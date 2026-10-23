@@ -25,9 +25,9 @@
 //   MIX-SPLIT       a JSDoc reword (clear) and a separate default changed (code)      clear + code
 //   DATA-JSON       package.json's "//" key reworded: a value, not a comment          code
 //
-// Code settles some families alone and never asks the verifier, so they are not cells: whole-line comments of a known
-// language (a Rust `///` doctest and a Go `// Output:` line are such comments: code clears them), and comments matching a
-// DIRECTIVES pattern (eslint-disable, @ts-expect-error, SPDX headers, `# type: ignore`: code refuses them).
+// Code settles some families alone and never asks the verifier, so they are not cells: whole-line comments it is certain
+// of by a lexer pass over the file (src/pipeline/comments.ts; never a Rust `///` doctest, a Go `// Output:` block, a line
+// inside a multi-line string or a configuration file's comment), and comments matching a DIRECTIVES pattern (eslint-disable, @ts-expect-error, SPDX headers, `# type: ignore`: code refuses them).
 //
 // The holdout set (evals/roles/holdout/verifier.ts, untracked) exports HOLDOUT_VERIFIER_CELLS of the same type, run only at
 // acceptance with --compare.

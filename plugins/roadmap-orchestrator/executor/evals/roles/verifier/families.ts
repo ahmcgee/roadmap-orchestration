@@ -3,7 +3,7 @@
 // key says, per hunk of `git diff -U0`, what a right answer makes of it: `clear` (comment, docstring or documentation,
 // nothing executed, no tool directive, no behaviour change: `hunkClear`), or the one flag that makes it not clear.
 //
-// Every cell's hunks are ones code sends to the verifier: none is a whole-line comment of a language code knows and none
+// Every cell's hunks are ones code sends to the verifier: none is a whole-line comment code is certain of and none
 // matches a `DIRECTIVES` pattern (those code settles alone, so they measure nothing here; test/roles-verifier.test.ts checks
 // the cells against code's reading, and a trial whose hunks code settled is void `code-decided`).
 import type { HunkVerdict } from '../../../src/prompts/schemas.ts';

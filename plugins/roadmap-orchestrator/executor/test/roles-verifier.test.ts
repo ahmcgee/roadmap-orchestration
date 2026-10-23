@@ -6,13 +6,13 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { DIRECTIVES, languageOf } from '../src/pipeline/docsonly.ts';
+import { readByCode } from '../src/pipeline/docsonly.ts';
 import { rebindConfig } from '../evals/roles/run.ts';
 import { triggeredRoles } from '../evals/roles/triggers.ts';
 import { type VerifierRow, verifierArm } from '../evals/roles/verifier/arc.ts';
 import { DEV_VERIFIER_CELLS, type VerifierCell } from '../evals/roles/verifier/cells.ts';
 import { VERIFIER_FAMILIES } from '../evals/roles/verifier/families.ts';
-import { buildVerifierFixture } from '../evals/roles/verifier/fixture.ts';
+import { buildVerifierFixture, diffOf } from '../evals/roles/verifier/fixture.ts';
 import { runVerifier } from '../evals/roles/verifier/run.ts';
 import { type VerifierSummary, summariseVerifier } from '../evals/roles/verifier/summary.ts';
 import { tmpDir } from './helpers/repo.ts';
@@ -29,13 +29,10 @@ test('roles.verifier-cells: unique ids, every family, clear and not-clear keys; 
   const fixtures = DEV_VERIFIER_CELLS.map(buildVerifierFixture);
   assert.ok(fixtures.some((f) => f.expected === 'accept') && fixtures.some((f) => f.expected === 'refuse'));
   for (const f of fixtures) {
-    const prefixes = languageOf(f.cell.path)?.prefixes ?? null;
-    for (const [i, h] of f.hunks.entries()) {
-      // Code's own reading (docsonly.ts): a directive refuses the claim, a hunk of whole-line comments passes, without the verifier.
-      assert.ok(!h.lines.some((l) => DIRECTIVES.some((d) => d.test(l.trim()))), `${f.cell.id} h${i + 1}: code refuses it as a directive`);
-      const nonBlank = h.lines.map((l) => l.trim()).filter((l) => l !== '');
-      assert.ok(prefixes === null || !nonBlank.every((l) => prefixes.some((p) => l.startsWith(p))), `${f.cell.id} h${i + 1}: code clears it as comments`);
-    }
+    // Code's own reading (docsonly.ts): a directive refuses the claim, a hunk it is certain is comments passes, without the verifier.
+    const read = readByCode(f.cell.path, f.cell.before, f.cell.after, diffOf(f.cell.before, f.cell.after));
+    assert.equal(read.kind, 'read', `${f.cell.id}: code refuses it as a directive`);
+    assert.equal(read.kind === 'read' ? read.left.length : 0, f.hunks.length, `${f.cell.id}: code clears a hunk itself`);
     assert.doesNotMatch(f.cell.before + f.cell.after + f.cell.path, /\b(evals?|verifier|oracle|answer key)\b/i, f.cell.id);
   }
   assert.throws(() => buildVerifierFixture({ ...cellOf('MIX-SPLIT'), hunks: ['clear'] }), /the diff has 2 hunks, the key names 1/);
@@ -145,7 +142,7 @@ test('roles.verifier-arm: the arm is the verifier seat (economy, Haiku 5.5 high)
 });
 
 test('roles.verifier-triggers: the verifier\'s prompt, the docs-only check and its eval trigger the verifier eval alone; shared paths every role', T, () => {
-  for (const p of ['src/prompts/verifier/claude-haiku-5-5.ts', 'src/pipeline/docsonly.ts', 'evals/roles/verifier/cells.ts']) assert.deepEqual(triggeredRoles([p]), ['verifier'], p);
+  for (const p of ['src/prompts/verifier/claude-haiku-5-5.ts', 'src/pipeline/docsonly.ts', 'src/pipeline/comments.ts', 'evals/roles/verifier/cells.ts']) assert.deepEqual(triggeredRoles([p]), ['verifier'], p);
   for (const p of ['src/prompts/schemas.ts', 'src/routing/profiles.ts', 'evals/roles/run.ts']) assert.deepEqual(triggeredRoles([p]), ['gate', 'walkthrough', 'polishJudge', 'verifier'], p);
   assert.deepEqual(triggeredRoles(['src/pipeline/gate.ts']), ['gate']);
 });

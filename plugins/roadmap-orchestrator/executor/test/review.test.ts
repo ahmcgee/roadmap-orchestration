@@ -1,6 +1,7 @@
 // Proportional review (dev.17; src/pipeline/review.ts, src/pipeline/docsonly.ts) through the unit driver, fake-backed: real
 // processes, real git. Named tests: review.defect-required, review.ride-along, review.docs-only-code,
-// review.docs-only-verifier, review.docs-only-refused, review.reraise-refused, review.reraise-anchor-changed,
+// review.docs-only-verifier, review.docs-only-template-literal, review.docs-only-code-certain, review.docs-only-refused,
+// review.reraise-refused, review.reraise-anchor-changed,
 // review.dispute-ruled-once, review.delta-demotes, review.delta-scope, review.delta-empty.
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
@@ -8,7 +9,8 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import type { Fact, IntentOf } from '../src/core/events.ts';
 import type { JsonValue } from '../src/core/json.ts';
-import { certifiedTree } from '../src/pipeline/docsonly.ts';
+import { diffOf } from '../evals/roles/verifier/fixture.ts';
+import { certifiedTree, readByCode } from '../src/pipeline/docsonly.ts';
 import { gateDebtNotes } from '../src/pipeline/gate.ts';
 import { runUnit } from '../src/pipeline/unit.ts';
 import { validateGateOutput } from '../src/prompts/schemas.ts';
@@ -149,6 +151,76 @@ test('review.docs-only-verifier: a doc comment code cannot clear goes to the ver
   } finally {
     r.journal.close();
   }
+});
+
+/** src/mul.js with a multi-line template literal, and a fix adding a line inside it that looks like a `//` comment. */
+const MUL_TEMPLATE = { 'src/mul.js': `${MUL['src/mul.js']}export const usage = \`\nmul(a, b)\n\`;\n` };
+const MUL_TEMPLATE_COMMENT = { 'src/mul.js': `${MUL['src/mul.js']}export const usage = \`\nmul(a, b)\n// multiplies a by b\n\`;\n` };
+
+test('review.docs-only-template-literal: a comment-looking line added inside a multi-line template literal is no comment; code leaves it to the verifier', T, async () => {
+  const d = setupArc({
+    steps: [
+      planCheckStep({ decision: 'approve' }), mulBuild(MUL_TEMPLATE),
+      gateStep({ decision: 'revise', directives: ['Document mul.'], findings: [blocking('src/mul.js', 'mul is undocumented.', { defect: 'requirement-unmet' })] }),
+    ],
+  });
+  const r = contextFor(d);
+  try {
+    const certified = await toRevise(r);
+    const changed = { id: 'h1', kind: 'code', executable: true, toolDirective: false, behaviourChange: true };
+    appendSteps(d, [fixBuild(MUL_TEMPLATE_COMMENT, certified), verifierStep([changed], ['// multiplies a by b']), gateStep({ decision: 'approve' })]);
+    await stepUntil(r, 'u1', (f) => f.stage === 'gate');
+    const [check] = factsOf(d, 'docs-only');
+    assert.equal(check!.verdict, 'refused', 'the verifier, not code, read the hunk');
+    assert.match(check!.reason!, /did not clear h1 \(src\/mul\.js\)/);
+    assert.equal(r.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'backend' && i.expect.subject.role === 'verifier').length, 1);
+    assert.deepEqual(laneSpawns(r, lastLanesAttempt(d)), ['mul', 'suite'], 'every lane ran');
+  } finally {
+    r.journal.close();
+  }
+});
+
+test('review.docs-only-code-certain: code clears a comment hunk only on a lexer pass it is certain of; strings spanning lines, heredocs, configuration comments and Go example output go to the verifier', () => {
+  /** The number of hunks code leaves to the verifier for `path` changed from `before` to `after` (a directive fails). */
+  const left = (path: string, before: string, after: string): number => {
+    const read = readByCode(path, before, after, diffOf(before, after));
+    assert.equal(read.kind, 'read', `${path}: no directive`);
+    return read.kind === 'read' ? read.left.length : -1;
+  };
+  // Controls: a whole-line comment in plain code is cleared by code.
+  assert.equal(left('src/a.ts', 'const a = 1;\n', '// a is one\nconst a = 1;\n'), 0, 'a TypeScript comment');
+  assert.equal(left('src/a.ts', 'const s = `x ${a * 2}`;\nconst b = 2;\n', 'const s = `x ${a * 2}`;\n// b\nconst b = 2;\n'), 0, 'after a template expression');
+  assert.equal(left('src/a.ts', 'const a = 1;\n// old\n', 'const a = 1;\n// new\n'), 0, 'a comment reworded');
+  assert.equal(left('a.py', 'x = """doc"""\ny = 1\n', 'x = """doc"""\n# y is one\ny = 1\n'), 0, 'a Python comment');
+  assert.equal(left('a.go', 'package a\n\nvar s = `x`\n', 'package a\n\n// s is x\nvar s = `x`\n'), 0, 'a Go comment');
+  // Lines inside strings that span lines: template literals, triple-quoted and raw strings, escaped newlines.
+  assert.equal(left('src/a.ts', 'const s = `\nhello\n`;\n', 'const s = `\nhello\n// not a comment\n`;\n'), 1, 'inside a template literal');
+  assert.equal(left('src/a.ts', 'const s = `\nhello\n// was\n`;\n', 'const s = `\nhello\n`;\n'), 1, 'removed from inside a template literal');
+  assert.equal(left('src/a.ts', 'const s = `${f(`\n`)}\nhello\n`;\n', 'const s = `${f(`\n`)}\nhello\n// not a comment\n`;\n'), 1, 'inside a template literal after a nested one');
+  assert.equal(left('src/a.js', "const s = 'a\\\nb';\n", "const s = 'a\\\n// b';\n"), 1, 'after an escaped newline in a quoted string');
+  assert.equal(left('a.py', 'x = """\nhello\n"""\n', 'x = """\nhello\n# not a comment\n"""\n'), 1, 'inside a triple-quoted string');
+  assert.equal(left('a.py', "x = f'''{y}\nhello\n'''\n", "x = f'''{y}\nhello\n# not a comment\n'''\n"), 1, 'inside a triple-quoted f-string');
+  assert.equal(left('a.go', 'package a\n\nvar s = `\nhello\n`\n', 'package a\n\nvar s = `\nhello\n// not a comment\n`\n'), 1, 'inside a Go raw string');
+  // What a lexer cannot be certain of: the whole file is unknown.
+  assert.equal(left('src/a.js', 'const r = /"/;\nconst a = 1;\n', 'const r = /"/;\n// a is one\nconst a = 1;\n'), 1, 'a slash then a quote: a regular expression or division');
+  assert.equal(left('a.py', 'x = f"{d[\'k\']}"\ny = 1\n', 'x = f"{d[\'k\']}"\n# y is one\ny = 1\n'), 1, 'an f-string field holding a quote');
+  assert.equal(left('src/a.js', 'const e = <p>\nhi\n</p>;\n', 'const e = <p>\n// hi\n</p>;\n'), 1, 'JSX text in a JavaScript file');
+  assert.equal(left('src/a.tsx', 'const a = 1;\n', '// a is one\nconst a = 1;\n'), 1, 'a TSX file');
+  assert.equal(left('a.go', 'package a\n\n// #include <stdio.h>\nimport "C"\n', 'package a\n\n// #include <stdio.h>\n// #include <stdlib.h>\nimport "C"\n'), 1, 'cgo\'s C preamble');
+  // Heredocs and configuration files (their tools may read comments): no lexer, never cleared by code.
+  assert.equal(left('run.sh', 'cat <<EOF\nhello\nEOF\n', 'cat <<EOF\nhello\n# not a comment\nEOF\n'), 1, 'inside a shell heredoc');
+  for (const path of ['ci.yaml', 'ci.yml', 'Cargo.toml', 'setup.cfg', 'tox.ini', 'conf.json5', 'a.rb', 'a.rs']) {
+    assert.equal(left(path, 'a = 1\n', '# a is one\na = 1\n'), 1, path);
+  }
+  // A Go example's output block: the Output line and every comment line under it.
+  const example = (out: readonly string[]): string =>
+    `package a\n\nimport "fmt"\n\nfunc ExampleMul() {\n\tfmt.Println(6)\n\t// Output:\n${out.map((l) => `\t// ${l}\n`).join('')}}\n`;
+  assert.equal(left('a_test.go', example(['6']), example(['7'])), 1, 'a line under Output changed');
+  assert.equal(left('a_test.go', example(['6']), example(['6', '7'])), 1, 'a line added under Output');
+  assert.equal(left('a_test.go', example(['6']), example(['6']).replace('// Output:', '// Unordered output:')), 1, 'the Output line itself');
+  assert.equal(left('a_test.go', example(['6']), example(['6']).replace('\t// 6\n', '\t// 6\n\n\t// later\n')), 1, 'a comment group after the output');
+  assert.equal(left('a_test.go', example(['6']), example(['6']).replace('\t// Output:\n', '\t// Output:\n\n')), 1, 'a blank line splitting the output');
+  assert.equal(left('a_test.go', example(['6']), example(['6']).replace('func ExampleMul', '// ExampleMul prints 6.\nfunc ExampleMul')), 0, 'a doc comment above the example is a comment');
 });
 
 test('review.docs-only-refused: the verifier finds a behaviour change; the claim is refused and the lanes run as normal, uncharged', T, async () => {

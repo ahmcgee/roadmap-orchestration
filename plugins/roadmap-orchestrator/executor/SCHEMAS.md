@@ -4809,8 +4809,12 @@ review"; src/pipeline/review.ts, src/pipeline/docsonly.ts). Every change is addi
 5. **Docs-only** (`docsOnlyCarry`, the lanes stage, before its entry reservation): the claim is the unit's latest build
    spawn's answer; `since` the commit of the spec series of `greenLanes(unit)`'s attempt (`certifiedTree`). Refused (a
    `docs-only` fact) when there is no certified tree, the claim names another, a path changed mode or is a submodule or
-   binary, or a changed line matches `DIRECTIVES`. A docs-class path (`pathClass` = docs) passes; a hunk whose changed
-   lines are blank or start with a `LINE_COMMENTS` prefix of the file's extension (at least one comment) passes; every
+   binary, or a changed line matches `DIRECTIVES`. A docs-class path (`pathClass` = docs) passes; a hunk of a file
+   present on both sides passes when each changed line is blank or a whole-line comment by a lexer pass over the whole
+   file at its side (src/pipeline/comments.ts `lineKinds`: TypeScript, JavaScript, Go, Python; a line inside a string
+   spanning lines, template literal or raw string, or in a Go example's `// Output:` block, is neither), at least one a
+   comment and none `TOOL_READ` (`///`, `//!`, `@` tags) (`readByCode`); a language without a lexer (configuration files
+   among them), a file the lexer cannot read with certainty, or an added or deleted file leaves its hunks; every
    other hunk (`h<n>`, with its path, language and text) goes to one fresh `verifier` call (`verifierDispatch`: the
    pinned record, `verifier.<riskFloor>`; read-only judgment profile, cwd the repository, no evidence dirs). Accepted only
    when each hunk is answered once and `hunkClear`. Accepted: per lane of the stage (spec lanes, then the fast suite's)

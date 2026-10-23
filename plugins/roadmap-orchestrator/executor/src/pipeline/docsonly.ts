@@ -3,10 +3,14 @@
 // A build answers `docsOnlySince`: the tested SHA since which it says it changed only comments and documentation, or null.
 // The claim alone carries nothing over. Code takes the unit's last certified tree (the salvage SHA of its latest lanes
 // attempt that ended green) and refuses a claim naming any other. It then reads the diff from that tree to the salvage SHA:
-// a docs-class file (the systems map's `docs`) passes, and so does a hunk whose every changed line is blank or a whole-line
-// comment of a language it knows (`LINE_COMMENTS`; never a comment a tool may run, `DOC_COMMENTS`), at least one of them a
-// comment, with no line matching a tool directive (`DIRECTIVES`: a directive refuses the claim outright). A line inside a
-// multi-line string that starts like a comment is taken for one: the heuristic the plan accepts. A mode change, a binary file or a submodule refuses it. Every hunk
+// a docs-class file (the systems map's `docs`) passes, and so does a hunk of a file changed on both sides whose every
+// changed line is blank or a whole-line comment by a lexer pass over the whole file at that side (src/pipeline/comments.ts
+// `lineKinds`: TypeScript, JavaScript, Go and Python; a line inside a multi-line string, template literal or raw string is
+// none, and a Go example's `// Output:` block is none), at least one of them a comment, none a comment a tool may read
+// (`TOOL_READ`), with no line matching a tool directive (`DIRECTIVES`: a directive refuses the claim outright). Code clears
+// only what it is certain of: a file whose language has no lexer (configuration files among them: YAML, TOML, INI, JSON5),
+// a file the lexer cannot read with certainty, and an added or deleted file leave their hunks to the verifier. A mode
+// change, a binary file or a submodule refuses the claim. Every hunk
 // left goes to the verifier (economy, Haiku 5.5 at high; prompts/verifier), one fresh call with a closed per-hunk answer
 // {kind, executable, toolDirective, behaviourChange}; code accepts only when every hunk is answered once and clear
 // (`hunkClear`). Accepted, each lane of the stage that does not declare `readsComments` reuses its pass on the certified
@@ -19,6 +23,7 @@ import type { LaneDef } from '../core/records.ts';
 import { repoPath } from '../core/values.ts';
 import { git } from '../git/git.ts';
 import { pathClass } from '../input/systems.ts';
+import { type LineKind, languageOf, lineKinds } from './comments.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import { promptFor } from '../prompts/index.ts';
 import type { VerifierHunk } from '../prompts/inputs.ts';
@@ -26,22 +31,6 @@ import { hunkClear, validateBuildOutput, validateVerifierOutput, verifierSchemaF
 import { type StageContext, type StageParent, callBackend, dispatchOf, judgmentDeadlineMs, verificationWorktree, verifierDispatch } from './dispatch.ts';
 import { type Reusable, laneNow, mapInForce, reusablePass } from './lanes.ts';
 import { inMs, judgedAnswer, judgmentOutput } from './stages.ts';
-
-/** A comment line per language, by file extension (lower case, without the dot), and the language's name. */
-const LINE_COMMENTS: Readonly<Record<string, Readonly<{ language: string; prefixes: readonly string[] }>>> = (() => {
-  const c = { language: 'C-family', prefixes: ['//'] };
-  const hash = (language: string) => ({ language, prefixes: ['#'] });
-  return {
-    ts: { ...c, language: 'TypeScript' }, tsx: { ...c, language: 'TypeScript' }, mts: { ...c, language: 'TypeScript' }, cts: { ...c, language: 'TypeScript' },
-    js: { ...c, language: 'JavaScript' }, jsx: { ...c, language: 'JavaScript' }, mjs: { ...c, language: 'JavaScript' }, cjs: { ...c, language: 'JavaScript' },
-    go: { ...c, language: 'Go' }, rs: { ...c, language: 'Rust' }, java: { ...c, language: 'Java' }, kt: { ...c, language: 'Kotlin' }, scala: { ...c, language: 'Scala' },
-    swift: { ...c, language: 'Swift' }, c: { ...c, language: 'C' }, h: { ...c, language: 'C' }, cc: { ...c, language: 'C++' }, cpp: { ...c, language: 'C++' },
-    hpp: { ...c, language: 'C++' }, cs: { ...c, language: 'C#' }, dart: { ...c, language: 'Dart' },
-    py: hash('Python'), rb: hash('Ruby'), sh: hash('shell'), bash: hash('shell'), zsh: hash('shell'), yaml: hash('YAML'), yml: hash('YAML'), toml: hash('TOML'),
-    r: hash('R'), pl: hash('Perl'), ex: hash('Elixir'), exs: hash('Elixir'),
-    sql: { language: 'SQL', prefixes: ['--'] }, lua: { language: 'Lua', prefixes: ['--'] }, hs: { language: 'Haskell', prefixes: ['--'] },
-  };
-})();
 
 /**
  * Comments a tool reads as an instruction: lint and type-checker suppressions, coverage and formatter pragmas, shebangs,
@@ -53,44 +42,56 @@ export const DIRECTIVES: readonly RegExp[] = [
   /\bnoqa\b/i, /type:\s*ignore/, /\bpragma\b/i, /pylint:|mypy:|pyright:|isort:|fmt:\s*(off|on|skip)|\bnosec\b/i, /-\*-.*coding|^#.*coding[:=]/,
   /^\/\/go:|^\/\/\s*\+build|\bnolint\b/i, /prettier-ignore|biome-ignore|deno-lint-ignore|dprint-ignore/, /(istanbul|c8|v8)\s+ignore/, /rubocop:|frozen_string_literal/,
   /SPDX-License-Identifier|@license|@preserve/, /sourceMappingURL|webpackChunkName|@vite-ignore/, /NOLINT|clang-format|swiftlint:|ktlint/, /@generated|DO NOT EDIT/i,
-  /#\s*(region|endregion)\b/, /shellcheck\s/,
+  /#\s*(region|endregion)\b/, /shellcheck\s/, /^\/\/(export|line|extern)\s/, /@(jest|vitest)-environment/,
 ];
 
-/** The language a path's extension names, or null when it is none `LINE_COMMENTS` knows. */
-export function languageOf(path: string): Readonly<{ language: string; prefixes: readonly string[] }> | null {
-  const dot = path.lastIndexOf('.');
-  const slash = path.lastIndexOf('/');
-  return dot <= slash ? null : LINE_COMMENTS[path.slice(dot + 1).toLowerCase()] ?? null;
-}
-
-/** One hunk of `git diff -U0`: its text (header included) and its changed lines without their +/- marks. */
-type Hunk = Readonly<{ text: string; lines: readonly string[] }>;
+/** One hunk of `git diff -U0`: its text (header included) and its changed lines, each with its side and line number there. */
+type Hunk = Readonly<{ text: string; lines: readonly Readonly<{ side: 'before' | 'after'; line: number; text: string }>[] }>;
 
 function hunksOf(diff: string): readonly Hunk[] {
-  const out: { text: string[]; lines: string[] }[] = [];
+  const out: { text: string[]; lines: { side: 'before' | 'after'; line: number; text: string }[]; next: { before: number; after: number } }[] = [];
   for (const line of diff.split('\n')) {
-    if (line.startsWith('@@')) out.push({ text: [line], lines: [] });
+    const header = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+    if (header !== null) out.push({ text: [line], lines: [], next: { before: Number(header[1]), after: Number(header[2]) } });
     else if (out.length > 0 && (line.startsWith('+') || line.startsWith('-')) && !line.startsWith('+++') && !line.startsWith('---')) {
-      out.at(-1)!.text.push(line);
-      out.at(-1)!.lines.push(line.slice(1));
+      const h = out.at(-1)!;
+      const side = line.startsWith('-') ? 'before' : 'after';
+      h.text.push(line);
+      h.lines.push({ side, line: h.next[side]++, text: line.slice(1) });
     }
   }
   return out.map((h) => ({ text: h.text.join('\n'), lines: h.lines }));
 }
 
 /**
- * Comments a tool may run: a Rust doctest in `///` or `//!`, a Go example's `// Output:` (and the lines `go test` compares
- * after it, which code cannot tell from prose). Never cleared by code: a hunk holding one asks the verifier.
+ * Comments a tool may read that no directive pattern names: triple-slash and `//!` doc comments (a Rust doctest, a
+ * TypeScript triple-slash line), `@` tags (docblock pragmas). Never cleared by code: a hunk holding one asks the verifier.
  */
-const DOC_COMMENTS: readonly RegExp[] = [/^\/\/\//, /^\/\/!/, /^\/\/\s*(Unordered output|Output):/i];
+const TOOL_READ: readonly RegExp[] = [/^\/\/[/!]/, /^(\/\/|#)\s*@/];
 
-/** What code alone makes of a hunk: clear (whole-line comments and blank lines), a directive, or a question for the verifier. */
-function hunkByCode(prefixes: readonly string[] | null, h: Hunk): 'clear' | 'directive' | 'verifier' {
-  if (h.lines.some((l) => DIRECTIVES.some((d) => d.test(l.trim())))) return 'directive';
-  if (prefixes === null) return 'verifier';
-  const nonBlank = h.lines.map((l) => l.trim()).filter((l) => l !== '');
-  const comment = (l: string): boolean => prefixes.some((p) => l.startsWith(p)) && !DOC_COMMENTS.some((d) => d.test(l));
-  return nonBlank.length > 0 && nonBlank.every(comment) ? 'clear' : 'verifier';
+/** What code alone makes of a file's diff: a directive (the hunk's header), or the hunks it leaves to the verifier. */
+export type CodeReading = Readonly<{ kind: 'directive'; hunk: string }> | Readonly<{ kind: 'read'; left: readonly string[] }>;
+
+/**
+ * Code's reading of the `-U0` diff of `path` from `before` to `after` (the whole file at each side; null where it does not
+ * exist): a hunk with a directive refuses; a hunk is cleared only when both sides lex with certainty (`lineKinds`) and its
+ * every changed line is blank or a comment no tool reads, at least one a comment; every other hunk is left to the verifier.
+ */
+export function readByCode(path: string, before: string | null, after: string | null, diff: string): CodeReading {
+  const kinds = { before: before === null ? null : lineKinds(path, before), after: after === null ? null : lineKinds(path, after) };
+  const texts = { before: before?.split('\n') ?? [], after: after?.split('\n') ?? [] };
+  const left: string[] = [];
+  for (const h of hunksOf(diff)) {
+    if (h.lines.some((l) => DIRECTIVES.some((d) => d.test(l.text.trim())))) return { kind: 'directive', hunk: h.text.split('\n')[0]! };
+    const read = h.lines.map((l): LineKind => {
+      const k = kinds.before === null || kinds.after === null ? undefined : kinds[l.side]![l.line - 1];
+      if (k === undefined) return 'other';
+      if (texts[l.side][l.line - 1] !== l.text) throw new Error(`${path}: the diff's ${l.side} line ${l.line} is not the file's`);
+      return k === 'comment' && TOOL_READ.some((t) => t.test(l.text.trim())) ? 'other' : k;
+    });
+    if (!(read.every((k) => k !== 'other') && read.includes('comment'))) left.push(h.text);
+  }
+  return { kind: 'read', left };
 }
 
 /** What the unit's latest build answered as `docsOnlySince`, or null (no claim, or no answer). */
@@ -125,12 +126,10 @@ async function verdictOf(ctx: StageContext, unit: PlanUnit, parent: StageParent,
     if (map !== null && pathClass(map, path).kind === 'docs') continue;
     const diff = git(ctx.repo, ['diff', '--no-renames', '-U0', since, at, '--', path]);
     if (/^Binary files /m.test(diff)) return { kind: 'refused', reason: `${path} is binary` };
-    const lang = languageOf(path);
-    for (const h of hunksOf(diff)) {
-      const by = hunkByCode(lang?.prefixes ?? null, h);
-      if (by === 'directive') return { kind: 'refused', reason: `${path} changes a tool directive: ${h.text.split('\n')[0]}` };
-      if (by === 'verifier') left.push({ id: `h${left.length + 1}`, path, language: lang?.language ?? null, text: h.text });
-    }
+    const show = (sha: Sha, mode: string): string | null => (mode === '000000' ? null : git(ctx.repo, ['show', `${sha}:${path}`]));
+    const read = readByCode(path, show(since, oldMode!), show(at, newMode!), diff);
+    if (read.kind === 'directive') return { kind: 'refused', reason: `${path} changes a tool directive: ${read.hunk}` };
+    for (const text of read.left) left.push({ id: `h${left.length + 1}`, path, language: languageOf(path), text });
   }
   if (left.length === 0) return { kind: 'accepted', by: 'code' };
   return askVerifier(ctx, unit, parent, since, at, left);
