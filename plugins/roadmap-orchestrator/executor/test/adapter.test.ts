@@ -100,7 +100,10 @@ describe('adapter', () => {
       assert.equal(codexCut.type === 'backend' && codexCut.role === 'build' ? codexCut.session : null, codex.type === 'backend' && codex.role === 'build' ? codex.session : 'x');
       const claude = adapt(edited('claude-judgment', EXIT0, cut));
       assert.equal(outcome(claude), 'malformed', 'no result event: the result line was the torn one');
-      assert.deepEqual(claude.type === 'backend' ? claude.usage : null, { kind: 'unavailable', reason: 'no-result' });
+      // A judgment's: what its own model's complete messages streamed before the cut (dev.17).
+      assert.deepEqual(claude.type === 'backend' ? claude.usage : null, {
+        kind: 'unavailable', reason: 'no-result', streamed: { inputTokens: 4, outputTokens: 40, cacheReadTokens: 3200, cacheWriteTokens: 3627, turns: 2, costUsd: null },
+      });
     });
   });
 
