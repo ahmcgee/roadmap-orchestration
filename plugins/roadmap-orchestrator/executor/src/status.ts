@@ -141,7 +141,7 @@ import { type GateAnswerView, latestGateAnswer } from './pipeline/gate.ts';
 import { busyWaits } from './holistic/checkpoint.ts';
 import { integrationHistory, recordedAdmits } from './holistic/bundle.ts';
 import { findingAttribution, opportunityClauses } from './holistic/admits.ts';
-import { EARLIER_BUILTIN_SEATS, gateLargeDiffOf } from './core/upgrade.ts';
+import { gateLargeDiffOf } from './core/upgrade.ts';
 import { type KnownDefect, type PlanM1, type PlanUnit, advancesOf, hasMilestones, knownDefectsOf, lensSetOf, milestonesOf, parsePlan } from './input/plan.ts';
 import { type MilestoneState, milestoneProgress, milestoneState, walksOf } from './walk/milestones.ts';
 import { milestoneEdges, milestonePassed, milestoneWaits } from './walk/node.ts';
@@ -171,7 +171,7 @@ import type { BriefArc, OwnerAnswer, StageTiming } from './phase0/types.ts';
 import { arcDebtLedger } from './pipeline/publish.ts';
 import type { AdmissionConstraint, Rank, ResourceRequest } from './schedule/types.ts';
 import {
-  type ResolvedRouting, type RoutingStack, type SeatSources, arcScopeOf, provenanceStack, resolveRouting, resolveRoutingUnder,
+  type ResolvedRouting, type SeatSources, arcScopeOf, provenanceStack, resolveRouting,
 } from './routing/layers.ts';
 import {
   type Backend, type ClassSource, type ClassTable, type ModelClass, type ProfileName, type RiskTier, type SeatRef,
@@ -680,7 +680,7 @@ function keptPlan(runDir: AbsPath, f: PlanAppliedFact): PlanM1 {
  * their recorded provenance only: what `spend.byModel` and `spend.byClass` render historical usage with (never the live
  * repo config). The
  * class catalogue and the built-in seats bind every revision (OR-L3), so an earlier release's meter row's recorded rev is also
- * registered, aliased to its revision's current table (`earlierRevAliases`, scaffolding): its spend joins and is
+ * registered, aliased to its revision's current table (`ResolvedRouting.earlierBuiltinRevs`, scaffolding): its spend joins and is
  * attributed to today's bindings. An alias never displaces a rev HEAD resolves.
  */
 function routingTables(runDir: AbsPath, events: readonly Event[]): ReadonlyMap<RoutingRev, ResolvedRouting> {
@@ -695,20 +695,11 @@ function routingTables(runDir: AbsPath, events: readonly Event[]): ReadonlyMap<R
       const stack = provenanceStack(provenance, scope, unit, hasMilestones(kept));
       const r = resolveRouting(stack);
       out.set(r.rev, r);
-      for (const rev of earlierRevAliases(stack)) aliases.set(rev, r);
+      for (const rev of r.earlierBuiltinRevs) aliases.set(rev, r);
     }
   }
   for (const [rev, r] of aliases) if (!out.has(rev)) out.set(rev, r);
   return out;
-}
-
-/**
- * TEMPORARY SCAFFOLDING (BACKLOG "Scaffolding to delete", efficient judgment and the gate risk ladder): the `routingRev`s
- * earlier executors recorded for `stack`, its resolutions under the built-in seats each hashed (`EARLIER_BUILTIN_SEATS`:
- * before 1.0.0-dev.10, and 1.0.0-dev.10 and dev.11).
- */
-function earlierRevAliases(stack: RoutingStack): readonly RoutingRev[] {
-  return EARLIER_BUILTIN_SEATS.map((seats) => resolveRoutingUnder(seats, stack).rev);
 }
 
 function routingView(profile: ProfileName, r: ResolvedRouting): RoutingView {

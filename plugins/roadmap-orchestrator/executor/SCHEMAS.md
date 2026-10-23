@@ -858,7 +858,8 @@ revision its plan-check read). A redirect cannot widen `scope` or lower `riskFlo
 `implementerSeatRev` hashes the triple at `build.<riskFloor>` under `routingRev`. A routing change mid-unit (lead
 ruling, arc-1 feedback item 7): when the rev in force differs from the pinned one, the unit is re-pinned (a new
 fact under the new rev, scope and floor unchanged) if no build has started for it or its implementer seat hashes
-the same; otherwise the dispatching stage records outcome `routing-changed` (at `plan-check`, `build` or `gate`),
+the same, or (dev.17 scaffolding, "Experience-won routing") the pinned rev is dev.16's built-in seats under the same
+stack, when the re-pin keeps the pinned `implementerSeatRev`; otherwise the dispatching stage records outcome `routing-changed` (at `plan-check`, `build` or `gate`),
 which parks the unit uncharged with needs-user reason `routing-changed` naming the seat, never a model.
 A risk raise re-pins under the rev in force and may move the implementer seat of a unit whose build already
 ran (a re-opened unit): a session cannot move across models or backends, so a build round whose
@@ -4573,9 +4574,14 @@ stays 1.
 **Seats** (`src/routing/profiles.ts`). `planCheck` and `gate`: `frontier` at `low`, `med`, `high`, `summit` at
 `escalation`. `build`: `efficient` at `low`, `med`, `high`. The arc seats are unchanged. An arc started on dev.12 to dev.16
 hashed `PRE_DEV17_BUILTIN_SEATS` (`src/core/upgrade.ts`, appended to `EARLIER_BUILTIN_SEATS`): under OR-L3 its units re-pin
-under HEAD's rev without a park while their implementer seat is unchanged (a high unit that already built on frontier
-parks `routing-changed`), and `status` aliases its recorded revs. Scaffolding: deleted once no arc started on dev.16 or
-earlier is in flight.
+under HEAD's rev without a park, and `status` aliases its recorded revs (`ResolvedRouting.earlierBuiltinRevs`: the stack's
+revs under each earlier built-in table). A high unit whose build already started on frontier keeps that seat through to
+its merge: `repin` (`src/pipeline/dispatch.ts`), finding the pinned rev equal to `ResolvedRouting.preDev17Rev` (the stack
+under `PRE_DEV17_BUILTIN_SEATS`, the only earlier table whose build seats differ: a release upgrade, not an owner edit; an
+owner edit can hash to an older table's rev, so those are not consulted) with the floor unchanged, records the new dispatch fact under HEAD's rev with the pinned
+`implementerSeatRev`, and the implementer builds on `seatTripleOf` of it; warned per unit (`implementerSeatKept`, kind
+`dispatch.implementerSeat.<unit>`). Units not yet started build under the new seats. An owner routing edit still parks a
+moved started implementer `routing-changed`. Scaffolding: deleted once no arc started on dev.16 or earlier is in flight.
 
 **Build advisor** (`src/routing/classes.ts` `BUILD_ADVISOR = 'claude-opus-5-5'`, `src/backends/argv.ts`). Every
 `claude-build` argv carries `--advisor claude-opus-5-5` after `--effort <level>`, fresh and resumed alike. No record

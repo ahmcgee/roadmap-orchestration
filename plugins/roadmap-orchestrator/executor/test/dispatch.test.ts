@@ -4,7 +4,8 @@
 // started (an effort-only change resumes the session with the new effort, R4/OR-L3), and a park (never a crash) when
 // the change moves the backend or model of an implementer whose session already exists. M4a named tests:
 // dispatch.seat-triples, dispatch.effort-only-repins-resumes, dispatch.model-change-parks, dispatch.packreview-role-no-park,
-// dispatch.dev6-decoder; dispatch.dev9-adopted (efficient judgment, 1.0.0-dev.10).
+// dispatch.dev6-decoder; dispatch.dev9-adopted (efficient judgment, 1.0.0-dev.10); dispatch.dev16-started-keeps-seat,
+// dispatch.dev16-unstarted-moves (experience-won routing, 1.0.0-dev.17).
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { DispatchRecord } from '../src/core/records.ts';
@@ -16,7 +17,7 @@ import { build, planCheck } from '../src/pipeline/stages.ts';
 import { step } from '../src/pipeline/unit.ts';
 import { largeDiffSeat } from '../src/pipeline/transitions.ts';
 import { type RoutingStack, arcStack, parseRepoConfig, resolveRouting, resolveRoutingUnder } from '../src/routing/layers.ts';
-import { PRE_DEV10_BUILTIN_SEATS, PRE_DEV12_BUILTIN_SEATS } from '../src/core/upgrade.ts';
+import { PRE_DEV10_BUILTIN_SEATS, PRE_DEV12_BUILTIN_SEATS, PRE_DEV17_BUILTIN_SEATS } from '../src/core/upgrade.ts';
 import {
   CLAUDE_EFFORTS, CLAUDE_MODELS, CODEX_EFFORTS, CODEX_MODELS, JUDGMENT_SEATS, type JudgmentSeat, MODEL_IDS, RISK_TIERS, type RoutingLayer, type Triple, routingLayer,
 } from '../src/routing/types.ts';
@@ -295,4 +296,66 @@ test('dispatch.dev11-adopted: a unit dispatched and built under the seats 1.0.0-
   assert.notEqual(run.journal.view.unit(U1).decided?.outcome, 'routing-changed');
   assert.deepEqual(seated(judgmentDispatch(head, U1, 'plan-check')).triple, { backend: 'claude', model: 'claude-opus-5-5', effort: 'medium' }, 'plan-check.med moves to frontier (dev.17)');
   assert.deepEqual(seated(judgmentDispatch(head, U1, 'gate')).triple, { backend: 'claude', model: 'claude-opus-5-5', effort: 'medium' }, 'gate.med stays on Opus medium');
+});
+
+// Experience-won routing (owner 2026-10-22, 1.0.0-dev.17): build.high moved from frontier to efficient (with an Opus advisor).
+// A release upgrade is not an owner edit: a dev.16 high unit whose build started keeps its Opus seat through to its merge;
+// one not yet started builds under the new seats (scaffolding, src/core/upgrade.ts `implementerSeatKept`).
+
+const OPUS_MEDIUM: Triple = { backend: 'claude', model: 'claude-opus-5-5', effort: 'medium' };
+const SONNET_MEDIUM: Triple = { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'medium' };
+/** The claude-only routing a dev.12 to dev.16 executor resolved: the same stack under the seats it hashed. */
+const dev16Ctx = (run: StageRun): StageContext => {
+  const routing = resolveRoutingUnder(PRE_DEV17_BUILTIN_SEATS, arcStack('claude-only', null, null));
+  return { ...run.ctx, routing: () => routing };
+};
+
+test('dispatch.dev16-started-keeps-seat: a dev.16 high unit whose build started on Opus resumes on Opus under HEAD\'s routing, no routing-changed park; an owner edit still parks', T, async () => {
+  const resumed = { as: 'claude', expect: { argv: ['--model', 'claude-opus-5-5', '--advisor', '--resume'], argvLacks: ['--session-id'] }, acts: [{ type: 'emit', value: BUILD_REPORT }] } as const;
+  const run = setupUnit({
+    profile: 'claude-only', risk: 'high',
+    steps: [planCheckStep({ decision: 'approve', risk: 'high' }), { as: 'claude', expect: { argv: ['--model', 'claude-opus-5-5', '--session-id'] }, acts: [MALFORMED] }, resumed],
+  });
+  const dev16 = dev16Ctx(run);
+  assert.deepEqual(dev16.routing(null).table.build.high, OPUS_MEDIUM, 'dev.16 built high on frontier');
+  started(await planCheck(dev16, run.unit));
+  assert.equal(started(await build(dev16, run.unit, { kind: 'fresh' })).outcome.kind, 'malformed');
+  const head = under(run, arcStack('claude-only', null, null));
+  assert.deepEqual(head.routing(null).table.build.high, SONNET_MEDIUM, 'HEAD builds high on efficient');
+  assert.equal(head.routing(null).preDev17Rev, dev16.routing(null).rev, 'the dev.16 rev is the same stack under dev.16\'s seats');
+  const s = await step(head, run.unit);
+  assert.equal(s.kind, 'continue', `the resumed build ran on Opus: ${JSON.stringify(s)}`);
+  const [first, repinned, ...more] = dispatches(run);
+  assert.deepEqual(more, [], 'one re-pin');
+  assert.equal(repinned?.routingRev, head.routing(null).rev);
+  assert.equal(repinned?.implementerSeatRev, first?.implementerSeatRev, 'the pinned Opus seat is kept');
+  assert.deepEqual(seated(implementerDispatch(head, U1)).triple, OPUS_MEDIUM, 'it builds on Opus through to its merge');
+  assert.notEqual(run.journal.view.unit(U1).decided?.outcome, 'routing-changed');
+
+  // An owner edit that moves a started implementer's seat is no release upgrade: it parks as before.
+  const edited = setupUnit({
+    profile: 'claude-only', risk: 'high', routing: HIGH_BUILDS_ON_FRONTIER,
+    steps: [planCheckStep({ decision: 'approve', risk: 'high' }), { as: 'claude', expect: { argv: ['--model', 'claude-opus-5-5', '--session-id'] }, acts: [MALFORMED] }],
+  });
+  started(await planCheck(edited.ctx, edited.unit));
+  assert.equal(started(await build(edited.ctx, edited.unit, { kind: 'fresh' })).outcome.kind, 'malformed');
+  const parked = await step(under(edited, arcStack('claude-only', null, null)), edited.unit);
+  assert.ok(parked.kind === 'parked');
+  assert.equal(parked.needsUser.reason, 'routing-changed');
+});
+
+test('dispatch.dev16-unstarted-moves: a dev.16 high unit dispatched but not yet built re-pins onto HEAD\'s seat and builds on Sonnet with the Opus advisor', T, async () => {
+  const run = setupUnit({
+    profile: 'claude-only', risk: 'high',
+    steps: [{ as: 'claude', expect: { argv: ['--model', 'claude-sonnet-5-5', '--effort', 'medium', '--advisor', 'claude-opus-5-5', '--session-id'] }, acts: [{ type: 'emit', value: BUILD_REPORT }] }],
+  });
+  const dev16 = dev16Ctx(run);
+  const first = seated(pinDispatch(dev16, run.unit, spec1(run)));
+  assert.deepEqual(seatTripleOf(first.implementerSeatRev), OPUS_MEDIUM, 'pinned on dev.16\'s Opus seat');
+  const head = under(run, arcStack('claude-only', null, null));
+  assert.deepEqual(seated(implementerDispatch(head, U1)).triple, SONNET_MEDIUM);
+  const repinned = dispatches(run).at(-1)!;
+  assert.equal(repinned.routingRev, head.routing(null).rev);
+  assert.deepEqual(seatTripleOf(repinned.implementerSeatRev), SONNET_MEDIUM, 'the new seat is pinned');
+  assert.equal(started(await build(head, run.unit, { kind: 'fresh' })).outcome.kind, 'success');
 });
