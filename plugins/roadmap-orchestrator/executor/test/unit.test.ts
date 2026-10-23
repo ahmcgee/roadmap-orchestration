@@ -27,7 +27,7 @@ import { type Step, readCalls } from './helpers/scenario.ts';
 import { events, intents } from './fixtures/invoke-specs.ts';
 import { BUILD_REPORT, SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
 import {
-  ADD_BROKEN, ADD_FIXED, type ArcRun, MUL, SUITE_LANE, U1, appendSteps, codexStep, isGateCall, contextFor, gateStep, literal, mulBuild, outcomes, setupArc, stepUntil,
+  ADD_BROKEN, ADD_FIXED, type ArcRun, MUL, SUITE_LANE, U1, appendSteps, codexStep, isGateCall, isPlanCheckCall, contextFor, gateStep, literal, mulBuild, outcomes, setupArc, stepUntil,
   unitWorktreePath, workDirPattern,
 } from './fixtures/unit-common.ts';
 
@@ -103,16 +103,19 @@ describe('unit: one unit merged first time', () => {
   test('unit.decisions-appended: decisions.json reaches the spec by an executor patch, and the approval carries the new rev', () => {
     assert.equal((JSON.parse(readFileSync(join(r.ctx.planDir, 'u1.json'), 'utf8')) as { rev: number }).rev, 1, 'the owner\'s spec file is never written');
     const { spec } = loadUnitSpec(r.ctx, r.unit('u1'));
-    assert.equal(spec.rev, 2, 'the patched spec is in force');
+    // dev.17: the approving plan-check's design record is rev 2, the build's decisions rev 3.
+    assert.equal(spec.rev, 3, 'the patched spec is in force');
     assert.deepEqual(spec.decisions, [{ id: 'D1', text: 'mul multiplies with the * operator.', state: 'active' }]);
+    assert.equal(spec.design?.kind, 'module', 'the design record the plan-check settled');
     const patches = intents(r.d.runDir, 'spec.patch');
-    assert.equal(patches.length, 1);
-    const p = patches[0]!;
+    assert.equal(patches.length, 2);
+    const [design, p] = patches as [(typeof patches)[number], (typeof patches)[number]];
+    assert.ok(design.kind === 'spec.patch' && design.parent.type === 'stage' && design.parent.stage === 'plan-check' && design.expect.patch.ops[0]?.op === 'design');
     assert.ok(p.kind === 'spec.patch' && p.parent.type === 'stage' && p.parent.stage === 'evidence');
     const build = intents(r.d.runDir, 'proc.spawn').find((i) => i.kind === 'proc.spawn' && i.expect.subject.purpose === 'backend' && i.expect.subject.role === 'build');
     assert.ok(build !== undefined);
     assert.deepEqual(p.expect.patch.by, { role: 'executor', inv: invocationId(build.op, 1) });
-    assert.equal(r.journal.view.unit(U1).approval?.fingerprint.specRev, 2, 'a decision recorded before the gate is what the gate saw');
+    assert.equal(r.journal.view.unit(U1).approval?.fingerprint.specRev, 3, 'a decision recorded before the gate is what the gate saw');
   });
 
   test('retire: every worktree of the unit is removed, citing its evidence; the branch and candidate ref stay', () => {
@@ -348,7 +351,7 @@ async function pauseAt(r: ArcRun, name: string): Promise<void> {
 
 const barrier = (name: string) => ({ type: 'barrier', name, timeoutMs: 120_000 } as const);
 /** The implementer's calls (dev.13: the gate, an acting judge, also runs under bypassPermissions, so its calls are left out). */
-const implementerCalls = (r: ArcRun) => readCalls(r.d.scenarioPath).filter((c) => (c.argv.includes('--permission-mode') && !isGateCall(c)) || c.as === 'codex');
+const implementerCalls = (r: ArcRun) => readCalls(r.d.scenarioPath).filter((c) => (c.argv.includes('--permission-mode') && !isGateCall(c) && !isPlanCheckCall(c)) || c.as === 'codex');
 const flag = (argv: readonly string[], name: string): string | undefined => argv[argv.indexOf(name) + 1];
 /** The unit's edits reached integration as the paused session left them. */
 const mulMerged = (r: ArcRun): void => {

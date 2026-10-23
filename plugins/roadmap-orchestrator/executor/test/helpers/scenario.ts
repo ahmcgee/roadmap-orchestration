@@ -110,7 +110,19 @@ export type ClaudeOnlyAct =
    * claude-build-advisor advisor spend (its cost added to `total_cost_usd`), as the real CLI reports it.
    */
   | Readonly<{ type: 'advised'; value: JsonValue }> | Readonly<{ type: 'globAboveAddDir' }> | Readonly<{ type: 'real'; readOnly?: Readonly<{ repo: string; runDir: string }> }>
-  | Readonly<{ type: 'stream'; events: readonly JsonValue[] }>;
+  | Readonly<{ type: 'stream'; events: readonly JsonValue[] }>
+  /**
+   * dev.17 (design pass): `emit` a plan-check answer. An approve or scaffold without a `design` key carries
+   * `defaultDesign(<the first pattern of the call's scope envelope>)`: a module change of that pattern, no failure modes, so
+   * a test about something else needs no design record of its own.
+   */
+  | Readonly<{ type: 'planCheck'; value: JsonValue }>;
+
+/** The design record a plan-check answer without one carries (`planCheck` act): one small module change of `pattern`. */
+export const defaultDesign = (pattern: string): JsonValue => ({
+  kind: 'module', changes: [{ system: null, paths: [pattern], lines: 10 }], interfaces: [], failureModes: [], breaks: { tests: [], docs: [] }, experiments: [],
+  newSystem: null, verification: null,
+});
 /**
  * `resumeCollision`: `codex exec resume` onto a thread another live session holds (CODEX_RESUME_COLLISION on
  * stderr, exit 1). `threadStarted`: print the `thread.started` event now, as the real CLI does first, so a

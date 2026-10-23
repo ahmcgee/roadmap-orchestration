@@ -244,6 +244,34 @@ const ROWS: readonly Row[] = [
   ['ff', 'foreign-move', {}, 'stop:foreign-ref-move', 'stop', {}],
   // snapshot
   ['snapshot', 'published', {}, 'retire', 'retire', {}],
+  // dev.17 (design pass): plan-check's design decisions, each uncharged. A split holds the unit until its revision cuts it.
+  ['plan-check', 'split', {}, 'hold', 'hold', {}],
+  ['plan-check', 'scaffold', {}, 'scaffold', 'advance', {}],
+  ['plan-check', 'poc', {}, 'poc', 'advance', {}],
+  ['plan-check', 'plan-defect', {}, 'park:plan-defect', 'park', {}],
+  // The scaffold writer's stage: committed, on to the first build; refused once, it tries again; twice, a plan defect.
+  ['scaffold', 'scaffolded', {}, 'build/fresh@med', 'advance', {}],
+  ['scaffold', 'refused', {}, 'scaffold', 'advance', {}],
+  ['scaffold', 'plan-defect', {}, 'park:plan-defect', 'park', {}],
+  ['scaffold', 'refusal', {}, 'park:refusal', 'park', {}],
+  ['scaffold', 'process-fault', {}, 'park:process-fault', 'park', {}],
+  ['scaffold', 'lost', {}, 'park:process-fault', 'park', {}],
+  ['scaffold', 'interrupted', {}, 'hold', 'hold', {}],
+  ['scaffold', 'routing-changed', {}, 'park:routing-changed', 'park', {}],
+  ['scaffold', 'context-exceeded', {}, 'park:context-exceeded', 'park', {}],
+  ['scaffold', 'occupied', {}, 'park:occupancy-unlabelled', 'park', {}],
+  ['scaffold', 'cleanup-failed', {}, 'park:residue', 'park', {}],
+  ['scaffold', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
+  // A proof of concept: answered or not, back to a fresh plan-check with its report.
+  ['poc', 'answered', {}, 'plan-check@med', 'advance', {}],
+  ['poc', 'unanswered', {}, 'plan-check@med', 'advance', {}],
+  ['poc', 'process-fault', {}, 'park:process-fault', 'park', {}],
+  ['poc', 'interrupted', {}, 'hold', 'hold', {}],
+  ['poc', 'routing-changed', {}, 'park:routing-changed', 'park', {}],
+  ['poc', 'context-exceeded', {}, 'park:context-exceeded', 'park', {}],
+  ['poc', 'occupied', {}, 'park:occupancy-unlabelled', 'park', {}],
+  ['poc', 'cleanup-failed', {}, 'park:residue', 'park', {}],
+  ['poc', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
 ];
 
 /** Every (stage, outcome) the fact vocabulary admits; StageOutcome is derived from the same list. */
@@ -280,7 +308,11 @@ describe('transitions', () => {
       'candidate red': 'design', 'candidate base-red': 'env', 'candidate blocked': 'retryable', 'candidate occupied': 'env', 'candidate cleanup-failed': 'retryable',
       'lanes env-unavailable': 'retryable', 'candidate env-unavailable': 'retryable',
       'reproduce not-reproduced': 'design', 'reproduce inapplicable': 'design', 'reproduce blocked': 'retryable', 'reproduce cleanup-failed': 'retryable',
-      ...Object.fromEntries(['prepare', 'reproduce', 'plan-check', 'build', 'quiesce', 'evidence', 'salvage', 'teardown', 'lanes', 'gate', 'candidate'].map((st) => [`${st} executor-fault`, 'env'])),
+      ...Object.fromEntries(['prepare', 'reproduce', 'plan-check', 'build', 'quiesce', 'evidence', 'salvage', 'teardown', 'lanes', 'gate', 'candidate', 'scaffold', 'poc'].map((st) => [`${st} executor-fault`, 'env'])),
+      // dev.17 (design pass): a plan defect is the plan's to fix (an apply, then `resume`), as at lanes.
+      'plan-check plan-defect': 'env', 'scaffold plan-defect': 'env', 'scaffold refusal': 'design', 'scaffold process-fault': 'retryable', 'scaffold lost': 'retryable',
+      'scaffold routing-changed': 'env', 'scaffold context-exceeded': 'env', 'scaffold occupied': 'env', 'scaffold cleanup-failed': 'retryable',
+      'poc process-fault': 'retryable', 'poc routing-changed': 'env', 'poc context-exceeded': 'env', 'poc occupied': 'env', 'poc cleanup-failed': 'retryable',
     };
     const targets = [{ type: 'resource', instance: resourceInstance('estate#2') }, { type: 'host' }, { type: 'host' }] as const;
     let parks = 0;

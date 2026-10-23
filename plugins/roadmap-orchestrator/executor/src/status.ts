@@ -647,7 +647,9 @@ function seatOf(view: JournalView, unit: UnitId): UnitStatusLine['seat'] {
     const inputs = u.open?.stage === 'gate' ? view.judgmentInputs(unit, 'gate', u.open.attempt) : null;
     return { role: 'gate', tier: largeDiffSeat(judgmentSeat(u, stage), inputs === null ? null : gateLargeDiffOf(inputs)) };
   }
-  return u.stage === 'build' ? { role: 'build', tier: u.risk } : null;
+  // dev.17 (design pass): a PoC builds on the build seat; the scaffold writer sits on its own seat at the unit's risk.
+  if (u.stage === 'build' || u.stage === 'poc') return { role: 'build', tier: u.risk };
+  return u.stage === 'scaffold' ? { role: 'scaffold', tier: u.risk } : null;
 }
 
 /** The terminal receipts' dir (src/commands/queue.ts writes `<id>.<applied|rejected>.json` there). */
@@ -1289,6 +1291,9 @@ function rulerOf(f: PlanAppliedFact): RuledBy {
     case 'walk':
     case 'compare':
       return { type: 'executor' };
+    // dev.17 (design pass): a split is its plan-check's decision, applied by code.
+    case 'split':
+      return { type: 'judgment', role: 'planCheck' };
   }
 }
 

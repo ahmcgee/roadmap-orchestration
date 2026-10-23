@@ -55,7 +55,7 @@ const OP_CLASS: { readonly [K in OpKind]: 'own' | 'shared' | 'process' | 'reserv
 
 /** The stages a unit may park `executor-fault` at: every outcome stage but `ff` and `snapshot`, which hold the slot. */
 type FaultStage = Exclude<OutcomeStage, 'ff' | 'snapshot'>;
-const FAULT_STAGES: readonly FaultStage[] = ['prepare', 'reproduce', 'plan-check', 'build', 'quiesce', 'evidence', 'salvage', 'teardown', 'lanes', 'gate', 'candidate'];
+const FAULT_STAGES: readonly FaultStage[] = ['prepare', 'reproduce', 'plan-check', 'build', 'quiesce', 'evidence', 'salvage', 'teardown', 'lanes', 'gate', 'candidate', 'scaffold', 'poc'];
 
 /** The arc jobs whose faults are contained (their scheduler track key), with the job kinds their work runs under. */
 export const JOB_FAULT_TRACKS: Readonly<Record<string, Readonly<{ name: string; kinds: readonly JobKind[] }>>> = {

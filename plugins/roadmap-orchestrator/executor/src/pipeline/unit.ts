@@ -96,8 +96,11 @@ import {
 } from './rounds.ts';
 import {
   type BuildRun, type StageDone, at, build, buildLaneIds, buildRead, evidence, failedFacts, fastSuiteRoot, keptSpecPath, laneGlobs, lanes, loadUnitSpec,
-  nowInside, planCheck, quiesce, readDecisions, record, recordedCall, salvage, salvageRejections, stillOutside, teardown,
+  nowInside, planCheck, planCheckAnswerOf, quiesce, readDecisions, record, recordedCall, salvage, salvageRejections, stillOutside, teardown,
 } from './stages.ts';
+import { poc } from './poc.ts';
+import { scaffold } from './scaffold.ts';
+import { finishSplit } from './split.ts';
 import { restoredPathsDirective, revertedPathsDirective } from '../prompts/directives.ts';
 import type { Role } from '../routing/types.ts';
 import { requiredAt } from './witnesscheck.ts';
@@ -477,6 +480,10 @@ async function runStage(ctx: StageContext, unit: PlanUnit, target: Target, f: St
       return ff(ctx, unit);
     case 'snapshot':
       return snapshot(ctx, unit);
+    case 'scaffold':
+      return scaffold(ctx, unit);
+    case 'poc':
+      return poc(ctx, unit);
   }
 }
 
@@ -579,8 +586,30 @@ async function consumeRecorded(ctx: StageContext, unit: PlanUnit, f: StageOutcom
  * at startup, right after recovery (lead ruling, 14c), and `step` calls it first, so it is recorded once.
  */
 export async function consume(ctx: StageContext, unit: PlanUnit): Promise<Step | null> {
+  const split = await finishHeldSplit(ctx, unit);
+  if (split !== null) return split;
   const recorded = await consumeRecorded(ctx, unit, ctx.journal.view.unit(unit.id).decided);
   return recorded === null ? null : after(ctx, unit, recorded);
+}
+
+/**
+ * dev.17 (design pass): a unit held by its plan-check's `split` whose revision a crash kept from landing (the unit is still
+ * held, not cut): the split judged again from the held attempt's recorded answer and committed (src/pipeline/split.ts
+ * `finishSplit`), its needs-user when it no longer lands. Null for any other unit.
+ */
+async function finishHeldSplit(ctx: StageContext, unit: PlanUnit): Promise<Step | null> {
+  const u = ctx.journal.view.unit(unit.id);
+  const held = u.interrupted;
+  if (u.status !== 'held' || held === null || held.stage !== 'plan-check' || held.outcome !== 'split') return null;
+  const parent: StageParent = { type: 'stage', unit: unit.id, stage: 'plan-check', attempt: held.attempt };
+  const called = recordedCall(ctx, parent);
+  const inputs = ctx.journal.view.judgmentInputs(unit.id, 'plan-check', held.attempt);
+  const out = planCheckAnswerOf(ctx, unit.id);
+  if (called === null || called.kind !== 'result' || inputs === null || out?.decision !== 'split') {
+    throw new Error(`unit ${unit.id}: held by a split at plan-check#${held.attempt} without its recorded split answer`);
+  }
+  const needsUser = await finishSplit(ctx, unit, { split: out.split, inv: called.inv, tip: inputs.tip }, parent);
+  return { kind: 'held', needsUser };
 }
 
 /**

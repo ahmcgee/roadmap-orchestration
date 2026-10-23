@@ -10,8 +10,8 @@
 //   gate:      approve → integration slot · revise → fix round with directives · escalate → route up
 //   build:     success → quiesce (the executor then salvages, runs lanes and gates; the report is evidence)
 import {
-  type ClauseId, type FindingId, type IssueId, type JourneyId, type LaneId, type ObligationId, type PocQuestionId, type RuleId, type RulingId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, clauseId,
-  pocQuestionId, answerIds, findingId, issueId, journeyId, laneId, obligationId, ruleId, rulingId, unitId, visionClauseId,
+  type ClauseId, type FailureModeId, type FindingId, type IssueId, type JourneyId, type LaneId, type ObligationId, type PocQuestionId, type RuleId, type RulingId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, clauseId,
+  failureModeId, pocQuestionId, answerIds, findingId, issueId, journeyId, laneId, obligationId, ruleId, rulingId, unitId, visionClauseId,
 } from '../core/ids.ts';
 import { type ActedOn, actedOn } from '../forge/types.ts';
 import { FLOW_REPORTERS, type FlowOutput, flowOutput } from '../flow/types.ts';
@@ -30,10 +30,13 @@ import { REENTRY_POINTS, type ReentryPoint } from '../input/plan.ts';
 import {
   admitSpecTextDefault, admitTargetsDefault, buildExperimentsDefault, buildFinalDefault, checkpointRulingTextDefault, GATE_DEBT_UNRECORDED, gateClustersDefault, gateNoteDebtDefault, gateUnreviewedDefault, lensPatchMutantDefault, planCheckScopeGrowthDefault,
   FIXES_UNRECORDED,
-  reenterFixesDefault,
+  reenterFixesDefault, planCheckDesignDefault,
 } from '../core/upgrade.ts';
 import type { MutantEdit } from '../git/mutant.ts';
-import { type NewSystem, newSystem } from '../core/design.ts';
+import {
+  type DesignChange, type DesignExperiment, type FailureModeProof, type NewSystem, type UnitKind, type Verification, UNIT_KINDS, designChange, designExperiment, failureModeProof,
+  newSystem, verification,
+} from '../core/design.ts';
 import { specBytes } from '../spec/spec.ts';
 import {
   BUILD_CLASSES, JUDGMENT_SEATS, MODEL_CLASSES, type ModelClass, classAt, RISK_TIERS, ROLES, type RiskTier, type Role, SEATS, type Seat,
@@ -73,7 +76,13 @@ const premise: Read<Premise> = object((f) => ({
 // ---------------------------------------------------------------------------------------------------
 // planCheck
 
-export const PLAN_CHECK_DECISIONS = ['approve', 'redirect', 'infeasible', 'escalate'] as const;
+/**
+ * dev.17 (design pass, DESIGN-1.0.md "Design pass"): `split` (the unit is too big or mixes concerns: child specs code
+ * applies as a revision), `scaffold` (a new system's skeleton the `scaffold` role writes first, then the build) and `poc`
+ * (questions a throwaway build answers before the check decides) join the M1 decisions.
+ */
+export const PLAN_CHECK_DECISIONS = ['approve', 'redirect', 'split', 'scaffold', 'poc', 'infeasible', 'escalate'] as const;
+export type PlanCheckDecision = (typeof PLAN_CHECK_DECISIONS)[number];
 
 type PlanCheckCommon = Readonly<{
   /** The decision's justification, one point per entry (a reason need not cite; a cite given elsewhere must resolve). */
@@ -103,9 +112,66 @@ export type VisionConflict = Readonly<{ clauses: readonly VisionClauseId[]; note
 /** One proposed growth as the plan-check writes it: its patterns are text until code verifies them. */
 export type ScopeGrowthAnswer = Readonly<{ patterns: readonly string[]; reason: string }>;
 const S_SCOPE_GROWTH = sArr(sObj({ patterns: sArr(S_STR), reason: S_STR }));
-export type PlanCheckOutput =
-  | (PlanCheckCommon & Readonly<{ decision: 'approve' | 'infeasible' | 'escalate'; patch: null }>)
-  | (PlanCheckCommon & Readonly<{ decision: 'redirect'; patch: readonly SpecPatchOp[] }>);
+
+/**
+ * The design record as the plan-check writes it (dev.17; src/core/design.ts `DesignRecord`): paths and ids, which code pins
+ * at the tip the check read (interfaces and broken files at their blobs, requirements at their revs: src/pipeline/design.ts
+ * `pinDesign`) before it lands on the spec's next revision. `newSystem` null: the unit creates none; `verification` null on
+ * every unit but a deflake unit.
+ */
+export type DesignAnswer = Readonly<{
+  kind: UnitKind;
+  changes: readonly DesignChange[];
+  interfaces: readonly Readonly<{ type: 'contract' | 'file'; path: RepoPath }>[];
+  failureModes: readonly Readonly<{ id: FailureModeId; mode: string; proof: FailureModeProof; requirements: readonly ObligationId[] }>[];
+  breaks: Readonly<{ tests: readonly RepoPath[]; docs: readonly RepoPath[] }>;
+  experiments: readonly DesignExperiment[];
+  newSystem: NewSystem | null;
+  verification: Verification | null;
+}>;
+/**
+ * One child of a `split`: its unit id (new to the plan), its scope (within the parent's effective scope), the parent's
+ * acceptance and witness item ids it takes (the children partition the parent's active items exactly), the obligations it
+ * declares (a subset of the parent's) and its own sized design record. Code builds its spec from the parent's (src/pipeline/split.ts).
+ */
+export type UnitSplitChild = Readonly<{ unit: UnitId; scope: readonly RepoPattern[]; items: readonly string[]; obligations: readonly ObligationId[]; design: DesignAnswer }>;
+/**
+ * `split` (dev.17): two or more children, the edges among them (`from` before `to`), and for a mixed-concerns split the
+ * skeleton: the child that lands the contracts, the wiring and the spanning test first, and the candidate or batch lane
+ * holding that test (every other child runs after it; null for a thin vertical slice). D0 typed the children as finished
+ * specs; code builds them from the parent's instead, so an item's text cannot drift in the split.
+ */
+export type SplitDecision = Readonly<{ children: readonly UnitSplitChild[]; edges: readonly Readonly<{ from: UnitId; to: UnitId }>[]; skeleton: Readonly<{ unit: UnitId; lane: LaneId }> | null }>;
+/**
+ * `scaffold`: what the `scaffold` role writes first in the unit worktree: the new system, its entry points and exports, the
+ * load test an arc lane's reporter must show ran, and the manifest entries (a path and the entry it gains).
+ */
+export type ScaffoldDecision = Readonly<{
+  newSystem: NewSystem;
+  entryPoints: readonly RepoPath[];
+  exports: readonly string[];
+  loadTest: Readonly<{ lane: LaneId; testId: string }>;
+  manifest: readonly Readonly<{ path: RepoPath; entry: string }>[];
+}>;
+/** One question a proof of concept answers. */
+export type PocQuestion = Readonly<{ id: PocQuestionId; question: string; whyItMatters: string }>;
+/** `poc`: the questions (one or more, unique ids) and the brief the throwaway build works from. */
+export type PocDecision = Readonly<{ questions: readonly PocQuestion[]; brief: string }>;
+
+/**
+ * The plan-check's answer by decision. An approve and a scaffold carry the design record (null only on an approve recorded
+ * before dev.17, `planCheckDesignDefault`: read back, never judged); every payload key is null on every other decision.
+ */
+export type PlanCheckOutput = PlanCheckCommon & (
+  | Readonly<{ decision: 'approve'; patch: null; design: DesignAnswer | null }>
+  | Readonly<{ decision: 'scaffold'; patch: null; design: DesignAnswer; scaffold: ScaffoldDecision }>
+  | Readonly<{ decision: 'split'; patch: null; split: SplitDecision }>
+  | Readonly<{ decision: 'poc'; patch: null; poc: PocDecision }>
+  | Readonly<{ decision: 'infeasible' | 'escalate'; patch: null }>
+  | Readonly<{ decision: 'redirect'; patch: readonly SpecPatchOp[] }>
+);
+/** An answer's design record, or null when its decision carries none. */
+export const designOfAnswer = (out: PlanCheckOutput): DesignAnswer | null => (out.decision === 'approve' || out.decision === 'scaffold' ? out.design : null);
 
 // A lane's `env.set` is a map in spec.json, but a strict schema cannot describe open maps, so the model
 // writes it as [{name, value}] and the validator converts before handing the op to records.ts.
@@ -140,6 +206,42 @@ const S_PATCH_OP: Schema = {
   ],
 };
 
+const S_NEW_SYSTEM = sObj({ name: S_STR, paths: sArr(S_STR), tests: sArr(S_STR) });
+const S_DESIGN = sObj({
+  kind: sEnum(UNIT_KINDS),
+  changes: sArr(sObj({ system: sNullable(S_STR), paths: sArr(S_STR), lines: S_INT })),
+  interfaces: sArr(sObj({ type: sEnum(['contract', 'file']), path: S_STR })),
+  failureModes: sArr(sObj({
+    id: S_STR, mode: S_STR,
+    proof: {
+      anyOf: [
+        sObj({ type: sEnum(['test']), test: { anyOf: [sObj({ type: sEnum(['witness']), item: S_STR }), sObj({ type: sEnum(['test']), lane: S_STR, testId: S_STR })] } }),
+        sObj({ type: sEnum(['untested']), reason: S_STR }),
+      ],
+    },
+    requirements: sArr(S_STR),
+  })),
+  breaks: sObj({ tests: sArr(S_STR), docs: sArr(S_STR) }),
+  experiments: sArr(sObj({ command: S_STR, output: S_STR })),
+  newSystem: sNullable(S_NEW_SYSTEM),
+  verification: sNullable({
+    anyOf: [
+      sObj({ type: sEnum(['reproduce-then-fix']), condition: S_STR, runs: S_INT }),
+      sObj({ type: sEnum(['repeat']), rationale: S_STR, runs: S_INT }),
+    ],
+  }),
+});
+const S_SPLIT = sObj({
+  children: sArr(sObj({ unit: S_STR, scope: sArr(S_STR), items: sArr(S_STR), obligations: sArr(S_STR), design: S_DESIGN })),
+  edges: sArr(sObj({ from: S_STR, to: S_STR })),
+  skeleton: sNullable(sObj({ unit: S_STR, lane: S_STR })),
+});
+const S_SCAFFOLD = sObj({
+  newSystem: S_NEW_SYSTEM, entryPoints: sArr(S_STR), exports: sArr(S_STR), loadTest: sObj({ lane: S_STR, testId: S_STR }),
+  manifest: sArr(sObj({ path: S_STR, entry: S_STR })),
+});
+const S_POC = sObj({ questions: sArr(sObj({ id: S_STR, question: S_STR, whyItMatters: S_STR })), brief: S_STR });
+
 export const PLAN_CHECK_SCHEMA: Schema = sObj({
   decision: sEnum(PLAN_CHECK_DECISIONS),
   reasons: sArr(S_STR),
@@ -149,6 +251,10 @@ export const PLAN_CHECK_SCHEMA: Schema = sObj({
   premises: S_PREMISES,
   visionConflict: sArr(sObj({ clauses: sArr(S_STR), note: S_STR })),
   scopeGrowth: S_SCOPE_GROWTH,
+  design: sNullable(S_DESIGN),
+  split: sNullable(S_SPLIT),
+  scaffold: sNullable(S_SCAFFOLD),
+  poc: sNullable(S_POC),
 });
 
 /** A lane item's wire form: its env.set arrives as [{name, value}] and becomes the map spec.json holds. */
@@ -184,75 +290,53 @@ const wireOp: Read<SpecPatchOp> = (value, path) => {
 const visionConflict: Read<VisionConflict> = object((g) => ({ clauses: g.get('clauses', answerIds(vid, { nonEmpty: true })), note: g.get('note', str) }));
 const scopeGrowthAnswer: Read<ScopeGrowthAnswer> = object((g) => ({ patterns: g.get('patterns', arrayOf(str, { nonEmpty: true })), reason: g.get('reason', str) }));
 
-export const planCheckOutput: Read<PlanCheckOutput> = object((f): PlanCheckOutput => {
-  const decision = f.get('decision', oneOf(PLAN_CHECK_DECISIONS));
-  const common = {
-    reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })),
-    risk: f.get('risk', oneOf(RISK_TIERS)),
-    notes: f.get('notes', text),
-    premises: f.get('premises', arrayOf(premise)),
-    visionConflict: f.get('visionConflict', arrayOf(visionConflict)),
-    scopeGrowth: f.optional('scopeGrowth', arrayOf(scopeGrowthAnswer)) ?? planCheckScopeGrowthDefault(),
+const repoPathR: Read<RepoPath> = (v, p) => repoPath(v, p);
+const designAnswer: Read<DesignAnswer> = object((f) => {
+  const out: DesignAnswer = {
+    kind: f.get('kind', oneOf(UNIT_KINDS)),
+    changes: f.get('changes', arrayOf(designChange, { nonEmpty: true })),
+    interfaces: f.get('interfaces', arrayOf(object((g) => ({ type: g.get('type', oneOf(['contract', 'file'] as const)), path: g.get('path', repoPathR) })))),
+    failureModes: f.get('failureModes', arrayOf(object((g) => ({
+      id: g.get('id', (v, p) => failureModeId(v, p)), mode: g.get('mode', str), proof: g.get('proof', failureModeProof), requirements: g.get('requirements', answerIds(oid)),
+    })))),
+    breaks: f.get('breaks', object((g) => ({ tests: g.get('tests', arrayOf(repoPathR)), docs: g.get('docs', arrayOf(repoPathR)) }))),
+    experiments: f.get('experiments', arrayOf(designExperiment)),
+    newSystem: f.get('newSystem', nullable(newSystem)),
+    verification: f.get('verification', nullable(verification)),
   };
-  if (decision === 'redirect') {
-    return { ...common, decision, patch: f.get('patch', arrayOf(wireOp, { nonEmpty: true })) };
-  }
-  return { ...common, decision, patch: f.get('patch', literal(null)) };
+  assertUnique(out.interfaces, (i) => i.path, `${f.path}.interfaces`);
+  assertUnique(out.failureModes, (m) => m.id, `${f.path}.failureModes`);
+  assertUnique([...out.breaks.tests, ...out.breaks.docs], (b) => b, `${f.path}.breaks`);
+  return out;
 });
-
-export function validatePlanCheckOutput(value: unknown): PlanCheckOutput {
-  return planCheckOutput(value, 'planCheck');
-}
-
-// dev.17 design pass (SCHEMAS.md "dev.17 records"): the decisions `split`, `scaffold` and `poc` and their payloads. Types
-// and readers only: the answer schema and `planCheckOutput` take them when the design pass wires their stages.
-
-/** Every plan-check decision of dev.17, in the order the design brief lists them. */
-export const PLAN_CHECK_DECISIONS_DEV17 = ['approve', 'redirect', 'split', 'scaffold', 'poc', 'infeasible', 'escalate'] as const;
-export type PlanCheckDecision = (typeof PLAN_CHECK_DECISIONS_DEV17)[number];
-/** The decisions the design pass adds to `PLAN_CHECK_DECISIONS`. */
-export type DesignDecision = Exclude<PlanCheckDecision, (typeof PLAN_CHECK_DECISIONS)[number]>;
-
-/**
- * `split`: the unit's child specs (two or more, distinct units) and the edges among them (`from` before `to`, both
- * children). Code checks the rest against the parent: children within its effective scope, items partitioned exactly, each
- * child sized, acyclic.
- */
-export type SplitDecision = Readonly<{ children: readonly SpecM1[]; edges: readonly Readonly<{ from: UnitId; to: UnitId }>[] }>;
-/**
- * `scaffold`: what the `scaffold` role writes first in the unit worktree: the new system, its entry points and exports, the
- * load test a new lane's reporter must show ran, and the manifest entries (a path and the entry it gains).
- */
-export type ScaffoldDecision = Readonly<{
-  newSystem: NewSystem;
-  entryPoints: readonly RepoPath[];
-  exports: readonly string[];
-  loadTest: Readonly<{ lane: LaneId; testId: string }>;
-  manifest: readonly Readonly<{ path: RepoPath; entry: string }>[];
-}>;
-/** One question a proof of concept answers. */
-export type PocQuestion = Readonly<{ id: PocQuestionId; question: string; whyItMatters: string }>;
-/** `poc`: the questions (one or more, unique ids) and the brief the throwaway build works from. */
-export type PocDecision = Readonly<{ questions: readonly PocQuestion[]; brief: string }>;
-
 export const splitDecision: Read<SplitDecision> = object((f) => {
-  const children = f.get('children', arrayOf(specM1, { nonEmpty: true }));
-  if (children.length < 2) throw new SchemaError(`${f.path}.children`, 'two or more child specs', children.length);
+  const children = f.get('children', arrayOf(object((g): UnitSplitChild => {
+    const child = {
+      unit: g.get('unit', unitR), scope: g.get('scope', arrayOf((v, p) => repoPattern(v, p), { nonEmpty: true })), items: g.get('items', arrayOf(str, { nonEmpty: true })),
+      obligations: g.get('obligations', answerIds(oid)), design: g.get('design', designAnswer),
+    };
+    assertUnique(child.scope, (s) => s, `${g.path}.scope`);
+    assertUnique(child.items, (i) => i, `${g.path}.items`);
+    return child;
+  }), { nonEmpty: true }));
+  if (children.length < 2) throw new SchemaError(`${f.path}.children`, 'two or more children', children.length);
   assertUnique(children, (c) => c.unit, `${f.path}.children`);
   const edges = f.get('edges', arrayOf(object((g) => ({ from: g.get('from', unitR), to: g.get('to', unitR) }))));
   const ids = new Set(children.map((c) => c.unit));
   const i = edges.findIndex((e) => !ids.has(e.from) || !ids.has(e.to) || e.from === e.to);
   if (i >= 0) throw new SchemaError(`${f.path}.edges[${i}]`, 'an edge between two distinct children', edges[i]);
   assertUnique(edges, (e) => `${e.from}>${e.to}`, `${f.path}.edges`);
-  return { children, edges };
+  const skeleton = f.get('skeleton', nullable(object((g) => ({ unit: g.get('unit', unitR), lane: g.get('lane', (v, p) => laneId(v, p)) }))));
+  if (skeleton !== null && !ids.has(skeleton.unit)) throw new SchemaError(`${f.path}.skeleton.unit`, 'one of the children', skeleton.unit);
+  return { children, edges, skeleton };
 });
 export const scaffoldDecision: Read<ScaffoldDecision> = object((f) => {
   const out = {
     newSystem: f.get('newSystem', newSystem),
-    entryPoints: f.get('entryPoints', arrayOf((v, p) => repoPath(v, p), { nonEmpty: true })),
+    entryPoints: f.get('entryPoints', arrayOf(repoPathR, { nonEmpty: true })),
     exports: f.get('exports', arrayOf(str)),
     loadTest: f.get('loadTest', object((g) => ({ lane: g.get('lane', (v, p) => laneId(v, p)), testId: g.get('testId', str) }))),
-    manifest: f.get('manifest', arrayOf(object((g) => ({ path: g.get('path', (v, p) => repoPath(v, p)), entry: g.get('entry', str) })))),
+    manifest: f.get('manifest', arrayOf(object((g) => ({ path: g.get('path', repoPathR), entry: g.get('entry', str) })))),
   };
   assertUnique(out.entryPoints, (e) => e, `${f.path}.entryPoints`);
   return out;
@@ -264,6 +348,95 @@ export const pocDecision: Read<PocDecision> = object((f) => {
   assertUnique(questions, (q) => q.id, `${f.path}.questions`);
   return { questions, brief: f.get('brief', str) };
 });
+
+/** A payload key that must be null (or, on an answer recorded before dev.17, absent) under every other decision. */
+const none = (f: Fields, key: string): void => void f.optional(key, literal(null));
+
+export const planCheckOutput: Read<PlanCheckOutput> = object((f): PlanCheckOutput => {
+  const decision = f.get('decision', oneOf(PLAN_CHECK_DECISIONS));
+  const common = {
+    reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })),
+    risk: f.get('risk', oneOf(RISK_TIERS)),
+    notes: f.get('notes', text),
+    premises: f.get('premises', arrayOf(premise)),
+    visionConflict: f.get('visionConflict', arrayOf(visionConflict)),
+    scopeGrowth: f.optional('scopeGrowth', arrayOf(scopeGrowthAnswer)) ?? planCheckScopeGrowthDefault(),
+  };
+  const payloads = ['design', 'split', 'scaffold', 'poc'] as const;
+  const nullExcept = (...keep: readonly (typeof payloads)[number][]): void => payloads.filter((k) => !keep.includes(k)).forEach((k) => none(f, k));
+  switch (decision) {
+    case 'redirect':
+      nullExcept();
+      return { ...common, decision, patch: f.get('patch', arrayOf(wireOp, { nonEmpty: true })) };
+    case 'approve': {
+      nullExcept('design');
+      const design = f.optional('design', nullable(designAnswer));
+      return { ...common, decision, patch: f.get('patch', literal(null)), design: design === undefined ? planCheckDesignDefault() : design };
+    }
+    case 'scaffold':
+      nullExcept('design', 'scaffold');
+      return { ...common, decision, patch: f.get('patch', literal(null)), design: f.get('design', designAnswer), scaffold: f.get('scaffold', scaffoldDecision) };
+    case 'split':
+      nullExcept('split');
+      return { ...common, decision, patch: f.get('patch', literal(null)), split: f.get('split', splitDecision) };
+    case 'poc':
+      nullExcept('poc');
+      return { ...common, decision, patch: f.get('patch', literal(null)), poc: f.get('poc', pocDecision) };
+    case 'infeasible':
+    case 'escalate':
+      nullExcept();
+      return { ...common, decision, patch: f.get('patch', literal(null)) };
+  }
+});
+
+export function validatePlanCheckOutput(value: unknown): PlanCheckOutput {
+  return planCheckOutput(value, 'planCheck');
+}
+
+// ---------------------------------------------------------------------------------------------------
+// The proof of concept (dev.17, design pass): a builder seat's throwaway build answering a `poc` decision's questions
+
+/** How sure a PoC is of one answer. */
+export const POC_CONFIDENCES = ['high', 'medium', 'low'] as const;
+export type PocConfidence = (typeof POC_CONFIDENCES)[number];
+/**
+ * A PoC's closed answer (src/pipeline/poc.ts): exactly one answer per question (its evidence: what was run or read, and what
+ * it showed), the lessons a builder of the real unit should know, and the surprises. Nothing of the PoC's code survives.
+ */
+export type PocOutput = Readonly<{
+  answers: readonly Readonly<{ questionId: PocQuestionId; answer: string; evidence: string; confidence: PocConfidence }>[];
+  lessons: readonly string[];
+  surprises: readonly string[];
+}>;
+export const POC_SCHEMA: Schema = sObj({
+  answers: sArr(sObj({ questionId: S_STR, answer: S_STR, evidence: S_STR, confidence: sEnum(POC_CONFIDENCES) })),
+  lessons: sArr(S_STR),
+  surprises: sArr(S_STR),
+});
+/** The PoC answer for `questions`: one answer per question, none for another. */
+export const pocOutputFor = (questions: readonly PocQuestionId[]): Read<PocOutput> => object((f) => {
+  const answers = f.get('answers', arrayOf(object((g) => ({
+    questionId: g.get('questionId', (v, p) => pocQuestionId(v, p)), answer: g.get('answer', str), evidence: g.get('evidence', str), confidence: g.get('confidence', oneOf(POC_CONFIDENCES)),
+  }))));
+  assertUnique(answers, (a) => a.questionId, `${f.path}.answers`);
+  const asked = new Set<string>(questions);
+  const stray = answers.find((a) => !asked.has(a.questionId));
+  if (stray !== undefined) throw new SchemaError(`${f.path}.answers`, `answers to the questions asked (${questions.join(', ')})`, stray.questionId);
+  const missing = questions.filter((q) => !answers.some((a) => a.questionId === q));
+  if (missing.length > 0) throw new SchemaError(`${f.path}.answers`, `an answer to ${missing.join(', ')}`, answers.map((a) => a.questionId));
+  return { answers, lessons: f.get('lessons', arrayOf(str)), surprises: f.get('surprises', arrayOf(str)) };
+});
+
+// ---------------------------------------------------------------------------------------------------
+// scaffold (dev.17, design pass): the economy role that writes a new system's skeleton
+
+/** The scaffold writer's report: what it wrote (each path relative to the worktree) and a summary; code checks the tree itself. */
+export type ScaffoldOutput = Readonly<{ summary: string; paths: readonly string[] }>;
+export const SCAFFOLD_SCHEMA: Schema = sObj({ summary: S_STR, paths: sArr(S_STR) });
+export const scaffoldOutput: Read<ScaffoldOutput> = object((f) => ({ summary: f.get('summary', str), paths: f.get('paths', arrayOf(str)) }));
+export function validateScaffoldOutput(value: unknown): ScaffoldOutput {
+  return scaffoldOutput(value, 'scaffold');
+}
 
 // ---------------------------------------------------------------------------------------------------
 // build
@@ -1201,10 +1374,11 @@ export type RoleOutputs = {
   readonly flow: FlowOutput;
   readonly walkthrough: WalkthroughOutput;
   readonly polishJudge: PolishJudgeOutput;
+  readonly scaffold: ScaffoldOutput;
 };
 export const ROLE_SCHEMAS: { readonly [R in Role]: Schema } = {
   planCheck: PLAN_CHECK_SCHEMA, build: BUILD_SCHEMA, gate: GATE_SCHEMA, lens: LENS_SCHEMA, checkpoint: CHECKPOINT_SCHEMA, packReview: PACK_REVIEW_SCHEMA, flow: FLOW_SCHEMA,
-  walkthrough: WALKTHROUGH_SCHEMA, polishJudge: POLISH_JUDGE_SCHEMA,
+  walkthrough: WALKTHROUGH_SCHEMA, polishJudge: POLISH_JUDGE_SCHEMA, scaffold: SCAFFOLD_SCHEMA,
 };
 export const ROLE_VALIDATORS: { readonly [R in Role]: (value: unknown) => RoleOutputs[R] } = {
   planCheck: validatePlanCheckOutput,
@@ -1216,4 +1390,5 @@ export const ROLE_VALIDATORS: { readonly [R in Role]: (value: unknown) => RoleOu
   flow: validateFlowOutput,
   walkthrough: validateWalkthroughOutput,
   polishJudge: validatePolishJudgeOutput,
+  scaffold: validateScaffoldOutput,
 };

@@ -16,7 +16,7 @@ import type { LensKindName } from '../../src/core/records.ts';
 import { unitBarrierName, waitAtBarrier } from '../helpers/barrier.ts';
 import { git, writeFiles, type FileSet } from '../helpers/repo.ts';
 import {
-  type Act, CALLS_FILE, CAPACITY_TEXT, CLAIMS_DIR, CLAUDE_USAGE_LIMIT, CODEX_CONTEXT_EXCEEDED, CODEX_RESUME_COLLISION, CODEX_USAGE_LIMIT, type CallRecord, type Expect, type FakeName, type ScenarioFile, type Step, readCalls,
+  type Act, CALLS_FILE, CAPACITY_TEXT, CLAIMS_DIR, defaultDesign, CLAUDE_USAGE_LIMIT, CODEX_CONTEXT_EXCEEDED, CODEX_RESUME_COLLISION, CODEX_USAGE_LIMIT, type CallRecord, type Expect, type FakeName, type ScenarioFile, type Step, readCalls,
 } from '../helpers/scenario.ts';
 
 const FIXTURES = fileURLToPath(new URL('../fixtures/backend-output/', import.meta.url));
@@ -262,6 +262,28 @@ function runReal(call: Call, scenarioDir: string, readOnly: Readonly<{ repo: str
   process.exit(r.status ?? 1);
 }
 
+/**
+ * A `planCheck` act's answer: the dev.17 payload keys it lacks are null, but an approve's or a scaffold's missing `design`,
+ * which is `defaultDesign` of the call's first scope pattern.
+ */
+function planCheckValue(call: Call, value: JsonValue, scenarioDir: string): JsonValue {
+  const v = value as Record<string, JsonValue>;
+  const designs = v['decision'] === 'approve' || v['decision'] === 'scaffold';
+  const scope = (): string => {
+    // A repair turn's stdin is its directive alone: the scope is in the prompt of the session it resumes.
+    const resumed = flagValue(call.argv, '--resume');
+    const prompt = resumed === undefined ? call.stdin
+      : readCalls(join(scenarioDir, 'scenario.json')).find((c) => flagValue(c.argv, '--session-id') === resumed)?.stdin ?? '';
+    const first = /<scope_envelope>\n- (\S+)\n/.exec(prompt)?.[1];
+    if (first === undefined) throw new Error('fake claude: a planCheck act needs a scope envelope in the prompt');
+    return first;
+  };
+  return {
+    split: null, scaffold: null, poc: null, ...v,
+    design: Object.hasOwn(v, 'design') ? v['design']! : designs ? defaultDesign(scope()) : null,
+  };
+}
+
 // ---------------------------------------------------------------------------------------------------
 
 function paths(files: FileSet): string[] {
@@ -307,6 +329,11 @@ function perform(act: Act, call: Call, step: Step, index: number, scenarioDir: s
     case 'advised':
       claudeAdvisedResult(call, session(), act.value);
       return;
+    case 'planCheck': {
+      const value = planCheckValue(call, act.value, scenarioDir);
+      claudeResult(session(), { result: JSON.stringify(value), structured_output: value });
+      return;
+    }
     case 'globAboveAddDir': {
       const first = flagValue(call.argv, '--add-dir');
       if (first === undefined) throw new Error('fake claude: globAboveAddDir needs an --add-dir in argv');

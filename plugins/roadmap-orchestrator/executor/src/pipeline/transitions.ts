@@ -195,6 +195,15 @@ export const TABLE: Table = {
     // prompt's size; `resume` re-runs the stage once its inputs fit (a smaller unit, or a seat with a larger window).
     'context-exceeded': park('context-exceeded', 'env'),
     'executor-fault': fault,
+    // dev.17 (design pass). `split`: the stage records it, then commits the split revision, which cuts the unit (its children
+    // take its place); the hold is never resumed, the unit being cut. `scaffold` and `poc`: on to those stages, uncharged (a
+    // PoC is bounded per unit by code, src/pipeline/design.ts). `plan-defect`: refused through the repair turn and again for a
+    // plan defect (a lane that cannot reach a test, an oversize design, a split code refuses): uncharged; `resume` re-runs
+    // the plan-check once an `apply` fixes the plan, as at lanes.
+    split: hold,
+    scaffold: go(at('scaffold')),
+    poc: go(at('poc')),
+    'plan-defect': park('plan-defect', 'env'),
   },
   build: {
     success: go(at('quiesce')),
@@ -323,6 +332,34 @@ export const TABLE: Table = {
     'foreign-move': { do: 'stop', reason: 'foreign-ref-move' },
   },
   snapshot: { published: { do: 'retire' } },
+  // dev.17 (design pass, src/pipeline/scaffold.ts): the skeleton committed, on to the first build; refused once, the writer
+  // tries again told why (uncharged); refused again, or a load test that cannot run, an uncharged plan-defect park.
+  scaffold: {
+    scaffolded: go(build('fresh')),
+    refused: go(at('scaffold')),
+    'plan-defect': park('plan-defect', 'env'),
+    refusal: park('refusal', 'design'),
+    'process-fault': park('process-fault', 'retryable'),
+    lost: park('process-fault', 'retryable'),
+    interrupted: hold,
+    'routing-changed': park('routing-changed', 'env'),
+    'context-exceeded': park('context-exceeded', 'env'),
+    occupied: park('occupancy-unlabelled', 'env'),
+    'cleanup-failed': park('residue', 'retryable'),
+    'executor-fault': fault,
+  },
+  // dev.17 (design pass, src/pipeline/poc.ts): answered or not, back to a fresh plan-check with the report, uncharged.
+  poc: {
+    answered: go(at('plan-check')),
+    unanswered: go(at('plan-check')),
+    'process-fault': park('process-fault', 'retryable'),
+    interrupted: hold,
+    'routing-changed': park('routing-changed', 'env'),
+    'context-exceeded': park('context-exceeded', 'env'),
+    occupied: park('occupancy-unlabelled', 'env'),
+    'cleanup-failed': park('residue', 'retryable'),
+    'executor-fault': fault,
+  },
 };
 
 // ---------------------------------------------------------------------------------------------------
@@ -354,6 +391,8 @@ function ruleOf(o: StageOutcome): Rule<OutcomeStage> {
     case 'candidate': return TABLE.candidate[o.kind];
     case 'ff': return TABLE.ff[o.kind];
     case 'snapshot': return TABLE.snapshot[o.kind];
+    case 'scaffold': return TABLE.scaffold[o.kind];
+    case 'poc': return TABLE.poc[o.kind];
     default: return unreachable(o);
   }
 }

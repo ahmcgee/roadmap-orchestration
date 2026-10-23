@@ -346,6 +346,22 @@ export function judgmentDispatch(ctx: StageContext, unit: UnitId, stage: Judgmen
   return { kind: 'pinned', dispatch: { role, tier, triple, routingRev: pinned.dispatch.routingRev } };
 }
 
+/** dev.17 (design pass): the scaffold writer's seat, `scaffold.<risk floor>` (economy in the built-in seats). */
+export type ScaffoldDispatch = Readonly<{ role: 'scaffold'; tier: RiskTier; triple: ClaudeTriple; routingRev: RoutingRev }>;
+
+/**
+ * The scaffold writer's seat at the unit's pinned risk floor. Only an arc of the `dev17` role set has the role in force
+ * (plan-check refuses a `scaffold` decision elsewhere: src/pipeline/design.ts), and its seat is Claude by its prompt table.
+ */
+export function scaffoldDispatch(ctx: StageContext, unit: UnitId): Pinned<ScaffoldDispatch> {
+  const pinned = inForce(ctx, dispatchOf(ctx.journal.view, unit));
+  if (pinned.kind !== 'pinned') return pinned;
+  const tier = pinned.dispatch.riskFloor;
+  const triple = ctx.routing(unit).table.scaffold[tier];
+  if (triple.backend !== 'claude') throw new Error(`the scaffold seat ${tier} resolves to ${triple.backend}; the scaffold writer is Claude only`);
+  return { kind: 'pinned', dispatch: { role: 'scaffold', tier, triple, routingRev: pinned.dispatch.routingRev } };
+}
+
 /**
  * The implementer's seat: the unit's build tier (`UnitState.buildTier`), its (possibly plan-check-raised) risk floor, or
  * `high` in a dev.16 arc whose unit an `implementer-escalated` fact moved there (D4, retired in dev.17). On the floor the
@@ -384,6 +400,8 @@ function seated(ctx: StageContext, record: DispatchRecord): ImplementerDispatch 
 
 export type BackendRequest =
   | Readonly<{ kind: 'judgment'; dispatch: JudgmentDispatch; session: JudgmentSession; evidenceDirs: readonly AbsPath[] }>
+  /** dev.17 (design pass): the scaffold writer in the unit worktree, a fresh session. */
+  | Readonly<{ kind: 'scaffold'; dispatch: ScaffoldDispatch; session: JudgmentSession }>
   /**
    * `mcpConfig` (dev.13): the `--mcp-config` text of a Claude build in a milestone with a `browser` journey
    * (src/backends/mcp.ts `walkMcpConfig`), kept under the run dir's inputs like an acting judge's; null for none.
@@ -417,11 +435,10 @@ function call(spec: BackendCallSpec, schemaText: string, schemaPath: AbsPath, in
   if (r.kind === 'judgment') {
     const { role, triple } = r.dispatch;
     // dev.13 (owner 2026-10-18): the gate judges by acting, with a shell in its own checkout of the unit's tip and no MCP
-    // server; plan-check reads.
-    return role === 'gate'
-      ? { kind: 'claude-acting-judge', role, triple, session: r.session, schemaText, system: spec.system, mcpConfig: null, evidenceDirs: r.evidenceDirs, denyWrites }
-      : { kind: 'claude-judgment', role, triple, session: r.session, schemaText, system: spec.system, evidenceDirs: r.evidenceDirs };
+    // server; dev.17 (design pass): so does plan-check, in its checkouts, with web search and fetch besides.
+    return { kind: 'claude-acting-judge', role, triple, session: r.session, schemaText, system: spec.system, mcpConfig: null, evidenceDirs: r.evidenceDirs, denyWrites };
   }
+  if (r.kind === 'scaffold') return { kind: 'claude-scaffold', triple: r.dispatch.triple, session: r.session, schemaText, system: spec.system };
   const { triple } = r.dispatch;
   const s = r.session;
   if (triple.backend === 'claude') {
@@ -440,6 +457,8 @@ function terminal(spec: BackendCallSpec, c: BackendCall, schemaPath: AbsPath, in
     case 'claude-judgment':
     case 'claude-acting-judge':
       return { ...base, outputPath: stdout, role: c.role, session: c.session };
+    case 'claude-scaffold':
+      return { ...base, outputPath: stdout, role: 'scaffold', session: c.session };
     case 'claude-build':
       return { ...base, outputPath: stdout, role: 'build', session: c.session };
     case 'codex-build':
@@ -519,21 +538,20 @@ export function judgmentSurface(
 export async function callBackend(ctx: StageContext, given: BackendCallSpec): Promise<BackendCallOutcome> {
   let spec = given;
   if (given.request.kind === 'judgment') {
-    // The gate's system text is appended to Claude Code's default prompt, which names its `--add-dir` dirs itself.
-    const { system, evidenceDirs } = given.request.dispatch.role === 'gate'
-      ? { system: given.system, evidenceDirs: judgmentReadDirs(ctx, given.request.evidenceDirs) }
-      : judgmentSurface(ctx, given.system, given.request.evidenceDirs);
-    spec = { ...given, system, request: { ...given.request, evidenceDirs } };
+    // An acting judge's system text (the gate's, dev.13; plan-check's, dev.17) is appended to Claude Code's default prompt,
+    // which names its `--add-dir` dirs itself.
+    spec = { ...given, request: { ...given.request, evidenceDirs: judgmentReadDirs(ctx, given.request.evidenceDirs) } };
   }
   const r = spec.request;
-  const seat: UnitSeatRef = r.kind === 'judgment' ? { role: r.dispatch.role, tier: r.dispatch.tier } : { role: 'build', tier: r.dispatch.tier };
+  const seat: UnitSeatRef = r.kind === 'implementer' ? { role: 'build', tier: r.dispatch.tier } : { role: r.dispatch.role, tier: r.dispatch.tier } as UnitSeatRef;
   const role: Role = seat.role;
   const schemaText = canonicalJson(spec.schema);
   const schemaPath = inputFile(ctx.runDir, `${schemaText}\n`, 'schema.json');
   const mcpConfig = r.kind === 'implementer' && r.mcpConfig !== null ? inputFile(ctx.runDir, r.mcpConfig, MCP_CONFIG_INPUT) : null;
   // promptBytes reads only the call's kind and system text, neither of which depends on the invocation dir.
-  // dev.13: the gate writes only in its own checkout (its cwd); its file-writing tools are denied the repository and the run dir.
-  const denyWrites = r.kind === 'judgment' && r.dispatch.role === 'gate' ? actingWriteDenials(ctx, [spec.cwd]) : [];
+  // dev.13: the gate (and, dev.17, plan-check) writes only in its own checkout (its cwd); its file-writing tools are denied the
+  // repository and the run dir.
+  const denyWrites = r.kind === 'judgment' ? actingWriteDenials(ctx, [spec.cwd]) : [];
   const stdin = inputFile(ctx.runDir, promptBytes(call(spec, schemaText, schemaPath, ctx.runDir, mcpConfig, denyWrites), spec.rendered), 'prompt.txt');
   // Only the implementer may create resources (its builds run the unit's tooling); a judgment holds none. It
   // is bound to the pool instances its build holds (F7), as its lanes, probes and teardowns are.

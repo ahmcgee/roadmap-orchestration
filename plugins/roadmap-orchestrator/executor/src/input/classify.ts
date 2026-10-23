@@ -202,7 +202,13 @@ export type Proposer =
   /** dev.13 (agent D): the code-applied polish revision of walk `job` (src/walk/polish.ts): it only admits that walk's proposals. */
   | Readonly<{ type: 'walk'; job: JobId }>
   /** dev.13 (agent D): the cut of polish unit `unit` its compare judged `drop` (src/walk/compare.ts): it only cuts that unit. */
-  | Readonly<{ type: 'compare'; unit: UnitId }>;
+  | Readonly<{ type: 'compare'; unit: UnitId }>
+  /**
+   * dev.17 (design pass): the split revision of `unit`'s plan-check (src/pipeline/split.ts): it cuts `unit` (reason
+   * `splitCutReason`), adds `children`, moves every unit waiting on `unit` onto all of them and every milestone listing `unit`
+   * onto them (`splitRows`).
+   */
+  | Readonly<{ type: 'split'; unit: UnitId; children: readonly UnitId[] }>;
 
 /** The revision's inputs beyond plan and specs, parsed (what renders and the payload are built from). */
 export type NextInputs = Readonly<{
@@ -418,6 +424,16 @@ function cutRefusal(view: JournalView, unit: UnitId): string | null {
       if (!inTask(view, u)) return null;
       return `unit ${unit} is in a task (${u.open === null ? `past ${u.stage}` : `at ${u.open.stage}`}); pause it, or let it park, before cutting it`;
   }
+}
+
+/**
+ * Why the split revision of `unit` may not cut it (dev.17), or null: its plan-check judges the split while the unit is in its
+ * task and records the hold before the commit, so the in-a-task refusal does not apply; a merged or superseded unit is not
+ * split.
+ */
+function splitCutRefusal(view: JournalView, unit: UnitId): string | null {
+  const u = view.unit(unit);
+  return u.status === 'retired' || u.status === 'superseded' || u.status === 'cut' ? `unit ${unit} is ${u.status}; it cannot be split` : null;
 }
 
 /**
@@ -692,7 +708,8 @@ export function classify(input: ClassifyInput): Classified {
     if (was.cut !== undefined && unit.cut === undefined) reasons.push(`unit ${unit.id} is cut; a cut is final`);
     if (was.cut === undefined && unit.cut !== undefined) {
       cutNow.add(unit.id);
-      const refusal = proposer.type === 'compare' && proposer.unit === unit.id ? droppedCutRefusal(view, unit) : cutRefusal(view, unit.id);
+      const refusal = proposer.type === 'compare' && proposer.unit === unit.id ? droppedCutRefusal(view, unit)
+        : proposer.type === 'split' && proposer.unit === unit.id ? splitCutRefusal(view, unit.id) : cutRefusal(view, unit.id);
       const ruling = unit.cut.ruling === undefined ? null : rulingReason(ledger, unit.cut.ruling, `unit ${unit.id}'s cut`);
       if (refusal !== null) reasons.push(refusal);
       if (ruling !== null) reasons.push(ruling);
@@ -927,6 +944,7 @@ export function classify(input: ClassifyInput): Classified {
   corpusRows(input, inputs, changes, reasons);
   // dev.13 (agent D): polish units and the code proposers, over every change listed.
   polishRows(view, cur, plan, proposer, changes, reasons);
+  splitRows(cur, plan, proposer, changes, reasons);
 
   if (reasons.length > 0) return { kind: 'rejected', reasons };
   // No change but other bytes (whitespace, key order): the new bytes come into force with no change listed.
@@ -1054,6 +1072,11 @@ function milestoneRows(view: JournalView, cur: PlanM1, plan: PlanM1, proposer: P
   const was = milestonesOf(cur);
   const now = milestonesOf(plan);
   if (same(was, now)) return;
+  // dev.17: a split moves the milestones listing its unit onto the children, and changes nothing else of them (`splitRows`).
+  if (proposer.type === 'split' && same(was.map((m) => splitMembership(m, proposer)), now)) {
+    changes.push({ type: 'milestones' });
+    return;
+  }
   if (proposer.type !== 'apply') {
     reasons.push(`the milestones change only through an architect \`apply\`, not a ${proposer.type}`);
     return;
@@ -1140,6 +1163,47 @@ function polishRows(view: JournalView, cur: PlanM1, plan: PlanM1, proposer: Prop
     const other = changes.filter((c) => !(c.type === 'unit-cut' && c.unit === proposer.unit));
     if (other.length > 0) reasons.push(`the compare's cut of ${proposer.unit} only cuts it; it also changes ${other.map((c) => canonicalJson(c)).join(', ')}`);
   }
+}
+
+/** The cut reason of a unit its plan-check split (dev.17, src/pipeline/split.ts): it names the children. */
+export const splitCutReason = (children: readonly UnitId[]): string => `split by its plan-check into ${children.join(', ')}`;
+
+/** Milestone `m` with a split's unit replaced by its children in its units (unchanged when it does not list the unit). */
+function splitMembership<M extends Readonly<{ units: readonly UnitId[] }>>(m: M, proposer: Extract<Proposer, { type: 'split' }>): M {
+  if (!m.units.includes(proposer.unit)) return m;
+  return { ...m, units: m.units.flatMap((u) => (u === proposer.unit ? [...proposer.children] : [u])) };
+}
+
+/**
+ * dev.17 (design pass): the split revision (`split{unit, children}`) changes exactly this: `unit` cut with
+ * `splitCutReason(children)`, the children added after it (none a re-entry, each of its origin), each unit that ran after
+ * `unit` now after every child instead (and nothing else of it), and the milestones listing `unit` listing the children
+ * (`milestoneRows`). The plan-check that split is held (the cut's `cutRefusal` passes). No other proposer adds a unit cut
+ * with that reason, so a split is only ever the executor's.
+ */
+function splitRows(cur: PlanM1, plan: PlanM1, proposer: Proposer, changes: readonly PlanChange[], reasons: string[]): void {
+  if (proposer.type !== 'split') return;
+  const parent = plan.units.find((u) => u.id === proposer.unit);
+  if (parent?.cut?.reason !== splitCutReason(proposer.children)) reasons.push(`the split of ${proposer.unit} cuts it with the reason "${splitCutReason(proposer.children)}"`);
+  const children = new Set<string>(proposer.children);
+  const curIds = new Set(cur.units.map((u) => u.id));
+  for (const id of proposer.children) {
+    const u = plan.units.find((x) => x.id === id);
+    if (u === undefined || curIds.has(id)) reasons.push(`the split of ${proposer.unit} adds ${id}, a new unit`);
+    else if (u.reenters !== undefined || u.origin !== parent?.origin) reasons.push(`child ${id} of ${proposer.unit} is no re-entry and takes its parent's origin`);
+  }
+  for (const u of plan.units) {
+    const was = cur.units.find((x) => x.id === u.id);
+    if (was === undefined || u.id === proposer.unit) continue;
+    const expected = was.after.includes(proposer.unit) ? [...was.after.filter((a) => a !== proposer.unit), ...proposer.children] : was.after;
+    if (!same([...expected].sort(), [...u.after].sort()) || !same({ ...entryOf(was), after: [] }, { ...entryOf(u), after: [] })) {
+      reasons.push(`the split of ${proposer.unit} moves ${u.id} onto its children only where ${u.id} ran after it, and changes nothing else of it`);
+    }
+  }
+  const allowed = (c: PlanChange): boolean => (c.type === 'unit-cut' && c.unit === proposer.unit) || (c.type === 'unit-added' && children.has(c.unit))
+    || (c.type === 'unit-changed') || c.type === 'order' || c.type === 'milestones' || (c.type === 'spec' && children.has(c.unit));
+  const other = changes.filter((c) => !allowed(c));
+  if (other.length > 0) reasons.push(`the split of ${proposer.unit} only cuts it and adds its children; it also changes ${other.map((c) => canonicalJson(c)).join(', ')}`);
 }
 
 type ObligationRows = Readonly<{

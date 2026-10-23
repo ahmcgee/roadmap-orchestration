@@ -77,7 +77,7 @@ export const designSize = (d: DesignRecord): number => d.changes.reduce((n, c) =
 const pattern: Read<RepoPattern> = (v, p) => repoPattern(v, p);
 const patterns = arrayOf(pattern, { nonEmpty: true });
 
-const change: Read<DesignChange> = object((f) => ({
+export const designChange: Read<DesignChange> = object((f) => ({
   system: f.get('system', nullable((v, p) => systemName(v, p))), paths: f.get('paths', patterns), lines: f.get('lines', nat),
 }));
 
@@ -86,14 +86,14 @@ export const testItemRef: Read<TestItemRef> = tagged<TestItemRef['type'], TestIt
   test: object((f) => ({ type: f.get('type', literal('test')), lane: f.get('lane', (v, p) => laneId(v, p)), testId: f.get('testId', str) })),
 });
 
-const proof: Read<FailureModeProof> = tagged<FailureModeProof['type'], FailureModeProof>('type', {
+export const failureModeProof: Read<FailureModeProof> = tagged<FailureModeProof['type'], FailureModeProof>('type', {
   test: object((f) => ({ type: f.get('type', literal('test')), test: f.get('test', testItemRef) })),
   untested: object((f) => ({ type: f.get('type', literal('untested')), reason: f.get('reason', str) })),
 });
 
 const failureMode: Read<FailureMode> = object((f) => {
   const out = {
-    id: f.get('id', (v, p) => failureModeId(v, p)), mode: f.get('mode', str), proof: f.get('proof', proof),
+    id: f.get('id', (v, p) => failureModeId(v, p)), mode: f.get('mode', str), proof: f.get('proof', failureModeProof),
     requirements: f.get('requirements', arrayOf(requirementPin)),
   };
   assertUnique(out.requirements, (r) => r.id, `${f.path}.requirements`);
@@ -124,7 +124,7 @@ export const designRecord: Read<DesignRecord> = object((f) => {
   const v = f.optional('verification', verification);
   const out: DesignRecord = {
     kind: f.get('kind', oneOf(UNIT_KINDS)),
-    changes: f.get('changes', arrayOf(change, { nonEmpty: true })),
+    changes: f.get('changes', arrayOf(designChange, { nonEmpty: true })),
     interfaces: f.get('interfaces', arrayOf(designInterface)),
     failureModes: f.get('failureModes', arrayOf(failureMode)),
     breaks: f.get('breaks', breaks),

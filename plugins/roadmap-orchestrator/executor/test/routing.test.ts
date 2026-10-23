@@ -65,6 +65,7 @@ describe('routing', () => {
       flow: { arc: 'efficient' },
       walkthrough: { arc: 'frontier' },
       polishJudge: { arc: 'frontier' },
+      scaffold: { low: 'economy', med: 'economy', high: 'economy' },
     });
   });
 
@@ -116,15 +117,24 @@ describe('routing', () => {
     assert.throws(() => parseRepoConfig({ routing: { seats: { build: { low: 'economy' } } } }), (e: unknown) => e instanceof SchemaError && e.field === 'config.routing.seats.build.low');
     assert.throws(() => layer({ build: { high: 'economy' } }), (e: unknown) => e instanceof SchemaError && e.field === 'layer.build.high');
     assert.throws(() => boundAt('default', 'economy', 'build'), /binds no build triple/);
-    // No built-in seat names economy (the 2026-10-17 gate eval reverted gate.low): with the built-in seats nothing resolves
-    // to Haiku, and even a Codex rebind of economy refuses nothing.
+    // No built-in judgment seat names economy (the 2026-10-17 gate eval reverted gate.low); dev.17's scaffold writer is the one
+    // built-in seat on it: with the built-in seats only the scaffold seats resolve to Haiku, and a Codex rebind of economy refuses
+    // nothing where the scaffold role is not in force (an adopted m4b arc) and the scaffold seats (no Codex prompt) where it is.
     for (const p of PROFILES) {
-      const r = resolveRouting({ ...arcStack(p, null, null), arcScope: 'corpus', arcRoles: 'm4b' });
-      assert.doesNotMatch(JSON.stringify(r.classes), /economy/, p);
-      assert.doesNotMatch(JSON.stringify(r.table), /claude-haiku/, p);
+      const r = resolveRouting({ ...arcStack(p, null, null), arcScope: 'corpus', arcRoles: 'dev17' });
+      const { scaffold: classes, ...judging } = r.classes;
+      const { scaffold: triples, ...tables } = r.table;
+      assert.doesNotMatch(JSON.stringify(judging), /economy/, p);
+      assert.doesNotMatch(JSON.stringify(tables), /claude-haiku/, p);
+      assert.deepEqual(classes, { low: 'economy', med: 'economy', high: 'economy' }, p);
+      assert.deepEqual(triples, { low: HAIKU_HIGH, med: HAIKU_HIGH, high: HAIKU_HIGH }, p);
     }
     const lunaEconomy = { economy: { backend: 'codex', model: 'gpt-5.6-luna', effort: 'low' } } as const;
-    assert.deepEqual(unsupportedSeats(resolveRouting(arcStack('default', parseRepoConfig({ routing: { classes: lunaEconomy } }), null)), null), []);
+    assert.deepEqual(unsupportedSeats(resolveRouting({ ...arcStack('default', parseRepoConfig({ routing: { classes: lunaEconomy } }), null), arcRoles: 'm4b' }), null), []);
+    assert.deepEqual(
+      unsupportedSeats(resolveRouting({ ...arcStack('default', parseRepoConfig({ routing: { classes: lunaEconomy } }), null), arcRoles: 'dev17' }), null).map((x) => (x.kind === 'unsupported-routing' ? `${x.role}.${x.tier}` : x.kind)),
+      ['scaffold.low', 'scaffold.med', 'scaffold.high'],
+    );
     // A repo rebind binds it at every judgment seat naming it (here the repo seats gate.low on it); a Codex rebind refuses
     // them; Haiku has no build prompt.
     const lowOnEconomy = { gate: { low: 'economy' } } as const;
@@ -263,14 +273,14 @@ describe('routing', () => {
     assert.equal(resolveRouting(base).rev, rev);
     // Naming the class a seat already has is no change.
     assert.equal(resolveRouting(arcStack('default', null, layer({ build: { low: 'efficient' } }))).rev, rev);
-    // Every seat is hashed where it is in force: all of them in a corpus arc of the m4b role set with milestones (the arc
-    // seats only in their scope, G20; the walk seats only under milestones, dev.13).
-    const seen = new Set([routingRevOf(t, 'corpus', 'm4b', true)]);
+    // Every seat is hashed where it is in force: all of them in a corpus arc of the dev17 role set with milestones (the arc
+    // seats only in their scope, G20; the walk seats only under milestones, dev.13; the scaffold seats only under dev17).
+    const seen = new Set([routingRevOf(t, 'corpus', 'dev17', true)]);
     for (const s of SEAT_REFS) {
       // A JSON round trip, not structuredClone: the table shares triple objects between seats.
       const changed = JSON.parse(JSON.stringify(t)) as Record<string, Record<Seat, Triple>>;
       changed[s.role]![s.tier] = atSeat(t, s).model === SOL_HIGH.model ? LUNA : SOL_HIGH;
-      const r = routingRevOf(changed as unknown as RoutingTable, 'corpus', 'm4b', true);
+      const r = routingRevOf(changed as unknown as RoutingTable, 'corpus', 'dev17', true);
       assert.ok(!seen.has(r), `${s.role}/${s.tier}`);
       seen.add(r);
     }
@@ -318,7 +328,8 @@ describe('routing: the arc seats (M3)', () => {
     const plan = { target: 'architecture-doc', holistic: { vision: planPath('vision.json'), advances: [visionClauseId('V-1')] } } as const;
     const h = resolveRouting(planStack('default', null, plan, null));
     assert.equal(h.arcScope, 'architecture-doc');
-    assert.equal(seatsInForce(h).length, SEAT_REFS.length - 4);
+    // Not in force: the pack review's, the flow's, the two walk seats and (no dev17 role set) the three scaffold seats.
+    assert.equal(seatsInForce(h).length, SEAT_REFS.length - 7);
     assert.notEqual(h.rev, base.rev);
     assert.deepEqual(unsupportedSeats(h, null), []);
     // Every Claude model has a module for every arc role (Sonnet since 2026-10-15): a plan may seat the checkpoint on efficient.
@@ -362,9 +373,9 @@ describe('routing: M4a (OR-Q17, OR-L3, LR-0a-1)', () => {
     assert.deepEqual(corpus.table.packReview.arc, OPUS);
     assert.ok(seatsInForce(corpus).some((s) => s.role === 'packReview'));
     assert.ok(!seatsInForce(doc).some((s) => s.role === 'packReview'));
-    const { packReview: _p, flow: _f, walkthrough: _w, polishJudge: _j, ...dev6Roles } = doc.table;
+    const { packReview: _p, flow: _f, walkthrough: _w, polishJudge: _j, scaffold: _s, ...dev6Roles } = doc.table;
     assert.equal(doc.rev, hashOf(dev6Roles), 'architecture-doc: unit roles, lens and checkpoint');
-    const { flow: _cf, walkthrough: _cw, polishJudge: _cj, ...dev7Roles } = corpus.table;
+    const { flow: _cf, walkthrough: _cw, polishJudge: _cj, scaffold: _cs, ...dev7Roles } = corpus.table;
     assert.equal(corpus.rev, hashOf(dev7Roles), 'corpus: every dev.7 role');
     // A plan layer that moves the packReview seat changes a corpus arc's rev only.
     const moved = layer({ packReview: { arc: 'summit' } });

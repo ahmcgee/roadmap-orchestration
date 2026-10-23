@@ -56,7 +56,7 @@ function locate(sections: Sections, id: LaneId | ClauseId | WitnessItemId): Loca
   return null;
 }
 
-type ItemOp = Exclude<SpecPatchOp, Readonly<{ op: 'cite' }>>;
+type ItemOp = Exclude<SpecPatchOp, Readonly<{ op: 'cite' | 'design' }>>;
 
 function applyOp(sections: Sections, op: ItemOp, index: number): void {
   const id = op.op === 'add' || op.op === 'replace' ? op.item.id : op.id;
@@ -96,7 +96,7 @@ const union = <T extends string>(a: readonly T[], b: readonly T[]): readonly T[]
  * Strike and defer change an item's state and never remove it; `cite` adds to the cites, and nothing
  * removes one. Scope and resources have no op: the `SpecPatchOp` type and its validator do not admit
  * them, so a patch naming them never reaches here. Whether a cite names a plan contract and a ledger
- * ruling is the caller's check (the plan and ledger are not the spec's).
+ * ruling is the caller's check (the plan and ledger are not the spec's). `design` (dev.17) replaces the design record.
  */
 export function applySpecPatch(spec: SpecM1, patch: SpecPatch): SpecM1 {
   if (patch.expectRev !== spec.rev) throw new SpecPatchStaleError(patch.expectRev, spec.rev);
@@ -108,8 +108,10 @@ export function applySpecPatch(spec: SpecM1, patch: SpecPatch): SpecM1 {
     witnesses: [...specWitnesses(spec)],
   };
   let cites = spec.cites;
+  let design = spec.design;
   patch.ops.forEach((op, i) => {
     if (op.op === 'cite') cites = { contracts: union(cites.contracts, op.contracts), rulings: canonicalIds([...cites.rulings, ...op.rulings]) };
+    else if (op.op === 'design') design = op.record;
     else applyOp(sections, op, i);
   });
   // Each add and replace put an item of its own section's type into that section. `witnesses` (M4a rev 3) stays absent
@@ -123,6 +125,7 @@ export function applySpecPatch(spec: SpecM1, patch: SpecPatch): SpecM1 {
     facts: sections.facts as SpecM1['facts'],
     ...(sections.witnesses.length === 0 ? {} : { witnesses: sections.witnesses as NonNullable<SpecM1['witnesses']> }),
     cites,
+    ...(design === undefined ? {} : { design }),
   };
 }
 

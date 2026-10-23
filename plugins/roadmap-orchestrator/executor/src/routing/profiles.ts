@@ -32,4 +32,6 @@ export const BUILTIN_SEATS: ClassTable = {
   flow: { arc: 'efficient' },
   walkthrough: { arc: 'frontier' },
   polishJudge: { arc: 'frontier' },
+  // dev.17 (design pass): the scaffold writer on economy (Haiku 5.5 high) at every tier, in force only in a `dev17` arc.
+  scaffold: { low: 'economy', med: 'economy', high: 'economy' },
 };

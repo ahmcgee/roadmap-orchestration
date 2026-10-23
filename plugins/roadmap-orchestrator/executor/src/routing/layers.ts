@@ -21,6 +21,8 @@
 // revision of an arc it started (`RoutingProvenance.arcRoles`). An arc 1.0.0-dev.7 started records none and keeps the
 // dev.7 role set (no `flow`), so its routing revs are the ones dev.7 hashed (scaffolding: `arcRolesInForce`). So the flow
 // seat is checked on a non-holistic arc too: an unsupported binding of its class refuses any start (DESIGN §10 M4b).
+// dev.17: the `dev17` role set is `m4b` plus the unit role `scaffold` (`unitRolesInForce`), written on every revision of an arc
+// dev.17 started; an adopted earlier arc keeps `m4b`, so its revs hash no scaffold seat.
 // dev.13: the walk roles `walkthrough` and `polishJudge` are in force exactly while the plan revision has milestones
 // (`RoutingStack.milestones`, `hasMilestones`), which only a holistic arc may have; an arc without milestones hashes,
 // checks and smokes neither, so its routing revs are unchanged.
@@ -71,7 +73,7 @@ import { CLASS_CATALOGUE, boundAt } from './classes.ts';
 import { BUILTIN_SEATS } from './profiles.ts';
 import {
   type ArcRole, type ArcRoleSet, WALK_ROLES, type ClassBindings, type ClassSource, type ClassTable, MODEL_CLASSES, type ModelClass, type ProfileName, type Role,
-  type RoutingLayer, type RoutingLayerName, type RoutingProvenance, type RoutingTable, SEAT_REFS, type SeatRef, type SeatTable, type Triple, UNIT_ROLES, atSeat,
+  type RoutingLayer, type RoutingLayerName, type RoutingProvenance, type RoutingTable, SEAT_REFS, type SeatRef, type SeatTable, type Triple, UNIT_ROLES, type UnitRole, DEV17_UNIT_ROLES, atSeat,
   classBindings, profileName, routingLayer, seatTable,
 } from './types.ts';
 
@@ -183,9 +185,17 @@ export const ARC_ROLES_IN_FORCE: { readonly [S in ArcScope]: readonly ArcRole[] 
  */
 export function arcRolesInForce(arcScope: ArcScope, arcRoles: ArcRoleSet | null, milestones: boolean): readonly ArcRole[] {
   const roles = ARC_ROLES_IN_FORCE[arcScope];
-  const scoped = arcRoles === 'm4b' ? roles : roles.filter((r) => r !== 'flow');
+  const scoped = arcRoles !== null ? roles : roles.filter((r) => r !== 'flow');
   if (milestones && arcScope === 'none') throw new Error('the walk roles in force outside a holistic arc (milestones need the holistic layer)');
   return milestones ? [...scoped, ...WALK_ROLES] : scoped;
+}
+
+/**
+ * The unit roles in force (dev.17): the M1 unit roles, and the dev.17 unit roles (`scaffold`) in an arc of the `dev17` role
+ * set only, so an adopted arc of an earlier release hashes and runs exactly the roles it did.
+ */
+export function unitRolesInForce(arcRoles: ArcRoleSet | null): readonly UnitRole[] {
+  return arcRoles === 'dev17' ? [...UNIT_ROLES, ...DEV17_UNIT_ROLES] : UNIT_ROLES;
 }
 
 /** A plan's arc scope: `none` without `holistic`, else its target kind. */
@@ -304,14 +314,14 @@ export function resolveRoutingUnder(builtin: ClassTable, stack: RoutingStack): R
  * milestones hashes the walk roles, so an arc without them keeps its revs.
  */
 export function routingRevOf(table: RoutingTable, arcScope: ArcScope, arcRoles: ArcRoleSet | null, milestones: boolean): RoutingRev {
-  const roles: readonly Role[] = [...UNIT_ROLES, ...arcRolesInForce(arcScope, arcRoles, milestones)];
+  const roles: readonly Role[] = [...unitRolesInForce(arcRoles), ...arcRolesInForce(arcScope, arcRoles, milestones)];
   return routingRev(sha256Hex(canonicalJson(Object.fromEntries(roles.map((r) => [r, table[r]])))).slice(0, 16));
 }
 
-/** The seats in force (G20, LR-0a-1): the unit roles' and the arc roles' of the resolved scope and role set. */
+/** The seats in force (G20, LR-0a-1): the unit roles' of the role set (`unitRolesInForce`) and the arc roles' of the resolved scope and role set. */
 export function seatsInForce(resolved: ResolvedRouting): readonly SeatRef[] {
-  const arc: readonly Role[] = arcRolesInForce(resolved.arcScope, resolved.arcRoles, resolved.milestones);
-  return SEAT_REFS.filter((s) => (UNIT_ROLES as readonly Role[]).includes(s.role) || arc.includes(s.role));
+  const roles: readonly Role[] = [...unitRolesInForce(resolved.arcRoles), ...arcRolesInForce(resolved.arcScope, resolved.arcRoles, resolved.milestones)];
+  return SEAT_REFS.filter((s) => roles.includes(s.role));
 }
 
 /**

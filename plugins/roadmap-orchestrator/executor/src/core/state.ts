@@ -193,6 +193,11 @@ export type UnitState = Readonly<{
    * classifier resolves (src/input/classify.ts `reentryRow`). Derived from the log alone.
    */
   failures: readonly FailedOutcome[];
+  /**
+   * dev.17 (design pass): the proofs of concept the unit has run (its `poc` stage outcomes that went back to plan-check), which
+   * code bounds per unit (src/pipeline/design.ts `POC_LIMIT`). Derived from the log alone; a reopen keeps it.
+   */
+  pocs: number;
 }>;
 
 /** One failure outcome of a unit (`UnitState.failures`): the fact, its seq and the park it recorded. */
@@ -223,6 +228,7 @@ export function newUnitState(unit: UnitId, stage: Stage, risk: RiskTier | null, 
     approval: null, open: null, counters: { attempts: 0, chargeableFailures: 0, redirects: 0, reviseRounds: 0, candidateReds: 0, smokeRounds: 0, retries },
     spec, reopened: null, pendingRevision: null, redirectBase: 0,
     park: null, lastRecovery: null, buildTier: risk, lineage: null, supersededBy: null, bounds, entry: null, steering: null, scopeDecisions: [], failures: [],
+    pocs: 0,
   };
 }
 
@@ -255,6 +261,7 @@ export function afterStageOutcome(u: UnitState, f: Pick<StageOutcomeFact, 'stage
   return {
     ...u,
     stage: f.stage,
+    pocs: u.pocs + (f.stage === 'poc' && f.class === 'advance' ? 1 : 0),
     counters: {
       ...c,
       chargeableFailures: c.chargeableFailures + (f.chargeable ? 1 : 0),
