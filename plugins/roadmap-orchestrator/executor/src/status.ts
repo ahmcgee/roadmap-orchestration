@@ -1012,7 +1012,7 @@ function derive(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Derived {
   const spec: SpecFactsOf = record === null
     ? (u) => {
       if (view.holistic().findings.length > 0) throw new Error(`status: arc ${arc} has findings but no ${START_FILE}, so the spec of ${u.id} cannot be read`);
-      return { reproduces: false, repairs: new Set() };
+      return { reproduces: false, repairs: new Set(), links: () => { throw new Error(`status: arc ${arc} has no ${START_FILE}, so the spec of ${u.id} cannot be read`); } };
     }
     : specFacts({ journal: { view }, runDir, planDir: absPath(dirname(record.planFile)) });
   const inputs: Inputs | null = plan === null ? null : {
@@ -1288,6 +1288,8 @@ function rulerOf(f: PlanAppliedFact): RuledBy {
     // dev.13 (agent D): the code-applied polish revision and a dropped tweak's cut are the executor's own.
     case 'walk':
     case 'compare':
+    // dev.17: the code-applied propagation revision is the executor's own.
+    case 'propagation':
       return { type: 'executor' };
   }
 }

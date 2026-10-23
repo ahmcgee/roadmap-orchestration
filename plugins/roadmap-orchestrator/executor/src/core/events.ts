@@ -52,6 +52,7 @@ import {
   routingProvenance, seatFields, unitSeatFields,
 } from '../routing/types.ts';
 import { type SystemsMap, systemsMap } from '../input/systems.ts';
+import { type PropagationTarget, type StaleAnswer, type StaleSet, propagationTarget, staleAnswer, staleSet, staleSetFields } from './stale.ts';
 
 // ---------------------------------------------------------------------------------------------------
 // Op kinds and their payloads
@@ -329,7 +330,9 @@ export type RevisionSource =
   /** dev.13: the code-applied polish revision of walk `job`: its applied proposals admitted as polish units (src/walk/polish.ts). */
   | Readonly<{ type: 'walk'; job: JobId }>
   /** dev.13: the cut of polish unit `unit`, which its compare judged `drop` (`polish-dropped`, src/walk/compare.ts). */
-  | Readonly<{ type: 'compare'; unit: UnitId }>;
+  | Readonly<{ type: 'compare'; unit: UnitId }>
+  /** dev.17 (propagation): the code-applied revision minting the propagation units of the stale set plan rev `rev` recorded. */
+  | Readonly<{ type: 'propagation'; rev: PlanRev }>;
 
 /** Expected postconditions beyond what the kind and `expect` already fix; `null` where they fix everything. */
 export type OpPost = {
@@ -786,7 +789,8 @@ export type Fact =
   | HolisticFact
   | M4aFact
   | FlowFact
-  | WalkFact;
+  | WalkFact
+  | PropagationFact;
 export type FactRecord = Readonly<{ type: 'fact'; fact: Fact }>;
 
 /**
@@ -1079,6 +1083,35 @@ export type WalkFact =
   | Readonly<{ kind: 'demo-acted'; command: CommandId; act: DemoAct }>;
 export type WalkFactKind = WalkFact['kind'];
 
+/**
+ * The dev.17 propagation facts (SCHEMAS.md "dev.17: propagation"; src/holistic/propagation.ts). The fold keeps them in log
+ * order (`propagationFacts`).
+ */
+export type PropagationFact =
+  /**
+   * The stale set of plan rev `rev`, appended from its payload right after its `plan-applied` (and its divergences), once:
+   * what the revision changed that links name, and every link that change left stale.
+   */
+  | (Readonly<{ kind: 'stale-set'; rev: PlanRev }> & StaleSet)
+  /**
+   * An in-flight unit with stale links its plan-check has not answered since they were recorded, re-opened at plan-check at
+   * its first boundary that allows a re-entry (`reentryAllowed`), as a pending spec revision re-opens one; `rev` is the latest
+   * stale set naming it. Its counters are kept.
+   */
+  | Readonly<{ kind: 'stale-reopened'; unit: UnitId; rev: PlanRev }>
+  /**
+   * Plan-check attempt `attempt` of `unit`, judging the revisions of plan rev `rev`, answered every stale link of the unit
+   * recorded up to that rev (`answers`, one per link key, the check `staleAnswerReasons`): written before its approve or
+   * redirect outcome, once per attempt. The links are settled; a later stale set opens new ones.
+   */
+  | Readonly<{ kind: 'stale-answered'; unit: UnitId; attempt: number; rev: PlanRev; answers: readonly StaleAnswer[] }>
+  /**
+   * A propagation the code-applied revision did not mint (the arc draining, or the admit path or the classifier refusing its
+   * unit): settled, never minted. Once per (`rev`, `target`).
+   */
+  | Readonly<{ kind: 'propagation-refused'; rev: PlanRev; target: PropagationTarget; reasons: readonly string[] }>;
+export type PropagationFactKind = PropagationFact['kind'];
+
 export type HolisticFactKind = HolisticFact['kind'];
 export type PlanAppliedFact = Extract<Fact, { kind: 'plan-applied' }>;
 
@@ -1184,6 +1217,12 @@ export type RevisionPayload = Readonly<{
   /** dev.17: the repo config's systems map (src/input/systems.ts; null: none); absent on a payload a dev.16 executor kept. */
   systemsMap?: SystemsMap | null;
   owner?: RevisionManifest;
+  /**
+   * dev.17 (propagation): the revision's stale set (src/holistic/propagation.ts `staleSetOf`), present exactly when it changes
+   * a target a link may name (a requirement's rev, a contract, a vision clause); its `stale-set` fact is appended from it.
+   * Absent: none (lasting: a revision that changed no such target, or one a dev.16 executor committed, which computed none).
+   */
+  stale?: StaleSet;
 }>;
 
 /**
@@ -1333,6 +1372,7 @@ const revisionSource: Read<RevisionSource> = tagged('type', {
   flow: object((f): RevisionSource => ({ type: f.get('type', literal('flow')), proposal: f.get('proposal', proposalR) })),
   walk: object((f): RevisionSource => ({ type: f.get('type', literal('walk')), job: f.get('job', (v, p) => jobIdOfKind('walk')(v, p)) })),
   compare: object((f): RevisionSource => ({ type: f.get('type', literal('compare')), unit: f.get('unit', unitR) })),
+  propagation: object((f): RevisionSource => ({ type: f.get('type', literal('propagation')), rev: f.get('rev', (v, p) => planRev(v, p)) })),
 });
 
 const resourceEdge: Read<ResourceEdge> = tagged('type', {
@@ -1753,8 +1793,9 @@ export const revisionPayload: Read<RevisionPayload> = object((f) => {
   };
   const systems = f.optional('systemsMap', nullable(systemsMap));
   const owner = f.optional('owner', object((g) => ({ planSha256: g.get('planSha256', sha256R), specs: g.get('specs', manifestSpecs), ...revisionInputs(g) })));
+  const stale = f.optional('stale', staleSet);
   if (out.rev !== out.base + 1) throw new SchemaError(`${f.path}.rev`, String(out.base + 1), out.rev);
-  return { ...out, ...(systems === undefined ? {} : { systemsMap: systems }), ...(owner === undefined ? {} : { owner }) };
+  return { ...out, ...(systems === undefined ? {} : { systemsMap: systems }), ...(owner === undefined ? {} : { owner }), ...(stale === undefined ? {} : { stale }) };
 });
 
 export function parseRevisionPayload(value: unknown): RevisionPayload {
@@ -2015,6 +2056,24 @@ const ports: Read<Readonly<Record<ServeName, number>>> = (value, path) => {
   for (const key of Object.keys(value as object)) out[serveName(key, `${path}.${key}`)] = f.get(key, int(1, 65_535));
   f.end();
   return out;
+};
+
+/** The readers of the dev.17 propagation facts, spread into `fact`. */
+const PROPAGATION_FACT_READERS: { readonly [K in PropagationFactKind]: Read<Fact> } = {
+  'stale-set': object((f): Fact => ({ kind: f.get('kind', literal('stale-set')), rev: f.get('rev', (v, p) => planRev(v, p)), ...staleSetFields(f) })),
+  'stale-reopened': object((f): Fact => ({ kind: f.get('kind', literal('stale-reopened')), unit: f.get('unit', unitR), rev: f.get('rev', (v, p) => planRev(v, p)) })),
+  'stale-answered': object((f): Fact => {
+    const out = {
+      kind: f.get('kind', literal('stale-answered')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), rev: f.get('rev', (v, p) => planRev(v, p)),
+      answers: f.get('answers', arrayOf(staleAnswer, { nonEmpty: true })),
+    };
+    assertUnique(out.answers, (a) => a.link, `${f.path}.answers`);
+    return out;
+  }),
+  'propagation-refused': object((f): Fact => ({
+    kind: f.get('kind', literal('propagation-refused')), rev: f.get('rev', (v, p) => planRev(v, p)), target: f.get('target', propagationTarget),
+    reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })),
+  })),
 };
 
 /** The readers of the dev.13 facts, spread into `fact`. */
@@ -2317,6 +2376,7 @@ export const fact: Read<Fact> = tagged('kind', {
   ...M4A_FACT_READERS,
   ...FLOW_FACT_READERS,
   ...WALK_FACT_READERS,
+  ...PROPAGATION_FACT_READERS,
   'stage-outcome': object((f): Fact => {
     const s = f.get('stage', oneOf(OUTCOME_STAGES));
     const out = {

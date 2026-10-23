@@ -57,7 +57,7 @@ const HOLD_MS = 20 * 60_000;
 
 const planCheck = (reason: string): M1Step => ({
   role: 'planCheck',
-  answer: { decision: 'approve', reasons: [reason], patch: null, risk: 'low', notes: '', premises: [], visionConflict: [], scopeGrowth: [] },
+  answer: { decision: 'approve', reasons: [reason], patch: null, risk: 'low', notes: '', premises: [], visionConflict: [], scopeGrowth: [], staleLinks: [] },
 });
 const build = (message: string, unit: string): M1Step => ({ role: 'build', round: 'fresh', acts: [{ type: 'commit', message, files: filesOf(join(FILES, 'units', unit)) }] });
 const gate = (reason: string, findings: readonly JsonValue[] = []): M1Step => ({
@@ -104,7 +104,7 @@ const M1_READOUTS: Readonly<Record<string, readonly M1Step[]>> = Object.fromEntr
  */
 const CONFIRM: Readonly<Record<string, readonly M1Step[]>> = {
   confirm: [
-    { role: 'planCheck', answer: { decision: 'approve', reasons: ['confirm.js sends the template; book calls it after the write.'], patch: null, risk: 'high', notes: '', premises: [], visionConflict: [], scopeGrowth: [] } },
+    { role: 'planCheck', answer: { decision: 'approve', reasons: ['confirm.js sends the template; book calls it after the write.'], patch: null, risk: 'high', notes: '', premises: [], visionConflict: [], scopeGrowth: [], staleLinks: [] } },
     build('confirm: text the skipper when a booking is made', 'confirm'),
     { role: 'build', round: 'resume', stdinContains: [`Survived: test "${TIDES_TEST}" on lane tides`], acts: [] },
     gate('A1, A2 and A3 hold; W-1 survives smoke because the tide table predates the unit.', [{ severity: 'note', path: 'src/confirm.js', text: GATE_NOTE, contractRef: null, experiments: [], debt: { drag: GATE_NOTE_DRAG } }]),

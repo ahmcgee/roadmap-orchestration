@@ -92,7 +92,9 @@ function applyOp(sections: Sections, op: ItemOp, index: number): void {
 const union = <T extends string>(a: readonly T[], b: readonly T[]): readonly T[] => [...new Set([...a, ...b])].sort();
 
 /**
- * Applies every op in order and returns the spec at `expectRev + 1`, or throws without partial effect.
+ * Applies every op in order and returns the spec at `expectRev + 1`, or throws without partial effect. dev.17: the patch's
+ * `pins`, when present, replace the spec's (its writer computed them over the patched spec's links).
+ *
  * Strike and defer change an item's state and never remove it; `cite` adds to the cites, and nothing
  * removes one. Scope and resources have no op: the `SpecPatchOp` type and its validator do not admit
  * them, so a patch naming them never reaches here. Whether a cite names a plan contract and a ledger
@@ -123,6 +125,7 @@ export function applySpecPatch(spec: SpecM1, patch: SpecPatch): SpecM1 {
     facts: sections.facts as SpecM1['facts'],
     ...(sections.witnesses.length === 0 ? {} : { witnesses: sections.witnesses as NonNullable<SpecM1['witnesses']> }),
     cites,
+    ...(patch.pins === undefined ? {} : { pins: patch.pins }),
   };
 }
 

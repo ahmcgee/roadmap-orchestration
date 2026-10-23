@@ -364,6 +364,12 @@ export function payloadAtRev(view: JournalView, runDir: AbsPath, rev: number): R
   return keptPayload(runDir, commit.expect.payloadSha256);
 }
 
+/** dev.17: the obligations in force at plan rev `rev` (its kept payload's), or null for a revision without them. */
+export function obligationsAtRev(view: JournalView, runDir: AbsPath, rev: number): Obligations | null {
+  const sha = payloadAtRev(view, runDir, rev).manifest.obligations;
+  return sha === null ? null : parseObligations(JSON.parse(kept(runDir, sha, OBLIGATIONS_INPUT).toString('utf8')));
+}
+
 /** The open `revision.commit` (A19: at most one, its key), or null: the revision fence's durable half. */
 export function openRevision(view: JournalView): IntentOf<'revision.commit'> | null {
   return (view.openIntents().find((i) => i.kind === 'revision.commit') as IntentOf<'revision.commit'> | undefined) ?? null;
@@ -391,7 +397,8 @@ export function planAppliedOf(payload: RevisionPayload, payloadSha256: Sha256Hex
 
 /**
  * Appends what the revision `commit` names, only what is missing (recovery runs it again): `plan-applied` from the
- * payload exactly, then its divergences in order, each once per `(job, index)`. The caller writes the done.
+ * payload exactly, then its divergences in order, each once per `(job, index)`, then (dev.17) its stale set, once per rev.
+ * The caller writes the done.
  */
 export function appendRevision(journal: Journal, commit: IntentOf<'revision.commit'>, payload: RevisionPayload, publication: Publication | null): PlanAppliedFact {
   const inForce = journal.view.planApplied();
@@ -411,6 +418,11 @@ export function appendRevision(journal: Journal, commit: IntentOf<'revision.comm
     index.set(d.job, i + 1);
     if (journal.view.holistic().divergences.some((x) => x.job === d.job && x.index === i)) continue;
     journal.fact({ kind: 'divergence', id: journal.view.nextDivergenceId(), index: i, ...d });
+  }
+  // dev.17 (propagation): the stale set, once per rev.
+  if (payload.stale !== undefined && !journal.view.propagationFacts().some((x) => x.fact.kind === 'stale-set' && x.fact.rev === payload.rev)) {
+    journal.fact({ kind: 'stale-set', rev: payload.rev, ...payload.stale });
+    crashPoint('propagation.after-stale-set');
   }
   return fact;
 }

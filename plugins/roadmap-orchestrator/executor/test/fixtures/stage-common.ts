@@ -263,6 +263,8 @@ export type PlanCheckAnswer = Readonly<{
   visionConflict?: readonly Readonly<{ clauses: readonly string[]; note: string }>[];
   /** Scope growth (2026-10-15): proposals the check makes (default none). */
   scopeGrowth?: readonly Readonly<{ patterns: readonly string[]; reason: string }>[];
+  /** dev.17: the answers to the unit's stale links (default none). */
+  staleLinks?: readonly Readonly<{ link: string; outcome: 'updated' | 'confirmed'; reason: string }>[];
 }>;
 
 /** A plan-check the fake Claude answers: a judgment call (read-only tools, fresh session, no resume). `expect` adds to that check. */
@@ -279,7 +281,7 @@ export function planCheckStep(a: PlanCheckAnswer, expect: Expect = {}, before: r
 /** A plan-check's answer as the fake emits it. */
 export const planCheckAnswer = (a: PlanCheckAnswer): JsonValue =>
   ({ decision: a.decision, reasons: ['C-1 holds'], patch: a.patch ?? null, risk: a.risk ?? 'med', notes: a.notes ?? '', premises: [...(a.premises ?? [])], visionConflict: [...(a.visionConflict ?? [])],
-    scopeGrowth: (a.scopeGrowth ?? []).map((g) => ({ patterns: [...g.patterns], reason: g.reason })) }) as JsonValue;
+    scopeGrowth: (a.scopeGrowth ?? []).map((g) => ({ patterns: [...g.patterns], reason: g.reason })), staleLinks: (a.staleLinks ?? []).map((l) => ({ ...l })) }) as JsonValue;
 
 /**
  * 2026-10-15: a plan-check's repair turn: its session resumed (`--resume`) with the reasons its answer was refused, which

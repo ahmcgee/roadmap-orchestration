@@ -4,6 +4,8 @@
 // `ProbeTarget`) live in src/core/events.ts.
 import type { BackendParkClass, Holder, OutcomeStage, ProbeTarget } from '../core/events.ts';
 import type { CommandId, FindingId, InvocationId, KnownDefectId, NeedsUserId, ObligationId, ResourceName, ResourceUnit, UnitId } from '../core/ids.ts';
+import type { PropagationTarget } from '../core/stale.ts';
+import type { RepoPath } from '../core/values.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import type { CommandBody, LaneCadence, NeedsUserReason } from '../core/records.ts';
 import type { PlanM1, PlanUnit, UnitOrigin, UnitPriority } from '../input/plan.ts';
@@ -72,8 +74,8 @@ export type Acquire = (request: ResourceRequest, holder: Holder, rank: () => Ran
 // ---------------------------------------------------------------------------------------------------
 // Priority and aging (F17)
 
-/** R6: repair units first, then checkpoint-originated, then planned. */
-export const ORIGIN_RANK = { repair: 0, checkpoint: 1, polish: 2, planned: 3 } as const satisfies Readonly<Record<UnitOrigin, number>>;
+/** R6: repair units (dev.17: and propagation units) first, then checkpoint-originated, then polish, then planned. */
+export const ORIGIN_RANK = { repair: 0, propagation: 0, checkpoint: 1, polish: 2, planned: 3 } as const satisfies Readonly<Record<UnitOrigin, number>>;
 /** A waiter is promoted once this many other units published inside its current waiting interval. */
 export const PROMOTION_BYPASS = 3;
 
@@ -144,7 +146,13 @@ export type AdmissionConstraint =
    * dev.13 (agent D): a polish unit's candidate waits for its compare (src/walk/compare.ts): `decision` null before its
    * `tweak-judged`, `drop` after a drop (it never lands; its cut follows).
    */
-  | Readonly<{ type: 'compare'; decision: 'drop' | null }>;
+  | Readonly<{ type: 'compare'; decision: 'drop' | null }>
+  /**
+   * dev.17 (propagation): the unit's gate waits while propagation unit `unit` (re-witnessing `target`) is neither merged nor
+   * cut: its spec links the target, or its design record's breaks touch a file the propagation re-witnesses (`stale`, those
+   * files). src/holistic/propagation.ts `propagationHolds`.
+   */
+  | Readonly<{ type: 'propagation'; unit: UnitId; target: PropagationTarget; stale: readonly RepoPath[] }>;
 
 export type Admission = Readonly<{ kind: 'admit' }> | Readonly<{ kind: 'wait'; constraints: readonly AdmissionConstraint[] }>;
 

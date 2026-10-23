@@ -1,6 +1,7 @@
 // Revision pins (dev.17, propagation; SCHEMAS.md "dev.17 records"): every link a spec or a design record carries names the
 // revision of its target it was written against, so a change to the target makes the link stale by comparison, in code.
-// A link with no pin (a dev.16 spec, `specPinsDefault`) reads `UNPINNED`: its staleness is unknown, never "fresh".
+// A link with no pin (a dev.16 spec, or an owner's spec no plan-check has revised) reads `UNPINNED`: its staleness is
+// unknown, never "fresh".
 import { type ObligationId, type Sha, type VisionClauseId, obligationId, sha, visionClauseId } from './ids.ts';
 import { type RepoPath, repoPath } from './values.ts';
 import { type Read, literal, object, positive, tagged } from './validate.ts';

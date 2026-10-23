@@ -21,7 +21,8 @@
         "notes": "",
         "premises": [],
         "visionConflict": [],
-        "scopeGrowth": []
+        "scopeGrowth": [],
+        "staleLinks": []
       }
     },
     {
@@ -36,7 +37,8 @@
         "notes": "",
         "premises": [],
         "visionConflict": [],
-        "scopeGrowth": []
+        "scopeGrowth": [],
+        "staleLinks": []
       },
       "stdinContains": [
         "slugify has no special case for an empty result; pageId owns the empty slug (contract one)."
@@ -101,7 +103,8 @@
         "notes": "",
         "premises": [],
         "visionConflict": [],
-        "scopeGrowth": []
+        "scopeGrowth": [],
+        "staleLinks": []
       }
     },
     {

@@ -191,6 +191,11 @@ export type PlanCheckInputs = Readonly<{
   escalation: EscalationInput | null;
   /** dev.13: the milestones the unit takes part in and their design references; null when it is in none. */
   milestones: MilestonesInput | null;
+  /**
+   * dev.17 (propagation): the unit's stale links its plan-check answers (src/holistic/staleset.ts `unitStaleLinks`), one line
+   * each, its key first (`staleLinkText`); empty when it has none.
+   */
+  staleLinks: readonly string[];
 }>;
 
 /** What a plan-check reads for its scope-growth proposals. */
@@ -584,7 +589,7 @@ export type RoleInputs = {
 export const ROLE_INPUTS = {
   planCheck: [
     'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision', 'priorInvalid',
-    'scopeGrowth', 'escalation', 'milestones',
+    'scopeGrowth', 'escalation', 'milestones', 'staleLinks',
   ],
   build: [
     'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks',
@@ -866,6 +871,11 @@ ${refs.length === 0 ? '(none: the spec declares no removes, or nothing outside t
 <rejected_scope_growth>
 ${rejected.join('\n')}
 </rejected_scope_growth>`}`;
+}
+
+/** dev.17 (propagation): the unit's stale links, each to answer by its key; nothing when it has none. */
+export function staleLinksText(lines: readonly string[]): string {
+  return lines.length === 0 ? '' : `\n\n<stale_links>\n${lines.map((l) => `- ${l}`).join('\n')}\n</stale_links>`;
 }
 
 /** A pack review's delta (the review it follows, what changed, the unresolved earlier findings), or nothing for a full review. */

@@ -4,7 +4,7 @@
 // Interfaces only; no behaviour here.
 import type {
   AbortCode, DoneRecord, Fact, FlowFact, GitOpKind, IntentOf, IntentRecord, JudgmentInputs, JudgmentStage, OpExpect, OpKind, OpOutcome, OpPost, Parent,
-  PlanAppliedFact, RecoveredBy, WalkFact,
+  PlanAppliedFact, PropagationFact, RecoveredBy, WalkFact,
 } from './events.ts';
 import type {
   AmendmentId, ArcId, ClaudeSessionId, CommandId, DivergenceId, EdgeId, FindingId, InvocationId, JobId, JobKind, MilestoneId, NeedsUserId, OpId, OpKey, PolishId, ResourceUnit, Sha, UnitId,
@@ -135,10 +135,13 @@ export interface JournalView {
    * bring-up or journeys after it was walked), 0 before one: the walk abandonment brake counts tries after it.
    */
   rewalkSeq(milestone: MilestoneId): number;
+  /** dev.17: every propagation fact (stale sets, stale re-opens, refused propagations), in log order, with its seq and time. */
+  propagationFacts(): readonly PropagationFactAt[];
 }
 
 export type FlowFactAt = Readonly<{ seq: number; at: IsoTime; fact: FlowFact }>;
 export type WalkFactAt = Readonly<{ seq: number; at: IsoTime; fact: WalkFact }>;
+export type PropagationFactAt = Readonly<{ seq: number; at: IsoTime; fact: PropagationFact }>;
 
 /** How an item was closed: by `command` (`needs-user-acked`), or by the executor at the close-out (`command` null: `needs-user-declined`, run 10 E). */
 export type NeedsUserAckState = Readonly<{ command: CommandId | null; choice: string | null }>;

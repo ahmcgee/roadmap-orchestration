@@ -21,8 +21,9 @@
 //
 // What dev.15 records differently from 1.0.0-dev.17: its lanes declare `tier`, read as their cadence, and its revisions
 // record no systems map, read as none (1.0.0-dev.17, lane topology; src/core/upgrade.ts `laneCadenceDefault`,
-// `systemsMapDefault`); its specs carry no design record (kind `module`) and no revision pins (links `unpinned`)
-// (`designKindDefault`, `specPinsDefault`). Nothing else: no release from dev.13 to dev.16 changes a record, nor does dev.12 record anything
+// `systemsMapDefault`); its specs carry no design record (kind `module`, `designKindDefault`) and no revision pins (links
+// `unpinned`: a lasting state, no default); its plan-check answers carry no `staleLinks` (none answered,
+// `planCheckStaleLinksDefault`, propagation). Nothing else: no release from dev.13 to dev.16 changes a record, nor does dev.12 record anything
 // differently from dev.13 that HEAD reads with a default: dev.13's additions (plan `milestones`, `limits.walkRounds`, a
 // unit's `polish`, `finding-opened.milestone`) are optional, absent meaning none for good. So a dev.15 arc on HEAD warns
 // those lane defaults and no other `roadmap: upgrade default` (asserted after every unlabelled cell's HEAD phase). Its seat
@@ -141,8 +142,10 @@
 //                              first chunk read). HEAD finds the same chunks, consumes the recorded first, asks the lost
 //                              second again as a bounded diff (`<orientation>`), settles the checkpoint, completes the arc.
 //   upgrade.spec-design-pins   the previous release's setup lays out its specs (no arc runs): HEAD reads each with no
-//                              design record (kind `module`, `designKindDefault`) and no revision pins (every link
-//                              `unpinned`, `specPinsDefault`), each default warned.
+//                              design record (kind `module`, `designKindDefault`, warned) and no revision pins (every link
+//                              `unpinned`: a lasting state, unwarned).
+//   upgrade.reentry-with-fixes (also) HEAD's resumed build reads the re-entry's plan-check answer the previous release
+//                              recorded, which has no `staleLinks`: read as none answered (`planCheckStaleLinksDefault`), warned.
 //
 // The dev.11 variants (DEV11_RELEASE starts the arc):
 //   upgrade.dev11.read-denied-retry
@@ -392,11 +395,15 @@ type Phase1 = Readonly<{
 }>;
 
 /**
- * A gate answer as `release` gives it: before 1.0.0-dev.12, without `unreviewed` (round 2) or `clusters` (the large-diff
- * gate), which its strict gate schema refuses (HEAD's scenarios carry them for HEAD's gate). Every other step, and every
- * step of a later release, is unchanged.
+ * A step as `release` gives it: a gate answer before 1.0.0-dev.12 without `unreviewed` (round 2) or `clusters` (the
+ * large-diff gate), and (every release here predates 1.0.0-dev.17) a plan-check answer without `staleLinks`, which their
+ * strict schemas refuse (HEAD's scenarios carry them for HEAD's judgments). Every other step is unchanged.
  */
 function asReleaseGate(release: Release, step: M1Step): M1Step {
+  if (step.role === 'planCheck') {
+    const { staleLinks: _s, ...answer } = step.answer as Readonly<Record<string, JsonValue>>;
+    return { ...step, answer };
+  }
   if (step.role !== 'gate' || !BEFORE_DEV12.has(release)) return step;
   const { unreviewed: _u, clusters: _c, ...answer } = step.answer as Readonly<Record<string, JsonValue>>;
   return { ...step, answer };
@@ -544,9 +551,11 @@ async function finishOnHead(p: Phase1, m1: readonly M1Step[], during: () => Prom
 /**
  * The defaults HEAD reads an arc the previous release started with (1.0.0-dev.17, lane topology): its lanes' `tier` as a
  * cadence (`lane.tier.<kind>`), a recorded lane rev of the tier form (`lane-rev.tier.<lane>`), its revisions' absent
- * systems map (`plan-applied.systemsMap`), and its specs' absent design record and pins (`spec.design.kind`, `spec.pins`). Nothing else changed a record since the previous release.
+ * systems map (`plan-applied.systemsMap`), its specs' absent design record (`spec.design.kind`), and (propagation) its
+ * plan-check answers' absent `staleLinks` (`plan-check.staleLinks`). A spec's absent pins are no default (a lasting state:
+ * every link unpinned). Nothing else changed a record since the previous release.
  */
-const DEV17_DEFAULTS = /^(lane\.tier\.(spec|suite|arc)|lane-rev\.tier\..+|plan-applied\.systemsMap|spec\.design\.kind|spec\.pins)$/;
+const DEV17_DEFAULTS = /^(lane\.tier\.(spec|suite|arc)|lane-rev\.tier\..+|plan-applied\.systemsMap|spec\.design\.kind|plan-check\.staleLinks)$/;
 
 /**
  * HEAD reads an arc the previous release started with the dev.17 lane defaults only (`DEV17_DEFAULTS`), but for the kinds
@@ -1423,6 +1432,7 @@ test('upgrade.reentry-with-fixes: a re-entry the previous release applied, namin
   }
   assert.equal(r.exit.kind, 'complete', JSON.stringify(r.exit));
   assert.equal(r.view.unit(unitId(REENTRY)).status, 'retired', 'HEAD merged the re-entry');
+  assert.match(hostLogs(p), /roadmap: upgrade default \(plan-check\.staleLinks\)/, 'HEAD read the previous release\'s plan-check answer, which has no staleLinks, as none answered, with a warning');
   assert.deepEqual(factsOf(r.after, 'plan-applied'), [], 'HEAD\'s start found the previous release\'s revision in force');
   newDirection(p.l);
   const dry = await headCli(p, ['apply', '--dry-run', ...p.run]);
@@ -1701,7 +1711,7 @@ test('upgrade.plan-check-by-builder: a corpus arc the previous release started u
   assert.match(hostLogs(p), /roadmap: upgrade default \(plan\.planCheck\.shape\)/, 'HEAD read the plan\'s by-builder shape as uniform, with a warning');
 });
 
-test('upgrade.spec-design-pins: the previous release\'s specs read on HEAD with no design record (kind module) and no revision pins (every link unpinned), each default warned', async () => {
+test('upgrade.spec-design-pins: the previous release\'s specs read on HEAD with no design record (kind module, warned) and no revision pins (every link unpinned, a lasting state, unwarned)', async () => {
   const dir = join(tmpDir('upgrade-spec'), 'fx');
   const setup = await runUntilExit(process.execPath, [join(previousOf(PREVIOUS_RELEASE).root, 'evals', 'm1', 'setup.ts'), dir], { env: process.env, timeoutMs: CLI_MS });
   assert.equal(setup.code, 0, setup.stderr);
@@ -1722,7 +1732,7 @@ test('upgrade.spec-design-pins: the previous release\'s specs read on HEAD with 
   }
   const kinds = [...warned.join('').matchAll(/roadmap: upgrade default \(([^)]+)\)/g)].map((m) => m[1]!);
   assert.ok(kinds.includes('spec.design.kind'), 'the absent design record was warned');
-  assert.ok(kinds.includes('spec.pins'), 'the absent pins were warned');
+  assert.ok(!kinds.some((k) => k.startsWith('spec.pins')), 'absent pins are a lasting state, not a default');
 });
 
 test('upgrade.checkpoint-answer-unapplied: a park checkpoint\'s answer the previous release recorded but did not apply (it crashed after the call), re-entering page-id with the failure it fixes, is adopted on HEAD: decided from the recorded answer with no new call, applied, the re-entry merged', T, async () => {
