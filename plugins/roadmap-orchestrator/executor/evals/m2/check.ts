@@ -25,7 +25,7 @@
 //                        `top` dispatched only after `right2` published, and merged
 //   no-duplicate-writer  per unit, its backend and lane invocations never overlap (from each op's first intent
 //                        to its done); each stage attempt has at most one outcome and consumed at most one
-//                        successful backend result
+//                        successful backend result (a resolve attempt two: its continuation, dev.17)
 // M1 criteria (evals/m1/check.ts, over this run):
 //   run-ended, units-settled (every unit merged, or superseded by a merged unit), head-is-candidate,
 //   diff-product-only, snapshot-verifies, judgment-fresh, meter-covers-calls, no-model-ids
@@ -408,7 +408,16 @@ function noDuplicateWriter(run: Run): Verdict {
     const key = `${i.parent.unit} ${i.parent.stage} ${i.parent.attempt}`;
     successes.set(key, (successes.get(key) ?? 0) + 1);
   }
-  for (const [key, n] of successes) if (n > 1) problems.push(`${key}: ${n} successful backend results`);
+  // dev.17 (field feedback 2026-10-23 item 4): a resolve round may go back to its builder once in the same attempt (the build
+  // attempt right after a `conflicted` preparation or merge-in), so that attempt may consume two results.
+  const resolves = new Set<string>();
+  const ordered = outcomes(run);
+  ordered.forEach((o, k) => {
+    if (o.outcome !== 'conflicted') return;
+    const next = ordered.slice(k + 1).find((x) => x.unit === o.unit && x.stage === 'build');
+    if (next !== undefined) resolves.add(`${next.unit} build ${next.attempt}`);
+  });
+  for (const [key, n] of successes) if (n > (resolves.has(key) ? 2 : 1)) problems.push(`${key}: ${n} successful backend results`);
   return { pass: problems.length === 0 && count > 0, detail: problems.length > 0 ? problems.join('; ') : `${count} workload ops over ${intervals.size} units, disjoint per unit; ${perAttempt.size} attempts, one outcome and at most one result each` };
 }
 

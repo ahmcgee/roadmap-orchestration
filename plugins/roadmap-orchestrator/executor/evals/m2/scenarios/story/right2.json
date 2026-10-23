@@ -14,6 +14,14 @@
       ]
     },
     {
+      "role": "build",
+      "round": "resume",
+      "acts": [],
+      "stdinContains": [
+        "The merge is committed, but the resolve round changed nothing beyond it while these acceptance clauses of the spec are still unmet: A3"
+      ]
+    },
+    {
       "role": "gate",
       "answer": {
         "decision": "approve",
