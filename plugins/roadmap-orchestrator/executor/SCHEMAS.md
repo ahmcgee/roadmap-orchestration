@@ -1103,7 +1103,7 @@ passes, read by `status` for the repo and plan file); `status.rejection.json` (`
 | File (run dir) | Type | Content |
 |---|---|---|
 | `commands/incoming/<id>.json` | `CommandFile` | `{v, id, arc, at, body}`; `body = pause{target} \| stop \| ack{needsUser, choice\|null} \| resume{target} \| sweep{resource\|null} \| apply{base: RevisionManifest\|null, manifest: ApplyManifest, rulings?: HashedFile[], visionEdit: boolean} \| resolve-edge{edge: EdgeId, evidence} \| run-only{units: UnitId[] (ascending, non-empty)\|null}` (the last two M2) \| M3: `rule{path, sha256}` \| `reverse{divergence}` \| `steer{unit, brief{path, sha256}, budgetMin, class\|null, resume}` \| `merge-in{unit}` \| `audit{lenses\|null}` \| `close-admissions` (see "M3: commands") \| M4b: `flow-decide`, `flow-request` (see "M4b") \| `scope-decide{unit, decision: accept\|reject, reason}` (see "Scope growth") \| dev.13: `demo{act: up\|down\|hold\|release}` (see "dev.13" "The demo") |
-| `commands/receipts/<id>.<state>.json` | `Receipt` | `accepted{at}` \| `applied{at, op, verified[] (non-empty)}` \| `rejected{at, reason}`; write-once each, by temp + `link` |
+| `commands/receipts/<id>.<state>.json` | `Receipt` | `accepted{at}` \| `applied{at, op, verified[] (non-empty)}` \| `rejected{at, reason}` \| dev.17: `queued{at, waitsFor: UnitId[] (non-empty), reason}` (see "dev.17: queued applies"); write-once each, by temp + `link` |
 | `needs-user/<id>.json` | `NeedsUserRecord` | `{v, id, arc, raisedAt, blocking, subject: unit{unit}\|arc\|host, reason, summary, recommendation, options[{id, label}], evidence[]}`; write-once. `NeedsUserContent` (`records.ts`) is the record without `v, id, arc, raisedAt`: what stages produce |
 | `needs-user/<id>.ack.json` | `NeedsUserAck` | `{v, id, command, choice\|null, at}`; write-once, by temp + `link` |
 
@@ -4758,3 +4758,22 @@ records and readers in src/core/stale.ts). Additive; `SCHEMA_VERSION` stays 1.
 
 Crash labels (test/matrix.ts rows STALE_SET and PROPAGATION_REVISION): `propagation.after-stale-set` (the set written,
 the commit not done), `propagation.after-refused`, `propagation.after-revision`.
+
+## dev.17: queued applies and apply warnings (2026-10-23; 1.0.0-dev.17, arc feedback 2026-10-23 items 7-9)
+
+An `apply` whose edit touches a unit mid-stage is queued behind that stage's boundary, never refused and dropped
+(DESIGN-1.0.md §2.3 "Commands"; src/input/classify.ts `busy`, src/schedule/scheduler.ts `queueApply`, src/commands/apply.ts
+`raiseDropped`, `applyWarnings`). Additive; `SCHEMA_VERSION` stays 1.
+
+| Record | Change | Read-time default |
+|---|---|---|
+| Classifier verdict | `+ busy{busy: BusyAttempt[], changes}`: nothing refused, but the spec edit (a revision or an evidence-only edit) of a unit running a live stage attempt. `commandScope` puts the busy units in the apply's scope, so the scheduler drains them (A12) and lands the apply at their boundary, classified again there (its stale set computed then). Any refusal refuses at once, the busy units named with it; any other proposer, and an apply run outside the drain, reads it as a refusal (`unit <u> is running <stage> attempt <n>; the edit applies at its stage boundary`) | — |
+| Fact `apply-queued` | `{command, waitsFor: UnitId[] (sorted, unique, non-empty)}`: the scheduler held `apply` `command` because units of its scope were in a stage or a chain; once per command, before its `queued` receipt | — |
+| Receipt `queued` | `{at, waitsFor, reason}` (what each unit runs); not terminal | — |
+| Needs-user reason | `+ apply-dropped`, non-blocking, subject arc, parent the command: a queued apply refused when it landed; the summary names the command, the units and every reason; evidence its rejected receipt. Raised once, after the rejected receipt (recovery raises it too) | — |
+| `status.commands.pending[]` | `+ queuedFor?: UnitId[]`: present on a queued apply | absent: not queued |
+| Applied receipt `verified[]` | `+ queued behind the stage boundary of <units> (seq <n>); applied there` on a queued apply; `+ warning: …` lines (also in `apply --dry-run`'s `warnings`): a checkpoint running (its bundle goes stale at activation, its spend wasted); a re-entry without `reset` whose predecessor's chargeable failures leave no fix round (failures + 1 ≥ its bound: its next charged failure parks for the operator) | — |
+| `apply --dry-run` | `+ kind: queues{waitsFor, reasons}`: refused only by busy units, so the apply would queue | — |
+
+Crash labels (test/matrix.ts row QUEUED_APPLY): `command.apply.queued` (the fact written, its receipt not),
+`command.apply.after-rejected-receipt` (a refused apply's receipt written, its `apply-dropped` item not).
