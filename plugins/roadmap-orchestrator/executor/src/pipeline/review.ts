@@ -19,7 +19,6 @@
 //
 // What a gate attempt was given is recorded on its `judgment-inputs` (`GateReview`), so the rules its answer is held to
 // follow from the log on replay and recovery; an attempt a dev.16 executor captured has none and is read without them.
-import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { type ReviewFindingId, type Sha, type SpecRev, type UnitId, reviewFindingIdOf } from '../core/ids.ts';
 import type { ReviewFact } from '../core/events.ts';
@@ -29,14 +28,15 @@ import {
 } from '../core/review.ts';
 import { approvalBlobsOf } from '../core/upgrade.ts';
 import { SchemaError } from '../core/validate.ts';
-import { type AbsPath, type RepoPath, repoPath } from '../core/values.ts';
+import { type AbsPath, type RepoPath, absPath, repoPath } from '../core/values.ts';
 import { git, gitRun } from '../git/git.ts';
 import { unitDiffPaths } from '../git/transient.ts';
 import { reviewDisputeDirective } from '../prompts/directives.ts';
 import type { GateReviewInput } from '../prompts/inputs.ts';
-import { DECISIONS_FILE, DEFECT_CATEGORIES, type GateFinding, type GateOutput, validateDecisionsFile, validateGateOutput } from '../prompts/schemas.ts';
+import { DECISIONS_FILE, DEFECT_CATEGORIES, type GateFinding, type GateOutput, validateGateOutput } from '../prompts/schemas.ts';
+import type { PlanUnit } from '../input/plan.ts';
 import { type StageContext, type StageParent, workDir } from './dispatch.ts';
-import { type JudgmentReader, judgmentOutput, judgmentSpawns } from './stages.ts';
+import { type JudgmentReader, judgmentOutput, judgmentSpawns, loadUnitSpec, readDecisions } from './stages.ts';
 
 /** The blob of `path` at `commit`, or null when the commit has no such file. */
 export function blobAt(repo: AbsPath, commit: Sha, path: string): Sha | null {
@@ -69,15 +69,15 @@ export function approvalBlobs(repo: AbsPath, unit: UnitId, specRev: SpecRev, tip
  * The disputes the unit's latest build wrote (decisions.json `disputes`) of its open ledger findings: the ones the next gate
  * rules on. A dispute of a settled or unknown finding is dropped: a ruling is final, and the ledger is the gate's.
  */
-export function openDisputes(ctx: StageContext, unit: UnitId, ledger: readonly FindingsLedgerEntry[]): readonly ReviewDispute[] {
-  const build = ctx.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'backend' && i.expect.subject.role === 'build' && i.expect.subject.unit === unit).at(-1);
+export function openDisputes(ctx: StageContext, unit: PlanUnit, ledger: readonly FindingsLedgerEntry[]): readonly ReviewDispute[] {
+  const build = ctx.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'backend' && i.expect.subject.role === 'build' && i.expect.subject.unit === unit.id).at(-1);
   if (build === undefined || build.parent.type !== 'stage') return [];
-  const file = join(workDir(ctx.runDir, build.parent as StageParent), DECISIONS_FILE);
-  if (!existsSync(file)) return [];
-  // The build that wrote it was read as a valid report (`buildRead`), so its decisions.json validates.
-  const { disputes } = validateDecisionsFile(JSON.parse(readFileSync(file, 'utf8')));
+  // A report-less build (lost with tree effects) may leave one that does not validate: none is read then, as its decisions
+  // are not appended (stages.ts `appendDecisions`, which names it on stderr).
+  const decisions = readDecisions(absPath(join(workDir(ctx.runDir, build.parent as StageParent), DECISIONS_FILE)), loadUnitSpec(ctx, unit).spec);
+  if (decisions === null || typeof decisions === 'string') return [];
   const open = new Set(ledger.filter((e) => !isSettled(e)).map((e) => e.id as string));
-  return disputes.filter((d) => open.has(d.finding));
+  return decisions.disputes.filter((d) => open.has(d.finding));
 }
 
 // ---------------------------------------------------------------------------------------------------

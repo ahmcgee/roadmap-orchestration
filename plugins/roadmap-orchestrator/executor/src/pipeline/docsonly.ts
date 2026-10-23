@@ -4,8 +4,9 @@
 // The claim alone carries nothing over. Code takes the unit's last certified tree (the salvage SHA of its latest lanes
 // attempt that ended green) and refuses a claim naming any other. It then reads the diff from that tree to the salvage SHA:
 // a docs-class file (the systems map's `docs`) passes, and so does a hunk whose every changed line is blank or a whole-line
-// comment of a language it knows (`LINE_COMMENTS`), at least one of them a comment, with no line matching a tool directive
-// (`DIRECTIVES`: a directive refuses the claim outright). A mode change, a binary file or a submodule refuses it. Every hunk
+// comment of a language it knows (`LINE_COMMENTS`; never a doc comment a tool may run, `DOC_COMMENTS`), at least one of them a
+// comment, with no line matching a tool directive (`DIRECTIVES`: a directive refuses the claim outright). A line inside a
+// multi-line string that starts like a comment is taken for one: the heuristic the plan accepts. A mode change, a binary file or a submodule refuses it. Every hunk
 // left goes to the verifier (economy, Haiku 5.5 at high; prompts/verifier), one fresh call with a closed per-hunk answer
 // {kind, executable, toolDirective, behaviourChange}; code accepts only when every hunk is answered once and clear
 // (`hunkClear`). Accepted, each lane of the stage that does not declare `readsComments` reuses its pass on the certified
@@ -77,12 +78,16 @@ function hunksOf(diff: string): readonly Hunk[] {
   return out.map((h) => ({ text: h.text.join('\n'), lines: h.lines }));
 }
 
+/** Doc comments a tool may run (a Rust doctest in `///` or `//!`): never cleared by code, the verifier is asked. */
+const DOC_COMMENTS: readonly string[] = ['///', '//!'];
+
 /** What code alone makes of a hunk: clear (whole-line comments and blank lines), a directive, or a question for the verifier. */
 function hunkByCode(prefixes: readonly string[] | null, h: Hunk): 'clear' | 'directive' | 'verifier' {
   if (h.lines.some((l) => DIRECTIVES.some((d) => d.test(l.trim())))) return 'directive';
   if (prefixes === null) return 'verifier';
   const nonBlank = h.lines.map((l) => l.trim()).filter((l) => l !== '');
-  return nonBlank.length > 0 && nonBlank.every((l) => prefixes.some((p) => l.startsWith(p))) ? 'clear' : 'verifier';
+  const comment = (l: string): boolean => prefixes.some((p) => l.startsWith(p)) && !DOC_COMMENTS.some((d) => l.startsWith(d));
+  return nonBlank.length > 0 && nonBlank.every(comment) ? 'clear' : 'verifier';
 }
 
 /** What the unit's latest build answered as `docsOnlySince`, or null (no claim, or no answer). */

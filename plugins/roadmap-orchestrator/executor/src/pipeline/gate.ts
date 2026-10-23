@@ -444,7 +444,7 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
     const delta = gateDelta(ctx, unit.id, tip, head, fingerprint);
     if (delta === 'empty') return { kind: 'delta-empty', fingerprint, blobs: approvalBlobs(ctx.repo, unit.id, spec.rev, tip, head) };
     const ledger = unitLedger(ctx, unit.id);
-    const review: GateReview = { ledger, disputes: openDisputes(ctx, unit.id, ledger), delta };
+    const review: GateReview = { ledger, disputes: openDisputes(ctx, unit, ledger), delta };
     // The attached diff first: whether it is over the large-diff threshold decides the seat.
     const diffDir = gateDiffDir(ctx, parent);
     const base = diffBase(ctx.repo, tip, head);
