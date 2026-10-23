@@ -4673,6 +4673,62 @@ wires it attaches it.
 | `spec.json` | `+ pins?: SpecPin[]`: one per target (unique), each naming a link the spec carries (`specRequirementLinks`: obligations, obligation repairs, witness obligations; `cites.contracts`) | absent: every link `unpinned`, stale-unknown (`specPinOf` → `specPinsDefault`, logged); a link a present list leaves out reads `unpinned`, unlogged |
 | `spec.json` | `+ design?: DesignRecord` (src/core/design.ts): `kind: module\|integration` (`UNIT_KINDS`), `changes [{system \| null, paths, lines}]` (non-empty; `designSize` sums `lines`), `interfaces [ContractPin \| FilePin]` (unique path), `failureModes [{id, mode, proof: {type: test, test: TestItemRef} \| {type: untested, reason}, requirements: RequirementPin[]}]` (a witness `TestItemRef` names a witness item of the spec), `breaks {tests, docs}: FilePin[]`, `experiments [{command, output}]`, `newSystem? {name, paths, tests}`, `verification? {type: reproduce-then-fix, condition, runs} \| {type: repeat, rationale, runs}` | absent: kind `module` (`specKindOf` → `designKindDefault`, logged) |
 | Plan-check decisions (src/prompts/schemas.ts) | `PLAN_CHECK_DECISIONS_DEV17` = approve, redirect, split, scaffold, poc, infeasible, escalate; `DesignDecision`; payloads `SplitDecision {children: SpecM1[] ≥ 2 distinct, edges [{from, to}] between distinct children}`, `ScaffoldDecision {newSystem, entryPoints, exports, loadTest {lane, testId}, manifest [{path, entry}]}`, `PocDecision {questions [{id, question, whyItMatters}] ≥ 1, brief}`. Not yet in `PLAN_CHECK_SCHEMA` or `planCheckOutput` | — |
-| Gate (src/prompts/schemas.ts) | `DEFECT_CATEGORIES` (incorrect-behaviour, contract-violation, security, requirement-unmet, test-inadequate, data-loss); `FINDING_SEVERITIES_DEV17` (+ `ride-along`); `DocsOnlySince = Sha \| null`. Not yet in `GATE_SCHEMA`, `gateOutput` or the build answer | — |
-| Review (src/core/review.ts) | `FindingsLedgerEntry {id: R-n, unit, path, anchor: blob, outcome: LedgerOutcome \| null}` (`LEDGER_OUTCOMES`: fixed, disputed-upheld, disputed-overruled, released, banked; null unsettled); `ApprovalBlobs {unit, specRev, files [{path, blob \| null}] ascending}` | — |
+| Gate (src/prompts/schemas.ts) | `DEFECT_CATEGORIES` (incorrect-behaviour, contract-violation, security, requirement-unmet, test-inadequate, data-loss); `FINDING_SEVERITIES_DEV17` (+ `ride-along`); `DocsOnlySince = Sha \| null`. Wired by "Proportional review" below | — |
+| Review (src/core/review.ts) | `FindingsLedgerEntry {id: R-n, unit, path, anchor: blob, outcome: LedgerOutcome \| null}` (`LEDGER_OUTCOMES`: fixed, disputed-upheld, disputed-overruled, released, banked; null unsettled); `ApprovalBlobs {unit, specRev, files [{path, blob \| null}] ascending}`; wired by "Proportional review" below | — |
 | Flaky ledger (src/core/flaky.ts) | `FlakyLedgerEntry {key: {type: test, lane, testId} \| {type: lane, lane}, events [{tree, env \| null, failing, red, green}] ≥ 1, deflakes: UnitId[]}`; `flakyKeyOf` | — |
+
+## Proportional review (2026-10-23; 1.0.0-dev.17, experience-won F)
+
+The gate's defect classes, the findings ledger, the delta re-gate and docs-only claims (DESIGN-1.0.md §4 "Proportional
+review"; src/pipeline/review.ts, src/pipeline/docsonly.ts). Every change is additive with a read-time default
+(src/core/upgrade.ts, logged once; scaffolding deleted once no dev.16 arc is in flight); `SCHEMA_VERSION` stays 1.
+
+| Record | Change | Read-time default |
+|---|---|---|
+| Gate answer (`GATE_SCHEMA`, `gateOutput`) | finding `severity` ∈ `FINDING_SEVERITIES_DEV17` (+ `ride-along`); finding `+ defect: DefectCategory \| null`, `+ reraises: R-n \| null`, `+ hunk: {path, line ≥ 1} \| null`; `+ rulings [{finding: R-n, ruling: upheld\|overruled, reason}]` (unique by finding) | absent `defect`, `reraises`, `hunk`: null (`gateFindingReviewDefault`); absent `rulings`: none (`gateRulingsDefault`) |
+| Build answer (`buildSchemaFor`, `buildOutputFor`) | `+ docsOnlySince: Sha \| null` | absent: null (`buildDocsOnlySinceDefault`) |
+| `decisions.json` | `+ disputes? [{finding: R-n, reason}]` (unique by finding) | absent: none (lasting: the implementer's own file) |
+| Verifier answer (`verifierSchemaFor(ids)`, `verifierOutput`) | new role `verifier`: `{hunks [{id, kind: comment\|docstring\|documentation\|code\|mixed, executable, toolDirective, behaviourChange}]}`, ids unique (the schema enumerates the ids given) | — |
+| Routing | `ROLES` and `UNIT_ROLES` `+ verifier` (seats `low\|med\|high`, the unit's risk floor; `FRESH_ROLES` too); built-in `verifier: economy` at each; `DEV17_ROLES` = [verifier], left out of the rev an earlier release's built-in seats hash (`routingRevOf(…, head)`), so status still aliases a recorded rev | — |
+| `judgment-inputs` (gate) | `+ review?: GateReview {ledger: FindingsLedgerEntry[] (the unit's, at capture), disputes [{finding, reason}], delta: GateDelta \| null}`; `GateDelta {approved: {attempt, head}, review: RepoPath[], unchanged: RepoPath[], moved: string[]}` (each ascending; `moved` names contract paths, ruling ids, requirement ids, `corpus`) | absent: a dev.16 attempt, read without the review rules (`gateReviewOf`) |
+| `approval` fact | `+ blobs?: ApprovalBlobs` (its unit and the fingerprint's spec rev) | absent: the unit's next gate reviews in full (`approvalBlobsOf`, warned per unit) |
+| `review-ledger` fact (new) | `{unit, attempt, minted [{index, entry: FindingsLedgerEntry}], settled [{id, outcome}]}`: at most one per gate attempt, before its stage-outcome, none when it mints and settles nothing; minted ids follow on arc-wide (`R-<n+1>`); a minted entry is open (blocking) or `banked`/`released`; only an open entry of the unit settles | none: no ledger (a dev.16 arc's findings are never ledgered) |
+| `docs-only` fact (new) | `{unit, attempt (lanes), since: Sha, at: Sha, verdict: code\|verifier\|refused, reason: string \| null (exactly on refused), carried: LaneId[] (ascending; none on refused)}` | — |
+| `docs-only-miss` fact (new) | `{unit, attempt (candidate), lanes: LaneId[] (non-empty, ascending)}`: calibration | — |
+| `LaneDef` | `+ readsComments?: true` (absent stays absent, so a lane's rev is unchanged) | none |
+| Gate outcome | `+ delta-empty` → `go(candidate)`, uncharged | — |
+| `JournalView.review()` | `ReviewFold {ledger, nextFindingId, ledgered(unit, attempt), approval(unit) (the latest, never cleared by a park or re-entry, with its blobs), greenLanes(unit) (the latest lanes attempt that ended green), docsOnly}` | — |
+
+1. **The rules a dev.17 gate answer is held to** (`reviewRules`, applied by `gateAnswerFor` after the cluster check, and by
+   `gateAnswerAt` from the attempt's recorded `review`): refused through the repair turn: a blocking finding with no
+   `defect`; a `reraises` naming no finding of the unit's ledger; a blocking finding raising a settled one whose path's
+   blob at the judged head equals its anchor; `rulings` not exactly one per dispute given. Then, on a delta, a blocking
+   finding whose path is `unchanged` stays blocking only when its `contractRef` (without `#anchor`) is a `moved` target or
+   its `hunk` names a path under review and a line inside a changed range (`git diff -U0` from the approved head);
+   otherwise it is read as a note (debt null), and a revise left with no blocking finding is read as an approve.
+2. **The ledger fact** (`ledgerFact`, in `gateRead` for an attempt with a review, after the approval and its banking):
+   minted, each finding whose path is a repository path existing at the judged head, anchored at its blob: blocking →
+   open, else `banked` when the approval banked it (`gateDebtNotes`, corpus arcs) or `released`; settled, each open entry
+   of the unit: a ruling → `disputed-upheld` / `disputed-overruled`; else, not raised again by this answer, `fixed` when its
+   path's blob moved off the anchor, or `released` on an approve.
+3. **Disputes** (`openDisputes`): the `disputes` of the unit's latest build's decisions.json that name an open entry of
+   its ledger, recorded on the next gate's `review`; one naming a settled or unknown finding is dropped. A gate revise's
+   fix round adds a directive naming the open entries it minted and the channel (`reviewDisputeDirective`).
+4. **The delta** (`gateDelta`, at the gate's capture, after the `unverified` check): none (null) without an approval,
+   with a dev.16 approval, or at another spec revision; else the union of the approved files and the unit diff's paths
+   (`unitDiffPaths(tip, head)`) at their blobs at the head, `moved` = `movedTargets(approved fingerprint, fingerprint now)`
+   (contract and requirement pins through `movedPins`, src/core/pins.ts, ruling revisions, the corpus pin), an unchanged
+   file whose content names a moved target under review. Empty (`review` and `moved` both empty): `approval{blobs}` at
+   the new fingerprint, then `stage-outcome gate delta-empty`, no `judgment-inputs`, no call.
+5. **Docs-only** (`docsOnlyCarry`, the lanes stage, before its entry reservation): the claim is the unit's latest build
+   spawn's answer; `since` the commit of the spec series of `greenLanes(unit)`'s attempt (`certifiedTree`). Refused (a
+   `docs-only` fact) when there is no certified tree, the claim names another, a path changed mode or is a submodule or
+   binary, or a changed line matches `DIRECTIVES`. A docs-class path (`pathClass` = docs) passes; a hunk whose changed
+   lines are blank or start with a `LINE_COMMENTS` prefix of the file's extension (at least one comment) passes; every
+   other hunk (`h<n>`, with its path, language and text) goes to one fresh `verifier` call (`verifierDispatch`: the
+   pinned record, `verifier.<riskFloor>`; read-only judgment profile, cwd the repository, no evidence dirs). Accepted only
+   when each hunk is answered once and `hunkClear`. Accepted: per lane of the stage (spec lanes, then the fast suite's)
+   without `readsComments`, `reusablePass(at: since)` is carried (`runLaneSeries` `carry`, recorded `lane-reused`).
+   The build prompt names the certified tree (`BuildInputs.certifiedAt`).
+6. **Calibration**: a candidate whose suite ends red on a lane the unit's latest green lanes attempt carried over
+   records `docs-only-miss` before its base check.
