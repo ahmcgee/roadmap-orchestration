@@ -1077,7 +1077,7 @@
 <text font-size="12" text-anchor="start" fill="#37474f" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" paint-order="stroke"><tspan x="1236.0" y="2632.0">1st refusal</tspan></text>
 <text font-size="12" text-anchor="start" fill="#37474f" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" paint-order="stroke"><tspan x="1236.0" y="2586.0">2nd refusal</tspan></text>
 <rect x="960" y="2782" width="150" height="56" rx="9" fill="#ffffff" stroke="#1f2933" stroke-width="1.6"/>
-<text font-size="12" text-anchor="middle"><tspan x="1035.0" y="2814.3">Spec patch: rev + 1</tspan></text>
+<text font-size="12" text-anchor="middle"><tspan x="1035.0" y="2799.3">Plan-check rewrites</tspan><tspan x="1035.0" y="2814.3">the spec itself</tspan><tspan x="1035.0" y="2829.3">(patch, rev + 1)</tspan></text>
 <path d="M1170 2788 L1192 2810 L1170 2832 L1148 2810 Z" fill="#fff" stroke="#1f2933" stroke-width="1.6"/>
 <path d="M1163 2803 L1177 2817 M1177 2803 L1163 2817" stroke="#1f2933" stroke-width="3.2"/>
 <text font-size="12" text-anchor="middle"><tspan x="1170.0" y="2780.0">within bounds?</tspan></text>
@@ -1087,11 +1087,11 @@
 <circle cx="1260" cy="2865" r="15" fill="#fff" stroke="#9a6700" stroke-width="1.5"/><circle cx="1260" cy="2865" r="11.5" fill="none" stroke="#9a6700" stroke-width="1.5"/>
 <path d="M1253 2862 H1261 V2858 L1268 2865 L1261 2872 V2868 H1253 Z" fill="#1f2933" stroke="#1f2933" stroke-width="1.1"/>
 <text font-size="12" text-anchor="start"><tspan x="1281.0" y="2862.0">plan-check on the escalation</tspan><tspan x="1281.0" y="2876.0">seat (route-up)</tspan></text>
-<text font-size="12" text-anchor="start" fill="#37474f" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" paint-order="stroke"><tspan x="906.0" y="2804.0">redirect</tspan></text>
+<text font-size="12" text-anchor="start" fill="#37474f" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" paint-order="stroke"><tspan x="906.0" y="2789.0">redirect:</tspan><tspan x="906.0" y="2804.0">fix spec</tspan></text>
 <text font-size="12" text-anchor="start" fill="#37474f" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" paint-order="stroke"><tspan x="1196.0" y="2804.0">yes</tspan></text>
 <text font-size="12" text-anchor="start" fill="#37474f" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" paint-order="stroke"><tspan x="1176.0" y="2859.0">no</tspan></text>
-<path d="M1462 2780 H1450 V2865 H1462" fill="none" stroke="#37474f" stroke-width="1.4"/>
-<text font-size="12" text-anchor="start" fill="#37474f"><tspan x="1458.0" y="2797.0">Bound: 2 redirects since the</tspan><tspan x="1458.0" y="2812.0">architect's latest spec edit; the third</tspan><tspan x="1458.0" y="2827.0">goes to the escalation seat. A</tspan><tspan x="1458.0" y="2842.0">redirect may not lower the risk floor</tspan><tspan x="1458.0" y="2857.0">or widen the scope envelope.</tspan></text>
+<path d="M1462 2780 H1450 V2925 H1462" fill="none" stroke="#37474f" stroke-width="1.4"/>
+<text font-size="12" text-anchor="start" fill="#37474f"><tspan x="1458.0" y="2797.0">Redirect: the spec is wrong but fixable,</tspan><tspan x="1458.0" y="2812.0">so plan-check patches it (a revisioned</tspan><tspan x="1458.0" y="2827.0">edit) instead of approving it, and the</tspan><tspan x="1458.0" y="2842.0">patched spec is checked again in a fresh</tspan><tspan x="1458.0" y="2857.0">session. No build runs in between.</tspan><tspan x="1458.0" y="2872.0">Bound: 2 since the architect's latest</tspan><tspan x="1458.0" y="2887.0">spec edit; the third goes to the</tspan><tspan x="1458.0" y="2902.0">escalation seat. A patch never lowers</tspan><tspan x="1458.0" y="2917.0">the risk floor or widens the scope.</tspan></text>
 <rect x="960" y="2900" width="160" height="80" rx="9" fill="#ffffff" stroke="#1f2933" stroke-width="1.6"/>
 <text font-size="12" text-anchor="middle"><tspan x="1040.0" y="2930.3">split: hold; code commits a</tspan><tspan x="1040.0" y="2944.3">split revision (parent cut,</tspan><tspan x="1040.0" y="2958.3">children after it)</tspan></text>
 <path d="M1170 2918 L1192 2940 L1170 2962 L1148 2940 Z" fill="#fff" stroke="#1f2933" stroke-width="1.6"/>
