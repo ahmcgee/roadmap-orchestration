@@ -70,7 +70,7 @@ import type { ResolvedRouting } from '../routing/layers.ts';
 import { routingChangedRecommendation } from '../needsuser.ts';
 import { implementerSeatKept } from '../core/upgrade.ts';
 import {
-  type ArcRole, type ArcSeatRef, type WalkRole, type Backend, CLAUDE_EFFORTS, CLAUDE_MODELS, CODEX_EFFORTS, CODEX_MODELS, RISK_TIERS, type Triple, type JudgmentRole, type JudgmentSeat, type RiskTier, type Role, type UnitSeatRef, seatRef,
+  type ArcRole, type ArcSeatRef, type WalkRole, type Backend, CLAUDE_EFFORTS, CLAUDE_MODELS, CODEX_EFFORTS, CODEX_MODELS, RISK_TIERS, type Triple, type JudgmentRole, type JudgmentSeat, type RiskTier, type Role, type UnitSeatRef, seatRef, unitSeatRef,
 } from '../routing/types.ts';
 import { runnerFiles } from '../runner/files.ts';
 import type { Acquire, Rank, ResourceRequest } from '../schedule/types.ts';
@@ -324,7 +324,13 @@ export function raiseRisk(ctx: StageContext, record: DispatchRecord, risk: RiskT
 // ---------------------------------------------------------------------------------------------------
 // Seats
 
-export type JudgmentDispatch = Readonly<{ role: JudgmentRole; tier: JudgmentSeat; triple: ClaudeTriple; routingRev: RoutingRev }>;
+/**
+ * A judgment call's seat: a unit judgment role's, or (dev.17, proportional review) the verifier's on the unit's risk tier, a
+ * fresh read-only call at the lanes stage (src/pipeline/docsonly.ts).
+ */
+export type JudgmentDispatch =
+  | Readonly<{ role: JudgmentRole; tier: JudgmentSeat; triple: ClaudeTriple; routingRev: RoutingRev }>
+  | Readonly<{ role: 'verifier'; tier: RiskTier; triple: ClaudeTriple; routingRev: RoutingRev }>;
 /** `seatRev`: the pinned `implementerSeatRev`, the hash of `triple`: a session resumes only on its session key (R4). */
 export type ImplementerDispatch = Readonly<{ role: 'build'; tier: RiskTier; triple: ClaudeTriple | CodexTriple; routingRev: RoutingRev; seatRev: SeatRev }>;
 
@@ -344,6 +350,20 @@ export function judgmentDispatch(ctx: StageContext, unit: UnitId, stage: Judgmen
   // Startup refuses every Codex judgment seat (unsupported-routing), so this is a bug if it happens.
   if (triple.backend !== 'claude') throw new Error(`the ${role} seat ${tier} resolves to ${triple.backend}; judgment is Claude only in M1`);
   return { kind: 'pinned', dispatch: { role, tier, triple, routingRev: pinned.dispatch.routingRev } };
+}
+
+/**
+ * dev.17: the verifier's seat for a unit's docs-only claim: `verifier.<risk floor>` under the routing in force (the unit's
+ * pinned record, re-pinned when the routing or plan moved it, as at a judgment), or the routing change that parks it.
+ */
+export function verifierDispatch(ctx: StageContext, unit: UnitId): Pinned<JudgmentDispatch> {
+  const pinned = inForce(ctx, dispatchOf(ctx.journal.view, unit));
+  if (pinned.kind !== 'pinned') return pinned;
+  const tier = pinned.dispatch.riskFloor;
+  const triple = ctx.routing(unit).table.verifier[tier];
+  // Startup refuses every Codex judgment seat (unsupported-routing), so this is a bug if it happens.
+  if (triple.backend !== 'claude') throw new Error(`the verifier seat ${tier} resolves to ${triple.backend}; judgment is Claude only`);
+  return { kind: 'pinned', dispatch: { role: 'verifier', tier, triple, routingRev: pinned.dispatch.routingRev } };
 }
 
 /**
@@ -526,7 +546,7 @@ export async function callBackend(ctx: StageContext, given: BackendCallSpec): Pr
     spec = { ...given, system, request: { ...given.request, evidenceDirs } };
   }
   const r = spec.request;
-  const seat: UnitSeatRef = r.kind === 'judgment' ? { role: r.dispatch.role, tier: r.dispatch.tier } : { role: 'build', tier: r.dispatch.tier };
+  const seat: UnitSeatRef = r.kind === 'judgment' ? unitSeatRef(r.dispatch.role, r.dispatch.tier) : { role: 'build', tier: r.dispatch.tier };
   const role: Role = seat.role;
   const schemaText = canonicalJson(spec.schema);
   const schemaPath = inputFile(ctx.runDir, `${schemaText}\n`, 'schema.json');

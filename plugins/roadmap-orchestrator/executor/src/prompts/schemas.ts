@@ -10,15 +10,16 @@
 //   gate:      approve → integration slot · revise → fix round with directives · escalate → route up
 //   build:     success → quiesce (the executor then salvages, runs lanes and gates; the report is evidence)
 import {
-  type ClauseId, type FindingId, type IssueId, type JourneyId, type LaneId, type ObligationId, type PocQuestionId, type RuleId, type RulingId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, clauseId,
-  pocQuestionId, answerIds, findingId, issueId, journeyId, laneId, obligationId, ruleId, rulingId, unitId, visionClauseId,
+  type ClauseId, type FindingId, type IssueId, type JourneyId, type LaneId, type ObligationId, type PocQuestionId, type ReviewFindingId, type RuleId, type RulingId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, clauseId,
+  pocQuestionId, answerIds, findingId, issueId, journeyId, laneId, obligationId, reviewFindingId, ruleId, rulingId, sha, unitId, visionClauseId,
 } from '../core/ids.ts';
+import { type ReviewDispute, reviewDispute } from '../core/review.ts';
 import { type ActedOn, actedOn } from '../forge/types.ts';
 import { FLOW_REPORTERS, type FlowOutput, flowOutput } from '../flow/types.ts';
 import { type JsonValue, canonicalJson } from '../core/json.ts';
 import { BOUND_FIELDS, type Bounds, type FailureRef, type NoteDef, SPEC_SCHEMA, SPEC_SECTIONS, type SpecM1, type SpecPatchOp, failureRef, specM1, specPatchOp } from '../core/records.ts';
 import {
-  Fields, type Read, SchemaError, answerSet, arrayOf, assertUnique, envName, int, literal, nullable, object, oneOf, positive, str, tagged, text,
+  Fields, type Read, SchemaError, answerSet, arrayOf, assertUnique, bool, envName, int, literal, nullable, object, oneOf, positive, str, tagged, text,
 } from '../core/validate.ts';
 import { type RepoPath, type RepoPattern, matchesPattern, repoPath, repoPattern } from '../core/values.ts';
 import {
@@ -28,7 +29,8 @@ import {
 } from '../holistic/types.ts';
 import { REENTRY_POINTS, type ReentryPoint } from '../input/plan.ts';
 import {
-  admitSpecTextDefault, admitTargetsDefault, buildExperimentsDefault, buildFinalDefault, checkpointRulingTextDefault, GATE_DEBT_UNRECORDED, gateClustersDefault, gateNoteDebtDefault, gateUnreviewedDefault, lensPatchMutantDefault, planCheckScopeGrowthDefault,
+  admitSpecTextDefault, admitTargetsDefault, buildDocsOnlySinceDefault, buildExperimentsDefault, buildFinalDefault, checkpointRulingTextDefault, GATE_DEBT_UNRECORDED, gateClustersDefault,
+  gateFindingReviewDefault, gateNoteDebtDefault, gateRulingsDefault, gateUnreviewedDefault, lensPatchMutantDefault, planCheckScopeGrowthDefault,
   FIXES_UNRECORDED,
   reenterFixesDefault,
 } from '../core/upgrade.ts';
@@ -283,6 +285,12 @@ export type BuildOutput = Readonly<{
   /** M4a rev 3 (I3): every other command it ran (never a fast lane); a 1.0.0-dev.6 answer has none (`buildExperimentsDefault`). */
   experiments: readonly Experiment[];
   /**
+   * dev.17 (proportional review): the tested SHA since which the build says it changed only comments and documentation, or
+   * null. Code verifies the claim against the diff from the unit's last certified tree (src/pipeline/docsonly.ts); the claim
+   * alone carries no lane pass over. Absent on an answer a dev.16 executor recorded (`buildDocsOnlySinceDefault`): null.
+   */
+  docsOnlySince: DocsOnlySince;
+  /**
    * The report is the final one. A Claude session that ends a turn to wait (a wake-up, a monitor) must still answer the
    * schema, and answers `final: false`; its runner ends the session a grace after the final report (src/runner/report.ts).
    * The reader admits `true` only: a session that ended on an interim answer has not reported. Absent on an answer an
@@ -297,6 +305,12 @@ const S_FINAL: Schema = {
   description: 'true in your final report. false only when you end a turn to wait for something you started (a wake-up, a monitor, a background command) and will report again when it completes.',
 };
 
+/** The build answer's `docsOnlySince` (dev.17): described in the schema, beside the prompt's account of it. */
+const S_DOCS_ONLY_SINCE: Schema = {
+  anyOf: [{ type: 'string' }, { type: 'null' }],
+  description: 'The full SHA of the last tree the executor certified for this unit, when everything you changed since it is comments or documentation only; otherwise null.',
+};
+
 /** The build answer's schema; `lanes` (M4a rev 3, I3) the spec's fast lane ids, which `lanesRun[].lane` then enumerates. */
 export function buildSchemaFor(lanes: readonly LaneId[] | null): Schema {
   return sObj({
@@ -305,6 +319,7 @@ export function buildSchemaFor(lanes: readonly LaneId[] | null): Schema {
     lanesRun: sArr(sObj({ lane: lanes === null || lanes.length === 0 ? S_STR : sEnum(lanes), exit: S_INT })),
     blockers: sArr(S_STR),
     experiments: sArr(sObj({ name: S_STR, argv: sArr(S_STR), exit: S_INT })),
+    docsOnlySince: S_DOCS_ONLY_SINCE,
     final: S_FINAL,
   });
 }
@@ -323,6 +338,7 @@ export function buildOutputFor(lanes: readonly LaneId[] | null): Read<BuildOutpu
   return object((f) => {
     const experiments = f.optional('experiments', arrayOf(experiment));
     const final = f.optional('final', literal(true));
+    const docsOnlySince = f.optional('docsOnlySince', nullable((v, p): Sha => sha(v, p)));
     return {
       summary: f.get('summary', str),
       changedPaths: f.get('changedPaths', arrayOf(str)),
@@ -332,6 +348,7 @@ export function buildOutputFor(lanes: readonly LaneId[] | null): Read<BuildOutpu
       })))),
       blockers: f.get('blockers', arrayOf(str)),
       experiments: experiments ?? buildExperimentsDefault(),
+      docsOnlySince: docsOnlySince === undefined ? buildDocsOnlySinceDefault() : docsOnlySince,
       final: final ?? buildFinalDefault(),
     };
   });
@@ -349,10 +366,16 @@ export function validateBuildOutput(value: unknown): BuildOutput {
  * the spec's `decisions` section (so the gate grades against it); ids must be fresh in the spec.
  */
 export const DECISIONS_FILE = 'decisions.json';
-export type DecisionsFile = Readonly<{ decisions: readonly NoteDef[] }>;
+/**
+ * dev.17 (proportional review): `disputes`, the open gate findings (R-n) the implementer disputes rather than fixes, each with
+ * its reason; the next gate rules on each once, and its ruling is final. Absent: none (the file is the implementer's, written
+ * in session, so the absence is no older record).
+ */
+export type DecisionsFile = Readonly<{ decisions: readonly NoteDef[]; disputes: readonly ReviewDispute[] }>;
 export const decisionsFile: Read<DecisionsFile> = object((f) => {
-  const out = { decisions: f.get('decisions', arrayOf(decision)) };
+  const out = { decisions: f.get('decisions', arrayOf(decision)), disputes: f.optional('disputes', arrayOf(reviewDispute)) ?? [] };
   assertUnique(out.decisions, (d) => d.id, `${f.path}.decisions`);
+  assertUnique(out.disputes, (d) => d.finding, `${f.path}.disputes`);
   return out;
 });
 
@@ -388,6 +411,15 @@ export type FindingSeverityDev17 = (typeof FINDING_SEVERITIES_DEV17)[number];
  */
 export type DocsOnlySince = Sha | null;
 
+/**
+ * dev.17: the gate's ruling on a builder's dispute of an open ledger finding (decisions.json `disputes`): `upheld` (the finding
+ * stands) or `overruled` (it falls), with the reason. Once per dispute, final.
+ */
+export const DISPUTE_RULINGS = ['upheld', 'overruled'] as const;
+export type DisputeRuling = Readonly<{ finding: ReviewFindingId; ruling: (typeof DISPUTE_RULINGS)[number]; reason: string }>;
+/** dev.17: the changed hunk a finding on an unchanged file rests on (the delta re-gate): a path and a line on the head's side. */
+export type HunkRef = Readonly<{ path: string; line: number }>;
+
 /** dev.13: an ad hoc experiment the gate ran in its checkout, cited as a finding's evidence: the command as run and what it printed. */
 export type GateExperiment = Readonly<{ command: string; output: string }>;
 /**
@@ -396,7 +428,8 @@ export type GateExperiment = Readonly<{ command: string; output: string }>;
  */
 export type GateDebt = Readonly<{ drag: string }>;
 export type GateFinding = Readonly<{
-  severity: (typeof FINDING_SEVERITIES)[number];
+  /** dev.17 adds `ride-along` (comments, docs): never a revise; debt when it names its drag, else released. */
+  severity: FindingSeverityDev17;
   path: string | null;
   text: string;
   /** A C-nn id, a contract path (with an optional #anchor) or a corpus rule T-n the finding rests on. */
@@ -412,6 +445,15 @@ export type GateFinding = Readonly<{
    * (`gateNoteDebtDefault`): banked as the dev.12 executor banked every note, so a re-read never changes what was banked.
    */
   debt: GateDebt | null | typeof GATE_DEBT_UNRECORDED;
+  /**
+   * dev.17 (proportional review): what a blocking finding must name (`DEFECT_CATEGORIES`); null on any other class. A dev.17
+   * gate's blocking finding without one is refused through the repair turn (src/pipeline/review.ts).
+   */
+  defect: DefectCategory | null;
+  /** dev.17: the ledger finding (R-n) this one raises again; a settled one only when its anchor blob changed. Null: a new finding. */
+  reraises: ReviewFindingId | null;
+  /** dev.17: on a delta re-gate, the changed hunk a blocking finding on an unchanged file rests on; null otherwise. */
+  hunk: HunkRef | null;
 }>;
 /** A part of the change the gate says it did not review (dev.12 round 2): recorded and reported, never enforced. */
 export type GateUnreviewed = Readonly<{ path: string; reason: string }>;
@@ -438,6 +480,8 @@ type GateCommon = Readonly<{
    * `gateAnswerFor`, `clusterCoverage`).
    */
   clusters: readonly GateCluster[] | null;
+  /** dev.17: one ruling per dispute the gate was given, exactly; empty when it was given none. Absent on a dev.16 answer: none. */
+  rulings: readonly DisputeRuling[];
 }>;
 export type GateOutput =
   | (GateCommon & Readonly<{ decision: 'approve' | 'escalate'; directives: readonly [] }>)
@@ -446,27 +490,42 @@ export type GateOutput =
 export const GATE_SCHEMA: Schema = sObj({
   decision: sEnum(GATE_DECISIONS),
   findings: sArr(sObj({
-    severity: sEnum(FINDING_SEVERITIES), path: sNullable(S_STR), text: S_STR, contractRef: sNullable(S_STR), experiments: sArr(sObj({ command: S_STR, output: S_STR })),
-    debt: sNullable(sObj({ drag: S_STR })),
+    severity: sEnum(FINDING_SEVERITIES_DEV17), path: sNullable(S_STR), text: S_STR, contractRef: sNullable(S_STR), experiments: sArr(sObj({ command: S_STR, output: S_STR })),
+    debt: sNullable(sObj({ drag: S_STR })), defect: sNullable(sEnum(DEFECT_CATEGORIES)), reraises: sNullable(S_STR), hunk: sNullable(sObj({ path: S_STR, line: S_INT })),
   })),
   directives: sArr(S_STR),
   reasons: sArr(S_STR),
   premises: S_PREMISES,
   unreviewed: sArr(sObj({ path: S_STR, reason: S_STR })),
   clusters: sNullable(sArr(sObj({ id: S_STR, paths: sArr(S_STR), review: sEnum(CLUSTER_REVIEWS) }))),
+  rulings: sArr(sObj({ finding: S_STR, ruling: sEnum(DISPUTE_RULINGS), reason: S_STR })),
 });
 
 /** Absent (a dev.12 answer): `unrecorded`, with the upgrade warning; null: not debt. */
 const readDebt = (read: GateDebt | null | undefined): GateDebt | null | typeof GATE_DEBT_UNRECORDED => (read === undefined ? gateNoteDebtDefault() : read);
 const gateExperiment: Read<GateExperiment> = object((f) => ({ command: f.get('command', str), output: f.get('output', str) }));
+const hunkRef: Read<HunkRef> = object((g) => ({ path: g.get('path', str), line: g.get('line', int(1, Number.MAX_SAFE_INTEGER)) }));
+/** Absent (a dev.16 answer): null, with the upgrade warning. */
+const dev17 = <T>(read: T | null | undefined): T | null => (read === undefined ? gateFindingReviewDefault() : read);
 const finding: Read<GateFinding> = object((f) => ({
-  severity: f.get('severity', oneOf(FINDING_SEVERITIES)),
+  severity: f.get('severity', oneOf(FINDING_SEVERITIES_DEV17)),
   path: f.get('path', nullable(str)),
   text: f.get('text', str),
   contractRef: f.get('contractRef', nullable(str)),
   experiments: f.optional('experiments', arrayOf(gateExperiment)) ?? [],
   debt: readDebt(f.optional('debt', nullable(object((g): GateDebt => ({ drag: g.get('drag', str) }))))),
+  defect: dev17(f.optional('defect', nullable(oneOf(DEFECT_CATEGORIES)))),
+  reraises: dev17(f.optional('reraises', nullable((v, p): ReviewFindingId => reviewFindingId(v, p)))),
+  hunk: dev17(f.optional('hunk', nullable(hunkRef))),
 }));
+const disputeRuling: Read<DisputeRuling> = object((f) => ({
+  finding: f.get('finding', (v, p): ReviewFindingId => reviewFindingId(v, p)), ruling: f.get('ruling', oneOf(DISPUTE_RULINGS)), reason: f.get('reason', str),
+}));
+const rulingList: Read<readonly DisputeRuling[]> = (value, path) => {
+  const rulings = arrayOf(disputeRuling)(value, path);
+  assertUnique(rulings, (r) => r.finding, path);
+  return rulings;
+};
 const unreviewedEntry: Read<GateUnreviewed> = object((f) => ({ path: f.get('path', str), reason: f.get('reason', str) }));
 const clusterEntry: Read<GateCluster> = object((f) => ({
   id: f.get('id', str), paths: f.get('paths', arrayOf((v, p) => repoPattern(v, p), { nonEmpty: true })), review: f.get('review', oneOf(CLUSTER_REVIEWS)),
@@ -489,6 +548,7 @@ export const gateOutput: Read<GateOutput> = object((f): GateOutput => {
     findings: f.get('findings', arrayOf(finding)), reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })), premises: f.get('premises', arrayOf(premise)),
     unreviewed: f.optional('unreviewed', arrayOf(unreviewedEntry)) ?? gateUnreviewedDefault(),
     clusters: readClusters(f.optional('clusters', nullable(clusterMap))),
+    rulings: f.optional('rulings', rulingList) ?? gateRulingsDefault(),
   };
   if (decision === 'revise') return { ...common, decision, directives: f.get('directives', arrayOf(str, { nonEmpty: true })) };
   if (decision === 'approve') {
@@ -1190,6 +1250,44 @@ export function validatePolishJudgeOutput(value: unknown): PolishJudgeOutput {
 }
 
 // ---------------------------------------------------------------------------------------------------
+// verifier (dev.17, proportional review: src/pipeline/docsonly.ts)
+
+/**
+ * What a hunk of a docs-only claim is: a `comment`, a `docstring`, `documentation` (prose in a docs file), `code`, or `mixed`.
+ * Code carries lane passes over only when every hunk is one of the first three and none is executable, a tool directive or a
+ * behaviour change (`hunkClear`).
+ */
+export const HUNK_KINDS = ['comment', 'docstring', 'documentation', 'code', 'mixed'] as const;
+export type HunkKind = (typeof HUNK_KINDS)[number];
+export type HunkVerdict = Readonly<{ id: string; kind: HunkKind; executable: boolean; toolDirective: boolean; behaviourChange: boolean }>;
+export type VerifierOutput = Readonly<{ hunks: readonly HunkVerdict[] }>;
+
+/** The verifier's schema; `ids` the hunk ids it was given, which `hunks[].id` then enumerates (null: any id). */
+export function verifierSchemaFor(ids: readonly string[] | null): Schema {
+  return sObj({
+    hunks: sArr(sObj({ id: ids === null || ids.length === 0 ? S_STR : sEnum(ids), kind: sEnum(HUNK_KINDS), executable: S_BOOL, toolDirective: S_BOOL, behaviourChange: S_BOOL })),
+  });
+}
+export const VERIFIER_SCHEMA: Schema = verifierSchemaFor(null);
+
+export const verifierOutput: Read<VerifierOutput> = object((f) => {
+  const hunks = f.get('hunks', arrayOf(object((g): HunkVerdict => ({
+    id: g.get('id', str), kind: g.get('kind', oneOf(HUNK_KINDS)), executable: g.get('executable', bool), toolDirective: g.get('toolDirective', bool),
+    behaviourChange: g.get('behaviourChange', bool),
+  }))));
+  assertUnique(hunks, (h) => h.id, `${f.path}.hunks`);
+  return { hunks };
+});
+
+export function validateVerifierOutput(value: unknown): VerifierOutput {
+  return verifierOutput(value, 'verifier');
+}
+
+/** A hunk the verifier cleared: comment, docstring or documentation, neither executable nor a tool directive, no behaviour change. */
+export const hunkClear = (h: HunkVerdict): boolean =>
+  (h.kind === 'comment' || h.kind === 'docstring' || h.kind === 'documentation') && !h.executable && !h.toolDirective && !h.behaviourChange;
+
+// ---------------------------------------------------------------------------------------------------
 
 export type RoleOutputs = {
   readonly planCheck: PlanCheckOutput;
@@ -1201,10 +1299,11 @@ export type RoleOutputs = {
   readonly flow: FlowOutput;
   readonly walkthrough: WalkthroughOutput;
   readonly polishJudge: PolishJudgeOutput;
+  readonly verifier: VerifierOutput;
 };
 export const ROLE_SCHEMAS: { readonly [R in Role]: Schema } = {
   planCheck: PLAN_CHECK_SCHEMA, build: BUILD_SCHEMA, gate: GATE_SCHEMA, lens: LENS_SCHEMA, checkpoint: CHECKPOINT_SCHEMA, packReview: PACK_REVIEW_SCHEMA, flow: FLOW_SCHEMA,
-  walkthrough: WALKTHROUGH_SCHEMA, polishJudge: POLISH_JUDGE_SCHEMA,
+  walkthrough: WALKTHROUGH_SCHEMA, polishJudge: POLISH_JUDGE_SCHEMA, verifier: VERIFIER_SCHEMA,
 };
 export const ROLE_VALIDATORS: { readonly [R in Role]: (value: unknown) => RoleOutputs[R] } = {
   planCheck: validatePlanCheckOutput,
@@ -1216,4 +1315,5 @@ export const ROLE_VALIDATORS: { readonly [R in Role]: (value: unknown) => RoleOu
   flow: validateFlowOutput,
   walkthrough: validateWalkthroughOutput,
   polishJudge: validatePolishJudgeOutput,
+  verifier: validateVerifierOutput,
 };

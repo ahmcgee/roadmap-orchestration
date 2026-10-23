@@ -668,7 +668,7 @@ async function main(): Promise<void> {
   const unitLane = { id: UNIT, argv: ['sh', '-c', 'grep -q hello hello.txt'], cwd: repoPath('.'), env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], evidenceExcludes: [] } as const;
   const buildInputs = (worktree: AbsPath, evidenceDir: AbsPath): BuildInputs => ({
     spec: { unit: unitId('u-hello'), rev: specRev(1), markdown: buildSpec }, contracts: [], rulings: [], index: MINI_INDEX, planCheckNotes: '', fastLanes: [unitLane], suiteLanes: [],
-    evidenceDir, worktree, scope: [repoPattern('hello.txt')], fixRound: null, witnessChecks: [], milestones: null, browser: null,
+    evidenceDir, worktree, scope: [repoPattern('hello.txt')], fixRound: null, witnessChecks: [], milestones: null, browser: null, certifiedAt: null,
   });
 
   // (3) A checkpoint answer under the new schema: an admit with `targets`.

@@ -13,6 +13,7 @@ import { PROMPT as PACK_REVIEW_OPUS } from './packReview/claude-opus-5-5.ts';
 import { PROMPT as PLAN_CHECK_OPUS } from './planCheck/claude-opus-5-5.ts';
 import { PROMPT as POLISH_JUDGE_OPUS } from './polishJudge/claude-opus-5-5.ts';
 import { PROMPT as WALKTHROUGH_OPUS } from './walkthrough/claude-opus-5-5.ts';
+import { PROMPT as VERIFIER_HAIKU } from './verifier/claude-haiku-5-5.ts';
 
 /** Every Codex judgment triple is unsupported in M1 (R21); layers.ts reports it as `codex-judgment`. */
 const CODEX_JUDGMENT = 'no read-only Codex judgment profile exists yet (R21)';
@@ -60,6 +61,9 @@ const HAIKU_FINISH = [
 function haiku<M extends Readonly<{ system: string }>>(opus: M): { readonly type: 'prompt'; readonly prompt: M } {
   return { type: 'prompt', prompt: { ...opus, system: `${opus.system}\n\n${HAIKU_FINISH}` } };
 }
+
+/** dev.17: why the verifier's other Claude rows read the Haiku module. */
+const VERIFIER_INHERITS = '2026-10-23: the Haiku 5.5 verifier module (a closed per-hunk classification, no model-specific method) read unchanged; no built-in seat routes this model to the verifier, so its role eval has not run on it';
 
 /** dev.13: why a walk role has no prompt on a model. */
 const WALK_OPUS_ONLY = 'the walk roles have Opus 5.5 modules only: the Sonnet and Haiku guides carry no design guidance (dev.13 plan §6)';
@@ -202,6 +206,18 @@ export const PROMPTS: PromptTable<PromptModules> = {
     'claude-haiku-5-5': { type: 'unsupported', reason: WALK_OPUS_ONLY },
     'gpt-5.6-luna': { type: 'unsupported', reason: WALK_CODEX },
     'gpt-5.6-sol': { type: 'unsupported', reason: WALK_CODEX },
+  },
+  // dev.17 (proportional review): the docs-only verifier on economy (Haiku 5.5). Its one written module is Haiku's; like every
+  // judgment role it has a row on each Claude model, so `route` may seat any class at its seats. The others read the Haiku
+  // module unchanged: the task is a closed per-hunk classification whose text holds nothing Haiku-specific but the completion
+  // lines, which the other models need no less.
+  verifier: {
+    'claude-haiku-5-5': { type: 'prompt', prompt: VERIFIER_HAIKU },
+    'claude-opus-5-5': { type: 'inherits', from: 'claude-haiku-5-5', reviewed: VERIFIER_INHERITS },
+    'claude-fable-5-1': { type: 'inherits', from: 'claude-haiku-5-5', reviewed: VERIFIER_INHERITS },
+    'claude-sonnet-5-5': { type: 'inherits', from: 'claude-haiku-5-5', reviewed: VERIFIER_INHERITS },
+    'gpt-5.6-luna': { type: 'unsupported', reason: CODEX_JUDGMENT },
+    'gpt-5.6-sol': { type: 'unsupported', reason: CODEX_JUDGMENT },
   },
 };
 

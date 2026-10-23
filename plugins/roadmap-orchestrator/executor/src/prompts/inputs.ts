@@ -8,9 +8,10 @@
 import { createHash } from 'node:crypto';
 import type { OutcomeStage, TestRef } from '../core/events.ts';
 import type {
-  ClauseId, DivergenceId, FindingId, InvocationId, JobId, LaneId, MilestoneId, ObligationId, PolishId, RulingId, ServeName, Sha, Sha256Hex, SpecRev, UnitId, VisionClauseId,
+  ClauseId, DivergenceId, FindingId, InvocationId, JobId, LaneId, MilestoneId, ObligationId, PolishId, ReviewFindingId, RulingId, ServeName, Sha, Sha256Hex, SpecRev, UnitId, VisionClauseId,
   WitnessItemId,
 } from '../core/ids.ts';
+import type { GateDelta, LedgerOutcome } from '../core/review.ts';
 import type { BringUp, Journey } from '../input/plan.ts';
 import type { RequiredWitness } from '../holistic/required.ts';
 import type { JsonValue } from '../core/json.ts';
@@ -228,6 +229,11 @@ export type BuildInputs = Readonly<{
   milestones: MilestonesInput | null;
   /** dev.13: the browser drive and bring-ups of a build in a milestone with a `browser` journey; null otherwise. */
   browser: BuildBrowser | null;
+  /**
+   * dev.17 (proportional review): the salvage SHA of the unit's last lanes attempt that ended green, the tree a build's
+   * `docsOnlySince` names; null before one.
+   */
+  certifiedAt: Sha | null;
 }>;
 
 /** One fast lane's witness check, as the build prompt names it. */
@@ -295,6 +301,19 @@ export type GateInputs = Readonly<{
   largeDiff: GateLargeDiffInput | null;
   /** dev.13: the milestones the unit takes part in and their design references; null when it is in none. */
   milestones: MilestonesInput | null;
+  /** dev.17 (proportional review): the unit's findings ledger, the disputes to rule on, and the delta from its approval. */
+  review: GateReviewInput;
+}>;
+
+/**
+ * dev.17 (proportional review; src/pipeline/review.ts): what the gate is told of the unit's findings ledger (each finding,
+ * its outcome, its text, and whether its file changed since it was raised), the builder's disputes it rules on, and its
+ * delta from the unit's approval (null: a full review).
+ */
+export type GateReviewInput = Readonly<{
+  ledger: readonly Readonly<{ id: ReviewFindingId; path: RepoPath; outcome: LedgerOutcome | null; anchorChanged: boolean; text: string }>[];
+  disputes: readonly Readonly<{ finding: ReviewFindingId; reason: string; text: string }>[];
+  delta: GateDelta | null;
 }>;
 
 /**
@@ -568,6 +587,14 @@ export type PolishJudgeInputs = Readonly<{
   evidenceDir: AbsPath;
 }>;
 
+/**
+ * dev.17 (proportional review): one hunk of a docs-only claim the verifier classifies: its id, its file, the file's language
+ * as code infers it from the name (null: none known), and the hunk as `git diff -U0` prints it, header included.
+ */
+export type VerifierHunk = Readonly<{ id: string; path: RepoPath; language: string | null; text: string }>;
+/** The verifier's inputs: the unit, the certified tree `since` and the salvage SHA `at` the hunks lie between, and the hunks. */
+export type VerifierInputs = Readonly<{ unit: UnitId; since: Sha; at: Sha; hunks: readonly VerifierHunk[] }>;
+
 export type RoleInputs = {
   readonly planCheck: PlanCheckInputs;
   readonly build: BuildInputs;
@@ -579,6 +606,7 @@ export type RoleInputs = {
   readonly flow: FlowPromptInputs;
   readonly walkthrough: WalkthroughInputs;
   readonly polishJudge: PolishJudgeInputs;
+  readonly verifier: VerifierInputs;
 };
 
 export const ROLE_INPUTS = {
@@ -588,11 +616,11 @@ export const ROLE_INPUTS = {
   ],
   build: [
     'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks',
-    'milestones', 'browser',
+    'milestones', 'browser', 'certifiedAt',
   ],
   gate: [
     'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'planCheckNotes', 'obligations', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
-    'checks', 'escalation', 'largeDiff', 'milestones',
+    'checks', 'escalation', 'largeDiff', 'milestones', 'review',
   ],
   lens: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'target', 'checkout', 'specsOnly'],
   checkpoint: [
@@ -603,6 +631,7 @@ export const ROLE_INPUTS = {
   flow: ['triggers', 'chart', 'stations', 'constraint', 'accounting', 'levers', 'givens', 'window', 'verdicts', 'rejections', 'advances', 'pressure'],
   walkthrough: ['vision', 'milestone', 'round', 'journeys', 'references', 'tweaks', 'findings', 'product', 'units', 'evidenceDir'],
   polishJudge: ['vision', 'milestone', 'journey', 'proposal', 'references', 'referenceDiff', 'walkEvidenceDir', 'before', 'after', 'evidenceDir'],
+  verifier: ['unit', 'since', 'at', 'hunks'],
 } as const satisfies { readonly [R in Role]: readonly (keyof RoleInputs[R])[] };
 
 // Compile-time half of `prompts.fields==required`: ROLE_INPUTS names every key of each role's inputs.
@@ -617,6 +646,7 @@ const ROLE_INPUTS_COMPLETE: { readonly [R in Role]: [Missing<R>] extends [never]
   flow: true,
   walkthrough: true,
   polishJudge: true,
+  verifier: true,
 };
 void ROLE_INPUTS_COMPLETE;
 

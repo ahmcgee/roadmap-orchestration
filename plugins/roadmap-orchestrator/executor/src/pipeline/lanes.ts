@@ -839,11 +839,12 @@ export function seriesEntry(ctx: ResourceContext, lanes: readonly LaneDef[]): Re
  * reuses a lane's earlier pass where `reusablePass` allows. The caller records the stage outcome; the checkout stays
  * for the caller to keep or remove, certified when it was still clean. `entered`: the stage already holds the first
  * lane's set (`seriesEntry`), reserved, so its first run takes no reservation of its own (released unused when the
- * first lane is reused). `witnesses`: a candidate's suite lanes that also run as an identical arc lane (F6), by id.
+ * first lane is reused). `witnesses`: a candidate's suite lanes that also run as an identical arc lane (F6), by id. `carry`
+ * (dev.17, a verified docs-only change: src/pipeline/docsonly.ts): passes reused in place of `reusablePass`, by lane id.
  */
 export async function runLaneSeries(
   ctx: StageContext, parent: StageParent, lanes: readonly LaneDef[], set: LaneSet, checkout: WorktreeCreateRequest, root: AbsPath,
-  rt: LaneRuntime, entered: boolean, witnesses: ReadonlyMap<LaneId, ArcLaneDef> = new Map(),
+  rt: LaneRuntime, entered: boolean, witnesses: ReadonlyMap<LaneId, ArcLaneDef> = new Map(), carry: ReadonlyMap<LaneId, Reusable> = new Map(),
 ): Promise<Series> {
   if (checkout.checkout.type !== 'detached') throw new Error(`a lane series runs in a detached checkout, not on ${checkout.checkout.branch}`);
   const ids = new Set<string>(lanes.map((l) => l.id));
@@ -936,7 +937,7 @@ export async function runLaneSeries(
   for (const lane of lanes) {
     const now = laneNow(ctx, lane, at);
     // A stand-in for an arc lane always runs: its run is also the arc lane's witness (F6).
-    const reusable = witnesses.has(lane.id) ? null : reusablePass(ctx, parent, lane, at, now);
+    const reusable = witnesses.has(lane.id) ? null : carry.get(lane.id) ?? reusablePass(ctx, parent, lane, at, now);
     const partial = reusable !== null || witnesses.has(lane.id) ? null : testOnlyRun(ctx, lane, at, now);
     const carried = reusable ?? (partial !== null && partial.files.length === 0 ? partial.base : null);
     if (carried !== null) {

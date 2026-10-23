@@ -120,3 +120,13 @@ export function movedHeadDirective(): string {
 export function repeatRedDirective(lane: LaneId, previous: Readonly<{ attempt: number }>): string {
   return `Lane ${lane} failed exactly as it did in attempt ${previous.attempt}: the same exit and the same final output line. The executor did not rerun it, because a failure that repeats unchanged is deterministic, not flaky. The previous fix did not reach its cause: read this run's evidence again, find what the failure says, and fix that.`;
 }
+
+/**
+ * dev.17 (proportional review): a gate revise's fix round names the gate's open ledger findings by id, and how the builder
+ * disputes one instead of fixing it (decisions.json `disputes`); the next gate rules on each dispute once, final.
+ */
+export function reviewDisputeDirective(open: readonly Readonly<{ id: string; path: string; text: string }>[]): string {
+  if (open.length === 0) throw new Error('reviewDisputeDirective: no open finding to name');
+  const listed = open.map((f) => `${f.id} (${f.path}): ${f.text}`).join('; ');
+  return `The gate's blocking findings are ledgered as ${listed}. Fix each, or, where you are sure a finding is wrong, dispute it instead: add {"finding": "<id>", "reason": "<why it is wrong, with evidence>"} to the "disputes" list in ${DECISIONS_FILE} and leave that code as it is. The next gate rules on each dispute once, and its ruling is final.`;
+}

@@ -99,6 +99,7 @@ import {
   type JourneyEnd, type JourneyRun, type JourneySeries, type Series, arcJourneyLane, arcLaneKey, intact, journeyRed, laneEnvId, laneRuntime, mapInForce, observations, removeJobCheckouts,
   removeVerificationTree, runJourneySeries, runLaneSeries, seriesOrder, standInJourneyLane, suiteJourneyLane, suiteStandIns,
 } from './lanes.ts';
+import { carriedLanes } from './docsonly.ts';
 import { type MutantEnd, mutantAcceptance, syncRepairs } from './reproduce.ts';
 import { pressureCause, seriesRuling } from './starved.ts';
 import { type StageDone, at, environmentFacts, executorIdentity, failedFacts, holisticInForce, integrationTip, latestMergein, loadUnitSpec, record, start } from './stages.ts';
@@ -260,6 +261,10 @@ async function integrate(ctx: StageContext, unit: PlanUnit, parent: StageParent,
       if (fault !== null) return fault;
       if (!failed(onCandidate)) return heldClaims(ctx, unit, parent, intent);
       if (ctx.signal.reason === 'preempt') return ended('preempted');
+      // dev.17 calibration: a lane whose pass the unit's docs-only acceptance carried over is red here (src/pipeline/docsonly.ts).
+      const carried = new Set<string>(carriedLanes(ctx, unit.id));
+      const missed = onCandidate.end.kind === 'red' && carried.has(onCandidate.end.lane.lane) ? [onCandidate.end.lane.lane] : [];
+      if (missed.length > 0) ctx.journal.fact({ kind: 'docs-only-miss', unit: unit.id, attempt: parent.attempt, lanes: missed });
       // Red on the candidate: the tip alone decides whose red it is.
       const tip = intent.expect.integrationTip;
       const alone = await suite(ctx, parent, lanes, { path: baseWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, parent.attempt), checkout: { type: 'detached', at: tip } }, baseSeriesRoot(ctx.runDir, parent), new Map());

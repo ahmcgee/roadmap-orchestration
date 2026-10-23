@@ -81,6 +81,8 @@ Before you finish, run every fast lane listed in the message exactly as written,
 
 <decisions>
 When you settle a question the spec leaves open and a competent engineer could reasonably have chosen otherwise, record it in ${DECISIONS_FILE} at the root of the evidence directory named in the message: a JSON object {"decisions": [{"id": "...", "text": "..."}]}, one entry per decision, text stating what you chose and the alternative you did not. Ids start with a letter, use letters, digits, _ . or -, and must not reuse an id in the spec or in the file already. Keep the file complete: rewrite it with every decision so far. Routine judgment calls do not belong there.
+
+A fix round names the gate's blocking findings by id (R-n). Where you are sure one is wrong, you may dispute it instead of fixing it: add {"finding": "R-n", "reason": "..."} to a "disputes" list in the same file, the reason giving your evidence, and leave that code as it is. The next gate rules on each dispute once, and its ruling is final.
 </decisions>
 
 <safety>
@@ -88,7 +90,7 @@ This host runs sibling units and the orchestrator. Stay inside the worktree and 
 </safety>
 
 <report>
-Your final message is the structured report. summary: two or three plain sentences on what changed and why, plus anything you left alone that someone should know. changedPaths: the repository paths you changed or created in this run, read from git status and git log rather than recalled. lanesRun: each fast lane run, by its id, with its exit code. experiments: every other command you ran to check your work (a single test, a witness check, a script, a probe), each with a short name, its argv and its exit code; never a fast lane. blockers: what keeps the unit from being complete, one per entry; empty when it is complete. final: true (false only in a report you give while you wait, see above). Stop when the spec's clauses hold and the fast lanes pass; finishing early is correct, and work beyond the spec is scope creep the gate rejects.
+Your final message is the structured report. summary: two or three plain sentences on what changed and why, plus anything you left alone that someone should know. changedPaths: the repository paths you changed or created in this run, read from git status and git log rather than recalled. lanesRun: each fast lane run, by its id, with its exit code. experiments: every other command you ran to check your work (a single test, a witness check, a script, a probe), each with a short name, its argv and its exit code; never a fast lane. blockers: what keeps the unit from being complete, one per entry; empty when it is complete. docsOnlySince: when the message names the unit's last certified tree and everything you changed since that tree is comments or documentation, that tree's SHA; otherwise null. The executor checks the claim against the diff and then reuses that tree's lane results instead of running the lanes again, so claim it only when it is true. final: true (false only in a report you give while you wait, see above). Stop when the spec's clauses hold and the fast lanes pass; finishing early is correct, and work beyond the spec is scope creep the gate rejects.
 </report>
 
 ${BUILD_DELEGATION}`;
@@ -102,7 +104,7 @@ This is a fix round on work you already did in this worktree. Read the failing e
 ${bullets(i.fixRound.failingEvidenceDirs, '(no failing lanes)')}
 Directives to carry out:
 ${bullets(i.fixRound.directives, '(none)')}
-Fix exactly what failed and what the directives name, nothing adjacent. Do not re-litigate a directive: carry it out, or record in a blocker why it is wrong and leave the code as it is. Then run every fast lane again and return the report. The same scope, safety and decision rules apply.
+Fix exactly what failed and what the directives name, nothing adjacent. Do not re-litigate a directive: carry it out, dispute the gate finding behind it (see decisions), or record in a blocker why it is wrong and leave the code as it is. Then run every fast lane again and return the report. The same scope, safety and decision rules apply.
 </fix_round>`;
 }
 
@@ -118,7 +120,7 @@ export const PROMPT: PromptModule<'build'> = {
   schema: BUILD_SCHEMA,
   fields: [
     'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks',
-    'milestones', 'browser',
+    'milestones', 'browser', 'certifiedAt',
   ],
   render: (i) => `${documentsXml([
     { source: `spec.json for unit ${i.spec.unit}, revision ${i.spec.rev} (rendered)`, content: i.spec.markdown },
@@ -141,6 +143,8 @@ ${i.planCheckNotes === '' ? '(none)' : i.planCheckNotes}
 <worktree>${i.worktree}</worktree>
 
 <evidence_dir>${i.evidenceDir}</evidence_dir>
+
+<certified_tree>${i.certifiedAt ?? '(none yet: docsOnlySince is null)'}</certified_tree>
 
 <scope_patterns>
 ${bullets(i.scope, '(empty)')}
