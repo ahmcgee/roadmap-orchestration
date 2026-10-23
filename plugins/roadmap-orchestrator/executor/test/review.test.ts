@@ -191,7 +191,7 @@ test('review.docs-only-code-certain: code clears a comment hunk only on a lexer 
   /** The number of hunks code leaves to the verifier for `path` changed from `before` to `after` (a directive fails). */
   const left = (path: string, before: string, after: string): number => {
     const read = readByCode(path, before, after, diffOf(before, after));
-    assert.equal(read.kind, 'read', `${path}: no directive`);
+    assert.equal(read.kind, 'read', `${path}: not refused`);
     return read.kind === 'read' ? read.left.length : -1;
   };
   // Controls: a whole-line comment in plain code is cleared by code.
@@ -219,6 +219,17 @@ test('review.docs-only-code-certain: code clears a comment hunk only on a lexer 
   for (const path of ['ci.yaml', 'ci.yml', 'Cargo.toml', 'setup.cfg', 'tox.ini', 'conf.json5', 'a.rb', 'a.rs']) {
     assert.equal(left(path, 'a = 1\n', '# a is one\na = 1\n'), 1, path);
   }
+  // Refused by code outright: a JSON line opening with a quote (a `"//"` key is a value) and a line inside a `/*!` block (kept by bundlers).
+  const refused = (path: string, before: string, after: string): string => {
+    const read = readByCode(path, before, after, diffOf(before, after));
+    return read.kind === 'refused' ? read.reason : 'not refused';
+  };
+  assert.match(refused('package.json', '{\n  "//": "a",\n  "x": 1\n}\n', '{\n  "//": "b",\n  "x": 1\n}\n'), /changes a JSON key or value/);
+  assert.equal(left('tsconfig.json', '{\n  // a\n  "x": 1\n}\n', '{\n  // b\n  "x": 1\n}\n'), 1, 'a JSONC comment goes to the verifier');
+  const legal = (year: string) => `/*!\n * widgets\n * (c) ${year} Labs\n */\nexport const a = 1;\n`;
+  assert.match(refused('src/w.ts', legal('2024'), legal('2025')), /preserved \/\*! comment/, 'inside a /*! block');
+  assert.match(refused('src/w.ts', legal('2024'), legal('2024').replace('/*!', '/*! v2')), /preserved \/\*! comment/, 'its opening line');
+  assert.equal(left('src/w.ts', '/*! kept */\n// a\nconst a = 1;\n', '/*! kept */\n// b\nconst a = 1;\n'), 0, 'a comment after a closed /*! line');
   // A Go example's output block: the Output line and every comment line under it.
   const example = (out: readonly string[]): string =>
     `package a\n\nimport "fmt"\n\nfunc ExampleMul() {\n\tfmt.Println(6)\n\t// Output:\n${out.map((l) => `\t// ${l}\n`).join('')}}\n`;

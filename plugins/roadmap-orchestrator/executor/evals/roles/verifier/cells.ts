@@ -16,18 +16,20 @@
 //   EX-RS-DOCTEST   a rustdoc example's assertion changed in a block doc comment      executable
 //   DIR-TSLINT      a tslint:disable block comment narrowed                           toolDirective
 //   DIR-PURE        a /*#__PURE__*/ annotation added before a call                    toolDirective
-//   DIR-LEGAL       a /*! preserved legal header's year changed (kept in the bundle)  toolDirective
+//   DIR-YAMLLS      a YAML file's `# yaml-language-server: $schema=` modeline bumped  toolDirective
 //   DIR-DOCKER      a Dockerfile's `# syntax=` parser directive bumped                toolDirective
 //   STR-PY-LINES    "# ..." lines of a Python string the program writes out           code
 //   STR-TEMPLATE    a /* ... */ line inside a TypeScript template literal of CSS      code
 //   STR-PY-USAGE    the prose of a printed usage string (triple-quoted)               behaviourChange
 //   MIX-TS          a comment and the rounding call under it, one hunk                behaviourChange
 //   MIX-SPLIT       a JSDoc reword (clear) and a separate default changed (code)      clear + code
-//   DATA-JSON       package.json's "//" key reworded: a value, not a comment          code
+//   DATA-YAML       a `# ...` line inside a YAML block scalar: content, not a comment  code
 //
 // Code settles some families alone and never asks the verifier, so they are not cells: whole-line comments it is certain
 // of by a lexer pass over the file (src/pipeline/comments.ts; never a Rust `///` doctest, a Go `// Output:` block, a line
-// inside a multi-line string or a configuration file's comment), and comments matching a DIRECTIVES pattern (eslint-disable, @ts-expect-error, SPDX headers, `# type: ignore`: code refuses them).
+// inside a multi-line string or a configuration file's comment), and what code refuses alone: comments matching a DIRECTIVES
+// pattern (eslint-disable, @ts-expect-error, SPDX headers, `# type: ignore`), a line inside a `/*!` block and a JSON line
+// opening with a quote (a `"//"` key).
 //
 // The holdout set (evals/roles/holdout/verifier.ts, untracked) exports HOLDOUT_VERIFIER_CELLS of the same type, run only at
 // acceptance with --compare.
@@ -121,9 +123,9 @@ export const DEV_VERIFIER_CELLS: readonly VerifierCell[] = [
     after: lines("import { createStore } from './create.js';", '', 'export const store = /*#__PURE__*/ createStore({ entries: [] });'),
   },
   {
-    id: 'DIR-LEGAL', family: 'directive', path: 'src/widgets.js', hunks: ['toolDirective'],
-    before: lines('/*!', ' * Northwind widgets 2.3.0', ' * (c) 2024 Northwind Labs, Apache-2.0', ' */', 'export function badge(text) {', '  return `<span class="badge">${text}</span>`;', '}'),
-    after: lines('/*!', ' * Northwind widgets 2.3.0', ' * (c) 2025 Northwind Labs, Apache-2.0', ' */', 'export function badge(text) {', '  return `<span class="badge">${text}</span>`;', '}'),
+    id: 'DIR-YAMLLS', family: 'directive', path: 'src/ledger.yaml', hunks: ['toolDirective'],
+    before: lines('# yaml-language-server: $schema=./schema/ledger-v1.json', 'name: tally', 'currency: EUR', 'retries: 3'),
+    after: lines('# yaml-language-server: $schema=./schema/ledger-v2.json', 'name: tally', 'currency: EUR', 'retries: 3'),
   },
   {
     id: 'DIR-DOCKER', family: 'directive', path: 'src/Dockerfile', hunks: ['toolDirective'],
@@ -156,9 +158,9 @@ export const DEV_VERIFIER_CELLS: readonly VerifierCell[] = [
     after: lines('/**', ' * Cuts the entries into pages of `size`.', ' */', 'export function paginate<T>(items: readonly T[], size = 50): T[][] {', '  const pages: T[][] = [];', '  for (let i = 0; i < items.length; i += size) pages.push(items.slice(i, i + size));', '  return pages;', '}', '', 'export const DEFAULT_PAGE = 0;'),
   },
   {
-    id: 'DATA-JSON', family: 'data', path: 'src/package.json', hunks: ['code'],
-    before: lines('{', '  "name": "tally",', '  "//": "keep engines in step with the CI image",', '  "engines": { "node": ">=24" }', '}'),
-    after: lines('{', '  "name": "tally",', '  "//": "engines must match the node version the CI image ships",', '  "engines": { "node": ">=24" }', '}'),
+    id: 'DATA-YAML', family: 'data', path: 'src/motd.yaml', hunks: ['code'],
+    before: lines('greeting: hello', 'motd: |', '  # Tally', '  Keep your ledger balanced.', 'farewell: bye'),
+    after: lines('greeting: hello', 'motd: |', '  # Tally, the household ledger', '  Keep your ledger balanced.', 'farewell: bye'),
   },
 ];
 

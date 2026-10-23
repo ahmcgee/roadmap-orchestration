@@ -7,7 +7,9 @@
 // changed line is blank or a whole-line comment by a lexer pass over the whole file at that side (src/pipeline/comments.ts
 // `lineKinds`: TypeScript, JavaScript, Go and Python; a line inside a multi-line string, template literal or raw string is
 // none, and a Go example's `// Output:` block is none), at least one of them a comment, none a comment a tool may read
-// (`TOOL_READ`), with no line matching a tool directive (`DIRECTIVES`: a directive refuses the claim outright). Code clears
+// (`TOOL_READ`), with no line matching a tool directive (`DIRECTIVES`) or inside a `/*!` block (`inPreservedBlock`): either
+// refuses the claim outright, and so does a changed line of a JSON file that opens with a quote (a key or a value, never a
+// comment: a `"//"` key is data). Code clears
 // only what it is certain of: a file whose language has no lexer (configuration files among them: YAML, TOML, INI, JSON5),
 // a file the lexer cannot read with certainty, and an added or deleted file leave their hunks to the verifier. A mode
 // change, a binary file or a submodule refuses the claim. Every hunk
@@ -70,11 +72,24 @@ function hunksOf(diff: string): readonly Hunk[] {
 const TOOL_READ: readonly RegExp[] = [/^\/\/[/!]/, /^(\/\/|#)\s*@/];
 
 /** What code alone makes of a file's diff: a directive (the hunk's header), or the hunks it leaves to the verifier. */
-export type CodeReading = Readonly<{ kind: 'directive'; hunk: string }> | Readonly<{ kind: 'read'; left: readonly string[] }>;
+export type CodeReading = Readonly<{ kind: 'refused'; reason: string }> | Readonly<{ kind: 'read'; left: readonly string[] }>;
+
+/**
+ * Whether line `n` (1-based) of `lines` lies inside a `/*!` block: a comment minifiers and bundlers keep in their output
+ * (a legal header). A text scan, not a lexer pass: it only ever refuses, never clears.
+ */
+function inPreservedBlock(lines: readonly string[], n: number): boolean {
+  for (let i = n - 1; i >= 0; i--) {
+    const t = lines[i]!.trim();
+    if (t.startsWith('/*!')) return i === n - 1 || !t.includes('*/');
+    if (i !== n - 1 && t.includes('*/')) return false;
+  }
+  return false;
+}
 
 /**
  * Code's reading of the `-U0` diff of `path` from `before` to `after` (the whole file at each side; null where it does not
- * exist): a hunk with a directive refuses; a hunk is cleared only when both sides lex with certainty (`lineKinds`) and its
+ * exist): a hunk with a directive, a line inside a `/*!` block or a JSON line opening with a quote refuses; a hunk is cleared only when both sides lex with certainty (`lineKinds`) and its
  * every changed line is blank or a comment no tool reads, at least one a comment; every other hunk is left to the verifier.
  */
 export function readByCode(path: string, before: string | null, after: string | null, diff: string): CodeReading {
@@ -82,7 +97,10 @@ export function readByCode(path: string, before: string | null, after: string | 
   const texts = { before: before?.split('\n') ?? [], after: after?.split('\n') ?? [] };
   const left: string[] = [];
   for (const h of hunksOf(diff)) {
-    if (h.lines.some((l) => DIRECTIVES.some((d) => d.test(l.text.trim())))) return { kind: 'directive', hunk: h.text.split('\n')[0]! };
+    const header = h.text.split('\n')[0]!;
+    if (h.lines.some((l) => DIRECTIVES.some((d) => d.test(l.text.trim())))) return { kind: 'refused', reason: `${path} changes a tool directive: ${header}` };
+    if (h.lines.some((l) => inPreservedBlock(texts[l.side], l.line))) return { kind: 'refused', reason: `${path} changes a preserved /*! comment: ${header}` };
+    if (/\.jsonc?$/i.test(path) && h.lines.some((l) => l.text.trim().startsWith('"'))) return { kind: 'refused', reason: `${path} changes a JSON key or value: ${header}` };
     const read = h.lines.map((l): LineKind => {
       const k = kinds.before === null || kinds.after === null ? undefined : kinds[l.side]![l.line - 1];
       if (k === undefined) return 'other';
@@ -128,7 +146,7 @@ async function verdictOf(ctx: StageContext, unit: PlanUnit, parent: StageParent,
     if (/^Binary files /m.test(diff)) return { kind: 'refused', reason: `${path} is binary` };
     const show = (sha: Sha, mode: string): string | null => (mode === '000000' ? null : git(ctx.repo, ['show', `${sha}:${path}`]));
     const read = readByCode(path, show(since, oldMode!), show(at, newMode!), diff);
-    if (read.kind === 'directive') return { kind: 'refused', reason: `${path} changes a tool directive: ${read.hunk}` };
+    if (read.kind === 'refused') return read;
     for (const text of read.left) left.push({ id: `h${left.length + 1}`, path, language: languageOf(path), text });
   }
   if (left.length === 0) return { kind: 'accepted', by: 'code' };
