@@ -177,7 +177,8 @@ export async function applyDeflake(ctx: DeflakeContext): Promise<DeflakeOutcome>
     const s = laneSource(ctx, current, inForce.plan, g);
     return s === null ? [] : [{ g, ...s }];
   });
-  if (sources.length === 0) return { kind: 'applied', admitted: [], recurring: d.recurring.length };
+  // Every due lane is gone (no longer defined where it was): nothing to admit; the job waits like any job with nothing done.
+  if (sources.length === 0) return d.recurring.length === 0 ? { kind: 'none' } : { kind: 'applied', admitted: [], recurring: d.recurring.length };
   const ids = nextIds(inForce.plan, sources.length);
   const reasons: string[] = [];
   sources.forEach(({ g, spec, owner }, i) => {
