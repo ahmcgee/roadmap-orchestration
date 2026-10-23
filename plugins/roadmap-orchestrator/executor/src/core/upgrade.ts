@@ -262,10 +262,11 @@ export const PRE_DEV12_BUILTIN_SEATS: ClassTable = {
 
 // Experience-won routing (owner 2026-10-22, 1.0.0-dev.17): plan-check and the gate moved to frontier at every risk tier, and
 // build.high to efficient (its builds consult an Opus advisor). As above, OR-L3 binds every revision through HEAD's seats:
-// an arc started on 1.0.0-dev.12 to dev.16 re-pins its units under the new rev without a park while their implementer seat
-// is unchanged (a unit at risk high that already built on frontier parks `routing-changed`: its session cannot move), and
-// status aliases the revs it recorded. Delete (with `PRE_DEV17_BUILTIN_SEATS`'s place in `EARLIER_BUILTIN_SEATS`) once no
-// arc started on 1.0.0-dev.16 or earlier is in flight.
+// an arc started on 1.0.0-dev.12 to dev.16 re-pins its units under the new rev without a park, and status aliases the revs
+// it recorded. A unit at risk high whose build already started on frontier keeps that pinned seat through to its merge
+// (`implementerSeatKept`; its session cannot move); units not yet started build under the new seats. Delete (with
+// `PRE_DEV17_BUILTIN_SEATS`'s place in `EARLIER_BUILTIN_SEATS`, `ResolvedRouting.preDev17Rev` and `implementerSeatKept`) once no arc started on
+// 1.0.0-dev.16 or earlier is in flight.
 
 /**
  * The built-in seats 1.0.0-dev.12 to dev.16 hashed: efficient plan-checked and gated low and med, frontier high; frontier
@@ -287,6 +288,16 @@ export const PRE_DEV17_BUILTIN_SEATS: ClassTable = {
 
 /** Every built-in seat table an earlier adopted release hashed, oldest first: what status aliases recorded revs under. */
 export const EARLIER_BUILTIN_SEATS: readonly ClassTable[] = [PRE_DEV10_BUILTIN_SEATS, PRE_DEV12_BUILTIN_SEATS, PRE_DEV17_BUILTIN_SEATS];
+
+/**
+ * A started implementer whose pinned routing is dev.16's built-in seats (`ResolvedRouting.preDev17Rev`: a release upgrade,
+ * not an owner edit) and whose seat the new seats move (dev.16 built high on frontier): it keeps its pinned seat through to its merge, as its
+ * session cannot move; src/pipeline/dispatch.ts `repin`. Delete with `PRE_DEV17_BUILTIN_SEATS` once no arc started on
+ * 1.0.0-dev.16 or earlier is in flight.
+ */
+export function implementerSeatKept(unit: string, seat: string): void {
+  warnDefaulted(`dispatch.implementerSeat.${unit}`, `unit ${unit} started building on ${seat} under an earlier release's built-in seats; it keeps that seat through to its merge (the new seats apply to units not yet started)`);
+}
 
 // Plan defects (2026-10-16, 1.0.0-dev.11): a fresh arc's arc lanes declare `testPaths` and its witnesses `files`, and
 // Phase 0 checks every witness file against its lane and its deliverers (src/phase0/rows.ts). Obligations an arc started

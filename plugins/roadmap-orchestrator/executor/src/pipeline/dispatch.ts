@@ -18,8 +18,10 @@
 //   resumes, so its session key (`implementerSessionKey`: backend and model, R4) may not change. The unit is re-pinned
 //   under the new rev (a new dispatch fact, scope and floor unchanged) when no build has started for it or its
 //   implementer seat keeps its key under both revs (an effort-only change re-pins, and the session resumes with the new
-//   `--effort`; OR-L3); otherwise the stage parks it (`routing-changed`) with a needs-user naming the seat, never a
-//   model. The pinned seat's triple is read back from its `implementerSeatRev` (`seatTripleOf`).
+//   `--effort`; OR-L3), or the pinned rev is the same stack under dev.16's built-in seats (`preDev17Rev`, a release upgrade:
+//   the re-pin keeps the started implementer's pinned seat through to its merge; scaffolding, `implementerSeatKept`);
+//   otherwise (an owner routing edit) the stage parks it (`routing-changed`) with a needs-user naming the seat, never a
+//   model. The pinned seat's triple is read back from its `implementerSeatRev` (`seatTripleOf`), and the implementer builds on it.
 //   A steer round (R11) starts a fresh implementer session, so it re-pins whatever the seat (`steerDispatch`):
 //   `steer --class` moves the implementer seat on purpose.
 // - Seats: the implementer sits on the unit's risk tier for the whole unit (it keeps its model); a
@@ -66,6 +68,7 @@ import { type ResourceContext, type UnitAcquiringHolder, holderUnits } from '../
 import { OWNER_ENV, ownerLabel } from '../resources/teardown.ts';
 import type { ResolvedRouting } from '../routing/layers.ts';
 import { routingChangedRecommendation } from '../needsuser.ts';
+import { implementerSeatKept } from '../core/upgrade.ts';
 import {
   type ArcRole, type ArcSeatRef, type WalkRole, type Backend, CLAUDE_EFFORTS, CLAUDE_MODELS, CODEX_EFFORTS, CODEX_MODELS, RISK_TIERS, type Triple, type JudgmentRole, type JudgmentSeat, type RiskTier, type Role, type UnitSeatRef, seatRef,
 } from '../routing/types.ts';
@@ -187,7 +190,10 @@ export function buildStarted(view: JournalView, unit: UnitId): boolean {
  * `record` re-pinned under `routing` (a new dispatch fact, same scope and floor) when the unit can absorb the
  * change: no build has started for it, or the seat it builds on (`build.<buildTier>`) keeps its session key (R4: an
  * effort-only change is absorbed, and the session resumes with the new effort); null when it cannot. On the floor the
- * seat is the pinned `implementerSeatRev` (`seatTripleOf`). An escalated unit (A11) no longer
+ * seat is the pinned `implementerSeatRev` (`seatTripleOf`). TEMPORARY SCAFFOLDING (dev.17 routing, src/core/upgrade.ts):
+ * when the pinned rev is the routing in force's stack under dev.16's built-in seats (`preDev17Rev`: a release upgrade,
+ * not an owner edit) and the floor is unchanged, the unit is re-pinned keeping its pinned seat, which
+ * it builds on through to its merge (`implementerSeatKept`). Delete once no dev.16 arc is in flight. An escalated unit (A11) no longer
  * builds on its floor, so a change there is absorbed; its `build.high` seat is not pinned, and its session
  * resumes only under the routing it ran on (rounds.ts `spawnSeatRev`), else a fresh one is told the worktree
  * holds the work. The stages call it when the rev in force differs from the pinned one, and so does
@@ -196,7 +202,12 @@ export function buildStarted(view: JournalView, unit: UnitId): boolean {
 export function repin(journal: Journal, routing: ResolvedRouting, record: DispatchRecord, update: PinUpdate = {}): DispatchRecord | null {
   const seat = routing.table.build[update.riskFloor ?? record.riskFloor];
   const onFloor = (journal.view.unit(record.unit).buildTier ?? record.riskFloor) === record.riskFloor;
-  if (onFloor && !sameSession(seatTripleOf(record.implementerSeatRev), seat) && buildStarted(journal.view, record.unit)) return null;
+  const pinnedSeat = seatTripleOf(record.implementerSeatRev);
+  if (onFloor && !sameSession(pinnedSeat, seat) && buildStarted(journal.view, record.unit)) {
+    if (record.routingRev !== routing.preDev17Rev || update.riskFloor !== undefined) return null;
+    implementerSeatKept(record.unit, `${pinnedSeat.backend} ${pinnedSeat.model}`);
+    return pin(journal, routing, record, update, record.implementerSeatRev);
+  }
   return pin(journal, routing, record, update);
 }
 
@@ -212,12 +223,15 @@ const withDerived = (record: DispatchRecord, derived: readonly RepoPattern[]): D
   return derived.length === 0 ? rest : { ...rest, derived };
 };
 
-/** Records `record` re-pinned under `routing` with `update` (a new dispatch fact), whatever its implementer seat. */
-function pin(journal: Journal, routing: ResolvedRouting, record: DispatchRecord, update: PinUpdate): DispatchRecord {
+/**
+ * Records `record` re-pinned under `routing` with `update` (a new dispatch fact), whatever its implementer seat: the floor's
+ * seat under `routing`, or `kept` (a started implementer's pinned seat across a release upgrade, `repin`).
+ */
+function pin(journal: Journal, routing: ResolvedRouting, record: DispatchRecord, update: PinUpdate, kept: SeatRev | null = null): DispatchRecord {
   const riskFloor = update.riskFloor ?? record.riskFloor;
   const { derived, ...rest } = update;
   const next: DispatchRecord = withDerived({
-    ...record, ...rest, routingRev: routing.rev, implementerSeatRev: implementerSeatRev(routing, riskFloor), at: now(),
+    ...record, ...rest, routingRev: routing.rev, implementerSeatRev: kept ?? implementerSeatRev(routing, riskFloor), at: now(),
   }, derived ?? record.derived ?? []);
   journal.fact({ kind: 'dispatch', record: next });
   return next;
@@ -361,8 +375,8 @@ function seated(ctx: StageContext, record: DispatchRecord): ImplementerDispatch 
   const tier = ctx.journal.view.unit(unit).buildTier;
   if (tier === null) throw new Error(`unit ${unit} is dispatched but has no build tier`);
   const routing = ctx.routing(unit);
-  const seat = tier === riskFloor ? floorSeat : implementerSeatRev(routing, tier);
-  return { role: 'build', tier, triple: routing.table.build[tier], routingRev, seatRev: seat };
+  if (tier === riskFloor) return { role: 'build', tier, triple: seatTripleOf(floorSeat), routingRev, seatRev: floorSeat };
+  return { role: 'build', tier, triple: routing.table.build[tier], routingRev, seatRev: implementerSeatRev(routing, tier) };
 }
 
 // ---------------------------------------------------------------------------------------------------

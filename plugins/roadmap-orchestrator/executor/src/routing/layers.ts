@@ -63,7 +63,7 @@ import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { Fields, type Read, SchemaError, arrayOf, object, positive, str, stringMap } from '../core/validate.ts';
 import { type RepoGiven, repoGiven } from '../flow/types.ts';
 import { type SystemsMap, systemsMap } from '../input/systems.ts';
-import { dev7ArcRolesDefault } from '../core/upgrade.ts';
+import { EARLIER_BUILTIN_SEATS, PRE_DEV17_BUILTIN_SEATS, dev7ArcRolesDefault } from '../core/upgrade.ts';
 import { type PlanM1, type PlanTargetKind, hasMilestones } from '../input/plan.ts';
 import type { StartupRejection } from '../preflight/startup.ts';
 import { support } from '../prompts/index.ts';
@@ -240,6 +240,20 @@ export type ResolvedRouting = Readonly<{
   arcScope: ArcScope;
   arcRoles: ArcRoleSet | null;
   milestones: boolean;
+  /**
+   * TEMPORARY SCAFFOLDING (BACKLOG "Scaffolding to delete"): the revs this same stack hashed under each earlier adopted
+   * release's built-in seats (`EARLIER_BUILTIN_SEATS`, src/core/upgrade.ts), which status aliases a recorded rev through.
+   * Empty under any table but HEAD's.
+   */
+  earlierBuiltinRevs: readonly RoutingRev[];
+  /**
+   * TEMPORARY SCAFFOLDING: the one of `earlierBuiltinRevs` under `PRE_DEV17_BUILTIN_SEATS`, the only earlier table whose
+   * build seats differ from HEAD's (dev.16 built high on frontier). A unit pinned under it is a dev.16 arc's, so dispatch
+   * keeps its started implementer's seat (`repin`). Only this table: an owner edit of HEAD's seats can hash to an older
+   * table's rev (HEAD with build.high on frontier is dev.9's table where no arc role is in force), never to this one
+   * unless it restores dev.16's seats exactly. Null under any table but HEAD's.
+   */
+  preDev17Rev: RoutingRev | null;
 }>;
 
 const LAYERS = [['unit', 'unit'], ['plan', 'plan'], ['repo-config', 'repoConfig']] as const;
@@ -250,7 +264,10 @@ const LAYERS = [['unit', 'unit'], ['plan', 'plan'], ['repo-config', 'repoConfig'
  * every seat naming the class, else the catalogue's build triple at a build seat and its judgment triple at any other.
  */
 export function resolveRouting(stack: RoutingStack): ResolvedRouting {
-  return resolveRoutingUnder(BUILTIN_SEATS, stack);
+  return {
+    ...resolveRoutingUnder(BUILTIN_SEATS, stack), earlierBuiltinRevs: EARLIER_BUILTIN_SEATS.map((seats) => resolveRoutingUnder(seats, stack).rev),
+    preDev17Rev: resolveRoutingUnder(PRE_DEV17_BUILTIN_SEATS, stack).rev,
+  };
 }
 
 /**
@@ -275,6 +292,7 @@ export function resolveRoutingUnder(builtin: ClassTable, stack: RoutingStack): R
   const milestones = stack.milestones === true;
   return {
     table, classes, sources: seatTable((s) => named(s)[1]), bindings, rev: routingRevOf(table, arcScope, arcRoles, milestones), arcScope, arcRoles, milestones,
+    earlierBuiltinRevs: [], preDev17Rev: null,
   };
 }
 
