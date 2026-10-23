@@ -21,7 +21,9 @@
 //   preempt  u1's candidate parks in a suite lane holding the publication slot before green (the `c-pin` lane, which
 //            parks on its first run only) when a `rule` lands C-2 with a contract op: its docs publication preempts the
 //            candidate (the kill of its lane, reason `preempt`), publishes, and u1 runs a fresh candidate onto the new
-//            tip, is gated again (the contract its approval bound changed) and merges. A crashed executor's successor
+//            tip, whose ff is fingerprint-invalid (the contract its approval bound changed); the contract op's stale set
+//            re-opens u1 at plan-check (dev.17 propagation), which answers it, a build resumes its session, it is gated
+//            again and merges. A crashed executor's successor
 //            releases the parked run (its recovery adopts it by waiting for it): a crash before the preemption can then
 //            let the candidate go green first (safety, not the uncrashed order, is claimed).
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -212,8 +214,13 @@ export function layoutHolisticConcurrent(t: Owner, peer: HolisticPeer): Holistic
   // The pin parks on its first run only (publish-common.ts `barrierSuite`): the preempting kill ends that run, and every
   // later run (the publication's own suite, u1's fresh candidate) passes at once.
   const r = setupExec(t, { steps: [], suite: [SUITE_LANE, { ...barrierSuite(barriers), id: 'c-pin' }] });
-  // The contract op changes a contract the approval bound: u1's green candidate onto the new tip is fingerprint-invalid, and a second gate approves.
-  appendSteps(r, [...SMOKE_DEFAULT, ...keyed('u1', [planCheckStep({ decision: 'approve' }), build(MUL), gateStep({ decision: 'approve' }), gateStep({ decision: 'approve' })])]);
+  // The contract op changes a contract the approval bound: u1's green candidate onto the new tip is fingerprint-invalid,
+  // its stale link re-opens it at plan-check (dev.17 propagation), the build resumes, and a second gate approves.
+  appendSteps(r, [...SMOKE_DEFAULT, ...keyed('u1', [
+    planCheckStep({ decision: 'approve' }), build(MUL), gateStep({ decision: 'approve' }),
+    planCheckStep({ decision: 'approve', staleLinks: [{ link: 'contract:contracts/api.md', outcome: 'confirmed', reason: 'C-2 narrows the sum to finite numbers; mul holds' }] }),
+    codexStep([]), gateStep({ decision: 'approve' }),
+  ])]);
   const hooks: readonly Hook[] = [
     once('rule', () => existsSync(join(barriers, 'lane.reached')), () => {
       const path = ruleC2(r);
