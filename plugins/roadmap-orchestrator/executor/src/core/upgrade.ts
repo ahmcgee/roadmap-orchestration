@@ -488,3 +488,11 @@ export function specPinsDefault(): typeof UNPINNED {
   warnDefaulted('spec.pins', 'a spec without revision pins (written before 1.0.0-dev.17); its links read as unpinned (stale-unknown)');
   return 'unpinned';
 }
+
+/**
+ * The flaky ledger (dev.17): an arc whose revision in force an executor before 1.0.0-dev.17 applied ran without one, and
+ * its flakes were charged as red. Read as an empty ledger at the upgrade: flakes its units met before are not in it.
+ */
+export function flakyLedgerDefault(): void {
+  warnDefaulted('flaky.ledger', 'an arc whose revision in force was applied before 1.0.0-dev.17 has no flaky ledger; it starts empty at the upgrade');
+}

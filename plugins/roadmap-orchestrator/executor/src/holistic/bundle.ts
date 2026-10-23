@@ -95,7 +95,7 @@ import {
   type InForce, type InputFile, type InputFiles, type RevisionInForce, type RoutingBase, inForceFiles, keptPayload, ledgerPath, requirePlanInForce, revisionInForce,
   sidecarPath,
 } from '../input/inforce.ts';
-import { type PlanM1, type PolishOrigin, advancesOf, contractOpDocuments, parsePlan } from '../input/plan.ts';
+import { type DeflakeOrigin, type PlanM1, type PolishOrigin, advancesOf, contractOpDocuments, parsePlan } from '../input/plan.ts';
 import type { RiskTier } from '../routing/types.ts';
 import { type RevisionContext, evaluateRevision, keepRevision, payloadOf } from '../commands/apply.ts';
 import { mayOverlap } from '../input/classify.ts';
@@ -456,7 +456,7 @@ function mappedObligations(obligations: Obligations, scope: readonly string[], d
  */
 export type AdmitEntry = Readonly<{
   id: UnitId; risk: RiskTier; scope: readonly RepoPattern[]; after: readonly UnitId[]; resources: readonly ResourceName[];
-  origin: 'checkpoint' | 'repair' | 'polish'; polish?: PolishOrigin;
+  origin: 'checkpoint' | 'repair' | 'polish' | 'deflake'; polish?: PolishOrigin; deflake?: DeflakeOrigin;
 }>;
 
 /**
@@ -478,7 +478,7 @@ export function admitUnit(plan: RawPlan, specs: Map<UnitId, InputFile>, entry: A
   if (spec.unit !== entry.id || spec.rev !== 1) return { reasons: [`${at}: its spec names unit ${spec.unit} rev ${spec.rev}, not ${entry.id} rev 1`] };
   plan.units.push({
     id: entry.id, spec: `${entry.id}.json`, risk: entry.risk, scope: entry.scope, resources: entry.resources, after: entry.after, origin: entry.origin,
-    ...(entry.polish === undefined ? {} : { polish: entry.polish }),
+    ...(entry.polish === undefined ? {} : { polish: entry.polish }), ...(entry.deflake === undefined ? {} : { deflake: entry.deflake }),
   });
   specs.set(entry.id, { path: specPath, bytes: specBytes(spec) });
   return { spec };

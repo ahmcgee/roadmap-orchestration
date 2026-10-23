@@ -26,7 +26,9 @@
 // re-runs its held stage once admitted; admission holds it under `host-pressure{inv}` until a scheduler tick since the
 // hold shows the host's cpu wait over a minute below `PRESSURE_SATURATED`, or `STARVED_HOLD_MS` pass (`pressureHoldWaits`, src/host/pressure.ts).
 import { type OutcomeStage, JUDGMENT_STAGES, type JudgmentStage, type ProbeTarget } from '../core/events.ts';
-import type { ObligationId, UnitId } from '../core/ids.ts';
+import type { LaneId, ObligationId, UnitId } from '../core/ids.ts';
+import { systemsMapInForce } from '../input/systems.ts';
+import { deflakeHold } from '../pipeline/deflake.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { type NeedsUserReason, obligationRevsOf } from '../core/records.ts';
 import { ENTRY_STAGE, type UnitState } from '../core/state.ts';
@@ -56,7 +58,11 @@ const isAdmissionStage = (s: OutcomeStage): s is AdmissionStage => (ADMISSION_ST
  * finding with a mutant, so it reproduces the mutant before anything is graded. `repairs`: the obligations it repairs
  * (its `I-n` repairs and its findings' obligations).
  */
-export type SpecFacts = Readonly<{ reproduces: boolean; repairs: ReadonlySet<ObligationId> }>;
+export type SpecFacts = Readonly<{
+  reproduces: boolean; repairs: ReadonlySet<ObligationId>;
+  /** dev.17: its spec lanes, forces and witness lanes (src/pipeline/deflake.ts `specLaneIds`), read when a deflake edge may hold it. */
+  lanes: () => ReadonlySet<LaneId>;
+}>;
 export type SpecFactsOf = (unit: PlanUnit) => SpecFacts;
 
 /**
@@ -163,6 +169,9 @@ export function admitter(routing: (unit: UnitId) => RoutingTable, specOf: SpecFa
       const hold = knownDefectHold(view, plan, unit.id);
       if (hold !== null) c.push(hold);
     }
+    // dev.17: a code edge from an open deflake unit whose lane this undispatched unit runs (src/pipeline/deflake.ts).
+    const edge = deflakeHold(view, plan, systemsMapInForce(view.planApplied()), unit, () => specOf(unit).lanes());
+    if (edge !== null) c.push(edge);
     const starved = view.unit(unit.id).pressureHold;
     if (starved !== null && pressureHoldWaits(Date.parse(starved.at), pressure)) c.push({ type: 'host-pressure', inv: starved.inv });
     for (const b of blocking) if (b.subject === 'host' || ADMISSION_BLOCKING.includes(b.reason)) c.push({ type: 'blocking-item', id: b.id, reason: b.reason });

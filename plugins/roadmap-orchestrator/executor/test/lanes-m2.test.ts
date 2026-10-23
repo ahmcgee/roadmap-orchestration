@@ -1,6 +1,6 @@
 // M2 lanes (src/pipeline/lanes.ts, src/pipeline/redlane.ts), integrated over real processes and real git: the
 // red-lane protocol on real lanes, host samples, `@cpu` and pool-instance reservations with their binding, and
-// cancelled waits. Named tests: lanes.flake-red-green, lanes.red-red, lanes.signature-no-evidence,
+// cancelled waits. Named tests: lanes.flake-red-green, lanes.flake-deflake-own (dev.17, the flaky ledger), lanes.red-red, lanes.signature-no-evidence,
 // lanes.signature-busy-rerun-pass, lanes.instance-env, lanes.pause-mid-series.
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
@@ -21,6 +21,7 @@ import { lanes, loadUnitSpec } from '../src/pipeline/stages.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
 import type { Acquire, ResourceRequest } from '../src/schedule/types.ts';
 import { tmpDir } from './helpers/repo.ts';
+import { revParse } from '../src/git/git.ts';
 import { intents } from './fixtures/invoke-specs.ts';
 import { DB, type LaneJson, SCENARIO_TIMEOUT_MS, type StageRun, U1, keptSpec, launchOf, outcomeFacts, setupUnit, spawnIntents, started } from './fixtures/stage-common.ts';
 
@@ -57,42 +58,74 @@ const runtime = (ctx: StageContext, sampleHost: () => HostSample, signal: AbortS
 
 const readBack = (run: StageRun, ctx: StageContext = run.ctx) => seriesLedger(ctx, PARENT, loadUnitSpec(run.ctx, run.unit).spec.lanes, 'spec', run.base, specSeriesRoot(ctx.runDir, PARENT));
 
-test('lanes.flake-red-green: red then green on the diagnostic rerun is red, flaky, charged; both runs kept; the fix round is told', T, async () => {
+test('lanes.flake-red-green: red then green on the diagnostic rerun is a flake: recorded in the flaky ledger and forgiven (the green rerun counts, uncharged); both runs kept', T, async () => {
   const run = laneRun([redGreen('flaky', 'expected 3, got 4')]);
   const done = started(await lanes(run.ctx, run.unit, run.base));
-  assert.equal(done.outcome.kind, 'red');
-  assert.equal(done.next.kind === 'stage' && done.next.stage, 'build');
-  const fact = outcomeFacts(run).at(-1)!;
-  assert.ok(fact.kind === 'stage-outcome' && fact.outcome === 'red' && fact.chargeable, 'flaky is charged as red');
-  assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, 1);
+  assert.equal(done.outcome.kind, 'green');
+  assert.equal(done.next.kind === 'stage' && done.next.stage, 'gate');
+  assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, 0, 'a forgiven flake is not charged');
+  assert.equal(done.fix, null);
 
   assert.equal(done.ledger.length, 1, 'one record per lane');
   const [record] = done.ledger;
-  assert.ok(record !== undefined && record.diagnostic !== null);
-  assert.equal(record.verdict, 'fail', 'the record is the failing run');
+  assert.ok(record !== undefined && record.voided !== null);
+  assert.equal(record.verdict, 'pass', 'the record is the green rerun');
   assert.equal(record.flaky, true);
-  assert.equal(record.voided, null);
-  assert.equal(record.diagnostic.verdict, 'pass');
-  assert.ok(record.evidenceDir.endsWith('/flaky'));
-  assert.ok(record.diagnostic.evidenceDir.endsWith('/flaky.rerun'), record.diagnostic.evidenceDir);
-  assert.match(readFileSync(join(record.evidenceDir, 'output', 'files', 'stderr'), 'utf8'), /expected 3, got 4/);
-  assert.match(readFileSync(join(record.diagnostic.evidenceDir, 'output', 'files', 'stdout'), 'utf8'), /green/);
-  for (const dir of [record.evidenceDir, record.diagnostic.evidenceDir]) assert.ok(existsSync(join(dir, 'host.json')), `${dir}/host.json`);
-  assert.ok(record.host !== null && record.host.start.cpus > 0, 'the host samples read back');
+  assert.equal(record.diagnostic, null);
+  assert.equal(record.voided.verdict, 'fail', 'the red run is kept, voided');
+  assert.ok(record.voided.evidenceDir.endsWith('/flaky'));
+  assert.ok(record.evidenceDir.endsWith('/flaky.rerun'), record.evidenceDir);
+  assert.match(readFileSync(join(record.voided.evidenceDir, 'output', 'files', 'stderr'), 'utf8'), /expected 3, got 4/);
+  assert.match(readFileSync(join(record.evidenceDir, 'output', 'files', 'stdout'), 'utf8'), /green/);
+  for (const dir of [record.evidenceDir, record.voided.evidenceDir]) assert.ok(existsSync(join(dir, 'host.json')), `${dir}/host.json`);
 
   // Two runs of the lane, the same SHA, one attempt.
   const spawns = laneSpawns(run);
   assert.equal(spawns.length, 2);
   assert.ok(spawns.every((s) => s.expect.subject.purpose === 'lane' && s.expect.subject.at === run.base && s.expect.subject.lane === 'flaky'));
 
+  // The flake, once: the lane's input (the whole tree, no systems map) and environment, the red run then the green.
+  const flakes = run.journal.view.flakes().map((x) => x.fact);
+  const subject = spawns[0]!.expect.subject;
+  const identity = subject.purpose === 'lane' ? subject.identity : undefined;
+  assert.ok(identity !== undefined);
+  assert.deepEqual(flakes, [{
+    kind: 'flake-observed', owner: { type: 'unit', unit: U1 }, lane: 'flaky', set: 'spec', forgiven: true,
+    event: { tree: revParse(run.repo, `${run.base}^{tree}`), env: identity.envId, failing: [], red: record.voided.inv, green: record.inv },
+  }]);
+
+  // Read back from the journal and the files: the same record.
+  const spawnParent = spawns[0]!.parent;
+  assert.ok(spawnParent.type === 'stage');
+  const back = seriesLedger(run.ctx, spawnParent, loadUnitSpec(run.ctx, run.unit).spec.lanes, 'spec', run.base, specSeriesRoot(run.runDir, spawnParent));
+  assert.deepEqual(back, done.ledger);
+});
+
+test('lanes.flake-deflake-own: a deflake unit\'s own flake is not forgiven: red, flaky, charged; the fix round is told', T, async () => {
+  const run = setupUnit({ steps: [], lanes: [redGreen('flaky', 'expected 3, got 4')], unit: { origin: 'deflake', deflake: { keys: [{ type: 'lane', lane: 'flaky' }] } } });
+  pinDispatch(run.ctx, run.unit, keptSpec(run.journal));
+  const done = started(await lanes(run.ctx, run.unit, run.base));
+  assert.equal(done.outcome.kind, 'red');
+  assert.equal(done.next.kind === 'stage' && done.next.stage, 'build');
+  const fact = outcomeFacts(run).at(-1)!;
+  assert.ok(fact.kind === 'stage-outcome' && fact.outcome === 'red' && fact.chargeable, 'its flaky lane is charged as red');
+  assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, 1);
+  assert.deepEqual(run.journal.view.flakes().map((x) => [x.fact.lane, x.fact.forgiven]), [['flaky', false]], 'the flake is in the ledger all the same');
+
+  const [record] = done.ledger;
+  assert.ok(record !== undefined && record.diagnostic !== null);
+  assert.equal(record.verdict, 'fail', 'the record is the failing run');
+  assert.equal(record.flaky, true);
+  assert.equal(record.voided, null);
+  assert.equal(record.diagnostic.verdict, 'pass');
+  assert.ok(record.diagnostic.evidenceDir.endsWith('/flaky.rerun'), record.diagnostic.evidenceDir);
+
   // The fix round: the failing run's evidence, the passing rerun's, and the flake directive.
   assert.ok(done.fix !== null && done.fix.kind === 'fix');
   assert.deepEqual(done.fix.fix.failingEvidenceDirs, [...record.fixDirs, ...record.diagnostic.fixDirs]);
   assert.equal(done.fix.fix.directives.length, 1);
   assert.match(done.fix.fix.directives[0]!, /^Lane flaky is flaky: it failed, then passed when the executor reran it at the same commit; .*flaky\.rerun/);
-
-  // Read back from the journal and the files: the same record.
-  const spawnParent = spawns[0]!.parent;
+  const spawnParent = laneSpawns(run)[0]!.parent;
   assert.ok(spawnParent.type === 'stage');
   const back = seriesLedger(run.ctx, spawnParent, loadUnitSpec(run.ctx, run.unit).spec.lanes, 'spec', run.base, specSeriesRoot(run.runDir, spawnParent));
   assert.deepEqual(back, done.ledger);
