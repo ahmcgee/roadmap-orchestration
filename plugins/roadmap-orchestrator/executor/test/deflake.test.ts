@@ -14,6 +14,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import type { DesignRecord } from '../src/core/design.ts';
+import type { JsonValue } from '../src/core/json.ts';
 import type { Fact } from '../src/core/events.ts';
 import { readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
@@ -48,9 +49,14 @@ const STRAIGHT = [...PRE_LANES, 'lanes:green', 'gate:approve', 'candidate:green'
 
 /** Each step keyed to `unit`. */
 const of = (unit: string, steps: readonly Step[]): readonly Step[] => steps.map((s) => ({ ...s, unit }));
-/** A unit straight through: approved plan-check, a build committing `files` beside mul, an approving gate. */
+/** A deflake unit's approving design record (dev.17 design pass): its verification, two runs of the flaky lane. */
+const DEFLAKE_DESIGN: JsonValue = {
+  kind: 'module', changes: [{ system: null, paths: ['test/**'], lines: 5 }], interfaces: [], failureModes: [], clauses: [{ clause: 'A-1', lanes: ['flaky'] }], breaks: { tests: [], docs: [] }, experiments: [],
+  newSystem: null, verification: { type: 'reproduce-then-fix', condition: 'the marker absent: the lane red', runs: 2 },
+};
+/** A unit straight through: approved plan-check (a deflake unit's with its verification), a build committing `files` beside mul, an approving gate. */
 const straight = (unit: string, files: Readonly<Record<string, string>>): readonly Step[] =>
-  of(unit, [planCheckStep({ decision: 'approve' }), mulBuild(files), gateStep({ decision: 'approve' })]);
+  of(unit, [planCheckStep({ decision: 'approve', ...(unit.startsWith('deflake-') ? { design: DEFLAKE_DESIGN } : {}) }), mulBuild(files), gateStep({ decision: 'approve' })]);
 
 const facts = (r: ArcRun): readonly Fact[] => readJournal(r.ctx.runDir, r.journal.view.arc).events.flatMap((e) => (e.type === 'fact' ? [e.fact] : []));
 const planOf = (r: ArcRun): PlanM1 => requirePlanInForce(r.ctx.runDir, r.journal.view).plan;
@@ -251,7 +257,7 @@ describe('the flaky ledger', () => {
       const median = medianLaneMinutes(r.ctx.runDir, r.journal.view, plan, unit.deflake!.keys, LANE_DEADLINE_MS);
       assert.ok(median !== null && median > 0 && median < 1, `the lane's runs were measured: ${median}`);
       const design = (verification?: DesignRecord['verification']): DesignRecord => ({
-        kind: 'module', changes: [{ system: null, paths: ['test/**' as never], lines: 3 }], interfaces: [], failureModes: [], breaks: { tests: [], docs: [] }, experiments: [],
+        kind: 'module', changes: [{ system: null, paths: ['test/**' as never], lines: 3 }], interfaces: [], failureModes: [], clauses: [], breaks: { tests: [], docs: [] }, experiments: [],
         ...(verification === undefined ? {} : { verification }),
       });
       const reasons = (dr: DesignRecord | undefined) => verificationReasons(r.ctx, plan, unit, spec, dr, LANE_DEADLINE_MS);

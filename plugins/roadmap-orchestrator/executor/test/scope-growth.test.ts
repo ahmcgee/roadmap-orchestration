@@ -137,7 +137,8 @@ test('scope.accept: a verified proposal holds the unit; `scope accept` lands one
     assert.equal(ran.kind, 'held', JSON.stringify(ran));
     assert.deepEqual(outcomes(d), ['plan-check:scope-growth', 'plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released']);
     assert.ok((dispatchOf(r.journal.view, U1).scope as readonly string[]).includes('package.json'), 'the dispatch re-pinned');
-    assert.equal(r.journal.view.unit(U1).spec?.rev, 2);
+    // Rev 3: the re-opened plan-check's approve lands its design record on the grown rev 2 (dev.17).
+    assert.equal(r.journal.view.unit(U1).spec?.rev, 3);
     assert.ok(readCalls(d.scenarioPath)[1]!.stdin.includes('<scope_envelope>\n- contracts/**\n- package.json\n- src/**\n- test/**\n</scope_envelope>'));
     assert.equal(git(d.repo, 'show', `${unitBranch(r.ctx.plan().arc, U1)}:package.json`), PACKAGE.trimEnd());
     assert.ok(readCalls(d.scenarioPath).every((c) => c.step !== null));

@@ -143,6 +143,6 @@ test('roles.verifier-arm: the arm is the verifier seat (economy, Haiku 5.5 high)
 
 test('roles.verifier-triggers: the verifier\'s prompt, the docs-only check and its eval trigger the verifier eval alone; shared paths every role', T, () => {
   for (const p of ['src/prompts/verifier/claude-haiku-5-5.ts', 'src/pipeline/docsonly.ts', 'src/pipeline/comments.ts', 'evals/roles/verifier/cells.ts']) assert.deepEqual(triggeredRoles([p]), ['verifier'], p);
-  for (const p of ['src/prompts/schemas.ts', 'src/routing/profiles.ts', 'evals/roles/run.ts']) assert.deepEqual(triggeredRoles([p]), ['gate', 'walkthrough', 'polishJudge', 'verifier'], p);
+  for (const p of ['src/prompts/schemas.ts', 'src/routing/profiles.ts', 'evals/roles/run.ts']) assert.deepEqual(triggeredRoles([p]), ['gate', 'walkthrough', 'polishJudge', 'verifier', 'scaffold'], p);
   assert.deepEqual(triggeredRoles(['src/pipeline/gate.ts']), ['gate']);
 });

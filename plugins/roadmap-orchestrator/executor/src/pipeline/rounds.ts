@@ -390,8 +390,8 @@ export async function callRound(ctx: StageContext, round: PreparedRound, spec: (
   return callImplementer(ctx, spec(round.fresh));
 }
 
-/** The unit worktree on the unit branch; created at the integration tip for the unit's first build. */
-async function ensureWorktree(ctx: StageContext, unit: UnitId, parent: StageParent): Promise<Readonly<{ worktree: AbsPath; branch: RefName }>> {
+/** The unit worktree on the unit branch; created at the integration tip for the unit's first build (or, dev.17, its scaffold). */
+export async function ensureWorktree(ctx: StageContext, unit: UnitId, parent: StageParent): Promise<Readonly<{ worktree: AbsPath; branch: RefName }>> {
   const worktree = unitWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit);
   const branch = unitBranch(ctx.plan().arc, unit);
   if (existsSync(worktree)) return { worktree, branch };

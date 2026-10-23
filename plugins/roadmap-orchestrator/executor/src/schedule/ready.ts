@@ -105,7 +105,8 @@ function backendOf(routing: RoutingTable, u: UnitState, unit: PlanUnit, stage: A
     const j = stage as JudgmentStage;
     return routing[ROLE_OF[j]][judgmentSeat({ ...u, risk: u.risk ?? unit.risk }, j)].backend;
   }
-  if (stage === 'build') return routing.build[u.buildTier ?? unit.risk].backend;
+  if (stage === 'build' || stage === 'poc') return routing.build[u.buildTier ?? unit.risk].backend;
+  if (stage === 'scaffold') return routing.scaffold[u.risk ?? unit.risk].backend;
   return null;
 }
 
@@ -117,7 +118,7 @@ function backendOf(routing: RoutingTable, u: UnitState, unit: PlanUnit, stage: A
 function breakerBlocks(target: ProbeTarget, stage: AdmissionStage, backend: Backend | null): boolean {
   switch (target.type) {
     case 'host':
-      return stage === 'build' || stage === 'lanes' || stage === 'reproduce';
+      return stage === 'build' || stage === 'lanes' || stage === 'reproduce' || stage === 'scaffold' || stage === 'poc';
     case 'backend':
       return target.backend === backend;
     case 'resource':

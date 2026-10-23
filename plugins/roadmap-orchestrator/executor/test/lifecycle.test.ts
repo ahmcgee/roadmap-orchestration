@@ -135,7 +135,7 @@ test('reopen.plan-check-park: resume is rejected until a revision of the spec (t
     assert.deepEqual(outcomes(d), ['plan-check:escalate', 'plan-check:escalate', ...STRAIGHT]);
     const calls = readCalls(d.scenarioPath);
     assert.ok(calls[2]!.stdin.includes('mul(0, 5) is 0'), 'the re-opened plan-check reads the edited spec');
-    assert.equal(r.journal.view.unit(U1).approval?.fingerprint.specRev, 2);
+    assert.equal(r.journal.view.unit(U1).approval?.fingerprint.specRev, 3, 'approved on rev 2, its design record landing as rev 3 (dev.17)');
     assert.equal(r.journal.view.unit(U1).counters.attempts, STRAIGHT.length + 3, 'the counters of the parked run are kept');
     assert.ok(calls.every((c) => c.step !== null));
   } finally {

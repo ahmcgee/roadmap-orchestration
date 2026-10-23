@@ -152,7 +152,7 @@ export function setupGateArc(f: Fixture, kind: GateKind, risk: RiskTier, config:
   const runDir = tmpDir('roles-run');
   const steps: Step[] = [
     // The plan-check's risk is the dispatch's: it picks the gate's seat.
-    { as: 'claude', expect: { argv: ['-p'] }, acts: [{ type: 'emit', value: planCheckAnswer({ decision: 'approve', risk }) }] },
+    { as: 'claude', expect: { argv: ['-p'] }, acts: [{ type: 'planCheck', value: planCheckAnswer({ decision: 'approve', risk }) }] },
     // The build's backend is the one its risk routes to (built-in: codex low/med under the default profile, Claude Opus high).
     { ...buildCall(risk, config), acts: [{ type: 'checkoutTree', sha: head, message: f.message }, { type: 'emit', value: BUILD_REPORT }] },
     ...gateSteps(kind, f.key, kind !== 'real' && overThreshold(repo, base, head, f.removes), readOnly ? { repo, runDir } : null),

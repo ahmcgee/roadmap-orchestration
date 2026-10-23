@@ -340,6 +340,8 @@ export type RevisionSource =
   | Readonly<{ type: 'walk'; job: JobId }>
   /** dev.13: the cut of polish unit `unit`, which its compare judged `drop` (`polish-dropped`, src/walk/compare.ts). */
   | Readonly<{ type: 'compare'; unit: UnitId }>
+  /** dev.17 (design pass): the split of `unit` its plan-check call `inv` decided (src/pipeline/split.ts). */
+  | Readonly<{ type: 'split'; unit: UnitId; inv: InvocationId }>
   /** dev.17 (flaky ledger): the code-applied revision admitting deflake units for the flakes the ledger holds (src/pipeline/deflake.ts). */
   | Readonly<{ type: 'deflake' }>
   /** dev.17 (propagation): the code-applied revision minting the propagation units of the stale set plan rev `rev` recorded. */
@@ -476,9 +478,11 @@ export const STAGE_OUTCOME_KINDS = {
   // `scope accept|reject <unit>`, src/commands/scope.ts).
   // 2026-10-16: `context-exceeded` (the call's prompt or context outgrew the model's window: an uncharged env park), at
   // plan-check, build and gate.
+  // dev.17 (design pass): `split` (the split revision lands, cutting the unit: a hold no resume releases), `scaffold` and `poc`
+  // (on to those stages), `plan-defect` (an answer refused twice for a plan defect: an uncharged park naming why).
   'plan-check': [
     'approve', 'redirect', 'infeasible', 'escalate', 'risk-lowered', 'scope-widened', 'refusal', 'malformed', 'process-fault', 'interrupted', 'routing-changed',
-    'in-session', 'read-denied', 'scope-growth', 'context-exceeded', 'executor-fault',
+    'in-session', 'read-denied', 'scope-growth', 'context-exceeded', 'executor-fault', 'split', 'scaffold', 'poc', 'plan-defect',
   ],
   // M4a rev 3 (E, R55) to dev.16: the in-session assessment found the spec `infeasible`, or raised the risk floor onto
   // another implementer seat (`risk-raised`). dev.17 records neither; read from an older log.
@@ -524,6 +528,16 @@ export const STAGE_OUTCOME_KINDS = {
   ],
   ff: ['published', 'cas-stale', 'fingerprint-invalid', 'foreign-move'],
   snapshot: ['published'],
+  // dev.17 (design pass): the scaffold writer's attempt. `scaffolded`: the skeleton passed code's checks and is the unit's
+  // first executor-authored commit; `refused`: it failed one (one retry, told why); `plan-defect`: refused again, or its
+  // load test cannot run (an uncharged park naming why).
+  scaffold: [
+    'scaffolded', 'refused', 'plan-defect', 'refusal', 'process-fault', 'lost', 'interrupted', 'routing-changed', 'context-exceeded', 'occupied', 'cleanup-failed',
+    'executor-fault',
+  ],
+  // dev.17 (design pass): a proof of concept's throwaway build. `answered`: its closed answer read; `unanswered`: none to read
+  // (malformed, a refusal, lost). Either goes back to a fresh plan-check with the report.
+  poc: ['answered', 'unanswered', 'process-fault', 'interrupted', 'routing-changed', 'context-exceeded', 'occupied', 'cleanup-failed', 'executor-fault'],
 } as const satisfies { readonly [S in Exclude<Stage, 'retire'>]: readonly string[] };
 export type OutcomeStage = keyof typeof STAGE_OUTCOME_KINDS;
 export type StageOutcomeKind<S extends OutcomeStage = OutcomeStage> = (typeof STAGE_OUTCOME_KINDS)[S][number];
@@ -630,7 +644,16 @@ export type StageOutcomeDetail =
    */
   | Readonly<{ kind: 'context-exceeded'; inv: InvocationId; promptBytes: number }>
   /** 1.0.0-dev.17: `executor-fault` at any stage that has it, the thrown error's stack (its message when it has none). */
-  | Readonly<{ kind: 'executor-fault'; stack: string }>;
+  | Readonly<{ kind: 'executor-fault'; stack: string }>
+  /** dev.17 (design pass): plan-check `split`, the children the split revision adds (two or more, in answer order). */
+  | Readonly<{ kind: 'split'; children: readonly UnitId[] }>
+  /** dev.17 (design pass): plan-check or scaffold `plan-defect`, every reason code refused the design for (non-empty). */
+  | Readonly<{ kind: 'design-defect'; reasons: readonly string[] }>
+  /**
+   * dev.17 (design pass): scaffold `refused`, why code refused the skeleton (non-empty) and, when its dry run ran the load
+   * test's lane, that run's evidence dir: what the retry is told.
+   */
+  | Readonly<{ kind: 'scaffold-refused'; reasons: readonly string[]; laneEvidence: AbsPath | null }>;
 /**
  * One verified scope-growth proposal of a plan-check (src/pipeline/stages.ts `verifiedGrowth`): repository patterns outside
  * the unit's pinned scope, each matching a file at the integration tip the plan-check read (ascending, non-empty), and the
@@ -647,6 +670,8 @@ export const DETAILED_OUTCOMES = {
   'build/executor-fault': 'executor-fault', 'quiesce/executor-fault': 'executor-fault', 'evidence/executor-fault': 'executor-fault',
   'salvage/executor-fault': 'executor-fault', 'teardown/executor-fault': 'executor-fault', 'lanes/executor-fault': 'executor-fault',
   'gate/executor-fault': 'executor-fault', 'candidate/executor-fault': 'executor-fault',
+  'plan-check/split': 'split', 'plan-check/plan-defect': 'design-defect', 'scaffold/plan-defect': 'design-defect', 'scaffold/refused': 'scaffold-refused', 'scaffold/context-exceeded': 'context-exceeded',
+  'poc/context-exceeded': 'context-exceeded', 'scaffold/executor-fault': 'executor-fault', 'poc/executor-fault': 'executor-fault',
 } as const satisfies Readonly<Record<string, StageOutcomeDetail['kind']>>;
 
 /**
@@ -707,6 +732,13 @@ export type JudgmentInputs = Readonly<{
    * is read without them (`gateReviewOf`).
    */
   review?: GateReview;
+  /**
+   * dev.17 (design pass): the changed lines the unit's design record estimated (src/core/design.ts `designSize`), null when
+   * its spec has none. Only on a gate's; absent on one an earlier executor recorded. A `largeDiff` beside an estimate within
+   * the gate's inline reading (src/pipeline/design.ts `gateInlineLines`) is the design's calibration signal: recorded,
+   * never acted on.
+   */
+  designEstimate?: number | null;
 }>;
 
 /** The paths a gate's attached diff inlined and did not (`JudgmentInputs.diffShown`). */
@@ -1436,6 +1468,7 @@ const revisionSource: Read<RevisionSource> = tagged('type', {
   flow: object((f): RevisionSource => ({ type: f.get('type', literal('flow')), proposal: f.get('proposal', proposalR) })),
   walk: object((f): RevisionSource => ({ type: f.get('type', literal('walk')), job: f.get('job', (v, p) => jobIdOfKind('walk')(v, p)) })),
   compare: object((f): RevisionSource => ({ type: f.get('type', literal('compare')), unit: f.get('unit', unitR) })),
+  split: object((f): RevisionSource => ({ type: f.get('type', literal('split')), unit: f.get('unit', unitR), inv: f.get('inv', invR) })),
   deflake: object((f): RevisionSource => ({ type: f.get('type', literal('deflake')) })),
   propagation: object((f): RevisionSource => ({ type: f.get('type', literal('propagation')), rev: f.get('rev', (v, p) => planRev(v, p)) })),
 });
@@ -1914,6 +1947,15 @@ const stageOutcomeDetail: Read<StageOutcomeDetail> = tagged('kind', {
     kind: f.get('kind', literal('context-exceeded')), inv: f.get('inv', invR), promptBytes: f.get('promptBytes', nat),
   })),
   'executor-fault': object((f): StageOutcomeDetail => ({ kind: f.get('kind', literal('executor-fault')), stack: f.get('stack', str) })),
+  split: object((f): StageOutcomeDetail => {
+    const out = { kind: f.get('kind', literal('split')), children: f.get('children', arrayOf((v, p) => unitId(v, p), { nonEmpty: true })) };
+    if (out.children.length < 2) throw new SchemaError(`${f.path}.children`, 'two or more children', out.children);
+    return out;
+  }),
+  'design-defect': object((f): StageOutcomeDetail => ({ kind: f.get('kind', literal('design-defect')), reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })) })),
+  'scaffold-refused': object((f): StageOutcomeDetail => ({
+    kind: f.get('kind', literal('scaffold-refused')), reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })), laneEvidence: f.get('laneEvidence', nullable((v, p) => absPath(v, p))),
+  })),
 });
 
 const holdCause: Read<HoldCause> = tagged('type', {
@@ -2418,10 +2460,13 @@ export const fact: Read<Fact> = tagged('kind', {
     if (largeDiff !== undefined && out.stage !== 'gate') throw new SchemaError(`${f.path}.largeDiff`, 'absent on a plan-check', largeDiff);
     const review = f.optional('review', gateReview);
     if (review !== undefined && out.stage !== 'gate') throw new SchemaError(`${f.path}.review`, 'absent on a plan-check', review);
+    const designEstimate = f.optional('designEstimate', nullable(nat));
+    if (designEstimate !== undefined && out.stage !== 'gate') throw new SchemaError(`${f.path}.designEstimate`, 'absent on a plan-check', designEstimate);
     if (fingerprint === undefined) return out;
     if (fingerprint.unitCommit !== out.head) throw new SchemaError(`${f.path}.fingerprint.unitCommit`, `the head the gate read (${out.head})`, fingerprint.unitCommit);
     return {
       ...out, fingerprint, ...(diffShown === undefined ? {} : { diffShown }), ...(largeDiff === undefined ? {} : { largeDiff }), ...(review === undefined ? {} : { review }),
+      ...(designEstimate === undefined ? {} : { designEstimate }),
     };
   }),
   'edge-resolved': object((f): Fact => ({
@@ -2516,9 +2561,10 @@ export const fact: Read<Fact> = tagged('kind', {
     if (out.class === 'retry' && !(RETRY_STAGES as readonly string[]).includes(s)) throw new SchemaError(`${f.path}.class`, `retry only at ${RETRY_STAGES.join(', ')}`, out.class);
     if (out.class === 'route-up' && !(JUDGMENT_STAGES as readonly string[]).includes(s)) throw new SchemaError(`${f.path}.class`, `route-up only at ${JUDGMENT_STAGES.join(', ')}`, out.class);
     // An interruption holds the unit, and so does a scope-growth proposal (a plan-check's, or a lanes attempt's after two
-    // reverts of one path); nothing else does; a hold never charges.
-    const holds = out.outcome === 'interrupted' || ((s === 'plan-check' || s === 'lanes') && out.outcome === 'scope-growth');
-    if (holds !== (out.class === 'hold')) throw new SchemaError(`${f.path}.class`, 'hold exactly for an interrupted outcome or a scope-growth', out.class);
+    // reverts of one path) and (dev.17) a plan-check's split until its revision cuts the unit; nothing else does; a hold
+    // never charges.
+    const holds = out.outcome === 'interrupted' || ((s === 'plan-check' || s === 'lanes') && out.outcome === 'scope-growth') || (s === 'plan-check' && out.outcome === 'split');
+    if (holds !== (out.class === 'hold')) throw new SchemaError(`${f.path}.class`, 'hold exactly for an interrupted outcome, a scope-growth or a split', out.class);
     if (out.class === 'hold' && out.chargeable) throw new SchemaError(`${f.path}.chargeable`, 'false for a hold', out.chargeable);
     return { ...out, ...(park === undefined ? {} : { park }), ...(cause === undefined ? {} : { cause }), ...(detail === undefined ? {} : { detail }) } as StageOutcomeFact;
   }),

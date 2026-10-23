@@ -53,7 +53,7 @@ const now = (): IsoTime => isoTimeOf(new Date());
  * started) logs its warning once per process (src/core/upgrade.ts).
  */
 export function flowOn(view: JournalView): boolean {
-  if (arcRolesOf(view.planApplied()) === 'm4b') return true;
+  if (arcRolesOf(view.planApplied()) !== null) return true;
   dev7ArcRolesDefault();
   return false;
 }

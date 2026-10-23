@@ -9,13 +9,13 @@ import { createHash } from 'node:crypto';
 import type { OutcomeStage, TestRef } from '../core/events.ts';
 import type {
   ClauseId, DivergenceId, FindingId, InvocationId, JobId, LaneId, MilestoneId, ObligationId, PolishId, ReviewFindingId, RulingId, ServeName, Sha, Sha256Hex, SpecRev, UnitId, VisionClauseId,
-  WitnessItemId,
+  ResourceName, SystemName, WitnessItemId,
 } from '../core/ids.ts';
 import type { GateDelta, LedgerOutcome } from '../core/review.ts';
 import type { BringUp, Journey } from '../input/plan.ts';
 import type { RequiredWitness } from '../holistic/required.ts';
 import type { JsonValue } from '../core/json.ts';
-import type { CommandVerdict, FailureRef, IgnoredCensus, LaneDef, NeedsUserReason, SpecPatchOp } from '../core/records.ts';
+import type { CommandVerdict, FailureRef, IgnoredCensus, LaneCadence, LaneDef, NeedsUserReason, SpecPatchOp } from '../core/records.ts';
 import type { AbsPath, RepoPath, RepoPattern } from '../core/values.ts';
 import type { Argv0 } from '../preflight/argv0.ts';
 import type { RiskTier, Role } from '../routing/types.ts';
@@ -29,7 +29,8 @@ import type { FlowPromptInputs } from '../flow/types.ts';
 import type { CapturedIssue } from '../forge/types.ts';
 import type { Phase0Record } from '../phase0/types.ts';
 import { type BoundedDiff, EXAMPLES } from '../git/boundeddiff.ts';
-import type { GateFinding, Premise } from './schemas.ts';
+import type { GateFinding, PocOutput, PocQuestion, Premise, ScaffoldDecision } from './schemas.ts';
+import type { SystemsMap } from '../input/systems.ts';
 
 /** The spec as the one text every role reads: the executor's Markdown rendering of spec.json at `rev`. */
 export type RenderedSpec = Readonly<{ unit: UnitId; rev: SpecRev; markdown: string }>;
@@ -197,6 +198,47 @@ export type PlanCheckInputs = Readonly<{
    * each, its key first (`staleLinkText`); empty when it has none.
    */
   staleLinks: readonly string[];
+  /** dev.17 (design pass): what the design record and the design decisions rest on (`PlanCheckDesignInput`). */
+  design: PlanCheckDesignInput;
+  /** dev.17 (design pass): the unit's proofs of concept so far, in order (their reports; none before the first). */
+  pocs: readonly PocReport[];
+}>;
+
+/**
+ * dev.17 (design pass): the facts a design rests on. `systems`: the systems map in force (null: none, so a change names no
+ * system). `lanes`: every lane a test item may sit in (the spec's active lanes, the plan's suite lanes, the arc lanes), with
+ * its cadence and systems (null: the whole tree). `forces`: the lanes the spec forces. The limits code checks the design
+ * against: a system's substantial change, the gate's inline reading, the proofs of concept left; and whether a `scaffold`
+ * decision can run in this arc.
+ */
+export type PlanCheckDesignInput = Readonly<{
+  systems: SystemsMap | null;
+  /**
+   * The lanes a test item may name. `environment`: the plan environment the lane runs against and, when it is unavailable to
+   * the arc (its last up or probe failed: src/resources/environments.ts `environmentUnavailable`), why; null: none.
+   */
+  lanes: readonly Readonly<{
+    id: LaneId; kind: 'spec' | 'suite' | 'arc'; cadence: LaneCadence; systems: readonly SystemName[] | null;
+    environment: Readonly<{ name: ResourceName; unavailable: string | null }> | null;
+  }>[];
+  forces: readonly LaneId[];
+  substantialLines: number;
+  gateInlineLines: number;
+  pocsLeft: number;
+  scaffold: boolean;
+}>;
+
+/**
+ * dev.17 (design pass): one proof of concept's report (src/pipeline/poc.ts): the questions it was asked, its closed answer
+ * or why it has none, and its diff (evidence; its code is gone).
+ */
+export type PocReport = Readonly<{
+  attempt: number;
+  questions: readonly PocQuestion[];
+  brief: string;
+  answer: PocOutput | null;
+  why: string | null;
+  diff: AbsPath;
 }>;
 
 /** What a plan-check reads for its scope-growth proposals. */
@@ -306,6 +348,11 @@ export type GateInputs = Readonly<{
   largeDiff: GateLargeDiffInput | null;
   /** dev.13: the milestones the unit takes part in and their design references; null when it is in none. */
   milestones: MilestonesInput | null;
+  /**
+   * dev.17 (design pass): the plan contracts the diff touches that the spec's design record does not declare as interfaces
+   * (src/pipeline/gate.ts `undeclaredContracts`), ascending; empty when it declares them all or the spec has no record.
+   */
+  undeclaredContracts: readonly RepoPath[];
   /** dev.17 (proportional review): the unit's findings ledger, the disputes to rule on, and the delta from its approval. */
   review: GateReviewInput;
 }>;
@@ -600,6 +647,35 @@ export type VerifierHunk = Readonly<{ id: string; path: RepoPath; language: stri
 /** The verifier's inputs: the unit, the certified tree `since` and the salvage SHA `at` the hunks lie between, and the hunks. */
 export type VerifierInputs = Readonly<{ unit: UnitId; since: Sha; at: Sha; hunks: readonly VerifierHunk[] }>;
 
+/**
+ * dev.17 (design pass): what the scaffold writer reads (src/pipeline/scaffold.ts): the unit's spec, the plan-check's
+ * `scaffold` decision, the arc lane its load test runs in (its argv, cwd and test paths: the files it must reach), the unit
+ * worktree it writes in, and on its one retry why the first attempt was refused (the lane's evidence dir when the dry run
+ * ran it); null on the first attempt.
+ */
+export type ScaffoldInputs = Readonly<{
+  spec: RenderedSpec;
+  scaffold: ScaffoldDecision;
+  loadLane: Readonly<{ id: LaneId; argv: readonly string[]; cwd: RepoPath; testPaths: readonly RepoPattern[] }>;
+  worktree: AbsPath;
+  retry: Readonly<{ reasons: readonly string[]; laneEvidence: AbsPath | null }> | null;
+}>;
+
+/**
+ * dev.17 (design pass): what the builder seat reads for a proof of concept (src/pipeline/poc.ts), not a role of its own: the
+ * unit's spec, the plan-check's brief and questions, the throwaway worktree at the tip, its evidence dir, and the lessons of
+ * the unit's earlier proofs of concept.
+ */
+export type PocInputs = Readonly<{
+  spec: RenderedSpec;
+  brief: string;
+  questions: readonly PocQuestion[];
+  worktree: AbsPath;
+  tip: Sha;
+  evidenceDir: AbsPath;
+  lessons: readonly string[];
+}>;
+
 export type RoleInputs = {
   readonly planCheck: PlanCheckInputs;
   readonly build: BuildInputs;
@@ -612,12 +688,13 @@ export type RoleInputs = {
   readonly walkthrough: WalkthroughInputs;
   readonly polishJudge: PolishJudgeInputs;
   readonly verifier: VerifierInputs;
+  readonly scaffold: ScaffoldInputs;
 };
 
 export const ROLE_INPUTS = {
   planCheck: [
     'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision', 'priorInvalid',
-    'scopeGrowth', 'escalation', 'milestones', 'staleLinks',
+    'scopeGrowth', 'escalation', 'milestones', 'staleLinks', 'design', 'pocs',
   ],
   build: [
     'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks',
@@ -625,7 +702,7 @@ export const ROLE_INPUTS = {
   ],
   gate: [
     'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'planCheckNotes', 'obligations', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
-    'checks', 'escalation', 'largeDiff', 'milestones', 'review',
+    'checks', 'escalation', 'largeDiff', 'milestones', 'review', 'undeclaredContracts',
   ],
   lens: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'target', 'checkout', 'specsOnly'],
   checkpoint: [
@@ -637,6 +714,7 @@ export const ROLE_INPUTS = {
   walkthrough: ['vision', 'milestone', 'round', 'journeys', 'references', 'tweaks', 'findings', 'product', 'units', 'evidenceDir'],
   polishJudge: ['vision', 'milestone', 'journey', 'proposal', 'references', 'referenceDiff', 'walkEvidenceDir', 'before', 'after', 'evidenceDir'],
   verifier: ['unit', 'since', 'at', 'hunks'],
+  scaffold: ['spec', 'scaffold', 'loadLane', 'worktree', 'retry'],
 } as const satisfies { readonly [R in Role]: readonly (keyof RoleInputs[R])[] };
 
 // Compile-time half of `prompts.fields==required`: ROLE_INPUTS names every key of each role's inputs.
@@ -652,6 +730,7 @@ const ROLE_INPUTS_COMPLETE: { readonly [R in Role]: [Missing<R>] extends [never]
   walkthrough: true,
   polishJudge: true,
   verifier: true,
+  scaffold: true,
 };
 void ROLE_INPUTS_COMPLETE;
 
@@ -906,6 +985,48 @@ ${rejected.join('\n')}
 /** dev.17 (propagation): the unit's stale links, each to answer by its key; nothing when it has none. */
 export function staleLinksText(lines: readonly string[]): string {
   return lines.length === 0 ? '' : `\n\n<stale_links>\n${lines.map((l) => `- ${l}`).join('\n')}\n</stale_links>`;
+}
+
+/**
+ * dev.17 (design pass): the plan-check's design facts (`PlanCheckDesignInput`): the systems map, the lanes a test item may sit
+ * in with their cadence and systems, the spec's forced lanes, and the limits code checks a design against.
+ */
+export function designInputText(d: PlanCheckDesignInput): string {
+  const systems = d.systems === null
+    ? '(no systems map: every change names system null)'
+    : Object.entries(d.systems.systems).map(([name, s]) => `- ${name}: ${s.paths.join(', ')}${s.tests.length === 0 ? '' : `; tests ${s.tests.join(', ')}`}${s.dependsOn.length === 0 ? '' : `; depends on ${s.dependsOn.join(', ')}`}`).join('\n');
+  const env = (e: PlanCheckDesignInput['lanes'][number]['environment']): string => (e === null ? '' : `, environment ${e.name}${e.unavailable === null ? '' : ` (unavailable: ${e.unavailable})`}`);
+  const lanes = d.lanes.map((l) => `- ${l.id} (${l.kind}, cadence ${l.cadence}${l.systems === null ? ', the whole tree' : `, systems ${l.systems.join(', ')}`}${env(l.environment)})`);
+  return `<systems>
+${systems}
+</systems>
+
+<test_lanes>
+${lanes.length === 0 ? '(none)' : lanes.join('\n')}
+forced by the spec: ${d.forces.length === 0 ? '(none)' : d.forces.join(', ')}
+</test_lanes>
+
+<design_limits>
+- a system's change is substantial above ${d.substantialLines} changed lines
+- the gate reads ${d.gateInlineLines} changed lines inline
+- proofs of concept left for this unit: ${d.pocsLeft}
+- scaffold decision: ${d.scaffold ? 'available' : 'not available in this arc'}
+</design_limits>`;
+}
+
+/** dev.17 (design pass): the unit's proof-of-concept reports, or nothing before the first. */
+export function pocReportsText(reports: readonly PocReport[]): string {
+  if (reports.length === 0) return '';
+  const one = (r: PocReport): string => {
+    const head = `<poc attempt="${r.attempt}" diff="${r.diff}">\nbrief: ${r.brief}`;
+    if (r.answer === null) return `${head}\nno answer: ${r.why ?? 'none recorded'}\n</poc>`;
+    const answers = r.answer.answers.map((a) => {
+      const q = r.questions.find((x) => x.id === a.questionId);
+      return `- ${a.questionId} ${q === undefined ? '' : `(${q.question}) `}[${a.confidence}]: ${a.answer}\n  evidence: ${a.evidence}`;
+    });
+    return `${head}\n${answers.join('\n')}\nlessons:\n${bullets(r.answer.lessons, '(none)')}\nsurprises:\n${bullets(r.answer.surprises, '(none)')}\n</poc>`;
+  };
+  return `\n\n<proofs_of_concept>\n${reports.map(one).join('\n')}\n</proofs_of_concept>`;
 }
 
 /** A pack review's delta (the review it follows, what changed, the unresolved earlier findings), or nothing for a full review. */

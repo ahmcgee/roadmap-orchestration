@@ -82,7 +82,7 @@ function ofOp(b: DivergenceBase, op: BundleOp, rulings: ReadonlyMap<string, Ruli
     case 'limits':
       return [plan(`sets ${op.unit === null ? 'the arc\'s' : `${op.unit}'s`} limits ${op.limits.map((l) => `${l.field} = ${l.value}`).join(', ')}`)];
     case 'patch-spec': {
-      const what = `patches ${op.unit}'s spec: ${op.patch.map((p) => (p.op === 'cite' ? 'cite' : `${p.op} ${p.op === 'add' || p.op === 'replace' ? p.item.id : p.id}`)).join(', ')}`;
+      const what = `patches ${op.unit}'s spec: ${op.patch.map((p) => (p.op === 'cite' || p.op === 'design' ? p.op : `${p.op} ${p.op === 'add' || p.op === 'replace' ? p.item.id : p.id}`)).join(', ')}`;
       const rev = b.specRevs[op.unit];
       if (rev === undefined) {
         if (!introduced.has(op.unit)) throw new Error(`patch-spec of ${op.unit}, which has no spec in force and no earlier op of the bundle introduces (validation refuses it)`);

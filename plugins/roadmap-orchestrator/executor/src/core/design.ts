@@ -1,9 +1,9 @@
 // The design record (dev.17, design pass; SCHEMAS.md "dev.17 records"): what a unit's plan-check settles about the change
 // before it is built, carried on the spec (`SpecM1.design`). Code binds it only as far as code can check (DESIGN-1.0.md):
 // its paths against the pinned scope, its interfaces against the risk trigger, its failure modes against the test items,
-// its breaks against the builder's departures. This module is the record and its reader; the checks live with the stages.
+// its breaks against the builder's departures, its clauses against the lanes that can run in the arc. This module is the record and its reader; the checks live with the stages.
 import {
-  type FailureModeId, type LaneId, type SystemName, type WitnessItemId, failureModeId, laneId, systemName, witnessItemId,
+  type ClauseId, type FailureModeId, type LaneId, type SystemName, type WitnessItemId, clauseId, failureModeId, laneId, systemName, witnessItemId,
 } from './ids.ts';
 import { type ContractPin, type FilePin, type RequirementPin, contractPin, filePin, requirementPin } from './pins.ts';
 import { type RepoPattern, repoPattern } from './values.ts';
@@ -38,6 +38,13 @@ export type FailureMode = Readonly<{
   requirements: readonly RequirementPin[];
 }>;
 
+/**
+ * Where an acceptance clause's behaviour is exercised (item 10, 2026-10-23): the lanes whose runs exercise it, beside the
+ * spec's witness items naming the clause. Every active acceptance clause is exercised by at least one lane that can run in
+ * the arc before the unit merges, or it is a plan defect (src/pipeline/design.ts `clauseFaults`).
+ */
+export type ClauseLanes = Readonly<{ clause: ClauseId; lanes: readonly LaneId[] }>;
+
 /** A contract or a plain path the unit's change crosses, pinned at its blob when the record was written. */
 export type DesignInterface = ContractPin | FilePin;
 
@@ -63,6 +70,8 @@ export type DesignRecord = Readonly<{
   changes: readonly DesignChange[];
   interfaces: readonly DesignInterface[];
   failureModes: readonly FailureMode[];
+  /** The lanes exercising each active acceptance clause no witness item names (one entry per clause). */
+  clauses: readonly ClauseLanes[];
   breaks: DesignBreaks;
   experiments: readonly DesignExperiment[];
   /** Absent: the unit creates no system (lasting). */
@@ -77,7 +86,7 @@ export const designSize = (d: DesignRecord): number => d.changes.reduce((n, c) =
 const pattern: Read<RepoPattern> = (v, p) => repoPattern(v, p);
 const patterns = arrayOf(pattern, { nonEmpty: true });
 
-const change: Read<DesignChange> = object((f) => ({
+export const designChange: Read<DesignChange> = object((f) => ({
   system: f.get('system', nullable((v, p) => systemName(v, p))), paths: f.get('paths', patterns), lines: f.get('lines', nat),
 }));
 
@@ -86,17 +95,23 @@ export const testItemRef: Read<TestItemRef> = tagged<TestItemRef['type'], TestIt
   test: object((f) => ({ type: f.get('type', literal('test')), lane: f.get('lane', (v, p) => laneId(v, p)), testId: f.get('testId', str) })),
 });
 
-const proof: Read<FailureModeProof> = tagged<FailureModeProof['type'], FailureModeProof>('type', {
+export const failureModeProof: Read<FailureModeProof> = tagged<FailureModeProof['type'], FailureModeProof>('type', {
   test: object((f) => ({ type: f.get('type', literal('test')), test: f.get('test', testItemRef) })),
   untested: object((f) => ({ type: f.get('type', literal('untested')), reason: f.get('reason', str) })),
 });
 
 const failureMode: Read<FailureMode> = object((f) => {
   const out = {
-    id: f.get('id', (v, p) => failureModeId(v, p)), mode: f.get('mode', str), proof: f.get('proof', proof),
+    id: f.get('id', (v, p) => failureModeId(v, p)), mode: f.get('mode', str), proof: f.get('proof', failureModeProof),
     requirements: f.get('requirements', arrayOf(requirementPin)),
   };
   assertUnique(out.requirements, (r) => r.id, `${f.path}.requirements`);
+  return out;
+});
+
+export const clauseLanes: Read<ClauseLanes> = object((f) => {
+  const out = { clause: f.get('clause', (v, p) => clauseId(v, p)), lanes: f.get('lanes', arrayOf((v, p) => laneId(v, p), { nonEmpty: true })) };
+  assertUnique(out.lanes, (l) => l, `${f.path}.lanes`);
   return out;
 });
 
@@ -124,9 +139,10 @@ export const designRecord: Read<DesignRecord> = object((f) => {
   const v = f.optional('verification', verification);
   const out: DesignRecord = {
     kind: f.get('kind', oneOf(UNIT_KINDS)),
-    changes: f.get('changes', arrayOf(change, { nonEmpty: true })),
+    changes: f.get('changes', arrayOf(designChange, { nonEmpty: true })),
     interfaces: f.get('interfaces', arrayOf(designInterface)),
     failureModes: f.get('failureModes', arrayOf(failureMode)),
+    clauses: f.get('clauses', arrayOf(clauseLanes)),
     breaks: f.get('breaks', breaks),
     experiments: f.get('experiments', arrayOf(designExperiment)),
     ...(ns === undefined ? {} : { newSystem: ns }),
@@ -134,5 +150,6 @@ export const designRecord: Read<DesignRecord> = object((f) => {
   };
   assertUnique(out.interfaces, (i) => i.path, `${f.path}.interfaces`);
   assertUnique(out.failureModes, (m) => m.id, `${f.path}.failureModes`);
+  assertUnique(out.clauses, (c) => c.clause, `${f.path}.clauses`);
   return out;
 });

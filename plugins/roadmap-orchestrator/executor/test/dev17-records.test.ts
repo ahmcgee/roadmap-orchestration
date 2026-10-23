@@ -33,6 +33,7 @@ const DESIGN = {
     { id: 'FM-1', mode: 'empty input', proof: { type: 'test', test: { type: 'witness', item: 'W-1' } }, requirements: [{ type: 'requirement', id: 'I-1', rev: 2 }] },
     { id: 'FM-2', mode: 'disk full', proof: { type: 'untested', reason: 'no fault injection here' }, requirements: [] },
   ],
+  clauses: [{ clause: 'A1', lanes: ['unit'] }],
   breaks: { tests: [{ type: 'file', path: 'test/api.test.ts', blob: B }], docs: [] },
   experiments: [{ command: 'npm test', output: 'ok' }],
   verification: { type: 'repeat', rationale: 'timing only', runs: 5 },
@@ -76,12 +77,23 @@ describe('spec design record and pins', () => {
 });
 
 describe('plan-check design decisions', () => {
-  it('split: two or more distinct children, edges between distinct children', () => {
-    const d = splitDecision({ children: [spec('u1a'), spec('u1b')], edges: [{ from: 'u1a', to: 'u1b' }] }, 'split');
+  // dev.17 (design pass): a child is the parent's items it takes and its own design, the spec built by code (src/pipeline/split.ts).
+  const child = (unit: string): Record<string, unknown> => ({
+    unit, scope: ['src/**'], items: ['a1'], obligations: [],
+    design: {
+      kind: 'module', changes: [{ system: null, paths: ['src/**'], lines: 10 }], interfaces: [], failureModes: [], clauses: [], breaks: { tests: [], docs: [] }, experiments: [],
+      newSystem: null, verification: null,
+    },
+  });
+
+  it('split: two or more distinct children, edges between distinct children, a skeleton among them', () => {
+    const d = splitDecision({ children: [child('u1a'), child('u1b')], edges: [{ from: 'u1a', to: 'u1b' }], skeleton: { unit: 'u1a', lane: 'e2e' } }, 'split');
     assert.equal(d.children.length, 2);
-    refuses(() => splitDecision({ children: [spec('u1a')], edges: [] }, 'split'), /^split\.children$/);
-    refuses(() => splitDecision({ children: [spec('u1a'), spec('u1a')], edges: [] }, 'split'), /^split\.children/);
-    refuses(() => splitDecision({ children: [spec('u1a'), spec('u1b')], edges: [{ from: 'u1a', to: 'u9' }] }, 'split'), /^split\.edges\[0\]$/);
+    refuses(() => splitDecision({ children: [child('u1a')], edges: [], skeleton: null }, 'split'), /^split\.children$/);
+    refuses(() => splitDecision({ children: [child('u1a'), child('u1a')], edges: [], skeleton: null }, 'split'), /^split\.children/);
+    refuses(() => splitDecision({ children: [child('u1a'), child('u1b')], edges: [{ from: 'u1a', to: 'u9' }], skeleton: null }, 'split'), /^split\.edges\[0\]$/);
+    refuses(() => splitDecision({ children: [child('u1a'), child('u1b')], edges: [], skeleton: { unit: 'u9', lane: 'e2e' } }, 'split'), /^split\.skeleton\.unit$/);
+    refuses(() => splitDecision({ children: [child('u1a'), { ...child('u1b'), items: [] }], edges: [], skeleton: null }, 'split'), /^split\.children\[1\]\.items$/);
   });
 
   it('scaffold and poc', () => {

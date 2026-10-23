@@ -154,7 +154,7 @@ export function setupVerifierArc(f: VerifierFixture, config: RepoConfig | null):
   const build = buildCalls(config);
   const d = setupArc({
     steps: [
-      { as: 'claude', expect: { argv: ['-p'] }, acts: [{ type: 'emit', value: planCheckAnswer({ decision: 'approve', risk: VERIFIER_RISK }) }] },
+      { as: 'claude', expect: { argv: ['-p'] }, acts: [{ type: 'planCheck', value: planCheckAnswer({ decision: 'approve', risk: VERIFIER_RISK }) }] },
       { ...build.fresh, acts: [{ type: 'commit', message: 'add mul', files: { ...MUL, [f.cell.path]: f.cell.before } }, { type: 'emit', value: BUILD_REPORT }] },
       gateStep({ decision: 'revise', directives: ['Document mul.'], findings: [REVISE] }),
     ],

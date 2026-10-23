@@ -161,12 +161,14 @@ export function staleLinkText(s: StaleLinkAt): string {
 }
 
 /**
- * Why a plan-check's stale-link answers do not settle `links`: an approve or a redirect answers each link once, by its key,
+ * Why a plan-check's stale-link answers do not settle `links`: an approve, a scaffold or a redirect answers each link once, by its key,
  * and only a redirect (whose patch changes the spec) answers `updated`. Empty when they settle them (or the decision is
  * neither, which settles nothing).
  */
 export function staleAnswerReasons(links: readonly StaleLinkAt[], answers: readonly StaleAnswer[], decision: string): readonly string[] {
-  if (decision !== 'approve' && decision !== 'redirect') return [];
+  // A scaffold (dev.17, the design pass) goes on to its build as an approve does, so it answers them too; a split's children
+  // and a poc's next plan-check answer them instead.
+  if (decision !== 'approve' && decision !== 'scaffold' && decision !== 'redirect') return [];
   const keys = new Set(links.map((s) => staleLinkKey(s.link)));
   const reasons: string[] = [];
   const seen = new Set<string>();

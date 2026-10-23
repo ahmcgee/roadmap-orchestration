@@ -352,7 +352,7 @@ export function noModelIds(run: OracleRun): Verdict {
  * `flow-series` since the completion before it (a crash between the two keeps no second series); with it off, none.
  */
 export function flowSeriesPerCompletion(run: OracleRun): Verdict {
-  const on = arcRolesOf(run.view.planApplied()) === 'm4b';
+  const on = arcRolesOf(run.view.planApplied()) !== null;
   const problems: string[] = [];
   let series = 0;
   let completions = 0;

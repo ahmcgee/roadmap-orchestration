@@ -25,7 +25,7 @@ import { invocationDir } from '../../src/pipeline/invoke.ts';
 import { reserveNow } from '../../src/pipeline/lanes.ts';
 import { rankOf } from '../../src/schedule/ready.ts';
 import { type RepoConfig, parseRepoConfig, resolveRouting } from '../../src/routing/layers.ts';
-import type { ProfileName, RiskTier } from '../../src/routing/types.ts';
+import type { ArcRoleSet, ProfileName, RiskTier } from '../../src/routing/types.ts';
 import { fixture } from '../helpers/proc.ts';
 import { git, makeRepo, revParse, tmpDir } from '../helpers/repo.ts';
 import { type ClaudeAct, type Expect, type Scenario, type Step, writeScenario } from '../helpers/scenario.ts';
@@ -153,7 +153,9 @@ export function writeStart(runDir: AbsPath, repo: AbsPath, planPath: AbsPath, pr
  * Records the plan file as revision 1 (`scheduling: 'dag'`), as a first start does (src/input/inforce.ts `recordPlan`). A
  * corpus arc's files pass the shared Phase-0 rows first, which open its corpus source, and its corpus files are kept.
  */
-export function recordFirstPlan(journal: Journal, runDir: AbsPath, planPath: AbsPath, repo: AbsPath, profile: ProfileName = 'default', config: RepoConfig | null = null): void {
+export function recordFirstPlan(
+  journal: Journal, runDir: AbsPath, planPath: AbsPath, repo: AbsPath, profile: ProfileName = 'default', config: RepoConfig | null = null, arcRoles: ArcRoleSet = 'm4b',
+): void {
   writeStart(runDir, repo, planPath, profile);
   const files = readInputFiles(planPath, repo);
   if (files.corpus !== null) {
@@ -161,7 +163,7 @@ export function recordFirstPlan(journal: Journal, runDir: AbsPath, planPath: Abs
     if (rows.rows.length > 0 || rows.opened === null) throw new Error(`the corpus arc's files are refused: ${JSON.stringify(rows.rows)}`);
     keepCorpusFiles(runDir, rows.opened.files);
   }
-  recordPlan(journal, runDir, files, [], { profile, config, arcRoles: 'm4b' });
+  recordPlan(journal, runDir, files, [], { profile, config, arcRoles });
 }
 
 /** Puts the run's input files as they are now in force as the next plan revision (an `apply` of, say, an edited ledger). */
@@ -258,7 +260,7 @@ export function setupUnit(opts: SetupOptions): StageRun {
 // Scenario steps
 
 export type PlanCheckAnswer = Readonly<{
-  decision: 'approve' | 'redirect' | 'infeasible' | 'escalate';
+  decision: 'approve' | 'redirect' | 'split' | 'scaffold' | 'poc' | 'infeasible' | 'escalate';
   risk?: RiskTier;
   patch?: readonly JsonValue[];
   notes?: string;
@@ -269,23 +271,39 @@ export type PlanCheckAnswer = Readonly<{
   scopeGrowth?: readonly Readonly<{ patterns: readonly string[]; reason: string }>[];
   /** dev.17: the answers to the unit's stale links (default none). */
   staleLinks?: readonly Readonly<{ link: string; outcome: 'updated' | 'confirmed'; reason: string }>[];
+  /** dev.17: the design record (absent: the `planCheck` act's default for an approve or scaffold; null: none). */
+  design?: JsonValue;
+  /** dev.17: the split, scaffold and PoC payloads (default null). */
+  split?: JsonValue;
+  scaffold?: JsonValue;
+  poc?: JsonValue;
 }>;
 
-/** A plan-check the fake Claude answers: a judgment call (read-only tools, fresh session, no resume). `expect` adds to that check. */
+/** A plan-check the fake Claude answers: an acting judgment (dev.17: shell and web tools, fresh session, no resume). `expect` adds to that check. */
+/**
+ * The plan-check's `--tools` (dev.17: an acting judge with web search and fetch, src/backends/argv.ts `PLAN_CHECK_TOOLS`), as
+ * the fakes match a plan-check call by.
+ */
+export const PLAN_CHECK_TOOLS_ARGV = ['--tools', 'Read,Grep,Glob,Bash,Write,Edit,Agent,WebSearch,WebFetch'] as const;
+
 export function planCheckStep(a: PlanCheckAnswer, expect: Expect = {}, before: readonly ClaudeAct[] = []): Step {
   // A judgment's fresh session persists (no --no-session-persistence) so its repair turn can resume it (dev.12: every role).
-  const argv = ['-p', '--tools', 'Read,Grep,Glob,Agent', '--session-id', ...(expect.argv ?? [])];
+  const argv = ['-p', ...PLAN_CHECK_TOOLS_ARGV, '--permission-mode', 'bypassPermissions', '--session-id', ...(expect.argv ?? [])];
   return {
     as: 'claude',
-    expect: { ...expect, argv, argvLacks: ['--resume', '--permission-mode', '--no-session-persistence'] },
-    acts: [...before, { type: 'emit', value: planCheckAnswer(a) }],
+    expect: { ...expect, argv, argvLacks: ['--resume', '--no-session-persistence'] },
+    acts: [...before, { type: 'planCheck', value: planCheckAnswer(a) }],
   };
 }
 
 /** A plan-check's answer as the fake emits it. */
 export const planCheckAnswer = (a: PlanCheckAnswer): JsonValue =>
-  ({ decision: a.decision, reasons: ['C-1 holds'], patch: a.patch ?? null, risk: a.risk ?? 'med', notes: a.notes ?? '', premises: [...(a.premises ?? [])], visionConflict: [...(a.visionConflict ?? [])],
-    scopeGrowth: (a.scopeGrowth ?? []).map((g) => ({ patterns: [...g.patterns], reason: g.reason })), staleLinks: (a.staleLinks ?? []).map((l) => ({ ...l })) }) as JsonValue;
+  ({
+    decision: a.decision, reasons: ['C-1 holds'], patch: a.patch ?? null, risk: a.risk ?? 'med', notes: a.notes ?? '', premises: [...(a.premises ?? [])], visionConflict: [...(a.visionConflict ?? [])],
+    scopeGrowth: (a.scopeGrowth ?? []).map((g) => ({ patterns: [...g.patterns], reason: g.reason })), staleLinks: (a.staleLinks ?? []).map((l) => ({ ...l })),
+    // dev.17: an approve's design record defaults by the `planCheck` act (a module change of the scope's first pattern).
+    ...(a.design === undefined ? {} : { design: a.design }), split: a.split ?? null, scaffold: a.scaffold ?? null, poc: a.poc ?? null,
+  }) as JsonValue;
 
 /**
  * 2026-10-15: a plan-check's repair turn: its session resumed (`--resume`) with the reasons its answer was refused, which
@@ -294,8 +312,8 @@ export const planCheckAnswer = (a: PlanCheckAnswer): JsonValue =>
 export function planCheckRepairStep(a: PlanCheckAnswer, stdinContains: readonly string[] = [], before: readonly ClaudeAct[] = []): Step {
   return {
     as: 'claude',
-    expect: { argv: ['-p', '--tools', 'Read,Grep,Glob,Agent', '--resume'], argvLacks: ['--session-id', '--permission-mode', '--no-session-persistence'], stdinContains: ['Your answer was refused: ', ...stdinContains] },
-    acts: [...before, { type: 'emit', value: planCheckAnswer(a) }],
+    expect: { argv: ['-p', ...PLAN_CHECK_TOOLS_ARGV, '--resume'], argvLacks: ['--session-id', '--no-session-persistence'], stdinContains: ['Your answer was refused: ', ...stdinContains] },
+    acts: [...before, { type: 'planCheck', value: planCheckAnswer(a) }],
   };
 }
 

@@ -39,6 +39,8 @@ import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-c
 import type { Gate } from '../src/pipeline/unit.ts';
 import { type ArcDescriptor, MUL, U1, codexStep, contextFor, gateRepairStep, gateStep, isGateCall as isGate, mulBuild, outcomes, setupArc, stepUntil } from './fixtures/unit-common.ts';
 import { BASE, editPlan, followContext, planDirOf, recordFirst, stepTo, unitOf } from './fixtures/route-common.ts';
+import { specBytes } from '../src/spec/spec.ts';
+import { loadUnitSpec } from '../src/pipeline/stages.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 /** Every stage admitted at once: the unit runs on its own. */
@@ -391,8 +393,10 @@ test('gate.inputs-not-in-ff-window: while a revision holds the fence the gate ne
     assert.deepEqual(judgmentInputs(d, 'gate'), [], 'no judgment-inputs while the fence is held');
     assert.equal(readCalls(d.scenarioPath).filter(isGate).length, 0, 'no gate call while the fence is held');
 
-    // A harmless revision commits while the fence is held: a new unit u2, plan rev 2.
+    // A harmless revision commits while the fence is held: a new unit u2, plan rev 2. The owner's u1 file is first brought
+    // to u1's spec in force (dev.17: its approve landed the design record as rev 2), as `roadmap inputs export` would.
     const u1Spec = JSON.parse(readFileSync(join(planDirOf(d), 'u1.json'), 'utf8')) as Record<string, unknown>;
+    writeFileSync(join(planDirOf(d), 'u1.json'), specBytes(loadUnitSpec(r.ctx, unitOf(ctx, 'u1')).spec));
     writeFileSync(join(planDirOf(d), 'u2.json'), JSON.stringify({ ...u1Spec, unit: 'u2' }));
     editPlan(d, (p) => void p.units.push({ ...p.units[0]!, id: 'u2', spec: 'u2.json' }));
     const rctx = { runDir: r.ctx.runDir, view: r.journal.view, hostDir: r.ctx.hostDir, planFile: absPath(d.planPath), routingBase: BASE, laneEnv: process.env };

@@ -78,9 +78,10 @@ export const containmentMode: Read<ContainmentMode> = oneOf(CONTAINMENT_MODES);
  * Pipeline stages of one unit (the transition table is step 11). Fix rounds are `build` attempts. `prepare`
  * (M2) is a re-entered unit's first stage: its worktree, pin, merge-in of the integration tip and snapshot.
  * `reproduce` (M3) is a vacuity repair's first stage: the finding's mutant applied in a detached worktree and
- * its lane run under `purpose: mutant`.
+ * its lane run under `purpose: mutant`. dev.17 (design pass, appended): `scaffold` writes a new system's skeleton a plan-check's
+ * `scaffold` decision specifies before the first build; `poc` builds a plan-check's proof of concept in a throwaway worktree.
  */
-export const STAGES = ['prepare', 'reproduce', 'plan-check', 'build', 'quiesce', 'evidence', 'salvage', 'teardown', 'lanes', 'gate', 'candidate', 'ff', 'snapshot', 'retire'] as const;
+export const STAGES = ['prepare', 'reproduce', 'plan-check', 'build', 'quiesce', 'evidence', 'salvage', 'teardown', 'lanes', 'gate', 'candidate', 'ff', 'snapshot', 'retire', 'scaffold', 'poc'] as const;
 export type Stage = (typeof STAGES)[number];
 export const stage: Read<Stage> = oneOf(STAGES);
 
@@ -1192,7 +1193,12 @@ export type SpecPatchOp =
   | { readonly [S in SpecSection]: Readonly<{ op: 'add'; section: S; item: SectionItem[S] }> }[SpecSection]
   | { readonly [S in SpecSection]: Readonly<{ op: 'replace'; section: S; item: SectionItem[S] }> }[SpecSection]
   | Readonly<{ op: 'strike' | 'defer'; id: LaneId | ClauseId }>
-  | Readonly<{ op: 'cite' } & SpecCites>;
+  | Readonly<{ op: 'cite' } & SpecCites>
+  /**
+   * dev.17 (design pass): the design record a plan-check's approve or scaffold settled, pinned by code at the tip it read,
+   * replacing any the spec held. Executor-written only: no model's patch schema offers it (`wireOp`, S_PATCH_OP).
+   */
+  | Readonly<{ op: 'design'; record: DesignRecord }>;
 
 /**
  * Who patched: a plan-check redirect (the judgment invocation), or the executor appending the implementer's
@@ -1237,6 +1243,8 @@ function idOp(op: 'strike' | 'defer'): Read<SpecPatchOp> {
   return object((f) => ({ op: f.get('op', literal(op)), id: f.get('id', (v, p): LaneId | ClauseId => clauseId(v, p)) }));
 }
 
+const designOp: Read<SpecPatchOp> = object((f) => ({ op: f.get('op', literal('design')), record: f.get('record', designRecord) }));
+
 const citeOp: Read<SpecPatchOp> = (value, path) => {
   const op = object((f) => ({ op: f.get('op', literal('cite')), ...citesFields(f) }))(value, path);
   if (op.contracts.length + op.rulings.length === 0) throw new SchemaError(path, 'a cite op naming at least one contract or ruling', value);
@@ -1249,6 +1257,7 @@ export const specPatchOp: Read<SpecPatchOp> = tagged('op', {
   strike: idOp('strike'),
   defer: idOp('defer'),
   cite: citeOp,
+  design: designOp,
 });
 
 export const specPatch: Read<SpecPatch> = object((f) => {
