@@ -35,4 +35,6 @@ export const BUILTIN_SEATS: ClassTable = {
   // dev.17 (proportional review): the docs-only verifier on economy (Haiku 5.5 high) at every risk tier: a closed per-hunk
   // classification, and code accepts only when every hunk is clear (src/pipeline/docsonly.ts).
   verifier: { low: 'economy', med: 'economy', high: 'economy' },
+  // dev.17 (design pass): the scaffold writer on economy (Haiku 5.5 high) at every tier, in force only in a `dev17` arc.
+  scaffold: { low: 'economy', med: 'economy', high: 'economy' },
 };

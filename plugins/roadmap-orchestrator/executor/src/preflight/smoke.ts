@@ -113,7 +113,7 @@ export type SmokeSubject = Extract<SpawnSubject, { purpose: 'smoke' }>;
  * role is any fresh read-only role, the arc roles included (M3), so a probe can call `lens.arc` or `checkpoint.arc`.
  */
 export type CallRequest =
-  | Readonly<{ kind: 'claude-judgment'; role: FreshRole; triple: ClaudeTriple; session: JudgmentSession; evidenceDirs: readonly AbsPath[] }>
+  | Readonly<{ kind: 'claude-judgment'; role: FreshRole | 'planCheck'; triple: ClaudeTriple; session: JudgmentSession; evidenceDirs: readonly AbsPath[] }>
   | Readonly<{ kind: 'claude-build'; triple: ClaudeTriple; session: ClaudeImplementerSession; evidenceDirs: readonly AbsPath[] }>
   | Readonly<{ kind: 'codex-build'; triple: CodexTriple; session: CodexSession }>;
 
@@ -218,6 +218,8 @@ function backendTerminal(b: BackendInvocation, call: BackendCall, invDir: AbsPat
     case 'claude-judgment':
     case 'claude-acting-judge':
       return { ...base, outputPath: absPath(join(invDir, STDOUT_FILE)), role: call.role, session: call.session };
+    case 'claude-scaffold':
+      return { ...base, outputPath: absPath(join(invDir, STDOUT_FILE)), role: 'scaffold', session: call.session };
     case 'claude-build':
       return { ...base, outputPath: absPath(join(invDir, STDOUT_FILE)), role: 'build', session: call.session };
     case 'codex-build':

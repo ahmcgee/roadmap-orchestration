@@ -158,6 +158,16 @@ unreviewed lists the parts of the change you did not review, each a repository p
 clusters is null unless this message has a <large_diff> section, which says what it holds.
 </decisions>`;
 
+/** dev.17 (design pass): the contracts the diff touches that the spec's design record did not declare, or nothing. */
+function undeclaredContractsText(i: GateInputs): string {
+  return i.undeclaredContracts.length === 0 ? '' : `
+
+<undeclared_contracts>
+The diff changes these contracts, which the spec's design record does not name as interfaces:
+${bullets(i.undeclaredContracts, '(none)')}
+</undeclared_contracts>`;
+}
+
 function largeDiff(i: GateInputs): string {
   const l = i.largeDiff;
   if (l === null) return '';
@@ -236,7 +246,7 @@ export const PROMPT: PromptModule<'gate'> = {
   schema: GATE_SCHEMA,
   fields: [
     'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'planCheckNotes', 'obligations', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
-    'checks', 'escalation', 'largeDiff', 'milestones', 'review',
+    'checks', 'escalation', 'largeDiff', 'milestones', 'review', 'undeclaredContracts',
   ],
   render: (i) => `${documentsXml([
     { source: `spec.json for unit ${i.spec.unit}, revision ${i.spec.rev} (rendered)`, content: i.spec.markdown },
@@ -285,7 +295,7 @@ ${bullets(i.scope.growth, '(none: every changed path is inside the envelope)')}
 
 <scope_reverted>
 ${bullets(i.scope.rejected, '(none: the build edited nothing outside the envelope)')}
-</scope_reverted>${gateChecksText(i.checks)}${priorRound(i)}${review(i)}${escalationText(i.escalation, 'gate')}${largeDiff(i)}
+</scope_reverted>${undeclaredContractsText(i)}${gateChecksText(i.checks)}${priorRound(i)}${review(i)}${escalationText(i.escalation, 'gate')}${largeDiff(i)}
 
 Gate unit ${i.spec.unit} at head ${i.diff.bounded.to}, spec revision ${i.spec.rev}. Grade each acceptance clause, then return your decision.`,
 };

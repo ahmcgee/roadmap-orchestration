@@ -62,8 +62,12 @@ const keyed = (unit: string, s: Step): Step => ({ ...s, unit });
 
 /** u3's design record: it breaks I-1's scenario test (pinned at a blob from before the file existed). */
 const U3_DESIGN = {
-  kind: 'module', changes: [{ system: null, paths: ['src/**'], lines: 10 }], interfaces: [], failureModes: [],
+  kind: 'module', changes: [{ system: null, paths: ['src/**'], lines: 10 }], interfaces: [], failureModes: [], clauses: [],
   breaks: { tests: [{ type: 'file', path: SCENARIO, blob: '0'.repeat(40) }], docs: [] }, experiments: [],
+};
+/** U3_DESIGN as u3's plan-check answers it (dev.17, the design pass; the wire form: paths, which code pins at the tip). */
+const U3_DESIGN_ANSWER = {
+  ...U3_DESIGN, clauses: [{ clause: 'A1', lanes: ['suite'] }], breaks: { tests: [SCENARIO], docs: [] }, newSystem: null, verification: null,
 };
 
 /**
@@ -148,7 +152,9 @@ describe('propagation (dev.17, experience-won E)', () => {
       )),
       keyed('u2', planCheckStep({ decision: 'approve' })),
       keyed('u2', codexStep([], { argv: ['exec', 'resume', U2_THREAD], stdinContains: [RESPEC_DIRECTIVE] })),
-      ...unitSteps('u3', moduleFiles('three', '-')).slice(0, 2),
+      // u3's plan-check lands its design record again, still breaking the scenario test.
+      keyed('u3', planCheckStep({ decision: 'approve', design: U3_DESIGN_ANSWER })),
+      ...unitSteps('u3', moduleFiles('three', '-')).slice(1, 2),
       ...unitSteps('u4', moduleFiles('four', '%')),
       ...unitSteps(PROP, { [SCENARIO]: scenarioTest('I-1 rev 2') }),
       keyed('u2', gateStep({ decision: 'approve' })),
@@ -260,7 +266,7 @@ describe('the stale set (src/holistic/staleset.ts)', () => {
     const before = obligationsOf([ob('I-1', 1), ob('I-2', 1, { serves: ['V-2'] }), ob('I-3', 1, { contracts: ['docs/api.md'] })]);
     const after = obligationsOf([ob('I-1', 2), ob('I-2', 1, { serves: ['V-2'] }), ob('I-3', 1, { contracts: ['docs/api.md'] })]);
     const design = {
-      kind: 'module', changes: [{ system: null, paths: ['src/**'], lines: 1 }], experiments: [], breaks: { tests: [], docs: [] },
+      kind: 'module', changes: [{ system: null, paths: ['src/**'], lines: 1 }], experiments: [], clauses: [], breaks: { tests: [], docs: [] },
       interfaces: [{ type: 'contract', path: 'docs/api.md', blob: BLOB }],
       failureModes: [{ id: 'FM-1', mode: 'off by one', proof: { type: 'untested', reason: 'r' }, requirements: [{ type: 'requirement', id: 'I-1', rev: 1 }] }],
     };

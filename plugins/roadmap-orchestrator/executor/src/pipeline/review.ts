@@ -11,7 +11,8 @@
 //    `disputed-overruled`); an open finding whose file changed and that it does not raise again, `fixed`; on an approval, the
 //    rest `released`. A blocking finding that raises a settled one again (`reraises`) is refused unless that finding's anchor
 //    blob changed.
-// 3. The delta re-gate. An approval records the blobs it approved (`ApprovalBlobs`). A later gate of the same spec revision
+// 3. The delta re-gate. An approval records the blobs it approved (`ApprovalBlobs`). A later gate of the same spec revision (or
+//    one later by design records alone, `designRevisionsOnly`)
 //    reviews only the files whose blob moved and those that name a target the approval bound that moved since (a contract,
 //    a ruling, a requirement: `movedTargets`, the pins hook; a target a stale set recorded after the approval changed, or a
 //    design interface whose blob moved: `staleSinceApproval`, `movedInterfaces`; an unpinned link is moved exactly when its
@@ -23,7 +24,7 @@
 // follow from the log on replay and recovery; an attempt a dev.16 executor captured has none and is read without them.
 import { join } from 'node:path';
 import { type ReviewFindingId, type Sha, type SpecRev, type UnitId, reviewFindingIdOf } from '../core/ids.ts';
-import type { ReviewFact } from '../core/events.ts';
+import { type ReviewFact, parentUnit } from '../core/events.ts';
 import type { ApprovalFingerprint, SpecM1 } from '../core/records.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { isUnitLink } from '../core/stale.ts';
@@ -90,14 +91,15 @@ export function openDisputes(ctx: StageContext, unit: PlanUnit, ledger: readonly
 
 /**
  * A gate's delta from the unit's latest approval, given its spec in force, its fingerprint `now` at the tip it reads and
- * the head it judges: null for a full review (no approval, a dev.16 approval without blobs, or a spec revision since),
- * `empty` when no file changed and nothing the approval bound moved, else the delta.
+ * the head it judges: null for a full review (no approval, a dev.16 approval without blobs, or a spec revision since that
+ * is not the design pass's alone: `designRevisionsOnly`), `empty` when no file changed and nothing the approval bound moved,
+ * else the delta.
  */
 export function gateDelta(ctx: StageContext, unit: UnitId, spec: SpecM1, tip: Sha, head: Sha, now: ApprovalFingerprint): GateDelta | 'empty' | null {
   const approval = ctx.journal.view.review().approval(unit);
   if (approval === null) return null;
   const blobs = approvalBlobsOf({ unit, blobs: approval.blobs });
-  if (blobs === null || blobs.specRev !== now.specRev) return null;
+  if (blobs === null || !designRevisionsOnly(ctx.journal.view, unit, blobs.specRev, now.specRev)) return null;
   const was = new Map<string, Sha | null>(blobs.files.map((f) => [f.path, f.blob]));
   const paths = unitDiffPaths(ctx.repo, tip, head);
   const is = new Map<string, Sha | null>(paths.map((p) => [p, blobAt(ctx.repo, head, p)]));
@@ -119,6 +121,20 @@ export function gateDelta(ctx: StageContext, unit: UnitId, spec: SpecM1, tip: Sh
   const review = all.filter((p) => !kept.includes(p)).map((p) => repoPath(p));
   if (review.length === 0 && moved.length === 0) return 'empty';
   return { approved: { attempt: approval.attempt, head: approval.fingerprint.unitCommit }, review, unchanged: kept.map((p) => repoPath(p)), moved };
+}
+
+/**
+ * Whether the unit's spec went from rev `from` to rev `to` by design records alone (dev.17, the design pass): every revision
+ * between is an executor patch whose every op is `design`, the record a plan-check's approve or scaffold lands on the
+ * spec's next revision. That revises the unit's own plan, not a requirement or contract the approval bound (those are
+ * `movedTargets`, `staleSinceApproval` and `movedInterfaces`), so it keeps the delta.
+ */
+function designRevisionsOnly(view: JournalView, unit: UnitId, from: SpecRev, to: SpecRev): boolean {
+  if (to < from) return false;
+  const design = new Set(view.opsOf('spec.patch').filter((i) =>
+    parentUnit(i.parent) === unit && view.doneOf(i.op) !== null && i.expect.patch.ops.every((o) => o.op === 'design')).map((i) => i.expect.expectRev as number));
+  for (let rev = from as number; rev < to; rev++) if (!design.has(rev)) return false;
+  return true;
 }
 
 /**

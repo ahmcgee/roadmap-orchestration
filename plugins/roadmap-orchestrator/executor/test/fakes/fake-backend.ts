@@ -16,7 +16,7 @@ import type { LensKindName } from '../../src/core/records.ts';
 import { unitBarrierName, waitAtBarrier } from '../helpers/barrier.ts';
 import { git, writeFiles, type FileSet } from '../helpers/repo.ts';
 import {
-  type Act, CALLS_FILE, CAPACITY_TEXT, CLAIMS_DIR, CLAUDE_USAGE_LIMIT, CODEX_CONTEXT_EXCEEDED, CODEX_RESUME_COLLISION, CODEX_USAGE_LIMIT, type CallRecord, type Expect, type FakeName, type ScenarioFile, type Step, readCalls,
+  type Act, CALLS_FILE, CAPACITY_TEXT, CLAIMS_DIR, defaultDesign, CLAUDE_USAGE_LIMIT, CODEX_CONTEXT_EXCEEDED, CODEX_RESUME_COLLISION, CODEX_USAGE_LIMIT, type CallRecord, type Expect, type FakeName, type ScenarioFile, type Step, readCalls,
 } from '../helpers/scenario.ts';
 
 const FIXTURES = fileURLToPath(new URL('../fixtures/backend-output/', import.meta.url));
@@ -262,6 +262,37 @@ function runReal(call: Call, scenarioDir: string, readOnly: Readonly<{ repo: str
   process.exit(r.status ?? 1);
 }
 
+/**
+ * A `planCheck` act's answer: the dev.17 payload keys it lacks are null, but an approve's or a scaffold's missing `design`,
+ * which is `defaultDesign` of the call's first scope pattern, its spec's active acceptance clauses and a lane that runs them.
+ */
+function planCheckValue(call: Call, value: JsonValue, scenarioDir: string): JsonValue {
+  const v = value as Record<string, JsonValue>;
+  const designs = v['decision'] === 'approve' || v['decision'] === 'scaffold';
+  // A repair turn's stdin is its directive alone: the scope is in the prompt of the session it resumes.
+  const prompt = (): string => {
+    const resumed = flagValue(call.argv, '--resume');
+    return resumed === undefined ? call.stdin
+      : readCalls(join(scenarioDir, 'scenario.json')).find((c) => flagValue(c.argv, '--session-id') === resumed)?.stdin ?? '';
+  };
+  const design = (): JsonValue => {
+    const text = prompt();
+    const first = /<scope_envelope>\n- (\S+)\n/.exec(text)?.[1];
+    if (first === undefined) throw new Error('fake claude: a planCheck act needs a scope envelope in the prompt');
+    const acceptance = /## Acceptance\n\n([\s\S]*?)\n\n## /.exec(text)?.[1] ?? '';
+    const clauses = [...acceptance.matchAll(/^- `([^`]+)` \[active\]/gm)].map((m) => m[1]!);
+    const lanes = [...(/<test_lanes>\n([\s\S]*?)<\/test_lanes>/.exec(text)?.[1] ?? '').matchAll(/^- (\S+) \((spec|suite|arc), cadence (\w+)([^\n]*)\)$/gm)]
+      .map((m) => ({ id: m[1]!, kind: m[2]!, cadence: m[3]!, unavailable: m[4]!.includes('(unavailable') }));
+    const lane = lanes.find((l) => l.kind === 'spec' && (l.cadence === 'build' || l.cadence === 'unit') && !l.unavailable)
+      ?? lanes.find((l) => l.cadence !== 'batch' && !l.unavailable);
+    return defaultDesign(first, clauses, lane?.id ?? null);
+  };
+  return {
+    split: null, scaffold: null, poc: null, ...v,
+    design: Object.hasOwn(v, 'design') ? v['design']! : designs ? design() : null,
+  };
+}
+
 // ---------------------------------------------------------------------------------------------------
 
 function paths(files: FileSet): string[] {
@@ -307,6 +338,11 @@ function perform(act: Act, call: Call, step: Step, index: number, scenarioDir: s
     case 'advised':
       claudeAdvisedResult(call, session(), act.value);
       return;
+    case 'planCheck': {
+      const value = planCheckValue(call, act.value, scenarioDir);
+      claudeResult(session(), { result: JSON.stringify(value), structured_output: value });
+      return;
+    }
     case 'globAboveAddDir': {
       const first = flagValue(call.argv, '--add-dir');
       if (first === undefined) throw new Error('fake claude: globAboveAddDir needs an --add-dir in argv');

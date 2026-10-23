@@ -2,16 +2,23 @@
 // processes, real git. Named tests: review.defect-required, review.ride-along, review.docs-only-code,
 // review.docs-only-verifier, review.docs-only-template-literal, review.docs-only-code-certain, review.docs-only-refused,
 // review.reraise-refused, review.reraise-anchor-changed,
-// review.dispute-ruled-once, review.delta-demotes, review.delta-scope, review.delta-empty.
+// review.dispute-ruled-once, review.delta-demotes, review.delta-scope, review.delta-empty, review.delta-design-revision
+// (dev.17 design pass: a design record's revision keeps the delta).
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import type { Fact, IntentOf } from '../src/core/events.ts';
+import { clauseId, invocationIdOf, sha } from '../src/core/ids.ts';
 import type { JsonValue } from '../src/core/json.ts';
+import type { SpecM1, SpecPatch } from '../src/core/records.ts';
 import { diffOf } from '../evals/roles/verifier/fixture.ts';
+import { runOp } from '../src/pipeline/dispatch.ts';
 import { certifiedTree, readByCode } from '../src/pipeline/docsonly.ts';
-import { gateDebtNotes } from '../src/pipeline/gate.ts';
+import { fingerprintAt, gateDebtNotes } from '../src/pipeline/gate.ts';
+import { gateDelta } from '../src/pipeline/review.ts';
+import { loadUnitSpec } from '../src/pipeline/stages.ts';
+import { specPatchOp } from '../src/spec/patch.ts';
 import { runUnit } from '../src/pipeline/unit.ts';
 import { validateGateOutput } from '../src/prompts/schemas.ts';
 import { events } from './fixtures/invoke-specs.ts';
@@ -392,6 +399,37 @@ test('review.delta-empty: a re-gate after an unchanged fix round with nothing mo
     assert.equal(approvals.length, 2, 'approved again at the new fingerprint');
     assert.deepEqual(approvals[1]!.blobs, approvals[0]!.blobs, 'the same blobs');
     assert.equal(approvals[1]!.attempt, r.journal.view.unit(U1).decided!.attempt);
+  } finally {
+    r.journal.close();
+  }
+});
+
+test('review.delta-design-revision: a design record a plan-check lands after an approval keeps the delta (empty, nothing changed) and mints no propagation; any other spec revision voids it', T, async () => {
+  const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })] });
+  const r = contextFor(d);
+  try {
+    await stepUntil(r, 'u1', (f) => f.stage === 'gate');
+    assert.equal(outcomes(d).at(-1), 'gate:approve');
+    const head = r.journal.view.review().approval(U1)!.fingerprint.unitCommit;
+    const tip = sha(git(d.repo, 'rev-parse', 'main'));
+    const patchSpec = async (ops: SpecPatch['ops'], stage: 'plan-check' | 'evidence'): Promise<SpecM1> => {
+      const { path, spec, sha256 } = loadUnitSpec(r.ctx, r.unit('u1'));
+      const attempt = r.journal.view.unit(U1).counters.attempts + 1;
+      await runOp(r.journal, specPatchOp(r.ctx.runDir), 'spec:u1', { type: 'stage', unit: U1, stage, attempt }, {
+        path, oldSha256: sha256, patch: { expectRev: spec.rev, by: { role: 'executor', inv: invocationIdOf(`${d.arc}/9#1`) }, ops },
+      });
+      return loadUnitSpec(r.ctx, r.unit('u1')).spec;
+    };
+    // A plan-check's approve again: its design record lands on the spec's next revision, the unit's own plan.
+    const approved = loadUnitSpec(r.ctx, r.unit('u1')).spec;
+    const redesigned = await patchSpec([{ op: 'design', record: approved.design! }], 'plan-check');
+    assert.equal(redesigned.rev, approved.rev + 1);
+    assert.equal(gateDelta(r.ctx, U1, redesigned, tip, head, fingerprintAt(r.ctx, r.unit('u1'), tip)), 'empty');
+    assert.deepEqual(r.journal.view.propagationFacts(), [], 'a design record mints no propagation');
+    assert.equal(r.journal.view.unit(U1).staleRev, null, 'and leaves none of the unit\'s links stale');
+    // Any other revision (here the build's recorded decisions) changes the spec the approval bound: a full review.
+    const revised = await patchSpec([{ op: 'add', section: 'decisions', item: { id: clauseId('D9'), text: 'mul stays in src/mul.js' } }], 'evidence');
+    assert.equal(gateDelta(r.ctx, U1, revised, tip, head, fingerprintAt(r.ctx, r.unit('u1'), tip)), null);
   } finally {
     r.journal.close();
   }

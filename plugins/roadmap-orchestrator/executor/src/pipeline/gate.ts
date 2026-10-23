@@ -73,7 +73,8 @@ import type { GateLargeDiff, IntentOf } from '../core/events.ts';
 import { captureUnderFence } from '../core/fence.ts';
 import { type JudgmentSessionId, type ObligationId, type Sha, type UnitId, invocationId, canonicalIds, compareIds } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
-import { type ApprovalFingerprint, type JudgmentSession, type ObligationRev, effectiveScope, obligationRevsOf, specObligations, specRemoves, specRepairs, specWitnesses } from '../core/records.ts';
+import { type ApprovalFingerprint, type JudgmentSession, type ObligationRev, type SpecM1, effectiveScope, obligationRevsOf, specObligations, specRemoves, specRepairs, specWitnesses } from '../core/records.ts';
+import { designSize } from '../core/design.ts';
 import { selectObligations } from '../holistic/impact.ts';
 import { effectiveRulingRevs } from '../spec/rulings.ts';
 import { type ObligationDef, isExempt } from '../holistic/types.ts';
@@ -419,6 +420,17 @@ export function regeneratedChecks(ctx: StageContext, series: StageParent, head: 
   });
 }
 
+/**
+ * dev.17 (design pass): the plan contracts among `paths` (the unit's diff) that the spec's design record does not name as a
+ * contract interface, ascending; none when the spec has no design record (nothing was declared to compare with).
+ */
+export function undeclaredContracts(ctx: StageContext, spec: SpecM1, paths: readonly RepoPath[]): readonly RepoPath[] {
+  if (spec.design === undefined) return [];
+  const declared = new Set<string>(spec.design.interfaces.filter((i) => i.type === 'contract').map((i) => i.path));
+  const contracts = new Set<string>(ctx.plan().contracts);
+  return paths.filter((p) => contracts.has(p) && !declared.has(p)).sort();
+}
+
 export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone | Cancelled> {
   const parent = at(start(ctx, unit.id, 'gate'), 'gate');
   // A cancelled task captures nothing (its `@cpu` wait, after the capture, would be cancelled at once).
@@ -490,10 +502,14 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
       // dev.13: the milestones it takes part in, their references at the tip (a design unit's own are in its diff).
       milestones: unitMilestones(ctx, unit.id, tip),
       review: reviewInput(ctx, unit.id, head, review),
+      // dev.17 (design pass): the contracts the diff touches that the design record does not declare (the salvage's risk
+      // trigger has put the gate on its escalation seat for them).
+      undeclaredContracts: undeclaredContracts(ctx, spec, paths),
     });
     writeJudgmentInputs(ctx, parent, {
       tip, head, specRev: spec.rev, specSha256: sha256, routingRev: seat.routingRev, fingerprint,
       diffShown: { inlined: bounded.inlined.map((f) => f.path).sort(), notInlined: bounded.notInlined }, largeDiff, review,
+      designEstimate: spec.design === undefined ? null : designSize(spec.design),
     });
     return {
       kind: 'captured', fingerprint, seat, rendered, system: prompt.system, schema: prompt.schema, evidence, head, dirs: targetDirs(target),

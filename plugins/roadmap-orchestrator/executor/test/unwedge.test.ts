@@ -109,7 +109,7 @@ describe('a crash-abandoned attempt is held at startup (arc feedback 2026-10-15)
       const acceptance = [...(spec['acceptance'] as Json[]), { id: 'A2', clause: 'mul(0, 5) is 0', failLoudIfUndelivered: true, state: 'active' }];
       writeFileSync(specPath(r.d, 'u1'), JSON.stringify({ ...spec, rev: 2, acceptance }));
       await command(r, applyBody(r.d));
-      assert.equal(r.journal.view.unit(U1).pendingRevision?.rev, 2);
+      assert.equal(r.journal.view.unit(U1).pendingRevision?.rev, 3, 'rebased onto rev 2 in force (dev.17: the approve landed its design record)');
       writeFileSync(specPath(r.d, 'u2'), JSON.stringify({ ...spec, unit: 'u2', rev: 1 }));
       editPlan(r.d, (p) => void p.units.push({ ...p.units[0]!, id: 'u2', spec: 'u2.json', reenters: { unit: 'u1' } }));
       await command(r, applyBody(r.d));

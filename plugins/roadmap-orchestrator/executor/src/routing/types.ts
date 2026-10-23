@@ -35,29 +35,38 @@ export type Triple =
  * arc roles: roles that run for the arc, not for a unit, on the one seat `arc`. They come last, so every earlier role keeps
  * its place in seat order.
  */
-export const ROLES = ['planCheck', 'build', 'gate', 'lens', 'checkpoint', 'packReview', 'flow', 'walkthrough', 'polishJudge', 'verifier'] as const;
+export const ROLES = ['planCheck', 'build', 'gate', 'lens', 'checkpoint', 'packReview', 'flow', 'walkthrough', 'polishJudge', 'verifier', 'scaffold'] as const;
 export type Role = (typeof ROLES)[number];
 /**
- * The unit pipeline's roles (M1), and (dev.17, proportional review) `verifier`: the economy role that classifies the hunks of
- * a build's docs-only claim at the unit's lanes stage (src/pipeline/docsonly.ts). It sits on the unit's risk tier like build.
+ * The unit pipeline's roles (M1), every arc hashes, and (dev.17, proportional review) `verifier`: the economy role that
+ * classifies the hunks of a build's docs-only claim at the unit's lanes stage (src/pipeline/docsonly.ts). It sits on the
+ * unit's risk tier like build. dev.17's `scaffold` is in force only under the `dev17` role set (`DEV17_UNIT_ROLES`).
  */
 export const UNIT_ROLES = ['planCheck', 'build', 'gate', 'verifier'] as const satisfies readonly Role[];
 /**
  * The roles a release before 1.0.0-dev.17 never had: an earlier release's built-in seats hash without them, so `status` still
  * aliases the revs it recorded (src/routing/layers.ts `routingRevOf`).
  */
-export const DEV17_ROLES = ['verifier'] as const satisfies readonly Role[];
-export type UnitRole = (typeof UNIT_ROLES)[number];
+export const DEV17_ROLES = ['verifier', 'scaffold'] as const satisfies readonly Role[];
+/**
+ * dev.17 (design pass): the unit roles in force only in an arc of the `dev17` role set (`ARC_ROLE_SETS`): `scaffold`, which
+ * writes a new system's skeleton a plan-check's `scaffold` decision specifies (src/pipeline/scaffold.ts). An adopted arc of
+ * an earlier release neither hashes nor runs it, so its routing revs are unchanged (src/routing/layers.ts `unitRolesInForce`).
+ */
+export const DEV17_UNIT_ROLES = ['scaffold'] as const satisfies readonly Role[];
+/** Every role a unit's call may sit on. */
+export type UnitRole = (typeof UNIT_ROLES)[number] | (typeof DEV17_UNIT_ROLES)[number];
 export const ARC_ROLES = ['lens', 'checkpoint', 'packReview', 'flow', 'walkthrough', 'polishJudge'] as const satisfies readonly Role[];
 export type ArcRole = (typeof ARC_ROLES)[number];
 /** The judgment roles of a unit's pipeline. */
 export type JudgmentRole = 'planCheck' | 'gate';
 export type ImplementerRole = 'build';
 /**
- * Every role that runs a fresh read-only session on the judgment profile (`claude-judgment`, `JUDGMENT_TOOLS`): plan-check
- * and the judging arc roles. An explicit list (dev.13): the gate and the walk roles judge by acting.
+ * Every role that runs a fresh read-only session on the judgment profile (`claude-judgment`, `JUDGMENT_TOOLS`): the judging
+ * arc roles and (dev.17) the docs-only verifier. An explicit list (dev.13): the gate and the walk roles judge by acting, and
+ * (dev.17) so does plan-check.
  */
-export const FRESH_ROLES = ['planCheck', 'lens', 'checkpoint', 'packReview', 'flow', 'verifier'] as const satisfies readonly Role[];
+export const FRESH_ROLES = ['lens', 'checkpoint', 'packReview', 'flow', 'verifier'] as const satisfies readonly Role[];
 export type FreshRole = (typeof FRESH_ROLES)[number];
 /**
  * dev.13: the arc roles that use the product (`claude-acting-judge` with the walkthrough MCP servers, cwd a detached
@@ -68,15 +77,23 @@ export type WalkRole = (typeof WALK_ROLES)[number];
 /**
  * dev.13: the roles that may run as an acting judge (`claude-acting-judge`, src/backends/argv.ts): the gate (owner
  * 2026-10-18: a shell for ad hoc experiments in a throwaway checkout of the unit's tip, no MCP server) and the walk roles.
+ * dev.17 (design pass): plan-check, in its throwaway checkouts of the tip and the unit branch, with web search and fetch
+ * besides (`PLAN_CHECK_TOOLS`).
  */
-export const ACTING_JUDGE_ROLES = ['gate', ...WALK_ROLES] as const satisfies readonly Role[];
+export const ACTING_JUDGE_ROLES = ['gate', ...WALK_ROLES, 'planCheck'] as const satisfies readonly Role[];
 export type ActingJudgeRole = (typeof ACTING_JUDGE_ROLES)[number];
-/** The roles whose session may change things: the implementer and the acting judges (dev.13). Every other role is a `FreshRole`. */
-export const ACTING_ROLES = ['build', ...ACTING_JUDGE_ROLES] as const satisfies readonly Role[];
+/**
+ * The roles whose session may change things: the implementer, the acting judges (dev.13) and (dev.17) the scaffold writer.
+ * Every other role is a `FreshRole`.
+ */
+export const ACTING_ROLES = ['build', ...ACTING_JUDGE_ROLES, 'scaffold'] as const satisfies readonly Role[];
 export type ActingRole = (typeof ACTING_ROLES)[number];
-/** The roles whose session is a `JudgmentSession` (fresh, or resumed once for the repair turn): every role but `build`. */
-export type JudgmentSessionRole = FreshRole | ActingJudgeRole;
-export const JUDGMENT_SESSION_ROLES = [...FRESH_ROLES, ...ACTING_JUDGE_ROLES] as const satisfies readonly Role[];
+/**
+ * The roles whose session is a `JudgmentSession` (fresh, or resumed once for the repair turn): every role but `build`. The
+ * scaffold writer's session is always fresh (its retry is a new attempt).
+ */
+export type JudgmentSessionRole = FreshRole | ActingJudgeRole | 'scaffold';
+export const JUDGMENT_SESSION_ROLES = [...FRESH_ROLES, ...ACTING_JUDGE_ROLES, 'scaffold'] as const satisfies readonly Role[];
 
 /** A unit's risk. Never `escalation`: that seat is a judgment role's route-up target, not a risk. */
 export const RISK_TIERS = ['low', 'med', 'high'] as const;
@@ -90,11 +107,11 @@ export const ARC_SEATS = ['arc'] as const;
 export type ArcSeat = (typeof ARC_SEATS)[number];
 /** Any role's seat name; `SeatRef` pairs one with a role that has it. */
 export type Seat = JudgmentSeat | ArcSeat;
-/** Build and (dev.17) the verifier have the three risk seats; each unit judgment role has four; each arc role has `arc`. */
+/** Build and (dev.17) the verifier and scaffold have the three risk seats; each unit judgment role has four; each arc role has `arc`. */
 export type SeatOf<R extends Role> = R extends ArcRole ? ArcSeat : R extends JudgmentRole ? JudgmentSeat : RiskTier;
 export const SEATS: { readonly [R in Role]: readonly SeatOf<R>[] } = {
   planCheck: JUDGMENT_SEATS, build: RISK_TIERS, gate: JUDGMENT_SEATS, lens: ARC_SEATS, checkpoint: ARC_SEATS, packReview: ARC_SEATS, flow: ARC_SEATS,
-  walkthrough: ARC_SEATS, polishJudge: ARC_SEATS, verifier: RISK_TIERS,
+  walkthrough: ARC_SEATS, polishJudge: ARC_SEATS, verifier: RISK_TIERS, scaffold: RISK_TIERS,
 };
 /** One seat of the table, `role.tier`: `build.escalation` is unrepresentable. */
 export type SeatRef = { [R in Role]: Readonly<{ role: R; tier: SeatOf<R> }> }[Role];
@@ -197,7 +214,7 @@ export function seatFields(f: Fields): SeatRef {
 
 /** `seatFields` limited to the unit roles: a unit's call never sits on an arc seat. */
 export function unitSeatFields(f: Fields): UnitSeatRef {
-  const r = f.get('role', oneOf(UNIT_ROLES));
+  const r = f.get('role', oneOf([...UNIT_ROLES, ...DEV17_UNIT_ROLES]));
   return { role: r, tier: f.get('tier', oneOf(SEATS[r] as readonly Seat[])) } as UnitSeatRef;
 }
 
@@ -270,8 +287,10 @@ export const classBindings: Read<ClassBindings> = object((f) => {
  * The arc-role set an arc runs under (M4b, R5): `m4b` puts `flow` in force in every arc scope. Written by 1.0.0-dev.8 on
  * every revision of an arc it started (carried from revision 1, which fixes it: the fold refuses a change), absent on
  * an arc 1.0.0-dev.7 started, which keeps the dev.7 role set (src/routing/layers.ts `arcRolesInForce`; scaffolding).
+ * dev.17: `dev17` is `m4b` and the dev.17 unit roles (`DEV17_UNIT_ROLES`), written on every revision of an arc dev.17
+ * started; an adopted dev.8-to-dev.16 arc keeps `m4b`, so it hashes no scaffold seat and takes no `scaffold` decision.
  */
-export const ARC_ROLE_SETS = ['m4b'] as const;
+export const ARC_ROLE_SETS = ['m4b', 'dev17'] as const;
 export type ArcRoleSet = (typeof ARC_ROLE_SETS)[number];
 
 /**

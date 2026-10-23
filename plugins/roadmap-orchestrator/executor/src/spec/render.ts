@@ -8,7 +8,8 @@
 // M3 (A13): the obligations a unit declares and what a repair unit repairs follow, each only when the spec has it.
 // M4a rev 3: a spec's witness items follow its facts, and a spec lane's `inputs` its evidence, each only when present, so
 // a spec without them renders as before. Scope growth (2026-10-15): what the unit removes or renames follows its scope, only
-// when declared.
+// when declared. dev.17 (design pass): the design record a plan-check settled closes the spec, only when it has one.
+import { type DesignRecord, designSize } from '../core/design.ts';
 import type { ItemState, LaneDef, NoteDef, SpecM1, WitnessItemDef } from '../core/records.ts';
 import { buildLanes } from '../resources/reserve.ts';
 
@@ -49,6 +50,28 @@ function witness(w: WitnessItemDef & Readonly<{ state: ItemState }>): string {
   ].join('\n');
 }
 
+/** dev.17: the design record, as the build and the gate read it (its pins stay in spec.json; a reader needs the paths). */
+function design(d: DesignRecord): string {
+  const changes = d.changes.map((c) => `- ${c.system === null ? '(no system)' : code(c.system)}: ${c.paths.map(code).join(', ')} (about ${c.lines} lines)`);
+  const proof = (m: DesignRecord['failureModes'][number]): string => {
+    if (m.proof.type === 'untested') return `untested: ${m.proof.reason}`;
+    const t = m.proof.test;
+    return t.type === 'witness' ? `proven by witness item ${code(t.item)}` : `proven by test ${code(t.testId)} of lane ${code(t.lane)}`;
+  };
+  const modes = d.failureModes.map((m) => bullet(code(m.id), `${m.mode} (${proof(m)}${m.requirements.length === 0 ? '' : `; bears on ${m.requirements.map((r) => r.id).join(', ')}`})`));
+  const clauses = d.clauses.map((c) => `- ${code(c.clause)}: ${c.lanes.map(code).join(', ')}`);
+  const breaks = [...d.breaks.tests.map((b) => `- test ${code(b.path)}`), ...d.breaks.docs.map((b) => `- doc ${code(b.path)}`)];
+  return [
+    `## Design\n\nkind ${d.kind}, about ${designSize(d)} changed lines`,
+    `### Changes\n\n${changes.join('\n')}`,
+    `### Interfaces\n\n${d.interfaces.length === 0 ? '(none)' : d.interfaces.map((i) => `- ${i.type} ${code(i.path)}`).join('\n')}`,
+    `### Failure modes\n\n${modes.length === 0 ? '(none)' : modes.join('\n')}`,
+    `### Clauses exercised by\n\n${clauses.length === 0 ? '(none)' : clauses.join('\n')}`,
+    `### Breaks\n\n${breaks.length === 0 ? '(none)' : breaks.join('\n')}`,
+    ...(d.newSystem === undefined ? [] : [`### New system\n\n${code(d.newSystem.name)}: ${d.newSystem.paths.map(code).join(', ')}`]),
+  ].join('\n\n');
+}
+
 function notes(title: string, items: readonly (NoteDef & Readonly<{ state: ItemState }>)[]): string {
   const body = items.length === 0 ? '(none)' : items.map((n) => bullet(`${code(n.id)} [${n.state}]`, n.text)).join('\n');
   return `## ${title}\n\n${body}`;
@@ -73,6 +96,7 @@ export function renderSpec(spec: SpecM1, options: RenderOptions = {}): string {
     // M3 (A13): shown only when declared, so a spec without them renders as before.
     ...(spec.obligations === undefined ? [] : [`## Obligations\n\n${sorted(spec.obligations).map((o) => `- ${o}`).join('\n')}`]),
     ...(spec.repairs === undefined ? [] : [`## Repairs\n\n${sorted(spec.repairs).map((r) => `- ${r}`).join('\n')}`]),
+    ...(spec.design === undefined ? [] : [design(spec.design)]),
   ];
   return `${sections.join('\n\n')}\n`;
 }

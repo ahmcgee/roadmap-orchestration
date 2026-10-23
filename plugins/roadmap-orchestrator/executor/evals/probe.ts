@@ -565,6 +565,7 @@ async function main(): Promise<void> {
     contracts: [], rulings: [], index: MINI_INDEX, target: MINI_ARCH, direction: 'Ship the smallest thing that serves the vision.',
     scope: [repoPattern('convert.ts')], risk: 'low', checkouts: { tip: { path: m3Dir, at: TREE }, branch: null }, lanePrograms: [], priorRound: null, vision: MINI_VISION, priorInvalid: null,
     scopeGrowth: { references: [], rejected: [] }, escalation: null, milestones: null, staleLinks: [],
+    design: { systems: null, lanes: [], forces: [], substantialLines: 200, gateInlineLines: 1310, pocsLeft: 2, scaffold: false }, pocs: [],
   };
   const planCheck = seatCall(holistic, 'planCheck', 'med', { role: 'planCheck', tier: 'med' }, 'm3-plan-check', m3Dir, planCheckInputs);
   await backend(ctx, 'm3.plan-check', planCheck,

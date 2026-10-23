@@ -562,7 +562,8 @@ A role eval measures one judgment role on its own, many trials per scenario cell
 no session can read. It complements the fixtures: they show an arc converges, a role eval shows how often a role catches
 what it must and how often it cries wolf, at what cost. The gate is the first role (dev.12: the bounded gate diff and the
 Agent tool); the walkthrough is the second and the polish judge the third (dev.13, "The walkthrough eval" and "The
-polish-judge eval" below). `run.ts` takes the role first (`triggers.ts` `EvalRole`: `gate`, `walkthrough`, `polishJudge`); the
+polish-judge eval" below); the scaffold writer is the fourth (dev.17, "The scaffold eval" below). `run.ts` takes the role
+first (`triggers.ts` `EvalRole`: `gate`, `walkthrough`, `polishJudge`, `scaffold`); the
 pool, the workers, `--rebind`, `--cap` and `--trial-cap` are shared (`pool.ts`, `trial.ts`).
 
 ```sh
@@ -912,6 +913,49 @@ fails, one bad run of three fails; voids; stability; holdout gap); run.ts end to
 production compare (`oracle` passes every criterion over all 12 cells, MCP only for the browser families; `keep-all`
 and `drop-all` fail; `refused` takes the repair turn and voids `invalid`); the caps; the seat. The triggers are in
 `test/roles-walkthrough.test.ts` (`roles.walk-triggers`).
+
+### The scaffold eval (dev.17)
+
+```sh
+node evals/roles/run.ts scaffold --set dev --n 3 [--cells module,imports-map] [--parallel 2] [--rebind <class>=<model>:<effort>] [--out <dir>] [--cap <usd>] [--trial-cap <usd>]
+node evals/roles/run.ts scaffold --set holdout --n 3 --compare <dev run>/summary.json     # acceptance only
+node evals/roles/run.ts scaffold --set dev --n 1 --fake oracle                              # free: the harness's own check
+```
+
+**When.** Paid, path-triggered: `src/prompts/scaffold/**`, the scaffold stage (`src/pipeline/scaffold.ts`), the prompt
+inputs and schemas, `src/routing/**`, the argv and the Claude reader, `evals/roles/scaffold/**` and the shared harness.
+
+**Cells** (`scaffold/cells.ts`). Four new systems over the corpus arc's Node repo, one per family: `module` (a plain module
+directory), `imports-map` (reached through a `package.json` `imports` entry), `named-exports` (a load test importing three
+exports), `bin-two-entries` (two entry points, a `bin` entry, the load test nested in a suite: id `report > loads`). A cell
+is the unit's acceptance and scope, the plan-check's scaffold decision (new system paths and tests, entry points,
+exports, manifest entries, the load test's id) and the load lane's glob; its reference skeleton is what the fake writers
+write, never shown to a real one. The holdout set is untracked (`evals/roles/holdout/scaffold.ts`, exporting
+`HOLDOUT_SCAFFOLD_CELLS`).
+
+**The harness** (`scaffold/arc.ts`, `fixture.ts`) runs each trial through the production scaffold stage: the corpus arc
+(role set `dev17`) with the arc lane `load` (`node --test <glob>`, the node-test reporter), a fake plan-check deciding
+`scaffold`, then u1's pipeline held before the build. The writer (`scaffold.med`, economy: Haiku 5.5 high) runs in the
+unit worktree; code checks its paths and entry points, dry-runs the load lane for real and commits the skeleton, or refuses
+it once (the retry is told why) and then parks plan-defect. The monitor, brakes and needle scan are the polish judge's.
+
+**Grading and criteria** (`scaffold/summary.ts`). The verdict is what code decided: `first`, `retry` or `defect`. Every
+run lands a skeleton in at least 3 of 4 cells (`landed`); at least half the graded trials land first-try (`first-try`);
+voids at most a quarter; cost-check; with `--compare`, the holdout's landed rate within 15 points of dev's. Reported:
+RUN, FAMILY, REFUSALS by kind (nothing, outside, entry-point, lane-exit, not-ran, schema), skeleton size, COST, USAGE,
+TOTAL. The bars are first guesses until a paid run measures the seat.
+
+**Cost.** An estimate: a skeleton is a few small files, roughly 10 to 25 turns on Haiku 5.5, a few cents a trial; the dev
+set at n = 3 (12 trials) well under $5. A paid run sets `--trial-cap 1 --cap 20`.
+
+**Output.** `<out>/trials.jsonl`, `<out>/summary.json`, and per trial `key.json`, `prompt-<n>.txt` per attempt,
+`argv.json`, `scaffold-<n>.jsonl`, `transcript.jsonl`, `answer.json`, `skeleton.diff` when one landed, `row.json`.
+
+**Free tier.** `test/roles-scaffold.test.ts`: the cells' shape (every reference path within the new system, its tests or
+a manifest file; every entry point present; the load glob takes the tests; no word naming the eval); the summary's bars
+over scripted rows and the refusal kinds of code's own reasons; run.ts end to end on the fake writers (`oracle` lands all
+four first-try; `fix-on-retry` lands on the retry, told `<previous_attempt>`; `outside` and `nothing` park plan-defect);
+the caps; the seat; the triggers.
 
 ## The run observer
 

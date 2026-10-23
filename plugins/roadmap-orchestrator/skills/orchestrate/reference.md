@@ -192,7 +192,10 @@ builds at every risk and runs the lenses and flow; `frontier` plan-checks and ga
 `summit` holds both escalation seats and the checkpoint. A Claude build consults the frontier model as its advisor (`--advisor`) at its
 own decision points; that spend shows under `frontier` in `spend.byClass`. A class binds a build
 model and a judgment model (always Claude): `efficient` judges on Claude under both profiles, even where it builds on Codex.
-`economy` is judgment-only and no built-in seat names it (reach it through `routing.seats`, a plan or `route`): no build seat may name it, in `routing.seats`, a plan, `route` or `steer --class`.
+`economy` is judgment-only: no build seat may name it, in `routing.seats`, a plan, `route` or `steer --class`. The one
+built-in seat on it is the `scaffold` role's (1.0.0-dev.17, `scaffold.low|med|high`: the writer of a new system's skeleton a
+plan-check decides; in force only in arcs started on dev.17 or later); reach economy elsewhere through
+`routing.seats`, a plan or `route`. Plan-check acts (a shell and web search in its own checkouts) at every seat.
 
 **`walkthrough.mcp`** names the stdio MCP servers a walk session gets, exactly these (`--strict-mcp-config`); the
 environment provides them, the executor ships no browser. Code substitutes `{evidence}` (the session's evidence dir) and
@@ -491,7 +494,10 @@ Blocking unless noted. Read the item file before acting.
   rejected receipt. Redo the edit from where the arc is now, then `ack` (SKILL.md "Changing the plan").
 - `plan-defect` (the unit is parked at lanes, uncharged): its missing witness is a plan defect code diagnosed (the
   witness file outside its lane, or absent and outside the unit's scope). Fix the plan by `apply`, then `resume`
-  (SKILL.md "Handling parks").
+  (SKILL.md "Handling parks"). At plan-check (1.0.0-dev.17): its design was refused twice for a plan defect (a test no lane
+  runs before the unit merges, an acceptance clause no lane runnable in this arc exercises, an integration unit without a spanning test, a design too big for one unit, a split code
+  refused); at scaffold: its skeleton was refused twice (paths outside the new system, a missing entry point, a load
+  test that does not run). The item names every reason; fix by `apply`, then `resume` (SKILL.md "The design pass").
 - Flow, non-blocking (SKILL.md "The flow loop"): `flow-proposal` and `flow-host` (`flow accept` or `flow reject`; the
   item's evidence is the run's inputs file), `flow-worse` (revert by `apply` to the `preimage` of the proposal's
   `flow-verdict` fact in the run dir's `events.jsonl`, then `ack`), `ruler-changed` (confirm or revert, then `ack`),

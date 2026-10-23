@@ -5,7 +5,8 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   clauseId, divergenceId, envId, findingId, issueContentRef, issueId, jobId, laneId, laneRev, obligationId, questionId, ruleId, rulingId, sha, sha256, specRev, unitId,
-  type Sha, visionClauseId, invocationId, opIdOf, witnessItemId, arcId, givenId, proposalId, stationId, journeyId, milestoneId, polishId, serveName,
+  type Sha, visionClauseId, invocationId, opIdOf, witnessItemId, arcId, givenId, proposalId, stationId, journeyId, milestoneId, polishId, serveName, pocQuestionId, resourceName,
+  systemName,
 } from '../src/core/ids.ts';
 import { isoTime } from '../src/core/values.ts';
 import { reviewFindingId } from '../src/core/ids.ts';
@@ -28,9 +29,11 @@ import { repeatRedDirective, smokeFixDirectives, witnessFixDirectives } from '..
 import { arcStack, resolveRouting, seatsInForce } from '../src/routing/layers.ts';
 import { FRESH_ROLES, MODEL_IDS, PROFILES, ROLES, type Role, WALK_ROLES, atSeat } from '../src/routing/types.ts';
 
-/** The judging roles with a written Opus module and derived Sonnet and Haiku rows: the read-only ones and the gate (dev.13, an acting judge). */
-/** The judgment roles written as Opus modules; the verifier (dev.17) has a Haiku module only. */
-const JUDGING = [...FRESH_ROLES.filter((r) => r !== 'verifier'), 'gate'] as const;
+/**
+ * The judging roles with a written Opus module and derived Sonnet and Haiku rows: the read-only ones (but the verifier, dev.17,
+ * which has a Haiku module only), the gate (dev.13, an acting judge) and plan-check (dev.17, an acting judge).
+ */
+const JUDGING = [...FRESH_ROLES.filter((r) => r !== 'verifier'), 'gate', 'planCheck'] as const;
 
 // Two complete input sets per role that differ in every field, so swapping one field shows whether a
 // module's rendering depends on it.
@@ -193,6 +196,21 @@ const partial = (from: Sha, to: Sha, text: string, labelled: boolean): BoundedDi
   };
 };
 
+/** dev.17: a scaffold writer's inputs, every field marked by `k`; `retry` its one retry's reasons, or null. */
+function scaffoldSample(k: string, retry: RoleInputs['scaffold']['retry']): RoleInputs['scaffold'] {
+  return {
+    spec: spec(k === 'A' ? 1 : 2, `SPEC-${k}`),
+    scaffold: {
+      newSystem: { name: systemName(`sys${k.toLowerCase()}`), paths: [repoPattern(`packages/${k}/**`)], tests: [repoPattern(`packages/${k}/test/**`)] },
+      entryPoints: [repoPath(`packages/${k}/index.js`)], exports: [`EXPORT-${k}`], loadTest: { lane: laneId(`load${k}`), testId: `LOAD-TEST-${k}` },
+      manifest: [{ path: repoPath('package.json'), entry: `MANIFEST-${k}` }],
+    },
+    loadLane: { id: laneId(`load${k}`), argv: ['node', '--test', `LOAD-ARGV-${k}`], cwd: repoPath('.'), testPaths: [repoPattern(`packages/${k}/test/**`)] },
+    worktree: absPath(`/wt/SCAFFOLD-${k}`),
+    retry,
+  };
+}
+
 const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] } = {
   planCheck: [
     {
@@ -201,6 +219,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       checkouts: { tip: { path: absPath('/wt/u.plan-check-1'), at: SHA_A }, branch: null },
       lanePrograms: [{ lane: laneId('unit'), argv0: 'npm', resolved: { kind: 'program', realpath: absPath('/usr/lib/node/npm') } }],
       priorRound: null, vision: null, priorInvalid: null, scopeGrowth: { references: [], rejected: [] }, escalation: null, milestones: null, staleLinks: [],
+      design: { systems: null, lanes: [], forces: [], substantialLines: 200, gateInlineLines: 1310, pocsLeft: 2, scaffold: false }, pocs: [],
     },
     {
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
@@ -220,6 +239,16 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       },
       escalation: { kind: 'route-up', first: { decision: 'escalate', reasons: ['ESCALATE-REASON-B'] } }, milestones: milestonesSample(),
       staleLinks: ['requirement:I-2: STALE-LINK-B'],
+      design: {
+        systems: { systems: { [systemName('api')]: { paths: [repoPattern('src/api/**')], tests: [repoPattern('test/api/**')], dependsOn: [] } }, shared: [], contracts: {}, docs: [] },
+        lanes: [{ id: laneId('journey'), kind: 'arc', cadence: 'candidate', systems: [systemName('api')], environment: { name: resourceName('env-b'), unavailable: 'ENV-UNAVAILABLE-B' } }], forces: [laneId('SYSTEMS-B')], substantialLines: 150, gateInlineLines: 900,
+        pocsLeft: 1, scaffold: true,
+      },
+      pocs: [{
+        attempt: 4, questions: [{ id: pocQuestionId('PQ-1'), question: 'POC-QUESTION-B', whyItMatters: 'WHY-B' }], brief: 'POC-BRIEF-B',
+        answer: { answers: [{ questionId: pocQuestionId('PQ-1'), answer: 'POC-ANSWER-B', evidence: 'POC-EVIDENCE-B', confidence: 'high' }], lessons: ['POC-LESSON-B'], surprises: [] },
+        why: null, diff: absPath('/run/ev/u/4-poc/poc.diff'),
+      }],
     },
   ],
   build: [
@@ -260,7 +289,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       diff: { bounded: shown(SHA_A, SHA_B, 'DIFF-A'), claims: { acceptance: [clauseId('A1')], witnesses: [], obligations: [] } },
       laneLedger: [{ lane: laneId('unit'), argv: ['npm', 'test'], expectedExit: 0, exitCode: 0, verdict: 'pass', evidenceDir: absPath('/run/inv/3-1'), ignored: null, reused: null }],
       evidence: [absPath('/run/ev/a')], scope: { patterns: [repoPattern('src/a/**')], growth: [], rejected: [] }, priorRound: null, checks: { witnesses: null, smoke: null, regenerated: [] },
-      escalation: null, largeDiff: null, milestones: null, review: { ledger: [], disputes: [], delta: null },
+      escalation: null, largeDiff: null, milestones: null, review: { ledger: [], disputes: [], delta: null }, undeclaredContracts: [],
     },
     {
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
@@ -293,6 +322,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
         disputes: [{ finding: reviewFindingId('R-1'), reason: 'DISPUTE-B', text: 'LEDGER-B' }],
         delta: { approved: { attempt: 2, head: SHA_A }, review: [repoPath('src/b/x.ts')], unchanged: [repoPath('src/b/UNCHANGED-B.ts')], moved: ['docs/b.md'] },
       },
+      undeclaredContracts: [repoPath('docs/UNDECLARED-B.md')],
     },
   ],
   lens: [
@@ -362,6 +392,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
     { unit: unitId('u-one'), since: SHA_A, at: SHA_B, hunks: [{ id: 'h1', path: repoPath('src/a.ts'), language: 'TypeScript', text: '@@ -1 +1 @@\n-/** HUNK-A */\n+/** HUNK-A2 */' }] },
     { unit: unitId('u-two'), since: SHA_B, at: SHA_A, hunks: [{ id: 'h2', path: repoPath('lib/b.py'), language: null, text: '@@ -3 +3 @@\n-# HUNK-B\n+# HUNK-B2' }] },
   ],
+  scaffold: [scaffoldSample('A', null), scaffoldSample('B', { reasons: ['RETRY-REASON-B'], laneEvidence: absPath('/run/ev/u/9-scaffold/LANE-B') })],
 };
 
 const OUTPUTS: { readonly [R in Role]: unknown } = {
@@ -389,8 +420,10 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
     findings: [{ severity: 'blocking', target: { type: 'census', rule: 'T-1' }, claim: 'T-1 has no census entry', evidence: [{ path: 'obligations.json', line: 1 }] }],
     dispositions: [{ job: 'review-1', index: 0, disposition: 'still-open' }], reasons: ['the census misses T-1'], premises: [],
   },
+  scaffold: { summary: 'Wrote the api package skeleton.', paths: ['packages/api/index.js', 'packages/api/test/load.test.js', 'package.json'] },
   planCheck: {
     decision: 'redirect', reasons: ['A1 contradicts C-1'], risk: 'med', notes: '', premises: [{ claim: 'parse.ts exists', evidence: [{ path: 'src/a/parse.ts', line: 1 }] }],
+    design: null, split: null, scaffold: null, poc: null,
     visionConflict: [{ clauses: ['V-1'], note: 'A2 makes rounding permissive, against V-1.' }],
     scopeGrowth: [{ patterns: ['test/legacy/shell.test.ts'], reason: 'it tests the shell page A1 removes' }],
     staleLinks: [{ link: 'requirement:I-2', outcome: 'updated', reason: 'A1 now states I-2 at rev 2' }],
@@ -431,11 +464,11 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
   },
 };
 
-/** Every (role, model) either built-in profile can resolve, the arc seats of a corpus arc of the m4b role set with milestones (every arc role) included. */
+/** Every (role, model) either built-in profile can resolve, the seats of a corpus arc of the dev17 role set with milestones (every role) included. */
 function builtinSeats(): readonly (readonly [Role, (typeof MODEL_IDS)[number]])[] {
   const seen = new Map<string, readonly [Role, (typeof MODEL_IDS)[number]]>();
   for (const p of PROFILES) {
-    const resolved = resolveRouting({ ...arcStack(p, null, null), arcScope: 'corpus', arcRoles: 'm4b', milestones: true });
+    const resolved = resolveRouting({ ...arcStack(p, null, null), arcScope: 'corpus', arcRoles: 'dev17', milestones: true });
     for (const s of seatsInForce(resolved)) {
       const m = atSeat(resolved.table, s).model;
       seen.set(`${s.role}/${m}`, [s.role, m]);

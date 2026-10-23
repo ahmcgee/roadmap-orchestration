@@ -305,11 +305,12 @@ export function keepCorpusFiles(runDir: AbsPath, files: readonly SourceFile[]): 
 export type RoutingBase = Readonly<{ profile: ProfileName; config: RepoConfig | null; arcRoles: ArcRoleSet | null }>;
 
 /**
- * The arc-role set of the arc whose plan in force is `inForce` (M4b, R5): `m4b` for an arc with no plan yet (a fresh start
- * records it on revision 1), else what its revisions carry from revision 1 (null: started on 1.0.0-dev.7).
+ * The arc-role set of the arc whose plan in force is `inForce` (M4b, R5): `dev17` for an arc with no plan yet (a fresh start
+ * records it on revision 1), else what its revisions carry from revision 1 (`m4b`: started on dev.8 to dev.16; null: started
+ * on 1.0.0-dev.7).
  */
 export function arcRolesOf(inForce: PlanAppliedFact | null): ArcRoleSet | null {
-  return inForce === null ? 'm4b' : inForce.routingProvenance.arcRoles ?? null;
+  return inForce === null ? 'dev17' : inForce.routingProvenance.arcRoles ?? null;
 }
 
 /** The arc routing of `plan` (no unit layer). */

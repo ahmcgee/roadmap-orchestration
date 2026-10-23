@@ -94,6 +94,9 @@ export const TERMINAL_SNAPSHOT = 'close-out publication and arc completion (M3 B
 export const EXECUTOR_FAULT = 'contained executor fault (1.0.0-dev.17: the task\'s leftovers settled, then the executor-fault park and its item)';
 export const STALE_SET = 'stale-set recording (1.0.0-dev.17 propagation: an apply\'s revision.commit, plan-applied, its divergences, then the stale-set fact from its payload)';
 export const PROPAGATION_REVISION = 'propagation revision (1.0.0-dev.17: propagation-refused, then plan-applied{source: propagation{rev}} under the fence)';
+export const DESIGN_SPLIT = 'plan-check split (dev.17 design pass: the split hold, then plan-applied{source: split} cutting the unit)';
+export const SCAFFOLD_STAGE = 'scaffold stage (dev.17 design pass: the writer, the dry run, then salvage.commit of the skeleton)';
+export const POC_STAGE = 'proof of concept (dev.17 design pass: the throwaway build, its report, then its checkout removed)';
 export const SUPERVISOR_HOST = 'supervisor/host';
 export const RECOVERY_CRASH = 'crash during recovery';
 export const ADVERSARIAL_LIVE_RUNNER = 'adversarial: crash during recovery with a live runner';
@@ -2163,6 +2166,65 @@ export const MATRIX: readonly Row[] = [
         labels: ['propagation.after-revision'],
         recovery: 'the revision committed: nothing is due (I-1 carried by its unit, I-2 refused); no second revision',
       },
+    },
+  },
+  {
+    // u1's oversize design refused, its repair turn's split accepted; the unit driver runs in a child (unit-child.ts) crashed
+    // at each label, then the restart's startup consume (src/pipeline/unit.ts `finishHeldSplit`).
+    row: DESIGN_SPLIT,
+    test: 'test/design.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: { status: 'excluded', why: 'the split writes no intent before its hold: the hold is one stage-outcome append (journal.append covers it torn)' },
+      B3: {
+        status: 'crash',
+        labels: ['split.after-hold'],
+        recovery: 'the split hold durable, the revision not committed: the restart lands the split from the held attempt\'s recorded answer, the plan-check never asked again; one plan-applied{source: split}',
+      },
+      B4: { status: 'excluded', why: 'the commit is one revision.commit (its own row crashes inside it); nothing of the split follows it but the label after it' },
+      B5: {
+        status: 'crash',
+        labels: ['split.after-commit'],
+        recovery: 'the revision committed and the unit cut: the restart finds nothing to finish; one split revision, the children in the plan in force',
+      },
+    },
+  },
+  {
+    // A corpus arc of the dev17 role set: u1's skeleton written and dry-run, the unit driver in a child (unit-child.ts) crashed
+    // after the skeleton's commit, then the driver again after recovery (stage-child.ts) to the merge.
+    row: SCAFFOLD_STAGE,
+    test: 'test/scaffold.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: { status: 'excluded', why: 'the writer\'s call is a proc.spawn (its rows); a crash in it leaves an attempt the startup holds and runs again over what the worktree holds' },
+      B3: { status: 'excluded', why: 'the dry run is a journey series (proc.spawn lane rows) and its commit object names no ref: nothing to reconcile' },
+      B4: {
+        status: 'crash',
+        labels: ['scaffold.after-commit'],
+        recovery: 'the skeleton committed, the outcome not recorded: the next attempt finds the commit and records scaffolded without asking the writer; one scaffold commit, the unit merges',
+      },
+      B5: { status: 'excluded', why: 'scaffolded is one stage-outcome append; what the build does after it is the whole-pipeline row (14c)' },
+    },
+  },
+  {
+    // u1's plan-check asks one PoC; the unit driver runs in a child (unit-child.ts) crashed at each label, then the driver again
+    // to the build.
+    row: POC_STAGE,
+    test: 'test/design.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: { status: 'excluded', why: 'the builder\'s call is a proc.spawn (its rows); a crash in it leaves an attempt the startup holds and runs again in a checkout of its own' },
+      B3: {
+        status: 'crash',
+        labels: ['poc.after-report'],
+        recovery: 'the report written, the checkout not removed: the next attempt removes the leftover checkout (snapshotting it) and records answered from the report, the builder never asked again',
+      },
+      B4: {
+        status: 'crash',
+        labels: ['poc.after-cleanup'],
+        recovery: 'the report written and the checkout removed, the outcome not recorded: the next attempt records answered from the report; the builder asked once',
+      },
+      B5: { status: 'excluded', why: 'answered is one stage-outcome append; the fresh plan-check after it is the plan-check rows\'' },
     },
   },
 ];

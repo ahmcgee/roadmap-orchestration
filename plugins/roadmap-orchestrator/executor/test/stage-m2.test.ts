@@ -130,13 +130,13 @@ test('gate.judgment-inputs: plan-check and gate write their inputs before the en
       const f = e.fact;
       assert.equal(f.tip, base, `${f.stage}: the integration tip it read`);
       assert.equal(f.head, f.stage === 'gate' ? git(d.repo, 'rev-parse', unitBranch(r.ctx.plan().arc, U1)) : null);
-      assert.equal(f.specRev, 1);
+      assert.equal(f.specRev, f.stage === 'gate' ? 2 : 1, `${f.stage}: the spec rev it read (dev.17: the approve's design record lands as rev 2)`);
       assert.equal(f.planRev, planRevNow);
       assert.equal(f.routingRev, r.ctx.routing(null).rev);
       // 1.0.0-dev.12: the gate's also record what its bounded diff inlined (the unit's two files) and did not, and that the
-      // diff is under the large-diff threshold.
+      // diff is under the large-diff threshold; dev.17: and the design record's size estimate (the fake approve's, 10 lines).
       const fingerprint = f.stage === 'gate'
-        ? { fingerprint: fingerprintAt(r.ctx, r.unit('u1'), sha(base)), diffShown: { inlined: ['src/mul.js', 'test/mul.test.js'], notInlined: [] }, largeDiff: null, review: { ledger: [], disputes: [], delta: null } }
+        ? { fingerprint: fingerprintAt(r.ctx, r.unit('u1'), sha(base)), diffShown: { inlined: ['src/mul.js', 'test/mul.test.js'], notInlined: [] }, largeDiff: null, review: { ledger: [], disputes: [], delta: null }, designEstimate: 10 }
         : {};
       assert.deepEqual(r.journal.view.judgmentInputs(U1, f.stage, f.attempt), {
         unit: f.unit, stage: f.stage, attempt: f.attempt, tip: f.tip, head: f.head, specRev: f.specRev, specSha256: f.specSha256, planRev: f.planRev, routingRev: f.routingRev, ...fingerprint,

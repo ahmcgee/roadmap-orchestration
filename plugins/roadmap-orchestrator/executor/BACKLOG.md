@@ -290,6 +290,28 @@ at triage stay in git history.
 - **File pins of a design record.** `breaks` and file `interfaces` pin a blob, but no merge marks them stale; only the
   code edge reads `breaks`. Trigger: a unit built on a break list a merge since made wrong.
 
+### Deferred from dev.17, the design pass (experience-won item 1)
+
+- **A plan-check role eval** (the plan's backlog): none exists; the paid m1 fixture covers the acting plan-check and its
+  design record this time. Trigger: the next change to the plan-check prompt or its design checks.
+- **Plan environments for a PoC.** A PoC builds in a throwaway checkout with the build's entry reservation and brings no
+  plan environment up (the plan allowed one within the verification budget). Trigger: a PoC question only an environment
+  can answer.
+- **Measured design thresholds.** `SUBSTANTIAL_SYSTEM_LINES` (200), `DIFF_BYTES_PER_LINE` (100, which turns the gate's diff
+  budget into `gateInlineLines`) and `POC_LIMIT` (2) are first guesses (src/pipeline/design.ts). Re-derive them from an arc:
+  the gates' `designEstimate` beside `largeDiff` (the calibration signal) and the splits' sizes.
+- **Scaffold modules beyond Haiku 5.5.** The `scaffold` role has a Haiku 5.5 module only; a rebind of its seats to another
+  model is refused at startup. Trigger: the scaffold role eval failing Haiku, or an owner rebind.
+- **A declared contract that skips the risk trigger.** The salvage's risk trigger still fires on any contract the diff
+  touches; the design record's declared contract interfaces only spare the gate's `<undeclared_contracts>` flag. Trigger:
+  escalation-seat gates on declared contract changes that measure as wasted.
+- **Probing an environment at plan-check** (item 10). An environment is unavailable to the arc only once its up or probe
+  failed in this arc (`environmentUnavailable`); one never used is presumed available, so a clause whose only lane needs
+  an environment that never exists here passes the plan-check and parks at its lanes (`env-unavailable`, retryable) before
+  the next plan-check sees it. Wanted if that wait measures as costly: the plan-check stage runs the probes of the
+  environments its spec's clauses name (cheap health checks, never an up), or the plan declares an environment absent.
+  Trigger: an arc parking on an environment that was never going to come up.
+
 ## Convergence and integrity (unscheduled, wanted)
 
 - **A `respec` gate outcome** (arc-1 item 27b). A gate that finds the spec wrong can only escalate to the
@@ -629,8 +651,12 @@ at triage stay in git history.
   and `seriesLedger`) and the `witnessed` fact's absent `inputSha` (its `treeSha`) go at the same time.
 - The dev.16 forms (1.0.0-dev.17, dev.17 records and propagation), once no arc started on 1.0.0-dev.16 is in flight:
   `planCheckStaleLinksDefault` (src/core/upgrade.ts, read by `planCheckOutput`: a plan-check answer without `staleLinks`).
-  `designKindDefault` stays only as long as a spec may lack a design record before its first plan-check (the design pass
-  decides). A spec without `pins` is a lasting state (an owner's spec no plan-check has revised), not scaffolding.
+  `designKindDefault` stays (the design pass): a spec has no design record before its first approving plan-check. A spec
+  without `pins` is a lasting state (an owner's spec no plan-check has revised), not scaffolding.
+- The dev.16 plan-check answers (1.0.0-dev.17, the design pass), once no arc started on 1.0.0-dev.16 is in flight:
+  `planCheckDesignDefault` (src/core/upgrade.ts, read by `planCheckOutput`: an approve without `design`), with which
+  `design`, `split`, `scaffold` and `poc` become required keys of the answer reader; and the `m4b` role set's place in
+  `unitRolesInForce` (src/routing/layers.ts), with which `scaffold` is a unit role of every arc.
 - The dev.16 arc's missing flaky ledger (1.0.0-dev.17, the flaky ledger), once no arc started on 1.0.0-dev.16 is in
   flight: `flakyLedgerDefault` (src/core/upgrade.ts, called by `flakyLedger` in src/pipeline/deflake.ts when the revision
   in force records no `systemsMap`). The ledger itself needs no default: an arc without `flake-observed` facts has none.

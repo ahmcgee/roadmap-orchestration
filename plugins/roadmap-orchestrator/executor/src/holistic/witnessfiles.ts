@@ -13,6 +13,7 @@
 //                  leaves selection to the runner: `testPaths` alone decides.
 // A lane without `testPaths` (inputs recorded before 2026-10-16) decides nothing here.
 import { posix } from 'node:path';
+import { type LaneDef, cadenceAtOrBefore } from '../core/records.ts';
 import type { RepoPath, RepoPattern } from '../core/values.ts';
 import { matchesPattern, repoPattern } from '../core/values.ts';
 import { mayOverlap } from '../input/classify.ts';
@@ -31,12 +32,31 @@ export function argvTestPaths(lane: ArcLaneDef, testPaths: readonly RepoPattern[
   });
 }
 
+/**
+ * Why a lane would never run a test: its file outside the lane's `testPaths` or not named by its argv (`laneMisses`); or
+ * (dev.17, design pass: `laneUnreachable`) the lane runs only after the unit's proof point and is not forced (`cadence`), or
+ * its systems are not ones the unit's change selects it by (`systems`).
+ */
+export type LaneMiss = 'test-paths' | 'argv' | 'cadence' | 'systems';
+
 /** Why `lane` would never run `file`: outside its `testPaths`, or not named by an argv that names test paths; null when it runs it. */
-export function laneMisses(lane: ArcLaneDef, file: RepoPath): 'test-paths' | 'argv' | null {
+export function laneMisses(lane: ArcLaneDef, file: RepoPath): Extract<LaneMiss, 'test-paths' | 'argv'> | null {
   const testPaths = lane.testPaths;
   if (testPaths === undefined) return null;
   if (!testPaths.some((t) => matchesPattern(file, t))) return 'test-paths';
   const named = argvTestPaths(lane, testPaths);
   if (named.length > 0 && !named.some((p) => p === '.' || matchesPattern(file, p))) return 'argv';
   return null;
+}
+
+/**
+ * dev.17 (design pass): why a test in `lane` would never run for the unit before its proof point (the candidate merge, the
+ * last run before it merges): the lane's cadence is `batch` (never in the merge path) and the unit's spec does not force it
+ * (`cadence`); or the lane lists systems and `selected` (the unit's change selects it, src/input/systems.ts `laneSelected` over
+ * the design record's systems) is false (`systems`). Null when the test runs at or before that point.
+ */
+export function laneUnreachable(lane: Pick<LaneDef, 'cadence' | 'systems'>, forced: boolean, selected: boolean): Extract<LaneMiss, 'cadence' | 'systems'> | null {
+  if (forced) return null;
+  if (!cadenceAtOrBefore(lane.cadence, 'candidate')) return 'cadence';
+  return selected ? null : 'systems';
 }

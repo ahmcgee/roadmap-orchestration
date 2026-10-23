@@ -332,6 +332,6 @@ test('roles.checkout-tree-act: checkoutTree commits exactly the given commit\'s 
 test('roles.triggers: gate paths trigger the gate eval; shared paths (routing) the walkthrough, polish-judge and verifier evals too; unrelated paths none', () => {
   assert.deepEqual(triggeredRoles(['src/prompts/gate/claude-opus-5-5.ts']), ['gate']);
   assert.deepEqual(triggeredRoles(['src/git/boundeddiff.ts', 'README.md']), ['gate']);
-  assert.deepEqual(triggeredRoles(['src/routing/classes.ts']), ['gate', 'walkthrough', 'polishJudge', 'verifier']);
+  assert.deepEqual(triggeredRoles(['src/routing/classes.ts']), ['gate', 'walkthrough', 'polishJudge', 'verifier', 'scaffold']);
   assert.deepEqual(triggeredRoles(['src/holistic/audit.ts', 'test/gate.test.ts']), []);
 });

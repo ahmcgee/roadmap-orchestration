@@ -237,6 +237,8 @@ export const PRE_DEV10_BUILTIN_SEATS: ClassTable = {
   walkthrough: { arc: 'frontier' },
   polishJudge: { arc: 'frontier' },
   verifier: { low: 'economy', med: 'economy', high: 'economy' },  // dev.17: never hashed under an earlier table (`DEV17_ROLES`).
+  // The scaffold role (dev.17) is in force only in a `dev17` arc, which no earlier release started: never hashed here.
+  scaffold: { low: 'economy', med: 'economy', high: 'economy' },
 };
 
 // Gate risk ladder (owner direction 2026-10-17, 1.0.0-dev.12): the built-in seats moved gate.med to efficient (Sonnet
@@ -262,6 +264,8 @@ export const PRE_DEV12_BUILTIN_SEATS: ClassTable = {
   walkthrough: { arc: 'frontier' },
   polishJudge: { arc: 'frontier' },
   verifier: { low: 'economy', med: 'economy', high: 'economy' },  // dev.17: never hashed under an earlier table (`DEV17_ROLES`).
+  // The scaffold role (dev.17) is in force only in a `dev17` arc, which no earlier release started: never hashed here.
+  scaffold: { low: 'economy', med: 'economy', high: 'economy' },
 };
 
 // Experience-won routing (owner 2026-10-22, 1.0.0-dev.17): plan-check and the gate moved to frontier at every risk tier, and
@@ -289,6 +293,8 @@ export const PRE_DEV17_BUILTIN_SEATS: ClassTable = {
   walkthrough: { arc: 'frontier' },
   polishJudge: { arc: 'frontier' },
   verifier: { low: 'economy', med: 'economy', high: 'economy' },  // dev.17: never hashed under an earlier table (`DEV17_ROLES`).
+  // The scaffold role (dev.17) is in force only in a `dev17` arc, which no earlier release started: never hashed here.
+  scaffold: { low: 'economy', med: 'economy', high: 'economy' },
 };
 
 /** Every built-in seat table an earlier adopted release hashed, oldest first: what status aliases recorded revs under. */
@@ -492,6 +498,18 @@ export function designKindDefault(): 'module' {
 export function planCheckStaleLinksDefault(): readonly never[] {
   warnDefaulted('plan-check.staleLinks', 'a plan-check answer without staleLinks (launched before 1.0.0-dev.17); read as none answered');
   return [];
+}
+
+// 1.0.0-dev.16 → 1.0.0-dev.17 (design pass, DESIGN-1.0.md "Design pass"). Scaffolding: deleted once no arc started on
+// 1.0.0-dev.16 is in flight.
+
+/**
+ * A plan-check answer without `design` (recorded before the design pass): it carried no design record. Read as none: such an
+ * answer is only read back (notes, the round handoff), never judged again.
+ */
+export function planCheckDesignDefault(): null {
+  warnDefaulted('plan-check.design', 'a plan-check answer without a design record (recorded before 1.0.0-dev.17); read as none');
+  return null;
 }
 
 /**

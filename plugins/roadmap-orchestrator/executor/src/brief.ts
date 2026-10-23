@@ -151,12 +151,12 @@ function carries(plan: PlanM1, action: FlowAction): boolean {
 
 /** M4b: an arc's flow (see `BriefFlow`); `previous`: the arc before it in the chain, or null. Null with the loop off. */
 function briefFlow(ref: ArcRef, from: number, previous: ArcRef | null): BriefFlow | null {
-  if (arcRolesOf(ref.view.planApplied()) !== 'm4b') return null;
+  if (arcRolesOf(ref.view.planApplied()) === null) return null;
   const series = seriesOfRef(ref);
   const c = codeConstraintOf(series.points);
   const a = series.accounting;
   const log = flowLog(ref.view, ref.events);
-  const prevLog = previous === null || arcRolesOf(previous.view.planApplied()) !== 'm4b' ? null : flowLog(previous.view, previous.events);
+  const prevLog = previous === null || arcRolesOf(previous.view.planApplied()) === null ? null : flowLog(previous.view, previous.events);
   return {
     constraint: c === null ? null : c.station === HOST_CPU_STATION
       ? `${c.station}, the host's cpu saturated: mean pressure ${windowPressure(series.points)!.toFixed(2)} over the last merges (threshold ${PRESSURE_SATURATED})`

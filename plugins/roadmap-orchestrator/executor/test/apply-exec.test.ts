@@ -141,7 +141,8 @@ test('apply.exec-revision-in-flight: rev + 1 of a held unit\'s spec (paused mid-
   const id = await apply(r);
   await until(() => receiptOf(r, id) !== null, WAIT_MS, 'the apply to land while u1 is held');
   assert.equal(receiptOf(r, id)?.state, 'applied');
-  assert.equal(journalOf(r).view.unit(U1).pendingRevision?.rev, 2, 'held pending: a continued build does not re-enter');
+  // dev.17 (the design pass): the first approve landed its design record as rev 2 in force, so the owner's edit rebases on it: rev 3.
+  assert.equal(journalOf(r).view.unit(U1).pendingRevision?.rev, 3, 'held pending: a continued build does not re-enter');
   await cli(r, ['resume', 'u1']);
   const exit = await run.exit;
   assert.equal(exit.code, 0, exit.stderr);
@@ -150,12 +151,14 @@ test('apply.exec-revision-in-flight: rev + 1 of a held unit\'s spec (paused mid-
   // The continued build's chain (quiesce → teardown) ran on rev 1; the unit re-entered before its lanes.
   assert.deepEqual(outcomes(r), ['plan-check:approve', 'build:interrupted', ...STRAIGHT.slice(1, 6), ...STRAIGHT]);
   const applied = seqOf(r, (f) => f.kind === 'plan-applied' && f.command === id);
-  const reopened = seqOf(r, (f) => f.kind === 'reopened' && f.command === id && f.specRev === 2);
+  const reopened = seqOf(r, (f) => f.kind === 'reopened' && f.command === id && f.specRev === 3);
   assert.ok(outcomeSeq(r, 'u1', 'build') < applied && applied < outcomeSeq(r, 'u1', 'build', 2), 'applied while the unit was held');
   assert.ok(outcomeSeq(r, 'u1', 'teardown') < reopened && reopened < outcomeSeq(r, 'u1', 'plan-check', 2), 're-opened at the boundary before lanes');
   const { view } = journalOf(r);
-  assert.equal(view.unit(U1).approval?.fingerprint.specRev, 2, 'approved on the revision');
-  assert.deepEqual(view.opsOf('spec.patch'), [], 'no executor patch of a spec whose revision is pending');
+  assert.equal(view.unit(U1).approval?.fingerprint.specRev, 4, 'approved on the revision, its design record landed as rev 4');
+  // The only spec patches are the two approves' design records: none of the build's decisions while the revision was pending.
+  assert.deepEqual(view.opsOf('spec.patch').map((p) => [p.parent.type === 'stage' ? p.parent.stage : null, p.expect.patch.ops.map((o) => o.op)]), [['plan-check', ['design']], ['plan-check', ['design']]],
+    'no executor patch of a spec whose revision is pending');
   assert.ok(readCalls(r.scenarioPath).every((c) => c.step !== null), 'the build after the re-entry resumed the session, told the spec was amended');
 });
 

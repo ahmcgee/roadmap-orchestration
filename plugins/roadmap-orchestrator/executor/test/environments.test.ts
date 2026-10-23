@@ -1,15 +1,16 @@
 // dev.17 plan environments (src/resources/environments.ts), integrated over real processes and real git: env-tool.ts
 // stands in for an environment's up, down and probe, logging every call. Named tests: env.lazy-up-reuse,
 // env.idle-teardown, env.start-waits-for-stop, env.probe-fails-parks, env.up-fails-parks, env.job-suite-lane, env.plain-no-lifecycle,
-// env.crash-before-up-runs, env.crash-after-up-ran, env.pause-brings-down, env.schema.
+// env.unavailable-to-arc, env.crash-before-up-runs, env.crash-after-up-ran, env.pause-brings-down, env.schema.
 import assert from 'node:assert/strict';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { describe, it, test } from 'node:test';
-import { arcId, jobId, resourceName } from '../src/core/ids.ts';
+import type { DesignRecord } from '../src/core/design.ts';
+import { arcId, jobId, laneId, resourceName } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
-import { absPath } from '../src/core/values.ts';
+import { absPath, repoPattern } from '../src/core/values.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { arcLaneDef } from '../src/holistic/types.ts';
 import { parsePlan } from '../src/input/plan.ts';
@@ -17,10 +18,11 @@ import { type StageParent, pinDispatch } from '../src/pipeline/dispatch.ts';
 import { type LaneRuntime, laneOrder, reserveNow, runJourneySeries, runLaneSeries, specSeriesRoot, suiteJourneyLane } from '../src/pipeline/lanes.ts';
 import { createArbiter } from '../src/schedule/arbiter.ts';
 import { lanes, loadUnitSpec } from '../src/pipeline/stages.ts';
+import { designFaults } from '../src/pipeline/design.ts';
 import { laneRows } from '../src/preflight/lanerows.ts';
 import { spawnReconciler } from '../src/recover/spawn.ts';
 import {
-  bringDown, downEnvironments, environmentState, idleEnvironments, releaseEnvironment, settleEnvironments, useEnvironment,
+  bringDown, downEnvironments, environmentState, environmentUnavailable, idleEnvironments, releaseEnvironment, settleEnvironments, useEnvironment,
 } from '../src/resources/environments.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
@@ -191,6 +193,29 @@ test('env.plain-no-lifecycle: an environment without up and down is reserved and
   await downEnvironments(run.ctx);
   assert.deepEqual(startedCalls(state), ['probe stack', 'probe stack'], 'no lifecycle command, ever');
   assert.equal(environmentState(run.journal.view, STACK), 'down');
+});
+
+test('env.unavailable-to-arc (item 10): an environment whose last probe failed is unavailable to the arc, and a clause only its lane exercises is a plan defect; a passing probe makes it available again', T, async () => {
+  const { run, state } = withEnv((s) => plainEnv(s, 'stack'), [envLane('one')]);
+  const spec = loadUnitSpec(run.ctx, run.unit).spec;
+  const record = (lanes: readonly string[]): DesignRecord => ({
+    kind: 'module', changes: [{ system: null, paths: [repoPattern('src/**')], lines: 10 }], interfaces: [], failureModes: [],
+    clauses: [{ clause: spec.acceptance[0]!.id, lanes: lanes.map((l) => laneId(l)) }], breaks: { tests: [], docs: [] }, experiments: [],
+  });
+  assert.equal(environmentUnavailable(run.journal.view, STACK), null, 'never probed: presumed available');
+  assert.deepEqual(designFaults(run.ctx, spec, record(['one'])), { reasons: [], defects: [] });
+  writeFileSync(join(state, 'stack.probe-fails'), '');
+  assert.equal((await useEnvironment(run.ctx, STACK, ARC)).kind, 'unavailable');
+  assert.match(environmentUnavailable(run.journal.view, STACK) ?? '', /environment stack's last probe in this arc failed/);
+  const faults = designFaults(run.ctx, spec, record(['one']));
+  assert.deepEqual(faults.reasons, []);
+  assert.equal(faults.defects.length, 1);
+  assert.match(faults.defects[0]!, /exercised by no lane that can run in this arc before the unit merges \(environment stack's last probe in this arc failed\)/);
+  rmSync(join(state, 'stack.probe-fails'));
+  assert.equal((await useEnvironment(run.ctx, STACK, ARC)).kind, 'ready');
+  releaseEnvironment(run.journal, STACK);
+  assert.equal(environmentUnavailable(run.journal.view, STACK), null, 'its last probe passed');
+  assert.deepEqual(designFaults(run.ctx, spec, record(['one'])).defects, []);
 });
 
 describe('env.crash: a crash inside the up, then recovery (the spawn reconciler) and the scheduler\'s settle', () => {
