@@ -487,7 +487,7 @@ Blocking unless noted. Read the item file before acting.
 - `plan-defect` (the unit is parked at lanes, uncharged): its missing witness is a plan defect code diagnosed (the
   witness file outside its lane, or absent and outside the unit's scope). Fix the plan by `apply`, then `resume`
   (SKILL.md "Handling parks"). At plan-check (1.0.0-dev.17): its design was refused twice for a plan defect (a test no lane
-  runs before the unit merges, an integration unit without a spanning test, a design too big for one unit, a split code
+  runs before the unit merges, an acceptance clause no lane runnable in this arc exercises, an integration unit without a spanning test, a design too big for one unit, a split code
   refused); at scaffold: its skeleton was refused twice (paths outside the new system, a missing entry point, a load
   test that does not run). The item names every reason; fix by `apply`, then `resume` (SKILL.md "The design pass").
 - Flow, non-blocking (SKILL.md "The flow loop"): `flow-proposal` and `flow-host` (`flow accept` or `flow reject`; the

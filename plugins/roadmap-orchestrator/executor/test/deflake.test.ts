@@ -51,7 +51,7 @@ const STRAIGHT = [...PRE_LANES, 'lanes:green', 'gate:approve', 'candidate:green'
 const of = (unit: string, steps: readonly Step[]): readonly Step[] => steps.map((s) => ({ ...s, unit }));
 /** A deflake unit's approving design record (dev.17 design pass): its verification, two runs of the flaky lane. */
 const DEFLAKE_DESIGN: JsonValue = {
-  kind: 'module', changes: [{ system: null, paths: ['test/**'], lines: 5 }], interfaces: [], failureModes: [], breaks: { tests: [], docs: [] }, experiments: [],
+  kind: 'module', changes: [{ system: null, paths: ['test/**'], lines: 5 }], interfaces: [], failureModes: [], clauses: [{ clause: 'A-1', lanes: ['flaky'] }], breaks: { tests: [], docs: [] }, experiments: [],
   newSystem: null, verification: { type: 'reproduce-then-fix', condition: 'the marker absent: the lane red', runs: 2 },
 };
 /** A unit straight through: approved plan-check (a deflake unit's with its verification), a build committing `files` beside mul, an approving gate. */
@@ -257,7 +257,7 @@ describe('the flaky ledger', () => {
       const median = medianLaneMinutes(r.ctx.runDir, r.journal.view, plan, unit.deflake!.keys, LANE_DEADLINE_MS);
       assert.ok(median !== null && median > 0 && median < 1, `the lane's runs were measured: ${median}`);
       const design = (verification?: DesignRecord['verification']): DesignRecord => ({
-        kind: 'module', changes: [{ system: null, paths: ['test/**' as never], lines: 3 }], interfaces: [], failureModes: [], breaks: { tests: [], docs: [] }, experiments: [],
+        kind: 'module', changes: [{ system: null, paths: ['test/**' as never], lines: 3 }], interfaces: [], failureModes: [], clauses: [], breaks: { tests: [], docs: [] }, experiments: [],
         ...(verification === undefined ? {} : { verification }),
       });
       const reasons = (dr: DesignRecord | undefined) => verificationReasons(r.ctx, plan, unit, spec, dr, LANE_DEADLINE_MS);

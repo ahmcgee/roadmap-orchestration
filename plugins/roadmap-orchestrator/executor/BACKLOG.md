@@ -291,6 +291,12 @@ at triage stay in git history.
 - **A declared contract that skips the risk trigger.** The salvage's risk trigger still fires on any contract the diff
   touches; the design record's declared contract interfaces only spare the gate's `<undeclared_contracts>` flag. Trigger:
   escalation-seat gates on declared contract changes that measure as wasted.
+- **Probing an environment at plan-check** (item 10). An environment is unavailable to the arc only once its up or probe
+  failed in this arc (`environmentUnavailable`); one never used is presumed available, so a clause whose only lane needs
+  an environment that never exists here passes the plan-check and parks at its lanes (`env-unavailable`, retryable) before
+  the next plan-check sees it. Wanted if that wait measures as costly: the plan-check stage runs the probes of the
+  environments its spec's clauses name (cheap health checks, never an up), or the plan declares an environment absent.
+  Trigger: an arc parking on an environment that was never going to come up.
 
 ## Convergence and integrity (unscheduled, wanted)
 

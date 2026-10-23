@@ -36,7 +36,9 @@
 // dev.13 (contract input): a milestone unit's design references as documents and its milestones block (`milestonesText`).
 // dev.17 (design pass; written to "Prompting best practices" and "Prompting Claude Opus 5.5" alone, owner 2026-10-17): the
 // check acts in its own checkouts (a shell for observing, web search and fetch with sources cited and web content as
-// untrusted data) and answers with a design record, and the decisions split, scaffold and poc. The prompt says what each
+// untrusted data) and answers with a design record, and the decisions split, scaffold and poc. Item 10 (2026-10-23, same
+// guides): the record's clauses name the lanes exercising each acceptance clause, and <test_lanes> marks an environment
+// unavailable to the arc, since a clause only the gate's static read could check cost a field arc paid gate rounds. The prompt says what each
 // field and decision is and what code checks, never how to reach them; the thresholds are inputs (<design_limits>).
 import type { PlanCheckInputs, PromptModule } from '../inputs.ts';
 import {
@@ -95,11 +97,12 @@ An approve and a scaffold carry a design record; a split carries one per child. 
 - changes: each area the unit changes, as a system from <systems> (null for a path no system covers, or when there is no map), the repository paths or globs it changes there, and your estimate of the changed lines. A path outside the scope envelope is proposed as scope growth, as scopeGrowth's are.
 - interfaces: the contracts (plan contracts, type contract) and other files (type file) the change crosses, each an existing file at the tip. A contract the unit's diff touches that is not listed here is flagged to the gate.
 - failureModes: each way the change can be wrong that matters, FM-n, proven by a test item the unit has: an active witness item of the spec (W-n), or a test id of a lane in <test_lanes>; or untested with the reason no test can show it. The requirements (I-n) each bears on.
+- clauses: for each active acceptance clause no witness item names, the lanes in <test_lanes> whose runs exercise its behaviour. A lane exercises a clause when it runs the code the clause is about; the gate reading the diff is no lane.
 - breaks: the existing tests and docs the change will make wrong, which the unit must update; a test or doc changed but not listed is recorded as the builder's departure.
 - kind: module (one system, other systems at seams only) or integration (spans systems at their seams, proven by a spanning test: a failure mode in a candidate or batch lane spanning two or more of its systems, or the whole tree).
 - experiments: what you ran in your checkout and what it printed.
 - newSystem: a system the unit creates (its name, paths, test paths), else null. verification: null (deflake units only).
-Code refuses, for you to correct: a failure mode whose test item the unit does not have; a test item in a lane that never runs before the unit merges (a batch lane the spec does not force, a lane whose systems the changes never select); an integration unit without a spanning test; and an oversize design: two or more systems each changed substantially, or more changed lines than the gate reads inline (<design_limits>). Oversize is fixed by a split, never by a smaller estimate.
+Code refuses, for you to correct: a failure mode whose test item the unit does not have; a test item in a lane that never runs before the unit merges (a batch lane the spec does not force, a lane whose systems the changes never select); an acceptance clause no lane that can run in this arc before the unit merges exercises (every lane it names is a batch lane the spec does not force, lists systems the changes never select, or needs an environment <test_lanes> marks unavailable); an integration unit without a spanning test; and an oversize design: two or more systems each changed substantially, or more changed lines than the gate reads inline (<design_limits>). Oversize is fixed by a split, never by a smaller estimate. A clause no runnable lane exercises is fixed by a static harness witness in a lane that runs here (a redirect adding it, then its lane in clauses), a split giving the clause its own unit, or a redirect deferring it.
 </design_record>
 
 <decisions>

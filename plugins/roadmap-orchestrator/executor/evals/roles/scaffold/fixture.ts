@@ -25,7 +25,8 @@ export const decisionOf = (c: ScaffoldCell): JsonValue => ({
 });
 
 const designOf = (c: ScaffoldCell): JsonValue => ({
-  kind: 'module', changes: [{ system: null, paths: [...c.newSystem.paths], lines: 30 }], interfaces: [], failureModes: [], breaks: { tests: [], docs: [] }, experiments: [],
+  kind: 'module', changes: [{ system: null, paths: [...c.newSystem.paths], lines: 30 }], interfaces: [], failureModes: [],
+  clauses: c.acceptance.map((_, i) => ({ clause: `A${i + 1}`, lanes: ['unit'] })), breaks: { tests: [], docs: [] }, experiments: [],
   newSystem: { ...c.newSystem, paths: [...c.newSystem.paths], tests: [...c.newSystem.tests] }, verification: null,
 });
 

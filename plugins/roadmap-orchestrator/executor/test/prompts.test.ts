@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   clauseId, divergenceId, envId, findingId, issueContentRef, issueId, jobId, laneId, laneRev, obligationId, questionId, ruleId, rulingId, sha, sha256, specRev, unitId,
-  type Sha, visionClauseId, invocationId, opIdOf, witnessItemId, arcId, givenId, proposalId, stationId, journeyId, milestoneId, polishId, serveName, pocQuestionId,
+  type Sha, visionClauseId, invocationId, opIdOf, witnessItemId, arcId, givenId, proposalId, stationId, journeyId, milestoneId, polishId, serveName, pocQuestionId, resourceName,
   systemName,
 } from '../src/core/ids.ts';
 import { isoTime } from '../src/core/values.ts';
@@ -239,7 +239,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       escalation: { kind: 'route-up', first: { decision: 'escalate', reasons: ['ESCALATE-REASON-B'] } }, milestones: milestonesSample(),
       design: {
         systems: { systems: { [systemName('api')]: { paths: [repoPattern('src/api/**')], tests: [repoPattern('test/api/**')], dependsOn: [] } }, shared: [], contracts: {}, docs: [] },
-        lanes: [{ id: laneId('journey'), kind: 'arc', cadence: 'candidate', systems: [systemName('api')] }], forces: [laneId('SYSTEMS-B')], substantialLines: 150, gateInlineLines: 900,
+        lanes: [{ id: laneId('journey'), kind: 'arc', cadence: 'candidate', systems: [systemName('api')], environment: { name: resourceName('env-b'), unavailable: 'ENV-UNAVAILABLE-B' } }], forces: [laneId('SYSTEMS-B')], substantialLines: 150, gateInlineLines: 900,
         pocsLeft: 1, scaffold: true,
       },
       pocs: [{

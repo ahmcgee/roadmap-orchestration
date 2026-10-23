@@ -35,7 +35,7 @@ const SCAFFOLD: JsonValue = {
   newSystem: NEW_SYSTEM, entryPoints: ['src/billing/index.js'], exports: ['charge'], loadTest: { lane: 'journey', testId: 't1' }, manifest: [],
 };
 const DESIGN: JsonValue = {
-  kind: 'module', changes: [{ system: null, paths: ['src/billing/**'], lines: 30 }], interfaces: [], failureModes: [], breaks: { tests: [], docs: [] }, experiments: [],
+  kind: 'module', changes: [{ system: null, paths: ['src/billing/**'], lines: 30 }], interfaces: [], failureModes: [], clauses: [{ clause: 'A1', lanes: ['mul'] }], breaks: { tests: [], docs: [] }, experiments: [],
   newSystem: NEW_SYSTEM, verification: null,
 };
 const INDEX = { 'src/billing/index.js': 'export function charge(cents) {\n  return cents;\n}\n' };

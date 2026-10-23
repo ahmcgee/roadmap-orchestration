@@ -11,8 +11,13 @@
 //   reachability     every test item (failure-mode proofs and the spec's active witness items, W-n) sits in a lane that runs
 //                    at or before the unit's proof point, the candidate merge: a batch lane only when the spec forces it, a
 //                    lane listing systems only when the design's systems select it (src/holistic/witnessfiles.ts
-//                    `laneUnreachable`). A plan defect.
-//   kind             an `integration` unit changes two or more systems and is proven by a spanning lane: a test of a
+//                    `laneUnreachable`), and whose environment is not unavailable to the arc. A plan defect.
+//   clauses          (item 10) every active acceptance clause is exercised by a lane that can run in the arc before the
+//                    candidate merge: the lanes of its witness items and of the record's `clauses` entry, at least one
+//                    reachable as above and its environment, if any, not unavailable (src/resources/environments.ts
+//                    `environmentUnavailable`: its last up or probe failed). A plan defect (`clauseFaults`): the fix is a
+//                    static harness witness in a lane that runs, a split giving the clause its own unit, or its deferral.
+//   kind            an `integration` unit changes two or more systems and is proven by a spanning lane: a test of a
 //                    candidate or batch lane listing two or more of its systems, or none (the whole tree); forced when
 //                    batch. A plan defect.
 //   size             oversize is a plan defect: mixed concerns (two or more systems each over `SUBSTANTIAL_SYSTEM_LINES`) or
@@ -39,6 +44,7 @@ import type { ContractPin, FilePin, RequirementPin } from '../core/pins.ts';
 import { type RepoPath, type RepoPattern, matchesPattern } from '../core/values.ts';
 import { gitRun } from '../git/git.ts';
 import { laneUnreachable } from '../holistic/witnessfiles.ts';
+import { environmentUnavailable } from '../resources/environments.ts';
 import { withinEnvelope } from '../input/envelope.ts';
 import { arcRolesOf } from '../input/inforce.ts';
 import { type SystemsMap, dependentsClosure } from '../input/systems.ts';
@@ -103,7 +109,7 @@ export function pinDesign(
   return {
     kind: 'pinned',
     record: {
-      kind: answer.kind, changes: answer.changes, interfaces, failureModes, breaks, experiments: answer.experiments,
+      kind: answer.kind, changes: answer.changes, interfaces, failureModes, clauses: answer.clauses, breaks, experiments: answer.experiments,
       ...(answer.newSystem === null ? {} : { newSystem: answer.newSystem }), ...(answer.verification === null ? {} : { verification: answer.verification }),
     },
   };
@@ -186,7 +192,12 @@ export function designFaults(
     const miss = laneUnreachable(lane, forced.has(lane.id), designSelects(map, lane, record.changes));
     if (miss === 'cadence') defects.push(`${key} sits in lane ${lane.id}, a batch lane that never runs before the unit merges: force it in the spec (\`forces\`), or prove it in an earlier lane`);
     if (miss === 'systems') defects.push(`${key} sits in lane ${lane.id}, which lists systems (${(lane.systems ?? []).join(', ')}) the design's changes never select`);
+    const env = miss === null && lane.environment !== undefined ? environmentUnavailable(ctx.journal.view, lane.environment) : null;
+    if (env !== null) defects.push(`${key} sits in lane ${lane.id}, which cannot run in this arc: ${env}`);
   }
+  const clauses = clauseFaults(spec, record, lanes, (lane) => cannotRun(ctx.journal.view, lane, forced.has(lane.id), designSelects(map, lane, record.changes)));
+  reasons.push(...clauses.reasons);
+  defects.push(...clauses.defects);
   // Kind: an integration unit spans systems and is proven by a spanning lane.
   if (record.kind === 'integration') {
     const systems = [...new Set(record.changes.flatMap((c) => (c.system === null ? [] : [c.system])))];
@@ -202,6 +213,48 @@ export function designFaults(
   }
   const big = oversize(record);
   if (big !== null) defects.push(big);
+  return { reasons, defects };
+}
+
+/** Why `lane` cannot run for the unit in this arc before it merges (its cadence, its systems, its environment), or null. */
+function cannotRun(view: JournalView, lane: LaneDef, forced: boolean, selected: boolean): string | null {
+  const miss = laneUnreachable(lane, forced, selected);
+  if (miss === 'cadence') return `${lane.id} is a batch lane the spec does not force: it never runs before the unit merges`;
+  if (miss === 'systems') return `${lane.id} lists systems (${(lane.systems ?? []).join(', ')}) the design's changes never select`;
+  return lane.environment === undefined ? null : environmentUnavailable(view, lane.environment);
+}
+
+/**
+ * Item 10 (2026-10-23): every active acceptance clause is exercised by a lane that can run in this arc before the unit
+ * merges. A clause's lanes are those of the spec's active witness items naming it and those the record's `clauses` entry
+ * names. An entry naming no active acceptance clause, or a lane not in force, is a plain reason; a clause with no lane, or
+ * none that can run (`why`: src/pipeline/design.ts `cannotRun`), is a plan defect whose fixes are a static harness witness
+ * in a lane that runs, a split putting the clause in its own unit, or its explicit deferral.
+ */
+export function clauseFaults(
+  spec: SpecM1, record: Pick<DesignRecord, 'clauses'>, lanes: ReadonlyMap<LaneId, LaneDef>, why: (lane: LaneDef) => string | null,
+): DesignFaults {
+  const reasons: string[] = [];
+  const defects: string[] = [];
+  const active = spec.acceptance.filter((a) => a.state === 'active');
+  for (const c of record.clauses) {
+    if (!active.some((a) => a.id === c.clause)) reasons.push(`the design record's clauses name ${c.clause}, which is no active acceptance clause of the spec`);
+    const unknown = c.lanes.filter((l) => !lanes.has(l));
+    if (unknown.length > 0) reasons.push(`the design record's clauses entry for ${c.clause} names ${unknown.join(', ')}, no spec, suite or arc lane in force`);
+  }
+  const witnesses = specWitnesses(spec).filter((w) => w.state === 'active');
+  for (const a of active) {
+    const named = [...new Set([...witnesses.filter((w) => w.clause === a.id).map((w) => w.lane), ...(record.clauses.find((c) => c.clause === a.id)?.lanes ?? [])])];
+    const defs = named.flatMap((l) => lanes.get(l) ?? []);
+    const fix = `add a static harness witness in a lane that runs here (a witness item, or a test in a lane the design's clauses name), split ${a.id} into its own unit, or defer it (a redirect deferring ${a.id})`;
+    if (named.length === 0) {
+      defects.push(`acceptance clause ${a.id}'s behaviour is exercised by no lane: name its lanes in the design record's clauses, or ${fix}`);
+      continue;
+    }
+    if (defs.length < named.length) continue; // a lane not in force: a plain reason above
+    const blocked = defs.map((l) => why(l));
+    if (blocked.every((b) => b !== null)) defects.push(`acceptance clause ${a.id}'s behaviour is exercised by no lane that can run in this arc before the unit merges (${blocked.join('; ')}): ${fix}`);
+  }
   return { reasons, defects };
 }
 

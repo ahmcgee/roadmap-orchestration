@@ -7,6 +7,12 @@
 //   names it; the corrected answer approves.
 // design.reachability-defect: a test item in a lane whose systems the design never selects is a plan defect: the repair turn,
 //   then an uncharged plan-defect park naming it.
+// design.clause-unexercised (item 10): an acceptance clause whose only lane lists systems the design never selects (it
+//   cannot run before the unit merges) is a plan defect naming the three fixes: the repair turn, then an uncharged park.
+//   (A batch lane's and an unavailable environment's halves: environments.test.ts env.unavailable-to-arc and the shared
+//   `cannotRun`.)
+// design.clause-unnamed (item 10): a clause no witness item and no clauses entry names is refused through the repair turn;
+//   the answer naming a runnable lane for it approves, the lanes landing in the record.
 // design.oversize-split: an oversize design (two systems each substantial) is refused; the repair turn's split of mixed
 //   concerns lands as one revision: the unit cut, its skeleton and module children added after it with their specs built
 //   from its own (items partitioned, designs pinned), its dependent moved onto both children.
@@ -58,7 +64,7 @@ const outcomeOf = (d: ArcDescriptor, stage: string): StageOutcomeFact => {
 
 /** A design record as the plan-check writes it, `over` its defaults (one small module change of src/**). */
 const design = (over: Readonly<Record<string, JsonValue>> = {}): JsonValue => ({
-  kind: 'module', changes: [{ system: null, paths: ['src/**'], lines: 40 }], interfaces: [], failureModes: [], breaks: { tests: [], docs: [] }, experiments: [],
+  kind: 'module', changes: [{ system: null, paths: ['src/**'], lines: 40 }], interfaces: [], failureModes: [], clauses: [{ clause: 'A1', lanes: ['mul'] }], breaks: { tests: [], docs: [] }, experiments: [],
   newSystem: null, verification: null, ...over,
 });
 
@@ -149,6 +155,51 @@ test('design.reachability-defect: a test item in a lane the design\'s systems ne
   }
 });
 
+/** u1 with a second acceptance clause A2, under the systems map, and a candidate suite lane `api-suite` of system api. */
+function twoClauseArc(steps: Parameters<typeof setupArc>[0]['steps']): ArcDescriptor {
+  const d = setupArc({
+    steps, suite: [{ id: 'suite', argv: ['node', '--test'] }, { id: 'api-suite', argv: ['node', '--test'], cadence: 'candidate', systems: ['api'] }], systemsMap: SYSTEMS,
+  });
+  editSpec(d, 'u1', (s) => {
+    s['acceptance'] = [...(s['acceptance'] as unknown[]), { id: 'A2', clause: 'the scripts render the TLS copy with its ca.crt', failLoudIfUndelivered: true, state: 'active' }];
+  });
+  return d;
+}
+
+test('design.clause-unexercised: a clause exercised only by a lane that cannot run before the unit merges is a plan defect: the repair turn, then an uncharged park naming the fixes', T, async () => {
+  const batchOnly = design({ changes: [{ system: 'core', paths: ['src/**'], lines: 40 }], clauses: [{ clause: 'A1', lanes: ['mul'] }, { clause: 'A2', lanes: ['api-suite'] }] });
+  const d = twoClauseArc([planCheckStep({ decision: 'approve', design: batchOnly }), planCheckRepairStep({ decision: 'approve', design: batchOnly }, ['acceptance clause A2'])]);
+  const r = contextFor(d);
+  try {
+    const parked = await runUnit(r.ctx, r.unit('u1'), until('build'));
+    assert.ok(parked.kind === 'parked', JSON.stringify(parked));
+    assert.equal(parked.needsUser.reason, 'plan-defect');
+    assert.match(parked.needsUser.summary, /acceptance clause A2's behaviour is exercised by no lane that can run in this arc before the unit merges \(api-suite lists systems \(api\) the design's changes never select\)/);
+    assert.match(parked.needsUser.summary, /static harness witness[\s\S]*split A2 into its own unit[\s\S]*defer/);
+    assert.deepEqual(outcomes(d), ['plan-check:plan-defect']);
+    const f = outcomeOf(d, 'plan-check');
+    assert.ok(f.detail?.kind === 'design-defect' && f.detail.reasons.length === 1, JSON.stringify(f.detail));
+    assert.equal(r.journal.view.unit(U1).counters.chargeableFailures, 0);
+  } finally {
+    r.journal.close();
+  }
+});
+
+test('design.clause-unnamed: a clause no lane is named for is refused through the repair turn; the answer naming a runnable lane approves', T, async () => {
+  const unnamed = design();
+  const named = design({ clauses: [{ clause: 'A1', lanes: ['mul'] }, { clause: 'A2', lanes: ['api-suite', 'suite'] }] });
+  const d = twoClauseArc([planCheckStep({ decision: 'approve', design: unnamed }), planCheckRepairStep({ decision: 'approve', design: named }, ['acceptance clause A2\'s behaviour is exercised by no lane: name its lanes'])]);
+  const r = contextFor(d);
+  try {
+    assert.equal((await runUnit(r.ctx, r.unit('u1'), until('build'))).kind, 'held');
+    assert.deepEqual(outcomes(d), ['plan-check:approve']);
+    assert.deepEqual(loadUnitSpec(r.ctx, r.unit('u1')).spec.design?.clauses, [{ clause: 'A1', lanes: ['mul'] }, { clause: 'A2', lanes: ['api-suite', 'suite'] }]);
+    assert.ok(readCalls(d.scenarioPath).every((c) => c.step !== null));
+  } finally {
+    r.journal.close();
+  }
+});
+
 /** u1 with a second acceptance clause (so a split can partition its items) and u2 after it. */
 function splitArc(steps: Parameters<typeof setupArc>[0]['steps']): ArcDescriptor {
   const d = setupArc({
@@ -162,12 +213,15 @@ function splitArc(steps: Parameters<typeof setupArc>[0]['steps']): ArcDescriptor
   return d;
 }
 
-const MIXED = design({ changes: [{ system: 'core', paths: ['src/**'], lines: 300 }, { system: 'api', paths: ['contracts/**'], lines: 300 }] });
+const MIXED = design({
+  changes: [{ system: 'core', paths: ['src/**'], lines: 300 }, { system: 'api', paths: ['contracts/**'], lines: 300 }],
+  clauses: [{ clause: 'A1', lanes: ['mul'] }, { clause: 'A2', lanes: ['mul'] }],
+});
 /** A child of u1's split taking `items`, changing `system` by `lines`. */
 const child = (unit: string, items: readonly string[], system: 'core' | 'api', lines: number, proven = false): JsonValue => ({
   unit, scope: [system === 'core' ? 'src/**' : 'contracts/**'], items, obligations: [],
   design: design({
-    changes: [{ system, paths: [system === 'core' ? 'src/**' : 'contracts/**'], lines }],
+    changes: [{ system, paths: [system === 'core' ? 'src/**' : 'contracts/**'], lines }], clauses: items.map((clause) => ({ clause, lanes: ['mul'] })),
     failureModes: proven ? [{ id: 'FM-1', mode: 'the seam breaks', proof: { type: 'test', test: { type: 'test', lane: 'e2e', testId: 'seam' } }, requirements: [] }] : [],
   }),
 });

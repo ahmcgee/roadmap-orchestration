@@ -139,6 +139,7 @@ import { resolveArgv0 } from '../preflight/argv0.ts';
 import type { JudgmentRole, JudgmentSeat, Triple } from '../routing/types.ts';
 import { buildCpu, requestOf } from '../resources/pool.ts';
 import { probe } from '../resources/probe.ts';
+import { environmentUnavailable } from '../resources/environments.ts';
 import { type Reservation, type StageHolder, cleanup, buildLanes, heldReservation, holderUnits, run } from '../resources/reserve.ts';
 import { knownDefectActive } from '../schedule/ready.ts';
 import { CPU_COST, type ResourceRequest } from '../schedule/types.ts';
@@ -1060,7 +1061,10 @@ export function planCheckAnswerOf(ctx: JudgmentReader, unit: UnitId): PlanCheckO
 /** dev.17 (design pass): the plan-check's `design` input (`PlanCheckDesignInput`) for `unit` with spec `spec`. */
 function planCheckDesignInput(ctx: StageContext, unit: UnitId, spec: SpecM1): PlanCheckDesignInput {
   const arc = holisticInForce(ctx).obligations?.lanes ?? [];
-  const lane = (kind: 'spec' | 'suite' | 'arc') => (l: LaneDef): PlanCheckDesignInput['lanes'][number] => ({ id: l.id, kind, cadence: l.cadence, systems: l.systems ?? null });
+  const lane = (kind: 'spec' | 'suite' | 'arc') => (l: LaneDef): PlanCheckDesignInput['lanes'][number] => ({
+    id: l.id, kind, cadence: l.cadence, systems: l.systems ?? null,
+    environment: l.environment === undefined ? null : { name: l.environment, unavailable: environmentUnavailable(ctx.journal.view, l.environment) },
+  });
   return {
     systems: mapInForce(ctx.journal.view),
     lanes: [...spec.lanes.filter((l) => l.state === 'active').map(lane('spec')), ...ctx.plan().suite.lanes.map(lane('suite')), ...arc.map(lane('arc'))],

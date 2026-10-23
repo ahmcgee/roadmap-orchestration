@@ -33,6 +33,7 @@ const DESIGN = {
     { id: 'FM-1', mode: 'empty input', proof: { type: 'test', test: { type: 'witness', item: 'W-1' } }, requirements: [{ type: 'requirement', id: 'I-1', rev: 2 }] },
     { id: 'FM-2', mode: 'disk full', proof: { type: 'untested', reason: 'no fault injection here' }, requirements: [] },
   ],
+  clauses: [{ clause: 'A1', lanes: ['unit'] }],
   breaks: { tests: [{ type: 'file', path: 'test/api.test.ts', blob: B }], docs: [] },
   experiments: [{ command: 'npm test', output: 'ok' }],
   verification: { type: 'repeat', rationale: 'timing only', runs: 5 },
@@ -76,7 +77,7 @@ describe('plan-check design decisions', () => {
   const child = (unit: string): Record<string, unknown> => ({
     unit, scope: ['src/**'], items: ['a1'], obligations: [],
     design: {
-      kind: 'module', changes: [{ system: null, paths: ['src/**'], lines: 10 }], interfaces: [], failureModes: [], breaks: { tests: [], docs: [] }, experiments: [],
+      kind: 'module', changes: [{ system: null, paths: ['src/**'], lines: 10 }], interfaces: [], failureModes: [], clauses: [], breaks: { tests: [], docs: [] }, experiments: [],
       newSystem: null, verification: null,
     },
   });

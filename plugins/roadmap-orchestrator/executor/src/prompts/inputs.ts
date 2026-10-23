@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto';
 import type { OutcomeStage, TestRef } from '../core/events.ts';
 import type {
   ClauseId, DivergenceId, FindingId, InvocationId, JobId, LaneId, MilestoneId, ObligationId, PolishId, RulingId, ServeName, Sha, Sha256Hex, SpecRev, UnitId, VisionClauseId,
-  SystemName, WitnessItemId,
+  ResourceName, SystemName, WitnessItemId,
 } from '../core/ids.ts';
 import type { BringUp, Journey } from '../input/plan.ts';
 import type { RequiredWitness } from '../holistic/required.ts';
@@ -207,7 +207,14 @@ export type PlanCheckInputs = Readonly<{
  */
 export type PlanCheckDesignInput = Readonly<{
   systems: SystemsMap | null;
-  lanes: readonly Readonly<{ id: LaneId; kind: 'spec' | 'suite' | 'arc'; cadence: LaneCadence; systems: readonly SystemName[] | null }>[];
+  /**
+   * The lanes a test item may name. `environment`: the plan environment the lane runs against and, when it is unavailable to
+   * the arc (its last up or probe failed: src/resources/environments.ts `environmentUnavailable`), why; null: none.
+   */
+  lanes: readonly Readonly<{
+    id: LaneId; kind: 'spec' | 'suite' | 'arc'; cadence: LaneCadence; systems: readonly SystemName[] | null;
+    environment: Readonly<{ name: ResourceName; unavailable: string | null }> | null;
+  }>[];
   forces: readonly LaneId[];
   substantialLines: number;
   gateInlineLines: number;
@@ -948,7 +955,8 @@ export function designInputText(d: PlanCheckDesignInput): string {
   const systems = d.systems === null
     ? '(no systems map: every change names system null)'
     : Object.entries(d.systems.systems).map(([name, s]) => `- ${name}: ${s.paths.join(', ')}${s.tests.length === 0 ? '' : `; tests ${s.tests.join(', ')}`}${s.dependsOn.length === 0 ? '' : `; depends on ${s.dependsOn.join(', ')}`}`).join('\n');
-  const lanes = d.lanes.map((l) => `- ${l.id} (${l.kind}, cadence ${l.cadence}${l.systems === null ? ', the whole tree' : `, systems ${l.systems.join(', ')}`})`);
+  const env = (e: PlanCheckDesignInput['lanes'][number]['environment']): string => (e === null ? '' : `, environment ${e.name}${e.unavailable === null ? '' : ` (unavailable: ${e.unavailable})`}`);
+  const lanes = d.lanes.map((l) => `- ${l.id} (${l.kind}, cadence ${l.cadence}${l.systems === null ? ', the whole tree' : `, systems ${l.systems.join(', ')}`}${env(l.environment)})`);
   return `<systems>
 ${systems}
 </systems>

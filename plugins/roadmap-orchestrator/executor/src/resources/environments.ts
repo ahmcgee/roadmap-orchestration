@@ -76,6 +76,20 @@ export function environmentState(view: JournalView, name: ResourceName): Environ
   return last.expect.subject.action === 'up' ? 'up' : 'down';
 }
 
+/**
+ * Why environment `name` is unavailable to the arc, or null (item 10, the design pass's `clauseFaults`): its latest closed
+ * up or probe in this arc failed, with none passing since. Never brought up nor probed: presumed available.
+ */
+export function environmentUnavailable(view: JournalView, name: ResourceName): string | null {
+  const last = view.opsOf('proc.spawn').filter((i) => {
+    const s = i.expect.subject;
+    return s.purpose === 'environment' && s.environment === name && s.action !== 'down' && view.doneOf(i.op) !== null;
+  }).at(-1);
+  if (last === undefined || passed(view, last)) return null;
+  const s = last.expect.subject;
+  return `environment ${name}'s last ${s.purpose === 'environment' ? s.action : 'use'} in this arc failed`;
+}
+
 // ---------------------------------------------------------------------------------------------------
 // In-process state
 

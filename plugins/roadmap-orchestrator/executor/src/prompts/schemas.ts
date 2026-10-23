@@ -34,7 +34,7 @@ import {
 } from '../core/upgrade.ts';
 import type { MutantEdit } from '../git/mutant.ts';
 import {
-  type DesignChange, type DesignExperiment, type FailureModeProof, type NewSystem, type UnitKind, type Verification, UNIT_KINDS, designChange, designExperiment, failureModeProof,
+  type ClauseLanes, type DesignChange, type DesignExperiment, type FailureModeProof, type NewSystem, type UnitKind, type Verification, UNIT_KINDS, clauseLanes, designChange, designExperiment, failureModeProof,
   newSystem, verification,
 } from '../core/design.ts';
 import { specBytes } from '../spec/spec.ts';
@@ -124,6 +124,7 @@ export type DesignAnswer = Readonly<{
   changes: readonly DesignChange[];
   interfaces: readonly Readonly<{ type: 'contract' | 'file'; path: RepoPath }>[];
   failureModes: readonly Readonly<{ id: FailureModeId; mode: string; proof: FailureModeProof; requirements: readonly ObligationId[] }>[];
+  clauses: readonly ClauseLanes[];
   breaks: Readonly<{ tests: readonly RepoPath[]; docs: readonly RepoPath[] }>;
   experiments: readonly DesignExperiment[];
   newSystem: NewSystem | null;
@@ -221,6 +222,7 @@ const S_DESIGN = sObj({
     },
     requirements: sArr(S_STR),
   })),
+  clauses: sArr(sObj({ clause: S_STR, lanes: sArr(S_STR) })),
   breaks: sObj({ tests: sArr(S_STR), docs: sArr(S_STR) }),
   experiments: sArr(sObj({ command: S_STR, output: S_STR })),
   newSystem: sNullable(S_NEW_SYSTEM),
@@ -299,6 +301,7 @@ const designAnswer: Read<DesignAnswer> = object((f) => {
     failureModes: f.get('failureModes', arrayOf(object((g) => ({
       id: g.get('id', (v, p) => failureModeId(v, p)), mode: g.get('mode', str), proof: g.get('proof', failureModeProof), requirements: g.get('requirements', answerIds(oid)),
     })))),
+    clauses: f.get('clauses', arrayOf(clauseLanes)),
     breaks: f.get('breaks', object((g) => ({ tests: g.get('tests', arrayOf(repoPathR)), docs: g.get('docs', arrayOf(repoPathR)) }))),
     experiments: f.get('experiments', arrayOf(designExperiment)),
     newSystem: f.get('newSystem', nullable(newSystem)),
@@ -306,6 +309,7 @@ const designAnswer: Read<DesignAnswer> = object((f) => {
   };
   assertUnique(out.interfaces, (i) => i.path, `${f.path}.interfaces`);
   assertUnique(out.failureModes, (m) => m.id, `${f.path}.failureModes`);
+  assertUnique(out.clauses, (c) => c.clause, `${f.path}.clauses`);
   assertUnique([...out.breaks.tests, ...out.breaks.docs], (b) => b, `${f.path}.breaks`);
   return out;
 });

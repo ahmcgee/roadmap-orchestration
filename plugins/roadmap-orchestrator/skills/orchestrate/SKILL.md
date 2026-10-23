@@ -575,7 +575,9 @@ second design park of one lineage (`respec-second`). `roadmap steer <unit>` is a
   uncharged): the item names each defect. Fix the plan by `apply` (the lane's argv or `testPaths`, the witness's
   `files` or lane, the obligation's `deliveredBy`), then `roadmap resume <unit>` re-runs its lanes. At plan-check or
   scaffold (1.0.0-dev.17) the item names the design's defects: a test in a lane that never runs before the unit merges
-  (force the batch lane in the spec's `forces`, or name the lane's systems), a design too big for one unit or a split code
+  (force the batch lane in the spec's `forces`, or name the lane's systems), an acceptance clause no lane that can run in
+  this arc exercises (add a static harness witness the arc can run, e.g. a `make check` lane, give the clause its own unit,
+  or defer it; bring the environment back if its probe failed), a design too big for one unit or a split code
   refused, a scaffold whose load test does not run. Fix the spec or plan by `apply`, then `roadmap resume <unit>` re-runs
   the stage.
 - **Parked `context-exceeded`** (a plan-check, build or gate call's prompt or context outgrew its model's window;

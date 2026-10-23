@@ -264,23 +264,32 @@ function runReal(call: Call, scenarioDir: string, readOnly: Readonly<{ repo: str
 
 /**
  * A `planCheck` act's answer: the dev.17 payload keys it lacks are null, but an approve's or a scaffold's missing `design`,
- * which is `defaultDesign` of the call's first scope pattern.
+ * which is `defaultDesign` of the call's first scope pattern, its spec's active acceptance clauses and a lane that runs them.
  */
 function planCheckValue(call: Call, value: JsonValue, scenarioDir: string): JsonValue {
   const v = value as Record<string, JsonValue>;
   const designs = v['decision'] === 'approve' || v['decision'] === 'scaffold';
-  const scope = (): string => {
-    // A repair turn's stdin is its directive alone: the scope is in the prompt of the session it resumes.
+  // A repair turn's stdin is its directive alone: the scope is in the prompt of the session it resumes.
+  const prompt = (): string => {
     const resumed = flagValue(call.argv, '--resume');
-    const prompt = resumed === undefined ? call.stdin
+    return resumed === undefined ? call.stdin
       : readCalls(join(scenarioDir, 'scenario.json')).find((c) => flagValue(c.argv, '--session-id') === resumed)?.stdin ?? '';
-    const first = /<scope_envelope>\n- (\S+)\n/.exec(prompt)?.[1];
+  };
+  const design = (): JsonValue => {
+    const text = prompt();
+    const first = /<scope_envelope>\n- (\S+)\n/.exec(text)?.[1];
     if (first === undefined) throw new Error('fake claude: a planCheck act needs a scope envelope in the prompt');
-    return first;
+    const acceptance = /## Acceptance\n\n([\s\S]*?)\n\n## /.exec(text)?.[1] ?? '';
+    const clauses = [...acceptance.matchAll(/^- `([^`]+)` \[active\]/gm)].map((m) => m[1]!);
+    const lanes = [...(/<test_lanes>\n([\s\S]*?)<\/test_lanes>/.exec(text)?.[1] ?? '').matchAll(/^- (\S+) \((spec|suite|arc), cadence (\w+)([^\n]*)\)$/gm)]
+      .map((m) => ({ id: m[1]!, kind: m[2]!, cadence: m[3]!, unavailable: m[4]!.includes('(unavailable') }));
+    const lane = lanes.find((l) => l.kind === 'spec' && (l.cadence === 'build' || l.cadence === 'unit') && !l.unavailable)
+      ?? lanes.find((l) => l.cadence !== 'batch' && !l.unavailable);
+    return defaultDesign(first, clauses, lane?.id ?? null);
   };
   return {
     split: null, scaffold: null, poc: null, ...v,
-    design: Object.hasOwn(v, 'design') ? v['design']! : designs ? defaultDesign(scope()) : null,
+    design: Object.hasOwn(v, 'design') ? v['design']! : designs ? design() : null,
   };
 }
 

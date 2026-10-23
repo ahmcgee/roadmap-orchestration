@@ -59,12 +59,14 @@ function design(d: DesignRecord): string {
     return t.type === 'witness' ? `proven by witness item ${code(t.item)}` : `proven by test ${code(t.testId)} of lane ${code(t.lane)}`;
   };
   const modes = d.failureModes.map((m) => bullet(code(m.id), `${m.mode} (${proof(m)}${m.requirements.length === 0 ? '' : `; bears on ${m.requirements.map((r) => r.id).join(', ')}`})`));
+  const clauses = d.clauses.map((c) => `- ${code(c.clause)}: ${c.lanes.map(code).join(', ')}`);
   const breaks = [...d.breaks.tests.map((b) => `- test ${code(b.path)}`), ...d.breaks.docs.map((b) => `- doc ${code(b.path)}`)];
   return [
     `## Design\n\nkind ${d.kind}, about ${designSize(d)} changed lines`,
     `### Changes\n\n${changes.join('\n')}`,
     `### Interfaces\n\n${d.interfaces.length === 0 ? '(none)' : d.interfaces.map((i) => `- ${i.type} ${code(i.path)}`).join('\n')}`,
     `### Failure modes\n\n${modes.length === 0 ? '(none)' : modes.join('\n')}`,
+    `### Clauses exercised by\n\n${clauses.length === 0 ? '(none)' : clauses.join('\n')}`,
     `### Breaks\n\n${breaks.length === 0 ? '(none)' : breaks.join('\n')}`,
     ...(d.newSystem === undefined ? [] : [`### New system\n\n${code(d.newSystem.name)}: ${d.newSystem.paths.map(code).join(', ')}`]),
   ].join('\n\n');

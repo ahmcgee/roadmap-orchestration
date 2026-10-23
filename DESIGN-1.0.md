@@ -171,7 +171,8 @@ repository and the run dir), and web search and fetch, each source it relies on 
 never an instruction. Its prompt says its job, not its method. Its decisions are `approve`, `redirect`, `split`,
 `scaffold`, `poc`, `infeasible` and `escalate`. An approve and a scaffold carry a typed **design record** (`changes`: a
 system of the map or none, its paths and estimated lines; `interfaces`: contracts and files it crosses; `failureModes`:
-each proven by a test item the unit has, a witness item W-n or a lane's test, or `untested` with a reason; `breaks`: the
+each proven by a test item the unit has, a witness item W-n or a lane's test, or `untested` with a reason; `clauses`: for each
+active acceptance clause no witness item names, the lanes exercising its behaviour; `breaks`: the
 existing tests and docs it must update; `kind` module | integration; `experiments` it ran; `newSystem`; `verification`, a
 deflake unit's), which lands on the spec's next revision, its interfaces and broken files pinned at their blobs and its
 requirements at their revs at the tip it read, by the plan-check's own spec patch; the build and the gate read it in the
@@ -182,7 +183,11 @@ doc the build changes that `breaks` does not list is the builder's departure, ap
 beside decisions.json, never refused. **Plan defects** (refused through the repair turn, then an uncharged `plan-defect`
 park, env: `resume` re-runs the plan-check after an `apply` fixes the plan): a test item (W-n included) in a lane that
 does not run before the unit's proof point, the candidate merge (a batch lane the spec does not force, a lane listing
-systems the design never selects: the cadence and systems half of `laneMisses`); an `integration` unit (it spans systems
+systems the design never selects: the cadence and systems half of `laneMisses`; or one whose environment is unavailable
+to the arc, its last up or probe there failed); an active **acceptance clause no runnable lane exercises** (item 10,
+2026-10-23: a field arc's clause only the gate's static read could check took a paid gate round per bug): every lane its
+witness items and the record's `clauses` name fails the reachability above, or it names none; the fix is a static harness
+witness in a lane that runs, a split giving the clause its own unit, or a redirect deferring it; an `integration` unit (it spans systems
 only at seams) not proven by a spanning test (a failure mode in a candidate or batch lane over two or more of its
 systems, or the whole tree, forced when batch); and an **oversize** design: mixed concerns (two or more systems each over
 a per-system substantial-change threshold, 200 lines) or an estimate over what the gate reads inline (its diff budget at
