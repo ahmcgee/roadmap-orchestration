@@ -607,6 +607,9 @@ at triage stay in git history.
   `systemsMap`). With them `cadence` is required on every lane, `tier` and `inputs` refused, and `plan-applied.systemsMap`
   required (null for no map). The `lane-reused` fact's absent `set`/`at` (a spec series at its commit, src/core/state.ts
   and `seriesLedger`) and the `witnessed` fact's absent `inputSha` (its `treeSha`) go at the same time.
+- The dev.16 spec forms (1.0.0-dev.17, dev.17 records), once no arc started on 1.0.0-dev.16 is in flight: `specPinsDefault`
+  (src/core/upgrade.ts, read by `specPinOf` in src/core/records.ts: a spec without `pins`). `designKindDefault` stays only
+  as long as a spec may lack a design record before its first plan-check (the design pass decides).
 
 - `gateNoteDebtDefault` and `GATE_DEBT_UNRECORDED` (src/core/upgrade.ts), with `gateDebtNotes`' unrecorded arm
   (src/pipeline/gate.ts), once no arc started on 1.0.0-dev.12 is in flight: a dev.12 gate finding has no `debt` and its

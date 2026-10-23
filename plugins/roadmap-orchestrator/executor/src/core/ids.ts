@@ -608,3 +608,25 @@ export function supervisorNeedsUserId(generation: number, n: number): NeedsUserI
 export function hostNeedsUserId(slug: string): NeedsUserId {
   return needsUserId(`host-${slug}`);
 }
+
+// ---------------------------------------------------------------------------------------------------
+// dev.17 ids (SCHEMAS.md "dev.17 records").
+
+/** A failure mode of a spec's design record: `FM-<n>`, unique in its record. */
+export type FailureModeId = Brand<string, 'FailureModeId'>;
+const FM = numbered('FailureModeId', 'FM');
+export const failureModeId: IdReader<FailureModeId> = FM.read;
+export const failureModeIdOf = FM.of;
+
+/** A question of a plan-check `poc` decision: `PQ-<n>`, unique in its decision. */
+export type PocQuestionId = Brand<string, 'PocQuestionId'>;
+const PQ = numbered('PocQuestionId', 'PQ');
+export const pocQuestionId: IdReader<PocQuestionId> = PQ.read;
+export const pocQuestionIdOf = PQ.of;
+
+/** A gate finding in the arc's findings ledger: `R-<n>`, numbered arc-wide in ledger order, never reused. */
+export type ReviewFindingId = Brand<string, 'ReviewFindingId'>;
+const R = numbered('ReviewFindingId', 'R');
+export const reviewFindingId: IdReader<ReviewFindingId> = R.read;
+export const reviewFindingIdOf = R.of;
+export const reviewFindingSeq = R.n;
