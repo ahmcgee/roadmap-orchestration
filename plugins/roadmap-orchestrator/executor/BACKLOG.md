@@ -631,6 +631,15 @@ at triage stay in git history.
 - **Vacuity lens: "the smallest regression this test would miss"** (BMAD-style): have the vacuity lens name, per test it
   judges, the smallest change to the code that the test would still pass. Trigger: a lens role eval, or a real arc where a
   vacuous witness test passed the vacuity lens.
+- **Rate-limit awareness** (owner ruling 2026-10-23, deferred from dev.17): read the stream's `rate_limit_info` (the
+  seven-day window's utilization and reset) and pace judgment work before the limit parks the backend, instead of only
+  parking on the usage-limit error. Trigger: an arc parked on the weekly limit with work it could have deferred.
+- **Lens and checkpoint cadence budget** (owner ruling 2026-10-23, deferred from dev.17): bound how much judgment the
+  audit lenses and checkpoints spend per merged unit. dev.17 lowers arc judgment cost through less rework (design pass,
+  PoCs, propagation) first. Trigger: an arc where lens or checkpoint spend dominates after dev.17.
+- **Probe environments during plan-check.** The design pass marks a clause unwitnessable only from the environment's
+  recorded history (its last up or probe failed); an environment never brought up in this arc counts as available, and
+  plan-check does not bring it up to find out. Trigger: a unit approved on an environment that turned out not to come up.
 
 ## Scaffolding to delete
 
