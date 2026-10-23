@@ -592,7 +592,11 @@ second design park of one lineage (`respec-second`). `roadmap steer <unit>` is a
   the lineage, or a lane failure by its `ref` in `status.units[].failures` (`<unit>/lanes#<attempt>/<lane>`). Find
   the cause first: `apply` accepts a re-entry that changes nothing the failure ran under, but a design failure retried
   unchanged usually fails again and spends the unit's chargeable bound. The new
-  unit's prepare creates `roadmap/<arc>/<new>` at the parked tip; never create it by hand. Its scope may grow beyond
+  unit's prepare creates `roadmap/<arc>/<new>` at the parked tip; never create it by hand. Its builder starts a fresh
+  session, and the executor hands it the lineage's history from its records (the handover: failures, the last gate's
+  directives and unsettled findings, clauses still unmet, earlier decisions, the last build report, the last red
+  evidence), as it does for every build that cannot resume its session (a reopen or a seat move, a steer). Do not
+  restate that history as spec facts; a fact carries only what the records cannot (a cause you found). Its scope may grow beyond
   the lineage's only on a ruling its spec cites that names exactly the added patterns.
 - **Parked `witness-lane-missing`** (an arc started on 1.0.0-dev.9: the unit's spec names a witness lane that is no
   arc lane): add that lane to the obligations with `roadmap apply`, then `roadmap resume <unit>`; or re-enter the unit

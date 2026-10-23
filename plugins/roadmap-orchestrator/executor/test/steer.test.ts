@@ -4,6 +4,7 @@
 // the table's steer rows; a judgment after it is always a fresh session; the command's rejections and its `--class`
 // revision, which never writes the owner's plan file (an apply of it rebases onto the layer); and the crash cells of
 // the matrix row STEER, recovered by the recovery engine (src/recover/recover.ts).
+// The steer round is a fresh session, so it gets the handover (src/pipeline/handover.ts).
 // Named tests: steer.round-uncharged, steer.resume-vs-park, steer.never-judge, steer.rejections, steer.class,
 // steer.class-write-back, steer.class-architect-edit, steer.crash-cells.
 import assert from 'node:assert/strict';
@@ -19,6 +20,9 @@ import type { CommandBody, NeedsUserContent } from '../src/core/records.ts';
 import { absPath } from '../src/core/values.ts';
 import { BRIEF_INPUT } from '../src/pipeline/rounds.ts';
 import { STEER_DIRECTIVE } from '../src/prompts/directives.ts';
+import { handoverText } from '../src/prompts/inputs.ts';
+import { handoverOf } from '../src/pipeline/handover.ts';
+import { loadUnitSpec } from '../src/pipeline/stages.ts';
 import { keptInput } from '../src/input/inforce.ts';
 import { openBlocking, raiseNeedsUser } from '../src/needsuser.ts';
 import type { StageContext } from '../src/pipeline/dispatch.ts';
@@ -138,7 +142,9 @@ test('steer.round-uncharged: a parked unit steered through the command path runs
     const u = r.journal.view.unit(U1);
     assert.deepEqual([u.status, u.entry?.kind, u.park, u.approval], ['active', 'steer', null, null], `the approval before the steer (${JSON.stringify(approvalBefore)}) is gone`);
 
-    // The steer round: one build.
+    // The steer round: one build, a fresh session given the handover (field feedback 2026-10-23 item 1).
+    const handover = handoverOf(r.ctx, U1, loadUnitSpec(r.ctx, r.unit('u1')).spec, { type: 'stage', unit: U1, stage: 'build', attempt: 999 });
+    assert.ok(handover !== null && handover.gate?.decision === 'escalate' && handover.report !== null);
     const round = await step(r.ctx, r.unit('u1'));
     const t1 = Date.now();
     assert.equal(round.kind, 'continue', JSON.stringify(round));
@@ -149,6 +155,7 @@ test('steer.round-uncharged: a parked unit steered through the command path runs
     assert.notEqual(call.step, null, `the steer call matched its step (fresh, the brief and the directive in its prompt): ${JSON.stringify(call.argv)}`);
     assert.ok(!call.argv.includes('resume'), 'a fresh session, not `exec resume`');
     assert.ok(call.stdin.includes(STEER_DIRECTIVE) && call.stdin.includes(BRIEF));
+    assert.ok(call.stdin.includes(handoverText(handover)), 'the steer round\'s handover, as built from the records');
     const spawns = buildSpawns(r);
     assert.equal(spawns.length, buildsBefore + 1);
     const deadline = Date.parse(spawns.at(-1)!.deadlineAt!);

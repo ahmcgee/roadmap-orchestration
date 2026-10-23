@@ -226,7 +226,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
     {
       spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
       planCheckNotes: '', fastLanes: [lane('unit', ['npm', 'test'])], suiteLanes: [], evidenceDir: absPath('/run/ev/a'), worktree: absPath('/wt/a'),
-      scope: [repoPattern('src/a/**')], fixRound: null, witnessChecks: [], milestones: null, browser: null, certifiedAt: null,
+      scope: [repoPattern('src/a/**')], fixRound: null, witnessChecks: [], milestones: null, browser: null, certifiedAt: null, handover: null,
     },
     {
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
@@ -234,6 +234,23 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       scope: [repoPattern('src/b/**')], fixRound: { failingEvidenceDirs: [absPath('/run/inv/9-1')], directives: ['DIRECTIVE-B'] },
       witnessChecks: [{ lane: laneId('journey'), command: 'roadmap witness-check --lane-file /run/ev/b/witness/journey.json' }],
       milestones: milestonesSample(), browser: browserSample(), certifiedAt: SHA_B,
+      handover: {
+        lineage: [unitId('u-one'), unitId('u-zero')],
+        diagnosis: {
+          units: [{
+            unit: unitId('u-zero'), outcomes: [{ ref: failureRef('u-zero/gate#4', 'ref'), text: 'HANDOVER-OUTCOME-B' }],
+            lanes: [{ ref: failureRef('u-zero/lanes#3/unit', 'ref'), class: 'red', hostSuspected: ['HANDOVER-HOST-B'] }], reverted: [{ path: repoPath('gen/HANDOVER-REVERTED-B.js'), salvages: 2 }], witnesses: [],
+          }],
+          reentries: [{ unit: unitId('u-one'), reenters: unitId('u-zero'), fixes: failureRef('u-zero/gate#4', 'ref') }],
+        },
+        gate: { unit: unitId('u-zero'), attempt: 4, decision: 'revise', directives: ['HANDOVER-DIRECTIVE-B'] },
+        findings: [{ id: reviewFindingId('R-3'), unit: unitId('u-zero'), path: repoPath('src/b/HANDOVER-FINDING-PATH-B.ts'), defect: 'requirement-unmet', text: 'HANDOVER-FINDING-B' }],
+        unmet: [{ clause: clauseId('A6'), text: 'HANDOVER-CLAUSE-B', why: 'new' }],
+        witnesses: [{ test: { lane: laneId('journey'), testId: 'HANDOVER-WITNESS-B' }, reason: 'missing', unit: unitId('u-zero'), attempt: 3 }],
+        decisions: [{ unit: unitId('u-zero'), id: clauseId('D1'), text: 'HANDOVER-DECISION-B', state: 'deferred' }],
+        report: { unit: unitId('u-zero'), attempt: 5, summary: 'HANDOVER-SUMMARY-B', blockers: ['HANDOVER-BLOCKER-B'] },
+        evidence: [absPath('/run/ev/HANDOVER-EVIDENCE-B')],
+      },
     },
   ],
   gate: [
@@ -1157,6 +1174,19 @@ describe('M4a rev 3 prompts: executable checks, the checkpoint admits', () => {
       for (const needle of [/after your fast lanes/, /fix round/, /after your last change/, /experiments/, /suite:<id>/, /never in lanesRun/]) {
         assert.match(text, needle, `build/${model}: ${needle}`);
       }
+    }
+  });
+
+  it('prompts.build-handover: a fresh session\'s handover renders every record it carries; no handover block without one', () => {
+    for (const model of BUILDERS) {
+      const mod = promptFor('build', model);
+      assert.doesNotMatch(mod.render(SAMPLES.build[0]), /HANDOVER-|[Hh]andover\b(?! in this message)/, `${model}: no handover without one`);
+      const text = mod.render({ ...SAMPLES.build[0], handover: SAMPLES.build[1].handover });
+      for (const needle of [
+        'u-one, u-zero', 'HANDOVER-OUTCOME-B', 'u-zero/lanes#3/unit', 'HANDOVER-HOST-B', 'gen/HANDOVER-REVERTED-B.js', 'u-zero gate attempt 4', 'revise', 'HANDOVER-DIRECTIVE-B',
+        'R-3', 'src/b/HANDOVER-FINDING-PATH-B.ts', 'requirement-unmet', 'HANDOVER-FINDING-B', 'A6', 'HANDOVER-CLAUSE-B', 'journey/HANDOVER-WITNESS-B missing',
+        'D1 (deferred): HANDOVER-DECISION-B', 'HANDOVER-SUMMARY-B', 'HANDOVER-BLOCKER-B', '/run/ev/HANDOVER-EVIDENCE-B',
+      ]) assert.ok(text.includes(needle), `build/${model}: ${needle}`);
     }
   });
 

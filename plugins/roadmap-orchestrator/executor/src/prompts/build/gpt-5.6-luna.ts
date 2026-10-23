@@ -22,8 +22,9 @@
 // text: the Claude role prompts' guidance names the Agent tool, which `codex exec` does not have.
 // dev.13: a milestone unit's design references and milestones, as the Claude module's; `browser` is always null on this
 // seat (Codex gets no MCP config), rendered by the shared helper all the same.
+// dev.17 (field feedback 2026-10-23 item 1): a session that does not continue its own gets the shared handover text.
 import type { BuildInputs, PromptModule } from '../inputs.ts';
-import { UNIT_POLICY, bullets, buildBrowserText, fastLanesText, milestonesText, referenceIndexText, rulingsText } from '../inputs.ts';
+import { UNIT_POLICY, bullets, buildBrowserText, fastLanesText, handoverText, milestonesText, referenceIndexText, rulingsText } from '../inputs.ts';
 import { BUILD_SCHEMA, DECISIONS_FILE } from '../schemas.ts';
 
 const system = `# Role
@@ -72,11 +73,19 @@ function fixRound(i: BuildInputs): string {
   return `
 
 # Fix round
-You already worked on this unit in this worktree. Read the failing evidence first (each directory holds a lane's stdout and stderr, its declared outputs, or, in an ignored/ directory, gitignored files it wrote, at their repository paths; a directive gives a lane's count of those):
+The worktree holds the work on this unit so far. Read the failing evidence first (each directory holds a lane's stdout and stderr, its declared outputs, or, in an ignored/ directory, gitignored files it wrote, at their repository paths; a directive gives a lane's count of those):
 ${bullets(i.fixRound.failingEvidenceDirs, '(no failing lanes)')}
 Directives:
 ${bullets(i.fixRound.directives, '(none)')}
 Fix exactly what failed and what the directives name. Carry out each directive, or list in blockers why it is wrong and leave the code. Then rerun every fast lane. Stop when they pass; anything past the repairs is scope creep.`;
+}
+
+/** dev.17 (field feedback 2026-10-23 item 1): a fresh session's handover from the executor's records; empty otherwise. */
+function handover(i: BuildInputs): string {
+  return i.handover === null ? '' : `
+
+# Handover
+${handoverText(i.handover)}`;
 }
 
 function suiteLanes(i: BuildInputs): string {
@@ -119,7 +128,7 @@ export const PROMPT: PromptModule<'build'> = {
   schema: BUILD_SCHEMA,
   fields: [
     'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks',
-    'milestones', 'browser', 'certifiedAt',
+    'milestones', 'browser', 'certifiedAt', 'handover',
   ],
   render: (i) => `# Spec (unit ${i.spec.unit}, revision ${i.spec.rev})
 ${i.spec.markdown}
@@ -144,7 +153,7 @@ ${i.planCheckNotes === '' ? '(none)' : i.planCheckNotes}
 ${bullets(i.scope, '(empty)')}
 
 # Fast lanes
-${fastLanesText(i.worktree, i.fastLanes)}${suiteLanes(i)}${witnessChecks(i)}${buildBrowserText(i.browser)}${fixRound(i)}
+${fastLanesText(i.worktree, i.fastLanes)}${suiteLanes(i)}${witnessChecks(i)}${buildBrowserText(i.browser)}${handover(i)}${fixRound(i)}
 
 # Task
 ${task(i)}`,

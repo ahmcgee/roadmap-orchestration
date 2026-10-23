@@ -129,7 +129,8 @@ import type {
   ArchitectureInput, BuildBrowser, Checkout, CorpusInput, DocText, EscalationInput, BuildLane, GateTargetInput, MilestonesInput,
   PlanCheckCheckouts, PlanCheckPriorRound, PlanCheckScopeGrowth, ReferenceIndex, RulingText, TargetInput, UnitMilestone, VisionInput,
 } from '../prompts/inputs.ts';
-import { visionInputOf } from '../prompts/inputs.ts';
+import { type Handover, visionInputOf } from '../prompts/inputs.ts';
+import { handoverOf, lineageOf, unmetClauses } from './handover.ts';
 import {
   DECISIONS_FILE, type DecisionsFile, type PlanCheckOutput, type Premise, buildOutputFor, buildSchemaFor, validateDecisionsFile, validatePlanCheckOutput,
 } from '../prompts/schemas.ts';
@@ -165,7 +166,7 @@ import { mutationSmoke, survivingObligations } from './smoke.ts';
 import { pressureCause, seriesRuling } from './starved.ts';
 import { checksApply, publishWitnessLaneFiles, requiredAt, witnessPresence } from './witnesscheck.ts';
 import {
-  type DecidedRound, type RoundCall, type RoundInput, callRound, decidedRound, laneFixRound, prepareRound,
+  type DecidedRound, type PreparedRound, type RoundCall, type RoundInput, callRound, decidedRound, laneFixRound, prepareRound, resolveContinuation,
   resumed,
 } from './rounds.ts';
 import { type BuildRound, type Next, type StageOutcome, outcomeFact, transition } from './transitions.ts';
@@ -1250,18 +1251,31 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
   // D1 (R56): the lane files of the fast required witness lanes, published before the call, and their commands.
   const witnessChecks = checksApply(ctx) ? publishWitnessLaneFiles(ctx, unit, work, requiredAt(ctx, unit, revParse(round.worktree, 'HEAD'))) : [];
   const lanes = buildLaneIds(spec);
-  const render = (fixRound: RoundCall['fixRound']): string => prompt.render({
+  // Field feedback 2026-10-23 item 1: a call on a fresh session gets the handover (src/pipeline/handover.ts); a resumed one does not.
+  const handover = handoverOf(ctx, unit.id, spec, parent);
+  const handed = (call: RoundCall): Handover | null => (call.session.mode === 'fresh' ? handover : null);
+  const render = (call: RoundCall): string => prompt.render({
     spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec, { buildLanesOnly: true }) }, ...lib,
     planCheckNotes: planCheckNotes(ctx, unit.id),
     fastLanes: activeBuildLanes(spec), suiteLanes: builderSuiteLanes(ctx.plan().suite.lanes, spec), evidenceDir: work, worktree: round.worktree, scope: effectiveScope(pinned),
-    fixRound, witnessChecks, milestones, browser: browser?.input ?? null, certifiedAt: certifiedTree(ctx, unit.id),
+    fixRound: call.fixRound, witnessChecks, milestones, browser: browser?.input ?? null, certifiedAt: certifiedTree(ctx, unit.id), handover: handed(call),
   });
-  const callFor = (call: RoundCall): BackendCallSpec => ({
+  const callFor = (prepared: PreparedRound) => (call: RoundCall): BackendCallSpec => ({
     unit: unit.id, parent,
-    request: { kind: 'implementer', dispatch, session: call.session, evidenceDirs: [work, ...call.evidenceDirs, ledgerDir(ctx)], mcpConfig: browser?.mcpConfig ?? null },
-    system: prompt.system, rendered: render(call.fixRound), schema: buildSchemaFor(lanes), cwd: round.worktree, deadlineAt: round.deadlineAt,
+    request: {
+      kind: 'implementer', dispatch, session: call.session, evidenceDirs: [...new Set([work, ...call.evidenceDirs, ...(handed(call)?.evidence ?? []), ledgerDir(ctx)])],
+      mcpConfig: browser?.mcpConfig ?? null,
+    },
+    system: prompt.system, rendered: render(call), schema: buildSchemaFor(lanes), cwd: prepared.worktree, deadlineAt: prepared.deadlineAt,
   });
-  return buildRead(ctx, unit, parent, decidedRound(input), await callRound(ctx, round, callFor), held.reservation);
+  const called = await callRound(ctx, round, callFor(round));
+  // Field feedback 2026-10-23 item 4: a resolve round that reported final with nothing beyond the merge while clauses are unmet
+  // goes back to its builder once (rounds.ts `resolveContinuation`); the continuation's outcome is read the normal way.
+  const unmet = decidedRound(input) === 'resolve' && called.kind === 'result' && called.result.outcome.kind === 'success' && mergeOnly(ctx, unit.id)
+    ? unmetClauses(ctx, lineageOf(ctx.journal.view, unit.id), spec) : [];
+  if (unmet.length === 0 || called.kind !== 'result') return buildRead(ctx, unit, parent, decidedRound(input), called, held.reservation);
+  const again = resolveContinuation(ctx, dispatch, round, called, unmet, unit.id);
+  return buildRead(ctx, unit, parent, decidedRound(input), await callRound(ctx, again, callFor(again)), held.reservation);
 }
 
 /**
@@ -1313,6 +1327,19 @@ export async function buildRead(
 /** The unit's latest merge-in: the conflicted one a resolve round resolves. */
 export function latestMergein(ctx: StageContext, unit: UnitId): IntentOf<'mergein.prepare'> | null {
   return ctx.journal.view.opsOf('mergein.prepare').filter((i) => i.parent.type === 'stage' && i.parent.unit === unit).at(-1) ?? null;
+}
+
+/**
+ * Field feedback 2026-10-23 item 4: whether a resolve round left the merge-in committed and nothing beyond it: HEAD is the merge
+ * of [old, T] itself (`resolvedHead`) and the worktree has no tracked or unignored change.
+ */
+function mergeOnly(ctx: StageContext, unit: UnitId): boolean {
+  const intent = latestMergein(ctx, unit);
+  if (intent === null) throw new Error(`a resolve round of ${unit} without a merge-in`);
+  const head = resolvedHead(intent);
+  if (head === null) return false;
+  const parents = git(intent.expect.worktree, ['rev-list', '--parents', '-n', '1', head]).trim().split(' ').slice(1);
+  return parents.length === 2 && parents[0] === intent.expect.old && parents[1] === intent.expect.integrationTip && dirtyPaths(intent.expect.worktree).length === 0;
 }
 
 /**

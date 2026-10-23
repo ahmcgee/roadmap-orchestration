@@ -239,7 +239,66 @@ export type BuildInputs = Readonly<{
    * `docsOnlySince` names; null before one.
    */
   certifiedAt: Sha | null;
+  /**
+   * dev.17 (field feedback 2026-10-23 item 1): what the executor's records show of the unit's work before this round, for a
+   * session that does not continue its own (src/pipeline/handover.ts); null on a resumed session and on the lineage's first build.
+   */
+  handover: Handover | null;
 }>;
+
+/**
+ * dev.17 (field feedback 2026-10-23 item 1): a fresh build session's handover, built in code from records only
+ * (src/pipeline/handover.ts), each list but `unmet` bounded to its most recent `HANDOVER_ITEMS_MAX`. `lineage`: the unit, then each unit it
+ * re-enters. `diagnosis`: the lineage's failures (the checkpoint's `ParkDiagnosis`). `gate`: the lineage's latest gate answer;
+ * `findings`: its unsettled blocking ledger findings. `unmet`: the spec's active acceptance clauses still unmet at the latest
+ * attempt (`new`: absent or reworded since the spec the lineage's latest gate judged; `witness-missing`/`witness-failed`: a
+ * witness item of the clause at the latest red witness check); `witnesses`: the required witness tests missing or failing there.
+ * `decisions`: the decisions the units it re-enters recorded that its spec does not hold; `report`: the lineage's latest build
+ * report; `evidence`: the failing lanes' evidence dirs of the lineage's latest red lanes attempt still on disk.
+ */
+export type Handover = Readonly<{
+  lineage: readonly UnitId[];
+  diagnosis: ParkDiagnosis;
+  gate: Readonly<{ unit: UnitId; attempt: number; decision: 'approve' | 'revise' | 'escalate'; directives: readonly string[] }> | null;
+  findings: readonly Readonly<{ id: ReviewFindingId; unit: UnitId; path: RepoPath; defect: string | null; text: string }>[];
+  unmet: readonly Readonly<{ clause: ClauseId; text: string; why: 'new' | 'witness-missing' | 'witness-failed' }>[];
+  witnesses: readonly Readonly<{ test: TestRef; reason: 'missing' | 'failed'; unit: UnitId; attempt: number }>[];
+  decisions: readonly Readonly<{ unit: UnitId; id: ClauseId; text: string; state: 'active' | 'deferred' }>[];
+  report: Readonly<{ unit: UnitId; attempt: number; summary: string; blockers: readonly string[] }> | null;
+  evidence: readonly AbsPath[];
+}>;
+
+/** The handover's body (the build modules wrap it), facts only: what each part is, never how to use it. */
+export function handoverText(h: Handover): string {
+  const section = (title: string, lines: readonly string[]): string[] => (lines.length === 0 ? [] : [title, ...lines]);
+  const why = (u: Handover['unmet'][number]): string =>
+    u.why === 'new' ? 'added or reworded since the spec the last gate judged' : u.why === 'witness-missing' ? 'a witness test of it was missing at the latest witness check' : 'a witness test of it failed at the latest witness check';
+  const history = h.diagnosis.units.flatMap((u) => {
+    const lines = [
+      ...u.outcomes.map((o) => `- ${o.ref}: ${o.text}`),
+      ...u.lanes.map((l) => `- ${l.ref}: lane failure, ${l.class}${l.hostSuspected === null ? '' : `, host-suspected (${l.hostSuspected.join(', ')})`}`),
+      ...(u.reverted.length === 0 ? [] : [`- Edits outside the pinned scope that salvage reverted: ${u.reverted.map((r) => `${r.path} (${r.salvages}×)`).join(', ')}`]),
+    ];
+    return lines.length === 0 ? [] : [`Unit ${u.unit}:`, ...lines];
+  });
+  return [
+    `This session is fresh: no earlier session's context carries over, and the worktree holds the work done before it. What the executor's records show of that work, on ${h.lineage.length === 1 ? `unit ${h.lineage[0]}` : `units ${h.lineage.join(', ')} (this unit, then each unit it re-enters)`}:`,
+    ...section('Acceptance clauses still unmet at the latest attempt:', h.unmet.map((u) => `- ${u.clause} (${why(u)}): ${u.text}`)),
+    ...section('Required witness tests missing or failing at the latest witness check:', h.witnesses.map((w) => `- ${w.test.lane}/${w.test.testId} ${w.reason} (${w.unit} lanes attempt ${w.attempt})`)),
+    ...(h.gate === null ? ['No gate has judged this work.'] : [
+      `The latest gate (${h.gate.unit} gate attempt ${h.gate.attempt}) decided ${h.gate.decision}.`,
+      ...section('Its directives:', h.gate.directives.map((d) => `- ${d}`)),
+    ]),
+    ...section('Blocking review findings not yet settled:', h.findings.map((f) => `- ${f.id} (${f.unit}, ${f.path}${f.defect === null ? '' : `, ${f.defect}`}): ${f.text}`)),
+    ...(h.report === null ? [] : [
+      `The latest build report (${h.report.unit} build attempt ${h.report.attempt}): ${h.report.summary}`,
+      ...section('Blockers it reported:', h.report.blockers.map((b) => `- ${b}`)),
+    ]),
+    ...section('Decisions the earlier units recorded that this spec does not hold:', h.decisions.map((d) => `- ${d.unit} ${d.id} (${d.state}): ${d.text}`)),
+    ...section('Evidence of the latest red lanes attempt (readable):', h.evidence.map((e) => `- ${e}`)),
+    ...section('Failure history (newest unit first):', history),
+  ].join('\n');
+}
 
 /** One fast lane's witness check, as the build prompt names it. */
 export type WitnessCheckCommand = Readonly<{ lane: LaneId; command: string }>;
@@ -621,7 +680,7 @@ export const ROLE_INPUTS = {
   ],
   build: [
     'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks',
-    'milestones', 'browser', 'certifiedAt',
+    'milestones', 'browser', 'certifiedAt', 'handover',
   ],
   gate: [
     'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'planCheckNotes', 'obligations', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',

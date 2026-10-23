@@ -14,7 +14,7 @@ import { type NeedsUserId, commandId, invocationId } from '../src/core/ids.ts';
 import type { CommandBody, NeedsUserContent } from '../src/core/records.ts';
 import { openBlocking, raiseNeedsUser } from '../src/needsuser.ts';
 import { invocationDir } from '../src/pipeline/invoke.ts';
-import { NO_SESSION_NOTE, RESPEC_DIRECTIVE } from '../src/prompts/directives.ts';
+import { NO_SESSION_NOTE, RESPEC_DIRECTIVE, RESPEC_FRESH_DIRECTIVE } from '../src/prompts/directives.ts';
 import type { StageContext } from '../src/pipeline/dispatch.ts';
 import { keptSpecPath } from '../src/pipeline/stages.ts';
 import { type Gate, runUnit, step } from '../src/pipeline/unit.ts';
@@ -223,7 +223,7 @@ test('reopen.risk-raise-moves-seat: a re-opened unit whose plan-check raises the
       planCheckStep({ decision: 'approve', risk: 'high' }),
       {
         as: 'claude',
-        expect: { argv: ['--permission-mode', 'bypassPermissions', '--session-id'], argvLacks: ['--resume'], stdinContains: [RESPEC_DIRECTIVE, NO_SESSION_NOTE, 'mul(0, 5) is 0'] },
+        expect: { argv: ['--permission-mode', 'bypassPermissions', '--session-id'], argvLacks: ['--resume'], stdinContains: [RESPEC_FRESH_DIRECTIVE, NO_SESSION_NOTE, 'mul(0, 5) is 0'] },
         acts: [{ type: 'emit', value: BUILD_REPORT }],
       },
       gateStep({ decision: 'approve' }),
