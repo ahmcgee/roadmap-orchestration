@@ -37,7 +37,8 @@
 //                      when the plant was live at that walk and no resolved finding names it
 //   repair-loop        the walk → repair → re-walk loop on any milestone: a walkthrough finding reached `resolved` from
 //                      `fixed-on-branch` of a unit whose publication came first, and a walk of its milestone started after
-//                      that wrote the milestone's `milestone-passed` (the plant's loop is the case plant-caught names)
+//                      that passed it: wrote the milestone's `milestone-passed`, or (a non-blocking finding: the milestone
+//                      passed before the repair) ended `reported` with no finding (the plant's loop is the case plant-caught names)
 //   plant-repaired     at the arc's latest integrated head (the verified ref's latest published `integration.ff`; the
 //                      arc is stopped, not completed), `/` rendered at 320 CSS px lays out no wider than the viewport,
 //                      and the planted book (its title and URL) is still in the page; a book gone fails, for the lead
@@ -185,8 +186,14 @@ export function repairLoopVerdict(log: M5Log): Verdict {
       problems.push(r.detail);
       continue;
     }
-    const rewalk = log.walks.find((w) => w.milestone === f.milestone && w.seq > r.seq && log.passed.some((p) => p.milestone === f.milestone && p.job === w.job));
-    if (rewalk !== undefined) return { pass: true, detail: `${f.milestone}: ${f.id} (${f.claim}) resolved at seq ${r.seq} by ${r.unit}'s publication at seq ${r.pub}; ${rewalk.job} (round ${rewalk.round}) re-walked it and passed the milestone` };
+    const passedBefore = log.passed.some((p) => p.milestone === f.milestone && p.seq < r.seq);
+    const passes = (w: M5Log['walks'][number]): boolean => log.passed.some((p) => p.milestone === f.milestone && p.job === w.job)
+      || (passedBefore && w.outcome === 'reported' && w.findings.length === 0);
+    const rewalk = log.walks.find((w) => w.milestone === f.milestone && w.seq > r.seq && passes(w));
+    if (rewalk !== undefined) {
+      const how = log.passed.some((p) => p.job === rewalk.job) ? 'passed the milestone' : 'reported no finding (the milestone had passed before the repair)';
+      return { pass: true, detail: `${f.milestone}: ${f.id} (${f.claim}) resolved at seq ${r.seq} by ${r.unit}'s publication at seq ${r.pub}; ${rewalk.job} (round ${rewalk.round}) re-walked it and ${how}` };
+    }
     problems.push(`${f.id} on ${f.milestone} resolved at seq ${r.seq} by ${r.unit}, and no later walk of ${f.milestone} passed it`);
   }
   return { pass: false, detail: problems.length === 0 ? 'no walkthrough finding on a milestone' : problems.join('; ') };

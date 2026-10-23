@@ -298,12 +298,18 @@ describe('the criteria over the log (evals/m5/check.ts)', () => {
     assert.match(sessionStoppedVerdict({ endedBy: 'timeout', stopReason: null, failure: null }, 'a', ['a'], false).detail, /ended timeout/);
   });
 
-  test('evals-m5.criterion.repair-loop: a walkthrough finding resolved by a published unit, then a later walk that passes its milestone; no later passing walk, or no resolution, fails', () => {
+  test('evals-m5.criterion.repair-loop: a walkthrough finding resolved by a published unit, then a later walk that passes its milestone (or, the milestone passed before the repair, reports no finding); no such walk, or no resolution, fails', () => {
     const ok = repairLoopVerdict(goodLog());
     assert.ok(ok.pass, ok.detail);
     assert.match(ok.detail, /MS-1: F-1 .* resolved at seq 82 by repair-contrast's publication at seq 80; walk-2 \(round 2\) re-walked it/);
-    // The milestone passed on the walk that found it, before the repair: no re-walk passed it.
-    assert.match(repairLoopVerdict(goodLog({ passed: [{ seq: 50, milestone: 'MS-1', job: 'walk-1' }] })).detail, /F-1 on MS-1 resolved at seq 82 by repair-contrast, and no later walk of MS-1 passed it/);
+    // The milestone passed on the walk that found it, before the repair (a non-blocking finding): a later walk reporting no
+    // finding passes; one reporting a finding does not.
+    const early = { passed: [{ seq: 50, milestone: 'MS-1', job: 'walk-1' }] } as const;
+    const clean = repairLoopVerdict(goodLog(early));
+    assert.ok(clean.pass, clean.detail);
+    assert.match(clean.detail, /walk-2 \(round 2\) re-walked it and reported no finding \(the milestone had passed before the repair\)/);
+    const walks = goodLog().walks.map((w) => (w.job === 'walk-2' ? { ...w, findings: ['F-9'] } : w));
+    assert.match(repairLoopVerdict(goodLog({ ...early, walks })).detail, /F-1 on MS-1 resolved at seq 82 by repair-contrast, and no later walk of MS-1 passed it/);
     const [f] = goodLog().findings;
     assert.match(repairLoopVerdict(goodLog({ findings: [{ ...f!, transitions: f!.transitions.slice(0, 2) }] })).detail, /F-1 .* is fixed-on-branch/);
     assert.match(repairLoopVerdict(goodLog({ findings: [] })).detail, /no walkthrough finding on a milestone/);
