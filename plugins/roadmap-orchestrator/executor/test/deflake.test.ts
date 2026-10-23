@@ -22,6 +22,7 @@ import { type PlanM1, milestonesOfUnit } from '../src/input/plan.ts';
 import { readNeedsUser } from '../src/needsuser.ts';
 import { deflakeDue, deflakeState, flakyLedger, medianLaneMinutes, verificationCap, verificationReasons, verifyRunsOf } from '../src/pipeline/deflake.ts';
 import { applyDeflake, deflakeJobPending, raiseDeflakeParked } from '../src/pipeline/deflakemint.ts';
+import { laneFailures } from '../src/pipeline/failures.ts';
 import { invocationDir } from '../src/pipeline/invoke.ts';
 import { LANE_DEADLINE_MS, laneOrder, reserveNow, runLaneSeries, seriesLedger, specSeriesRoot } from '../src/pipeline/lanes.ts';
 import { pinDispatch, type StageParent } from '../src/pipeline/dispatch.ts';
@@ -304,6 +305,9 @@ describe('verification runs and stochastic lanes', () => {
     assert.equal(red.end.kind, 'red');
     assert.equal(run.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'lane').length, 5);
     assert.equal(run.journal.view.flakes().length, 0, 'a verification run is never a flake');
+    // Status lists the red verification as the attempt's red lane, the green one not at all (each attempt closed).
+    run.journal.fact({ kind: 'stage-outcome', unit: STAGE_U1, stage: 'lanes', attempt: 2, outcome: 'red', class: 'advance', chargeable: true });
+    assert.deepEqual(laneFailures(run.ctx, run.unit).map((f) => [f.attempt, f.lane, f.class]), [[2, 'flaky', 'red']]);
   });
 
   test('deflake.stochastic: a k-of-n lane red then green passes without the red-lane protocol and never enters the ledger', T, async () => {
