@@ -626,6 +626,14 @@ rejected. An edit you never apply has no effect, even after a restart.
   `must-hold` to `future`, waive, defer, retire) needs a ruling naming it, landed with the edit:
   `roadmap apply --ruling <sidecar>`. A rule anchor whose hash changed with the statement unchanged is an edit, not
   a weakening.
+- **What a change leaves stale** (1.0.0-dev.17): an apply that moves an obligation to a new rev, rewrites a contract
+  (a ruling's contract ops) or edits a vision clause is followed through in code, with nothing to do on your side.
+  Every unit still to land that links the change answers it at its plan-check (one in flight re-opens there first);
+  merged witness tests of a changed obligation, or of one binding a changed contract, are re-witnessed by a
+  `propagate-r<rev>-…` unit the executor mints (milestone-exempt, ranked with repairs), and no unit linking the change,
+  or whose design breaks those tests, passes its gate before that unit merges. A propagation unit that parks holds
+  those gates: resume it, or `cut` it to release them. A vision edit reaches the units through the obligations serving
+  the clause (the checkpoint reconciles the obligations themselves).
 - **Priority, known defects, plan-check shape**: apply at once, draining nothing ("Supervising the executor").
 - **Milestones**: only by `apply`, draining nothing. A milestone being walked waits for its walk to end; once walked it
   stays, with its units and design (plan another milestone for more), while its text, references, bring-up, journeys

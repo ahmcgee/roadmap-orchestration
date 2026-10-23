@@ -276,6 +276,20 @@ at triage stay in git history.
 - **Close-out batch reds as P1s.** A red batch lane at the close-out refuses it (base-red, needs-user) rather than opening a
   P1 the checkpoint could repair, because no checkpoint is due at the close-out. Trigger: a close-out refused this way.
 
+### Deferred from dev.17, propagation (experience-won item 2)
+
+- **Pins at the owner's apply.** An owner's spec is pinned by its first plan-check redirect (or never, read `unpinned`):
+  stamping pins into the kept bytes at the apply would make every owner spec differ from the owner's file and lean on the
+  rebase's `owner` manifest for every revision source. Unpinned links read as stale-unknown, so the cost is only a longer
+  stale list at a later change. Trigger: plan-checks answering many unpinned links that never moved.
+- **A propagation unit for a vision change.** A changed clause reaches the obligations serving it (reconciled by the
+  checkpoint) and the units linking them (answered at plan-check), but mints no unit: an unrevised obligation's witness
+  still proves its unchanged statement. Trigger: a merged artifact a vision edit left wrong that no obligation edit reached.
+- **Implementation files in a propagation unit's scope.** Its scope is the stale witness files; code the change needs
+  outside them goes through scope growth. Trigger: propagation units held for scope growth as a rule.
+- **File pins of a design record.** `breaks` and file `interfaces` pin a blob, but no merge marks them stale; only the
+  code edge reads `breaks`. Trigger: a unit built on a break list a merge since made wrong.
+
 ## Convergence and integrity (unscheduled, wanted)
 
 - **A `respec` gate outcome** (arc-1 item 27b). A gate that finds the spec wrong can only escalate to the
@@ -607,9 +621,10 @@ at triage stay in git history.
   `systemsMap`). With them `cadence` is required on every lane, `tier` and `inputs` refused, and `plan-applied.systemsMap`
   required (null for no map). The `lane-reused` fact's absent `set`/`at` (a spec series at its commit, src/core/state.ts
   and `seriesLedger`) and the `witnessed` fact's absent `inputSha` (its `treeSha`) go at the same time.
-- The dev.16 spec forms (1.0.0-dev.17, dev.17 records), once no arc started on 1.0.0-dev.16 is in flight: `specPinsDefault`
-  (src/core/upgrade.ts, read by `specPinOf` in src/core/records.ts: a spec without `pins`). `designKindDefault` stays only
-  as long as a spec may lack a design record before its first plan-check (the design pass decides).
+- The dev.16 forms (1.0.0-dev.17, dev.17 records and propagation), once no arc started on 1.0.0-dev.16 is in flight:
+  `planCheckStaleLinksDefault` (src/core/upgrade.ts, read by `planCheckOutput`: a plan-check answer without `staleLinks`).
+  `designKindDefault` stays only as long as a spec may lack a design record before its first plan-check (the design pass
+  decides). A spec without `pins` is a lasting state (an owner's spec no plan-check has revised), not scaffolding.
 
 - `gateNoteDebtDefault` and `GATE_DEBT_UNRECORDED` (src/core/upgrade.ts), with `gateDebtNotes`' unrecorded arm
   (src/pipeline/gate.ts), once no arc started on 1.0.0-dev.12 is in flight: a dev.12 gate finding has no `debt` and its
