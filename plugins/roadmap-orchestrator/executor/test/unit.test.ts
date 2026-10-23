@@ -15,7 +15,7 @@ import { unitBranch } from '../src/pipeline/dispatch.ts';
 import { latestCandidate } from '../src/pipeline/integrate.ts';
 import { loadUnitSpec } from '../src/pipeline/stages.ts';
 import { killWorkload } from '../src/pipeline/invoke.ts';
-import { CONTINUE_DIRECTIVE, NO_SESSION_NOTE, RESOLVE_DIRECTIVE } from '../src/prompts/directives.ts';
+import { CONTINUE_DIRECTIVE, CONTINUE_FRESH_DIRECTIVE, NO_SESSION_NOTE, RESOLVE_DIRECTIVE } from '../src/prompts/directives.ts';
 import { type Gate, type UnitResult, runUnit } from '../src/pipeline/unit.ts';
 import { MODEL_IDS } from '../src/routing/types.ts';
 import { parseRepoConfig } from '../src/routing/layers.ts';
@@ -411,7 +411,7 @@ test('continue.no-session-fresh: a Codex exec killed before its thread started h
     steps: [
       planCheckStep({ decision: 'approve' }),
       codexStep([{ type: 'dirty', files: MUL }, barrier('b1')], { argv: ['exec', '-C'] }),
-      codexStep([], { argv: ['exec', '-C'], argvLacks: ['resume'], stdinContains: [NO_SESSION_NOTE, CONTINUE_DIRECTIVE] }),
+      codexStep([], { argv: ['exec', '-C'], argvLacks: ['resume'], stdinContains: [NO_SESSION_NOTE, CONTINUE_FRESH_DIRECTIVE] }),
       gateStep({ decision: 'approve' }),
     ],
   });

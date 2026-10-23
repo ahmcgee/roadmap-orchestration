@@ -42,8 +42,9 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
 - `roadmap stop`: park everything, tear down, release the host lock.
 - `roadmap pause (<unit> | --all)`: kill and tear down; commits and worktree stay as left; the unit holds at its stage.
 - `roadmap resume [<unit> | --backend claude|codex]`: no argument clears pauses and holds (a held build continues
-  its session). `<unit>` re-opens a unit parked at plan-check or gate after a spec revision was applied, or one
-  parked `routing-changed` once its seat is restored. `--backend` clears a usage-limit park after a passing smoke.
+  its session). `<unit>` re-opens a unit parked at plan-check or gate after a spec revision was applied (its next build
+  resumes the implementer session; one that cannot, on a moved seat, starts fresh with the executor's handover of the
+  unit's history), or one parked `routing-changed` once its seat is restored. `--backend` clears a usage-limit park after a passing smoke.
 - `roadmap ack <needs-user-id> [--choice <option-id>]`: answer an item; `--choice` names one of its `options`.
 - `roadmap sweep [--resource <name>]`: run the recorded teardown of undispositioned residues.
 - `roadmap apply [--base <file>] [--dry-run] [--ruling <file>] [--vision-edit]`: put the edited plan, specs and other

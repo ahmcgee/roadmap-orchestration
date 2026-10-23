@@ -247,7 +247,7 @@ export function ledgerFact(ctx: StageContext, unit: UnitId, attempt: number, hea
 // What the gate and the builder are told
 
 /** The text of each ledger finding of `unit`, from the gate answers that minted them. */
-function ledgerTexts(ctx: JudgmentReader, unit: UnitId): ReadonlyMap<string, GateFinding> {
+export function ledgerTexts(ctx: JudgmentReader, unit: UnitId): ReadonlyMap<string, GateFinding> {
   const out = new Map<string, GateFinding>();
   for (const spawn of judgmentSpawns(ctx, unit, 'gate')) {
     if (spawn.parent.type !== 'stage') continue;

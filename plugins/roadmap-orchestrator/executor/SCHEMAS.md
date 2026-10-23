@@ -4867,3 +4867,35 @@ An `apply` whose edit touches a unit mid-stage is queued behind that stage's bou
 
 Crash labels (test/matrix.ts row QUEUED_APPLY): `command.apply.queued` (the fact written, its receipt not),
 `command.apply.after-rejected-receipt` (a refused apply's receipt written, its `apply-dropped` item not).
+
+## dev.17: the build handover (2026-10-23; 1.0.0-dev.17, field feedback 2026-10-23 items 1, 2, 4)
+
+A build call on a fresh session gets the executor's records of the work before it (DESIGN-1.0.md §4 "Handover";
+src/pipeline/handover.ts). No record changes: everything is read from the log, kept specs, gate and build results and the
+evidence dirs, so there is no read-time default and no upgrade cell.
+
+| Input | Change |
+|---|---|
+| `BuildInputs` (`ROLE_INPUTS.build`) | `+ handover: Handover \| null` (null on a resumed session and on the lineage's first build) |
+| `Handover` (`src/prompts/inputs.ts`) | `{lineage: UnitId[] (the unit first), diagnosis: ParkDiagnosis, gate: {unit, attempt, decision, directives} \| null, findings [{id: R-n, unit, path, defect \| null, text}], unmet [{clause, text, why: new \| witness-missing \| witness-failed}], witnesses [{test, reason: missing \| failed, unit, attempt}], decisions [{unit, id, text, state: active \| deferred}], report: {unit, attempt, summary, blockers} \| null, evidence: AbsPath[]}`; every list but `unmet` the most recent `HANDOVER_ITEMS_MAX` (10) |
+| Directives (`src/prompts/directives.ts`) | `+ RESPEC_FRESH_DIRECTIVE`, `+ CONTINUE_FRESH_DIRECTIVE` (a fresh session's, beside `NO_SESSION_NOTE`); `+ resolveUnmetDirective(unmet)`; `RESOLVE_DIRECTIVE` goes on past the merge commit to what the spec still needs |
+
+1. **When** (`handoverOf`, computed once per build attempt before its calls): the unit re-enters another, or a build spawn of
+   its lineage outside the attempt exists; the build stage renders it on a call whose `session.mode` is `fresh` (the round's
+   own, its never-persisted rerun, a continue that cannot resume) and adds its `evidence` to the call's readable dirs.
+2. **Its parts.** `diagnosis`: `lineageDiagnosis` (the checkpoint's `parkDiagnosis` of a park trigger). `gate`: the latest
+   gate spawn of the lineage (newest unit first) with a validated answer. `findings`: ledger entries of the lineage's units
+   with no outcome, text from the gate answer that minted them. `unmet` (`unmetClauses`): the spec's active acceptance
+   clauses, `new` when the baseline does not hold it active with the same text (baseline: the spec of the lineage's latest
+   gate `judgment-inputs`; with none, the spec in force of the re-entered unit; a unit of its own with no gate has none),
+   else `witness-missing`/`witness-failed` when an active witness item of it names a test the latest red witness check
+   missed. That check: per lineage unit newest first, its latest `witnesses-missing` outcome when `greenLanes(unit)` is
+   not later, else none when it has a green lanes attempt, else the unit it re-enters. `decisions`: the decisions of each
+   re-entered unit's spec in force not struck and not in the unit's spec by id. `report`: the latest build spawn of the
+   lineage outside the attempt with a validated answer. `evidence`: the lane dirs of the lineage's latest lanes attempt
+   with a lane failure (`laneFailures`), each still on disk.
+3. **Resolve continuation** (`build`, `resolveContinuation`): a resolve round whose call ends `success` with HEAD exactly
+   the merge `[old, T]` of the unit's latest merge-in and no dirty path, while `unmetClauses` is non-empty, is followed by
+   one more invocation of the same attempt: its session resumed (`invocationSession` of the first call; fresh with
+   `NO_SESSION_NOTE` and the handover when it has none) with `resolveUnmetDirective`, under `freshBuildMin`. `buildRead`
+   reads that call. Recovery after a crash between the two reads the attempt's latest call.

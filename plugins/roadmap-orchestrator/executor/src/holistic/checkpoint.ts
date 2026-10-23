@@ -79,7 +79,7 @@
 import { join } from 'node:path';
 import { freshJudgmentSession } from '../backends/argv.ts';
 import { crashPoint } from '../core/crash.ts';
-import { type CheckpointIssues, type Parent, type TestRef, testRefKey } from '../core/events.ts';
+import type { CheckpointIssues, Parent } from '../core/events.ts';
 import { captureUnderFence } from '../core/fence.ts';
 import { canonicalJson } from '../core/json.ts';
 import { type FindingId, type InvocationId, type JobId, type LaneId, type Sha, type Sha256Hex, type UnitId, INTEGRATION_SLOT, invocationId, parseInvocationId, canonicalIds } from '../core/ids.ts';
@@ -90,7 +90,7 @@ import { BACKEND_PARK_CLASSES } from '../core/events.ts';
 import { DEFAULT_BOUNDS, specWitnesses } from '../core/records.ts';
 import { type CheckpointState, openAttempt } from '../core/state.ts';
 import { SchemaError } from '../core/validate.ts';
-import { type AbsPath, type RepoPath, absPath } from '../core/values.ts';
+import { type AbsPath, absPath } from '../core/values.ts';
 import { git, revParse } from '../git/git.ts';
 import {
   ISSUES_INPUT, OBLIGATIONS_INPUT, PHASE0_INPUT, PLAN_INPUT, RULING_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, inForceFiles, inputPath, keptInput, payloadAtRev, requirePlanInForce,
@@ -104,8 +104,8 @@ import {
 import { arcJourneyLane, arcLaneKey, jobSeriesCheckout, laneEnvId, observations, observedViews, removeJobCheckouts, runJourneySeries } from '../pipeline/lanes.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
 import { candidateRedCause } from '../pipeline/unit.ts';
-import { architecture, docAt, inMs, ledgerDir, ledgerPath, salvageRejections, targetDirs } from '../pipeline/stages.ts';
-import { laneFailures, outcomeRef, outcomeText } from '../pipeline/failures.ts';
+import { architecture, docAt, inMs, ledgerDir, ledgerPath, targetDirs } from '../pipeline/stages.ts';
+import { lineageDiagnosis } from '../pipeline/handover.ts';
 import { judgmentRepairDirective } from '../prompts/directives.ts';
 import { promptFor } from '../prompts/index.ts';
 import { type CheckpointInputs, type CheckpointSpec, type FindingView, type ManifestEntry, type ManifestKind, type ParkDiagnosis, type TriggerView, visionInputOf } from '../prompts/inputs.ts';
@@ -584,43 +584,9 @@ function triggerView(ctx: CheckpointContext, t: CheckpointTrigger): TriggerView 
   return { ...t, cause: { stage: f.stage, attempt: f.attempt, outcome: f.outcome, reason: d.reason, design, detail } };
 }
 
-/**
- * Arc feedback 2026-10-16 (ckpt re-entered u1e1 without finding why its 41 attempts failed): a park trigger's lineage as the
- * executor's records show it, the parked unit first, then each unit it re-entered: its failure outcomes and lane failures
- * (with the references a re-entry cites, src/pipeline/failures.ts), the out-of-scope paths salvage reverted, the required
- * witness tests found missing or failing, and the lineage's re-entries with the failures they cited. Null for an audit's.
- */
+/** A park trigger's lineage as the executor's records show it (src/pipeline/handover.ts `lineageDiagnosis`); null for any other trigger. */
 export function parkDiagnosis(ctx: CheckpointContext, t: CheckpointTrigger): ParkDiagnosis | null {
-  if (t.type !== 'park') return null;
-  const view = ctx.journal.view;
-  const lineage = [t.unit];
-  for (let l = view.unit(t.unit).lineage; l !== null; l = view.unit(l.reenters).lineage) lineage.push(l.reenters);
-  const units = lineage.map((unit) => {
-    const failed = view.unit(unit).failures;
-    const reverted = new Map<RepoPath, number>();
-    for (const s of salvageRejections(ctx, unit)) for (const p of new Set(s.paths)) reverted.set(p, (reverted.get(p) ?? 0) + 1);
-    const witnesses = new Map<string, Readonly<{ test: TestRef; reason: 'missing' | 'failed'; attempt: number }>>();
-    for (const f of failed) {
-      const d = f.fact.detail;
-      if (d?.kind !== 'witnesses-missing') continue;
-      for (const test of d.missing) witnesses.set(testRefKey(test), { test, reason: 'missing', attempt: f.fact.attempt });
-      for (const test of d.failed) witnesses.set(testRefKey(test), { test, reason: 'failed', attempt: f.fact.attempt });
-    }
-    return {
-      unit,
-      outcomes: failed.map((f) => ({ ref: outcomeRef(f), text: outcomeText(f) })),
-      lanes: laneFailures(ctx, { id: unit }).map((l) => ({ ref: l.ref, class: l.class, hostSuspected: l.hostSuspected === null ? null : l.hostSuspected.signatures })),
-      reverted: [...reverted].sort(([a], [b]) => (a < b ? -1 : 1)).map(([path, salvages]) => ({ path, salvages })),
-      witnesses: [...witnesses].sort(([a], [b]) => (a < b ? -1 : 1)).map(([, w]) => w),
-    };
-  });
-  const plan = requirePlanInForce(ctx.runDir, view).plan;
-  const reentries = lineage.slice(0, -1).reverse().map((unit) => {
-    const re = plan.units.find((u) => u.id === unit)?.reenters;
-    if (re === undefined) throw new Error(`unit ${unit} has a lineage, but the plan in force records no re-entry for it`);
-    return { unit, reenters: re.unit, fixes: re.fixes ?? null };
-  });
-  return { units, reentries };
+  return t.type === 'park' ? lineageDiagnosis(ctx, t.unit) : null;
 }
 
 /**

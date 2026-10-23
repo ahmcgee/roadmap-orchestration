@@ -32,15 +32,28 @@
 // another implementer seat (a plan-check raised the risk after a build, and the raised seat binds another
 // model or backend: a session cannot move across them), the round starts a fresh session instead, on the
 // kept branch and worktree, with the same inputs plus NO_SESSION_NOTE (a continue: its decided round's
-// inputs, then NO_SESSION_NOTE and CONTINUE_DIRECTIVE; a reopen's fresh round: RESPEC_DIRECTIVE, then
-// NO_SESSION_NOTE); the round keeps its kind, and its launch.json records the session as fresh. A session's
+// inputs, then NO_SESSION_NOTE and CONTINUE_FRESH_DIRECTIVE; a reopen's fresh round: RESPEC_FRESH_DIRECTIVE, then
+// NO_SESSION_NOTE: no directive told to a fresh session claims the earlier work as its own); the round keeps its kind, and
+// its launch.json records the session as fresh.
+//
+// Handover (dev.17, field feedback 2026-10-23 item 1; src/pipeline/handover.ts): every call on a fresh session whose lineage
+// has work before it (a re-entry, a reopen or a seat move that cannot resume, a steer, a session that never persisted, a
+// continue that cannot resume) is given the handover, the executor's records of that work; a resumed session is not. Keeping
+// the session is an optimisation; the handover is what guarantees the history reaches the builder. A session's
 // seat is the `implementerSeatRev` of the dispatch fact its spawn ran under (`spawnSeatRev`); a routing
 // change never moves the session key (backend, model) of a unit whose build started (implementerDispatch parks it
 // instead), and an effort-only change re-pins it and resumes the session with the new effort (R4, OR-L3).
 //
 // A resolve round after a re-entry's conflicted `prepare` (A6) is fresh: the re-entering unit is a new unit
 // id with no build of its own, and no session inherits across units, so it starts a fresh session on the
-// prepared worktree (MERGE_HEAD kept) with RESOLVE_DIRECTIVE and NO_SESSION_NOTE.
+// prepared worktree (MERGE_HEAD kept) with RESOLVE_DIRECTIVE and NO_SESSION_NOTE, and the handover.
+//
+// Resolve continuation (field feedback 2026-10-23 item 4): a resolve round whose report is final with the merge committed and
+// nothing changed beyond it (HEAD the merge itself, the worktree clean), while acceptance clauses of the spec are still unmet
+// (src/pipeline/handover.ts `unmetClauses`), is not taken as the attempt's last word: its session is resumed once, as a new
+// invocation of the same attempt, with `resolveUnmetDirective` naming those clauses and a fresh build's window
+// (`resolveContinuation`). Its outcome is read the normal way. A crash between the two calls reads the first (recovery consumes
+// the attempt's latest call).
 //
 // Session never persisted. A round that resumes a session (a fix, resume or resolve round, a continue, a
 // reopen's respec round) whose call ends `process-fault` with no complete JSON line on stdout never got its
@@ -79,8 +92,8 @@ import { type AbsPath, type IsoTime, type RefName, type RepoPath, branchRef, iso
 import { refTarget, revParse } from '../git/git.ts';
 import { type FixRound, ignoredText } from '../prompts/inputs.ts';
 import {
-  CONTINUE_DIRECTIVE, NO_SESSION_NOTE, RESOLVE_DIRECTIVE, RESPEC_DIRECTIVE, STEER_DIRECTIVE, dirtyLanesDirective, flakyLaneDirective, movedHeadDirective,
-  repeatRedDirective, resumeDirectives, smokeFixDirectives, stalledLaneDirective, witnessFixDirectives,
+  CONTINUE_DIRECTIVE, CONTINUE_FRESH_DIRECTIVE, NO_SESSION_NOTE, RESOLVE_DIRECTIVE, RESPEC_DIRECTIVE, RESPEC_FRESH_DIRECTIVE, STEER_DIRECTIVE, dirtyLanesDirective,
+  flakyLaneDirective, movedHeadDirective, repeatRedDirective, resolveUnmetDirective, resumeDirectives, smokeFixDirectives, stalledLaneDirective, witnessFixDirectives,
 } from '../prompts/directives.ts';
 import { runnerFiles } from '../runner/files.ts';
 import {
@@ -314,13 +327,14 @@ function sessionOf(dispatch: ImplementerDispatch, id: ImplementerSessionId | nul
 }
 
 /**
- * The call of a round that resumes session `id` with `fix`, and its fresh variant: a fresh session told so by
- * NO_SESSION_NOTE. With no session to resume the round is that fresh variant.
+ * The call of a round that resumes session `id` with `fix`, and its fresh variant: a fresh session given `freshFix` (`fix`
+ * unless a directive claims the earlier work as the session's own) told so by NO_SESSION_NOTE. With no session to resume the
+ * round is that fresh variant.
  */
 export function resumed(
-  dispatch: ImplementerDispatch, id: ImplementerSessionId | null, fix: FixRound, evidenceDirs: readonly AbsPath[],
+  dispatch: ImplementerDispatch, id: ImplementerSessionId | null, fix: FixRound, evidenceDirs: readonly AbsPath[], freshFix: FixRound = fix,
 ): RoundCall & Readonly<{ fresh: RoundCall | null }> {
-  const fresh: RoundCall = { session: freshSession(dispatch), fixRound: { ...fix, directives: [...fix.directives, NO_SESSION_NOTE] }, evidenceDirs };
+  const fresh: RoundCall = { session: freshSession(dispatch), fixRound: { ...freshFix, directives: [...freshFix.directives, NO_SESSION_NOTE] }, evidenceDirs };
   return id === null ? { ...fresh, fresh: null } : { session: sessionOf(dispatch, id), fixRound: fix, evidenceDirs, fresh };
 }
 
@@ -390,6 +404,19 @@ export async function callRound(ctx: StageContext, round: PreparedRound, spec: (
   return callImplementer(ctx, spec(round.fresh));
 }
 
+/**
+ * Field feedback 2026-10-23 item 4: the one continuation of resolve round `round` whose call `called` reported final with nothing
+ * changed beyond the merge while `unmet` clauses are still unmet (stages.ts `build` decides that): its session resumed (fresh with
+ * NO_SESSION_NOTE when it has none) with `resolveUnmetDirective`, under a fresh build's window.
+ */
+export function resolveContinuation(
+  ctx: StageContext, dispatch: ImplementerDispatch, round: PreparedRound, called: Extract<BackendCallOutcome, Readonly<{ kind: 'result' }>>, unmet: readonly Readonly<{ clause: string; text: string }>[], unit: UnitId,
+): PreparedRound {
+  const fix: FixRound = { failingEvidenceDirs: [], directives: [resolveUnmetDirective(unmet)] };
+  const deadlineAt = inMs(minutesMs(ctx.journal.view.unit(unit).bounds.freshBuildMin));
+  return { worktree: round.worktree, branch: round.branch, ...resumed(dispatch, invocationSession(ctx, called.inv), fix, []), deadlineAt };
+}
+
 /** The unit worktree on the unit branch; created at the integration tip for the unit's first build. */
 async function ensureWorktree(ctx: StageContext, unit: UnitId, parent: StageParent): Promise<Readonly<{ worktree: AbsPath; branch: RefName }>> {
   const worktree = unitWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit);
@@ -452,7 +479,8 @@ export async function prepareRound(ctx: StageContext, dispatch: ImplementerDispa
       // (on the same seat: a moved seat gets a fresh session, told the worktree holds the earlier work).
       const earlier = ctx.journal.view.unit(unit).reopened === null ? null : lastImplementerSession(ctx, unit);
       if (earlier === null) return { ...ready, session: freshSession(dispatch), fixRound: null, evidenceDirs: [], deadlineAt, fresh: null };
-      return { ...ready, ...resumed(dispatch, onSeat(dispatch, earlier), { failingEvidenceDirs: [], directives: [RESPEC_DIRECTIVE, ...(input.directives ?? [])] }, []), deadlineAt };
+      const respec = (directive: string): FixRound => ({ failingEvidenceDirs: [], directives: [directive, ...(input.directives ?? [])] });
+      return { ...ready, ...resumed(dispatch, onSeat(dispatch, earlier), respec(RESPEC_DIRECTIVE), [], respec(RESPEC_FRESH_DIRECTIVE)), deadlineAt };
     }
     case 'fix': {
       if (input.verification !== null) await removeVerificationTree(ctx, input.verification, parent);
@@ -473,7 +501,7 @@ export async function prepareRound(ctx: StageContext, dispatch: ImplementerDispa
       const id = onSeat(dispatch, seatedSessionOf(ctx, interrupted, input.interrupted));
       // A resumed session already holds the spec and its round's inputs; a fresh one is given them again.
       const fresh: RoundCall = {
-        session: freshSession(dispatch), fixRound: { ...own, directives: [...own.directives, NO_SESSION_NOTE, CONTINUE_DIRECTIVE] }, evidenceDirs: own.failingEvidenceDirs,
+        session: freshSession(dispatch), fixRound: { ...own, directives: [...own.directives, NO_SESSION_NOTE, CONTINUE_FRESH_DIRECTIVE] }, evidenceDirs: own.failingEvidenceDirs,
       };
       if (id === null) return { worktree, branch, ...fresh, deadlineAt, fresh: null };
       return {

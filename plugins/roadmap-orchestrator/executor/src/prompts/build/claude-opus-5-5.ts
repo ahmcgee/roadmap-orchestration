@@ -32,9 +32,12 @@
 // most plausible wrong versions each failing a test, with the patterns that survived weak tests in that run.
 // dev.13 (contract input, no method): a milestone unit's design references as documents and its milestones block
 // (`milestonesText`); a build with the browser drive gets the `<browser>` block (`buildBrowserText`).
+// dev.17 (field feedback 2026-10-23 item 1, contract input, no method): a session that does not continue its own gets the
+// `<handover>` block, the executor's records of the work before it; the fix round no longer claims the work is the session's own.
 import type { BuildInputs, PromptModule } from '../inputs.ts';
 import {
-  UNIT_POLICY, bullets, buildBrowserText, documentsXml, milestoneDocuments, milestonesText, fastLanesText, referenceIndexText, rulingsText, suiteLanesText, witnessChecksText,
+  UNIT_POLICY, bullets, buildBrowserText, documentsXml, handoverText, milestoneDocuments, milestonesText, fastLanesText, referenceIndexText, rulingsText, suiteLanesText,
+  witnessChecksText,
 } from '../inputs.ts';
 import { BUILD_DELEGATION } from '../delegation.ts';
 import { BUILD_SCHEMA, DECISIONS_FILE } from '../schemas.ts';
@@ -100,12 +103,21 @@ function fixRound(i: BuildInputs): string {
   return `
 
 <fix_round>
-This is a fix round on work you already did in this worktree. Read the failing evidence first; each directory holds the lane's stdout and stderr, its declared outputs, or (in an ignored/ directory) gitignored files it wrote, at their repository paths, and a directive gives the lane's count of those:
+This is a fix round on the work in this worktree. Read the failing evidence first; each directory holds the lane's stdout and stderr, its declared outputs, or (in an ignored/ directory) gitignored files it wrote, at their repository paths, and a directive gives the lane's count of those:
 ${bullets(i.fixRound.failingEvidenceDirs, '(no failing lanes)')}
 Directives to carry out:
 ${bullets(i.fixRound.directives, '(none)')}
 Fix exactly what failed and what the directives name, nothing adjacent. Do not re-litigate a directive: carry it out, dispute the gate finding behind it (see decisions), or record in a blocker why it is wrong and leave the code as it is. Then run every fast lane again and return the report. The same scope, safety and decision rules apply.
 </fix_round>`;
+}
+
+/** dev.17 (field feedback 2026-10-23 item 1): a fresh session's handover from the executor's records; empty otherwise. */
+function handover(i: BuildInputs): string {
+  return i.handover === null ? '' : `
+
+<handover>
+${handoverText(i.handover)}
+</handover>`;
 }
 
 /** The ask: a fresh build or a fix round. */
@@ -120,7 +132,7 @@ export const PROMPT: PromptModule<'build'> = {
   schema: BUILD_SCHEMA,
   fields: [
     'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks',
-    'milestones', 'browser', 'certifiedAt',
+    'milestones', 'browser', 'certifiedAt', 'handover',
   ],
   render: (i) => `${documentsXml([
     { source: `spec.json for unit ${i.spec.unit}, revision ${i.spec.rev} (rendered)`, content: i.spec.markdown },
@@ -152,7 +164,7 @@ ${bullets(i.scope, '(empty)')}
 
 <fast_lanes>
 ${fastLanesText(i.worktree, i.fastLanes)}
-</fast_lanes>${suiteLanesText(i.worktree, i.suiteLanes)}${witnessChecksText(i.witnessChecks)}${buildBrowserText(i.browser)}${fixRound(i)}
+</fast_lanes>${suiteLanesText(i.worktree, i.suiteLanes)}${witnessChecksText(i.witnessChecks)}${buildBrowserText(i.browser)}${handover(i)}${fixRound(i)}
 
 ${ask(i)}`,
 };
