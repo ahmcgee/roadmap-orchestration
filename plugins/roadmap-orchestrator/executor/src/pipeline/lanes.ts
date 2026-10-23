@@ -781,7 +781,7 @@ async function runLane(
     origin: { type: 'new', key: opKey(`lane:${parent.unit}`), parent, deadlineAt: isoTimeOf(new Date(Date.now() + LANE_DEADLINE_MS)) },
     subject: {
       purpose: 'lane', unit: parent.unit, lane: lane.id, set, at, redRev: HOST_SIGNATURES_REV, identity, ...(files === null ? {} : { files: [...files].sort() }),
-      ...(verify === null ? {} : { verify }),
+      ...(verify === null ? (lane.stochastic === undefined ? {} : { stochastic: lane.stochastic }) : { verify }),
     },
     launch: (invDir) => {
       const env = laneEnv(ctx, parent.unit, lane, held);
