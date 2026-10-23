@@ -313,9 +313,10 @@ describe('impact mapping', () => {
     }
   });
 
-  test('fingerprint.judged-rev-change-regates: an obligation the gate judged changes revision (future → must-hold, rev 2) before ff: fingerprint-invalid, and the re-gate binds rev 2', T, async () => {
+  test('fingerprint.judged-rev-change-regates: an obligation the gate judged changes revision (future → must-hold, rev 2) before ff: fingerprint-invalid; the unit, linking it, re-opens at plan-check to answer the stale link (dev.17 propagation), and the re-gate binds rev 2', T, async () => {
+    const answered = planCheckStep({ decision: 'approve', staleLinks: [{ link: 'requirement:I-1', outcome: 'confirmed', reason: 'mul holds I-1 as rev 2 states it' }] }, { stdinContains: ['<stale_links>', 'requirement:I-1'] });
     const { d, control } = holisticArc({
-      steps: [...steps, gateStep({ decision: 'approve' })], units: [{ id: 'u1', obligations: ['I-1'] }, { id: 'u2' }],
+      steps: [...steps, answered, codexStep([], { argv: ['exec', 'resume'] }), gateStep({ decision: 'approve' })], units: [{ id: 'u1', obligations: ['I-1'] }, { id: 'u2' }],
       obligations: [{ id: 'I-1', activation: 'future', deliveredBy: ['u1', 'u2'], testIds: ['t1'] }], mapping: MAPPED, trees: { '*': { outcomes: { t1: 'pass' } } },
     });
     const r = contextFor(d);
@@ -332,6 +333,7 @@ describe('impact mapping', () => {
       await stepUntil(r, 'u1', (f) => f.stage === 'ff');
       assert.equal(outcomes(d).at(-1), 'ff:fingerprint-invalid', outcomes(d).join(' '));
       assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), admitAll), { kind: 'merged' }, outcomes(d).join(' '));
+      assert.deepEqual(outcomes(d).filter((o) => o.startsWith('plan-check')), ['plan-check:approve', 'plan-check:approve'], 'the stale link re-opened it at plan-check once');
       assert.deepEqual(r.journal.view.unit(U1).approval?.fingerprint.obligationRevs, [{ id: 'I-1', rev: 2 }], 'the re-gate binds the new revision');
     } finally {
       r.journal.close();

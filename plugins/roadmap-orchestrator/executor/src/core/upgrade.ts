@@ -13,7 +13,6 @@ import type { FindingId, LaneId, ObligationId } from './ids.ts';
 import type { PressureAvailability } from '../host/pressure.ts';
 import type { LaunchCpu } from './records.ts';
 import type { ClassTable } from '../routing/types.ts';
-import type { UNPINNED } from './pins.ts';
 
 const warned = new Set<string>();
 
@@ -468,8 +467,9 @@ export function systemsMapDefault(): null {
   return null;
 }
 
-// 1.0.0-dev.16 → 1.0.0-dev.17 (design records and revision pins, SCHEMAS.md "dev.17 records"). Scaffolding: deleted once no
-// arc started on 1.0.0-dev.16 is in flight (BACKLOG "Scaffolding to delete").
+// 1.0.0-dev.16 → 1.0.0-dev.17 (design records, SCHEMAS.md "dev.17 records"; propagation, "dev.17: propagation"). Scaffolding:
+// deleted once no arc started on 1.0.0-dev.16 is in flight (BACKLOG "Scaffolding to delete"). A spec without revision pins
+// is no default: it is a lasting state (an owner's spec no plan-check has revised), read as unpinned (`specPinOf`).
 
 /**
  * A unit's kind (dev.17) from a spec without a design record: one a dev.16 executor wrote, or one no dev.17 plan-check has
@@ -481,12 +481,12 @@ export function designKindDefault(): 'module' {
 }
 
 /**
- * A spec's revision pins (dev.17): absent on a spec a dev.16 executor wrote. Every link of it reads `unpinned`: stale-unknown,
- * never fresh (src/core/records.ts `specPinOf`).
+ * dev.17 (propagation): a plan-check answer without `staleLinks`, recorded before dev.17 (its call consumed after the
+ * upgrade). Read as none answered: the arc it ran in recorded no stale set, so it had none to answer.
  */
-export function specPinsDefault(): typeof UNPINNED {
-  warnDefaulted('spec.pins', 'a spec without revision pins (written before 1.0.0-dev.17); its links read as unpinned (stale-unknown)');
-  return 'unpinned';
+export function planCheckStaleLinksDefault(): readonly never[] {
+  warnDefaulted('plan-check.staleLinks', 'a plan-check answer without staleLinks (launched before 1.0.0-dev.17); read as none answered');
+  return [];
 }
 
 /**

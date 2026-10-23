@@ -44,7 +44,7 @@ const HOLD_MS = 20 * 60_000;
 
 const planCheck = (reason: string): M1Step => ({
   role: 'planCheck',
-  answer: { decision: 'approve', reasons: [reason], patch: null, risk: 'med', notes: '', premises: [], visionConflict: [], scopeGrowth: [] },
+  answer: { decision: 'approve', reasons: [reason], patch: null, risk: 'med', notes: '', premises: [], visionConflict: [], scopeGrowth: [], staleLinks: [] },
 });
 const build = (message: string, files: Readonly<Record<string, string>>): M1Step => ({ role: 'build', round: 'fresh', acts: [{ type: 'commit', message, files }] });
 const gate = (reason: string): M1Step => ({ role: 'gate', answer: { decision: 'approve', findings: [], directives: [], reasons: [reason], premises: [], unreviewed: [], clusters: null } });
@@ -108,7 +108,7 @@ const INFEASIBLE: M1Step = {
     decision: 'infeasible', reasons: ['Routing `format` through formatDisplay breaks I-2: its toFixed prints 0.125 as 0.13; nothing within src/cli.js reconciles A1 with I-2.'],
     patch: null, risk: 'med', notes: 'Drop the unit, or re-scope a unit to src/display.js so formatDisplay rounds half to even.', premises: [],
     visionConflict: [{ clauses: ['V-2'], note: 'format through formatDisplay silently mis-rounds money (0.125 prints 0.13)' }],
-    scopeGrowth: [],
+    scopeGrowth: [], staleLinks: [],
   },
 };
 

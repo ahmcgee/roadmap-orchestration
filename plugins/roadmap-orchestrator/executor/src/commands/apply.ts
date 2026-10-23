@@ -120,6 +120,7 @@ import type { RulesRegistry } from '../corpus/types.ts';
 import { INVARIANTS_DOC, renderInvariants } from '../docs/invariants.ts';
 import type { ContractOp, DivergenceDraft, Preimage } from '../holistic/types.ts';
 import { bytesSha256, parseSpec } from '../spec/spec.ts';
+import { staleSetOf } from '../holistic/staleset.ts';
 import { type AbsPath, type RepoPath, absPath, isoTimeOf, repoPath } from '../core/values.ts';
 import { SCHEMA_VERSION } from '../core/version.ts';
 import { type ResidueEntry, readResidues, recordDisposition, undispositioned } from '../host/residues.ts';
@@ -707,6 +708,13 @@ export function evaluateRevision(
       compensation: { hint: `\`roadmap reverse\` restores the obligations before the split of ${d.obligation}`, kind: 'restore-revision' },
     };
   });
+  // dev.17 (propagation): what the revision leaves stale, by code (src/holistic/staleset.ts), over the units still to land.
+  const stale = staleSetOf({
+    obligations: { before: revision.obligations?.value ?? null, after: verdict.inputs.obligations },
+    vision: { before: revision.vision?.value ?? null, after: verdict.inputs.vision },
+    contracts: publication.contractOps.map((o) => o.path),
+    units: () => proposal.plan.units.filter((u) => u.cut === undefined && !['retired', 'cut', 'superseded'].includes(ctx.view.unit(u.id).status)).map((u) => ({ id: u.id, spec: specOf(u) })),
+  });
   const draft: RevisionDraft = {
     v: SCHEMA_VERSION, base: inForce.rev, rev: planRev(inForce.rev + 1), manifest, changes: verdict.changes, dispositions: verdict.dispositions, divergences,
     publication: publication.renders.length === 0 && publication.contractOps.length === 0
@@ -714,6 +722,7 @@ export function evaluateRevision(
       : { renders: publication.renders.map((r) => ({ path: r.path, sha256: bytesSha256(r.bytes) })).sort((a, b) => (a.path < b.path ? -1 : 1)), contractOps: publication.contractOps },
     routingProvenance: routingProvenanceOf(ctx.routingBase, proposal.plan),
     systemsMap: ctx.routingBase.config?.systemsMap ?? null,
+    ...(stale === null ? {} : { stale }),
   };
   return { kind: 'accepted', draft, next: proposal, scoped: verdict.scoped, routings: verdict.routings, renders: publication.renders };
 }

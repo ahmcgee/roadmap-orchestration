@@ -37,6 +37,7 @@ import { type NeedsUserReason, obligationRevsOf } from '../core/records.ts';
 import { ENTRY_STAGE, type UnitState } from '../core/state.ts';
 import { p1Blocking } from '../holistic/findings.ts';
 import { pressureHoldWaits } from '../host/pressure.ts';
+import { type SpecLinks, propagationHolds } from '../holistic/staleset.ts';
 import { canonicalJson } from '../core/json.ts';
 import { lineageMembers } from '../input/envelope.ts';
 import { type KnownDefect, type PlanM1, type PlanUnit, knownDefectsOf, priorityOf } from '../input/plan.ts';
@@ -59,12 +60,14 @@ const isAdmissionStage = (s: OutcomeStage): s is AdmissionStage => (ADMISSION_ST
 /**
  * M3 (B3): what admission and `nextStage` read from a unit's spec in force. `reproduces`: it repairs an active vacuity
  * finding with a mutant, so it reproduces the mutant before anything is graded. `repairs`: the obligations it repairs
- * (its `I-n` repairs and its findings' obligations).
+ * (its `I-n` repairs and its findings' obligations). dev.17: `links`, what the spec links that a propagation edge reads,
+ * read only when one is pending (src/holistic/staleset.ts `propagationHolds`).
  */
 export type SpecFacts = Readonly<{
   reproduces: boolean; repairs: ReadonlySet<ObligationId>;
   /** dev.17: its spec lanes, forces and witness lanes (src/pipeline/deflake.ts `specLaneIds`), read when a deflake edge may hold it. */
   lanes: () => ReadonlySet<LaneId>;
+  links: () => SpecLinks;
 }>;
 export type SpecFactsOf = (unit: PlanUnit) => SpecFacts;
 
@@ -175,6 +178,8 @@ export function admitter(routing: (unit: UnitId) => RoutingTable, specOf: SpecFa
     // dev.17: a code edge from an open deflake unit whose lane this undispatched unit runs (src/pipeline/deflake.ts).
     const edge = deflakeHold(view, plan, systemsMapInForce(view.planApplied()), unit, () => specOf(unit).lanes());
     if (edge !== null) c.push(edge);
+    // dev.17 (propagation): no unit linking a propagation unit's target, or whose design breaks touch its files, approves first.
+    if (stage === 'gate') c.push(...propagationHolds(view, plan, unit, specOf(unit).links));
     const starved = view.unit(unit.id).pressureHold;
     if (starved !== null && pressureHoldWaits(Date.parse(starved.at), pressure)) c.push({ type: 'host-pressure', inv: starved.inv });
     for (const b of blocking) if (b.subject === 'host' || ADMISSION_BLOCKING.includes(b.reason)) c.push({ type: 'blocking-item', id: b.id, reason: b.reason });

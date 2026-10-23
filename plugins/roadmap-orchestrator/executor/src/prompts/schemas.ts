@@ -28,12 +28,13 @@ import {
 } from '../holistic/types.ts';
 import { REENTRY_POINTS, type ReentryPoint } from '../input/plan.ts';
 import {
-  admitSpecTextDefault, admitTargetsDefault, buildExperimentsDefault, buildFinalDefault, checkpointRulingTextDefault, GATE_DEBT_UNRECORDED, gateClustersDefault, gateNoteDebtDefault, gateUnreviewedDefault, lensPatchMutantDefault, planCheckScopeGrowthDefault,
+  admitSpecTextDefault, admitTargetsDefault, buildExperimentsDefault, buildFinalDefault, checkpointRulingTextDefault, GATE_DEBT_UNRECORDED, gateClustersDefault, gateNoteDebtDefault, gateUnreviewedDefault, lensPatchMutantDefault, planCheckScopeGrowthDefault, planCheckStaleLinksDefault,
   FIXES_UNRECORDED,
   reenterFixesDefault,
 } from '../core/upgrade.ts';
 import type { MutantEdit } from '../git/mutant.ts';
 import { type DesignRecord, type NewSystem, designRecord, newSystem } from '../core/design.ts';
+import { STALE_OUTCOMES, type StaleAnswer, staleAnswer } from '../core/stale.ts';
 import { specBytes } from '../spec/spec.ts';
 import {
   BUILD_CLASSES, JUDGMENT_SEATS, MODEL_CLASSES, type ModelClass, classAt, RISK_TIERS, ROLES, type RiskTier, type Role, SEATS, type Seat,
@@ -104,11 +105,18 @@ type PlanCheckCommon = Readonly<{
    * (`PLAN_CHECK_SCHEMA`) is the design pass's to add.
    */
   design?: DesignRecord;
+  /**
+   * dev.17 (propagation): one answer per stale link the input lists (by its key), `updated` (by this redirect's patch) or
+   * `confirmed`, with a reason; empty when it lists none. An approve or a redirect leaving one unanswered is refused
+   * (src/holistic/staleset.ts `staleAnswerReasons`). An answer recorded before dev.17 has none (`planCheckStaleLinksDefault`).
+   */
+  staleLinks: readonly StaleAnswer[];
 }>;
 export type VisionConflict = Readonly<{ clauses: readonly VisionClauseId[]; note: string }>;
 /** One proposed growth as the plan-check writes it: its patterns are text until code verifies them. */
 export type ScopeGrowthAnswer = Readonly<{ patterns: readonly string[]; reason: string }>;
 const S_SCOPE_GROWTH = sArr(sObj({ patterns: sArr(S_STR), reason: S_STR }));
+const S_STALE_LINKS = sArr(sObj({ link: S_STR, outcome: sEnum(STALE_OUTCOMES), reason: S_STR }));
 export type PlanCheckOutput =
   | (PlanCheckCommon & Readonly<{ decision: 'approve' | 'infeasible' | 'escalate'; patch: null }>)
   | (PlanCheckCommon & Readonly<{ decision: 'redirect'; patch: readonly SpecPatchOp[] }>);
@@ -155,6 +163,7 @@ export const PLAN_CHECK_SCHEMA: Schema = sObj({
   premises: S_PREMISES,
   visionConflict: sArr(sObj({ clauses: sArr(S_STR), note: S_STR })),
   scopeGrowth: S_SCOPE_GROWTH,
+  staleLinks: S_STALE_LINKS,
 });
 
 /** A lane item's wire form: its env.set arrives as [{name, value}] and becomes the map spec.json holds. */
@@ -199,6 +208,7 @@ export const planCheckOutput: Read<PlanCheckOutput> = object((f): PlanCheckOutpu
     premises: f.get('premises', arrayOf(premise)),
     visionConflict: f.get('visionConflict', arrayOf(visionConflict)),
     scopeGrowth: f.optional('scopeGrowth', arrayOf(scopeGrowthAnswer)) ?? planCheckScopeGrowthDefault(),
+    staleLinks: f.optional('staleLinks', arrayOf(staleAnswer)) ?? planCheckStaleLinksDefault(),
     ...optionalDesign(f),
   };
   if (decision === 'redirect') {

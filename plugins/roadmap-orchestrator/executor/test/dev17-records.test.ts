@@ -61,8 +61,12 @@ describe('spec design record and pins', () => {
     assert.equal(specPinOf(s, { type: 'requirement', id: obligationId('I-1') }), UNPINNED);
   });
 
-  it('refuses a pin of no link, a duplicate pin, a failure mode citing a witness item the spec lacks, an unknown kind', () => {
-    refuses(() => specM1(spec('u1', { pins: [{ type: 'requirement', id: 'I-9', rev: 1 }] }), 'spec'), /^spec\.pins\[0\]$/);
+  it('reads a pin whose link a later edit removed (inert: no link reads it), so an owner\'s edit dropping a link keeps the spec readable', () => {
+    const s = specM1(spec('u1', { pins: [{ type: 'requirement', id: 'I-9', rev: 1 }] }), 'spec');
+    assert.equal(specPinOf(s, { type: 'requirement', id: obligationId('I-1') }), UNPINNED);
+  });
+
+  it('refuses a duplicate pin, a failure mode citing a witness item the spec lacks, an unknown kind', () => {
     refuses(() => specM1(spec('u1', { pins: [{ type: 'requirement', id: 'I-1', rev: 1 }, { type: 'requirement', id: 'I-1', rev: 2 }] }), 'spec'), /^spec\.pins/);
     const fm = { ...DESIGN.failureModes[0], proof: { type: 'test', test: { type: 'witness', item: 'W-7' } } };
     refuses(() => specM1(spec('u1', { design: { ...DESIGN, failureModes: [fm] } }), 'spec'), /^spec\.design\.failureModes\[0\]\.proof$/);

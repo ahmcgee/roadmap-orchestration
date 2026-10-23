@@ -16,10 +16,11 @@
 // `limits.walkRounds` (absent: 3; `walkRoundsOf`), the unit origin `polish` with its `polish` field. The in-file milestone
 // refusals are here (`milestoneRefusals`); `milestones-need-holistic` is a Phase-0 row (src/phase0/rows.ts).
 import {
-  type ArcId, type EdgeId, type JourneyId, type KnownDefectId, type LaneId, type MilestoneId, type PolishId, type ResourceName, type RulingId, type ServeName, type Sha,
-  type UnitId, type VisionClauseId, INTEGRATION_SLOT, arcId, edgeId, journeyId, knownDefectId, laneId, milestoneId, polishId, resourceName, rulingId, serveName, sha,
+  type ArcId, type EdgeId, type JourneyId, type KnownDefectId, type LaneId, type MilestoneId, type PlanRev, type PolishId, type ResourceName, type RulingId, type ServeName, type Sha,
+  type UnitId, type VisionClauseId, INTEGRATION_SLOT, arcId, edgeId, journeyId, knownDefectId, laneId, milestoneId, planRev, polishId, resourceName, rulingId, serveName, sha,
   unitId, visionClauseId, idList,
 } from '../core/ids.ts';
+import { type PropagationTarget, propagationTarget } from '../core/stale.ts';
 import {
   BOUND_FIELDS, type Bounds, DEFAULT_BOUNDS, type FailureRef, failureRef, type KnownDefectMatch, type LaneDef, type LaneEnv, knownDefectMatch, laneDefOf, laneEnv,
 } from '../core/records.ts';
@@ -67,9 +68,11 @@ export type EnvironmentDecl = Readonly<{ name: ResourceName; probe: ToolCommand;
  * Where a unit came from (M2): `checkpoint` units rank before `planned` ones among unpromoted waiters; M3's
  * `repair` units (R6) rank first, and need a spec with non-empty `repairs` (a startup and apply row). dev.13: `polish`, a
  * unit a milestone walkthrough proposed and code admitted (it carries `polish`), ranks between checkpoint and planned
- * (`ORIGIN_RANK`, src/schedule/types.ts).
+ * (`ORIGIN_RANK`, src/schedule/types.ts). dev.17: `propagation`, a unit code minted to re-witness the merged artifacts a
+ * requirement or contract change left stale (it carries `propagation`; src/holistic/propagation.ts), ranks with repairs.
+ * Every origin but `planned` is milestone-exempt (src/walk/node.ts).
  */
-export const UNIT_ORIGINS = ['planned', 'checkpoint', 'repair', 'polish', 'deflake'] as const;
+export const UNIT_ORIGINS = ['planned', 'checkpoint', 'repair', 'polish', 'deflake', 'propagation'] as const;
 export type UnitOrigin = (typeof UNIT_ORIGINS)[number];
 
 /**
@@ -77,6 +80,9 @@ export type UnitOrigin = (typeof UNIT_ORIGINS)[number];
  * admits it (src/pipeline/deflake.ts); it ranks with the repair units and belongs to no milestone.
  */
 export type DeflakeOrigin = Readonly<{ keys: readonly FlakyKey[] }>;
+
+/** dev.17: what a `propagation` unit came from: the plan rev whose stale set named the change, and the changed target. */
+export type PropagationOrigin = Readonly<{ rev: PlanRev; target: PropagationTarget }>;
 
 /** dev.13: what a `polish` unit came from: the milestone it polishes and the walkthrough's proposal (`polish-proposed`). */
 export type PolishOrigin = Readonly<{ milestone: MilestoneId; proposal: PolishId }>;
@@ -174,6 +180,8 @@ export type PlanUnit = Readonly<{
   polish?: PolishOrigin;
   /** dev.17: present exactly on a `deflake` unit. */
   deflake?: DeflakeOrigin;
+  /** dev.17: present exactly on a `propagation` unit. */
+  propagation?: PropagationOrigin;
 }>;
 
 export const UNIT_PRIORITIES = ['normal', 'high'] as const;
@@ -549,6 +557,10 @@ const planUnit: Read<PlanUnit> = object((f) => {
   if ((origin === 'polish') !== (polish !== undefined)) throw new SchemaError(`${f.path}.polish`, origin === 'polish' ? 'the milestone and proposal of a polish unit' : 'absent (only a polish unit carries it)', polish);
   const deflake = f.optional('deflake', deflakeOrigin);
   if ((origin === 'deflake') !== (deflake !== undefined)) throw new SchemaError(`${f.path}.deflake`, origin === 'deflake' ? 'the flaky keys of a deflake unit' : 'absent (only a deflake unit carries it)', deflake);
+  const propagation = f.optional('propagation', object((g): PropagationOrigin => ({ rev: g.get('rev', (v, p) => planRev(v, p)), target: g.get('target', propagationTarget) })));
+  if ((origin === 'propagation') !== (propagation !== undefined)) {
+    throw new SchemaError(`${f.path}.propagation`, origin === 'propagation' ? 'the stale set and target of a propagation unit' : 'absent (only a propagation unit carries it)', propagation);
+  }
   assertUnique(out.scope, (s) => s, `${f.path}.scope`);
   assertUnique(out.resources, (r) => r, `${f.path}.resources`);
   assertUnique(out.after, (u) => u, `${f.path}.after`);
@@ -557,6 +569,7 @@ const planUnit: Read<PlanUnit> = object((f) => {
     ...out, ...(origin === undefined ? {} : { origin }), ...(cpu === undefined ? {} : { cpu }), ...(reenters === undefined ? {} : { reenters }),
     ...(cutField === undefined ? {} : { cut: cutField }), ...(routing === undefined ? {} : { routing }), ...(limits === undefined ? {} : { limits }),
     ...(priority === undefined ? {} : { priority }), ...(polish === undefined ? {} : { polish }), ...(deflake === undefined ? {} : { deflake }),
+    ...(propagation === undefined ? {} : { propagation }),
   };
 });
 

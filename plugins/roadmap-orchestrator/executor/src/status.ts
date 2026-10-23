@@ -1017,6 +1017,9 @@ function derive(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Derived {
         lanes: () => {
           throw new Error(`status: arc ${arc} has an open deflake unit but no ${START_FILE}, so the spec of ${u.id} cannot be read`);
         },
+        links: () => {
+          throw new Error(`status: arc ${arc} has no ${START_FILE}, so the spec of ${u.id} cannot be read`);
+        },
       };
     }
     : specFacts({ journal: { view }, runDir, planDir: absPath(dirname(record.planFile)) });
@@ -1092,8 +1095,8 @@ function unitReason(l: UnitCore): Exclude<ObligationReason, 'spec' | 'witness'> 
       const types = new Set((w?.admission ?? []).map((c) => c.type));
       if (types.has('paused') || types.has('blocking-item') || types.has('run-only')) return 'supervision';
       if (types.has('backend-parked') || types.has('breaker') || types.has('host-pressure')) return 'host';
-      // A known defect waits on its fixer unit (F4); dev.17, a code edge on its deflake unit.
-      if (types.has('known-defect') || types.has('deflake')) return 'waiting-dep';
+      // A known defect waits on its fixer unit (F4); dev.17, a code edge on its deflake or propagation unit.
+      if (types.has('known-defect') || types.has('deflake') || types.has('propagation')) return 'waiting-dep';
       return 'code';
     }
     case 'running':
@@ -1295,6 +1298,8 @@ function rulerOf(f: PlanAppliedFact): RuledBy {
     case 'compare':
     // dev.17: the code-applied deflake revision is the executor's own.
     case 'deflake':
+    // dev.17: the code-applied propagation revision is the executor's own.
+    case 'propagation':
       return { type: 'executor' };
   }
 }

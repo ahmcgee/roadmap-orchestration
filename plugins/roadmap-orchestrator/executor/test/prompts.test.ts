@@ -198,7 +198,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A', scope: [repoPattern('src/a/**')], risk: 'low',
       checkouts: { tip: { path: absPath('/wt/u.plan-check-1'), at: SHA_A }, branch: null },
       lanePrograms: [{ lane: laneId('unit'), argv0: 'npm', resolved: { kind: 'program', realpath: absPath('/usr/lib/node/npm') } }],
-      priorRound: null, vision: null, priorInvalid: null, scopeGrowth: { references: [], rejected: [] }, escalation: null, milestones: null,
+      priorRound: null, vision: null, priorInvalid: null, scopeGrowth: { references: [], rejected: [] }, escalation: null, milestones: null, staleLinks: [],
     },
     {
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
@@ -217,6 +217,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
         rejected: [{ patterns: [repoPattern('docs/b/**')], reason: 'GROWTH-REASON-B', rejection: 'REJECTION-B' }],
       },
       escalation: { kind: 'route-up', first: { decision: 'escalate', reasons: ['ESCALATE-REASON-B'] } }, milestones: milestonesSample(),
+      staleLinks: ['requirement:I-2: STALE-LINK-B'],
     },
   ],
   build: [
@@ -361,6 +362,7 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
     decision: 'redirect', reasons: ['A1 contradicts C-1'], risk: 'med', notes: '', premises: [{ claim: 'parse.ts exists', evidence: [{ path: 'src/a/parse.ts', line: 1 }] }],
     visionConflict: [{ clauses: ['V-1'], note: 'A2 makes rounding permissive, against V-1.' }],
     scopeGrowth: [{ patterns: ['test/legacy/shell.test.ts'], reason: 'it tests the shell page A1 removes' }],
+    staleLinks: [{ link: 'requirement:I-2', outcome: 'updated', reason: 'A1 now states I-2 at rev 2' }],
     patch: [
       { op: 'replace', section: 'lanes', item: { id: 'unit', argv: ['npm', 'test'], cwd: '.', env: { set: [{ name: 'CI', value: '1' }], pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], evidenceExcludes: [] } },
       { op: 'add', section: 'decisions', item: { id: 'R2', text: 'Use the existing parser.' } },
@@ -930,6 +932,21 @@ describe('M3 prompts: the vision and the arc roles', () => {
     // An answer a dev.9 executor launched has no scopeGrowth: read as none proposed (scaffolding, `planCheckScopeGrowthDefault`).
     const { scopeGrowth: _g, ...dev9 } = ok;
     assert.deepEqual(validatePlanCheckOutput(dev9).scopeGrowth, []);
+  });
+
+  it('prompts.stale-links (dev.17 propagation): the plan-check is given its stale links, each by its key, and answers them in a required staleLinks field', () => {
+    const mod = promptFor('planCheck', 'claude-opus-5-5');
+    assert.ok(mod.fields.includes('staleLinks'));
+    assert.match(mod.render(SAMPLES.planCheck[1]), /- requirement:I-2: STALE-LINK-B/);
+    assert.ok((PLAN_CHECK_SCHEMA as { required: string[] }).required.includes('staleLinks'));
+    const ok = OUTPUTS.planCheck as Record<string, unknown>;
+    assert.deepEqual(validatePlanCheckOutput(ok).staleLinks, [{ link: 'requirement:I-2', outcome: 'updated', reason: 'A1 now states I-2 at rev 2' }]);
+    for (const bad of [[{ link: 'requirement:I-2', outcome: 'ignored', reason: 'r' }], [{ link: 'requirement:I-2', outcome: 'confirmed' }]]) {
+      assert.throws(() => validatePlanCheckOutput({ ...ok, staleLinks: bad }), SchemaError, JSON.stringify(bad));
+    }
+    // An answer a dev.16 executor launched has no staleLinks: read as none answered (scaffolding, `planCheckStaleLinksDefault`).
+    const { staleLinks: _s, ...dev16 } = ok;
+    assert.deepEqual(validatePlanCheckOutput(dev16).staleLinks, []);
   });
 
   it('the gate (R17) never receives the vision: its selected obligations, without the clauses they serve', () => {

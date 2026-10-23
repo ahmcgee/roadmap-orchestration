@@ -19,7 +19,7 @@ import {
   positive, sortedBy, str, stringMap, tagged, text, version,
 } from './validate.ts';
 import type { SchemaVersion } from './version.ts';
-import { type LaneKind, applyExpectRevDefault, applyVisionEditDefault, designKindDefault, dev6SmokeBounds, laneCadenceDefault, laneInputsDropped, specPinsDefault } from './upgrade.ts';
+import { type LaneKind, applyExpectRevDefault, applyVisionEditDefault, designKindDefault, dev6SmokeBounds, laneCadenceDefault, laneInputsDropped } from './upgrade.ts';
 import { type DesignRecord, type UnitKind, designRecord } from './design.ts';
 import { type ContractPin, type Pinned, type RequirementPin, type SpecPin, UNPINNED, pinTarget, specPin } from './pins.ts';
 import { type HostSignatureId, HOST_SIGNATURES } from '../host/signatures.ts';
@@ -1043,9 +1043,11 @@ export type SpecM1 = Readonly<{
   design?: DesignRecord;
   /**
    * dev.17 (propagation): the revision each of the spec's links was written against, one pin per target (unique): a
-   * requirement pin per obligation it declares, repairs or a witness item names, a contract pin per cited contract; a pin
-   * naming no link of the spec is refused. Absent on a dev.16 spec: every link reads `unpinned` (`specPinOf`, warned). A link
-   * with no pin in a present list (one a later patch added) reads `unpinned` too, unwarned.
+   * requirement pin per obligation it declares, repairs or a witness item names, a contract pin per cited contract. Its
+   * writers: a plan-check redirect's patch (`SpecPatch.pins`: every link at the revisions the check read) and a propagation
+   * unit's minted spec (src/holistic/propagation.ts). A pin whose link a later edit removed names nothing and is never read.
+   * Absent (a dev.16 spec, or an owner's spec no plan-check has revised; lasting): every link reads `unpinned`,
+   * stale-unknown (`specPinOf`). A link with no pin in a present list (one a later edit added) reads `unpinned` too.
    */
   pins?: readonly SpecPin[];
 }>;
@@ -1081,11 +1083,11 @@ export function specRequirementLinks(spec: SpecM1): readonly ObligationId[] {
   return [...new Set(ids)];
 }
 
-/** The pin of one of a spec's links (dev.17): the pin it carries, or `unpinned` (stale-unknown; warned when the spec has no pins). */
+/** The pin of one of a spec's links (dev.17): the pin it carries, or `unpinned` (stale-unknown). */
 export function specPinOf(spec: SpecM1, link: Readonly<{ type: 'requirement'; id: ObligationId }>): Pinned<RequirementPin>;
 export function specPinOf(spec: SpecM1, link: Readonly<{ type: 'contract'; path: RepoPath }>): Pinned<ContractPin>;
 export function specPinOf(spec: SpecM1, link: Readonly<{ type: 'requirement'; id: ObligationId }> | Readonly<{ type: 'contract'; path: RepoPath }>): Pinned<SpecPin> {
-  if (spec.pins === undefined) return specPinsDefault();
+  if (spec.pins === undefined) return UNPINNED;
   const target = link.type === 'requirement' ? `requirement:${link.id}` : `contract:${link.path}`;
   return spec.pins.find((p) => pinTarget(p) === target) ?? UNPINNED;
 }
@@ -1159,12 +1161,7 @@ export const specM1: Read<SpecM1> = object((f) => {
     const i = design.failureModes.findIndex((m) => m.proof.type === 'test' && m.proof.test.type === 'witness' && !items.has(m.proof.test.item));
     if (i >= 0) throw new SchemaError(`${f.path}.design.failureModes[${i}].proof`, 'a witness item of the spec', design.failureModes[i]!.proof);
   }
-  if (pins !== undefined) {
-    assertUnique(pins, pinTarget, `${f.path}.pins`);
-    const links = new Set([...specRequirementLinks(out).map((id) => `requirement:${id}`), ...out.cites.contracts.map((c) => `contract:${c}`)]);
-    const i = pins.findIndex((p) => !links.has(pinTarget(p)));
-    if (i >= 0) throw new SchemaError(`${f.path}.pins[${i}]`, 'a pin of a link the spec carries (an obligation it declares, repairs or a witness names; a cited contract)', pins[i]);
-  }
+  if (pins !== undefined) assertUnique(pins, pinTarget, `${f.path}.pins`);
   assertUnique(specRemoves(out), (r) => r, `${f.path}.removes`);
   assertUnique(specForces(out), (l) => l, `${f.path}.forces`);
   assertUnique([...out.lanes, ...out.acceptance, ...out.decisions, ...out.facts, ...specWitnesses(out)], (i) => i.id, `${f.path}.<item ids>`);
@@ -1202,6 +1199,12 @@ export type SpecPatch = Readonly<{
   expectRev: SpecRev;
   by: SpecPatchBy;
   ops: readonly SpecPatchOp[];
+  /**
+   * dev.17 (propagation): the pins of every link the patched spec carries, at the revisions its writer read (a plan-check
+   * redirect: src/holistic/staleset.ts `pinsOf`), which replace the spec's pins. Absent: the spec's pins carry over unchanged
+   * (lasting: the executor's decisions patch, and every patch written before dev.17).
+   */
+  pins?: readonly SpecPin[];
 }>;
 
 const sectionItem: { readonly [S in SpecSection]: Read<SectionItem[S]> } = {
@@ -1241,14 +1244,18 @@ export const specPatchOp: Read<SpecPatchOp> = tagged('op', {
   cite: citeOp,
 });
 
-export const specPatch: Read<SpecPatch> = object((f) => ({
-  expectRev: f.get('expectRev', (v, p) => specRev(v, p)),
-  by: f.get('by', tagged<'planCheck' | 'executor', SpecPatchBy>('role', {
-    planCheck: object((g): SpecPatchBy => ({ role: g.get('role', literal('planCheck')), routingRev: g.get('routingRev', rev), inv: g.get('inv', inv) })),
-    executor: object((g): SpecPatchBy => ({ role: g.get('role', literal('executor')), inv: g.get('inv', inv) })),
-  })),
-  ops: f.get('ops', arrayOf(specPatchOp, { nonEmpty: true })),
-}));
+export const specPatch: Read<SpecPatch> = object((f) => {
+  const out = {
+    expectRev: f.get('expectRev', (v, p) => specRev(v, p)),
+    by: f.get('by', tagged<'planCheck' | 'executor', SpecPatchBy>('role', {
+      planCheck: object((g): SpecPatchBy => ({ role: g.get('role', literal('planCheck')), routingRev: g.get('routingRev', rev), inv: g.get('inv', inv) })),
+      executor: object((g): SpecPatchBy => ({ role: g.get('role', literal('executor')), inv: g.get('inv', inv) })),
+    })),
+    ops: f.get('ops', arrayOf(specPatchOp, { nonEmpty: true })),
+  };
+  const pins = f.optional('pins', arrayOf(specPin));
+  return pins === undefined ? out : { ...out, pins };
+});
 
 // ---------------------------------------------------------------------------------------------------
 // Host files under /var/tmp/roadmap/

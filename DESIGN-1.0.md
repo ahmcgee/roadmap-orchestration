@@ -533,7 +533,7 @@ topology"; a dev.16 lane's `tier` reads as its cadence), `forces? [suite lane id
 shell strings, so no bare `access.sh`; `until` resolves through `supersedes`, C-126), `acceptance [{id, clause,
 failLoudIfUndelivered}]`, `scope`, `resources`, `decisions [R1…]` verbatim for the implementer,
 `obligations? [I-nn]`, `repairs? [finding or I-nn]` (required non-empty for `origin: repair`), `facts` (a debt item a
-Phase-0 `promote` assigns the unit is named by that disposition alone, §2.9). `contractRequests` and `owedAfterMerge` are
+Phase-0 `promote` assigns the unit is named by that disposition alone, §2.9), `pins?` (dev.17: the revision each link was written against, §2.8 "Propagation"). `contractRequests` and `owedAfterMerge` are
 withdrawn (M4a): a contract need is a corpus amendment or a ruling, owed work is debt. `patch-spec` ops (`add |
 replace | strike | defer`) target ids with the expected revision, and are also how plan-check redirects apply;
 changing a lane or clause invalidates the evidence that graded it.
@@ -898,6 +898,36 @@ out-of-scope path on two build rounds running holds the unit at lanes with the s
 proposal (`scope accept|reject`); an accept re-opens it at plan-check, and its builder is told to restore the reverted
 version. An arc started on dev.10 declares no witness files: it is read as undeclared (nothing checked), with a logged
 warning, until an apply declares them.
+
+**Propagation (1.0.0-dev.17, experience-won item 2; owner 2026-10-22: a stale test scenario cost unit u1f three rounds).**
+A change to what records link to is followed through in code (src/holistic/staleset.ts, src/holistic/propagation.ts),
+never left to a reader to notice. *Pins.* A spec's links (the obligations it declares, repairs or a witness item names;
+its cited contracts) carry the revision they were written against: `pins [{requirement, id, rev} | {contract, path,
+blob}]`. A plan-check redirect's patch pins every link of the patched spec at the revisions the check read (the
+obligations of the plan rev its inputs captured, the contracts at the tip it read), and a propagation unit's minted spec
+is pinned at the revisions in force; a design record's failure modes and interfaces carry their own pins. An owner's spec
+no plan-check has revised, like a dev.16 spec, has none: its links are `unpinned`, stale-unknown, never fresh (a lasting
+state). *The stale set.* Every revision (the apply core: an `apply`, a bundle, a `rule`, a code-applied revision)
+computes what it changed that a link may name: an obligation whose normative rev rose, a contract its landing rulings'
+contract ops rewrite, a vision clause the owner edited or withdrew. Transitively: a changed clause reaches the active
+obligations serving it that the revision did not revise (the checkpoint reconciles those; a vision revision triggers its
+drift audit); every unit still to land (not merged, cut or superseded) whose links reach a change is stale on that link
+(pinned below the new rev, or unpinned: a spec link, a design failure mode or contract interface); the merged artifacts
+are the declared witness files of each changed obligation and of each active obligation binding a changed contract. The
+set rides the revision's payload and is journaled once after its `plan-applied` (`stale-set`). *Unmerged units.* A
+unit's plan-check is given its stale links recorded since its last answer, each by its key, and an approve or a redirect
+answers every one, `updated` (only a redirect) or `confirmed`, with a reason, or the answer is refused through the repair
+turn; the answers are journaled (`stale-answered`). A unit in flight past its plan-check with unanswered links re-opens
+there at its first boundary that allows a re-entry, as a pending revision re-opens one (`stale-reopened`; its counters
+kept, its next fresh build resuming its session). *Merged artifacts.* Code mints one propagation unit per changed
+obligation and per changed contract whose witness files are at the integration tip (`propagate-r<rev>-<target>`, origin
+`propagation`: milestone-exempt, ranked with repairs), its scope those files, its spec one acceptance clause per
+obligation it re-witnesses at its rev in force; its candidate is its proof (the brake grades each declared obligation
+held at its new rev). One whose files are not at the tip (nothing merged), or minted while the arc drains, is refused
+and settled (`propagation-refused`). *Code edges.* No unit whose spec links a propagation unit's target, or whose
+design record's breaks touch a file it re-witnesses, passes its gate admission while that unit is neither merged nor
+cut (`propagation` admission hold); a propagation unit never waits on another, and one that parks holds those gates
+until it is resumed or cut.
 
 ### 2.9 Artifacts
 

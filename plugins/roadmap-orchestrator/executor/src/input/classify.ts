@@ -89,6 +89,10 @@
 //   a dropped tweak's cut       proposer `compare{unit}` cuts only `unit`, reason `polish-dropped`, judged `drop`; the
 //                               in-a-task refusal does not apply (the unit waits at its candidate admission, in no stage)
 //
+// dev.17 (propagation, `propagationRows`):
+//   propagation units           a propagation unit added (not a re-entry) only by the propagation revision of the stale
+//                               set it names (proposer `propagation{rev}`), which changes nothing else
+//
 // M3 (plan "Obligations as a revisioned input"; step A2). Who proposes the revision (`Proposer`) decides what
 // it may touch:
 //   rulings ledger + sidecars   executor-owned after start (A3): only `rule`, `apply --ruling` (M4a rev 3, I2: the
@@ -132,7 +136,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import type { IntentOf, PlanChange, ReentryWidening } from '../core/events.ts';
 import { PLAN_FIELDS } from '../core/events.ts';
 import {
-  type JobId, type ObligationId, type ResourceName, type ResourceUnit, type RulingId, type Sha256Hex, type UnitId, type VisionClauseId,
+  type JobId, type ObligationId, type PlanRev, type ResourceName, type ResourceUnit, type RulingId, type Sha256Hex, type UnitId, type VisionClauseId,
   parseResourceUnit, compareIds, canonicalIds,
 } from '../core/ids.ts';
 import { type CorpusPin, parseCorpusPin } from '../corpus/types.ts';
@@ -204,7 +208,9 @@ export type Proposer =
   /** dev.13 (agent D): the cut of polish unit `unit` its compare judged `drop` (src/walk/compare.ts): it only cuts that unit. */
   | Readonly<{ type: 'compare'; unit: UnitId }>
   /** dev.17 (flaky ledger): the code-applied deflake revision (src/pipeline/deflake.ts): it only admits deflake units. */
-  | Readonly<{ type: 'deflake' }>;
+  | Readonly<{ type: 'deflake' }>
+  /** dev.17: the code-applied propagation revision of the stale set plan rev `rev` recorded (src/holistic/propagation.ts): it only admits its propagation units. */
+  | Readonly<{ type: 'propagation'; rev: PlanRev }>;
 
 /** The revision's inputs beyond plan and specs, parsed (what renders and the payload are built from). */
 export type NextInputs = Readonly<{
@@ -931,6 +937,8 @@ export function classify(input: ClassifyInput): Classified {
   polishRows(view, cur, plan, proposer, changes, reasons);
   // dev.17: deflake units and their code proposer.
   deflakeRows(cur, plan, proposer, changes, reasons);
+  // dev.17: propagation units and their code proposer.
+  propagationRows(cur, plan, proposer, changes, reasons);
 
   if (reasons.length > 0) return { kind: 'rejected', reasons };
   // No change but other bytes (whitespace, key order): the new bytes come into force with no change listed.
@@ -1161,6 +1169,24 @@ function deflakeRows(cur: PlanM1, plan: PlanM1, proposer: Proposer, changes: rea
   const ids = new Set<string>(added.map((u) => u.id));
   const other = changes.filter((c) => !(c.type === 'unit-added' && ids.has(c.unit)));
   if (other.length > 0) reasons.push(`the deflake revision only admits deflake units; it also changes ${other.map((c) => canonicalJson(c)).join(', ')}`);
+}
+
+/**
+ * dev.17 (propagation): a propagation unit added (not a re-entry) only by the propagation revision of the stale set it names
+ * (proposer `propagation{rev}`), which only adds such units.
+ */
+function propagationRows(cur: PlanM1, plan: PlanM1, proposer: Proposer, changes: readonly PlanChange[], reasons: string[]): void {
+  const curIds = new Set(cur.units.map((u) => u.id));
+  const added = plan.units.filter((u) => !curIds.has(u.id) && u.origin === 'propagation' && u.reenters === undefined);
+  for (const u of added) {
+    if (proposer.type !== 'propagation') reasons.push(`unit ${u.id} is a propagation unit: only the executor mints one, from a stale set, not a ${proposer.type}`);
+    else if (u.propagation!.rev !== proposer.rev) reasons.push(`unit ${u.id} names the stale set of rev ${u.propagation!.rev}; this revision mints rev ${proposer.rev}'s`);
+  }
+  if (proposer.type === 'propagation') {
+    const ids = new Set<string>(added.map((u) => u.id));
+    const other = changes.filter((c) => !(c.type === 'unit-added' && ids.has(c.unit)));
+    if (other.length > 0) reasons.push(`the propagation revision of rev ${proposer.rev} only mints its propagation units; it also changes ${other.map((c) => canonicalJson(c)).join(', ')}`);
+  }
 }
 
 type ObligationRows = Readonly<{

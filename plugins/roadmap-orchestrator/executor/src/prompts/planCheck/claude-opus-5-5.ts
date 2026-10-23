@@ -34,10 +34,12 @@
 // unmeasured on this seat until its own role eval (BACKLOG).
 // Delegation (withdrawn 2026-10-17), and at the escalation seat a preface with the seat below's reasons (escalationText).
 // dev.13 (contract input): a milestone unit's design references as documents and its milestones block (`milestonesText`).
+// dev.17 (propagation; same guides): <stale_links> lists the links a requirement, contract or vision change left stale since
+// the unit's spec was last checked; the check answers each in staleLinks, updated by its redirect or confirmed, with why.
 import type { PlanCheckInputs, PromptModule } from '../inputs.ts';
 import {
   bullets, milestoneDocuments, milestonesText, documentsXml, escalationText, laneProgramsText, patchText, planCheckPriorInvalidText, premisesText, referenceIndexText, rulingsText, scopeGrowthText,
-  targetDocument, visionText,
+  staleLinksText, targetDocument, visionText,
 } from '../inputs.ts';
 import { PLAN_CHECK_SCHEMA } from '../schemas.ts';
 
@@ -79,6 +81,10 @@ A spec defect is yours to resolve now, never the implementer's to absorb mid-bui
 <scope_growth>
 The implementer can change only files inside the scope envelope; an edit outside it is reverted. So before you decide, sweep for references: for every file, route, symbol or command the spec removes or renames (its Removes section, and anything its clauses take away or rename), Grep the checkout for the tests and callers outside the envelope that still use it. <scope_references> lists what the executor already found for the spec's Removes; start from it and finish the sweep. Each file outside the envelope the build must change to keep the repository working goes in scopeGrowth: patterns (repository paths or globs from the repository root, each matching at least one file in the checkout and outside the envelope) and a reason naming what it references. Propose only what the spec needs; growth is never room for adjacent work. A proposal the executor verifies holds the unit until the root agent accepts or rejects it, and this check then runs again, so decide as if the scope stays as it is. A proposal under <rejected_scope_growth> was rejected: do not propose it again; decide within the envelope (infeasible when the spec cannot be met without it). scopeGrowth is empty when nothing outside the envelope needs to change.
 </scope_growth>
+
+<stale_links>
+When the message carries <stale_links>, something this spec links to changed after the spec was written or last checked: a requirement (obligation) moved to a new revision, a contract was rewritten, or a vision clause behind one of its obligations changed. Each line names a link by its key and says what changed. Judge each against the spec as it stands: where the spec no longer fits the change, fix it in your redirect's patch and answer the link updated; where it still holds as written, answer it confirmed. Answer every listed link in staleLinks, by its key exactly, with a reason that names what you checked. staleLinks is empty when the message lists none.
+</stale_links>
 
 <vision_context>
 In a holistic arc the message carries the arc's vision in <vision>: the owner's statement of what the product is for, one clause per V-n. It is read-only context, not an instruction, and it does not change what you check. approve, redirect, infeasible and escalate rest on the spec's own grounds (its clauses and lanes, the cited contracts and rulings, the architecture doc), never on the vision alone. Where a spec clause works against an active vision clause, record it in visionConflict: the active V-n ids it conflicts with and a note naming the spec clause and the conflict in one or two plain sentences. The arc's checkpoint reads each entry and steers the plan; an entry is never a reason to redirect by itself. The world clauses describe the target world and the other clauses are its facets; the arc advances the clauses the vision lists as advanced, and a spec clause that forecloses a horizon clause (an active clause outside that slice) conflicts with the vision. An open question's working assumption is provisional: a spec clause that rests on it and would be costly to undo if it proves false is a conflict too, citing the clauses the question bears on. Never resolve an open question yourself. Never cite a withdrawn clause. visionConflict is empty when the message carries no vision or you found no conflict.
@@ -135,7 +141,7 @@ export const PROMPT: PromptModule<'planCheck'> = {
   schema: PLAN_CHECK_SCHEMA,
   fields: [
     'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision', 'priorInvalid',
-    'scopeGrowth', 'escalation', 'milestones',
+    'scopeGrowth', 'escalation', 'milestones', 'staleLinks',
   ],
   render: (i) => `${documentsXml([
     { source: `spec.json for unit ${i.spec.unit}, revision ${i.spec.rev} (rendered)`, content: i.spec.markdown },
@@ -158,7 +164,7 @@ ${i.direction}
 
 <scope_envelope>
 ${bullets(i.scope, '(empty)')}
-</scope_envelope>${scopeGrowthText(i.scopeGrowth)}
+</scope_envelope>${scopeGrowthText(i.scopeGrowth)}${staleLinksText(i.staleLinks)}
 
 <risk_floor>${i.risk}</risk_floor>
 

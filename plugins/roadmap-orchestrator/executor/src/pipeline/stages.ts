@@ -41,6 +41,10 @@
 //               Scope growth (2026-10-15): a proposal code verifies (`verifiedGrowth`) holds the unit `scope-growth`;
 //               nothing else of that answer is applied, so its patch is not judged (no repair turn for it), and a
 //               pattern code cannot verify is dropped and named, never a reason to refuse the answer.
+//               dev.17 (propagation, src/holistic/staleset.ts): the check is given the unit's stale links up to the plan rev
+//               its capture read; an approve or redirect answers each (refused otherwise, `staleLinkReasons`) and, the
+//               decision taken, its answers are recorded (`stale-answered`); a redirect's patch pins every link of the
+//               patched spec at the revisions the check read (`pinnedPatch`).
 //   build       the implementer round (rounds.ts) under its entry reservation, held from reserve to
 //               teardown; the D4 escalation is decided before the seat (G1); prompt: fast lanes only (the spec's,
 //               and the plan's fast suite lanes, `fastSuiteLanes`), the worktree, the evidence dir, the pinned scope,
@@ -166,6 +170,11 @@ import { type BuildRound, type Next, type StageOutcome, outcomeFact, transition 
 import { verificationReasons, verifyRunsOf } from './deflake.ts';
 import type { Verification } from '../core/design.ts';
 import { evidenceSnapshotOp, salvageCommitOp, worktreeCreateOp, worktreeRemoveOp } from '../recover/ops.ts';
+// dev.17 (propagation)
+import { type PlanRev, parseInvocationId } from '../core/ids.ts';
+import type { SpecPatch } from '../core/records.ts';
+import { obligationsAtRev } from '../input/inforce.ts';
+import { pinsOf, staleAnswerReasons, staleLinkText, unitStaleLinks } from '../holistic/staleset.ts';
 
 /** One stage attempt, recorded. `needsUser`: content beyond the table's own, for the caller to write. */
 export type StageDone<S extends OutcomeStage> = Readonly<{
@@ -746,6 +755,8 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
       scopeGrowth: planCheckScopeGrowth(ctx, unit.id, effectiveScope(pinned), now.spec, checkouts.tip.at),
       escalation: escalationOf(ctx, unit.id, 'plan-check', seat.tier, validatePlanCheckOutput),
       milestones: unitMilestones(ctx, unit.id, checkouts.tip.at),
+      // dev.17 (propagation): the unit's stale links up to the plan rev this capture reads.
+      staleLinks: unitStaleLinks(ctx.journal.view, unit.id, planRevInForce(ctx), parent.attempt).map(staleLinkText),
     });
     writeJudgmentInputs(ctx, parent, { tip: checkouts.tip.at, head: null, specRev: now.spec.rev, specSha256: now.sha256, routingRev: seat.routingRev });
     return { checkouts, rendered, target };
@@ -815,7 +826,7 @@ function judgePlanCheck(ctx: StageContext, unit: PlanUnit, called: BackendCallOu
   if (out.decision === 'approve') reasons.push(...verificationReasons(ctx, ctx.plan(), unit, loadUnitSpec(ctx, unit).spec, out.design, LANE_DEADLINE_MS));
   const pinned = dispatchOf(ctx.journal.view, unit.id);
   const holds = judged !== null && verifiedGrowth(ctx, unit, judged.spec, effectiveScope(pinned), judged.tip, out.scopeGrowth).proposals.length > 0;
-  if (!holds) reasons.push(...unknownCiteReasons(ctx, out.patch));
+  if (!holds) reasons.push(...unknownCiteReasons(ctx, out.patch), ...staleLinkReasons(ctx, unit.id, called, out));
   if (out.patch !== null && judged !== null && !holds) {
     const by = { role: 'planCheck', routingRev: pinned.routingRev, inv: called.inv } as const;
     reasons.push(...patchReasons(ctx, unit, judged.spec, { expectRev: judged.spec.rev, by, ops: out.patch }));
@@ -951,8 +962,46 @@ export async function planCheckRead(
   if (riskAbove(out.risk, pinned.riskFloor)) raiseRisk(ctx, pinned, out.risk, { rev: specRev, sha256: seenSha256 });
   // A redirect beyond its bound escalates instead; only a redirect the table takes patches the spec.
   const redirects = outcomeFact(ctx.journal.view.unit(unit.id), { stage: 'plan-check', kind: 'redirect' }, parent.attempt).class === 'redirect';
-  if (patch !== null && applied === null && redirects) await machinePatch(ctx, unit.id, parent, { path, oldSha256: sha256, patch });
+  // dev.17 (propagation): an approve, or a redirect the table takes, settles the unit's stale links it answered.
+  if (out.decision === 'approve' || (out.decision === 'redirect' && redirects)) answerStaleLinks(ctx, unit.id, parent.attempt, captured.planRev, out.staleLinks);
+  if (patch !== null && applied === null && redirects) await machinePatch(ctx, unit.id, parent, { path, oldSha256: sha256, patch: pinnedPatch(ctx, spec, patch, captured) });
   return done(record(ctx, parent, out.decision));
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Propagation (dev.17; src/holistic/staleset.ts)
+
+/** The plan rev in force (a judgment's capture reads it under the fence). */
+function planRevInForce(ctx: StageContext): PlanRev {
+  const applied = ctx.journal.view.planApplied();
+  if (applied === null) throw new Error('a plan-check before any plan revision');
+  return applied.rev;
+}
+
+/** Why a plan-check answer's `staleLinks` do not settle the stale links its attempt was given (`staleAnswerReasons`). */
+function staleLinkReasons(ctx: StageContext, unit: UnitId, called: BackendCallOutcome, out: PlanCheckOutput): readonly string[] {
+  const parent = ctx.journal.view.latestIntent(parseInvocationId(called.inv).op).parent;
+  if (parent.type !== 'stage' || parent.stage !== 'plan-check') throw new Error(`${called.inv}: a plan-check call whose op is not a plan-check attempt's`);
+  const inputs = ctx.journal.view.judgmentInputs(unit, 'plan-check', parent.attempt);
+  if (inputs === null) throw new Error(`plan-check ${unit}#${parent.attempt} has no judgment-inputs`);
+  return staleAnswerReasons(unitStaleLinks(ctx.journal.view, unit, inputs.planRev, parent.attempt), out.staleLinks, out.decision);
+}
+
+/** Records attempt `attempt`'s answers to the stale links it was given (`stale-answered`), once; nothing when it had none. */
+function answerStaleLinks(ctx: StageContext, unit: UnitId, attempt: number, planRev: PlanRev, answers: PlanCheckOutput['staleLinks']): void {
+  if (answers.length === 0) return;
+  if (ctx.journal.view.propagationFacts().some((x) => x.fact.kind === 'stale-answered' && x.fact.unit === unit && x.fact.attempt === attempt)) return;
+  ctx.journal.fact({ kind: 'stale-answered', unit, attempt, rev: planRev, answers });
+}
+
+/**
+ * A redirect's patch with the pins of every link the patched spec carries, at the revisions the check read: the obligations
+ * of the plan rev its inputs captured, the contracts at the tip it read (`pinsOf`).
+ */
+function pinnedPatch(ctx: StageContext, spec: SpecM1, patch: SpecPatch, captured: Readonly<{ planRev: PlanRev; tip: Sha }>): SpecPatch {
+  const after = applySpecPatch(spec, patch);
+  const obligations = obligationsAtRev(ctx.journal.view, ctx.runDir, captured.planRev);
+  return { ...patch, pins: pinsOf(after, obligations, (path) => blobAt(ctx, captured.tip, path) as Sha | null) };
 }
 
 // ---------------------------------------------------------------------------------------------------

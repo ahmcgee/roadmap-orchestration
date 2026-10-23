@@ -291,7 +291,9 @@ waits on you), `blocked` (work remains and nothing can move), `complete`, `refus
   carries a cluster map that code checks covers every changed path exactly once; a file in a cluster counts as reviewed. `state` is `running`, `preparing`, `ready`, `waiting`, `awaiting-admission`, `held`, `blocked`,
   `parked`, `merged`, `cut` or `superseded`. `waitingFor{deps, edges, resources, envBlocked, admission, drainFor}`;
   `admission` holds `known-defect{id, fixUnit}` while a known defect holds the unit at prepare, and (1.0.0-dev.17)
-  `deflake{deflake, lane}` while an open deflake unit holds a unit not yet started that runs its flaky lane. `running{stage,
+  `deflake{deflake, lane}` while an open deflake unit holds a unit not yet started that runs its flaky lane.
+  `propagation{unit, target, stale}` while a propagation unit still to land holds its gate (`stale`: the re-witnessed
+  files its design breaks; empty when it links the target). `running{stage,
   attempt, elapsed (ms), deadline, resources, lane}`, `lane{id, set: spec|suite|journey|mutant, inv, startedAt}` the
   lane run open now. `failures[{ref, stage, attempt, lane, class: red|flaky|repeat, hostSuspected}]`: `hostSuspected`
   `{signatures, busy}` names the host failure signatures the output matched and whether the host was busy, or null;
@@ -524,3 +526,6 @@ Blocking unless noted. Read the item file before acting.
 - "dev.17: the flaky ledger": `flake-observed`, deflake units (`origin: deflake`, `deflake.keys`), their code edges,
   `limits.verification {laneMinutes?, lanes?: {<lane>: minutes}}` (a deflake unit's verification budget in lane-minutes;
   default 30, a batch lane 2 runs), `deflake-parked` and `flake-recurring`.
+- "dev.17: propagation": revision pins on a spec and a plan-check patch, a revision's stale set (`stale-set`), the
+  plan-check's `staleLinks` and `stale-answered`, `stale-reopened`, propagation units (`origin: propagation`,
+  `propagation{rev, target}`), `propagation-refused`, and the gate's `propagation` admission hold.

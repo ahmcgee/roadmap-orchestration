@@ -4,7 +4,7 @@
 // Interfaces only; no behaviour here.
 import type {
   AbortCode, DoneRecord, Fact, FlowFact, GitOpKind, IntentOf, IntentRecord, JudgmentInputs, JudgmentStage, OpExpect, OpKind, OpOutcome, OpPost, Parent,
-  PlanAppliedFact, RecoveredBy, WalkFact, FlakyFact,
+  PlanAppliedFact, PropagationFact, RecoveredBy, WalkFact, FlakyFact,
 } from './events.ts';
 import type {
   AmendmentId, ArcId, ClaudeSessionId, CommandId, DivergenceId, EdgeId, FindingId, InvocationId, JobId, JobKind, MilestoneId, NeedsUserId, OpId, OpKey, PolishId, ResourceUnit, Sha, UnitId,
@@ -137,11 +137,14 @@ export interface JournalView {
   rewalkSeq(milestone: MilestoneId): number;
   /** dev.17: every `flake-observed` fact, in log order, with its seq (the flaky ledger, src/pipeline/deflake.ts). */
   flakes(): readonly FlakeAt[];
+  /** dev.17: every propagation fact (stale sets, stale re-opens, refused propagations), in log order, with its seq and time. */
+  propagationFacts(): readonly PropagationFactAt[];
 }
 
 export type FlakeAt = Readonly<{ seq: number; at: IsoTime; fact: FlakyFact }>;
 export type FlowFactAt = Readonly<{ seq: number; at: IsoTime; fact: FlowFact }>;
 export type WalkFactAt = Readonly<{ seq: number; at: IsoTime; fact: WalkFact }>;
+export type PropagationFactAt = Readonly<{ seq: number; at: IsoTime; fact: PropagationFact }>;
 
 /** How an item was closed: by `command` (`needs-user-acked`), or by the executor at the close-out (`command` null: `needs-user-declined`, run 10 E). */
 export type NeedsUserAckState = Readonly<{ command: CommandId | null; choice: string | null }>;

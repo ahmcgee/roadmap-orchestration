@@ -95,7 +95,7 @@ import {
   type InForce, type InputFile, type InputFiles, type RevisionInForce, type RoutingBase, inForceFiles, keptPayload, ledgerPath, requirePlanInForce, revisionInForce,
   sidecarPath,
 } from '../input/inforce.ts';
-import { type DeflakeOrigin, type PlanM1, type PolishOrigin, advancesOf, contractOpDocuments, parsePlan } from '../input/plan.ts';
+import { type DeflakeOrigin, type PlanM1, type PolishOrigin, type PropagationOrigin, advancesOf, contractOpDocuments, parsePlan } from '../input/plan.ts';
 import type { RiskTier } from '../routing/types.ts';
 import { type RevisionContext, evaluateRevision, keepRevision, payloadOf } from '../commands/apply.ts';
 import { mayOverlap } from '../input/classify.ts';
@@ -452,11 +452,12 @@ function mappedObligations(obligations: Obligations, scope: readonly string[], d
 /**
  * An admitted unit's plan entry (dev.13: one admit path, two authors). A checkpoint `admit` names its own origin
  * (`checkpoint` or `repair`) and no resources; a walkthrough's polish proposal (src/walk/polish.ts) is admitted with origin
- * `polish`, its `polish` origin, risk high and its milestone's resources.
+ * `polish`, its `polish` origin, risk high and its milestone's resources. dev.17: a propagation unit code mints
+ * (src/holistic/propagation.ts) with origin `propagation` and its `propagation` origin.
  */
 export type AdmitEntry = Readonly<{
   id: UnitId; risk: RiskTier; scope: readonly RepoPattern[]; after: readonly UnitId[]; resources: readonly ResourceName[];
-  origin: 'checkpoint' | 'repair' | 'polish' | 'deflake'; polish?: PolishOrigin; deflake?: DeflakeOrigin;
+  origin: 'checkpoint' | 'repair' | 'polish' | 'deflake' | 'propagation'; polish?: PolishOrigin; deflake?: DeflakeOrigin; propagation?: PropagationOrigin;
 }>;
 
 /**
@@ -479,6 +480,7 @@ export function admitUnit(plan: RawPlan, specs: Map<UnitId, InputFile>, entry: A
   plan.units.push({
     id: entry.id, spec: `${entry.id}.json`, risk: entry.risk, scope: entry.scope, resources: entry.resources, after: entry.after, origin: entry.origin,
     ...(entry.polish === undefined ? {} : { polish: entry.polish }), ...(entry.deflake === undefined ? {} : { deflake: entry.deflake }),
+    ...(entry.polish === undefined ? {} : { polish: entry.polish }), ...(entry.propagation === undefined ? {} : { propagation: entry.propagation }),
   });
   specs.set(entry.id, { path: specPath, bytes: specBytes(spec) });
   return { spec };

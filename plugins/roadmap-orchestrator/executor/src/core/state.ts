@@ -17,7 +17,8 @@ import {
   type MilestoneId, type OpId, type OpKey, type PlanRev, type PolishId, type ResourceInstance, type ResourceUnit, type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId,
   JOB_KINDS, amendmentIdOf, compareResourceUnits, divergenceIdOf, findingIdOf, jobId, parseInvocationId, parseJobId, parseOpId, polishIdOf,
 } from './ids.ts';
-import type { ControlState, FlowFactAt, JournalView, NeedsUserAckState, NeedsUserState, WalkFactAt, FlakeAt } from './interfaces.ts';
+import type { ControlState, FlowFactAt, JournalView, NeedsUserAckState, NeedsUserState, PropagationFactAt, WalkFactAt, FlakeAt } from './interfaces.ts';
+import { causeKey } from './stale.ts';
 import { canonicalJson } from './json.ts';
 import { type SessionCharge, addCharged } from './usage.ts';
 import { type ApprovalFingerprint, type Bounds, type ContainmentMode, type DispatchRecord, type ResidueKey, type Stage, DEFAULT_BOUNDS, boundsOfRecord } from './records.ts';
@@ -153,6 +154,11 @@ export type UnitState = Readonly<{
    */
   pendingRevision: Readonly<{ rev: SpecRev; sha256: Sha256Hex; command: CommandId | null }> | null;
   /**
+   * dev.17 (propagation): the latest stale set (its plan rev) naming a link of the unit that no plan-check of it has answered
+   * since (`stale-answered`); null when none. An in-flight unit re-opens at plan-check on it (`stale-reopened`).
+   */
+  staleRev: PlanRev | null;
+  /**
    * `counters.redirects` at the latest reopen (0 before one): the redirect bound counts only the redirects
    * since the architect's latest spec revision (`redirectsSinceEdit`).
    */
@@ -221,7 +227,7 @@ export function newUnitState(unit: UnitId, stage: Stage, risk: RiskTier | null, 
   return {
     unit, stage, risk, status: 'active', routedUp: [], promotion: false, decided: null, interrupted: null, pressureHold: null, pressureHolds: 0,
     approval: null, open: null, counters: { attempts: 0, chargeableFailures: 0, redirects: 0, reviseRounds: 0, candidateReds: 0, smokeRounds: 0, retries },
-    spec, reopened: null, pendingRevision: null, redirectBase: 0,
+    spec, reopened: null, pendingRevision: null, staleRev: null, redirectBase: 0,
     park: null, lastRecovery: null, buildTier: risk, lineage: null, supersededBy: null, bounds, entry: null, steering: null, scopeDecisions: [], failures: [],
   };
 }
@@ -609,6 +615,7 @@ export class Fold implements JournalView {
   readonly #walkFacts: WalkFactAt[] = [];
   // dev.17
   readonly #flakes: FlakeAt[] = [];
+  readonly #propagationFacts: PropagationFactAt[] = [];
   /** dev.13: per milestone, the seq of the latest `plan-applied` whose milestones change lists it in `rewalk`. */
   readonly #rewalkSeqs = new Map<MilestoneId, number>();
   #draining: Readonly<{ command: CommandId; seq: number }> | null = null;
@@ -1198,6 +1205,39 @@ export class Fold implements JournalView {
         this.#flakes.push({ seq: at.seq, at: at.at, fact: f });
         return;
       }
+      // dev.17 (SCHEMAS.md "dev.17: propagation"): the fold keeps every propagation fact (`propagationFacts`), a stale set
+      // once per plan rev and a refusal once per (rev, target); a stale re-open sends its unit back to plan-check. What the
+      // facts mean for units is read from `propagationFacts` (src/holistic/propagation.ts).
+      case 'stale-set':
+        if (this.#propagationFacts.some((x) => x.fact.kind === 'stale-set' && x.fact.rev === f.rev)) fail(`a second stale-set of plan rev ${f.rev}`);
+        if (this.#planApplied?.rev !== f.rev) fail(`stale-set of plan rev ${f.rev}, which is not the plan in force (rev ${this.#planApplied?.rev ?? 'none'})`);
+        for (const l of f.links) {
+          const u = 'unit' in l ? this.#units.get(l.unit) : undefined;
+          if (u !== undefined) u.state = { ...u.state, staleRev: f.rev };
+        }
+        this.#propagationFacts.push({ seq: at.seq, at: at.at, fact: f });
+        return;
+      case 'stale-answered': {
+        const u = this.#units.get(f.unit);
+        if (u === undefined) return fail(`stale-answered of unit ${f.unit}, which never started`);
+        if (this.#propagationFacts.some((x) => x.fact.kind === 'stale-answered' && x.fact.unit === f.unit && x.fact.attempt === f.attempt)) {
+          fail(`a second stale-answered of unit ${f.unit}'s plan-check attempt ${f.attempt}`);
+        }
+        if (u.state.staleRev !== null && u.state.staleRev <= f.rev) u.state = { ...u.state, staleRev: null };
+        this.#propagationFacts.push({ seq: at.seq, at: at.at, fact: f });
+        return;
+      }
+      case 'propagation-refused':
+        if (this.#propagationFacts.some((x) => x.fact.kind === 'propagation-refused' && x.fact.rev === f.rev && causeKey(x.fact.target) === causeKey(f.target))) {
+          fail(`a second propagation-refused of ${causeKey(f.target)} (stale set of rev ${f.rev})`);
+        }
+        this.#propagationFacts.push({ seq: at.seq, at: at.at, fact: f });
+        return;
+      case 'stale-reopened':
+        this.#staleReopened(f, fail);
+        this.#lastReopenSeq = at.seq;
+        this.#propagationFacts.push({ seq: at.seq, at: at.at, fact: f });
+        return;
       default:
         this.#holisticFact(f, fail, at);
     }
@@ -1629,6 +1669,25 @@ export class Fold implements JournalView {
   }
 
   /**
+   * dev.17 (propagation): an in-flight unit with unanswered stale links re-opens at plan-check on its spec in force (no spec
+   * change): as `reopened` does, its decision and interruption cleared, its counters kept, the redirect bound counted from here,
+   * and its next fresh build resuming its implementer session (`reopened`, with no command).
+   */
+  #staleReopened(f: Extract<Fact, { kind: 'stale-reopened' }>, fail: (detail: string) => never): void {
+    const u = this.#units.get(f.unit);
+    if (u === undefined) return fail(`stale-reopened of unit ${f.unit}, which never started`);
+    if (u.state.status !== 'active') fail(`stale-reopened of unit ${f.unit}, which is ${u.state.status}`);
+    if (u.state.pendingRevision !== null) fail(`stale-reopened of unit ${f.unit}, which has a pending revision (it re-opens on that)`);
+    if (u.state.staleRev !== f.rev) fail(`stale-reopened of unit ${f.unit} on the stale set of rev ${f.rev}; its unanswered one is ${u.state.staleRev ?? 'none'}`);
+    const spec = u.state.spec;
+    if (spec === null) return fail(`stale-reopened of unit ${f.unit}, which has no spec recorded`);
+    u.state = {
+      ...u.state, stage: 'plan-check', decided: null, interrupted: null, pressureHold: null, park: null,
+      reopened: { command: null, specRev: spec.rev }, redirectBase: u.state.counters.redirects,
+    };
+  }
+
+  /**
    * The root agent's decision on a held scope-growth proposal (src/commands/scope.ts): only of the unit held by that
    * plan-check (or, plan defects 2026-10-16, lanes) attempt's `scope-growth` hold. It releases the hold (the stage re-runs
    * as a new, uncharged attempt, or an accepted growth re-opens the unit at plan-check) and is kept with the proposals it
@@ -1870,6 +1929,10 @@ export class Fold implements JournalView {
 
   flakes(): readonly FlakeAt[] {
     return this.#flakes;
+  }
+
+  propagationFacts(): readonly PropagationFactAt[] {
+    return this.#propagationFacts;
   }
 
   rewalkSeq(milestone: MilestoneId): number {
