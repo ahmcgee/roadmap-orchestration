@@ -15,6 +15,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { durableWrite } from '../core/fsx.ts';
+import { earlierReaderResultDefault } from '../core/upgrade.ts';
 import { implementerSessionId, type ImplementerSessionId } from '../core/ids.ts';
 import type { AdapterInput } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
@@ -173,6 +174,16 @@ function implementerSession(terminal: Extract<BackendTerminal, { role: 'build' }
   return implementerSessionId(reading.sessionId, 'stdout thread.started.thread_id');
 }
 
+/**
+ * An implementer's reading without what a result-less stream showed (`streamed`): its session is resumed (a pause, a fix
+ * round), and the resumed process's result reports the session's spend cumulatively, this process's included, so counting
+ * the streamed share too would count it twice. A judgment's session is never resumed after a call without a result.
+ */
+function implementerUsage(terminal: BackendTerminal, usage: Usage): Usage {
+  if (terminal.role !== 'build' || usage.kind !== 'unavailable' || usage.streamed === undefined) return usage;
+  return { kind: 'unavailable', reason: usage.reason };
+}
+
 type Adapted = Readonly<{ result: ResultFile; reads: ReadsFile | null }>;
 
 function backendAdapted(input: AdapterInput, terminal: BackendTerminal): Adapted {
@@ -183,7 +194,7 @@ function backendAdapted(input: AdapterInput, terminal: BackendTerminal): Adapted
     ...bound, type: 'backend' as const,
     routingRev: terminal.routingRev,
     outcome: backendOutcome(exit, input.cancel, terminal, reading),
-    usage: reading.usage,
+    usage: implementerUsage(terminal, reading.usage),
     backendErrors: reading.backendErrors,
   };
   const result: BackendResult = terminal.role === 'build'
@@ -263,6 +274,13 @@ export function writeResult(invDir: string): ResultFile {
   const { result, reads } = adapted(input);
   if (reads !== null) writeOnce(join(invDir, 'reads.json'), recordBytes('reads.json', reads));
   const path = join(invDir, 'result.json');
-  writeOnce(path, resultBytes(result));
+  const bytes = resultBytes(result);
+  if (existsSync(path) && readFileSync(path, 'utf8') !== bytes) {
+    // Temporary scaffolding (upgrade.ts `earlierReaderResultDefault`): a dev.16 reader's result of these files.
+    const adopted = earlierReaderResultDefault(RUNNER_FILE_READERS['result.json'](JSON.parse(readFileSync(path, 'utf8')), path), result);
+    if (adopted === null) throw new ResultConflictError(path);
+    return adopted;
+  }
+  writeOnce(path, bytes);
   return result;
 }

@@ -47,6 +47,8 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { type BackendCall, type ClaudeTriple, type CodexTriple, backendArgv, freshJudgmentSession, promptBytes, resumedJudgmentSession } from '../backends/argv.ts';
+import { usageLimitResets } from '../backends/errors.ts';
+import { JUDGE_SUBAGENTS } from '../prompts/delegation.ts';
 import {
   BACKEND_PARK_CLASSES, type BackendParkClass, type GateLargeDiff, type HoldCause, type IntentOf, type JudgmentStage, type OpKind, type OpOutcome, type Parent,
 } from '../core/events.ts';
@@ -536,13 +538,16 @@ export function judgmentSurface(
   };
 }
 
+/** A judgment session's system text: its module's, then the subagent constraint every judge carries (delegation.ts). */
+export const judgeSystem = (system: string): string => `${system}\n\n${JUDGE_SUBAGENTS}`;
+
 export async function callBackend(ctx: StageContext, given: BackendCallSpec): Promise<BackendCallOutcome> {
   let spec = given;
   if (given.request.kind === 'judgment') {
     // The gate's system text is appended to Claude Code's default prompt, which names its `--add-dir` dirs itself.
     const { system, evidenceDirs } = given.request.dispatch.role === 'gate'
-      ? { system: given.system, evidenceDirs: judgmentReadDirs(ctx, given.request.evidenceDirs) }
-      : judgmentSurface(ctx, given.system, given.request.evidenceDirs);
+      ? { system: judgeSystem(given.system), evidenceDirs: judgmentReadDirs(ctx, given.request.evidenceDirs) }
+      : judgmentSurface(ctx, judgeSystem(given.system), given.request.evidenceDirs);
     spec = { ...given, system, request: { ...given.request, evidenceDirs } };
   }
   const r = spec.request;
@@ -657,7 +662,7 @@ export async function callArcRole(ctx: StageContext, spec: ArcCallSpec): Promise
   const seat = arcSeat(ctx, spec.role);
   const schemaText = canonicalJson(spec.schema);
   return callJobRole(ctx, spec, seat, {
-    kind: 'claude-judgment', role: spec.role, triple: seat.triple, session: spec.session, schemaText, ...judgmentSurface(ctx, spec.system, spec.evidenceDirs),
+    kind: 'claude-judgment', role: spec.role, triple: seat.triple, session: spec.session, schemaText, ...judgmentSurface(ctx, judgeSystem(spec.system), spec.evidenceDirs),
   });
 }
 
@@ -699,7 +704,7 @@ export function actingJudgeCall(
   ctx: Readonly<{ repo: AbsPath; runDir: AbsPath }>, spec: ActingJudgeCallSpec, triple: ClaudeTriple,
 ): Extract<BackendCall, { kind: 'claude-acting-judge' }> {
   return {
-    kind: 'claude-acting-judge', role: spec.role, triple, session: spec.session, schemaText: canonicalJson(spec.schema), system: spec.system,
+    kind: 'claude-acting-judge', role: spec.role, triple, session: spec.session, schemaText: canonicalJson(spec.schema), system: judgeSystem(spec.system),
     mcpConfig: spec.mcpConfig === null ? null : inputFile(ctx.runDir, spec.mcpConfig, MCP_CONFIG_INPUT), evidenceDirs: judgmentReadDirs(ctx, spec.evidenceDirs),
     denyWrites: actingWriteDenials(ctx, [spec.cwd, ...spec.evidenceDirs]),
   };
@@ -800,12 +805,14 @@ function usageLimitNeedsUser(parent: CallParent, backend: Backend, called: Backe
   const holds = parent.type === 'stage'
     ? `Stages that need it wait; unit ${parent.unit} holds at ${parent.stage}, uncharged.`
     : `Stages and jobs that need it wait; ${parent.job} ends and what it did not cover stays owed.`;
+  const error = called.kind === 'result' ? called.result.backendErrors.find((e) => e.class === 'usage-limit') : undefined;
+  const resets = error === undefined ? null : usageLimitResets(error.message);
   return {
     blocking: true,
     subject: { type: 'arc' },
     reason: 'usage-limit',
-    summary: `The ${backend} backend reported a usage-limit error ${where} (${called.inv}); it is parked arc-wide. ${holds}`,
-    recommendation: `When the limit has reset, run \`roadmap resume --backend ${backend}\`: it re-runs the ${backend} smoke before unparking.`,
+    summary: `The ${backend} backend reported a usage-limit error ${where} (${called.inv})${error === undefined ? '' : `: "${error.message}"`}; it is parked arc-wide. ${holds}`,
+    recommendation: `When the limit has reset${resets === null ? '' : ` (the backend said it resets ${resets})`}, run \`roadmap resume --backend ${backend}\`: it re-runs the ${backend} smoke before unparking.`,
     options: [],
     evidence: [absPath(join(called.invDir, STDOUT_FILE)), absPath(join(called.invDir, STDERR_FILE))],
   };

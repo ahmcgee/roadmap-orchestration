@@ -75,6 +75,23 @@ describe('meter', () => {
     assert.deepEqual(m.bySeat.map((t) => [t.role, t.tier, t.calls]), [['planCheck', 'low', 1]]);
   });
 
+  it('meter.streamed (dev.17): a checkpoint call without a result adds the tokens and turns its stream showed, still counted unavailable, its cost unknown', () => {
+    const job = { type: 'job', job: jobIdOf('ckpt-1'), attempt: 1, role: 'checkpoint', tier: 'arc' } as const;
+    const holistic = resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: null, unit: null, arcScope: 'architecture-doc' });
+    const log = [
+      factEvent({ kind: 'usage-unavailable', inv: inv(1), routingRev: holistic.rev, subject: job, reason: 'no-result', streamed: tokens(8, 64, 11950, 6868, 3) }),
+      factEvent({ kind: 'usage-unavailable', inv: inv(2), routingRev: holistic.rev, subject: { ...job, attempt: 2 }, reason: 'no-result' }),
+      factEvent({ kind: 'meter', inv: inv(3), routingRev: holistic.rev, subject: { ...job, attempt: 3 }, usage: tokens(10, 5, 0, 0, 1, 0.5) }),
+    ];
+    assert.deepEqual(meterOf(log).byJob, [
+      { job: 'ckpt-1', role: 'checkpoint', routingRev: holistic.rev, calls: 3, input: 18, output: 69, cacheRead: 11950, cacheWrite: 6868, turns: 4, costUsd: 0.5, unavailable: 2 },
+    ]);
+    // The fact carries what result.json's usage streamed.
+    const streamed = tokens(8, 64, 11950, 6868, 3);
+    assert.deepEqual(usageFact({ sessionCharge: () => null }, { routingRev: holistic.rev, subject: job }, inv(1), { kind: 'unavailable', reason: 'no-result', streamed }, null),
+      { kind: 'usage-unavailable', inv: inv(1), routingRev: holistic.rev, subject: job, reason: 'no-result', streamed });
+  });
+
   it('meter.job-usage: a job\'s lens and checkpoint calls count at their arc seat, by role and per job, never per unit; byModel renders them', () => {
     const job = (j: string, role: 'lens' | 'checkpoint', attempt: number) => ({ type: 'job', job: jobIdOf(j), attempt, role, tier: 'arc' }) as const;
     const holistic = resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: null, unit: null, arcScope: 'architecture-doc' });

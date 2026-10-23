@@ -4822,3 +4822,29 @@ review"; src/pipeline/review.ts, src/pipeline/docsonly.ts). Every change is addi
    The build prompt names the certified tree (`BuildInputs.certifiedAt`).
 6. **Calibration**: a candidate whose suite ends red on a lane the unit's latest green lanes attempt carried over
    records `docs-only-miss` before its base check.
+
+## dev.17: usage limits in any result, streamed usage, k-of-n failures (2026-10-23; field feedback items 3 and 6, U)
+
+Field feedback 2026-10-23 (an arc on dev.13): a gate's first result was Claude's session limit and its failing background
+subagents' empty results followed, so the call was read as a process fault (a self-probing park) instead of the arc-wide
+usage-limit park; 14 checkpoint calls that ended without a result were metered as nothing. Record changes are additive;
+`SCHEMA_VERSION` stays 1.
+
+| Record | Change | Read-time default |
+|---|---|---|
+| `result.json` `backendErrors` (Claude) | one per `is_error` result of the stream, in order, once per message (was: the last result's alone); a `usage-limit` one makes the output absent whatever results follow (src/backends/claude.ts `errorsOf`) | none (lasting) |
+| `result.json` `usage` | `unavailable{reason, streamed?: TokenUsage}`: a judgment's Claude call without a result, what its own model's `assistant` messages showed (`streamedUsage`: once per message id, outside subagents; output tokens a lower bound, `turns` the messages, `costUsd` null). Never on an implementer's (its resumed session's reading reports the spend cumulatively: adapter.ts `implementerUsage`) | absent: the stream showed none |
+| `usage-unavailable` fact | `+ streamed?: TokenUsage`, as result.json's; the meter adds its tokens and turns to every total and still counts the call in `unavailable` (its cost unknown) | absent: none |
+| `proc.spawn` subject `lane` | `+ stochastic?: Stochastic`: a stochastic lane's run, its spec's `{runs, minPasses}`; never with `verify`. `laneFailures` reads a lane's runs with either as k of n: red once its red runs leave fewer than `minPasses` runs that could pass, else not listed | absent: the red-lane protocol (or `verify`) |
+
+The usage-limit `needs-user` item quotes the error and names the reset the text gives ("resets 11:40pm (UTC)",
+src/backends/errors.ts `usageLimitResets`), kept as written: the text has no date. The classifier's usage-limit text also
+matches a named window ("You've hit your session limit"). Every judgment session's system text carries
+`JUDGE_SUBAGENTS` (src/prompts/delegation.ts; dispatch.ts `judgeSystem`): subagents run in the foreground, the answer
+after their reports.
+
+Upgrade (temporary scaffolding, `earlierReaderResultDefault` in src/core/upgrade.ts): recovery re-adapts an invocation whose
+result.json a 1.0.0-dev.16 executor wrote before it crashed (its done not written). HEAD's reader may adapt those files
+differently (a usage limit before the last result, `streamed`); the recorded result is adopted as written and warned
+(`result.earlier-reader`) when it differs only there, else the write-once conflict stands. Guarded by
+`upgrade.result-earlier-reader`.

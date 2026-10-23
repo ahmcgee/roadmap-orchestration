@@ -11,7 +11,7 @@ import { mcpHandshake, substituteWalkServer, walkMcpConfig } from '../src/backen
 import { jobId, journeyId, milestoneId, serveName, unitId } from '../src/core/ids.ts';
 import { absPath, isoTime, repoPath } from '../src/core/values.ts';
 import type { Milestone } from '../src/input/plan.ts';
-import { type ActingJudgeCallSpec, MCP_CONFIG_INPUT, actingJudgeCall } from '../src/pipeline/dispatch.ts';
+import { type ActingJudgeCallSpec, MCP_CONFIG_INPUT, actingJudgeCall, judgeSystem } from '../src/pipeline/dispatch.ts';
 import { walkToolsRows } from '../src/preflight/walktools.ts';
 import { parseRepoConfig } from '../src/routing/layers.ts';
 import { tmpDir } from './helpers/repo.ts';
@@ -94,7 +94,7 @@ describe('walkthrough MCP config', () => {
     assert.ok(c.mcpConfig !== null && c.mcpConfig.startsWith(`${runDir}/inputs/`) && c.mcpConfig.endsWith(`.${MCP_CONFIG_INPUT}`), String(c.mcpConfig));
     assert.equal(readFileSync(c.mcpConfig, 'utf8'), '{"mcpServers":{}}\n');
     assert.deepEqual(c.evidenceDirs, [repo, runDir, '/elsewhere'], 'the repository, the run dir, then what neither covers');
-    assert.equal(c.system, 'SYS', 'appended to the default prompt, which lists the dirs');
+    assert.equal(c.system, judgeSystem('SYS'), 'appended to the default prompt, which lists the dirs');
     assert.equal(actingJudgeCall({ repo, runDir }, { ...spec, mcpConfig: null }, triple).mcpConfig, null);
   });
 });

@@ -296,7 +296,9 @@ that fails partway leaves one residue per failed resource. `start` for any arc r
   `operator/usage-limit`, others run until they need it, and one `needs-user` is raised. It never auto-retries:
   `resume --backend <name>` re-runs that backend's preflight smoke before unparking. A usage-limit park dominates
   a retryable park on the same backend, and a probe clears only the park epoch it tested. Nothing brakes before
-  the limit; limit hits under parallel burn are measured in arc 2.
+  the limit; limit hits under parallel burn are measured in arc 2. A Claude call is usage-limited when any result of its
+  stream is (dev.17, field 2026-10-23: a judge's background subagents printed empty results after the limit), and the
+  needs-user item names the reset the CLI gave. Judges run their subagents in the foreground.
 - **Lane efficiency (A-M4-24; every arc; dev.17 one reuse key, §4 "Lane topology").** A series (spec or suite, any unit's)
   reuses a lane's newest earlier run with the same reuse key when that run is a clean pass: its recorded identity
   (normalised lane rev, environment id, argv[0]'s resolved path and content hash) is today's, its commit holds the same

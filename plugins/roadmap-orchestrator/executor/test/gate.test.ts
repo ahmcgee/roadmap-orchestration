@@ -25,7 +25,7 @@ import { absPath, repoPath } from '../src/core/values.ts';
 import { CHANGED_LIST, CLUSTER_PATHS_SHOWN, gateAnswerFor } from '../src/pipeline/gate.ts';
 import { ACTING_JUDGE_TOOLS, writeDenyRules } from '../src/backends/argv.ts';
 import { FILES_DIR, readManifest } from '../src/git/evidence.ts';
-import { evidenceRoot, verificationWorktree } from '../src/pipeline/dispatch.ts';
+import { evidenceRoot, judgeSystem, verificationWorktree } from '../src/pipeline/dispatch.ts';
 import { promptFor } from '../src/prompts/index.ts';
 import { clusterCoverage } from '../src/prompts/schemas.ts';
 import { laneRevOf, parseObligations } from '../src/holistic/types.ts';
@@ -223,7 +223,7 @@ test('gate.acting-checkout (dev.13): the gate is an acting judge with no MCP ser
     assert.equal(after('--setting-sources'), 'project');
     assert.ok(gate.argv.includes('--strict-mcp-config') && !gate.argv.includes('--mcp-config'), 'no MCP server');
     assert.ok(!gate.argv.includes('--system-prompt') && !gate.argv.includes('--no-session-persistence'), 'its text is appended; its session persists');
-    assert.equal(after('--append-system-prompt'), promptFor('gate', after('--model') as 'claude-sonnet-5-5').system, 'the module\'s system text, appended as it stands');
+    assert.equal(after('--append-system-prompt'), judgeSystem(promptFor('gate', after('--model') as 'claude-sonnet-5-5').system), 'the module\'s system text and the judge\'s subagent constraint, appended');
     assert.deepEqual(addDirs(gate).slice(0, 2), [d.repo, d.runDir], 'the judgment read surface');
     // Its Write, Edit and NotebookEdit are denied the repository and the run dir (Bash stays trusted to the prompt).
     const rules = gate.argv.slice(gate.argv.indexOf('--disallowedTools') + 1, gate.argv.indexOf('--permission-mode'));

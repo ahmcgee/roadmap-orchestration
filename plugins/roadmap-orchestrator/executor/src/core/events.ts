@@ -28,7 +28,7 @@ import {
   type DispatchRecord, type KillReason, type KnownDefectMatch, type LensKindName, type PauseTarget, type PlanManifest, type RedRev, type ResidueRecord, type ResumeTarget,
   type RevisionManifest, type SpecPatch, type Stage, type TokenUsage, type ClassUsage, classUsages, type UsageUnavailableReason, approvalFingerprint, containmentMode,
   dispatchRecord, killReason, knownDefectMatch, optionId, pauseTarget, manifestSpecs, resumeTarget, revisionInputs, specPatch, stage, tokenUsage,
-  usageUnavailableReason,
+  usageUnavailableReason, type Stochastic, stochastic,
 } from './records.ts';
 import {
   type BusyAttempt, type ClassifiedAdmit, type Conversion, type ConversionReason, BUNDLE_REJECTIONS, CONVERSION_REASONS, classifiedAdmit, conversion,
@@ -190,8 +190,13 @@ export type SpawnSubject =
   /**
    * dev.17 (flaky ledger): `verify`, a deflake unit's verification run count of the lane (2 or more): its runs are `verify`
    * spawns that must all pass (src/pipeline/deflake.ts). Absent: one run under the red-lane protocol (lasting).
+   * `stochastic` (dev.17): a run of a stochastic lane (records.ts `Stochastic`, its spec's), so its series' runs are read as
+   * k of n, never as a red run and its rerun (src/pipeline/failures.ts). Absent on a verification run (`verify` says it).
    */
-  | Readonly<{ purpose: 'lane'; unit: UnitId; lane: LaneId; set: 'spec' | 'suite'; at: Sha; redRev?: RedRev; identity?: LaneIdentity; files?: readonly RepoPath[]; verify?: number }>
+  | Readonly<{
+    purpose: 'lane'; unit: UnitId; lane: LaneId; set: 'spec' | 'suite'; at: Sha; redRev?: RedRev; identity?: LaneIdentity; files?: readonly RepoPath[]; verify?: number;
+    stochastic?: Stochastic;
+  }>
   | Readonly<{ purpose: 'teardown' | 'probe'; unit: UnitId | null; resource: ResourceInstance }>
   /**
    * M4b: one side of a suite-lane proof (RC-4): proof job `job` runs lane `lane` with its `old` or `new` argv at the
@@ -727,7 +732,8 @@ export type Fact =
   | Readonly<{
     kind: 'meter'; inv: InvocationId; routingRev: RoutingRev; subject: MeterSubject; usage: TokenUsage; session?: ClaudeSessionId; delegated?: readonly ClassUsage[];
   }>
-  | Readonly<{ kind: 'usage-unavailable'; inv: InvocationId; routingRev: RoutingRev; subject: MeterSubject; reason: UsageUnavailableReason }>
+  /** `streamed` (dev.17): what a judgment's stream without a result showed (records.ts `Usage`); the meter counts its tokens. */
+  | Readonly<{ kind: 'usage-unavailable'; inv: InvocationId; routingRev: RoutingRev; subject: MeterSubject; reason: UsageUnavailableReason; streamed?: TokenUsage }>
   | Readonly<{ kind: 'dispatch'; record: DispatchRecord }>
   /**
    * A backend is parked arc-wide: a failed invocation reported a usage-limit or capacity error (`inv`, the
@@ -1480,11 +1486,13 @@ const spawnSubject: Read<SpawnSubject> = tagged('purpose', {
     const files = f.optional('files', sortedBy((v, p) => repoPath(v, p), (s) => s, { nonEmpty: true }));
     const verify = f.optional('verify', positive);
     if (verify !== undefined && verify < 2) throw new SchemaError(`${f.path}.verify`, 'two or more verification runs', verify);
+    const stoch = f.optional('stochastic', stochastic);
+    if (verify !== undefined && stoch !== undefined) throw new SchemaError(f.path, 'a verification run or a stochastic lane\'s run, not both', { verify, stochastic: stoch });
     return {
       purpose: f.get('purpose', literal('lane')), unit: f.get('unit', unitR), lane: f.get('lane', (v, p): LaneId => laneId(v, p)),
       set: f.get('set', oneOf(['spec', 'suite'] as const)), at: f.get('at', shaR),
       ...(redRev === undefined ? {} : { redRev }), ...(identity === undefined ? {} : { identity }), ...(files === undefined ? {} : { files }),
-      ...(verify === undefined ? {} : { verify }),
+      ...(verify === undefined ? {} : { verify }), ...(stoch === undefined ? {} : { stochastic: stoch }),
     };
   }),
   teardown: object((f): SpawnSubject => ({ purpose: f.get('purpose', literal('teardown')), unit: f.get('unit', nullable(unitR)), resource: f.get('resource', instR) })),
@@ -2364,10 +2372,13 @@ export const fact: Read<Fact> = tagged('kind', {
       usage: f.get('usage', tokenUsage), ...(session === undefined || delegated === undefined ? {} : { session, delegated }),
     };
   }),
-  'usage-unavailable': object((f): Fact => ({
-    kind: f.get('kind', literal('usage-unavailable')), inv: f.get('inv', invR), routingRev: f.get('routingRev', revR), subject: f.get('subject', meterSubject),
-    reason: f.get('reason', usageUnavailableReason),
-  })),
+  'usage-unavailable': object((f): Fact => {
+    const streamed = f.optional('streamed', tokenUsage);
+    return {
+      kind: f.get('kind', literal('usage-unavailable')), inv: f.get('inv', invR), routingRev: f.get('routingRev', revR), subject: f.get('subject', meterSubject),
+      reason: f.get('reason', usageUnavailableReason), ...(streamed === undefined ? {} : { streamed }),
+    };
+  }),
   dispatch: object((f): Fact => ({ kind: f.get('kind', literal('dispatch')), record: f.get('record', dispatchRecord) })),
   'backend-park': object((f): Fact => {
     const out = {

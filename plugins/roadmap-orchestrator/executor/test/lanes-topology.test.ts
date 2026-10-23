@@ -11,6 +11,7 @@ import { type LaneDef, type SpecM1 } from '../src/core/records.ts';
 import { absPath } from '../src/core/values.ts';
 import { type StageContext, type StageParent, pinDispatch } from '../src/pipeline/dispatch.ts';
 import { type LaneRuntime, type Series, laneOrder, reserveNow, runLaneSeries, seriesLedger, seriesOrder, specSeriesRoot } from '../src/pipeline/lanes.ts';
+import { laneFailures } from '../src/pipeline/failures.ts';
 import { forcedLanes, lanes, loadUnitSpec } from '../src/pipeline/stages.ts';
 import { commitAll, tmpDir, writeFiles } from './helpers/repo.ts';
 import { type LaneJson, SCENARIO_TIMEOUT_MS, type SetupOptions, type StageRun, U1, keptSpec, setupUnit, spawnIntents, started } from './fixtures/stage-common.ts';
@@ -45,6 +46,11 @@ function series(run: StageRun, attempt: number, defs: readonly LaneDef[], at: Sh
 const commit = (run: StageRun, files: Readonly<Record<string, string>>): Sha => {
   writeFiles(run.repo, files);
   return sha(commitAll(run.repo, 'more'));
+};
+
+/** Records lanes attempt `attempt`'s outcome, so status reads it as closed. */
+const closeAttempt = (run: StageRun, attempt: number, outcome: 'green' | 'red'): void => {
+  run.journal.fact({ kind: 'stage-outcome', unit: U1, stage: 'lanes', attempt, outcome, class: 'advance', chargeable: outcome === 'red' });
 };
 
 const laneSpawns = (run: StageRun, lane: string): readonly IntentOf<'proc.spawn'>[] =>
@@ -156,6 +162,10 @@ describe('lanes.stochastic (dev.17)', () => {
     assert.equal(laneSpawns(run, 'noisy').length, 3, 'red, pass, pass');
     assert.deepEqual(s.ledger.map((l) => [l.verdict, l.flaky, l.diagnostic, l.voided]), [['pass', false, null, null]]);
     assert.deepEqual(seriesLedger(run.ctx, parentOf(1), specLanes(run), 'spec', run.base, specSeriesRoot(run.runDir, parentOf(1))), s.ledger);
+    assert.ok(laneSpawns(run, 'noisy').every((i) => i.expect.subject.purpose === 'lane' && i.expect.subject.stochastic?.minPasses === 2), 'each run is stamped k of n');
+    // Status reads the closed attempt's runs as k of n: no failure (C1: it threw on a red run followed by more runs).
+    closeAttempt(run, 1, 'green');
+    assert.deepEqual(laneFailures(run.ctx, run.unit), []);
   });
 
   test('lanes.stochastic-red: it stops once k passes can no longer be reached, red', T, async () => {
@@ -165,6 +175,9 @@ describe('lanes.stochastic (dev.17)', () => {
     assert.equal(s.end.kind, 'red');
     assert.equal(laneSpawns(run, 'noisy').length, 2, 'two reds: two passes of three are out of reach');
     assert.equal(s.ledger[0]!.flaky, false);
+    // Two runs and no red.json (no red-lane protocol): a red lane, not a run and its rerun.
+    closeAttempt(run, 1, 'red');
+    assert.deepEqual(laneFailures(run.ctx, run.unit).map((f) => [f.attempt, f.lane, f.class, f.hostSuspected]), [[1, 'noisy', 'red', null]]);
   });
 });
 

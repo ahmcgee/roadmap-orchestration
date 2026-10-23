@@ -5,6 +5,7 @@ import { describe, it } from 'node:test';
 import { adapt, writeResult } from '../src/backends/adapter.ts';
 import { type BackendCall, backendArgv, freshClaudeImplementerSession, freshJudgmentSession, resumedJudgmentSession } from '../src/backends/argv.ts';
 import { readClaude } from '../src/backends/claude.ts';
+import { classifyBackendError, usageLimitResets } from '../src/backends/errors.ts';
 import { type InvocationId, judgmentSessionId } from '../src/core/ids.ts';
 import { absPath } from '../src/core/values.ts';
 import { repairTurnOf } from '../src/pipeline/dispatch.ts';
@@ -123,6 +124,34 @@ describe('claude', () => {
     assert.equal(readClaude(errorStream({ result: 'API Error: 500', api_error_status: 500 })).backendErrors[0]?.class, 'platform');
   });
 
+  describe('claude.usage-limit-any-result (field feedback 2026-10-23)', () => {
+    // Synthesised in the field shape (PROVENANCE): a judge put two background subagents to work; its first result is the
+    // session limit (is_error, no HTTP status), and the empty results of its failing subagents follow it.
+    const SESSION_LIMIT = "You've hit your session limit · resets 11:40pm (UTC)";
+    it('a usage-limit result anywhere in the stream is the call\'s backend error, though empty results follow it', () => {
+      const r = readClaude(stdoutOf('claude-judgment-usage-limit-subagents'));
+      assert.deepEqual(r.backendErrors, [{ class: 'usage-limit', message: SESSION_LIMIT }]);
+      assert.equal(r.output.kind, 'absent');
+      const a = adapt(fixtureInvocation('claude-judgment-usage-limit-subagents', EXIT0));
+      // Exit 0 without an answer: malformed (the field's ended as a process fault); either way not a success, so verdictOf parks it.
+      assert.deepEqual(a.type === 'backend' ? [a.outcome.kind, a.backendErrors.map((e) => e.class)] : null, ['malformed', ['usage-limit']]);
+      assert.equal(a.type === 'backend' ? a.usage.kind : null, 'known', 'its usage is the results\'');
+    });
+    it('a usage limit before a later answer still ends the call: the answer is a background wind-down', () => {
+      const lines = stdoutOf('claude-judgment-usage-limit-subagents').split('\n').filter((l) => l !== '');
+      const last = JSON.parse(lines.at(-1)!) as Record<string, unknown>;
+      const answered = [...lines.slice(0, -1), JSON.stringify({ ...last, result: '{"ok":true}', structured_output: { ok: true } })].join('\n');
+      const r = readClaude(`${answered}\n`);
+      assert.deepEqual([r.output.kind, r.backendErrors.map((e) => e.class)], ['absent', ['usage-limit']]);
+    });
+    it('usageLimitResets: the reset the text names, as written; null when it names none', () => {
+      assert.equal(usageLimitResets(SESSION_LIMIT), '11:40pm (UTC)');
+      assert.equal(usageLimitResets(CLAUDE_USAGE_LIMIT), '3am (UTC)');
+      assert.equal(usageLimitResets('Claude usage limit reached.'), null);
+      assert.equal(classifyBackendError("You've hit your weekly limit · resets Oct 27, 6:30am (UTC)", null), 'usage-limit');
+    });
+  });
+
   describe('claude.usage-unavailable', () => {
     it('a result without modelUsage is still a success; usage unavailable{absent}', () => {
       const r = adapt(editClaudeResult(fixtureInvocation('claude-judgment', EXIT0), (o) => {
@@ -144,6 +173,22 @@ describe('claude', () => {
         return o;
       }));
       assert.deepEqual(r.type === 'backend' && r.usage.kind === 'known' ? [r.usage.tokens.turns, r.usage.tokens.costUsd, r.usage.tokens.outputTokens] : null, [null, null, 316]);
+    });
+    it('a judgment killed before its result: unavailable{no-result} with what its own model\'s messages streamed; an implementer\'s without it', () => {
+      // The 2.1.301 subagents capture without its results: three Sonnet messages of the session (its Haiku subagent's are
+      // not its own). Input and cache figures are the API's; output as streamed (64 against the result's 280).
+      const cut = (name: string) => {
+        const invDir = fixtureInvocation(name, { type: 'signalled', signal: 'SIGKILL' }, 'deadline');
+        const lines = readFileSync(join(invDir, 'stdout'), 'utf8').split('\n').filter((l) => l !== '' && (JSON.parse(l) as { type: string }).type !== 'result');
+        writeFileSync(join(invDir, 'stdout'), lines.map((l) => `${l}\n`).join(''));
+        return adapt(invDir);
+      };
+      const judged = cut('claude-judgment-subagents');
+      assert.deepEqual(judged.type === 'backend' ? judged.usage : null, {
+        kind: 'unavailable', reason: 'no-result', streamed: { inputTokens: 8, outputTokens: 64, cacheReadTokens: 11950, cacheWriteTokens: 6868, turns: 3, costUsd: null },
+      });
+      const built = cut('claude-implementer');
+      assert.deepEqual(built.type === 'backend' ? built.usage : null, { kind: 'unavailable', reason: 'no-result' }, 'its resumed session reports this spend');
     });
     it('no result event at all → unavailable{no-result}', () => {
       const invDir = fixtureInvocation('claude-judgment', EXIT0);

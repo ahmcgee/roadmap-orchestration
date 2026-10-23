@@ -56,6 +56,9 @@
 // recovery finishes what that release left open.
 //
 // The variants (PREVIOUS_RELEASE starts the arc):
+//   upgrade.result-earlier-reader  no arc: an invocation the previous release's reader adapted (result.json written,
+//                              its done not, as a crash leaves it) re-adapted on HEAD keeps the recorded result
+//                              (`earlierReaderResultDefault`, dev.17), warned once.
 //   upgrade.stop-mid-build     unit `slug` merged; `page-id` stopped mid-build (its Codex thread started, its
 //                              worktree dirty), so held with an interrupted attempt; `resume` queued through
 //                              the previous release's CLI. HEAD continues the same thread.
@@ -208,6 +211,7 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { after, before, test } from 'node:test';
+import { writeResult } from '../../src/backends/adapter.ts';
 import { isAlive, statOf } from '../../src/contain/proc.ts';
 import type { Event, Fact } from '../../src/core/events.ts';
 import { arcId, commandId, invocationId, obligationId, opId, resourceName, unitId } from '../../src/core/ids.ts';
@@ -2308,4 +2312,36 @@ test('upgrade.dev10.checkpoint-answer-unapplied: a park checkpoint\'s answer dev
   assert.deepEqual(factsOf(r.after, 'bundle-decided').map((b) => [b.job, b.outcome]), [['ckpt-2', { kind: 'no-op' }]]);
   assert.equal(factsOf(r.after, 'arc-completed').length, 1);
   assert.match(hostLogs(p), /roadmap: upgrade default \(checkpoint\.reenter\.fixes\)/, 'the default warned');
+});
+
+test('upgrade.result-earlier-reader: an invocation the previous release adapted (result.json written, its done not) is re-adapted on HEAD to the recorded result, warned, never refused', T, async () => {
+  type PrevScenario = { fixtureInvocation: (name: string, child: { type: 'exited'; code: number }) => string };
+  type PrevAdapter = { writeResult: (invDir: string) => unknown };
+  const [prevScenario, prevAdapter] = await Promise.all([
+    loadFrom<PrevScenario>(PREVIOUS_RELEASE, 'test', 'helpers', 'scenario.ts'), loadFrom<PrevAdapter>(PREVIOUS_RELEASE, 'src', 'backends', 'adapter.ts'),
+  ]);
+  const fieldStream = readFileSync(join(EXECUTOR, 'test', 'fixtures', 'backend-output', 'claude-judgment-usage-limit-subagents', 'stdout'), 'utf8');
+  const lines = readFileSync(join(EXECUTOR, 'test', 'fixtures', 'backend-output', 'claude-judgment-subagents', 'stdout'), 'utf8').split('\n').filter((l) => l !== '');
+  const cutStream = lines.filter((l) => (JSON.parse(l) as { type: string }).type !== 'result').map((l) => `${l}\n`).join('');
+  // The field's usage limit before empty results (dev.17 classifies it from any result) and a judgment killed before its
+  // result (dev.17 records what it streamed): the previous reader wrote another result for each.
+  const warnings: string[] = [];
+  for (const stdout of [fieldStream, cutStream]) {
+    const invDir = prevScenario.fixtureInvocation('claude-judgment-subagents', { type: 'exited', code: 0 });
+    writeFileSync(join(invDir, 'stdout'), stdout);
+    prevAdapter.writeResult(invDir);
+    const recorded = readFileSync(join(invDir, 'result.json'), 'utf8');
+    const write = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: string) => (warnings.push(String(chunk)), true)) as typeof process.stderr.write;
+    let adopted: unknown;
+    try {
+      adopted = writeResult(invDir);
+    } finally {
+      process.stderr.write = write;
+    }
+    assert.equal(readFileSync(join(invDir, 'result.json'), 'utf8'), recorded, 'result.json is kept as written');
+    assert.equal(canonicalJson(adopted as JsonValue), canonicalJson(JSON.parse(recorded) as JsonValue), 'the recorded result is the reading');
+  }
+  assert.equal(warnings.length, 1, warnings.join(''));
+  assert.match(warnings[0]!, /roadmap: upgrade default \(result\.earlier-reader\)/, 'warned once');
 });

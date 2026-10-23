@@ -11,8 +11,9 @@
 // run's (lanes.ts `laneRecord`).
 //
 // Not listed: a lanes attempt still open (its records are not final); a lane whose spawns are not all done (a crash cut
-// it short: unknown); a reused lane (a pass); suite lanes (the candidate's). dev.17: a deflake unit's verification runs
-// (spawn `verify`) are `red` when one run was, else not listed.
+// it short: unknown); a reused lane (a pass); suite lanes (the candidate's). dev.17: a stochastic lane's runs (spawn
+// `stochastic`) and a deflake unit's verification runs (spawn `verify`, every run required) are k of n: `red` once too many
+// runs were red for k to pass, else not listed.
 //
 // 1.0.0-dev.6 adoption (temporary scaffolding): a red run its spawn did not stamp with `redRev` never persisted its
 // class; it is re-derived from its raw evidence with the frozen table (lanes.ts `dev6RedClass`), and not listed once
@@ -49,9 +50,14 @@ function laneFailure(view: JournalView, runDir: AbsPath, parent: StageParent, la
   if (first === undefined) throw new Error(`lane ${lane}: no spawn`);
   const verdicts = spawns.map((s) => verdictOf(view, s));
   if (verdicts.some((v) => v === null)) return null;
-  // dev.17: a deflake unit's verification runs (`verify`): red when a run was, never rerun, never flaky.
-  if (first.expect.subject.purpose === 'lane' && first.expect.subject.verify !== undefined) {
-    return verdicts.some((v) => isRed(v!)) ? classified(parent, lane, null, undefined) : null;
+  // dev.17: k-of-n runs, never a rerun, never flaky: a stochastic lane's (`stochastic`) and a deflake unit's verification
+  // (`verify`: every run must pass). Red once its reds leave fewer than k runs that could pass (where its series stops it).
+  const subject = first.expect.subject;
+  if (subject.purpose !== 'lane') throw new Error(`${first.op} spawned a ${subject.purpose}, not a lane`);
+  const k = subject.verify !== undefined ? { runs: subject.verify, minPasses: subject.verify } : subject.stochastic;
+  if (k !== undefined) {
+    const reds = verdicts.filter((v) => isRed(v!)).length;
+    return k.runs - reds < k.minPasses ? classified(parent, lane, null, undefined) : null;
   }
   if (more.length > 0) throw new Error(`lane ${lane} ran ${spawns.length} times in series ${parent.unit} lanes#${parent.attempt}; a lane runs at most twice`);
   const [firstVerdict, rerunVerdict] = verdicts as CommandVerdict[];
@@ -59,8 +65,6 @@ function laneFailure(view: JournalView, runDir: AbsPath, parent: StageParent, la
     if (rerun !== undefined) throw new Error(`lane ${lane} was rerun after a ${firstVerdict} run (${first.op})`);
     return null;
   }
-  const subject = first.expect.subject;
-  if (subject.purpose !== 'lane') throw new Error(`${first.op} spawned a ${subject.purpose}, not a lane`);
   const dir = absPath(join(specSeriesRoot(runDir, parent), lane));
   if (subject.redRev === undefined) {
     const dev6 = dev6RedClass(runDir, invocationId(first.op, first.ordinal), dir);
