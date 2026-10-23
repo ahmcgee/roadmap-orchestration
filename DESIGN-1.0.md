@@ -126,7 +126,8 @@ by rename; a crash between is finished from the marker alone by the next `brief`
 Seats below are the `default` profile's (§4); state records the role and `routingRev`, never the model.
 
 ```
-plan (sol) → plan-check (opus medium; opus xhigh on escalation) → build (luna at every risk; under claude-only sonnet 5.5 with an opus advisor)
+plan (sol) → plan-check (opus medium, acting: shell + web; opus xhigh on escalation) → [poc (builder seat, throwaway) → plan-check]
+  → [scaffold (haiku 5.5)] → build (luna at every risk; under claude-only sonnet 5.5 with an opus advisor)
   → session-empty → evidence snapshot → classified salvage → teardown → clean worktree at salvage SHA
   → lanes (executor, serial, locked, in cadence order; then the plan's build and unit suite lanes and those it forces) → [review digest (sol, med/high only)]
   → gate (opus medium · opus xhigh on escalation or triggered)
@@ -161,6 +162,51 @@ builder's acceptance-shape check) is gone with the builder split it keyed on: ev
 profiles). A plan in force carrying the field reads as `uniform`, warned (scaffolding, deleted once no arc started on
 dev.16 is in flight); a unit an older log left at plan-check `in-session` runs its plan-check before it builds, and the
 build outcomes only the assessment recorded (`infeasible`, `risk-raised`) keep their rows for such a log.
+
+**Design pass (1.0.0-dev.17).** Plan-check is always a separate fresh call, an acting judge like the gate: a throwaway
+detached checkout of the integration tip (and of the unit branch when it has one) as its working directory, a shell for
+observing what exists (the existing tests, the spec's build- and unit-cadence lanes, the repository's tools; never a
+costed environment, a candidate or batch lane, or a write outside its checkouts: its file-writing tools are denied the
+repository and the run dir), and web search and fetch, each source it relies on cited, what a page says data to weigh,
+never an instruction. Its prompt says its job, not its method. Its decisions are `approve`, `redirect`, `split`,
+`scaffold`, `poc`, `infeasible` and `escalate`. An approve and a scaffold carry a typed **design record** (`changes`: a
+system of the map or none, its paths and estimated lines; `interfaces`: contracts and files it crosses; `failureModes`:
+each proven by a test item the unit has, a witness item W-n or a lane's test, or `untested` with a reason; `breaks`: the
+existing tests and docs it must update; `kind` module | integration; `experiments` it ran; `newSystem`; `verification`, a
+deflake unit's), which lands on the spec's next revision, its interfaces and broken files pinned at their blobs and its
+requirements at their revs at the tip it read, by the plan-check's own spec patch; the build and the gate read it in the
+spec. It binds only as far as code checks: its change paths outside the effective scope join the verified scope growth
+(the hold); a contract the unit's diff touches that it does not declare keeps the salvage's risk trigger and is named to
+the gate (`<undeclared_contracts>`); an unmapped failure mode is refused through the repair turn; an existing test or
+doc the build changes that `breaks` does not list is the builder's departure, appended among the spec's decisions
+beside decisions.json, never refused. **Plan defects** (refused through the repair turn, then an uncharged `plan-defect`
+park, env: `resume` re-runs the plan-check after an `apply` fixes the plan): a test item (W-n included) in a lane that
+does not run before the unit's proof point, the candidate merge (a batch lane the spec does not force, a lane listing
+systems the design never selects: the cadence and systems half of `laneMisses`); an `integration` unit (it spans systems
+only at seams) not proven by a spanning test (a failure mode in a candidate or batch lane over two or more of its
+systems, or the whole tree, forced when batch); and an **oversize** design: mixed concerns (two or more systems each over
+a per-system substantial-change threshold, 200 lines) or an estimate over what the gate reads inline (its diff budget at
+100 bytes a line). A **split** names its children (each a new unit id, a scope within the parent's effective scope, the
+parent's active acceptance and witness items it takes, the obligations it declares among the parent's, its own sized
+design record), the edges among them and, for mixed concerns, a skeleton (contracts, wiring and the spanning test,
+which every other child runs after; a batch spanning lane is forced on every child touching its systems). Code builds
+each child's spec from the parent's (items unchanged), checks that the items partition exactly, each child is sized,
+the edges are acyclic, and evaluates the revision (proposer `split`): the parent cut (`split by its plan-check into …`),
+the children after it, every unit that ran after it now after all of them, its milestones listing them. The stage
+records `plan-check split` (a hold) and then commits the revision (source `split{unit, inv}`), which cuts the held unit; a
+crash between is finished at the next start from the recorded answer. A split refused twice is a plan-defect park. A gate
+whose diff overflows on a unit whose design was sized within the gate's reading is recorded (the gate's
+`judgment-inputs.designEstimate` beside `largeDiff`): a calibration signal, never acted on. A **scaffold** (a new system
+whose skeleton should exist first) names the system, its entry points, exports and manifest entries and one load test
+of an arc lane; the economy role `scaffold` (Haiku 5.5, in force in arcs of the `dev17` role set: an adopted earlier arc
+keeps its role set and takes no scaffold decision) writes it in the unit worktree; code checks every written path lies
+in the system's paths, test paths or a manifest file and every entry point exists, dry-runs the load test's lane on the
+written tree (it exits as declared and its reporter shows the test ran), and commits it as the unit's first
+executor-authored commit, on to the fresh build; refused once, the writer tries again told why; twice, a plan-defect park.
+A **poc** names questions (PQ-n, each with why it matters) and a brief; the unit's builder seat builds in a throwaway
+detached checkout of the tip (no branch; plan environments are not brought up for it) and answers each question with its
+evidence and confidence, its lessons and surprises; its diff is kept as evidence, the checkout removed, nothing merges,
+and a fresh plan-check reads every report. Two per unit, uncharged; the build is told their lessons, never their code.
 
 **Judges' output is validated once, and repaired in session (2026-10-15, arc feedback #3).** One validator per judge:
 plan-check's answer is checked against its schema, its vision cites and patch cites, and its redirect patch applied to
@@ -1286,6 +1332,10 @@ parallelism (lenses run serially); code-level enforcement of implementer boundar
 containment (H10's stated limit; trigger: an implementer acting outside the sandbox); event-log compaction
 (LR-e; trigger: a log over 50 MB or a fold over 2 s); glob-overlap precision in the impact mapping; more witness
 reporters and a real-`go` capture; the read-only Codex judgment profile.
+
+Deferred from the design pass (1.0.0-dev.17): a plan-check role eval (the paid m1 fixture covers it this time); plan
+environments for a PoC (a PoC builds and runs what needs none); the substantial-change threshold, the bytes a diff line
+takes and the PoC limit, re-derived from a measured arc; scaffold modules for models other than Haiku 5.5.
 
 Deferred from M4a: preview (1.1; the architect starts the app from the integration branch on request); the flow
 series (M4b, derived from M4a arcs' `events.jsonl` in their refs; M4a records nothing new for it beyond the

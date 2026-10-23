@@ -143,6 +143,10 @@
 //   upgrade.spec-design-pins   the previous release's setup lays out its specs (no arc runs): HEAD reads each with no
 //                              design record (kind `module`, `designKindDefault`) and no revision pins (every link
 //                              `unpinned`, `specPinsDefault`), each default warned.
+//   upgrade.design-pass-adopted
+//                              the previous release's plan-check answers (its M1 fakes', as its arcs recorded them) read
+//                              on HEAD with no design record (`planCheckDesignDefault`, warned); its role set (`m4b`)
+//                              seats and hashes no scaffold role, so its revs do not move for it.
 //
 // The dev.11 variants (DEV11_RELEASE starts the arc):
 //   upgrade.dev11.read-denied-retry
@@ -220,7 +224,8 @@ import { overCapacity } from '../../src/resources/pool.ts';
 import { bytesSha256, loadSpec } from '../../src/spec/spec.ts';
 import { CONTINUE_DIRECTIVE } from '../../src/prompts/directives.ts';
 import { meterOf } from '../../src/meter.ts';
-import { provenanceStack, resolveRouting, resolveRoutingUnder } from '../../src/routing/layers.ts';
+import { arcStack, provenanceStack, resolveRouting, resolveRoutingUnder, routingRevOf, seatsInForce } from '../../src/routing/layers.ts';
+import { designOfAnswer, validatePlanCheckOutput } from '../../src/prompts/schemas.ts';
 import { executorLogs, lastLine } from '../../src/supervisor.ts';
 import { corpusTarget } from '../fixtures/corpus-target.ts';
 import type { CheckResult } from '../../evals/m1/check.ts';
@@ -544,9 +549,11 @@ async function finishOnHead(p: Phase1, m1: readonly M1Step[], during: () => Prom
 /**
  * The defaults HEAD reads an arc the previous release started with (1.0.0-dev.17, lane topology): its lanes' `tier` as a
  * cadence (`lane.tier.<kind>`), a recorded lane rev of the tier form (`lane-rev.tier.<lane>`), its revisions' absent
- * systems map (`plan-applied.systemsMap`), and its specs' absent design record and pins (`spec.design.kind`, `spec.pins`). Nothing else changed a record since the previous release.
+ * systems map (`plan-applied.systemsMap`), its specs' absent design record and pins (`spec.design.kind`, `spec.pins`), and
+ * (the design pass) its plan-check answers' absent design record (`plan-check.design`, read back for the build's notes). Nothing
+ * else changed a record since the previous release.
  */
-const DEV17_DEFAULTS = /^(lane\.tier\.(spec|suite|arc)|lane-rev\.tier\..+|plan-applied\.systemsMap|spec\.design\.kind|spec\.pins)$/;
+const DEV17_DEFAULTS = /^(lane\.tier\.(spec|suite|arc)|lane-rev\.tier\..+|plan-applied\.systemsMap|spec\.design\.kind|spec\.pins|plan-check\.design)$/;
 
 /**
  * HEAD reads an arc the previous release started with the dev.17 lane defaults only (`DEV17_DEFAULTS`), but for the kinds
@@ -1723,6 +1730,34 @@ test('upgrade.spec-design-pins: the previous release\'s specs read on HEAD with 
   const kinds = [...warned.join('').matchAll(/roadmap: upgrade default \(([^)]+)\)/g)].map((m) => m[1]!);
   assert.ok(kinds.includes('spec.design.kind'), 'the absent design record was warned');
   assert.ok(kinds.includes('spec.pins'), 'the absent pins were warned');
+});
+
+/** A triple no built-in seat binds: what a scaffold seat may hold without moving an m4b arc's rev. */
+const OPUS_SENTINEL = { backend: 'claude', model: 'claude-fable-5-1', effort: 'max' } as const;
+
+test('upgrade.design-pass-adopted: the previous release\'s plan-check answers read on HEAD with no design record (warned), and its role set hashes and seats no scaffold role', async () => {
+  // The answers the previous release's M1 fakes give its plan-checks: what its arcs recorded.
+  const scenario = JSON.parse(readFileSync(join(previousOf(PREVIOUS_RELEASE).root, 'evals', 'm1', 'scenarios', 'clean.json'), 'utf8')) as { steps: { role: string; answer?: unknown }[] };
+  const answers = scenario.steps.filter((s) => s.role === 'planCheck').map((s) => s.answer);
+  assert.ok(answers.length > 0);
+  const warned: string[] = [];
+  const write = process.stderr.write.bind(process.stderr);
+  process.stderr.write = ((chunk: string | Uint8Array, ...rest: never[]) => { warned.push(String(chunk)); return write(chunk, ...rest); }) as typeof process.stderr.write;
+  try {
+    for (const a of answers) {
+      const out = validatePlanCheckOutput(a);
+      assert.equal(designOfAnswer(out), null, 'no design record');
+    }
+  } finally {
+    process.stderr.write = write;
+  }
+  assert.ok([...warned.join('').matchAll(/roadmap: upgrade default \(([^)]+)\)/g)].some((m) => m[1] === 'plan-check.design'), 'the absent design record was warned');
+  // An arc the previous release started records the m4b role set: no scaffold seat in force, none hashed (its revs as before).
+  const adopted = resolveRouting({ ...arcStack('default', null, null), arcRoles: 'm4b' });
+  assert.ok(!seatsInForce(adopted).some((s) => s.role === 'scaffold'));
+  const { scaffold: _scaffold, ...dev16Roles } = adopted.table;
+  assert.equal(routingRevOf(adopted.table, 'none', 'm4b', false), routingRevOf({ ...dev16Roles, scaffold: { low: OPUS_SENTINEL, med: OPUS_SENTINEL, high: OPUS_SENTINEL } }, 'none', 'm4b', false), 'the scaffold seats are not hashed');
+  assert.ok(seatsInForce(resolveRouting({ ...arcStack('default', null, null), arcRoles: 'dev17' })).some((s) => s.role === 'scaffold'), 'a dev.17 arc seats it');
 });
 
 test('upgrade.checkpoint-answer-unapplied: a park checkpoint\'s answer the previous release recorded but did not apply (it crashed after the call), re-entering page-id with the failure it fixes, is adopted on HEAD: decided from the recorded answer with no new call, applied, the re-entry merged', T, async () => {

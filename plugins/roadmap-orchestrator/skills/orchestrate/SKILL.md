@@ -522,6 +522,26 @@ for changes on it, becomes fix units, never a hand edit of the branch:
 Read the CI log or the review in full first; a fix unit's spec cites what it fixes. Never push to an arc branch
 yourself, and never squash the fix into the PR by hand.
 
+## The design pass
+
+Every plan-check designs its unit before it is built (1.0.0-dev.17): it works in throwaway checkouts with a shell and the
+web, and its approve lands a design record on the spec's next revision (what the unit changes, the contracts it crosses,
+how each way it can fail is proven, the tests and docs it breaks, its size). Code holds the record where it can: a path
+outside the scope is a scope-growth proposal; a test no lane runs before the unit merges, or a design too big for one
+unit (two systems changed substantially, or more than the gate reads inline), is a plan defect. The plan-check may
+instead:
+
+- **split** the unit: the executor applies the split as a plan revision (the unit cut, its children added after it from
+  its own spec, every dependent moved onto all children, milestones too). Nothing for you to do; `status` shows the
+  children. A split code refuses twice parks the unit `plan-defect`.
+- **scaffold** a new system: a small writer lays the skeleton down first, code dry-runs its load test and commits it,
+  then the build. Only in arcs started on 1.0.0-dev.17 or later.
+- ask a **proof of concept** (at most two per unit): a throwaway build answers its questions; nothing of it merges, and the
+  build is told its lessons.
+
+A build that changes a test or doc its design did not list records a departure among the spec's decisions; read them
+when you review the unit. Size the units you plan so each fits one design; a split is the executor's repair, not your plan.
+
 ## Scope growth
 
 A plan-check sweeps for references to what a unit removes or renames and proposes the paths outside its scope.
@@ -553,7 +573,11 @@ second design park of one lineage (`respec-second`). `roadmap steer <unit>` is a
   session. The resume acknowledges the park.
 - **Parked `plan-defect`** (a missing witness its lane never runs, or whose file no build of the unit can create;
   uncharged): the item names each defect. Fix the plan by `apply` (the lane's argv or `testPaths`, the witness's
-  `files` or lane, the obligation's `deliveredBy`), then `roadmap resume <unit>` re-runs its lanes.
+  `files` or lane, the obligation's `deliveredBy`), then `roadmap resume <unit>` re-runs its lanes. At plan-check or
+  scaffold (1.0.0-dev.17) the item names the design's defects: a test in a lane that never runs before the unit merges
+  (force the batch lane in the spec's `forces`, or name the lane's systems), a design too big for one unit or a split code
+  refused, a scaffold whose load test does not run. Fix the spec or plan by `apply`, then `roadmap resume <unit>` re-runs
+  the stage.
 - **Parked `context-exceeded`** (a plan-check, build or gate call's prompt or context outgrew its model's window;
   uncharged): the item names the role, the call and the prompt's size. Make the stage's inputs fit (split the unit or
   narrow its spec, or a milestone's `references`, by `apply`, or route that seat to a class whose model has a larger
