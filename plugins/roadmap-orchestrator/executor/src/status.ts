@@ -506,8 +506,11 @@ export type Status = Readonly<{
   /** Raised and not acknowledged, ascending id: the log's items and the file-only `sup-*` / `host-*` ones. */
   needsUser: readonly Readonly<{ id: NeedsUserId; reason: NeedsUserReason; blocking: boolean }>[];
   commands: Readonly<{
-    /** Submitted, no terminal receipt yet, in submission order. */
-    pending: readonly Readonly<{ id: CommandId; type: CommandBody['type'] }>[];
+    /**
+     * Submitted, no terminal receipt yet, in submission order. `queuedFor` (dev.17): an apply held behind the stage boundary of
+     * these units (`apply-queued`); it lands there.
+     */
+    pending: readonly Readonly<{ id: CommandId; type: CommandBody['type']; queuedFor?: readonly UnitId[] }>[];
     /** The latest terminal receipts, oldest first. */
     receipts: readonly Receipt[];
   }>;
@@ -653,8 +656,11 @@ function seatOf(view: JournalView, unit: UnitId): UnitStatusLine['seat'] {
 /** The terminal receipts' dir (src/commands/queue.ts writes `<id>.<applied|rejected>.json` there). */
 const TERMINAL_RECEIPT = /^(cmd-[0-9a-f]{16})\.(?:applied|rejected)\.json$/;
 
-function commandsOf(runDir: AbsPath, arc: ArcId): Status['commands'] {
-  const pending = pendingCommandIds(runDir).map((id) => ({ id, type: readCommand(runDir, id, arc).file.body.type }));
+function commandsOf(runDir: AbsPath, arc: ArcId, view: JournalView): Status['commands'] {
+  const pending = pendingCommandIds(runDir).map((id) => {
+    const queued = view.applyQueued(id);
+    return { id, type: readCommand(runDir, id, arc).file.body.type, ...(queued === null ? {} : { queuedFor: queued.waitsFor }) };
+  });
   const dir = join(runDir, COMMANDS_DIR, 'receipts');
   const done = existsSync(dir) ? readdirSync(dir).flatMap((n) => {
     const m = TERMINAL_RECEIPT.exec(n);
@@ -1723,7 +1729,7 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
     ...openNeedsUser(view).map((n) => ({ id: n.id, reason: recordOf(runDir, n.id).reason, blocking: n.blocking })),
     ...fileNeedsUser(runDir, view).map((r) => ({ id: r.id, reason: r.reason, blocking: r.blocking })),
   ].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  const commands = commandsOf(runDir, arc);
+  const commands = commandsOf(runDir, arc, view);
   const acks = ackSeqs(events);
 
   // The holistic keys: only an arc whose plan in force names a vision (A5) has them.

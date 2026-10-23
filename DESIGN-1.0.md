@@ -373,8 +373,20 @@ arc whose owner died, a no-op otherwise); `witness-check --lane-file` (the imple
 `{planRev, specRevs, base}`, for an edit and `apply --base <out>/export.json`); `apply --ruling <sidecar>` (repeatable: rulings and the edits that depend on them land as one
 revision). `apply` gains the edit classes `unit-priority`, `known-defects` and `plan-check-shape` (none drains), and a
 re-entry may widen its lineage's scope envelope on an active ruling naming exactly the added patterns. A spec edit of a
-unit whose attempt is running is refused until its stage boundary; an attempt a crash cut short never refuses it (the
+unit whose attempt is running waits for its stage boundary; an attempt a crash cut short never holds it (the
 executor's startup records every one, `hold{recovery}` above).
+
+**Queued applies and apply warnings (dev.17, arc feedback 2026-10-23).** A spec edit of a unit running a stage puts that
+unit in the apply's scope, so the apply is queued behind the stage's boundary, never refused and dropped: an `apply-queued`
+fact, then a `queued` receipt naming what each unit runs; `status` lists the pending apply with the units it waits on. The
+drain holds the unit's next admission, so the apply lands before its next stage and is classified there, its stale set
+(§2.8 Propagation) computed then. Refused where it lands (the gate approved the unit meanwhile, say), it raises a
+non-blocking `apply-dropped` item naming the command, the units and every reason: an edit is never dropped silently. An
+edit refused whatever the boundary is refused at once. The receipt of an applied revision also warns, never refusing: a
+checkpoint running now goes stale (its bundle rejected at activation, its spend wasted); a re-entry without `reset` whose
+predecessor's chargeable failures leave it no fix round (its next charged failure, a red series or a gate revise, parks it
+for the operator, so a gate's directives reach the builder only through the operator). Partial revalidation of a stale
+bundle stays in the backlog (executor/BACKLOG.md, F09).
 
 ### 2.4 `status`
 

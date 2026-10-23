@@ -776,7 +776,7 @@ async function assertAcceptsApply(p: Phase1, f: Finished): Promise<void> {
   writeFileSync(p.l.plan, JSON.stringify({ ...plan, units: [...plan.units, { ...last, id: 'extra', spec: 'extra.json', after: [] }] }));
   const dry = await headCli(p, ['apply', '--dry-run', ...p.run]);
   assert.equal(dry.code, 0, dry.stderr);
-  assert.deepEqual(JSON.parse(dry.stdout), { dryRun: true, kind: 'accepted', rev: 2, nextRev: 3, changes: [{ type: 'unit-added', unit: 'extra' }], smoke: [], advisories: [], numbered: [] });
+  assert.deepEqual(JSON.parse(dry.stdout), { dryRun: true, kind: 'accepted', rev: 2, nextRev: 3, changes: [{ type: 'unit-added', unit: 'extra' }], smoke: [], advisories: [], numbered: [], warnings: [] });
 }
 
 // ---------------------------------------------------------------------------------------------------

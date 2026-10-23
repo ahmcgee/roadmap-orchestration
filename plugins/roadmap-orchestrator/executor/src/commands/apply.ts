@@ -69,7 +69,11 @@
 //            validates it (src/commands/rule.ts `rulingReasons`) against the revision being built, and landed by the one
 //            ruling path (src/input/classify.ts `withRulings`) on the ledger in force (an owner's ledger or sidecar edit
 //            is refused). A pack review keyed on the revision never sees the rulings without their dependent edits.
-//            Mutation.
+//            dev.17 (arc feedback 2026-10-23): a spec edit of a unit running a stage attempt is not refused: it puts that
+//            unit in the apply's scope (classify `busy`), so the apply is queued behind its stage boundary (`apply-queued`,
+//            a `queued` receipt) and evaluated there, its stale set computed then; refused there, it raises `apply-dropped`.
+//            The receipt warns, never refusing, of a running checkpoint the revision makes stale and of a re-entry with no
+//            fix round left (`applyWarnings`). Mutation.
 //   reverse  (M3, H13) `reverse <D-n>`: a fresh compensating revision built from the divergence's preimage and
 //            committed like any revision (src/commands/reverse.ts). Mutation, scope the arc.
 //   resolve-edge, run-only: facts about the graph (src/commands/graph.ts). Mutations with an empty scope.
@@ -110,7 +114,7 @@ import {
 } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import type { CommandBody, CommandFile, HashedFile, NeedsUserAck, ResidueKey, RevisionManifest, SpecM1, Stage } from '../core/records.ts';
-import { type PlanUnit, visionFile } from '../input/plan.ts';
+import { type PlanM1, type PlanUnit, boundsOf, visionFile } from '../input/plan.ts';
 import { gitRun } from '../git/git.ts';
 import type { ParkState } from '../core/state.ts';
 import { SchemaError } from '../core/validate.ts';
@@ -118,19 +122,19 @@ import { CONSTRAINTS_DOC, renderConstraints } from '../docs/constraints.ts';
 import { registryOf } from '../corpus/registry.ts';
 import type { RulesRegistry } from '../corpus/types.ts';
 import { INVARIANTS_DOC, renderInvariants } from '../docs/invariants.ts';
-import type { ContractOp, DivergenceDraft, Preimage } from '../holistic/types.ts';
+import type { BusyAttempt, ContractOp, DivergenceDraft, Preimage } from '../holistic/types.ts';
 import { bytesSha256, parseSpec } from '../spec/spec.ts';
 import { staleSetOf } from '../holistic/staleset.ts';
 import { type AbsPath, type RepoPath, absPath, isoTimeOf, repoPath } from '../core/values.ts';
 import { SCHEMA_VERSION } from '../core/version.ts';
 import { type ResidueEntry, readResidues, recordDisposition, undispositioned } from '../host/residues.ts';
-import { type ApplyProposal, type NextInputs, type Proposer, type RulingDraft, applyProposal, classify, readRulingRecord } from '../input/classify.ts';
+import { type ApplyProposal, type NextInputs, type Proposer, type RulingDraft, applyProposal, busyText, classify, readRulingRecord } from '../input/classify.ts';
 import { keepOwner } from '../input/rebase.ts';
 import {
   type InForce, type InputFiles, RENDER_INPUT, type RevisionInForce, type RoutingBase, keepCorpusFiles, keepInput, keepRevisionFiles, planInForce, planRouting,
   readInputFiles, requirePlanInForce, revisionInForce, revisionManifestOf, routingProvenanceOf,
 } from '../input/inforce.ts';
-import { needsUserAckPath, raisedFor, readNeedsUser, readNeedsUserAck } from '../needsuser.ts';
+import { needsUserAckPath, raiseNeedsUser, raisedFor, raisedWithReason, readNeedsUser, readNeedsUserAck } from '../needsuser.ts';
 import { dispatchOf, repin } from '../pipeline/dispatch.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
 import { applyRows } from '../preflight/checks.ts';
@@ -153,7 +157,7 @@ import { closeAdmissions } from './admissions.ts';
 import { decideFlow, requestFlow } from './flow.ts';
 import { requestAudit } from './audit.ts';
 import { resolveEdge, runOnly } from './graph.ts';
-import { isControl, readCommand, readReceipt, receiptSha256, writeReceipt } from './queue.ts';
+import { isControl, readCommand, readReceipt, receiptPath, receiptSha256, writeReceipt } from './queue.ts';
 import { mergeIn } from './mergein.ts';
 import { reverse } from './reverse.ts';
 import { rule, rulingReasons } from './rule.ts';
@@ -236,18 +240,41 @@ export async function finish(ctx: CommandContext, intent: IntentOf<'command.appl
     return { kind: 'applied', receiptSha256: receiptSha256(ctx.runDir, id, 'applied') };
   }
   const rejected = readReceipt(ctx.runDir, id, 'rejected');
-  if (rejected !== null && rejected.state === 'rejected') return { kind: 'rejected', reason: rejected.reason };
+  if (rejected !== null && rejected.state === 'rejected') {
+    raiseDropped(ctx, id, rejected.reason);
+    return { kind: 'rejected', reason: rejected.reason };
+  }
 
   const effect = await effectOf(ctx, command);
   crashPoint('command.apply.after-effect');
   const at = isoTimeOf(new Date());
   if (effect.kind === 'rejected') {
     writeReceipt(ctx.runDir, { v: SCHEMA_VERSION, command: id, state: 'rejected', at, reason: effect.reason });
+    crashPoint('command.apply.after-rejected-receipt');
+    raiseDropped(ctx, id, effect.reason);
     return { kind: 'rejected', reason: effect.reason };
   }
   const sha = writeReceipt(ctx.runDir, { v: SCHEMA_VERSION, command: id, state: 'applied', at, op: intent.op, verified: effect.verified });
   crashPoint('command.apply.after-receipt');
   return { kind: 'applied', receiptSha256: sha };
+}
+
+/**
+ * dev.17 (arc feedback 2026-10-23, item 7): an apply queued behind a running stage (`apply-queued`) and refused when it landed
+ * raises one `apply-dropped` item naming the dropped edit, once (after its rejected receipt, so recovery raises it too). Its
+ * operator was told it would land; nothing drops it silently.
+ */
+function raiseDropped(ctx: CommandContext, id: CommandId, reason: string): void {
+  const view = ctx.journal.view;
+  const queued = view.applyQueued(id);
+  if (queued === null || raisedWithReason(view, ctx.runDir, parentOf(id), 'apply-dropped') !== null) return;
+  raiseNeedsUser(ctx.journal, ctx.runDir, {
+    blocking: false, subject: { type: 'arc' }, reason: 'apply-dropped',
+    summary: `apply ${id}, queued behind the stage boundary of ${queued.waitsFor.join(', ')}, was refused when it landed there; none of its edits is in force: ${reason}`,
+    recommendation: 'Fix what the reasons name and run `roadmap apply` again (`roadmap apply --dry-run` shows the verdict now); '
+      + 'the edit of a unit that passed its gate since goes to a new unit that re-enters it.',
+    options: [], evidence: [receiptPath(ctx.runDir, id, 'rejected')],
+  }, parentOf(id));
 }
 
 async function effectOf(ctx: CommandContext, command: CommandFile): Promise<Effect> {
@@ -594,7 +621,8 @@ export type RevisionDraft = Omit<RevisionPayload, 'source'>;
 export type Render = Readonly<{ path: RepoPath; bytes: Buffer }>;
 
 export type RevisionVerdict =
-  | Readonly<{ kind: 'rejected'; reasons: readonly string[] }>
+  /** `busy` (dev.17): refused only because these units run a stage attempt; an apply lands at their boundary (`classify` `busy`). */
+  | Readonly<{ kind: 'rejected'; reasons: readonly string[]; busy?: readonly BusyAttempt[] }>
   | Readonly<{ kind: 'unchanged'; rev: PlanRev }>
   | Readonly<{
     kind: 'accepted'; draft: RevisionDraft; next: InputFiles; scoped: readonly UnitId[]; routings: readonly ResolvedRouting[]; renders: readonly Render[];
@@ -687,6 +715,7 @@ export function evaluateRevision(
     runDir: ctx.runDir, view: ctx.view, inForce, revision, next: proposal, residues: undispositioned(ctx.hostDir), routing: ctx.routingBase, proposer,
   });
   if (verdict.kind === 'rejected') return verdict;
+  if (verdict.kind === 'busy') return { kind: 'rejected', reasons: verdict.busy.map(busyText), busy: verdict.busy };
   if (verdict.kind === 'unchanged') return { kind: 'unchanged', rev: inForce.rev };
   // The lane row (src/preflight/lanerows.ts) over the units the revision changes, on every path a revision takes.
   const specOf = (unit: PlanUnit): SpecM1 => {
@@ -759,16 +788,17 @@ export type Rebuild = Readonly<{
 }>;
 
 export type ApplyVerdict =
-  | Readonly<{ kind: 'rejected'; reasons: readonly string[] }>
+  | Readonly<{ kind: 'rejected'; reasons: readonly string[]; busy?: readonly BusyAttempt[] }>
   | Readonly<{ kind: 'unchanged'; rev: PlanRev }>
   /** `smoke`: backends the new routings seat that the routing in force did not; they must pass a smoke first. */
   /** `corpusFiles`: a corpus arc's corpus files as its pin re-derived them (kept before the commit, M4a). */
   /** `rulings`: the ids its `--ruling` records land (I2), for the commit's proposer; `numbered`: each `C-?` record's assigned id. */
   /** `advisories` (scope growth, 2026-10-15): Phase-0 rows 10's, 13's and 14's, which never refuse (the receipt and the dry run list them). */
   /** `rebuild`: the proposal built again under the fence. */
+  /** `warnings` (dev.17, arc feedback 2026-10-23 items 8 and 9): what the revision costs that it does not refuse (`applyWarnings`). */
   | Readonly<{
     kind: 'accepted'; rev: PlanRev; evaluated: Extract<RevisionVerdict, { kind: 'accepted' }>; smoke: readonly Backend[]; corpusFiles: readonly SourceFile[];
-    rulings: readonly RulingId[]; numbered: readonly string[]; advisories: readonly Phase0Advisory[]; rebuild: Rebuild;
+    rulings: readonly RulingId[]; numbered: readonly string[]; advisories: readonly Phase0Advisory[]; rebuild: Rebuild; warnings: readonly string[];
   }>;
 
 /** One rejection per line of text, for a receipt's reason and the dry run. */
@@ -840,8 +870,37 @@ export async function evaluateApply(input: ApplyInput): Promise<ApplyVerdict> {
   };
   return {
     kind: 'accepted', rev: inForce.rev, evaluated: verdict, smoke, corpusFiles: p0.opened?.files ?? [], rulings: records.map((r) => r.sidecar.id), numbered,
-    advisories: p0.advisories, rebuild,
+    advisories: p0.advisories, rebuild, warnings: applyWarnings(input.view, proposal.plan, verdict.draft.changes),
   };
+}
+
+/**
+ * What an accepted apply costs that it never refuses (dev.17, arc feedback 2026-10-23), one receipt line each:
+ * - item 8: a checkpoint running now read the plan before this revision, so a bundle of it that touches what the revision
+ *   changes is rejected stale at activation, its spend wasted;
+ * - item 9: a re-entry without `reset` carries its predecessor's chargeable failures; at its bound less one, the next charged
+ *   failure (a red series, a gate revise) parks it for the operator instead of a fix round, so a gate's directives reach the
+ *   builder only through the operator.
+ */
+export function applyWarnings(view: JournalView, plan: PlanM1, changes: readonly PlanChange[]): readonly string[] {
+  const out: string[] = [];
+  for (const c of view.holistic().checkpoints) {
+    if (c.decided !== null) continue;
+    out.push(`warning: checkpoint ${c.inputs.job} is running on plan rev ${c.inputs.vector.plan}; a bundle of it that touches what this revision changes `
+      + 'is rejected stale when it lands, and its spend is wasted (apply after it decides unless the edit cannot wait)');
+  }
+  for (const c of changes) {
+    if (c.type !== 'unit-reentered' || c.reset) continue;
+    const unit = plan.units.find((u) => u.id === c.unit);
+    if (unit === undefined) throw new Error(`a re-entry of ${c.reenters} as ${c.unit}, which the plan does not list`);
+    const failures = view.unit(c.reenters).counters.chargeableFailures;
+    const bound = boundsOf(plan, unit).chargeable;
+    if (failures + 1 < bound) continue;
+    out.push(`warning: ${c.unit} re-enters ${c.reenters} with ${failures} chargeable failures of its bound ${bound} and no reset: its next charged failure `
+      + '(a red lane series, a gate revise) parks it for you instead of a fix round, so a gate\'s directives reach the builder only through you; '
+      + 'when the re-entry answers a known cause, cite a ruling as `reenters.reset` to start it at 0');
+  }
+  return out;
 }
 
 /** The apply's manifest is the revision in force already. */
@@ -900,7 +959,12 @@ async function applyPlan(ctx: CommandContext, id: CommandId, body: Extract<Comma
       return { kind: 'rejected', reason: rejectedText([`the arc moved under each of ${APPLY_ATTEMPTS} evaluations of this apply (other revisions or spec patches landed while it was evaluated); run it again`]) };
     }
     if (committed.kind === 'rejected') return { kind: 'rejected', reason: rejectedText(committed.reasons) };
-    return { kind: 'applied', verified: [...appliedText(committed.fact.rev, committed.fact.changes), ...verdict.numbered, ...verdict.advisories.map(advisoryText)] };
+    const queued = ctx.journal.view.applyQueued(id);
+    const landed = queued === null ? [] : [`queued behind the stage boundary of ${queued.waitsFor.join(', ')} (seq ${queued.seq}); applied there`];
+    return {
+      kind: 'applied',
+      verified: [...appliedText(committed.fact.rev, committed.fact.changes), ...landed, ...verdict.numbered, ...verdict.advisories.map(advisoryText), ...verdict.warnings],
+    };
   }
 }
 

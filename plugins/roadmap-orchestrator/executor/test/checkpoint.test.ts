@@ -10,7 +10,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import { applyCommand } from '../src/commands/apply.ts';
-import { submitCommand } from '../src/commands/queue.ts';
+import { readReceipt, submitCommand } from '../src/commands/queue.ts';
 import { type DivergenceId, type NeedsUserId, arcId, commandId, jobIdOf, unitId } from '../src/core/ids.ts';
 import { absPath } from '../src/core/values.ts';
 import { status } from '../src/status.ts';
@@ -37,7 +37,7 @@ import {
 import { auditArc, mapped } from './fixtures/audit-common.ts';
 import { ruleRecord, submitRule } from './fixtures/publish-common.ts';
 import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep, serialRuntime } from './fixtures/stage-common.ts';
-import { type ArcRun, appendSteps, codexStep, contextFor, gateStep, mulBuild, stepUntil } from './fixtures/unit-common.ts';
+import { type ArcRun, appendSteps, applyBody, codexStep, contextFor, gateStep, mulBuild, stepUntil } from './fixtures/unit-common.ts';
 import { candidateTree } from './fixtures/brake-common.ts';
 import { scriptTree } from './helpers/witness.ts';
 
@@ -164,6 +164,39 @@ describe('the checkpoint and its bundle', () => {
       assert.deepEqual(planLimits(r), { convergenceK: 3 });
       assert.deepEqual(bundleRevs(r), [[r.journal.view.planApplied()!.rev, 'ckpt-2']]);
       assert.deepEqual(checkpointCalls(r), ['ckpt-1', 'ckpt-2']);
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('apply.warns-running-checkpoint (dev.17, arc feedback 2026-10-23 item 8): an apply while a checkpoint runs is applied, never blocked, and its receipt warns that the checkpoint\'s bundle goes stale and its spend is wasted; with none running, no warning', T, async () => {
+    const d = checkpointArc([...visionLenses('audit-1'), checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [VALID_OP] }), [barrier]), checkpointStep('ckpt-2', checkpointAnswer({ decision: 'no-op' }))]);
+    const r = contextFor(d);
+    const { ctx, w } = checkpointContext(r);
+    const editAndApply = async (direction: string) => {
+      const plan = JSON.parse(readFileSync(d.planPath, 'utf8')) as Record<string, unknown>;
+      writeFileSync(d.planPath, JSON.stringify({ ...plan, direction }));
+      const out = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, applyBody(d)));
+      assert.equal(out.kind, 'applied', JSON.stringify(out));
+      return readReceipt(r.ctx.runDir, commandIdOf(r), 'applied');
+    };
+    const commandIdOf = (x: ArcRun) => x.journal.view.planApplied()!.command!;
+    try {
+      await completedAudit(r, ctx);
+      const rev = r.journal.view.planApplied()!.rev;
+      const running = runCheckpoint(ctx);
+      await reached(d.scenarioDir, 'ckpt', 120_000);
+      const during = await editAndApply('Keep it smaller.');
+      assert.ok(during?.state === 'applied', JSON.stringify(during));
+      const warnings = during.verified.filter((l) => l.startsWith('warning:'));
+      assert.equal(warnings.length, 1, JSON.stringify(during.verified));
+      assert.match(warnings[0]!, new RegExp(`^warning: checkpoint ckpt-1 is running on plan rev ${rev}; .*rejected stale.*spend is wasted`));
+      release(d.scenarioDir, 'ckpt');
+      const first = await running;
+      assert.ok(first.kind === 'decided' && first.decision.kind === 'rejected' && first.decision.reason === 'stale', JSON.stringify(first));
+      const after = await editAndApply('Keep it smaller still.');
+      assert.ok(after?.state === 'applied');
+      assert.deepEqual(after.verified.filter((l) => l.startsWith('warning:')), [], 'no checkpoint runs: no warning');
     } finally {
       r.journal.close();
     }

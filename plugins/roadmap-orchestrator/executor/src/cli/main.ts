@@ -295,13 +295,16 @@ async function dryRun(run: Run, start: RunStart, hostDir: AbsPath, base: Revisio
   });
   switch (verdict.kind) {
     case 'rejected':
-      return { dryRun: true, kind: 'rejected', reasons: verdict.reasons };
+      // dev.17: refused only because units run a stage attempt: the apply would queue behind their boundary and be evaluated there.
+      return verdict.busy === undefined
+        ? { dryRun: true, kind: 'rejected', reasons: verdict.reasons }
+        : { dryRun: true, kind: 'queues', waitsFor: verdict.busy, reasons: verdict.reasons };
     case 'unchanged':
       return { dryRun: true, kind: 'unchanged', rev: verdict.rev };
     case 'accepted':
       return {
         dryRun: true, kind: 'accepted', rev: verdict.rev, nextRev: verdict.evaluated.draft.rev, changes: verdict.evaluated.draft.changes, smoke: verdict.smoke,
-        advisories: verdict.advisories, numbered: verdict.numbered,
+        advisories: verdict.advisories, numbered: verdict.numbered, warnings: verdict.warnings,
       };
   }
 }

@@ -3,14 +3,16 @@
 // boundary (A12), never by killing what runs; the plan in force changes what the arc does next. Named tests: apply.exec-add-unit-mid-build,
 // apply.exec-revision-in-flight, apply.exec-routing-parks, apply.exec-resume-at-boundary,
 // apply.exec-respawn-ignores-unapplied-edit; the crash cells of the matrix row "start: a later start whose files
-// change the plan".
+// change the plan". dev.17: apply.exec-queued-at-boundary, apply.exec-queued-dropped and the crash cells of the row
+// QUEUED_APPLY (apply.exec-queued-crash).
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import type { Event, Fact } from '../src/core/events.ts';
 import { type CommandId, commandId, unitId } from '../src/core/ids.ts';
-import { terminalReceipt } from '../src/commands/queue.ts';
+import { readReceipt, terminalReceipt } from '../src/commands/queue.ts';
+import { readNeedsUser } from '../src/needsuser.ts';
 import { absPath } from '../src/core/values.ts';
 import { CONTINUE_DIRECTIVE, RESPEC_DIRECTIVE } from '../src/prompts/directives.ts';
 import { reached, release } from './helpers/barrier.ts';
@@ -18,7 +20,7 @@ import { assertNoSurvivors } from './helpers/reap.ts';
 import { type CodexAct, type Step, readCalls } from './helpers/scenario.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
 import { tmpDir } from './helpers/repo.ts';
-import { PLAN_START, crashCells } from './matrix.ts';
+import { PLAN_START, QUEUED_APPLY, crashCells } from './matrix.ts';
 import { type Scenario, finalReason, layout, supervisedRun } from './fixtures/pm-common.ts';
 import { stateOf } from './fixtures/sup-common.ts';
 import { planCheckStep } from './fixtures/stage-common.ts';
@@ -156,6 +158,137 @@ test('apply.exec-revision-in-flight: rev + 1 of a held unit\'s spec (paused mid-
   assert.deepEqual(view.opsOf('spec.patch'), [], 'no executor patch of a spec whose revision is pending');
   assert.ok(readCalls(r.scenarioPath).every((c) => c.step !== null), 'the build after the re-entry resumed the session, told the spec was amended');
 });
+
+// dev.17 (arc feedback 2026-10-23, item 7): a spec edit of a unit running a stage is queued behind its stage boundary, never
+// rejected and dropped.
+const addA2 = (spec: Json): void => {
+  spec['acceptance'] = [...(spec['acceptance'] as Json[]), { id: 'A2', clause: 'mul(0, 5) is 0', failLoudIfUndelivered: true, state: 'active' }];
+  spec['rev'] = 2;
+};
+const queuedReceipt = (r: ExecRun, id: CommandId) => readReceipt(absPath(r.runDir), id, 'queued');
+const factsOf = <K extends Fact['kind']>(r: ExecRun, kind: K): readonly Extract<Fact, { kind: K }>[] =>
+  events(r).flatMap((e) => (e.type === 'fact' && e.fact.kind === kind ? [e.fact as Extract<Fact, { kind: K }>] : []));
+
+test('apply.exec-queued-at-boundary: rev + 1 of a unit\'s spec applied while its build runs is queued (an apply-queued fact, a queued receipt, status naming the unit), lands at the build\'s stage boundary with nothing killed, and the unit re-opens at plan-check on it', T, async (t) => {
+  const thread = '00000000-0000-4000-8000-0000000a9921';
+  const r = setupExec(t, {
+    steps: [
+      ...SMOKE_DEFAULT, planCheckStep({ decision: 'approve' }), blockedBuild('build1', thread, [{ type: 'threadStarted' }]),
+      planCheckStep({ decision: 'approve' }),
+      codexStep([], { argv: ['exec', 'resume', thread], stdinContains: [RESPEC_DIRECTIVE, 'mul(0, 5) is 0'] }),
+      gateStep({ decision: 'approve' }),
+    ],
+  });
+  const run = startExec(r);
+  await reached(r.scenarioDir, 'build1', WAIT_MS);
+  editSpec(r, 'u1', addA2);
+  const id = await apply(r);
+  await until(() => queuedReceipt(r, id) !== null, WAIT_MS, 'the queued receipt');
+  const queued = queuedReceipt(r, id);
+  assert.ok(queued?.state === 'queued');
+  assert.deepEqual(queued.waitsFor, ['u1']);
+  assert.match(queued.reason, /^u1 is running build attempt \d+: the apply lands at its stage boundary and is evaluated there$/);
+  assert.deepEqual(factsOf(r, 'apply-queued'), [{ kind: 'apply-queued', command: id, waitsFor: ['u1'] }]);
+  assert.equal(receiptOf(r, id), null, 'no terminal receipt while the build runs');
+  const pending = (await statusOf(r)).commands.pending;
+  assert.deepEqual(pending, [{ id, type: 'apply', queuedFor: ['u1'] }]);
+  release(r.scenarioDir, 'build1');
+  const exit = await run.exit;
+  assert.equal(exit.code, 0, exit.stderr);
+  assert.deepEqual(reasonOf(exit), { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }] });
+  const receipt = receiptOf(r, id);
+  assert.ok(receipt?.state === 'applied', JSON.stringify(receipt));
+  assert.ok(receipt.verified.some((l) => /^queued behind the stage boundary of u1 \(seq \d+\); applied there$/.test(l)), JSON.stringify(receipt.verified));
+  assert.deepEqual(kills(r), [], 'the running build was not interrupted');
+  const applied = seqOf(r, (f) => f.kind === 'plan-applied' && f.command === id);
+  const reopened = seqOf(r, (f) => f.kind === 'reopened' && f.command === id && f.specRev === 2);
+  assert.ok(outcomeSeq(r, 'u1', 'build') < applied, 'applied after the build recorded its outcome');
+  assert.ok(applied < reopened && reopened < outcomeSeq(r, 'u1', 'plan-check', 2), 're-opened at plan-check on the revision');
+  assert.equal(journalOf(r).view.unit(U1).approval?.fingerprint.specRev, 2, 'approved on the revision');
+  assert.deepEqual((await statusOf(r)).needsUser.filter((n) => n.reason === 'apply-dropped'), []);
+  assert.ok(readCalls(r.scenarioPath).every((c) => c.step !== null));
+});
+
+test('apply.exec-queued-dropped: a spec edit queued behind a running gate that approves is refused where it lands (the unit is approved and publishing); one non-blocking apply-dropped item names the dropped edit and why, and the unit merges on the spec it was approved on', T, async (t) => {
+  const r = setupExec(t, {
+    steps: [
+      ...SMOKE_DEFAULT, planCheckStep({ decision: 'approve' }), mulBuild(),
+      gateStep({ decision: 'approve' }, {}, [{ type: 'barrier', name: 'gate1', timeoutMs: 120_000 }]),
+    ],
+  });
+  const run = startExec(r);
+  await reached(r.scenarioDir, 'gate1', WAIT_MS);
+  editSpec(r, 'u1', addA2);
+  const id = await apply(r);
+  await until(() => queuedReceipt(r, id) !== null, WAIT_MS, 'the queued receipt');
+  const queued = queuedReceipt(r, id);
+  assert.ok(queued?.state === 'queued');
+  assert.match(queued.reason, /^u1 is running gate attempt \d+:/);
+  release(r.scenarioDir, 'gate1');
+  const exit = await run.exit;
+  assert.equal(exit.code, 0, exit.stderr);
+  assert.deepEqual(reasonOf(exit), { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }] });
+  const receipt = receiptOf(r, id);
+  assert.ok(receipt?.state === 'rejected', JSON.stringify(receipt));
+  assert.match(receipt.reason, /unit u1 is (approved and publishing|merged); its spec is fixed/);
+  assert.deepEqual(factsOf(r, 'plan-applied').map((f) => f.command), [null], 'nothing of the edit is in force');
+  assert.equal(journalOf(r).view.unit(U1).approval?.fingerprint.specRev, 1);
+  const dropped = (await statusOf(r)).needsUser.filter((n) => n.reason === 'apply-dropped');
+  assert.equal(dropped.length, 1, 'one item, raised once');
+  assert.equal(dropped[0]!.blocking, false);
+  const item = readNeedsUser(absPath(r.runDir), dropped[0]!.id)!;
+  assert.match(item.summary, new RegExp(`^apply ${id}, queued behind the stage boundary of u1, was refused when it landed there; none of its edits is in force: apply rejected .*its spec is fixed`));
+  assert.deepEqual(item.evidence, [join(r.runDir, 'commands', 'receipts', `${id}.rejected.json`)]);
+});
+
+for (const cell of crashCells(QUEUED_APPLY)) {
+  test(`apply.exec-queued-crash ${cell.boundary} ${cell.label}: ${cell.recovery}`, T, async (t) => {
+    const trigger = writeTrigger(tmpDir('queued-crash'), { label: cell.label, occurrence: 1 });
+    const dropped = cell.label === 'command.apply.after-rejected-receipt';
+    const thread = '00000000-0000-4000-8000-0000000a9922';
+    const r = setupExec(t, {
+      // Unit steps keyed to u1, so the respawn's smoke takes only its own (the last) steps.
+      steps: [
+        ...SMOKE_DEFAULT,
+        ...(dropped
+          ? [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' }, {}, [{ type: 'barrier', name: 'held', timeoutMs: 120_000 }])]
+          : [
+            planCheckStep({ decision: 'approve' }), blockedBuild('held', thread, [{ type: 'threadStarted' }]),
+            planCheckStep({ decision: 'approve' }), codexStep([], { argv: ['exec', 'resume', thread], stdinContains: [RESPEC_DIRECTIVE, 'mul(0, 5) is 0'] }),
+            gateStep({ decision: 'approve' }),
+          ]).map((step) => ({ ...step, unit: 'u1' })),
+        ...SMOKE_DEFAULT,
+      ],
+    });
+    const run = startExec(r, [], { ROADMAP_TEST_CRASH: trigger });
+    await reached(r.scenarioDir, 'held', WAIT_MS);
+    editSpec(r, 'u1', addA2);
+    const id = await apply(r);
+    if (!dropped) await until(() => events(r).filter((e) => e.type === 'fact' && e.fact.kind === 'executor-started').length === 2, WAIT_MS, 'the respawn');
+    else await until(() => factsOf(r, 'apply-queued').length === 1, WAIT_MS, 'the apply queued behind the gate');
+    release(r.scenarioDir, 'held');
+    const exit = await run.exit;
+    assert.equal(exit.code, 0, exit.stderr);
+    assertFired(trigger);
+    assert.equal(factsOf(r, 'executor-started').length, 2, 'one executor crash, which the supervisor restarted');
+    assert.deepEqual(reasonOf(exit), { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }] });
+    assert.deepEqual(factsOf(r, 'apply-queued'), [{ kind: 'apply-queued', command: id, waitsFor: ['u1'] }], 'queued once');
+    const receipt = receiptOf(r, id);
+    const items = (await statusOf(r)).needsUser.filter((n) => n.reason === 'apply-dropped');
+    if (dropped) {
+      assert.equal(receipt?.state, 'rejected', JSON.stringify(receipt));
+      assert.equal(items.length, 1, 'the one apply-dropped item');
+      assert.deepEqual(factsOf(r, 'plan-applied').map((f) => f.command), [null]);
+      assert.equal(journalOf(r).view.unit(U1).approval?.fingerprint.specRev, 1);
+    } else {
+      assert.equal(receipt?.state, 'applied', JSON.stringify(receipt));
+      assert.deepEqual(items, []);
+      assert.deepEqual(factsOf(r, 'plan-applied').map((f) => f.command), [null, id], 'the revision recorded once');
+      assert.equal(journalOf(r).view.unit(U1).approval?.fingerprint.specRev, 2, 'approved on the revision');
+    }
+    assert.deepEqual(journalOf(r).view.openIntents(), []);
+  });
+}
 
 test('apply.exec-routing-parks: a routing apply that moves the building unit\'s implementer seat parks it routing-changed at its next dispatch', T, async (t) => {
   const r = setupExec(t, { steps: [...SMOKE_DEFAULT, planCheckStep({ decision: 'approve' }), blockedBuild('build1')] });

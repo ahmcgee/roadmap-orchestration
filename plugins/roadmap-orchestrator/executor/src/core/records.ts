@@ -1654,7 +1654,12 @@ export const commandFile: Read<CommandFile> = object((f) => ({
 export type Receipt =
   | Readonly<{ v: SchemaVersion; command: CommandId; state: 'accepted'; at: IsoTime }>
   | Readonly<{ v: SchemaVersion; command: CommandId; state: 'applied'; at: IsoTime; op: OpId; verified: readonly string[] }>
-  | Readonly<{ v: SchemaVersion; command: CommandId; state: 'rejected'; at: IsoTime; reason: string }>;
+  | Readonly<{ v: SchemaVersion; command: CommandId; state: 'rejected'; at: IsoTime; reason: string }>
+  /**
+   * dev.17: an `apply` whose scope holds a unit in a stage waits for that stage's boundary (A12) and says so (`apply-queued`):
+   * `waitsFor` the units it waits on, `reason` what each runs. Not terminal; `applied` or `rejected` follows.
+   */
+  | Readonly<{ v: SchemaVersion; command: CommandId; state: 'queued'; at: IsoTime; waitsFor: readonly UnitId[]; reason: string }>;
 
 export const receipt: Read<Receipt> = tagged('state', {
   accepted: object((f): Receipt => ({ v: f.get('v', version), command: f.get('command', cmdId), state: f.get('state', literal('accepted')), at: f.get('at', time) })),
@@ -1664,6 +1669,10 @@ export const receipt: Read<Receipt> = tagged('state', {
   })),
   rejected: object((f): Receipt => ({
     v: f.get('v', version), command: f.get('command', cmdId), state: f.get('state', literal('rejected')), at: f.get('at', time), reason: f.get('reason', str),
+  })),
+  queued: object((f): Receipt => ({
+    v: f.get('v', version), command: f.get('command', cmdId), state: f.get('state', literal('queued')), at: f.get('at', time),
+    waitsFor: f.get('waitsFor', arrayOf(unit, { nonEmpty: true })), reason: f.get('reason', str),
   })),
 });
 
@@ -1714,11 +1723,14 @@ export const NEEDS_USER_REASONS = [
   // dev.17 (flaky ledger), non-blocking: a deflake unit parked, so the code edges it held dropped (src/pipeline/deflake.ts);
   // a key flaked again after two deflake units merged, so no third is minted.
   'deflake-parked', 'flake-recurring',
+  // dev.17, non-blocking: an `apply` queued behind a running stage (`apply-queued`) was refused when it landed at the stage
+  // boundary; the item names the dropped edit and why.
+  'apply-dropped',
 ] as const;
 /** The reasons from M3 on raised non-blocking; every other one is raised blocking. */
 export const NON_BLOCKING_M3_REASONS = [
   'bundle-request', 'convergence-bound', 'convergence-identity', 'audit-owed', 'divergence-digest', 'flow-proposal', 'flow-host', 'flow-worse', 'flow-invalid',
-  'ruler-changed', 'executor-fault', 'deflake-parked', 'flake-recurring',
+  'ruler-changed', 'executor-fault', 'deflake-parked', 'flake-recurring', 'apply-dropped',
 ] as const satisfies readonly NeedsUserReason[];
 export type NeedsUserReason = (typeof NEEDS_USER_REASONS)[number];
 

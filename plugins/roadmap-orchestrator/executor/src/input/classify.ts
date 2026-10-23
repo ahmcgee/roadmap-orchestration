@@ -152,7 +152,7 @@ import type { AbsPath, RepoPattern } from '../core/values.ts';
 import { undispositioned } from '../host/residues.ts';
 import { classifyObligations } from '../holistic/obligations.ts';
 import { specCensusMismatches } from '../holistic/rederive.ts';
-import { type ClassifiedAdmit, type ObligationDisposition, type Obligations, type RulingSidecar, type Vision, isExempt, parseObligations, parseRulingSidecar, parseVision } from '../holistic/types.ts';
+import { type BusyAttempt, type ClassifiedAdmit, type ObligationDisposition, type Obligations, type RulingSidecar, type Vision, isExempt, parseObligations, parseRulingSidecar, parseVision } from '../holistic/types.ts';
 import { advancesReasons, visionEditReasons } from '../holistic/vision.ts';
 import { citedFailure, laneFailures, outcomeRef } from '../pipeline/failures.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
@@ -237,7 +237,13 @@ export type Classified =
     dropped: readonly Readonly<{ obligation: ObligationId; sentences: readonly string[] }>[];
     inputs: NextInputs;
   }>
-  | Readonly<{ kind: 'rejected'; reasons: readonly string[] }>;
+  | Readonly<{ kind: 'rejected'; reasons: readonly string[] }>
+  /**
+   * dev.17 (arc feedback 2026-10-23, item 7): nothing refused, but a spec edit of a unit running a stage attempt (`busy`), which
+   * holds only at that attempt's boundary. An apply's scope then holds the busy units (`commandScope`), so the scheduler lands it
+   * at their boundary and evaluates it again there; `changes`: the rest of its edits, for that scope. Any other proposer refuses it.
+   */
+  | Readonly<{ kind: 'busy'; busy: readonly BusyAttempt[]; changes: readonly PlanChange[] }>;
 
 export type ClassifyInput = Readonly<{
   runDir: AbsPath;
@@ -313,7 +319,7 @@ function opportunityAdvancesReason(proposer: Extract<Proposer, { type: 'bundle' 
 /** The spec change of a dispatched unit, or why it is refused; null when the file is the unit's spec. */
 function dispatchedSpec(
   input: ClassifyInput, unit: PlanUnit, u: UnitState, path: AbsPath, bytes: Buffer, spec: SpecM1, inputs: NextInputs,
-): PlanChange | string | null {
+): PlanChange | Readonly<{ busy: BusyAttempt }> | string | null {
   const recorded = u.spec;
   if (recorded === null) throw new Error(`unit ${unit.id} is dispatched without a recorded spec`);
   const sha = bytesSha256(bytes);
@@ -327,10 +333,6 @@ function dispatchedSpec(
   if (status === 'park-pending' && (u.decided === null || !['plan-check', 'gate'].includes(u.decided.stage))) {
     return `unit ${unit.id} is parked at ${u.decided?.stage}, which is final in M1; re-enter the work under a new unit id`;
   }
-  // Arc feedback 2026-10-15: an attempt a crash cut short is recorded at the executor's startup (a recovery hold, or its
-  // call), so only a running one refuses.
-  const open = openAttempt(input.view, unit.id);
-  if (open?.live === true) return `unit ${unit.id} is running ${open.stage} attempt ${open.attempt}; apply the edit at its stage boundary`;
   const kept = keptInput(input.runDir, recorded.sha256, SPEC_INPUT);
   if (kept === null) throw new Error(`unit ${unit.id}: the spec it was dispatched at (${recorded.sha256}) is not kept in the run dir`);
   const was = parseSpec(kept, path);
@@ -345,13 +347,26 @@ function dispatchedSpec(
         + '(lane evidenceGlobs and evidenceExcludes may change at the current rev)';
     }
     if (pending !== null) return `unit ${unit.id} has revision ${pending.rev} pending; apply that revision, or the recorded spec to withdraw it, before an evidence-only edit`;
-    return change('evidence');
+    return busyOr(input.view, unit.id, change('evidence'));
   }
   if (spec.rev !== recorded.rev + 1) {
     return `unit ${unit.id}: its spec ${path} is at rev ${spec.rev}, but the unit's recorded rev is ${recorded.rev}; a revision sets rev ${recorded.rev + 1}`;
   }
-  return change('revision');
+  return busyOr(input.view, unit.id, change('revision'));
 }
+
+/**
+ * An edit of a dispatched unit's spec that holds now, or (dev.17, arc feedback 2026-10-23 item 7) the stage attempt the unit
+ * is running: the apply waits for that attempt's boundary and is evaluated again there (`busy`). Arc feedback 2026-10-15: an
+ * attempt a crash cut short is recorded at the executor's startup (a recovery hold, or its call), so only a running one waits.
+ */
+function busyOr(view: JournalView, unit: UnitId, change: PlanChange): PlanChange | Readonly<{ busy: BusyAttempt }> {
+  const open = openAttempt(view, unit);
+  return open?.live === true ? { busy: { unit, stage: open.stage, attempt: open.attempt } } : change;
+}
+
+/** What a busy unit is running, as a refusal or a queued receipt says it. */
+export const busyText = (b: BusyAttempt): string => `unit ${b.unit} is running ${b.stage} attempt ${b.attempt}; the edit applies at its stage boundary`;
 
 /**
  * A plan unit without its M2 lifecycle fields, its M3 routing layer and limits and its M4a rev 3 priority (their own edit
@@ -631,6 +646,7 @@ export function classify(input: ClassifyInput): Classified {
   const reasons: string[] = [];
   const changes: PlanChange[] = [];
   const scoped = new Set<UnitId>();
+  const busy: BusyAttempt[] = [];
   const { ledger, inputs } = nextInputsOf(input, reasons);
 
   for (const field of FIXED) {
@@ -757,6 +773,7 @@ export function classify(input: ClassifyInput): Classified {
     }
     const c = dispatchedSpec(input, unit, view.unit(unit.id), file.path, file.bytes, spec, inputs);
     if (typeof c === 'string') reasons.push(c);
+    else if (c !== null && 'busy' in c) busy.push(c.busy);
     else if (c !== null) {
       changes.push(c);
       scoped.add(unit.id);
@@ -940,7 +957,8 @@ export function classify(input: ClassifyInput): Classified {
   // dev.17: propagation units and their code proposer.
   propagationRows(cur, plan, proposer, changes, reasons);
 
-  if (reasons.length > 0) return { kind: 'rejected', reasons };
+  if (reasons.length > 0) return { kind: 'rejected', reasons: [...reasons, ...busy.map(busyText)] };
+  if (busy.length > 0) return { kind: 'busy', busy, changes };
   // No change but other bytes (whitespace, key order): the new bytes come into force with no change listed.
   const sameInputs = !inputs.changed.rulings && !inputs.changed.obligations && !inputs.changed.vision && !inputs.changed.corpus && !inputs.changed.phase0;
   if (changes.length === 0 && bytesSha256(next.planBytes) === inForce.manifest.planSha256 && sameSpecs(input) && sameInputs) return { kind: 'unchanged' };
@@ -1389,6 +1407,10 @@ const unitsScope = (units: Iterable<UnitId>): CommandScope => {
   return sorted.length === 0 ? NONE : { type: 'units', units: sorted };
 };
 
+/** `scope` with `units` added (the arc holds every unit already). */
+const unionScope = (scope: CommandScope, units: readonly UnitId[]): CommandScope =>
+  (scope.type === 'arc' ? scope : unitsScope([...(scope.type === 'units' ? scope.units : []), ...units]));
+
 /**
  * Whether a change drains the whole arc (A12): plan-wide routing or limits, a resource or pool, capacity and the other
  * plan-wide fields, the suite, and the holistic layer (obligations, mapping, vision, advances, the corpus pin). The flow
@@ -1688,6 +1710,7 @@ export function commandScope(sc: ScopeContext): ScopeOf {
           runDir: sc.runDir, view, inForce, revision, next: proposal.next, residues: undispositioned(sc.hostDir), routing: sc.routingBase,
           proposer: proposal.records.length === 0 ? { type: 'apply' } : { type: 'apply', rulings: proposal.records.map((r) => r.sidecar.id) },
         });
+        if (verdict.kind === 'busy') return unionScope(changesScope(verdict.changes, inForce.plan, proposal.next.plan), verdict.busy.map((b) => b.unit));
         return verdict.kind === 'accepted' ? changesScope(verdict.changes, inForce.plan, proposal.next.plan) : NONE;
       }
     }

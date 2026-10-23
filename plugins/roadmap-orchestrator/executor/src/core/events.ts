@@ -759,6 +759,12 @@ export type Fact =
    */
   | Readonly<{ kind: 'scope-decided'; unit: UnitId; attempt: number; command: CommandId; decision: 'accepted' | 'rejected'; reason: string }>
   /**
+   * dev.17 (arc feedback 2026-10-23, item 7): the scheduler held `apply` `command` because its scope holds units in a stage
+   * (`waitsFor`, sorted): it lands at their stage boundary (A12), evaluated then. Once per command, before its `queued`
+   * receipt; an apply refused when it lands raises an `apply-dropped` item.
+   */
+  | Readonly<{ kind: 'apply-queued'; command: CommandId; waitsFor: readonly UnitId[] }>
+  /**
    * A unit re-opened on a spec revision the architect applied (`specRev`, the unit's recorded spec rev + 1,
    * whose bytes hash to `specSha256`): by `resume <unit>` of a unit parked at a judgment stage (`command`: the
    * resume), or by the driver at an in-flight unit's next stage boundary that allows it (`command`: the apply
@@ -2400,6 +2406,11 @@ export const fact: Read<Fact> = tagged('kind', {
     kind: f.get('kind', literal('scope-decided')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), command: f.get('command', cmdR),
     decision: f.get('decision', oneOf(['accepted', 'rejected'] as const)), reason: f.get('reason', str),
   })),
+  'apply-queued': object((f): Fact => {
+    const out = { kind: f.get('kind', literal('apply-queued')), command: f.get('command', cmdR), waitsFor: f.get('waitsFor', arrayOf(unitR, { nonEmpty: true })) };
+    assertUnique(out.waitsFor, (u) => u, `${f.path}.waitsFor`);
+    return out;
+  }),
   reopened: object((f): Fact => ({
     kind: f.get('kind', literal('reopened')), unit: f.get('unit', unitR), command: f.get('command', nullable(cmdR)), specRev: f.get('specRev', specRevR),
     specSha256: f.get('specSha256', sha256R),

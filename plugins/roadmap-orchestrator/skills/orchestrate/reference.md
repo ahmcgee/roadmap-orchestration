@@ -24,7 +24,8 @@ Each finds the run through the host lock (the one live arc on this host). Add `-
 of them to reach a run with no live owner, e.g. `roadmap status --repo <path> --arc <arc>`. Except `start`,
 `status`, `watch` and `apply --dry-run`, they only queue a file and print `{command, arc, type}`. Queued is not
 done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly one of `.applied.json` or
-`.rejected.json` (with every reason).
+`.rejected.json` (with every reason). An `apply` waiting for a unit's stage boundary first gets `.queued.json`
+(`waitsFor`, `reason`; 1.0.0-dev.17).
 
 - `roadmap start --repo <path> --plan <plan.json> [--profile default|claude-only] [--wait <ms>]`: launch, or recover
   from disk. Without `--profile`, `.roadmap/config.json` chooses, else `default`. On an arc with a plan in force the
@@ -212,7 +213,7 @@ one is absolute (checked on 0.0.83). Install it in the project's devcontainer, p
 
 - `needs-user/<id>.json`: `summary, reason, subject, recommendation, options[{id, label}], evidence[]`;
   `<id>.ack.json` once acknowledged.
-- `commands/incoming/<id>.json`, `commands/receipts/<id>.{accepted,applied,rejected}.json`.
+- `commands/incoming/<id>.json`, `commands/receipts/<id>.{accepted,queued,applied,rejected}.json`.
 - `heartbeat.json`: every 10 s; older than 5 minutes means the executor is dead or wedged.
 - `inv/<seq>-<ordinal>/`: one invocation: `stdout`, `stderr`, `exit.json`, `result.json`.
 - `status.rejection.json`: the last refused start's rows.
@@ -302,7 +303,8 @@ waits on you), `blocked` (work remains and nothing can move), `complete`, `refus
   `park{class: retryable|operator, kind, targets, outstanding, nextProbeAt, escalateAt}`: a retryable park recovers
   by itself once its probes pass.
 - `edges[]` (`after{unit, on, effective, met}`, `contingent{unit, edge, condition, resolved}`), `runOnly`.
-- `commands{pending[{id, type}], receipts}` (the last 10 terminal receipts).
+- `commands{pending[{id, type, queuedFor?}], receipts}` (the last 10 terminal receipts); `queuedFor` names the units a
+  queued `apply` waits on.
 - `spend{byRole, byModel{models, unresolvedRevs}, byClass{classes, unresolvedRevs}, byJob, bySmoke}`: token totals and
   list-price cost. A Claude call's totals include its subagents'; `byClass` splits spend by class (`efficient`, `frontier`,
   `summit`, `economy`): each seat's own share on its class, subagent spend on the subagent model's class. `byModel` counts each seat's own share and is the only place `status` names a model.
@@ -483,6 +485,9 @@ Blocking unless noted. Read the item file before acting.
 - `executor-fault`, non-blocking (1.0.0-dev.17): the executor threw inside a unit's task (the unit is parked at the stage
   it was in, uncharged) or an arc job (audit, walk, checkpoint, baseline: the job ended faulted) while it held only that
   unit's or job's own state; the arc went on. The item carries the stack (SKILL.md "Handling parks").
+- `apply-dropped`, non-blocking (1.0.0-dev.17): an `apply` queued behind a unit's stage boundary was refused when it
+  landed there; none of its edits is in force. The summary names the command and every reason, the evidence its
+  rejected receipt. Redo the edit from where the arc is now, then `ack` (SKILL.md "Changing the plan").
 - `plan-defect` (the unit is parked at lanes, uncharged): its missing witness is a plan defect code diagnosed (the
   witness file outside its lane, or absent and outside the unit's scope). Fix the plan by `apply`, then `resume`
   (SKILL.md "Handling parks").

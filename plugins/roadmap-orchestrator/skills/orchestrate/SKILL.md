@@ -375,7 +375,9 @@ as its recommendation says, Phase 0, `start`, `pr` and check-ins are not interve
 once, in the operator log `<repo>/../roadmap-inputs/skill-feedback.md` (outside the product repo, append-only;
 format in `reference.md`, "The operator log"): what you saw, the evidence (status fields, item ids, event seqs), the
 outcome, and what executor change would have made it unnecessary. A check-in preface may cite the log; the brief
-never reads it.
+never reads it. Every arc-wide lever (`pause --all`, `resume` of all, `resume --backend`, `stop`, `close-admissions`)
+gets an entry whoever asked for it, its outcome saying when it ended: an unlogged arc-wide pause hides that time from
+everyone who reads the arc later.
 
 ## Check-ins
 
@@ -594,6 +596,13 @@ second design park of one lineage (`respec-second`). `roadmap steer <unit>` is a
   unchanged usually fails again and spends the unit's chargeable bound. The new
   unit's prepare creates `roadmap/<arc>/<new>` at the parked tip; never create it by hand. Its scope may grow beyond
   the lineage's only on a ruling its spec cites that names exactly the added patterns.
+  - **The re-entry's `facts`** say what the lineage proved and what is still unproven: the lanes and clauses that
+    passed (at which attempt), and those no lane has run yet or that failed. Never write "the build is complete; change
+    nothing": its builder then delivers nothing, and the gate is left as the only test of what is still open.
+  - **`reset`**: a re-entry keeps its predecessor's chargeable failures. When it answers a known cause (the failure it
+    `fixes` is diagnosed and the spec changes what that failure ran under), cite a ruling as `reenters.reset`, so it
+    starts at 0. Without one, at its bound less one, its next charged failure (a red series, a gate revise) parks for
+    you instead of a fix round, and a gate's directives reach the builder only through you; the apply's receipt warns.
 - **Parked `witness-lane-missing`** (an arc started on 1.0.0-dev.9: the unit's spec names a witness lane that is no
   arc lane): add that lane to the obligations with `roadmap apply`, then `roadmap resume <unit>`; or re-enter the unit
   with a spec whose witness items name arc lanes. An apply can no longer create this state.
@@ -641,6 +650,14 @@ classes, scope growth) and never writes into your files: the plan in force lives
 
 The executor applies at the next stage boundary and kills nothing; the receipt says applied or every reason it was
 rejected. An edit you never apply has no effect, even after a restart.
+
+- **Mid-stage** (1.0.0-dev.17): an apply whose edit touches a unit running a stage is queued, not refused: a `queued`
+  receipt names the units it waits for (`status.commands.pending[].queuedFor` too), and it lands at their stage
+  boundary, before their next stage. Refused there (the unit passed its gate meanwhile, say), an `apply-dropped` item
+  names it and why: redo the edit from where the arc is now.
+- **While a checkpoint runs**, an apply makes that checkpoint's bundle stale and its spend wasted; the receipt warns.
+  Apply after it decides unless the edit cannot wait.
+- Read every `warning:` line of a receipt (also `apply --dry-run`'s `warnings`); they never refuse.
 
 - **Units**: add at the end or among units not started; remove only one that never started; ids are never reused.
   A dispatched unit keeps its resources and spec path, its risk may only rise, it gains no `after`, and its scope
@@ -749,6 +766,9 @@ rejected. An edit you never apply has no effect, even after a restart.
 - A shared resource needs an owner marker its probe honours: anyone using it outside the executor writes
   `/var/tmp/roadmap-resources/<name>.lease`; the probe exits 11 while the lease exists, so the executor parks
   `occupancy-unlabelled` instead of tearing down someone else's work.
+- Never act on a shared estate resource (a `sweep`, a lease, a teardown or probe by hand, an `apply` of its declaration)
+  while anyone holds it: a unit or job reservation in `status`, a lease, an outside user. Acting then races whoever
+  governs it mid-use; wait until it is free.
 
 ## Branches and refs
 

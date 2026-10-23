@@ -575,7 +575,8 @@ at triage stay in git history.
   arc to take one; read its log against the fake test.
 
 - **Partial revalidation of a stale-spec bundle** (F09): revalidate only the ops a patch delta touches. Trigger: stale
-  rejections > 2 per paid run.
+  rejections > 2 per paid run. A field arc (2026-10-23) lost one checkpoint's spend to an operator apply; since dev.17 the
+  apply's receipt warns while a checkpoint runs.
 - **External-state identity for estate-lane reuse across SHAs** (Q13 remainder: toolchain versions, image digests,
   service state). Trigger: estate lane time > 20% of a real arc's wall clock.
 - **Shared execution for non-identical but equivalent suite and witness lanes** (F13 remainder). Trigger: duplicate
