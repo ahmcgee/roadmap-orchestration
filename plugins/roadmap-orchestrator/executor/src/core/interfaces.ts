@@ -14,7 +14,7 @@ import type {
   CancelFile, ChildEnd, ContainmentMode, DispatchRecord, ExitFile, KillReason, LaunchFile, ProcIdentity, ResultFile, RunnerFileMap,
   RunnerFileName,
 } from './records.ts';
-import type { BackendParkState, EdgeResolvedState, HolisticFold, ProbeState, ResidueState, ResourceEntry, UnitState } from './state.ts';
+import type { ApplyQueued, BackendParkState, EdgeResolvedState, HolisticFold, ProbeState, ResidueState, ResourceEntry, UnitState } from './state.ts';
 import type { Backend } from '../routing/types.ts';
 import type { AbsPath, IsoTime } from './values.ts';
 
@@ -100,6 +100,8 @@ export interface JournalView {
   planApplied(): PlanAppliedFact | null;
   /** The `plan-applied` fact `command` wrote (an apply's postcondition), or null. */
   planAppliedBy(command: CommandId): PlanAppliedFact | null;
+  /** dev.17: the `apply-queued` fact of `command` (its seq and the units it waits on), or null when it was never queued. */
+  applyQueued(command: CommandId): ApplyQueued | null;
   /** M2 (rank, F17): the seq of the stage-outcome fact that is `unit(id).decided`, or null while it is null. */
   decidedSeq(unit: UnitId): number | null;
   /** M2 (rank, F17): every published `integration.ff` of a unit's ff stage, the unit and its done record's seq, in log order. */

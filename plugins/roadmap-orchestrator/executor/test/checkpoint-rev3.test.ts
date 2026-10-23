@@ -477,13 +477,14 @@ describe('busy: a bundle touching a unit mid-stage waits for its boundary (C5, R
       // While the attempt runs, the trigger is not due: no capture, no call (a long stage spans many checkpoint turns).
       for (let i = 0; i < 3; i++) assert.deepEqual(await run(x), { kind: 'none' });
       assert.deepEqual(ckptCalls(x), ['ckpt-1'], 'exactly one paid call before the boundary');
-      // An architect's spec edit is refused with the running text (classify.ts via openAttempt).
+      // An architect's spec edit applied straight through the command path (no scheduler drain) while the attempt runs is
+      // refused with the running text (classify.ts `busy` via openAttempt); the scheduler would queue it (apply-exec.test.ts).
       const spec = join(x.a.planDir, 'u1.json');
       const was = readFileSync(spec, 'utf8');
       writeFileSync(spec, JSON.stringify({ ...(JSON.parse(was) as Json), rev: 2 }));
       const refused = await applyCommand(x.w.commands, submitCommand(x.r.ctx.runDir, x.r.journal.view.arc, applyBody(x.a.d)));
       assert.equal(refused.kind, 'rejected', JSON.stringify(refused));
-      assert.match(JSON.stringify(refused), /unit u1 is running plan-check attempt 1; apply the edit at its stage boundary/);
+      assert.match(JSON.stringify(refused), /unit u1 is running plan-check attempt 1; the edit applies at its stage boundary/);
       writeFileSync(spec, was);
       release(x.a.d.scenarioDir, 'pc');
       await unit;

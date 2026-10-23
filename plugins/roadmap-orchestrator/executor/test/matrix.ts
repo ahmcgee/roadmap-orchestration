@@ -73,6 +73,7 @@ export const NEEDSUSER_RAISE = 'needsuser.raise';
 export const COMMAND_APPLY = 'command.apply';
 export const PLAN_APPLY = 'command.apply: apply (a plan revision)';
 export const PLAN_START = 'start: a later start whose files change the plan (supervised)';
+export const QUEUED_APPLY = 'command.apply: an apply queued behind a running stage (dev.17: apply-queued, queued receipt, its landing at the boundary, apply-dropped; supervised)';
 export const REVISION_COMMIT = 'revision.commit: a revision\'s activation (payload, docs ff, plan-applied; M3 G1)';
 export const STEER = 'command.apply: steer (M3: class revision, brief, pre-steer snapshot, steered)';
 export const MERGE_IN = 'command.apply: merge-in (M3: merge-tree plan, mergein.prepare, merged-in)';
@@ -801,6 +802,28 @@ export const MATRIX: readonly Row[] = [
         recovery: 'the fact is written: the reconciler finds it (the postcondition) and writes the applied receipt if missing, or reads it; no second fact',
       },
       B5: { status: 'excluded', why: 'the done is one journal append (journal.append) and closes the op: nothing is open for recovery, and a re-delivered command is a no-op (cmd.idempotent)' },
+    },
+  },
+  {
+    // dev.17 (arc feedback 2026-10-23, item 7), through the real CLI and supervisor (test/apply-exec.test.ts): B2, a spec
+    // revision of u1 queued behind its running build; B4, one queued behind its running gate, which approves, so it is refused
+    // where it lands.
+    row: QUEUED_APPLY,
+    test: 'test/apply-exec.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'crash',
+        labels: ['command.apply.queued'],
+        recovery: 'the apply-queued fact is durable, its queued receipt not: the respawn lands the apply once (one apply-queued fact, one plan-applied of the command, its applied receipt); the unit re-opens on the revision and merges approved on it',
+      },
+      B3: { status: 'excluded', why: `the landing is an apply's effect evaluated at the boundary; the ${PLAN_APPLY} row crashes it (before-effect, after-inputs, after-effect, after-receipt)` },
+      B4: {
+        status: 'crash',
+        labels: ['command.apply.after-rejected-receipt'],
+        recovery: 'the rejected receipt is written, the item not: recovery finishes the open command op from that receipt and raises the one apply-dropped item; done reconciled; the unit merges on the spec it was approved on',
+      },
+      B5: { status: 'excluded', why: 'the item is raised by its own op (needsuser.raise row) before the command op\'s done, one journal append that closes it' },
     },
   },
   {

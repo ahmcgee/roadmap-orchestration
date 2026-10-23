@@ -130,7 +130,7 @@
 // head are those it recorded (A20); an admitting apply or a reopen invalidates it, and the arc runs again.
 import type { CommandContext } from '../commands/apply.ts';
 import { applyCommand, applyControl } from '../commands/apply.ts';
-import { isControl, pollCommands, POLL_MS } from '../commands/queue.ts';
+import { isControl, pollCommands, POLL_MS, readReceipt, writeReceipt } from '../commands/queue.ts';
 import { dirname, join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import { type IntentOf, JUDGMENT_STAGES, type Parent, probeTargetKey } from '../core/events.ts';
@@ -165,7 +165,7 @@ import { packReviewHolds, packReviewPending, runPackReview, settlePackReviews } 
 import { type ArcLaneDef, isExempt, laneRevOf } from '../holistic/types.ts';
 import { type Observation, type ObservationStore, reuse, verdictOf as witnessVerdict } from '../holistic/observe.ts';
 import type { RoutingBase } from '../input/inforce.ts';
-import { type AbsPath, absPath } from '../core/values.ts';
+import { type AbsPath, absPath, isoTimeOf } from '../core/values.ts';
 import { commandScope } from '../input/classify.ts';
 import { type PlanM1, type PlanUnit, hasMilestones, lensSetOf } from '../input/plan.ts';
 import { type BlockingItem, blockingItems, holdsUnit, openBlocking, raiseNeedsUser, raisedFor, readNeedsUser } from '../needsuser.ts';
@@ -1048,6 +1048,28 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
     return park.park.targets.map(probeTargetKey).filter((k) => !passed.has(k));
   };
 
+  /**
+   * dev.17 (arc feedback 2026-10-23, item 7): an apply its scope's units in a stage hold says so, once: the `apply-queued` fact,
+   * then its `queued` receipt naming what each runs. It lands at their boundary (the drain holds their next admission) and is
+   * evaluated there; refused then, it raises an `apply-dropped` item (src/commands/apply.ts `raiseDropped`).
+   */
+  const queueApply = (id: CommandId, busy: readonly UnitId[]): void => {
+    if (view().applyQueued(id) === null) {
+      journal.fact({ kind: 'apply-queued', command: id, waitsFor: [...busy].sort() });
+      crashPoint('command.apply.queued');
+    }
+    if (readReceipt(runDir, id, 'queued') !== null) return;
+    const { waitsFor } = view().applyQueued(id)!;
+    const running = waitsFor.map((u) => {
+      const open = view().unit(u).open;
+      return open === null ? `${u} is between stages` : `${u} is running ${open.stage} attempt ${open.attempt}`;
+    });
+    writeReceipt(runDir, {
+      v: SCHEMA_VERSION, command: id, state: 'queued', at: isoTimeOf(new Date()), waitsFor,
+      reason: `${running.join('; ')}: the apply lands at ${waitsFor.length === 1 ? 'its' : 'their'} stage boundary and is evaluated there`,
+    });
+  };
+
   const startMutations = (mutations: ReturnType<typeof pendingMutations>): void => {
     const v = view();
     const open = new Set(v.opsOf('command.apply').filter((i) => v.doneOf(i.op) === null).map((i) => i.expect.command));
@@ -1059,12 +1081,13 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       const blockedByEarlier = earlier.some((e) => conflicts(e, scope));
       earlier.push(scope);
       if (jobs.has(key) || open.has(command.id) || blockedByEarlier) continue;
-      const busy = scopeUnits(scope, all).some((u) => {
+      const busy = scopeUnits(scope, all).filter((u) => {
         const t = tasks.get(u);
         return t !== undefined && t.state !== 'awaiting-admission' && t.state !== 'idle';
       });
+      if (busy.length > 0 && command.body.type === 'apply') queueApply(command.id, busy);
       const probes = probedBy(command);
-      if (busy || probes.some((k) => running.has(k))) continue;
+      if (busy.length > 0 || probes.some((k) => running.has(k))) continue;
       commandTargets.set(command.id, probes);
       track(key, async () => {
         try {

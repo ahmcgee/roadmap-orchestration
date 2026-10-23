@@ -293,6 +293,9 @@ export function openAttempt(view: JournalView, unit: UnitId): OpenAttempt | null
   return { stage: u.open.stage, attempt: u.open.attempt, live: u.open.seq > view.lastExecutorStarted() };
 }
 
+/** dev.17: an `apply` the scheduler queued behind a running stage (`apply-queued`): the fact's seq and the units it waits on. */
+export type ApplyQueued = Readonly<{ seq: number; waitsFor: readonly UnitId[] }>;
+
 /** Whom a meter total charges: a role's unit calls, or a backend's start-up smokes. */
 export type MeterCharge = Readonly<{ type: 'role'; role: Role }> | Readonly<{ type: 'smoke'; backend: Backend }>;
 
@@ -567,6 +570,7 @@ export class Fold implements JournalView {
   #planApplied: PlanAppliedFact | null = null;
   readonly #plannedUnits = new Set<UnitId>();
   readonly #appliedBy = new Map<CommandId, PlanAppliedFact>();
+  readonly #queuedApplies = new Map<CommandId, ApplyQueued>();
   readonly #tail: TailDiscarded[] = [];
   readonly #backendParks = new Map<Backend, BackendParkState>();
   /** Every park seq the log holds: a unit park's stage-outcome seq → its unit, a backend park's seq → its backend. */
@@ -992,6 +996,10 @@ export class Fold implements JournalView {
       case 'needs-user-acked':
         if (this.#acks.has(f.id)) fail(`second acknowledgement of needs-user ${f.id}`);
         this.#acks.set(f.id, { command: f.command, choice: f.choice });
+        return;
+      case 'apply-queued':
+        if (this.#queuedApplies.has(f.command)) fail(`a second apply-queued of command ${f.command}`);
+        this.#queuedApplies.set(f.command, { seq: at.seq, waitsFor: f.waitsFor });
         return;
       case 'paused':
         if (f.target.type === 'all') this.#pausedAll = true;
@@ -1866,6 +1874,10 @@ export class Fold implements JournalView {
 
   planAppliedBy(command: CommandId): PlanAppliedFact | null {
     return this.#appliedBy.get(command) ?? null;
+  }
+
+  applyQueued(command: CommandId): ApplyQueued | null {
+    return this.#queuedApplies.get(command) ?? null;
   }
 
   decidedSeq(unit: UnitId): number | null {
