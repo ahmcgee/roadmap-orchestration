@@ -15,6 +15,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { durableWrite } from '../core/fsx.ts';
+import { earlierReaderResultDefault } from '../core/upgrade.ts';
 import { implementerSessionId, type ImplementerSessionId } from '../core/ids.ts';
 import type { AdapterInput } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
@@ -273,6 +274,13 @@ export function writeResult(invDir: string): ResultFile {
   const { result, reads } = adapted(input);
   if (reads !== null) writeOnce(join(invDir, 'reads.json'), recordBytes('reads.json', reads));
   const path = join(invDir, 'result.json');
-  writeOnce(path, resultBytes(result));
+  const bytes = resultBytes(result);
+  if (existsSync(path) && readFileSync(path, 'utf8') !== bytes) {
+    // Temporary scaffolding (upgrade.ts `earlierReaderResultDefault`): a dev.16 reader's result of these files.
+    const adopted = earlierReaderResultDefault(RUNNER_FILE_READERS['result.json'](JSON.parse(readFileSync(path, 'utf8')), path), result);
+    if (adopted === null) throw new ResultConflictError(path);
+    return adopted;
+  }
+  writeOnce(path, bytes);
   return result;
 }

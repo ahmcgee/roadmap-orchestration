@@ -4778,3 +4778,9 @@ src/backends/errors.ts `usageLimitResets`), kept as written: the text has no dat
 matches a named window ("You've hit your session limit"). Every judgment session's system text carries
 `JUDGE_SUBAGENTS` (src/prompts/delegation.ts; dispatch.ts `judgeSystem`): subagents run in the foreground, the answer
 after their reports.
+
+Upgrade (temporary scaffolding, `earlierReaderResultDefault` in src/core/upgrade.ts): recovery re-adapts an invocation whose
+result.json a 1.0.0-dev.16 executor wrote before it crashed (its done not written). HEAD's reader may adapt those files
+differently (a usage limit before the last result, `streamed`); the recorded result is adopted as written and warned
+(`result.earlier-reader`) when it differs only there, else the write-once conflict stands. Guarded by
+`upgrade.result-earlier-reader`.

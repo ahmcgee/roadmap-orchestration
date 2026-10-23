@@ -11,7 +11,8 @@ import type { CensusEntry, ClassifiedAdmit, Conversion, Obligations } from '../h
 import type { DiffShown, GateLargeDiff, JudgmentInputs, MutantOf, RevisionSource } from './events.ts';
 import type { FindingId, LaneId, ObligationId } from './ids.ts';
 import type { PressureAvailability } from '../host/pressure.ts';
-import type { LaunchCpu } from './records.ts';
+import type { LaunchCpu, ResultFile } from './records.ts';
+import { canonicalJson } from './json.ts';
 import type { ClassTable } from '../routing/types.ts';
 
 const warned = new Set<string>();
@@ -495,4 +496,29 @@ export function planCheckStaleLinksDefault(): readonly never[] {
  */
 export function flakyLedgerDefault(): void {
   warnDefaulted('flaky.ledger', 'an arc whose revision in force was applied before 1.0.0-dev.17 has no flaky ledger; it starts empty at the upgrade');
+}
+
+// ---------------------------------------------------------------------------------------------------
+// 1.0.0-dev.16 -> dev.17 (field feedback 2026-10-23, U). dev.17's Claude reader classifies a usage limit in any result
+// (not the last alone) and records what a result-less judgment streamed, so it can adapt a dev.16 invocation's files to
+// a result other than the one dev.16 wrote. Recovery re-adapts an invocation whose result.json was written but whose done
+// was not (a crash between them); the recorded result is the call's reading, so it is adopted as written, warned.
+// Delete once no arc started on 1.0.0-dev.16 is in flight (BACKLOG "Scaffolding to delete").
+
+/**
+ * The recorded `result.json` of an invocation, adopted when it is what dev.16's reader made of the files HEAD's reads
+ * differently, and only then: equal to HEAD's result less what dev.16 did not read, `usage.streamed`; or, where HEAD
+ * finds a usage limit in a result before the last and the record names none, equal but for `outcome` and
+ * `backendErrors`. Null otherwise: the caller's write-once conflict stands (an input file changed).
+ */
+export function earlierReaderResultDefault(recorded: ResultFile, fresh: ResultFile): ResultFile | null {
+  if (recorded.type !== 'backend' || fresh.type !== 'backend') return null;
+  const usage = fresh.usage.kind === 'unavailable' ? { kind: fresh.usage.kind, reason: fresh.usage.reason } : fresh.usage;
+  const dev16 = { ...fresh, usage };
+  const limit = (r: typeof fresh): boolean => r.backendErrors.some((e) => e.class === 'usage-limit');
+  const unclassified = (r: typeof fresh): string => canonicalJson({ ...r, outcome: null, backendErrors: [] });
+  const adopted = canonicalJson(recorded) === canonicalJson(dev16) || (limit(fresh) && !limit(recorded) && unclassified(recorded) === unclassified(dev16));
+  if (!adopted) return null;
+  warnDefaulted('result.earlier-reader', `${recorded.inv}: result.json was adapted by 1.0.0-dev.16's reader; adopted as recorded`);
+  return recorded;
 }

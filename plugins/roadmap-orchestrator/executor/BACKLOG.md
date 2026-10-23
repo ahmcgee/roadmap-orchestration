@@ -611,6 +611,9 @@ at triage stay in git history.
 
 ## Scaffolding to delete
 
+- **dev.16 result.json adopted as recorded** (`earlierReaderResultDefault`, src/core/upgrade.ts; its call in
+  src/backends/adapter.ts `writeResult`): delete once no arc started on 1.0.0-dev.16 is in flight.
+
 - dev.17 routing adoption (src/core/upgrade.ts), once no arc started on 1.0.0-dev.16 or earlier is in flight:
   `planCheckShapeDefault` with the plan reader's legacy `planCheck` arm (src/input/plan.ts; the reader then refuses the
   field), `PRE_DEV17_BUILTIN_SEATS` in `EARLIER_BUILTIN_SEATS`, the plan-check `in-session` and build `infeasible` and
