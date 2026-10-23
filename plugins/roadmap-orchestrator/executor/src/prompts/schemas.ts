@@ -10,13 +10,13 @@
 //   gate:      approve → integration slot · revise → fix round with directives · escalate → route up
 //   build:     success → quiesce (the executor then salvages, runs lanes and gates; the report is evidence)
 import {
-  type ClauseId, type FindingId, type IssueId, type JourneyId, type LaneId, type ObligationId, type RuleId, type RulingId, type Sha256Hex, type UnitId, type VisionClauseId, clauseId,
-  answerIds, findingId, issueId, journeyId, laneId, obligationId, ruleId, rulingId, unitId, visionClauseId,
+  type ClauseId, type FindingId, type IssueId, type JourneyId, type LaneId, type ObligationId, type PocQuestionId, type RuleId, type RulingId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, clauseId,
+  pocQuestionId, answerIds, findingId, issueId, journeyId, laneId, obligationId, ruleId, rulingId, unitId, visionClauseId,
 } from '../core/ids.ts';
 import { type ActedOn, actedOn } from '../forge/types.ts';
 import { FLOW_REPORTERS, type FlowOutput, flowOutput } from '../flow/types.ts';
 import { type JsonValue, canonicalJson } from '../core/json.ts';
-import { BOUND_FIELDS, type Bounds, type FailureRef, type NoteDef, SPEC_SCHEMA, SPEC_SECTIONS, type SpecPatchOp, failureRef, specM1, specPatchOp } from '../core/records.ts';
+import { BOUND_FIELDS, type Bounds, type FailureRef, type NoteDef, SPEC_SCHEMA, SPEC_SECTIONS, type SpecM1, type SpecPatchOp, failureRef, specM1, specPatchOp } from '../core/records.ts';
 import {
   Fields, type Read, SchemaError, answerSet, arrayOf, assertUnique, envName, int, literal, nullable, object, oneOf, positive, str, tagged, text,
 } from '../core/validate.ts';
@@ -33,6 +33,7 @@ import {
   reenterFixesDefault,
 } from '../core/upgrade.ts';
 import type { MutantEdit } from '../git/mutant.ts';
+import { type NewSystem, newSystem } from '../core/design.ts';
 import { specBytes } from '../spec/spec.ts';
 import {
   BUILD_CLASSES, JUDGMENT_SEATS, MODEL_CLASSES, type ModelClass, classAt, RISK_TIERS, ROLES, type RiskTier, type Role, SEATS, type Seat,
@@ -203,6 +204,67 @@ export function validatePlanCheckOutput(value: unknown): PlanCheckOutput {
   return planCheckOutput(value, 'planCheck');
 }
 
+// dev.17 design pass (SCHEMAS.md "dev.17 records"): the decisions `split`, `scaffold` and `poc` and their payloads. Types
+// and readers only: the answer schema and `planCheckOutput` take them when the design pass wires their stages.
+
+/** Every plan-check decision of dev.17, in the order the design brief lists them. */
+export const PLAN_CHECK_DECISIONS_DEV17 = ['approve', 'redirect', 'split', 'scaffold', 'poc', 'infeasible', 'escalate'] as const;
+export type PlanCheckDecision = (typeof PLAN_CHECK_DECISIONS_DEV17)[number];
+/** The decisions the design pass adds to `PLAN_CHECK_DECISIONS`. */
+export type DesignDecision = Exclude<PlanCheckDecision, (typeof PLAN_CHECK_DECISIONS)[number]>;
+
+/**
+ * `split`: the unit's child specs (two or more, distinct units) and the edges among them (`from` before `to`, both
+ * children). Code checks the rest against the parent: children within its effective scope, items partitioned exactly, each
+ * child sized, acyclic.
+ */
+export type SplitDecision = Readonly<{ children: readonly SpecM1[]; edges: readonly Readonly<{ from: UnitId; to: UnitId }>[] }>;
+/**
+ * `scaffold`: what the `scaffold` role writes first in the unit worktree: the new system, its entry points and exports, the
+ * load test a new lane's reporter must show ran, and the manifest entries (a path and the entry it gains).
+ */
+export type ScaffoldDecision = Readonly<{
+  newSystem: NewSystem;
+  entryPoints: readonly RepoPath[];
+  exports: readonly string[];
+  loadTest: Readonly<{ lane: LaneId; testId: string }>;
+  manifest: readonly Readonly<{ path: RepoPath; entry: string }>[];
+}>;
+/** One question a proof of concept answers. */
+export type PocQuestion = Readonly<{ id: PocQuestionId; question: string; whyItMatters: string }>;
+/** `poc`: the questions (one or more, unique ids) and the brief the throwaway build works from. */
+export type PocDecision = Readonly<{ questions: readonly PocQuestion[]; brief: string }>;
+
+export const splitDecision: Read<SplitDecision> = object((f) => {
+  const children = f.get('children', arrayOf(specM1, { nonEmpty: true }));
+  if (children.length < 2) throw new SchemaError(`${f.path}.children`, 'two or more child specs', children.length);
+  assertUnique(children, (c) => c.unit, `${f.path}.children`);
+  const edges = f.get('edges', arrayOf(object((g) => ({ from: g.get('from', unitR), to: g.get('to', unitR) }))));
+  const ids = new Set(children.map((c) => c.unit));
+  const i = edges.findIndex((e) => !ids.has(e.from) || !ids.has(e.to) || e.from === e.to);
+  if (i >= 0) throw new SchemaError(`${f.path}.edges[${i}]`, 'an edge between two distinct children', edges[i]);
+  assertUnique(edges, (e) => `${e.from}>${e.to}`, `${f.path}.edges`);
+  return { children, edges };
+});
+export const scaffoldDecision: Read<ScaffoldDecision> = object((f) => {
+  const out = {
+    newSystem: f.get('newSystem', newSystem),
+    entryPoints: f.get('entryPoints', arrayOf((v, p) => repoPath(v, p), { nonEmpty: true })),
+    exports: f.get('exports', arrayOf(str)),
+    loadTest: f.get('loadTest', object((g) => ({ lane: g.get('lane', (v, p) => laneId(v, p)), testId: g.get('testId', str) }))),
+    manifest: f.get('manifest', arrayOf(object((g) => ({ path: g.get('path', (v, p) => repoPath(v, p)), entry: g.get('entry', str) })))),
+  };
+  assertUnique(out.entryPoints, (e) => e, `${f.path}.entryPoints`);
+  return out;
+});
+export const pocDecision: Read<PocDecision> = object((f) => {
+  const questions = f.get('questions', arrayOf(object((g): PocQuestion => ({
+    id: g.get('id', (v, p) => pocQuestionId(v, p)), question: g.get('question', str), whyItMatters: g.get('whyItMatters', str),
+  })), { nonEmpty: true }));
+  assertUnique(questions, (q) => q.id, `${f.path}.questions`);
+  return { questions, brief: f.get('brief', str) };
+});
+
 // ---------------------------------------------------------------------------------------------------
 // build
 
@@ -307,6 +369,24 @@ export const GATE_DECISIONS = ['approve', 'revise', 'escalate'] as const;
  * 2): a real defect the unit did not introduce, present at the base; recorded and handled as a note, never blocks.
  */
 export const FINDING_SEVERITIES = ['blocking', 'note', 'pre-existing'] as const;
+
+// dev.17 proportional review (SCHEMAS.md "dev.17 records"): types only; the gate schema and `gateOutput` take them when the
+// review stages are wired.
+
+/**
+ * What a blocking finding must name. `test-inadequate`: a test cited as proof (requirement, acceptance item, failure mode)
+ * does not verify it: weakened, vacuous or missing. A blocking finding without one is refused through the repair turn.
+ */
+export const DEFECT_CATEGORIES = ['incorrect-behaviour', 'contract-violation', 'security', 'requirement-unmet', 'test-inadequate', 'data-loss'] as const;
+export type DefectCategory = (typeof DEFECT_CATEGORIES)[number];
+/** dev.17's finding classes: `ride-along` (comments, docs) never causes a revise; drag makes it debt, else it is released. */
+export const FINDING_SEVERITIES_DEV17 = [...FINDING_SEVERITIES, 'ride-along'] as const;
+export type FindingSeverityDev17 = (typeof FINDING_SEVERITIES_DEV17)[number];
+/**
+ * The build answer's `docsOnlySince` (dev.17): the tested sha since which the builder says it changed only docs and
+ * comments, or null. Code verifies the claim; the model's word alone carries no lane pass over.
+ */
+export type DocsOnlySince = Sha | null;
 
 /** dev.13: an ad hoc experiment the gate ran in its checkout, cited as a finding's evidence: the command as run and what it printed. */
 export type GateExperiment = Readonly<{ command: string; output: string }>;

@@ -19,7 +19,9 @@ import {
   positive, sortedBy, str, stringMap, tagged, text, version,
 } from './validate.ts';
 import type { SchemaVersion } from './version.ts';
-import { type LaneKind, applyExpectRevDefault, applyVisionEditDefault, dev6SmokeBounds, laneCadenceDefault, laneInputsDropped } from './upgrade.ts';
+import { type LaneKind, applyExpectRevDefault, applyVisionEditDefault, designKindDefault, dev6SmokeBounds, laneCadenceDefault, laneInputsDropped, specPinsDefault } from './upgrade.ts';
+import { type DesignRecord, type UnitKind, designRecord } from './design.ts';
+import { type ContractPin, type Pinned, type RequirementPin, type SpecPin, UNPINNED, pinTarget, specPin } from './pins.ts';
 import { type HostSignatureId, HOST_SIGNATURES } from '../host/signatures.ts';
 import {
   type Backend, type ImplementerRole, JUDGMENT_SESSION_ROLES, type JudgmentSessionRole, type ModelClass, type ProfileName, type RiskTier, type Role, ROLES, backend,
@@ -1034,6 +1036,18 @@ export type SpecM1 = Readonly<{
    * that lane besides (src/pipeline/stages.ts `forcedLanes`).
    */
   forces?: readonly LaneId[];
+  /**
+   * dev.17 (design pass): the design record the unit's plan-check settled (src/core/design.ts). Absent: none yet (a dev.16
+   * spec, or one no plan-check has designed), whose unit reads as kind `module` (`specKindOf`, warned).
+   */
+  design?: DesignRecord;
+  /**
+   * dev.17 (propagation): the revision each of the spec's links was written against, one pin per target (unique): a
+   * requirement pin per obligation it declares, repairs or a witness item names, a contract pin per cited contract; a pin
+   * naming no link of the spec is refused. Absent on a dev.16 spec: every link reads `unpinned` (`specPinOf`, warned). A link
+   * with no pin in a present list (one a later patch added) reads `unpinned` too, unwarned.
+   */
+  pins?: readonly SpecPin[];
 }>;
 
 /**
@@ -1058,6 +1072,23 @@ export const specWitnesses = (spec: SpecM1): readonly Stated<WitnessItemDef>[] =
 export const specRemoves = (spec: SpecM1): readonly string[] => spec.removes ?? [];
 /** The suite lanes a spec forces at its lanes stage (dev.17); none when absent. */
 export const specForces = (spec: SpecM1): readonly LaneId[] => spec.forces ?? [];
+/** A spec's unit kind (dev.17): its design record's, or `module` with the upgrade warning when it has none. */
+export const specKindOf = (spec: SpecM1): UnitKind => spec.design?.kind ?? designKindDefault();
+
+/** The requirements a spec links to: the obligations it declares, the obligations it repairs, those its witness items name. */
+export function specRequirementLinks(spec: SpecM1): readonly ObligationId[] {
+  const ids = [...specObligations(spec), ...specRepairs(spec).filter((r): r is ObligationId => !r.startsWith('F-')), ...specWitnesses(spec).flatMap((w) => (w.obligation === undefined ? [] : [w.obligation]))];
+  return [...new Set(ids)];
+}
+
+/** The pin of one of a spec's links (dev.17): the pin it carries, or `unpinned` (stale-unknown; warned when the spec has no pins). */
+export function specPinOf(spec: SpecM1, link: Readonly<{ type: 'requirement'; id: ObligationId }>): Pinned<RequirementPin>;
+export function specPinOf(spec: SpecM1, link: Readonly<{ type: 'contract'; path: RepoPath }>): Pinned<ContractPin>;
+export function specPinOf(spec: SpecM1, link: Readonly<{ type: 'requirement'; id: ObligationId }> | Readonly<{ type: 'contract'; path: RepoPath }>): Pinned<SpecPin> {
+  if (spec.pins === undefined) return specPinsDefault();
+  const target = link.type === 'requirement' ? `requirement:${link.id}` : `contract:${link.path}`;
+  return spec.pins.find((p) => pinTarget(p) === target) ?? UNPINNED;
+}
 
 const itemState: Read<ItemState> = oneOf(['active', 'struck', 'deferred'] as const);
 const cid: Read<ClauseId> = (v, p) => clauseId(v, p);
@@ -1102,6 +1133,8 @@ export const specM1: Read<SpecM1> = object((f) => {
   const witnesses = f.optional('witnesses', arrayOf(stated(witnessItemFields), { nonEmpty: true }));
   const removes = f.optional('removes', arrayOf(removed, { nonEmpty: true }));
   const forces = f.optional('forces', arrayOf((v, p) => laneId(v, p), { nonEmpty: true }));
+  const design = f.optional('design', designRecord);
+  const pins = f.optional('pins', arrayOf(specPin));
   const out: SpecM1 = {
     schema: f.get('schema', literal(SPEC_SCHEMA)),
     unit: f.get('unit', unit),
@@ -1118,7 +1151,20 @@ export const specM1: Read<SpecM1> = object((f) => {
     ...(witnesses === undefined ? {} : { witnesses }),
     ...(removes === undefined ? {} : { removes }),
     ...(forces === undefined ? {} : { forces }),
+    ...(design === undefined ? {} : { design }),
+    ...(pins === undefined ? {} : { pins }),
   };
+  if (design !== undefined) {
+    const items = new Set(specWitnesses(out).map((w) => w.id));
+    const i = design.failureModes.findIndex((m) => m.proof.type === 'test' && m.proof.test.type === 'witness' && !items.has(m.proof.test.item));
+    if (i >= 0) throw new SchemaError(`${f.path}.design.failureModes[${i}].proof`, 'a witness item of the spec', design.failureModes[i]!.proof);
+  }
+  if (pins !== undefined) {
+    assertUnique(pins, pinTarget, `${f.path}.pins`);
+    const links = new Set([...specRequirementLinks(out).map((id) => `requirement:${id}`), ...out.cites.contracts.map((c) => `contract:${c}`)]);
+    const i = pins.findIndex((p) => !links.has(pinTarget(p)));
+    if (i >= 0) throw new SchemaError(`${f.path}.pins[${i}]`, 'a pin of a link the spec carries (an obligation it declares, repairs or a witness names; a cited contract)', pins[i]);
+  }
   assertUnique(specRemoves(out), (r) => r, `${f.path}.removes`);
   assertUnique(specForces(out), (l) => l, `${f.path}.forces`);
   assertUnique([...out.lanes, ...out.acceptance, ...out.decisions, ...out.facts, ...specWitnesses(out)], (i) => i.id, `${f.path}.<item ids>`);

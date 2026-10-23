@@ -4652,3 +4652,21 @@ flight); `SCHEMA_VERSION` stays 1. Lane environments and the flaky ledger are no
    A red one opens `batchDraft` (walkthrough P1 with `milestone` and `cause: batch lane <id> red`, or witness P1 over no
    obligation), and `walk-ended.findings` include the walk job's batch findings; the node holds through `activeWalkP1s`.
    A lane without a verdict leaves the walk `incomplete` or the audit running.
+
+## dev.17 records (2026-10-23; 1.0.0-dev.17, experience-won D, E, F, C3)
+
+The shared record types the design pass, propagation, proportional review and the flaky ledger build on. Types, readers
+and read-time defaults only (src/core/upgrade.ts, logged once; scaffolding deleted once no dev.16 arc is in flight);
+`SCHEMA_VERSION` stays 1. Where a type is not yet attached to a persisted record or an answer schema, the section that
+wires it attaches it.
+
+| Record | Change | Read-time default |
+|---|---|---|
+| Ids (src/core/ids.ts) | `FailureModeId` `FM-<n>`, `PocQuestionId` `PQ-<n>`, `ReviewFindingId` `R-<n>` | none |
+| Pins (src/core/pins.ts) | `Pin` = `requirement {id, rev}` \| `contract {path, blob}` \| `vision-clause {id, visionRev}` \| `file {path, blob}`; `SpecPin` = requirement \| contract; `UNPINNED`, `Pinned<P>`, `pinTarget` | — |
+| `spec.json` | `+ pins?: SpecPin[]`: one per target (unique), each naming a link the spec carries (`specRequirementLinks`: obligations, obligation repairs, witness obligations; `cites.contracts`) | absent: every link `unpinned`, stale-unknown (`specPinOf` → `specPinsDefault`, logged); a link a present list leaves out reads `unpinned`, unlogged |
+| `spec.json` | `+ design?: DesignRecord` (src/core/design.ts): `kind: module\|integration` (`UNIT_KINDS`), `changes [{system \| null, paths, lines}]` (non-empty; `designSize` sums `lines`), `interfaces [ContractPin \| FilePin]` (unique path), `failureModes [{id, mode, proof: {type: test, test: TestItemRef} \| {type: untested, reason}, requirements: RequirementPin[]}]` (a witness `TestItemRef` names a witness item of the spec), `breaks {tests, docs}: FilePin[]`, `experiments [{command, output}]`, `newSystem? {name, paths, tests}`, `verification? {type: reproduce-then-fix, condition, runs} \| {type: repeat, rationale, runs}` | absent: kind `module` (`specKindOf` → `designKindDefault`, logged) |
+| Plan-check decisions (src/prompts/schemas.ts) | `PLAN_CHECK_DECISIONS_DEV17` = approve, redirect, split, scaffold, poc, infeasible, escalate; `DesignDecision`; payloads `SplitDecision {children: SpecM1[] ≥ 2 distinct, edges [{from, to}] between distinct children}`, `ScaffoldDecision {newSystem, entryPoints, exports, loadTest {lane, testId}, manifest [{path, entry}]}`, `PocDecision {questions [{id, question, whyItMatters}] ≥ 1, brief}`. Not yet in `PLAN_CHECK_SCHEMA` or `planCheckOutput` | — |
+| Gate (src/prompts/schemas.ts) | `DEFECT_CATEGORIES` (incorrect-behaviour, contract-violation, security, requirement-unmet, test-inadequate, data-loss); `FINDING_SEVERITIES_DEV17` (+ `ride-along`); `DocsOnlySince = Sha \| null`. Not yet in `GATE_SCHEMA`, `gateOutput` or the build answer | — |
+| Review (src/core/review.ts) | `FindingsLedgerEntry {id: R-n, unit, path, anchor: blob, outcome: LedgerOutcome \| null}` (`LEDGER_OUTCOMES`: fixed, disputed-upheld, disputed-overruled, released, banked; null unsettled); `ApprovalBlobs {unit, specRev, files [{path, blob \| null}] ascending}` | — |
+| Flaky ledger (src/core/flaky.ts) | `FlakyLedgerEntry {key: {type: test, lane, testId} \| {type: lane, lane}, events [{tree, env \| null, failing, red, green}] ≥ 1, deflakes: UnitId[]}`; `flakyKeyOf` | — |
