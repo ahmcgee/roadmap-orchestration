@@ -289,9 +289,10 @@ describe('dispatch: backend park epochs, hold causes, instance env, sessions (G5
     assert.deepEqual(run.journal.view.backendParks().map((p) => [p.backend, p.class]), [['claude', 'usage-limit']]);
     assert.equal(v.needsUser?.reason, 'usage-limit');
     assert.match(v.needsUser?.recommendation ?? '', /resets 11:40pm \(UTC\)/);
-    // Every judge carries the subagent constraint (W2) at the end of its module's text.
+    // Every judge carries the subagent constraint (W2) at the end of its module's text; plan-check acts (dev.17, the design
+    // pass), so its text is appended to Claude Code's default prompt.
     const argv = runnerFiles(called.invDir, called.inv).read('launch.json')!.argv;
-    assert.ok(argv[argv.indexOf('--system-prompt') + 1]!.startsWith(`check\n\n${JUDGE_SUBAGENTS}`));
+    assert.equal(argv[argv.indexOf('--append-system-prompt') + 1], `check\n\n${JUDGE_SUBAGENTS}`);
     run.journal.close();
   });
 
