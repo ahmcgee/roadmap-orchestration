@@ -68,6 +68,8 @@ export type LaneJson = Readonly<{
   systems?: readonly string[];
   testArgv?: readonly string[];
   stochastic?: Readonly<{ runs: number; minPasses: number }>;
+  /** dev.17 (proportional review): the lane reads comments, so a docs-only change never carries its pass over. */
+  readsComments?: true;
 }>;
 
 /** The fixture's own test lane: fails until `add` is fixed, printing ADD-MARKER. */
@@ -293,7 +295,7 @@ export function planCheckRepairStep(a: PlanCheckAnswer, stdinContains: readonly 
   };
 }
 
-export const BUILD_REPORT = { summary: 'Did the work.', changedPaths: [], lanesRun: [], blockers: [], experiments: [], final: true } as const;
+export const BUILD_REPORT = { summary: 'Did the work.', changedPaths: [], lanesRun: [], blockers: [], experiments: [], docsOnlySince: null, final: true } as const;
 
 /** Stdin-matching pattern for a failing lane's stdout/stderr dir of this run, as a fix round lists it. */
 export function laneEvidencePattern(run: StageRun, lane: string): string {

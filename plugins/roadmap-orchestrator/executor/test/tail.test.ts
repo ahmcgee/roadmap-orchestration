@@ -221,7 +221,9 @@ describe('tail.released', () => {
 });
 
 describe('tail.gate-debt', () => {
-  const f = (severity: 'blocking' | 'note' | 'pre-existing', text: string, debt: Readonly<{ drag: string }> | null | 'unrecorded') => ({ severity, path: null, text, contractRef: null, experiments: [], debt });
+  const f = (severity: 'blocking' | 'note' | 'pre-existing' | 'ride-along', text: string, debt: Readonly<{ drag: string }> | null | 'unrecorded') => ({
+    severity, path: null, text, contractRef: null, experiments: [], debt, defect: severity === 'blocking' ? 'incorrect-behaviour' as const : null, reraises: null, hunk: null,
+  });
   it('a note banks only with a drag; a pre-existing defect always; a dev.12 note as dev.12 banked it; never a blocking finding or a blank text', () => {
     assert.deepEqual(gateDebtNotes([
       f('note', 'parse re-reads the file per call.', { drag: 'Every reader of big inputs  pays it.' }),

@@ -40,7 +40,8 @@
         ],
         "premises": [],
         "unreviewed": [],
-        "clusters": null
+        "clusters": null,
+        "rulings": []
       }
     },
     {
@@ -83,7 +84,8 @@
         ],
         "premises": [],
         "unreviewed": [],
-        "clusters": null
+        "clusters": null,
+        "rulings": []
       }
     }
   ]
