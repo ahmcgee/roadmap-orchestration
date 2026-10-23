@@ -382,7 +382,13 @@ export type UsageUnavailableReason = (typeof USAGE_UNAVAILABLE_REASONS)[number];
  */
 export type Usage =
   | Readonly<{ kind: 'known'; tokens: TokenUsage; delegated?: readonly ClassUsage[] }>
-  | Readonly<{ kind: 'unavailable'; reason: UsageUnavailableReason }>;
+  /**
+   * `streamed` (dev.17, field feedback 2026-10-23 item 6): a judgment's Claude call ended without a result (killed,
+   * cancelled, superseded), and this is what its stream showed of its own model's spend (src/backends/claude.ts
+   * `streamedUsage`: output tokens a lower bound, cost null). Absent: the stream showed none, or the call is an
+   * implementer's, whose session's next reading reports this process's spend cumulatively.
+   */
+  | Readonly<{ kind: 'unavailable'; reason: UsageUnavailableReason; streamed?: TokenUsage }>;
 
 const usd: Read<number> = (value, path) => {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) throw new SchemaError(path, 'a finite non-negative number', value);
@@ -417,7 +423,10 @@ const usage: Read<Usage> = tagged('kind', {
     const delegated = f.optional('delegated', classUsages);
     return { kind: f.get('kind', literal('known')), tokens: f.get('tokens', tokenUsage), ...(delegated === undefined ? {} : { delegated }) };
   }),
-  unavailable: object((f): Usage => ({ kind: f.get('kind', literal('unavailable')), reason: f.get('reason', usageUnavailableReason) })),
+  unavailable: object((f): Usage => {
+    const streamed = f.optional('streamed', tokenUsage);
+    return { kind: f.get('kind', literal('unavailable')), reason: f.get('reason', usageUnavailableReason), ...(streamed === undefined ? {} : { streamed }) };
+  }),
 });
 
 /**
@@ -922,7 +931,7 @@ export const laneEnv: Read<LaneEnv> = object((f) => {
   return out;
 });
 
-const stochastic: Read<Stochastic> = object((f) => {
+export const stochastic: Read<Stochastic> = object((f) => {
   const out = { runs: f.get('runs', positive), minPasses: f.get('minPasses', positive) };
   if (out.runs < 2) throw new SchemaError(`${f.path}.runs`, 'at least 2 (one run is not stochastic)', out.runs);
   if (out.minPasses > out.runs) throw new SchemaError(`${f.path}.minPasses`, `at most runs (${out.runs})`, out.minPasses);

@@ -4758,3 +4758,23 @@ records and readers in src/core/stale.ts). Additive; `SCHEMA_VERSION` stays 1.
 
 Crash labels (test/matrix.ts rows STALE_SET and PROPAGATION_REVISION): `propagation.after-stale-set` (the set written,
 the commit not done), `propagation.after-refused`, `propagation.after-revision`.
+
+## dev.17: usage limits in any result, streamed usage, k-of-n failures (2026-10-23; field feedback items 3 and 6, U)
+
+Field feedback 2026-10-23 (an arc on dev.13): a gate's first result was Claude's session limit and its failing background
+subagents' empty results followed, so the call was read as a process fault (a self-probing park) instead of the arc-wide
+usage-limit park; 14 checkpoint calls that ended without a result were metered as nothing. Record changes are additive;
+`SCHEMA_VERSION` stays 1.
+
+| Record | Change | Read-time default |
+|---|---|---|
+| `result.json` `backendErrors` (Claude) | one per `is_error` result of the stream, in order, once per message (was: the last result's alone); a `usage-limit` one makes the output absent whatever results follow (src/backends/claude.ts `errorsOf`) | none (lasting) |
+| `result.json` `usage` | `unavailable{reason, streamed?: TokenUsage}`: a judgment's Claude call without a result, what its own model's `assistant` messages showed (`streamedUsage`: once per message id, outside subagents; output tokens a lower bound, `turns` the messages, `costUsd` null). Never on an implementer's (its resumed session's reading reports the spend cumulatively: adapter.ts `implementerUsage`) | absent: the stream showed none |
+| `usage-unavailable` fact | `+ streamed?: TokenUsage`, as result.json's; the meter adds its tokens and turns to every total and still counts the call in `unavailable` (its cost unknown) | absent: none |
+| `proc.spawn` subject `lane` | `+ stochastic?: Stochastic`: a stochastic lane's run, its spec's `{runs, minPasses}`; never with `verify`. `laneFailures` reads a lane's runs with either as k of n: red once its red runs leave fewer than `minPasses` runs that could pass, else not listed | absent: the red-lane protocol (or `verify`) |
+
+The usage-limit `needs-user` item quotes the error and names the reset the text gives ("resets 11:40pm (UTC)",
+src/backends/errors.ts `usageLimitResets`), kept as written: the text has no date. The classifier's usage-limit text also
+matches a named window ("You've hit your session limit"). Every judgment session's system text carries
+`JUDGE_SUBAGENTS` (src/prompts/delegation.ts; dispatch.ts `judgeSystem`): subagents run in the foreground, the answer
+after their reports.

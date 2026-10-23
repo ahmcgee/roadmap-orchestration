@@ -54,7 +54,11 @@ export class ResultConflictError extends Error {
  * history before retrying."; the API's own code is `context_length_exceeded`.
  */
 const CONTEXT_EXCEEDED = /prompt is too long|input is too long for requested model|ran out of room in the model's context window|context_length_exceeded/i;
-const USAGE_LIMIT = /usage limit|hit your limit|rate limit|quota/i;
+// Claude Code's own texts: "You've hit your limit · resets 3am (UTC)", "You've hit your session limit · resets 11:40pm (UTC)"
+// (field 2026-10-23); a named window ("session", "weekly", ...) may stand between "your" and "limit".
+const USAGE_LIMIT = /usage limit|hit your (?:[a-z-]+ )?limit|rate limit|quota/i;
+/** The reset a Claude usage-limit text names after "resets" (`usageLimitResets`). */
+const RESETS = /\bresets\s+([^·\n]+?)\s*$/i;
 const CAPACITY = /at capacity|try a different model|overloaded/i;
 const PLATFORM = /stream disconnected|connection (?:lost|reset|refused|closed)|timed out|service unavailable|internal server error|bad gateway/i;
 
@@ -72,4 +76,12 @@ export function classifyBackendError(message: string, httpStatus: number | null)
   if (httpStatus !== null && httpStatus >= 500) return 'platform';
   if (PLATFORM.test(message)) return 'platform';
   return 'backend';
+}
+
+/**
+ * When a usage-limit error's text says the limit resets, as the CLI wrote it ("11:40pm (UTC)"), or null when it says
+ * none. The text gives a clock time without a date, so it is kept as written: the needs-user item names it.
+ */
+export function usageLimitResets(message: string): string | null {
+  return RESETS.exec(message)?.[1] ?? null;
 }

@@ -173,6 +173,16 @@ function implementerSession(terminal: Extract<BackendTerminal, { role: 'build' }
   return implementerSessionId(reading.sessionId, 'stdout thread.started.thread_id');
 }
 
+/**
+ * An implementer's reading without what a result-less stream showed (`streamed`): its session is resumed (a pause, a fix
+ * round), and the resumed process's result reports the session's spend cumulatively, this process's included, so counting
+ * the streamed share too would count it twice. A judgment's session is never resumed after a call without a result.
+ */
+function implementerUsage(terminal: BackendTerminal, usage: Usage): Usage {
+  if (terminal.role !== 'build' || usage.kind !== 'unavailable' || usage.streamed === undefined) return usage;
+  return { kind: 'unavailable', reason: usage.reason };
+}
+
 type Adapted = Readonly<{ result: ResultFile; reads: ReadsFile | null }>;
 
 function backendAdapted(input: AdapterInput, terminal: BackendTerminal): Adapted {
@@ -183,7 +193,7 @@ function backendAdapted(input: AdapterInput, terminal: BackendTerminal): Adapted
     ...bound, type: 'backend' as const,
     routingRev: terminal.routingRev,
     outcome: backendOutcome(exit, input.cancel, terminal, reading),
-    usage: reading.usage,
+    usage: implementerUsage(terminal, reading.usage),
     backendErrors: reading.backendErrors,
   };
   const result: BackendResult = terminal.role === 'build'

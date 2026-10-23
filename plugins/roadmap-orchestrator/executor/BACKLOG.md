@@ -413,10 +413,12 @@ at triage stay in git history.
   facts charged; a session whose earlier invocation an executor before 1.0.0-dev.12 metered has no `session` on that
   fact, so its first dev.12 reading (a repair turn or a resumed build) is charged whole, once. Nothing to do unless an
   arc's spend matters at that precision.
-- **A judge's background subagent** (W2, 2026-10-16). The Agent tool's `run_in_background` lets a judge end a turn while a
-  subagent runs; the session then prints an interim result (with `structured_output`) and a later one, and the adapter
-  reads the last. Watch for a judge whose deadline kills it while it waits on a background subagent: then tell judges to
-  run subagents in the foreground, or treat the last interim answer as the call's.
+- **A judge's background subagent** (W2, 2026-10-16; triggered and resolved in dev.17). The Agent tool's
+  `run_in_background` lets a judge end a turn while a subagent runs; the session then prints an interim result (with
+  `structured_output`) and a later one, and the adapter reads the last. Triggered in the field 2026-10-23: a gate's first
+  result was the session limit and its failing background subagents' empty results followed, so the call read as a process
+  fault. Resolved: every judge's system text says to run subagents in the foreground (`JUDGE_SUBAGENTS`), and a usage limit
+  in any result is the call's (src/backends/claude.ts). Reopen if a judge's trace still shows `run_in_background`.
 
 - **`proofJudgment` → execution evidence** (dev.12 gate method redesign, deferred). An obligation's `proofJudgment` is
   graded by a judge reading the proof; the owner's philosophy (code owns invariants, models own method, evals own trust)
