@@ -10,7 +10,7 @@
 //      (milestone-exempt), ranked with the repair units (`ORIGIN_RANK`). Its spec seed (`deflakeSpec`) carries the lane
 //      (a spec lane copied from the unit that saw it; a suite lane in `forces`; an arc lane's failing tests as witness
 //      items), the outcomes it may reach, the flakes it fixes, and the earlier deflake units of its keys (a second deflake
-//      is told of the first). A lane no longer defined anywhere is due nothing. The commit is `plan-applied{source:
+//      is told of the first). A lane no longer defined anywhere is never minted for (the job waits). The commit is `plan-applied{source:
 //      deflake}`, proposer `deflake` (src/input/classify.ts `deflakeRows`); a commit the arc moved under is retried at the
 //      next run. Not while the arc drains (admissions closed).
 //

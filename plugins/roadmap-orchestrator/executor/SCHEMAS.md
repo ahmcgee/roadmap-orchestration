@@ -4713,7 +4713,7 @@ src/pipeline/deflake.ts, src/pipeline/deflakemint.ts). Record changes are additi
    finds an item by the red run's dir), crash label `deflake.after-recurring`; then, unless draining, admits the due units in
    one revision through `admitUnit` and `fillMappedObligations`, `evaluateRevision` with proposer `deflake`, and
    `commitUnderFence` with source `deflake`, parent `arc`; crash label `deflake.after-revision`. A group whose lane is no
-   longer defined (the owner's spec lane, a suite lane, an arc lane) is due nothing. A refusal of its own units is a bug
+   longer defined (the owner's spec lane, a suite lane, an arc lane) is never minted for (the job waits). A refusal of its own units is a bug
    (thrown); a commit the arc moved under is retried.
 5. **The spec seed** (`deflakeSpec`, rev 1): `deflake-<n>` (the next free number); scope the lane's systems' paths and test
    globs, else the scope of the unit whose spec lane it is, else `**`; a spec lane copied (normalised) from that unit, a
