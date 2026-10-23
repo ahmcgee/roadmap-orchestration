@@ -153,7 +153,7 @@ import {
 import { invocationDir, quiescent } from './invoke.ts';
 import {
   type LaneRecord, type LaneRuntime, type Series, type VerificationTree, builderSuiteLanes, dirtyPaths, dirtySnapshot, laneOrder, laneRuntime, presentCheckouts, removeCheckout,
-  removeVerificationTree, runLaneSeries, seriesEntry, specSeriesRoot, stageSuiteLanes,
+  LANE_DEADLINE_MS, removeVerificationTree, runLaneSeries, seriesEntry, specSeriesRoot, stageSuiteLanes,
 } from './lanes.ts';
 import { mutationSmoke, survivingObligations } from './smoke.ts';
 import { pressureCause, seriesRuling } from './starved.ts';
@@ -163,6 +163,8 @@ import {
   resumed,
 } from './rounds.ts';
 import { type BuildRound, type Next, type StageOutcome, outcomeFact, transition } from './transitions.ts';
+import { verificationReasons, verifyRunsOf } from './deflake.ts';
+import type { Verification } from '../core/design.ts';
 import { evidenceSnapshotOp, salvageCommitOp, worktreeCreateOp, worktreeRemoveOp } from '../recover/ops.ts';
 
 /** One stage attempt, recorded. `needsUser`: content beyond the table's own, for the caller to write. */
@@ -666,6 +668,19 @@ function planCheckPriorRound(ctx: StageContext, unit: UnitId, now: PlanCheckChec
   return null;
 }
 
+/**
+ * dev.17 (flaky ledger): the verification a deflake unit's approving plan-check settled in its design record (null: none,
+ * or the unit's latest answer is no approve). Its lanes stage runs the key's lane that many times (`verifyRunsOf`).
+ */
+export function approvedVerification(ctx: StageContext, unit: UnitId): Verification | null {
+  const spawns = judgmentSpawns(ctx, unit, 'planCheck');
+  for (let i = spawns.length - 1; i >= 0; i--) {
+    const out = judgmentOutput(ctx, spawns[i]!, validatePlanCheckOutput);
+    if (out !== null) return out.decision === 'approve' ? out.design?.verification ?? null : null;
+  }
+  return null;
+}
+
 /** The approving plan-check's notes: facts it reported for the build and the gate (arc-1 feedback item 26). */
 export function planCheckNotes(ctx: StageContext, unit: UnitId): string {
   const spawns = judgmentSpawns(ctx, unit, 'planCheck');
@@ -796,6 +811,8 @@ function judgePlanCheck(ctx: StageContext, unit: PlanUnit, called: BackendCallOu
   if (answer.kind !== 'answered') return answer;
   const out: PlanCheckOutput = answer.out;
   const reasons = [...visionCiteReasons(ctx, out)];
+  // dev.17 (flaky ledger): a deflake unit approves with its verification, within the verification budget.
+  if (out.decision === 'approve') reasons.push(...verificationReasons(ctx, ctx.plan(), unit, loadUnitSpec(ctx, unit).spec, out.design, LANE_DEADLINE_MS));
   const pinned = dispatchOf(ctx.journal.view, unit.id);
   const holds = judged !== null && verifiedGrowth(ctx, unit, judged.spec, effectiveScope(pinned), judged.tip, out.scopeGrowth).proposals.length > 0;
   if (!holds) reasons.push(...unknownCiteReasons(ctx, out.patch));
@@ -1563,11 +1580,13 @@ function suiteFault(ctx: StageContext, unit: UnitId, series: Series): LanesVerdi
   }
 }
 
-/** `lanes` at `at` in their own checkout, removed afterwards (citing the series' evidence). */
-async function fastSuiteSeries(ctx: StageContext, parent: StageParent, lanes: readonly LaneDef[], at: Sha, which: 'suite' | 'base', rt: LaneRuntime): Promise<Series> {
+/** `lanes` at `at` in their own checkout, removed afterwards (citing the series' evidence). `verify`: a deflake unit's verification runs. */
+async function fastSuiteSeries(
+  ctx: StageContext, parent: StageParent, lanes: readonly LaneDef[], at: Sha, which: 'suite' | 'base', rt: LaneRuntime, verify: ReadonlyMap<LaneId, number> = new Map(),
+): Promise<Series> {
   const { worktreeRoot, arc } = ctx.plan();
   const checkout = { path: fastSuiteWorktree(worktreeRoot, arc, parent.unit, parent.attempt, which), checkout: { type: 'detached', at } } as const;
-  const series = await runLaneSeries(ctx, parent, lanes, 'suite', checkout, fastSuiteRoot(ctx.runDir, parent, which), rt, false);
+  const series = await runLaneSeries(ctx, parent, lanes, 'suite', checkout, fastSuiteRoot(ctx.runDir, parent, which), rt, false, new Map(), verify);
   if (series.tree !== null) await removeVerificationTree(ctx, series.tree, parent);
   return series;
 }
@@ -1613,7 +1632,7 @@ async function fastSuite(
   const regenerate = unitRegenerateLanes(ctx.plan(), unitDiffPaths(ctx.repo, integrationTip(ctx), salvaged));
   const lanes = [...regenerate, ...stageSuiteLanes(ctx.plan().suite.lanes, spec, forcedLanes(ctx.journal.view, spec))];
   if (lanes.length === 0) return { verdict: { kind: 'green' }, series: null };
-  const series = await fastSuiteSeries(ctx, parent, lanes, salvaged, 'suite', rt);
+  const series = await fastSuiteSeries(ctx, parent, lanes, salvaged, 'suite', rt, verifyRunsOf(unit, approvedVerification(ctx, unit.id)));
   const fault = suiteFault(ctx, unit.id, series);
   if (fault !== null) return { verdict: fault, series };
   const { end, dirty } = series;
@@ -1656,7 +1675,7 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
   for (const created of presentCheckouts(ctx.journal.view, unit.id)) await removeCheckout(ctx, created, parent, laneGlobs(ctx, spec));
   const checkout = { path: verificationWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, parent.attempt), checkout: { type: 'detached', at: salvaged } } as const;
   const rt = laneRuntime(ctx, unit.id);
-  const series = await runLaneSeries(ctx, parent, order, 'spec', checkout, specSeriesRoot(ctx.runDir, parent), rt, entry !== null);
+  const series = await runLaneSeries(ctx, parent, order, 'spec', checkout, specSeriesRoot(ctx.runDir, parent), rt, entry !== null, new Map(), verifyRunsOf(unit, approvedVerification(ctx, unit.id)));
   const { end } = series;
   let verdict: LanesVerdict = end.kind === 'green' ? { kind: series.dirty.length > 0 ? 'not-certified' : 'green' }
     : end.kind === 'occupied' ? { kind: 'occupied', needsUser: end.needsUser }

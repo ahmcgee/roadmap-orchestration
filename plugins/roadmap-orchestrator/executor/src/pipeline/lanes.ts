@@ -19,7 +19,9 @@
 // A lane that runs red goes through the red-lane protocol (redlane.ts): a host signature on a busy host
 // waits, holding nothing, for a clear host and reruns; a signature without that evidence is `blocked`; a spec lane's
 // red repeating the unit's confirmed earlier red (`repeatOf`) is red without a rerun; any other red gets one diagnostic
-// rerun (red then green is red, `flaky`). The class is persisted (`red.json`) before the decision. A rerun takes its own reservation,
+// rerun (red then green is `flaky`: dev.17, a flake the flaky ledger records, `observeFlake`, and forgives, so the green
+// rerun counts, unless the unit deflakes that lane or the red ran on a saturated host; else red). The class is persisted
+// (`red.json`) before the decision. A rerun takes its own reservation,
 // runs in the same checkout at the same SHA and keeps its evidence in `<lane>.rerun/`. The ledger holds one
 // record per lane (`LaneRecord`): the run whose verdict counts, with the other run attached.
 //
@@ -62,7 +64,8 @@
 //
 // Stochastic lanes (dev.17, `Stochastic`): up to `runs` runs, each its own spawn and reservation (`<lane>.runs/<n>/` past
 // the first), stopping once `minPasses` passed or can no longer pass; the lane passes with `minPasses` passes, and its
-// record is its last passing run (else its last run). Never the red-lane protocol, never flaky.
+// record is its last passing run (else its last run). Never the red-lane protocol, never flaky. A deflake unit's
+// verification (dev.17, `verify` on its spawns) runs its lane the same way with every run required to pass.
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { basename, dirname, join, posix } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
@@ -93,6 +96,7 @@ import { ignoredWrites, planIgnored } from '../git/ignored.ts';
 import { statusPorcelainV2Z } from '../git/git.ts';
 import { type WorktreeCreateRequest, removedSince, standing } from '../git/worktree.ts';
 import { type HostSample, readHostSample } from '../host/sample.ts';
+import { PRESSURE_SATURATED } from '../host/pressure.ts';
 import { HOST_SIGNATURES, HOST_SIGNATURES_REV, type HostSignatureId, outputSignatures, outputTail } from '../host/signatures.ts';
 import { type Argv0, resolveArgv0 } from '../preflight/argv0.ts';
 import type { BuildLane, LaneLedgerEntry, ObligationView } from '../prompts/inputs.ts';
@@ -112,6 +116,8 @@ import {
   laneAbortReason, laneCancelOf, readRedClass, redLane, writeRedClass,
 } from './redlane.ts';
 import { evidenceSnapshotOp, worktreeCreateOp, worktreeRemoveOp } from '../recover/ops.ts';
+import { flakeOf, observeFlake } from './deflake.ts';
+import type { FlakyEvent } from '../core/flaky.ts';
 
 /** A lane with no progress this long has hung. Default, unmeasured: re-derive once arcs have measured stalls. */
 export const LANE_STALL_MS = 10 * 60_000;
@@ -140,7 +146,8 @@ export type HostSuspected = Readonly<{ signatures: readonly HostSignatureId[]; b
 /**
  * One lane of a series: the run whose verdict counts, and the other run of a red lane (redlane.ts). After a
  * host-signature rerun the record is the rerun and `voided` the first run; after a diagnostic rerun it is the
- * first run and `diagnostic` the rerun; `flaky`: red, then green on the diagnostic rerun. `repeat`: a red that
+ * first run and `diagnostic` the rerun; `flaky`: red, then green on the diagnostic rerun. dev.17: a flake the flaky
+ * ledger forgave (src/pipeline/deflake.ts) is the green rerun, `flaky`, with the red run `voided`. `repeat`: a red that
  * repeated the unit's earlier red (no rerun, F2). `hostSuspected`: the first run's host signatures (F3).
  */
 export type LaneRecord = LaneRun & Readonly<{
@@ -396,8 +403,11 @@ export function dev6RedClass(runDir: AbsPath, inv: InvocationId, dir: AbsPath): 
   return classifyRed({ signatures: outputSignatures(output, HOST_SIGNATURES_DEV6), host: readLaneHost(dir) }, null);
 }
 
-/** A lane's record from its first run and its rerun, if any: the reading `redLane` made live (redlane.ts). */
-function laneRecord(first: LaneRun, rerun: LaneRun | null): LaneRecord {
+/**
+ * A lane's record from its first run and its rerun, if any: the reading `redLane` made live (redlane.ts). `forgiven`: the
+ * flake's `flake-observed` fact forgave it (dev.17), so the green rerun counts.
+ */
+function laneRecord(first: LaneRun, rerun: LaneRun | null, forgiven = false): LaneRecord {
   const cls = redClassOf(first);
   const base = {
     voided: null, diagnostic: null, flaky: false, repeat: cls?.kind === 'repeat' ? { attempt: cls.attempt, inv: cls.inv } : null,
@@ -410,6 +420,10 @@ function laneRecord(first: LaneRun, rerun: LaneRun | null): LaneRecord {
     case 'host-signature':
       return { ...rerun, ...base, voided: first };
     case 'diagnostic':
+      if (forgiven) {
+        if (rerun.verdict !== 'pass') throw new Error(`lane ${first.lane}: a forgiven flake whose rerun ${rerun.inv} did not pass`);
+        return { ...rerun, ...base, voided: first, flaky: true };
+      }
       return { ...first, ...base, diagnostic: rerun, flaky: rerun.verdict === 'pass' };
     case 'signature-without-evidence':
       throw new Error(`lane ${first.lane} was rerun after a signature without host evidence (${first.inv})`);
@@ -509,6 +523,9 @@ function laneSpawns(view: JournalView, parent: StageParent, lane: LaneId, at: Sh
   });
 }
 
+/** dev.17: a deflake unit's verification of `lane`: `runs` runs, every one passing (src/pipeline/deflake.ts `verifyRunsOf`). */
+const verifiedLane = (lane: LaneDef, runs: number): LaneDef => ({ ...lane, stochastic: { runs, minPasses: runs } });
+
 /** A stochastic lane's record from its runs (see the header): its last passing run once `minPasses` passed, else its last run. */
 function stochasticRecord(lane: LaneDef, runs: readonly LaneRun[]): LaneRecord {
   const s = lane.stochastic;
@@ -524,9 +541,12 @@ function stochasticRecord(lane: LaneDef, runs: readonly LaneRun[]): LaneRecord {
 function spawnRecord(ctx: StageContext, parent: StageParent, lane: LaneDef, spawns: readonly IntentOf<'proc.spawn'>[], root: AbsPath): LaneRecord {
   const [first, rerun, ...more] = spawns;
   if (first === undefined) throw new Error(`lane ${lane.id}: no spawn`);
-  if (lane.stochastic !== undefined) return stochasticRecord(lane, spawns.map((s, i) => laneRun(ctx, s, lane, laneDir(root, lane, i === 0 ? 'first' : i + 1))));
+  const verify = first.expect.subject.purpose === 'lane' ? first.expect.subject.verify : undefined;
+  const runs = verify === undefined ? lane : verifiedLane(lane, verify);
+  if (runs.stochastic !== undefined) return stochasticRecord(runs, spawns.map((s, i) => laneRun(ctx, s, lane, laneDir(root, lane, i === 0 ? 'first' : i + 1))));
   if (more.length > 0) throw new Error(`lane ${lane.id} ran ${spawns.length} times in series ${parent.unit} ${parent.stage}#${parent.attempt}; a lane runs at most twice`);
-  return laneRecord(laneRun(ctx, first, lane, laneDir(root, lane, 'first')), rerun === undefined ? null : laneRun(ctx, rerun, lane, laneDir(root, lane, 'rerun')));
+  const red = laneRun(ctx, first, lane, laneDir(root, lane, 'first'));
+  return laneRecord(red, rerun === undefined ? null : laneRun(ctx, rerun, lane, laneDir(root, lane, 'rerun')), flakeOf(ctx.journal.view, red.inv)?.forgiven ?? false);
 }
 
 /**
@@ -753,13 +773,16 @@ const suiteWitnessDir = (runDir: AbsPath, parent: StageParent, witness: ArcLaneD
  */
 async function runLane(
   ctx: StageContext, parent: StageParent, lane: LaneDef, set: LaneSet, tree: AbsPath, at: Sha, dir: AbsPath, held: readonly ResourceUnit[],
-  sampleHost: () => HostSample, identity: LaneIdentity, witness: ArcLaneDef | null, files: readonly RepoPath[] | null,
+  sampleHost: () => HostSample, identity: LaneIdentity, witness: ArcLaneDef | null, files: readonly RepoPath[] | null, verify: number | null,
 ): Promise<Ran> {
   const start = sampleHost();
   const outcome = await invoke(ctx.journal, ctx.containment, {
     runDir: ctx.runDir,
     origin: { type: 'new', key: opKey(`lane:${parent.unit}`), parent, deadlineAt: isoTimeOf(new Date(Date.now() + LANE_DEADLINE_MS)) },
-    subject: { purpose: 'lane', unit: parent.unit, lane: lane.id, set, at, redRev: HOST_SIGNATURES_REV, identity, ...(files === null ? {} : { files: [...files].sort() }) },
+    subject: {
+      purpose: 'lane', unit: parent.unit, lane: lane.id, set, at, redRev: HOST_SIGNATURES_REV, identity, ...(files === null ? {} : { files: [...files].sort() }),
+      ...(verify === null ? {} : { verify }),
+    },
     launch: (invDir) => {
       const env = laneEnv(ctx, parent.unit, lane, held);
       let extra: Readonly<Record<string, string>> = {};
@@ -840,10 +863,13 @@ export function seriesEntry(ctx: ResourceContext, lanes: readonly LaneDef[]): Re
  * for the caller to keep or remove, certified when it was still clean. `entered`: the stage already holds the first
  * lane's set (`seriesEntry`), reserved, so its first run takes no reservation of its own (released unused when the
  * first lane is reused). `witnesses`: a candidate's suite lanes that also run as an identical arc lane (F6), by id.
+ * `verify` (dev.17): a deflake unit's verification runs per lane (src/pipeline/deflake.ts `verifyRunsOf`): that lane runs
+ * fresh, that many times, every run passing. A flaky lane (red, then green on its diagnostic rerun) is recorded in the
+ * flaky ledger (`observeFlake`) and passes when the ledger forgives it.
  */
 export async function runLaneSeries(
   ctx: StageContext, parent: StageParent, lanes: readonly LaneDef[], set: LaneSet, checkout: WorktreeCreateRequest, root: AbsPath,
-  rt: LaneRuntime, entered: boolean, witnesses: ReadonlyMap<LaneId, ArcLaneDef> = new Map(),
+  rt: LaneRuntime, entered: boolean, witnesses: ReadonlyMap<LaneId, ArcLaneDef> = new Map(), verify: ReadonlyMap<LaneId, number> = new Map(),
 ): Promise<Series> {
   if (checkout.checkout.type !== 'detached') throw new Error(`a lane series runs in a detached checkout, not on ${checkout.checkout.branch}`);
   const ids = new Set<string>(lanes.map((l) => l.id));
@@ -869,7 +895,7 @@ export async function runLaneSeries(
     keepWitness(ctx, witness, record.inv, suiteWitnessDir(ctx.runDir, parent, witness, record.inv), treeSha, { type: 'candidate', unit: parent.unit, attempt: parent.attempt });
   };
 
-  const attempt = async (lane: LaneDef, which: Which, identity: LaneIdentity, files: readonly RepoPath[] | null): Promise<Attempt> => {
+  const attempt = async (lane: LaneDef, which: Which, identity: LaneIdentity, files: readonly RepoPath[] | null, verifyRuns: number | null = null): Promise<Attempt> => {
     const request = laneRequest(ctx, lane);
     let held: Reservation<'running', StageHolder> | null = null;
     if (request !== null) {
@@ -899,7 +925,7 @@ export async function runLaneSeries(
     }
     try {
       if (last.evidence === null) await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${parent.unit}:verify`, parent, checkout);
-      const ran = await runLane(ctx, parent, lane, set, path, at, laneDir(root, lane, which), held?.resources ?? [], rt.sampleHost, identity, witnesses.get(lane.id) ?? null, files);
+      const ran = await runLane(ctx, parent, lane, set, path, at, laneDir(root, lane, which), held?.resources ?? [], rt.sampleHost, identity, witnesses.get(lane.id) ?? null, files, verifyRuns);
       last.evidence = ran.evidence;
       if (held !== null) {
         const cleaned = await cleanup(ctx, held, parent);
@@ -915,12 +941,12 @@ export async function runLaneSeries(
    * A stochastic lane's runs (see the header): its record (null when it never ran), and how it ends the series (null: it
    * passed).
    */
-  const stochastic = async (lane: LaneDef, identity: LaneIdentity): Promise<Readonly<{ record: LaneRecord | null; end: SeriesEnd | null }>> => {
+  const stochastic = async (lane: LaneDef, identity: LaneIdentity, verifyRuns: number | null = null): Promise<Readonly<{ record: LaneRecord | null; end: SeriesEnd | null }>> => {
     const s = lane.stochastic;
     if (s === undefined) throw new Error(`lane ${lane.id} is not stochastic`);
     const runs: LaneRun[] = [];
     for (let n = 1; n <= s.runs; n++) {
-      const a = await attempt(lane, n === 1 ? 'first' : n, identity, null);
+      const a = await attempt(lane, n === 1 ? 'first' : n, identity, null, verifyRuns);
       if (a.ran !== null) runs.push(a.ran.record);
       const record = runs.length === 0 ? null : stochasticRecord(lane, runs);
       const stopped = a.kind === 'ended' ? a.end : runEnd(a.ran);
@@ -935,6 +961,18 @@ export async function runLaneSeries(
 
   for (const lane of lanes) {
     const now = laneNow(ctx, lane, at);
+    // dev.17: a deflake unit's verification runs its lane fresh, `runs` times, every run passing (never reused, never test-only).
+    const verifyRuns = verify.get(lane.id);
+    if (verifyRuns !== undefined) {
+      if (witnesses.has(lane.id) || lane.stochastic !== undefined) throw new Error(`lane ${lane.id} of ${parent.unit}: a verification lane is neither an arc lane's stand-in nor stochastic`);
+      const ran = await stochastic(verifiedLane(lane, verifyRuns), now.identity, verifyRuns);
+      if (ran.record !== null) ledger.push(ran.record);
+      if (ran.end !== null) {
+        end = ran.end;
+        break;
+      }
+      continue;
+    }
     // A stand-in for an arc lane always runs: its run is also the arc lane's witness (F6).
     const reusable = witnesses.has(lane.id) ? null : reusablePass(ctx, parent, lane, at, now);
     const partial = reusable !== null || witnesses.has(lane.id) ? null : testOnlyRun(ctx, lane, at, now);
@@ -998,10 +1036,16 @@ export async function runLaneSeries(
       if (ended !== null) return { kind: 'ended', end: ended };
       return { kind: 'ran', run: again.ran, verdict: { red: isRed(again.ran.record.verdict), evidence: evidenceOf(again.ran.record) } };
     }, { sample: rt.sampleHost, signal: rt.signal });
-    const record = laneRecord(red, rerun.ran?.record ?? null);
+    const again = rerun.ran?.record ?? null;
+    // dev.17: red then green on the diagnostic rerun is a flake: the ledger's, and forgiven unless this unit deflakes it. A
+    // red run on a saturated host is the host's (RC-11: the stage holds it for its rerun), never a flake.
+    const hostRed = red.pressure !== null && red.pressure >= PRESSURE_SATURATED;
+    const forgiven = result.kind === 'reran' && result.reason === 'diagnostic' && result.verdict.kind === 'red' && result.verdict.flaky && again !== null && !hostRed
+      && observeFlake(ctx, { type: 'unit', unit: parent.unit }, lane.id, set, { tree: now.inputSha, env: identity.envId, failing: [], red: red.inv, green: again.inv });
+    const record = laneRecord(red, again, forgiven);
     ledger.push(record);
     if ((result.kind === 'reran' && result.verdict.kind !== 'blocked') || result.kind === 'repeat') witnessCounted(lane, record);
-    if (result.kind === 'reran' && result.verdict.kind === 'pass') continue;
+    if ((result.kind === 'reran' && result.verdict.kind === 'pass') || forgiven) continue;
     switch (result.kind) {
       case 'repeat':
         end = { kind: 'red', lane: record };
@@ -1605,8 +1649,12 @@ export async function runJourneySeries(
         end = { kind: 'blocked', lane: lane.def.id, detail: again.verdict.detail };
         break;
       }
-      // After a host-signature rerun the rerun counts; after a diagnostic rerun the first run does (red, flaky when the rerun passed).
-      result = again.reason === 'host-signature' ? counted(lane, again.rerun, false) : counted(lane, first.ran, again.verdict.kind === 'red' && again.verdict.flaky);
+      // After a host-signature rerun the rerun counts; after a diagnostic rerun the first run does (red, flaky when the rerun
+      // passed), unless the flaky ledger forgave the flake (dev.17): then the rerun counts.
+      const flaky = again.reason === 'diagnostic' && again.verdict.kind === 'red' && again.verdict.flaky;
+      const forgiven = flaky && observeFlake(ctx, owner.type === 'unit' ? { type: 'unit', unit: owner.parent.unit } : { type: 'job', job: owner.job }, lane.def.id,
+        lane.witness === null ? 'suite' : 'arc', journeyFlake(ctx, lane, treeSha, red, again.rerun));
+      result = again.reason === 'host-signature' || forgiven ? counted(lane, again.rerun, forgiven) : counted(lane, first.ran, flaky);
     }
     runs.push(result);
     if (opts.stop(result)) break;
@@ -1628,6 +1676,22 @@ export async function runJourneySeries(
     ctx.journal.fact({ kind: 'series-certified', parent, checkout: checkout.path, at });
   }
   return { end, runs, treeSha, checkout: { dirty, movedTo: head === at ? null : head, evidence: dirtyAt } };
+}
+
+/**
+ * dev.17: a journey lane's flake (red run `red`, green rerun `green`) as the flaky ledger records it: the lane's input and
+ * environment, and the tests an arc lane's reporter named failing in the red run.
+ */
+function journeyFlake(ctx: JourneyContext, lane: JourneyLane, treeSha: Sha, red: JourneyRan, green: JourneyRan): FlakyEvent {
+  const map = mapInForce(ctx.journal.view);
+  if (lane.witness === null) {
+    return { tree: inputShaOf(ctx.repo, treeSha, lane.def, map), env: laneIdentity(ctx, lane.def).identity.envId, failing: [], red: red.inv, green: green.inv };
+  }
+  const env = laneEnvId(ctx, lane.witness);
+  const tests = collectWitness(lane.witness.reporter, {
+    witnessFile: absPath(join(red.dir, WITNESS_LINES)), stdoutFile: absPath(join(invocationDir(ctx.runDir, red.inv), STDOUT_FILE)),
+  }) ?? [];
+  return { tree: arcLaneKey(ctx, treeSha, lane.witness, env).inputSha, env, failing: tests.filter((t) => t.outcome === 'fail').map((t) => t.testId), red: red.inv, green: green.inv };
 }
 
 /** Whether a journey run counts as red (failed or stalled); a reused observation has no verdict of its own. */

@@ -65,7 +65,8 @@ describe('lane failures (F3)', () => {
       // OOMKilled on its first run; its rerun fails on its own (a real defect the host signal hid).
       { id: 'oom', argv: ['sh', '-c', `if [ -f ${oomed} ]; then echo "assertion failed: berth 3 is double-booked" >&2; exit 1; fi; touch ${oomed}; echo "Last State: Terminated  Reason: OOMKilled" >&2; exit 1`] },
     ];
-    const run: StageRun = setupUnit({ steps: [], lanes });
+    // dev.17: a deflake unit of `flaky`, so its flake stays red (any other unit's would be forgiven, src/pipeline/deflake.ts).
+    const run: StageRun = setupUnit({ steps: [], lanes, unit: { origin: 'deflake', deflake: { keys: [{ type: 'lane', lane: 'flaky' }] } } });
     pinDispatch(run.ctx, run.unit, keptSpec(run.journal));
     const defs = laneOrder(loadUnitSpec(run.ctx, run.unit).spec);
     const byId = (id: string): LaneDef => defs.find((l) => l.id === id)!;

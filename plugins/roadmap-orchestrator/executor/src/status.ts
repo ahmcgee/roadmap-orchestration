@@ -1012,7 +1012,12 @@ function derive(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Derived {
   const spec: SpecFactsOf = record === null
     ? (u) => {
       if (view.holistic().findings.length > 0) throw new Error(`status: arc ${arc} has findings but no ${START_FILE}, so the spec of ${u.id} cannot be read`);
-      return { reproduces: false, repairs: new Set() };
+      return {
+        reproduces: false, repairs: new Set(),
+        lanes: () => {
+          throw new Error(`status: arc ${arc} has an open deflake unit but no ${START_FILE}, so the spec of ${u.id} cannot be read`);
+        },
+      };
     }
     : specFacts({ journal: { view }, runDir, planDir: absPath(dirname(record.planFile)) });
   const inputs: Inputs | null = plan === null ? null : {
@@ -1087,8 +1092,8 @@ function unitReason(l: UnitCore): Exclude<ObligationReason, 'spec' | 'witness'> 
       const types = new Set((w?.admission ?? []).map((c) => c.type));
       if (types.has('paused') || types.has('blocking-item') || types.has('run-only')) return 'supervision';
       if (types.has('backend-parked') || types.has('breaker') || types.has('host-pressure')) return 'host';
-      // A known defect waits on its fixer unit (F4).
-      if (types.has('known-defect')) return 'waiting-dep';
+      // A known defect waits on its fixer unit (F4); dev.17, a code edge on its deflake unit.
+      if (types.has('known-defect') || types.has('deflake')) return 'waiting-dep';
       return 'code';
     }
     case 'running':
@@ -1288,6 +1293,8 @@ function rulerOf(f: PlanAppliedFact): RuledBy {
     // dev.13 (agent D): the code-applied polish revision and a dropped tweak's cut are the executor's own.
     case 'walk':
     case 'compare':
+    // dev.17: the code-applied deflake revision is the executor's own.
+    case 'deflake':
       return { type: 'executor' };
   }
 }

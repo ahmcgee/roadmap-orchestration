@@ -24,8 +24,9 @@ import {
   BOUND_FIELDS, type Bounds, DEFAULT_BOUNDS, type FailureRef, failureRef, type KnownDefectMatch, type LaneDef, type LaneEnv, knownDefectMatch, laneDefOf, laneEnv,
 } from '../core/records.ts';
 import { planCheckShapeDefault } from '../core/upgrade.ts';
+import { type FlakyKey, flakyKey, flakyKeyOf } from '../core/flaky.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
-import { type Fields, type Read, SchemaError, arrayOf, assertUnique, literal, nullable, object, oneOf, positive, sortedBy, str, stringMap, tagged } from '../core/validate.ts';
+import { Fields, type Read, SchemaError, arrayOf, assertUnique, literal, nullable, object, oneOf, positive, sortedBy, str, stringMap, tagged } from '../core/validate.ts';
 import { type LensKind, LENS_KINDS } from '../holistic/types.ts';
 import {
   type AbsPath, type BranchName, type PlanPath, type RepoPath, type RepoPattern, absPath, branchName, planPath, repoPath,
@@ -68,8 +69,14 @@ export type EnvironmentDecl = Readonly<{ name: ResourceName; probe: ToolCommand;
  * unit a milestone walkthrough proposed and code admitted (it carries `polish`), ranks between checkpoint and planned
  * (`ORIGIN_RANK`, src/schedule/types.ts).
  */
-export const UNIT_ORIGINS = ['planned', 'checkpoint', 'repair', 'polish'] as const;
+export const UNIT_ORIGINS = ['planned', 'checkpoint', 'repair', 'polish', 'deflake'] as const;
 export type UnitOrigin = (typeof UNIT_ORIGINS)[number];
+
+/**
+ * dev.17 (flaky ledger): what a `deflake` unit fixes: the ledger keys it was minted for (non-empty, unique, one lane). Code
+ * admits it (src/pipeline/deflake.ts); it ranks with the repair units and belongs to no milestone.
+ */
+export type DeflakeOrigin = Readonly<{ keys: readonly FlakyKey[] }>;
 
 /** dev.13: what a `polish` unit came from: the milestone it polishes and the walkthrough's proposal (`polish-proposed`). */
 export type PolishOrigin = Readonly<{ milestone: MilestoneId; proposal: PolishId }>;
@@ -99,7 +106,17 @@ export type UnitLimits = Readonly<{ [K in keyof Bounds]?: number }>;
  * The plan's limits: the units' bounds, the arc's convergence counter K (§2.8, default 3) and (dev.13) the walks per
  * milestone (`walkRounds`, default 3: round 1 and up to two polish or fix rounds).
  */
-export type ArcLimits = UnitLimits & Readonly<{ convergenceK?: number; walkRounds?: number }>;
+export type ArcLimits = UnitLimits & Readonly<{ convergenceK?: number; walkRounds?: number; verification?: VerificationBudget }>;
+
+/**
+ * dev.17 (flaky ledger): what a deflake unit's verification may cost, in lane-minutes (its runs times the lane's measured
+ * median duration): `laneMinutes` for every lane (absent: `DEFAULT_VERIFICATION_LANE_MINUTES`), `lanes` per lane. A batch
+ * lane without its own entry is capped at `BATCH_VERIFICATION_RUNS` runs instead (src/pipeline/deflake.ts).
+ */
+export type VerificationBudget = Readonly<{ laneMinutes?: number; lanes?: Readonly<Record<LaneId, number>> }>;
+/** Defaults, unmeasured: re-derive once arcs have measured deflakes (BACKLOG). */
+export const DEFAULT_VERIFICATION_LANE_MINUTES = 30;
+export const BATCH_VERIFICATION_RUNS = 2;
 export const DEFAULT_CONVERGENCE_K = 3;
 export const DEFAULT_WALK_ROUNDS = 3;
 
@@ -155,6 +172,8 @@ export type PlanUnit = Readonly<{
   priority?: UnitPriority;
   /** dev.13: present exactly on a `polish` unit. */
   polish?: PolishOrigin;
+  /** dev.17: present exactly on a `deflake` unit. */
+  deflake?: DeflakeOrigin;
 }>;
 
 export const UNIT_PRIORITIES = ['normal', 'high'] as const;
@@ -388,10 +407,27 @@ function limitsFields(f: Fields): Record<string, number> {
   return out;
 }
 const unitLimits: Read<UnitLimits> = object((f) => limitsFields(f) as UnitLimits);
+const laneMinutesMap: Read<Readonly<Record<LaneId, number>>> = (value, path) => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new SchemaError(path, 'an object of lane id → lane-minutes', value);
+  const f = new Fields(value, path);
+  const out: Record<LaneId, number> = {};
+  for (const key of Object.keys(value)) out[laneId(key, `${path}.${key}`)] = f.get(key, positive);
+  f.end();
+  return out;
+};
+const verificationBudget: Read<VerificationBudget> = object((f) => {
+  const laneMinutes = f.optional('laneMinutes', positive);
+  const lanes = f.optional('lanes', laneMinutesMap);
+  return { ...(laneMinutes === undefined ? {} : { laneMinutes }), ...(lanes === undefined ? {} : { lanes }) };
+});
 const arcLimits: Read<ArcLimits> = object((f) => {
   const k = f.optional('convergenceK', positive);
   const walkRounds = f.optional('walkRounds', positive);
-  return { ...limitsFields(f), ...(k === undefined ? {} : { convergenceK: k }), ...(walkRounds === undefined ? {} : { walkRounds }) } as ArcLimits;
+  const verification = f.optional('verification', verificationBudget);
+  return {
+    ...limitsFields(f), ...(k === undefined ? {} : { convergenceK: k }), ...(walkRounds === undefined ? {} : { walkRounds }),
+    ...(verification === undefined ? {} : { verification }),
+  } as ArcLimits;
 });
 
 /** `holistic`, with its `vision` exactly when `withVision` (an `architecture-doc` plan's; a corpus plan's has none). */
@@ -511,6 +547,8 @@ const planUnit: Read<PlanUnit> = object((f) => {
   const priority = f.optional('priority', oneOf(UNIT_PRIORITIES));
   const polish = f.optional('polish', object((g): PolishOrigin => ({ milestone: g.get('milestone', (v, p) => milestoneId(v, p)), proposal: g.get('proposal', (v, p) => polishId(v, p)) })));
   if ((origin === 'polish') !== (polish !== undefined)) throw new SchemaError(`${f.path}.polish`, origin === 'polish' ? 'the milestone and proposal of a polish unit' : 'absent (only a polish unit carries it)', polish);
+  const deflake = f.optional('deflake', deflakeOrigin);
+  if ((origin === 'deflake') !== (deflake !== undefined)) throw new SchemaError(`${f.path}.deflake`, origin === 'deflake' ? 'the flaky keys of a deflake unit' : 'absent (only a deflake unit carries it)', deflake);
   assertUnique(out.scope, (s) => s, `${f.path}.scope`);
   assertUnique(out.resources, (r) => r, `${f.path}.resources`);
   assertUnique(out.after, (u) => u, `${f.path}.after`);
@@ -518,8 +556,15 @@ const planUnit: Read<PlanUnit> = object((f) => {
   return {
     ...out, ...(origin === undefined ? {} : { origin }), ...(cpu === undefined ? {} : { cpu }), ...(reenters === undefined ? {} : { reenters }),
     ...(cutField === undefined ? {} : { cut: cutField }), ...(routing === undefined ? {} : { routing }), ...(limits === undefined ? {} : { limits }),
-    ...(priority === undefined ? {} : { priority }), ...(polish === undefined ? {} : { polish }),
+    ...(priority === undefined ? {} : { priority }), ...(polish === undefined ? {} : { polish }), ...(deflake === undefined ? {} : { deflake }),
   };
+});
+
+const deflakeOrigin: Read<DeflakeOrigin> = object((f) => {
+  const keys = f.get('keys', arrayOf(flakyKey, { nonEmpty: true }));
+  assertUnique(keys, flakyKeyOf, `${f.path}.keys`);
+  if (new Set(keys.map((k) => k.lane)).size !== 1) throw new SchemaError(`${f.path}.keys`, 'keys of one lane', keys);
+  return { keys };
 });
 
 const patterns: Read<readonly RepoPattern[]> = (value, path) => {

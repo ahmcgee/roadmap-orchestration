@@ -33,7 +33,7 @@ import {
   reenterFixesDefault,
 } from '../core/upgrade.ts';
 import type { MutantEdit } from '../git/mutant.ts';
-import { type NewSystem, newSystem } from '../core/design.ts';
+import { type DesignRecord, type NewSystem, designRecord, newSystem } from '../core/design.ts';
 import { specBytes } from '../spec/spec.ts';
 import {
   BUILD_CLASSES, JUDGMENT_SEATS, MODEL_CLASSES, type ModelClass, classAt, RISK_TIERS, ROLES, type RiskTier, type Role, SEATS, type Seat,
@@ -98,6 +98,12 @@ type PlanCheckCommon = Readonly<{
    * before it has none (`planCheckScopeGrowthDefault`).
    */
   scopeGrowth: readonly ScopeGrowthAnswer[];
+  /**
+   * dev.17 (design pass): the design record the answer settles (src/core/design.ts); absent: none. A deflake unit's approve
+   * that carries one must give its `verification` (src/pipeline/deflake.ts `verificationReasons`). The answer schema's half
+   * (`PLAN_CHECK_SCHEMA`) is the design pass's to add.
+   */
+  design?: DesignRecord;
 }>;
 export type VisionConflict = Readonly<{ clauses: readonly VisionClauseId[]; note: string }>;
 /** One proposed growth as the plan-check writes it: its patterns are text until code verifies them. */
@@ -193,12 +199,18 @@ export const planCheckOutput: Read<PlanCheckOutput> = object((f): PlanCheckOutpu
     premises: f.get('premises', arrayOf(premise)),
     visionConflict: f.get('visionConflict', arrayOf(visionConflict)),
     scopeGrowth: f.optional('scopeGrowth', arrayOf(scopeGrowthAnswer)) ?? planCheckScopeGrowthDefault(),
+    ...optionalDesign(f),
   };
   if (decision === 'redirect') {
     return { ...common, decision, patch: f.get('patch', arrayOf(wireOp, { nonEmpty: true })) };
   }
   return { ...common, decision, patch: f.get('patch', literal(null)) };
 });
+
+function optionalDesign(f: Fields): Readonly<{ design?: DesignRecord }> {
+  const design = f.optional('design', designRecord);
+  return design === undefined ? {} : { design };
+}
 
 export function validatePlanCheckOutput(value: unknown): PlanCheckOutput {
   return planCheckOutput(value, 'planCheck');
