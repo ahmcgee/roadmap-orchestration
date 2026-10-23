@@ -36,7 +36,8 @@
 //     "chain": { "k": <positive> },                                  optional (M4a): unacked chained starts allowed
 //     "flow": { "givens": [{ "lever": "<lever class>", "note" }] },   optional (M4b): repo givens, owner-committed
 //     "walkthrough": { "mcp": { "<server>": {                        optional (dev.13): the walk sessions' MCP servers
-//         "command", "args"?: [...], "env"?: { ... } } } } }
+//         "command", "args"?: [...], "env"?: { ... } } } },
+//     "systemsMap": { "systems", "shared"?, "contracts"?, "docs"? } } optional (dev.17): src/input/systems.ts
 //
 //   `chain.k` (M4a, OR-Q19, K10) is asked once at bootstrap and committed by the owner; the root agent never writes it.
 //   Absent: K unset (a chained start is refused `chain-invalid{k-unset}`). Nothing about issues lives here (OR-L6).
@@ -61,6 +62,7 @@ import { type RoutingRev, routingRev } from '../core/ids.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { Fields, type Read, SchemaError, arrayOf, object, positive, str, stringMap } from '../core/validate.ts';
 import { type RepoGiven, repoGiven } from '../flow/types.ts';
+import { type SystemsMap, systemsMap } from '../input/systems.ts';
 import { dev7ArcRolesDefault } from '../core/upgrade.ts';
 import { type PlanM1, type PlanTargetKind, hasMilestones } from '../input/plan.ts';
 import type { StartupRejection } from '../preflight/startup.ts';
@@ -94,6 +96,8 @@ export type RepoConfig = Readonly<{
   flow?: Readonly<{ givens: readonly RepoGiven[] }>;
   /** dev.13: the walk sessions' MCP servers, by name (non-empty); absent: no browser drive. */
   walkthrough?: Readonly<{ mcp: Readonly<Record<string, WalkMcpServer>> }>;
+  /** dev.17: the repo's systems map (src/input/systems.ts); absent: none (every lane selected everywhere, the whole tree its input). */
+  systemsMap?: SystemsMap;
 }>;
 
 const walkMcpServer = object((f): WalkMcpServer => ({
@@ -119,6 +123,7 @@ export const repoConfig = object((f): RepoConfig => {
   const chain = f.optional('chain', object((g) => ({ k: g.get('k', positive) })));
   const flow = f.optional('flow', object((g) => ({ givens: g.get('givens', arrayOf(repoGiven)) })));
   const walkthrough = f.optional('walkthrough', object((g) => ({ mcp: g.get('mcp', walkMcp) })));
+  const systems = f.optional('systemsMap', systemsMap);
   const routing = f.optional('routing', object((g) => {
     const out: { profile?: ProfileName; seats?: RoutingLayer; classes?: ClassBindings } = {};
     const profile = g.optional('profile', profileName);
@@ -131,7 +136,7 @@ export const repoConfig = object((f): RepoConfig => {
   }));
   return {
     ...(routing === undefined ? {} : { routing }), ...(chain === undefined ? {} : { chain }), ...(flow === undefined ? {} : { flow }),
-    ...(walkthrough === undefined ? {} : { walkthrough }),
+    ...(walkthrough === undefined ? {} : { walkthrough }), ...(systems === undefined ? {} : { systemsMap: systems }),
   };
 });
 

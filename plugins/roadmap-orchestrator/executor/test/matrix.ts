@@ -179,7 +179,11 @@ const PIPELINE_LABELS: Readonly<Record<Boundary, readonly string[]>> = {
  * A supervised run to its end adds its completion (M3 B7: every arc writes `arc-completed`, then its terminal snapshot),
  * and before it the flow series (M4b: `flow-series`, then `arc-completed`).
  */
-const COMPLETE_LABELS: Readonly<Partial<Record<Boundary, readonly string[]>>> = { B4: ['flow.series-before-completed'], B5: ['complete.after-fact'] };
+/**
+ * The straight run completes; dev.17: its candidate reuses the suite lane the lanes stage passed on the same tree (the one
+ * reuse key), so it reaches `lanes.after-reused` too.
+ */
+const COMPLETE_LABELS: Readonly<Partial<Record<Boundary, readonly string[]>>> = { B4: ['flow.series-before-completed'], B5: ['complete.after-fact', 'lanes.after-reused'] };
 /** The bumpy run adds the merge-in's conflicted path and the red lane's persisted class (M4a rev 3 N1: red.json written, the rerun not begun). */
 const MERGEIN_LABELS: Readonly<Partial<Record<Boundary, readonly string[]>>> = {
   B2: ['mergein.act-start'], B3: ['mergein.after-merge'], B4: ['mergein.act-end', 'flow.series-before-completed'], B5: ['complete.after-fact', 'redlane.after-class'],
@@ -283,6 +287,7 @@ export const CONCURRENT_EXCLUDED_LABELS: Readonly<Record<string, string>> = {
   'plan.apply.after-inputs': 'a start occurrence (the plan put in force before any unit runs): the whole-pipeline and plan-start rows crash it',
   'revision.commit.after-intent': 'a start occurrence (its revision 1 commit): the whole-pipeline and revision.commit rows crash it',
   'revision.commit.after-fact': 'a start occurrence (its revision 1 commit): the whole-pipeline and revision.commit rows crash it',
+  'lanes.after-reused': 'dev.17: reached when a candidate reuses the lanes stage\'s pass on the same tree, which a peer\'s merge may or may not leave so: the LANE_REUSE row and the straight whole-pipeline row crash it',
 };
 
 /**

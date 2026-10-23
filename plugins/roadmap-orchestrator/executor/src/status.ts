@@ -1121,9 +1121,9 @@ export type ObligationLeaf = Readonly<{ verdict: ObligationTruth['verdict']; wit
  * split parent's is its non-exempt children's (held when every one holds). `store` is the run dir's (`observations`) or
  * a snapshot ref's (the brief): one rule.
  */
-export function obligationLeaves(view: JournalView, obligations: Obligations, store: ObservationStore, tree: Sha): (o: ObligationDef) => ObligationLeaf {
+export function obligationLeaves(repo: AbsPath, view: JournalView, obligations: Obligations, store: ObservationStore, tree: Sha): (o: ObligationDef) => ObligationLeaf {
   const fold = view.holistic();
-  const onTree = (lane: ArcLaneDef): Observation | null => dischargingObservation(store, tree, lane, (l) => recordedLaneEnv(view, l));
+  const onTree = (lane: ArcLaneDef): Observation | null => dischargingObservation({ repo, journal: { view } }, store, tree, lane, (l) => recordedLaneEnv(view, l));
   const witnessed = new Map(fold.witnessed.map((w) => [w.seq, w]));
   const lanes = new Map(obligations.lanes.map((l) => [l.id, l]));
   const defs = new Map(obligations.obligations.map((o) => [o.id, o]));
@@ -1164,7 +1164,7 @@ function truths(
   const leaves = new Map<Sha, ReturnType<typeof obligationLeaves>>();
   const leafOn = (tree: Sha, o: ObligationDef): ObligationLeaf => {
     let at = leaves.get(tree);
-    if (at === undefined) leaves.set(tree, at = obligationLeaves(view, obligations, store, tree));
+    if (at === undefined) leaves.set(tree, at = obligationLeaves(repo, view, obligations, store, tree));
     return at(o);
   };
   const evidenceOf = (l: ObligationLeaf): readonly AbsPath[] => l.witnessed.map((w) => witnessDir(runDir, w));

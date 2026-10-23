@@ -21,7 +21,7 @@ import {
   unitId, visionClauseId, idList,
 } from '../core/ids.ts';
 import {
-  BOUND_FIELDS, type Bounds, DEFAULT_BOUNDS, type FailureRef, failureRef, type KnownDefectMatch, type LaneDef, type LaneEnv, knownDefectMatch, laneDef, laneEnv, refuseLaneInputs,
+  BOUND_FIELDS, type Bounds, DEFAULT_BOUNDS, type FailureRef, failureRef, type KnownDefectMatch, type LaneDef, type LaneEnv, knownDefectMatch, laneDefOf, laneEnv,
 } from '../core/records.ts';
 import { planCheckShapeDefault } from '../core/upgrade.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
@@ -709,7 +709,7 @@ export function parsePlan(value: unknown): PlanM1 {
       direction: f.get('direction', str),
       ...(routing === undefined ? {} : { routing }),
       ...(capacity === undefined ? {} : { capacity }),
-      suite: f.get('suite', object((g) => ({ lanes: g.get('lanes', arrayOf(laneDef)) }))),
+      suite: f.get('suite', object((g) => ({ lanes: g.get('lanes', arrayOf(laneDefOf('suite'))) }))),
       resources: f.get('resources', arrayOf(resourceDecl)),
       units: f.get('units', arrayOf(planUnit, { nonEmpty: true })),
       ...(limits === undefined ? {} : { limits }),
@@ -720,7 +720,10 @@ export function parsePlan(value: unknown): PlanM1 {
       ...(environments === undefined ? {} : { environments }),
       ...target,
     };
-    out.suite.lanes.forEach((l, i) => refuseLaneInputs(l, `plan.suite.lanes[${i}]`, 'suite'));
+    // dev.17: a batch lane runs at milestones, cadence audits and the close-out, which only the holistic layer has.
+    out.suite.lanes.forEach((l, i) => {
+      if (l.cadence === 'batch' && out.holistic === undefined) throw new SchemaError(`plan.suite.lanes[${i}].cadence`, 'build, unit or candidate outside a holistic arc (a batch lane runs at milestones, audits and the close-out)', l.cadence);
+    });
     assertUnique(knownDefectsOf(out), (k) => k.id, 'plan.knownDefects');
     assertUnique(out.contracts, (c) => c, 'plan.contracts');
     assertUnique([...out.suite.lanes.map((l) => l.id), ...derivedOf(out).filter((d) => d.regenerate !== undefined).map(regenerateLaneId)], (id) => id, 'plan.suite.lanes');

@@ -25,6 +25,7 @@ import {
 import { assertFired, writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
 import { tmpDir } from './helpers/repo.ts';
+import { commitOn } from './fixtures/git8b-common.ts';
 import { type EnvRun, managedEnv, openEnvRun, plainEnv, startedCalls, envCalls } from './fixtures/env-common.ts';
 import { receiptOf, startScheduler, stopScheduler, submit } from './fixtures/sched-common.ts';
 import { type LaneJson, SCENARIO_TIMEOUT_MS, type StageRun, U1, keptSpec, outcomeFacts, setupUnit, spawnIntents, started, testProbes } from './fixtures/stage-common.ts';
@@ -36,8 +37,8 @@ const STACK = resourceName('stack');
 const CLEAR = { load1: 1, cpus: 16, memTotalKb: 1_000_000, memAvailableKb: 900_000 };
 const ARC = { type: 'arc' } as const;
 
-/** An estate lane on environment `stack` that passes. */
-const envLane = (id: string, environment = 'stack'): LaneJson => ({ id, argv: ['sh', '-c', 'exit 0'], tier: 'estate', environment });
+/** A lane on environment `stack` that passes: a spec lane's cadence `unit`, a suite lane's `candidate`. */
+const envLane = (id: string, cadence: 'unit' | 'candidate' = 'unit', environment = 'stack'): LaneJson => ({ id, argv: ['sh', '-c', 'exit 0'], cadence, environment });
 
 /** A run whose plan declares `stack` as `decl(stateDir)` and whose spec has `lanesJson`. */
 function withEnv(decl: (state: string) => unknown, lanesJson: readonly LaneJson[]): Readonly<{ run: StageRun; state: string }> {
@@ -50,15 +51,15 @@ function withEnv(decl: (state: string) => unknown, lanesJson: readonly LaneJson[
 const runtime = (run: StageRun): LaneRuntime => ({ acquire: reserveNow(run.ctx), rank: () => { throw new Error('not ranked'); }, signal: new AbortController().signal, sampleHost: () => CLEAR });
 
 /**
- * The unit's spec lanes at the base commit as lanes attempt `attempt`, in a checkout of its own. A later attempt's spec
- * series would reuse the first's passes at the same SHA (touching nothing), so it runs them as set `suite`, which never
- * reuses: each lane runs again.
+ * The unit's spec lanes as lanes attempt `attempt`, in a checkout of its own: the first at the base commit, a later one at
+ * a commit on it adding `attempt-<n>`. A series reuses an earlier clean pass on the same input (dev.17, the one reuse
+ * key: any set, any unit), so a later attempt runs on a tree of its own: each lane runs again.
  */
 function series(run: StageRun, attempt: number) {
   const parent: StageParent = { type: 'stage', unit: U1, stage: 'lanes', attempt };
-  const checkout = { path: absPath(join(tmpDir('env-tree'), 'tree')), checkout: { type: 'detached', at: run.base } } as const;
-  const set = attempt === 1 ? 'spec' : 'suite';
-  return runLaneSeries(run.ctx, parent, laneOrder(loadUnitSpec(run.ctx, run.unit).spec), set, checkout, specSeriesRoot(run.ctx.runDir, parent), runtime(run), false);
+  const at = attempt === 1 ? run.base : commitOn(run.repo, run.base, { [`attempt-${attempt}`]: `${attempt}\n` }, `attempt ${attempt}\n`);
+  const checkout = { path: absPath(join(tmpDir('env-tree'), 'tree')), checkout: { type: 'detached', at } } as const;
+  return runLaneSeries(run.ctx, parent, laneOrder(loadUnitSpec(run.ctx, run.unit).spec), 'spec', checkout, specSeriesRoot(run.ctx.runDir, parent), runtime(run), false);
 }
 
 const never = (): boolean => false;
@@ -163,7 +164,7 @@ test('env.up-fails-parks: a failed up parks the lanes stage on the environment, 
 
 test('env.job-suite-lane: a suite lane in a job\'s journey series uses its environment; one that does not come up gives no verdict (blocked), never red', T, async () => {
   const state = tmpDir('env-state');
-  const run = setupUnit({ steps: [], suite: [envLane('suite-env')], environments: { stack: managedEnv(state, 'stack', 60) as never } });
+  const run = setupUnit({ steps: [], suite: [envLane('suite-env', 'candidate')], environments: { stack: managedEnv(state, 'stack', 60) as never } });
   const ctx = { ...run.ctx, acquireFirst: createArbiter(run.ctx).acquireFirst };
   const lane = suiteJourneyLane(run.ctx.plan().suite.lanes[0]!);
   const go = (n: number) => runJourneySeries(ctx, { type: 'job', job: jobId('audit', n), acquireFirst: ctx.acquireFirst }, [lane], {
@@ -290,15 +291,15 @@ describe('env.schema', () => {
     assert.throws(() => parsePlan(base({ environments: { 'integration-slot': { probe: cmd } } })), SchemaError);
   });
 
-  it('a lane naming an undeclared environment, and a fast lane naming one, are unrunnable; an arc lane never names one', () => {
-    const lane = (id: string, tier: 'fast' | 'estate', environment: string) => ({
-      id, argv: ['true'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, tier, resources: [], evidenceGlobs: [], environment,
+  it('a lane naming an undeclared environment, and a build-cadence lane naming one, are unrunnable; an arc lane never names one', () => {
+    const lane = (id: string, cadence: 'build' | 'candidate', environment: string) => ({
+      id, argv: ['true'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence, resources: [], evidenceGlobs: [], environment,
     });
-    const plan = parsePlan(base({ environments: { stack: { probe: cmd } }, suite: { lanes: [lane('known', 'estate', 'stack'), lane('unknown', 'estate', 'nope'), lane('fast', 'fast', 'stack')] } }));
+    const plan = parsePlan(base({ environments: { stack: { probe: cmd } }, suite: { lanes: [lane('known', 'candidate', 'stack'), lane('unknown', 'candidate', 'nope'), lane('fast', 'build', 'stack')] } }));
     const rows = laneRows(plan, [], () => { throw new Error('no unit is checked'); }, process.env);
     assert.deepEqual(rows.map((r) => ('lane' in r ? [r.lane, r.problem.type] : null)), [
       ['unknown', 'unknown-environment'], ['fast', 'estate-lane-for-implementer'],
     ]);
-    assert.throws(() => arcLaneDef({ ...lane('arc', 'estate', 'stack'), reporter: 'jsonl' }, 'lane'), /absent on an arc lane/);
+    assert.throws(() => arcLaneDef({ ...lane('arc', 'candidate', 'stack'), reporter: 'jsonl' }, 'lane'), /absent on an arc lane/);
   });
 });

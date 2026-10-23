@@ -13,9 +13,9 @@ import {
 } from '../core/ids.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import {
-  LENS_KIND_NAMES, type LaneDef, type LensKindName, type RepairRef, type Stage, laneDef, laneEnv, refuseLaneEnvironment, refuseLaneInputs, repairRef,
+  LENS_KIND_NAMES, type LaneDef, type LensKindName, type RepairRef, type Stage, laneDef, laneDefOf, laneEnv, repairRef,
 } from '../core/records.ts';
-import { minimalLaneRev } from '../core/upgrade.ts';
+import { legacyTierOf, minimalLaneRev, tierLaneRev } from '../core/upgrade.ts';
 import {
   type Read, Fields, SchemaError, arrayOf, assertUnique, bool, literal, nat, nullable, object, oneOf, positive, sortedBy, str, tagged,
   text, version,
@@ -258,9 +258,7 @@ export const arcLaneDef: Read<ArcLaneDef> = (value, path) => {
   const reporter = g.get('reporter', oneOf(REPORTERS));
   const testPaths = g.optional('testPaths', arrayOf((v, p) => repoPattern(v, p), { nonEmpty: true }));
   const { reporter: _reporter, testPaths: _testPaths, ...rest } = value as Record<string, unknown>;
-  const lane = laneDef(rest, path);
-  refuseLaneInputs(lane, path, 'arc');
-  refuseLaneEnvironment(lane, path);
+  const lane = laneDefOf('arc')(rest, path);
   // The node-test reporter is loaded through NODE_OPTIONS (B1): a lane that sets its own is refused.
   if (reporter === 'node-test' && (Object.hasOwn(lane.env.set, 'NODE_OPTIONS') || lane.env.pass.includes('NODE_OPTIONS'))) {
     throw new SchemaError(`${path}.env`, 'no NODE_OPTIONS on a node-test lane (the witness reporter is loaded through it)', lane.env);
@@ -495,13 +493,21 @@ function normalisedLane(lane: LaneDef | ArcLaneDef): LaneDef | ArcLaneDef {
 /**
  * Whether a recorded lane rev is `lane`'s (F7): its normalised rev, or (TEMPORARY SCAFFOLDING, `minimalLaneRev` in
  * src/core/upgrade.ts) the rev of its minimal form, a default-valued field omitted (`evidenceExcludes: []`), as a
- * generator hashing raw input wrote it before 1.0.0-dev.7 (run 5). Every comparison of a recorded rev with a lane goes here.
+ * generator hashing raw input wrote it before 1.0.0-dev.7 (run 5), or (TEMPORARY SCAFFOLDING, `tierLaneRev`) the rev of its
+ * dev.16 form, `tier` in place of `cadence` (a lane declaring none of the dev.17 fields). Every comparison of a recorded rev
+ * with a lane goes here.
  */
 export function laneRevMatches(recorded: LaneRev, lane: LaneDef | ArcLaneDef): boolean {
   if (recorded === laneRevOf(lane)) return true;
+  const revOf = (v: object): LaneRev => laneRev(sha256Hex(canonicalJson(v)).slice(0, 16));
   const { evidenceExcludes, ...minimal } = normalisedLane(lane);
-  if (evidenceExcludes.length > 0) return false;
-  return recorded === laneRev(sha256Hex(canonicalJson(minimal)).slice(0, 16)) && minimalLaneRev(lane.id);
+  if (evidenceExcludes.length === 0 && recorded === revOf(minimal)) return minimalLaneRev(lane.id);
+  const { cadence, ...rest } = normalisedLane(lane);
+  const tier = legacyTierOf(cadence);
+  if (tier === null || rest.systems !== undefined || rest.testArgv !== undefined || rest.stochastic !== undefined) return false;
+  const { evidenceExcludes: excludes, ...restMinimal } = rest;
+  const forms = [{ ...rest, tier }, ...(excludes.length === 0 ? [{ ...restMinimal, tier }] : [])];
+  return forms.some((f) => recorded === revOf(f)) && tierLaneRev(lane.id);
 }
 
 /** An obligation is exempt while waived, deferred or retired (only a disposition ruling exempts one). */

@@ -15,7 +15,9 @@
 //      observation already on the tree). A lane that ends without a verdict leaves the job running (`incomplete`);
 //      a failed cleanup leaves a job-owned residue its holder reclaims (G4), and the resumed job runs that lane again.
 //   3. Code opens a P1 (`lens: witness`) for every must-hold obligation (a latched future one included) not held on
-//      the audited tree.
+//      the audited tree. 3a (dev.17): in an arc without milestones, the batch point on the audited SHA
+//      (src/pipeline/batchlanes.ts): each batch lane whose systems changed since its last green runs, and a red one opens
+//      code's P1 (`lens: witness`, over no obligation, naming the lane). A lane without a verdict leaves the job running.
 //   4. The lenses, serially (the vision first), each a fresh session on the lens seat (`callArcRole`: `arc-backend`,
 //      metered to the job by role and routingRev) holding `@cpu`×1 under `job{audit-n}`, reading a detached checkout
 //      of the audited SHA: the vision first, then the obligations with their observations there, the lens's range
@@ -72,7 +74,8 @@ import { catFileType, refTarget, revParse } from '../git/git.ts';
 import { jobEvidenceRoot } from '../git/snapshot.ts';
 import { diffBase } from '../git/transient.ts';
 import { PLAN_INPUT, RULINGS_INPUT, OBLIGATIONS_INPUT, SPEC_INPUT, VISION_INPUT, keptInput, keptPayload, payloadAtRev } from '../input/inforce.ts';
-import { advancesOf, derivedOf, parsePlan } from '../input/plan.ts';
+import { advancesOf, derivedOf, hasMilestones, parsePlan } from '../input/plan.ts';
+import { runBatchPoint } from '../pipeline/batchlanes.ts';
 import { DEFAULT_BOUNDS } from '../core/records.ts';
 import { raiseNeedsUser, raisedFor, readNeedsUser } from '../needsuser.ts';
 import {
@@ -498,6 +501,11 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
     if (series.end.kind !== 'ran') return { kind: 'incomplete', job, end: series.end };
     const records = new Map(series.runs.flatMap((x) => (x.record === null ? [] : [[x.lane, x.record] as const])));
     for (const d of witnessDrafts(ctx, s, r, records, gateHadPassed)) admit(ctx, t, d);
+  }
+  // 3a (dev.17): an arc without milestones has its batch point here (src/pipeline/batchlanes.ts); a red lane is code's P1.
+  if (!hasMilestones(ctx.plan())) {
+    const batch = await runBatchPoint(ctx, job, s.integrationSha, null, (d) => admit(ctx, t, d));
+    if (batch.kind === 'no-verdict') return { kind: 'incomplete', job, end: batch.end };
   }
 
   // 4: the lenses, serially, the vision first.

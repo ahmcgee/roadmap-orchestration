@@ -261,6 +261,21 @@ at triage stay in git history.
   outlives 30 min.
 - **Measured `idleMinutes` defaults** (the plan's backlog): re-derive after an arc that ran environments.
 
+### Deferred from dev.17, lane topology (experience-won item 4)
+
+- **Bisect-based culprit finding for batch lanes** (the plan's backlog): a red batch lane's P1 names the lane and the
+  SHA, not the unit that broke it; suspect narrowing only for now.
+- **Batch arc lanes.** An arc lane is `build` or `candidate`; a `batch` arc lane would leave its obligations unwitnessed
+  at the candidate's held-claims brake. Trigger: an obligation whose only witness is too slow for every merge.
+- **Observations across a lane rev change.** A dev.16 arc's observations and reuse identities are keyed by the dev.16
+  lane rev, so after the upgrade every lane runs once again; `laneRevMatches` keeps only proof judgments fresh. Trigger: a
+  measured upgrade cost that matters.
+- **A systems map edit without a restart.** The map in force is the repo config the executor read at its start, recorded
+  on each revision; an edit needs a restart before the apply that records it (as every repo config edit). Trigger: the
+  root agent editing the map mid-arc more than once.
+- **Close-out batch reds as P1s.** A red batch lane at the close-out refuses it (base-red, needs-user) rather than opening a
+  P1 the checkpoint could repair, because no checkpoint is due at the close-out. Trigger: a close-out refused this way.
+
 ## Convergence and integrity (unscheduled, wanted)
 
 - **A `respec` gate outcome** (arc-1 item 27b). A gate that finds the spec wrong can only escalate to the
@@ -585,6 +600,13 @@ at triage stay in git history.
   field), `PRE_DEV17_BUILTIN_SEATS` in `EARLIER_BUILTIN_SEATS`, the plan-check `in-session` and build `infeasible` and
   `risk-raised` outcomes with their transition rows, `PlanChange` `plan-check-shape`, and the `implementer-escalated`
   fact with its fold (src/core/events.ts, src/core/state.ts).
+- The dev.16 lane forms (1.0.0-dev.17, lane topology), once no arc started on 1.0.0-dev.16 is in flight:
+  `laneCadenceDefault` and `laneInputsDropped` (src/core/upgrade.ts, read by `laneFields` in src/core/records.ts: a lane's
+  `tier` and a spec lane's `inputs`), `tierLaneRev` and `legacyTierOf` with `laneRevMatches`' dev.16 form
+  (src/holistic/types.ts), and `systemsMapDefault` (`systemsMapInForce`, src/input/systems.ts: a dev.16 revision has no
+  `systemsMap`). With them `cadence` is required on every lane, `tier` and `inputs` refused, and `plan-applied.systemsMap`
+  required (null for no map). The `lane-reused` fact's absent `set`/`at` (a spec series at its commit, src/core/state.ts
+  and `seriesLedger`) and the `witnessed` fact's absent `inputSha` (its `treeSha`) go at the same time.
 
 - `gateNoteDebtDefault` and `GATE_DEBT_UNRECORDED` (src/core/upgrade.ts), with `gateDebtNotes`' unrecorded arm
   (src/pipeline/gate.ts), once no arc started on 1.0.0-dev.12 is in flight: a dev.12 gate finding has no `debt` and its

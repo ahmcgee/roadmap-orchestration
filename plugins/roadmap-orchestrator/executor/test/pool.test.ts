@@ -149,7 +149,7 @@ describe('res.instance-binding-persisted', () => {
 
 describe('res.over-capacity', () => {
   const spec = (lanes: readonly object[]): SpecM1 => ({ lanes } as unknown as SpecM1);
-  const lane = (id: string, tier: 'fast' | 'estate', state: string, cpu?: number) => ({ id: laneId(id), tier, state, resources: [], ...(cpu === undefined ? {} : { cpu }) });
+  const lane = (id: string, cadence: 'build' | 'unit', state: string, cpu?: number) => ({ id: laneId(id), cadence, state, resources: [], ...(cpu === undefined ? {} : { cpu }) });
 
   it('a build, a spec lane or a suite lane asking more @cpu than the pool has is a plan-invalid row; judgment and pools cannot exceed', () => {
     const r = newRun();
@@ -160,12 +160,12 @@ describe('res.over-capacity', () => {
       ],
       suite: { lanes: [{ id: 'suite', argv: ['true'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, tier: 'estate', resources: [], evidenceGlobs: [] }] },
     });
-    const specs = new Map([[unitId('u2'), spec([lane('big', 'fast', 'active', 8), lane('parked', 'estate', 'deferred', 9), lane('ok', 'estate', 'active')])]]);
+    const specs = new Map([[unitId('u2'), spec([lane('big', 'build', 'active', 8), lane('parked', 'unit', 'deferred', 9), lane('ok', 'unit', 'active')])]]);
     assert.deepEqual(overCapacity(plan, { cpu: 4 }, specs), [
       { kind: 'plan-invalid', problem: { type: 'over-capacity', unit: 'u1', lane: null, resource: '@cpu', requested: 6, total: 4 } },
       { kind: 'plan-invalid', problem: { type: 'over-capacity', unit: 'u2', lane: 'big', resource: '@cpu', requested: 8, total: 4 } },
     ]);
-    // A small host: the default build (4), the suite's estate lane (4) and an estate spec lane (4) exceed 3 too.
+    // A small host: the default build (4), the suite's candidate lane (4) and a unit-cadence spec lane (4) exceed 3 too.
     assert.deepEqual(overCapacity(plan, { cpu: 3 }, specs).map((x) => `${x.problem.unit}/${x.problem.lane}:${x.problem.requested}`), [
       'null/suite:4', 'u1/null:6', 'u2/null:4', 'u2/big:8', 'u2/ok:4',
     ]);

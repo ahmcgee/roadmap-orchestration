@@ -270,7 +270,7 @@ export const rejectionKey: Read<RejectionKey> = object((f) => ({ station: f.get(
 
 /**
  * The plan values an applied action replaced, so a `worse` verdict names the revert (RC-6) and an absent field is told from a
- * set one: `cpu` null (no `capacity.cpu`: the host default), a lane's `cpu` null (its tier's default), `priority` null
+ * set one: `cpu` null (no `capacity.cpu`: the host default), a lane's `cpu` null (its cadence's default), `priority` null
  * (absent: normal), `class` null (no plan routing at that build seat: the built-in class). `host` is never applied.
  */
 export type FlowPreimage =
@@ -373,7 +373,7 @@ const stationRow: Read<StationRow> = object((f) => ({
 
 /**
  * A lever's current value in the plan in force (the catalogue a run reads). `concurrency.set`: the plan sets
- * `capacity.cpu` (else `cpu` is the host default); a suite lane's `cpu` null is its tier's default; `build-class.builtin`
+ * `capacity.cpu` (else `cpu` is the host default); a suite lane's `cpu` null is its cadence's default; `build-class.builtin`
  * is the tier's built-in class, the floor (RC-8).
  */
 export type LeverState =

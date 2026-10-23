@@ -21,7 +21,7 @@ import { type PlanUnit, parsePlan } from '../../src/input/plan.ts';
 import type { StageContext } from '../../src/pipeline/dispatch.ts';
 import { step } from '../../src/pipeline/unit.ts';
 import { DOCS_NOT_YET } from '../../src/recover/revision.ts';
-import { type RepoConfig, arcStack, resolveRouting } from '../../src/routing/layers.ts';
+import { type RepoConfig, arcStack, parseRepoConfig, resolveRouting } from '../../src/routing/layers.ts';
 import type { RiskTier } from '../../src/routing/types.ts';
 import { makeRepo, revParse, tmpDir } from '../helpers/repo.ts';
 import { type CallRecord, type ClaudeAct, type CodexAct, type Expect, type Step, writeScenario } from '../helpers/scenario.ts';
@@ -51,6 +51,8 @@ export type ArcOptions = Readonly<{
   suite?: readonly LaneJson[];
   /** The integration tip's `add`: fixed (green suite at T, the default) or broken (red at T). */
   base?: 'green' | 'red';
+  /** dev.17: the repo config's `systemsMap` (the descriptor's `config`, which revision 1 records); default none. */
+  systemsMap?: JsonValue;
 }>;
 
 /** Everything needed to rebuild the arc's StageContext, as JSON (for a child executor). */
@@ -71,7 +73,8 @@ export type ArcDescriptor = Readonly<{
 export function laneJson(l: LaneJson): Record<string, unknown> {
   return {
     id: l.id, argv: l.argv, cwd: l.cwd ?? '.', env: { set: l.env?.set ?? {}, pass: l.env?.pass ?? ['PATH'] }, expectedExit: l.expectedExit ?? 0,
-    tier: l.tier ?? 'fast', resources: l.resources ?? [], evidenceGlobs: l.evidenceGlobs ?? [], ...(l.inputs === undefined ? {} : { inputs: l.inputs }),
+    ...(l.cadence === undefined ? { tier: l.tier ?? 'fast' } : { cadence: l.cadence }), resources: l.resources ?? [], evidenceGlobs: l.evidenceGlobs ?? [],
+    ...(l.inputs === undefined ? {} : { inputs: l.inputs }), ...(l.systems === undefined ? {} : { systems: l.systems }),
   };
 }
 
@@ -110,6 +113,7 @@ export function setupArc(opts: ArcOptions): ArcDescriptor {
   return {
     arc, repo, planPath, runDir: tmpDir('unit-run'), hostDir: join(tmpDir('unit-host'), 'roadmap'),
     binDir: scenario.binDir, scenarioPath: scenario.path, scenarioDir,
+    ...(opts.systemsMap === undefined ? {} : { config: parseRepoConfig({ systemsMap: opts.systemsMap }) }),
   };
 }
 

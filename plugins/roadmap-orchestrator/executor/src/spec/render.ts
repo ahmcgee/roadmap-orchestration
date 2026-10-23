@@ -4,15 +4,15 @@
 // Items keep their authored order (the patch appends). Sets whose order carries no meaning (scope,
 // resources, a lane's env names, resources and evidence globs, the cites) are sorted. Struck and deferred items are
 // always shown with their state: ids are never reused, and a reader must see what was withdrawn.
-// `fastLanesOnly` is the implementer's view: estate lanes are left out entirely, without even a mention.
+// `buildLanesOnly` is the implementer's view: lanes of a later cadence are left out entirely, without even a mention.
 // M3 (A13): the obligations a unit declares and what a repair unit repairs follow, each only when the spec has it.
 // M4a rev 3: a spec's witness items follow its facts, and a spec lane's `inputs` its evidence, each only when present, so
 // a spec without them renders as before. Scope growth (2026-10-15): what the unit removes or renames follows its scope, only
 // when declared.
 import type { ItemState, LaneDef, NoteDef, SpecM1, WitnessItemDef } from '../core/records.ts';
-import { fastLanes } from '../resources/reserve.ts';
+import { buildLanes } from '../resources/reserve.ts';
 
-export type RenderOptions = Readonly<{ fastLanesOnly?: boolean }>;
+export type RenderOptions = Readonly<{ buildLanesOnly?: boolean }>;
 
 const sorted = (values: readonly string[]): string[] => [...values].sort();
 const code = (value: string): string => `\`${value}\``;
@@ -28,7 +28,7 @@ function lane(l: LaneDef & Readonly<{ state: ItemState }>): string {
     ...sorted(l.env.pass).map((name) => `${name} (from the host)`),
   ];
   return [
-    `- ${code(l.id)} [${l.state}] tier ${l.tier}`,
+    `- ${code(l.id)} [${l.state}] cadence ${l.cadence}`,
     `  - argv: ${code(JSON.stringify(l.argv))}`,
     `  - cwd: ${code(l.cwd)}`,
     `  - expected exit: ${l.expectedExit}`,
@@ -36,7 +36,9 @@ function lane(l: LaneDef & Readonly<{ state: ItemState }>): string {
     `  - resources: ${l.resources.length === 0 ? '(none)' : sorted(l.resources).map(code).join(', ')}`,
     `  - evidence: ${l.evidenceGlobs.length === 0 ? '(none)' : sorted(l.evidenceGlobs).map(code).join(', ')}`,
     ...(l.evidenceExcludes.length === 0 ? [] : [`  - evidence excludes: ${sorted(l.evidenceExcludes).map(code).join(', ')}`]),
-    ...(l.inputs === undefined ? [] : [`  - inputs: ${sorted(l.inputs).map(code).join(', ')}`]),
+    ...(l.systems === undefined ? [] : [`  - systems: ${sorted(l.systems).map(code).join(', ')}`]),
+    ...(l.testArgv === undefined ? [] : [`  - test argv: ${code(JSON.stringify(l.testArgv))}`]),
+    ...(l.stochastic === undefined ? [] : [`  - stochastic: passes when ${l.stochastic.minPasses} of up to ${l.stochastic.runs} runs pass`]),
   ].join('\n');
 }
 
@@ -53,7 +55,7 @@ function notes(title: string, items: readonly (NoteDef & Readonly<{ state: ItemS
 }
 
 export function renderSpec(spec: SpecM1, options: RenderOptions = {}): string {
-  const lanes = options.fastLanesOnly === true ? fastLanes(spec) : spec.lanes;
+  const lanes = options.buildLanesOnly === true ? buildLanes(spec) : spec.lanes;
   const acceptance = spec.acceptance.map((a) =>
     bullet(`${code(a.id)} [${a.state}]${a.failLoudIfUndelivered ? ' (fail loud if undelivered)' : ''}`, a.clause));
   const cites = [...sorted(spec.cites.contracts).map((c) => `- contract ${code(c)}`), ...sorted(spec.cites.rulings).map((r) => `- ruling ${r}`)];

@@ -125,7 +125,7 @@ function censusAt(repo: AbsPath, ref: ArcRef): BriefArc['census'] {
     const o = observationOf(w, refBlob(repo, ref, `witness/${invocationDirName(w.inv)}.json`));
     return o === null ? [] : [o];
   }));
-  const leaf = obligationLeaves(ref.view, obligations, store, tree);
+  const leaf = obligationLeaves(repo, ref.view, obligations, store, tree);
   const defs = new Map(obligations.obligations.map((o) => [o.id, o]));
   return censusCounts(obligations.census, (id) => {
     const o = defs.get(id);

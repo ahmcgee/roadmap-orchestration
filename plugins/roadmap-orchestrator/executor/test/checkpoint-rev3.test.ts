@@ -298,7 +298,10 @@ function observation(records: WitnessRecord['records'], over: Partial<Pick<Witne
     v: 1, lane: LANE, laneRev: (over.laneRev ?? 'aaaaaaaaaaaaaaaa') as LaneRev, envId: (over.envId ?? 'eeeeeeeeeeeeeeee') as EnvId, treeSha: (over.treeSha ?? '1'.repeat(40)) as Sha,
     inv: (over.inv ?? 'arc/1-1') as InvocationId, runner: 'jsonl', purpose: 'witness', records, malformed: over.malformed ?? false,
   } as unknown as WitnessRecord;
-  return { key: { treeSha: record.treeSha, lane: LANE, laneRev: record.laneRev, envId: record.envId }, recordsSha256: sha256Hex(JSON.stringify(record)) as Sha256Hex, record, seq: 1 };
+  return {
+    key: { treeSha: record.treeSha, lane: LANE, laneRev: record.laneRev, envId: record.envId }, reuse: { inputSha: record.treeSha, lane: LANE, laneRev: record.laneRev, envId: record.envId },
+    recordsSha256: sha256Hex(JSON.stringify(record)) as Sha256Hex, record, seq: 1,
+  };
 }
 const t = (testId: string, outcome: 'pass' | 'fail' | 'skip', selected = 1) => ({ testId, outcome, selected });
 

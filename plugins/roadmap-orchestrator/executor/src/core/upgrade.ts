@@ -406,3 +406,52 @@ export function gateUnreviewedDefault(): null {
 export function planCheckShapeDefault(shape: 'uniform' | 'by-builder'): void {
   warnDefaulted('plan.planCheck.shape', `a plan with planCheck.shape ${shape} (removed in dev.17); read as uniform: every plan-check is one fresh call`);
 }
+
+// ---------------------------------------------------------------------------------------------------
+// 1.0.0-dev.16 → 1.0.0-dev.17 (lane topology). Scaffolding: deleted once no arc started on 1.0.0-dev.16 is in flight
+// (BACKLOG "Scaffolding to delete"); `cadence` then becomes required on every lane and `inputs` is refused.
+
+/** Where a lane is declared: a spec, the plan's suite, or the obligations' arc lanes (each defaults `tier` its own way). */
+export type LaneKind = 'spec' | 'suite' | 'arc';
+
+/**
+ * A lane's `cadence` (dev.17) from the `tier` a dev.16 record declares: a fast lane is `build` (the builder runs it: a spec
+ * or suite lane in its loop, an arc lane as its witness check); an estate lane is `unit` in a spec (the lanes stage) and
+ * `candidate` in the suite or the arc lanes (the candidate merge). Warned once per lane kind.
+ */
+export function laneCadenceDefault(kind: LaneKind, tier: 'fast' | 'estate'): 'build' | 'unit' | 'candidate' {
+  warnDefaulted(`lane.tier.${kind}`, `${kind === 'arc' ? 'an' : 'a'} ${kind} lane declaring tier (written before 1.0.0-dev.17); read as its cadence`);
+  if (tier === 'fast') return 'build';
+  return kind === 'spec' ? 'unit' : 'candidate';
+}
+
+/** The dev.16 `tier` a lane of `cadence` was declared with (`laneCadenceDefault` inverted; null: none, a dev.17 cadence). */
+export function legacyTierOf(cadence: 'build' | 'unit' | 'candidate' | 'batch'): 'fast' | 'estate' | null {
+  return cadence === 'build' ? 'fast' : cadence === 'batch' ? null : 'estate';
+}
+
+/**
+ * A spec lane's `inputs` (M4a rev 3, F1a), folded into the reuse key in 1.0.0-dev.17 (a lane's inputs are its systems'
+ * paths): a dev.16 spec declaring them reads without them; warned once.
+ */
+export function laneInputsDropped(lane: LaneId): void {
+  warnDefaulted('lane.inputs', `lane ${lane}: inputs (written before 1.0.0-dev.17) are dropped; the lane's reuse key reads its systems' paths`);
+}
+
+/**
+ * A recorded lane rev equal to the rev of the lane's dev.16 form (`tier` in place of `cadence`) compares equal to its
+ * normalised rev (`laneRevMatches`), so a proof judgment over a dev.16 lane stays fresh; warned once per lane.
+ */
+export function tierLaneRev(lane: LaneId): true {
+  warnDefaulted(`lane-rev.tier.${lane}`, `lane ${lane}: a recorded rev of its dev.16 form (tier, before 1.0.0-dev.17) compares equal to its normalised rev`);
+  return true;
+}
+
+/**
+ * The systems map a revision recorded (dev.17): absent on a revision a dev.16 executor applied, which had none. Read as no
+ * map: every lane is selected everywhere and reads the whole tree (src/input/systems.ts).
+ */
+export function systemsMapDefault(): null {
+  warnDefaulted('plan-applied.systemsMap', 'a revision without a systems map (applied before 1.0.0-dev.17); read as none');
+  return null;
+}

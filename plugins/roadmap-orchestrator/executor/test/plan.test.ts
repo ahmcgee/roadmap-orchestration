@@ -16,7 +16,7 @@ function validPlan(): Record<string, unknown> {
     rulings: 'rulings.jsonl',
     architectureDoc: 'docs/architecture.md',
     direction: 'Converge on the documented target state.',
-    suite: { lanes: [{ id: 'suite', argv: ['npm', 'test'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, tier: 'estate', resources: ['db'], evidenceGlobs: [] }] },
+    suite: { lanes: [{ id: 'suite', argv: ['npm', 'test'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'candidate', resources: ['db'], evidenceGlobs: [] }] },
     resources: [{ name: 'db', probe: tool, teardown: { ...tool, argv: ['make', 'down-db'] } }],
     units: [{ id: 'u1', spec: 'specs/u1.json', risk: 'med', scope: ['src/auth/**'], resources: ['db'] }],
   };

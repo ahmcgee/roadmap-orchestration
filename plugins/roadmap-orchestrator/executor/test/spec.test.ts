@@ -135,17 +135,17 @@ describe('spec rendering', () => {
 
   it('spec.render-fast-lanes-only', () => {
     const full = renderSpec(SPEC);
-    const fast = renderSpec(SPEC, { fastLanesOnly: true });
-    const estateTokens = ['estateJourney', 'estate-runner', '--estate-flag', 'estate-dir', 'ESTATE_SECRET', 'estate-value', 'ESTATE_PASS', 'estate-evidence', 'tier estate'];
+    const fast = renderSpec(SPEC, { buildLanesOnly: true });
+    const estateTokens = ['estateJourney', 'estate-runner', '--estate-flag', 'estate-dir', 'ESTATE_SECRET', 'estate-value', 'ESTATE_PASS', 'estate-evidence', 'cadence unit'];
     for (const token of estateTokens) {
       assert.ok(full.includes(token), `full render shows ${token}`);
       assert.ok(!fast.includes(token), `fast-lanes render leaks ${token}`);
     }
-    assert.ok(fast.includes('`unit-tests` [active] tier fast'));
+    assert.ok(fast.includes('`unit-tests` [active] cadence build'));
     // A struck estate lane is still an estate lane: omitted too.
     const struck = applySpecPatch(SPEC, patch([{ op: 'strike', id: 'estateJourney' }]));
-    assert.ok(!renderSpec(struck, { fastLanesOnly: true }).includes('estateJourney'));
-    assert.ok(renderSpec(struck).includes('`estateJourney` [struck] tier estate'));
+    assert.ok(!renderSpec(struck, { buildLanesOnly: true }).includes('estateJourney'));
+    assert.ok(renderSpec(struck).includes('`estateJourney` [struck] cadence unit'));
   });
 
   it('spec.redirect-renders', () => {
@@ -158,7 +158,7 @@ describe('spec rendering', () => {
     assert.ok(text.includes('- `D1` [deferred]: Use the canvas API.'), 'deferred items stay visible');
     assert.ok(text.includes('- `D2` [active]: Use SVG instead.'));
     assert.ok(text.includes('- `F2` [active]: SVG is available.'));
-    assert.ok(text.includes('`lint` [active] tier fast'));
+    assert.ok(text.includes('`lint` [active] cadence build'));
   });
 });
 
@@ -250,10 +250,14 @@ describe('spec witnesses (M4a rev 3)', () => {
     assert.doesNotMatch(renderSpec(plain), /## Witnesses/);
   });
 
-  it('a spec lane\'s inputs render beside its evidence', () => {
-    const spec = specM1({ ...RAW_SPEC, lanes: [{ ...FAST_LANE, inputs: ['src/widget/**', 'package.json'] }] }, 'spec');
-    assert.match(renderSpec(spec), /  - inputs: `package.json`, `src\/widget\/\*\*`/);
-    assert.doesNotMatch(renderSpec(SPEC), /inputs:/);
+  it('a spec lane\'s systems, test argv and stochastic render beside its evidence (dev.17); a dev.16 lane\'s inputs are dropped', () => {
+    const spec = specM1({ ...RAW_SPEC, lanes: [{ ...FAST_LANE, systems: ['widget', 'api'], testArgv: ['node', '--test', '{files}'], stochastic: { runs: 3, minPasses: 2 } }] }, 'spec');
+    assert.match(renderSpec(spec), /  - systems: `api`, `widget`/);
+    assert.match(renderSpec(spec), /  - test argv: `\["node","--test","\{files\}"\]`/);
+    assert.match(renderSpec(spec), /  - stochastic: passes when 2 of up to 3 runs pass/);
+    assert.doesNotMatch(renderSpec(SPEC), /systems:|test argv:|stochastic:/);
+    const legacy = specM1({ ...RAW_SPEC, lanes: [{ ...FAST_LANE, inputs: ['src/widget/**'] }] }, 'spec');
+    assert.doesNotMatch(renderSpec(legacy), /inputs:/);
   });
 });
 

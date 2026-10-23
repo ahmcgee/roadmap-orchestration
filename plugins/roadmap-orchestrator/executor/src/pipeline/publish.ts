@@ -98,7 +98,9 @@ import type { ResourceRequest } from '../schedule/types.ts';
 import { type RulingContext, ledgerAfter, parseRulings, validateRuling } from '../spec/rulings.ts';
 import { baselineDebtAt, rulingCorpusOf } from '../phase0/rows.ts';
 import { preemptCandidate } from './integrate.ts';
-import { type JourneySeries, arcJourneyLane, runJourneySeries, suiteJourneyLane } from './lanes.ts';
+import { type JourneySeries, arcJourneyLane, mapInForce, runJourneySeries, seriesOrder, suiteJourneyLane } from './lanes.ts';
+import { selectedLanes } from '../input/systems.ts';
+import { cadenceAtOrBefore } from '../core/records.ts';
 import { runOp, runPrepared } from './dispatch.ts';
 import { executorIdentity } from './stages.ts';
 
@@ -387,7 +389,10 @@ async function publishDocs(ctx: DocsContext, payload: RevisionPayload): Promise<
 
   const obligations = revisionObligations(ctx.runDir, payload);
   const selected = new Set(obligations === null ? [] : docsSelection(obligations, files.contractPaths, payload.changes, new Set(ctx.journal.view.holistic().latched.map((l) => l.obligation))));
-  const lanes = [...plan.suite.lanes.map(suiteJourneyLane), ...(obligations === null ? [] : witnessLanes(obligations, selected).map(arcJourneyLane))];
+  // dev.17: the suite lanes up to `candidate` the commit's diff selects (a docs-only diff selects none but a lane listing
+  // `docs`); a batch lane never runs in the merge path.
+  const suiteLanes = seriesOrder(selectedLanes(mapInForce(ctx.journal.view), plan.suite.lanes.filter((l) => cadenceAtOrBefore(l.cadence, 'candidate')), changedPaths(ctx.repo, tip, next)));
+  const lanes = [...suiteLanes.map(suiteJourneyLane), ...(obligations === null ? [] : witnessLanes(obligations, selected).map(arcJourneyLane))];
   const series = await runJourneySeries(
     ctx, { type: 'job', job: pub, acquireFirst: ctx.arbiter.acquireFirst }, lanes, docsWorktreeRequest(commit),
     { reuse: true, stop: (r) => r.record === null && r.verdict !== 'pass' },
@@ -472,11 +477,11 @@ export function closeOutFiles(ctx: Reader, commit: Sha): readonly DocsFile[] {
 export type CloseOutOutcome =
   /** Published: the integration head is its commit; its docs-covered, docs-published and snapshot are written. */
   | Readonly<{ kind: 'published'; pub: JobId; head: Sha }>
-  /** The head already holds the close-out renderings; every arc lane is witnessed on it. */
+  /** The head already holds the close-out renderings; every batch lane passed and every arc lane is witnessed on it. */
   | Readonly<{ kind: 'nothing-to-change'; head: Sha }>
   /** A lane gave no verdict (blocked, occupied, a failed cleanup: job-owned residues): the close-out runs again later. */
   | Readonly<{ kind: 'no-verdict'; pub: JobId; detail: string }>
-  /** Refused before its ff: a suite lane or an obligation red on the head plus the renderings, or the head moved. */
+  /** Refused before its ff: a suite lane or an obligation red on the head plus the renderings, or the head moved; or a batch lane red on the head alone. */
   | Readonly<{ kind: 'refused'; pub: JobId; reason: string }>;
 
 /** Why a journey series ended without every verdict, in words (a job's escalation and refusals name it). */
@@ -516,8 +521,13 @@ export async function publishCloseOut(ctx: DocsContext): Promise<CloseOutOutcome
 
   const head = headNow();
   if (closeOutFiles(ctx, head).length === 0) {
-    const series = await runJourneySeries(ctx, owner, arcLanes, { path: docsWorktree(plan, pub), checkout: { type: 'detached', at: head } }, { reuse: true, stop: () => false });
-    return series.end.kind === 'ran' ? { kind: 'nothing-to-change', head } : { kind: 'no-verdict', pub, detail: endDetail(series.end) };
+    // dev.17: the batch lanes always run at the close-out, fresh (a suite lane in a journey always runs), then the arc lanes.
+    const batch = plan.suite.lanes.filter((l) => l.cadence === 'batch').map(suiteJourneyLane);
+    const series = await runJourneySeries(ctx, owner, [...batch, ...arcLanes], { path: docsWorktree(plan, pub), checkout: { type: 'detached', at: head } }, { reuse: true, stop: () => false });
+    if (series.end.kind !== 'ran') return { kind: 'no-verdict', pub, detail: endDetail(series.end) };
+    const red = series.runs.find((r) => r.record === null && r.verdict !== 'pass');
+    if (red !== undefined) return { kind: 'refused', pub, reason: `close-out ${pub}: batch lane ${red.lane} is ${red.verdict} on ${plan.integrationBranch} at ${head} (evidence ${red.dir})` };
+    return { kind: 'nothing-to-change', head };
   }
 
   await takeSlot(ctx, { type: 'docs', pub });

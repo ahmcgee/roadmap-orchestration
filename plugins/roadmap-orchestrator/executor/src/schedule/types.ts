@@ -5,7 +5,7 @@
 import type { BackendParkClass, Holder, OutcomeStage, ProbeTarget } from '../core/events.ts';
 import type { CommandId, FindingId, InvocationId, KnownDefectId, NeedsUserId, ObligationId, ResourceName, ResourceUnit, UnitId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
-import type { CommandBody, LaneTier, NeedsUserReason } from '../core/records.ts';
+import type { CommandBody, LaneCadence, NeedsUserReason } from '../core/records.ts';
 import type { PlanM1, PlanUnit, UnitOrigin, UnitPriority } from '../input/plan.ts';
 import type { PressureNow } from '../host/pressure.ts';
 import type { Backend } from '../routing/types.ts';
@@ -31,8 +31,8 @@ export type TaskState = 'idle' | 'awaiting-admission' | 'in-stage' | 'in-chain';
 // Capacity (A3): token costs, all unmeasured defaults
 
 /** `@cpu` tokens per holder kind. Probes and teardowns take none. */
-export const CPU_COST = { judgment: 1, build: 4, lane: { fast: 2, estate: 4 } } as const satisfies Readonly<{
-  judgment: number; build: number; lane: Readonly<Record<LaneTier, number>>;
+export const CPU_COST = { judgment: 1, build: 4, lane: { build: 2, unit: 4, candidate: 4, batch: 4 } } as const satisfies Readonly<{
+  judgment: number; build: number; lane: Readonly<Record<LaneCadence, number>>;
 }>;
 
 /**
