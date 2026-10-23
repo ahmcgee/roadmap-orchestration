@@ -71,7 +71,7 @@ import { CLASS_CATALOGUE, boundAt } from './classes.ts';
 import { BUILTIN_SEATS } from './profiles.ts';
 import {
   type ArcRole, type ArcRoleSet, WALK_ROLES, type ClassBindings, type ClassSource, type ClassTable, MODEL_CLASSES, type ModelClass, type ProfileName, type Role,
-  type RoutingLayer, type RoutingLayerName, type RoutingProvenance, type RoutingTable, SEAT_REFS, type SeatRef, type SeatTable, type Triple, UNIT_ROLES, atSeat,
+  type RoutingLayer, type RoutingLayerName, type RoutingProvenance, type RoutingTable, SEAT_REFS, type SeatRef, type SeatTable, type Triple, UNIT_ROLES, DEV17_ROLES, atSeat,
   classBindings, profileName, routingLayer, seatTable,
 } from './types.ts';
 
@@ -291,7 +291,7 @@ export function resolveRoutingUnder(builtin: ClassTable, stack: RoutingStack): R
   const arcRoles = stack.arcRoles ?? null;
   const milestones = stack.milestones === true;
   return {
-    table, classes, sources: seatTable((s) => named(s)[1]), bindings, rev: routingRevOf(table, arcScope, arcRoles, milestones), arcScope, arcRoles, milestones,
+    table, classes, sources: seatTable((s) => named(s)[1]), bindings, rev: routingRevOf(table, arcScope, arcRoles, milestones, builtin === BUILTIN_SEATS), arcScope, arcRoles, milestones,
     earlierBuiltinRevs: [], preDev17Rev: null,
   };
 }
@@ -301,10 +301,12 @@ export function resolveRoutingUnder(builtin: ClassTable, stack: RoutingStack): R
  * roles of `arcScope` and `arcRoles` (`arcRolesInForce`). Without a role set (an adopted 1.0.0-dev.7 arc) a
  * non-holistic arc hashes the M2 table and a holistic `architecture-doc` arc the 1.0.0-dev.6 role set (no
  * `packReview`), so dev.7's revs are unchanged; an `m4b` arc's revs include `flow`, and (dev.13) only a plan with
- * milestones hashes the walk roles, so an arc without them keeps its revs.
+ * milestones hashes the walk roles, so an arc without them keeps its revs. `head` false (an earlier release's built-in seats,
+ * which only `status` resolves under to alias recorded revs): without the roles that release never had (`DEV17_ROLES`).
  */
-export function routingRevOf(table: RoutingTable, arcScope: ArcScope, arcRoles: ArcRoleSet | null, milestones: boolean): RoutingRev {
-  const roles: readonly Role[] = [...UNIT_ROLES, ...arcRolesInForce(arcScope, arcRoles, milestones)];
+export function routingRevOf(table: RoutingTable, arcScope: ArcScope, arcRoles: ArcRoleSet | null, milestones: boolean, head = true): RoutingRev {
+  const unitRoles: readonly Role[] = head ? UNIT_ROLES : UNIT_ROLES.filter((r) => !(DEV17_ROLES as readonly Role[]).includes(r));
+  const roles: readonly Role[] = [...unitRoles, ...arcRolesInForce(arcScope, arcRoles, milestones)];
   return routingRev(sha256Hex(canonicalJson(Object.fromEntries(roles.map((r) => [r, table[r]])))).slice(0, 16));
 }
 

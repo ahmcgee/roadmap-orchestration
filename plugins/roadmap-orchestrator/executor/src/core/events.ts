@@ -52,6 +52,10 @@ import {
   routingProvenance, seatFields, unitSeatFields,
 } from '../routing/types.ts';
 import { type SystemsMap, systemsMap } from '../input/systems.ts';
+import {
+  type ApprovalBlobs, type FindingsLedgerEntry, type GateReview, type LedgerOutcome, LEDGER_OUTCOMES, approvalBlobs, findingsLedgerEntry, gateReview,
+} from './review.ts';
+import { type ReviewFindingId, reviewFindingId } from './ids.ts';
 
 // ---------------------------------------------------------------------------------------------------
 // Op kinds and their payloads
@@ -496,7 +500,12 @@ export const STAGE_OUTCOME_KINDS = {
   // TEMPORARY SCAFFOLDING (BACKLOG "Scaffolding to delete"): no longer recorded since 2026-10-16, when the judge's read
   // surface widened to the repository and the run dir and a refused read stopped voiding an approval; kept, with its
   // transition row, so a 1.0.0-dev.11 log whose latest gate or plan-check outcome is one still folds and retries.
-  gate: ['approve', 'revise', 'escalate', 'empty-diff', 'refusal', 'malformed', 'process-fault', 'interrupted', 'routing-changed', 'unverified', 'read-denied', 'context-exceeded', 'executor-fault'],
+  // dev.17 (proportional review): `delta-empty` (no file changed since the unit's approval and no target it bound moved:
+  // code skips the gate and approves again at the new fingerprint, uncharged).
+  gate: [
+    'approve', 'revise', 'escalate', 'empty-diff', 'refusal', 'malformed', 'process-fault', 'interrupted', 'routing-changed', 'unverified', 'read-denied', 'context-exceeded',
+    'executor-fault', 'delta-empty',
+  ],
   // M3: `preempted` (a docs publication took the slot before green, A7, uncharged); `finding-blocked` (an active P1
   // blocks a selected obligation, at admission or the pre-ff re-check, G10; uncharged, waits for the finding).
   candidate: [
@@ -682,6 +691,12 @@ export type JudgmentInputs = Readonly<{
    * on a gate's; absent on one a dev.11 executor recorded: read through `gateLargeDiffOf`.
    */
   largeDiff?: GateLargeDiff | null;
+  /**
+   * dev.17 (proportional review): the findings ledger, disputes and delta the gate was given (src/core/review.ts `GateReview`),
+   * which the rules its answer is held to follow from. Only on a gate's; absent on one a dev.16 executor recorded, whose answer
+   * is read without them (`gateReviewOf`).
+   */
+  review?: GateReview;
 }>;
 
 /** The paths a gate's attached diff inlined and did not (`JudgmentInputs.diffShown`). */
@@ -779,15 +794,43 @@ export type Fact =
   | Readonly<{ kind: 'executor-started'; generation: number; host?: HostFingerprint; pressure?: PressureAvailability }>
   /**
    * The gate at `attempt` approved the unit, bound to `fingerprint` (R2): recorded before its stage-outcome,
-   * read by the candidate and ff stages, and re-checked at T before `integration.ff`.
+   * read by the candidate and ff stages, and re-checked at T before `integration.ff`. dev.17: `blobs`, what it approved by
+   * blob (src/core/review.ts `ApprovalBlobs`), the base of a later round's delta; absent on a dev.16 approval, after which
+   * the next round reviews in full (`approvalBlobsOf`).
    */
-  | Readonly<{ kind: 'approval'; unit: UnitId; attempt: number; fingerprint: ApprovalFingerprint }>
+  | Readonly<{ kind: 'approval'; unit: UnitId; attempt: number; fingerprint: ApprovalFingerprint; blobs?: ApprovalBlobs }>
   | StageOutcomeFact
   | HolisticFact
   | M4aFact
   | FlowFact
-  | WalkFact;
+  | WalkFact
+  | ReviewFact;
 export type FactRecord = Readonly<{ type: 'fact'; fact: Fact }>;
+
+/**
+ * dev.17 proportional review (DESIGN-1.0.md §4 "Proportional review"; SCHEMAS.md "Proportional review").
+ *
+ * `review-ledger`: a gate attempt's answer entered the findings ledger: `minted`, each finding with a path that exists at the
+ * head it judged, by its place in the answer (`index`), its entry (blocking: open; any other class settled at once, banked
+ * or released); `settled`, the open entries of the unit this answer settled (a ruled dispute, a fixed or released finding).
+ * At most one per gate attempt, before its stage-outcome.
+ *
+ * `docs-only`: a lanes attempt checked its build's `docsOnlySince` claim against the diff from the unit's last certified
+ * tree `since` to the salvage SHA `at`: accepted by code alone (`code`) or with the verifier (`verifier`), carrying the
+ * passes of `carried` over; or `refused` with the reason, the lanes then running as normal (uncharged).
+ *
+ * `docs-only-miss`: calibration: a candidate attempt found red a lane whose pass the unit's docs-only acceptance carried over.
+ */
+export type ReviewFact =
+  | Readonly<{
+    kind: 'review-ledger'; unit: UnitId; attempt: number; minted: readonly Readonly<{ index: number; entry: FindingsLedgerEntry }>[];
+    settled: readonly Readonly<{ id: ReviewFindingId; outcome: LedgerOutcome }>[];
+  }>
+  | Readonly<{ kind: 'docs-only'; unit: UnitId; attempt: number; since: Sha; at: Sha; verdict: DocsOnlyVerdict; reason: string | null; carried: readonly LaneId[] }>
+  | Readonly<{ kind: 'docs-only-miss'; unit: UnitId; attempt: number; lanes: readonly LaneId[] }>;
+export type ReviewFactKind = ReviewFact['kind'];
+export const DOCS_ONLY_VERDICTS = ['code', 'verifier', 'refused'] as const;
+export type DocsOnlyVerdict = (typeof DOCS_ONLY_VERDICTS)[number];
 
 /**
  * M3 fields of `plan-applied`: `source` (G1); `payloadSha256` (the kept `inputs/<sha>.revision.json` it was appended
@@ -2070,6 +2113,36 @@ const WALK_FACT_READERS: { readonly [K in WalkFactKind]: Read<Fact> } = {
   'demo-acted': object((f): Fact => ({ kind: f.get('kind', literal('demo-acted')), command: f.get('command', cmdR), act: f.get('act', oneOf(DEMO_ACTS)) })),
 };
 
+/** The readers of the dev.17 proportional review facts, spread into `fact`. */
+const REVIEW_FACT_READERS: { readonly [K in ReviewFactKind]: Read<Fact> } = {
+  'review-ledger': object((f): Fact => {
+    const out = {
+      kind: f.get('kind', literal('review-ledger')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive),
+      minted: f.get('minted', arrayOf(object((g) => ({ index: g.get('index', nat), entry: g.get('entry', findingsLedgerEntry) })))),
+      settled: f.get('settled', arrayOf(object((g) => ({ id: g.get('id', (v, p) => reviewFindingId(v, p)), outcome: g.get('outcome', oneOf(LEDGER_OUTCOMES)) })))),
+    };
+    out.minted.forEach((m, i) => {
+      if (m.entry.unit !== out.unit) throw new SchemaError(`${f.path}.minted[${i}].entry.unit`, `unit ${out.unit}`, m.entry.unit);
+      if (m.entry.outcome !== null && m.entry.outcome !== 'banked' && m.entry.outcome !== 'released') throw new SchemaError(`${f.path}.minted[${i}].entry.outcome`, 'open, banked or released at mint', m.entry.outcome);
+    });
+    assertUnique(out.minted, (m) => String(m.index), `${f.path}.minted`);
+    assertUnique(out.settled, (s) => s.id, `${f.path}.settled`);
+    return out;
+  }),
+  'docs-only': object((f): Fact => {
+    const out = {
+      kind: f.get('kind', literal('docs-only')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), since: f.get('since', shaR), at: f.get('at', shaR),
+      verdict: f.get('verdict', oneOf(DOCS_ONLY_VERDICTS)), reason: f.get('reason', nullable(str)), carried: f.get('carried', sortedBy(laneR, (l) => l)),
+    };
+    if ((out.verdict === 'refused') !== (out.reason !== null)) throw new SchemaError(`${f.path}.reason`, out.verdict === 'refused' ? 'why it was refused' : 'null on an acceptance', out.reason);
+    if (out.verdict === 'refused' && out.carried.length > 0) throw new SchemaError(`${f.path}.carried`, 'none on a refusal', out.carried);
+    return out;
+  }),
+  'docs-only-miss': object((f): Fact => ({
+    kind: f.get('kind', literal('docs-only-miss')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), lanes: f.get('lanes', sortedBy(laneR, (l) => l, { nonEmpty: true })),
+  })),
+};
+
 /** The readers of the M3 facts, spread into `fact`. */
 const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = {
   witnessed: object((f): Fact => {
@@ -2259,9 +2332,13 @@ export const fact: Read<Fact> = tagged('kind', {
     if (diffShown !== undefined && out.stage !== 'gate') throw new SchemaError(`${f.path}.diffShown`, 'absent on a plan-check', diffShown);
     const largeDiff = f.optional('largeDiff', nullable(object((g): GateLargeDiff => ({ overflow: g.get('overflow', positive) }))));
     if (largeDiff !== undefined && out.stage !== 'gate') throw new SchemaError(`${f.path}.largeDiff`, 'absent on a plan-check', largeDiff);
+    const review = f.optional('review', gateReview);
+    if (review !== undefined && out.stage !== 'gate') throw new SchemaError(`${f.path}.review`, 'absent on a plan-check', review);
     if (fingerprint === undefined) return out;
     if (fingerprint.unitCommit !== out.head) throw new SchemaError(`${f.path}.fingerprint.unitCommit`, `the head the gate read (${out.head})`, fingerprint.unitCommit);
-    return { ...out, fingerprint, ...(diffShown === undefined ? {} : { diffShown }), ...(largeDiff === undefined ? {} : { largeDiff }) };
+    return {
+      ...out, fingerprint, ...(diffShown === undefined ? {} : { diffShown }), ...(largeDiff === undefined ? {} : { largeDiff }), ...(review === undefined ? {} : { review }),
+    };
   }),
   'edge-resolved': object((f): Fact => ({
     kind: f.get('kind', literal('edge-resolved')), edge: f.get('edge', (v, p) => edgeId(v, p)), command: f.get('command', cmdR), evidence: f.get('evidence', str),
@@ -2310,13 +2387,18 @@ export const fact: Read<Fact> = tagged('kind', {
       ...(pressure === undefined ? {} : { pressure }),
     };
   }),
-  approval: object((f): Fact => ({
-    kind: f.get('kind', literal('approval')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), fingerprint: f.get('fingerprint', approvalFingerprint),
-  })),
+  approval: object((f): Fact => {
+    const out = { kind: f.get('kind', literal('approval')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), fingerprint: f.get('fingerprint', approvalFingerprint) };
+    const blobs = f.optional('blobs', approvalBlobs);
+    if (blobs === undefined) return out;
+    if (blobs.unit !== out.unit || blobs.specRev !== out.fingerprint.specRev) throw new SchemaError(`${f.path}.blobs`, `the blobs of unit ${out.unit} at spec revision ${out.fingerprint.specRev}`, blobs);
+    return { ...out, blobs };
+  }),
   ...HOLISTIC_FACT_READERS,
   ...M4A_FACT_READERS,
   ...FLOW_FACT_READERS,
   ...WALK_FACT_READERS,
+  ...REVIEW_FACT_READERS,
   'stage-outcome': object((f): Fact => {
     const s = f.get('stage', oneOf(OUTCOME_STAGES));
     const out = {
