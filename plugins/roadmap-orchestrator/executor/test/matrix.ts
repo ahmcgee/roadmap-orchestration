@@ -85,6 +85,7 @@ export const AUDIT_JOB = 'cadence audit job (M3 B5: audit-started under the fenc
 export const CHECKPOINT_JOB = 'checkpoint job (M3 B6: checkpoint-inputs under the fence, the checkpoint call)';
 export const WALK_JOB = 'milestone walk job (dev.13: walk-started under the fence, the bring-up, the walkthrough call, minting, walk-ended, milestone-passed)';
 export const POLISH_REVISION = 'polish revision (dev.13 agent D: polish-refused, then plan-applied{source: walk{job}} under the fence)';
+export const DEFLAKE_REVISION = 'deflake revision (dev.17 flaky ledger: flake-recurring items, then plan-applied{source: deflake} under the fence)';
 export const COMPARE_JOB = 'polish compare job (dev.13 agent D: compare-started under the fence, two bring-ups, the polish judge, tweak-judged, the polish-dropped cut)';
 export const DEMO_PROMOTE = 'demo promotion (dev.13 agent G: demo-promoted, then refs/roadmap/demo moved to it; the ref follows the facts)';
 export const BUNDLE_ACTIVATE = 'bundle activation (M3 B6: bundle-decided or plan-applied{source: bundle}, divergences, finding dispositions, digest)';
@@ -1503,6 +1504,27 @@ export const MATRIX: readonly Row[] = [
         status: 'crash',
         labels: ['walk.after-ended', 'walk.after-passed'],
         recovery: 'the walk ended: nothing to resume; a pass the crash cut short is written by settleWalks (the log read through the end held no active walkthrough P1); no walk is due; the model was asked once',
+      },
+    },
+  },
+  {
+    // u1's lane flaked (deflake-1 due), or a third flake of the key after deflake-1 and deflake-2 merged (flake-recurring
+    // due); the deflake job runs in a child (test/fixtures/deflake-child.ts) crashed at each label, then recovery and the job again.
+    row: DEFLAKE_REVISION,
+    test: 'test/deflake.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: { status: 'excluded', why: 'the job writes no intent of its own before its items; each item is a needsuser.raise (its own row) and the commit a revision.commit (its own row)' },
+      B3: {
+        status: 'crash',
+        labels: ['deflake.after-recurring'],
+        recovery: 'the flake-recurring item durable: the rerun finds it raised (its evidence names the flake\'s red run) and has nothing due; one item, no third deflake unit',
+      },
+      B4: { status: 'excluded', why: 'the commit is one revision.commit (its own row crashes inside it); nothing of the deflake job follows it but the crash label after it' },
+      B5: {
+        status: 'crash',
+        labels: ['deflake.after-revision'],
+        recovery: 'plan-applied{source: deflake} durable: the deflake unit is in the plan in force and owns the key, so the rerun has nothing due; one deflake revision',
       },
     },
   },

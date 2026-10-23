@@ -157,7 +157,7 @@ import {
 import { invocationDir, quiescent } from './invoke.ts';
 import {
   type LaneRecord, type LaneRuntime, type Series, type VerificationTree, builderSuiteLanes, dirtyPaths, dirtySnapshot, laneOrder, laneRuntime, mapInForce, presentCheckouts, removeCheckout,
-  removeVerificationTree, runLaneSeries, seriesEntry, specSeriesRoot, stageSuiteLanes,
+  LANE_DEADLINE_MS, removeVerificationTree, runLaneSeries, seriesEntry, specSeriesRoot, stageSuiteLanes,
 } from './lanes.ts';
 import { mutationSmoke, survivingObligations } from './smoke.ts';
 import { pressureCause, seriesRuling } from './starved.ts';
@@ -167,6 +167,8 @@ import {
   resumed,
 } from './rounds.ts';
 import { type BuildRound, type Next, type StageOutcome, outcomeFact, transition } from './transitions.ts';
+import { verificationReasons, verifyRunsOf } from './deflake.ts';
+import type { Verification } from '../core/design.ts';
 import { evidenceSnapshotOp, salvageCommitOp, worktreeCreateOp, worktreeRemoveOp } from '../recover/ops.ts';
 
 /** One stage attempt, recorded. `needsUser`: content beyond the table's own, for the caller to write. */
@@ -674,6 +676,14 @@ function planCheckPriorRound(ctx: StageContext, unit: UnitId, now: PlanCheckChec
 }
 
 /**
+ * dev.17 (flaky ledger): the verification a deflake unit's approving plan-check settled in its design record, as the spec in
+ * force holds it (null: none). Its lanes stage runs the key's lane that many times (`verifyRunsOf`).
+ */
+export function approvedVerification(ctx: StageContext, unit: PlanUnit): Verification | null {
+  return loadUnitSpec(ctx, unit).spec.design?.verification ?? null;
+}
+
+/**
  * The approving plan-check's notes: facts it reported for the build and the gate (arc-1 feedback item 26). dev.17: a
  * scaffold's approves the build as well, and the lessons of the unit's proofs of concept follow the notes (the builder gets
  * the lessons, never a PoC's code: src/pipeline/poc.ts `pocLessons`).
@@ -847,6 +857,8 @@ function judgePlanCheck(ctx: StageContext, unit: PlanUnit, called: BackendCallOu
       if (p.kind === 'refused') reasons.push(...p.reasons);
       else {
         record = p.record;
+        // dev.17 (flaky ledger): a deflake unit approves with its verification, within the verification budget.
+        if (out.decision === 'approve') reasons.push(...verificationReasons(ctx, ctx.plan(), unit, judged.spec, p.record, LANE_DEADLINE_MS));
         const faults = designFaults(ctx, judged.spec, p.record);
         reasons.push(...faults.reasons);
         defects.push(...faults.defects);
@@ -854,7 +866,9 @@ function judgePlanCheck(ctx: StageContext, unit: PlanUnit, called: BackendCallOu
     }
     if (out.decision === 'scaffold') reasons.push(...scaffoldReasons(ctx, out.scaffold, out.design));
     if (out.decision === 'poc') reasons.push(...pocReasons(ctx.journal.view, unit.id));
-    if (out.decision === 'split') {
+    // A deflake unit is one lane's flake, admitted only by the deflake revision (src/input/classify.ts `deflakeRows`): never split.
+    if (out.decision === 'split' && unit.origin === 'deflake') reasons.push(`deflake unit ${unit.id} is not split: fix the flake, or declare the lane's need`);
+    else if (out.decision === 'split') {
       const v = judgeSplit(ctx, unit, judged.spec, out.split, judged.tip);
       if (v.kind === 'faults') {
         reasons.push(...v.faults.reasons);
@@ -1687,11 +1701,13 @@ function suiteFault(ctx: StageContext, unit: UnitId, series: Series): LanesVerdi
   }
 }
 
-/** `lanes` at `at` in their own checkout, removed afterwards (citing the series' evidence). */
-async function fastSuiteSeries(ctx: StageContext, parent: StageParent, lanes: readonly LaneDef[], at: Sha, which: 'suite' | 'base', rt: LaneRuntime): Promise<Series> {
+/** `lanes` at `at` in their own checkout, removed afterwards (citing the series' evidence). `verify`: a deflake unit's verification runs. */
+async function fastSuiteSeries(
+  ctx: StageContext, parent: StageParent, lanes: readonly LaneDef[], at: Sha, which: 'suite' | 'base', rt: LaneRuntime, verify: ReadonlyMap<LaneId, number> = new Map(),
+): Promise<Series> {
   const { worktreeRoot, arc } = ctx.plan();
   const checkout = { path: fastSuiteWorktree(worktreeRoot, arc, parent.unit, parent.attempt, which), checkout: { type: 'detached', at } } as const;
-  const series = await runLaneSeries(ctx, parent, lanes, 'suite', checkout, fastSuiteRoot(ctx.runDir, parent, which), rt, false);
+  const series = await runLaneSeries(ctx, parent, lanes, 'suite', checkout, fastSuiteRoot(ctx.runDir, parent, which), rt, false, new Map(), verify);
   if (series.tree !== null) await removeVerificationTree(ctx, series.tree, parent);
   return series;
 }
@@ -1737,7 +1753,7 @@ async function fastSuite(
   const regenerate = unitRegenerateLanes(ctx.plan(), unitDiffPaths(ctx.repo, integrationTip(ctx), salvaged));
   const lanes = [...regenerate, ...stageSuiteLanes(ctx.plan().suite.lanes, spec, forcedLanes(ctx.journal.view, spec))];
   if (lanes.length === 0) return { verdict: { kind: 'green' }, series: null };
-  const series = await fastSuiteSeries(ctx, parent, lanes, salvaged, 'suite', rt);
+  const series = await fastSuiteSeries(ctx, parent, lanes, salvaged, 'suite', rt, verifyRunsOf(unit, approvedVerification(ctx, unit)));
   const fault = suiteFault(ctx, unit.id, series);
   if (fault !== null) return { verdict: fault, series };
   const { end, dirty } = series;
@@ -1780,7 +1796,7 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
   for (const created of presentCheckouts(ctx.journal.view, unit.id)) await removeCheckout(ctx, created, parent, laneGlobs(ctx, spec));
   const checkout = { path: verificationWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, parent.attempt), checkout: { type: 'detached', at: salvaged } } as const;
   const rt = laneRuntime(ctx, unit.id);
-  const series = await runLaneSeries(ctx, parent, order, 'spec', checkout, specSeriesRoot(ctx.runDir, parent), rt, entry !== null);
+  const series = await runLaneSeries(ctx, parent, order, 'spec', checkout, specSeriesRoot(ctx.runDir, parent), rt, entry !== null, new Map(), verifyRunsOf(unit, approvedVerification(ctx, unit)));
   const { end } = series;
   let verdict: LanesVerdict = end.kind === 'green' ? { kind: series.dirty.length > 0 ? 'not-certified' : 'green' }
     : end.kind === 'occupied' ? { kind: 'occupied', needsUser: end.needsUser }

@@ -73,6 +73,9 @@
 // repair batch (`publishBatch`, B2) and the close-out publication each run as a job of their own. Jobs and units
 // share the arbiter and `@cpu` (the jobs' waits are served first, `acquireFirst`).
 //
+// The flaky ledger (dev.17, src/pipeline/deflakemint.ts; every arc): the deflake job (`applyDeflake`) while the ledger has a
+// deflake unit or a `flake-recurring` item due, and each iteration a `deflake-parked` item per park of a deflake unit.
+//
 // The flow track (M4b, src/flow/track.ts; every arc whose revisions carry the `m4b` role set, holistic or not): each
 // run raises the ruler changes, applies an accepted proposal pending its apply and proves one pending its proof, writes
 // the verdicts due, then runs the flow job when triggers are due. One judgment job at a time: the flow job waits while a
@@ -153,6 +156,7 @@ import { coverageOf } from '../holistic/coverage.ts';
 import { isActive, raiseFindingItems } from '../holistic/findings.ts';
 import { raiseWalkItems, runWalk, settleWalks, walkPending } from '../walk/walk.ts';
 import { applyPolish, polishPending } from '../walk/polish.ts';
+import { applyDeflake, deflakeJobPending, raiseDeflakeParked } from '../pipeline/deflakemint.ts';
 import { comparePending, runCompare } from '../walk/compare.ts';
 import { walksPending } from '../walk/milestones.ts';
 import { packReviewHolds, packReviewPending, runPackReview, settlePackReviews } from '../holistic/packreview.ts';
@@ -1178,6 +1182,16 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
     })) === 'progress' ? PROGRESS : WAIT));
   };
 
+  /**
+   * dev.17 (flaky ledger, src/pipeline/deflakemint.ts): the deflake job on every arc while the ledger asks for a deflake unit or
+   * a `flake-recurring` item; and each iteration, a `deflake-parked` item for a deflake unit's park.
+   */
+  const startDeflake = (): void => {
+    raiseDeflakeParked(x.stage);
+    if (!due('deflake') || !deflakeJobPending(x.stage)) return;
+    trackRetrying('deflake', 'deflake', async () => ((await applyDeflake(h.checkpoint)).kind === 'applied' ? PROGRESS : WAIT));
+  };
+
   /** A8: the close-out publication (or, with nothing to change, every arc lane on the head), as a job. */
   const startCloseOut = (): void => {
     if (!due('closeout')) return;
@@ -1343,6 +1357,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       const holds: Holds = { arc: arcHeld(blocking), batch: batch.held, flowApply: flowApplyHeld(view()) };
       startHolistic(holds, batch);
       startFlow();
+      startDeflake();
       if (tasks.size === 0 && jobs.size === 0 && mutations.length === 0) {
         const end = await ended(blocking);
         if (end !== null) {

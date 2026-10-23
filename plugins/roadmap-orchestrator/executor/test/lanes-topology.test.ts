@@ -84,7 +84,11 @@ describe('lanes.reuse-key (dev.17)', () => {
 
   test('lanes.reuse-red-reruns: with no clean pass on the input a lane runs again; its pass is then reused on the same input', T, async () => {
     const counter = join(tmpDir('topology-counter'), 'n');
-    const run = unitRun({ lanes: [{ id: 'seq', cadence: 'build', argv: ['sh', '-c', `n=$(cat "${counter}" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "${counter}"; [ $n -ne 1 ]`], systems: ['add'] }], systemsMap: MAP });
+    // dev.17: a deflake unit of `seq`, so its flake stays red (any other unit's would be forgiven, src/pipeline/deflake.ts).
+    const run = unitRun({
+      lanes: [{ id: 'seq', cadence: 'build', argv: ['sh', '-c', `n=$(cat "${counter}" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "${counter}"; [ $n -ne 1 ]`], systems: ['add'] }], systemsMap: MAP,
+      unit: { origin: 'deflake', deflake: { keys: [{ type: 'lane', lane: 'seq' }] } },
+    });
     assert.equal((await series(run, 1, specLanes(run), run.base)).end.kind, 'red');
     const b = commit(run, { 'src/other/b.js': '1\n' });
     const second = await series(run, 2, specLanes(run), b);

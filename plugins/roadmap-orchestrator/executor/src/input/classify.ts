@@ -208,7 +208,9 @@ export type Proposer =
    * `splitCutReason`), adds `children`, moves every unit waiting on `unit` onto all of them and every milestone listing `unit`
    * onto them (`splitRows`).
    */
-  | Readonly<{ type: 'split'; unit: UnitId; children: readonly UnitId[] }>;
+  | Readonly<{ type: 'split'; unit: UnitId; children: readonly UnitId[] }>
+  /** dev.17 (flaky ledger): the code-applied deflake revision (src/pipeline/deflake.ts): it only admits deflake units. */
+  | Readonly<{ type: 'deflake' }>;
 
 /** The revision's inputs beyond plan and specs, parsed (what renders and the payload are built from). */
 export type NextInputs = Readonly<{
@@ -945,6 +947,8 @@ export function classify(input: ClassifyInput): Classified {
   // dev.13 (agent D): polish units and the code proposers, over every change listed.
   polishRows(view, cur, plan, proposer, changes, reasons);
   splitRows(cur, plan, proposer, changes, reasons);
+  // dev.17: deflake units and their code proposer.
+  deflakeRows(cur, plan, proposer, changes, reasons);
 
   if (reasons.length > 0) return { kind: 'rejected', reasons };
   // No change but other bytes (whitespace, key order): the new bytes come into force with no change listed.
@@ -1204,6 +1208,23 @@ function splitRows(cur: PlanM1, plan: PlanM1, proposer: Proposer, changes: reado
     || (c.type === 'unit-changed') || c.type === 'order' || c.type === 'milestones' || (c.type === 'spec' && children.has(c.unit));
   const other = changes.filter((c) => !allowed(c));
   if (other.length > 0) reasons.push(`the split of ${proposer.unit} only cuts it and adds its children; it also changes ${other.map((c) => canonicalJson(c)).join(', ')}`);
+}
+
+/**
+ * dev.17 (flaky ledger): a deflake unit added (not a re-entry) is the executor's, from its flaky ledger: only the deflake
+ * revision (`deflake`) admits one, and that revision only adds deflake units. Which keys are due is the ledger's
+ * (src/pipeline/deflake.ts `deflakeDue`), not a classifier row.
+ */
+function deflakeRows(cur: PlanM1, plan: PlanM1, proposer: Proposer, changes: readonly PlanChange[], reasons: string[]): void {
+  const curIds = new Set(cur.units.map((u) => u.id));
+  const added = plan.units.filter((u) => !curIds.has(u.id) && u.origin === 'deflake' && u.reenters === undefined);
+  if (proposer.type !== 'deflake') {
+    for (const u of added) reasons.push(`unit ${u.id} is a deflake unit: only the executor admits one, from its flaky ledger, not a ${proposer.type}`);
+    return;
+  }
+  const ids = new Set<string>(added.map((u) => u.id));
+  const other = changes.filter((c) => !(c.type === 'unit-added' && ids.has(c.unit)));
+  if (other.length > 0) reasons.push(`the deflake revision only admits deflake units; it also changes ${other.map((c) => canonicalJson(c)).join(', ')}`);
 }
 
 type ObligationRows = Readonly<{

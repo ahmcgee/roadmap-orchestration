@@ -11,7 +11,8 @@
 // run's (lanes.ts `laneRecord`).
 //
 // Not listed: a lanes attempt still open (its records are not final); a lane whose spawns are not all done (a crash cut
-// it short: unknown); a reused lane (a pass); suite lanes (the candidate's).
+// it short: unknown); a reused lane (a pass); suite lanes (the candidate's). dev.17: a deflake unit's verification runs
+// (spawn `verify`) are `red` when one run was, else not listed.
 //
 // 1.0.0-dev.6 adoption (temporary scaffolding): a red run its spawn did not stamp with `redRev` never persisted its
 // class; it is re-derived from its raw evidence with the frozen table (lanes.ts `dev6RedClass`), and not listed once
@@ -46,9 +47,13 @@ function verdictOf(view: JournalView, spawn: IntentOf<'proc.spawn'>): CommandVer
 function laneFailure(view: JournalView, runDir: AbsPath, parent: StageParent, lane: LaneId, spawns: readonly IntentOf<'proc.spawn'>[]): LaneFailure | null {
   const [first, rerun, ...more] = spawns;
   if (first === undefined) throw new Error(`lane ${lane}: no spawn`);
-  if (more.length > 0) throw new Error(`lane ${lane} ran ${spawns.length} times in series ${parent.unit} lanes#${parent.attempt}; a lane runs at most twice`);
   const verdicts = spawns.map((s) => verdictOf(view, s));
   if (verdicts.some((v) => v === null)) return null;
+  // dev.17: a deflake unit's verification runs (`verify`): red when a run was, never rerun, never flaky.
+  if (first.expect.subject.purpose === 'lane' && first.expect.subject.verify !== undefined) {
+    return verdicts.some((v) => isRed(v!)) ? classified(parent, lane, null, undefined) : null;
+  }
+  if (more.length > 0) throw new Error(`lane ${lane} ran ${spawns.length} times in series ${parent.unit} lanes#${parent.attempt}; a lane runs at most twice`);
   const [firstVerdict, rerunVerdict] = verdicts as CommandVerdict[];
   if (!isRed(firstVerdict!)) {
     if (rerun !== undefined) throw new Error(`lane ${lane} was rerun after a ${firstVerdict} run (${first.op})`);

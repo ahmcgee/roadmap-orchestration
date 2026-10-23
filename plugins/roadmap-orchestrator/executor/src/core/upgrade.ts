@@ -506,3 +506,11 @@ export function planCheckDesignDefault(): null {
   warnDefaulted('plan-check.design', 'a plan-check answer without a design record (recorded before 1.0.0-dev.17); read as none');
   return null;
 }
+
+/**
+ * The flaky ledger (dev.17): an arc whose revision in force an executor before 1.0.0-dev.17 applied ran without one, and
+ * its flakes were charged as red. Read as an empty ledger at the upgrade: flakes its units met before are not in it.
+ */
+export function flakyLedgerDefault(): void {
+  warnDefaulted('flaky.ledger', 'an arc whose revision in force was applied before 1.0.0-dev.17 has no flaky ledger; it starts empty at the upgrade');
+}

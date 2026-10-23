@@ -1697,11 +1697,14 @@ export const NEEDS_USER_REASONS = [
   // dev.17: a lane's environment did not come up or failed its probe (lanes or candidate `env-unavailable`: a retryable park
   // on the environment, probed until it comes up).
   'env-unavailable',
+  // dev.17 (flaky ledger), non-blocking: a deflake unit parked, so the code edges it held dropped (src/pipeline/deflake.ts);
+  // a key flaked again after two deflake units merged, so no third is minted.
+  'deflake-parked', 'flake-recurring',
 ] as const;
 /** The reasons from M3 on raised non-blocking; every other one is raised blocking. */
 export const NON_BLOCKING_M3_REASONS = [
   'bundle-request', 'convergence-bound', 'convergence-identity', 'audit-owed', 'divergence-digest', 'flow-proposal', 'flow-host', 'flow-worse', 'flow-invalid',
-  'ruler-changed', 'executor-fault',
+  'ruler-changed', 'executor-fault', 'deflake-parked', 'flake-recurring',
 ] as const satisfies readonly NeedsUserReason[];
 export type NeedsUserReason = (typeof NEEDS_USER_REASONS)[number];
 

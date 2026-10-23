@@ -4,7 +4,7 @@
 // Interfaces only; no behaviour here.
 import type {
   AbortCode, DoneRecord, Fact, FlowFact, GitOpKind, IntentOf, IntentRecord, JudgmentInputs, JudgmentStage, OpExpect, OpKind, OpOutcome, OpPost, Parent,
-  PlanAppliedFact, RecoveredBy, WalkFact,
+  PlanAppliedFact, RecoveredBy, WalkFact, FlakyFact,
 } from './events.ts';
 import type {
   AmendmentId, ArcId, ClaudeSessionId, CommandId, DivergenceId, EdgeId, FindingId, InvocationId, JobId, JobKind, MilestoneId, NeedsUserId, OpId, OpKey, PolishId, ResourceUnit, Sha, UnitId,
@@ -135,8 +135,11 @@ export interface JournalView {
    * bring-up or journeys after it was walked), 0 before one: the walk abandonment brake counts tries after it.
    */
   rewalkSeq(milestone: MilestoneId): number;
+  /** dev.17: every `flake-observed` fact, in log order, with its seq (the flaky ledger, src/pipeline/deflake.ts). */
+  flakes(): readonly FlakeAt[];
 }
 
+export type FlakeAt = Readonly<{ seq: number; at: IsoTime; fact: FlakyFact }>;
 export type FlowFactAt = Readonly<{ seq: number; at: IsoTime; fact: FlowFact }>;
 export type WalkFactAt = Readonly<{ seq: number; at: IsoTime; fact: WalkFact }>;
 

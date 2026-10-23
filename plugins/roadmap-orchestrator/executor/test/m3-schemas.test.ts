@@ -437,7 +437,7 @@ describe('M3 file records', () => {
     assert.throws(() => parsePlan({ ...base, holistic: { vision: 'v.json', advances: ['V-2', 'V-1'] } }), /holistic\.advances\[1\]/);
     assert.throws(() => parsePlan({ ...base, limits: { chargeable: 0 } }), /limits\.chargeable/);
     assert.throws(() => parsePlan({ ...base, units: [{ ...unit, limits: { convergenceK: 2 } }] }), /convergenceK/);
-    assert.deepEqual(ORIGIN_RANK, { repair: 0, checkpoint: 1, polish: 2, planned: 3 });
+    assert.deepEqual(ORIGIN_RANK, { repair: 0, deflake: 0, checkpoint: 1, polish: 2, planned: 3 });
   });
 });
 

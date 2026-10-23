@@ -96,6 +96,8 @@ export type SetupOptions = Readonly<{
   systemsMap?: JsonValue;
   /** dev.17: the spec's `forces` (default none). */
   forces?: readonly string[];
+  /** Fields merged into the plan's unit entry (default none): e.g. a deflake unit's `origin` and `deflake` (dev.17). */
+  unit?: Readonly<Record<string, JsonValue>>;
 }>;
 
 /**
@@ -221,7 +223,7 @@ export function setupUnit(opts: SetupOptions): StageRun {
     schema: 'roadmap/plan-m1', arc, integrationBranch: 'main', baseline: base, worktreeRoot: tmpDir('stage-wt'),
     contracts: ['contracts/api.md'], rulings: 'rulings.md', architectureDoc: 'ARCHITECTURE.md', direction: 'Keep it small.',
     suite: { lanes: (opts.suite ?? []).map(suiteLaneJson) }, resources: [{ name: DB, probe: tool('probe'), teardown: tool('teardown') }],
-    units: [{ id: U1, spec: 'u1.json', risk: opts.risk ?? 'med', scope: ['src/**', 'test/**'], resources: opts.resources ?? [] }],
+    units: [{ id: U1, spec: 'u1.json', risk: opts.risk ?? 'med', scope: ['src/**', 'test/**'], resources: opts.resources ?? [], ...opts.unit }],
     ...(opts.derived === undefined ? {} : { derived: opts.derived }),
     ...(opts.environments === undefined ? {} : { environments: opts.environments }),
     ...(opts.routing === undefined ? {} : { routing: opts.routing }),

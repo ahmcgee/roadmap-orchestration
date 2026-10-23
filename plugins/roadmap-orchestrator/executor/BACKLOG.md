@@ -630,6 +630,9 @@ at triage stay in git history.
   `planCheckDesignDefault` (src/core/upgrade.ts, read by `planCheckOutput`: an approve without `design`), with which
   `design`, `split`, `scaffold` and `poc` become required keys of the answer reader; and the `m4b` role set's place in
   `unitRolesInForce` (src/routing/layers.ts), with which `scaffold` is a unit role of every arc.
+- The dev.16 arc's missing flaky ledger (1.0.0-dev.17, the flaky ledger), once no arc started on 1.0.0-dev.16 is in
+  flight: `flakyLedgerDefault` (src/core/upgrade.ts, called by `flakyLedger` in src/pipeline/deflake.ts when the revision
+  in force records no `systemsMap`). The ledger itself needs no default: an arc without `flake-observed` facts has none.
 
 - `gateNoteDebtDefault` and `GATE_DEBT_UNRECORDED` (src/core/upgrade.ts), with `gateDebtNotes`' unrecorded arm
   (src/pipeline/gate.ts), once no arc started on 1.0.0-dev.12 is in flight: a dev.12 gate finding has no `debt` and its

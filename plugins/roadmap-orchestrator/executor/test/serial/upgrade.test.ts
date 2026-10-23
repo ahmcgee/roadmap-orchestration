@@ -23,7 +23,8 @@
 // record no systems map, read as none (1.0.0-dev.17, lane topology; src/core/upgrade.ts `laneCadenceDefault`,
 // `systemsMapDefault`); its specs carry no design record (kind `module`) and no revision pins (links `unpinned`)
 // (`designKindDefault`, `specPinsDefault`). Nothing else: no release from dev.13 to dev.16 changes a record, nor does dev.12 record anything
-// differently from dev.13 that HEAD reads with a default: dev.13's additions (plan `milestones`, `limits.walkRounds`, a
+// differently from dev.13 that HEAD reads with a default (dev.17's flaky ledger aside: a dev.15 arc has none, read as empty
+// at the upgrade, `flakyLedgerDefault`): dev.13's additions (plan `milestones`, `limits.walkRounds`, a
 // unit's `polish`, `finding-opened.milestone`) are optional, absent meaning none for good. So a dev.15 arc on HEAD warns
 // those lane defaults and no other `roadmap: upgrade default` (asserted after every unlabelled cell's HEAD phase). Its seat
 // table is not HEAD's (dev.17 moved plan-check and the gate to frontier and build.high to efficient), so under OR-L3 its
@@ -550,10 +551,10 @@ async function finishOnHead(p: Phase1, m1: readonly M1Step[], during: () => Prom
  * The defaults HEAD reads an arc the previous release started with (1.0.0-dev.17, lane topology): its lanes' `tier` as a
  * cadence (`lane.tier.<kind>`), a recorded lane rev of the tier form (`lane-rev.tier.<lane>`), its revisions' absent
  * systems map (`plan-applied.systemsMap`), its specs' absent design record and pins (`spec.design.kind`, `spec.pins`), and
- * (the design pass) its plan-check answers' absent design record (`plan-check.design`, read back for the build's notes). Nothing
- * else changed a record since the previous release.
+ * (the design pass) its plan-check answers' absent design record (`plan-check.design`, read back for the build's notes), and
+ * its absent flaky ledger (`flaky.ledger`: empty at the upgrade). Nothing else changed a record since the previous release.
  */
-const DEV17_DEFAULTS = /^(lane\.tier\.(spec|suite|arc)|lane-rev\.tier\..+|plan-applied\.systemsMap|spec\.design\.kind|spec\.pins|plan-check\.design)$/;
+const DEV17_DEFAULTS = /^(lane\.tier\.(spec|suite|arc)|lane-rev\.tier\..+|plan-applied\.systemsMap|spec\.design\.kind|spec\.pins|plan-check\.design|flaky\.ledger)$/;
 
 /**
  * HEAD reads an arc the previous release started with the dev.17 lane defaults only (`DEV17_DEFAULTS`), but for the kinds
@@ -676,6 +677,11 @@ test('upgrade.stop-mid-build: HEAD continues the Codex thread the previous relea
   assert.equal(gated[0]!.largeDiff, null, 'HEAD\'s gate records its diff under the large-diff threshold');
   // dev.17: HEAD ran page-id's lanes on the arc's revisions, which record no systems map: read as none, and warned.
   assert.match(hostLogs(p), /roadmap: upgrade default \(plan-applied\.systemsMap\)/, 'HEAD read the revisions without a systems map, and warned');
+  // dev.17: the arc ran without a flaky ledger: HEAD's deflake job reads it empty at the upgrade (warned), and with no flake
+  // since, mints nothing.
+  assert.match(hostLogs(p), /roadmap: upgrade default \(flaky\.ledger\)/, 'HEAD read the arc without a flaky ledger as an empty one, and warned');
+  assert.deepEqual(factsOf(f.after, 'flake-observed'), []);
+  assert.deepEqual(factsOf(f.after, 'plan-applied').filter((x) => x.source.type === 'deflake'), [], 'no deflake unit');
 });
 
 test('upgrade.reopen-mid-plan-check: a unit the previous release parked, re-opened and stopped mid-judgment finishes on HEAD', T, async () => {

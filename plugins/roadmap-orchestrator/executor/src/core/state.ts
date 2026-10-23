@@ -17,7 +17,7 @@ import {
   type MilestoneId, type OpId, type OpKey, type PlanRev, type PolishId, type ResourceInstance, type ResourceUnit, type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId,
   JOB_KINDS, amendmentIdOf, compareResourceUnits, divergenceIdOf, findingIdOf, jobId, parseInvocationId, parseJobId, parseOpId, polishIdOf,
 } from './ids.ts';
-import type { ControlState, FlowFactAt, JournalView, NeedsUserAckState, NeedsUserState, WalkFactAt } from './interfaces.ts';
+import type { ControlState, FlowFactAt, JournalView, NeedsUserAckState, NeedsUserState, WalkFactAt, FlakeAt } from './interfaces.ts';
 import { canonicalJson } from './json.ts';
 import { type SessionCharge, addCharged } from './usage.ts';
 import { type ApprovalFingerprint, type Bounds, type ContainmentMode, type DispatchRecord, type ResidueKey, type Stage, DEFAULT_BOUNDS, boundsOfRecord } from './records.ts';
@@ -614,6 +614,8 @@ export class Fold implements JournalView {
   // M4b
   readonly #flowFacts: FlowFactAt[] = [];
   readonly #walkFacts: WalkFactAt[] = [];
+  // dev.17
+  readonly #flakes: FlakeAt[] = [];
   /** dev.13: per milestone, the seq of the latest `plan-applied` whose milestones change lists it in `rewalk`. */
   readonly #rewalkSeqs = new Map<MilestoneId, number>();
   #draining: Readonly<{ command: CommandId; seq: number }> | null = null;
@@ -1192,6 +1194,17 @@ export class Fold implements JournalView {
       case 'demo-acted':
         this.#walkFacts.push({ seq: at.seq, at: at.at, fact: f });
         return;
+      case 'flake-observed': {
+        // dev.17: one per red run (its diagnostic rerun the green); the red and the green are runs this log opened.
+        if (this.#flakes.some((x) => x.fact.event.red === f.event.red)) fail(`a second flake-observed of red run ${f.event.red}`);
+        for (const inv of [f.event.red, f.event.green]) {
+          const { op, ordinal } = parseInvocationId(inv);
+          const entry = this.#ops.get(op);
+          if (entry === undefined || ordinal > entry.latest.ordinal) fail(`flake-observed names ${inv}, which no intent opened`);
+        }
+        this.#flakes.push({ seq: at.seq, at: at.at, fact: f });
+        return;
+      }
       default:
         this.#holisticFact(f, fail, at);
     }
@@ -1860,6 +1873,10 @@ export class Fold implements JournalView {
 
   walkFacts(): readonly WalkFactAt[] {
     return this.#walkFacts;
+  }
+
+  flakes(): readonly FlakeAt[] {
+    return this.#flakes;
   }
 
   rewalkSeq(milestone: MilestoneId): number {

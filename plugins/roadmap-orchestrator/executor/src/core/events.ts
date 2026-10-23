@@ -52,6 +52,7 @@ import {
   routingProvenance, seatFields, unitSeatFields,
 } from '../routing/types.ts';
 import { type SystemsMap, systemsMap } from '../input/systems.ts';
+import { type FlakyEvent, flakyEvent } from './flaky.ts';
 
 // ---------------------------------------------------------------------------------------------------
 // Op kinds and their payloads
@@ -181,7 +182,11 @@ export type SpawnSubject =
    * dev.17: `files`, a test-only run (src/pipeline/lanes.ts `testOnlyRun`): the lane's `testArgv` over these leaf test files,
    * the rest carried over from the clean pass the run builds on (non-empty when present; absent: the whole lane).
    */
-  | Readonly<{ purpose: 'lane'; unit: UnitId; lane: LaneId; set: 'spec' | 'suite'; at: Sha; redRev?: RedRev; identity?: LaneIdentity; files?: readonly RepoPath[] }>
+  /**
+   * dev.17 (flaky ledger): `verify`, a deflake unit's verification run count of the lane (2 or more): its runs are `verify`
+   * spawns that must all pass (src/pipeline/deflake.ts). Absent: one run under the red-lane protocol (lasting).
+   */
+  | Readonly<{ purpose: 'lane'; unit: UnitId; lane: LaneId; set: 'spec' | 'suite'; at: Sha; redRev?: RedRev; identity?: LaneIdentity; files?: readonly RepoPath[]; verify?: number }>
   | Readonly<{ purpose: 'teardown' | 'probe'; unit: UnitId | null; resource: ResourceInstance }>
   /**
    * M4b: one side of a suite-lane proof (RC-4): proof job `job` runs lane `lane` with its `old` or `new` argv at the
@@ -331,7 +336,9 @@ export type RevisionSource =
   /** dev.13: the cut of polish unit `unit`, which its compare judged `drop` (`polish-dropped`, src/walk/compare.ts). */
   | Readonly<{ type: 'compare'; unit: UnitId }>
   /** dev.17 (design pass): the split of `unit` its plan-check call `inv` decided (src/pipeline/split.ts). */
-  | Readonly<{ type: 'split'; unit: UnitId; inv: InvocationId }>;
+  | Readonly<{ type: 'split'; unit: UnitId; inv: InvocationId }>
+  /** dev.17 (flaky ledger): the code-applied revision admitting deflake units for the flakes the ledger holds (src/pipeline/deflake.ts). */
+  | Readonly<{ type: 'deflake' }>;
 
 /** Expected postconditions beyond what the kind and `expect` already fix; `null` where they fix everything. */
 export type OpPost = {
@@ -818,7 +825,8 @@ export type Fact =
   | HolisticFact
   | M4aFact
   | FlowFact
-  | WalkFact;
+  | WalkFact
+  | FlakyFact;
 export type FactRecord = Readonly<{ type: 'fact'; fact: Fact }>;
 
 /**
@@ -1111,6 +1119,19 @@ export type WalkFact =
   | Readonly<{ kind: 'demo-acted'; command: CommandId; act: DemoAct }>;
 export type WalkFactKind = WalkFact['kind'];
 
+/** Which lanes a flaky lane is of: a unit's spec lane, a plan suite lane, or an arc lane (its reporter names tests). */
+export const FLAKY_LANE_SETS = ['spec', 'suite', 'arc'] as const;
+export type FlakyLaneSet = (typeof FLAKY_LANE_SETS)[number];
+
+/**
+ * dev.17, the flaky ledger (SCHEMAS.md "dev.17: the flaky ledger"; src/pipeline/deflake.ts). `flake-observed`: a lane run
+ * red then green on its diagnostic rerun (same tree, same environment), written once per such rerun before the lane's
+ * record is read, by `owner`'s series. `set` says where the lane is defined; `event.failing` the test ids the red run's
+ * reporter named (an arc lane's; empty for a spec or suite lane, whose key is the lane). `forgiven`: the lane counts as
+ * passed (the rerun's verdict), true unless the owner is a deflake unit for one of the event's keys, which must fix it.
+ */
+export type FlakyFact = Readonly<{ kind: 'flake-observed'; owner: LaneOwner; lane: LaneId; set: FlakyLaneSet; event: FlakyEvent; forgiven: boolean }>;
+
 export type HolisticFactKind = HolisticFact['kind'];
 export type PlanAppliedFact = Extract<Fact, { kind: 'plan-applied' }>;
 
@@ -1366,6 +1387,7 @@ const revisionSource: Read<RevisionSource> = tagged('type', {
   walk: object((f): RevisionSource => ({ type: f.get('type', literal('walk')), job: f.get('job', (v, p) => jobIdOfKind('walk')(v, p)) })),
   compare: object((f): RevisionSource => ({ type: f.get('type', literal('compare')), unit: f.get('unit', unitR) })),
   split: object((f): RevisionSource => ({ type: f.get('type', literal('split')), unit: f.get('unit', unitR), inv: f.get('inv', invR) })),
+  deflake: object((f): RevisionSource => ({ type: f.get('type', literal('deflake')) })),
 });
 
 const resourceEdge: Read<ResourceEdge> = tagged('type', {
@@ -1406,10 +1428,13 @@ const spawnSubject: Read<SpawnSubject> = tagged('purpose', {
     const redRev = f.optional('redRev', positive);
     const identity = f.optional('identity', laneIdentity);
     const files = f.optional('files', sortedBy((v, p) => repoPath(v, p), (s) => s, { nonEmpty: true }));
+    const verify = f.optional('verify', positive);
+    if (verify !== undefined && verify < 2) throw new SchemaError(`${f.path}.verify`, 'two or more verification runs', verify);
     return {
       purpose: f.get('purpose', literal('lane')), unit: f.get('unit', unitR), lane: f.get('lane', (v, p): LaneId => laneId(v, p)),
       set: f.get('set', oneOf(['spec', 'suite'] as const)), at: f.get('at', shaR),
       ...(redRev === undefined ? {} : { redRev }), ...(identity === undefined ? {} : { identity }), ...(files === undefined ? {} : { files }),
+      ...(verify === undefined ? {} : { verify }),
     };
   }),
   teardown: object((f): SpawnSubject => ({ purpose: f.get('purpose', literal('teardown')), unit: f.get('unit', nullable(unitR)), resource: f.get('resource', instR) })),
@@ -2364,6 +2389,14 @@ export const fact: Read<Fact> = tagged('kind', {
   ...M4A_FACT_READERS,
   ...FLOW_FACT_READERS,
   ...WALK_FACT_READERS,
+  'flake-observed': object((f): Fact => {
+    const out = {
+      kind: f.get('kind', literal('flake-observed')), owner: f.get('owner', laneOwner), lane: f.get('lane', laneR), set: f.get('set', oneOf(FLAKY_LANE_SETS)),
+      event: f.get('event', flakyEvent), forgiven: f.get('forgiven', bool),
+    };
+    if (out.set !== 'arc' && out.event.failing.length > 0) throw new SchemaError(`${f.path}.event.failing`, 'empty (only an arc lane\'s reporter names tests)', out.event.failing);
+    return out;
+  }),
   'stage-outcome': object((f): Fact => {
     const s = f.get('stage', oneOf(OUTCOME_STAGES));
     const out = {

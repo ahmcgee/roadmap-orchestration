@@ -109,7 +109,7 @@ class Log {
 type Extras = Partial<Pick<AdmitInput, 'blocking' | 'drains' | 'tripped'>>;
 
 /** No unit reproduces a mutant or repairs an obligation: what a spec says, for logs that hold no finding. */
-const NO_REPAIRS: SpecFactsOf = () => ({ reproduces: false, repairs: new Set() });
+const NO_REPAIRS: SpecFactsOf = () => ({ reproduces: false, repairs: new Set(), lanes: () => new Set() });
 
 const inputOf = (log: Log, plan: PlanM1, extras: Extras = {}): ReadyInput => ({
   view: log.view(), plan, blocking: [], drains: [], tripped: [], pressure: { ticks: [], nowMs: 0 }, routing: () => ROUTING, spec: NO_REPAIRS, ...extras,
@@ -276,7 +276,7 @@ describe('admit (A12, A17)', () => {
     const blocked = [{ type: 'finding-blocked', finding: 'F-1', obligation: I1 }];
     assert.deepEqual(admits(log, med), { prepare: 'admit', 'plan-check': 'admit', build: 'admit', lanes: 'admit', gate: 'admit', candidate: blocked }, 'only the candidate waits');
     assert.equal(admits(log, high).candidate, 'admit', 'a candidate selecting other obligations is not held');
-    const repairs: SpecFactsOf = (u) => ({ reproduces: false, repairs: new Set(u.id === M ? [I1 as never] : []) });
+    const repairs: SpecFactsOf = (u) => ({ reproduces: false, repairs: new Set(u.id === M ? [I1 as never] : []), lanes: () => new Set() });
     const view = log.view();
     assert.deepEqual(admitter(() => ROUTING, repairs)({ view, plan, unit: med, stage: 'candidate', blocking: [], drains: [], tripped: [], pressure: { ticks: [], nowMs: 0 } }), { kind: 'admit' }, 'p1.repair-exempt: the declared repair is admitted');
     log.add(fact({ kind: 'finding-transition', id: 'F-1', to: { state: 'ruled', disposition: 'dismissed', by: { type: 'checkpoint', job: 'ckpt-1' } } }));

@@ -23,12 +23,13 @@
 // (src/holistic/findings.ts `ownershipMoves`: owned, fixed-on-branch, resolved, open again) and code's dismissal of a
 // finding whose mutant a `reproduce` killed. It is re-runnable, so the driver calls it around every stage and a
 // restart writes only what is missing.
+import { specLaneIds } from './deflake.ts';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import type { MutantOf, OutcomeStage, WitnessFor } from '../core/events.ts';
 import { mutantSubjectDefault } from '../core/upgrade.ts';
-import { type FindingId, type OpId, type ResourceInstance, type ResourceUnit, type Sha, type Sha256Hex, type UnitId, invocationId, opKey } from '../core/ids.ts';
+import { type FindingId, type LaneId, type OpId, type ResourceInstance, type ResourceUnit, type Sha, type Sha256Hex, type UnitId, invocationId, opKey } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import { type NeedsUserContent, STDERR_FILE, STDOUT_FILE, specRepairs } from '../core/records.ts';
@@ -74,10 +75,12 @@ function vacuityTargets(findings: readonly FindingState[], repairs: readonly str
  */
 export function specFacts(ctx: SpecReader): SpecFactsOf {
   return (unit: PlanUnit): SpecFacts => {
+    // dev.17: the unit's spec-side lanes, read only when an open deflake unit asks (src/pipeline/deflake.ts `deflakeHold`).
+    const lanes = (): ReadonlySet<LaneId> => specLaneIds(loadUnitSpec(ctx, unit).spec);
     const findings = ctx.journal.view.holistic().findings;
-    if (!findings.some(isActive)) return { reproduces: false, repairs: new Set() };
+    if (!findings.some(isActive)) return { reproduces: false, repairs: new Set(), lanes };
     const repairs = specRepairs(loadUnitSpec(ctx, unit).spec);
-    return { reproduces: vacuityTargets(findings, repairs).length > 0, repairs: repairedObligations(findings, repairs) };
+    return { reproduces: vacuityTargets(findings, repairs).length > 0, repairs: repairedObligations(findings, repairs), lanes };
   };
 }
 
