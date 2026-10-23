@@ -6,7 +6,8 @@
 // started that run the lane; a unit already in flight keeps its one-rerun forgiveness; the deflake's merge releases the
 // edges), deflake.reflake (a flake after the deflake merged mints a second, told of the first; one after the second raises
 // `flake-recurring` and mints nothing), deflake.park (a parked deflake drops its edges and raises `deflake-parked`),
-// deflake.verification-budget (runs × the lane's measured median against the verification budget), deflake.verify-runs (a
+// deflake.verification-budget (runs × the lane's measured median against the verification budget),
+// deflake.verification-budget-repair (an approve over it repaired through the plan-check's repair turn), deflake.verify-runs (a
 // deflake unit's verification runs its lane that many times, every run passing), deflake.stochastic (a k-of-n lane never
 // flakes), and the deflake revision's crash cells (deflake.crash.<label>).
 import assert from 'node:assert/strict';
@@ -38,8 +39,8 @@ import { runFixture } from './helpers/proc.ts';
 import { tmpDir } from './helpers/repo.ts';
 import type { Step } from './helpers/scenario.ts';
 import { deflakeContext, flakyLane, freshMarker, reflake, unitInForce } from './fixtures/deflake-common.ts';
-import { SCENARIO_TIMEOUT_MS, U1 as STAGE_U1, keptSpec, planCheckStep, setupUnit, started } from './fixtures/stage-common.ts';
-import { type ArcDescriptor, type ArcRun, MUL_LANE, contextFor, gateStep, mulBuild, outcomes, setupArc, stepUntil } from './fixtures/unit-common.ts';
+import { SCENARIO_TIMEOUT_MS, U1 as STAGE_U1, keptSpec, planCheckAnswer, planCheckRepairStep, planCheckStep, setupUnit, started } from './fixtures/stage-common.ts';
+import { type ArcDescriptor, type ArcRun, MUL_LANE, appendSteps, contextFor, gateStep, mulBuild, outcomes, setupArc, stepUntil } from './fixtures/unit-common.ts';
 import { DEFLAKE_REVISION, crashCells } from './matrix.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS * 4 };
@@ -278,6 +279,43 @@ describe('the flaky ledger', () => {
       assert.deepEqual([...verifyRunsOf(unit, { type: 'repeat', rationale: 'x', runs: 3 })], [['flaky', 3]]);
       assert.deepEqual([...verifyRunsOf(unit, { type: 'repeat', rationale: 'x', runs: 1 })], []);
       assert.deepEqual([...verifyRunsOf(unitInForce(r, 'u1'), { type: 'repeat', rationale: 'x', runs: 3 })], []);
+    } finally {
+      r.journal.close();
+    }
+  });
+});
+
+describe('the verification budget through the plan-check', () => {
+  test('deflake.verification-budget-repair: a deflake unit\'s approve over the budget is refused through the repair turn naming the cost; the repaired runs verify the lane', T, async () => {
+    const marker = freshMarker();
+    const d = flakyArc(marker, ['u1'], [], straight('u1', {}));
+    const r = contextFor(d);
+    try {
+      assert.deepEqual(await run(r, 'u1'), { kind: 'merged' });
+      assert.deepEqual(await mint(r), { kind: 'applied', admitted: ['deflake-1'], recurring: 0 });
+      const unit = unitInForce(r, 'deflake-1');
+      const median = medianLaneMinutes(r.ctx.runDir, r.journal.view, planOf(r), unit.deflake!.keys, LANE_DEADLINE_MS);
+      assert.ok(median !== null && median > 0, `the lane's runs were measured: ${median}`);
+      const over = Math.ceil(31 / median);
+      const design = (runs: number): JsonValue => ({
+        kind: 'module', changes: [{ system: null, paths: ['test/**'], lines: 3 }], interfaces: [], failureModes: [], clauses: [{ clause: 'A-1', lanes: ['flaky'] }], breaks: { tests: [], docs: [] }, experiments: [], newSystem: null,
+        verification: { type: 'repeat', rationale: 'the race needs real timing', runs },
+      });
+      const approve = (runs: number): JsonValue => ({ ...(planCheckAnswer({ decision: 'approve' }) as Record<string, JsonValue>), design: design(runs) });
+      const first = planCheckStep({ decision: 'approve' });
+      const repair = planCheckRepairStep({ decision: 'approve' }, [`verification of ${over} runs of lane flaky costs `, 'over the verification budget of 30 lane-minutes']);
+      appendSteps(d, of('deflake-1', [
+        { ...first, acts: [{ type: 'emit', value: approve(over) }] },
+        { ...repair, acts: [{ type: 'emit', value: approve(2) }] },
+        mulBuild({ 'test/flaky-note.txt': 'deterministic now\n' }), gateStep({ decision: 'approve' }),
+      ]));
+      assert.deepEqual(await run(r, 'deflake-1'), { kind: 'merged' });
+      assert.deepEqual(outcomes(d, 'deflake-1'), STRAIGHT, 'the refused answer was repaired within the attempt');
+      const verify = r.journal.view.opsOf('proc.spawn').flatMap((i) => {
+        const sub = i.expect.subject;
+        return sub.purpose === 'lane' && sub.unit === 'deflake-1' && sub.set === 'spec' ? [sub.verify] : [];
+      });
+      assert.deepEqual(verify, [2, 2], 'the repaired answer\'s two runs, each a verification run');
     } finally {
       r.journal.close();
     }
