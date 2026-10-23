@@ -73,6 +73,7 @@ export const NEEDSUSER_RAISE = 'needsuser.raise';
 export const COMMAND_APPLY = 'command.apply';
 export const PLAN_APPLY = 'command.apply: apply (a plan revision)';
 export const PLAN_START = 'start: a later start whose files change the plan (supervised)';
+export const QUEUED_APPLY = 'command.apply: an apply queued behind a running stage (dev.17: apply-queued, queued receipt, its landing at the boundary, apply-dropped; supervised)';
 export const REVISION_COMMIT = 'revision.commit: a revision\'s activation (payload, docs ff, plan-applied; M3 G1)';
 export const STEER = 'command.apply: steer (M3: class revision, brief, pre-steer snapshot, steered)';
 export const MERGE_IN = 'command.apply: merge-in (M3: merge-tree plan, mergein.prepare, merged-in)';
@@ -85,10 +86,17 @@ export const AUDIT_JOB = 'cadence audit job (M3 B5: audit-started under the fenc
 export const CHECKPOINT_JOB = 'checkpoint job (M3 B6: checkpoint-inputs under the fence, the checkpoint call)';
 export const WALK_JOB = 'milestone walk job (dev.13: walk-started under the fence, the bring-up, the walkthrough call, minting, walk-ended, milestone-passed)';
 export const POLISH_REVISION = 'polish revision (dev.13 agent D: polish-refused, then plan-applied{source: walk{job}} under the fence)';
+export const DEFLAKE_REVISION = 'deflake revision (dev.17 flaky ledger: flake-recurring items, then plan-applied{source: deflake} under the fence)';
 export const COMPARE_JOB = 'polish compare job (dev.13 agent D: compare-started under the fence, two bring-ups, the polish judge, tweak-judged, the polish-dropped cut)';
 export const DEMO_PROMOTE = 'demo promotion (dev.13 agent G: demo-promoted, then refs/roadmap/demo moved to it; the ref follows the facts)';
 export const BUNDLE_ACTIVATE = 'bundle activation (M3 B6: bundle-decided or plan-applied{source: bundle}, divergences, finding dispositions, digest)';
 export const TERMINAL_SNAPSHOT = 'close-out publication and arc completion (M3 B7, A8, A20, G8: close-out ff, docs-published, arc-completed, terminal snapshot)';
+export const EXECUTOR_FAULT = 'contained executor fault (1.0.0-dev.17: the task\'s leftovers settled, then the executor-fault park and its item)';
+export const STALE_SET = 'stale-set recording (1.0.0-dev.17 propagation: an apply\'s revision.commit, plan-applied, its divergences, then the stale-set fact from its payload)';
+export const PROPAGATION_REVISION = 'propagation revision (1.0.0-dev.17: propagation-refused, then plan-applied{source: propagation{rev}} under the fence)';
+export const DESIGN_SPLIT = 'plan-check split (dev.17 design pass: the split hold, then plan-applied{source: split} cutting the unit)';
+export const SCAFFOLD_STAGE = 'scaffold stage (dev.17 design pass: the writer, the dry run, then salvage.commit of the skeleton)';
+export const POC_STAGE = 'proof of concept (dev.17 design pass: the throwaway build, its report, then its checkout removed)';
 export const SUPERVISOR_HOST = 'supervisor/host';
 export const RECOVERY_CRASH = 'crash during recovery';
 export const ADVERSARIAL_LIVE_RUNNER = 'adversarial: crash during recovery with a live runner';
@@ -135,9 +143,6 @@ export const RED_CLASS = 'red class (M4a rev 3 N1 RED_CLASS: a red run\'s eviden
 export const WITNESS_FILES = 'witness lane files (M4a rev 3 N3 WITNESS_FILES: <evidenceDir>/witness/<lane>.json per fast required lane, write-once, then the build call)';
 export const WITNESS_CHECK = 'witness presence (M4a rev 3 N3 WITNESS_CHECK: a green certified spec series, then the required arc lanes at the salvage SHA in the unit\'s own checkout, census, series-certified, then the stage outcome)';
 export const MUTATION_SMOKE = 'mutation smoke (M4a rev 3 N3 MUTATION_SMOKE: allowance, the reverse patch kept, mutant.apply{of: smoke}, the target lanes on the mutant, witnessed, worktree removed, smoke-ran, then the outcome)';
-export const PLANCHECK_ACCEPTANCE = 'plan-check acceptance patch (M4a rev 3 N3: an efficient builder\'s acceptance answer, its witness items through spec.patch, then the outcome)';
-export const PLANCHECK_IN_SESSION = 'plan-check in-session (M4a rev 3 N3: a frontier builder\'s dispatch pinned, no call, then the outcome in-session)';
-export const BUILD_ASSESS = 'build assess (M4a rev 3 N3: the fresh build\'s assessment call, its result read, findings and risk, then the implementing call resuming its session)';
 export const PREPARE_KNOWN_DEFECT = 'prepare known-defect (M4a rev 3 N3: a unit released from its known-defect hold merges the tip in, attempt-scoped, snapshots, then the outcome)';
 export const CLOSE_OUT_SETTLEMENT = 'close-out settlement (run 10 E, F: an unanswered bundle request\'s corpus amendment, then its decline; an open P2/P3 finding with no obligation banked, then deferred)';
 export const ADMIT_CONVERSIONS = 'admit conversions (M4a rev 3 N2: a decision record holding conversions, then settlement: each conversion\'s corpus amendment, a follow-up overrun\'s debt item naming the opportunity)';
@@ -149,9 +154,6 @@ export const FIXTURE_RED_CANDIDATE = 'fixture: red candidate → fix → fresh g
 export const FIXTURE_WITNESSES_MISSING = 'fixture: lanes witnesses-missing → fix round naming the missing ids, no gate call';
 export const FIXTURE_SMOKE_SURVIVED = 'fixture: lanes smoke-survived → one charged fix round → the gate with the survivor (allowance reused by key)';
 export const FIXTURE_KNOWN_DEFECT = 'fixture: lanes known-defect (uncharged) → prepare held under known-defect{id, fixUnit} → released by the fixer\'s merge → merges';
-export const FIXTURE_IN_SESSION = 'fixture: plan-check in-session (no call) → the build assesses, then implements in the same session';
-export const FIXTURE_ASSESS_INFEASIBLE = 'fixture: build infeasible (the assessment says not feasible) → escalation park, nothing implemented';
-export const FIXTURE_ASSESS_RISK_RAISED = 'fixture: build risk-raised (the assessed floor binds another seat) → a fresh build there';
 export const FIXTURE_CHECKPOINT_BUSY = 'fixture: checkpoint rejected busy → waits for the unit\'s stage boundary, then captures again';
 export const FIXTURE_CONVERTED_NO_OP = 'fixture: a bundle whose only admit converts → no-op carrying its conversion → its amendment';
 
@@ -184,7 +186,11 @@ const PIPELINE_LABELS: Readonly<Record<Boundary, readonly string[]>> = {
  * A supervised run to its end adds its completion (M3 B7: every arc writes `arc-completed`, then its terminal snapshot),
  * and before it the flow series (M4b: `flow-series`, then `arc-completed`).
  */
-const COMPLETE_LABELS: Readonly<Partial<Record<Boundary, readonly string[]>>> = { B4: ['flow.series-before-completed'], B5: ['complete.after-fact'] };
+/**
+ * The straight run completes; dev.17: its candidate reuses the suite lane the lanes stage passed on the same tree (the one
+ * reuse key), so it reaches `lanes.after-reused` too.
+ */
+const COMPLETE_LABELS: Readonly<Partial<Record<Boundary, readonly string[]>>> = { B4: ['flow.series-before-completed'], B5: ['complete.after-fact', 'lanes.after-reused'] };
 /** The bumpy run adds the merge-in's conflicted path and the red lane's persisted class (M4a rev 3 N1: red.json written, the rerun not begun). */
 const MERGEIN_LABELS: Readonly<Partial<Record<Boundary, readonly string[]>>> = {
   B2: ['mergein.act-start'], B3: ['mergein.after-merge'], B4: ['mergein.act-end', 'flow.series-before-completed'], B5: ['complete.after-fact', 'redlane.after-class'],
@@ -212,7 +218,7 @@ const HOLISTIC_LABELS: Readonly<Record<Boundary, readonly string[]>> = {
     'spawn.after-runner-exit', 'spawn.after-result', 'spawn.after-usage', 'evidence.act-end', 'ff.act-end', 'snapshot.act-end', 'revision.commit.after-fact',
     'needsuser.raise.after-publish', 'audit.before-ended', 'checkpoint.after-call', 'bundle.after-applied', 'bundle.after-decided', 'docs.act-end',
     'closeout.before-published', 'packreview.after-call', 'packreview.after-ended', 'issues.after-keep', 'amendment.after-decided', 'debt.after-approval',
-    'plancheck.after-pin-in-session', 'build.after-assess', 'smoke.after-witnessed', 'mutant.act-end', 'bundle.after-conversion-amendment',
+    'smoke.after-witnessed', 'mutant.act-end', 'bundle.after-conversion-amendment',
     'flow.series-before-completed',
   ],
   B5: [
@@ -226,7 +232,7 @@ const HOLISTIC_RECOVERY: Readonly<Record<Boundary, string>> = {
   B1: 'the M3 fact (a witness, the latch, an audit\'s start or end, a checkpoint\'s inputs, the bundle\'s plan-applied or divergence, the digest, a no-op decision, docs-covered, docs-published, arc-completed) or the rev 3 one (smoke-ran, a corpus amendment) is absent after the restart, a torn line discarded once: the job or the unit\'s stage resumes and writes it once (a capture from the same inputs, a smoke run again within its allowance), the arc ends as uncrashed',
   B2: 'the job\'s open op (its slot or lane reservation, checkout, lane, lens, checkpoint or pack-review call, evidence, docs commit, docs ff, snapshot, the bundle\'s revision, the digest item) is closed as its reconciler says (a spawn lost, the rest redone or reconciled), or a capture fact (pack-review-started included) is durable with nothing run: the job resumes as the same job from its recorded inputs, every backend call made once; an unpublished close-out is abandoned and runs again as the next docs publication; the build\'s witness lane files published with no call made: the restarted build publishes the same bytes and calls once; the smoke\'s patch kept or its mutant.apply open: redone, the lanes attempt run again (one more smoke execution, within the allowance); the arc ends as uncrashed',
   B3: 'inside the job\'s op: its reconciler finishes or redoes it (a live lane adopted, the same SHAs), a lens read resumes at the next lens, a close-out ff published is finished (docs-covered, docs-published, the snapshot, the slot released); a mutant checkout made, its patch not applied: removed and redone; the arc ends as uncrashed',
-  B4: 'the op\'s postcondition holds (reconciled); a read call (the pack review\'s, the in-session assessment\'s included) or a decided bundle is consumed from the record (never asked again), its aftermath written only where missing (a flow-series written, arc-completed not: no second series, the arc completes; the review ended once; a checkpoint\'s issue capture kept, recorded once with the same bytes; its amendments, a converted admit\'s included, and issue outcomes once each; a gate note banked once after its approval); a frontier dispatch pinned, its in-session outcome unwritten: the next attempt finds the pin; a smoke\'s mutant lanes witnessed, its run unrecorded: run again within the allowance; one plan-applied, one divergence per (job, index), one digest; the arc ends as uncrashed',
+  B4: 'the op\'s postcondition holds (reconciled); a read call (the pack review\'s included) or a decided bundle is consumed from the record (never asked again), its aftermath written only where missing (a flow-series written, arc-completed not: no second series, the arc completes; the review ended once; a checkpoint\'s issue capture kept, recorded once with the same bytes; its amendments, a converted admit\'s included, and issue outcomes once each; a gate note banked once after its approval); a frontier dispatch pinned, its in-session outcome unwritten: the next attempt finds the pin; a smoke\'s mutant lanes witnessed, its run unrecorded: run again within the allowance; one plan-applied, one divergence per (job, index), one digest; the arc ends as uncrashed',
   B5: 'nothing is open: the job, the close-out or the completion runs on from its facts (no second latch, audit-ended, docs-published or arc-completed; the terminal snapshot published by the restart); a witness check\'s certified observation reused, never run twice; a smoke-ran read back by its key (no second execution), or a mutant applied with its lanes not run: run again within the allowance; the arc ends as uncrashed',
 };
 
@@ -288,6 +294,7 @@ export const CONCURRENT_EXCLUDED_LABELS: Readonly<Record<string, string>> = {
   'plan.apply.after-inputs': 'a start occurrence (the plan put in force before any unit runs): the whole-pipeline and plan-start rows crash it',
   'revision.commit.after-intent': 'a start occurrence (its revision 1 commit): the whole-pipeline and revision.commit rows crash it',
   'revision.commit.after-fact': 'a start occurrence (its revision 1 commit): the whole-pipeline and revision.commit rows crash it',
+  'lanes.after-reused': 'dev.17: reached when a candidate reuses the lanes stage\'s pass on the same tree, which a peer\'s merge may or may not leave so: the LANE_REUSE row and the straight whole-pipeline row crash it',
 };
 
 /**
@@ -798,6 +805,28 @@ export const MATRIX: readonly Row[] = [
         recovery: 'the fact is written: the reconciler finds it (the postcondition) and writes the applied receipt if missing, or reads it; no second fact',
       },
       B5: { status: 'excluded', why: 'the done is one journal append (journal.append) and closes the op: nothing is open for recovery, and a re-delivered command is a no-op (cmd.idempotent)' },
+    },
+  },
+  {
+    // dev.17 (arc feedback 2026-10-23, item 7), through the real CLI and supervisor (test/apply-exec.test.ts): B2, a spec
+    // revision of u1 queued behind its running build; B4, one queued behind its running gate, which approves, so it is refused
+    // where it lands.
+    row: QUEUED_APPLY,
+    test: 'test/apply-exec.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'crash',
+        labels: ['command.apply.queued'],
+        recovery: 'the apply-queued fact is durable, its queued receipt not: the respawn lands the apply once (one apply-queued fact, one plan-applied of the command, its applied receipt); the unit re-opens on the revision and merges approved on it',
+      },
+      B3: { status: 'excluded', why: `the landing is an apply's effect evaluated at the boundary; the ${PLAN_APPLY} row crashes it (before-effect, after-inputs, after-effect, after-receipt)` },
+      B4: {
+        status: 'crash',
+        labels: ['command.apply.after-rejected-receipt'],
+        recovery: 'the rejected receipt is written, the item not: recovery finishes the open command op from that receipt and raises the one apply-dropped item; done reconciled; the unit merges on the spec it was approved on',
+      },
+      B5: { status: 'excluded', why: 'the item is raised by its own op (needsuser.raise row) before the command op\'s done, one journal append that closes it' },
     },
   },
   {
@@ -1504,6 +1533,27 @@ export const MATRIX: readonly Row[] = [
     },
   },
   {
+    // u1's lane flaked (deflake-1 due), or a third flake of the key after deflake-1 and deflake-2 merged (flake-recurring
+    // due); the deflake job runs in a child (test/fixtures/deflake-child.ts) crashed at each label, then recovery and the job again.
+    row: DEFLAKE_REVISION,
+    test: 'test/deflake.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: { status: 'excluded', why: 'the job writes no intent of its own before its items; each item is a needsuser.raise (its own row) and the commit a revision.commit (its own row)' },
+      B3: {
+        status: 'crash',
+        labels: ['deflake.after-recurring'],
+        recovery: 'the flake-recurring item durable: the rerun finds it raised (its evidence names the flake\'s red run) and has nothing due; one item, no third deflake unit',
+      },
+      B4: { status: 'excluded', why: 'the commit is one revision.commit (its own row crashes inside it); nothing of the deflake job follows it but the crash label after it' },
+      B5: {
+        status: 'crash',
+        labels: ['deflake.after-revision'],
+        recovery: 'plan-applied{source: deflake} durable: the deflake unit is in the plan in force and owns the key, so the rerun has nothing due; one deflake revision',
+      },
+    },
+  },
+  {
     // Walk-1 proposed X-1 (admitted) and X-2 (refused by the classifier); the polish revision runs in a child
     // (test/fixtures/polish-child.ts) crashed at each label, then recovery and the revision again.
     row: POLISH_REVISION,
@@ -1994,56 +2044,6 @@ export const MATRIX: readonly Row[] = [
     },
   },
   {
-    // E (src/pipeline/stages.ts `planCheck`, by-builder, efficient): the acceptance answer's witness items applied by the
-    // executor's spec.patch, crashed through the unit driver in a child a restart resumes (test/plancheck-shape.test.ts).
-    row: PLANCHECK_ACCEPTANCE,
-    test: 'test/plancheck-shape.test.ts',
-    cells: {
-      B1: { status: 'excluded', why: EXCLUDED_B1 },
-      B2: { status: 'excluded', why: 'the patch is one spec.patch op: the spec.patch row crashes its intent, write and done' },
-      B3: { status: 'excluded', why: 'inside the spec.patch: its row' },
-      B4: { status: 'excluded', why: 'the spec.patch done is its row\'s B4' },
-      B5: {
-        status: 'crash',
-        labels: ['plancheck.after-witness-patch'],
-        recovery: 'the witness patch done, the outcome unwritten: the restart\'s plan-check consumes the recorded answer and finds the attempt\'s done patch (never patching twice), recording redirect then approve; the outcomes of an uncrashed run',
-      },
-    },
-  },
-  {
-    // E, by-builder, a frontier builder: no plan-check call (test/plancheck-shape.test.ts; the holistic row's u1).
-    row: PLANCHECK_IN_SESSION,
-    test: 'test/plancheck-shape.test.ts, test/serial/pipeline-matrix.test.ts',
-    cells: {
-      B1: { status: 'excluded', why: 'the pin is one dispatch fact: journal.append B1 covers a torn one' },
-      B2: { status: 'excluded', why: 'no intent: the decision is the routing\'s and the plan\'s, and nothing is called' },
-      B3: { status: 'excluded', why: 'no act between the pin and the outcome but their appends' },
-      B4: {
-        status: 'crash',
-        labels: ['plancheck.after-pin-in-session'],
-        recovery: 'the dispatch pinned, the in-session outcome unwritten: the next attempt finds the pin (dispatchOf) and records in-session once, with no plan-check call; the outcomes of an uncrashed run',
-      },
-      B5: { status: 'excluded', why: 'after the outcome the stage is done: unit.after-stage (the whole-pipeline rows)' },
-    },
-  },
-  {
-    // E (Q18): the fresh build of an in-session unit makes the assessment call, then resumes that session to implement
-    // (test/plancheck-shape.test.ts; the holistic row's u1).
-    row: BUILD_ASSESS,
-    test: 'test/plancheck-shape.test.ts, test/serial/pipeline-matrix.test.ts',
-    cells: {
-      B1: { status: 'excluded', why: EXCLUDED_B1 },
-      B2: { status: 'excluded', why: 'the assessment and the implementing call are proc.spawn ops: the proc.spawn rows and the whole-pipeline rows crash them' },
-      B3: { status: 'excluded', why: 'inside either call: the proc.spawn and runner-death rows' },
-      B4: {
-        status: 'crash',
-        labels: ['build.after-assess'],
-        recovery: 'the assessment completed and read, the implementing call not begun: the restart\'s build consumes the recorded assessment against its inputs (never asking again) and resumes its session to implement; one assessment, the outcomes of an uncrashed run',
-      },
-      B5: { status: 'excluded', why: 'after the implementing call the build stage ends as any build: the whole-pipeline rows' },
-    },
-  },
-  {
     // F4 (src/pipeline/prepare.ts, cause known-defect): a held unit released once its fixer merged, crashed through the
     // unit driver in a child a restart resumes (test/knowndefect-stage.test.ts).
     row: PREPARE_KNOWN_DEFECT,
@@ -2107,11 +2107,126 @@ export const MATRIX: readonly Row[] = [
     test: 'test/knowndefect-stage.test.ts',
     cells: fixtureCells('knowndefect.lane-hold-uncharged / knowndefect.release-prepare-merges', PREPARE_KNOWN_DEFECT),
   },
-  { row: FIXTURE_IN_SESSION, test: 'test/plancheck-shape.test.ts', cells: fixtureCells('plancheck.in-session-frontier-no-call', PLANCHECK_IN_SESSION) },
-  { row: FIXTURE_ASSESS_INFEASIBLE, test: 'test/plancheck-shape.test.ts', cells: fixtureCells('build.assess-infeasible-escalates', BUILD_ASSESS) },
-  { row: FIXTURE_ASSESS_RISK_RAISED, test: 'test/plancheck-shape.test.ts', cells: fixtureCells('build.assess-risk-raised-reseats', BUILD_ASSESS) },
   { row: FIXTURE_CHECKPOINT_BUSY, test: 'test/status-rev3.test.ts', cells: fixtureCells('status.checkpoint-busy-wait', BUNDLE_ACTIVATE) },
   { row: FIXTURE_CONVERTED_NO_OP, test: 'test/checkpoint-rev3.test.ts', cells: fixtureCells('bundle.all-converted-no-op', ADMIT_CONVERSIONS) },
+  {
+    // A unit's lanes throw inside their evidence snapshot under a supervised start (test/fault.test.ts
+    // fault.replay-after-crash); the executor is killed once, after the park.
+    row: EXECUTOR_FAULT,
+    test: 'test/fault.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: { status: 'excluded', why: 'the settlement closes ops through their own reconcilers, kills and transitions: their rows\' crash points; a crash before the park leaves the task as any crash does, recovered as one' },
+      B3: { status: 'excluded', why: 'the park is one stage-outcome append: journal.append covers it torn' },
+      B4: { status: 'excluded', why: 'the park and its item are separate records: B5 is the state between them' },
+      B5: {
+        status: 'crash',
+        labels: ['fault.after-park'],
+        recovery: 'the executor-fault park durable, its item not raised: the restart replays the park (the stage never runs again), raises its non-blocking item once, and the other unit merges',
+      },
+    },
+  },
+  {
+    // An apply moving I-1 to rev 2 (a requirement u1 and u2 link, its witness file declared) runs in a child with the
+    // stand-in docs publisher (test/fixtures/revision-child.ts); the whole recovery runs.
+    row: STALE_SET,
+    test: 'test/propagation.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: { status: 'excluded', why: 'the stale set rides the revision.commit of its revision: that row\'s B2 (payload kept and named, nothing appended) covers it' },
+      B3: {
+        status: 'crash',
+        labels: ['revision.commit.after-fact'],
+        recovery: 'plan-applied written, the stale set not: the reconciler appends it from the kept payload, once, after the plan-applied; done reconciled; the apply finds its fact',
+      },
+      B4: {
+        status: 'crash',
+        labels: ['propagation.after-stale-set'],
+        recovery: 'the stale set written, the commit not done: the reconciler appends nothing twice (one stale-set of rev 2) and closes the commit; the apply finds its fact',
+      },
+      B5: { status: 'excluded', why: 'the done is one journal append (journal.append) and closes the commit: nothing is open for recovery' },
+    },
+  },
+  {
+    // I-1's scenario test is on the base and I-2's is not; an apply moved both to rev 2. The propagation revision runs in a
+    // child (test/fixtures/propagation-child.ts) crashed at each label, then recovery and the revision again.
+    row: PROPAGATION_REVISION,
+    test: 'test/propagation.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: { status: 'excluded', why: 'the revision writes no intent of its own before its refusals; its commit is the revision.commit row\'s' },
+      B3: {
+        status: 'crash',
+        labels: ['propagation.after-refused'],
+        recovery: 'I-2\'s propagation-refused durable, the revision not committed: the rerun skips I-2 (settled) and mints I-1\'s unit in one revision; one propagation-refused, one plan-applied{source: propagation}',
+      },
+      B4: { status: 'excluded', why: 'the commit is one revision.commit (its own row crashes inside it); nothing of the propagation revision follows it but the crash label after it' },
+      B5: {
+        status: 'crash',
+        labels: ['propagation.after-revision'],
+        recovery: 'the revision committed: nothing is due (I-1 carried by its unit, I-2 refused); no second revision',
+      },
+    },
+  },
+  {
+    // u1's oversize design refused, its repair turn's split accepted; the unit driver runs in a child (unit-child.ts) crashed
+    // at each label, then the restart's startup consume (src/pipeline/unit.ts `finishHeldSplit`).
+    row: DESIGN_SPLIT,
+    test: 'test/design.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: { status: 'excluded', why: 'the split writes no intent before its hold: the hold is one stage-outcome append (journal.append covers it torn)' },
+      B3: {
+        status: 'crash',
+        labels: ['split.after-hold'],
+        recovery: 'the split hold durable, the revision not committed: the restart lands the split from the held attempt\'s recorded answer, the plan-check never asked again; one plan-applied{source: split}',
+      },
+      B4: { status: 'excluded', why: 'the commit is one revision.commit (its own row crashes inside it); nothing of the split follows it but the label after it' },
+      B5: {
+        status: 'crash',
+        labels: ['split.after-commit'],
+        recovery: 'the revision committed and the unit cut: the restart finds nothing to finish; one split revision, the children in the plan in force',
+      },
+    },
+  },
+  {
+    // A corpus arc of the dev17 role set: u1's skeleton written and dry-run, the unit driver in a child (unit-child.ts) crashed
+    // after the skeleton's commit, then the driver again after recovery (stage-child.ts) to the merge.
+    row: SCAFFOLD_STAGE,
+    test: 'test/scaffold.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: { status: 'excluded', why: 'the writer\'s call is a proc.spawn (its rows); a crash in it leaves an attempt the startup holds and runs again over what the worktree holds' },
+      B3: { status: 'excluded', why: 'the dry run is a journey series (proc.spawn lane rows) and its commit object names no ref: nothing to reconcile' },
+      B4: {
+        status: 'crash',
+        labels: ['scaffold.after-commit'],
+        recovery: 'the skeleton committed, the outcome not recorded: the next attempt finds the commit and records scaffolded without asking the writer; one scaffold commit, the unit merges',
+      },
+      B5: { status: 'excluded', why: 'scaffolded is one stage-outcome append; what the build does after it is the whole-pipeline row (14c)' },
+    },
+  },
+  {
+    // u1's plan-check asks one PoC; the unit driver runs in a child (unit-child.ts) crashed at each label, then the driver again
+    // to the build.
+    row: POC_STAGE,
+    test: 'test/design.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: { status: 'excluded', why: 'the builder\'s call is a proc.spawn (its rows); a crash in it leaves an attempt the startup holds and runs again in a checkout of its own' },
+      B3: {
+        status: 'crash',
+        labels: ['poc.after-report'],
+        recovery: 'the report written, the checkout not removed: the next attempt removes the leftover checkout (snapshotting it) and records answered from the report, the builder never asked again',
+      },
+      B4: {
+        status: 'crash',
+        labels: ['poc.after-cleanup'],
+        recovery: 'the report written and the checkout removed, the outcome not recorded: the next attempt records answered from the report; the builder asked once',
+      },
+      B5: { status: 'excluded', why: 'answered is one stage-outcome append; the fresh plan-check after it is the plan-check rows\'' },
+    },
+  },
 ];
 
 /** Justified exclusions, listed beside the table (plan "Tests"). */

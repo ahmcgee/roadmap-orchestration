@@ -4,6 +4,9 @@
 // independent of outcome"), because the fact is written from result.json before the spawn's done, for
 // every result.
 //
+// An unavailable call is counted in `unavailable`, its cost never known; a judgment's call without a result adds the tokens
+// its stream showed (`streamed`, dev.17, field feedback 2026-10-23: superseded checkpoint calls were unmetered).
+//
 // Smokes are charged to their backend, not to a seat (`bySmoke`), so seat spend is the units' and jobs' own. A job's
 // lens or checkpoint call (M3, `MeterSubject.job`), and a pack review's (M4a, job `review-<n>`), is charged to its arc
 // seat (`lens.arc`, `checkpoint.arc`, `packReview.arc`): it counts in `byRole` and `bySeat` like a unit's call, and per
@@ -35,7 +38,11 @@ export type UsageTotals = Readonly<{
   /** CLI-reported turns and list-price cost (Claude); a call that reports none adds nothing. */
   turns: number;
   costUsd: number;
-  /** Calls whose usage was unavailable (no result, absent from the output, malformed). */
+  /**
+   * Calls whose usage was unavailable (no result, absent from the output, malformed): their cost is not in `costUsd`. A
+   * judgment's call without a result that streamed its own model's messages (`streamed`, dev.17) adds those tokens and
+   * turns (output tokens a lower bound), and still counts here.
+   */
   unavailable: number;
 }>;
 
@@ -71,11 +78,12 @@ type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 const ZERO: UsageTotals = { calls: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, turns: 0, costUsd: 0, unavailable: 0 };
 
 function add(t: UsageTotals, f: UsageFact): UsageTotals {
-  if (f.kind === 'usage-unavailable') return { ...t, calls: t.calls + 1, unavailable: t.unavailable + 1 };
-  const u = f.usage;
+  if (f.kind === 'usage-unavailable' && f.streamed === undefined) return { ...t, calls: t.calls + 1, unavailable: t.unavailable + 1 };
+  const u = f.kind === 'usage-unavailable' ? f.streamed! : f.usage;
   return {
     ...t,
     calls: t.calls + 1,
+    unavailable: t.unavailable + (f.kind === 'usage-unavailable' ? 1 : 0),
     input: t.input + u.inputTokens,
     output: t.output + u.outputTokens,
     // A backend that reports no cache figure contributes nothing to it.

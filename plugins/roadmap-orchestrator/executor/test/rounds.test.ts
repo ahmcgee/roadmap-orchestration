@@ -1,23 +1,21 @@
-// M2 build rounds (src/pipeline/rounds.ts): stalled fix rounds and the D4 escalation to `build.high` (A11, G1),
-// a re-entry's fresh resolve round, and the session-never-persisted rerun. Integrated over real git and the
-// fake backends where a round runs. Named tests: rounds.d4-decide, rounds.fresh-resolve,
-// rounds.session-unrecoverable. The through-driver version (rounds.d4-through-driver) is M2 step 7a/7b's.
+// M2 build rounds (src/pipeline/rounds.ts): a re-entry's fresh resolve round and the session-never-persisted rerun.
+// Integrated over real git and the fake backends where a round runs. Named tests: rounds.fresh-resolve,
+// rounds.session-unrecoverable. A stalled fix round stays on its seat (dev.17 retired D4): stage-m2's rounds.no-escalation.
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import type { Fact } from '../src/core/events.ts';
-import { type UnitId, sha, unitId } from '../src/core/ids.ts';
+import { type UnitId, unitId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
 import { mergeHead } from '../src/git/mergein.ts';
 import { readInputFiles, recordPlan } from '../src/input/inforce.ts';
 import { implementerDispatch, pinDispatch, unitBranch, workDir } from '../src/pipeline/dispatch.ts';
 import { prepare } from '../src/pipeline/prepare.ts';
-import { type RoundInput, callRound, escalateImplementer, escalation, prepareRound, stalledRounds } from '../src/pipeline/rounds.ts';
+import { type RoundInput, callRound, prepareRound } from '../src/pipeline/rounds.ts';
 import { NO_SESSION_NOTE, RESOLVE_DIRECTIVE } from '../src/prompts/directives.ts';
 import { type LanesDone, at, build, buildRead, evidence, lanes, loadUnitSpec, planCheck, quiesce, record, salvage, start, teardown } from '../src/pipeline/stages.ts';
-import { type StageOutcome, outcomeFact } from '../src/pipeline/transitions.ts';
 import { promptFor } from '../src/prompts/index.ts';
 import { commitAll, git, writeFiles } from './helpers/repo.ts';
 import { type CodexAct, type Expect, type Step, readCalls } from './helpers/scenario.ts';
@@ -28,16 +26,6 @@ const T = { timeout: SCENARIO_TIMEOUT_MS };
 
 const codexBuild = (acts: readonly CodexAct[], expect: Expect = {}): Step => ({ as: 'codex', expect, acts: [...acts, { type: 'emit', value: BUILD_REPORT }] });
 
-/** Records the unit's next stage attempt with `outcome`, as its stage would; returns the attempt. */
-function decide(run: StageRun, outcome: StageOutcome): number {
-  const u = run.journal.view.unit(U1);
-  const fact = outcomeFact(u, outcome, u.counters.attempts + 1);
-  run.journal.fact(fact);
-  return fact.attempt;
-}
-
-const FIX: RoundInput = { kind: 'fix', fix: { failingEvidenceDirs: [], directives: ['Fix it.'] }, ledger: [], verification: null, salvage: sha('0'.repeat(40)) };
-const escalatedFacts = (run: StageRun): readonly Fact[] => readJournal(run.runDir, run.journal.view.arc).events.flatMap((e) => (e.type === 'fact' && e.fact.kind === 'implementer-escalated' ? [e.fact] : []));
 
 /** build → quiesce → evidence → salvage → teardown; returns the salvage SHA. */
 async function buildToLanes(run: StageRun, input: RoundInput): Promise<LanesDone['at']> {
@@ -50,78 +38,6 @@ async function buildToLanes(run: StageRun, input: RoundInput): Promise<LanesDone
   await teardown(run.ctx, U1, b.run);
   return s.sha;
 }
-
-test('rounds.d4-decide: a fix round after a stalled one escalates to build.high once, journaled before its seat is chosen', T, async () => {
-  // The gate revised, a fix round ran, the gate revised again: that fix round stalled.
-  const run = setupUnit({ steps: [] });
-  pinDispatch(run.ctx, run.unit, { rev: loadUnitSpec(run.ctx, run.unit).spec.rev, sha256: loadUnitSpec(run.ctx, run.unit).sha256 });
-  decide(run, { stage: 'plan-check', kind: 'approve' });
-  decide(run, { stage: 'build', kind: 'success' });
-  decide(run, { stage: 'lanes', kind: 'green' });
-  decide(run, { stage: 'gate', kind: 'revise' });
-  const fix = decide(run, { stage: 'build', kind: 'success' });
-  decide(run, { stage: 'lanes', kind: 'green' });
-  assert.deepEqual(stalledRounds(readJournal(run.runDir, run.journal.view.arc), U1), [], 'no verdict on the fix round yet');
-  decide(run, { stage: 'gate', kind: 'revise' });
-  const log = readJournal(run.runDir, run.journal.view.arc);
-  assert.deepEqual(stalledRounds(log, U1), [fix]);
-  assert.equal(log.view.unit(U1).counters.chargeableFailures, 2, 'inside the bound');
-
-  // Pure: only a fix round escalates, only when build.<tier> is not build.high's triple.
-  const routing = run.ctx.routing(null);
-  assert.deepEqual(escalation(log, routing, U1, FIX), { kind: 'escalate', from: 'med', stalled: fix });
-  assert.deepEqual(escalation(log, routing, U1, { kind: 'resume', error: null }), { kind: 'none', why: 'not-a-fix-round' });
-  const sameHigh = { ...routing, table: { ...routing.table, build: { ...routing.table.build, med: routing.table.build.high } } };
-  assert.deepEqual(escalation(log, sameHigh, U1, FIX), { kind: 'none', why: 'same-triple' });
-
-  // Journaled: the fact, then the fold's build tier; a second decision escalates nothing.
-  const attempt = run.journal.view.unit(U1).counters.attempts + 1;
-  assert.equal(escalateImplementer(run.ctx, U1, attempt, FIX), 'high');
-  assert.deepEqual(escalatedFacts(run), [{ kind: 'implementer-escalated', unit: U1, attempt, from: 'med', to: 'high', stalled: fix }]);
-  assert.equal(run.journal.view.unit(U1).buildTier, 'high');
-  assert.equal(run.journal.view.unit(U1).risk, 'med', 'the risk floor is unchanged');
-  assert.equal(escalateImplementer(run.ctx, U1, attempt, FIX), 'high');
-  assert.equal(escalatedFacts(run).length, 1);
-  assert.deepEqual(escalation(readJournal(run.runDir, run.journal.view.arc), routing, U1, FIX), { kind: 'none', why: 'already-high' });
-
-  // Not stalled: a revise, then a fix round whose lanes were not certified (no lane failed twice).
-  const other = setupUnit({ steps: [] });
-  pinDispatch(other.ctx, other.unit, { rev: loadUnitSpec(other.ctx, other.unit).spec.rev, sha256: loadUnitSpec(other.ctx, other.unit).sha256 });
-  decide(other, { stage: 'plan-check', kind: 'approve' });
-  decide(other, { stage: 'build', kind: 'success' });
-  decide(other, { stage: 'lanes', kind: 'green' });
-  decide(other, { stage: 'gate', kind: 'revise' });
-  decide(other, { stage: 'build', kind: 'success' });
-  decide(other, { stage: 'lanes', kind: 'not-certified' });
-  const otherLog = readJournal(other.runDir, other.journal.view.arc);
-  assert.deepEqual(stalledRounds(otherLog, U1), []);
-  assert.equal(escalateImplementer(other.ctx, U1, otherLog.view.unit(U1).counters.attempts + 1, FIX), 'med');
-  assert.deepEqual(escalatedFacts(other), []);
-
-  // A lane that fails before and after a fix round, on real lanes: the unit's own test lane fails until add is
-  // fixed, and the fix round commits something else.
-  const lanesRun = setupUnit({
-    steps: [
-      planCheckStep({ decision: 'approve' }), codexBuild([], { argv: ['exec', '-C'] }),
-      codexBuild([{ type: 'commit', message: 'not the fix', files: { 'src/notes.md': 'Tried.\n' } }], { argv: ['exec', 'resume'] }),
-    ],
-  });
-  started(await planCheck(lanesRun.ctx, lanesRun.unit));
-  const red1 = started(await lanes(lanesRun.ctx, lanesRun.unit, await buildToLanes(lanesRun, { kind: 'fresh' })));
-  assert.equal(red1.outcome.kind, 'red');
-  assert.ok(red1.fix !== null);
-  const fixAttempt = lanesRun.journal.view.unit(U1).counters.attempts + 1;
-  assert.equal(escalateImplementer(lanesRun.ctx, U1, fixAttempt, red1.fix), 'med', 'the first fix round follows no stalled round');
-  const red2 = started(await lanes(lanesRun.ctx, lanesRun.unit, await buildToLanes(lanesRun, red1.fix)));
-  assert.equal(red2.outcome.kind, 'red');
-  assert.ok(red2.fix !== null);
-  const lanesLog = readJournal(lanesRun.runDir, lanesRun.journal.view.arc);
-  assert.deepEqual(stalledRounds(lanesLog, U1), [fixAttempt]);
-  const next = lanesLog.view.unit(U1).counters.attempts + 1;
-  assert.equal(escalateImplementer(lanesRun.ctx, U1, next, red2.fix), 'high');
-  assert.deepEqual(escalatedFacts(lanesRun), [{ kind: 'implementer-escalated', unit: U1, attempt: next, from: 'med', to: 'high', stalled: fixAttempt }]);
-  assert.equal(readCalls(lanesRun.scenario.path).length, 3);
-});
 
 const U2: UnitId = unitId('u2');
 

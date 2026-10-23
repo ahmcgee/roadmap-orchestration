@@ -250,6 +250,68 @@ at triage stay in git history.
   apps (Electron via Playwright, native via a virtual display); Claude Design in design units (trigger: usable from a
   headless `claude -p`; it was not on CLI 2.1.301); an advisory for human-facing units outside every milestone.
 
+### Deferred from dev.17, environments (src/resources/environments.ts)
+
+- **Environments on arc lanes.** An arc lane never names an environment (refused at the obligations read): its other
+  reservation sites (the reproduce stage's mutant, mutation smoke, witness presence, the audit) do not bring one up.
+  Trigger: a real arc whose witness needs a costed environment.
+- **A single-unit pause brings nothing down.** Only `pause --all` and a stop idle environments at once; a paused unit's
+  environment goes down by its idle clock. Trigger: a real arc paying for an environment across a long single pause.
+- **Declared lifecycle timeouts.** Up and down get 30 min, the probe 2 min, fixed. Trigger: an environment whose up
+  outlives 30 min.
+- **Measured `idleMinutes` defaults** (the plan's backlog): re-derive after an arc that ran environments.
+
+### Deferred from dev.17, lane topology (experience-won item 4)
+
+- **Bisect-based culprit finding for batch lanes** (the plan's backlog): a red batch lane's P1 names the lane and the
+  SHA, not the unit that broke it; suspect narrowing only for now.
+- **Batch arc lanes.** An arc lane is `build` or `candidate`; a `batch` arc lane would leave its obligations unwitnessed
+  at the candidate's held-claims brake. Trigger: an obligation whose only witness is too slow for every merge.
+- **Observations across a lane rev change.** A dev.16 arc's observations and reuse identities are keyed by the dev.16
+  lane rev, so after the upgrade every lane runs once again; `laneRevMatches` keeps only proof judgments fresh. Trigger: a
+  measured upgrade cost that matters.
+- **A systems map edit without a restart.** The map in force is the repo config the executor read at its start, recorded
+  on each revision; an edit needs a restart before the apply that records it (as every repo config edit). Trigger: the
+  root agent editing the map mid-arc more than once.
+- **Close-out batch reds as P1s.** A red batch lane at the close-out refuses it (base-red, needs-user) rather than opening a
+  P1 the checkpoint could repair, because no checkpoint is due at the close-out. Trigger: a close-out refused this way.
+
+### Deferred from dev.17, propagation (experience-won item 2)
+
+- **Pins at the owner's apply.** An owner's spec is pinned by its first plan-check redirect (or never, read `unpinned`):
+  stamping pins into the kept bytes at the apply would make every owner spec differ from the owner's file and lean on the
+  rebase's `owner` manifest for every revision source. Unpinned links read as stale-unknown, so the cost is only a longer
+  stale list at a later change. Trigger: plan-checks answering many unpinned links that never moved.
+- **A propagation unit for a vision change.** A changed clause reaches the obligations serving it (reconciled by the
+  checkpoint) and the units linking them (answered at plan-check), but mints no unit: an unrevised obligation's witness
+  still proves its unchanged statement. Trigger: a merged artifact a vision edit left wrong that no obligation edit reached.
+- **Implementation files in a propagation unit's scope.** Its scope is the stale witness files; code the change needs
+  outside them goes through scope growth. Trigger: propagation units held for scope growth as a rule.
+- **File pins of a design record.** `breaks` and file `interfaces` pin a blob, but no merge marks them stale; only the
+  code edge reads `breaks`. Trigger: a unit built on a break list a merge since made wrong.
+
+### Deferred from dev.17, the design pass (experience-won item 1)
+
+- **A plan-check role eval** (the plan's backlog): none exists; the paid m1 fixture covers the acting plan-check and its
+  design record this time. Trigger: the next change to the plan-check prompt or its design checks.
+- **Plan environments for a PoC.** A PoC builds in a throwaway checkout with the build's entry reservation and brings no
+  plan environment up (the plan allowed one within the verification budget). Trigger: a PoC question only an environment
+  can answer.
+- **Measured design thresholds.** `SUBSTANTIAL_SYSTEM_LINES` (200), `DIFF_BYTES_PER_LINE` (100, which turns the gate's diff
+  budget into `gateInlineLines`) and `POC_LIMIT` (2) are first guesses (src/pipeline/design.ts). Re-derive them from an arc:
+  the gates' `designEstimate` beside `largeDiff` (the calibration signal) and the splits' sizes.
+- **Scaffold modules beyond Haiku 5.5.** The `scaffold` role has a Haiku 5.5 module only; a rebind of its seats to another
+  model is refused at startup. Trigger: the scaffold role eval failing Haiku, or an owner rebind.
+- **A declared contract that skips the risk trigger.** The salvage's risk trigger still fires on any contract the diff
+  touches; the design record's declared contract interfaces only spare the gate's `<undeclared_contracts>` flag. Trigger:
+  escalation-seat gates on declared contract changes that measure as wasted.
+- **Probing an environment at plan-check** (item 10). An environment is unavailable to the arc only once its up or probe
+  failed in this arc (`environmentUnavailable`); one never used is presumed available, so a clause whose only lane needs
+  an environment that never exists here passes the plan-check and parks at its lanes (`env-unavailable`, retryable) before
+  the next plan-check sees it. Wanted if that wait measures as costly: the plan-check stage runs the probes of the
+  environments its spec's clauses name (cheap health checks, never an up), or the plan declares an environment absent.
+  Trigger: an arc parking on an environment that was never going to come up.
+
 ## Convergence and integrity (unscheduled, wanted)
 
 - **A `respec` gate outcome** (arc-1 item 27b). A gate that finds the spec wrong can only escalate to the
@@ -373,10 +435,12 @@ at triage stay in git history.
   facts charged; a session whose earlier invocation an executor before 1.0.0-dev.12 metered has no `session` on that
   fact, so its first dev.12 reading (a repair turn or a resumed build) is charged whole, once. Nothing to do unless an
   arc's spend matters at that precision.
-- **A judge's background subagent** (W2, 2026-10-16). The Agent tool's `run_in_background` lets a judge end a turn while a
-  subagent runs; the session then prints an interim result (with `structured_output`) and a later one, and the adapter
-  reads the last. Watch for a judge whose deadline kills it while it waits on a background subagent: then tell judges to
-  run subagents in the foreground, or treat the last interim answer as the call's.
+- **A judge's background subagent** (W2, 2026-10-16; triggered and resolved in dev.17). The Agent tool's
+  `run_in_background` lets a judge end a turn while a subagent runs; the session then prints an interim result (with
+  `structured_output`) and a later one, and the adapter reads the last. Triggered in the field 2026-10-23: a gate's first
+  result was the session limit and its failing background subagents' empty results followed, so the call read as a process
+  fault. Resolved: every judge's system text says to run subagents in the foreground (`JUDGE_SUBAGENTS`), and a usage limit
+  in any result is the call's (src/backends/claude.ts). Reopen if a judge's trace still shows `run_in_background`.
 
 - **`proofJudgment` → execution evidence** (dev.12 gate method redesign, deferred). An obligation's `proofJudgment` is
   graded by a judge reading the proof; the owner's philosophy (code owns invariants, models own method, evals own trust)
@@ -422,16 +486,14 @@ at triage stay in git history.
   every blocker's owner is approved; then follow every blocker and batch the closure.
 - **The dev.9 resume crash** (arc feedback 2026-10-15). The stuck unit's crash on `resume` was not reproduced: the
   startup's recovery hold closes its attempt, and a resumed held unit re-runs from its decision as an abandoned
-  attempt always did. Trigger: a resume of a recovery-held unit that still throws; read the throw site from its
-  stderr.
-- **Scope growth beyond the uniform plan-check** (2026-10-15). Deferred: (a) the in-session assessment of a frontier or
-  summit builder under `planCheck.shape: by-builder` proposes no `scopeGrowth` (it makes no plan-check call); (b) a
-  builder's `scope growth: <path>` blocker reaches only the gate (it reads the build report), never a hold of its own,
+  attempt always did. Trigger: a resume of a recovery-held unit that still throws (since 1.0.0-dev.17 an `executor-fault`
+  park, unless it held shared state); read the throw site from its stack.
+- **Scope growth beyond the plan-check** (2026-10-15; (a), the by-builder in-session assessment, went with it in
+  dev.17). Deferred: (b) a builder's `scope growth: <path>` blocker reaches only the gate (it reads the build report), never a hold of its own,
   unless salvage reverted that path on its last two build rounds (plan defects, 2026-10-16: then the unit holds at lanes
   with that path as the proposal); a blocker naming a path the builder never edited still waits for the gate;
   (c) `start` writes Phase-0 row 10's advisories to the executor's stderr only (`phase0 check` and `apply` print them).
-  Trigger: a unit under `by-builder` needs growth its assessment cannot propose, or a gate escalation that a held
-  proposal would have saved.
+  Trigger: a gate escalation that a held proposal would have saved.
 - **Plan defects beyond Phase 0** (2026-10-16). (a) A checkpoint's split child is checked against its lane (its
   declared files, required when the parent declared them), not for reach: a child whose file no deliverer can create is
   caught by the next `apply`'s row 11 or by the run-time `plan-defect` park. (b) A flow lever that rewrites an arc
@@ -441,18 +503,12 @@ at triage stay in git history.
   `plan-defect` park whose cause one of these would have refused earlier; a flow proposal that moves a witness out of
   its lane; a spec witness item that is never run; a `derived` edit that hands a unit someone else's file.
 
-- **Executor faults outside bundle judging** (real arc 2026-10-12: a `reenter` + `patch-spec` of the re-entered unit
-  threw in the divergence step and crash-looped the executor to sup-4-4). The fix contains only `decide`'s judging
-  (steps 0–9): it decides the bundle invalid and records it, so a restart never replays it. A deterministic throw in
-  `settleDecided`, the scheduler or any other job resumed from a recorded model output would still replay on every
-  restart until the supervisor gives up. Trigger: a second crash loop of that shape; then decide on a general rule
-  (a job's fault is recorded against the job before the throw escapes).
-
-- **A declared evidence glob matching a symlink** (2026-10-21; 1.0.0-dev.16). The dev.16 fix (SCHEMAS.md "Field fixes:
-  snapshot symlinks, restart checks") skips and records a symlink or special file among a checkout's dirty paths;
-  a lane's `evidenceGlobs` entry matching one still makes `listEvidence` throw in the lane's `tree` snapshot, which
-  crash-loops like the field case did. Trigger: that throw in a field run; then give declared globs the same
-  `notRegular` record (the reconciler's re-list must skip alike).
+- **Faults beyond the contained tracks** (1.0.0-dev.17, fault isolation). A throw is contained only in a unit's task and the
+  audit, walk, checkpoint and baseline jobs, and only while they hold no shared state (src/schedule/fault.ts). A
+  deterministic throw while holding the integration slot (candidate, ff, snapshot), in a pack review, polish, compare,
+  flow, repair batch, close-out or command job, or in the scheduler loop still crashes and replays on every restart until
+  the supervisor gives up (3 an hour). Trigger: a crash loop of one of those shapes in a field run; then record that
+  job's fault against it the same way, or give the slot holder a recorded abandon before the throw escapes.
 
 - **Checkpoint reads refused** (paid M4b run 5): the checkpoint call inv 2174 was refused reads of the runtime's
   `inputs/*.plan.json` (outside its `--add-dir`s) and still answered `bundle`. The gate and plan-check void an approve
@@ -541,7 +597,8 @@ at triage stay in git history.
   arc to take one; read its log against the fake test.
 
 - **Partial revalidation of a stale-spec bundle** (F09): revalidate only the ops a patch delta touches. Trigger: stale
-  rejections > 2 per paid run.
+  rejections > 2 per paid run. A field arc (2026-10-23) lost one checkpoint's spend to an operator apply; since dev.17 the
+  apply's receipt warns while a checkpoint runs.
 - **External-state identity for estate-lane reuse across SHAs** (Q13 remainder: toolchain versions, image digests,
   service state). Trigger: estate lane time > 20% of a real arc's wall clock.
 - **Shared execution for non-identical but equivalent suite and witness lanes** (F13 remainder). Trigger: duplicate
@@ -550,8 +607,8 @@ at triage stay in git history.
   activation. Trigger: a real-arc drift finding on generated records.
 - **Stable defect lineage across audits and lenses** beyond equal causes (F24 remainder; within one audit, equal causes
   merge). Trigger: the run-10 analysis shows ≥3 same-defect findings across audits.
-- **Deterministic safety fixtures for the plan-check shape** (understated risk, infeasible specs) beyond unit tests
-  (Q27 remainder). Trigger: `by-builder` reverted after run 10, or a missed-risk term fires.
+- **Deterministic safety fixtures for plan-check** (understated risk, infeasible specs) beyond unit tests (Q27
+  remainder; the by-builder shape they were for went in dev.17). Trigger: a missed-risk term fires.
 
 - **Builder role eval: the gate's marginal value** (2026-10-17; research notes outside the repo,
   review-pass-research.md). About 30 to 40 trap units on the role-eval harness (an untested spec clause, an
@@ -574,8 +631,44 @@ at triage stay in git history.
 - **Vacuity lens: "the smallest regression this test would miss"** (BMAD-style): have the vacuity lens name, per test it
   judges, the smallest change to the code that the test would still pass. Trigger: a lens role eval, or a real arc where a
   vacuous witness test passed the vacuity lens.
+- **Rate-limit awareness** (owner ruling 2026-10-23, deferred from dev.17): read the stream's `rate_limit_info` (the
+  seven-day window's utilization and reset) and pace judgment work before the limit parks the backend, instead of only
+  parking on the usage-limit error. Trigger: an arc parked on the weekly limit with work it could have deferred.
+- **Lens and checkpoint cadence budget** (owner ruling 2026-10-23, deferred from dev.17): bound how much judgment the
+  audit lenses and checkpoints spend per merged unit. dev.17 lowers arc judgment cost through less rework (design pass,
+  PoCs, propagation) first. Trigger: an arc where lens or checkpoint spend dominates after dev.17.
+- **Probe environments during plan-check.** The design pass marks a clause unwitnessable only from the environment's
+  recorded history (its last up or probe failed); an environment never brought up in this arc counts as available, and
+  plan-check does not bring it up to find out. Trigger: a unit approved on an environment that turned out not to come up.
 
 ## Scaffolding to delete
+
+- **dev.16 result.json adopted as recorded** (`earlierReaderResultDefault`, src/core/upgrade.ts; its call in
+  src/backends/adapter.ts `writeResult`): delete once no arc started on 1.0.0-dev.16 is in flight.
+
+- dev.17 routing adoption (src/core/upgrade.ts), once no arc started on 1.0.0-dev.16 or earlier is in flight:
+  `planCheckShapeDefault` with the plan reader's legacy `planCheck` arm (src/input/plan.ts; the reader then refuses the
+  field), `PRE_DEV17_BUILTIN_SEATS` in `EARLIER_BUILTIN_SEATS`, the plan-check `in-session` and build `infeasible` and
+  `risk-raised` outcomes with their transition rows, `PlanChange` `plan-check-shape`, and the `implementer-escalated`
+  fact with its fold (src/core/events.ts, src/core/state.ts).
+- The dev.16 lane forms (1.0.0-dev.17, lane topology), once no arc started on 1.0.0-dev.16 is in flight:
+  `laneCadenceDefault` and `laneInputsDropped` (src/core/upgrade.ts, read by `laneFields` in src/core/records.ts: a lane's
+  `tier` and a spec lane's `inputs`), `tierLaneRev` and `legacyTierOf` with `laneRevMatches`' dev.16 form
+  (src/holistic/types.ts), and `systemsMapDefault` (`systemsMapInForce`, src/input/systems.ts: a dev.16 revision has no
+  `systemsMap`). With them `cadence` is required on every lane, `tier` and `inputs` refused, and `plan-applied.systemsMap`
+  required (null for no map). The `lane-reused` fact's absent `set`/`at` (a spec series at its commit, src/core/state.ts
+  and `seriesLedger`) and the `witnessed` fact's absent `inputSha` (its `treeSha`) go at the same time.
+- The dev.16 forms (1.0.0-dev.17, dev.17 records and propagation), once no arc started on 1.0.0-dev.16 is in flight:
+  `planCheckStaleLinksDefault` (src/core/upgrade.ts, read by `planCheckOutput`: a plan-check answer without `staleLinks`).
+  `designKindDefault` stays (the design pass): a spec has no design record before its first approving plan-check. A spec
+  without `pins` is a lasting state (an owner's spec no plan-check has revised), not scaffolding.
+- The dev.16 plan-check answers (1.0.0-dev.17, the design pass), once no arc started on 1.0.0-dev.16 is in flight:
+  `planCheckDesignDefault` (src/core/upgrade.ts, read by `planCheckOutput`: an approve without `design`), with which
+  `design`, `split`, `scaffold` and `poc` become required keys of the answer reader; and the `m4b` role set's place in
+  `unitRolesInForce` (src/routing/layers.ts), with which `scaffold` is a unit role of every arc.
+- The dev.16 arc's missing flaky ledger (1.0.0-dev.17, the flaky ledger), once no arc started on 1.0.0-dev.16 is in
+  flight: `flakyLedgerDefault` (src/core/upgrade.ts, called by `flakyLedger` in src/pipeline/deflake.ts when the revision
+  in force records no `systemsMap`). The ledger itself needs no default: an arc without `flake-observed` facts has none.
 
 - `gateNoteDebtDefault` and `GATE_DEBT_UNRECORDED` (src/core/upgrade.ts), with `gateDebtNotes`' unrecorded arm
   (src/pipeline/gate.ts), once no arc started on 1.0.0-dev.12 is in flight: a dev.12 gate finding has no `debt` and its

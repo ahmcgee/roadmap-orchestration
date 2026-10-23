@@ -25,7 +25,7 @@ import { absPath, repoPath } from '../src/core/values.ts';
 import { CHANGED_LIST, CLUSTER_PATHS_SHOWN, gateAnswerFor } from '../src/pipeline/gate.ts';
 import { ACTING_JUDGE_TOOLS, writeDenyRules } from '../src/backends/argv.ts';
 import { FILES_DIR, readManifest } from '../src/git/evidence.ts';
-import { evidenceRoot, verificationWorktree } from '../src/pipeline/dispatch.ts';
+import { evidenceRoot, judgeSystem, verificationWorktree } from '../src/pipeline/dispatch.ts';
 import { promptFor } from '../src/prompts/index.ts';
 import { clusterCoverage } from '../src/prompts/schemas.ts';
 import { laneRevOf, parseObligations } from '../src/holistic/types.ts';
@@ -39,6 +39,8 @@ import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-c
 import type { Gate } from '../src/pipeline/unit.ts';
 import { type ArcDescriptor, MUL, U1, codexStep, contextFor, gateRepairStep, gateStep, isGateCall as isGate, mulBuild, outcomes, setupArc, stepUntil } from './fixtures/unit-common.ts';
 import { BASE, editPlan, followContext, planDirOf, recordFirst, stepTo, unitOf } from './fixtures/route-common.ts';
+import { specBytes } from '../src/spec/spec.ts';
+import { loadUnitSpec } from '../src/pipeline/stages.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 /** Every stage admitted at once: the unit runs on its own. */
@@ -113,7 +115,7 @@ test('gate.risk-promotion: a contract path in the unit\'s diff promotes the gate
     await stepUntil(r, 'u1', (f) => f.stage === 'gate');
     assert.equal(outcomes(d).at(-1), 'gate:approve');
     const [planCall, , gateCall] = readCalls(d.scenarioPath);
-    assert.ok(planCall!.argv.includes('claude-sonnet-5-5'), 'plan-check sat on the unit\'s med seat (efficient: Sonnet)');
+    assert.ok(planCall!.argv.includes('claude-opus-5-5') && planCall!.argv.includes('medium'), 'plan-check sat on the unit\'s med seat (frontier: Opus medium, dev.17)');
     assert.ok(gateCall!.argv.includes('xhigh'), 'the gate sat on the escalation seat');
     assert.ok(!planCall!.stdin.includes('<escalation>'), 'no preface below the escalation seat');
     assert.equal(r.journal.view.unit(U1).promotion, false, 'the promotion was for that dispatch only');
@@ -223,7 +225,7 @@ test('gate.acting-checkout (dev.13): the gate is an acting judge with no MCP ser
     assert.equal(after('--setting-sources'), 'project');
     assert.ok(gate.argv.includes('--strict-mcp-config') && !gate.argv.includes('--mcp-config'), 'no MCP server');
     assert.ok(!gate.argv.includes('--system-prompt') && !gate.argv.includes('--no-session-persistence'), 'its text is appended; its session persists');
-    assert.equal(after('--append-system-prompt'), promptFor('gate', after('--model') as 'claude-sonnet-5-5').system, 'the module\'s system text, appended as it stands');
+    assert.equal(after('--append-system-prompt'), judgeSystem(promptFor('gate', after('--model') as 'claude-sonnet-5-5').system), 'the module\'s system text and the judge\'s subagent constraint, appended');
     assert.deepEqual(addDirs(gate).slice(0, 2), [d.repo, d.runDir], 'the judgment read surface');
     // Its Write, Edit and NotebookEdit are denied the repository and the run dir (Bash stays trusted to the prompt).
     const rules = gate.argv.slice(gate.argv.indexOf('--disallowedTools') + 1, gate.argv.indexOf('--permission-mode'));
@@ -391,8 +393,10 @@ test('gate.inputs-not-in-ff-window: while a revision holds the fence the gate ne
     assert.deepEqual(judgmentInputs(d, 'gate'), [], 'no judgment-inputs while the fence is held');
     assert.equal(readCalls(d.scenarioPath).filter(isGate).length, 0, 'no gate call while the fence is held');
 
-    // A harmless revision commits while the fence is held: a new unit u2, plan rev 2.
+    // A harmless revision commits while the fence is held: a new unit u2, plan rev 2. The owner's u1 file is first brought
+    // to u1's spec in force (dev.17: its approve landed the design record as rev 2), as `roadmap inputs export` would.
     const u1Spec = JSON.parse(readFileSync(join(planDirOf(d), 'u1.json'), 'utf8')) as Record<string, unknown>;
+    writeFileSync(join(planDirOf(d), 'u1.json'), specBytes(loadUnitSpec(r.ctx, unitOf(ctx, 'u1')).spec));
     writeFileSync(join(planDirOf(d), 'u2.json'), JSON.stringify({ ...u1Spec, unit: 'u2' }));
     editPlan(d, (p) => void p.units.push({ ...p.units[0]!, id: 'u2', spec: 'u2.json' }));
     const rctx = { runDir: r.ctx.runDir, view: r.journal.view, hostDir: r.ctx.hostDir, planFile: absPath(d.planPath), routingBase: BASE, laneEnv: process.env };
@@ -496,9 +500,9 @@ test('gate.bounded-diff: the gate reads its diff as the bounded attachment (orie
     // A dev.11 executor's gate recorded none: read as nothing recorded (scaffolding).
     const { diffShown: _, ...dev11 } = inputs;
     assert.deepEqual(gateDiffShownOf(dev11), { inlined: [], notInlined: [] });
-    // Under the large-diff threshold: the unit's own seat (med: efficient), the plain prompt, no map.
+    // Under the large-diff threshold: the unit's own seat (med: frontier, Opus medium since dev.17), the plain prompt, no map.
     assert.equal(inputs.largeDiff, null);
-    assert.ok(g!.argv.includes('claude-sonnet-5-5'), 'a small diff keeps the unit\'s seat');
+    assert.ok(g!.argv.includes('claude-opus-5-5') && g!.argv.includes('medium'), 'a small diff keeps the unit\'s seat');
     assert.ok(!g!.stdin.includes('<large_diff>'), 'and the plain prompt');
   } finally {
     r.journal.close();

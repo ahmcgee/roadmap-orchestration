@@ -24,7 +24,8 @@ Each finds the run through the host lock (the one live arc on this host). Add `-
 of them to reach a run with no live owner, e.g. `roadmap status --repo <path> --arc <arc>`. Except `start`,
 `status`, `watch` and `apply --dry-run`, they only queue a file and print `{command, arc, type}`. Queued is not
 done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly one of `.applied.json` or
-`.rejected.json` (with every reason).
+`.rejected.json` (with every reason). An `apply` waiting for a unit's stage boundary first gets `.queued.json`
+(`waitsFor`, `reason`; 1.0.0-dev.17).
 
 - `roadmap start --repo <path> --plan <plan.json> [--profile default|claude-only] [--wait <ms>]`: launch, or recover
   from disk. Without `--profile`, `.roadmap/config.json` chooses, else `default`. On an arc with a plan in force the
@@ -41,8 +42,9 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
 - `roadmap stop`: park everything, tear down, release the host lock.
 - `roadmap pause (<unit> | --all)`: kill and tear down; commits and worktree stay as left; the unit holds at its stage.
 - `roadmap resume [<unit> | --backend claude|codex]`: no argument clears pauses and holds (a held build continues
-  its session). `<unit>` re-opens a unit parked at plan-check or gate after a spec revision was applied, or one
-  parked `routing-changed` once its seat is restored. `--backend` clears a usage-limit park after a passing smoke.
+  its session). `<unit>` re-opens a unit parked at plan-check or gate after a spec revision was applied (its next build
+  resumes the implementer session; one that cannot, on a moved seat, starts fresh with the executor's handover of the
+  unit's history), or one parked `routing-changed` once its seat is restored. `--backend` clears a usage-limit park after a passing smoke.
 - `roadmap ack <needs-user-id> [--choice <option-id>]`: answer an item; `--choice` names one of its `options`.
 - `roadmap sweep [--resource <name>]`: run the recorded teardown of undispositioned residues.
 - `roadmap apply [--base <file>] [--dry-run] [--ruling <file>] [--vision-edit]`: put the edited plan, specs and other
@@ -177,16 +179,23 @@ registry), `debt.md` (with the `json roadmap-debt` block), all rendered by the e
 `vision.json`, `corpus.md`, yours, committed. Anything else is a 0.x layout (`legacy-roadmap-dir`).
 
 **`.roadmap/config.json`**: `{routing?: {profile?, seats?, classes?}, chain?: {k}, flow?: {givens: [{lever, note}]},
-walkthrough?: {mcp: {<name>: {command, args?, env?}}}}`; unknown keys refused; read at `start`. `walkthrough.mcp` names
+walkthrough?: {mcp: {<name>: {command, args?, env?}}}, systemsMap?: {systems: {<name>: {paths, tests?, dependsOn?}},
+shared?: [{paths, dependents}], contracts?: {<path>: [<system>]}, docs?: [<glob>]}}`; unknown keys refused; read at
+`start`. `systemsMap` names every system a lane lists (`docs` is the docs class, never a system name); every revision
+records the map the executor read, so an edit reaches the arc at the next `apply` after a restart. `walkthrough.mcp` names
 the MCP servers a walkthrough session gets (and only those), with `{evidence}` and `{viewport}` substituted in `args` and
 `env`; absent, no browser drive, so a `browser` journey is refused `walk-tools-missing`. `flow.givens` are the owner's repo givens, never yours to add. `routing.seats` overrides the class of a seat; `routing.classes` rebinds a class to `{backend, model,
 effort}` and is the only place a model is named (ids in `executor/src/routing/models.ts`). A rebind applies at every seat
 that names the class, judgment seats included: a Codex triple there is refused `unsupported-routing{codex-judgment}`, so
 move those judgment seats to another class in `routing.seats` first. Built-in seats, both profiles: `efficient`
-builds low and med, plan-checks low and med, gates low and med, and runs the lenses and flow; `frontier` builds high, plan-checks
-high, gates high, and runs the pack review; `summit` holds both escalation seats and the checkpoint. A class binds a build
+builds at every risk and runs the lenses and flow; `frontier` plan-checks and gates at every risk and runs the pack review;
+`summit` holds both escalation seats and the checkpoint. A Claude build consults the frontier model as its advisor (`--advisor`) at its
+own decision points; that spend shows under `frontier` in `spend.byClass`. A class binds a build
 model and a judgment model (always Claude): `efficient` judges on Claude under both profiles, even where it builds on Codex.
-`economy` is judgment-only and no built-in seat names it (reach it through `routing.seats`, a plan or `route`): no build seat may name it, in `routing.seats`, a plan, `route` or `steer --class`.
+`economy` is judgment-only: no build seat may name it, in `routing.seats`, a plan, `route` or `steer --class`. The one
+built-in seat on it is the `scaffold` role's (1.0.0-dev.17, `scaffold.low|med|high`: the writer of a new system's skeleton a
+plan-check decides; in force only in arcs started on dev.17 or later); reach economy elsewhere through
+`routing.seats`, a plan or `route`. Plan-check acts (a shell and web search in its own checkouts) at every seat.
 
 **`walkthrough.mcp`** names the stdio MCP servers a walk session gets, exactly these (`--strict-mcp-config`); the
 environment provides them, the executor ships no browser. Code substitutes `{evidence}` (the session's evidence dir) and
@@ -208,7 +217,7 @@ one is absolute (checked on 0.0.83). Install it in the project's devcontainer, p
 
 - `needs-user/<id>.json`: `summary, reason, subject, recommendation, options[{id, label}], evidence[]`;
   `<id>.ack.json` once acknowledged.
-- `commands/incoming/<id>.json`, `commands/receipts/<id>.{accepted,applied,rejected}.json`.
+- `commands/incoming/<id>.json`, `commands/receipts/<id>.{accepted,queued,applied,rejected}.json`.
 - `heartbeat.json`: every 10 s; older than 5 minutes means the executor is dead or wedged.
 - `inv/<seq>-<ordinal>/`: one invocation: `stdout`, `stderr`, `exit.json`, `result.json`.
 - `status.rejection.json`: the last refused start's rows.
@@ -286,7 +295,10 @@ waits on you), `blocked` (work remains and nothing can move), `complete`, `refus
   size) sits at least at the high seat whatever the unit's risk (`seat` shows it once the gate has started), and its answer
   carries a cluster map that code checks covers every changed path exactly once; a file in a cluster counts as reviewed. `state` is `running`, `preparing`, `ready`, `waiting`, `awaiting-admission`, `held`, `blocked`,
   `parked`, `merged`, `cut` or `superseded`. `waitingFor{deps, edges, resources, envBlocked, admission, drainFor}`;
-  `admission` holds `known-defect{id, fixUnit}` while a known defect holds the unit at prepare. `running{stage,
+  `admission` holds `known-defect{id, fixUnit}` while a known defect holds the unit at prepare, and (1.0.0-dev.17)
+  `deflake{deflake, lane}` while an open deflake unit holds a unit not yet started that runs its flaky lane.
+  `propagation{unit, target, stale}` while a propagation unit still to land holds its gate (`stale`: the re-witnessed
+  files its design breaks; empty when it links the target). `running{stage,
   attempt, elapsed (ms), deadline, resources, lane}`, `lane{id, set: spec|suite|journey|mutant, inv, startedAt}` the
   lane run open now. `failures[{ref, stage, attempt, lane, class: red|flaky|repeat, hostSuspected}]`: `hostSuspected`
   `{signatures, busy}` names the host failure signatures the output matched and whether the host was busy, or null;
@@ -295,7 +307,8 @@ waits on you), `blocked` (work remains and nothing can move), `complete`, `refus
   `park{class: retryable|operator, kind, targets, outstanding, nextProbeAt, escalateAt}`: a retryable park recovers
   by itself once its probes pass.
 - `edges[]` (`after{unit, on, effective, met}`, `contingent{unit, edge, condition, resolved}`), `runOnly`.
-- `commands{pending[{id, type}], receipts}` (the last 10 terminal receipts).
+- `commands{pending[{id, type, queuedFor?}], receipts}` (the last 10 terminal receipts); `queuedFor` names the units a
+  queued `apply` waits on.
 - `spend{byRole, byModel{models, unresolvedRevs}, byClass{classes, unresolvedRevs}, byJob, bySmoke}`: token totals and
   list-price cost. A Claude call's totals include its subagents'; `byClass` splits spend by class (`efficient`, `frontier`,
   `summit`, `economy`): each seat's own share on its class, subagent spend on the subagent model's class. `byModel` counts each seat's own share and is the only place `status` names a model.
@@ -468,9 +481,23 @@ Blocking unless noted. Read the item file before acting.
 - `context-exceeded` (the unit is parked at plan-check, build or gate, uncharged): the call's prompt or context outgrew
   its model's window; the item names the role, the call and the prompt's size. Shrink the stage's inputs or route the
   seat to a larger window, then `resume`, which makes a new call (SKILL.md "Handling parks"). Not a backend problem: nothing is parked arc-wide.
+- `deflake-parked`, non-blocking (1.0.0-dev.17): a deflake unit parked; the units its code edges held run again. Handle
+  the park's own item; a named cpu or resource need is declared on the lane by `apply`, then the deflake unit is cut
+  (SKILL.md "Flaky lanes").
+- `flake-recurring`, non-blocking (1.0.0-dev.17): a test (or lane) flaked again after two deflake units merged or were
+  cut; no third is minted. The evidence is the flake's red and green runs (SKILL.md "Flaky lanes").
+- `executor-fault`, non-blocking (1.0.0-dev.17): the executor threw inside a unit's task (the unit is parked at the stage
+  it was in, uncharged) or an arc job (audit, walk, checkpoint, baseline: the job ended faulted) while it held only that
+  unit's or job's own state; the arc went on. The item carries the stack (SKILL.md "Handling parks").
+- `apply-dropped`, non-blocking (1.0.0-dev.17): an `apply` queued behind a unit's stage boundary was refused when it
+  landed there; none of its edits is in force. The summary names the command and every reason, the evidence its
+  rejected receipt. Redo the edit from where the arc is now, then `ack` (SKILL.md "Changing the plan").
 - `plan-defect` (the unit is parked at lanes, uncharged): its missing witness is a plan defect code diagnosed (the
   witness file outside its lane, or absent and outside the unit's scope). Fix the plan by `apply`, then `resume`
-  (SKILL.md "Handling parks").
+  (SKILL.md "Handling parks"). At plan-check (1.0.0-dev.17): its design was refused twice for a plan defect (a test no lane
+  runs before the unit merges, an acceptance clause no lane runnable in this arc exercises, an integration unit without a spanning test, a design too big for one unit, a split code
+  refused); at scaffold: its skeleton was refused twice (paths outside the new system, a missing entry point, a load
+  test that does not run). The item names every reason; fix by `apply`, then `resume` (SKILL.md "The design pass").
 - Flow, non-blocking (SKILL.md "The flow loop"): `flow-proposal` and `flow-host` (`flow accept` or `flow reject`; the
   item's evidence is the run's inputs file), `flow-worse` (revert by `apply` to the `preimage` of the proposal's
   `flow-verdict` fact in the run dir's `events.jsonl`, then `ack`), `ruler-changed` (confirm or revert, then `ack`),
@@ -498,13 +525,21 @@ Blocking unless noted. Read the item file before acting.
   checkpoint.
 - "M4a: corpus, debt, forge, brief, chaining": the corpus guide, the pin, rules registry, obligations with census,
   the Phase-0 record, the issue capture, debt, the brief and the ack log.
-- "M4a rev 3: the run-10 batch": `knownDefects`, `priority`, `planCheck`, spec `witnesses` and lane `inputs`, arc
+- "M4a rev 3: the run-10 batch": `knownDefects`, `priority`, `planCheck` (removed in dev.17), spec `witnesses` and lane `inputs`, arc
   lane `testPaths`, admit classes and conversions, the witness lane file.
 - "Plan defects (2026-10-16)": witness `files`, required `testPaths`, the `plan-defect` row (2026-10-21: milestone references over the budget) and park, plan `derived`
   and the dispatch record's `derived`, the lanes `scope-growth` hold; a derived entry's `regenerate` and its check
   ("Regenerate checks").
 - "M4b: the flow loop": stations, the series and chart, levers and their plan paths, the ruler paths, proposals,
   proofs, verdicts, givens and the flow facts.
+- "Proportional review" (dev.17): the gate's defect classes and ride-along findings, the findings ledger and disputes,
+  the delta re-gate and `delta-empty`, the build's `docsOnlySince` and the verifier, lane `readsComments`.
 - "dev.13: milestone walkthroughs and design units": `milestones` (design, references, bring-up, journeys),
   `limits.walkRounds`, polish units, the `experience` vision clause, the walk facts and findings, the walkthrough MCP
   config, the Phase-0 rows and advisories, the demo.
+- "dev.17: the flaky ledger": `flake-observed`, deflake units (`origin: deflake`, `deflake.keys`), their code edges,
+  `limits.verification {laneMinutes?, lanes?: {<lane>: minutes}}` (a deflake unit's verification budget in lane-minutes;
+  default 30, a batch lane 2 runs), `deflake-parked` and `flake-recurring`.
+- "dev.17: propagation": revision pins on a spec and a plan-check patch, a revision's stale set (`stale-set`), the
+  plan-check's `staleLinks` and `stale-answered`, `stale-reopened`, propagation units (`origin: propagation`,
+  `propagation{rev, target}`), `propagation-refused`, and the gate's `propagation` admission hold.

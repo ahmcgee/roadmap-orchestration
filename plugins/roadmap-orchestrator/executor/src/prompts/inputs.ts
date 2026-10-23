@@ -8,13 +8,14 @@
 import { createHash } from 'node:crypto';
 import type { OutcomeStage, TestRef } from '../core/events.ts';
 import type {
-  ClauseId, DivergenceId, FindingId, InvocationId, JobId, LaneId, MilestoneId, ObligationId, PolishId, RulingId, ServeName, Sha, Sha256Hex, SpecRev, UnitId, VisionClauseId,
-  WitnessItemId,
+  ClauseId, DivergenceId, FindingId, InvocationId, JobId, LaneId, MilestoneId, ObligationId, PolishId, ReviewFindingId, RulingId, ServeName, Sha, Sha256Hex, SpecRev, UnitId, VisionClauseId,
+  ResourceName, SystemName, WitnessItemId,
 } from '../core/ids.ts';
+import type { GateDelta, LedgerOutcome } from '../core/review.ts';
 import type { BringUp, Journey } from '../input/plan.ts';
 import type { RequiredWitness } from '../holistic/required.ts';
 import type { JsonValue } from '../core/json.ts';
-import type { CommandVerdict, FailureRef, IgnoredCensus, LaneDef, NeedsUserReason, SpecPatchOp } from '../core/records.ts';
+import type { CommandVerdict, FailureRef, IgnoredCensus, LaneCadence, LaneDef, NeedsUserReason, SpecPatchOp } from '../core/records.ts';
 import type { AbsPath, RepoPath, RepoPattern } from '../core/values.ts';
 import type { Argv0 } from '../preflight/argv0.ts';
 import type { RiskTier, Role } from '../routing/types.ts';
@@ -28,7 +29,8 @@ import type { FlowPromptInputs } from '../flow/types.ts';
 import type { CapturedIssue } from '../forge/types.ts';
 import type { Phase0Record } from '../phase0/types.ts';
 import { type BoundedDiff, EXAMPLES } from '../git/boundeddiff.ts';
-import type { GateFinding, Premise } from './schemas.ts';
+import type { GateFinding, PocOutput, PocQuestion, Premise, ScaffoldDecision } from './schemas.ts';
+import type { SystemsMap } from '../input/systems.ts';
 
 /** The spec as the one text every role reads: the executor's Markdown rendering of spec.json at `rev`. */
 export type RenderedSpec = Readonly<{ unit: UnitId; rev: SpecRev; markdown: string }>;
@@ -36,8 +38,9 @@ export type RenderedSpec = Readonly<{ unit: UnitId; rev: SpecRev; markdown: stri
 export type DocText = Readonly<{ path: RepoPath; text: string }>;
 /** One cited, active C-nn ruling, verbatim from the ledger. */
 export type RulingText = Readonly<{ id: RulingId; text: string }>;
-/** Implementers get fast lanes only; estate lanes are executor-only (dispatch refuses otherwise). */
-export type FastLane = LaneDef & Readonly<{ tier: 'fast' }>;
+/** Implementers get build-cadence lanes only; later cadences are executor-only (dispatch refuses otherwise). */
+/** A lane the builder runs in its own loop (dev.17: cadence `build`). */
+export type BuildLane = LaneDef & Readonly<{ cadence: 'build' }>;
 
 /**
  * What a prompt does not embed, one line each, readable on demand (arc-1 feedback item 12): every plan
@@ -177,11 +180,6 @@ export type PlanCheckInputs = Readonly<{
   /** R17: the vision as read-only context, marked non-directive; null outside a holistic arc. */
   vision: VisionInput | null;
   /**
-   * M4a rev 3 (E, R59): the acceptance shape of an efficient builder's plan-check under `planCheck.shape: by-builder`
-   * (its answer is `PLAN_CHECK_ACCEPTANCE_SCHEMA`); null: the uniform check.
-   */
-  acceptance: PlanCheckAcceptance | null;
-  /**
    * Run 10 (C): why the executor refused the unit's previous answer's redirect patch (it cited an out-of-slice rule), for
    * this retry to correct; null otherwise.
    */
@@ -195,6 +193,52 @@ export type PlanCheckInputs = Readonly<{
   escalation: EscalationInput | null;
   /** dev.13: the milestones the unit takes part in and their design references; null when it is in none. */
   milestones: MilestonesInput | null;
+  /**
+   * dev.17 (propagation): the unit's stale links its plan-check answers (src/holistic/staleset.ts `unitStaleLinks`), one line
+   * each, its key first (`staleLinkText`); empty when it has none.
+   */
+  staleLinks: readonly string[];
+  /** dev.17 (design pass): what the design record and the design decisions rest on (`PlanCheckDesignInput`). */
+  design: PlanCheckDesignInput;
+  /** dev.17 (design pass): the unit's proofs of concept so far, in order (their reports; none before the first). */
+  pocs: readonly PocReport[];
+}>;
+
+/**
+ * dev.17 (design pass): the facts a design rests on. `systems`: the systems map in force (null: none, so a change names no
+ * system). `lanes`: every lane a test item may sit in (the spec's active lanes, the plan's suite lanes, the arc lanes), with
+ * its cadence and systems (null: the whole tree). `forces`: the lanes the spec forces. The limits code checks the design
+ * against: a system's substantial change, the gate's inline reading, the proofs of concept left; and whether a `scaffold`
+ * decision can run in this arc.
+ */
+export type PlanCheckDesignInput = Readonly<{
+  systems: SystemsMap | null;
+  /**
+   * The lanes a test item may name. `environment`: the plan environment the lane runs against and, when it is unavailable to
+   * the arc (its last up or probe failed: src/resources/environments.ts `environmentUnavailable`), why; null: none.
+   */
+  lanes: readonly Readonly<{
+    id: LaneId; kind: 'spec' | 'suite' | 'arc'; cadence: LaneCadence; systems: readonly SystemName[] | null;
+    environment: Readonly<{ name: ResourceName; unavailable: string | null }> | null;
+  }>[];
+  forces: readonly LaneId[];
+  substantialLines: number;
+  gateInlineLines: number;
+  pocsLeft: number;
+  scaffold: boolean;
+}>;
+
+/**
+ * dev.17 (design pass): one proof of concept's report (src/pipeline/poc.ts): the questions it was asked, its closed answer
+ * or why it has none, and its diff (evidence; its code is gone).
+ */
+export type PocReport = Readonly<{
+  attempt: number;
+  questions: readonly PocQuestion[];
+  brief: string;
+  answer: PocOutput | null;
+  why: string | null;
+  diff: AbsPath;
 }>;
 
 /** What a plan-check reads for its scope-growth proposals. */
@@ -205,15 +249,6 @@ export type PlanCheckScopeGrowth = Readonly<{
   rejected: readonly Readonly<{ patterns: readonly RepoPattern[]; reason: string; rejection: string }>[];
 }>;
 
-/**
- * What the acceptance shape needs beyond the uniform check: the spec's next free witness item id (R59: ids are
- * consecutive from it), the arc lanes a witness item may name (the obligations file's lanes), and (paid M4b run 6) the
- * witnesses of the obligations the unit delivers, already required by their exact ids, which an item restating one reuses.
- */
-export type PlanCheckAcceptance = Readonly<{ nextWitnessId: WitnessItemId; arcLanes: readonly LaneId[]; delivered: readonly DeliveredWitness[] }>;
-/** One obligation the unit delivers or repairs, with its witness's lane and test ids (each required of the unit). */
-export type DeliveredWitness = Readonly<{ obligation: ObligationId; statement: string; lane: LaneId; testIds: readonly string[] }>;
-
 export type BuildInputs = Readonly<{
   spec: RenderedSpec;
   contracts: readonly DocText[];
@@ -221,12 +256,12 @@ export type BuildInputs = Readonly<{
   index: ReferenceIndex;
   /** The approving plan-check's notes: facts it found about existing code (item 26); empty when none. */
   planCheckNotes: string;
-  fastLanes: readonly FastLane[];
+  fastLanes: readonly BuildLane[];
   /**
    * The 2026-10-15 batch: the plan's fast suite lanes the lanes stage runs after the spec's (`fastSuiteLanes`,
    * src/pipeline/lanes.ts), which the implementer runs green beside its fast lanes; empty when the plan has none.
    */
-  suiteLanes: readonly FastLane[];
+  suiteLanes: readonly BuildLane[];
   /** Where the implementer writes decisions.json; outside the worktree, snapshotted by the executor. */
   evidenceDir: AbsPath;
   worktree: AbsPath;
@@ -237,20 +272,75 @@ export type BuildInputs = Readonly<{
    * implementer runs after its last change; empty outside a corpus arc or without required witnesses.
    */
   witnessChecks: readonly WitnessCheckCommand[];
-  /**
-   * M4a rev 3 (E, R55): this call is the in-session assessment (read-only, `PLAN_ASSESSMENT_SCHEMA`), not the build: the
-   * pinned risk floor its `riskFloor` may not go below, and the vision its `visionConflict` cites (null outside a holistic
-   * arc). Null: the build itself.
-   */
-  assess: BuildAssess | null;
   /** dev.13: the milestones the unit takes part in and their design references; null when it is in none. */
   milestones: MilestonesInput | null;
   /** dev.13: the browser drive and bring-ups of a build in a milestone with a `browser` journey; null otherwise. */
   browser: BuildBrowser | null;
+  /**
+   * dev.17 (proportional review): the salvage SHA of the unit's last lanes attempt that ended green, the tree a build's
+   * `docsOnlySince` names; null before one.
+   */
+  certifiedAt: Sha | null;
+  /**
+   * dev.17 (field feedback 2026-10-23 item 1): what the executor's records show of the unit's work before this round, for a
+   * session that does not continue its own (src/pipeline/handover.ts); null on a resumed session and on the lineage's first build.
+   */
+  handover: Handover | null;
 }>;
 
-/** The plan-check slice an in-session assessment rules on (R55). */
-export type BuildAssess = Readonly<{ risk: RiskTier; vision: VisionInput | null }>;
+/**
+ * dev.17 (field feedback 2026-10-23 item 1): a fresh build session's handover, built in code from records only
+ * (src/pipeline/handover.ts), each list but `unmet` bounded to its most recent `HANDOVER_ITEMS_MAX`. `lineage`: the unit, then each unit it
+ * re-enters. `diagnosis`: the lineage's failures (the checkpoint's `ParkDiagnosis`). `gate`: the lineage's latest gate answer;
+ * `findings`: its unsettled blocking ledger findings. `unmet`: the spec's active acceptance clauses still unmet at the latest
+ * attempt (`new`: absent or reworded since the spec the lineage's latest gate judged; `witness-missing`/`witness-failed`: a
+ * witness item of the clause at the latest red witness check); `witnesses`: the required witness tests missing or failing there.
+ * `decisions`: the decisions the units it re-enters recorded that its spec does not hold; `report`: the lineage's latest build
+ * report; `evidence`: the failing lanes' evidence dirs of the lineage's latest red lanes attempt still on disk.
+ */
+export type Handover = Readonly<{
+  lineage: readonly UnitId[];
+  diagnosis: ParkDiagnosis;
+  gate: Readonly<{ unit: UnitId; attempt: number; decision: 'approve' | 'revise' | 'escalate'; directives: readonly string[] }> | null;
+  findings: readonly Readonly<{ id: ReviewFindingId; unit: UnitId; path: RepoPath; defect: string | null; text: string }>[];
+  unmet: readonly Readonly<{ clause: ClauseId; text: string; why: 'new' | 'witness-missing' | 'witness-failed' }>[];
+  witnesses: readonly Readonly<{ test: TestRef; reason: 'missing' | 'failed'; unit: UnitId; attempt: number }>[];
+  decisions: readonly Readonly<{ unit: UnitId; id: ClauseId; text: string; state: 'active' | 'deferred' }>[];
+  report: Readonly<{ unit: UnitId; attempt: number; summary: string; blockers: readonly string[] }> | null;
+  evidence: readonly AbsPath[];
+}>;
+
+/** The handover's body (the build modules wrap it), facts only: what each part is, never how to use it. */
+export function handoverText(h: Handover): string {
+  const section = (title: string, lines: readonly string[]): string[] => (lines.length === 0 ? [] : [title, ...lines]);
+  const why = (u: Handover['unmet'][number]): string =>
+    u.why === 'new' ? 'added or reworded since the spec the last gate judged' : u.why === 'witness-missing' ? 'a witness test of it was missing at the latest witness check' : 'a witness test of it failed at the latest witness check';
+  const history = h.diagnosis.units.flatMap((u) => {
+    const lines = [
+      ...u.outcomes.map((o) => `- ${o.ref}: ${o.text}`),
+      ...u.lanes.map((l) => `- ${l.ref}: lane failure, ${l.class}${l.hostSuspected === null ? '' : `, host-suspected (${l.hostSuspected.join(', ')})`}`),
+      ...(u.reverted.length === 0 ? [] : [`- Edits outside the pinned scope that salvage reverted: ${u.reverted.map((r) => `${r.path} (${r.salvages}×)`).join(', ')}`]),
+    ];
+    return lines.length === 0 ? [] : [`Unit ${u.unit}:`, ...lines];
+  });
+  return [
+    `This session is fresh: no earlier session's context carries over, and the worktree holds the work done before it. What the executor's records show of that work, on ${h.lineage.length === 1 ? `unit ${h.lineage[0]}` : `units ${h.lineage.join(', ')} (this unit, then each unit it re-enters)`}:`,
+    ...section('Acceptance clauses still unmet at the latest attempt:', h.unmet.map((u) => `- ${u.clause} (${why(u)}): ${u.text}`)),
+    ...section('Required witness tests missing or failing at the latest witness check:', h.witnesses.map((w) => `- ${w.test.lane}/${w.test.testId} ${w.reason} (${w.unit} lanes attempt ${w.attempt})`)),
+    ...(h.gate === null ? ['No gate has judged this work.'] : [
+      `The latest gate (${h.gate.unit} gate attempt ${h.gate.attempt}) decided ${h.gate.decision}.`,
+      ...section('Its directives:', h.gate.directives.map((d) => `- ${d}`)),
+    ]),
+    ...section('Blocking review findings not yet settled:', h.findings.map((f) => `- ${f.id} (${f.unit}, ${f.path}${f.defect === null ? '' : `, ${f.defect}`}): ${f.text}`)),
+    ...(h.report === null ? [] : [
+      `The latest build report (${h.report.unit} build attempt ${h.report.attempt}): ${h.report.summary}`,
+      ...section('Blockers it reported:', h.report.blockers.map((b) => `- ${b}`)),
+    ]),
+    ...section('Decisions the earlier units recorded that this spec does not hold:', h.decisions.map((d) => `- ${d.unit} ${d.id} (${d.state}): ${d.text}`)),
+    ...section('Evidence of the latest red lanes attempt (readable):', h.evidence.map((e) => `- ${e}`)),
+    ...section('Failure history (newest unit first):', history),
+  ].join('\n');
+}
 
 /** One fast lane's witness check, as the build prompt names it. */
 export type WitnessCheckCommand = Readonly<{ lane: LaneId; command: string }>;
@@ -317,6 +407,24 @@ export type GateInputs = Readonly<{
   largeDiff: GateLargeDiffInput | null;
   /** dev.13: the milestones the unit takes part in and their design references; null when it is in none. */
   milestones: MilestonesInput | null;
+  /**
+   * dev.17 (design pass): the plan contracts the diff touches that the spec's design record does not declare as interfaces
+   * (src/pipeline/gate.ts `undeclaredContracts`), ascending; empty when it declares them all or the spec has no record.
+   */
+  undeclaredContracts: readonly RepoPath[];
+  /** dev.17 (proportional review): the unit's findings ledger, the disputes to rule on, and the delta from its approval. */
+  review: GateReviewInput;
+}>;
+
+/**
+ * dev.17 (proportional review; src/pipeline/review.ts): what the gate is told of the unit's findings ledger (each finding,
+ * its outcome, its text, and whether its file changed since it was raised), the builder's disputes it rules on, and its
+ * delta from the unit's approval (null: a full review).
+ */
+export type GateReviewInput = Readonly<{
+  ledger: readonly Readonly<{ id: ReviewFindingId; path: RepoPath; outcome: LedgerOutcome | null; anchorChanged: boolean; text: string }>[];
+  disputes: readonly Readonly<{ finding: ReviewFindingId; reason: string; text: string }>[];
+  delta: GateDelta | null;
 }>;
 
 /**
@@ -590,6 +698,43 @@ export type PolishJudgeInputs = Readonly<{
   evidenceDir: AbsPath;
 }>;
 
+/**
+ * dev.17 (proportional review): one hunk of a docs-only claim the verifier classifies: its id, its file, the file's language
+ * as code infers it from the name (null: none known), and the hunk as `git diff -U0` prints it, header included.
+ */
+export type VerifierHunk = Readonly<{ id: string; path: RepoPath; language: string | null; text: string }>;
+/** The verifier's inputs: the unit, the certified tree `since` and the salvage SHA `at` the hunks lie between, and the hunks. */
+export type VerifierInputs = Readonly<{ unit: UnitId; since: Sha; at: Sha; hunks: readonly VerifierHunk[] }>;
+
+/**
+ * dev.17 (design pass): what the scaffold writer reads (src/pipeline/scaffold.ts): the unit's spec, the plan-check's
+ * `scaffold` decision, the arc lane its load test runs in (its argv, cwd and test paths: the files it must reach), the unit
+ * worktree it writes in, and on its one retry why the first attempt was refused (the lane's evidence dir when the dry run
+ * ran it); null on the first attempt.
+ */
+export type ScaffoldInputs = Readonly<{
+  spec: RenderedSpec;
+  scaffold: ScaffoldDecision;
+  loadLane: Readonly<{ id: LaneId; argv: readonly string[]; cwd: RepoPath; testPaths: readonly RepoPattern[] }>;
+  worktree: AbsPath;
+  retry: Readonly<{ reasons: readonly string[]; laneEvidence: AbsPath | null }> | null;
+}>;
+
+/**
+ * dev.17 (design pass): what the builder seat reads for a proof of concept (src/pipeline/poc.ts), not a role of its own: the
+ * unit's spec, the plan-check's brief and questions, the throwaway worktree at the tip, its evidence dir, and the lessons of
+ * the unit's earlier proofs of concept.
+ */
+export type PocInputs = Readonly<{
+  spec: RenderedSpec;
+  brief: string;
+  questions: readonly PocQuestion[];
+  worktree: AbsPath;
+  tip: Sha;
+  evidenceDir: AbsPath;
+  lessons: readonly string[];
+}>;
+
 export type RoleInputs = {
   readonly planCheck: PlanCheckInputs;
   readonly build: BuildInputs;
@@ -601,20 +746,22 @@ export type RoleInputs = {
   readonly flow: FlowPromptInputs;
   readonly walkthrough: WalkthroughInputs;
   readonly polishJudge: PolishJudgeInputs;
+  readonly verifier: VerifierInputs;
+  readonly scaffold: ScaffoldInputs;
 };
 
 export const ROLE_INPUTS = {
   planCheck: [
-    'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision', 'acceptance', 'priorInvalid',
-    'scopeGrowth', 'escalation', 'milestones',
+    'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision', 'priorInvalid',
+    'scopeGrowth', 'escalation', 'milestones', 'staleLinks', 'design', 'pocs',
   ],
   build: [
-    'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks', 'assess',
-    'milestones', 'browser',
+    'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks',
+    'milestones', 'browser', 'certifiedAt', 'handover',
   ],
   gate: [
     'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'planCheckNotes', 'obligations', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
-    'checks', 'escalation', 'largeDiff', 'milestones',
+    'checks', 'escalation', 'largeDiff', 'milestones', 'review', 'undeclaredContracts',
   ],
   lens: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'target', 'checkout', 'specsOnly'],
   checkpoint: [
@@ -625,6 +772,8 @@ export const ROLE_INPUTS = {
   flow: ['triggers', 'chart', 'stations', 'constraint', 'accounting', 'levers', 'givens', 'window', 'verdicts', 'rejections', 'advances', 'pressure'],
   walkthrough: ['vision', 'milestone', 'round', 'journeys', 'references', 'tweaks', 'findings', 'product', 'units', 'evidenceDir'],
   polishJudge: ['vision', 'milestone', 'journey', 'proposal', 'references', 'referenceDiff', 'walkEvidenceDir', 'before', 'after', 'evidenceDir'],
+  verifier: ['unit', 'since', 'at', 'hunks'],
+  scaffold: ['spec', 'scaffold', 'loadLane', 'worktree', 'retry'],
 } as const satisfies { readonly [R in Role]: readonly (keyof RoleInputs[R])[] };
 
 // Compile-time half of `prompts.fields==required`: ROLE_INPUTS names every key of each role's inputs.
@@ -639,6 +788,8 @@ const ROLE_INPUTS_COMPLETE: { readonly [R in Role]: [Missing<R>] extends [never]
   flow: true,
   walkthrough: true,
   polishJudge: true,
+  verifier: true,
+  scaffold: true,
 };
 void ROLE_INPUTS_COMPLETE;
 
@@ -754,7 +905,7 @@ export function bullets(items: readonly string[], empty: string): string {
 }
 
 /** The implementer's lane list: one exact command per lane, with its expected exit. */
-export function fastLanesText(worktree: AbsPath, lanes: readonly FastLane[]): string {
+export function fastLanesText(worktree: AbsPath, lanes: readonly BuildLane[]): string {
   if (lanes.length === 0) return '(no fast lanes)';
   return lanes.map((l) => {
     const pass = l.env.pass.length === 0 ? '' : `; needs ${l.env.pass.join(', ')} from the environment`;
@@ -766,7 +917,7 @@ export function fastLanesText(worktree: AbsPath, lanes: readonly FastLane[]): st
  * The suite lanes a build runs beside its fast lanes (the 2026-10-15 batch), as their exact commands; nothing when the plan
  * has none. Reported as experiments: lanesRun holds the spec's fast lanes only (its schema's enum).
  */
-export function suiteLanesText(worktree: AbsPath, lanes: readonly FastLane[]): string {
+export function suiteLanesText(worktree: AbsPath, lanes: readonly BuildLane[]): string {
   if (lanes.length === 0) return '';
   return `\n\n<suite_lanes>\nThe executor runs these suite lanes after your fast lanes, in a clean checkout of your commit, and a red one comes back to you as a fix round. Run each exactly as written beside the fast lanes, after your last change, until it exits with its expected code, and report each run in experiments under the name suite:<id>, never in lanesRun:\n${fastLanesText(worktree, lanes)}\n</suite_lanes>`;
 }
@@ -781,7 +932,7 @@ export function laneLedgerText(ledger: readonly LaneLedgerEntry[]): string {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// M4a rev 3: the executable checks, witness commands, in-session assessment, specs-only drift and the checkpoint's
+// M4a rev 3: the executable checks, witness commands, specs-only drift and the checkpoint's
 // manifest, embedded specs and issue reuse, as the prompts read them.
 
 const refsText = (refs: readonly TestRef[]): string => (refs.length === 0 ? 'none' : refs.map((r) => `${r.lane} ${r.testId}`).join('; '));
@@ -842,26 +993,6 @@ export function witnessChecksText(checks: readonly WitnessCheckCommand[]): strin
 }
 
 /**
- * The in-session assessment's ask (E, R55): the first invocation of a frontier builder's fresh build, read-only, answered
- * as `planAssessment`. The implementing invocation resumes the same session with the build's own ask.
- */
-export function assessText(a: BuildAssess): string {
-  const vision = a.vision === null
-    ? 'This arc has no vision, so visionConflict is empty.'
-    : `The arc's vision follows, as read-only context: it informs visionConflict and never decides feasibility.\n${visionText(a.vision)}`;
-  return `This invocation is the assessment, not the build. No plan-check reviewed this spec: you assess it yourself before you write any code, and the build resumes this session afterwards with its own instructions. Change nothing now: no edits, no new files, no commits, no lanes, no command that writes. Any change to the worktree makes the assessment malformed.
-
-Read the spec, the documents above and the code the spec depends on, then return planAssessment:
-- feasible: false only when the spec cannot be satisfied inside its scope and the contracts and rulings as written; notes then says why in plain sentences, and the unit stops for the spec to be revised.
-- riskFloor: the risk the unit really carries. The pinned floor is ${a.risk}; never answer below it. Raise it when the unit touches a contract surface, a security or data boundary, or more of the system than its tier suggests: a higher floor may move the build to another seat.
-- visionConflict: each spec clause that works against an active vision clause, with the clause ids and a one-sentence note; empty when none.
-- premises: the claims about the repository your assessment relies on, each with the file and line where you read it.
-- notes: what the build should know: facts about the existing code, and the order you will work in.
-
-${vision}`;
-}
-
-/**
  * Run 10 (C), every reason since 2026-10-15: why the previous plan-check answer (its repair turn's, when it made one) was
  * refused, as the retry reads it (empty when it was not).
  */
@@ -910,38 +1041,51 @@ ${rejected.join('\n')}
 </rejected_scope_growth>`}`;
 }
 
+/** dev.17 (propagation): the unit's stale links, each to answer by its key; nothing when it has none. */
+export function staleLinksText(lines: readonly string[]): string {
+  return lines.length === 0 ? '' : `\n\n<stale_links>\n${lines.map((l) => `- ${l}`).join('\n')}\n</stale_links>`;
+}
+
 /**
- * The acceptance shape of a plan-check (E, R59), or nothing for the uniform check: the redirect may only add or replace
- * witness items and facts, and cite; witness items take ids from the spec's next free `W-n`.
+ * dev.17 (design pass): the plan-check's design facts (`PlanCheckDesignInput`): the systems map, the lanes a test item may sit
+ * in with their cadence and systems, the spec's forced lanes, and the limits code checks a design against.
  */
-export function acceptanceShapeText(a: PlanCheckAcceptance | null): string {
-  if (a === null) return '';
-  const lanes = a.arcLanes.length === 0 ? '(none: this arc declares no arc lanes, so no witness item can be written; say so in notes)' : a.arcLanes.join(', ');
-  const delivered = a.delivered.length === 0
-    ? 'This unit delivers no obligation with a witness, so obligation is null on every item.'
-    : `The obligations this unit delivers already name their witness tests, and the executor requires each of them by its exact id:
-${a.delivered.map((d) => `- ${d.obligation}: ${d.statement}\n  lane ${d.lane}, ${d.testIds.length === 1 ? 'test' : 'tests'} ${d.testIds.map((t) => JSON.stringify(t)).join(', ')}`).join('\n')}
-A clause one of these tests proves needs no second test. A witness item for such a clause sets obligation to that obligation's id and copies its lane and one of its test ids exactly; the executor refuses an item whose lane or test id differs. Never name a new test for behaviour one of these tests already proves: the build would then have to keep two names for one test, and renaming one to satisfy the other breaks the first.`;
-  return `
+export function designInputText(d: PlanCheckDesignInput): string {
+  const systems = d.systems === null
+    ? '(no systems map: every change names system null)'
+    : Object.entries(d.systems.systems).map(([name, s]) => `- ${name}: ${s.paths.join(', ')}${s.tests.length === 0 ? '' : `; tests ${s.tests.join(', ')}`}${s.dependsOn.length === 0 ? '' : `; depends on ${s.dependsOn.join(', ')}`}`).join('\n');
+  const env = (e: PlanCheckDesignInput['lanes'][number]['environment']): string => (e === null ? '' : `, environment ${e.name}${e.unavailable === null ? '' : ` (unavailable: ${e.unavailable})`}`);
+  const lanes = d.lanes.map((l) => `- ${l.id} (${l.kind}, cadence ${l.cadence}${l.systems === null ? ', the whole tree' : `, systems ${l.systems.join(', ')}`}${env(l.environment)})`);
+  return `<systems>
+${systems}
+</systems>
 
-<acceptance_shape>
-This check runs in the acceptance shape: an efficient model builds this unit, and your job includes making the spec's proof concrete before it builds. Check everything above as usual. Then map every acceptance clause that admits a test to a witness item: a named test in an arc lane that fails when the clause does not hold. The executor runs every active witness item's test by its exact id before the gate and sends the unit back while one is missing or failing, so each item is a test the build must write.
+<test_lanes>
+${lanes.length === 0 ? '(none)' : lanes.join('\n')}
+forced by the spec: ${d.forces.length === 0 ? '(none)' : d.forces.join(', ')}
+</test_lanes>
 
-In this shape a redirect may only add or replace items in witnesses and facts, and cite; no other patch operation is accepted. A defect you would fix in another section goes in notes for the build and the gate, or, when it leaves the spec unbuildable, is an escalation.
+<design_limits>
+- a system's change is substantial above ${d.substantialLines} changed lines
+- the gate reads ${d.gateInlineLines} changed lines inline
+- proofs of concept left for this unit: ${d.pocsLeft}
+- scaffold decision: ${d.scaffold ? 'available' : 'not available in this arc'}
+</design_limits>`;
+}
 
-${delivered}
-
-A witness item is {id, lane, testId, clause, skeleton, obligation}:
-- id: a new item takes the next free id, ${a.nextWitnessId}, and further new items the ids after it in order, written without leading zeros; replace names a witness id the spec already holds.
-- lane: one of the arc lanes: ${lanes}.
-- testId: the test's exact id as that lane's reporter gives it (for node --test, the suite and test names joined by " > ").
-  Name only a test the change newly makes pass. A check that existing behaviour is preserved passes with the change reverted, so mutation smoke reports it against the unit; it is not a witness item but belongs to a must-hold obligation's witness.
-- clause: the id of the acceptance clause it witnesses.
-- skeleton: the test's shape in one or two plain sentences: the entry point it drives, the fixture it injects, what it asserts. A negative witness drives the real entry point with an injected fixture, never a helper.
-- obligation: the id of the obligation above whose witness test this item names, or null when none of their tests proves the clause.
-
-Approve when every acceptance clause that admits a test already has an active witness item, or a witness test of an obligation above, that would fail without the behaviour.
-</acceptance_shape>`;
+/** dev.17 (design pass): the unit's proof-of-concept reports, or nothing before the first. */
+export function pocReportsText(reports: readonly PocReport[]): string {
+  if (reports.length === 0) return '';
+  const one = (r: PocReport): string => {
+    const head = `<poc attempt="${r.attempt}" diff="${r.diff}">\nbrief: ${r.brief}`;
+    if (r.answer === null) return `${head}\nno answer: ${r.why ?? 'none recorded'}\n</poc>`;
+    const answers = r.answer.answers.map((a) => {
+      const q = r.questions.find((x) => x.id === a.questionId);
+      return `- ${a.questionId} ${q === undefined ? '' : `(${q.question}) `}[${a.confidence}]: ${a.answer}\n  evidence: ${a.evidence}`;
+    });
+    return `${head}\n${answers.join('\n')}\nlessons:\n${bullets(r.answer.lessons, '(none)')}\nsurprises:\n${bullets(r.answer.surprises, '(none)')}\n</poc>`;
+  };
+  return `\n\n<proofs_of_concept>\n${reports.map(one).join('\n')}\n</proofs_of_concept>`;
 }
 
 /** A pack review's delta (the review it follows, what changed, the unresolved earlier findings), or nothing for a full review. */

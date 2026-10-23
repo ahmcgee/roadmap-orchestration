@@ -19,6 +19,9 @@
 // the fixer's lineage. A unit whose decided outcome is lanes `known-defect{id}` waits at `prepare` under
 // `known-defect{id, fixUnit}` while the plan's entry of that id is active for it; a removed entry releases it.
 //
+// dev.17 (flaky ledger): a unit not yet dispatched whose lanes include an open deflake unit's lane waits on that code edge
+// at any admission (`deflakeHold`, src/pipeline/deflake.ts), until the deflake merges, parks or is cut.
+//
 // dev.13 (agent D): a polish unit's candidate admission waits for its compare (`compare`): until its `tweak-judged`, and
 // for ever after a `drop` (its cut follows, src/walk/compare.ts); a `keep` admits it.
 //
@@ -26,12 +29,15 @@
 // re-runs its held stage once admitted; admission holds it under `host-pressure{inv}` until a scheduler tick since the
 // hold shows the host's cpu wait over a minute below `PRESSURE_SATURATED`, or `STARVED_HOLD_MS` pass (`pressureHoldWaits`, src/host/pressure.ts).
 import { type OutcomeStage, JUDGMENT_STAGES, type JudgmentStage, type ProbeTarget } from '../core/events.ts';
-import type { ObligationId, UnitId } from '../core/ids.ts';
+import type { LaneId, ObligationId, UnitId } from '../core/ids.ts';
+import { systemsMapInForce } from '../input/systems.ts';
+import { deflakeHold } from '../pipeline/deflake.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { type NeedsUserReason, obligationRevsOf } from '../core/records.ts';
 import { ENTRY_STAGE, type UnitState } from '../core/state.ts';
 import { p1Blocking } from '../holistic/findings.ts';
 import { pressureHoldWaits } from '../host/pressure.ts';
+import { type SpecLinks, propagationHolds } from '../holistic/staleset.ts';
 import { canonicalJson } from '../core/json.ts';
 import { lineageMembers } from '../input/envelope.ts';
 import { type KnownDefect, type PlanM1, type PlanUnit, knownDefectsOf, priorityOf } from '../input/plan.ts';
@@ -54,9 +60,15 @@ const isAdmissionStage = (s: OutcomeStage): s is AdmissionStage => (ADMISSION_ST
 /**
  * M3 (B3): what admission and `nextStage` read from a unit's spec in force. `reproduces`: it repairs an active vacuity
  * finding with a mutant, so it reproduces the mutant before anything is graded. `repairs`: the obligations it repairs
- * (its `I-n` repairs and its findings' obligations).
+ * (its `I-n` repairs and its findings' obligations). dev.17: `links`, what the spec links that a propagation edge reads,
+ * read only when one is pending (src/holistic/staleset.ts `propagationHolds`).
  */
-export type SpecFacts = Readonly<{ reproduces: boolean; repairs: ReadonlySet<ObligationId> }>;
+export type SpecFacts = Readonly<{
+  reproduces: boolean; repairs: ReadonlySet<ObligationId>;
+  /** dev.17: its spec lanes, forces and witness lanes (src/pipeline/deflake.ts `specLaneIds`), read when a deflake edge may hold it. */
+  lanes: () => ReadonlySet<LaneId>;
+  links: () => SpecLinks;
+}>;
 export type SpecFactsOf = (unit: PlanUnit) => SpecFacts;
 
 /**
@@ -93,23 +105,26 @@ function backendOf(routing: RoutingTable, u: UnitState, unit: PlanUnit, stage: A
     const j = stage as JudgmentStage;
     return routing[ROLE_OF[j]][judgmentSeat({ ...u, risk: u.risk ?? unit.risk }, j)].backend;
   }
-  if (stage === 'build') return routing.build[u.buildTier ?? unit.risk].backend;
+  if (stage === 'build' || stage === 'poc') return routing.build[u.buildTier ?? unit.risk].backend;
+  if (stage === 'scaffold') return routing.scaffold[u.risk ?? unit.risk].backend;
   return null;
 }
 
 /**
  * Whether a tripped breaker on `target` blocks `stage`: `host` blocks builds and lanes (a reproduce runs a lane), a
- * backend the stages that call it. A resource instance's breaker blocks no admission: the arbiter sets aside the
- * waiters of a dirty instance (F8).
+ * backend the stages that call it, an environment (dev.17) the stages that run its lanes. A resource instance's breaker
+ * blocks no admission: the arbiter sets aside the waiters of a dirty instance (F8).
  */
 function breakerBlocks(target: ProbeTarget, stage: AdmissionStage, backend: Backend | null): boolean {
   switch (target.type) {
     case 'host':
-      return stage === 'build' || stage === 'lanes' || stage === 'reproduce';
+      return stage === 'build' || stage === 'lanes' || stage === 'reproduce' || stage === 'scaffold' || stage === 'poc';
     case 'backend':
       return target.backend === backend;
     case 'resource':
       return false;
+    case 'environment':
+      return stage === 'lanes' || stage === 'candidate';
   }
 }
 
@@ -161,6 +176,11 @@ export function admitter(routing: (unit: UnitId) => RoutingTable, specOf: SpecFa
       const hold = knownDefectHold(view, plan, unit.id);
       if (hold !== null) c.push(hold);
     }
+    // dev.17: a code edge from an open deflake unit whose lane this undispatched unit runs (src/pipeline/deflake.ts).
+    const edge = deflakeHold(view, plan, systemsMapInForce(view.planApplied()), unit, () => specOf(unit).lanes());
+    if (edge !== null) c.push(edge);
+    // dev.17 (propagation): no unit linking a propagation unit's target, or whose design breaks touch its files, approves first.
+    if (stage === 'gate') c.push(...propagationHolds(view, plan, unit, specOf(unit).links));
     const starved = view.unit(unit.id).pressureHold;
     if (starved !== null && pressureHoldWaits(Date.parse(starved.at), pressure)) c.push({ type: 'host-pressure', inv: starved.inv });
     for (const b of blocking) if (b.subject === 'host' || ADMISSION_BLOCKING.includes(b.reason)) c.push({ type: 'blocking-item', id: b.id, reason: b.reason });

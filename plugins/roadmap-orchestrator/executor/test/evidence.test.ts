@@ -1,12 +1,13 @@
 // Integrated tests of evidence.snapshot (src/git/evidence.ts, src/recover/evidence.ts): real files, the
 // idempotent copy, manifest verification, and the evidence cells of the crash matrix.
 import assert from 'node:assert/strict';
-import { readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import type { IntentOf } from '../src/core/events.ts';
 import { sha256Hex } from '../src/core/json.ts';
-import { ManifestMismatchError, type SnapshotRequest, manifestComplete, manifestPath, verifyManifest } from '../src/git/evidence.ts';
+import { ManifestMismatchError, type SnapshotRequest, manifestComplete, manifestPath, notRegularMatches, verifyManifest } from '../src/git/evidence.ts';
 import { absPath, repoPattern } from '../src/core/values.ts';
 import { crashChild, openArc, recoverOp, runOp } from './fixtures/git-common.ts';
 import { tmpDir, writeFiles } from './helpers/repo.ts';
@@ -61,6 +62,19 @@ describe('evidence', () => {
     await evidenceSnapshotOp.act(intent);
     assert.equal(manifestSha(request.dest), first);
     assert.equal(verifyManifest(request.dest).files.length, 3);
+  });
+
+  it('evidence.not-regular (1.0.0-dev.17): a symlink or special file a declared glob matches is skipped, named on the intent, and the re-list agrees', async () => {
+    const { runDir, request } = setup();
+    symlinkSync('decisions.json', join(request.source, 'lanes/unit/link.json'));
+    execFileSync('mkfifo', [join(request.source, 'lanes/unit/pipe.json')]);
+    const intent = await snapshot(runDir, request);
+    assert.deepEqual(intent.expect.notRegular, ['lanes/unit/link.json', 'lanes/unit/pipe.json']);
+    assert.deepEqual(verifyManifest(request.dest).files.map((f) => f.path), CAPTURED);
+    assert.deepEqual(notRegularMatches(request.source, request.globs), ['lanes/unit/link.json', 'lanes/unit/pipe.json']);
+    const journal = openArc(runDir);
+    assert.equal((await evidenceSnapshotOp.reconcile(intent, journal.view)).kind, 'done', 'the reconciler\'s re-list skips them alike');
+    journal.close();
   });
 
   it('a manifest that no longer lists the source\'s evidence set is redone', async () => {

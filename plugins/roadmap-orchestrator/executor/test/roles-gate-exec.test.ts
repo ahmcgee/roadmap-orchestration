@@ -135,7 +135,7 @@ test('roles.read-only-argv: the arm rewrites an acting gate call into the dev.12
   }
   assert.throws(() => readOnlyArgs(['-p', '--tools', JUDGMENT_TOOLS], ctx), /not an acting gate call/);
   assert.equal(ACTING_JUDGE_TOOLS.includes('Bash'), true);
-  assert.equal(gateArm('med', null, true), 'gate.med efficient claude-sonnet-5-5:high read-only');
+  assert.equal(gateArm('med', null, true), 'gate.med frontier claude-opus-5-5:medium read-only');
 });
 
 test('roles.read-only-act: a real act with readOnly runs the next claude on PATH with the rewritten argv, the call\'s stdin and cwd', () => {

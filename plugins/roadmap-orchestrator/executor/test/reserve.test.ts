@@ -14,7 +14,7 @@ import { invocationDir, invoke } from '../src/pipeline/invoke.ts';
 import { requestOf } from '../src/resources/pool.ts';
 import { probe } from '../src/resources/probe.ts';
 import {
-  type Reservation, type ResourceContext, type StageHolder, type SweepHolder, cancel, checkLaneTiers, cleanup, entryOf, fastLanes,
+  type Reservation, type ResourceContext, type StageHolder, type SweepHolder, cancel, checkBuildLanes, cleanup, entryOf, buildLanes,
   lockOrder, reserve, reserveForSweep, resourceTable, run, transition,
 } from '../src/resources/reserve.ts';
 import { stageRecipes } from '../src/resources/teardown.ts';
@@ -168,17 +168,17 @@ test('res.estate-refused-for-implementer', () => {
 
   // Fast lanes within the build's own resources, estate lanes needing anything: accepted.
   const ok = spec([lane('unit', 'fast', ['db']), lane('e2e', 'estate', ['cache', 'db']), lane('old', 'fast', ['cache'], 'struck')]);
-  assert.deepEqual(checkLaneTiers(ok, unit), []);
+  assert.deepEqual(checkBuildLanes(ok, unit), []);
   // The implementer's lane list is the fast lanes, and the build prompt shows exactly those.
-  assert.deepEqual(fastLanes(ok).map((l) => l.id), ['unit', 'old']);
+  assert.deepEqual(buildLanes(ok).map((l) => l.id), ['unit', 'old']);
   const lanesSection = (text: string): string[] => [...text.split('## Lanes')[1]!.split('## Resources')[0]!.matchAll(/^- `([^`]+)`/gm)].map((m) => m[1]!);
-  assert.deepEqual(lanesSection(renderSpec(ok, { fastLanesOnly: true })), fastLanes(ok).map((l) => l.id));
-  assert.ok(!renderSpec(ok, { fastLanesOnly: true }).includes('e2e'), 'no estate lane is even mentioned to the implementer');
+  assert.deepEqual(lanesSection(renderSpec(ok, { buildLanesOnly: true })), buildLanes(ok).map((l) => l.id));
+  assert.ok(!renderSpec(ok, { buildLanesOnly: true }).includes('e2e'), 'no estate lane is even mentioned to the implementer');
   assert.deepEqual(lanesSection(renderSpec(ok)), ['unit', 'e2e', 'old'], 'the executor view keeps every lane');
 
   // A fast lane that needs a resource the build does not hold gives the implementer estate: refused.
   const bad = spec([lane('unit', 'fast', ['db']), lane('smoke', 'fast', ['cache', 'db'])]);
-  assert.deepEqual(checkLaneTiers(bad, unit), [
+  assert.deepEqual(checkBuildLanes(bad, unit), [
     { kind: 'spec-lane-unrunnable', unit: 'u1', lane: 'smoke', problem: { type: 'estate-lane-for-implementer' } },
   ]);
 });

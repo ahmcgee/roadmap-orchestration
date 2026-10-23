@@ -314,7 +314,10 @@ unattended week is only safe if the owner can see, in one place, everything deci
   with no routing generations; an effort-only change of a build seat re-pins and resumes its session. 2026-10-15
   (1.0.0-dev.10): a class binds a build triple and a Claude judgment triple; the efficient class judges low-risk
   plan-checks and gates, the lenses and flow, because independence is a clean context and the cheaper Claude model is
-  capable there; the stronger classes stay where risk or an escalation is.
+  capable there; the stronger classes stay where risk or an escalation is. 1.0.0-dev.17 (owner 2026-10-22, the
+  software-factory routing research: a strong planner and reviewer over a cheaper executor): frontier plan-checks and
+  gates every tier, the efficient class builds every tier, and a Claude build consults an Opus advisor at its own
+  decision points; the fix-round escalation to `build.high` (D4) is retired.
 - **Efficiency waits for M4b** (§19). M4a only measures stage timings; the root agent reports slowdowns as
   observations and changes nothing that grades the work.
 
@@ -338,7 +341,9 @@ own scripts.
 - **Plan-check by builder class** (E). A frontier builder assesses the spec in its own session, as the build's first
   structured output, before any edit, so an infeasible or riskier spec is routed before code exists. An efficient
   builder keeps a plan-check, narrowed to adding witness items through the one spec patch channel. Run 10 measures
-  it against the runs 4 to 9 baseline; the template reverts on a safety regression.
+  it against the runs 4 to 9 baseline; the template reverts on a safety regression. Removed in 1.0.0-dev.17: with every
+  build on the efficient class there is no frontier builder to assess in session, and every unit's plan-check is one
+  Opus call.
 - **Admit classes** (owner ruling OR-A1, lead ruling LR-k). Code, not the checkpoint, classes each admit from what it
   touches: repair and oversight always pass; an opportunity outside the slice must cite its clauses, shows in the
   brief, and is capped at one per arc with one follow-up repair; anything else becomes a corpus amendment for the

@@ -14,6 +14,16 @@ claude-judgment-subagents        2026-10-16, Claude Code 2.1.301, claude-sonnet-
                                  each with the session's cumulative modelUsage of both models
 claude-prompt-too-long           same CLI, claude-haiku-5-5 effort low, judgment argv, a generated 9.4 MB prompt (not kept):
                                  is_error result "Prompt is too long", api_error_status null, empty modelUsage, exit 1
+claude-build-advisor             2026-10-22, Claude Code 2.1.301, claude-sonnet-5-5 effort medium, build argv with
+                                 `--advisor claude-opus-5-5` (dev.17); the prompt has it consult the advisor once, then
+                                 answer {"ok": true}: a server_tool_use `advisor` block, and the advisor's spend as its own
+                                 `claude-opus-5-5` entry in modelUsage
+claude-judgment-usage-limit-subagents
+                                 SYNTHESISED, not captured (2026-10-23), from claude-judgment-subagents' event shapes, in
+                                 the shape a field arc's gate printed (feedback 2026-10-23 item 3): the judge starts two
+                                 background Explore subagents, its first result (result_index 0) is is_error with "You've
+                                 hit your session limit · resets 11:40pm (UTC)" and no api_error_status, then the
+                                 subagents' task_notification failures and two empty results without structured_output
 
 Per dir: argv.json, stdin (but claude-prompt-too-long's), stdout, stderr, exit-code, and last.json (the -o file) for Codex.
 Hand-written, never captured: the usage-limit and capacity texts in test/helpers/scenario.ts

@@ -160,7 +160,7 @@ describe('M2 file records', () => {
   });
 
   it('a lane may name its @cpu tokens; absent stays absent', () => {
-    const lane = { id: 'L1', argv: ['npm', 'test'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, tier: 'estate', resources: [], evidenceGlobs: [], evidenceExcludes: [] };
+    const lane = { id: 'L1', argv: ['npm', 'test'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'candidate', resources: [], evidenceGlobs: [], evidenceExcludes: [] };
     assert.equal('cpu' in laneDef(lane, 'lane'), false);
     assert.equal(laneDef({ ...lane, cpu: 6 }, 'lane').cpu, 6);
     assert.throws(() => laneDef({ ...lane, cpu: 0 }, 'lane'), SchemaError);

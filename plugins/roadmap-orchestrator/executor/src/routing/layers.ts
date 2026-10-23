@@ -21,6 +21,8 @@
 // revision of an arc it started (`RoutingProvenance.arcRoles`). An arc 1.0.0-dev.7 started records none and keeps the
 // dev.7 role set (no `flow`), so its routing revs are the ones dev.7 hashed (scaffolding: `arcRolesInForce`). So the flow
 // seat is checked on a non-holistic arc too: an unsupported binding of its class refuses any start (DESIGN §10 M4b).
+// dev.17: the `dev17` role set is `m4b` plus the unit role `scaffold` (`unitRolesInForce`), written on every revision of an arc
+// dev.17 started; an adopted earlier arc keeps `m4b`, so its revs hash no scaffold seat.
 // dev.13: the walk roles `walkthrough` and `polishJudge` are in force exactly while the plan revision has milestones
 // (`RoutingStack.milestones`, `hasMilestones`), which only a holistic arc may have; an arc without milestones hashes,
 // checks and smokes neither, so its routing revs are unchanged.
@@ -36,7 +38,8 @@
 //     "chain": { "k": <positive> },                                  optional (M4a): unacked chained starts allowed
 //     "flow": { "givens": [{ "lever": "<lever class>", "note" }] },   optional (M4b): repo givens, owner-committed
 //     "walkthrough": { "mcp": { "<server>": {                        optional (dev.13): the walk sessions' MCP servers
-//         "command", "args"?: [...], "env"?: { ... } } } } }
+//         "command", "args"?: [...], "env"?: { ... } } } },
+//     "systemsMap": { "systems", "shared"?, "contracts"?, "docs"? } } optional (dev.17): src/input/systems.ts
 //
 //   `chain.k` (M4a, OR-Q19, K10) is asked once at bootstrap and committed by the owner; the root agent never writes it.
 //   Absent: K unset (a chained start is refused `chain-invalid{k-unset}`). Nothing about issues lives here (OR-L6).
@@ -61,7 +64,8 @@ import { type RoutingRev, routingRev } from '../core/ids.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { Fields, type Read, SchemaError, arrayOf, object, positive, str, stringMap } from '../core/validate.ts';
 import { type RepoGiven, repoGiven } from '../flow/types.ts';
-import { dev7ArcRolesDefault } from '../core/upgrade.ts';
+import { type SystemsMap, systemsMap } from '../input/systems.ts';
+import { EARLIER_BUILTIN_SEATS, PRE_DEV17_BUILTIN_SEATS, dev7ArcRolesDefault } from '../core/upgrade.ts';
 import { type PlanM1, type PlanTargetKind, hasMilestones } from '../input/plan.ts';
 import type { StartupRejection } from '../preflight/startup.ts';
 import { support } from '../prompts/index.ts';
@@ -69,7 +73,7 @@ import { CLASS_CATALOGUE, boundAt } from './classes.ts';
 import { BUILTIN_SEATS } from './profiles.ts';
 import {
   type ArcRole, type ArcRoleSet, WALK_ROLES, type ClassBindings, type ClassSource, type ClassTable, MODEL_CLASSES, type ModelClass, type ProfileName, type Role,
-  type RoutingLayer, type RoutingLayerName, type RoutingProvenance, type RoutingTable, SEAT_REFS, type SeatRef, type SeatTable, type Triple, UNIT_ROLES, atSeat,
+  type RoutingLayer, type RoutingLayerName, type RoutingProvenance, type RoutingTable, SEAT_REFS, type SeatRef, type SeatTable, type Triple, UNIT_ROLES, type UnitRole, DEV17_ROLES, DEV17_UNIT_ROLES, atSeat,
   classBindings, profileName, routingLayer, seatTable,
 } from './types.ts';
 
@@ -94,6 +98,8 @@ export type RepoConfig = Readonly<{
   flow?: Readonly<{ givens: readonly RepoGiven[] }>;
   /** dev.13: the walk sessions' MCP servers, by name (non-empty); absent: no browser drive. */
   walkthrough?: Readonly<{ mcp: Readonly<Record<string, WalkMcpServer>> }>;
+  /** dev.17: the repo's systems map (src/input/systems.ts); absent: none (every lane selected everywhere, the whole tree its input). */
+  systemsMap?: SystemsMap;
 }>;
 
 const walkMcpServer = object((f): WalkMcpServer => ({
@@ -119,6 +125,7 @@ export const repoConfig = object((f): RepoConfig => {
   const chain = f.optional('chain', object((g) => ({ k: g.get('k', positive) })));
   const flow = f.optional('flow', object((g) => ({ givens: g.get('givens', arrayOf(repoGiven)) })));
   const walkthrough = f.optional('walkthrough', object((g) => ({ mcp: g.get('mcp', walkMcp) })));
+  const systems = f.optional('systemsMap', systemsMap);
   const routing = f.optional('routing', object((g) => {
     const out: { profile?: ProfileName; seats?: RoutingLayer; classes?: ClassBindings } = {};
     const profile = g.optional('profile', profileName);
@@ -131,7 +138,7 @@ export const repoConfig = object((f): RepoConfig => {
   }));
   return {
     ...(routing === undefined ? {} : { routing }), ...(chain === undefined ? {} : { chain }), ...(flow === undefined ? {} : { flow }),
-    ...(walkthrough === undefined ? {} : { walkthrough }),
+    ...(walkthrough === undefined ? {} : { walkthrough }), ...(systems === undefined ? {} : { systemsMap: systems }),
   };
 });
 
@@ -178,9 +185,17 @@ export const ARC_ROLES_IN_FORCE: { readonly [S in ArcScope]: readonly ArcRole[] 
  */
 export function arcRolesInForce(arcScope: ArcScope, arcRoles: ArcRoleSet | null, milestones: boolean): readonly ArcRole[] {
   const roles = ARC_ROLES_IN_FORCE[arcScope];
-  const scoped = arcRoles === 'm4b' ? roles : roles.filter((r) => r !== 'flow');
+  const scoped = arcRoles !== null ? roles : roles.filter((r) => r !== 'flow');
   if (milestones && arcScope === 'none') throw new Error('the walk roles in force outside a holistic arc (milestones need the holistic layer)');
   return milestones ? [...scoped, ...WALK_ROLES] : scoped;
+}
+
+/**
+ * The unit roles in force (dev.17): the M1 unit roles, and the dev.17 unit roles (`scaffold`) in an arc of the `dev17` role
+ * set only, so an adopted arc of an earlier release hashes and runs exactly the roles it did.
+ */
+export function unitRolesInForce(arcRoles: ArcRoleSet | null): readonly UnitRole[] {
+  return arcRoles === 'dev17' ? [...UNIT_ROLES, ...DEV17_UNIT_ROLES] : UNIT_ROLES;
 }
 
 /** A plan's arc scope: `none` without `holistic`, else its target kind. */
@@ -235,6 +250,20 @@ export type ResolvedRouting = Readonly<{
   arcScope: ArcScope;
   arcRoles: ArcRoleSet | null;
   milestones: boolean;
+  /**
+   * TEMPORARY SCAFFOLDING (BACKLOG "Scaffolding to delete"): the revs this same stack hashed under each earlier adopted
+   * release's built-in seats (`EARLIER_BUILTIN_SEATS`, src/core/upgrade.ts), which status aliases a recorded rev through.
+   * Empty under any table but HEAD's.
+   */
+  earlierBuiltinRevs: readonly RoutingRev[];
+  /**
+   * TEMPORARY SCAFFOLDING: the one of `earlierBuiltinRevs` under `PRE_DEV17_BUILTIN_SEATS`, the only earlier table whose
+   * build seats differ from HEAD's (dev.16 built high on frontier). A unit pinned under it is a dev.16 arc's, so dispatch
+   * keeps its started implementer's seat (`repin`). Only this table: an owner edit of HEAD's seats can hash to an older
+   * table's rev (HEAD with build.high on frontier is dev.9's table where no arc role is in force), never to this one
+   * unless it restores dev.16's seats exactly. Null under any table but HEAD's.
+   */
+  preDev17Rev: RoutingRev | null;
 }>;
 
 const LAYERS = [['unit', 'unit'], ['plan', 'plan'], ['repo-config', 'repoConfig']] as const;
@@ -245,7 +274,10 @@ const LAYERS = [['unit', 'unit'], ['plan', 'plan'], ['repo-config', 'repoConfig'
  * every seat naming the class, else the catalogue's build triple at a build seat and its judgment triple at any other.
  */
 export function resolveRouting(stack: RoutingStack): ResolvedRouting {
-  return resolveRoutingUnder(BUILTIN_SEATS, stack);
+  return {
+    ...resolveRoutingUnder(BUILTIN_SEATS, stack), earlierBuiltinRevs: EARLIER_BUILTIN_SEATS.map((seats) => resolveRoutingUnder(seats, stack).rev),
+    preDev17Rev: resolveRoutingUnder(PRE_DEV17_BUILTIN_SEATS, stack).rev,
+  };
 }
 
 /**
@@ -269,7 +301,8 @@ export function resolveRoutingUnder(builtin: ClassTable, stack: RoutingStack): R
   const arcRoles = stack.arcRoles ?? null;
   const milestones = stack.milestones === true;
   return {
-    table, classes, sources: seatTable((s) => named(s)[1]), bindings, rev: routingRevOf(table, arcScope, arcRoles, milestones), arcScope, arcRoles, milestones,
+    table, classes, sources: seatTable((s) => named(s)[1]), bindings, rev: routingRevOf(table, arcScope, arcRoles, milestones, builtin === BUILTIN_SEATS), arcScope, arcRoles, milestones,
+    earlierBuiltinRevs: [], preDev17Rev: null,
   };
 }
 
@@ -278,17 +311,20 @@ export function resolveRoutingUnder(builtin: ClassTable, stack: RoutingStack): R
  * roles of `arcScope` and `arcRoles` (`arcRolesInForce`). Without a role set (an adopted 1.0.0-dev.7 arc) a
  * non-holistic arc hashes the M2 table and a holistic `architecture-doc` arc the 1.0.0-dev.6 role set (no
  * `packReview`), so dev.7's revs are unchanged; an `m4b` arc's revs include `flow`, and (dev.13) only a plan with
- * milestones hashes the walk roles, so an arc without them keeps its revs.
+ * milestones hashes the walk roles, so an arc without them keeps its revs. `head` false (an earlier release's built-in seats,
+ * which only `status` resolves under to alias recorded revs): without the roles that release never had (`DEV17_ROLES`).
  */
-export function routingRevOf(table: RoutingTable, arcScope: ArcScope, arcRoles: ArcRoleSet | null, milestones: boolean): RoutingRev {
-  const roles: readonly Role[] = [...UNIT_ROLES, ...arcRolesInForce(arcScope, arcRoles, milestones)];
+export function routingRevOf(table: RoutingTable, arcScope: ArcScope, arcRoles: ArcRoleSet | null, milestones: boolean, head = true): RoutingRev {
+  const inForce = unitRolesInForce(arcRoles);
+  const unitRoles: readonly Role[] = head ? inForce : inForce.filter((r) => !(DEV17_ROLES as readonly Role[]).includes(r));
+  const roles: readonly Role[] = [...unitRoles, ...arcRolesInForce(arcScope, arcRoles, milestones)];
   return routingRev(sha256Hex(canonicalJson(Object.fromEntries(roles.map((r) => [r, table[r]])))).slice(0, 16));
 }
 
-/** The seats in force (G20, LR-0a-1): the unit roles' and the arc roles' of the resolved scope and role set. */
+/** The seats in force (G20, LR-0a-1): the unit roles' of the role set (`unitRolesInForce`) and the arc roles' of the resolved scope and role set. */
 export function seatsInForce(resolved: ResolvedRouting): readonly SeatRef[] {
-  const arc: readonly Role[] = arcRolesInForce(resolved.arcScope, resolved.arcRoles, resolved.milestones);
-  return SEAT_REFS.filter((s) => (UNIT_ROLES as readonly Role[]).includes(s.role) || arc.includes(s.role));
+  const roles: readonly Role[] = [...unitRolesInForce(resolved.arcRoles), ...arcRolesInForce(resolved.arcScope, resolved.arcRoles, resolved.milestones)];
+  return SEAT_REFS.filter((s) => roles.includes(s.role));
 }
 
 /**

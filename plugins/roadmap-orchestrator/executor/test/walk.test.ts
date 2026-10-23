@@ -375,7 +375,9 @@ describe('polish and compare (src/walk/polish.ts, src/walk/compare.ts)', () => {
     const tweak = (decision: 'keep' | 'drop'): WalkFact => ({ kind: 'tweak-judged', unit: 'p1' as UnitId, decision, reason: 'judged' });
     const p1 = { id: 'p1', origin: 'polish', polish: { milestone: 'MS-1', proposal: 'X-1' } } as unknown as PlanUnit;
     const a = { id: 'a' } as unknown as PlanUnit;
-    const admit = admitter(() => ({}) as never, () => ({ reproduces: false, repairs: new Set() }));
+    const admit = admitter(() => ({}) as never, () => ({
+      reproduces: false, repairs: new Set(), lanes: () => new Set(), links: () => ({ requirements: new Set(), contracts: new Set(), breaks: [] }),
+    }));
     const at = (v: JournalView, unit: PlanUnit, stage: 'candidate' | 'lanes') => {
       const view = {
         ...v, control: () => ({ pausedAll: false, pausedUnits: [] }), runOnly: () => null, backendParks: () => [],

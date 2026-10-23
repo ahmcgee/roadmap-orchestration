@@ -113,8 +113,9 @@ const ROWS: readonly Row[] = [
   ['plan-check', 'process-fault', {}, 'park:process-fault', 'park', {}],
   // A routing change that moved a started implementer's seat (dispatch.ts): park, uncharged, at any dispatching stage.
   ['plan-check', 'routing-changed', {}, 'park:routing-changed', 'park', {}],
-  // M4a rev 3 (E): a frontier builder under by-builder makes no plan-check call; its fresh build assesses in session.
-  ['plan-check', 'in-session', {}, 'build/fresh@med', 'advance', {}],
+  // M4a rev 3 (E) to dev.16: a by-builder frontier unit's plan-check recorded in-session (no call). dev.17 has no in-session
+  // assessment: a unit an older log left there runs its plan-check before it builds.
+  ['plan-check', 'in-session', {}, 'plan-check@med', 'advance', {}],
   // Scope growth (2026-10-15): a verified proposal holds the unit for the root agent, uncharged.
   ['plan-check', 'scope-growth', {}, 'hold', 'hold', {}],
   // 2026-10-16: the prompt or context outgrew the model's window: an uncharged env park, never the retryable process-fault
@@ -139,7 +140,7 @@ const ROWS: readonly Row[] = [
   ['build', 'interrupted', {}, 'hold', 'hold', {}],
   ['build', 'interrupted', { counters: { 'retries.build': 1, chargeableFailures: 2 } }, 'hold', 'hold', {}],
   ['build', 'context-exceeded', {}, 'park:context-exceeded', 'park', {}],
-  // M4a rev 3 (E, R55): the in-session assessment's outcomes. Infeasible parks design with the escalation's reason (a
+  // M4a rev 3 (E, R55) to dev.16, read from an older log: the in-session assessment's outcomes. Infeasible parks design with the escalation's reason (a
   // build has no escalation seat to route up to); a raised floor on another seat builds fresh there, uncharged.
   ['build', 'infeasible', {}, 'park:escalation', 'park', {}],
   ['build', 'risk-raised', {}, 'build/fresh@med', 'advance', {}],
@@ -178,6 +179,8 @@ const ROWS: readonly Row[] = [
   // A fast suite lane red on the unit's diff base alone too: the base's red, uncharged, on to the gate.
   ['lanes', 'base-red', {}, 'gate@med', 'advance', {}],
   ['lanes', 'base-red', { promotion: true }, 'gate@escalation', 'advance', {}],
+  // dev.17: a lane's environment did not come up: a retryable park on it, uncharged, never red.
+  ['lanes', 'env-unavailable', {}, 'park:env-unavailable', 'park', {}],
   ['lanes', 'witness-lane-missing', {}, 'park:witness-lane-missing', 'park', {}],
   // Plan defects (2026-10-16): a missing witness no build could fix parks uncharged, even at the bound's edge; salvage's
   // repeated reverts hold the unit for the root agent.
@@ -202,6 +205,8 @@ const ROWS: readonly Row[] = [
   ['gate', 'interrupted', {}, 'hold', 'hold', {}],
   // Run 11 round 3: no green verification checkout of the head: the lanes run again, uncharged.
   ['gate', 'unverified', {}, 'lanes', 'advance', {}],
+  // dev.17 (proportional review): nothing changed since the approval and nothing it bound moved: on to a new candidate, uncharged.
+  ['gate', 'delta-empty', {}, 'candidate', 'advance', {}],
   // Paid M4b run 5: an approve from a session refused a read: one uncharged retry, then an env park.
   ['gate', 'read-denied', {}, 'gate@med', 'retry', { 'retries.gate': 1 }],
   ['gate', 'read-denied', { counters: { 'retries.gate': 1 } }, 'park:read-denied', 'park', {}],
@@ -220,6 +225,20 @@ const ROWS: readonly Row[] = [
   // M3: a preempting docs publication (A7) and a blocking P1 (G10) send the unit back to its candidate, uncharged
   ['candidate', 'preempted', {}, 'candidate', 'advance', {}],
   ['candidate', 'finding-blocked', {}, 'candidate', 'advance', {}],
+  // 1.0.0-dev.17: the executor threw inside the unit's task holding only its own state: an uncharged env park at every stage
+  // but ff and snapshot (src/schedule/fault.ts).
+  ['prepare', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
+  ['reproduce', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
+  ['plan-check', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
+  ['build', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
+  ['quiesce', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
+  ['evidence', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
+  ['salvage', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
+  ['teardown', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
+  ['lanes', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
+  ['gate', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
+  ['candidate', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
+  ['candidate', 'env-unavailable', {}, 'park:env-unavailable', 'park', {}],
   // ff
   ['ff', 'published', {}, 'snapshot', 'advance', {}],
   ['ff', 'cas-stale', {}, 'candidate', 'advance', {}],
@@ -227,6 +246,34 @@ const ROWS: readonly Row[] = [
   ['ff', 'foreign-move', {}, 'stop:foreign-ref-move', 'stop', {}],
   // snapshot
   ['snapshot', 'published', {}, 'retire', 'retire', {}],
+  // dev.17 (design pass): plan-check's design decisions, each uncharged. A split holds the unit until its revision cuts it.
+  ['plan-check', 'split', {}, 'hold', 'hold', {}],
+  ['plan-check', 'scaffold', {}, 'scaffold', 'advance', {}],
+  ['plan-check', 'poc', {}, 'poc', 'advance', {}],
+  ['plan-check', 'plan-defect', {}, 'park:plan-defect', 'park', {}],
+  // The scaffold writer's stage: committed, on to the first build; refused once, it tries again; twice, a plan defect.
+  ['scaffold', 'scaffolded', {}, 'build/fresh@med', 'advance', {}],
+  ['scaffold', 'refused', {}, 'scaffold', 'advance', {}],
+  ['scaffold', 'plan-defect', {}, 'park:plan-defect', 'park', {}],
+  ['scaffold', 'refusal', {}, 'park:refusal', 'park', {}],
+  ['scaffold', 'process-fault', {}, 'park:process-fault', 'park', {}],
+  ['scaffold', 'lost', {}, 'park:process-fault', 'park', {}],
+  ['scaffold', 'interrupted', {}, 'hold', 'hold', {}],
+  ['scaffold', 'routing-changed', {}, 'park:routing-changed', 'park', {}],
+  ['scaffold', 'context-exceeded', {}, 'park:context-exceeded', 'park', {}],
+  ['scaffold', 'occupied', {}, 'park:occupancy-unlabelled', 'park', {}],
+  ['scaffold', 'cleanup-failed', {}, 'park:residue', 'park', {}],
+  ['scaffold', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
+  // A proof of concept: answered or not, back to a fresh plan-check with its report.
+  ['poc', 'answered', {}, 'plan-check@med', 'advance', {}],
+  ['poc', 'unanswered', {}, 'plan-check@med', 'advance', {}],
+  ['poc', 'process-fault', {}, 'park:process-fault', 'park', {}],
+  ['poc', 'interrupted', {}, 'hold', 'hold', {}],
+  ['poc', 'routing-changed', {}, 'park:routing-changed', 'park', {}],
+  ['poc', 'context-exceeded', {}, 'park:context-exceeded', 'park', {}],
+  ['poc', 'occupied', {}, 'park:occupancy-unlabelled', 'park', {}],
+  ['poc', 'cleanup-failed', {}, 'park:residue', 'park', {}],
+  ['poc', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
 ];
 
 /** Every (stage, outcome) the fact vocabulary admits; StageOutcome is derived from the same list. */
@@ -261,7 +308,13 @@ describe('transitions', () => {
       'gate process-fault': 'retryable', 'gate routing-changed': 'env', 'gate read-denied': 'env',
       'plan-check context-exceeded': 'env', 'build context-exceeded': 'env', 'gate context-exceeded': 'env',
       'candidate red': 'design', 'candidate base-red': 'env', 'candidate blocked': 'retryable', 'candidate occupied': 'env', 'candidate cleanup-failed': 'retryable',
+      'lanes env-unavailable': 'retryable', 'candidate env-unavailable': 'retryable',
       'reproduce not-reproduced': 'design', 'reproduce inapplicable': 'design', 'reproduce blocked': 'retryable', 'reproduce cleanup-failed': 'retryable',
+      ...Object.fromEntries(['prepare', 'reproduce', 'plan-check', 'build', 'quiesce', 'evidence', 'salvage', 'teardown', 'lanes', 'gate', 'candidate', 'scaffold', 'poc'].map((st) => [`${st} executor-fault`, 'env'])),
+      // dev.17 (design pass): a plan defect is the plan's to fix (an apply, then `resume`), as at lanes.
+      'plan-check plan-defect': 'env', 'scaffold plan-defect': 'env', 'scaffold refusal': 'design', 'scaffold process-fault': 'retryable', 'scaffold lost': 'retryable',
+      'scaffold routing-changed': 'env', 'scaffold context-exceeded': 'env', 'scaffold occupied': 'env', 'scaffold cleanup-failed': 'retryable',
+      'poc process-fault': 'retryable', 'poc routing-changed': 'env', 'poc context-exceeded': 'env', 'poc occupied': 'env', 'poc cleanup-failed': 'retryable',
     };
     const targets = [{ type: 'resource', instance: resourceInstance('estate#2') }, { type: 'host' }, { type: 'host' }] as const;
     let parks = 0;

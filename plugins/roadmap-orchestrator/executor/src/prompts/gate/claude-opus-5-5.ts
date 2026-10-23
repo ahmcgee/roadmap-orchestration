@@ -56,6 +56,12 @@
 // dev.13 (the convergence tail, owner ruling 2026-10-20: debt is for substantive issues that drag down future work, never
 // test nitpicks or status remarks): each finding's `debt`, the contract only (the field, and which notes are debt); code
 // banks a note only when its drag is given (src/pipeline/gate.ts `gateDebtNotes`). The Fable, Sonnet and Haiku rows inherit it.
+// dev.17 proportional review (owner 2026-10-22; written against "Prompting Claude Opus 5.5" and "Prompting best practices"
+// alone: the job and why, no method): <finding_bar> states what may block, as the closed defect classes a blocking finding
+// names (code refuses one without), test-inadequate defined by the test being cited as proof, and comments and docs as
+// ride-along, which never blocks. <findings_ledger>, <disputes> and <delta> are the contract of src/pipeline/review.ts:
+// a settled finding is raised again only once its file changed, each dispute is ruled once, and on a delta a blocking
+// finding on an unchanged file rests on a changed hunk or a moved target, else code records it as a note.
 import type { GateInputs, PromptModule } from '../inputs.ts';
 import {
   boundedDiffText, bullets, milestoneDocuments, milestonesText, documentsXml, escalationText, findingsText, laneLedgerText, obligationsText, premisesText, referenceIndexText, rulingsText, targetDocument, gateChecksText} from '../inputs.ts';
@@ -102,7 +108,22 @@ Host facts are never a verdict. Sibling units' lanes and the orchestrator's proc
 </how_to_grade>
 
 <finding_bar>
-Report every real defect you find, and classify each as blocking, note or pre-existing. A defect is one of (1) incorrect behaviour, (2) a spec, contract or ruling violation, (3) an acceptance clause left untested or a test that would pass if the behaviour were wrong, (4) scope creep: behaviour or files the spec did not ask for; and you can state its evidence in one sentence. Not a finding: style, naming or formatting, anything a linter or type checker enforces, a preference without a defect behind it, or one defect twice under two headings. These are always defects of kind (3), whatever the lanes say: a test that reads the real clock or the host time zone instead of a pinned clock; a fixed date the change makes invalid, or one that will expire; a real wait in a fast lane, where the timeout should be injected and the production default checked separately; a negative witness (a test that something does not happen) that calls a helper instead of driving the real entry point with an injected fixture. A change that moves a step of a transaction (staging, a save, a publication, a rollback) is a defect of kind (1) unless a failure matrix in the spec or decisions.json shows what each step leaves when the process dies before or after it, and the code matches every cell. A finding is blocking when the merge cannot carry it: a correctness defect, a contract or ruling violation, or an untested acceptance clause, that this diff introduced or that the spec requires and the diff omits. A real defect this unit did not introduce, one already present at the base, is pre-existing: report it, classify it pre-existing, and say in its text why you believe it predates the unit. Everything else is a note. Notes and pre-existing findings are recorded, and never a fix round. Classify by what the merge cannot carry, not by how sure you are: a defect you cannot state evidence for is not a finding at all. A real defect left out of the report is a miss, and a non-defect marked blocking costs a fix round that widens the diff to be read again.
+Report every real defect you find, each with evidence you can state in one sentence, and classify it as blocking, note, pre-existing or ride-along. Not a finding: style, naming or formatting, anything a linter or type checker enforces, a preference without a defect behind it, or one defect twice under two headings.
+
+A finding is blocking when the merge cannot carry it, and every blocking finding names its defect, one of:
+- incorrect-behaviour: the code does the wrong thing for an input or a state the spec covers.
+- contract-violation: the change breaks the spec, a cited contract, a ruling, a corpus rule, or the pinned scope envelope.
+- security: the change opens a way to read, change or run what the caller should not.
+- requirement-unmet: an acceptance clause, obligation or requirement this unit owns is not delivered.
+- test-inadequate: a test cited as proof of a requirement, an acceptance item or a failure mode does not verify it. It was weakened, it is vacuous (it asserts nothing, is tautological, mocks the very thing it tests, or passes without the change), or it is missing.
+- data-loss: the change can lose or corrupt data a user or the system keeps.
+The executor refuses a blocking finding without one, and a defect that fits none of them does not block. test-inadequate is about proof: a test nobody cites as proof of a requirement, an acceptance item or a failure mode never blocks for being imperfect; a case it could add or an assertion it could sharpen is a note at most.
+
+These are always test-inadequate when the test is cited as proof, whatever the lanes say: a test that reads the real clock or the host time zone instead of a pinned clock; a fixed date the change makes invalid, or one that will expire; a real wait in a fast lane, where the timeout should be injected and the production default checked separately; a negative witness (a test that something does not happen) that calls a helper instead of driving the real entry point with an injected fixture. A change that moves a step of a transaction (staging, a save, a publication, a rollback) is incorrect-behaviour unless a failure matrix in the spec or decisions.json shows what each step leaves when the process dies before or after it, and the code matches every cell.
+
+A finding about comments, docstrings or documentation is ride-along: it never blocks and never causes a revise, whatever it says. A real defect this unit did not introduce, one already present at the base, is pre-existing: say in its text why you believe it predates the unit. Everything else is a note. Notes, ride-along and pre-existing findings are recorded and never a fix round.
+
+Classify by what the merge cannot carry, not by how sure you are: a defect you cannot state evidence for is not a finding at all. A real defect left out of the report is a miss, and a non-defect marked blocking costs a fix round that widens the diff to be read again.
 </finding_bar>
 
 <obligations>
@@ -114,7 +135,7 @@ In a corpus arc the executor runs two checks before you, and the executable chec
 </executable_checks>
 
 <scope>
-The scope envelope was pinned at dispatch. Rule on each path listed as scope growth with its own finding: a note when the path was necessary to satisfy the spec (say why), a blocking finding with a directive to revert it when it is creep. Growth is a signal to you, never a licence to review those files as if they were in scope. A path listed as reverted was edited by the build outside the envelope and reverted by the executor, so it is in no diff: when the spec cannot be satisfied without it, escalate (only the root agent grows a unit's scope); otherwise record a note that the unit needed no such change.
+The scope envelope was pinned at dispatch. Rule on each path listed as scope growth with its own finding: a note when the path was necessary to satisfy the spec (say why), a blocking contract-violation with a directive to revert it when it is creep. Growth is a signal to you, never a licence to review those files as if they were in scope. A path listed as reverted was edited by the build outside the envelope and reverted by the executor, so it is in no diff: when the spec cannot be satisfied without it, escalate (only the root agent grows a unit's scope); otherwise record a note that the unit needed no such change.
 </scope>
 
 <direction>
@@ -128,12 +149,24 @@ The Direction breaks ties only where the spec, contracts and rulings are silent;
 
 directives is empty unless you revise. A directive may name the experiment that shows its defect, so the implementer can run it again. reasons gives the decision's justification, one point per entry; it is not a transcript of your reasoning. path is the repository path a finding concerns, or null. premises lists the claims about the code your decision relies on, each with the file and line you read it at, or is empty; a later round re-verifies only those whose files changed.
 
-debt says whether a note is debt: {drag}, where drag names the future work the issue will slow and why, or null. A note is debt only when it is a substantive issue in the code that will drag down the delivery of later work; the executor banks those in the arc's debt ledger and records every other note in this answer only. A nitpick about a unit test (a case it could add, an assertion it could sharpen), a status remark (a prior finding is resolved, a check now passes, a test now separates two cases) and a preference are never debt. debt is null on every blocking and pre-existing finding: a pre-existing defect is recorded as debt by the executor.
+debt says whether a note or a ride-along finding is debt: {drag}, where drag names the future work the issue will slow and why, or null. It is debt only when it is a substantive issue that will drag down the delivery of later work; the executor banks those in the arc's debt ledger and releases every other one. A nitpick about a unit test (a case it could add, an assertion it could sharpen), a status remark (a prior finding is resolved, a check now passes, a test now separates two cases) and a preference are never debt. debt is null on every blocking and pre-existing finding: a pre-existing defect is recorded as debt by the executor.
+
+defect names a blocking finding's defect from <finding_bar>, and is null on every other finding. reraises is the id of the earlier finding in <findings_ledger> that this one raises again, or null for a new finding. hunk is null unless <delta> asks for it. rulings holds one ruling per dispute in <disputes>, and is empty when there are none.
 
 unreviewed lists the parts of the change you did not review, each a repository path or path pattern with the reason, or is empty. Be honest about coverage: it is compared with what you actually read. If you approve, name here what you did not look at, and do not approve on the strength of a part you did not read when that part could hold a defect.
 
 clusters is null unless this message has a <large_diff> section, which says what it holds.
 </decisions>`;
+
+/** dev.17 (design pass): the contracts the diff touches that the spec's design record did not declare, or nothing. */
+function undeclaredContractsText(i: GateInputs): string {
+  return i.undeclaredContracts.length === 0 ? '' : `
+
+<undeclared_contracts>
+The diff changes these contracts, which the spec's design record does not name as interfaces:
+${bullets(i.undeclaredContracts, '(none)')}
+</undeclared_contracts>`;
+}
 
 function largeDiff(i: GateInputs): string {
   const l = i.largeDiff;
@@ -153,6 +186,35 @@ Next, list the changed contracts that cross cluster boundaries, such as an expor
 
 Your answer carries the cluster map in clusters: each cluster's id, the paths it covers (exact repository paths, directories or globs) and its review: description, routine or close. The executor checks the map against the list above: every path must fall in exactly one cluster, so write patterns that do not overlap, and an answer whose map misses or repeats a path is refused. A file in a cluster counts as reviewed at that cluster's depth; unreviewed still names any part you could not review properly, with the reason.
 </large_diff>`;
+}
+
+function review(i: GateInputs): string {
+  const r = i.review;
+  const ledger = r.ledger.length === 0 ? '' : `
+
+<findings_ledger>
+Your earlier findings on this unit, each with its id, how it settled (open until it does) and whether its file changed since it was raised. A finding is settled once it is fixed, released, banked, or a dispute about it is ruled. A settled finding may block again only once its file has changed: the executor refuses a blocking finding that raises a settled one again (reraises) while its file is unchanged. Name the earlier finding in reraises whenever you raise one again, open or settled.
+${r.ledger.map((e) => `- ${e.id} [${e.outcome ?? 'open'}${e.anchorChanged ? ', file changed since' : ', file unchanged'}] ${e.path}: ${e.text}`).join('\n')}
+</findings_ledger>`;
+  const disputes = r.disputes.length === 0 ? '' : `
+
+<disputes>
+The implementer disputes these open findings instead of fixing them, with its reasons. Rule on each once, in rulings: upheld when the finding stands (raise it again, naming it in reraises, if the merge still cannot carry it), overruled when it falls, with the reason. Your ruling is final: the finding is not disputed again.
+${r.disputes.map((d) => `- ${d.finding}: ${d.text}\n  Dispute: ${d.reason}`).join('\n')}
+</disputes>`;
+  const d = r.delta;
+  const delta = d === null ? '' : `
+
+<delta>
+You approved this unit at ${d.approved.head}. Since then the files below changed, or name a target your approval bound that has moved; they are under review:
+${bullets(d.review, '(none)')}
+These files you approved are unchanged. They are in your checkout to read for context, and they are not under review:
+${bullets(d.unchanged, '(none)')}
+Targets your approval bound that moved since (contracts, rulings, requirements):
+${bullets(d.moved, '(none)')}
+A blocking finding on an unchanged file must rest on what moved: a changed hunk, cited in hunk (a path under review and a line on the head's side), or a moved target, named in contractRef. The executor records any other blocking finding on an unchanged file as a note.
+</delta>`;
+  return `${ledger}${disputes}${delta}`;
 }
 
 function priorRound(i: GateInputs): string {
@@ -184,7 +246,7 @@ export const PROMPT: PromptModule<'gate'> = {
   schema: GATE_SCHEMA,
   fields: [
     'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'planCheckNotes', 'obligations', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
-    'checks', 'escalation', 'largeDiff', 'milestones',
+    'checks', 'escalation', 'largeDiff', 'milestones', 'review', 'undeclaredContracts',
   ],
   render: (i) => `${documentsXml([
     { source: `spec.json for unit ${i.spec.unit}, revision ${i.spec.rev} (rendered)`, content: i.spec.markdown },
@@ -233,7 +295,7 @@ ${bullets(i.scope.growth, '(none: every changed path is inside the envelope)')}
 
 <scope_reverted>
 ${bullets(i.scope.rejected, '(none: the build edited nothing outside the envelope)')}
-</scope_reverted>${gateChecksText(i.checks)}${priorRound(i)}${escalationText(i.escalation, 'gate')}${largeDiff(i)}
+</scope_reverted>${undeclaredContractsText(i)}${gateChecksText(i.checks)}${priorRound(i)}${review(i)}${escalationText(i.escalation, 'gate')}${largeDiff(i)}
 
 Gate unit ${i.spec.unit} at head ${i.diff.bounded.to}, spec revision ${i.spec.rev}. Grade each acceptance clause, then return your decision.`,
 };

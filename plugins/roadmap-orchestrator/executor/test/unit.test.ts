@@ -15,9 +15,10 @@ import { unitBranch } from '../src/pipeline/dispatch.ts';
 import { latestCandidate } from '../src/pipeline/integrate.ts';
 import { loadUnitSpec } from '../src/pipeline/stages.ts';
 import { killWorkload } from '../src/pipeline/invoke.ts';
-import { CONTINUE_DIRECTIVE, NO_SESSION_NOTE, RESOLVE_DIRECTIVE } from '../src/prompts/directives.ts';
+import { CONTINUE_DIRECTIVE, CONTINUE_FRESH_DIRECTIVE, NO_SESSION_NOTE, RESOLVE_DIRECTIVE } from '../src/prompts/directives.ts';
 import { type Gate, type UnitResult, runUnit } from '../src/pipeline/unit.ts';
 import { MODEL_IDS } from '../src/routing/types.ts';
+import { parseRepoConfig } from '../src/routing/layers.ts';
 import { reached, release } from './helpers/barrier.ts';
 import { writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
@@ -26,7 +27,7 @@ import { type Step, readCalls } from './helpers/scenario.ts';
 import { events, intents } from './fixtures/invoke-specs.ts';
 import { BUILD_REPORT, SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
 import {
-  ADD_BROKEN, ADD_FIXED, type ArcRun, MUL, SUITE_LANE, U1, appendSteps, codexStep, isGateCall, contextFor, gateStep, literal, mulBuild, outcomes, setupArc, stepUntil,
+  ADD_BROKEN, ADD_FIXED, type ArcRun, MUL, SUITE_LANE, U1, appendSteps, codexStep, isGateCall, isPlanCheckCall, contextFor, gateStep, literal, mulBuild, outcomes, setupArc, stepUntil,
   unitWorktreePath, workDirPattern,
 } from './fixtures/unit-common.ts';
 
@@ -76,10 +77,15 @@ describe('unit: one unit merged first time', () => {
     assert.equal(ff.length, 1);
     assert.ok(ff[0]!.kind === 'integration.ff');
     assert.deepEqual(ff[0]!.expect.fingerprint, approval.fingerprint, 'the ff intent records the approval fingerprint');
-    // The suite ran on exactly that commit, after the lanes stage's fast suite (stages.ts `fastSuite`) at the approved unit commit.
+    // The suite ran once, in the lanes stage at the approved unit commit; the candidate, on the same tree, reused that clean
+    // pass (dev.17: one reuse key for every series lane) rather than run it again.
     const suite = intents(r.d.runDir, 'proc.spawn').filter((i) => i.kind === 'proc.spawn' && i.expect.subject.purpose === 'lane' && i.expect.subject.set === 'suite');
-    assert.deepEqual(suite.map((i) => i.kind === 'proc.spawn' && i.expect.subject.purpose === 'lane' && i.expect.subject.at), [approval.fingerprint.unitCommit, head]);
-    assert.deepEqual(suite.map((i) => i.parent.type === 'stage' && i.parent.stage), ['lanes', 'candidate']);
+    assert.deepEqual(suite.map((i) => i.kind === 'proc.spawn' && i.expect.subject.purpose === 'lane' && i.expect.subject.at), [approval.fingerprint.unitCommit]);
+    assert.deepEqual(suite.map((i) => i.parent.type === 'stage' && i.parent.stage), ['lanes']);
+    assert.equal(git(r.d.repo, 'rev-parse', `${head}^{tree}`), git(r.d.repo, 'rev-parse', `${approval.fingerprint.unitCommit}^{tree}`), 'the candidate holds the unit commit\'s tree');
+    const reused = events(r.d.runDir).flatMap((e) => (e.type === 'fact' && e.fact.kind === 'lane-reused' ? [e.fact] : []));
+    assert.deepEqual(reused.map((f) => f.kind === 'lane-reused' && [f.lane, f.set, f.at, f.parent.type === 'stage' && f.parent.stage, f.from.at, f.from.parent.type === 'stage' && f.from.parent.stage]),
+      [['suite', 'suite', head, 'candidate', approval.fingerprint.unitCommit, 'lanes']], 'the candidate\'s suite lane reused at the tested head');
   });
 
   test('snapshot.after-publish: the ref moved, the tree verifies against its manifest, the high-water mark covers the ff', () => {
@@ -97,16 +103,19 @@ describe('unit: one unit merged first time', () => {
   test('unit.decisions-appended: decisions.json reaches the spec by an executor patch, and the approval carries the new rev', () => {
     assert.equal((JSON.parse(readFileSync(join(r.ctx.planDir, 'u1.json'), 'utf8')) as { rev: number }).rev, 1, 'the owner\'s spec file is never written');
     const { spec } = loadUnitSpec(r.ctx, r.unit('u1'));
-    assert.equal(spec.rev, 2, 'the patched spec is in force');
+    // dev.17: the approving plan-check's design record is rev 2, the build's decisions rev 3.
+    assert.equal(spec.rev, 3, 'the patched spec is in force');
     assert.deepEqual(spec.decisions, [{ id: 'D1', text: 'mul multiplies with the * operator.', state: 'active' }]);
+    assert.equal(spec.design?.kind, 'module', 'the design record the plan-check settled');
     const patches = intents(r.d.runDir, 'spec.patch');
-    assert.equal(patches.length, 1);
-    const p = patches[0]!;
+    assert.equal(patches.length, 2);
+    const [design, p] = patches as [(typeof patches)[number], (typeof patches)[number]];
+    assert.ok(design.kind === 'spec.patch' && design.parent.type === 'stage' && design.parent.stage === 'plan-check' && design.expect.patch.ops[0]?.op === 'design');
     assert.ok(p.kind === 'spec.patch' && p.parent.type === 'stage' && p.parent.stage === 'evidence');
     const build = intents(r.d.runDir, 'proc.spawn').find((i) => i.kind === 'proc.spawn' && i.expect.subject.purpose === 'backend' && i.expect.subject.role === 'build');
     assert.ok(build !== undefined);
     assert.deepEqual(p.expect.patch.by, { role: 'executor', inv: invocationId(build.op, 1) });
-    assert.equal(r.journal.view.unit(U1).approval?.fingerprint.specRev, 2, 'a decision recorded before the gate is what the gate saw');
+    assert.equal(r.journal.view.unit(U1).approval?.fingerprint.specRev, 3, 'a decision recorded before the gate is what the gate saw');
   });
 
   test('retire: every worktree of the unit is removed, citing its evidence; the branch and candidate ref stay', () => {
@@ -342,7 +351,7 @@ async function pauseAt(r: ArcRun, name: string): Promise<void> {
 
 const barrier = (name: string) => ({ type: 'barrier', name, timeoutMs: 120_000 } as const);
 /** The implementer's calls (dev.13: the gate, an acting judge, also runs under bypassPermissions, so its calls are left out). */
-const implementerCalls = (r: ArcRun) => readCalls(r.d.scenarioPath).filter((c) => (c.argv.includes('--permission-mode') && !isGateCall(c)) || c.as === 'codex');
+const implementerCalls = (r: ArcRun) => readCalls(r.d.scenarioPath).filter((c) => (c.argv.includes('--permission-mode') && !isGateCall(c) && !isPlanCheckCall(c)) || c.as === 'codex');
 const flag = (argv: readonly string[], name: string): string | undefined => argv[argv.indexOf(name) + 1];
 /** The unit's edits reached integration as the paused session left them. */
 const mulMerged = (r: ArcRun): void => {
@@ -358,7 +367,8 @@ test('continue.claude-session: a pause mid fresh build holds it; resume continue
       gateStep({ decision: 'approve' }),
     ],
   });
-  const r = contextFor(d);
+  // The repo seats build.high on frontier: a Claude build (every built-in build seat is efficient, Codex under default, since dev.17).
+  const r = contextFor({ ...d, config: parseRepoConfig({ routing: { seats: { build: { high: 'frontier' } } } }) });
   try {
     await pauseAt(r, 'b1');
     assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), live()), { kind: 'merged' });
@@ -404,7 +414,7 @@ test('continue.no-session-fresh: a Codex exec killed before its thread started h
     steps: [
       planCheckStep({ decision: 'approve' }),
       codexStep([{ type: 'dirty', files: MUL }, barrier('b1')], { argv: ['exec', '-C'] }),
-      codexStep([], { argv: ['exec', '-C'], argvLacks: ['resume'], stdinContains: [NO_SESSION_NOTE, CONTINUE_DIRECTIVE] }),
+      codexStep([], { argv: ['exec', '-C'], argvLacks: ['resume'], stdinContains: [NO_SESSION_NOTE, CONTINUE_FRESH_DIRECTIVE] }),
       gateStep({ decision: 'approve' }),
     ],
   });

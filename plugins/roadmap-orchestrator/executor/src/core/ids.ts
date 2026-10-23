@@ -123,6 +123,14 @@ export const edgeId: IdReader<EdgeId> = textual('EdgeId', new RegExp(`^${SLUG}$`
 export type LaneId = Brand<string, 'LaneId'>;
 export const laneId: IdReader<LaneId> = textual('LaneId', /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/, 'a letter then letters, digits, _ . -, 1-64 chars');
 
+/**
+ * A system of the repo's systems map (`.roadmap/config.json` `systemsMap`, src/input/systems.ts). `docs` names the map's
+ * docs class (never a declared system): a lane listing it reads the docs paths.
+ */
+export type SystemName = Brand<string, 'SystemName'>;
+export const systemName: IdReader<SystemName> = textual('SystemName', new RegExp(`^${SLUG}$`), SLUG_FORM);
+export const DOCS_SYSTEM = systemName('docs');
+
 /** Acceptance clauses, decisions and facts in a spec. */
 export type ClauseId = Brand<string, 'ClauseId'>;
 export const clauseId: IdReader<ClauseId> = textual('ClauseId', /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/, 'a letter then letters, digits, _ . -, 1-64 chars');
@@ -386,7 +394,7 @@ export function proposalJob(id: ProposalId): JobId {
  * The stages a unit's lead time is cut into as `stage:<s>` (service) and `wait:<s>` (the gap before it). The candidate,
  * ff and snapshot stages run inside the integration slot's hold, so they are the slot's components instead.
  */
-export const FLOW_STAGES = ['prepare', 'reproduce', 'plan-check', 'build', 'quiesce', 'evidence', 'salvage', 'teardown', 'lanes', 'gate'] as const satisfies readonly Stage[];
+export const FLOW_STAGES = ['prepare', 'reproduce', 'plan-check', 'build', 'quiesce', 'evidence', 'salvage', 'teardown', 'lanes', 'gate', 'scaffold', 'poc'] as const satisfies readonly Stage[];
 export type FlowStage = (typeof FLOW_STAGES)[number];
 /** The integration slot's service components; with `suite:<lane>` (one per suite lane) they partition its service. */
 export const SLOT_COMPONENTS = ['arc-lanes', 'candidate-rest', 'ff', 'snapshot'] as const;
@@ -600,3 +608,25 @@ export function supervisorNeedsUserId(generation: number, n: number): NeedsUserI
 export function hostNeedsUserId(slug: string): NeedsUserId {
   return needsUserId(`host-${slug}`);
 }
+
+// ---------------------------------------------------------------------------------------------------
+// dev.17 ids (SCHEMAS.md "dev.17 records").
+
+/** A failure mode of a spec's design record: `FM-<n>`, unique in its record. */
+export type FailureModeId = Brand<string, 'FailureModeId'>;
+const FM = numbered('FailureModeId', 'FM');
+export const failureModeId: IdReader<FailureModeId> = FM.read;
+export const failureModeIdOf = FM.of;
+
+/** A question of a plan-check `poc` decision: `PQ-<n>`, unique in its decision. */
+export type PocQuestionId = Brand<string, 'PocQuestionId'>;
+const PQ = numbered('PocQuestionId', 'PQ');
+export const pocQuestionId: IdReader<PocQuestionId> = PQ.read;
+export const pocQuestionIdOf = PQ.of;
+
+/** A gate finding in the arc's findings ledger: `R-<n>`, numbered arc-wide in ledger order, never reused. */
+export type ReviewFindingId = Brand<string, 'ReviewFindingId'>;
+const R = numbered('ReviewFindingId', 'R');
+export const reviewFindingId: IdReader<ReviewFindingId> = R.read;
+export const reviewFindingIdOf = R.of;
+export const reviewFindingSeq = R.n;

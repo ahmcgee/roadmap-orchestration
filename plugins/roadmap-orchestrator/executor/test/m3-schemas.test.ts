@@ -92,7 +92,7 @@ const OBLIGATIONS = {
   schema: 'roadmap/obligations-m3',
   cutLine: 'Everything above the ledger CLI.',
   lanes: [{
-    id: 'journey', argv: ['node', '--test', 'test/journey.test.js'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, tier: 'fast', resources: [],
+    id: 'journey', argv: ['node', '--test', 'test/journey.test.js'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [],
     evidenceGlobs: [], evidenceExcludes: [], reporter: 'node-test',
   }],
   obligations: [
@@ -437,7 +437,7 @@ describe('M3 file records', () => {
     assert.throws(() => parsePlan({ ...base, holistic: { vision: 'v.json', advances: ['V-2', 'V-1'] } }), /holistic\.advances\[1\]/);
     assert.throws(() => parsePlan({ ...base, limits: { chargeable: 0 } }), /limits\.chargeable/);
     assert.throws(() => parsePlan({ ...base, units: [{ ...unit, limits: { convergenceK: 2 } }] }), /convergenceK/);
-    assert.deepEqual(ORIGIN_RANK, { repair: 0, checkpoint: 1, polish: 2, planned: 3 });
+    assert.deepEqual(ORIGIN_RANK, { repair: 0, deflake: 0, propagation: 0, checkpoint: 1, polish: 2, planned: 3 });
   });
 });
 

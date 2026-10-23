@@ -89,14 +89,23 @@ function close(ctx: ResourceContext, intent: IntentOf<'resource.transition'>): R
  * retry, or a job reclaiming its own residue, holds only an instance whose teardown failed again.
  */
 export async function recoverReservations(ctx: ResourceContext): Promise<void> {
+  await settleHolders(ctx, () => true);
+}
+
+/**
+ * The open transitions of every holder `owns` names closed, then each such holder that still holds anything settled per
+ * the table above, as a dead holder's. Recovery passes every holder; 1.0.0-dev.17, a faulted task's own stage or job
+ * holders (src/schedule/fault.ts: the task is over, as a dead executor's are), never a publication's slot.
+ */
+export async function settleHolders(ctx: ResourceContext, owns: (holder: Holder) => boolean): Promise<void> {
   const reconcile = resourceReconciler(ctx);
   for (const intent of ctx.journal.view.openIntents()) {
-    if (intent.kind === 'resource.transition') await reconcile(intent, ctx.journal.view);
+    if (intent.kind === 'resource.transition' && owns(intent.expect.holder)) await reconcile(intent, ctx.journal.view);
   }
   const holders: Exclude<Holder, SweepHolderShape>[] = [];
   for (const entry of resourceTable(ctx.journal.view).values()) {
     const { status } = entry;
-    if (status.state === 'free' || status.state === 'cleanup-failed' || status.holder.type === 'sweep') continue;
+    if (status.state === 'free' || status.state === 'cleanup-failed' || status.holder.type === 'sweep' || !owns(status.holder)) continue;
     const holder = status.holder;
     if (!holders.some((h) => sameHolder(h, holder))) holders.push(holder);
   }

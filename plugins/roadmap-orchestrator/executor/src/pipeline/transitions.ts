@@ -136,6 +136,12 @@ const park = (reason: NeedsUserReason, cls: ParkClass): Park => ({ do: 'park', r
 const retry = (reason: NeedsUserReason, cls: ParkClass): Retry => ({ do: 'retry', reason, park: cls });
 const routeUp = (reason: RouteUp['reason']): RouteUp => ({ do: 'route-up', reason });
 const hold: Hold = { do: 'hold' };
+/**
+ * 1.0.0-dev.17: the executor threw inside the unit's task while it held only the unit's own state (src/schedule/fault.ts):
+ * uncharged, operator env, so `resume <unit>` re-enters the stage once the fault is fixed. Never a crash loop: the park is
+ * replayed, not the throw.
+ */
+const fault: Park = park('executor-fault', 'env');
 
 /** The plan's table, one rule per (stage, outcome); the type requires every row and admits no other. */
 export const TABLE: Table = {
@@ -148,6 +154,7 @@ export const TABLE: Table = {
     conflicted: go(build('resolve')),
     // Arc feedback 2026-10-15: a preparation a crash cut short, held by recovery (`cause: recovery`); it prepares again.
     interrupted: hold,
+    'executor-fault': fault,
   },
   // M3 (B3): a vacuity repair reproduces its finding's mutant before anything is graded.
   reproduce: {
@@ -159,6 +166,7 @@ export const TABLE: Table = {
     blocked: park('lane-blocked', 'retryable'),
     interrupted: hold,
     'cleanup-failed': park('residue', 'retryable'),
+    'executor-fault': fault,
   },
   'plan-check': {
     approve: go(build('fresh')),
@@ -173,9 +181,10 @@ export const TABLE: Table = {
     'process-fault': park('process-fault', 'retryable'),
     interrupted: hold,
     'routing-changed': park('routing-changed', 'env'),
-    // M4a rev 3 (E, R55): a frontier or summit builder under `by-builder` makes no plan-check call; its fresh build
-    // assesses in session first.
-    'in-session': go(build('fresh')),
+    // M4a rev 3 (E, R55) to dev.16: a frontier or summit builder under `by-builder` made no plan-check call, and its fresh
+    // build assessed in session first. dev.17 has no in-session assessment, so a unit an older log left here runs its
+    // plan-check (uniform, one fresh call) before it builds. Scaffolding: deleted with `planCheckShapeDefault`.
+    'in-session': go(at('plan-check')),
     // Paid M4b run 5: an approve from a session the CLI refused a read, as at the gate (scaffolding: a 1.0.0-dev.11 record).
     'read-denied': retry('read-denied', 'env'),
     // Scope growth (2026-10-15): a proposal code verified holds the unit, uncharged, for the root agent's `scope accept|reject`
@@ -185,6 +194,16 @@ export const TABLE: Table = {
     // probe, no repeat rule, no backend park): uncharged, operator env, the needs-user naming the role, the call and the
     // prompt's size; `resume` re-runs the stage once its inputs fit (a smaller unit, or a seat with a larger window).
     'context-exceeded': park('context-exceeded', 'env'),
+    'executor-fault': fault,
+    // dev.17 (design pass). `split`: the stage records it, then commits the split revision, which cuts the unit (its children
+    // take its place); the hold is never resumed, the unit being cut. `scaffold` and `poc`: on to those stages, uncharged (a
+    // PoC is bounded per unit by code, src/pipeline/design.ts). `plan-defect`: refused through the repair turn and again for a
+    // plan defect (a lane that cannot reach a test, an oversize design, a split code refuses): uncharged; `resume` re-runs
+    // the plan-check once an `apply` fixes the plan, as at lanes.
+    split: hold,
+    scaffold: go(at('scaffold')),
+    poc: go(at('poc')),
+    'plan-defect': park('plan-defect', 'env'),
   },
   build: {
     success: go(at('quiesce')),
@@ -202,27 +221,31 @@ export const TABLE: Table = {
     'cleanup-failed': park('residue', 'retryable'),
     interrupted: hold,
     'routing-changed': park('routing-changed', 'env'),
-    // M4a rev 3 (E, R55): the in-session assessment found the spec infeasible. A build has no escalation seat to route up
-    // to (route-up is a judgment stage's), so the unit parks for a spec revision with the escalation's reason.
+    // M4a rev 3 (E, R55) to dev.16, read from an older log: the in-session assessment found the spec infeasible. A build has
+    // no escalation seat to route up to (route-up is a judgment stage's), so the unit parks for a spec revision with the
+    // escalation's reason.
     infeasible: park('escalation', 'design'),
-    // The assessment raised the risk floor onto another implementer seat: a fresh build there, uncharged.
+    // To dev.16, read from an older log: the assessment raised the risk floor onto another implementer seat: a fresh build
+    // there, uncharged.
     'risk-raised': go(build('fresh')),
     // 2026-10-15: a required witness item names no arc lane in force (an arc started on 1.0.0-dev.9; the classifier refuses
     // it since). Uncharged; `resume` re-runs the stage once an `apply` adds the lane, or a re-entry fixes the spec.
     'witness-lane-missing': park('witness-lane-missing', 'env'),
     // 2026-10-16: as at plan-check.
     'context-exceeded': park('context-exceeded', 'env'),
+    'executor-fault': fault,
   },
-  quiesce: { empty: go(at('evidence')) },
-  evidence: { captured: go(at('salvage')) },
+  quiesce: { empty: go(at('evidence')), 'executor-fault': fault },
+  evidence: { captured: go(at('salvage')), 'executor-fault': fault },
   salvage: {
     committed: go(at('teardown')),
     'committed-contract-touched': { do: 'go', to: at('teardown'), chargeable: false, trigger: true },
     unmerged: park('salvage-failed', 'env'),
     'commit-failed': park('salvage-failed', 'retryable'),
+    'executor-fault': fault,
   },
   // Failed cleanup leaves a residue and never releases its resources.
-  teardown: { released: go(at('lanes')), 'cleanup-failed': park('residue', 'retryable') },
+  teardown: { released: go(at('lanes')), 'cleanup-failed': park('residue', 'retryable'), 'executor-fault': fault },
   lanes: {
     green: go(at('gate')),
     red: charge(build('fix')),
@@ -251,6 +274,10 @@ export const TABLE: Table = {
     // Plan defects (2026-10-16): salvage reverted the same out-of-scope path on two build rounds running: the scope-growth
     // hold, uncharged, until the root agent's `scope accept|reject`.
     'scope-growth': hold,
+    'executor-fault': fault,
+    // dev.17: a lane's environment did not come up or failed its probe: no verdict on the tree, uncharged; the executor
+    // probes the environment (up, then its probe) and re-runs the lanes once it passes.
+    'env-unavailable': park('env-unavailable', 'retryable'),
   },
   gate: {
     approve: go(at('candidate')),
@@ -270,6 +297,10 @@ export const TABLE: Table = {
     'read-denied': retry('read-denied', 'env'),
     // 2026-10-16: as at plan-check (the dev.11 consumer arc's 2.37 MB unit diff).
     'context-exceeded': park('context-exceeded', 'env'),
+    'executor-fault': fault,
+    // dev.17 (proportional review): nothing changed since the unit's approval and nothing it bound moved: code approved again
+    // without a call (src/pipeline/review.ts `gateDelta`), on to a new candidate, uncharged.
+    'delta-empty': go(at('candidate')),
   },
   candidate: {
     green: go(at('ff')),
@@ -291,6 +322,9 @@ export const TABLE: Table = {
     preempted: go(at('candidate')),
     // M3 (G10): an active P1 blocks a selected obligation; admission holds the next candidate until it lifts.
     'finding-blocked': go(at('candidate')),
+    'executor-fault': fault,
+    // dev.17: as at lanes.
+    'env-unavailable': park('env-unavailable', 'retryable'),
   },
   ff: {
     published: go(at('snapshot')),
@@ -301,6 +335,34 @@ export const TABLE: Table = {
     'foreign-move': { do: 'stop', reason: 'foreign-ref-move' },
   },
   snapshot: { published: { do: 'retire' } },
+  // dev.17 (design pass, src/pipeline/scaffold.ts): the skeleton committed, on to the first build; refused once, the writer
+  // tries again told why (uncharged); refused again, or a load test that cannot run, an uncharged plan-defect park.
+  scaffold: {
+    scaffolded: go(build('fresh')),
+    refused: go(at('scaffold')),
+    'plan-defect': park('plan-defect', 'env'),
+    refusal: park('refusal', 'design'),
+    'process-fault': park('process-fault', 'retryable'),
+    lost: park('process-fault', 'retryable'),
+    interrupted: hold,
+    'routing-changed': park('routing-changed', 'env'),
+    'context-exceeded': park('context-exceeded', 'env'),
+    occupied: park('occupancy-unlabelled', 'env'),
+    'cleanup-failed': park('residue', 'retryable'),
+    'executor-fault': fault,
+  },
+  // dev.17 (design pass, src/pipeline/poc.ts): answered or not, back to a fresh plan-check with the report, uncharged.
+  poc: {
+    answered: go(at('plan-check')),
+    unanswered: go(at('plan-check')),
+    'process-fault': park('process-fault', 'retryable'),
+    interrupted: hold,
+    'routing-changed': park('routing-changed', 'env'),
+    'context-exceeded': park('context-exceeded', 'env'),
+    occupied: park('occupancy-unlabelled', 'env'),
+    'cleanup-failed': park('residue', 'retryable'),
+    'executor-fault': fault,
+  },
 };
 
 // ---------------------------------------------------------------------------------------------------
@@ -332,6 +394,8 @@ function ruleOf(o: StageOutcome): Rule<OutcomeStage> {
     case 'candidate': return TABLE.candidate[o.kind];
     case 'ff': return TABLE.ff[o.kind];
     case 'snapshot': return TABLE.snapshot[o.kind];
+    case 'scaffold': return TABLE.scaffold[o.kind];
+    case 'poc': return TABLE.poc[o.kind];
     default: return unreachable(o);
   }
 }

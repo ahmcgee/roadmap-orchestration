@@ -466,7 +466,7 @@ describe('startup.plan-in-force', () => {
     writeFileSync(s.planFile, JSON.stringify({ ...s.plan, units: [...(s.plan['units'] as Raw[]), { id: 'u2', spec: 'u2.json', risk: 'low', scope: ['src/**'], resources: ['db'] }] }));
     const j = openJournal(runDirOf(s), arcId(s.arc));
     try {
-      const rctx = { runDir: runDirOf(s), view: j.view, hostDir: s.hostDir, planFile: s.planFile, routingBase: { profile: profileName('default', 'p'), config: null, arcRoles: 'm4b' as const }, laneEnv: process.env };
+      const rctx = { runDir: runDirOf(s), view: j.view, hostDir: s.hostDir, planFile: s.planFile, routingBase: { profile: profileName('default', 'p'), config: null, arcRoles: 'dev17' as const }, laneEnv: process.env };
       const v = evaluateRevision(rctx, readInputFiles(s.planFile, s.repo), { type: 'rule' });
       assert.ok(v.kind === 'accepted', JSON.stringify(v));
       keepRevision(runDirOf(s), v);

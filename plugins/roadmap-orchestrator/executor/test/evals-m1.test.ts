@@ -128,7 +128,7 @@ test('evals-m1.setup-valid: setup lays out a plan parsePlan accepts, specs the s
   for (const u of plan.units) {
     const spec = loadSpec(absPath(join(l.input, u.spec)));
     assert.equal(spec.unit, u.id);
-    assert.deepEqual(spec.lanes.map((x) => x.tier), ['fast']);
+    assert.deepEqual(spec.lanes.map((x) => x.cadence), ['build']);
     assert.ok(spec.acceptance.some((a) => a.clause.includes('.roadmap/contracts/one.md')), `${u.id} cites the contract`);
   }
   assert.equal(git(l.repo, 'rev-parse', MAIN), plan.baseline);
@@ -159,7 +159,7 @@ describe('evals-m1: fake-backed fixture runs', () => {
   let parked: Fixture;
   before(async () => {
     const parkedScenario = join(tmpDir('m1-parked'), 'parked.json');
-    const escalate = { role: 'planCheck', answer: { decision: 'escalate', reasons: ['The contract is ambiguous.'], patch: null, risk: 'med', notes: '', premises: [], visionConflict: [], scopeGrowth: [] } };
+    const escalate = { role: 'planCheck', answer: { decision: 'escalate', reasons: ['The contract is ambiguous.'], patch: null, risk: 'med', notes: '', premises: [], visionConflict: [], scopeGrowth: [], staleLinks: [] } };
     // slug escalates on its seat and again on the escalation seat it routes up to: it parks, and page-id, which
     // runs after it (merged-only, D1), never starts.
     writeFileSync(parkedScenario, JSON.stringify({ steps: [escalate, escalate] }));

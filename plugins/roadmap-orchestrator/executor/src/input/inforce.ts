@@ -305,11 +305,12 @@ export function keepCorpusFiles(runDir: AbsPath, files: readonly SourceFile[]): 
 export type RoutingBase = Readonly<{ profile: ProfileName; config: RepoConfig | null; arcRoles: ArcRoleSet | null }>;
 
 /**
- * The arc-role set of the arc whose plan in force is `inForce` (M4b, R5): `m4b` for an arc with no plan yet (a fresh start
- * records it on revision 1), else what its revisions carry from revision 1 (null: started on 1.0.0-dev.7).
+ * The arc-role set of the arc whose plan in force is `inForce` (M4b, R5): `dev17` for an arc with no plan yet (a fresh start
+ * records it on revision 1), else what its revisions carry from revision 1 (`m4b`: started on dev.8 to dev.16; null: started
+ * on 1.0.0-dev.7).
  */
 export function arcRolesOf(inForce: PlanAppliedFact | null): ArcRoleSet | null {
-  return inForce === null ? 'm4b' : inForce.routingProvenance.arcRoles ?? null;
+  return inForce === null ? 'dev17' : inForce.routingProvenance.arcRoles ?? null;
 }
 
 /** The arc routing of `plan` (no unit layer). */
@@ -364,6 +365,12 @@ export function payloadAtRev(view: JournalView, runDir: AbsPath, rev: number): R
   return keptPayload(runDir, commit.expect.payloadSha256);
 }
 
+/** dev.17: the obligations in force at plan rev `rev` (its kept payload's), or null for a revision without them. */
+export function obligationsAtRev(view: JournalView, runDir: AbsPath, rev: number): Obligations | null {
+  const sha = payloadAtRev(view, runDir, rev).manifest.obligations;
+  return sha === null ? null : parseObligations(JSON.parse(kept(runDir, sha, OBLIGATIONS_INPUT).toString('utf8')));
+}
+
 /** The open `revision.commit` (A19: at most one, its key), or null: the revision fence's durable half. */
 export function openRevision(view: JournalView): IntentOf<'revision.commit'> | null {
   return (view.openIntents().find((i) => i.kind === 'revision.commit') as IntentOf<'revision.commit'> | undefined) ?? null;
@@ -385,12 +392,14 @@ export function planAppliedOf(payload: RevisionPayload, payloadSha256: Sha256Hex
     source: payload.source, payloadSha256, rulingsSha256: m.rulings.ledgerSha256,
     ...(m.obligations === null ? {} : { obligationsSha256: m.obligations }), ...(m.vision === null ? {} : { visionSha256: m.vision }),
     ...(publication === null ? {} : { publication }), routingProvenance: payload.routingProvenance,
+    ...(payload.systemsMap === undefined ? {} : { systemsMap: payload.systemsMap }),
   };
 }
 
 /**
  * Appends what the revision `commit` names, only what is missing (recovery runs it again): `plan-applied` from the
- * payload exactly, then its divergences in order, each once per `(job, index)`. The caller writes the done.
+ * payload exactly, then its divergences in order, each once per `(job, index)`, then (dev.17) its stale set, once per rev.
+ * The caller writes the done.
  */
 export function appendRevision(journal: Journal, commit: IntentOf<'revision.commit'>, payload: RevisionPayload, publication: Publication | null): PlanAppliedFact {
   const inForce = journal.view.planApplied();
@@ -410,6 +419,11 @@ export function appendRevision(journal: Journal, commit: IntentOf<'revision.comm
     index.set(d.job, i + 1);
     if (journal.view.holistic().divergences.some((x) => x.job === d.job && x.index === i)) continue;
     journal.fact({ kind: 'divergence', id: journal.view.nextDivergenceId(), index: i, ...d });
+  }
+  // dev.17 (propagation): the stale set, once per rev.
+  if (payload.stale !== undefined && !journal.view.propagationFacts().some((x) => x.fact.kind === 'stale-set' && x.fact.rev === payload.rev)) {
+    journal.fact({ kind: 'stale-set', rev: payload.rev, ...payload.stale });
+    crashPoint('propagation.after-stale-set');
   }
   return fact;
 }
@@ -458,6 +472,7 @@ export function recordPlan(journal: Journal, runDir: AbsPath, files: InputFiles,
   const payload: RevisionPayload = {
     v: SCHEMA_VERSION, source: { type: 'start' }, base, rev: planRev(base + 1), manifest: keepRevisionFiles(runDir, files), changes,
     dispositions: [], divergences: [], publication: null, routingProvenance: routingProvenanceOf(routing, files.plan),
+    systemsMap: routing.config?.systemsMap ?? null,
   };
   return commitRevisionNow(journal, runDir, payload, { type: 'arc' });
 }

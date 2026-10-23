@@ -13,12 +13,14 @@
 // and prints a `result` per turn (`result_index` 0, 1, ...; Claude Code 2.1.288), each with `structured_output`, since
 // `--json-schema` forces one at every turn end; the build answer's `final` tells the interim ones from the report
 // (src/runner/report.ts). The last `result` event is the reading (its usage: `readUsage`); a stream without one (the CLI
-// died or was killed first) has no output and usage `no-result`. The `assistant` events' tool_use blocks of Read, Grep
+// died or was killed first) has no output and usage `no-result`, with what its own model's `assistant` events showed
+// (`streamedUsage`). Every `is_error` result is a backend error, not the last one alone (field feedback 2026-10-23: a
+// judge's first result was the session limit, and its failing background subagents' empty results came after it). The `assistant` events' tool_use blocks of Read, Grep
 // and Glob are the session's reads (reads.json), its subagents' included (their events carry `parent_tool_use_id`). The result's `permission_denials` (`[{tool_name, tool_use_id, tool_input}]`,
 // on every result the CLI prints, an is_error one included) lists the tool calls the CLI refused: in a judgment,
 // a read of a path outside the cwd and every `--add-dir` (paid M4b run 5 captured one: a gate's Glob of the
 // parent of its evidence dirs). Its Read, Grep and Glob entries are reads.json's `denied`.
-import type { ClassUsage, TokenUsage, ToolRead, Usage, UsageUnavailableReason } from '../core/records.ts';
+import type { BackendError, ClassUsage, TokenUsage, ToolRead, Usage, UsageUnavailableReason } from '../core/records.ts';
 import { delegateClass } from '../routing/classes.ts';
 import { MODEL_CLASSES, type ModelClass } from '../routing/types.ts';
 import type { BackendReading } from './adapter.ts';
@@ -148,38 +150,76 @@ function deniedOf(r: StreamEvent): readonly ToolRead[] {
   });
 }
 
+/**
+ * What a stream without a result showed of its session's own spend (field feedback 2026-10-23 item 6: a checkpoint call
+ * cancelled by a superseding revision, or killed, before its result): each `assistant` message of the init event's model
+ * outside any subagent (`parent_tool_use_id` null), once per message id (the CLI prints one event per content block, each
+ * with the message's usage). Input and cache figures are the API's own; `output_tokens` is the figure as streamed, a
+ * lower bound; `turns` the messages; cost null (only a result reports one). Null when the stream showed no such message.
+ */
+function streamedUsage(events: readonly StreamEvent[], ownModel: string | null): TokenUsage | null {
+  const messages = new Map<string, Readonly<Record<string, unknown>>>();
+  for (const e of events) {
+    if (e['type'] !== 'assistant' || e['parent_tool_use_id'] !== null) continue;
+    const m = e['message'] as Record<string, unknown>;
+    if (m['model'] !== ownModel || typeof m['id'] !== 'string') continue;
+    const u = m['usage'];
+    if (typeof u !== 'object' || u === null) throw new MalformedOutputError('stdout', `assistant message ${m['id']} without usage`);
+    messages.set(m['id'], u as Record<string, unknown>);
+  }
+  if (messages.size === 0) return null;
+  const sum = (k: string): number => [...messages.values()].reduce((a, u) => {
+    const n = u[k];
+    if (!count(n)) throw new MalformedOutputError('stdout', `an assistant message's usage.${k} is not a count`);
+    return a + n;
+  }, 0);
+  return {
+    inputTokens: sum('input_tokens'), outputTokens: sum('output_tokens'), cacheReadTokens: sum('cache_read_input_tokens'),
+    cacheWriteTokens: sum('cache_creation_input_tokens'), turns: messages.size, costUsd: null,
+  };
+}
+
+/** Each `is_error` result's error, in stream order, once per message. */
+function errorsOf(results: readonly StreamEvent[]): readonly BackendError[] {
+  const out: BackendError[] = [];
+  for (const r of results) {
+    if (r['is_error'] !== true) continue;
+    const message = typeof r['result'] === 'string' ? r['result'] : JSON.stringify(r['result'] ?? null);
+    const status = typeof r['api_error_status'] === 'number' ? r['api_error_status'] : null;
+    if (!out.some((e) => e.message === message)) out.push({ class: classifyBackendError(message, status), message });
+  }
+  return out;
+}
+
 /** @param stdout the invocation's stdout file: empty when the CLI died before printing anything. */
 export function readClaude(stdout: string): BackendReading {
   const events = jsonLines(stdout, 'stdout');
   const reads = readsOf(events);
   const results = events.filter((e) => e['type'] === 'result');
+  const init = events.find((e) => e['type'] === 'system' && e['subtype'] === 'init');
+  const ownModel = typeof init?.['model'] === 'string' ? init['model'] : null;
   const r = results.at(-1);
   if (r === undefined) {
+    const streamed = streamedUsage(events, ownModel);
     return {
-      sessionId: null, output: { kind: 'absent', why: 'no result event on stdout' }, usage: { kind: 'unavailable', reason: 'no-result' }, backendErrors: [], stopReason: null,
+      sessionId: null, output: { kind: 'absent', why: 'no result event on stdout' },
+      usage: { kind: 'unavailable', reason: 'no-result', ...(streamed === null ? {} : { streamed }) }, backendErrors: [], stopReason: null,
       access: { reads, denied: [] },
     };
   }
   const sessionId = r['session_id'];
   if (typeof sessionId !== 'string') throw new MalformedOutputError('stdout', 'result without a string session_id');
   const stopReason = typeof r['stop_reason'] === 'string' ? r['stop_reason'] : null;
-  const init = events.find((e) => e['type'] === 'system' && e['subtype'] === 'init');
-  const usage = readUsage(results, typeof init?.['model'] === 'string' ? init['model'] : null);
+  const usage = readUsage(results, ownModel);
   const denied = deniedOf(r);
-  if (r['is_error'] === true) {
-    const message = typeof r['result'] === 'string' ? r['result'] : JSON.stringify(r['result'] ?? null);
-    const status = typeof r['api_error_status'] === 'number' ? r['api_error_status'] : null;
-    return {
-      sessionId,
-      output: { kind: 'absent', why: 'the CLI reported an error result' },
-      usage,
-      backendErrors: [{ class: classifyBackendError(message, status), message }],
-      stopReason,
-      access: { reads, denied },
-    };
+  const backendErrors = errorsOf(results);
+  // A usage limit anywhere in the stream is the call's end, whatever results follow it: the session can make no further
+  // request, so a later result is a background task's wind-down, not an answer.
+  if (r['is_error'] === true || backendErrors.some((e) => e.class === 'usage-limit')) {
+    return { sessionId, output: { kind: 'absent', why: 'the CLI reported an error result' }, usage, backendErrors, stopReason, access: { reads, denied } };
   }
   const output: BackendReading['output'] = Object.hasOwn(r, 'structured_output')
     ? { kind: 'present', value: r['structured_output'] }
     : { kind: 'absent', why: 'no structured_output in the result' };
-  return { sessionId, output, usage, backendErrors: [], stopReason, access: { reads, denied } };
+  return { sessionId, output, usage, backendErrors, stopReason, access: { reads, denied } };
 }

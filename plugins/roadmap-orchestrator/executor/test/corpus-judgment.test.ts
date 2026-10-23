@@ -165,7 +165,9 @@ describe('a corpus arc\'s unit through its gate', T, () => {
 
   it('status.gate-answer: the unit\'s line carries its latest gate answer: every finding by class and what the gate did not review (dev.12 round 2)', () => {
     const line = status(absPath(a.d.runDir), arcId(a.d.arc), absPath(a.d.hostDir)).units.find((u) => u.unit === U1);
-    assert.deepEqual(line?.gate, { attempt: r.journal.view.unit(U1).approval!.attempt, decision: 'approve', findings: FINDINGS, unreviewed: UNREVIEWED });
+    // dev.17: the live answer carries each finding's defect, reraises and hunk (null on these notes).
+    const findings = FINDINGS.map((f) => ({ defect: null, reraises: null, hunk: null, ...f }));
+    assert.deepEqual(line?.gate, { attempt: r.journal.view.unit(U1).approval!.attempt, decision: 'approve', findings, unreviewed: UNREVIEWED });
   });
 
   it('publish.debt-render: the close-out renders debt.md from the baseline ledger, the Phase-0 dispositions and the banked items, and invariants.md with the pin\'s registry', () => {

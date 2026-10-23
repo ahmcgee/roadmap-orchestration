@@ -12,7 +12,8 @@
         "notes": "",
         "premises": [],
         "visionConflict": [],
-        "scopeGrowth": []
+        "scopeGrowth": [],
+        "staleLinks": []
       }
     },
     {
@@ -40,7 +41,8 @@
         ],
         "premises": [],
         "unreviewed": [],
-        "clusters": null
+        "clusters": null,
+        "rulings": []
       }
     },
     {
@@ -55,7 +57,8 @@
         "notes": "",
         "premises": [],
         "visionConflict": [],
-        "scopeGrowth": []
+        "scopeGrowth": [],
+        "staleLinks": []
       }
     },
     {
@@ -83,7 +86,8 @@
         ],
         "premises": [],
         "unreviewed": [],
-        "clusters": null
+        "clusters": null,
+        "rulings": []
       }
     }
   ]

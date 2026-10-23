@@ -252,6 +252,8 @@ test('route.risk-floor: a risk below its Phase-0 floor is refused unless the uni
     steps: [planCheckStep({ decision: 'approve' }), mulBuild(), planCheckStep({ decision: 'approve' }), claudeBuild()],
   });
   addRuling(d, 'C-2', 'u4 is low risk after all.', { appliesTo: { type: 'units', units: ['u4'] } });
+  // The plan seats build.high on frontier, so a raise to high moves the implementer (every built-in build seat is efficient since dev.17).
+  editPlan(d, (p) => void (p['routing'] = { build: { high: 'frontier' } }));
   const cites = { contracts: ['contracts/api.md'], rulings: ['C-1', 'C-2'] };
   // Both cite C-2; it applies to u4 alone.
   editSpec(d, 'u3', (s) => void (s['cites'] = cites));

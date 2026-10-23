@@ -6,7 +6,7 @@ converges the codebase on the documented target state, unattended, for a week or
 
 ## Status
 
-**1.0 is in prerelease on `main`** (`1.0.0-dev.14`), and it is what the marketplace installs. Milestones M1 to M4b
+**1.0 is in prerelease on `main`** (`1.0.0-dev.17`), and it is what the marketplace installs. Milestones M1 to M4b
 and the dev.13 milestone walkthroughs have landed. The last 0.x release is at tag `v0.20.0`.
 
 ## What 1.0 is

@@ -21,7 +21,8 @@
         "notes": "",
         "premises": [],
         "visionConflict": [],
-        "scopeGrowth": []
+        "scopeGrowth": [],
+        "staleLinks": []
       }
     },
     {
@@ -36,7 +37,8 @@
         "notes": "",
         "premises": [],
         "visionConflict": [],
-        "scopeGrowth": []
+        "scopeGrowth": [],
+        "staleLinks": []
       },
       "stdinContains": [
         "slugify has no special case for an empty result; pageId owns the empty slug (contract one)."
@@ -86,7 +88,8 @@
         ],
         "premises": [],
         "unreviewed": [],
-        "clusters": null
+        "clusters": null,
+        "rulings": []
       }
     },
     {
@@ -101,7 +104,8 @@
         "notes": "",
         "premises": [],
         "visionConflict": [],
-        "scopeGrowth": []
+        "scopeGrowth": [],
+        "staleLinks": []
       }
     },
     {
@@ -129,7 +133,10 @@
             "text": "pageId('!!!', 3) returns '-3'.",
             "contractRef": ".roadmap/contracts/one.md",
             "experiments": [],
-            "debt": null
+            "debt": null,
+            "defect": "requirement-unmet",
+            "reraises": null,
+            "hunk": null
           }
         ],
         "directives": [
@@ -140,7 +147,8 @@
         ],
         "premises": [],
         "unreviewed": [],
-        "clusters": null
+        "clusters": null,
+        "rulings": []
       }
     },
     {
@@ -171,7 +179,8 @@
         ],
         "premises": [],
         "unreviewed": [],
-        "clusters": null
+        "clusters": null,
+        "rulings": []
       },
       "stdinContains": [
         "Deliver B2: when slugify(title) is empty, pageId must use 'page' as the slug part (pageId('!!!', 3) is 'page-3'), and test it."

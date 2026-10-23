@@ -28,7 +28,7 @@ import {
   type DispatchRecord, type KillReason, type KnownDefectMatch, type LensKindName, type PauseTarget, type PlanManifest, type RedRev, type ResidueRecord, type ResumeTarget,
   type RevisionManifest, type SpecPatch, type Stage, type TokenUsage, type ClassUsage, classUsages, type UsageUnavailableReason, approvalFingerprint, containmentMode,
   dispatchRecord, killReason, knownDefectMatch, optionId, pauseTarget, manifestSpecs, resumeTarget, revisionInputs, specPatch, stage, tokenUsage,
-  usageUnavailableReason,
+  usageUnavailableReason, type Stochastic, stochastic,
 } from './records.ts';
 import {
   type BusyAttempt, type ClassifiedAdmit, type Conversion, type ConversionReason, BUNDLE_REJECTIONS, CONVERSION_REASONS, classifiedAdmit, conversion,
@@ -51,6 +51,13 @@ import {
   type ArcSeatRef, type Backend, type RiskTier, type RoutingProvenance, type SeatRef, type UnitSeatRef, arcSeatFields, backend, riskTier,
   routingProvenance, seatFields, unitSeatFields,
 } from '../routing/types.ts';
+import { type SystemsMap, systemsMap } from '../input/systems.ts';
+import { type FlakyEvent, flakyEvent } from './flaky.ts';
+import { type PropagationTarget, type StaleAnswer, type StaleSet, propagationTarget, staleAnswer, staleSet, staleSetFields } from './stale.ts';
+import {
+  type ApprovalBlobs, type FindingsLedgerEntry, type GateReview, type LedgerOutcome, LEDGER_OUTCOMES, approvalBlobs, findingsLedgerEntry, gateReview,
+} from './review.ts';
+import { type ReviewFindingId, reviewFindingId } from './ids.ts';
 
 // ---------------------------------------------------------------------------------------------------
 // Op kinds and their payloads
@@ -150,9 +157,11 @@ export type LaneOwner = Readonly<{ type: 'unit'; unit: UnitId }> | Readonly<{ ty
 export type MutantOf = Readonly<{ type: 'finding'; finding: FindingId }> | Readonly<{ type: 'smoke'; unit: UnitId; attempt: number }>;
 
 /**
- * A lane execution's reuse identity (M4a rev 3, F1a, R52), stamped on a spec lane's spawn: the lane's normalised rev
- * (`laneRevOf`), its environment's id (`envIdOf`), and argv[0] resolved to a path with its content's sha256 (null when it
- * does not resolve: never reused). Absent: a 1.0.0-dev.6 execution, never reused.
+ * A lane execution's reuse identity (M4a rev 3, F1a, R52), stamped on a spec lane's spawn and (dev.17) on a suite lane's,
+ * in a series or a journey: the lane's normalised rev (`laneRevOf`), its environment's id (`envIdOf`), and argv[0] resolved
+ * to a path with its content's sha256 (null when it does not resolve: never reused). With the lane's input on the run's
+ * commit (src/git/reusekey.ts) it is the run's reuse key. Absent: never reused (a 1.0.0-dev.6 execution, a suite lane's
+ * before dev.17).
  */
 export type LaneIdentity = Readonly<{ laneRev: LaneRev; envId: EnvId; argv0: Readonly<{ path: AbsPath; sha256: Sha256Hex }> | null }>;
 
@@ -170,10 +179,24 @@ export type Dev6MutantSubject = Readonly<{ purpose: 'mutant'; finding: FindingId
 export type SpawnSubject =
   | (Readonly<{ purpose: 'backend'; routingRev: RoutingRev; unit: UnitId; attempt: number }> & UnitSeatRef)
   | (Readonly<{ purpose: 'arc-backend'; routingRev: RoutingRev; job: JobId; attempt: number }> & ArcSeatRef)
-  | Readonly<{ purpose: 'journey'; lane: LaneId; laneRev: LaneRev; at: Sha; owner: LaneOwner; redRev?: RedRev }>
+  /** dev.17: `identity` on a suite lane's journey (a batch point's, a publication's), so a batch point finds its clean passes. */
+  | Readonly<{ purpose: 'journey'; lane: LaneId; laneRev: LaneRev; at: Sha; owner: LaneOwner; redRev?: RedRev; identity?: LaneIdentity }>
   | MutantSubject
   | Dev6MutantSubject
-  | Readonly<{ purpose: 'lane'; unit: UnitId; lane: LaneId; set: 'spec' | 'suite'; at: Sha; redRev?: RedRev; identity?: LaneIdentity }>
+  /**
+   * dev.17: `files`, a test-only run (src/pipeline/lanes.ts `testOnlyRun`): the lane's `testArgv` over these leaf test files,
+   * the rest carried over from the clean pass the run builds on (non-empty when present; absent: the whole lane).
+   */
+  /**
+   * dev.17 (flaky ledger): `verify`, a deflake unit's verification run count of the lane (2 or more): its runs are `verify`
+   * spawns that must all pass (src/pipeline/deflake.ts). Absent: one run under the red-lane protocol (lasting).
+   * `stochastic` (dev.17): a run of a stochastic lane (records.ts `Stochastic`, its spec's), so its series' runs are read as
+   * k of n, never as a red run and its rerun (src/pipeline/failures.ts). Absent on a verification run (`verify` says it).
+   */
+  | Readonly<{
+    purpose: 'lane'; unit: UnitId; lane: LaneId; set: 'spec' | 'suite'; at: Sha; redRev?: RedRev; identity?: LaneIdentity; files?: readonly RepoPath[]; verify?: number;
+    stochastic?: Stochastic;
+  }>
   | Readonly<{ purpose: 'teardown' | 'probe'; unit: UnitId | null; resource: ResourceInstance }>
   /**
    * M4b: one side of a suite-lane proof (RC-4): proof job `job` runs lane `lane` with its `old` or `new` argv at the
@@ -188,11 +211,20 @@ export type SpawnSubject =
    * again).
    */
   | Readonly<{ purpose: 'bring-up'; milestone: MilestoneId; step: string }>
+  /**
+   * dev.17: one lifecycle command of plan environment `environment` (src/resources/environments.ts): `up` and `down` are
+   * its lifecycle transitions (keyed `env:<name>`, so at most one is open: the journal is the state machine), `probe` its
+   * health check before a lane uses it (keyed `env-probe:<name>`).
+   */
+  | Readonly<{ purpose: 'environment'; environment: ResourceName; action: EnvironmentAction }>
   | Readonly<{
     purpose: 'smoke';
     check: string;
     target: (Readonly<{ type: 'backend'; backend: Backend; routingRev: RoutingRev }> & SeatRef) | Readonly<{ type: 'command' }>;
   }>;
+
+export const ENVIRONMENT_ACTIONS = ['up', 'down', 'probe'] as const;
+export type EnvironmentAction = (typeof ENVIRONMENT_ACTIONS)[number];
 
 export type WorktreeCheckout =
   | Readonly<{ type: 'branch'; branch: RefName; at: Sha; createBranch: boolean }>
@@ -312,7 +344,13 @@ export type RevisionSource =
   /** dev.13: the code-applied polish revision of walk `job`: its applied proposals admitted as polish units (src/walk/polish.ts). */
   | Readonly<{ type: 'walk'; job: JobId }>
   /** dev.13: the cut of polish unit `unit`, which its compare judged `drop` (`polish-dropped`, src/walk/compare.ts). */
-  | Readonly<{ type: 'compare'; unit: UnitId }>;
+  | Readonly<{ type: 'compare'; unit: UnitId }>
+  /** dev.17 (design pass): the split of `unit` its plan-check call `inv` decided (src/pipeline/split.ts). */
+  | Readonly<{ type: 'split'; unit: UnitId; inv: InvocationId }>
+  /** dev.17 (flaky ledger): the code-applied revision admitting deflake units for the flakes the ledger holds (src/pipeline/deflake.ts). */
+  | Readonly<{ type: 'deflake' }>
+  /** dev.17 (propagation): the code-applied revision minting the propagation units of the stale set plan rev `rev` recorded. */
+  | Readonly<{ type: 'propagation'; rev: PlanRev }>;
 
 /** Expected postconditions beyond what the kind and `expect` already fix; `null` where they fix everything. */
 export type OpPost = {
@@ -386,7 +424,8 @@ export type Parent =
 /** null: closed on the normal path. Otherwise the reconciler disposition that closed it during recovery. */
 export type RecoveredBy = null | 'reconciled' | 'redone' | 'adopted';
 
-export type AbortCode = 'precondition' | 'recovery' | 'cancelled';
+/** `fault` (1.0.0-dev.17): an op of a task the executor faulted in, closed by the fault's settlement (src/schedule/fault.ts). */
+export type AbortCode = 'precondition' | 'recovery' | 'cancelled' | 'fault';
 
 export type IntentOf<K extends OpKind> = Readonly<{
   type: 'intent';
@@ -423,37 +462,44 @@ export type MeterSubject =
 // Stage outcomes: the vocabulary of the `stage-outcome` fact. The transition table itself (what each
 // outcome leads to) is `src/pipeline/transitions.ts`; its `StageOutcome` union is derived from this list.
 
-/** Every outcome a stage can report, per stage. `retire` is terminal and reports none. */
+/**
+ * Every outcome a stage can report, per stage. `retire` is terminal and reports none. 1.0.0-dev.17 (fault isolation):
+ * `executor-fault` at every stage but `ff` and `snapshot` (which always hold the integration slot, so a throw there crashes):
+ * the executor threw inside the unit's task while it held only the unit's own state (src/schedule/fault.ts); an uncharged
+ * operator env park whose detail carries the stack, so `resume <unit>` re-enters the stage.
+ */
 export const STAGE_OUTCOME_KINDS = {
   // A re-entered unit's preparation (M2): where the prepared worktree enters. `conflicted` keeps MERGE_HEAD and
   // enters a `resolve` round (A6). `interrupted` (arc feedback 2026-10-15): only ever the recovery hold of a preparation
   // a crash cut short (`cause: recovery`); the stage itself is never cancelled.
-  prepare: ['clean-plan-check', 'clean-build', 'clean-verify', 'conflicted', 'interrupted'],
+  prepare: ['clean-plan-check', 'clean-build', 'clean-verify', 'conflicted', 'interrupted', 'executor-fault'],
   // A vacuity repair's first stage (M3, B3): the mutant applied and its lane run. `reproduced` goes on to
   // plan-check; `not-reproduced` dismisses the finding and parks; `inapplicable` parks for the next audit.
-  reproduce: ['reproduced', 'not-reproduced', 'inapplicable', 'blocked', 'interrupted', 'cleanup-failed'],
-  // M4a rev 3 (E): `in-session` (a frontier or summit builder under `planCheck.shape: by-builder`: no plan-check call, the
-  // build assesses in session).
+  reproduce: ['reproduced', 'not-reproduced', 'inapplicable', 'blocked', 'interrupted', 'cleanup-failed', 'executor-fault'],
+  // M4a rev 3 (E) to dev.16: `in-session` (a frontier or summit builder under `planCheck.shape: by-builder`: no plan-check
+  // call, the build assessed in session). dev.17 records none; read from an older log.
   // Paid M4b run 5: `read-denied`, as at the gate (no longer recorded since 2026-10-16; read from a 1.0.0-dev.11 log).
   // Scope growth (2026-10-15): `scope-growth` (the answer proposed scope growth code verified: a hold until the root agent's
   // `scope accept|reject <unit>`, src/commands/scope.ts).
   // 2026-10-16: `context-exceeded` (the call's prompt or context outgrew the model's window: an uncharged env park), at
   // plan-check, build and gate.
+  // dev.17 (design pass): `split` (the split revision lands, cutting the unit: a hold no resume releases), `scaffold` and `poc`
+  // (on to those stages), `plan-defect` (an answer refused twice for a plan defect: an uncharged park naming why).
   'plan-check': [
     'approve', 'redirect', 'infeasible', 'escalate', 'risk-lowered', 'scope-widened', 'refusal', 'malformed', 'process-fault', 'interrupted', 'routing-changed',
-    'in-session', 'read-denied', 'scope-growth', 'context-exceeded',
+    'in-session', 'read-denied', 'scope-growth', 'context-exceeded', 'executor-fault', 'split', 'scaffold', 'poc', 'plan-defect',
   ],
-  // M4a rev 3 (E, R55): the in-session assessment found the spec `infeasible`, or raised the risk floor onto another
-  // implementer seat (`risk-raised`).
+  // M4a rev 3 (E, R55) to dev.16: the in-session assessment found the spec `infeasible`, or raised the risk floor onto
+  // another implementer seat (`risk-raised`). dev.17 records neither; read from an older log.
   // 2026-10-15 (arc feedback #3): `witness-lane-missing` (a required witness item names no arc lane in force), at build and lanes.
   build: [
     'success', 'refusal', 'malformed', 'process-fault', 'lost', 'lost-tree-effects', 'occupied', 'cleanup-failed', 'interrupted', 'routing-changed', 'infeasible',
-    'risk-raised', 'witness-lane-missing', 'context-exceeded',
+    'risk-raised', 'witness-lane-missing', 'context-exceeded', 'executor-fault',
   ],
-  quiesce: ['empty'],
-  evidence: ['captured'],
-  salvage: ['committed', 'committed-contract-touched', 'unmerged', 'commit-failed'],
-  teardown: ['released', 'cleanup-failed'],
+  quiesce: ['empty', 'executor-fault'],
+  evidence: ['captured', 'executor-fault'],
+  salvage: ['committed', 'committed-contract-touched', 'unmerged', 'commit-failed', 'executor-fault'],
+  teardown: ['released', 'cleanup-failed', 'executor-fault'],
   // M4a rev 3 (corpus arcs, LR-h): `witnesses-missing` (D1: a required witness id absent or failing after a green certified
   // series); `smoke-survived` (D2: a mutation-smoke target survived); `known-defect` (F4: the unit hit a plan known
   // defect, uncharged, back to prepare). `base-red` (the 2026-10-15 batch): a fast suite lane red at the salvage SHA is red on
@@ -462,21 +508,41 @@ export const STAGE_OUTCOME_KINDS = {
   // ran, or that no build of the unit could create: an uncharged park naming the defects, src/pipeline/witnesscheck.ts);
   // `scope-growth` (salvage reverted the same out-of-scope path on the unit's last two build rounds: the hold of a
   // plan-check's proposal, with that path as the proposal, until `scope accept|reject`).
+  // dev.17: `env-unavailable` (a lane's environment did not come up or failed its probe: a retryable park on the
+  // environment, never a red lane), here and at the candidate.
   lanes: [
     'green', 'red', 'not-certified', 'blocked', 'interrupted', 'occupied', 'cleanup-failed', 'witnesses-missing', 'smoke-survived', 'known-defect', 'base-red',
-    'witness-lane-missing', 'plan-defect', 'scope-growth',
+    'witness-lane-missing', 'plan-defect', 'scope-growth', 'executor-fault', 'env-unavailable',
   ],
   // M4a rev 3 (paid run 11): `unverified` (no green verification checkout of the head: the lanes run again, uncharged).
   // Paid M4b run 5: `read-denied` (an approve from a session the CLI refused a read: not an approval; one uncharged retry).
   // TEMPORARY SCAFFOLDING (BACKLOG "Scaffolding to delete"): no longer recorded since 2026-10-16, when the judge's read
   // surface widened to the repository and the run dir and a refused read stopped voiding an approval; kept, with its
   // transition row, so a 1.0.0-dev.11 log whose latest gate or plan-check outcome is one still folds and retries.
-  gate: ['approve', 'revise', 'escalate', 'empty-diff', 'refusal', 'malformed', 'process-fault', 'interrupted', 'routing-changed', 'unverified', 'read-denied', 'context-exceeded'],
+  // dev.17 (proportional review): `delta-empty` (no file changed since the unit's approval and no target it bound moved:
+  // code skips the gate and approves again at the new fingerprint, uncharged).
+  gate: [
+    'approve', 'revise', 'escalate', 'empty-diff', 'refusal', 'malformed', 'process-fault', 'interrupted', 'routing-changed', 'unverified', 'read-denied', 'context-exceeded',
+    'executor-fault', 'delta-empty',
+  ],
   // M3: `preempted` (a docs publication took the slot before green, A7, uncharged); `finding-blocked` (an active P1
   // blocks a selected obligation, at admission or the pre-ff re-check, G10; uncharged, waits for the finding).
-  candidate: ['green', 'transient-violation', 'conflict', 'red', 'base-red', 'blocked', 'occupied', 'cleanup-failed', 'interrupted', 'preempted', 'finding-blocked'],
+  candidate: [
+    'green', 'transient-violation', 'conflict', 'red', 'base-red', 'blocked', 'occupied', 'cleanup-failed', 'interrupted', 'preempted', 'finding-blocked',
+    'executor-fault', 'env-unavailable',
+  ],
   ff: ['published', 'cas-stale', 'fingerprint-invalid', 'foreign-move'],
   snapshot: ['published'],
+  // dev.17 (design pass): the scaffold writer's attempt. `scaffolded`: the skeleton passed code's checks and is the unit's
+  // first executor-authored commit; `refused`: it failed one (one retry, told why); `plan-defect`: refused again, or its
+  // load test cannot run (an uncharged park naming why).
+  scaffold: [
+    'scaffolded', 'refused', 'plan-defect', 'refusal', 'process-fault', 'lost', 'interrupted', 'routing-changed', 'context-exceeded', 'occupied', 'cleanup-failed',
+    'executor-fault',
+  ],
+  // dev.17 (design pass): a proof of concept's throwaway build. `answered`: its closed answer read; `unanswered`: none to read
+  // (malformed, a refusal, lost). Either goes back to a fresh plan-check with the report.
+  poc: ['answered', 'unanswered', 'process-fault', 'interrupted', 'routing-changed', 'context-exceeded', 'occupied', 'cleanup-failed', 'executor-fault'],
 } as const satisfies { readonly [S in Exclude<Stage, 'retire'>]: readonly string[] };
 export type OutcomeStage = keyof typeof STAGE_OUTCOME_KINDS;
 export type StageOutcomeKind<S extends OutcomeStage = OutcomeStage> = (typeof STAGE_OUTCOME_KINDS)[S][number];
@@ -510,7 +576,9 @@ export type OutcomeClass = (typeof OUTCOME_CLASSES)[number];
 export type ProbeTarget =
   | Readonly<{ type: 'backend'; backend: Backend }>
   | Readonly<{ type: 'host' }>
-  | Readonly<{ type: 'resource'; instance: ResourceInstance }>;
+  | Readonly<{ type: 'resource'; instance: ResourceInstance }>
+  /** dev.17: a plan environment a lane could not bring up or probe: its lifecycle up (when down) and its probe. */
+  | Readonly<{ type: 'environment'; environment: ResourceName }>;
 
 /** A total order key over probe targets: target sets are written sorted and unique by it. */
 export function probeTargetKey(t: ProbeTarget): string {
@@ -518,6 +586,7 @@ export function probeTargetKey(t: ProbeTarget): string {
     case 'backend': return `backend:${t.backend}`;
     case 'host': return 'host';
     case 'resource': return `resource:${t.instance}`;
+    case 'environment': return `environment:${t.environment}`;
   }
 }
 
@@ -578,7 +647,18 @@ export type StageOutcomeDetail =
    * 2026-10-16: plan-check, build or gate `context-exceeded`, the call whose prompt or context outgrew the model's window and
    * its prompt's size in bytes (stdin and the system prompt; dispatch.ts `verdictOf`).
    */
-  | Readonly<{ kind: 'context-exceeded'; inv: InvocationId; promptBytes: number }>;
+  | Readonly<{ kind: 'context-exceeded'; inv: InvocationId; promptBytes: number }>
+  /** 1.0.0-dev.17: `executor-fault` at any stage that has it, the thrown error's stack (its message when it has none). */
+  | Readonly<{ kind: 'executor-fault'; stack: string }>
+  /** dev.17 (design pass): plan-check `split`, the children the split revision adds (two or more, in answer order). */
+  | Readonly<{ kind: 'split'; children: readonly UnitId[] }>
+  /** dev.17 (design pass): plan-check or scaffold `plan-defect`, every reason code refused the design for (non-empty). */
+  | Readonly<{ kind: 'design-defect'; reasons: readonly string[] }>
+  /**
+   * dev.17 (design pass): scaffold `refused`, why code refused the skeleton (non-empty) and, when its dry run ran the load
+   * test's lane, that run's evidence dir: what the retry is told.
+   */
+  | Readonly<{ kind: 'scaffold-refused'; reasons: readonly string[]; laneEvidence: AbsPath | null }>;
 /**
  * One verified scope-growth proposal of a plan-check (src/pipeline/stages.ts `verifiedGrowth`): repository patterns outside
  * the unit's pinned scope, each matching a file at the integration tip the plan-check read (ascending, non-empty), and the
@@ -591,6 +671,12 @@ export const DETAILED_OUTCOMES = {
   'lanes/base-red': 'base-red',
   'plan-check/scope-growth': 'scope-growth', 'lanes/scope-growth': 'scope-growth', 'lanes/plan-defect': 'plan-defect',
   'plan-check/context-exceeded': 'context-exceeded', 'build/context-exceeded': 'context-exceeded', 'gate/context-exceeded': 'context-exceeded',
+  'prepare/executor-fault': 'executor-fault', 'reproduce/executor-fault': 'executor-fault', 'plan-check/executor-fault': 'executor-fault',
+  'build/executor-fault': 'executor-fault', 'quiesce/executor-fault': 'executor-fault', 'evidence/executor-fault': 'executor-fault',
+  'salvage/executor-fault': 'executor-fault', 'teardown/executor-fault': 'executor-fault', 'lanes/executor-fault': 'executor-fault',
+  'gate/executor-fault': 'executor-fault', 'candidate/executor-fault': 'executor-fault',
+  'plan-check/split': 'split', 'plan-check/plan-defect': 'design-defect', 'scaffold/plan-defect': 'design-defect', 'scaffold/refused': 'scaffold-refused', 'scaffold/context-exceeded': 'context-exceeded',
+  'poc/context-exceeded': 'context-exceeded', 'scaffold/executor-fault': 'executor-fault', 'poc/executor-fault': 'executor-fault',
 } as const satisfies Readonly<Record<string, StageOutcomeDetail['kind']>>;
 
 /**
@@ -645,6 +731,19 @@ export type JudgmentInputs = Readonly<{
    * on a gate's; absent on one a dev.11 executor recorded: read through `gateLargeDiffOf`.
    */
   largeDiff?: GateLargeDiff | null;
+  /**
+   * dev.17 (proportional review): the findings ledger, disputes and delta the gate was given (src/core/review.ts `GateReview`),
+   * which the rules its answer is held to follow from. Only on a gate's; absent on one a dev.16 executor recorded, whose answer
+   * is read without them (`gateReviewOf`).
+   */
+  review?: GateReview;
+  /**
+   * dev.17 (design pass): the changed lines the unit's design record estimated (src/core/design.ts `designSize`), null when
+   * its spec has none. Only on a gate's; absent on one an earlier executor recorded. A `largeDiff` beside an estimate within
+   * the gate's inline reading (src/pipeline/design.ts `gateInlineLines`) is the design's calibration signal: recorded,
+   * never acted on.
+   */
+  designEstimate?: number | null;
 }>;
 
 /** The paths a gate's attached diff inlined and did not (`JudgmentInputs.diffShown`). */
@@ -665,7 +764,8 @@ export type Fact =
   | Readonly<{
     kind: 'meter'; inv: InvocationId; routingRev: RoutingRev; subject: MeterSubject; usage: TokenUsage; session?: ClaudeSessionId; delegated?: readonly ClassUsage[];
   }>
-  | Readonly<{ kind: 'usage-unavailable'; inv: InvocationId; routingRev: RoutingRev; subject: MeterSubject; reason: UsageUnavailableReason }>
+  /** `streamed` (dev.17): what a judgment's stream without a result showed (records.ts `Usage`); the meter counts its tokens. */
+  | Readonly<{ kind: 'usage-unavailable'; inv: InvocationId; routingRev: RoutingRev; subject: MeterSubject; reason: UsageUnavailableReason; streamed?: TokenUsage }>
   | Readonly<{ kind: 'dispatch'; record: DispatchRecord }>
   /**
    * A backend is parked arc-wide: a failed invocation reported a usage-limit or capacity error (`inv`, the
@@ -690,6 +790,12 @@ export type Fact =
    * ruled-growth revision it committed (src/commands/scope.ts).
    */
   | Readonly<{ kind: 'scope-decided'; unit: UnitId; attempt: number; command: CommandId; decision: 'accepted' | 'rejected'; reason: string }>
+  /**
+   * dev.17 (arc feedback 2026-10-23, item 7): the scheduler held `apply` `command` because its scope holds units in a stage
+   * (`waitsFor`, sorted): it lands at their stage boundary (A12), evaluated then. Once per command, before its `queued`
+   * receipt; an apply refused when it lands raises an `apply-dropped` item.
+   */
+  | Readonly<{ kind: 'apply-queued'; command: CommandId; waitsFor: readonly UnitId[] }>
   /**
    * A unit re-opened on a spec revision the architect applied (`specRev`, the unit's recorded spec rev + 1,
    * whose bytes hash to `specSha256`): by `resume <unit>` of a unit parked at a judgment stage (`command`: the
@@ -724,9 +830,9 @@ export type Fact =
   /** `run-only` (M2): admission is limited to `units` (sorted), or unlimited again (null). */
   | Readonly<{ kind: 'run-only'; command: CommandId; units: readonly UnitId[] | null }>
   /**
-   * A fix round after a stalled one runs cold on the `build.high` seat (A11, G1): written before that round's
-   * implementer seat is chosen. `attempt` is the escalated build attempt, `stalled` the build attempt whose
-   * round stalled, `from` the unit's build tier until now.
+   * Legacy (D4, retired in dev.17; written by dev.16 and earlier): a fix round after a stalled one ran cold on the
+   * `build.high` seat (A11, G1). `attempt` is the escalated build attempt, `stalled` the build attempt whose round stalled,
+   * `from` the unit's build tier until then. No longer written; a dev.16 log's still folds (state.ts `buildTier`).
    */
   | Readonly<{ kind: 'implementer-escalated'; unit: UnitId; attempt: number; from: RiskTier; to: 'high'; stalled: number }>
   /**
@@ -742,15 +848,45 @@ export type Fact =
   | Readonly<{ kind: 'executor-started'; generation: number; host?: HostFingerprint; pressure?: PressureAvailability }>
   /**
    * The gate at `attempt` approved the unit, bound to `fingerprint` (R2): recorded before its stage-outcome,
-   * read by the candidate and ff stages, and re-checked at T before `integration.ff`.
+   * read by the candidate and ff stages, and re-checked at T before `integration.ff`. dev.17: `blobs`, what it approved by
+   * blob (src/core/review.ts `ApprovalBlobs`), the base of a later round's delta; absent on a dev.16 approval, after which
+   * the next round reviews in full (`approvalBlobsOf`).
    */
-  | Readonly<{ kind: 'approval'; unit: UnitId; attempt: number; fingerprint: ApprovalFingerprint }>
+  | Readonly<{ kind: 'approval'; unit: UnitId; attempt: number; fingerprint: ApprovalFingerprint; blobs?: ApprovalBlobs }>
   | StageOutcomeFact
   | HolisticFact
   | M4aFact
   | FlowFact
-  | WalkFact;
+  | WalkFact
+  | FlakyFact
+  | PropagationFact
+  | ReviewFact;
 export type FactRecord = Readonly<{ type: 'fact'; fact: Fact }>;
+
+/**
+ * dev.17 proportional review (DESIGN-1.0.md §4 "Proportional review"; SCHEMAS.md "Proportional review").
+ *
+ * `review-ledger`: a gate attempt's answer entered the findings ledger: `minted`, each finding with a path that exists at the
+ * head it judged, by its place in the answer (`index`), its entry (blocking: open; any other class settled at once, banked
+ * or released); `settled`, the open entries of the unit this answer settled (a ruled dispute, a fixed or released finding).
+ * At most one per gate attempt, before its stage-outcome.
+ *
+ * `docs-only`: a lanes attempt checked its build's `docsOnlySince` claim against the diff from the unit's last certified
+ * tree `since` to the salvage SHA `at`: accepted by code alone (`code`) or with the verifier (`verifier`), carrying the
+ * passes of `carried` over; or `refused` with the reason, the lanes then running as normal (uncharged).
+ *
+ * `docs-only-miss`: calibration: a candidate attempt found red a lane whose pass the unit's docs-only acceptance carried over.
+ */
+export type ReviewFact =
+  | Readonly<{
+    kind: 'review-ledger'; unit: UnitId; attempt: number; minted: readonly Readonly<{ index: number; entry: FindingsLedgerEntry }>[];
+    settled: readonly Readonly<{ id: ReviewFindingId; outcome: LedgerOutcome }>[];
+  }>
+  | Readonly<{ kind: 'docs-only'; unit: UnitId; attempt: number; since: Sha; at: Sha; verdict: DocsOnlyVerdict; reason: string | null; carried: readonly LaneId[] }>
+  | Readonly<{ kind: 'docs-only-miss'; unit: UnitId; attempt: number; lanes: readonly LaneId[] }>;
+export type ReviewFactKind = ReviewFact['kind'];
+export const DOCS_ONLY_VERDICTS = ['code', 'verifier', 'refused'] as const;
+export type DocsOnlyVerdict = (typeof DOCS_ONLY_VERDICTS)[number];
 
 /**
  * M3 fields of `plan-applied`: `source` (G1); `payloadSha256` (the kept `inputs/<sha>.revision.json` it was appended
@@ -765,6 +901,8 @@ export type PlanAppliedM3 = Readonly<{
   visionSha256?: Sha256Hex;
   publication?: Readonly<{ pub: JobId; head: Sha }>;
   routingProvenance: RoutingProvenance;
+  /** dev.17: the repo config's systems map the revision was applied under (null: none); absent before dev.17 (`systemsMapInForce`). */
+  systemsMap?: SystemsMap | null;
 }>;
 
 /**
@@ -813,7 +951,11 @@ export type LensRefusal = Readonly<{ lens: LensKindName; attempt: number; claim:
 /** The M3 facts (SCHEMAS.md "M3: the holistic layer"). */
 export type HolisticFact =
   /** A witness run's records (`witness.json`, hashed): the observation key and whom it ran for. */
-  | Readonly<{ kind: 'witnessed'; lane: LaneId; laneRev: LaneRev; envId: EnvId; treeSha: Sha; inv: InvocationId; recordsSha256: Sha256Hex; purpose: WitnessPurpose; for: WitnessFor }>
+  /** dev.17: `inputSha`, the lane's input on the tree (src/git/reusekey.ts); absent before dev.17: `treeSha`. */
+  | Readonly<{
+    kind: 'witnessed'; lane: LaneId; laneRev: LaneRev; envId: EnvId; treeSha: Sha; inv: InvocationId; recordsSha256: Sha256Hex; purpose: WitnessPurpose; for: WitnessFor;
+    inputSha?: Sha;
+  }>
   /** A future obligation delivered and held on its publication: it is must-hold from here (after `ff{published}`, before the snapshot). */
   | Readonly<{ kind: 'obligation-latched'; obligation: ObligationId; unit: UnitId; treeSha: Sha }>
   /** dev.13: `milestone` exactly on a `walkthrough` finding (absent on every other: none). */
@@ -823,6 +965,11 @@ export type HolisticFact =
     gateHadPassed: boolean; milestone?: MilestoneId;
     /** dev.13: the finding's cause (its key's input), kept only on a walkthrough finding, so a later walk re-reports it alike; absent: none. */
     cause?: string;
+    /**
+     * dev.17: the batch lane whose red opened it (code's batch P1): a walkthrough P1 from a walk job (the milestone's batch
+     * point) or a witness P1 over no obligation from an audit job (a no-milestone arc's). A repair of it forces the lane.
+     */
+    lane?: LaneId;
   }>
   | Readonly<{ kind: 'finding-transition'; id: FindingId; to: FindingTo }>
   | (Readonly<{ kind: 'audit-started' }> & AuditInputs)
@@ -892,7 +1039,11 @@ export type M4aFact =
    * A series reused a lane's earlier pass instead of running it (F1a, R52), written before the lane would have run;
    * keyed `(parent, lane)`. `from`: the reused execution's series parent, invocation and SHA.
    */
-  | Readonly<{ kind: 'lane-reused'; parent: Parent; lane: LaneId; from: Readonly<{ parent: Parent; inv: InvocationId; at: Sha }> }>
+  /**
+   * dev.17: `set` and `at`, the series that reused it (absent: a spec series, at its commit); `from` may name any unit's
+   * series, a suite lane's included, whose run has the same reuse key (src/git/reusekey.ts).
+   */
+  | Readonly<{ kind: 'lane-reused'; parent: Parent; lane: LaneId; from: Readonly<{ parent: Parent; inv: InvocationId; at: Sha }>; set?: 'spec' | 'suite'; at?: Sha }>
   /**
    * A series' completed clean certificate (Q12, R51): its lanes ran, its checkout's census was clean and its checkout was
    * removed. Absence is unknown, never clean: an uncertified series is never reused. One per `(parent, checkout)`.
@@ -1027,6 +1178,48 @@ export type WalkFact =
   | Readonly<{ kind: 'demo-acted'; command: CommandId; act: DemoAct }>;
 export type WalkFactKind = WalkFact['kind'];
 
+/** Which lanes a flaky lane is of: a unit's spec lane, a plan suite lane, or an arc lane (its reporter names tests). */
+export const FLAKY_LANE_SETS = ['spec', 'suite', 'arc'] as const;
+export type FlakyLaneSet = (typeof FLAKY_LANE_SETS)[number];
+
+/**
+ * dev.17, the flaky ledger (SCHEMAS.md "dev.17: the flaky ledger"; src/pipeline/deflake.ts). `flake-observed`: a lane run
+ * red then green on its diagnostic rerun (same tree, same environment), written once per such rerun before the lane's
+ * record is read, by `owner`'s series. `set` says where the lane is defined; `event.failing` the test ids the red run's
+ * reporter named (an arc lane's; empty for a spec or suite lane, whose key is the lane). `forgiven`: the lane counts as
+ * passed (the rerun's verdict), true unless the owner is a deflake unit for one of the event's keys, which must fix it.
+ */
+export type FlakyFact = Readonly<{ kind: 'flake-observed'; owner: LaneOwner; lane: LaneId; set: FlakyLaneSet; event: FlakyEvent; forgiven: boolean }>;
+
+/**
+ * The dev.17 propagation facts (SCHEMAS.md "dev.17: propagation"; src/holistic/propagation.ts). The fold keeps them in log
+ * order (`propagationFacts`).
+ */
+export type PropagationFact =
+  /**
+   * The stale set of plan rev `rev`, appended from its payload right after its `plan-applied` (and its divergences), once:
+   * what the revision changed that links name, and every link that change left stale.
+   */
+  | (Readonly<{ kind: 'stale-set'; rev: PlanRev }> & StaleSet)
+  /**
+   * An in-flight unit with stale links its plan-check has not answered since they were recorded, re-opened at plan-check at
+   * its first boundary that allows a re-entry (`reentryAllowed`), as a pending spec revision re-opens one; `rev` is the latest
+   * stale set naming it. Its counters are kept.
+   */
+  | Readonly<{ kind: 'stale-reopened'; unit: UnitId; rev: PlanRev }>
+  /**
+   * Plan-check attempt `attempt` of `unit`, judging the revisions of plan rev `rev`, answered every stale link of the unit
+   * recorded up to that rev (`answers`, one per link key, the check `staleAnswerReasons`): written before its approve or
+   * redirect outcome, once per attempt. The links are settled; a later stale set opens new ones.
+   */
+  | Readonly<{ kind: 'stale-answered'; unit: UnitId; attempt: number; rev: PlanRev; answers: readonly StaleAnswer[] }>
+  /**
+   * A propagation the code-applied revision did not mint (the arc draining, or the admit path or the classifier refusing its
+   * unit): settled, never minted. Once per (`rev`, `target`).
+   */
+  | Readonly<{ kind: 'propagation-refused'; rev: PlanRev; target: PropagationTarget; reasons: readonly string[] }>;
+export type PropagationFactKind = PropagationFact['kind'];
+
 export type HolisticFactKind = HolisticFact['kind'];
 export type PlanAppliedFact = Extract<Fact, { kind: 'plan-applied' }>;
 
@@ -1084,7 +1277,7 @@ export type PlanChange =
   | Readonly<{ type: 'unit-priority'; unit: UnitId }>
   /** M4a rev 3 (F4): the plan's `knownDefects` changed. */
   | Readonly<{ type: 'known-defects' }>
-  /** M4a rev 3 (E): the plan's `planCheck.shape` changed (no drain; units whose plan-check has not decided). */
+  /** M4a rev 3 (E) to dev.16: the plan's `planCheck.shape` changed (no drain). Read from older logs; dev.17 writes none. */
   | Readonly<{ type: 'plan-check-shape' }>
   /** Plan defects (2026-10-16): the plan's `derived` entries changed (no drain; each unit re-pins its widening at its next dispatch check). */
   | Readonly<{ type: 'derived' }>
@@ -1129,7 +1322,15 @@ export type RevisionPayload = Readonly<{
   divergences: readonly DivergenceDraft[];
   publication: Readonly<{ renders: readonly Readonly<{ path: RepoPath; sha256: Sha256Hex }>[]; contractOps: readonly ContractOp[] }> | null;
   routingProvenance: RoutingProvenance;
+  /** dev.17: the repo config's systems map (src/input/systems.ts; null: none); absent on a payload a dev.16 executor kept. */
+  systemsMap?: SystemsMap | null;
   owner?: RevisionManifest;
+  /**
+   * dev.17 (propagation): the revision's stale set (src/holistic/propagation.ts `staleSetOf`), present exactly when it changes
+   * a target a link may name (a requirement's rev, a contract, a vision clause); its `stale-set` fact is appended from it.
+   * Absent: none (lasting: a revision that changed no such target, or one a dev.16 executor committed, which computed none).
+   */
+  stale?: StaleSet;
 }>;
 
 /**
@@ -1279,6 +1480,9 @@ const revisionSource: Read<RevisionSource> = tagged('type', {
   flow: object((f): RevisionSource => ({ type: f.get('type', literal('flow')), proposal: f.get('proposal', proposalR) })),
   walk: object((f): RevisionSource => ({ type: f.get('type', literal('walk')), job: f.get('job', (v, p) => jobIdOfKind('walk')(v, p)) })),
   compare: object((f): RevisionSource => ({ type: f.get('type', literal('compare')), unit: f.get('unit', unitR) })),
+  split: object((f): RevisionSource => ({ type: f.get('type', literal('split')), unit: f.get('unit', unitR), inv: f.get('inv', invR) })),
+  deflake: object((f): RevisionSource => ({ type: f.get('type', literal('deflake')) })),
+  propagation: object((f): RevisionSource => ({ type: f.get('type', literal('propagation')), rev: f.get('rev', (v, p) => planRev(v, p)) })),
 });
 
 const resourceEdge: Read<ResourceEdge> = tagged('type', {
@@ -1304,9 +1508,10 @@ const spawnSubject: Read<SpawnSubject> = tagged('purpose', {
   })),
   journey: object((f): SpawnSubject => {
     const redRev = f.optional('redRev', positive);
+    const identity = f.optional('identity', laneIdentity);
     return {
       purpose: f.get('purpose', literal('journey')), lane: f.get('lane', laneR), laneRev: f.get('laneRev', laneRevR), at: f.get('at', shaR),
-      owner: f.get('owner', laneOwner), ...(redRev === undefined ? {} : { redRev }),
+      owner: f.get('owner', laneOwner), ...(redRev === undefined ? {} : { redRev }), ...(identity === undefined ? {} : { identity }),
     };
   }),
   // M4a rev 3: `of`; a 1.0.0-dev.6 subject's `finding` reads as written (`mutantSubjectDefault`).
@@ -1317,13 +1522,17 @@ const spawnSubject: Read<SpawnSubject> = tagged('purpose', {
   lane: object((f): SpawnSubject => {
     const redRev = f.optional('redRev', positive);
     const identity = f.optional('identity', laneIdentity);
-    const out = {
+    const files = f.optional('files', sortedBy((v, p) => repoPath(v, p), (s) => s, { nonEmpty: true }));
+    const verify = f.optional('verify', positive);
+    if (verify !== undefined && verify < 2) throw new SchemaError(`${f.path}.verify`, 'two or more verification runs', verify);
+    const stoch = f.optional('stochastic', stochastic);
+    if (verify !== undefined && stoch !== undefined) throw new SchemaError(f.path, 'a verification run or a stochastic lane\'s run, not both', { verify, stochastic: stoch });
+    return {
       purpose: f.get('purpose', literal('lane')), unit: f.get('unit', unitR), lane: f.get('lane', (v, p): LaneId => laneId(v, p)),
       set: f.get('set', oneOf(['spec', 'suite'] as const)), at: f.get('at', shaR),
-      ...(redRev === undefined ? {} : { redRev }), ...(identity === undefined ? {} : { identity }),
+      ...(redRev === undefined ? {} : { redRev }), ...(identity === undefined ? {} : { identity }), ...(files === undefined ? {} : { files }),
+      ...(verify === undefined ? {} : { verify }), ...(stoch === undefined ? {} : { stochastic: stoch }),
     };
-    if (identity !== undefined && out.set !== 'spec') throw new SchemaError(`${f.path}.identity`, 'absent on a suite lane (only a spec lane is reused)', identity);
-    return out;
   }),
   teardown: object((f): SpawnSubject => ({ purpose: f.get('purpose', literal('teardown')), unit: f.get('unit', nullable(unitR)), resource: f.get('resource', instR) })),
   probe: object((f): SpawnSubject => ({ purpose: f.get('purpose', literal('probe')), unit: f.get('unit', nullable(unitR)), resource: f.get('resource', instR) })),
@@ -1333,6 +1542,9 @@ const spawnSubject: Read<SpawnSubject> = tagged('purpose', {
   })),
   'bring-up': object((f): SpawnSubject => ({
     purpose: f.get('purpose', literal('bring-up')), milestone: f.get('milestone', (v, p): MilestoneId => milestoneId(v, p)), step: f.get('step', str),
+  })),
+  environment: object((f): SpawnSubject => ({
+    purpose: f.get('purpose', literal('environment')), environment: f.get('environment', resR), action: f.get('action', oneOf(ENVIRONMENT_ACTIONS)),
   })),
   smoke: object((f): SpawnSubject => ({
     purpose: f.get('purpose', literal('smoke')),
@@ -1694,9 +1906,11 @@ export const revisionPayload: Read<RevisionPayload> = object((f) => {
     })))),
     routingProvenance: f.get('routingProvenance', routingProvenance),
   };
+  const systems = f.optional('systemsMap', nullable(systemsMap));
   const owner = f.optional('owner', object((g) => ({ planSha256: g.get('planSha256', sha256R), specs: g.get('specs', manifestSpecs), ...revisionInputs(g) })));
+  const stale = f.optional('stale', staleSet);
   if (out.rev !== out.base + 1) throw new SchemaError(`${f.path}.rev`, String(out.base + 1), out.rev);
-  return owner === undefined ? out : { ...out, owner };
+  return { ...out, ...(systems === undefined ? {} : { systemsMap: systems }), ...(owner === undefined ? {} : { owner }), ...(stale === undefined ? {} : { stale }) };
 });
 
 export function parseRevisionPayload(value: unknown): RevisionPayload {
@@ -1707,6 +1921,7 @@ const probeTarget: Read<ProbeTarget> = tagged('type', {
   backend: object((f): ProbeTarget => ({ type: f.get('type', literal('backend')), backend: f.get('backend', backend) })),
   host: object((f): ProbeTarget => ({ type: f.get('type', literal('host')) })),
   resource: object((f): ProbeTarget => ({ type: f.get('type', literal('resource')), instance: f.get('instance', instR) })),
+  environment: object((f): ProbeTarget => ({ type: f.get('type', literal('environment')), environment: f.get('environment', resR) })),
 });
 
 const parkRecord: Read<ParkRecord> = tagged('class', {
@@ -1744,6 +1959,16 @@ const stageOutcomeDetail: Read<StageOutcomeDetail> = tagged('kind', {
   'plan-defect': object((f): StageOutcomeDetail => ({ kind: f.get('kind', literal('plan-defect')), defects: f.get('defects', arrayOf(planDefect, { nonEmpty: true })) })),
   'context-exceeded': object((f): StageOutcomeDetail => ({
     kind: f.get('kind', literal('context-exceeded')), inv: f.get('inv', invR), promptBytes: f.get('promptBytes', nat),
+  })),
+  'executor-fault': object((f): StageOutcomeDetail => ({ kind: f.get('kind', literal('executor-fault')), stack: f.get('stack', str) })),
+  split: object((f): StageOutcomeDetail => {
+    const out = { kind: f.get('kind', literal('split')), children: f.get('children', arrayOf((v, p) => unitId(v, p), { nonEmpty: true })) };
+    if (out.children.length < 2) throw new SchemaError(`${f.path}.children`, 'two or more children', out.children);
+    return out;
+  }),
+  'design-defect': object((f): StageOutcomeDetail => ({ kind: f.get('kind', literal('design-defect')), reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })) })),
+  'scaffold-refused': object((f): StageOutcomeDetail => ({
+    kind: f.get('kind', literal('scaffold-refused')), reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })), laneEvidence: f.get('laneEvidence', nullable((v, p) => absPath(v, p))),
   })),
 });
 
@@ -1835,10 +2060,15 @@ const M4A_FACT_READERS: { readonly [K in M4aFactKind]: Read<Fact> } = {
     if ((out.bankReason === 'opportunity-overrun') !== (out.source.type === 'admit')) throw new SchemaError(`${f.path}.source`, out.bankReason === 'opportunity-overrun' ? 'the admit that overran' : 'a gate or finding source', out.source);
     return opportunity === undefined ? out : { ...out, opportunity };
   }),
-  'lane-reused': object((f): Fact => ({
-    kind: f.get('kind', literal('lane-reused')), parent: f.get('parent', parent), lane: f.get('lane', laneR),
-    from: f.get('from', object((g) => ({ parent: g.get('parent', parent), inv: g.get('inv', invR), at: g.get('at', shaR) }))),
-  })),
+  'lane-reused': object((f): Fact => {
+    const set = f.optional('set', oneOf(['spec', 'suite'] as const));
+    const at = f.optional('at', shaR);
+    return {
+      kind: f.get('kind', literal('lane-reused')), parent: f.get('parent', parent), lane: f.get('lane', laneR),
+      from: f.get('from', object((g) => ({ parent: g.get('parent', parent), inv: g.get('inv', invR), at: g.get('at', shaR) }))),
+      ...(set === undefined ? {} : { set }), ...(at === undefined ? {} : { at }),
+    };
+  }),
   'series-certified': object((f): Fact => ({ kind: f.get('kind', literal('series-certified')), parent: f.get('parent', parent), checkout: f.get('checkout', absR), at: f.get('at', shaR) })),
   'smoke-ran': object((f): Fact => ({
     kind: f.get('kind', literal('smoke-ran')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), key: f.get('key', sha256R), verdict: f.get('verdict', smokeVerdict),
@@ -1952,6 +2182,24 @@ const ports: Read<Readonly<Record<ServeName, number>>> = (value, path) => {
   return out;
 };
 
+/** The readers of the dev.17 propagation facts, spread into `fact`. */
+const PROPAGATION_FACT_READERS: { readonly [K in PropagationFactKind]: Read<Fact> } = {
+  'stale-set': object((f): Fact => ({ kind: f.get('kind', literal('stale-set')), rev: f.get('rev', (v, p) => planRev(v, p)), ...staleSetFields(f) })),
+  'stale-reopened': object((f): Fact => ({ kind: f.get('kind', literal('stale-reopened')), unit: f.get('unit', unitR), rev: f.get('rev', (v, p) => planRev(v, p)) })),
+  'stale-answered': object((f): Fact => {
+    const out = {
+      kind: f.get('kind', literal('stale-answered')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), rev: f.get('rev', (v, p) => planRev(v, p)),
+      answers: f.get('answers', arrayOf(staleAnswer, { nonEmpty: true })),
+    };
+    assertUnique(out.answers, (a) => a.link, `${f.path}.answers`);
+    return out;
+  }),
+  'propagation-refused': object((f): Fact => ({
+    kind: f.get('kind', literal('propagation-refused')), rev: f.get('rev', (v, p) => planRev(v, p)), target: f.get('target', propagationTarget),
+    reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })),
+  })),
+};
+
 /** The readers of the dev.13 facts, spread into `fact`. */
 const WALK_FACT_READERS: { readonly [K in WalkFactKind]: Read<Fact> } = {
   'walk-started': object((f): Fact => ({
@@ -2005,6 +2253,36 @@ const WALK_FACT_READERS: { readonly [K in WalkFactKind]: Read<Fact> } = {
   'demo-acted': object((f): Fact => ({ kind: f.get('kind', literal('demo-acted')), command: f.get('command', cmdR), act: f.get('act', oneOf(DEMO_ACTS)) })),
 };
 
+/** The readers of the dev.17 proportional review facts, spread into `fact`. */
+const REVIEW_FACT_READERS: { readonly [K in ReviewFactKind]: Read<Fact> } = {
+  'review-ledger': object((f): Fact => {
+    const out = {
+      kind: f.get('kind', literal('review-ledger')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive),
+      minted: f.get('minted', arrayOf(object((g) => ({ index: g.get('index', nat), entry: g.get('entry', findingsLedgerEntry) })))),
+      settled: f.get('settled', arrayOf(object((g) => ({ id: g.get('id', (v, p) => reviewFindingId(v, p)), outcome: g.get('outcome', oneOf(LEDGER_OUTCOMES)) })))),
+    };
+    out.minted.forEach((m, i) => {
+      if (m.entry.unit !== out.unit) throw new SchemaError(`${f.path}.minted[${i}].entry.unit`, `unit ${out.unit}`, m.entry.unit);
+      if (m.entry.outcome !== null && m.entry.outcome !== 'banked' && m.entry.outcome !== 'released') throw new SchemaError(`${f.path}.minted[${i}].entry.outcome`, 'open, banked or released at mint', m.entry.outcome);
+    });
+    assertUnique(out.minted, (m) => String(m.index), `${f.path}.minted`);
+    assertUnique(out.settled, (s) => s.id, `${f.path}.settled`);
+    return out;
+  }),
+  'docs-only': object((f): Fact => {
+    const out = {
+      kind: f.get('kind', literal('docs-only')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), since: f.get('since', shaR), at: f.get('at', shaR),
+      verdict: f.get('verdict', oneOf(DOCS_ONLY_VERDICTS)), reason: f.get('reason', nullable(str)), carried: f.get('carried', sortedBy(laneR, (l) => l)),
+    };
+    if ((out.verdict === 'refused') !== (out.reason !== null)) throw new SchemaError(`${f.path}.reason`, out.verdict === 'refused' ? 'why it was refused' : 'null on an acceptance', out.reason);
+    if (out.verdict === 'refused' && out.carried.length > 0) throw new SchemaError(`${f.path}.carried`, 'none on a refusal', out.carried);
+    return out;
+  }),
+  'docs-only-miss': object((f): Fact => ({
+    kind: f.get('kind', literal('docs-only-miss')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), lanes: f.get('lanes', sortedBy(laneR, (l) => l, { nonEmpty: true })),
+  })),
+};
+
 /** The readers of the M3 facts, spread into `fact`. */
 const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = {
   witnessed: object((f): Fact => {
@@ -2013,10 +2291,11 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
       treeSha: f.get('treeSha', shaR), inv: f.get('inv', invR), recordsSha256: f.get('recordsSha256', sha256R), purpose: f.get('purpose', oneOf(WITNESS_PURPOSES)),
       for: f.get('for', witnessFor),
     };
+    const inputSha = f.optional('inputSha', shaR);
     // G13: a mutant run (a finding's, or M4a rev 3's mutation smoke) is recorded as such and never certifies.
     const mutant = out.for.type === 'mutant' || out.for.type === 'smoke';
     if ((out.purpose === 'mutant') !== mutant) throw new SchemaError(`${f.path}.for`, out.purpose === 'mutant' ? 'mutant{finding, of} or smoke{unit, attempt, of}' : 'a candidate or a job', out.for);
-    return out;
+    return inputSha === undefined ? out : { ...out, inputSha };
   }),
   'obligation-latched': object((f): Fact => ({
     kind: f.get('kind', literal('obligation-latched')), obligation: f.get('obligation', obligationR), unit: f.get('unit', unitR), treeSha: f.get('treeSha', shaR),
@@ -2031,6 +2310,7 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
     };
     const milestone = f.optional('milestone', (v, p): MilestoneId => milestoneId(v, p));
     const cause = f.optional('cause', str);
+    const lane = f.optional('lane', laneR);
     // dev.13: a walkthrough finding names its milestone, is a P1 (breaks) or a P2 (deviates), and comes from a walk job or
     // the demo; no other finding names a milestone or comes from the demo.
     const walk = out.lens === 'walkthrough';
@@ -2043,12 +2323,17 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
     // R17: plan-check opens only P3 vision-conflict findings, from its own attempt; every other opener is a job.
     if ((out.lens === 'plan-check') !== (out.source.type === 'stage')) throw new SchemaError(`${f.path}.source`, out.lens === 'plan-check' ? 'the plan-check attempt' : 'the job that opened it', out.source);
     if (out.lens === 'plan-check' && (out.severity !== 'P3' || out.visionClauses.length === 0)) throw new SchemaError(`${f.path}.severity`, 'P3 citing vision clauses for a plan-check vision conflict', out.severity);
-    // A must-hold not held on an audit snapshot opens a P1 over its obligation.
-    if (out.lens === 'witness' && (out.severity !== 'P1' || out.obligation === null)) throw new SchemaError(`${f.path}.severity`, 'P1 over its obligation for a witness finding', out.severity);
+    // A must-hold not held on an audit snapshot opens a P1 over its obligation; dev.17: a batch lane red at an audit, a P1 over none.
+    if (out.lens === 'witness' && (out.severity !== 'P1' || (out.obligation === null) !== (lane !== undefined))) {
+      throw new SchemaError(`${f.path}.severity`, 'P1 over its obligation (or, a batch lane red, over none) for a witness finding', out.severity);
+    }
+    if (lane !== undefined && !((walk && out.severity === 'P1' && out.source.type === 'job') || (out.lens === 'witness' && out.source.type === 'job' && parseJobId(out.source.job).kind === 'audit'))) {
+      throw new SchemaError(`${f.path}.lane`, 'absent (only a batch lane red names one: a walk job\'s walkthrough P1, an audit job\'s witness P1)', lane);
+    }
     if (out.lens === 'vision' && out.severity === 'P1') throw new SchemaError(`${f.path}.severity`, 'P2 or P3 for a vision-lens finding', out.severity);
     // M4a: a checkpoint's issue intake opens P2 or P3 only.
     if (out.lens === 'issue' && out.severity === 'P1') throw new SchemaError(`${f.path}.severity`, 'P2 or P3 for an issue finding', out.severity);
-    return { ...out, ...(milestone === undefined ? {} : { milestone }), ...(cause === undefined ? {} : { cause }) };
+    return { ...out, ...(milestone === undefined ? {} : { milestone }), ...(cause === undefined ? {} : { cause }), ...(lane === undefined ? {} : { lane }) };
   }),
   'finding-transition': object((f): Fact => ({ kind: f.get('kind', literal('finding-transition')), id: f.get('id', findingR), to: f.get('to', findingTo) })),
   'audit-started': object((f): Fact => {
@@ -2135,10 +2420,13 @@ export const fact: Read<Fact> = tagged('kind', {
       usage: f.get('usage', tokenUsage), ...(session === undefined || delegated === undefined ? {} : { session, delegated }),
     };
   }),
-  'usage-unavailable': object((f): Fact => ({
-    kind: f.get('kind', literal('usage-unavailable')), inv: f.get('inv', invR), routingRev: f.get('routingRev', revR), subject: f.get('subject', meterSubject),
-    reason: f.get('reason', usageUnavailableReason),
-  })),
+  'usage-unavailable': object((f): Fact => {
+    const streamed = f.optional('streamed', tokenUsage);
+    return {
+      kind: f.get('kind', literal('usage-unavailable')), inv: f.get('inv', invR), routingRev: f.get('routingRev', revR), subject: f.get('subject', meterSubject),
+      reason: f.get('reason', usageUnavailableReason), ...(streamed === undefined ? {} : { streamed }),
+    };
+  }),
   dispatch: object((f): Fact => ({ kind: f.get('kind', literal('dispatch')), record: f.get('record', dispatchRecord) })),
   'backend-park': object((f): Fact => {
     const out = {
@@ -2160,6 +2448,11 @@ export const fact: Read<Fact> = tagged('kind', {
     kind: f.get('kind', literal('scope-decided')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), command: f.get('command', cmdR),
     decision: f.get('decision', oneOf(['accepted', 'rejected'] as const)), reason: f.get('reason', str),
   })),
+  'apply-queued': object((f): Fact => {
+    const out = { kind: f.get('kind', literal('apply-queued')), command: f.get('command', cmdR), waitsFor: f.get('waitsFor', arrayOf(unitR, { nonEmpty: true })) };
+    assertUnique(out.waitsFor, (u) => u, `${f.path}.waitsFor`);
+    return out;
+  }),
   reopened: object((f): Fact => ({
     kind: f.get('kind', literal('reopened')), unit: f.get('unit', unitR), command: f.get('command', nullable(cmdR)), specRev: f.get('specRev', specRevR),
     specSha256: f.get('specSha256', sha256R),
@@ -2187,9 +2480,16 @@ export const fact: Read<Fact> = tagged('kind', {
     if (diffShown !== undefined && out.stage !== 'gate') throw new SchemaError(`${f.path}.diffShown`, 'absent on a plan-check', diffShown);
     const largeDiff = f.optional('largeDiff', nullable(object((g): GateLargeDiff => ({ overflow: g.get('overflow', positive) }))));
     if (largeDiff !== undefined && out.stage !== 'gate') throw new SchemaError(`${f.path}.largeDiff`, 'absent on a plan-check', largeDiff);
+    const review = f.optional('review', gateReview);
+    if (review !== undefined && out.stage !== 'gate') throw new SchemaError(`${f.path}.review`, 'absent on a plan-check', review);
+    const designEstimate = f.optional('designEstimate', nullable(nat));
+    if (designEstimate !== undefined && out.stage !== 'gate') throw new SchemaError(`${f.path}.designEstimate`, 'absent on a plan-check', designEstimate);
     if (fingerprint === undefined) return out;
     if (fingerprint.unitCommit !== out.head) throw new SchemaError(`${f.path}.fingerprint.unitCommit`, `the head the gate read (${out.head})`, fingerprint.unitCommit);
-    return { ...out, fingerprint, ...(diffShown === undefined ? {} : { diffShown }), ...(largeDiff === undefined ? {} : { largeDiff }) };
+    return {
+      ...out, fingerprint, ...(diffShown === undefined ? {} : { diffShown }), ...(largeDiff === undefined ? {} : { largeDiff }), ...(review === undefined ? {} : { review }),
+      ...(designEstimate === undefined ? {} : { designEstimate }),
+    };
   }),
   'edge-resolved': object((f): Fact => ({
     kind: f.get('kind', literal('edge-resolved')), edge: f.get('edge', (v, p) => edgeId(v, p)), command: f.get('command', cmdR), evidence: f.get('evidence', str),
@@ -2209,7 +2509,10 @@ export const fact: Read<Fact> = tagged('kind', {
   'plan-applied': object((f): Fact => {
     const scheduling = f.optional('scheduling', literal('dag'));
     const opt: Record<string, unknown> = {};
-    for (const [key, read] of [['obligationsSha256', sha256R], ['visionSha256', sha256R], ['publication', object((g) => ({ pub: g.get('pub', docsJobR), head: g.get('head', shaR) }))]] as const) {
+    for (const [key, read] of [
+      ['obligationsSha256', sha256R], ['visionSha256', sha256R], ['publication', object((g) => ({ pub: g.get('pub', docsJobR), head: g.get('head', shaR) }))],
+      ['systemsMap', nullable(systemsMap)],
+    ] as const) {
       const v = f.optional(key, read as Read<unknown>);
       if (v !== undefined) opt[key] = v;
     }
@@ -2235,13 +2538,27 @@ export const fact: Read<Fact> = tagged('kind', {
       ...(pressure === undefined ? {} : { pressure }),
     };
   }),
-  approval: object((f): Fact => ({
-    kind: f.get('kind', literal('approval')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), fingerprint: f.get('fingerprint', approvalFingerprint),
-  })),
+  approval: object((f): Fact => {
+    const out = { kind: f.get('kind', literal('approval')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), fingerprint: f.get('fingerprint', approvalFingerprint) };
+    const blobs = f.optional('blobs', approvalBlobs);
+    if (blobs === undefined) return out;
+    if (blobs.unit !== out.unit || blobs.specRev !== out.fingerprint.specRev) throw new SchemaError(`${f.path}.blobs`, `the blobs of unit ${out.unit} at spec revision ${out.fingerprint.specRev}`, blobs);
+    return { ...out, blobs };
+  }),
   ...HOLISTIC_FACT_READERS,
   ...M4A_FACT_READERS,
   ...FLOW_FACT_READERS,
   ...WALK_FACT_READERS,
+  'flake-observed': object((f): Fact => {
+    const out = {
+      kind: f.get('kind', literal('flake-observed')), owner: f.get('owner', laneOwner), lane: f.get('lane', laneR), set: f.get('set', oneOf(FLAKY_LANE_SETS)),
+      event: f.get('event', flakyEvent), forgiven: f.get('forgiven', bool),
+    };
+    if (out.set !== 'arc' && out.event.failing.length > 0) throw new SchemaError(`${f.path}.event.failing`, 'empty (only an arc lane\'s reporter names tests)', out.event.failing);
+    return out;
+  }),
+  ...PROPAGATION_FACT_READERS,
+  ...REVIEW_FACT_READERS,
   'stage-outcome': object((f): Fact => {
     const s = f.get('stage', oneOf(OUTCOME_STAGES));
     const out = {
@@ -2266,9 +2583,10 @@ export const fact: Read<Fact> = tagged('kind', {
     if (out.class === 'retry' && !(RETRY_STAGES as readonly string[]).includes(s)) throw new SchemaError(`${f.path}.class`, `retry only at ${RETRY_STAGES.join(', ')}`, out.class);
     if (out.class === 'route-up' && !(JUDGMENT_STAGES as readonly string[]).includes(s)) throw new SchemaError(`${f.path}.class`, `route-up only at ${JUDGMENT_STAGES.join(', ')}`, out.class);
     // An interruption holds the unit, and so does a scope-growth proposal (a plan-check's, or a lanes attempt's after two
-    // reverts of one path); nothing else does; a hold never charges.
-    const holds = out.outcome === 'interrupted' || ((s === 'plan-check' || s === 'lanes') && out.outcome === 'scope-growth');
-    if (holds !== (out.class === 'hold')) throw new SchemaError(`${f.path}.class`, 'hold exactly for an interrupted outcome or a scope-growth', out.class);
+    // reverts of one path) and (dev.17) a plan-check's split until its revision cuts the unit; nothing else does; a hold
+    // never charges.
+    const holds = out.outcome === 'interrupted' || ((s === 'plan-check' || s === 'lanes') && out.outcome === 'scope-growth') || (s === 'plan-check' && out.outcome === 'split');
+    if (holds !== (out.class === 'hold')) throw new SchemaError(`${f.path}.class`, 'hold exactly for an interrupted outcome, a scope-growth or a split', out.class);
     if (out.class === 'hold' && out.chargeable) throw new SchemaError(`${f.path}.chargeable`, 'false for a hold', out.chargeable);
     return { ...out, ...(park === undefined ? {} : { park }), ...(cause === undefined ? {} : { cause }), ...(detail === undefined ? {} : { detail }) } as StageOutcomeFact;
   }),
@@ -2307,7 +2625,7 @@ function abortRecord(f: Fields): AbortRecord {
   return {
     type: 'abort',
     op: f.get('op', opR),
-    reason: f.get('reason', object((g) => ({ code: g.get('code', oneOf(['precondition', 'recovery', 'cancelled'] as const)), detail: g.get('detail', str) }))),
+    reason: f.get('reason', object((g) => ({ code: g.get('code', oneOf(['precondition', 'recovery', 'cancelled', 'fault'] as const)), detail: g.get('detail', str) }))),
   };
 }
 

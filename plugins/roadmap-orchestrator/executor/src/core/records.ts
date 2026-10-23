@@ -4,10 +4,10 @@
 import {
   type ArcId, type ClauseId, type CommandId, type DivergenceId, type FindingId, type ImplementerSessionId, type InvocationId, type JobId,
   type JudgmentSessionId, type EdgeId, type LaneId, type NeedsUserId, type ObligationId, type OpId, type ProposalId, type ResourceInstance,
-  type ResourceName, type RoutingRev, type RulingId, type SeatRev, type Sha, type Sha256Hex, type SpecRev, type UnitId, type WitnessItemId, arcId, clauseId,
+  type ResourceName, type RoutingRev, type RulingId, type SeatRev, type Sha, type Sha256Hex, type SpecRev, type SystemName, type UnitId, type WitnessItemId, arcId, clauseId,
   commandId, divergenceId, edgeId, findingId, implementerSessionId, invocationIdOf, jobIdOf, judgmentSessionId, laneId, needsUserId,
   obligationId, opIdOf, parseInvocationId, planRev, resourceInstance, resourceName, routingRev, rulingId, seatRev, sha, sha256, specRev, unitId, idsAscending,
-  witnessItemId, proposalId,
+  witnessItemId, proposalId, systemName,
 } from './ids.ts';
 import type { JsonValue } from './json.ts';
 import {
@@ -19,7 +19,9 @@ import {
   positive, sortedBy, str, stringMap, tagged, text, version,
 } from './validate.ts';
 import type { SchemaVersion } from './version.ts';
-import { applyExpectRevDefault, applyVisionEditDefault, dev6SmokeBounds } from './upgrade.ts';
+import { type LaneKind, applyExpectRevDefault, applyVisionEditDefault, designKindDefault, dev6SmokeBounds, laneCadenceDefault, laneInputsDropped } from './upgrade.ts';
+import { type DesignRecord, type UnitKind, designRecord } from './design.ts';
+import { type ContractPin, type Pinned, type RequirementPin, type SpecPin, UNPINNED, pinTarget, specPin } from './pins.ts';
 import { type HostSignatureId, HOST_SIGNATURES } from '../host/signatures.ts';
 import {
   type Backend, type ImplementerRole, JUDGMENT_SESSION_ROLES, type JudgmentSessionRole, type ModelClass, type ProfileName, type RiskTier, type Role, ROLES, backend,
@@ -61,8 +63,11 @@ export type BackendCancelReason = (typeof BACKEND_CANCEL_REASONS)[number];
 
 export const SPAWN_PURPOSES = ['backend', 'lane', 'teardown', 'probe', 'smoke'] as const;
 export type SpawnPurpose = (typeof SPAWN_PURPOSES)[number];
-/** dev.13: `bring-up`, a milestone product's setup, serve or seed command (src/walk/bringup.ts). */
-export const COMMAND_PURPOSES = ['lane', 'teardown', 'probe', 'smoke', 'bring-up'] as const;
+/**
+ * dev.13: `bring-up`, a milestone product's setup, serve or seed command (src/walk/bringup.ts). dev.17: `environment`, a plan
+ * environment's up, down or probe (src/resources/environments.ts).
+ */
+export const COMMAND_PURPOSES = ['lane', 'teardown', 'probe', 'smoke', 'bring-up', 'environment'] as const;
 export type CommandPurpose = (typeof COMMAND_PURPOSES)[number];
 
 export const CONTAINMENT_MODES = ['session', 'cgroup'] as const;
@@ -73,9 +78,10 @@ export const containmentMode: Read<ContainmentMode> = oneOf(CONTAINMENT_MODES);
  * Pipeline stages of one unit (the transition table is step 11). Fix rounds are `build` attempts. `prepare`
  * (M2) is a re-entered unit's first stage: its worktree, pin, merge-in of the integration tip and snapshot.
  * `reproduce` (M3) is a vacuity repair's first stage: the finding's mutant applied in a detached worktree and
- * its lane run under `purpose: mutant`.
+ * its lane run under `purpose: mutant`. dev.17 (design pass, appended): `scaffold` writes a new system's skeleton a plan-check's
+ * `scaffold` decision specifies before the first build; `poc` builds a plan-check's proof of concept in a throwaway worktree.
  */
-export const STAGES = ['prepare', 'reproduce', 'plan-check', 'build', 'quiesce', 'evidence', 'salvage', 'teardown', 'lanes', 'gate', 'candidate', 'ff', 'snapshot', 'retire'] as const;
+export const STAGES = ['prepare', 'reproduce', 'plan-check', 'build', 'quiesce', 'evidence', 'salvage', 'teardown', 'lanes', 'gate', 'candidate', 'ff', 'snapshot', 'retire', 'scaffold', 'poc'] as const;
 export type Stage = (typeof STAGES)[number];
 export const stage: Read<Stage> = oneOf(STAGES);
 
@@ -377,7 +383,13 @@ export type UsageUnavailableReason = (typeof USAGE_UNAVAILABLE_REASONS)[number];
  */
 export type Usage =
   | Readonly<{ kind: 'known'; tokens: TokenUsage; delegated?: readonly ClassUsage[] }>
-  | Readonly<{ kind: 'unavailable'; reason: UsageUnavailableReason }>;
+  /**
+   * `streamed` (dev.17, field feedback 2026-10-23 item 6): a judgment's Claude call ended without a result (killed,
+   * cancelled, superseded), and this is what its stream showed of its own model's spend (src/backends/claude.ts
+   * `streamedUsage`: output tokens a lower bound, cost null). Absent: the stream showed none, or the call is an
+   * implementer's, whose session's next reading reports this process's spend cumulatively.
+   */
+  | Readonly<{ kind: 'unavailable'; reason: UsageUnavailableReason; streamed?: TokenUsage }>;
 
 const usd: Read<number> = (value, path) => {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) throw new SchemaError(path, 'a finite non-negative number', value);
@@ -412,7 +424,10 @@ const usage: Read<Usage> = tagged('kind', {
     const delegated = f.optional('delegated', classUsages);
     return { kind: f.get('kind', literal('known')), tokens: f.get('tokens', tokenUsage), ...(delegated === undefined ? {} : { delegated }) };
   }),
-  unavailable: object((f): Usage => ({ kind: f.get('kind', literal('unavailable')), reason: f.get('reason', usageUnavailableReason) })),
+  unavailable: object((f): Usage => {
+    const streamed = f.optional('streamed', tokenUsage);
+    return { kind: f.get('kind', literal('unavailable')), reason: f.get('reason', usageUnavailableReason), ...(streamed === undefined ? {} : { streamed }) };
+  }),
 });
 
 /**
@@ -846,7 +861,27 @@ export function boundsOfRecord(record: DispatchRecord | null): Bounds {
 
 /** `set`: literal values. `pass`: names copied from the executor's environment; absent → spec-lane-unrunnable. */
 export type LaneEnv = Readonly<{ set: Readonly<Record<string, string>>; pass: readonly string[] }>;
-export type LaneTier = 'fast' | 'estate';
+/**
+ * Where a lane runs (dev.17, DESIGN-1.0.md §4 "Lane topology"), a ladder: `build` in the builder's own loop and at the
+ * lanes stage; `unit` at the lanes stage; `candidate` on the candidate merge in the integration slot (and, a suite lane of
+ * a lower cadence, there too); `batch` never in the merge path: at the publication retiring a milestone's last unit,
+ * before its walk, at a no-milestone holistic arc's cadence audits, and always at the close-out. A spec lane is `build` or
+ * `unit`; an arc lane `build` (the builder runs it as its witness check) or `candidate`; a suite lane any (`batch` only in
+ * a holistic arc, the plan reader). `fast`/`estate` (`tier`) is the dev.16 form, read through `laneCadenceDefault`.
+ */
+export type { LaneKind } from './upgrade.ts';
+export const LANE_CADENCES = ['build', 'unit', 'candidate', 'batch'] as const;
+export type LaneCadence = (typeof LANE_CADENCES)[number];
+/** The cadences each kind of lane may declare. */
+export const KIND_CADENCES: { readonly [K in LaneKind]: readonly LaneCadence[] } = { spec: ['build', 'unit'], suite: LANE_CADENCES, arc: ['build', 'candidate'] };
+/** Whether a lane of cadence `c` runs at or before the point of cadence `at` (the ladder). */
+export const cadenceAtOrBefore = (c: LaneCadence, at: LaneCadence): boolean => LANE_CADENCES.indexOf(c) <= LANE_CADENCES.indexOf(at);
+
+/** The `{files}` element of a lane's `testArgv`: the changed leaf test files, one argument each. */
+export const TEST_FILES_TOKEN = '{files}';
+
+/** A stochastic lane (dev.17): run up to `runs` times, it passes once `minPasses` runs passed; never flaky, never deflaked. */
+export type Stochastic = Readonly<{ runs: number; minPasses: number }>;
 
 export type LaneDef = Readonly<{
   id: LaneId;
@@ -856,7 +891,7 @@ export type LaneDef = Readonly<{
   cwd: RepoPath;
   env: LaneEnv;
   expectedExit: number;
-  tier: LaneTier;
+  cadence: LaneCadence;
   resources: readonly ResourceName[];
   evidenceGlobs: readonly RepoPattern[];
   /**
@@ -864,14 +899,33 @@ export type LaneDef = Readonly<{
    * excludes; declared `evidenceGlobs` are never filtered. Optional in spec.json, read as [] when absent.
    */
   evidenceExcludes: readonly RepoPattern[];
-  /** `@cpu` tokens the lane takes (M2); absent: its tier's default (fast 2, estate 4). Absent stays absent. */
+  /** `@cpu` tokens the lane takes (M2); absent: its cadence's default (build 2, else 4). Absent stays absent. */
   cpu?: number;
   /**
-   * M4a rev 3 (F1a, R52): the repo paths a passing run of this lane depends on, non-empty when present. A fast spec
-   * lane that declares them may reuse a pass on another SHA whose diff touches none of them; absent: no cross-SHA reuse.
-   * Spec lanes only: a suite or arc lane declaring them is refused (`refuseLaneInputs`).
+   * dev.17: the systems of the repo's systems map the lane tests (non-empty, unique when present; `docs` names the docs
+   * class). Its reuse key reads their paths (with what they depend on and the shared areas), and a candidate or batch lane
+   * listing them runs only when a diff touches one (src/input/systems.ts). Absent: the whole tree, selected always.
    */
-  inputs?: readonly RepoPattern[];
+  systems?: readonly SystemName[];
+  /**
+   * dev.17: the lane's argv for a run of some test files only, one element exactly `{files}` (`TEST_FILES_TOKEN`: the files,
+   * one argument each, relative to the lane's cwd). A diff
+   * since the lane's last clean pass touching only leaf test files runs those files (src/pipeline/lanes.ts `testOnlyRun`).
+   */
+  testArgv?: readonly string[];
+  /** dev.17: run k-of-n (`Stochastic`); absent: one run under the red-lane protocol. */
+  stochastic?: Stochastic;
+  /**
+   * dev.17: the plan environment the lane runs against (plan `environments`), reserved with its resources and brought up
+   * before it runs (src/resources/environments.ts); absent: none. An arc lane never names one (`laneFields`), and a
+   * `build`-cadence lane (the implementer runs it) never does (`estate-lane-for-implementer`).
+   */
+  environment?: ResourceName;
+  /**
+   * dev.17 (proportional review): the lane reads comments (a linter, a doc checker, a doctest runner), so a build's verified
+   * docs-only change never carries its earlier pass over: it runs again (src/pipeline/docsonly.ts). Absent: it does not.
+   */
+  readsComments?: true;
 }>;
 
 export const laneEnv: Read<LaneEnv> = object((f) => {
@@ -883,30 +937,64 @@ export const laneEnv: Read<LaneEnv> = object((f) => {
   return out;
 });
 
-function laneFields(f: Fields): LaneDef {
+export const stochastic: Read<Stochastic> = object((f) => {
+  const out = { runs: f.get('runs', positive), minPasses: f.get('minPasses', positive) };
+  if (out.runs < 2) throw new SchemaError(`${f.path}.runs`, 'at least 2 (one run is not stochastic)', out.runs);
+  if (out.minPasses > out.runs) throw new SchemaError(`${f.path}.minPasses`, `at most runs (${out.runs})`, out.minPasses);
+  return out;
+});
+
+/**
+ * A lane of `kind` (null: the normalising re-read, `laneRevOf`, which takes any cadence and the current form only). A
+ * dev.16 lane's `tier` reads as its kind's cadence and a dev.16 spec lane's `inputs` are dropped (src/core/upgrade.ts).
+ */
+function laneFields(f: Fields, kind: LaneKind | null): LaneDef {
+  const id = f.get('id', (v, p) => laneId(v, p));
+  const tier = kind === null ? undefined : f.optional('tier', oneOf(['fast', 'estate'] as const));
+  const declared = f.optional('cadence', oneOf(LANE_CADENCES));
+  if (tier !== undefined && declared !== undefined) throw new SchemaError(`${f.path}.tier`, 'absent beside cadence (tier is the dev.16 form)', tier);
+  const cadence = declared ?? (tier === undefined || kind === null ? f.get('cadence', oneOf(LANE_CADENCES)) : laneCadenceDefault(kind, tier));
+  if (kind !== null && !KIND_CADENCES[kind].includes(cadence)) throw new SchemaError(`${f.path}.cadence`, `${KIND_CADENCES[kind].join(' or ')} on ${kind === 'arc' ? 'an' : 'a'} ${kind} lane`, cadence);
   const out = {
-    id: f.get('id', (v, p) => laneId(v, p)),
+    id,
     argv: f.get('argv', argv),
     cwd: f.get('cwd', (v, p) => repoPath(v, p)),
     env: f.get('env', laneEnv),
     expectedExit: f.get('expectedExit', exitCode),
-    tier: f.get('tier', oneOf(['fast', 'estate'] as const)),
+    cadence,
     resources: f.get('resources', arrayOf(resource)),
     evidenceGlobs: f.get('evidenceGlobs', arrayOf((v, p) => repoPattern(v, p))),
     evidenceExcludes: f.optional('evidenceExcludes', arrayOf((v, p) => repoPattern(v, p))) ?? [],
   };
   const cpu = f.optional('cpu', positive);
-  const inputs = f.optional('inputs', arrayOf((v, p) => repoPattern(v, p), { nonEmpty: true }));
+  if (kind === 'spec' && f.optional('inputs', arrayOf((v, p) => repoPattern(v, p), { nonEmpty: true })) !== undefined) laneInputsDropped(id);
+  const systems = f.optional('systems', arrayOf((v, p) => systemName(v, p), { nonEmpty: true }));
+  const testArgv = f.optional('testArgv', argv);
+  const stoch = f.optional('stochastic', stochastic);
+  const environment = f.optional('environment', resource);
+  const readsComments = f.optional('readsComments', literal(true));
   assertUnique(out.resources, (r) => r, `${f.path}.resources`);
-  if (inputs !== undefined) assertUnique(inputs, (i) => i, `${f.path}.inputs`);
-  return { ...out, ...(cpu === undefined ? {} : { cpu }), ...(inputs === undefined ? {} : { inputs }) };
+  if (systems !== undefined) assertUnique(systems, (s) => s, `${f.path}.systems`);
+  if (testArgv !== undefined && testArgv.filter((a) => a === TEST_FILES_TOKEN).length !== 1) {
+    throw new SchemaError(`${f.path}.testArgv`, `one element exactly ${TEST_FILES_TOKEN}`, testArgv);
+  }
+  if (kind === 'arc' && (testArgv !== undefined || stoch !== undefined)) {
+    throw new SchemaError(`${f.path}`, 'no testArgv or stochastic on an arc lane (its runs are witnesses)', { testArgv, stochastic: stoch });
+  }
+  // An arc lane runs outside the reservation sites that bring an environment up (BACKLOG "Environments on arc lanes").
+  if (kind === 'arc' && environment !== undefined) {
+    throw new SchemaError(`${f.path}.environment`, 'absent on an arc lane (environments are a spec or suite lane\'s)', environment);
+  }
+  return {
+    ...out, ...(cpu === undefined ? {} : { cpu }), ...(systems === undefined ? {} : { systems }), ...(testArgv === undefined ? {} : { testArgv }),
+    ...(stoch === undefined ? {} : { stochastic: stoch }), ...(environment === undefined ? {} : { environment }),
+    ...(readsComments === undefined ? {} : { readsComments }),
+  };
 }
-export const laneDef: Read<LaneDef> = object(laneFields);
-
-/** M4a rev 3 (F1a): `inputs` belongs to a spec lane; a suite lane (plan.json) or an arc lane (obligations) declaring it is refused. */
-export function refuseLaneInputs(lane: LaneDef, path: string, what: 'suite' | 'arc'): void {
-  if (lane.inputs !== undefined) throw new SchemaError(`${path}.inputs`, `absent on ${what === 'suite' ? 'a suite' : 'an arc'} lane (inputs are a spec lane's)`, lane.inputs);
-}
+/** A lane declared as `kind` (see `laneFields`). */
+export const laneDefOf = (kind: LaneKind): Read<LaneDef> => object((f) => laneFields(f, kind));
+/** A lane in its normalised form (any cadence, no dev.16 fields): what `laneRevOf` re-reads. */
+export const laneDef: Read<LaneDef> = object((f) => laneFields(f, null));
 
 /** Items keep their id forever; strike and defer change state, never delete, so ids are never reused. */
 export type ItemState = 'active' | 'struck' | 'deferred';
@@ -959,6 +1047,26 @@ export type SpecM1 = Readonly<{
    * unit's scope that still names one (non-empty when present, unique; absent: none, lasting, `specRemoves`).
    */
   removes?: readonly string[];
+  /**
+   * dev.17: suite lanes of a later cadence (candidate, batch) the unit's own lanes stage runs at the salvage SHA, after its
+   * spec lanes (non-empty, unique when present; absent: none, lasting, `specForces`). A repair of a batch lane's P1 forces
+   * that lane besides (src/pipeline/stages.ts `forcedLanes`).
+   */
+  forces?: readonly LaneId[];
+  /**
+   * dev.17 (design pass): the design record the unit's plan-check settled (src/core/design.ts). Absent: none yet (a dev.16
+   * spec, or one no plan-check has designed), whose unit reads as kind `module` (`specKindOf`, warned).
+   */
+  design?: DesignRecord;
+  /**
+   * dev.17 (propagation): the revision each of the spec's links was written against, one pin per target (unique): a
+   * requirement pin per obligation it declares, repairs or a witness item names, a contract pin per cited contract. Its
+   * writers: a plan-check redirect's patch (`SpecPatch.pins`: every link at the revisions the check read) and a propagation
+   * unit's minted spec (src/holistic/propagation.ts). A pin whose link a later edit removed names nothing and is never read.
+   * Absent (a dev.16 spec, or an owner's spec no plan-check has revised; lasting): every link reads `unpinned`,
+   * stale-unknown (`specPinOf`). A link with no pin in a present list (one a later edit added) reads `unpinned` too.
+   */
+  pins?: readonly SpecPin[];
 }>;
 
 /**
@@ -981,6 +1089,25 @@ export const specRepairs = (spec: SpecM1): readonly RepairRef[] => spec.repairs 
 export const specWitnesses = (spec: SpecM1): readonly Stated<WitnessItemDef>[] => spec.witnesses ?? [];
 /** What a spec says its unit removes or renames (scope growth, 2026-10-15); none when absent. */
 export const specRemoves = (spec: SpecM1): readonly string[] => spec.removes ?? [];
+/** The suite lanes a spec forces at its lanes stage (dev.17); none when absent. */
+export const specForces = (spec: SpecM1): readonly LaneId[] => spec.forces ?? [];
+/** A spec's unit kind (dev.17): its design record's, or `module` with the upgrade warning when it has none. */
+export const specKindOf = (spec: SpecM1): UnitKind => spec.design?.kind ?? designKindDefault();
+
+/** The requirements a spec links to: the obligations it declares, the obligations it repairs, those its witness items name. */
+export function specRequirementLinks(spec: SpecM1): readonly ObligationId[] {
+  const ids = [...specObligations(spec), ...specRepairs(spec).filter((r): r is ObligationId => !r.startsWith('F-')), ...specWitnesses(spec).flatMap((w) => (w.obligation === undefined ? [] : [w.obligation]))];
+  return [...new Set(ids)];
+}
+
+/** The pin of one of a spec's links (dev.17): the pin it carries, or `unpinned` (stale-unknown). */
+export function specPinOf(spec: SpecM1, link: Readonly<{ type: 'requirement'; id: ObligationId }>): Pinned<RequirementPin>;
+export function specPinOf(spec: SpecM1, link: Readonly<{ type: 'contract'; path: RepoPath }>): Pinned<ContractPin>;
+export function specPinOf(spec: SpecM1, link: Readonly<{ type: 'requirement'; id: ObligationId }> | Readonly<{ type: 'contract'; path: RepoPath }>): Pinned<SpecPin> {
+  if (spec.pins === undefined) return UNPINNED;
+  const target = link.type === 'requirement' ? `requirement:${link.id}` : `contract:${link.path}`;
+  return spec.pins.find((p) => pinTarget(p) === target) ?? UNPINNED;
+}
 
 const itemState: Read<ItemState> = oneOf(['active', 'struck', 'deferred'] as const);
 const cid: Read<ClauseId> = (v, p) => clauseId(v, p);
@@ -1024,11 +1151,14 @@ export const specM1: Read<SpecM1> = object((f) => {
   const repairs = f.optional('repairs', arrayOf(repairRef, { nonEmpty: true }));
   const witnesses = f.optional('witnesses', arrayOf(stated(witnessItemFields), { nonEmpty: true }));
   const removes = f.optional('removes', arrayOf(removed, { nonEmpty: true }));
+  const forces = f.optional('forces', arrayOf((v, p) => laneId(v, p), { nonEmpty: true }));
+  const design = f.optional('design', designRecord);
+  const pins = f.optional('pins', arrayOf(specPin));
   const out: SpecM1 = {
     schema: f.get('schema', literal(SPEC_SCHEMA)),
     unit: f.get('unit', unit),
     rev: f.get('rev', (v, p) => specRev(v, p)),
-    lanes: f.get('lanes', arrayOf(stated(laneFields))),
+    lanes: f.get('lanes', arrayOf(stated((g) => laneFields(g, 'spec')))),
     acceptance: f.get('acceptance', arrayOf(stated(acceptanceFields), { nonEmpty: true })),
     scope: f.get('scope', arrayOf((v, p) => repoPattern(v, p), { nonEmpty: true })),
     resources: f.get('resources', arrayOf(resource)),
@@ -1039,8 +1169,18 @@ export const specM1: Read<SpecM1> = object((f) => {
     ...(repairs === undefined ? {} : { repairs }),
     ...(witnesses === undefined ? {} : { witnesses }),
     ...(removes === undefined ? {} : { removes }),
+    ...(forces === undefined ? {} : { forces }),
+    ...(design === undefined ? {} : { design }),
+    ...(pins === undefined ? {} : { pins }),
   };
+  if (design !== undefined) {
+    const items = new Set(specWitnesses(out).map((w) => w.id));
+    const i = design.failureModes.findIndex((m) => m.proof.type === 'test' && m.proof.test.type === 'witness' && !items.has(m.proof.test.item));
+    if (i >= 0) throw new SchemaError(`${f.path}.design.failureModes[${i}].proof`, 'a witness item of the spec', design.failureModes[i]!.proof);
+  }
+  if (pins !== undefined) assertUnique(pins, pinTarget, `${f.path}.pins`);
   assertUnique(specRemoves(out), (r) => r, `${f.path}.removes`);
+  assertUnique(specForces(out), (l) => l, `${f.path}.forces`);
   assertUnique([...out.lanes, ...out.acceptance, ...out.decisions, ...out.facts, ...specWitnesses(out)], (i) => i.id, `${f.path}.<item ids>`);
   assertUnique(specObligations(out), (o) => o, `${f.path}.obligations`);
   assertUnique(specRepairs(out), (r) => r, `${f.path}.repairs`);
@@ -1062,7 +1202,12 @@ export type SpecPatchOp =
   | { readonly [S in SpecSection]: Readonly<{ op: 'add'; section: S; item: SectionItem[S] }> }[SpecSection]
   | { readonly [S in SpecSection]: Readonly<{ op: 'replace'; section: S; item: SectionItem[S] }> }[SpecSection]
   | Readonly<{ op: 'strike' | 'defer'; id: LaneId | ClauseId }>
-  | Readonly<{ op: 'cite' } & SpecCites>;
+  | Readonly<{ op: 'cite' } & SpecCites>
+  /**
+   * dev.17 (design pass): the design record a plan-check's approve or scaffold settled, pinned by code at the tip it read,
+   * replacing any the spec held. Executor-written only: no model's patch schema offers it (`wireOp`, S_PATCH_OP).
+   */
+  | Readonly<{ op: 'design'; record: DesignRecord }>;
 
 /**
  * Who patched: a plan-check redirect (the judgment invocation), or the executor appending the implementer's
@@ -1076,10 +1221,16 @@ export type SpecPatch = Readonly<{
   expectRev: SpecRev;
   by: SpecPatchBy;
   ops: readonly SpecPatchOp[];
+  /**
+   * dev.17 (propagation): the pins of every link the patched spec carries, at the revisions its writer read (a plan-check
+   * redirect: src/holistic/staleset.ts `pinsOf`), which replace the spec's pins. Absent: the spec's pins carry over unchanged
+   * (lasting: the executor's decisions patch, and every patch written before dev.17).
+   */
+  pins?: readonly SpecPin[];
 }>;
 
 const sectionItem: { readonly [S in SpecSection]: Read<SectionItem[S]> } = {
-  lanes: laneDef,
+  lanes: laneDefOf('spec'),
   acceptance: object(acceptanceFields),
   decisions: object(noteFields),
   facts: object(noteFields),
@@ -1101,6 +1252,8 @@ function idOp(op: 'strike' | 'defer'): Read<SpecPatchOp> {
   return object((f) => ({ op: f.get('op', literal(op)), id: f.get('id', (v, p): LaneId | ClauseId => clauseId(v, p)) }));
 }
 
+const designOp: Read<SpecPatchOp> = object((f) => ({ op: f.get('op', literal('design')), record: f.get('record', designRecord) }));
+
 const citeOp: Read<SpecPatchOp> = (value, path) => {
   const op = object((f) => ({ op: f.get('op', literal('cite')), ...citesFields(f) }))(value, path);
   if (op.contracts.length + op.rulings.length === 0) throw new SchemaError(path, 'a cite op naming at least one contract or ruling', value);
@@ -1113,16 +1266,21 @@ export const specPatchOp: Read<SpecPatchOp> = tagged('op', {
   strike: idOp('strike'),
   defer: idOp('defer'),
   cite: citeOp,
+  design: designOp,
 });
 
-export const specPatch: Read<SpecPatch> = object((f) => ({
-  expectRev: f.get('expectRev', (v, p) => specRev(v, p)),
-  by: f.get('by', tagged<'planCheck' | 'executor', SpecPatchBy>('role', {
-    planCheck: object((g): SpecPatchBy => ({ role: g.get('role', literal('planCheck')), routingRev: g.get('routingRev', rev), inv: g.get('inv', inv) })),
-    executor: object((g): SpecPatchBy => ({ role: g.get('role', literal('executor')), inv: g.get('inv', inv) })),
-  })),
-  ops: f.get('ops', arrayOf(specPatchOp, { nonEmpty: true })),
-}));
+export const specPatch: Read<SpecPatch> = object((f) => {
+  const out = {
+    expectRev: f.get('expectRev', (v, p) => specRev(v, p)),
+    by: f.get('by', tagged<'planCheck' | 'executor', SpecPatchBy>('role', {
+      planCheck: object((g): SpecPatchBy => ({ role: g.get('role', literal('planCheck')), routingRev: g.get('routingRev', rev), inv: g.get('inv', inv) })),
+      executor: object((g): SpecPatchBy => ({ role: g.get('role', literal('executor')), inv: g.get('inv', inv) })),
+    })),
+    ops: f.get('ops', arrayOf(specPatchOp, { nonEmpty: true })),
+  };
+  const pins = f.optional('pins', arrayOf(specPin));
+  return pins === undefined ? out : { ...out, pins };
+});
 
 // ---------------------------------------------------------------------------------------------------
 // Host files under /var/tmp/roadmap/
@@ -1505,7 +1663,12 @@ export const commandFile: Read<CommandFile> = object((f) => ({
 export type Receipt =
   | Readonly<{ v: SchemaVersion; command: CommandId; state: 'accepted'; at: IsoTime }>
   | Readonly<{ v: SchemaVersion; command: CommandId; state: 'applied'; at: IsoTime; op: OpId; verified: readonly string[] }>
-  | Readonly<{ v: SchemaVersion; command: CommandId; state: 'rejected'; at: IsoTime; reason: string }>;
+  | Readonly<{ v: SchemaVersion; command: CommandId; state: 'rejected'; at: IsoTime; reason: string }>
+  /**
+   * dev.17: an `apply` whose scope holds a unit in a stage waits for that stage's boundary (A12) and says so (`apply-queued`):
+   * `waitsFor` the units it waits on, `reason` what each runs. Not terminal; `applied` or `rejected` follows.
+   */
+  | Readonly<{ v: SchemaVersion; command: CommandId; state: 'queued'; at: IsoTime; waitsFor: readonly UnitId[]; reason: string }>;
 
 export const receipt: Read<Receipt> = tagged('state', {
   accepted: object((f): Receipt => ({ v: f.get('v', version), command: f.get('command', cmdId), state: f.get('state', literal('accepted')), at: f.get('at', time) })),
@@ -1515,6 +1678,10 @@ export const receipt: Read<Receipt> = tagged('state', {
   })),
   rejected: object((f): Receipt => ({
     v: f.get('v', version), command: f.get('command', cmdId), state: f.get('state', literal('rejected')), at: f.get('at', time), reason: f.get('reason', str),
+  })),
+  queued: object((f): Receipt => ({
+    v: f.get('v', version), command: f.get('command', cmdId), state: f.get('state', literal('queued')), at: f.get('at', time),
+    waitsFor: f.get('waitsFor', arrayOf(unit, { nonEmpty: true })), reason: f.get('reason', str),
   })),
 });
 
@@ -1556,11 +1723,23 @@ export const NEEDS_USER_REASONS = [
   'plan-defect',
   // 2026-10-16, blocking: a plan-check, build or gate call's prompt or context outgrew the model's window (`context-exceeded`).
   'context-exceeded',
+  // 1.0.0-dev.17, non-blocking: the executor threw inside a unit's task or an arc job while it held only that unit's or job's
+  // own state (src/schedule/fault.ts): the unit parked `executor-fault`, or the job ended faulted; the item cites the stack.
+  'executor-fault',
+  // dev.17: a lane's environment did not come up or failed its probe (lanes or candidate `env-unavailable`: a retryable park
+  // on the environment, probed until it comes up).
+  'env-unavailable',
+  // dev.17 (flaky ledger), non-blocking: a deflake unit parked, so the code edges it held dropped (src/pipeline/deflake.ts);
+  // a key flaked again after two deflake units merged, so no third is minted.
+  'deflake-parked', 'flake-recurring',
+  // dev.17, non-blocking: an `apply` queued behind a running stage (`apply-queued`) was refused when it landed at the stage
+  // boundary; the item names the dropped edit and why.
+  'apply-dropped',
 ] as const;
 /** The reasons from M3 on raised non-blocking; every other one is raised blocking. */
 export const NON_BLOCKING_M3_REASONS = [
   'bundle-request', 'convergence-bound', 'convergence-identity', 'audit-owed', 'divergence-digest', 'flow-proposal', 'flow-host', 'flow-worse', 'flow-invalid',
-  'ruler-changed',
+  'ruler-changed', 'executor-fault', 'deflake-parked', 'flake-recurring', 'apply-dropped',
 ] as const satisfies readonly NeedsUserReason[];
 export type NeedsUserReason = (typeof NEEDS_USER_REASONS)[number];
 

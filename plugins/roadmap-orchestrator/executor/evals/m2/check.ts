@@ -25,13 +25,13 @@
 //                        `top` dispatched only after `right2` published, and merged
 //   no-duplicate-writer  per unit, its backend and lane invocations never overlap (from each op's first intent
 //                        to its done); each stage attempt has at most one outcome and consumed at most one
-//                        successful backend result
+//                        successful backend result (a resolve attempt two: its continuation, dev.17)
 // M1 criteria (evals/m1/check.ts, over this run):
 //   run-ended, units-settled (every unit merged, or superseded by a merged unit), head-is-candidate,
 //   diff-product-only, snapshot-verifies, judgment-fresh, meter-covers-calls, no-model-ids
 //
-// The non-exercised list names what this run's journal shows no trace of, from: flake, host signature, D4
-// escalation, backend capacity park, backend outage park, aging promotion. Each has a fake integrated test in
+// The non-exercised list names what this run's journal shows no trace of, from: flake, host signature, backend
+// capacity park, backend outage park, aging promotion. Each has a fake integrated test in
 // `npm test`; this run is evidence only for what it took.
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { basename, join, relative, resolve } from 'node:path';
@@ -68,7 +68,7 @@ export type Criterion = Readonly<{ name: string }> & Verdict;
 export type CheckResult = Readonly<{ pass: boolean; criteria: readonly Criterion[]; notExercised: readonly Branch[]; cannotShow: readonly string[] }>;
 
 /** What a real run may leave untaken, in the order the report lists them. */
-export const BRANCHES = ['flake', 'host signature', 'D4 escalation', 'backend capacity park', 'backend outage park', 'aging promotion'] as const;
+export const BRANCHES = ['flake', 'host signature', 'backend capacity park', 'backend outage park', 'aging promotion'] as const;
 export type Branch = (typeof BRANCHES)[number];
 
 export const CANNOT_SHOW = ['real cgroup containment', 'crash boundaries under real models', 'usage-limit hits under parallel burn', 'week-long reliability'] as const;
@@ -408,7 +408,16 @@ function noDuplicateWriter(run: Run): Verdict {
     const key = `${i.parent.unit} ${i.parent.stage} ${i.parent.attempt}`;
     successes.set(key, (successes.get(key) ?? 0) + 1);
   }
-  for (const [key, n] of successes) if (n > 1) problems.push(`${key}: ${n} successful backend results`);
+  // dev.17 (field feedback 2026-10-23 item 4): a resolve round may go back to its builder once in the same attempt (the build
+  // attempt right after a `conflicted` preparation or merge-in), so that attempt may consume two results.
+  const resolves = new Set<string>();
+  const ordered = outcomes(run);
+  ordered.forEach((o, k) => {
+    if (o.outcome !== 'conflicted') return;
+    const next = ordered.slice(k + 1).find((x) => x.unit === o.unit && x.stage === 'build');
+    if (next !== undefined) resolves.add(`${next.unit} build ${next.attempt}`);
+  });
+  for (const [key, n] of successes) if (n > (resolves.has(key) ? 2 : 1)) problems.push(`${key}: ${n} successful backend results`);
   return { pass: problems.length === 0 && count > 0, detail: problems.length > 0 ? problems.join('; ') : `${count} workload ops over ${intervals.size} units, disjoint per unit; ${perAttempt.size} attempts, one outcome and at most one result each` };
 }
 
@@ -598,7 +607,6 @@ function exercised(run: Run, promoted: number): ReadonlySet<Branch> {
     const dir = invocationDir(run.runDir, invocationId(first.op, first.ordinal));
     out.add(outputSignatures([join(dir, 'stdout'), join(dir, 'stderr')]).length > 0 ? 'host signature' : 'flake');
   }
-  if (facts(run).some((f) => f.kind === 'implementer-escalated')) out.add('D4 escalation');
   for (const f of factsOf(run, 'backend-park')) {
     if (f.class === 'capacity') out.add('backend capacity park');
     if (f.class === 'outage') out.add('backend outage park');

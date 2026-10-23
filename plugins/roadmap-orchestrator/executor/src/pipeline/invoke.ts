@@ -205,6 +205,7 @@ export function chargeOf(subject: SpawnSubject): Charge | null {
     case 'mutant':
     case 'proof':
     case 'bring-up':
+    case 'environment':
       return null;
   }
 }
@@ -215,7 +216,7 @@ export function chargeOf(subject: SpawnSubject): Charge | null {
  * session, so a resumed session is never charged twice for its earlier processes.
  */
 export function usageFact(view: Pick<JournalView, 'sessionCharge'>, charge: Charge, inv: InvocationId, usage: Usage, session: string | null): Fact {
-  if (usage.kind === 'unavailable') return { kind: 'usage-unavailable', inv, ...charge, reason: usage.reason };
+  if (usage.kind === 'unavailable') return { kind: 'usage-unavailable', inv, ...charge, reason: usage.reason, ...(usage.streamed === undefined ? {} : { streamed: usage.streamed }) };
   if (usage.delegated === undefined) return { kind: 'meter', inv, ...charge, usage: usage.tokens };
   if (session === null) throw new Error(`${inv}: a Claude call's usage without its session`);
   const id = claudeSessionId(session, `${inv} session`);
@@ -244,6 +245,7 @@ function assertPairing(subject: SpawnSubject, terminal: LaunchTerminal): void {
     case 'teardown':
     case 'probe':
     case 'bring-up':
+    case 'environment':
       if (terminal.type !== 'command' || terminal.purpose !== subject.purpose) fail();
   }
 }

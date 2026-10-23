@@ -5,9 +5,11 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   clauseId, divergenceId, envId, findingId, issueContentRef, issueId, jobId, laneId, laneRev, obligationId, questionId, ruleId, rulingId, sha, sha256, specRev, unitId,
-  type Sha, visionClauseId, invocationId, opIdOf, witnessItemId, arcId, givenId, proposalId, stationId, journeyId, milestoneId, polishId, serveName,
+  type Sha, visionClauseId, invocationId, opIdOf, witnessItemId, arcId, givenId, proposalId, stationId, journeyId, milestoneId, polishId, serveName, pocQuestionId, resourceName,
+  systemName,
 } from '../src/core/ids.ts';
 import { isoTime } from '../src/core/values.ts';
+import { reviewFindingId } from '../src/core/ids.ts';
 import { failureRef } from '../src/core/records.ts';
 import {
   DOC_RELATIONS, LENS_KINDS, OBLIGATION_DISPOSITIONS, type ObligationDef, RULE_RELATIONS, RULING_KINDS, RULING_LIFETIMES, RULING_SCHEMA,
@@ -20,15 +22,18 @@ import { PROMPTS, SONNET_THINK_FIRST, UnsupportedPromptError, promptFor, support
 import type { BoundedDiff } from '../src/git/boundeddiff.ts';
 import { type RoleInputs, ROLE_INPUTS, UNIT_POLICY, laneCommand, obligationsText, pasted, pastedAs, targetDocument } from '../src/prompts/inputs.ts';
 import {
-  CHECKPOINT_SCHEMA, CLUSTER_REVIEWS, GATE_SCHEMA, PLAN_ASSESSMENT_SCHEMA, PLAN_CHECK_ACCEPTANCE_SCHEMA, PLAN_CHECK_SCHEMA, ROLE_SCHEMAS, ROLE_VALIDATORS, type RoleOutputs, buildSchemaFor,
-  validateBuildOutput, validateCheckpointOutput, validateDecisionsFile, validateGateOutput, validatePackReviewOutput, validatePlanCheckAcceptanceOutput, validatePlanCheckOutput,
+  CHECKPOINT_SCHEMA, CLUSTER_REVIEWS, GATE_SCHEMA, PLAN_CHECK_SCHEMA, ROLE_SCHEMAS, ROLE_VALIDATORS, type RoleOutputs, buildSchemaFor,
+  validateBuildOutput, validateCheckpointOutput, validateDecisionsFile, validateGateOutput, validatePackReviewOutput, validatePlanCheckOutput,
 } from '../src/prompts/schemas.ts';
 import { repeatRedDirective, smokeFixDirectives, witnessFixDirectives } from '../src/prompts/directives.ts';
 import { arcStack, resolveRouting, seatsInForce } from '../src/routing/layers.ts';
 import { FRESH_ROLES, MODEL_IDS, PROFILES, ROLES, type Role, WALK_ROLES, atSeat } from '../src/routing/types.ts';
 
-/** The judging roles with a written Opus module and derived Sonnet and Haiku rows: the read-only ones and the gate (dev.13, an acting judge). */
-const JUDGING = [...FRESH_ROLES, 'gate'] as const;
+/**
+ * The judging roles with a written Opus module and derived Sonnet and Haiku rows: the read-only ones (but the verifier, dev.17,
+ * which has a Haiku module only), the gate (dev.13, an acting judge) and plan-check (dev.17, an acting judge).
+ */
+const JUDGING = [...FRESH_ROLES.filter((r) => r !== 'verifier'), 'gate', 'planCheck'] as const;
 
 // Two complete input sets per role that differ in every field, so swapping one field shows whether a
 // module's rendering depends on it.
@@ -36,7 +41,7 @@ const spec = (rev: number, text: string) => ({ unit: unitId('u-one'), rev: specR
 const doc = (path: string, text: string) => ({ path: repoPath(path), text });
 const ruling = (id: string, text: string) => ({ id: rulingId(id), text });
 const lane = (id: string, argv: string[]) => ({
-  id: laneId(id), argv, cwd: repoPath('.'), env: { set: { CI: '1' }, pass: [] }, expectedExit: 0, tier: 'fast' as const,
+  id: laneId(id), argv, cwd: repoPath('.'), env: { set: { CI: '1' }, pass: [] }, expectedExit: 0, cadence: 'build' as const,
   resources: [], evidenceGlobs: [], evidenceExcludes: [],
 });
 const SHA_A = sha('a'.repeat(40));
@@ -191,6 +196,21 @@ const partial = (from: Sha, to: Sha, text: string, labelled: boolean): BoundedDi
   };
 };
 
+/** dev.17: a scaffold writer's inputs, every field marked by `k`; `retry` its one retry's reasons, or null. */
+function scaffoldSample(k: string, retry: RoleInputs['scaffold']['retry']): RoleInputs['scaffold'] {
+  return {
+    spec: spec(k === 'A' ? 1 : 2, `SPEC-${k}`),
+    scaffold: {
+      newSystem: { name: systemName(`sys${k.toLowerCase()}`), paths: [repoPattern(`packages/${k}/**`)], tests: [repoPattern(`packages/${k}/test/**`)] },
+      entryPoints: [repoPath(`packages/${k}/index.js`)], exports: [`EXPORT-${k}`], loadTest: { lane: laneId(`load${k}`), testId: `LOAD-TEST-${k}` },
+      manifest: [{ path: repoPath('package.json'), entry: `MANIFEST-${k}` }],
+    },
+    loadLane: { id: laneId(`load${k}`), argv: ['node', '--test', `LOAD-ARGV-${k}`], cwd: repoPath('.'), testPaths: [repoPattern(`packages/${k}/test/**`)] },
+    worktree: absPath(`/wt/SCAFFOLD-${k}`),
+    retry,
+  };
+}
+
 const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] } = {
   planCheck: [
     {
@@ -198,7 +218,8 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A', scope: [repoPattern('src/a/**')], risk: 'low',
       checkouts: { tip: { path: absPath('/wt/u.plan-check-1'), at: SHA_A }, branch: null },
       lanePrograms: [{ lane: laneId('unit'), argv0: 'npm', resolved: { kind: 'program', realpath: absPath('/usr/lib/node/npm') } }],
-      priorRound: null, vision: null, acceptance: null, priorInvalid: null, scopeGrowth: { references: [], rejected: [] }, escalation: null, milestones: null,
+      priorRound: null, vision: null, priorInvalid: null, scopeGrowth: { references: [], rejected: [] }, escalation: null, milestones: null, staleLinks: [],
+      design: { systems: null, lanes: [], forces: [], substantialLines: 200, gateInlineLines: 1310, pocsLeft: 2, scaffold: false }, pocs: [],
     },
     {
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
@@ -211,30 +232,54 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
         patchedRev: specRev(2), changedPremiseFiles: ['src/b/x.ts'],
       },
       vision: vision(2, 'VISION-B'),
-      acceptance: {
-        nextWitnessId: witnessItemId('W-3'), arcLanes: [laneId('journey'), laneId('e2e')],
-        delivered: [{ obligation: obligationId('I-7'), statement: 'A cancelled booking frees its berth.', lane: laneId('journey'), testIds: ['cancel > frees the berth'] }],
-      },
       priorInvalid: 'PRIOR-INVALID-B',
       scopeGrowth: {
         references: [{ removed: 'REMOVED-B', referrers: [repoPath('test/b/old.test.ts')] }],
         rejected: [{ patterns: [repoPattern('docs/b/**')], reason: 'GROWTH-REASON-B', rejection: 'REJECTION-B' }],
       },
       escalation: { kind: 'route-up', first: { decision: 'escalate', reasons: ['ESCALATE-REASON-B'] } }, milestones: milestonesSample(),
+      staleLinks: ['requirement:I-2: STALE-LINK-B'],
+      design: {
+        systems: { systems: { [systemName('api')]: { paths: [repoPattern('src/api/**')], tests: [repoPattern('test/api/**')], dependsOn: [] } }, shared: [], contracts: {}, docs: [] },
+        lanes: [{ id: laneId('journey'), kind: 'arc', cadence: 'candidate', systems: [systemName('api')], environment: { name: resourceName('env-b'), unavailable: 'ENV-UNAVAILABLE-B' } }], forces: [laneId('SYSTEMS-B')], substantialLines: 150, gateInlineLines: 900,
+        pocsLeft: 1, scaffold: true,
+      },
+      pocs: [{
+        attempt: 4, questions: [{ id: pocQuestionId('PQ-1'), question: 'POC-QUESTION-B', whyItMatters: 'WHY-B' }], brief: 'POC-BRIEF-B',
+        answer: { answers: [{ questionId: pocQuestionId('PQ-1'), answer: 'POC-ANSWER-B', evidence: 'POC-EVIDENCE-B', confidence: 'high' }], lessons: ['POC-LESSON-B'], surprises: [] },
+        why: null, diff: absPath('/run/ev/u/4-poc/poc.diff'),
+      }],
     },
   ],
   build: [
     {
       spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
       planCheckNotes: '', fastLanes: [lane('unit', ['npm', 'test'])], suiteLanes: [], evidenceDir: absPath('/run/ev/a'), worktree: absPath('/wt/a'),
-      scope: [repoPattern('src/a/**')], fixRound: null, witnessChecks: [], assess: null, milestones: null, browser: null,
+      scope: [repoPattern('src/a/**')], fixRound: null, witnessChecks: [], milestones: null, browser: null, certifiedAt: null, handover: null,
     },
     {
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
       planCheckNotes: 'NOTES-B', fastLanes: [lane('lint', ['npx', 'tsc', '--noEmit'])], suiteLanes: [lane('eslint', ['npx', 'eslint', '.'])], evidenceDir: absPath('/run/ev/b'), worktree: absPath('/wt/b'),
       scope: [repoPattern('src/b/**')], fixRound: { failingEvidenceDirs: [absPath('/run/inv/9-1')], directives: ['DIRECTIVE-B'] },
       witnessChecks: [{ lane: laneId('journey'), command: 'roadmap witness-check --lane-file /run/ev/b/witness/journey.json' }],
-      assess: { risk: 'high', vision: vision(2, 'VISION-B') }, milestones: milestonesSample(), browser: browserSample(),
+      milestones: milestonesSample(), browser: browserSample(), certifiedAt: SHA_B,
+      handover: {
+        lineage: [unitId('u-one'), unitId('u-zero')],
+        diagnosis: {
+          units: [{
+            unit: unitId('u-zero'), outcomes: [{ ref: failureRef('u-zero/gate#4', 'ref'), text: 'HANDOVER-OUTCOME-B' }],
+            lanes: [{ ref: failureRef('u-zero/lanes#3/unit', 'ref'), class: 'red', hostSuspected: ['HANDOVER-HOST-B'] }], reverted: [{ path: repoPath('gen/HANDOVER-REVERTED-B.js'), salvages: 2 }], witnesses: [],
+          }],
+          reentries: [{ unit: unitId('u-one'), reenters: unitId('u-zero'), fixes: failureRef('u-zero/gate#4', 'ref') }],
+        },
+        gate: { unit: unitId('u-zero'), attempt: 4, decision: 'revise', directives: ['HANDOVER-DIRECTIVE-B'] },
+        findings: [{ id: reviewFindingId('R-3'), unit: unitId('u-zero'), path: repoPath('src/b/HANDOVER-FINDING-PATH-B.ts'), defect: 'requirement-unmet', text: 'HANDOVER-FINDING-B' }],
+        unmet: [{ clause: clauseId('A6'), text: 'HANDOVER-CLAUSE-B', why: 'new' }],
+        witnesses: [{ test: { lane: laneId('journey'), testId: 'HANDOVER-WITNESS-B' }, reason: 'missing', unit: unitId('u-zero'), attempt: 3 }],
+        decisions: [{ unit: unitId('u-zero'), id: clauseId('D1'), text: 'HANDOVER-DECISION-B', state: 'deferred' }],
+        report: { unit: unitId('u-zero'), attempt: 5, summary: 'HANDOVER-SUMMARY-B', blockers: ['HANDOVER-BLOCKER-B'] },
+        evidence: [absPath('/run/ev/HANDOVER-EVIDENCE-B')],
+      },
     },
   ],
   gate: [
@@ -244,7 +289,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       diff: { bounded: shown(SHA_A, SHA_B, 'DIFF-A'), claims: { acceptance: [clauseId('A1')], witnesses: [], obligations: [] } },
       laneLedger: [{ lane: laneId('unit'), argv: ['npm', 'test'], expectedExit: 0, exitCode: 0, verdict: 'pass', evidenceDir: absPath('/run/inv/3-1'), ignored: null, reused: null }],
       evidence: [absPath('/run/ev/a')], scope: { patterns: [repoPattern('src/a/**')], growth: [], rejected: [] }, priorRound: null, checks: { witnesses: null, smoke: null, regenerated: [] },
-      escalation: null, largeDiff: null, milestones: null,
+      escalation: null, largeDiff: null, milestones: null, review: { ledger: [], disputes: [], delta: null }, undeclaredContracts: [],
     },
     {
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
@@ -256,7 +301,10 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
         reused: { at: SHA_A, inv: invocationId(opIdOf('arc-1/4'), 1) } }],
       evidence: [absPath('/run/ev/b')], scope: { patterns: [repoPattern('src/b/**')], growth: [repoPath('README.md')], rejected: [repoPath('test/b/REVERTED-B.test.ts')] },
       priorRound: {
-        directives: ['DIRECTIVE-B'], findings: [{ severity: 'blocking', path: 'src/b/x.ts', text: 'FINDING-B', contractRef: null, experiments: [{ command: 'node EXPERIMENT-B.mjs', output: 'OUTPUT-B' }], debt: null }],
+        directives: ['DIRECTIVE-B'], findings: [{
+          severity: 'blocking', path: 'src/b/x.ts', text: 'FINDING-B', contractRef: null, experiments: [{ command: 'node EXPERIMENT-B.mjs', output: 'OUTPUT-B' }], debt: null,
+          defect: 'incorrect-behaviour', reraises: null, hunk: null,
+        }],
         premises: [premise('PREMISE-B', 'src/b/x.ts')], fixPaths: [repoPath('src/b/x.ts')], changedPremiseFiles: ['src/b/x.ts'],
       },
       checks: {
@@ -269,6 +317,12 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       },
       escalation: { kind: 'risk-trigger' },
       largeDiff: { overflow: 2741, changed: 3012, list: absPath('/run/ev/b/diff/CHANGED-LIST-B.txt') }, milestones: milestonesSample(),
+      review: {
+        ledger: [{ id: reviewFindingId('R-1'), path: repoPath('src/b/x.ts'), outcome: null, anchorChanged: true, text: 'LEDGER-B' }],
+        disputes: [{ finding: reviewFindingId('R-1'), reason: 'DISPUTE-B', text: 'LEDGER-B' }],
+        delta: { approved: { attempt: 2, head: SHA_A }, review: [repoPath('src/b/x.ts')], unchanged: [repoPath('src/b/UNCHANGED-B.ts')], moved: ['docs/b.md'] },
+      },
+      undeclaredContracts: [repoPath('docs/UNDECLARED-B.md')],
     },
   ],
   lens: [
@@ -334,6 +388,11 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
   flow: [flowSample('A'), flowSample('B')],
   walkthrough: [walkSample('A'), walkSample('B')],
   polishJudge: [polishSample('A'), polishSample('B')],
+  verifier: [
+    { unit: unitId('u-one'), since: SHA_A, at: SHA_B, hunks: [{ id: 'h1', path: repoPath('src/a.ts'), language: 'TypeScript', text: '@@ -1 +1 @@\n-/** HUNK-A */\n+/** HUNK-A2 */' }] },
+    { unit: unitId('u-two'), since: SHA_B, at: SHA_A, hunks: [{ id: 'h2', path: repoPath('lib/b.py'), language: null, text: '@@ -3 +3 @@\n-# HUNK-B\n+# HUNK-B2' }] },
+  ],
+  scaffold: [scaffoldSample('A', null), scaffoldSample('B', { reasons: ['RETRY-REASON-B'], laneEvidence: absPath('/run/ev/u/9-scaffold/LANE-B') })],
 };
 
 const OUTPUTS: { readonly [R in Role]: unknown } = {
@@ -361,25 +420,32 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
     findings: [{ severity: 'blocking', target: { type: 'census', rule: 'T-1' }, claim: 'T-1 has no census entry', evidence: [{ path: 'obligations.json', line: 1 }] }],
     dispositions: [{ job: 'review-1', index: 0, disposition: 'still-open' }], reasons: ['the census misses T-1'], premises: [],
   },
+  scaffold: { summary: 'Wrote the api package skeleton.', paths: ['packages/api/index.js', 'packages/api/test/load.test.js', 'package.json'] },
   planCheck: {
     decision: 'redirect', reasons: ['A1 contradicts C-1'], risk: 'med', notes: '', premises: [{ claim: 'parse.ts exists', evidence: [{ path: 'src/a/parse.ts', line: 1 }] }],
+    design: null, split: null, scaffold: null, poc: null,
     visionConflict: [{ clauses: ['V-1'], note: 'A2 makes rounding permissive, against V-1.' }],
     scopeGrowth: [{ patterns: ['test/legacy/shell.test.ts'], reason: 'it tests the shell page A1 removes' }],
+    staleLinks: [{ link: 'requirement:I-2', outcome: 'updated', reason: 'A1 now states I-2 at rev 2' }],
     patch: [
-      { op: 'replace', section: 'lanes', item: { id: 'unit', argv: ['npm', 'test'], cwd: '.', env: { set: [{ name: 'CI', value: '1' }], pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], evidenceExcludes: [] } },
+      { op: 'replace', section: 'lanes', item: { id: 'unit', argv: ['npm', 'test'], cwd: '.', env: { set: [{ name: 'CI', value: '1' }], pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], evidenceExcludes: [] } },
       { op: 'add', section: 'decisions', item: { id: 'R2', text: 'Use the existing parser.' } },
       { op: 'strike', id: 'A3' },
       { op: 'cite', contracts: ['docs/api.md'], rulings: ['C-4'] },
     ],
   },
   build: {
-    summary: 'Added the parser.', changedPaths: ['src/a/parse.ts'], lanesRun: [{ lane: 'unit', exit: 0 }], blockers: [], experiments: [], final: true,
+    summary: 'Added the parser.', changedPaths: ['src/a/parse.ts'], lanesRun: [{ lane: 'unit', exit: 0 }], blockers: [], experiments: [], docsOnlySince: null, final: true,
   },
   gate: {
     decision: 'revise', reasons: ['A2 untested'], directives: ['Add a test for A2.'],
-    findings: [{ severity: 'blocking', path: 'src/a/parse.ts', text: 'A2 has no test.', contractRef: null, experiments: [{ command: 'node -e "parse(\'\')"', output: 'TypeError' }], debt: null }],
-    premises: [], unreviewed: [], clusters: null,
+    findings: [{
+      severity: 'blocking', path: 'src/a/parse.ts', text: 'A2 has no test.', contractRef: null, experiments: [{ command: 'node -e "parse(\'\')"', output: 'TypeError' }], debt: null,
+      defect: 'test-inadequate', reraises: null, hunk: null,
+    }],
+    premises: [], unreviewed: [], clusters: null, rulings: [],
   },
+  verifier: { hunks: [{ id: 'h1', kind: 'comment', executable: false, toolDirective: false, behaviourChange: false }] },
   lens: {
     findings: [{ severity: 'P1', obligation: 'I-1', visionClauses: ['V-1'], claim: 'I-1 is not held.', cause: 'rounding', evidence: [{ path: 'src/a.ts', line: 3 }], mutant: null }],
     reasons: ['I-1 fails on the audited tree'], premises: [],
@@ -398,11 +464,11 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
   },
 };
 
-/** Every (role, model) either built-in profile can resolve, the arc seats of a corpus arc of the m4b role set with milestones (every arc role) included. */
+/** Every (role, model) either built-in profile can resolve, the seats of a corpus arc of the dev17 role set with milestones (every role) included. */
 function builtinSeats(): readonly (readonly [Role, (typeof MODEL_IDS)[number]])[] {
   const seen = new Map<string, readonly [Role, (typeof MODEL_IDS)[number]]>();
   for (const p of PROFILES) {
-    const resolved = resolveRouting({ ...arcStack(p, null, null), arcScope: 'corpus', arcRoles: 'm4b', milestones: true });
+    const resolved = resolveRouting({ ...arcStack(p, null, null), arcScope: 'corpus', arcRoles: 'dev17', milestones: true });
     for (const s of seatsInForce(resolved)) {
       const m = atSeat(resolved.table, s).model;
       seen.set(`${s.role}/${m}`, [s.role, m]);
@@ -670,7 +736,7 @@ describe('output validators', () => {
     const pre = [{ severity: 'pre-existing', path: 'src/old.ts', text: 'Off by one since before the unit: the base has it.', contractRef: null }];
     const unreviewed = [{ path: 'packages/*/golden/**', reason: 'regenerated goldens, judged through the generator' }];
     const out = validateGateOutput({ ...ok.gate, decision: 'approve', directives: [], findings: pre, unreviewed });
-    assert.deepEqual(out.findings, pre.map((f) => ({ ...f, experiments: [], debt: 'unrecorded' })), 'a finding without experiments (a dev.12 answer) cites none; its debt is unrecorded');
+    assert.deepEqual(out.findings, pre.map((f) => ({ ...f, experiments: [], debt: 'unrecorded', defect: null, reraises: null, hunk: null })), 'a finding without experiments (a dev.12 answer) cites none; its debt is unrecorded; dev.17 fields read null');
     assert.deepEqual(out.unreviewed, unreviewed);
     const { unreviewed: _u, ...dev11 } = ok.gate;
     assert.equal(validateGateOutput(dev11).unreviewed, null);
@@ -926,7 +992,6 @@ describe('M3 prompts: the vision and the arc roles', () => {
       assert.match(gate.render(SAMPLES.gate[0]), /<scope_reverted>\n\(none: the build edited nothing outside the envelope\)\n<\/scope_reverted>/, model);
     }
     assert.ok((PLAN_CHECK_SCHEMA as { required: string[] }).required.includes('scopeGrowth'));
-    assert.ok((PLAN_CHECK_ACCEPTANCE_SCHEMA as { required: string[] }).required.includes('scopeGrowth'));
     const ok = OUTPUTS.planCheck as Record<string, unknown>;
     assert.deepEqual(validatePlanCheckOutput(ok).scopeGrowth, [{ patterns: ['test/legacy/shell.test.ts'], reason: 'it tests the shell page A1 removes' }]);
     for (const bad of [[{ patterns: [], reason: 'r' }], [{ patterns: ['a'] }], [{ patterns: [''], reason: 'r' }]]) {
@@ -935,6 +1000,21 @@ describe('M3 prompts: the vision and the arc roles', () => {
     // An answer a dev.9 executor launched has no scopeGrowth: read as none proposed (scaffolding, `planCheckScopeGrowthDefault`).
     const { scopeGrowth: _g, ...dev9 } = ok;
     assert.deepEqual(validatePlanCheckOutput(dev9).scopeGrowth, []);
+  });
+
+  it('prompts.stale-links (dev.17 propagation): the plan-check is given its stale links, each by its key, and answers them in a required staleLinks field', () => {
+    const mod = promptFor('planCheck', 'claude-opus-5-5');
+    assert.ok(mod.fields.includes('staleLinks'));
+    assert.match(mod.render(SAMPLES.planCheck[1]), /- requirement:I-2: STALE-LINK-B/);
+    assert.ok((PLAN_CHECK_SCHEMA as { required: string[] }).required.includes('staleLinks'));
+    const ok = OUTPUTS.planCheck as Record<string, unknown>;
+    assert.deepEqual(validatePlanCheckOutput(ok).staleLinks, [{ link: 'requirement:I-2', outcome: 'updated', reason: 'A1 now states I-2 at rev 2' }]);
+    for (const bad of [[{ link: 'requirement:I-2', outcome: 'ignored', reason: 'r' }], [{ link: 'requirement:I-2', outcome: 'confirmed' }]]) {
+      assert.throws(() => validatePlanCheckOutput({ ...ok, staleLinks: bad }), SchemaError, JSON.stringify(bad));
+    }
+    // An answer a dev.16 executor launched has no staleLinks: read as none answered (scaffolding, `planCheckStaleLinksDefault`).
+    const { staleLinks: _s, ...dev16 } = ok;
+    assert.deepEqual(validatePlanCheckOutput(dev16).staleLinks, []);
   });
 
   it('the gate (R17) never receives the vision: its selected obligations, without the clauses they serve', () => {
@@ -1052,7 +1132,7 @@ describe('M4a prompts: the corpus target, checkpoint intake, the pack review, un
     const a = mod.render(SAMPLES.flow[0]);
     assert.match(a, /No chart yet/);
     assert.match(a, /Code's constraint: stage:build \(the largest service\)/);
-    assert.match(a, /suite-lane unit: argv \["node","--test","--test-concurrency=1"\], cpu null \(its tier's default\)/);
+    assert.match(a, /suite-lane unit: argv \["node","--test","--test-concurrency=1"\], cpu null \(its cadence's default\)/);
     const b = mod.render(SAMPLES.flow[1]);
     assert.match(b, /Code's constraint: slot:integration, its largest service component suite:all \(the largest wait in front of it\)/);
     assert.match(b, /Open: flow-1\.0 \(suite-lane at suite:all\), 2 of 5 samples\. Only host advice or noAction while it is open\./);
@@ -1097,7 +1177,7 @@ const namesEvery = (text: string, keys: readonly string[], what: string): void =
   for (const k of keys) assert.match(text, new RegExp(`\\b${k}\\b`), `${what}: names ${k}`);
 };
 
-describe('M4a rev 3 prompts: executable checks, the plan-check shape, the in-session assessment, the checkpoint admits', () => {
+describe('M4a rev 3 prompts: executable checks, the checkpoint admits', () => {
   const BUILDERS = ['claude-opus-5-5', 'gpt-5.6-luna'] as const;
   const JUDGES = ['claude-opus-5-5', 'claude-fable-5-1'] as const;
 
@@ -1106,7 +1186,7 @@ describe('M4a rev 3 prompts: executable checks, the plan-check shape, the in-ses
       const mod = promptFor('build', model);
       const plain = mod.render({ ...SAMPLES.build[0] });
       assert.doesNotMatch(plain, /witness-check/, `${model}: no witness checks without required witnesses`);
-      const text = mod.render({ ...SAMPLES.build[1], assess: null, fixRound: null });
+      const text = mod.render({ ...SAMPLES.build[1], fixRound: null });
       assert.match(text, /- journey:\n {2}roadmap witness-check --lane-file \/run\/ev\/b\/witness\/journey\.json/, `${model}: the exact command per lane`);
       assert.match(text, /every fast lane and witness check passes/, `${model}: the ask names the witness checks`);
       for (const needle of [/after your last change/, /exactly the id the spec gives/, /witness item/, /missing or failing id is a blocker/,
@@ -1122,7 +1202,7 @@ describe('M4a rev 3 prompts: executable checks, the plan-check shape, the in-ses
     for (const model of BUILDERS) {
       const mod = promptFor('build', model);
       assert.doesNotMatch(mod.render(SAMPLES.build[0]), /[Ss]uite lanes?/, `${model}: no suite section without suite lanes`);
-      const text = mod.render({ ...SAMPLES.build[1], assess: null, fixRound: null });
+      const text = mod.render({ ...SAMPLES.build[1], fixRound: null });
       assert.match(text, /- eslint \(expects exit 0\):\n {2}cd \/wt\/b && env CI=1 npx eslint \./, `${model}: the exact command`);
       for (const needle of [/after your fast lanes/, /fix round/, /after your last change/, /experiments/, /suite:<id>/, /never in lanesRun/]) {
         assert.match(text, needle, `build/${model}: ${needle}`);
@@ -1130,58 +1210,17 @@ describe('M4a rev 3 prompts: executable checks, the plan-check shape, the in-ses
     }
   });
 
-  it('prompts.build-assess-directive:a read-only first invocation answered as planAssessment, the pinned floor, the vision as context', () => {
+  it('prompts.build-handover: a fresh session\'s handover renders every record it carries; no handover block without one', () => {
     for (const model of BUILDERS) {
       const mod = promptFor('build', model);
-      assert.doesNotMatch(mod.render(SAMPLES.build[0]), /planAssessment|assessment/, `${model}: no assessment in a build`);
-      const text = mod.render(SAMPLES.build[1]);
-      for (const needle of [/This invocation is the assessment, not the build/, /Change nothing now/, /makes the assessment malformed/, /The pinned floor is high; never answer below it/,
-        /the build resumes this session afterwards/, /as read-only context/, /V-1 \(world\): VISION-B/, /return planAssessment|only the planAssessment object/]) {
-        assert.match(text, needle, `build/${model}: ${needle}`);
-      }
-      assert.doesNotMatch(text.slice(text.lastIndexOf('\n\n')), /Implement unit/, `${model}: the ask is the assessment`);
-      namesEvery(text, requiredKeys(PLAN_ASSESSMENT_SCHEMA, [], ['planAssessment']), `assess/${model}`);
-      const noVision = mod.render({ ...SAMPLES.build[1], assess: { risk: 'low', vision: null } });
-      assert.match(noVision, /This arc has no vision, so visionConflict is empty\./);
-      assert.match(noVision, /The pinned floor is low/);
+      assert.doesNotMatch(mod.render(SAMPLES.build[0]), /HANDOVER-|[Hh]andover\b(?! in this message)/, `${model}: no handover without one`);
+      const text = mod.render({ ...SAMPLES.build[0], handover: SAMPLES.build[1].handover });
+      for (const needle of [
+        'u-one, u-zero', 'HANDOVER-OUTCOME-B', 'u-zero/lanes#3/unit', 'HANDOVER-HOST-B', 'gen/HANDOVER-REVERTED-B.js', 'u-zero gate attempt 4', 'revise', 'HANDOVER-DIRECTIVE-B',
+        'R-3', 'src/b/HANDOVER-FINDING-PATH-B.ts', 'requirement-unmet', 'HANDOVER-FINDING-B', 'A6', 'HANDOVER-CLAUSE-B', 'journey/HANDOVER-WITNESS-B missing',
+        'D1 (deferred): HANDOVER-DECISION-B', 'HANDOVER-SUMMARY-B', 'HANDOVER-BLOCKER-B', '/run/ev/HANDOVER-EVIDENCE-B',
+      ]) assert.ok(text.includes(needle), `build/${model}: ${needle}`);
     }
-  });
-
-  it('prompts.plancheck-acceptance-shape: witness items through the patch channel only, ids from the next free W-n, the arc lanes named', () => {
-    for (const model of JUDGES) {
-      const mod = promptFor('planCheck', model);
-      assert.doesNotMatch(mod.render(SAMPLES.planCheck[0]), /acceptance_shape|W-\d/, `${model}: the uniform check has no acceptance shape`);
-      const text = mod.render(SAMPLES.planCheck[1]);
-      for (const needle of [/<acceptance_shape>/, /may only add or replace items in witnesses and facts, and cite; no other patch operation is accepted/,
-        /a new item takes the next free id, W-3, and further new items the ids after it in order, written without leading zeros/,
-        /lane: one of the arc lanes: journey, e2e/, /testId: the test's exact id/, /" > "/, /skeleton/, /real entry point/,
-        /sends the unit back while one is missing or failing/, /Name only a test the change newly makes pass/, /belongs to a must-hold obligation's witness/,
-        // Paid M4b run 6: the delivered obligations' witness ids, which an item restating one reuses exactly.
-        /- I-7: A cancelled booking frees its berth\.\n  lane journey, test "cancel > frees the berth"/,
-        /sets obligation to that obligation's id and copies its lane and one of its test ids exactly; the executor refuses an item whose lane or test id differs/,
-        /Never name a new test for behaviour one of these tests already proves/, /or a witness test of an obligation above/]) {
-        assert.match(text, needle, `planCheck/${model}: ${needle}`);
-      }
-      namesEvery(mod.system + text, requiredKeys(PLAN_CHECK_ACCEPTANCE_SCHEMA, [], ['patch'], ['patch', 'item']), `planCheck acceptance/${model}`);
-      const noLanes = mod.render({ ...SAMPLES.planCheck[1], acceptance: { nextWitnessId: witnessItemId('W-1'), arcLanes: [], delivered: [] } });
-      assert.match(noLanes, /this arc declares no arc lanes/);
-      assert.match(noLanes, /This unit delivers no obligation with a witness, so obligation is null on every item\./);
-    }
-    const answer = {
-      ...(OUTPUTS.planCheck as Record<string, unknown>),
-      patch: [
-        { op: 'add', section: 'witnesses', item: { id: 'W-3', lane: 'journey', testId: 'export > writes the header', clause: 'A1', skeleton: 'Runs the export command on a fixture register and asserts the header row.', obligation: null } },
-        { op: 'add', section: 'witnesses', item: { id: 'W-4', lane: 'journey', testId: 'cancel > frees the berth', clause: 'A2', skeleton: 'Cancels a booking and books its berth again.', obligation: 'I-7' } },
-      ],
-    };
-    assert.ok(conforms(PLAN_CHECK_ACCEPTANCE_SCHEMA, answer));
-    // The wire's null obligation is spec.json's absent; a named one is kept.
-    const ops = validatePlanCheckAcceptanceOutput(answer).patch ?? [];
-    assert.deepEqual(ops.map((op) => (op.op === 'add' && op.section === 'witnesses' ? op.item.obligation ?? null : 'other')), [null, 'I-7']);
-    assert.ok(ops[0]!.op === 'add' && !('obligation' in ops[0]!.item));
-    // An answer recorded before the field reads as one naming no obligation.
-    const { obligation: _, ...older } = answer.patch[0]!.item;
-    assert.ok(validatePlanCheckAcceptanceOutput({ ...answer, patch: [{ ...answer.patch[0]!, item: older }] }).patch !== null);
   });
 
   it('plan-check: the failure matrix before a transaction ordering, earlier repairs carried in; clock and entry-point defects (F03, D3)', () => {
@@ -1326,7 +1365,7 @@ describe('W3 seat prompts (2026-10-16)', () => {
     for (const model of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-fable-5-1'] as const) {
       const sys = promptFor('gate', model).system;
       for (const needle of [
-        /classify each as blocking, note or pre-existing/, /Notes and pre-existing findings are recorded, and never a fix round/,
+        /classify it as blocking, note, pre-existing or ride-along/, /Notes, ride-along and pre-existing findings are recorded and never a fix round/,
         /unreviewed lists the parts of the change you did not review, each a repository path or path pattern with the reason/,
       ]) assert.match(sys, needle, `${model}: ${needle}`);
     }

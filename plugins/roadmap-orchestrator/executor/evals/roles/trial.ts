@@ -7,6 +7,8 @@ import type { RiskTier } from '../../src/routing/types.ts';
 import type { GateKind } from './gate/arc.ts';
 import type { CellSet } from './gate/cells.ts';
 import type { PolishWorkerArgs } from './polish/arc.ts';
+import type { VerifierWorkerArgs } from './verifier/arc.ts';
+import type { ScaffoldWorkerArgs } from './scaffold/arc.ts';
 import type { WalkWorkerArgs } from './walkthrough/arc.ts';
 
 export type GateWorkerArgs = Readonly<{
@@ -29,7 +31,7 @@ export type GateWorkerArgs = Readonly<{
 }>;
 
 /** The roles with evals: a worker runs one trial of one. */
-export type WorkerArgs = GateWorkerArgs | WalkWorkerArgs | PolishWorkerArgs;
+export type WorkerArgs = GateWorkerArgs | WalkWorkerArgs | PolishWorkerArgs | VerifierWorkerArgs | ScaffoldWorkerArgs;
 
 async function main(): Promise<void> {
   enableCompileCache();
@@ -51,6 +53,18 @@ async function main(): Promise<void> {
     const cell = (await polishCellsFor(a.set)).find((c) => c.id === a.cell);
     if (cell === undefined) throw new Error(`no cell ${a.cell} in the polishJudge ${a.set} set`);
     await runPolishTrial({ ...a, cell, log });
+  } else if (a.role === 'verifier') {
+    const { verifierCellsFor } = await import('./verifier/cells.ts');
+    const { runVerifierTrial } = await import('./verifier/arc.ts');
+    const cell = (await verifierCellsFor(a.set)).find((c) => c.id === a.cell);
+    if (cell === undefined) throw new Error(`no cell ${a.cell} in the verifier ${a.set} set`);
+    await runVerifierTrial({ ...a, cell, log });
+  } else if (a.role === 'scaffold') {
+    const { scaffoldCellsFor } = await import('./scaffold/cells.ts');
+    const { runScaffoldTrial } = await import('./scaffold/arc.ts');
+    const cell = (await scaffoldCellsFor(a.set)).find((c) => c.id === a.cell);
+    if (cell === undefined) throw new Error(`no cell ${a.cell} in the scaffold ${a.set} set`);
+    await runScaffoldTrial({ ...a, cell, log });
   } else {
     const { walkCellsFor } = await import('./walkthrough/cells.ts');
     const { runWalkTrial } = await import('./walkthrough/arc.ts');

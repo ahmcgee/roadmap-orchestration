@@ -10,7 +10,7 @@ import {
   InvalidIdError, arcId, commandId, jobId, knownDefectId, laneId, opId, opKey, opportunityId, sha, sha256, unitId, witnessItemId,
 } from '../src/core/ids.ts';
 import { canonicalJson } from '../src/core/json.ts';
-import { DEFAULT_BOUNDS, boundsOfRecord, commandBody, dispatchRecord, laneDef, redFile, specM1, specPatchOp } from '../src/core/records.ts';
+import { DEFAULT_BOUNDS, boundsOfRecord, commandBody, dispatchRecord, laneDef, laneDefOf, redFile, specM1, specPatchOp } from '../src/core/records.ts';
 import { Fold, openAttempt } from '../src/core/state.ts';
 import {
   HOST_SIGNATURES_DEV6, buildExperimentsDefault, bundleClassesOf, dev6SmokeBounds, mutantSubjectDefault,
@@ -21,11 +21,10 @@ import { debtSource } from '../src/debt/types.ts';
 import { HOST_SIGNATURES } from '../src/host/signatures.ts';
 import { type ArcLaneDef, admitClass, conversion, laneRevMatches, laneRevOf, parseObligations, witnessLaneFile } from '../src/holistic/types.ts';
 import { CliError, parseCommand } from '../src/input/cli.ts';
-import { knownDefectsOf, parsePlan, planCheckShapeOf, priorityOf } from '../src/input/plan.ts';
+import { knownDefectsOf, parsePlan, priorityOf } from '../src/input/plan.ts';
 import { DETAILED_OUTCOMES, STAGE_OUTCOME_KINDS } from '../src/core/events.ts';
 import {
-  BUILD_SCHEMA, CHECKPOINT_SCHEMA, PLAN_ASSESSMENT_SCHEMA, buildOutputFor, buildSchemaFor, validateBuildOutput, validateCheckpointOutput, validatePlanAssessment,
-  validatePlanCheckAcceptanceOutput,
+  BUILD_SCHEMA, CHECKPOINT_SCHEMA, buildOutputFor, buildSchemaFor, validateBuildOutput, validateCheckpointOutput,
 } from '../src/prompts/schemas.ts';
 import { schemaViolation } from '../src/backends/adapter.ts';
 import { parseSpec, specBytes } from '../src/spec/spec.ts';
@@ -77,13 +76,13 @@ describe('m4a-rev3 ids', () => {
 });
 
 describe('m4a-rev3 spawn subjects and mutant records', () => {
-  it('a lane spawn carries redRev and a reuse identity (spec lanes only); a journey spawn redRev', () => {
+  it('a lane spawn carries redRev and a reuse identity (spec and, since dev.17, suite lanes); a journey spawn redRev', () => {
     const identity = { laneRev: '0123456789abcdef', envId: 'fedcba9876543210', argv0: { path: '/usr/bin/node', sha256: H } };
     const lane = { purpose: 'lane', unit: 'u1', lane: 'unit', set: 'spec', at: A, redRev: 2, identity };
     roundTrip(intent('proc.spawn', { subject: lane, launchSha256: H }));
     roundTrip(intent('proc.spawn', { subject: { ...lane, identity: { ...identity, argv0: null } }, launchSha256: H }));
     roundTrip(intent('proc.spawn', { subject: { purpose: 'lane', unit: 'u1', lane: 'unit', set: 'suite', at: A }, launchSha256: H }));
-    refuses(intent('proc.spawn', { subject: { ...lane, set: 'suite' }, launchSha256: H }), /identity$/);
+    roundTrip(intent('proc.spawn', { subject: { ...lane, set: 'suite' }, launchSha256: H }));
     refuses(intent('proc.spawn', { subject: { ...lane, redRev: 0 }, launchSha256: H }), /redRev$/);
     roundTrip(intent('proc.spawn', { subject: { purpose: 'journey', lane: 'journey', laneRev: '0123456789abcdef', at: A, owner: { type: 'unit', unit: 'u1' }, redRev: 1 }, launchSha256: H }));
   });
@@ -269,16 +268,16 @@ describe('m4a-rev3 plan and spec', () => {
     direction: 'd', suite: { lanes: [] }, resources: [], units: [unit, { ...unit, id: 'u2', spec: 'specs/u2.json' }], architectureDoc: 'docs/arch.md',
   };
 
-  it('plan.knowndefects-parse: known defects, unit priority and the plan-check shape; absent reads as none, normal and uniform', () => {
+  it('plan.knowndefects-parse: known defects and unit priority; absent reads as none and normal; a dev.16 plan-check shape reads and drops (dev.17)', () => {
     const p = parsePlan({
       ...plan, units: [{ ...unit, priority: 'high' }, { ...unit, id: 'u2', spec: 'specs/u2.json' }], planCheck: { shape: 'by-builder' },
       knownDefects: [{ id: 'K-1', match: { type: 'lane', lane: 'e2e' }, fixUnit: 'u2' }, { id: 'K-2', match: { type: 'output', lane: 'unit', contains: 'ETIMEDOUT' }, fixUnit: 'u2' }],
     });
     assert.deepEqual(knownDefectsOf(p).map((k) => k.id), ['K-1', 'K-2']);
-    assert.equal(planCheckShapeOf(p), 'by-builder');
+    assert.ok(!('planCheck' in p), 'dev.17: the removed field is dropped at read (planCheckShapeDefault)');
     assert.deepEqual(p.units.map(priorityOf), ['high', 'normal']);
     const bare = parsePlan(plan);
-    assert.deepEqual([knownDefectsOf(bare), planCheckShapeOf(bare), priorityOf(bare.units[0]!)], [[], 'uniform', 'normal']);
+    assert.deepEqual([knownDefectsOf(bare), priorityOf(bare.units[0]!)], [[], 'normal']);
     assert.throws(() => parsePlan({ ...plan, knownDefects: [] }), SchemaError);
     assert.throws(() => parsePlan({ ...plan, knownDefects: [{ id: 'K-1', match: { type: 'lane', lane: 'a' }, fixUnit: 'u2' }, { id: 'K-1', match: { type: 'lane', lane: 'b' }, fixUnit: 'u2' }] }), /knownDefects/);
     assert.throws(() => parsePlan({ ...plan, knownDefects: [{ id: 'K-1', match: { type: 'output', lane: 'a' }, fixUnit: 'u2' }] }), /contains/);
@@ -286,12 +285,12 @@ describe('m4a-rev3 plan and spec', () => {
     assert.throws(() => parsePlan({ ...plan, units: [{ ...unit, priority: 'urgent' }] }), /priority/);
   });
 
-  it('spec.inputs-only-spec-lanes: a spec lane may declare inputs; a suite or arc lane may not', () => {
+  it('spec.inputs-dropped (dev.17): a dev.16 spec lane\'s inputs read as dropped; a suite or arc lane declaring them is refused', () => {
     const withInputs = { ...LANE, inputs: ['src/**', 'package.json'] };
-    assert.deepEqual(laneDef(withInputs, 'l').inputs, ['src/**', 'package.json']);
-    assert.throws(() => laneDef({ ...LANE, inputs: [] }, 'l'), SchemaError);
-    assert.throws(() => parsePlan({ ...plan, suite: { lanes: [withInputs] } }), (e: unknown) => e instanceof SchemaError && e.field === 'plan.suite.lanes[0].inputs');
-    assert.throws(() => parseObligations(obligationsWith({ ...ARC_LANE, inputs: ['src/**'] })), /an arc lane/);
+    assert.equal('inputs' in laneDefOf('spec')(withInputs, 'l'), false);
+    assert.throws(() => laneDef({ ...laneDefOf('spec')(LANE, 'l'), inputs: ['src/**'] }, 'l'), SchemaError);
+    assert.throws(() => parsePlan({ ...plan, suite: { lanes: [withInputs] } }), SchemaError);
+    assert.throws(() => parseObligations(obligationsWith({ ...ARC_LANE, inputs: ['src/**'] })), SchemaError);
     // An arc lane's testPaths (D2): non-empty when present.
     assert.deepEqual(parseObligations(obligationsWith({ ...ARC_LANE, testPaths: ['test/**'] })).lanes[0]!.testPaths, ['test/**']);
     assert.throws(() => parseObligations(obligationsWith({ ...ARC_LANE, testPaths: [] })), SchemaError);
@@ -347,17 +346,6 @@ describe('m4a-rev3 role schemas', () => {
     assert.ok('experiments' in (BUILD_SCHEMA as { properties: object }).properties);
   });
 
-  it('the in-session assessment and the acceptance-shape plan-check', () => {
-    const a = { planAssessment: { feasible: false, riskFloor: 'high', visionConflict: [{ clauses: ['V-2'], note: 'n' }], premises: [], notes: 'the corpus forbids it' } };
-    assert.deepEqual(validatePlanAssessment(a), a);
-    assert.ok(canonicalJson(PLAN_ASSESSMENT_SCHEMA).includes('"riskFloor"'));
-    assert.throws(() => validatePlanAssessment({ planAssessment: { ...a.planAssessment, riskFloor: 'urgent' } }), SchemaError);
-    const redirect = (patch: readonly object[]) => ({ decision: 'redirect', reasons: ['r'], patch, risk: 'med', notes: '', premises: [], visionConflict: [] });
-    const witness = { op: 'add', section: 'witnesses', item: { id: 'W-1', lane: 'journey', testId: 't', clause: 'A1', skeleton: 's' } };
-    validatePlanCheckAcceptanceOutput(redirect([witness, { op: 'cite', contracts: [], rulings: ['C-1'] }, { op: 'replace', section: 'facts', item: { id: 'F1', text: 't' } }]));
-    assert.throws(() => validatePlanCheckAcceptanceOutput(redirect([{ op: 'add', section: 'acceptance', item: { id: 'A9', clause: 'c', failLoudIfUndelivered: false } }])), /acceptance shape/);
-    assert.throws(() => validatePlanCheckAcceptanceOutput(redirect([{ op: 'strike', id: 'A1' }])), /acceptance shape/);
-  });
 });
 
 describe('m4a-rev3 rank', () => {
@@ -376,8 +364,9 @@ describe('types.lane-rev-normalised', () => {
     // The executor's dev.6 revs are this form already: the hash of the parsed lane's canonical JSON.
     assert.equal(laneRevOf(parsed), sha256Hex(cj(parsed)).slice(0, 16));
     // A spec lane item's state is the item's, not the definition's.
-    assert.equal(laneRevOf({ ...laneDef(LANE, 'l'), state: 'active' } as never), laneRevOf(laneDef(LANE, 'l')));
-    assert.notEqual(laneRevOf(laneDef({ ...LANE, inputs: ['src/**'] }, 'l')), laneRevOf(laneDef(LANE, 'l')), 'inputs are part of the definition');
+    const spec = laneDefOf('spec');
+    assert.equal(laneRevOf({ ...spec(LANE, 'l'), state: 'active' } as never), laneRevOf(spec(LANE, 'l')));
+    assert.notEqual(laneRevOf(spec({ ...LANE, systems: ['api'] }, 'l')), laneRevOf(spec(LANE, 'l')), 'systems are part of the definition');
   });
 });
 
@@ -476,7 +465,7 @@ describe('run 10 (D): a checkpoint admit\'s spec is constrained by the schema', 
   const wire = {
     schema: 'roadmap/spec-m1', unit: 'gap', rev: 1, scope: ['src/**'], resources: [], decisions: [], facts: [], cites: { contracts: [], rulings: [] },
     lanes: [{
-      id: 'unit', argv: ['node', '--test'], cwd: '.', env: { set: [{ name: 'TZ', value: 'UTC' }], pass: [] }, expectedExit: 0, tier: 'fast', resources: [],
+      id: 'unit', argv: ['node', '--test'], cwd: '.', env: { set: [{ name: 'TZ', value: 'UTC' }], pass: [] }, expectedExit: 0, cadence: 'build', resources: [],
       evidenceGlobs: [], evidenceExcludes: [], state: 'active',
     }],
     acceptance: [{ id: 'A1', clause: 'A booking names one berth.', failLoudIfUndelivered: true, state: 'active' }],

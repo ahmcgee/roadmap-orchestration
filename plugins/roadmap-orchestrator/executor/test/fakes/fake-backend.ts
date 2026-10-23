@@ -11,11 +11,12 @@ import { accessSync, appendFileSync, constants, existsSync, mkdirSync, readFileS
 import { createRequire } from 'node:module';
 import { basename, delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { JsonValue } from '../../src/core/json.ts';
 import type { LensKindName } from '../../src/core/records.ts';
 import { unitBarrierName, waitAtBarrier } from '../helpers/barrier.ts';
 import { git, writeFiles, type FileSet } from '../helpers/repo.ts';
 import {
-  type Act, CALLS_FILE, CAPACITY_TEXT, CLAIMS_DIR, CLAUDE_USAGE_LIMIT, CODEX_CONTEXT_EXCEEDED, CODEX_RESUME_COLLISION, CODEX_USAGE_LIMIT, type CallRecord, type Expect, type FakeName, type ScenarioFile, type Step, readCalls,
+  type Act, CALLS_FILE, CAPACITY_TEXT, CLAIMS_DIR, defaultDesign, CLAUDE_USAGE_LIMIT, CODEX_CONTEXT_EXCEEDED, CODEX_RESUME_COLLISION, CODEX_USAGE_LIMIT, type CallRecord, type Expect, type FakeName, type ScenarioFile, type Step, readCalls,
 } from '../helpers/scenario.ts';
 
 const FIXTURES = fileURLToPath(new URL('../fixtures/backend-output/', import.meta.url));
@@ -124,7 +125,7 @@ function codexFailed(thread: string, message: string): never {
 // ---------------------------------------------------------------------------------------------------
 // Claude: stream-json on stdout, the captured init event then one result object, built from the fixtures.
 
-type ClaudeCapture = 'claude-judgment' | 'claude-api-error' | 'claude-prompt-too-long';
+type ClaudeCapture = 'claude-judgment' | 'claude-api-error' | 'claude-prompt-too-long' | 'claude-build-advisor';
 
 function capturedEvent(name: ClaudeCapture, type: 'system' | 'result'): Record<string, unknown> {
   const events = readFileSync(join(FIXTURES, name, 'stdout'), 'utf8').split('\n').filter((l) => l !== '').map((l) => JSON.parse(l) as Record<string, unknown>);
@@ -140,11 +141,11 @@ function template(name: ClaudeCapture): Record<string, unknown> {
 /** Set once the init event is printed: a stream prints it once, first. */
 let initPrinted = false;
 
-/** The init event every stream-json run prints first. */
-function claudeInit(session: string): void {
+/** The init event every stream-json run prints first; `model` replaces the captured session model (an `advised` act's). */
+function claudeInit(session: string, model?: string): void {
   if (initPrinted) return;
   initPrinted = true;
-  out(`${JSON.stringify({ ...capturedEvent('claude-judgment', 'system'), session_id: session })}\n`);
+  out(`${JSON.stringify({ ...capturedEvent('claude-judgment', 'system'), session_id: session, ...(model === undefined ? {} : { model }) })}\n`);
 }
 
 /** The tool calls the fake CLI refused this run: the result's `permission_denials`. */
@@ -200,6 +201,27 @@ function claudeResult(session: string, fields: Readonly<Record<string, unknown>>
   out(`${JSON.stringify(r)}\n`);
 }
 
+/**
+ * An `advised` act's result (dev.17): the session's usage under the call's `--model` (the captured judgment's, as
+ * `sessionUsage`), plus the call's `--advisor` with the claude-build-advisor capture's advisor entry.
+ */
+function claudeAdvisedResult(call: Call, session: string, value: JsonValue): void {
+  const model = flagValue(call.argv, '--model');
+  const advisor = flagValue(call.argv, '--advisor');
+  if (model === undefined || advisor === undefined) throw new Error('fake claude: an advised act needs --model and --advisor in argv');
+  if (model === advisor) throw new Error(`fake claude: an advised act with the advisor ${advisor} as the session's own model reports one entry; use emit`);
+  const own = sessionUsage(priorSessionCalls + 1);
+  const captured = (template('claude-build-advisor')['modelUsage'] as Record<string, Record<string, unknown>>)['claude-opus-5-5'];
+  if (captured === undefined) throw new Error('fake claude: the claude-build-advisor capture has no claude-opus-5-5 entry');
+  const modelUsage = { ...Object.fromEntries(Object.values(own.modelUsage).map((u) => [model, u])), [advisor]: captured };
+  const r = {
+    ...template('claude-judgment'), modelUsage, total_cost_usd: own.total_cost_usd + (captured['costUSD'] as number), session_id: session,
+    permission_denials: denials, result: JSON.stringify(value), structured_output: value,
+  };
+  claudeInit(session, model);
+  out(`${JSON.stringify(r)}\n`);
+}
+
 /** A CLI error result (exit 1): the usage limit on the captured api-error result, or the captured prompt-too-long one. */
 function claudeFailed(session: string, what: 'usage-limit' | 'context-exceeded'): never {
   const r = what === 'usage-limit'
@@ -238,6 +260,37 @@ function runReal(call: Call, scenarioDir: string, readOnly: Readonly<{ repo: str
   if (r.error !== undefined) throw r.error;
   if (r.signal !== null) process.kill(process.pid, r.signal);
   process.exit(r.status ?? 1);
+}
+
+/**
+ * A `planCheck` act's answer: the dev.17 payload keys it lacks are null, but an approve's or a scaffold's missing `design`,
+ * which is `defaultDesign` of the call's first scope pattern, its spec's active acceptance clauses and a lane that runs them.
+ */
+function planCheckValue(call: Call, value: JsonValue, scenarioDir: string): JsonValue {
+  const v = value as Record<string, JsonValue>;
+  const designs = v['decision'] === 'approve' || v['decision'] === 'scaffold';
+  // A repair turn's stdin is its directive alone: the scope is in the prompt of the session it resumes.
+  const prompt = (): string => {
+    const resumed = flagValue(call.argv, '--resume');
+    return resumed === undefined ? call.stdin
+      : readCalls(join(scenarioDir, 'scenario.json')).find((c) => flagValue(c.argv, '--session-id') === resumed)?.stdin ?? '';
+  };
+  const design = (): JsonValue => {
+    const text = prompt();
+    const first = /<scope_envelope>\n- (\S+)\n/.exec(text)?.[1];
+    if (first === undefined) throw new Error('fake claude: a planCheck act needs a scope envelope in the prompt');
+    const acceptance = /## Acceptance\n\n([\s\S]*?)\n\n## /.exec(text)?.[1] ?? '';
+    const clauses = [...acceptance.matchAll(/^- `([^`]+)` \[active\]/gm)].map((m) => m[1]!);
+    const lanes = [...(/<test_lanes>\n([\s\S]*?)<\/test_lanes>/.exec(text)?.[1] ?? '').matchAll(/^- (\S+) \((spec|suite|arc), cadence (\w+)([^\n]*)\)$/gm)]
+      .map((m) => ({ id: m[1]!, kind: m[2]!, cadence: m[3]!, unavailable: m[4]!.includes('(unavailable') }));
+    const lane = lanes.find((l) => l.kind === 'spec' && (l.cadence === 'build' || l.cadence === 'unit') && !l.unavailable)
+      ?? lanes.find((l) => l.cadence !== 'batch' && !l.unavailable);
+    return defaultDesign(first, clauses, lane?.id ?? null);
+  };
+  return {
+    split: null, scaffold: null, poc: null, ...v,
+    design: Object.hasOwn(v, 'design') ? v['design']! : designs ? design() : null,
+  };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -282,6 +335,14 @@ function perform(act: Act, call: Call, step: Step, index: number, scenarioDir: s
     case 'refusal':
       claudeResult(session(), { result: "I can't help with that.", stop_reason: 'refusal' }, ['structured_output']);
       return;
+    case 'advised':
+      claudeAdvisedResult(call, session(), act.value);
+      return;
+    case 'planCheck': {
+      const value = planCheckValue(call, act.value, scenarioDir);
+      claudeResult(session(), { result: JSON.stringify(value), structured_output: value });
+      return;
+    }
     case 'globAboveAddDir': {
       const first = flagValue(call.argv, '--add-dir');
       if (first === undefined) throw new Error('fake claude: globAboveAddDir needs an --add-dir in argv');

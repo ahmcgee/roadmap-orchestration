@@ -13,6 +13,11 @@ import { PROMPT as PACK_REVIEW_OPUS } from './packReview/claude-opus-5-5.ts';
 import { PROMPT as PLAN_CHECK_OPUS } from './planCheck/claude-opus-5-5.ts';
 import { PROMPT as POLISH_JUDGE_OPUS } from './polishJudge/claude-opus-5-5.ts';
 import { PROMPT as WALKTHROUGH_OPUS } from './walkthrough/claude-opus-5-5.ts';
+import { PROMPT as VERIFIER_HAIKU } from './verifier/claude-haiku-5-5.ts';
+import { PROMPT as SCAFFOLD_HAIKU } from './scaffold/claude-haiku-5-5.ts';
+import { POC_PROMPT } from './poc/claude-opus-5-5.ts';
+import type { PocInputs } from './inputs.ts';
+import type { JsonValue } from '../core/json.ts';
 
 /** Every Codex judgment triple is unsupported in M1 (R21); layers.ts reports it as `codex-judgment`. */
 const CODEX_JUDGMENT = 'no read-only Codex judgment profile exists yet (R21)';
@@ -61,9 +66,15 @@ function haiku<M extends Readonly<{ system: string }>>(opus: M): { readonly type
   return { type: 'prompt', prompt: { ...opus, system: `${opus.system}\n\n${HAIKU_FINISH}` } };
 }
 
+/** dev.17: why the verifier's other Claude rows read the Haiku module. */
+const VERIFIER_INHERITS = '2026-10-23: the Haiku 5.5 verifier module (a closed per-hunk classification, no model-specific method) read unchanged; no built-in seat routes this model to the verifier, so its role eval has not run on it';
+
 /** dev.13: why a walk role has no prompt on a model. */
 const WALK_OPUS_ONLY = 'the walk roles have Opus 5.5 modules only: the Sonnet and Haiku guides carry no design guidance (dev.13 plan §6)';
 const WALK_CODEX = 'Codex has no walkthrough prompt and no acting-judge profile';
+
+/** dev.17: why the scaffold role has no prompt on a model other than Haiku 5.5. */
+const SCAFFOLD_HAIKU_ONLY = 'the scaffold role has a Haiku 5.5 module only (economy, its built-in class)';
 
 /** Fable 5.1 holds no built-in seat (a repo rebind reaches it) and reads each judgment role's Opus module unchanged. */
 const fableJudgment = (module: string) => ({
@@ -203,7 +214,63 @@ export const PROMPTS: PromptTable<PromptModules> = {
     'gpt-5.6-luna': { type: 'unsupported', reason: WALK_CODEX },
     'gpt-5.6-sol': { type: 'unsupported', reason: WALK_CODEX },
   },
+  // dev.17 (proportional review): the docs-only verifier on economy (Haiku 5.5). Its one written module is Haiku's; like every
+  // judgment role it has a row on each Claude model, so `route` may seat any class at its seats. The others read the Haiku
+  // module unchanged: the task is a closed per-hunk classification whose text holds nothing Haiku-specific but the completion
+  // lines, which the other models need no less.
+  verifier: {
+    'claude-haiku-5-5': { type: 'prompt', prompt: VERIFIER_HAIKU },
+    'claude-opus-5-5': { type: 'inherits', from: 'claude-haiku-5-5', reviewed: VERIFIER_INHERITS },
+    'claude-fable-5-1': { type: 'inherits', from: 'claude-haiku-5-5', reviewed: VERIFIER_INHERITS },
+    'claude-sonnet-5-5': { type: 'inherits', from: 'claude-haiku-5-5', reviewed: VERIFIER_INHERITS },
+    'gpt-5.6-luna': { type: 'unsupported', reason: CODEX_JUDGMENT },
+    'gpt-5.6-sol': { type: 'unsupported', reason: CODEX_JUDGMENT },
+  },
+  // dev.17 (design pass): the scaffold writer, on economy (Haiku 5.5 high) in the built-in seats. Only a Haiku module is
+  // written; a rebind of its seat to another model is refused at startup until that model's module is written and reviewed.
+  scaffold: {
+    'claude-haiku-5-5': { type: 'prompt', prompt: SCAFFOLD_HAIKU },
+    'claude-opus-5-5': { type: 'unsupported', reason: SCAFFOLD_HAIKU_ONLY },
+    'claude-sonnet-5-5': { type: 'unsupported', reason: SCAFFOLD_HAIKU_ONLY },
+    'claude-fable-5-1': { type: 'unsupported', reason: SCAFFOLD_HAIKU_ONLY },
+    'gpt-5.6-luna': { type: 'unsupported', reason: 'the scaffold writer is Claude only (a fresh Claude session in the unit worktree)' },
+    'gpt-5.6-sol': { type: 'unsupported', reason: 'the scaffold writer is Claude only (a fresh Claude session in the unit worktree)' },
+  },
 };
+
+/**
+ * dev.17 (design pass): the proof-of-concept brief the builder seat runs (src/pipeline/poc.ts). Not a role: the seat is
+ * build's, so its table follows build's models. One module, task-only text (the job, the unattended-run rule, the answer),
+ * written to the Opus 5.5 guide; Codex takes it with its system text leading stdin, as it takes every brief.
+ */
+export type PocModule = Readonly<{ system: string; render: (inputs: PocInputs) => string; schema: JsonValue }>;
+export const POC_PROMPTS: { readonly [M in ModelId]: PromptSupport<PocModule> } = {
+  'claude-opus-5-5': { type: 'prompt', prompt: POC_PROMPT },
+  'claude-sonnet-5-5': {
+    type: 'inherits', from: 'claude-opus-5-5',
+    reviewed: '2026-10-23: carried over as the Sonnet build seat carries the Opus build brief (task-only text, the unattended-run rule, one closed answer; no Sonnet-specific text); unmeasured until a PoC eval (BACKLOG)',
+  },
+  'gpt-5.6-luna': {
+    type: 'inherits', from: 'claude-opus-5-5',
+    reviewed: '2026-10-23: the PoC brief is task-only text with no model-specific steering; the Codex builder reads it as its build brief is read (system text leading stdin)',
+  },
+  'gpt-5.6-sol': { type: 'inherits', from: 'gpt-5.6-luna', reviewed: '2026-10-23: GPT-5.6 tiers share one prompt skeleton, as for the build brief' },
+  'claude-haiku-5-5': { type: 'unsupported', reason: 'Haiku 5.5 holds no build seat: its class, economy, is judgment-only' },
+  'claude-fable-5-1': { type: 'unsupported', reason: 'no build prompt written for Fable; no built-in seat uses it' },
+};
+
+/** The PoC module a builder seat runs, following `inherits`; a seat the build table refuses is refused here too. */
+export function pocPromptFor(model: ModelId): PocModule {
+  const s = POC_PROMPTS[model];
+  switch (s.type) {
+    case 'prompt':
+      return s.prompt;
+    case 'inherits':
+      return pocPromptFor(s.from);
+    case 'unsupported':
+      throw new UnsupportedPromptError('build', model, s.reason);
+  }
+}
 
 export class UnsupportedPromptError extends Error {
   readonly role: Role;

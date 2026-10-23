@@ -20,7 +20,6 @@ import type { AbsPath } from '../src/core/values.ts';
 import { git, refTarget, revParse } from '../src/git/git.ts';
 import { snapshotRef, verifySnapshot } from '../src/git/snapshot.ts';
 import { invocationDir } from '../src/pipeline/invoke.ts';
-import { isAssessCall } from '../src/pipeline/stages.ts';
 import { runnerFiles } from '../src/runner/files.ts';
 import { MODEL_IDS } from '../src/routing/types.ts';
 import { ADMISSION_STAGES } from '../src/schedule/types.ts';
@@ -156,13 +155,24 @@ export function provenance(run: OracleRun, integration: string, baseline: string
     if (byJob !== null) return s.purpose === 'journey' && s.owner.type === 'job' && s.owner.job === byJob && s.at === head;
     return s.purpose === 'lane' && s.set === 'suite' && s.at === head;
   });
-  if (tested.length === 0) problems.push(`no ${byJob === null ? 'suite lane' : `lane of ${byJob}`} ran at the head ${head}`);
+  // dev.17: a unit's suite lane at the head may be reused (the one reuse key): its run passed on a commit of the same tree
+  // (the fixtures declare no systems map, so a lane's input is the whole tree).
+  const reused = byJob !== null ? [] : run.events.flatMap((e) => (e.type === 'fact' && e.fact.kind === 'lane-reused' && e.fact.set === 'suite' && e.fact.at === head ? [e.fact] : []));
+  if (tested.length + reused.length === 0) problems.push(`no ${byJob === null ? 'suite lane' : `lane of ${byJob}`} ran at the head ${head}`);
+  const passed = (inv: ReturnType<typeof invocationId>): boolean => {
+    const result = runnerFiles(invocationDir(run.runDir, inv), inv).read('result.json');
+    return result !== null && result.type === 'command' && result.verdict === 'pass';
+  };
   for (const lane of tested) {
     const inv = invocationId(lane.op, lane.ordinal);
-    const result = runnerFiles(invocationDir(run.runDir, inv), inv).read('result.json');
-    if (result === null || result.type !== 'command' || result.verdict !== 'pass') problems.push(`lane ${inv} at the head did not pass`);
+    if (!passed(inv)) problems.push(`lane ${inv} at the head did not pass`);
   }
-  return verdict(problems, `${published.length} publication(s); head ${head} is the last, tested by ${tested.length} passing lane(s)`);
+  const tree = (commit: string): string => revParse(run.repo, `${commit}^{tree}`);
+  for (const r of reused) {
+    if (!passed(r.from.inv)) problems.push(`lane ${r.lane} reused at the head from ${r.from.inv}, which did not pass`);
+    if (tree(r.from.at) !== tree(head)) problems.push(`lane ${r.lane} reused at the head from ${r.from.at}, another tree`);
+  }
+  return verdict(problems, `${published.length} publication(s); head ${head} is the last, tested by ${tested.length + reused.length} passing lane(s)`);
 }
 
 /** Each unit published exactly `expected[unit]` times (1 for a merged unit, 0 otherwise), by its own ff or as a batch member. */
@@ -229,8 +239,8 @@ export function recoveryHoldsOf(run: OracleRun): readonly string[] {
  * The recovery holds a run with exactly one executor crash must show, derived from its own log, and `outcomes` (the
  * uncrashed run's, per unit) with each inserted where it falls. At the crash (the log before the restart's
  * `executor-started`, the last) each unit's open attempt at an admission stage is either consumed by the restart from its backend
- * call (the attempt's latest backend spawn closed with a result, or a build's lost with tree effects, and not an
- * in-session assessment: src/pipeline/unit.ts `consumeRecorded`) or closed by one `interrupted` hold, cause recovery,
+ * call (the attempt's latest backend spawn closed with a result, or a build's lost with tree effects:
+ * src/pipeline/unit.ts `consumeRecorded`) or closed by one `interrupted` hold, cause recovery,
  * which follows the unit's outcomes at the crash. Pair with `recoveryHoldsOf(run)`, which must equal `holds`.
  */
 export function withRecoveryHolds(
@@ -269,7 +279,7 @@ function consumable(run: OracleRun, unit: string, stage: string, attempt: number
   const done = run.view.doneOf(spawn.op);
   if (done === null || done.kind !== 'proc.spawn') throw new Error(`${unit} ${stage}#${attempt}: its backend call ${spawn.op} was never closed`);
   if (done.outcome.kind === 'lost') return stage === 'build' && done.outcome.treeEffects;
-  return !(stage === 'build' && isAssessCall({ runDir: run.runDir }, invocationId(spawn.op, spawn.ordinal)));
+  return true;
 }
 
 /** Every needs-user raised (journal and file items), by reason, is exactly `expected` (a multiset): no duplicates. */
@@ -342,7 +352,7 @@ export function noModelIds(run: OracleRun): Verdict {
  * `flow-series` since the completion before it (a crash between the two keeps no second series); with it off, none.
  */
 export function flowSeriesPerCompletion(run: OracleRun): Verdict {
-  const on = arcRolesOf(run.view.planApplied()) === 'm4b';
+  const on = arcRolesOf(run.view.planApplied()) !== null;
   const problems: string[] = [];
   let series = 0;
   let completions = 0;

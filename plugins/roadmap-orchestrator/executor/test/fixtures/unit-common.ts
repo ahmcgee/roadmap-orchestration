@@ -21,8 +21,8 @@ import { type PlanUnit, parsePlan } from '../../src/input/plan.ts';
 import type { StageContext } from '../../src/pipeline/dispatch.ts';
 import { step } from '../../src/pipeline/unit.ts';
 import { DOCS_NOT_YET } from '../../src/recover/revision.ts';
-import { type RepoConfig, arcStack, resolveRouting } from '../../src/routing/layers.ts';
-import type { RiskTier } from '../../src/routing/types.ts';
+import { type RepoConfig, arcStack, parseRepoConfig, resolveRouting } from '../../src/routing/layers.ts';
+import type { ArcRoleSet, RiskTier } from '../../src/routing/types.ts';
 import { makeRepo, revParse, tmpDir } from '../helpers/repo.ts';
 import { type CallRecord, type ClaudeAct, type CodexAct, type Expect, type Step, writeScenario } from '../helpers/scenario.ts';
 import { arcFor } from './invoke-specs.ts';
@@ -51,6 +51,8 @@ export type ArcOptions = Readonly<{
   suite?: readonly LaneJson[];
   /** The integration tip's `add`: fixed (green suite at T, the default) or broken (red at T). */
   base?: 'green' | 'red';
+  /** dev.17: the repo config's `systemsMap` (the descriptor's `config`, which revision 1 records); default none. */
+  systemsMap?: JsonValue;
 }>;
 
 /** Everything needed to rebuild the arc's StageContext, as JSON (for a child executor). */
@@ -65,13 +67,17 @@ export type ArcDescriptor = Readonly<{
   scenarioDir: string;
   /** The repo config the arc resolves its routing under, as `.roadmap/config.json` holds it once parsed; absent: none. */
   config?: RepoConfig;
+  /** dev.17: the arc's role set; absent: `m4b` (an arc a dev.8 to dev.16 executor started). `dev17` puts the scaffold role in force. */
+  arcRoles?: ArcRoleSet;
 }>;
 
 /** A lane as plan and spec files carry it, defaults filled. */
 export function laneJson(l: LaneJson): Record<string, unknown> {
   return {
     id: l.id, argv: l.argv, cwd: l.cwd ?? '.', env: { set: l.env?.set ?? {}, pass: l.env?.pass ?? ['PATH'] }, expectedExit: l.expectedExit ?? 0,
-    tier: l.tier ?? 'fast', resources: l.resources ?? [], evidenceGlobs: l.evidenceGlobs ?? [], ...(l.inputs === undefined ? {} : { inputs: l.inputs }),
+    ...(l.cadence === undefined ? { tier: l.tier ?? 'fast' } : { cadence: l.cadence }), resources: l.resources ?? [], evidenceGlobs: l.evidenceGlobs ?? [],
+    ...(l.inputs === undefined ? {} : { inputs: l.inputs }), ...(l.systems === undefined ? {} : { systems: l.systems }),
+    ...(l.readsComments === undefined ? {} : { readsComments: l.readsComments }),
   };
 }
 
@@ -110,6 +116,7 @@ export function setupArc(opts: ArcOptions): ArcDescriptor {
   return {
     arc, repo, planPath, runDir: tmpDir('unit-run'), hostDir: join(tmpDir('unit-host'), 'roadmap'),
     binDir: scenario.binDir, scenarioPath: scenario.path, scenarioDir,
+    ...(opts.systemsMap === undefined ? {} : { config: parseRepoConfig({ systemsMap: opts.systemsMap }) }),
   };
 }
 
@@ -121,9 +128,9 @@ export function contextFor(d: ArcDescriptor): ArcRun {
   const journal = openJournal(absPath(d.runDir), arcId(d.arc));
   // As a first start does: the files become the plan in force (rev 1), whose specs the stages load.
   if (journal.view.planApplied() === null) {
-    recordFirstPlan(journal, absPath(d.runDir), absPath(d.planPath), absPath(d.repo), 'default', d.config ?? null);
+    recordFirstPlan(journal, absPath(d.runDir), absPath(d.planPath), absPath(d.repo), 'default', d.config ?? null, d.arcRoles ?? 'm4b');
   }
-  const routing = resolveRouting({ ...arcStack('default', d.config ?? null, null), arcRoles: 'm4b' });
+  const routing = resolveRouting({ ...arcStack('default', d.config ?? null, null), arcRoles: d.arcRoles ?? 'm4b' });
   const resources = {
     journal, containment: sessionContainment, runDir: absPath(d.runDir), plan: () => plan, repo: absPath(d.repo),
     hostDir: openHostDir(absPath(d.hostDir)),
@@ -134,7 +141,7 @@ export function contextFor(d: ArcDescriptor): ArcRun {
     hostEnv: { ...process.env, PATH: `${d.binDir}:${process.env['PATH'] ?? ''}` },
     planDir: absPath(join(d.planPath, '..')),
     planFile: absPath(d.planPath),
-    routingBase: { profile: 'default', config: d.config ?? null, arcRoles: 'm4b' },
+    routingBase: { profile: 'default', config: d.config ?? null, arcRoles: d.arcRoles ?? 'm4b' },
     ...serialRuntime(resources),
   };
   const unit = (id: string): PlanUnit => {
@@ -189,6 +196,8 @@ export type GateAnswer = Readonly<{
   premises?: readonly JsonValue[];
   unreviewed?: readonly JsonValue[];
   clusters?: readonly JsonValue[] | null;
+  /** dev.17: the rulings on the disputes the gate was given; default none. */
+  rulings?: readonly JsonValue[];
 }>;
 
 /** A gate the fake Claude answers after `before`: a fresh acting-judge call. `expect` adds to the gate argv check. */
@@ -200,9 +209,18 @@ export function gateStep(a: GateAnswer, expect: Expect = {}, before: readonly Cl
   };
 }
 
+/**
+ * dev.17: a finding as a live gate writes it: `defect` (a blocking one's `incorrect-behaviour` unless the test names one, else
+ * null), `reraises` and `hunk` (null) where the test leaves them out. A test of the defect refusal passes `defect: null`.
+ */
+const dev17Finding = (f: JsonValue): JsonValue => {
+  const o = f as Readonly<Record<string, JsonValue>>;
+  return { defect: o['severity'] === 'blocking' ? 'incorrect-behaviour' : null, reraises: null, hunk: null, ...o };
+};
+
 const gateAnswer = (a: GateAnswer): JsonValue => ({
-  decision: a.decision, findings: [...(a.findings ?? [])], directives: [...(a.directives ?? [])], reasons: ['A1 holds'], premises: [...(a.premises ?? [])],
-  unreviewed: [...(a.unreviewed ?? [])], clusters: a.clusters ?? null,
+  decision: a.decision, findings: (a.findings ?? []).map(dev17Finding), directives: [...(a.directives ?? [])], reasons: ['A1 holds'], premises: [...(a.premises ?? [])],
+  unreviewed: [...(a.unreviewed ?? [])], clusters: a.clusters ?? null, rulings: [...(a.rulings ?? [])],
 }) as JsonValue;
 
 /**
@@ -223,6 +241,11 @@ export function gateRepairStep(a: GateAnswer, stdinContains: readonly string[] =
 /** A gate call: a Claude judgment whose schema is the gate's (the one with directives), whatever its prompt module. */
 export function isGateCall(c: CallRecord): boolean {
   return c.as === 'claude' && (c.argv[c.argv.indexOf('--json-schema') + 1] ?? '').includes('"directives"');
+}
+
+/** dev.17: a plan-check call, an acting judge since the design pass: its `--tools` carry web search (src/backends/argv.ts `PLAN_CHECK_TOOLS`). */
+export function isPlanCheckCall(c: CallRecord): boolean {
+  return c.as === 'claude' && (c.argv[c.argv.indexOf('--tools') + 1] ?? '').includes('WebSearch');
 }
 
 /** A Codex implementer round: `acts`, then the report. */

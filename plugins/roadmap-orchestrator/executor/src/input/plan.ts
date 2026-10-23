@@ -16,15 +16,18 @@
 // `limits.walkRounds` (absent: 3; `walkRoundsOf`), the unit origin `polish` with its `polish` field. The in-file milestone
 // refusals are here (`milestoneRefusals`); `milestones-need-holistic` is a Phase-0 row (src/phase0/rows.ts).
 import {
-  type ArcId, type EdgeId, type JourneyId, type KnownDefectId, type LaneId, type MilestoneId, type PolishId, type ResourceName, type RulingId, type ServeName, type Sha,
-  type UnitId, type VisionClauseId, INTEGRATION_SLOT, arcId, edgeId, journeyId, knownDefectId, laneId, milestoneId, polishId, resourceName, rulingId, serveName, sha,
+  type ArcId, type EdgeId, type JourneyId, type KnownDefectId, type LaneId, type MilestoneId, type PlanRev, type PolishId, type ResourceName, type RulingId, type ServeName, type Sha,
+  type UnitId, type VisionClauseId, INTEGRATION_SLOT, arcId, edgeId, journeyId, knownDefectId, laneId, milestoneId, planRev, polishId, resourceName, rulingId, serveName, sha,
   unitId, visionClauseId, idList,
 } from '../core/ids.ts';
+import { type PropagationTarget, propagationTarget } from '../core/stale.ts';
 import {
-  BOUND_FIELDS, type Bounds, DEFAULT_BOUNDS, type FailureRef, failureRef, type KnownDefectMatch, type LaneDef, type LaneEnv, knownDefectMatch, laneDef, laneEnv, refuseLaneInputs,
+  BOUND_FIELDS, type Bounds, DEFAULT_BOUNDS, type FailureRef, failureRef, type KnownDefectMatch, type LaneDef, type LaneEnv, knownDefectMatch, laneDefOf, laneEnv,
 } from '../core/records.ts';
+import { planCheckShapeDefault } from '../core/upgrade.ts';
+import { type FlakyKey, flakyKey, flakyKeyOf } from '../core/flaky.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
-import { type Fields, type Read, SchemaError, arrayOf, assertUnique, literal, nullable, object, oneOf, positive, sortedBy, str, stringMap, tagged } from '../core/validate.ts';
+import { Fields, type Read, SchemaError, arrayOf, assertUnique, literal, nullable, object, oneOf, positive, sortedBy, str, stringMap, tagged } from '../core/validate.ts';
 import { type LensKind, LENS_KINDS } from '../holistic/types.ts';
 import {
   type AbsPath, type BranchName, type PlanPath, type RepoPath, type RepoPattern, absPath, branchName, planPath, repoPath,
@@ -50,13 +53,36 @@ export const PROBE_EXIT = { free: 0, ownLabel: 10, foreign: 11 } as const;
 export type ResourceDecl = Readonly<{ name: ResourceName; probe: ToolCommand; teardown: ToolCommand; pool?: Readonly<{ size: number }> }>;
 
 /**
+ * dev.17 (SCHEMAS.md "dev.17: environments"): a costed environment a lane runs against (`LaneDef.environment`). On disk
+ * `environments: {<name>: {up?, down?, probe, idleMinutes?}}`; `up`, `down` and `idleMinutes` come together or not at all.
+ * With them the executor owns its lifecycle (src/resources/environments.ts): brought up lazily at a lane's first use, kept
+ * up while lanes keep using it, brought down `idleMinutes` (a positive number, fractions allowed) after its last use.
+ * Without them it is a plain resource: reserved and probed, never started or stopped by the executor. The name shares the
+ * resource namespace (a lane reserves it as a named resource unit, which serialises its use), so it is never also a
+ * declared resource. The probe answers exit 0 when the environment is up and usable; anything else is a failed probe.
+ */
+export type EnvironmentLifecycle = Readonly<{ up: ToolCommand; down: ToolCommand; idleMinutes: number }>;
+export type EnvironmentDecl = Readonly<{ name: ResourceName; probe: ToolCommand; lifecycle: EnvironmentLifecycle | null }>;
+
+/**
  * Where a unit came from (M2): `checkpoint` units rank before `planned` ones among unpromoted waiters; M3's
  * `repair` units (R6) rank first, and need a spec with non-empty `repairs` (a startup and apply row). dev.13: `polish`, a
  * unit a milestone walkthrough proposed and code admitted (it carries `polish`), ranks between checkpoint and planned
- * (`ORIGIN_RANK`, src/schedule/types.ts).
+ * (`ORIGIN_RANK`, src/schedule/types.ts). dev.17: `propagation`, a unit code minted to re-witness the merged artifacts a
+ * requirement or contract change left stale (it carries `propagation`; src/holistic/propagation.ts), ranks with repairs.
+ * Every origin but `planned` is milestone-exempt (src/walk/node.ts).
  */
-export const UNIT_ORIGINS = ['planned', 'checkpoint', 'repair', 'polish'] as const;
+export const UNIT_ORIGINS = ['planned', 'checkpoint', 'repair', 'polish', 'deflake', 'propagation'] as const;
 export type UnitOrigin = (typeof UNIT_ORIGINS)[number];
+
+/**
+ * dev.17 (flaky ledger): what a `deflake` unit fixes: the ledger keys it was minted for (non-empty, unique, one lane). Code
+ * admits it (src/pipeline/deflake.ts); it ranks with the repair units and belongs to no milestone.
+ */
+export type DeflakeOrigin = Readonly<{ keys: readonly FlakyKey[] }>;
+
+/** dev.17: what a `propagation` unit came from: the plan rev whose stale set named the change, and the changed target. */
+export type PropagationOrigin = Readonly<{ rev: PlanRev; target: PropagationTarget }>;
 
 /** dev.13: what a `polish` unit came from: the milestone it polishes and the walkthrough's proposal (`polish-proposed`). */
 export type PolishOrigin = Readonly<{ milestone: MilestoneId; proposal: PolishId }>;
@@ -86,7 +112,17 @@ export type UnitLimits = Readonly<{ [K in keyof Bounds]?: number }>;
  * The plan's limits: the units' bounds, the arc's convergence counter K (§2.8, default 3) and (dev.13) the walks per
  * milestone (`walkRounds`, default 3: round 1 and up to two polish or fix rounds).
  */
-export type ArcLimits = UnitLimits & Readonly<{ convergenceK?: number; walkRounds?: number }>;
+export type ArcLimits = UnitLimits & Readonly<{ convergenceK?: number; walkRounds?: number; verification?: VerificationBudget }>;
+
+/**
+ * dev.17 (flaky ledger): what a deflake unit's verification may cost, in lane-minutes (its runs times the lane's measured
+ * median duration): `laneMinutes` for every lane (absent: `DEFAULT_VERIFICATION_LANE_MINUTES`), `lanes` per lane. A batch
+ * lane without its own entry is capped at `BATCH_VERIFICATION_RUNS` runs instead (src/pipeline/deflake.ts).
+ */
+export type VerificationBudget = Readonly<{ laneMinutes?: number; lanes?: Readonly<Record<LaneId, number>> }>;
+/** Defaults, unmeasured: re-derive once arcs have measured deflakes (BACKLOG). */
+export const DEFAULT_VERIFICATION_LANE_MINUTES = 30;
+export const BATCH_VERIFICATION_RUNS = 2;
 export const DEFAULT_CONVERGENCE_K = 3;
 export const DEFAULT_WALK_ROUNDS = 3;
 
@@ -142,6 +178,10 @@ export type PlanUnit = Readonly<{
   priority?: UnitPriority;
   /** dev.13: present exactly on a `polish` unit. */
   polish?: PolishOrigin;
+  /** dev.17: present exactly on a `deflake` unit. */
+  deflake?: DeflakeOrigin;
+  /** dev.17: present exactly on a `propagation` unit. */
+  propagation?: PropagationOrigin;
 }>;
 
 export const UNIT_PRIORITIES = ['normal', 'high'] as const;
@@ -156,9 +196,11 @@ export const priorityOf = (unit: PlanUnit): UnitPriority => unit.priority ?? 'no
  */
 export type KnownDefect = Readonly<{ id: KnownDefectId; match: KnownDefectMatch; fixUnit: UnitId }>;
 
-/** M4a rev 3 (E, R40): how plan-check runs, per builder class (`by-builder`) or for every unit alike (`uniform`, the default). */
-export const PLAN_CHECK_SHAPES = ['uniform', 'by-builder'] as const;
-export type PlanCheckShape = (typeof PLAN_CHECK_SHAPES)[number];
+/**
+ * M4a rev 3 (E, R40) to dev.16: how plan-check ran, per builder class (`by-builder`) or for every unit alike (`uniform`).
+ * Removed in dev.17 (every plan-check is one fresh call); a plan in force carrying it reads as uniform (`planCheckShapeDefault`).
+ */
+const LEGACY_PLAN_CHECK_SHAPES = ['uniform', 'by-builder'] as const;
 
 /**
  * Plan defects (2026-10-16): files the build derives from others (a bundle from its sources). A unit whose scope covers a
@@ -258,8 +300,6 @@ export function portNames(text: string): readonly string[] {
 
 /** The plan's known defects; none when absent. */
 export const knownDefectsOf = (plan: PlanM1): readonly KnownDefect[] => plan.knownDefects ?? [];
-/** The plan's plan-check shape (R40: a non-holistic arc always runs `uniform`, the caller's rule); `uniform` when absent. */
-export const planCheckShapeOf = (plan: PlanM1): PlanCheckShape => plan.planCheck?.shape ?? 'uniform';
 
 /** A chained start's previous arc and its completed head (H12), fixed at revision 1 (`chain-immutable`). */
 export type PlanChain = Readonly<{ previousArc: ArcId; previousHead: Sha }>;
@@ -307,12 +347,12 @@ type PlanBase = Readonly<{
   chain?: PlanChain;
   /** M4a rev 3 (F4): known defects, ids unique (absent: none, lasting; `knownDefectsOf`). */
   knownDefects?: readonly KnownDefect[];
-  /** M4a rev 3 (E): the plan-check shape (absent: `uniform`, lasting; `planCheckShapeOf`). */
-  planCheck?: Readonly<{ shape: PlanCheckShape }>;
   /** Plan defects (2026-10-16): derived files (absent: none, lasting; `derivedOf`). */
   derived?: readonly DerivedFiles[];
   /** dev.13: the milestones, ids unique (absent: none, lasting; `milestonesOf`). Changed only by `apply`. */
   milestones?: readonly Milestone[];
+  /** dev.17: the environments, ascending by name (absent: none, lasting; `environmentsOf`). */
+  environments?: readonly EnvironmentDecl[];
 }>;
 export type PlanM1 = PlanBase & PlanTarget;
 
@@ -375,10 +415,27 @@ function limitsFields(f: Fields): Record<string, number> {
   return out;
 }
 const unitLimits: Read<UnitLimits> = object((f) => limitsFields(f) as UnitLimits);
+const laneMinutesMap: Read<Readonly<Record<LaneId, number>>> = (value, path) => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new SchemaError(path, 'an object of lane id → lane-minutes', value);
+  const f = new Fields(value, path);
+  const out: Record<LaneId, number> = {};
+  for (const key of Object.keys(value)) out[laneId(key, `${path}.${key}`)] = f.get(key, positive);
+  f.end();
+  return out;
+};
+const verificationBudget: Read<VerificationBudget> = object((f) => {
+  const laneMinutes = f.optional('laneMinutes', positive);
+  const lanes = f.optional('lanes', laneMinutesMap);
+  return { ...(laneMinutes === undefined ? {} : { laneMinutes }), ...(lanes === undefined ? {} : { lanes }) };
+});
 const arcLimits: Read<ArcLimits> = object((f) => {
   const k = f.optional('convergenceK', positive);
   const walkRounds = f.optional('walkRounds', positive);
-  return { ...limitsFields(f), ...(k === undefined ? {} : { convergenceK: k }), ...(walkRounds === undefined ? {} : { walkRounds }) } as ArcLimits;
+  const verification = f.optional('verification', verificationBudget);
+  return {
+    ...limitsFields(f), ...(k === undefined ? {} : { convergenceK: k }), ...(walkRounds === undefined ? {} : { walkRounds }),
+    ...(verification === undefined ? {} : { verification }),
+  } as ArcLimits;
 });
 
 /** `holistic`, with its `vision` exactly when `withVision` (an `architecture-doc` plan's; a corpus plan's has none). */
@@ -428,6 +485,41 @@ const resourceDecl: Read<ResourceDecl> = object((f) => {
   return { name, probe: f.get('probe', toolCommand), teardown: f.get('teardown', toolCommand), ...(pool === undefined ? {} : { pool }) };
 });
 
+/** A positive number of minutes; fractions allowed (an idle timeout of seconds is a fraction of a minute). */
+const positiveMinutes: Read<number> = (value, path) => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) throw new SchemaError(path, 'a positive number of minutes', value);
+  return value;
+};
+
+const environmentDecl = (name: ResourceName): Read<EnvironmentDecl> => object((f) => {
+  const probe = f.get('probe', toolCommand);
+  const up = f.optional('up', toolCommand);
+  const down = f.optional('down', toolCommand);
+  const idleMinutes = f.optional('idleMinutes', positiveMinutes);
+  if (up === undefined && down === undefined && idleMinutes === undefined) return { name, probe, lifecycle: null };
+  if (up === undefined || down === undefined || idleMinutes === undefined) {
+    throw new SchemaError(f.path, 'up, down and idleMinutes together (a managed environment), or none of them (a plain one)', { up, down, idleMinutes });
+  }
+  return { name, probe, lifecycle: { up, down, idleMinutes } };
+});
+
+/** `environments`: an object keyed by environment name, read ascending by name. */
+const environmentsR: Read<readonly EnvironmentDecl[]> = (value, path) => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new SchemaError(path, 'an object of environments by name', value);
+  return Object.keys(value).sort().map((key) => {
+    const name = resourceName(key, `${path}.${key}`);
+    if (name === INTEGRATION_SLOT) throw new SchemaError(`${path}.${key}`, 'a name other than the built-in integration-slot', name);
+    return environmentDecl(name)((value as Readonly<Record<string, unknown>>)[key], `${path}.${key}`);
+  });
+};
+
+/** dev.17: the plan's environments (none when it declares none). */
+export const environmentsOf = (plan: Pick<PlanM1, 'environments'>): readonly EnvironmentDecl[] => plan.environments ?? [];
+
+/** The environment `name` declares, or null when `name` is not an environment (a resource, the slot, or nothing). */
+export const environmentOf = (plan: Pick<PlanM1, 'environments'>, name: ResourceName): EnvironmentDecl | null =>
+  environmentsOf(plan).find((e) => e.name === name) ?? null;
+
 const rulingR: Read<RulingId> = (v, p) => rulingId(v, p);
 
 const reentry: Read<Reentry> = object((f) => {
@@ -463,6 +555,12 @@ const planUnit: Read<PlanUnit> = object((f) => {
   const priority = f.optional('priority', oneOf(UNIT_PRIORITIES));
   const polish = f.optional('polish', object((g): PolishOrigin => ({ milestone: g.get('milestone', (v, p) => milestoneId(v, p)), proposal: g.get('proposal', (v, p) => polishId(v, p)) })));
   if ((origin === 'polish') !== (polish !== undefined)) throw new SchemaError(`${f.path}.polish`, origin === 'polish' ? 'the milestone and proposal of a polish unit' : 'absent (only a polish unit carries it)', polish);
+  const deflake = f.optional('deflake', deflakeOrigin);
+  if ((origin === 'deflake') !== (deflake !== undefined)) throw new SchemaError(`${f.path}.deflake`, origin === 'deflake' ? 'the flaky keys of a deflake unit' : 'absent (only a deflake unit carries it)', deflake);
+  const propagation = f.optional('propagation', object((g): PropagationOrigin => ({ rev: g.get('rev', (v, p) => planRev(v, p)), target: g.get('target', propagationTarget) })));
+  if ((origin === 'propagation') !== (propagation !== undefined)) {
+    throw new SchemaError(`${f.path}.propagation`, origin === 'propagation' ? 'the stale set and target of a propagation unit' : 'absent (only a propagation unit carries it)', propagation);
+  }
   assertUnique(out.scope, (s) => s, `${f.path}.scope`);
   assertUnique(out.resources, (r) => r, `${f.path}.resources`);
   assertUnique(out.after, (u) => u, `${f.path}.after`);
@@ -470,8 +568,16 @@ const planUnit: Read<PlanUnit> = object((f) => {
   return {
     ...out, ...(origin === undefined ? {} : { origin }), ...(cpu === undefined ? {} : { cpu }), ...(reenters === undefined ? {} : { reenters }),
     ...(cutField === undefined ? {} : { cut: cutField }), ...(routing === undefined ? {} : { routing }), ...(limits === undefined ? {} : { limits }),
-    ...(priority === undefined ? {} : { priority }), ...(polish === undefined ? {} : { polish }),
+    ...(priority === undefined ? {} : { priority }), ...(polish === undefined ? {} : { polish }), ...(deflake === undefined ? {} : { deflake }),
+    ...(propagation === undefined ? {} : { propagation }),
   };
+});
+
+const deflakeOrigin: Read<DeflakeOrigin> = object((f) => {
+  const keys = f.get('keys', arrayOf(flakyKey, { nonEmpty: true }));
+  assertUnique(keys, flakyKeyOf, `${f.path}.keys`);
+  if (new Set(keys.map((k) => k.lane)).size !== 1) throw new SchemaError(`${f.path}.keys`, 'keys of one lane', keys);
+  return { keys };
 });
 
 const patterns: Read<readonly RepoPattern[]> = (value, path) => {
@@ -644,9 +750,12 @@ export function parsePlan(value: unknown): PlanM1 {
     const limits = f.optional('limits', arcLimits);
     const chain = f.optional('chain', object((g): PlanChain => ({ previousArc: g.get('previousArc', (v, p) => arcId(v, p)), previousHead: g.get('previousHead', (v, p) => sha(v, p)) })));
     const knownDefects = f.optional('knownDefects', arrayOf(knownDefect, { nonEmpty: true }));
-    const planCheck = f.optional('planCheck', object((g) => ({ shape: g.get('shape', oneOf(PLAN_CHECK_SHAPES)) })));
+    // dev.17: a dev.16 plan's `planCheck.shape` is read and dropped (every plan-check is uniform now), warned.
+    const legacyPlanCheck = f.optional('planCheck', object((g) => ({ shape: g.get('shape', oneOf(LEGACY_PLAN_CHECK_SHAPES)) })));
+    if (legacyPlanCheck !== undefined) planCheckShapeDefault(legacyPlanCheck.shape);
     const derived = f.optional('derived', arrayOf(derivedFiles));
     const milestones = f.optional('milestones', arrayOf(milestone, { nonEmpty: true }));
+    const environments = f.optional('environments', environmentsR);
     const out: PlanM1 = {
       schema: f.get('schema', literal(PLAN_SCHEMA)),
       arc: f.get('arc', planArc),
@@ -658,22 +767,28 @@ export function parsePlan(value: unknown): PlanM1 {
       direction: f.get('direction', str),
       ...(routing === undefined ? {} : { routing }),
       ...(capacity === undefined ? {} : { capacity }),
-      suite: f.get('suite', object((g) => ({ lanes: g.get('lanes', arrayOf(laneDef)) }))),
+      suite: f.get('suite', object((g) => ({ lanes: g.get('lanes', arrayOf(laneDefOf('suite'))) }))),
       resources: f.get('resources', arrayOf(resourceDecl)),
       units: f.get('units', arrayOf(planUnit, { nonEmpty: true })),
       ...(limits === undefined ? {} : { limits }),
       ...(chain === undefined ? {} : { chain }),
       ...(knownDefects === undefined ? {} : { knownDefects }),
-      ...(planCheck === undefined ? {} : { planCheck }),
       ...(derived === undefined ? {} : { derived }),
       ...(milestones === undefined ? {} : { milestones }),
+      ...(environments === undefined ? {} : { environments }),
       ...target,
     };
-    out.suite.lanes.forEach((l, i) => refuseLaneInputs(l, `plan.suite.lanes[${i}]`, 'suite'));
+    // dev.17: a batch lane runs at milestones, cadence audits and the close-out, which only the holistic layer has.
+    out.suite.lanes.forEach((l, i) => {
+      if (l.cadence === 'batch' && out.holistic === undefined) throw new SchemaError(`plan.suite.lanes[${i}].cadence`, 'build, unit or candidate outside a holistic arc (a batch lane runs at milestones, audits and the close-out)', l.cadence);
+    });
     assertUnique(knownDefectsOf(out), (k) => k.id, 'plan.knownDefects');
     assertUnique(out.contracts, (c) => c, 'plan.contracts');
     assertUnique([...out.suite.lanes.map((l) => l.id), ...derivedOf(out).filter((d) => d.regenerate !== undefined).map(regenerateLaneId)], (id) => id, 'plan.suite.lanes');
     assertUnique(out.resources, (r) => r.name, 'plan.resources');
+    for (const e of environmentsOf(out)) {
+      if (out.resources.some((r) => r.name === e.name)) throw new SchemaError(`plan.environments.${e.name}`, 'a name no declared resource has (environments share the resource namespace)', e.name);
+    }
     assertUnique(out.units, (u) => u.id, 'plan.units');
     assertUnique(out.units, (u) => u.spec, 'plan.units');
     assertUnique(out.units.flatMap((u) => u.contingent), (e) => e.id, 'plan.units[].contingent');

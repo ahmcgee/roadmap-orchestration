@@ -135,7 +135,7 @@ test('session.plan-check-repair: a refused answer goes back once, in the same se
 test('redirect.no-widen: a redirect that widens the envelope or lowers the risk is refused and routes up', T, async () => {
   const widening = [{
     op: 'add', section: 'lanes',
-    item: { id: 'db-lane', argv: ['true'], cwd: '.', env: { set: [], pass: [] }, expectedExit: 0, tier: 'estate', resources: [DB], evidenceGlobs: [], evidenceExcludes: [] },
+    item: { id: 'db-lane', argv: ['true'], cwd: '.', env: { set: [], pass: [] }, expectedExit: 0, cadence: 'unit', resources: [DB], evidenceGlobs: [], evidenceExcludes: [] },
   }];
   const run = setupUnit({ steps: [planCheckStep({ decision: 'redirect', patch: widening }), planCheckStep({ decision: 'approve', risk: 'low' })] });
   const widened = started(await planCheck(run.ctx, run.unit));
@@ -455,7 +455,9 @@ test('stages.counters-from-fold: attempts and counters are the log\'s, identical
 });
 
 test('stages.no-model-ids: events, the state cache, dispatch facts and needs-user content never name a model; launch.json argv does', T, async () => {
+  // claude-only: the build is Claude's (Sonnet, the efficient class at every risk since dev.17).
   const run = setupUnit({
+    profile: 'claude-only',
     resources: [DB],
     steps: [
       planCheckStep({ decision: 'approve', risk: 'high' }),

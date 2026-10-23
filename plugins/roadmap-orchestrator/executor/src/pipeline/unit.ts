@@ -30,7 +30,9 @@
 // announced and runs whatever pause or drain says (F5). A re-entered unit starts at `prepare` (step 6). A
 // unit re-opened (`reopened`: no decided outcome) starts over at plan-check: after a park by `resume <unit>`,
 // or in flight by the driver itself, on a spec revision an `apply` left pending, at the first boundary whose
-// next stage starts from a clean worktree (`reentryAllowed`).
+// next stage starts from a clean worktree (`reentryAllowed`). dev.17 (propagation): an in-flight unit past its plan-check
+// with stale links no plan-check of it has answered (`UnitState.staleRev`) re-opens the same way (`stale-reopened`), on
+// its spec in force, so its plan-check answers them.
 //
 // M3 (step A3): a command may set an entry outside the table (`UnitState.entry`), which runs before anything the
 // latest decision says: `steer <u>` a steer round (a fresh implementer session with the architect's brief, R11; the
@@ -46,7 +48,7 @@
 // M4a rev 3: a lanes `known-defect` (F4) sends the unit to `prepare` (prepare.ts), held by admission until the defect's
 // fixer merges. A lanes fix round is rebuilt from the recorded outcome (`lanesFixRound`): a red or dirty series, missing
 // witnesses (D1), smoke survivors (D2), or a witness check whose own checkout was left dirty. A resume round quotes why
-// the answer it follows was malformed (I3); the retry of a malformed in-session assessment assesses again, fresh (E).
+// the answer it follows was malformed (I3).
 //
 // Scope growth (2026-10-15): a fix round after a salvage that reverted the build's out-of-scope edits carries the executor's
 // directive naming them (`withReverted`).
@@ -84,6 +86,7 @@ import {
   type Cancelled, type StageContext, type StageParent, dispatchOf, evidenceRoot, isCancelled, runOp, unitBranch, unitWorktree, verificationWorktree, witnessWorktree, workDir,
 } from './dispatch.ts';
 import { consumeJudgment, gate, gateDirectives, unitTip } from './gate.ts';
+import { disputeDirective } from './review.ts';
 import { batchMemberFix, candidate, candidateBrakeFix, candidateRefusalFix, candidateSeriesRoot, ff, latestCandidate, memberBatchCandidate, snapshot } from './integrate.ts';
 import { invocationDir } from './invoke.ts';
 import { type LaneRecord, latestSpecSeries, presentCheckouts, removeCheckout, seriesDirty, seriesLedger, seriesTree, specSeriesRoot } from './lanes.ts';
@@ -95,9 +98,12 @@ import {
   witnessCheckoutFixRound, witnessFixRound,
 } from './rounds.ts';
 import {
-  type BuildRun, type StageDone, at, build, buildLaneIds, buildRead, evidence, failedFacts, fastSuiteRoot, isAssessCall, keptSpecPath, laneGlobs, lanes, loadUnitSpec,
-  nowInside, planCheck, quiesce, readDecisions, record, recordedCall, salvage, salvageRejections, stillOutside, teardown,
+  type BuildRun, type StageDone, at, build, buildLaneIds, buildRead, evidence, failedFacts, fastSuiteRoot, keptSpecPath, laneGlobs, lanes, loadUnitSpec,
+  nowInside, planCheck, planCheckAnswerOf, quiesce, readDecisions, record, recordedCall, salvage, salvageRejections, stillOutside, teardown,
 } from './stages.ts';
+import { poc } from './poc.ts';
+import { scaffold } from './scaffold.ts';
+import { finishSplit } from './split.ts';
 import { restoredPathsDirective, revertedPathsDirective } from '../prompts/directives.ts';
 import type { Role } from '../routing/types.ts';
 import { requiredAt } from './witnesscheck.ts';
@@ -133,6 +139,9 @@ const ARC_REASONS: ReadonlySet<NeedsUserReason> = new Set(['base-red', 'foreign-
  */
 function haltEvidence(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact): readonly AbsPath[] {
   const parent = stageParent(f);
+  // 1.0.0-dev.17: an executor fault cut the attempt short, so only what surely stands is cited (its stack is the summary's):
+  // reading the attempt's call or series back could meet what the fault left half-written.
+  if (f.detail?.kind === 'executor-fault') return [evidenceRoot(ctx.runDir, parent), keptSpecPath(ctx, unit)].filter((p) => existsSync(p));
   const out: AbsPath[] = [];
   const called = CALL_STAGES.includes(f.stage) ? recordedCall(ctx, parent) : null;
   if (called?.kind === 'result') out.push(absPath(join(called.invDir, 'result.json')), absPath(join(called.invDir, STDOUT_FILE)));
@@ -164,8 +173,13 @@ function haltNeedsUser(ctx: StageContext, unit: PlanUnit, kind: 'park' | 'stop',
   const { path, spec } = loadUnitSpec(ctx, unit);
   const exceeded = f.detail?.kind === 'context-exceeded' ? f.detail : null;
   if (reason === 'context-exceeded' && exceeded === null) throw new Error(`unit ${unit.id}: ${f.stage}#${f.attempt} context-exceeded without its detail`);
+  const faulted = f.detail?.kind === 'executor-fault' ? f.detail : null;
+  if (reason === 'executor-fault' && faulted === null) throw new Error(`unit ${unit.id}: ${f.stage}#${f.attempt} executor-fault without its stack`);
   const recommendation = kind === 'stop'
     ? 'Read the evidence and the log, find and fix the cause, then acknowledge this item and start the arc again.'
+    : faulted !== null
+      ? `The executor threw inside ${unit.id}'s ${f.stage} while the unit held only its own state (stack above); the arc went on without it. `
+        + `Fix the cause (an executor defect, or what the unit left in its checkout), then \`roadmap resume ${unit.id}\` re-enters ${f.stage}, uncharged.`
     : exceeded !== null
       ? `Make the ${f.stage} inputs fit: split the unit or narrow its spec through a spec revision, or route ${STAGE_ROLE[f.stage as CallStage]}'s seat `
         + `to a class whose model has a larger context window. Then \`roadmap resume ${unit.id}\` re-runs ${f.stage}, uncharged.`
@@ -178,14 +192,16 @@ function haltNeedsUser(ctx: StageContext, unit: PlanUnit, kind: 'park' | 'stop',
         ? reopenRecommendation(unit.id, path, spec.rev)
         : reentryRecommendation(unit.id, f.stage, f.attempt, unitBranch(ctx.plan().arc, unit.id));
   return {
-    blocking: true,
+    // 1.0.0-dev.17: an executor fault is non-blocking (the arc goes on without the unit; src/schedule/fault.ts).
+    blocking: faulted === null,
     subject: ARC_REASONS.has(reason) ? { type: 'arc' } : { type: 'unit', unit: unit.id },
     reason,
     // F3: a lanes park lists the unit's lane failures, host-suspected ones marked, so a reset re-entry can cite them.
     summary: [
       `Unit ${unit.id}: ${summary} (spec ${path} at rev ${spec.rev}).`,
       ...(exceeded === null ? [] : [`The ${STAGE_ROLE[f.stage as CallStage]} call ${exceeded.inv} outgrew the model's context window: its prompt was ${exceeded.promptBytes} bytes.`]),
-      ...(f.stage === 'lanes' ? [failuresText(laneFailures(ctx, unit))] : []),
+      ...(faulted === null ? [] : [`The executor threw: ${faulted.stack}`]),
+      ...(f.stage === 'lanes' && faulted === null ? [failuresText(laneFailures(ctx, unit))] : []),
     ]
       .filter((x) => x !== '').join(' '),
     recommendation,
@@ -351,13 +367,8 @@ function lanesFixRound(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact, t
 
 /** The build round `round` after the decision `f`, with the inputs its kind needs. */
 function decidedInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, { stage: 'build' }>['round'], f: StageOutcomeFact): DecidedRound {
-  // E (R55): the retry of a malformed in-session assessment assesses again, fresh; any other malformed answer's resume
-  // round quotes why it was malformed (I3).
-  if (round === 'resume') {
-    const last = recordedCall(ctx, stageParent(f));
-    if (last !== null && isAssessCall(ctx, last.inv)) return { kind: 'fresh' };
-    return { kind: 'resume', error: malformedError(ctx, unit, f) };
-  }
+  // A malformed answer's resume round quotes why it was malformed (I3).
+  if (round === 'resume') return { kind: 'resume', error: malformedError(ctx, unit, f) };
   if (round !== 'fix') return { kind: round };
   const view = ctx.journal.view;
   const { spec } = loadUnitSpec(ctx, unit);
@@ -375,7 +386,10 @@ function decidedInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, 
       return lanesFixRound(ctx, unit, f, tip);
     case 'gate': {
       const parent = specSeries();
-      return gateReviseRound(gateDirectives(ctx, stageParent(f)), seriesLedger(ctx, parent, spec.lanes, 'spec', tip, specSeriesRoot(ctx.runDir, parent)), verificationOf(parent), tip);
+      // dev.17: the gate's open ledger findings by id, and how to dispute one (src/pipeline/review.ts).
+      const dispute = disputeDirective(ctx, unit.id, f.attempt);
+      const directives = [...gateDirectives(ctx, stageParent(f)), ...(dispute === null ? [] : [dispute])];
+      return gateReviseRound(directives, seriesLedger(ctx, parent, spec.lanes, 'spec', tip, specSeriesRoot(ctx.runDir, parent)), verificationOf(parent), tip);
     }
     case 'candidate': {
       const parent = specSeries();
@@ -472,6 +486,10 @@ async function runStage(ctx: StageContext, unit: PlanUnit, target: Target, f: St
       return ff(ctx, unit);
     case 'snapshot':
       return snapshot(ctx, unit);
+    case 'scaffold':
+      return scaffold(ctx, unit);
+    case 'poc':
+      return poc(ctx, unit);
   }
 }
 
@@ -557,9 +575,6 @@ async function consumeRecorded(ctx: StageContext, unit: PlanUnit, f: StageOutcom
       // Against the attempt's recorded inputs (F1): a gate at the tip and head it judged, not the current ones.
       return consumeJudgment(ctx, unit, parent, called);
     case 'build': {
-      // E (R55): a crash after the in-session assessment, before the implementing call: the build runs again as a new
-      // attempt, which reads the completed assessment instead of asking again (stages.ts `crashedAssessment`).
-      if (isAssessCall(ctx, called.inv)) return null;
       const holder: StageHolder = { type: 'stage', unit: unit.id, stage: 'build', attempt: open.attempt };
       // Recovery cleaned the dead attempt's reservation; a teardown that failed there is this attempt's outcome.
       const failed = [...resourceTable(ctx.journal.view)].flatMap(([r, e]) => (e.status.state === 'cleanup-failed' && sameHolder(e.status.holder, holder) ? [r as ResourceInstance] : []));
@@ -577,16 +592,38 @@ async function consumeRecorded(ctx: StageContext, unit: PlanUnit, f: StageOutcom
  * at startup, right after recovery (lead ruling, 14c), and `step` calls it first, so it is recorded once.
  */
 export async function consume(ctx: StageContext, unit: PlanUnit): Promise<Step | null> {
+  const split = await finishHeldSplit(ctx, unit);
+  if (split !== null) return split;
   const recorded = await consumeRecorded(ctx, unit, ctx.journal.view.unit(unit.id).decided);
   return recorded === null ? null : after(ctx, unit, recorded);
 }
 
 /**
- * Closes the unit's admission-stage attempt a crash cut short that `consume` did not record (no call yet, a lost call, an
- * in-session assessment, a stage without a call) with an uncharged `interrupted` hold, `cause: recovery`: the unit is
+ * dev.17 (design pass): a unit held by its plan-check's `split` whose revision a crash kept from landing (the unit is still
+ * held, not cut): the split judged again from the held attempt's recorded answer and committed (src/pipeline/split.ts
+ * `finishSplit`), its needs-user when it no longer lands. Null for any other unit.
+ */
+async function finishHeldSplit(ctx: StageContext, unit: PlanUnit): Promise<Step | null> {
+  const u = ctx.journal.view.unit(unit.id);
+  const held = u.interrupted;
+  if (u.status !== 'held' || held === null || held.stage !== 'plan-check' || held.outcome !== 'split') return null;
+  const parent: StageParent = { type: 'stage', unit: unit.id, stage: 'plan-check', attempt: held.attempt };
+  const called = recordedCall(ctx, parent);
+  const inputs = ctx.journal.view.judgmentInputs(unit.id, 'plan-check', held.attempt);
+  const out = planCheckAnswerOf(ctx, unit.id);
+  if (called === null || called.kind !== 'result' || inputs === null || out?.decision !== 'split') {
+    throw new Error(`unit ${unit.id}: held by a split at plan-check#${held.attempt} without its recorded split answer`);
+  }
+  const needsUser = await finishSplit(ctx, unit, { split: out.split, inv: called.inv, tip: inputs.tip }, parent);
+  return { kind: 'held', needsUser };
+}
+
+/**
+ * Closes the unit's admission-stage attempt a crash cut short that `consume` did not record (no call yet, a lost call, a
+ * stage without a call) with an uncharged `interrupted` hold, `cause: recovery`: the unit is
  * held while a pause covers it, else stays active, and its next attempt re-runs the stage from the decision before (the
  * fold leaves `decided` and `interrupted` alone, so the crash readers still find the abandoned attempt by number:
- * stages.ts `crashedAssessment`, rounds.ts `crashLostDeadline`). The executor calls it for every unit at startup, after
+ * rounds.ts `crashLostDeadline`). The executor calls it for every unit at startup, after
  * `consume` (arc feedback 2026-10-15); no-op when nothing is open or the open attempt is a chain stage's (it runs again at
  * the start, whatever pause says). A running attempt here is a bug: nothing runs before the scheduler.
  */
@@ -684,6 +721,10 @@ export function reentryAllowed(u: UnitState): boolean {
 function reopenIfDue(ctx: StageContext, unit: UnitId): void {
   const u = ctx.journal.view.unit(unit);
   const p = u.pendingRevision;
+  if (staleReopenDue(u)) {
+    ctx.journal.fact({ kind: 'stale-reopened', unit, rev: u.staleRev! });
+    return;
+  }
   if (p === null || !reopenDue(u)) return;
   // The classifier refuses a revision while an attempt is open, and no executor patch runs while one is
   // pending, so a pending revision is always the next rev.
@@ -691,8 +732,19 @@ function reopenIfDue(ctx: StageContext, unit: UnitId): void {
   ctx.journal.fact({ kind: 'reopened', unit, command: p.command, specRev: p.rev, specSha256: p.sha256 });
 }
 
-/** Whether the unit re-opens on a pending revision at this boundary. */
-const reopenDue = (u: UnitState): boolean => u.pendingRevision !== null && reentryAllowed(u);
+/**
+ * dev.17 (propagation): whether an in-flight unit re-opens at plan-check on stale links no plan-check of it has answered
+ * (`staleRev`): past its plan-check (one still ahead answers them), with no pending revision (whose re-open answers them),
+ * at a boundary that allows a re-entry.
+ */
+function staleReopenDue(u: UnitState): boolean {
+  if (u.staleRev === null || u.pendingRevision !== null || u.decided === null || !reentryAllowed(u)) return false;
+  const d = decidedBy(u.decided);
+  return d.kind === 'stage' && d.target.stage !== 'plan-check';
+}
+
+/** Whether the unit re-opens at this boundary: on a pending revision, or (dev.17) on unanswered stale links. */
+const reopenDue = (u: UnitState): boolean => (u.pendingRevision !== null && reentryAllowed(u)) || staleReopenDue(u);
 
 /**
  * The stage the unit starts next: its first stage when it re-opens at this boundary (plan-check, or `reproduce` for a

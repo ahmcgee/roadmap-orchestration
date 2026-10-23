@@ -44,7 +44,8 @@ const T = { timeout: EXEC_TIMEOUT_MS };
 const DEFAULT_STEPS: readonly Step[] = [...SMOKE_DEFAULT, planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })];
 const CLAUDE_ONLY_STEPS: readonly Step[] = [
   ...SMOKE_CLAUDE_ONLY, planCheckStep({ decision: 'approve' }),
-  { as: 'claude', expect: { argv: ['-p', '--permission-mode'] }, acts: [{ type: 'commit', message: 'add mul', files: MUL }, { type: 'emit', value: BUILD_REPORT }] },
+  // dev.17: the Sonnet build consults its Opus advisor once.
+  { as: 'claude', expect: { argv: ['-p', '--model', 'claude-sonnet-5-5', '--advisor', 'claude-opus-5-5', '--permission-mode'] }, acts: [{ type: 'commit', message: 'add mul', files: MUL }, { type: 'advised', value: BUILD_REPORT }] },
   gateStep({ decision: 'approve' }),
 ];
 
@@ -152,24 +153,26 @@ describe('status.subset', () => {
     assert.deepEqual(s.spend.bySmoke.map((t) => [t.backend, t.calls]), [['claude', 1], ['codex', 1]], 'each start-up smoke apart, by backend');
     assert.deepEqual(s.spend.byModel.unresolvedRevs, []);
     // The one permitted derivation: models named by looking seats up in the routing table at render time.
-    // A med unit: plan-check and gate on efficient (Sonnet high; the gate since 1.0.0-dev.12), build on efficient (Luna).
-    assert.deepEqual(s.spend.byModel.models.map((m) => [m.model, m.calls]), [['claude-sonnet-5-5', 2], ['gpt-5.6-luna', 1]]);
+    // A med unit: plan-check and gate on frontier (Opus medium, since dev.17), build on efficient (Luna).
+    assert.deepEqual(s.spend.byModel.models.map((m) => [m.model, m.calls]), [['claude-opus-5-5', 2], ['gpt-5.6-luna', 1]]);
     assert.deepEqual(s.host.containment, { mode: 'session', guarantee: SESSION_GUARANTEE });
     assert.match(s.host.containment.guarantee, /setsid\(\) and execs with a cleared environment/);
     assert.deepEqual(s.parkedBackends, []);
     assert.equal(s.rejection, null);
     // The routing view: classes per seat, the layer that chose each and where each class is bound; no model.
     assert.equal(s.routing?.profile, 'default');
-    assert.deepEqual(s.routing?.seats.gate, { low: 'efficient', med: 'efficient', high: 'frontier', escalation: 'summit' });
-    assert.deepEqual(s.routing?.seats.planCheck, { low: 'efficient', med: 'efficient', high: 'frontier', escalation: 'summit' });
-    assert.deepEqual(s.routing?.seats.build, { low: 'efficient', med: 'efficient', high: 'frontier' });
+    assert.deepEqual(s.routing?.seats.gate, { low: 'frontier', med: 'frontier', high: 'frontier', escalation: 'summit' });
+    assert.deepEqual(s.routing?.seats.planCheck, { low: 'frontier', med: 'frontier', high: 'frontier', escalation: 'summit' });
+    assert.deepEqual(s.routing?.seats.build, { low: 'efficient', med: 'efficient', high: 'efficient' });
     assert.equal(s.routing?.sources.planCheck.escalation, 'builtin');
     assert.deepEqual(s.routing?.bindings, { efficient: 'builtin', frontier: 'builtin', summit: 'builtin', economy: 'builtin' });
     for (const m of MODEL_IDS) assert.doesNotMatch(JSON.stringify(s.routing), new RegExp(m.replace('.', '\\.')));
     // M3: an arc without the holistic layer has vacuous holistic keys and completes as in M2; like every arc it records
     // `arc-completed` and its terminal snapshot (B7 lead ruling), so it is sealed.
     assert.equal(s.holistic, false);
-    assert.deepEqual([s.target, s.vision, s.audit, s.convergence, s.nowTrue, s.notYetTrue, s.divergences, s.decisionsSince], [null, null, null, null, [], [], [], []]);
+    assert.deepEqual([s.target, s.vision, s.audit, s.convergence, s.nowTrue, s.notYetTrue, s.divergences], [null, null, null, null, [], [], []]);
+    // dev.17: the one decision since is the approving plan-check's design record, landed as the spec's rev 2.
+    assert.deepEqual(s.decisionsSince.map(({ seq: _, ...d }) => d), [{ id: 'u1', kind: 'patch', oneLine: 'u1 spec rev 2 (1 ops)', ruledBy: { role: 'planCheck', type: 'judgment' } }]);
     assert.deepEqual(s.completion, { planRev: 1, head: git(r.repo, 'rev-parse', 'main'), active: true, sealed: true, notSealed: null, unmet: [] });
     assert.ok(s.host.log.bytes > 0 && s.host.log.events > 0 && !s.host.log.compactionDue, JSON.stringify(s.host.log));
     // M4a: an arc outside the corpus layer has vacuous corpus keys; its timings are its stages' (LR-c).
@@ -224,7 +227,13 @@ test('state.no-model-ids: after full runs under the default and claude-only prof
     assert.ok(MODEL_IDS.some((m) => launches.includes(m)), 'launch.json argv names the models it launched');
   }
   const claudeOnly = await statusOf(runs[1]!);
-  assert.deepEqual(claudeOnly.spend.byModel.models.map((m) => [m.model, m.calls]), [['claude-sonnet-5-5', 3]], 'claude-only: Sonnet plan-checks, builds and (1.0.0-dev.12) gates the med unit');
+  assert.deepEqual(claudeOnly.spend.byModel.models.map((m) => [m.model, m.calls]), [['claude-opus-5-5', 2], ['claude-sonnet-5-5', 1]], 'claude-only (dev.17): Opus plan-checks and gates, Sonnet builds');
+  // The build's advisor spend is its own: delegated to frontier, Opus's class, beside the judgments' own frontier share.
+  const advisor = claudeOnly.spend.byClass.classes.find((c) => c.class === 'frontier');
+  const efficient = claudeOnly.spend.byClass.classes.find((c) => c.class === 'efficient');
+  const judgments = claudeOnly.spend.byModel.models.find((m) => m.model === 'claude-opus-5-5');
+  assert.ok(advisor !== undefined && efficient !== undefined && judgments !== undefined);
+  assert.equal(advisor.input, judgments.input + 19316, 'frontier = the Opus judgments plus the captured advisor input');
 });
 
 test('status.sup-items-and-arc-wide-state: file-only sup-/host- items are listed until acknowledged; run.state applies the arc-wide rule', { timeout: EXEC_TIMEOUT_MS }, async (t) => {

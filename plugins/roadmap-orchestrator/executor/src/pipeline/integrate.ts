@@ -15,7 +15,8 @@
 //              reserves its own resources inside the series (the one hold-and-wait, A1), and a red suite
 //              lane goes through the red-lane protocol (redlane.ts). `planCandidate` (transient check, merge-tree,
 //              prefix guard) → `candidate.merge` onto the current tip T → the candidate checkout, detached
-//              (`candidateWorktreeRequest`) → the plan's suite, serially and verbatim. Outcomes:
+//              (`candidateWorktreeRequest`) → the plan's suite lanes up to `candidate` the candidate's diff selects
+//              (dev.17, `candidateLanes`), serially and verbatim. Outcomes:
 //              - a transient violation or prefix collision: refused, a scope-growth fix round (C, trigger);
 //              - a conflict: `mergein.prepare` in the unit worktree (MERGE_HEAD = T), then the resolve
 //                round; uncharged, and the diff base is recomputed (T), so the unit is gated again;
@@ -64,19 +65,20 @@ import { crashPoint } from '../core/crash.ts';
 import type { HoldCause, IntentOf, OpOutcome, Parent } from '../core/events.ts';
 import { canonicalJson } from '../core/json.ts';
 import type { Journal, JournalView } from '../core/interfaces.ts';
-import { type FindingId, INTEGRATION_SLOT, type JobId, type LaneId, type ObligationId, type ResourceInstance, type Sha, type UnitId, invocationId, canonicalIds } from '../core/ids.ts';
-import { type ApprovalFingerprint, type NeedsUserContent, obligationRevsOf, specRepairs } from '../core/records.ts';
+import { type FindingId, INTEGRATION_SLOT, type JobId, type LaneId, type ObligationId, type ResourceInstance, type ResourceName, type Sha, type UnitId, invocationId, canonicalIds } from '../core/ids.ts';
+import { type ApprovalFingerprint, type LaneDef, type NeedsUserContent, cadenceAtOrBefore, obligationRevsOf, specRepairs } from '../core/records.ts';
+import { selectedLanes } from '../input/systems.ts';
 import { type AbsPath, absPath, branchRef } from '../core/values.ts';
 import { type CandidateDecision, type CandidateRequest, candidateRef, candidateWorktreeRequest, planBatchCandidate, planCandidate } from '../git/candidate.ts';
 import { planBatchFf, planFf } from '../git/ff.ts';
 import { jobEvidenceRoot } from '../git/snapshot.ts';
 import { revParse } from '../git/git.ts';
 import { snapshotRequestOf } from '../git/snapshot.ts';
-import { type TransientViolation, unitTransientRules } from '../git/transient.ts';
+import { type TransientViolation, unitDiffPaths, unitTransientRules } from '../git/transient.ts';
 import { classifyMergein } from '../git/mergein.ts';
 import type { WorktreeCreateRequest } from '../git/worktree.ts';
 import { type FindingBlock, p1Blocking, p1Obligations as activeP1Obligations, repairedObligations as repairedBy } from '../holistic/findings.ts';
-import { keyOf, observedVerdict, reuse, verdictOf } from '../holistic/observe.ts';
+import { observedVerdict, reuse, verdictOf } from '../holistic/observe.ts';
 import { type ObligationEffect, completes, latches, obligationEffects } from '../holistic/table.ts';
 import { type ArcLaneDef, type ObligationDef, type Obligations, type ObservationVerdict, type WitnessRef, isExempt, isMustHold } from '../holistic/types.ts';
 import type { PlanUnit } from '../input/plan.ts';
@@ -94,12 +96,13 @@ import {
 } from './dispatch.ts';
 import { fingerprintHolds, fingerprintValid, selected, unitTip } from './gate.ts';
 import {
-  type JourneyEnd, type JourneyRun, type JourneySeries, type Series, arcJourneyLane, intact, journeyRed, laneEnvId, laneRuntime, observations, removeJobCheckouts,
+  type JourneyEnd, type JourneyRun, type JourneySeries, type Series, arcJourneyLane, arcLaneKey, intact, journeyRed, laneEnvId, laneRuntime, mapInForce, observations, removeJobCheckouts,
   removeVerificationTree, runJourneySeries, runLaneSeries, seriesOrder, standInJourneyLane, suiteJourneyLane, suiteStandIns,
 } from './lanes.ts';
+import { carriedLanes } from './docsonly.ts';
 import { type MutantEnd, mutantAcceptance, syncRepairs } from './reproduce.ts';
 import { pressureCause, seriesRuling } from './starved.ts';
-import { type StageDone, at, executorIdentity, failedFacts, holisticInForce, integrationTip, latestMergein, loadUnitSpec, record, start } from './stages.ts';
+import { type StageDone, at, environmentFacts, executorIdentity, failedFacts, holisticInForce, integrationTip, latestMergein, loadUnitSpec, record, start } from './stages.ts';
 import { candidateMergeOp, integrationFfOp, mergeinOp, snapshotPublishOp } from '../recover/ops.ts';
 import { SCOPE_GROWTH_BLOCKER } from '../prompts/directives.ts';
 
@@ -143,10 +146,13 @@ async function releasePublication(ctx: StageContext, held: Reservation<'running'
 // candidate
 
 type CandidateEnd = Readonly<{
-  kind: 'green' | 'transient-violation' | 'conflict' | 'red' | 'base-red' | 'blocked' | 'occupied' | 'cleanup-failed' | 'interrupted' | 'preempted' | 'finding-blocked';
+  kind: 'green' | 'transient-violation' | 'conflict' | 'red' | 'base-red' | 'blocked' | 'occupied' | 'cleanup-failed' | 'interrupted' | 'preempted' | 'finding-blocked'
+    | 'env-unavailable';
   needsUser: NeedsUserContent | null;
   /** The instances a suite lane's cleanup failed (`cleanup-failed`): the park's targets. */
   failed: readonly ResourceInstance[];
+  /** dev.17: the environment a suite lane could not bring up (`env-unavailable`): the park's target. */
+  environment?: ResourceName;
   /** M4b rev 3 (RC-11): an `interrupted` suite under host pressure, starved or red with its rerun pending (starved.ts). */
   cause?: HoldCause;
 }>;
@@ -178,6 +184,8 @@ function seriesFault(series: Series): CandidateEnd | null {
       return { kind: 'cleanup-failed', needsUser: null, failed: series.end.failed };
     case 'occupied':
       return ended('occupied', series.end.needsUser);
+    case 'env-unavailable':
+      return { kind: 'env-unavailable', needsUser: null, failed: [], environment: series.end.environment };
   }
 }
 
@@ -196,12 +204,24 @@ export const candidateSeriesRoot = (runDir: AbsPath, parent: StageParent): AbsPa
 const baseSeriesRoot = (runDir: AbsPath, parent: StageParent): AbsPath => absPath(join(evidenceRoot(runDir, parent), 'base'));
 
 /**
- * A suite series on `checkout`, its checkout removed afterwards (citing the series' evidence). Its lanes take
+ * The suite lanes a candidate runs (dev.17): those of a cadence up to `candidate` the candidate's diff on the tip selects by
+ * the systems map (src/input/systems.ts `selectedLanes`: a lane listing no systems, or any lane when a path is unmapped,
+ * always), in series order. A batch lane never runs in the merge path.
+ */
+export function candidateLanes(ctx: StageContext, tip: Sha, candidate: Sha): readonly LaneDef[] {
+  const lanes = ctx.plan().suite.lanes.filter((l) => cadenceAtOrBefore(l.cadence, 'candidate'));
+  return seriesOrder(selectedLanes(mapInForce(ctx.journal.view), lanes, unitDiffPaths(ctx.repo, tip, candidate)));
+}
+
+/**
+ * A suite series of `lanes` on `checkout`, its checkout removed afterwards (citing the series' evidence). Its lanes take
  * their own sets while the publication holds the slot (the one hold-and-wait, A1). `standIns`: suite lanes identical
  * to an arc lane the held claims will witness on this tree (F6): each runs once, as both, and the claims reuse it.
  */
-async function suite(ctx: StageContext, parent: StageParent, checkout: WorktreeCreateRequest, root: AbsPath, standIns: ReadonlyMap<LaneId, ArcLaneDef>): Promise<Series> {
-  const series = await runLaneSeries(ctx, parent, seriesOrder(ctx.plan().suite.lanes), 'suite', checkout, root, laneRuntime(ctx, parent.unit), false, standIns);
+async function suite(
+  ctx: StageContext, parent: StageParent, lanes: readonly LaneDef[], checkout: WorktreeCreateRequest, root: AbsPath, standIns: ReadonlyMap<LaneId, ArcLaneDef>,
+): Promise<Series> {
+  const series = await runLaneSeries(ctx, parent, lanes, 'suite', checkout, root, laneRuntime(ctx, parent.unit), false, standIns);
   if (series.tree !== null) await removeVerificationTree(ctx, series.tree, parent);
   return series;
 }
@@ -234,15 +254,20 @@ async function integrate(ctx: StageContext, unit: PlanUnit, parent: StageParent,
       if (ctx.signal.reason === 'preempt') return ended('preempted');
       // F6: a suite lane identical to an arc lane the held claims witness runs once on the candidate, as both.
       const claims = unitClaims(ctx, unit, intent.expect.integrationTip, intent.expect.unitCommit);
-      const standIns = suiteStandIns(ctx.plan().suite.lanes, claims === null || claims.selected.size === 0 ? [] : claims.lanes);
-      const onCandidate = await suite(ctx, parent, candidateWorktreeRequest(intent), candidateSeriesRoot(ctx.runDir, parent), standIns);
+      const lanes = candidateLanes(ctx, intent.expect.integrationTip, intent.post.new);
+      const standIns = suiteStandIns(lanes, claims === null || claims.selected.size === 0 ? [] : claims.lanes);
+      const onCandidate = await suite(ctx, parent, lanes, candidateWorktreeRequest(intent), candidateSeriesRoot(ctx.runDir, parent), standIns);
       const fault = pressureHeld(ctx, unit.id, onCandidate) ?? seriesFault(onCandidate);
       if (fault !== null) return fault;
       if (!failed(onCandidate)) return heldClaims(ctx, unit, parent, intent);
       if (ctx.signal.reason === 'preempt') return ended('preempted');
+      // dev.17 calibration: a lane whose pass the unit's docs-only acceptance carried over is red here (src/pipeline/docsonly.ts).
+      const carried = new Set<string>(carriedLanes(ctx, unit.id));
+      const missed = onCandidate.end.kind === 'red' && carried.has(onCandidate.end.lane.lane) ? [onCandidate.end.lane.lane] : [];
+      if (missed.length > 0) ctx.journal.fact({ kind: 'docs-only-miss', unit: unit.id, attempt: parent.attempt, lanes: missed });
       // Red on the candidate: the tip alone decides whose red it is.
       const tip = intent.expect.integrationTip;
-      const alone = await suite(ctx, parent, { path: baseWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, parent.attempt), checkout: { type: 'detached', at: tip } }, baseSeriesRoot(ctx.runDir, parent), new Map());
+      const alone = await suite(ctx, parent, lanes, { path: baseWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, parent.attempt), checkout: { type: 'detached', at: tip } }, baseSeriesRoot(ctx.runDir, parent), new Map());
       const baseFault = pressureHeld(ctx, unit.id, alone) ?? seriesFault(alone);
       if (baseFault !== null) return baseFault;
       if (!failed(alone)) return ended('red');
@@ -309,7 +334,7 @@ export async function candidate(ctx: StageContext, unit: PlanUnit): Promise<Stag
   } finally {
     await preempt.close();
   }
-  const done = record(ctx, parent, end.kind, end.needsUser, failedFacts(end.failed), end.cause);
+  const done = record(ctx, parent, end.kind, end.needsUser, end.environment === undefined ? failedFacts(end.failed) : environmentFacts(end.environment), end.cause);
   if (end.kind !== 'green') await releasePublication(ctx, held, parent);
   return done;
 }
@@ -625,7 +650,7 @@ function observedRuns(ctx: StageContext, claims: Claims, commit: Sha): readonly 
   const tree = revParse(ctx.repo, `${commit}^{tree}`);
   const store = observations(ctx);
   return claims.lanes.flatMap((l) => {
-    const o = reuse(store, keyOf(tree, l, laneEnvId(ctx, l)));
+    const o = reuse(store, arcLaneKey(ctx, tree, l, laneEnvId(ctx, l)));
     return o === null ? [] : [{ lane: l.id, inv: o.record.inv, verdict: null, flaky: false, dir: null, record: o.record }];
   });
 }
@@ -653,7 +678,7 @@ export function latchPublished(
     verdict: (_o, w) => {
       const lane = lanes.get(w.lane);
       if (lane === undefined) throw new Error(`witness lane ${w.lane} is not in the obligations in force`);
-      return observedVerdict(store, keyOf(tree, lane, laneEnvId(ctx, lane)), w);
+      return observedVerdict(store, arcLaneKey(ctx, tree, lane, laneEnvId(ctx, lane)), w);
     },
   });
   const ids = latches(effects).filter((id) => completing.has(id));
@@ -1094,10 +1119,11 @@ export async function publishBatch(ctx: BatchContext, findings: readonly Finding
   const owner = { type: 'job', job, acquireFirst: ctx.acquireFirst } as const;
   // F6: a suite lane identical to a claimed arc lane runs once, in the suite's place, as both.
   const claimed = claims?.lanes ?? [];
-  const standIns = suiteStandIns(plan.suite.lanes, claimed);
+  const suiteLanes = candidateLanes(ctx, tip, cand.post.new);
+  const standIns = suiteStandIns(suiteLanes, claimed);
   const standing = new Set([...standIns.values()].map((l) => l.id));
   const lanes = [
-    ...plan.suite.lanes.map((l) => {
+    ...suiteLanes.map((l) => {
       const arc = standIns.get(l.id);
       return arc === undefined ? suiteJourneyLane(l) : standInJourneyLane(arc);
     }),

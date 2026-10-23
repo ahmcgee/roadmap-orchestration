@@ -11,13 +11,14 @@ import { Fold } from '../src/core/state.ts';
 import { absPath, branchName, isoTime, planPath, refName, repoPath, repoPattern } from '../src/core/values.ts';
 import { type KnownDefect, PLAN_SCHEMA, type PlanM1, type PlanUnit } from '../src/input/plan.ts';
 import { arcStack, resolveRouting } from '../src/routing/layers.ts';
-import type { RiskTier } from '../src/routing/types.ts';
+import { type RiskTier, routingLayer } from '../src/routing/types.ts';
 import { type ReadyInput, type SpecFactsOf, activeKnownDefects, admitter, knownDefectActive, rankOf, ready } from '../src/schedule/ready.ts';
 import { type AdmissionStage, type AdmitInput, type CommandScope, type Rank, PROMOTION_BYPASS, compareRank } from '../src/schedule/types.ts';
 import type { PressureTick } from '../src/host/pressure.ts';
 import { ARC, H, REV, appliedFields, chain } from './fixtures/log-records.ts';
 
-const ROUTING = resolveRouting(arcStack('default', null, null)).table;
+/** The default profile with a plan seating build.high on frontier (Claude), so a med and a high unit build on different backends. */
+const ROUTING = resolveRouting(arcStack('default', null, routingLayer({ build: { high: 'frontier' } }, 'layer'))).table;
 const CMD = commandId('cmd-0123456789abcdef');
 const LATER = isoTime('2026-09-25T12:30:00.000Z');
 const H2 = sha256('e'.repeat(64));
@@ -107,8 +108,10 @@ class Log {
 
 type Extras = Partial<Pick<AdmitInput, 'blocking' | 'drains' | 'tripped'>>;
 
+/** No spec links anything a propagation edge reads (dev.17). */
+const NO_LINKS = () => ({ requirements: new Set<never>(), contracts: new Set<never>(), breaks: [] });
 /** No unit reproduces a mutant or repairs an obligation: what a spec says, for logs that hold no finding. */
-const NO_REPAIRS: SpecFactsOf = () => ({ reproduces: false, repairs: new Set() });
+const NO_REPAIRS: SpecFactsOf = () => ({ reproduces: false, repairs: new Set(), lanes: () => new Set(), links: NO_LINKS });
 
 const inputOf = (log: Log, plan: PlanM1, extras: Extras = {}): ReadyInput => ({
   view: log.view(), plan, blocking: [], drains: [], tripped: [], pressure: { ticks: [], nowMs: 0 }, routing: () => ROUTING, spec: NO_REPAIRS, ...extras,
@@ -275,7 +278,7 @@ describe('admit (A12, A17)', () => {
     const blocked = [{ type: 'finding-blocked', finding: 'F-1', obligation: I1 }];
     assert.deepEqual(admits(log, med), { prepare: 'admit', 'plan-check': 'admit', build: 'admit', lanes: 'admit', gate: 'admit', candidate: blocked }, 'only the candidate waits');
     assert.equal(admits(log, high).candidate, 'admit', 'a candidate selecting other obligations is not held');
-    const repairs: SpecFactsOf = (u) => ({ reproduces: false, repairs: new Set(u.id === M ? [I1 as never] : []) });
+    const repairs: SpecFactsOf = (u) => ({ reproduces: false, repairs: new Set(u.id === M ? [I1 as never] : []), lanes: () => new Set(), links: NO_LINKS });
     const view = log.view();
     assert.deepEqual(admitter(() => ROUTING, repairs)({ view, plan, unit: med, stage: 'candidate', blocking: [], drains: [], tripped: [], pressure: { ticks: [], nowMs: 0 } }), { kind: 'admit' }, 'p1.repair-exempt: the declared repair is admitted');
     log.add(fact({ kind: 'finding-transition', id: 'F-1', to: { state: 'ruled', disposition: 'dismissed', by: { type: 'checkpoint', job: 'ckpt-1' } } }));

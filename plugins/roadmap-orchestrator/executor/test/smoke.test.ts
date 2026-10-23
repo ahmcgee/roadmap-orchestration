@@ -85,10 +85,10 @@ describe('smoke', () => {
     }
     // The argv is the one place it may appear, and it does: the smoke ran the routed model.
     const argvModels = report.backends.flatMap((b) => (b.ran ? [b.argv[b.argv.indexOf(b.backend === 'claude' ? '--model' : '-m') + 1]] : []));
-    // The Claude smoke runs the first Claude seat, planCheck.low: the efficient class's judgment binding, Sonnet 5.5 high.
-    assert.deepEqual(argvModels, ['claude-sonnet-5-5', 'gpt-5.6-luna']);
+    // The Claude smoke runs the first Claude seat, planCheck.low: the frontier class since dev.17, Opus 5.5 medium.
+    assert.deepEqual(argvModels, ['claude-opus-5-5', 'gpt-5.6-luna']);
     const claudeArgv = report.backends.flatMap((b) => (b.ran && b.backend === 'claude' ? [b.argv] : []))[0]!;
-    assert.equal(claudeArgv[claudeArgv.indexOf('--effort') + 1], 'high');
+    assert.equal(claudeArgv[claudeArgv.indexOf('--effort') + 1], 'medium');
   });
 
   it('claude-only never invokes the codex shim', T, async () => {

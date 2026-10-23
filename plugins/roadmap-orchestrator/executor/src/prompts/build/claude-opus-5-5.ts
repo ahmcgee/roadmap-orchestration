@@ -22,7 +22,7 @@
 // witness item to the test that shows it, by its exact id (retro F05: correct code returned for missing witness tests);
 // the per-lane witness check commands, run after the last change beside the fast lanes, a missing id a blocker (D1, R56);
 // a negative witness drives the real entry point with an injected fixture, never a helper (F20); `experiments` for every
-// other command run; and the in-session assessment, a read-only first invocation answered as planAssessment (E, R55).
+// other command run. (The in-session assessment, E/R55, went with `planCheck.shape: by-builder` in dev.17.)
 // W3 (2026-10-16; re-reviewed 2026-10-17 against "Prompting best practices", "Prompting Claude Opus 5.5" and "Prompting
 // Claude Sonnet 5.5" alone): delegation (BUILD_DELEGATION, re-derived from those guides);
 // <safety> no longer repeats UNIT_POLICY's "do not kill a process this unit did not start". Further trims wait for the
@@ -32,9 +32,12 @@
 // most plausible wrong versions each failing a test, with the patterns that survived weak tests in that run.
 // dev.13 (contract input, no method): a milestone unit's design references as documents and its milestones block
 // (`milestonesText`); a build with the browser drive gets the `<browser>` block (`buildBrowserText`).
+// dev.17 (field feedback 2026-10-23 item 1, contract input, no method): a session that does not continue its own gets the
+// `<handover>` block, the executor's records of the work before it; the fix round no longer claims the work is the session's own.
 import type { BuildInputs, PromptModule } from '../inputs.ts';
 import {
-  UNIT_POLICY, assessText, bullets, buildBrowserText, documentsXml, milestoneDocuments, milestonesText, fastLanesText, referenceIndexText, rulingsText, suiteLanesText, witnessChecksText,
+  UNIT_POLICY, bullets, buildBrowserText, documentsXml, handoverText, milestoneDocuments, milestonesText, fastLanesText, referenceIndexText, rulingsText, suiteLanesText,
+  witnessChecksText,
 } from '../inputs.ts';
 import { BUILD_DELEGATION } from '../delegation.ts';
 import { BUILD_SCHEMA, DECISIONS_FILE } from '../schemas.ts';
@@ -81,6 +84,8 @@ Before you finish, run every fast lane listed in the message exactly as written,
 
 <decisions>
 When you settle a question the spec leaves open and a competent engineer could reasonably have chosen otherwise, record it in ${DECISIONS_FILE} at the root of the evidence directory named in the message: a JSON object {"decisions": [{"id": "...", "text": "..."}]}, one entry per decision, text stating what you chose and the alternative you did not. Ids start with a letter, use letters, digits, _ . or -, and must not reuse an id in the spec or in the file already. Keep the file complete: rewrite it with every decision so far. Routine judgment calls do not belong there.
+
+A fix round names the gate's blocking findings by id (R-n). Where you are sure one is wrong, you may dispute it instead of fixing it: add {"finding": "R-n", "reason": "..."} to a "disputes" list in the same file, the reason giving your evidence, and leave that code as it is. The next gate rules on each dispute once, and its ruling is final.
 </decisions>
 
 <safety>
@@ -88,7 +93,7 @@ This host runs sibling units and the orchestrator. Stay inside the worktree and 
 </safety>
 
 <report>
-Your final message is the structured report. summary: two or three plain sentences on what changed and why, plus anything you left alone that someone should know. changedPaths: the repository paths you changed or created in this run, read from git status and git log rather than recalled. lanesRun: each fast lane run, by its id, with its exit code. experiments: every other command you ran to check your work (a single test, a witness check, a script, a probe), each with a short name, its argv and its exit code; never a fast lane. blockers: what keeps the unit from being complete, one per entry; empty when it is complete. final: true (false only in a report you give while you wait, see above). Stop when the spec's clauses hold and the fast lanes pass; finishing early is correct, and work beyond the spec is scope creep the gate rejects.
+Your final message is the structured report. summary: two or three plain sentences on what changed and why, plus anything you left alone that someone should know. changedPaths: the repository paths you changed or created in this run, read from git status and git log rather than recalled. lanesRun: each fast lane run, by its id, with its exit code. experiments: every other command you ran to check your work (a single test, a witness check, a script, a probe), each with a short name, its argv and its exit code; never a fast lane. blockers: what keeps the unit from being complete, one per entry; empty when it is complete. docsOnlySince: when the message names the unit's last certified tree and everything you changed since that tree is comments or documentation, that tree's SHA; otherwise null. The executor checks the claim against the diff and then reuses that tree's lane results instead of running the lanes again, so claim it only when it is true. final: true (false only in a report you give while you wait, see above). Stop when the spec's clauses hold and the fast lanes pass; finishing early is correct, and work beyond the spec is scope creep the gate rejects.
 </report>
 
 ${BUILD_DELEGATION}`;
@@ -98,17 +103,25 @@ function fixRound(i: BuildInputs): string {
   return `
 
 <fix_round>
-This is a fix round on work you already did in this worktree. Read the failing evidence first; each directory holds the lane's stdout and stderr, its declared outputs, or (in an ignored/ directory) gitignored files it wrote, at their repository paths, and a directive gives the lane's count of those:
+This is a fix round on the work in this worktree. Read the failing evidence first; each directory holds the lane's stdout and stderr, its declared outputs, or (in an ignored/ directory) gitignored files it wrote, at their repository paths, and a directive gives the lane's count of those:
 ${bullets(i.fixRound.failingEvidenceDirs, '(no failing lanes)')}
 Directives to carry out:
 ${bullets(i.fixRound.directives, '(none)')}
-Fix exactly what failed and what the directives name, nothing adjacent. Do not re-litigate a directive: carry it out, or record in a blocker why it is wrong and leave the code as it is. Then run every fast lane again and return the report. The same scope, safety and decision rules apply.
+Fix exactly what failed and what the directives name, nothing adjacent. Do not re-litigate a directive: carry it out, dispute the gate finding behind it (see decisions), or record in a blocker why it is wrong and leave the code as it is. Then run every fast lane again and return the report. The same scope, safety and decision rules apply.
 </fix_round>`;
 }
 
-/** The ask: the assessment (read-only, its own answer), a fresh build, or a fix round. */
+/** dev.17 (field feedback 2026-10-23 item 1): a fresh session's handover from the executor's records; empty otherwise. */
+function handover(i: BuildInputs): string {
+  return i.handover === null ? '' : `
+
+<handover>
+${handoverText(i.handover)}
+</handover>`;
+}
+
+/** The ask: a fresh build or a fix round. */
 function ask(i: BuildInputs): string {
-  if (i.assess !== null) return `<assessment>\n${assessText(i.assess)}\n</assessment>\n\nAssess unit ${i.spec.unit} (spec revision ${i.spec.rev}) in ${i.worktree} without changing anything, then return planAssessment.`;
   return i.fixRound === null
     ? `Implement unit ${i.spec.unit} (spec revision ${i.spec.rev}) in ${i.worktree} until every acceptance clause holds and every fast lane${i.witnessChecks.length === 0 ? '' : ' and witness check'} passes, then return your report.`
     : `Carry out this fix round for unit ${i.spec.unit} in ${i.worktree}, run the fast lanes${i.witnessChecks.length === 0 ? '' : ' and the witness checks'}, then return your report.`;
@@ -118,8 +131,8 @@ export const PROMPT: PromptModule<'build'> = {
   system,
   schema: BUILD_SCHEMA,
   fields: [
-    'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks', 'assess',
-    'milestones', 'browser',
+    'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks',
+    'milestones', 'browser', 'certifiedAt', 'handover',
   ],
   render: (i) => `${documentsXml([
     { source: `spec.json for unit ${i.spec.unit}, revision ${i.spec.rev} (rendered)`, content: i.spec.markdown },
@@ -143,13 +156,15 @@ ${i.planCheckNotes === '' ? '(none)' : i.planCheckNotes}
 
 <evidence_dir>${i.evidenceDir}</evidence_dir>
 
+<certified_tree>${i.certifiedAt ?? '(none yet: docsOnlySince is null)'}</certified_tree>
+
 <scope_patterns>
 ${bullets(i.scope, '(empty)')}
 </scope_patterns>
 
 <fast_lanes>
 ${fastLanesText(i.worktree, i.fastLanes)}
-</fast_lanes>${suiteLanesText(i.worktree, i.suiteLanes)}${witnessChecksText(i.witnessChecks)}${buildBrowserText(i.browser)}${fixRound(i)}
+</fast_lanes>${suiteLanesText(i.worktree, i.suiteLanes)}${witnessChecksText(i.witnessChecks)}${buildBrowserText(i.browser)}${handover(i)}${fixRound(i)}
 
 ${ask(i)}`,
 };

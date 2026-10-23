@@ -165,10 +165,9 @@ Keep the arc's inputs in their own directory outside the product working tree, f
     `V-n` any unit delivers, including one it delivers without being the reason for the slice. `why` says why
     this slice now.
 12. **Plan and specs.** SCHEMAS.md "Input contract" and "`spec.json` M1 subset". A corpus arc's plan names
-    `corpus` and `phase0`, and `holistic` without `vision` (the record is `.roadmap/vision.json`), and writes
-    `"planCheck": {"shape": "by-builder"}`: a frontier builder assesses the spec in its own session instead of a
-    plan-check call, and an efficient builder gets a plan-check that may add witness items. Plan contracts and unit
-    scopes never overlap the corpus files. Write lanes and witnesses per "Lanes, witnesses and clocks".
+    `corpus` and `phase0`, and `holistic` without `vision` (the record is `.roadmap/vision.json`). Write no
+    `planCheck` field: every unit's plan-check is one call (an older plan's `planCheck.shape` is read as uniform).
+    Plan contracts and unit scopes never overlap the corpus files. Write lanes and witnesses per "Lanes, witnesses and clocks".
     **Scope for what a unit removes.** A unit that removes or renames a file, route, symbol or command lists each
     in its spec's `removes` (the literal text other code names it by: `"src/shell/page.go"`, `"/shell"`,
     `"renderShell"`). Its scope must also cover every test and caller outside its package that still uses one:
@@ -191,7 +190,7 @@ Keep the arc's inputs in their own directory outside the product working tree, f
     (`milestones-need-holistic`).
     - **Its design unit comes first.** Each milestone names a planned design unit (`design.unit`, outside its
       `units`), and every milestone unit runs `after` it, directly or transitively (`phase0 check` advises
-      `milestone-unit-before-design` otherwise). Risk `high`, so the `frontier` class builds it. It designs
+      `milestone-unit-before-design` otherwise). Risk `high`, so the strongest judgments check and gate it. It designs
       what the milestone exposes into the reference directories `references` names. The first milestone that exposes
       a surface writes its reference; a later milestone's design unit extends that reference rather than starting
       another, so names, voice, tokens and the error model stay one language across milestones.
@@ -376,7 +375,9 @@ as its recommendation says, Phase 0, `start`, `pr` and check-ins are not interve
 once, in the operator log `<repo>/../roadmap-inputs/skill-feedback.md` (outside the product repo, append-only;
 format in `reference.md`, "The operator log"): what you saw, the evidence (status fields, item ids, event seqs), the
 outcome, and what executor change would have made it unnecessary. A check-in preface may cite the log; the brief
-never reads it.
+never reads it. Every arc-wide lever (`pause --all`, `resume` of all, `resume --backend`, `stop`, `close-admissions`)
+gets an entry whoever asked for it, its outcome saying when it ended: an unlogged arc-wide pause hides that time from
+everyone who reads the arc later.
 
 ## Check-ins
 
@@ -523,6 +524,26 @@ for changes on it, becomes fix units, never a hand edit of the branch:
 Read the CI log or the review in full first; a fix unit's spec cites what it fixes. Never push to an arc branch
 yourself, and never squash the fix into the PR by hand.
 
+## The design pass
+
+Every plan-check designs its unit before it is built (1.0.0-dev.17): it works in throwaway checkouts with a shell and the
+web, and its approve lands a design record on the spec's next revision (what the unit changes, the contracts it crosses,
+how each way it can fail is proven, the tests and docs it breaks, its size). Code holds the record where it can: a path
+outside the scope is a scope-growth proposal; a test no lane runs before the unit merges, or a design too big for one
+unit (two systems changed substantially, or more than the gate reads inline), is a plan defect. The plan-check may
+instead:
+
+- **split** the unit: the executor applies the split as a plan revision (the unit cut, its children added after it from
+  its own spec, every dependent moved onto all children, milestones too). Nothing for you to do; `status` shows the
+  children. A split code refuses twice parks the unit `plan-defect`.
+- **scaffold** a new system: a small writer lays the skeleton down first, code dry-runs its load test and commits it,
+  then the build. Only in arcs started on 1.0.0-dev.17 or later.
+- ask a **proof of concept** (at most two per unit): a throwaway build answers its questions; nothing of it merges, and the
+  build is told its lessons.
+
+A build that changes a test or doc its design did not list records a departure among the spec's decisions; read them
+when you review the unit. Size the units you plan so each fits one design; a split is the executor's repair, not your plan.
+
 ## Scope growth
 
 A plan-check sweeps for references to what a unit removes or renames and proposes the paths outside its scope.
@@ -543,6 +564,23 @@ the proposal: `scope accept` re-opens it at plan-check and its builder is told t
 `scope reject` lets the lanes run. A gate that escalates
 over one comes to you as a park: grow the scope then by `apply --ruling` with the spec's next rev, or re-enter.
 
+## Proportional review
+
+The gate blocks only on a defect it names (`incorrect-behaviour`, `contract-violation`, `security`,
+`requirement-unmet`, `test-inadequate`, `data-loss`); a finding about comments or docs rides along and never costs a
+fix round. Code keeps the gate proportional, and none of it needs you:
+
+- Every gate finding enters the arc's findings ledger (`R-n`). A settled finding (fixed, released, banked, or a
+  dispute ruled) is never raised to block again unless its file changed. The builder may dispute a finding in
+  decisions.json instead of fixing it; the next gate rules once, and the ruling is final.
+- A re-gate after an approval (a moved contract, a candidate fix round) reviews only what changed since the approval
+  and what names a moved contract or requirement; a blocking finding on an unchanged file is recorded as a note.
+  Nothing changed and nothing moved: the gate is skipped (`gate:delta-empty`), no call.
+- A fix that changes only comments and docs says so (`docsOnlySince`); code checks the diff, a cheap verifier seat
+  reads what code cannot clear, and the lanes' earlier passes carry over (a `docs-only` fact; refused, the lanes just
+  run). A later candidate red on a carried lane is recorded as calibration (`docs-only-miss`): tell the owner if one
+  appears.
+
 ## Handling parks
 
 Read the item's `evidence` first: the deciding call's `result.json`, its `stdout`, the spec, the lane evidence.
@@ -554,12 +592,23 @@ second design park of one lineage (`respec-second`). `roadmap steer <unit>` is a
   session. The resume acknowledges the park.
 - **Parked `plan-defect`** (a missing witness its lane never runs, or whose file no build of the unit can create;
   uncharged): the item names each defect. Fix the plan by `apply` (the lane's argv or `testPaths`, the witness's
-  `files` or lane, the obligation's `deliveredBy`), then `roadmap resume <unit>` re-runs its lanes.
+  `files` or lane, the obligation's `deliveredBy`), then `roadmap resume <unit>` re-runs its lanes. At plan-check or
+  scaffold (1.0.0-dev.17) the item names the design's defects: a test in a lane that never runs before the unit merges
+  (force the batch lane in the spec's `forces`, or name the lane's systems), an acceptance clause no lane that can run in
+  this arc exercises (add a static harness witness the arc can run, e.g. a `make check` lane, give the clause its own unit,
+  or defer it; bring the environment back if its probe failed), a design too big for one unit or a split code
+  refused, a scaffold whose load test does not run. Fix the spec or plan by `apply`, then `roadmap resume <unit>` re-runs
+  the stage.
 - **Parked `context-exceeded`** (a plan-check, build or gate call's prompt or context outgrew its model's window;
   uncharged): the item names the role, the call and the prompt's size. Make the stage's inputs fit (split the unit or
   narrow its spec, or a milestone's `references`, by `apply`, or route that seat to a class whose model has a larger
   window), then `roadmap resume <unit>` re-runs the stage: a new call with a prompt built from the inputs in force, never
   a replay of the parked one (2026-10-21; 1.0.0-dev.16). Resuming unchanged hits the same wall.
+- **Parked `executor-fault`** (1.0.0-dev.17; non-blocking, uncharged): the executor threw inside the unit's stage; the
+  item's summary carries the stack, and the arc went on without the unit. Read the throw site: an executor defect is the
+  owner's to report (the run's feedback notes); something the unit left in its checkout (an unreadable file, an odd
+  path) is fixed there or by a spec revision. Then `roadmap resume <unit>` re-enters the stage it parked at. An arc job's
+  `executor-fault` item (subject the arc) holds that job until you acknowledge it: `roadmap ack <id>` makes it due again.
 - **Parked `routing-changed`** (the implementer seat's backend or model moved after its build started; an
   effort-only change re-pins by itself): restore the routing of the seat the item names, or re-enter the unit
   under a new id. Once the seat resolves to the same backend and model the unit was dispatched on,
@@ -571,15 +620,34 @@ second design park of one lineage (`respec-second`). `roadmap steer <unit>` is a
   the lineage, or a lane failure by its `ref` in `status.units[].failures` (`<unit>/lanes#<attempt>/<lane>`). Find
   the cause first: `apply` accepts a re-entry that changes nothing the failure ran under, but a design failure retried
   unchanged usually fails again and spends the unit's chargeable bound. The new
-  unit's prepare creates `roadmap/<arc>/<new>` at the parked tip; never create it by hand. Its scope may grow beyond
+  unit's prepare creates `roadmap/<arc>/<new>` at the parked tip; never create it by hand. Its builder starts a fresh
+  session, and the executor hands it the lineage's history from its records (the handover: failures, the last gate's
+  directives and unsettled findings, clauses still unmet, earlier decisions, the last build report, the last red
+  evidence), as it does for every build that cannot resume its session (a reopen or a seat move, a steer). Do not
+  restate that history as spec facts; a fact carries only what the records cannot (a cause you found). Its scope may grow beyond
   the lineage's only on a ruling its spec cites that names exactly the added patterns.
+  - **The re-entry's `facts`** say what the lineage proved and what is still unproven: the lanes and clauses that
+    passed (at which attempt), and those no lane has run yet or that failed. Never write "the build is complete; change
+    nothing": its builder then delivers nothing, and the gate is left as the only test of what is still open.
+  - **`reset`**: a re-entry keeps its predecessor's chargeable failures. When it answers a known cause (the failure it
+    `fixes` is diagnosed and the spec changes what that failure ran under), cite a ruling as `reenters.reset`, so it
+    starts at 0. Without one, at its bound less one, its next charged failure (a red series, a gate revise) parks for
+    you instead of a fix round, and a gate's directives reach the builder only through you; the apply's receipt warns.
 - **Parked `witness-lane-missing`** (an arc started on 1.0.0-dev.9: the unit's spec names a witness lane that is no
   arc lane): add that lane to the obligations with `roadmap apply`, then `roadmap resume <unit>`; or re-enter the unit
   with a spec whose witness items name arc lanes. An apply can no longer create this state.
-- **Parked `escalation` after an assessment found the spec infeasible** (the build's `infeasible` notes are in the
-  evidence): a design park, so the checkpoint sees it first; otherwise apply a feasible spec revision (it reopens
-  the unit) or re-enter.
+- **Parked `escalation` after an assessment found the spec infeasible** (an arc started on 1.0.0-dev.16 or earlier: the
+  build's `infeasible` notes are in the evidence): a design park, so the checkpoint sees it first; otherwise apply a
+  feasible spec revision (it reopens the unit) or re-enter.
 - **A lane red for a cause another unit fixes**: a known defect (above), not a re-entry.
+- **Flaky lanes** (1.0.0-dev.17): the executor owns them. A lane red then green on its same-commit rerun is a flake: the
+  unit running it passes, and the arc's flaky ledger mints a deflake unit (`deflake-<n>`, ranked first, in no milestone)
+  that fixes the test; units not yet started that run the lane wait for it. Never quarantine, skip or weaken a flaky
+  test, and never declare a flake "environment": an external cause is the environment probe's to catch. A deflake unit
+  parked (`deflake-parked`, non-blocking: the units it held run again) is handled as its park says; when its notes name
+  the lane's cpu or resource need, declare it on the lane with `roadmap apply` and cut the deflake unit. A
+  `flake-recurring` item (non-blocking) means a test flaked again after two deflake units: read both and the flake's
+  evidence, then fix the test yourself through a unit or declare the lane's need; no third deflake is minted.
 - **Repairs held by each other's findings** (each approved repair waits at its candidate behind a P1 the other
   fixes): the executor publishes them as one batch. Do not cut them or hand-build a combined unit.
 - **A paused unit whose stage a crash cut short** is held after the next start, like any paused unit: resume, cut,
@@ -613,6 +681,14 @@ classes, scope growth) and never writes into your files: the plan in force lives
 The executor applies at the next stage boundary and kills nothing; the receipt says applied or every reason it was
 rejected. An edit you never apply has no effect, even after a restart.
 
+- **Mid-stage** (1.0.0-dev.17): an apply whose edit touches a unit running a stage is queued, not refused: a `queued`
+  receipt names the units it waits for (`status.commands.pending[].queuedFor` too), and it lands at their stage
+  boundary, before their next stage. Refused there (the unit passed its gate meanwhile, say), an `apply-dropped` item
+  names it and why: redo the edit from where the arc is now.
+- **While a checkpoint runs**, an apply makes that checkpoint's bundle stale and its spend wasted; the receipt warns.
+  Apply after it decides unless the edit cannot wait.
+- Read every `warning:` line of a receipt (also `apply --dry-run`'s `warnings`); they never refuse.
+
 - **Units**: add at the end or among units not started; remove only one that never started; ids are never reused.
   A dispatched unit keeps its resources and spec path, its risk may only rise, it gains no `after`, and its scope
   grows only by a ruling naming the patterns. Its spec keeps every item id (strike or defer, never delete) and
@@ -622,6 +698,14 @@ rejected. An edit you never apply has no effect, even after a restart.
   `must-hold` to `future`, waive, defer, retire) needs a ruling naming it, landed with the edit:
   `roadmap apply --ruling <sidecar>`. A rule anchor whose hash changed with the statement unchanged is an edit, not
   a weakening.
+- **What a change leaves stale** (1.0.0-dev.17): an apply that moves an obligation to a new rev, rewrites a contract
+  (a ruling's contract ops) or edits a vision clause is followed through in code, with nothing to do on your side.
+  Every unit still to land that links the change answers it at its plan-check (one in flight re-opens there first);
+  merged witness tests of a changed obligation, or of one binding a changed contract, are re-witnessed by a
+  `propagate-r<rev>-…` unit the executor mints (milestone-exempt, ranked with repairs), and no unit linking the change,
+  or whose design breaks those tests, passes its gate before that unit merges. A propagation unit that parks holds
+  those gates: resume it, or `cut` it to release them. A vision edit reaches the units through the obligations serving
+  the clause (the checkpoint reconciles the obligations themselves).
 - **Priority, known defects, plan-check shape**: apply at once, draining nothing ("Supervising the executor").
 - **Milestones**: only by `apply`, draining nothing. A milestone being walked waits for its walk to end; once walked it
   stays, with its units and design (plan another milestone for more), while its text, references, bring-up, journeys
@@ -647,7 +731,7 @@ rejected. An edit you never apply has no effect, even after a restart.
 - Declare `evidenceGlobs` for everything a lane script writes as evidence: its outputs (logs, reports, coverage),
   never the files it reads or tests. A match is never committed and refuses the candidate, so an entry covering
   the unit's own source or tests leaves it unmergeable; `start` and `apply` refuse an entry that matches a literal
-  scope path or equals a scope pattern. Paths a lane reads go in its `inputs`. Undeclared ignored output is captured
+  scope path or equals a scope pattern. What a lane reads is the systems it lists (below). Undeclared ignored output is captured
   only when the lane fails, capped. Add `evidenceExcludes` for anything that must never leave the checkout.
 - A lane asserts its required failure inside the script (or by `expectedExit`) and prints the failing step and
   reason on stderr before a non-zero exit: the fix round starts from stderr.
@@ -657,14 +741,32 @@ rejected. An edit you never apply has no effect, even after a restart.
   Copy its flags exactly as the project runs them today, even where the corpus says a faster setting is now safe:
   changing how the gate runs is the flow loop's lever, which proves the same tests still pass and measures the
   change. Retuning a flag while authoring skips that proof.
-- Every fast suite lane runs after each build too: the lanes stage runs them on the unit's commit once its spec lanes
-  pass, and the builder is told to run them first. A red one that is also red on the unit's base alone does not charge
-  the unit; otherwise it is the unit's fix round, long before the candidate. So give each cheap check its own fast suite
-  lane (lint, typecheck, format check: `["npx", "eslint", "."]`, `["npx", "tsc", "--noEmit"]`), never one lane that
-  chains them: a fix round then names the check that failed, and the run time of each is measured apart. Keep slow or
-  stateful suites `estate`: only the candidate runs those.
-- A spec lane may declare `inputs`, the repo patterns it reads: a fast lane's pass is then reused on a later commit
-  that touched none of them. Suite and arc lanes never declare it.
+- Every lane declares its `cadence`, where it runs (each runs at its point and every later one up to the candidate):
+  `build` (the builder runs it in its loop; the lanes stage runs it on the unit's commit), `unit` (the lanes stage
+  only), `candidate` (the candidate merge in the integration slot), `batch` (never in the merge path: before a
+  milestone's walk, at a cadence audit of an arc without milestones, and always at the close-out; holistic arcs only).
+  A spec lane is `build` or `unit`, an arc lane `build` (the builder checks its witnesses) or `candidate`, a suite lane
+  any. A red build or unit suite lane that is also red on the unit's base alone does not charge the unit; otherwise it
+  is the unit's fix round, long before the candidate. So give each cheap check its own `build` suite lane (lint,
+  typecheck, format check: `["npx", "eslint", "."]`, `["npx", "tsc", "--noEmit"]`), never one lane that chains them: a
+  fix round then names the check that failed, and the run time of each is measured apart. Put slow or stateful suites at
+  `candidate`, and only end-to-end runs too slow for every merge at `batch`: a red batch lane opens a P1 that holds its
+  milestone, and the repair of it runs that lane at its own lanes stage. A spec's `forces: [<suite lane id>]` runs
+  later-cadence suite lanes at its own lanes stage: force the lane whose tests prove the unit (a test in a batch lane
+  needs it).
+- Map the repo's systems once in the committed `.roadmap/config.json` `systemsMap` (`reference.md`): each system's
+  `paths`, its leaf test files (`tests`) and what it `dependsOn`; `shared` areas (lockfile, build config) with the
+  systems that depend on them; the systems consuming each contract; the `docs` class. A lane lists the `systems` it
+  tests: a candidate then runs it only when its diff touches one of them (a path mapped to no system runs every lane),
+  and its pass is reused on any commit whose paths of those systems are unchanged. A lane listing none reads the whole
+  tree but the docs class, so a docs-only change reruns nothing. A lane may declare `testArgv`, its argv with one
+  element `{files}`: when only leaf test files changed since its last clean pass, only those run. A lane that is
+  statistically noisy by nature declares `stochastic: {runs, minPasses}` (k of n); it is never treated as flaky. What a
+  deflake unit's verification may cost is `limits.verification` (`reference.md`): 30 lane-minutes per lane by default.
+  A lane that reads comments (a linter, a doc checker, a doctest runner) declares `readsComments: true`: a fix that
+  changes only comments and docs carries every other lane's pass over, never that lane's (see "Proportional review").
+  `start`, `apply` and `phase0 check` refuse a lane naming a system the map lacks. A map edit reaches a running arc
+  through the next `apply` after a restart (`roadmap start`, as for any config edit).
 - Every arc lane in the obligations file declares `testPaths`, every test path it runs; `start` refuses a fresh arc
   whose lane lacks it (`plan-defect`). Mutation smoke reverts a unit's production change (everything outside
   `testPaths`) and runs its witnesses again.
@@ -684,8 +786,8 @@ rejected. An edit you never apply has no effect, even after a restart.
   change makes pass: mutation smoke reports a witness that passes with the change reverted. A check that existing
   behaviour holds is a must-hold obligation's witness, never a spec witness.
 - **Clocks.** A unit whose behaviour depends on the date or time zone pins the product's own clock seam in every test
-  it touches, existing ones included, and declares a second fast lane that runs its witnesses with the seam shifted
-  far ahead (+400 days) under a non-UTC `TZ`. No real wait in a fast lane: inject the timeout, and check the production
+  it touches, existing ones included, and declares a second build lane that runs its witnesses with the seam shifted
+  far ahead (+400 days) under a non-UTC `TZ`. No real wait in a build lane: inject the timeout, and check the production
   default separately. Every negative witness drives the real entry point (the CLI command) with an injected fixture,
   never a helper.
 
@@ -694,6 +796,9 @@ rejected. An edit you never apply has no effect, even after a restart.
 - A shared resource needs an owner marker its probe honours: anyone using it outside the executor writes
   `/var/tmp/roadmap-resources/<name>.lease`; the probe exits 11 while the lease exists, so the executor parks
   `occupancy-unlabelled` instead of tearing down someone else's work.
+- Never act on a shared estate resource (a `sweep`, a lease, a teardown or probe by hand, an `apply` of its declaration)
+  while anyone holds it: a unit or job reservation in `status`, a lease, an outside user. Acting then races whoever
+  governs it mid-use; wait until it is free.
 
 ## Branches and refs
 

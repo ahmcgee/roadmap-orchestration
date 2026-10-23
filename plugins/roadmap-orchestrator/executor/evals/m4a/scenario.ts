@@ -1,15 +1,14 @@
 // Fake-backed M4a runs (`driver --fake <script>`): the backend calls of each arc, one scenario per arc (its job ids
 // restart at review-1, audit-1, ckpt-1), written by the driver under `fake/arc-<n>/` with its shims; the scripted root
 // agent puts arc n's shims first on PATH when it starts arc n. Unit calls are M1 steps keyed by unit (evals/m1/
-// scenario.ts), or Claude implementer steps where the unit's builder is the frontier class; pack review, lens and
-// checkpoint calls are 0b's scripted judgments keyed by job (and lens). Every plan is `planCheck.shape: by-builder`.
+// scenario.ts); pack review, lens and checkpoint calls are 0b's scripted judgments keyed by job (and lens). Every unit's
+// plan-check is one call (dev.17 removed `planCheck.shape: by-builder`) and every build is the efficient class's.
 //
 //   arc 1   review-1 holds a blocking finding on guard's spec (the hold; the root agent fixes the pack by `apply`), and
-//           review-2, on the new key, supersedes it with a note. guard (efficient: the acceptance plan-check) builds a
+//           review-2, on the new key, supersedes it with a note. guard builds a
 //           refusal that does not name the vessel holding the berth: its unit lane passes, the berths journey fails,
 //           so witness presence sends it back with the failing id (a witness fix round) before any gate. confirm (high
-//           risk, frontier: no plan-check call) assesses in session, then implements in the same session; mutation
-//           smoke reverts it and its W-1 witness, the tide table's journey, still passes: one smoke fix round, which
+//           risk) is plan-checked and built like the others; mutation smoke reverts it and its W-1 witness, the tide table's journey, still passes: one smoke fix round, which
 //           leaves the test (the behaviour predates the unit), then the gate approves with the survivor in its checks
 //           and a note (gate-note debt). audit-1's vision lens opens a P2 with no obligation; ckpt-1 defers it
 //           (finding-deferred debt), proposes an amendment (T-11: confirm cancellations by text) and takes in both
@@ -38,11 +37,10 @@
 // item's wake), so its cooldown covers the arc. The flow calls are judgment steps keyed by job id (`flow-<n>`), each
 // answer checked by the frozen reader (FLOW_SCHEMA).
 import type { JsonValue } from '../../src/core/json.ts';
-import { ASSESSED_DIRECTIVE } from '../../src/prompts/directives.ts';
 import type { ProfileName } from '../../src/routing/types.ts';
 import { validateFlowOutput } from '../../src/prompts/schemas.ts';
 import { admitSpecWire, checkpointAnswer, checkpointStep, intakeOutcome, lensStep, noteLensStep, packReviewStep, packTargetOf } from '../../test/helpers/holistic.ts';
-import type { ClaudeAct, Step } from '../../test/helpers/scenario.ts';
+import type { Step } from '../../test/helpers/scenario.ts';
 import { type M1Step, fakeSteps } from '../m1/scenario.ts';
 import { FILES, FITS_WITNESS, LANES, OBLIGATIONS, OPPORTUNITY, READOUTS, REPLAY_LANE, SHARD, SUITE_LANE, filesOf, specOf } from './golden.ts';
 import type { FakeScript } from './fake-root.ts';
@@ -59,11 +57,15 @@ const HOLD_MS = 20 * 60_000;
 
 const planCheck = (reason: string): M1Step => ({
   role: 'planCheck',
-  answer: { decision: 'approve', reasons: [reason], patch: null, risk: 'low', notes: '', premises: [], visionConflict: [], scopeGrowth: [] },
+  answer: { decision: 'approve', reasons: [reason], patch: null, risk: 'low', notes: '', premises: [], visionConflict: [], scopeGrowth: [], staleLinks: [] },
 });
 const build = (message: string, unit: string): M1Step => ({ role: 'build', round: 'fresh', acts: [{ type: 'commit', message, files: filesOf(join(FILES, 'units', unit)) }] });
 const gate = (reason: string, findings: readonly JsonValue[] = []): M1Step => ({
-  role: 'gate', answer: { decision: 'approve', findings: [...findings], directives: [], reasons: [reason], premises: [], unreviewed: [], clusters: null },
+  role: 'gate',
+  answer: {
+    decision: 'approve', findings: findings.map((f) => ({ ...(f as object), defect: null, reraises: null, hunk: null })), directives: [], reasons: [reason], premises: [], unreviewed: [],
+    clusters: null, rulings: [],
+  },
 });
 
 /** The gate note confirm's approval carries: banked as `gate-note` debt. */
@@ -100,29 +102,18 @@ const M1_READOUTS: Readonly<Record<string, readonly M1Step[]>> = Object.fromEntr
   planCheck(`The spec adds ${r.module} and its test, one new module (${r.rule}).`), build(`${r.unit}: ${r.text}`, r.unit), gate('A1 holds.'),
 ]]));
 
-const IMPLEMENTER = ['-p', '--permission-mode', 'bypassPermissions'];
-const report = (summary: string): ClaudeAct => ({ type: 'emit', value: { summary, changedPaths: [], lanesRun: [], blockers: [], experiments: [], final: true } });
-const confirmGate = fakeSteps({ steps: [gate('A1, A2 and A3 hold; W-1 survives smoke because the tide table predates the unit.', [{ severity: 'note', path: 'src/confirm.js', text: GATE_NOTE, contractRef: null, experiments: [], debt: { drag: GATE_NOTE_DRAG } }])] }, 'default').at(-1)!;
-
 /**
- * confirm, high risk on the frontier class: no plan-check call; one session assesses (read-only), then implements; the
- * smoke fix round resumes it and leaves W-1's test, which passed before the unit; then the gate. The same in both profiles.
+ * confirm, high risk: plan-checked, built, then the smoke fix round resumes the build session and leaves W-1's test, which
+ * passed before the unit; then the gate with its note.
  */
-const CONFIRM: readonly Step[] = ([
-  {
-    as: 'claude', expect: { argv: [...IMPLEMENTER, '--session-id'], argvLacks: ['--tools'], stdinContains: ['This invocation is the assessment, not the build.'] },
-    acts: [{ type: 'emit', value: { planAssessment: { feasible: true, riskFloor: 'high', visionConflict: [], premises: [], notes: 'confirm.js sends the template; book calls it after the write.' } } }],
-  },
-  {
-    as: 'claude', expect: { argv: [...IMPLEMENTER, '--resume'], argvLacks: ['--tools'], stdinContains: [ASSESSED_DIRECTIVE.slice(0, 60)] },
-    acts: [{ type: 'commit', message: 'confirm: text the skipper when a booking is made', files: filesOf(join(FILES, 'units', 'confirm')) }, report('Did the work.')],
-  },
-  {
-    as: 'claude', expect: { argv: [...IMPLEMENTER, '--resume'], argvLacks: ['--tools'], stdinContains: [`Survived: test "${TIDES_TEST}" on lane tides`] },
-    acts: [report('W-1\'s test passes without this change because the tide table behaviour predates the unit; left as it is.')],
-  },
-  confirmGate,
-] satisfies Step[]).map((s): Step => ({ ...s, unit: 'confirm' }));
+const CONFIRM: Readonly<Record<string, readonly M1Step[]>> = {
+  confirm: [
+    { role: 'planCheck', answer: { decision: 'approve', reasons: ['confirm.js sends the template; book calls it after the write.'], patch: null, risk: 'high', notes: '', premises: [], visionConflict: [], scopeGrowth: [], staleLinks: [] } },
+    build('confirm: text the skipper when a booking is made', 'confirm'),
+    { role: 'build', round: 'resume', stdinContains: [`Survived: test "${TIDES_TEST}" on lane tides`], acts: [] },
+    gate('A1, A2 and A3 hold; W-1 survives smoke because the tide table predates the unit.', [{ severity: 'note', path: 'src/confirm.js', text: GATE_NOTE, contractRef: null, experiments: [], debt: { drag: GATE_NOTE_DRAG } }]),
+  ],
+};
 
 const UNITS_2: Readonly<Record<string, readonly M1Step[]>> = {
   cutoff: [planCheck('The spec closes cancellations 48 hours before the window opens (T-23).'), build('cutoff: cancellations close 48 hours before the window', 'cutoff'), gate('A1, A2 and A3 hold.')],
@@ -295,5 +286,5 @@ export function arcSteps(n: 1 | 2, profile: ProfileName, script: FakeScript): re
   const story = script === 'story';
   if (n === 2) return [...smoke, ...m1(UNITS_2), ...JOBS_2, ...(story ? [flowStep(FLOW_2.buildClass.job, FLOW_2.buildClass.answer)] : [])];
   const flow = story ? Object.values(FLOW_1).map((f) => flowStep(f.job, f.answer)) : [flowStep('flow-1', VISION_SILENT_FLOW)];
-  return [...smoke, ...m1(M1_UNITS_1), ...m1(M1_READOUTS), ...CONFIRM, ...JOBS_1, ...flow];
+  return [...smoke, ...m1(M1_UNITS_1), ...m1(M1_READOUTS), ...m1(CONFIRM), ...JOBS_1, ...flow];
 }

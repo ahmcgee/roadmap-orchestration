@@ -34,11 +34,12 @@ Runs the production argv builder, runner and adapter against the real `claude` a
 PATH and logged in): the backend smoke, Codex fresh and resume, a real shell lane, the Claude judgment and
 implementer argvs, the Fable id pin, the economy class (dev.12: its judgment binding, Haiku 5.5 high, which no built-in seat names since the 2026-10-17
 gate eval, one call under the Haiku gate prompt module's system prompt), and (M3) one real call each of the lens, checkpoint and vision-aware plan-check
-prompt modules over tiny fixtures on their own seats (since 1.0.0-dev.10 the lens and med plan-check seats are the efficient
-class, Sonnet 5.5 high, as is the Claude smoke on planCheck.low); (M4a) the forge functions read-only against the real repository
+prompt modules over tiny fixtures on their own seats (the lens seat is the efficient class, Sonnet 5.5 high; since
+1.0.0-dev.17 the plan-check seats and the Claude smoke on planCheck.low are frontier, Opus 5.5 medium); (dev.17) a Sonnet
+build launched with `--advisor claude-opus-5-5`, told to consult it once: the advisor call is in the stream and its Opus
+spend is metered as delegated frontier; (M4a) the forge functions read-only against the real repository
 (identity, policy and trust, issues and comments shapes), a real pack-review call (frontier Opus medium) and checkpoint
-call (summit Opus xhigh), and an effort-changed resume on both CLIs (OI-2); (M4a rev 3) the in-session assessment (frontier Opus medium,
-read-only, the worktree unchanged), the acceptance-shape plan-check (witness items through the patch channel), a checkpoint admit
+call (summit Opus xhigh), and an effort-changed resume on both CLIs (OI-2); (M4a rev 3) a checkpoint admit
 carrying `targets`, `roadmap witness-check` over a real `node --test` run (exit 0, and 78 naming the missing id), and a Sonnet 5.5
 medium build under the per-call build schema (`experiments`); (M4b) a real flow call on the flow seat (efficient, Sonnet 5.5 high, the m4b role
 set) over a small synthetic `FlowInputs`, validated by the flow role's reader, and a real suite-lane proof (`runProof`) on a tiny
@@ -163,7 +164,7 @@ scenario file per unit, keyed by unit since units run in parallel) with a host d
 free (10 minute timeout). `test/evals-m2.test.ts` runs it and requires every criterion to pass. M4b: the third merge,
 with `top` still to flow, fires the flow loop's first run; its fake call (`flow-1`) answers noAction.
 
-`NOT EXERCISED: …` names what the journal shows no trace of, from: flake, host signature, D4 escalation,
+`NOT EXERCISED: …` names what the journal shows no trace of, from: flake, host signature,
 backend capacity park, backend outage park, aging promotion. The straight path takes none of them (`aging` is
 vacuous when no waiter was promoted); each has a fake integrated test in `npm test`. `CANNOT SHOW: …` is fixed:
 real cgroup containment, crash boundaries under real models, usage-limit hits under parallel burn (D4),
@@ -380,10 +381,10 @@ the vision lens of each audit and its checkpoint (summit; arc 1 about 5 of each)
 agent (`fake-root.ts`), which follows the skill and replays the golden Phase-0 outputs (`golden.ts`: the curated
 corpus as exact edits of the raw one, the obligations, census, records and plans) through the staged plugin's real
 CLI, against the fake backends (`scenario.ts`, one scenario per arc) and a host dir in the fixture; 30 minute
-timeout. Every plan is `planCheck.shape: by-builder` and every arc lane declares `testPaths`. `story`: arc 1's pack
+timeout. Every arc lane declares `testPaths`. `story`: arc 1's pack
 review holds a blocking finding the root agent fixes by `apply` (the superseding review); guard's first build fails
-its berths witness, so witness presence sends it back before any gate; confirm (high risk, the frontier builder) makes
-no plan-check call, assesses in session and implements in the same session, and mutation smoke finds its W-1 witness
+its berths witness, so witness presence sends it back before any gate; confirm (high risk) is plan-checked and built, and
+mutation smoke finds its W-1 witness
 surviving (one smoke fix round, then the gate decides); a gate note and a deferred lens finding bank debt, a checkpoint
 and an issue derive amendments; after arc 1 `chain status` answers `nextStart` within K = 1 (the bootstrap start
 counts as acked) and the check-in, one final message, asks the cutoff question and ends with the action taken on
@@ -561,7 +562,8 @@ A role eval measures one judgment role on its own, many trials per scenario cell
 no session can read. It complements the fixtures: they show an arc converges, a role eval shows how often a role catches
 what it must and how often it cries wolf, at what cost. The gate is the first role (dev.12: the bounded gate diff and the
 Agent tool); the walkthrough is the second and the polish judge the third (dev.13, "The walkthrough eval" and "The
-polish-judge eval" below). `run.ts` takes the role first (`triggers.ts` `EvalRole`: `gate`, `walkthrough`, `polishJudge`); the
+polish-judge eval" below); the scaffold writer is the fourth (dev.17, "The scaffold eval" below). `run.ts` takes the role
+first (`triggers.ts` `EvalRole`: `gate`, `walkthrough`, `polishJudge`, `scaffold`); the
 pool, the workers, `--rebind`, `--cap` and `--trial-cap` are shared (`pool.ts`, `trial.ts`).
 
 ```sh
@@ -911,6 +913,49 @@ fails, one bad run of three fails; voids; stability; holdout gap); run.ts end to
 production compare (`oracle` passes every criterion over all 12 cells, MCP only for the browser families; `keep-all`
 and `drop-all` fail; `refused` takes the repair turn and voids `invalid`); the caps; the seat. The triggers are in
 `test/roles-walkthrough.test.ts` (`roles.walk-triggers`).
+
+### The scaffold eval (dev.17)
+
+```sh
+node evals/roles/run.ts scaffold --set dev --n 3 [--cells module,imports-map] [--parallel 2] [--rebind <class>=<model>:<effort>] [--out <dir>] [--cap <usd>] [--trial-cap <usd>]
+node evals/roles/run.ts scaffold --set holdout --n 3 --compare <dev run>/summary.json     # acceptance only
+node evals/roles/run.ts scaffold --set dev --n 1 --fake oracle                              # free: the harness's own check
+```
+
+**When.** Paid, path-triggered: `src/prompts/scaffold/**`, the scaffold stage (`src/pipeline/scaffold.ts`), the prompt
+inputs and schemas, `src/routing/**`, the argv and the Claude reader, `evals/roles/scaffold/**` and the shared harness.
+
+**Cells** (`scaffold/cells.ts`). Four new systems over the corpus arc's Node repo, one per family: `module` (a plain module
+directory), `imports-map` (reached through a `package.json` `imports` entry), `named-exports` (a load test importing three
+exports), `bin-two-entries` (two entry points, a `bin` entry, the load test nested in a suite: id `report > loads`). A cell
+is the unit's acceptance and scope, the plan-check's scaffold decision (new system paths and tests, entry points,
+exports, manifest entries, the load test's id) and the load lane's glob; its reference skeleton is what the fake writers
+write, never shown to a real one. The holdout set is untracked (`evals/roles/holdout/scaffold.ts`, exporting
+`HOLDOUT_SCAFFOLD_CELLS`).
+
+**The harness** (`scaffold/arc.ts`, `fixture.ts`) runs each trial through the production scaffold stage: the corpus arc
+(role set `dev17`) with the arc lane `load` (`node --test <glob>`, the node-test reporter), a fake plan-check deciding
+`scaffold`, then u1's pipeline held before the build. The writer (`scaffold.med`, economy: Haiku 5.5 high) runs in the
+unit worktree; code checks its paths and entry points, dry-runs the load lane for real and commits the skeleton, or refuses
+it once (the retry is told why) and then parks plan-defect. The monitor, brakes and needle scan are the polish judge's.
+
+**Grading and criteria** (`scaffold/summary.ts`). The verdict is what code decided: `first`, `retry` or `defect`. Every
+run lands a skeleton in at least 3 of 4 cells (`landed`); at least half the graded trials land first-try (`first-try`);
+voids at most a quarter; cost-check; with `--compare`, the holdout's landed rate within 15 points of dev's. Reported:
+RUN, FAMILY, REFUSALS by kind (nothing, outside, entry-point, lane-exit, not-ran, schema), skeleton size, COST, USAGE,
+TOTAL. The bars are first guesses until a paid run measures the seat.
+
+**Cost.** An estimate: a skeleton is a few small files, roughly 10 to 25 turns on Haiku 5.5, a few cents a trial; the dev
+set at n = 3 (12 trials) well under $5. A paid run sets `--trial-cap 1 --cap 20`.
+
+**Output.** `<out>/trials.jsonl`, `<out>/summary.json`, and per trial `key.json`, `prompt-<n>.txt` per attempt,
+`argv.json`, `scaffold-<n>.jsonl`, `transcript.jsonl`, `answer.json`, `skeleton.diff` when one landed, `row.json`.
+
+**Free tier.** `test/roles-scaffold.test.ts`: the cells' shape (every reference path within the new system, its tests or
+a manifest file; every entry point present; the load glob takes the tests; no word naming the eval); the summary's bars
+over scripted rows and the refusal kinds of code's own reasons; run.ts end to end on the fake writers (`oracle` lands all
+four first-try; `fix-on-retry` lands on the retry, told `<previous_attempt>`; `outside` and `nothing` park plan-defect);
+the caps; the seat; the triggers.
 
 ## The run observer
 

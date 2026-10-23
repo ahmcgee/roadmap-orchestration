@@ -260,7 +260,12 @@ test('publish.green-not-preempted: once a candidate is green its ff and snapshot
 });
 
 test('docs.transient: a docs publication\'s diff is exactly its rendered files and its contract ops\' paths; a unit dispatched under dev.6 may not touch the in-tree .roadmap/', T, async () => {
-  const d = publishArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild({ '.roadmap/constraints.md': 'hand-written\n' })] });
+  // C-2 rewrites contracts/api.md, which u1 cites: its plan-check answers the stale link (dev.17 propagation).
+  const answered = planCheckStep(
+    { decision: 'approve', staleLinks: [{ link: 'contract:contracts/api.md', outcome: 'confirmed', reason: 'mul does not depend on how sums are stated' }] },
+    { stdinContains: ['<stale_links>', 'contract:contracts/api.md'] },
+  );
+  const d = publishArc({ steps: [answered, mulBuild({ '.roadmap/constraints.md': 'hand-written\n' })] });
   const r = contextFor(d);
   const w = wire(r);
   const stop = ticking(w);

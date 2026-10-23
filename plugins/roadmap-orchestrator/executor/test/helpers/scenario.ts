@@ -98,12 +98,37 @@ export type WorldAct =
  * Nothing after it runs. The production prompt, capture, tools and add-dirs reach the real model byte for byte, with no
  * test seam in production code. `readOnly` (the gate eval's comparison arm, dev.13): the acting gate call's argv is first
  * rewritten into the dev.12 gate's judgment profile (evals/roles/gate/readonly.ts `readOnlyArgs`); all else is the call's.
+ * `advised`: see its member.
  * `stream` (the role evals' spend brake): print `events` to stdout as stream-json lines, as a running session prints its
  * messages before any result.
  */
 export type ClaudeOnlyAct =
-  | Readonly<{ type: 'refusal' }> | Readonly<{ type: 'globAboveAddDir' }> | Readonly<{ type: 'real'; readOnly?: Readonly<{ repo: string; runDir: string }> }>
-  | Readonly<{ type: 'stream'; events: readonly JsonValue[] }>;
+  | Readonly<{ type: 'refusal' }>
+  /**
+   * dev.17: `emit`, from a build that consulted its advisor once: the init event and the result name the call's `--model` as
+   * the session's own, and the result's `modelUsage` carries the call's `--advisor` model beside it with the captured
+   * claude-build-advisor advisor spend (its cost added to `total_cost_usd`), as the real CLI reports it.
+   */
+  | Readonly<{ type: 'advised'; value: JsonValue }> | Readonly<{ type: 'globAboveAddDir' }> | Readonly<{ type: 'real'; readOnly?: Readonly<{ repo: string; runDir: string }> }>
+  | Readonly<{ type: 'stream'; events: readonly JsonValue[] }>
+  /**
+   * dev.17 (design pass): `emit` a plan-check answer. An approve or scaffold without a `design` key carries
+   * `defaultDesign(<the first pattern of the call's scope envelope>, <the spec's active acceptance clauses>, <the first spec
+   * lane of cadence build or unit in <test_lanes>, else the first lane there not batch and not unavailable>)`: a module change
+   * of that pattern, no failure modes, every clause exercised by that lane, so a test about something else needs no design
+   * record of its own.
+   */
+  | Readonly<{ type: 'planCheck'; value: JsonValue }>;
+
+/**
+ * The design record a plan-check answer without one carries (`planCheck` act): one small module change of `pattern`, each
+ * clause of `clauses` exercised by `lane` (item 10).
+ */
+export const defaultDesign = (pattern: string, clauses: readonly string[] = [], lane: string | null = null): JsonValue => ({
+  kind: 'module', changes: [{ system: null, paths: [pattern], lines: 10 }], interfaces: [], failureModes: [],
+  clauses: lane === null ? [] : clauses.map((clause) => ({ clause, lanes: [lane] })), breaks: { tests: [], docs: [] }, experiments: [],
+  newSystem: null, verification: null,
+});
 /**
  * `resumeCollision`: `codex exec resume` onto a thread another live session holds (CODEX_RESUME_COLLISION on
  * stderr, exit 1). `threadStarted`: print the `thread.started` event now, as the real CLI does first, so a

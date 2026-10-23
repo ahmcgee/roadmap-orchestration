@@ -16,7 +16,7 @@ import { git, tmpDir } from '../helpers/repo.ts';
 import type { ClaudeAct, Step } from '../helpers/scenario.ts';
 import { writeWitnessControl } from '../helpers/witness.ts';
 import { admitSpecWire } from '../helpers/holistic.ts';
-import { BUILD_REPORT, planCheckStep } from './stage-common.ts';
+import { BUILD_REPORT, type LaneJson, planCheckStep } from './stage-common.ts';
 import { ADVANCES, VISION, obligationsJson } from './brake-common.ts';
 import { publishArc } from './publish-common.ts';
 import { wired } from './sched-m3-common.ts';
@@ -72,13 +72,20 @@ export function milestoneJson(extra: Json = {}): Json {
   };
 }
 
-export type WalkArcOptions = Readonly<{ steps: readonly Step[]; milestone?: Json; walkRounds?: number }>;
+export type WalkArcOptions = Readonly<{
+  steps: readonly Step[]; milestone?: Json; walkRounds?: number;
+  /** dev.17: the plan's suite (default unit-common's) and the repo config's systems map (default none). */
+  suite?: readonly LaneJson[]; systemsMap?: JsonValue;
+}>;
 
 /** Lays out the walk arc (u1 in MS-1; u2 after u1; u3 unrelated) and records revision 1 as a start does. */
 export function walkArc(opts: WalkArcOptions): ArcDescriptor {
   const control = join(tmpDir('witness-control'), 'control.json');
   writeWitnessControl(control, { trees: { '*': { outcomes: { t1: 'pass' } } } });
-  return publishArc({ steps: opts.steps, units: [{ id: 'u1' }, { id: 'u2', after: ['u1'] }, { id: 'u3' }] }, (x) => {
+  return publishArc({
+    steps: opts.steps, units: [{ id: 'u1' }, { id: 'u2', after: ['u1'] }, { id: 'u3' }],
+    ...(opts.suite === undefined ? {} : { suite: opts.suite }), ...(opts.systemsMap === undefined ? {} : { systemsMap: opts.systemsMap }),
+  }, (x) => {
     for (const [path, text] of Object.entries(PRODUCT)) {
       mkdirSync(join(x.repo, path, '..'), { recursive: true });
       writeFileSync(join(x.repo, path), text);
@@ -173,9 +180,9 @@ export function proposal(d: Readonly<{ planPath: string }>, id: string, text: st
   return { journey: 'J-1', text, unit: { id, scope: SCOPE, spec: admitSpecWire({ ...u1, unit: id, rev: 1, scope: SCOPE, ...extra }) } };
 }
 
-/** A Claude build of polish unit `unit` (frontier builds high risk): it commits `files`. */
+/** The build of polish unit `unit` (risk high: the efficient class since dev.17, Codex under the default profile): it commits `files`. */
 export const polishBuild = (unit: string, files: Readonly<Record<string, string>>): Step => ({
-  as: 'claude', unit, expect: { argv: ['--permission-mode', 'bypassPermissions', '--session-id'] },
+  as: 'codex', unit, expect: { argv: ['exec', '-C'] },
   acts: [{ type: 'commit', message: `polish ${unit}`, files }, { type: 'emit', value: BUILD_REPORT }],
 });
 export const polishSteps = (unit: string, files: Readonly<Record<string, string>>): readonly Step[] => [

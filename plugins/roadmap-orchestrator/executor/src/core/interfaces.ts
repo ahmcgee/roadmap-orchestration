@@ -4,7 +4,7 @@
 // Interfaces only; no behaviour here.
 import type {
   AbortCode, DoneRecord, Fact, FlowFact, GitOpKind, IntentOf, IntentRecord, JudgmentInputs, JudgmentStage, OpExpect, OpKind, OpOutcome, OpPost, Parent,
-  PlanAppliedFact, RecoveredBy, WalkFact,
+  PlanAppliedFact, PropagationFact, RecoveredBy, WalkFact, FlakyFact,
 } from './events.ts';
 import type {
   AmendmentId, ArcId, ClaudeSessionId, CommandId, DivergenceId, EdgeId, FindingId, InvocationId, JobId, JobKind, MilestoneId, NeedsUserId, OpId, OpKey, PolishId, ResourceUnit, Sha, UnitId,
@@ -14,7 +14,7 @@ import type {
   CancelFile, ChildEnd, ContainmentMode, DispatchRecord, ExitFile, KillReason, LaunchFile, ProcIdentity, ResultFile, RunnerFileMap,
   RunnerFileName,
 } from './records.ts';
-import type { BackendParkState, EdgeResolvedState, HolisticFold, ProbeState, ResidueState, ResourceEntry, UnitState } from './state.ts';
+import type { ApplyQueued, BackendParkState, EdgeResolvedState, HolisticFold, ProbeState, ResidueState, ResourceEntry, ReviewFold, UnitState } from './state.ts';
 import type { Backend } from '../routing/types.ts';
 import type { AbsPath, IsoTime } from './values.ts';
 
@@ -100,6 +100,8 @@ export interface JournalView {
   planApplied(): PlanAppliedFact | null;
   /** The `plan-applied` fact `command` wrote (an apply's postcondition), or null. */
   planAppliedBy(command: CommandId): PlanAppliedFact | null;
+  /** dev.17: the `apply-queued` fact of `command` (its seq and the units it waits on), or null when it was never queued. */
+  applyQueued(command: CommandId): ApplyQueued | null;
   /** M2 (rank, F17): the seq of the stage-outcome fact that is `unit(id).decided`, or null while it is null. */
   decidedSeq(unit: UnitId): number | null;
   /** M2 (rank, F17): every published `integration.ff` of a unit's ff stage, the unit and its done record's seq, in log order. */
@@ -124,6 +126,8 @@ export interface JournalView {
   lastExecutorStarted(): number;
   /** M3: the holistic layer's fold (findings, audits, checkpoints, divergences, completion, …). */
   holistic(): HolisticFold;
+  /** dev.17 proportional review: the findings ledger, approvals with their blobs, docs-only checks. */
+  review(): ReviewFold;
   /** M4b: every flow fact, in log order, with its seq and time (src/flow/apply.ts derives the decisions' phases from them). */
   flowFacts(): readonly FlowFactAt[];
   /** dev.13: every walk fact (walks, polish, tweaks, milestone passes, the demo), in log order, with its seq and time. */
@@ -135,10 +139,16 @@ export interface JournalView {
    * bring-up or journeys after it was walked), 0 before one: the walk abandonment brake counts tries after it.
    */
   rewalkSeq(milestone: MilestoneId): number;
+  /** dev.17: every `flake-observed` fact, in log order, with its seq (the flaky ledger, src/pipeline/deflake.ts). */
+  flakes(): readonly FlakeAt[];
+  /** dev.17: every propagation fact (stale sets, stale re-opens, refused propagations), in log order, with its seq and time. */
+  propagationFacts(): readonly PropagationFactAt[];
 }
 
+export type FlakeAt = Readonly<{ seq: number; at: IsoTime; fact: FlakyFact }>;
 export type FlowFactAt = Readonly<{ seq: number; at: IsoTime; fact: FlowFact }>;
 export type WalkFactAt = Readonly<{ seq: number; at: IsoTime; fact: WalkFact }>;
+export type PropagationFactAt = Readonly<{ seq: number; at: IsoTime; fact: PropagationFact }>;
 
 /** How an item was closed: by `command` (`needs-user-acked`), or by the executor at the close-out (`command` null: `needs-user-declined`, run 10 E). */
 export type NeedsUserAckState = Readonly<{ command: CommandId | null; choice: string | null }>;

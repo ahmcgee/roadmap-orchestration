@@ -23,12 +23,13 @@
 // (src/holistic/findings.ts `ownershipMoves`: owned, fixed-on-branch, resolved, open again) and code's dismissal of a
 // finding whose mutant a `reproduce` killed. It is re-runnable, so the driver calls it around every stage and a
 // restart writes only what is missing.
+import { specLaneIds } from './deflake.ts';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import type { MutantOf, OutcomeStage, WitnessFor } from '../core/events.ts';
 import { mutantSubjectDefault } from '../core/upgrade.ts';
-import { type FindingId, type OpId, type ResourceInstance, type ResourceUnit, type Sha, type Sha256Hex, type UnitId, invocationId, opKey } from '../core/ids.ts';
+import { type FindingId, type LaneId, type OpId, type ResourceInstance, type ResourceUnit, type Sha, type Sha256Hex, type UnitId, invocationId, opKey } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import { type NeedsUserContent, STDERR_FILE, STDOUT_FILE, specRepairs } from '../core/records.ts';
@@ -40,6 +41,7 @@ import { mutantLaneDir } from '../git/snapshot.ts';
 import { removedSince } from '../git/worktree.ts';
 import { type RepairProgress, type RepairUnit, isActive, repairedObligations, ruleFinding, syncFindings } from '../holistic/findings.ts';
 import { verdictOf } from '../holistic/observe.ts';
+import { type SpecLinks, specLinksOf } from '../holistic/staleset.ts';
 import { type ArcLaneDef, type MutantRef, type ObservationVerdict, type WitnessRecord, type WitnessRef, laneRevOf, witnessRecord } from '../holistic/types.ts';
 import { WITNESS_LINES, WITNESS_RECORD_FILE, collectWitness, witnessEnv, witnessRecordOf, writeWitnessRecord } from '../holistic/witness.ts';
 import type { PlanM1, PlanUnit } from '../input/plan.ts';
@@ -70,14 +72,18 @@ function vacuityTargets(findings: readonly FindingState[], repairs: readonly str
 
 /**
  * What admission and `nextStage` read from each unit's spec in force (src/schedule/ready.ts `SpecFacts`). With no
- * active finding in the arc nothing in a spec matters to either, and no spec is read.
+ * active finding in the arc nothing in a spec matters to either, and no spec is read for them; dev.17: the spec's links
+ * (`links`) are read only when a propagation edge asks.
  */
 export function specFacts(ctx: SpecReader): SpecFactsOf {
   return (unit: PlanUnit): SpecFacts => {
+    // dev.17: the unit's spec-side lanes, read only when an open deflake unit asks (src/pipeline/deflake.ts `deflakeHold`).
+    const lanes = (): ReadonlySet<LaneId> => specLaneIds(loadUnitSpec(ctx, unit).spec);
+    const links = (): SpecLinks => specLinksOf(loadUnitSpec(ctx, unit).spec);
     const findings = ctx.journal.view.holistic().findings;
-    if (!findings.some(isActive)) return { reproduces: false, repairs: new Set() };
+    if (!findings.some(isActive)) return { reproduces: false, repairs: new Set(), lanes, links };
     const repairs = specRepairs(loadUnitSpec(ctx, unit).spec);
-    return { reproduces: vacuityTargets(findings, repairs).length > 0, repairs: repairedObligations(findings, repairs) };
+    return { reproduces: vacuityTargets(findings, repairs).length > 0, repairs: repairedObligations(findings, repairs), lanes, links };
   };
 }
 

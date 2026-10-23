@@ -364,8 +364,6 @@ function composeArc(c: Ctx, n: ArcNo, baseline: string, opts: Readonly<{ answer?
     // Arc 2 audits every publication: cutoff's audit is the one whose checkpoint capture meets the flipped policy.
     holistic: { advances: slice.advances, obligations: 'obligations.json', audit: { every: n === 2 ? 1 : 2, lenses: ['vision'] } },
     limits: { convergenceK: 3 },
-    // The skill's plan template: frontier builders assess in session, efficient ones get the acceptance plan-check.
-    planCheck: { shape: 'by-builder' },
     units: units.map((u) => ({ id: u.id, spec: `${u.id}.json`, risk: u.risk, scope: u.scope, resources: [], after: u.after.filter((a) => units.some((x) => x.id === a)) })),
     ...(opts.previous === undefined ? {} : { chain: { previousArc: opts.previous.arc, previousHead: opts.previous.head } }),
   }));

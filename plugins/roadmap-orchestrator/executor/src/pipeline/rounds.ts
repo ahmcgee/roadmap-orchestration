@@ -32,15 +32,28 @@
 // another implementer seat (a plan-check raised the risk after a build, and the raised seat binds another
 // model or backend: a session cannot move across them), the round starts a fresh session instead, on the
 // kept branch and worktree, with the same inputs plus NO_SESSION_NOTE (a continue: its decided round's
-// inputs, then NO_SESSION_NOTE and CONTINUE_DIRECTIVE; a reopen's fresh round: RESPEC_DIRECTIVE, then
-// NO_SESSION_NOTE); the round keeps its kind, and its launch.json records the session as fresh. A session's
+// inputs, then NO_SESSION_NOTE and CONTINUE_FRESH_DIRECTIVE; a reopen's fresh round: RESPEC_FRESH_DIRECTIVE, then
+// NO_SESSION_NOTE: no directive told to a fresh session claims the earlier work as its own); the round keeps its kind, and
+// its launch.json records the session as fresh.
+//
+// Handover (dev.17, field feedback 2026-10-23 item 1; src/pipeline/handover.ts): every call on a fresh session whose lineage
+// has work before it (a re-entry, a reopen or a seat move that cannot resume, a steer, a session that never persisted, a
+// continue that cannot resume) is given the handover, the executor's records of that work; a resumed session is not. Keeping
+// the session is an optimisation; the handover is what guarantees the history reaches the builder. A session's
 // seat is the `implementerSeatRev` of the dispatch fact its spawn ran under (`spawnSeatRev`); a routing
 // change never moves the session key (backend, model) of a unit whose build started (implementerDispatch parks it
 // instead), and an effort-only change re-pins it and resumes the session with the new effort (R4, OR-L3).
 //
 // A resolve round after a re-entry's conflicted `prepare` (A6) is fresh: the re-entering unit is a new unit
 // id with no build of its own, and no session inherits across units, so it starts a fresh session on the
-// prepared worktree (MERGE_HEAD kept) with RESOLVE_DIRECTIVE and NO_SESSION_NOTE.
+// prepared worktree (MERGE_HEAD kept) with RESOLVE_DIRECTIVE and NO_SESSION_NOTE, and the handover.
+//
+// Resolve continuation (field feedback 2026-10-23 item 4): a resolve round whose report is final with the merge committed and
+// nothing changed beyond it (HEAD the merge itself, the worktree clean), while acceptance clauses of the spec are still unmet
+// (src/pipeline/handover.ts `unmetClauses`), is not taken as the attempt's last word: its session is resumed once, as a new
+// invocation of the same attempt, with `resolveUnmetDirective` naming those clauses and a fresh build's window
+// (`resolveContinuation`). Its outcome is read the normal way. A crash between the two calls reads the first (recovery consumes
+// the attempt's latest call).
 //
 // Session never persisted. A round that resumes a session (a fix, resume or resolve round, a continue, a
 // reopen's respec round) whose call ends `process-fault` with no complete JSON line on stdout never got its
@@ -48,13 +61,10 @@
 // same attempt, fresh on the kept worktree with the round's inputs and NO_SESSION_NOTE (`PreparedRound.fresh`,
 // `callRound`).
 //
-// Stalled rounds and escalation (A11, D4, G1). A fix round is stalled when the failure that asks for the next
-// fix round fails a lane that also failed in the failure that asked for it, or the gate revised both times
-// (`stalledRounds`). With N = 1, the fix round after the first stalled round runs cold on the arc's
-// `build.high` seat, provided `chargeableFailures` is below the unit's chargeable bound and `build.<buildTier>` does
-// not already bind `build.high`'s triple: `escalateImplementer` journals `implementer-escalated` before the round's
-// implementer seat is chosen, and the fold's `buildTier` becomes `high`. The seat moves, so its session is
-// fresh (NO_SESSION_NOTE).
+// No escalation (dev.17): a stalled build stays on its seat and runs out its chargeable bound, then parks. The D4 escalation
+// (a cold fix round on `build.high` after a stalled round, `implementer-escalated`) is retired: every build seat binds the
+// efficient class, whose builds consult an Opus advisor at their own decision points (backends/argv.ts). A dev.16 log's
+// `implementer-escalated` facts still fold (core/state.ts `buildTier`).
 //
 // Deadlines (M3: the unit's pinned bounds, `limits`). A fix round's window is the measured lane series plus the
 // unit's edit allowance (`editAllowanceMin`), a fresh build's its `freshBuildMin`; the built-in values are
@@ -76,19 +86,14 @@ import type { IntentOf, TestRef } from '../core/events.ts';
 import type { RequiredWitness } from '../holistic/required.ts';
 import { type ImplementerSessionId, type InvocationId, type SeatRev, type Sha, type Sha256Hex, type UnitId, invocationId, parseInvocationId } from '../core/ids.ts';
 import { keptInput } from '../input/inforce.ts';
-import type { Journal, JournalView } from '../core/interfaces.ts';
 import type { UnitState } from '../core/state.ts';
-import { canonicalJson } from '../core/json.ts';
-import { type LogSnapshot, readJournal } from '../core/log.ts';
 import { type Bounds, type ImplementerSession, STDERR_FILE } from '../core/records.ts';
-import type { ResolvedRouting } from '../routing/layers.ts';
-import type { RiskTier } from '../routing/types.ts';
 import { type AbsPath, type IsoTime, type RefName, type RepoPath, branchRef, isoTimeOf } from '../core/values.ts';
 import { refTarget, revParse } from '../git/git.ts';
 import { type FixRound, ignoredText } from '../prompts/inputs.ts';
 import {
-  CONTINUE_DIRECTIVE, NO_SESSION_NOTE, RESOLVE_DIRECTIVE, RESPEC_DIRECTIVE, STEER_DIRECTIVE, dirtyLanesDirective, flakyLaneDirective, movedHeadDirective,
-  repeatRedDirective, resumeDirectives, smokeFixDirectives, stalledLaneDirective, witnessFixDirectives,
+  CONTINUE_DIRECTIVE, CONTINUE_FRESH_DIRECTIVE, NO_SESSION_NOTE, RESOLVE_DIRECTIVE, RESPEC_DIRECTIVE, RESPEC_FRESH_DIRECTIVE, STEER_DIRECTIVE, dirtyLanesDirective,
+  flakyLaneDirective, movedHeadDirective, repeatRedDirective, resolveUnmetDirective, resumeDirectives, smokeFixDirectives, stalledLaneDirective, witnessFixDirectives,
 } from '../prompts/directives.ts';
 import { runnerFiles } from '../runner/files.ts';
 import {
@@ -97,7 +102,7 @@ import {
 } from './dispatch.ts';
 import { invocationDir } from './invoke.ts';
 import { LANE_STALL_MS, type LaneRecord, type VerificationTree, dirtyPaths, removeVerificationTree, seriesDurationMs } from './lanes.ts';
-import { type BuildRound, decidedBy } from './transitions.ts';
+import type { BuildRound } from './transitions.ts';
 import { worktreeCreateOp } from '../recover/ops.ts';
 
 
@@ -322,13 +327,14 @@ function sessionOf(dispatch: ImplementerDispatch, id: ImplementerSessionId | nul
 }
 
 /**
- * The call of a round that resumes session `id` with `fix`, and its fresh variant: a fresh session told so by
- * NO_SESSION_NOTE. With no session to resume the round is that fresh variant.
+ * The call of a round that resumes session `id` with `fix`, and its fresh variant: a fresh session given `freshFix` (`fix`
+ * unless a directive claims the earlier work as the session's own) told so by NO_SESSION_NOTE. With no session to resume the
+ * round is that fresh variant.
  */
 export function resumed(
-  dispatch: ImplementerDispatch, id: ImplementerSessionId | null, fix: FixRound, evidenceDirs: readonly AbsPath[],
+  dispatch: ImplementerDispatch, id: ImplementerSessionId | null, fix: FixRound, evidenceDirs: readonly AbsPath[], freshFix: FixRound = fix,
 ): RoundCall & Readonly<{ fresh: RoundCall | null }> {
-  const fresh: RoundCall = { session: freshSession(dispatch), fixRound: { ...fix, directives: [...fix.directives, NO_SESSION_NOTE] }, evidenceDirs };
+  const fresh: RoundCall = { session: freshSession(dispatch), fixRound: { ...freshFix, directives: [...freshFix.directives, NO_SESSION_NOTE] }, evidenceDirs };
   return id === null ? { ...fresh, fresh: null } : { session: sessionOf(dispatch, id), fixRound: fix, evidenceDirs, fresh };
 }
 
@@ -398,8 +404,21 @@ export async function callRound(ctx: StageContext, round: PreparedRound, spec: (
   return callImplementer(ctx, spec(round.fresh));
 }
 
-/** The unit worktree on the unit branch; created at the integration tip for the unit's first build. */
-async function ensureWorktree(ctx: StageContext, unit: UnitId, parent: StageParent): Promise<Readonly<{ worktree: AbsPath; branch: RefName }>> {
+/**
+ * Field feedback 2026-10-23 item 4: the one continuation of resolve round `round` whose call `called` reported final with nothing
+ * changed beyond the merge while `unmet` clauses are still unmet (stages.ts `build` decides that): its session resumed (fresh with
+ * NO_SESSION_NOTE when it has none) with `resolveUnmetDirective`, under a fresh build's window.
+ */
+export function resolveContinuation(
+  ctx: StageContext, dispatch: ImplementerDispatch, round: PreparedRound, called: Extract<BackendCallOutcome, Readonly<{ kind: 'result' }>>, unmet: readonly Readonly<{ clause: string; text: string }>[], unit: UnitId,
+): PreparedRound {
+  const fix: FixRound = { failingEvidenceDirs: [], directives: [resolveUnmetDirective(unmet)] };
+  const deadlineAt = inMs(minutesMs(ctx.journal.view.unit(unit).bounds.freshBuildMin));
+  return { worktree: round.worktree, branch: round.branch, ...resumed(dispatch, invocationSession(ctx, called.inv), fix, []), deadlineAt };
+}
+
+/** The unit worktree on the unit branch; created at the integration tip for the unit's first build (or, dev.17, its scaffold). */
+export async function ensureWorktree(ctx: StageContext, unit: UnitId, parent: StageParent): Promise<Readonly<{ worktree: AbsPath; branch: RefName }>> {
   const worktree = unitWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit);
   const branch = unitBranch(ctx.plan().arc, unit);
   if (existsSync(worktree)) return { worktree, branch };
@@ -460,7 +479,8 @@ export async function prepareRound(ctx: StageContext, dispatch: ImplementerDispa
       // (on the same seat: a moved seat gets a fresh session, told the worktree holds the earlier work).
       const earlier = ctx.journal.view.unit(unit).reopened === null ? null : lastImplementerSession(ctx, unit);
       if (earlier === null) return { ...ready, session: freshSession(dispatch), fixRound: null, evidenceDirs: [], deadlineAt, fresh: null };
-      return { ...ready, ...resumed(dispatch, onSeat(dispatch, earlier), { failingEvidenceDirs: [], directives: [RESPEC_DIRECTIVE, ...(input.directives ?? [])] }, []), deadlineAt };
+      const respec = (directive: string): FixRound => ({ failingEvidenceDirs: [], directives: [directive, ...(input.directives ?? [])] });
+      return { ...ready, ...resumed(dispatch, onSeat(dispatch, earlier), respec(RESPEC_DIRECTIVE), [], respec(RESPEC_FRESH_DIRECTIVE)), deadlineAt };
     }
     case 'fix': {
       if (input.verification !== null) await removeVerificationTree(ctx, input.verification, parent);
@@ -481,7 +501,7 @@ export async function prepareRound(ctx: StageContext, dispatch: ImplementerDispa
       const id = onSeat(dispatch, seatedSessionOf(ctx, interrupted, input.interrupted));
       // A resumed session already holds the spec and its round's inputs; a fresh one is given them again.
       const fresh: RoundCall = {
-        session: freshSession(dispatch), fixRound: { ...own, directives: [...own.directives, NO_SESSION_NOTE, CONTINUE_DIRECTIVE] }, evidenceDirs: own.failingEvidenceDirs,
+        session: freshSession(dispatch), fixRound: { ...own, directives: [...own.directives, NO_SESSION_NOTE, CONTINUE_FRESH_DIRECTIVE] }, evidenceDirs: own.failingEvidenceDirs,
       };
       if (id === null) return { worktree, branch, ...fresh, deadlineAt, fresh: null };
       return {
@@ -490,104 +510,4 @@ export async function prepareRound(ctx: StageContext, dispatch: ImplementerDispa
       };
     }
   }
-}
-
-// ---------------------------------------------------------------------------------------------------
-// Stalled rounds and escalation (A11, D4, G1)
-
-/**
- * The lanes each of the unit's stage attempts failed, as `<set>:<lane>` (a lane whose run was red, a flaky
- * one included; a red a host signature voided on a busy host counts too, as the log cannot tell it apart).
- */
-function failedLanes(view: JournalView, unit: UnitId): ReadonlyMap<number, ReadonlySet<string>> {
-  const failed = new Map<number, Set<string>>();
-  for (const intent of view.opsOf('proc.spawn')) {
-    const s = intent.expect.subject;
-    if (s.purpose !== 'lane' || s.unit !== unit || intent.parent.type !== 'stage') continue;
-    const done = view.doneOf(intent.op);
-    if (done?.kind !== 'proc.spawn' || done.outcome.kind !== 'result' || done.outcome.summary.type !== 'command') continue;
-    const { verdict } = done.outcome.summary;
-    if (verdict !== 'fail' && verdict !== 'stall') continue;
-    const keys = failed.get(intent.parent.attempt) ?? new Set<string>();
-    keys.add(`${s.set}:${s.lane}`);
-    failed.set(intent.parent.attempt, keys);
-  }
-  return failed;
-}
-
-/** What a gate's revise failed, beside lanes. */
-const GATE_REVISED = 'gate';
-
-/**
- * The unit's stalled fix rounds, ascending by build attempt. A fix round (the first build attempt after a
- * failure whose decision is a fix round) is stalled when the next such failure fails a lane that also failed
- * in the one before it, or the gate revised both times. A reopen (a new spec revision) starts over. Pure over
- * the log: the stage-outcome and reopened facts of `log.events`, the lane verdicts of `log.view`.
- */
-export function stalledRounds(log: LogSnapshot, unit: UnitId): readonly number[] {
-  const failed = failedLanes(log.view, unit);
-  const stalled: number[] = [];
-  let before: ReadonlySet<string> | null = null;
-  let fix: number | null = null;
-  for (const e of log.events) {
-    if (e.type !== 'fact') continue;
-    const f = e.fact;
-    if (f.kind === 'reopened' && f.unit === unit) {
-      before = null;
-      fix = null;
-    }
-    if (f.kind !== 'stage-outcome' || f.unit !== unit || f.class === 'hold') continue;
-    if (f.stage === 'build') {
-      if (before !== null && fix === null) fix = f.attempt;
-      continue;
-    }
-    const decided = decidedBy(f);
-    if (decided.kind !== 'stage' || decided.target.stage !== 'build' || decided.target.round !== 'fix') continue;
-    const keys: ReadonlySet<string> = f.stage === 'gate' ? new Set([GATE_REVISED]) : failed.get(f.attempt) ?? new Set();
-    const earlier = before;
-    if (fix !== null && earlier !== null && [...keys].some((k) => earlier.has(k))) stalled.push(fix);
-    before = keys;
-    fix = null;
-  }
-  return stalled;
-}
-
-/** Whether a round escalates the implementer to `build.high`, and if not, why. */
-export type Escalation =
-  | Readonly<{ kind: 'escalate'; from: Exclude<RiskTier, 'high'>; stalled: number }>
-  | Readonly<{ kind: 'none'; why: 'not-a-fix-round' | 'no-stalled-round' | 'already-high' | 'same-triple' | 'at-bound' }>;
-
-/**
- * The escalation decision for build round `input` of `unit` (N = 1): a fix round after the unit's first
- * stalled round moves to `build.high`, while `chargeableFailures` is below the unit's chargeable bound and unless its
- * build tier's seat already binds `build.high`'s triple under the unit's routing. A continue keeps the seat its
- * interrupted attempt ran on.
- */
-export function escalation(log: LogSnapshot, routing: ResolvedRouting, unit: UnitId, input: RoundInput): Escalation {
-  if (input.kind !== 'fix') return { kind: 'none', why: 'not-a-fix-round' };
-  const u = log.view.unit(unit);
-  if (u.buildTier === null) throw new Error(`a fix round of ${unit}, which was never dispatched`);
-  if (u.buildTier === 'high') return { kind: 'none', why: 'already-high' };
-  const [stalled] = stalledRounds(log, unit);
-  if (stalled === undefined) return { kind: 'none', why: 'no-stalled-round' };
-  if (u.counters.chargeableFailures >= u.bounds.chargeable) return { kind: 'none', why: 'at-bound' };
-  if (canonicalJson(routing.table.build[u.buildTier]) === canonicalJson(routing.table.build.high)) return { kind: 'none', why: 'same-triple' };
-  return { kind: 'escalate', from: u.buildTier, stalled };
-}
-
-/**
- * Decides and journals the escalation of build attempt `attempt` of `unit` (`implementer-escalated`), and
- * returns the unit's build tier after it: the tier whose implementer seat the round is dispatched on. Called
- * before the round's implementer seat is selected (G1). Reads the arc's log from `runDir` for its history.
- */
-export function escalateImplementer(
-  ctx: Readonly<{ journal: Journal; runDir: AbsPath; routing: (unit: UnitId | null) => ResolvedRouting }>, unit: UnitId, attempt: number, input: RoundInput,
-): RiskTier {
-  const decided = escalation(readJournal(ctx.runDir, ctx.journal.view.arc), ctx.routing(unit), unit, input);
-  if (decided.kind === 'escalate') {
-    ctx.journal.fact({ kind: 'implementer-escalated', unit, attempt, from: decided.from, to: 'high', stalled: decided.stalled });
-  }
-  const tier = ctx.journal.view.unit(unit).buildTier;
-  if (tier === null) throw new Error(`${unit} has no build tier after its escalation decision`);
-  return tier;
 }

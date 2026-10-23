@@ -9,9 +9,11 @@
 // `supervisor.<token>.err` in the host dir).
 import type { CensusEntry, ClassifiedAdmit, Conversion, Obligations } from '../holistic/types.ts';
 import type { DiffShown, GateLargeDiff, JudgmentInputs, MutantOf, RevisionSource } from './events.ts';
+import type { ApprovalBlobs, GateReview } from './review.ts';
 import type { FindingId, LaneId, ObligationId } from './ids.ts';
 import type { PressureAvailability } from '../host/pressure.ts';
-import type { LaunchCpu } from './records.ts';
+import type { LaunchCpu, ResultFile } from './records.ts';
+import { canonicalJson } from './json.ts';
 import type { ClassTable } from '../routing/types.ts';
 
 const warned = new Set<string>();
@@ -234,6 +236,9 @@ export const PRE_DEV10_BUILTIN_SEATS: ClassTable = {
   flow: { arc: 'frontier' },  // The walk roles (dev.13) are in force only under a plan with milestones, which no earlier release's arc has: never hashed here.
   walkthrough: { arc: 'frontier' },
   polishJudge: { arc: 'frontier' },
+  verifier: { low: 'economy', med: 'economy', high: 'economy' },  // dev.17: never hashed under an earlier table (`DEV17_ROLES`).
+  // The scaffold role (dev.17) is in force only in a `dev17` arc, which no earlier release started: never hashed here.
+  scaffold: { low: 'economy', med: 'economy', high: 'economy' },
 };
 
 // Gate risk ladder (owner direction 2026-10-17, 1.0.0-dev.12): the built-in seats moved gate.med to efficient (Sonnet
@@ -258,10 +263,52 @@ export const PRE_DEV12_BUILTIN_SEATS: ClassTable = {
   flow: { arc: 'efficient' },  // The walk roles (dev.13) are in force only under a plan with milestones, which no earlier release's arc has: never hashed here.
   walkthrough: { arc: 'frontier' },
   polishJudge: { arc: 'frontier' },
+  verifier: { low: 'economy', med: 'economy', high: 'economy' },  // dev.17: never hashed under an earlier table (`DEV17_ROLES`).
+  // The scaffold role (dev.17) is in force only in a `dev17` arc, which no earlier release started: never hashed here.
+  scaffold: { low: 'economy', med: 'economy', high: 'economy' },
+};
+
+// Experience-won routing (owner 2026-10-22, 1.0.0-dev.17): plan-check and the gate moved to frontier at every risk tier, and
+// build.high to efficient (its builds consult an Opus advisor). As above, OR-L3 binds every revision through HEAD's seats:
+// an arc started on 1.0.0-dev.12 to dev.16 re-pins its units under the new rev without a park, and status aliases the revs
+// it recorded. A unit at risk high whose build already started on frontier keeps that pinned seat through to its merge
+// (`implementerSeatKept`; its session cannot move); units not yet started build under the new seats. Delete (with
+// `PRE_DEV17_BUILTIN_SEATS`'s place in `EARLIER_BUILTIN_SEATS`, `ResolvedRouting.preDev17Rev` and `implementerSeatKept`) once no arc started on
+// 1.0.0-dev.16 or earlier is in flight.
+
+/**
+ * The built-in seats 1.0.0-dev.12 to dev.16 hashed: efficient plan-checked and gated low and med, frontier high; frontier
+ * built high. Kept only so `status` can join such a meter row's recorded `routingRev` to its revision's current table;
+ * nothing routes under it. These seats name only classes whose bindings HEAD's catalogue keeps, so HEAD resolves them to
+ * the triples dev.16 hashed.
+ */
+export const PRE_DEV17_BUILTIN_SEATS: ClassTable = {
+  planCheck: { low: 'efficient', med: 'efficient', high: 'frontier', escalation: 'summit' },
+  build: { low: 'efficient', med: 'efficient', high: 'frontier' },
+  gate: { low: 'efficient', med: 'efficient', high: 'frontier', escalation: 'summit' },
+  lens: { arc: 'efficient' },
+  checkpoint: { arc: 'summit' },
+  packReview: { arc: 'frontier' },
+  flow: { arc: 'efficient' },
+  walkthrough: { arc: 'frontier' },
+  polishJudge: { arc: 'frontier' },
+  verifier: { low: 'economy', med: 'economy', high: 'economy' },  // dev.17: never hashed under an earlier table (`DEV17_ROLES`).
+  // The scaffold role (dev.17) is in force only in a `dev17` arc, which no earlier release started: never hashed here.
+  scaffold: { low: 'economy', med: 'economy', high: 'economy' },
 };
 
 /** Every built-in seat table an earlier adopted release hashed, oldest first: what status aliases recorded revs under. */
-export const EARLIER_BUILTIN_SEATS: readonly ClassTable[] = [PRE_DEV10_BUILTIN_SEATS, PRE_DEV12_BUILTIN_SEATS];
+export const EARLIER_BUILTIN_SEATS: readonly ClassTable[] = [PRE_DEV10_BUILTIN_SEATS, PRE_DEV12_BUILTIN_SEATS, PRE_DEV17_BUILTIN_SEATS];
+
+/**
+ * A started implementer whose pinned routing is dev.16's built-in seats (`ResolvedRouting.preDev17Rev`: a release upgrade,
+ * not an owner edit) and whose seat the new seats move (dev.16 built high on frontier): it keeps its pinned seat through to its merge, as its
+ * session cannot move; src/pipeline/dispatch.ts `repin`. Delete with `PRE_DEV17_BUILTIN_SEATS` once no arc started on
+ * 1.0.0-dev.16 or earlier is in flight.
+ */
+export function implementerSeatKept(unit: string, seat: string): void {
+  warnDefaulted(`dispatch.implementerSeat.${unit}`, `unit ${unit} started building on ${seat} under an earlier release's built-in seats; it keeps that seat through to its merge (the new seats apply to units not yet started)`);
+}
 
 // Plan defects (2026-10-16, 1.0.0-dev.11): a fresh arc's arc lanes declare `testPaths` and its witnesses `files`, and
 // Phase 0 checks every witness file against its lane and its deliverers (src/phase0/rows.ts). Obligations an arc started
@@ -370,4 +417,175 @@ export function gateNoteDebtDefault(): typeof GATE_DEBT_UNRECORDED {
 export function gateUnreviewedDefault(): null {
   warnDefaulted('gate.unreviewed', 'a gate answer without unreviewed (a dev.11 gate); read as unknown');
   return null;
+}
+
+/**
+ * A plan's `planCheck.shape` (M4a rev 3 to dev.16): removed in dev.17, where every unit's plan-check is one fresh call. A plan
+ * in force carrying it (an arc started on dev.16 or earlier) reads as `uniform`: the field is dropped at parse, and a
+ * `by-builder` arc's units plan-check as any other's from here. Scaffolding: deleted once no arc started on 1.0.0-dev.16 is in
+ * flight (BACKLOG "Scaffolding to delete"); the plan reader then refuses the field.
+ */
+export function planCheckShapeDefault(shape: 'uniform' | 'by-builder'): void {
+  warnDefaulted('plan.planCheck.shape', `a plan with planCheck.shape ${shape} (removed in dev.17); read as uniform: every plan-check is one fresh call`);
+}
+
+// ---------------------------------------------------------------------------------------------------
+// 1.0.0-dev.16 → 1.0.0-dev.17 (lane topology). Scaffolding: deleted once no arc started on 1.0.0-dev.16 is in flight
+// (BACKLOG "Scaffolding to delete"); `cadence` then becomes required on every lane and `inputs` is refused.
+
+/** Where a lane is declared: a spec, the plan's suite, or the obligations' arc lanes (each defaults `tier` its own way). */
+export type LaneKind = 'spec' | 'suite' | 'arc';
+
+/**
+ * A lane's `cadence` (dev.17) from the `tier` a dev.16 record declares: a fast lane is `build` (the builder runs it: a spec
+ * or suite lane in its loop, an arc lane as its witness check); an estate lane is `unit` in a spec (the lanes stage) and
+ * `candidate` in the suite or the arc lanes (the candidate merge). Warned once per lane kind.
+ */
+export function laneCadenceDefault(kind: LaneKind, tier: 'fast' | 'estate'): 'build' | 'unit' | 'candidate' {
+  warnDefaulted(`lane.tier.${kind}`, `${kind === 'arc' ? 'an' : 'a'} ${kind} lane declaring tier (written before 1.0.0-dev.17); read as its cadence`);
+  if (tier === 'fast') return 'build';
+  return kind === 'spec' ? 'unit' : 'candidate';
+}
+
+/** The dev.16 `tier` a lane of `cadence` was declared with (`laneCadenceDefault` inverted; null: none, a dev.17 cadence). */
+export function legacyTierOf(cadence: 'build' | 'unit' | 'candidate' | 'batch'): 'fast' | 'estate' | null {
+  return cadence === 'build' ? 'fast' : cadence === 'batch' ? null : 'estate';
+}
+
+/**
+ * A spec lane's `inputs` (M4a rev 3, F1a), folded into the reuse key in 1.0.0-dev.17 (a lane's inputs are its systems'
+ * paths): a dev.16 spec declaring them reads without them; warned once.
+ */
+export function laneInputsDropped(lane: LaneId): void {
+  warnDefaulted('lane.inputs', `lane ${lane}: inputs (written before 1.0.0-dev.17) are dropped; the lane's reuse key reads its systems' paths`);
+}
+
+/**
+ * A recorded lane rev equal to the rev of the lane's dev.16 form (`tier` in place of `cadence`) compares equal to its
+ * normalised rev (`laneRevMatches`), so a proof judgment over a dev.16 lane stays fresh; warned once per lane.
+ */
+export function tierLaneRev(lane: LaneId): true {
+  warnDefaulted(`lane-rev.tier.${lane}`, `lane ${lane}: a recorded rev of its dev.16 form (tier, before 1.0.0-dev.17) compares equal to its normalised rev`);
+  return true;
+}
+
+/**
+ * The systems map a revision recorded (dev.17): absent on a revision a dev.16 executor applied, which had none. Read as no
+ * map: every lane is selected everywhere and reads the whole tree (src/input/systems.ts).
+ */
+export function systemsMapDefault(): null {
+  warnDefaulted('plan-applied.systemsMap', 'a revision without a systems map (applied before 1.0.0-dev.17); read as none');
+  return null;
+}
+
+// 1.0.0-dev.16 → 1.0.0-dev.17 (design records, SCHEMAS.md "dev.17 records"; propagation, "dev.17: propagation"). Scaffolding:
+// deleted once no arc started on 1.0.0-dev.16 is in flight (BACKLOG "Scaffolding to delete"). A spec without revision pins
+// is no default: it is a lasting state (an owner's spec no plan-check has revised), read as unpinned (`specPinOf`).
+
+/**
+ * A unit's kind (dev.17) from a spec without a design record: one a dev.16 executor wrote, or one no dev.17 plan-check has
+ * designed yet. Read as `module` (src/core/records.ts `specKindOf`).
+ */
+export function designKindDefault(): 'module' {
+  warnDefaulted('spec.design.kind', 'a spec without a design record (written before 1.0.0-dev.17, or not yet designed); its unit reads as kind module');
+  return 'module';
+}
+
+/**
+ * dev.17 (propagation): a plan-check answer without `staleLinks`, recorded before dev.17 (its call consumed after the
+ * upgrade). Read as none answered: the arc it ran in recorded no stale set, so it had none to answer.
+ */
+export function planCheckStaleLinksDefault(): readonly never[] {
+  warnDefaulted('plan-check.staleLinks', 'a plan-check answer without staleLinks (launched before 1.0.0-dev.17); read as none answered');
+  return [];
+}
+
+// 1.0.0-dev.16 → 1.0.0-dev.17 (design pass, DESIGN-1.0.md "Design pass"). Scaffolding: deleted once no arc started on
+// 1.0.0-dev.16 is in flight.
+
+/**
+ * A plan-check answer without `design` (recorded before the design pass): it carried no design record. Read as none: such an
+ * answer is only read back (notes, the round handoff), never judged again.
+ */
+export function planCheckDesignDefault(): null {
+  warnDefaulted('plan-check.design', 'a plan-check answer without a design record (recorded before 1.0.0-dev.17); read as none');
+  return null;
+}
+
+/**
+ * The flaky ledger (dev.17): an arc whose revision in force an executor before 1.0.0-dev.17 applied ran without one, and
+ * its flakes were charged as red. Read as an empty ledger at the upgrade: flakes its units met before are not in it.
+ */
+export function flakyLedgerDefault(): void {
+  warnDefaulted('flaky.ledger', 'an arc whose revision in force was applied before 1.0.0-dev.17 has no flaky ledger; it starts empty at the upgrade');
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Proportional review (dev.17; SCHEMAS.md "Proportional review"). A dev.16 arc is adopted: its gate answers, build answers,
+// approvals and judgment inputs predate the ledger, the delta and the docs-only claim. Delete once no arc started on
+// 1.0.0-dev.16 is in flight.
+
+/**
+ * A gate finding's `defect`, `reraises` and `hunk` (dev.17): absent on an answer a dev.16 gate gave, read as null. Such an
+ * answer is never held to the dev.17 rules: its attempt's `judgment-inputs` carry no `review` (`gateReviewOf`).
+ */
+export function gateFindingReviewDefault(): null {
+  warnDefaulted('gate.finding.review', 'a gate finding without defect, reraises or hunk (an answer written before 1.0.0-dev.17); read as null');
+  return null;
+}
+
+/** A gate answer's `rulings` (dev.17): absent on a dev.16 answer, which was given no disputes; read as none. */
+export function gateRulingsDefault(): readonly never[] {
+  warnDefaulted('gate.rulings', 'a gate answer without rulings (written before 1.0.0-dev.17); read as none');
+  return [];
+}
+
+/** A build answer's `docsOnlySince` (dev.17): absent on a dev.16 answer, read as null (no claim: the lanes run as normal). */
+export function buildDocsOnlySinceDefault(): null {
+  warnDefaulted('build.docsOnlySince', 'a build answer without docsOnlySince (written before 1.0.0-dev.17); read as null');
+  return null;
+}
+
+/**
+ * The review a gate attempt was given (dev.17): absent on a gate attempt a dev.16 executor captured, whose answer is read
+ * without the ledger, dispute and delta rules (null), and on a plan-check's.
+ */
+export function gateReviewOf(inputs: JudgmentInputs): GateReview | null {
+  if (inputs.stage !== 'gate' || inputs.review !== undefined) return inputs.review ?? null;
+  warnDefaulted('judgment-inputs.review', `gate ${inputs.unit}#${inputs.attempt}: judgment inputs without a review (captured before 1.0.0-dev.17); its answer is read without the ledger rules`);
+  return null;
+}
+
+/**
+ * What an approval approved by blob (dev.17): absent on a dev.16 approval, so the unit's next gate reviews in full and starts
+ * its findings ledger empty (no finding of a dev.16 gate is ledgered).
+ */
+export function approvalBlobsOf(approval: Readonly<{ unit: string; blobs: ApprovalBlobs | null }>): ApprovalBlobs | null {
+  if (approval.blobs === null) warnDefaulted(`approval.blobs.${approval.unit}`, `unit ${approval.unit}: an approval without blobs (recorded before 1.0.0-dev.17); its next gate reviews in full`);
+  return approval.blobs;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// 1.0.0-dev.16 -> dev.17 (field feedback 2026-10-23, U). dev.17's Claude reader classifies a usage limit in any result
+// (not the last alone) and records what a result-less judgment streamed, so it can adapt a dev.16 invocation's files to
+// a result other than the one dev.16 wrote. Recovery re-adapts an invocation whose result.json was written but whose done
+// was not (a crash between them); the recorded result is the call's reading, so it is adopted as written, warned.
+// Delete once no arc started on 1.0.0-dev.16 is in flight (BACKLOG "Scaffolding to delete").
+
+/**
+ * The recorded `result.json` of an invocation, adopted when it is what dev.16's reader made of the files HEAD's reads
+ * differently, and only then: equal to HEAD's result less what dev.16 did not read, `usage.streamed`; or, where HEAD
+ * finds a usage limit in a result before the last and the record names none, equal but for `outcome` and
+ * `backendErrors`. Null otherwise: the caller's write-once conflict stands (an input file changed).
+ */
+export function earlierReaderResultDefault(recorded: ResultFile, fresh: ResultFile): ResultFile | null {
+  if (recorded.type !== 'backend' || fresh.type !== 'backend') return null;
+  const usage = fresh.usage.kind === 'unavailable' ? { kind: fresh.usage.kind, reason: fresh.usage.reason } : fresh.usage;
+  const dev16 = { ...fresh, usage };
+  const limit = (r: typeof fresh): boolean => r.backendErrors.some((e) => e.class === 'usage-limit');
+  const unclassified = (r: typeof fresh): string => canonicalJson({ ...r, outcome: null, backendErrors: [] });
+  const adopted = canonicalJson(recorded) === canonicalJson(dev16) || (limit(fresh) && !limit(recorded) && unclassified(recorded) === unclassified(dev16));
+  if (!adopted) return null;
+  warnDefaulted('result.earlier-reader', `${recorded.inv}: result.json was adapted by 1.0.0-dev.16's reader; adopted as recorded`);
+  return recorded;
 }

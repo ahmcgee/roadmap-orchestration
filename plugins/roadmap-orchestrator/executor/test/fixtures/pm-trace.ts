@@ -93,12 +93,9 @@ export const LABEL_TRACE: Readonly<Record<string, Trace>> = {
   'issues.after-keep': NONE,
   'amendment.after-decided': NONE,
   'debt.after-approval': NONE,
-  // M4a rev 3 N3 (a corpus arc's unit stages): the frontier dispatch pinned (in-session unwritten); the assessment read (the
-  // implementing call not begun); the witness lane files published (no build call); the witness check's series certified
-  // (its verdict unwritten); the smoke's patch kept, its mutant applied, its mutant lanes witnessed, its smoke-ran written.
-  // Each op is closed: the stage runs again as a new attempt, consuming what is recorded.
-  'plancheck.after-pin-in-session': NONE,
-  'build.after-assess': NONE,
+  // M4a rev 3 N3 (a corpus arc's unit stages): the witness lane files published (no build call); the witness check's series
+  // certified (its verdict unwritten); the smoke's patch kept, its mutant applied, its mutant lanes witnessed, its smoke-ran
+  // written. Each op is closed: the stage runs again as a new attempt, consuming what is recorded.
   'witnesscheck.after-lane-files': NONE,
   'witnesscheck.after-witnessed': NONE,
   'smoke.after-patch-kept': NONE,

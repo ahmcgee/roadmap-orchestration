@@ -14,10 +14,10 @@
 // snapshot. Its occurrences are sampled by the context the recording's log puts them in (`sampleHolistic`), and
 // each cell also asserts the op the crash hit (the log at the crash holds the recording's records up to it), the
 // product without the close-out's run-specific renderings, the holistic layer's records as uncrashed, and the fence
-// (no input capture inside an open revision.commit). M4a rev 3: the holistic row's u1 walks the corpus-arc stages (in-session
-// plan-check, the assessment, the witness lane files and presence check, the mutation smoke with its mutant.apply) and
-// ckpt-2's admit converts, so those labels are crashed in the supervised arc too (the operation rows WITNESS_FILES,
-// WITNESS_CHECK, MUTATION_SMOKE, PLANCHECK_IN_SESSION, BUILD_ASSESS, ADMIT_CONVERSIONS name this file).
+// (no input capture inside an open revision.commit). M4a rev 3: the holistic row's u1 walks the corpus-arc stages (the witness
+// lane files and presence check, the mutation smoke with its mutant.apply) and ckpt-2's admit converts, so those labels are
+// crashed in the supervised arc too (the operation rows WITNESS_FILES, WITNESS_CHECK, MUTATION_SMOKE, ADMIT_CONVERSIONS name
+// this file).
 //
 // The admit-conversions row (ADMIT_CONVERSIONS) also crashes a follow-up overrun's settlement, whose story (an opportunity,
 // its merged unit, a finding on its code, one follow-up, a second repair) runs the checkpoint jobs in process

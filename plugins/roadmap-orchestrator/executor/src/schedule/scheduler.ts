@@ -31,6 +31,12 @@
 // keeps it waiting. Chain stages (quiesce → evidence → salvage → teardown; ff → snapshot) are never gated: they run
 // to completion under pause, drain and stop (F5).
 //
+// Faults (1.0.0-dev.17, src/schedule/fault.ts): a task's throw is classified by what the task holds, read from the log.
+// Confined to the unit's own state, it parks the unit `executor-fault` at its stage (`faultUnit`) and the arc goes on; an
+// audit, walk, checkpoint or baseline job's ends the job faulted (`faultJob`), and the holistic track waits until its
+// item is acknowledged (`jobFaultOpen`). Holding shared state (the integration slot, an open shared op), any other job's,
+// or the loop's own throw crashes the run.
+//
 // Start and restart (G2): before the loop's first iteration a checkpoint's decision and a pack review's end a crash cut
 // short are settled (`settleLatest`, `settlePackReviews`), a published repair batch a crash cut short is finished
 // (`finishBatch`: recovery leaves its slot held), a terminal snapshot the ref lacks is published (G8), and a task is
@@ -47,11 +53,17 @@
 // section like a publication chain). Control commands keep applying meanwhile. Once every task and job has settled, `recoverReservations` cleans what a stage still holds, and the
 // run ends `stop`.
 //
+// Environments (dev.17, src/resources/environments.ts): before the loop, an environment an interrupted up or down left
+// unsettled is brought down (`settleEnvironments`). Each iteration, after control, every managed environment up, unused,
+// with no lane holding or waiting for its unit, and idle `idleMinutes` (at once under `pause --all` or a stop) is brought
+// down as a tracked job (`env-down:<name>`), so a stop waits for it. Every end (stop, complete) brings the rest down.
+//
 // The holistic layer (M3; only while the plan in force names a vision, A5). One holistic job runs at a time, in
 // this order of preference: in a corpus arc before its first admission, the pack review (`runPackReview`, M4a OR-Q16,
 // R16) while one is running or due; the baseline witness (`runBaseline`, A6) while one is owed; the checkpoint
 // (`runCheckpoint`, B6) while one is due or running; (dev.13) the milestone walk (`runWalk`, src/walk/walk.ts) while one is
-// due or running; (dev.13, agent D) the code-applied polish revision (`applyPolish`, src/walk/polish.ts) while a walk's
+// due or running; (dev.17) the code-applied propagation revision (`applyPropagation`, src/holistic/propagation.ts) while a
+// stale set's propagations are unsettled; (dev.13, agent D) the code-applied polish revision (`applyPolish`, src/walk/polish.ts) while a walk's
 // applied proposals are unsettled, and a polish unit's compare or a dropped tweak's cut (`runCompare`, src/walk/compare.ts)
 // while one is due or running; the cadence audit (`runAudit`, B5) while one is due or running (one audit at a time, its clock
 // `processClock`). A job that waits on a condition a command changes (skipped for a
@@ -61,6 +73,9 @@
 // (`escalateNoVerdict`, D2); progress ends the episode. Beside it, a
 // repair batch (`publishBatch`, B2) and the close-out publication each run as a job of their own. Jobs and units
 // share the arbiter and `@cpu` (the jobs' waits are served first, `acquireFirst`).
+//
+// The flaky ledger (dev.17, src/pipeline/deflakemint.ts; every arc): the deflake job (`applyDeflake`) while the ledger has a
+// deflake unit or a `flake-recurring` item due, and each iteration a `deflake-parked` item per park of a deflake unit.
 //
 // The flow track (M4b, src/flow/track.ts; every arc whose revisions carry the `m4b` role set, holistic or not): each
 // run raises the ruler changes, applies an accepted proposal pending its apply and proves one pending its proof, writes
@@ -115,13 +130,13 @@
 // head are those it recorded (A20); an admitting apply or a reopen invalidates it, and the arc runs again.
 import type { CommandContext } from '../commands/apply.ts';
 import { applyCommand, applyControl } from '../commands/apply.ts';
-import { isControl, pollCommands, POLL_MS } from '../commands/queue.ts';
+import { isControl, pollCommands, POLL_MS, readReceipt, writeReceipt } from '../commands/queue.ts';
 import { dirname, join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import { type IntentOf, JUDGMENT_STAGES, type Parent, probeTargetKey } from '../core/events.ts';
 import { atomicJson, canonicalJson } from '../core/fsx.ts';
 import {
-  type ArcId, type CommandId, type EnvId, type FindingId, type InvocationId, type JobId, type LaneId, type NeedsUserId, type OpId, type Sha, type UnitId, arcId, commandId, findingId,
+  type ArcId, type CommandId, type EnvId, type FindingId, type InvocationId, type JobId, type LaneId, type NeedsUserId, type OpId, type ResourceName, type Sha, type UnitId, arcId, commandId, findingId,
   invocationId, jobIdOf, jobIdOfKind, parseJobId, resourceName, unitId,
 } from '../core/ids.ts';
 import type { Containment, Journal, JournalView } from '../core/interfaces.ts';
@@ -142,13 +157,15 @@ import { coverageOf } from '../holistic/coverage.ts';
 import { isActive, raiseFindingItems } from '../holistic/findings.ts';
 import { raiseWalkItems, runWalk, settleWalks, walkPending } from '../walk/walk.ts';
 import { applyPolish, polishPending } from '../walk/polish.ts';
+import { applyDeflake, deflakeJobPending, raiseDeflakeParked } from '../pipeline/deflakemint.ts';
+import { applyPropagation, propagationPending } from '../holistic/propagation.ts';
 import { comparePending, runCompare } from '../walk/compare.ts';
 import { walksPending } from '../walk/milestones.ts';
 import { packReviewHolds, packReviewPending, runPackReview, settlePackReviews } from '../holistic/packreview.ts';
 import { type ArcLaneDef, isExempt, laneRevOf } from '../holistic/types.ts';
-import { type Observation, type ObservationStore, keyOf, reuse, verdictOf as witnessVerdict } from '../holistic/observe.ts';
+import { type Observation, type ObservationStore, reuse, verdictOf as witnessVerdict } from '../holistic/observe.ts';
 import type { RoutingBase } from '../input/inforce.ts';
-import { type AbsPath, absPath } from '../core/values.ts';
+import { type AbsPath, absPath, isoTimeOf } from '../core/values.ts';
 import { commandScope } from '../input/classify.ts';
 import { type PlanM1, type PlanUnit, hasMilestones, lensSetOf } from '../input/plan.ts';
 import { type BlockingItem, blockingItems, holdsUnit, openBlocking, raiseNeedsUser, raisedFor, readNeedsUser } from '../needsuser.ts';
@@ -158,17 +175,19 @@ import { baselineDue, runBaseline } from '../pipeline/baseline.ts';
 import { type StageContext, runOp } from '../pipeline/dispatch.ts';
 import { type BatchOutcome, batchRepairs, finishBatch, findingBlocking, heldBatch, publishBatch } from '../pipeline/integrate.ts';
 import { invocationDir, killWorkload } from '../pipeline/invoke.ts';
-import { laneEnvId, observations } from '../pipeline/lanes.ts';
+import { arcLaneKey, laneEnvId, observations } from '../pipeline/lanes.ts';
 import { type DocsContext, closeOutFiles, endDetail, publishCloseOut } from '../pipeline/publish.ts';
 import { repairUnits, specFacts } from '../pipeline/reproduce.ts';
 import { at, executorIdentity, holisticInForce, record, start } from '../pipeline/stages.ts';
 import { type Gate, type UnitResult, haltResult, runUnit, upcoming } from '../pipeline/unit.ts';
 import { snapshotPublishOp } from '../recover/ops.ts';
 import { recoverReservations } from '../recover/resource.ts';
+import { bringDown, downEnvironments, idleEnvironments, settleEnvironments } from '../resources/environments.ts';
 import { holderStage } from '../resources/reserve.ts';
 import { runnerFiles } from '../runner/files.ts';
 import type { Arbiter, FirstHolder } from './arbiter.ts';
 import { holdCycle } from './graph.ts';
+import { faultJob, faultUnit, jobFaultOpen } from './fault.ts';
 import { admitter, findingBlock, nextStage, rankOf, ready } from './ready.ts';
 import { type AdmissionStage, type CommandScope, PARK_ESCALATE_MS, PROBE_BACKOFF_MIN, type ResourceRequest, type TaskState } from './types.ts';
 
@@ -467,12 +486,15 @@ export function baselineOwed(ctx: StageContext): JobId | null {
 const integrationTree = (ctx: StageContext): Sha => revParse(ctx.repo, `${integrationHeadNow(ctx)}^{tree}`);
 
 /**
- * The observation that witnesses `lane` on `tree` under §2.8's strict reuse rule: the lane's observation on the tree at
- * its revision in the executor's environment (`laneEnv`), or null. Completion and `status` both read it (one rule).
+ * The observation that witnesses `lane` on `tree` under §2.8's strict reuse rule: the lane's observation on the tree's input
+ * for it (its reuse key, dev.17) at its revision in the executor's environment (`laneEnv`), or null. Completion and `status`
+ * both read it (one rule).
  */
-export function dischargingObservation(store: ObservationStore, tree: Sha, lane: ArcLaneDef, laneEnv: (lane: ArcLaneDef) => EnvId | null): Observation | null {
+export function dischargingObservation(
+  ctx: Readonly<{ repo: AbsPath; journal: Readonly<{ view: JournalView }> }>, store: ObservationStore, tree: Sha, lane: ArcLaneDef, laneEnv: (lane: ArcLaneDef) => EnvId | null,
+): Observation | null {
   const env = laneEnv(lane);
-  return env === null ? null : reuse(store, keyOf(tree, lane, env));
+  return env === null ? null : reuse(store, arcLaneKey(ctx, tree, lane, env));
 }
 
 /**
@@ -494,7 +516,7 @@ export function obligationsOn(
     if (isExempt(o) || o.state.type === 'split' || o.witness === null) continue;
     const lane = lanes.get(o.witness.lane);
     if (lane === undefined) throw new Error(`obligation ${o.id} is witnessed on lane ${o.witness.lane}, which the obligations in force do not have`);
-    const found = dischargingObservation(store, tree, lane, laneEnv);
+    const found = dischargingObservation(ctx, store, tree, lane, laneEnv);
     if (found === null) unobserved = true;
     else if (witnessVerdict(found.record, o.witness) !== 'held') return 'not-held';
   }
@@ -766,12 +788,15 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   /** A stop's abort surfaces as its reason: the expected end of a job the stop cut short. */
   const cutByStop = (error: unknown): boolean => stopping !== null && error === 'stop';
 
-  /** Tracks one job under `key`: it never blocks the loop; its end wakes it, a failure crashes the run. */
+  /**
+   * Tracks one job under `key`: it never blocks the loop; its end wakes it, a failure crashes the run, unless it is an arc
+   * job's fault confined to its own state (1.0.0-dev.17, src/schedule/fault.ts `faultJob`): the job ends faulted instead.
+   */
   const track = (key: string, work: () => Promise<unknown>): void => {
     if (jobs.has(key)) throw new Error(`job ${key} is already running`);
-    const job = work().then(() => undefined, (error: unknown) => {
-      if (!cutByStop(error)) fail(error);
-    }).finally(() => {
+    const job = work().then(() => undefined, async (error: unknown) => {
+      if (!cutByStop(error) && !(await faultJob(x.stage, key, error))) fail(error);
+    }).catch(fail).finally(() => {
       jobs.delete(key);
       settled();
     });
@@ -832,7 +857,13 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
         task.waiting = { stage: next.stage, resolve };
       });
     };
-    runUnit(ctx, unit, gate).then((result) => raiseResult(x.stage, unit.id, result, route)).catch(fail).finally(() => {
+    // 1.0.0-dev.17: a throw confined to the unit's own state parks it `executor-fault` (src/schedule/fault.ts); any other crashes.
+    const contained = async (error: unknown): Promise<UnitResult> => {
+      const parked = await faultUnit(x.stage, unit, error);
+      if (parked === null) throw error;
+      return parked;
+    };
+    runUnit(ctx, unit, gate).catch(contained).then((result) => raiseResult(x.stage, unit.id, result, route)).catch(fail).finally(() => {
       tasks.delete(unit.id);
       settled();
     });
@@ -1017,6 +1048,28 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
     return park.park.targets.map(probeTargetKey).filter((k) => !passed.has(k));
   };
 
+  /**
+   * dev.17 (arc feedback 2026-10-23, item 7): an apply its scope's units in a stage hold says so, once: the `apply-queued` fact,
+   * then its `queued` receipt naming what each runs. It lands at their boundary (the drain holds their next admission) and is
+   * evaluated there; refused then, it raises an `apply-dropped` item (src/commands/apply.ts `raiseDropped`).
+   */
+  const queueApply = (id: CommandId, busy: readonly UnitId[]): void => {
+    if (view().applyQueued(id) === null) {
+      journal.fact({ kind: 'apply-queued', command: id, waitsFor: [...busy].sort() });
+      crashPoint('command.apply.queued');
+    }
+    if (readReceipt(runDir, id, 'queued') !== null) return;
+    const { waitsFor } = view().applyQueued(id)!;
+    const running = waitsFor.map((u) => {
+      const open = view().unit(u).open;
+      return open === null ? `${u} is between stages` : `${u} is running ${open.stage} attempt ${open.attempt}`;
+    });
+    writeReceipt(runDir, {
+      v: SCHEMA_VERSION, command: id, state: 'queued', at: isoTimeOf(new Date()), waitsFor,
+      reason: `${running.join('; ')}: the apply lands at ${waitsFor.length === 1 ? 'its' : 'their'} stage boundary and is evaluated there`,
+    });
+  };
+
   const startMutations = (mutations: ReturnType<typeof pendingMutations>): void => {
     const v = view();
     const open = new Set(v.opsOf('command.apply').filter((i) => v.doneOf(i.op) === null).map((i) => i.expect.command));
@@ -1028,12 +1081,13 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       const blockedByEarlier = earlier.some((e) => conflicts(e, scope));
       earlier.push(scope);
       if (jobs.has(key) || open.has(command.id) || blockedByEarlier) continue;
-      const busy = scopeUnits(scope, all).some((u) => {
+      const busy = scopeUnits(scope, all).filter((u) => {
         const t = tasks.get(u);
         return t !== undefined && t.state !== 'awaiting-admission' && t.state !== 'idle';
       });
+      if (busy.length > 0 && command.body.type === 'apply') queueApply(command.id, busy);
       const probes = probedBy(command);
-      if (busy || probes.some((k) => running.has(k))) continue;
+      if (busy.length > 0 || probes.some((k) => running.has(k))) continue;
       commandTargets.set(command.id, probes);
       track(key, async () => {
         try {
@@ -1093,7 +1147,8 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   /** The one holistic job (baseline, checkpoint, audit), the batch and the close-out, each started when due. */
   const startHolistic = (holds: Holds, batch: BatchPlan): void => {
     if (!holistic()) return;
-    if (due('holistic') && !flowJudging) {
+    // 1.0.0-dev.17: an arc job that faulted waits for its item's acknowledgement (src/schedule/fault.ts `jobFaultOpen`).
+    if (due('holistic') && !flowJudging && !jobFaultOpen(view(), runDir)) {
       const job = baselineOwed(x.stage);
       if (packReviewPending(h.checkpoint)) {
         trackRetrying('holistic:packreview', 'holistic', async () => ((await runPackReview(h.checkpoint)).kind === 'ended' ? PROGRESS : WAIT));
@@ -1109,6 +1164,8 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
           const out = await runWalk(h.audit);
           return out.kind === 'ended' && out.outcome !== 'abandoned' ? PROGRESS : WAIT;
         });
+      } else if (propagationPending(h.checkpoint)) {
+        trackRetrying('holistic:propagation', 'holistic', async () => ((await applyPropagation(h.checkpoint)).kind === 'applied' ? PROGRESS : WAIT));
       } else if (polishPending(h.checkpoint)) {
         trackRetrying('holistic:polish', 'holistic', async () => ((await applyPolish(h.checkpoint)).kind === 'applied' ? PROGRESS : WAIT));
       } else if (comparePending(h.checkpoint)) {
@@ -1150,6 +1207,16 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       },
       hostPressure: () => hostPressure(pressure.ticks(), 0),
     })) === 'progress' ? PROGRESS : WAIT));
+  };
+
+  /**
+   * dev.17 (flaky ledger, src/pipeline/deflakemint.ts): the deflake job on every arc while the ledger asks for a deflake unit or
+   * a `flake-recurring` item; and each iteration, a `deflake-parked` item for a deflake unit's park.
+   */
+  const startDeflake = (): void => {
+    raiseDeflakeParked(x.stage);
+    if (!due('deflake') || !deflakeJobPending(x.stage)) return;
+    trackRetrying('deflake', 'deflake', async () => ((await applyDeflake(h.checkpoint)).kind === 'applied' ? PROGRESS : WAIT));
   };
 
   /** A8: the close-out publication (or, with nothing to change, every arc lane on the head), as a job. */
@@ -1243,6 +1310,27 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   // -------------------------------------------------------------------------------------------------
   // The loop
 
+  // -------------------------------------------------------------------------------------------------
+  // Environments (dev.17, src/resources/environments.ts)
+
+  /** Whether a lane holds or waits for environment `name`'s unit: it is not idle then, whatever its clock says. */
+  const environmentBusy = (name: ResourceName): boolean => {
+    const entry = view().resources().get(name);
+    if (entry !== undefined && (entry.pending !== null || entry.status.state !== 'free')) return true;
+    return [...arbiter.waiting(), ...arbiter.waitingFirst()].some((w) => w.request.named.includes(name));
+  };
+
+  /** Brings down each managed environment idle long enough (at once under a pause of every unit or a stop), as a tracked job. */
+  const startEnvironmentDowns = (): void => {
+    const immediate = stopping !== null || view().control().pausedAll;
+    for (const name of idleEnvironments(x.stage, Date.now(), environmentBusy, immediate)) {
+      const key = `env-down:${name}`;
+      if (!jobs.has(key)) track(key, () => bringDown(x.stage, name, { type: 'arc' }));
+    }
+  };
+
+  // An environment an interrupted up or down left unsettled is brought down; one up resumes its idle clock.
+  await settleEnvironments(x.stage);
   // A published batch a crash cut short (recovery left its slot held) is finished first; a terminal snapshot the ref
   // lacks is published (G8).
   if (heldBatch(view()) !== null) await finishBatch(x.stage);
@@ -1267,14 +1355,16 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       if (stopping !== null) x.stop.abort('stop');
     }
     interrupt();
+    startEnvironmentDowns();
 
     if (stopping !== null) {
       // Stopping: nothing new starts; the halted units' items are raised (a unit's stop names its own), and the
-      // run ends once every task and job has settled.
+      // run ends once every task and job has settled, every environment down.
       raiseHalted();
       for (const task of tasks.values()) endTask(task);
       if (tasks.size === 0 && jobs.size === 0) {
         await recoverReservations(x.stage);
+        await downEnvironments(x.stage);
         const needsUser = stopping.unit === null ? null : raisedFor(view(), decidedParent(view(), stopping.unit));
         return { kind: 'stop', cause: stopping.cause, needsUser };
       }
@@ -1294,9 +1384,13 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       const holds: Holds = { arc: arcHeld(blocking), batch: batch.held, flowApply: flowApplyHeld(view()) };
       startHolistic(holds, batch);
       startFlow();
+      startDeflake();
       if (tasks.size === 0 && jobs.size === 0 && mutations.length === 0) {
         const end = await ended(blocking);
-        if (end !== null) return end;
+        if (end !== null) {
+          await downEnvironments(x.stage);
+          return end;
+        }
       }
       // 5. Chains a recovered park returned a unit to, waiting tasks admitted, then tasks for ready units (each
       //    reaches its first gate at once).

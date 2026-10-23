@@ -29,6 +29,7 @@ import { tmpDir } from './helpers/repo.ts';
 import { type Step, capturedClaudeResult, readCalls } from './helpers/scenario.ts';
 import { ARC, H, REV, appliedFields, chain } from './fixtures/log-records.ts';
 import { recoveryContext } from './fixtures/rec-common.ts';
+import { parseRepoConfig } from '../src/routing/layers.ts';
 import { haltItem, receiptOf, startScheduler, submit } from './fixtures/sched-common.ts';
 import { SCENARIO_TIMEOUT_MS, planCheckStep } from './fixtures/stage-common.ts';
 import {
@@ -335,13 +336,14 @@ test('sched.backend-limit-others-run: with codex parked on a usage limit, u1 (bu
       ...of('u1', [planCheckStep({ decision: 'approve' }), mulBuild({ 'src/one.js': 'export const one = 1;\n' }), gateStep({ decision: 'approve' })]),
       ...of('u2', [
         planCheckStep({ decision: 'approve', risk: 'high' }),
-        { as: 'claude', expect: { argv: ['--permission-mode', 'bypassPermissions', '--session-id'] }, acts: [{ type: 'commit', message: 'add mul', files: MUL }, { type: 'emit', value: { summary: 'Did the work.', changedPaths: [], lanesRun: [], blockers: [], experiments: [], final: true } }] },
+        { as: 'claude', expect: { argv: ['--permission-mode', 'bypassPermissions', '--session-id'] }, acts: [{ type: 'commit', message: 'add mul', files: MUL }, { type: 'emit', value: { summary: 'Did the work.', changedPaths: [], lanesRun: [], blockers: [], experiments: [], docsOnlySince: null, final: true } }] },
         gateStep({ decision: 'approve' }),
       ]),
       { as: 'codex', expect: { argv: ['exec'] }, acts: [{ type: 'emit', value: OK }] },
     ],
   });
-  const r = contextFor(d);
+  // The repo seats build.high on frontier, so u2 builds on Claude (every built-in build seat is efficient since dev.17).
+  const r = contextFor({ ...d, config: parseRepoConfig({ routing: { seats: { build: { high: 'frontier' } } } }) });
   try {
     usageLimit(r, 'codex');
     const s = startScheduler(r);

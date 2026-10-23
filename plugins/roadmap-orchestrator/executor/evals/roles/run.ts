@@ -1,6 +1,7 @@
 // Role evals (rung 3.5): N trials per cell of a role, each in its own worker process, graded against answer keys only the
-// eval run dir holds, aggregated with Wilson intervals and per-model cost. Three roles (triggers.ts `EvalRole`): `gate`
-// (below), `walkthrough` (walkthrough/run.ts) and `polishJudge` (polish/run.ts), each with its options and report there;
+// eval run dir holds, aggregated with Wilson intervals and per-model cost. Five roles (triggers.ts `EvalRole`): `gate`
+// (below), `walkthrough` (walkthrough/run.ts), `polishJudge` (polish/run.ts), `verifier` (verifier/run.ts, dev.17: the
+// docs-only claim's per-hunk classifier) and `scaffold` (scaffold/run.ts, dev.17), each with its options and report there;
 // the pool, the workers and `--rebind` are shared (pool.ts).
 //
 //   node evals/roles/run.ts gate --set dev|holdout [--n 3] [--cells G0,G3a] [--parallel 4] [--size 3000] [--seed roles-1]
@@ -11,6 +12,13 @@
 //                           [--compare <dev summary.json>] [--fake <walker>] [--cap <usd>] [--trial-cap <usd>]
 //   node evals/roles/run.ts polishJudge --set dev|holdout [--n 3] [--cells SP-B,HI-W] [--parallel 2] [--rebind ...] [--out <dir>]
 //                           [--compare <dev summary.json>] [--fake <judge>] [--cap <usd>] [--trial-cap <usd>]
+//   node evals/roles/run.ts verifier --set dev|holdout [--n 3] [--cells CL-PY-DOC,EX-PY-DOCTEST] [--parallel 4] [--rebind ...]
+//                           [--out <dir>] [--compare <dev summary.json>] [--fake <verifier>] [--cap <usd>] [--trial-cap <usd>]
+//   node evals/roles/run.ts scaffold --set dev|holdout [--n 3] [--cells module,imports-map] [--parallel 2] [--rebind ...] [--out <dir>]
+//                           [--compare <dev summary.json>] [--fake <writer>] [--cap <usd>] [--trial-cap <usd>]
+//
+// The verifier's authorised dev run (dev.17 plan, one run capped at $20):
+//   node evals/roles/run.ts verifier --set dev --n 3 --cap 20
 //
 // The gate's arm: `--risk` picks the gate seat (built-in: low and med efficient/Sonnet 5.5, high frontier/Opus 5.5)
 // and `--rebind` (repeatable) rebinds a class for the run through the production mechanism, the repo config's
@@ -46,7 +54,11 @@ import { intOption, rebindConfig, runPool, runWorker, usdOption } from './pool.t
 import { median } from './stats.ts';
 import type { GateWorkerArgs } from './trial.ts';
 import { parsePolishRun, runPolish } from './polish/run.ts';
+import { parseVerifierRun, runVerifier } from './verifier/run.ts';
+import { verifierFailed } from './verifier/summary.ts';
 import { polishFailed } from './polish/summary.ts';
+import { parseScaffoldRun, runScaffold } from './scaffold/run.ts';
+import { scaffoldFailed } from './scaffold/summary.ts';
 import { type EvalRole, TRIGGERS } from './triggers.ts';
 import { parseWalkRun, runWalk } from './walkthrough/run.ts';
 import { walkFailed } from './walkthrough/summary.ts';
@@ -89,7 +101,7 @@ export function parseRun(argv: readonly string[]): RunOptions {
       cap: { type: 'string' }, 'trial-cap': { type: 'string' }, 'read-only': { type: 'boolean', default: false }, baseline: { type: 'string' },
     },
   });
-  if (positionals.length !== 1 || positionals[0] !== 'gate') throw new Error(`${USAGE}\n(the gate's options; the walkthrough role's: node evals/roles/run.ts walkthrough --help)`);
+  if (positionals.length !== 1 || positionals[0] !== 'gate') throw new Error(`${USAGE}\n(the gate's options; another role's: node evals/roles/run.ts walkthrough|polishJudge|verifier|scaffold --help)`);
   if (values.set !== 'dev' && values.set !== 'holdout') throw new Error(USAGE);
   const int = intOption;
   const usd = usdOption;
@@ -160,6 +172,8 @@ if (import.meta.main) {
   const role = argv.find((a): a is EvalRole => (Object.keys(TRIGGERS) as readonly string[]).includes(a)) ?? 'gate';
   const fail = role === 'walkthrough' ? walkFailed(await runWalk(parseWalkRun(argv)))
     : role === 'polishJudge' ? polishFailed(await runPolish(parsePolishRun(argv)))
+    : role === 'verifier' ? verifierFailed(await runVerifier(parseVerifierRun(argv)))
+    : role === 'scaffold' ? scaffoldFailed(await runScaffold(parseScaffoldRun(argv)))
     : failed(await run(parseRun(argv)));
   process.exit(fail ? 1 : 0);
 }

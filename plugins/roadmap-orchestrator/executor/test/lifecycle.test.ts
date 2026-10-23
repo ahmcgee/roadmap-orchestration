@@ -14,13 +14,13 @@ import { type NeedsUserId, commandId, invocationId } from '../src/core/ids.ts';
 import type { CommandBody, NeedsUserContent } from '../src/core/records.ts';
 import { openBlocking, raiseNeedsUser } from '../src/needsuser.ts';
 import { invocationDir } from '../src/pipeline/invoke.ts';
-import { NO_SESSION_NOTE, RESPEC_DIRECTIVE } from '../src/prompts/directives.ts';
+import { NO_SESSION_NOTE, RESPEC_DIRECTIVE, RESPEC_FRESH_DIRECTIVE } from '../src/prompts/directives.ts';
 import type { StageContext } from '../src/pipeline/dispatch.ts';
 import { keptSpecPath } from '../src/pipeline/stages.ts';
 import { type Gate, runUnit, step } from '../src/pipeline/unit.ts';
 import { absPath } from '../src/core/values.ts';
 import { DOCS_NOT_YET } from '../src/recover/revision.ts';
-import { arcStack, resolveRouting } from '../src/routing/layers.ts';
+import { arcStack, parseRepoConfig, resolveRouting } from '../src/routing/layers.ts';
 import { type RoutingLayer, routingLayer } from '../src/routing/types.ts';
 import { type Step, readCalls } from './helpers/scenario.ts';
 import { BUILD_REPORT, SCENARIO_TIMEOUT_MS, admitAll, planCheckStep, testProbes } from './fixtures/stage-common.ts';
@@ -42,7 +42,7 @@ function raiseParked(r: ArcRun, unit: typeof U1, content: NeedsUserContent): Nee
 async function command(r: ArcRun, body: CommandBody, stage: StageContext = r.ctx): Promise<Readonly<{ id: string; outcome: CommandOutcome }>> {
   const ctx: CommandContext = {
     ...stage, hostEnv: {}, laneEnv: stage.hostEnv, planFile: absPath(r.d.planPath), routing: () => ({ profile: 'default', resolved: stage.routing(null) }),
-    routingBase: { profile: 'default', config: null, arcRoles: 'm4b' }, docs: DOCS_NOT_YET,
+    routingBase: { profile: 'default', config: r.d.config ?? null, arcRoles: 'm4b' }, docs: DOCS_NOT_YET,
     probes: testProbes(stage),
   };
   const file = submitCommand(r.ctx.runDir, r.ctx.plan().arc, body);
@@ -135,7 +135,7 @@ test('reopen.plan-check-park: resume is rejected until a revision of the spec (t
     assert.deepEqual(outcomes(d), ['plan-check:escalate', 'plan-check:escalate', ...STRAIGHT]);
     const calls = readCalls(d.scenarioPath);
     assert.ok(calls[2]!.stdin.includes('mul(0, 5) is 0'), 'the re-opened plan-check reads the edited spec');
-    assert.equal(r.journal.view.unit(U1).approval?.fingerprint.specRev, 2);
+    assert.equal(r.journal.view.unit(U1).approval?.fingerprint.specRev, 3, 'approved on rev 2, its design record landing as rev 3 (dev.17)');
     assert.equal(r.journal.view.unit(U1).counters.attempts, STRAIGHT.length + 3, 'the counters of the parked run are kept');
     assert.ok(calls.every((c) => c.step !== null));
   } finally {
@@ -223,13 +223,14 @@ test('reopen.risk-raise-moves-seat: a re-opened unit whose plan-check raises the
       planCheckStep({ decision: 'approve', risk: 'high' }),
       {
         as: 'claude',
-        expect: { argv: ['--permission-mode', 'bypassPermissions', '--session-id'], argvLacks: ['--resume'], stdinContains: [RESPEC_DIRECTIVE, NO_SESSION_NOTE, 'mul(0, 5) is 0'] },
+        expect: { argv: ['--permission-mode', 'bypassPermissions', '--session-id'], argvLacks: ['--resume'], stdinContains: [RESPEC_FRESH_DIRECTIVE, NO_SESSION_NOTE, 'mul(0, 5) is 0'] },
         acts: [{ type: 'emit', value: BUILD_REPORT }],
       },
       gateStep({ decision: 'approve' }),
     ],
   });
-  const r = contextFor(d);
+  // The repo seats build.high on frontier, so the raise moves the implementer (every built-in build seat is efficient since dev.17).
+  const r = contextFor({ ...d, config: parseRepoConfig({ routing: { seats: { build: { high: 'frontier' } } } }) });
   try {
     const parked = await runUnit(r.ctx, r.unit('u1'), live());
     assert.ok(parked.kind === 'parked');

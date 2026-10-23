@@ -14,7 +14,7 @@ import {
 } from '../core/ids.ts';
 import type { CommandVerdict, TeardownRecipe } from '../core/records.ts';
 import { type AbsPath, absPath, isoTimeOf } from '../core/values.ts';
-import type { PlanM1, ResourceDecl, ToolCommand } from '../input/plan.ts';
+import { type PlanM1, type ResourceDecl, type ToolCommand, environmentOf } from '../input/plan.ts';
 import { type ProcContext, invocationDir, invoke } from '../pipeline/invoke.ts';
 import type { ResidueRecipe } from '../recover/residue.ts';
 import { declOf, instanceEnv } from './pool.ts';
@@ -59,11 +59,17 @@ export function resolveCommand(repo: AbsPath, command: ToolCommand, label: strin
   return { argv: command.argv, cwd: absPath(join(repo, command.cwd)), env };
 }
 
-/** The units that declare a probe and a teardown: named resources and pool instances (not `@cpu`, not the slot). */
-export function instancesOf(resources: readonly ResourceUnit[]): readonly ResourceInstance[] {
+/**
+ * The units that declare a probe and a teardown: named resources and pool instances (not `@cpu`, not the slot, and not
+ * an environment, dev.17: its probe and lifecycle are src/resources/environments.ts's, and a lane leaves nothing in it
+ * for a teardown to remove).
+ */
+export function instancesOf(plan: PlanM1, resources: readonly ResourceUnit[]): readonly ResourceInstance[] {
   return resources.flatMap((r) => {
     const p = parseResourceUnit(r);
-    return p.type === 'cpu' || r === INTEGRATION_SLOT ? [] : [r as ResourceInstance];
+    if (p.type === 'cpu' || r === INTEGRATION_SLOT) return [];
+    if (p.type === 'named' && environmentOf(plan, p.name) !== null) return [];
+    return [r as ResourceInstance];
   });
 }
 
@@ -81,7 +87,7 @@ export function stageRecipes(
   instances: Readonly<Record<string, string>> = instanceEnv(resources),
 ): ReadonlyMap<ResourceInstance, ResidueRecipe> {
   const label = ownerLabel(plan.arc, unit);
-  return new Map(instancesOf(resources).map((r) => [r, { teardown: resolveCommand(repo, resourceDecl(plan, r).teardown, label, instances), label }]));
+  return new Map(instancesOf(plan, resources).map((r) => [r, { teardown: resolveCommand(repo, resourceDecl(plan, r).teardown, label, instances), label }]));
 }
 
 /** How a declared command ended: its exit code and verdict against exit 0, or lost with its runner. */

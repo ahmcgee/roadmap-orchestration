@@ -5,10 +5,10 @@
 //   RESUME_DIRECTIVE      the uncharged resume after a malformed report (`resumeDirectives` quotes the validation error)
 //   NO_SESSION_NOTE       a round that could not resume its session runs fresh on the kept worktree
 //   RESOLVE_DIRECTIVE     resolve and commit a conflicted merge-in
-//   RESPEC_DIRECTIVE      the spec was amended after the earlier work
-//   CONTINUE_DIRECTIVE    the continue of an interrupted build
+//   RESPEC_DIRECTIVE      the spec was amended after the earlier work (RESPEC_FRESH_DIRECTIVE: told to a fresh session)
+//   CONTINUE_DIRECTIVE    the continue of an interrupted build (CONTINUE_FRESH_DIRECTIVE: told to a fresh session)
+//   resolveUnmetDirective the continuation of a resolve round that left unmet clauses untouched (field feedback 2026-10-23)
 //   STEER_DIRECTIVE       the architect's steer brief follows
-//   ASSESSED_DIRECTIVE    the implementing invocation after an in-session assessment (E)
 //   judgmentRepairDirective  every judgment role's one repair turn: the refused answer's reasons (2026-10-15; all roles dev.12)
 //   stalledLaneDirective, flakyLaneDirective, dirtyLanesDirective, movedHeadDirective   a failing or uncertified series
 //   witnessFixDirectives  D1: required witness test ids missing or failing after a green certified series, then every required id
@@ -24,17 +24,24 @@ import { DECISIONS_FILE } from './schemas.ts';
 
 export const RESUME_DIRECTIVE = 'Your previous final report did not match the required structured format. Do not change any code: return the structured report for the work in this worktree now.';
 export const NO_SESSION_NOTE = 'No earlier session of yours exists for this unit, so this is a fresh session: the worktree holds the work done so far. Read it before you change anything.';
-export const RESOLVE_DIRECTIVE = 'Integration was merged into this branch and the merge conflicted: resolve and commit. Resolve every conflict in the worktree, then commit the merge on the current branch (no other changes in that commit), run the fast lanes and return your report.';
+export const RESOLVE_DIRECTIVE = 'Integration was merged into this branch and the merge conflicted: resolve and commit. Resolve every conflict in the worktree, then commit the merge on the current branch (no other changes in that commit). Then carry out what the spec still needs (a handover in this message, when there is one, lists the acceptance clauses still unmet), run the fast lanes and return your report.';
 export const RESPEC_DIRECTIVE = 'The architect amended this unit\'s spec after your earlier work on it; the spec in this message is the amended revision and replaces the one you worked from. The worktree holds your earlier work, committed. Bring the work in line with the amended spec, run the fast lanes and return your report.';
+/** RESPEC_DIRECTIVE for a fresh session (before NO_SESSION_NOTE): it claims no earlier work as the session's own. */
+export const RESPEC_FRESH_DIRECTIVE = 'The architect amended this unit\'s spec after earlier work on it; the spec in this message is the amended revision and replaces the one that work followed. Bring the work in line with the amended spec, run the fast lanes and return your report.';
 export const CONTINUE_DIRECTIVE = `You were paused partway through this task and are now resumed. The worktree holds your work so far, including uncommitted changes. Continue from where you stopped; do not restart. The evidence directory named in this message is new: rewrite ${DECISIONS_FILE} there, complete, with every decision so far.`;
-/** A steer round's directive (R11): the architect's brief follows it verbatim. */
-export const STEER_DIRECTIVE = 'The architect is steering this unit: the brief below is their direction for this round, and it takes precedence over any earlier round\'s directives. The worktree holds the unit\'s work so far (committed, and possibly uncommitted changes); read it before you change anything. Follow the brief within the unit\'s scope, run the fast lanes and return your report. The brief:';
+/** CONTINUE_DIRECTIVE for a fresh session (after NO_SESSION_NOTE): it claims no earlier work as the session's own. */
+export const CONTINUE_FRESH_DIRECTIVE = `An earlier session on this task was interrupted partway through. The worktree holds its work so far, including uncommitted changes. Continue from there; do not restart. The evidence directory named in this message is new: write ${DECISIONS_FILE} there with every decision you take.`;
 
 /**
- * M4a rev 3 (E, R55): the implementing invocation after an in-session assessment, in the same session: the build's own ask
- * applies from here.
+ * Field feedback 2026-10-23 item 4: the one continuation of a resolve round that committed the merge and changed nothing beyond
+ * it while acceptance clauses of the spec are still unmet (src/pipeline/rounds.ts `resolveContinuation`).
  */
-export const ASSESSED_DIRECTIVE = `Your assessment is recorded. Now build the unit: everything the first message of this session says about the build applies from here (the spec, the scope, the fast lanes, the witness checks, ${DECISIONS_FILE}). Record in ${DECISIONS_FILE} each decision your assessment's premises led you to, then return the build report.`;
+export function resolveUnmetDirective(unmet: readonly Readonly<{ clause: string; text: string }>[]): string {
+  if (unmet.length === 0) throw new Error('resolveUnmetDirective: a continuation names the unmet clauses');
+  return `The merge is committed, but the resolve round changed nothing beyond it while these acceptance clauses of the spec are still unmet: ${unmet.map((u) => `${u.clause} (${u.text})`).join('; ')}. Carry them out now, run the fast lanes and return your report.`;
+}
+/** A steer round's directive (R11): the architect's brief follows it verbatim. */
+export const STEER_DIRECTIVE = 'The architect is steering this unit: the brief below is their direction for this round, and it takes precedence over any earlier round\'s directives. The worktree holds the unit\'s work so far (committed, and possibly uncommitted changes); read it before you change anything. Follow the brief within the unit\'s scope, run the fast lanes and return your report. The brief:';
 
 /**
  * Scope growth (2026-10-15): what a builder does with an out-of-scope path the work needs. It never keeps one: it names it in
@@ -126,4 +133,14 @@ export function movedHeadDirective(): string {
 /** F2: a red lane whose failure repeated its previous red exactly (no rerun: the failure is deterministic). */
 export function repeatRedDirective(lane: LaneId, previous: Readonly<{ attempt: number }>): string {
   return `Lane ${lane} failed exactly as it did in attempt ${previous.attempt}: the same exit and the same final output line. The executor did not rerun it, because a failure that repeats unchanged is deterministic, not flaky. The previous fix did not reach its cause: read this run's evidence again, find what the failure says, and fix that.`;
+}
+
+/**
+ * dev.17 (proportional review): a gate revise's fix round names the gate's open ledger findings by id, and how the builder
+ * disputes one instead of fixing it (decisions.json `disputes`); the next gate rules on each dispute once, final.
+ */
+export function reviewDisputeDirective(open: readonly Readonly<{ id: string; path: string; text: string }>[]): string {
+  if (open.length === 0) throw new Error('reviewDisputeDirective: no open finding to name');
+  const listed = open.map((f) => `${f.id} (${f.path}): ${f.text}`).join('; ');
+  return `The gate's blocking findings are ledgered as ${listed}. Fix each, or, where you are sure a finding is wrong, dispute it instead: add {"finding": "<id>", "reason": "<why it is wrong, with evidence>"} to the "disputes" list in ${DECISIONS_FILE} and leave that code as it is. The next gate rules on each dispute once, and its ruling is final.`;
 }

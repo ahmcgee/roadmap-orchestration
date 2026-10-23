@@ -80,17 +80,20 @@ export function readScenario(path: string): M1Scenario {
 }
 
 /** The report every fake build ends with (the build role's output schema). */
-const BUILD_REPORT: JsonValue = { summary: 'Did the work.', changedPaths: [], lanesRun: [], blockers: [], experiments: [], final: true };
+const BUILD_REPORT: JsonValue = { summary: 'Did the work.', changedPaths: [], lanesRun: [], blockers: [], experiments: [], docsOnlySince: null, final: true };
 const SMOKE_OK: JsonValue = { ok: true };
 
 /**
  * A judgment call: a fresh session id, never a resume. Its session persists (dev.12: every judgment's repair turn may resume
- * it). A plan-check reads (read-only tools, no permission mode); the gate acts (dev.13: a shell and bypassPermissions in its
- * own checkout, no MCP server).
+ * it). Both act: the gate (dev.13: a shell and bypassPermissions in its own checkout, no MCP server) and plan-check (dev.17:
+ * the same in its checkouts, with web search and fetch besides).
  */
 const judgment = (role: 'planCheck' | 'gate'): Expect => (role === 'gate'
   ? { argv: ['-p', '--tools', 'Read,Grep,Glob,Bash,Write,Edit,Agent', '--permission-mode', 'bypassPermissions', '--session-id'], argvLacks: ['--resume', '--mcp-config', '--no-session-persistence'] }
-  : { argv: ['-p', '--tools', 'Read,Grep,Glob,Agent', '--session-id'], argvLacks: ['--resume', '--permission-mode', '--no-session-persistence'] });
+  : {
+    argv: ['-p', '--tools', 'Read,Grep,Glob,Bash,Write,Edit,Agent,WebSearch,WebFetch', '--permission-mode', 'bypassPermissions', '--session-id'],
+    argvLacks: ['--resume', '--mcp-config', '--no-session-persistence'],
+  });
 
 /** The smoke `roadmap start` runs first: Claude, then Codex under `default` (BACKENDS order); Claude alone under `claude-only`. */
 function smokeSteps(profile: ProfileName): readonly Step[] {
@@ -108,7 +111,8 @@ function buildExpect(profile: ProfileName, round: 'fresh' | 'resume'): Expect {
 export function fakeSteps(scenario: M1Scenario, profile: ProfileName): readonly Step[] {
   const steps = scenario.steps.map((s): Step => {
     const stdin: Expect = s.stdinContains === undefined ? {} : { stdinContains: s.stdinContains };
-    if (s.role !== 'build') return { as: 'claude', expect: { ...judgment(s.role), ...stdin }, acts: [{ type: 'emit', value: s.answer }] };
+    // dev.17: a plan-check answer carries the design payload keys (`planCheck` act: an approve's design record defaulted).
+    if (s.role !== 'build') return { as: 'claude', expect: { ...judgment(s.role), ...stdin }, acts: [{ type: s.role === 'planCheck' ? 'planCheck' : 'emit', value: s.answer }] };
     const acts = [...s.acts, { type: 'emit', value: BUILD_REPORT } as const];
     const expect = { ...buildExpect(profile, s.round), ...stdin };
     return profile === 'default' ? { as: 'codex', expect, acts } : { as: 'claude', expect, acts };

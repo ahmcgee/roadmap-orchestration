@@ -3,7 +3,8 @@
 //   commands/incoming/<id>.json             written once by the CLI (`submitCommand`), atomically (temp + link)
 //   commands/receipts/<id>.<state>.json     written once each by the executor, atomically too: `accepted` at pickup, then
 //                                           exactly one of `applied` (naming the `command.apply` op and the
-//                                           postconditions it verified) or `rejected{reason}`
+//                                           postconditions it verified) or `rejected{reason}`; dev.17: an `apply`
+//                                           held behind a running stage gets `queued{waitsFor, reason}` first (scheduler)
 //
 // The executor polls every POLL_MS (`pollCommands`): each incoming command without a terminal receipt is
 // pending, and gets its `accepted` receipt on first sight. An accepted command is not done; only the

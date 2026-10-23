@@ -2,7 +2,7 @@
 // with real journals, runners and fake backends behind PATH shims. Backend targets smoke through the fake;
 // host targets use an injected host sample and the real shell command; resource targets run the reclaim order.
 import assert from 'node:assert/strict';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { freshClaudeImplementerSession, freshJudgmentSession } from '../src/backends/argv.ts';
@@ -21,7 +21,9 @@ import { SMOKE_SCHEMA } from '../src/preflight/smoke.ts';
 import { cleanup, reserve, run as runReservation } from '../src/resources/reserve.ts';
 import { runnerFiles } from '../src/runner/files.ts';
 import { git, tmpDir } from './helpers/repo.ts';
-import { capturedClaudeResult, readCalls } from './helpers/scenario.ts';
+import { BACKEND_FIXTURES, capturedClaudeResult, readCalls } from './helpers/scenario.ts';
+import type { JsonValue } from '../src/core/json.ts';
+import { JUDGE_SUBAGENTS } from '../src/prompts/delegation.ts';
 import { BUSY, BUILD_CLEANUP_FAILED, LANES_BLOCKED, SALVAGE_COMMIT_FAILED, newProbeRun, openProbeRun, parkBackend, parkUnit, seedArc } from './fixtures/probe-common.ts';
 import { ESTATE } from './fixtures/pool-plan.ts';
 import { seated, setupUnit } from './fixtures/stage-common.ts';
@@ -270,6 +272,27 @@ describe('dispatch: backend park epochs, hold causes, instance env, sessions (G5
     const [park] = run.journal.view.backendParks();
     assert.deepEqual(v.cause, { type: 'backend', backend: 'claude', parkSeq: park!.seq });
     assert.deepEqual([v.needsUser?.reason, v.needsUser?.blocking], ['usage-limit', true]);
+    run.journal.close();
+  });
+
+  it('a judge whose stream holds a usage-limit result before its background subagents\' empty results parks the backend arc-wide, naming the reset (field feedback 2026-10-23)', T, async () => {
+    const events = readFileSync(join(BACKEND_FIXTURES, 'claude-judgment-usage-limit-subagents', 'stdout'), 'utf8').split('\n').filter((l) => l !== '').map((l) => JSON.parse(l) as JsonValue);
+    const run = setupUnit({ steps: [{ as: 'claude', expect: {}, acts: [{ type: 'stream', events }] }], profile: 'claude-only' });
+    seated(pinDispatch(run.ctx, run.unit, { rev: specRev(1), sha256: sha256('1'.repeat(64)) }));
+    const parent = { type: 'stage', unit: run.unit.id, stage: 'plan-check', attempt: 1 } as const;
+    const called = await callBackend(run.ctx, {
+      unit: run.unit.id, parent, request: { kind: 'judgment', dispatch: seated(judgmentDispatch(run.ctx, run.unit.id, 'plan-check')), session: freshJudgmentSession(), evidenceDirs: [] },
+      system: 'check', rendered: 'check', schema: SMOKE_SCHEMA, cwd: run.repo, deadlineAt: isoTimeOf(new Date(Date.now() + 60_000)),
+    });
+    const v = verdictOf(run.ctx, parent, called);
+    assert.ok(v.kind === 'interrupted', `not a process fault: ${v.kind}`);
+    assert.deepEqual(run.journal.view.backendParks().map((p) => [p.backend, p.class]), [['claude', 'usage-limit']]);
+    assert.equal(v.needsUser?.reason, 'usage-limit');
+    assert.match(v.needsUser?.recommendation ?? '', /resets 11:40pm \(UTC\)/);
+    // Every judge carries the subagent constraint (W2) at the end of its module's text; plan-check acts (dev.17, the design
+    // pass), so its text is appended to Claude Code's default prompt.
+    const argv = runnerFiles(called.invDir, called.inv).read('launch.json')!.argv;
+    assert.equal(argv[argv.indexOf('--append-system-prompt') + 1], `check\n\n${JUDGE_SUBAGENTS}`);
     run.journal.close();
   });
 

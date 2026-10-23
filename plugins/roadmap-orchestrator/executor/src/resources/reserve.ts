@@ -143,11 +143,11 @@ export function holderRecipes(
       return stageRecipes(plan, repo, holder.unit, resources, instances);
     case 'docs':
     case 'batch':
-      if (instancesOf(resources).length > 0) throw new Error(`${canonicalJson(holder)} holds ${JSON.stringify(resources)}: a ${holder.type} holder holds integration-slot alone`);
+      if (instancesOf(plan, resources).length > 0) throw new Error(`${canonicalJson(holder)} holds ${JSON.stringify(resources)}: a ${holder.type} holder holds integration-slot alone`);
       return new Map();
     case 'job': {
       const label = jobOwnerLabel(plan.arc, holder.job);
-      return new Map(instancesOf(resources).map((r) => [r, { teardown: resolveCommand(repo, resourceDecl(plan, r).teardown, label, instances), label }]));
+      return new Map(instancesOf(plan, resources).map((r) => [r, { teardown: resolveCommand(repo, resourceDecl(plan, r).teardown, label, instances), label }]));
     }
   }
 }
@@ -482,26 +482,27 @@ export async function retryReclaim(ctx: ResourceContext, holder: ReclaimHolder, 
 }
 
 // ---------------------------------------------------------------------------------------------------
-// The fast/estate boundary
+// The build-cadence boundary
 
 export type SpecLane = SpecM1['lanes'][number];
-export type LaneTierRefusal = Extract<StartupRejection, { kind: 'spec-lane-unrunnable' }>;
+export type BuildLaneRefusal = Extract<StartupRejection, { kind: 'spec-lane-unrunnable' }>;
 
 /**
  * The implementer's lanes: the only source of the lane list a build prompt shows (renderSpec with
- * fastLanesOnly shows exactly these). Estate lanes are executor-only.
+ * buildLanesOnly shows exactly these). Lanes of a later cadence are executor-only.
  */
-export function fastLanes(spec: SpecM1): readonly SpecLane[] {
-  return spec.lanes.filter((l) => l.tier === 'fast');
+export function buildLanes(spec: SpecM1): readonly SpecLane[] {
+  return spec.lanes.filter((l) => l.cadence === 'build');
 }
 
 /**
- * Startup and dispatch check: an active fast lane is one the implementer runs inside its build, which
- * holds exactly the unit's declared resources for its whole run. A fast lane that needs any other
- * resource would give the implementer estate it does not hold, so the spec is refused.
+ * Startup and dispatch check: an active build-cadence lane is one the implementer runs inside its build, which
+ * holds exactly the unit's declared resources for its whole run. A build lane that needs any other
+ * resource would give the implementer estate it does not hold, so the spec is refused; so is one naming an
+ * environment (dev.17), which only the executor brings up.
  */
-export function checkLaneTiers(spec: SpecM1, unit: PlanUnit): readonly LaneTierRefusal[] {
-  return fastLanes(spec)
-    .filter((l) => l.state === 'active' && l.resources.some((r) => !unit.resources.includes(r)))
+export function checkBuildLanes(spec: SpecM1, unit: PlanUnit): readonly BuildLaneRefusal[] {
+  return buildLanes(spec)
+    .filter((l) => l.state === 'active' && (l.environment !== undefined || l.resources.some((r) => !unit.resources.includes(r))))
     .map((l) => ({ kind: 'spec-lane-unrunnable', unit: unit.id, lane: l.id, problem: { type: 'estate-lane-for-implementer' } }));
 }

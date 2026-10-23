@@ -92,15 +92,15 @@ const CONTRACT_PATH = '.roadmap/contracts/one.md';
 const SCOPE = ['src/**', 'test/**'];
 const PASS_PATH = { set: {}, pass: ['PATH'] };
 
-const lane = (id: string, tier: 'fast' | 'estate', argv: readonly string[], resources: readonly string[], cpu?: number) => ({
-  id, argv, cwd: '.', env: PASS_PATH, expectedExit: 0, tier, resources, evidenceGlobs: [], state: 'active', ...(cpu === undefined ? {} : { cpu }),
+const lane = (id: string, cadence: 'build' | 'unit', argv: readonly string[], resources: readonly string[], cpu?: number) => ({
+  id, argv, cwd: '.', env: PASS_PATH, expectedExit: 0, cadence, resources, evidenceGlobs: [], state: 'active', ...(cpu === undefined ? {} : { cpu }),
 });
-const fastLane = (id: string, ...files: readonly string[]) => lane(id, 'fast', ['node', '--test', ...files], []);
+const fastLane = (id: string, ...files: readonly string[]) => lane(id, 'build', ['node', '--test', ...files], []);
 /** The unit's estate lane: holds one instance of the pool; at the `estate-hold` barrier for `left` and `right`. */
 const estateLane = (l: Layout, id: string, hold: boolean) =>
-  lane(id, 'estate', [process.execPath, ESTATE_SCRIPT, 'hold', l.estate, ...(hold ? [l.barriers, ESTATE_HOLD, String(ESTATE_ROUNDS), String(BARRIER_TIMEOUT_MS)] : [])], [POOL]);
+  lane(id, 'unit', [process.execPath, ESTATE_SCRIPT, 'hold', l.estate, ...(hold ? [l.barriers, ESTATE_HOLD, String(ESTATE_ROUNDS), String(BARRIER_TIMEOUT_MS)] : [])], [POOL]);
 /** `right`'s barrier lane after its edit commit: no instance, one `@cpu` token. */
-const holdLane = (l: Layout) => lane(RIGHT_HOLD, 'estate', [process.execPath, ESTATE_SCRIPT, 'barrier', l.barriers, RIGHT_HOLD, '1', String(BARRIER_TIMEOUT_MS)], [], 1);
+const holdLane = (l: Layout) => lane(RIGHT_HOLD, 'unit', [process.execPath, ESTATE_SCRIPT, 'barrier', l.barriers, RIGHT_HOLD, '1', String(BARRIER_TIMEOUT_MS)], [], 1);
 
 const clause = (id: string, text: string) => ({ id, clause: text, failLoudIfUndelivered: true, state: 'active' });
 
@@ -226,7 +226,7 @@ export function setup(dir: string): void {
     suite: {
       lanes: [{
         id: 'suite', argv: ['npm', 'test'], cwd: '.', env: { set: { npm_config_update_notifier: 'false' }, pass: ['PATH', 'HOME'] },
-        expectedExit: 0, tier: 'estate', resources: [], evidenceGlobs: [],
+        expectedExit: 0, cadence: 'candidate', resources: [], evidenceGlobs: [],
       }],
     },
     resources: [poolDecl(l)],

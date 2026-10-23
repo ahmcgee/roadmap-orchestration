@@ -16,8 +16,11 @@ import {
   type AmendmentId, type ArcId, type ClaudeSessionId, type CommandId, type DivergenceId, type EdgeId, type FindingId, type InvocationId, type JobId, type JobKind, type NeedsUserId, type ObligationId,
   type MilestoneId, type OpId, type OpKey, type PlanRev, type PolishId, type ResourceInstance, type ResourceUnit, type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId,
   JOB_KINDS, amendmentIdOf, compareResourceUnits, divergenceIdOf, findingIdOf, jobId, parseInvocationId, parseJobId, parseOpId, polishIdOf,
+  type ReviewFindingId, reviewFindingIdOf,
 } from './ids.ts';
-import type { ControlState, FlowFactAt, JournalView, NeedsUserAckState, NeedsUserState, WalkFactAt } from './interfaces.ts';
+import type { ControlState, FlowFactAt, JournalView, NeedsUserAckState, NeedsUserState, PropagationFactAt, WalkFactAt, FlakeAt } from './interfaces.ts';
+import { causeKey } from './stale.ts';
+import type { ApprovalBlobs, FindingsLedgerEntry } from './review.ts';
 import { canonicalJson } from './json.ts';
 import { type SessionCharge, addCharged } from './usage.ts';
 import { type ApprovalFingerprint, type Bounds, type ContainmentMode, type DispatchRecord, type ResidueKey, type Stage, DEFAULT_BOUNDS, boundsOfRecord } from './records.ts';
@@ -153,6 +156,11 @@ export type UnitState = Readonly<{
    */
   pendingRevision: Readonly<{ rev: SpecRev; sha256: Sha256Hex; command: CommandId | null }> | null;
   /**
+   * dev.17 (propagation): the latest stale set (its plan rev) naming a link of the unit that no plan-check of it has answered
+   * since (`stale-answered`); null when none. An in-flight unit re-opens at plan-check on it (`stale-reopened`).
+   */
+  staleRev: PlanRev | null;
+  /**
    * `counters.redirects` at the latest reopen (0 before one): the redirect bound counts only the redirects
    * since the architect's latest spec revision (`redirectsSinceEdit`).
    */
@@ -162,8 +170,9 @@ export type UnitState = Readonly<{
   /** The latest retryable park recovery (M2): when, and the targets that passed; null before one. */
   lastRecovery: Readonly<{ at: IsoTime; targets: readonly ProbeTarget[] }> | null;
   /**
-   * The implementer's seat tier (A11): `max(risk, escalated)`, `high` once an `implementer-escalated` fact
-   * moved it; null before the first dispatch. The routing-changed check compares against `build.<buildTier>`.
+   * The implementer's seat tier (A11): the risk floor, or `high` once a dev.16 `implementer-escalated` fact moved it (D4,
+   * retired in dev.17: none is written now); null before the first dispatch. The routing-changed check compares against
+   * `build.<buildTier>`.
    */
   buildTier: RiskTier | null;
   /** Set on a unit that re-enters another (M2); null otherwise. */
@@ -192,6 +201,31 @@ export type UnitState = Readonly<{
    * classifier resolves (src/input/classify.ts `reentryRow`). Derived from the log alone.
    */
   failures: readonly FailedOutcome[];
+  /**
+   * dev.17 (design pass): the proofs of concept the unit has run (its `poc` stage outcomes that went back to plan-check), which
+   * code bounds per unit (src/pipeline/design.ts `POC_LIMIT`). Derived from the log alone; a reopen keeps it.
+   */
+  pocs: number;
+}>;
+
+/**
+ * A unit's latest approval as the review fold keeps it (never cleared by a park or re-entry): its blobs, null on a dev.16
+ * one, and its log position (`seq`: the stale sets recorded after it changed what it bound, src/pipeline/review.ts).
+ */
+export type ReviewApproval = Readonly<{ seq: number; attempt: number; fingerprint: ApprovalFingerprint; blobs: ApprovalBlobs | null }>;
+type DocsOnlyFact = Extract<Fact, Readonly<{ kind: 'docs-only' }>>;
+
+/** dev.17 proportional review (SCHEMAS.md "Proportional review"): what `JournalView.review()` folds. */
+export type ReviewFold = Readonly<{
+  /** Every ledger finding in id order, at its current outcome. */
+  ledger: readonly FindingsLedgerEntry[];
+  nextFindingId: ReviewFindingId;
+  /** The findings gate attempt `attempt` of `unit` minted, by their place in its answer; null before its `review-ledger`. */
+  ledgered: (unit: UnitId, attempt: number) => readonly Readonly<{ index: number; id: ReviewFindingId }>[] | null;
+  approval: (unit: UnitId) => ReviewApproval | null;
+  /** The unit's latest lanes attempt that ended green (its salvage SHA is that attempt's spec series' commit); null before one. */
+  greenLanes: (unit: UnitId) => number | null;
+  docsOnly: readonly (DocsOnlyFact & Readonly<{ seq: number }>)[];
 }>;
 
 /** One failure outcome of a unit (`UnitState.failures`): the fact, its seq and the park it recorded. */
@@ -220,8 +254,9 @@ export function newUnitState(unit: UnitId, stage: Stage, risk: RiskTier | null, 
   return {
     unit, stage, risk, status: 'active', routedUp: [], promotion: false, decided: null, interrupted: null, pressureHold: null, pressureHolds: 0,
     approval: null, open: null, counters: { attempts: 0, chargeableFailures: 0, redirects: 0, reviseRounds: 0, candidateReds: 0, smokeRounds: 0, retries },
-    spec, reopened: null, pendingRevision: null, redirectBase: 0,
+    spec, reopened: null, pendingRevision: null, staleRev: null, redirectBase: 0,
     park: null, lastRecovery: null, buildTier: risk, lineage: null, supersededBy: null, bounds, entry: null, steering: null, scopeDecisions: [], failures: [],
+    pocs: 0,
   };
 }
 
@@ -254,6 +289,7 @@ export function afterStageOutcome(u: UnitState, f: Pick<StageOutcomeFact, 'stage
   return {
     ...u,
     stage: f.stage,
+    pocs: u.pocs + (f.stage === 'poc' && f.class === 'advance' ? 1 : 0),
     counters: {
       ...c,
       chargeableFailures: c.chargeableFailures + (f.chargeable ? 1 : 0),
@@ -285,6 +321,9 @@ export function openAttempt(view: JournalView, unit: UnitId): OpenAttempt | null
   if (u.open === null || u.status === 'retired' || u.status === 'cut' || u.status === 'superseded') return null;
   return { stage: u.open.stage, attempt: u.open.attempt, live: u.open.seq > view.lastExecutorStarted() };
 }
+
+/** dev.17: an `apply` the scheduler queued behind a running stage (`apply-queued`): the fact's seq and the units it waits on. */
+export type ApplyQueued = Readonly<{ seq: number; waitsFor: readonly UnitId[] }>;
 
 /** Whom a meter total charges: a role's unit calls, or a backend's start-up smokes. */
 export type MeterCharge = Readonly<{ type: 'role'; role: Role }> | Readonly<{ type: 'smoke'; backend: Backend }>;
@@ -560,6 +599,7 @@ export class Fold implements JournalView {
   #planApplied: PlanAppliedFact | null = null;
   readonly #plannedUnits = new Set<UnitId>();
   readonly #appliedBy = new Map<CommandId, PlanAppliedFact>();
+  readonly #queuedApplies = new Map<CommandId, ApplyQueued>();
   readonly #tail: TailDiscarded[] = [];
   readonly #backendParks = new Map<Backend, BackendParkState>();
   /** Every park seq the log holds: a unit park's stage-outcome seq → its unit, a backend park's seq → its backend. */
@@ -606,6 +646,9 @@ export class Fold implements JournalView {
   // M4b
   readonly #flowFacts: FlowFactAt[] = [];
   readonly #walkFacts: WalkFactAt[] = [];
+  // dev.17
+  readonly #flakes: FlakeAt[] = [];
+  readonly #propagationFacts: PropagationFactAt[] = [];
   /** dev.13: per milestone, the seq of the latest `plan-applied` whose milestones change lists it in `rewalk`. */
   readonly #rewalkSeqs = new Map<MilestoneId, number>();
   #draining: Readonly<{ command: CommandId; seq: number }> | null = null;
@@ -616,6 +659,12 @@ export class Fold implements JournalView {
   readonly #certificates: CertificateState[] = [];
   readonly #smokeRuns: SmokeRunState[] = [];
   readonly #corroborations: CorroborationState[] = [];
+  // dev.17 proportional review (`review()`)
+  readonly #ledger = new Map<ReviewFindingId, FindingsLedgerEntry>();
+  readonly #ledgered = new Map<string, readonly Readonly<{ index: number; id: ReviewFindingId }>[]>();
+  readonly #approvals = new Map<UnitId, ReviewApproval>();
+  readonly #greenLanes = new Map<UnitId, number>();
+  readonly #docsOnly: (DocsOnlyFact & Seq)[] = [];
 
   constructor(arc: ArcId) {
     this.arc = arc;
@@ -895,6 +944,7 @@ export class Fold implements JournalView {
         const u = this.#unit(f.unit, f.stage);
         u.outcomes.add(key);
         this.#outcomeSeqs.set(`${f.unit}/${key}`, at.seq);
+        if (f.stage === 'lanes' && f.outcome === 'green') this.#greenLanes.set(f.unit, f.attempt);
         // M3: an entry's stage records its outcome (a hold keeps the entry, whose stage then runs again); a steer pass
         // ends where it parks, stops or retires the unit, or where its gate advances it.
         const entry = u.state.entry;
@@ -967,8 +1017,32 @@ export class Fold implements JournalView {
       case 'approval': {
         const u = this.#unit(f.unit, 'gate');
         u.state = { ...u.state, approval: { attempt: f.attempt, fingerprint: f.fingerprint } };
+        this.#approvals.set(f.unit, { seq: at.seq, attempt: f.attempt, fingerprint: f.fingerprint, blobs: f.blobs ?? null });
         return;
       }
+      // dev.17 proportional review: minted ids follow on, one ledger fact per gate attempt, and only an open entry of the unit settles.
+      case 'review-ledger': {
+        const key = `${f.unit} gate#${f.attempt}`;
+        if (this.#ledgered.has(key)) fail(`a second review-ledger for ${key}`);
+        for (const s of f.settled) {
+          const e = this.#ledger.get(s.id);
+          if (e === undefined || e.unit !== f.unit) fail(`review-ledger ${key} settles ${s.id}, which is no ledger finding of ${f.unit}`);
+          else if (e.outcome !== null) fail(`review-ledger ${key} settles ${s.id}, already ${e.outcome}`);
+          else this.#ledger.set(s.id, { ...e, outcome: s.outcome });
+        }
+        for (const m of f.minted) {
+          const next = reviewFindingIdOf(this.#ledger.size + 1);
+          if (m.entry.id !== next) fail(`review-ledger ${key} mints ${m.entry.id}; the next ledger id is ${next}`);
+          this.#ledger.set(m.entry.id, m.entry);
+        }
+        this.#ledgered.set(key, f.minted.map((m) => ({ index: m.index, id: m.entry.id })));
+        return;
+      }
+      case 'docs-only':
+        this.#docsOnly.push({ ...f, seq: at.seq });
+        return;
+      case 'docs-only-miss':
+        return;
       case 'backend-park': {
         const cur = this.#backendParks.get(f.backend);
         const cls = cur?.class === 'usage-limit' ? 'usage-limit' : f.class;
@@ -982,6 +1056,10 @@ export class Fold implements JournalView {
       case 'needs-user-acked':
         if (this.#acks.has(f.id)) fail(`second acknowledgement of needs-user ${f.id}`);
         this.#acks.set(f.id, { command: f.command, choice: f.choice });
+        return;
+      case 'apply-queued':
+        if (this.#queuedApplies.has(f.command)) fail(`a second apply-queued of command ${f.command}`);
+        this.#queuedApplies.set(f.command, { seq: at.seq, waitsFor: f.waitsFor });
         return;
       case 'paused':
         if (f.target.type === 'all') this.#pausedAll = true;
@@ -1057,8 +1135,10 @@ export class Fold implements JournalView {
       }
       // M4a rev 3: lane reuse and series certificates (N1), smoke runs (N3), cross-lens corroboration (N5).
       case 'lane-reused': {
-        const key = canonicalJson({ parent: f.parent, lane: f.lane });
-        if (this.#laneReuses.some((r) => canonicalJson({ parent: r.parent, lane: r.lane }) === key)) fail(`a second lane-reused of ${f.lane} under ${canonicalJson(f.parent)}`);
+        // dev.17: one per series (parent, set, commit) and lane; a fact before dev.17 names a spec series.
+        const keyOf = (r: Readonly<{ parent: unknown; lane: string; set?: string; at?: string }>): string => canonicalJson({ parent: r.parent, lane: r.lane, set: r.set ?? 'spec', at: r.at ?? null });
+        const key = keyOf(f);
+        if (this.#laneReuses.some((r) => keyOf(r) === key)) fail(`a second lane-reused of ${f.lane} under ${canonicalJson(f.parent)}`);
         const { op, ordinal } = parseInvocationId(f.from.inv);
         const entry = this.#ops.get(op);
         if (entry === undefined || ordinal > entry.latest.ordinal) fail(`lane-reused from ${f.from.inv}, which no intent opened`);
@@ -1181,6 +1261,50 @@ export class Fold implements JournalView {
       case 'demo-failed':
       case 'demo-acted':
         this.#walkFacts.push({ seq: at.seq, at: at.at, fact: f });
+        return;
+      case 'flake-observed': {
+        // dev.17: one per red run (its diagnostic rerun the green); the red and the green are runs this log opened.
+        if (this.#flakes.some((x) => x.fact.event.red === f.event.red)) fail(`a second flake-observed of red run ${f.event.red}`);
+        for (const inv of [f.event.red, f.event.green]) {
+          const { op, ordinal } = parseInvocationId(inv);
+          const entry = this.#ops.get(op);
+          if (entry === undefined || ordinal > entry.latest.ordinal) fail(`flake-observed names ${inv}, which no intent opened`);
+        }
+        this.#flakes.push({ seq: at.seq, at: at.at, fact: f });
+        return;
+      }
+      // dev.17 (SCHEMAS.md "dev.17: propagation"): the fold keeps every propagation fact (`propagationFacts`), a stale set
+      // once per plan rev and a refusal once per (rev, target); a stale re-open sends its unit back to plan-check. What the
+      // facts mean for units is read from `propagationFacts` (src/holistic/propagation.ts).
+      case 'stale-set':
+        if (this.#propagationFacts.some((x) => x.fact.kind === 'stale-set' && x.fact.rev === f.rev)) fail(`a second stale-set of plan rev ${f.rev}`);
+        if (this.#planApplied?.rev !== f.rev) fail(`stale-set of plan rev ${f.rev}, which is not the plan in force (rev ${this.#planApplied?.rev ?? 'none'})`);
+        for (const l of f.links) {
+          const u = 'unit' in l ? this.#units.get(l.unit) : undefined;
+          if (u !== undefined) u.state = { ...u.state, staleRev: f.rev };
+        }
+        this.#propagationFacts.push({ seq: at.seq, at: at.at, fact: f });
+        return;
+      case 'stale-answered': {
+        const u = this.#units.get(f.unit);
+        if (u === undefined) return fail(`stale-answered of unit ${f.unit}, which never started`);
+        if (this.#propagationFacts.some((x) => x.fact.kind === 'stale-answered' && x.fact.unit === f.unit && x.fact.attempt === f.attempt)) {
+          fail(`a second stale-answered of unit ${f.unit}'s plan-check attempt ${f.attempt}`);
+        }
+        if (u.state.staleRev !== null && u.state.staleRev <= f.rev) u.state = { ...u.state, staleRev: null };
+        this.#propagationFacts.push({ seq: at.seq, at: at.at, fact: f });
+        return;
+      }
+      case 'propagation-refused':
+        if (this.#propagationFacts.some((x) => x.fact.kind === 'propagation-refused' && x.fact.rev === f.rev && causeKey(x.fact.target) === causeKey(f.target))) {
+          fail(`a second propagation-refused of ${causeKey(f.target)} (stale set of rev ${f.rev})`);
+        }
+        this.#propagationFacts.push({ seq: at.seq, at: at.at, fact: f });
+        return;
+      case 'stale-reopened':
+        this.#staleReopened(f, fail);
+        this.#lastReopenSeq = at.seq;
+        this.#propagationFacts.push({ seq: at.seq, at: at.at, fact: f });
         return;
       default:
         this.#holisticFact(f, fail, at);
@@ -1613,6 +1737,25 @@ export class Fold implements JournalView {
   }
 
   /**
+   * dev.17 (propagation): an in-flight unit with unanswered stale links re-opens at plan-check on its spec in force (no spec
+   * change): as `reopened` does, its decision and interruption cleared, its counters kept, the redirect bound counted from here,
+   * and its next fresh build resuming its implementer session (`reopened`, with no command).
+   */
+  #staleReopened(f: Extract<Fact, { kind: 'stale-reopened' }>, fail: (detail: string) => never): void {
+    const u = this.#units.get(f.unit);
+    if (u === undefined) return fail(`stale-reopened of unit ${f.unit}, which never started`);
+    if (u.state.status !== 'active') fail(`stale-reopened of unit ${f.unit}, which is ${u.state.status}`);
+    if (u.state.pendingRevision !== null) fail(`stale-reopened of unit ${f.unit}, which has a pending revision (it re-opens on that)`);
+    if (u.state.staleRev !== f.rev) fail(`stale-reopened of unit ${f.unit} on the stale set of rev ${f.rev}; its unanswered one is ${u.state.staleRev ?? 'none'}`);
+    const spec = u.state.spec;
+    if (spec === null) return fail(`stale-reopened of unit ${f.unit}, which has no spec recorded`);
+    u.state = {
+      ...u.state, stage: 'plan-check', decided: null, interrupted: null, pressureHold: null, park: null,
+      reopened: { command: null, specRev: spec.rev }, redirectBase: u.state.counters.redirects,
+    };
+  }
+
+  /**
    * The root agent's decision on a held scope-growth proposal (src/commands/scope.ts): only of the unit held by that
    * plan-check (or, plan defects 2026-10-16, lanes) attempt's `scope-growth` hold. It releases the hold (the stage re-runs
    * as a new, uncharged attempt, or an accepted growth re-opens the unit at plan-check) and is kept with the proposals it
@@ -1793,6 +1936,10 @@ export class Fold implements JournalView {
     return this.#appliedBy.get(command) ?? null;
   }
 
+  applyQueued(command: CommandId): ApplyQueued | null {
+    return this.#queuedApplies.get(command) ?? null;
+  }
+
   decidedSeq(unit: UnitId): number | null {
     const d = this.unit(unit).decided;
     if (d === null) return null;
@@ -1852,6 +1999,14 @@ export class Fold implements JournalView {
     return this.#walkFacts;
   }
 
+  flakes(): readonly FlakeAt[] {
+    return this.#flakes;
+  }
+
+  propagationFacts(): readonly PropagationFactAt[] {
+    return this.#propagationFacts;
+  }
+
   rewalkSeq(milestone: MilestoneId): number {
     return this.#rewalkSeqs.get(milestone) ?? 0;
   }
@@ -1889,6 +2044,18 @@ export class Fold implements JournalView {
       certificates: this.#certificates,
       smokeRuns: this.#smokeRuns,
       corroborations: this.#corroborations,
+    };
+  }
+
+  /** dev.17 proportional review: the findings ledger, the latest approval of each unit, and the docs-only checks. */
+  review(): ReviewFold {
+    return {
+      ledger: [...this.#ledger.values()],
+      nextFindingId: reviewFindingIdOf(this.#ledger.size + 1),
+      ledgered: (unit, attempt) => this.#ledgered.get(`${unit} gate#${attempt}`) ?? null,
+      approval: (unit) => this.#approvals.get(unit) ?? null,
+      greenLanes: (unit) => this.#greenLanes.get(unit) ?? null,
+      docsOnly: this.#docsOnly,
     };
   }
 

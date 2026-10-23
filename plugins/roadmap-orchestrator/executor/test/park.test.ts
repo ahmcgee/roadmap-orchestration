@@ -50,7 +50,7 @@ const pass = (journal: ReturnType<typeof newArc>['journal'], target: ProbeTarget
 
 describe('park table', () => {
   it('park.table-total: exactly the rows that can decide a retryable park name targets, and each yields a sorted, non-empty set', () => {
-    const facts = { backend: 'claude', failed: [poolInstance(resourceName('estate'), 1), resourceName('db')] } as const;
+    const facts = { backend: 'claude', failed: [poolInstance(resourceName('estate'), 1), resourceName('db')], environment: resourceName('stack') } as const;
     let rows = 0;
     for (const stage of Object.keys(STAGE_OUTCOME_KINDS) as OutcomeStage[]) {
       for (const kind of STAGE_OUTCOME_KINDS[stage]) {
@@ -67,21 +67,23 @@ describe('park table', () => {
         assert.equal(new Set(keys).size, keys.length);
       }
     }
-    assert.equal(rows, 13, 'plan-check/build/gate process-fault, build lost, five cleanup-failed, lanes, candidate and reproduce blocked, salvage commit-failed');
-    assert.equal(Object.keys(PARK_TARGETS).length, 8);
+    assert.equal(rows, 20, 'plan-check/build/gate/scaffold/poc process-fault, build and scaffold lost, seven cleanup-failed, lanes, candidate and reproduce blocked, salvage commit-failed, lanes and candidate env-unavailable');
+    assert.equal(Object.keys(PARK_TARGETS).length, 10);
   });
 
   it('names each row\'s targets: backend, host, one resource per failed instance, and host plus the teardown\'s instances for a salvage (G6)', () => {
     const estate = poolInstance(resourceName('estate'), 2);
-    assert.deepEqual(parkTargets({ stage: 'gate', kind: 'process-fault' }, { backend: 'claude', failed: [] }), [{ type: 'backend', backend: 'claude' }]);
-    assert.deepEqual(parkTargets({ stage: 'build', kind: 'lost' }, { backend: 'codex', failed: [] }), [{ type: 'backend', backend: 'codex' }]);
+    assert.deepEqual(parkTargets({ stage: 'gate', kind: 'process-fault' }, { backend: 'claude', failed: [], environment: null }), [{ type: 'backend', backend: 'claude' }]);
+    assert.deepEqual(parkTargets({ stage: 'build', kind: 'lost' }, { backend: 'codex', failed: [], environment: null }), [{ type: 'backend', backend: 'codex' }]);
     assert.deepEqual(parkTargets({ stage: 'candidate', kind: 'blocked' }, NO_PARK_FACTS), [HOST]);
-    assert.deepEqual(parkTargets({ stage: 'teardown', kind: 'cleanup-failed' }, { backend: null, failed: [estate, resourceName('db')] }), [DB, { type: 'resource', instance: estate }]);
+    assert.deepEqual(parkTargets({ stage: 'teardown', kind: 'cleanup-failed' }, { backend: null, failed: [estate, resourceName('db')], environment: null }), [DB, { type: 'resource', instance: estate }]);
     assert.deepEqual(parkTargets({ stage: 'salvage', kind: 'commit-failed' }, NO_PARK_FACTS), [HOST]);
-    assert.deepEqual(parkTargets({ stage: 'salvage', kind: 'commit-failed' }, { backend: null, failed: [estate] }), [HOST, { type: 'resource', instance: estate }]);
+    assert.deepEqual(parkTargets({ stage: 'salvage', kind: 'commit-failed' }, { backend: null, failed: [estate], environment: null }), [HOST, { type: 'resource', instance: estate }]);
     assert.throws(() => parkTargets({ stage: 'build', kind: 'process-fault' }, NO_PARK_FACTS), /needs its backend/);
     assert.throws(() => parkTargets({ stage: 'lanes', kind: 'cleanup-failed' }, NO_PARK_FACTS), /needs its failed instances/);
     assert.throws(() => parkTargets({ stage: 'salvage', kind: 'unmerged' }, NO_PARK_FACTS), /decides no retryable park/);
+    assert.deepEqual(parkTargets({ stage: 'lanes', kind: 'env-unavailable' }, { backend: null, failed: [], environment: resourceName('stack') }), [{ type: 'environment', environment: 'stack' }]);
+    assert.throws(() => parkTargets({ stage: 'candidate', kind: 'env-unavailable' }, NO_PARK_FACTS), /needs its environment/);
   });
 
   it('stageOutcomeFact writes the row\'s targets into a retryable park, and leaves every other outcome as outcomeFact has it', () => {

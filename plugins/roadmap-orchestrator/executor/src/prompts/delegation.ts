@@ -15,8 +15,18 @@
 // (argv.ts `JUDGMENT_TOOLS`, metered as before) and arrives at its own method; the prompt does not steer it. One exception
 // (1.0.0-dev.12): a gate whose diff is over the large-diff threshold gets the owner's delegation method in its own module
 // (src/prompts/gate/claude-opus-5-5.ts <large_diff>), since one context cannot cover that diff.
+//
+// dev.17 (BACKLOG watch W2, triggered in the field 2026-10-23): every judgment session ends its system text with
+// JUDGE_SUBAGENTS, a constraint of the call, not a method: whether to delegate stays the judge's. A judge that ended its turn
+// while background subagents ran printed a result per later turn; a gate's first result was the session limit, its
+// subagents' failures came after, and the executor read the last, empty one. The executor reads one answer per call.
 
 /** The Claude implementer: it writes in its worktree, and a subagent helps it read and think. */
 export const BUILD_DELEGATION = `<subagents>
 You own the unit's outcome, and you may use subagents (the Agent tool) where they help. Choose each one's model for its task: surveying many files for the code a change touches suits a fast, inexpensive model (model: haiku); a hard design sub-question suits a stronger one (model: opus). A subagent's report is a lead: open the code yourself before you change it or rely on it. Make the edits in your own session, so one agent knows the worktree's state when you run the lanes and write the report.
+</subagents>`;
+
+/** Every judgment session (dispatch.ts `judgeSystem`): its subagents, if any, report before its answer. */
+export const JUDGE_SUBAGENTS = `<subagents>
+If you start subagents (the Agent tool), run each in the foreground, never in the background, and answer once their reports are in; several started in one turn still run in parallel. Your answer ends the call: a subagent still running then is cut off, and one that fails afterwards can leave the call with no answer.
 </subagents>`;

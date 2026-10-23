@@ -1,11 +1,11 @@
 // M2 step 7a: the stage functions on the M2 primitives, integrated over real processes and real git. Entry
 // reservations before a stage's first journaled op and cancelled waits that journal nothing (A1, F6), durable
 // judgment inputs and a recovered gate read against them (F1), the publication holder from candidate to
-// snapshot (A2, F3), park outcomes with their targets (A7, G6) and the D4 escalation through the build stage
-// (A11, G1). M3 Checkpoint A: a judgment captures its inputs under the fence before its entry reservation.
+// snapshot (A2, F3), park outcomes with their targets (A7, G6) and a stalled fix round that stays on its seat (dev.17
+// retired the D4 escalation). M3 Checkpoint A: a judgment captures its inputs under the fence before its entry reservation.
 // Named tests: stage.entry-before-first-op, stage.cancel-wait-journals-nothing, gate.judgment-inputs, gate.cancel-wait-recaptures,
 // gate.recovered-recorded-tip, publication.ownership (live, pause before and after green, a crash at each
-// boundary), park.salvage-and-teardown-fail-restart, rounds.d4-through-driver; also stage.repeat-park.
+// boundary), park.salvage-and-teardown-fail-restart, rounds.no-escalation; also stage.repeat-park.
 import assert from 'node:assert/strict';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -21,7 +21,6 @@ import { type StageContext, type StageParent, isCancelled, unitBranch } from '..
 import { consumeJudgment, fingerprintAt, gate } from '../src/pipeline/gate.ts';
 import { candidate, ff, snapshot } from '../src/pipeline/integrate.ts';
 import { reserveNow } from '../src/pipeline/lanes.ts';
-import { NO_SESSION_NOTE } from '../src/prompts/directives.ts';
 import {
   type BuildRun, type LanesDone, at, build, evidence, lanes, planCheck, quiesce, record, recordedCall, salvage, start, teardown,
 } from '../src/pipeline/stages.ts';
@@ -42,7 +41,7 @@ import {
   admitAll, testProbes,
   BUILD_REPORT, DB, SCENARIO_TIMEOUT_MS, type StageRun, U1, launchOf, planCheckStep, serialRuntime, setupUnit, spawnIntents, started, worktreeOf,
 } from './fixtures/stage-common.ts';
-import { type ArcDescriptor, contextFor, gateStep, mulBuild, outcomes, setupArc, stepUntil } from './fixtures/unit-common.ts';
+import { type ArcDescriptor, type ArcOptions, SUITE_LANE, contextFor, gateStep, mulBuild, outcomes, setupArc, stepUntil } from './fixtures/unit-common.ts';
 import { CLEAR } from './fixtures/probe-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
@@ -131,13 +130,13 @@ test('gate.judgment-inputs: plan-check and gate write their inputs before the en
       const f = e.fact;
       assert.equal(f.tip, base, `${f.stage}: the integration tip it read`);
       assert.equal(f.head, f.stage === 'gate' ? git(d.repo, 'rev-parse', unitBranch(r.ctx.plan().arc, U1)) : null);
-      assert.equal(f.specRev, 1);
+      assert.equal(f.specRev, f.stage === 'gate' ? 2 : 1, `${f.stage}: the spec rev it read (dev.17: the approve's design record lands as rev 2)`);
       assert.equal(f.planRev, planRevNow);
       assert.equal(f.routingRev, r.ctx.routing(null).rev);
       // 1.0.0-dev.12: the gate's also record what its bounded diff inlined (the unit's two files) and did not, and that the
-      // diff is under the large-diff threshold.
+      // diff is under the large-diff threshold; dev.17: and the design record's size estimate (the fake approve's, 10 lines).
       const fingerprint = f.stage === 'gate'
-        ? { fingerprint: fingerprintAt(r.ctx, r.unit('u1'), sha(base)), diffShown: { inlined: ['src/mul.js', 'test/mul.test.js'], notInlined: [] }, largeDiff: null }
+        ? { fingerprint: fingerprintAt(r.ctx, r.unit('u1'), sha(base)), diffShown: { inlined: ['src/mul.js', 'test/mul.test.js'], notInlined: [] }, largeDiff: null, review: { ledger: [], disputes: [], delta: null }, designEstimate: 10 }
         : {};
       assert.deepEqual(r.journal.view.judgmentInputs(U1, f.stage, f.attempt), {
         unit: f.unit, stage: f.stage, attempt: f.attempt, tip: f.tip, head: f.head, specRev: f.specRev, specSha256: f.specSha256, planRev: f.planRev, routingRev: f.routingRev, ...fingerprint,
@@ -302,8 +301,8 @@ test('gate.cancel-wait-recaptures: a gate paused while waiting for its @cpu leav
 // ---------------------------------------------------------------------------------------------------
 // The publication holder
 
-async function readyForCandidate(): Promise<ArcDescriptor> {
-  const d = setupArc({ steps: STRAIGHT });
+async function readyForCandidate(suite?: ArcOptions['suite']): Promise<ArcDescriptor> {
+  const d = setupArc({ steps: STRAIGHT, ...(suite === undefined ? {} : { suite }) });
   const r = contextFor(d);
   try {
     await stepUntil(r, 'u1', (f) => f.stage === 'gate' && f.outcome === 'approve');
@@ -339,7 +338,9 @@ test('publication.ownership: the candidate\'s publication holds the slot through
 });
 
 test('publication.ownership: a pause before green abandons the candidate (its suite wait cancelled) and releases the slot; resumed, it publishes', T, async () => {
-  const d = await readyForCandidate();
+  // A candidate-cadence suite lane: the lanes stage never ran it, so the candidate must (dev.17: a unit-cadence one would
+  // be reused from the lanes stage on the same tree, with no wait for the pause to cancel).
+  const d = await readyForCandidate([{ ...SUITE_LANE, cadence: 'candidate' }]);
   const r = contextFor(d);
   try {
     const u1 = r.unit('u1');
@@ -530,13 +531,13 @@ test('park.salvage-and-teardown-fail-restart: a failed salvage whose teardown fa
 test('stage.repeat-park: a retryable park on a target the unit recovered on within 6 h is written operator, and its item is env-blocked', () => {
   const run = setupUnit({ steps: [] });
   const parent = at(start(run.ctx, U1, 'plan-check'), 'plan-check');
-  const first = record(run.ctx, parent, 'process-fault', null, { backend: 'claude', failed: [] });
+  const first = record(run.ctx, parent, 'process-fault', null, { backend: 'claude', failed: [], environment: null });
   assert.equal(first.next.kind, 'park');
   const park = runEvents(run).map(outcomeOf).findLast((o) => o !== null)!;
   assert.deepEqual(park.park, { class: 'retryable', targets: [{ type: 'backend', backend: 'claude' }] });
   run.journal.fact({ kind: 'probe', target: { type: 'backend', backend: 'claude' }, covers: [runEvents(run).findLast((e) => outcomeOf(e) !== null)!.seq], result: 'pass', nextProbeAt: null } as Fact);
   assert.equal(run.journal.view.unit(U1).status, 'active', 'recovered');
-  const again = record(run.ctx, at(start(run.ctx, U1, 'plan-check'), 'plan-check'), 'process-fault', null, { backend: 'claude', failed: [] });
+  const again = record(run.ctx, at(start(run.ctx, U1, 'plan-check'), 'plan-check'), 'process-fault', null, { backend: 'claude', failed: [], environment: null });
   assert.ok(again.next.kind === 'park');
   assert.equal(again.next.needsUser.reason, 'env-blocked');
   assert.deepEqual(runEvents(run).map(outcomeOf).findLast((o) => o !== null)!.park, { class: 'operator', kind: 'env' });
@@ -544,19 +545,15 @@ test('stage.repeat-park: a retryable park on a target the unit recovered on with
 });
 
 // ---------------------------------------------------------------------------------------------------
-// D4 through the build stage
+// No escalation through the build stage (dev.17 retired D4)
 
-test('rounds.d4-through-driver: red, a stalled fix round, then the next build launches on build.high with a fresh session', T, async () => {
+test('rounds.no-escalation: red, a stalled fix round, then the next fix round resumes its session on the same seat; nothing escalates', T, async () => {
   const run = setupUnit({
     steps: [
       planCheckStep({ decision: 'approve' }),
       codexBuild([], { argv: ['exec', '-C'] }),
       codexBuild([{ type: 'commit', message: 'not the fix', files: { 'src/notes.md': 'Tried.\n' } }], { argv: ['exec', 'resume'] }),
-      {
-        as: 'claude',
-        expect: { argv: ['-p', '--session-id'], argvLacks: ['--resume'], stdinContains: [NO_SESSION_NOTE] },
-        acts: [{ type: 'commit', message: 'fix add', files: ADD_FIX }, { type: 'emit', value: BUILD_REPORT }],
-      },
+      codexBuild([{ type: 'commit', message: 'fix add', files: ADD_FIX }], { argv: ['exec', 'resume'] }),
     ],
   });
   started(await planCheck(run.ctx, run.unit));
@@ -573,19 +570,14 @@ test('rounds.d4-through-driver: red, a stalled fix round, then the next build la
   assert.equal(green.outcome.kind, 'green');
   const builds = spawnIntents(run).filter((i) => i.expect.subject.purpose === 'backend' && i.expect.subject.role === 'build');
   assert.equal(builds.length, 3);
-  const escalated = builds[2]!;
-  assert.ok(escalated.parent.type === 'stage');
-  const s = escalated.expect.subject;
+  const third = builds[2]!;
+  const s = third.expect.subject;
   assert.ok(s.purpose === 'backend' && s.role === 'build');
-  assert.equal(s.tier, 'high', 'the round sits on build.high');
-  const launch = launchOf(run, escalated);
-  assert.equal(launch.argv[0], 'claude');
-  assert.ok(launch.argv.includes(run.ctx.routing(null).table.build.high.model), 'build.high\'s model');
-  assert.ok(launch.terminal.type === 'backend' && 'session' in launch.terminal && launch.terminal.session.mode === 'fresh', 'a fresh session: the seat moved');
-  const fact = runEvents(run).find((e) => e.type === 'fact' && e.fact.kind === 'implementer-escalated');
-  assert.ok(fact !== undefined && fact.type === 'fact' && fact.fact.kind === 'implementer-escalated');
-  assert.equal(fact.fact.attempt, escalated.parent.attempt);
-  assert.ok(fact.seq < (escalated as Event).seq, 'journaled before the round\'s seat was chosen and spawned');
-  assert.equal(run.journal.view.unit(U1).buildTier, 'high');
+  assert.equal(s.tier, 'med', 'the round stays on the unit\'s own seat');
+  const launch = launchOf(run, third);
+  assert.equal(launch.argv[0], 'codex');
+  assert.ok(launch.terminal.type === 'backend' && 'session' in launch.terminal && launch.terminal.session.mode === 'resume', 'the session resumes');
+  assert.equal(runEvents(run).some((e) => e.type === 'fact' && e.fact.kind === 'implementer-escalated'), false);
+  assert.equal(run.journal.view.unit(U1).buildTier, 'med');
   assert.ok(readCalls(run.scenario.path).every((c) => c.step !== null));
 });

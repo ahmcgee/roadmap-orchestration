@@ -17,13 +17,14 @@
 // the rest (items 6, 12); the plan-check's notes as facts about existing code (item 26).
 // M4a rev 3 (reviewed 2026-10-06 against the same guides): a success criterion that every acceptance clause and witness
 // item maps to a test by its exact id (retro F05); the per-lane witness check commands (D1, R56); negative witnesses
-// through the real entry point (F20); `experiments` in the output; the read-only in-session assessment (E, R55).
+// through the real entry point (F20); `experiments` in the output. (The in-session assessment, E/R55, went in dev.17.)
 // W3 (2026-10-16): Host no longer repeats UNIT_POLICY's "do not kill a process this unit did not start". No delegation
 // text: the Claude role prompts' guidance names the Agent tool, which `codex exec` does not have.
 // dev.13: a milestone unit's design references and milestones, as the Claude module's; `browser` is always null on this
 // seat (Codex gets no MCP config), rendered by the shared helper all the same.
+// dev.17 (field feedback 2026-10-23 item 1): a session that does not continue its own gets the shared handover text.
 import type { BuildInputs, PromptModule } from '../inputs.ts';
-import { UNIT_POLICY, assessText, bullets, buildBrowserText, fastLanesText, milestonesText, referenceIndexText, rulingsText } from '../inputs.ts';
+import { UNIT_POLICY, bullets, buildBrowserText, fastLanesText, handoverText, milestonesText, referenceIndexText, rulingsText } from '../inputs.ts';
 import { BUILD_SCHEMA, DECISIONS_FILE } from '../schemas.ts';
 
 const system = `# Role
@@ -52,7 +53,7 @@ Make every acceptance clause in the spec hold, with every fast lane passing, and
 - Tests: never weaken, skip or delete a test to get green; never write a test asserting behaviour you believe is wrong; no hard-coded answers shaped to the tests.
 - Git: do not push, rebase, reset --hard, checkout --, switch or delete branches, or amend and rewrite commits. Never revert changes you did not make. Committing is optional; the executor commits in-scope work after you exit. If you commit, commit on the current branch.
 - Host: sibling units and the orchestrator run here. Do not run estate lanes or start the clusters, containers or services they use. Work only in the worktree and the evidence directory.
-- ${DECISIONS_FILE}: a JSON object {"decisions": [{"id": "...", "text": "..."}]} at the root of the evidence directory, rewritten complete each time. id starts with a letter, uses letters, digits, _ . or -, and is new to the spec and the file. text states the choice and the alternative not taken.
+- ${DECISIONS_FILE}: a JSON object {"decisions": [{"id": "...", "text": "..."}]} at the root of the evidence directory, rewritten complete each time. id starts with a letter, uses letters, digits, _ . or -, and is new to the spec and the file. text states the choice and the alternative not taken. To dispute a gate finding (R-n) a fix round names instead of fixing it, add {"finding": "R-n", "reason": "..."} to a "disputes" list in the same object, with your evidence, and leave that code; the next gate rules once, final.
 
 # Tools
 Use the shell with an explicit working directory for every command, rg for search, and apply_patch for edits. Read independent files in parallel. Run lanes with the exact commands listed.
@@ -65,18 +66,26 @@ Use the shell with an explicit working directory for every command, rg for searc
 - A witness check that still reports a missing or failing id is a blocker.
 
 # Output
-Your final message is only the JSON object the output schema defines. summary: two or three plain sentences on what changed and why. changedPaths: the paths you changed or created, from git status and git log. lanesRun: each fast lane run, by its id, with its exit code. experiments: every other command you ran to check your work (a single test, a witness check, a script), each with a short name, its argv and its exit code; never a fast lane. blockers: what keeps the unit from being complete; empty when complete. final: true. Decisions go in ${DECISIONS_FILE}, not in this object.`;
+Your final message is only the JSON object the output schema defines. summary: two or three plain sentences on what changed and why. changedPaths: the paths you changed or created, from git status and git log. lanesRun: each fast lane run, by its id, with its exit code. experiments: every other command you ran to check your work (a single test, a witness check, a script), each with a short name, its argv and its exit code; never a fast lane. blockers: what keeps the unit from being complete; empty when complete. docsOnlySince: the certified tree's SHA from the Environment section when everything you changed since it is comments or documentation, else null; the executor checks it and reuses that tree's lane results. final: true. Decisions go in ${DECISIONS_FILE}, not in this object.`;
 
 function fixRound(i: BuildInputs): string {
   if (i.fixRound === null) return '';
   return `
 
 # Fix round
-You already worked on this unit in this worktree. Read the failing evidence first (each directory holds a lane's stdout and stderr, its declared outputs, or, in an ignored/ directory, gitignored files it wrote, at their repository paths; a directive gives a lane's count of those):
+The worktree holds the work on this unit so far. Read the failing evidence first (each directory holds a lane's stdout and stderr, its declared outputs, or, in an ignored/ directory, gitignored files it wrote, at their repository paths; a directive gives a lane's count of those):
 ${bullets(i.fixRound.failingEvidenceDirs, '(no failing lanes)')}
 Directives:
 ${bullets(i.fixRound.directives, '(none)')}
 Fix exactly what failed and what the directives name. Carry out each directive, or list in blockers why it is wrong and leave the code. Then rerun every fast lane. Stop when they pass; anything past the repairs is scope creep.`;
+}
+
+/** dev.17 (field feedback 2026-10-23 item 1): a fresh session's handover from the executor's records; empty otherwise. */
+function handover(i: BuildInputs): string {
+  return i.handover === null ? '' : `
+
+# Handover
+${handoverText(i.handover)}`;
 }
 
 function suiteLanes(i: BuildInputs): string {
@@ -107,9 +116,8 @@ Run each after your last change, beside the fast lanes, until it exits 0:
 ${i.witnessChecks.map((w) => `- ${w.lane}:\n  ${w.command}`).join('\n')}`;
 }
 
-/** The assessment (read-only, its own answer), a fresh build, or a fix round. */
+/** A fresh build or a fix round. */
 function task(i: BuildInputs): string {
-  if (i.assess !== null) return `${assessText(i.assess)}\n\nAssess unit ${i.spec.unit} in ${i.worktree} without changing anything; your final message is only the planAssessment object.`;
   return i.fixRound === null
     ? `Implement unit ${i.spec.unit} in ${i.worktree} until every acceptance clause holds and every fast lane${i.witnessChecks.length === 0 ? '' : ' and witness check'} passes.`
     : `Complete the fix round for unit ${i.spec.unit} in ${i.worktree}.`;
@@ -119,8 +127,8 @@ export const PROMPT: PromptModule<'build'> = {
   system,
   schema: BUILD_SCHEMA,
   fields: [
-    'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks', 'assess',
-    'milestones', 'browser',
+    'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks',
+    'milestones', 'browser', 'certifiedAt', 'handover',
   ],
   render: (i) => `# Spec (unit ${i.spec.unit}, revision ${i.spec.rev})
 ${i.spec.markdown}
@@ -140,11 +148,12 @@ ${i.planCheckNotes === '' ? '(none)' : i.planCheckNotes}
 # Environment
 - Worktree: ${i.worktree}
 - Evidence directory: ${i.evidenceDir}
+- Certified tree: ${i.certifiedAt ?? '(none yet: docsOnlySince is null)'}
 - Scope patterns:
 ${bullets(i.scope, '(empty)')}
 
 # Fast lanes
-${fastLanesText(i.worktree, i.fastLanes)}${suiteLanes(i)}${witnessChecks(i)}${buildBrowserText(i.browser)}${fixRound(i)}
+${fastLanesText(i.worktree, i.fastLanes)}${suiteLanes(i)}${witnessChecks(i)}${buildBrowserText(i.browser)}${handover(i)}${fixRound(i)}
 
 # Task
 ${task(i)}`,

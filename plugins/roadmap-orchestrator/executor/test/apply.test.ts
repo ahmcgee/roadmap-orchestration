@@ -3,7 +3,7 @@
 // the log, with and without a fact; an apply's rejections (files changed since they were hashed, a startup row) and its smoke of a backend the new routing needs; and the crash cells of the apply
 // matrix row. Named tests: apply.classifier-table, apply.fold, apply.rejections, apply.smoke-new-backend,
 // apply.crash-cells, apply.recovered-after-start; M4a rev 3 (N3): classify.priority-edit-no-drain,
-// classify.plan-check-shape-edit, classify.knowndefect-refusals, classify.knowndefect-cycle-refused,
+// classify.plan-check-shape-dropped, classify.knowndefect-refusals, classify.knowndefect-cycle-refused,
 // classify.knowndefect-cut-fixer-refused, classify.reentry-widen-with-ruling, classify.reentry-widen-without-ruling-refused; M2: apply.cut-*, apply.reenter-*, apply.pool-*,
 // apply.capacity-*, apply.after-non-prefix-* (G3), apply.revalidate-after-smoke, cmd.scope,
 // apply.stale-after-evidence-revision, classify.evidence-covers-scope (M4b run 3).
@@ -126,7 +126,8 @@ type Row = Readonly<{
   setup?: (r: ArcRun) => void;
   edit: (d: ArcDescriptor, r: ArcRun) => void;
   residues?: readonly ResidueKey[];
-  expect: 'unchanged' | ((r: ArcRun) => readonly PlanChange[]) | readonly RegExp[];
+  /** `busy` (dev.17): nothing refused, but these units run a stage attempt; the apply queues behind their boundary. */
+  expect: 'unchanged' | ((r: ArcRun) => readonly PlanChange[]) | readonly RegExp[] | Readonly<{ busy: readonly Readonly<{ unit: string; stage: string; attempt: number }>[] }>;
 }>;
 
 const THREE: readonly UnitSpecJson[] = [{ id: 'u1' }, { id: 'u2' }, { id: 'u3' }];
@@ -315,7 +316,7 @@ const ROWS: readonly Row[] = [
   },
   {
     // classify.open-attempt-running-vs-abandoned (M4a rev 3, C5, R50): an attempt started under the running executor is live.
-    name: 'rev + 1 of a unit running an attempt: refused until its stage boundary',
+    name: 'rev + 1 of a unit running an attempt: busy, so the apply queues behind its stage boundary (dev.17)',
     setup: (r) => {
       inFlight(r);
       const parent = { type: 'stage', unit: U1, stage: 'build', attempt: 2 } as const;
@@ -324,7 +325,37 @@ const ROWS: readonly Row[] = [
       }) });
     },
     edit: revise,
-    expect: [/unit u1 is running build attempt 2; apply the edit at its stage boundary/],
+    expect: { busy: [{ unit: 'u1', stage: 'build', attempt: 2 }] },
+  },
+  {
+    // dev.17: an edit refused whatever the boundary is refused now, never queued.
+    name: 'rev + 2 of a unit running an attempt: refused now, not busy',
+    setup: (r) => {
+      inFlight(r);
+      const parent = { type: 'stage', unit: U1, stage: 'build', attempt: 2 } as const;
+      r.journal.begin({ kind: 'worktree.create', key: opKey('worktree:u1:unit'), parent, deadlineAt: null, body: () => ({
+        expect: { path: absPath(tmpDir('apply-wt')), checkout: { type: 'detached', at: sha('0'.repeat(40)) } }, post: null,
+      }) });
+    },
+    edit: (d) => editSpec(d, 'u1', (s) => void (s['rev'] = 3)),
+    expect: [/is at rev 3, but the unit's recorded rev is 1; a revision sets rev 2/],
+  },
+  {
+    // dev.17: any refusal refuses the whole apply now; the busy unit is named with it.
+    name: 'rev + 1 of a unit running an attempt beside a refused edit: refused, the busy unit named too',
+    setup: (r) => {
+      inFlight(r);
+      const parent = { type: 'stage', unit: U1, stage: 'build', attempt: 2 } as const;
+      r.journal.begin({ kind: 'worktree.create', key: opKey('worktree:u1:unit'), parent, deadlineAt: null, body: () => ({
+        expect: { path: absPath(tmpDir('apply-wt')), checkout: { type: 'detached', at: sha('0'.repeat(40)) } }, post: null,
+      }) });
+      pin(r, 'u2');
+    },
+    edit: (d) => {
+      revise(d);
+      editPlan(d, (p) => void p.units.splice(1, 1));
+    },
+    expect: [/unit u2 has started; it cannot be removed/, /unit u1 is running build attempt 2; the edit applies at its stage boundary/],
   },
   {
     name: 'a pending revision taken back: withdrawn',
@@ -682,6 +713,9 @@ function runRow(row: Row): void {
       else if (typeof row.expect === 'function') {
         assert.equal(v.kind, 'accepted', JSON.stringify(v));
         if (v.kind === 'accepted') assert.deepEqual(v.changes, row.expect(r));
+      } else if ('busy' in row.expect) {
+        assert.equal(v.kind, 'busy', JSON.stringify(v));
+        if (v.kind === 'busy') assert.deepEqual(v.busy, row.expect.busy);
       } else {
         assert.equal(v.kind, 'rejected', JSON.stringify(v));
         if (v.kind === 'rejected') {
@@ -836,11 +870,10 @@ describe('M4a rev 3 edits that drain nothing', () => {
     });
   });
 
-  test('classify.plan-check-shape-edit: `plan-check-shape`, scope none; absent and `uniform` are the same shape', T, () => {
-    assert.deepEqual(scopeOf((d) => editPlan(d, (p) => void (p['planCheck'] = { shape: 'by-builder' }))), {
-      changes: [{ type: 'plan-check-shape' }], scope: { type: 'none' },
-    });
-    assert.deepEqual(scopeOf((d) => editPlan(d, (p) => void (p['planCheck'] = { shape: 'uniform' }))), { changes: [], scope: { type: 'none' } });
+  test('classify.plan-check-shape-dropped (dev.17): the removed `planCheck.shape` is read and dropped, so adding it changes nothing', T, () => {
+    for (const shape of ['by-builder', 'uniform']) {
+      assert.deepEqual(scopeOf((d) => editPlan(d, (p) => void (p['planCheck'] = { shape }))), { changes: [], scope: { type: 'none' } }, shape);
+    }
   });
 
   test('classify.knowndefect-refusals: a valid known-defects edit drains nothing', T, () => {
@@ -935,6 +968,39 @@ test('apply.fold: the plan in force is the latest plan-applied fact (none before
 async function command(r: ArcRun, body: CommandBody): Promise<Readonly<{ id: string; outcome: CommandOutcome }>> {
   const file = submitCommand(r.ctx.runDir, r.ctx.plan().arc, body);
   return { id: file.id, outcome: await applyCommand(commandContextFor(r), file) };
+}
+
+// dev.17 (arc feedback 2026-10-23, item 9): the receipt of an apply whose re-entry carries its predecessor's failures to the
+// bound less one warns; a reset or a failure to spare does not.
+const BOUND_CASES = [
+  { failures: 2, reset: false, warns: true },
+  { failures: 1, reset: false, warns: false },
+  { failures: 2, reset: true, warns: false },
+] as const;
+for (const c of BOUND_CASES) {
+  test(`apply.warns-reentry-at-bound: a re-entry of a unit parked with ${c.failures} chargeable failures of 3, ${c.reset ? 'reset under C-1' : 'no reset'}: applied, ${c.warns ? 'its receipt warning that its next charged failure parks it for the operator' : 'no warning'}`, T, async () => {
+    const d = setupArc({ steps: [], units: [{ id: 'u1' }] });
+    const r = contextFor(d);
+    try {
+      pin(r, 'u1');
+      for (let i = 1; i <= c.failures; i++) r.journal.fact({ kind: 'stage-outcome', unit: U1, stage: 'gate', attempt: i, outcome: 'revise', class: 'revise', chargeable: true } as Fact);
+      decide(r, 'u1', 'gate', 'escalate', 'park');
+      assert.equal(r.journal.view.unit(U1).counters.chargeableFailures, c.failures);
+      reenter('u4', 'u1', {}, { fixes: `u1/gate#${c.failures + 1}`, ...(c.reset ? { reset: { ruling: 'C-1' } } : {}) })(d);
+      const { id, outcome } = await command(r, applyBody(d));
+      assert.equal(outcome.kind, 'applied', JSON.stringify(outcome));
+      const receipt = readReceipt(r.ctx.runDir, commandId(id), 'applied');
+      assert.ok(receipt?.state === 'applied');
+      const warnings = receipt.verified.filter((l) => l.startsWith('warning:'));
+      if (!c.warns) assert.deepEqual(warnings, []);
+      else {
+        assert.equal(warnings.length, 1, JSON.stringify(receipt.verified));
+        assert.match(warnings[0]!, /^warning: u4 re-enters u1 with 2 chargeable failures of its bound 3 and no reset: its next charged failure .*parks it for you instead of a fix round.*`reenters\.reset`/);
+      }
+    } finally {
+      r.journal.close();
+    }
+  });
 }
 
 test('apply.stale-after-evidence-revision: an architect\'s revision written while the build ran, applied after its evidence stage appended the implementer\'s decisions (the executor\'s rev 2), is refused naming that revision; re-applied on top of it, it is pending', T, async () => {
@@ -1063,7 +1129,7 @@ test('apply.smoke-new-backend: a routing apply that seats a backend the plan in 
     ],
   });
   // In force: every build seat on the frontier class (Claude), so no seat runs on Codex.
-  const allClaude = { build: { low: 'frontier', med: 'frontier' } };
+  const allClaude = { build: { low: 'frontier', med: 'frontier', high: 'frontier' } };
   editPlan(d, (p) => void (p['routing'] = allClaude));
   const r = contextFor(d);
   try {
@@ -1088,7 +1154,7 @@ test('apply.revalidate-after-smoke: the log moving while the smoke runs is caugh
     steps: [{ as: 'codex', expect: { argv: ['exec'] }, acts: [{ type: 'barrier', name: 'smoke', timeoutMs: 30_000 }, { type: 'emit', value: { ok: true } }] }],
     units: [{ id: 'u1' }, { id: 'u2' }],
   });
-  editPlan(d, (p) => void (p['routing'] = { build: { low: 'frontier', med: 'frontier' } }));
+  editPlan(d, (p) => void (p['routing'] = { build: { low: 'frontier', med: 'frontier', high: 'frontier' } }));
   const r = contextFor(d);
   try {
     // Seats Codex again (smoked first) and edits u2's spec while u2 is undispatched.

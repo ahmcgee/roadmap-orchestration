@@ -9,6 +9,10 @@
 //      written) while the walkthrough seat's backend is parked or the arc is paused or stopped.
 //   1. The capture: `walk-started{job, milestone, round, sha, ports}` under the revision fence (`captureUnderFence`), the
 //      SHA the integration head then, a free port allocated per serve entry. Everything after reads the recorded start.
+//   1a. The milestone's batch point (dev.17, src/pipeline/batchlanes.ts `runBatchPoint`) on the walked SHA, under the walk
+//      job, before its reservation (a resumed walk runs it again: a lane already green on its input or red under this
+//      job is skipped). A red batch lane opens code's walkthrough P1 naming it, which the walk's findings include, so it
+//      holds the node; a lane without a verdict leaves the walk `incomplete`.
 //   2. Its reservation: the milestone's resources and `@cpu`×WALK_CPU under `job{walk-n}`, served first (`acquireFirst`),
 //      probed; an occupied resource releases it and the walk waits, started (its occupancy item raised once).
 //   3. A detached checkout `<worktreeRoot>/<arc>/<walk-n>.walk` of the SHA; the evidence dir `<runDir>/evidence/jobs/<walk-n>/`.
@@ -50,6 +54,8 @@ import {
   type BackendCallOutcome, type RepairTurn, type StageContext, arcSeat, callActingJudge, recordedArcCall, repairTurnOf, runOp, verdictOf,
 } from '../pipeline/dispatch.ts';
 import { removeJobCheckouts } from '../pipeline/lanes.ts';
+import { batchFindingsOf, runBatchPoint } from '../pipeline/batchlanes.ts';
+import { endDetail } from '../pipeline/publish.ts';
 import { holisticInForce, inMs, loadUnitSpec } from '../pipeline/stages.ts';
 import { referenceFiles } from '../phase0/rows.ts';
 import { repairUnits } from '../pipeline/reproduce.ts';
@@ -253,7 +259,9 @@ function end(
 ): WalkRunOutcome {
   const last = w.round >= walkRoundsOf(plan);
   crashPoint('walk.before-ended');
-  ctx.journal.fact({ kind: 'walk-ended', job: w.job, outcome, findings: canonicalIds(findings), proposals, dropped: last ? proposals : [], ...(interrupted ? { interrupted: true } : {}) });
+  // dev.17: the walk's findings include its batch point's (src/pipeline/batchlanes.ts).
+  const all = canonicalIds([...new Set([...findings, ...batchFindingsOf(ctx, w.job)])]);
+  ctx.journal.fact({ kind: 'walk-ended', job: w.job, outcome, findings: all, proposals, dropped: last ? proposals : [], ...(interrupted ? { interrupted: true } : {}) });
   crashPoint('walk.after-ended');
   const passes = outcome === 'reported' && !milestonePassed(ctx.journal.view, m.id) && activeWalkP1s(ctx.journal.view, m.id).length === 0;
   if (passes) {
@@ -279,6 +287,9 @@ export async function runWalk(ctx: WalkContext): Promise<WalkRunOutcome> {
     crashPoint('walk.after-started');
   }
   const walk = w;
+  // dev.17: the milestone's batch point on the walked SHA, before the walk's reservation (src/pipeline/batchlanes.ts).
+  const batch = await runBatchPoint(ctx, walk.job, walk.sha, milestoneOf(ctx.plan(), walk.milestone), (d) => void openFinding(ctx.journal, d));
+  if (batch.kind === 'no-verdict') return { kind: 'incomplete', job: walk.job, detail: endDetail(batch.end) };
   const r = await reserveJob(ctx, walk.job, milestoneOf(ctx.plan(), walk.milestone));
   if (r === 'occupied' || r === 'cleanup-failed') return { kind: 'incomplete', job: walk.job, detail: r };
   try {

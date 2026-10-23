@@ -11,6 +11,11 @@
 //   (src/walk/bringup.ts), the polish revision that admits the units it judges (src/walk/polish.ts), its MCP config, the
 //   prompt inputs and schemas, routing, the acting-judge argv and reader, and its eval (which runs on the walkthrough
 //   eval's product, so that product triggers it too).
+// - Verifier (dev.17, the docs-only claim): its prompt modules, the docs-only check that reads the diff, calls it and
+//   accepts or refuses (src/pipeline/docsonly.ts, its lexers src/pipeline/comments.ts), the prompt inputs and schemas, routing, the judgment argv and the
+//   reader of its session, and its eval.
+// - Scaffold (dev.17): its prompt modules, the scaffold stage (src/pipeline/scaffold.ts: the call, code's checks, the dry
+//   run, the commit), the prompt inputs and schemas, routing, the `claude-scaffold` argv and the Claude reader, and its eval.
 // The shared harness (evals/roles/*.ts) triggers every role.
 //
 //   node evals/roles/triggers.ts [<base ref>]   prints the triggered roles, one per line (base: origin/main), from
@@ -18,7 +23,7 @@
 import { spawnSync } from 'node:child_process';
 import { matchesGlob } from 'node:path';
 
-export type EvalRole = 'gate' | 'walkthrough' | 'polishJudge';
+export type EvalRole = 'gate' | 'walkthrough' | 'polishJudge' | 'verifier' | 'scaffold';
 
 const SHARED = ['src/prompts/inputs.ts', 'src/prompts/schemas.ts', 'src/routing/**', 'src/backends/argv.ts', 'src/backends/claude.ts', 'evals/roles/*.ts'] as const;
 /** The polish judge's modules under src/walk/: they trigger it alone. */
@@ -31,6 +36,8 @@ export const TRIGGERS: Readonly<Record<EvalRole, readonly string[]>> = {
     'src/prompts/polishJudge/**', ...POLISH_MODULES, 'src/walk/bringup.ts', 'src/backends/mcp.ts', ...SHARED,
     'evals/roles/polish/**', 'evals/roles/walkthrough/**',
   ],
+  verifier: ['src/prompts/verifier/**', 'src/pipeline/docsonly.ts', 'src/pipeline/comments.ts', ...SHARED, 'evals/roles/verifier/**'],
+  scaffold: ['src/prompts/scaffold/**', 'src/pipeline/scaffold.ts', ...SHARED, 'evals/roles/scaffold/**'],
 };
 
 /** Paths a role's globs match that do not trigger it. */

@@ -141,7 +141,7 @@ import { type GateAnswerView, latestGateAnswer } from './pipeline/gate.ts';
 import { busyWaits } from './holistic/checkpoint.ts';
 import { integrationHistory, recordedAdmits } from './holistic/bundle.ts';
 import { findingAttribution, opportunityClauses } from './holistic/admits.ts';
-import { EARLIER_BUILTIN_SEATS, gateLargeDiffOf } from './core/upgrade.ts';
+import { gateLargeDiffOf } from './core/upgrade.ts';
 import { type KnownDefect, type PlanM1, type PlanUnit, advancesOf, hasMilestones, knownDefectsOf, lensSetOf, milestonesOf, parsePlan } from './input/plan.ts';
 import { type MilestoneState, milestoneProgress, milestoneState, walksOf } from './walk/milestones.ts';
 import { milestoneEdges, milestonePassed, milestoneWaits } from './walk/node.ts';
@@ -171,7 +171,7 @@ import type { BriefArc, OwnerAnswer, StageTiming } from './phase0/types.ts';
 import { arcDebtLedger } from './pipeline/publish.ts';
 import type { AdmissionConstraint, Rank, ResourceRequest } from './schedule/types.ts';
 import {
-  type ResolvedRouting, type RoutingStack, type SeatSources, arcScopeOf, provenanceStack, resolveRouting, resolveRoutingUnder,
+  type ResolvedRouting, type SeatSources, arcScopeOf, provenanceStack, resolveRouting,
 } from './routing/layers.ts';
 import {
   type Backend, type ClassSource, type ClassTable, type ModelClass, type ProfileName, type RiskTier, type SeatRef,
@@ -506,8 +506,11 @@ export type Status = Readonly<{
   /** Raised and not acknowledged, ascending id: the log's items and the file-only `sup-*` / `host-*` ones. */
   needsUser: readonly Readonly<{ id: NeedsUserId; reason: NeedsUserReason; blocking: boolean }>[];
   commands: Readonly<{
-    /** Submitted, no terminal receipt yet, in submission order. */
-    pending: readonly Readonly<{ id: CommandId; type: CommandBody['type'] }>[];
+    /**
+     * Submitted, no terminal receipt yet, in submission order. `queuedFor` (dev.17): an apply held behind the stage boundary of
+     * these units (`apply-queued`); it lands there.
+     */
+    pending: readonly Readonly<{ id: CommandId; type: CommandBody['type']; queuedFor?: readonly UnitId[] }>[];
     /** The latest terminal receipts, oldest first. */
     receipts: readonly Receipt[];
   }>;
@@ -647,14 +650,19 @@ function seatOf(view: JournalView, unit: UnitId): UnitStatusLine['seat'] {
     const inputs = u.open?.stage === 'gate' ? view.judgmentInputs(unit, 'gate', u.open.attempt) : null;
     return { role: 'gate', tier: largeDiffSeat(judgmentSeat(u, stage), inputs === null ? null : gateLargeDiffOf(inputs)) };
   }
-  return u.stage === 'build' ? { role: 'build', tier: u.risk } : null;
+  // dev.17 (design pass): a PoC builds on the build seat; the scaffold writer sits on its own seat at the unit's risk.
+  if (u.stage === 'build' || u.stage === 'poc') return { role: 'build', tier: u.risk };
+  return u.stage === 'scaffold' ? { role: 'scaffold', tier: u.risk } : null;
 }
 
 /** The terminal receipts' dir (src/commands/queue.ts writes `<id>.<applied|rejected>.json` there). */
 const TERMINAL_RECEIPT = /^(cmd-[0-9a-f]{16})\.(?:applied|rejected)\.json$/;
 
-function commandsOf(runDir: AbsPath, arc: ArcId): Status['commands'] {
-  const pending = pendingCommandIds(runDir).map((id) => ({ id, type: readCommand(runDir, id, arc).file.body.type }));
+function commandsOf(runDir: AbsPath, arc: ArcId, view: JournalView): Status['commands'] {
+  const pending = pendingCommandIds(runDir).map((id) => {
+    const queued = view.applyQueued(id);
+    return { id, type: readCommand(runDir, id, arc).file.body.type, ...(queued === null ? {} : { queuedFor: queued.waitsFor }) };
+  });
   const dir = join(runDir, COMMANDS_DIR, 'receipts');
   const done = existsSync(dir) ? readdirSync(dir).flatMap((n) => {
     const m = TERMINAL_RECEIPT.exec(n);
@@ -680,7 +688,7 @@ function keptPlan(runDir: AbsPath, f: PlanAppliedFact): PlanM1 {
  * their recorded provenance only: what `spend.byModel` and `spend.byClass` render historical usage with (never the live
  * repo config). The
  * class catalogue and the built-in seats bind every revision (OR-L3), so an earlier release's meter row's recorded rev is also
- * registered, aliased to its revision's current table (`earlierRevAliases`, scaffolding): its spend joins and is
+ * registered, aliased to its revision's current table (`ResolvedRouting.earlierBuiltinRevs`, scaffolding): its spend joins and is
  * attributed to today's bindings. An alias never displaces a rev HEAD resolves.
  */
 function routingTables(runDir: AbsPath, events: readonly Event[]): ReadonlyMap<RoutingRev, ResolvedRouting> {
@@ -695,20 +703,11 @@ function routingTables(runDir: AbsPath, events: readonly Event[]): ReadonlyMap<R
       const stack = provenanceStack(provenance, scope, unit, hasMilestones(kept));
       const r = resolveRouting(stack);
       out.set(r.rev, r);
-      for (const rev of earlierRevAliases(stack)) aliases.set(rev, r);
+      for (const rev of r.earlierBuiltinRevs) aliases.set(rev, r);
     }
   }
   for (const [rev, r] of aliases) if (!out.has(rev)) out.set(rev, r);
   return out;
-}
-
-/**
- * TEMPORARY SCAFFOLDING (BACKLOG "Scaffolding to delete", efficient judgment and the gate risk ladder): the `routingRev`s
- * earlier executors recorded for `stack`, its resolutions under the built-in seats each hashed (`EARLIER_BUILTIN_SEATS`:
- * before 1.0.0-dev.10, and 1.0.0-dev.10 and dev.11).
- */
-function earlierRevAliases(stack: RoutingStack): readonly RoutingRev[] {
-  return EARLIER_BUILTIN_SEATS.map((seats) => resolveRoutingUnder(seats, stack).rev);
 }
 
 function routingView(profile: ProfileName, r: ResolvedRouting): RoutingView {
@@ -1021,7 +1020,15 @@ function derive(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Derived {
   const spec: SpecFactsOf = record === null
     ? (u) => {
       if (view.holistic().findings.length > 0) throw new Error(`status: arc ${arc} has findings but no ${START_FILE}, so the spec of ${u.id} cannot be read`);
-      return { reproduces: false, repairs: new Set() };
+      return {
+        reproduces: false, repairs: new Set(),
+        lanes: () => {
+          throw new Error(`status: arc ${arc} has an open deflake unit but no ${START_FILE}, so the spec of ${u.id} cannot be read`);
+        },
+        links: () => {
+          throw new Error(`status: arc ${arc} has no ${START_FILE}, so the spec of ${u.id} cannot be read`);
+        },
+      };
     }
     : specFacts({ journal: { view }, runDir, planDir: absPath(dirname(record.planFile)) });
   const inputs: Inputs | null = plan === null ? null : {
@@ -1096,8 +1103,8 @@ function unitReason(l: UnitCore): Exclude<ObligationReason, 'spec' | 'witness'> 
       const types = new Set((w?.admission ?? []).map((c) => c.type));
       if (types.has('paused') || types.has('blocking-item') || types.has('run-only')) return 'supervision';
       if (types.has('backend-parked') || types.has('breaker') || types.has('host-pressure')) return 'host';
-      // A known defect waits on its fixer unit (F4).
-      if (types.has('known-defect')) return 'waiting-dep';
+      // A known defect waits on its fixer unit (F4); dev.17, a code edge on its deflake or propagation unit.
+      if (types.has('known-defect') || types.has('deflake') || types.has('propagation')) return 'waiting-dep';
       return 'code';
     }
     case 'running':
@@ -1121,9 +1128,9 @@ export type ObligationLeaf = Readonly<{ verdict: ObligationTruth['verdict']; wit
  * split parent's is its non-exempt children's (held when every one holds). `store` is the run dir's (`observations`) or
  * a snapshot ref's (the brief): one rule.
  */
-export function obligationLeaves(view: JournalView, obligations: Obligations, store: ObservationStore, tree: Sha): (o: ObligationDef) => ObligationLeaf {
+export function obligationLeaves(repo: AbsPath, view: JournalView, obligations: Obligations, store: ObservationStore, tree: Sha): (o: ObligationDef) => ObligationLeaf {
   const fold = view.holistic();
-  const onTree = (lane: ArcLaneDef): Observation | null => dischargingObservation(store, tree, lane, (l) => recordedLaneEnv(view, l));
+  const onTree = (lane: ArcLaneDef): Observation | null => dischargingObservation({ repo, journal: { view } }, store, tree, lane, (l) => recordedLaneEnv(view, l));
   const witnessed = new Map(fold.witnessed.map((w) => [w.seq, w]));
   const lanes = new Map(obligations.lanes.map((l) => [l.id, l]));
   const defs = new Map(obligations.obligations.map((o) => [o.id, o]));
@@ -1164,7 +1171,7 @@ function truths(
   const leaves = new Map<Sha, ReturnType<typeof obligationLeaves>>();
   const leafOn = (tree: Sha, o: ObligationDef): ObligationLeaf => {
     let at = leaves.get(tree);
-    if (at === undefined) leaves.set(tree, at = obligationLeaves(view, obligations, store, tree));
+    if (at === undefined) leaves.set(tree, at = obligationLeaves(repo, view, obligations, store, tree));
     return at(o);
   };
   const evidenceOf = (l: ObligationLeaf): readonly AbsPath[] => l.witnessed.map((w) => witnessDir(runDir, w));
@@ -1297,7 +1304,14 @@ function rulerOf(f: PlanAppliedFact): RuledBy {
     // dev.13 (agent D): the code-applied polish revision and a dropped tweak's cut are the executor's own.
     case 'walk':
     case 'compare':
+    // dev.17: the code-applied deflake revision is the executor's own.
+    case 'deflake':
+    // dev.17: the code-applied propagation revision is the executor's own.
+    case 'propagation':
       return { type: 'executor' };
+    // dev.17 (design pass): a split is its plan-check's decision, applied by code.
+    case 'split':
+      return { type: 'judgment', role: 'planCheck' };
   }
 }
 
@@ -1720,7 +1734,7 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
     ...openNeedsUser(view).map((n) => ({ id: n.id, reason: recordOf(runDir, n.id).reason, blocking: n.blocking })),
     ...fileNeedsUser(runDir, view).map((r) => ({ id: r.id, reason: r.reason, blocking: r.blocking })),
   ].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  const commands = commandsOf(runDir, arc);
+  const commands = commandsOf(runDir, arc, view);
   const acks = ackSeqs(events);
 
   // The holistic keys: only an arc whose plan in force names a vision (A5) has them.
