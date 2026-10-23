@@ -9,11 +9,14 @@ import { sha256Hex } from '../src/core/json.ts';
 import { SCHEMA_VERSION } from '../src/core/version.ts';
 import { type WitnessedEntry, observationOf, observationStore, observedVerdict, reuse, verdictOf } from '../src/holistic/observe.ts';
 import { type ObservationKey, type WitnessOutcome, type WitnessRecord, WITNESS_OUTCOMES } from '../src/holistic/types.ts';
+import type { ReuseKey } from '../src/git/reusekey.ts';
 
 const LANE = laneId('journey');
 const INV = invocationId(opId(arcId('arc-1'), 7), 1);
 const TREE = sha('a'.repeat(40));
 const KEY: ObservationKey = { treeSha: TREE, lane: LANE, laneRev: laneRev('0123456789abcdef'), envId: envId('fedcba9876543210') };
+/** The observation's reuse key (dev.17): a fact before dev.17, naming no inputSha, is keyed by its tree. */
+const RKEY: ReuseKey = { inputSha: TREE, lane: LANE, laneRev: KEY.laneRev, envId: KEY.envId };
 
 function record(tests: readonly (readonly [string, WitnessOutcome])[], over: Partial<WitnessRecord> = {}): WitnessRecord {
   return {
@@ -67,10 +70,10 @@ describe('observe.reuse-keys', () => {
     const obs = observationOf(entry(held, 10), bytesOf(held));
     assert.ok(obs !== null);
     const store = observationStore([obs]);
-    assert.equal(reuse(store, KEY), obs);
-    assert.equal(observedVerdict(store, KEY, w('a')), 'held');
+    assert.equal(reuse(store, RKEY), obs);
+    assert.equal(observedVerdict(store, RKEY, w('a')), 'held');
     for (const other of [
-      { ...KEY, treeSha: sha('b'.repeat(40)) }, { ...KEY, lane: laneId('suite') }, { ...KEY, laneRev: laneRev('1123456789abcdef') }, { ...KEY, envId: envId('0edcba9876543210') },
+      { ...RKEY, inputSha: sha('b'.repeat(40)) }, { ...RKEY, lane: laneId('suite') }, { ...RKEY, laneRev: laneRev('1123456789abcdef') }, { ...RKEY, envId: envId('0edcba9876543210') },
     ]) {
       assert.equal(reuse(store, other), null, JSON.stringify(other));
       if (other.lane === LANE) assert.equal(observedVerdict(store, other, w('a')), null);
@@ -87,7 +90,7 @@ describe('observe.reuse-keys', () => {
   it('a mutant record never certifies, even on the key of an unmodified tree (G13)', () => {
     const mutant = record([['a', 'pass']], { purpose: 'mutant' });
     assert.equal(observationOf(entry(mutant, 11), bytesOf(mutant)), null);
-    assert.equal(reuse(observationStore([]), KEY), null);
+    assert.equal(reuse(observationStore([]), RKEY), null);
   });
 
   it('the latest observation of a key is the one reused, whatever order they are read in', () => {
@@ -95,7 +98,7 @@ describe('observe.reuse-keys', () => {
     const first = observationOf(entry(held, 10), bytesOf(held));
     const second = observationOf(entry(failed, 20), bytesOf(failed));
     assert.ok(first !== null && second !== null);
-    for (const order of [[first, second], [second, first]]) assert.equal(observedVerdict(observationStore(order), KEY, w('a')), 'not-held');
+    for (const order of [[first, second], [second, first]]) assert.equal(observedVerdict(observationStore(order), RKEY, w('a')), 'not-held');
   });
 
   it('a file that hashes right but names another key, purpose or invocation than its fact is refused loudly', () => {
@@ -104,6 +107,6 @@ describe('observe.reuse-keys', () => {
   });
 
   it('a witness read on another lane is a caller error', () => {
-    assert.throws(() => observedVerdict(observationStore([]), KEY, { lane: laneId('suite'), testIds: ['a'] }), /lane suite/);
+    assert.throws(() => observedVerdict(observationStore([]), RKEY, { lane: laneId('suite'), testIds: ['a'] }), /lane suite/);
   });
 });

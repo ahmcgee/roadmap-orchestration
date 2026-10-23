@@ -77,10 +77,15 @@ describe('unit: one unit merged first time', () => {
     assert.equal(ff.length, 1);
     assert.ok(ff[0]!.kind === 'integration.ff');
     assert.deepEqual(ff[0]!.expect.fingerprint, approval.fingerprint, 'the ff intent records the approval fingerprint');
-    // The suite ran on exactly that commit, after the lanes stage's fast suite (stages.ts `fastSuite`) at the approved unit commit.
+    // The suite ran once, in the lanes stage at the approved unit commit; the candidate, on the same tree, reused that clean
+    // pass (dev.17: one reuse key for every series lane) rather than run it again.
     const suite = intents(r.d.runDir, 'proc.spawn').filter((i) => i.kind === 'proc.spawn' && i.expect.subject.purpose === 'lane' && i.expect.subject.set === 'suite');
-    assert.deepEqual(suite.map((i) => i.kind === 'proc.spawn' && i.expect.subject.purpose === 'lane' && i.expect.subject.at), [approval.fingerprint.unitCommit, head]);
-    assert.deepEqual(suite.map((i) => i.parent.type === 'stage' && i.parent.stage), ['lanes', 'candidate']);
+    assert.deepEqual(suite.map((i) => i.kind === 'proc.spawn' && i.expect.subject.purpose === 'lane' && i.expect.subject.at), [approval.fingerprint.unitCommit]);
+    assert.deepEqual(suite.map((i) => i.parent.type === 'stage' && i.parent.stage), ['lanes']);
+    assert.equal(git(r.d.repo, 'rev-parse', `${head}^{tree}`), git(r.d.repo, 'rev-parse', `${approval.fingerprint.unitCommit}^{tree}`), 'the candidate holds the unit commit\'s tree');
+    const reused = events(r.d.runDir).flatMap((e) => (e.type === 'fact' && e.fact.kind === 'lane-reused' ? [e.fact] : []));
+    assert.deepEqual(reused.map((f) => f.kind === 'lane-reused' && [f.lane, f.set, f.at, f.parent.type === 'stage' && f.parent.stage, f.from.at, f.from.parent.type === 'stage' && f.from.parent.stage]),
+      [['suite', 'suite', head, 'candidate', approval.fingerprint.unitCommit, 'lanes']], 'the candidate\'s suite lane reused at the tested head');
   });
 
   test('snapshot.after-publish: the ref moved, the tree verifies against its manifest, the high-water mark covers the ff', () => {

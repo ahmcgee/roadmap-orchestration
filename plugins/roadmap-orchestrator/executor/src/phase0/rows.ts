@@ -65,6 +65,8 @@
 //  14. design first (advisory, never a rejection; every arc, every mode; dev.13) a live unit of a milestone that does not run
 //                  after the milestone's design unit, transitively: `milestone-unit-before-design{milestone, unit, design}`.
 //  15. milestones (every arc, every mode; dev.13) milestones on a plan without `holistic`: `milestones-need-holistic`.
+//  16. lane topology (every arc, every mode; dev.17) every system a lane lists declared by the repo config's systems map, every
+//                  lane a spec forces a suite lane of the plan (`plan-invalid{schema}`, `laneTopologyRows`).
 //                  `walk-tools-missing` (the bring-up programs and the walkthrough MCP servers) is not one of these rows: its
 //                  smoke is a backend call (see `milestonesNeedHolisticRows`).
 // A record that names something absent (a debt disposition of no open item, a promote to a unit the plan does not
@@ -74,8 +76,9 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { answerLog, latestAnswers, refQuestions, unappliedOf } from '../answers.ts';
 import { type ArcRef, amendmentsOf, chainBack, committedAcks, completedHeadOf, previousIncomplete, questionClosure, quotaOf } from '../chain.ts';
-import { type ArcId, type DebtId, type IssueId, type MilestoneId, type Sha256Hex, type UnitId, issueId, phaseQuestionSeq, sha, sha256 } from '../core/ids.ts';
-import { type SpecM1, specRemoves } from '../core/records.ts';
+import { type ArcId, type DebtId, type IssueId, type MilestoneId, type Sha256Hex, type UnitId, DOCS_SYSTEM, issueId, phaseQuestionSeq, sha, sha256 } from '../core/ids.ts';
+import { type SpecM1, specForces, specRemoves } from '../core/records.ts';
+import { unknownLaneSystems } from '../input/systems.ts';
 import { sha256Hex } from '../core/json.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, type RepoPath, type RepoPattern, absPath, matchesPattern, repoPath, repoPattern } from '../core/values.ts';
@@ -209,6 +212,7 @@ export function phase0Rows(input: Phase0Input, mode: Phase0Mode): Phase0Outcome 
   if (mode.tree) rows.push(...treeUncommitted(input.repo));
   const { plan } = input;
   rows.push(...milestonesNeedHolisticRows(plan));
+  rows.push(...laneTopologyRows(input));
   const advisories = [...referenceRows(input), ...derivedUnregenerated(plan), ...milestoneUnitsBeforeDesign(plan)];
   const defects: PlanDefect[] = [...derivedOwned(plan), ...referencesOversize(input.repo, plan)];
   if (plan.target !== 'corpus') {
@@ -715,6 +719,27 @@ export function holisticNeedsCorpus(plan: PlanM1): readonly Row<'holistic-needs-
  */
 export function milestonesNeedHolisticRows(plan: PlanM1): readonly Row<'milestones-need-holistic'>[] {
   return milestonesNeedHolistic(plan) ? [{ kind: 'milestones-need-holistic' }] : [];
+}
+
+/**
+ * Row 16 (dev.17, every arc, every mode): every system a suite, spec or arc lane lists is one the repo config's systems map
+ * declares (`docs` its docs class), and every lane a spec `forces` is a suite lane of the plan; else `plan-invalid{schema}`
+ * naming it.
+ */
+export function laneTopologyRows(input: Phase0Input): readonly Row<'plan-invalid'>[] {
+  const map = input.config?.systemsMap ?? null;
+  const specs = parsedSpecs(input);
+  const arc = visionAndObligations(input).obligations?.lanes ?? [];
+  const lanes = [
+    ...input.plan.suite.lanes.map((l) => ({ lane: l, at: 'plan.suite.lanes' })),
+    ...specs.flatMap((s) => s.lanes.map((l) => ({ lane: l, at: `spec ${s.unit} lanes` }))),
+    ...arc.map((l) => ({ lane: l, at: 'obligations lanes' })),
+  ];
+  const rows = lanes.flatMap(({ lane, at }) => unknownLaneSystems(map, [lane]).map((u) =>
+    schemaRow(`${at}.${u.lane}.systems`, map === null ? `${u.system}: the repo config has no systemsMap` : `${u.system}: a system of the repo config's systemsMap${u.system === DOCS_SYSTEM ? ' (docs: its docs class)' : ''}`)));
+  const suite = new Set<string>(input.plan.suite.lanes.map((l) => l.id));
+  for (const s of specs) for (const f of specForces(s)) if (!suite.has(f)) rows.push(schemaRow(`spec ${s.unit}.forces`, `${f}: a suite lane of the plan`));
+  return rows;
 }
 
 // `walk-tools-missing` (dev.13, agent A): the bring-up programs (argv0) and, for a `browser` journey, the walkthrough MCP

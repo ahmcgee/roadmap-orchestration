@@ -713,6 +713,7 @@ export function evaluateRevision(
       ? null
       : { renders: publication.renders.map((r) => ({ path: r.path, sha256: bytesSha256(r.bytes) })).sort((a, b) => (a.path < b.path ? -1 : 1)), contractOps: publication.contractOps },
     routingProvenance: routingProvenanceOf(ctx.routingBase, proposal.plan),
+    systemsMap: ctx.routingBase.config?.systemsMap ?? null,
   };
   return { kind: 'accepted', draft, next: proposal, scoped: verdict.scoped, routings: verdict.routings, renders: publication.renders };
 }

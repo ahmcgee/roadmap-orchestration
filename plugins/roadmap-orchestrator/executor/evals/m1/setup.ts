@@ -81,7 +81,7 @@ const SCOPE = ['src/**', 'test/**'];
 const PASS_PATH = { set: {}, pass: ['PATH'] };
 
 const fastLane = (id: string, file: string) => ({
-  id, argv: ['node', '--test', file], cwd: '.', env: PASS_PATH, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], state: 'active',
+  id, argv: ['node', '--test', file], cwd: '.', env: PASS_PATH, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], state: 'active',
 });
 
 const clause = (id: string, text: string) => ({ id, clause: text, failLoudIfUndelivered: true, state: 'active' });
@@ -180,7 +180,7 @@ export function setup(dir: string): void {
     suite: {
       lanes: [{
         id: 'suite', argv: ['npm', 'test'], cwd: '.', env: { set: { npm_config_update_notifier: 'false' }, pass: ['PATH', 'HOME'] },
-        expectedExit: 0, tier: 'estate', resources: [], evidenceGlobs: [],
+        expectedExit: 0, cadence: 'candidate', resources: [], evidenceGlobs: [],
       }],
     },
     resources: [resourceDecl(l.resource)],

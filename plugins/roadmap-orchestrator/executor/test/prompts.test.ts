@@ -36,7 +36,7 @@ const spec = (rev: number, text: string) => ({ unit: unitId('u-one'), rev: specR
 const doc = (path: string, text: string) => ({ path: repoPath(path), text });
 const ruling = (id: string, text: string) => ({ id: rulingId(id), text });
 const lane = (id: string, argv: string[]) => ({
-  id: laneId(id), argv, cwd: repoPath('.'), env: { set: { CI: '1' }, pass: [] }, expectedExit: 0, tier: 'fast' as const,
+  id: laneId(id), argv, cwd: repoPath('.'), env: { set: { CI: '1' }, pass: [] }, expectedExit: 0, cadence: 'build' as const,
   resources: [], evidenceGlobs: [], evidenceExcludes: [],
 });
 const SHA_A = sha('a'.repeat(40));
@@ -362,7 +362,7 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
     visionConflict: [{ clauses: ['V-1'], note: 'A2 makes rounding permissive, against V-1.' }],
     scopeGrowth: [{ patterns: ['test/legacy/shell.test.ts'], reason: 'it tests the shell page A1 removes' }],
     patch: [
-      { op: 'replace', section: 'lanes', item: { id: 'unit', argv: ['npm', 'test'], cwd: '.', env: { set: [{ name: 'CI', value: '1' }], pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], evidenceExcludes: [] } },
+      { op: 'replace', section: 'lanes', item: { id: 'unit', argv: ['npm', 'test'], cwd: '.', env: { set: [{ name: 'CI', value: '1' }], pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], evidenceExcludes: [] } },
       { op: 'add', section: 'decisions', item: { id: 'R2', text: 'Use the existing parser.' } },
       { op: 'strike', id: 'A3' },
       { op: 'cite', contracts: ['docs/api.md'], rulings: ['C-4'] },
@@ -1047,7 +1047,7 @@ describe('M4a prompts: the corpus target, checkpoint intake, the pack review, un
     const a = mod.render(SAMPLES.flow[0]);
     assert.match(a, /No chart yet/);
     assert.match(a, /Code's constraint: stage:build \(the largest service\)/);
-    assert.match(a, /suite-lane unit: argv \["node","--test","--test-concurrency=1"\], cpu null \(its tier's default\)/);
+    assert.match(a, /suite-lane unit: argv \["node","--test","--test-concurrency=1"\], cpu null \(its cadence's default\)/);
     const b = mod.render(SAMPLES.flow[1]);
     assert.match(b, /Code's constraint: slot:integration, its largest service component suite:all \(the largest wait in front of it\)/);
     assert.match(b, /Open: flow-1\.0 \(suite-lane at suite:all\), 2 of 5 samples\. Only host advice or noAction while it is open\./);

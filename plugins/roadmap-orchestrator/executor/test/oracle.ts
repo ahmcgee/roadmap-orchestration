@@ -155,13 +155,24 @@ export function provenance(run: OracleRun, integration: string, baseline: string
     if (byJob !== null) return s.purpose === 'journey' && s.owner.type === 'job' && s.owner.job === byJob && s.at === head;
     return s.purpose === 'lane' && s.set === 'suite' && s.at === head;
   });
-  if (tested.length === 0) problems.push(`no ${byJob === null ? 'suite lane' : `lane of ${byJob}`} ran at the head ${head}`);
+  // dev.17: a unit's suite lane at the head may be reused (the one reuse key): its run passed on a commit of the same tree
+  // (the fixtures declare no systems map, so a lane's input is the whole tree).
+  const reused = byJob !== null ? [] : run.events.flatMap((e) => (e.type === 'fact' && e.fact.kind === 'lane-reused' && e.fact.set === 'suite' && e.fact.at === head ? [e.fact] : []));
+  if (tested.length + reused.length === 0) problems.push(`no ${byJob === null ? 'suite lane' : `lane of ${byJob}`} ran at the head ${head}`);
+  const passed = (inv: ReturnType<typeof invocationId>): boolean => {
+    const result = runnerFiles(invocationDir(run.runDir, inv), inv).read('result.json');
+    return result !== null && result.type === 'command' && result.verdict === 'pass';
+  };
   for (const lane of tested) {
     const inv = invocationId(lane.op, lane.ordinal);
-    const result = runnerFiles(invocationDir(run.runDir, inv), inv).read('result.json');
-    if (result === null || result.type !== 'command' || result.verdict !== 'pass') problems.push(`lane ${inv} at the head did not pass`);
+    if (!passed(inv)) problems.push(`lane ${inv} at the head did not pass`);
   }
-  return verdict(problems, `${published.length} publication(s); head ${head} is the last, tested by ${tested.length} passing lane(s)`);
+  const tree = (commit: string): string => revParse(run.repo, `${commit}^{tree}`);
+  for (const r of reused) {
+    if (!passed(r.from.inv)) problems.push(`lane ${r.lane} reused at the head from ${r.from.inv}, which did not pass`);
+    if (tree(r.from.at) !== tree(head)) problems.push(`lane ${r.lane} reused at the head from ${r.from.at}, another tree`);
+  }
+  return verdict(problems, `${published.length} publication(s); head ${head} is the last, tested by ${tested.length + reused.length} passing lane(s)`);
 }
 
 /** Each unit published exactly `expected[unit]` times (1 for a merged unit, 0 otherwise), by its own ff or as a batch member. */

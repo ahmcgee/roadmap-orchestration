@@ -92,7 +92,7 @@ const OBLIGATIONS = {
   schema: 'roadmap/obligations-m3',
   cutLine: 'Everything above the ledger CLI.',
   lanes: [{
-    id: 'journey', argv: ['node', '--test', 'test/journey.test.js'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, tier: 'fast', resources: [],
+    id: 'journey', argv: ['node', '--test', 'test/journey.test.js'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [],
     evidenceGlobs: [], evidenceExcludes: [], reporter: 'node-test',
   }],
   obligations: [

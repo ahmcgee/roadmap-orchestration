@@ -96,7 +96,7 @@ const ruleObligation = (id: string, rule: string) => ({
 });
 const obligationsFile = (obligations: readonly object[], census?: readonly object[]) => ({
   schema: 'roadmap/obligations-m3', cutLine: 'cut',
-  lanes: [{ id: 'journey', argv: ['node', 'j.js'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], evidenceExcludes: [], reporter: 'jsonl' }],
+  lanes: [{ id: 'journey', argv: ['node', 'j.js'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], evidenceExcludes: [], reporter: 'jsonl' }],
   obligations, mapping: { paths: [] }, ...(census === undefined ? {} : { census }),
 });
 

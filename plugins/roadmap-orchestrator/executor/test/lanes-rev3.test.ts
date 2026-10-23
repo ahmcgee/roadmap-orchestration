@@ -11,6 +11,7 @@ import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import type { Fact, IntentOf } from '../src/core/events.ts';
+import type { JsonValue } from '../src/core/json.ts';
 import { type Sha, jobId, opKey, resourceName, sha } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import { type LaneDef, RED_FILE, redFile } from '../src/core/records.ts';
@@ -51,6 +52,13 @@ const parentOf = (attempt: number): StageParent => ({ type: 'stage', unit: U1, s
 
 function unitRun(lanesJson: readonly LaneJson[], resources: readonly string[] = []): StageRun {
   const run = setupUnit({ steps: [], lanes: lanesJson, resources });
+  pinDispatch(run.ctx, run.unit, keptSpec(run.journal));
+  return run;
+}
+
+/** A unit run whose first revision records `systemsMap` (dev.17). */
+function unitRunWith(lanesJson: readonly LaneJson[], systemsMap: JsonValue): StageRun {
+  const run = setupUnit({ steps: [], lanes: lanesJson, systemsMap });
   pinDispatch(run.ctx, run.unit, keptSpec(run.journal));
   return run;
 }
@@ -149,13 +157,13 @@ describe('series certificates and lane reuse (F1a)', () => {
     assert.equal(await ran(1, lane!, ctxWith(bins[0]!, 'a')), true, 'the first run');
     assert.equal(await ran(2, lane!, ctxWith(bins[0]!, 'a')), false, 'the same identity: reused');
     assert.equal(await ran(3, { ...lane!, env: { ...lane!.env, set: { EXTRA: '1' } } }, ctxWith(bins[0]!, 'a')), true, 'another lane rev');
-    assert.equal(await ran(4, lane!, ctxWith(bins[0]!, 'a')), true, 'back to the first rev: its latest execution had another rev');
+    assert.equal(await ran(4, lane!, ctxWith(bins[0]!, 'a')), false, 'back to the first rev: the reuse key of attempt 1, reused (dev.17)');
     assert.equal(await ran(5, lane!, ctxWith(bins[0]!, 'b')), true, 'a passed-through variable changed: another environment');
     assert.equal(await ran(6, lane!, ctxWith(bins[1]!, 'b')), true, 'argv[0] resolves to another path');
     writeFileSync(join(bins[1]!, 'rev3-tool'), '#!/bin/sh\n# changed\nexit 0\n');
     assert.equal(await ran(7, lane!, ctxWith(bins[1]!, 'b')), true, 'argv[0] content changed');
     assert.equal(await ran(8, lane!, ctxWith(bins[1]!, 'b')), false, 'unchanged again: reused');
-    assert.equal(laneSpawns(run, 'tool').length, 6);
+    assert.equal(laneSpawns(run, 'tool').length, 5);
   });
 
   test('lanes.no-reuse-after-dirty: a series whose checkout a lane dirtied is never certified; its passes rerun', T, async () => {
@@ -170,35 +178,37 @@ describe('series certificates and lane reuse (F1a)', () => {
     assert.deepEqual(reuses(run), []);
   });
 
-  test('lanes.inputs-untouched-reused / lanes.inputs-touched-reruns / lanes.no-inputs-reruns-on-new-sha: across SHAs only a fast lane whose declared inputs the diff leaves alone is reused', T, async () => {
-    const run = unitRun([{ id: 'add', argv: ['node', '--test', 'test/add.test.js'], inputs: ['src/add.js', 'test/add.test.js'] }, { id: 'plain', argv: ['true'] }]);
+  test('lanes.systems-untouched-reused / lanes.systems-touched-reruns / lanes.no-systems-reruns-on-new-sha (dev.17: inputs folded into the reuse key): across SHAs only a lane whose systems the diff leaves alone is reused', T, async () => {
+    const run = unitRunWith([{ id: 'add', argv: ['node', '--test', 'test/add.test.js'], systems: ['add'] }, { id: 'plain', argv: ['true'] }], {
+      systems: { add: { paths: ['src/add.js'], tests: ['test/add.test.js'] }, other: { paths: ['src/other.js'] } },
+    });
     writeFiles(run.repo, { 'src/add.js': 'export function add(a, b) {\n  return a + b;\n}\n' });
     const fixed = sha(commitAll(run.repo, 'fix add'));
     const first = await series(run, 1, specLanes(run), fixed);
     assert.equal(first.end.kind, 'green');
     const other = commit(run, { 'src/other.js': 'export const other = 1;\n' });
     const second = await series(run, 2, specLanes(run), other);
-    assert.deepEqual(second.ledger.map((l) => [l.lane, l.reused?.at ?? null]), [['add', fixed], ['plain', null]], 'add reused from the earlier SHA; plain, declaring no inputs, reran');
+    assert.deepEqual(second.ledger.map((l) => [l.lane, l.reused?.at ?? null]), [['add', fixed], ['plain', null]], 'add reused from the earlier SHA; plain, listing no systems, reran');
     const touched = commit(run, { 'test/add.test.js': `${readFileSync(join(run.repo, 'test', 'add.test.js'), 'utf8')}\n// touched\n` });
     const third = await series(run, 3, specLanes(run), touched);
-    assert.deepEqual(third.ledger.map((l) => l.reused), [null, null], 'an input changed: add reran');
+    assert.deepEqual(third.ledger.map((l) => l.reused), [null, null], 'its system changed: add reran');
     assert.equal(laneSpawns(run, 'add').length, 2);
     assert.equal(laneSpawns(run, 'plain').length, 3);
   });
 
-  test('lanes.estate-same-sha-only: an estate lane declaring inputs reuses only at the same SHA', T, async () => {
-    const run = unitRun([{ id: 'estate', tier: 'estate', argv: ['true'], inputs: ['src/add.js'] }]);
+  test('lanes.no-map-same-tree-only (dev.17): without a systems map a lane reads the whole tree, so it reuses only on the same tree', T, async () => {
+    const run = unitRun([{ id: 'estate', cadence: 'unit', argv: ['true'] }]);
     await series(run, 1, specLanes(run), run.base);
     const same = await series(run, 2, specLanes(run), run.base);
     assert.notEqual(same.ledger[0]!.reused, null, 'same SHA: reused');
     const moved = commit(run, { 'src/other.js': 'export const other = 1;\n' });
     const next = await series(run, 3, specLanes(run), moved);
-    assert.equal(next.ledger[0]!.reused, null, 'another SHA: an estate lane reruns');
+    assert.equal(next.ledger[0]!.reused, null, 'another tree: the lane reruns');
     assert.equal(laneSpawns(run, 'estate').length, 2);
   });
 
-  test('lanes.unresolvable-argv0-reruns: argv[0] a repository file has no program identity: reused at the same SHA, rerun on another even with its inputs untouched', T, async () => {
-    const run = unitRun([{ id: 'script', argv: ['scripts/ok.sh'], inputs: ['scripts/**'] }]);
+  test('lanes.unresolvable-argv0-reruns: argv[0] a repository file has no program identity: reused at the same SHA, rerun on another', T, async () => {
+    const run = unitRun([{ id: 'script', argv: ['scripts/ok.sh'] }]);
     writeFiles(run.repo, { 'scripts/ok.sh': '#!/bin/sh\nexit 0\n' });
     chmodSync(join(run.repo, 'scripts', 'ok.sh'), 0o755);
     const withScript = sha(commitAll(run.repo, 'script'));
@@ -211,7 +221,7 @@ describe('series certificates and lane reuse (F1a)', () => {
     assert.equal(laneSpawns(run, 'script').length, 2);
   });
 
-  test('lanes.inputs-refused-off-spec: a suite lane or an arc lane declaring inputs is refused', () => {
+  test('lanes.inputs-refused-off-spec: a suite lane or an arc lane declaring inputs is refused (a spec lane\'s are dropped since dev.17)', () => {
     const lane = { id: 'l', argv: ['true'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], inputs: ['src/**'] };
     const plan = {
       schema: 'roadmap/plan-m1', arc: 'arc-1', integrationBranch: 'main', baseline: 'a'.repeat(40), worktreeRoot: '/tmp/wt', contracts: [], rulings: 'r.md',
@@ -401,7 +411,9 @@ describe('certified-only journey reuse (R51)', () => {
 // ---------------------------------------------------------------------------------------------------
 // Crash rows (identical replay: no duplicate spawn, the same outcomes as an uncrashed run)
 
-const STABLE: LaneJson = { id: 'stable', argv: ['node', '--test', 'test/add.test.js'], inputs: ['src/add.js', 'test/add.test.js'] };
+const STABLE: LaneJson = { id: 'stable', argv: ['node', '--test', 'test/add.test.js'], systems: ['add'] };
+/** The fix commit touches only `mul`'s system, so the stable lane (system `add`) reads the same input across it. */
+const CRASH_MAP: JsonValue = { systems: { add: { paths: ['src/add.js', 'test/add.test.js'] }, mul: { paths: ['src/mul.js', 'test/mul.test.js'] } } };
 const MUL_LANE: LaneJson = { id: 'mul', argv: ['node', '--test', 'test/mul.test.js'] };
 const MUL_BROKEN = { ...MUL, 'src/mul.js': 'export function mul(a, b) {\n  return a + b;\n}\n' };
 
@@ -409,7 +421,7 @@ const MUL_BROKEN = { ...MUL, 'src/mul.js': 'export function mul(a, b) {\n  retur
 const labelOf = (row: string): string => crashCells(row).map((c) => c.label).join();
 
 async function crashThenResume(steps: Parameters<typeof setupArc>[0]['steps'], label: string): Promise<Readonly<{ d: ReturnType<typeof setupArc> }>> {
-  const d = setupArc({ steps, units: [{ id: 'u1', lanes: [STABLE, MUL_LANE] }] });
+  const d = setupArc({ steps, units: [{ id: 'u1', lanes: [STABLE, MUL_LANE] }], systemsMap: CRASH_MAP });
   const trigger = writeTrigger(tmpDir('rev3-crash'), { label, occurrence: 1, unit: 'u1' });
   const env = { ...process.env, ROADMAP_TEST_CRASH: trigger };
   const first = await runFixture('unit-child.ts', [JSON.stringify(d), 'u1'], { env, timeoutMs: SCENARIO_TIMEOUT_MS });
@@ -441,7 +453,7 @@ describe('crash rows', () => {
     const { d } = await crashThenResume(FIX_STEPS, labelOf(LANE_REUSE));
     assert.deepEqual(outcomes(d), FIX_OUTCOMES, 'the same outcomes as an uncrashed run');
     assert.equal(arcSpawns(d, 'stable').length, 1, 'the stable lane ran once: reused after the fix, and again after the crash');
-    const reused = factsOf(d.runDir, d.arc).filter((f) => f.kind === 'lane-reused');
+    const reused = factsOf(d.runDir, d.arc).filter((f) => f.kind === 'lane-reused' && f.lane === 'stable');
     assert.equal(reused.length, 2, 'the crashed attempt\'s reuse and the restart\'s');
     const ran = arcSpawns(d, 'stable')[0]!;
     assert.ok(reused.every((f) => f.kind === 'lane-reused' && JSON.stringify(f.from.parent) === JSON.stringify(ran.parent)), 'both from the one execution');
@@ -456,7 +468,11 @@ describe('crash rows', () => {
     ]);
     assert.equal(arcSpawns(d, 'stable').length, 2, 'uncertified: run again');
     assert.equal(arcSpawns(d, 'mul').length, 2);
-    assert.deepEqual(factsOf(d.runDir, d.arc).filter((f) => f.kind === 'lane-reused'), []);
+    const reused = factsOf(d.runDir, d.arc).filter((f) => f.kind === 'lane-reused');
+    assert.deepEqual(reused.filter((f) => f.kind === 'lane-reused' && f.set !== 'suite'), [], 'no spec lane reused from the uncertified series');
+    // dev.17: one reuse key for every series lane: the candidate's suite lane reuses the certified lanes-stage run on its input.
+    assert.deepEqual(reused.map((f) => f.kind === 'lane-reused' && [f.lane, f.set, f.parent.type === 'stage' && f.parent.stage, f.from.parent.type === 'stage' && f.from.parent.stage]),
+      [['suite', 'suite', 'candidate', 'lanes']], 'the candidate\'s suite lane reused the lanes stage\'s');
   });
 
   test('crash RED_CLASS (redlane.after-class): killed after the class is persisted, before the rerun; the restart reruns the series, the class kept', T, async () => {

@@ -24,7 +24,7 @@ import { type Cancelled, type Pinned, type StageContext, isCancelled } from '../
 import { invocationDir } from '../../src/pipeline/invoke.ts';
 import { reserveNow } from '../../src/pipeline/lanes.ts';
 import { rankOf } from '../../src/schedule/ready.ts';
-import { type RepoConfig, resolveRouting } from '../../src/routing/layers.ts';
+import { type RepoConfig, parseRepoConfig, resolveRouting } from '../../src/routing/layers.ts';
 import type { ProfileName, RiskTier } from '../../src/routing/types.ts';
 import { fixture } from '../helpers/proc.ts';
 import { git, makeRepo, revParse, tmpDir } from '../helpers/repo.ts';
@@ -53,14 +53,21 @@ export type LaneJson = Readonly<{
   cwd?: string;
   env?: Readonly<{ set?: Readonly<Record<string, string>>; pass?: readonly string[] }>;
   expectedExit?: number;
+  /** The dev.16 form (default `fast` when no cadence is given). */
   tier?: 'fast' | 'estate';
+  /** dev.17: written instead of `tier` when given. */
+  cadence?: 'build' | 'unit' | 'candidate' | 'batch';
   resources?: readonly string[];
   evidenceGlobs?: readonly string[];
   evidenceExcludes?: readonly string[];
-  /** M4a rev 3 (F1a): a spec lane's inputs. */
+  /** M4a rev 3 (F1a): a spec lane's inputs (dev.16; dropped on read since dev.17). */
   inputs?: readonly string[];
   /** dev.17: the plan environment the lane runs against. */
   environment?: string;
+  /** dev.17: the lane topology fields. */
+  systems?: readonly string[];
+  testArgv?: readonly string[];
+  stochastic?: Readonly<{ runs: number; minPasses: number }>;
 }>;
 
 /** The fixture's own test lane: fails until `add` is fixed, printing ADD-MARKER. */
@@ -85,6 +92,10 @@ export type SetupOptions = Readonly<{
   environments?: Readonly<Record<string, JsonValue>>;
   /** The plan's routing layer as plan.json writes it (default none): e.g. `HIGH_BUILDS_ON_FRONTIER`. */
   routing?: JsonValue;
+  /** dev.17: the repo config's `systemsMap` the first revision records (default none). */
+  systemsMap?: JsonValue;
+  /** dev.17: the spec's `forces` (default none). */
+  forces?: readonly string[];
 }>;
 
 /**
@@ -111,9 +122,11 @@ export type StageRun = Readonly<{
 function laneJson(l: LaneJson): Record<string, unknown> {
   return {
     id: l.id, argv: l.argv, cwd: l.cwd ?? '.', env: { set: l.env?.set ?? {}, pass: l.env?.pass ?? ['PATH'] }, expectedExit: l.expectedExit ?? 0,
-    tier: l.tier ?? 'fast', resources: l.resources ?? [], evidenceGlobs: l.evidenceGlobs ?? [],
+    ...(l.cadence === undefined ? { tier: l.tier ?? 'fast' } : { cadence: l.cadence }), resources: l.resources ?? [], evidenceGlobs: l.evidenceGlobs ?? [],
     ...(l.evidenceExcludes === undefined ? {} : { evidenceExcludes: l.evidenceExcludes }), ...(l.inputs === undefined ? {} : { inputs: l.inputs }),
-    ...(l.environment === undefined ? {} : { environment: l.environment }), state: 'active',
+    ...(l.systems === undefined ? {} : { systems: l.systems }), ...(l.testArgv === undefined ? {} : { testArgv: l.testArgv }),
+    ...(l.stochastic === undefined ? {} : { stochastic: l.stochastic }), ...(l.environment === undefined ? {} : { environment: l.environment }),
+    state: 'active',
   };
 }
 
@@ -194,7 +207,7 @@ export function setupUnit(opts: SetupOptions): StageRun {
     lanes: (opts.lanes ?? [UNIT_LANE]).map(laneJson),
     acceptance: [{ id: 'A1', clause: 'add(1, 2) is 3', failLoudIfUndelivered: true, state: 'active' }],
     scope: ['src/**', 'test/**'], resources: opts.resources ?? [], decisions: [], facts: [],
-    cites: { contracts: ['contracts/api.md'], rulings: ['C-1'] },
+    cites: { contracts: ['contracts/api.md'], rulings: ['C-1'] }, ...(opts.forces === undefined ? {} : { forces: opts.forces }),
   }));
   cpSync(RULINGS, join(planDir, 'rulings.md'));
 
@@ -217,7 +230,8 @@ export function setupUnit(opts: SetupOptions): StageRun {
   const runDir = tmpDir('stage-run');
   const journal = openJournal(absPath(runDir), arcId(arc));
   // As a first start does: the files become the plan in force (rev 1), whose spec the stages load.
-  recordFirstPlan(journal, absPath(runDir), planPath, absPath(repo), opts.profile);
+  const config = opts.systemsMap === undefined ? null : parseRepoConfig({ systemsMap: opts.systemsMap });
+  recordFirstPlan(journal, absPath(runDir), planPath, absPath(repo), opts.profile, config);
   const scenario = writeScenario(tmpDir('stage-scenario'), opts.steps);
   const routing = resolveRouting({ profile: opts.profile ?? 'default', classes: null, repoConfig: null, plan: plan.routing ?? null, unit: null });
   const resources = {
@@ -230,7 +244,7 @@ export function setupUnit(opts: SetupOptions): StageRun {
     hostEnv: { ...process.env, PATH: `${scenario.binDir}:${process.env['PATH'] ?? ''}` },
     planDir: absPath(planDir),
     planFile: absPath(planPath),
-    routingBase: { profile: opts.profile ?? 'default', config: null, arcRoles: null },
+    routingBase: { profile: opts.profile ?? 'default', config, arcRoles: null },
     ...serialRuntime(resources),
   };
   return { ctx, journal, unit, repo: absPath(repo), runDir: absPath(runDir), planDir: absPath(planDir), specPath: absPath(specPath), base, scenario, stateDir, scratch: tmpDir('stage-scratch') };

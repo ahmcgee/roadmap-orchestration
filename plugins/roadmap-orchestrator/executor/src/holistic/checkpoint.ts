@@ -101,7 +101,7 @@ import { raiseNeedsUser, raisedFor, readNeedsUser } from '../needsuser.ts';
 import {
   type BackendCallOutcome, type JobParent, arcSeat, callArcRole, minutesMs, recordedArcCall, repairTurnOf, runOp, verdictOf,
 } from '../pipeline/dispatch.ts';
-import { arcJourneyLane, jobSeriesCheckout, laneEnvId, observations, observedViews, removeJobCheckouts, runJourneySeries } from '../pipeline/lanes.ts';
+import { arcJourneyLane, arcLaneKey, jobSeriesCheckout, laneEnvId, observations, observedViews, removeJobCheckouts, runJourneySeries } from '../pipeline/lanes.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
 import { candidateRedCause } from '../pipeline/unit.ts';
 import { architecture, docAt, inMs, ledgerDir, ledgerPath, salvageRejections, targetDirs } from '../pipeline/stages.ts';
@@ -124,7 +124,7 @@ import type { AppliedBundle } from './convergence.ts';
 import { uncoveredDivergences } from './divergence.ts';
 import { isActive } from './findings.ts';
 import { captureCheckpointIssues, issueReuse, issuesInputOf, unseenIssues } from './intake.ts';
-import { keyOf, reuse } from './observe.ts';
+import { reuse } from './observe.ts';
 import { type ArcLaneDef, type BusyAttempt, type CheckpointTrigger, type ObligationDef, type Obligations, type Vision, observationKeyText, parseObligations, parseRulingSidecar, parseVision } from './types.ts';
 import { visionCoverage } from './vision.ts';
 import { jobEvidenceRoot } from '../git/snapshot.ts';
@@ -442,9 +442,10 @@ function capture(ctx: CheckpointContext, due: Due, issues: CheckpointIssues | nu
   const tree = revParse(ctx.repo, `${head}^{tree}`);
   const store = observations(ctx);
   const lanes = revision.obligations?.value.lanes ?? [];
+  // The observation each lane has on the head (dev.17: by its reuse key, so it may name another tree with the same input).
   const shown = lanes.flatMap((l) => {
-    const key = keyOf(tree, l, laneEnvId(ctx, l));
-    return store.has(observationKeyText(key)) ? [key] : [];
+    const o = reuse(store, arcLaneKey(ctx, tree, l, laneEnvId(ctx, l)));
+    return o === null ? [] : [o.key];
   }).sort((a, b) => (observationKeyText(a) < observationKeyText(b) ? -1 : 1));
   const job = view.nextJobId('ckpt');
   const fact = {
@@ -918,7 +919,7 @@ function citedLanesUnobserved(ctx: CheckpointContext, output: CheckpointOutput, 
   const tree = revParse(ctx.repo, `${head}^{tree}`);
   const store = observations(ctx);
   const wanted = new Set<LaneId>(output.cites.observations.filter((k) => k.treeSha !== tree).map((k) => k.lane));
-  return (revision.obligations?.value.lanes ?? []).filter((l) => wanted.has(l.id) && reuse(store, keyOf(tree, l, laneEnvId(ctx, l))) === null);
+  return (revision.obligations?.value.lanes ?? []).filter((l) => wanted.has(l.id) && reuse(store, arcLaneKey(ctx, tree, l, laneEnvId(ctx, l))) === null);
 }
 
 /** Witnesses on the head now, under `job`, `output`'s cited lanes that have no observation there; the head, or null when none was due. */

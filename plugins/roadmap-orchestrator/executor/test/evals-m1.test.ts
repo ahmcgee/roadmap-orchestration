@@ -128,7 +128,7 @@ test('evals-m1.setup-valid: setup lays out a plan parsePlan accepts, specs the s
   for (const u of plan.units) {
     const spec = loadSpec(absPath(join(l.input, u.spec)));
     assert.equal(spec.unit, u.id);
-    assert.deepEqual(spec.lanes.map((x) => x.tier), ['fast']);
+    assert.deepEqual(spec.lanes.map((x) => x.cadence), ['build']);
     assert.ok(spec.acceptance.some((a) => a.clause.includes('.roadmap/contracts/one.md')), `${u.id} cites the contract`);
   }
   assert.equal(git(l.repo, 'rev-parse', MAIN), plan.baseline);

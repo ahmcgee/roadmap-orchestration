@@ -43,7 +43,7 @@ const cites = { cites: ['V-1'], evidence: ['scripted evidence'] } as const;
 
 /**
  * A spec.json object in the checkpoint's admit wire form (run 10, D; src/prompts/schemas.ts `S_ADMIT_SPEC`): each lane's
- * env.set as [{name, value}] and its evidenceExcludes present, `obligations` and `repairs` [] when absent. A lane's `cpu`
+ * env.set as [{name, value}], its evidenceExcludes present and a dev.16 `tier` its cadence, `obligations` and `repairs` [] when absent. A lane's `cpu`
  * or `inputs` and witness items have no wire form: they throw.
  */
 export function admitSpecWire(spec: Readonly<Record<string, unknown>>): JsonValue {
@@ -51,7 +51,9 @@ export function admitSpecWire(spec: Readonly<Record<string, unknown>>): JsonValu
   const lanes = ((spec['lanes'] ?? []) as Readonly<Record<string, unknown>>[]).map((l) => {
     if (l['cpu'] !== undefined || l['inputs'] !== undefined) throw new Error(`lane ${String(l['id'])}: cpu and inputs have no admit wire form`);
     const env = l['env'] as Readonly<{ set: Readonly<Record<string, string>>; pass: readonly string[] }>;
-    return { ...l, evidenceExcludes: l['evidenceExcludes'] ?? [], env: { ...env, set: Object.entries(env.set).map(([name, value]) => ({ name, value })) } };
+    const { tier, ...rest } = l;
+    const cadence = tier === undefined ? rest['cadence'] : tier === 'estate' ? 'unit' : 'build';
+    return { ...rest, cadence, evidenceExcludes: l['evidenceExcludes'] ?? [], env: { ...env, set: Object.entries(env.set).map(([name, value]) => ({ name, value })) } };
   });
   return { ...spec, lanes, obligations: spec['obligations'] ?? [], repairs: spec['repairs'] ?? [] } as unknown as JsonValue;
 }

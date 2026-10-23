@@ -132,7 +132,7 @@ test('fault.replay-after-crash: an executor killed right after the fault park re
 
 test('fault.slot-crashes: a throw while the unit\'s publication holds the integration slot (a candidate lane) is no contained fault: the scheduler crashes with it', T, async () => {
   const marker = armedMarker();
-  const suite: LaneJson = { id: 'suite', argv: ['sh', '-c', `node --test || exit 1; ${lockOnce(marker)}`], tier: 'estate', evidenceGlobs: ['out/**'] };
+  const suite: LaneJson = { id: 'suite', argv: ['sh', '-c', `node --test || exit 1; ${lockOnce(marker)}`], cadence: 'candidate', evidenceGlobs: ['out/**'] };
   const d = setupArc({ suite: [suite], steps: straight('u1') });
   const r = contextFor(d);
   try {
