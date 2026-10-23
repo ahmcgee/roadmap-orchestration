@@ -73,6 +73,9 @@
 // repair batch (`publishBatch`, B2) and the close-out publication each run as a job of their own. Jobs and units
 // share the arbiter and `@cpu` (the jobs' waits are served first, `acquireFirst`).
 //
+// The flaky ledger (dev.17, src/pipeline/deflakemint.ts; every arc): the deflake job (`applyDeflake`) while the ledger has a
+// deflake unit or a `flake-recurring` item due, and each iteration a `deflake-parked` item per park of a deflake unit.
+//
 // The flow track (M4b, src/flow/track.ts; every arc whose revisions carry the `m4b` role set, holistic or not): each
 // run raises the ruler changes, applies an accepted proposal pending its apply and proves one pending its proof, writes
 // the verdicts due, then runs the flow job when triggers are due. One judgment job at a time: the flow job waits while a

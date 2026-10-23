@@ -19,7 +19,9 @@
 // A lane that runs red goes through the red-lane protocol (redlane.ts): a host signature on a busy host
 // waits, holding nothing, for a clear host and reruns; a signature without that evidence is `blocked`; a spec lane's
 // red repeating the unit's confirmed earlier red (`repeatOf`) is red without a rerun; any other red gets one diagnostic
-// rerun (red then green is red, `flaky`). The class is persisted (`red.json`) before the decision. A rerun takes its own reservation,
+// rerun (red then green is `flaky`: dev.17, a flake the flaky ledger records, `observeFlake`, and forgives, so the green
+// rerun counts, unless the unit deflakes that lane or the red ran on a saturated host; else red). The class is persisted
+// (`red.json`) before the decision. A rerun takes its own reservation,
 // runs in the same checkout at the same SHA and keeps its evidence in `<lane>.rerun/`. The ledger holds one
 // record per lane (`LaneRecord`): the run whose verdict counts, with the other run attached.
 //
@@ -62,7 +64,8 @@
 //
 // Stochastic lanes (dev.17, `Stochastic`): up to `runs` runs, each its own spawn and reservation (`<lane>.runs/<n>/` past
 // the first), stopping once `minPasses` passed or can no longer pass; the lane passes with `minPasses` passes, and its
-// record is its last passing run (else its last run). Never the red-lane protocol, never flaky.
+// record is its last passing run (else its last run). Never the red-lane protocol, never flaky. A deflake unit's
+// verification (dev.17, `verify` on its spawns) runs its lane the same way with every run required to pass.
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { basename, dirname, join, posix } from 'node:path';
 import { crashPoint } from '../core/crash.ts';

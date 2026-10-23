@@ -290,7 +290,8 @@ waits on you), `blocked` (work remains and nothing can move), `complete`, `refus
   size) sits at least at the high seat whatever the unit's risk (`seat` shows it once the gate has started), and its answer
   carries a cluster map that code checks covers every changed path exactly once; a file in a cluster counts as reviewed. `state` is `running`, `preparing`, `ready`, `waiting`, `awaiting-admission`, `held`, `blocked`,
   `parked`, `merged`, `cut` or `superseded`. `waitingFor{deps, edges, resources, envBlocked, admission, drainFor}`;
-  `admission` holds `known-defect{id, fixUnit}` while a known defect holds the unit at prepare. `running{stage,
+  `admission` holds `known-defect{id, fixUnit}` while a known defect holds the unit at prepare, and (1.0.0-dev.17)
+  `deflake{deflake, lane}` while an open deflake unit holds a unit not yet started that runs its flaky lane. `running{stage,
   attempt, elapsed (ms), deadline, resources, lane}`, `lane{id, set: spec|suite|journey|mutant, inv, startedAt}` the
   lane run open now. `failures[{ref, stage, attempt, lane, class: red|flaky|repeat, hostSuspected}]`: `hostSuspected`
   `{signatures, busy}` names the host failure signatures the output matched and whether the host was busy, or null;
@@ -472,6 +473,11 @@ Blocking unless noted. Read the item file before acting.
 - `context-exceeded` (the unit is parked at plan-check, build or gate, uncharged): the call's prompt or context outgrew
   its model's window; the item names the role, the call and the prompt's size. Shrink the stage's inputs or route the
   seat to a larger window, then `resume`, which makes a new call (SKILL.md "Handling parks"). Not a backend problem: nothing is parked arc-wide.
+- `deflake-parked`, non-blocking (1.0.0-dev.17): a deflake unit parked; the units its code edges held run again. Handle
+  the park's own item; a named cpu or resource need is declared on the lane by `apply`, then the deflake unit is cut
+  (SKILL.md "Flaky lanes").
+- `flake-recurring`, non-blocking (1.0.0-dev.17): a test (or lane) flaked again after two deflake units merged or were
+  cut; no third is minted. The evidence is the flake's red and green runs (SKILL.md "Flaky lanes").
 - `executor-fault`, non-blocking (1.0.0-dev.17): the executor threw inside a unit's task (the unit is parked at the stage
   it was in, uncharged) or an arc job (audit, walk, checkpoint, baseline: the job ended faulted) while it held only that
   unit's or job's own state; the arc went on. The item carries the stack (SKILL.md "Handling parks").
@@ -515,3 +521,6 @@ Blocking unless noted. Read the item file before acting.
 - "dev.13: milestone walkthroughs and design units": `milestones` (design, references, bring-up, journeys),
   `limits.walkRounds`, polish units, the `experience` vision clause, the walk facts and findings, the walkthrough MCP
   config, the Phase-0 rows and advisories, the demo.
+- "dev.17: the flaky ledger": `flake-observed`, deflake units (`origin: deflake`, `deflake.keys`), their code edges,
+  `limits.verification {laneMinutes?, lanes?: {<lane>: minutes}}` (a deflake unit's verification budget in lane-minutes;
+  default 30, a batch lane 2 runs), `deflake-parked` and `flake-recurring`.

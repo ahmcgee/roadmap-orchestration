@@ -584,6 +584,14 @@ second design park of one lineage (`respec-second`). `roadmap steer <unit>` is a
   build's `infeasible` notes are in the evidence): a design park, so the checkpoint sees it first; otherwise apply a
   feasible spec revision (it reopens the unit) or re-enter.
 - **A lane red for a cause another unit fixes**: a known defect (above), not a re-entry.
+- **Flaky lanes** (1.0.0-dev.17): the executor owns them. A lane red then green on its same-commit rerun is a flake: the
+  unit running it passes, and the arc's flaky ledger mints a deflake unit (`deflake-<n>`, ranked first, in no milestone)
+  that fixes the test; units not yet started that run the lane wait for it. Never quarantine, skip or weaken a flaky
+  test, and never declare a flake "environment": an external cause is the environment probe's to catch. A deflake unit
+  parked (`deflake-parked`, non-blocking: the units it held run again) is handled as its park says; when its notes name
+  the lane's cpu or resource need, declare it on the lane with `roadmap apply` and cut the deflake unit. A
+  `flake-recurring` item (non-blocking) means a test flaked again after two deflake units: read both and the flake's
+  evidence, then fix the test yourself through a unit or declare the lane's need; no third deflake is minted.
 - **Repairs held by each other's findings** (each approved repair waits at its candidate behind a P1 the other
   fixes): the executor publishes them as one batch. Do not cut them or hand-build a combined unit.
 - **A paused unit whose stage a crash cut short** is held after the next start, like any paused unit: resume, cut,
@@ -681,7 +689,8 @@ rejected. An edit you never apply has no effect, even after a restart.
   and its pass is reused on any commit whose paths of those systems are unchanged. A lane listing none reads the whole
   tree but the docs class, so a docs-only change reruns nothing. A lane may declare `testArgv`, its argv with one
   element `{files}`: when only leaf test files changed since its last clean pass, only those run. A lane that is
-  statistically noisy by nature declares `stochastic: {runs, minPasses}` (k of n); it is never treated as flaky.
+  statistically noisy by nature declares `stochastic: {runs, minPasses}` (k of n); it is never treated as flaky. What a
+  deflake unit's verification may cost is `limits.verification` (`reference.md`): 30 lane-minutes per lane by default.
   `start`, `apply` and `phase0 check` refuse a lane naming a system the map lacks. A map edit reaches a running arc
   through the next `apply` after a restart (`roadmap start`, as for any config edit).
 - Every arc lane in the obligations file declares `testPaths`, every test path it runs; `start` refuses a fresh arc

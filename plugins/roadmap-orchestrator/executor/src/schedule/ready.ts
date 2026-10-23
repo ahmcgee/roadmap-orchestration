@@ -19,6 +19,9 @@
 // the fixer's lineage. A unit whose decided outcome is lanes `known-defect{id}` waits at `prepare` under
 // `known-defect{id, fixUnit}` while the plan's entry of that id is active for it; a removed entry releases it.
 //
+// dev.17 (flaky ledger): a unit not yet dispatched whose lanes include an open deflake unit's lane waits on that code edge
+// at any admission (`deflakeHold`, src/pipeline/deflake.ts), until the deflake merges, parks or is cut.
+//
 // dev.13 (agent D): a polish unit's candidate admission waits for its compare (`compare`): until its `tweak-judged`, and
 // for ever after a `drop` (its cut follows, src/walk/compare.ts); a `keep` admits it.
 //

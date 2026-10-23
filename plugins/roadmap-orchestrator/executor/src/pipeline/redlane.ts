@@ -12,8 +12,10 @@
 //                               earlier red of the same spec lane (`repeatOf`, lanes.ts: not flaky, no pass since,
 //                               equal lane rev and environment) with the same specific failure signature: red, not
 //                               flaky, and no rerun: the failure is the tree's.
-//   no signature                one diagnostic rerun. Red again: red. Green: still red, `flaky`, charged as
-//                               red, and its fix round is told the lane is flaky.
+//   no signature                one diagnostic rerun. Red again: red. Green: `flaky`, a flake of the flaky ledger
+//                               (dev.17, src/pipeline/deflake.ts): the series records it and the lane passes on its
+//                               green rerun, but for a deflake unit of its keys (and a red on a saturated host, the
+//                               pressure protocol's), where it stays red, charged, and the fix round is told it is flaky.
 //
 // Both runs are kept: the first in the lane's dir, the rerun in `<lane>.rerun/`. The class is decided once, before
 // any rerun, and persisted write-once in the first run's dir as `red.json` (`RedFile`, Q20) by a spawn stamped with

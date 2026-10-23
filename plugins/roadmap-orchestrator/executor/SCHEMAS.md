@@ -4607,7 +4607,7 @@ build `infeasible` and `risk-raised` (rows unchanged), and `PlanChange` `plan-ch
 
 Where each lane runs, what it reads, and one reuse key for every run (DESIGN-1.0.md §4 "Lane topology"). Every record
 change is additive with a read-time default (src/core/upgrade.ts, logged once, scaffolding deleted once no dev.16 arc is in
-flight); `SCHEMA_VERSION` stays 1. Lane environments and the flaky ledger are not here.
+flight); `SCHEMA_VERSION` stays 1. Lane environments and the flaky ledger have sections of their own.
 
 | Record | Change | Read-time default |
 |---|---|---|
@@ -4675,4 +4675,62 @@ wires it attaches it.
 | Plan-check decisions (src/prompts/schemas.ts) | `PLAN_CHECK_DECISIONS_DEV17` = approve, redirect, split, scaffold, poc, infeasible, escalate; `DesignDecision`; payloads `SplitDecision {children: SpecM1[] ≥ 2 distinct, edges [{from, to}] between distinct children}`, `ScaffoldDecision {newSystem, entryPoints, exports, loadTest {lane, testId}, manifest [{path, entry}]}`, `PocDecision {questions [{id, question, whyItMatters}] ≥ 1, brief}`. Not yet in `PLAN_CHECK_SCHEMA` or `planCheckOutput` | — |
 | Gate (src/prompts/schemas.ts) | `DEFECT_CATEGORIES` (incorrect-behaviour, contract-violation, security, requirement-unmet, test-inadequate, data-loss); `FINDING_SEVERITIES_DEV17` (+ `ride-along`); `DocsOnlySince = Sha \| null`. Not yet in `GATE_SCHEMA`, `gateOutput` or the build answer | — |
 | Review (src/core/review.ts) | `FindingsLedgerEntry {id: R-n, unit, path, anchor: blob, outcome: LedgerOutcome \| null}` (`LEDGER_OUTCOMES`: fixed, disputed-upheld, disputed-overruled, released, banked; null unsettled); `ApprovalBlobs {unit, specRev, files [{path, blob \| null}] ascending}` | — |
-| Flaky ledger (src/core/flaky.ts) | `FlakyLedgerEntry {key: {type: test, lane, testId} \| {type: lane, lane}, events [{tree, env \| null, failing, red, green}] ≥ 1, deflakes: UnitId[]}`; `flakyKeyOf` | — |
+| Flaky ledger (src/core/flaky.ts) | `FlakyLedgerEntry {key: {type: test, lane, testId} \| {type: lane, lane}, events [{tree, env \| null, failing, red, green}] ≥ 1, deflakes: UnitId[]}`; `flakyKeyOf`. Wired in "dev.17: the flaky ledger" below | see there |
+
+## dev.17: the flaky ledger (2026-10-23; 1.0.0-dev.17, experience-won item 4, C3)
+
+The ledger, its deflake units, their code edges and their verification (DESIGN-1.0.md §4 "Flaky ledger";
+src/pipeline/deflake.ts, src/pipeline/deflakemint.ts). Record changes are additive; `SCHEMA_VERSION` stays 1.
+
+| Record | Change | Read-time default |
+|---|---|---|
+| `flake-observed` fact (new) | `{owner: {type: unit, unit} \| {type: job, job}, lane, set: spec\|suite\|arc (FLAKY_LANE_SETS), event: FlakyEvent, forgiven}`; `event.failing` empty unless `set` is `arc`; one per red run (`event.red`), both runs opened by this log. The fold keeps them in log order (`JournalView.flakes`) | — |
+| The ledger | derived, never stored: one `FlakyLedgerEntry` per key of the `flake-observed` facts (`flakyKeysOf`: a test key per failing id, else the lane key), its `deflakes` the plan's deflake units naming it, in plan order (`flakyLedger`) | an arc whose revision in force records no `systemsMap` (applied before dev.17) ran without a ledger: read as empty at the upgrade (`flakyLedgerDefault`, kind `flaky.ledger`, logged once) |
+| `PlanUnit` | `origin` + `deflake` (`UNIT_ORIGINS` appended); `+ deflake?: {keys: FlakyKey[]}` (non-empty, unique, one lane), present exactly on a deflake unit | none (lasting) |
+| Plan `limits` | `+ verification?: {laneMinutes?: positive, lanes?: {<lane id>: positive}}` (lane-minutes) | `laneMinutes` 30 (`DEFAULT_VERIFICATION_LANE_MINUTES`); a batch lane without its own entry: 2 runs (`BATCH_VERIFICATION_RUNS`) |
+| `RevisionSource`, proposer | `+ {type: deflake}`: the code-applied revision admitting deflake units (src/input/classify.ts `deflakeRows`: only it adds a deflake unit, and it adds nothing else) | — |
+| `proc.spawn` subject `lane` | `+ verify?: number` (≥ 2): a deflake unit's verification run count of the lane; its runs are read back as a k-of-n lane with `minPasses = runs` | absent: one run under the red-lane protocol |
+| `LaneRecord` | a forgiven flake: the green rerun with `flaky` and the red run as `voided` (no new field) | — |
+| `AdmissionConstraint` | `+ {type: deflake, deflake, lane}`: a code edge | — |
+| `ORIGIN_RANK` | `+ deflake: 0` (with `repair`) | — |
+| `NEEDS_USER_REASONS` | `+ deflake-parked`, `+ flake-recurring`, both non-blocking (`NON_BLOCKING_M3_REASONS`) | — |
+| Plan-check answer | `+ design?: DesignRecord` read when present (`planCheckOutput`); the answer schema's `design` property is the design pass's to add | absent: none |
+
+1. **Observation** (src/pipeline/lanes.ts). In a series (spec or suite, the lanes stage or a candidate) and in a journey
+   series (a unit's or a job's), a red lane whose diagnostic rerun passed writes `flake-observed` (`observeFlake`) before its
+   record is read: `tree` the lane's input on the commit (the reuse key's `inputSha`), `env` its environment id, `failing`
+   the tests an arc lane's reporter named failing in the red run. A red whose spawn pressure is at or above
+   `PRESSURE_SATURATED` (a series' run on a saturated host) is the pressure protocol's, never a flake. A stochastic lane and
+   a verification run take no diagnostic rerun.
+2. **Forgiveness**: `forgiven` is decided once, at observation (`flakeForgiven`): true unless the owner is a deflake unit
+   (or a re-entry of one) of one of the event's keys. Forgiven, the lane passes on its green rerun; else it is red, `flaky`,
+   charged, and its fix round is told so. A read-back (`seriesLedger`) takes the forgiveness from the fact of the red run.
+3. **Due** (`deflakeDue`): per key, nothing while a deflake of it is open or parked; else the flakes after its deflakes
+   settled (a merged one's publication seq; a cut one's admission seq). None: nothing. Some, with fewer than two deflakes:
+   a deflake is due, one unit per lane and count (`MintGroup`); with two: `flake-recurring`.
+4. **The deflake job** (`applyDeflake`; the scheduler's `deflake` track, every arc, before the end check): raises each
+   recurring item not yet raised (subject the arc, evidence the flake's red and green invocation dirs; `recurringRaised`
+   finds an item by the red run's dir), crash label `deflake.after-recurring`; then, unless draining, admits the due units in
+   one revision through `admitUnit` and `fillMappedObligations`, `evaluateRevision` with proposer `deflake`, and
+   `commitUnderFence` with source `deflake`, parent `arc`; crash label `deflake.after-revision`. A group whose lane is no
+   longer defined (the owner's spec lane, a suite lane, an arc lane) is due nothing. A refusal of its own units is a bug
+   (thrown); a commit the arc moved under is retried.
+5. **The spec seed** (`deflakeSpec`, rev 1): `deflake-<n>` (the next free number); scope the lane's systems' paths and test
+   globs, else the scope of the unit whose spec lane it is, else `**`; a spec lane copied (normalised) from that unit, a
+   suite lane in `forces`, or an arc lane's failing tests as witness items `W-n` of clause `A-1`; acceptance `A-1` (the key
+   passes every run of a tree), decision `D-1` (the two outcomes; external causes are the environment probe's; never
+   quarantine, skip or weaken), facts `F-1` (the flakes' runs) and `F-n` (each earlier deflake of the keys and its state).
+6. **Code edges** (`deflakeHold`, in `admitter`): an undispatched non-deflake unit (`UnitState.spec` null) waits under
+   `deflake{deflake, lane}` while a deflake unit whose lineage head is open (`active`, `held`, `stop-pending`) has a lane
+   among its lanes: `SpecFacts.lanes` (active spec lanes, forces, active witness lanes; read only when an open deflake
+   exists), or a suite lane up to `candidate` its scope may select (no map or no systems: always; a scope pattern
+   overlapping no system: every lane; else the lane's systems meet the dependents closure of the systems its patterns may
+   overlap). Parked, cut or merged: no edge. `raiseDeflakeParked` raises one `deflake-parked` per park (parent the parking
+   stage attempt, found by `raisedWithReason`).
+7. **Verification** (`verificationReasons`, from `judgePlanCheck` on an approve of a deflake unit): with a design record,
+   `verification` absent, a `repeat` whose rationale is blank, or `runs` over the cap is refused through the repair turn,
+   naming the cost: `runs × medianLaneMinutes` (the median wall time of the ledger's red and green runs of its keys, from
+   launch.json's start and exit.json's end) against the lane's minutes; a batch lane without its own entry against 2 runs;
+   no measured run: no cost check. Without a design record nothing is checked here. The lanes stage gives the approving
+   answer's `runs` (≥ 2; `approvedVerification`, `verifyRunsOf`) to the series running the key's spec or suite lane: run
+   fresh (never reused, never test-only), every run passing.

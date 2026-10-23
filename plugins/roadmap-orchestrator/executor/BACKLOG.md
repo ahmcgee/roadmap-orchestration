@@ -610,6 +610,9 @@ at triage stay in git history.
 - The dev.16 spec forms (1.0.0-dev.17, dev.17 records), once no arc started on 1.0.0-dev.16 is in flight: `specPinsDefault`
   (src/core/upgrade.ts, read by `specPinOf` in src/core/records.ts: a spec without `pins`). `designKindDefault` stays only
   as long as a spec may lack a design record before its first plan-check (the design pass decides).
+- The dev.16 arc's missing flaky ledger (1.0.0-dev.17, the flaky ledger), once no arc started on 1.0.0-dev.16 is in
+  flight: `flakyLedgerDefault` (src/core/upgrade.ts, called by `flakyLedger` in src/pipeline/deflake.ts when the revision
+  in force records no `systemsMap`). The ledger itself needs no default: an arc without `flake-observed` facts has none.
 
 - `gateNoteDebtDefault` and `GATE_DEBT_UNRECORDED` (src/core/upgrade.ts), with `gateDebtNotes`' unrecorded arm
   (src/pipeline/gate.ts), once no arc started on 1.0.0-dev.12 is in flight: a dev.12 gate finding has no `debt` and its
