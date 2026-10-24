@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1100" height="1000" viewBox="0 0 1100 1000" role="img" aria-labelledby="title desc">
 <title id="title">How a roadmap-orchestrator arc runs</title>
-<desc id="desc">A simplified swimlane flowchart in three lanes: you (the owner), the architect (Claude in your session) and the executor (a detached process that runs unattended and calls models for judgment). Bootstrap, once per repo: you write the target state, the architect sets up the repo and you confirm the vision and set K, the number of arcs that may chain. Phase 0, each arc: the architect curates the corpus into obligations and questions, writes the plan and specs, and starts the executor, which runs a pack review and a baseline witness. The unattended run: the executor schedules ready units; each unit, in parallel, goes through plan-check (a design pass by a model), a build (a model), the test lanes, a review gate (a model) and publication onto the arc branch; a red lane or a revise from the gate sends it back to its build for a fix round. When a milestone's units have merged, a model walks its journeys; a settled milestone is promoted to a demo you can try. Audits, walk findings and design parks feed the checkpoint, a model that steers the run by admitting, respecifying or cutting units. Meanwhile the architect watches the run, adjudicates the items it hands over through plan edits and resumes, and brings owner-only decisions and questions to you. Completion: when no work is left the executor closes out the arc, the architect opens a stacked PR and checks in with you; if K arcs have run it stops and you merge the stacked PRs, otherwise it chains into the next arc's Phase 0.</desc>
+<desc id="desc">A simplified swimlane flowchart in three lanes: you (the owner), the architect (Claude in your session) and the executor (a detached process that runs unattended and calls models for judgment). Bootstrap, once per repo: you write the target state, the architect sets up the repo and you confirm the vision and set K, the number of arcs that may chain. Phase 0, each arc: the architect curates the corpus into obligations and questions, writes the plan and specs, and starts the executor, which runs a pack review and a baseline witness. The unattended run: the executor schedules ready units; each unit, in parallel, goes through plan-check (a design pass by a model), a build (a model), the test lanes, a review gate (a model) and publication onto the arc branch; a red lane (including an own-commit flake unless already standing at the integration tip) or a revise from the gate sends it back to its build for a charged fix round. When a milestone's units have merged, a model walks its journeys; a settled milestone is promoted to a demo you can try. Audits and walk findings accumulate for the steering checkpoint, every two retired milestones by default after the walk; design parks, unweighed P1s and the final audit trigger it immediately. Without milestones, new audit findings trigger checkpoints. It admits, respecifies or cuts units. Meanwhile the architect watches the run, adjudicates the items it hands over through plan edits and resumes, and brings owner-only decisions and questions to you. Completion: when no work is left the executor closes out the arc, the architect opens a stacked PR and checks in with you; if K arcs have run it stops and you merge the stacked PRs, otherwise it chains into the next arc's Phase 0.</desc>
 <style>
 text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, "DejaVu Sans", sans-serif; fill: #1f2328; }
 .h1 { font-size: 22px; font-weight: 700; }
@@ -127,7 +127,7 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 <path class="arr" d="M947 600 H964" marker-end="url(#ah)"/>
 <path class="arr" d="M902 638 V656 H684 V640" marker-end="url(#ah)"/>
 <path class="arr" d="M793 638 V656"/>
-<text class="al" x="793" y="675" text-anchor="middle">red or revise: fix round</text>
+<text class="al" x="793" y="675" text-anchor="middle">red (incl. own flake) or revise: charged fix round</text>
 
 <rect class="box ex" x="530" y="712" width="190" height="50" rx="8"/>
 <text class="t" x="542" y="732">Milestone walk</text><text class="b" x="542" y="750">journeys end to end</text>
@@ -135,12 +135,16 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 <path class="arr" d="M575 686 V710" marker-end="url(#ah)"/>
 <text class="al" x="583" y="703">milestone reached</text>
 
-<rect class="box ex" x="860" y="712" width="196" height="50" rx="8"/>
-<text class="t" x="872" y="732">Audit, checkpoint</text><text class="b" x="872" y="750">admit, respec, cut</text>
-<rect class="chip" x="1002" y="720" width="44" height="16" rx="8"/><text class="chipt" x="1024" y="732" text-anchor="middle">model</text>
+<rect class="box ex" x="850" y="712" width="206" height="100" rx="8"/>
+<text class="t" x="862" y="732">Steering checkpoint</text>
+<text class="b" x="862" y="750">every 2 milestones, after walk</text>
+<text class="b" x="862" y="768">weigh audit + walk findings</text>
+<text class="b" x="862" y="786">P1, park, final: immediate</text>
+<text class="b" x="862" y="804">no milestones: audit</text>
+<rect class="chip" x="1002" y="792" width="44" height="16" rx="8"/><text class="chipt" x="1024" y="804" text-anchor="middle">model</text>
 <path class="arr" d="M958 686 V710" marker-end="url(#ah)"/>
 <text class="al" x="950" y="703" text-anchor="end">audits, design parks</text>
-<path class="arr" d="M720 737 H858" marker-end="url(#ah)"/>
+<path class="arr" d="M720 737 H848" marker-end="url(#ah)"/>
 <text class="al" x="789" y="731" text-anchor="middle">findings</text>
 <path class="arr" d="M1056 737 H1076 V510 H942" marker-end="url(#ah)"/>
 <text class="al" x="1008" y="503" text-anchor="middle">steers the run</text>
@@ -156,8 +160,8 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 <!-- completion -->
 <rect class="box ex" x="740" y="870" width="200" height="40" rx="8"/>
 <text class="t" x="752" y="895">Close out the arc</text>
-<path class="arr" d="M958 762 V890 H942" marker-end="url(#ah)"/>
-<text class="al" x="966" y="815">no work left</text>
+<path class="arr" d="M958 812 V890 H942" marker-end="url(#ah)"/>
+<text class="al" x="966" y="832">no work left</text>
 <rect class="box ar" x="260" y="870" width="180" height="40" rx="8"/>
 <text class="t" x="272" y="895">Open PR, check in</text>
 <path class="arr" d="M740 890 H442" marker-end="url(#ah)"/>

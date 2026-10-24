@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="2400" height="12370" viewBox="0 0 2400 12370" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" fill="#1f2933">
 <title>Roadmap Arc BPMN</title>
-<desc>BPMN 2.0 process diagram of how a roadmap-orchestrator arc runs as of 1.0.0-dev.17: a top-level collaboration of three pools (owner, architect, executor with lanes for the scheduler, unit pipeline, holistic layer, milestones and demo, flow loop, and fault event sub-processes), followed by expanded sub-process panels for bootstrap, Phase 0, the unit lifecycle, lanes, parks and holds with propagation, deflake and environments, milestone walk and demo, lens audit and checkpoint, the flow loop, the architect's wake handling, arc-wide holds, close-out, PR and chain, and a legend.</desc>
+<desc>BPMN 2.0 process diagram of how a roadmap-orchestrator arc runs as of 1.0.0-dev.21: a top-level collaboration of three pools (owner, architect, executor with lanes for the scheduler, unit pipeline, holistic layer, milestones and demo, flow loop, and fault event sub-processes), followed by expanded sub-process panels for bootstrap, Phase 0, the unit lifecycle, lanes, parks and holds with propagation, deflake and environments, milestone walk and demo, lens audit and checkpoint, the flow loop, the architect's wake handling, arc-wide holds, close-out, PR and chain, and a legend.</desc>
 <defs>
 <marker id="seqarrow" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M0 0 L10 5 L0 10 Z" fill="#1f2933"/></marker>
 <marker id="msgend" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="11" markerHeight="11" orient="auto" markerUnits="userSpaceOnUse"><path d="M1 1 L11 6 L1 11 Z" fill="#fff" stroke="#1565c0" stroke-width="1.3"/></marker>
@@ -63,7 +63,7 @@
 <path d="M40 4670 H2360" stroke="#90a4ae" stroke-width="1" stroke-dasharray="6 6"/>
 <rect x="20" y="6090" width="2360" height="690" rx="18" fill="#fbfcfe" stroke="#1f2933" stroke-width="2.2"/>
 <text font-size="17" text-anchor="start" font-weight="bold"><tspan x="38.0" y="6116.0">Lanes [+], expanded: executor, in a detached checkout of the salvage SHA</tspan></text>
-<text font-size="12.5" text-anchor="start" font-style="italic" fill="#37474f"><tspan x="38.0" y="6136.0">Outcomes end the sub-process and are routed by the "outcome" gateway after lanes in the Unit lifecycle panel.</tspan></text>
+<text font-size="12.5" text-anchor="start" font-style="italic" fill="#37474f"><tspan x="38.0" y="6136.0">Own-commit flake (lanes, witness check, scaffold dry run): charged red, fix round told the lane is flaky; forgive only an already standing tip flake. No deflake minted from it. Outcomes route back to the Unit lifecycle.</tspan></text>
 <rect x="1250" y="6155" width="960" height="290" rx="14" fill="#ffffff" stroke="#1f2933" stroke-width="1.3"/>
 <text font-size="12.5" text-anchor="start" font-weight="bold"><tspan x="1260.0" y="6173.0">Spec series: the spec's lanes (cadence build | unit), in cadence order, serially, under reservations</tspan></text>
 <rect x="20" y="6800" width="2360" height="900" rx="18" fill="#fbfcfe" stroke="#1f2933" stroke-width="2.2"/>
@@ -72,7 +72,7 @@
 <rect x="1320" y="6870" width="1040" height="300" rx="14" fill="#ffffff" stroke="#1f2933" stroke-width="1.3" stroke-dasharray="2 4"/>
 <text font-size="12.5" text-anchor="start" font-weight="bold"><tspan x="1330.0" y="6888.0">Propagation (dev.17): when a requirement or contract changes mid-arc</tspan></text>
 <rect x="1320" y="7190" width="1040" height="250" rx="14" fill="#ffffff" stroke="#1f2933" stroke-width="1.3" stroke-dasharray="2 4"/>
-<text font-size="12.5" text-anchor="start" font-weight="bold"><tspan x="1330.0" y="7208.0">Flaky ledger and deflake units (dev.17)</tspan></text>
+<text font-size="12.5" text-anchor="start" font-weight="bold"><tspan x="1330.0" y="7208.0">Flaky ledger and deflake units (dev.21): mint only from integration-tip flakes</tspan></text>
 <rect x="1320" y="7460" width="1040" height="210" rx="14" fill="#ffffff" stroke="#1f2933" stroke-width="1.3" stroke-dasharray="2 4"/>
 <text font-size="12.5" text-anchor="start" font-weight="bold"><tspan x="1330.0" y="7478.0">Costed environments (dev.17): plan.environments {name: {probe, up?, down?, idleMinutes?}}</tspan></text>
 <rect x="20" y="7720" width="2360" height="800" rx="18" fill="#fbfcfe" stroke="#1f2933" stroke-width="2.2"/>
@@ -594,11 +594,6 @@
 <path d="M930.0 1900.0 L970.0 1900.0" fill="none" stroke="#1f2933" stroke-width="1.5" marker-end="url(#seqarrow)"/>
 <path d="M740.0 1900.0 L780.0 1900.0" fill="none" stroke="#1f2933" stroke-width="1.5" marker-end="url(#seqarrow)"/>
 <path d="M520.0 1900.0 L560.0 1900.0" fill="none" stroke="#1f2933" stroke-width="1.5" marker-end="url(#seqarrow)"/>
-<path d="M295.0 1972.0 L185.0 1972.0 L185.0 1935.0" fill="none" stroke="#1f2933" stroke-width="1.5" marker-end="url(#seqarrow)"/>
-<path d="M310.0 1922.0 L310.0 1957.0" fill="none" stroke="#1f2933" stroke-width="1.5" marker-end="url(#seqarrow)"/>
-<path d="M332.0 1900.0 L360.0 1900.0" fill="none" stroke="#1f2933" stroke-width="1.5" marker-end="url(#seqarrow)"/>
-<path d="M260.0 1900.0 L288.0 1900.0" fill="none" stroke="#1f2933" stroke-width="1.5" marker-end="url(#seqarrow)"/>
-<path d="M87.0 1900.0 L110.0 1900.0" fill="none" stroke="#1f2933" stroke-width="1.5" marker-end="url(#seqarrow)"/>
 <path d="M1790.0 853.0 L1790.0 720.0" fill="none" stroke="#1565c0" stroke-width="1.4" stroke-dasharray="7 4" marker-start="url(#msgstart)" marker-end="url(#msgend)"/>
 <path d="M1260.0 780.0 L1260.0 720.0" fill="none" stroke="#1565c0" stroke-width="1.4" stroke-dasharray="7 4" marker-start="url(#msgstart)" marker-end="url(#msgend)"/>
 <path d="M1300.0 720.0 L1300.0 780.0" fill="none" stroke="#1565c0" stroke-width="1.4" stroke-dasharray="7 4" marker-start="url(#msgstart)" marker-end="url(#msgend)"/>
@@ -678,7 +673,7 @@
 <path d="M1660.0 165.0 L1930.0 165.0" fill="none" stroke="#1f2933" stroke-width="1.5" marker-end="url(#seqarrow)"/>
 <path d="M335.0 165.0 L1000.0 165.0" fill="none" stroke="#1f2933" stroke-width="1.5" marker-end="url(#seqarrow)"/>
 <path d="M112.0 165.0 L130.0 165.0" fill="none" stroke="#1f2933" stroke-width="1.5" marker-end="url(#seqarrow)"/>
-<text font-size="24" text-anchor="start" font-weight="bold"><tspan x="24.0" y="36.0">How a roadmap-orchestrator arc runs (1.0.0-dev.17), in BPMN 2.0</tspan></text>
+<text font-size="24" text-anchor="start" font-weight="bold"><tspan x="24.0" y="36.0">How a roadmap-orchestrator arc runs (1.0.0-dev.21), in BPMN 2.0</tspan></text>
 <text font-size="13" text-anchor="start" fill="#37474f"><tspan x="24.0" y="58.0">Top level: the collaboration between the owner, the architect (Claude in the owner's session) and the executor. Every collapsed sub-process [+] is drawn expanded in a panel further down. Legend at the bottom.</tspan></text>
 <circle cx="95" cy="165" r="17" fill="#fff" stroke="#2e7d32" stroke-width="1.8"/>
 <text font-size="12" text-anchor="middle"><tspan x="95.0" y="197.0">Wants the</tspan><tspan x="95.0" y="211.0">vision</tspan><tspan x="95.0" y="225.0">advanced</tspan></text>
@@ -814,7 +809,7 @@
 <rect x="1068.0" y="1199" width="12" height="12" fill="#fff" stroke="#1f2933" stroke-width="1.2"/><path d="M1070.0 1205 H1078.0 M1074.0 1201 V1209" stroke="#1f2933" stroke-width="1.4"/>
 <rect x="1210" y="1145" width="170" height="70" rx="9" fill="#ffffff" stroke="#1f2933" stroke-width="1.6"/>
 <text font-size="12" text-anchor="start" font-style="italic" fill="#6a1b9a"><tspan x="1218.0" y="1161.0">model: checkpoint (summit)</tspan></text>
-<text font-size="12" text-anchor="middle"><tspan x="1295.0" y="1185.8">Checkpoint</tspan></text>
+<text font-size="12" text-anchor="middle"><tspan x="1295.0" y="1179.0">Steering checkpoint</tspan><tspan x="1295.0" y="1194.0">every 2 milestones (default)</tspan></text>
 <path d="M1290.5 1208 A5.5 5.5 0 1 0 1285.5 1210.5" fill="none" stroke="#1f2933" stroke-width="1.3"/><path d="M1287.5 1208.2 L1290.8 1208 L1291.6 1204.6" fill="none" stroke="#1f2933" stroke-width="1.3"/>
 <rect x="1298.0" y="1199" width="12" height="12" fill="#fff" stroke="#1f2933" stroke-width="1.2"/><path d="M1300.0 1205 H1308.0 M1304.0 1201 V1209" stroke="#1f2933" stroke-width="1.4"/>
 <rect x="980" y="1265" width="170" height="70" rx="9" fill="#ffffff" stroke="#1f2933" stroke-width="1.6"/>
@@ -841,7 +836,7 @@
 <text font-size="12" text-anchor="start" fill="#37474f" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" paint-order="stroke"><tspan x="386.0" y="906.0">no</tspan></text>
 <text font-size="12" text-anchor="start" fill="#37474f" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" paint-order="stroke"><tspan x="656.0" y="864.0">yes</tspan></text>
 <text font-size="12" text-anchor="start" fill="#37474f" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" paint-order="stroke"><tspan x="636.0" y="906.0">no</tspan></text>
-<text font-size="12" text-anchor="middle" fill="#37474f" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" paint-order="stroke"><tspan x="1180.0" y="1138.0">found something new</tspan></text>
+<text font-size="12" text-anchor="middle" fill="#37474f" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" paint-order="stroke"><tspan x="1180.0" y="1138.0">audits + walks accumulate; urgent triggers stay immediate</tspan></text>
 <text font-size="12" text-anchor="middle" fill="#37474f" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" paint-order="stroke"><tspan x="1180.0" y="1258.0">settled</tspan></text>
 <path d="M1552 1130 H1540 V1215 H1552" fill="none" stroke="#37474f" stroke-width="1.4"/>
 <text font-size="12" text-anchor="start" fill="#37474f"><tspan x="1548.0" y="1147.0">The join fires when the completion predicate holds: every unit merged,</tspan><tspan x="1548.0" y="1162.0">cut or superseded; no blocking item, pending command or own-arc</tspan><tspan x="1548.0" y="1177.0">residue; no baseline, audit, checkpoint or walk owed or running; the</tspan><tspan x="1548.0" y="1192.0">latest generation quiescent under the current vision; every non-exempt</tspan><tspan x="1548.0" y="1207.0">obligation held on the head.</tspan></text>
@@ -914,15 +909,8 @@
 <text font-size="12" text-anchor="start" fill="#1565c0"><tspan x="1306.0" y="744.0">roadmap commands: apply, resume, scope, ack, steer,</tspan><tspan x="1306.0" y="758.0">merge-in, flow, audit, pause, stop, rule …</tspan></text>
 <text font-size="12" text-anchor="end" fill="#1565c0"><tspan x="1254.0" y="758.0">watch stream: items, merges, parks, run state</tspan></text>
 <text font-size="12" text-anchor="start" fill="#1565c0" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" paint-order="stroke"><tspan x="1796.0" y="760.0">complete</tspan></text>
-<circle cx="70" cy="1900" r="17" fill="#fff" stroke="#2e7d32" stroke-width="1.8"/>
-<rect x="110" y="1865" width="150" height="70" rx="9" fill="#ffffff" stroke="#1f2933" stroke-width="1.6"/>
-<text font-size="12" text-anchor="middle"><tspan x="185.0" y="1897.3">roadmap issues --repo:</tspan><tspan x="185.0" y="1911.3">who may open issues?</tspan></text>
-<path d="M310 1878 L332 1900 L310 1922 L288 1900 Z" fill="#fff" stroke="#1f2933" stroke-width="1.6"/>
-<path d="M303 1893 L317 1907 M317 1893 L303 1907" stroke="#1f2933" stroke-width="3.2"/>
-<text font-size="12" text-anchor="middle"><tspan x="310.0" y="1856.0">anyone can open</tspan><tspan x="310.0" y="1870.0">issues?</tspan></text>
-<circle cx="310" cy="1972" r="15" fill="#fff" stroke="#9a6700" stroke-width="1.5"/><circle cx="310" cy="1972" r="11.5" fill="none" stroke="#9a6700" stroke-width="1.5"/>
-<rect x="302.5" y="1967" width="15" height="10" fill="#1f2933" stroke="#1f2933" stroke-width="1.1"/><path d="M302.5 1967 L310 1973 L317.5 1967" fill="none" stroke="#fff" stroke-width="1.1"/>
-<text font-size="12" text-anchor="start"><tspan x="331.0" y="1969.0">issue-policy-untrusted: ask the owner</tspan><tspan x="331.0" y="1983.0">to restrict issue creation</tspan></text>
+<circle cx="300" cy="1900" r="17" fill="#fff" stroke="#2e7d32" stroke-width="1.8"/>
+<path d="M317 1900 L360 1900" fill="none" stroke="#1f2933" stroke-width="1.5" marker-end="url(#seqarrow)"/>
 <rect x="360" y="1865" width="160" height="70" rx="9" fill="#ffffff" stroke="#1f2933" stroke-width="1.6"/>
 <text font-size="12" text-anchor="middle"><tspan x="440.0" y="1890.3">Write .roadmap/corpus.md:</tspan><tspan x="440.0" y="1904.3">source, include patterns,</tspan><tspan x="440.0" y="1918.3">vision doc path</tspan></text>
 <rect x="560" y="1865" width="180" height="70" rx="9" fill="#ffffff" stroke="#1f2933" stroke-width="4"/>
@@ -944,11 +932,9 @@
 <path d="M1965 1878 L1987 1900 L1965 1922 L1943 1900 Z" fill="#fff" stroke="#1f2933" stroke-width="1.6"/>
 <path d="M1958 1893 L1972 1907 M1972 1893 L1958 1907" stroke="#1f2933" stroke-width="3.2"/>
 <rect x="2015" y="1865" width="180" height="70" rx="9" fill="#ffffff" stroke="#1f2933" stroke-width="1.6"/>
-<text font-size="12" text-anchor="middle"><tspan x="2105.0" y="1897.3">Offer the resume-arc boot</tspan><tspan x="2105.0" y="1911.3">hook; optional issue templates</tspan></text>
+<text font-size="12" text-anchor="middle"><tspan x="2105.0" y="1897.3">Offer the resume-arc boot</tspan><tspan x="2105.0" y="1911.3">hook</tspan></text>
 <circle cx="2250" cy="1900" r="17" fill="#fff" stroke="#b71c1c" stroke-width="4"/>
 <text font-size="12" text-anchor="middle"><tspan x="2250.0" y="1932.0">ready for</tspan><tspan x="2250.0" y="1946.0">Phase 0</tspan></text>
-<text font-size="12" text-anchor="start" fill="#37474f" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" paint-order="stroke"><tspan x="340.0" y="1894.0">no</tspan></text>
-<text font-size="12" text-anchor="start" fill="#37474f" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" paint-order="stroke"><tspan x="316.0" y="1942.0">yes</tspan></text>
 <text font-size="12" text-anchor="start" fill="#37474f" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" paint-order="stroke"><tspan x="1680.0" y="1894.0">yes</tspan></text>
 <text font-size="12" text-anchor="start" fill="#37474f" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" paint-order="stroke"><tspan x="1656.0" y="1842.0">no</tspan></text>
 <path d="M423.0 1788 H447.0 L457.0 1798 V1832 H423.0 Z" fill="#fff" stroke="#455a64" stroke-width="1.5"/><path d="M447.0 1788 V1798 H457.0" fill="none" stroke="#455a64" stroke-width="1.2"/>
@@ -978,7 +964,7 @@
 <rect x="1390" y="2092" width="170" height="96" rx="9" fill="#ffffff" stroke="#1f2933" stroke-width="1.6"/>
 <text font-size="12" text-anchor="middle"><tspan x="1475.0" y="2130.3">Questions P-n, ranked, each</tspan><tspan x="1475.0" y="2144.3">with a working assumption</tspan><tspan x="1475.0" y="2158.3">(an answer must be applied)</tspan></text>
 <rect x="1590" y="2092" width="230" height="96" rx="9" fill="#ffffff" stroke="#1f2933" stroke-width="1.6"/>
-<text font-size="12" text-anchor="middle"><tspan x="1705.0" y="2123.3">Dispositions: debt promote | keep |</tspan><tspan x="1705.0" y="2137.3">resolve; amendments applied | rejected |</tspan><tspan x="1705.0" y="2151.3">deferred; issue intake (roadmap issues</tspan><tspan x="1705.0" y="2165.3">--out), one outcome per issue</tspan></text>
+<text font-size="12" text-anchor="middle"><tspan x="1705.0" y="2123.3">Dispositions: debt promote | keep |</tspan><tspan x="1705.0" y="2138.3">resolve; amendments applied | rejected |</tspan><tspan x="1705.0" y="2153.3">deferred</tspan></text>
 <rect x="1850" y="2092" width="170" height="96" rx="9" fill="#ffffff" stroke="#1f2933" stroke-width="1.6"/>
 <text font-size="12" text-anchor="middle"><tspan x="1935.0" y="2137.3">Slice: slice.advances equals</tspan><tspan x="1935.0" y="2151.3">holistic.advances</tspan></text>
 <rect x="110" y="2272" width="340" height="116" rx="9" fill="#ffffff" stroke="#1f2933" stroke-width="1.6"/>
@@ -1003,7 +989,7 @@
 <path d="M275 2436 V2443 M280 2436 V2443 M285 2436 V2443" stroke="#455a64" stroke-width="1.4"/>
 <text font-size="12" text-anchor="start"><tspan x="303.0" y="2428.0">plan + specs</tspan></text>
 <path d="M1162 2262 H1150 V2347 H1162" fill="none" stroke="#37474f" stroke-width="1.4"/>
-<text font-size="12" text-anchor="start" fill="#37474f"><tspan x="1158.0" y="2279.0">Refusals (phase0 check and start share rows): legacy-roadmap-dir; plan-invalid (dev.17: also a lane naming an undeclared system, or a forces naming no suite lane); spec-lane-unrunnable; unsupported-routing;</tspan><tspan x="1158.0" y="2294.0">holistic-needs-corpus; milestones-need-holistic; walk-tools-missing; vision-unconfirmed; corpus-invalid (pin drift, reused T-n, rules in the vision, scope or contract overlapping the corpus); phase0-invalid (census, debt,</tspan><tspan x="1158.0" y="2309.0">amendments, intake, questions, answer-unapplied, spec-census-mismatch); chain-invalid; issue-policy-untrusted; tree-uncommitted; row 11 plan-defect (a witness file outside its lane's testPaths / argv; a witness file absent at</tspan><tspan x="1158.0" y="2324.0">the tip and outside every deliverer's scope; a derived output on the corpus; milestone-references-oversize). start only: backend-smoke (after ready), undispositioned-residue, host rows, host busy (exit 75). Advisories never</tspan><tspan x="1158.0" y="2339.0">refuse: scope-references-outside, derived-unregenerated, milestone-unit-before-design.</tspan></text>
+<text font-size="12" text-anchor="start" fill="#37474f"><tspan x="1158.0" y="2279.0">Refusals (phase0 check and start share rows): legacy-roadmap-dir; plan-invalid (dev.17: also a lane naming an undeclared system, or a forces naming no suite lane); spec-lane-unrunnable; unsupported-routing;</tspan><tspan x="1158.0" y="2294.0">holistic-needs-corpus; milestones-need-holistic; walk-tools-missing; vision-unconfirmed; corpus-invalid (pin drift, reused T-n, rules in the vision, scope or contract overlapping the corpus); phase0-invalid (census, debt,</tspan><tspan x="1158.0" y="2309.0">amendments, questions, answer-unapplied, spec-census-mismatch); chain-invalid; tree-uncommitted; row 11 plan-defect (a witness file outside its lane's testPaths / argv; a witness file absent at</tspan><tspan x="1158.0" y="2324.0">the tip and outside every deliverer's scope; a derived output on the corpus; milestone-references-oversize). start only: backend-smoke (after ready), undispositioned-residue, host rows, host busy (exit 75). Advisories never</tspan><tspan x="1158.0" y="2339.0">refuse: scope-references-outside, derived-unregenerated, milestone-unit-before-design.</tspan></text>
 <text font-size="14" text-anchor="start" font-weight="bold"><tspan x="40.0" y="2592.0">A. Entry and the design pass (plan-check)</tspan></text>
 <circle cx="75" cy="2700" r="17" fill="#fff" stroke="#2e7d32" stroke-width="1.8"/>
 <text font-size="12" text-anchor="middle"><tspan x="75.0" y="2732.0">admitted</tspan></text>
@@ -1265,8 +1251,8 @@
 <text font-size="12" text-anchor="middle"><tspan x="700.0" y="4044.3">quiesce</tspan></text>
 <rect x="780" y="4000" width="165" height="80" rx="9" fill="#ffffff" stroke="#1f2933" stroke-width="1.6"/>
 <text font-size="12" text-anchor="middle"><tspan x="862.5" y="4023.3">evidence: snapshot the</tspan><tspan x="862.5" y="4037.3">output; append</tspan><tspan x="862.5" y="4051.3">decisions.json to the spec's</tspan><tspan x="862.5" y="4065.3">decisions</tspan></text>
-<rect x="970" y="3990" width="205" height="100" rx="9" fill="#ffffff" stroke="#1f2933" stroke-width="1.6"/>
-<text font-size="12" text-anchor="middle"><tspan x="1072.5" y="4016.3">salvage: commit only paths in the</tspan><tspan x="1072.5" y="4030.3">effective scope (scope + derived</tspan><tspan x="1072.5" y="4044.3">outputs); revert out-of-scope edits,</tspan><tspan x="1072.5" y="4058.3">named to the gate and the next fix</tspan><tspan x="1072.5" y="4072.3">round</tspan></text>
+<rect x="970" y="3960" width="205" height="160" rx="9" fill="#ffffff" stroke="#1f2933" stroke-width="1.6"/>
+<text font-size="12" text-anchor="middle"><tspan x="1072.5" y="3996.3">salvage: commit effective scope</tspan><tspan x="1072.5" y="4011.3">+ derived outputs; revert other</tspan><tspan x="1072.5" y="4026.3">edits, named to gate / fix round.</tspan><tspan x="1072.5" y="4041.3">Run the transient scope check:</tspan><tspan x="1072.5" y="4056.3">violation → charged build fix;</tspan><tspan x="1072.5" y="4071.3">failed cleanup → residue park</tspan></text>
 <path d="M1220 4018 L1242 4040 L1220 4062 L1198 4040 Z" fill="#fff" stroke="#1f2933" stroke-width="1.6"/>
 <path d="M1213 4033 L1227 4047 M1227 4033 L1213 4047" stroke="#1f2933" stroke-width="3.2"/>
 <text font-size="12" text-anchor="middle"><tspan x="1220.0" y="4010.0">merged?</tspan></text>
@@ -1413,8 +1399,9 @@
 <text font-size="12" text-anchor="start" fill="#37474f" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" paint-order="stroke"><tspan x="516.0" y="5292.0">process-fault, context-exceeded,</tspan><tspan x="516.0" y="5306.0">routing-changed, executor-fault</tspan></text>
 <path d="M1242 4740 H1230 V4780 H1242" fill="none" stroke="#37474f" stroke-width="1.4"/>
 <text font-size="12" text-anchor="start" fill="#37474f"><tspan x="1238.0" y="4757.0">Proportional review (dev.17). A blocking finding must name a defect: incorrect-behaviour | contract-violation | security | requirement-unmet | test-inadequate | data-loss; otherwise the answer is refused through</tspan><tspan x="1238.0" y="4772.0">the repair turn. test-inadequate: a test cited as proof does not verify it (an uncited imperfect test never blocks). Comment and doc findings ride along: never a revise; debt if they name a drag, else released.</tspan></text>
-<path d="M1242 4810 H1230 V4865 H1242" fill="none" stroke="#37474f" stroke-width="1.4"/>
+<path d="M1242 4810 H1230 V4895 H1242" fill="none" stroke="#37474f" stroke-width="1.4"/>
 <text font-size="12" text-anchor="start" fill="#37474f"><tspan x="1238.0" y="4827.0">Findings ledger (R-n, anchored at file blob): blocking findings open; a settled finding (fixed, released, banked, or a dispute ruled) cannot block again unless its blob changed. The builder may dispute in</tspan><tspan x="1238.0" y="4842.0">decisions.json; the next gate rules once, finally. Delta re-gate: an approval records file blobs; a later gate at the same spec revision reviews only changed files plus files citing a moved contract or requirement;</tspan><tspan x="1238.0" y="4857.0">nothing changed and nothing moved → delta-empty, no call, approved again.</tspan></text>
+<text font-size="12" text-anchor="start" fill="#37474f"><tspan x="1238.0" y="4872.0">Scope-only re-entry: carry the latest approval only at its exact approved head, with no later failed gate and an otherwise equivalent spec (design records may differ).</tspan><tspan x="1238.0" y="4887.0">Its diff must pass the new pinned scope check; only delta-empty carries, with no judge call. Otherwise review in full.</tspan></text>
 <path d="M1242 4900 H1230 V4955 H1242" fill="none" stroke="#37474f" stroke-width="1.4"/>
 <text font-size="12" text-anchor="start" fill="#37474f"><tspan x="1238.0" y="4917.0">Inputs: the spec with its design record, contracts and rulings, the lane ledger, witness and smoke checks, the scope plus growth and reverted paths, plan-check notes. Large diff: at least seat high (frontier,</tspan><tspan x="1238.0" y="4932.0">which every tier now is), and a clusters map covering every changed path once. Propagation hold: no unit linking a changed requirement or contract, or whose design breaks a re-witnessed file, is admitted to</tspan><tspan x="1238.0" y="4947.0">its gate until the propagation unit merges or is cut.</tspan></text>
 <circle cx="80" cy="5390" r="15" fill="#fff" stroke="#9a6700" stroke-width="1.5"/><circle cx="80" cy="5390" r="11.5" fill="none" stroke="#9a6700" stroke-width="1.5"/>
@@ -1562,9 +1549,9 @@
 <text font-size="12" text-anchor="middle"><tspan x="1955.0" y="6332.3">Red-lane protocol: busy host and</tspan><tspan x="1955.0" y="6346.3">host signature → wait, rerun; repeat</tspan><tspan x="1955.0" y="6360.3">of the confirmed red → no rerun;</tspan><tspan x="1955.0" y="6374.3">otherwise one same-SHA diagnostic</tspan><tspan x="1955.0" y="6388.3">rerun</tspan></text>
 <path d="M2105 6334 L2127 6356 L2105 6378 L2083 6356 Z" fill="#fff" stroke="#1f2933" stroke-width="1.6"/>
 <path d="M2098 6349 L2112 6363 M2112 6349 L2098 6363" stroke="#1f2933" stroke-width="3.2"/>
-<text font-size="12" text-anchor="middle"><tspan x="2105.0" y="6393.0">green on rerun?</tspan></text>
+<text font-size="12" text-anchor="middle"><tspan x="2105.0" y="6393.0">green rerun</tspan><tspan x="2105.0" y="6408.0">forgiven?</tspan></text>
 <circle cx="2105" cy="6235" r="15" fill="#fff" stroke="#b71c1c" stroke-width="4"/>
-<text font-size="12" text-anchor="end"><tspan x="2084.0" y="6225.0">flake: flaky ledger, forgiven</tspan><tspan x="2084.0" y="6239.0">(not for a deflake unit of that</tspan><tspan x="2084.0" y="6253.0">key)</tspan></text>
+<text font-size="12" text-anchor="end"><tspan x="2084.0" y="6225.0">flake: integration tip or standing</tspan><tspan x="2084.0" y="6240.0">tip flake only; never its own</tspan><tspan x="2084.0" y="6255.0">deflake (ledger, forgiven)</tspan></text>
 <circle cx="2170" cy="6356" r="15" fill="#fff" stroke="#b71c1c" stroke-width="4"/>
 <path d="M2163 6363 L2167 6350 L2172 6358 L2177 6349 L2173 6362 L2168 6354 Z" fill="#1f2933" stroke="#1f2933" stroke-width="1.1" stroke-linejoin="round"/>
 <text font-size="12" text-anchor="middle"><tspan x="2170.0" y="6386.0">red</tspan></text>
@@ -1771,7 +1758,7 @@
 <text font-size="12" text-anchor="start" fill="#37474f"><tspan x="1718.0" y="7117.0">Pins: spec obligations, repairs and witnesses → requirement@rev; contracts → blob; design failure modes and</tspan><tspan x="1718.0" y="7132.0">interfaces pinned. A vision edit reaches units through the obligations serving the edited clause.</tspan></text>
 <circle cx="1370" cy="7300" r="17" fill="#fff" stroke="#2e7d32" stroke-width="1.8"/>
 <rect x="1364" y="7292" width="12" height="16" fill="#fff" stroke="#1f2933" stroke-width="1.1"/><path d="M1366.5 7296 H1373.5 M1366.5 7299.5 H1373.5 M1366.5 7303 H1373.5" stroke="#1f2933" stroke-width="1"/>
-<text font-size="12" text-anchor="middle"><tspan x="1370.0" y="7332.0">flake recorded</tspan><tspan x="1370.0" y="7346.0">(lane, testId)</tspan></text>
+<text font-size="12" text-anchor="middle"><tspan x="1370.0" y="7332.0">tip flake</tspan><tspan x="1370.0" y="7347.0">(lane, testId)</tspan></text>
 <path d="M1430 7278 L1452 7300 L1430 7322 L1408 7300 Z" fill="#fff" stroke="#1f2933" stroke-width="1.6"/>
 <path d="M1423 7293 L1437 7307 M1437 7293 L1423 7307" stroke="#1f2933" stroke-width="3.2"/>
 <text font-size="12" text-anchor="middle"><tspan x="1430.0" y="7256.0">draining, or two</tspan><tspan x="1430.0" y="7270.0">deflakes already?</tspan></text>
@@ -1895,16 +1882,16 @@
 <text font-size="14" text-anchor="start" font-weight="bold"><tspan x="40.0" y="8110.0">Repair loop</tspan></text>
 <circle cx="75" cy="8170" r="17" fill="#fff" stroke="#2e7d32" stroke-width="1.8"/>
 <rect x="69" y="8162" width="12" height="16" fill="#fff" stroke="#1f2933" stroke-width="1.1"/><path d="M71.5 8166 H78.5 M71.5 8169.5 H78.5 M71.5 8173 H78.5" stroke="#1f2933" stroke-width="1"/>
-<text font-size="12" text-anchor="middle"><tspan x="75.0" y="8202.0">a walk ended with</tspan><tspan x="75.0" y="8216.0">findings no</tspan><tspan x="75.0" y="8230.0">checkpoint has</tspan><tspan x="75.0" y="8244.0">weighed</tspan></text>
+<text font-size="12" text-anchor="middle"><tspan x="75.0" y="8202.0">unweighed</tspan><tspan x="75.0" y="8217.0">blocking walk P1</tspan><tspan x="75.0" y="8232.0">(nonblocking</tspan><tspan x="75.0" y="8247.0">findings wait)</tspan></text>
 <rect x="130" y="8135" width="190" height="70" rx="9" fill="#ffffff" stroke="#1f2933" stroke-width="4"/>
-<text font-size="12" text-anchor="middle"><tspan x="225.0" y="8160.3">Checkpoint admits repairs</tspan><tspan x="225.0" y="8174.3">(breaks block; deviations</tspan><tspan x="225.0" y="8188.3">repaired alongside)</tspan></text>
+<text font-size="12" text-anchor="middle"><tspan x="225.0" y="8160.3">Immediate checkpoint</tspan><tspan x="225.0" y="8175.3">admits break repairs;</tspan><tspan x="225.0" y="8190.3">deviations wait for cadence</tspan></text>
 <rect x="360" y="8135" width="180" height="70" rx="9" fill="#ffffff" stroke="#1f2933" stroke-width="1.6"/>
 <text font-size="12" text-anchor="middle"><tspan x="450.0" y="8160.8">Repair units run the Unit</tspan><tspan x="450.0" y="8174.8">lifecycle</tspan></text>
 <path d="M437.0 8189 V8201 M441.0 8189 V8201 M445.0 8189 V8201" stroke="#1f2933" stroke-width="1.6"/>
 <rect x="453.0" y="8189" width="12" height="12" fill="#fff" stroke="#1f2933" stroke-width="1.2"/><path d="M455.0 8195 H463.0 M459.0 8191 V8199" stroke="#1f2933" stroke-width="1.4"/>
 <path d="M590 8148 L612 8170 L590 8192 L568 8170 Z" fill="#fff" stroke="#1f2933" stroke-width="1.6"/>
 <path d="M583 8163 L597 8177 M597 8163 L583 8177" stroke="#1f2933" stroke-width="3.2"/>
-<text font-size="12" text-anchor="middle"><tspan x="650.0" y="8126.0">one of round k's units merged</tspan><tspan x="650.0" y="8140.0">and k &lt; walkRounds (default 3)?</tspan></text>
+<text font-size="12" text-anchor="middle"><tspan x="650.0" y="8126.0">round k&#x27;s blocking repair merged</tspan><tspan x="650.0" y="8141.0">and k &lt; walkRounds (default 3)?</tspan></text>
 <circle cx="680" cy="8170" r="15" fill="#fff" stroke="#b71c1c" stroke-width="4"/>
 <path d="M680 8162 L688 8176 L672 8176 Z" fill="#1f2933" stroke="#1f2933" stroke-width="1.1"/>
 <text font-size="12" text-anchor="start"><tspan x="701.0" y="8167.0">next round's walk is</tspan><tspan x="701.0" y="8181.0">due</tspan></text>
@@ -1924,7 +1911,7 @@
 <text font-size="12" text-anchor="start" fill="#37474f" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" paint-order="stroke"><tspan x="846.0" y="8242.0">yes</tspan></text>
 <text font-size="12" text-anchor="start" fill="#37474f" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" paint-order="stroke"><tspan x="826.0" y="8290.0">no</tspan></text>
 <path d="M52 8345 H40 V8400 H52" fill="none" stroke="#37474f" stroke-width="1.4"/>
-<text font-size="12" text-anchor="start" fill="#37474f"><tspan x="48.0" y="8362.0">Break vs deviation. A break would force rework if fixed later (the journey cannot be completed, the interface contract is wrong, or a declared floor is violated): a P1 that keeps the</tspan><tspan x="48.0" y="8377.0">milestone node unpassed, so DAG descendants wait. A deviation (copy, visuals within tokens, layout, docs disagreeing with a correct contract, log text) is a P2, repaired alongside; it</tspan><tspan x="48.0" y="8392.0">holds nothing. A walkthrough P1 still open after the park deadline also raises finding-p1-escalated.</tspan></text>
+<text font-size="12" text-anchor="start" fill="#37474f"><tspan x="48.0" y="8362.0">Break vs deviation. A break would force rework if fixed later (the journey cannot be completed, the interface contract is wrong, or a declared floor is violated): a P1 that keeps the</tspan><tspan x="48.0" y="8377.0">milestone node unpassed, so DAG descendants wait. A deviation (copy, visuals within tokens, layout, docs disagreeing with a correct contract, log text) is a P2, repaired alongside; it</tspan><tspan x="48.0" y="8392.0">holds neither dependents nor a walk round open; it waits for the steering checkpoint. An overdue walkthrough P1 also raises finding-p1-escalated.</tspan></text>
 <text font-size="14" text-anchor="start" font-weight="bold"><tspan x="1080.0" y="8110.0">Polish (code admits, no checkpoint)</tspan></text>
 <circle cx="1110" cy="8170" r="17" fill="#fff" stroke="#2e7d32" stroke-width="1.8"/>
 <rect x="1104" y="8162" width="12" height="16" fill="#fff" stroke="#1f2933" stroke-width="1.1"/><path d="M1106.5 8166 H1113.5 M1106.5 8169.5 H1113.5 M1106.5 8173 H1113.5" stroke="#1f2933" stroke-width="1"/>
@@ -1986,13 +1973,13 @@
 <text font-size="12" text-anchor="start" fill="#37474f"><tspan x="102.0" y="8663.0">cadence: every N = 5 qualifying publications (unit, batch, rule</tspan><tspan x="102.0" y="8677.0">with contract ops)</tspan></text>
 <circle cx="80" cy="8745" r="15" fill="#fff" stroke="#2e7d32" stroke-width="1.8"/>
 <rect x="74" y="8737" width="12" height="16" fill="#fff" stroke="#1f2933" stroke-width="1.1"/><path d="M76.5 8741 H83.5 M76.5 8744.5 H83.5 M76.5 8748 H83.5" stroke="#1f2933" stroke-width="1"/>
-<text font-size="12" text-anchor="start" fill="#37474f"><tspan x="102.0" y="8723.0">unwitnessed: a publication left a selected future or exempt</tspan><tspan x="102.0" y="8737.0">obligation unwitnessed</tspan></text>
+<text font-size="12" text-anchor="start" fill="#37474f"><tspan x="102.0" y="8723.0">unwitnessed: publication leaves an active future obligation</tspan><tspan x="102.0" y="8738.0">unwitnessed; ignore waived / deferred / retired</tspan></text>
 <circle cx="80" cy="8805" r="15" fill="#fff" stroke="#2e7d32" stroke-width="1.8"/>
 <rect x="74" y="8797" width="12" height="16" fill="#fff" stroke="#1f2933" stroke-width="1.1"/><path d="M76.5 8801 H83.5 M76.5 8804.5 H83.5 M76.5 8808 H83.5" stroke="#1f2933" stroke-width="1"/>
 <text font-size="12" text-anchor="start" fill="#37474f"><tspan x="102.0" y="8769.0">drift: after a bundle, rule, reverse, or an architect spec,</tspan><tspan x="102.0" y="8783.0">obligation or vision edit (drift and vision lenses; vision only for</tspan><tspan x="102.0" y="8797.0">a specs-only bundle)</tspan></text>
 <circle cx="80" cy="8885" r="15" fill="#fff" stroke="#2e7d32" stroke-width="1.8"/>
 <circle cx="80" cy="8885" r="9" fill="#fff" stroke="#1f2933" stroke-width="1.2"/><path d="M87.0 8885.0 L88.6 8885.0 M86.1 8888.5 L87.4 8889.3 M83.5 8891.1 L84.3 8892.4 M80.0 8892.0 L80.0 8893.6 M76.5 8891.1 L75.7 8892.4 M73.9 8888.5 L72.6 8889.3 M73.0 8885.0 L71.4 8885.0 M73.9 8881.5 L72.6 8880.7 M76.5 8878.9 L75.7 8877.6 M80.0 8878.0 L80.0 8876.4 M83.5 8878.9 L84.3 8877.6 M86.1 8881.5 L87.4 8880.7 " stroke="#1f2933" stroke-width="0.9"/><path d="M80 8885 L81 8879 M80 8885 L84.5 8886.5" stroke="#1f2933" stroke-width="1.3"/>
-<text font-size="12" text-anchor="start" fill="#37474f"><tspan x="102.0" y="8877.0">wall-clock: 360 min</tspan></text>
+<text font-size="12" text-anchor="start" fill="#37474f"><tspan x="102.0" y="8877.0">wall-clock: 360 min; publication since last audit started</tspan></text>
 <circle cx="80" cy="8945" r="15" fill="#fff" stroke="#2e7d32" stroke-width="1.8"/>
 <rect x="72.5" y="8940" width="15" height="10" fill="#fff" stroke="#1f2933" stroke-width="1.1"/><path d="M72.5 8940 L80 8946 L87.5 8940" fill="none" stroke="#1f2933" stroke-width="1.1"/>
 <text font-size="12" text-anchor="start" fill="#37474f"><tspan x="102.0" y="8937.0">requested: audit [--lens]</tspan></text>
@@ -2001,6 +1988,8 @@
 <text font-size="12" text-anchor="start" fill="#37474f"><tspan x="102.0" y="8997.0">final: outstanding ranges once no work remains</tspan></text>
 <path d="M450 8818 L472 8840 L450 8862 L428 8840 Z" fill="#fff" stroke="#1f2933" stroke-width="1.6"/>
 <path d="M443 8833 L457 8847 M457 8833 L443 8847" stroke="#1f2933" stroke-width="3.2"/>
+<path d="M512 8655 H500 V8710 H512" fill="none" stroke="#37474f" stroke-width="1.4"/>
+<text font-size="12" text-anchor="start" fill="#37474f"><tspan x="508.0" y="8672.0">Before audit-started: select lenses and require an outstanding coverage range.</tspan><tspan x="508.0" y="8687.0">Explicit request / semantic drift may inspect an unchanged head;</tspan><tspan x="508.0" y="8702.0">final selects outstanding lenses only. Suppressed audits never start.</tspan></text>
 <rect x="500" y="8790" width="230" height="100" rx="9" fill="#ffffff" stroke="#1f2933" stroke-width="1.6"/>
 <text font-size="12" text-anchor="start" font-style="italic" fill="#6a1b9a"><tspan x="508.0" y="8806.0">model: lens (efficient)</tspan></text>
 <text font-size="12" text-anchor="middle"><tspan x="615.0" y="8831.8">Four lenses (invariants, drift, vacuity,</tspan><tspan x="615.0" y="8845.8">vision), serially; each over its range in</tspan><tspan x="615.0" y="8859.8">chunks within the diff budget</tspan></text>
@@ -2020,16 +2009,24 @@
 <text font-size="12" text-anchor="middle"><tspan x="1130.0" y="8872.0">audit</tspan><tspan x="1130.0" y="8886.0">complete</tspan></text>
 <text font-size="12" text-anchor="start" fill="#37474f" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" paint-order="stroke"><tspan x="1016.0" y="8834.0">no</tspan></text>
 <text font-size="12" text-anchor="start" fill="#37474f" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" paint-order="stroke"><tspan x="996.0" y="8882.0">yes</tspan></text>
+<path d="M512 8920 H500 V8960 H512" fill="none" stroke="#37474f" stroke-width="1.4"/>
+<text font-size="12" text-anchor="start" fill="#37474f"><tspan x="508.0" y="8937.0">Lost lens call: at most two reissues across restarts; then abandon the audit.</tspan><tspan x="508.0" y="8952.0">Keep coverage for chunks already reported.</tspan></text>
 <path d="M512 8970 H500 V9010 H512" fill="none" stroke="#37474f" stroke-width="1.4"/>
-<text font-size="12" text-anchor="start" fill="#37474f"><tspan x="508.0" y="8987.0">Owed for 2N publications or 12 h → audit-owed (non-blocking). A completed audit triggers the checkpoint; if it found</tspan><tspan x="508.0" y="9002.0">nothing new, the checkpoint is skipped (right).</tspan></text>
+<text font-size="12" text-anchor="start" fill="#37474f"><tspan x="508.0" y="8987.0">Owed for 2N publications or 12 h → audit-owed (non-blocking). Audit findings accumulate for the milestone checkpoint;</tspan><tspan x="508.0" y="9002.0">unweighed P1 / final audits trigger immediately. Without milestones, audits with new findings trigger checkpoints.</tspan></text>
 <path d="M52 9100 H40 V9140 H52" fill="none" stroke="#37474f" stroke-width="1.4"/>
 <text font-size="12" text-anchor="start" fill="#37474f"><tspan x="48.0" y="9117.0">bundle-request is the architect's: ack --choice apply | reject (or acknowledge | decline). Still open at close-out, code declines it and turns it into an amendment. Owner-requests (irreversible, over $10, legal; also a</tspan><tspan x="48.0" y="9132.0">vision, resource, config, gc or ref op; a new lane program) apply nothing and raise a blocking item.</tspan></text>
+<path d="M52 9023 H40 V9078 H52" fill="none" stroke="#37474f" stroke-width="1.4"/>
+<text font-size="12" text-anchor="start" fill="#37474f"><tspan x="48.0" y="9040.0">Non-bundle drift: throttle to 60 min from last audit start while work remains.</tspan><tspan x="48.0" y="9055.0">Held drift joins the next audit (any fresh trigger can carry it).</tspan><tspan x="48.0" y="9070.0">Bundle drift and drift after work ends are never held.</tspan></text>
 <path d="M52 9152 H40 V9192 H52" fill="none" stroke="#37474f" stroke-width="1.4"/>
 <text font-size="12" text-anchor="start" fill="#37474f"><tspan x="48.0" y="9169.0">Admit classes (corpus arcs): repair and oversight always admitted; opportunity limited to one per arc, needs its witness, gets one follow-up repair; unrelated, over-budget, unwitnessed and follow-up-overrun admits</tspan><tspan x="48.0" y="9184.0">are dropped and become corpus amendments.</tspan></text>
 <path d="M52 9204 H40 V9244 H52" fill="none" stroke="#37474f" stroke-width="1.4"/>
 <text font-size="12" text-anchor="start" fill="#37474f"><tspan x="48.0" y="9221.0">Divergences: one per act departing from the target, an obligation, the plan or a contract, and one per interpretation, with preimages; non-blocking, rolled into a divergence-digest; the architect can reverse &lt;D-n&gt; or</tspan><tspan x="48.0" y="9236.0">apply. Amendments are dispositioned at the next Phase 0; the corpus is never edited mid-arc except for an owner's answer.</tspan></text>
 <path d="M52 9256 H40 V9296 H52" fill="none" stroke="#37474f" stroke-width="1.4"/>
 <text font-size="12" text-anchor="start" fill="#37474f"><tspan x="48.0" y="9273.0">Tail brakes (dev.13): a P3 is never debt. Regress brake (findings about code written by finding-origin units) and settled brake (every milestone passed, every other unit merged or cut, below-P1 findings bearing on</tspan><tspan x="48.0" y="9288.0">no non-negotiable clause): an admit spawns no unit, P2s are released (or banked if ruled deferred). Neither touches P1s, obligation-broken or walkthrough findings.</tspan></text>
+<circle cx="1240" cy="8890" r="15" fill="#fff" stroke="#2e7d32" stroke-width="1.8"/>
+<path d="M1240 8882 L1248 8896 L1232 8896 Z" fill="#fff" stroke="#1f2933" stroke-width="1.1"/>
+<text font-size="12" text-anchor="start" fill="#37474f"><tspan x="1260.0" y="8864.0">K retired milestones, walk ended</tspan><tspan x="1260.0" y="8879.0">(everyMilestones, default 2)</tspan></text>
+<path d="M1255 8890 L1470 8890 L1470 8762" fill="none" stroke="#1f2933" stroke-width="1.5" marker-end="url(#seqarrow)"/>
 <path d="M1470 8718 L1492 8740 L1470 8762 L1448 8740 Z" fill="#fff" stroke="#1f2933" stroke-width="1.6"/>
 <path d="M1463 8733 L1477 8747 M1477 8733 L1463 8747" stroke="#1f2933" stroke-width="3.2"/>
 <circle cx="1240" cy="8670" r="15" fill="#fff" stroke="#2e7d32" stroke-width="1.8"/>
@@ -2037,15 +2034,15 @@
 <text font-size="12" text-anchor="start" fill="#37474f"><tspan x="1260.0" y="8662.0">operator-design park</tspan></text>
 <circle cx="1240" cy="8740" r="15" fill="#fff" stroke="#2e7d32" stroke-width="1.8"/>
 <path d="M1240 8732 L1248 8746 L1232 8746 Z" fill="#fff" stroke="#1f2933" stroke-width="1.1"/>
-<text font-size="12" text-anchor="start" fill="#37474f"><tspan x="1260.0" y="8732.0">walk with unweighed findings</tspan></text>
+<text font-size="12" text-anchor="start" fill="#37474f"><tspan x="1260.0" y="8732.0">unweighed blocking walk P1</tspan></text>
 <circle cx="1240" cy="8810" r="15" fill="#fff" stroke="#2e7d32" stroke-width="1.8"/>
 <path d="M1240 8802 L1248 8816 L1232 8816 Z" fill="#fff" stroke="#1f2933" stroke-width="1.1"/>
-<text font-size="12" text-anchor="start" fill="#37474f"><tspan x="1260.0" y="8802.0">completed audit</tspan></text>
+<text font-size="12" text-anchor="start" fill="#37474f"><tspan x="1260.0" y="8780.0">unweighed audit P1 / final audit;</tspan><tspan x="1260.0" y="8795.0">new audit findings if no milestones</tspan></text>
 <path d="M1570 8718 L1592 8740 L1570 8762 L1548 8740 Z" fill="#fff" stroke="#1f2933" stroke-width="1.6"/>
 <path d="M1563 8733 L1577 8747 M1577 8733 L1563 8747" stroke="#1f2933" stroke-width="3.2"/>
-<text font-size="12" text-anchor="middle"><tspan x="1570.0" y="8696.0">audit found</tspan><tspan x="1570.0" y="8710.0">nothing new?</tspan></text>
+<text font-size="12" text-anchor="middle"><tspan x="1570.0" y="8696.0">non-park, same</tspan><tspan x="1570.0" y="8711.0">decided capture? *</tspan></text>
 <circle cx="1570" cy="8840" r="15" fill="#fff" stroke="#b71c1c" stroke-width="4"/>
-<text font-size="12" text-anchor="end"><tspan x="1549.0" y="8837.0">checkpoint-skipped</tspan><tspan x="1549.0" y="8851.0">(no call)</tspan></text>
+<text font-size="12" text-anchor="start"><tspan x="1591.0" y="8837.0">checkpoint-skipped</tspan><tspan x="1591.0" y="8851.0">(no call)</tspan></text>
 <path d="M1650 8718 L1672 8740 L1650 8762 L1628 8740 Z" fill="#fff" stroke="#1f2933" stroke-width="1.6"/>
 <path d="M1643 8733 L1657 8747 M1657 8733 L1643 8747" stroke="#1f2933" stroke-width="3.2"/>
 <path d="M1730 8718 L1752 8740 L1730 8762 L1708 8740 Z" fill="#fff" stroke="#1f2933" stroke-width="1.6"/>
@@ -2061,15 +2058,25 @@
 <text font-size="12" text-anchor="middle"><tspan x="1885.0" y="8730.3">Capture under the revision</tspan><tspan x="1885.0" y="8744.3">fence: the vision first and in</tspan><tspan x="1885.0" y="8758.3">full; a park's code diagnosis</tspan></text>
 <rect x="2000" y="8680" width="340" height="120" rx="9" fill="#ffffff" stroke="#1f2933" stroke-width="1.6"/>
 <text font-size="12" text-anchor="start" font-style="italic" fill="#6a1b9a"><tspan x="2008.0" y="8696.0">model: checkpoint (summit)</tspan></text>
-<text font-size="12" text-anchor="middle"><tspan x="2170.0" y="8731.3">Decide one bundle, all or none: admit, respec, reenter (with</tspan><tspan x="2170.0" y="8745.3">fixes), cut, re-route, limits, rule, split, dispose or amend</tspan><tspan x="2170.0" y="8759.3">obligations (citing V-n plus evidence), invalidate approvals,</tspan><tspan x="2170.0" y="8773.3">interpretations, corpusAmendments, issue intake; or no-op</tspan></text>
+<text font-size="12" text-anchor="middle"><tspan x="2170.0" y="8731.3">Decide one bundle, all or none: admit, respec, reenter (with</tspan><tspan x="2170.0" y="8745.3">fixes), cut, re-route, limits, rule, split, dispose or amend</tspan><tspan x="2170.0" y="8759.3">obligations (citing V-n plus evidence), invalidate approvals,</tspan><tspan x="2170.0" y="8773.3">interpretations, corpusAmendments; or no-op</tspan></text>
 <text font-size="12" text-anchor="start" fill="#37474f" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" paint-order="stroke"><tspan x="1756.0" y="8734.0">no</tspan></text>
 <path d="M1960 8918 L1982 8940 L1960 8962 L1938 8940 Z" fill="#fff" stroke="#1f2933" stroke-width="1.6"/>
 <path d="M1953 8933 L1967 8947 M1967 8933 L1953 8947" stroke="#1f2933" stroke-width="3.2"/>
-<text font-size="12" text-anchor="end"><tspan x="1932.0" y="8937.0">bundle</tspan><tspan x="1932.0" y="8951.0">activation</tspan></text>
+<text font-size="12" text-anchor="end"><tspan x="1932.0" y="8901.0">bundle</tspan><tspan x="1932.0" y="8916.0">activation</tspan></text>
 <path d="M1242 9070 H1230 V9110 H1242" fill="none" stroke="#37474f" stroke-width="1.4"/>
-<text font-size="12" text-anchor="start" fill="#37474f"><tspan x="1238.0" y="9087.0">Skip rule (dev.11): an audit that found nothing new gets checkpoint-skipped and no call; the first checkpoint,</tspan><tspan x="1238.0" y="9102.0">the first after a vision revision and the final one always run. The checkpoint reads the vision first and in full.</tspan></text>
+<text font-size="12" text-anchor="start" fill="#37474f"><tspan x="1238.0" y="9087.0">* Non-park triggers skip if head, plan revision, vision and active findings equal a decided checkpoint capture.</tspan><tspan x="1238.0" y="9102.0">This guard also applies at the final audit. A design park still runs; the vision is read first and in full.</tspan></text>
+<path d="M1242 8923 H1230 V8993 H1242" fill="none" stroke="#37474f" stroke-width="1.4"/>
+<text font-size="12" text-anchor="start" fill="#37474f"><tspan x="1238.0" y="8940.0">Milestone steering weighs accumulated audit and walk findings.</tspan><tspan x="1238.0" y="8955.0">Nonblocking walk findings wait here and do not hold the round.</tspan><tspan x="1238.0" y="8970.0">The retired-milestone counter resets at this boundary (including a skipped equal capture).</tspan><tspan x="1238.0" y="8985.0">holistic.checkpoint.everyMilestones = K (default 2).</tspan></text>
 <path d="M1242 9000 H1230 V9040 H1242" fill="none" stroke="#37474f" stroke-width="1.4"/>
 <text font-size="12" text-anchor="start" fill="#37474f"><tspan x="1238.0" y="9017.0">Schema, cites and rulings are checked first. An invalid bundle gets one repair turn in its own session; still</tspan><tspan x="1238.0" y="9032.0">invalid, it becomes a bundle-request.</tspan></text>
+<path d="M1938 8940 L1890 8940 L1890 9188 L1840 9188" fill="none" stroke="#1f2933" stroke-width="1.5" marker-end="url(#seqarrow)"/>
+<text font-size="12" text-anchor="start" fill="#37474f"><tspan x="1852.0" y="9160.0">busy</tspan></text>
+<rect x="1460" y="9150" width="380" height="76" rx="9" fill="#ffffff" stroke="#1f2933" stroke-width="1.6"/>
+<text font-size="12" text-anchor="middle"><tspan x="1650.0" y="9184.5">Hold the rejected bundle; named units finish their stage,</tspan><tspan x="1650.0" y="9199.5">then hold at their next stage start. Wait for the boundary.</tspan></text>
+<path d="M1650 9226 L1650 9260" fill="none" stroke="#1f2933" stroke-width="1.5" marker-end="url(#seqarrow)"/>
+<rect x="1460" y="9260" width="380" height="80" rx="9" fill="#ffffff" stroke="#1f2933" stroke-width="1.6"/>
+<text font-size="12" text-anchor="middle"><tspan x="1650.0" y="9289.0">At the boundary: re-decide the held bundle in code;</tspan><tspan x="1650.0" y="9304.0">rerun activation checks, with no new checkpoint call.</tspan><tspan x="1650.0" y="9319.0">Only stale / evidence mismatch / invalid → fresh call.</tspan></text>
+<path d="M1840 9300 L1915 9300 L1915 8940 L1938 8940" fill="none" stroke="#1f2933" stroke-width="1.5" marker-end="url(#seqarrow)"/>
 <rect x="2030" y="8910" width="125" height="60" rx="9" fill="#ffffff" stroke="#1f2933" stroke-width="1.6"/>
 <text font-size="12" text-anchor="middle"><tspan x="2092.5" y="8944.3">Commit the bundle</tspan></text>
 <rect x="2175" y="8895" width="165" height="90" rx="9" fill="#ffffff" stroke="#1f2933" stroke-width="1.6"/>
@@ -2078,7 +2085,7 @@
 <text font-size="12" text-anchor="start" fill="#37474f" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" paint-order="stroke"><tspan x="1986.0" y="8934.0">valid</tspan></text>
 <circle cx="2200" cy="9070" r="15" fill="#fff" stroke="#b71c1c" stroke-width="4"/>
 <rect x="2192.5" y="9065" width="15" height="10" fill="#1f2933" stroke="#1f2933" stroke-width="1.1"/><path d="M2192.5 9065 L2200 9071 L2207.5 9065" fill="none" stroke="#fff" stroke-width="1.1"/>
-<text font-size="12" text-anchor="start"><tspan x="2221.0" y="9060.0">owner-request</tspan><tspan x="2221.0" y="9074.0">(blocking); nothing</tspan><tspan x="2221.0" y="9088.0">applied</tspan></text>
+<text font-size="12" text-anchor="start"><tspan x="2221.0" y="9060.0">owner-request</tspan><tspan x="2221.0" y="9075.0">(blocking); no acts</tspan><tspan x="2221.0" y="9090.0">keep existing open</tspan><tspan x="2221.0" y="9105.0">request; no re-raise</tspan></text>
 <text font-size="12" text-anchor="start" fill="#37474f"><tspan x="1966.0" y="9064.0">owner-only op (closed set)</tspan></text>
 <circle cx="2200" cy="9116" r="15" fill="#fff" stroke="#b71c1c" stroke-width="4"/>
 <rect x="2192.5" y="9111" width="15" height="10" fill="#1f2933" stroke="#1f2933" stroke-width="1.1"/><path d="M2192.5 9111 L2200 9117 L2207.5 9111" fill="none" stroke="#fff" stroke-width="1.1"/>

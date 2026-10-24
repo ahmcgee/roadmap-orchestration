@@ -110,8 +110,11 @@ candidate merge.
 A red lane, a gate revise or a red candidate sends the unit back to its build for a charged fix round. A gate
 revises at most twice before the unit goes to the escalation seat, the summit class (Opus at high effort). A red candidate
 retries once, and the third charged failure parks the unit. A lane that goes red then green on a rerun of the same
-tree is a flake: it is forgiven, recorded in the flaky ledger, and code mints a deflake unit to fix the test. Its
-scope is the systems the lane declares, else the systems holding the flaky test's file, with what they depend on.
+tree is a flake, recorded in the flaky ledger. On a unit's own commit (its lanes, witness check or scaffold dry run),
+it is the unit's red: a charged fix round tells the builder the lane is flaky, forgiven only if it is already a standing
+tip flake. Only flakes seen on the integration tip are forgiven and mint deflake units to fix the test (a deflake
+unit's own flake still counts as red). A deflake's scope is the systems the lane declares, else the systems holding
+the flaky test's file, with what they depend on.
 No unit may write the corpus, so when neither maps and the fallback would reach it, no unit is minted and you get
 a `deflake-unscoped` item asking for the lane's systems or a systems map.
 When a requirement or contract changes mid-arc, code mints a propagation unit that re-witnesses the merged code
