@@ -213,7 +213,7 @@ test('scope.reverted-visible: an out-of-scope edit salvage reverts reaches the g
 
 test('scope.references-row: Phase-0 row 10 lists, as an advisory, the files outside a unit\'s scope that name what its spec removes', T, () => {
   const d = setupArc({ steps: [] });
-  const advisories = () => phase0Rows(phase0InputOf(readInputFiles(absPath(d.planPath), absPath(d.repo)), null), APPLY);
+  const advisories = () => phase0Rows(phase0InputOf(readInputFiles(absPath(d.planPath), absPath(d.repo)), null, null), APPLY);
   assert.deepEqual(advisories().advisories, [], 'no removes, no advisory');
   editSpec(d, (s) => void (s['removes'] = ['src/add.js', '`add(a, b)`', 'NOT-NAMED-ANYWHERE']));
   const out = advisories();

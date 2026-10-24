@@ -107,7 +107,7 @@ describe('declared test paths and witness files', () => {
     editWitness(a, { lane: ({ testPaths: _t, ...l }) => l, witness: ({ files: _f, ...w }) => w });
     assert.deepEqual(await defects(a), [{ type: 'lane-test-paths-undeclared', lane: 'journey' }, { type: 'witness-files-undeclared', obligation: 'I-1' }]);
     // An apply (or a restart) of an arc started before: nothing declared anywhere, so nothing to check.
-    assert.deepEqual(phase0Rows(phase0InputOf(filesOf(a), null), APPLY).rows, []);
+    assert.deepEqual(phase0Rows(phase0InputOf(filesOf(a), null, null), APPLY).rows, []);
   });
 
   it('plan-defect.undeclared-per-witness: on an arc started before, one witness declaring files is checked alone; the others stay undeclared, not refused', T, async () => {
@@ -123,10 +123,10 @@ describe('declared test paths and witness files', () => {
       return { ...o, obligations: [i1, i2], census };
     });
     withI2([WITNESS_FILE]);
-    assert.deepEqual(phase0Rows(phase0InputOf(filesOf(a), null), APPLY).rows, []);
+    assert.deepEqual(phase0Rows(phase0InputOf(filesOf(a), null, null), APPLY).rows, []);
     // I-2's declared file is still checked.
     withI2(['test/new.test.ts']);
-    assert.deepEqual(phase0Rows(phase0InputOf(filesOf(a), null), APPLY).rows, [{ kind: 'plan-defect', defects: [{ type: 'witness-file-unreachable', obligation: obligationId('I-2'), file: repoPath('test/new.test.ts'), units: [] }] }]);
+    assert.deepEqual(phase0Rows(phase0InputOf(filesOf(a), null, null), APPLY).rows, [{ kind: 'plan-defect', defects: [{ type: 'witness-file-unreachable', obligation: obligationId('I-2'), file: repoPath('test/new.test.ts'), units: [] }] }]);
   });
 });
 

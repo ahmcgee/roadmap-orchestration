@@ -6,7 +6,7 @@ converges the codebase on the documented target state, unattended, for a week or
 
 ## Status
 
-**1.0 is in prerelease on `main`** (`1.0.0-dev.18`), and it is what the marketplace installs. Milestones M1 to M4b
+**1.0 is in prerelease on `main`** (`1.0.0-dev.19`), and it is what the marketplace installs. Milestones M1 to M4b
 and the dev.13 milestone walkthroughs have landed. dev.17 made plan-check a design pass, put lanes on cadences
 selected by a systems map, made the gate block only on named defects, and added propagation and deflake units,
 costed environments and per-unit fault isolation. The last 0.x release is at tag `v0.20.0`.

@@ -6,8 +6,8 @@
 //                  commit and the baseline's rules registry, and required equal (`corpus-invalid`: pin-drift, rule-reused,
 //                  rule-retired-reappears, rules-in-vision, guide-missing, source-unreadable, source-remote-mismatch); for
 //                  a same-repo source, no unit scope and no plan contract overlapping the corpus file set (every pinned
-//                  file plus every path matching root/include, R32): `scope-overlaps-corpus` (a cut unit excepted; its
-//                  `fix` names how to narrow the unit), `contract-overlaps-corpus`. The unit rule (`scopeOverlapProblems`)
+//                  file plus every path matching root/include, R32): `scope-overlaps-corpus` (a cut unit excepted, and
+//                  one the arc settled: merged, superseded or cut; its `fix` names how to narrow the unit), `contract-overlaps-corpus`. The unit rule (`scopeOverlapProblems`)
 //                  is also every revision's, over the units it changes (src/commands/apply.ts `evaluateRevision`).
 //                  Malformed corpus text throws `CorpusFormatError` (LR-A1-2), never a row.
 //   2-3. census    one state per active pinned rule, none dangling, every obligation's rule resolved: a binding one's
@@ -82,6 +82,7 @@ import { type ArcId, type DebtId, type IssueId, type MilestoneId, type Sha256Hex
 import { type SpecM1, specForces, specRemoves } from '../core/records.ts';
 import { unknownLaneSystems } from '../input/systems.ts';
 import { sha256Hex } from '../core/json.ts';
+import type { JournalView } from '../core/interfaces.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, type RepoPath, type RepoPattern, absPath, matchesPattern, repoPath, repoPattern } from '../core/values.ts';
 import { readGuideBytes } from '../corpus/guide.ts';
@@ -149,6 +150,11 @@ export type Phase0Input = Readonly<{
   specs: ReadonlyMap<UnitId, Buffer | null>;
   /** The rulings ledger the inputs carry (a `resolve` disposition names an active ruling of it). */
   ledger: readonly Ruling[];
+  /**
+   * The units the arc has settled (merged, superseded or cut: they build nothing more), which the corpus overlap rule
+   * passes (dev.19: a dev.17 `**` deflake unit, once merged, can be neither narrowed nor cut). Empty with no arc log.
+   */
+  settled: ReadonlySet<UnitId>;
 }>;
 
 /**
@@ -180,7 +186,7 @@ export type Phase0Advisory = ScopeReference | DerivedUnregenerated | MilestoneUn
 export type Phase0Outcome = Readonly<{ rows: readonly StartupRejection[]; opened: OpenedSource | null; pin: CorpusPin | null; advisories: readonly Phase0Advisory[] }>;
 
 /** The rows' input over files as a start or an apply reads them (the ledger's rulings parsed; it loads, group 1 checked). */
-export function phase0InputOf(files: InputFiles, config: RepoConfig | null): Phase0Input {
+export function phase0InputOf(files: InputFiles, config: RepoConfig | null, view: JournalView | null): Phase0Input {
   const c = files.corpus;
   return {
     repo: files.repo, plan: files.plan, config, where: files.planFile,
@@ -188,8 +194,13 @@ export function phase0InputOf(files: InputFiles, config: RepoConfig | null): Pha
     obligations: files.obligations?.bytes ?? null, vision: files.vision?.bytes ?? null,
     specs: new Map([...files.specs].map(([unit, file]) => [unit, file.bytes])),
     ledger: files.ledger.bytes === null ? [] : parseRulings(files.ledger.bytes.toString('utf8'), files.ledger.path),
+    settled: view === null ? new Set() : settledUnits(files.plan, view),
   };
 }
+
+/** The plan's units the arc has settled: merged (retired), superseded or cut. */
+export const settledUnits = (plan: PlanM1, view: JournalView): ReadonlySet<UnitId> =>
+  new Set(plan.units.filter((u) => ['retired', 'superseded', 'cut'].includes(view.unit(u.id).status)).map((u) => u.id));
 
 const schemaRow = (field: string, detail: string): Row<'plan-invalid'> => ({ kind: 'plan-invalid', problem: { type: 'schema', field, detail } });
 
@@ -242,7 +253,7 @@ export function phase0Rows(input: Phase0Input, mode: Phase0Mode): Phase0Outcome 
     else opened = re.opened;
     if (guide !== null && guide.source.kind === 'same-repo') {
       const set = corpusFileSet(pin, guide);
-      corpus.push(...overlapProblems(plan, set));
+      corpus.push(...overlapProblems(plan, set, input.settled));
       defects.push(...derivedOnCorpus(plan, set));
     }
   }
@@ -336,17 +347,18 @@ export const scopeOverlapsCorpus = (set: CorpusFileSet, s: RepoPattern): boolean
 
 /**
  * The one unit-overlap rule (R32): a `scope-overlaps-corpus` per unit of `units` whose scope may reach the corpus file set,
- * a cut unit excepted (it builds nothing). The Phase-0 rows run it over every unit of the plan, every revision over the
- * units it changes (src/commands/apply.ts `evaluateRevision`), and the deflake job over a unit before it mints it.
+ * a cut unit excepted (it builds nothing). The Phase-0 rows run it over every unit of the plan the arc has not settled,
+ * every revision over the units it changes (src/commands/apply.ts `evaluateRevision`), and the deflake job over a unit
+ * before it mints it.
  */
 export function scopeOverlapProblems(set: CorpusFileSet, units: readonly Pick<PlanUnit, 'id' | 'scope' | 'cut'>[]): readonly CorpusProblem[] {
   return units.filter((u) => u.cut === undefined && u.scope.some((s) => scopeOverlapsCorpus(set, s)))
     .map((u) => ({ type: 'scope-overlaps-corpus', unit: u.id, fix: scopeOverlapFix(u.id) }));
 }
 
-function overlapProblems(plan: PlanM1, set: CorpusFileSet): readonly CorpusProblem[] {
+function overlapProblems(plan: PlanM1, set: CorpusFileSet, settled: ReadonlySet<UnitId>): readonly CorpusProblem[] {
   const contracts = plan.contracts.filter((c) => inCorpusSet(set, c)).map((path): CorpusProblem => ({ type: 'contract-overlaps-corpus', path }));
-  return [...scopeOverlapProblems(set, plan.units), ...contracts];
+  return [...scopeOverlapProblems(set, plan.units.filter((u) => !settled.has(u.id))), ...contracts];
 }
 
 // ---------------------------------------------------------------------------------------------------

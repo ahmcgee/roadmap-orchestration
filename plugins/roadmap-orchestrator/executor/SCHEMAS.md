@@ -4953,8 +4953,9 @@ but not the Phase-0 overlap row, so every later apply and start was refused, and
 3. **One overlap rule** (`scopeOverlapProblems`, src/phase0/rows.ts): a `scope-overlaps-corpus` per unit whose plan scope
    may reach the corpus file set, a cut unit excepted (it builds nothing). `evaluateRevision` runs it over the units the
    revision changes (`scoped`, as the lane row), for every proposer (start, apply, bundle, deflake, propagation, split,
-   walk repairs, plan-check); the Phase-0 rows run it over every unit, so a unit in force that reaches the corpus still
-   refuses every apply and start until an edit narrows or cuts it.
+   walk repairs, plan-check); the Phase-0 rows run it over every unit the arc has not settled (dev.19: `Phase0Input.settled`,
+   the units merged, superseded or cut in the journal; empty with no arc log and for `phase0 check --from-ref`), so a unit
+   in force that reaches the corpus still refuses every apply and start until an edit narrows or cuts it, or it merges.
 4. **`start --base`** (src/preflight/checks.ts `startSource`, `settlePlan`): the owner's files rebased from the export's
    manifest onto the files in force, by the one rebase (`applyProposal`, src/input/rebase.ts) an apply takes; without it,
    from the owner's files of their latest apply. An arc with no plan in force refuses it (`plan-change-refused`).

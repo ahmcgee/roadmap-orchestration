@@ -159,7 +159,7 @@ export function recordFirstPlan(
   writeStart(runDir, repo, planPath, profile);
   const files = readInputFiles(planPath, repo);
   if (files.corpus !== null) {
-    const rows = phase0Rows(phase0InputOf(files, null), APPLY);
+    const rows = phase0Rows(phase0InputOf(files, null, null), APPLY);
     if (rows.rows.length > 0 || rows.opened === null) throw new Error(`the corpus arc's files are refused: ${JSON.stringify(rows.rows)}`);
     keepCorpusFiles(runDir, rows.opened.files);
   }
