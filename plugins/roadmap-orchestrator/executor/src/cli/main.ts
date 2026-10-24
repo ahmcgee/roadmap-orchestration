@@ -14,7 +14,8 @@
 // executor, and waits for its own generation's readiness (the executor passed every startup check), at
 // most 240 s by default or `--wait <ms>`. It prints one JSON line: `ready` (exit 0; start returns while the
 // run goes on), the refused exit line (exit 78/75), or `failed` / `timeout` (exit 70). The run's own end is
-// in exit.reason.json and `status`. `status` prints the status object.
+// in exit.reason.json and `status`. `status` prints the status object; a second `status` of a run while one runs
+// refuses (src/status.ts `statusSingleFlight`).
 //
 // M4a host acts (no host lock, not queued; each module's own header has its contract): `phase0 check` prints its rows
 // and slice candidates (exit 0 when no row, else 78); `corpus pin` writes the pin and prints it with its sha256, or the
@@ -63,7 +64,7 @@ import { HOST_DIR } from '../host/hostdir.ts';
 import { CliError, type Command, type RunLocator, parseCommand } from '../input/cli.ts';
 import { readRepoConfig } from '../preflight/checks.ts';
 import { EXIT_HOST_BUSY, EXIT_REFUSED, type StartupRejection } from '../preflight/startup.ts';
-import { status } from '../status.ts';
+import { status, statusSingleFlight } from '../status.ts';
 import { START_WAIT_MS, launchSupervisor } from '../supervisor.ts';
 import { HEARTBEAT_MIN, watch, watchActionable } from '../watch.ts';
 
@@ -138,7 +139,7 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
     }
     case 'status': {
       const run = locate(command.run, hostDir);
-      process.stdout.write(`${canonicalJson(status(run.runDir, run.arc, hostDir))}\n`);
+      process.stdout.write(`${canonicalJson(statusSingleFlight(run.runDir, run.arc, () => status(run.runDir, run.arc, hostDir)))}\n`);
       return;
     }
     case 'rule':

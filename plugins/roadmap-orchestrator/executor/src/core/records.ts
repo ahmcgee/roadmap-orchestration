@@ -1328,6 +1328,14 @@ export const recoveryLockClaim: Read<RecoveryLockClaim> = object((f) => ({
   at: f.get('at', time),
 }));
 
+/** `<runDir>/status.lock`: the run's one running `roadmap status` (src/status.ts `statusSingleFlight`). */
+export type StatusLock = Readonly<{ v: SchemaVersion; bootId: BootId; holder: ProcIdentity }>;
+export const statusLock: Read<StatusLock> = object((f) => ({
+  v: f.get('v', version),
+  bootId: f.get('bootId', bootR),
+  holder: f.get('holder', procIdentity),
+}));
+
 /** `handshake.<generation>`: the executor performs no effect until this exists and matches host.owner.json. */
 export type HandshakeFile = Readonly<{ v: SchemaVersion; nonce: Nonce; generation: number }>;
 export const handshakeFile: Read<HandshakeFile> = object((f) => ({

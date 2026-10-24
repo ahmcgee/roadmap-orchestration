@@ -34,7 +34,8 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
   once the executor passed every startup row; the run goes on. The backend smoke runs after `ready`: a smoke refusal
   shows in `status.rejection` and the run ends `refused`. Exit 78 with the rows, 75 host busy, 70 `failed` or
   `timeout` (read `status` and the supervisor logs in the host dir before starting again). Waits 240 s by default.
-- `roadmap status`: the run as one JSON object ("status" below).
+- `roadmap status`: the run as one JSON object ("status" below). One at a time per arc: a second call while one runs
+  fails at once.
 - `roadmap watch [--actionable [--heartbeat-min <n>] [--from <seq>]]`: one JSON line per event until killed, each with
   its `seq`; `--actionable` prints only the wakes, and `--from` replays the wakes since that seq. Wait on one
   `roadmap watch --actionable` per arc, started in the background into a file that a Monitor tails, and started again

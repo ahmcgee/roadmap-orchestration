@@ -1274,7 +1274,9 @@ delegated share on its own class); `host{…, log}` (below); `parkedBackends`; `
 (`src/core/log.ts`: fold without lock, repair, fact or cache write; an unterminated tail is left out); what only
 the scheduler knows comes from `sched.json` while its writer is the live owner. `byModel` is the only place a model
 id appears: seat totals (`meterOf(...).bySeat`) looked up in each revision's table, resolved from the routing
-provenance each plan revision recorded (M3 B9 item 2).
+provenance each plan revision recorded (M3 B9 item 2). The CLI's `status` runs one at a time per run dir (2026-10-23): it holds
+`<runDir>/status.lock` (`StatusLock {v, bootId, holder{pid,start}}`, published write-once; `statusSingleFlight`) while it
+reads, a second refuses while the holder lives, and a dead holder's lock is replaced.
 
 A unit line: `{unit, stage, status, attempts, chargeableFailures, risk, seat{role, tier}|null}` (`status` is the
 fold's `UnitStatus`, or `held-after:<ids>` while `after` units it waits on are not merged), and since M2:

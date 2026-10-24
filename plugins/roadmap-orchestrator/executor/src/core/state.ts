@@ -564,7 +564,63 @@ type UnitEntry = {
   starts: Map<string, number>; outcomes: Set<string>; state: UnitState; attemptBase: number;
   beforeDecided: Readonly<{ decided: StageOutcomeFact | null; interrupted: StageOutcomeFact | null }>;
 };
-type MeterEntry = { -readonly [F in keyof MeterTotal]: MeterTotal[F] };
+
+/**
+ * The records the fold's counters live in, by reference: each unit's state and each meter total is immutable and
+ * replaced whenever a counter in it moves, so between two captures only a replaced (or vanished) record can have moved.
+ */
+export type CounterRefs = Readonly<{
+  lastSeq: number;
+  snapshotHighWater: number;
+  units: ReadonlyMap<UnitId, UnitState>;
+  meter: ReadonlyMap<string, MeterTotal>;
+}>;
+
+const unitCounters = (unit: UnitId, { counters: c, routedUp }: UnitState): Record<string, number> => {
+  const out: Record<string, number> = {
+    [`unit ${unit} attempts`]: c.attempts,
+    [`unit ${unit} chargeableFailures`]: c.chargeableFailures,
+    [`unit ${unit} redirects`]: c.redirects,
+    [`unit ${unit} reviseRounds`]: c.reviseRounds,
+    [`unit ${unit} candidateReds`]: c.candidateReds,
+    [`unit ${unit} smokeRounds`]: c.smokeRounds,
+  };
+  for (const s of RETRY_STAGES) out[`unit ${unit} retries ${s}`] = c.retries[s];
+  out[`unit ${unit} routedUp`] = routedUp.length;
+  return out;
+};
+
+const meterCounters = (key: string, m: MeterTotal): Record<string, number> => ({
+  [`meter ${key} known`]: m.known,
+  [`meter ${key} unavailable`]: m.unavailable,
+  [`meter ${key} inputTokens`]: m.inputTokens,
+  [`meter ${key} outputTokens`]: m.outputTokens,
+  [`meter ${key} cacheReadTokens`]: m.cacheReadTokens,
+  [`meter ${key} cacheWriteTokens`]: m.cacheWriteTokens,
+  [`meter ${key} turns`]: m.turns,
+  [`meter ${key} costUsd`]: m.costUsd,
+});
+
+/**
+ * `monotonic()` over every counter in `before` that can differ in `after`: lastSeq, snapshotHighWater and the counters
+ * of each record whose reference changed (a vanished record's counters are absent). Its cost is the records an event
+ * replaced, not every unit and meter key the arc has.
+ */
+export function monotonicSince(before: CounterRefs, after: CounterRefs): void {
+  const was: Record<string, number> = { lastSeq: before.lastSeq, snapshotHighWater: before.snapshotHighWater };
+  const now: Record<string, number> = { lastSeq: after.lastSeq, snapshotHighWater: after.snapshotHighWater };
+  const compare = <K, R>(a: ReadonlyMap<K, R>, b: ReadonlyMap<K, R>, flat: (key: K, r: R) => Record<string, number>): void => {
+    for (const [key, r] of a) {
+      const next = b.get(key);
+      if (next === r) continue;
+      Object.assign(was, flat(key, r));
+      if (next !== undefined) Object.assign(now, flat(key, next));
+    }
+  };
+  compare(before.units, after.units, unitCounters);
+  compare(before.meter, after.meter, meterCounters);
+  monotonic(was, now);
+}
 
 /**
  * The incremental fold. `apply` checks every invariant before it changes anything, so a rejected event
@@ -587,7 +643,7 @@ export class Fold implements JournalView {
   readonly #unitChangedSeq = new Map<UnitId, number>();
   /** The spec the unit's dispatch facts name: its first pin's (a re-pin keeps it; see the `dispatch` case). */
   readonly #pinnedSpec = new Map<UnitId, SpecState>();
-  readonly #meter = new Map<string, MeterEntry>();
+  readonly #meter = new Map<string, MeterTotal>();
   readonly #metered = new Set<InvocationId>();
   readonly #sessionCharges = new Map<ClaudeSessionId, SessionCharge>();
   readonly #needsUser = new Map<NeedsUserId, { blocking: boolean }>();
@@ -683,7 +739,7 @@ export class Fold implements JournalView {
     if (event.arc !== this.arc) fail(`arc ${event.arc} in the log of arc ${this.arc}`);
     if (event.seq !== this.#lastSeq + 1) fail(`seq not contiguous: expected ${this.#lastSeq + 1}`);
     if (event.prev !== this.#lastHash) fail(`chain broken: prev ${event.prev}, previous line hashes to ${this.#lastHash}`);
-    const before = this.#counters();
+    const before = this.#counterRefs();
     switch (event.type) {
       case 'intent':
         this.#intent(event, fail);
@@ -701,7 +757,7 @@ export class Fold implements JournalView {
     if (isWork(event)) this.#lastWorkSeq = event.seq;
     this.#lastSeq = event.seq;
     this.#lastHash = lineHash;
-    monotonic(before, this.#counters());
+    monotonicSince(before, this.#counterRefs());
   }
 
   #intent(r: IntentRecord, fail: (detail: string) => never): void {
@@ -877,17 +933,19 @@ export class Fold implements JournalView {
           if (f.session !== undefined && f.delegated !== undefined) {
             this.#sessionCharges.set(f.session, addCharged(this.#sessionCharges.get(f.session) ?? null, { tokens: f.usage, delegated: f.delegated }));
           }
-          m.known += 1;
-          m.inputTokens += f.usage.inputTokens;
-          m.outputTokens += f.usage.outputTokens;
-          m.cacheReadTokens += f.usage.cacheReadTokens ?? 0;
-          m.cacheWriteTokens += f.usage.cacheWriteTokens ?? 0;
-          m.turns += f.usage.turns ?? 0;
-          m.costUsd += f.usage.costUsd ?? 0;
+          this.#meter.set(key, {
+            ...m,
+            known: m.known + 1,
+            inputTokens: m.inputTokens + f.usage.inputTokens,
+            outputTokens: m.outputTokens + f.usage.outputTokens,
+            cacheReadTokens: m.cacheReadTokens + (f.usage.cacheReadTokens ?? 0),
+            cacheWriteTokens: m.cacheWriteTokens + (f.usage.cacheWriteTokens ?? 0),
+            turns: m.turns + (f.usage.turns ?? 0),
+            costUsd: m.costUsd + (f.usage.costUsd ?? 0),
+          });
         } else {
-          m.unavailable += 1;
+          this.#meter.set(key, { ...m, unavailable: m.unavailable + 1 });
         }
-        this.#meter.set(key, m);
         return;
       }
       case 'dispatch': {
@@ -1805,30 +1863,12 @@ export class Fold implements JournalView {
     }
   }
 
-  /** Every counter the fold derives, flattened, for the `monotonic()` check around each event. */
-  #counters(): Record<string, number> {
-    const out: Record<string, number> = { lastSeq: this.#lastSeq, snapshotHighWater: this.#snapshotHighWater };
-    for (const [unit, { state: { counters: c, routedUp } }] of this.#units) {
-      out[`unit ${unit} attempts`] = c.attempts;
-      out[`unit ${unit} chargeableFailures`] = c.chargeableFailures;
-      out[`unit ${unit} redirects`] = c.redirects;
-      out[`unit ${unit} reviseRounds`] = c.reviseRounds;
-      out[`unit ${unit} candidateReds`] = c.candidateReds;
-      out[`unit ${unit} smokeRounds`] = c.smokeRounds;
-      for (const s of RETRY_STAGES) out[`unit ${unit} retries ${s}`] = c.retries[s];
-      out[`unit ${unit} routedUp`] = routedUp.length;
-    }
-    for (const [key, m] of this.#meter) {
-      out[`meter ${key} known`] = m.known;
-      out[`meter ${key} unavailable`] = m.unavailable;
-      out[`meter ${key} inputTokens`] = m.inputTokens;
-      out[`meter ${key} outputTokens`] = m.outputTokens;
-      out[`meter ${key} cacheReadTokens`] = m.cacheReadTokens;
-      out[`meter ${key} cacheWriteTokens`] = m.cacheWriteTokens;
-      out[`meter ${key} turns`] = m.turns;
-      out[`meter ${key} costUsd`] = m.costUsd;
-    }
-    return out;
+  /** The records every counter the fold derives lives in, by reference, for the `monotonicSince()` check around each event. */
+  #counterRefs(): CounterRefs {
+    return {
+      lastSeq: this.#lastSeq, snapshotHighWater: this.#snapshotHighWater,
+      units: new Map([...this.#units].map(([unit, u]) => [unit, u.state])), meter: new Map(this.#meter),
+    };
   }
 
   // JournalView ---------------------------------------------------------------------------------------

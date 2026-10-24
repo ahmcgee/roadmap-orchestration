@@ -1,7 +1,8 @@
 // `roadmap status`: DESIGN-1.0.md §2.4, as one agent-facing JSON object (M2's view plus M3's holistic keys).
 //
 // Read only, from anywhere, while an executor runs or when none does: the log is folded without the host
-// lock (`readJournal`: no tail repair, no fact, no cache write), and the run dir's files are only read.
+// lock (`readJournal`: no tail repair, no fact, no cache write), and the run dir's files are only read. The one
+// write is the CLI's `status.lock` (`statusSingleFlight`): one `roadmap status` per run at a time.
 // Nothing here names a model except `spend.byModel`, which looks each seat's model up in its revision's
 // routing table at render time: each plan revision's table is resolved from the routing provenance it recorded
 // (H7), for the arc and for each unit, never from the live repo config; a meter row whose `routingRev` no revision
@@ -119,7 +120,7 @@ import {
   type AmendmentSource, type Event, JUDGMENT_STAGES, type JudgmentStage, type Holder, OUTCOME_STAGES, type OperatorParkKind, type OutcomeStage, type PlanAppliedFact,
   type ProbeTarget, type RevisionPayload, type WalkOutcome, holderUnit, parentUnit, probeTargetKey,
 } from './core/events.ts';
-import { readJson } from './core/fsx.ts';
+import { AlreadyExistsError, canonicalJson as fileJson, durableUnlink, exclusivePublish, readJson } from './core/fsx.ts';
 import {
   type AmendmentId, type ArcId, CPU_POOL, type CommandId, type DebtId, type DivergenceId, type IssueId, type RuleId, type EdgeId, type FindingId, type JobId, type NeedsUserId, type ObligationId, type PlanRev, type ProposalId,
   type ResourceUnit, type RoutingRev, type RulingId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, type InvocationId, type KnownDefectId, type LaneId,
@@ -128,7 +129,7 @@ import {
 import type { JournalView } from './core/interfaces.ts';
 import { EVENTS_FILE, type LogSnapshot, readJournal } from './core/log.ts';
 import type { HolisticFold, Lineage, ResourceEntry, UnitState } from './core/state.ts';
-import type { KnownDefectMatch } from './core/records.ts';
+import { type KnownDefectMatch, type StatusLock, statusLock } from './core/records.ts';
 import { type CorpusInForce, type InForce, PLAN_INPUT, RULING_INPUT, type RevisionInForce, keptInput, keptPayload, planInForce, revisionInForce, routingBaseOf } from './input/inforce.ts';
 import {
   type CommandBody, type ContainmentMode, type NeedsUserReason, type Receipt, type RunStart, type Stage, heartbeat, runStart,
@@ -178,7 +179,10 @@ import {
   type RoutingTable,
 } from './routing/types.ts';
 import { readClaim } from './host/lock.ts';
-import { isAlive } from './host/liveness.ts';
+import { isAlive, selfIdentity } from './host/liveness.ts';
+import { readBootId } from './contain/proc.ts';
+import { CliError } from './input/cli.ts';
+import { SCHEMA_VERSION } from './core/version.ts';
 import { readOwner } from './host/owner.ts';
 import { git, revParse } from './git/git.ts';
 import { type FlowStatus, flowStatus } from './flow/track.ts';
@@ -1718,6 +1722,40 @@ export function admitViews(view: JournalView, repo: AbsPath, plan: PlanM1, meter
     }];
   });
   return { admits, opportunities, drift };
+}
+
+export const STATUS_LOCK = 'status.lock';
+
+/**
+ * Runs `read` as the run's only `roadmap status` (2026-10-23: 110 overlapping polls of a 38k-event arc exhausted the
+ * host and starved its executor). `status.lock` names its holder: a live holder refuses at once, loud; a dead one's
+ * lock (a status killed by a timeout never releases) is replaced. Two replacers of one dead lock race on the create,
+ * and the loser refuses; one that removed the dead lock just after the other replaced it lets two statuses run once.
+ * An arc that never started has no run dir, and no log to fold: its status takes no lock.
+ */
+export function statusSingleFlight<T>(runDir: AbsPath, arc: ArcId, read: () => T): T {
+  if (!existsSync(runDir)) return read();
+  const path = join(runDir, STATUS_LOCK);
+  const claim = (): boolean => {
+    try {
+      exclusivePublish(path, fileJson({ v: SCHEMA_VERSION, bootId: readBootId(), holder: selfIdentity() } satisfies StatusLock));
+      return true;
+    } catch (error) {
+      if (error instanceof AlreadyExistsError) return false;
+      throw error;
+    }
+  };
+  if (!claim()) {
+    const held = statusLock(readJson(path), path);
+    if (isAlive(held.holder, held.bootId)) throw new CliError(`status: another status of arc ${arc} is running (pid ${held.holder.pid}); run one at a time`);
+    durableUnlink(path);
+    if (!claim()) throw new CliError(`status: another status of arc ${arc} replaced the stale ${STATUS_LOCK} first; run one at a time`);
+  }
+  try {
+    return read();
+  } finally {
+    durableUnlink(path);
+  }
 }
 
 export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {

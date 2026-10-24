@@ -263,7 +263,8 @@ timeout; on its expiry re-arm only the tail (the watch keeps running, so nothing
 session, a host restart, `resume-arc`, a reopened arc), start it with `--from <seq of the last line in watch.jsonl>`,
 or without `--from` when the file is empty: it replays exactly the wakes since that line, merges and parks included,
 so nothing that happened while no watch ran is lost. Never restart or re-arm on a short timer, never wait on plain
-`roadmap watch`, never poll `status` in a loop. Without a Monitor tool,
+`roadmap watch`, never poll `status` in a loop, and never hand a subagent a `status` poll. `status` runs one at a time
+per arc: a second call while one runs fails at once ("another status of arc ... is running"). Without a Monitor tool,
 end your turn while the arc runs; the harness resumes you on the next wake. Every wake costs a model turn (about
 $0.30), so the wakes are few by design.
 

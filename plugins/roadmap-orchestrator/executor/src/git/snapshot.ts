@@ -76,7 +76,7 @@ import { BRIEF_INPUT } from '../pipeline/rounds.ts';
 import { manifestPath } from './evidence.ts';
 import { RED_FILE } from '../core/records.ts';
 import { MUTANT_PATCH_INPUT } from './mutant.ts';
-import { type Identity, catFileType, commitTree, git, gitRun, lsTree, refTarget, updateRefCas, writeTreeFromIndex } from './git.ts';
+import { type Identity, catFileBlobs, catFileType, commitTree, git, lsTree, refTarget, updateRefCas, writeTreeFromIndex } from './git.ts';
 
 export class SnapshotStateError extends Error {
   readonly ref: RefName;
@@ -492,8 +492,9 @@ function writeSnapshotTree(repo: AbsPath, files: ReadonlyMap<RepoPath, Buffer>):
 // ---------------------------------------------------------------------------------------------------
 // Verification
 
+/** `files`: every file the tree holds but the manifest, by path, as verified (read once, so a reader re-reads none). */
 export type SnapshotVerification =
-  | Readonly<{ kind: 'verified'; manifest: SnapshotManifest; manifestSha256: Sha256Hex }>
+  | Readonly<{ kind: 'verified'; manifest: SnapshotManifest; manifestSha256: Sha256Hex; files: ReadonlyMap<string, Buffer> }>
   | Readonly<{ kind: 'mismatch'; detail: string }>;
 
 class Mismatch extends Error {}
@@ -502,22 +503,23 @@ class Mismatch extends Error {}
  * Re-reads a snapshot commit: its tree holds `manifest.json` and exactly the files it lists, each hashing as
  * listed; `events.jsonl` ends at the manifest's high-water mark; and the listed files are exactly the closure the
  * tree's own events and payloads name (reads.json where a call wrote one, red.json where a red lane's class was written), each with its naming record, hashing as
- * that record states.
+ * that record states. The tree's blobs are read in one `cat-file --batch` (`catFileBlobs`).
  */
 export function verifySnapshot(repo: AbsPath, commit: Sha): SnapshotVerification {
   const mismatch = (detail: string): SnapshotVerification => ({ kind: 'mismatch', detail });
   const entries = lsTree(repo, commit);
   const manifestEntry = entries.find((e) => e.path === SNAPSHOT_MANIFEST);
   if (manifestEntry === undefined) return mismatch('no manifest.json');
-  const manifestText = blobText(repo, manifestEntry.object);
-  const manifest = snapshotManifest(JSON.parse(manifestText), `${commit}:${SNAPSHOT_MANIFEST}`);
+  const read = catFileBlobs(repo, entries.map((e) => e.object));
+  const manifestBytes = read.get(manifestEntry.object)!;
+  const manifest = snapshotManifest(JSON.parse(manifestBytes.toString('utf8')), `${commit}:${SNAPSHOT_MANIFEST}`);
   const listed = new Map(manifest.files.map((f) => [f.path as string, f]));
   const blobs = new Map<string, Buffer>();
   for (const e of entries) {
     if (e.path === SNAPSHOT_MANIFEST) continue;
     const want = listed.get(e.path);
     if (want === undefined) return mismatch(`${e.path} is not in the manifest`);
-    const bytes = Buffer.from(blobText(repo, e.object), 'utf8');
+    const bytes = read.get(e.object)!;
     if (sha256Hex(bytes) !== want.sha256 || bytes.length !== want.size) return mismatch(`${e.path} hashes to ${sha256Hex(bytes)} (${bytes.length} bytes), manifest says ${want.sha256} (${want.size})`);
     blobs.set(e.path, bytes);
   }
@@ -529,7 +531,7 @@ export function verifySnapshot(repo: AbsPath, commit: Sha): SnapshotVerification
   if (lines.pop() !== '' || lines.length !== manifest.highWater) return mismatch(`events.jsonl holds ${lines.length} lines, high-water mark ${manifest.highWater}`);
   const events = lines.map(parseEventLine);
   if (events[events.length - 1]!.seq !== manifest.highWater) return mismatch(`events.jsonl ends at another seq than ${manifest.highWater}`);
-  const verified: SnapshotVerification = { kind: 'verified', manifest, manifestSha256: sha256(sha256Hex(manifestText)) };
+  const verified: SnapshotVerification = { kind: 'verified', manifest, manifestSha256: sha256(sha256Hex(manifestBytes)), files: blobs };
 
   let closure: readonly Item[];
   try {
@@ -559,9 +561,6 @@ export function verifySnapshot(repo: AbsPath, commit: Sha): SnapshotVerification
   if (extra.length > 0) return mismatch(`${extra.join(', ')} ${extra.length === 1 ? 'is' : 'are'} not in the snapshot closure`);
   return verified;
 }
-
-/** A blob's content. Every snapshot file is UTF-8 text (JSON, the ledger, a brief, a render), so text round-trips its bytes. */
-const blobText = (repo: AbsPath, blob: Sha): string => gitRun(repo, ['cat-file', 'blob', blob]).stdout;
 
 // ---------------------------------------------------------------------------------------------------
 // The op
