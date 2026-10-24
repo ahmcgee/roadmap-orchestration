@@ -6,8 +6,9 @@
 // completed audit follows it):
 //   cadence       N qualifying publications (D3: `holistic.audit.every`, default 5): unit and batch publications, and a
 //                 revision's docs publication that carries contract ops (a rule's); a docs-only one is not counted
-//   unwitnessed   R8: a unit or batch publication that selected a future (not latched) or exempt obligation left
-//                 unwitnessed on its tree (no observation there, or verdict `unwitnessed`)
+//   unwitnessed   R8: a unit or batch publication that selected an active future (not latched) obligation left
+//                 unwitnessed on its tree (no observation there, or verdict `unwitnessed`). An exempt one (waived,
+//                 deferred, retired: a ruling released it) is owed no witness and triggers nothing (field fix, 2026-10-24)
 //   drift         a revision from a bundle, a rule (its ledger or sidecars changed), `reverse`, or an architect spec,
 //                 obligation, mapping or vision edit (R15: a vision revision, and the arc turning holistic): runs
 //                 L ∩ {drift, vision}, or all of L when that is empty. Change-sensitive (M4a rev 3, H2, R61): a bundle
@@ -28,6 +29,13 @@
 // period (`wallClockMin`) has passed since it started. A skipped audit (its lens backend parked, the arc paused:
 // `skipReason`) writes nothing.
 //
+// Drift is throttled (field fix 2026-10-24, `DRIFT_THROTTLE_MIN`): within that period of the latest audit's start a drift
+// trigger is owed but not fresh, so a burst of revisions (owner re-entries, cuts, rules) runs one audit per period, not
+// one each. Every drift since the last completed audit's start stays owed, so the next audit records them all; any other
+// fresh trigger runs it at once. A bundle's drift is never held (it opens the checkpoint's next generation right after
+// the audit that led to it, one bundle per checkpoint), nor is any once no work remains (nothing is left to burst, and
+// completion waits on it).
+//
 // Owed (OR-Q2/3): triggers owed for 2N qualifying publications, or for 2 × `wallClockMin` since the last completed
 // audit started (or the base), raise one non-blocking `audit-owed` per episode (audit.ts `raiseAuditOwed`).
 //
@@ -38,7 +46,7 @@
 // fact from when this process first saw it (a fact older than the process from the process's start), so a restart
 // delays a wall-clock trigger, never fires one early.
 import type { AuditTrigger } from './types.ts';
-import { type LensKind, isExempt, isMustHold, LENS_KINDS } from './types.ts';
+import { type LensKind, isMustHold, LENS_KINDS } from './types.ts';
 import type { Parent, PlanChange } from '../core/events.ts';
 import { type ObligationId, type Sha, type UnitId, compareIds } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
@@ -52,6 +60,12 @@ import { selected } from '../pipeline/gate.ts';
 import { observedViews } from '../pipeline/lanes.ts';
 import { holisticInForce } from '../pipeline/stages.ts';
 import { type AppliedRevision, type CoverageBase, type PublishedHead, appliedRevisions, coverageBase, coverageOf, publishedHeads, revisionPublication } from './coverage.ts';
+
+/**
+ * Minutes after the latest audit's start during which a non-bundle revision's drift makes no audit due (see the header).
+ * Field fix 2026-10-24: seven revisions in one stretch each ran a drift audit, five finding nothing.
+ */
+export const DRIFT_THROTTLE_MIN = 60;
 
 /** Minutes since the fact at `seq` was written. */
 export type Clock = (seq: number) => number;
@@ -88,7 +102,8 @@ export type Cadence = Readonly<{
   episode: Parent;
 }>;
 
-type Event<T> = Readonly<{ seq: number; trigger: T }>;
+/** `held`: a drift event inside the throttle period (DRIFT_THROTTLE_MIN): owed, but not fresh. */
+type Event<T> = Readonly<{ seq: number; trigger: T; held?: true }>;
 
 /** The integration head now. */
 export const integrationHeadNow = (ctx: Pick<StageContext, 'repo' | 'plan'>): Sha => revParse(ctx.repo, branchRef(ctx.plan().integrationBranch));
@@ -169,7 +184,7 @@ export function specsOnlyOf(triggers: readonly AuditTrigger[]): readonly UnitId[
 // R8 is a git diff and a spec read per publication: read each once per process.
 const unwitnessedMemo = new Map<string, readonly ObligationId[]>();
 
-/** R8: the future (not latched) or exempt obligations a unit or batch publication selected and left unwitnessed on its tree. */
+/** R8: the active future (not latched) obligations a unit or batch publication selected and left unwitnessed on its tree. */
 function unwitnessedBy(ctx: StageContext, h: PublishedHead): readonly ObligationId[] {
   const key = `${ctx.runDir}\0${h.op}`;
   const memo = unwitnessedMemo.get(key);
@@ -189,8 +204,16 @@ function unwitnessedBy(ctx: StageContext, h: PublishedHead): readonly Obligation
       const unit = ctx.plan().units.find((u) => u.id === id);
       if (unit === undefined) throw new Error(`publication ${h.op} names unit ${id}, which the plan in force does not have`);
       for (const o of selected(ctx, unit, h.old, h.head)) {
-        if (o.state.type === 'split' || o.witness === null) continue;
-        if (isExempt(o) || !isMustHold(o, latched)) picked.set(o.id, o);
+        switch (o.state.type) {
+          case 'active':
+            if (o.witness !== null && !isMustHold(o, latched)) picked.set(o.id, o);
+            break;
+          // A split one is witnessed through its children; an exempt one was released by a ruling.
+          case 'split': case 'waived': case 'deferred': case 'retired':
+            break;
+          default:
+            throw new Error(`obligation ${o.id} is in state ${JSON.stringify(o.state satisfies never)}`);
+        }
       }
     }
     out = observedViews(ctx, obligations, [...picked.values()], h.head)
@@ -250,16 +273,19 @@ export function cadence(ctx: StageContext, clock: Clock): Cadence | null {
       events.push({ seq: h.seq, trigger: { type: 'unwitnessed', obligation } });
     }
   }
+  const remains = workRemains(ctx);
+  const throttled = remains && latest !== null && clock(latest.started.seq) < DRIFT_THROTTLE_MIN;
   revisions.forEach((r, i) => {
     if (r.seq < since) return;
     const drift = driftOf(r, i === 0 ? null : revisions[i - 1]!);
-    if (drift.kind === 'full') events.push({ seq: r.seq, trigger: { type: 'drift', planRev: r.payload.rev } });
-    if (drift.kind === 'specs-only') events.push({ seq: r.seq, trigger: { type: 'drift', planRev: r.payload.rev, specsOnly: drift.units } });
+    if (drift.kind === 'none') return;
+    const held = throttled && r.payload.source.type !== 'bundle' ? { held: true as const } : {};
+    const trigger: AuditTrigger = drift.kind === 'full' ? { type: 'drift', planRev: r.payload.rev } : { type: 'drift', planRev: r.payload.rev, specsOnly: drift.units };
+    events.push({ seq: r.seq, trigger, ...held });
   });
   const requested = fold.auditRequests.filter((q) => q.seq > since);
   for (const q of requested) events.push({ seq: q.seq, trigger: { type: 'requested', command: q.command } });
 
-  const remains = workRemains(ctx);
   const outstanding = coverageOf(fold, base, L, head).filter((c) => c.outstanding).map((c) => c.lens);
   const anchor = Math.max(latest?.started.seq ?? 0, heads.filter((h) => h.subject !== 'docs').at(-1)?.seq ?? 0, base.seq);
   const elapsed = clock(anchor) >= wallClockMin;
@@ -279,7 +305,7 @@ export function cadence(ctx: StageContext, clock: Clock): Cadence | null {
     ...(final ? [{ type: 'final' } as const] : []),
   ];
   const running = latest !== null && latest.ended === null;
-  const due = !running && (events.some((e) => fresh(e.seq)) || wallClock || finalFresh || retry);
+  const due = !running && (events.some((e) => e.held === undefined && fresh(e.seq)) || wallClock || finalFresh || retry);
 
   const lenses = new Set<LensKind>();
   for (const t of owed) {

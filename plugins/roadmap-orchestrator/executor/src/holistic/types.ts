@@ -878,7 +878,7 @@ export const findingTo: Read<FindingTo> = tagged('state', {
 export type AuditTrigger =
   /** Every N publications (D3, N = `holistic.audit.every`, default 5). */
   | Readonly<{ type: 'cadence' }>
-  /** R8: a publication left a selected future or exempt obligation unwitnessed. */
+  /** R8: a publication left a selected active future (not latched) obligation unwitnessed; never an exempt one. */
   | Readonly<{ type: 'unwitnessed'; obligation: ObligationId }>
   /**
    * A revision from a rule, a bundle, `reverse`, or an architect spec, obligation or vision edit: `L ∩ {drift, vision}`.

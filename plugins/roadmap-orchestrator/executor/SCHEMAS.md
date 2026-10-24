@@ -2212,14 +2212,18 @@ src/pipeline/dispatch.ts `callArcRole`):
    `integration.ff`s (a docs one at its intent's seq, a unit's or batch's at its done's seq, `publications()`).
 2. **Triggers** are events after the last completed audit's start (or the latest vision revision): `cadence` (N counted
    publications: unit, batch, and a revision's docs publication carrying contract ops; never a docs-only one),
-   `unwitnessed` (R8: a publication's selected future-not-latched or exempt obligations with no observation on its tree
-   or verdict `unwitnessed`, recomputed with `selected` over the ff's old..new), `drift` (a revision from a bundle, or
+   `unwitnessed` (R8: a publication's selected active future-not-latched obligations with no observation on its tree
+   or verdict `unwitnessed`, recomputed with `selected` over the ff's old..new; a waived, deferred or retired one never,
+   field fix 2026-10-24), `drift` (a revision from a bundle, or
    whose ledger/sidecars, a non-evidence spec, obligations, mapping, vision, `holistic` or `advances` changed; never an executor's or
    an arc's first), `wall-clock` (`wallClockMin` since the latest audit start or unit publication, while a plan unit is
    not retired, cut or superseded), `requested` (its lenses ∩ L, or L), `final` (no work left and some lens in L
    outstanding: those lenses only). drift runs L ∩ {drift, vision} (or L); every other trigger runs L. An audit records
    every owed trigger (coalesced).
-3. **Due:** no audit running, and a trigger is fresh (its event after the latest audit start), the wall-clock trigger
+3. **Due:** no audit running, and a trigger is fresh (its event after the latest audit start; a drift one, while a plan
+   unit is not retired, cut or superseded and its revision is not a bundle's, only once `DRIFT_THROTTLE_MIN` = 60 minutes
+   have passed since the latest audit started, field fix 2026-10-24: a held drift is owed and recorded by whatever audit
+   runs next, so a burst of revisions runs one audit per period), the wall-clock trigger
    fired, `final` holds after a completed audit (or before any), or `wallClockMin` passed since the latest start with
    triggers owed. So an abandoned audit is not retried at once for the same triggers; with no work left the retry is the
    final trigger alone. A due audit is skipped, writing nothing, while the lens seat's backend is parked or the arc is
