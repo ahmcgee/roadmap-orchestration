@@ -8,7 +8,7 @@
 // Each defaulted kind warns once per process on stderr (the executor's stderr is the supervisor's
 // `supervisor.<token>.err` in the host dir).
 import type { CensusEntry, ClassifiedAdmit, Conversion, Obligations } from '../holistic/types.ts';
-import type { DiffShown, GateLargeDiff, JudgmentInputs, MutantOf, RevisionSource } from './events.ts';
+import type { DiffShown, FlakeOn, FlakyFact, GateLargeDiff, JudgmentInputs, MutantOf, Parent, RevisionSource } from './events.ts';
 import type { ApprovalBlobs, GateReview } from './review.ts';
 import type { FindingId, LaneId, ObligationId, UnitId } from './ids.ts';
 import type { PressureAvailability } from '../host/pressure.ts';
@@ -601,4 +601,21 @@ export function earlierReaderResultDefault(recorded: ResultFile, fresh: ResultFi
  */
 export function scopeOverlapFixDefault(unit: UnitId): void {
   warnDefaulted('scope-overlaps-corpus.fix', `unit ${unit}: a scope-overlaps-corpus problem without fix (written before 1.0.0-dev.18); read as the fix dev.18 names`);
+}
+
+// ---------------------------------------------------------------------------------------------------
+// 1.0.0-dev.20 -> dev.21 (unit flakes, 2026-10-24). Delete once no arc started on 1.0.0-dev.20 or earlier is in flight
+// (BACKLOG "Scaffolding to delete"); `on` then becomes required on `flake-observed`.
+
+/**
+ * A `flake-observed` fact's `on` (dev.21): absent on one an earlier executor wrote, which forgave every unit's flake and
+ * minted deflakes from all of them. Read from its red run's spawn (`spawnParent`): a job's, or a candidate's, `tip`; any
+ * other unit stage's (its lanes stage, its scaffold) `unit`, so it never mints. A lanes stage's run on the unit's diff base
+ * reads `unit` too (its tree is not recorded): such a flake mints only once it is seen on the tip again.
+ */
+export function flakeOnDefault(fact: FlakyFact, spawnParent: Parent): FlakeOn {
+  warnDefaulted('flake-observed.on', 'a flake-observed fact without on (written before 1.0.0-dev.21); read from its red run\'s stage: a candidate\'s or a job\'s is the tip\'s, any other unit stage\'s the unit\'s');
+  if (fact.owner.type === 'job') return 'tip';
+  if (spawnParent.type !== 'stage') throw new Error(`flake-observed of ${fact.event.red}: a unit's lane run whose spawn's parent is ${spawnParent.type}, not a stage`);
+  return spawnParent.stage === 'candidate' ? 'tip' : 'unit';
 }

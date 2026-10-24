@@ -643,6 +643,9 @@ at triage stay in git history.
 
 ## Scaffolding to delete
 
+- **dev.20 flakes without `on`** (`flakeOnDefault`, src/core/upgrade.ts; its call in src/pipeline/deflake.ts
+  `flakeOnOf`): delete once no arc started on 1.0.0-dev.20 or earlier is in flight; `on` then becomes required on
+  `flake-observed`.
 - **dev.17 rejections without `fix`** (`scopeOverlapFixDefault`, src/core/upgrade.ts; its call in the
   `scope-overlaps-corpus` reader, src/phase0/types.ts `corpusProblem`): delete once no arc started on 1.0.0-dev.17 or
   earlier is in flight; `fix` then becomes required.

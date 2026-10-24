@@ -1183,13 +1183,23 @@ export const FLAKY_LANE_SETS = ['spec', 'suite', 'arc'] as const;
 export type FlakyLaneSet = (typeof FLAKY_LANE_SETS)[number];
 
 /**
+ * Which tree a flake was seen on (dev.21, src/pipeline/lanes.ts `flakeOn`): `unit`, a unit's own run (its lanes stage, its
+ * scaffold dry run) on a commit the integration tip does not contain, so the commit holds the unit's unmerged work; `tip`,
+ * any other: a job's run, a candidate's (the candidate merge, the tip alone), a unit's run on a commit the tip contains (its
+ * diff base, a commit with nothing of its own).
+ */
+export const FLAKE_ONS = ['unit', 'tip'] as const;
+export type FlakeOn = (typeof FLAKE_ONS)[number];
+
+/**
  * dev.17, the flaky ledger (SCHEMAS.md "dev.17: the flaky ledger"; src/pipeline/deflake.ts). `flake-observed`: a lane run
  * red then green on its diagnostic rerun (same tree, same environment), written once per such rerun before the lane's
  * record is read, by `owner`'s series. `set` says where the lane is defined; `event.failing` the test ids the red run's
- * reporter named (an arc lane's; empty for a spec or suite lane, whose key is the lane). `forgiven`: the lane counts as
- * passed (the rerun's verdict), true unless the owner is a deflake unit for one of the event's keys, which must fix it.
+ * reporter named (an arc lane's; empty for a spec or suite lane, whose key is the lane). `on` (dev.21): the tree it was
+ * seen on; absent on a fact an earlier release wrote (src/pipeline/deflake.ts `flakeOnOf` reads it). `forgiven`: the lane
+ * counts as passed (the rerun's verdict), decided at observation (`flakeForgiven`).
  */
-export type FlakyFact = Readonly<{ kind: 'flake-observed'; owner: LaneOwner; lane: LaneId; set: FlakyLaneSet; event: FlakyEvent; forgiven: boolean }>;
+export type FlakyFact = Readonly<{ kind: 'flake-observed'; owner: LaneOwner; lane: LaneId; set: FlakyLaneSet; on?: FlakeOn; event: FlakyEvent; forgiven: boolean }>;
 
 /**
  * The dev.17 propagation facts (SCHEMAS.md "dev.17: propagation"; src/holistic/propagation.ts). The fold keeps them in log
@@ -2554,8 +2564,9 @@ export const fact: Read<Fact> = tagged('kind', {
       kind: f.get('kind', literal('flake-observed')), owner: f.get('owner', laneOwner), lane: f.get('lane', laneR), set: f.get('set', oneOf(FLAKY_LANE_SETS)),
       event: f.get('event', flakyEvent), forgiven: f.get('forgiven', bool),
     };
+    const on = f.optional('on', oneOf(FLAKE_ONS));
     if (out.set !== 'arc' && out.event.failing.length > 0) throw new SchemaError(`${f.path}.event.failing`, 'empty (only an arc lane\'s reporter names tests)', out.event.failing);
-    return out;
+    return on === undefined ? out : { ...out, on };
   }),
   ...PROPAGATION_FACT_READERS,
   ...REVIEW_FACT_READERS,

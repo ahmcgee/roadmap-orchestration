@@ -4714,7 +4714,8 @@ src/pipeline/deflake.ts, src/pipeline/deflakemint.ts). Record changes are additi
 | Record | Change | Read-time default |
 |---|---|---|
 | `flake-observed` fact (new) | `{owner: {type: unit, unit} \| {type: job, job}, lane, set: spec\|suite\|arc (FLAKY_LANE_SETS), event: FlakyEvent, forgiven}`; `event.failing` empty unless `set` is `arc`; one per red run (`event.red`), both runs opened by this log. The fold keeps them in log order (`JournalView.flakes`) | — |
-| The ledger | derived, never stored: one `FlakyLedgerEntry` per key of the `flake-observed` facts (`flakyKeysOf`: a test key per failing id, else the lane key), its `deflakes` the plan's deflake units naming it, in plan order (`flakyLedger`) | an arc whose revision in force records no `systemsMap` (applied before dev.17) ran without a ledger: read as empty at the upgrade (`flakyLedgerDefault`, kind `flaky.ledger`, logged once) |
+| `flake-observed` fact (dev.21) | `+ on?: unit \| tip` (`FLAKE_ONS`): the tree the flake was seen on (src/pipeline/lanes.ts `flakeOn`): `unit` for a unit's run, but the candidate's, on a commit the integration tip does not contain; else `tip`. Written on every new fact | absent (an earlier executor's): read from the red run's spawn parent (`flakeOnDefault`, kind `flake-observed.on`, logged once): a job's or a candidate's `tip`, any other unit stage's `unit` (a lanes-stage run on the diff base included: it mints only once it flakes on the tip again) |
+| The ledger | derived, never stored: one `FlakyLedgerEntry` per key of the `flake-observed` facts seen `on: tip` (`flakeOnOf`; `flakyKeysOf`: a test key per failing id, else the lane key), its `deflakes` the plan's deflake units naming it, in plan order (`flakyLedger`) | an arc whose revision in force records no `systemsMap` (applied before dev.17) ran without a ledger: read as empty at the upgrade (`flakyLedgerDefault`, kind `flaky.ledger`, logged once) |
 | `PlanUnit` | `origin` + `deflake` (`UNIT_ORIGINS` appended); `+ deflake?: {keys: FlakyKey[]}` (non-empty, unique, one lane), present exactly on a deflake unit | none (lasting) |
 | Plan `limits` | `+ verification?: {laneMinutes?: positive, lanes?: {<lane id>: positive}}` (lane-minutes) | `laneMinutes` 30 (`DEFAULT_VERIFICATION_LANE_MINUTES`); a batch lane without its own entry: 2 runs (`BATCH_VERIFICATION_RUNS`) |
 | `RevisionSource`, proposer | `+ {type: deflake}`: the code-applied revision admitting deflake units (src/input/classify.ts `deflakeRows`: only it adds a deflake unit, and it adds nothing else) | — |
@@ -4728,12 +4729,15 @@ src/pipeline/deflake.ts, src/pipeline/deflakemint.ts). Record changes are additi
 1. **Observation** (src/pipeline/lanes.ts). In a series (spec or suite, the lanes stage or a candidate) and in a journey
    series (a unit's or a job's), a red lane whose diagnostic rerun passed writes `flake-observed` (`observeFlake`) before its
    record is read: `tree` the lane's input on the commit (the reuse key's `inputSha`), `env` its environment id, `failing`
-   the tests an arc lane's reporter named failing in the red run. A red whose spawn pressure is at or above
+   the tests an arc lane's reporter named failing in the red run, `on` the tree it was seen on (`flakeOn`: `unit` when a
+   unit stage other than the candidate ran it at a commit that is not an ancestor of the integration tip, else `tip`). A red whose spawn pressure is at or above
    `PRESSURE_SATURATED` (a series' run on a saturated host) is the pressure protocol's, never a flake. A stochastic lane and
    a verification run take no diagnostic rerun.
-2. **Forgiveness**: `forgiven` is decided once, at observation (`flakeForgiven`): true unless the owner is a deflake unit
-   (or a re-entry of one) of one of the event's keys. Forgiven, the lane passes on its green rerun; else it is red, `flaky`,
-   charged, and its fix round is told so. A read-back (`seriesLedger`) takes the forgiveness from the fact of the red run.
+2. **Forgiveness**: `forgiven` is decided once, at observation (`flakeForgiven`): false when the owner is a deflake unit
+   (or a re-entry of one) of one of the event's keys; else true for a flake `on: tip`; for one `on: unit` (dev.21), true
+   only when every key stands as a tip flake (`tipFlaky`: a ledger flake after the key's latest merged deflake's
+   publication seq). Forgiven, the lane passes on its green rerun; else it is red, `flaky`, charged, and its fix round is
+   told so. A unit's own flake is never in the ledger, so it never mints. A read-back (`seriesLedger`) takes the forgiveness from the fact of the red run.
 3. **Due** (`deflakeDue`): per key, nothing while a deflake of it is open or parked; else the flakes after its deflakes
    settled (a merged one's publication seq; a cut one's admission seq). None: nothing. Some, with fewer than two deflakes:
    a deflake is due, one unit per lane and count (`MintGroup`); with two: `flake-recurring`.

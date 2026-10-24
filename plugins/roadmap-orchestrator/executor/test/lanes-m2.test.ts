@@ -1,16 +1,19 @@
 // M2 lanes (src/pipeline/lanes.ts, src/pipeline/redlane.ts), integrated over real processes and real git: the
 // red-lane protocol on real lanes, host samples, `@cpu` and pool-instance reservations with their binding, and
-// cancelled waits. Named tests: lanes.flake-red-green, lanes.flake-deflake-own (dev.17, the flaky ledger), lanes.red-red, lanes.signature-no-evidence,
+// cancelled waits. Named tests: lanes.flake-red-green, lanes.flake-deflake-own (dev.17, the flaky ledger), lanes.flake-unit-own
+// (dev.21: a flake on the unit's own commit is its red, unless it stands as a tip flake), lanes.flake-on-default (an earlier
+// executor's fact without `on`), lanes.red-red, lanes.signature-no-evidence,
 // lanes.signature-busy-rerun-pass, lanes.instance-env, lanes.pause-mid-series.
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import type { Fact, Holder, IntentOf } from '../src/core/events.ts';
 import { appliedFields } from './fixtures/log-records.ts';
-import { arcId, planRev, resourceName, sha256, unitId } from '../src/core/ids.ts';
-import { openJournal } from '../src/core/log.ts';
+import { type InvocationId, arcId, opKey, planRev, resourceName, sha, sha256, unitId } from '../src/core/ids.ts';
+import { openJournal, readJournal } from '../src/core/log.ts';
+import { laneRevOf } from '../src/holistic/types.ts';
 import { absPath } from '../src/core/values.ts';
 import type { HostSample } from '../src/host/sample.ts';
 import { parsePlan } from '../src/input/plan.ts';
@@ -21,7 +24,8 @@ import { lanes, loadUnitSpec } from '../src/pipeline/stages.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
 import type { Acquire, ResourceRequest } from '../src/schedule/types.ts';
 import { tmpDir } from './helpers/repo.ts';
-import { revParse } from '../src/git/git.ts';
+import { git, revParse } from '../src/git/git.ts';
+import { flakeOnOf, flakyLedger } from '../src/pipeline/deflake.ts';
 import { intents } from './fixtures/invoke-specs.ts';
 import { DB, type LaneJson, SCENARIO_TIMEOUT_MS, type StageRun, U1, keptSpec, launchOf, outcomeFacts, setupUnit, spawnIntents, started } from './fixtures/stage-common.ts';
 
@@ -58,7 +62,7 @@ const runtime = (ctx: StageContext, sampleHost: () => HostSample, signal: AbortS
 
 const readBack = (run: StageRun, ctx: StageContext = run.ctx) => seriesLedger(ctx, PARENT, loadUnitSpec(run.ctx, run.unit).spec.lanes, 'spec', run.base, specSeriesRoot(ctx.runDir, PARENT));
 
-test('lanes.flake-red-green: red then green on the diagnostic rerun is a flake: recorded in the flaky ledger and forgiven (the green rerun counts, uncharged); both runs kept', T, async () => {
+test('lanes.flake-red-green: red then green on the diagnostic rerun at a commit the tip contains is the tip\'s flake: recorded in the flaky ledger and forgiven (the green rerun counts, uncharged); both runs kept', T, async () => {
   const run = laneRun([redGreen('flaky', 'expected 3, got 4')]);
   const done = started(await lanes(run.ctx, run.unit, run.base));
   assert.equal(done.outcome.kind, 'green');
@@ -90,7 +94,7 @@ test('lanes.flake-red-green: red then green on the diagnostic rerun is a flake: 
   const identity = subject.purpose === 'lane' ? subject.identity : undefined;
   assert.ok(identity !== undefined);
   assert.deepEqual(flakes, [{
-    kind: 'flake-observed', owner: { type: 'unit', unit: U1 }, lane: 'flaky', set: 'spec', forgiven: true,
+    kind: 'flake-observed', owner: { type: 'unit', unit: U1 }, lane: 'flaky', set: 'spec', on: 'tip', forgiven: true,
     event: { tree: revParse(run.repo, `${run.base}^{tree}`), env: identity.envId, failing: [], red: record.voided.inv, green: record.inv },
   }]);
 
@@ -130,6 +134,54 @@ test('lanes.flake-deflake-own: a deflake unit\'s own flake is not forgiven: red,
   const back = seriesLedger(run.ctx, spawnParent, loadUnitSpec(run.ctx, run.unit).spec.lanes, 'spec', run.base, specSeriesRoot(run.runDir, spawnParent));
   assert.deepEqual(back, done.ledger);
   assert.deepEqual(laneFixRound(back, [], run.base), done.fix);
+});
+
+test('lanes.flake-unit-own: a flake on the unit\'s own commit (one the tip does not contain) is its red: flaky, charged, the fix round told; never the ledger\'s; a standing tip flake of the lane is forgiven', T, async () => {
+  const marker = join(tmpDir('red-green'), 'flaky.marker');
+  const run = laneRun([{ id: 'flaky', argv: [process.execPath, RED_GREEN, marker, 'expected 3, got 4'] }]);
+  // The unit's own commit: the base's tree on a commit no ref of the tip names.
+  const own = sha(git(run.repo, ['commit-tree', `${run.base}^{tree}`, '-p', run.base, '-m', 'u1 own']).trim());
+  const done = started(await lanes(run.ctx, run.unit, own));
+  assert.equal(done.outcome.kind, 'red');
+  assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, 1);
+  const [record] = done.ledger;
+  assert.ok(record !== undefined && record.diagnostic !== null);
+  assert.deepEqual([record.verdict, record.flaky, record.diagnostic.verdict], ['fail', true, 'pass']);
+  assert.ok(done.fix !== null && done.fix.kind === 'fix');
+  assert.match(done.fix.fix.directives[0]!, /^Lane flaky is flaky: it failed, then passed when the executor reran it at the same commit/);
+  assert.deepEqual(run.journal.view.flakes().map((x) => [x.fact.on, x.fact.forgiven]), [['unit', false]]);
+  assert.deepEqual(flakyLedger(run.journal.view, run.ctx.plan()), [], 'a unit\'s own flake is not the ledger\'s');
+
+  // The lane flakes on the tip (the unit's base): the ledger's, forgiven. Then again on the unit's own commit: it stands as a
+  // tip flake the unit did not bring, so it is forgiven too, and still not the ledger's.
+  rmSync(marker);
+  assert.equal(started(await lanes(run.ctx, run.unit, run.base)).outcome.kind, 'green');
+  rmSync(marker);
+  assert.equal(started(await lanes(run.ctx, run.unit, own)).outcome.kind, 'green');
+  assert.deepEqual(run.journal.view.flakes().map((x) => [x.fact.on, x.fact.forgiven]), [['unit', false], ['tip', true], ['unit', true]]);
+  assert.deepEqual(flakyLedger(run.journal.view, run.ctx.plan()).map((e) => e.events.length), [1]);
+});
+
+test('lanes.flake-on-default: a flake-observed fact an earlier executor wrote (no on) still reads; its red run\'s stage decides: a lanes stage\'s is the unit\'s, a candidate\'s the tip\'s', T, async () => {
+  const run = laneRun([redGreen('flaky', 'expected 3, got 4')]);
+  const lane = loadUnitSpec(run.ctx, run.unit).spec.lanes[0]!;
+  let n = 0;
+  const spawn = (stage: 'lanes' | 'candidate'): InvocationId => {
+    const { op, inv } = run.journal.begin({
+      kind: 'proc.spawn', key: opKey(`old:${++n}`), parent: { type: 'stage', unit: U1, stage, attempt: 1 }, deadlineAt: null,
+      body: () => ({ expect: { subject: { purpose: 'journey', lane: lane.id, laneRev: laneRevOf(lane), at: run.base, owner: { type: 'unit', unit: U1 } }, launchSha256: sha256('d'.repeat(64)) }, post: null }),
+    });
+    run.journal.done(op, 'proc.spawn', { kind: 'lost', treeEffects: false }, 'reconciled');
+    return inv;
+  };
+  for (const stage of ['lanes', 'candidate'] as const) {
+    run.journal.fact({ kind: 'flake-observed', owner: { type: 'unit', unit: U1 }, lane: lane.id, set: 'suite', forgiven: true, event: { tree: sha('a'.repeat(40)), env: null, failing: [], red: spawn(stage), green: spawn(stage) } });
+  }
+  const read = readJournal(run.runDir, run.journal.view.arc).events.flatMap((e) => (e.type === 'fact' && e.fact.kind === 'flake-observed' ? [e.fact] : []));
+  assert.deepEqual(read.map((f) => f.on), [undefined, undefined], 'read as written');
+  assert.deepEqual(run.journal.view.flakes().map((x) => flakeOnOf(run.journal.view, x.fact)), ['unit', 'tip']);
+  const ledger = flakyLedger(run.journal.view, run.ctx.plan());
+  assert.deepEqual(ledger.map((e) => e.events.map((ev) => ev.red)), [[run.journal.view.flakes()[1]!.fact.event.red]], 'only the candidate\'s is the ledger\'s');
 });
 
 test('lanes.red-red: red on the diagnostic rerun too is red, not flaky; the fix round reads the first run', T, async () => {

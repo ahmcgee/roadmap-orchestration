@@ -74,12 +74,12 @@ function journeyRun(a: CorpusArc, j: OpenJournal, n: number): InvocationId {
 }
 
 let runs = 0;
-/** A flake of `lane` (`set`) as its series records it: a red run naming `failing`, then a green rerun. */
+/** A flake of `lane` (`set`) on the tip as its series records it: a red run naming `failing`, then a green rerun. */
 function flake(a: CorpusArc, j: OpenJournal, lane: string, set: 'arc' | 'suite', failing: readonly string[]): void {
   const red = journeyRun(a, j, ++runs);
   const green = journeyRun(a, j, ++runs);
   j.fact({
-    kind: 'flake-observed', owner: { type: 'unit', unit: unitId('u1') }, lane: laneId(lane), set, forgiven: true,
+    kind: 'flake-observed', owner: { type: 'unit', unit: unitId('u1') }, lane: laneId(lane), set, on: 'tip', forgiven: true,
     event: { tree: sha('a'.repeat(40)), env: null, failing, red, green },
   });
 }

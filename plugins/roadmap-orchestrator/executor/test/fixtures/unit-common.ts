@@ -43,7 +43,11 @@ export const MUL_LANE: LaneJson = { id: 'mul', argv: ['node', '--test', 'test/mu
 /** The plan's suite: every test file of the repo (node's default patterns). */
 export const SUITE_LANE: LaneJson = { id: 'suite', argv: ['node', '--test'] };
 
-export type UnitSpecJson = Readonly<{ id: string; risk?: RiskTier; lanes?: readonly LaneJson[]; after?: readonly string[] }>;
+/** `scope`: the unit's (spec and plan) scope; default `UNIT_SCOPE`. */
+export type UnitSpecJson = Readonly<{ id: string; risk?: RiskTier; lanes?: readonly LaneJson[]; after?: readonly string[]; scope?: readonly string[] }>;
+
+/** A unit's default scope. */
+export const UNIT_SCOPE: readonly string[] = ['src/**', 'test/**', 'contracts/**'];
 
 export type ArcOptions = Readonly<{
   steps: readonly Step[];
@@ -96,7 +100,7 @@ export function setupArc(opts: ArcOptions): ArcDescriptor {
       schema: 'roadmap/spec-m1', unit: u.id, rev: 1,
       lanes: (u.lanes ?? [MUL_LANE]).map((l) => ({ ...laneJson(l), state: 'active' })),
       acceptance: [{ id: 'A1', clause: 'mul(2, 3) is 6', failLoudIfUndelivered: true, state: 'active' }],
-      scope: ['src/**', 'test/**', 'contracts/**'], resources: [], decisions: [], facts: [],
+      scope: u.scope ?? UNIT_SCOPE, resources: [], decisions: [], facts: [],
       cites: { contracts: ['contracts/api.md'], rulings: ['C-1'] },
     }));
   }
@@ -108,7 +112,7 @@ export function setupArc(opts: ArcOptions): ArcDescriptor {
     worktreeRoot: tmpDir('unit-wt'), contracts: ['contracts/api.md'], rulings: 'rulings.md', architectureDoc: 'ARCHITECTURE.md',
     direction: 'Keep it small.', suite: { lanes: (opts.suite ?? [SUITE_LANE]).map(laneJson) }, resources: [],
     units: units.map((u) => ({
-      id: u.id, spec: `${u.id}.json`, risk: u.risk ?? 'med', scope: ['src/**', 'test/**', 'contracts/**'], resources: [], ...(u.after === undefined ? {} : { after: u.after }),
+      id: u.id, spec: `${u.id}.json`, risk: u.risk ?? 'med', scope: u.scope ?? UNIT_SCOPE, resources: [], ...(u.after === undefined ? {} : { after: u.after }),
     })),
   }));
   const scenarioDir = tmpDir('unit-scenario');
