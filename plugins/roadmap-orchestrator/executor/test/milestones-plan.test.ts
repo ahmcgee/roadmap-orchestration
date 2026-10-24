@@ -3,7 +3,7 @@
 // advisory `milestone-unit-before-design` and row 11's `milestone-references-oversize` (2026-10-21); and the vision's
 // `experience` clause, which the vision skill compiles from its `## Experience standards` section. A corpus arc over
 // unit-common's repo for the classifier; the rows over a scratch repo, which row 11 reads the references in.
-// Named tests: classify.milestones-* (classify.milestones-rewalk: the walk abandonment brake's reset), phase0.milestones-*,
+// Named tests: classify.milestones-* (classify.milestones-rewalk: the walk abandonment brake's reset; classify.milestones-rewalk-bring-up-failed: a failed bring-up's round walked again), phase0.milestones-*,
 // vision.experience-clause.
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -12,12 +12,14 @@ import type { Fact } from '../src/core/events.ts';
 import { jobId, milestoneId, sha, unitId } from '../src/core/ids.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { absPath } from '../src/core/values.ts';
+import { openFinding } from '../src/holistic/findings.ts';
 import { parseVision } from '../src/holistic/types.ts';
 import { type Classified, type Proposer, changesScope, classify } from '../src/input/classify.ts';
 import { readInputFiles, recordPlan, requirePlanInForce, revisionInForce } from '../src/input/inforce.ts';
 import { milestonesOf, parsePlan } from '../src/input/plan.ts';
 import { openBlocking, raiseNeedsUser, supersededItems } from '../src/needsuser.ts';
 import { milestoneProgress, walkItemsDue } from '../src/walk/milestones.ts';
+import { bringUpDraft } from '../src/walk/report.ts';
 import { FROM_REF, MILESTONE_REFERENCES_BUDGET, phase0Rows } from '../src/phase0/rows.ts';
 import { pinDispatch } from '../src/pipeline/dispatch.ts';
 import { loadUnitSpec } from '../src/pipeline/stages.ts';
@@ -165,6 +167,35 @@ describe('classify.milestones: the milestones edit class', () => {
     const again = progress();
     assert.ok(again.kind === 'abandoned' && again.last.job === 'walk-4', JSON.stringify(again));
     assert.deepEqual(walkItemsDue(r.journal.view, plan(), [], new Date()).map((i) => i.job), ['walk-4'], 'the brake binds again, with its own escalation');
+  }));
+
+  test('classify.milestones-rewalk-bring-up-failed: an apply editing a milestone\'s bring-up after its walk failed bring-up makes that round\'s walk due again, its escalation superseded', T, () => onCorpusArc((r) => {
+    withMilestones(MILESTONE)(r.d);
+    accept(r);
+    merge(r, 'u2');
+    const plan = () => requirePlanInForce(r.ctx.runDir, r.journal.view).plan;
+    const progress = () => milestoneProgress(r.journal.view, plan(), milestonesOf(plan())[0]!, []);
+    const failBringUp = (n: number): void => {
+      const job = jobId('walk', n);
+      r.journal.fact({ kind: 'walk-started', job, milestone: milestoneId('MS-1'), round: 1, sha: SHA, ports: {} });
+      const o = openFinding(r.journal, bringUpDraft(job, milestonesOf(plan())[0]!, 'setup[0]', 'exit 1', []));
+      r.journal.fact({ kind: 'walk-ended', job, outcome: 'bring-up-failed', findings: [o.kind === 'suppressed' ? o.by : o.id], proposals: [], dropped: [] });
+    };
+    const later = new Date(Date.now() + 7 * 3_600_000);
+    failBringUp(1);
+    assert.equal(progress().kind, 'round-open', 'no unit can repair it: the round holds');
+    const [item] = walkItemsDue(r.journal.view, plan(), [], later);
+    assert.equal(item!.job, 'walk-1');
+    const id = raiseNeedsUser(r.journal, r.ctx.runDir, item!.content, { type: 'job', job: item!.job });
+
+    withMilestones({ ...MILESTONE, bringUp: { ...MILESTONE.bringUp, setup: [['node', '-e', '0']] } })(r.d);
+    assert.deepEqual(accepted(classifyNow(r)).changes, [{ type: 'milestones', rewalk: ['MS-1'] }]);
+    accept(r);
+    assert.deepEqual(progress(), { kind: 'walk-due', round: 1 });
+    assert.deepEqual([...supersededItems(r.journal.view)], [id]);
+    assert.deepEqual(openBlocking(r.journal.view), [], 'the escalation clears');
+    failBringUp(2);
+    assert.equal(progress().kind, 'round-open', 'a failure after the edit is a round again');
   }));
 
   test('classify.milestones-need-holistic: milestones on an arc without the holistic layer are refused before routing resolves', T, () => {

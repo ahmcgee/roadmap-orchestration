@@ -8,7 +8,9 @@
 //   interrupted) WALK_ATTEMPTS times ends `abandoned`: no further walk, not settled (the demo never promotes on it), and
 //   its escalation is raised (lead ruling 2026-10-18: a brake, not a retry for ever). An `apply` that edits the
 //   milestone's bring-up or journeys afterwards (`plan-applied` milestones change `rewalk`) resets it: the round's walk is
-//   due again with a fresh attempt count, and the escalation is superseded (src/needsuser.ts `supersededItems`).
+//   due again with a fresh attempt count, and the escalation is superseded (src/needsuser.ts `supersededItems`). Such an
+//   apply after a round whose walk ended `bring-up-failed` makes that round's walk due again the same way: no unit repairs
+//   an environment, so the edit is the lever (2026-10-24 field fix).
 // - **The rounds brake** (plan §4, in code): after round k's walk ended (`reported` or `bring-up-failed`), the units
 //   admitted from it are the polish units carrying its applied proposals and the units whose specs repair one of its
 //   findings. While an author has yet to act (a finding of the walk is still open, no unit owning it, and no checkpoint
@@ -86,7 +88,10 @@ export type RoundView = Readonly<{
 export type MilestoneProgress =
   /** Not every unit merged yet. */
   | Readonly<{ kind: 'building' }>
-  /** The walk of `round` is due: round 1 once reached, a later one by the brake, or a round whose walk was abandoned. */
+  /**
+   * The walk of `round` is due: round 1 once reached, a later one by the brake, or a round whose walk was abandoned or
+   * failed bring-up before an apply edited the milestone's bring-up or journeys.
+   */
   | Readonly<{ kind: 'walk-due'; round: number }>
   | Readonly<{ kind: 'walking'; walk: WalkRecord }>
   /** Round `round.round` is open: its authors have yet to act, or its units are in flight. */
@@ -148,6 +153,7 @@ export function milestoneProgress(view: JournalView, plan: PlanM1, m: Milestone,
   const last = rounds.at(-1);
   const since = view.rewalkSeq(m.id);
   if (last === undefined) return milestoneReached(view, m) ? braked(walks, 1, since) : { kind: 'building' };
+  if (last.ended!.outcome === 'bring-up-failed' && since > last.ended!.seq) return braked(walks, last.round, since);
   const r = roundOf(view, plan, last, repairs);
   if (r.pending !== null || r.inFlight.length > 0) return { kind: 'round-open', round: r };
   return r.landed.length > 0 && last.round < walkRoundsOf(plan) ? braked(walks, last.round + 1, Math.max(last.seq, since)) : { kind: 'settled', last };

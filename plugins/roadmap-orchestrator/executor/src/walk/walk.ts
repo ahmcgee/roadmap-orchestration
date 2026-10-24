@@ -32,6 +32,8 @@
 //      code-applied polish revision consumes them). Then `walk-ended{job, outcome, findings, proposals, dropped}`: the
 //      last round's proposals (round = `walkRounds`) are all dropped, never applied.
 //   8. `milestone-passed{milestone, job}` when the walk ended `reported` and the milestone has no active walkthrough P1.
+//      Before the end, a `reported` walk dismisses (code, `not-reproduced`) the still-active P1s of the milestone's
+//      earlier `bring-up-failed` walks: its product came up, so they no longer hold (a fixed environment, 2026-10-24).
 //      A crash between the end and the pass is settled by `settleWalks` (the scheduler's start, and every run).
 import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -46,7 +48,7 @@ import { type AbsPath, absPath } from '../core/values.ts';
 import { jobEvidenceRoot } from '../git/snapshot.ts';
 import { removeCheckout } from '../holistic/audit.ts';
 import { integrationHeadNow } from '../holistic/cadence.ts';
-import { isActive, openFinding, raisedWith } from '../holistic/findings.ts';
+import { isActive, openFinding, raisedWith, ruleFinding } from '../holistic/findings.ts';
 import type { Vision } from '../holistic/types.ts';
 import { type Milestone, type PlanM1, advancesOf, milestoneOf, milestonesOf, walkRoundsOf } from '../input/plan.ts';
 import { raiseNeedsUser, raisedFor } from '../needsuser.ts';
@@ -258,6 +260,12 @@ function end(
   interrupted = false,
 ): WalkRunOutcome {
   const last = w.round >= walkRoundsOf(plan);
+  if (outcome === 'reported') {
+    const stale = new Set(walksOf(ctx.journal.view, m.id).flatMap((x) => (x.ended?.outcome === 'bring-up-failed' ? x.ended.findings : [])));
+    for (const f of ctx.journal.view.holistic().findings) {
+      if (stale.has(f.id) && isActive(f)) ruleFinding(ctx.journal, f.id, 'dismissed', { type: 'code', reason: 'not-reproduced' });
+    }
+  }
   crashPoint('walk.before-ended');
   // dev.17: the walk's findings include its batch point's (src/pipeline/batchlanes.ts).
   const all = canonicalIds([...new Set([...findings, ...batchFindingsOf(ctx, w.job)])]);

@@ -1,7 +1,7 @@
 // dev.13 (plan §2–§4, §7 "Integrated"): the milestone walk job over a real arc (real git, real processes, the fake claude
 // and codex answering by unit and job, a tiny fake product: a node http server and a CLI). Named tests:
 // walk.loop (milestone reached → walk → a P1 keeps the node unpassed while an unrelated unit runs → a repair lands → round
-// 2 passes the node → the descendant becomes ready), walk.bring-up-failed (code's P1, no model call), walk.repair-turn
+// 2 passes the node → the descendant becomes ready), walk.bring-up-failed (code's P1, no model call; a bring-up edit walks the round again, its report dismissing the P1), walk.repair-turn
 // (a report citing evidence outside the evidence dir takes the one repair turn), walk.rounds-bound (the last round's
 // proposals dropped; a settled milestone unpassed escalates), and the walk crash cells (walk.crash.<label>).
 import assert from 'node:assert/strict';
@@ -29,7 +29,7 @@ import { applyPlanEdit } from './fixtures/checkpoint-common.ts';
 import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
 import { type ArcRun, appendSteps, codexStep, contextFor, gateStep } from './fixtures/unit-common.ts';
 import { admitSpecWire } from './helpers/holistic.ts';
-import { BROKEN_WALK, GREETING, J1_EVIDENCE, unitInForce, walkAnswer, walkArc, walkContext, walkStep } from './fixtures/walk-common.ts';
+import { BROKEN_WALK, GREETING, J1_EVIDENCE, PRODUCT, unitInForce, walkAnswer, walkArc, walkContext, walkStep } from './fixtures/walk-common.ts';
 import { repairUnits } from '../src/pipeline/reproduce.ts';
 import { milestonesOf } from '../src/input/plan.ts';
 
@@ -159,8 +159,8 @@ describe('the milestone walk (dev.13)', () => {
     }
   });
 
-  test('walk.bring-up-failed: a setup command that fails opens code\'s P1 citing its log, with no model call', T, async () => {
-    const d = walkArc({ steps: unitSteps('u1', moduleFiles('mul', '*')) });
+  test('walk.bring-up-failed: a setup command that fails opens code\'s P1 citing its log, with no model call; once the environment is fixed, a bring-up edit walks the round again and its report dismisses the P1', T, async () => {
+    const d = walkArc({ steps: [...unitSteps('u1', moduleFiles('mul', '*')), walkStep('walk-2', walkAnswer())] });
     const r = contextFor(d);
     try {
       await merge(r, 'u1');
@@ -177,6 +177,20 @@ describe('the milestone walk (dev.13)', () => {
       assert.deepEqual(factsOf(r, 'walk-ended').map((f) => [f.outcome, f.findings]), [['bring-up-failed', ['F-1']]]);
       assert.deepEqual(readCalls(d.scenarioPath).filter((c) => c.unit === 'walk-1'), [], 'no model call');
       assert.deepEqual(r.journal.view.openIntents(), []);
+
+      // The environment is fixed outside any unit (the setup passes again); an apply edits MS-1's bring-up: round 1 is due again.
+      writeFileSync(join(d.repo, 'product', 'setup.js'), PRODUCT['product/setup.js']!);
+      git(d.repo, 'commit', '--quiet', '-am', 'fix the setup');
+      const { w } = walkContext(r);
+      await applyPlanEdit(r, w as never, (plan) => {
+        const [m] = plan['milestones'] as Json[];
+        m!['bringUp'] = { ...(m!['bringUp'] as Json), env: { ...((m!['bringUp'] as Json)['env'] as Json), GREETER_FIXED: '1' } };
+      });
+      assert.deepEqual(milestoneProgress(r.journal.view, planOf(r), milestonesOf(planOf(r))[0]!, []), { kind: 'walk-due', round: 1 });
+      assert.deepEqual(await walk(r), { kind: 'ended', job: 'walk-2', outcome: 'reported', passed: true });
+      assert.deepEqual(factsOf(r, 'walk-started').map((f) => [f.job, f.round]), [['walk-1', 1], ['walk-2', 1]]);
+      const f1 = r.journal.view.holistic().findings.find((f) => f.id === 'F-1');
+      assert.deepEqual(f1?.last, { state: 'ruled', disposition: 'dismissed', by: { type: 'code', reason: 'not-reproduced' } }, 'the bring-up P1 no longer holds');
     } finally {
       r.journal.close();
     }

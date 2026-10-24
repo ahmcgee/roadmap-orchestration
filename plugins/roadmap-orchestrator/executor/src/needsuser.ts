@@ -139,13 +139,13 @@ export function raisedWithReason(view: JournalView, runDir: AbsPath, parent: Par
  * The items a later fact superseded. K14: the `pack-review` item each pack review raised (parent `job`), for every review
  * ended before the latest ended one. dev.13: the escalation of a walk abandoned on a failure (parent its walk job), once
  * an apply edited its milestone's bring-up or journeys after it ended (`rewalkSeq`; src/walk/milestones.ts, the walk
- * abandonment brake starts afresh).
+ * abandonment brake starts afresh); likewise the escalation of a walk that failed bring-up (its round's walk is due again).
  */
 export function supersededItems(view: JournalView): ReadonlySet<NeedsUserId> {
   const ended = view.holistic().packReviews.filter((r) => r.ended !== null).slice(0, -1);
   const facts = view.walkFacts();
   const rewalked = facts.flatMap((x) => {
-    if (x.fact.kind !== 'walk-ended' || x.fact.outcome !== 'abandoned' || x.fact.interrupted === true) return [];
+    if (x.fact.kind !== 'walk-ended' || x.fact.outcome === 'reported' || x.fact.interrupted === true) return [];
     const job = x.fact.job;
     const started = facts.find((y) => y.fact.kind === 'walk-started' && y.fact.job === job)?.fact;
     if (started?.kind !== 'walk-started') throw new Error(`walk-ended of ${job}, which never started`);

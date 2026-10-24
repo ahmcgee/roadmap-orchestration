@@ -4226,6 +4226,9 @@ No new reason (step 0 decided). `finding-p1-escalated` (blocking) is raised also
   revision applies them, and D extends this rule for a proposal its admit refuses) or one of its units is neither merged
   nor cut. Then k+1 is due when one landed and k < `walkRounds`; else the milestone settles (derived, no fact). A
   `bring-up-failed` walk is a round; an `abandoned` one is not (a round abandoned twice ends: "The abandonment brakes").
+  A `bring-up-failed` round followed by a `rewalk` apply (below) is due again: no unit repairs an environment, so the
+  edit is the lever. A `reported` walk dismisses (code, `not-reproduced`) the still-active P1s of the milestone's earlier
+  `bring-up-failed` walks before it ends: its product came up (2026-10-24 field fix).
 - **Milestone node.** Exemption is by the lineage root's origin: a re-entry of a gated planned unit stays gated, whatever
   its own origin.
 - **Escalation** (`walkItemsDue`, raised by the scheduler's tick with the findings' items): `finding-p1-escalated`
@@ -4302,7 +4305,7 @@ No new reason (step 0 decided). `finding-p1-escalated` (blocking) is raised also
     can be fixed) lists it in its `milestones` change's `rewalk` (src/input/classify.ts `milestoneRows`); the fold keeps the
     latest such revision's seq (`view.rewalkSeq(m)`), and the brake counts only the tries after it (and after the previous
     round's walk): the round's walk is due again with a fresh WALK_ATTEMPTS, `walkItemsDue` no longer raises the escalation,
-    and the one raised is superseded (src/needsuser.ts `supersededItems`: the item parented by a failed abandoned walk job
+    and the one raised is superseded (src/needsuser.ts `supersededItems`: the item parented by a failed abandoned or bring-up-failed walk job
     whose milestone's `rewalkSeq` is after the walk's end; open no more, it holds and blocks nothing). Otherwise the brake
     is final for that round: the owner plans another milestone for the experience if it still needs walking.
 - **Prompt.** `prompts/polishJudge/claude-opus-5-5.ts` (Opus 5.5 guide only); Fable a dated `inherits`.
