@@ -405,7 +405,7 @@ in a repo's class rebinds (`.roadmap/config.json` `routing.classes`). Built-in p
 | Form | `Command` |
 |---|---|
 | `--version` | `{command:'version'}` |
-| `start --repo <path> --plan <plan.json> [--profile default\|claude-only] [--wait <ms>]` | `{command:'start', args:{repo, plan, profile, waitMs}}`; `profile: null` when absent, so `selectProfile` lets `.roadmap/config.json` choose (explicit flag > config > `default`); `waitMs: null` when absent (`START_WAIT_MS`, 240 s; step 14b) |
+| `start --repo <path> --plan <plan.json> [--profile default\|claude-only] [--wait <ms>] [--base <export.json>]` | `{command:'start', args:{repo, plan, profile, waitMs, base}}`; `profile: null` when absent, so `selectProfile` lets `.roadmap/config.json` choose (explicit flag > config > `default`); `waitMs: null` when absent (`START_WAIT_MS`, 240 s; step 14b); `base: null` when absent, else an `inputs export`'s `export.json`, read by the CLI and passed to every executor as `--base` (deflake scope, 2026-10-23) |
 | `status`, `watch`, `stop` `[--repo <p> --arc <a>]` | `{command, run: RunLocator}` |
 | `pause (<unit> \| --all)` | `{target: {type:'unit',unit} \| {type:'all'}}` |
 | `ack <needs-user-id> [--choice <option>]` | `{id, choice \| null}` |
@@ -2653,7 +2653,7 @@ first, K14, H9), `issue-policy-untrusted` (holds admission arc-wide and the chec
 **Startup rows** (`src/preflight/startup.ts`; problems in `src/phase0/types.ts`; all exit 78; shared with `phase0 check`):
 `vision-unconfirmed{ref|null, expected|null, actual|null}` (null `ref`: unconfirmed; null `actual`: no such pinned
 file); `corpus-invalid{problems: (pin-drift | rule-reused{id} | rule-retired-reappears{id} | rules-in-vision |
-guide-missing | source-unreadable{detail} | source-remote-mismatch | scope-overlaps-corpus{unit} |
+guide-missing | source-unreadable{detail} | source-remote-mismatch | scope-overlaps-corpus{unit, fix} |
 contract-overlaps-corpus{path})[]}`; `phase0-invalid{problems: (census-incomplete{rules} | census-dangling{rules} |
 obligation-rule-unresolved{obligation} | debt-undispositioned{id} | debt-kept-twice-unasked{id} |
 amendment-undispositioned{id} | intake-missing{issue} | intake-unknown{issue} | intake-duplicate{issue} |
@@ -4737,10 +4737,10 @@ src/pipeline/deflake.ts, src/pipeline/deflakemint.ts). Record changes are additi
    finds an item by the red run's dir), crash label `deflake.after-recurring`; then, unless draining, admits the due units in
    one revision through `admitUnit` and `fillMappedObligations`, `evaluateRevision` with proposer `deflake`, and
    `commitUnderFence` with source `deflake`, parent `arc`; crash label `deflake.after-revision`. A group whose lane is no
-   longer defined (the owner's spec lane, a suite lane, an arc lane) is never minted for (the job waits). A refusal of its own units is a bug
-   (thrown); a commit the arc moved under is retried.
-5. **The spec seed** (`deflakeSpec`, rev 1): `deflake-<n>` (the next free number); scope the lane's systems' paths and test
-   globs, else the scope of the unit whose spec lane it is, else `**`; a spec lane copied (normalised) from that unit, a
+   longer defined (the owner's spec lane, a suite lane, an arc lane) is never minted for (the job waits). A group whose
+   scope would reach a same-repo corpus file set is not minted either: it raises `deflake-unscoped` ("Deflake scope"
+   below) and the others are admitted. A refusal of its own units is a bug (thrown); a commit the arc moved under is retried.
+5. **The spec seed** (`deflakeSpec`, rev 1): `deflake-<n>` (the next free number); scope per "Deflake scope" below; a spec lane copied (normalised) from that unit, a
    suite lane in `forces`, or an arc lane's failing tests as witness items `W-n` of clause `A-1`; acceptance `A-1` (the key
    passes every run of a tree), decision `D-1` (the two outcomes; external causes are the environment probe's; never
    quarantine, skip or weaken), facts `F-1` (the flakes' runs) and `F-n` (each earlier deflake of the keys and its state).
@@ -4923,3 +4923,38 @@ evidence dirs, so there is no read-time default and no upgrade cell.
    one more invocation of the same attempt: its session resumed (`invocationSession` of the first call; fresh with
    `NO_SESSION_NOTE` and the handover when it has none) with `resolveUnmetDirective`, under `freshBuildMin`. `buildRead`
    reads that call. Recovery after a crash between the two reads the attempt's latest call.
+
+## Deflake scope (2026-10-23; field 2026-10-23, the Atlas arc)
+
+An arc lane's flake minted `deflake-1` scoped `**` in a same-repo corpus arc; the deflake revision passed `evaluateRevision`
+but not the Phase-0 overlap row, so every later apply and start was refused, and `start` had no `--base` to edit it.
+
+| Record | Change | Read-time default |
+|---|---|---|
+| `NEEDS_USER_REASONS` | `+ deflake-unscoped`, non-blocking (`NON_BLOCKING_M3_REASONS`) | — |
+| `scope-overlaps-corpus` problem | `+ fix: string` (`scopeOverlapFix(unit)`: narrow the unit's scope off the corpus or cut it, in this apply or start; `inputs export`, sync, and `--base` when the arc changed the unit since your base) | a dev.17 rejection file's problem without it: `scopeOverlapFix(unit)` |
+| `StartArgs`, supervisor and executor argv, `StartInput` | `+ base`: `start --base <export.json>`; the CLI reads it (`exportBase`, a usage error when it is no export's), the supervisor passes `--base <abs>` to every executor, the executor reads the manifest into `StartInput.base` | absent: null |
+
+1. **Scope** (`deflakeScope`, src/pipeline/deflakemint.ts), the first that holds: (a) the `systems` of the group's suite or
+   arc lane (an arc lane's from the obligations in force); (b) the systems the flaky tests' files belong to under the
+   systems map in force: a test id's file is its first ` > ` segment when that is a repo path (`testFileOf`,
+   src/core/flaky.ts), its systems those whose `paths` or `tests` match it, the dependents of a shared area and the
+   consumers of a contract it is (`pathSystems`, `pathClass` before its dependents closure); for (a) and (b) the systems
+   closed over their dependencies (`dependenciesClosure`), each one's `paths` and `tests`, ascending and unique; (c) a spec
+   lane's group: the scope of the unit whose lane it is; (d) `**`.
+2. **Unscoped** (`applyDeflake`): a group whose scope has a pattern that may reach the same-repo corpus file set in force
+   (`scopeOverlapsCorpus`, R32) is not minted. One `deflake-unscoped` item: subject the arc, evidence the red run of the
+   group's first flake, the summary naming the keys, the scope and the patterns that reach the corpus, the recommendation
+   the lane's `systems` or a systems map by `apply`. While an item names that red run and the scope still reaches the
+   corpus, the group is not due (`deflakeJobPending` false); once an apply changes either, it is minted. No crash label: a
+   rerun after the item finds it and mints the rest.
+3. **One overlap rule** (`scopeOverlapProblems`, src/phase0/rows.ts): a `scope-overlaps-corpus` per unit whose plan scope
+   may reach the corpus file set, a cut unit excepted (it builds nothing). `evaluateRevision` runs it over the units the
+   revision changes (`scoped`, as the lane row), for every proposer (start, apply, bundle, deflake, propagation, split,
+   walk repairs, plan-check); the Phase-0 rows run it over every unit, so a unit in force that reaches the corpus still
+   refuses every apply and start until an edit narrows or cuts it.
+4. **`start --base`** (src/preflight/checks.ts `startSource`, `settlePlan`): the owner's files rebased from the export's
+   manifest onto the files in force, by the one rebase (`applyProposal`, src/input/rebase.ts) an apply takes; without it,
+   from the owner's files of their latest apply. An arc with no plan in force refuses it (`plan-change-refused`).
+   `inputs export` reads the run dir only, so the export, its edit and `start --base` all work with the executor down.
+

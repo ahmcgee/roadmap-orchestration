@@ -21,8 +21,10 @@ export class CliError extends Error {
 /**
  * `profile: null` when `--profile` is absent, so `selectProfile` can let `.roadmap/config.json` choose.
  * `waitMs`: how long `start` waits for readiness (`--wait <ms>`), null for the default (START_WAIT_MS).
+ * `base`: the `export.json` of the export the files' edit started from (`--base`, as `apply --base`; null: the owner's files
+ * of their latest apply).
  */
-export type StartArgs = Readonly<{ repo: string; plan: string; profile: ProfileName | null; waitMs: number | null }>;
+export type StartArgs = Readonly<{ repo: string; plan: string; profile: ProfileName | null; waitMs: number | null; base: string | null }>;
 
 /**
  * How a run command finds its run: through the host lock claim (the one live arc on this host), or
@@ -175,7 +177,7 @@ function locator(p: Parsed, command: string): RunLocator {
 }
 
 export function parseStartArgs(argv: readonly string[]): StartArgs {
-  const p = parseRest(argv, { repo: 'value', plan: 'value', profile: 'value', wait: 'value' }, 'start');
+  const p = parseRest(argv, { repo: 'value', plan: 'value', profile: 'value', wait: 'value', base: 'value' }, 'start');
   positionals(p, 'start', 0);
   const repo = value(p, 'repo');
   const plan = value(p, 'plan');
@@ -187,6 +189,7 @@ export function parseStartArgs(argv: readonly string[]): StartArgs {
     repo, plan,
     profile: profile === undefined ? null : arg('start', '--profile', (v, path) => profileName(v, path ?? '--profile'), profile),
     waitMs: wait === undefined ? null : waitMs(wait),
+    base: value(p, 'base') ?? null,
   };
 }
 

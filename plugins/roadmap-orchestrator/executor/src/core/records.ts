@@ -1735,11 +1735,14 @@ export const NEEDS_USER_REASONS = [
   // dev.17, non-blocking: an `apply` queued behind a running stage (`apply-queued`) was refused when it landed at the stage
   // boundary; the item names the dropped edit and why.
   'apply-dropped',
+  // Deflake scope (2026-10-23), non-blocking: a deflake unit was not minted, its scope reaching a same-repo corpus (no lane systems
+  // and no system holding the flaky tests' files); the item names the lane, the keys and what to declare.
+  'deflake-unscoped',
 ] as const;
 /** The reasons from M3 on raised non-blocking; every other one is raised blocking. */
 export const NON_BLOCKING_M3_REASONS = [
   'bundle-request', 'convergence-bound', 'convergence-identity', 'audit-owed', 'divergence-digest', 'flow-proposal', 'flow-host', 'flow-worse', 'flow-invalid',
-  'ruler-changed', 'executor-fault', 'deflake-parked', 'flake-recurring', 'apply-dropped',
+  'ruler-changed', 'executor-fault', 'deflake-parked', 'flake-recurring', 'apply-dropped', 'deflake-unscoped',
 ] as const satisfies readonly NeedsUserReason[];
 export type NeedsUserReason = (typeof NEEDS_USER_REASONS)[number];
 

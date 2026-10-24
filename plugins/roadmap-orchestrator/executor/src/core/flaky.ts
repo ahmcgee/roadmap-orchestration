@@ -1,7 +1,8 @@
 // The flaky ledger (dev.17, lane topology; SCHEMAS.md "dev.17 records"): arc-wide, one entry per test (a lane and a test
 // id) or per lane (a lane whose reporter names no failing test). Types and readers only; the lanes stage keeps it.
 import { type EnvId, type InvocationId, type LaneId, type Sha, type UnitId, envId, invocationIdOf, laneId, sha, unitId } from './ids.ts';
-import { type Read, arrayOf, literal, nullable, object, str, tagged } from './validate.ts';
+import { type Read, SchemaError, arrayOf, literal, nullable, object, str, tagged } from './validate.ts';
+import { type RepoPath, repoPath } from './values.ts';
 
 export type FlakyKey = Readonly<{ type: 'test'; lane: LaneId; testId: string }> | Readonly<{ type: 'lane'; lane: LaneId }>;
 
@@ -16,6 +17,20 @@ export type FlakyLedgerEntry = Readonly<{ key: FlakyKey; events: readonly FlakyE
 
 /** The key's identity, for lookups and uniqueness. */
 export const flakyKeyOf = (k: FlakyKey): string => (k.type === 'test' ? `test:${k.lane}:${k.testId}` : `lane:${k.lane}`);
+
+/**
+ * The test file a test id names: its first name-path segment (" > ", src/holistic/witness.ts) when that is a repo path, as a
+ * runner whose outermost suite is the file writes it (`apps/x/test/a.test.ts > suite > test`); else null. A suite name that
+ * reads as a path names no file the systems map knows, so it classifies unmapped.
+ */
+export function testFileOf(testId: string): RepoPath | null {
+  try {
+    return repoPath(testId.split(' > ')[0]!);
+  } catch (error) {
+    if (!(error instanceof SchemaError)) throw error;
+    return null;
+  }
+}
 
 const lane: Read<LaneId> = (v, p) => laneId(v, p);
 export const flakyKey: Read<FlakyKey> = tagged<FlakyKey['type'], FlakyKey>('type', {

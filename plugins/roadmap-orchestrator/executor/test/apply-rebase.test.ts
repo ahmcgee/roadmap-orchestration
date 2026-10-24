@@ -83,7 +83,7 @@ test('rebase.export-race: the owner exports and edits u2 while the executor patc
     await machinePatch(r, 'u1', [DECISION]);
     assert.equal(specInForce(r, 'u1').rev, 2);
 
-    const outcome = await command(r, applyBody(r.d, exportBase(absPath(join(out, 'export.json')))));
+    const outcome = await command(r, applyBody(r.d, exportBase(absPath(join(out, 'export.json')), 'apply')));
     assert.equal(outcome.kind, 'applied', JSON.stringify(outcome));
     const [u1, u2] = [specInForce(r, 'u1'), specInForce(r, 'u2')];
     assert.deepEqual([u1.rev, u1.decisions.map((x) => x['id'])], [2, ['D1']], 'the executor\'s patch of u1 is kept');

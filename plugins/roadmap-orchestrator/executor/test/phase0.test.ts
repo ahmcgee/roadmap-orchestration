@@ -9,7 +9,7 @@ import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { acksDir, amendmentsOf, arcsWithRefs, chainBack, completedHeadOf, readArcRef } from '../src/chain.ts';
 import { phase0Check } from '../src/commands/phase0.ts';
-import { amendmentIdOf, arcId, divergenceIdOf, obligationId, ruleId } from '../src/core/ids.ts';
+import { amendmentIdOf, arcId, divergenceIdOf, obligationId, ruleId, unitId } from '../src/core/ids.ts';
 import { specM1 } from '../src/core/records.ts';
 import { specCensusMismatches } from '../src/holistic/rederive.ts';
 import { canonicalJson, sha256Hex } from '../src/core/json.ts';
@@ -22,6 +22,7 @@ import { ruleAnchorResolves } from '../src/holistic/obligations.ts';
 import { parseObligations } from '../src/holistic/types.ts';
 import { planInForce, revisionInForce } from '../src/input/inforce.ts';
 import { rulingCorpusOf } from '../src/phase0/rows.ts';
+import { scopeOverlapFix } from '../src/phase0/types.ts';
 import { UNTRUSTED_POLICY } from './helpers/forge.ts';
 import {
   CAPTURE_FILE, type CorpusArc, PIN_FILE, betweenArc, check, corpusArc, editJsonFile, editPhase0, editPlan, inForce, kinds, nextArc, phase0Of, rowOf,
@@ -114,7 +115,7 @@ describe('phase0 check', () => {
   it('phase0.scope-overlaps-corpus: a unit scope that may write the same-repo corpus file set', T, async () => {
     for (const scope of [['docs/**'], ['docs/corpus/0010_Overview.md'], ['src/**', 'docs/corpus/new/**']]) {
       const a = await corpusArc({ scope });
-      assert.deepEqual(await corpusProblems(a), [{ type: 'scope-overlaps-corpus', unit: 'u1' }], scope.join(','));
+      assert.deepEqual(await corpusProblems(a), [{ type: 'scope-overlaps-corpus', unit: 'u1', fix: scopeOverlapFix(unitId('u1')) }], scope.join(','));
     }
     await green(await corpusArc({ scope: ['src/**', 'docs/api/**'] }));
   });

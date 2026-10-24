@@ -11,7 +11,7 @@
 // rebased files against the plan in force, read-only, and prints the verdict (it runs no smoke: a backend the new
 // routing needs is listed under `smoke`). Output is agent-facing JSON.
 // `start` launches the supervisor detached (src/supervisor.ts), which claims the host and spawns the
-// executor, and waits for its own generation's readiness (the executor passed every startup check), at
+// executor (`--base <export.json>`: the base its files are rebased from, as an apply's; deflake scope, 2026-10-23), and waits for its own generation's readiness (the executor passed every startup check), at
 // most 240 s by default or `--wait <ms>`. It prints one JSON line: `ready` (exit 0; start returns while the
 // run goes on), the refused exit line (exit 78/75), or `failed` / `timeout` (exit 70). The run's own end is
 // in exit.reason.json and `status`. `status` prints the status object.
@@ -102,7 +102,7 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       const start = startOf(run);
       // M4a rev 3 (I2): each `--ruling` sidecar hashed like a `rule` record, in the order given.
       const rulings = command.rulings.map((f) => hashedFile('apply --ruling', f));
-      const base = command.base === null ? null : exportBase(absPath(resolve(command.base)));
+      const base = command.base === null ? null : exportBase(absPath(resolve(command.base)), 'apply');
       if (command.dryRun) {
         process.stdout.write(`${canonicalJson(await dryRun(run, start, hostDir, base, rulings, command.visionEdit))}\n`);
         return;
@@ -129,8 +129,11 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       return;
     }
     case 'start': {
+      const base = command.args.base === null ? null : absPath(resolve(command.args.base));
+      // Read here first, so a file that is no export's is a usage error, not a refused executor.
+      if (base !== null) exportBase(base, 'start');
       const outcome = await launchSupervisor({
-        hostDir, repo: absPath(resolve(command.args.repo)), planFile: absPath(resolve(command.args.plan)), profile: command.args.profile, heartbeatStaleMs: null,
+        hostDir, repo: absPath(resolve(command.args.repo)), planFile: absPath(resolve(command.args.plan)), profile: command.args.profile, heartbeatStaleMs: null, base,
       }, process.env, command.args.waitMs ?? START_WAIT_MS);
       process.stdout.write(`${outcome.line}\n`);
       process.exitCode = outcome.code;

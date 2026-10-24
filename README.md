@@ -111,7 +111,10 @@ candidate merge.
 A red lane, a gate revise or a red candidate sends the unit back to its build for a charged fix round. A gate
 revises at most twice before the unit goes to the escalation seat, the summit class (Opus at xhigh effort). A red candidate
 retries once, and the third charged failure parks the unit. A lane that goes red then green on a rerun of the same
-tree is a flake: it is forgiven, recorded in the flaky ledger, and code mints a deflake unit to fix the test.
+tree is a flake: it is forgiven, recorded in the flaky ledger, and code mints a deflake unit to fix the test. Its
+scope is the systems the lane declares, else the systems holding the flaky test's file, with what they depend on.
+No unit may write the corpus, so when neither maps and the fallback would reach it, no unit is minted and you get
+a `deflake-unscoped` item asking for the lane's systems or a systems map.
 When a requirement or contract changes mid-arc, code mints a propagation unit that re-witnesses the merged code
 against the new revision; units linked to the change re-open at plan-check, and none reaches its gate until the
 propagation unit merges. A fault confined to one unit parks only that unit and the arc goes on; a crashed executor
@@ -135,7 +138,9 @@ runs a backend or touches the executor's state; it acts only through the executo
 revised spec (`apply`, then `resume`), a re-entry under a new id naming the failure it fixes, or a `steer`. A
 usage limit parks that backend arc-wide until `resume --backend`. An `apply` that touches a unit mid-stage is
 queued and lands at the stage boundary; if it can no longer apply there, the architect gets an item and redoes
-the edit. You can answer an open question at any time with `roadmap answer <P-n> --text "…"`, and it applies at
+the edit. To edit something the executor changed (a spec it patched, a unit it minted), the architect runs
+`roadmap inputs export`, syncs the export over the inputs, edits them and applies with `--base <export>/export.json`.
+With the executor down, `roadmap start --base` takes the same base. You can answer an open question at any time with `roadmap answer <P-n> --text "…"`, and it applies at
 once.
 
 **The checkpoint steers toward the vision.** Lens audits run every five publications, on a wall-clock timer, after a

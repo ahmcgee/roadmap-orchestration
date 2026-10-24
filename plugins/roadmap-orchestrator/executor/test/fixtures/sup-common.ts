@@ -158,7 +158,7 @@ export function launchDirect(r: ExecRun, heartbeatStaleMs: number): ProcIdentity
   const out = openSync(join(dir, 'out'), 'a');
   const err = openSync(join(dir, 'err'), 'a');
   const argv = supervisorArgv({
-    hostDir: absPath(r.hostDir), repo: absPath(r.repo), planFile: absPath(r.planPath), profile: 'claude-only', heartbeatStaleMs,
+    hostDir: absPath(r.hostDir), repo: absPath(r.repo), planFile: absPath(r.planPath), profile: 'claude-only', heartbeatStaleMs, base: null,
   });
   const child = spawn(process.execPath, [SUPERVISOR_ENTRY, ...argv], {
     detached: true, stdio: ['ignore', out, err], env: { ...execEnv(r), ROADMAP_ROLE: 'supervisor' },

@@ -145,8 +145,15 @@ export type CorpusProblem =
   | Readonly<{ type: 'guide-missing' }>
   | Readonly<{ type: 'source-unreadable'; detail: string }>
   | Readonly<{ type: 'source-remote-mismatch' }>
-  | Readonly<{ type: 'scope-overlaps-corpus'; unit: UnitId }>
+  /** `fix`: what the owner does about it (`scopeOverlapFix`); read as that when a dev.17 rejection file lacks it. */
+  | Readonly<{ type: 'scope-overlaps-corpus'; unit: UnitId; fix: string }>
   | Readonly<{ type: 'contract-overlaps-corpus'; path: RepoPath }>;
+
+/** The fix a `scope-overlaps-corpus` problem names: the unit's scope narrowed off the corpus (or the unit cut) in an apply or start. */
+export const scopeOverlapFix = (unit: UnitId): string =>
+  `narrow ${unit}'s scope off the corpus file set, or cut ${unit}, in this apply or start; when the arc changed ${unit} since your base (a unit the `
+  + 'executor minted, such as a deflake unit), `roadmap inputs export` the arc, sync the export over your inputs, edit it there and pass '
+  + '`--base <export>/export.json` to the apply or start';
 
 export const corpusProblem: Read<CorpusProblem> = tagged('type', {
   'pin-drift': object((f): CorpusProblem => ({ type: f.get('type', literal('pin-drift')) })),
@@ -156,7 +163,10 @@ export const corpusProblem: Read<CorpusProblem> = tagged('type', {
   'guide-missing': object((f): CorpusProblem => ({ type: f.get('type', literal('guide-missing')) })),
   'source-unreadable': object((f): CorpusProblem => ({ type: f.get('type', literal('source-unreadable')), detail: f.get('detail', str) })),
   'source-remote-mismatch': object((f): CorpusProblem => ({ type: f.get('type', literal('source-remote-mismatch')) })),
-  'scope-overlaps-corpus': object((f): CorpusProblem => ({ type: f.get('type', literal('scope-overlaps-corpus')), unit: f.get('unit', (v, p) => unitId(v, p)) })),
+  'scope-overlaps-corpus': object((f): CorpusProblem => {
+    const unit = f.get('unit', (v, p) => unitId(v, p));
+    return { type: f.get('type', literal('scope-overlaps-corpus')), unit, fix: f.optional('fix', str) ?? scopeOverlapFix(unit) };
+  }),
   'contract-overlaps-corpus': object((f): CorpusProblem => ({ type: f.get('type', literal('contract-overlaps-corpus')), path: f.get('path', pathR) })),
 });
 

@@ -338,7 +338,7 @@ describe('roadmap brief', () => {
       // `roadmap start` of arc 2 (its startup checks, as the executor runs them).
       const hostDir = newHostDir();
       const out = await withForge(a2.forge, () => runChecks({
-        repo: a2.repo, planFile: a2.planPath, profile: null, hostDir, env: process.env, respawn: null,
+        repo: a2.repo, planFile: a2.planPath, profile: null, hostDir, env: process.env, respawn: null, base: null,
         claim: (ctx) => claimHost(ctx.hostDir, { arc: ctx.plan.arc, runDir: ctx.runDir, repo: ctx.repo, supervisor: selfIdentity() }, async () => assert.fail('no previous arc')),
       }));
       out.journal?.close();
