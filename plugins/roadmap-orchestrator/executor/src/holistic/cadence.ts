@@ -17,7 +17,7 @@
 //                 lenses when L has no vision lens), its lens reading those units' specs (`specsOnlyOf`); the code
 //                 lenses keep their watermarks
 //   wall-clock    `wallClockMin` (default 360) since the latest audit started or unit published, while work remains
-//                 (a plan unit not retired, cut or superseded)
+//                 (a plan unit not retired, cut or superseded), and a publication occurred since the latest audit started
 //   requested     `audit [--lens]` (`audit-requested`): its lenses ∩ L, or L
 //   final         H9: no work remains and some lens in L has an outstanding range (one an abandoned audit covered
 //                 in part included: its rest is outstanding): those lenses only
@@ -26,7 +26,10 @@
 // Due: one audit at a time, and some trigger is fresh: its event came after the latest audit started, the wall-clock
 // trigger fired, or `final` holds after a completed audit (or before any). So an audit abandoned mid-run (a lens failed,
 // its backend parked) is not retried at once for the same triggers: they stay owed until something new happens or the
-// period (`wallClockMin`) has passed since it started. A skipped audit (its lens backend parked, the arc paused:
+// period (`wallClockMin`) has passed since it started. After trigger/lens selection, an ordinary audit needs an
+// outstanding range in a selected lens; requested and semantic drift audits may inspect an unchanged head. Final
+// audits select only outstanding lenses. This calculation serves both pending and fenced capture, so an empty
+// ordinary audit writes nothing and does not spin the scheduler. A skipped audit (its lens backend parked, the arc paused:
 // `skipReason`) writes nothing.
 //
 // Drift is throttled (field fix 2026-10-24, `DRIFT_THROTTLE_MIN`): within that period of the latest audit's start a drift
@@ -40,7 +43,8 @@
 // audit started (or the base), raise one non-blocking `audit-owed` per episode (audit.ts `raiseAuditOwed`).
 //
 // Generation (§2.8): an audit a bundle's revision triggered is its checkpoint's generation + 1; any other is one more
-// than the highest generation any audit or checkpoint recorded.
+// than the highest generation any audit or checkpoint recorded. A milestone steering checkpoint takes the latest
+// recorded generation (minimum 1), like a walk or park; an audit checkpoint keeps its audit's generation.
 //
 // Time: `Clock(seq)` is the minutes since the fact at `seq` was written. `processClock` is the executor's: it times a
 // fact from when this process first saw it (a fact older than the process from the process's start), so a restart
@@ -289,7 +293,8 @@ export function cadence(ctx: StageContext, clock: Clock): Cadence | null {
   const outstanding = coverageOf(fold, base, L, head).filter((c) => c.outstanding).map((c) => c.lens);
   const anchor = Math.max(latest?.started.seq ?? 0, heads.filter((h) => h.subject !== 'docs').at(-1)?.seq ?? 0, base.seq);
   const elapsed = clock(anchor) >= wallClockMin;
-  const wallClock = elapsed && remains;
+  const publishedSince = heads.some((h) => h.seq > (latest?.started.seq ?? base.seq));
+  const wallClock = elapsed && remains && publishedSince;
   const final = !remains && outstanding.length > 0;
   const finalFresh = final && (latest === null || latest.ended?.outcome === 'completed');
   // Owed triggers an abandoned audit left are asked again once the period has passed (with no work left, no wall-clock
@@ -305,7 +310,7 @@ export function cadence(ctx: StageContext, clock: Clock): Cadence | null {
     ...(final ? [{ type: 'final' } as const] : []),
   ];
   const running = latest !== null && latest.ended === null;
-  const due = !running && (events.some((e) => e.held === undefined && fresh(e.seq)) || wallClock || finalFresh || retry);
+  const freshTrigger = !running && (events.some((e) => e.held === undefined && fresh(e.seq)) || wallClock || finalFresh || retry);
 
   const lenses = new Set<LensKind>();
   for (const t of owed) {
@@ -334,6 +339,9 @@ export function cadence(ctx: StageContext, clock: Clock): Cadence | null {
   }
   const sorted = LENS_KINDS.filter((l) => lenses.has(l)).sort();
   if (owed.length > 0 && sorted.length === 0) throw new Error(`the owed triggers ${JSON.stringify(owed)} call for no lens of L = ${L.join(', ')} (the audit command refuses a lens outside L)`);
+  // A semantic drift or explicit request can inspect unchanged code. Ordinary triggers need a selected lens's range.
+  const inspectUnchanged = owed.some((t) => t.type === 'requested' || t.type === 'drift');
+  const due = freshTrigger && (inspectUnchanged || sorted.some((l) => outstanding.includes(l)));
   const plan = due && owed.length > 0 ? { triggers: owed, lenses: sorted, generation: generationOf(ctx, revisions, owed) } : null;
   const owedLong = owed.length > 0 && (pubs.length >= 2 * every || clock(since) >= 2 * wallClockMin);
   const episode: Parent = completed === null ? { type: 'arc' } : { type: 'job', job: completed.started.job };

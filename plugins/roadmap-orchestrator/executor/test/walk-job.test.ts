@@ -16,6 +16,7 @@ import { specFacts } from '../src/pipeline/reproduce.ts';
 import { recover } from '../src/recover/recover.ts';
 import { ready } from '../src/schedule/ready.ts';
 import { status } from '../src/status.ts';
+import { checkpointMilestonesRemaining, checkpointPending, runCheckpoint } from '../src/holistic/checkpoint.ts';
 import { milestoneWaits } from '../src/walk/node.ts';
 import { milestoneProgress, walkItemsDue } from '../src/walk/milestones.ts';
 import { runWalk, settleWalks, walkEvidenceDir } from '../src/walk/walk.ts';
@@ -25,11 +26,11 @@ import { runFixture } from './helpers/proc.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 import { type Step, readCalls } from './helpers/scenario.ts';
 import { moduleFiles, unitSteps } from './fixtures/audit-common.ts';
-import { applyPlanEdit } from './fixtures/checkpoint-common.ts';
+import { applyPlanEdit, checkpointContext, completedAudit } from './fixtures/checkpoint-common.ts';
 import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
 import { type ArcRun, appendSteps, codexStep, contextFor, gateStep } from './fixtures/unit-common.ts';
-import { admitSpecWire } from './helpers/holistic.ts';
-import { BROKEN_WALK, GREETING, J1_EVIDENCE, PRODUCT, unitInForce, walkAnswer, walkArc, walkContext, walkStep } from './fixtures/walk-common.ts';
+import { admitSpecWire, checkpointAnswer, checkpointStep, noteLensStep, lensStep } from './helpers/holistic.ts';
+import { BROKEN_WALK, milestoneJson, GREETING, J1_EVIDENCE, PRODUCT, unitInForce, walkAnswer, walkArc, walkContext, walkStep } from './fixtures/walk-common.ts';
 import { repairUnits } from '../src/pipeline/reproduce.ts';
 import { milestonesOf } from '../src/input/plan.ts';
 
@@ -39,6 +40,12 @@ type Json = Record<string, unknown>;
 const facts = (r: ArcRun): readonly Fact[] => readJournal(r.ctx.runDir, r.journal.view.arc).events.flatMap((e) => (e.type === 'fact' ? [e.fact] : []));
 const factsOf = <K extends Fact['kind']>(r: ArcRun, kind: K) => facts(r).filter((f): f is Extract<Fact, { kind: K }> => f.kind === kind);
 const planOf = (r: ArcRun) => requirePlanInForce(r.ctx.runDir, r.journal.view).plan;
+
+/** Steering reads the plan in force after applies, as the scheduler does. */
+function steeringContext(r: ArcRun) {
+  const { ctx, w } = checkpointContext(r);
+  return { ctx: { ...ctx, plan: () => planOf(r) }, w };
+}
 
 /** The ready units' ids now (the scheduler's readiness, src/schedule/ready.ts). */
 function readyNow(r: ArcRun): readonly string[] {
@@ -89,6 +96,163 @@ const r1Steps = (): readonly Step[] => [
 ];
 
 describe('the milestone walk (dev.13)', () => {
+  for (const everyMilestones of [undefined, 1]) {
+    test(`checkpoint.milestone-boundary: K=${everyMilestones ?? 'default 2'} counts retired milestones after their walks, folds audit and nonblocking walk findings, and resets only at a milestone checkpoint`, T, async () => {
+      const deviation = walkAnswer({ findings: [{ class: 'deviates', journey: 'J-1', claim: 'The error omits its remedy', cause: 'error text', against: { type: 'design', path: 'design/README.md', anchor: '#errors' }, paths: ['product/server.js'] }] });
+      const d = walkArc({ steps: [
+        ...unitSteps('u1', moduleFiles('mul', '*')), ...unitSteps('u2', moduleFiles('div', '/')),
+        noteLensStep('audit-1'), walkStep('walk-1', deviation),
+        walkStep('walk-2', walkAnswer({ journeys: [{ journey: 'J-3', outcome: 'completed' }, { journey: 'J-4', outcome: 'completed' }] })),
+      ] });
+      appendSteps(d, [
+        { ...checkpointStep('ckpt-1', checkpointAnswer({ decision: 'no-op' })), expect: { stdinContains: [`${d.runDir}/evidence/jobs/walk-1`] } },
+        checkpointStep('ckpt-2', checkpointAnswer({ decision: 'no-op' })),
+      ]);
+      const r = contextFor(d);
+      const { ctx, w } = steeringContext(r);
+      const tick = setInterval(() => w.arbiter.wake(), 50);
+      try {
+        await applyPlanEdit(r, w, (plan) => {
+          const second = milestoneJson({ id: 'MS-2', units: ['u2'] });
+          second['journeys'] = (second['journeys'] as Json[]).map((j, i) => ({ ...j, id: `J-${i + 3}` }));
+          (plan['milestones'] as Json[]).push(second);
+          if (everyMilestones !== undefined) (plan['holistic'] as Json)['checkpoint'] = { everyMilestones };
+        });
+        const K = everyMilestones ?? 2;
+        assert.equal(checkpointMilestonesRemaining(r.journal.view, ctx.plan()), K);
+        await completedAudit(r, ctx);
+        assert.equal(checkpointPending(ctx), false, 'a completed audit with a P3 folds into the milestone checkpoint');
+        assert.deepEqual(await runCheckpoint(ctx), { kind: 'none' });
+        await merge(r, 'u1');
+        assert.equal(checkpointPending(ctx), false, 'retired units alone: the milestone still owes its walk');
+        await walk(r);
+        assert.equal(milestoneProgress(r.journal.view, ctx.plan(), milestonesOf(ctx.plan())[0]!, []).kind, 'settled', 'a nonblocking finding can await the steering checkpoint');
+        assert.equal(checkpointMilestonesRemaining(r.journal.view, ctx.plan()), K - 1);
+        if (K === 1) assert.equal((await runCheckpoint(ctx)).kind, 'decided');
+        else assert.equal(checkpointPending(ctx), false, 'one of two milestones is retired');
+        await merge(r, 'u2');
+        assert.equal(checkpointPending(ctx), false, 'the K-th milestone still owes its walk');
+        await walk(r);
+        assert.equal(checkpointMilestonesRemaining(r.journal.view, ctx.plan()), 0);
+        const out = await runCheckpoint(ctx);
+        assert.ok(out.kind === 'decided' && out.trigger.type === 'milestone', JSON.stringify(out));
+        const captures = factsOf(r, 'checkpoint-inputs');
+        assert.deepEqual(captures.map((c) => c.trigger), K === 1
+          ? [{ type: 'milestone', milestones: ['MS-1'] }, { type: 'milestone', milestones: ['MS-2'] }]
+          : [{ type: 'milestone', milestones: ['MS-1', 'MS-2'] }]);
+        assert.deepEqual(captures[0]!.findings, ['F-1', 'F-2'], 'the boundary weighs both the audit and walk findings');
+        assert.equal(captures[0]!.generation, factsOf(r, 'audit-started')[0]!.generation, 'a boundary uses the latest recorded generation');
+        assert.equal(checkpointPending(ctx), false);
+        assert.equal(checkpointMilestonesRemaining(r.journal.view, ctx.plan()), K, 'count starts afresh; old audits do not wake it');
+        assert.equal(status(r.ctx.runDir, r.journal.view.arc, r.ctx.hostDir).audit!.checkpointMilestonesRemaining, K);
+      } finally {
+        clearInterval(tick);
+        r.journal.close();
+      }
+    });
+  }
+
+  test('checkpoint.milestone-equal-snapshot: an immediate blocking walk checkpoint consumes no milestones; its equal milestone boundary is skipped and settles once', T, async () => {
+    const d = walkArc({ steps: [...unitSteps('u1', moduleFiles('mul', '*')), walkStep('walk-1', BROKEN_WALK), checkpointStep('ckpt-1', checkpointAnswer({ decision: 'no-op' }))] });
+    const r = contextFor(d);
+    const { ctx, w } = steeringContext(r);
+    const tick = setInterval(() => w.arbiter.wake(), 50);
+    try {
+      await applyPlanEdit(r, w, (plan) => { (plan['holistic'] as Json)['checkpoint'] = { everyMilestones: 1 }; });
+      await merge(r, 'u1');
+      await walk(r);
+      const immediate = await runCheckpoint(ctx);
+      assert.ok(immediate.kind === 'decided' && immediate.trigger.type === 'walk', JSON.stringify(immediate));
+      assert.equal(checkpointMilestonesRemaining(r.journal.view, ctx.plan()), 0, 'the walk escape hatch did not reset the count');
+      assert.deepEqual(await runCheckpoint(ctx), { kind: 'not-needed', trigger: { type: 'milestone', milestones: ['MS-1'] }, carried: ['F-1'] });
+      assert.equal(checkpointPending(ctx), false);
+      assert.equal(checkpointMilestonesRemaining(r.journal.view, ctx.plan()), 1);
+      assert.deepEqual(await runCheckpoint(ctx), { kind: 'none' });
+      assert.equal(readCalls(d.scenarioPath).filter((c) => c.unit?.startsWith('ckpt-')).length, 1);
+    } finally {
+      clearInterval(tick);
+      r.journal.close();
+    }
+  });
+
+  test('checkpoint.final-before-quorum: the final audit gets its checkpoint when fewer than K milestones retired', T, async () => {
+    const d = walkArc({ steps: [
+      ...unitSteps('u1', moduleFiles('mul', '*')), ...unitSteps('u2', moduleFiles('div', '/')), ...unitSteps('u3', moduleFiles('sub', '-')),
+      walkStep('walk-1', walkAnswer()), lensStep('audit-1', 'vision'), checkpointStep('ckpt-1', checkpointAnswer({ decision: 'no-op' })),
+    ] });
+    const r = contextFor(d);
+    const { ctx, w } = steeringContext(r);
+    const tick = setInterval(() => w.arbiter.wake(), 50);
+    try {
+      await merge(r, 'u1');
+      await walk(r);
+      assert.equal(checkpointPending(ctx), false, 'one retired milestone is below K=2');
+      await merge(r, 'u2');
+      await merge(r, 'u3');
+      await completedAudit(r, ctx);
+      assert.ok(factsOf(r, 'audit-started')[0]!.triggers.some((t) => t.type === 'final'));
+      const out = await runCheckpoint(ctx);
+      assert.ok(out.kind === 'decided' && out.trigger.type === 'audit', JSON.stringify(out));
+      assert.equal(checkpointMilestonesRemaining(r.journal.view, ctx.plan()), 1, 'the final checkpoint does not reset the milestone count');
+      assert.equal(checkpointPending(ctx), false);
+    } finally {
+      clearInterval(tick);
+      r.journal.close();
+    }
+  });
+
+  test('checkpoint.final-capture-before-retirement: an ordinary audit covering the final head waits for the last walk, then checkpoints its findings even below K', T, async () => {
+    const d = walkArc({ steps: [
+      lensStep('audit-1', 'vision'), ...unitSteps('u1', moduleFiles('mul', '*')), ...unitSteps('u2', moduleFiles('div', '/')), ...unitSteps('u3', moduleFiles('sub', '-')),
+      walkStep('walk-1', walkAnswer({ findings: [{ class: 'deviates', journey: 'J-1', claim: 'The error omits its remedy', cause: 'error text', against: { type: 'design', path: 'design/README.md', anchor: '#errors' }, paths: ['product/server.js'] }] })),
+      checkpointStep('ckpt-1', checkpointAnswer({ decision: 'no-op' })),
+    ] });
+    const r = contextFor(d);
+    const { ctx, w } = steeringContext(r);
+    const tick = setInterval(() => w.arbiter.wake(), 50);
+    try {
+      await completedAudit(r, ctx);
+      const initial = factsOf(r, 'audit-started')[0]!;
+      await merge(r, 'u1');
+      await merge(r, 'u2');
+      await merge(r, 'u3');
+      // What an audit starting in the last ff's window records: it covered the final head, but the retirement
+      // fact had not arrived, so its trigger was ordinary. Its late completion must not strand close-out.
+      const head = git(d.repo, 'rev-parse', 'main') as typeof initial.integrationSha;
+      r.journal.fact({ ...initial, job: 'audit-2' as never, integrationSha: head, generation: 2, highWater: r.journal.view.highWater(), triggers: [{ type: 'cadence' }] });
+      r.journal.fact({ kind: 'audit-ended', job: 'audit-2' as never, outcome: 'completed', covered: [{ lens: 'vision', from: initial.integrationSha, to: head }], findings: [], suppressed: 0 });
+      assert.equal(checkpointPending(ctx), false, 'the final audit checkpoint waits for the last milestone walk');
+      await walk(r);
+      assert.equal(checkpointPending(ctx), true);
+      const out = await runCheckpoint(ctx);
+      assert.ok(out.kind === 'decided' && out.trigger.type === 'audit' && out.trigger.job === 'audit-2', JSON.stringify(out));
+      assert.deepEqual(factsOf(r, 'checkpoint-inputs')[0]!.findings, ['F-1'], 'the final steering decision includes the last walk');
+      assert.equal(checkpointPending(ctx), false);
+    } finally {
+      clearInterval(tick);
+      r.journal.close();
+    }
+  });
+
+  test('checkpoint.audit-p1-escape: a milestone arc checkpoints an unweighed audit P1 immediately, before any milestone retires', T, async () => {
+    const d = walkArc({ auditLenses: ['invariants'], steps: [lensStep('audit-1', 'invariants', [{ severity: 'P1', claim: 'The invariant is broken', cause: 'invariant failure', obligation: 'I-1' }]), checkpointStep('ckpt-1', checkpointAnswer({ decision: 'no-op' }))] });
+    const r = contextFor(d);
+    const { ctx, w } = steeringContext(r);
+    const tick = setInterval(() => w.arbiter.wake(), 50);
+    try {
+      await completedAudit(r, ctx);
+      assert.equal(checkpointMilestonesRemaining(r.journal.view, ctx.plan()), 2);
+      assert.equal(checkpointPending(ctx), true);
+      const out = await runCheckpoint(ctx);
+      assert.ok(out.kind === 'decided' && out.trigger.type === 'audit', JSON.stringify(out));
+      assert.equal(checkpointPending(ctx), false, 'the audit P1 was weighed');
+      assert.equal(checkpointMilestonesRemaining(r.journal.view, ctx.plan()), 2, 'an escape hatch does not reset milestone cadence');
+    } finally {
+      clearInterval(tick);
+      r.journal.close();
+    }
+  });
+
   test('walk.loop: milestone reached → walk → P1 holds the node while an unrelated unit runs → repair lands → round 2 passes → the descendant is ready', T, async () => {
     const d = walkArc({
       steps: [

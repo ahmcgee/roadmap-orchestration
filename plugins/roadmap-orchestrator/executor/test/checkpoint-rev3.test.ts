@@ -13,7 +13,7 @@
 // checkpoint.capture-wait-bounded (paid M4a run 10, R-15), checkpoint.manifest-content-addressed,
 // checkpoint.specs-embedded-with-occupied-ids, checkpoint.next-ruling-id, checkpoint.closeout-delta-when-unchanged,
 // bundle.merged-since-capture-stale, bundle.merged-at-capture-invalid, checkpoint.refused-carried-across-triggers (paid M4a
-// run 12), checkpoint.final-always-full, checkpoint.skipped-nothing-new (arc feedback 2026-10-16), checkpoint.schema-closed-ids
+// run 12), checkpoint.final-unchanged-skipped, checkpoint.resumed-equal-capture, checkpoint.skipped-nothing-new (arc feedback 2026-10-16), checkpoint.schema-closed-ids
 // (paid M4b run 5).
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -714,22 +714,45 @@ describe('the checkpoint\'s inputs (H4, H5)', () => {
     }
   });
 
-  test('checkpoint.final-always-full: the final audit\'s checkpoint runs, in full, even after a no-op on an unchanged arc', T, async () => {
-    const x = await arc([checkpointStep('ckpt-1', checkpointAnswer({ decision: 'no-op' })), checkpointStep('ckpt-2', checkpointAnswer({ decision: 'no-op' }))]);
+  test('checkpoint.resumed-equal-capture: an older captured audit job settles through checkpoint-skipped at an equal decided snapshot, with no call and no repeated settlement', T, async () => {
+    const x = await arc([checkpointStep('ckpt-1', checkpointAnswer({ decision: 'no-op' }))]);
     try {
-      assert.ok((await run(x)).kind === 'decided');
-      // The final audit, as cadence records one (its lens call is not what this test is about).
-      const started = factsOfKind(x.r, 'audit-started')[0]!;
-      x.r.journal.fact({ ...started, job: 'audit-2' as never, generation: started.generation + 1, triggers: [{ type: 'final' }] });
+      assert.equal((await run(x)).kind, 'decided');
+      const audit = factsOfKind(x.r, 'audit-started')[0]!;
+      x.r.journal.fact({ ...audit, job: 'audit-2' as never, generation: audit.generation + 1, triggers: [{ type: 'final' }] });
       x.r.journal.fact({ kind: 'audit-ended', job: 'audit-2' as never, covered: [], findings: [], suppressed: 0, outcome: 'completed' });
-      assert.ok((await run(x)).kind === 'decided');
-      assert.deepEqual(factsOfKind(x.r, 'checkpoint-skipped'), [], 'the final audit is never skipped');
-      const stdin = callOf(x, 'ckpt-2').stdin;
-      assert.match(tagOf(stdin, 'unit_specs'), /spec of unit u1/);
+      const capture = factsOfKind(x.r, 'checkpoint-inputs')[0]!;
+      // A dev.20 checkpoint captured before the new no-call guard was installed.
+      x.r.journal.fact({ ...capture, job: 'ckpt-2' as never, generation: audit.generation + 1, trigger: { type: 'audit', job: 'audit-2' as never } });
+      assert.deepEqual(await run(x), { kind: 'not-needed', audit: 'audit-2', carried: [] });
+      assert.equal(x.r.journal.view.holistic().checkpoints.at(-1)!.decided?.kind, 'no-op');
+      assert.deepEqual(await run(x), { kind: 'none' }, 'settleLatest needs no model output for a code skip');
+      assert.deepEqual(ckptCalls(x), ['ckpt-1']);
     } finally {
       x.r.journal.close();
     }
   });
+
+  test('checkpoint.final-unchanged-skipped: a decided checkpoint at the same head, plan, vision and active findings suppresses the final call; a new plan rev still receives its final checkpoint', T, async () => {
+    const x = await arc([checkpointStep('ckpt-1', checkpointAnswer({ decision: 'no-op' })), checkpointStep('ckpt-2', checkpointAnswer({ decision: 'no-op' }))]);
+    try {
+      assert.ok((await run(x)).kind === 'decided');
+      const started = factsOfKind(x.r, 'audit-started')[0]!;
+      x.r.journal.fact({ ...started, job: 'audit-2' as never, generation: started.generation + 1, triggers: [{ type: 'final' }] });
+      x.r.journal.fact({ kind: 'audit-ended', job: 'audit-2' as never, covered: [], findings: [], suppressed: 0, outcome: 'completed' });
+      assert.deepEqual(await run(x), { kind: 'not-needed', audit: 'audit-2', carried: [] });
+      assert.deepEqual(ckptCalls(x), ['ckpt-1'], 'a final trigger obeys the equality guard');
+      assert.ok(quiescentGenerations(x.r.journal.view, started.visionSha256).has(started.generation + 1));
+      await applyPlanEdit(x.r, x.w, (plan) => { plan['direction'] = 'The revised course.'; });
+      x.r.journal.fact({ ...started, job: 'audit-3' as never, generation: started.generation + 2, planRev: x.r.journal.view.planApplied()!.rev, triggers: [{ type: 'final' }] });
+      x.r.journal.fact({ kind: 'audit-ended', job: 'audit-3' as never, covered: [], findings: [], suppressed: 0, outcome: 'completed' });
+      assert.equal((await run(x)).kind, 'decided', 'a different plan rev is not an equal capture');
+      assert.deepEqual(ckptCalls(x), ['ckpt-1', 'ckpt-2']);
+    } finally {
+      x.r.journal.close();
+    }
+  });
+
 });
 
 describe('a unit merged around the capture (paid M4a run 10)', () => {

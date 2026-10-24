@@ -474,21 +474,26 @@ gates had passed; drift in four of six audits; eight vacuity rows). The fourth, 
 product serves the vision, whether anything is faithful to its letter but wrong for it, and where the vision
 does not anticipate what happened; it opens P2 or P3 findings citing `V-n`. `holistic.audit.lenses` is the arc's
 **required lens set L** (default: all four); coverage, owed audits and completion are measured per lens in L
-(H9). Audits run only when the holistic layer is on (§2.8). The lenses report; the checkpoint that follows (when they found something new, §2.8 "Aimed and rarer")
-them acts (§2.8).
+(H9). Audits run only when the holistic layer is on (§2.8). The lenses report; the steering checkpoint weighs
+their accumulated findings at milestone boundaries, with immediate P1 and close-out escape hatches (§2.8).
 
 - **Triggers**: every N publications (D3; unit, batch, and rule-with-contract-ops publications); a publication
   leaving a selected active future obligation unwitnessed (R8; an exempt one, waived, deferred or retired, is owed no
   witness and triggers nothing: field fix 2026-10-24); drift-only on a revision from a rule, a
   bundle, `reverse`, or an architect spec, obligation, vision or corpus edit (w37 found drift with zero merges), running
-  `L ∩ {drift, vision}`, or all of L when that is empty (R15); wall-clock (`wallClockMin`, default 360);
+  `L ∩ {drift, vision}`, or all of L when that is empty (R15); wall-clock (`wallClockMin`, default 360),
+  requiring a publication since the latest audit started;
   `audit [--lens]`; **final**: at the final head, every lens in L with an outstanding range (H9). Triggers
   coalesce, one audit runs at a time, and each records its causal generation (§2.8). **Drift is throttled** (field fix
   2026-10-24: seven revisions in a stretch ran seven drift audits, five finding nothing): while work remains, a
   non-bundle revision's drift within 60 minutes (`DRIFT_THROTTLE_MIN`) of the latest audit's start makes no audit due;
   once the period passes, or with any other fresh trigger, one audit runs. The drift is owed throughout, so that audit
   records every drift since the last completed audit and no revision goes unaudited. A bundle's drift is never held (it
-  opens the checkpoint's next generation, one per checkpoint), nor is any once no work remains.
+  opens the checkpoint's next generation, one per checkpoint), nor is any once no work remains. After trigger and
+  lens selection, an ordinary audit starts only if at least one selected lens has an outstanding coverage range.
+  Explicit requests and semantic drift (specs, obligations, mapping, vision, corpus or ledger revisions) can inspect
+  an unchanged head; final audits run only outstanding lenses. The scheduler and capture use the same calculation,
+  so a suppressed audit writes no `audit-started` and causes no scheduler spin.
 - **Immutable inputs**: `audit-started{job, triggers, generation, lenses, integrationSha, planRev,
   ledgerSha256, obligationsSha256, visionSha256, owners, priorFindings, highWater, diffBudget}`, captured under the revision
   fence (§2.6, A19): owners are the branch SHAs of parked or in-flight owners (the w33 P1s were already fixed on
@@ -509,7 +514,9 @@ them acts (§2.8).
   plan-declared `derived` output) listed with a readable file holding its whole diff (a judgment has no shell, so a
   `git diff` it is told to run is one it cannot; 1.0.0-dev.12). The prompt makes a report the lens's statement that it
   read every file of its range. Coverage records exactly the chunks reported: a lens that fails a
-  later chunk keeps the earlier ones, and its rest stays outstanding for the next audit.
+  later chunk keeps the earlier ones, and its rest stays outstanding for the next audit. A lost logical lens call
+  may be reissued through at most two new operations across all restarts, counted from the journal by job, role and
+  attempt. Exhaustion fails the lens and abandons the audit as a process fault does; no retry counter is stored.
 - **Coverage**: per lens, a contiguous watermark over the integration history; results are observations keyed by
   the audited SHA. A docs-only publication (the executor-rendered `.roadmap/` files, rendered by code from
   in-force records) covers its own edge U→D by construction (`docs-covered`, A17, H8): a lens's watermark
@@ -527,7 +534,7 @@ them acts (§2.8).
   (high 30%, med 21%, low 7%). 1.0 stops charging host or supervision faults.
 - **Owed**: a skipped audit keeps its triggers owed; at 2N publications or 2 × `wallClockMin` → a non-blocking
   `audit-owed` (OR-Q2/3; an owed explorer went unrun for 27 waves). The final audit and checkpoint run after the
-  last merge; the audit stays open until its generation is quiescent.
+  last merge, subject to the checkpoint equality guard (§2.8); the audit stays open until its generation is quiescent.
 - **Change-sensitive drift (A-M4-27).** A bundle revision that changes only plan units and their specs drifts
   `specsOnly`: the vision lens alone, over the spec deltas; code lenses keep their watermarks. Within one audit, a
   lens draft whose (repo evidence paths, obligation, cause) equals a finding the audit already opened merges into it,
@@ -846,8 +853,19 @@ admit mixing one with other repairs makes the bundle invalid; when applied, such
 checkpoint's call that it is substantive), and otherwise, while nothing fixes it, is released (`release{job, regress |
 settled}`). `status.findings` counts the released findings by who released them and the admits a brake converted.
 
-**Checkpoint authority.** After every completed audit (§2.5) that found something new, and on every operator-design
-park, the checkpoint seat **rules**, steering toward the vision rather than the original plan: amend implementation contracts,
+**Checkpoint authority.** In a holistic arc declaring milestones, the checkpoint seat **rules** once per
+`holistic.checkpoint.everyMilestones` retired milestones (positive integer, default 2), after the K-th milestone
+walk ends. A milestone retires when all its units' lineage heads have merged and its walk has ended; each id counts
+once, starting at the arc's start and resetting only at a milestone checkpoint (a suppressed equal-input boundary
+also counts). It weighs the active findings accumulated from completed audits and walks since the previous steering
+checkpoint. Audit completions and nonblocking walk findings fold into that boundary. Immediate triggers remain:
+every operator-design park; a completed audit reporting an active P1 no decided checkpoint under the vision in force
+has weighed; a walk round with an unweighed open P1 (its milestone descendants wait); and the final audit at close-out
+(H5). A holistic arc without milestones keeps audit-triggered checkpoints. Captured audit/walk jobs from an older
+executor still resume and settle, including their rejected retries and approved enactments; uncaptured ordinary
+audit triggers fold into the next milestone boundary. A milestone checkpoint uses the highest generation already
+recorded (1 before any), like a walk or park; an audit checkpoint keeps its audit's generation. The seat steers toward
+the vision rather than the original plan: amend implementation contracts,
 respec, `reenter`, `cut`, `admit`, re-route, set limits, rule, split or dispose obligations, invalidate
 approvals. A design park goes to the checkpoint for a respec, re-entry or cut first; a `no-op` raises the park's
 `needs-user`, and a second design park on the same lineage raises a blocking `respec-second` (OR-Q1). The
@@ -864,14 +882,15 @@ lineage: each unit's failure outcomes and lane failures with the references a re
 salvage reverted as outside the pinned scope, the required witness tests found missing or failing, and the lineage's
 earlier re-entries with the failures they cited.
 
-**Aimed and rarer (arc feedback 2026-10-16: eleven checkpoints, mostly small spec patches, $78 before anything
-merged).** A completed audit that found nothing new has no checkpoint: it is not the final audit, a checkpoint already
-settled a decision (applied, no-op or requested) under the vision in force, and every active finding no unit owns was
-captured by such a checkpoint. Code records `checkpoint-skipped{audit, generation, visionSha256, carried}` instead of a
-call (shown in `decisionsSince`), and the audit's generation is quiescent as after a `no-op`. So the arc's first
-checkpoint and the first after a vision revision always run (they weigh coverage gaps and obligations), a final audit's
-always runs, and a bundle's drift audit that finds
-nothing ends the loop instead of feeding another bundle. Brakes in code:
+**Aimed and rarer (owner ruling 2026-10-24).** Under every non-park trigger, code makes no checkpoint call when a
+checkpoint that decided (applied, no-op or requested, never rejected) already captured the same head SHA, plan revision,
+vision SHA and set of active finding ids. Parks remain immediate. The existing `nothingNew` rule also suppresses an
+audit's first checkpoint when it is not final, a checkpoint settled under the vision in force, and every active
+unowned finding (and every active P1, owned or not) was already weighed. A final checkpoint obeys the equality guard.
+Code records `checkpoint-skipped{trigger, audit?, generation, visionSha256, carried}` instead of a call, settling that
+generation as after a no-op and consuming that boundary. An old audit-only skip reads byte-preserving as its audit
+trigger, with one upgrade warning per process. `status.audit.checkpointMilestonesRemaining` shows how many milestones
+remain (null without milestones). Brakes in code:
 
 - **Bundles.** A decision is one action bundle, activated as a mutation job scoped to its ops; affected dispatch
   waits meanwhile. In order: validate schema, identity, rulings (their `consistency` included) and cites (active
@@ -1187,7 +1206,8 @@ gets the walkthrough MCP servers. Milestones change only by
 for its walk to end. The vision gains `## Experience standards` (clause kind `experience`: outcomes and refusals, never
 mechanisms), distilled only when the world has a human-facing surface.
 
-**Fix units and polish.** A walk whose findings no checkpoint has weighed triggers the checkpoint, which reads the walk's
+**Fix units and polish.** A walk with an unweighed blocking P1 triggers the checkpoint immediately; other findings
+wait for the next milestone steering checkpoint (§2.8), without holding the walk round open. The checkpoint reads the walk's
 evidence and plans repairs from claim, cause and evidence; it is never asked to judge looks. Polish skips it: code admits
 a walk's proposals as one revision under the fence, through the same admit path and classifier as a checkpoint `admit`
 (one admit path, two authors), refusing and recording a proposal whose scope covers no milestone reference, that is not

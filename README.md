@@ -142,11 +142,20 @@ the edit. To edit something the executor changed (a spec it patched, a unit it m
 With the executor down, `roadmap start --base` takes the same base. You can answer an open question at any time with `roadmap answer <P-n> --text "…"`, and it applies at
 once.
 
-**The checkpoint steers toward the vision.** Lens audits run every five publications, on a wall-clock timer, after a
-plan change, when a publication leaves an obligation unwitnessed, and once more when no work remains: four model
-lenses look for broken invariants, drift from the target, vacuous tests and anything that fails the vision. The
-checkpoint rules on a park that is a design problem, after a milestone walk whose findings it has not weighed, and
-after an audit that found something new; an audit that found nothing skips it. It may admit a unit (a repair, an
+**The checkpoint steers toward the vision.** Lens audits run every five publications, on a wall-clock timer after a
+new publication, after a semantic plan change, when a publication leaves an obligation unwitnessed, and once more when
+no work remains. Ordinary audits need an outstanding range in a selected lens; an explicit request or semantic drift
+can audit an unchanged head, and final audits cover only outstanding lenses. Four model lenses look for broken
+invariants, drift from the target, vacuous tests and anything that fails the vision. A lost lens call gets at most two
+reissues across restarts, then its audit is abandoned.
+
+With milestones, the steering checkpoint runs every two retired milestones by default
+(`holistic.checkpoint.everyMilestones`), after the boundary milestone's walk ends, weighing the accumulated audit and
+walk findings. Nonblocking walk findings wait for that boundary without holding the round open. A design park, a new
+unweighed audit P1 or an unweighed blocking walk finding still gets an immediate checkpoint, as does the final audit
+at close-out. Without milestones, audits keep triggering checkpoints when they find something new. Every non-park
+trigger skips the call when a decided checkpoint already captured the same head, plan revision, vision and active
+finding set. Status shows the milestones remaining to the next steering checkpoint. It may admit a unit (a repair, an
 oversight within the slice, or one opportunity per arc that advances a clause outside it), respec, re-enter or cut
 a unit, or amend an obligation, each act citing the vision clauses it serves. Code validates the bundle and applies
 it, so its acts go straight back into the run without waiting for anyone. Every departure from the target is

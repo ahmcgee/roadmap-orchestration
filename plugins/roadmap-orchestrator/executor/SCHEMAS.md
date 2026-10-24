@@ -457,7 +457,7 @@ in a repo's class rebinds (`.roadmap/config.json` `routing.classes`). Built-in p
 | `suite.lanes` | `LaneDef[]` | executor-only suite lanes |
 | `resources` | `ResourceDecl[]` | `{name, probe: ToolCommand, teardown: ToolCommand, pool?: {size: positive}}`; `integration-slot` is built in and may not be declared. A pool (M2) has instances `<name>#1..size`; a request by name takes one; each workload of the holder gets `RESOURCE_INSTANCE_<NAME>=<n>` (upper case, `-` → `_`), persisted in `launch.json` `env` and the residue's teardown recipe |
 | `units` | `PlanUnit[]` (non-empty) | a unit entering the plan (a fresh arc's rev 1, a unit a revision adds) may not take an `id` of the form `batch-<digits>`, `jobs` or `mutants` (`reservedUnitIdReason`: a `plan-change-refused` reason, not a schema rule, so an adopted arc's units keep their ids; M3: a repair batch's candidate ref `refs/roadmap-run/<arc>/candidate/<batch-n>` shares the units' candidate ref namespace, and `<runDir>/evidence/<unit>/` sits beside `evidence/jobs/` and `evidence/mutants/`). `{id: UnitId, spec: PlanPath, risk: RiskTier, scope: RepoPattern[] (non-empty), resources: ResourceName[], after?: UnitId[]}`; `after` (parsed as `[]` when absent) names units earlier in plan order, never the unit itself, each once: the unit is not dispatched while any of them is neither merged nor parked with its needs-user acknowledged (arc-1 feedback item 17; since M2, merged only, D1). M2 optional fields: `origin?: planned\|checkpoint`, `cpu?: positive` (build `@cpu` tokens, default 4), `contingent?: [{id: EdgeId, condition}]` (read as `[]`; ids unique across the plan), `reenters?: {unit (earlier in plan order, not itself), enterAt?: plan-check\|build\|verify, reset?: {ruling: RulingId}}`, `cut?: {reason, ruling?: RulingId}` |
-| `holistic?` (M3, A5) | `{vision: PlanPath, advances: V-n[] (ascending, non-empty), obligations?: PlanPath, audit?: {every?: positive, lenses?: LensKind[] (ascending, non-empty), wallClockMin?: positive}}` | present exactly when the arc runs the holistic layer; `vision` names a `roadmap/vision-m3` file, `advances` the slice of it this arc moves toward (active clauses of the vision, at least one `world`; checked at startup and on every classified revision, `advancesReasons`; owner-only: only an `apply` changes it, `PlanChange` `advances`; the other active clauses are the horizon), `obligations` a `roadmap/obligations-m3` file (absent: none); `audit.every` N (default 5, D3), `audit.lenses` the required lens set L (default all four, H9, `lensSetOf`), `wallClockMin` (default 360). An apply may add it, never remove it |
+| `holistic?` (M3, A5) | `{vision: PlanPath, advances: V-n[] (ascending, non-empty), obligations?: PlanPath, audit?: {every?: positive, lenses?: LensKind[] (ascending, non-empty), wallClockMin?: positive}, checkpoint?: {everyMilestones?: positive}}` | present exactly when the arc runs the holistic layer; `vision` names a `roadmap/vision-m3` file, `advances` the slice of it this arc moves toward (active clauses of the vision, at least one `world`; checked at startup and on every classified revision, `advancesReasons`; owner-only: only an `apply` changes it, `PlanChange` `advances`; the other active clauses are the horizon), `obligations` a `roadmap/obligations-m3` file (absent: none); `audit.every` N (default 5, D3), `audit.lenses` the required lens set L (default all four, H9, `lensSetOf`), `wallClockMin` (default 360); `checkpoint.everyMilestones` K (default 2, `DEFAULT_CHECKPOINT`), milestone steering cadence ("Milestone checkpoint cadence" below). An apply may add it, never remove it |
 | `limits?` (M3) | `{chargeable?, redirects?, reviseRounds?, candidateReds?, retries?, judgmentDeadlineMin?, freshBuildMin?, editAllowanceMin?, convergenceK?}`, all positive | the units' bounds over the built-in ones (`DEFAULT_BOUNDS`: 3, 2, 2, 1, 1, 45, 180, 60) and the arc's convergence K (default 3); a unit's own `limits` (same fields but `convergenceK`) override them (`boundsOf(plan, unit)`). Unit M3 fields: `routing?: RoutingLayer` (the unit layer, `route` and `steer --class`), `limits?`, and `origin: repair` (needs a spec with non-empty `repairs`) |
 
 `ToolCommand = {argv, cwd: RepoPath, env: LaneEnv}`, run from the repo root. Probe exit contract
@@ -1611,9 +1611,9 @@ added in step A2), `mapping`, `vision{rev}`, `limits{unit|null}`, `holistic`, `a
 | `audit-started` | `job (audit-n), triggers: [cadence \| unwitnessed{obligation} \| drift{planRev} \| wall-clock \| requested{command} \| final] (non-empty), generation, lenses (ascending, a subset of L), integrationSha, planRev, ledgerSha256\|null, obligationsSha256\|null, visionSha256, owners: [{unit, head}] (ascending), priorFindings, highWater, diffBudget?` (bytes, positive; absent on an audit a dev.10 executor started) |
 | `audit-ended` | `job, covered: [{lens, from, to}] (ascending by lens; `to` as far as the lens's reported chunks reached), findings, suppressed, outcome: completed\|abandoned, refused?: [{lens, attempt, claim, cause, reason}]` (M4b: each lens draft refused at admission, in call order; absent on an earlier executor's) |
 | `docs-covered` | `pub, from: U, to: D` (A17, H8) |
-| `checkpoint-inputs` | `job (ckpt-n), trigger: audit{job} \| park{unit, seq}, generation, vector: {plan, specs: {unit: rev}, obligationsSha256\|null, ledgerSha256\|null, visionSha256, contracts: [{path, blob}]}, headSha, visionSha256 (= the vector's), findings, observations: ObservationKey[]` |
+| `checkpoint-inputs` | `job (ckpt-n), trigger: audit{job} \| park{unit, seq} \| walk{job} \| milestone{milestones: MilestoneId[]}, generation, vector: {plan, specs: {unit: rev}, obligationsSha256\|null, ledgerSha256\|null, visionSha256, contracts: [{path, blob}]}, headSha, visionSha256 (= the vector's), findings, observations: ObservationKey[]` |
 | `bundle-decided` | `job, outcome: no-op \| rejected{reason: stale\|evidence\|invalid, detail} \| requested{needsUser}`; an applied bundle is its `plan-applied{source: bundle{job}}` instead |
-| `checkpoint-skipped` | `audit (audit-n), generation (the audit's), visionSha256, carried: FindingId[]`: the audit's checkpoint not run, the audit having found nothing new (arc feedback 2026-10-16); once per audit, never beside its `checkpoint-inputs` |
+| `checkpoint-skipped` | `trigger: CheckpointTrigger, audit?: audit-n, generation, visionSha256, carried: FindingId[]`: a checkpoint suppressed by `nothingNew` or the equal-input guard; once per trigger. An audit trigger also carries `audit` for existing readers. Old audit-only records read byte-preserving through `checkpointSkipTriggerOf`, warned once; see "Milestone checkpoint cadence" |
 | `divergence` | `id, index (its place among its job's divergences), job, type: target-departed\|obligation-departed\|plan-departed\|contract-departed\|split-dropped\|interpretation, from, what, cites: V-n[] (non-empty), evidence (non-empty), preimage: {planRev, specs: {unit: rev}, obligationsSha256\|null, ledgerSha256\|null, contracts}, compensation: {hint, kind: restore-revision\|repair-unit\|none}` (H13: no executable inverse) |
 | `divergence-digest` | `needsUser, ids: D-n[] (ascending, non-empty)` (H11) |
 | `steered` | `unit, command, brief (sha256), budgetMin, resume` |
@@ -2228,7 +2228,7 @@ src/pipeline/dispatch.ts `callArcRole`):
    field fix 2026-10-24), `drift` (a revision from a bundle, or
    whose ledger/sidecars, a non-evidence spec, obligations, mapping, vision, `holistic` or `advances` changed; never an executor's or
    an arc's first), `wall-clock` (`wallClockMin` since the latest audit start or unit publication, while a plan unit is
-   not retired, cut or superseded), `requested` (its lenses ∩ L, or L), `final` (no work left and some lens in L
+   not retired, cut or superseded, and a publication occurred since the latest audit started), `requested` (its lenses ∩ L, or L), `final` (no work left and some lens in L
    outstanding: those lenses only). drift runs L ∩ {drift, vision} (or L); every other trigger runs L. An audit records
    every owed trigger (coalesced).
 3. **Due:** no audit running, and a trigger is fresh (its event after the latest audit start; a drift one, while a plan
@@ -2238,7 +2238,9 @@ src/pipeline/dispatch.ts `callArcRole`):
    fired, `final` holds after a completed audit (or before any), or `wallClockMin` passed since the latest start with
    triggers owed. So an abandoned audit is not retried at once for the same triggers; with no work left the retry is the
    final trigger alone. A due audit is skipped, writing nothing, while the lens seat's backend is parked or the arc is
-   paused or stopped.
+   paused or stopped. After trigger/lens selection, it also needs an outstanding range in a selected lens unless
+   explicitly requested or driven by semantic drift. A final audit selects only outstanding lenses. The one
+   `cadence` calculation serves both scheduler pending and fenced capture; suppression writes nothing.
 4. **Owed (OR-Q2/3):** owed for 2N counted publications or 2 × `wallClockMin` since the last completed audit started
    (or the vision revision): one non-blocking `audit-owed` per episode, parented by that audit's job (`{type: arc}`
    before one) and found again by parent and reason (a `job{audit-n}` parent for an audit not yet started would name,
@@ -2263,7 +2265,10 @@ src/pipeline/dispatch.ts `callArcRole`):
    `arc-backend{role: lens, tier: arc, routingRev, job, attempt}`, `attempt` its lens's place in the run order for its
    first call; every further call (a retry, M4b, over the same chunk; a later chunk) after every lens's first, numbered
    in order; a resumed job consumes a recorded call (`recordedArcCall`) and asks again only for a lost one, finding the
-   chunks again from git, the published heads and the recorded budget. A lens's refusal, malformed report or fault, or
+   chunks again from git, the published heads and the recorded budget. A logical call (job, lens role, attempt)
+   gets at most two reissues as new operations across all restarts, counted from its earlier `proc.spawn` operations
+   (the existing one retry within an operation remains). At the cap the lost call fails and the audit is abandoned
+   as on a process fault, without a new counter record. A lens's refusal, malformed report or fault, or
    a draft refused again after its retry, abandons the audit after the rest; a usage limit or capacity parks the backend
    (`verdictOf` with a job parent; the usage-limit item parented by the spawn op) and stops it. The lens checkout is
    removed (citing an evidence snapshot) before `audit-ended`, so a crash never strands it. `covered` lists each lens
@@ -4221,7 +4226,7 @@ No new reason (step 0 decided). `finding-p1-escalated` (blocking) is raised also
   ended `reported`, no walk of the milestone started since, and the log read through that end held no active walkthrough P1.
 - **The rounds brake** (`milestoneProgress`). Round k's admitted units: the plan's polish units carrying k's applied
   proposals (its proposals less `dropped`) and the units whose specs repair a finding of k (`repairUnits`), each followed
-  to its lineage head. Round k is open while an author has yet to act (`pending`: `checkpoint`, a finding of k still
+  to its lineage head. Round k is open while an author has yet to act (`pending`: `checkpoint`, a blocking P1 finding of k still
   `open` and no checkpoint captured after k's end decided; `polish`, an applied proposal in no unit of the plan: agent D's
   revision applies them, and D extends this rule for a proposal its admit refuses) or one of its units is neither merged
   nor cut. Then k+1 is due when one landed and k < `walkRounds`; else the milestone settles (derived, no fact). A
@@ -4246,15 +4251,14 @@ No new reason (step 0 decided). `finding-p1-escalated` (blocking) is raised also
 
 ### Fix units and the polish loop (agent D: src/walk/polish.ts, src/walk/compare.ts; plan §4)
 
-- **The checkpoint's walk trigger.** `CheckpointTrigger + {type: 'walk'; job: walk-n}`: due for a walk that ended as a
-  round (`reported`, `bring-up-failed`) while one of its findings is unweighed (`unweighedWalkFindings`, src/walk/milestones.ts:
-  active, `open`, and captured by no checkpoint that settled a decision, applied, no-op or requested, under the vision in
-  force); a walk that opened nothing, or only weighed findings, has nothing new and no checkpoint (as an audit's
-  `nothingNew`; no `checkpoint-skipped` is written: that fact is an audit's). Order: parks, then walks, then audits; the
-  generation is the latest recorded (as a park's). `TriggerView + {type: 'walk'; job, milestone, round, findings,
-  evidenceDir}`; the session's readable dirs gain the walk's evidence dir (Read renders its screenshots). The checkpoint
-  plans repairs from claim, cause and evidence; nothing asks it to judge looks. The rounds brake's `pending: checkpoint`
-  is the same predicate.
+- **The checkpoint's walk trigger.** `CheckpointTrigger + {type: 'walk'; job: walk-n}` remains readable for every
+  captured job. In a milestone arc a new walk trigger is due only for a round with an unweighed open P1
+  (`unweighedWalkFindings`: active, open, captured by no decided, non-rejected checkpoint under the vision in force).
+  Nonblocking findings fold into the next milestone checkpoint and do not hold the round open. Parks run first,
+  blocking walks next, audit P1s and final audits next, then milestone boundaries. `TriggerView.walk` adds
+  `{milestone, round, findings, evidenceDir}`; every checkpoint weighing unweighed walk findings gets those walks'
+  evidence directories on its readable surface. Old captured triggers still retry and settle.
+
 - **The polish revision** (code, no model call, `applyPolish`, a holistic job after the walk). Due: the first walk in log
   order that ended `reported` with an applied proposal (proposals less `dropped`) carried by no plan unit and not refused.
   A proposal is refused, `polish-refused{proposal: X-n, reasons (non-empty)}` (once per proposal; settled: never applied, and
@@ -4994,3 +4998,34 @@ No record changes: both are derived from facts already in the log, and two outco
    its instances as park targets. The fix round (`decidedInput`, src/pipeline/unit.ts) is `salvageRefusalFix`
    (src/pipeline/integrate.ts): the violations re-derived from git at the current tip, as `transientDirectives(…,
    'salvage')`, over an empty ledger (the window is the edit allowance; no lane ran).
+
+## Milestone checkpoint cadence (owner ruling 2026-10-24)
+
+- `Holistic.checkpoint?: {everyMilestones?: positive integer}` (`src/input/plan.ts`): optional in both plan targets;
+  absent block or value uses `DEFAULT_CHECKPOINT.everyMilestones = 2` at read time, like `DEFAULT_AUDIT`. The input
+  bytes stay unchanged. Arcs without milestones keep audit-triggered checkpoints.
+- `CheckpointTrigger` adds `{type: 'milestone'; milestones: MilestoneId[]}` (canonical id order, unique, non-empty).
+  Every K milestones whose units' lineage heads retired and whose latest walk ended form a boundary, in retirement
+  order. Each id counts once across re-walks and plan edits; captures and skips retain the consumed boundary. A
+  rejected job retries on its recorded trigger before another boundary. Its generation is the highest audit or
+  checkpoint generation recorded, minimum 1, as for a walk or park; audit triggers retain their audit's generation.
+- New ordinary audit completions and nonblocking walk findings accumulate until that boundary. Design parks,
+  unweighed active audit P1s, unweighed open blocking walk findings and the final audit checkpoint remain immediate.
+  Already captured audit/walk jobs from dev.20 still resume, retry rejected decisions and enact approved requests.
+- Every non-park call is suppressed when a non-rejected decided checkpoint under the current vision captured the
+  same head SHA, plan rev and active finding-id set. `nothingNew` remains the audit's additional first-job guard
+  (except final audits; every active P1 counts even if owned). `checkpoint-skipped` now carries `trigger`, plus
+  `audit` on audit skips, and settles the trigger's generation as a no-op. Legacy audit-only skips read as written;
+  `checkpointSkipTriggerOf` in `src/core/upgrade.ts` supplies their audit trigger and warns once per process. A skip
+  also settles an equal older running capture as a derived no-op; it has no model output to activate. Recorded
+  answers are consumed normally. Once coverage is complete and no walk or semantic drift is owed, an audit covering the
+  final head serves H5 even if captured before the last unit's retirement fact, so a partial interval cannot strand
+  close-out. `TriggerView.milestone` adds the accumulated unweighed walks (their job, milestone, round, findings and
+  evidence directory), so their evidence is named in the call as on an immediate walk trigger.
+- `status.audit.checkpointMilestonesRemaining: number | null`: milestones remaining before the next steering
+  checkpoint, zero at a due boundary, null without milestones. No `SCHEMA_VERSION` or release version bump.
+
+The required upgrade regression also exposed an existing historical-spend gap after the summit effort moved from
+`xhigh` to `high`: `summitXhighTriple` (`src/core/upgrade.ts`) derives the older hashes for the current and adopted
+builtin seat tables, aliased by `ResolvedRouting.earlierBuiltinRevs` to current bindings. Explicit repo class rebinds
+keep their effort, current routing is unchanged, and no record is rewritten.

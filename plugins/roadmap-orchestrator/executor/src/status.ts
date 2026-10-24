@@ -66,7 +66,7 @@
 //                 evidence, its bundle and its compensation hint (H13)
 //   decisionsSince  what was decided since the architect last acknowledged a divergence digest (the whole arc
 //                 before one): rulings, bundles, patches, re-entries, cuts, steers, divergences, reversals and the audits
-//                 whose checkpoint was not run because they found nothing new (`checkpoint-skipped`)
+//                 whose checkpoint was suppressed by nothing-new or equal-input guards (`checkpoint-skipped`)
 //   convergence   K, the applied bundles counted against it since the counter last cleared, the open brake items
 //   findings      the active findings and `findingMetrics` (B3); dev.13 the released findings by who released them and
 //                 the admits a brake converted (src/holistic/tail.ts)
@@ -138,10 +138,10 @@ import { HEARTBEAT_FILE, REJECTION_FILE, START_FILE } from './executor.ts';
 import { type BlockingItem, blockingItems, fileNeedsUser, holdsUnit, openNeedsUser, recordOf, supersededItems } from './needsuser.ts';
 import { type LaneFailure, laneFailures } from './pipeline/failures.ts';
 import { type GateAnswerView, latestGateAnswer } from './pipeline/gate.ts';
-import { busyWaits } from './holistic/checkpoint.ts';
+import { busyWaits, checkpointMilestonesRemaining } from './holistic/checkpoint.ts';
 import { integrationHistory, recordedAdmits } from './holistic/bundle.ts';
 import { findingAttribution, opportunityClauses } from './holistic/admits.ts';
-import { gateLargeDiffOf } from './core/upgrade.ts';
+import { checkpointSkipTriggerOf, gateLargeDiffOf } from './core/upgrade.ts';
 import { type KnownDefect, type PlanM1, type PlanUnit, advancesOf, hasMilestones, knownDefectsOf, lensSetOf, milestonesOf, parsePlan } from './input/plan.ts';
 import { type MilestoneState, milestoneProgress, milestoneState, walksOf } from './walk/milestones.ts';
 import { milestoneEdges, milestonePassed, milestoneWaits } from './walk/node.ts';
@@ -478,6 +478,8 @@ export type AuditView = Readonly<{
   running: JobId | null;
   /** Wall-clock minutes of the journey lanes checkpoint jobs ran (a running one's up to now). */
   checkpointLaneMinutes: number;
+  /** Null without milestones; otherwise retire this many before the next steering checkpoint. */
+  checkpointMilestonesRemaining: number | null;
 }>;
 
 export type CompletionView = Readonly<{
@@ -1412,9 +1414,11 @@ export function decisionsAfter(view: JournalView, events: readonly Event[], sinc
     }
     if (f.kind === 'divergence') out.push({ seq: e.seq, kind: 'divergence', id: f.id, oneLine: `${f.type}: ${f.what}`, ruledBy: { type: 'checkpoint', job: f.job } });
     if (f.kind === 'checkpoint-skipped') {
+      const trigger = checkpointSkipTriggerOf(f);
+      const id = trigger.type === 'milestone' ? trigger.milestones.join(', ') : trigger.type === 'park' ? trigger.unit : trigger.job;
       out.push({
-        seq: e.seq, kind: 'checkpoint-skipped', id: f.audit,
-        oneLine: `no checkpoint after ${f.audit}: it found nothing new${f.carried.length === 0 ? '' : ` (${f.carried.join(', ')} already weighed, inactive or owned)`}`, ruledBy: { type: 'executor' },
+        seq: e.seq, kind: 'checkpoint-skipped', id,
+        oneLine: `no checkpoint after ${id}: it found nothing new${f.carried.length === 0 ? '' : ` (${f.carried.join(', ')} already weighed, inactive or owned)`}`, ruledBy: { type: 'executor' },
       });
     }
   }
@@ -1467,6 +1471,7 @@ function auditOf(runDir: AbsPath, view: JournalView, events: readonly Event[], p
     generation: generationOf(fold),
     running: latest !== null && latest.ended === null ? latest.started.job : null,
     checkpointLaneMinutes: checkpointLaneMinutes(events, now),
+    checkpointMilestonesRemaining: checkpointMilestonesRemaining(view, plan),
   };
 }
 

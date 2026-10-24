@@ -7,14 +7,14 @@
 //
 // Each defaulted kind warns once per process on stderr (the executor's stderr is the supervisor's
 // `supervisor.<token>.err` in the host dir).
-import type { CensusEntry, ClassifiedAdmit, Conversion, Obligations } from '../holistic/types.ts';
+import type { CheckpointTrigger, CensusEntry, ClassifiedAdmit, Conversion, Obligations } from '../holistic/types.ts';
 import type { DiffShown, FlakeOn, FlakyFact, GateLargeDiff, JudgmentInputs, MutantOf, Parent, RevisionSource } from './events.ts';
 import type { ApprovalBlobs, GateReview } from './review.ts';
-import type { FindingId, LaneId, ObligationId, UnitId } from './ids.ts';
+import type { FindingId, JobId, LaneId, ObligationId, UnitId } from './ids.ts';
 import type { PressureAvailability } from '../host/pressure.ts';
 import type { LaunchCpu, ResultFile } from './records.ts';
 import { canonicalJson } from './json.ts';
-import type { ClassTable } from '../routing/types.ts';
+import type { ClassTable, Triple } from '../routing/types.ts';
 
 const warned = new Set<string>();
 
@@ -632,4 +632,20 @@ export function flakeOnDefault(fact: FlakyFact, spawnParent: Parent): FlakeOn {
 /** A field, fact or item `what` of the removed issues integration: read as written, ignored. Warned once per `what`. */
 export function issuesIgnored(what: string): void {
   warnDefaulted(`issues.${what}`, `${what} (the GitHub issues integration, removed in 1.0.0-dev.21) is read as written and ignored`);
+}
+
+/** A dev.20 audit-only skip: read as its audit trigger, without changing the record's hashed bytes. */
+export function checkpointSkipTriggerOf(s: Readonly<{ trigger?: CheckpointTrigger; audit?: JobId }>): CheckpointTrigger {
+  if (s.trigger !== undefined) return s.trigger;
+  if (s.audit === undefined) throw new Error('a checkpoint skip without its trigger or legacy audit');
+  warnDefaulted('checkpoint-skipped.trigger', 'an audit-only checkpoint skip (before milestone cadence); read as its audit trigger');
+  return { type: 'audit', job: s.audit };
+}
+
+/**
+ * Before the 2026-10-24 summit effort change, builtin summit seats hashed xhigh. Status aliases those recorded revs
+ * to today's bindings; a repo's explicit class rebind keeps its own effort. Delete once no pre-change arc is in flight.
+ */
+export function summitXhighTriple(triple: Triple): Triple {
+  return { ...triple, effort: 'xhigh' };
 }

@@ -74,6 +74,7 @@ export function milestoneJson(extra: Json = {}): Json {
 
 export type WalkArcOptions = Readonly<{
   steps: readonly Step[]; milestone?: Json; walkRounds?: number;
+  auditLenses?: readonly string[];
   /** dev.17: the plan's suite (default unit-common's) and the repo config's systems map (default none). */
   suite?: readonly LaneJson[]; systemsMap?: JsonValue;
 }>;
@@ -98,7 +99,7 @@ export function walkArc(opts: WalkArcOptions): ArcDescriptor {
     const plan = JSON.parse(readFileSync(x.planPath, 'utf8')) as Json;
     writeFileSync(x.planPath, JSON.stringify({
       ...plan, baseline: git(x.repo, 'rev-parse', 'main'),
-      holistic: { vision: 'vision.json', advances: ADVANCES, obligations: 'obligations.json', audit: { lenses: ['vision'], every: 100 } },
+      holistic: { vision: 'vision.json', advances: ADVANCES, obligations: 'obligations.json', audit: { lenses: opts.auditLenses ?? ['vision'], every: 100 } },
       milestones: [opts.milestone ?? milestoneJson()],
       ...(opts.walkRounds === undefined ? {} : { limits: { walkRounds: opts.walkRounds } }),
     }));

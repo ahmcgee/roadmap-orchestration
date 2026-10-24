@@ -11,6 +11,7 @@ import {
   type ResourceEdge, type RetryStage, type ScopeGrowthProposal, type StageOutcomeFact, JUDGMENT_STAGES, RECLAIM_HOLDERS, RESIDUE_HOLDERS, RETRY_STAGES, RETRYABLE_BACKEND_PARKS,
   prevHash, probeTargetKey, serializeEvent,
 } from './events.ts';
+import { checkpointSkipTriggerOf } from './upgrade.ts';
 import { atomicJson, monotonic } from './fsx.ts';
 import {
   type AmendmentId, type ArcId, type ClaudeSessionId, type CommandId, type DivergenceId, type EdgeId, type FindingId, type InvocationId, type JobId, type JobKind, type NeedsUserId, type ObligationId,
@@ -1448,12 +1449,22 @@ export class Fold implements JournalView {
         return;
       }
       case 'checkpoint-skipped': {
-        const a = this.#audits.find((x) => x.started.job === f.audit);
-        if (a?.ended?.outcome !== 'completed') return fail(`checkpoint-skipped of ${f.audit}, which is no completed audit`);
-        if (a.started.generation !== f.generation) fail(`checkpoint-skipped of ${f.audit} at generation ${f.generation}; the audit's is ${a.started.generation}`);
-        if (this.#checkpointSkips.some((s) => s.audit === f.audit)) fail(`a second checkpoint-skipped of ${f.audit}`);
-        const trigger = canonicalJson({ type: 'audit', job: f.audit });
-        if ([...this.#checkpoints.values()].some((c) => canonicalJson(c.inputs.trigger) === trigger)) fail(`checkpoint-skipped of ${f.audit}, whose checkpoint ran`);
+        const t = checkpointSkipTriggerOf(f);
+        if (t.type === 'audit') {
+          const a = this.#audits.find((x) => x.started.job === t.job);
+          if (a?.ended?.outcome !== 'completed') return fail(`checkpoint-skipped of ${t.job}, which is no completed audit`);
+          if (a.started.generation !== f.generation) fail(`checkpoint-skipped of ${t.job} at generation ${f.generation}; the audit's is ${a.started.generation}`);
+        }
+        const trigger = canonicalJson(t);
+        if (this.#checkpointSkips.some((s) => canonicalJson(checkpointSkipTriggerOf(s)) === trigger)) fail(`a second checkpoint-skipped of ${trigger}`);
+        const jobs = [...this.#checkpoints.values()].filter((c) => canonicalJson(c.inputs.trigger) === trigger);
+        if (jobs.some((c) => c.decided !== null && c.decided.kind !== 'rejected')) fail(`checkpoint-skipped of ${trigger}, whose checkpoint decided`);
+        // A pre-upgrade capture can resume at an equal decided snapshot. The skip settles it with no paid call.
+        for (const c of jobs) {
+          if (c.decided !== null) continue;
+          if (c.inputs.generation !== f.generation) fail(`checkpoint-skipped of ${trigger} at another generation than its capture`);
+          c.decided = { kind: 'no-op' };
+        }
         const { kind: _k, ...rest } = f;
         this.#checkpointSkips.push({ ...rest, seq });
         return;

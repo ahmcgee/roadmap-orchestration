@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
-import { unitId, visionClauseId } from '../src/core/ids.ts';
+import { routingRev, unitId, visionClauseId } from '../src/core/ids.ts';
 import { canonicalJson } from '../src/core/json.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { planPath } from '../src/core/values.ts';
@@ -68,6 +68,18 @@ describe('routing', () => {
       verifier: { low: 'economy', med: 'economy', high: 'economy' },
       scaffold: { low: 'economy', med: 'economy', high: 'economy' },
     });
+  });
+
+  it('historical summit effort: earlier xhigh revisions resolve through aliases to current high seats, without overriding a repo rebind', () => {
+    const stack = { ...base, arcRoles: 'dev17' as const };
+    const resolved = resolveRouting(stack);
+    for (const rev of ['ec39c27ced3c46bf', '98bcf2744f049328', 'a5c3da09379b0035']) {
+      assert.ok(resolved.earlierBuiltinRevs.includes(routingRev(rev)), `adopt the recorded ${rev}`);
+    }
+    assert.deepEqual(resolved.table.checkpoint.arc, OPUS_HIGH, 'historical aliases do not change current routing');
+    const rebound = resolveRouting({ ...stack, classes: { summit: FABLE } });
+    assert.equal(rebound.earlierBuiltinRevs.includes(routingRev('ec39c27ced3c46bf')), false, 'an explicit class rebind is its own revision');
+    assert.deepEqual(rebound.table.checkpoint.arc, FABLE);
   });
 
   it('built-in profiles resolve (dev.17): efficient builds every tier (Luna; Sonnet medium under claude-only) and runs the lenses and flow on Sonnet high; Opus medium plan-checks and gates every tier; Opus high holds escalation', () => {

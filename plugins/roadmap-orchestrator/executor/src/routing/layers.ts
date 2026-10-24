@@ -11,7 +11,8 @@
 // then binds to a triple: the profile's class catalogue (classes.ts), which binds a class's build seats and its judgment
 // seats separately, unless the repo config rebinds it, which binds the class at every seat that names it (so a class
 // rebound to Codex at a judgment seat is refused `codex-judgment`). The resolved table of triples is hashed into the
-// RoutingRev that records carry instead of model ids, so a rebind changes the rev exactly as a seat edit does.
+// RoutingRev that records carry instead of model ids, so a rebind changes the rev exactly as a seat edit does. Status
+// aliases historical builtin seat and summit-effort hashes to today's bindings, without changing current routing.
 //
 // Seats: build has `low | med | high`; planCheck and gate also have `escalation`, where route-ups and risk
 // triggers go (transitions.ts). A unit's risk is never `escalation`. The arc roles `lens`, `checkpoint` (M3),
@@ -65,7 +66,7 @@ import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { Fields, type Read, SchemaError, arrayOf, object, positive, str, stringMap } from '../core/validate.ts';
 import { type RepoGiven, repoGiven } from '../flow/types.ts';
 import { type SystemsMap, systemsMap } from '../input/systems.ts';
-import { EARLIER_BUILTIN_SEATS, PRE_DEV17_BUILTIN_SEATS, dev7ArcRolesDefault } from '../core/upgrade.ts';
+import { EARLIER_BUILTIN_SEATS, PRE_DEV17_BUILTIN_SEATS, dev7ArcRolesDefault, summitXhighTriple } from '../core/upgrade.ts';
 import { type PlanM1, type PlanTargetKind, hasMilestones } from '../input/plan.ts';
 import type { StartupRejection } from '../preflight/startup.ts';
 import { support } from '../prompts/index.ts';
@@ -252,7 +253,8 @@ export type ResolvedRouting = Readonly<{
   milestones: boolean;
   /**
    * TEMPORARY SCAFFOLDING (BACKLOG "Scaffolding to delete"): the revs this same stack hashed under each earlier adopted
-   * release's built-in seats (`EARLIER_BUILTIN_SEATS`, src/core/upgrade.ts), which status aliases a recorded rev through.
+   * release's built-in seats and xhigh summit effort (`EARLIER_BUILTIN_SEATS`, `summitXhighTriple` in core/upgrade.ts),
+   * which status aliases a recorded rev through.
    * Empty under any table but HEAD's.
    */
   earlierBuiltinRevs: readonly RoutingRev[];
@@ -274,8 +276,17 @@ const LAYERS = [['unit', 'unit'], ['plan', 'plan'], ['repo-config', 'repoConfig'
  * every seat naming the class, else the catalogue's build triple at a build seat and its judgment triple at any other.
  */
 export function resolveRouting(stack: RoutingStack): ResolvedRouting {
+  const current = resolveRoutingUnder(BUILTIN_SEATS, stack);
+  const earlier = EARLIER_BUILTIN_SEATS.map((seats) => resolveRoutingUnder(seats, stack));
+  const xhigh = [current, ...earlier].map((r, i) => {
+    const table = seatTable((s) => {
+      const triple = atSeat(r.table, s);
+      return atSeat(r.classes, s) === 'summit' && r.bindings.summit === 'builtin' ? summitXhighTriple(triple) : triple;
+    });
+    return routingRevOf(table, r.arcScope, r.arcRoles, r.milestones, i === 0);
+  });
   return {
-    ...resolveRoutingUnder(BUILTIN_SEATS, stack), earlierBuiltinRevs: EARLIER_BUILTIN_SEATS.map((seats) => resolveRoutingUnder(seats, stack).rev),
+    ...current, earlierBuiltinRevs: [...new Set([...earlier.map((r) => r.rev), ...xhigh])].filter((rev) => rev !== current.rev),
     preDev17Rev: resolveRoutingUnder(PRE_DEV17_BUILTIN_SEATS, stack).rev,
   };
 }

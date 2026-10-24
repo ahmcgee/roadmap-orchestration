@@ -138,6 +138,8 @@ export type Holistic = Readonly<{
   advances: readonly VisionClauseId[];
   /** The obligations file (`roadmap/obligations-m3`); absent: no obligations. */
   obligations?: PlanPath;
+  /** Retired milestones per steering checkpoint; absent: 2. */
+  checkpoint?: Readonly<{ everyMilestones?: number }>;
   audit?: Readonly<{
     /** Publications per cadence audit (D3); absent: 5. */
     every?: number;
@@ -150,6 +152,7 @@ export type Holistic = Readonly<{
 /** An `architecture-doc` plan's holistic block: the vision file (`roadmap/vision-m3`), relative to the plan's directory. */
 export type HolisticDoc = Holistic & Readonly<{ vision: PlanPath }>;
 export const DEFAULT_AUDIT = { every: 5, wallClockMin: 360 } as const;
+export const DEFAULT_CHECKPOINT = { everyMilestones: 2 } as const;
 
 export type PlanUnit = Readonly<{
   id: UnitId;
@@ -445,6 +448,10 @@ const holisticOf = (withVision: boolean): Read<Holistic | HolisticDoc> => object
     throw new SchemaError(`${f.path}.vision`, withVision ? 'the vision file (an architecture-doc plan)' : 'absent (a corpus plan\'s vision is <repo>/.roadmap/vision.json)', vision);
   }
   const obligations = f.optional('obligations', (v, p) => planPath(v, p));
+  const checkpoint = f.optional('checkpoint', object((g) => {
+    const everyMilestones = g.optional('everyMilestones', positive);
+    return everyMilestones === undefined ? {} : { everyMilestones };
+  }));
   const audit = f.optional('audit', object((g) => {
     const every = g.optional('every', positive);
     const lenses = g.optional('lenses', sortedBy(oneOf(LENS_KINDS), (l) => l, { nonEmpty: true }));
@@ -454,7 +461,8 @@ const holisticOf = (withVision: boolean): Read<Holistic | HolisticDoc> => object
   return {
     ...(vision === undefined ? {} : { vision }),
     advances: f.get('advances', idList((v, p) => visionClauseId(v, p), { nonEmpty: true, legacyStringOrder: true })),
-    ...(obligations === undefined ? {} : { obligations }), ...(audit === undefined ? {} : { audit }) };
+    ...(obligations === undefined ? {} : { obligations }), ...(audit === undefined ? {} : { audit }),
+    ...(checkpoint === undefined ? {} : { checkpoint }) };
 });
 
 /** A unit's bounds: the built-in ones, then the plan's `limits`, then the unit's own (M3). */

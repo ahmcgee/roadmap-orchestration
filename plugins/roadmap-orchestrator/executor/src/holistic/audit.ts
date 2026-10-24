@@ -1,11 +1,13 @@
 // The cadence audit job (M3 step B5; DESIGN-1.0.md §2.5; plan "Audits"): one durable job `audit-<n>` at a time, which
-// reads the integrated tree through the lenses and records what they found. The lenses report; the checkpoint that
-// follows acts (B6).
+// reads the integrated tree through the lenses and records what they found. The lenses report; the steering
+// checkpoint weighs them at milestone boundaries, with immediate P1 and final-audit triggers (B6; checkpoint.ts).
 //
 // A run (`runAudit`, one call per scheduler turn):
 //   0. A running audit (started, not ended: a crash or a restart cut it short) resumes as the same job, from its
 //      recorded inputs; otherwise the cadence (cadence.ts) says whether one is due. A due audit is skipped (nothing
-//      written, its triggers stay owed) while the lens seat's backend is parked or the arc is paused or stopped.
+//      written, its triggers stay owed) while the lens seat's backend is parked or the arc is paused or stopped. Cadence
+//      suppresses an ordinary audit before capture when no selected lens has an outstanding range; explicit requests
+//      and semantic drift may inspect unchanged code. The same cadence calculation serves scheduler and capture.
 //   1. Immutable inputs (H2, A19): `audit-started{job, triggers, generation, lenses, integrationSha, planRev,
 //      ledgerSha256, obligationsSha256, visionSha256, owners, priorFindings, highWater, diffBudget}` in one synchronous capture
 //      under the revision fence (`captureUnderFence`), so no audit starts between a docs `ff` and its `plan-applied`.
@@ -31,7 +33,9 @@
 //      which the call may read. An audit an earlier executor started (no `diffBudget`)
 //      reviews each range in one call, as its recorded calls did. A resumed job consumes a call it already made
 //      (`recordedArcCall`) and asks again only for one lost: a lens's first call is numbered by its place in the run
-//      order, every further call (a later chunk, a repair turn) after every lens's first, in order, and the chunks are
+//      order. At most two new operations reissue a logical call lost across restarts (job, role, attempt), counted
+//      from the journal: exhausted, the lens fails and the audit is abandoned as on a process fault. The existing
+//      retry within an operation stays bounded by invoke. Every further call (a later chunk, a repair turn) after every lens's first, in order, and the chunks are
 //      found again from git and the recorded inputs. Each report's findings are opened at once. A report off its schema,
 //      or with a draft refused at admission (below), takes the one judgment repair turn (dev.12, `repairTurnOf` in
 //      src/pipeline/dispatch.ts; M4b paid run 3 asked a fresh session again): its own session resumed with every reason
@@ -471,6 +475,9 @@ function witnessDrafts(ctx: StageContext, s: Started, r: Recorded, records: Read
   });
 }
 
+/** New operations reissuing a lost logical lens call, counted across every restart. */
+const LOST_CALL_REISSUES = 2;
+
 /**
  * Runs (or resumes) the audit due now: see the header. `none` when nothing is due; `skipped` (writing nothing but an owed
  * item) while the lens backend is parked or the arc paused.
@@ -524,7 +531,12 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
    */
   const ask = async (lens: LensKind, attempt: number, chunk: Chunk, repair: Readonly<{ turn: RepairTurn; reasons: readonly string[] }> | null): Promise<Readonly<{ read: LensRead; called: BackendCallOutcome }>> => {
     let called = recordedArcCall(ctx, job, 'lens', attempt);
-    if (called === null || called.kind === 'lost') {
+    // A restart reissues a lost logical call as a new operation; count those operations across every restart.
+    const operations = ctx.journal.view.opsOf('proc.spawn').filter((i) => {
+      const subject = i.expect.subject;
+      return subject.purpose === 'arc-backend' && subject.job === job && subject.role === 'lens' && subject.attempt === attempt;
+    }).length;
+    if (called === null || (called.kind === 'lost' && operations <= LOST_CALL_REISSUES)) {
       if (!made) {
         await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${job}`, parent, { path: checkout, checkout: { type: 'detached', at: s.integrationSha } });
         made = true;

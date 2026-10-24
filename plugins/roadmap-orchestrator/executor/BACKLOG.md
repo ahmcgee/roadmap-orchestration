@@ -783,3 +783,15 @@ at triage stay in git history.
 - Interim M2 shim: `outcomeFact` writing no `park` for a retryable row whose stage names no targets (step 7a,
   src/pipeline/transitions.ts), and the fold's reading of such a fact as an operator park (`unclassedParkRecord`,
   src/core/state.ts). A behaviour shim, not a release layer (kept by M4a step X0).
+
+## Milestone checkpoint cadence follow-up (2026-10-24)
+
+- Diagram update deferred by the owner for this batch: `docs/flow.svg` and `docs/flow-bpmn.svg` need the README's
+  milestone steering boundary (every K retired milestones, default 2, after the walk), accumulated audit/walk
+  findings, immediate design-park/P1/final paths, equal-input checkpoint guard, empty-range audit guard,
+  publication-gated wall-clock and two lost-call reissues. No SVG or version edits in this batch.
+- Delete `checkpointSkipTriggerOf`'s audit-only default once no arc started on dev.20 or earlier remains in flight;
+  new skip records carry their trigger. Optional plan cadence defaults are lasting, like the audit defaults.
+
+- The mandatory upgrade regression exposed a pre-existing historical-spend alias gap from summit `xhigh` → `high`.
+  Delete `summitXhighTriple` and its routing aliases once no arc started before that effort change is in flight.

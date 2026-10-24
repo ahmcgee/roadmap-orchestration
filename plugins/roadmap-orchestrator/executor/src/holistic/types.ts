@@ -907,14 +907,16 @@ export const auditTrigger: Read<AuditTrigger> = tagged('type', {
 });
 
 /**
- * What a checkpoint runs for: a completed audit, an operator-design park (OR-Q1), or (dev.13) a milestone walk that ended
- * as a round with findings no checkpoint has weighed (src/holistic/checkpoint.ts `walkNeedsCheckpoint`).
+ * What a checkpoint runs for: K retired milestones, an operator-design park, an audit P1/final audit (all audits in
+ * an arc without milestones), or a walk round's unweighed blocking finding. Old audit/walk captures stay readable.
  */
 export type CheckpointTrigger =
   | Readonly<{ type: 'audit'; job: JobId }>
   | Readonly<{ type: 'park'; unit: UnitId; seq: number }>
-  | Readonly<{ type: 'walk'; job: JobId }>;
+  | Readonly<{ type: 'walk'; job: JobId }>
+  | Readonly<{ type: 'milestone'; milestones: readonly MilestoneId[] }>;
 export const checkpointTrigger: Read<CheckpointTrigger> = tagged('type', {
+  milestone: object((f): CheckpointTrigger => ({ type: f.get('type', literal('milestone')), milestones: f.get('milestones', idList((v, p) => milestoneId(v, p), { nonEmpty: true })) })),
   audit: object((f): CheckpointTrigger => ({ type: f.get('type', literal('audit')), job: f.get('job', jobR) })),
   park: object((f): CheckpointTrigger => ({ type: f.get('type', literal('park')), unit: f.get('unit', (v, p) => unitId(v, p)), seq: f.get('seq', positive) })),
   walk: object((f): CheckpointTrigger => ({ type: f.get('type', literal('walk')), job: f.get('job', (v, p) => jobIdOfKind('walk')(v, p)) })),

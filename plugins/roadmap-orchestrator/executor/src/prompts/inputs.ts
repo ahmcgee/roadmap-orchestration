@@ -509,14 +509,16 @@ export type ParkCause = Readonly<{
 }>;
 
 /**
- * A checkpoint's trigger: a completed audit, a park with its cause (null: the unit has moved on since the capture), or
+ * A checkpoint's trigger: a milestone boundary, a completed audit, a park with its cause (null: the unit has moved on since the capture), or
  * (dev.13) a milestone walk: its milestone and round, the findings it opened or re-reported, and its evidence dir (the
  * screenshots, transcripts and server logs the findings cite, readable by the session).
  */
+export type WalkTriggerView = Readonly<{ type: 'walk'; job: JobId; milestone: MilestoneId; round: number; findings: readonly FindingId[]; evidenceDir: AbsPath }>;
 export type TriggerView =
+  | Readonly<{ type: 'milestone'; milestones: readonly MilestoneId[]; walks: readonly WalkTriggerView[] }>
   | Readonly<{ type: 'audit'; job: JobId }>
   | Readonly<{ type: 'park'; unit: UnitId; seq: number; cause: ParkCause | null }>
-  | Readonly<{ type: 'walk'; job: JobId; milestone: MilestoneId; round: number; findings: readonly FindingId[]; evidenceDir: AbsPath }>;
+  | WalkTriggerView;
 
 /**
  * Arc feedback 2026-10-16 (a checkpoint re-entered a unit without finding why it failed): what the executor's records say
@@ -1353,6 +1355,9 @@ export function refusedText(refused: CheckpointInputs['refused']): string {
 
 /** Why the checkpoint runs, in sentences. */
 export function triggerText(t: TriggerView): string {
+  if (t.type === 'milestone') {
+    return [`milestones ${t.milestones.join(', ')} retired and their walks ended; weigh the accumulated audit and walk findings since the previous steering checkpoint.`, ...t.walks.map(triggerText)].join('\n');
+  }
   if (t.type === 'audit') return `the audit ${t.job} completed.`;
   if (t.type === 'walk') {
     return `the walkthrough ${t.job} of milestone ${t.milestone} (round ${t.round}) used the running product along its journeys and reported ${t.findings.join(', ')}, which no checkpoint has weighed. `

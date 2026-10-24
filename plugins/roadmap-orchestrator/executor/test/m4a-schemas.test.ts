@@ -18,7 +18,7 @@ import { canonicalJson } from '../src/core/json.ts';
 import { brief } from '../src/commands/brief.ts';
 import { chainStatus } from '../src/commands/chain.ts';
 import { approvalFingerprint, needsUserRecord, NEEDS_USER_REASONS, revisionInputs } from '../src/core/records.ts';
-import { censusOf } from '../src/core/upgrade.ts';
+import { censusOf, checkpointSkipTriggerOf } from '../src/core/upgrade.ts';
 import { Fields, SchemaError } from '../src/core/validate.ts';
 import { absPath, isoTime, repoPath } from '../src/core/values.ts';
 import { parseCorpusGuide, parseCorpusPin, parseRulesRegistry } from '../src/corpus/types.ts';
@@ -328,6 +328,24 @@ describe('facts, plan changes, manifests and fingerprints', () => {
     const dev6 = roundTrip(fact(inputs));
     assert.ok(dev6.type === 'fact' && dev6.fact.kind === 'checkpoint-inputs' && dev6.fact.issues === undefined && dev6.fact.corpusSha256 === undefined);
     roundTrip(fact({ ...inputs, corpusSha256: H2 }));
+  });
+
+  it('milestone cadence: positive optional plan knob, additive trigger, and byte-preserving audit-only skips', () => {
+    assert.equal(parsePlan(corpusPlan).holistic!.checkpoint, undefined, 'absence reads with the runtime default of 2');
+    const withKnob = (n: number) => ({ ...corpusPlan, holistic: { ...corpusPlan.holistic, checkpoint: { everyMilestones: n } } });
+    assert.equal(parsePlan(withKnob(3)).holistic!.checkpoint!.everyMilestones, 3);
+    for (const n of [0, -1, 1.5]) assert.throws(() => parsePlan(withKnob(n)), /everyMilestones/);
+    const skipped = { kind: 'checkpoint-skipped', audit: 'audit-1', generation: 1, visionSha256: H, carried: [] };
+    const old = roundTrip(fact(skipped));
+    assert.ok(old.type === 'fact' && old.fact.kind === 'checkpoint-skipped');
+    assert.deepEqual(checkpointSkipTriggerOf(old.fact), { type: 'audit', job: 'audit-1' });
+    const trigger = { type: 'milestone', milestones: ['MS-1', 'MS-2'] };
+    roundTrip(fact({ kind: 'checkpoint-skipped', trigger, generation: 2, visionSha256: H, carried: [] }));
+    const inputs = { kind: 'checkpoint-inputs', job: 'ckpt-1', trigger, generation: 2, vector: { plan: 1, specs: {}, obligationsSha256: null, ledgerSha256: H, visionSha256: H, contracts: [] }, headSha: A, visionSha256: H, findings: [], observations: [] };
+    roundTrip(fact(inputs));
+    refusesFact({ ...inputs, trigger: { type: 'milestone', milestones: [] } }, /milestones/);
+    refusesFact({ ...inputs, trigger: { type: 'milestone', milestones: ['MS-2', 'MS-1'] } }, /milestones/);
+    for (const type of ['audit', 'walk']) roundTrip(fact({ ...inputs, trigger: { type, job: `${type}-1` } }));
   });
 
   it('revision inputs: the three corpus digests together or not at all', () => {

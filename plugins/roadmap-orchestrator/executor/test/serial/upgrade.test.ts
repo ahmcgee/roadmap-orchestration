@@ -31,7 +31,8 @@
 // on dev.17, so no cell reads one. Nothing else: the `deflake-unscoped` needs-user reason is a new kind, `start --base`
 // records nothing, the status lock (`status.lock`) is new runtime state no dev.17 executor reads or writes, and the
 // fold's monotonic check and the snapshot's batch read change no record. dev.18's seat table is dev.17's, so a dev.17
-// arc's routing rev does not move. So a dev.17 arc on HEAD warns no `roadmap: upgrade default` but `spec.design.kind`, a
+// arc's seat table stays the same. The 2026-10-24 summit effort change (xhigh → high) moves its hash; historical
+// hashes alias to today's routing for spend, with no routing park. A dev.17 arc warns no `roadmap: upgrade default` but `spec.design.kind`, a
 // lasting read rather than an upgrade default (a spec no approving plan-check has designed yet reads as kind `module`, on
 // dev.17 as on HEAD), and the kinds a cell's story reads on purpose (asserted after every unlabelled cell's HEAD phase).
 //
@@ -251,7 +252,7 @@ import { arcId, commandId, invocationId, obligationId, opId, resourceName, unitI
 import { UNPINNED } from '../../src/core/pins.ts';
 import type { JournalView } from '../../src/core/interfaces.ts';
 import { type JsonValue, canonicalJson } from '../../src/core/json.ts';
-import { PRE_DEV12_BUILTIN_SEATS, PRE_DEV17_BUILTIN_SEATS, gateDiffShownOf, gateLargeDiffOf } from '../../src/core/upgrade.ts';
+import { gateDiffShownOf, gateLargeDiffOf } from '../../src/core/upgrade.ts';
 import { type ProcIdentity, specKindOf, specPinOf } from '../../src/core/records.ts';
 import { openJournal, readJournal } from '../../src/core/log.ts';
 import { absPath, repoPath } from '../../src/core/values.ts';
@@ -266,7 +267,7 @@ import { overCapacity } from '../../src/resources/pool.ts';
 import { bytesSha256, loadSpec } from '../../src/spec/spec.ts';
 import { CONTINUE_DIRECTIVE } from '../../src/prompts/directives.ts';
 import { meterOf } from '../../src/meter.ts';
-import { arcStack, provenanceStack, resolveRouting, resolveRoutingUnder, routingRevOf, seatsInForce } from '../../src/routing/layers.ts';
+import { arcStack, provenanceStack, resolveRouting, routingRevOf, seatsInForce } from '../../src/routing/layers.ts';
 import { designOfAnswer, validatePlanCheckOutput } from '../../src/prompts/schemas.ts';
 import { executorLogs, lastLine } from '../../src/supervisor.ts';
 import { corpusTarget } from '../fixtures/corpus-target.ts';
@@ -1512,28 +1513,27 @@ async function routingStable(release: Release): Promise<Readonly<{
   return { revs, resolved, stack, judged };
 }
 
-test('upgrade.routing-stable: an arc the previous release started keeps its role set and its routing rev on HEAD (dev.18 kept dev.17\'s seat table): every judgment under that rev, no park or routing-changed; spend resolves', T, async () => {
-  const { revs, resolved, judged } = await routingStable(PREVIOUS_RELEASE);
-  // OR-L3 binds every revision through HEAD's seat table, the previous release's: HEAD resolves the rev it recorded.
-  assert.ok(revs.has(resolved), 'HEAD resolves the rev the previous release recorded');
-  for (const ji of judged) assert.equal(ji.routingRev, resolved, `${ji.unit} ${ji.stage}: judged under the previous release's rev`);
+test('upgrade.routing-stable: the previous release\'s arc keeps its role set, re-pins from xhigh to high summit effort, never parks for routing, and resolves historical spend', T, async () => {
+  const { revs, resolved, stack, judged } = await routingStable(PREVIOUS_RELEASE);
+  const previous = await loadFrom<typeof import('../../src/routing/layers.ts')>(PREVIOUS_RELEASE, 'src/routing/layers.ts');
+  assert.ok(revs.has(previous.resolveRouting(stack).rev), 'the archived release reproduces its recorded revision');
+  assert.ok(!revs.has(resolved), 'the summit effort changed xhigh to high; HEAD re-pins through the current catalogue');
+  for (const ji of judged) assert.equal(ji.routingRev, resolved, `${ji.unit} ${ji.stage}: judged under HEAD's current rev`);
 });
 
-test('upgrade.dev16.routing-stable: an arc dev.16 started keeps its role set on HEAD; its routing rev moves only by HEAD\'s seat table (dev.17: frontier judgments, efficient builds) and re-pins without a park or routing-changed; spend resolves', T, async () => {
+test('upgrade.dev16.routing-stable: an arc dev.16 started keeps its role set on HEAD; its routing rev moves by HEAD\'s seats and summit effort (frontier judgments, efficient builds) and re-pins without a park or routing-changed; spend resolves', T, async () => {
   const { revs, resolved, stack, judged } = await routingStable(DEV16_RELEASE);
-  // OR-L3 binds every revision through HEAD's seat table, which moved plan-check and the gate to frontier and build.high to
-  // efficient (1.0.0-dev.17): the seats dev.16 hashed reproduce its rev, HEAD's give another.
-  assert.ok(revs.has(resolveRoutingUnder(PRE_DEV17_BUILTIN_SEATS, stack).rev), 'under the seats dev.16 hashed, HEAD resolves the rev it recorded');
+  const previous = await loadFrom<typeof import('../../src/routing/layers.ts')>(DEV16_RELEASE, 'src/routing/layers.ts');
+  assert.ok(revs.has(previous.resolveRouting(stack).rev), 'dev.16 reproduces its recorded seats and xhigh summit binding');
   assert.ok(!revs.has(resolved), 'HEAD\'s seat table moved the rev');
   for (const ji of judged) assert.ok(revs.has(ji.routingRev) || ji.routingRev === resolved, `${ji.unit} ${ji.stage}: judged under dev.16's rev or HEAD's`);
   assert.ok(judged.some((ji) => ji.stage === 'gate' && ji.routingRev === resolved), 'page-id re-pinned: its gate judged under HEAD\'s rev');
 });
 
-test('upgrade.dev11.routing-stable: an arc dev.11 started keeps its role set on HEAD; its routing rev moves only by HEAD\'s seat table (the gate ladder) and re-pins without a park or routing-changed; spend resolves', T, async () => {
+test('upgrade.dev11.routing-stable: an arc dev.11 started keeps its role set on HEAD; its routing rev moves by HEAD\'s seats and summit effort (the gate ladder) and re-pins without a park or routing-changed; spend resolves', T, async () => {
   const { revs, resolved, stack, judged } = await routingStable(DEV11_RELEASE);
-  // OR-L3 binds every revision through HEAD's seat table, which moved gate.med (the gate risk ladder,
-  // 1.0.0-dev.12): the seats dev.11 hashed reproduce its rev, HEAD's give another.
-  assert.ok(revs.has(resolveRoutingUnder(PRE_DEV12_BUILTIN_SEATS, stack).rev), 'under the seats dev.11 hashed, HEAD resolves the rev it recorded');
+  const previous = await loadFrom<typeof import('../../src/routing/layers.ts')>(DEV11_RELEASE, 'src/routing/layers.ts');
+  assert.ok(revs.has(previous.resolveRouting(stack).rev), 'dev.11 reproduces its recorded seats and xhigh summit binding');
   assert.ok(!revs.has(resolved), 'HEAD\'s seat table moved the rev');
   for (const ji of judged) assert.ok(revs.has(ji.routingRev) || ji.routingRev === resolved, `${ji.unit} ${ji.stage}: judged under dev.11's rev or HEAD's`);
   assert.ok(judged.some((ji) => ji.stage === 'gate' && ji.routingRev === resolved), 'page-id re-pinned: its gate judged under HEAD\'s rev');
@@ -1740,11 +1740,12 @@ test('upgrade.checkpoint-reentry-with-fixes: a holistic arc whose checkpoint the
   let r: HeadRun;
   track(scope);
   try {
-    r = await runOnHead(p, steps, async () => {});
+    r = await runOnHead(p, steps, async () => {}, 'fake-head', [], ['checkpoint-skipped.trigger']);
   } finally {
     await teardown(scope);
   }
   assert.equal(r.exit.kind, 'complete', JSON.stringify(r.exit));
+  assert.equal([...hostLogs(p).matchAll(/roadmap: upgrade default \(checkpoint-skipped\.trigger\)/g)].length, 1, 'the older audit-only skip warns once, and reads as its audit trigger');
   assert.equal(r.view.unit(unitId(REENTRY)).status, 'retired', 'HEAD merged the re-entry');
   assert.deepEqual(factsOf(r.after, 'plan-applied'), [], 'HEAD\'s start found the previous release\'s revision in force');
   assert.ok(factsOf(r.after, 'witnessed').some((w) => w.for.type === 'candidate' && w.for.unit === REENTRY), 'the brake ran on the re-entry\'s candidate');
