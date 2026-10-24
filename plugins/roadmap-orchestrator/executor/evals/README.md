@@ -39,7 +39,7 @@ prompt modules over tiny fixtures on their own seats (the lens seat is the effic
 build launched with `--advisor claude-opus-5-5`, told to consult it once: the advisor call is in the stream and its Opus
 spend is metered as delegated frontier; (M4a) the forge functions read-only against the real repository
 (identity, policy and trust, issues and comments shapes), a real pack-review call (frontier Opus medium) and checkpoint
-call (summit Opus xhigh), and an effort-changed resume on both CLIs (OI-2); (M4a rev 3) a checkpoint admit
+call (summit Opus high), and an effort-changed resume on both CLIs (OI-2); (M4a rev 3) a checkpoint admit
 carrying `targets`, `roadmap witness-check` over a real `node --test` run (exit 0, and 78 naming the missing id), and a Sonnet 5.5
 medium build under the per-call build schema (`experiments`); (M4b) a real flow call on the flow seat (efficient, Sonnet 5.5 high, the m4b role
 set) over a small synthetic `FlowInputs`, validated by the flow role's reader, and a real suite-lane proof (`runProof`) on a tiny

@@ -1,6 +1,6 @@
 // checkpoint × claude-opus-5-5 (M3, §2.8, OR-V). Guides: Anthropic "Prompting best practices" and "Prompting Claude Opus
 // 5.5" (platform.claude.com). Only the 5.5-generation guides bind (owner ruling 2026-10-17): "Prompting Claude Opus 5.5", "Prompting Claude Sonnet 5.5",
-// "Prompting Claude Haiku 5.5" and "Prompting best practices" as it applies to current models; earlier-generation guides do not. The checkpoint sits on summit, which Opus 5.5 holds at xhigh
+// "Prompting Claude Haiku 5.5" and "Prompting best practices" as it applies to current models; earlier-generation guides do not. The checkpoint sits on summit, which Opus 5.5 holds at high
 // (OR-Q17); Fable reads this module unchanged (src/prompts/index.ts). First written for Fable 5.1 (reviewed 2026-09-30,
 // when Fable held summit) and served to Opus since M4a; W3 (2026-10-16) made it the Opus module by name. Kept from the Fable
 // writing, and what the Opus 5.5 guide also asks of an unattended run: the autonomous-operation opening, adapted to a

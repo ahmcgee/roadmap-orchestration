@@ -109,7 +109,7 @@ candidate merge.
   fast-forwards the arc branch.
 
 A red lane, a gate revise or a red candidate sends the unit back to its build for a charged fix round. A gate
-revises at most twice before the unit goes to the escalation seat, the summit class (Opus at xhigh effort). A red candidate
+revises at most twice before the unit goes to the escalation seat, the summit class (Opus at high effort). A red candidate
 retries once, and the third charged failure parks the unit. A lane that goes red then green on a rerun of the same
 tree is a flake: it is forgiven, recorded in the flaky ledger, and code mints a deflake unit to fix the test. Its
 scope is the systems the lane declares, else the systems holding the flaky test's file, with what they depend on.

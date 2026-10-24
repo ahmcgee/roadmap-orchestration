@@ -23,9 +23,9 @@ const EXECUTOR = new URL('..', import.meta.url).pathname;
 const fixture = (name: string): unknown => JSON.parse(readFileSync(new URL(`fixtures/routing/${name}`, import.meta.url), 'utf8'));
 const layer = (v: unknown): RoutingLayer => routingLayer(v, 'layer');
 
-/** The frontier and summit bindings (OR-Q17): Opus 5.5 at medium and at xhigh. */
+/** The frontier and summit bindings (OR-Q17): Opus 5.5 at medium and at high. */
 const OPUS: Triple = { backend: 'claude', model: 'claude-opus-5-5', effort: 'medium' };
-const OPUS_XHIGH: Triple = { backend: 'claude', model: 'claude-opus-5-5', effort: 'xhigh' };
+const OPUS_HIGH: Triple = { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' };
 const FABLE: Triple = { backend: 'claude', model: 'claude-fable-5-1', effort: 'high' };
 const SONNET: Triple = { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'medium' };
 /** The efficient class's judgment binding in both profiles (owner ruling 2026-10-15): Sonnet 5.5 at high. */
@@ -51,8 +51,8 @@ describe('routing', () => {
   it('routing.classes: the class catalogue is the one binding, per profile; seats name classes, never models', () => {
     const both = (t: Triple) => ({ build: t, judgment: t });
     assert.deepEqual(CLASS_CATALOGUE, {
-      default: { efficient: { build: LUNA, judgment: SONNET_HIGH }, frontier: both(OPUS), summit: both(OPUS_XHIGH), economy: { judgment: HAIKU_HIGH } },
-      'claude-only': { efficient: { build: SONNET, judgment: SONNET_HIGH }, frontier: both(OPUS), summit: both(OPUS_XHIGH), economy: { judgment: HAIKU_HIGH } },
+      default: { efficient: { build: LUNA, judgment: SONNET_HIGH }, frontier: both(OPUS), summit: both(OPUS_HIGH), economy: { judgment: HAIKU_HIGH } },
+      'claude-only': { efficient: { build: SONNET, judgment: SONNET_HIGH }, frontier: both(OPUS), summit: both(OPUS_HIGH), economy: { judgment: HAIKU_HIGH } },
     });
     for (const m of MODEL_IDS) assert.doesNotMatch(JSON.stringify(BUILTIN_SEATS), new RegExp(m.replace('.', '\\.')));
     assert.deepEqual(BUILTIN_SEATS, {
@@ -70,15 +70,15 @@ describe('routing', () => {
     });
   });
 
-  it('built-in profiles resolve (dev.17): efficient builds every tier (Luna; Sonnet medium under claude-only) and runs the lenses and flow on Sonnet high; Opus medium plan-checks and gates every tier; Opus xhigh holds escalation', () => {
+  it('built-in profiles resolve (dev.17): efficient builds every tier (Luna; Sonnet medium under claude-only) and runs the lenses and flow on Sonnet high; Opus medium plan-checks and gates every tier; Opus high holds escalation', () => {
     const d = resolveRouting(base).table;
     assert.deepEqual(d.build, { low: LUNA, med: LUNA, high: LUNA });
     const c = resolveRouting(arcStack('claude-only', null, null)).table;
     assert.deepEqual(c.build, { low: SONNET, med: SONNET, high: SONNET });
     for (const t of [d, c]) {
-      assert.deepEqual(t.planCheck, { low: OPUS, med: OPUS, high: OPUS, escalation: OPUS_XHIGH });
-      assert.deepEqual(t.gate, { low: OPUS, med: OPUS, high: OPUS, escalation: OPUS_XHIGH });
-      assert.deepEqual([t.lens.arc, t.checkpoint.arc, t.packReview.arc, t.flow.arc], [SONNET_HIGH, OPUS_XHIGH, OPUS, SONNET_HIGH]);
+      assert.deepEqual(t.planCheck, { low: OPUS, med: OPUS, high: OPUS, escalation: OPUS_HIGH });
+      assert.deepEqual(t.gate, { low: OPUS, med: OPUS, high: OPUS, escalation: OPUS_HIGH });
+      assert.deepEqual([t.lens.arc, t.checkpoint.arc, t.packReview.arc, t.flow.arc], [SONNET_HIGH, OPUS_HIGH, OPUS, SONNET_HIGH]);
     }
     for (const p of PROFILES) {
       assert.deepEqual(unsupportedSeats(resolveRouting({ ...arcStack(p, null, null), arcScope: 'corpus', arcRoles: 'm4b' }), null), [], p);
@@ -189,7 +189,7 @@ describe('routing', () => {
     assert.equal(r.sources.planCheck.escalation, 'plan');
     assert.deepEqual(r.table.planCheck.escalation, OPUS);
     assert.equal(r.sources.gate.med, 'repo-config');
-    assert.deepEqual(r.table.gate.med, OPUS_XHIGH);
+    assert.deepEqual(r.table.gate.med, OPUS_HIGH);
     assert.equal(r.sources.build.high, 'builtin');
     assert.deepEqual(r.bindings, { efficient: 'builtin', frontier: 'builtin', summit: 'builtin', economy: 'builtin' });
     // Without the unit layer, the plan's build.low shows; without the plan too, the repo config's.
@@ -325,10 +325,10 @@ describe('routing: the arc seats (M3)', () => {
       // An arc seat rebound in a plan layer changes nothing while the arc is not holistic.
       assert.equal(resolveRouting(arcStack(p, null, layer({ lens: { arc: 'summit' } }))).rev, r.rev);
     }
-    // The built-in arc seats: the lenses on efficient (Sonnet high), the checkpoint on summit (Opus xhigh).
+    // The built-in arc seats: the lenses on efficient (Sonnet high), the checkpoint on summit (Opus high).
     const base = resolveRouting(arcStack('default', null, null));
     assert.deepEqual([base.classes.lens.arc, base.classes.checkpoint.arc], ['efficient', 'summit']);
-    assert.deepEqual([base.table.lens.arc, base.table.checkpoint.arc], [SONNET_HIGH, OPUS_XHIGH]);
+    assert.deepEqual([base.table.lens.arc, base.table.checkpoint.arc], [SONNET_HIGH, OPUS_HIGH]);
     // A plan naming a vision puts the M3 arc seats in force: every seat but the pack review's (LR-0a-1), in the dev.7
     // role set the flow seat's, and without milestones the two walk seats' (dev.13) is checked (the built-in arc seats have
     // prompt modules since B4), and the rev hashes them too.
@@ -356,9 +356,9 @@ describe('routing: the arc seats (M3)', () => {
 describe('routing: M4a (OR-Q17, OR-L3, LR-0a-1)', () => {
   const hashOf = (table: object): string => createHash('sha256').update(canonicalJson(table)).digest('hex').slice(0, 16);
 
-  it('routing.catalogue-m4a: frontier is Opus 5.5 medium and summit Opus 5.5 xhigh in both profiles; Fable is reachable only by a repo rebind', () => {
+  it('routing.catalogue-m4a: frontier is Opus 5.5 medium and summit Opus 5.5 high in both profiles; Fable is reachable only by a repo rebind', () => {
     for (const p of PROFILES) {
-      assert.deepEqual([CLASS_CATALOGUE[p].frontier, CLASS_CATALOGUE[p].summit], [{ build: OPUS, judgment: OPUS }, { build: OPUS_XHIGH, judgment: OPUS_XHIGH }], p);
+      assert.deepEqual([CLASS_CATALOGUE[p].frontier, CLASS_CATALOGUE[p].summit], [{ build: OPUS, judgment: OPUS }, { build: OPUS_HIGH, judgment: OPUS_HIGH }], p);
       const r = resolveRouting({ ...arcStack(p, null, null), arcScope: 'corpus', arcRoles: 'm4b' });
       for (const s of SEAT_REFS) assert.notEqual(atSeat(r.table, s).model, 'claude-fable-5-1', `${p} ${s.role}.${s.tier}`);
       assert.deepEqual(unsupportedSeats(r, null), [], `${p}: every seat of a corpus arc has a prompt`);

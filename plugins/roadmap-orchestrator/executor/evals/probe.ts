@@ -48,7 +48,7 @@
 //   forge.*             (M4a) the executor's own src/forge functions against the real ahmcgee/roadmap-orchestration, read-only:
 //                       resolveRepo, queryPolicy + trusted, the REST issues and comments shapes (pull_request entries,
 //                       author_association), fetchIssueCapture
-//   routing.m4a         the default table's packReview.arc is claude-opus-5-5 medium, checkpoint.arc claude-opus-5-5 xhigh
+//   routing.m4a         the default table's packReview.arc is claude-opus-5-5 medium, checkpoint.arc claude-opus-5-5 high
 //   m4a.pack-review     packReview.arc (frontier, corpus arc scope): the real prompt module over a tiny corpus pack; the
 //                       answer must validate against PackReviewOutput
 //   m4a.checkpoint-summit  checkpoint.arc (summit): the real checkpoint module; the output must validate
@@ -622,7 +622,7 @@ async function main(): Promise<void> {
   const frontierT = atSeat(corpusArc.table, { role: 'packReview', tier: 'arc' });
   const summitT = atSeat(corpusArc.table, { role: 'checkpoint', tier: 'arc' });
   report(frontierT.backend === 'claude' && frontierT.model === 'claude-opus-5-5' && frontierT.effort === 'medium'
-    && summitT.backend === 'claude' && summitT.model === 'claude-opus-5-5' && summitT.effort === 'xhigh', 'routing.m4a', `packReview.arc=${JSON.stringify(frontierT)} checkpoint.arc=${JSON.stringify(summitT)}`);
+    && summitT.backend === 'claude' && summitT.model === 'claude-opus-5-5' && summitT.effort === 'high', 'routing.m4a', `packReview.arc=${JSON.stringify(frontierT)} checkpoint.arc=${JSON.stringify(summitT)}`);
 
   // packReview on a tiny corpus pack, frontier seat, corpus arc scope.
   const m4Dir = dir(join(root, 'm4a'));

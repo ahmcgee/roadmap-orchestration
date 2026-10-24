@@ -26,7 +26,7 @@ const T = { timeout: SCENARIO_TIMEOUT_MS };
 const U2 = unitId('u2');
 /** A Claude call's seat binding, model and effort: frontier and summit are both Opus 5.5 (OR-Q17), told by effort. */
 const seatOf = (argv: readonly string[]): string => `${modelOf(argv)}/${argv[argv.indexOf('--effort') + 1]}`;
-const SUMMIT = 'claude-opus-5-5/xhigh';
+const SUMMIT = 'claude-opus-5-5/high';
 const FRONTIER = 'claude-opus-5-5/medium';
 
 /** A fresh Claude implementer session (the frontier build seat) that commits mul. */

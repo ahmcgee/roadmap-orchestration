@@ -108,7 +108,7 @@ test('dispatch.repin-judgment-only: after a build, a change that leaves the impl
   const [first, repinned] = dispatches(run);
   assert.equal(repinned?.routingRev, changed.routing(null).rev);
   assert.equal(repinned?.implementerSeatRev, first?.implementerSeatRev);
-  assert.deepEqual(seated(judgmentDispatch(changed, U1, 'gate')).triple, { backend: 'claude', model: 'claude-opus-5-5', effort: 'xhigh' }, 'the gate follows the new binding');
+  assert.deepEqual(seated(judgmentDispatch(changed, U1, 'gate')).triple, { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' }, 'the gate follows the new binding');
 });
 
 test('dispatch.routing-changed-parks: after a build, a change that moves the implementer seat parks the unit with a needs-user, never a crash', T, async () => {

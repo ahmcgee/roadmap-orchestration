@@ -67,7 +67,7 @@ at triage stay in git history.
 
 - Scope (LR-a): the pinned corpus as the target (guide, sources, `T-n` rules, pin, census), the vision's in-tree home
   and playback verification, `roadmap phase0 check`, the debt lifecycle, the forge (issue policy, intake, push, stacked
-  PRs), `roadmap brief`, chaining with K, the routing rebinding (frontier Opus medium, summit Opus xhigh), the pack
+  PRs), `roadmap brief`, chaining with K, the routing rebinding (frontier Opus medium, summit Opus high), the pack
   review, prompt notes, the full skill, and the deletion of every pre-dev.6 scaffolding layer (OR-L4, step X0).
 - Records frozen in step 0a (SCHEMAS.md "M4a"); step 0a placed placeholder modules at every final command path, each
   replaced by its landing step (C4 the last, deleting `src/core/notyet.ts`).
@@ -622,9 +622,8 @@ at triage stay in git history.
 - **Time signals for judges and multi-agent work** (Opus 5.5 guide, 2026-10-17): give a judgment session elapsed time
   against its deadline, and the skill's fan-out elapsed time against a budget. Trigger: a judgment killed at its deadline
   with no answer, or a role eval showing a judge spending past its budget on reading it never cites.
-- **Effort xhigh only where measured** (Opus 5.5 guide, 2026-10-17: xhigh where it shows a measured gain). The escalation
-  seats and the checkpoint run summit (xhigh) unmeasured. Trigger: a role eval for the escalation gate or the checkpoint;
-  then compare `--rebind summit=claude-opus-5-5:high` with xhigh and keep xhigh only where it catches more.
+- **Summit effort high vs xhigh** (owner ruling 2026-10-24: summit binds `high`). Trigger: a role eval for the escalation gate or
+  the checkpoint; then compare `--rebind summit=claude-opus-5-5:xhigh` with `high` and move to xhigh only where it catches more.
 - **Three-state verifier** (CONFIRMED / PLAUSIBLE / REFUTED): a separate, evaluated pass over a judge's findings that
   tries to refute each. Only if a false-alarm problem is measured: a role eval or arc where blocking findings that are not
   real cost fix rounds (the 2026-10-17 gate eval saw 0 false alarms in 12 clean trials).

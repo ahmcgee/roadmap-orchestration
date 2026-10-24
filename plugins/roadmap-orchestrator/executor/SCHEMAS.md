@@ -1059,7 +1059,7 @@ holistic, else the unit roles' seats), which `unsupportedSeats` and the smoke's 
 summit`; the class catalogue (`CLASS_CATALOGUE: {[P]: {[C]: ClassBinding}}`) binds per profile, twice per class:
 `ClassBinding = {build: Triple, judgment: ClaudeTriple}`, the build triple at a build seat and the judgment triple at every
 other (`boundAt`). `efficient` → build codex gpt-5.6-luna medium (`default`) or claude-sonnet-5-5 medium (`claude-only`),
-judgment claude-sonnet-5-5 high (both); `frontier` → claude-opus-5-5 medium, `summit` → claude-opus-5-5 xhigh (both kinds,
+judgment claude-sonnet-5-5 high (both); `frontier` → claude-opus-5-5 medium, `summit` → claude-opus-5-5 high (owner ruling 2026-10-24, was xhigh) (both kinds,
 both profiles). Built-in seats (1.0.0-dev.10): planCheck `{low: efficient, med: efficient, high: frontier, escalation:
 summit}`, build `{low: efficient, med: efficient, high: frontier}`, gate `{low: efficient, med: frontier, high: frontier,
 escalation: summit}`, lens and flow efficient, packReview frontier, checkpoint summit. A repo rebind (`ClassBindings`) binds

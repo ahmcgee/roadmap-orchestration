@@ -12,9 +12,9 @@
 // and Sonnet 5.5 `medium` under `claude-only`, Anthropic's starting point for agentic coding on Sonnet's recalibrated
 // levels (at `low` it may report a change done without running a check). frontier and summit bind one triple for both.
 //
-// Owner ruling OR-Q17 (M4a): frontier = Opus 5.5 at `medium`, summit = Opus 5.5 at `xhigh`, in both profiles.
-// Anthropic's Opus 5.5 effort guidance: `medium` is the model's own default, and
-// `xhigh` is the level for the hardest coding and agentic work, which is where a judgment escalates to summit.
+// Owner ruling OR-Q17 (M4a): frontier = Opus 5.5 at `medium`, in both profiles. Summit = Opus 5.5 at `high` (owner ruling
+// 2026-10-24, was `xhigh`), in both profiles and both kinds; it holds the checkpoint seat and the escalation seats.
+// Anthropic's Opus 5.5 effort guidance: `medium` is the model's own default.
 //
 // economy (owner direction 2026-10-17, 1.0.0-dev.12): a judgment-only class, Haiku 5.5. It held the low-risk gate until the
 // paid gate role eval (2026-10-17) failed it there (clean-cell false alarms); no built-in seat names it now, and it is kept,
@@ -44,7 +44,7 @@ export type ClassBinding<C extends ModelClass> = C extends BuildClass ? BuildCla
 export type ClassCatalogue = { readonly [P in ProfileName]: { readonly [C in ModelClass]: ClassBinding<C> } };
 
 const FRONTIER: ClaudeTriple = { backend: 'claude', model: 'claude-opus-5-5', effort: 'medium' };
-const SUMMIT: ClaudeTriple = { backend: 'claude', model: 'claude-opus-5-5', effort: 'xhigh' };
+const SUMMIT: ClaudeTriple = { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' };
 const EFFICIENT_JUDGMENT: ClaudeTriple = { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'high' };
 const ECONOMY: JudgmentClassBinding = { judgment: { backend: 'claude', model: 'claude-haiku-5-5', effort: 'high' } };
 const both = (t: ClaudeTriple): BuildClassBinding => ({ build: t, judgment: t });
