@@ -477,11 +477,17 @@ does not anticipate what happened; it opens P2 or P3 findings citing `V-n`. `hol
 them acts (§2.8).
 
 - **Triggers**: every N publications (D3; unit, batch, and rule-with-contract-ops publications); a publication
-  leaving a selected future or exempt obligation unwitnessed (R8); drift-only on a revision from a rule, a
+  leaving a selected active future obligation unwitnessed (R8; an exempt one, waived, deferred or retired, is owed no
+  witness and triggers nothing: field fix 2026-10-24); drift-only on a revision from a rule, a
   bundle, `reverse`, or an architect spec, obligation, vision or corpus edit (w37 found drift with zero merges), running
   `L ∩ {drift, vision}`, or all of L when that is empty (R15); wall-clock (`wallClockMin`, default 360);
   `audit [--lens]`; **final**: at the final head, every lens in L with an outstanding range (H9). Triggers
-  coalesce, one audit runs at a time, and each records its causal generation (§2.8).
+  coalesce, one audit runs at a time, and each records its causal generation (§2.8). **Drift is throttled** (field fix
+  2026-10-24: seven revisions in a stretch ran seven drift audits, five finding nothing): while work remains, a
+  non-bundle revision's drift within 60 minutes (`DRIFT_THROTTLE_MIN`) of the latest audit's start makes no audit due;
+  once the period passes, or with any other fresh trigger, one audit runs. The drift is owed throughout, so that audit
+  records every drift since the last completed audit and no revision goes unaudited. A bundle's drift is never held (it
+  opens the checkpoint's next generation, one per checkpoint), nor is any once no work remains.
 - **Immutable inputs**: `audit-started{job, triggers, generation, lenses, integrationSha, planRev,
   ledgerSha256, obligationsSha256, visionSha256, owners, priorFindings, highWater, diffBudget}`, captured under the revision
   fence (§2.6, A19): owners are the branch SHAs of parked or in-flight owners (the w33 P1s were already fixed on

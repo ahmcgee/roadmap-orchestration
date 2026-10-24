@@ -4,7 +4,8 @@
 // audit.immutable-inputs, audit.coverage, audit.one-call-per-lens (R-16), audit.race-ends-before-merge and audit.race-merge-during-audit (both race
 // orders), audit.owed, audit.skipped-on-park, audit.starts-in-ff-window (H2), coverage.docs-edge-contiguous (H8), coverage.docs-edge-subsumed,
 // coverage.vision-reset (H3), the crash cells of the matrix row AUDIT_JOB (test/matrix.ts), and M4a rev 3 (N5):
-// cadence.spec-only-bundle-vision-lens-only, cadence.obligation-bundle-full-drift, audit.cross-lens-merge-corroborated,
+// cadence.spec-only-bundle-vision-lens-only, cadence.obligation-bundle-full-drift, the 2026-10-24 field fixes
+// cadence.exempt-not-unwitnessed and cadence.drift-throttled, audit.cross-lens-merge-corroborated,
 // audit.cross-lens-different-cause-separate (with a refused mutant refused again); M4b: audit.refused-mutant-retried; the
 // lens-range fix (2026-10-16): audit.range-chunked, audit.oversized-publication-bounded, audit.upgrade-dev10-oversized-range,
 // audit.chunk-crash-resume.
@@ -24,7 +25,7 @@ import { commitRevision } from '../src/recover/revision.ts';
 import { fakeDocs } from './fixtures/docs-fake.ts';
 import { readJournal } from '../src/core/log.ts';
 import { type AuditContext, runAudit } from '../src/holistic/audit.ts';
-import { type Cadence, cadence } from '../src/holistic/cadence.ts';
+import { type Cadence, DRIFT_THROTTLE_MIN, cadence } from '../src/holistic/cadence.ts';
 import { coverageBase, coverageOf, lensCoverage } from '../src/holistic/coverage.ts';
 import { findingKey } from '../src/holistic/types.ts';
 import { openBlocking, readNeedsUser } from '../src/needsuser.ts';
@@ -120,6 +121,56 @@ describe('cadence', () => {
         contractOps: [{ path: 'contracts/api.md', anchor: '#api-contract', oldText: 'the sum of two finite numbers', newText: 'the exact sum of two finite numbers' }],
       });
       assert.deepEqual(owed(cadence(ctx, ctx.clock)), ['cadence', 'drift:3', 'drift:4']);
+    } finally {
+      stop();
+      r.journal.close();
+    }
+  });
+
+  test('cadence.exempt-not-unwitnessed (R8, field fix 2026-10-24): a publication selecting deferred, waived or retired obligations left unwitnessed owes no trigger for them; an active future one still does', T, async () => {
+    const ids = ['I-1', 'I-2', 'I-3', 'I-4', 'I-5'];
+    const { d } = auditArc({
+      steps: unitSteps('u1', moduleFiles('mul', '*')),
+      units: [{ id: 'u1', obligations: ids }, { id: 'u2', obligations: ['I-1'] }],
+      obligations: [
+        { id: 'I-1', testIds: ['t1'] },
+        { id: 'I-2', activation: 'future', deliveredBy: ['u1', 'u2'], testIds: ['t2'] },
+        { id: 'I-3', activation: 'future', deliveredBy: ['u1', 'u2'], testIds: ['t3'], state: { type: 'deferred', ruling: 'C-1' } },
+        { id: 'I-4', testIds: ['t4'], state: { type: 'waived', ruling: 'C-1' } },
+        { id: 'I-5', testIds: ['t5'], state: { type: 'retired', ruling: 'C-1' } },
+      ],
+      mapping: mapped(ids), trees: { '*': { outcomes: { t1: 'pass' } } }, audit: { every: 5, lenses: [...L2] },
+    });
+    const r = contextFor(d);
+    const { ctx } = auditContext(r);
+    try {
+      assert.deepEqual(await runUnit(ctx, r.unit('u1'), admitAll), { kind: 'merged' });
+      assert.deepEqual(owed(cadence(ctx, ctx.clock)), ['unwitnessed:I-2']);
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('cadence.drift-throttled (field fix 2026-10-24): while work remains, drift within DRIFT_THROTTLE_MIN of the latest audit start is owed but runs no audit; once the period passes, or with another fresh trigger, one audit records every drift', T, async () => {
+    const { d } = auditArc({
+      steps: [lensStep('audit-1', 'vision')], units: [{ id: 'u1', obligations: ['I-1'] }], ...I1, mapping: mapped(['I-1']), audit: { every: 5, lenses: [...L2] },
+    });
+    const r = contextFor(d);
+    const { ctx, w } = auditContext(r);
+    const stop = ticking(w);
+    try {
+      await rule(w, r, 'C-2');
+      assert.deepEqual(cadence(ctx, ctx.clock)!.plan?.triggers, [{ type: 'drift', planRev: 2 }], 'no audit yet: the first drift runs one at once');
+      const out = await runAudit(ctx);
+      assert.ok(out.kind === 'ended' && out.outcome === 'completed', JSON.stringify(out));
+      await rule(w, r, 'C-3', { statement: 'Helpers never round.' });
+      await rule(w, r, 'C-4', { statement: 'Helpers never truncate.' });
+      const drifts = [{ type: 'drift', planRev: 3 }, { type: 'drift', planRev: 4 }];
+      assert.deepEqual([owed(cadence(ctx, ctx.clock)), cadence(ctx, ctx.clock)!.plan], [['drift:3', 'drift:4'], null], 'owed, inside the period');
+      assert.equal(cadence(ctx, () => DRIFT_THROTTLE_MIN - 1)!.plan, null);
+      assert.deepEqual(cadence(ctx, () => DRIFT_THROTTLE_MIN)!.plan, { triggers: drifts, lenses: ['vision'], generation: 2 }, 'the period passed: one audit records both');
+      const asked = requestAudit(r, ['invariants']);
+      assert.deepEqual(cadence(ctx, ctx.clock)!.plan?.triggers, [...drifts, { type: 'requested', command: asked }], 'another fresh trigger runs it at once, the held drifts with it');
     } finally {
       stop();
       r.journal.close();
@@ -530,8 +581,10 @@ describe('coverage', () => {
       assert.deepEqual(lensCoverage(r.journal.view.holistic(), base, 'invariants').followed, [], 'audit-1\'s range was recorded under the old vision');
       assert.deepEqual(watermarks(ctx, L2), [['invariants', S, true], ['vision', S, true]], 'every lens\'s coverage is cleared back to the arc\'s base');
       const rev = r.journal.view.planApplied()!.rev;
-      assert.deepEqual(cadence(ctx, ctx.clock)!.plan, { triggers: [{ type: 'drift', planRev: rev }], lenses: ['vision'], generation: 2 });
-      const out = await runAudit(ctx);
+      assert.equal(cadence(ctx, ctx.clock)!.plan, null, 'u3 remains and audit-1 just started: the drift is throttled');
+      const settled = { ...ctx, clock: () => DRIFT_THROTTLE_MIN };
+      assert.deepEqual(cadence(settled, settled.clock)!.plan, { triggers: [{ type: 'drift', planRev: rev }], lenses: ['vision'], generation: 2 });
+      const out = await runAudit(settled);
       assert.ok(out.kind === 'ended' && out.outcome === 'completed', JSON.stringify(out));
       assert.equal(started(r)[1]!.visionSha256, base.visionSha256);
       assert.deepEqual(ended(r)[1]!.covered, [{ lens: 'vision', from: S, to: S2 }], 'the vision lens covers everything up to S2, S1→S2 included');
