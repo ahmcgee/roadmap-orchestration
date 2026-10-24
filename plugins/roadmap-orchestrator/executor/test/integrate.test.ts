@@ -81,13 +81,14 @@ test('merge.stale-tip-fresh-candidate: T advances between the green candidate an
   }
 });
 
-test('merge.transient-refusal: a path the transient check refuses sends the unit to a scope-growth fix round, and the next gate sits on the escalation seat', T, async () => {
+test('merge.transient-refusal: salvage refuses a transient path and sends the unit to a scope-growth fix round, and the next gate sits on the escalation seat', T, async () => {
   const d = setupArc({
     steps: [
       planCheckStep({ decision: 'approve' }),
       mulBuild({ 'evidence/notes.txt': 'scratch\n' }),
-      gateStep({ decision: 'approve' }),
-      codexStep([{ type: 'commit', message: 'drop the scratch file', files: { 'evidence/notes.txt': null } }], { argv: ['exec', 'resume'], stdinContains: ['evidence/notes.txt (evidence)'] }),
+      codexStep([{ type: 'commit', message: 'drop the scratch file', files: { 'evidence/notes.txt': null } }], {
+        argv: ['exec', 'resume'], stdinContains: ["The executor refused your last round's commit:", 'evidence/notes.txt (evidence)', 'Remove them from the branch;'],
+      }),
       gateStep({ decision: 'approve' }),
     ],
   });
@@ -95,11 +96,15 @@ test('merge.transient-refusal: a path the transient check refuses sends the unit
   try {
     const result = await runUnit(r.ctx, r.unit('u1'), live());
     assert.deepEqual(result, { kind: 'merged' });
-    assert.ok(outcomes(d).includes('candidate:transient-violation'));
+    assert.deepEqual(outcomes(d), [
+      'plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:transient-violation',
+      'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve',
+      'candidate:green', 'ff:published', 'snapshot:published',
+    ]);
     assert.equal(r.journal.view.unit(U1).counters.chargeableFailures, 1, `a transient violation charges: ${outcomes(d).join(' ')}`);
     const gates = readCalls(d.scenarioPath).filter(isGate);
-    assert.equal(gates.length, 2);
-    assert.ok(gates[1]!.argv.includes('claude-opus-5-5') && gates[1]!.argv.includes('high'), 'scope growth promoted the next judgment');
+    assert.equal(gates.length, 1, 'the refused salvage never reached a gate');
+    assert.ok(gates[0]!.argv.includes('claude-opus-5-5') && gates[0]!.argv.includes('high'), 'scope growth promoted the next judgment');
     assert.ok(!git(d.repo, 'ls-tree', '-r', '--name-only', 'main').includes('evidence/'), 'nothing transient reached integration');
     assert.ok(readCalls(d.scenarioPath).every((c) => c.step !== null));
   } finally {
