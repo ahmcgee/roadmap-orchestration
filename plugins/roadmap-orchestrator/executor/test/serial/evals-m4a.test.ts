@@ -4,16 +4,16 @@
 // CLI, against the fake backends (evals/m4a/scenario.ts) and the fake gh over a local bare origin; real processes,
 // real git, the real supervisor, real node-test witness lanes over the product's journeys. Two scripts run side by
 // side: `story` (bootstrap, arc 1 with the pack-review hold, a witness fix round, a smoke
-// survivor, the cutoff question, arc 2 with the mid-arc policy flip, an opportunity admit and a converted one, a pause in
+// survivor, the cutoff question, arc 2 with an opportunity admit and a converted one, a pause in
 // a hung lane and the lane reuse after it, arc 3 refused at K, stop k-limit) and `vision-silent` (arc 1, then no slice
 // candidate, stop vision-silent). The story synchronises on events, never on time, so its turns are the same every run.
-// M4b's plants (S: the stale serial run of the suite gate; G: the soak run and the issue to drop it) are in the product
+// M4b's plants (S: the stale serial run of the suite gate; G: the soak run that stays in it) are in the product
 // and the golden outputs; the story works the flow loop (arc 1: a `changed` bait proof, a `preserved` shard and its
 // verdict; arc 2: a reject).
-// Named tests: evals-m4a.setup-valid, evals-m4a.fake, evals-m4a.intake-filtering, evals-m4a.pack-review-hold,
-// evals-m4a.amendments-debt, evals-m4a.policy-flip, evals-m4a.k-limit, evals-m4a.brief, evals-m4a.check-oracle,
+// Named tests: evals-m4a.setup-valid, evals-m4a.fake, evals-m4a.pack-review-hold,
+// evals-m4a.amendments-debt, evals-m4a.k-limit, evals-m4a.brief, evals-m4a.check-oracle,
 // evals-m4a.adjudication-tree, evals-m4a.rerun-refused, evals-m4a.vision-silent, evals-m4a.witness-missing,
-// evals-m4a.smoke-survivor, evals-m4a.opportunity, evals-m4a.lane-reuse-after-pause, evals-m4a.untrusted-start,
+// evals-m4a.smoke-survivor, evals-m4a.opportunity, evals-m4a.lane-reuse-after-pause,
 // evals-m4a.owner-questions, evals-m4a.owner-code-answers, evals-m4a.owner-reads-brief, evals-m4a.wake-key, skill.operator-log-format,
 // evals-m4a.flow-loop, evals-m4a.flow-criteria, evals-m4a.plant-lane.
 import assert from 'node:assert/strict';
@@ -23,25 +23,23 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, before, describe, test } from 'node:test';
 import { type ArcRef, amendmentsOf } from '../../src/chain.ts';
-import { captureIssues } from '../../src/commands/issues.ts';
 import type { Event, Fact, Parent } from '../../src/core/events.ts';
 import { arcId } from '../../src/core/ids.ts';
 import { readJournal } from '../../src/core/log.ts';
 import { absPath } from '../../src/core/values.ts';
 import { parseDebtBlock } from '../../src/docs/debt.ts';
-import { readStore, writeStore } from '../fakes/gh-store.ts';
 import { verdictProblems, stageTree } from '../../evals/m4a/adjudicate.ts';
 import {
   type CheckResult, CRITERIA, type FlowArc, LEVERS, arcView, chainOf, flowArcOf, flowConstraintVerdict, flowLoopVerdict, flowShardVerdict, parseOperatorLog,
   rulerArgvs, rulerRecordProblems, triplesProblems,
 } from '../../evals/m4a/check.ts';
 import {
-  MIN_ARC1_UNITS, type OwnerCtx, type Report, SPEND_APPROVED, type Turn, codeAnswer, failFastText, firstPlanCheck, ghOnPath, launchEnv, numberedQuestions, openBriefQuestions,
-  plantCheck, plantLaneOf, prepareFake, spendHold, stagePlugin,
+  MIN_ARC1_UNITS, type Report, SPEND_APPROVED, type Turn, codeAnswer, failFastText, firstPlanCheck, ghOnPath, launchEnv, numberedQuestions, openBriefQuestions,
+  plantCheck, plantLaneOf, spendHold, stagePlugin,
 } from '../../evals/m4a/driver.ts';
 import type { BriefPayload } from '../../src/phase0/types.ts';
 import { itemKey } from '../../src/watch.ts';
-import { fakeArc, fakeHostDir, prepareArc1 } from '../../evals/m4a/fake-root.ts';
+import { fakeArc, fakeHostDir } from '../../evals/m4a/fake-root.ts';
 import { FILES, FITS_WITNESS, LANES, READOUTS, REPLAY_LANE, SHARD, SLOW_LANE, SUITE_LANE, corpusFor, rawCorpus, unitsOf } from '../../evals/m4a/golden.ts';
 import { DRIFT_CHECKPOINT, FLOW_1, FLOW_2 } from '../../evals/m4a/scenario.ts';
 import { CLOCK_FILE, FAKE_TICK_MS, PAID_TICK } from '../../evals/m4a/setup.ts';
@@ -49,7 +47,7 @@ import { collectWitness, witnessEnv } from '../../src/holistic/witness.ts';
 import { parseObligations } from '../../src/holistic/types.ts';
 import type { PlanM1 } from '../../src/input/plan.ts';
 import { type ArcView, defectVerdicts, matches, readKey, spanPresent } from '../../evals/m4a/key.ts';
-import { INJECTION_MARKER, PLANT, SEED_SUITE_ARGV, layout } from '../../evals/m4a/layout.ts';
+import { PLANT, SEED_SUITE_ARGV, layout } from '../../evals/m4a/layout.ts';
 import { ANSWER_KEY, needles, toolTraffic } from '../../evals/m4a/transcript.ts';
 import { type Exit, runUntilExit } from '../helpers/proc.ts';
 import { type RunScope, assertNoSurvivors, teardown, track } from '../helpers/reap.ts';
@@ -146,7 +144,7 @@ function journeys(cwd: string): Readonly<Record<string, number | null>> {
   return Object.fromEntries(LANES.map((x) => [x.id, spawnSync('node', ['--test', x.journey], { cwd, env: ENV, encoding: 'utf8', timeout: 60_000 }).status]));
 }
 
-test('evals-m4a.setup-valid: the messy corpus hides its defects, the key\'s spans are planted, the product and its golden builds behave, the forge filters, and the stage carries no key and no fixture source', T, async () => {
+test('evals-m4a.setup-valid: the messy corpus hides its defects, the key\'s spans are planted, the product and its golden builds behave, and the stage carries no key and no fixture source', T, async () => {
   const dir = join(tmpDir('m4a-setup'), 'fx');
   const out = await script('setup.ts', [dir, '--fake-pace']);
   assert.equal(out.code, 0, out.stderr);
@@ -219,21 +217,6 @@ test('evals-m4a.setup-valid: the messy corpus hides its defects, the key\'s span
   const bait = triplesProblems(witnessed(replayAt(1)), [witnessed(replayAt(6))]);
   assert.equal(bait.filter((p) => /triples differ/.test(p)).length, 1, 'the replay fake changes its triples under another concurrency');
 
-  // The forge: trusted; the capture keeps issues #1 and #2 and the author's comment, drops the stranger's and the PR entry.
-  const before = process.env['PATH'];
-  process.env['PATH'] = `${l.forgeBin}:${before ?? ''}`;
-  let captured: Awaited<ReturnType<typeof captureIssues>>;
-  try {
-    captured = await captureIssues({ repo: absPath(l.product), out: null });
-  } finally {
-    process.env['PATH'] = before;
-  }
-  assert.ok(captured.kind === 'captured');
-  assert.deepEqual(captured.capture.issues.map((i) => [i.id, i.comments.length]), [['issue-1', 0], ['issue-2', 1], [PLANT.soakIssue, 0]]);
-  assert.deepEqual(captured.capture.filtered, { comments: 1, pullRequests: 1 });
-  assert.ok(!JSON.stringify(captured.capture).includes(INJECTION_MARKER), 'the injection never reaches a capture');
-  assert.ok(readFileSync(l.store, 'utf8').includes(INJECTION_MARKER), 'the store holds it');
-
   // The stage: the plugin without evals/ or test/, nothing in it naming the key, this fixture's sources or this repository.
   stagePlugin(l);
   for (const p of ['executor/evals', 'executor/test', 'executor/node_modules']) assert.ok(!existsSync(join(l.plugin, p)), `the stage lacks ${p}`);
@@ -285,7 +268,7 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     }
     assert.equal(report.turns.filter((t) => /^Rejected flow-1\.0/.test(t.result ?? '')).length, 1, 'arc 2\'s proposal was rejected on one wake');
     const storyTurns = report.turns.filter((t) => !mergeOnly(t));
-    assert.deepEqual(storyTurns.map((t) => t.kind), ['start', 'owner', 'wake', 'wake', 'wake', 'owner', 'wake', 'wake', 'owner', 'wake', 'wake']);
+    assert.deepEqual(storyTurns.map((t) => t.kind), ['start', 'owner', 'wake', 'wake', 'wake', 'owner', 'wake', 'wake', 'wake']);
     // Each wake carries exactly the events the story synchronises on (paid run 10 batch: two events 3.7 s apart against
     // the 3 s debounce once made an extra wake); the same lines every run, whatever the timing.
     const wakes = storyTurns.filter((t) => t.kind === 'wake').map((t) => linesOf(t).filter((e) => !merging(e)).map((e) => (
@@ -293,7 +276,7 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     )).sort());
     assert.deepEqual(wakes, [
       ['needs-user:pack-review'], ['units:blocked'], ['units:complete'],
-      ['units:blocked'], ['needs-user:issue-policy-untrusted'], ['needs-user:divergence-digest', 'units:held'], ['units:complete'],
+      ['units:blocked'], ['needs-user:divergence-digest', 'units:held'], ['units:complete'],
     ]);
     // The chain boundaries (paid runs 12, 13): arc 1's check-in is one final message, no numbered question (P-1 stays in
     // the brief), a hold for the spend approval, then the action taken on resume (arc 2 starts under K = 1: the bootstrap
@@ -326,23 +309,10 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
       ['numbered', 'code', 'K = 1.'], ['numbered', 'code', 'Yes, I accept that slice.'],
       ['answer', 'simulator', p1],
       ['spend-hold', 'code', SPEND_APPROVED],
-      ['numbered', 'code', 'Done: issue creation is restricted to collaborators again.'],
     ]);
     assert.deepEqual(failing(checked), [], JSON.stringify(checked.result.criteria));
     assert.equal(checked.result.criteria.length, CRITERIA.length);
     assertEveryStepPlayed(story.dir, [1, 2]);
-  });
-
-  test('evals-m4a.intake-filtering: every capture drops the stranger\'s comment and the PR entry; each checkpoint takes in each issue once', () => {
-    for (const events of [arc1, arc2]) {
-      const captured = factsOf(events, 'issues-captured');
-      assert.ok(captured.length >= 2);
-      for (const c of captured) assert.deepEqual(c.filtered, { comments: 1, pullRequests: 1 });
-      const intake = factsOf(events, 'issue-intake');
-      assert.deepEqual(intake.map((x) => `${x.job}/${x.issue}`), captured.flatMap((c) => [`${c.job}/issue-1`, `${c.job}/issue-2`, `${c.job}/${PLANT.soakIssue}`]));
-    }
-    const p0 = arcView(chainOf(absPath(layout(story.dir).product)).one!).phase0;
-    assert.deepEqual(p0.intake.map((x) => [x.issue, x.outcome.type]), [['issue-1', 'acted'], ['issue-2', 'none'], [PLANT.soakIssue, 'none']], 'Phase 0 acted on the bug through guard and declined dropping the soak run');
   });
 
   test('evals-m4a.pack-review-hold: review-1\'s blocking finding holds admission until the fixed pack\'s review-2 supersedes it', () => {
@@ -361,7 +331,7 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
   });
 
   test('evals-m4a.amendments-debt: arc 1 banks a gate note and a deferred finding and derives two amendments; arc 2 dispositions all four', () => {
-    assert.deepEqual(factsOf(arc1, 'corpus-amendment').map((a) => a.source.type).sort(), ['checkpoint', 'issue']);
+    assert.deepEqual(factsOf(arc1, 'corpus-amendment').map((a) => a.source.type), ['checkpoint', 'checkpoint']);
     assert.deepEqual(factsOf(arc1, 'debt-banked').map((d) => d.bankReason).sort(), ['finding-deferred', 'gate-note']);
     const { one, two } = chainOf(absPath(layout(story.dir).product));
     const p0 = arcView(two!).phase0;
@@ -374,31 +344,6 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     assert.deepEqual(ledger.items.map((i) => [i.bankReason, i.state]).sort(), [['finding-deferred', 'promoted'], ['gate-note', 'open']]);
   });
 
-  test('evals-m4a.policy-flip: the flip mid-arc holds admission and the checkpoint uncaptured until the owner fixed the policy and the root agent acked', () => {
-    assert.ok(story.report.devices.policyFlip !== null && story.report.devices.policyFix !== null);
-    const [item] = raisedOf(arc2, 'issue-policy-untrusted', story.dir, 2);
-    assert.ok(item !== undefined, 'the checkpoint capture raised the blocking item');
-    assert.equal(raisedOf(arc2, 'issue-policy-untrusted', story.dir, 2).length, 1, 'raised once');
-    const ack = factsOf(arc2, 'needs-user-acked').find((a) => a.id === item.id);
-    assert.ok(ack !== undefined && ack.seq > item.seq);
-    const between = (seq: number) => seq > item.seq && seq < ack.seq;
-    assert.deepEqual(factsOf(arc2, 'checkpoint-inputs').filter((f) => between(f.seq)), [], 'no checkpoint captured while it was open');
-    assert.deepEqual(factsOf(arc2, 'issues-captured').filter((f) => between(f.seq)), []);
-    // While it was open, status showed the arc-wide hold: the root agent's last status read before its ack.
-    const traffic = toolTraffic(layout(story.dir).transcript);
-    const acked = traffic.findIndex((t) => t.kind === 'tool_use' && t.text.includes(`roadmap ack ${item.id}`));
-    assert.ok(acked >= 0, 'the root agent acked the item');
-    const status = traffic.findLastIndex((t, i) => i < acked && t.kind === 'tool_use' && t.text.includes('roadmap status') && t.text.includes(fakeArc(story.dir, 2)));
-    assert.ok(status >= 0, 'the root agent read status on the item');
-    assert.match(traffic[status + 1]!.text, /\\"holds\\":\[\\"issue-policy-untrusted\\"\]/, 'admission was held arc-wide');
-    const notice = factsOf(arc2, 'dispatch').filter((d) => d.record.unit === 'notice');
-    assert.ok(notice.length > 0 && notice.every((d) => d.seq > ack.seq), 'notice was admitted only after the ack');
-    assert.ok(factsOf(arc2, 'checkpoint-inputs').some((f) => f.seq > ack.seq), 'the checkpoint captured after the ack');
-    // The audit of cutoff waited for the root agent's blocked wake, so the item came after that wake's turn.
-    const blockedTurn = story.report.turns.find((t) => t.kind === 'wake' && t.prompt.includes('"run":"blocked"'));
-    assert.ok(blockedTurn !== undefined && traffic.some((t) => t.turn === blockedTurn.n && t.kind === 'tool_use' && t.text.includes('roadmap status')), 'the blocked wake read status');
-  });
-
   test('evals-m4a.k-limit: with K = 1 and arc 2 unacked, arc 3 is refused chain-invalid{limit} at phase0 check and at start', () => {
     const traffic = toolTraffic(layout(story.dir).transcript);
     const startArc3 = traffic.findIndex((t) => t.kind === 'tool_use' && t.text.includes('roadmap start') && t.text.includes(fakeArc(story.dir, 3)));
@@ -409,21 +354,20 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     assert.equal(chainOf(absPath(layout(story.dir).product)).arcs.length, 2, 'no third arc started');
   });
 
-  test('evals-m4a.brief: the brief spans both arcs, K = 1 with arc 2 unacked, and carries the amendments, intake, debt and P-1', () => {
+  test('evals-m4a.brief: the brief spans both arcs, K = 1 with arc 2 unacked, and carries the amendments, debt and P-1', () => {
     const l = layout(story.dir);
     // check.ts restored the scrambled live files (K20) after its from-ref check; the brief reads the committed config.
     assert.equal(spawnSync('git', ['-C', l.product, 'status', '--porcelain', '--', ...story.report.scrambled], { encoding: 'utf8' }).stdout.trim(), '', 'check.ts restored every scrambled path');
     const env = { ...ENV, PATH: `${l.forgeBin}:${ENV['PATH'] ?? ''}` };
     const r = spawnSync(process.execPath, [join(EVALS, 'stage-cli.ts'), ...STAGE_ARGS(story.dir, fakeHostDir(story.dir)), 'brief', '--repo', l.product, '--json'], { env, encoding: 'utf8', timeout: 120_000 });
     assert.equal(r.status, 0, r.stderr);
-    const { payload } = JSON.parse(r.stdout) as { payload: { chain: { k: number; unackedStarts: string[] }; arcs: { arc: string; amendments: unknown[]; intake: unknown[]; questions: { id: string; state: { type: string } }[]; debt: { banked: unknown[]; dispositioned: unknown[] }; pr: { type: string } }[] } };
+    const { payload } = JSON.parse(r.stdout) as { payload: { chain: { k: number; unackedStarts: string[] }; arcs: { arc: string; amendments: unknown[]; questions: { id: string; state: { type: string } }[]; debt: { banked: unknown[]; dispositioned: unknown[] }; pr: { type: string } }[] } };
     assert.deepEqual(payload.chain.k, 1);
     assert.deepEqual(payload.chain.unackedStarts, [fakeArc(story.dir, 2)]);
     const [one, two] = payload.arcs;
     assert.equal(one!.amendments.length, 2);
     assert.equal(one!.debt.banked.length, 2);
     assert.equal(two!.debt.dispositioned.length, 2);
-    assert.ok(one!.intake.length >= 2 && two!.intake.length >= 2);
     assert.deepEqual(two!.questions.map((q) => [q.id, q.state.type]), [['P-1', 'answered']]);
     assert.deepEqual(payload.arcs.map((a) => a.pr.type), ['pr', 'pr']);
   });
@@ -444,7 +388,7 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
       D6: () => ({ 1: census(a1, 'T-2', 'out-of-slice'), 2: a2 }),
       D7: () => ({ 1: census(a1, 'T-14', 'untestable'), 2: a2 }),
       S: () => ({ 1: { ...a1, pin: { ...a1.pin, rules: a1.pin.rules.filter((r) => r.id !== 'T-15') } }, 2: a2 }),
-      G: () => ({ 1: { ...a1, phase0: { ...a1.phase0, intake: a1.phase0.intake.map((x) => (x.issue === PLANT.soakIssue ? { ...x, outcome: { type: 'amendment' as const, rules: ['T-16' as never], proposal: 'Drop the soak run from the suite gate.' } } : x)) } }, 2: a2 }),
+      G: () => ({ 1: a1, 2: { ...a2, pin: { ...a2.pin, rules: a2.pin.rules.filter((r) => !/soak/i.test(r.text)) } } }),
     };
     // The key's defects and the mutations are one-to-one: every defect has its mutation and no mutation is left over.
     assert.deepEqual(Object.keys(mutations).sort(), key.defects.map((d) => d.id).sort());
@@ -552,7 +496,7 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     const pass = checked.result.criteria.filter((c) => c.pass).map((c) => c.name);
     // M4b: arc 1's constraint-shift run (noAction) names the slot and its suite component, so flow-constraint holds; the
     // loop and the shard need a decided proposal and a verdict. M4b rev 3: its lane runs carry pressure (pressure-recorded).
-    assert.deepEqual(pass, ['isolation', 'intake-filtered', 'arc1-complete', 'brief-acked-once', 'no-model-ids', 'host-released', 'profile', 'flow-constraint', 'ruler-intact', 'pressure-recorded'], 'the paid run\'s criteria that need a second arc, the k-limit stop or a decided flow proposal fail here');
+    assert.deepEqual(pass, ['isolation', 'arc1-complete', 'brief-acked-once', 'no-model-ids', 'host-released', 'profile', 'flow-constraint', 'ruler-intact', 'pressure-recorded'], 'the paid run\'s criteria that need a second arc, the k-limit stop or a decided flow proposal fail here');
     assert.match(checked.result.criteria.find((c) => c.name === 'stopped-at-k')!.detail, /vision-silent/);
   });
 
@@ -679,36 +623,6 @@ test('skill.operator-log-format: reference.md\'s operator-log example parses wit
   for (const lever of Object.keys(parsed.byLever)) assert.ok((LEVERS as readonly string[]).includes(lever));
 });
 
-test('evals-m4a.untrusted-start: under PUBLIC + ALL, phase0 check and start refuse issue-policy-untrusted before anything runs', T, async () => {
-  const dir = join(tmpDir('m4a-untrusted'), 'fx');
-  const out = await script('setup.ts', [dir]);
-  assert.equal(out.code, 0, out.stderr);
-  const l = layout(dir);
-  stagePlugin(l);
-  prepareFake(l, 'story');
-  const pathBefore = process.env['PATH'];
-  process.env['PATH'] = launchEnv(l, process.env)['PATH'];
-  let plan: string;
-  try {
-    plan = prepareArc1(dir);
-  } finally {
-    process.env['PATH'] = pathBefore;
-  }
-  writeStore(l.store, { ...readStore(l.store), policy: { visibility: 'PUBLIC', hasIssuesEnabled: true, issueCreationPolicy: 'ALL' } });
-  const env = { ...ENV, PATH: `${join(l.fake, 'arc-1', 'bin')}:${l.forgeBin}:${ENV['PATH'] ?? ''}` };
-  const cli = (args: readonly string[]) => spawnSync(process.execPath, [join(EVALS, 'stage-cli.ts'), ...STAGE_ARGS(dir, fakeHostDir(dir)), ...args], { env, encoding: 'utf8', timeout: 300_000 });
-  const p0 = cli(['phase0', 'check', '--repo', l.product, '--plan', plan]);
-  assert.equal(p0.status, 78, p0.stderr);
-  assert.deepEqual((JSON.parse(p0.stdout) as { rows: unknown[] }).rows, [{ kind: 'issue-policy-untrusted', visibility: 'PUBLIC', policy: 'ALL' }]);
-  const scope: RunScope = { paths: [dir], stop: async () => {} };
-  track(scope);
-  const start = cli(['start', '--repo', l.product, '--plan', plan, '--profile', 'default']);
-  await teardown(scope);
-  assert.equal(start.status, 78, `${start.stdout} ${start.stderr}`);
-  assert.match(start.stdout, /issue-policy-untrusted/);
-  assert.ok(!existsSync(join(l.fake, 'arc-1', 'calls.jsonl')), 'no backend was called');
-});
-
 test('evals-m4a.owner-questions (paid run 1): the owner simulator gets the final text\'s last numbered block only, never a status list or a brief\'s numbered lines before it', () => {
   const text = [
     '1. **Status:** three units are merged.',
@@ -736,13 +650,12 @@ test('evals-m4a.owner-questions (paid run 1): the owner simulator gets the final
 });
 
 test('evals-m4a.owner-code-answers (paid run 2): a brief-ack question naming `k-limit` is not the K question; K is asked case-sensitively', () => {
-  const c = {} as OwnerCtx; // neither question below reaches the forge branch
-  assert.equal(codeAnswer(c, 'Do you acknowledge brief a636215e877ff428? If you do, I can chain a third arc. If you have no view, the chain stops after arc 2 (`k-limit`).'), 'I have not read the brief yet; do not acknowledge it.');
-  assert.equal(codeAnswer(c, 'K: how many arcs may I run past your last acknowledged brief?'), 'K = 1.');
-  assert.equal(codeAnswer(c, 'How many arcs may I run past your last acknowledged brief before I stop and wait (K)? Working assumption: 1.'), 'K = 1.');
-  assert.equal(codeAnswer(c, 'Should the cut-off be checked against k-limit style rules?'), null);
+  assert.equal(codeAnswer('Do you acknowledge brief a636215e877ff428? If you do, I can chain a third arc. If you have no view, the chain stops after arc 2 (`k-limit`).'), 'I have not read the brief yet; do not acknowledge it.');
+  assert.equal(codeAnswer('K: how many arcs may I run past your last acknowledged brief?'), 'K = 1.');
+  assert.equal(codeAnswer('How many arcs may I run past your last acknowledged brief before I stop and wait (K)? Working assumption: 1.'), 'K = 1.');
+  assert.equal(codeAnswer('Should the cut-off be checked against k-limit style rules?'), null);
   // Paid run 12: the K question whose working assumption names the brief's ack is still the K question.
-  assert.equal(codeAnswer(c, '1. **K.** How many arcs may I run past your last acknowledged brief before I stop and wait? *If you have no view, I\'ll write `{"chain": {"k": 1}}`: one arc, then I stop until you acknowledge its brief.*'), 'K = 1.');
+  assert.equal(codeAnswer('1. **K.** How many arcs may I run past your last acknowledged brief before I stop and wait? *If you have no view, I\'ll write `{"chain": {"k": 1}}`: one arc, then I stop until you acknowledge its brief.*'), 'K = 1.');
 });
 
 test('evals-m4a.owner-reads-brief (paid run 13): open questions are those no arc answered; a hold naming a cost is a spend hold, a running wait is not', () => {

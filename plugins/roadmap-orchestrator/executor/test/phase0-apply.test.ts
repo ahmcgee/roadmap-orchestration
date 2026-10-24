@@ -1,8 +1,8 @@
 // M4a step C1: the corpus arc's revisions and starts. The classifier's corpus and Phase-0 edit classes, the target kind
 // and the chain fixed, the shared Phase-0 rows on every apply (re-derivation, census, rules resolved, the vision
-// confirmed, the tree), and a start's rows (`runChecks`): the vision, the tree, the issue policy, the kept corpus inputs.
+// confirmed, the tree), and a start's rows (`runChecks`): the vision, the tree, the kept corpus inputs.
 // dev.16: a vision edit's docs publication carries the vision files it changes; a start never runs one, so refuses it.
-// Real repos, real pins (`roadmap corpus pin`), real issue captures against the fake forge.
+// Real repos, real pins (`roadmap corpus pin`).
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -23,7 +23,6 @@ import { classify, changesScope } from '../src/input/classify.ts';
 import { CORPUS_FILE_INPUT, keptInput, planInForce, readInputFiles, recordPlan, revisionInForce } from '../src/input/inforce.ts';
 import { type StartChecks, type StartInput, runChecks } from '../src/preflight/checks.ts';
 import type { StartupRejection } from '../src/preflight/startup.ts';
-import { UNTRUSTED_POLICY } from './helpers/forge.ts';
 import {
   type CorpusArc, PIN_FILE, corpusArc, editJsonFile, editPhase0, editPlan, filesOf, inForce, newHostDir, readJsonFile, runDirOfArc, visionRecord, withForge,
 } from './helpers/corpusarc.ts';
@@ -257,8 +256,7 @@ describe('Phase-0 record edits and the census', () => {
       editPhase0(a, (r) => ({ ...r, curation: [{ tier: 'structural', what: 'merged two restatements', files: ['0010_Overview.md'], rules: ['T-1'] }] }));
       const v = accepted(await apply(a, j));
       const record = sha256Hex(readFileSync(join(a.planDir, 'phase0.json')));
-      const capture = sha256Hex(readFileSync(join(a.planDir, 'issues.json')));
-      assert.deepEqual(v.evaluated.draft.changes, [{ type: 'phase0', sha256: record, issuesSha256: capture }]);
+      assert.deepEqual(v.evaluated.draft.changes, [{ type: 'phase0', sha256: record }]);
       const cur = planInForce(runDirOfArc(a), j.view)!.plan;
       assert.deepEqual(changesScope(v.evaluated.draft.changes, cur, filesOf(a).plan), { type: 'none' });
 
@@ -509,12 +507,6 @@ describe('the tree and the forge at start', () => {
     } finally {
       j.close();
     }
-  });
-
-  it('phase0.issue-policy-untrusted-start: PUBLIC + ALL refuses the start', T, async () => {
-    const a = await corpusArc();
-    a.forge.setPolicy(UNTRUSTED_POLICY);
-    assert.deepEqual(refusedRows(await start(a)), [{ kind: 'issue-policy-untrusted', visibility: 'PUBLIC', policy: 'ALL' }]);
   });
 });
 

@@ -26,9 +26,7 @@
 //      skipped, writing nothing, while the checkpoint seat's backend is parked or the arc is paused or stopped.
 //   1a. Arc feedback 2026-10-16 (checkpoints ran too often, not aimed at the blocker): a completed audit's first job is not
 //      made when the audit found nothing new (`nothingNew`: not the final audit, a checkpoint already settled under the
-//      vision in force, and every active finding no unit owns captured by such a checkpoint; in a corpus arc, also every
-//      open issue, fetched just before, held byte-equal by such a checkpoint's capture, `unseenIssues` in
-//      src/holistic/intake.ts, whose forge failure keeps the checkpoint). Code writes `checkpoint-skipped{audit, generation,
+//      vision in force, and every active finding no unit owns captured by such a checkpoint). Code writes `checkpoint-skipped{audit, generation,
 //      visionSha256, carried}` instead of a call; it settles the audit's generation as a no-op would. A park trigger's prompt
 //      carries the code-produced diagnosis of the parked lineage (`parkDiagnosis`), and a reenter op cites the failure it
 //      fixes (src/input/classify.ts requires and resolves it).
@@ -42,23 +40,20 @@
 //   2. Before the capture: for an audit's trigger, its cited P1s re-witnessed on the head (B5's `rewitnessP1s`, the
 //      race of §2.5); after an evidence rejection, the lanes of the observations it cited re-witnessed on the head.
 //   3. The capture (H2, A19), under the revision fence in one synchronous step: `checkpoint-inputs{job, trigger,
-//      generation, vector, headSha, visionSha256, findings, observations, issues?, corpusSha256?}`. The vector is the
+//      generation, vector, headSha, visionSha256, findings, observations, corpusSha256?}`. The vector is the
 //      plan rev, every unit's spec rev, the obligations', ledger's and vision's bytes, and the blob of every plan
 //      contract and the architecture doc at the head. The generation is the trigger audit's (a park's: the latest
-//      recorded, else 1). M4a: in a corpus arc, the issues are captured first (src/holistic/intake.ts: the kept capture,
-//      or `unavailable{reason}`; an untrusted issue policy holds the job uncaptured, `skipped{issue-policy-untrusted}`),
-//      and `corpusSha256` names the pin in force. An enactment (no call) captures no issues.
+//      recorded, else 1). M4a: in a corpus arc, `corpusSha256` names the pin in force.
 //   4. The call: a fresh session on the checkpoint seat (`callArcRole`, `arc-backend{role: checkpoint}`, metered to the
 //      job), `@cpu`×1 under the job, in a detached checkout `<job>.checkpoint` of the captured head, the prompt rendered
 //      from the recorded inputs alone: the vision first and in full (by its kept bytes), the trigger and head, vision
 //      coverage, the findings, the obligations with their observations on the head, the uncovered divergences, the plan
 //      in force at the captured rev (units with state, edges, limits and routing), the contracts at the head, the
-//      rulings, the direction, the captured issues; a corpus arc's materialised pin is readable beside the checkout
+//      rulings, the direction; a corpus arc's materialised pin is readable beside the checkout
 //      (`targetDirs`). M4a rev 3 (H4, F08, F16, F21): the input manifest (every captured input by kind, id, kept path and
 //      sha256: the only way to read one), every non-retired unit's spec in full with the item ids it holds, and the
 //      ledger's next ruling id. (H5's closeout render, a delta-only prompt after a no-op on an unchanged arc, is gone: such
-//      an audit now has no checkpoint at all, step 1a.) Issues unchanged since the latest decided
-//      checkpoint, on unchanged grounds, are not listed (`issuesUnchangedSince`, src/holistic/intake.ts `issueReuse`). A resumed job consumes a
+//      an audit now has no checkpoint at all, step 1a.) A resumed job consumes a
 //      call it made; a call interrupted (a pause, a stop, a backend park) leaves the job running and a later run asks
 //      again as the next attempt. A refusal or fault is an invalid decision. 2026-10-15: an answer off its schema, or
 //      whose bundle the activation finds invalid, first takes the one judgment repair turn (dev.12 every judgment role's,
@@ -77,14 +72,14 @@
 //      retry. Other revisions (a spec patch, a ruling) leave the call running; the activation's staleness checks what the
 //      bundle touches.
 //   5. The activation (src/holistic/bundle.ts): `plan-applied{source: bundle{job}}` or `bundle-decided`; then (an
-//      applied or no-op decision) its amendments and issue outcomes (src/holistic/{amendments,intake}.ts).
+//      applied or no-op decision) its amendments (src/holistic/amendments.ts).
 //
 // OR-Q1: `designParkRoute` tells the scheduler what a design park waits for: the checkpoint (its park item is held
 // back), the owner (`respec-second`, raised here), or its own park item (the checkpoint decided nothing applicable).
 import { join } from 'node:path';
 import { freshJudgmentSession } from '../backends/argv.ts';
 import { crashPoint } from '../core/crash.ts';
-import type { CheckpointIssues, Parent } from '../core/events.ts';
+import type { Parent } from '../core/events.ts';
 import { captureUnderFence } from '../core/fence.ts';
 import { canonicalJson } from '../core/json.ts';
 import { type FindingId, type InvocationId, type JobId, type LaneId, type Sha, type Sha256Hex, type UnitId, INTEGRATION_SLOT, invocationId, parseInvocationId, canonicalIds } from '../core/ids.ts';
@@ -98,7 +93,7 @@ import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
 import { git, revParse } from '../git/git.ts';
 import {
-  ISSUES_INPUT, OBLIGATIONS_INPUT, PHASE0_INPUT, PLAN_INPUT, RULING_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, inForceFiles, inputPath, keptInput, payloadAtRev, requirePlanInForce,
+  OBLIGATIONS_INPUT, PHASE0_INPUT, PLAN_INPUT, RULING_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, inForceFiles, inputPath, keptInput, payloadAtRev, requirePlanInForce,
   revisionInForce,
 } from '../input/inforce.ts';
 import { DEFAULT_CONVERGENCE_K, type PlanM1, advancesOf, parsePlan } from '../input/plan.ts';
@@ -128,7 +123,6 @@ import { integrationHeadNow } from './cadence.ts';
 import type { AppliedBundle } from './convergence.ts';
 import { uncoveredDivergences } from './divergence.ts';
 import { isActive } from './findings.ts';
-import { captureCheckpointIssues, issueReuse, issuesInputOf, unseenIssues } from './intake.ts';
 import { reuse } from './observe.ts';
 import { type ArcLaneDef, type BusyAttempt, type CheckpointTrigger, type ObligationDef, type Obligations, type Vision, observationKeyText, parseObligations, parseRulingSidecar, parseVision } from './types.ts';
 import { visionCoverage } from './vision.ts';
@@ -141,10 +135,10 @@ export type CheckpointOutcome =
   /** Nothing is due. */
   | Readonly<{ kind: 'none' }>
   /**
-   * Due, but not asked: the checkpoint backend is parked, or the arc is paused or stopped; or (M4a) an untrusted issue
-   * policy's item is open and the job waits uncaptured (R31); or (R-15) a publication is in flight (`publishing`).
+   * Due, but not asked: the checkpoint backend is parked, or the arc is paused or stopped; or (R-15) a publication is in
+   * flight (`publishing`).
    */
-  | Readonly<{ kind: 'skipped'; reason: 'backend-parked' | 'paused' | 'issue-policy-untrusted' | 'publishing' }>
+  | Readonly<{ kind: 'skipped'; reason: 'backend-parked' | 'paused' | 'publishing' }>
   /** The call was interrupted (a pause, a stop, a backend park): the job stays running and resumes at a later call. */
   | Readonly<{ kind: 'interrupted'; job: JobId; detail: string }>
   /** Arc feedback 2026-10-16: an audit's checkpoint not run, the audit having found nothing new (`checkpoint-skipped`). */
@@ -436,8 +430,7 @@ export function busyHolds(ctx: CheckpointContext): ReadonlySet<UnitId> {
  * decision under the vision in force (applied, no-op or requested; so the arc's first checkpoint, which weighs the coverage
  * gaps and the obligations, and the first after a vision revision always run); and every active finding no unit owns
  * (one this audit opened, merged into or corroborated, or one opened elsewhere: a plan-check's vision conflict) was
- * captured by such a checkpoint. `carried`: the findings the audit reported. A corpus arc's open issues are weighed after
- * this, by `runCheckpoint` (`unseenIssues`: the forge is no journal view).
+ * captured by such a checkpoint. `carried`: the findings the audit reported.
  */
 export function nothingNew(view: JournalView, job: JobId): readonly FindingId[] | null {
   const fold = view.holistic();
@@ -500,8 +493,8 @@ export function checkpointPending(ctx: CheckpointContext): boolean {
 // ---------------------------------------------------------------------------------------------------
 // The capture (H2)
 
-/** `checkpoint-inputs` of `due` with `issues` (M4a: absent outside a corpus arc), captured synchronously under the revision fence. */
-function capture(ctx: CheckpointContext, due: Due, issues: CheckpointIssues | null): Captured {
+/** `checkpoint-inputs` of `due`, captured synchronously under the revision fence. */
+function capture(ctx: CheckpointContext, due: Due): Captured {
   const view = ctx.journal.view;
   const inForce = requirePlanInForce(ctx.runDir, view);
   const revision = revisionInForce(ctx.runDir, inForce);
@@ -521,7 +514,6 @@ function capture(ctx: CheckpointContext, due: Due, issues: CheckpointIssues | nu
     kind: 'checkpoint-inputs' as const, job, trigger: due.trigger, generation: due.generation, vector, headSha: head, visionSha256: vector.visionSha256,
     findings: canonicalIds(view.holistic().findings.filter(isActive).map((f) => f.id)),
     observations: shown,
-    ...(issues === null ? {} : { issues }),
     ...(revision.corpus === null ? {} : { corpusSha256: revision.corpus.pin.sha256 }),
   };
   const seq = ctx.journal.fact(fact);
@@ -583,7 +575,7 @@ function renderPlan(ctx: CheckpointContext, s: Captured, r: Recorded): string {
 
 /**
  * H4 (F08): every input the checkpoint was captured on, content-addressed in the run dir: the plan, each spec, the ledger
- * and its sidecars, the obligations, the vision, the Phase-0 record and the issue capture.
+ * and its sidecars, the obligations, the vision and the Phase-0 record.
  */
 function manifestOf(ctx: CheckpointContext, s: Captured): readonly ManifestEntry[] {
   const m = payloadAt(ctx, s.vector.plan).manifest;
@@ -597,7 +589,6 @@ function manifestOf(ctx: CheckpointContext, s: Captured): readonly ManifestEntry
     ...(s.vector.obligationsSha256 === null ? [] : [entry('obligations', 'obligations', s.vector.obligationsSha256, OBLIGATIONS_INPUT)]),
     entry('vision', 'vision', s.visionSha256, VISION_INPUT),
     ...(m.phase0 === undefined ? [] : [entry('phase0', 'phase0', m.phase0, PHASE0_INPUT)]),
-    ...(s.issues?.type === 'captured' ? [entry('issues', 'issues', s.issues.sha256, ISSUES_INPUT)] : []),
   ];
 }
 
@@ -699,7 +690,6 @@ function refusedOf(ctx: CheckpointContext, s: Captured, prior: CheckpointInputs[
 
 function checkpointInputs(ctx: CheckpointContext, s: Captured, r: Recorded): CheckpointInputs {
   const rulings = parseRulings(r.ledgerText, ledgerPath(ctx));
-  const reuse = issueReuse(ctx.journal.view, ctx.runDir, s);
   const sidecars = Object.entries(payloadAt(ctx, r.planRev).manifest.rulings.sidecars)
     .map(([, sha]) => parseRulingSidecar(JSON.parse(kept(ctx, sha, RULING_INPUT).toString('utf8'))));
   const prior = priorRejected(ctx, s);
@@ -719,11 +709,9 @@ function checkpointInputs(ctx: CheckpointContext, s: Captured, r: Recorded): Che
     index: { contracts: [], rulings: rulings.flatMap((x) => (x.status === 'withdrawn' ? [{ id: x.id, line: `withdrawn by ${x.by}` }] : [])), ledger: ledgerPath(ctx) },
     target: architecture(ctx, s.headSha),
     direction: r.plan.direction,
-    issues: issuesInputOf(ctx.runDir, s, reuse),
     manifest: manifestOf(ctx, s),
     specs: specsOf(ctx, r),
     nextRulingId: nextRulingId(rulings),
-    issuesUnchangedSince: reuse?.since ?? null,
     diagnosis: parkDiagnosis(ctx, s.trigger),
     brakes: brakesShown(ctx, s.findings),
   };
@@ -1033,20 +1021,14 @@ export async function runCheckpoint(ctx: CheckpointContext): Promise<CheckpointO
   if (s === null) {
     const due = dueTrigger(ctx);
     if (due === null) return { kind: 'none' };
-    let carried = due.trigger.type === 'audit' && due.prev === null ? nothingNew(ctx.journal.view, due.trigger.job) : null;
-    // An issue no settled checkpoint saw is new too (src/holistic/intake.ts `unseenIssues`).
-    if (carried !== null && ctx.plan().target === 'corpus') {
-      const issues = unseenIssues(ctx, settledUnderVision(ctx.journal.view));
-      if (issues === 'held') return { kind: 'skipped', reason: 'issue-policy-untrusted' };
-      if (issues === 'unseen') carried = null;
-    }
+    const carried = due.trigger.type === 'audit' && due.prev === null ? nothingNew(ctx.journal.view, due.trigger.job) : null;
     if (carried !== null && due.trigger.type === 'audit') {
       const visionSha256 = ctx.journal.view.planApplied()?.visionSha256;
       if (visionSha256 === undefined) throw new Error('a holistic arc whose plan in force records no vision');
       ctx.journal.fact({ kind: 'checkpoint-skipped', audit: due.trigger.job, generation: due.generation, visionSha256, carried });
       return { kind: 'not-needed', audit: due.trigger.job, carried };
     }
-    // An enactment or a re-decide (`inherits`) makes no call: the call's gates and the issue capture are skipped.
+    // An enactment or a re-decide (`inherits`) makes no call: the call's gates are skipped.
     const inherit = approved(ctx, due.prev) || busyRejected(due.prev);
     if (!inherit) {
       const skip = checkpointSkip(ctx);
@@ -1056,13 +1038,7 @@ export async function runCheckpoint(ctx: CheckpointContext): Promise<CheckpointO
     }
     if (due.trigger.type === 'audit') await rewitnessP1s(ctx, due.trigger.job);
     if (due.prev !== null) await rewitnessCited(ctx, due.prev);
-    let issues: CheckpointIssues | null = null;
-    if (ctx.plan().target === 'corpus' && !inherit) {
-      const captured = captureCheckpointIssues(ctx);
-      if (captured.kind === 'held') return { kind: 'skipped', reason: 'issue-policy-untrusted' };
-      issues = captured.issues;
-    }
-    s = await captureUnderFence(ctx.journal, () => capture(ctx, due, issues));
+    s = await captureUnderFence(ctx.journal, () => capture(ctx, due));
     crashPoint('checkpoint.after-inputs');
   }
   const { job } = s;

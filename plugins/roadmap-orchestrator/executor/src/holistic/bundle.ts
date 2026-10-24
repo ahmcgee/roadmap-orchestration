@@ -25,8 +25,7 @@
 //      the executor from the captured inputs (lead ruling: the model echoes no revisions), validated at the tip in
 //      order (`validateRuling`; only a valid one is folded into the ledger the next is checked against, so no model
 //      output reaches the ledger reader as a repeated id); each lands through exactly one `rule` op. M4a: the corpus
-//      amendments and the issue outcomes (src/holistic/{amendments,intake}.ts: active pinned rules only; every captured
-//      issue exactly once; an `acted` outcome through ops of this output only). A split child anchored at a rule takes
+//      amendments (src/holistic/amendments.ts: active pinned rules only). A split child anchored at a rule takes
 //      its hash from the pin in force; one anchored at another rule than its parent's whose census state is `out-of-slice`
 //      moves that state to `obligation{child}` when the child serves only the owner-selected slice and this bundle's
 //      opportunities (C4), else the reason names the rule, its state and the fix. The model's numbered ids are read in
@@ -72,7 +71,7 @@
 // After an applied or no-op decision: its finding dispositions as the tail rules bind them (none written for a finding
 // named in the repairs of a unit it admits or re-enters: the repairs route rules it), and code's release of each
 // shown finding nothing fixes that is a P3 or below a brake (`settleFindings`, src/holistic/tail.ts); in a corpus arc the
-// debt its deferrals bank, its amendments and issue outcomes, and its conversions (each an amendment `source: admit`, a
+// debt its deferrals bank, its amendments, and its conversions (each an amendment `source: admit`, a
 // follow-up overrun also a debt item naming its opportunity), read from the decision record, never classified again;
 // the convergence bound when due (over the effective ops), the divergence digest when due. Each is idempotent, and
 // `settleDecided` rewrites what a crash lost.
@@ -121,7 +120,6 @@ import { publishedHeads } from './coverage.ts';
 import { type DivergenceBase, appendDivergences, interpretationDivergences, opDivergences, raiseDigest } from './divergence.ts';
 import { isActive, ruleFinding, rulingRefusal } from './findings.ts';
 import { type Brake, type TailWorld, brakeConversions, brakeOf, findingOriginRoots, indexedAdmits, settledPoint, tailRulings } from './tail.ts';
-import { intakeReasons, issueReuse, settleIntake } from './intake.ts';
 import { type Observation, observedVerdict, reuse } from './observe.ts';
 import { inputShaOf } from '../git/reusekey.ts';
 import {
@@ -1248,8 +1246,7 @@ function judge(ctx: CheckpointContext, a: Activation): BundleDecision | Refused 
       : decided(ctx, a.job, { kind: 'rejected', reason: 'invalid', detail: reasons.join('; ') }));
   const pin = revision.corpus?.pin.value ?? null;
   const reasons = [
-    ...duplicated, ...citeAndDispositionReasons(ctx, a, revision), ...amendmentReasons(pin, a.output),
-    ...intakeReasons(ctx.runDir, a.captured, pin, a.output, issueReuse(view, ctx.runDir, a.captured)), ...p.reasons,
+    ...duplicated, ...citeAndDispositionReasons(ctx, a, revision), ...amendmentReasons(pin, a.output), ...p.reasons,
   ];
   if (reasons.length > 0) return invalid(reasons);
   // dev.13 (the convergence tail, src/holistic/tail.ts): an admit whose every repair is a finding below a brake converts,
@@ -1363,8 +1360,8 @@ export function effectiveOps(view: Parameters<typeof conversionsOf>[0], job: Job
 /**
  * What follows an applied or no-op decision, each only where missing (a crash may cut it short): a no-op's
  * interpretation divergences (H12), the finding dispositions still applicable, then (M4a, a corpus arc) the debt the
- * deferrals bank, the amendments (the output's own, keyed by `captured.job`, the checkpoint whose output it is), the
- * issue outcomes (src/holistic/intake.ts), one amendment per `target-departed` or `interpretation` divergence of
+ * deferrals bank, the amendments (the output's own, keyed by `captured.job`, the checkpoint whose output it is), one
+ * amendment per `target-departed` or `interpretation` divergence of
  * `job` (src/holistic/amendments.ts), and (M4a rev 3, R35) each conversion its decision record holds: an amendment
  * `source: admit{job, index, reason}`, and for a follow-up overrun a debt item naming the opportunity (never classified
  * again: the record is read); the convergence bound when due, the digest when due.
@@ -1378,7 +1375,6 @@ export function settleDecided(ctx: CheckpointContext, job: JobId, output: Checkp
   if (ctx.plan().target === 'corpus') {
     bankDeferred(ctx, job, output);
     for (const draft of checkpointAmendments(captured.job, output)) appendAmendment(ctx.journal, draft);
-    settleIntake(ctx.journal, captured.job, output, issueReuse(ctx.journal.view, ctx.runDir, captured));
     for (const draft of divergenceAmendments(ctx.journal.view, job)) appendAmendment(ctx.journal, draft);
     settleConversions(ctx, job, output);
   }

@@ -20,7 +20,7 @@
 // Every raised item is a `needs-user` line, blocking or not: the Monitor wakes the session on each (DESIGN §2), so the
 // holistic layer's items wake it as any other does: `owner-request`, the `divergence-digest`, the `convergence-bound`
 // and `convergence-identity` brakes, `audit-owed`, `finding-p1-escalated` and `new-finding-draining` (test
-// watch.m3-kinds), and M4a's blocking `pack-review` and `issue-policy-untrusted`. `run` may be `draining` (admissions
+// watch.m3-kinds), and M4a's blocking `pack-review`. `run` may be `draining` (admissions
 // closed). A headless driver resumes its session on these lines and on `run` reaching `complete` (M4a R12).
 //
 // `roadmap watch --actionable [--heartbeat-min <n>]` prints only what the architect acts on (`ActionableFilter`, the one

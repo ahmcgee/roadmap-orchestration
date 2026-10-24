@@ -4,11 +4,11 @@
 import type { Buffer } from 'node:buffer';
 import {
   type AmendmentId, type ArcId, type CommandId, type DebtId, type DivergenceId, type EdgeId, type EnvId, type FindingId, type InvocationId,
-  type IssueId, type JobId, type KnownDefectId, type LaneId, type LaneRev, type NeedsUserId, type ObligationId, type OpId, type OpKey, type OpportunityId, type PlanRev,
+  type JobId, type KnownDefectId, type LaneId, type LaneRev, type NeedsUserId, type ObligationId, type OpId, type OpKey, type OpportunityId, type PlanRev,
   knownDefectId, opportunityId,
   type ResourceInstance, type ResourceName, type ResourceUnit, type RoutingRev, type RuleId, type RulingId, type Sha, type Sha256Hex, type SpecRev,
   type ProposalId, type UnitId, type VisionClauseId, INTEGRATION_SLOT, proposalId, proposalJob, amendmentId, arcId, commandId, compareResourceUnits, debtId, divergenceId, edgeId, envId,
-  findingId, invocationIdOf, issueId, jobIdOf, jobIdOfKind, laneId, laneRev, needsUserId, obligationId, opIdOf, opKey, parseInvocationId, parseJobId, parseOpId,
+  findingId, invocationIdOf, jobIdOf, jobIdOfKind, laneId, laneRev, needsUserId, obligationId, opIdOf, opKey, parseInvocationId, parseJobId, parseOpId,
   parseResourceUnit, planRev, resourceInstance, resourceName, resourceUnit, routingRev, ruleId, rulingId, sha, sha256, specRev, unitId,
   visionClauseId, idList, type ClaudeSessionId, claudeSessionId,
   type JourneyId, type MilestoneId, type PolishId, type ServeName, journeyId, milestoneId, polishId, serveName,
@@ -20,7 +20,6 @@ import {
   MIN_VERDICT_SAMPLES, PROOF_OUTCOMES, flowDropped, fraction, flowEndedConstraint, flowMetric, flowPreimage, flowProposal, flowTriggers, guardBreaches, hostFingerprint,
   proofMinutes, verdictAfter, verdictBefore,
 } from '../flow/types.ts';
-import { type IssueIntakeOutcome, type RepoIdentity, issueIntakeOutcome, repoIdentity } from '../forge/types.ts';
 import { type PressureAvailability, PRESSURE_AVAILABILITIES } from '../host/pressure.ts';
 import { canonicalJson, sha256Hex } from './json.ts';
 import {
@@ -30,6 +29,7 @@ import {
   dispatchRecord, killReason, knownDefectMatch, optionId, pauseTarget, manifestSpecs, resumeTarget, revisionInputs, specPatch, stage, tokenUsage,
   usageUnavailableReason, type Stochastic, stochastic,
 } from './records.ts';
+import { issuesIgnored } from './upgrade.ts';
 import {
   type BusyAttempt, type ClassifiedAdmit, type Conversion, type ConversionReason, BUNDLE_REJECTIONS, CONVERSION_REASONS, classifiedAdmit, conversion,
   type AuditTrigger, type BundleOutcome, type CheckpointTrigger, type ContractOp, type DivergenceDraft, type FindingEvidence, type FindingLens,
@@ -982,17 +982,19 @@ export type HolisticFact =
   }>
   /** A17, H8: a docs-only publication covers its own edge U→D by construction. */
   | Readonly<{ kind: 'docs-covered'; pub: JobId; from: Sha; to: Sha }>
-  /** M4a: `issues` (the checkpoint's issue capture; absent on a dev.6 fact: none) and `corpusSha256` (the pin in force; absent: none). */
+  /**
+   * M4a: `corpusSha256` (the pin in force; absent: none). `issues`: the issue capture an earlier executor recorded, read as
+   * written and ignored (`issuesIgnored`, src/core/upgrade.ts); never written.
+   */
   | Readonly<{
     kind: 'checkpoint-inputs'; job: JobId; trigger: CheckpointTrigger; generation: number; vector: RevisionVector; headSha: Sha; visionSha256: Sha256Hex;
-    findings: readonly FindingId[]; observations: readonly ObservationKey[]; issues?: CheckpointIssues; corpusSha256?: Sha256Hex;
+    findings: readonly FindingId[]; observations: readonly ObservationKey[]; issues?: unknown; corpusSha256?: Sha256Hex;
   }>
   | Readonly<{ kind: 'bundle-decided'; job: JobId; outcome: BundleOutcome }>
   /**
    * Arc feedback 2026-10-16: the checkpoint after a completed audit is not run, because the audit found nothing new: it is
    * not the final one, a checkpoint already settled under the vision in force, and every active finding no unit owns was
-   * captured by such a checkpoint (src/holistic/checkpoint.ts `nothingNew`), and in a corpus arc every open issue was
-   * captured, unchanged, by such a checkpoint (src/holistic/intake.ts `unseenIssues`). `carried`: the findings the audit reported.
+   * captured by such a checkpoint (src/holistic/checkpoint.ts `nothingNew`). `carried`: the findings the audit reported.
    * `generation` is the audit's, quiescent under `visionSha256` (src/holistic/convergence.ts).
    */
   | Readonly<{ kind: 'checkpoint-skipped'; audit: JobId; generation: number; visionSha256: Sha256Hex; carried: readonly FindingId[] }>
@@ -1009,20 +1011,18 @@ export type HolisticFact =
   | Readonly<{ kind: 'arc-completed'; planRev: PlanRev; head: Sha; highWater: number; units: readonly UnitId[] }>;
 
 /**
- * Where a corpus amendment came from (M4a): a checkpoint's proposal, a divergence code derived it from, or an issue's
- * intake; since M4a rev 3 (R35) a checkpoint `admit` op code converted (`index` the op's, `reason` the conversion's); since
- * run 10 (E) a bundle request the close-out declined.
+ * Where a corpus amendment came from (M4a): a checkpoint's proposal or a divergence code derived it from; since M4a rev 3
+ * (R35) a checkpoint `admit` op code converted (`index` the op's, `reason` the conversion's); since run 10 (E) a bundle
+ * request the close-out declined. `issue`: a captured issue's intake, which only an earlier executor recorded (the issues
+ * integration was removed in 1.0.0-dev.21; scaffolding, `issuesIgnored`): read and dispositioned as any amendment.
  */
 export type AmendmentSource =
   | Readonly<{ type: 'checkpoint'; job: JobId; index: number }>
   | Readonly<{ type: 'divergence'; divergence: DivergenceId }>
-  | Readonly<{ type: 'issue'; job: JobId; issue: IssueId }>
+  | Readonly<{ type: 'issue'; job: JobId; issue: string }>
   | Readonly<{ type: 'admit'; job: JobId; index: number; reason: ConversionReason }>
   /** Run 10 (E): a non-blocking bundle request of checkpoint `job` nobody answered by the close-out, declined by the executor. */
   | Readonly<{ type: 'request'; job: JobId; needsUser: NeedsUserId }>;
-
-/** A checkpoint's issues (M4a, R21): the kept capture, or why none was taken (non-fatal, never a park). */
-export type CheckpointIssues = Readonly<{ type: 'captured'; sha256: Sha256Hex }> | Readonly<{ type: 'unavailable'; reason: string }>;
 
 /** A mutation smoke's per-target verdicts (D2, Q15), each list ascending by lane then test id. */
 export type SmokeVerdict = Readonly<{ killed: readonly TestRef[]; survived: readonly TestRef[]; inconclusive: readonly TestRef[] }>;
@@ -1064,8 +1064,6 @@ export type M4aFact =
   | Readonly<{ kind: 'needs-user-declined'; id: NeedsUserId; choice: string | null; reason: string }>
   /** A proposed change to the corpus, dispositioned at the next Phase 0. */
   | Readonly<{ kind: 'corpus-amendment'; id: AmendmentId; source: AmendmentSource; rules: readonly RuleId[]; proposal: string; why: string; evidence: readonly string[] }>
-  /** A checkpoint's one outcome for one captured issue; once per `(job, issue)`. */
-  | Readonly<{ kind: 'issue-intake'; job: JobId; issue: IssueId; outcome: IssueIntakeOutcome }>
   /** A pack review's kept inputs (K8): written after `inputs/<inputsSha256>.pack-review.json` and before the spawn; `key` its required-review key. */
   | Readonly<{ kind: 'pack-review-started'; job: JobId; planRev: PlanRev; inputsSha256: Sha256Hex; key: Sha256Hex }>
   /**
@@ -1074,8 +1072,11 @@ export type M4aFact =
    * full review (the first, or after an abandoned one) and on an abandoned one.
    */
   | Readonly<{ kind: 'pack-review-ended'; job: JobId; outcome: 'completed' | 'abandoned'; findings: readonly PackFinding[]; dispositions?: readonly PackDisposition[] }>
-  /** A checkpoint's issue capture kept as `inputs/<sha256>.issues.json`, before its `checkpoint-inputs` (H13: the repo it resolved once). */
-  | Readonly<{ kind: 'issues-captured'; job: JobId; sha256: Sha256Hex; repo: RepoIdentity; filtered: Readonly<{ comments: number; pullRequests: number }> }>;
+  /**
+   * A checkpoint's issue outcome and its issue capture, which only an earlier executor wrote (the issues integration was
+   * removed in 1.0.0-dev.21): read as written, their other fields untyped, and ignored (`issuesIgnored`; scaffolding).
+   */
+  | Readonly<{ kind: 'issue-intake' | 'issues-captured' }>;
 
 /**
  * The M4b facts (SCHEMAS.md "M4b"); their behaviour is the later steps' (B1: series, runs; B2: decisions, proofs,
@@ -1283,8 +1284,11 @@ export type PlanChange =
    * changes the required-review key.
    */
   | Readonly<{ type: 'corpus'; pinSha256: Sha256Hex; guideSha256: Sha256Hex }>
-  /** M4a (H7): a Phase-0 record edit (source `command` only), with its issue capture; changes only the required-review key. */
-  | Readonly<{ type: 'phase0'; sha256: Sha256Hex; issuesSha256: Sha256Hex }>
+  /**
+   * M4a (H7): a Phase-0 record edit (source `command` only); changes only the required-review key. `issuesSha256`: the
+   * issue capture an earlier executor recorded with it, read as written and ignored (`issuesIgnored`); never written.
+   */
+  | Readonly<{ type: 'phase0'; sha256: Sha256Hex; issuesSha256?: Sha256Hex }>
   /** M4a rev 3 (F1b): a unit's `priority` changed (no drain; any status but merged). */
   | Readonly<{ type: 'unit-priority'; unit: UnitId }>
   /** M4a rev 3 (F4): the plan's `knownDefects` changed. */
@@ -1889,7 +1893,13 @@ const planChange: Read<PlanChange> = tagged('type', {
   holistic: object((f): PlanChange => ({ type: f.get('type', literal('holistic')) })),
   advances: object((f): PlanChange => ({ type: f.get('type', literal('advances')) })),
   corpus: object((f): PlanChange => ({ type: f.get('type', literal('corpus')), pinSha256: f.get('pinSha256', sha256R), guideSha256: f.get('guideSha256', sha256R) })),
-  phase0: object((f): PlanChange => ({ type: f.get('type', literal('phase0')), sha256: f.get('sha256', sha256R), issuesSha256: f.get('issuesSha256', sha256R) })),
+  phase0: object((f): PlanChange => {
+    const out = { type: f.get('type', literal('phase0')), sha256: f.get('sha256', sha256R) };
+    const issuesSha256 = f.optional('issuesSha256', sha256R);
+    if (issuesSha256 === undefined) return out;
+    issuesIgnored('plan-changed.phase0.issuesSha256');
+    return { ...out, issuesSha256 };
+  }),
   'unit-priority': object((f): PlanChange => ({ type: f.get('type', literal('unit-priority')), unit: f.get('unit', unitR) })),
   'known-defects': object((f): PlanChange => ({ type: f.get('type', literal('known-defects')) })),
   'plan-check-shape': object((f): PlanChange => ({ type: f.get('type', literal('plan-check-shape')) })),
@@ -2029,15 +2039,19 @@ const bundleOutcome: Read<BundleOutcome> = tagged('kind', {
 const reviewJobR: Read<JobId> = (v, p) => jobIdOfKind('review')(v, p);
 const ruleList: Read<readonly RuleId[]> = idList((v, p) => ruleId(v, p), { legacyStringOrder: true });
 
-const checkpointIssues: Read<CheckpointIssues> = tagged('type', {
-  captured: object((f): CheckpointIssues => ({ type: f.get('type', literal('captured')), sha256: f.get('sha256', sha256R) })),
-  unavailable: object((f): CheckpointIssues => ({ type: f.get('type', literal('unavailable')), reason: f.get('reason', str) })),
-});
+/** Scaffolding (`issuesIgnored`): JSON the removed issues integration wrote, `what` naming it; returned as written. */
+const issuesLegacy = <T>(what: string): Read<T> => (value) => {
+  issuesIgnored(what);
+  return value as T;
+};
 
 const amendmentSource: Read<AmendmentSource> = tagged('type', {
   checkpoint: object((f): AmendmentSource => ({ type: f.get('type', literal('checkpoint')), job: f.get('job', ckptJobR), index: f.get('index', nat) })),
   divergence: object((f): AmendmentSource => ({ type: f.get('type', literal('divergence')), divergence: f.get('divergence', (v, p) => divergenceId(v, p)) })),
-  issue: object((f): AmendmentSource => ({ type: f.get('type', literal('issue')), job: f.get('job', ckptJobR), issue: f.get('issue', (v, p) => issueId(v, p)) })),
+  issue: object((f): AmendmentSource => {
+    issuesIgnored('corpus-amendment.source.issue');
+    return { type: f.get('type', literal('issue')), job: f.get('job', ckptJobR), issue: f.get('issue', str) };
+  }),
   admit: object((f): AmendmentSource => ({
     type: f.get('type', literal('admit')), job: f.get('job', ckptJobR), index: f.get('index', nat), reason: f.get('reason', oneOf(CONVERSION_REASONS)),
   })),
@@ -2094,9 +2108,7 @@ const M4A_FACT_READERS: { readonly [K in M4aFactKind]: Read<Fact> } = {
     kind: f.get('kind', literal('corpus-amendment')), id: f.get('id', (v, p) => amendmentId(v, p)), source: f.get('source', amendmentSource),
     rules: f.get('rules', ruleList), proposal: f.get('proposal', str), why: f.get('why', str), evidence: f.get('evidence', arrayOf(str)),
   })),
-  'issue-intake': object((f): Fact => ({
-    kind: f.get('kind', literal('issue-intake')), job: f.get('job', ckptJobR), issue: f.get('issue', (v, p) => issueId(v, p)), outcome: f.get('outcome', issueIntakeOutcome),
-  })),
+  'issue-intake': issuesLegacy<Fact>('issue-intake'),
   'pack-review-started': object((f): Fact => ({
     kind: f.get('kind', literal('pack-review-started')), job: f.get('job', reviewJobR), planRev: f.get('planRev', planRevR), inputsSha256: f.get('inputsSha256', sha256R),
     key: f.get('key', sha256R),
@@ -2116,10 +2128,7 @@ const M4A_FACT_READERS: { readonly [K in M4aFactKind]: Read<Fact> } = {
     assertUnique(dispositions, (d) => `${d.job}#${d.index}`, `${f.path}.dispositions`);
     return { ...out, dispositions };
   }),
-  'issues-captured': object((f): Fact => ({
-    kind: f.get('kind', literal('issues-captured')), job: f.get('job', ckptJobR), sha256: f.get('sha256', sha256R), repo: f.get('repo', repoIdentity),
-    filtered: f.get('filtered', object((g) => ({ comments: g.get('comments', nat), pullRequests: g.get('pullRequests', nat) }))),
-  })),
+  'issues-captured': issuesLegacy<Fact>('issues-captured'),
 };
 
 const flowJobR: Read<JobId> = (v, p) => jobIdOfKind('flow')(v, p);
@@ -2343,7 +2352,7 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
       throw new SchemaError(`${f.path}.lane`, 'absent (only a batch lane red names one: a walk job\'s walkthrough P1, an audit job\'s witness P1)', lane);
     }
     if (out.lens === 'vision' && out.severity === 'P1') throw new SchemaError(`${f.path}.severity`, 'P2 or P3 for a vision-lens finding', out.severity);
-    // M4a: a checkpoint's issue intake opens P2 or P3 only.
+    // M4a: a checkpoint's issue intake (an earlier executor's; removed in 1.0.0-dev.21) opened P2 or P3 only.
     if (out.lens === 'issue' && out.severity === 'P1') throw new SchemaError(`${f.path}.severity`, 'P2 or P3 for an issue finding', out.severity);
     return { ...out, ...(milestone === undefined ? {} : { milestone }), ...(cause === undefined ? {} : { cause }), ...(lane === undefined ? {} : { lane }) };
   }),
@@ -2390,7 +2399,7 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
       observations: f.get('observations', sortedBy(observationKey, (k: ObservationKey) => `${k.treeSha}/${k.lane}/${k.laneRev}/${k.envId}`)),
     };
     if (out.vector.visionSha256 !== out.visionSha256) throw new SchemaError(`${f.path}.vector.visionSha256`, out.visionSha256, out.vector.visionSha256);
-    const issues = f.optional('issues', checkpointIssues);
+    const issues = f.optional('issues', issuesLegacy<unknown>('checkpoint-inputs.issues'));
     const corpusSha256 = f.optional('corpusSha256', sha256R);
     return { ...out, ...(issues === undefined ? {} : { issues }), ...(corpusSha256 === undefined ? {} : { corpusSha256 }) };
   }),

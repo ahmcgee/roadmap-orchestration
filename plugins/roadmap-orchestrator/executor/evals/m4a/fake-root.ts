@@ -4,7 +4,7 @@
 // the orchestrate skill's protocol (skills/orchestrate/SKILL.md) and replays the golden Phase-0 outputs (golden.ts)
 // through the staged plugin's real CLI (stage-cli.ts, a host dir of the fixture's own):
 //
-//   turn 1     the issue policy (`roadmap issues`), then the bootstrap questions (K, the first slice)
+//   turn 1     the bootstrap questions (K, the first slice)
 //   answers    the bootstrap commit on `roadmap-work` (K, the curated corpus, the journeys), arc 1's Phase 0, start
 //   wake-ups   `pack-review` (blocking): fix guard's spec, `apply` (a new key: the superseding review);
 //              `run: complete`: `roadmap pr`, the brief (never acked: the owner has acknowledged none), `chain status`
@@ -18,10 +18,9 @@
 //                    otherwise; after the start `chain status` lists nothing), run-only cutoff before its start, so
 //                    notice's admission is the item's to hold. Arc 2's
 //                    wakes, each synchronised on an event rather than a time: `run: blocked` (cutoff merged, notice
-//                    behind run-only): read status, release the audit waiting for this wake (scenario.ts);
-//                    `issue-policy-untrusted`: read the hold, ask the owner to restrict issue creation; on the answer,
-//                    ack, wait in turn (status) for the bundle's drift checkpoint, lift run-only, wait for notice's
-//                    hung `slow` lane and pause notice; `run: held` (with the bundle's divergence digest): resume
+//                    behind run-only): read status, release the audit waiting for this wake (scenario.ts), wait in
+//                    turn for the bundle's drift checkpoint, lift run-only, wait for notice's hung `slow` lane and
+//                    pause notice; `run: held` (with the bundle's divergence digest): resume
 //                    notice and log the intervention (OP-1); after arc 2, `nextStart` refuses `limit`: the fixture
 //                    still composes arc 3 (applying arc 2's converted admit as T-25) and shows `phase0 check` and
 //                    `start` refuse it `chain-invalid{limit}`, then stops `k-limit`
@@ -56,8 +55,8 @@ import {
   type ArcNo, ARC1_CURATION, ARC1_QUESTION, CENSUS_OTHERS, CORPUS_ROOT, DIRECTION, FILES, LANES, MAPPING, OBLIGATIONS, SLICES, SLOW_LANE, TEST_PATHS, UNITS, corpusFor,
   PASS_PATH, specLane, specOf, suiteLanes, unitsOf,
 } from './golden.ts';
-import { MAIN, PLANT, layout } from './layout.ts';
-import { BLOCKED_SEEN_BARRIER, CHECKPOINT_AMENDMENT, DRIFT_CHECKPOINT, FLOW_1, FLOW_2, SOAK_DECLINED } from './scenario.ts';
+import { MAIN, layout } from './layout.ts';
+import { BLOCKED_SEEN_BARRIER, CHECKPOINT_AMENDMENT, DRIFT_CHECKPOINT, FLOW_1, FLOW_2 } from './scenario.ts';
 
 export const FAKE_SCRIPTS = ['story', 'vision-silent'] as const;
 export type FakeScript = (typeof FAKE_SCRIPTS)[number];
@@ -79,9 +78,8 @@ type ArcState = { n: ArcNo; arc: string; inputs: string; baseline: string };
 type State = {
   session: string;
   script: FakeScript;
-  phase: 'new' | 'bootstrap-asked' | 'running' | 'cutoff-asked' | 'policy-asked' | 'stopped';
+  phase: 'new' | 'bootstrap-asked' | 'running' | 'cutoff-asked' | 'stopped';
   arcs: ArcState[];
-  policyItem: string | null;
   packFixed: boolean;
   /** Arc 2's blocked wake came and released the audit waiting for it (scenario.ts BLOCKED_SEEN_BARRIER). */
   blockedSeen: boolean;
@@ -100,7 +98,6 @@ type Status = Readonly<{
   needsUser: readonly Readonly<{ id: string; reason: string; blocking: boolean }>[];
   holds: readonly string[];
   units: readonly Readonly<{ unit: string; state: string; waitingFor: unknown; running: Readonly<{ stage: string; lane: Readonly<{ id: string; set: string }> | null }> | null }>[];
-  issues: Readonly<{ intake: readonly Readonly<{ job: string }>[] }> | null;
   opportunities: readonly Readonly<{ id: string; clauses: readonly string[]; units: readonly string[] }>[];
 }>;
 const SLEEP = new Int32Array(new SharedArrayBuffer(4));
@@ -309,15 +306,13 @@ function dispositions(c: Ctx, n: ArcNo, previous: ArcState | undefined, baseline
   return { debt, amendments };
 }
 
-/** Composes arc n's inputs (pin, capture, obligations, specs, ledger, Phase-0 record, plan), its branch, and checks it. */
+/** Composes arc n's inputs (pin, obligations, specs, ledger, Phase-0 record, plan), its branch, and checks it. */
 function composeArc(c: Ctx, n: ArcNo, baseline: string, opts: Readonly<{ answer?: Readonly<{ answer: string; at: string }>; previous?: ArcState & { head: string }; draft?: 'vision-silent' }> = {}): ArcState {
   const l = layout(c.dir);
   const arc = fakeArc(c.dir, n);
   const inputs = join(l.inputs, arc);
   mkdirSync(inputs, { recursive: true });
   const pinOut = JSON.parse(c.t.roadmap(['corpus', 'pin', '--repo', l.product, '--commit', baseline, '--baseline', baseline, '--out', join(inputs, 'corpus.json')])) as { pin: Pin };
-  const captured = JSON.parse(c.t.roadmap(['issues', '--repo', l.product, '--out', join(inputs, 'issues.json')])) as { sha256: string };
-  const capture = JSON.parse(readFileSync(join(inputs, 'issues.json'), 'utf8')) as { issues: readonly { id: string }[] };
   const units = opts.draft === undefined ? unitsOf(n) : UNITS.filter((u) => u.id === 'dayview');
   const obligationsN: ArcNo = opts.draft === undefined ? n : 1;
   const obligations = obligationsOf(obligationsN, pinOut.pin);
@@ -337,12 +332,6 @@ function composeArc(c: Ctx, n: ArcNo, baseline: string, opts: Readonly<{ answer?
   }
   const { debt, amendments } = dispositions(c, n, opts.previous, baseline);
   const question = opts.answer === undefined ? { ...ARC1_QUESTION, state: { type: 'open' } } : { ...ARC1_QUESTION, state: { type: 'answered', ...opts.answer } };
-  const intake = capture.issues.map((i) => ({
-    issue: i.id,
-    outcome: n === 1 && i.id === 'issue-1' ? { type: 'acted', on: { type: 'units', ids: ['guard'] } }
-      : i.id === PLANT.soakIssue ? { type: 'none', reason: SOAK_DECLINED }
-        : { type: 'none', reason: n === 1 ? 'out of this slice: the windows view is not in it' : 'handled in arc 1 (see its intake)' },
-  }));
   // Arc 1 writes the corpus's suite gate (plant S); a later arc carries the previous arc's suite lanes as they ended.
   const previousRef = opts.previous === undefined ? null : readArcRef(absPath(l.product), arcId(opts.previous.arc));
   const suite = previousRef === null ? suiteLanes(false) : JSON.parse(JSON.stringify(previousRef.plan.suite.lanes)) as unknown;
@@ -352,16 +341,14 @@ function composeArc(c: Ctx, n: ArcNo, baseline: string, opts: Readonly<{ answer?
     curation: n === 1 ? ARC1_CURATION : [{ tier: 'structural', what: n === 2 ? 'applied arc-1/M-1 as T-24; T-23 replaces T-9 per the owner\'s answer to P-1' : 'added the harbour master\'s day view as T-25', files: n === 2 ? ['0030_Bookings.md', '0040_Notifications.md'] : ['0060_Operations.md'], rules: n === 2 ? ['T-23', 'T-24'] : ['T-25'] }],
     corpusDivergences: n === 1 ? [{ tier: 'semantic', what: 'removed the busy-week override that let the harbour master double-book a berth: V-2 says never', preimage, cites: ['V-2'], rules: ['T-7'] }] : [],
     questions: opts.draft === 'vision-silent' ? [{ ...ARC1_QUESTION, state: { type: 'open' } }] : [question],
-    debt, amendments,
-    issueCapture: { file: 'issues.json', sha256: captured.sha256 },
-    intake, slice,
+    debt, amendments, slice,
   }));
   writeFile(join(inputs, 'plan.json'), json({
     schema: 'roadmap/plan-m1', arc, integrationBranch: `arc/${arc}`, baseline, worktreeRoot: l.worktrees,
     contracts: [], rulings: 'rulings.md', corpus: 'corpus.json', phase0: 'phase0.json', direction: DIRECTION,
     suite: { lanes: suite },
     resources: [],
-    // Arc 2 audits every publication: cutoff's audit is the one whose checkpoint capture meets the flipped policy.
+    // Arc 2 audits every publication: cutoff's audit is the one whose checkpoint admits the opportunity.
     holistic: { advances: slice.advances, obligations: 'obligations.json', audit: { every: n === 2 ? 1 : 2, lenses: ['vision'] } },
     limits: { convergenceK: 3 },
     units: units.map((u) => ({ id: u.id, spec: `${u.id}.json`, risk: u.risk, scope: u.scope, resources: [], after: u.after.filter((a) => units.some((x) => x.id === a)) })),
@@ -424,15 +411,6 @@ function bootstrapArc1(c: Ctx, k: string): ArcState {
   return a;
 }
 
-/**
- * Tests: the bootstrap and arc 1's inputs in a fresh fixture (staged plugin and fake shims in place), as the story's
- * second turn writes them, without starting; returns arc 1's plan file. Its commands' events go to `sink`.
- */
-export function prepareArc1(dir: string, sink: Sink = () => {}): string {
-  const state: State = { session: 'prepare', script: 'story', phase: 'bootstrap-asked', arcs: [], policyItem: null, packFixed: false, blockedSeen: false, paused: null, p1: null, flowDone: false, flowRejected: false };
-  return planOf(bootstrapArc1({ t: new Turn(state.session, dir, sink), dir, state }, '1'));
-}
-
 function bootstrap(c: Ctx, answer: string): string {
   const k = /K\s*=\s*(\d+)/.exec(answer)?.[1];
   if (k === undefined) throw new Error(`the owner's answer names no K: ${answer}`);
@@ -477,30 +455,16 @@ function onWake(c: Ctx, prompt: string): string {
     }
     if (w.event === 'units' && w.run === 'blocked' && current.n === 1 && !c.state.flowDone) return c.state.script === 'story' ? flowLoop(c, current) : flowNoAction(c, current);
     if (w.event === 'units' && w.run === 'blocked' && current.n === 2 && !c.state.blockedSeen) {
-      // cutoff merged and notice waits behind the run-only limit, as intended: nothing to do. The fixture's audit of
-      // cutoff waits for this wake (scenario.ts BLOCKED_SEEN_BARRIER), so its checkpoint's item is a wake of its own
-      // whatever the timing.
+      // cutoff merged and notice waits behind the run-only limit, as intended. The fixture's audit of cutoff waits for
+      // this wake (scenario.ts BLOCKED_SEEN_BARRIER), so its checkpoints run while this turn supervises (`superviseArc2`).
       const s = JSON.parse(c.t.roadmap(['status', '--repo', l.product, '--arc', current.arc])) as Status;
       const notice = unitOf(s, 'notice');
       if (unitOf(s, 'cutoff').state !== 'merged' || notice.state !== 'awaiting-admission') throw new Error(`blocked, but not behind the run-only limit: ${JSON.stringify(s.units)}`);
       writeFileSync(join(layout(c.dir).fake, 'arc-2', `${BLOCKED_SEEN_BARRIER}.release`), '', { flag: 'wx' });
       c.state.blockedSeen = true;
-      return `cutoff merged; notice waits behind my run-only limit until the checkpoint has read the issues. ${RUNNING(current)}`;
+      return superviseArc2(c, current);
     }
     if (w.event === 'units' && w.run === 'held' && c.state.paused !== null) return resumePaused(c, current);
-    if (w.event === 'needs-user' && w.reason === 'issue-policy-untrusted') {
-      // The arc-wide hold, as status shows it while the item is open. notice stays behind the run-only limit until the
-      // checkpoint after the fix has decided (`policyFixed`).
-      const holds = (JSON.parse(c.t.roadmap(['status', '--repo', l.product, '--arc', current.arc])) as Status).holds;
-      if (!holds.includes('issue-policy-untrusted')) throw new Error(`the open issue-policy-untrusted item holds nothing: holds ${JSON.stringify(holds)}`);
-      c.state.policyItem = w.id ?? null;
-      c.state.phase = 'policy-asked';
-      return [
-        'The forge now lets anyone open issues on this public repo (PUBLIC + ALL): the checkpoint will not read issues until that is fixed, and admission is held meanwhile.',
-        '',
-        '1. Please restrict issue creation to collaborators (or disable issues), then tell me. Working assumption: the arc stays held until you do.',
-      ].join('\n');
-    }
     if (w.event === 'units' && w.run === 'complete') return arcComplete(c, current);
   }
   return `Nothing for me in this wake-up. ${RUNNING(current)}`;
@@ -631,7 +595,7 @@ function arc2(c: Ctx, reply: string): string {
   const a = composeArc(c, 2, baseline, { answer, previous: { ...one, head } });
   c.state.arcs.push(a);
   phase0Check(c, a);
-  // notice waits behind cutoff (run-only), so its admission comes after the first checkpoint's capture.
+  // notice waits behind cutoff (run-only), so its admission comes after the bundle's drift checkpoint (`superviseArc2`).
   mkdirSync(join(l.product, '.git', 'roadmap-runtime', a.arc), { recursive: true });
   c.t.roadmap(['run-only', 'cutoff', '--repo', l.product, '--arc', a.arc]);
   start(c, a);
@@ -655,21 +619,18 @@ function logIntervention(c: Ctx, arc: string, lever: string, bullets: Readonly<{
 }
 
 /**
- * The owner restored the issue policy: ack the item, then supervise in this turn, each step waiting on a state status
- * shows, never on time. The checkpoint after the ack admits the opportunity `fits` and converts the over-budget day view
+ * Arc 2's blocked wake, after releasing cutoff's audit: supervise in this turn, each step waiting on a state the journal
+ * or status shows, never on time. The audit's checkpoint admits the opportunity `fits` and converts the over-budget day view
  * (scenario.ts); its bundle departs from the plan, so a non-blocking `divergence-digest` item is raised. Once the drift
  * audit that bundle owes has its checkpoint (`DRIFT_CHECKPOINT`) decided, the run-only limit goes and notice runs. Its
  * `slow` lane hangs (golden.ts SLOW_LANE): the root agent pauses notice and ends the turn. The next wake therefore holds
  * exactly the digest and the run newly `held`, both open before the watch starts (`resumePaused` follows).
  */
-function policyFixed(c: Ctx): string {
-  const a = c.state.arcs.at(-1)!;
+function superviseArc2(c: Ctx, a: ArcState): string {
   const l = layout(c.dir);
   const at = ['--repo', l.product, '--arc', a.arc];
-  if (c.state.policyItem === null) throw new Error('no policy item to ack');
-  c.t.roadmap(['ack', c.state.policyItem, ...at]);
-  c.state.policyItem = null;
-  const decided = c.t.until(a.arc, `checkpoint ${DRIFT_CHECKPOINT} decided`, (s) => (s.issues?.intake ?? []).some((x) => x.job === DRIFT_CHECKPOINT));
+  c.t.untilFact(a.arc, `checkpoint ${DRIFT_CHECKPOINT} decided`, (facts) => facts.find((x) => x.kind === 'bundle-decided' && x.job === DRIFT_CHECKPOINT));
+  const decided = JSON.parse(c.t.roadmap(['status', ...at])) as Status;
   const o = decided.opportunities;
   if (o.length !== 1 || o[0]!.units.join() !== 'fits') throw new Error(`the checkpoint should have admitted fits as the one opportunity: ${JSON.stringify(o)}`);
   if (!decided.needsUser.some((x) => x.reason === 'divergence-digest')) throw new Error(`the bundle raised no divergence digest: ${JSON.stringify(decided.needsUser)}`);
@@ -678,14 +639,13 @@ function policyFixed(c: Ctx): string {
   c.state.paused = { unit: 'notice', lane: JSON.stringify(unitOf(hung, 'notice').running!.lane) };
   c.t.roadmap(['pause', 'notice', ...at]);
   c.t.until(a.arc, 'notice held', (s) => unitOf(s, 'notice').state === 'held');
-  c.state.phase = 'running';
   return [
-    `The owner restricted issue creation; acked the item. The checkpoint admitted fits as this arc's opportunity (O-1, V-7) and converted the day view into an amendment (D-1 is in the digest); then I lifted the run-only limit.`,
+    `cutoff merged; notice waited behind my run-only limit for the checkpoints. The checkpoint admitted fits as this arc's opportunity (O-1, V-7) and converted the day view into an amendment (D-1 is in the digest); then I lifted the run-only limit.`,
     `notice's ${SLOW_LANE.id} lane hung: I paused notice and resume it on the next wake. ${RUNNING(a)}`,
   ].join('\n');
 }
 
-/** The wake after `policyFixed`: notice is held by the root agent's own pause. Resume it and log the intervention. */
+/** The wake after `superviseArc2`: notice is held by the root agent's own pause. Resume it and log the intervention. */
 function resumePaused(c: Ctx, a: ArcState): string {
   const paused = c.state.paused;
   if (paused === null) throw new Error('nothing paused to resume');
@@ -703,13 +663,11 @@ function resumePaused(c: Ctx, a: ArcState): string {
 }
 
 function turn(c: Ctx, prompt: string): string {
-  const l = layout(c.dir);
   switch (c.state.phase) {
     case 'new':
-      c.t.roadmap(['issues', '--repo', l.product]);
       c.state.phase = 'bootstrap-asked';
       return [
-        'The issue policy is trusted. The corpus guide and the confirmed vision are committed already; two things before the first arc:',
+        'The corpus guide and the confirmed vision are committed already; two things before the first arc:',
         '',
         '1. How many arcs may I run past your last acknowledged brief before I stop and wait (K)? Working assumption: 1.',
         `2. Do you accept ${SLICES[1].advances.join(' and ')} as the first slice (${SLICES[1].why})? Working assumption: yes.`,
@@ -720,8 +678,6 @@ function turn(c: Ctx, prompt: string): string {
       return onWake(c, prompt);
     case 'cutoff-asked':
       return arc2(c, prompt);
-    case 'policy-asked':
-      return policyFixed(c);
     case 'stopped':
       throw new Error('the session has stopped');
   }
@@ -743,7 +699,7 @@ if (import.meta.main) {
   let state: State;
   if (resume === undefined) {
     if (existsSync(statePath)) throw new Error(`${statePath} exists: a fresh session in a used fixture`);
-    state = { session: randomUUID(), script: fakeScript(script), phase: 'new', arcs: [], policyItem: null, packFixed: false, blockedSeen: false, paused: null, p1: null, flowDone: false, flowRejected: false };
+    state = { session: randomUUID(), script: fakeScript(script), phase: 'new', arcs: [], packFixed: false, blockedSeen: false, paused: null, p1: null, flowDone: false, flowRejected: false };
   } else {
     state = JSON.parse(readFileSync(statePath, 'utf8')) as State;
     if (state.session !== resume) throw new Error(`resume ${resume}, but the session is ${state.session}`);

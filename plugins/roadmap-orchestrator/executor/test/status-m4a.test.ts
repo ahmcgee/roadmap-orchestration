@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { describe, it, test } from 'node:test';
 import type { Event, Fact } from '../src/core/events.ts';
 import {
-  amendmentIdOf, arcId, debtId, divergenceIdOf, envId, invocationId, issueId, jobId, opKey, sha, sha256, unitId,
+  amendmentIdOf, arcId, debtId, divergenceIdOf, envId, invocationId, jobId, opKey, sha, sha256, unitId,
 } from '../src/core/ids.ts';
 import { debtKey } from '../src/debt/ledger.ts';
 import { witnessDir } from '../src/git/snapshot.ts';
@@ -64,7 +64,7 @@ describe('status M4a', () => {
       // Before the first admission a pack review is due and holds every admission (K14, H9), with the baseline owed.
       assert.deepEqual(s.packReview, { state: 'due', reviews: [] });
       assert.deepEqual(s.holds, ['baseline', 'pack-review']);
-      assert.deepEqual([s.amendments, s.debt, s.issues], [[], { banked: [], ledger: [] }, { lastCapture: null, intake: [] }]);
+      assert.deepEqual([s.amendments, s.debt], [[], { banked: [], ledger: [] }]);
       // The chain of a bootstrap arc integrating on main: position 1, acked, no PR; no K committed in this repo.
       // The arc has no ref yet, so the next start waits for it.
       assert.deepEqual(s.chain, {
@@ -84,9 +84,10 @@ describe('status M4a', () => {
           { index: 1, severity: 'note', target: { type: 'plan' }, claim: 'the cut line is vague', evidence: [] },
         ],
       } as Fact);
-      // A checkpoint capture and its intake; an amendment from a divergence; a banked note.
-      r.journal.fact({ kind: 'issues-captured', job: jobId('ckpt', 1), sha256: sha256('c'.repeat(64)), repo: DEFAULT_REPO, filtered: { comments: 2, pullRequests: 1 } } as Fact);
-      r.journal.fact({ kind: 'issue-intake', job: jobId('ckpt', 1), issue: issueId('issue-3'), outcome: { type: 'none', reason: 'tracked by u1' } } as Fact);
+      // An earlier executor's checkpoint capture and its intake (the issues integration was removed in 1.0.0-dev.21: read and
+      // ignored, scaffolding); an amendment from a divergence; a banked note.
+      r.journal.fact({ kind: 'issues-captured', job: jobId('ckpt', 1), sha256: sha256('c'.repeat(64)), repo: DEFAULT_REPO, filtered: { comments: 2, pullRequests: 1 } } as unknown as Fact);
+      r.journal.fact({ kind: 'issue-intake', job: jobId('ckpt', 1), issue: 'issue-3', outcome: { type: 'none', reason: 'tracked by u1' } } as unknown as Fact);
       r.journal.fact({
         kind: 'corpus-amendment', id: amendmentIdOf(1), source: { type: 'divergence', divergence: divergenceIdOf(1) }, rules: [], proposal: 'Name the tide window.', why: 'D-1', evidence: [],
       } as Fact);
@@ -104,10 +105,7 @@ describe('status M4a', () => {
         reviews: [{ job: 'review-1', planRev: 1, key: 'b'.repeat(64), outcome: 'completed', blocking: 1, notes: 1, needsUser: null, superseded: false }],
       });
       assert.ok(s.holds.includes('pack-review'));
-      assert.deepEqual(s.issues, {
-        lastCapture: { job: 'ckpt-1', sha256: 'c'.repeat(64), repo: DEFAULT_REPO, filtered: { comments: 2, pullRequests: 1 } },
-        intake: [{ job: 'ckpt-1', issue: 'issue-3', outcome: { type: 'none', reason: 'tracked by u1' } }],
-      });
+      assert.equal('issues' in s, false, 'status shows no issues');
       assert.deepEqual(s.amendments, [{ id: 'M-1', source: { type: 'divergence', divergence: 'D-1' }, rules: [], proposal: 'Name the tide window.', why: 'D-1' }]);
       assert.deepEqual(s.debt, {
         banked: [{ id: 'B-1', bankReason: 'gate-note', what, seq: s.debt?.banked[0]?.seq }],

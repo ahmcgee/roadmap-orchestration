@@ -2,20 +2,16 @@
 // shared startup rows report (`phase0Rows`, C1's src/phase0/rows.ts, run by `start`, `apply` and `phase0 check`), the
 // brief ack marker and the brief payload (C4). Types and readers only.
 import { OUTCOME_STAGES, type OutcomeStage } from '../core/events.ts';
-import { scopeOverlapFixDefault } from '../core/upgrade.ts';
+import { issuesIgnored, scopeOverlapFixDefault } from '../core/upgrade.ts';
 import {
-  type AmendmentRef, type ArcId, type ClauseId, type DebtId, type DivergenceId, type IssueId, type JobId, type NeedsUserId, type ObligationId, type PhaseQuestionId,
-  type RuleId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, amendmentRef, arcId, briefId, clauseId, debtId, divergenceId, issueId, issueNumber,
+  type AmendmentRef, type ArcId, type ClauseId, type DebtId, type DivergenceId, type JobId, type NeedsUserId, type ObligationId, type PhaseQuestionId,
+  type RuleId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, amendmentRef, arcId, briefId, clauseId, debtId, divergenceId,
   amendmentRefKey, compareIds, idList, jobIdOf, needsUserId, obligationId, phaseQuestionId, ruleId, sha, sha256, unitId, visionClauseId, type BriefId,
   type FindingId, type OpportunityId, type WitnessItemId, findingId, opportunityId, witnessItemId, type MilestoneId, milestoneId,
 } from '../core/ids.ts';
 import { type Read, SchemaError, arrayOf, assertUnique, bool, literal, nat, nullable, object, oneOf, positive, sortedBy, str, tagged } from '../core/validate.ts';
 import { type IsoTime, type PlanPath, type RepoPath, isoTime, planPath, repoPath } from '../core/values.ts';
 import { type DebtDisposition, debtDisposition } from '../debt/types.ts';
-import {
-  type IssueIntakeOutcome, type Phase0IntakeOutcome, type RepoIdentity, ISSUE_CREATION_POLICIES, REPO_VISIBILITIES, type IssueCreationPolicy,
-  type RepoVisibility, issueIntakeOutcome, phase0IntakeOutcome, repoIdentity,
-} from '../forge/types.ts';
 import { CENSUS_STATES, CONVERSION_REASONS, DIVERGENCE_KINDS, type ConversionReason, type DivergenceKind } from '../holistic/types.ts';
 
 /** A census state's name (`obligation`, `out-of-slice`, `untestable`, `prod-only`). */
@@ -63,10 +59,6 @@ export type Phase0Record = Readonly<{
   debt: readonly Readonly<{ id: DebtId; disposition: DebtDisposition }>[];
   /** One per amendment of the previous arc's verified ref, ascending. */
   amendments: readonly Readonly<{ id: AmendmentRef; disposition: AmendmentDisposition }>[];
-  /** The canonical issue capture beside the plan (`roadmap issues --out`, H8, R30). */
-  issueCapture: Readonly<{ file: PlanPath; sha256: Sha256Hex }>;
-  /** One outcome per IssueId of the capture, ascending by issue number. */
-  intake: readonly Readonly<{ issue: IssueId; outcome: Phase0IntakeOutcome }>[];
   slice: Readonly<{ advances: readonly VisionClauseId[]; why: string }>;
 }>;
 
@@ -113,8 +105,6 @@ export const phase0Record: Read<Phase0Record> = object((f) => {
     questions: f.get('questions', arrayOf(phaseQuestion)),
     debt: f.get('debt', arrayOf(object((g) => ({ id: g.get('id', (v, p) => debtId(v, p)), disposition: g.get('disposition', debtDisposition) })))),
     amendments: f.get('amendments', sortedBy(object((g) => ({ id: g.get('id', (v, p) => amendmentRef(v, p)), disposition: g.get('disposition', amendmentDisposition) })), (a) => amendmentRefKey(a.id), { order: 'by arc, then id', legacyKey: (a) => a.id })),
-    issueCapture: f.get('issueCapture', object((g) => ({ file: g.get('file', (v, p) => planPath(v, p)), sha256: g.get('sha256', sha256R) }))),
-    intake: f.get('intake', arrayOf(object((g) => ({ issue: g.get('issue', (v, p) => issueId(v, p)), outcome: g.get('outcome', phase0IntakeOutcome) })))),
     slice: f.get('slice', object((g) => ({ advances: g.get('advances', idList(vidR, { nonEmpty: true, legacyStringOrder: true })), why: g.get('why', str) }))),
   };
   out.questions.forEach((q, i) => {
@@ -124,9 +114,11 @@ export const phase0Record: Read<Phase0Record> = object((f) => {
   out.debt.forEach((d, i) => {
     if (i > 0 && !(compareIds(out.debt[i - 1]!.id, d.id) < 0)) throw new SchemaError(`${f.path}.debt[${i}]`, 'one disposition per item, ascending by number', d.id);
   });
-  out.intake.forEach((x, i) => {
-    if (i > 0 && !(issueNumber(out.intake[i - 1]!.issue) < issueNumber(x.issue))) throw new SchemaError(`${f.path}.intake[${i}]`, 'one outcome per issue, ascending by number', x.issue);
-  });
+  // A record written for an earlier executor names its issue capture and intake (the issues integration was removed in
+  // 1.0.0-dev.21): read and ignored (`issuesIgnored`; scaffolding).
+  for (const legacy of ['issueCapture', 'intake'] as const) {
+    if (f.optional(legacy, (v) => v) !== undefined) issuesIgnored(`phase0.${legacy}`);
+  }
   return out;
 });
 
@@ -179,9 +171,6 @@ export type Phase0Problem =
   | Readonly<{ type: 'obligation-rule-unresolved'; obligation: ObligationId }>
   | Readonly<{ type: 'debt-undispositioned' | 'debt-kept-twice-unasked'; id: DebtId }>
   | Readonly<{ type: 'amendment-undispositioned'; id: AmendmentRef }>
-  | Readonly<{ type: 'intake-missing' | 'intake-unknown' | 'intake-duplicate'; issue: IssueId }>
-  | Readonly<{ type: 'capture-missing' }>
-  | Readonly<{ type: 'capture-foreign'; expected: RepoIdentity; actual: RepoIdentity }>
   | Readonly<{ type: 'question-reused'; id: PhaseQuestionId }>
   /**
    * The owner-answer channel (src/answers.ts): a question whose latest recorded owner answer (`roadmap answer`) the new
@@ -197,8 +186,6 @@ export type Phase0Problem =
   | Readonly<{ type: 'spec-census-mismatch'; unit: UnitId; item: ObligationId | ClauseId | WitnessItemId; rule: RuleId; state: CensusStateName }>;
 
 const ruleSet: Read<readonly RuleId[]> = idList(ruleR);
-const issueProblem = (type: 'intake-missing' | 'intake-unknown' | 'intake-duplicate'): Read<Phase0Problem> =>
-  object((f): Phase0Problem => ({ type: f.get('type', literal(type)), issue: f.get('issue', (v, p) => issueId(v, p)) }));
 const debtProblem = (type: 'debt-undispositioned' | 'debt-kept-twice-unasked'): Read<Phase0Problem> =>
   object((f): Phase0Problem => ({ type: f.get('type', literal(type)), id: f.get('id', (v, p) => debtId(v, p)) }));
 export const phase0Problem: Read<Phase0Problem> = tagged('type', {
@@ -208,11 +195,6 @@ export const phase0Problem: Read<Phase0Problem> = tagged('type', {
   'debt-undispositioned': debtProblem('debt-undispositioned'),
   'debt-kept-twice-unasked': debtProblem('debt-kept-twice-unasked'),
   'amendment-undispositioned': object((f): Phase0Problem => ({ type: f.get('type', literal('amendment-undispositioned')), id: f.get('id', (v, p) => amendmentRef(v, p)) })),
-  'intake-missing': issueProblem('intake-missing'),
-  'intake-unknown': issueProblem('intake-unknown'),
-  'intake-duplicate': issueProblem('intake-duplicate'),
-  'capture-missing': object((f): Phase0Problem => ({ type: f.get('type', literal('capture-missing')) })),
-  'capture-foreign': object((f): Phase0Problem => ({ type: f.get('type', literal('capture-foreign')), expected: f.get('expected', repoIdentity), actual: f.get('actual', repoIdentity) })),
   'question-reused': object((f): Phase0Problem => ({ type: f.get('type', literal('question-reused')), id: f.get('id', (v, p) => phaseQuestionId(v, p)) })),
   'answer-unapplied': object((f): Phase0Problem => ({ type: f.get('type', literal('answer-unapplied')), question: f.get('question', (v, p) => phaseQuestionId(v, p)) })),
   'spec-census-mismatch': object((f): Phase0Problem => ({
@@ -262,10 +244,6 @@ export const nextStart: Read<NextStart> = tagged('reason', {
   'k-unset': object((f): NextStart => ({ allowed: f.get('allowed', literal(false)), reason: f.get('reason', literal('k-unset')) })),
   'previous-incomplete': object((f): NextStart => ({ allowed: f.get('allowed', literal(false)), reason: f.get('reason', literal('previous-incomplete')), arc: f.get('arc', (v, p) => arcId(v, p)) })),
 });
-
-/** `issue-policy-untrusted{visibility, policy}` (OR-L6): the policy the forge answered. */
-export type UntrustedPolicy = Readonly<{ visibility: RepoVisibility; policy: IssueCreationPolicy }>;
-export const untrustedPolicyFields = { visibility: oneOf(REPO_VISIBILITIES), policy: oneOf(ISSUE_CREATION_POLICIES) } as const;
 
 // ---------------------------------------------------------------------------------------------------
 // The brief ack log (K9, K10, H6): write-once files in `$(git-common-dir)/roadmap/acks/`, `<briefId>.pending.json`
@@ -336,8 +314,6 @@ export type BriefArc = Readonly<{
     banked: readonly Readonly<{ id: DebtId; what: string }>[];
     dispositioned: readonly Readonly<{ id: DebtId; disposition: DebtDisposition }>[];
   }>;
-  /** `job` null: the arc's Phase-0 intake; else a checkpoint's. */
-  intake: readonly (Readonly<{ issue: IssueId; job: null; outcome: Phase0IntakeOutcome }> | Readonly<{ issue: IssueId; job: JobId; outcome: IssueIntakeOutcome }>)[];
   questions: readonly Readonly<{ id: PhaseQuestionId; rank: number; text: string; assumption: string; state: QuestionState }>[];
   /** M4a rev 3 (OR-A1): `admit` names the converted checkpoint admit an amendment came from (R35); null otherwise. */
   amendments: readonly Readonly<{ id: AmendmentRef; rules: readonly RuleId[]; proposal: string; admit: BriefConversion | null }>[];
@@ -422,11 +398,6 @@ const briefPr: Read<BriefPr> = tagged('type', {
   unavailable: object((f): BriefPr => ({ type: f.get('type', literal('unavailable')), reason: f.get('reason', str) })),
 });
 const divR: Read<DivergenceId> = (v, p) => divergenceId(v, p);
-const briefIntake: Read<BriefArc['intake'][number]> = object((f) => {
-  const issue = f.get('issue', (v, p) => issueId(v, p));
-  const job = f.get('job', nullable((v, p) => jobIdOf(v, p)));
-  return job === null ? { issue, job, outcome: f.get('outcome', phase0IntakeOutcome) } : { issue, job, outcome: f.get('outcome', issueIntakeOutcome) };
-});
 const briefConversion: Read<BriefConversion> = object((g) => ({
   job: g.get('job', (v, p) => jobIdOf(v, p)), index: g.get('index', nat), reason: g.get('reason', oneOf(CONVERSION_REASONS)),
 }));
@@ -447,7 +418,6 @@ const briefArc: Read<BriefArc> = object((f) => ({
     banked: g.get('banked', arrayOf(object((h) => ({ id: h.get('id', (v, p) => debtId(v, p)), what: h.get('what', str) })))),
     dispositioned: g.get('dispositioned', arrayOf(object((h) => ({ id: h.get('id', (v, p) => debtId(v, p)), disposition: h.get('disposition', debtDisposition) })))),
   }))),
-  intake: f.get('intake', arrayOf(briefIntake)),
   questions: f.get('questions', arrayOf(object((g) => ({
     id: g.get('id', (v, p) => phaseQuestionId(v, p)), rank: g.get('rank', positive), text: g.get('text', str), assumption: g.get('assumption', str), state: g.get('state', questionState),
   })))),

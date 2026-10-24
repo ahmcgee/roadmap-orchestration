@@ -57,8 +57,7 @@ judgment is needed. Builds run on an efficient model (Sonnet 5.5 under the `clau
 advisor; Opus judges plan-check and the gate at every risk tier.
 
 **1. Bootstrap, once per repo.** You write the target state: detailed documents of what the product must become,
-the corpus. Then you run `/roadmap-orchestrator:orchestrate`. The architect checks the repo's issue policy and
-writes the corpus guide, then runs the `vision` skill: it distils your vision in dialogue, one question at a time,
+the corpus. Then you run `/roadmap-orchestrator:orchestrate`. The architect writes the corpus guide, then runs the `vision` skill: it distils your vision in dialogue, one question at a time,
 and plays back the decisions it would make on your behalf. You confirm it explicitly, set K (how many arcs may run
 past your last acknowledged check-in) and pick the first slice of the vision to build. The architect compiles
 `.roadmap/vision.json` and commits `.roadmap/`. It offers a boot hook that brings a dead arc back after a host
@@ -207,7 +206,7 @@ failures or review comments on a PR become fix units in the arc, never hand edit
 plugins/roadmap-orchestrator/
   .claude-plugin/plugin.json
   executor/                         # the 1.0 executor (TypeScript on Node 24)
-  skills/orchestrate/               # SKILL.md, reference.md (every command), RATIONALE-1.0.md, templates/
+  skills/orchestrate/               # SKILL.md, reference.md (every command), RATIONALE-1.0.md
   skills/vision/                    # SKILL.md: distil and calibrate the arc's vision in dialogue
 docs/flow.svg                       # how an arc runs: simplified overview
 docs/flow-bpmn.svg                  # how an arc runs: the detailed process in BPMN

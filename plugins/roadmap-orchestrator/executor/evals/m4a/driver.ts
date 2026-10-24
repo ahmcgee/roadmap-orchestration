@@ -15,8 +15,7 @@
 //     the skill's closed set: k-limit, vision-silent, owner);
 //   - a final text ending in numbered questions goes to the owner simulator, its last numbered block only (paid M4a
 //     run 1: a status list and a brief's numbered lines earlier in the text were answered as questions): code answers K (= 1), the first slice
-//     (accepted), the issue policy (the owner restores PUBLIC + COLLABORATORS_ONLY, then says so) and a brief ack (the
-//     owner has read none: never acknowledged); every other question goes to a frontier-medium `claude -p` (fake: a
+//     (accepted) and a brief ack (the owner has read none: never acknowledged); every other question goes to a frontier-medium `claude -p` (fake: a
 //     keyword stub) given only the answer key's owner answers released so far (`from: arc-1-complete` once the first
 //     arc's completion is in its ref), told to answer from them alone, else "no view: keep your working assumption";
 //   - the owner also reads the brief (`roadmap brief --json`, the staged plugin) as a real owner would, and answers
@@ -64,9 +63,6 @@
 // `diagnostics/` keeps the session-end copy of each arc's needs-user files and the turn stderr tails; `costs.jsonl`
 // holds one row per invocation and per turn with the unknowns explicit (transcript.ts).
 //
-// Fake runs add two devices (story only): once the second arc holds the host, the forge flips to PUBLIC + ALL and arc
-// 2's pack review is released from its barrier (scenario.ts), so a checkpoint capture meets an untrusted policy.
-//
 // Fail-fast (M4b, plan "Fixture … the two plants"): plant S is in play only when arc 1's first plan in force has a suite
 // lane whose argv carries `--test-concurrency=1` and `test/unit/*.test.js` as elements (`plantLaneOf`; an `npm test` or a
 // `sh -c` lane cannot be edited in place, RC-4), and that plan has at least MIN_ARC1_UNITS units (a conclusive verdict
@@ -99,12 +95,11 @@ import { absPath, type AbsPath } from '../../src/core/values.ts';
 import { gitCommonDir } from '../../src/git/git.ts';
 import { runDir } from '../../src/input/cli.ts';
 import { PROFILES, type ProfileName } from '../../src/routing/types.ts';
-import { readStore, writeStore } from '../../test/fakes/gh-store.ts';
 import { writeShims } from '../../test/fakes/shim.ts';
 import { type FakeScript, arcShims, fakeHostDir, fakeScript } from './fake-root.ts';
 import { CORPUS_ROOT } from './golden.ts';
 import { type Layout, PLANT, SESSION_END, STOP_REASONS, type StopReason, layout } from './layout.ts';
-import { POLICY_FLIP_BARRIER, arcSteps } from './scenario.ts';
+import { arcSteps } from './scenario.ts';
 import { json } from './setup.ts';
 import { ANSWER_KEY, exportCosts, needles, repositoryPaths, scanTranscript } from './transcript.ts';
 
@@ -261,12 +256,10 @@ function firstArcComplete(product: AbsPath): boolean {
   });
 }
 
-export type OwnerCtx = Readonly<{ l: Layout; env: Readonly<Record<string, string>>; mode: Mode; devices: Devices }>;
-
-const TRUSTED = { visibility: 'PUBLIC', hasIssuesEnabled: true, issueCreationPolicy: 'COLLABORATORS_ONLY' } as const;
+export type OwnerCtx = Readonly<{ l: Layout; env: Readonly<Record<string, string>>; mode: Mode }>;
 
 /** The answers code gives (plan "Driver"), or null for the simulator. */
-export function codeAnswer(c: OwnerCtx, q: string): string | null {
+export function codeAnswer(q: string): string | null {
   // The K question first (paid run 12: its working assumption "I stop until you acknowledge its brief" read as a brief
   // ack, so K was never answered).
   if (/how many arcs/i.test(q)) return 'K = 1.';
@@ -274,14 +267,6 @@ export function codeAnswer(c: OwnerCtx, q: string): string | null {
   if (/\b(acknowledge|ack)\b[^.?]*\bbrief\b/i.test(q)) return 'I have not read the brief yet; do not acknowledge it.';
   // Case-sensitive K (paid run 2: `k-limit` in a brief-ack question matched /\bK\b/i).
   if (/\bK\b(?!-)/.test(q)) return 'K = 1.';
-  if (/issue (creation|policy)|PUBLIC \+ ALL|anyone (can )?open issues/i.test(q)) {
-    const store = readStore(c.l.store);
-    if (store.policy.issueCreationPolicy !== TRUSTED.issueCreationPolicy || store.policy.visibility !== TRUSTED.visibility) {
-      writeStore(c.l.store, { ...store, policy: { ...TRUSTED } });
-      c.devices.policyFix = { at: new Date().toISOString() };
-    }
-    return 'Done: issue creation is restricted to collaborators again.';
-  }
   if (/\b(first|next|this) slice\b/i.test(q) && /\b(accept|agree|approve|ok)\b/i.test(q)) return 'Yes, I accept that slice.';
   return null;
 }
@@ -379,7 +364,7 @@ async function answerFromBrief(c: OwnerCtx, memory: OwnerMemory, log: OwnerExcha
 async function ownerReply(c: OwnerCtx, text: string, memory: OwnerMemory, log: OwnerExchange[]): Promise<string | null> {
   const lines: string[] = [];
   for (const [i, q] of numberedQuestions(text).entries()) {
-    const code = codeAnswer(c, q);
+    const code = codeAnswer(q);
     const answer = code ?? (await simulatorAnswer(c, q));
     log.push({ question: q, answer, by: code === null ? 'simulator' : 'code', via: 'numbered', inTurn: null });
     lines.push(`${/^\s*(\d+)/.exec(q)?.[1] ?? i + 1}. ${answer}`);
@@ -401,11 +386,6 @@ async function ownerReply(c: OwnerCtx, text: string, memory: OwnerMemory, log: O
 // The session
 
 export type Turn = Readonly<{ n: number; kind: 'start' | 'owner' | 'wake' | 'nudge'; prompt: string; session: string | null; result: string | null; exit: number | null; ms: number }>;
-
-export type Devices = {
-  policyFlip: { at: string; arc: string } | null;
-  policyFix: { at: string } | null;
-};
 
 /**
  * `timeout`: the session cap passed between turns; `turn-timeout`: a turn was killed at its cap (never `session-failed`);
@@ -437,7 +417,6 @@ export type Report = Readonly<{
   transcriptHits: readonly string[];
   turns: readonly Turn[];
   owner: readonly OwnerExchange[];
-  devices: Devices;
   scrambled: readonly string[];
   /** Arcs still holding the host when the session ended, stopped by the driver (empty: none did). */
   released: readonly Released[];
@@ -611,7 +590,7 @@ export type Watched = { arc: string | null; arcsSeen: string[]; filter: Actionab
  * deadline; null when there is nothing to wait on (no arc seen, or the last one no longer holds the host and its end was
  * already reported).
  */
-export async function wake(l: Layout, mode: Mode, env: Readonly<Record<string, string>>, w: Watched, deadline: number, onArc: (arc: string) => void): Promise<string | null> {
+export async function wake(l: Layout, mode: Mode, env: Readonly<Record<string, string>>, w: Watched, deadline: number): Promise<string | null> {
   const hostDir = mode.kind === 'real' ? HOST_DIR : absPath(fakeHostDir(l.dir));
   const claim = readClaim(hostDir);
   if (claim !== null && claim.repo === absPath(l.product)) {
@@ -622,7 +601,6 @@ export async function wake(l: Layout, mode: Mode, env: Readonly<Record<string, s
   const held = claim !== null && claim.arc === w.arc;
   if (!held && w.filter.ended(w.arc)) return null;
   const arc = w.arc;
-  onArc(arc);
   const [cmd, args] = roadmapArgv(l, mode, ['watch', '--repo', l.product, '--arc', arc]);
   const child = spawn(cmd, [...args], { cwd: l.product, env, stdio: ['ignore', 'pipe', 'pipe'] });
   const lines: string[] = [];
@@ -839,19 +817,11 @@ export async function drive(dir: string, mode: Mode, options: DriveOptions = {})
   const deadline = startedAt.getTime() + limits.sessionMs;
   const before = mode.kind === 'real' ? forgeCanary() : null;
 
-  const devices: Devices = { policyFlip: null, policyFix: null };
   const owner: OwnerExchange[] = [];
   const turns: Turn[] = [];
   const watched: Watched = { arc: null, arcsSeen: [], filter: new ActionableFilter(Date.now(), HEARTBEAT_MIN) };
-  const ownerCtx: OwnerCtx = { l, env, mode, devices };
+  const ownerCtx: OwnerCtx = { l, env, mode };
   const memory: OwnerMemory = { answered: new Set(), askedAt: new Map(), spendApprovedAt: -1 };
-  const onArc = (arc: string): void => {
-    if (mode.kind !== 'fake' || mode.script !== 'story' || devices.policyFlip !== null || watched.arcsSeen.indexOf(arc) !== 1) return;
-    const store = readStore(l.store);
-    writeStore(l.store, { ...store, policy: { visibility: 'PUBLIC', hasIssuesEnabled: true, issueCreationPolicy: 'ALL' } });
-    writeFileSync(join(l.fake, 'arc-2', `${POLICY_FLIP_BARRIER}.release`), '', { flag: 'wx' });
-    devices.policyFlip = { at: new Date().toISOString(), arc };
-  };
 
   let endedBy: EndedBy = 'timeout';
   let stopReason: StopReason | null = null;
@@ -935,7 +905,7 @@ export async function drive(dir: string, mode: Mode, options: DriveOptions = {})
         nudges = 0;
         continue;
       }
-      const woke = await wake(l, mode, env, watched, deadline, onArc);
+      const woke = await wake(l, mode, env, watched, deadline);
       if (woke === '') break;
       if (woke === null) {
         if (++nudges > MAX_NUDGES) {
@@ -995,7 +965,7 @@ export async function drive(dir: string, mode: Mode, options: DriveOptions = {})
     launch: { envKeys: Object.keys(env).sort(), gh: ghOnPath(l, env), ghConfigDir: env['GH_CONFIG_DIR']!, xdgConfigHome: env['XDG_CONFIG_HOME']!, gitConfigGlobal: env['GIT_CONFIG_GLOBAL']! },
     canary,
     transcriptHits: scanTranscript(l.transcript, needles()),
-    turns, owner, devices,
+    turns, owner,
     scrambled: scramble(l),
     released, leftovers, arcs,
     postRun: arcs.flatMap((a) => postRunOf(a) ?? []),

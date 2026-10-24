@@ -15,7 +15,7 @@ import { brief } from '../src/commands/brief.ts';
 import { chainStatus } from '../src/commands/chain.ts';
 import { MAX_ACK_ITEMS, ackCommandId, enqueueCommand, incomingPath } from '../src/commands/queue.ts';
 import type { Fact } from '../src/core/events.ts';
-import { type BriefId, type NeedsUserId, amendmentIdOf, arcId, commandId, debtId, divergenceIdOf, issueId, jobId, needsUserId, ruleId, sha256 } from '../src/core/ids.ts';
+import { type BriefId, type NeedsUserId, amendmentIdOf, arcId, commandId, debtId, divergenceIdOf, jobId, needsUserId, ruleId, sha256 } from '../src/core/ids.ts';
 import { canonicalJson } from '../src/core/json.ts';
 import { EVENTS_FILE, type OpenJournal, openJournal } from '../src/core/log.ts';
 import type { NeedsUserReason } from '../src/core/records.ts';
@@ -105,7 +105,7 @@ type Chained = Readonly<{
  * Arc 1 sealed (complete) with a divergence, its amendment and an open non-blocking digest; the between-arc commit;
  * arc 2 chained over it with a Phase-0 record that curates, asks and dispositions arc 1's amendment, in force with a
  * divergence, a digest and a convergence bound (non-blocking), an owner request (blocking), an owed audit, banked debt,
- * an issue outcome and a pack-review note, its snapshot published.
+ * an earlier executor's issue outcome (read and ignored) and a pack-review note, its snapshot published.
  */
 async function chained(): Promise<Chained> {
   const a1 = await corpusArc();
@@ -140,7 +140,8 @@ async function chained(): Promise<Chained> {
     ids.owed = item(j, a2, 'audit-owed', false);
     const what = 'Tidy the berth helpers.';
     j.fact({ kind: 'debt-banked', id: debtId('B-1'), bankReason: 'gate-note', what, key: debtKey({ unit: null, bankReason: 'gate-note', what }), source: { type: 'gate', unit: 'u1', attempt: 1, index: 0 } } as unknown as Fact);
-    j.fact({ kind: 'issue-intake', job: jobId('ckpt', 1), issue: issueId('issue-1'), outcome: { type: 'none', reason: 'already planned' } } as Fact);
+    // Scaffolding (the issues integration was removed in 1.0.0-dev.21): an earlier executor's fact reads, and the brief ignores it.
+    j.fact({ kind: 'issue-intake', job: jobId('ckpt', 1), issue: 'issue-1', outcome: { type: 'none', reason: 'already planned' } } as unknown as Fact);
     packReviewWithNote(j, a2, 'the cut line is vague');
   });
   return { a1, a2, items: ids as Chained['items'] };
@@ -183,17 +184,12 @@ describe('roadmap brief', () => {
     assert.deepEqual(one.decisions, ['divergence D-1: interpretation: trust means tested (ckpt-1)']);
     assert.deepEqual(one.amendments, [{ id: 'arc-1/M-1', rules: ['T-2'], proposal: 'Name the tide window in every booking.', admit: null }]);
     assert.deepEqual(one.census, { held: 0, obligationRules: 1, outOfSlice: 1, untestable: 1, prodOnly: 0 });
-    assert.deepEqual(one.intake, [{ issue: 'issue-1', job: null, outcome: { type: 'none', reason: 'tracked already' } }], 'arc 1\'s Phase-0 intake');
     assert.deepEqual(one.pr, { type: 'none' }, 'arc 1 integrates on main');
     const two = arcOf(p, 'arc-2');
     assert.deepEqual(two.divergences, [{ id: 'D-1', type: 'interpretation', what: 'a berth is a slot' }]);
     assert.deepEqual(two.curation, [{ tier: 'structural', what: 'merged the two overviews', files: ['0010_Overview.md'], rules: ['T-1'] }]);
     assert.deepEqual(two.questions, [{ id: 'P-1', rank: 1, text: 'Is the cancellation window 24 h or 48 h?', assumption: '48 h', state: { type: 'open' } }]);
     assert.deepEqual(two.debt, { banked: [{ id: 'B-1', what: 'Tidy the berth helpers.' }], dispositioned: [] });
-    assert.deepEqual(two.intake, [
-      { issue: 'issue-1', job: null, outcome: { type: 'none', reason: 'tracked already' } },
-      { issue: 'issue-1', job: 'ckpt-1', outcome: { type: 'none', reason: 'already planned' } },
-    ]);
     assert.deepEqual(two.packReviewNotes, [{ job: 'review-1', index: 0, claim: 'the cut line is vague' }]);
     assert.deepEqual(two.amendments, []);
     assert.deepEqual(two.pr, { type: 'none' });
@@ -206,7 +202,7 @@ describe('roadmap brief', () => {
     assert.deepEqual(after.chain.unackedStarts, []);
     assert.deepEqual(after.items, []);
     for (const x of after.arcs) {
-      assert.deepEqual([x.divergences, x.digests, x.decisions, x.amendments, x.debt.banked, x.intake, x.questions, x.curation, x.packReviewNotes], [[], [], [], [], [], [], [], [], []], x.arc);
+      assert.deepEqual([x.divergences, x.digests, x.decisions, x.amendments, x.debt.banked, x.questions, x.curation, x.packReviewNotes], [[], [], [], [], [], [], [], []], x.arc);
     }
     assert.deepEqual(arcOf(after, 'arc-1').census, one.census, 'the census is the ref\'s, not a delta');
     // arc 2 moves on: only what came after the ack shows, in arc 2 alone.

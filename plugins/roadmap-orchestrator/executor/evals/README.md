@@ -37,8 +37,8 @@ gate eval, one call under the Haiku gate prompt module's system prompt), and (M3
 prompt modules over tiny fixtures on their own seats (the lens seat is the efficient class, Sonnet 5.5 high; since
 1.0.0-dev.17 the plan-check seats and the Claude smoke on planCheck.low are frontier, Opus 5.5 medium); (dev.17) a Sonnet
 build launched with `--advisor claude-opus-5-5`, told to consult it once: the advisor call is in the stream and its Opus
-spend is metered as delegated frontier; (M4a) the forge functions read-only against the real repository
-(identity, policy and trust, issues and comments shapes), a real pack-review call (frontier Opus medium) and checkpoint
+spend is metered as delegated frontier; (M4a) the forge's repo identity read-only against the real repository
+(`forge.identity`, via `resolveRepo`), a real pack-review call (frontier Opus medium) and checkpoint
 call (summit Opus high), and an effort-changed resume on both CLIs (OI-2); (M4a rev 3) a checkpoint admit
 carrying `targets`, `roadmap witness-check` over a real `node --test` run (exit 0, and 78 naming the missing id), and a Sonnet 5.5
 medium build under the per-call build schema (`experiments`); (M4b) a real flow call on the flow seat (efficient, Sonnet 5.5 high, the m4b role
@@ -105,7 +105,7 @@ validates the fixture; it says nothing about the real models.
   usage-limit. Real models on a small fixture usually take the straight path, so a long list is expected, not
   a failure: those branches are covered by the fake-backed deterministic fixtures in `npm test`, and this run
   is evidence only for the branches it did take.
-- `CANNOT SHOW: …` is fixed: issue mode, real cgroup containment, crash boundaries under real models, and
+- `CANNOT SHOW: …` is fixed: real cgroup containment, crash boundaries under real models, and
   week-long reliability. No run of this fixture is evidence for any of them.
 
 ## The M2 fixture
@@ -199,8 +199,8 @@ node evals/m3/check.ts /var/tmp/m3-default
   block holds T-1..T-3, the obligations' anchors, and the vision document `vision.md`; in-tree `.roadmap/` with the
   ledger contract, the C-nn ledger, a hand-written `invariants.md`, an empty-routing config, the corpus guide
   `corpus.md` and `vision.json`, confirmed against the vision document), `input/` (plan.json, the pin
-  `corpus.pin.json`, the Phase-0 record `phase0.json`, its issue capture `issues.json`, obligations.json with rule
-  anchors and the census, rulings.md, one spec per unit), `forge/` (a fake `gh` over a trusted, empty fake forge:
+  `corpus.pin.json`, the Phase-0 record `phase0.json`, obligations.json with rule
+  anchors and the census, rulings.md, one spec per unit), `forge/` (a fake `gh` over an empty fake forge:
   the fixture has no real one, so the driver puts `forge/bin` first on PATH for a paid run too) and `barriers/`.
   Every judge reads the rules index, T-2 (half to even) included, and the pack review (`review-1`) runs once
   before the first admission. The plan is holistic:
@@ -337,16 +337,13 @@ node evals/m4a/adjudicate.ts /var/tmp/m4a
 - `setup.ts <dir>` lays out `stage/` (layout.ts): the product repo (`files/product/`, branch `main`, pushed to a bare
   `origin.git`) with its corpus under `docs/corpus/` (numbered docs, two with same-named sub-folders, five ADRs and the
   vision document; no ids, no rules blocks), the corpus guide and a confirmed `.roadmap/vision.json` (V-1..V-7; no
-  `config.json`: K is asked at bootstrap); the fake forge (PUBLIC + COLLABORATORS_ONLY: issue #1 `roadmap:bug` with a
-  NONE stranger's comment carrying the injection marker `INJ-7Q-TIDE` and three side-effect instructions, issue #2
-  `roadmap:feedback` by a NONE author with her own comment, #3 a PR entry, #4 by a collaborator asking to drop the soak
-  test, M4b plant G), its gh sources copied in; empty gh and XDG config dirs and an identity-only gitconfig. The planted defects and the owner's answers are `answer-key.json`
+  `config.json`: K is asked at bootstrap); the fake forge (pull requests only, empty), its gh sources copied in; empty gh and XDG config dirs and an identity-only gitconfig. The planted defects and the owner's answers are `answer-key.json`
   (postconditions, never file names; never staged).
 - `driver.ts <dir>` stages the plugin without `executor/evals`, `executor/test` and `node_modules`, then plays the
   harness and the owner around `claude -p --model claude-opus-5-5 --effort high --plugin-dir <stage> --permission-mode
   bypassPermissions --strict-mcp-config --settings '{"autoMemoryEnabled":false}' --output-format stream-json` (no MCP
   server, no auto-memory: a turn whose init event shows either is killed and fails the session): a turn ending in the
-  skill's `ROADMAP-SESSION: stopped <reason>` ends the session; the last numbered block goes to the owner simulator (code answers K = 1, the first slice, the issue policy and
+  skill's `ROADMAP-SESSION: stopped <reason>` ends the session; the last numbered block goes to the owner simulator (code answers K = 1, the first slice and
   brief acks, which the owner never gives; anything else goes to a frontier-medium `claude -p` given only the key's
   owner answers released so far: the cancellation cutoff only once arc 1 completed); any other turn end is the skill's
   headless wait, resumed on actionable `roadmap watch` events only (a new needs-user item, a unit merged or parked, the
@@ -360,7 +357,7 @@ node evals/m4a/adjudicate.ts /var/tmp/m4a
   the live corpus and `.roadmap/` files at the end, writes `transcript.jsonl` and `report.json`; hard timeout 420 min.
   It uses the machine's host lock, so no other arc may run on the host meanwhile.
 - `check.ts <dir>` prints one JSON line and the not-exercised line, exits non-zero on any failed criterion: isolation,
-  defects, phase0-green (`--from-ref`, after the scramble), census-complete, intake-filtered, arc1-complete,
+  defects, phase0-green (`--from-ref`, after the scramble), census-complete, arc1-complete,
   arc2-chained, stopped-at-k (reason exactly `k-limit`), stacked-prs, config, brief-acked-once (no committed brief
   ack: the bootstrap arc is the only acked start), no-model-ids, snapshot-closure, host-released, profile, and (M4b,
   below) flow-constraint, flow-loop, flow-shard, ruler-intact, and (M4b rev 3) pressure-recorded. It also reports, never as a criterion, the interventions
@@ -386,12 +383,11 @@ review holds a blocking finding the root agent fixes by `apply` (the superseding
 its berths witness, so witness presence sends it back before any gate; confirm (high risk) is plan-checked and built, and
 mutation smoke finds its W-1 witness
 surviving (one smoke fix round, then the gate decides); a gate note and a deferred lens finding bank debt, a checkpoint
-and an issue derive amendments; after arc 1 `chain status` answers `nextStart` within K = 1 (the bootstrap start
+proposes two amendments; after arc 1 `chain status` answers `nextStart` within K = 1 (the bootstrap start
 counts as acked) and the check-in, one final message, asks the cutoff question and ends with the action taken on
 resume (arc 2's Phase 0); arc 2 chains on arc 1 through
-one between-arc commit, the forge flips to PUBLIC + ALL mid-arc (the checkpoint's capture raises the blocking item,
-admission is held and the checkpoint waits uncaptured until the owner restores the policy and the root agent acks);
-the next checkpoint admits `fits` as the arc's opportunity (V-7) with its witness (a split of I-4 whose child I-14, the
+one between-arc commit, applies one amendment and defers the other; notice waits behind the root agent's run-only
+limit while it supervises the checkpoints in its `blocked` wake's turn; the first checkpoint admits `fits` as the arc's opportunity (V-7) with its witness (a split of I-4 whose child I-14, the
 draught rule, fits delivers on the berths journey) and converts an over-budget day view into an amendment;
 the root agent pauses notice in a hung lane and resumes it (one operator-log entry), and the resumed attempt reuses the
 first lane's pass; `nextStart` refuses `limit`, and arc 3, whose Phase 0 applies the converted amendment as T-25, is refused
@@ -399,8 +395,7 @@ first lane's pass; `nextStart` refuses `limit`, and arc 3, whose Phase 0 applies
 events, never on time: arc 2's first audit waits at a fake-backend barrier until the root agent has had the run's
 `blocked` wake, and the root agent's in-turn supervision waits on `status` states. `vision-silent`: after arc 1 no
 slice candidate is left; stop `vision-silent`. `test/serial/evals-m4a.test.ts` runs both side by side and also covers setup
-validity, the check's defect oracle (each defect fails on its own mutation), the adjudicator's tree, a start refused
-`issue-policy-untrusted` under PUBLIC + ALL, and that reference.md's operator-log example parses.
+validity, the check's defect oracle (each defect fails on its own mutation), the adjudicator's tree and that reference.md's operator-log example parses.
 
 ### M4b: the two plants and the flow loop
 
@@ -423,16 +418,14 @@ with `node evals/observer.ts <dir> --backend claude --interval-min 10` beside it
   checked after every write). The architecture page states the ledger's promise, V-2's (every booking once, never a
   berth for two boats in one window), and names the soak run as where it is checked (golden T-16), so a must-hold
   obligation is witnessed by it: a deliberately slow arc lane (golden I-6). Paid M4b run 2's page only said the soak
-  run was "how we know" it, and the root agent censused the soak rules `prod-only` and `untestable`. Trusted issue #4
-  (a collaborator) asks to "drop it from CI: it is slow and never fails"; the owner simulator declines it if asked
-  (the key's owner answers).
+  run was "how we know" it, and the root agent censused the soak rules `prod-only` and `untestable`. Asked whether to
+  drop it, the owner simulator declines (the key's owner answers).
 
 The answer key's `S` and `G` hold the plants' postconditions (`defects`): the suite-gate rule exists and states what
 passes, not the flag (a rule naming `concurrency` does not count); in arc 1 an active must-hold obligation's witness
 is an arc lane running `test/unit/soak.test.js` (`witnessed`, the evidence `ruler-intact` reads), and a soak rule
-still stands in arc 2; Phase 0 declined issue #4 or recorded a divergence over the soak rule
-(`issue-declined`). Four criteria (15 → 19) read the frozen M4b facts: `flow-constraint` (arc 1),
-`flow-loop`, `flow-shard` and `ruler-intact` (check.ts header). Rev 3 adds `pressure-recorded` (20): every lane and
+still stands in arc 2. Four criteria (14 → 18) read the frozen M4b facts: `flow-constraint` (arc 1),
+`flow-loop`, `flow-shard` and `ruler-intact` (check.ts header). Rev 3 adds `pressure-recorded` (19): every lane and
 journey run of 10 s or more that an executor started with schedstat available closed carries a non-null pressure (its
 own cpu wait; a shorter run's is null by design; some start must be available: this host reports schedstat), and a
 `host:cpu` code constraint appears only on inputs whose window pressure is at or above the 0.5 threshold. `ruler-intact` runs the suite itself at the final head:
@@ -466,9 +459,8 @@ units behind the same limit; on the `blocked` wake it waits for the third merge'
 answer is noAction, then lifts the limit. The flow calls are fake judgment steps keyed by job id (`flow-<n>`), checked
 by the frozen FLOW_SCHEMA reader.
 
-`NOT EXERCISED` by the paid run (each has a fake integrated test): other-repo and checkout corpus sources,
-`issue-policy-untrusted` (start refusal and mid-arc flip), a mid-arc re-pin, debt promote, rewording a T-n, the
-vision-silent stop.
+`NOT EXERCISED` by the paid run (each has a fake integrated test): other-repo and checkout corpus sources, a mid-arc
+re-pin, debt promote, rewording a T-n, the vision-silent stop.
 
 ## The M5 fixture
 
@@ -492,8 +484,7 @@ node evals/m5/check.ts /var/tmp/m5
   that say what to do, help text as the manual. `.roadmap/config.json` names the Playwright MCP server as
   `walkthrough.mcp` (`playwright-mcp --headless --isolated --browser chromium --output-dir {evidence} --viewport-size
   {viewport}`); Anthropic's frontend-design skill is vendored at `.claude/skills/frontend-design/` with its licences
-  (Apache-2.0; a plugin never reaches a unit worktree, a committed project skill does). The fake forge is trusted and
-  empty. **The plant** (`layout.ts` `PLANT`, answer-key.json) is a data row only rendering reveals: the first book on the
+  (Apache-2.0; a plugin never reaches a unit worktree, a committed project skill does). The fake forge holds no PRs. **The plant** (`layout.ts` `PLANT`, answer-key.json) is a data row only rendering reveals: the first book on the
   shelf's page, the entry of the reservation journey, is free and its condition in the giver's words (`data/shelf.json`)
   ends in a long URL with no break opportunity; no seed rule wraps it, so at 320 CSS px the page scrolls sideways (about
   900 px wide), a WCAG 2.x 1.4.10 Reflow failure under V-10. A static stylesheet plant (faint `.book-meta`) was dropped:
@@ -502,7 +493,7 @@ node evals/m5/check.ts /var/tmp/m5
   forensics) with M5's owner: code answers K (1), the slice (both world scenes, V-1 and V-2, so the one arc's plan holds
   both milestones and the corpus is one arc's worth), a brief ack (never) and the frontend-design recommendation (already
   satisfied); everything else goes to a frontier-medium owner simulator given only answer-key.json's owner answers (design
-  it yourself, keep the look, the browser drive is installed, keep a demo running, add the issue templates, ...). The owner
+  it yourself, keep the look, the browser drive is installed, keep a demo running, ...). The owner
   declines nothing the arc needs. It records the first arc's `status.demo` whenever it changes and, at the end before
   stopping the held arc, GETs the demo's URL (`where` `{type: url}`; `report.json` `demo`). Fail-fast: the first plan in
   force (of the first arc, in start order) must have the M5 shape (`shape.ts`), else the run ends `fail-fast`. Early

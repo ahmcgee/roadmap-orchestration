@@ -768,8 +768,11 @@ export function parseRulingSidecar(value: unknown): RulingSidecar {
 
 export const FINDING_SEVERITIES = ['P1', 'P2', 'P3'] as const;
 export type FindingSeverity = (typeof FINDING_SEVERITIES)[number];
-/** Who opened it: a lens, code over a witness (a must-hold not held on an audit snapshot), plan-check (R17), or issue intake (M4a). */
-/** M4a: `issue` (a checkpoint's issue intake opens a P2 or P3 finding, C3). */
+/** Who opened it: a lens, code over a witness (a must-hold not held on an audit snapshot), or plan-check (R17). */
+/**
+ * M4a: `issue` (a checkpoint's issue intake opened a P2 or P3 finding, C3). Only an earlier executor opened one (the issues
+ * integration was removed in 1.0.0-dev.21); kept so its findings still read and settle (scaffolding, `issuesIgnored`).
+ */
 /**
  * dev.13: `walkthrough` (a milestone walk opens a P1 for a break, a P2 for a deviation, never a P3; code opens a P1 for a
  * failed bring-up of a walk or the demo). A walkthrough finding names its milestone (`finding-opened.milestone`) and may

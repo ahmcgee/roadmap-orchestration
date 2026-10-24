@@ -111,7 +111,7 @@ describe('checkpoint rulings (arc feedback #3)', () => {
     };
     const answer = (rulings: readonly unknown[]) => ({
       decision: 'bundle', reasons: ['r'], ops: [{ op: 'rule', ruling: 'C-2', cites: ['V-1'], evidence: ['e'] }], rulings, findingDispositions: [], interpretations: [],
-      cites: { vision: ['V-1'], observations: [], findings: [] }, premises: [], corpusAmendments: [], issueIntake: [],
+      cites: { vision: ['V-1'], observations: [], findings: [] }, premises: [], corpusAmendments: [],
     });
     assert.equal(schemaViolation(CHECKPOINT_SCHEMA, answer([ruling])), null);
     const { trigger: _t, ...missing } = ruling;

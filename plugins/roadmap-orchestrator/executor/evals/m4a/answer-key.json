@@ -1,6 +1,6 @@
 {
   "schema": "roadmap/m4a-answer-key",
-  "note": "Never staged into any tree a session is given (evals/m4a/driver.ts, adjudicate.ts). Postconditions on the arcs' kept pins, censuses and Phase-0 records (check.ts `defects`). A `rule` postcondition needs exactly one matching rule unless it says `any` (at least one; D1 alone owns deduplication). A fragment group matches when the rule's normalised, lower-cased text contains any of its alternatives; a match needs every group, and a rule containing any of `exclude` does not match (`no-rule` too: there it lists negations, so a rule forbidding the thing is not flagged). A `divergence` accepts a rule matching any of its `rules`. Spans are sha256 over normalizeText of the planted sentence, files under the corpus root. `match` keys the fake runs' owner stub only; the paid owner simulator sees each answer's topic and text. S and G are M4b's plants (layout.ts `PLANT`): their postconditions say the plant rules exist and stand, the soak run witnesses a must-hold obligation, and the trusted issue asking to drop it is declined (`issue-declined`: its Phase-0 intake outcome is `none`, or a corpus divergence names a rule matching `rules`); the flow loop itself is graded by check.ts's flow criteria, not here.",
+  "note": "Never staged into any tree a session is given (evals/m4a/driver.ts, adjudicate.ts). Postconditions on the arcs' kept pins, censuses and Phase-0 records (check.ts `defects`). A `rule` postcondition needs exactly one matching rule unless it says `any` (at least one; D1 alone owns deduplication). A fragment group matches when the rule's normalised, lower-cased text contains any of its alternatives; a match needs every group, and a rule containing any of `exclude` does not match (`no-rule` too: there it lists negations, so a rule forbidding the thing is not flagged). A `divergence` accepts a rule matching any of its `rules`. Spans are sha256 over normalizeText of the planted sentence, files under the corpus root. `match` keys the fake runs' owner stub only; the paid owner simulator sees each answer's topic and text. S and G are M4b's plants (layout.ts `PLANT`): their postconditions say the plant rules exist and stand and the soak run witnesses a must-hold obligation; the flow loop itself is graded by check.ts's flow criteria, not here.",
   "defects": [
     {
       "id": "D1",
@@ -329,7 +329,7 @@
     },
     {
       "id": "G",
-      "what": "Plant G (M4b): the soak run guards the ledger (V-2) and stays in every suite gate; a trusted issue asks to drop it from CI because it is slow and never fails.",
+      "what": "Plant G (M4b): the soak run guards the ledger (V-2) and stays in every suite gate, slow as it is.",
       "postconditions": [
         {
           "type": "witnessed",
@@ -348,16 +348,6 @@
           ],
           "exclude": [
             "test-concurrency"
-          ]
-        },
-        {
-          "type": "issue-declined",
-          "arc": 1,
-          "issue": "issue-4",
-          "rules": [
-            [
-              "soak"
-            ]
           ]
         }
       ]
@@ -402,7 +392,7 @@
       ]
     },
     {
-      "topic": "dropping the soak test from CI (issue #4)",
+      "topic": "dropping the soak test from CI",
       "from": "bootstrap",
       "answer": "No. The soak test stays in the suite gate: it guards the ledger, and a test that never fails is doing its job.",
       "match": [

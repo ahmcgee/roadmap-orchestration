@@ -20,8 +20,7 @@
 // M4a host acts (no host lock, not queued; each module's own header has its contract): `phase0 check` prints its rows
 // and slice candidates (exit 0 when no row, else 78); `corpus pin` writes the pin and prints it with its sha256, or the
 // refused row (78); `brief` prints the payload (`--json`) or its Markdown, and `--ack` prints the commands it enqueued, or
-// the stale ids (78); `pr` prints the pull request; `issues` prints the capture (or writes `--out`), or the refused row
-// (78); `chain status` prints the chain. `answer` records the owner's answer (src/answers.ts) and prints
+// the stale ids (78); `pr` prints the pull request; `chain status` prints the chain. `answer` records the owner's answer (src/answers.ts) and prints
 // `{recorded}` or `{unchanged}` (a rerun with the text in force), or `{refused}` (78: no Phase-0 record, the question
 // unknown or not open in it). Step 0a placed every module at its final path; the landing steps replace them.
 // M4a rev 3 host acts: `witness-check` prints `{passed: true}` (exit 0) or `{missing, failed, malformed}` (78);
@@ -43,7 +42,6 @@ import { recordAnswer } from '../answers.ts';
 import { brief } from '../commands/brief.ts';
 import { chainStatus } from '../commands/chain.ts';
 import { corpusPin } from '../commands/corpus.ts';
-import { captureIssues } from '../commands/issues.ts';
 import { phase0Check } from '../commands/phase0.ts';
 import { openPr } from '../commands/pr.ts';
 import { exportBase, exportInputs } from '../commands/inputs.ts';
@@ -204,12 +202,6 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
     case 'pr':
       process.stdout.write(`${canonicalJson(await openPr({ repo: repoOf(command.repo), arc: command.arc, supersedePrevious: command.supersedePrevious }))}\n`);
       return;
-    case 'issues': {
-      const outcome = await captureIssues({ repo: repoOf(command.repo), out: command.out === null ? null : absPath(resolve(command.out)) });
-      if (outcome.kind === 'refused') return refused(outcome.rejection);
-      process.stdout.write(command.out === null ? `${canonicalJson(outcome.capture)}\n` : `${canonicalJson({ out: absPath(resolve(command.out)), sha256: outcome.sha256 })}\n`);
-      return;
-    }
     case 'chain-status':
       process.stdout.write(`${canonicalJson(await chainStatus({ repo: repoOf(command.repo) }))}\n`);
       return;
