@@ -82,7 +82,7 @@ const pinnedHash = (a: CorpusArc, rule: string): string =>
 
 function startInput(repo: AbsPath, planFile: AbsPath, hostDir: AbsPath): StartInput {
   return {
-    repo, planFile, profile: null, hostDir, env: process.env, respawn: null,
+    repo, planFile, profile: null, hostDir, env: process.env, respawn: null, base: null,
     claim: (ctx) => claimHost(ctx.hostDir, { arc: ctx.plan.arc, runDir: ctx.runDir, repo: ctx.repo, supervisor: selfIdentity() }, async () => assert.fail('no previous arc')),
   };
 }

@@ -34,6 +34,6 @@ export async function resumeArc(args: ResumeArcArgs): Promise<ResumeArcOutcome> 
   const path = join(claim.runDir, START_FILE);
   if (!existsSync(path)) throw new CliError(`resume-arc: arc ${claim.arc} holds the host but never started (no ${path}); start it with roadmap start`);
   const start = runStart(readJson(path), path);
-  const outcome = await launchSupervisor({ hostDir: args.hostDir, repo: start.repo, planFile: start.planFile, profile: start.profile, heartbeatStaleMs: null }, process.env, START_WAIT_MS);
+  const outcome = await launchSupervisor({ hostDir: args.hostDir, repo: start.repo, planFile: start.planFile, profile: start.profile, heartbeatStaleMs: null, base: null }, process.env, START_WAIT_MS);
   return outcome.code === EXIT_HOST_BUSY ? { resumed: false, reason: 'already-resumed' } : { resumed: true, line: outcome.line, code: outcome.code };
 }

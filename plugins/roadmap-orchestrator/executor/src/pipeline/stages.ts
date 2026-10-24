@@ -109,10 +109,9 @@ import { FILES_DIR, capturedEvidence } from '../git/evidence.ts';
 import { GitError, type Identity, git, gitRun, refTarget, revParse } from '../git/git.ts';
 import { mergeHead, resolvedHead } from '../git/mergein.ts';
 import { SalvageStateError, SalvageUnmergedError, checkRejected, planSalvage, type SalvageRules } from '../git/salvage.ts';
-import { readGuideBytes } from '../corpus/guide.ts';
 import { unitRegenerateLanes } from '../input/derived.ts';
 import { withinEnvelope } from '../input/envelope.ts';
-import { corpusFileSet, referenceFiles, scopeOverlapsCorpus, scopeReferences } from '../phase0/rows.ts';
+import { type CorpusFileSet, referenceFiles, sameRepoCorpusSet, scopeOverlapsCorpus, scopeReferences } from '../phase0/rows.ts';
 import { diffBase, unitDiffPaths } from '../git/transient.ts';
 import {
   type CorpusInForce, type InputFiles, type LoadedSpec, CORPUS_FILE_INPUT, OBLIGATIONS_INPUT, PLAN_INPUT, RULING_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, inForceFiles,
@@ -1187,10 +1186,9 @@ function verifiedGrowth(ctx: StageContext, unit: PlanUnit, spec: SpecM1, scope: 
 }
 
 /** A same-repo corpus arc's corpus file set in force; null for a corpus kept in another repository. */
-function corpusSet(ctx: StageContext): ReturnType<typeof corpusFileSet> | null {
+function corpusSet(ctx: StageContext): CorpusFileSet | null {
   const c = corpusInForce(ctx);
-  const guide = readGuideBytes(c.guide.bytes).guide;
-  return guide.source.kind === 'same-repo' ? corpusFileSet(c.pin.value, guide) : null;
+  return sameRepoCorpusSet(c.pin.value, c.guide.bytes);
 }
 
 /** The blocking item a scope-growth hold raises (the scheduler writes it, parented by the held attempt). */

@@ -643,7 +643,9 @@ second design park of one lineage (`respec-second`). `roadmap steer <unit>` is a
 - **A lane red for a cause another unit fixes**: a known defect (above), not a re-entry.
 - **Flaky lanes** (1.0.0-dev.17): the executor owns them. A lane red then green on its same-commit rerun is a flake: the
   unit running it passes, and the arc's flaky ledger mints a deflake unit (`deflake-<n>`, ranked first, in no milestone)
-  that fixes the test; units not yet started that run the lane wait for it. Never quarantine, skip or weaken a flaky
+  that fixes the test; units not yet started that run the lane wait for it. Its scope is the lane's `systems`, else the
+  systems holding the flaky test's file, with their dependencies; a scope that would reach a same-repo corpus is never
+  minted: a `deflake-unscoped` item (non-blocking) asks you to declare the lane's `systems` or the systems map by `apply`. Never quarantine, skip or weaken a flaky
   test, and never declare a flake "environment": an external cause is the environment probe's to catch. A deflake unit
   parked (`deflake-parked`, non-blocking: the units it held run again) is handled as its park says; when its notes name
   the lane's cpu or resource need, declare it on the lane with `roadmap apply` and cut the deflake unit. A
@@ -677,7 +679,8 @@ classes, scope growth) and never writes into your files: the plan in force lives
   apply with `--base`.
 - `start` merges your files the same way: unchanged files restart on the plan in force. Its startup checks read the
   merged files too (2026-10-21; 1.0.0-dev.16), so a ruling or unit the executor landed since your last apply is known
-  to them: restart with `start --plan <your plan.json>` as it stands, with no `inputs export` sync first.
+  to them: restart with `start --plan <your plan.json>` as it stands, with no `inputs export` sync first. To edit what
+  the executor changed while it is down, export, sync, edit and `start --base <export>/export.json` (as `apply --base`).
 
 The executor applies at the next stage boundary and kills nothing; the receipt says applied or every reason it was
 rejected. An edit you never apply has no effect, even after a restart.

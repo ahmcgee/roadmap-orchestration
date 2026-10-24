@@ -48,8 +48,8 @@
 //            (src/input/rebase.ts) from the base (the command's `base`, an export's manifest, or the owner's files of
 //            their latest apply) onto the files in force, so an executor act since the base (a spec patch, a bundle, a
 //            flow proposal, a ruling) is kept and only a true conflict refuses, naming the file and JSON path; the apply
-//            core evaluates the merge (`evaluateRevision`: every change classified, src/input/classify.ts, and its
-//            payload built), the startup rows re-run over the changed units, and a backend a new routing needs that the
+//            core evaluates the merge (`evaluateRevision`: every change classified, src/input/classify.ts, the lane row and
+//            the corpus overlap rule over the units it changes, and its payload built), the startup rows re-run over the changed units, and a backend a new routing needs that the
 //            old did not passes its smoke; after those asynchronous parts, under the revision fence (A19), the proposal
 //            is rebased again onto the log as it is then and evaluated, synchronously, and must build the same payload
 //            (`commitRebased`; when the arc moved, the apply is evaluated again, up to `APPLY_ATTEMPTS`); then the bytes
@@ -140,7 +140,7 @@ import { decidedBy } from '../pipeline/transitions.ts';
 import { applyRows } from '../preflight/checks.ts';
 import { laneRows } from '../preflight/lanerows.ts';
 import type { SourceFile } from '../corpus/source.ts';
-import { APPLY, type Phase0Advisory, phase0InputOf, phase0Rows, underRoot, visionLeak } from '../phase0/rows.ts';
+import { APPLY, type Phase0Advisory, phase0InputOf, phase0Rows, sameRepoCorpusSet, scopeOverlapProblems, underRoot, visionLeak } from '../phase0/rows.ts';
 import { type SmokeRouting, backendsOf, smokeBackends, smokeRejections } from '../preflight/smoke.ts';
 import type { StartupContext, StartupRejection } from '../preflight/startup.ts';
 import type { ResidueRecipe } from '../recover/residue.ts';
@@ -701,8 +701,9 @@ const obligationsPreimage = (inForce: InForce, revision: RevisionInForce): Preim
 /**
  * The apply core (G1, A2): evaluates a proposal (the files an `apply` or a start read; the plan in force plus a
  * bundle's ops; the ledger plus a `rule`'s sidecar; a divergence's preimage for `reverse`) against the plan in force,
- * synchronously and without effect: the classifier (src/input/classify.ts), then the payload's publication plan and
- * divergences. A caller evaluates once, runs what it must await (the startup rows, a smoke), then takes the fence
+ * synchronously and without effect: the classifier (src/input/classify.ts), the lane row and the corpus overlap rule
+ * over the units it changes (src/phase0/rows.ts `scopeOverlapProblems`; deflake scope, 2026-10-23), then the payload's
+ * publication plan and divergences. A caller evaluates once, runs what it must await (the startup rows, a smoke), then takes the fence
  * (src/core/fence.ts) and evaluates again: a draft that differs is stale. `proposer` is who proposes it; a
  * bundle's cites and evidence back the `split-dropped` divergences its splits record (H14).
  */
@@ -725,6 +726,14 @@ export function evaluateRevision(
   };
   const lanes = laneRows(proposal.plan, verdict.scoped, specOf, ctx.laneEnv);
   if (lanes.length > 0) return { kind: 'rejected', reasons: lanes.map(rowText) };
+  // The corpus overlap rule (R32) over the units the revision changes, on every path a revision takes: what an apply's
+  // Phase-0 rows would refuse is never committed by the executor's own revisions (a pin or guide that does not load or is
+  // absent: those rows refuse it).
+  const pin = verdict.inputs.corpus?.pin ?? null;
+  const guide = proposal.corpus?.guide.bytes ?? null;
+  const set = pin === null || guide === null ? null : sameRepoCorpusSet(pin, guide);
+  const overlaps = set === null ? [] : scopeOverlapProblems(set, proposal.plan.units.filter((u) => verdict.scoped.includes(u.id)));
+  if (overlaps.length > 0) return { kind: 'rejected', reasons: [rowText({ kind: 'corpus-invalid', problems: overlaps })] };
   const manifest = revisionManifestOf(proposal);
   if ('missing' in manifest) return { kind: 'rejected', reasons: manifest.missing };
   const publication = publicationOf(ctx.view, revision, verdict.inputs, proposal);

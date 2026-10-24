@@ -87,6 +87,7 @@ function input(s: Setup, reconcile: () => Promise<PreviousArcVerdict> = async ()
     repo: s.repo, planFile: s.planFile, profile: null, hostDir: s.hostDir,
     env: { ...process.env, PATH: `${s.binDir}:${process.env['PATH'] ?? ''}` },
     respawn: null,
+    base: null,
     claim: (ctx) => claimHost(ctx.hostDir, { arc: ctx.plan.arc, runDir: ctx.runDir, repo: ctx.repo, supervisor: selfIdentity() }, reconcile),
   };
 }

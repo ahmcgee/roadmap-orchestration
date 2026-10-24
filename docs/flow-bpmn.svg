@@ -716,7 +716,7 @@
 <text font-size="12" text-anchor="start"><tspan x="640.0" y="492.0">plan + specs, Phase-0</tspan><tspan x="640.0" y="506.0">record, integration branch</tspan><tspan x="640.0" y="520.0">at the baseline</tspan></text>
 <rect x="760" y="385" width="150" height="70" rx="9" fill="#ffffff" stroke="#1f2933" stroke-width="1.6"/>
 <rect x="766" y="392" width="15" height="10" fill="#1f2933"/><path d="M766 392 L773.5 397.5 L781 392" fill="none" stroke="#fff" stroke-width="1"/>
-<text font-size="12" text-anchor="middle"><tspan x="835.0" y="423.3">roadmap start --repo</tspan><tspan x="835.0" y="437.3">--plan [--profile]</tspan></text>
+<text font-size="12" text-anchor="middle"><tspan x="835.0" y="416.3">roadmap start --repo</tspan><tspan x="835.0" y="430.3">--plan [--profile]</tspan><tspan x="835.0" y="444.3">[--base &lt;export&gt;]</tspan></text>
 <path d="M950 398 L972 420 L950 442 L928 420 Z" fill="#fff" stroke="#1f2933" stroke-width="1.6"/>
 <path d="M943 413 L957 427 M957 413 L943 427" stroke="#1f2933" stroke-width="3.2"/>
 <path d="M1020 398 L1042 420 L1020 442 L998 420 Z" fill="#fff" stroke="#1f2933" stroke-width="1.6"/>
@@ -1779,7 +1779,7 @@
 <rect x="1422.5" y="7385" width="15" height="10" fill="#1f2933" stroke="#1f2933" stroke-width="1.1"/><path d="M1422.5 7385 L1430 7391 L1437.5 7385" fill="none" stroke="#fff" stroke-width="1.1"/>
 <text font-size="12" text-anchor="start"><tspan x="1451.0" y="7387.0">flake-recurring (non-blocking)</tspan><tspan x="1451.0" y="7401.0">after two; nothing minted</tspan></text>
 <rect x="1490" y="7260" width="200" height="80" rx="9" fill="#ffffff" stroke="#1f2933" stroke-width="1.6"/>
-<text font-size="12" text-anchor="middle"><tspan x="1590.0" y="7290.3">Mint deflake-&lt;n&gt;: origin deflake,</tspan><tspan x="1590.0" y="7304.3">risk med, no after, no milestone,</tspan><tspan x="1590.0" y="7318.3">rank 0; told of an earlier one</tspan></text>
+<text font-size="12" text-anchor="middle"><tspan x="1590.0" y="7276.3">Mint deflake-&lt;n&gt;: origin deflake,</tspan><tspan x="1590.0" y="7290.3">risk med, no after, no milestone,</tspan><tspan x="1590.0" y="7304.3">rank 0; told of an earlier one;</tspan><tspan x="1590.0" y="7318.3">scope: lane or test file systems</tspan><tspan x="1590.0" y="7332.3">+ deps; never the corpus</tspan></text>
 <rect x="1730" y="7260" width="170" height="80" rx="9" fill="#ffffff" stroke="#1f2933" stroke-width="1.6"/>
 <text font-size="12" text-anchor="middle"><tspan x="1815.0" y="7290.3">Units not yet dispatched</tspan><tspan x="1815.0" y="7304.3">whose lanes include its lane</tspan><tspan x="1815.0" y="7318.3">wait</tspan></text>
 <rect x="1940" y="7260" width="170" height="80" rx="9" fill="#ffffff" stroke="#1f2933" stroke-width="1.6"/>
@@ -2240,8 +2240,8 @@
 <text font-size="12" text-anchor="middle"><tspan x="1070.0" y="10787.3">flow-worse: revert by apply --base to the preimage, then ack; ruler-changed: confirm or revert, then</tspan><tspan x="1070.0" y="10801.3">ack</tspan></text>
 <text font-size="12" text-anchor="start" fill="#37474f" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" paint-order="stroke"><tspan x="566.0" y="10784.0">flow-worse, ruler-changed</tspan></text>
 <rect x="800" y="10833.0" width="540" height="30" rx="9" fill="#ffffff" stroke="#1f2933" stroke-width="1.6"/>
-<text font-size="12" text-anchor="middle"><tspan x="1070.0" y="10852.3">Declare the lane's cpu or resource need (apply), or fix it through a unit</tspan></text>
-<text font-size="12" text-anchor="start" fill="#37474f" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" paint-order="stroke"><tspan x="566.0" y="10842.0">deflake-parked, flake-recurring</tspan></text>
+<text font-size="12" text-anchor="middle"><tspan x="1070.0" y="10852.3">Declare the lane's cpu, resource or systems need (apply), or fix it through a unit</tspan></text>
+<text font-size="12" text-anchor="start" fill="#37474f" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" paint-order="stroke"><tspan x="566.0" y="10835.0">deflake-parked, flake-recurring,</tspan><tspan x="566.0" y="10849.0">deflake-unscoped</tspan></text>
 <rect x="800" y="10877.0" width="540" height="30" rx="9" fill="#ffffff" stroke="#1f2933" stroke-width="1.6"/>
 <text font-size="12" text-anchor="middle"><tspan x="1070.0" y="10896.3">Redo the edit from the arc's current state, then ack</tspan></text>
 <text font-size="12" text-anchor="start" fill="#37474f" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" paint-order="stroke"><tspan x="566.0" y="10886.0">apply-dropped (dev.17)</tspan></text>
@@ -2267,7 +2267,7 @@
 <circle cx="1495" cy="10265" r="17" fill="#fff" stroke="#2e7d32" stroke-width="1.8"/>
 <text font-size="12" text-anchor="middle"><tspan x="1495.0" y="10297.0">a change is</tspan><tspan x="1495.0" y="10311.0">needed</tspan></text>
 <rect x="1535" y="10230" width="200" height="70" rx="9" fill="#ffffff" stroke="#1f2933" stroke-width="1.6"/>
-<text font-size="12" text-anchor="middle"><tspan x="1635.0" y="10255.3">Edit the input files (units the</tspan><tspan x="1635.0" y="10269.3">executor changed: inputs export,</tspan><tspan x="1635.0" y="10283.3">then apply --base)</tspan></text>
+<text font-size="12" text-anchor="middle"><tspan x="1635.0" y="10255.3">Edit the input files (units the</tspan><tspan x="1635.0" y="10269.3">executor changed: inputs export,</tspan><tspan x="1635.0" y="10283.3">then apply or start --base)</tspan></text>
 <rect x="1765" y="10240" width="120" height="50" rx="9" fill="#ffffff" stroke="#1f2933" stroke-width="1.6"/>
 <text font-size="12" text-anchor="middle"><tspan x="1825.0" y="10269.3">apply --dry-run</tspan></text>
 <rect x="1915" y="10225" width="230" height="80" rx="9" fill="#ffffff" stroke="#1f2933" stroke-width="1.6"/>
