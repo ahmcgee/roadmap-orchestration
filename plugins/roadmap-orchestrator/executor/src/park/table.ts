@@ -8,7 +8,7 @@
 // |-------------------------------------------------------|-------------------------------------------|
 // | plan-check, build, gate `process-fault`; build `lost` | `backend{b}`: the stage's backend          |
 // | lanes `blocked` (after its retry), candidate `blocked` | `host`                                    |
-// | build, teardown, lanes, candidate `cleanup-failed`    | one `resource{i}` per failed instance     |
+// | build, salvage, teardown, lanes, candidate `cleanup-failed` | one `resource{i}` per failed instance |
 // | salvage `commit-failed`                               | `host`, plus the failed teardown's instances (G6) |
 // | lanes, candidate `env-unavailable` (dev.17)           | `environment{e}`: the lane's environment  |
 // | scaffold, poc `process-fault`, scaffold `lost` (dev.17) | `backend{b}`                              |
@@ -29,7 +29,7 @@ export const PARK_TARGETS: { readonly [S in OutcomeStage]?: { readonly [K in Sta
   'plan-check': { 'process-fault': 'backend' },
   build: { 'process-fault': 'backend', lost: 'backend', 'cleanup-failed': 'resources' },
   gate: { 'process-fault': 'backend' },
-  salvage: { 'commit-failed': 'host+resources' },
+  salvage: { 'commit-failed': 'host+resources', 'cleanup-failed': 'resources' },
   teardown: { 'cleanup-failed': 'resources' },
   lanes: { blocked: 'host', 'cleanup-failed': 'resources', 'env-unavailable': 'environment' },
   candidate: { blocked: 'host', 'cleanup-failed': 'resources', 'env-unavailable': 'environment' },

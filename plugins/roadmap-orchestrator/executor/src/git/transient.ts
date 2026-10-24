@@ -6,7 +6,8 @@
 //   writes, or in-tree `.roadmap/` (H15): any `.roadmap/` path and any path outside the unit's pinned scope.
 //   Nothing transient may reach a candidate, so the tested head is the published head and the
 //   PR diff stays product-only. A violation is a scope-growth finding for a normal fix round, never a
-//   silent drop.
+//   silent drop. The same check runs at salvage over the salvage SHA (field report 2026-10-24), and gates a
+//   scope-only re-entry's carried approval (src/pipeline/review.ts).
 // - The docs check (G17) confines a docs publication's diff to the `.roadmap/` files it renders and its
 //   contract ops' paths.
 // - The prefix-collision guard refuses a candidate whose new paths would collide on a case-insensitive

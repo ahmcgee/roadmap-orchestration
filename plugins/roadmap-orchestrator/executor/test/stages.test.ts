@@ -411,7 +411,9 @@ test('stages.interrupted-holds: a pause mid-build holds the unit, moves no count
 });
 
 test('stages.contract-touched-promotes: a contract path in the round\'s commits promotes the next judgment dispatch only', T, async () => {
+  // The contract lies in the unit's scope: a commit outside it is refused at salvage (field report 2026-10-24).
   const run = setupUnit({
+    unit: { scope: ['src/**', 'test/**', 'contracts/**'] },
     steps: [
       planCheckStep({ decision: 'approve' }),
       codexBuild([{ type: 'commit', message: 'touch the contract', files: { 'contracts/api.md': '# API contract\n\nChanged.\n', 'src/add.js': 'export const add = (a, b) => a + b;\n' } }]),

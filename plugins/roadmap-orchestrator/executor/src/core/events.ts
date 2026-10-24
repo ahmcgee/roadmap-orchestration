@@ -498,7 +498,9 @@ export const STAGE_OUTCOME_KINDS = {
   ],
   quiesce: ['empty', 'executor-fault'],
   evidence: ['captured', 'executor-fault'],
-  salvage: ['committed', 'committed-contract-touched', 'unmerged', 'commit-failed', 'executor-fault'],
+  // Field report 2026-10-24: `transient-violation` (the salvage SHA fails the transient check, as a candidate's would) and
+  // `cleanup-failed` (its cleanup of the build's resources, which then ends the chain, failed).
+  salvage: ['committed', 'committed-contract-touched', 'unmerged', 'commit-failed', 'executor-fault', 'transient-violation', 'cleanup-failed'],
   teardown: ['released', 'cleanup-failed', 'executor-fault'],
   // M4a rev 3 (corpus arcs, LR-h): `witnesses-missing` (D1: a required witness id absent or failing after a green certified
   // series); `smoke-survived` (D2: a mutation-smoke target survived); `known-defect` (F4: the unit hit a plan known

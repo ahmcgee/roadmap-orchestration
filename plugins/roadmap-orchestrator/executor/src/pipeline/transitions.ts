@@ -18,7 +18,7 @@
 // - Route up: a refusal or escalation at a judgment stage re-dispatches that stage on its role's
 //   `escalation` seat, a fresh session even when that seat binds the same model (independence is a clean
 //   context); at the escalation seat it parks with a needs-user. A routed-up role stays there for the unit.
-// - A risk trigger (contract path touched at salvage, scope growth at the candidate) puts the next judgment
+// - A risk trigger (contract path touched at salvage, scope growth at salvage or the candidate) puts the next judgment
 //   dispatch, and only that one, on the escalation seat. The implementer keeps the unit's risk seat throughout.
 // - A routing change the unit cannot absorb (its implementer's seat moved after a build started;
 //   dispatch.ts) parks it at the stage that found it: `routing-changed`, uncharged.
@@ -243,6 +243,10 @@ export const TABLE: Table = {
     unmerged: park('salvage-failed', 'env'),
     'commit-failed': park('salvage-failed', 'retryable'),
     'executor-fault': fault,
+    // Field report 2026-10-24: the salvage SHA fails the transient check: the candidate's refusal row, one stage earlier.
+    'transient-violation': { do: 'go', to: build('fix'), chargeable: true, trigger: true },
+    // The build's resources, cleaned by a salvage that ends the chain, could not be: teardown's row.
+    'cleanup-failed': park('residue', 'retryable'),
   },
   // Failed cleanup leaves a residue and never releases its resources.
   teardown: { released: go(at('lanes')), 'cleanup-failed': park('residue', 'retryable'), 'executor-fault': fault },

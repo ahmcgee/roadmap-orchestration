@@ -74,7 +74,7 @@ import { planBatchFf, planFf } from '../git/ff.ts';
 import { jobEvidenceRoot } from '../git/snapshot.ts';
 import { revParse } from '../git/git.ts';
 import { snapshotRequestOf } from '../git/snapshot.ts';
-import { type TransientViolation, unitDiffPaths, unitTransientRules } from '../git/transient.ts';
+import { type TransientViolation, transientCheck, unitDiffPaths, unitTransientRules } from '../git/transient.ts';
 import { classifyMergein } from '../git/mergein.ts';
 import type { WorktreeCreateRequest } from '../git/worktree.ts';
 import { type FindingBlock, p1Blocking, p1Obligations as activeP1Obligations, repairedObligations as repairedBy } from '../holistic/findings.ts';
@@ -810,14 +810,16 @@ export function latestCandidate(ctx: StageContext, unit: UnitId): IntentOf<'cand
  * The fix round's directives for a transient refusal. A path a lane's `evidenceGlobs` entry matches is named with the
  * lane and the entry: it may be the unit's own work under a spec that mislabels it as lane output (M4b run 3), which
  * the builder must keep and report, never delete. Every other path is removed, or (an out-of-scope path the work needs) named in
- * the report's blockers as a scope growth only the root agent grants (`SCOPE_GROWTH_BLOCKER`).
+ * the report's blockers as a scope growth only the root agent grants (`SCOPE_GROWTH_BLOCKER`). `by`: the check that refused, the
+ * candidate's or (field report 2026-10-24) the salvage's of the round's commit.
  */
-export function transientDirectives(violations: readonly TransientViolation[]): readonly string[] {
+export function transientDirectives(violations: readonly TransientViolation[], by: 'candidate' | 'salvage'): readonly string[] {
+  const refused = by === 'candidate' ? 'The candidate merge was refused' : 'The executor refused your last round\'s commit';
   const declared = violations.flatMap((v) => (v.rule === 'lane-evidence' ? [v] : []));
   const other = violations.filter((v) => v.rule !== 'lane-evidence');
   return [
-    ...(other.length === 0 ? [] : [`The candidate merge was refused: these paths must not reach integration (run state, evidence, executor files, in-tree .roadmap/ paths, or paths outside the unit's pinned scope): ${other.map((v) => `${v.path} (${v.rule})`).join(', ')}. Remove them from the branch; if the work needs an out-of-scope path, ${SCOPE_GROWTH_BLOCKER} instead of keeping it.`]),
-    ...(declared.length === 0 ? [] : [`The candidate merge was refused: these paths match a lane's declared evidenceGlobs, which name the files that lane's run writes (its outputs) and never reach integration: ${declared.map((v) => `${v.path} (lane ${v.lane}, entry \`${v.glob}\`)`).join(', ')}. Remove from the branch only a path that is lane output. A path that is the unit's own work (its source or tests) is not: keep it, change nothing for it, and say in your report that lane ${[...new Set(declared.map((v) => v.lane))].join(', ')}'s evidenceGlobs cover the unit's work, so the spec's entry needs correcting by the architect.`]),
+    ...(other.length === 0 ? [] : [`${refused}: these paths must not reach integration (run state, evidence, executor files, in-tree .roadmap/ paths, or paths outside the unit's pinned scope): ${other.map((v) => `${v.path} (${v.rule})`).join(', ')}. Remove them from the branch; if the work needs an out-of-scope path, ${SCOPE_GROWTH_BLOCKER} instead of keeping it.`]),
+    ...(declared.length === 0 ? [] : [`${refused}: these paths match a lane's declared evidenceGlobs, which name the files that lane's run writes (its outputs) and never reach integration: ${declared.map((v) => `${v.path} (lane ${v.lane}, entry \`${v.glob}\`)`).join(', ')}. Remove from the branch only a path that is lane output. A path that is the unit's own work (its source or tests) is not: keep it, change nothing for it, and say in your report that lane ${[...new Set(declared.map((v) => v.lane))].join(', ')}'s evidenceGlobs cover the unit's work, so the spec's entry needs correcting by the architect.`]),
   ];
 }
 
@@ -830,13 +832,26 @@ export function candidateRefusalFix(ctx: StageContext, unit: PlanUnit): FixRound
   const decision = planCandidate(ctx.repo, candidateRequest(ctx, unit, 0));
   switch (decision.kind) {
     case 'transient-violation':
-      return { failingEvidenceDirs: [], directives: transientDirectives(decision.violations) };
+      return { failingEvidenceDirs: [], directives: transientDirectives(decision.violations, 'candidate') };
     case 'prefix-collision':
       return { failingEvidenceDirs: [], directives: [`The candidate merge was refused: these new paths collide, ignoring case, with existing ones: ${decision.collisions.map((c) => `${c.path} with ${c.existing}`).join(', ')}. Rename them.`] };
     case 'conflict':
     case 'merge':
       return { failingEvidenceDirs: [], directives: ['The candidate merge was refused by the transient check at an earlier integration tip, and passes at the current one. Change nothing unless a fast lane fails, and report.'] };
   }
+}
+
+/**
+ * The executor's directive for the fix round after a salvage the transient check refused (field report 2026-10-24): what
+ * the check refuses in the unit commit at the current tip, re-derived from git as at the candidate.
+ */
+export function salvageRefusalFix(ctx: StageContext, unit: PlanUnit): FixRound {
+  const violations = transientCheck(ctx.repo, candidateRequest(ctx, unit, 0).rules, integrationTip(ctx), unitTip(ctx, unit.id));
+  return {
+    failingEvidenceDirs: [],
+    directives: violations.length > 0 ? transientDirectives(violations, 'salvage')
+      : ['The executor refused your last round\'s commit by the transient check at an earlier integration tip, and it passes at the current one. Change nothing unless a fast lane fails, and report.'],
+  };
 }
 
 // ---------------------------------------------------------------------------------------------------
