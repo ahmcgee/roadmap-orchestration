@@ -2317,7 +2317,11 @@ src/pipeline/dispatch.ts `callArcRole`):
    first, the `priorRejected` jobs excluded; rendered `<refused_proposals>`. Derived from the log before the capture,
    so a resumed job renders the same prompt. That next job
    enacts the requested bundle: it captures as ever, makes no call, activates the requester's output against the
-   requester's captured inputs with draining and the brakes skipped. Parks are served before audits. A park
+   requester's captured inputs with draining and the brakes skipped. Owner-only (arc feedback 2026-10-24): a bundle
+   whose owner-only requests (`[class] summary` each, in the bundle's order) are exactly those of an open
+   `owner-request` an earlier checkpoint job raised (its summary as that job renders the list, so an older release's
+   item matches) decides `requested{needsUser}` naming that item and raises none (`openOwnerRequest`); a different or
+   extended list, or the same once the item is answered, raises its own. Parks are served before audits. A park
    checkpoint's generation is the latest recorded (1 before any). Its prompt reads the park's cause from the unit's
    parking outcome (`triggerView`): a design question (an `escalation` or `refusal` park), or an executor-side cause
    with its outcome, reason and detail (a spent bound; a red candidate's failing suite lanes and the fix round's
@@ -3175,7 +3179,17 @@ sections and marks converted amendments.
    `bundle.after-overrun-debt`). Idempotent by source.
 8. **Busy (N2, C5).** Step 0 of `decide`, before staleness: ops naming a unit with an open attempt are `rejected{busy,
    units}`, never counted toward `secondInvalid`; the checkpoint is due again once every attempt it named has closed
-   (src/holistic/checkpoint.ts).
+   (src/holistic/checkpoint.ts). Arc feedback 2026-10-24 (ckpt-30 and ckpt-31 rejected busy, each retry a fresh paid
+   call): the trigger's next job re-decides the held bundle (`redecides`: its previous job rejected `busy`, no call of
+   its own). It captures as ever but makes no call and skips the call's gates (backend park, pause, `publishing`) and
+   the issue capture; it activates the busy job's output (`outputOf`, followed back) against the inputs that output was
+   built on (`builtOn`), every step from 0 judged again as the arc is then, draining and the brakes skipped only when the
+   held bundle was an enactment's (`enacts`). Busy again, the job after re-decides at that boundary; stale, evidence or
+   invalid, the trigger's next job is a fresh call, and a re-decide's `invalid` is not counted toward `secondInvalid`.
+   While a served trigger's latest job is rejected `busy`, the scheduler holds the units it named at every admission
+   (`busyHolds`), so the re-decide lands at the boundary. No record changes: a re-decide is read from the log (a job an
+   older release captured after a busy rejection that spawned a call keeps its call). It adds no non-atomic step (the
+   capture's and the activation's crash points cover it).
 9. **Evidence, rulings, census moves (N2, C1–C4; bundle.ts).** `evidenceDiffers(cited, head)` is step 5's per-test
    comparator: same lane rev and env id, neither record malformed, the cited one non-empty, every cited test the same
    outcome on the head with no fewer selected (tests the head adds never matter). A checkpoint's ruling is stamped

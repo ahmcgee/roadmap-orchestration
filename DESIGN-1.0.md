@@ -706,7 +706,9 @@ resource declarations, `.roadmap/config.json`, `gc` or ref deletion; for such an
 `request{class, summary, evidence}`. Nested effects are converted the same way: an op that would introduce a lane
 program whose `argv[0]` the plan in force does not already resolve, a new lane env prerequisite, or a contract-op
 path outside the plan's contracts and target documents becomes a `request{class}`. A request applies nothing and
-raises a blocking `owner-request`. Stated limit: this governs the checkpoint's revisions; an implementer build
+raises a blocking `owner-request`, unless an earlier checkpoint's `owner-request` asking exactly the same requests
+(each class and summary, in order) is still open: the decision then names that item and raises none (arc feedback
+2026-10-24). Stated limit: this governs the checkpoint's revisions; an implementer build
 stays bounded by the unit policy (a prompt, §4) and by containment, not by this check.
 
 **Obligation record.** `I-nn {rev, statement, docRef {path, anchor, quotedText} | rule {id: T-n, textSha256}, serves [V-n], witness {lane,
@@ -925,7 +927,11 @@ of the same lane, at the same lane rev and environment, keeps every cited test's
 malformed nor the cited one empty. Rulings are stamped with the corpus pin they were judged at; model-written ruling
 ids are read in numeric form; a split child anchored at an out-of-slice rule moves the census when it serves the
 slice, and is refused with the fix otherwise. A bundle touching a unit's running or crash-abandoned attempt is
-rejected `busy` (not counted toward the invalid brake) and decided again only after the attempt's boundary. The
+rejected `busy` (not counted toward the invalid brake) and decided again only after the attempt's boundary: the
+trigger's next job re-decides the held bundle with no new call (arc feedback 2026-10-24), every activation check run
+again against the arc as it is then, while the scheduler holds the named units' next admission; a held bundle stale,
+unsupported by the evidence or invalid by then falls back to a fresh call, the re-decide's invalid not spending the
+trigger's one retry. The
 checkpoint reads an immutable, content-addressed manifest of its inputs (never `roadmap-inputs`) with every unit's
 spec embedded with its occupied item ids and the ledger's next ruling id; unchanged issues on unchanged grounds keep
 their dispositions. (The delta-only closeout render after a no-op on an unchanged arc is gone, 2026-10-16: such an

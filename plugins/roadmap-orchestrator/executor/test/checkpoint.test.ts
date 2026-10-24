@@ -1,7 +1,7 @@
 // M3 step B6: the checkpoint job and its bundles (src/holistic/{checkpoint,bundle,convergence,divergence}.ts), over real
 // arcs: real git, real processes, the fake claude answering lens and checkpoint calls keyed by job, fake witness lanes.
 // Named tests: bundle.stale, bundle.partial (with the retry's prior_attempt), bundle.vision-always-read (H3), bundle.partial (A18's literal partial bundle), bundle.no-op,
-// noop.interpretation-divergence (H12), bundle.evidence-drift-witnessed, bundle.evidence-drop, bundle.draining-request, bundle.nested-owner-only (H10),
+// noop.interpretation-divergence (H12), bundle.evidence-drift-witnessed, bundle.evidence-drop, bundle.draining-request, bundle.nested-owner-only (H10), bundle.owner-request-not-repeated,
 // bundle.withdrawn-cite-invalid (H16), bundle.rule-race-stale, bundle.ruling-id-collision-invalid, bundle.admit-widens-obligations, bundle.weakening-applies-with-divergence (OR-V), convergence.bound-k,
 // convergence.bound-identity, bundle.compensating, digest.binds-ids (H11), divergence.preimage-no-inverse (H13), divergence.patch-of-introduced-unit, bundle.fault-decided,
 // ckpt.design-park-respec-first (OR-Q1), ckpt.park-cause, bundle.p1-left-to-repair, and the crash cells of the matrix rows CHECKPOINT_JOB and BUNDLE_ACTIVATE.
@@ -582,6 +582,37 @@ describe('the activation checks', () => {
       await ack(w, r, out.decision.needsUser);
       assert.deepEqual([...quiescentGenerations(r.journal.view, vision)], [1], 'the owner answered: the generation is quiescent');
       assert.deepEqual(await runCheckpoint(ctx), { kind: 'none' });
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('bundle.owner-request-not-repeated (arc feedback 2026-10-24): a later checkpoint asking exactly an open request decides on that item and raises none; another request, or the same once answered, raises its own', T, async () => {
+    const d = checkpointArc([...visionLenses('audit-1'), ...noteLenses('audit-2', 'audit-3', 'audit-4')]);
+    const r = contextFor(d);
+    const { ctx, w } = checkpointContext(r);
+    try {
+      const request = (summary: string): JsonValue => ({ op: 'request', class: 'config', summary, cites: ['V-1'], evidence: ['e'] });
+      appendSteps(d, [
+        checkpointStep('ckpt-1', bundle([request('provide the walk key')])), checkpointStep('ckpt-2', bundle([request('provide the walk key')])),
+        checkpointStep('ckpt-3', bundle([request('provide the deploy key')])), checkpointStep('ckpt-4', bundle([request('provide the walk key')])),
+      ]);
+      const asked = async (): Promise<string> => {
+        await completedAudit(r, ctx);
+        const out = await runCheckpoint(ctx);
+        assert.ok(out.kind === 'decided' && out.decision.kind === 'requested' && out.decision.reason === 'owner-request', JSON.stringify(out));
+        return out.decision.needsUser;
+      };
+      const first = await asked();
+      assert.equal(await asked(), first, 'ckpt-2 asks exactly what ckpt-1 asked, still open: it decides on that item');
+      assert.deepEqual(itemsOf(r, 'owner-request').map((n) => n.id), [first], 'raised once');
+      const other = await asked();
+      assert.notEqual(other, first, 'a different request is its own item');
+      await ack(w, r, first);
+      const again = await asked();
+      assert.ok(again !== first && again !== other, 'answered, the same request is asked anew');
+      assert.match(item(r, again).summary, /^Checkpoint ckpt-4 asks for acts only the owner may take: \[config\] provide the walk key\./);
+      assert.equal(itemsOf(r, 'owner-request').length, 3);
     } finally {
       r.journal.close();
     }
