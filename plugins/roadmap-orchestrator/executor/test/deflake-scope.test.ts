@@ -4,7 +4,8 @@
 // job runs as the scheduler runs it. Named tests: deflake-scope.systems (an arc lane's flake mints a unit scoped to its test file's system and its
 // dependencies; an unmappable suite lane's raises `deflake-unscoped` instead; an unrelated apply still lands),
 // deflake-scope.unmapped (nothing maps: no unit, one item, the job keeps running), deflake-scope.gate (an executor revision
-// cannot commit a unit reaching the corpus), deflake-scope.start-base (the dev.17 stuck arc: a minted `**` unit in force,
+// cannot commit a unit reaching the corpus), deflake-scope.settled (the corpus overlap row passes a merged unit, dev.19),
+// deflake-scope.start-base (the dev.17 stuck arc: a minted `**` unit in force,
 // executor down; `start --base <export>` with the unit narrowed puts it in force, a start without is refused the conflict).
 import assert from 'node:assert/strict';
 import { cpSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -12,6 +13,7 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { evaluateApply, evaluateRevision, keepRevision, payloadOf } from '../src/commands/apply.ts';
 import { EXPORT_FILE, exportBase, exportInputs } from '../src/commands/inputs.ts';
+import type { Fact } from '../src/core/events.ts';
 import { atomicJson } from '../src/core/fsx.ts';
 import { type InvocationId, type UnitId, laneId, opKey, sha, sha256, unitId } from '../src/core/ids.ts';
 import { laneRevOf } from '../src/holistic/types.ts';
@@ -47,7 +49,7 @@ const BERTHS_TEST = 'test/berths.test.ts > berths > never double-books';
 async function arcInForce(config: Json): Promise<Readonly<{ a: CorpusArc; j: OpenJournal }>> {
   const a = await corpusArc({ config });
   const files = filesOf(a);
-  const rows = phase0Rows(phase0InputOf(files, readRepoConfig(a.repo)), APPLY);
+  const rows = phase0Rows(phase0InputOf(files, readRepoConfig(a.repo), null), APPLY);
   assert.deepEqual(rows.rows, []);
   const runDir = runDirOfArc(a);
   mkdirSync(runDir, { recursive: true });
@@ -109,6 +111,27 @@ function withDeflakeUnit(a: CorpusArc, j: OpenJournal, id: UnitId, scope: readon
   return { ...current, plan, planBytes, specs: new Map(plan.units.map((u) => [u.id, specs.get(u.id)!] as const)) };
 }
 
+/** What a dev.17 executor committed: the deflake revision with deflake-1 scoped `**` (no gate refused it then). */
+function commitDev17Unit(a: CorpusArc, j: OpenJournal): void {
+  const runDir = runDirOfArc(a);
+  const rctx = { runDir, view: j.view, hostDir: newHostDir(), planFile: a.planPath, routingBase: routingOf(a), laneEnv: process.env };
+  const narrow = evaluateRevision(rctx, withDeflakeUnit(a, j, unitId('deflake-1'), ['src/**']), { type: 'deflake' });
+  assert.equal(narrow.kind, 'accepted');
+  if (narrow.kind !== 'accepted') return;
+  const wide = withDeflakeUnit(a, j, unitId('deflake-1'), ['**']);
+  const manifest = revisionManifestOf(wide);
+  assert.ok(!('missing' in manifest));
+  const verdict = { ...narrow, next: wide, draft: { ...narrow.draft, manifest } };
+  keepRevision(runDir, verdict);
+  commitRevisionNow(j, runDir, payloadOf(verdict.draft, { type: 'deflake' }), { type: 'arc' });
+}
+
+/** `evaluateApply` of the owner's files as they stand, from their latest apply. */
+const ownerApply = (a: CorpusArc, j: OpenJournal) => withForge(a.forge, () => evaluateApply({
+  runDir: runDirOfArc(a), view: j.view, hostDir: newHostDir(), repo: a.repo, planFile: a.planPath, routingBase: routingOf(a),
+  laneEnv: process.env, manifest: null, base: null, rulings: [], visionEdit: false,
+}));
+
 function startInput(a: CorpusArc, hostDir: AbsPath, base: RevisionManifest | null): StartInput {
   return {
     repo: a.repo, planFile: a.planPath, profile: null, hostDir, env: process.env, respawn: null, base,
@@ -146,10 +169,7 @@ describe('deflake scope', () => {
 
       // The owner's unrelated edit lands with the deflake unit in force.
       editPlan(a, (p) => ({ ...p, units: (p['units'] as Json[]).map((u) => ({ ...u, risk: 'med' })) }));
-      const verdict = await withForge(a.forge, () => evaluateApply({
-        runDir: runDirOfArc(a), view: j.view, hostDir: newHostDir(), repo: a.repo, planFile: a.planPath, routingBase: routingOf(a),
-        laneEnv: process.env, manifest: null, base: null, rulings: [], visionEdit: false,
-      }));
+      const verdict = await ownerApply(a, j);
       assert.equal(verdict.kind, 'accepted', JSON.stringify(verdict));
     } finally {
       j.close();
@@ -196,17 +216,7 @@ describe('deflake scope', () => {
     const { a, j } = await arcInForce({ chain: { k: 1 } });
     const runDir = runDirOfArc(a);
     try {
-      // What a dev.17 executor committed: the deflake revision with deflake-1 scoped `**` (no gate refused it then).
-      const rctx = { runDir, view: j.view, hostDir: newHostDir(), planFile: a.planPath, routingBase: routingOf(a), laneEnv: process.env };
-      const narrow = evaluateRevision(rctx, withDeflakeUnit(a, j, unitId('deflake-1'), ['src/**']), { type: 'deflake' });
-      assert.equal(narrow.kind, 'accepted');
-      if (narrow.kind !== 'accepted') return;
-      const wide = withDeflakeUnit(a, j, unitId('deflake-1'), ['**']);
-      const manifest = revisionManifestOf(wide);
-      assert.ok(!('missing' in manifest));
-      const verdict = { ...narrow, next: wide, draft: { ...narrow.draft, manifest } };
-      keepRevision(runDir, verdict);
-      commitRevisionNow(j, runDir, payloadOf(verdict.draft, { type: 'deflake' }), { type: 'arc' });
+      commitDev17Unit(a, j);
       atomicJson(join(runDir, START_FILE), { v: SCHEMA_VERSION, generation: 1, at: isoTimeOf(new Date()), repo: a.repo, planFile: a.planPath, profile: 'default' });
     } finally {
       j.close();
@@ -236,6 +246,22 @@ describe('deflake scope', () => {
       assert.equal(j2.view.planApplied()!.source.type, 'start');
     } finally {
       j2.close();
+    }
+  });
+  it('deflake-scope.settled: a dev.17 `**` deflake unit refuses an unrelated apply while it builds, and no longer once it merged', T, async () => {
+    const { a, j } = await arcInForce({ chain: { k: 1 } });
+    try {
+      commitDev17Unit(a, j);
+      editPlan(a, (p) => ({ ...p, units: (p['units'] as Json[]).map((u) => ({ ...u, risk: 'med' })) }));
+      const building = await ownerApply(a, j);
+      assert.equal(building.kind, 'rejected');
+      assert.match(JSON.stringify(building), /scope-overlaps-corpus.*deflake-1/);
+      j.fact({ kind: 'stage-outcome', unit: unitId('deflake-1'), stage: 'snapshot', attempt: 1, outcome: 'published', class: 'retire', chargeable: false } as Fact);
+      assert.equal(j.view.unit(unitId('deflake-1')).status, 'retired');
+      const merged = await ownerApply(a, j);
+      assert.equal(merged.kind, 'accepted', JSON.stringify(merged));
+    } finally {
+      j.close();
     }
   });
 });

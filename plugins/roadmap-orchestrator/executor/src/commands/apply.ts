@@ -863,7 +863,7 @@ export async function evaluateApply(input: ApplyInput): Promise<ApplyVerdict> {
   const routingChanged = verdict.routings.length > 0 || verdict.draft.changes.some((c) => c.type === 'holistic');
   // M4a: the shared Phase-0 rows (src/phase0/rows.ts) over the proposal: the tree, and for a corpus arc the pin
   // re-derived, corpus overlap, census, debt, questions, amendments, intake and the vision confirmed.
-  const p0 = phase0Rows(phase0InputOf(proposal, input.routingBase.config), APPLY);
+  const p0 = phase0Rows(phase0InputOf(proposal, input.routingBase.config, input.view), APPLY);
   const leak = visionLeak(input.planFile, proposal.vision?.bytes ?? null, revisionInForce(input.runDir, inForce).vision?.sha256 ?? null, input.visionEdit);
   const rows = [...(await applyRows(context, verdict.scoped, routingChanged)), ...p0.rows, ...leak];
   if (rows.length > 0) return { kind: 'rejected', reasons: rows.map(rowText) };

@@ -267,7 +267,8 @@ T-13: A cancelled booking frees its berth at once.
   unit; an executor-minted unit from before the deflake scope fix): export, sync, narrow the unit's scope off the
   corpus (or cut it, if it never started a task), then `roadmap apply --base <dir>/export.json` (executor running) or
   `roadmap start --repo <path> --plan <plan.json> --base <dir>/export.json` (executor down).
-  A dispatched unit's scope may not shrink: cut it instead, or tell the owner.
+  A dispatched unit's scope may not shrink: cut it instead, or tell the owner. Once the unit merges, the refusal lifts
+  on its own (a merged unit builds nothing more).
 - **Boot hook.** A devcontainer restarts with no executor. `roadmap resume-arc --repo <path>` relaunches a dead
   owner's supervisor and does nothing otherwise, so it is safe at every boot:
   `"postStartCommand": "<plugin root>/executor/bin/roadmap resume-arc --repo <product repo>"` in

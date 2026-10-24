@@ -167,7 +167,7 @@ async function landGrowth(
   if (evaluated.kind === 'rejected') return { kind: 'rejected', reason: rejectedText(evaluated.reasons) };
   if (evaluated.kind === 'unchanged') throw new Error(`scope accept ${unit}: a new ruling and a wider scope left the plan in force unchanged`);
   // The Phase-0 rows an apply runs (a corpus arc's corpus overlap among them).
-  const rows = phase0Rows(phase0InputOf(proposal, ctx.routingBase.config), APPLY).rows;
+  const rows = phase0Rows(phase0InputOf(proposal, ctx.routingBase.config, view), APPLY).rows;
   if (rows.length > 0) return { kind: 'rejected', reason: rejectedText(rows.map((r) => canonicalJson(r))) };
   const committed = await commitUnderFence(ctx, evaluated, proposer, { type: 'command', command: id }, parentOf(id));
   if (committed.kind === 'rejected') return { kind: 'rejected', reason: rejectedText(committed.reasons) };

@@ -198,7 +198,7 @@ async function repin(a: CorpusUnitArc, r: ArcRun): Promise<CorpusPin> {
   const out = await corpusPin({ repo: absPath(a.d.repo), commit: sha(commit), baseline: sha(a.baseline), out: absPath(join(a.planDir, PIN_FILE)) });
   assert.equal(out.kind, 'pinned', JSON.stringify(out));
   const files = readInputFiles(absPath(a.d.planPath), absPath(a.d.repo));
-  const rows = phase0Rows(phase0InputOf(files, null), APPLY);
+  const rows = phase0Rows(phase0InputOf(files, null, null), APPLY);
   assert.deepEqual(rows.rows, []);
   keepCorpusFiles(r.ctx.runDir, rows.opened!.files);
   recordPlan(r.journal, r.ctx.runDir, files, [], BASE);

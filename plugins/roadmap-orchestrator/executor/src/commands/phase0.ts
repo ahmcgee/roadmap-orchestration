@@ -67,7 +67,7 @@ async function fromPlan(repo: AbsPath, planFile: AbsPath): Promise<Checked> {
   }
   const input = [...legacyRoadmapDir(repo), ...(await planInvalidCheck.check(context)), ...revisionInputRows(files)];
   if (input.length > 0) return { rows: input, input: null, advisories: [] };
-  const p0 = phase0InputOf(files, config);
+  const p0 = phase0InputOf(files, config, null);
   const outcome = phase0Rows(p0, FRESH_START);
   // Milestones outside a holistic arc (`milestones-need-holistic`, in the shared rows) have no routing to resolve.
   const routing = milestonesNeedHolistic(plan) ? [] : await routingCheck.check(context);
@@ -96,6 +96,8 @@ function fromRef(repo: AbsPath, source: Extract<Phase0Source, { type: 'ref' }>):
     capture: kept(m.phase0Issues, ISSUES_INPUT), obligations: kept(m.obligations, OBLIGATIONS_INPUT), vision: kept(m.vision, VISION_INPUT),
     specs: new Map(ref.plan.units.map((u) => [u.id, kept(m.specs[u.id], SPEC_INPUT)])),
     ledger: parseRulings(ref.input(m.rulings.ledgerSha256, RULINGS_INPUT).toString('utf8'), `refs/roadmap/${ref.arc} (the rulings ledger)`),
+    // A ref carries no unit state: every unit of its plan is judged.
+    settled: new Set(),
   };
   const outcome = phase0Rows(input, FROM_REF);
   return { rows: outcome.rows, input, advisories: outcome.advisories };

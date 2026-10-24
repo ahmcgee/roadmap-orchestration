@@ -669,7 +669,7 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
     const by = fresh ? null : successorOf(input.repo, plan.arc);
     if (by !== null) return refused([{ kind: 'arc-superseded', by }]);
     if (source.checked !== null) {
-      const p0 = phase0Rows(phase0InputOf(source.checked, readRepoConfig(input.repo)), fresh ? FRESH_START : RESTART);
+      const p0 = phase0Rows(phase0InputOf(source.checked, readRepoConfig(input.repo), log === 'corrupt' ? null : log), fresh ? FRESH_START : RESTART);
       const rows = [...(fresh ? holisticNeedsCorpus(source.checked.plan) : []), ...p0.rows];
       if (rows.length > 0) return refused(rows);
       // Rows 10's, 13's and 14's advisories never refuse a start; the executor's stderr (the supervisor's err file) keeps them, and

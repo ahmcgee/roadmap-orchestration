@@ -674,7 +674,7 @@ never changes the variant (`target-kind-changed`). Code reads the variant fields
   (`contract-overlaps-corpus`, `scope-overlaps-corpus`), so units never write the corpus and contract ops never
   target it. Every revision, the executor's own included, refuses a unit it changes whose scope overlaps it (deflake
   scope, 2026-10-23); the refusal of a unit in force names the fix (narrow or cut it, with `--base` when the arc
-  changed it).
+  changed it), and a unit the arc has merged, superseded or cut is not judged: it builds nothing more.
 
 **Corpus amendments and curation (M4a).** A checkpoint never edits the corpus. Code records a `corpus-amendment`
 for every `target-departed` divergence (citing `T-n`) and every interpretation divergence; the checkpoint proposes

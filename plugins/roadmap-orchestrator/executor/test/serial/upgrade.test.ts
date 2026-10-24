@@ -8,7 +8,7 @@
 // HEAD's check.ts (every criterion passes, and the upgrade forced no park and no new session), or, where the story
 // needs arc judgments the M1 scenario format cannot express, with HEAD's CLI and fakes directly.
 //
-// Which releases: HEAD (1.0.0-dev.18) adopts arcs started on 1.0.0-dev.7 to dev.17, through the defaults of
+// Which releases: HEAD (1.0.0-dev.19) adopts arcs started on 1.0.0-dev.7 to dev.18, through the defaults of
 // src/core/upgrade.ts. Four are covered here. Every unlabelled cell starts its arc on the previous release
 // (PREVIOUS_RELEASE, 1.0.0-dev.17). The cells labelled `upgrade.dev11.*` start theirs on 1.0.0-dev.11 (DEV11_RELEASE)
 // and those labelled `upgrade.dev10.*` on 1.0.0-dev.10 (DEV10_RELEASE): an arc started on each is in flight, so the
@@ -21,6 +21,9 @@
 // arc started without the holistic layer runs with M2 semantics and no new spend unless the architect opts in. Their
 // role sets and pressure records are HEAD's. HEAD's walk roles (`walkthrough`, `polishJudge`) are in force only under a
 // plan with milestones, which no arc of theirs has, so no walk seat is hashed for them.
+//
+// dev.19 records nothing differently from dev.18 (it only reads the arc's settled units into the Phase-0 corpus overlap
+// row), so a dev.18 arc reads on HEAD as on dev.18 and the previous release covered here stays dev.17.
 //
 // What dev.17 records differently from 1.0.0-dev.18: one record, read with a default. A `scope-overlaps-corpus` Phase-0
 // problem a dev.17 executor wrote (a refused start's `status.rejection.json` or refused exit line) names no `fix`, read

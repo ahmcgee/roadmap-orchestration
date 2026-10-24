@@ -194,7 +194,7 @@ export const filesOf = (a: CorpusArc): InputFiles => readInputFiles(a.planPath, 
 /** Puts the arc's files in force as revision 1, as a fresh start does (the corpus files kept first). Returns the open journal. */
 export function inForce(a: CorpusArc): OpenJournal {
   const files = filesOf(a);
-  const rows = phase0Rows(phase0InputOf(files, null), APPLY);
+  const rows = phase0Rows(phase0InputOf(files, null, null), APPLY);
   assert.deepEqual(rows.rows, []);
   const runDir = runDirOfArc(a);
   mkdirSync(runDir, { recursive: true });
