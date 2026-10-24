@@ -66,8 +66,8 @@ at triage stay in git history.
 ### M4a (done: plan `/claude-state/plans/m4a-convergence.md`, rev 2.1; 1.0.0-dev.7, merged at b55ad88)
 
 - Scope (LR-a): the pinned corpus as the target (guide, sources, `T-n` rules, pin, census), the vision's in-tree home
-  and playback verification, `roadmap phase0 check`, the debt lifecycle, the forge (issue policy, intake, push, stacked
-  PRs), `roadmap brief`, chaining with K, the routing rebinding (frontier Opus medium, summit Opus xhigh), the pack
+  and playback verification, `roadmap phase0 check`, the debt lifecycle, the forge (issue policy and intake, removed in
+  1.0.0-dev.21; push, stacked PRs), `roadmap brief`, chaining with K, the routing rebinding (frontier Opus medium, summit Opus xhigh), the pack
   review, prompt notes, the full skill, and the deletion of every pre-dev.6 scaffolding layer (OR-L4, step X0).
 - Records frozen in step 0a (SCHEMAS.md "M4a"); step 0a placed placeholder modules at every final command path, each
   replaced by its landing step (C4 the last, deleting `src/core/notyet.ts`).
@@ -130,7 +130,6 @@ at triage stay in git history.
 
 - Preview (the root agent starts the app from integration on request): 1.1 (OR-Q15).
 - Flow series: not recorded (LR-c); M4b derives any series from `events.jsonl` in M4a arcs' refs.
-- Issue mode outbound projection: 1.1.
 - The Codex judgment profile and cgroup containment stay out (LR-a).
 
 ### Deferred from the dev.12 role evals (evals/roles/)
@@ -643,6 +642,15 @@ at triage stay in git history.
 
 ## Scaffolding to delete
 
+- **dev.21 GitHub issues removed** (`issuesIgnored`, src/core/upgrade.ts): delete once no arc started on 1.0.0-dev.20
+  or earlier is in flight, with its call sites: src/core/events.ts (the `issue-intake` and `issues-captured` facts,
+  `checkpoint-inputs.issues`, `plan-changed.phase0.issuesSha256`, amendment `source: issue`), src/core/records.ts
+  (manifest `phase0Issues`), src/core/state.ts, src/phase0/types.ts (the record's `issueCapture` and `intake`),
+  src/prompts/schemas.ts (a checkpoint answer's `issueIntake`), the `phase0Issues` skip in src/input/classify.ts's
+  manifest compare and the src/git/snapshot.ts comment. With them go the `issue-policy-untrusted` needs-user reason
+  (src/core/records.ts, src/needsuser.ts), the `issue` finding lens (src/holistic/types.ts `FINDING_LENSES`, its arms
+  in src/core/events.ts and src/holistic/admits.ts) and the `issue` amendment source; the readers then refuse those
+  fields and kinds.
 - **dev.20 flakes without `on`** (`flakeOnDefault`, src/core/upgrade.ts; its call in src/pipeline/deflake.ts
   `flakeOnOf`): delete once no arc started on 1.0.0-dev.20 or earlier is in flight; `on` then becomes required on
   `flake-observed`.
@@ -746,7 +754,7 @@ at triage stay in git history.
 - The 1.0.0-dev.6 layer below is no longer adopted (1.0.0-dev.8 adopts dev.7 only; no dev.6 arc was in flight at M4b
   step 0a, which moved `PREVIOUS_RELEASE` to b55ad88 and dropped the dev.6 upgrade cases). Step 0a deleted the
   self-contained part: `checkpointOutputM4Default`, `splitChildRuleDefault` (a checkpoint answer now needs
-  `corpusAmendments`, `issueIntake` and each split child's `rule`), `DEV6_CLASS_CATALOGUE` and status's `dev6RevAlias`
+  `corpusAmendments` and each split child's `rule`; `issueIntake` too until dev.21), `DEV6_CLASS_CATALOGUE` and status's `dev6RevAlias`
   (with `resolveRoutingUnder`). The rest goes in one dedicated step with the corpus migration of the M3 fixtures below.
 
 - Holistic `architecture-doc` arcs (adopted dev.6 arcs only; a fresh one is refused, D0). With them go the

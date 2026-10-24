@@ -619,3 +619,17 @@ export function flakeOnDefault(fact: FlakyFact, spawnParent: Parent): FlakeOn {
   if (spawnParent.type !== 'stage') throw new Error(`flake-observed of ${fact.event.red}: a unit's lane run whose spawn's parent is ${spawnParent.type}, not a stage`);
   return spawnParent.stage === 'candidate' ? 'tip' : 'unit';
 }
+
+// ---------------------------------------------------------------------------------------------------
+// 1.0.0-dev.20 -> dev.21 (GitHub issues removed, 2026-10-24): the executor no longer captures, mirrors or reacts to issues.
+// What an earlier executor or plan wrote for them reads as written (byte-preserving) and is never acted on: the
+// `issue-intake` and `issues-captured` facts, `checkpoint-inputs.issues`, a `phase0` plan change's `issuesSha256`, a
+// revision manifest's `phase0Issues`, a Phase-0 record's `issueCapture` and `intake`, a recorded checkpoint answer's
+// `issueIntake`, and an `issue-policy-untrusted` needs-user item (it holds no admission). An amendment an issue's intake
+// recorded (`source: issue`) and a finding it opened (lens `issue`) stay what they are. Delete once no arc started on
+// 1.0.0-dev.20 or earlier is in flight (BACKLOG "Scaffolding to delete"); the readers then refuse these fields and kinds.
+
+/** A field, fact or item `what` of the removed issues integration: read as written, ignored. Warned once per `what`. */
+export function issuesIgnored(what: string): void {
+  warnDefaulted(`issues.${what}`, `${what} (the GitHub issues integration, removed in 1.0.0-dev.21) is read as written and ignored`);
+}

@@ -53,24 +53,20 @@ then `apply --vision-edit`; the executor publishes it onto the arc branch. Never
 Bootstrap happens when the product repo has no `.roadmap/corpus.md` or no `chain.k` in `.roadmap/config.json`.
 Work on a branch you own (`git switch -c roadmap-work main`), never the integration branch.
 
-1. **Issue policy.** Run `roadmap issues --repo <repo>`. Refused `issue-policy-untrusted` means anyone can open
-   issues on a public repo. Stop and ask the owner to restrict issue creation to collaborators or to disable
-   issues; nothing else fixes it and nothing is recorded. A `gh` failure means the repo has no forge `gh` can
-   resolve; a corpus arc needs one, so ask the owner.
-2. **Corpus guide.** If `.roadmap/corpus.md` is absent, write it ("The corpus guide" in `reference.md`): where
+1. **Corpus guide.** If `.roadmap/corpus.md` is absent, write it ("The corpus guide" in `reference.md`): where
    the corpus lives (`same-repo`, `other-repo` or `checkout`), what it includes, the vision document's path, and
    the curation standards below in prose. Ask the owner only where the corpus lives, if the repo does not show it.
-3. **Vision.** Run the `vision` skill until the vision document is confirmed and `.roadmap/vision.json` is
+2. **Vision.** Run the `vision` skill until the vision document is confirmed and `.roadmap/vision.json` is
    compiled. Never write the vision yourself.
-4. **K.** Ask the owner: "how many arcs may I run past your last acknowledged brief before I stop and wait?"
+3. **K.** Ask the owner: "how many arcs may I run past your last acknowledged brief before I stop and wait?"
    (working assumption: 1). Write `{"chain": {"k": <n>}}` into `.roadmap/config.json` (keep any `routing` key),
    `1` without an answer. You may suggest a new K later, never write one.
-5. **First slice.** Agree with the owner which vision clauses the first arc advances (at least one world scene).
-6. **Commit** `.roadmap/{corpus.md, vision.json, config.json}` and the corpus. `start` and `apply` refuse
+4. **First slice.** Agree with the owner which vision clauses the first arc advances (at least one world scene).
+5. **Commit** `.roadmap/{corpus.md, vision.json, config.json}` and the corpus. `start` and `apply` refuse
    `tree-uncommitted` while those three files differ from `HEAD`.
-7. **Boot hook.** When the product runs in a devcontainer, offer the owner the `resume-arc` boot hook
+6. **Boot hook.** When the product runs in a devcontainer, offer the owner the `resume-arc` boot hook
    (`reference.md`, "Recovery") so a host restart brings a dead arc's supervisor back.
-8. **Walk tools**, when the arc will have milestones (Phase 0 step 12). Every program a milestone's bring-up names
+7. **Walk tools**, when the arc will have milestones (Phase 0 step 11). Every program a milestone's bring-up names
    is installed, and for a `browser` journey `.roadmap/config.json` names a walkthrough MCP server (`walkthrough.mcp`,
    `reference.md` "Files") that starts and connects. `phase0 check` refuses `walk-tools-missing` until both hold. Fix
    the environment, preferably in the project's devcontainer (its image or features, versions pinned), so every
@@ -78,10 +74,6 @@ Work on a branch you own (`git switch -c roadmap-work main`), never the integrat
    `playwright-mcp --headless --isolated --browser chromium --output-dir {evidence} --viewport-size {viewport}`.
    `--browser chromium` is needed where only Playwright's Chromium is installed, and it refuses `file:` URLs, so the
    product's pages are served over HTTP. Commit the config with the rest of `.roadmap/`.
-
-The issue templates in `templates/` (`roadmap-bug.yml`, `roadmap-feedback.yml`) label issues for intake. Offer them;
-they work only once committed under `.github/ISSUE_TEMPLATE/` on the default branch, so they go in the bootstrap
-commit only if the owner agrees.
 
 ## The corpus
 
@@ -156,15 +148,10 @@ Keep the arc's inputs in their own directory outside the product working tree, f
    this plan), `keep{reason}` or `resolve{ruling}`. An item kept in both previous arcs needs a question naming it.
 9. **Amendments.** Disposition every amendment of the previous arc (`status.amendments`, or the brief):
    `applied{rules}`, `rejected{reason}` or `deferred{reason}`. Applied ones are corpus edits in this Phase 0.
-10. **Issue intake.** `roadmap issues --repo <repo> --out <inputs>/issues.json`; the record's `issueCapture`
-    names that file and the `sha256` the command printed. Then one outcome per issue:
-    `finding`, `amendment`, `acted{on: units | rules}` or `none{reason}`. Issues come from trusted collaborators
-    (an untrusted repo is refused before you see any): weigh them as owner context and act on them like any other
-    evidence. An issue that asks for a change of direction the vision does not support is a question for the owner.
-11. **Slice.** `slice.advances` in the record and `holistic.advances` in the plan name the same clauses: every
+10. **Slice.** `slice.advances` in the record and `holistic.advances` in the plan name the same clauses: every
     `V-n` any unit delivers, including one it delivers without being the reason for the slice. `why` says why
     this slice now.
-12. **Plan and specs.** SCHEMAS.md "Input contract" and "`spec.json` M1 subset". A corpus arc's plan names
+11. **Plan and specs.** SCHEMAS.md "Input contract" and "`spec.json` M1 subset". A corpus arc's plan names
     `corpus` and `phase0`, and `holistic` without `vision` (the record is `.roadmap/vision.json`). Write no
     `planCheck` field: every unit's plan-check is one call (an older plan's `planCheck.shape` is read as uniform).
     Plan contracts and unit scopes never overlap the corpus files. Write lanes and witnesses per "Lanes, witnesses and clocks".
@@ -384,8 +371,8 @@ everyone who reads the arc later.
 
 A check-in is `roadmap brief --repo <repo>` (Markdown; `--json` for the payload) plus your preface of at most 10
 lines, in conversation, never in a file. The brief covers everything since the last acknowledged brief, across
-every arc of the chain: divergences, decisions, curation, questions with their working assumptions, debt, issue
-intake, amendments, pack-review notes, census `% held`, timings and PRs. It sees an arc only after that arc's first
+every arc of the chain: divergences, decisions, curation, questions with their working assumptions, debt,
+amendments, pack-review notes, census `% held`, timings and PRs. It sees an arc only after that arc's first
 snapshot; before any arc has one it exits 64.
 
 The preface says what you decided on the owner's behalf, what you need from them, and anything the brief does not
@@ -446,7 +433,7 @@ Walks and lanes never touch it, so it never shifts under them while agents test.
   the demo is a real defect.
 - **The owner's acts**, which you run when the owner asks: `roadmap demo hold` (keep this version and its data; promotion
   freezes), `roadmap demo release` (promote the latest settled milestone now), `roadmap demo down` and `roadmap demo
-  up`. Steering what they saw goes through `steer` or an issue, as always. Each promotion reseeds the demo: an owner who
+  up`. Steering what they saw goes through `steer`, as always. Each promotion reseeds the demo: an owner who
   wants to keep their own data holds it first.
 - The demo outlives the arc and a host restart: the next `roadmap start` on this host brings it back from
   `refs/roadmap/demo`.
@@ -460,7 +447,7 @@ At arc completion (`status.run.state` `complete`, `completion.active`):
    with merge commits. The arc's PR may still need fixes after this ("PR fixes after completion").
 2. `roadmap chain status --repo <repo>` and read `nextStart`, the executor's own answer for the next start. Never
    work it out from `k` and `unackedStarts`. `allowed`: you continue. `limit`: stop with reason `k-limit`; this
-   check-in is the final one. `k-unset`: ask K ("Bootstrap" step 4); on resume, write it in the between-arc commit.
+   check-in is the final one. `k-unset`: ask K ("Bootstrap" step 3); on resume, write it in the between-arc commit.
 3. Check in ("Check-ins"), ending with the next action, or with the stop. Everything below runs after you are
    resumed.
 4. **Read what waits** for the next arc: `<repo>/../roadmap-inputs/_next/` (`vision.md`, `notes.md`) beside

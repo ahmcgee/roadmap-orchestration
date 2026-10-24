@@ -86,11 +86,10 @@ export const LABEL_TRACE: Readonly<Record<string, Trace>> = {
   'checkpoint.after-call': NONE,
   'bundle.after-applied': NONE,
   'bundle.after-decided': NONE,
-  // M4a (a corpus arc): the pack review's facts, a checkpoint's kept issue capture, its amendment settlement.
+  // M4a (a corpus arc): the pack review's facts, a checkpoint's amendment settlement.
   'packreview.after-started': NONE,
   'packreview.after-call': NONE,
   'packreview.after-ended': NONE,
-  'issues.after-keep': NONE,
   'amendment.after-decided': NONE,
   'debt.after-approval': NONE,
   // M4a rev 3 N3 (a corpus arc's unit stages): the witness lane files published (no build call); the witness check's series

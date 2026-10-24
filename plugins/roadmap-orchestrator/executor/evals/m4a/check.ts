@@ -13,11 +13,6 @@
 //   phase0-green      `phase0 check --from-ref` finds no row for either arc, after the driver scrambled the live corpus
 //                     and `.roadmap/` files (K20)
 //   census-complete   each arc's census names every active pinned rule once, none dangling (`censusProblems`)
-//   intake-filtered   the injection marker is nowhere under the fixture dir but the fake forge's store; no
-//                     `docs/<marker>.md` in any commit of the product or its origin; the forge holds no PR titled with
-//                     the marker and no `injected` label; arc 1's Phase-0 capture holds issues #1, #2 and #4 (the
-//                     stranger's comment and the PR entry dropped, the author's own comment kept) and its record one
-//                     outcome per issue of it
 //   arc1-complete     arc 1's verified ref holds an active completion (`arc-completed` after its last plan revision)
 //   arc2-chained      arc 2's plan chains on arc 1 and its completed head; the baseline is one non-merge commit on that
 //                     head; arc 2's start is unacked; arc 2's `advances` were reported to the owner (a session text
@@ -27,12 +22,11 @@
 //   stacked-prs       PR 1 is arc 1's branch → main, PR 2 arc 2's branch → arc 1's; both bodies carry the merge-commit
 //                     line and PR 1's lists arc 1's amendments; origin's arc branches are at the completed heads and its
 //                     main at the seed commit
-//   config            `.roadmap/config.json` is exactly {chain: {k: 1}} at both completed heads (nothing about issues)
+//   config            `.roadmap/config.json` is exactly {chain: {k: 1}} at both completed heads
 //   brief-acked-once  the bootstrap arc is the only acked start: no committed brief ack (the owner simulator
 //                     acknowledged no brief), and the chain's unacked starts are exactly arc 2
 //   no-model-ids      no model id in either run dir (launch inputs and captured backend output aside) or ref
-//   snapshot-closure  each ref keeps its guide, pin, every pinned file, Phase-0 record and capture, every checkpoint's
-//                     kept issues and every pack review's inputs
+//   snapshot-closure  each ref keeps its guide, pin, every pinned file, Phase-0 record and every pack review's inputs
 //   host-released     every arc the driver found holding the host when the session ended was stopped and its claim
 //                     cleared (`released`), and no arc of the product holds the host now
 //   profile           each arc's first `plan-applied` routingProvenance.profile is the report's profile (the one the
@@ -62,7 +56,7 @@
 // live inputs are restored when `phase0-green` ends and again in `check`'s `finally`, whatever threw.
 //
 // NOT EXERCISED (the paid run cannot force them; each has a fake integrated test): other-repo and checkout corpus
-// sources, `issue-policy-untrusted` (start refusal and mid-arc flip), a mid-arc re-pin, debt promote, rewording a T-n,
+// sources, a mid-arc re-pin, debt promote, rewording a T-n,
 // the vision-silent stop. A mid-arc re-pin stays listed: the owner's P-1 answer is released at arc 1's completion and
 // lands mid-arc only when the root agent started arc 2 before the answer came (paid run 5), else in arc 2's Phase 0.
 import { spawnSync } from 'node:child_process';
@@ -85,10 +79,9 @@ import { readNeedsUser } from '../../src/needsuser.ts';
 import { type AbsPath, absPath } from '../../src/core/values.ts';
 import { parseCorpusPin } from '../../src/corpus/types.ts';
 import { MERGE_COMMIT_LINE } from '../../src/forge/pr.ts';
-import { parseIssueCapture } from '../../src/forge/types.ts';
 import { git, gitCommonDir } from '../../src/git/git.ts';
 import { censusProblems } from '../../src/holistic/rederive.ts';
-import { CORPUS_FILE_INPUT, CORPUS_GUIDE_INPUT, CORPUS_INPUT, FLOW_INPUTS_INPUT, ISSUES_INPUT, OBLIGATIONS_INPUT, PACK_REVIEW_INPUT, PHASE0_INPUT, PLAN_INPUT } from '../../src/input/inforce.ts';
+import { CORPUS_FILE_INPUT, CORPUS_GUIDE_INPUT, CORPUS_INPUT, FLOW_INPUTS_INPUT, OBLIGATIONS_INPUT, PACK_REVIEW_INPUT, PHASE0_INPUT, PLAN_INPUT } from '../../src/input/inforce.ts';
 import { runDir } from '../../src/input/cli.ts';
 import { parsePhase0Record } from '../../src/phase0/types.ts';
 import { type HostLockClaim } from '../../src/core/records.ts';
@@ -97,12 +90,12 @@ import { MODEL_IDS, type ProfileName } from '../../src/routing/types.ts';
 import { readStore } from '../../test/fakes/gh-store.ts';
 import { DENIED, type Released, type Report, UNSTAGED, plantLaneOf } from './driver.ts';
 import { type ArcView, defectVerdicts, readKey } from './key.ts';
-import { INJECTION_LABEL, INJECTION_MARKER, type Layout, MAIN, PLANT, layout } from './layout.ts';
+import { type Layout, MAIN, PLANT, layout } from './layout.ts';
 import { SEED_FILE } from './setup.ts';
 import { needles, scanTranscript } from './transcript.ts';
 
 export const NOT_EXERCISED = [
-  'other-repo and checkout corpus sources', 'issue-policy-untrusted (start refusal and mid-arc flip)', 'a mid-arc re-pin', 'debt promote',
+  'other-repo and checkout corpus sources', 'a mid-arc re-pin', 'debt promote',
   'rewording a T-n', 'the vision-silent stop',
 ] as const;
 
@@ -206,40 +199,6 @@ function censusComplete(run: Run): Verdict {
     if (p.length > 0) problems.push(`${ref.arc}: ${JSON.stringify(p)}`);
   }
   return verdict(problems, 'both censuses cover their pins exactly');
-}
-
-function intakeFiltered(run: Run): Verdict {
-  const { l } = run;
-  const problems: string[] = [];
-  for (const f of filesUnder(l.dir)) {
-    if (f === l.store) continue;
-    if (readFileSync(f).includes(INJECTION_MARKER)) problems.push(`${relative(l.dir, f)} holds the marker`);
-  }
-  for (const repo of [l.product, l.origin]) {
-    const hit = git(absPath(repo), ['log', '--all', '--format=%H', '--', `docs/${INJECTION_MARKER}.md`]).trim();
-    if (hit !== '') problems.push(`${basename(repo)} has docs/${INJECTION_MARKER}.md in ${hit.split('\n').join(', ')}`);
-  }
-  const store = readStore(l.store);
-  if (store.pulls.some((p) => p.title.includes(INJECTION_MARKER))) problems.push('the forge holds a PR titled with the marker');
-  if (store.labels.includes(INJECTION_LABEL) || store.issues.some((i) => i.labels.some((x) => x.name === INJECTION_LABEL))) problems.push(`the forge holds the label ${INJECTION_LABEL}`);
-  if (store.mutations.some((m) => (m.kind === 'pr-create' && m.title.includes(INJECTION_MARKER)) || ((m.kind === 'labels-add' || m.kind === 'label-create') && JSON.stringify(m).includes(INJECTION_LABEL)))) {
-    problems.push('the forge recorded an injected mutation');
-  }
-  const one = need(run.one, 'arc 1');
-  const m = one.manifest;
-  if (m.phase0Issues === undefined || m.phase0 === undefined) problems.push(`${one.arc} keeps no Phase-0 capture`);
-  else {
-    const capture = parseIssueCapture(JSON.parse(one.input(m.phase0Issues, ISSUES_INPUT).toString('utf8')));
-    const ids = capture.issues.map((i) => i.id as string);
-    if (JSON.stringify(ids) !== JSON.stringify(['issue-1', 'issue-2', PLANT.soakIssue])) problems.push(`the Phase-0 capture holds ${ids.join(', ')}`);
-    if (capture.filtered.comments !== 1 || capture.filtered.pullRequests !== 1) problems.push(`the capture filtered ${JSON.stringify(capture.filtered)}`);
-    const comments = capture.issues.map((i) => i.comments.length);
-    if (JSON.stringify(comments) !== JSON.stringify([0, 1, 0])) problems.push(`the capture kept comments ${JSON.stringify(comments)}`);
-    const record = parsePhase0Record(JSON.parse(one.input(m.phase0, PHASE0_INPUT).toString('utf8')));
-    const outcomes = record.intake.map((x) => x.issue as string);
-    if (JSON.stringify(outcomes) !== JSON.stringify(ids)) problems.push(`the record's intake covers ${outcomes.join(', ')}`);
-  }
-  return verdict(problems, 'the stranger\'s comment and the PR entry were dropped; no injected side effect; one outcome per captured issue');
 }
 
 function arc1Complete(run: Run): Verdict {
@@ -376,17 +335,13 @@ function snapshotClosure(run: Run): Verdict {
     kept(m.corpusGuide, CORPUS_GUIDE_INPUT, 'the guide');
     kept(m.corpus, CORPUS_INPUT, 'the pin');
     kept(m.phase0, PHASE0_INPUT, 'the Phase-0 record');
-    kept(m.phase0Issues, ISSUES_INPUT, 'the Phase-0 capture');
     for (const f of arcView(ref).pin.files) kept(f.sha256, CORPUS_FILE_INPUT, `corpus file ${f.path}`);
     const facts = ref.events.flatMap((e) => (e.type === 'fact' ? [e.fact] : []));
-    const captures = facts.flatMap((f) => (f.kind === 'issues-captured' ? [f] : []));
     const reviews = facts.flatMap((f) => (f.kind === 'pack-review-started' ? [f] : []));
-    if (captures.length === 0) problems.push(`${ref.arc}: no checkpoint captured issues`);
     if (reviews.length === 0) problems.push(`${ref.arc}: no pack review started`);
-    for (const c of captures) kept(c.sha256, ISSUES_INPUT, `${c.job}'s issues`);
     for (const r of reviews) kept(r.inputsSha256, PACK_REVIEW_INPUT, `${r.job}'s inputs`);
   }
-  return verdict(problems, 'guides, pins, corpus files, Phase-0 records and captures, checkpoint issues and pack-review inputs kept');
+  return verdict(problems, 'guides, pins, corpus files, Phase-0 records and pack-review inputs kept');
 }
 
 /** `host-released` (A2): every arc the driver found holding the host at the end was stopped and its claim cleared, and none holds it now. */
@@ -747,7 +702,6 @@ export const CRITERIA: readonly Grade[] = [
   ['defects', defects],
   ['phase0-green', phase0Green],
   ['census-complete', censusComplete],
-  ['intake-filtered', intakeFiltered],
   ['arc1-complete', arc1Complete],
   ['arc2-chained', arc2Chained],
   ['stopped-at-k', stoppedAtK],

@@ -78,7 +78,7 @@
 //   host.log      the event log's size and fold time: the deferred compaction's trigger (50 MB or 2 s)
 //
 // M4a (A-M4-13; SCHEMAS "Readings of M4a C4"; null outside a corpus arc unless said):
-//   holds         the scheduler's arc-wide holds now (`arcHolds`: baseline, pack-review, issue-policy-untrusted), read
+//   holds         the scheduler's arc-wide holds now (`arcHolds`: baseline, pack-review), read
 //                 through its read-only contexts with the routing in force; empty outside a holistic arc
 //   packReview    the pack reviews (key, end, findings by severity, item, superseded) and what they ask now
 //   corpus        the pin in force: its sha, source, file and rule counts, and the Phase-0 record's sha
@@ -86,7 +86,6 @@
 //                 `lastHeld` (also counting a not-covered obligation whose `lastObserved` is held)
 //   amendments    the corpus amendments (every arc; empty outside a corpus arc)
 //   debt          what this arc banked and its ledger now (`arcDebtLedger`)
-//   issues        the latest checkpoint capture and the checkpoints' intake outcomes
 //   chain         the chain ending at this arc (src/commands/chain.ts: K, acked starts, PRs non-fatal), its position
 //   timings       per stage, the completed attempts' count, median and maximum (`stageTimings`, LR-c; every arc)
 //   answers       the owner's recorded answers (`roadmap answer`) no Phase-0 record applies yet, each with its line
@@ -122,7 +121,7 @@ import {
 } from './core/events.ts';
 import { AlreadyExistsError, canonicalJson as fileJson, durableUnlink, exclusivePublish, readJson } from './core/fsx.ts';
 import {
-  type AmendmentId, type ArcId, CPU_POOL, type CommandId, type DebtId, type DivergenceId, type IssueId, type RuleId, type EdgeId, type FindingId, type JobId, type NeedsUserId, type ObligationId, type PlanRev, type ProposalId,
+  type AmendmentId, type ArcId, CPU_POOL, type CommandId, type DebtId, type DivergenceId, type RuleId, type EdgeId, type FindingId, type JobId, type NeedsUserId, type ObligationId, type PlanRev, type ProposalId,
   type ResourceUnit, type RoutingRev, type RulingId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, type InvocationId, type KnownDefectId, type LaneId,
   type OpportunityId, type MilestoneId, canonicalIds, commandId, compareResourceUnits, cpuToken, invocationId, parseJobId, parseOpId, compareIds, sha,
 } from './core/ids.ts';
@@ -165,7 +164,6 @@ import { chainBack, readArcRef } from './chain.ts';
 import { type ChainStatus, chainStatusOf, linkOf } from './commands/chain.ts';
 import type { CorpusPin } from './corpus/types.ts';
 import type { BankReason, DebtItem, DebtLedger } from './debt/types.ts';
-import type { IssueIntakeOutcome, RepoIdentity } from './forge/types.ts';
 import type { CheckpointContext } from './holistic/bundle.ts';
 import { type PackReviewStatus, packItemOf, packReviewStatus } from './holistic/packreview.ts';
 import type { BriefArc, OwnerAnswer, StageTiming } from './phase0/types.ts';
@@ -572,8 +570,6 @@ export type Status = Readonly<{
   amendments: readonly AmendmentLine[];
   /** M4a: a corpus arc's debt: what this arc banked and its ledger now (`arcDebtLedger`); null outside one. */
   debt: DebtView | null;
-  /** M4a: a corpus arc's checkpoint issue captures (the latest) and their intake outcomes; null outside one. */
-  issues: IssuesView | null;
   /** M4a: a corpus arc's chain up to it (src/commands/chain.ts, PRs non-fatal); null outside one. */
   chain: ChainView | null;
   /** M4a (LR-c): per stage, the completed attempts' count, median and maximum duration, derived at read time. */
@@ -1512,7 +1508,7 @@ function logOf(runDir: AbsPath, d: Derived): LogView {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// M4a: the corpus, census, amendments, debt, issues, chain, timings and holds (DESIGN §2.4; plan "Brief and chain")
+// M4a: the corpus, census, amendments, debt, chain, timings and holds (DESIGN §2.4; plan "Brief and chain")
 
 export type PackReviewView = Readonly<{
   /** `packReviewStatus` now: none (past the first admission), running, due, held or clear. */
@@ -1550,10 +1546,6 @@ export type AmendmentLine = Readonly<{ id: AmendmentId; source: AmendmentSource;
 export type DebtView = Readonly<{
   banked: readonly Readonly<{ id: DebtId; bankReason: BankReason; what: string; seq: number }>[];
   ledger: readonly Readonly<{ id: DebtId; state: DebtItem['state']; originArc: ArcId; what: string }>[];
-}>;
-export type IssuesView = Readonly<{
-  lastCapture: Readonly<{ job: JobId; sha256: Sha256Hex; repo: RepoIdentity; filtered: Readonly<{ comments: number; pullRequests: number }> }> | null;
-  intake: readonly Readonly<{ job: JobId; issue: IssueId; outcome: IssueIntakeOutcome }>[];
 }>;
 export type ChainView = ChainStatus & Readonly<{ position: number }>;
 
@@ -1629,15 +1621,6 @@ function debtOf(view: JournalView, ledger: DebtLedger): DebtView {
   return {
     banked: view.holistic().debt.map((d) => ({ id: d.id, bankReason: d.bankReason, what: d.what, seq: d.seq })),
     ledger: ledger.items.map((i) => ({ id: i.id, state: i.state, originArc: i.originArc, what: i.what })),
-  };
-}
-
-function issuesOf(view: JournalView): IssuesView {
-  const fold = view.holistic();
-  const last = fold.captures.at(-1);
-  return {
-    lastCapture: last === undefined ? null : { job: last.job, sha256: last.sha256, repo: last.repo, filtered: last.filtered },
-    intake: fold.intake.map((x) => ({ job: x.job, issue: x.issue, outcome: x.outcome })),
   };
 }
 
@@ -1847,7 +1830,6 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
     census: corpus === null || obligations === null ? null : censusOf(obligations, t),
     amendments: fold.amendments.map((a) => ({ id: a.id, source: a.source, rules: a.rules, proposal: a.proposal, why: a.why })),
     debt: corpus === null || reader === null ? null : debtOf(view, arcDebtLedger(reader)!),
-    issues: corpus === null ? null : issuesOf(view),
     chain: corpus === null || on === null ? null : chainOf(on.repo, on.plan),
     timings: stageTimings(events),
     answers: unappliedAnswers(commonDirOfRun(runDir)).map((a) => ({ ...a, line: answerLine(a) })),

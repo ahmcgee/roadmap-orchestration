@@ -46,8 +46,7 @@
 //   m3.plan-check       planCheck.med seat (frontier since dev.17: claude-opus-5-5 medium) with a vision input: the real plan-check module and PLAN_CHECK_SCHEMA;
 //                       the output must validate and carry a visionConflict array
 //   forge.*             (M4a) the executor's own src/forge functions against the real ahmcgee/roadmap-orchestration, read-only:
-//                       resolveRepo, queryPolicy + trusted, the REST issues and comments shapes (pull_request entries,
-//                       author_association), fetchIssueCapture
+//                       resolveRepo (the identity every `gh pr` call names)
 //   routing.m4a         the default table's packReview.arc is claude-opus-5-5 medium, checkpoint.arc claude-opus-5-5 xhigh
 //   m4a.pack-review     packReview.arc (frontier, corpus arc scope): the real prompt module over a tiny corpus pack; the
 //                       answer must validate against PackReviewOutput
@@ -100,12 +99,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { freshClaudeImplementerSession, freshJudgmentSession } from '../src/backends/argv.ts';
-import { ghApi, resolveRepo } from '../src/forge/gh.ts';
+import { resolveRepo } from '../src/forge/gh.ts';
 import { canonicalJson } from '../src/core/json.ts';
 import { SCHEMA_VERSION } from '../src/core/version.ts';
-import { fetchIssueCapture } from '../src/forge/issues.ts';
-import { queryPolicy } from '../src/forge/policy.ts';
-import { trusted } from '../src/forge/trust.ts';
 import { containmentFor, detectContainmentMode } from '../src/contain/detect.ts';
 import {
   type ImplementerSessionId, arcId, envId, invocationId, jobId, laneId, laneRev, obligationId, proposalId, questionId, ruleId, rulingId, sha, sha256, specRev, stationId, unitId, visionClauseId,
@@ -563,8 +559,8 @@ async function main(): Promise<void> {
     vision: MINI_VISION, trigger: { type: 'audit', job: jobId('audit', 1) }, priorRejected: [], refused: [], head: HEAD,
     plan: 'Unit u-convert (done): implements convert.ts. No other units. No open work.', findings: [], obligations: MINI_OBLIGATIONS,
     coverage: { unservedAdvanced: [visionClauseId('V-2'), visionClauseId('V-3')], unservedOpportunity: [], horizon: [], obligationsServingNone: [], withdrawnCited: [] }, divergences: [],
-    contracts: [], rulings: [], index: MINI_INDEX, target: MINI_ARCH, direction: 'Ship the smallest thing that serves the vision.', issues: { type: 'captured', issues: [] },
-    manifest: [], specs: [], nextRulingId: rulingId('C-1'), issuesUnchangedSince: null, diagnosis: null, brakes: { settled: false, findings: [] },
+    contracts: [], rulings: [], index: MINI_INDEX, target: MINI_ARCH, direction: 'Ship the smallest thing that serves the vision.',
+    manifest: [], specs: [], nextRulingId: rulingId('C-1'), diagnosis: null, brakes: { settled: false, findings: [] },
   };
   await backend(ctx, 'm4a.checkpoint-summit', seatCall(holistic, 'checkpoint', 'arc', { role: 'planCheck', tier: 'escalation' }, 'm3-checkpoint', m3Dir, checkpointInputs),
     validates('m4a.checkpoint-summit', 'checkpoint', () => true));
@@ -585,34 +581,6 @@ async function main(): Promise<void> {
   try {
     const repo = resolveRepo(repoDir);
     report(repo.host === 'github.com' && repo.owner === 'ahmcgee' && repo.name === 'roadmap-orchestration', 'forge.identity', JSON.stringify(repo));
-    const policy = queryPolicy(repoDir, repo);
-    const trust = trusted(policy);
-    report(policy.visibility === 'PUBLIC' && policy.issueCreationPolicy === 'COLLABORATORS_ONLY' && policy.hasIssuesEnabled && trust.kind === 'trusted' && trust.intake,
-      'forge.policy', `${JSON.stringify(policy)} trust=${trust.kind}`);
-    const base = `repos/${repo.owner}/${repo.name}`;
-    const listed = ghApi(repoDir, repo, [`${base}/issues?state=all&per_page=100`]);
-    if (!Array.isArray(listed)) throw new Error(`issues answer is not an array: ${JSON.stringify(listed).slice(0, 200)}`);
-    const shaped = listed.every((e) => {
-      const r = e as Record<string, unknown>;
-      return typeof r['number'] === 'number' && typeof r['title'] === 'string' && Array.isArray(r['labels']) && typeof (r['user'] as { login?: unknown } | null)?.['login'] === 'string'
-        && (r['body'] === null || typeof r['body'] === 'string');
-    });
-    const pulls = listed.filter((e) => (e as Record<string, unknown>)['pull_request'] !== undefined).length;
-    report(shaped && listed.length > 0, 'forge.issues-shape', `entries=${listed.length} pullRequestEntries=${pulls} issuesOnly=${listed.length - pulls}`);
-    const withComments = listed.find((e) => typeof (e as { comments?: unknown }).comments === 'number' && (e as { comments: number }).comments > 0) as { number: number } | undefined;
-    if (withComments === undefined) {
-      report(false, 'forge.comments-shape', 'no issue or pull request entry has comments on this repository to read');
-    } else {
-      const comments = ghApi(repoDir, repo, [`${base}/issues/${withComments.number}/comments?per_page=100`]);
-      const rows = Array.isArray(comments) ? comments : [];
-      const assoc = rows.map((c) => (c as { author_association?: unknown }).author_association);
-      report(rows.length > 0 && assoc.every((a) => typeof a === 'string') && rows.every((c) => typeof (c as { id?: unknown }).id === 'number' && typeof (c as { user?: { login?: unknown } }).user?.login === 'string'),
-        'forge.comments-shape', `#${withComments.number} comments=${rows.length} author_association=${JSON.stringify([...new Set(assoc)])}`);
-    }
-    if (trust.kind === 'trusted') {
-      const capture = fetchIssueCapture(repoDir, repo, trust);
-      report(capture.repo.name === repo.name, 'forge.capture', `issues=${capture.issues.length} filtered=${JSON.stringify(capture.filtered)}`);
-    }
   } catch (e) {
     report(false, 'forge.error', e instanceof Error ? e.message : String(e));
   }
@@ -641,7 +609,7 @@ async function main(): Promise<void> {
   };
   const phase0Json = {
     schema: 'roadmap/phase0-m4', curation: [], corpusDivergences: [], questions: [], debt: [], amendments: [],
-    issueCapture: { file: 'issues.json', sha256: '0'.repeat(64) }, intake: [], slice: { advances: ['V-1'], why: 'The smallest conversion first.' },
+    slice: { advances: ['V-1'], why: 'The smallest conversion first.' },
   };
   try {
     const packInputs: PackReviewPromptInputs = {

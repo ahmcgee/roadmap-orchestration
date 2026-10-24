@@ -476,7 +476,7 @@ describe('run 10 (D): a checkpoint admit\'s spec is constrained by the schema', 
   });
   const answer = (spec: unknown) => ({
     decision: 'bundle', reasons: ['r'], ops: [admit(spec)], rulings: [], findingDispositions: [], interpretations: [],
-    cites: { vision: ['V-1'], observations: [], findings: [] }, premises: [], corpusAmendments: [], issueIntake: [],
+    cites: { vision: ['V-1'], observations: [], findings: [] }, premises: [], corpusAmendments: [],
   });
 
   it('checkpoint.admit-spec-schema: the wire object conforms; JSON text or a spec missing a field is a schema violation the adapter catches', () => {

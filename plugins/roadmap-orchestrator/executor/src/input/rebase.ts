@@ -29,8 +29,8 @@ import { type AbsPath, absPath } from '../core/values.ts';
 import { readCommand } from '../commands/queue.ts';
 import { CORPUS_GUIDE_PATH } from '../corpus/guide.ts';
 import {
-  CORPUS_GUIDE_INPUT, CORPUS_INPUT, type InputFile, type InputFiles, ISSUES_INPUT, OBLIGATIONS_INPUT, PHASE0_INPUT, PLAN_INPUT, RULING_INPUT, RULINGS_INPUT,
-  SPEC_INPUT, VISION_INPUT, keepInput, keptInput, keptPayload, ledgerPath, phase0RecordOf, revisionManifestOf, sidecarPath, specFilePath,
+  CORPUS_GUIDE_INPUT, CORPUS_INPUT, type InputFile, type InputFiles, OBLIGATIONS_INPUT, PHASE0_INPUT, PLAN_INPUT, RULING_INPUT, RULINGS_INPUT,
+  SPEC_INPUT, VISION_INPUT, keepInput, keptInput, keptPayload, ledgerPath, revisionManifestOf, sidecarPath, specFilePath,
 } from './inforce.ts';
 import { type PlanM1, parsePlan, visionFile } from './plan.ts';
 
@@ -215,13 +215,10 @@ export function rebaseInputs(base: InputFiles, ours: InputFiles, theirs: InputFi
   let corpus: InputFiles['corpus'] = null;
   if (plan.target === 'corpus') {
     if (ours.corpus === null) throw new Error('a merged corpus plan whose owner plan is not a corpus plan (a target change is refused by the classifier, which never sees this)');
-    const phase0 = optionalFile(beside(plan.phase0), sides((f) => f.corpus?.phase0), conflicts)!;
-    const record = phase0RecordOf(phase0.bytes);
     corpus = {
       pin: optionalFile(beside(plan.corpus), sides((f) => f.corpus?.pin), conflicts)!,
       guide: { path: absPath(join(ours.repo, CORPUS_GUIDE_PATH)), bytes: ours.corpus.guide.bytes },
-      phase0,
-      capture: record === null ? null : optionalFile(beside(record.issueCapture.file), sides((f) => f.corpus?.capture), conflicts),
+      phase0: optionalFile(beside(plan.phase0), sides((f) => f.corpus?.phase0), conflicts)!,
     };
   }
   const obligations = optionalFile(beside(plan.holistic?.obligations), sides((f) => f.obligations), conflicts);
@@ -265,12 +262,9 @@ export function baseFiles(runDir: AbsPath, base: RevisionManifest, planFile: Abs
   let corpus: InputFiles['corpus'] = null;
   if (plan.target === 'corpus') {
     const phase0 = file(base.phase0, PHASE0_INPUT, 'Phase-0 record', beside(plan.phase0));
-    const record = phase0RecordOf(phase0?.bytes ?? null);
     const pin = file(base.corpus, CORPUS_INPUT, 'corpus pin', beside(plan.corpus));
     const guide = file(base.corpusGuide, CORPUS_GUIDE_INPUT, 'corpus guide', absPath(join(repo, CORPUS_GUIDE_PATH)));
-    if (pin !== null && guide !== null && phase0 !== null) {
-      corpus = { pin, guide, phase0, capture: record === null ? null : file(base.phase0Issues, ISSUES_INPUT, 'issue capture', beside(record.issueCapture.file)) };
-    }
+    if (pin !== null && guide !== null && phase0 !== null) corpus = { pin, guide, phase0 };
   }
   const files: InputFiles = {
     repo, planFile, plan, planBytes, specs, ledger: { path: ledger, bytes: ledgerBytes }, sidecars,
@@ -317,7 +311,6 @@ export function keepOwnerFiles(runDir: AbsPath, files: InputFiles): void {
     keep(files.corpus.pin, CORPUS_INPUT);
     keep(files.corpus.guide, CORPUS_GUIDE_INPUT);
     keep(files.corpus.phase0, PHASE0_INPUT);
-    keep(files.corpus.capture, ISSUES_INPUT);
   }
 }
 

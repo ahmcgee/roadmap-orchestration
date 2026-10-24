@@ -1,7 +1,7 @@
 // A revision's activation and its recovery (G1, A2, A19; DESIGN-1.0.md §2.6 "Revisions and activation"; M3 step A2).
 //
 //   commitRevision   under the fence (src/core/fence.ts), its inputs already kept by the caller (`keepRevision`; M4a: a
-//                    corpus arc's guide, corpus files, pin, Phase-0 record and issue capture too, content-addressed, so a
+//                    corpus arc's guide, corpus files, pin and Phase-0 record too, content-addressed, so a
 //                    re-run keeps nothing twice): the payload kept, `revision.commit` naming it, the docs
 //                    publication when the payload has one, `plan-applied` appended from the payload exactly, then
 //                    its divergences, done `applied`. A refused publication aborts the commit (nothing is in force).

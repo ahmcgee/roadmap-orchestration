@@ -10,12 +10,12 @@
 // |----------------------------------------|--------------------------------------------------------------------|
 // | `inputs/<sha256>.<ext>`                | a `plan-applied` (plan, specs, ledger, obligations, vision, payload), |
 // |                                        | a `revision.commit` intent (payload), a kept payload (its manifest's |
-// |                                        | inputs, sidecars, renders; M4a: a corpus arc's pin, guide, Phase-0  |
-// |                                        | record and its issue capture), a kept pin (each pinned corpus file, |
+// |                                        | inputs, sidecars, renders; M4a: a corpus arc's pin, guide and       |
+// |                                        | Phase-0 record), a kept pin (each pinned corpus file,              |
 // |                                        | `.corpus-file`), a `spec.patch` done, a `dispatch`,                 |
 // |                                        | `judgment-inputs` or `reopened` fact (spec), a `steered` fact (brief), |
-// |                                        | a vacuity `finding-opened` (its mutant `.patch`), an `issues-captured` |
-// |                                        | fact (a checkpoint's capture), a `pack-review-started` fact (its   |
+// |                                        | a vacuity `finding-opened` (its mutant `.patch`),                  |
+// |                                        | a `pack-review-started` fact (its                                  |
 // |                                        | kept `PackReviewInputs`); M4b: a `flow-started` fact (its kept      |
 // |                                        | `FlowInputs`), a `flow-series` fact (the compact series), a        |
 // |                                        | `flow-proof` fact (each side's kept witness records, when present) |
@@ -67,7 +67,7 @@ import { START_FILE } from '../executor.ts';
 import { parseCorpusPin } from '../corpus/types.ts';
 import { WITNESS_RECORD_FILE } from '../holistic/witness.ts';
 import {
-  CORPUS_FILE_INPUT, CORPUS_GUIDE_INPUT, CORPUS_INPUT, FLOW_INPUTS_INPUT, FLOW_PROOF_INPUT, FLOW_SERIES_INPUT, ISSUES_INPUT, OBLIGATIONS_INPUT, PACK_REVIEW_INPUT,
+  CORPUS_FILE_INPUT, CORPUS_GUIDE_INPUT, CORPUS_INPUT, FLOW_INPUTS_INPUT, FLOW_PROOF_INPUT, FLOW_SERIES_INPUT, OBLIGATIONS_INPUT, PACK_REVIEW_INPUT,
   PHASE0_INPUT, PLAN_INPUT, RENDER_INPUT, REVISION_INPUT,
   RULING_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, inputPath,
 } from '../input/inforce.ts';
@@ -199,11 +199,11 @@ function closureOf(events: readonly Event[], read: (sha: Sha256Hex, ext: string)
     for (const s of Object.values(m.rulings.sidecars)) input(s, RULING_INPUT, from);
     if (m.obligations !== null) input(m.obligations, OBLIGATIONS_INPUT, from);
     if (m.vision !== null) input(m.vision, VISION_INPUT, from);
-    // M4a: a corpus arc's pin and every corpus file it pins (named by the pin), guide, Phase-0 record and issue capture.
+    // M4a: a corpus arc's pin and every corpus file it pins (named by the pin), guide and Phase-0 record (an earlier
+    // executor's `phase0Issues` capture is ignored: the issues integration was removed in 1.0.0-dev.21).
     if (m.corpus !== undefined) pin(m.corpus, from);
     if (m.corpusGuide !== undefined) input(m.corpusGuide, CORPUS_GUIDE_INPUT, from);
     if (m.phase0 !== undefined) input(m.phase0, PHASE0_INPUT, from);
-    if (m.phase0Issues !== undefined) input(m.phase0Issues, ISSUES_INPUT, from);
     for (const r of p.publication?.renders ?? []) input(r.sha256, RENDER_INPUT, from);
   };
 
@@ -279,9 +279,6 @@ function closureOf(events: readonly Event[], read: (sha: Sha256Hex, ext: string)
         break;
       case 'finding-opened':
         if (f.mutant !== null) input(f.mutant.patchSha256, MUTANT_PATCH_INPUT, by);
-        break;
-      case 'issues-captured':
-        input(f.sha256, ISSUES_INPUT, by);
         break;
       case 'pack-review-started':
         input(f.inputsSha256, PACK_REVIEW_INPUT, by);

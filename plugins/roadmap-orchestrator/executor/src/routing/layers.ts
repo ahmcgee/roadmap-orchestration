@@ -42,7 +42,7 @@
 //     "systemsMap": { "systems", "shared"?, "contracts"?, "docs"? } } optional (dev.17): src/input/systems.ts
 //
 //   `chain.k` (M4a, OR-Q19, K10) is asked once at bootstrap and committed by the owner; the root agent never writes it.
-//   Absent: K unset (a chained start is refused `chain-invalid{k-unset}`). Nothing about issues lives here (OR-L6).
+//   Absent: K unset (a chained start is refused `chain-invalid{k-unset}`).
 //   `flow.givens` (M4b): what cannot be tuned in this repo, each a closed lever class (src/flow/types.ts `FLOW_LEVERS`)
 //   and a note; code drops a flow proposal using a given's lever. The owner commits them; host givens live in the git
 //   common dir (src/flow/givens.ts).

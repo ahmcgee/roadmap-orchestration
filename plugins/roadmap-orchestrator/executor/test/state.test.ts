@@ -130,7 +130,7 @@ describe('fold derives', () => {
       backendParks: [], resources: [], runOnly: null, resolvedEdges: [],
       holistic: {
         on: false, witnessed: [], latched: [], findings: [], audits: [], auditRequests: [], docsCovered: [], docsPublished: [], checkpoints: [], checkpointSkips: [], divergences: [],
-        digests: [], steered: [], mergedIn: [], debt: [], amendments: [], intake: [], packReviews: [], captures: [], draining: null, completion: null, laneReuses: [], certificates: [], smokeRuns: [], corroborations: [],
+        digests: [], steered: [], mergedIn: [], debt: [], amendments: [], packReviews: [], draining: null, completion: null, laneReuses: [], certificates: [], smokeRuns: [], corroborations: [],
       },
     });
   });

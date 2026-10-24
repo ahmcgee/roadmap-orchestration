@@ -1,5 +1,5 @@
 // M4a step C1: `roadmap phase0 check` and the shared Phase-0 rows (src/phase0/rows.ts) over real repos, real pins
-// (`roadmap corpus pin`), real issue captures against the fake forge and real snapshot refs for the chain (src/chain.ts).
+// (`roadmap corpus pin`) and real snapshot refs for the chain (src/chain.ts).
 // The classifier's and the apply's and start's sides are test/phase0-apply.test.ts. M4a rev 3 (N5):
 // phase0.spec-census-mismatch-row. Run 10 (C): phase0.spec-census-witness-items. 2026-10-21: phase0.retired-rule-anchor.
 import assert from 'node:assert/strict';
@@ -23,9 +23,8 @@ import { parseObligations } from '../src/holistic/types.ts';
 import { planInForce, revisionInForce } from '../src/input/inforce.ts';
 import { rulingCorpusOf } from '../src/phase0/rows.ts';
 import { scopeOverlapFix } from '../src/phase0/types.ts';
-import { UNTRUSTED_POLICY } from './helpers/forge.ts';
 import {
-  CAPTURE_FILE, type CorpusArc, PIN_FILE, betweenArc, check, corpusArc, editJsonFile, editPhase0, editPlan, inForce, kinds, nextArc, phase0Of, rowOf,
+  type CorpusArc, PIN_FILE, betweenArc, check, corpusArc, editJsonFile, editPhase0, editPlan, inForce, kinds, nextArc, phase0Of, rowOf,
   runDirOfArc, seal, visionRecord, withForge,
 } from './helpers/corpusarc.ts';
 import { runUntilExit } from './helpers/proc.ts';
@@ -97,11 +96,6 @@ describe('phase0 check', () => {
     writeFiles(a.repo, { '.roadmap/config.json': '{"chain":{"k":2}}\n' });
     assert.deepEqual((await check(a)).rows, [{ kind: 'tree-uncommitted', paths: ['.roadmap/config.json'] }]);
     git(a.repo, 'checkout', '--', '.roadmap/config.json');
-    // issue-policy-untrusted: the forge lets anyone open issues.
-    a.forge.setPolicy(UNTRUSTED_POLICY);
-    assert.deepEqual((await check(a)).rows, [{ kind: 'issue-policy-untrusted', visibility: 'PUBLIC', policy: 'ALL' }]);
-    a.forge.setPolicy({ ...UNTRUSTED_POLICY, issueCreationPolicy: 'COLLABORATORS_ONLY' });
-    await green(a);
     // plan-invalid: a corpus arc names its obligations file (LR-0a-2).
     editPlan(a, (p) => ({ ...p, holistic: { advances: ['V-1'] } }));
     assert.deepEqual((await check(a)).rows.map((r) => (r.kind === 'plan-invalid' && r.problem.type === 'schema' ? r.problem.field : r.kind)), ['plan.holistic.obligations']);
@@ -287,50 +281,6 @@ describe('phase0 debt and questions', () => {
   });
 });
 
-describe('phase0 intake', () => {
-  const outcome = (issue: string): Json => ({ issue, outcome: { type: 'none', reason: 'nothing to do' } });
-
-  it('phase0.intake-missing-against-capture: an issue of the kept capture with no outcome', T, async () => {
-    const a = await corpusArc();
-    editPhase0(a, (r) => ({ ...r, intake: [] }));
-    assert.deepEqual(await phase0Problems(a), [{ type: 'intake-missing', issue: 'issue-1' }]);
-  });
-
-  it('phase0.intake-unknown-against-capture: an outcome for an issue the capture does not hold (an issue opened after it is the first checkpoint\'s)', T, async () => {
-    const a = await corpusArc();
-    a.forge.addIssue({ title: 'opened after the capture', labels: ['roadmap:feedback'] });
-    editPhase0(a, (r) => ({ ...r, intake: [outcome('issue-1'), outcome('issue-2')] }));
-    assert.deepEqual(await phase0Problems(a), [{ type: 'intake-unknown', issue: 'issue-2' }]);
-  });
-
-  it('phase0.intake-duplicate-against-capture: two outcomes for one issue', T, async () => {
-    const a = await corpusArc();
-    editPhase0(a, (r) => ({ ...r, intake: [outcome('issue-1'), outcome('issue-1')] }));
-    assert.deepEqual(await phase0Problems(a), [{ type: 'intake-duplicate', issue: 'issue-1' }]);
-  });
-
-  it('phase0.capture-missing: the capture the record names is absent or not the bytes it hashed', T, async () => {
-    const a = await corpusArc();
-    editJsonFile(join(a.planDir, CAPTURE_FILE), (c) => ({ ...c, filtered: { comments: 5, pullRequests: 0 } }));
-    assert.deepEqual(await phase0Problems(a), [{ type: 'capture-missing' }]);
-  });
-
-  it('phase0.capture-foreign: the capture\'s repo is not the one gh resolves now (live only)', T, async () => {
-    const a = await corpusArc();
-    const was = a.forge.read().repo;
-    a.forge.update((s) => ({ ...s, repo: { ...s.repo, owner: 'someone-else' } }));
-    assert.deepEqual(await phase0Problems(a), [{ type: 'capture-foreign', expected: { ...was, owner: 'someone-else' }, actual: was }]);
-  });
-
-  it('phase0.issue-policy-untrusted: PUBLIC + ALL refuses; issues disabled or collaborators-only do not (OR-L6)', T, async () => {
-    const a = await corpusArc();
-    a.forge.setPolicy(UNTRUSTED_POLICY);
-    assert.deepEqual((await check(a)).rows, [{ kind: 'issue-policy-untrusted', visibility: 'PUBLIC', policy: 'ALL' }]);
-    a.forge.setPolicy({ ...UNTRUSTED_POLICY, hasIssuesEnabled: false });
-    await green(a);
-  });
-});
-
 describe('the chain (src/chain.ts)', () => {
   /** Arc 1 sealed with one amendment, the between-arc commit on its head, arc 2 chained over it. */
   async function twoArcs(): Promise<Readonly<{ a1: CorpusArc; h1: string; a2: CorpusArc }>> {
@@ -440,16 +390,15 @@ describe('phase0 check --from-ref (K20)', () => {
   it('phase0.from-ref: the arc\'s inputs by the digests its verified ref recorded, after the live files changed', T, async () => {
     const a = await corpusArc();
     await seal(a);
-    // The live files move on: the pin, the capture, the record and the vision in the working tree.
+    // The live files move on: the pin, the record and the vision in the working tree.
     editJsonFile(join(a.planDir, PIN_FILE), (p) => ({ ...p, highWater: 9 }));
-    editJsonFile(join(a.planDir, CAPTURE_FILE), (c) => ({ ...c, filtered: { comments: 3, pullRequests: 0 } }));
-    editPhase0(a, (r) => ({ ...r, intake: [] }));
+    editPhase0(a, (r) => ({ ...r, slice: { advances: [], why: 'none' } }));
     writeFiles(a.repo, { '.roadmap/vision.json': JSON.stringify(visionRecord(null)) });
     commitAll(a.repo, 'the live vision moves on');
-    assert.deepEqual([...kinds((await check(a)).rows)].sort(), ['corpus-invalid', 'phase0-invalid', 'vision-unconfirmed']);
+    assert.deepEqual([...kinds((await check(a)).rows)].sort(), ['corpus-invalid', 'plan-invalid', 'vision-unconfirmed']);
     const fromRef = await withForge(a.forge, () => phase0Check({ repo: a.repo, source: { type: 'ref', arc: a.arc } }));
     assert.deepEqual(fromRef, { rows: [], sliceCandidates: [], advisories: [] });
-    assert.deepEqual(phase0Of(a)['intake'], [], 'the live record is not what the ref check read');
+    assert.deepEqual(phase0Of(a)['slice'], { advances: [], why: 'none' }, 'the live record is not what the ref check read');
   });
 
   it('phase0.from-ref-unknown-arc: an arc with no ref is a CLI error', T, async () => {

@@ -1,6 +1,6 @@
 // M4a rev 3 step N2 (B, C, H4, H5): a checkpoint's admit classes, conversions, busy deferral, evidence per test, ruling
-// stamps and ids, split census moves, input manifest, embedded specs, closeout and issue reuse, over real corpus arcs (real
-// git, real processes, the fake claude answering lens and checkpoint calls by job, the fake gh as the forge). Named tests:
+// stamps and ids, split census moves, input manifest, embedded specs and closeout, over real corpus arcs (real git, real
+// processes, the fake claude answering lens and checkpoint calls by job, the fake gh as the forge). Named tests:
 // bundle.decision-persists-conversions, bundle.opportunity-joins-advances, bundle.opportunity-unwitnessed-converts, bundle.all-converted-no-op,
 // bundle.follow-up-overrun-converts-with-debt, bundle.admit-targets-checked,
 // bundle.recovery-no-reclassify, admits.architecture-doc-arc-unclassified, bundle.evidence-head-superset-accepted,
@@ -12,8 +12,7 @@
 // checkpoint.capture-wait-bounded (paid M4a run 10, R-15), checkpoint.manifest-content-addressed,
 // checkpoint.specs-embedded-with-occupied-ids, checkpoint.next-ruling-id, checkpoint.closeout-delta-when-unchanged,
 // bundle.merged-since-capture-stale, bundle.merged-at-capture-invalid, checkpoint.refused-carried-across-triggers (paid M4a
-// run 12), checkpoint.final-always-full, checkpoint.skipped-nothing-new and checkpoint.skip-weighs-issues (arc feedback
-// 2026-10-16), intake.unchanged-capture-reuses-dispositions, intake.changed-ground-relists, checkpoint.schema-closed-ids
+// run 12), checkpoint.final-always-full, checkpoint.skipped-nothing-new (arc feedback 2026-10-16), checkpoint.schema-closed-ids
 // (paid M4b run 5).
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -38,7 +37,7 @@ import { reached, release } from './helpers/barrier.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
 import { withForge } from './helpers/corpusarc.ts';
 import { sampleCorpus } from './helpers/corpus.ts';
-import { VALID_OP, checkpointAnswer, jobRepairStep, checkpointStep, intakeOutcome, lensStep, noteLensStep } from './helpers/holistic.ts';
+import { VALID_OP, checkpointAnswer, jobRepairStep, checkpointStep, lensStep, noteLensStep } from './helpers/holistic.ts';
 import { runFixture } from './helpers/proc.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 import { type Step, readCalls } from './helpers/scenario.ts';
@@ -606,7 +605,7 @@ describe('the checkpoint\'s inputs (H4, H5)', () => {
       const stdin = callOf(x, 'ckpt-1').stdin;
       const lines = tagOf(stdin, 'input_manifest').split('\n');
       const kinds = lines.map((l) => /^- (\S+) /.exec(l)![1]);
-      for (const k of ['plan', 'spec', 'ledger', 'obligations', 'vision', 'phase0', 'issues']) assert.ok(kinds.includes(k), `the manifest names a ${k}: ${lines.join('\n')}`);
+      for (const k of ['plan', 'spec', 'ledger', 'obligations', 'vision', 'phase0']) assert.ok(kinds.includes(k), `the manifest names a ${k}: ${lines.join('\n')}`);
       for (const l of lines) {
         const m = /^- \S+ \S+: (\S+) sha256:([0-9a-f]{64})$/.exec(l);
         assert.ok(m !== null, l);
@@ -643,29 +642,6 @@ describe('the checkpoint\'s inputs (H4, H5)', () => {
       const third = await run(x);
       assert.ok(third.kind === 'decided' && third.job === 'ckpt-2' && third.trigger.type === 'audit' && third.trigger.job === 'audit-3', JSON.stringify(third));
       assert.match(tagOf(callOf(x, 'ckpt-2').stdin, 'findings'), /audit-3 notes a gap in the arc/);
-    } finally {
-      x.r.journal.close();
-    }
-  });
-
-  test('checkpoint.skip-weighs-issues (arc feedback 2026-10-16): an audit that finds nothing new is skipped while every open issue is one a settled checkpoint captured unchanged; a new issue keeps its checkpoint, which reads it', T, async () => {
-    const x = await arc([
-      checkpointStep('ckpt-1', checkpointAnswer({ decision: 'no-op', issueIntake: [{ issue: 'issue-1', outcome: intakeOutcome.none('fixed by I-1') }] })),
-      lensStep('audit-2', 'vision'), lensStep('audit-3', 'vision'),
-      checkpointStep('ckpt-2', checkpointAnswer({ decision: 'no-op', issueIntake: [{ issue: 'issue-2', outcome: intakeOutcome.none('the berth view covers it') }] })),
-    ], { before: (a) => a.forge.addIssue({ title: 'A berth was double-booked', labels: ['roadmap:bug'], body: 'Berth 4 holds two bookings.', association: 'OWNER', author: 'harbourmaster' }) });
-    try {
-      assert.ok((await run(x)).kind === 'decided');
-      await completedAudit(x.r, x.ctx);
-      assert.deepEqual(await run(x), { kind: 'not-needed', audit: 'audit-2', carried: [] }, 'issue-1 is unchanged since ckpt-1');
-      assert.deepEqual(factsOfKind(x.r, 'issues-captured').map((f) => f.job), ['ckpt-1'], 'the fetch before the skip records nothing');
-      x.a.forge.addIssue({ title: 'Show the tide window', labels: ['roadmap:feedback'], body: 'Every booking should say its tide window.', association: 'OWNER', author: 'harbourmaster' });
-      await completedAudit(x.r, x.ctx);
-      const third = await run(x);
-      assert.ok(third.kind === 'decided' && third.job === 'ckpt-2' && third.trigger.type === 'audit' && third.trigger.job === 'audit-3' && third.decision.kind === 'no-op', JSON.stringify(third));
-      assert.deepEqual(factsOfKind(x.r, 'checkpoint-skipped').map((f) => f.audit), ['audit-2'], 'audit-3 found nothing new but a new issue');
-      assert.match(callOf(x, 'ckpt-2').stdin, /Every booking should say its tide window/, 'the new issue reaches the checkpoint');
-      assert.deepEqual(factsOfKind(x.r, 'issue-intake').filter((f) => f.job === 'ckpt-2').map((f) => f.issue).sort(), ['issue-1', 'issue-2']);
     } finally {
       x.r.journal.close();
     }
@@ -719,59 +695,6 @@ describe('the checkpoint\'s inputs (H4, H5)', () => {
       assert.deepEqual(factsOfKind(x.r, 'checkpoint-skipped'), [], 'the final audit is never skipped');
       const stdin = callOf(x, 'ckpt-2').stdin;
       assert.match(tagOf(stdin, 'unit_specs'), /spec of unit u1/);
-    } finally {
-      x.r.journal.close();
-    }
-  });
-});
-
-describe('issue reuse (H5, F27)', () => {
-  const seed = (a: CorpusHolisticArc) => {
-    a.forge.addIssue({ title: 'A berth was double-booked', labels: ['roadmap:bug'], body: 'Berth 4 holds two bookings.', association: 'OWNER', author: 'harbourmaster' });
-    a.forge.addIssue({ title: 'Name the tide window', labels: ['roadmap:feedback'], body: 'Every booking should say its tide window.', association: 'OWNER', author: 'harbourmaster' });
-  };
-  const first = checkpointAnswer({
-    decision: 'no-op',
-    issueIntake: [{ issue: 'issue-1', outcome: intakeOutcome.none('fixed by I-1') }, { issue: 'issue-2', outcome: intakeOutcome.amendment(['T-2'], 'Name the window.') }],
-  });
-
-  test('intake.unchanged-capture-reuses-dispositions: unchanged issues are not listed; the output omits them; their outcomes carry forward', T, async () => {
-    const x = await arc([checkpointStep('ckpt-1', first), noteLensStep('audit-2')], { before: seed });
-    try {
-      assert.ok((await run(x)).kind === 'decided');
-      x.a.forge.addComment(1, { body: 'Still seen on berth 4.', association: 'OWNER', author: 'harbourmaster' });
-      appendSteps(x.a.d, [checkpointStep('ckpt-2', checkpointAnswer({ decision: 'no-op', issueIntake: [{ issue: 'issue-1', outcome: intakeOutcome.none('still fixed') }] }))]);
-      await completedAudit(x.r, x.ctx);
-      const out = await run(x);
-      assert.ok(out.kind === 'decided' && out.decision.kind === 'no-op', JSON.stringify(out));
-      const stdin = callOf(x, 'ckpt-2').stdin;
-      assert.match(stdin, /Still seen on berth 4/, 'the changed issue is listed');
-      assert.doesNotMatch(stdin, /Every booking should say its tide window/, 'the unchanged one is not');
-      assert.match(stdin, /unchanged since checkpoint ckpt-1/);
-      const intake = factsOfKind(x.r, 'issue-intake').filter((f) => f.job === 'ckpt-2').map((f) => [f.issue, f.outcome.type]);
-      assert.deepEqual(intake.sort(), [['issue-1', 'none'], ['issue-2', 'amendment']], 'issue-2 carried from ckpt-1');
-    } finally {
-      x.r.journal.close();
-    }
-  });
-
-  test('intake.changed-ground-relists: a changed ground (the obligations) lists every issue again, and each needs an outcome', T, async () => {
-    const relisted = checkpointAnswer({ decision: 'no-op', issueIntake: [{ issue: 'issue-1', outcome: intakeOutcome.none('still fixed') }] });
-    const x = await arc([checkpointStep('ckpt-1', first), noteLensStep('audit-2'), checkpointStep('ckpt-2', relisted)], { before: seed });
-    try {
-      assert.ok((await run(x)).kind === 'decided');
-      const file = join(x.a.planDir, 'obligations.json');
-      writeFileSync(file, JSON.stringify({ ...(JSON.parse(readFileSync(file, 'utf8')) as Json), cutLine: 'the berth booking ships, and its texts' }));
-      const applied = await applyCommand(x.w.commands, submitCommand(x.r.ctx.runDir, x.r.journal.view.arc, applyBody(x.a.d)));
-      assert.equal(applied.kind, 'applied', JSON.stringify(applied));
-      await completedAudit(x.r, x.ctx);
-      appendSteps(x.a.d, [jobRepairStep('ckpt-2', relisted, ['issueIntake gives issue-2 no outcome'])]);
-      const out = await run(x);
-      assert.ok(out.kind === 'decided' && out.decision.kind === 'rejected' && out.decision.reason === 'invalid', JSON.stringify(out));
-      assert.match(out.decision.detail, /issueIntake gives issue-2 no outcome/);
-      const stdin = callOf(x, 'ckpt-2').stdin;
-      assert.match(stdin, /Every booking should say its tide window/);
-      assert.doesNotMatch(stdin, /unchanged since checkpoint/);
     } finally {
       x.r.journal.close();
     }

@@ -430,12 +430,8 @@ export type BankedDebt = Extract<Fact, { kind: 'debt-banked' }> & Seq;
 type M4aFactOf<K extends Fact['kind']> = Omit<Extract<Fact, { kind: K }>, 'kind'> & Seq;
 /** M4a: a corpus amendment (`M-n`, in id order), its source unique. */
 export type AmendmentState = M4aFactOf<'corpus-amendment'>;
-/** M4a: a checkpoint's outcome for one captured issue, one per `(job, issue)`. */
-export type IntakeState = M4aFactOf<'issue-intake'>;
 /** M4a: a pack review job: its kept inputs' fact, and its end (null while running). */
 export type PackReviewState = Readonly<{ started: M4aFactOf<'pack-review-started'>; ended: M4aFactOf<'pack-review-ended'> | null }>;
-/** M4a: a checkpoint's issue capture, written for the next checkpoint job before its `checkpoint-inputs`. */
-export type IssueCaptureState = M4aFactOf<'issues-captured'>;
 
 /** A finding as the log last moved it. `owner`: the unit of its latest `owned` or `fixed-on-branch` move. */
 export type FindingState = Omit<FactOf<'finding-opened'>, 'kind'> & Readonly<{
@@ -476,12 +472,8 @@ export type HolisticFold = Readonly<{
   debt: readonly BankedDebt[];
   /** M4a: the corpus amendments, in id order (src/holistic/amendments.ts). */
   amendments: readonly AmendmentState[];
-  /** M4a: the checkpoints' issue outcomes, in log order (src/holistic/intake.ts). */
-  intake: readonly IntakeState[];
   /** M4a: the pack reviews, in job order; at most one running (src/holistic/packreview.ts). */
   packReviews: readonly PackReviewState[];
-  /** M4a: the checkpoints' issue captures, in log order. */
-  captures: readonly IssueCaptureState[];
   /** `close-admissions` latched and no architect admit since (§2.10). */
   draining: Readonly<{ command: CommandId; seq: number }> | null;
   completion: CompletionState | null;
@@ -696,9 +688,7 @@ export class Fold implements JournalView {
   readonly #mergedIn: (Omit<FactOf<'merged-in'>, 'kind'> & Seq)[] = [];
   readonly #debt: BankedDebt[] = [];
   readonly #amendments: AmendmentState[] = [];
-  readonly #intake: IntakeState[] = [];
   readonly #packReviews: { started: PackReviewState['started']; ended: PackReviewState['ended'] }[] = [];
-  readonly #captures: IssueCaptureState[] = [];
   // M4b
   readonly #flowFacts: FlowFactAt[] = [];
   readonly #walkFacts: WalkFactAt[] = [];
@@ -1165,17 +1155,11 @@ export class Fold implements JournalView {
         this.#amendments.push({ ...rest, seq: at.seq });
         return;
       }
-      case 'issue-intake': {
-        if (this.#intake.some((x) => x.job === f.job && x.issue === f.issue)) fail(`a second issue-intake of ${f.issue} by ${f.job}`);
-        if (f.outcome.type === 'finding' && !this.#findings.has(f.outcome.finding)) fail(`issue-intake of ${f.issue} names finding ${f.outcome.finding}, which was never opened`);
-        if (f.outcome.type === 'amendment' && !this.#amendments.some((x) => x.id === (f.outcome as { amendment: string }).amendment)) {
-          fail(`issue-intake of ${f.issue} names amendment ${f.outcome.amendment}, which was never recorded`);
-        }
-        this.#seeJob(f.job);
-        const { kind: _k, ...rest } = f;
-        this.#intake.push({ ...rest, seq: at.seq });
+      // An earlier executor's issue facts (the issues integration was removed in 1.0.0-dev.21): read and ignored
+      // (`issuesIgnored`, src/core/upgrade.ts; scaffolding).
+      case 'issue-intake':
+      case 'issues-captured':
         return;
-      }
       case 'pack-review-started': {
         const running = this.#packReviews.find((r) => r.ended === null);
         if (running !== undefined) fail(`pack review ${f.job} started while ${running.started.job} is running (one at a time)`);
@@ -1226,15 +1210,6 @@ export class Fold implements JournalView {
         if (!this.#findings.has(f.id)) fail(`finding-corroborated of ${f.id}, which was never opened`);
         const { kind: _k, ...rest } = f;
         this.#corroborations.push({ ...rest, seq: at.seq });
-        return;
-      }
-      case 'issues-captured': {
-        // Written for the checkpoint job its `checkpoint-inputs` opens next (H13): it names that job without opening it.
-        const next = this.nextJobId('ckpt');
-        if (f.job !== next) fail(`issues-captured for ${f.job}; the next checkpoint job is ${next}`);
-        if (this.#captures.some((c) => c.job === f.job)) fail(`a second issues-captured for ${f.job}`);
-        const { kind: _k, ...rest } = f;
-        this.#captures.push({ ...rest, seq: at.seq });
         return;
       }
       // M4b (SCHEMAS.md "M4b"): the fold sees the jobs the flow facts name and keeps every flow fact (`flowFacts`); a
@@ -1461,10 +1436,6 @@ export class Fold implements JournalView {
         return;
       }
       case 'checkpoint-inputs': {
-        if (f.issues?.type === 'captured') {
-          const capture = this.#captures.find((c) => c.job === f.job);
-          if (capture?.sha256 !== f.issues.sha256) fail(`checkpoint-inputs of ${f.job} names issues ${f.issues.sha256}, which no issues-captured for it records`);
-        }
         this.#openJob(f.job, fail);
         const { kind: _k, ...rest } = f;
         this.#checkpoints.set(f.job, { inputs: { ...rest, seq }, decided: null });
@@ -2075,9 +2046,7 @@ export class Fold implements JournalView {
       mergedIn: this.#mergedIn,
       debt: this.#debt,
       amendments: this.#amendments,
-      intake: this.#intake,
       packReviews: this.#packReviews.map((r) => ({ started: r.started, ended: r.ended })),
-      captures: this.#captures,
       draining: this.#draining,
       completion: c === null ? null : { ...c, active },
       laneReuses: this.#laneReuses,

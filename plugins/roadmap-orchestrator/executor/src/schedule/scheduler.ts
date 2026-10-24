@@ -93,9 +93,7 @@
 //   - arc-wide (`arcHolds`): no unit is admitted to any stage (chains run on) while
 //       - baseline (A6): the baseline is owed or running, or its blocking `obligation-baseline` is open;
 //       - pack-review (M4a K14, H9): before the first admission, a pack review is running or due, or the latest ended
-//         review with the current key has an open blocking `pack-review` item (src/holistic/packreview.ts);
-//       - issue-policy-untrusted (M4a OR-L6, R31): its blocking item is open (a checkpoint capture found the issue
-//         policy untrusted; the checkpoint waits uncaptured meanwhile, src/holistic/intake.ts).
+//         review with the current key has an open blocking `pack-review` item (src/holistic/packreview.ts).
 //   - batch (R7, B2): the candidate of an approved unit repairing a finding directly waits while another active
 //     unit repairs that finding directly and is not approved yet; once every such unit (at least two) waits at its
 //     candidate they publish as one batch. A red batch records `red` for each member its own selection attributes
@@ -449,18 +447,17 @@ export type CompletionBlocker = (typeof COMPLETION_BLOCKERS)[number];
 const TERMINAL: readonly string[] = ['retired', 'cut', 'superseded'];
 
 /** What holds every admission of a holistic arc now (the scheduler's arc-wide holds; see the header), in this order. */
-export const ARC_HOLDS = ['baseline', 'pack-review', 'issue-policy-untrusted'] as const;
+export const ARC_HOLDS = ['baseline', 'pack-review'] as const;
 export type ArcHold = (typeof ARC_HOLDS)[number];
 
 /**
  * The arc-wide holds of a holistic arc now: the baseline owed, running (`baselineRunning`) or its item open (A6); the pack
- * review running, due or held (K14, H9); an open `issue-policy-untrusted` item (OR-L6, R31). Empty: none.
+ * review running, due or held (K14, H9). Empty: none.
  */
 export function arcHolds(h: HolisticContexts, blocking: readonly BlockingItem[], baselineRunning: boolean): readonly ArcHold[] {
   const out = new Set<ArcHold>();
   if (baselineRunning || baselineOwed(h.audit) !== null || blocking.some((b) => b.reason === 'obligation-baseline')) out.add('baseline');
   if (packReviewHolds(h.checkpoint)) out.add('pack-review');
-  if (blocking.some((b) => b.reason === 'issue-policy-untrusted')) out.add('issue-policy-untrusted');
   return ARC_HOLDS.filter((x) => out.has(x));
 }
 
@@ -878,7 +875,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   };
 
   // -------------------------------------------------------------------------------------------------
-  // The scheduler's holds: arc-wide (the baseline, the pack review, an untrusted issue policy) and repair batches (R7)
+  // The scheduler's holds: arc-wide (the baseline, the pack review) and repair batches (R7)
 
   /** `flowApply` (M4b): an accepted flow proposal waits for its revision, so no new candidate starts. */
   type Holds = Readonly<{ arc: boolean; batch: ReadonlySet<UnitId>; flowApply: boolean }>;

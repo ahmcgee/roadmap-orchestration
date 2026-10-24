@@ -386,7 +386,7 @@ export async function drive(dir: string, profile: ProfileName): Promise<Report> 
       }
       // Waits in ANSWER_POLL_MS slices, so the stop rule is read between watch events too.
       let woke: string | null = '';
-      while (woke === '' && Date.now() < deadline && !checkEvidence()) woke = await wake(l, REAL, env, watched, Math.min(deadline, Date.now() + ANSWER_POLL_MS), () => {});
+      while (woke === '' && Date.now() < deadline && !checkEvidence()) woke = await wake(l, REAL, env, watched, Math.min(deadline, Date.now() + ANSWER_POLL_MS));
       if (evidence !== null) {
         endedBy = 'evidence-complete';
         break;

@@ -642,9 +642,16 @@ const DEV17_DEFAULTS = /^(lane\.tier\.(spec|suite|arc)|lane-rev\.tier\..+|plan-a
 const DEV17_LASTING = /^spec\.design\.kind$/;
 
 /**
+ * dev.21 removed the GitHub issues integration: what an arc started before it holds for issues (its Phase-0 record's
+ * capture and intake, its manifests' `phase0Issues`, its checkpoints' captures, intake and recorded `issueIntake`) is read
+ * as written and ignored, warned (`issuesIgnored`, src/core/upgrade.ts): expected of every earlier release's arc.
+ */
+const ISSUES_IGNORED = /^issues\.(issue-intake|issues-captured|checkpoint-inputs\.issues|plan-changed\.phase0\.issuesSha256|manifest\.phase0Issues|phase0\.(issueCapture|intake)|checkpoint\.issueIntake|corpus-amendment\.source\.issue)$/;
+
+/**
  * Once HEAD's phase ends, every `roadmap: upgrade default` an executor of the host dir warned is one HEAD reads the
  * starting release's arc with, or a kind the cell's story reads on purpose (`expected`, e.g. dev.16's
- * `plan.planCheck.shape`, a plan field dev.17 removed). An arc the previous release started: none but `DEV17_LASTING`. An
+ * `plan.planCheck.shape`, a plan field dev.17 removed). An arc the previous release started: none but `DEV17_LASTING`; any earlier release's also `ISSUES_IGNORED`. An
  * arc dev.16 started: the dev.17 defaults (`DEV17_DEFAULTS`), its spec lanes' tier read as their cadence among them (the
  * absent systems map is warned only where HEAD reads the map in force, a lane's selection or reuse; asserted in
  * `upgrade.dev16.review-unledgered`, which runs lanes on HEAD). An older release's cells assert the defaults they read
@@ -655,7 +662,7 @@ function assertNoDefaultRead(p: Phase1, expected: readonly string[] = []): void 
   const allowed = p.release === PREVIOUS_RELEASE ? DEV17_LASTING : DEV17_DEFAULTS;
   const kinds = [...hostLogs(p).matchAll(/roadmap: upgrade default \(([^)]+)\)/g)].map((m) => m[1]!);
   for (const kind of kinds) {
-    if (!expected.includes(kind)) assert.match(kind, allowed, `HEAD read the ${p.release.version} arc with the ${kind} default`);
+    if (!expected.includes(kind) && !ISSUES_IGNORED.test(kind)) assert.match(kind, allowed, `HEAD read the ${p.release.version} arc with the ${kind} default`);
   }
   if (p.release === DEV16_RELEASE) assert.ok(kinds.includes('lane.tier.spec'), `HEAD read the ${p.release.version} spec lanes' tier as their cadence, and warned`);
 }

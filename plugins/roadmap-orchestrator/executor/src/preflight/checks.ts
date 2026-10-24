@@ -26,7 +26,7 @@
 //
 // M4a (step C1): group 1 ends with the shared Phase-0 rows over the files (src/phase0/rows.ts `phase0Rows`, one rule
 // with `apply` and `phase0 check`): `tree-uncommitted` for every arc; for a corpus arc the pin re-derived, corpus overlap,
-// census, debt, questions, amendments, intake, the vision confirmed, the issue policy and the capture's repo, and at a
+// census, debt, questions, amendments, the vision confirmed, and at a
 // fresh start (no plan in force) the chain rows and `holistic-needs-corpus` (H4, R17: a fresh holistic arc targets a
 // corpus; an arc with a plan in force, such as an adopted dev.6 one, is never refused it). The corpus files the
 // re-derived pin read are kept when the files come into force (`settlePlan`).

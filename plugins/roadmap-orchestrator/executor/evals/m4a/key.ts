@@ -16,8 +16,6 @@
 //   question-answered  the question of arc `askedIn` bearing `bears` is answered, by the same id, in this arc's record
 //   curation           a `curation` entry of one of `tiers` names `file` (curation paths are repo-relative, the key's are
 //                      corpus-root-relative: both are resolved against the pin's source root before comparing)
-//   issue-declined     (M4b plant G) the Phase-0 intake outcome of `issue` is `none` (declined, with its reason), or a
-//                      `corpusDivergences` entry names a rule matching `rules` (the request recorded as a divergence)
 //   witnessed          (M4b plant G) an active obligation of `activation` has as its witness an arc lane whose argv names
 //                      `file` (the evidence check.ts `ruler-intact` reads), whatever the census says of the rules about it
 // A match is a list of fragment groups over the rule's normalised, lower-cased text: each group matches when the text
@@ -44,7 +42,6 @@ export type Postcondition =
   | Readonly<{ type: 'question'; arc: ArcNo; bears: Match; state: 'open' | 'answered' }>
   | Readonly<{ type: 'question-answered'; arc: ArcNo; askedIn: ArcNo; bears: Match }>
   | Readonly<{ type: 'curation'; arc: ArcNo; tiers: readonly string[]; file: string }>
-  | Readonly<{ type: 'issue-declined'; arc: ArcNo; issue: string; rules: Match }>
   | Readonly<{ type: 'witnessed'; arc: ArcNo; file: string; activation: 'future' | 'must-hold' }>;
 
 export type Defect = Readonly<{ id: string; what: string; postconditions: readonly Postcondition[] }>;
@@ -147,14 +144,6 @@ function evaluate(p: Postcondition, arcs: Readonly<Record<ArcNo, ArcView>>): Ver
       const rel = (f: string): string => (f.startsWith(`${root}/`) ? f.slice(root.length + 1) : f);
       const hit = view.phase0.curation.find((c) => p.tiers.includes(c.tier) && c.files.some((f) => rel(f) === rel(p.file)));
       return { pass: hit !== undefined, detail: hit === undefined ? `no ${p.tiers.join('/')} curation names ${p.file}` : hit.what };
-    }
-    case 'issue-declined': {
-      const ids = new Set<string>(rulesMatching(view, p.rules).map((r) => r.id));
-      const divergence = view.phase0.corpusDivergences.find((d) => d.rules.some((r) => ids.has(r)));
-      if (divergence !== undefined) return { pass: true, detail: `divergence: ${divergence.what}` };
-      const outcome = view.phase0.intake.find((x) => x.issue === p.issue)?.outcome;
-      if (outcome === undefined) return { pass: false, detail: `the Phase-0 intake has no outcome for ${p.issue}` };
-      return outcome.type === 'none' ? { pass: true, detail: `declined: ${outcome.reason}` } : { pass: false, detail: `${p.issue}'s outcome is ${outcome.type}, and no divergence names ${[...ids].join(', ') || 'a matching rule'}` };
     }
     case 'witnessed': {
       const lanes = new Set<string>(view.obligations.lanes.filter((l) => l.argv.some((arg) => arg.includes(p.file))).map((l) => l.id));

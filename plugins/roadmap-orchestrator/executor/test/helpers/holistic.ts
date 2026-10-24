@@ -72,17 +72,7 @@ export type CheckpointSpec = Readonly<{
   interpretations?: readonly Readonly<{ clauses: readonly string[]; situation: string; reading: string }>[];
   /** M4a: amendments the checkpoint proposes (`rules` are `T-n` ids). */
   corpusAmendments?: readonly Readonly<{ rules: readonly string[]; proposal: string; why: string }>[];
-  /** M4a: one outcome per captured issue (`issue` is an `issue-<number>` id); the outcome objects are the wire form. */
-  issueIntake?: readonly Readonly<{ issue: string; outcome: JsonValue }>[];
 }>;
-
-/** Issue-intake outcomes in the checkpoint's wire form (H17: `acted` names ops of the same output). */
-export const intakeOutcome = {
-  finding: (claim: string, severity: 'P2' | 'P3' = 'P2', cause = 'scripted cause'): JsonValue => ({ type: 'finding', severity, claim, cause }),
-  amendment: (rules: readonly string[], proposal: string): JsonValue => ({ type: 'amendment', rules: [...rules], proposal }),
-  actedOps: (indexes: readonly number[]): JsonValue => ({ type: 'acted', on: { type: 'ops', indexes: [...indexes] } }),
-  none: (reason: string): JsonValue => ({ type: 'none', reason }),
-} as const;
 
 /** A checkpoint's answer, validated by the frozen reader (so a no-op with ops, or a bundle without, throws here). */
 export function checkpointAnswer(spec: CheckpointSpec): JsonValue {
@@ -96,7 +86,6 @@ export function checkpointAnswer(spec: CheckpointSpec): JsonValue {
     cites: { vision: ['V-1'], observations: [], findings: [] },
     premises: [],
     corpusAmendments: (spec.corpusAmendments ?? []).map((a) => ({ rules: [...a.rules], proposal: a.proposal, why: a.why })),
-    issueIntake: (spec.issueIntake ?? []).map((e) => ({ issue: e.issue, outcome: e.outcome })),
   };
   validateCheckpointOutput(value);
   return value;

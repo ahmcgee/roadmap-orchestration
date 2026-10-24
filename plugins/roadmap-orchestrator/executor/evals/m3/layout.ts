@@ -3,10 +3,10 @@
 //   repo/        the product repo, the Node CLI `ledger` (branches `main` and `integration`); its run dir is
 //                repo/.git/roadmap-runtime/<arc>/
 //   input/       the run input: plan.json (a corpus arc, M4a R17), corpus.pin.json (the pin), phase0.json (the Phase-0
-//                record), issues.json (its issue capture), obligations.json, rulings.md (the C-nn ledger) and one spec
+//                record), obligations.json, rulings.md (the C-nn ledger) and one spec
 //                per unit (never in the product tree); the vision record is the repo's committed `.roadmap/vision.json`
-//   forge/       the fake forge (`gh-store.json`, trusted, no issues) and its `gh` shim under `forge/bin`, first on PATH
-//                for setup's capture and for every run (fake or real): the fixture has no real forge
+//   forge/       the fake forge (`gh-store.json`, no PR) and its `gh` shim under `forge/bin`, first on PATH
+//                for every run (fake or real): the fixture has no real forge
 //   worktrees/   the plan's worktreeRoot
 //   barriers/    the money lane's audit barrier, branch R only (`money.reached`, holding the audit's job id / `money.release`,
 //                barrier.ts)
@@ -48,7 +48,6 @@ export type Layout = Readonly<{
   obligations: string;
   pin: string;
   phase0: string;
-  capture: string;
   forge: string;
   /** The fake gh's directory, first on PATH. */
   forgeBin: string;
@@ -78,7 +77,6 @@ export function layout(dir: string): Layout {
     obligations: join(input, 'obligations.json'),
     pin: join(input, 'corpus.pin.json'),
     phase0: join(input, 'phase0.json'),
-    capture: join(input, 'issues.json'),
     forge: join(dir, 'forge'),
     forgeBin: join(dir, 'forge', 'bin'),
     worktrees: join(dir, 'worktrees'),

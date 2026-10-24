@@ -1,14 +1,13 @@
 // A corpus arc for tests (M4a step C1): a product repo whose baseline commit holds the sample corpus (test/helpers/
 // corpus.ts) under `docs/corpus`, its guide, `.roadmap/vision.json` (confirmed against the vision doc) and
 // `.roadmap/config.json`; and a plan dir beside it with plan.json (target corpus), a spec, the ledger, rule-anchored
-// obligations with their census, the pin (`roadmap corpus pin` at the baseline), the issue capture (`roadmap issues
-// --out` against a fake forge) and the Phase-0 record naming it. `phase0Check` over it is green. Tests then edit the
+// obligations with their census, the pin (`roadmap corpus pin` at the baseline) and the Phase-0 record, beside a fake
+// forge (for `roadmap pr` and the chain's PRs). `phase0Check` over it is green. Tests then edit the
 // files (`edit*`), commit between arcs (`betweenArc`), put the arc in force (`inForce`) or seal it with a terminal
 // snapshot (`seal`), and chain the next arc onto it (`nextArc`).
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { captureIssues } from '../../src/commands/issues.ts';
 import { corpusPin } from '../../src/commands/corpus.ts';
 import { phase0Check } from '../../src/commands/phase0.ts';
 import { type ArcId, type Sha, arcId, sha } from '../../src/core/ids.ts';
@@ -36,7 +35,6 @@ type Json = Record<string, unknown>;
 export const VISION_DOC = '0005_Vision.md';
 export const PIN_FILE = 'corpus.pin.json';
 export const PHASE0_FILE = 'phase0.json';
-export const CAPTURE_FILE = 'issues.json';
 
 /** The vision record: V-1 a world clause the arc advances, V-2 a purpose; confirmed against `visionText` unless `confirmed` is false. */
 export function visionRecord(visionText: string | null): Json {
@@ -126,16 +124,12 @@ export async function corpusArc(opts: CorpusArcOptions = {}): Promise<CorpusArc>
   } else repo = opts.repo;
   const baseline = git(repo, 'rev-parse', 'HEAD');
   const forge = opts.forge ?? makeForge();
-  if (opts.forge === undefined) forge.addIssue({ title: 'A berth was double-booked', labels: ['roadmap:bug'], body: 'twice', association: 'OWNER', author: 'tidewater' });
   const planDir = tmpDir('c1-plan');
   const arc = arcId(opts.arc ?? 'arc-1');
   const out = absPath(join(planDir, PIN_FILE));
   const pinned = await corpusPin({ repo, commit: baseline, baseline: sha(baseline), out });
   assert.equal(pinned.kind, 'pinned', JSON.stringify(pinned));
   if (pinned.kind !== 'pinned') throw new Error('unreachable');
-  const captured = await withForge(forge, () => captureIssues({ repo, out: absPath(join(planDir, CAPTURE_FILE)) }));
-  assert.equal(captured.kind, 'captured');
-  if (captured.kind !== 'captured') throw new Error('unreachable');
   writeFileSync(join(planDir, 'u1.json'), JSON.stringify({
     schema: 'roadmap/spec-m1', unit: 'u1', rev: 1, lanes: [{ ...lane('unit'), state: 'active' }],
     acceptance: [{ id: 'A1', clause: 'It works.', failLoudIfUndelivered: true, state: 'active' }],
@@ -143,10 +137,7 @@ export async function corpusArc(opts: CorpusArcOptions = {}): Promise<CorpusArc>
   }));
   writeFileSync(join(planDir, 'rulings.md'), '# Rulings\n\nC-1 — Helpers live in src/.\n');
   writeFileSync(join(planDir, 'obligations.json'), JSON.stringify(obligationsFile(pinned.pin, { activation: opts.activation ?? 'must-hold' })));
-  writePhase0(planDir, {
-    issueCapture: { file: CAPTURE_FILE, sha256: captured.sha256 },
-    intake: captured.capture.issues.map((i) => ({ issue: i.id, outcome: { type: 'none', reason: 'tracked already' } })),
-  });
+  writePhase0(planDir, {});
   const planPath = absPath(join(planDir, 'plan.json'));
   writeFileSync(planPath, JSON.stringify({
     schema: 'roadmap/plan-m1', arc, integrationBranch: 'main', baseline, worktreeRoot: tmpDir('c1-wt'), contracts: [], rulings: 'rulings.md',
@@ -162,7 +153,7 @@ export async function corpusArc(opts: CorpusArcOptions = {}): Promise<CorpusArc>
 export function writePhase0(planDir: string, over: Json): void {
   writeFileSync(join(planDir, PHASE0_FILE), JSON.stringify({
     schema: 'roadmap/phase0-m4', curation: [], corpusDivergences: [], questions: [], debt: [], amendments: [],
-    issueCapture: { file: CAPTURE_FILE, sha256: '0'.repeat(64) }, intake: [], slice: { advances: ['V-1'], why: 'the first slice' }, ...over,
+    slice: { advances: ['V-1'], why: 'the first slice' }, ...over,
   }));
 }
 

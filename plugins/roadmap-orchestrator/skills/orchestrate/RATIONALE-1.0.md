@@ -241,8 +241,8 @@ chooses where to crash. The paid run shows the parts meet real models and lists 
 - **The three-tier boundary ladder**: Haiku census, Opus triage, Fable boundary, then root. Cadence audits
   and the checkpoint replace it [M3].
 - **Verifier-as-agent.** The executor runs lanes verbatim and grades by exit code.
-- **The outbound issue projection.** Issue mode becomes inbound only, `roadmap:bug` and `roadmap:feedback`
-  read at Phase 0 and checkpoints [M4]; the projection is deferred to 1.1.
+- **Issue mode.** The outbound projection was dropped first; the inbound intake M4 built (`roadmap:bug` and
+  `roadmap:feedback` read at Phase 0 and checkpoints) was removed in 1.0.0-dev.21 (§17).
 - **The dual-driver protocol**, the post-publication revert, text-grep outage detection and the spend cap.
 
 What stays is the judgment that worked: frozen contracts, C-nn rulings, plan-checks that redirect,
@@ -303,9 +303,10 @@ unattended week is only safe if the owner can see, in one place, everything deci
   agent (subagent prescriptions withdrawn 2026-10-17); `phase0 check` runs
   the same rows `start` runs, so a Phase 0 is green before it costs a start. The pack review became an executor
   job on the frontier class with kept inputs, holding admission until a review matches the current pack.
-- **Issues are trusted or refused.** Owner ruling L6: a repository whose policy lets anyone open issues refuses
-  `start`; there is no confirmation path and no injection filter to maintain. Under a trusted policy, issues are
-  owner context, rendered as pasted data, and every captured issue gets exactly one recorded outcome.
+- **No issue intake.** M4 read trusted `roadmap:bug` and `roadmap:feedback` issues at Phase 0 and every
+  checkpoint and refused a repository anyone could open issues on (ruling L6). It saw no real use, and the owner
+  steers through `steer`, answers and the vision, so 1.0.0-dev.21 removed it with its policy check; the forge is the
+  PR path alone. Records an earlier executor wrote for issues are read and ignored.
 - **Chaining with a brake the owner sets.** Arcs run back to back as stacked branches and PRs. One code-rendered
   brief, hashed whole, covers everything since the owner's last acknowledgement across the chain; K bounds how
   many starts may pass without one, and only the owner changes K. The root agent never merges `main`; the owner

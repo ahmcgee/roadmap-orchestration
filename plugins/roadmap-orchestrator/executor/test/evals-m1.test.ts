@@ -43,7 +43,7 @@ async function check(dir: string): Promise<Checked> {
   assert.ok(json !== undefined && notExercised !== undefined && cannotShow !== undefined, `check printed: ${exit.stdout}; stderr: ${exit.stderr}`);
   const result = JSON.parse(json) as CheckResult;
   assert.equal(notExercised, `NOT EXERCISED: ${result.notExercised.length === 0 ? '(none)' : result.notExercised.join(', ')}`);
-  assert.equal(cannotShow, 'CANNOT SHOW: issue mode, real cgroup containment, crash boundaries under real models, week-long reliability');
+  assert.equal(cannotShow, 'CANNOT SHOW: real cgroup containment, crash boundaries under real models, week-long reliability');
   assert.equal(exit.code, result.pass ? 0 : 1, 'check exits non-zero exactly when a criterion fails');
   return { exit, result };
 }

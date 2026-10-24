@@ -19,7 +19,9 @@ import {
   positive, sortedBy, str, stringMap, tagged, text, version,
 } from './validate.ts';
 import type { SchemaVersion } from './version.ts';
-import { type LaneKind, applyExpectRevDefault, applyVisionEditDefault, designKindDefault, dev6SmokeBounds, laneCadenceDefault, laneInputsDropped } from './upgrade.ts';
+import {
+  type LaneKind, applyExpectRevDefault, applyVisionEditDefault, designKindDefault, dev6SmokeBounds, issuesIgnored, laneCadenceDefault, laneInputsDropped,
+} from './upgrade.ts';
 import { type DesignRecord, type UnitKind, designRecord } from './design.ts';
 import { type ContractPin, type Pinned, type RequirementPin, type SpecPin, UNPINNED, pinTarget, specPin } from './pins.ts';
 import { type HostSignatureId, HOST_SIGNATURES } from '../host/signatures.ts';
@@ -1479,8 +1481,9 @@ export const planManifest: Read<PlanManifest> = object((f) => ({
  * names none.
  *
  * M4a (a corpus arc's; absent: none, lasting): `corpus` the pin (`inputs/<sha>.corpus.json`), `corpusGuide` the guide's
- * bytes (`inputs/<sha>.corpus-guide.md`, H5), `phase0` the Phase-0 record (`inputs/<sha>.phase0.json`) and `phase0Issues`
- * its issue capture (`inputs/<sha>.issues.json`, H8). The four are present together or not at all.
+ * bytes (`inputs/<sha>.corpus-guide.md`, H5) and `phase0` the Phase-0 record (`inputs/<sha>.phase0.json`). The three are
+ * present together or not at all. `phase0Issues`: the issue capture an earlier executor kept beside them, read as written
+ * and ignored (`issuesIgnored`, src/core/upgrade.ts; scaffolding); never written.
  */
 export type RevisionInputs = Readonly<{
   rulings: Readonly<{ ledgerSha256: Sha256Hex; sidecars: Readonly<Record<RulingId, Sha256Hex>> }>;
@@ -1501,15 +1504,21 @@ const sidecarShas: Read<Readonly<Record<RulingId, Sha256Hex>>> = (value, path) =
   f.end();
   return out;
 };
-const CORPUS_INPUTS = ['corpus', 'corpusGuide', 'phase0', 'phase0Issues'] as const;
+const CORPUS_INPUTS = ['corpus', 'corpusGuide', 'phase0'] as const;
 export const revisionInputs = (f: Fields): RevisionInputs => {
-  const corpus: Partial<Record<(typeof CORPUS_INPUTS)[number], Sha256Hex>> = {};
+  const corpus: Partial<Record<(typeof CORPUS_INPUTS)[number] | 'phase0Issues', Sha256Hex>> = {};
   for (const k of CORPUS_INPUTS) {
     const v = f.optional(k, (x, p) => sha256(x, p));
     if (v !== undefined) corpus[k] = v;
   }
   const n = Object.keys(corpus).length;
   if (n !== 0 && n !== CORPUS_INPUTS.length) throw new SchemaError(`${f.path}.corpus`, `all of ${CORPUS_INPUTS.join(', ')} or none (a corpus arc's inputs)`, corpus);
+  const issues = f.optional('phase0Issues', (x, p) => sha256(x, p));
+  if (issues !== undefined) {
+    if (n === 0) throw new SchemaError(`${f.path}.phase0Issues`, 'absent outside a corpus arc', issues);
+    issuesIgnored('manifest.phase0Issues');
+    corpus.phase0Issues = issues;
+  }
   return {
     rulings: f.get('rulings', object((g) => ({ ledgerSha256: g.get('ledgerSha256', (v, p) => sha256(v, p)), sidecars: g.get('sidecars', sidecarShas) }))),
     obligations: f.get('obligations', nullable((v, p) => sha256(v, p))),
@@ -1712,8 +1721,9 @@ export const NEEDS_USER_REASONS = [
   // the divergence digest (H11).
   'bundle-request', 'convergence-bound', 'convergence-identity', 'audit-owed', 'divergence-digest',
   // M4a, blocking (fixed by `m3Blocking`, as the M3 reasons): a pack review's blocking finding, holding admission before
-  // the first (K14, H9); a checkpoint capture that found the issue policy untrusted, holding admission arc-wide and the
-  // capture until acked (OR-L6).
+  // the first (K14, H9). `issue-policy-untrusted`: a checkpoint capture found the issue policy untrusted; only an earlier
+  // executor raised it (the issues integration was removed in 1.0.0-dev.21), kept so its item still reads and can be
+  // acknowledged; it holds no admission (scaffolding).
   'pack-review', 'issue-policy-untrusted',
   // M4b, non-blocking: a flow proposal for the root agent (`flow accept | reject`); host advice for the owner; an applied
   // proposal's `worse` verdict (with its preimage, RC-6); a flow run without a valid answer after its retry; a ruler path

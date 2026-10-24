@@ -561,20 +561,6 @@ export function idList<T extends NumberedId>(item: Read<T>, opts: Readonly<{ non
   return idsAscending(item, (t) => t, opts);
 }
 
-/** A forge issue: `issue-<number>`, the only issue identity in outcomes, amendments and coverage checks (H18). */
-export type IssueId = Brand<string, 'IssueId'>;
-const ISSUE = new RegExp(`^issue-(${POS})$`);
-export const issueId: IdReader<IssueId> = textual('IssueId', ISSUE, 'issue-<number>');
-export const issueIdOf = (n: number): IssueId => issueId(`issue-${n}`);
-export const issueNumber = (id: IssueId): number => Number(ISSUE.exec(id)?.[1]);
-
-/** Pasted issue content and evidence only (H18): an issue's body `issue-<n>`, or one of its comments `issue-<n>/c-<id>`. */
-export type IssueContentRef = Brand<string, 'IssueContentRef'>;
-const ISSUE_CONTENT = new RegExp(`^issue-(${POS})(?:/c-(${POS}))?$`);
-export const issueContentRef: IdReader<IssueContentRef> = textual('IssueContentRef', ISSUE_CONTENT, 'issue-<number> | issue-<number>/c-<id>');
-/** The issue a content ref belongs to. */
-export const issueOfContent = (ref: IssueContentRef): IssueId => issueIdOf(Number(ISSUE_CONTENT.exec(ref)?.[1]));
-
 /** A brief: the first 16 hex of sha256 over its canonical payload (H16). */
 export type BriefId = Brand<string, 'BriefId'>;
 export const briefId: IdReader<BriefId> = textual('BriefId', /^[0-9a-f]{16}$/, '16 lowercase hex');

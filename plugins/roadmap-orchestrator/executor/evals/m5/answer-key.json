@@ -12,7 +12,6 @@
     { "topic": "the frontend-design skill", "answer": "It is already committed in the repo at .claude/skills/frontend-design/, with its licence. Nothing more to do." },
     { "topic": "the browser drive for walkthroughs (Playwright MCP, Chromium)", "answer": "Both are installed on this machine, and .roadmap/config.json names the Playwright server. Use them as they are." },
     { "topic": "the demo", "answer": "Yes, keep a demo running as milestones settle. Do not hold it; reseed it on each promotion." },
-    { "topic": "the issue templates", "answer": "Yes, add them." },
     { "topic": "the boot hook for restarts", "answer": "Not needed: this machine is not restarted during the arc." },
     { "topic": "time zone for the collection window", "answer": "The machine's local time zone." },
     { "topic": "how many walk rounds or polish rounds a milestone gets", "answer": "The default is fine." }

@@ -1,8 +1,8 @@
 // `roadmap inputs export --repo <repo> --arc <arc> --out <dir>` (M4a rev 3, I1, F17): a host act, read-only, no lock.
 // Writes the arc's complete current input view from the run dir's kept inputs (`inForceFiles`, src/input/inforce.ts:
 // the plan in force, every unit's spec at its current rev including the executor's and plan-check's post-plan
-// patches, the rulings ledger and its sidecars, the obligations, the vision, and a corpus arc's pin, Phase-0 record and
-// issue capture) into `--out`, which must not exist, plus `export.json {planRev, specRevs, base}`, `base` the manifest of
+// patches, the rulings ledger and its sidecars, the obligations, the vision, and a corpus arc's pin and Phase-0 record)
+// into `--out`, which must not exist, plus `export.json {planRev, specRevs, base}`, `base` the manifest of
 // the exported files (every byte kept in the run dir). The one way to get the files in force (the executor never writes
 // into the owner's files): export, edit, `apply --base <out>/export.json`, which rebases the edit onto whatever the arc did
 // since (src/input/rebase.ts); never copying a historical manifest by hand. With the executor down, `start --base
@@ -94,7 +94,6 @@ export async function exportInputs(args: InputsExportArgs): Promise<InputsExport
   if (files.corpus !== null) {
     write(files.corpus.pin);
     write(files.corpus.phase0);
-    if (files.corpus.capture !== null) write(files.corpus.capture);
   }
   const base = revisionManifestOf(files);
   if ('missing' in base) throw new Error(`inputs export: the inputs in force are incomplete: ${base.missing.join('; ')}`);

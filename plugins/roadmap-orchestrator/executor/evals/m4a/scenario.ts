@@ -11,21 +11,19 @@
 //           risk) is plan-checked and built like the others; mutation smoke reverts it and its W-1 witness, the tide table's journey, still passes: one smoke fix round, which
 //           leaves the test (the behaviour predates the unit), then the gate approves with the survivor in its checks
 //           and a note (gate-note debt). audit-1's vision lens opens a P2 with no obligation; ckpt-1 defers it
-//           (finding-deferred debt), proposes an amendment (T-11: confirm cancellations by text) and takes in both
-//           issues (#1 none, #2 an amendment). Then the six read-outs (one module each: plan-check, build, gate), with
+//           (finding-deferred debt) and proposes two amendments (T-11: confirm cancellations by text; T-5: list the
+//           high-water heights). Then the six read-outs (one module each: plan-check, build, gate), with
 //           audit-2..audit-5; audit-2..audit-4 find nothing new and have no checkpoint (checkpoint-skipped), and the
 //           final audit-5's checkpoint, ckpt-2, no-ops.
-//   arc 2   review-1 waits at the `policy-flip` barrier until the driver has flipped the forge to PUBLIC + ALL (the
-//           mid-arc flip, OR-L6); then cutoff builds; audit-1 waits at the `blocked-seen` barrier until the root agent
-//           has had the run's blocked wake (notice behind the run-only limit), so its checkpoint capture's blocking
-//           item is always a wake of its own; once the owner restored the policy and the root agent acked, ckpt-1
-//           takes in both issues and admits `fits` (the opportunity O-1, V-7, with its witness: I-4 split into I-13 and
+//   arc 2   review-1, then cutoff builds; audit-1 waits at the `blocked-seen` barrier until the root agent has had the
+//           run's blocked wake (notice behind the run-only limit), so the checkpoints run while that turn supervises in
+//           place; ckpt-1 admits `fits` (the opportunity O-1, V-7, with its witness: I-4 split into I-13 and
 //           fits' I-14 on the berths journey, golden.ts `FITS_WITNESS`) and a day view (V-6, over the budget: converted
 //           into an amendment); the bundle's drift audit-2 (noting a new gap) and ckpt-2 run while the run-only limit
 //           still holds every unit; then notice builds (the root agent pauses it in its hung `slow` lane and resumes
 //           it), audit-3 (nothing new: no checkpoint), fits builds after notice, audit-4 (cadence and final) and ckpt-3.
 //
-// M4b (the flow loop): every checkpoint also takes in issue #4 (drop the soak test: none, T-16). Arc 1, in both scripts,
+// M4b (the flow loop): arc 1, in both scripts,
 // has the six read-outs after confirm (golden.ts `READOUTS`, one unit each), and run-only holds every unit after
 // quay-list until the flow loop has run (three suite runs before the change, confirm's smoke fix round among them,
 // outside the rework guard's window). `story`: two flow runs the root agent requests (the second the cooldown's one
@@ -39,7 +37,7 @@
 import type { JsonValue } from '../../src/core/json.ts';
 import type { ProfileName } from '../../src/routing/types.ts';
 import { validateFlowOutput } from '../../src/prompts/schemas.ts';
-import { admitSpecWire, checkpointAnswer, checkpointStep, intakeOutcome, lensStep, noteLensStep, packReviewStep, packTargetOf } from '../../test/helpers/holistic.ts';
+import { admitSpecWire, checkpointAnswer, checkpointStep, lensStep, noteLensStep, packReviewStep, packTargetOf } from '../../test/helpers/holistic.ts';
 import type { Step } from '../../test/helpers/scenario.ts';
 import { type M1Step, fakeSteps } from '../m1/scenario.ts';
 import { FILES, FITS_WITNESS, LANES, OBLIGATIONS, OPPORTUNITY, READOUTS, REPLAY_LANE, SHARD, SUITE_LANE, filesOf, specOf } from './golden.ts';
@@ -47,8 +45,6 @@ import type { FakeScript } from './fake-root.ts';
 import { PLANT } from './layout.ts';
 import { join } from 'node:path';
 
-/** The barrier arc 2's pack review waits at until the driver flipped the forge's policy. */
-export const POLICY_FLIP_BARRIER = 'policy-flip';
 /** The barrier arc 2's audit-1 waits at until the root agent had the run's blocked wake (fake-root.ts releases it). */
 export const BLOCKED_SEEN_BARRIER = 'blocked-seen';
 /** Arc 2's checkpoint of the drift audit ckpt-1's bundle owes: the root agent lifts the run-only limit once it decided. */
@@ -76,8 +72,8 @@ export const GATE_NOTE = 'The confirmation text signs off as "Tidewater" where t
 export const DEFERRED_CLAIM = '`cancel` leaves the skipper nothing to keep: unlike a booking, a cancellation sends no text.';
 /** ckpt-1's proposed amendment (source checkpoint), applied in arc 2 as T-24. */
 export const CHECKPOINT_AMENDMENT = { rules: ['T-11'], proposal: 'Add a rule: a cancellation is confirmed to the skipper by text message, as a booking is.', why: 'V-5 asks that a cancellation be as clear to the skipper as a booking; only bookings are confirmed today.' } as const;
-/** ckpt-1's intake amendment of issue #2 (source issue), deferred in arc 2. */
-export const ISSUE_AMENDMENT = { rules: ['T-5'], proposal: 'Windows list the high-water height from the printed table beside each time.' } as const;
+/** ckpt-1's second proposed amendment (source checkpoint), deferred in arc 2. */
+export const HEIGHTS_AMENDMENT = { rules: ['T-5'], proposal: 'Windows list the high-water height from the printed table beside each time.', why: 'The printed sheet the harbour hands out lists the heights; the windows command shows only the times.' } as const;
 
 /** The test guard's first attempt fails (witness presence), as the fix round's directive names it. */
 const BERTHS_TEST = LANES.find((x) => x.id === 'berths')!.test;
@@ -121,17 +117,7 @@ const UNITS_2: Readonly<Record<string, readonly M1Step[]>> = {
   fits: [planCheck('The spec lists the berths a draught fits (V-7), within the register.'), build('fits: the berths a draught fits', 'fits'), gate('A1 holds.')],
 };
 
-/** Every checkpoint's intake of issue #4 (plant G): declined, the soak rule stands. */
-export const SOAK_DECLINED = 'The soak run stays in the suite gate (T-16): it guards the ledger, which V-2 will not give up; slow and green is it doing its job.';
-const soakIntake = { issue: PLANT.soakIssue, outcome: intakeOutcome.none(SOAK_DECLINED) };
-
-const intakeNone = (reason1: string, reason2: string) => [
-  { issue: 'issue-1', outcome: intakeOutcome.none(reason1) },
-  { issue: 'issue-2', outcome: intakeOutcome.none(reason2) },
-  soakIntake,
-];
-
-const NO_OP_1 = checkpointAnswer({ decision: 'no-op', issueIntake: intakeNone('guard refuses a second booking of a berth for one window (I-1)', 'taken in at ckpt-1 as an amendment') });
+const NO_OP = checkpointAnswer({ decision: 'no-op' });
 
 const JOBS_1: readonly Step[] = [
   packReviewStep('review-1', [{
@@ -146,22 +132,15 @@ const JOBS_1: readonly Step[] = [
   checkpointStep('ckpt-1', checkpointAnswer({
     decision: 'no-op',
     findingDispositions: [{ finding: 'F-1', disposition: 'deferred', reason: 'Cancellations are the next slice\'s scene (V-5), not this one\'s.' }],
-    corpusAmendments: [{ ...CHECKPOINT_AMENDMENT, rules: [...CHECKPOINT_AMENDMENT.rules] }],
-    issueIntake: [
-      { issue: 'issue-1', outcome: intakeOutcome.none('guard refuses a second booking of a berth for one window (I-1 held on the head)') },
-      { issue: 'issue-2', outcome: intakeOutcome.amendment([...ISSUE_AMENDMENT.rules], ISSUE_AMENDMENT.proposal) },
-      soakIntake,
-    ],
+    corpusAmendments: [CHECKPOINT_AMENDMENT, HEIGHTS_AMENDMENT],
   })),
   // The read-outs' publications owe four more cadence audits, the last the final one. audit-2..audit-4 find nothing new
   // after the settled ckpt-1, so they have no checkpoint (checkpoint-skipped); the final audit's is ckpt-2.
   lensStep('audit-2', 'vision'),
   lensStep('audit-3', 'vision'),
   lensStep('audit-4', 'vision'),
-  lensStep('audit-5', 'vision'), checkpointStep('ckpt-2', NO_OP_1),
+  lensStep('audit-5', 'vision'), checkpointStep('ckpt-2', NO_OP),
 ];
-
-const NO_OP_2 = checkpointAnswer({ decision: 'no-op', issueIntake: intakeNone('fixed in arc 1 (I-1)', 'deferred at Phase 0 as an amendment of arc 1') });
 
 /** A checkpoint `admit` of golden.ts's `OPPORTUNITY[id]`: its targets, citing the one clause it advances. */
 function admitOp(id: keyof typeof OPPORTUNITY): JsonValue {
@@ -190,22 +169,21 @@ function fitsWitnessOp(): JsonValue {
 }
 
 const JOBS_2: readonly Step[] = [
-  packReviewStep('review-1', [], [{ type: 'barrier', name: POLICY_FLIP_BARRIER, timeoutMs: HOLD_MS }]),
+  packReviewStep('review-1'),
   lensStep('audit-1', 'vision', [], [{ type: 'barrier', name: BLOCKED_SEEN_BARRIER, timeoutMs: HOLD_MS }]),
   checkpointStep('ckpt-1', checkpointAnswer({
     decision: 'bundle', ops: [admitOp('fits'), admitOp('dayview'), fitsWitnessOp()],
-    issueIntake: intakeNone('fixed in arc 1 (I-1)', 'deferred at Phase 0 as an amendment of arc 1'),
   })),
   // The drift audit notes a new gap (F-1), so its checkpoint runs (the root agent waits on it) and dismisses it, leaving no
   // debt; audit-3 finds nothing new after it (checkpoint-skipped), and the final audit-4's checkpoint is ckpt-3.
   noteLensStep('audit-2'),
   checkpointStep(DRIFT_CHECKPOINT, checkpointAnswer({
-    decision: 'no-op', issueIntake: intakeNone('fixed in arc 1 (I-1)', 'deferred at Phase 0 as an amendment of arc 1'),
+    decision: 'no-op',
     findingDispositions: [{ finding: 'F-1', disposition: 'dismissed', reason: 'The noted gap is not this slice\'s.' }],
   })),
   lensStep('audit-3', 'vision'),
   lensStep('audit-4', 'vision'),
-  checkpointStep('ckpt-3', NO_OP_2),
+  checkpointStep('ckpt-3', NO_OP),
 ];
 
 // ---------------------------------------------------------------------------------------------------

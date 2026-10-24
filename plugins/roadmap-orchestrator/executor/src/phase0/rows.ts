@@ -1,6 +1,6 @@
 // The shared Phase-0 startup rows (M4a "`roadmap phase0 check`", step C1): one rule, run by `start` (src/preflight/
 // checks.ts), `apply` (src/commands/apply.ts) and `roadmap phase0 check` (src/commands/phase0.ts, both modes).
-// Synchronous: git and gh run as spawnSync reads.
+// Synchronous: git runs as spawnSync reads.
 //
 //   1. corpus      the pin re-derived from the guide committed at the plan's baseline (LR-A1-1), its source at the pinned
 //                  commit and the baseline's rules registry, and required equal (`corpus-invalid`: pin-drift, rule-reused,
@@ -20,15 +20,12 @@
 //   4. debt        every open item of the baseline's `debt.md` block dispositioned (`debt-undispositioned`); a third
 //                  `keep` of an item kept in each of the two previous arcs needs a question whose text names the item
 //                  (`debt-kept-twice-unasked`); question ids against the chain closure (`question-reused`, H23).
-//   5. amendments  every amendment of the previous arc's verified ref dispositioned (`amendment-undispositioned`);
-//                  intake against the kept capture the record names (`capture-missing`, `intake-missing`,
-//                  `intake-unknown`, `intake-duplicate`, H8).
+//   5. amendments  every amendment of the previous arc's verified ref dispositioned (`amendment-undispositioned`).
 //   5a. answers    (a fresh start, live) every owner answer in force in the answer log (`roadmap answer`, src/answers.ts)
 //                  applied: the record marks its question `answered` with its text, or, for a question the record
 //                  does not carry, the newest earlier arc of the chain carrying it does (`answer-unapplied`).
 //   6. vision      confirmed against the pin (`vision-unconfirmed`, src/holistic/vision.ts).
-//   7. forge       (live) the issue policy trusted (`issue-policy-untrusted`, OR-L6) and the capture's repo the one
-//                  `gh repo view` resolves now (`capture-foreign`).
+//   7. (none: the forge row, the issue policy, went with the issues integration in 1.0.0-dev.21)
 //   8. chain       (a fresh start, live) K, the baseline rules and the ack limit (src/chain.ts; H12, R11).
 //   9. tree        (live) `.roadmap/{vision.json, corpus.md, config.json}` equal to their blobs at HEAD (`tree-uncommitted`,
 //                  K18), for every arc.
@@ -72,13 +69,13 @@
 //                  `walk-tools-missing` (the bring-up programs and the walkthrough MCP servers) is not one of these rows: its
 //                  smoke is a backend call (see `milestonesNeedHolisticRows`).
 // A record that names something absent (a debt disposition of no open item, a promote to a unit the plan does not
-// hold, a resolve by a ruling the ledger does not hold active, an intake act on an unknown unit or rule, an amendment
-// disposition of no amendment) is `plan-invalid{schema}` naming it.
+// hold, a resolve by a ruling the ledger does not hold active, an amendment disposition of no amendment) is
+// `plan-invalid{schema}` naming it.
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { answerLog, latestAnswers, refQuestions, unappliedOf } from '../answers.ts';
 import { type ArcRef, amendmentsOf, chainBack, committedAcks, completedHeadOf, previousIncomplete, questionClosure, quotaOf } from '../chain.ts';
-import { type ArcId, type DebtId, type IssueId, type MilestoneId, type Sha256Hex, type UnitId, DOCS_SYSTEM, issueId, phaseQuestionSeq, sha, sha256 } from '../core/ids.ts';
+import { type ArcId, type DebtId, type MilestoneId, type Sha256Hex, type UnitId, DOCS_SYSTEM, phaseQuestionSeq, sha, sha256 } from '../core/ids.ts';
 import { type SpecM1, specForces, specRemoves } from '../core/records.ts';
 import { unknownLaneSystems } from '../input/systems.ts';
 import { sha256Hex } from '../core/json.ts';
@@ -93,10 +90,6 @@ import { type CorpusGuide, type CorpusPin, activeRules, parseCorpusPin } from '.
 import { EMPTY_LEDGER, keptInEachOfLastTwoArcs, openItems } from '../debt/ledger.ts';
 import type { DebtLedger } from '../debt/types.ts';
 import { DEBT_DOC, parseDebtBlock } from '../docs/debt.ts';
-import { resolveRepo } from '../forge/gh.ts';
-import { queryPolicy } from '../forge/policy.ts';
-import { trusted } from '../forge/trust.ts';
-import { type IssueCapture, parseIssueCapture, sameRepo } from '../forge/types.ts';
 import { git, gitCommonDir, gitRun } from '../git/git.ts';
 import { censusProblems, specCensusMismatches } from '../holistic/rederive.ts';
 import {
@@ -119,18 +112,18 @@ import { type ChainProblem, type CorpusProblem, type Phase0Problem, type Phase0R
 type Row<K extends StartupRejection['kind']> = Extract<StartupRejection, { kind: K }>;
 
 /**
- * Which live rows run: the answers (5a) and the chain (8), a fresh start's; the forge (7) and the tree (9). Rows 1-6 and
- * 10-11 always run; `fresh` makes row 11 require declared test paths and witness files.
+ * Which live rows run: the answers (5a) and the chain (8), a fresh start's; the tree (9). Rows 1-6 and 10-11 always run;
+ * `fresh` makes row 11 require declared test paths and witness files.
  */
-export type Phase0Mode = Readonly<{ forge: boolean; chain: boolean; answers: boolean; tree: boolean; fresh: boolean }>;
+export type Phase0Mode = Readonly<{ chain: boolean; answers: boolean; tree: boolean; fresh: boolean }>;
 /** `start` of a fresh arc and `phase0 check --plan`: everything. */
-export const FRESH_START: Phase0Mode = { forge: true, chain: true, answers: true, tree: true, fresh: true };
+export const FRESH_START: Phase0Mode = { chain: true, answers: true, tree: true, fresh: true };
 /** `start` of an arc with a plan in force: no chain or answer rows (it is not a new start). */
-export const RESTART: Phase0Mode = { forge: true, chain: false, answers: false, tree: true, fresh: false };
-/** `apply`: no forge, no chain, no answers (an answer that comes mid-arc is applied by an apply, not refused by one). */
-export const APPLY: Phase0Mode = { forge: false, chain: false, answers: false, tree: true, fresh: false };
+export const RESTART: Phase0Mode = { chain: false, answers: false, tree: true, fresh: false };
+/** `apply`: no chain, no answers (an answer that comes mid-arc is applied by an apply, not refused by one). */
+export const APPLY: Phase0Mode = { chain: false, answers: false, tree: true, fresh: false };
 /** `phase0 check --from-ref`: the recorded closure alone (K20). */
-export const FROM_REF: Phase0Mode = { forge: false, chain: false, answers: false, tree: false, fresh: false };
+export const FROM_REF: Phase0Mode = { chain: false, answers: false, tree: false, fresh: false };
 
 /** What the rows read of a plan's inputs: bytes as the files (or a ref) hold them, null when absent. */
 export type Phase0Input = Readonly<{
@@ -143,7 +136,6 @@ export type Phase0Input = Readonly<{
   pin: Buffer | null;
   guide: Buffer | null;
   phase0: Buffer | null;
-  capture: Buffer | null;
   obligations: Buffer | null;
   vision: Buffer | null;
   /** Per unit of the plan: its spec's bytes, null when the file does not exist (the spec rows report it). */
@@ -190,7 +182,7 @@ export function phase0InputOf(files: InputFiles, config: RepoConfig | null, view
   const c = files.corpus;
   return {
     repo: files.repo, plan: files.plan, config, where: files.planFile,
-    pin: c?.pin.bytes ?? null, guide: c?.guide.bytes ?? null, phase0: c?.phase0.bytes ?? null, capture: c?.capture?.bytes ?? null,
+    pin: c?.pin.bytes ?? null, guide: c?.guide.bytes ?? null, phase0: c?.phase0.bytes ?? null,
     obligations: files.obligations?.bytes ?? null, vision: files.vision?.bytes ?? null,
     specs: new Map([...files.specs].map(([unit, file]) => [unit, file.bytes])),
     ledger: files.ledger.bytes === null ? [] : parseRulings(files.ledger.bytes.toString('utf8'), files.ledger.path),
@@ -235,12 +227,11 @@ export function phase0Rows(input: Phase0Input, mode: Phase0Mode): Phase0Outcome 
   const where = (what: string): string => `${input.where} (${what})`;
   if (plan.holistic.obligations === undefined) rows.push(schemaRow('plan.holistic.obligations', 'a corpus arc names its obligations file (the census lives there)'));
   const pin = load(rows, 'plan.corpus', where('the corpus pin'), input.pin, parseCorpusPin);
-  const duplicates = duplicateIntake(input.phase0);
-  const record = duplicates.length > 0 ? null : load(rows, 'plan.phase0', where('the Phase-0 record'), input.phase0, parsePhase0Record);
+  const record = load(rows, 'plan.phase0', where('the Phase-0 record'), input.phase0, parsePhase0Record);
   const obligations = plan.holistic.obligations === undefined ? null : load(rows, 'plan.holistic.obligations', where('the obligations'), input.obligations, parseObligations);
   const vision = load(rows, '.roadmap/vision.json', where('the vision record'), input.vision, parseVision);
   const corpus: CorpusProblem[] = [];
-  const p0: Phase0Problem[] = duplicates.map((issue) => ({ type: 'intake-duplicate', issue }));
+  const p0: Phase0Problem[] = [];
   let opened: OpenedSource | null = null;
   let guide: CorpusGuide | null = null;
 
@@ -267,16 +258,12 @@ export function phase0Rows(input: Phase0Input, mode: Phase0Mode): Phase0Outcome 
   }
   // 11. The witnesses against their lanes and deliverers.
   if (obligations !== null) defects.push(...witnessDefects(input, obligations, mode.fresh));
-  // 4-5. Debt, questions, amendments, intake.
+  // 4-5. Debt, questions, amendments.
   const previous = plan.chain === undefined ? null : chainBack(input.repo, plan.chain.previousArc);
-  let capture: IssueCapture | null = null;
   if (record !== null) {
     p0.push(...debtProblems(input, record, rows));
     p0.push(...questionProblems(record, previous?.arcs ?? []));
     p0.push(...amendmentProblems(record, previous?.arcs.at(-1) ?? null, rows));
-    capture = captureOf(input, record, p0, rows, where('the issue capture'));
-    if (capture !== null) p0.push(...intakeProblems(record, capture));
-    actedReferences(record, plan, pin, rows);
     if (mode.answers) p0.push(...answerProblems(input.repo, record, previous?.arcs ?? []));
   }
   // 6. The vision confirmed against the pin.
@@ -290,13 +277,6 @@ export function phase0Rows(input: Phase0Input, mode: Phase0Mode): Phase0Outcome 
     }
   }
   if (corpus.length > 0) rows.push({ kind: 'corpus-invalid', problems: corpus });
-  // 7. The forge, live: the policy, and the capture's repo.
-  if (mode.forge) {
-    const identity = resolveRepo(input.repo);
-    const trust = trusted(queryPolicy(input.repo, identity));
-    if (trust.kind === 'untrusted') rows.push({ kind: 'issue-policy-untrusted', ...trust.untrusted });
-    if (capture !== null && !sameRepo(capture.repo, identity)) p0.push({ type: 'capture-foreign', expected: identity, actual: capture.repo });
-  }
   if (p0.length > 0) rows.push({ kind: 'phase0-invalid', problems: p0 });
   if (defects.length > 0) rows.push({ kind: 'plan-defect', defects });
   // 8. The chain, at a fresh start.
@@ -550,7 +530,7 @@ function parsedSpecs(input: Phase0Input): readonly SpecM1[] {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// 4-5. Debt, questions, amendments, intake
+// 4-5. Debt, questions, amendments
 
 /**
  * The debt ledger published at `rev` of the product repo (`.roadmap/debt.md`; a corpus arc's baseline holds the previous
@@ -604,15 +584,6 @@ function amendmentProblems(record: Phase0Record, previous: ArcRef | null, rows: 
   return owed.filter((id) => !record.amendments.some((a) => a.id === id)).map((id) => ({ type: 'amendment-undispositioned', id }));
 }
 
-/** The capture the record names, when its bytes are there and hash to the record's sha256; else `capture-missing`. */
-function captureOf(input: Phase0Input, record: Phase0Record, p0: Phase0Problem[], rows: StartupRejection[], where: string): IssueCapture | null {
-  if (input.capture === null || sha256Hex(input.capture) !== record.issueCapture.sha256) {
-    p0.push({ type: 'capture-missing' });
-    return null;
-  }
-  return load(rows, 'plan.phase0.issueCapture', where, input.capture, parseIssueCapture);
-}
-
 /** 5a. Every answer in force applied by the record, or by the newest earlier arc of the chain carrying its question. */
 function answerProblems(repo: AbsPath, record: Phase0Record, chain: readonly ArcRef[]): readonly Phase0Problem[] {
   const latest = latestAnswers(answerLog(gitCommonDir(repo)));
@@ -624,56 +595,6 @@ function answerProblems(repo: AbsPath, record: Phase0Record, chain: readonly Arc
     }
   }
   return unappliedOf(latest, records()).map((a) => ({ type: 'answer-unapplied', question: a.question }));
-}
-
-/** Exactly one outcome per issue of the kept capture (H8). */
-function intakeProblems(record: Phase0Record, capture: IssueCapture): readonly Phase0Problem[] {
-  const captured = new Set<IssueId>(capture.issues.map((i) => i.id));
-  const recorded = new Set<IssueId>(record.intake.map((x) => x.issue));
-  return [
-    ...capture.issues.filter((i) => !recorded.has(i.id)).map((i): Phase0Problem => ({ type: 'intake-missing', issue: i.id })),
-    ...record.intake.filter((x) => !captured.has(x.issue)).map((x): Phase0Problem => ({ type: 'intake-unknown', issue: x.issue })),
-  ];
-}
-
-/** The issues the raw record lists more than once (the reader refuses them; the row names them), ascending. */
-function duplicateIntake(bytes: Buffer | null): readonly IssueId[] {
-  if (bytes === null) return [];
-  let raw: unknown;
-  try {
-    raw = JSON.parse(bytes.toString('utf8'));
-  } catch {
-    return [];
-  }
-  const intake = (raw as { intake?: unknown }).intake;
-  if (!Array.isArray(intake)) return [];
-  const seen = new Set<string>();
-  const twice = new Set<string>();
-  for (const x of intake) {
-    const issue = (x as { issue?: unknown } | null)?.issue;
-    if (typeof issue !== 'string') continue;
-    if (seen.has(issue)) twice.add(issue);
-    seen.add(issue);
-  }
-  return [...twice].flatMap((i) => {
-    try {
-      return [issueId(i)];
-    } catch {
-      return [];
-    }
-  }).sort((a, b) => Number(a.slice(6)) - Number(b.slice(6)));
-}
-
-/** Phase 0's `acted` names units of the plan or active rules of the pin (R29). */
-function actedReferences(record: Phase0Record, plan: PlanM1, pin: CorpusPin | null, rows: StartupRejection[]): void {
-  const units = new Set<string>(plan.units.map((u) => u.id));
-  const rules = pin === null ? null : activeRules(pin);
-  for (const x of record.intake) {
-    if (x.outcome.type !== 'acted') continue;
-    const on = x.outcome.on;
-    const unknown = on.type === 'units' ? on.ids.filter((u) => !units.has(u)) : rules === null ? [] : on.ids.filter((r) => !rules.has(r));
-    if (unknown.length > 0) rows.push(schemaRow(`plan.phase0.intake.${x.issue}`, `acts on ${unknown.join(', ')}, which the ${on.type === 'units' ? 'plan does not hold' : 'pin does not hold active'}`));
-  }
 }
 
 // ---------------------------------------------------------------------------------------------------
