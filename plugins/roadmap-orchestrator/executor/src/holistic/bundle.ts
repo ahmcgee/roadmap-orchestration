@@ -11,8 +11,9 @@
 // between the check and the commit, and the proposal is built from the revision in force at that moment. In order:
 //
 //   0. Busy (M4a rev 3, C5, R50): an op that touches a unit with an open stage attempt (`openAttempt`, src/core/state.ts:
-//      running or crash-abandoned) → `rejected{busy, units}`; the trigger is due again once each attempt has closed
-//      (src/holistic/checkpoint.ts), and it never counts toward `secondInvalid`.
+//      running or crash-abandoned) → `rejected{busy, units}`; the trigger is due again once each attempt has closed, and
+//      its next job re-decides the held output with no call, every step from this one judged again then (arc feedback
+//      2026-10-24, src/holistic/checkpoint.ts `redecides`); it never counts toward `secondInvalid`.
 //   1. Staleness (H3). The artifacts the ops touch, compared with the vector the checkpoint captured: the plan's bytes,
 //      each patched or re-entered unit's spec rev (and whether it merged since the capture: its spec is fixed now, so stale, not invalid), the obligations, the ledger, the contracts a landing ruling names;
 //      and the vision, always. A finding the checkpoint was shown that closed since is stale when the decision rests on
@@ -99,7 +100,7 @@ import { type DeflakeOrigin, type PlanM1, type PolishOrigin, type PropagationOri
 import type { RiskTier } from '../routing/types.ts';
 import { type RevisionContext, evaluateRevision, keepRevision, payloadOf } from '../commands/apply.ts';
 import { mayOverlap } from '../input/classify.ts';
-import { raiseNeedsUser, readNeedsUser } from '../needsuser.ts';
+import { openNeedsUser, raiseNeedsUser, readNeedsUser } from '../needsuser.ts';
 import { arcLaneKey, laneEnvId, mapInForce, observations, observedViews } from '../pipeline/lanes.ts';
 import { conversionsOf, rulingContextAt } from '../pipeline/publish.ts';
 import { loadUnitSpec } from '../pipeline/stages.ts';
@@ -153,12 +154,12 @@ export type Refused = Readonly<{ kind: 'refused'; reasons: readonly string[] }>;
 /** One activation: the deciding job, the inputs the output was decided on, the output, and the call that produced it. */
 export type Activation = Readonly<{
   job: JobId;
-  /** The inputs the output was built on (an enactment's: the requesting job's). */
+  /** The inputs the output was built on (an enactment's or a re-decide's: those of the job whose call produced it). */
   captured: Captured;
   output: CheckpointOutput;
   /** The checkpoint call that produced `output`. */
   inv: InvocationId;
-  /** An owner-approved bundle request (A9): draining and the brakes do not apply to it. */
+  /** An owner-approved bundle request (A9), or a re-decide of one: draining and the brakes do not apply to it. */
   enact: boolean;
   /** Its trigger was rejected invalid once already: this bundle, if invalid, goes to the owner. */
   secondInvalid: boolean;
@@ -886,9 +887,32 @@ function citeAndDispositionReasons(ctx: CheckpointContext, a: Activation, revisi
   return out;
 }
 
+type OwnerRequest = Readonly<{ class: OwnerOnlyClass; summary: string }>;
+
+/** The summary of `job`'s `owner-request` item: its requests, each `[class] summary`, in the bundle's order. */
+const ownerRequestSummary = (job: JobId, requests: readonly OwnerRequest[]): string =>
+  `Checkpoint ${job} asks for acts only the owner may take: ${requests.map((r) => `[${r.class}] ${r.summary}`).join('; ')}. Nothing of its bundle was applied.`;
+
+/**
+ * Arc feedback 2026-10-24 (ckpt-38 raised ckpt-37's open owner request again): the latest open `owner-request` item a
+ * checkpoint job raised for exactly `requests`, or null. The identity is the request list: the same owner-only acts,
+ * each the same class and the same summary text, in the same order (the item's summary as that job would have rendered
+ * it, so an item an older release raised matches too). A different or extended list raises its own item.
+ */
+function openOwnerRequest(ctx: CheckpointContext, requests: readonly OwnerRequest[]): NeedsUserId | null {
+  const view = ctx.journal.view;
+  const open = new Set(openNeedsUser(view).map((n) => n.id));
+  for (const i of [...view.opsOf('needsuser.raise')].reverse()) {
+    if (i.parent.type !== 'job' || !open.has(i.expect.id)) continue;
+    const record = readNeedsUser(ctx.runDir, i.expect.id);
+    if (record?.reason === 'owner-request' && record.summary === ownerRequestSummary(i.parent.job, requests)) return i.expect.id;
+  }
+  return null;
+}
+
 /** A16, H10: the owner-only requests of the bundle, explicit and nested. */
-function ownerOnly(ctx: CheckpointContext, a: Activation, p: Proposal, inForce: InForce, current: InputFiles, revision: RevisionInForce): readonly Readonly<{ class: OwnerOnlyClass; summary: string }>[] {
-  const out: { class: OwnerOnlyClass; summary: string }[] = [];
+function ownerOnly(ctx: CheckpointContext, a: Activation, p: Proposal, inForce: InForce, current: InputFiles, revision: RevisionInForce): readonly OwnerRequest[] {
+  const out: OwnerRequest[] = [];
   for (const op of a.output.ops) if (op.op === 'request') out.push({ class: op.class, summary: op.summary });
   const inForceLanes: readonly LaneDef[] = [
     ...inForce.plan.suite.lanes,
@@ -1261,14 +1285,14 @@ function judge(ctx: CheckpointContext, a: Activation): BundleDecision | Refused 
     return d;
   };
 
-  // 3. Owner-only (A16, H10): nothing applied.
+  // 3. Owner-only (A16, H10): nothing applied. The same requests still open from an earlier checkpoint are not raised again.
   const requests = ownerOnly(ctx, a, p, inForce, current, revision);
   if (requests.length > 0) {
-    const needsUser = raiseOnce(ctx, a.job, {
+    const needsUser = openOwnerRequest(ctx, requests) ?? raiseOnce(ctx, a.job, {
       blocking: true,
       subject: { type: 'arc' },
       reason: 'owner-request',
-      summary: `Checkpoint ${a.job} asks for acts only the owner may take: ${requests.map((r) => `[${r.class}] ${r.summary}`).join('; ')}. Nothing of its bundle was applied.`,
+      summary: ownerRequestSummary(a.job, requests),
       recommendation: 'Decide each request: take the act yourself (for a plan change, `roadmap apply`) or leave it. Acknowledge this item when done; the next checkpoint reads the arc as it then is.',
       options: [],
       evidence: [],

@@ -96,6 +96,9 @@
 //         review with the current key has an open blocking `pack-review` item (src/holistic/packreview.ts);
 //       - issue-policy-untrusted (M4a OR-L6, R31): its blocking item is open (a checkpoint capture found the issue
 //         policy untrusted; the checkpoint waits uncaptured meanwhile, src/holistic/intake.ts).
+//   - held bundle (arc feedback 2026-10-24, `busyHolds`): a unit a checkpoint's bundle touched mid-stage (rejected `busy`)
+//     is not admitted to its next stage until the trigger's next job has re-decided the held bundle (no call) at the
+//     boundary (src/holistic/checkpoint.ts).
 //   - batch (R7, B2): the candidate of an approved unit repairing a finding directly waits while another active
 //     unit repairs that finding directly and is not approved yet; once every such unit (at least two) waits at its
 //     candidate they publish as one batch. A red batch records `red` for each member its own selection attributes
@@ -147,7 +150,7 @@ import { revParse } from '../git/git.ts';
 import { jobEvidenceRoot, snapshotRequestOf } from '../git/snapshot.ts';
 import { type AuditContext, auditPending, raiseAuditOwed, runAudit } from '../holistic/audit.ts';
 import { cadence, integrationHeadNow, processClock } from '../holistic/cadence.ts';
-import { type CheckpointContext, type DesignParkRoute, checkpointPending, designParkRoute, runCheckpoint, settleLatest } from '../holistic/checkpoint.ts';
+import { type CheckpointContext, type DesignParkRoute, busyHolds, checkpointPending, designParkRoute, runCheckpoint, settleLatest } from '../holistic/checkpoint.ts';
 import { settleCloseOut } from '../holistic/closeout.ts';
 import { beforeCompletion, flowApplyHeld, flowOn, runFlowTrack } from '../flow/track.ts';
 import { demoTicker, promoteFinal, writeDesired } from '../demo/promote.ts';
@@ -880,10 +883,13 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   // -------------------------------------------------------------------------------------------------
   // The scheduler's holds: arc-wide (the baseline, the pack review, an untrusted issue policy) and repair batches (R7)
 
-  /** `flowApply` (M4b): an accepted flow proposal waits for its revision, so no new candidate starts. */
-  type Holds = Readonly<{ arc: boolean; batch: ReadonlySet<UnitId>; flowApply: boolean }>;
+  /**
+   * `flowApply` (M4b): an accepted flow proposal waits for its revision, so no new candidate starts. `bundle` (arc feedback
+   * 2026-10-24): the units a busy-rejected checkpoint's held bundle waits for (`busyHolds`), held at every admission.
+   */
+  type Holds = Readonly<{ arc: boolean; batch: ReadonlySet<UnitId>; flowApply: boolean; bundle: ReadonlySet<UnitId> }>;
   const heldBack = (holds: Holds, unit: UnitId, stage: AdmissionStage): boolean =>
-    holds.arc || (stage === 'candidate' && (holds.batch.has(unit) || holds.flowApply));
+    holds.arc || holds.bundle.has(unit) || (stage === 'candidate' && (holds.batch.has(unit) || holds.flowApply));
 
   const approvalKey = (unit: UnitId): string => canonicalJson(view().unit(unit).approval);
 
@@ -1381,7 +1387,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       demo.tick();
       const blocking = blockingItems(runDir, view());
       const batch = batchPlan();
-      const holds: Holds = { arc: arcHeld(blocking), batch: batch.held, flowApply: flowApplyHeld(view()) };
+      const holds: Holds = { arc: arcHeld(blocking), batch: batch.held, flowApply: flowApplyHeld(view()), bundle: holistic() ? busyHolds(h.checkpoint) : new Set() };
       startHolistic(holds, batch);
       startFlow();
       startDeflake();

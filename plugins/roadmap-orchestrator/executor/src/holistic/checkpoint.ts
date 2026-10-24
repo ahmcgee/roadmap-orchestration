@@ -12,13 +12,18 @@
 //      weighed (`unweighedWalkFindings`, src/walk/milestones.ts: a walk that opened nothing new needs no checkpoint, as
 //      an audit's `nothingNew`; the walk's evidence dir joins the session's readable dirs), then completed audits in order. A trigger is due while it has no job, or its latest job
 //      was rejected (`stale` or `evidence`: re-evaluated whole; `busy` (M4a rev 3, C5): once every open attempt it named
-//      has closed, so no paid call is made while a unit it changes is mid-stage; `invalid`: once, the second goes to the
-//      owner; whatever the reason, the next job's prompt carries every rejected job of its trigger with its reason and
-//      detail verbatim, `priorRejected`), or its
+//      has closed, so no paid call is made while a unit it changes is mid-stage, and (arc feedback 2026-10-24: ckpt-30 and
+//      ckpt-31 were each rejected busy and paid for again) the next job re-decides the held bundle with no call
+//      (`redecides`): the busy job's output activated again, against the inputs it was built on (`builtOn`), as the arc is
+//      then; the scheduler holds the named units' next admission meanwhile (`busyHolds`); busy again, the job after
+//      re-decides it at that boundary in turn; stale, evidence or invalid then,
+//      the trigger falls back to a fresh call, a re-decide's invalid not spending the trigger's one retry; `invalid`: once,
+//      the second goes to the owner; whatever the reason, a called job's prompt carries every rejected job of its trigger
+//      with its reason and detail verbatim, `priorRejected`), or its
 //      latest job's bundle request was acknowledged `apply` (the next job enacts that bundle: no call, the brakes and
 //      draining skipped, staleness and the rest checked as ever); a request answered otherwise ends the trigger's decision
-//      (its generation quiescent, `quiescentGenerations`). A due job is skipped, writing nothing, while the
-//      checkpoint seat's backend is parked or the arc is paused or stopped.
+//      (its generation quiescent, `quiescentGenerations`). A due job that would make a call (no enactment or re-decide) is
+//      skipped, writing nothing, while the checkpoint seat's backend is parked or the arc is paused or stopped.
 //   1a. Arc feedback 2026-10-16 (checkpoints ran too often, not aimed at the blocker): a completed audit's first job is not
 //      made when the audit found nothing new (`nothingNew`: not the final audit, a checkpoint already settled under the
 //      vision in force, and every active finding no unit owns captured by such a checkpoint; in a corpus arc, also every
@@ -175,9 +180,52 @@ function approved(ctx: CheckpointContext, c: CheckpointState | null): boolean {
   return readNeedsUser(ctx.runDir, id)?.reason === 'bundle-request' && ctx.journal.view.ackOf(id)?.choice === 'apply';
 }
 
+/** Whether `c` was rejected `busy` (C5): its bundle is held, and its trigger's next job re-decides it. */
+const busyRejected = (c: CheckpointState | null | undefined): boolean => c?.decided?.kind === 'rejected' && c.decided.reason === 'busy';
+
+/** Whether `job` spawned a checkpoint call of its own (any attempt). */
+function madeCall(view: JournalView, job: JobId): boolean {
+  return view.opsOf('proc.spawn').some((i) => {
+    const s = i.expect.subject;
+    return s.purpose === 'arc-backend' && s.job === job && s.role === 'checkpoint';
+  });
+}
+
+/**
+ * Arc feedback 2026-10-24 (ckpt-30 and ckpt-31 rejected `busy`, each retry a fresh paid call): whether `job` re-decides
+ * the bundle its trigger's previous job `prev` held when it was rejected `busy`: no call of its own, the held output
+ * activated again against the state at this job. A job an older release captured after a busy rejection, which may
+ * have called, keeps its call (`madeCall`).
+ */
+function redecides(ctx: CheckpointContext, job: JobId, prev: CheckpointState | null): boolean {
+  return busyRejected(prev) && !madeCall(ctx.journal.view, job);
+}
+
+/** Whether `job` acts on its previous job's output with no call: it enacts an approved request, or re-decides a held bundle. */
+const inherits = (ctx: CheckpointContext, job: JobId, prev: CheckpointState | null): boolean => approved(ctx, prev) || redecides(ctx, job, prev);
+
+/**
+ * Whether `job` activates as an enactment (the brakes and draining skipped): it enacts an approved request, or
+ * re-decides a held bundle that was itself an enactment's.
+ */
+function enacts(ctx: CheckpointContext, job: JobId): boolean {
+  const prev = previousOf(ctx, job);
+  if (approved(ctx, prev)) return true;
+  return redecides(ctx, job, prev) && enacts(ctx, prev!.inputs.job);
+}
+
+/** The inputs the output `job` acts on was built on: those of the job whose call produced it (`inherits`, followed back). */
+function builtOn(ctx: CheckpointContext, job: JobId): Captured {
+  const prev = previousOf(ctx, job);
+  if (prev !== null && inherits(ctx, job, prev)) return builtOn(ctx, prev.inputs.job);
+  const mine = ctx.journal.view.holistic().checkpoints.find((c) => c.inputs.job === job);
+  if (mine === undefined) throw new Error(`${job} is no checkpoint job`);
+  return mine.inputs;
+}
+
 /**
  * The output a decided or running job acts on, and the call that produced it: its own last successful call, or (an
- * enactment, which makes none) the requesting job's. Null while it has none.
+ * enactment or a re-decide, which make none: `inherits`) its previous job's. Null while it has none.
  */
 export function outputOf(ctx: CheckpointContext, job: JobId): Readonly<{ output: CheckpointOutput; inv: InvocationId }> | null {
   let found: Readonly<{ output: CheckpointOutput; inv: InvocationId }> | null = null;
@@ -193,7 +241,7 @@ export function outputOf(ctx: CheckpointContext, job: JobId): Readonly<{ output:
   }
   if (found !== null) return found;
   const prev = previousOf(ctx, job);
-  return approved(ctx, prev) ? outputOf(ctx, prev!.inputs.job) : null;
+  return inherits(ctx, job, prev) ? outputOf(ctx, prev!.inputs.job) : null;
 }
 
 /** Every applied bundle so far, in log order: its job, its revision.commit's seq, its effective ops (converted admits dropped, Q4). */
@@ -336,8 +384,11 @@ function walkTriggers(ctx: CheckpointContext): readonly Readonly<{ walk: WalkRec
   return walksOf(ctx.journal.view).flatMap((w) => (w.ended !== null && w.ended.outcome !== 'abandoned' ? [{ walk: w, at: w.ended.seq }] : []));
 }
 
-/** The first due trigger, parks first, then walks (their P1s hold a milestone's descendants), then audits; null when none is. */
-function dueTrigger(ctx: CheckpointContext): Due | null {
+/** A trigger the checkpoint serves now, its generation, the seq it has waited from, and its latest job. */
+type Candidate = Readonly<{ trigger: CheckpointTrigger; generation: number; at: number; last: CheckpointState | undefined }>;
+
+/** The triggers the checkpoint serves now, parks first, then walks (their P1s hold a milestone's descendants), then audits. */
+function candidates(ctx: CheckpointContext): readonly Candidate[] {
   const fold = ctx.journal.view.holistic();
   const latest = (t: CheckpointTrigger): CheckpointState | undefined => fold.checkpoints.filter((c) => triggerKey(c.inputs.trigger) === triggerKey(t)).at(-1);
   const parks = designParks(ctx).filter((p) => earlierRespecs(ctx, p.unit, p.seq).length === 0)
@@ -353,11 +404,29 @@ function dueTrigger(ctx: CheckpointContext): Due | null {
     const needed = unweighedWalkFindings(ctx.journal.view, walk).length > 0 || (last !== undefined && approved(ctx, last));
     return needed ? [{ trigger, generation: latestGeneration(ctx), at }] : [];
   });
-  for (const { at, ...t } of [...parks, ...walks, ...audits]) {
-    const last = latest(t.trigger);
+  return [...parks, ...walks, ...audits].map((t) => ({ ...t, last: latest(t.trigger) }));
+}
+
+/** The first due trigger (`candidates`, in order); null when none is. */
+function dueTrigger(ctx: CheckpointContext): Due | null {
+  for (const { at, last, ...t } of candidates(ctx)) {
     if (dueAgain(ctx, last)) return { ...t, prev: last ?? null, since: last?.inputs.seq ?? at };
   }
   return null;
+}
+
+/**
+ * Arc feedback 2026-10-24: the units a held bundle waits for (each served trigger's latest job rejected `busy`, the units
+ * it named). The scheduler holds their next admission until the trigger's next job has re-decided the bundle, as an
+ * apply's drain holds the units it waits for, so the re-decide lands at the boundary instead of chasing the unit into its
+ * next stage.
+ */
+export function busyHolds(ctx: CheckpointContext): ReadonlySet<UnitId> {
+  if (!ctx.journal.view.holistic().on) return new Set();
+  return new Set(candidates(ctx).flatMap(({ last }) => {
+    const d = last?.decided;
+    return d?.kind === 'rejected' && d.reason === 'busy' ? (d.units ?? []).map((b) => b.unit) : [];
+  }));
 }
 
 /**
@@ -947,9 +1016,7 @@ export function settleLatest(ctx: CheckpointContext): void {
   if (last === undefined || (last.decided!.kind !== 'applied' && last.decided!.kind !== 'no-op')) return;
   const out = outputOf(ctx, last.inputs.job);
   if (out === null) throw new Error(`${last.inputs.job} decided with no recorded output`);
-  const prev = previousOf(ctx, last.inputs.job);
-  const captured = approved(ctx, prev) ? prev!.inputs : last.inputs;
-  settleDecided(ctx, last.inputs.job, out.output, captured, appliedBundles(ctx));
+  settleDecided(ctx, last.inputs.job, out.output, builtOn(ctx, last.inputs.job), appliedBundles(ctx));
 }
 
 /**
@@ -979,7 +1046,9 @@ export async function runCheckpoint(ctx: CheckpointContext): Promise<CheckpointO
       ctx.journal.fact({ kind: 'checkpoint-skipped', audit: due.trigger.job, generation: due.generation, visionSha256, carried });
       return { kind: 'not-needed', audit: due.trigger.job, carried };
     }
-    if (!approved(ctx, due.prev)) {
+    // An enactment or a re-decide (`inherits`) makes no call: the call's gates and the issue capture are skipped.
+    const inherit = approved(ctx, due.prev) || busyRejected(due.prev);
+    if (!inherit) {
       const skip = checkpointSkip(ctx);
       if (skip !== null) return { kind: 'skipped', reason: skip };
       // R-15: a paid call waits at the publication boundary, bounded (see the header).
@@ -988,7 +1057,7 @@ export async function runCheckpoint(ctx: CheckpointContext): Promise<CheckpointO
     if (due.trigger.type === 'audit') await rewitnessP1s(ctx, due.trigger.job);
     if (due.prev !== null) await rewitnessCited(ctx, due.prev);
     let issues: CheckpointIssues | null = null;
-    if (ctx.plan().target === 'corpus' && !approved(ctx, due.prev)) {
+    if (ctx.plan().target === 'corpus' && !inherit) {
       const captured = captureCheckpointIssues(ctx);
       if (captured.kind === 'held') return { kind: 'skipped', reason: 'issue-policy-untrusted' };
       issues = captured.issues;
@@ -1000,11 +1069,11 @@ export async function runCheckpoint(ctx: CheckpointContext): Promise<CheckpointO
   await removeJobCheckouts(ctx, job);
 
   const prev = previousOf(ctx, job);
-  const enact = approved(ctx, prev);
+  const enact = enacts(ctx, job);
   let asked: Asked;
-  if (enact) {
+  if (inherits(ctx, job, prev)) {
     const out = outputOf(ctx, prev!.inputs.job);
-    if (out === null) throw new Error(`${job} enacts ${prev!.inputs.job}'s bundle, whose output is not recorded`);
+    if (out === null) throw new Error(`${job} acts on ${prev!.inputs.job}'s bundle, whose output is not recorded`);
     asked = { kind: 'output', ...out, repairOf: null };
   } else {
     asked = await ask(ctx, s);
@@ -1016,13 +1085,13 @@ export async function runCheckpoint(ctx: CheckpointContext): Promise<CheckpointO
   const answered = await answerOf(ctx, s, asked);
   if (answered.kind !== 'output' && answered.kind !== 'failed') return answered;
   crashPoint('checkpoint.after-call');
-  const decision = await decideAnswer(ctx, s, answered, enact, prev);
+  const decision = await decideAnswer(ctx, s, answered, enact);
   if (decision.kind !== 'refused') return { kind: 'decided', job, trigger: s.trigger, decision };
   // 2026-10-15: an invalid bundle of a fresh answer takes its repair turn with every reason, and that answer is decided.
   if (answered.kind !== 'output' || answered.repairOf === null) throw new Error(`${job}: a refused bundle without a repair turn to take`);
   const repaired = await answerOf(ctx, s, await repairCall(ctx, s, answered.inv, answered.repairOf, decision.reasons));
   if (repaired.kind !== 'output' && repaired.kind !== 'failed') return repaired;
-  const final = await decideAnswer(ctx, s, repaired, enact, prev);
+  const final = await decideAnswer(ctx, s, repaired, enact);
   if (final.kind === 'refused') throw new Error(`${job}: a repair turn's answer was refused for another repair turn`);
   return { kind: 'decided', job, trigger: s.trigger, decision: final };
 }
@@ -1046,14 +1115,18 @@ async function answerOf(ctx: CheckpointContext, s: Captured, asked: Asked): Prom
 
 /**
  * Decides the job's answer: a failure is an invalid decision (a trigger's second goes to the owner); an output is
- * activated (src/holistic/bundle.ts), `refused` when it is invalid and may still take its repair turn (`repairOf`).
+ * activated (src/holistic/bundle.ts) against the inputs it was built on (`builtOn`), `refused` when it is invalid and may
+ * still take its repair turn (`repairOf`). A re-decide's invalid decision does not count toward the trigger's one retry:
+ * the held bundle was never judged before the busy rejection, and the fresh call after it has its own repair turn and
+ * retry, as it had before re-decides existed.
  */
 async function decideAnswer(
-  ctx: CheckpointContext, s: Captured, asked: Extract<Asked, Readonly<{ kind: 'output' | 'failed' }>>, enact: boolean, prev: CheckpointState | null,
+  ctx: CheckpointContext, s: Captured, asked: Extract<Asked, Readonly<{ kind: 'output' | 'failed' }>>, enact: boolean,
 ): Promise<BundleDecision | Refused> {
   const { job, trigger } = s;
   if (asked.kind === 'output') await witnessDrift(ctx, job, asked.output);
-  const secondInvalid = ctx.journal.view.holistic().checkpoints.some((c) => triggerKey(c.inputs.trigger) === triggerKey(trigger) && c.decided?.kind === 'rejected' && c.decided.reason === 'invalid');
+  const secondInvalid = ctx.journal.view.holistic().checkpoints.some((c) => triggerKey(c.inputs.trigger) === triggerKey(trigger) && c.decided?.kind === 'rejected'
+    && c.decided.reason === 'invalid' && !redecides(ctx, c.inputs.job, previousOf(ctx, c.inputs.job)));
   if (asked.kind === 'failed') {
     const decision: BundleDecision = secondInvalid
       ? { kind: 'requested', needsUser: failedTwice(ctx, job, asked.detail), reason: 'bundle-request' }
@@ -1062,7 +1135,7 @@ async function decideAnswer(
     return decision;
   }
   const a: Activation = {
-    job, captured: enact ? prev!.inputs : s, output: asked.output, inv: asked.inv, enact, secondInvalid, applied: appliedBundles(ctx), repairable: !enact && asked.repairOf !== null,
+    job, captured: builtOn(ctx, job), output: asked.output, inv: asked.inv, enact, secondInvalid, applied: appliedBundles(ctx), repairable: !enact && asked.repairOf !== null,
   };
   return activate(ctx, a);
 }

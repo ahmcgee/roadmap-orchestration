@@ -8,7 +8,8 @@
 // bundle.evidence-malformed-or-empty-rejected, bundle.evidence-selection-loss-rejected,
 // bundle.evidence-env-or-rev-differs-rejected, bundle.ruling-corpus-consistency-stamped, bundle.ruling-id-leading-zero,
 // bundle.split-census-out-of-slice-moved, bundle.split-census-other-state-reason, bundle.busy-live-attempt,
-// checkpoint.busy-waits-for-boundary, classify.open-attempt-running-vs-abandoned, checkpoint.capture-waits-for-publication and
+// checkpoint.busy-waits-for-boundary (arc feedback 2026-10-24: the held bundle re-decided with no call),
+// checkpoint.busy-redecide-stale-falls-back, classify.open-attempt-running-vs-abandoned, checkpoint.capture-waits-for-publication and
 // checkpoint.capture-wait-bounded (paid M4a run 10, R-15), checkpoint.manifest-content-addressed,
 // checkpoint.specs-embedded-with-occupied-ids, checkpoint.next-ruling-id, checkpoint.closeout-delta-when-unchanged,
 // bundle.merged-since-capture-stale, bundle.merged-at-capture-invalid, checkpoint.refused-carried-across-triggers (paid M4a
@@ -26,7 +27,7 @@ import { status } from '../src/status.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import { sha256Hex } from '../src/core/json.ts';
 import { evidenceDiffers, integrationHistory, numericId, numericRulingIds } from '../src/holistic/bundle.ts';
-import { CAPTURE_WAIT_MAX_MIN, publishing, runCheckpoint } from '../src/holistic/checkpoint.ts';
+import { CAPTURE_WAIT_MAX_MIN, busyHolds, publishing, runCheckpoint } from '../src/holistic/checkpoint.ts';
 import { quiescentGenerations } from '../src/holistic/convergence.ts';
 import type { Observation } from '../src/holistic/observe.ts';
 import type { WitnessRecord } from '../src/holistic/types.ts';
@@ -463,7 +464,6 @@ describe('busy: a bundle touching a unit mid-stage waits for its boundary (C5, R
     const x = await arc([
       { ...pc, acts: [pcBarrier, ...pc.acts] } as Step,
       checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [limitsU1] })),
-      checkpointStep('ckpt-2', checkpointAnswer({ decision: 'bundle', ops: [limitsU1] })),
     ]);
     try {
       const unit = stepTo(x.ctx, 'u1', (f) => f.stage === 'plan-check');
@@ -474,6 +474,7 @@ describe('busy: a bundle touching a unit mid-stage waits for its boundary (C5, R
       assert.ok(first.kind === 'decided' && first.decision.kind === 'rejected' && first.decision.reason === 'busy', JSON.stringify(first));
       assert.deepEqual(first.decision.units, [{ unit: 'u1', stage: 'plan-check', attempt: 1 }]);
       assert.match(first.decision.detail, /u1, which is in plan-check attempt 1/);
+      assert.deepEqual([...busyHolds(x.ctx)], ['u1'], 'the scheduler holds u1 at its boundary for the held bundle');
       // While the attempt runs, the trigger is not due: no capture, no call (a long stage spans many checkpoint turns).
       for (let i = 0; i < 3; i++) assert.deepEqual(await run(x), { kind: 'none' });
       assert.deepEqual(ckptCalls(x), ['ckpt-1'], 'exactly one paid call before the boundary');
@@ -488,11 +489,41 @@ describe('busy: a bundle touching a unit mid-stage waits for its boundary (C5, R
       writeFileSync(spec, was);
       release(x.a.d.scenarioDir, 'pc');
       await unit;
+      // Arc feedback 2026-10-24: at the boundary the next job re-decides ckpt-1's held bundle, with no call.
       const second = await run(x);
-      assert.ok(second.kind === 'decided' && second.decision.kind === 'applied', JSON.stringify(second));
-      assert.deepEqual(ckptCalls(x), ['ckpt-1', 'ckpt-2'], 'one call after the boundary');
+      assert.ok(second.kind === 'decided' && second.job === 'ckpt-2' && second.decision.kind === 'applied', JSON.stringify(second));
+      assert.deepEqual(ckptCalls(x), ['ckpt-1'], 'no call after the boundary: the held bundle is re-decided');
       assert.deepEqual(decisions(x.r), [['ckpt-1', 'rejected:busy']]);
       assert.deepEqual(bundleSources(x.r).map((b) => b.job), ['ckpt-2']);
+      assert.equal(planInForce(x.r).units.find((u) => u.id === 'u1')?.limits?.chargeable, 2);
+      assert.deepEqual([...busyHolds(x.ctx)], [], 'decided: the hold is released');
+    } finally {
+      x.r.journal.close();
+    }
+  });
+
+  test('checkpoint.busy-redecide-stale-falls-back (arc feedback 2026-10-24): a held bundle the arc moved under is decided stale at its re-decide, with no call; the trigger then asks a fresh call', T, async () => {
+    const pc = planCheckStep({ decision: 'approve' });
+    const x = await arc([
+      { ...pc, acts: [pcBarrier, ...pc.acts] } as Step,
+      checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [limitsU1] })),
+      checkpointStep('ckpt-3', checkpointAnswer({ decision: 'bundle', ops: [limitsU1] })),
+    ]);
+    try {
+      const unit = stepTo(x.ctx, 'u1', (f) => f.stage === 'plan-check');
+      await reached(x.a.d.scenarioDir, 'pc', 120_000);
+      const first = await withForge(x.a.forge, () => runCheckpoint({ ...x.ctx, clock: () => CAPTURE_WAIT_MAX_MIN }));
+      assert.ok(first.kind === 'decided' && first.decision.kind === 'rejected' && first.decision.reason === 'busy', JSON.stringify(first));
+      release(x.a.d.scenarioDir, 'pc');
+      await unit;
+      await applyPlanEdit(x.r, x.w, (plan) => { plan['direction'] = 'Berths first, then the morning view.'; });
+      const second = await run(x);
+      assert.ok(second.kind === 'decided' && second.job === 'ckpt-2' && second.decision.kind === 'rejected' && second.decision.reason === 'stale', JSON.stringify(second));
+      assert.deepEqual(ckptCalls(x), ['ckpt-1'], 'the re-decide made no call');
+      const third = await run(x);
+      assert.ok(third.kind === 'decided' && third.job === 'ckpt-3' && third.decision.kind === 'applied', JSON.stringify(third));
+      assert.deepEqual(ckptCalls(x), ['ckpt-1', 'ckpt-3'], 'the fallback is a fresh call');
+      assert.deepEqual(decisions(x.r), [['ckpt-1', 'rejected:busy'], ['ckpt-2', 'rejected:stale']]);
     } finally {
       x.r.journal.close();
     }
