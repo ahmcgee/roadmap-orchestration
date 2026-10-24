@@ -27,7 +27,7 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
 `.rejected.json` (with every reason). An `apply` waiting for a unit's stage boundary first gets `.queued.json`
 (`waitsFor`, `reason`; 1.0.0-dev.17).
 
-- `roadmap start --repo <path> --plan <plan.json> [--profile default|claude-only] [--wait <ms>] [--base <export.json>]`:
+- `roadmap start --repo <path> --plan <plan.json> [--profile default|claude-only] [--wait <ms>] [--base <file>]`:
   launch, or recover from disk. Without `--profile`, `.roadmap/config.json` chooses, else `default`. On an arc with a
   plan in force the plan file is your edit: its files are rebased onto the files in force and the startup rows check
   the result, the ledger in force included (2026-10-21; 1.0.0-dev.16). The rebase starts from the files you last
@@ -262,11 +262,12 @@ T-13: A cancelled booking frees its berth at once.
   is the manifest of the exported files. The executor never writes your input files, so this is the one way to get the
   files in force: sync the export over your inputs, edit, then `roadmap apply --base <dir>/export.json`; the apply
   rebases your edit onto whatever the executor did since the export. It reads the run dir only, so it works with the
-  executor down; then `roadmap start … --base <dir>/export.json` rebases the edit the same way.
+  executor down; then `roadmap start --repo <path> --plan <plan.json> --base <dir>/export.json` rebases the edit the same way.
 - **A unit in force that every apply and start refuses** (`corpus-invalid` `scope-overlaps-corpus`, its `fix` naming the
   unit; an executor-minted unit from before the deflake scope fix): export, sync, narrow the unit's scope off the
-  corpus (or cut it, if it never started a task), then `roadmap apply --base` (executor running) or `roadmap start
-  --base` (executor down). A dispatched unit's scope may not shrink: cut it instead, or tell the owner.
+  corpus (or cut it, if it never started a task), then `roadmap apply --base <dir>/export.json` (executor running) or
+  `roadmap start --repo <path> --plan <plan.json> --base <dir>/export.json` (executor down).
+  A dispatched unit's scope may not shrink: cut it instead, or tell the owner.
 - **Boot hook.** A devcontainer restarts with no executor. `roadmap resume-arc --repo <path>` relaunches a dead
   owner's supervisor and does nothing otherwise, so it is safe at every boot:
   `"postStartCommand": "<plugin root>/executor/bin/roadmap resume-arc --repo <product repo>"` in
