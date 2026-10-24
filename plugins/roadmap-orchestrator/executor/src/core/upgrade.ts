@@ -10,7 +10,7 @@
 import type { CensusEntry, ClassifiedAdmit, Conversion, Obligations } from '../holistic/types.ts';
 import type { DiffShown, GateLargeDiff, JudgmentInputs, MutantOf, RevisionSource } from './events.ts';
 import type { ApprovalBlobs, GateReview } from './review.ts';
-import type { FindingId, LaneId, ObligationId } from './ids.ts';
+import type { FindingId, LaneId, ObligationId, UnitId } from './ids.ts';
 import type { PressureAvailability } from '../host/pressure.ts';
 import type { LaunchCpu, ResultFile } from './records.ts';
 import { canonicalJson } from './json.ts';
@@ -588,4 +588,17 @@ export function earlierReaderResultDefault(recorded: ResultFile, fresh: ResultFi
   if (!adopted) return null;
   warnDefaulted('result.earlier-reader', `${recorded.inv}: result.json was adapted by 1.0.0-dev.16's reader; adopted as recorded`);
   return recorded;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// 1.0.0-dev.17 -> dev.18 (deflake scope, 2026-10-23). Delete once no arc started on 1.0.0-dev.17 or earlier is in flight
+// (BACKLOG "Scaffolding to delete"); `fix` then becomes required on the problem.
+
+/**
+ * A `scope-overlaps-corpus` problem's `fix` (dev.18): absent on one a dev.17 executor wrote (a refused start's
+ * `status.rejection.json` or refused exit line, read back by `status` and `start`). Read as the fix dev.18 names
+ * (src/phase0/types.ts `scopeOverlapFix`).
+ */
+export function scopeOverlapFixDefault(unit: UnitId): void {
+  warnDefaulted('scope-overlaps-corpus.fix', `unit ${unit}: a scope-overlaps-corpus problem without fix (written before 1.0.0-dev.18); read as the fix dev.18 names`);
 }

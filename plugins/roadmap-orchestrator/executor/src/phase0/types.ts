@@ -2,6 +2,7 @@
 // shared startup rows report (`phase0Rows`, C1's src/phase0/rows.ts, run by `start`, `apply` and `phase0 check`), the
 // brief ack marker and the brief payload (C4). Types and readers only.
 import { OUTCOME_STAGES, type OutcomeStage } from '../core/events.ts';
+import { scopeOverlapFixDefault } from '../core/upgrade.ts';
 import {
   type AmendmentRef, type ArcId, type ClauseId, type DebtId, type DivergenceId, type IssueId, type JobId, type NeedsUserId, type ObligationId, type PhaseQuestionId,
   type RuleId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, amendmentRef, arcId, briefId, clauseId, debtId, divergenceId, issueId, issueNumber,
@@ -145,7 +146,7 @@ export type CorpusProblem =
   | Readonly<{ type: 'guide-missing' }>
   | Readonly<{ type: 'source-unreadable'; detail: string }>
   | Readonly<{ type: 'source-remote-mismatch' }>
-  /** `fix`: what the owner does about it (`scopeOverlapFix`); read as that when a dev.17 rejection file lacks it. */
+  /** `fix`: what the owner does about it (`scopeOverlapFix`); read as that, warned, when a dev.17 rejection lacks it (`scopeOverlapFixDefault`). */
   | Readonly<{ type: 'scope-overlaps-corpus'; unit: UnitId; fix: string }>
   | Readonly<{ type: 'contract-overlaps-corpus'; path: RepoPath }>;
 
@@ -165,7 +166,9 @@ export const corpusProblem: Read<CorpusProblem> = tagged('type', {
   'source-remote-mismatch': object((f): CorpusProblem => ({ type: f.get('type', literal('source-remote-mismatch')) })),
   'scope-overlaps-corpus': object((f): CorpusProblem => {
     const unit = f.get('unit', (v, p) => unitId(v, p));
-    return { type: f.get('type', literal('scope-overlaps-corpus')), unit, fix: f.optional('fix', str) ?? scopeOverlapFix(unit) };
+    const fix = f.optional('fix', str);
+    if (fix === undefined) scopeOverlapFixDefault(unit);
+    return { type: f.get('type', literal('scope-overlaps-corpus')), unit, fix: fix ?? scopeOverlapFix(unit) };
   }),
   'contract-overlaps-corpus': object((f): CorpusProblem => ({ type: f.get('type', literal('contract-overlaps-corpus')), path: f.get('path', pathR) })),
 });
