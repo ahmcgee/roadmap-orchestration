@@ -134,6 +134,42 @@ export function catFileType(repo: AbsPath, object: string): ObjectType | null {
   return t;
 }
 
+/**
+ * The bytes of every blob in `blobs`, read through one `cat-file --batch` (one process, not one per blob). Each
+ * answer is `<sha> blob <size>\n<bytes>\n`, cut by its size, so binary content round-trips. Throws on a missing
+ * object, an object that is not a blob, or a malformed answer.
+ */
+export function catFileBlobs(repo: AbsPath, blobs: readonly Sha[]): ReadonlyMap<Sha, Buffer> {
+  const wanted = [...new Set(blobs)];
+  const out = new Map<Sha, Buffer>();
+  if (wanted.length === 0) return out;
+  const args = ['cat-file', '--batch'];
+  const r = spawnSync('git', ['-C', repo, ...FIXED_CONFIG, ...args], { env: environment({}), input: `${wanted.join('\n')}\n`, maxBuffer: BATCH_MAX_BUFFER });
+  if (r.error !== undefined) throw r.error;
+  if (r.status !== 0) throw new GitError(args, r.status, r.stderr.toString('utf8'));
+  const stdout = r.stdout;
+  let at = 0;
+  for (const object of wanted) {
+    const eol = stdout.indexOf(0x0a, at);
+    if (eol === -1) throw new Error(`cat-file --batch: no answer for ${object}`);
+    const header = stdout.toString('latin1', at, eol);
+    const m = /^([0-9a-f]{40}) (\S+) ([0-9]+)$/.exec(header);
+    if (m === null) throw new Error(`cat-file --batch: ${object} answered ${JSON.stringify(header)}`);
+    if (m[1] !== object) throw new Error(`cat-file --batch: asked for ${object}, answered ${m[1]}`);
+    if (m[2] !== 'blob') throw new Error(`cat-file --batch: ${object} is a ${m[2]}, not a blob`);
+    const start = eol + 1;
+    const end = start + Number(m[3]);
+    if (end >= stdout.length || stdout[end] !== 0x0a) throw new Error(`cat-file --batch: ${object}'s ${m[3]} bytes are cut short`);
+    out.set(object, stdout.subarray(start, end));
+    at = end + 1;
+  }
+  if (at !== stdout.length) throw new Error(`cat-file --batch: ${stdout.length - at} bytes after the last answer`);
+  return out;
+}
+
+/** A batch read holds every blob it answers at once: a snapshot's whole tree (66 MB on a 4,769-file arc, 2026-10-23). */
+const BATCH_MAX_BUFFER = 1024 * 1024 * 1024;
+
 export type TreeEntry = Readonly<{ mode: string; type: 'blob' | 'tree' | 'commit'; object: Sha; path: RepoPath }>;
 
 /** `ls-tree -r -z <tree>`: every blob (and gitlink) in the tree, recursively. */

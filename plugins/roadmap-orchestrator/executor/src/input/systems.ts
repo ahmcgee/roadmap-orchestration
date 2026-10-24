@@ -122,6 +122,19 @@ export function dependenciesClosure(map: SystemsMap, systems: Iterable<SystemNam
   return out;
 }
 
+/**
+ * The systems a path belongs to itself, before `pathClass` closes them over their dependents: those whose `paths` or
+ * `tests` match it, the dependents of a shared area matching it and the consumers of a contract it is.
+ */
+export function pathSystems(map: SystemsMap, path: RepoPath): ReadonlySet<SystemName> {
+  const hit = (globs: readonly RepoPattern[]): boolean => globs.some((g) => matchesPattern(path, g));
+  const direct = new Set<SystemName>();
+  for (const [name, def] of Object.entries(map.systems) as [SystemName, SystemDef][]) if (hit(def.paths) || hit(def.tests)) direct.add(name);
+  for (const s of map.shared) if (hit(s.paths)) for (const d of s.dependents) direct.add(d);
+  for (const c of map.contracts[path] ?? []) direct.add(c);
+  return direct;
+}
+
 const CLASSES = new WeakMap<SystemsMap, Map<string, PathClass>>();
 
 /** A path's class under `map` (see the header), memoised per map. */
@@ -130,12 +143,10 @@ export function pathClass(map: SystemsMap, path: RepoPath): PathClass {
   CLASSES.set(map, memo);
   const known = memo.get(path);
   if (known !== undefined) return known;
-  const hit = (globs: readonly RepoPattern[]): boolean => globs.some((g) => matchesPattern(path, g));
-  const direct = new Set<SystemName>();
-  for (const [name, def] of Object.entries(map.systems) as [SystemName, SystemDef][]) if (hit(def.paths) || hit(def.tests)) direct.add(name);
-  for (const s of map.shared) if (hit(s.paths)) for (const d of s.dependents) direct.add(d);
-  for (const c of map.contracts[path] ?? []) direct.add(c);
-  const out: PathClass = direct.size > 0 ? { kind: 'systems', systems: dependentsClosure(map, direct) } : hit(map.docs) ? { kind: 'docs' } : { kind: 'unmapped' };
+  const direct = pathSystems(map, path);
+  const out: PathClass = direct.size > 0
+    ? { kind: 'systems', systems: dependentsClosure(map, direct) }
+    : map.docs.some((g) => matchesPattern(path, g)) ? { kind: 'docs' } : { kind: 'unmapped' };
   memo.set(path, out);
   return out;
 }

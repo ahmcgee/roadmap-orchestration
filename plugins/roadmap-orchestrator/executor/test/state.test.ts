@@ -4,10 +4,10 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { type Event, type LogRecord, type StageOutcomeFact, prevHash, serializeEvent } from '../src/core/events.ts';
-import { canonicalJson } from '../src/core/fsx.ts';
+import { CounterRegressionError, canonicalJson } from '../src/core/fsx.ts';
 import { type UnitId, arcId, commandId, needsUserId, opId, planRev, seatRev, sha256, specRev, unitId } from '../src/core/ids.ts';
 import { DEFAULT_BOUNDS, type Stage } from '../src/core/records.ts';
-import { Fold, FoldInvariantError, fold, newUnitState, writeStateCache } from '../src/core/state.ts';
+import { type CounterRefs, Fold, FoldInvariantError, type MeterTotal, fold, monotonicSince, newUnitState, writeStateCache } from '../src/core/state.ts';
 import { isoTime, repoPattern } from '../src/core/values.ts';
 import type { RiskTier } from '../src/routing/types.ts';
 import { tmpDir } from './helpers/repo.ts';
@@ -219,6 +219,22 @@ describe('fold invariants', () => {
     fold(ARC, chain([dispatch('low'), dispatch('high')]));
     refuses(chain([dispatch('med'), dispatch('low')]), 2, /dispatch of u1 lowers riskFloor med to low/);
     refuses(chain([dispatch('med'), dispatch('med', 'lib/**')]), 2, /dispatch of u1 changes its pinned scope/);
+  });
+
+  it('monotonicSince: a replaced record whose counter fell, or a vanished one, is refused', () => {
+    const unit = newUnitState(U1, 'build', 'med');
+    const total: MeterTotal = {
+      charge: { type: 'role', role: 'build' }, routingRev: REV, known: 2, unavailable: 0, inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0, turns: 1, costUsd: 0.5,
+    };
+    const refs = (units: CounterRefs['units'], meter: CounterRefs['meter'], lastSeq = 1): CounterRefs => ({ lastSeq, snapshotHighWater: 0, units, meter });
+    const before = refs(new Map([[U1, unit]]), new Map([['build r', total]]));
+    const regressed = (f: () => void, counter: string): void => {
+      assert.throws(f, (err: unknown) => err instanceof CounterRegressionError && err.counter === counter);
+    };
+    monotonicSince(before, refs(new Map([[U1, { ...unit, counters: { ...unit.counters, attempts: 1 } }]]), new Map([['build r', { ...total, known: 3 }]]), 2));
+    regressed(() => monotonicSince(before, refs(new Map([[U1, unit]]), new Map([['build r', { ...total, known: 1 }]]), 2)), 'meter build r known');
+    regressed(() => monotonicSince(before, refs(new Map(), new Map([['build r', total]]), 2)), `unit ${U1} attempts`);
+    regressed(() => monotonicSince(before, refs(before.units, before.meter, 0)), 'lastSeq');
   });
 
   it('a refused event leaves the fold unchanged', () => {

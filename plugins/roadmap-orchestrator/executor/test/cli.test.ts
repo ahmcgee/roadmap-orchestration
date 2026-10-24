@@ -20,9 +20,10 @@ describe('cli', () => {
     assert.deepEqual(parseCommand(['--version']), { command: 'version' });
   });
 
-  it('start with and without --profile', () => {
-    assert.deepEqual(parseCommand(['start', '--repo', '.', '--plan', 'plan.json']), { command: 'start', args: { repo: '.', plan: 'plan.json', profile: null, waitMs: null } });
-    assert.deepEqual(parseStartArgs(['--plan', 'p.json', '--profile', 'claude-only', '--repo', '/r']), { repo: '/r', plan: 'p.json', profile: 'claude-only', waitMs: null });
+  it('start with and without --profile and --base', () => {
+    assert.deepEqual(parseCommand(['start', '--repo', '.', '--plan', 'plan.json']), { command: 'start', args: { repo: '.', plan: 'plan.json', profile: null, waitMs: null, base: null } });
+    assert.deepEqual(parseStartArgs(['--plan', 'p.json', '--profile', 'claude-only', '--repo', '/r']), { repo: '/r', plan: 'p.json', profile: 'claude-only', waitMs: null, base: null });
+    assert.equal(parseStartArgs(['--repo', '.', '--plan', 'p', '--base', 'x/export.json']).base, 'x/export.json');
   });
 
   it('start refuses a missing or unknown argument', () => {

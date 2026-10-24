@@ -5,7 +5,8 @@
 // issue capture) into `--out`, which must not exist, plus `export.json {planRev, specRevs, base}`, `base` the manifest of
 // the exported files (every byte kept in the run dir). The one way to get the files in force (the executor never writes
 // into the owner's files): export, edit, `apply --base <out>/export.json`, which rebases the edit onto whatever the arc did
-// since (src/input/rebase.ts); never copying a historical manifest by hand.
+// since (src/input/rebase.ts); never copying a historical manifest by hand. With the executor down, `start --base
+// <out>/export.json` rebases the edit the same way (deflake scope, 2026-10-23). Reads the run dir only: it needs no executor.
 //
 // Layout: a file beside the plan (start.json's plan file) keeps its path relative to the plan's directory; a file in
 // the product repo (a corpus arc's vision record) goes under `repo/` at its repo path. The corpus guide is not exported:
@@ -34,23 +35,23 @@ export type InputsExportArgs = Readonly<{ repo: AbsPath; arc: ArcId; out: AbsPat
  */
 export type InputsExport = Readonly<{ planRev: PlanRev; specRevs: Readonly<Record<UnitId, SpecRev>>; base: RevisionManifest }>;
 
-/** The `base` of an `export.json` (`apply --base`); a CliError when the file is not an export's. */
-export function exportBase(path: AbsPath): RevisionManifest {
-  if (!existsSync(path)) throw new CliError(`apply --base: no file ${path}`);
+/** The `base` of an `export.json` (`apply --base`, `start --base`); a CliError naming `command` when the file is not an export's. */
+export function exportBase(path: AbsPath, command: 'apply' | 'start'): RevisionManifest {
+  if (!existsSync(path)) throw new CliError(`${command} --base: no file ${path}`);
   let value: unknown;
   try {
     value = JSON.parse(readFileSync(path, 'utf8'));
   } catch (error) {
     if (!(error instanceof SyntaxError)) throw error;
-    throw new CliError(`apply --base: ${path} is not JSON: ${error.message}`);
+    throw new CliError(`${command} --base: ${path} is not JSON: ${error.message}`);
   }
   const base = typeof value === 'object' && value !== null ? (value as { base?: unknown }).base : undefined;
-  if (base === undefined) throw new CliError(`apply --base: ${path} names no base (not an ${EXPORT_FILE} of \`roadmap inputs export\`, or one an earlier release wrote: export again)`);
+  if (base === undefined) throw new CliError(`${command} --base: ${path} names no base (not an ${EXPORT_FILE} of \`roadmap inputs export\`, or one an earlier release wrote: export again)`);
   try {
     return applyManifest(base, `${path}.base`);
   } catch (error) {
     if (!(error instanceof SchemaError)) throw error;
-    throw new CliError(`apply --base: ${error.message}`);
+    throw new CliError(`${command} --base: ${error.message}`);
   }
 }
 

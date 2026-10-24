@@ -1,7 +1,7 @@
 // The supervisor (plan "Supervisor (R19)", "Host lock and ownership (R17-R18)"; DESIGN-1.0.md §2): it owns
 // the executor and nothing else.
 //
-//   node src/entry/supervisor.ts <hostDir> --repo <abs> --plan <abs> [--profile <p>] [--heartbeat-stale-ms <n>]
+//   node src/entry/supervisor.ts <hostDir> --repo <abs> --plan <abs> [--profile <p>] [--heartbeat-stale-ms <n>] [--base <abs>]
 //
 // `roadmap start` launches it (`launchSupervisor`) detached (setsid) with ROADMAP_ROLE=supervisor, stdout and
 // stderr to `supervisor.<token>.out|.err` in the host dir. Its stdout is agent-facing JSON lines: one
@@ -108,6 +108,8 @@ export type SupervisorArgs = Readonly<{
   profile: ProfileName | null;
   /** Only when `--heartbeat-stale-ms` is given; recorded in supervisor.state.json. */
   heartbeatStaleMs: number | null;
+  /** `start --base`: the export.json every executor of this supervisor rebases the files from (a respawn reads none). */
+  base: AbsPath | null;
 }>;
 
 /** A line on the supervisor's stdout. */
@@ -260,7 +262,7 @@ async function superviseOne(args: SupervisorArgs, claim: HostLockClaim, controlO
   const env = { ...process.env };
   delete env[ROLE_ENV];
   const argv = executorArgv({
-    hostDir: dir, generation: claim.generation, nonce: claim.nonce, repo: args.repo, planFile: args.planFile, profile: args.profile, controlOnly, respawn,
+    hostDir: dir, generation: claim.generation, nonce: claim.nonce, repo: args.repo, planFile: args.planFile, profile: args.profile, controlOnly, respawn, base: args.base,
   });
   const child = spawn(process.execPath, [EXECUTOR_ENTRY, ...argv], { stdio: ['ignore', out, err], env });
   closeSync(out);
@@ -420,18 +422,18 @@ export async function supervise(args: SupervisorArgs): Promise<number> {
 export function supervisorArgv(a: SupervisorArgs): readonly string[] {
   return [
     a.hostDir, '--repo', a.repo, '--plan', a.planFile, ...(a.profile === null ? [] : ['--profile', a.profile]),
-    ...(a.heartbeatStaleMs === null ? [] : ['--heartbeat-stale-ms', String(a.heartbeatStaleMs)]),
+    ...(a.heartbeatStaleMs === null ? [] : ['--heartbeat-stale-ms', String(a.heartbeatStaleMs)]), ...(a.base === null ? [] : ['--base', a.base]),
   ];
 }
 
 function parseSupervisorArgv(argv: readonly string[]): SupervisorArgs {
   const [hostDir, ...rest] = argv;
-  if (hostDir === undefined) throw new Error('usage: supervisor <hostDir> --repo <abs> --plan <abs> [--profile <p>] [--heartbeat-stale-ms <n>]');
+  if (hostDir === undefined) throw new Error('usage: supervisor <hostDir> --repo <abs> --plan <abs> [--profile <p>] [--heartbeat-stale-ms <n>] [--base <abs>]');
   const values = new Map<string, string>();
   for (let i = 0; i < rest.length; i += 2) {
     const flag = rest[i] as string;
     const value = rest[i + 1];
-    if (!['--repo', '--plan', '--profile', '--heartbeat-stale-ms'].includes(flag) || value === undefined || values.has(flag)) {
+    if (!['--repo', '--plan', '--profile', '--heartbeat-stale-ms', '--base'].includes(flag) || value === undefined || values.has(flag)) {
       throw new Error(`supervisor: unexpected argument ${JSON.stringify(flag)} in ${JSON.stringify(argv)}`);
     }
     values.set(flag, value);
@@ -443,10 +445,12 @@ function parseSupervisorArgv(argv: readonly string[]): SupervisorArgs {
   };
   const profile = values.get('--profile');
   const stale = values.get('--heartbeat-stale-ms');
+  const base = values.get('--base');
   return {
     hostDir: absPath(hostDir), repo: absPath(need('--repo')), planFile: absPath(need('--plan')),
     profile: profile === undefined ? null : profileName(profile, '--profile'),
     heartbeatStaleMs: stale === undefined ? null : positive(Number(stale), '--heartbeat-stale-ms'),
+    base: base === undefined ? null : absPath(base),
   };
 }
 

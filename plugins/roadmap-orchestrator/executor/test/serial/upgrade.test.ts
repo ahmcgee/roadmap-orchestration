@@ -8,32 +8,47 @@
 // HEAD's check.ts (every criterion passes, and the upgrade forced no park and no new session), or, where the story
 // needs arc judgments the M1 scenario format cannot express, with HEAD's CLI and fakes directly.
 //
-// Which releases: HEAD (1.0.0-dev.17) adopts arcs started on 1.0.0-dev.7 to dev.16, through the defaults of
-// src/core/upgrade.ts. Three are covered here. Every unlabelled cell starts its arc on the previous release
-// (PREVIOUS_RELEASE, 1.0.0-dev.16). The cells labelled `upgrade.dev11.*` start theirs on 1.0.0-dev.11 (DEV11_RELEASE)
+// Which releases: HEAD (1.0.0-dev.18) adopts arcs started on 1.0.0-dev.7 to dev.17, through the defaults of
+// src/core/upgrade.ts. Four are covered here. Every unlabelled cell starts its arc on the previous release
+// (PREVIOUS_RELEASE, 1.0.0-dev.17). The cells labelled `upgrade.dev11.*` start theirs on 1.0.0-dev.11 (DEV11_RELEASE)
 // and those labelled `upgrade.dev10.*` on 1.0.0-dev.10 (DEV10_RELEASE): an arc started on each is in flight, so the
-// dev.11 and dev.10 defaults are live code. No arc started on dev.7 to dev.9 is in flight, and no cell starts one.
+// dev.11 and dev.10 defaults are live code. The cells labelled `upgrade.dev16.*` start theirs on 1.0.0-dev.16
+// (DEV16_RELEASE): no arc started on dev.16 is in flight, but the dev.16 -> dev.17 defaults are what those dev.10 and
+// dev.11 arcs read too, and their cells do not isolate them, so these cells keep them exercised end to end until they
+// go. No arc started on dev.7 to dev.9 or on dev.12 to dev.15 is in flight, and no cell starts one.
 //
-// All three schedule a DAG and keep every M3, M4a and M4b record, so their arcs run on HEAD as they ran on them; an
+// All four schedule a DAG and keep every M3, M4a and M4b record, so their arcs run on HEAD as they ran on them; an
 // arc started without the holistic layer runs with M2 semantics and no new spend unless the architect opts in. Their
 // role sets and pressure records are HEAD's. HEAD's walk roles (`walkthrough`, `polishJudge`) are in force only under a
 // plan with milestones, which no arc of theirs has, so no walk seat is hashed for them.
 //
-// What dev.16 records differently from 1.0.0-dev.17: its lanes declare `tier`, read as their cadence, and its revisions
-// record no systems map, read as none (1.0.0-dev.17, lane topology; src/core/upgrade.ts `laneCadenceDefault`,
-// `systemsMapDefault`); its specs carry no design record (kind `module`, `designKindDefault`) and no revision pins (links
-// `unpinned`: a lasting state, no default); its plan-check answers carry no `staleLinks` (none answered,
-// `planCheckStaleLinksDefault`, propagation); and (proportional review) its gate answers, gate inputs, build answers and
-// approvals predate the findings ledger, the delta and the docs-only claim (`gateFindingReviewDefault`, `gateRulingsDefault`,
-// `gateReviewOf`, `buildDocsOnlySinceDefault`, `approvalBlobsOf`). Nothing else: no release from dev.13 to dev.16 changes a record
-// in a way HEAD reads with a default (dev.16's additions, an evidence snapshot's `notRegular`, a publication's vision files and
-// the `milestone-references-oversize` plan defect, are optional or new kinds), nor does dev.12 record anything
-// differently from dev.13 that HEAD reads with a default (dev.17's flaky ledger aside: a dev.16 arc has none, read as empty
-// at the upgrade, `flakyLedgerDefault`): dev.13's additions (plan `milestones`, `limits.walkRounds`, a
-// unit's `polish`, `finding-opened.milestone`) are optional, absent meaning none for good. So a dev.16 arc on HEAD warns
-// those lane defaults and no other `roadmap: upgrade default` (asserted after every unlabelled cell's HEAD phase). Its seat
-// table is not HEAD's (dev.17 moved plan-check and the gate to frontier and build.high to efficient), so under OR-L3 its
-// units re-pin under HEAD's rev and status aliases the revs it recorded (PRE_DEV17_BUILTIN_SEATS).
+// What dev.17 records differently from 1.0.0-dev.18: one record, read with a default. A `scope-overlaps-corpus` Phase-0
+// problem a dev.17 executor wrote (a refused start's `status.rejection.json` or refused exit line) names no `fix`, read
+// as the fix dev.18 names (deflake scope; src/core/upgrade.ts `scopeOverlapFixDefault`, warned). No cell refuses a start
+// on dev.17, so no cell reads one. Nothing else: the `deflake-unscoped` needs-user reason is a new kind, `start --base`
+// records nothing, the status lock (`status.lock`) is new runtime state no dev.17 executor reads or writes, and the
+// fold's monotonic check and the snapshot's batch read change no record. dev.18's seat table is dev.17's, so a dev.17
+// arc's routing rev does not move. So a dev.17 arc on HEAD warns no `roadmap: upgrade default` but `spec.design.kind`, a
+// lasting read rather than an upgrade default (a spec no approving plan-check has designed yet reads as kind `module`, on
+// dev.17 as on HEAD), and the kinds a cell's story reads on purpose (asserted after every unlabelled cell's HEAD phase).
+//
+// What dev.16 also lacks of 1.0.0-dev.17 (the `upgrade.dev16.*` cells): its lanes declare `tier`, read as their cadence,
+// and its revisions record no systems map, read as none (1.0.0-dev.17, lane topology; src/core/upgrade.ts
+// `laneCadenceDefault`, `systemsMapDefault`); its specs carry no design record (kind `module`, `designKindDefault`) and no
+// revision pins (links `unpinned`: a lasting state, no default); its plan-check answers carry no `staleLinks` (none
+// answered, `planCheckStaleLinksDefault`, propagation) and no design record (`planCheckDesignDefault`); its plan may carry
+// `planCheck.shape`, removed (`planCheckShapeDefault`); its arc has no flaky ledger (read as empty at the upgrade,
+// `flakyLedgerDefault`); and (proportional review) its gate answers, gate inputs, build answers and approvals predate the
+// findings ledger, the delta and the docs-only claim (`gateFindingReviewDefault`, `gateRulingsDefault`, `gateReviewOf`,
+// `buildDocsOnlySinceDefault`, `approvalBlobsOf`); and its Claude reader adapted some result files otherwise
+// (`earlierReaderResultDefault`). No release from dev.13 to dev.16 changes a record in a way HEAD reads with a default
+// (dev.16's additions, an evidence snapshot's `notRegular`, a publication's vision files and the
+// `milestone-references-oversize` plan defect, are optional or new kinds), nor does dev.12 record anything differently
+// from dev.13 that HEAD reads with a default: dev.13's additions (plan `milestones`, `limits.walkRounds`, a unit's
+// `polish`, `finding-opened.milestone`) are optional, absent meaning none for good. So a dev.16 arc on HEAD warns those
+// dev.17 defaults and no other `roadmap: upgrade default`. Its seat table is not HEAD's (dev.17 moved plan-check and the
+// gate to frontier and build.high to efficient), so under OR-L3 its units re-pin under HEAD's rev and status aliases the
+// revs it recorded (PRE_DEV17_BUILTIN_SEATS).
 //
 // What dev.11 and dev.10 also lack of 1.0.0-dev.12: their judgments ran without the Agent tool and, but for
 // plan-check and the checkpoint, without session persistence (a refused answer left unread takes no repair turn on
@@ -58,9 +73,6 @@
 // recovery finishes what that release left open.
 //
 // The variants (PREVIOUS_RELEASE starts the arc):
-//   upgrade.result-earlier-reader  no arc: an invocation the previous release's reader adapted (result.json written,
-//                              its done not, as a crash leaves it) re-adapted on HEAD keeps the recorded result
-//                              (`earlierReaderResultDefault`, dev.17), warned once.
 //   upgrade.stop-mid-build     unit `slug` merged; `page-id` stopped mid-build (its Codex thread started, its
 //                              worktree dirty), so held with an interrupted attempt; `resume` queued through
 //                              the previous release's CLI. HEAD continues the same thread.
@@ -100,9 +112,6 @@
 //                              lane, L = {invariants}), then `resume page-id`: the baseline job, the drift audit and
 //                              a no-op checkpoint, the brake on `page-id`'s candidate, the final audit and a no-op
 //                              checkpoint, the close-out, `arc-completed`.
-//   upgrade.review-unledgered  `page-id`'s gate revised and its fix round stopped mid-call; HEAD's gate rules on a prior
-//                              round no findings ledger recorded (dev.17 proportional review: the answer and inputs read
-//                              with their defaults, warned; an empty ledger, no disputes, a full review).
 //   upgrade.fingerprint-open-ff
 //                              `page-id` approved, the ff open at a crash; HEAD compares the fingerprint byte for byte.
 //                              The previous release's gate recorded `diffShown` and `largeDiff`, read as recorded.
@@ -111,11 +120,9 @@
 //   upgrade.target-kind-fixed  an apply cannot switch the adopted arc to a corpus target (`target-kind-changed`).
 //   upgrade.routing-stable     stopped mid-build, `page-id` left held; on HEAD the architect's `apply` (a new
 //                              `direction`) and `resume page-id`: HEAD's revision records the role set the previous
-//                              release recorded (no walk role in force: no milestones); HEAD's seat table (dev.17:
-//                              frontier plan-check and gate at every tier, efficient builds) moved the rev, so `page-id`
-//                              re-pins without a park (its implementer seat unchanged) and its gate judges under HEAD's
-//                              rev; no `routing-changed`; `status` spend resolves every metered call (the earlier rev
-//                              aliased, PRE_DEV17_BUILTIN_SEATS).
+//                              release recorded (no walk role in force: no milestones); HEAD's seat table is the previous
+//                              release's, so the rev does not move: every judgment on HEAD is under the rev it recorded;
+//                              no `routing-changed`; `status` spend resolves every metered call.
 //   upgrade.reentry-with-fixes
 //                              `page-id` parked infeasible at plan-check (a recorded failure); the architect's `apply`
 //                              through the previous release's CLI adds `page-id-2` re-entering it with `fixes` naming that
@@ -144,23 +151,40 @@
 //                              whose arc lane declares `testPaths` and whose witness declares `files`; stopped mid-build.
 //                              HEAD finishes it (the brake, the final audit and checkpoint); an apply's Phase 0 checks
 //                              both as declared, no default read.
-//   upgrade.plan-check-by-builder
-//                              a corpus arc whose plan carries `planCheck.shape: by-builder` (removed in dev.17); stopped
-//                              mid-build of `page-id`. HEAD reads the plan as uniform (warned, `planCheckShapeDefault`)
-//                              and finishes the arc.
 //   upgrade.audit-mid-chunk    a corpus arc (holistic from the start) whose slug publication alone outgrows a lens's diff
 //                              budget; the previous release's executor dies in the final audit's second chunk (its
 //                              first chunk read). HEAD finds the same chunks, consumes the recorded first, asks the lost
 //                              second again as a bounded diff (`<orientation>`), settles the checkpoint, completes the arc.
-//   upgrade.spec-design-pins   the previous release's setup lays out its specs (no arc runs): HEAD reads each with no
-//                              design record (kind `module`, `designKindDefault`, warned) and no revision pins (every link
-//                              `unpinned`: a lasting state, unwarned).
-//   upgrade.reentry-with-fixes (also) HEAD's resumed build reads the re-entry's plan-check answer the previous release
-//                              recorded, which has no `staleLinks`: read as none answered (`planCheckStaleLinksDefault`), warned.
-//   upgrade.design-pass-adopted
-//                              the previous release's plan-check answers (its M1 fakes', as its arcs recorded them) read
-//                              on HEAD with no design record (`planCheckDesignDefault`, warned); its role set (`m4b`)
-//                              seats and hashes no scaffold role, so its revs do not move for it.
+//
+// The dev.16 variants (DEV16_RELEASE starts the arc, where there is one):
+//   upgrade.dev16.result-earlier-reader
+//                              no arc: an invocation dev.16's reader adapted (result.json written, its done not, as a
+//                              crash leaves it) re-adapted on HEAD keeps the recorded result (`earlierReaderResultDefault`,
+//                              dev.17), warned once.
+//   upgrade.dev16.review-unledgered
+//                              `page-id`'s gate revised and its fix round stopped mid-call; HEAD's gate rules on a prior
+//                              round no findings ledger recorded (dev.17 proportional review: the answer and inputs read
+//                              with their defaults, warned; an empty ledger, no disputes, a full review). HEAD runs
+//                              page-id's lanes on revisions with no systems map and deflakes over no flaky ledger (both
+//                              read with their defaults, warned).
+//   upgrade.dev16.routing-stable
+//                              as routing-stable, but HEAD's seat table (dev.17: frontier plan-check and gate at every
+//                              tier, efficient builds) moved the rev: under the seats dev.16 hashed HEAD resolves the rev
+//                              it recorded, under its own another; `page-id` re-pins without a park (its implementer seat
+//                              unchanged) and its gate judges under HEAD's rev; `status` spend resolves every metered
+//                              call (the dev.16 rev aliased, PRE_DEV17_BUILTIN_SEATS).
+//   upgrade.dev16.plan-check-by-builder
+//                              a corpus arc whose plan carries `planCheck.shape: by-builder` (removed in dev.17); stopped
+//                              mid-build of `page-id`. HEAD reads the plan as uniform (warned, `planCheckShapeDefault`)
+//                              and finishes the arc.
+//   upgrade.dev16.spec-design-pins
+//                              dev.16's setup lays out its specs (no arc runs): HEAD reads each with no design record
+//                              (kind `module`, `designKindDefault`, warned) and no revision pins (every link `unpinned`: a
+//                              lasting state, unwarned).
+//   upgrade.dev16.design-pass-adopted
+//                              dev.16's plan-check answers (its M1 fakes', as its arcs recorded them) read on HEAD with no
+//                              design record (`planCheckDesignDefault`, warned); its role set (`m4b`) seats and hashes no
+//                              scaffold role, so its revs do not move for it.
 //
 // The dev.11 variants (DEV11_RELEASE starts the arc):
 //   upgrade.dev11.read-denied-retry
@@ -263,9 +287,17 @@ type Release = Readonly<{ sha: string; version: string }>;
  * The previous release: its executor starts the arc, HEAD's finishes it, in every cell not labelled with an older
  * release. At each release, move it to the last released commit, the merge of the previous release's PR into main.
  * Merges here are merge commits, so a merged branch's shas stay reachable and `git archive` finds them. Now:
- * 1.0.0-dev.16, merged to main as PR #119 (schema version 1).
+ * 1.0.0-dev.17, merged to main as PR #120 (schema version 1).
  */
-const PREVIOUS_RELEASE: Release = { sha: 'bc04af770294487c6b3d9190c6c8de7669eff09e', version: '1.0.0-dev.16' };
+const PREVIOUS_RELEASE: Release = { sha: '44e5512806cf087da75ab37502f653a2657c8a66', version: '1.0.0-dev.17' };
+/**
+ * 1.0.0-dev.16, merged to main as PR #119: no arc started on it is in flight, but the dev.17 defaults of
+ * src/core/upgrade.ts it exercises (lane topology, the design pass, propagation, the flaky ledger, proportional review,
+ * the earlier reader's result, PRE_DEV17_BUILTIN_SEATS, `planCheck.shape`) are read by the in-flight dev.11 and dev.10 arcs
+ * too, so the cells labelled `upgrade.dev16.*` start their arc on it. Delete it, with those cells, when those defaults go
+ * (BACKLOG "Scaffolding to delete").
+ */
+const DEV16_RELEASE: Release = { sha: 'bc04af770294487c6b3d9190c6c8de7669eff09e', version: '1.0.0-dev.16' };
 /**
  * 1.0.0-dev.11, merged to main as PR #113: an arc started on it is in flight (adopted by dev.12, then by HEAD), so the
  * cells labelled `upgrade.dev11.*` start their arc on it and exercise the dev.11 defaults of src/core/upgrade.ts end to
@@ -282,14 +314,28 @@ const DEV11_RELEASE: Release = { sha: '1f7f69681fbf637126046dfc0c01617b1adfdb17'
  * test starts none.
  */
 const DEV10_RELEASE: Release = { sha: 'b1c3666843fa458c46eb2e541c97f62dd0244328', version: '1.0.0-dev.10' };
-const RELEASES: readonly Release[] = [PREVIOUS_RELEASE, DEV11_RELEASE, DEV10_RELEASE];
+const RELEASES: readonly Release[] = [PREVIOUS_RELEASE, DEV16_RELEASE, DEV11_RELEASE, DEV10_RELEASE];
+/**
+ * The releases before 1.0.0-dev.17: their lanes declare `tier`, not `cadence`, and their strict judgment schemas refuse
+ * dev.17's answer fields (plan-check `staleLinks`; gate `rulings`, a finding's `defect`, `reraises` and `hunk`).
+ */
+const BEFORE_DEV17: ReadonlySet<Release> = new Set([DEV16_RELEASE, DEV11_RELEASE, DEV10_RELEASE]);
 /**
  * The releases before 1.0.0-dev.12: their judgments ran with `--tools Read,Grep,Glob` (no Agent tool), and their strict
  * gate schema refuses `unreviewed` and `clusters`.
  */
 const BEFORE_DEV12: ReadonlySet<Release> = new Set([DEV11_RELEASE, DEV10_RELEASE]);
-/** The `--tools` value `release`'s judgments run with. */
-const judgmentToolsOf = (release: Release): string => (BEFORE_DEV12.has(release) ? 'Read,Grep,Glob' : 'Read,Grep,Glob,Agent');
+/**
+ * The `--tools` value `release`'s plan-check runs with: from 1.0.0-dev.17 an acting judge's (the design pass, with the
+ * web tools; evals/m1/scenario.ts), before it a read-only judge's, before 1.0.0-dev.12 without the Agent tool.
+ */
+const planCheckToolsOf = (release: Release): string =>
+  BEFORE_DEV12.has(release) ? 'Read,Grep,Glob' : BEFORE_DEV17.has(release) ? 'Read,Grep,Glob,Agent' : 'Read,Grep,Glob,Bash,Write,Edit,Agent,WebSearch,WebFetch';
+/** The `--tools` value the gate of `release`, a release before 1.0.0-dev.17 (`releaseGate`), runs with. */
+const judgmentToolsOf = (release: Release): string => {
+  assert.ok(BEFORE_DEV17.has(release), `${release.version}'s gate acts: its tools are evals/m1/scenario.ts's`);
+  return BEFORE_DEV12.has(release) ? 'Read,Grep,Glob' : 'Read,Grep,Glob,Agent';
+};
 const EXECUTOR_PATH = 'plugins/roadmap-orchestrator/executor';
 
 const EXECUTOR = fileURLToPath(new URL('../../', import.meta.url));
@@ -379,7 +425,7 @@ function pageIdFiles(c: Clean): Readonly<Record<string, string>> {
 
 const ESCALATE: M1Step = {
   role: 'planCheck',
-  answer: { decision: 'escalate', reasons: ['The contract is ambiguous.'], patch: null, risk: 'med', notes: '', premises: [], visionConflict: [], scopeGrowth: [] },
+  answer: { decision: 'escalate', reasons: ['The contract is ambiguous.'], patch: null, risk: 'med', notes: '', premises: [], visionConflict: [], scopeGrowth: [], staleLinks: [] },
 };
 
 /** Where the previous release is stopped: a fake call parked at a barrier in its scenario dir. */
@@ -390,9 +436,9 @@ const midBuild = (files: Readonly<Record<string, string>>): Step => ({
   as: 'codex', threadId: MID_BUILD_THREAD, expect: { argv: ['exec', '-C'] },
   acts: [{ type: 'threadStarted' }, { type: 'dirty', files }, { type: 'barrier', name: MID_CALL, timeoutMs: PHASE_MS }],
 });
-/** page-id's plan-check after its reopen, parked (`release`'s judgment tools). */
+/** page-id's plan-check after its reopen, parked (`release`'s plan-check tools). */
 const midPlanCheck = (release: Release): Step => ({
-  as: 'claude', expect: { argv: ['-p', '--tools', judgmentToolsOf(release)] }, acts: [{ type: 'barrier', name: MID_CALL, timeoutMs: PHASE_MS }],
+  as: 'claude', expect: { argv: ['-p', '--tools', planCheckToolsOf(release)] }, acts: [{ type: 'barrier', name: MID_CALL, timeoutMs: PHASE_MS }],
 });
 
 // ---------------------------------------------------------------------------------------------------
@@ -412,13 +458,14 @@ type Phase1 = Readonly<{
 }>;
 
 /**
- * A step as `release` gives it: every release here predates 1.0.0-dev.17, so a plan-check answer without `staleLinks`
- * (propagation) and a gate answer without `rulings` and its findings' `defect`, `reraises` and `hunk` (proportional review);
- * before 1.0.0-dev.12, a gate answer also without `unreviewed` (round 2) or `clusters` (the large-diff gate). Each release's
- * strict schemas refuse the fields they do not know (HEAD's scenarios carry them for HEAD's judgments). Every other step is
- * unchanged.
+ * A step as `release` gives it: dev.17 gives HEAD's (dev.18 changed no judgment schema). Before 1.0.0-dev.17, a plan-check
+ * answer without `staleLinks` (propagation) and a gate answer without `rulings` and its findings' `defect`, `reraises` and
+ * `hunk` (proportional review); before 1.0.0-dev.12, a gate answer also without `unreviewed` (round 2) or `clusters` (the
+ * large-diff gate). Each release's strict schemas refuse the fields they do not know (HEAD's scenarios carry them for HEAD's
+ * judgments). Every other step is unchanged.
  */
 function asReleaseGate(release: Release, step: M1Step): M1Step {
+  if (!BEFORE_DEV17.has(release)) return step;
   if (step.role === 'planCheck') {
     const { staleLinks: _s, ...answer } = step.answer as Readonly<Record<string, JsonValue>>;
     return { ...step, answer };
@@ -572,7 +619,7 @@ async function finishOnHead(p: Phase1, m1: readonly M1Step[], during: () => Prom
 }
 
 /**
- * The defaults HEAD reads an arc the previous release started with (1.0.0-dev.17, lane topology): its lanes' `tier` as a
+ * The defaults HEAD reads an arc dev.16 started with (1.0.0-dev.17, lane topology): its lanes' `tier` as a
  * cadence (`lane.tier.<kind>`), a recorded lane rev of the tier form (`lane-rev.tier.<lane>`), its revisions' absent
  * systems map (`plan-applied.systemsMap`), its specs' absent design record (`spec.design.kind`), (propagation) its
  * plan-check answers' absent `staleLinks` (`plan-check.staleLinks`), (the design pass) its plan-check answers' absent design
@@ -580,26 +627,34 @@ async function finishOnHead(p: Phase1, m1: readonly M1Step[], during: () => Prom
  * upgrade); and (proportional review) its gate answers without `defect`, `reraises`, `hunk` and `rulings`
  * (`gate.finding.review`, `gate.rulings`), its gate inputs without a review (`judgment-inputs.review`), its build answers
  * without `docsOnlySince` (`build.docsOnlySince`) and its approvals without blobs (`approval.blobs.<unit>`). A spec's
- * absent pins are no default (a lasting state: every link unpinned). Nothing else changed a record since the previous
- * release.
+ * absent pins are no default (a lasting state: every link unpinned).
  */
 const DEV17_DEFAULTS = /^(lane\.tier\.(spec|suite|arc)|lane-rev\.tier\..+|plan-applied\.systemsMap|spec\.design\.kind|plan-check\.staleLinks|plan-check\.design|flaky\.ledger|gate\.finding\.review|gate\.rulings|judgment-inputs\.review|build\.docsOnlySince|approval\.blobs\..+)$/;
 
 /**
- * HEAD reads an arc the previous release started with the dev.17 lane defaults only (`DEV17_DEFAULTS`), but for the kinds
- * a cell's story reads on purpose (`expected`: dev.17's `plan.planCheck.shape`, a plan field it removed): once HEAD's
- * phase ends, every `roadmap: upgrade default` an executor of the host dir warned is one of them, and the spec lanes' tier
- * was read as their cadence (the absent systems map is warned only where HEAD reads the map in force: a lane's selection
- * or reuse; asserted in the cells that run lanes on HEAD, `upgrade.stop-mid-build`). An older release's cells assert the
- * defaults they read instead.
+ * The kinds an executor warns for an arc dev.17 started that are no upgrade default: `spec.design.kind`, a spec no
+ * approving plan-check has designed yet (kind `module`), read so on dev.17 and on HEAD alike. The one dev.17 -> dev.18
+ * default (`scope-overlaps-corpus.fix`) is read only from a dev.17 refusal, which no cell leaves.
+ */
+const DEV17_LASTING = /^spec\.design\.kind$/;
+
+/**
+ * Once HEAD's phase ends, every `roadmap: upgrade default` an executor of the host dir warned is one HEAD reads the
+ * starting release's arc with, or a kind the cell's story reads on purpose (`expected`, e.g. dev.16's
+ * `plan.planCheck.shape`, a plan field dev.17 removed). An arc the previous release started: none but `DEV17_LASTING`. An
+ * arc dev.16 started: the dev.17 defaults (`DEV17_DEFAULTS`), its spec lanes' tier read as their cadence among them (the
+ * absent systems map is warned only where HEAD reads the map in force, a lane's selection or reuse; asserted in
+ * `upgrade.dev16.review-unledgered`, which runs lanes on HEAD). An older release's cells assert the defaults they read
+ * instead.
  */
 function assertNoDefaultRead(p: Phase1, expected: readonly string[] = []): void {
-  if (p.release !== PREVIOUS_RELEASE) return;
+  if (p.release !== PREVIOUS_RELEASE && p.release !== DEV16_RELEASE) return;
+  const allowed = p.release === PREVIOUS_RELEASE ? DEV17_LASTING : DEV17_DEFAULTS;
   const kinds = [...hostLogs(p).matchAll(/roadmap: upgrade default \(([^)]+)\)/g)].map((m) => m[1]!);
   for (const kind of kinds) {
-    if (!expected.includes(kind)) assert.match(kind, DEV17_DEFAULTS, `HEAD read the ${p.release.version} arc with the ${kind} default`);
+    if (!expected.includes(kind)) assert.match(kind, allowed, `HEAD read the ${p.release.version} arc with the ${kind} default`);
   }
-  assert.ok(kinds.includes('lane.tier.spec'), `HEAD read the ${p.release.version} spec lanes' tier as their cadence, and warned`);
+  if (p.release === DEV16_RELEASE) assert.ok(kinds.includes('lane.tier.spec'), `HEAD read the ${p.release.version} spec lanes' tier as their cadence, and warned`);
 }
 
 /** Every check.ts criterion passes, both units merged, one HEAD generation ran it, and the upgrade forced no park. */
@@ -704,11 +759,8 @@ test('upgrade.stop-mid-build: HEAD continues the Codex thread the previous relea
   const gated = factsOf(f.after, 'judgment-inputs').filter((i) => i.stage === 'gate');
   assert.ok(gated.length === 1 && gated[0]!.diffShown !== undefined && gated[0]!.diffShown.inlined.length > 0, 'HEAD\'s gate records what its bounded diff showed');
   assert.equal(gated[0]!.largeDiff, null, 'HEAD\'s gate records its diff under the large-diff threshold');
-  // dev.17: HEAD ran page-id's lanes on the arc's revisions, which record no systems map: read as none, and warned.
-  assert.match(hostLogs(p), /roadmap: upgrade default \(plan-applied\.systemsMap\)/, 'HEAD read the revisions without a systems map, and warned');
-  // dev.17: the arc ran without a flaky ledger: HEAD's deflake job reads it empty at the upgrade (warned), and with no flake
-  // since, mints nothing.
-  assert.match(hostLogs(p), /roadmap: upgrade default \(flaky\.ledger\)/, 'HEAD read the arc without a flaky ledger as an empty one, and warned');
+  // The previous release's revisions record a systems map and its arc keeps a flaky ledger: HEAD reads both as recorded
+  // (no default, `assertNoDefaultRead`), and with no flake since, its deflake job mints nothing.
   assert.deepEqual(factsOf(f.after, 'flake-observed'), []);
   assert.deepEqual(factsOf(f.after, 'plan-applied').filter((x) => x.source.type === 'deflake'), [], 'no deflake unit');
 });
@@ -1143,9 +1195,16 @@ const VISION = {
   questions: [],
 };
 const SLUG_LANE = {
-  id: 'slug-journey', argv: ['node', '--test', 'test/slug.test.js'], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, tier: 'fast',
+  id: 'slug-journey', argv: ['node', '--test', 'test/slug.test.js'], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, cadence: 'build',
   resources: [], evidenceGlobs: [], reporter: 'node-test',
 } as const;
+
+/** An arc lane as `release` declares it: before 1.0.0-dev.17, a `build` cadence is `tier: 'fast'` (lane topology). */
+function laneAs(release: Release, lane: Readonly<{ cadence: 'build' }>): object {
+  if (!BEFORE_DEV17.has(release)) return lane;
+  const { cadence: _cadence, ...rest } = lane;
+  return { ...rest, tier: 'fast' };
+}
 const SLUG_WITNESS = { lane: SLUG_LANE.id, testIds: ['slugify never starts or ends with a hyphen (A2)'] };
 
 /**
@@ -1270,12 +1329,12 @@ async function fingerprintOpenFf(release: Release, gate: (inputs: Extract<Fact, 
 }
 
 /**
- * Proportional review (dev.17): page-id's gate revised on the previous release and its fix round was stopped mid-call, so
+ * Proportional review (dev.17): page-id's gate revised on dev.16 and its fix round was stopped mid-call, so
  * HEAD's gate rules on a prior round no findings ledger recorded. The revising answer has no defect, reraises, hunk or
  * rulings and its inputs no review (each read with its default, warned); none of its findings is ledgered, so HEAD's gate is
  * given an empty ledger, no disputes and a full review, and nothing is refused for the ledger's sake.
  */
-test('upgrade.review-unledgered: a gate revise the previous release recorded, its fix round stopped mid-call, finishes on HEAD: no ledger, the dev.16 answer read with the review defaults, warned', T, async () => {
+test('upgrade.dev16.review-unledgered: a gate revise dev.16 recorded, its fix round stopped mid-call, finishes on HEAD: no ledger, the dev.16 answer read with the review defaults, warned', T, async () => {
   const c = clean();
   const files = pageIdFiles(c);
   const revise: M1Step = {
@@ -1286,7 +1345,7 @@ test('upgrade.review-unledgered: a gate revise the previous release recorded, it
     },
   };
   const midFix: Step = { as: 'codex', expect: { argv: ['exec', 'resume'] }, acts: [{ type: 'barrier', name: MID_CALL, timeoutMs: PHASE_MS }] };
-  const p = await preparePrevious([...c.slug, c.pageId.planCheck, c.pageId.build, revise], [midFix]);
+  const p = await preparePrevious([...c.slug, c.pageId.planCheck, c.pageId.build, revise], [midFix], undefined, DEV16_RELEASE);
   const scope = scopeOf(p);
   track(scope);
   try {
@@ -1297,7 +1356,7 @@ test('upgrade.review-unledgered: a gate revise the previous release recorded, it
     await teardown(scope);
   }
   const mid = journalOf(p).view;
-  assert.deepEqual(outcomesOf(journalOf(p).events, 'page-id').filter((o) => o.startsWith('gate:')), ['gate:revise'], 'the previous release revised page-id');
+  assert.deepEqual(outcomesOf(journalOf(p).events, 'page-id').filter((o) => o.startsWith('gate:')), ['gate:revise'], 'dev.16 revised page-id');
   assert.deepEqual([mid.unit(unitId('page-id')).stage, mid.unit(unitId('page-id')).status], ['build', 'held']);
   const resume = await p.cli(['resume', ...p.run]);
   assert.equal(resume.code, 0, resume.stderr);
@@ -1315,11 +1374,18 @@ test('upgrade.review-unledgered: a gate revise the previous release recorded, it
   const gated = factsOf(f.after, 'judgment-inputs').filter((i) => i.stage === 'gate' && i.unit === 'page-id');
   assert.equal(gated.length, 1);
   assert.deepEqual(gated[0]!.review, { ledger: [], disputes: [], delta: null }, 'HEAD\'s gate was given an empty ledger and a full review');
-  assert.deepEqual(factsOf(f.events, 'review-ledger'), [], 'no finding of the previous release\'s gate is ledgered, and HEAD\'s approval minted none');
+  assert.deepEqual(factsOf(f.events, 'review-ledger'), [], 'no finding of dev.16\'s gate is ledgered, and HEAD\'s approval minted none');
   const logs = hostLogs(p);
   for (const kind of ['judgment-inputs.review', 'gate.finding.review', 'gate.rulings']) {
-    assert.ok(logs.includes(`roadmap: upgrade default (${kind})`), `HEAD read the previous release's gate round with the ${kind} default, and warned`);
+    assert.ok(logs.includes(`roadmap: upgrade default (${kind})`), `HEAD read dev.16's gate round with the ${kind} default, and warned`);
   }
+  // dev.17: HEAD ran page-id's lanes on the arc's revisions, which record no systems map: read as none, and warned.
+  assert.ok(logs.includes('roadmap: upgrade default (plan-applied.systemsMap)'), 'HEAD read the revisions without a systems map, and warned');
+  // dev.17: the arc ran without a flaky ledger: HEAD's deflake job reads it empty at the upgrade (warned), and with no flake
+  // since, mints nothing.
+  assert.ok(logs.includes('roadmap: upgrade default (flaky.ledger)'), 'HEAD read the arc without a flaky ledger as an empty one, and warned');
+  assert.deepEqual(factsOf(f.after, 'flake-observed'), []);
+  assert.deepEqual(factsOf(f.after, 'plan-applied').filter((x) => x.source.type === 'deflake'), [], 'no deflake unit');
 });
 
 test('upgrade.fingerprint-open-ff: the previous release approved page-id and crashed with its ff open; HEAD\'s recovery compares its fingerprint byte for byte and publishes, with no new judgment', T, async () => {
@@ -1436,13 +1502,20 @@ async function routingStable(release: Release): Promise<Readonly<{
   return { revs, resolved, stack, judged };
 }
 
-test('upgrade.routing-stable: an arc the previous release started keeps its role set on HEAD; its routing rev moves only by HEAD\'s seat table (dev.17: frontier judgments, efficient builds) and re-pins without a park or routing-changed; spend resolves', T, async () => {
-  const { revs, resolved, stack, judged } = await routingStable(PREVIOUS_RELEASE);
+test('upgrade.routing-stable: an arc the previous release started keeps its role set and its routing rev on HEAD (dev.18 kept dev.17\'s seat table): every judgment under that rev, no park or routing-changed; spend resolves', T, async () => {
+  const { revs, resolved, judged } = await routingStable(PREVIOUS_RELEASE);
+  // OR-L3 binds every revision through HEAD's seat table, the previous release's: HEAD resolves the rev it recorded.
+  assert.ok(revs.has(resolved), 'HEAD resolves the rev the previous release recorded');
+  for (const ji of judged) assert.equal(ji.routingRev, resolved, `${ji.unit} ${ji.stage}: judged under the previous release's rev`);
+});
+
+test('upgrade.dev16.routing-stable: an arc dev.16 started keeps its role set on HEAD; its routing rev moves only by HEAD\'s seat table (dev.17: frontier judgments, efficient builds) and re-pins without a park or routing-changed; spend resolves', T, async () => {
+  const { revs, resolved, stack, judged } = await routingStable(DEV16_RELEASE);
   // OR-L3 binds every revision through HEAD's seat table, which moved plan-check and the gate to frontier and build.high to
-  // efficient (1.0.0-dev.17): the seats the previous release hashed reproduce its rev, HEAD's give another.
-  assert.ok(revs.has(resolveRoutingUnder(PRE_DEV17_BUILTIN_SEATS, stack).rev), 'under the seats the previous release hashed, HEAD resolves the rev it recorded');
+  // efficient (1.0.0-dev.17): the seats dev.16 hashed reproduce its rev, HEAD's give another.
+  assert.ok(revs.has(resolveRoutingUnder(PRE_DEV17_BUILTIN_SEATS, stack).rev), 'under the seats dev.16 hashed, HEAD resolves the rev it recorded');
   assert.ok(!revs.has(resolved), 'HEAD\'s seat table moved the rev');
-  for (const ji of judged) assert.ok(revs.has(ji.routingRev) || ji.routingRev === resolved, `${ji.unit} ${ji.stage}: judged under the previous release's rev or HEAD's`);
+  for (const ji of judged) assert.ok(revs.has(ji.routingRev) || ji.routingRev === resolved, `${ji.unit} ${ji.stage}: judged under dev.16's rev or HEAD's`);
   assert.ok(judged.some((ji) => ji.stage === 'gate' && ji.routingRev === resolved), 'page-id re-pinned: its gate judged under HEAD\'s rev');
 });
 
@@ -1463,7 +1536,7 @@ test('upgrade.dev11.routing-stable: an arc dev.11 started keeps its role set on 
 /** A plan-check that finds page-id infeasible; played twice (its seat, then the escalation seat), it parks page-id. */
 const INFEASIBLE: M1Step = {
   role: 'planCheck',
-  answer: { decision: 'infeasible', reasons: ['Contract one cannot be met as written.'], patch: null, risk: 'med', notes: 'Contract one contradicts itself.', premises: [], visionConflict: [], scopeGrowth: [] },
+  answer: { decision: 'infeasible', reasons: ['Contract one cannot be met as written.'], patch: null, risk: 'med', notes: 'Contract one contradicts itself.', premises: [], visionConflict: [], scopeGrowth: [], staleLinks: [] },
 };
 const REENTRY = 'page-id-2';
 
@@ -1519,7 +1592,6 @@ test('upgrade.reentry-with-fixes: a re-entry the previous release applied, namin
   }
   assert.equal(r.exit.kind, 'complete', JSON.stringify(r.exit));
   assert.equal(r.view.unit(unitId(REENTRY)).status, 'retired', 'HEAD merged the re-entry');
-  assert.match(hostLogs(p), /roadmap: upgrade default \(plan-check\.staleLinks\)/, 'HEAD read the previous release\'s plan-check answer, which has no staleLinks, as none answered, with a warning');
   assert.deepEqual(factsOf(r.after, 'plan-applied'), [], 'HEAD\'s start found the previous release\'s revision in force');
   newDirection(p.l);
   const dry = await headCli(p, ['apply', '--dry-run', ...p.run]);
@@ -1566,7 +1638,8 @@ test('upgrade.inputs-in-force: a plan-check\'s spec patch and a ruling the previ
   assert.ok(readFileSync(ledger).equals(ledgerBefore) && !existsSync(sidecar) && readFileSync(specPath).equals(specBefore), 'the previous release wrote nothing into the owner\'s files');
   const ruled = journalOf(p).view.planApplied();
   assert.equal(ruled?.rev, 2, 'the ruling\'s revision');
-  assert.equal(journalOf(p).view.unit(unitId('page-id')).spec?.rev, 2, 'page-id runs at the patched spec rev');
+  // The redirect's patch is rev 2; the approving plan-check on it lands its design record as rev 3 (dev.17, the design pass).
+  assert.equal(journalOf(p).view.unit(unitId('page-id')).spec?.rev, 3, 'page-id runs at its designed rev, over the patched rev 2');
 
   let id = '';
   let f: Finished;
@@ -1585,7 +1658,7 @@ test('upgrade.inputs-in-force: a plan-check\'s spec patch and a ruling the previ
   const [fact, ...more] = factsOf(f.after, 'plan-applied');
   assert.ok(fact !== undefined && more.length === 0, 'HEAD\'s start found the files in force: only the apply revised the plan');
   assert.deepEqual([fact.rev, fact.command, fact.changes, fact.rulingsSha256], [3, id, [{ type: 'plan-field', field: 'direction' }], ruled!.rulingsSha256], 'C-3 stays in force');
-  assert.equal(f.view.unit(unitId('page-id')).spec?.rev, 2, 'page-id merged at the patched rev');
+  assert.equal(f.view.unit(unitId('page-id')).spec?.rev, 3, 'page-id merged at its designed rev, over the patched rev 2');
   assert.ok(readFileSync(ledger).equals(ledgerBefore) && !existsSync(sidecar) && readFileSync(specPath).equals(specBefore), 'HEAD wrote nothing into the owner\'s files');
   const constraints = git(p.l.repo, 'show', 'integration:.roadmap/constraints.md');
   assert.equal(constraints.split(`${RULING} — ${RULING_TEXT}`).length - 1, 1, 'C-3 published once');
@@ -1619,7 +1692,7 @@ test('upgrade.checkpoint-reentry-with-fixes: a holistic arc whose checkpoint the
     await until('page-id parks infeasible', PHASE_MS, () => (journalOf(p).view.unit(unitId('page-id')).status === 'park-pending' ? true : null));
     // The architect opts in through the previous release's CLI, the obligations as it wrote them.
     writeFileSync(join(p.l.input, 'vision.json'), `${JSON.stringify(VISION, null, 2)}\n`);
-    const file = obligations(SLUG_LANE, SLUG_WITNESS, (o) => prevTypes.laneRevOf(prevTypes.parseObligations(o).lanes[0]!));
+    const file = obligations(laneAs(PREVIOUS_RELEASE, SLUG_LANE), SLUG_WITNESS, (o) => prevTypes.laneRevOf(prevTypes.parseObligations(o).lanes[0]!));
     writeFileSync(join(p.l.input, 'obligations.json'), `${JSON.stringify(file, null, 2)}\n`);
     editJson<object>(p.l.plan, (plan) => ({ ...plan, holistic: { vision: 'vision.json', advances: ['V-1', 'V-2'], obligations: 'obligations.json', audit: { lenses: ['invariants'] } } }));
     await submitOnPrevious(p, ['apply', '--vision-edit']);
@@ -1686,12 +1759,12 @@ const BULK = Array.from({ length: 6000 }, (_, i) => `export const word${i} = 'w$
 
 /**
  * The M1 fixture as a corpus arc of `release` (its corpus target: pin, Phase-0 record, fake forge, whose `gh` is in the
- * returned bin dir), its one obligation witnessed through `lane` by `witness` on the fixture's initial text tests (green
+ * returned bin dir), its one obligation witnessed through `lane` (as `release` declares it, `laneAs`) by `witness` on the fixture's initial text tests (green
  * from the baseline), L = {invariants}; `m1` and `extra(helpers)` (the release's holistic step builders) its fake steps,
  * after the pack review `review-1`.
  */
 async function corpusArc(
-  m1: readonly M1Step[], extra: (prev: PreviousHelpers) => readonly Step[], release: Release = PREVIOUS_RELEASE, lane: object = TEXT_LANE, witness: object = TEXT_WITNESS,
+  m1: readonly M1Step[], extra: (prev: PreviousHelpers) => readonly Step[], release: Release = PREVIOUS_RELEASE, lane: Readonly<{ cadence: 'build' }> = TEXT_LANE, witness: object = TEXT_WITNESS,
   planExtra: Readonly<Record<string, unknown>> = {},
 ): Promise<Readonly<{ p: Phase1; gh: string }>> {
   type Target = typeof import('../fixtures/corpus-target.ts');
@@ -1705,7 +1778,7 @@ async function corpusArc(
   const p = await preparePrevious(m1, [...extra(prev), prev.packReviewStep('review-1')], (l) => {
     gh = join(l.dir, 'bin-gh');
     mkdirSync(gh, { recursive: true });
-    const file = obligations(lane, witness, (o) => prevTypes.laneRevOf(prevTypes.parseObligations(o).lanes[0]!)) as Record<string, unknown>;
+    const file = obligations(laneAs(release, lane), witness, (o) => prevTypes.laneRevOf(prevTypes.parseObligations(o).lanes[0]!)) as Record<string, unknown>;
     target.corpusTarget(
       { arc: l.arc, repo: l.repo, planPath: l.plan, runDir: l.runDir, hostDir: join(l.fake, 'host'), binDir: gh, scenarioPath: '', scenarioDir: '' },
       { obligations: file, advances: brake.ADVANCES, audit: { lenses: ['invariants'] }, planExtra },
@@ -1764,10 +1837,10 @@ test('upgrade.corpus-witnesses-declared: a corpus arc the previous release start
   assert.doesNotMatch(dry.stderr, /roadmap: upgrade default \(obligations\./, 'the apply read the declared obligations as written');
 });
 
-test('upgrade.plan-check-by-builder: a corpus arc the previous release started under `planCheck.shape: by-builder` finishes on HEAD, which reads the plan as uniform and warns (dev.17 removed the shape)', T, async () => {
+test('upgrade.dev16.plan-check-by-builder: a corpus arc dev.16 started under `planCheck.shape: by-builder` finishes on HEAD, which reads the plan as uniform and warns (dev.17 removed the shape)', T, async () => {
   const c = clean();
-  // page-id is at risk med on the efficient builder, so the previous release plan-checked it in the acceptance shape (a call).
-  const { p, gh } = await corpusArc([...c.slug, c.pageId.planCheck], () => [midBuild(pageIdFiles(c))], PREVIOUS_RELEASE, TEXT_LANE, TEXT_WITNESS, { planCheck: { shape: 'by-builder' } });
+  // page-id is at risk med on the efficient builder, so dev.16 plan-checked it in the acceptance shape (a call).
+  const { p, gh } = await corpusArc([...c.slug, c.pageId.planCheck], () => [midBuild(pageIdFiles(c))], DEV16_RELEASE, TEXT_LANE, TEXT_WITNESS, { planCheck: { shape: 'by-builder' } });
   const scope = scopeOf(p);
   track(scope);
   try {
@@ -1798,9 +1871,9 @@ test('upgrade.plan-check-by-builder: a corpus arc the previous release started u
   assert.match(hostLogs(p), /roadmap: upgrade default \(plan\.planCheck\.shape\)/, 'HEAD read the plan\'s by-builder shape as uniform, with a warning');
 });
 
-test('upgrade.spec-design-pins: the previous release\'s specs read on HEAD with no design record (kind module, warned) and no revision pins (every link unpinned, a lasting state, unwarned)', async () => {
+test('upgrade.dev16.spec-design-pins: dev.16\'s specs read on HEAD with no design record (kind module, warned) and no revision pins (every link unpinned, a lasting state, unwarned)', async () => {
   const dir = join(tmpDir('upgrade-spec'), 'fx');
-  const setup = await runUntilExit(process.execPath, [join(previousOf(PREVIOUS_RELEASE).root, 'evals', 'm1', 'setup.ts'), dir], { env: process.env, timeoutMs: CLI_MS });
+  const setup = await runUntilExit(process.execPath, [join(previousOf(DEV16_RELEASE).root, 'evals', 'm1', 'setup.ts'), dir], { env: process.env, timeoutMs: CLI_MS });
   assert.equal(setup.code, 0, setup.stderr);
   const l = layout(dir);
   const warned: string[] = [];
@@ -1809,7 +1882,7 @@ test('upgrade.spec-design-pins: the previous release\'s specs read on HEAD with 
   try {
     for (const unit of UNITS) {
       const spec = loadSpec(absPath(join(l.input, `${unit}.json`)));
-      assert.equal(spec.design, undefined, `${unit}: the previous release wrote no design record`);
+      assert.equal(spec.design, undefined, `${unit}: dev.16 wrote no design record`);
       assert.equal(specKindOf(spec), 'module');
       assert.equal(specPinOf(spec, { type: 'requirement', id: obligationId('I-1') }), UNPINNED);
       assert.equal(specPinOf(spec, { type: 'contract', path: repoPath('docs/contract.md') }), UNPINNED);
@@ -1825,9 +1898,9 @@ test('upgrade.spec-design-pins: the previous release\'s specs read on HEAD with 
 /** A triple no built-in seat binds: what a scaffold seat may hold without moving an m4b arc's rev. */
 const OPUS_SENTINEL = { backend: 'claude', model: 'claude-fable-5-1', effort: 'max' } as const;
 
-test('upgrade.design-pass-adopted: the previous release\'s plan-check answers read on HEAD with no design record (warned), and its role set hashes and seats no scaffold role', async () => {
-  // The answers the previous release's M1 fakes give its plan-checks: what its arcs recorded.
-  const scenario = JSON.parse(readFileSync(join(previousOf(PREVIOUS_RELEASE).root, 'evals', 'm1', 'scenarios', 'clean.json'), 'utf8')) as { steps: { role: string; answer?: unknown }[] };
+test('upgrade.dev16.design-pass-adopted: dev.16\'s plan-check answers read on HEAD with no design record (warned), and its role set hashes and seats no scaffold role', async () => {
+  // The answers dev.16's M1 fakes give its plan-checks: what its arcs recorded.
+  const scenario = JSON.parse(readFileSync(join(previousOf(DEV16_RELEASE).root, 'evals', 'm1', 'scenarios', 'clean.json'), 'utf8')) as { steps: { role: string; answer?: unknown }[] };
   const answers = scenario.steps.filter((s) => s.role === 'planCheck').map((s) => s.answer);
   assert.ok(answers.length > 0);
   const warned: string[] = [];
@@ -1842,7 +1915,7 @@ test('upgrade.design-pass-adopted: the previous release\'s plan-check answers re
     process.stderr.write = write;
   }
   assert.ok([...warned.join('').matchAll(/roadmap: upgrade default \(([^)]+)\)/g)].some((m) => m[1] === 'plan-check.design'), 'the absent design record was warned');
-  // An arc the previous release started records the m4b role set: no scaffold seat in force, none hashed (its revs as before).
+  // An arc dev.16 started records the m4b role set: no scaffold seat in force, none hashed (its revs as before).
   const adopted = resolveRouting({ ...arcStack('default', null, null), arcRoles: 'm4b' });
   assert.ok(!seatsInForce(adopted).some((s) => s.role === 'scaffold'));
   const { scaffold: _scaffold, ...dev16Roles } = adopted.table;
@@ -2202,7 +2275,7 @@ test('upgrade.dev10.checkpoint-reentry-before-fixes: a holistic arc whose checkp
     await until('page-id parks infeasible', PHASE_MS, () => (journalOf(p).view.unit(unitId('page-id')).status === 'park-pending' ? true : null));
     // The architect opts in through dev.10's CLI, the obligations as it wrote them.
     writeFileSync(join(p.l.input, 'vision.json'), `${JSON.stringify(VISION, null, 2)}\n`);
-    const file = obligations(SLUG_LANE, SLUG_WITNESS, (o) => prevTypes.laneRevOf(prevTypes.parseObligations(o).lanes[0]!));
+    const file = obligations(laneAs(DEV10_RELEASE, SLUG_LANE), SLUG_WITNESS, (o) => prevTypes.laneRevOf(prevTypes.parseObligations(o).lanes[0]!));
     writeFileSync(join(p.l.input, 'obligations.json'), `${JSON.stringify(file, null, 2)}\n`);
     editJson<object>(p.l.plan, (plan) => ({ ...plan, holistic: { vision: 'vision.json', advances: ['V-1', 'V-2'], obligations: 'obligations.json', audit: { lenses: ['invariants'] } } }));
     await submitOnPrevious(p, ['apply']);
@@ -2351,17 +2424,17 @@ test('upgrade.dev10.checkpoint-answer-unapplied: a park checkpoint\'s answer dev
   assert.match(hostLogs(p), /roadmap: upgrade default \(checkpoint\.reenter\.fixes\)/, 'the default warned');
 });
 
-test('upgrade.result-earlier-reader: an invocation the previous release adapted (result.json written, its done not) is re-adapted on HEAD to the recorded result, warned, never refused', T, async () => {
+test('upgrade.dev16.result-earlier-reader: an invocation dev.16 adapted (result.json written, its done not) is re-adapted on HEAD to the recorded result, warned, never refused', T, async () => {
   type PrevScenario = { fixtureInvocation: (name: string, child: { type: 'exited'; code: number }) => string };
   type PrevAdapter = { writeResult: (invDir: string) => unknown };
   const [prevScenario, prevAdapter] = await Promise.all([
-    loadFrom<PrevScenario>(PREVIOUS_RELEASE, 'test', 'helpers', 'scenario.ts'), loadFrom<PrevAdapter>(PREVIOUS_RELEASE, 'src', 'backends', 'adapter.ts'),
+    loadFrom<PrevScenario>(DEV16_RELEASE, 'test', 'helpers', 'scenario.ts'), loadFrom<PrevAdapter>(DEV16_RELEASE, 'src', 'backends', 'adapter.ts'),
   ]);
   const fieldStream = readFileSync(join(EXECUTOR, 'test', 'fixtures', 'backend-output', 'claude-judgment-usage-limit-subagents', 'stdout'), 'utf8');
   const lines = readFileSync(join(EXECUTOR, 'test', 'fixtures', 'backend-output', 'claude-judgment-subagents', 'stdout'), 'utf8').split('\n').filter((l) => l !== '');
   const cutStream = lines.filter((l) => (JSON.parse(l) as { type: string }).type !== 'result').map((l) => `${l}\n`).join('');
   // The field's usage limit before empty results (dev.17 classifies it from any result) and a judgment killed before its
-  // result (dev.17 records what it streamed): the previous reader wrote another result for each.
+  // result (dev.17 records what it streamed): dev.16's reader wrote another result for each.
   const warnings: string[] = [];
   for (const stdout of [fieldStream, cutStream]) {
     const invDir = prevScenario.fixtureInvocation('claude-judgment-subagents', { type: 'exited', code: 0 });

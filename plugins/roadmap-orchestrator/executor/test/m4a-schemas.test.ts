@@ -11,7 +11,7 @@ import { describe, it } from 'node:test';
 import { type Envelope, type Event, type Fact, type LogRecord, parseEventLine, serializeEvent } from '../src/core/events.ts';
 import {
   InvalidIdError, amendmentRef, amendmentRefOf, arcId, briefId, commandId, debtId, issueContentRef, issueId, issueOfContent, jobId, jobIdOf,
-  parseAmendmentRef, phaseQuestionId, ruleId, sha, sha256,
+  parseAmendmentRef, phaseQuestionId, ruleId, sha, sha256, unitId,
 } from '../src/core/ids.ts';
 import { canonicalJson } from '../src/core/json.ts';
 import { brief } from '../src/commands/brief.ts';
@@ -29,7 +29,7 @@ import {
 } from '../src/holistic/types.ts';
 import { CliError, parseCommand } from '../src/input/cli.ts';
 import { contractOpDocuments, parsePlan, targetDocumentPaths, targetDocuments, visionFile } from '../src/input/plan.ts';
-import { parseAckMarker, parseBriefPayload, parsePhase0Record } from '../src/phase0/types.ts';
+import { parseAckMarker, parseBriefPayload, parsePhase0Record, scopeOverlapFix } from '../src/phase0/types.ts';
 import { exitCodeFor, rejectionFile } from '../src/preflight/startup.ts';
 import { validateCheckpointOutput, validatePackReviewOutput } from '../src/prompts/schemas.ts';
 import { m3Blocking } from '../src/needsuser.ts';
@@ -418,7 +418,7 @@ describe('startup rows, brief and ack', () => {
       {
         kind: 'corpus-invalid', problems: [
           { type: 'pin-drift' }, { type: 'rule-reused', id: 'T-3' }, { type: 'rule-retired-reappears', id: 'T-1' }, { type: 'rules-in-vision' }, { type: 'guide-missing' },
-          { type: 'source-unreadable', detail: 'no such commit' }, { type: 'source-remote-mismatch' }, { type: 'scope-overlaps-corpus', unit: 'u1' },
+          { type: 'source-unreadable', detail: 'no such commit' }, { type: 'source-remote-mismatch' }, { type: 'scope-overlaps-corpus', unit: 'u1', fix: 'narrow it' },
           { type: 'contract-overlaps-corpus', path: 'docs/corpus/0010_Overview.md' },
         ],
       },
@@ -444,6 +444,9 @@ describe('startup rows, brief and ack', () => {
     same((v) => rejectionFile(v, 'rejection'), file);
     for (const row of rejectionFile(file, 'rejection').rejections) assert.equal(exitCodeFor(row), 78, row.kind);
     assert.throws(() => rejectionFile({ ...file, rejections: [{ kind: 'corpus-invalid', problems: [] }] }, 'rejection'), /problems/);
+    // A dev.17 rejection file's scope-overlaps-corpus names no fix: read with the fix the row names now.
+    const dev17 = rejectionFile({ ...file, rejections: [{ kind: 'corpus-invalid', problems: [{ type: 'scope-overlaps-corpus', unit: 'u1' }] }] }, 'rejection');
+    assert.deepEqual(dev17.rejections[0], { kind: 'corpus-invalid', problems: [{ type: 'scope-overlaps-corpus', unit: 'u1', fix: scopeOverlapFix(unitId('u1')) }] });
   });
 
   it('the ack marker round-trips with its coverage vector and items', () => {

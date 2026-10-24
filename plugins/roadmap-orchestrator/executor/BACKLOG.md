@@ -643,6 +643,9 @@ at triage stay in git history.
 
 ## Scaffolding to delete
 
+- **dev.17 rejections without `fix`** (`scopeOverlapFixDefault`, src/core/upgrade.ts; its call in the
+  `scope-overlaps-corpus` reader, src/phase0/types.ts `corpusProblem`): delete once no arc started on 1.0.0-dev.17 or
+  earlier is in flight; `fix` then becomes required.
 - **dev.16 result.json adopted as recorded** (`earlierReaderResultDefault`, src/core/upgrade.ts; its call in
   src/backends/adapter.ts `writeResult`): delete once no arc started on 1.0.0-dev.16 is in flight.
 

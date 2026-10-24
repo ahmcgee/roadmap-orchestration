@@ -54,8 +54,9 @@ import { canonicalJson } from './core/json.ts';
 import { type ArcId, type NeedsUserId, type UnitId, hostNeedsUserId } from './core/ids.ts';
 import type { OpenJournal } from './core/log.ts';
 import {
-  type ExecutorExitReason, type Heartbeat, type HostLockClaim, type NeedsUserContent, type NeedsUserRecord, type RunStart,
+  type ExecutorExitReason, type Heartbeat, type HostLockClaim, type NeedsUserContent, type NeedsUserRecord, type RevisionManifest, type RunStart,
 } from './core/records.ts';
+import { exportBase } from './commands/inputs.ts';
 import { type Read, arrayOf, literal, object } from './core/validate.ts';
 import { type AbsPath, absPath, isoTimeOf, nonce } from './core/values.ts';
 import { SCHEMA_VERSION } from './core/version.ts';
@@ -111,6 +112,8 @@ export type ExecutorArgs = Readonly<{
   controlOnly: boolean;
   /** A supervisor's respawn after a crash, once one of its generations was ready: runs the plan in force, never the files (`runChecks`). */
   respawn: boolean;
+  /** `start --base`: the base the files are rebased from (an export's manifest); null: the owner's files of their latest apply. */
+  base: RevisionManifest | null;
 }>;
 
 /**
@@ -379,6 +382,8 @@ async function controlOnly(x: Exec): Promise<ExitReason | null> {
 
 export type ExecutorArgv = Readonly<{
   hostDir: AbsPath; generation: number; nonce: string; repo: AbsPath; planFile: AbsPath; profile: ProfileName | null; controlOnly: boolean; respawn: boolean;
+  /** `start --base`'s export.json. */
+  base: AbsPath | null;
 }>;
 
 /** The argv the supervisor builds (`executorArgv`) and this entry parses back. */
@@ -386,12 +391,13 @@ export function executorArgv(a: ExecutorArgv): readonly string[] {
   return [
     a.hostDir, '--generation', String(a.generation), '--nonce', a.nonce, '--repo', a.repo, '--plan', a.planFile,
     ...(a.profile === null ? [] : ['--profile', a.profile]), ...(a.controlOnly ? ['--control-only'] : []), ...(a.respawn ? ['--respawn'] : []),
+    ...(a.base === null ? [] : ['--base', a.base]),
   ];
 }
 
 function parseExecutorArgv(argv: readonly string[]): ExecutorArgv {
   const [hostDir, ...rest] = argv;
-  if (hostDir === undefined) throw new Error('usage: executor <hostDir> --generation <n> --nonce <hex> --repo <abs> --plan <abs> [--profile <p>] [--control-only] [--respawn]');
+  if (hostDir === undefined) throw new Error('usage: executor <hostDir> --generation <n> --nonce <hex> --repo <abs> --plan <abs> [--profile <p>] [--control-only] [--respawn] [--base <abs>]');
   const values = new Map<string, string>();
   let controlOnly = false;
   let respawn = false;
@@ -403,7 +409,7 @@ function parseExecutorArgv(argv: readonly string[]): ExecutorArgv {
       continue;
     }
     const value = rest[i + 1];
-    if (!['--generation', '--nonce', '--repo', '--plan', '--profile'].includes(flag) || value === undefined || values.has(flag)) {
+    if (!['--generation', '--nonce', '--repo', '--plan', '--profile', '--base'].includes(flag) || value === undefined || values.has(flag)) {
       throw new Error(`executor: unexpected argument ${JSON.stringify(flag)} in ${JSON.stringify(argv)}`);
     }
     values.set(flag, value);
@@ -417,9 +423,10 @@ function parseExecutorArgv(argv: readonly string[]): ExecutorArgv {
   const generation = Number(need('--generation'));
   if (!Number.isSafeInteger(generation) || generation < 1) throw new Error(`executor: --generation must be a positive integer, got ${need('--generation')}`);
   const profile = values.get('--profile');
+  const base = values.get('--base');
   return {
     hostDir: absPath(hostDir), generation, nonce: need('--nonce'), repo: absPath(need('--repo')), planFile: absPath(need('--plan')),
-    profile: profile === undefined ? null : profileName(profile, '--profile'), controlOnly, respawn,
+    profile: profile === undefined ? null : profileName(profile, '--profile'), controlOnly, respawn, base: base === undefined ? null : absPath(base),
   };
 }
 
@@ -456,6 +463,8 @@ export async function executorMain(argv: readonly string[]): Promise<number> {
   openHostDir(a.hostDir);
   const reason = await runExecutor({
     repo: a.repo, planFile: a.planFile, profile: a.profile, hostDir: a.hostDir, env: process.env, claim, controlOnly: a.controlOnly, respawn: a.respawn,
+    // `start` read the file already (src/cli/main.ts): one that no longer reads is a crash, not a refusal.
+    base: a.base === null ? null : exportBase(a.base, 'start'),
   });
   process.stdout.write(`${exitLine(reason)}\n`);
   return exitCodeOf(reason);

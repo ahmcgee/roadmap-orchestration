@@ -6,7 +6,9 @@
 //                  commit and the baseline's rules registry, and required equal (`corpus-invalid`: pin-drift, rule-reused,
 //                  rule-retired-reappears, rules-in-vision, guide-missing, source-unreadable, source-remote-mismatch); for
 //                  a same-repo source, no unit scope and no plan contract overlapping the corpus file set (every pinned
-//                  file plus every path matching root/include, R32): `scope-overlaps-corpus`, `contract-overlaps-corpus`.
+//                  file plus every path matching root/include, R32): `scope-overlaps-corpus` (a cut unit excepted; its
+//                  `fix` names how to narrow the unit), `contract-overlaps-corpus`. The unit rule (`scopeOverlapProblems`)
+//                  is also every revision's, over the units it changes (src/commands/apply.ts `evaluateRevision`).
 //                  Malformed corpus text throws `CorpusFormatError` (LR-A1-2), never a row.
 //   2-3. census    one state per active pinned rule, none dangling, every obligation's rule resolved: a binding one's
 //                  active, a waived or deferred one's active or retired (LR-C1-2; src/holistic/rederive.ts
@@ -111,7 +113,7 @@ import type { RepoConfig } from '../routing/layers.ts';
 import { type Ruling, type RulingCorpus, parseRulings } from '../spec/rulings.ts';
 import { SpecFileError, parseSpec } from '../spec/spec.ts';
 import type { CorpusInForce, InputFiles } from '../input/inforce.ts';
-import { type ChainProblem, type CorpusProblem, type Phase0Problem, type Phase0Record, type PhaseQuestion, parsePhase0Record } from './types.ts';
+import { type ChainProblem, type CorpusProblem, type Phase0Problem, type Phase0Record, type PhaseQuestion, parsePhase0Record, scopeOverlapFix } from './types.ts';
 
 type Row<K extends StartupRejection['kind']> = Extract<StartupRejection, { kind: K }>;
 
@@ -239,8 +241,9 @@ export function phase0Rows(input: Phase0Input, mode: Phase0Mode): Phase0Outcome 
     if (re.kind === 'refused') corpus.push(...re.problems);
     else opened = re.opened;
     if (guide !== null && guide.source.kind === 'same-repo') {
-      corpus.push(...overlapProblems(plan, pin, guide));
-      defects.push(...derivedOnCorpus(plan, corpusFileSet(pin, guide)));
+      const set = corpusFileSet(pin, guide);
+      corpus.push(...overlapProblems(plan, set));
+      defects.push(...derivedOnCorpus(plan, set));
     }
   }
   // 2-3. The census.
@@ -300,37 +303,50 @@ export function phase0Rows(input: Phase0Input, mode: Phase0Mode): Phase0Outcome 
 export const underRoot = (root: RepoPath, path: string): string => (root === '.' ? path : `${root}/${path}`);
 
 /** A same-repo corpus's file set: its pinned files' product paths, and its include patterns rooted. */
-export function corpusFileSet(pin: CorpusPin, guide: CorpusGuide): Readonly<{ files: readonly RepoPath[]; patterns: readonly RepoPattern[] }> {
+export type CorpusFileSet = Readonly<{ files: readonly RepoPath[]; patterns: readonly RepoPattern[] }>;
+
+/** A same-repo corpus's file set (`CorpusFileSet`). */
+export function corpusFileSet(pin: CorpusPin, guide: CorpusGuide): CorpusFileSet {
   const root = guide.source.root;
   return { files: pin.files.map((f) => repoPath(underRoot(root, f.path))), patterns: guide.include.map((p) => repoPattern(underRoot(root, p))) };
 }
 
 /** Whether a product path is in the corpus file set: a pinned file, or a path an include pattern matches. */
-export const inCorpusSet = (set: ReturnType<typeof corpusFileSet>, path: RepoPath): boolean =>
+export const inCorpusSet = (set: CorpusFileSet, path: RepoPath): boolean =>
   set.files.includes(path) || set.patterns.some((p) => matchesPattern(path, p));
 
 /** What `validateRuling` reads of a corpus arc's pin in force: its active rules, and the same-repo corpus file set (R32). */
 export function rulingCorpusOf(c: CorpusInForce): RulingCorpus {
-  const guide = readGuideBytes(c.guide.bytes).guide;
-  const set = guide.source.kind === 'same-repo' ? corpusFileSet(c.pin.value, guide) : null;
+  const set = sameRepoCorpusSet(c.pin.value, c.guide.bytes);
   return {
     rules: new Map(c.pin.value.rules.map((r) => [r.id, r.textSha256])),
     inFileSet: (path) => set !== null && inCorpusSet(set, path),
   };
 }
 
+/** The file set of a pin and the guide's bytes (the guide committed at the baseline) when the corpus is same-repo; else null. */
+export function sameRepoCorpusSet(pin: CorpusPin, guide: Buffer): CorpusFileSet | null {
+  const g = readGuideBytes(guide).guide;
+  return g.source.kind === 'same-repo' ? corpusFileSet(pin, g) : null;
+}
+
 /** Whether scope pattern `s` may reach the corpus file set: it matches a pinned file, or may overlap an include pattern (R32). */
-export const scopeOverlapsCorpus = (set: ReturnType<typeof corpusFileSet>, s: RepoPattern): boolean =>
+export const scopeOverlapsCorpus = (set: CorpusFileSet, s: RepoPattern): boolean =>
   set.files.some((f) => matchesPattern(f, s)) || set.patterns.some((p) => mayOverlap(s, p));
 
-function overlapProblems(plan: PlanM1, pin: CorpusPin, guide: CorpusGuide): readonly CorpusProblem[] {
-  const set = corpusFileSet(pin, guide);
-  const out: CorpusProblem[] = [];
-  for (const u of plan.units) {
-    if (u.scope.some((s) => scopeOverlapsCorpus(set, s))) out.push({ type: 'scope-overlaps-corpus', unit: u.id });
-  }
-  for (const c of plan.contracts) if (inCorpusSet(set, c)) out.push({ type: 'contract-overlaps-corpus', path: c });
-  return out;
+/**
+ * The one unit-overlap rule (R32): a `scope-overlaps-corpus` per unit of `units` whose scope may reach the corpus file set,
+ * a cut unit excepted (it builds nothing). The Phase-0 rows run it over every unit of the plan, every revision over the
+ * units it changes (src/commands/apply.ts `evaluateRevision`), and the deflake job over a unit before it mints it.
+ */
+export function scopeOverlapProblems(set: CorpusFileSet, units: readonly Pick<PlanUnit, 'id' | 'scope' | 'cut'>[]): readonly CorpusProblem[] {
+  return units.filter((u) => u.cut === undefined && u.scope.some((s) => scopeOverlapsCorpus(set, s)))
+    .map((u) => ({ type: 'scope-overlaps-corpus', unit: u.id, fix: scopeOverlapFix(u.id) }));
+}
+
+function overlapProblems(plan: PlanM1, set: CorpusFileSet): readonly CorpusProblem[] {
+  const contracts = plan.contracts.filter((c) => inCorpusSet(set, c)).map((path): CorpusProblem => ({ type: 'contract-overlaps-corpus', path }));
+  return [...scopeOverlapProblems(set, plan.units), ...contracts];
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -445,7 +461,7 @@ function referencesOversize(repo: AbsPath, plan: PlanM1): readonly PlanDefect[] 
 }
 
 /** Each derived output that may reach a same-repo corpus file set. */
-const derivedOnCorpus = (plan: PlanM1, set: ReturnType<typeof corpusFileSet>): readonly PlanDefect[] =>
+const derivedOnCorpus = (plan: PlanM1, set: CorpusFileSet): readonly PlanDefect[] =>
   [...new Set(derivedOf(plan).flatMap((d) => d.outputs))].filter((o) => scopeOverlapsCorpus(set, o)).map((output) => ({ type: 'derived-overlaps-corpus', output }));
 
 /** `units` and every unit they run after, transitively. */

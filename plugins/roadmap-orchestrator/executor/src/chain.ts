@@ -18,7 +18,7 @@ import { EVENTS_FILE, readJournal } from './core/log.ts';
 import { type RevisionManifest } from './core/records.ts';
 import { Fold } from './core/state.ts';
 import { type AbsPath, absPath } from './core/values.ts';
-import { git, gitCommonDir, gitRun, refTarget } from './git/git.ts';
+import { git, gitCommonDir, refTarget } from './git/git.ts';
 import { snapshotRef, verifySnapshot } from './git/snapshot.ts';
 import { PHASE0_INPUT, PLAN_INPUT, REVISION_INPUT, planInForce } from './input/inforce.ts';
 import { type PlanM1, parsePlan } from './input/plan.ts';
@@ -62,17 +62,20 @@ export function readArcRef(repo: AbsPath, arc: ArcId): ArcRef | null {
   const check = verifySnapshot(repo, commit);
   if (check.kind === 'mismatch') throw new ArcRefError(arc, `at ${commit} does not verify: ${check.detail}`);
   if (check.manifest.arc !== arc) throw new ArcRefError(arc, `at ${commit} is a snapshot of arc ${check.manifest.arc}`);
-  const lines = git(repo, ['cat-file', 'blob', `${commit}:${EVENTS_FILE}`]).split('\n').filter((l) => l !== '');
+  const lines = check.files.get(EVENTS_FILE)!.toString('utf8').split('\n').filter((l) => l !== '');
   const fold = new Fold(arc);
   const events = lines.map((line) => {
     const e = parseEventLine(line);
     fold.apply(e, prevHash(Buffer.from(`${line}\n`, 'utf8')));
     return e;
   });
+  // Only the kept inputs outlive the verification, copied out of the batch read's one buffer: the ref's other files
+  // (results, witnesses) are most of its bytes, and a chain holds every earlier arc's ref.
+  const inputs = new Map([...check.files].filter(([path]) => path.startsWith('inputs/')).map(([path, bytes]) => [path, Buffer.from(bytes)] as const));
   const input = (sha: Sha256Hex, ext: string): Buffer => {
-    const r = gitRun(repo, ['cat-file', 'blob', `${commit}:inputs/${sha}.${ext}`], { okCodes: [0, 128] });
-    if (r.code !== 0) throw new ArcRefError(arc, `at ${commit} keeps no inputs/${sha}.${ext}`);
-    return Buffer.from(r.stdout, 'utf8');
+    const bytes = inputs.get(`inputs/${sha}.${ext}`);
+    if (bytes === undefined) throw new ArcRefError(arc, `at ${commit} keeps no inputs/${sha}.${ext}`);
+    return bytes;
   };
   const applied = fold.planApplied();
   if (applied === null) throw new ArcRefError(arc, `at ${commit} records no plan in force`);

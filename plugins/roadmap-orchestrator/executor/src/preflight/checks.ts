@@ -13,7 +13,8 @@
 //                   plan in force (`settlePlan`): a first start records the files (M3: after the Phase-0 row
 //                   `obligation-dropped`, and the classifier's lane-evidence row `evidenceScopeConflicts` over
 //                   every unit, both reported as plan-change-refused), a later start rebases them from the owner's
-//                   files of the latest revision applied from them onto the files in force (src/input/rebase.ts:
+//                   files of the latest revision applied from them, or with `start --base` from an export's manifest
+//                   (`StartInput.base`, as `apply --base`; deflake scope, 2026-10-23), onto the files in force (src/input/rebase.ts:
 //                   files unchanged since are the plan in force) and applies a change through the apply core
 //                   (src/commands/apply.ts `evaluateRevision`, source `start`) or refuses (plan-change-refused, a
 //                   conflict included, and a change needing a docs publication: rulings, obligations, a corpus arc's
@@ -57,7 +58,7 @@ import { type ArcId, INTEGRATION_SLOT, type ResourceName, type Sha, type UnitId,
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import { LogCorruptError, type OpenJournal, openJournal, readJournal } from '../core/log.ts';
-import type { HostLockClaim, LaneDef, SpecM1 } from '../core/records.ts';
+import type { HostLockClaim, LaneDef, RevisionManifest, SpecM1 } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, absPath, branchName, branchRef, refName } from '../core/values.ts';
 import { gitRun, refTarget } from '../git/git.ts';
@@ -430,6 +431,12 @@ export type StartInput = Readonly<{
    * through the apply rules.
    */
   respawn: Readonly<{ runDir: AbsPath; arc: ArcId }> | null;
+  /**
+   * `start --base` (deflake scope, 2026-10-23): the base the owner's files are rebased from onto the files in force, as an
+   * `apply --base` takes it (an `inputs export`'s manifest); null: the owner's files of their latest apply. A first start
+   * (no plan in force) takes none.
+   */
+  base: RevisionManifest | null;
 }>;
 
 export type StartChecks =
@@ -513,13 +520,15 @@ function inForceSource(runDir: AbsPath, arc: ArcId): Source | null {
  * rebase that does not hold (a conflict) refuses here, as `settlePlan` would. The files as they are (a fresh start's source) when the
  * arc has no plan in force or its log does not read.
  */
-function startSource(owner: InputFiles): Source | Rejection<'plan-change-refused'> {
+function startSource(owner: InputFiles, base: RevisionManifest | null): Source | Rejection<'plan-change-refused'> {
   const runDir = runDirOf(gitCommonDir(owner.repo), owner.plan.arc);
   const view = readArcView(runDir, owner.plan.arc);
   const inForce = view === null ? null : planInForce(runDir, view);
-  if (view === null || inForce === null) return filesSource(owner);
+  if (view === null || inForce === null) {
+    return base === null ? filesSource(owner) : { kind: 'plan-change-refused', reasons: [`start --base: arc ${owner.plan.arc} records no plan in force, so there is nothing to rebase onto; start without --base`] };
+  }
   if (openRevision(view) !== null || committedCommand(view)) return inForceOf(runDir, view, inForce, owner);
-  const proposal = applyProposal({ runDir, view, inForce, revision: revisionInForce(runDir, inForce) }, owner, null, null, []);
+  const proposal = applyProposal({ runDir, view, inForce, revision: revisionInForce(runDir, inForce) }, owner, null, base, []);
   if ('reasons' in proposal) return { kind: 'plan-change-refused', reasons: proposal.reasons };
   const next = proposal.next;
   return { plan: next.plan, specOf: (unit) => next.specs.get(unit.id)?.bytes ?? null, ledger: next.ledger.bytes, checked: next, owner };
@@ -538,6 +547,7 @@ export function routingOf(profile: ProfileName, repo: AbsPath, plan: PlanM1, arc
  */
 export function settlePlan(
   journal: OpenJournal, context: StartupContext, files: InputFiles | null, env: Readonly<Record<string, string | undefined>>, corpusFiles: readonly SourceFile[] = [],
+  base: RevisionManifest | null = null,
 ): readonly Rejection<'plan-change-refused'>[] {
   // A start's own revision a crash left mid-commit (it has no docs step): finished from its payload first, exactly as
   // recovery would (src/recover/revision.ts), so the plan in force exists before anything reads it.
@@ -574,8 +584,8 @@ export function settlePlan(
   if (openRevision(journal.view) !== null) return [];
   // A command whose revision is in force but which a crash cut short: recovery finishes it; the files are settled at the next start.
   if (committedCommand(journal.view)) return [];
-  // The owner's files rebased from their latest applied revision onto the files in force: unchanged files are the plan in force.
-  const proposal = applyProposal({ runDir: context.runDir, view: journal.view, inForce, revision: revisionInForce(context.runDir, inForce) }, files, null, null, []);
+  // The owner's files rebased from `base` (their latest applied revision by default) onto the files in force: unchanged files are the plan in force.
+  const proposal = applyProposal({ runDir: context.runDir, view: journal.view, inForce, revision: revisionInForce(context.runDir, inForce) }, files, null, base, []);
   if ('reasons' in proposal) return [{ kind: 'plan-change-refused', reasons: proposal.reasons }];
   const rctx = { runDir: context.runDir, view: journal.view, hostDir: context.hostDir, planFile: context.planFile, routingBase, laneEnv: env };
   const verdict = evaluateRevision(rctx, proposal.next, { type: 'start' });
@@ -631,7 +641,7 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
   else {
     const owner = ownerFiles(input.planFile, input.repo);
     if ('kind' in owner) return refused([...legacyRoadmapDir(input.repo), owner]);
-    const started = startSource(owner);
+    const started = startSource(owner, input.base);
     if ('kind' in started) return refused([...legacyRoadmapDir(input.repo), started]);
     source = started;
   }
@@ -697,7 +707,7 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
   if ('kind' in journal) return refused([journal], claim);
   const mode = containmentModeCheck(journal);
   if (mode.length > 0) return refused(mode, claim, journal);
-  const planRows = settlePlan(journal, context, source.owner, input.env, corpusFiles);
+  const planRows = settlePlan(journal, context, source.owner, input.env, corpusFiles, input.base);
   if (planRows.length > 0) return refused(planRows, claim, journal);
 
   return { kind: 'passed', context, routing: { profile, resolved }, claim, journal, respawn: inForce !== null };

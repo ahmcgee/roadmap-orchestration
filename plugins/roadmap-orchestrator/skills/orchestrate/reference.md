@@ -27,14 +27,17 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
 `.rejected.json` (with every reason). An `apply` waiting for a unit's stage boundary first gets `.queued.json`
 (`waitsFor`, `reason`; 1.0.0-dev.17).
 
-- `roadmap start --repo <path> --plan <plan.json> [--profile default|claude-only] [--wait <ms>]`: launch, or recover
-  from disk. Without `--profile`, `.roadmap/config.json` chooses, else `default`. On an arc with a plan in force the
-  plan file is your edit: its files are rebased onto the files in force and the startup rows check the result, the
-  ledger in force included (2026-10-21; 1.0.0-dev.16). Prints `{"kind":"ready",…}` (exit 0)
+- `roadmap start --repo <path> --plan <plan.json> [--profile default|claude-only] [--wait <ms>] [--base <file>]`:
+  launch, or recover from disk. Without `--profile`, `.roadmap/config.json` chooses, else `default`. On an arc with a
+  plan in force the plan file is your edit: its files are rebased onto the files in force and the startup rows check
+  the result, the ledger in force included (2026-10-21; 1.0.0-dev.16). The rebase starts from the files you last
+  applied, or with `--base` from an `inputs export`'s `export.json`, as `apply --base` does: the way to edit what the
+  executor changed while no executor runs (an arc with no plan in force refuses `--base`). Prints `{"kind":"ready",…}` (exit 0)
   once the executor passed every startup row; the run goes on. The backend smoke runs after `ready`: a smoke refusal
   shows in `status.rejection` and the run ends `refused`. Exit 78 with the rows, 75 host busy, 70 `failed` or
   `timeout` (read `status` and the supervisor logs in the host dir before starting again). Waits 240 s by default.
-- `roadmap status`: the run as one JSON object ("status" below).
+- `roadmap status`: the run as one JSON object ("status" below). One at a time per arc: a second call while one runs
+  fails at once.
 - `roadmap watch [--actionable [--heartbeat-min <n>] [--from <seq>]]`: one JSON line per event until killed, each with
   its `seq`; `--actionable` prints only the wakes, and `--from` replays the wakes since that seq. Wait on one
   `roadmap watch --actionable` per arc, started in the background into a file that a Monitor tails, and started again
@@ -258,7 +261,13 @@ T-13: A cancelled booking frees its berth at once.
   goes under `repo/` at its repo path. The corpus guide is not exported (it is the baseline's). `export.json`'s `base`
   is the manifest of the exported files. The executor never writes your input files, so this is the one way to get the
   files in force: sync the export over your inputs, edit, then `roadmap apply --base <dir>/export.json`; the apply
-  rebases your edit onto whatever the executor did since the export.
+  rebases your edit onto whatever the executor did since the export. It reads the run dir only, so it works with the
+  executor down; then `roadmap start --repo <path> --plan <plan.json> --base <dir>/export.json` rebases the edit the same way.
+- **A unit in force that every apply and start refuses** (`corpus-invalid` `scope-overlaps-corpus`, its `fix` naming the
+  unit; an executor-minted unit from before the deflake scope fix): export, sync, narrow the unit's scope off the
+  corpus (or cut it, if it never started a task), then `roadmap apply --base <dir>/export.json` (executor running) or
+  `roadmap start --repo <path> --plan <plan.json> --base <dir>/export.json` (executor down).
+  A dispatched unit's scope may not shrink: cut it instead, or tell the owner.
 - **Boot hook.** A devcontainer restarts with no executor. `roadmap resume-arc --repo <path>` relaunches a dead
   owner's supervisor and does nothing otherwise, so it is safe at every boot:
   `"postStartCommand": "<plugin root>/executor/bin/roadmap resume-arc --repo <product repo>"` in
@@ -486,6 +495,11 @@ Blocking unless noted. Read the item file before acting.
   (SKILL.md "Flaky lanes").
 - `flake-recurring`, non-blocking (1.0.0-dev.17): a test (or lane) flaked again after two deflake units merged or were
   cut; no third is minted. The evidence is the flake's red and green runs (SKILL.md "Flaky lanes").
+- `deflake-unscoped`, non-blocking (deflake scope, 2026-10-23): a deflake unit was due, but its scope would reach a
+  same-repo corpus (the lane declares no `systems` and no system of the map holds the flaky test's file, so it fell
+  back to `**` or a corpus-reaching unit scope); none is minted. The item names the keys, the scope and the patterns
+  that reach the corpus. Declare the lane's `systems` (or a systems map whose systems hold its test files) by `apply`;
+  the next deflake run mints the unit with those systems' paths and tests (SKILL.md "Flaky lanes").
 - `executor-fault`, non-blocking (1.0.0-dev.17): the executor threw inside a unit's task (the unit is parked at the stage
   it was in, uncharged) or an arc job (audit, walk, checkpoint, baseline: the job ended faulted) while it held only that
   unit's or job's own state; the arc went on. The item carries the stack (SKILL.md "Handling parks").
@@ -539,7 +553,8 @@ Blocking unless noted. Read the item file before acting.
   config, the Phase-0 rows and advisories, the demo.
 - "dev.17: the flaky ledger": `flake-observed`, deflake units (`origin: deflake`, `deflake.keys`), their code edges,
   `limits.verification {laneMinutes?, lanes?: {<lane>: minutes}}` (a deflake unit's verification budget in lane-minutes;
-  default 30, a batch lane 2 runs), `deflake-parked` and `flake-recurring`.
+  default 30, a batch lane 2 runs), `deflake-parked` and `flake-recurring`; deflake scope (2026-10-23): the scope rule,
+  `deflake-unscoped`, the corpus overlap on every revision and `start --base`.
 - "dev.17: propagation": revision pins on a spec and a plan-check patch, a revision's stale set (`stale-set`), the
   plan-check's `staleLinks` and `stale-answered`, `stale-reopened`, propagation units (`origin: propagation`,
   `propagation{rev, target}`), `propagation-refused`, and the gate's `propagation` admission hold.
