@@ -67,7 +67,7 @@ describe('park table', () => {
         assert.equal(new Set(keys).size, keys.length);
       }
     }
-    assert.equal(rows, 20, 'plan-check/build/gate/scaffold/poc process-fault, build and scaffold lost, seven cleanup-failed, lanes, candidate and reproduce blocked, salvage commit-failed, lanes and candidate env-unavailable');
+    assert.equal(rows, 21, 'plan-check/build/gate/scaffold/poc process-fault, build and scaffold lost, eight cleanup-failed (salvage\'s since 2026-10-24), lanes, candidate and reproduce blocked, salvage commit-failed, lanes and candidate env-unavailable');
     assert.equal(Object.keys(PARK_TARGETS).length, 10);
   });
 

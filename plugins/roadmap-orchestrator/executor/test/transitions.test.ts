@@ -154,6 +154,10 @@ const ROWS: readonly Row[] = [
   ['salvage', 'committed-contract-touched', {}, 'teardown', 'trigger', {}],
   ['salvage', 'unmerged', {}, 'park:salvage-failed', 'park', {}],
   ['salvage', 'commit-failed', {}, 'park:salvage-failed', 'park', {}],
+  // Field report 2026-10-24: the salvage SHA fails the transient check: the candidate's refusal row (a C fix round, a risk
+  // trigger); the chain ends there, and a failed cleanup of the build's resources parks as teardown's does.
+  ['salvage', 'transient-violation', {}, 'build/fix@med', 'trigger', { chargeableFailures: 1 }],
+  ['salvage', 'cleanup-failed', {}, 'park:residue', 'park', {}],
   ['teardown', 'released', {}, 'lanes', 'advance', {}],
   ['teardown', 'cleanup-failed', {}, 'park:residue', 'park', {}],
   // lanes (clean detached worktree at the salvage SHA)
@@ -302,7 +306,7 @@ describe('transitions', () => {
       'plan-check malformed': 'design', 'plan-check process-fault': 'retryable', 'plan-check routing-changed': 'env', 'plan-check read-denied': 'env',
       'build refusal': 'design', 'build malformed': 'design', 'build process-fault': 'retryable', 'build routing-changed': 'env', 'build lost': 'retryable',
       'build occupied': 'env', 'build cleanup-failed': 'retryable', 'build witness-lane-missing': 'env', 'lanes witness-lane-missing': 'env', 'lanes plan-defect': 'env',
-      'salvage unmerged': 'env', 'salvage commit-failed': 'retryable', 'teardown cleanup-failed': 'retryable',
+      'salvage unmerged': 'env', 'salvage commit-failed': 'retryable', 'salvage cleanup-failed': 'retryable', 'teardown cleanup-failed': 'retryable',
       'lanes red': 'design', 'lanes witnesses-missing': 'design', 'build infeasible': 'design', 'lanes blocked': 'retryable', 'lanes cleanup-failed': 'retryable', 'lanes occupied': 'env',
       'gate revise': 'design', 'gate escalate': 'design', 'gate empty-diff': 'design', 'gate refusal': 'design', 'gate malformed': 'design',
       'gate process-fault': 'retryable', 'gate routing-changed': 'env', 'gate read-denied': 'env',

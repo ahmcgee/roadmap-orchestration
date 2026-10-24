@@ -51,7 +51,8 @@
 // the answer it follows was malformed (I3).
 //
 // Scope growth (2026-10-15): a fix round after a salvage that reverted the build's out-of-scope edits carries the executor's
-// directive naming them (`withReverted`).
+// directive naming them (`withReverted`). Field report 2026-10-24: one after a salvage the transient check refused names
+// the committed paths it refuses (`salvageRefusalFix`).
 //
 // Needs-user content is produced here, never written: the scheduler writes it. A halt's item names its
 // evidence and says what `resume` does for it (`haltNeedsUser`).
@@ -87,7 +88,9 @@ import {
 } from './dispatch.ts';
 import { consumeJudgment, gate, gateDirectives, unitTip } from './gate.ts';
 import { disputeDirective } from './review.ts';
-import { batchMemberFix, candidate, candidateBrakeFix, candidateRefusalFix, candidateSeriesRoot, ff, latestCandidate, memberBatchCandidate, snapshot } from './integrate.ts';
+import {
+  batchMemberFix, candidate, candidateBrakeFix, candidateRefusalFix, candidateSeriesRoot, ff, latestCandidate, memberBatchCandidate, salvageRefusalFix, snapshot,
+} from './integrate.ts';
 import { invocationDir } from './invoke.ts';
 import { type LaneRecord, latestSpecSeries, presentCheckouts, removeCheckout, seriesDirty, seriesLedger, seriesTree, specSeriesRoot } from './lanes.ts';
 import type { FixRound } from '../prompts/inputs.ts';
@@ -382,6 +385,9 @@ function decidedInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, 
   // The series' own verification checkout (Q3), while it is still there.
   const verificationOf = (parent: StageParent) => seriesTree(view, parent, verificationWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, parent.attempt));
   switch (f.stage) {
+    // Field report 2026-10-24: a salvage the transient check refused; no lanes ran on it, so the window is the edit allowance.
+    case 'salvage':
+      return candidateFixRound(salvageRefusalFix(ctx, unit), [], null, tip);
     case 'lanes':
       return lanesFixRound(ctx, unit, f, tip);
     case 'gate': {

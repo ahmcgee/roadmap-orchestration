@@ -19,6 +19,9 @@
 //   unit at lanes (`lanes scope-growth`), uncharged; an accept re-opens it, and its builder is told to restore the path.
 // scope.derived-outputs (plan defects, 2026-10-16): a unit covering a `derived` source pins the outputs on its dispatch
 //   record, and salvage keeps an output it regenerated while still reverting what lies outside.
+// scope.salvage-transient (field report 2026-10-24): a path the builder committed outside the scope (salvage reverts only
+//   uncommitted ones) is refused at salvage by the candidate's transient check, before any lane: a chargeable fix round
+//   naming it, the build's resources released; once it is removed the unit goes on.
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -267,6 +270,27 @@ test('scope.derived-outputs (plan defects, 2026-10-16): a unit covering a derive
     const branch = unitBranch(r.ctx.plan().arc, U1);
     assert.equal(git(d.repo, 'show', `${branch}:dist/bundle.js`), 'export const bundled = 1;');
     assert.throws(() => git(d.repo, 'show', `${branch}:out-of-scope.txt`), 'a path outside the effective scope is still reverted');
+  } finally {
+    r.journal.close();
+  }
+});
+
+test('scope.salvage-transient (field report 2026-10-24): a committed out-of-scope path is refused at salvage, before any lane: a chargeable fix round names it; removed, the unit merges', T, async () => {
+  const committed = codexStep([{ type: 'commit', message: 'add mul and notes', files: { ...MUL, 'notes/u1.md': 'how mul works\n' } }], { argv: ['exec', '-C'] });
+  const removed = codexStep([{ type: 'commit', message: 'drop the notes', files: { 'notes/u1.md': null } }], { argv: ['exec', 'resume'] });
+  const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), committed, removed, gateStep({ decision: 'approve' })] });
+  const r = contextFor(d);
+  try {
+    assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), async () => true), { kind: 'merged' });
+    assert.deepEqual(outcomes(d).slice(0, 12), [
+      'plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:transient-violation',
+      'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve',
+    ]);
+    const refused = readJournal(absPath(d.runDir), arcId(d.arc)).events.flatMap((e) => (e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.stage === 'salvage' ? [e.fact] : []))[0]!;
+    assert.equal(refused.chargeable, true);
+    const fix = readCalls(d.scenarioPath)[2]!.stdin;
+    assert.match(fix, /The executor refused your last round's commit: these paths must not reach integration \(.*\): notes\/u1\.md \(out-of-scope\)\. Remove them from the branch;/);
+    assert.equal(git(d.repo, 'ls-tree', '--name-only', 'main', 'notes/'), '', 'nothing out of scope reached integration');
   } finally {
     r.journal.close();
   }

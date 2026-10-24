@@ -58,7 +58,9 @@
 //   salvage     `salvage.commit` under the pinned scope; a plan contract, the architecture doc or its
 //               digest in the unit's merge-base diff is a risk trigger; a merge left in progress parks. A
 //               failed salvage cleans the build's reservation, and the instances that cleanup failed join the
-//               park's targets (G6).
+//               park's targets (G6). Field report 2026-10-24: then the candidate's transient check over the salvage
+//               SHA; refused (a path the builder committed outside its scope), the chain ends there as at a failure,
+//               the reservation cleaned: `transient-violation` (the candidate's fix round), or `cleanup-failed`.
 //   teardown    cleanup of the build's reservation.
 //   lanes       lanes.ts in a detached checkout of the salvage SHA; the lane ledger for the gate. M4a rev 3: a plan known
 //               defect the unit matches (by lane before any lane runs, by a red lane's output after) is `known-defect`,
@@ -112,7 +114,7 @@ import { SalvageStateError, SalvageUnmergedError, checkRejected, planSalvage, ty
 import { unitRegenerateLanes } from '../input/derived.ts';
 import { withinEnvelope } from '../input/envelope.ts';
 import { type CorpusFileSet, referenceFiles, sameRepoCorpusSet, scopeOverlapsCorpus, scopeReferences } from '../phase0/rows.ts';
-import { diffBase, unitDiffPaths } from '../git/transient.ts';
+import { diffBase, transientCheck, unitDiffPaths, unitTransientRules } from '../git/transient.ts';
 import {
   type CorpusInForce, type InputFiles, type LoadedSpec, CORPUS_FILE_INPUT, OBLIGATIONS_INPUT, PLAN_INPUT, RULING_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, inForceFiles,
   inputPath, keptInput, keptPayload, parseUnitSpec, requirePlanInForce, revisionInForce, specBytesOf, specShaInForce,
@@ -1587,6 +1589,12 @@ export async function salvage(ctx: StageContext, unit: PlanUnit, run: BuildRun):
     message: `roadmap ${ctx.plan().arc}: salvage of unit ${unit.id} (build ${run.inv})\n`,
   };
   const op = salvageCommitOp(rules);
+  // A salvage that ends the build chain here never reaches teardown: the build's resources are cleaned now (a failure
+  // leaves its residue durable), and the instances it failed are returned for the outcome's park targets (G6).
+  const released = async (): Promise<readonly ResourceInstance[]> => {
+    const cleaned = run.reservation === null ? null : await cleanup(ctx, run.reservation, parent);
+    return cleaned?.kind === 'cleanup-failed' ? cleaned.failed : [];
+  };
   let prepared;
   try {
     // A merge left in progress (a resolve round that never committed) is never salvaged as a plain commit.
@@ -1597,15 +1605,21 @@ export async function salvage(ctx: StageContext, unit: PlanUnit, run: BuildRun):
     const kind = error instanceof SalvageUnmergedError ? 'unmerged'
       : error instanceof SalvageStateError || error instanceof GitError ? 'commit-failed' : null;
     if (kind === null) throw error;
-    // Refused before any intent: the tree is untouched and preserved for the architect. The unit parks, so
-    // teardown never runs: the build's resources are cleaned here (a failure leaves its residue durable), and
-    // the instances it failed join the park's targets (G6).
-    const cleaned = run.reservation === null ? null : await cleanup(ctx, run.reservation, parent);
-    return { ...record(ctx, parent, kind, null, failedFacts(cleaned?.kind === 'cleanup-failed' ? cleaned.failed : [])), sha: null };
+    // Refused before any intent: the tree is untouched and preserved for the architect, and the unit parks.
+    return { ...record(ctx, parent, kind, null, failedFacts(await released())), sha: null };
   }
   const next = prepared === null
     ? revParse(run.worktree, 'HEAD')
     : (await runPrepared(ctx.journal, op, `salvage:${unit.id}`, parent, prepared)).post.new;
+  // Field report 2026-10-24: the one transient check (src/git/transient.ts), which the candidate runs, at the salvage SHA
+  // too, so a path the builder committed outside the unit's pinned scope (salvage reverts only uncommitted ones) is
+  // refused before the lanes and the gate spend on it. The chain ends here as at a salvage failure, the build's resources
+  // cleaned; the outcome is the candidate's refusal (a chargeable scope-growth fix round, a risk trigger), or, when that
+  // cleanup failed, a park on its instances.
+  if (transientCheck(ctx.repo, unitTransientRules(pinned, spec), integrationTip(ctx), next).length > 0) {
+    const failed = await released();
+    return { ...record(ctx, parent, failed.length > 0 ? 'cleanup-failed' : 'transient-violation', null, failedFacts(failed)), sha: next };
+  }
   // A risk trigger when the unit's diff (merge-base with the integration tip, so what a merge-in brought
   // is not the unit's) touches any plan contract, cited or not, the architecture doc or its digest.
   const authority = authorityPaths(ctx);

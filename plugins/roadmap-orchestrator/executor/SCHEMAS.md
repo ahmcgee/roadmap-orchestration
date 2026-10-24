@@ -1890,7 +1890,8 @@ residues, the snapshot closure):
    rules apply too (M4a X0 deleted dev.5's rules: ROADMAP_ALLOWLIST, no scope check). A path a lane's `evidenceGlobs`
    entry matches is `lane-evidence` and names the lane and the entry (top-level `evidence/` stays `evidence`); the fix
    round's directive (`transientDirectives`) names them too and tells the builder to keep a path that is its own work
-   and report the mislabelled entry, never delete it (M4b run 3). Violations are not persisted. A docs publication's diff may hold only the files it writes, matched exactly
+   and report the mislabelled entry, never delete it (M4b run 3). The same check runs at salvage over the salvage SHA
+   (2026-10-24, "Scope at salvage" below). Violations are not persisted. A docs publication's diff may hold only the files it writes, matched exactly
    (`docsTransientViolations`, rule `not-docs`).
 8. **Job-owned residues (G4, H4)**: a job holder reserves through a request but never takes `integration-slot`; a
    docs holder takes the slot alone. A job's teardowns, probes and lanes carry the owner label `<arc>/job/<job>`
@@ -4856,7 +4857,9 @@ review"; src/pipeline/review.ts, src/pipeline/docsonly.ts). Every change is addi
    (`movedInterfaces`); a link the spec leaves unpinned is moved exactly when its target changed since the approval, never
    read as unchanged for want of a pin (`ReviewApproval.seq`, the fold's, places the approval in the log); an unchanged
    file whose content names a moved target under review. Empty (`review` and `moved` both empty): `approval{blobs}` at
-   the new fingerprint, then `stage-outcome gate delta-empty`, no `judgment-inputs`, no call.
+   the new fingerprint, then `stage-outcome gate delta-empty`, no `judgment-inputs`, no call. A re-entered unit with no
+   approval of its own measures from a scope-only re-entry's carried approval (2026-10-24, "Scope-only re-entry" below),
+   and only to empty.
 5. **Docs-only** (`docsOnlyCarry`, the lanes stage, before its entry reservation): the claim is the unit's latest build
    spawn's answer; `since` the commit of the spec series of `greenLanes(unit)`'s attempt (`certifiedTree`). Refused (a
    `docs-only` fact) when there is no certified tree, the claim names another, a path changed mode or is a submodule or
@@ -4986,3 +4989,27 @@ but not the Phase-0 overlap row, so every later apply and start was refused, and
    from the owner's files of their latest apply. An arc with no plan in force refuses it (`plan-change-refused`).
    `inputs export` reads the run dir only, so the export, its edit and `start --base` all work with the executor down.
 
+## Scope-only re-entry and scope at salvage (2026-10-24; field report, live arc unit u1f-r4)
+
+No record changes: both are derived from facts already in the log, and two outcome kinds are added.
+
+| Record | Change | Read-time default |
+|---|---|---|
+| `STAGE_OUTCOME_KINDS.salvage` | `+ transient-violation` (C, trigger → `build fix`), `+ cleanup-failed` (retryable park `residue`, one `resource{i}` per failed instance) | — (an older log has neither) |
+
+1. **Scope-only re-entry** (`carriedApproval`, src/pipeline/review.ts): `gateDelta` of a unit with no approval of its own
+   measures from the re-entered unit's (`UnitState.lineage.reenters`) latest approval when (a) its `fingerprint.unitCommit`
+   is the head the gate judges, so no commit came after it (no build, no merge-in at `prepare`); (b) no `gate`
+   stage-outcome of the re-entered unit is among its `failures` after the approval's seq; (c) the re-entered unit's spec in
+   force is at the approval's `blobs.specRev`, or later by design records alone (`designRevisionsOnly`), and the gated spec
+   equals it in canonical JSON but for `unit`, `rev` and `scope`; (d) `transientCheck` passes over `diffBase(T, head)..head`
+   under the gated unit's own `unitTransientRules`, so a narrowed scope that leaves an approved path outside carries
+   nothing. Then only an empty delta counts: the gate records `approval{blobs}` for the gated unit at its fingerprint and
+   `stage-outcome gate delta-empty`, no call; anything else is a full review (`delta` null).
+2. **Scope at salvage** (`salvage`, src/pipeline/stages.ts): after the commit (or no change), `transientCheck(repo,
+   unitTransientRules(dispatch, spec), T, salvage SHA)`, the candidate's check. A violation ends the build chain there as a
+   salvage failure does: the build's reservation is cleaned (teardown never runs). Cleaned, `salvage transient-violation`
+   (the candidate's row: a chargeable fix round with a risk trigger); a cleanup that failed, `salvage cleanup-failed` with
+   its instances as park targets. The fix round (`decidedInput`, src/pipeline/unit.ts) is `salvageRefusalFix`
+   (src/pipeline/integrate.ts): the violations re-derived from git at the current tip, as `transientDirectives(…,
+   'salvage')`, over an empty ledger (the window is the edit allowance; no lane ran).
