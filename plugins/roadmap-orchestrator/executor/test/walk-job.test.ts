@@ -9,17 +9,21 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
+import { findingId, jobId } from '../src/core/ids.ts';
+import { vectorAt } from '../src/holistic/bundle.ts';
+import { integrationHeadNow } from '../src/holistic/cadence.ts';
 import type { Fact } from '../src/core/events.ts';
 import { readJournal } from '../src/core/log.ts';
-import { requirePlanInForce } from '../src/input/inforce.ts';
+import { inForceFiles, requirePlanInForce, revisionInForce } from '../src/input/inforce.ts';
 import { runUnit } from '../src/pipeline/unit.ts';
 import { specFacts } from '../src/pipeline/reproduce.ts';
 import { recover } from '../src/recover/recover.ts';
 import { ready } from '../src/schedule/ready.ts';
 import { status } from '../src/status.ts';
+import { runAudit } from '../src/holistic/audit.ts';
 import { checkpointMilestonesRemaining, checkpointPending, runCheckpoint } from '../src/holistic/checkpoint.ts';
 import { milestoneWaits } from '../src/walk/node.ts';
-import { milestoneProgress, walkItemsDue } from '../src/walk/milestones.ts';
+import { milestoneProgress, unweighedWalkFindings, walksOf, walkItemsDue } from '../src/walk/milestones.ts';
 import { runWalk, settleWalks, walkEvidenceDir } from '../src/walk/walk.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
 import { WALK_JOB, crashCells } from './matrix.ts';
@@ -27,7 +31,7 @@ import { runFixture } from './helpers/proc.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 import { type Step, readCalls } from './helpers/scenario.ts';
 import { moduleFiles, unitSteps } from './fixtures/audit-common.ts';
-import { applyPlanEdit, checkpointContext, completedAudit } from './fixtures/checkpoint-common.ts';
+import { applyPlanEdit, applyVision, checkpointContext, completedAudit } from './fixtures/checkpoint-common.ts';
 import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
 import { type ArcRun, appendSteps, codexStep, contextFor, gateStep } from './fixtures/unit-common.ts';
 import { admitSpecWire, checkpointAnswer, checkpointStep, noteLensStep, lensStep } from './helpers/holistic.ts';
@@ -190,6 +194,68 @@ describe('the milestone walk (dev.13)', () => {
         assert.deepEqual(await runCheckpoint(ctx), { kind: 'none' });
         assert.equal(factsOf(r, 'checkpoint-inputs').length, 1, 'no second capture on the same inputs');
         assert.equal(readCalls(d.scenarioPath).filter((c) => c.unit?.startsWith('ckpt-')).length, 1);
+      } finally {
+        clearInterval(tick);
+        r.journal.close();
+      }
+    });
+  }
+
+  for (const prior of ['decided', 'skipped'] as const) {
+    test(`checkpoint.walk-vision-edit: a ${prior} walk trigger reopens under a revised vision, after a clean drift audit`, T, async () => {
+      const report = walkAnswer({ findings: [{ class: 'deviates', journey: 'J-1', claim: 'The error omits its remedy', cause: 'error text', against: { type: 'design', path: 'design/README.md', anchor: '#errors' }, paths: ['product/server.js'] }] });
+      const d = walkArc({ steps: [
+        ...unitSteps('u1', moduleFiles('mul', '*')), walkStep('walk-1', report),
+        ...(prior === 'decided' ? [checkpointStep('ckpt-1', checkpointAnswer({ decision: 'no-op' }))] : []), lensStep('audit-1', 'vision'),
+        checkpointStep('ckpt-2', checkpointAnswer({ decision: 'no-op' })),
+      ] });
+      const r = contextFor(d);
+      const { ctx, w } = steeringContext(r);
+      const tick = setInterval(() => w.arbiter.wake(), 50);
+      try {
+        await merge(r, 'u1');
+        await walk(r);
+        const round = walksOf(r.journal.view)[0]!;
+        if (prior === 'skipped') {
+          // An older milestone capture settled through the equality guard, weighing the same finding.
+          const inForce = requirePlanInForce(ctx.runDir, r.journal.view);
+          const revision = revisionInForce(ctx.runDir, inForce);
+          const files = inForceFiles(ctx.runDir, r.journal.view, inForce, revision, ctx.planFile, ctx.repo);
+          const headSha = integrationHeadNow(ctx);
+          const vector = vectorAt(ctx, inForce, revision, files, headSha);
+          const job = jobId('ckpt', 1);
+          r.journal.fact({ kind: 'checkpoint-inputs', job, trigger: { type: 'milestone', milestones: [round.milestone] }, generation: 1,
+            headSha, vector, visionSha256: vector.visionSha256, findings: [findingId('F-1')], observations: [] });
+          r.journal.fact({ kind: 'checkpoint-skipped', trigger: { type: 'milestone', milestones: [round.milestone] }, generation: 1,
+            visionSha256: vector.visionSha256, carried: [findingId('F-1')] });
+        }
+        const first = await runCheckpoint(ctx);
+        assert.equal(first.kind, prior === 'decided' ? 'decided' : 'none');
+        if (prior === 'skipped') {
+          // The other checkpoint already weighed it, so an older executor may have left a no-call walk settlement.
+          r.journal.fact({ kind: 'checkpoint-skipped', trigger: { type: 'walk', job: round.job }, generation: 1,
+            visionSha256: r.journal.view.planApplied()!.visionSha256!, carried: [findingId('F-1')] });
+        }
+        assert.deepEqual(unweighedWalkFindings(r.journal.view, round), []);
+        assert.equal(checkpointPending(ctx), false);
+        await applyVision(r, w, [{ id: 'V-999', kind: 'good', text: 'Errors give users a clear next action.', rank: null, state: 'active' }]);
+        assert.deepEqual(unweighedWalkFindings(r.journal.view, round), ['F-1']);
+        assert.equal(milestoneProgress(r.journal.view, ctx.plan(), milestonesOf(ctx.plan())[0]!, repairUnits(ctx)).kind, 'round-open');
+        const audit = await runAudit(ctx);
+        assert.ok(audit.kind === 'ended' && audit.outcome === 'completed', JSON.stringify(audit));
+        assert.deepEqual(factsOf(r, 'audit-ended')[0]!.findings, [], 'the drift audit adds no findings');
+        assert.equal(checkpointPending(ctx), true, 'the old decision or skip must not consume the revised-vision trigger');
+        const second = await runCheckpoint(ctx);
+        assert.ok(second.kind === 'decided' && second.trigger.type === 'walk' && second.trigger.job === round.job, JSON.stringify(second));
+        const captures = factsOf(r, 'checkpoint-inputs');
+        assert.deepEqual(captures.map((c) => c.findings), [['F-1'], ['F-1']]);
+        assert.notEqual(captures[0]!.visionSha256, captures[1]!.visionSha256);
+        assert.deepEqual(unweighedWalkFindings(r.journal.view, round), []);
+        assert.equal(checkpointMilestonesRemaining(r.journal.view, ctx.plan()), prior === 'decided' ? 1 : 2, 're-weighing does not consume the milestone interval');
+        // Settle the clean audit without another model call, then remain quiescent.
+        await runCheckpoint(ctx);
+        assert.deepEqual(await runCheckpoint(ctx), { kind: 'none' });
+        assert.equal(readCalls(d.scenarioPath).filter((c) => c.unit?.startsWith('ckpt-')).length, prior === 'decided' ? 2 : 1);
       } finally {
         clearInterval(tick);
         r.journal.close();

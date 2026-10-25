@@ -147,8 +147,9 @@ With the executor down, `roadmap start --base` takes the same base. You can answ
 once.
 
 **The checkpoint steers toward the vision.** Lens audits run every five publications, on a wall-clock timer after a
-new publication, after a semantic plan change, when a publication leaves an obligation unwitnessed, and once more when
-no work remains. Ordinary audits need an outstanding range in a selected lens; an explicit request or semantic drift
+new publication, after a semantic plan change, when a publication leaves an active future obligation unwitnessed, and once more when
+no work remains. Waiving, deferring, retiring or latching an obligation removes its unwitnessed trigger during the
+same run. Ordinary audits need an outstanding range in a selected lens; an explicit request or semantic drift
 can audit an unchanged head, and final audits cover only outstanding lenses. Four model lenses look for broken
 invariants, drift from the target, vacuous tests and anything that fails the vision. A lost lens call gets at most two
 reissues across restarts, then its audit is abandoned.
@@ -156,7 +157,8 @@ reissues across restarts, then its audit is abandoned.
 With milestones, the steering checkpoint runs every two retired milestones by default
 (`holistic.checkpoint.everyMilestones`), after the boundary milestone's walk ends, weighing the accumulated audit and
 walk findings. Any unweighed walk finding, at any severity, gets an immediate checkpoint, which also weighs all
-active audit findings. Walk checkpoints do not count toward or reset the milestone interval. A design park, a new
+active audit findings. A vision edit reopens this immediate trigger for open findings weighed only under the old
+vision, even after a decision or skip. Walk checkpoints do not count toward or reset the milestone interval. A design park, a new
 unweighed audit P1 and the final audit at close-out also get immediate checkpoints. Without milestones, audits keep
 triggering checkpoints when they find something new. Every non-park trigger skips the call when a decided checkpoint
 already captured the same head, plan revision, vision and active finding set, so a milestone boundary does not repeat an unchanged walk capture. Status shows the milestones remaining

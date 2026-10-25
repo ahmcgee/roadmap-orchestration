@@ -8,26 +8,27 @@
 // HEAD's check.ts (every criterion passes, and the upgrade forced no park and no new session), or, where the story
 // needs arc judgments the M1 scenario format cannot express, with HEAD's CLI and fakes directly.
 //
-// Which releases: HEAD (1.0.0-dev.21) adopts arcs started on 1.0.0-dev.7 to dev.20, through the defaults of
-// src/core/upgrade.ts. Four are covered here. Every unlabelled cell starts its arc on the previous release
-// (PREVIOUS_RELEASE, 1.0.0-dev.20). The cells labelled `upgrade.dev11.*` start theirs on 1.0.0-dev.11 (DEV11_RELEASE)
+// Which releases: HEAD (1.0.0-dev.22) adopts arcs started on 1.0.0-dev.7 to dev.21, through the defaults of
+// src/core/upgrade.ts. Five are covered here. Every unlabelled cell starts its arc on the previous release
+// (PREVIOUS_RELEASE, 1.0.0-dev.21). The dev.20 cells retain legacy snapshot and audit-only skip coverage. The cells
+// labelled `upgrade.dev11.*` start theirs on 1.0.0-dev.11 (DEV11_RELEASE)
 // and those labelled `upgrade.dev10.*` on 1.0.0-dev.10 (DEV10_RELEASE): an arc started on each is in flight, so the
 // dev.11 and dev.10 defaults are live code. The cells labelled `upgrade.dev16.*` start theirs on 1.0.0-dev.16
 // (DEV16_RELEASE): no arc started on dev.16 is in flight, but the dev.16 -> dev.17 defaults are what those dev.10 and
 // dev.11 arcs read too, and their cells do not isolate them, so these cells keep them exercised end to end until they
 // go. No arc started on dev.7 to dev.9 or on dev.12 to dev.15 is in flight, and no cell starts one.
 //
-// All four schedule a DAG and keep every M3, M4a and M4b record, so their arcs run on HEAD as they ran on them; an
+// All five schedule a DAG and keep every M3, M4a and M4b record, so their arcs run on HEAD as they ran on them; an
 // arc started without the holistic layer runs with M2 semantics and no new spend unless the architect opts in. Their
 // role sets and pressure records are HEAD's. HEAD's walk roles (`walkthrough`, `polishJudge`) are in force only under a
 // plan with milestones, which no arc of theirs has, so no walk seat is hashed for them.
 //
-// What dev.20 lacks of dev.21: a `flake-observed` fact has no `on`, read from its red run's stage (`flakeOnDefault`),
+// Dev.21 adds no read defaults here. What dev.20 lacks of dev.21: a `flake-observed` fact has no `on`, read from its red run's stage (`flakeOnDefault`),
 // but these fixtures record no flakes, so `flake-observed.on` is not allowed. Its GitHub issues fields and facts read as
 // written and ignored (`issuesIgnored`, the exact `ISSUES_IGNORED` kinds below). Its audit-only `checkpoint-skipped`
-// records have no trigger, read as their audit trigger (`checkpointSkipTriggerOf`); only checkpoint-reentry-with-fixes
+// records have no trigger, read as their audit trigger (`checkpointSkipTriggerOf`); only dev20.checkpoint-reentry-with-fixes
 // leaves one for HEAD, and that cell explicitly expects the warning once. `spec.design.kind` is a lasting read: a spec no
-// approving plan-check has designed yet reads as kind `module`, on dev.20 as on HEAD. No other default is allowed in an
+// approving plan-check has designed yet reads as kind `module`, on dev.20, dev.21 and HEAD. No other default is allowed in an
 // unlabelled cell. The summit effort change (xhigh → high) moves dev.20's routing hash; historical hashes alias to today's
 // routing for spend without a warning or routing park (asserted by routing-stable).
 //
@@ -242,8 +243,11 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { after, before, test } from 'node:test';
 import { writeResult } from '../../src/backends/adapter.ts';
 import { isAlive, statOf } from '../../src/contain/proc.ts';
+import { readArcRef } from '../../src/chain.ts';
+import { phase0Check } from '../../src/commands/phase0.ts';
+import { verifySnapshot } from '../../src/git/snapshot.ts';
 import type { Event, Fact } from '../../src/core/events.ts';
-import { arcId, commandId, invocationId, obligationId, opId, resourceName, unitId } from '../../src/core/ids.ts';
+import { arcId, commandId, invocationId, obligationId, opId, resourceName, sha, unitId } from '../../src/core/ids.ts';
 import { UNPINNED } from '../../src/core/pins.ts';
 import type { JournalView } from '../../src/core/interfaces.ts';
 import { type JsonValue, canonicalJson } from '../../src/core/json.ts';
@@ -286,9 +290,11 @@ type Release = Readonly<{ sha: string; version: string }>;
  * The previous release: its executor starts the arc, HEAD's finishes it, in every cell not labelled with an older
  * release. At each release, move it to the last released commit, the merge of the previous release's PR into main.
  * Merges here are merge commits, so a merged branch's shas stay reachable and `git archive` finds them. Now:
- * 1.0.0-dev.20, merged to main as PR #124, merge commit 6aea2bb (schema version 1).
+ * 1.0.0-dev.21, merged to main as PR #125, merge commit 03a45d7 (schema version 1).
  */
-const PREVIOUS_RELEASE: Release = { sha: '6aea2bb5729a2c700a30cef65ff13f89a9838b5f', version: '1.0.0-dev.20' };
+const PREVIOUS_RELEASE: Release = { sha: '03a45d7000565ac49491a6b15d6062ecb78e6313', version: '1.0.0-dev.21' };
+/** dev.20 snapshots and audit-only skips still have to be adopted after the issues integration was removed. */
+const DEV20_RELEASE: Release = { sha: '6aea2bb5729a2c700a30cef65ff13f89a9838b5f', version: '1.0.0-dev.20' };
 /**
  * 1.0.0-dev.16, merged to main as PR #119: no arc started on it is in flight, but the dev.17 defaults of
  * src/core/upgrade.ts it exercises (lane topology, the design pass, propagation, the flaky ledger, proportional review,
@@ -313,7 +319,7 @@ const DEV11_RELEASE: Release = { sha: '1f7f69681fbf637126046dfc0c01617b1adfdb17'
  * test starts none.
  */
 const DEV10_RELEASE: Release = { sha: 'b1c3666843fa458c46eb2e541c97f62dd0244328', version: '1.0.0-dev.10' };
-const RELEASES: readonly Release[] = [PREVIOUS_RELEASE, DEV16_RELEASE, DEV11_RELEASE, DEV10_RELEASE];
+const RELEASES: readonly Release[] = [PREVIOUS_RELEASE, DEV20_RELEASE, DEV16_RELEASE, DEV11_RELEASE, DEV10_RELEASE];
 /**
  * The releases before 1.0.0-dev.17: their lanes declare `tier`, not `cadence`, and their strict judgment schemas refuse
  * dev.17's answer fields (plan-check `staleLinks`; gate `rulings`, a finding's `defect`, `reraises` and `hunk`).
@@ -402,6 +408,37 @@ before(async () => {
     });
   }
 });
+
+// A real older ref must be verified before any HEAD publication can replace its closure. In particular, dev.20
+// kept phase0Issues bytes even though today's executor no longer uses the issues integration.
+for (const release of [DEV20_RELEASE, PREVIOUS_RELEASE]) {
+  test(`upgrade.snapshot-${release.version}: an untouched released corpus snapshot verifies, adopts and passes Phase 0 on HEAD`, T, async () => {
+    const old = await loadFrom<typeof import('../helpers/corpusarc.ts')>(release, 'test/helpers/corpusarc.ts');
+    const verifier = await loadFrom<typeof import('../../src/git/snapshot.ts')>(release, 'src/git/snapshot.ts');
+    const oldInputs = release === DEV20_RELEASE ? await loadFrom<typeof import('../../src/input/inforce.ts')>(release, 'src/input/inforce.ts') : null;
+    const a = await old.corpusArc();
+    await old.seal(a, { complete: false, before: (j) => {
+      if (release !== DEV20_RELEASE) return;
+      // A later checkpoint's capture differs from the initial Phase-0 capture and is named only by this fact.
+      const capture = j.view.nextJobId('ckpt');
+      const bytes = Buffer.from('{"legacyCheckpointCapture":true}\n');
+      const digest = oldInputs!.keepInput(old.runDirOfArc(a), bytes, 'issues.json');
+      j.fact({ kind: 'issues-captured', job: capture, sha256: digest, repo: { host: 'github.com', owner: 'o', name: 'n' },
+        filtered: { comments: 0, pullRequests: 0 } } as Fact);
+    } });
+    const commit = sha(git(a.repo, 'rev-parse', `refs/roadmap/${a.arc}`));
+    const released = verifier.verifySnapshot(a.repo, commit);
+    assert.equal(released.kind, 'verified');
+    if (release === DEV20_RELEASE && released.kind === 'verified') {
+      assert.equal(released.manifest.files.filter((f) => f.path.endsWith('.issues.json')).length, 2, 'exercise the dev.20 capture that dev.21 omitted from its closure');
+    }
+    const check = verifySnapshot(a.repo, commit);
+    assert.equal(check.kind, 'verified', check.kind === 'mismatch' ? check.detail : '');
+    assert.equal(readArcRef(a.repo, a.arc)!.commit, commit);
+    const report = await phase0Check({ repo: a.repo, source: { type: 'ref', arc: a.arc } });
+    assert.deepEqual(report.rows, []);
+  });
+}
 
 // ---------------------------------------------------------------------------------------------------
 // Scenario pieces (evals/m1/scenarios/clean.json, whose steps are slug's three then page-id's three)
@@ -648,15 +685,15 @@ const ISSUES_IGNORED = /^issues\.(issue-intake|issues-captured|checkpoint-inputs
  * Once HEAD's phase ends, every `roadmap: upgrade default` an executor of the host dir warned is one HEAD reads the
  * starting release's arc with, or a kind the cell's story reads on purpose (`expected`, e.g. dev.16's
  * `plan.planCheck.shape`, a plan field dev.17 removed). An arc dev.20 started: `DEV20_LASTING` and the exact
- * `ISSUES_IGNORED` kinds; checkpoint-reentry-with-fixes alone also expects `checkpoint-skipped.trigger`. An arc dev.16
+ * `ISSUES_IGNORED` kinds; dev20.checkpoint-reentry-with-fixes alone also expects `checkpoint-skipped.trigger`. An arc dev.16
  * started: the dev.17 defaults (`DEV17_DEFAULTS`) and `ISSUES_IGNORED`, its spec lanes' tier read as their cadence among them (the
  * absent systems map is warned only where HEAD reads the map in force, a lane's selection or reuse; asserted in
  * `upgrade.dev16.review-unledgered`, which runs lanes on HEAD). An older release's cells assert the defaults they read
  * instead.
  */
 function assertNoDefaultRead(p: Phase1, expected: readonly string[] = []): void {
-  if (p.release !== PREVIOUS_RELEASE && p.release !== DEV16_RELEASE) return;
-  const allowed = p.release === PREVIOUS_RELEASE ? DEV20_LASTING : DEV17_DEFAULTS;
+  if (p.release !== PREVIOUS_RELEASE && p.release !== DEV20_RELEASE && p.release !== DEV16_RELEASE) return;
+  const allowed = p.release === DEV16_RELEASE ? DEV17_DEFAULTS : DEV20_LASTING;
   const kinds = [...hostLogs(p).matchAll(/roadmap: upgrade default \(([^)]+)\)/g)].map((m) => m[1]!);
   for (const kind of kinds) {
     if (!expected.includes(kind) && !ISSUES_IGNORED.test(kind)) assert.match(kind, allowed, `HEAD read the ${p.release.version} arc with the ${kind} default`);
@@ -1509,13 +1546,21 @@ async function routingStable(release: Release): Promise<Readonly<{
   return { revs, resolved, stack, judged };
 }
 
-test('upgrade.routing-stable: the previous release\'s arc keeps its role set, re-pins from xhigh to high summit effort, never parks for routing, and resolves historical spend', T, async () => {
-  const { revs, resolved, stack, judged } = await routingStable(PREVIOUS_RELEASE);
-  const previous = await loadFrom<typeof import('../../src/routing/layers.ts')>(PREVIOUS_RELEASE, 'src/routing/layers.ts');
-  assert.ok(revs.has(previous.resolveRouting(stack).rev), 'the archived release reproduces its recorded revision');
-  assert.ok(!revs.has(resolved), 'the summit effort changed xhigh to high; HEAD re-pins through the current catalogue');
-  for (const ji of judged) assert.equal(ji.routingRev, resolved, `${ji.unit} ${ji.stage}: judged under HEAD's current rev`);
-});
+for (const release of [PREVIOUS_RELEASE, DEV20_RELEASE]) {
+  const label = release === DEV20_RELEASE ? 'dev20.' : '';
+  test(`upgrade.${label}routing-stable: the ${release.version} arc keeps its role set, never parks for routing, and resolves historical spend`, T, async () => {
+    const { revs, resolved, stack, judged } = await routingStable(release);
+    const previous = await loadFrom<typeof import('../../src/routing/layers.ts')>(release, 'src/routing/layers.ts');
+    assert.ok(revs.has(previous.resolveRouting(stack).rev), 'the archived release reproduces its recorded revision');
+    if (release === DEV20_RELEASE) {
+      assert.ok(!revs.has(resolved), 'the summit effort changed xhigh to high; HEAD re-pins through the current catalogue');
+    } else {
+      assert.ok(revs.has(resolved), 'dev.21 already uses the current seat table; the routing rev stays stable');
+    }
+    for (const ji of judged) assert.equal(ji.routingRev, resolved, `${ji.unit} ${ji.stage}: judged under HEAD's current rev`);
+  });
+}
+
 
 test('upgrade.dev16.routing-stable: an arc dev.16 started keeps its role set on HEAD; its routing rev moves by HEAD\'s seats and summit effort (frontier judgments, efficient builds) and re-pins without a park or routing-changed; spend resolves', T, async () => {
   const { revs, resolved, stack, judged } = await routingStable(DEV16_RELEASE);
@@ -1674,10 +1719,10 @@ test('upgrade.inputs-in-force: a plan-check\'s spec patch and a ruling the previ
 const TEXT_LANE = { ...SLUG_LANE, id: 'text-journey', argv: ['node', '--test', 'test/text.test.js'], testPaths: ['test/text.test.js'] } as const;
 const TEXT_WITNESS = { lane: TEXT_LANE.id, testIds: ['words splits on runs of whitespace'], files: ['test/text.test.js'] };
 
-test('upgrade.checkpoint-reentry-with-fixes: a holistic arc whose checkpoint the previous release ran re-entered page-id, naming the failure it fixes, finishes on HEAD: the bundle\'s re-entry stays in force, HEAD\'s final checkpoint reads the applied answer as recorded, and a later apply is accepted', T, async () => {
+test('upgrade.dev20.checkpoint-reentry-with-fixes: a holistic arc whose checkpoint the previous release ran re-entered page-id, naming the failure it fixes, finishes on HEAD: the bundle\'s re-entry stays in force, HEAD\'s final checkpoint reads the applied answer as recorded, and a later apply is accepted', T, async () => {
   const c = clean();
   const [prev, prevTypes] = await Promise.all([
-    loadFrom<PreviousHelpers>(PREVIOUS_RELEASE, 'test', 'helpers', 'holistic.ts'), loadFrom<PreviousTypes>(PREVIOUS_RELEASE, 'src', 'holistic', 'types.ts'),
+    loadFrom<PreviousHelpers>(DEV20_RELEASE, 'test', 'helpers', 'holistic.ts'), loadFrom<PreviousTypes>(DEV20_RELEASE, 'src', 'holistic', 'types.ts'),
   ]);
   // page-id's second plan-check (the escalation seat's infeasible) is the failure its park recorded last.
   const fixes = 'page-id/plan-check#2';
@@ -1690,7 +1735,7 @@ test('upgrade.checkpoint-reentry-with-fixes: a holistic arc whose checkpoint the
     midBuild(pageIdFiles(c)),
     prev.checkpointStep('ckpt-1', prev.checkpointAnswer({ decision: 'bundle', ops: [reenter, respec] })),
     prev.lensStep('audit-1', 'invariants'),
-  ]);
+  ], () => {}, DEV20_RELEASE);
   const scope = scopeOf(p);
   track(scope);
   try {
@@ -1698,7 +1743,7 @@ test('upgrade.checkpoint-reentry-with-fixes: a holistic arc whose checkpoint the
     await until('page-id parks infeasible', PHASE_MS, () => (journalOf(p).view.unit(unitId('page-id')).status === 'park-pending' ? true : null));
     // The architect opts in through the previous release's CLI, the obligations as it wrote them.
     writeFileSync(join(p.l.input, 'vision.json'), `${JSON.stringify(VISION, null, 2)}\n`);
-    const file = obligations(laneAs(PREVIOUS_RELEASE, SLUG_LANE), SLUG_WITNESS, (o) => prevTypes.laneRevOf(prevTypes.parseObligations(o).lanes[0]!));
+    const file = obligations(laneAs(DEV20_RELEASE, SLUG_LANE), SLUG_WITNESS, (o) => prevTypes.laneRevOf(prevTypes.parseObligations(o).lanes[0]!));
     writeFileSync(join(p.l.input, 'obligations.json'), `${JSON.stringify(file, null, 2)}\n`);
     editJson<object>(p.l.plan, (plan) => ({ ...plan, holistic: { vision: 'vision.json', advances: ['V-1', 'V-2'], obligations: 'obligations.json', audit: { lenses: ['invariants'] } } }));
     await submitOnPrevious(p, ['apply', '--vision-edit']);

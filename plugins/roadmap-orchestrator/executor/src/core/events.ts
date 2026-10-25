@@ -1075,7 +1075,9 @@ export type M4aFact =
    * A checkpoint's issue outcome and its issue capture, which only an earlier executor wrote (the issues integration was
    * removed in 1.0.0-dev.21): read as written, their other fields untyped, and ignored (`issuesIgnored`; scaffolding).
    */
-  | Readonly<{ kind: 'issue-intake' | 'issues-captured' }>;
+  | Readonly<{ kind: 'issue-intake' }>
+  // The capture's digest still names immutable snapshot bytes; its other fields remain ignored.
+  | Readonly<{ kind: 'issues-captured'; sha256: Sha256Hex }>;
 
 /**
  * The M4b facts (SCHEMAS.md "M4b"); their behaviour is the later steps' (B1: series, runs; B2: decisions, proofs,
@@ -2127,7 +2129,10 @@ const M4A_FACT_READERS: { readonly [K in M4aFactKind]: Read<Fact> } = {
     assertUnique(dispositions, (d) => `${d.job}#${d.index}`, `${f.path}.dispositions`);
     return { ...out, dispositions };
   }),
-  'issues-captured': issuesLegacy<Fact>('issues-captured'),
+  'issues-captured': (value, path): Fact => {
+    const legacy = issuesLegacy<Record<string, unknown>>('issues-captured')(value, path);
+    return { ...legacy, kind: 'issues-captured', sha256: sha256R(legacy['sha256'], `${path}.sha256`) };
+  },
 };
 
 const flowJobR: Read<JobId> = (v, p) => jobIdOfKind('flow')(v, p);
