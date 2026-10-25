@@ -13,7 +13,7 @@ starting `executor/` are under the plugin root.
   `kind` instead of `type`); `a | b` is a closed choice; `x?` is optional.
 - Ids: arc and unit ids are lowercase slugs (`[a-z0-9]` with inner `-`, at most 64); `T-n` rule, `V-n` vision
   clause, `I-n` obligation, `C-n` ruling, `D-n` divergence, `F-n` finding, `B-n` debt, `M-n` amendment (cited
-  `<arc>/M-n` across arcs), `P-n` Phase-0 question, `issue-<number>`; needs-user ids are `nu-<seq>`, `sup-<g>-<n>`
+  `<arc>/M-n` across arcs), `P-n` Phase-0 question; needs-user ids are `nu-<seq>`, `sup-<g>-<n>`
   or `host-<slug>`.
 
 ## CLI
@@ -107,7 +107,7 @@ Not queued, no host lock, no run needed. Run them any time, a running arc includ
 - `roadmap phase0 check --repo <path> --plan <plan.json>`: read-only, the rows a fresh `start` runs on its inputs:
   the `.roadmap/` layout, `plan-invalid`, routing, lanes, `holistic-needs-corpus`, `milestones-need-holistic`,
   `walk-tools-missing`, and every corpus, Phase-0,
-  vision, issue-policy, chain and `tree-uncommitted` row (not the host, residue or smoke rows). Prints `{rows, sliceCandidates, advisories}`; exit 0 with no rows, else 78.
+  vision, chain and `tree-uncommitted` row (not the host, residue or smoke rows). Prints `{rows, sliceCandidates, advisories}`; exit 0 with no rows, else 78.
   `advisories` never refuse: `scope-references-outside{unit, removed, referrers}`, the files outside a unit's scope that
   still name something its spec `removes` (searched at the integration tip, or the baseline before it exists), and
   `derived-unregenerated{outputs, units}`, a `derived` entry declaring no `regenerate` that a live unit takes in, and
@@ -115,14 +115,12 @@ Not queued, no host lock, no run needed. Run them any time, a running arc includ
   its milestone's design unit.
   `sliceCandidates`: the active world clauses whose census rules are not all held on the baseline.
 - `roadmap phase0 check --repo <path> --from-ref <arc>`: the same over every input the arc's `refs/roadmap/<arc>`
-  recorded, never the live files; only the corpus, census, obligation, debt, question, amendment, intake and vision
-  rows (no forge, chain or tree rows).
+  recorded, never the live files; only the corpus, census, obligation, debt, question, amendment and vision
+  rows (no chain or tree rows).
 - `roadmap corpus pin --repo <path> --commit <ref> --baseline <sha> --out <file>`: reads the guide and the rules
   registry committed at `--baseline` (the plan's baseline) and the corpus source at `--commit`, writes the pin to
   `--out` and prints `{pin, sha256}`; refused `corpus-invalid` (78). A pin made against any other baseline is drift
   at `start`.
-- `roadmap issues --repo <path> [--out <file>]`: the canonical capture of open `roadmap:bug` and `roadmap:feedback`
-  issues (stdout, or `--out` then `{out, sha256}`); refused `issue-policy-untrusted` (78); a forge failure exits 64.
 - `roadmap brief --repo <path> [--json]`: the brief since the last committed ack (Markdown, or `{briefId, payload}`
   with `--json`). Exits 64 while no arc of the repo has published a snapshot.
 - `roadmap brief --repo <path> --ack <briefId>`: acknowledge that brief: prints `{acked, commands}` (one queued `ack`
@@ -171,7 +169,7 @@ Not queued, no host lock, no run needed. Run them any time, a running arc includ
 
 **Arc inputs** (yours, a directory per arc outside the product tree; every `PlanPath` is relative to the plan):
 `plan.json`, `specs/<unit>.json`, the rulings ledger, `obligations.json` (with its census), and for a corpus arc
-the pin (`corpus pin --out`), the Phase-0 record and the issue capture (`issues --out`). The executor keeps each by
+the pin (`corpus pin --out`) and the Phase-0 record. The executor keeps each by
 hash at `start` and `apply`; editing them later changes nothing until `apply`. Beside the arcs' directories, the
 operator log `skill-feedback.md` ("The operator log") and the next-arc staging dir `_next/`: `vision.md` (the owner's
 working draft of the next vision) and `notes.md` (work for later, deferred rulings, ideas). The executor never reads
@@ -256,7 +254,7 @@ T-13: A cancelled booking frees its berth at once.
 
 - **Inputs.** `roadmap inputs export --repo <path> --arc <arc> --out <dir>` writes the inputs in force from the run
   dir's kept copies: the plan, every spec at its current rev (machine and plan-check patches included), the rulings
-  ledger and sidecars, the obligations, and for a corpus arc the pin, the Phase-0 record and the issue capture. A file
+  ledger and sidecars, the obligations, and for a corpus arc the pin and the Phase-0 record. A file
   beside the plan keeps its path relative to the plan's directory; a file in the product repo (the vision record)
   goes under `repo/` at its repo path. The corpus guide is not exported (it is the baseline's). `export.json`'s `base`
   is the manifest of the exported files. The executor never writes your input files, so this is the one way to get the
@@ -336,12 +334,12 @@ waits on you), `blocked` (work remains and nothing can move), `complete`, `refus
   `decisionsSince` (rulings, bundles, patches, re-entries, cuts, steers, divergences, reversals, and `checkpoint-skipped`:
   an audit that found nothing new, so no checkpoint ran), `convergence{k, counter, since, open}`, `findings{active, metrics}`, `audit`, `owed`,
   `completion{planRev, head, active, sealed, notSealed, unmet}`, `holds` (arc-wide admission holds: `baseline`,
-  `pack-review`, `issue-policy-untrusted`), `amendments[{id, source, rules, proposal, why}]`.
+  `pack-review`), `amendments[{id, source, rules, proposal, why}]`.
 - Corpus arcs also (null otherwise): `packReview{state: none|running|due|held|clear, reviews[{job, planRev, key,
   outcome, blocking, notes, needsUser, superseded}]}`, `corpus{pinSha256, source{kind, commit, root}, files,
   rules{active, retired, highWater}, phase0Sha256}`, `census{rules[{rule, state, held}], counts, heldPct, lastHeld}` (`held`/`heldPct` on the head alone,
   so they drop after a merge until the next all-lanes run; `lastHeld` also counts rules held at their last observation),
-  `debt{banked, ledger}`, `issues{lastCapture, intake}`, `chain{arcs, k, unackedStarts, nextStart, position}` (the
+  `debt{banked, ledger}`, `chain{arcs, k, unackedStarts, nextStart, position}` (the
   next start after this arc). `status` reads the repo config the arc's revision recorded (routing) and the one committed
   at its baseline (K), never the live `.roadmap/config.json`.
 - Every arc: `flow` (null before a start): `{state: off-dev7}` for an arc an older release started, else `{state: on,
@@ -389,7 +387,7 @@ the first 16 hex of its sha256, so any change (forge state included) is a new id
   Markdown opens with them ("Owner answers to apply now").
 - `arcs[]`, per chained arc: `slice{advances, why}` (the arc's Phase-0 slice in force, null without a record; you pick it,
   the owner sees it here afterwards), `divergences`, `digests`, `decisions`, `curation`, `corpusDivergences`,
-  `debt{banked, dispositioned}`, `intake` (`job` null for Phase 0), `questions`, `amendments`, `packReviewNotes`,
+  `debt{banked, dispositioned}`, `questions`, `amendments`, `packReviewNotes`,
   `census{held, obligationRules, outOfSlice, untestable, prodOnly}` (`% held` = held / obligationRules), `timings`
   (the attempts completed since the last ack), `pr` (`pr{number, url, state, base, needsRebase}`, `none` or
   `unavailable{reason}`); corpus arcs also `admits` (classified since the last ack), `opportunities` and the
@@ -448,10 +446,9 @@ item and an unapplied answer are printed again. A seq past the log's end is refu
 | `walk-tools-missing{milestone, problem}` | `program{step, argv0}`: a bring-up command's program is not installed (`step` `setup[i]`, `serve.<name>`, `seed[i]`); `mcp-unconfigured`: a `browser` journey and no `walkthrough.mcp`; `mcp-unconnected{server, detail}`: the server did not start or connect | install it in the project's devcontainer; configure and commit `walkthrough.mcp` (SKILL.md "Bootstrap", walk tools) |
 | `vision-unconfirmed{ref, expected, actual}` | `.roadmap/vision.json` unconfirmed, or its `corpus:` hash differs from the pinned vision document (`actual` null: no such pinned file) | run the `vision` skill; commit; re-pin |
 | `corpus-invalid{problems}` | `pin-drift`, `rule-reused{id}`, `rule-retired-reappears{id}`, `rules-in-vision`, `guide-missing`, `source-unreadable{detail}`, `source-remote-mismatch`, `scope-overlaps-corpus{unit}`, `contract-overlaps-corpus{path}` | re-pin after any corpus change; a new meaning takes a new id; no rules block in the vision document; scopes and contracts stay off corpus files |
-| `phase0-invalid{problems}` | `census-incomplete{rules}`, `census-dangling{rules}`, `obligation-rule-unresolved{obligation}`, `debt-undispositioned{id}`, `debt-kept-twice-unasked{id}`, `amendment-undispositioned{id}`, `intake-missing{issue}`, `intake-unknown{issue}`, `intake-duplicate{issue}`, `capture-missing`, `capture-foreign{expected, actual}`, `question-reused{id}`, `answer-unapplied{question}` (a fresh start: a recorded owner answer the record does not mark
-`answered` with its text), `spec-census-mismatch{unit, item, rule, state}` (a spec declares an obligation whose rule's census is not that obligation, or an acceptance clause or witness item names an `out-of-slice` rule; checked on every revision, so `apply` refuses it too) | complete the Phase-0 record or obligations (an answer: `answered{answer, at}` with its text, rules to match); re-capture issues for this repo; align the spec with the census |
+| `phase0-invalid{problems}` | `census-incomplete{rules}`, `census-dangling{rules}`, `obligation-rule-unresolved{obligation}`, `debt-undispositioned{id}`, `debt-kept-twice-unasked{id}`, `amendment-undispositioned{id}`, `question-reused{id}`, `answer-unapplied{question}` (a fresh start: a recorded owner answer the record does not mark
+`answered` with its text), `spec-census-mismatch{unit, item, rule, state}` (a spec declares an obligation whose rule's census is not that obligation, or an acceptance clause or witness item names an `out-of-slice` rule; checked on every revision, so `apply` refuses it too) | complete the Phase-0 record or obligations (an answer: `answered{answer, at}` with its text, rules to match); align the spec with the census |
 | `chain-invalid{problem}` | `limit{k, unacked}`, `baseline{previous-head-mismatch \| merge-commit \| parent-mismatch \| paths{paths}}`, `previous-incomplete{arc}`, `k-unset` | `limit`: stop (`k-limit`); `baseline`: one non-merge commit on the previous completed head, touching only `.roadmap/` inputs and corpus paths; `k-unset`: bootstrap K. `chain status` `nextStart` answers `limit`, `k-unset` and `previous-incomplete` before you compose the plan |
-| `issue-policy-untrusted{visibility, policy}` | anyone can open issues | the owner restricts issue creation to collaborators or disables issues |
 | `tree-uncommitted{paths}` | `.roadmap/{vision.json, corpus.md, config.json}` differ from `HEAD` | commit them |
 | `arc-superseded{by}` | a start of an arc with a plan in force (a reopen) after arc `by` started on its head | put the fixes in arc `by` as priority units; at its completion, `pr --supersede-previous` for arc `by` |
 | `vision-leak{inForce, committed, draft}` (`apply` only) | the vision file differs from the vision in force and the apply declares no vision edit | move the draft to `draft` (`<inputs>/_next/vision.md`) and restore `.roadmap/vision.json` and the vision document to the vision in force (commit, re-pin); `--vision-edit` only for a vision change the owner ordered for this arc |
@@ -523,9 +520,8 @@ Blocking unless noted. Read the item file before acting.
 - Holistic, blocking: `obligation-baseline` (a must-hold obligation not held at the baseline: fix the obligation
   or the plan), `finding-p1-escalated`, `new-finding-draining`, `not-reproduced`, `owner-request` (an owner-only act:
   ask the owner).
-- Corpus arcs, blocking: `pack-review` (fix the pack with `apply`, or ack), `issue-policy-untrusted` (raised at a
-  checkpoint capture: admission and the checkpoint wait; the owner fixes the policy, then ack; the next capture
-  checks again).
+- Corpus arcs, blocking: `pack-review` (fix the pack with `apply`, or ack). An open `issue-policy-untrusted` item an
+  executor before 1.0.0-dev.21 raised holds nothing: ack it.
 
 ## Schemas
 
@@ -539,7 +535,7 @@ Blocking unless noted. Read the item file before acting.
 - "M3: the holistic layer": `holistic`, obligations, witnesses, the vision record, ruling sidecars, lenses, the
   checkpoint.
 - "M4a: corpus, debt, forge, brief, chaining": the corpus guide, the pin, rules registry, obligations with census,
-  the Phase-0 record, the issue capture, debt, the brief and the ack log.
+  the Phase-0 record, debt, the brief and the ack log.
 - "M4a rev 3: the run-10 batch": `knownDefects`, `priority`, `planCheck` (removed in dev.17), spec `witnesses` and lane `inputs`, arc
   lane `testPaths`, admit classes and conversions, the witness lane file.
 - "Plan defects (2026-10-16)": witness `files`, required `testPaths`, the `plan-defect` row (2026-10-21: milestone references over the budget) and park, plan `derived`

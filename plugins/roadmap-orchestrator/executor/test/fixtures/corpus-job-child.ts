@@ -1,4 +1,4 @@
-// Crash child of the M4a job rows (test/intake.test.ts: ISSUE_CAPTURE, CORPUS_AMENDMENT/ISSUE_INTAKE; test/packreview.test.ts:
+// Crash child of the M4a job rows (test/amendments.test.ts: CORPUS_AMENDMENT; test/packreview.test.ts:
 // PACK_REVIEW_JOB; test/closeout.test.ts: CLOSE_OUT_SETTLEMENT): argv <ArcDescriptor json> <checkpoint | packreview |
 // closeout>. Reopens the corpus arc and runs its checkpoint, its pack review or its close-out settlement once (the fake gh
 // comes first on PATH from the parent's env); the crash trigger in ROADMAP_TEST_CRASH kills it at the row's label.

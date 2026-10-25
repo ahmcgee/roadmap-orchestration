@@ -53,7 +53,7 @@ export const BRANCHES = [
 ] as const;
 export type Branch = (typeof BRANCHES)[number];
 
-export const CANNOT_SHOW = ['issue mode', 'real cgroup containment', 'crash boundaries under real models', 'week-long reliability'] as const;
+export const CANNOT_SHOW = ['real cgroup containment', 'crash boundaries under real models', 'week-long reliability'] as const;
 
 type Run = Readonly<{
   repo: AbsPath;

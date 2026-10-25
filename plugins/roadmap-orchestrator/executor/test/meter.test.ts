@@ -211,7 +211,7 @@ describe('meter', () => {
       ({ ...unitSeatRef(role, tier), routingRev: rev, calls: 1, input, output: 1, cacheRead: 0, cacheWrite: 0, turns: 1, costUsd: 0.5, unavailable: 0 });
     const seats = [t('build', 'med', claudeOnly.rev, 10), t('build', 'med', def.rev, 5), t('build', 'high', def.rev, 7), t('gate', 'high', def.rev, 2), t('gate', 'escalation', def.rev, 3)];
     assert.deepEqual(byModel(seats, tables), [
-      // gate.high (frontier) and gate.escalation (summit): Opus 5.5 at medium and xhigh (OR-Q17); build.high is efficient
+      // gate.high (frontier) and gate.escalation (summit): Opus 5.5 at medium and high (OR-Q17); build.high is efficient
       // (Luna under default) since dev.17.
       { model: 'claude-opus-5-5', calls: 2, input: 5, output: 2, cacheRead: 0, cacheWrite: 0, turns: 2, costUsd: 1, unavailable: 0 },
       { model: 'claude-sonnet-5-5', calls: 1, input: 10, output: 1, cacheRead: 0, cacheWrite: 0, turns: 1, costUsd: 0.5, unavailable: 0 },

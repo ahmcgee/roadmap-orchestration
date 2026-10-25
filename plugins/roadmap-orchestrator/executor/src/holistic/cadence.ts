@@ -6,8 +6,9 @@
 // completed audit follows it):
 //   cadence       N qualifying publications (D3: `holistic.audit.every`, default 5): unit and batch publications, and a
 //                 revision's docs publication that carries contract ops (a rule's); a docs-only one is not counted
-//   unwitnessed   R8: a unit or batch publication that selected a future (not latched) or exempt obligation left
-//                 unwitnessed on its tree (no observation there, or verdict `unwitnessed`)
+//   unwitnessed   R8: a unit or batch publication that selected an active future (not latched) obligation left
+//                 unwitnessed on its tree (no observation there, or verdict `unwitnessed`). An exempt one (waived,
+//                 deferred, retired: a ruling released it) is owed no witness and triggers nothing (field fix, 2026-10-24)
 //   drift         a revision from a bundle, a rule (its ledger or sidecars changed), `reverse`, or an architect spec,
 //                 obligation, mapping or vision edit (R15: a vision revision, and the arc turning holistic): runs
 //                 L ∩ {drift, vision}, or all of L when that is empty. Change-sensitive (M4a rev 3, H2, R61): a bundle
@@ -16,7 +17,7 @@
 //                 lenses when L has no vision lens), its lens reading those units' specs (`specsOnlyOf`); the code
 //                 lenses keep their watermarks
 //   wall-clock    `wallClockMin` (default 360) since the latest audit started or unit published, while work remains
-//                 (a plan unit not retired, cut or superseded)
+//                 (a plan unit not retired, cut or superseded), and a publication occurred since the latest audit started
 //   requested     `audit [--lens]` (`audit-requested`): its lenses ∩ L, or L
 //   final         H9: no work remains and some lens in L has an outstanding range (one an abandoned audit covered
 //                 in part included: its rest is outstanding): those lenses only
@@ -25,20 +26,31 @@
 // Due: one audit at a time, and some trigger is fresh: its event came after the latest audit started, the wall-clock
 // trigger fired, or `final` holds after a completed audit (or before any). So an audit abandoned mid-run (a lens failed,
 // its backend parked) is not retried at once for the same triggers: they stay owed until something new happens or the
-// period (`wallClockMin`) has passed since it started. A skipped audit (its lens backend parked, the arc paused:
+// period (`wallClockMin`) has passed since it started. After trigger/lens selection, an ordinary audit needs an
+// outstanding range in a selected lens; requested and semantic drift audits may inspect an unchanged head. Final
+// audits select only outstanding lenses. This calculation serves both pending and fenced capture, so an empty
+// ordinary audit writes nothing and does not spin the scheduler. A skipped audit (its lens backend parked, the arc paused:
 // `skipReason`) writes nothing.
+//
+// Drift is throttled (field fix 2026-10-24, `DRIFT_THROTTLE_MIN`): within that period of the latest audit's start a drift
+// trigger is owed but not fresh, so a burst of revisions (owner re-entries, cuts, rules) runs one audit per period, not
+// one each. Every drift since the last completed audit's start stays owed, so the next audit records them all; any other
+// fresh trigger runs it at once. A bundle's drift is never held (it opens the checkpoint's next generation right after
+// the audit that led to it, one bundle per checkpoint), nor is any once no work remains (nothing is left to burst, and
+// completion waits on it).
 //
 // Owed (OR-Q2/3): triggers owed for 2N qualifying publications, or for 2 × `wallClockMin` since the last completed
 // audit started (or the base), raise one non-blocking `audit-owed` per episode (audit.ts `raiseAuditOwed`).
 //
 // Generation (§2.8): an audit a bundle's revision triggered is its checkpoint's generation + 1; any other is one more
-// than the highest generation any audit or checkpoint recorded.
+// than the highest generation any audit or checkpoint recorded. A milestone steering checkpoint takes the latest
+// recorded generation (minimum 1), like a walk or park; an audit checkpoint keeps its audit's generation.
 //
 // Time: `Clock(seq)` is the minutes since the fact at `seq` was written. `processClock` is the executor's: it times a
 // fact from when this process first saw it (a fact older than the process from the process's start), so a restart
 // delays a wall-clock trigger, never fires one early.
 import type { AuditTrigger } from './types.ts';
-import { type LensKind, isExempt, isMustHold, LENS_KINDS } from './types.ts';
+import { type LensKind, isMustHold, LENS_KINDS } from './types.ts';
 import type { Parent, PlanChange } from '../core/events.ts';
 import { type ObligationId, type Sha, type UnitId, compareIds } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
@@ -52,6 +64,12 @@ import { selected } from '../pipeline/gate.ts';
 import { observedViews } from '../pipeline/lanes.ts';
 import { holisticInForce } from '../pipeline/stages.ts';
 import { type AppliedRevision, type CoverageBase, type PublishedHead, appliedRevisions, coverageBase, coverageOf, publishedHeads, revisionPublication } from './coverage.ts';
+
+/**
+ * Minutes after the latest audit's start during which a non-bundle revision's drift makes no audit due (see the header).
+ * Field fix 2026-10-24: seven revisions in one stretch each ran a drift audit, five finding nothing.
+ */
+export const DRIFT_THROTTLE_MIN = 60;
 
 /** Minutes since the fact at `seq` was written. */
 export type Clock = (seq: number) => number;
@@ -88,7 +106,8 @@ export type Cadence = Readonly<{
   episode: Parent;
 }>;
 
-type Event<T> = Readonly<{ seq: number; trigger: T }>;
+/** `held`: a drift event inside the throttle period (DRIFT_THROTTLE_MIN): owed, but not fresh. */
+type Event<T> = Readonly<{ seq: number; trigger: T; held?: true }>;
 
 /** The integration head now. */
 export const integrationHeadNow = (ctx: Pick<StageContext, 'repo' | 'plan'>): Sha => revParse(ctx.repo, branchRef(ctx.plan().integrationBranch));
@@ -169,7 +188,7 @@ export function specsOnlyOf(triggers: readonly AuditTrigger[]): readonly UnitId[
 // R8 is a git diff and a spec read per publication: read each once per process.
 const unwitnessedMemo = new Map<string, readonly ObligationId[]>();
 
-/** R8: the future (not latched) or exempt obligations a unit or batch publication selected and left unwitnessed on its tree. */
+/** R8: the active future (not latched) obligations a unit or batch publication selected and left unwitnessed on its tree. */
 function unwitnessedBy(ctx: StageContext, h: PublishedHead): readonly ObligationId[] {
   const key = `${ctx.runDir}\0${h.op}`;
   const memo = unwitnessedMemo.get(key);
@@ -189,8 +208,16 @@ function unwitnessedBy(ctx: StageContext, h: PublishedHead): readonly Obligation
       const unit = ctx.plan().units.find((u) => u.id === id);
       if (unit === undefined) throw new Error(`publication ${h.op} names unit ${id}, which the plan in force does not have`);
       for (const o of selected(ctx, unit, h.old, h.head)) {
-        if (o.state.type === 'split' || o.witness === null) continue;
-        if (isExempt(o) || !isMustHold(o, latched)) picked.set(o.id, o);
+        switch (o.state.type) {
+          case 'active':
+            if (o.witness !== null && !isMustHold(o, latched)) picked.set(o.id, o);
+            break;
+          // A split one is witnessed through its children; an exempt one was released by a ruling.
+          case 'split': case 'waived': case 'deferred': case 'retired':
+            break;
+          default:
+            throw new Error(`obligation ${o.id} is in state ${JSON.stringify(o.state satisfies never)}`);
+        }
       }
     }
     out = observedViews(ctx, obligations, [...picked.values()], h.head)
@@ -250,20 +277,24 @@ export function cadence(ctx: StageContext, clock: Clock): Cadence | null {
       events.push({ seq: h.seq, trigger: { type: 'unwitnessed', obligation } });
     }
   }
+  const remains = workRemains(ctx);
+  const throttled = remains && latest !== null && clock(latest.started.seq) < DRIFT_THROTTLE_MIN;
   revisions.forEach((r, i) => {
     if (r.seq < since) return;
     const drift = driftOf(r, i === 0 ? null : revisions[i - 1]!);
-    if (drift.kind === 'full') events.push({ seq: r.seq, trigger: { type: 'drift', planRev: r.payload.rev } });
-    if (drift.kind === 'specs-only') events.push({ seq: r.seq, trigger: { type: 'drift', planRev: r.payload.rev, specsOnly: drift.units } });
+    if (drift.kind === 'none') return;
+    const held = throttled && r.payload.source.type !== 'bundle' ? { held: true as const } : {};
+    const trigger: AuditTrigger = drift.kind === 'full' ? { type: 'drift', planRev: r.payload.rev } : { type: 'drift', planRev: r.payload.rev, specsOnly: drift.units };
+    events.push({ seq: r.seq, trigger, ...held });
   });
   const requested = fold.auditRequests.filter((q) => q.seq > since);
   for (const q of requested) events.push({ seq: q.seq, trigger: { type: 'requested', command: q.command } });
 
-  const remains = workRemains(ctx);
   const outstanding = coverageOf(fold, base, L, head).filter((c) => c.outstanding).map((c) => c.lens);
   const anchor = Math.max(latest?.started.seq ?? 0, heads.filter((h) => h.subject !== 'docs').at(-1)?.seq ?? 0, base.seq);
   const elapsed = clock(anchor) >= wallClockMin;
-  const wallClock = elapsed && remains;
+  const publishedSince = heads.some((h) => h.seq > (latest?.started.seq ?? base.seq));
+  const wallClock = elapsed && remains && publishedSince;
   const final = !remains && outstanding.length > 0;
   const finalFresh = final && (latest === null || latest.ended?.outcome === 'completed');
   // Owed triggers an abandoned audit left are asked again once the period has passed (with no work left, no wall-clock
@@ -279,7 +310,7 @@ export function cadence(ctx: StageContext, clock: Clock): Cadence | null {
     ...(final ? [{ type: 'final' } as const] : []),
   ];
   const running = latest !== null && latest.ended === null;
-  const due = !running && (events.some((e) => fresh(e.seq)) || wallClock || finalFresh || retry);
+  const freshTrigger = !running && (events.some((e) => e.held === undefined && fresh(e.seq)) || wallClock || finalFresh || retry);
 
   const lenses = new Set<LensKind>();
   for (const t of owed) {
@@ -308,6 +339,9 @@ export function cadence(ctx: StageContext, clock: Clock): Cadence | null {
   }
   const sorted = LENS_KINDS.filter((l) => lenses.has(l)).sort();
   if (owed.length > 0 && sorted.length === 0) throw new Error(`the owed triggers ${JSON.stringify(owed)} call for no lens of L = ${L.join(', ')} (the audit command refuses a lens outside L)`);
+  // A semantic drift or explicit request can inspect unchanged code. Ordinary triggers need a selected lens's range.
+  const inspectUnchanged = owed.some((t) => t.type === 'requested' || t.type === 'drift');
+  const due = freshTrigger && (inspectUnchanged || sorted.some((l) => outstanding.includes(l)));
   const plan = due && owed.length > 0 ? { triggers: owed, lenses: sorted, generation: generationOf(ctx, revisions, owed) } : null;
   const owedLong = owed.length > 0 && (pubs.length >= 2 * every || clock(since) >= 2 * wallClockMin);
   const episode: Parent = completed === null ? { type: 'arc' } : { type: 'job', job: completed.started.job };

@@ -2,8 +2,8 @@
 // authoritative records", G6/H6): `roadmap start` runs one unit through plan-check, build, gate, ff and snapshot
 // with fake backends, then the published ref is checked against the log. Named tests: snapshot.closure,
 // snapshot.reconstruct-alone. M4a step C2, over a sealed corpus arc (test/helpers/corpusarc.ts): snapshot.corpus-closure,
-// snapshot.phase0-capture-closure, snapshot.issues-and-packreview-closure, and snapshot.reconstruct-alone extended to the
-// corpus inputs, a checkpoint's issue capture and a pack review's inputs.
+// snapshot.phase0-closure, snapshot.packreview-closure, and snapshot.reconstruct-alone extended to the corpus inputs and a
+// pack review's inputs.
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -13,11 +13,10 @@ import { type Sha, type Sha256Hex, arcId, invocationDirName, invocationId, jobId
 import { canonicalJson, sha256Hex } from '../src/core/json.ts';
 import { materialiseCorpus } from '../src/corpus/materialise.ts';
 import { type CorpusPin, parseCorpusPin } from '../src/corpus/types.ts';
-import { parseIssueCapture } from '../src/forge/types.ts';
 import { PACK_REVIEW_INPUTS_SCHEMA, parsePackReviewInputs } from '../src/holistic/types.ts';
 import { packReviewKey } from '../src/holistic/packreview.ts';
 import {
-  CORPUS_FILE_INPUT, ISSUES_INPUT, PACK_REVIEW_INPUT, keepInput, keptInput, planInForce, revisionInForce,
+  CORPUS_FILE_INPUT, PACK_REVIEW_INPUT, keepInput, keptInput, planInForce, revisionInForce,
 } from '../src/input/inforce.ts';
 import { openJournal, readJournal } from '../src/core/log.ts';
 import { type AbsPath, absPath } from '../src/core/values.ts';
@@ -31,8 +30,7 @@ import { EXEC_TIMEOUT_MS, type ExecRun, SMOKE_DEFAULT, setupExec, startExec } fr
 import { planCheckStep } from './fixtures/stage-common.ts';
 import { gateStep, mulBuild } from './fixtures/unit-common.ts';
 import { assertNoSurvivors } from './helpers/reap.ts';
-import { CAPTURE_FILE, type CorpusArc, PHASE0_FILE, PIN_FILE, corpusArc, newHostDir, runDirOfArc, seal } from './helpers/corpusarc.ts';
-import { DEFAULT_REPO } from './helpers/forge.ts';
+import { type CorpusArc, PHASE0_FILE, PIN_FILE, corpusArc, newHostDir, runDirOfArc, seal } from './helpers/corpusarc.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 
 after(assertNoSurvivors);
@@ -152,24 +150,15 @@ test('snapshot.reconstruct-alone: the run dir deleted and restored from the ref 
 // ---------------------------------------------------------------------------------------------------
 // M4a (C2): a corpus arc's closure
 
-type Sealed = Readonly<{ a: CorpusArc; at: Sha; captureSha: Sha256Hex; packSha: Sha256Hex; pinSha: Sha256Hex }>;
+type Sealed = Readonly<{ a: CorpusArc; at: Sha; packSha: Sha256Hex; pinSha: Sha256Hex }>;
 
-/**
- * A corpus arc in force, completed and sealed by its terminal snapshot, after a checkpoint's issue capture (`issues-captured`,
- * its bytes kept as `inputs/<sha>.issues.json`) and a pack review's kept inputs (`pack-review-started`).
- */
+/** A corpus arc in force, completed and sealed by its terminal snapshot, after a pack review's kept inputs (`pack-review-started`). */
 async function sealedCorpusArc(): Promise<Sealed> {
   const a = await corpusArc();
   const runDir = runDirOfArc(a);
-  let captureSha: Sha256Hex | null = null;
   let packSha: Sha256Hex | null = null;
   await seal(a, {
     before: (j) => {
-      // The checkpoint's capture: the Phase-0 one with its issue since closed (other bytes, so its own naming record).
-      const phase0Capture = parseIssueCapture(JSON.parse(readFileSync(join(a.planDir, CAPTURE_FILE), 'utf8')));
-      assert.ok(phase0Capture.issues.length > 0);
-      captureSha = keepInput(runDir, Buffer.from(canonicalJson({ ...phase0Capture, issues: [] }), 'utf8'), ISSUES_INPUT);
-      j.fact({ kind: 'issues-captured', job: jobId('ckpt', 1), sha256: captureSha, repo: DEFAULT_REPO, filtered: { comments: 0, pullRequests: 0 } });
       const inForce = planInForce(runDir, j.view)!;
       const revision = revisionInForce(runDir, inForce);
       const inputs = parsePackReviewInputs({
@@ -183,7 +172,7 @@ async function sealedCorpusArc(): Promise<Sealed> {
     },
   });
   const at = sha(gitRaw(a.repo, ['rev-parse', snapshotRef(a.arc)]).trim());
-  return { a, at, captureSha: captureSha!, packSha: packSha!, pinSha: sha256(sha256Hex(readFileSync(join(a.planDir, PIN_FILE)))) };
+  return { a, at, packSha: packSha!, pinSha: sha256(sha256Hex(readFileSync(join(a.planDir, PIN_FILE)))) };
 }
 
 /** The verified manifest of `s`'s ref, by path. */
@@ -228,31 +217,28 @@ test('snapshot.corpus-closure: the ref carries the guide, the pin and every pinn
   if (tampered.kind === 'mismatch') assert.match(tampered.detail, new RegExp(`^${dropped.replace(/[.]/g, '\\.')}, which inputs/`));
 });
 
-test('snapshot.phase0-capture-closure: the ref carries the Phase-0 record and the issue capture it names, as the plan dir holds them', T, async () => {
+test('snapshot.phase0-closure: the ref carries the Phase-0 record, as the plan dir holds it', T, async () => {
   const s = await sealedCorpusArc();
   const listed = listedOf(s);
-  for (const [file, ext] of [[PHASE0_FILE, 'phase0.json'], [CAPTURE_FILE, 'issues.json']] as const) {
-    const bytes = readFileSync(join(s.a.planDir, file));
-    const path = `inputs/${sha256Hex(bytes)}.${ext}`;
-    assert.ok(listed.get(path)?.namedBy.type === 'item', `${file} is named by its revision payload`);
-    assert.equal(gitRun(s.a.repo, ['cat-file', 'blob', `${s.at}:${path}`]).stdout, bytes.toString('utf8'));
-  }
-  const tampered = verifySnapshot(s.a.repo, withoutFile(s.a.repo, s.at, `inputs/${sha256Hex(readFileSync(join(s.a.planDir, CAPTURE_FILE)))}.issues.json`));
+  const bytes = readFileSync(join(s.a.planDir, PHASE0_FILE));
+  const path = `inputs/${sha256Hex(bytes)}.phase0.json`;
+  assert.ok(listed.get(path)?.namedBy.type === 'item', `${PHASE0_FILE} is named by its revision payload`);
+  assert.equal(gitRun(s.a.repo, ['cat-file', 'blob', `${s.at}:${path}`]).stdout, bytes.toString('utf8'));
+  const tampered = verifySnapshot(s.a.repo, withoutFile(s.a.repo, s.at, path));
   assert.equal(tampered.kind, 'mismatch');
 });
 
-test('snapshot.issues-and-packreview-closure: a checkpoint\'s kept capture and a pack review\'s kept inputs are named by their facts', T, async () => {
+test('snapshot.packreview-closure: a pack review\'s kept inputs are named by their fact', T, async () => {
   const s = await sealedCorpusArc();
   const listed = listedOf(s);
   const events = readJournal(runDirOfArc(s.a), s.a.arc).events;
   const seqOf = (kind: string): number => events.find((e) => e.type === 'fact' && e.fact.kind === kind)!.seq;
-  assert.deepEqual(listed.get(`inputs/${s.captureSha}.issues.json`)?.namedBy, { type: 'event', seq: seqOf('issues-captured') });
   assert.deepEqual(listed.get(`inputs/${s.packSha}.pack-review.json`)?.namedBy, { type: 'event', seq: seqOf('pack-review-started') });
   const tampered = verifySnapshot(s.a.repo, withoutFile(s.a.repo, s.at, `inputs/${s.packSha}.pack-review.json`));
   assert.equal(tampered.kind, 'mismatch');
 });
 
-test('snapshot.reconstruct-alone (corpus): the run dir deleted and restored from the ref alone holds the corpus inputs in force, the pinned files, the captures and the pack-review inputs; status is unchanged', T, async () => {
+test('snapshot.reconstruct-alone (corpus): the run dir deleted and restored from the ref alone holds the corpus inputs in force, the pinned files and the pack-review inputs; status is unchanged', T, async () => {
   const s = await sealedCorpusArc();
   const runDir = runDirOfArc(s.a);
   const hostDir = newHostDir();
@@ -269,11 +255,9 @@ test('snapshot.reconstruct-alone (corpus): the run dir deleted and restored from
     assert.ok(corpus !== null, 'the corpus inputs in force read back');
     assert.equal(corpus.pin.sha256, s.pinSha);
     assert.equal(corpus.guide.bytes.toString('utf8'), readFileSync(join(s.a.repo, '.roadmap/corpus.md'), 'utf8'));
-    assert.equal(corpus.capture.bytes.toString('utf8'), readFileSync(join(s.a.planDir, CAPTURE_FILE), 'utf8'));
     for (const f of corpus.pin.value.files) assert.ok(keptInput(runDir, f.sha256, CORPUS_FILE_INPUT) !== null, `${f.path} restored`);
     const dir = materialiseCorpus(runDir, corpus.pin.value, corpus.pin.sha256, 'without-vision', (f) => keptInput(runDir, f.sha256, CORPUS_FILE_INPUT)!);
     assert.ok(existsSync(join(dir, corpus.pin.value.rules[0]!.file)), 'the gate\'s view materialises from the restored bytes');
-    assert.ok(keptInput(runDir, s.captureSha, ISSUES_INPUT) !== null, 'the checkpoint\'s capture restored');
     const pack = keptInput(runDir, s.packSha, PACK_REVIEW_INPUT);
     assert.ok(pack !== null, 'the pack review\'s inputs restored');
     assert.equal(parsePackReviewInputs(JSON.parse(pack.toString('utf8'))).corpusPinSha256, s.pinSha);

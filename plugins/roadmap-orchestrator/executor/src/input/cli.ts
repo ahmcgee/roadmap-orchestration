@@ -72,7 +72,7 @@ export type Command =
   | Readonly<{ command: 'close-admissions'; run: RunLocator }>
   /** M3 (A20, H5): prunes sealed arcs of `repo` and the host dir, keeping the last `keep` (null: the default). A CLI action, not a command. */
   | Readonly<{ command: 'gc'; repo: string; keep: number | null; dryRun: boolean }>
-  // M4a host acts (not queued; no host lock): src/commands/{phase0,corpus,brief,pr,issues,chain}.ts.
+  // M4a host acts (not queued; no host lock): src/commands/{phase0,corpus,brief,pr,chain}.ts.
   /** `phase0 check`: the shared Phase-0 rows, read-only, over a plan file or (K20) the digests an arc's ref recorded. */
   | Readonly<{ command: 'phase0-check'; repo: string; source: Phase0Source }>
   /** `corpus pin`: derive the corpus pin from the guide at `baseline` (the plan's, LR-A1-1) and its source at `commit`, and write it to `out`. */
@@ -81,8 +81,6 @@ export type Command =
   | Readonly<{ command: 'brief'; repo: string; json: boolean; ack: BriefId | null }>
   /** `pr`: open or update the arc's stacked pull request; `supersedePrevious` (`--supersede-previous`): it supersedes the previous arc's open PR. */
   | Readonly<{ command: 'pr'; repo: string; arc: ArcId; supersedePrevious: boolean }>
-  /** `issues`: the canonical issue capture, to stdout or (`out`) a file by atomic rename. */
-  | Readonly<{ command: 'issues'; repo: string; out: string | null }>
   /** `chain status`: the chain derived from refs, the ack log and K. */
   | Readonly<{ command: 'chain-status'; repo: string }>
   /**
@@ -372,11 +370,6 @@ export function parseCommand(argv: readonly string[]): Command {
         command, repo: required(p, command, 'repo', '<path>'), arc: arg(command, '--arc', arcId, required(p, command, 'arc', '<arc>')), supersedePrevious: p.flags.has('supersede-previous'),
       };
     }
-    case 'issues': {
-      const p = parseRest(rest, { repo: 'value', out: 'value' }, command);
-      positionals(p, command, 0);
-      return { command, repo: required(p, command, 'repo', '<path>'), out: value(p, 'out') ?? null };
-    }
     case 'chain': {
       const [sub, ...args] = rest;
       if (sub !== 'status') throw new CliError(`chain: expected the subcommand status, got ${JSON.stringify(sub ?? '')}`);
@@ -461,7 +454,7 @@ export function parseCommand(argv: readonly string[]): Command {
     }
     default:
       throw new CliError(
-        `unknown command ${JSON.stringify(command ?? '')}; expected one of --version, start, status, watch, stop, pause, ack, resume, sweep, apply, resolve-edge, run-only, rule, reverse, steer, merge-in, audit, close-admissions, gc, phase0 check, corpus pin, brief, pr, issues, chain status, answer, witness-check, resume-arc, inputs export, flow accept, flow reject, flow request, flow given, scope accept, scope reject, demo up, demo down, demo hold, demo release`,
+        `unknown command ${JSON.stringify(command ?? '')}; expected one of --version, start, status, watch, stop, pause, ack, resume, sweep, apply, resolve-edge, run-only, rule, reverse, steer, merge-in, audit, close-admissions, gc, phase0 check, corpus pin, brief, pr, chain status, answer, witness-check, resume-arc, inputs export, flow accept, flow reject, flow request, flow given, scope accept, scope reject, demo up, demo down, demo hold, demo release`,
       );
   }
 }

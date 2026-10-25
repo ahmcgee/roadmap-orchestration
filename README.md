@@ -57,8 +57,7 @@ judgment is needed. Builds run on an efficient model (Sonnet 5.5 under the `clau
 advisor; Opus judges plan-check and the gate at every risk tier.
 
 **1. Bootstrap, once per repo.** You write the target state: detailed documents of what the product must become,
-the corpus. Then you run `/roadmap-orchestrator:orchestrate`. The architect checks the repo's issue policy and
-writes the corpus guide, then runs the `vision` skill: it distils your vision in dialogue, one question at a time,
+the corpus. Then you run `/roadmap-orchestrator:orchestrate`. The architect writes the corpus guide, then runs the `vision` skill: it distils your vision in dialogue, one question at a time,
 and plays back the decisions it would make on your behalf. You confirm it explicitly, set K (how many arcs may run
 past your last acknowledged check-in) and pick the first slice of the vision to build. The architect compiles
 `.roadmap/vision.json` and commits `.roadmap/`. It offers a boot hook that brings a dead arc back after a host
@@ -109,10 +108,13 @@ candidate merge.
   fast-forwards the arc branch.
 
 A red lane, a gate revise or a red candidate sends the unit back to its build for a charged fix round. A gate
-revises at most twice before the unit goes to the escalation seat, the summit class (Opus at xhigh effort). A red candidate
+revises at most twice before the unit goes to the escalation seat, the summit class (Opus at high effort). A red candidate
 retries once, and the third charged failure parks the unit. A lane that goes red then green on a rerun of the same
-tree is a flake: it is forgiven, recorded in the flaky ledger, and code mints a deflake unit to fix the test. Its
-scope is the systems the lane declares, else the systems holding the flaky test's file, with what they depend on.
+tree is a flake, recorded in the flaky ledger. On a unit's own commit (its lanes, witness check or scaffold dry run),
+it is the unit's red: a charged fix round tells the builder the lane is flaky, forgiven only if it is already a standing
+tip flake. Only flakes seen on the integration tip are forgiven and mint deflake units to fix the test (a deflake
+unit's own flake still counts as red). A deflake's scope is the systems the lane declares, else the systems holding
+the flaky test's file, with what they depend on.
 No unit may write the corpus, so when neither maps and the fallback would reach it, no unit is minted and you get
 a `deflake-unscoped` item asking for the lane's systems or a systems map.
 When a requirement or contract changes mid-arc, code mints a propagation unit that re-witnesses the merged code
@@ -126,8 +128,9 @@ with a shell, and a browser for web journeys) uses it along each journey as its 
 that would force rework of what is built on top if fixed later is a break: the journey cannot be completed, an
 interface contract is wrong, or a declared floor is violated. A break holds the milestone's dependents until the
 checkpoint repairs it and a re-walk passes, for at most three rounds by default. Everything else (copy, visuals
-within the design tokens, docs and log text) is a deviation, repaired alongside without holding anything. Polish the
-walker proposes becomes units that code admits, and a polish judge keeps each one only if a walk of before and after
+within the design tokens, docs and log text) is a deviation, repaired alongside without holding dependents. Any
+unweighed walk finding gets an immediate checkpoint and holds the walk round open for repair and re-walk,
+bounded by `walkRounds`; every walk follows merged code. Polish the walker proposes becomes units that code admits, and a polish judge keeps each one only if a walk of before and after
 shows it better. Each settled milestone promotes the demo automatically: the supervisor brings the new version up
 on stable ports beside the old one and switches over once it is ready. `roadmap status` gives the address, and
 `roadmap demo hold|release|down|up` are your controls.
@@ -143,13 +146,22 @@ the edit. To edit something the executor changed (a spec it patched, a unit it m
 With the executor down, `roadmap start --base` takes the same base. You can answer an open question at any time with `roadmap answer <P-n> --text "…"`, and it applies at
 once.
 
-**The checkpoint steers toward the vision.** Lens audits run every five publications, on a wall-clock timer, after a
-plan change, when a publication leaves an obligation unwitnessed, and once more when no work remains: four model
-lenses look for broken invariants, drift from the target, vacuous tests and anything that fails the vision. The
-checkpoint rules on a park that is a design problem, after a milestone walk whose findings it has not weighed, and
-after an audit that found something new; an audit that found nothing skips it. It may admit a unit (a repair, an
-oversight within the slice, or one opportunity per arc that advances a clause outside it), respec, re-enter or cut
-a unit, or amend an obligation, each act citing the vision clauses it serves. Code validates the bundle and applies
+**The checkpoint steers toward the vision.** Lens audits run every five publications, on a wall-clock timer after a
+new publication, after a semantic plan change, when a publication leaves an obligation unwitnessed, and once more when
+no work remains. Ordinary audits need an outstanding range in a selected lens; an explicit request or semantic drift
+can audit an unchanged head, and final audits cover only outstanding lenses. Four model lenses look for broken
+invariants, drift from the target, vacuous tests and anything that fails the vision. A lost lens call gets at most two
+reissues across restarts, then its audit is abandoned.
+
+With milestones, the steering checkpoint runs every two retired milestones by default
+(`holistic.checkpoint.everyMilestones`), after the boundary milestone's walk ends, weighing the accumulated audit and
+walk findings. Any unweighed walk finding, at any severity, gets an immediate checkpoint, which also weighs all
+active audit findings. Walk checkpoints do not count toward or reset the milestone interval. A design park, a new
+unweighed audit P1 and the final audit at close-out also get immediate checkpoints. Without milestones, audits keep
+triggering checkpoints when they find something new. Every non-park trigger skips the call when a decided checkpoint
+already captured the same head, plan revision, vision and active finding set, so a milestone boundary does not repeat an unchanged walk capture. Status shows the milestones remaining
+to the next steering checkpoint. It may admit a unit (a repair, an oversight within the slice, or one opportunity per
+arc that advances a clause outside it), respec, re-enter or cut a unit, or amend an obligation, each act citing the vision clauses it serves. Code validates the bundle and applies
 it, so its acts go straight back into the run without waiting for anyone. Every departure from the target is
 recorded as a divergence, which the architect reviews and can `reverse`. An act only you may approve becomes an
 `owner-request`; you are always asked first about anything irreversible, anything costing over $10, or anything with
@@ -207,7 +219,7 @@ failures or review comments on a PR become fix units in the arc, never hand edit
 plugins/roadmap-orchestrator/
   .claude-plugin/plugin.json
   executor/                         # the 1.0 executor (TypeScript on Node 24)
-  skills/orchestrate/               # SKILL.md, reference.md (every command), RATIONALE-1.0.md, templates/
+  skills/orchestrate/               # SKILL.md, reference.md (every command), RATIONALE-1.0.md
   skills/vision/                    # SKILL.md: distil and calibrate the arc's vision in dialogue
 docs/flow.svg                       # how an arc runs: simplified overview
 docs/flow-bpmn.svg                  # how an arc runs: the detailed process in BPMN

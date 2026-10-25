@@ -34,7 +34,7 @@ The message holds the whole pack, read-only:
 - <specs>: every unit's spec. Every acceptance clause binds.
 - <obligations>: the obligations file: each obligation anchored at a corpus rule (T-n), its witness lane and tests, its activation and the units that deliver it; the cut line; and the census, one state per active rule (obligation, out-of-slice, untestable, prod-only).
 - <rules_index>: every active corpus rule, by file and section. The corpus is the arc's target.
-- <phase0>: the Phase-0 record: curation, corpus divergences, ranked questions with working assumptions, debt and amendment dispositions, issue intake and the slice.
+- <phase0>: the Phase-0 record: curation, corpus divergences, ranked questions with working assumptions, debt and amendment dispositions, and the slice.
 - <delta>, on a re-review only: the review this one follows (since), what changed in the pack since it (<changed>: the plan, a spec by unit, the obligations, the corpus pin, the Phase-0 record, the vision, the head or the routing), and every earlier finding still unresolved (<previous_findings>, each named job#index). On a re-review <specs> holds only the changed specs; the rest of the pack is given whole as the frame.
 Your working directory is the repository at the head the pack was drafted on. Explore as much of the code as you need: read the code the specs and rules describe before judging whether a unit can be built. Batch your reads: one Grep over many paths rather than many single Reads.
 

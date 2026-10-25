@@ -1,23 +1,20 @@
 // A corpus arc over unit-common's repo (M4a step C2): the unit u1 that adds `mul`, driven by the unit driver with fake
 // backends, in an arc whose target is a pinned corpus. The baseline commit adds the sample corpus (test/helpers/
 // corpus.ts) under `docs/corpus` with its guide and `.roadmap/vision.json` (confirmed against the vision doc); the plan
-// dir holds the pin (`roadmap corpus pin` at the baseline), an issue capture of an empty forge, the Phase-0 record and
-// rule-anchored obligations: I-1 at T-1, must-hold, witnessed by a jsonl lane that passes `t1` on every tree, so a
+// dir holds the pin (`roadmap corpus pin` at the baseline), the Phase-0 record and rule-anchored obligations: I-1 at T-1, must-hold, witnessed by a jsonl lane that passes `t1` on every tree, so a
 // candidate is green. Everything a child needs is the `ArcDescriptor`; `contextFor` records revision 1 with the corpus
 // files kept (stage-common `recordFirstPlan`).
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { captureIssues } from '../../src/commands/issues.ts';
 import { corpusPin } from '../../src/commands/corpus.ts';
 import { sha } from '../../src/core/ids.ts';
 import { sha256Hex } from '../../src/core/json.ts';
 import { absPath } from '../../src/core/values.ts';
 import type { CorpusPin } from '../../src/corpus/types.ts';
 import { laneRevOf, parseObligations } from '../../src/holistic/types.ts';
-import { CAPTURE_FILE, PHASE0_FILE, PIN_FILE, VISION_DOC, visionRecord, withForge, writePhase0 } from '../helpers/corpusarc.ts';
+import { PHASE0_FILE, PIN_FILE, VISION_DOC, visionRecord, writePhase0 } from '../helpers/corpusarc.ts';
 import { type CorpusSpec, DEFAULT_CORPUS_ROOT, sampleCorpus } from '../helpers/corpus.ts';
-import { makeForge } from '../helpers/forge.ts';
 import { type FileSet, commitAll, writeFiles } from '../helpers/repo.ts';
 import type { Step } from '../helpers/scenario.ts';
 import { witnessLaneArgv, writeWitnessControl } from '../helpers/witness.ts';
@@ -50,9 +47,6 @@ export async function setupCorpusArc(steps: readonly Step[], opts: CorpusUnitOpt
   const pinned = await corpusPin({ repo: absPath(d.repo), commit: baseline, baseline: sha(baseline), out: absPath(join(planDir, PIN_FILE)) });
   assert.equal(pinned.kind, 'pinned', JSON.stringify(pinned));
   if (pinned.kind !== 'pinned') throw new Error('unreachable');
-  const captured = await withForge(makeForge(), () => captureIssues({ repo: absPath(d.repo), out: absPath(join(planDir, CAPTURE_FILE)) }));
-  assert.equal(captured.kind, 'captured');
-  if (captured.kind !== 'captured') throw new Error('unreachable');
 
   const control = join(planDir, 'witness-control.json');
   writeWitnessControl(control, { trees: { '*': { outcomes: { t1: 'pass' } } } });
@@ -73,7 +67,7 @@ export async function setupCorpusArc(steps: readonly Step[], opts: CorpusUnitOpt
     mapping: { paths: [] },
     census: pinned.pin.rules.map((r) => ({ rule: r.id, state: r.id === 'T-1' ? { type: 'obligation', id: 'I-1' } : { type: 'out-of-slice' } })),
   }));
-  writePhase0(planDir, { issueCapture: { file: CAPTURE_FILE, sha256: captured.sha256 }, intake: [], ...opts.phase0 });
+  writePhase0(planDir, { ...opts.phase0 });
   editPlan(d, (p) => {
     delete p['architectureDoc'];
     p['baseline'] = baseline;

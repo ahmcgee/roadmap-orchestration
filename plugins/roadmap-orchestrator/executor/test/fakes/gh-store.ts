@@ -1,26 +1,9 @@
 // The fake `gh`'s state (M4a step 0b): one JSON file, the whole forge. The fake (fake-gh.ts) reads it on every call and
-// rewrites it by atomic rename on a mutation; tests change it between calls (test/helpers/forge.ts), so a policy flip
-// mid-run is a rewrite of this file. Calls are logged beside it in `gh-calls.jsonl`.
+// rewrites it by atomic rename on a mutation; tests change it between calls (test/helpers/forge.ts). Calls are logged
+// beside it in `gh-calls.jsonl`.
 import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import type { AuthorAssociation, IssuePolicy, RepoIdentity } from '../../src/forge/types.ts';
-
-export type GhUser = Readonly<{ login: string }>;
-
-/** A REST comment of an issue or PR entry. */
-export type GhComment = Readonly<{ id: number; user: GhUser; author_association: AuthorAssociation; body: string }>;
-
-/** An entry of the REST issues endpoint. A pull request is an issue entry carrying `pull_request`, as on GitHub. */
-export type GhIssue = Readonly<{
-  number: number;
-  title: string;
-  body: string | null;
-  state: 'open' | 'closed';
-  labels: readonly Readonly<{ name: string }>[];
-  user: GhUser;
-  author_association: AuthorAssociation;
-  pull_request?: Readonly<{ url: string }>;
-}>;
+import type { RepoIdentity } from '../../src/forge/types.ts';
 
 export type GhPullState = 'OPEN' | 'MERGED' | 'CLOSED';
 /** The fields `gh pr list|view --json` can name. */
@@ -36,29 +19,18 @@ export type GhPull = Readonly<{
   isDraft: boolean;
 }>;
 
-/**
- * What the forge was asked to change: the fixture's injection check reads this (a PR, a label). `call` is the 1-based
- * sequence number of the logged call (`GhCallRecord.seq`).
- */
+/** What the forge was asked to change. `call` is the 1-based sequence number of the logged call (`GhCallRecord.seq`). */
 export type GhMutation =
   | Readonly<{ call: number; kind: 'pr-create'; number: number; base: string; head: string; title: string }>
   | Readonly<{ call: number; kind: 'pr-edit'; number: number; fields: Readonly<Record<string, string>> }>
-  | Readonly<{ call: number; kind: 'pr-close'; number: number; comment: string | null }>
-  | Readonly<{ call: number; kind: 'label-create'; name: string }>
-  | Readonly<{ call: number; kind: 'labels-add' | 'labels-remove'; number: number; labels: readonly string[] }>;
+  | Readonly<{ call: number; kind: 'pr-close'; number: number; comment: string | null }>;
 
 export type GhStore = Readonly<{
   repo: RepoIdentity;
-  policy: IssuePolicy;
   /** A bare repo path: `pr create --head <b>` fails unless it holds `refs/heads/<b>`, as gh does for an unpushed branch. */
   originPath: string | null;
-  /** The shared issue/PR number space; the next number to hand out. */
+  /** The PR number space; the next number to hand out. */
   nextNumber: number;
-  nextCommentId: number;
-  issues: readonly GhIssue[];
-  /** Comments by issue/PR number (string keys: JSON). */
-  comments: Readonly<Record<string, readonly GhComment[]>>;
-  labels: readonly string[];
   pulls: readonly GhPull[];
   mutations: readonly GhMutation[];
 }>;
@@ -72,7 +44,7 @@ export type GhCallRecord = Readonly<{
   owner: string | null;
   name: string | null;
   status: number;
-  /** Set for a call that touched the forge: `repo-view`, `graphql`, `rest`, `pr-list`... */
+  /** Set for a call that touched the forge: `repo-view`, `pr-list`... */
   kind: string;
 }>;
 

@@ -3,7 +3,7 @@
 // admits.ref-exempt-invalid, admits.ref-resolved-invalid, admits.impact-mapped-not-touched,
 // admits.exempt-delivered-not-touched, admits.finding-clauses-are-context, admits.declared-target-out-of-slice,
 // admits.target-unknown-invalid, admits.split-child-out-of-slice-targets, admits.attr-audit-lens-range,
-// admits.attr-witness-union-range, admits.attr-plan-check-ambiguous, admits.attr-issue-ambiguous,
+// admits.attr-witness-union-range, admits.attr-plan-check-ambiguous, admits.attr-issue-ambiguous (an earlier executor's issue finding),
 // admits.attr-absolute-paths-ignored, admits.attr-obligation-held-window, admits.attr-shared-file-ambiguous,
 // admits.opportunity-clause-without-lineage-spends, admits.follow-up-overrun-converts-with-debt,
 // admits.conversion-referenced-is-invalid, admits.dishonest-citation-invalid. The run-9 replay is test/admits-run9.test.ts.
@@ -19,7 +19,7 @@ import {
 } from '../src/holistic/admits.ts';
 import type { AdmitClass, ObligationDef, Obligations } from '../src/holistic/types.ts';
 import { validateCheckpointOutput } from '../src/prompts/schemas.ts';
-import { checkpointAnswer, intakeOutcome } from './helpers/holistic.ts';
+import { checkpointAnswer } from './helpers/holistic.ts';
 
 const v = (...n: number[]) => n.map((x) => `V-${x}` as VisionClauseId);
 const u = (s: string) => s as UnitId;
@@ -286,7 +286,7 @@ describe('admit classes: conversions (R35, LR-k)', () => {
     assert.equal(mintDebt(baseline, [fact], { type: 'opportunity-overrun', opportunity: c.opportunity!, job: job('ckpt-3'), index: 2, unit: c.unit, what: 'again' }), null);
   });
 
-  test('admits.conversion-referenced-is-invalid: another op or an acted intake naming a converted admit makes the bundle invalid', () => {
+  test('admits.conversion-referenced-is-invalid: another op naming a converted admit makes the bundle invalid', () => {
     const spec = JSON.stringify({ unit: 'aside' });
     const output = validateCheckpointOutput(checkpointAnswer({
       decision: 'bundle',
@@ -295,13 +295,11 @@ describe('admit classes: conversions (R35, LR-k)', () => {
         { op: 'admit', unit: { id: 'next', risk: 'low', scope: ['src/**'], after: ['aside'], origin: 'checkpoint' }, spec, cites: ['V-1'], evidence: ['e'] },
         { op: 'limits', unit: 'aside', limits: [{ field: 'chargeable', value: 2 }], cites: ['V-1'], evidence: ['e'] },
       ],
-      issueIntake: [{ issue: 'issue-1', outcome: intakeOutcome.actedOps([0]) }],
     }));
     const reasons = conversionReasons(output, [{ index: 0, unit: u('aside'), reason: 'unrelated', opportunity: null }]);
-    assert.equal(reasons.length, 3, JSON.stringify(reasons));
+    assert.equal(reasons.length, 2, JSON.stringify(reasons));
     assert.match(reasons[0]!, /^op 2 \(admit\) names aside/);
     assert.match(reasons[1]!, /^op 3 \(limits\) names aside/);
-    assert.match(reasons[2]!, /^issueIntake acts on issue-1 through op 1/);
     assert.deepEqual(conversionReasons(output, []), []);
   });
 });

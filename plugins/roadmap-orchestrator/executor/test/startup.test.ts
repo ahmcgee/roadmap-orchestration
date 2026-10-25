@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { arcId, invocationIdOf, milestoneId, issueId, laneId, obligationId, resourceName, ruleId, sha, sha256, unitId } from '../src/core/ids.ts';
+import { arcId, invocationIdOf, milestoneId, laneId, phaseQuestionId, obligationId, resourceName, ruleId, sha, sha256, unitId } from '../src/core/ids.ts';
 import { absPath, planPath, repoPath } from '../src/core/values.ts';
 import { EXIT_HOST_BUSY, EXIT_REFUSED, type StartupRejection, type StartupRejectionKind, exitCodeFor } from '../src/preflight/startup.ts';
 
@@ -25,9 +25,8 @@ const SAMPLES: { readonly [K in StartupRejectionKind]: Extract<StartupRejection,
   'plan-change-refused': { kind: 'plan-change-refused', reasons: ['unit u1 has started; it cannot be removed'] },
   'vision-unconfirmed': { kind: 'vision-unconfirmed', ref: 'corpus:0005_Vision.md#sha256:' + 'a'.repeat(64), expected: sha256('a'.repeat(64)), actual: null },
   'corpus-invalid': { kind: 'corpus-invalid', problems: [{ type: 'pin-drift' }, { type: 'rule-reused', id: ruleId('T-3') }] },
-  'phase0-invalid': { kind: 'phase0-invalid', problems: [{ type: 'intake-missing', issue: issueId('issue-4') }] },
+  'phase0-invalid': { kind: 'phase0-invalid', problems: [{ type: 'question-reused', id: phaseQuestionId('P-4') }] },
   'chain-invalid': { kind: 'chain-invalid', problem: { type: 'limit', k: 1, unacked: 1 } },
-  'issue-policy-untrusted': { kind: 'issue-policy-untrusted', visibility: 'PUBLIC', policy: 'ALL' },
   'tree-uncommitted': { kind: 'tree-uncommitted', paths: [repoPath('.roadmap/vision.json')] },
   'holistic-needs-corpus': { kind: 'holistic-needs-corpus' },
   'plan-defect': { kind: 'plan-defect', defects: [{ type: 'witness-not-in-lane', obligation: obligationId('I-1'), lane: laneId('arc'), file: repoPath('test/a.test.ts'), missing: 'argv' }] },

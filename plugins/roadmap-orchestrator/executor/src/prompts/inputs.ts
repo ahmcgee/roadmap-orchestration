@@ -26,7 +26,6 @@ import type {
 import { obligationSource } from '../holistic/types.ts';
 import type { PinnedRule } from '../corpus/types.ts';
 import type { FlowPromptInputs } from '../flow/types.ts';
-import type { CapturedIssue } from '../forge/types.ts';
 import type { Phase0Record } from '../phase0/types.ts';
 import { type BoundedDiff, EXAMPLES } from '../git/boundeddiff.ts';
 import type { GateFinding, PocOutput, PocQuestion, Premise, ScaffoldDecision } from './schemas.ts';
@@ -510,14 +509,16 @@ export type ParkCause = Readonly<{
 }>;
 
 /**
- * A checkpoint's trigger: a completed audit, a park with its cause (null: the unit has moved on since the capture), or
+ * A checkpoint's trigger: a milestone boundary, a completed audit, a park with its cause (null: the unit has moved on since the capture), or
  * (dev.13) a milestone walk: its milestone and round, the findings it opened or re-reported, and its evidence dir (the
  * screenshots, transcripts and server logs the findings cite, readable by the session).
  */
+export type WalkTriggerView = Readonly<{ type: 'walk'; job: JobId; milestone: MilestoneId; round: number; findings: readonly FindingId[]; evidenceDir: AbsPath }>;
 export type TriggerView =
+  | Readonly<{ type: 'milestone'; milestones: readonly MilestoneId[]; walks: readonly WalkTriggerView[] }>
   | Readonly<{ type: 'audit'; job: JobId }>
   | Readonly<{ type: 'park'; unit: UnitId; seq: number; cause: ParkCause | null }>
-  | Readonly<{ type: 'walk'; job: JobId; milestone: MilestoneId; round: number; findings: readonly FindingId[]; evidenceDir: AbsPath }>;
+  | WalkTriggerView;
 
 /**
  * Arc feedback 2026-10-16 (a checkpoint re-entered a unit without finding why it failed): what the executor's records say
@@ -588,16 +589,12 @@ export type CheckpointInputs = Readonly<{
   index: ReferenceIndex;
   target: TargetInput;
   direction: string;
-  /** M4a: the issues captured for this checkpoint (trusted, LR-d), or why none were captured (R21). */
-  issues: CheckpointIssuesInput;
   /** M4a rev 3 (H4, F08): every captured input, content-addressed in the run dir; read only through these paths. */
   manifest: readonly ManifestEntry[];
   /** M4a rev 3 (H4, F21): every non-retired unit's spec in full, with the item ids it holds (`add` needs a new one). */
   specs: readonly CheckpointSpec[];
   /** M4a rev 3 (C3, H4): the ledger's next ruling id (numeric, no padding); several rulings take consecutive ids from it. */
   nextRulingId: RulingId;
-  /** M4a rev 3 (H5, F27): the issues and their grounds are unchanged since that checkpoint's dispositions; null: listed. */
-  issuesUnchangedSince: JobId | null;
   /** Arc feedback 2026-10-16: a park trigger's code-produced diagnosis of the parked lineage; null for an audit's trigger. */
   diagnosis: ParkDiagnosis | null;
   /**
@@ -611,20 +608,12 @@ export type CheckpointInputs = Readonly<{
 export type CheckpointBrakes = Readonly<{ settled: boolean; findings: readonly Readonly<{ finding: FindingId; brake: 'regress' | 'settled' }>[] }>;
 
 /** What a checkpoint manifest entry names (H4). */
-export const MANIFEST_KINDS = ['plan', 'spec', 'ledger', 'sidecar', 'obligations', 'vision', 'phase0', 'issues'] as const;
+export const MANIFEST_KINDS = ['plan', 'spec', 'ledger', 'sidecar', 'obligations', 'vision', 'phase0'] as const;
 export type ManifestKind = (typeof MANIFEST_KINDS)[number];
 /** One captured input: its kind, its id within the kind (a unit, a ruling, or the kind's name), its kept path and hash. */
 export type ManifestEntry = Readonly<{ kind: ManifestKind; id: string; path: AbsPath; sha256: Sha256Hex }>;
 /** A unit's spec as a checkpoint reads it: rendered in full, with every item id it holds. */
 export type CheckpointSpec = Readonly<{ unit: UnitId; rev: SpecRev; markdown: string; occupied: readonly string[] }>;
-
-/**
- * A checkpoint's issues as its prompt gets them: the kept capture's issues, each body and comment already wrapped by
- * `pastedAs` at capture (`roadmap/issues-capture-m4`), or the reason the capture failed (non-fatal, R21).
- */
-export type CheckpointIssuesInput =
-  | Readonly<{ type: 'captured'; issues: readonly CapturedIssue[] }>
-  | Readonly<{ type: 'unavailable'; reason: string }>;
 
 /**
  * M4a (OR-Q16): what a pack review reads, all read-only, rendered from its kept `PackReviewInputs` (K8): the vision,
@@ -766,7 +755,7 @@ export const ROLE_INPUTS = {
   lens: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'target', 'checkout', 'specsOnly'],
   checkpoint: [
     'vision', 'trigger', 'priorRejected', 'refused', 'head', 'plan', 'findings', 'obligations', 'coverage', 'divergences', 'contracts', 'rulings', 'index',
-    'target', 'direction', 'issues', 'manifest', 'specs', 'nextRulingId', 'issuesUnchangedSince', 'diagnosis', 'brakes',
+    'target', 'direction', 'manifest', 'specs', 'nextRulingId', 'diagnosis', 'brakes',
   ],
   packReview: ['vision', 'plan', 'specs', 'obligations', 'rulesIndex', 'phase0', 'delta'],
   flow: ['triggers', 'chart', 'stations', 'constraint', 'accounting', 'levers', 'givens', 'window', 'verdicts', 'rejections', 'advances', 'pressure'],
@@ -842,10 +831,7 @@ export function pasted(label: string, body: string): string {
   return pastedAs(createHash('sha256').update(`${label}\0${body}`).digest('hex').slice(0, 8), body);
 }
 
-/**
- * The sanitiser itself, under a caller's stable id: an issue capture wraps each issue body as `issue-<n>` and each
- * comment as `issue-<n>/c-<id>` (M4a), so evidence can name the block.
- */
+/** The sanitiser itself, under a caller's stable id, so evidence can name the block. */
 export function pastedAs(id: string, body: string): string {
   const safe = body.replace(/<(\/?)pasted_content/gi, '‹$1pasted_content');
   return `<pasted_content id="${id}">\n${safe}\n</pasted_content id="${id}">`;
@@ -933,7 +919,7 @@ export function laneLedgerText(ledger: readonly LaneLedgerEntry[]): string {
 
 // ---------------------------------------------------------------------------------------------------
 // M4a rev 3: the executable checks, witness commands, specs-only drift and the checkpoint's
-// manifest, embedded specs and issue reuse, as the prompts read them.
+// manifest and embedded specs, as the prompts read them.
 
 const refsText = (refs: readonly TestRef[]): string => (refs.length === 0 ? 'none' : refs.map((r) => `${r.lane} ${r.testId}`).join('; '));
 
@@ -1161,11 +1147,6 @@ export function checkpointSpecsText(specs: CheckpointInputs['specs']): string {
   })));
 }
 
-/** Issue reuse (H5, F27): the issues not listed are unchanged, on unchanged grounds, since that checkpoint's dispositions. */
-export function issuesUnchangedText(since: JobId | null): string {
-  return since === null ? '' : `\nEvery open issue not listed above is unchanged since checkpoint ${since}, on unchanged grounds: its disposition there stands, and issueIntake records none for it.`;
-}
-
 /** Bytes as a reader scans them: B, KiB or MiB. */
 export function sizeText(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -1374,6 +1355,9 @@ export function refusedText(refused: CheckpointInputs['refused']): string {
 
 /** Why the checkpoint runs, in sentences. */
 export function triggerText(t: TriggerView): string {
+  if (t.type === 'milestone') {
+    return [`milestones ${t.milestones.join(', ')} retired and their walks ended; weigh the accumulated audit and walk findings since the previous steering checkpoint.`, ...t.walks.map(triggerText)].join('\n');
+  }
   if (t.type === 'audit') return `the audit ${t.job} completed.`;
   if (t.type === 'walk') {
     return `the walkthrough ${t.job} of milestone ${t.milestone} (round ${t.round}) used the running product along its journeys and reported ${t.findings.join(', ')}, which no checkpoint has weighed. `
@@ -1387,16 +1371,3 @@ export function triggerText(t: TriggerView): string {
   return [`unit ${t.unit} parked (log seq ${t.seq}) on an executor-side cause, not a design question: ${ended} and the executor parked it (${c.reason}).`, ...c.detail].join(' ');
 }
 
-/**
- * The checkpoint's issues (M4a): each issue's id, labels and title, then its body and kept comments as the capture
- * wrapped them (`<pasted_content id="issue-<n>">`, `issue-<n>/c-<id>`). An unavailable capture says why.
- */
-export function issuesText(i: CheckpointIssuesInput): string {
-  if (i.type === 'unavailable') return `The issue capture failed (${i.reason}). There are no issues this checkpoint; issueIntake is empty.`;
-  if (i.issues.length === 0) return '(no open roadmap:bug or roadmap:feedback issues)';
-  return i.issues.map((issue) => [
-    `${issue.id} [${issue.labels.join(', ')}], title ${JSON.stringify(issue.title)}:`,
-    issue.body,
-    ...issue.comments.map((c) => `Comment ${c.id} (${c.association}):\n${c.body}`),
-  ].join('\n')).join('\n\n');
-}

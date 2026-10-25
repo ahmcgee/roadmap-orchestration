@@ -3,13 +3,16 @@
 // review.docs-only-verifier, review.docs-only-template-literal, review.docs-only-code-certain, review.docs-only-refused,
 // review.reraise-refused, review.reraise-anchor-changed,
 // review.dispute-ruled-once, review.delta-demotes, review.delta-scope, review.delta-empty, review.delta-design-revision
-// (dev.17 design pass: a design record's revision keeps the delta).
+// (dev.17 design pass: a design record's revision keeps the delta), review.reentry-scope-carry and
+// review.reentry-scope-out (field report 2026-10-24: a scope-only re-entry carries the approval, unless the diff leaves its scope).
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import type { Fact, IntentOf } from '../src/core/events.ts';
-import { clauseId, invocationIdOf, sha } from '../src/core/ids.ts';
+import { applyCommand } from '../src/commands/apply.ts';
+import { submitCommand } from '../src/commands/queue.ts';
+import { clauseId, invocationIdOf, sha, unitId } from '../src/core/ids.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import type { SpecM1, SpecPatch } from '../src/core/records.ts';
 import { diffOf } from '../evals/roles/verifier/fixture.ts';
@@ -17,15 +20,18 @@ import { runOp } from '../src/pipeline/dispatch.ts';
 import { certifiedTree, readByCode } from '../src/pipeline/docsonly.ts';
 import { fingerprintAt, gateDebtNotes } from '../src/pipeline/gate.ts';
 import { gateDelta } from '../src/pipeline/review.ts';
-import { loadUnitSpec } from '../src/pipeline/stages.ts';
+import { unitBranch } from '../src/pipeline/dispatch.ts';
+import { at, keptSpecPath, loadUnitSpec, record, start } from '../src/pipeline/stages.ts';
 import { specPatchOp } from '../src/spec/patch.ts';
 import { runUnit } from '../src/pipeline/unit.ts';
 import { validateGateOutput } from '../src/prompts/schemas.ts';
 import { events } from './fixtures/invoke-specs.ts';
 import { BUILD_REPORT, SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
 import {
-  type ArcRun, MUL, SUITE_LANE, U1, appendSteps, contextFor, gateRepairStep, gateStep, isGateCall, mulBuild, outcomes, setupArc, stepUntil, workDirPattern,
+  type ArcRun, MUL, SUITE_LANE, U1, appendSteps, applyBody, commandContextFor, contextFor, gateRepairStep, gateStep, isGateCall, mulBuild, outcomes, setupArc, stepUntil,
+  workDirPattern,
 } from './fixtures/unit-common.ts';
+import { editPlan } from './fixtures/route-common.ts';
 import { git } from './helpers/repo.ts';
 import { type CallRecord, type Step, readCalls } from './helpers/scenario.ts';
 
@@ -441,6 +447,68 @@ test('review.delta-design-revision: a design record a plan-check lands after an 
     // Any other revision (here the build's recorded decisions) changes the spec the approval bound: a full review.
     const revised = await patchSpec([{ op: 'add', section: 'decisions', item: { id: clauseId('D9'), text: 'mul stays in src/mul.js' } }], 'evidence');
     assert.equal(gateDelta(r.ctx, U1, revised, tip, head, fingerprintAt(r.ctx, r.unit('u1'), tip)), null);
+  } finally {
+    r.journal.close();
+  }
+});
+
+/**
+ * u1 approved at its gate, then held at its candidate (as a pause holds it); u2 re-enters it at verify with u1's spec in force
+ * (as `roadmap inputs export` writes it) and `scope` in place of u1's, in its spec and its plan entry. The integration tip
+ * never moves, so the preparation merges nothing in and u2's head is the approved one. Returns the arc reopened on the applied
+ * plan, u2 prepared and through its lanes; `r` is closed.
+ */
+async function scopeOnlyReentry(scope: readonly string[]): Promise<ArcRun> {
+  const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })] });
+  let r = contextFor(d);
+  await stepUntil(r, 'u1', (f) => f.stage === 'gate');
+  assert.equal(outcomes(d).at(-1), 'gate:approve');
+  record(r.ctx, at(start(r.ctx, U1, 'candidate'), 'candidate'), 'interrupted');
+  assert.equal(r.journal.view.unit(U1).status, 'held');
+  const inForce = JSON.parse(readFileSync(keptSpecPath(r.ctx, r.unit('u1')), 'utf8')) as Record<string, unknown>;
+  writeFileSync(join(dirname(d.planPath), 'u2.json'), JSON.stringify({ ...inForce, unit: 'u2', rev: 1, scope }));
+  editPlan(d, (p) => void p.units.push({ ...p.units[0]!, id: 'u2', spec: 'u2.json', scope: [...scope], reenters: { unit: 'u1', enterAt: 'verify' } }));
+  const applied = await applyCommand(commandContextFor(r), submitCommand(r.ctx.runDir, r.ctx.plan().arc, applyBody(d)));
+  assert.equal(applied.kind, 'applied', JSON.stringify(applied));
+  r.journal.close();
+  r = contextFor(d);
+  await stepUntil(r, 'u2', (f) => f.stage === 'lanes');
+  assert.deepEqual(outcomes(d, 'u2'), ['prepare:clean-verify', 'lanes:green']);
+  return r;
+}
+
+const U2 = unitId('u2');
+
+test('review.reentry-scope-carry: a re-entry that changes only the scope, at the approved head, carries the approval: its gate approves by code, no call; any other spec change, or any new commit, does not', T, async () => {
+  const r = await scopeOnlyReentry(['src/**', 'test/**']);
+  try {
+    const tip = sha(git(r.d.repo, 'rev-parse', 'main'));
+    const head = sha(git(r.d.repo, 'rev-parse', unitBranch(r.ctx.plan().arc, U2)));
+    assert.equal(head, r.journal.view.review().approval(U1)!.fingerprint.unitCommit, 'nothing merged in: the approved head');
+    const spec = loadUnitSpec(r.ctx, r.unit('u2')).spec;
+    const now = fingerprintAt(r.ctx, r.unit('u2'), tip);
+    assert.equal(gateDelta(r.ctx, U2, spec, tip, head, now), 'empty');
+    const clause = { id: clauseId('A2'), clause: 'mul(0, 5) is 0', failLoudIfUndelivered: true, state: 'active' } as const;
+    assert.equal(gateDelta(r.ctx, U2, { ...spec, acceptance: [...spec.acceptance, clause] }, tip, head, now), null, 'a spec change beyond scope');
+    const recommitted = sha(git(r.d.repo, 'commit-tree', '-p', head, '-m', 'the same tree, a new commit', `${head}^{tree}`));
+    assert.equal(gateDelta(r.ctx, U2, spec, tip, recommitted, now), null, 'a commit after the approved head');
+
+    assert.deepEqual(await runUnit(r.ctx, r.unit('u2'), live()), { kind: 'merged' });
+    assert.deepEqual(outcomes(r.d, 'u2').slice(2, 4), ['gate:delta-empty', 'candidate:green']);
+    assert.equal(gateCalls(r.d).length, 1, 'only u1\'s gate called a judge');
+    assert.deepEqual(factsOf(r.d, 'approval').map((a) => [a.unit, a.fingerprint.unitCommit]), [[U1, head], [U2, head]]);
+  } finally {
+    r.journal.close();
+  }
+});
+
+test('review.reentry-scope-out: a scope-only re-entry whose narrowed scope leaves a path of the approved diff outside it carries nothing', T, async () => {
+  const r = await scopeOnlyReentry(['src/**']);
+  try {
+    const tip = sha(git(r.d.repo, 'rev-parse', 'main'));
+    const head = sha(git(r.d.repo, 'rev-parse', unitBranch(r.ctx.plan().arc, U2)));
+    assert.equal(head, r.journal.view.review().approval(U1)!.fingerprint.unitCommit);
+    assert.equal(gateDelta(r.ctx, U2, loadUnitSpec(r.ctx, r.unit('u2')).spec, tip, head, fingerprintAt(r.ctx, r.unit('u2'), tip)), null, 'test/mul.test.js is outside src/**');
   } finally {
     r.journal.close();
   }

@@ -143,15 +143,17 @@ describe('the rounds brake (src/walk/milestones.ts)', () => {
     assert.equal(p.kind, 'settled');
   });
 
-  test('brake.checkpoint-pending: an open finding of the round waits for a checkpoint that weighed it (captured it, decided, under the vision in force); one that admits nothing settles it', () => {
-    const walks = [started(1, 1), ended(1, 'reported', ['F-1'])];
-    const findings = [{ id: 'F-1' as FindingId, milestone: 'MS-1' as MilestoneId }];
-    const open = progress(plan(), viewOf({ status: { a: 'retired' }, walks, findings }));
-    assert.ok(open.kind === 'round-open' && open.round.pending === 'checkpoint', JSON.stringify(open));
-    assert.equal(progress(plan(), viewOf({ status: { a: 'retired' }, walks, findings, checkpoints: [{ seq: 5, findings: [] }] })).kind, 'round-open', 'a checkpoint before the walk opened F-1 weighed nothing of it');
-    assert.equal(progress(plan(), viewOf({ status: { a: 'retired' }, walks, findings, checkpoints: [{ seq: 25, findings: ['F-1'], vision: 'w'.repeat(64) }] })).kind, 'round-open', 'one under another vision weighed it under that one only');
-    assert.equal(progress(plan(), viewOf({ status: { a: 'retired' }, walks, findings, checkpoints: [{ seq: 25, findings: ['F-1'] }] })).kind, 'settled');
-  });
+  for (const severity of ['P1', 'P2', 'P3'] as const) {
+    test(`brake.checkpoint-pending: an open ${severity} finding of the round waits for a checkpoint that weighed it (captured it, decided, under the vision in force); one that admits nothing settles it`, () => {
+      const walks = [started(1, 1), ended(1, 'reported', ['F-1'])];
+      const findings = [{ id: 'F-1' as FindingId, milestone: 'MS-1' as MilestoneId, severity }];
+      const open = progress(plan(), viewOf({ status: { a: 'retired' }, walks, findings }));
+      assert.ok(open.kind === 'round-open' && open.round.pending === 'checkpoint', JSON.stringify(open));
+      assert.equal(progress(plan(), viewOf({ status: { a: 'retired' }, walks, findings, checkpoints: [{ seq: 5, findings: [] }] })).kind, 'round-open', 'a checkpoint before the walk opened F-1 weighed nothing of it');
+      assert.equal(progress(plan(), viewOf({ status: { a: 'retired' }, walks, findings, checkpoints: [{ seq: 25, findings: ['F-1'], vision: 'w'.repeat(64) }] })).kind, 'round-open', 'one under another vision weighed it under that one only');
+      assert.equal(progress(plan(), viewOf({ status: { a: 'retired' }, walks, findings, checkpoints: [{ seq: 25, findings: ['F-1'] }] })).kind, 'settled');
+    });
+  }
 
   test('brake.landed: the next round once every admitted unit is merged or cut and one landed; none landed settles', () => {
     const walks = [started(1, 1), ended(1, 'reported', ['F-1'])];

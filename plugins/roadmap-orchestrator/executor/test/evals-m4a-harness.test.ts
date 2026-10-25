@@ -411,10 +411,11 @@ test('evals-m4a.turn-timeout-distinct: a turn killed at its cap ends the run tur
   assert.ok(existsSync(layout(dir).costs), 'costs.jsonl is written even for a run that never started an arc');
   assert.ok(existsSync(layout(dir).diagnostics));
   // The session's deadline falling inside a turn names the session's bound, not the turn's (the suite run on cc939ee:
-  // a fake story slowed to 30 min read "killed at its 1800000 ms cap" for a turn 21 s old).
+  // a fake story slowed to 30 min read "killed at its 1800000 ms cap" for a turn 21 s old). Which turn the deadline
+  // falls in depends on the fake setup's speed (dev.21's shorter setup ends turn 1 inside it), so any turn is accepted.
   const late = await driveTimed('m4a-deadline', { sessionMs: 1_000, turnMs: 600_000 });
   assert.equal(late.report.endedBy, 'turn-timeout');
-  assert.match(late.report.failure ?? '', /turn 1 was killed at the session's 1000 ms deadline, \d+ ms into the turn/);
+  assert.match(late.report.failure ?? '', /turn \d+ was killed at the session's 1000 ms deadline, \d+ ms into the turn/);
 });
 
 test('evals-m4a.driver-reaps-fixture: the fixture\'s processes are found by cwd or argv, a watch tail is told from an arc\'s process, and both are killed', T, async () => {

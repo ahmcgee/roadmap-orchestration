@@ -220,7 +220,7 @@ describe('phase0.milestones: the shared rows', () => {
   };
   // The repo row 11 reads the milestones' references in (at `main`, the integration tip).
   const rowsOf = (plan: Json, repo = makeRepo(tmpDir('phase0-milestones'), { files: { 'README.md': 'r\n' } })) => phase0Rows({
-    repo: absPath(repo), plan: parsePlan(plan), config: null, where: 'plan.json', pin: null, guide: null, phase0: null, capture: null,
+    repo: absPath(repo), plan: parsePlan(plan), config: null, where: 'plan.json', pin: null, guide: null, phase0: null,
     obligations: null, vision: null, specs: new Map(), ledger: [], settled: new Set(),
   }, FROM_REF);
   const milestone = { ...MILESTONE, design: { unit: 'd1' }, units: ['u1', 'u2', 'u3', 'u4'] };

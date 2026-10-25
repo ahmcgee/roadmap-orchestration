@@ -1,9 +1,8 @@
 // Corpus amendments (M4a; plan "Corpus, pin and census" 8, A-M4-4, OR-L7): proposed changes to a corpus arc's corpus,
 // recorded as `corpus-amendment` facts and dispositioned by the next arc's Phase 0 (read from this arc's verified ref,
-// src/chain.ts `amendmentsOf`). Nothing in the arc edits the corpus. Four sources, each recorded once (the fold refuses a
+// src/chain.ts `amendmentsOf`). Nothing in the arc edits the corpus. These sources, each recorded once (the fold refuses a
 // second amendment of one source, and `appendAmendment` finds the first):
 //   - checkpoint{job, index}: the checkpoint's own `corpusAmendments`, in output order;
-//   - issue{job, issue}: a captured issue's intake outcome `amendment` (src/holistic/intake.ts);
 //   - divergence{D-n}: code derives one per `target-departed` and `interpretation` divergence: where the arc departed
 //     from its target or read the vision where the corpus is silent, the corpus should say so;
 //   - admit{job, index, reason} (M4a rev 3, R35): a checkpoint `admit` code converted (unrelated, over the opportunity

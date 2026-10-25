@@ -450,7 +450,7 @@ describe('M3 judgment outputs', () => {
   const ckpt = {
     decision: 'bundle', reasons: ['F-1'], ops: [op], rulings: [], findingDispositions: [{ finding: 'F-1', disposition: 'accepted', reason: 'r' }],
     interpretations: [{ clauses: ['V-1'], situation: 's', reading: 'r' }], cites: { vision: ['V-2'], observations: [{ treeSha: A, lane: 'journey', laneRev: LANE_REV, envId: ENV }], findings: ['F-1'] },
-    premises: [], corpusAmendments: [], issueIntake: [],
+    premises: [], corpusAmendments: [],
   };
 
   it('lens: severities P1-P3, obligation ids, unique clauses', () => {

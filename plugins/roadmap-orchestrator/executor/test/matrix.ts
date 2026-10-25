@@ -133,8 +133,7 @@ export const DEBT_BANK = 'debt bank (M4a DEBT_BANK: a corpus arc\'s approval, th
 export const PACK_REVIEW_JOB = 'pack review job (M4a PACK_REVIEW_JOB: PackReviewInputs kept, pack-review-started, the call, pack-review-ended, the blocking item)';
 export const FLOW_JOB = 'flow job (M4b: FlowInputs kept, flow-started, the call, flow-ended, the flow-proposal item)';
 export const FLOW_SERIES = 'flow series at completion (M4b: the compact series kept, flow-series, then arc-completed)';
-export const ISSUE_CAPTURE = 'checkpoint issue capture (M4a ISSUE_CAPTURE: identity, policy, fetch, the capture kept, issues-captured, checkpoint-inputs)';
-export const CORPUS_AMENDMENT = 'corpus amendments and issue intake (M4a CORPUS_AMENDMENT / ISSUE_INTAKE: after the decision, corpus-amendment and issue-intake facts keyed by source)';
+export const CORPUS_AMENDMENT = 'corpus amendments (M4a CORPUS_AMENDMENT: after the decision, corpus-amendment facts keyed by source)';
 export const BRIEF_ACK = 'brief ack (M4a CLI brief --ack: the pending marker, the ack commands under deterministic ids, the committed marker)';
 export const ANSWER_RECORD = 'owner answer (M4a CLI roadmap answer: the answer published write-once by link, latest k in force)';
 export const LANE_REUSE = 'lane reuse (M4a rev 3 N1 LANE_REUSE: a spec lane reused from a certified series, lane-reused keyed (parent, lane), then the remaining lanes)';
@@ -217,7 +216,7 @@ const HOLISTIC_LABELS: Readonly<Record<Boundary, readonly string[]>> = {
   B4: [
     'spawn.after-runner-exit', 'spawn.after-result', 'spawn.after-usage', 'evidence.act-end', 'ff.act-end', 'snapshot.act-end', 'revision.commit.after-fact',
     'needsuser.raise.after-publish', 'audit.before-ended', 'checkpoint.after-call', 'bundle.after-applied', 'bundle.after-decided', 'docs.act-end',
-    'closeout.before-published', 'packreview.after-call', 'packreview.after-ended', 'issues.after-keep', 'amendment.after-decided', 'debt.after-approval',
+    'closeout.before-published', 'packreview.after-call', 'packreview.after-ended', 'amendment.after-decided', 'debt.after-approval',
     'smoke.after-witnessed', 'mutant.act-end', 'bundle.after-conversion-amendment',
     'flow.series-before-completed',
   ],
@@ -232,7 +231,7 @@ const HOLISTIC_RECOVERY: Readonly<Record<Boundary, string>> = {
   B1: 'the M3 fact (a witness, the latch, an audit\'s start or end, a checkpoint\'s inputs, the bundle\'s plan-applied or divergence, the digest, a no-op decision, docs-covered, docs-published, arc-completed) or the rev 3 one (smoke-ran, a corpus amendment) is absent after the restart, a torn line discarded once: the job or the unit\'s stage resumes and writes it once (a capture from the same inputs, a smoke run again within its allowance), the arc ends as uncrashed',
   B2: 'the job\'s open op (its slot or lane reservation, checkout, lane, lens, checkpoint or pack-review call, evidence, docs commit, docs ff, snapshot, the bundle\'s revision, the digest item) is closed as its reconciler says (a spawn lost, the rest redone or reconciled), or a capture fact (pack-review-started included) is durable with nothing run: the job resumes as the same job from its recorded inputs, every backend call made once; an unpublished close-out is abandoned and runs again as the next docs publication; the build\'s witness lane files published with no call made: the restarted build publishes the same bytes and calls once; the smoke\'s patch kept or its mutant.apply open: redone, the lanes attempt run again (one more smoke execution, within the allowance); the arc ends as uncrashed',
   B3: 'inside the job\'s op: its reconciler finishes or redoes it (a live lane adopted, the same SHAs), a lens read resumes at the next lens, a close-out ff published is finished (docs-covered, docs-published, the snapshot, the slot released); a mutant checkout made, its patch not applied: removed and redone; the arc ends as uncrashed',
-  B4: 'the op\'s postcondition holds (reconciled); a read call (the pack review\'s included) or a decided bundle is consumed from the record (never asked again), its aftermath written only where missing (a flow-series written, arc-completed not: no second series, the arc completes; the review ended once; a checkpoint\'s issue capture kept, recorded once with the same bytes; its amendments, a converted admit\'s included, and issue outcomes once each; a gate note banked once after its approval); a frontier dispatch pinned, its in-session outcome unwritten: the next attempt finds the pin; a smoke\'s mutant lanes witnessed, its run unrecorded: run again within the allowance; one plan-applied, one divergence per (job, index), one digest; the arc ends as uncrashed',
+  B4: 'the op\'s postcondition holds (reconciled); a read call (the pack review\'s included) or a decided bundle is consumed from the record (never asked again), its aftermath written only where missing (a flow-series written, arc-completed not: no second series, the arc completes; the review ended once; its amendments, a converted admit\'s included, once each; a gate note banked once after its approval); a frontier dispatch pinned, its in-session outcome unwritten: the next attempt finds the pin; a smoke\'s mutant lanes witnessed, its run unrecorded: run again within the allowance; one plan-applied, one divergence per (job, index), one digest; the arc ends as uncrashed',
   B5: 'nothing is open: the job, the close-out or the completion runs on from its facts (no second latch, audit-ended, docs-published or arc-completed; the terminal snapshot published by the restart); a witness check\'s certified observation reused, never run twice; a smoke-ran read back by its key (no second execution), or a mutant applied with its lanes not run: run again within the allowance; the arc ends as uncrashed',
 };
 
@@ -1064,7 +1063,7 @@ export const MATRIX: readonly Row[] = [
   },
   {
     // The holistic scenario (test/fixtures/pm-holistic.ts HOLISTIC), a corpus arc (M4a D0): review-1 (the pack review),
-    // each checkpoint's issue capture and amendment settlement, baseline-1, u1 with a journey lane and I-2 latched,
+    // each checkpoint's amendment settlement, baseline-1, u1 with a journey lane and I-2 latched,
     // audit-1, ckpt-1 applying a bundle (revision, divergence, digest), audit-2, ckpt-2 an interpretation-only no-op,
     // the close-out docs-1, arc-completed and the terminal snapshot, through `roadmap start`. Its occurrences are
     // sampled by context (`sampleHolistic`): each M3-only label at 1 and 2, each log append at each M3 fact kind's
@@ -1122,11 +1121,11 @@ export const MATRIX: readonly Row[] = [
   {
     row: CONCURRENT_AUDIT,
     test: 'test/serial/concurrent-matrix.test.ts',
-    cells: jobCells([...LOG_APPENDS, 'audit.after-started', 'audit.after-lens', 'audit.before-ended', 'audit.after-ended', 'issues.after-keep', ...JOB_OPS], {
+    cells: jobCells([...LOG_APPENDS, 'audit.after-started', 'audit.after-lens', 'audit.before-ended', 'audit.after-ended', ...JOB_OPS], {
       B1: 'audit-started or audit-ended lost (a torn line discarded once): the audit captures again from the same state, or ends again, once',
       B2: 'the audit\'s open op closed by its reconciler (a spawn lost, the rest redone or reconciled), or audit-started durable with nothing run: the job resumes as audit-1 from its recorded inputs, its lens asked once',
       B3: 'inside the audit\'s op or after its lens was read: finished or redone; the job resumes, consuming the call it made',
-      B4: 'the op\'s postcondition holds (reconciled), or every lens read and the end not written: the job resumes and ends once; or the audit ended and its checkpoint\'s issue capture kept (the corpus arc\'s, its last record still the audit\'s): the restart captures again (the same bytes) and records it once',
+      B4: 'the op\'s postcondition holds (reconciled), or every lens read and the end not written: the job resumes and ends once',
       B5: 'nothing open: the job runs on from its facts; one audit-ended, the lens called once',
     }, PEERS_IN_BUILDS, 'no audit label falls on this boundary'),
   },
@@ -1857,27 +1856,10 @@ export const MATRIX: readonly Row[] = [
     },
   },
   {
-    // A corpus arc's checkpoint capture (src/holistic/intake.ts `captureCheckpointIssues`) against the fake gh, driven in a
-    // child (test/fixtures/corpus-job-child.ts) that a restart in process recovers and runs again.
-    row: ISSUE_CAPTURE,
-    test: 'test/intake.test.ts',
-    cells: {
-      B1: { status: 'excluded', why: 'each fact is one journal append; journal.append B1 covers a torn or short one' },
-      B2: { status: 'excluded', why: 'the identity, policy and fetch are forge reads that write nothing: a crash before the capture is kept re-queries and re-fetches' },
-      B3: { status: 'excluded', why: 'the capture\'s bytes are kept content-addressed (keepInput) in one write the B4 cell follows' },
-      B4: {
-        status: 'crash',
-        labels: ['issues.after-keep'],
-        recovery: 'the capture kept, no issues-captured: the restart re-queries and re-fetches (the same bytes), records one issues-captured, then the checkpoint-inputs naming its sha, and asks once',
-      },
-      B5: { status: 'fixture', test: 'intake.capture-reused', crashedIn: ISSUE_CAPTURE },
-    },
-  },
-  {
-    // A corpus arc's checkpoint decision and what follows it (src/holistic/bundle.ts `settleDecided`): the amendments and
-    // issue outcomes, each crash point after one of their facts, at the first, third and sixth.
+    // A corpus arc's checkpoint decision and what follows it (src/holistic/bundle.ts `settleDecided`): the amendments, each
+    // crash point after one of their facts, at the first, second and third.
     row: CORPUS_AMENDMENT,
-    test: 'test/intake.test.ts',
+    test: 'test/amendments.test.ts',
     cells: {
       B1: { status: 'excluded', why: 'each fact is one journal append; journal.append B1 covers a torn or short one' },
       B2: { status: 'excluded', why: 'no intent: the facts are written from the decided output, which the decision\'s own rows (BUNDLE_ACTIVATE, REVISION_COMMIT) settle' },
@@ -1885,9 +1867,9 @@ export const MATRIX: readonly Row[] = [
       B4: {
         status: 'crash',
         labels: ['amendment.after-decided'],
-        recovery: 'the decision durable and some of its amendments and outcomes written: the next run settles it from the consumed output (never asked again), writing each missing corpus-amendment (by source) and issue-intake (by job and issue) once, the issue finding once',
+        recovery: 'the decision durable and some of its amendments written: the next run settles it from the consumed output (never asked again), writing each missing corpus-amendment (by source) once',
       },
-      B5: { status: 'excluded', why: 'the settlement is idempotent per source and (job, issue): settling again writes nothing' },
+      B5: { status: 'excluded', why: 'the settlement is idempotent per source: settling again writes nothing' },
     },
   },
   {

@@ -1,7 +1,7 @@
 // The executor's one way to run `gh` (M4a, R22): like `git`, a spawnSync with a timeout, a read rather than a workload.
 // The repo identity is resolved once (`gh repo view` in the product repo, which reads its remotes, H13) and every later
-// call names it explicitly: `gh api --hostname <host> ...` for GraphQL and REST, and `-R <owner>/<name>` with
-// `GH_HOST=<host>` for `gh pr`, so no call falls back to whatever repository the cwd or the user's config implies.
+// call names it explicitly: `-R <owner>/<name>` with `GH_HOST=<host>` for `gh pr`, so no call falls back to whatever
+// repository the cwd or the user's config implies.
 // The user's environment is inherited (gh's own auth lives there); prompts are disabled.
 import { spawnSync } from 'node:child_process';
 import type { AbsPath } from '../core/values.ts';
@@ -47,12 +47,6 @@ export function resolveRepo(repo: AbsPath): RepoIdentity {
   const host = typeof out.url === 'string' ? URL.parse(out.url)?.host : undefined;
   if (host === undefined || host === '') throw new GhError(args, 0, `no host in the url ${JSON.stringify(out.url)}`);
   return repoIdentity({ host, owner: out.owner?.login, name: out.name }, 'gh repo view');
-}
-
-/** `gh api --hostname <host> <args...>` (GraphQL or REST), its JSON answer. */
-export function ghApi(cwd: AbsPath, repo: RepoIdentity, args: readonly string[]): unknown {
-  const full = ['api', '--hostname', repo.host, ...args];
-  return parsed(full, run(cwd, full, repo.host));
 }
 
 /** `gh pr <sub> -R <owner>/<name> <args...>` with `GH_HOST=<host>`, its stdout. */

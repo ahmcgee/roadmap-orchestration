@@ -278,18 +278,26 @@ test('docs.transient: a docs publication\'s diff is exactly its rendered files a
     assert.deepEqual(diff, ['.roadmap/constraints.md', 'contracts/api.md']);
     assert.deepEqual(docsTransientViolations(diff, diff), []);
     assert.deepEqual(docsTransientViolations(diff, [diff[0]!]).map((v) => [v.path, v.rule]), [['contracts/api.md', 'not-docs']]);
-    // The unit (dispatched on the published tip) overwrites the rendered constraints.md: refused at its candidate, a
+    // The unit (dispatched on the published tip) overwrites the rendered constraints.md: refused at salvage, a
     // fix round restores the executor's rendering, then it merges.
     appendSteps(d, [
-      gateStep({ decision: 'approve' }),
       codexStep([{ type: 'commit', message: 'restore the roadmap file', files: { '.roadmap/constraints.md': rawGit(absPath(d.repo), ['show', `${at}:.roadmap/constraints.md`]) } }], {
-        argv: ['exec', 'resume'], stdinContains: ['.roadmap/constraints.md (roadmap-dir)'],
+        argv: ['exec', 'resume'], stdinContains: ["The executor refused your last round's commit:", '.roadmap/constraints.md (roadmap-dir)', 'Remove them from the branch;'],
       }),
       gateStep({ decision: 'approve' }),
     ]);
     assert.deepEqual(await runUnit(w.stage, r.unit('u1'), admitAll), { kind: 'merged' }, outcomes(d).join(' '));
-    assert.ok(outcomes(d).includes('candidate:transient-violation'), outcomes(d).join(' '));
+    assert.deepEqual(outcomes(d), [
+      'plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:transient-violation',
+      'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve',
+      'candidate:green', 'ff:published', 'snapshot:published',
+    ]);
+    assert.equal(r.journal.view.unit(U1).counters.chargeableFailures, 1, 'a transient violation charges');
+    const gates = readCalls(d.scenarioPath).filter(isGateCall);
+    assert.equal(gates.length, 1, 'the refused salvage never reached a gate');
+    assert.ok(gates[0]!.argv.includes('claude-opus-5-5') && gates[0]!.argv.includes('high'), 'scope growth promoted the next judgment');
     assert.equal(show(d, 'main', '.roadmap/constraints.md'), show(d, at, '.roadmap/constraints.md'), 'only the executor wrote the in-tree .roadmap/');
+    assert.ok(readCalls(d.scenarioPath).every((c) => c.step !== null));
   } finally {
     stop();
     r.journal.close();

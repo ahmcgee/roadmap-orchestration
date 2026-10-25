@@ -18,10 +18,10 @@
 //             and vision.json (confirmed against the vision document)
 //   input/    plan.json (a corpus arc: the pin, the Phase-0 record; holistic: advances V-1..V-4, obligations, audit
 //             every 2 with L = {invariants, vision}; limits.convergenceK 1), corpus.pin.json (`roadmap corpus pin` at
-//             the baseline), issues.json (the fake forge's capture: no issue), phase0.json, obligations.json (rule
-//             anchors and their census), rulings.md and one spec per unit
-//   forge/    the fake forge (trusted, no issue) and its `gh` (forge/bin), first on PATH for the capture here and for
-//             the driver's runs
+//             the baseline), phase0.json, obligations.json (rule anchors and their census), rulings.md and one spec
+//             per unit
+//   forge/    the fake forge (no PR) and its `gh` (forge/bin), first on PATH for the driver's runs, so no call reaches a
+//             real forge
 //   barriers/ empty: in branch R the money lane writes `money.reached` here, the driver `money.release`
 //
 // The vision (plan "Fixture evals/m3/"): V-1 purpose "bookkeepers reconcile a month in one command", V-2
@@ -53,7 +53,6 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { captureIssues } from '../../src/commands/issues.ts';
 import { corpusPin } from '../../src/commands/corpus.ts';
 import { sha } from '../../src/core/ids.ts';
 import { sha256Hex } from '../../src/core/json.ts';
@@ -280,14 +279,12 @@ export const DIRECTION = 'Grow `ledger` until a bookkeeper reconciles a month in
 /** The driver's stale-making edit (story step 4): the architect rewords the direction while the first checkpoint runs. */
 export const DIRECTION_EDITED = `${DIRECTION} Clear errors come first.`;
 
-/** The fake forge's store and `gh` shim under `l.forge`: the fixture's repo identity, trusted (PUBLIC + COLLABORATORS_ONLY), no issue. */
+/** The fake forge's store and `gh` shim under `l.forge`: the fixture's repo identity, no PR. */
 function writeForge(l: Layout): void {
   mkdirSync(l.forge, { recursive: true });
   const store = join(l.forge, STORE_FILE);
   writeStore(store, {
-    repo: { host: 'forge.test', owner: 'ledger-fixture', name: 'ledger' },
-    policy: { visibility: 'PUBLIC', hasIssuesEnabled: true, issueCreationPolicy: 'COLLABORATORS_ONLY' },
-    originPath: null, nextNumber: 1, nextCommentId: 1000, issues: [], comments: {}, labels: [], pulls: [], mutations: [],
+    repo: { host: 'forge.test', owner: 'ledger-fixture', name: 'ledger' }, originPath: null, nextNumber: 1, pulls: [], mutations: [],
   });
   writeGhShim(l.forgeBin, store);
 }
@@ -314,18 +311,8 @@ export async function setup(dir: string): Promise<void> {
 
   const pinned = await corpusPin({ repo: absPath(l.repo), commit: baseline, baseline: sha(baseline), out: absPath(l.pin) });
   if (pinned.kind !== 'pinned') throw new Error(`corpus pin refused: ${JSON.stringify(pinned.rejection)}`);
-  const path = process.env['PATH'];
-  process.env['PATH'] = forgePath(l);
-  let captured: Awaited<ReturnType<typeof captureIssues>>;
-  try {
-    captured = await captureIssues({ repo: absPath(l.repo), out: absPath(l.capture) });
-  } finally {
-    process.env['PATH'] = path;
-  }
-  if (captured.kind !== 'captured') throw new Error(`issue capture refused: ${JSON.stringify(captured.rejection)}`);
   write(l.phase0, json({
     schema: 'roadmap/phase0-m4', curation: [], corpusDivergences: [], questions: [], debt: [], amendments: [],
-    issueCapture: { file: basename(l.capture), sha256: captured.sha256 }, intake: [],
     slice: { advances: ADVANCES, why: 'the first slice: the whole month-end story' },
   }));
 

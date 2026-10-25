@@ -56,8 +56,8 @@
 //   corpus                      a re-pin (the pin's or the guide's bytes changed): `corpus{pinSha256, guideSha256}`, an
 //                               architect `apply` only; what it may re-pin is the shared Phase-0 rows' (src/phase0/rows.ts:
 //                               re-derivation, census, rules resolved, the vision confirmed), which the apply runs
-//   phase0                      the Phase-0 record or its issue capture changed: `phase0{sha256, issuesSha256}`, an
-//                               architect `apply` only; a new `promote` disposition while draining is refused
+//   phase0                      the Phase-0 record changed: `phase0{sha256}`, an architect `apply` only; a new
+//                               `promote` disposition while draining is refused
 //
 // M4a rev 3 (N3):
 //   priority (F1b)              a unit's `priority`: `unit-priority{unit}`, any status but merged (no drain)
@@ -598,7 +598,7 @@ function nextInputsOf(input: ClassifyInput, reasons: string[]): Readonly<{ ledge
         obligations: sha(next.obligations?.bytes) !== (revision.obligations?.sha256 ?? null),
         vision: sha(next.vision?.bytes) !== (revision.vision?.sha256 ?? null),
         corpus: sha(c?.pin.bytes) !== (m.corpus ?? null) || sha(c?.guide.bytes) !== (m.corpusGuide ?? null),
-        phase0: sha(c?.phase0.bytes) !== (m.phase0 ?? null) || sha(c?.capture?.bytes) !== (m.phase0Issues ?? null),
+        phase0: sha(c?.phase0.bytes) !== (m.phase0 ?? null),
       },
     },
   };
@@ -1440,9 +1440,8 @@ function corpusRows(input: ClassifyInput, inputs: NextInputs, changes: PlanChang
   }
   if (inputs.changed.phase0) {
     const record = sha(c.phase0.bytes);
-    const capture = sha(c.capture?.bytes);
     if (input.proposer.type !== 'apply') architectOnly('the Phase-0 record');
-    else if (record !== null && capture !== null) changes.push({ type: 'phase0', sha256: record, issuesSha256: capture });
+    else if (record !== null) changes.push({ type: 'phase0', sha256: record });
     const before = new Set((input.revision.corpus?.phase0.value.debt ?? []).filter((d) => d.disposition.type === 'promote').map((d) => canonicalJson(d)));
     const promoted = (inputs.corpus.phase0?.debt ?? []).filter((d) => d.disposition.type === 'promote' && !before.has(canonicalJson(d)));
     if (input.view.holistic().draining !== null && promoted.length > 0) {
@@ -1580,7 +1579,11 @@ export function applyProposal(
 ): ApplyProposal | Readonly<{ reasons: readonly string[] }> {
   const actual = revisionManifestOf(files);
   if ('missing' in actual) return { reasons: actual.missing };
-  if (manifest !== null && !same(actual, manifest)) return { reasons: [manifestMismatch(files, manifest, actual)] };
+  if (manifest !== null) {
+    // An apply an earlier CLI queued hashed the issue capture too (`phase0Issues`): not compared (`issuesIgnored`; scaffolding).
+    const { phase0Issues: _issues, ...expected } = manifest;
+    if (!same(actual, expected)) return { reasons: [manifestMismatch(files, expected, actual)] };
+  }
   const from = baseFiles(ctx.runDir, base ?? ownerBase(ctx.runDir, ctx.view, ctx.view.arc), files.planFile, files.repo);
   if ('reasons' in from) return from;
   const theirs = inForceFiles(ctx.runDir, ctx.view, ctx.inForce, ctx.revision, files.planFile, files.repo);
@@ -1708,7 +1711,6 @@ function manifestMismatch(files: InputFiles, expected: RevisionManifest, actual:
   if (expected.corpus !== actual.corpus) differ.push(c?.pin.path ?? 'the corpus pin (no longer in the plan)');
   if (expected.corpusGuide !== actual.corpusGuide) differ.push(c?.guide.path ?? 'the corpus guide (no longer in the plan)');
   if (expected.phase0 !== actual.phase0) differ.push(c?.phase0.path ?? 'the Phase-0 record (no longer in the plan)');
-  if (expected.phase0Issues !== actual.phase0Issues) differ.push(c?.capture?.path ?? 'the issue capture (no longer in the plan)');
   return `the files changed since \`roadmap apply\` hashed them: ${differ.join(', ')}; run it again`;
 }
 

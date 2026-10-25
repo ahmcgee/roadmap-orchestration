@@ -18,7 +18,8 @@
 //   in no unit of the plan yet and was not refused: agent D's code-applied polish revision, src/walk/polish.ts) or one of
 //   those units is in flight, round k is open. Then round k+1's walk is due when at least one of them
 //   landed (merged) and k < `walkRounds`; otherwise the milestone settles. A milestone settles at most once: no fact
-//   records it; `settledMilestones` is the demo's hook (agent G promotes on it).
+//   records it; `settledMilestones` is the demo's hook (agent G promotes on it). Every severity gets an immediate
+//   checkpoint and holds the round open until weighed (owner ruling 2026-10-24); only a P1 holds the milestone node.
 // - **The node** (src/walk/node.ts) passes when a walk ends `reported` and the milestone has no active walkthrough P1
 //   (`milestone-passed`, written by the walk job, src/walk/walk.ts).
 // - **Escalation** (`finding-p1-escalated`, blocking, raised once per walk job): a walkthrough P1 of the walk still open
@@ -107,8 +108,7 @@ export type MilestoneProgress =
 /**
  * The findings of walk `w` no checkpoint has weighed (agent D): each active and open (no unit owns it) and captured by no
  * checkpoint that settled a decision (applied, no-op or requested) under the vision in force, in id order. The walk's
- * checkpoint trigger is due while any is (src/holistic/checkpoint.ts); none, the trigger is skipped as an audit that found
- * nothing new is.
+ * immediate checkpoint trigger is due while any finding is unweighed, at any severity (src/holistic/checkpoint.ts).
  */
 export function unweighedWalkFindings(view: JournalView, w: WalkRecord): readonly FindingId[] {
   if (w.ended === null) return [];

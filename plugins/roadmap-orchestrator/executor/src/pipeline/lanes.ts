@@ -19,9 +19,10 @@
 // A lane that runs red goes through the red-lane protocol (redlane.ts): a host signature on a busy host
 // waits, holding nothing, for a clear host and reruns; a signature without that evidence is `blocked`; a spec lane's
 // red repeating the unit's confirmed earlier red (`repeatOf`) is red without a rerun; any other red gets one diagnostic
-// rerun (red then green is `flaky`: dev.17, a flake the flaky ledger records, `observeFlake`, and forgives, so the green
-// rerun counts, unless the unit deflakes that lane or the red ran on a saturated host; else red). The class is persisted
-// (`red.json`) before the decision. A rerun takes its own reservation,
+// rerun (red then green is `flaky`: dev.17, a flake recorded with the tree it was seen on, `observeFlake`, `flakeOn`; a
+// flake of the tip's is the flaky ledger's and forgiven, so the green rerun counts, unless the unit deflakes that lane or
+// the red ran on a saturated host; a flake on the unit's own commit is its red, dev.21, unless it stands as a tip flake;
+// else red). The class is persisted (`red.json`) before the decision. A rerun takes its own reservation,
 // runs in the same checkout at the same SHA and keeps its evidence in `<lane>.rerun/`. The ledger holds one
 // record per lane (`LaneRecord`): the run whose verdict counts, with the other run attached.
 //
@@ -69,7 +70,7 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { basename, dirname, join, posix } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
-import type { IntentOf, LaneIdentity, Parent, WitnessFor } from '../core/events.ts';
+import type { FlakeOn, IntentOf, LaneIdentity, Parent, WitnessFor } from '../core/events.ts';
 import {
   type EnvId, type InvocationId, type JobId, type LaneId, type LaneRev, type OpId, type ResourceInstance, type ResourceName, type ResourceUnit, type Sha, type UnitId,
   invocationDirName, invocationId, laneRev, opKey, parseInvocationId, parseOpId, sha256,
@@ -83,6 +84,7 @@ import { type SystemsMap, laneInput, laneTestFiles, systemsMapInForce } from '..
 import { type ArcLaneDef, type ObligationDef, type Obligations, type WitnessRecord, isExempt, laneRevOf } from '../holistic/types.ts';
 import { WITNESS_LINES, WITNESS_RECORD_FILE, collectWitness, envIdOf, hostIdentity, witnessEnv, witnessRecordOf, writeWitnessRecord } from '../holistic/witness.ts';
 import { git, revParse } from '../git/git.ts';
+import { isAncestor } from '../git/ff.ts';
 import { candidateLaneDir, jobEvidenceRoot, jobLaneDir, witnessDir } from '../git/snapshot.ts';
 import type { AcquireFirst } from '../schedule/arbiter.ts';
 import { exclusivePublish, canonicalJson as fileJson, readJson } from '../core/fsx.ts';
@@ -90,7 +92,7 @@ import {
   type CommandVerdict, type IgnoredCensus, isRed, type LaneDef, type RedRev, type SpecM1, STDERR_FILE, STDOUT_FILE, type NeedsUserContent, ignoredCensus,
   LANE_CADENCES, TEST_FILES_TOKEN, cadenceAtOrBefore,
 } from '../core/records.ts';
-import { type AbsPath, type IsoTime, type RepoPath, type RepoPattern, absPath, isoTimeOf, repoPath, repoPattern } from '../core/values.ts';
+import { type AbsPath, type IsoTime, type RepoPath, type RepoPattern, absPath, branchRef, isoTimeOf, repoPath, repoPattern } from '../core/values.ts';
 import { type EvidenceManifest, FILES_DIR, capturedEvidence, manifestPath, namedPathGlobs, patternPath, readManifest } from '../git/evidence.ts';
 import { ignoredWrites, planIgnored } from '../git/ignored.ts';
 import { statusPorcelainV2Z } from '../git/git.ts';
@@ -118,6 +120,16 @@ import {
 import { evidenceSnapshotOp, worktreeCreateOp, worktreeRemoveOp } from '../recover/ops.ts';
 import { flakeOf, observeFlake } from './deflake.ts';
 import type { FlakyEvent } from '../core/flaky.ts';
+
+/**
+ * The tree a flake of a run at `at` was seen on (dev.21, src/core/events.ts `FlakeOn`): a unit's own (`unit`) when a unit
+ * stage other than the candidate ran it on a commit the integration tip does not contain, so the commit holds the unit's
+ * unmerged work; else the tip's. `stage` null: a job's run.
+ */
+export function flakeOn(ctx: ResourceContext, stage: StageParent | null, at: Sha): FlakeOn {
+  if (stage === null || stage.stage === 'candidate') return 'tip';
+  return isAncestor(ctx.repo, at, revParse(ctx.repo, branchRef(ctx.plan().integrationBranch))) ? 'tip' : 'unit';
+}
 
 /** A lane with no progress this long has hung. Default, unmeasured: re-derive once arcs have measured stalls. */
 export const LANE_STALL_MS = 10 * 60_000;
@@ -1039,11 +1051,12 @@ export async function runLaneSeries(
       return { kind: 'ran', run: again.ran, verdict: { red: isRed(again.ran.record.verdict), evidence: evidenceOf(again.ran.record) } };
     }, { sample: rt.sampleHost, signal: rt.signal });
     const again = rerun.ran?.record ?? null;
-    // dev.17: red then green on the diagnostic rerun is a flake: the ledger's, and forgiven unless this unit deflakes it. A
-    // red run on a saturated host is the host's (RC-11: the stage holds it for its rerun), never a flake.
+    // dev.17: red then green on the diagnostic rerun is a flake, recorded with the tree it was seen on; forgiven as the
+    // ledger decides (src/pipeline/deflake.ts `flakeForgiven`: a unit's own flake is its red). A red run on a saturated host
+    // is the host's (RC-11: the stage holds it for its rerun), never a flake.
     const hostRed = red.pressure !== null && red.pressure >= PRESSURE_SATURATED;
     const forgiven = result.kind === 'reran' && result.reason === 'diagnostic' && result.verdict.kind === 'red' && result.verdict.flaky && again !== null && !hostRed
-      && observeFlake(ctx, { type: 'unit', unit: parent.unit }, lane.id, set, { tree: now.inputSha, env: identity.envId, failing: [], red: red.inv, green: again.inv });
+      && observeFlake(ctx, { type: 'unit', unit: parent.unit }, lane.id, set, flakeOn(ctx, parent, at), { tree: now.inputSha, env: identity.envId, failing: [], red: red.inv, green: again.inv });
     const record = laneRecord(red, again, forgiven);
     ledger.push(record);
     if ((result.kind === 'reran' && result.verdict.kind !== 'blocked') || result.kind === 'repeat') witnessCounted(lane, record);
@@ -1652,10 +1665,10 @@ export async function runJourneySeries(
         break;
       }
       // After a host-signature rerun the rerun counts; after a diagnostic rerun the first run does (red, flaky when the rerun
-      // passed), unless the flaky ledger forgave the flake (dev.17): then the rerun counts.
+      // passed), unless the flaky ledger forgave the flake (dev.17; a unit's own is its red, dev.21): then the rerun counts.
       const flaky = again.reason === 'diagnostic' && again.verdict.kind === 'red' && again.verdict.flaky;
       const forgiven = flaky && observeFlake(ctx, owner.type === 'unit' ? { type: 'unit', unit: owner.parent.unit } : { type: 'job', job: owner.job }, lane.def.id,
-        lane.witness === null ? 'suite' : 'arc', journeyFlake(ctx, lane, treeSha, red, again.rerun));
+        lane.witness === null ? 'suite' : 'arc', flakeOn(ctx, owner.type === 'unit' ? owner.parent : null, at), journeyFlake(ctx, lane, treeSha, red, again.rerun));
       result = again.reason === 'host-signature' || forgiven ? counted(lane, again.rerun, forgiven) : counted(lane, first.ran, flaky);
     }
     runs.push(result);

@@ -116,13 +116,13 @@ describe('transient check', () => {
     const directives = transientDirectives([
       { path: repoPath('lib/y.ts'), rule: 'out-of-scope' },
       { path: repoPath('src/cli.js'), rule: 'lane-evidence', lane: laneId('confirm-order'), glob: repoPattern('src/**/*.js') },
-    ]);
+    ], 'candidate');
     assert.equal(directives.length, 2);
     assert.match(directives[0]!, /: lib\/y\.ts \(out-of-scope\)\. Remove them from the branch;/);
     assert.doesNotMatch(directives[0]!, /src\/cli\.js/);
     assert.match(directives[1]!, /src\/cli\.js \(lane confirm-order, entry `src\/\*\*\/\*\.js`\)/);
     assert.match(directives[1]!, /A path that is the unit's own work \(its source or tests\) is not: keep it/);
-    assert.equal(transientDirectives([{ path: repoPath('evidence/x'), rule: 'evidence' }]).length, 1);
+    assert.equal(transientDirectives([{ path: repoPath('evidence/x'), rule: 'evidence' }], 'candidate').length, 1);
   });
 
   it('the docs check: a docs diff is confined to its rendered .roadmap/ files and contract ops\' paths', () => {

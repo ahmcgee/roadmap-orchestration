@@ -2,23 +2,32 @@
 // over the log's view and the plan in force; the minting revision and its items are src/pipeline/deflakemint.ts.
 //
 // A flake is a lane run red, then green on its diagnostic rerun (src/pipeline/redlane.ts): the same tree, the same
-// environment. The series that saw it writes `flake-observed{owner, lane, set, event, forgiven}` once (`observeFlake`)
+// environment. The series that saw it writes `flake-observed{owner, lane, set, on, event, forgiven}` once (`observeFlake`)
 // before the lane's record is read. The event's `tree` is the lane's input on the commit (its reuse key's `inputSha`), `env`
 // its environment id, `failing` the test ids the red run's reporter named (an arc lane's; a spec or suite lane names none).
-// A stochastic lane (k-of-n) never takes the red-lane protocol, so it is never flaky and never deflaked.
+// `on` (dev.21, src/pipeline/lanes.ts `flakeOn`) is the tree it was seen on: `unit`, a unit's own run on a commit the
+// integration tip does not contain (the unit's unmerged work: its lanes stage, its scaffold dry run); `tip`, any other (a
+// job's, a candidate's, a unit's run on a commit the tip contains). A fact an earlier release wrote reads `on` from its red
+// run's stage (`flakeOnOf`). A stochastic lane (k-of-n) never takes the red-lane protocol, so it is never flaky and never
+// deflaked.
 //
-// The ledger (`flakyLedger`) is arc-wide, one entry per key: (lane, testId) for each failing test, or the lane when the
-// reporter named none. Each entry holds its events in log order and the deflake units minted for it (the plan's units of
-// origin `deflake` whose keys name it, in plan order).
+// The ledger (`flakyLedger`) is the tip's flakes only, arc-wide, one entry per key: (lane, testId) for each failing test, or
+// the lane when the reporter named none. Each entry holds its events in log order and the deflake units minted for it (the
+// plan's units of origin `deflake` whose keys name it, in plan order). A unit's own flake is never in it: it is that unit's
+// red, so it never mints a deflake cut from the tip (field report 2026-10-24: four deflakes of a race in an unmerged unit's
+// own code, each infeasible from the tip, while the unit's lane forgave the race and the unit reached its gate with it).
 //
-// Forgiveness: a flaky lane counts as passed (its green rerun's verdict) for every owner but a deflake unit of one of the
-// event's keys, which must fix it. So an in-flight unit keeps its one-rerun forgiveness while the deflake unit works; the
-// flake is the ledger's to fix, never the unit's.
+// Forgiveness (`flakeForgiven`): a flaky lane counts as passed (its green rerun's verdict) when the flake is the tip's,
+// for every owner but a deflake unit of one of the event's keys, which must fix it. A unit's own flake (`on: unit`) is red,
+// `flaky`, charged: its fix round is told the lane is flaky (the red-lane path's `flakyLaneDirective`) and the builder
+// fixes it; unless every key of it is a standing tip flake (`tipFlaky`: a ledger flake since the key's latest merged
+// deflake published), which the unit did not bring and the ledger fixes, so the unit keeps its one-rerun forgiveness while
+// a deflake unit works.
 //
-// Minting (`deflakeDue`, applied by deflakemint.ts): a key with no open or parked deflake whose events since its deflakes
-// settled (the latest's publication when merged; its admission when cut, which fixed nothing) are not empty: its first
-// deflake when it has none, a second (told of the first) after one, and after two a non-blocking `flake-recurring` item,
-// no third. Never quarantine, never skip: the lane keeps running everywhere.
+// Minting (`deflakeDue`, applied by deflakemint.ts; over the ledger, so the tip's flakes only): a key with no open or
+// parked deflake whose events since its deflakes settled (the latest's publication when merged; its admission when cut,
+// which fixed nothing) are not empty: its first deflake when it has none, a second (told of the first) after one, and
+// after two a non-blocking `flake-recurring` item, no third. Never quarantine, never skip: the lane keeps running everywhere.
 //
 // Code edges (`deflakeHold`): a unit that has not been dispatched yet and whose lanes include an open deflake's lane (its
 // spec lanes, the suite lanes it forces, its witness lanes, and the plan's suite lanes up to `candidate` its scope may
@@ -31,13 +40,13 @@
 // budget: `limits.verification.lanes[lane]` lane-minutes, else for a batch lane `BATCH_VERIFICATION_RUNS` runs, else
 // `limits.verification.laneMinutes` (default 30). Over it, the plan-check's repair turn names the cost. The lanes stage then
 // runs the deflake unit's lane `runs` times, every run passing (`verify` on its spawns, src/pipeline/lanes.ts).
-import { type LaneOwner, type FlakyFact, type FlakyLaneSet } from '../core/events.ts';
+import { type FlakeOn, type LaneOwner, type FlakyFact, type FlakyLaneSet } from '../core/events.ts';
 import type { DesignRecord, Verification } from '../core/design.ts';
 import { type FlakyEvent, type FlakyKey, type FlakyLedgerEntry, flakyKeyOf } from '../core/flaky.ts';
-import type { InvocationId, LaneId, SystemName, UnitId } from '../core/ids.ts';
+import { type InvocationId, type LaneId, type SystemName, type UnitId, parseInvocationId } from '../core/ids.ts';
 import type { FlakeAt, Journal, JournalView } from '../core/interfaces.ts';
 import { cadenceAtOrBefore, type LaneDef, type SpecM1, specForces } from '../core/records.ts';
-import { flakyLedgerDefault } from '../core/upgrade.ts';
+import { flakeOnDefault, flakyLedgerDefault } from '../core/upgrade.ts';
 import type { AbsPath, RepoPattern } from '../core/values.ts';
 import { lineageMembers } from '../input/envelope.ts';
 import { BATCH_VERIFICATION_RUNS, DEFAULT_VERIFICATION_LANE_MINUTES, type PlanM1, type PlanUnit } from '../input/plan.ts';
@@ -85,18 +94,21 @@ export function deflakeState(view: JournalView, unit: UnitId): DeflakeState {
  */
 function settledSeq(view: JournalView, unit: UnitId): number | null {
   const state = deflakeState(view, unit);
-  if (state === 'merged') {
-    const head = lineageMembers(view, unit).at(-1)!;
-    const pub = view.publications().find((p) => p.unit === head);
-    if (pub === undefined) throw new Error(`deflake unit ${head} is retired without a publication`);
-    return pub.seq;
-  }
+  if (state === 'merged') return publishedSeq(view, unit);
   if (state === 'cut') {
     const added = view.addedSeq(unit);
     if (added === null) throw new Error(`deflake unit ${unit} is in the plan, but no plan-applied fact named it`);
     return added;
   }
   return null;
+}
+
+/** The seq of a merged deflake unit's publication (its lineage head's). */
+function publishedSeq(view: JournalView, unit: UnitId): number {
+  const head = lineageMembers(view, unit).at(-1)!;
+  const pub = view.publications().find((p) => p.unit === head);
+  if (pub === undefined) throw new Error(`deflake unit ${head} is retired without a publication`);
+  return pub.seq;
 }
 
 /** The deflake units of `plan` whose keys name `key`, in plan order. */
@@ -121,14 +133,21 @@ function ownKeys(view: JournalView, plan: PlanM1, unit: UnitId): ReadonlySet<str
 /** One ledger entry with the seqs of its events (the flakes' facts), for the minting decision. */
 export type LedgerEntry = FlakyLedgerEntry & Readonly<{ at: readonly FlakeAt[]; set: FlakyLaneSet }>;
 
+/** The tree flake `fact` was seen on: its `on`, or (written before dev.21) as its red run's stage says (`flakeOnDefault`). */
+export function flakeOnOf(view: JournalView, fact: FlakyFact): FlakeOn {
+  return fact.on ?? flakeOnDefault(fact, view.latestIntent(parseInvocationId(fact.event.red).op).parent);
+}
+
 /**
- * The arc's flaky ledger: one entry per key, in the order its first flake was observed. An arc whose revision in force a
- * release before 1.0.0-dev.17 applied ran without one: its ledger starts empty at the upgrade (warned once).
+ * The arc's flaky ledger: one entry per key of the tip's flakes, in the order its first was observed. An arc whose
+ * revision in force a release before 1.0.0-dev.17 applied ran without one: its ledger starts empty at the upgrade (warned
+ * once).
  */
 export function flakyLedger(view: JournalView, plan: PlanM1): readonly LedgerEntry[] {
   if (view.planApplied()?.systemsMap === undefined) flakyLedgerDefault();
   const entries = new Map<string, { key: FlakyKey; at: FlakeAt[]; set: FlakyLaneSet }>();
   for (const x of view.flakes()) {
+    if (flakeOnOf(view, x.fact) !== 'tip') continue;
     for (const key of flakyKeysOf(x.fact.lane, x.fact.event.failing)) {
       const k = keyText(key);
       const e = entries.get(k) ?? { key, at: [], set: x.fact.set };
@@ -142,25 +161,47 @@ export function flakyLedger(view: JournalView, plan: PlanM1): readonly LedgerEnt
 // ---------------------------------------------------------------------------------------------------
 // Observation and forgiveness
 
-/** Whether `owner` is forgiven a flake of `keys`: every owner but a deflake unit of one of them. */
-export function flakeForgiven(view: JournalView, plan: PlanM1, owner: LaneOwner, keys: readonly FlakyKey[]): boolean {
-  if (owner.type === 'job') return true;
-  const own = ownKeys(view, plan, owner.unit);
-  return !keys.some((k) => own.has(keyText(k)));
+/**
+ * The keys standing as tip flakes: each ledger key with a flake since its latest merged deflake published (a merged fix is
+ * in every later tree; a cut or open deflake fixed nothing yet).
+ */
+function tipFlaky(view: JournalView, plan: PlanM1): ReadonlySet<string> {
+  const out = new Set<string>();
+  for (const e of flakyLedger(view, plan)) {
+    const since = Math.max(0, ...e.deflakes.filter((d) => deflakeState(view, d) === 'merged').map((d) => publishedSeq(view, d)));
+    if (e.at.some((x) => x.seq > since)) out.add(keyText(e.key));
+  }
+  return out;
 }
 
 /**
- * Records one flake (`flake-observed`), once per red run: whether its lane counts as passed. Called by the series that ran
- * the diagnostic rerun, before it reads the lane's record.
+ * Whether `owner` is forgiven a flake of `keys` seen `on` (see the header): never a deflake unit of one of them; a tip
+ * flake, every other owner; a unit's own flake, only when every key stands as a tip flake.
+ */
+export function flakeForgiven(view: JournalView, plan: PlanM1, owner: LaneOwner, on: FlakeOn, keys: readonly FlakyKey[]): boolean {
+  if (owner.type === 'job') {
+    if (on !== 'tip') throw new Error(`job ${owner.job}: a flake on a unit's own tree; a job runs only integrated trees`);
+    return true;
+  }
+  const own = ownKeys(view, plan, owner.unit);
+  if (keys.some((k) => own.has(keyText(k)))) return false;
+  if (on === 'tip') return true;
+  const standing = tipFlaky(view, plan);
+  return keys.every((k) => standing.has(keyText(k)));
+}
+
+/**
+ * Records one flake (`flake-observed`), once per red run, seen `on`: whether its lane counts as passed. Called by the
+ * series that ran the diagnostic rerun, before it reads the lane's record.
  */
 export function observeFlake(
-  ctx: Readonly<{ journal: Journal; plan: () => PlanM1 }>, owner: LaneOwner, lane: LaneId, set: FlakyLaneSet, event: FlakyEvent,
+  ctx: Readonly<{ journal: Journal; plan: () => PlanM1 }>, owner: LaneOwner, lane: LaneId, set: FlakyLaneSet, on: FlakeOn, event: FlakyEvent,
 ): boolean {
   const view = ctx.journal.view;
   const known = view.flakes().find((x) => x.fact.event.red === event.red);
   if (known !== undefined) return known.fact.forgiven;
-  const forgiven = flakeForgiven(view, ctx.plan(), owner, flakyKeysOf(lane, event.failing));
-  const fact: FlakyFact = { kind: 'flake-observed', owner, lane, set, event, forgiven };
+  const forgiven = flakeForgiven(view, ctx.plan(), owner, on, flakyKeysOf(lane, event.failing));
+  const fact: FlakyFact = { kind: 'flake-observed', owner, lane, set, on, event, forgiven };
   ctx.journal.fact(fact);
   return forgiven;
 }

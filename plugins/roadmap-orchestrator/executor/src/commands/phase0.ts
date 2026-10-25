@@ -7,9 +7,9 @@
 //               revisioned inputs, routing, lanes), `holistic-needs-corpus` (H4: a holistic plan targets a corpus), then
 //               dev.13's `walk-tools-missing` (src/preflight/walktools.ts: the milestones' bring-up programs and
 //               walkthrough MCP servers, handshaken), then the shared Phase-0 rows (src/phase0/rows.ts) in full: the
-//               closure rows 1-6, the forge, the chain as a fresh start's and the tree.
+//               closure rows 1-6, the chain as a fresh start's and the tree.
 //   --from-ref  every input by the digests the arc's verified `refs/roadmap/<arc>` recorded (the plan in force at its
-//               high-water and its revision's manifest: pin, guide, Phase-0 record, issue capture, obligations, vision,
+//               high-water and its revision's manifest: pin, guide, Phase-0 record, obligations, vision,
 //               ledger), never the live files; the closure rows 1-6 only (re-derivation reads the source at the pin's
 //               commit and the registry at the plan's baseline).
 import { dirname } from 'node:path';
@@ -19,7 +19,7 @@ import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
 import { CliError, runDir, type Phase0Source } from '../input/cli.ts';
 import {
-  CORPUS_GUIDE_INPUT, CORPUS_INPUT, ISSUES_INPUT, OBLIGATIONS_INPUT, PHASE0_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, arcRolesOf, readInputFiles,
+  CORPUS_GUIDE_INPUT, CORPUS_INPUT, OBLIGATIONS_INPUT, PHASE0_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, arcRolesOf, readInputFiles,
 } from '../input/inforce.ts';
 import {
   holisticNeedsCorpus, FRESH_START, FROM_REF, type Phase0Input, type Phase0Advisory, phase0InputOf, phase0Rows, visionAndObligations,
@@ -93,7 +93,7 @@ function fromRef(repo: AbsPath, source: Extract<Phase0Source, { type: 'ref' }>):
   const input: Phase0Input = {
     repo, plan: ref.plan, config: null, where: `refs/roadmap/${ref.arc} at ${ref.commit}`,
     pin: kept(m.corpus, CORPUS_INPUT), guide: kept(m.corpusGuide, CORPUS_GUIDE_INPUT), phase0: kept(m.phase0, PHASE0_INPUT),
-    capture: kept(m.phase0Issues, ISSUES_INPUT), obligations: kept(m.obligations, OBLIGATIONS_INPUT), vision: kept(m.vision, VISION_INPUT),
+    obligations: kept(m.obligations, OBLIGATIONS_INPUT), vision: kept(m.vision, VISION_INPUT),
     specs: new Map(ref.plan.units.map((u) => [u.id, kept(m.specs[u.id], SPEC_INPUT)])),
     ledger: parseRulings(ref.input(m.rulings.ledgerSha256, RULINGS_INPUT).toString('utf8'), `refs/roadmap/${ref.arc} (the rulings ledger)`),
     // A ref carries no unit state: every unit of its plan is judged.

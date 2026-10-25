@@ -768,8 +768,11 @@ export function parseRulingSidecar(value: unknown): RulingSidecar {
 
 export const FINDING_SEVERITIES = ['P1', 'P2', 'P3'] as const;
 export type FindingSeverity = (typeof FINDING_SEVERITIES)[number];
-/** Who opened it: a lens, code over a witness (a must-hold not held on an audit snapshot), plan-check (R17), or issue intake (M4a). */
-/** M4a: `issue` (a checkpoint's issue intake opens a P2 or P3 finding, C3). */
+/** Who opened it: a lens, code over a witness (a must-hold not held on an audit snapshot), or plan-check (R17). */
+/**
+ * M4a: `issue` (a checkpoint's issue intake opened a P2 or P3 finding, C3). Only an earlier executor opened one (the issues
+ * integration was removed in 1.0.0-dev.21); kept so its findings still read and settle (scaffolding, `issuesIgnored`).
+ */
 /**
  * dev.13: `walkthrough` (a milestone walk opens a P1 for a break, a P2 for a deviation, never a P3; code opens a P1 for a
  * failed bring-up of a walk or the demo). A walkthrough finding names its milestone (`finding-opened.milestone`) and may
@@ -878,7 +881,7 @@ export const findingTo: Read<FindingTo> = tagged('state', {
 export type AuditTrigger =
   /** Every N publications (D3, N = `holistic.audit.every`, default 5). */
   | Readonly<{ type: 'cadence' }>
-  /** R8: a publication left a selected future or exempt obligation unwitnessed. */
+  /** R8: a publication left a selected active future (not latched) obligation unwitnessed; never an exempt one. */
   | Readonly<{ type: 'unwitnessed'; obligation: ObligationId }>
   /**
    * A revision from a rule, a bundle, `reverse`, or an architect spec, obligation or vision edit: `L ∩ {drift, vision}`.
@@ -904,14 +907,16 @@ export const auditTrigger: Read<AuditTrigger> = tagged('type', {
 });
 
 /**
- * What a checkpoint runs for: a completed audit, an operator-design park (OR-Q1), or (dev.13) a milestone walk that ended
- * as a round with findings no checkpoint has weighed (src/holistic/checkpoint.ts `walkNeedsCheckpoint`).
+ * What a checkpoint runs for: K retired milestones, an operator-design park, an audit P1/final audit (all audits in
+ * an arc without milestones), or a walk round's unweighed blocking finding. Old audit/walk captures stay readable.
  */
 export type CheckpointTrigger =
   | Readonly<{ type: 'audit'; job: JobId }>
   | Readonly<{ type: 'park'; unit: UnitId; seq: number }>
-  | Readonly<{ type: 'walk'; job: JobId }>;
+  | Readonly<{ type: 'walk'; job: JobId }>
+  | Readonly<{ type: 'milestone'; milestones: readonly MilestoneId[] }>;
 export const checkpointTrigger: Read<CheckpointTrigger> = tagged('type', {
+  milestone: object((f): CheckpointTrigger => ({ type: f.get('type', literal('milestone')), milestones: f.get('milestones', idList((v, p) => milestoneId(v, p), { nonEmpty: true })) })),
   audit: object((f): CheckpointTrigger => ({ type: f.get('type', literal('audit')), job: f.get('job', jobR) })),
   park: object((f): CheckpointTrigger => ({ type: f.get('type', literal('park')), unit: f.get('unit', (v, p) => unitId(v, p)), seq: f.get('seq', positive) })),
   walk: object((f): CheckpointTrigger => ({ type: f.get('type', literal('walk')), job: f.get('job', (v, p) => jobIdOfKind('walk')(v, p)) })),

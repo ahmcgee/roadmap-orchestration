@@ -4,18 +4,14 @@
 // shapes the real `gh` prints, and fails loudly (exit 99, the mismatch on stderr) on anything else, so a call the
 // fake does not know is a test failure rather than a silent success:
 //   gh repo view [<owner/name>] --json owner,name,url[,nameWithOwner]
-//   gh api [--hostname H] graphql -f query=... [-f owner=.. -f name=..]   (repository{visibility hasIssuesEnabled issueCreationPolicy})
-//   gh api [--hostname H] [--paginate] [-X M] repos/<owner>/<name>/issues[?labels=a,b&state=open&per_page=N&page=N]
-//   gh api ... repos/<owner>/<name>/issues/<n>/comments   (GET)
-//   gh api ... repos/<owner>/<name>/issues/<n>/labels     (POST -f labels[]=x | DELETE .../labels/<x>)
-//   gh pr list|view|create|edit, gh label create, gh issue edit --add-label/--remove-label
-// Every call is appended to gh-calls.jsonl beside the store with the hostname, owner and name it carried. A GraphQL or
-// REST call names its repository explicitly, so one that carries the wrong owner or name finds nothing, as on GitHub.
+//   gh pr list|view|create|edit|close
+// Every call is appended to gh-calls.jsonl beside the store with the hostname, owner and name it carried. A call that
+// names its repository (`-R`) names the store's, or it finds nothing, as on GitHub.
 // Calls are expected one at a time (a test drives them sequentially); a mutation is a read-modify-write of the store.
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { type GhCallRecord, type GhIssue, type GhMutation, type GhPull, type GhStore, appendCall, nextSeq, readStore, writeStore } from './gh-store.ts';
+import { type GhCallRecord, type GhMutation, type GhPull, type GhStore, appendCall, nextSeq, readStore, writeStore } from './gh-store.ts';
 
 /** A failure the real gh would report: its message on stderr and its exit code (1; 99 for what the fake does not know). */
 class GhFail extends Error {
@@ -60,7 +56,6 @@ const one = (p: Parsed, flag: string): string | undefined => {
   if (v !== undefined && v.length > 1) throw new GhFail(`flag ${flag} given ${v.length} times`);
   return v?.[0];
 };
-const all = (p: Parsed, ...flags: string[]): readonly string[] => flags.flatMap((f) => p.flags.get(f) ?? []);
 
 let store: GhStore;
 let storePath: string;
@@ -109,117 +104,8 @@ function repoView(argv: readonly string[]): void {
     name: store.repo.name,
     url: repoUrl(),
     nameWithOwner: `${store.repo.owner}/${store.repo.name}`,
-    isPrivate: store.policy.visibility === 'PRIVATE',
   };
   json(Object.fromEntries(fields.map((f) => [f, f in known ? known[f] : unknown(`repo view field ${f}`)])));
-}
-
-function graphql(fields: ReadonlyMap<string, string>): void {
-  touched.kind = 'graphql';
-  const query = fields.get('query') ?? unknown('graphql without a query');
-  const call = /repository\s*\(([^)]*)\)\s*\{([^}]*)\}/.exec(query);
-  if (call === null) return unknown(`graphql query ${query}`);
-  const arg = (key: string): string => {
-    const m = new RegExp(`${key}\\s*:\\s*(\\$\\w+|"[^"]*")`).exec(call[1] as string);
-    if (m === null) return unknown(`graphql repository() without ${key}`);
-    const v = m[1] as string;
-    if (v.startsWith('"')) return v.slice(1, -1);
-    return fields.get(v.slice(1)) ?? unknown(`graphql variable ${v} not passed`);
-  };
-  const [owner, name] = [arg('owner'), arg('name')];
-  touched.owner = owner;
-  touched.name = name;
-  if (owner !== store.repo.owner || name !== store.repo.name) {
-    json({ data: { repository: null }, errors: [{ type: 'NOT_FOUND', path: ['repository'], message: `Could not resolve to a Repository with the name '${owner}/${name}'.` }] });
-    throw new GhFail(`gh: Could not resolve to a Repository with the name '${owner}/${name}'.`);
-  }
-  const selected = (call[2] as string).split(/\s+/).filter((w) => w !== '');
-  const known: Record<string, unknown> = { ...store.policy };
-  json({ data: { repository: Object.fromEntries(selected.map((f) => [f, f in known ? known[f] : unknown(`graphql repository field ${f}`)])) } });
-}
-
-function paged<T>(items: readonly T[], query: URLSearchParams, paginate: boolean): readonly T[] {
-  if (paginate) return items;
-  const per = Number(query.get('per_page') ?? 30);
-  const page = Number(query.get('page') ?? 1);
-  return items.slice((page - 1) * per, page * per);
-}
-
-function rest(method: string, endpoint: string, fields: ReadonlyMap<string, string>, listFields: ReadonlyMap<string, readonly string[]>, paginate: boolean): void {
-  touched.kind = 'rest';
-  const [pathPart, queryPart] = endpoint.replace(/^\//, '').split('?') as [string, string | undefined];
-  const query = new URLSearchParams(queryPart ?? '');
-  const seg = pathPart.split('/');
-  if (seg[0] !== 'repos' || seg[1] === undefined || seg[2] === undefined) return unknown(`api endpoint ${endpoint}`);
-  checkRepo(seg[1], seg[2]);
-  const rest = seg.slice(3);
-  if (rest[0] !== 'issues') return unknown(`api endpoint ${endpoint}`);
-  if (!store.policy.hasIssuesEnabled && method === 'GET' && rest.length === 1) {
-    throw new GhFail('gh: the contents of this repository are disabled: Issues are disabled for this repo (HTTP 410)');
-  }
-  if (method === 'GET' && rest.length === 1) {
-    const wanted = (query.get('labels') ?? '').split(',').filter((l) => l !== '');
-    const state = query.get('state') ?? 'open';
-    const hits = store.issues.filter((i) => (state === 'all' || i.state === state) && wanted.every((w) => i.labels.some((l) => l.name === w)));
-    json(paged(hits, query, paginate));
-    return;
-  }
-  const n = Number(rest[1]);
-  const issue = store.issues.find((i) => i.number === n);
-  if (!Number.isInteger(n) || issue === undefined) throw new GhFail(`gh: Not Found (HTTP 404): issue ${rest[1]}`);
-  if (method === 'GET' && rest[2] === 'comments' && rest.length === 3) {
-    json(paged(store.comments[String(n)] ?? [], query, paginate));
-    return;
-  }
-  if (rest[2] !== 'labels') return unknown(`api ${method} ${endpoint}`);
-  if (method === 'POST' && rest.length === 3) {
-    const names = [...(listFields.get('labels') ?? []), ...(fields.has('labels') ? [fields.get('labels') as string] : [])];
-    addLabels(issue, names);
-    json((store.issues.find((i) => i.number === n) as GhIssue).labels);
-    return;
-  }
-  if (method === 'DELETE' && rest.length === 4) {
-    removeLabels(issue, [decodeURIComponent(rest[3] as string)]);
-    json((store.issues.find((i) => i.number === n) as GhIssue).labels);
-    return;
-  }
-  unknown(`api ${method} ${endpoint}`);
-}
-
-function addLabels(issue: GhIssue, names: readonly string[]): void {
-  const added = names.filter((l) => !issue.labels.some((x) => x.name === l));
-  const unknownLabel = added.find((l) => !store.labels.includes(l));
-  if (unknownLabel !== undefined) throw new GhFail(`'${unknownLabel}' not found`);
-  const next = { ...issue, labels: [...issue.labels, ...added.map((name) => ({ name }))] };
-  save({ issues: store.issues.map((i) => (i.number === issue.number ? next : i)) });
-  mutate({ kind: 'labels-add', number: issue.number, labels: names });
-}
-
-function removeLabels(issue: GhIssue, names: readonly string[]): void {
-  const next = { ...issue, labels: issue.labels.filter((l) => !names.includes(l.name)) };
-  save({ issues: store.issues.map((i) => (i.number === issue.number ? next : i)) });
-  mutate({ kind: 'labels-remove', number: issue.number, labels: names });
-}
-
-function api(argv: readonly string[]): void {
-  const p = parseFlags(argv, ['--hostname', '-X', '--method', '-f', '--raw-field', '-F', '--field', '-H', '--header'], ['--paginate']);
-  const endpoint = p.positional[0] ?? unknown('api without an endpoint');
-  if (p.positional.length > 1) unknown(`api with extra arguments ${p.positional.slice(1).join(' ')}`);
-  touched.kind = endpoint === 'graphql' ? 'graphql' : 'rest';
-  const hostname = one(p, '--hostname') ?? null;
-  checkHost(hostname);
-  const fields = new Map<string, string>();
-  const listFields = new Map<string, string[]>();
-  for (const kv of all(p, '-f', '--raw-field', '-F', '--field')) {
-    const eq = kv.indexOf('=');
-    if (eq === -1) throw new GhFail(`field ${kv} must be key=value`);
-    const key = kv.slice(0, eq);
-    if (key.endsWith('[]')) listFields.set(key.slice(0, -2), [...(listFields.get(key.slice(0, -2)) ?? []), kv.slice(eq + 1)]);
-    else fields.set(key, kv.slice(eq + 1));
-  }
-  const method = (one(p, '-X') ?? one(p, '--method') ?? (endpoint === 'graphql' || fields.size > 0 || listFields.size > 0 ? 'POST' : 'GET')).toUpperCase();
-  if (endpoint === 'graphql') graphql(fields);
-  else rest(method, endpoint, fields, listFields, p.flags.has('--paginate'));
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -284,14 +170,14 @@ function pr(argv: readonly string[]): void {
     return;
   }
   if (sub === 'create') {
-    const p = parseFlags(rest, [...PR_COMMON, '--base', '-B', '--head', '-H', '--title', '-t', '--body', '-b', '--body-file', '-F', '--label', '-l'], ['--draft']);
+    const p = parseFlags(rest, [...PR_COMMON, '--base', '-B', '--head', '-H', '--title', '-t', '--body', '-b', '--body-file', '-F'], ['--draft']);
     pullRepo(p);
     touched.kind = 'pr-create';
     createPull(p);
     return;
   }
   if (sub === 'edit') {
-    const p = parseFlags(rest, [...PR_COMMON, '--base', '-B', '--title', '-t', '--body', '-b', '--body-file', '-F', '--add-label', '--remove-label'], []);
+    const p = parseFlags(rest, [...PR_COMMON, '--base', '-B', '--title', '-t', '--body', '-b', '--body-file', '-F'], []);
     pullRepo(p);
     touched.kind = 'pr-edit';
     editPull(p);
@@ -328,16 +214,10 @@ function createPull(p: Parsed): void {
   if (store.pulls.some((x) => x.state === 'OPEN' && x.headRefName === head && x.baseRefName === base)) {
     throw new GhFail(`a pull request for branch "${head}" into branch "${base}" already exists`);
   }
-  const labels = all(p, '--label', '-l').flatMap((l) => l.split(','));
-  const missing = labels.find((l) => !store.labels.includes(l));
-  if (missing !== undefined) throw new GhFail(`could not add label: '${missing}' not found`);
   const number = store.nextNumber;
   const url = `${repoUrl()}/pull/${number}`;
   const pull: GhPull = { number, title, body, state: 'OPEN', url, baseRefName: base, headRefName: head, mergeCommit: null, isDraft: p.flags.has('--draft') };
-  const entry: GhIssue = {
-    number, title, body, state: 'open', labels: labels.map((name) => ({ name })), user: { login: store.repo.owner }, author_association: 'OWNER', pull_request: { url: `${repoUrl()}/pull/${number}` },
-  };
-  save({ nextNumber: number + 1, pulls: [...store.pulls, pull], issues: [...store.issues, entry] });
+  save({ nextNumber: number + 1, pulls: [...store.pulls, pull] });
   mutate({ kind: 'pr-create', number, base, head, title });
   out(`${url}\n`);
 }
@@ -353,13 +233,8 @@ function editPull(p: Parsed): void {
   if (body !== undefined) fields['body'] = body;
   if (base !== undefined && !originHas(base)) throw new GhFail(`base branch "${base}" not found`);
   const next: GhPull = { ...found, ...(base === undefined ? {} : { baseRefName: base }), ...(title === undefined ? {} : { title }), ...(body === undefined ? {} : { body }) };
-  const issues = store.issues.map((i) => (i.number === found.number ? { ...i, ...(title === undefined ? {} : { title }), ...(body === undefined ? {} : { body }) } : i));
-  save({ pulls: store.pulls.map((x) => (x.number === found.number ? next : x)), issues });
+  save({ pulls: store.pulls.map((x) => (x.number === found.number ? next : x)) });
   if (Object.keys(fields).length > 0) mutate({ kind: 'pr-edit', number: found.number, fields });
-  for (const [flag, op] of [['--add-label', addLabels], ['--remove-label', removeLabels]] as const) {
-    const names = all(p, flag).flatMap((l) => l.split(','));
-    if (names.length > 0) op(store.issues.find((i) => i.number === found.number) as GhIssue, names);
-  }
   out(`${found.url}\n`);
 }
 
@@ -367,41 +242,9 @@ function editPull(p: Parsed): void {
 function closePull(p: Parsed): void {
   const found = findPull(p.positional[0]);
   if (found.state !== 'OPEN') throw new GhFail(`Pull request #${found.number} (${found.title}) is already ${found.state === 'MERGED' ? 'merged' : 'closed'}`);
-  save({
-    pulls: store.pulls.map((x) => (x.number === found.number ? { ...x, state: 'CLOSED' as const } : x)),
-    issues: store.issues.map((i) => (i.number === found.number ? { ...i, state: 'closed' as const } : i)),
-  });
+  save({ pulls: store.pulls.map((x) => (x.number === found.number ? { ...x, state: 'CLOSED' as const } : x)) });
   mutate({ kind: 'pr-close', number: found.number, comment: one(p, '--comment') ?? one(p, '-c') ?? null });
   out(`✓ Closed pull request ${found.url}\n`);
-}
-
-function label(argv: readonly string[]): void {
-  if (argv[0] !== 'create') return unknown(`label ${argv[0]}`);
-  const p = parseFlags(argv.slice(1), [...PR_COMMON, '--color', '-c', '--description', '-d'], ['--force', '-f']);
-  pullRepo(p);
-  touched.kind = 'label-create';
-  const name = p.positional[0] ?? unknown('label create without a name');
-  if (store.labels.includes(name)) {
-    if (!p.flags.has('--force') && !p.flags.has('-f')) throw new GhFail(`label with name "${name}" already exists; use \`--force\` to update its color and description`);
-    return;
-  }
-  save({ labels: [...store.labels, name] });
-  mutate({ kind: 'label-create', name });
-}
-
-function issue(argv: readonly string[]): void {
-  if (argv[0] !== 'edit') return unknown(`issue ${argv[0]}`);
-  const p = parseFlags(argv.slice(1), [...PR_COMMON, '--add-label', '--remove-label'], []);
-  pullRepo(p);
-  touched.kind = 'issue-edit';
-  const n = Number(p.positional[0]);
-  const found = store.issues.find((i) => i.number === n);
-  if (found === undefined) throw new GhFail(`issue ${p.positional[0]} not found`);
-  const add = all(p, '--add-label').flatMap((l) => l.split(','));
-  const remove = all(p, '--remove-label').flatMap((l) => l.split(','));
-  if (add.length > 0) addLabels(found, add);
-  if (remove.length > 0) removeLabels(store.issues.find((i) => i.number === n) as GhIssue, remove);
-  out(`${repoUrl()}/issues/${n}\n`);
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -421,17 +264,8 @@ export function main(): void {
         if (argv[1] !== 'view') unknown(`repo ${argv[1]}`);
         repoView(argv.slice(2));
         break;
-      case 'api':
-        api(argv.slice(1));
-        break;
       case 'pr':
         pr(argv.slice(1));
-        break;
-      case 'label':
-        label(argv.slice(1));
-        break;
-      case 'issue':
-        issue(argv.slice(1));
         break;
       default:
         unknown(`gh ${argv.join(' ')}`);

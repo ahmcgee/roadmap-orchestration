@@ -27,7 +27,7 @@
 //   - a finding from an audit lens: the units whose ff merge lies in that lens's covered range of the audit and whose
 //     first-parent diff touches one of the finding's repo-relative evidence paths (absolute paths ignored);
 //   - lens `witness`: the same over the union of the audit's ranges;
-//   - lens `issue`, or a stage finding (plan-check, build): empty;
+//   - lens `issue` (an earlier executor's issue intake), or a stage finding (plan-check, build): empty;
 //   - an obligation: the units merged after the latest head it was observed held and at or before the first head after
 //     it observed not held; never observed held: empty.
 // Lineage O: L(i) non-empty, unambiguous and inside units(O) for exactly one O. Ambiguity never grants a follow-up.
@@ -278,7 +278,7 @@ export function namedUnits(op: BundleOp): readonly UnitId[] {
   }
 }
 
-/** R35: a conversion another op or an `acted` intake names makes the bundle invalid instead of dropping the op. */
+/** R35: a conversion another op names makes the bundle invalid instead of dropping the op. */
 export function conversionReasons(output: CheckpointOutput, conversions: readonly Conversion[]): readonly string[] {
   const byUnit = new Map(conversions.map((c) => [c.unit as string, c]));
   const dropped = new Set(conversions.map((c) => c.index));
@@ -290,9 +290,5 @@ export function conversionReasons(output: CheckpointOutput, conversions: readonl
       if (c !== undefined) out.push(`op ${i + 1} (${op.op}) names ${u}, whose admit (op ${c.index + 1}) code converts (${c.reason}): nothing may depend on an admit that converts`);
     }
   });
-  for (const { issue, outcome } of output.issueIntake) {
-    if (outcome.type !== 'acted' || outcome.on.type !== 'ops') continue;
-    for (const i of outcome.on.indexes) if (dropped.has(i)) out.push(`issueIntake acts on ${issue} through op ${i + 1}, an admit code converts`);
-  }
   return out;
 }

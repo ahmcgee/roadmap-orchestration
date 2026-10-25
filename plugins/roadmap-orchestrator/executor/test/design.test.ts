@@ -321,7 +321,7 @@ test('design.departure-and-contract: an unlisted test change is a departure reco
     assert.match(decisions[0]!.id, /^departure\.[0-9a-f]{12}$/);
     assert.equal(decisions[0]!.text, 'Departure from the design record: the build changed the existing test test/add.test.js, which its breaks do not list.');
     const gate = readCalls(d.scenarioPath).find(isGateCall);
-    assert.ok(gate !== undefined && gate.argv.includes('xhigh'), 'the contract touched put the gate on its escalation seat');
+    assert.ok(gate !== undefined && gate.argv.includes('claude-opus-5-5') && gate.argv.includes('high'), 'the contract touched put the gate on its escalation seat');
     const inputs = facts(d).find((f) => f.kind === 'judgment-inputs' && f.stage === 'gate');
     assert.ok(inputs?.kind === 'judgment-inputs' && inputs.designEstimate === 10, 'the gate records the design\'s size estimate');
     assert.ok(readCalls(d.scenarioPath).every((c) => c.step !== null));

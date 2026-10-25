@@ -5,7 +5,7 @@
 //   grammar: `[x]` optional, `(a | b)` one of the groups, `a|b` one of the literals, `<name>` a placeholder (a sample
 //   value from PLACEHOLDERS; an unknown name fails), `<name>...` one or more.
 // skill-lint.no-model-ids: no model id (a catalogue key, or a token shaped like one) in any file under skills/; and in
-//   the files an agent loads at run time (each SKILL.md, reference.md, the templates) no display name or model family
+//   the files an agent loads at run time (each SKILL.md, reference.md) no display name or model family
 //   name either. RATIONALE-1.0.md is maintainer text that cites the models arc 1 ran on as evidence.
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -29,7 +29,7 @@ const PLACEHOLDERS: Readonly<Record<string, string>> = {
 const KINDS: { readonly [K in Command['command']]: true } = {
   version: true, start: true, status: true, watch: true, stop: true, pause: true, ack: true, resume: true, sweep: true, apply: true,
   'resolve-edge': true, 'run-only': true, rule: true, reverse: true, steer: true, 'merge-in': true, audit: true, 'close-admissions': true,
-  gc: true, 'phase0-check': true, 'corpus-pin': true, brief: true, pr: true, issues: true, 'chain-status': true, answer: true,
+  gc: true, 'phase0-check': true, 'corpus-pin': true, brief: true, pr: true, 'chain-status': true, answer: true,
   'witness-check': true, 'resume-arc': true, 'inputs-export': true, 'flow-decide': true, 'flow-request': true, 'flow-given': true, 'scope-decide': true, demo: true,
 };
 

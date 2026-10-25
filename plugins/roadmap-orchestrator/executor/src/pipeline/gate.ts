@@ -50,7 +50,8 @@
 // review's rules (`reviewRules`: a defect on every blocking finding, no blocking re-raise of a settled finding whose file is
 // unchanged, one ruling per dispute, demotion off the delta), and once read its findings enter the ledger (`review-ledger`).
 // An approval records its blobs (`ApprovalBlobs`); a later gate whose delta is empty records `delta-empty` and approves again
-// at the new fingerprint without a call.
+// at the new fingerprint without a call, and so does a scope-only re-entry's first gate at the approved head (field report
+// 2026-10-24, review.ts `carriedApproval`).
 //
 // M3: the gate grades against the obligations its diff selects (`selectObligations`, src/holistic/impact.ts: the
 // spec's declared ones and repairs, its dependency closure's declared ones, what the diff's paths touch, the future

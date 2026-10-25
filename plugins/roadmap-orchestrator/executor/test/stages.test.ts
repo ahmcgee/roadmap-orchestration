@@ -152,7 +152,7 @@ test('redirect.no-widen: a redirect that widens the envelope or lowers the risk 
   assert.equal(dispatches.length, 1, 'the dispatch record is never re-pinned lower');
   assert.equal(run.journal.view.dispatchOf(U1)?.riskFloor, 'med');
   const calls = readCalls(run.scenario.path);
-  assert.ok(calls[1]!.argv.includes('xhigh'), 'the routed-up check ran on the escalation seat');
+  assert.ok(calls[1]!.argv.includes('claude-opus-5-5') && calls[1]!.argv.includes('high'), 'the routed-up check ran on the escalation seat');
 });
 
 test('stages.red-lane-fix-round: the resumed implementer reads the failing evidence dir, commits the fix, the next series is green', T, async () => {
@@ -411,7 +411,9 @@ test('stages.interrupted-holds: a pause mid-build holds the unit, moves no count
 });
 
 test('stages.contract-touched-promotes: a contract path in the round\'s commits promotes the next judgment dispatch only', T, async () => {
+  // The contract lies in the unit's scope: a commit outside it is refused at salvage (field report 2026-10-24).
   const run = setupUnit({
+    unit: { scope: ['src/**', 'test/**', 'contracts/**'] },
     steps: [
       planCheckStep({ decision: 'approve' }),
       codexBuild([{ type: 'commit', message: 'touch the contract', files: { 'contracts/api.md': '# API contract\n\nChanged.\n', 'src/add.js': 'export const add = (a, b) => a + b;\n' } }]),

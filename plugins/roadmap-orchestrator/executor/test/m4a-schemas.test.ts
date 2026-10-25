@@ -1,8 +1,9 @@
 // M4a records frozen in step 0a (SCHEMAS.md "M4a: corpus, debt, forge, brief, chaining"): ids, the plan target union
 // (`plan.target-union`), the corpus guide, pin and registry, obligations with rule anchors and the census, ruling rule
-// refs (`sidecar.rule-arm-no-deviates`), the Phase-0 record, the issue capture, the debt ledger, pack-review inputs and
-// key, every new fact and PlanChange arm, the startup rows, the brief payload and the ack marker, the dev.6 read-time
-// defaults (`upgrade.defaults-dev6`), the CLI forms (`cli.m4a`) and the accessor guard (`target.no-direct-access`).
+// refs (`sidecar.rule-arm-no-deviates`), the Phase-0 record, the debt ledger, pack-review inputs and key, every new fact
+// and PlanChange arm, the startup rows, the brief payload and the ack marker, the dev.6 read-time defaults
+// (`upgrade.defaults-dev6`), what an earlier executor wrote for the removed issues integration (`upgrade.issues-ignored`),
+// the CLI forms (`cli.m4a`) and the accessor guard (`target.no-direct-access`).
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
@@ -10,19 +11,18 @@ import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 import { type Envelope, type Event, type Fact, type LogRecord, parseEventLine, serializeEvent } from '../src/core/events.ts';
 import {
-  InvalidIdError, amendmentRef, amendmentRefOf, arcId, briefId, commandId, debtId, issueContentRef, issueId, issueOfContent, jobId, jobIdOf,
+  InvalidIdError, amendmentRef, amendmentRefOf, arcId, briefId, commandId, debtId, jobId, jobIdOf,
   parseAmendmentRef, phaseQuestionId, ruleId, sha, sha256, unitId,
 } from '../src/core/ids.ts';
 import { canonicalJson } from '../src/core/json.ts';
 import { brief } from '../src/commands/brief.ts';
 import { chainStatus } from '../src/commands/chain.ts';
 import { approvalFingerprint, needsUserRecord, NEEDS_USER_REASONS, revisionInputs } from '../src/core/records.ts';
-import { censusOf } from '../src/core/upgrade.ts';
+import { censusOf, checkpointSkipTriggerOf } from '../src/core/upgrade.ts';
 import { Fields, SchemaError } from '../src/core/validate.ts';
 import { absPath, isoTime, repoPath } from '../src/core/values.ts';
 import { parseCorpusGuide, parseCorpusPin, parseRulesRegistry } from '../src/corpus/types.ts';
 import { parseDebtLedger } from '../src/debt/types.ts';
-import { parseIssueCapture } from '../src/forge/types.ts';
 import { packReviewKey } from '../src/holistic/packreview.ts';
 import {
   obligationSource, parseConfirmationRef, parseObligations, parsePackReviewInputs, parseRulingSidecar, rulingRefSource,
@@ -109,19 +109,6 @@ const sidecar = (docRefs: readonly object[]) => ({
   },
 });
 
-const capture = {
-  schema: 'roadmap/issues-capture-m4', repo: { host: 'github.com', owner: 'o', name: 'tidewater' },
-  policy: { visibility: 'PUBLIC', hasIssuesEnabled: true, issueCreationPolicy: 'COLLABORATORS_ONLY' },
-  issues: [
-    {
-      id: 'issue-3', title: 'Overlap allowed', labels: ['roadmap:bug'], body: '<pasted_content id="x">\nbody\n</pasted_content id="x">',
-      comments: [{ id: 'issue-3/c-7', association: 'NONE', body: 'me too' }, { id: 'issue-3/c-12', association: 'OWNER', body: 'confirmed' }],
-    },
-    { id: 'issue-11', title: 'Feedback', labels: ['roadmap:feedback'], body: 'b', comments: [] },
-  ],
-  filtered: { comments: 1, pullRequests: 1 },
-};
-
 const phase0 = {
   schema: 'roadmap/phase0-m4',
   curation: [{ tier: 'structural', what: 'merged three restatements', files: ['0010_Overview.md'], rules: ['T-2'] }],
@@ -129,11 +116,6 @@ const phase0 = {
   questions: [{ id: 'P-4', rank: 1, text: '24 h or 48 h?', files: ['0010_Overview.md'], bears: ['T-10', 'V-1'], assumption: '48 h', state: { type: 'answered', answer: '48 h', at: AT } }],
   debt: [{ id: 'B-2', disposition: { type: 'keep', reason: 'later' } }, { id: 'B-10', disposition: { type: 'promote', unit: 'u1' } }],
   amendments: [{ id: 'arc-1/M-1', disposition: { type: 'applied', rules: ['T-10'] } }],
-  issueCapture: { file: 'issues.json', sha256: H },
-  intake: [
-    { issue: 'issue-3', outcome: { type: 'acted', on: { type: 'rules', ids: ['T-2'] } } },
-    { issue: 'issue-11', outcome: { type: 'none', reason: 'already planned' } },
-  ],
   slice: { advances: ['V-1'], why: 'first slice' },
 };
 
@@ -148,17 +130,15 @@ const items = [{ arc: 'arc-2', id: 'nu-12' }, { arc: 'arc-2', id: 'nu-30' }];
 // ---------------------------------------------------------------------------------------------------
 
 describe('M4a ids', () => {
-  it('rule, debt, amendment, Phase-0 question, issue, issue content and brief ids; review jobs', () => {
+  it('rule, debt, amendment, Phase-0 question and brief ids; review jobs', () => {
     assert.equal(ruleId('T-12'), 'T-12');
     assert.equal(debtId('B-1'), 'B-1');
     assert.equal(phaseQuestionId('P-3'), 'P-3');
     assert.equal(amendmentRefOf(ARC, 'M-4' as never), 'arc-2/M-4');
     assert.deepEqual(parseAmendmentRef(amendmentRef('arc-1/M-2')), { arc: 'arc-1', id: 'M-2' });
-    assert.equal(issueId('issue-42'), 'issue-42');
-    assert.equal(issueOfContent(issueContentRef('issue-42/c-9001')), 'issue-42');
     assert.equal(briefId('0123456789abcdef'), '0123456789abcdef');
     assert.equal(jobIdOf('review-1'), jobId('review', 1));
-    for (const [read, bad] of [[ruleId, 'T-0'], [debtId, 'B-01'], [phaseQuestionId, 'P-'], [issueId, 'issue-0'], [issueContentRef, 'issue-3/c-'], [briefId, 'ABC'], [amendmentRef, 'M-1']] as const) {
+    for (const [read, bad] of [[ruleId, 'T-0'], [debtId, 'B-01'], [phaseQuestionId, 'P-'], [briefId, 'ABC'], [amendmentRef, 'M-1']] as const) {
       assert.throws(() => (read as (v: unknown) => unknown)(bad), InvalidIdError, String(bad));
     }
   });
@@ -271,25 +251,11 @@ describe('obligations, census and ruling refs', () => {
   });
 });
 
-describe('Phase 0, issues, debt and pack review', () => {
-  it('the Phase-0 record round-trips; Phase 0 may act only on units or rules', () => {
+describe('Phase 0, debt and pack review', () => {
+  it('the Phase-0 record round-trips', () => {
     same(parsePhase0Record, phase0);
-    const acted = (on: object) => ({ ...phase0, intake: [{ issue: 'issue-3', outcome: { type: 'acted', on } }] });
-    same(parsePhase0Record, acted({ type: 'units', ids: ['u1'] }));
-    assert.throws(() => parsePhase0Record(acted({ type: 'ops', indexes: [0] })), /intake\[0\]\.outcome\.on\.type/);
-    assert.throws(() => parsePhase0Record(acted({ type: 'units', ids: [] })), /ids/);
-    assert.throws(() => parsePhase0Record({ ...phase0, intake: [...phase0.intake].reverse() }), /intake\[1\]/);
     assert.throws(() => parsePhase0Record({ ...phase0, debt: [...phase0.debt].reverse() }), /debt\[1\]/);
     assert.throws(() => parsePhase0Record({ ...phase0, curation: [{ ...phase0.curation[0], files: [] }] }), /files/);
-  });
-
-  it('the issue capture round-trips canonically; its order, comment ownership and disabled issues are checked', () => {
-    same(parseIssueCapture, capture);
-    same(parseIssueCapture, { ...capture, policy: { ...capture.policy, hasIssuesEnabled: false }, issues: [] });
-    assert.throws(() => parseIssueCapture({ ...capture, issues: [...capture.issues].reverse() }), /issues\[1\]/);
-    assert.throws(() => parseIssueCapture({ ...capture, issues: [{ ...capture.issues[1], comments: [{ id: 'issue-3/c-1', association: 'OWNER', body: 'x' }] }] }), /comments\[0\]\.id/);
-    assert.throws(() => parseIssueCapture({ ...capture, policy: { ...capture.policy, hasIssuesEnabled: false } }), /issues/);
-    assert.throws(() => parseIssueCapture({ ...capture, policy: { ...capture.policy, issueCreationPolicy: 'SOMETIMES' } }), /issueCreationPolicy/);
   });
 
   it('the debt ledger round-trips, ascending by number', () => {
@@ -316,37 +282,29 @@ describe('facts, plan changes, manifests and fingerprints', () => {
   const M4A_FACTS: Readonly<Record<string, object>> = {
     'debt-banked': { kind: 'debt-banked', id: 'B-3', bankReason: 'gate-note', what: 'tidy x', key: H, source: { type: 'gate', unit: 'u1', attempt: 2, index: 0 } },
     'corpus-amendment': {
-      kind: 'corpus-amendment', id: 'M-1', source: { type: 'issue', job: 'ckpt-2', issue: 'issue-3' }, rules: ['T-2'], proposal: 'p', why: 'w', evidence: ['issue-3'],
+      kind: 'corpus-amendment', id: 'M-1', source: { type: 'checkpoint', job: 'ckpt-2', index: 0 }, rules: ['T-2'], proposal: 'p', why: 'w', evidence: [],
     },
-    'issue-intake': { kind: 'issue-intake', job: 'ckpt-2', issue: 'issue-3', outcome: { type: 'acted', on: { type: 'ops', indexes: [0, 2] } } },
     'pack-review-started': { kind: 'pack-review-started', job: 'review-1', planRev: 1, inputsSha256: H, key: H2 },
     'pack-review-ended': {
       kind: 'pack-review-ended', job: 'review-1', outcome: 'completed',
       findings: [{ index: 0, severity: 'blocking', target: { type: 'census', rule: 'T-2' }, claim: 'c', evidence: [{ path: 'obligations.json', line: 3 }] }],
     },
-    'issues-captured': { kind: 'issues-captured', job: 'ckpt-2', sha256: H, repo: { host: 'github.com', owner: 'o', name: 'n' }, filtered: { comments: 2, pullRequests: 1 } },
   };
 
   it('every M4a fact round-trips byte-identically', () => {
     for (const f of Object.values(M4A_FACTS)) roundTrip(fact(f));
     roundTrip(fact({ ...M4A_FACTS['debt-banked'], source: { type: 'finding', finding: 'F-4' } }));
-    roundTrip(fact({ ...M4A_FACTS['corpus-amendment'], source: { type: 'checkpoint', job: 'ckpt-1', index: 2 } }));
     roundTrip(fact({ ...M4A_FACTS['corpus-amendment'], source: { type: 'divergence', divergence: 'D-3' } }));
-    for (const outcome of [{ type: 'finding', finding: 'F-9' }, { type: 'amendment', amendment: 'M-2' }, { type: 'none', reason: 'dup' }]) {
-      roundTrip(fact({ ...M4A_FACTS['issue-intake'], outcome }));
-    }
   });
 
   it('the M4a facts refuse their illegal shapes', () => {
-    refusesFact({ ...M4A_FACTS['issue-intake'], outcome: { type: 'acted', on: { type: 'units', ids: ['u1'] } } }, /outcome\.on\.type/);
     refusesFact({ ...M4A_FACTS['pack-review-started'], job: 'audit-1' }, /job/);
     refusesFact({ ...M4A_FACTS['pack-review-ended'], findings: [{ ...(M4A_FACTS['pack-review-ended'] as { findings: object[] }).findings[0], index: 1 }] }, /findings\[0\]\.index/);
     refusesFact({ ...M4A_FACTS['pack-review-ended'], outcome: 'abandoned' }, /findings/);
-    refusesFact({ ...M4A_FACTS['issues-captured'], job: 'review-1' }, /job/);
     refusesFact({ ...M4A_FACTS['debt-banked'], bankReason: 'overflow' }, /bankReason/);
   });
 
-  it('a finding opened by issue intake is P2 or P3', () => {
+  it('a finding an earlier executor\'s issue intake opened (lens issue) is P2 or P3', () => {
     const opened = {
       kind: 'finding-opened', id: 'F-1', key: H, lens: 'issue', severity: 'P2', obligation: null, visionClauses: [], claim: 'c', evidence: [], mutant: null,
       source: { type: 'job', job: 'ckpt-1' }, gateHadPassed: false,
@@ -358,26 +316,43 @@ describe('facts, plan changes, manifests and fingerprints', () => {
   it('PlanChange arms corpus and phase0 round-trip in plan-applied', () => {
     roundTrip(fact({
       kind: 'plan-applied', rev: 2, command: CMD, planSha256: H, specs: { u1: H },
-      changes: [{ type: 'corpus', pinSha256: H, guideSha256: H2 }, { type: 'phase0', sha256: H2, issuesSha256: H }], ...appliedFields(2, CMD),
+      changes: [{ type: 'corpus', pinSha256: H, guideSha256: H2 }, { type: 'phase0', sha256: H2 }], ...appliedFields(2, CMD),
     }));
   });
 
-  it('checkpoint-inputs: issues and corpusSha256 round-trip; a dev.6 fact without them reads as written', () => {
+  it('checkpoint-inputs: corpusSha256 round-trips; a dev.6 fact without it reads as written', () => {
     const inputs = {
       kind: 'checkpoint-inputs', job: 'ckpt-1', trigger: { type: 'audit', job: 'audit-1' }, generation: 1,
       vector: { plan: 4, specs: { u1: 2 }, obligationsSha256: H2, ledgerSha256: H, visionSha256: H, contracts: [] }, headSha: A, visionSha256: H, findings: [], observations: [],
     };
     const dev6 = roundTrip(fact(inputs));
     assert.ok(dev6.type === 'fact' && dev6.fact.kind === 'checkpoint-inputs' && dev6.fact.issues === undefined && dev6.fact.corpusSha256 === undefined);
-    roundTrip(fact({ ...inputs, issues: { type: 'captured', sha256: H }, corpusSha256: H2 }));
-    roundTrip(fact({ ...inputs, issues: { type: 'unavailable', reason: 'gh: network unreachable' } }));
+    roundTrip(fact({ ...inputs, corpusSha256: H2 }));
   });
 
-  it('revision inputs: the four corpus digests together or not at all', () => {
+  it('milestone cadence: positive optional plan knob, additive trigger, and byte-preserving audit-only skips', () => {
+    assert.equal(parsePlan(corpusPlan).holistic!.checkpoint, undefined, 'absence reads with the runtime default of 2');
+    const withKnob = (n: number) => ({ ...corpusPlan, holistic: { ...corpusPlan.holistic, checkpoint: { everyMilestones: n } } });
+    assert.equal(parsePlan(withKnob(3)).holistic!.checkpoint!.everyMilestones, 3);
+    for (const n of [0, -1, 1.5]) assert.throws(() => parsePlan(withKnob(n)), /everyMilestones/);
+    const skipped = { kind: 'checkpoint-skipped', audit: 'audit-1', generation: 1, visionSha256: H, carried: [] };
+    const old = roundTrip(fact(skipped));
+    assert.ok(old.type === 'fact' && old.fact.kind === 'checkpoint-skipped');
+    assert.deepEqual(checkpointSkipTriggerOf(old.fact), { type: 'audit', job: 'audit-1' });
+    const trigger = { type: 'milestone', milestones: ['MS-1', 'MS-2'] };
+    roundTrip(fact({ kind: 'checkpoint-skipped', trigger, generation: 2, visionSha256: H, carried: [] }));
+    const inputs = { kind: 'checkpoint-inputs', job: 'ckpt-1', trigger, generation: 2, vector: { plan: 1, specs: {}, obligationsSha256: null, ledgerSha256: H, visionSha256: H, contracts: [] }, headSha: A, visionSha256: H, findings: [], observations: [] };
+    roundTrip(fact(inputs));
+    refusesFact({ ...inputs, trigger: { type: 'milestone', milestones: [] } }, /milestones/);
+    refusesFact({ ...inputs, trigger: { type: 'milestone', milestones: ['MS-2', 'MS-1'] } }, /milestones/);
+    for (const type of ['audit', 'walk']) roundTrip(fact({ ...inputs, trigger: { type, job: `${type}-1` } }));
+  });
+
+  it('revision inputs: the three corpus digests together or not at all', () => {
     const read = (v: unknown) => { const f = new Fields(v, 'manifest'); const out = revisionInputs(f); f.end(); return out; };
     const m3 = { rulings: { ledgerSha256: H, sidecars: {} }, obligations: H2, vision: null };
     same(read, m3);
-    same(read, { ...m3, corpus: H, corpusGuide: H2, phase0: H, phase0Issues: H2 });
+    same(read, { ...m3, corpus: H, corpusGuide: H2, phase0: H });
     assert.throws(() => read({ ...m3, corpus: H }), /manifest\.corpus/);
   });
 
@@ -387,7 +362,7 @@ describe('facts, plan changes, manifests and fingerprints', () => {
     same((v) => approvalFingerprint(v, 'fp'), { ...dev6, corpus: H });
   });
 
-  it('needs-user: pack-review and issue-policy-untrusted are blocking', () => {
+  it('needs-user: pack-review is blocking, and so is an earlier executor\'s issue-policy-untrusted item (it still reads)', () => {
     for (const reason of ['pack-review', 'issue-policy-untrusted'] as const) {
       assert.ok(NEEDS_USER_REASONS.includes(reason));
       assert.equal(m3Blocking(reason), true, reason);
@@ -426,8 +401,6 @@ describe('startup rows, brief and ack', () => {
         kind: 'phase0-invalid', problems: [
           { type: 'census-incomplete', rules: ['T-2', 'T-10'] }, { type: 'census-dangling', rules: ['T-1'] }, { type: 'obligation-rule-unresolved', obligation: 'I-2' },
           { type: 'debt-undispositioned', id: 'B-2' }, { type: 'debt-kept-twice-unasked', id: 'B-3' }, { type: 'amendment-undispositioned', id: 'arc-1/M-2' },
-          { type: 'intake-missing', issue: 'issue-3' }, { type: 'intake-unknown', issue: 'issue-4' }, { type: 'intake-duplicate', issue: 'issue-5' }, { type: 'capture-missing' },
-          { type: 'capture-foreign', expected: { host: 'github.com', owner: 'o', name: 'a' }, actual: { host: 'github.com', owner: 'o', name: 'b' } },
           { type: 'question-reused', id: 'P-2' },
         ],
       },
@@ -436,7 +409,6 @@ describe('startup rows, brief and ack', () => {
       { kind: 'chain-invalid', problem: { type: 'baseline', baseline: { type: 'merge-commit' } } },
       { kind: 'chain-invalid', problem: { type: 'previous-incomplete', arc: 'arc-1' } },
       { kind: 'chain-invalid', problem: { type: 'k-unset' } },
-      { kind: 'issue-policy-untrusted', visibility: 'PUBLIC', policy: 'ALL' },
       { kind: 'tree-uncommitted', paths: ['.roadmap/config.json', '.roadmap/vision.json'] },
       { kind: 'holistic-needs-corpus' },
     ];
@@ -461,10 +433,6 @@ describe('startup rows, brief and ack', () => {
         arc: 'arc-2', slice: { advances: ['V-1', 'V-2'], why: 'first slice' }, divergences: [{ id: 'D-1', type: 'target-departed', what: 'w' }], digests: [{ needsUser: 'nu-12', ids: ['D-1'] }], decisions: ['d'],
         curation: phase0.curation, corpusDivergences: phase0.corpusDivergences,
         debt: { banked: [{ id: 'B-3', what: 'tidy x' }], dispositioned: [{ id: 'B-2', disposition: { type: 'keep', reason: 'later' } }] },
-        intake: [
-          { issue: 'issue-3', job: null, outcome: { type: 'none', reason: 'planned' } },
-          { issue: 'issue-4', job: 'ckpt-2', outcome: { type: 'finding', finding: 'F-2' } },
-        ],
         questions: [{ id: 'P-4', rank: 1, text: 't', assumption: 'a', state: { type: 'open' } }],
         amendments: [
           { id: 'arc-2/M-1', rules: ['T-2'], proposal: 'p', admit: null },
@@ -505,28 +473,58 @@ describe('upgrade.defaults-dev6', () => {
     assert.deepEqual(censusOf(parseObligations(obligationsFile([], []))), []);
   });
 
-  it('a checkpoint answer carries amendments, intake and each split child\'s rule (a dev.6 answer\'s shape is not adopted since 1.0.0-dev.8)', () => {
+  it('a checkpoint answer carries amendments and each split child\'s rule (a dev.6 answer\'s shape is not adopted since 1.0.0-dev.8)', () => {
     const child = { id: 'I-5', statement: 's', docRef: { path: 'docs/arch.md', anchor: '#a', quotedText: 'q' }, rule: null, witness, activation: 'must-hold', deliveredBy: [] };
     const answer = {
       decision: 'bundle', reasons: ['r'], ops: [{ op: 'obligation-split', obligation: 'I-1', children: [child], cites: ['V-1'], evidence: ['F-1'] }],
       rulings: [], findingDispositions: [], interpretations: [], cites: { vision: ['V-1'], observations: [], findings: [] }, premises: [],
-      corpusAmendments: [], issueIntake: [],
+      corpusAmendments: [],
     };
     const op = validateCheckpointOutput(answer).ops[0]!;
     assert.ok(op.op === 'obligation-split' && op.children[0]!.rule === null);
     const { corpusAmendments: _c, ...noAmendments } = answer;
-    const { issueIntake: _i, ...noIntake } = answer;
     const { rule: _r, ...noRule } = child;
-    for (const dev6 of [noAmendments, noIntake, { ...answer, ops: [{ ...answer.ops[0], children: [noRule] }] }]) assert.throws(() => validateCheckpointOutput(dev6), SchemaError);
-    // M4a's own: a rule-anchored child, amendments and intake.
+    for (const dev6 of [noAmendments, { ...answer, ops: [{ ...answer.ops[0], children: [noRule] }] }]) assert.throws(() => validateCheckpointOutput(dev6), SchemaError);
+    // M4a's own: a rule-anchored child and amendments.
     const m4 = validateCheckpointOutput({
       ...answer, ops: [{ ...answer.ops[0], children: [{ ...child, docRef: null, rule: 'T-2' }] }],
       corpusAmendments: [{ rules: ['T-2'], proposal: 'p', why: 'w' }],
-      issueIntake: [{ issue: 'issue-3', outcome: { type: 'acted', on: { type: 'ops', indexes: [0] } } }, { issue: 'issue-4', outcome: { type: 'finding', severity: 'P3', claim: 'c', cause: 'k' } }],
     });
-    assert.equal(m4.issueIntake.length, 2);
+    assert.equal(m4.corpusAmendments.length, 1);
     assert.throws(() => validateCheckpointOutput({ ...answer, ops: [{ ...answer.ops[0], children: [{ ...child, rule: 'T-2' }] }] }), /exactly one of docRef and rule/);
-    assert.throws(() => validateCheckpointOutput({ ...answer, issueIntake: [{ issue: 'issue-4', outcome: { type: 'finding', severity: 'P1', claim: 'c', cause: 'k' } }] }), /severity/);
+  });
+});
+
+// The issues integration was removed in 1.0.0-dev.21; what an earlier executor or plan wrote for it reads as written and is
+// ignored (src/core/upgrade.ts `issuesIgnored`; scaffolding, deleted with it).
+describe('upgrade.issues-ignored', () => {
+  it('facts: issue-intake and issues-captured, checkpoint-inputs.issues, a phase0 change\'s issuesSha256 and an amendment from an issue read byte-identically', () => {
+    roundTrip(fact({ kind: 'issue-intake', job: 'ckpt-2', issue: 'issue-3', outcome: { type: 'acted', on: { type: 'ops', indexes: [0, 2] } } }));
+    roundTrip(fact({ kind: 'issues-captured', job: 'ckpt-2', sha256: H, repo: { host: 'github.com', owner: 'o', name: 'n' }, filtered: { comments: 2, pullRequests: 1 } }));
+    const inputs = {
+      kind: 'checkpoint-inputs', job: 'ckpt-1', trigger: { type: 'audit', job: 'audit-1' }, generation: 1,
+      vector: { plan: 4, specs: { u1: 2 }, obligationsSha256: H2, ledgerSha256: H, visionSha256: H, contracts: [] }, headSha: A, visionSha256: H, findings: [], observations: [],
+    };
+    roundTrip(fact({ ...inputs, issues: { type: 'captured', sha256: H }, corpusSha256: H2 }));
+    roundTrip(fact({ ...inputs, issues: { type: 'unavailable', reason: 'gh: network unreachable' } }));
+    roundTrip(fact({
+      kind: 'plan-applied', rev: 2, command: CMD, planSha256: H, specs: { u1: H }, changes: [{ type: 'phase0', sha256: H2, issuesSha256: H }], ...appliedFields(2, CMD),
+    }));
+    roundTrip(fact({ kind: 'corpus-amendment', id: 'M-1', source: { type: 'issue', job: 'ckpt-2', issue: 'issue-3' }, rules: ['T-2'], proposal: 'p', why: 'w', evidence: ['issue-3'] }));
+  });
+
+  it('records: a manifest\'s phase0Issues beside the corpus digests, a Phase-0 record\'s issueCapture and intake, a checkpoint answer\'s issueIntake', () => {
+    const read = (v: unknown) => { const f = new Fields(v, 'manifest'); const out = revisionInputs(f); f.end(); return out; };
+    const m3 = { rulings: { ledgerSha256: H, sidecars: {} }, obligations: H2, vision: null };
+    same(read, { ...m3, corpus: H, corpusGuide: H2, phase0: H, phase0Issues: H2 });
+    assert.throws(() => read({ ...m3, phase0Issues: H2 }), /manifest\.phase0Issues/);
+    const legacy = { ...phase0, issueCapture: { file: 'issues.json', sha256: H }, intake: [{ issue: 'issue-3', outcome: { type: 'none', reason: 'planned' } }] };
+    assert.deepEqual(parsePhase0Record(legacy), parsePhase0Record(phase0), 'read and ignored');
+    const answer = {
+      decision: 'no-op', reasons: ['r'], ops: [], rulings: [], findingDispositions: [], interpretations: [], cites: { vision: ['V-1'], observations: [], findings: [] },
+      premises: [], corpusAmendments: [],
+    };
+    assert.deepEqual(validateCheckpointOutput({ ...answer, issueIntake: [{ issue: 'issue-3', outcome: { type: 'none', reason: 'x' } }] }), validateCheckpointOutput(answer));
   });
 });
 
@@ -571,17 +569,12 @@ describe('upgrade.legacy-id-order', () => {
       interpretations: [{ clauses: ['V-11', 'V-3'], situation: 's', reading: 'r' }],
       cites: { vision: ['V-10', 'V-9'], observations: [], findings: ['F-12', 'F-3'] },
       corpusAmendments: [{ rules: ['T-120', 'T-42'], proposal: 'p', why: 'w' }],
-      issueIntake: [
-        { issue: 'issue-3', outcome: { type: 'acted', on: { type: 'ops', indexes: [2, 0] } } },
-        { issue: 'issue-4', outcome: { type: 'amendment', rules: ['T-42', 'T-120'], proposal: 'p' } },
-      ],
     });
     const op = out.ops[0]!;
     assert.ok(op.op === 'obligation-split');
     assert.deepEqual([op.cites, op.children[0]!.deliveredBy], [['V-2', 'V-10'], ['u1', 'u2']]);
     assert.deepEqual([out.interpretations[0]!.clauses, out.cites.vision, out.cites.findings], [['V-3', 'V-11'], ['V-9', 'V-10'], ['F-3', 'F-12']]);
     assert.deepEqual(out.corpusAmendments[0]!.rules, ['T-42', 'T-120']);
-    assert.deepEqual(out.issueIntake.map((e) => e.outcome), [{ type: 'acted', on: { type: 'ops', indexes: [0, 2] } }, { type: 'amendment', rules: ['T-42', 'T-120'], proposal: 'p' }]);
   });
 
   it('the census and the pin were always numeric: string order is refused there', () => {
@@ -601,8 +594,6 @@ describe('cli.m4a', () => {
     assert.deepEqual(parseCommand(['brief', '--repo', '.', '--json', '--ack', '0123456789abcdef']), { command: 'brief', repo: '.', json: true, ack: '0123456789abcdef' });
     assert.deepEqual(parseCommand(['pr', '--repo', '.', '--arc', 'arc-1']), { command: 'pr', repo: '.', arc: 'arc-1', supersedePrevious: false });
     assert.deepEqual(parseCommand(['pr', '--repo', '.', '--arc', 'arc-2', '--supersede-previous']), { command: 'pr', repo: '.', arc: 'arc-2', supersedePrevious: true });
-    assert.deepEqual(parseCommand(['issues', '--repo', '.']), { command: 'issues', repo: '.', out: null });
-    assert.deepEqual(parseCommand(['issues', '--repo', '.', '--out', 'issues.json']), { command: 'issues', repo: '.', out: 'issues.json' });
     assert.deepEqual(parseCommand(['chain', 'status', '--repo', '.']), { command: 'chain-status', repo: '.' });
   });
 
@@ -617,7 +608,7 @@ describe('cli.m4a', () => {
     refuses(['corpus', 'pin', '--repo', '.', '--commit', 'HEAD', '--baseline', 'HEAD', '--out', 'pin.json'], /Sha/);
     refuses(['brief', '--repo', '.', '--ack', 'nope'], /BriefId/);
     refuses(['pr', '--repo', '.'], /--arc <arc> is required/);
-    refuses(['issues', '--repo', '.', 'extra'], /unexpected argument/);
+    refuses(['issues', '--repo', '.'], /unknown command "issues"/);
     refuses(['chain', '--repo', '.'], /chain: expected the subcommand status/);
     refuses(['debt', 'resolve', 'B-1'], /unknown command "debt"/);
   });

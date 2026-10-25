@@ -14,7 +14,7 @@
 //                     `.claude/skills/frontend-design/`: Anthropic's frontend-design skill vendored with its licences,
 //                     so builds, gates and walks in unit worktrees load it. One commit on `main`, pushed to the origin.
 //   stage/origin.git  the bare origin (`roadmap pr` pushes the arc branch here; `main` is never pushed again)
-//   stage/forge/      the fake forge: PUBLIC + COLLABORATORS_ONLY (trusted), no issues
+//   stage/forge/      the fake forge: no PRs
 //   stage/config/     empty GH_CONFIG_DIR and XDG_CONFIG_HOME, and a gitconfig with the fixture identity only
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -58,12 +58,9 @@ export function visionRecord(visionText: string): unknown {
   };
 }
 
-/** The fake forge's initial store: trusted, no issues, no PRs. */
+/** The fake forge's initial store: no PRs. */
 export function forgeStore(l: Layout): GhStore {
-  return {
-    repo: { ...FORGE_REPO }, policy: { visibility: 'PUBLIC', hasIssuesEnabled: true, issueCreationPolicy: 'COLLABORATORS_ONLY' }, originPath: l.origin,
-    nextNumber: 1, nextCommentId: 1, issues: [], comments: {}, labels: ['roadmap:bug', 'roadmap:feedback'], pulls: [], mutations: [],
-  };
+  return { repo: { ...FORGE_REPO }, originPath: l.origin, nextNumber: 1, pulls: [], mutations: [] };
 }
 
 function write(path: string, text: string): void {

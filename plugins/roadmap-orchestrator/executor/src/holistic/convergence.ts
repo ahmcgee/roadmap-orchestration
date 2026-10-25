@@ -151,7 +151,8 @@ export function raiseBound(ctx: Readonly<{ journal: Journal; runDir: AbsPath }>,
  * The generations quiescent under the vision in force (`visionSha256`): each with a checkpoint, captured under that
  * vision, that decided `no-op`, or whose request (`bundle-request` or `owner-request`) the owner answered without
  * `apply`: a declined or acknowledged request ends that trigger's decision, nothing applied, the findings it concerned
- * as they are; or whose audit found nothing new (`checkpoint-skipped`, captured under that vision). An unanswered request
+ * as they are; or whose checkpoint was suppressed by the nothing-new or equal-input guard (`checkpoint-skipped`,
+ * under that vision). An unanswered request
  * waits on its open item; one answered `apply` is enacted by the trigger's next job.
  * A vision revision since reopens them all (H3).
  */
@@ -165,7 +166,7 @@ export function quiescentGenerations(view: JournalView, visionSha256: Sha256Hex)
   const fold = view.holistic();
   return new Set([
     ...fold.checkpoints.filter((c) => c.inputs.visionSha256 === visionSha256 && settled(c.decided)).map((c) => c.inputs.generation),
-    // Arc feedback 2026-10-16: an audit that found nothing new settles its generation as a no-op would, with no call.
+    // A checkpoint suppressed by either guard settles its generation as a no-op would, with no call.
     ...fold.checkpointSkips.filter((s) => s.visionSha256 === visionSha256).map((s) => s.generation),
   ]);
 }

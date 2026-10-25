@@ -10,11 +10,10 @@
 //   gate:      approve → integration slot · revise → fix round with directives · escalate → route up
 //   build:     success → quiesce (the executor then salvages, runs lanes and gates; the report is evidence)
 import {
-  type ClauseId, type FailureModeId, type FindingId, type IssueId, type JourneyId, type LaneId, type ObligationId, type PocQuestionId, type ReviewFindingId, type RuleId, type RulingId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, clauseId,
-  failureModeId, pocQuestionId, answerIds, findingId, issueId, journeyId, laneId, obligationId, reviewFindingId, ruleId, rulingId, sha, unitId, visionClauseId,
+  type ClauseId, type FailureModeId, type FindingId, type JourneyId, type LaneId, type ObligationId, type PocQuestionId, type ReviewFindingId, type RuleId, type RulingId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, clauseId,
+  failureModeId, pocQuestionId, answerIds, findingId, journeyId, laneId, obligationId, reviewFindingId, ruleId, rulingId, sha, unitId, visionClauseId,
 } from '../core/ids.ts';
 import { type ReviewDispute, reviewDispute } from '../core/review.ts';
-import { type ActedOn, actedOn } from '../forge/types.ts';
 import { FLOW_REPORTERS, type FlowOutput, flowOutput } from '../flow/types.ts';
 import { type JsonValue, canonicalJson } from '../core/json.ts';
 import { BOUND_FIELDS, type Bounds, type FailureRef, type NoteDef, SPEC_SCHEMA, SPEC_SECTIONS, type SpecM1, type SpecPatchOp, failureRef, specM1, specPatchOp } from '../core/records.ts';
@@ -30,7 +29,7 @@ import {
 import { REENTRY_POINTS, type ReentryPoint } from '../input/plan.ts';
 import {
   admitSpecTextDefault, admitTargetsDefault, buildDocsOnlySinceDefault, buildExperimentsDefault, buildFinalDefault, checkpointRulingTextDefault, GATE_DEBT_UNRECORDED, gateClustersDefault,
-  gateFindingReviewDefault, gateNoteDebtDefault, gateRulingsDefault, gateUnreviewedDefault, lensPatchMutantDefault, planCheckScopeGrowthDefault, planCheckStaleLinksDefault,
+  gateFindingReviewDefault, gateNoteDebtDefault, gateRulingsDefault, gateUnreviewedDefault, issuesIgnored, lensPatchMutantDefault, planCheckScopeGrowthDefault, planCheckStaleLinksDefault,
   FIXES_UNRECORDED,
   reenterFixesDefault, planCheckDesignDefault,
 } from '../core/upgrade.ts';
@@ -913,22 +912,12 @@ export type CheckpointOutput = Readonly<{
   premises: readonly Premise[];
   /** M4a: corpus amendments the checkpoint proposes (`corpus-amendment{source: checkpoint{job, index}}`). */
   corpusAmendments: readonly CorpusAmendmentProposal[];
-  /** M4a: exactly one outcome per captured issue (R9); `acted` names ops of this output (C3 checks it). */
-  issueIntake: readonly Readonly<{ issue: IssueId; outcome: CheckpointIssueOutcome }>[];
 }>;
 
 /** A corpus amendment a checkpoint proposes (M4a). */
 export type CorpusAmendmentProposal = Readonly<{ rules: readonly RuleId[]; proposal: string; why: string }>;
-/** A checkpoint's outcome for one issue (M4a, H17): a P2/P3 finding to open, an amendment, an act through its ops, or none. */
-export type CheckpointIssueOutcome =
-  | Readonly<{ type: 'finding'; severity: 'P2' | 'P3'; claim: string; cause: string }>
-  | Readonly<{ type: 'amendment'; rules: readonly RuleId[]; proposal: string }>
-  | Readonly<{ type: 'acted'; on: ActedOn }>
-  | Readonly<{ type: 'none'; reason: string }>;
 
 const LIMIT_FIELDS = [...BOUND_FIELDS, 'convergenceK'] as const;
-/** An issue's finding opens at P2 or P3 only (a P1 comes from an audit). */
-const ISSUE_FINDING_SEVERITIES = ['P2', 'P3'] as const;
 const opSchema = (op: BundleOpKind, fields: { readonly [key: string]: Schema }): Schema =>
   sObj({ op: sEnum([op]), ...fields, cites: S_IDS, evidence: sArr(S_STR) });
 const S_DOC_REF = sObj({ path: S_STR, anchor: S_STR, quotedText: S_STR });
@@ -1034,18 +1023,6 @@ export function checkpointSchemaFor(ids: CheckpointIds | null): Schema {
     cites: sObj({ vision: S_IDS, observations: sArr(sObj({ treeSha: S_STR, lane: S_STR, laneRev: S_STR, envId: S_STR })), findings: S_IDS }),
     premises: S_PREMISES,
     corpusAmendments: sArr(sObj({ rules: S_IDS, proposal: S_STR, why: S_STR })),
-    // A checkpoint acts on an issue only through its own ops (H17): the schema offers `acted{on: ops}` alone.
-    issueIntake: sArr(sObj({
-      issue: S_STR,
-      outcome: {
-        anyOf: [
-          sObj({ type: sEnum(['finding']), severity: sEnum(ISSUE_FINDING_SEVERITIES), claim: S_STR, cause: S_STR }),
-          sObj({ type: sEnum(['amendment']), rules: S_IDS, proposal: S_STR }),
-          sObj({ type: sEnum(['acted']), on: sObj({ type: sEnum(['ops']), indexes: sArr(S_INT) }) }),
-          sObj({ type: sEnum(['none']), reason: S_STR }),
-        ],
-      },
-    })),
   });
 }
 /** The checkpoint schema its prompt module carries: any id. Each call writes its own, `checkpointSchemaFor(<its ids>)`. */
@@ -1085,17 +1062,6 @@ const ruleList: Read<readonly RuleId[]> = answerIds((v, p) => ruleId(v, p));
 const corpusAmendmentProposal: Read<CorpusAmendmentProposal> = object((g) => ({
   rules: g.get('rules', ruleList), proposal: g.get('proposal', str), why: g.get('why', str),
 }));
-const checkpointIssueOutcome: Read<CheckpointIssueOutcome> = tagged('type', {
-  finding: object((g): CheckpointIssueOutcome => ({
-    type: g.get('type', literal('finding')), severity: g.get('severity', oneOf(ISSUE_FINDING_SEVERITIES)), claim: g.get('claim', str), cause: g.get('cause', str),
-  })),
-  amendment: object((g): CheckpointIssueOutcome => ({ type: g.get('type', literal('amendment')), rules: g.get('rules', ruleList), proposal: g.get('proposal', str) })),
-  acted: object((g): CheckpointIssueOutcome => ({ type: g.get('type', literal('acted')), on: g.get('on', actedOn(['ops', 'units', 'rules'], 'answer')) })),
-  none: object((g): CheckpointIssueOutcome => ({ type: g.get('type', literal('none')), reason: g.get('reason', str) })),
-});
-const issueIntakeEntries: Read<CheckpointOutput['issueIntake']> = arrayOf(object((g) => ({
-  issue: g.get('issue', (v, p): IssueId => issueId(v, p)), outcome: g.get('outcome', checkpointIssueOutcome),
-})));
 
 /**
  * An admit's spec (run 10, D): the wire object read into spec.json's canonical text, validated by the spec reader here, so
@@ -1207,8 +1173,9 @@ export const checkpointOutput: Read<CheckpointOutput> = object((f) => {
     }))),
     premises: f.get('premises', arrayOf(premise)),
     corpusAmendments: f.get('corpusAmendments', arrayOf(corpusAmendmentProposal)),
-    issueIntake: f.get('issueIntake', issueIntakeEntries),
   };
+  // An answer to an earlier executor's prompt carries `issueIntake`: read and ignored (`issuesIgnored`; scaffolding).
+  if (f.optional('issueIntake', (v) => v) !== undefined) issuesIgnored('checkpoint.issueIntake');
   if ((out.decision === 'no-op') !== (out.ops.length === 0)) throw new SchemaError(`${f.path}.ops`, out.decision === 'no-op' ? 'no ops on a no-op' : 'at least one op in a bundle', out.ops);
   if (out.decision === 'no-op' && out.rulings.length > 0) throw new SchemaError(`${f.path}.rulings`, 'no rulings on a no-op', out.rulings);
   return out;

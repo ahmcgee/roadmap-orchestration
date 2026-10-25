@@ -259,7 +259,7 @@ const TIDY = 'tidy';
 const DISPOSALS: readonly string[] = ['unit-cut', 'unit-changed', 'spec', 'unit-reentered', 'unit-removed'];
 
 /** A checkpoint trigger, as the device messages name it. */
-const triggerText = (t: CheckpointTrigger): string => (t.type === 'park' ? `park of ${t.unit} at seq ${t.seq}` : `${t.type} ${t.job}`);
+const triggerText = (t: CheckpointTrigger): string => (t.type === 'park' ? `park of ${t.unit} at seq ${t.seq}` : t.type === 'milestone' ? `milestones ${t.milestones.join(', ')}` : `${t.type} ${t.job}`);
 const outcomeText = (o: BundleOutcome): string => (o.kind === 'rejected' ? `rejected{${o.reason}}: ${o.detail}` : o.kind === 'requested' ? `requested (${o.needsUser})` : o.kind);
 
 /** Rewrites the plan's `direction`, as the architect would, keeping every other byte of its JSON. */

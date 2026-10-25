@@ -1,23 +1,20 @@
 // A laid-out holistic arc moved onto a corpus target (M4a step D0, R17: a fresh holistic arc targets a corpus), for the
 // whole-arc fixtures that run the real supervised `roadmap start` (pm-holistic.ts, cm-holistic.ts). The baseline commit
 // adds the sample corpus (test/helpers/corpus.ts) with its guide and `.roadmap/vision.json` (brake-common's VISION,
-// confirmed against the vision document); the plan dir gains the pin (`roadmap corpus pin` at that baseline), the issue
-// capture of an empty trusted fake forge whose `gh` goes into the arc's bin dir (first on PATH for every CLI child,
-// the executor's checkpoints included) and the Phase-0 record. The obligations are anchored by number (I-n at T-n,
+// confirmed against the vision document); the plan dir gains the pin (`roadmap corpus pin` at that baseline) and the
+// Phase-0 record. The obligations are anchored by number (I-n at T-n,
 // with the pinned text hash), and the census holds every pinned rule: as its obligation, else out of slice. The plan
-// drops `architectureDoc` and names the pin, the record and `holistic` without a vision. The pin and the capture run
-// through the CLI as children, so a scenario's synchronous `prepare` can call this.
+// drops `architectureDoc` and names the pin, the record and `holistic` without a vision. The pin runs through the CLI as
+// a child, so a scenario's synchronous `prepare` can call this.
 import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { sha256Hex } from '../../src/core/json.ts';
 import { type CorpusPin, parseCorpusPin } from '../../src/corpus/types.ts';
 import { DEFAULT_CORPUS_ROOT, sampleCorpus } from '../helpers/corpus.ts';
-import { CAPTURE_FILE, PHASE0_FILE, PIN_FILE, VISION_DOC, writePhase0 } from '../helpers/corpusarc.ts';
-import { makeForge } from '../helpers/forge.ts';
+import { PHASE0_FILE, PIN_FILE, VISION_DOC, writePhase0 } from '../helpers/corpusarc.ts';
 import { fixture } from '../helpers/proc.ts';
 import { commitAll, tmpDir, writeFiles } from '../helpers/repo.ts';
-import { writeGhShim } from '../fakes/shim.ts';
 import { VISION } from './brake-common.ts';
 import type { ArcDescriptor } from './unit-common.ts';
 
@@ -67,16 +64,11 @@ export function corpusTarget(d: ArcDescriptor, opts: CorpusTargetOptions): strin
   writeFiles(d.repo, { ...corpus.files, '.roadmap/vision.json': `${JSON.stringify(vision, null, 2)}\n` });
   const baseline = commitAll(d.repo, 'the corpus');
 
-  const forge = makeForge();
-  writeGhShim(d.binDir, forge.storePath);
   act(d, ['corpus', 'pin', '--repo', d.repo, '--commit', baseline, '--baseline', baseline, '--out', join(planDir, PIN_FILE)]);
   const pin = parseCorpusPin(JSON.parse(readFileSync(join(planDir, PIN_FILE), 'utf8')));
-  const captured = act(d, ['issues', '--repo', d.repo, '--out', join(planDir, CAPTURE_FILE)]);
 
   writeFileSync(join(planDir, 'obligations.json'), JSON.stringify(anchored(opts.obligations, pin)));
-  writePhase0(planDir, {
-    issueCapture: { file: CAPTURE_FILE, sha256: captured['sha256'] }, intake: [], slice: { advances: [...opts.advances], why: 'the first slice' },
-  });
+  writePhase0(planDir, { slice: { advances: [...opts.advances], why: 'the first slice' } });
   const { architectureDoc: _a, ...plan } = JSON.parse(readFileSync(d.planPath, 'utf8')) as Json;
   writeFileSync(d.planPath, JSON.stringify({
     ...plan, ...opts.planExtra, baseline, corpus: PIN_FILE, phase0: PHASE0_FILE,

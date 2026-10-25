@@ -7,14 +7,14 @@
 //
 // Each defaulted kind warns once per process on stderr (the executor's stderr is the supervisor's
 // `supervisor.<token>.err` in the host dir).
-import type { CensusEntry, ClassifiedAdmit, Conversion, Obligations } from '../holistic/types.ts';
-import type { DiffShown, GateLargeDiff, JudgmentInputs, MutantOf, RevisionSource } from './events.ts';
+import type { CheckpointTrigger, CensusEntry, ClassifiedAdmit, Conversion, Obligations } from '../holistic/types.ts';
+import type { DiffShown, FlakeOn, FlakyFact, GateLargeDiff, JudgmentInputs, MutantOf, Parent, RevisionSource } from './events.ts';
 import type { ApprovalBlobs, GateReview } from './review.ts';
-import type { FindingId, LaneId, ObligationId, UnitId } from './ids.ts';
+import type { FindingId, JobId, LaneId, ObligationId, UnitId } from './ids.ts';
 import type { PressureAvailability } from '../host/pressure.ts';
 import type { LaunchCpu, ResultFile } from './records.ts';
 import { canonicalJson } from './json.ts';
-import type { ClassTable } from '../routing/types.ts';
+import type { ClassTable, Triple } from '../routing/types.ts';
 
 const warned = new Set<string>();
 
@@ -601,4 +601,51 @@ export function earlierReaderResultDefault(recorded: ResultFile, fresh: ResultFi
  */
 export function scopeOverlapFixDefault(unit: UnitId): void {
   warnDefaulted('scope-overlaps-corpus.fix', `unit ${unit}: a scope-overlaps-corpus problem without fix (written before 1.0.0-dev.18); read as the fix dev.18 names`);
+}
+
+// ---------------------------------------------------------------------------------------------------
+// 1.0.0-dev.20 -> dev.21 (unit flakes, 2026-10-24). Delete once no arc started on 1.0.0-dev.20 or earlier is in flight
+// (BACKLOG "Scaffolding to delete"); `on` then becomes required on `flake-observed`.
+
+/**
+ * A `flake-observed` fact's `on` (dev.21): absent on one an earlier executor wrote, which forgave every unit's flake and
+ * minted deflakes from all of them. Read from its red run's spawn (`spawnParent`): a job's, or a candidate's, `tip`; any
+ * other unit stage's (its lanes stage, its scaffold) `unit`, so it never mints. A lanes stage's run on the unit's diff base
+ * reads `unit` too (its tree is not recorded): such a flake mints only once it is seen on the tip again.
+ */
+export function flakeOnDefault(fact: FlakyFact, spawnParent: Parent): FlakeOn {
+  warnDefaulted('flake-observed.on', 'a flake-observed fact without on (written before 1.0.0-dev.21); read from its red run\'s stage: a candidate\'s or a job\'s is the tip\'s, any other unit stage\'s the unit\'s');
+  if (fact.owner.type === 'job') return 'tip';
+  if (spawnParent.type !== 'stage') throw new Error(`flake-observed of ${fact.event.red}: a unit's lane run whose spawn's parent is ${spawnParent.type}, not a stage`);
+  return spawnParent.stage === 'candidate' ? 'tip' : 'unit';
+}
+
+// ---------------------------------------------------------------------------------------------------
+// 1.0.0-dev.20 -> dev.21 (GitHub issues removed, 2026-10-24): the executor no longer captures, mirrors or reacts to issues.
+// What an earlier executor or plan wrote for them reads as written (byte-preserving) and is never acted on: the
+// `issue-intake` and `issues-captured` facts, `checkpoint-inputs.issues`, a `phase0` plan change's `issuesSha256`, a
+// revision manifest's `phase0Issues`, a Phase-0 record's `issueCapture` and `intake`, a recorded checkpoint answer's
+// `issueIntake`, and an `issue-policy-untrusted` needs-user item (it holds no admission). An amendment an issue's intake
+// recorded (`source: issue`) and a finding it opened (lens `issue`) stay what they are. Delete once no arc started on
+// 1.0.0-dev.20 or earlier is in flight (BACKLOG "Scaffolding to delete"); the readers then refuse these fields and kinds.
+
+/** A field, fact or item `what` of the removed issues integration: read as written, ignored. Warned once per `what`. */
+export function issuesIgnored(what: string): void {
+  warnDefaulted(`issues.${what}`, `${what} (the GitHub issues integration, removed in 1.0.0-dev.21) is read as written and ignored`);
+}
+
+/** A dev.20 audit-only skip: read as its audit trigger, without changing the record's hashed bytes. */
+export function checkpointSkipTriggerOf(s: Readonly<{ trigger?: CheckpointTrigger; audit?: JobId }>): CheckpointTrigger {
+  if (s.trigger !== undefined) return s.trigger;
+  if (s.audit === undefined) throw new Error('a checkpoint skip without its trigger or legacy audit');
+  warnDefaulted('checkpoint-skipped.trigger', 'an audit-only checkpoint skip (before milestone cadence); read as its audit trigger');
+  return { type: 'audit', job: s.audit };
+}
+
+/**
+ * Before the 2026-10-24 summit effort change, builtin summit seats hashed xhigh. Status aliases those recorded revs
+ * to today's bindings; a repo's explicit class rebind keeps its own effort. Delete once no pre-change arc is in flight.
+ */
+export function summitXhighTriple(triple: Triple): Triple {
+  return { ...triple, effort: 'xhigh' };
 }

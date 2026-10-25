@@ -11,8 +11,9 @@
 // between the check and the commit, and the proposal is built from the revision in force at that moment. In order:
 //
 //   0. Busy (M4a rev 3, C5, R50): an op that touches a unit with an open stage attempt (`openAttempt`, src/core/state.ts:
-//      running or crash-abandoned) → `rejected{busy, units}`; the trigger is due again once each attempt has closed
-//      (src/holistic/checkpoint.ts), and it never counts toward `secondInvalid`.
+//      running or crash-abandoned) → `rejected{busy, units}`; the trigger is due again once each attempt has closed, and
+//      its next job re-decides the held output with no call, every step from this one judged again then (arc feedback
+//      2026-10-24, src/holistic/checkpoint.ts `redecides`); it never counts toward `secondInvalid`.
 //   1. Staleness (H3). The artifacts the ops touch, compared with the vector the checkpoint captured: the plan's bytes,
 //      each patched or re-entered unit's spec rev (and whether it merged since the capture: its spec is fixed now, so stale, not invalid), the obligations, the ledger, the contracts a landing ruling names;
 //      and the vision, always. A finding the checkpoint was shown that closed since is stale when the decision rests on
@@ -24,8 +25,7 @@
 //      the executor from the captured inputs (lead ruling: the model echoes no revisions), validated at the tip in
 //      order (`validateRuling`; only a valid one is folded into the ledger the next is checked against, so no model
 //      output reaches the ledger reader as a repeated id); each lands through exactly one `rule` op. M4a: the corpus
-//      amendments and the issue outcomes (src/holistic/{amendments,intake}.ts: active pinned rules only; every captured
-//      issue exactly once; an `acted` outcome through ops of this output only). A split child anchored at a rule takes
+//      amendments (src/holistic/amendments.ts: active pinned rules only). A split child anchored at a rule takes
 //      its hash from the pin in force; one anchored at another rule than its parent's whose census state is `out-of-slice`
 //      moves that state to `obligation{child}` when the child serves only the owner-selected slice and this bundle's
 //      opportunities (C4), else the reason names the rule, its state and the fix. The model's numbered ids are read in
@@ -71,7 +71,7 @@
 // After an applied or no-op decision: its finding dispositions as the tail rules bind them (none written for a finding
 // named in the repairs of a unit it admits or re-enters: the repairs route rules it), and code's release of each
 // shown finding nothing fixes that is a P3 or below a brake (`settleFindings`, src/holistic/tail.ts); in a corpus arc the
-// debt its deferrals bank, its amendments and issue outcomes, and its conversions (each an amendment `source: admit`, a
+// debt its deferrals bank, its amendments, and its conversions (each an amendment `source: admit`, a
 // follow-up overrun also a debt item naming its opportunity), read from the decision record, never classified again;
 // the convergence bound when due (over the effective ops), the divergence digest when due. Each is idempotent, and
 // `settleDecided` rewrites what a crash lost.
@@ -99,7 +99,7 @@ import { type DeflakeOrigin, type PlanM1, type PolishOrigin, type PropagationOri
 import type { RiskTier } from '../routing/types.ts';
 import { type RevisionContext, evaluateRevision, keepRevision, payloadOf } from '../commands/apply.ts';
 import { mayOverlap } from '../input/classify.ts';
-import { raiseNeedsUser, readNeedsUser } from '../needsuser.ts';
+import { openNeedsUser, raiseNeedsUser, readNeedsUser } from '../needsuser.ts';
 import { arcLaneKey, laneEnvId, mapInForce, observations, observedViews } from '../pipeline/lanes.ts';
 import { conversionsOf, rulingContextAt } from '../pipeline/publish.ts';
 import { loadUnitSpec } from '../pipeline/stages.ts';
@@ -120,7 +120,6 @@ import { publishedHeads } from './coverage.ts';
 import { type DivergenceBase, appendDivergences, interpretationDivergences, opDivergences, raiseDigest } from './divergence.ts';
 import { isActive, ruleFinding, rulingRefusal } from './findings.ts';
 import { type Brake, type TailWorld, brakeConversions, brakeOf, findingOriginRoots, indexedAdmits, settledPoint, tailRulings } from './tail.ts';
-import { intakeReasons, issueReuse, settleIntake } from './intake.ts';
 import { type Observation, observedVerdict, reuse } from './observe.ts';
 import { inputShaOf } from '../git/reusekey.ts';
 import {
@@ -153,12 +152,12 @@ export type Refused = Readonly<{ kind: 'refused'; reasons: readonly string[] }>;
 /** One activation: the deciding job, the inputs the output was decided on, the output, and the call that produced it. */
 export type Activation = Readonly<{
   job: JobId;
-  /** The inputs the output was built on (an enactment's: the requesting job's). */
+  /** The inputs the output was built on (an enactment's or a re-decide's: those of the job whose call produced it). */
   captured: Captured;
   output: CheckpointOutput;
   /** The checkpoint call that produced `output`. */
   inv: InvocationId;
-  /** An owner-approved bundle request (A9): draining and the brakes do not apply to it. */
+  /** An owner-approved bundle request (A9), or a re-decide of one: draining and the brakes do not apply to it. */
   enact: boolean;
   /** Its trigger was rejected invalid once already: this bundle, if invalid, goes to the owner. */
   secondInvalid: boolean;
@@ -886,9 +885,32 @@ function citeAndDispositionReasons(ctx: CheckpointContext, a: Activation, revisi
   return out;
 }
 
+type OwnerRequest = Readonly<{ class: OwnerOnlyClass; summary: string }>;
+
+/** The summary of `job`'s `owner-request` item: its requests, each `[class] summary`, in the bundle's order. */
+const ownerRequestSummary = (job: JobId, requests: readonly OwnerRequest[]): string =>
+  `Checkpoint ${job} asks for acts only the owner may take: ${requests.map((r) => `[${r.class}] ${r.summary}`).join('; ')}. Nothing of its bundle was applied.`;
+
+/**
+ * Arc feedback 2026-10-24 (ckpt-38 raised ckpt-37's open owner request again): the latest open `owner-request` item a
+ * checkpoint job raised for exactly `requests`, or null. The identity is the request list: the same owner-only acts,
+ * each the same class and the same summary text, in the same order (the item's summary as that job would have rendered
+ * it, so an item an older release raised matches too). A different or extended list raises its own item.
+ */
+function openOwnerRequest(ctx: CheckpointContext, requests: readonly OwnerRequest[]): NeedsUserId | null {
+  const view = ctx.journal.view;
+  const open = new Set(openNeedsUser(view).map((n) => n.id));
+  for (const i of [...view.opsOf('needsuser.raise')].reverse()) {
+    if (i.parent.type !== 'job' || !open.has(i.expect.id)) continue;
+    const record = readNeedsUser(ctx.runDir, i.expect.id);
+    if (record?.reason === 'owner-request' && record.summary === ownerRequestSummary(i.parent.job, requests)) return i.expect.id;
+  }
+  return null;
+}
+
 /** A16, H10: the owner-only requests of the bundle, explicit and nested. */
-function ownerOnly(ctx: CheckpointContext, a: Activation, p: Proposal, inForce: InForce, current: InputFiles, revision: RevisionInForce): readonly Readonly<{ class: OwnerOnlyClass; summary: string }>[] {
-  const out: { class: OwnerOnlyClass; summary: string }[] = [];
+function ownerOnly(ctx: CheckpointContext, a: Activation, p: Proposal, inForce: InForce, current: InputFiles, revision: RevisionInForce): readonly OwnerRequest[] {
+  const out: OwnerRequest[] = [];
   for (const op of a.output.ops) if (op.op === 'request') out.push({ class: op.class, summary: op.summary });
   const inForceLanes: readonly LaneDef[] = [
     ...inForce.plan.suite.lanes,
@@ -1224,8 +1246,7 @@ function judge(ctx: CheckpointContext, a: Activation): BundleDecision | Refused 
       : decided(ctx, a.job, { kind: 'rejected', reason: 'invalid', detail: reasons.join('; ') }));
   const pin = revision.corpus?.pin.value ?? null;
   const reasons = [
-    ...duplicated, ...citeAndDispositionReasons(ctx, a, revision), ...amendmentReasons(pin, a.output),
-    ...intakeReasons(ctx.runDir, a.captured, pin, a.output, issueReuse(view, ctx.runDir, a.captured)), ...p.reasons,
+    ...duplicated, ...citeAndDispositionReasons(ctx, a, revision), ...amendmentReasons(pin, a.output), ...p.reasons,
   ];
   if (reasons.length > 0) return invalid(reasons);
   // dev.13 (the convergence tail, src/holistic/tail.ts): an admit whose every repair is a finding below a brake converts,
@@ -1261,14 +1282,14 @@ function judge(ctx: CheckpointContext, a: Activation): BundleDecision | Refused 
     return d;
   };
 
-  // 3. Owner-only (A16, H10): nothing applied.
+  // 3. Owner-only (A16, H10): nothing applied. The same requests still open from an earlier checkpoint are not raised again.
   const requests = ownerOnly(ctx, a, p, inForce, current, revision);
   if (requests.length > 0) {
-    const needsUser = raiseOnce(ctx, a.job, {
+    const needsUser = openOwnerRequest(ctx, requests) ?? raiseOnce(ctx, a.job, {
       blocking: true,
       subject: { type: 'arc' },
       reason: 'owner-request',
-      summary: `Checkpoint ${a.job} asks for acts only the owner may take: ${requests.map((r) => `[${r.class}] ${r.summary}`).join('; ')}. Nothing of its bundle was applied.`,
+      summary: ownerRequestSummary(a.job, requests),
       recommendation: 'Decide each request: take the act yourself (for a plan change, `roadmap apply`) or leave it. Acknowledge this item when done; the next checkpoint reads the arc as it then is.',
       options: [],
       evidence: [],
@@ -1339,8 +1360,8 @@ export function effectiveOps(view: Parameters<typeof conversionsOf>[0], job: Job
 /**
  * What follows an applied or no-op decision, each only where missing (a crash may cut it short): a no-op's
  * interpretation divergences (H12), the finding dispositions still applicable, then (M4a, a corpus arc) the debt the
- * deferrals bank, the amendments (the output's own, keyed by `captured.job`, the checkpoint whose output it is), the
- * issue outcomes (src/holistic/intake.ts), one amendment per `target-departed` or `interpretation` divergence of
+ * deferrals bank, the amendments (the output's own, keyed by `captured.job`, the checkpoint whose output it is), one
+ * amendment per `target-departed` or `interpretation` divergence of
  * `job` (src/holistic/amendments.ts), and (M4a rev 3, R35) each conversion its decision record holds: an amendment
  * `source: admit{job, index, reason}`, and for a follow-up overrun a debt item naming the opportunity (never classified
  * again: the record is read); the convergence bound when due, the digest when due.
@@ -1354,7 +1375,6 @@ export function settleDecided(ctx: CheckpointContext, job: JobId, output: Checkp
   if (ctx.plan().target === 'corpus') {
     bankDeferred(ctx, job, output);
     for (const draft of checkpointAmendments(captured.job, output)) appendAmendment(ctx.journal, draft);
-    settleIntake(ctx.journal, captured.job, output, issueReuse(ctx.journal.view, ctx.runDir, captured));
     for (const draft of divergenceAmendments(ctx.journal.view, job)) appendAmendment(ctx.journal, draft);
     settleConversions(ctx, job, output);
   }

@@ -19,6 +19,8 @@
 //    target changed since the approval); the rest are listed, readable and not under review. A blocking
 //    finding on one of those is demoted to a note unless it cites a changed hunk (`hunk`) or a moved target (`contractRef`);
 //    a revise left with no blocking finding is read as an approval. An empty delta skips the gate (`delta-empty`).
+//    A scope-only re-entry (field report 2026-10-24) carries the re-entered unit's approval to a unit with none of its own,
+//    for an empty delta only (`carriedApproval`).
 //
 // What a gate attempt was given is recorded on its `judgment-inputs` (`GateReview`), so the rules its answer is held to
 // follow from the log on replay and recovery; an attempt a dev.16 executor captured has none and is read without them.
@@ -27,6 +29,7 @@ import { type ReviewFindingId, type Sha, type SpecRev, type UnitId, reviewFindin
 import { type ReviewFact, parentUnit } from '../core/events.ts';
 import type { ApprovalFingerprint, SpecM1 } from '../core/records.ts';
 import type { JournalView } from '../core/interfaces.ts';
+import type { ReviewApproval } from '../core/state.ts';
 import { isUnitLink } from '../core/stale.ts';
 import { specLinksOf } from '../holistic/staleset.ts';
 import {
@@ -36,12 +39,13 @@ import { approvalBlobsOf } from '../core/upgrade.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, type RepoPath, absPath, repoPath } from '../core/values.ts';
 import { git, gitRun } from '../git/git.ts';
-import { unitDiffPaths } from '../git/transient.ts';
+import { transientCheck, unitDiffPaths, unitTransientRules } from '../git/transient.ts';
+import { canonicalJson } from '../core/json.ts';
 import { reviewDisputeDirective } from '../prompts/directives.ts';
 import type { GateReviewInput } from '../prompts/inputs.ts';
 import { DECISIONS_FILE, DEFECT_CATEGORIES, type GateFinding, type GateOutput, validateGateOutput } from '../prompts/schemas.ts';
 import type { PlanUnit } from '../input/plan.ts';
-import { type StageContext, type StageParent, workDir } from './dispatch.ts';
+import { type StageContext, type StageParent, dispatchOf, workDir } from './dispatch.ts';
 import { type JudgmentReader, judgmentOutput, judgmentSpawns, loadUnitSpec, readDecisions } from './stages.ts';
 
 /** The blob of `path` at `commit`, or null when the commit has no such file. */
@@ -93,13 +97,25 @@ export function openDisputes(ctx: StageContext, unit: PlanUnit, ledger: readonly
  * A gate's delta from the unit's latest approval, given its spec in force, its fingerprint `now` at the tip it reads and
  * the head it judges: null for a full review (no approval, a dev.16 approval without blobs, or a spec revision since that
  * is not the design pass's alone: `designRevisionsOnly`), `empty` when no file changed and nothing the approval bound moved,
- * else the delta.
+ * else the delta. A re-entered unit with no approval of its own measures from the one a scope-only re-entry carries
+ * (`carriedApproval`), and only to `empty`: anything else is a full review.
  */
 export function gateDelta(ctx: StageContext, unit: UnitId, spec: SpecM1, tip: Sha, head: Sha, now: ApprovalFingerprint): GateDelta | 'empty' | null {
-  const approval = ctx.journal.view.review().approval(unit);
-  if (approval === null) return null;
-  const blobs = approvalBlobsOf({ unit, blobs: approval.blobs });
+  const own = ctx.journal.view.review().approval(unit);
+  if (own === null) {
+    const carried = carriedApproval(ctx, unit, spec, tip, head);
+    return carried === null ? null : deltaFrom(ctx, unit, spec, tip, head, now, carried) === 'empty' ? 'empty' : null;
+  }
+  const blobs = approvalBlobsOf({ unit, blobs: own.blobs });
   if (blobs === null || !designRevisionsOnly(ctx.journal.view, unit, blobs.specRev, now.specRev)) return null;
+  return deltaFrom(ctx, unit, spec, tip, head, now, { approval: own, blobs });
+}
+
+type Measured = Readonly<{ approval: ReviewApproval; blobs: ApprovalBlobs }>;
+
+/** The delta of `head` at `tip` from `from`'s approved blobs and bound targets. */
+function deltaFrom(ctx: StageContext, unit: UnitId, spec: SpecM1, tip: Sha, head: Sha, now: ApprovalFingerprint, from: Measured): GateDelta | 'empty' {
+  const { approval, blobs } = from;
   const was = new Map<string, Sha | null>(blobs.files.map((f) => [f.path, f.blob]));
   const paths = unitDiffPaths(ctx.repo, tip, head);
   const is = new Map<string, Sha | null>(paths.map((p) => [p, blobAt(ctx.repo, head, p)]));
@@ -121,6 +137,41 @@ export function gateDelta(ctx: StageContext, unit: UnitId, spec: SpecM1, tip: Sh
   const review = all.filter((p) => !kept.includes(p)).map((p) => repoPath(p));
   if (review.length === 0 && moved.length === 0) return 'empty';
   return { approved: { attempt: approval.attempt, head: approval.fingerprint.unitCommit }, review, unchanged: kept.map((p) => repoPath(p)), moved };
+}
+
+/**
+ * The approval a scope-only re-entry carries forward (field report 2026-10-24: a re-entry at verify that only widened the
+ * scope by a test file was gated again). The re-entered unit's latest approval, when all of these hold:
+ * - the approval judged exactly `head` (`unitCommit`): no commit since, so neither a build nor a merge-in moved the unit;
+ * - no gate attempt of the re-entered unit failed after it (a revise, or a park after escalations, overrides it);
+ * - the re-entered unit's spec in force is the one it approved, or later by design records alone (`designRevisionsOnly`),
+ *   and `spec` equals it in everything but `unit`, `rev` and `scope`;
+ * - the unit diff passes the transient check (src/git/transient.ts) under this unit's own pinned rules, so a narrowed
+ *   scope that leaves a path of the approved diff outside it carries nothing.
+ * Derived from the log and git alone; null otherwise, and for a unit that re-enters nothing.
+ */
+function carriedApproval(ctx: StageContext, unit: UnitId, spec: SpecM1, tip: Sha, head: Sha): Measured | null {
+  const view = ctx.journal.view;
+  const lineage = view.unit(unit).lineage;
+  if (lineage === null) return null;
+  const from = lineage.reenters;
+  const approval = view.review().approval(from);
+  if (approval === null || approval.fingerprint.unitCommit !== head) return null;
+  const blobs = approvalBlobsOf({ unit: from, blobs: approval.blobs });
+  if (blobs === null) return null;
+  if (view.unit(from).failures.some((f) => f.fact.stage === 'gate' && f.seq > approval.seq)) return null;
+  const planned = ctx.plan().units.find((u) => u.id === from);
+  if (planned === undefined) throw new Error(`unit ${unit} re-enters ${from}, which is not in the plan in force`);
+  const approved = loadUnitSpec(ctx, planned).spec;
+  if (!designRevisionsOnly(view, from, blobs.specRev, approved.rev) || !sameButScope(approved, spec)) return null;
+  if (transientCheck(ctx.repo, unitTransientRules(dispatchOf(view, unit), spec), tip, head).length > 0) return null;
+  return { approval, blobs };
+}
+
+/** Whether two specs differ in nothing but their unit, revision and scope. */
+function sameButScope(a: SpecM1, b: SpecM1): boolean {
+  const rest = ({ unit: _unit, rev: _rev, scope: _scope, ...other }: SpecM1): unknown => other;
+  return canonicalJson(rest(a)) === canonicalJson(rest(b));
 }
 
 /**

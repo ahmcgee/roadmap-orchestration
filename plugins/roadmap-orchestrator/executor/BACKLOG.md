@@ -66,8 +66,8 @@ at triage stay in git history.
 ### M4a (done: plan `/claude-state/plans/m4a-convergence.md`, rev 2.1; 1.0.0-dev.7, merged at b55ad88)
 
 - Scope (LR-a): the pinned corpus as the target (guide, sources, `T-n` rules, pin, census), the vision's in-tree home
-  and playback verification, `roadmap phase0 check`, the debt lifecycle, the forge (issue policy, intake, push, stacked
-  PRs), `roadmap brief`, chaining with K, the routing rebinding (frontier Opus medium, summit Opus xhigh), the pack
+  and playback verification, `roadmap phase0 check`, the debt lifecycle, the forge (issue policy and intake, removed in
+  1.0.0-dev.21; push, stacked PRs), `roadmap brief`, chaining with K, the routing rebinding (frontier Opus medium, summit Opus high), the pack
   review, prompt notes, the full skill, and the deletion of every pre-dev.6 scaffolding layer (OR-L4, step X0).
 - Records frozen in step 0a (SCHEMAS.md "M4a"); step 0a placed placeholder modules at every final command path, each
   replaced by its landing step (C4 the last, deleting `src/core/notyet.ts`).
@@ -130,7 +130,6 @@ at triage stay in git history.
 
 - Preview (the root agent starts the app from integration on request): 1.1 (OR-Q15).
 - Flow series: not recorded (LR-c); M4b derives any series from `events.jsonl` in M4a arcs' refs.
-- Issue mode outbound projection: 1.1.
 - The Codex judgment profile and cgroup containment stay out (LR-a).
 
 ### Deferred from the dev.12 role evals (evals/roles/)
@@ -622,9 +621,8 @@ at triage stay in git history.
 - **Time signals for judges and multi-agent work** (Opus 5.5 guide, 2026-10-17): give a judgment session elapsed time
   against its deadline, and the skill's fan-out elapsed time against a budget. Trigger: a judgment killed at its deadline
   with no answer, or a role eval showing a judge spending past its budget on reading it never cites.
-- **Effort xhigh only where measured** (Opus 5.5 guide, 2026-10-17: xhigh where it shows a measured gain). The escalation
-  seats and the checkpoint run summit (xhigh) unmeasured. Trigger: a role eval for the escalation gate or the checkpoint;
-  then compare `--rebind summit=claude-opus-5-5:high` with xhigh and keep xhigh only where it catches more.
+- **Summit effort high vs xhigh** (owner ruling 2026-10-24: summit binds `high`). Trigger: a role eval for the escalation gate or
+  the checkpoint; then compare `--rebind summit=claude-opus-5-5:xhigh` with `high` and move to xhigh only where it catches more.
 - **Three-state verifier** (CONFIRMED / PLAUSIBLE / REFUTED): a separate, evaluated pass over a judge's findings that
   tries to refute each. Only if a false-alarm problem is measured: a role eval or arc where blocking findings that are not
   real cost fix rounds (the 2026-10-17 gate eval saw 0 false alarms in 12 clean trials).
@@ -643,6 +641,18 @@ at triage stay in git history.
 
 ## Scaffolding to delete
 
+- **dev.21 GitHub issues removed** (`issuesIgnored`, src/core/upgrade.ts): delete once no arc started on 1.0.0-dev.20
+  or earlier is in flight, with its call sites: src/core/events.ts (the `issue-intake` and `issues-captured` facts,
+  `checkpoint-inputs.issues`, `plan-changed.phase0.issuesSha256`, amendment `source: issue`), src/core/records.ts
+  (manifest `phase0Issues`), src/core/state.ts, src/phase0/types.ts (the record's `issueCapture` and `intake`),
+  src/prompts/schemas.ts (a checkpoint answer's `issueIntake`), the `phase0Issues` skip in src/input/classify.ts's
+  manifest compare and the src/git/snapshot.ts comment. With them go the `issue-policy-untrusted` needs-user reason
+  (src/core/records.ts, src/needsuser.ts), the `issue` finding lens (src/holistic/types.ts `FINDING_LENSES`, its arms
+  in src/core/events.ts and src/holistic/admits.ts) and the `issue` amendment source; the readers then refuse those
+  fields and kinds.
+- **dev.20 flakes without `on`** (`flakeOnDefault`, src/core/upgrade.ts; its call in src/pipeline/deflake.ts
+  `flakeOnOf`): delete once no arc started on 1.0.0-dev.20 or earlier is in flight; `on` then becomes required on
+  `flake-observed`.
 - **dev.17 rejections without `fix`** (`scopeOverlapFixDefault`, src/core/upgrade.ts; its call in the
   `scope-overlaps-corpus` reader, src/phase0/types.ts `corpusProblem`): delete once no arc started on 1.0.0-dev.17 or
   earlier is in flight; `fix` then becomes required.
@@ -743,7 +753,7 @@ at triage stay in git history.
 - The 1.0.0-dev.6 layer below is no longer adopted (1.0.0-dev.8 adopts dev.7 only; no dev.6 arc was in flight at M4b
   step 0a, which moved `PREVIOUS_RELEASE` to b55ad88 and dropped the dev.6 upgrade cases). Step 0a deleted the
   self-contained part: `checkpointOutputM4Default`, `splitChildRuleDefault` (a checkpoint answer now needs
-  `corpusAmendments`, `issueIntake` and each split child's `rule`), `DEV6_CLASS_CATALOGUE` and status's `dev6RevAlias`
+  `corpusAmendments` and each split child's `rule`; `issueIntake` too until dev.21), `DEV6_CLASS_CATALOGUE` and status's `dev6RevAlias`
   (with `resolveRoutingUnder`). The rest goes in one dedicated step with the corpus migration of the M3 fixtures below.
 
 - Holistic `architecture-doc` arcs (adopted dev.6 arcs only; a fresh one is refused, D0). With them go the
@@ -773,3 +783,15 @@ at triage stay in git history.
 - Interim M2 shim: `outcomeFact` writing no `park` for a retryable row whose stage names no targets (step 7a,
   src/pipeline/transitions.ts), and the fold's reading of such a fact as an operator park (`unclassedParkRecord`,
   src/core/state.ts). A behaviour shim, not a release layer (kept by M4a step X0).
+
+## Milestone checkpoint cadence follow-up (2026-10-24)
+
+- Diagram update deferred by the owner for this batch: `docs/flow.svg` and `docs/flow-bpmn.svg` need the README's
+  milestone steering boundary (every K retired milestones, default 2, after the walk), accumulated audit/walk
+  findings, immediate design-park/P1/final paths, equal-input checkpoint guard, empty-range audit guard,
+  publication-gated wall-clock and two lost-call reissues. No SVG or version edits in this batch.
+- Delete `checkpointSkipTriggerOf`'s audit-only default once no arc started on dev.20 or earlier remains in flight;
+  new skip records carry their trigger. Optional plan cadence defaults are lasting, like the audit defaults.
+
+- The mandatory upgrade regression exposed a pre-existing historical-spend alias gap from summit `xhigh` → `high`.
+  Delete `summitXhighTriple` and its routing aliases once no arc started before that effort change is in flight.

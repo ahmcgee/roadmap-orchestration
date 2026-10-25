@@ -9,7 +9,7 @@ import {
 } from '../core/ids.ts';
 import { type ResidueKey, residueKey } from '../core/records.ts';
 import {
-  type ChainProblem, type CorpusProblem, type Phase0Problem, type UntrustedPolicy, chainProblem, corpusProblem, phase0Problem, untrustedPolicyFields,
+  type ChainProblem, type CorpusProblem, type Phase0Problem, chainProblem, corpusProblem, phase0Problem,
 } from '../phase0/types.ts';
 import { Fields, type Read, SchemaError, arrayOf, literal, nat, nullable, object, oneOf, positive, sortedBy, str, tagged, version } from '../core/validate.ts';
 import { type AbsPath, type IsoTime, type PlanPath, type RefName, type RepoPath, absPath, isoTime, planPath, refName, repoPath } from '../core/values.ts';
@@ -86,8 +86,6 @@ export type StartupRejection =
   | Readonly<{ kind: 'corpus-invalid'; problems: readonly CorpusProblem[] }>
   | Readonly<{ kind: 'phase0-invalid'; problems: readonly Phase0Problem[] }>
   | Readonly<{ kind: 'chain-invalid'; problem: ChainProblem }>
-  // The forge's issue policy lets anyone open issues (OR-L6): restrict issue creation or disable issues.
-  | (Readonly<{ kind: 'issue-policy-untrusted' }> & UntrustedPolicy)
   // `.roadmap/{vision.json, corpus.md, config.json}` in the working tree differ from their blobs at HEAD (K18).
   | Readonly<{ kind: 'tree-uncommitted'; paths: readonly RepoPath[] }>
   // A fresh arc's holistic plan names an architecture doc (H4, R17): a new holistic arc targets a corpus.
@@ -143,7 +141,6 @@ export function exitCodeFor(rejection: StartupRejection): typeof EXIT_REFUSED | 
     case 'corpus-invalid':
     case 'phase0-invalid':
     case 'chain-invalid':
-    case 'issue-policy-untrusted':
     case 'tree-uncommitted':
     case 'holistic-needs-corpus':
     case 'plan-defect':
@@ -277,9 +274,6 @@ export const startupRejection: Read<StartupRejection> = tagged<StartupRejectionK
   'corpus-invalid': object((f): StartupRejection => ({ kind: f.get('kind', literal('corpus-invalid')), problems: f.get('problems', arrayOf(corpusProblem, { nonEmpty: true })) })),
   'phase0-invalid': object((f): StartupRejection => ({ kind: f.get('kind', literal('phase0-invalid')), problems: f.get('problems', arrayOf(phase0Problem, { nonEmpty: true })) })),
   'chain-invalid': object((f): StartupRejection => ({ kind: f.get('kind', literal('chain-invalid')), problem: f.get('problem', chainProblem) })),
-  'issue-policy-untrusted': object((f): StartupRejection => ({
-    kind: f.get('kind', literal('issue-policy-untrusted')), visibility: f.get('visibility', untrustedPolicyFields.visibility), policy: f.get('policy', untrustedPolicyFields.policy),
-  })),
   'tree-uncommitted': object((f): StartupRejection => ({
     kind: f.get('kind', literal('tree-uncommitted')), paths: f.get('paths', sortedBy((v, p): RepoPath => repoPath(v, p), (x) => x, { nonEmpty: true })),
   })),

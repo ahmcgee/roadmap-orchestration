@@ -113,7 +113,6 @@ describe('status.subset', () => {
       census: null,
       amendments: [],
       debt: null,
-      issues: null,
       chain: null,
       timings: [],
       answers: [],
@@ -132,7 +131,7 @@ describe('status.subset', () => {
     const s = after_;
     assert.deepEqual(Object.keys(s).sort(), [
       'admits', 'amendments', 'answers', 'arc', 'audit', 'census', 'chain', 'checkpointWaits', 'commands', 'completion', 'convergence', 'corpus', 'debt', 'decisionsSince', 'deferred', 'demo',
-      'divergences', 'drift', 'edges', 'findings', 'flow', 'holds', 'holistic', 'host', 'issues', 'knownDefects', 'milestones', 'needsUser', 'notYetTrue', 'nowTrue', 'opportunities', 'owed',
+      'divergences', 'drift', 'edges', 'findings', 'flow', 'holds', 'holistic', 'host', 'knownDefects', 'milestones', 'needsUser', 'notYetTrue', 'nowTrue', 'opportunities', 'owed',
       'packReview', 'parkedBackends', 'plan', 'rejection', 'routing', 'run', 'runOnly', 'spend', 'target', 'timings', 'units', 'vision', 'waived',
     ]);
     assert.equal(s.plan?.rev, 1, 'the first start put plan.json in force as revision 1');
@@ -176,7 +175,7 @@ describe('status.subset', () => {
     assert.deepEqual(s.completion, { planRev: 1, head: git(r.repo, 'rev-parse', 'main'), active: true, sealed: true, notSealed: null, unmet: [] });
     assert.ok(s.host.log.bytes > 0 && s.host.log.events > 0 && !s.host.log.compactionDue, JSON.stringify(s.host.log));
     // M4a: an arc outside the corpus layer has vacuous corpus keys; its timings are its stages' (LR-c).
-    assert.deepEqual([s.holds, s.packReview, s.corpus, s.census, s.amendments, s.debt, s.issues, s.chain], [[], null, null, null, [], null, null, null]);
+    assert.deepEqual([s.holds, s.packReview, s.corpus, s.census, s.amendments, s.debt, s.chain], [[], null, null, null, [], null, null]);
     assert.ok(s.timings.some((t) => t.stage === 'build'), JSON.stringify(s.timings));
     for (const t of s.timings) assert.ok(t.count >= 1 && t.p50Ms <= t.maxMs, JSON.stringify(t));
   });

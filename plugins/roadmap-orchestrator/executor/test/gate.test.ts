@@ -116,7 +116,7 @@ test('gate.risk-promotion: a contract path in the unit\'s diff promotes the gate
     assert.equal(outcomes(d).at(-1), 'gate:approve');
     const [planCall, , gateCall] = readCalls(d.scenarioPath);
     assert.ok(planCall!.argv.includes('claude-opus-5-5') && planCall!.argv.includes('medium'), 'plan-check sat on the unit\'s med seat (frontier: Opus medium, dev.17)');
-    assert.ok(gateCall!.argv.includes('xhigh'), 'the gate sat on the escalation seat');
+    assert.ok(gateCall!.argv.includes('claude-opus-5-5') && gateCall!.argv.includes('high'), 'the gate sat on the escalation seat');
     assert.ok(!planCall!.stdin.includes('<escalation>'), 'no preface below the escalation seat');
     assert.equal(r.journal.view.unit(U1).promotion, false, 'the promotion was for that dispatch only');
     assert.ok(readCalls(d.scenarioPath).every((c) => c.step !== null));
@@ -669,7 +669,7 @@ test('gate.large-diff: at low risk a diff over the threshold seats the gate on h
     await stepUntil(r, 'u1', (f) => f.stage === 'gate');
     assert.equal(outcomes(d).at(-1), 'gate:approve', 'the repaired map covers every path');
     const [fresh] = readCalls(d.scenarioPath).filter(isGate);
-    assert.ok(fresh!.argv.includes('claude-opus-5-5') && !fresh!.argv.includes('xhigh'), `the gate sat on the high seat (frontier), not escalation: ${fresh!.argv.join(' ')}`);
+    assert.ok(fresh!.argv.includes('claude-opus-5-5') && !fresh!.argv.includes('high'), `the gate sat on the high seat (frontier), not escalation: ${fresh!.argv.join(' ')}`);
     const attempt = r.journal.view.unit(U1).decided!.attempt;
     const inputs = r.journal.view.judgmentInputs(U1, 'gate', attempt)!;
     assert.ok(inputs.largeDiff !== null && inputs.largeDiff !== undefined && inputs.largeDiff.overflow > 0, `largeDiff recorded: ${JSON.stringify(inputs.largeDiff)}`);
@@ -693,7 +693,7 @@ test('gate.large-diff-seat: at med risk the large diff seats the gate on high; a
     await stepUntil(r, 'u1', (f) => f.stage === 'gate');
     assert.equal(outcomes(med).at(-1), 'gate:approve');
     const [g] = readCalls(med.scenarioPath).filter(isGate);
-    assert.ok(g!.argv.includes('claude-opus-5-5') && !g!.argv.includes('xhigh'), `med moved to high: ${g!.argv.join(' ')}`);
+    assert.ok(g!.argv.includes('claude-opus-5-5') && !g!.argv.includes('high'), `med moved to high: ${g!.argv.join(' ')}`);
   } finally {
     r.journal.close();
   }
@@ -707,7 +707,7 @@ test('gate.large-diff-seat: at med risk the large diff seats the gate on high; a
     await stepUntil(p, 'u1', (f) => f.stage === 'gate');
     assert.equal(outcomes(promoted).at(-1), 'gate:approve');
     const [g] = readCalls(promoted.scenarioPath).filter(isGate);
-    assert.ok(g!.argv.includes('xhigh'), 'the escalation seat stays');
+    assert.ok(g!.argv.includes('claude-opus-5-5') && g!.argv.includes('high'), 'the escalation seat stays');
   } finally {
     p.journal.close();
   }

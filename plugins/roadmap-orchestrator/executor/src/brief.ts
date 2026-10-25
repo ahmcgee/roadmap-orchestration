@@ -10,8 +10,7 @@
 //   starts at seq 0. Nothing else defines a delta. The new vector is, per chained arc, its ref's commit and high-water.
 // - **Per arc** (`BriefArc`), from its delta: the divergences and digests; the decisions (`status`'s `decisionsAfter`,
 //   read from the ref); the Phase-0 record when a revision in the delta changed it (its curation digest, corpus
-//   divergences, questions with their working assumptions, debt dispositions and intake); the debt banked; the
-//   checkpoints' intake outcomes; the amendments (`<arc>/M-n`); the pack reviews' notes; the stage timings of the
+//   divergences, questions with their working assumptions and debt dispositions); the debt banked; the amendments (`<arc>/M-n`); the pack reviews' notes; the stage timings of the
 //   attempts completed in the delta (`status`'s `stageTimings`). Not a delta: the census at the ref (a corpus arc's;
 //   `held` = its obligation-state rules whose obligation holds on the arc's integration head, `status`'s rule over the
 //   ref's witness records) and the arc's PR now (non-fatal `unavailable`).
@@ -197,10 +196,6 @@ function briefArc(repo: AbsPath, ref: ArcRef, from: number, pr: BriefPr, previou
       banked: facts.flatMap((f) => (f.kind === 'debt-banked' ? [{ id: f.id, what: f.what }] : [])),
       dispositioned: record?.debt ?? [],
     },
-    intake: [
-      ...(record?.intake ?? []).map((x) => ({ issue: x.issue, job: null, outcome: x.outcome })),
-      ...facts.flatMap((f) => (f.kind === 'issue-intake' ? [{ issue: f.issue, job: f.job, outcome: f.outcome }] : [])),
-    ],
     questions: (record?.questions ?? []).map((q) => ({ id: q.id, rank: q.rank, text: q.text, assumption: q.assumption, state: q.state })),
     amendments: facts.flatMap((f) => (f.kind === 'corpus-amendment' ? [{
       id: amendmentRefOf(ref.arc, f.id), rules: f.rules, proposal: f.proposal,
@@ -294,7 +289,6 @@ function arcMarkdown(a: BriefArc): string {
     section('Questions (working assumptions)', [...a.questions].sort((x, y) => x.rank - y.rank).map((q) => `#${q.rank} ${q.id} ${q.state.type === 'open' ? 'open' : `answered: ${q.state.answer}`}: ${q.text} — assuming: ${q.assumption}`)),
     section('Debt banked', a.debt.banked.map((d) => `${d.id}: ${d.what}`)),
     section('Debt dispositioned', a.debt.dispositioned.map((d) => `${d.id}: ${canonicalJson(d.disposition).trim()}`)),
-    section('Issue intake', a.intake.map((x) => `${x.issue} (${x.job ?? 'Phase 0'}): ${canonicalJson(x.outcome).trim()}`)),
     section('Amendments', a.amendments.map((x) => `${x.id}${x.rules.length === 0 ? '' : ` (${x.rules.join(', ')})`}${x.admit === null ? ''
       : ` [converted admit ${x.admit.job}#${x.admit.index}: ${x.admit.reason}]`}: ${x.proposal}`)),
     section('Admits', a.admits.map((x) => `${x.unit} (${x.job}#${x.index}): ${x.class}${x.clauses.length === 0 ? '' : ` ${x.clauses.join(', ')}`}${x.followUp === null ? '' : `, follow-up of ${x.followUp}`}`)),
