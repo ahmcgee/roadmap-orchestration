@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="2400" height="12370" viewBox="0 0 2400 12370" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" fill="#1f2933">
 <title>Roadmap Arc BPMN</title>
-<desc>BPMN 2.0 process diagram of how a roadmap-orchestrator arc runs as of 1.0.0-dev.21: a top-level collaboration of three pools (owner, architect, executor with lanes for the scheduler, unit pipeline, holistic layer, milestones and demo, flow loop, and fault event sub-processes), followed by expanded sub-process panels for bootstrap, Phase 0, the unit lifecycle, lanes, parks and holds with propagation, deflake and environments, milestone walk and demo, lens audit and checkpoint, the flow loop, the architect's wake handling, arc-wide holds, close-out, PR and chain, and a legend.</desc>
+<desc>BPMN 2.0 process diagram of how a roadmap-orchestrator arc runs as of 1.0.0-dev.22: a top-level collaboration of three pools (owner, architect, executor with lanes for the scheduler, unit pipeline, holistic layer, milestones and demo, flow loop, and fault event sub-processes), followed by expanded sub-process panels for bootstrap, Phase 0, the unit lifecycle, lanes, parks and holds with propagation, deflake and environments, milestone walk and demo, lens audit and checkpoint, the flow loop, the architect's wake handling, arc-wide holds, close-out, PR and chain, and a legend.</desc>
 <defs>
 <marker id="seqarrow" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M0 0 L10 5 L0 10 Z" fill="#1f2933"/></marker>
 <marker id="msgend" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="11" markerHeight="11" orient="auto" markerUnits="userSpaceOnUse"><path d="M1 1 L11 6 L1 11 Z" fill="#fff" stroke="#1565c0" stroke-width="1.3"/></marker>
@@ -673,7 +673,7 @@
 <path d="M1660.0 165.0 L1930.0 165.0" fill="none" stroke="#1f2933" stroke-width="1.5" marker-end="url(#seqarrow)"/>
 <path d="M335.0 165.0 L1000.0 165.0" fill="none" stroke="#1f2933" stroke-width="1.5" marker-end="url(#seqarrow)"/>
 <path d="M112.0 165.0 L130.0 165.0" fill="none" stroke="#1f2933" stroke-width="1.5" marker-end="url(#seqarrow)"/>
-<text font-size="24" text-anchor="start" font-weight="bold"><tspan x="24.0" y="36.0">How a roadmap-orchestrator arc runs (1.0.0-dev.21), in BPMN 2.0</tspan></text>
+<text font-size="24" text-anchor="start" font-weight="bold"><tspan x="24.0" y="36.0">How a roadmap-orchestrator arc runs (1.0.0-dev.22), in BPMN 2.0</tspan></text>
 <text font-size="13" text-anchor="start" fill="#37474f"><tspan x="24.0" y="58.0">Top level: the collaboration between the owner, the architect (Claude in the owner's session) and the executor. Every collapsed sub-process [+] is drawn expanded in a panel further down. Legend at the bottom.</tspan></text>
 <circle cx="95" cy="165" r="17" fill="#fff" stroke="#2e7d32" stroke-width="1.8"/>
 <text font-size="12" text-anchor="middle"><tspan x="95.0" y="197.0">Wants the</tspan><tspan x="95.0" y="211.0">vision</tspan><tspan x="95.0" y="225.0">advanced</tspan></text>
@@ -836,7 +836,7 @@
 <text font-size="12" text-anchor="start" fill="#37474f" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" paint-order="stroke"><tspan x="386.0" y="906.0">no</tspan></text>
 <text font-size="12" text-anchor="start" fill="#37474f" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" paint-order="stroke"><tspan x="656.0" y="864.0">yes</tspan></text>
 <text font-size="12" text-anchor="start" fill="#37474f" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" paint-order="stroke"><tspan x="636.0" y="906.0">no</tspan></text>
-<text font-size="12" text-anchor="middle" fill="#37474f" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" paint-order="stroke"><tspan x="1180.0" y="1138.0">audits + walks accumulate; urgent triggers stay immediate</tspan></text>
+<text font-size="12" text-anchor="middle" fill="#37474f" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" paint-order="stroke"><tspan x="1180.0" y="1138.0">audits accumulate; any unweighed walk finding checkpoints immediately</tspan></text>
 <text font-size="12" text-anchor="middle" fill="#37474f" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" paint-order="stroke"><tspan x="1180.0" y="1258.0">settled</tspan></text>
 <path d="M1552 1130 H1540 V1215 H1552" fill="none" stroke="#37474f" stroke-width="1.4"/>
 <text font-size="12" text-anchor="start" fill="#37474f"><tspan x="1548.0" y="1147.0">The join fires when the completion predicate holds: every unit merged,</tspan><tspan x="1548.0" y="1162.0">cut or superseded; no blocking item, pending command or own-arc</tspan><tspan x="1548.0" y="1177.0">residue; no baseline, audit, checkpoint or walk owed or running; the</tspan><tspan x="1548.0" y="1192.0">latest generation quiescent under the current vision; every non-exempt</tspan><tspan x="1548.0" y="1207.0">obligation held on the head.</tspan></text>
@@ -1882,16 +1882,16 @@
 <text font-size="14" text-anchor="start" font-weight="bold"><tspan x="40.0" y="8110.0">Repair loop</tspan></text>
 <circle cx="75" cy="8170" r="17" fill="#fff" stroke="#2e7d32" stroke-width="1.8"/>
 <rect x="69" y="8162" width="12" height="16" fill="#fff" stroke="#1f2933" stroke-width="1.1"/><path d="M71.5 8166 H78.5 M71.5 8169.5 H78.5 M71.5 8173 H78.5" stroke="#1f2933" stroke-width="1"/>
-<text font-size="12" text-anchor="middle"><tspan x="75.0" y="8202.0">unweighed</tspan><tspan x="75.0" y="8217.0">blocking walk P1</tspan><tspan x="75.0" y="8232.0">(nonblocking</tspan><tspan x="75.0" y="8247.0">findings wait)</tspan></text>
+<text font-size="12" text-anchor="middle"><tspan x="75.0" y="8202.0">unweighed</tspan><tspan x="75.0" y="8217.0">walk finding</tspan><tspan x="75.0" y="8232.0">(any severity;</tspan><tspan x="75.0" y="8247.0">round stays open)</tspan></text>
 <rect x="130" y="8135" width="190" height="70" rx="9" fill="#ffffff" stroke="#1f2933" stroke-width="4"/>
-<text font-size="12" text-anchor="middle"><tspan x="225.0" y="8160.3">Immediate checkpoint</tspan><tspan x="225.0" y="8175.3">admits break repairs;</tspan><tspan x="225.0" y="8190.3">deviations wait for cadence</tspan></text>
+<text font-size="12" text-anchor="middle"><tspan x="225.0" y="8160.3">Immediate checkpoint</tspan><tspan x="225.0" y="8175.3">weighs all active findings;</tspan><tspan x="225.0" y="8190.3">may admit repairs</tspan></text>
 <rect x="360" y="8135" width="180" height="70" rx="9" fill="#ffffff" stroke="#1f2933" stroke-width="1.6"/>
 <text font-size="12" text-anchor="middle"><tspan x="450.0" y="8160.8">Repair units run the Unit</tspan><tspan x="450.0" y="8174.8">lifecycle</tspan></text>
 <path d="M437.0 8189 V8201 M441.0 8189 V8201 M445.0 8189 V8201" stroke="#1f2933" stroke-width="1.6"/>
 <rect x="453.0" y="8189" width="12" height="12" fill="#fff" stroke="#1f2933" stroke-width="1.2"/><path d="M455.0 8195 H463.0 M459.0 8191 V8199" stroke="#1f2933" stroke-width="1.4"/>
 <path d="M590 8148 L612 8170 L590 8192 L568 8170 Z" fill="#fff" stroke="#1f2933" stroke-width="1.6"/>
 <path d="M583 8163 L597 8177 M597 8163 L583 8177" stroke="#1f2933" stroke-width="3.2"/>
-<text font-size="12" text-anchor="middle"><tspan x="650.0" y="8126.0">round k&#x27;s blocking repair merged</tspan><tspan x="650.0" y="8141.0">and k &lt; walkRounds (default 3)?</tspan></text>
+<text font-size="12" text-anchor="middle"><tspan x="650.0" y="8126.0">round k&#x27;s repair / polish merged</tspan><tspan x="650.0" y="8141.0">and k &lt; walkRounds (default 3)?</tspan></text>
 <circle cx="680" cy="8170" r="15" fill="#fff" stroke="#b71c1c" stroke-width="4"/>
 <path d="M680 8162 L688 8176 L672 8176 Z" fill="#1f2933" stroke="#1f2933" stroke-width="1.1"/>
 <text font-size="12" text-anchor="start"><tspan x="701.0" y="8167.0">next round's walk is</tspan><tspan x="701.0" y="8181.0">due</tspan></text>
@@ -1911,7 +1911,7 @@
 <text font-size="12" text-anchor="start" fill="#37474f" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" paint-order="stroke"><tspan x="846.0" y="8242.0">yes</tspan></text>
 <text font-size="12" text-anchor="start" fill="#37474f" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" paint-order="stroke"><tspan x="826.0" y="8290.0">no</tspan></text>
 <path d="M52 8345 H40 V8400 H52" fill="none" stroke="#37474f" stroke-width="1.4"/>
-<text font-size="12" text-anchor="start" fill="#37474f"><tspan x="48.0" y="8362.0">Break vs deviation. A break would force rework if fixed later (the journey cannot be completed, the interface contract is wrong, or a declared floor is violated): a P1 that keeps the</tspan><tspan x="48.0" y="8377.0">milestone node unpassed, so DAG descendants wait. A deviation (copy, visuals within tokens, layout, docs disagreeing with a correct contract, log text) is a P2, repaired alongside; it</tspan><tspan x="48.0" y="8392.0">holds neither dependents nor a walk round open; it waits for the steering checkpoint. An overdue walkthrough P1 also raises finding-p1-escalated.</tspan></text>
+<text font-size="12" text-anchor="start" fill="#37474f"><tspan x="48.0" y="8362.0">Break vs deviation. A break would force rework if fixed later (the journey cannot be completed, the interface contract is wrong, or a declared floor is violated): a P1 that keeps the</tspan><tspan x="48.0" y="8377.0">milestone node unpassed, so DAG descendants wait. A deviation (copy, visuals within tokens, layout, docs disagreeing with a correct contract, log text) is a P2, repaired alongside; it</tspan><tspan x="48.0" y="8392.0">does not hold dependents. Any unweighed finding gets an immediate checkpoint and holds its round open for repair / re-walk after merged code. An overdue P1 raises finding-p1-escalated.</tspan></text>
 <text font-size="14" text-anchor="start" font-weight="bold"><tspan x="1080.0" y="8110.0">Polish (code admits, no checkpoint)</tspan></text>
 <circle cx="1110" cy="8170" r="17" fill="#fff" stroke="#2e7d32" stroke-width="1.8"/>
 <rect x="1104" y="8162" width="12" height="16" fill="#fff" stroke="#1f2933" stroke-width="1.1"/><path d="M1106.5 8166 H1113.5 M1106.5 8169.5 H1113.5 M1106.5 8173 H1113.5" stroke="#1f2933" stroke-width="1"/>
@@ -2034,7 +2034,7 @@
 <text font-size="12" text-anchor="start" fill="#37474f"><tspan x="1260.0" y="8662.0">operator-design park</tspan></text>
 <circle cx="1240" cy="8740" r="15" fill="#fff" stroke="#2e7d32" stroke-width="1.8"/>
 <path d="M1240 8732 L1248 8746 L1232 8746 Z" fill="#fff" stroke="#1f2933" stroke-width="1.1"/>
-<text font-size="12" text-anchor="start" fill="#37474f"><tspan x="1260.0" y="8732.0">unweighed blocking walk P1</tspan></text>
+<text font-size="12" text-anchor="start" fill="#37474f"><tspan x="1260.0" y="8717.0">unweighed walk finding</tspan><tspan x="1260.0" y="8732.0">(any severity): immediate</tspan></text>
 <circle cx="1240" cy="8810" r="15" fill="#fff" stroke="#2e7d32" stroke-width="1.8"/>
 <path d="M1240 8802 L1248 8816 L1232 8816 Z" fill="#fff" stroke="#1f2933" stroke-width="1.1"/>
 <text font-size="12" text-anchor="start" fill="#37474f"><tspan x="1260.0" y="8780.0">unweighed audit P1 / final audit;</tspan><tspan x="1260.0" y="8795.0">new audit findings if no milestones</tspan></text>
@@ -2064,9 +2064,9 @@
 <path d="M1953 8933 L1967 8947 M1967 8933 L1953 8947" stroke="#1f2933" stroke-width="3.2"/>
 <text font-size="12" text-anchor="end"><tspan x="1932.0" y="8901.0">bundle</tspan><tspan x="1932.0" y="8916.0">activation</tspan></text>
 <path d="M1242 9070 H1230 V9110 H1242" fill="none" stroke="#37474f" stroke-width="1.4"/>
-<text font-size="12" text-anchor="start" fill="#37474f"><tspan x="1238.0" y="9087.0">* Non-park triggers skip if head, plan revision, vision and active findings equal a decided checkpoint capture.</tspan><tspan x="1238.0" y="9102.0">This guard also applies at the final audit. A design park still runs; the vision is read first and in full.</tspan></text>
+<text font-size="12" text-anchor="start" fill="#37474f"><tspan x="1238.0" y="9087.0">* Non-park triggers skip if head, plan revision, vision and active findings equal a decided checkpoint capture.</tspan><tspan x="1238.0" y="9102.0">It skips a milestone call after an equal walk capture, and applies at the final audit. Design parks still run.</tspan></text>
 <path d="M1242 8923 H1230 V8993 H1242" fill="none" stroke="#37474f" stroke-width="1.4"/>
-<text font-size="12" text-anchor="start" fill="#37474f"><tspan x="1238.0" y="8940.0">Milestone steering weighs accumulated audit and walk findings.</tspan><tspan x="1238.0" y="8955.0">Nonblocking walk findings wait here and do not hold the round.</tspan><tspan x="1238.0" y="8970.0">The retired-milestone counter resets at this boundary (including a skipped equal capture).</tspan><tspan x="1238.0" y="8985.0">holistic.checkpoint.everyMilestones = K (default 2).</tspan></text>
+<text font-size="12" text-anchor="start" fill="#37474f"><tspan x="1238.0" y="8940.0">Every checkpoint weighs all active audit and walk findings.</tspan><tspan x="1238.0" y="8955.0">Walk checkpoints do not count toward or reset the K-milestone interval.</tspan><tspan x="1238.0" y="8970.0">Only a milestone boundary resets K (including a skipped equal capture).</tspan><tspan x="1238.0" y="8985.0">holistic.checkpoint.everyMilestones = K (default 2).</tspan></text>
 <path d="M1242 9000 H1230 V9040 H1242" fill="none" stroke="#37474f" stroke-width="1.4"/>
 <text font-size="12" text-anchor="start" fill="#37474f"><tspan x="1238.0" y="9017.0">Schema, cites and rulings are checked first. An invalid bundle gets one repair turn in its own session; still</tspan><tspan x="1238.0" y="9032.0">invalid, it becomes a bundle-request.</tspan></text>
 <path d="M1938 8940 L1890 8940 L1890 9188 L1840 9188" fill="none" stroke="#1f2933" stroke-width="1.5" marker-end="url(#seqarrow)"/>

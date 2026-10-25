@@ -858,11 +858,13 @@ settled}`). `status.findings` counts the released findings by who released them 
 walk ends. A milestone retires when all its units' lineage heads have merged and its walk has ended; each id counts
 once, starting at the arc's start and resetting only at a milestone checkpoint (a suppressed equal-input boundary
 also counts). It weighs the active findings accumulated from completed audits and walks since the previous steering
-checkpoint. Audit completions and nonblocking walk findings fold into that boundary. Immediate triggers remain:
+checkpoint. Ordinary audit completions fold into that boundary. Immediate triggers remain:
 every operator-design park; a completed audit reporting an active P1 no decided checkpoint under the vision in force
-has weighed; a walk round with an unweighed open P1 (its milestone descendants wait); and the final audit at close-out
-(H5). A holistic arc without milestones keeps audit-triggered checkpoints. Captured audit/walk jobs from an older
-executor still resume and settle, including their rejected retries and approved enactments; uncaptured ordinary
+has weighed; a walk round with any unweighed open finding, at any severity (the round stays open; only a P1 holds
+milestone descendants); and the final audit at close-out (H5). A walk-round checkpoint captures all active findings,
+including accumulated audit findings, and never counts toward or resets the milestone interval. The unchanged-capture
+guard suppresses the milestone call if those inputs have already been weighed. A holistic arc without milestones
+keeps audit-triggered checkpoints. Captured audit/walk jobs from an older executor still resume and settle, including their rejected retries and approved enactments; uncaptured ordinary
 audit triggers fold into the next milestone boundary. A milestone checkpoint uses the highest generation already
 recorded (1 before any), like a walk or park; an audit checkpoint keeps its audit's generation. The seat steers toward
 the vision rather than the original plan: amend implementation contracts,
@@ -1206,9 +1208,10 @@ gets the walkthrough MCP servers. Milestones change only by
 for its walk to end. The vision gains `## Experience standards` (clause kind `experience`: outcomes and refusals, never
 mechanisms), distilled only when the world has a human-facing surface.
 
-**Fix units and polish.** A walk with an unweighed blocking P1 triggers the checkpoint immediately; other findings
-wait for the next milestone steering checkpoint (§2.8), without holding the walk round open. The checkpoint reads the walk's
-evidence and plans repairs from claim, cause and evidence; it is never asked to judge looks. Polish skips it: code admits
+**Fix units and polish.** A walk with any unweighed open finding triggers the checkpoint immediately, at every
+severity, and holds its round open until weighed (§2.8). Repairs admitted from the round must merge or be cut before
+it ends; a merged repair makes the next walk due while k < `walkRounds`. Every walk follows merged code. The checkpoint
+reads the walk's evidence and plans repairs from claim, cause and evidence; it is never asked to judge looks. Polish skips it: code admits
 a walk's proposals as one revision under the fence, through the same admit path and classifier as a checkpoint `admit`
 (one admit path, two authors), refusing and recording a proposal whose scope covers no milestone reference, that is not
 from the milestone's latest round, or that the admit path refuses; the rounds brake counts a refused proposal as settled.

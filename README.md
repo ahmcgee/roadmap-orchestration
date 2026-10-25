@@ -128,8 +128,9 @@ with a shell, and a browser for web journeys) uses it along each journey as its 
 that would force rework of what is built on top if fixed later is a break: the journey cannot be completed, an
 interface contract is wrong, or a declared floor is violated. A break holds the milestone's dependents until the
 checkpoint repairs it and a re-walk passes, for at most three rounds by default. Everything else (copy, visuals
-within the design tokens, docs and log text) is a deviation, repaired alongside without holding anything. Polish the
-walker proposes becomes units that code admits, and a polish judge keeps each one only if a walk of before and after
+within the design tokens, docs and log text) is a deviation, repaired alongside without holding dependents. Any
+unweighed walk finding gets an immediate checkpoint and holds the walk round open for repair and re-walk,
+bounded by `walkRounds`; every walk follows merged code. Polish the walker proposes becomes units that code admits, and a polish judge keeps each one only if a walk of before and after
 shows it better. Each settled milestone promotes the demo automatically: the supervisor brings the new version up
 on stable ports beside the old one and switches over once it is ready. `roadmap status` gives the address, and
 `roadmap demo hold|release|down|up` are your controls.
@@ -154,13 +155,13 @@ reissues across restarts, then its audit is abandoned.
 
 With milestones, the steering checkpoint runs every two retired milestones by default
 (`holistic.checkpoint.everyMilestones`), after the boundary milestone's walk ends, weighing the accumulated audit and
-walk findings. Nonblocking walk findings wait for that boundary without holding the round open. A design park, a new
-unweighed audit P1 or an unweighed blocking walk finding still gets an immediate checkpoint, as does the final audit
-at close-out. Without milestones, audits keep triggering checkpoints when they find something new. Every non-park
-trigger skips the call when a decided checkpoint already captured the same head, plan revision, vision and active
-finding set. Status shows the milestones remaining to the next steering checkpoint. It may admit a unit (a repair, an
-oversight within the slice, or one opportunity per arc that advances a clause outside it), respec, re-enter or cut
-a unit, or amend an obligation, each act citing the vision clauses it serves. Code validates the bundle and applies
+walk findings. Any unweighed walk finding, at any severity, gets an immediate checkpoint, which also weighs all
+active audit findings. Walk checkpoints do not count toward or reset the milestone interval. A design park, a new
+unweighed audit P1 and the final audit at close-out also get immediate checkpoints. Without milestones, audits keep
+triggering checkpoints when they find something new. Every non-park trigger skips the call when a decided checkpoint
+already captured the same head, plan revision, vision and active finding set, so a milestone boundary does not repeat an unchanged walk capture. Status shows the milestones remaining
+to the next steering checkpoint. It may admit a unit (a repair, an oversight within the slice, or one opportunity per
+arc that advances a clause outside it), respec, re-enter or cut a unit, or amend an obligation, each act citing the vision clauses it serves. Code validates the bundle and applies
 it, so its acts go straight back into the run without waiting for anyone. Every departure from the target is
 recorded as a divergence, which the architect reviews and can `reverse`. An act only you may approve becomes an
 `owner-request`; you are always asked first about anything irreversible, anything costing over $10, or anything with

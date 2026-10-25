@@ -4226,9 +4226,9 @@ No new reason (step 0 decided). `finding-p1-escalated` (blocking) is raised also
   ended `reported`, no walk of the milestone started since, and the log read through that end held no active walkthrough P1.
 - **The rounds brake** (`milestoneProgress`). Round k's admitted units: the plan's polish units carrying k's applied
   proposals (its proposals less `dropped`) and the units whose specs repair a finding of k (`repairUnits`), each followed
-  to its lineage head. Round k is open while an author has yet to act (`pending`: `checkpoint`, a blocking P1 finding of k still
-  `open` and no checkpoint captured after k's end decided; `polish`, an applied proposal in no unit of the plan: agent D's
-  revision applies them, and D extends this rule for a proposal its admit refuses) or one of its units is neither merged
+  to its lineage head. Round k is open while an author has yet to act (`pending`: `checkpoint`, a finding of k at any
+  severity still active and `open`, captured by no decided, non-rejected checkpoint under the vision in force; `polish`,
+  an applied proposal in no unit of the plan: agent D's revision applies them, and D extends this rule for a proposal its admit refuses) or one of its units is neither merged
   nor cut. Then k+1 is due when one landed and k < `walkRounds`; else the milestone settles (derived, no fact). A
   `bring-up-failed` walk is a round; an `abandoned` one is not (a round abandoned twice ends: "The abandonment brakes").
   A `bring-up-failed` round followed by a `rewalk` apply (below) is due again: no unit repairs an environment, so the
@@ -4252,10 +4252,11 @@ No new reason (step 0 decided). `finding-p1-escalated` (blocking) is raised also
 ### Fix units and the polish loop (agent D: src/walk/polish.ts, src/walk/compare.ts; plan §4)
 
 - **The checkpoint's walk trigger.** `CheckpointTrigger + {type: 'walk'; job: walk-n}` remains readable for every
-  captured job. In a milestone arc a new walk trigger is due only for a round with an unweighed open P1
+  captured job. A new walk trigger is due immediately for a round with any unweighed open finding, at any severity
   (`unweighedWalkFindings`: active, open, captured by no decided, non-rejected checkpoint under the vision in force).
-  Nonblocking findings fold into the next milestone checkpoint and do not hold the round open. Parks run first,
-  blocking walks next, audit P1s and final audits next, then milestone boundaries. `TriggerView.walk` adds
+  Every such finding holds the round open until weighed. Its checkpoint captures all active findings, including
+  accumulated audit findings, without consuming or resetting the milestone interval. Parks run first,
+  unweighed walks next, audit P1s and final audits next, then milestone boundaries. `TriggerView.walk` adds
   `{milestone, round, findings, evidenceDir}`; every checkpoint weighing unweighed walk findings gets those walks'
   evidence directories on its readable surface. Old captured triggers still retry and settle.
 
@@ -5009,8 +5010,10 @@ No record changes: both are derived from facts already in the log, and two outco
   order. Each id counts once across re-walks and plan edits; captures and skips retain the consumed boundary. A
   rejected job retries on its recorded trigger before another boundary. Its generation is the highest audit or
   checkpoint generation recorded, minimum 1, as for a walk or park; audit triggers retain their audit's generation.
-- New ordinary audit completions and nonblocking walk findings accumulate until that boundary. Design parks,
-  unweighed active audit P1s, unweighed open blocking walk findings and the final audit checkpoint remain immediate.
+- New ordinary audit completions accumulate until that boundary. Design parks, unweighed active audit P1s,
+  unweighed open walk findings of any severity and the final audit checkpoint remain immediate. Walk-round
+  checkpoints weigh all active findings, including accumulated audit findings, and do not count toward or reset
+  the milestone interval. An unchanged milestone boundary then skips its call and consumes the boundary.
   Already captured audit/walk jobs from dev.20 still resume, retry rejected decisions and enact approved requests.
 - Every non-park call is suppressed when a non-rejected decided checkpoint under the current vision captured the
   same head SHA, plan rev and active finding-id set. `nothingNew` remains the audit's additional first-job guard
@@ -5023,7 +5026,7 @@ No record changes: both are derived from facts already in the log, and two outco
   close-out. `TriggerView.milestone` adds the accumulated unweighed walks (their job, milestone, round, findings and
   evidence directory), so their evidence is named in the call as on an immediate walk trigger.
 - `status.audit.checkpointMilestonesRemaining: number | null`: milestones remaining before the next steering
-  checkpoint, zero at a due boundary, null without milestones. No `SCHEMA_VERSION` or release version bump.
+  checkpoint, zero at a due boundary, null without milestones. No `SCHEMA_VERSION` bump is needed.
 
 The required upgrade regression also exposed an existing historical-spend gap after the summit effort moved from
 `xhigh` to `high`: `summitXhighTriple` (`src/core/upgrade.ts`) derives the older hashes for the current and adopted

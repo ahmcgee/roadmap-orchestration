@@ -2,8 +2,9 @@
 // job `ckpt-<n>` at a time, the one seat that steers the arc as a whole. In a holistic arc with milestones it runs every
 // K retired milestones (`holistic.checkpoint.everyMilestones`, positive integer, default 2), after the boundary's walk
 // ends, weighing the accumulated audit and walk findings. A design park, an audit's unweighed active P1, a walk round's
-// unweighed open P1, and the final audit still trigger immediately. Without milestones, audits keep their checkpoint.
-// It reads the vision first and in full and decides one bundle, which src/holistic/bundle.ts activates all or nothing.
+// unweighed open finding of any severity, and the final audit still trigger immediately. Walk checkpoints also weigh
+// accumulated audit findings, without consuming or resetting the milestone interval. Without milestones, audits keep
+// their checkpoint. It reads the vision first and in full and decides one bundle, which src/holistic/bundle.ts activates all or nothing.
 // It writes nothing itself. Older captured audit/walk jobs still resume and settle; uncaptured ordinary audits fold
 // into the milestone boundary. Each milestone id counts once (lineage heads retired, latest walk ended), across re-walks.
 //
@@ -12,8 +13,8 @@
 //      once at its start: a crash right after a decision leaves no checkpoint due), and raise `respec-second` for a
 //      design park on a lineage the checkpoint already respecified (OR-Q1: the second goes to the owner).
 //   1. A running job (captured, undecided) resumes from its recorded inputs. Otherwise the first due trigger, parks
-//      first (they hold units), then blocking milestone walks (`unweighedWalkFindings`, src/walk/milestones.ts), audit
-//      P1s and final audits (all completed audits without milestones), then milestone boundaries. Every walk whose
+//      first (they hold units), then milestone walks with any unweighed finding (`unweighedWalkFindings`,
+//      src/walk/milestones.ts), audit P1s and final audits (all completed audits without milestones), then milestone boundaries. Every walk whose
 //      unweighed findings it reads has its evidence dir on the session's readable surface. A trigger is due while it has no job, or its latest job
 //      was rejected (`stale` or `evidence`: re-evaluated whole; `busy` (M4a rev 3, C5): once every open attempt it named
 //      has closed, so no paid call is made while a unit it changes is mid-stage, and (arc feedback 2026-10-24: ckpt-30 and
@@ -393,8 +394,9 @@ type Candidate = Readonly<{ trigger: CheckpointTrigger; generation: number; at: 
 
 /**
  * Milestones retired since the previous milestone checkpoint (or skip). Retirement is every lineage merged and its
- * latest walk ended; it does not wait for the nonblocking findings this checkpoint will weigh. Count each id once,
- * across re-walks and plan edits. A rejected job keeps its original trigger and retries before another boundary.
+ * latest walk ended; immediate walk checkpoints weigh findings before this boundary. Count each id once,
+ * across re-walks and plan edits. Walk checkpoints never consume this count. A rejected job keeps its original trigger
+ * and retries before another boundary.
  */
 function milestoneBoundary(view: JournalView, plan: PlanM1): Readonly<{ remaining: number; trigger: CheckpointTrigger | null; at: number }> {
   const fold = view.holistic();
@@ -429,7 +431,7 @@ export function checkpointMilestonesRemaining(view: JournalView, plan: PlanM1): 
   return pending ? 0 : milestoneBoundary(view, plan).remaining;
 }
 
-/** Parks, blocking walks, audit P1s/final audits, then the next milestone boundary. Old captured triggers still settle. */
+/** Parks, unweighed walks (any severity), audit P1s/final audits, then the next milestone boundary. Old captured triggers still settle. */
 function candidates(ctx: CheckpointContext): readonly Candidate[] {
   const view = ctx.journal.view;
   const fold = view.holistic();
@@ -454,7 +456,7 @@ function candidates(ctx: CheckpointContext): readonly Candidate[] {
   const walks = walkTriggers(ctx).flatMap(({ walk, at }) => {
     const trigger: CheckpointTrigger = { type: 'walk', job: walk.job };
     const unweighed = unweighedWalkFindings(view, walk);
-    const needed = unweighed.some((id) => !milestoneArc || p1(id)) || latest(trigger) !== undefined;
+    const needed = unweighed.length > 0 || latest(trigger) !== undefined;
     return needed ? [{ trigger, generation: latestGeneration(ctx), at }] : [];
   });
   // Keep old audit/walk jobs and rejected boundaries on their recorded identity, including an approved enactment.
