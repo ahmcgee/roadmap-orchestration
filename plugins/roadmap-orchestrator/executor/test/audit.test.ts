@@ -37,6 +37,7 @@ import { assertFired, writeTrigger } from './helpers/crash.ts';
 import { jobRepairStep, lensAnswer, lensStep } from './helpers/holistic.ts';
 import { runFixture } from './helpers/proc.ts';
 import { git, tmpDir } from './helpers/repo.ts';
+import { scriptTree } from './helpers/witness.ts';
 import { readCalls } from './helpers/scenario.ts';
 import { AUDIT_JOB, crashCells } from './matrix.ts';
 import { auditArc, auditContext, factsOf, mapped, moduleFiles, unitSteps } from './fixtures/audit-common.ts';
@@ -146,6 +147,53 @@ describe('cadence', () => {
     try {
       assert.deepEqual(await runUnit(ctx, r.unit('u1'), admitAll), { kind: 'merged' });
       assert.deepEqual(owed(cadence(ctx, ctx.clock)), ['unwitnessed:I-2']);
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  for (const disposition of ['waived', 'deferred', 'retired'] as const) {
+    test(`cadence.exemption-after-memo: ${disposition} removes a previously cached unwitnessed trigger in the same process`, T, async () => {
+      const ids = ['I-1', 'I-2'];
+      const { d } = auditArc({
+        steps: unitSteps('u1', moduleFiles('mul', '*')),
+        units: [{ id: 'u1', obligations: ids }, { id: 'u2', obligations: ids }],
+        obligations: [{ id: 'I-1', testIds: ['t1'] }, { id: 'I-2', activation: 'future', deliveredBy: ['u1', 'u2'], testIds: ['t2'] }],
+        mapping: mapped(ids), trees: { '*': { outcomes: { t1: 'pass' } } }, audit: { every: 5, lenses: [...L2] },
+      });
+      const r = contextFor(d);
+      const { ctx, w } = auditContext(r);
+      const stop = ticking(w);
+      try {
+        assert.deepEqual(await runUnit(ctx, r.unit('u1'), admitAll), { kind: 'merged' });
+        assert.deepEqual(owed(cadence(ctx, ctx.clock)), ['unwitnessed:I-2'], 'populate the memo before changing the obligation');
+        await rule(w, r, 'C-2', { obligations: ['I-2'], obligationDispositions: [{ id: 'I-2', disposition }] });
+        assert.deepEqual(owed(cadence(ctx, ctx.clock)), ['drift:2'], 'the ruling still drifts, but the exempt obligation owes no witness');
+        assert.deepEqual(owed(cadence(ctx, ctx.clock)), ['drift:2'], 'the recomputed result is stable');
+      } finally {
+        stop();
+        r.journal.close();
+      }
+    });
+  }
+
+  test('cadence.latch-after-memo: completing a future obligation removes the earlier publication\'s cached unwitnessed trigger', T, async () => {
+    const ids = ['I-1', 'I-2'];
+    const { d, control } = auditArc({
+      steps: [...unitSteps('u1', moduleFiles('mul', '*')), ...unitSteps('u2', moduleFiles('div', '/'))],
+      units: [{ id: 'u1', obligations: ids }, { id: 'u2', obligations: ids }, { id: 'u3', obligations: ids }],
+      obligations: [{ id: 'I-1', testIds: ['t1'] }, { id: 'I-2', activation: 'future', deliveredBy: ['u1', 'u2'], testIds: ['t2'] }],
+      mapping: mapped(ids), trees: { '*': { outcomes: { t1: 'pass' } } }, audit: { every: 5, lenses: [...L2] },
+    });
+    const r = contextFor(d);
+    const { ctx } = auditContext(r);
+    try {
+      assert.deepEqual(await runUnit(ctx, r.unit('u1'), admitAll), { kind: 'merged' });
+      assert.deepEqual(owed(cadence(ctx, ctx.clock)), ['unwitnessed:I-2']);
+      scriptTree(control, '*', { outcomes: { t1: 'pass', t2: 'pass' } });
+      assert.deepEqual(await runUnit(ctx, r.unit('u2'), admitAll), { kind: 'merged' });
+      assert.deepEqual(r.journal.view.holistic().latched.map((l) => l.obligation), ['I-2']);
+      assert.deepEqual(owed(cadence(ctx, ctx.clock)), [], 'the old publication no longer selects an unlatched future obligation');
     } finally {
       r.journal.close();
     }

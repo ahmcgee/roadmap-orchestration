@@ -2,8 +2,8 @@
 // job `ckpt-<n>` at a time, the one seat that steers the arc as a whole. In a holistic arc with milestones it runs every
 // K retired milestones (`holistic.checkpoint.everyMilestones`, positive integer, default 2), after the boundary's walk
 // ends, weighing the accumulated audit and walk findings. A design park, an audit's unweighed active P1, a walk round's
-// unweighed open finding of any severity, and the final audit still trigger immediately. Walk checkpoints also weigh
-// accumulated audit findings, without consuming or resetting the milestone interval. Without milestones, audits keep
+// unweighed open finding of any severity (again after a vision edit), and the final audit still trigger immediately.
+// Walk checkpoints also weigh accumulated audit findings, without consuming or resetting the milestone interval. Without milestones, audits keep
 // their checkpoint. It reads the vision first and in full and decides one bundle, which src/holistic/bundle.ts activates all or nothing.
 // It writes nothing itself. Older captured audit/walk jobs still resume and settle; uncaptured ordinary audits fold
 // into the milestone boundary. Each milestone id counts once (lineage heads retired, latest walk ended), across re-walks.
@@ -378,6 +378,13 @@ function dueAgain(ctx: CheckpointContext, last: CheckpointState | undefined): bo
   // C5 (R50): a busy rejection is due once every attempt it named has closed (none open, or another one).
   if (d.kind === 'rejected' && d.reason === 'busy') return stillBusy(ctx.journal.view, last).length === 0;
   if (d.kind === 'rejected') return true;
+  // A settled walk is weighed only under its captured vision. A vision edit can reopen its findings.
+  const trigger = last.inputs.trigger;
+  if (trigger.type === 'walk') {
+    const walk = walksOf(ctx.journal.view).find((w) => w.job === trigger.job);
+    if (walk === undefined) throw new Error(`${last.inputs.job} names missing walk ${trigger.job}`);
+    if (unweighedWalkFindings(ctx.journal.view, walk).length > 0) return true;
+  }
   return approved(ctx, last);
 }
 
@@ -437,7 +444,9 @@ function candidates(ctx: CheckpointContext): readonly Candidate[] {
   const fold = view.holistic();
   const milestoneArc = hasMilestones(ctx.plan());
   const latest = (t: CheckpointTrigger): CheckpointState | undefined => fold.checkpoints.filter((c) => triggerKey(c.inputs.trigger) === triggerKey(t)).at(-1);
-  const skipped = new Set(fold.checkpointSkips.map((s) => triggerKey(checkpointSkipTriggerOf(s))));
+  const vision = view.planApplied()?.visionSha256;
+  const skipped = new Set(fold.checkpointSkips.filter((s) => checkpointSkipTriggerOf(s).type !== 'walk' || s.visionSha256 === vision)
+    .map((s) => triggerKey(checkpointSkipTriggerOf(s))));
   const weighed = new Set(settledUnderVision(view).flatMap((c) => c.findings));
   const p1 = (id: FindingId): boolean => fold.findings.some((f) => f.id === id && f.severity === 'P1' && isActive(f) && !weighed.has(id));
   const parks = designParks(ctx).filter((p) => earlierRespecs(ctx, p.unit, p.seq).length === 0)

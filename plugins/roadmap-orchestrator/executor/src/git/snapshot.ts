@@ -11,10 +11,12 @@
 // | `inputs/<sha256>.<ext>`                | a `plan-applied` (plan, specs, ledger, obligations, vision, payload), |
 // |                                        | a `revision.commit` intent (payload), a kept payload (its manifest's |
 // |                                        | inputs, sidecars, renders; M4a: a corpus arc's pin, guide and       |
-// |                                        | Phase-0 record), a kept pin (each pinned corpus file,              |
+// |                                        | Phase-0 record and legacy issues captures), a kept pin (each     |
+// |                                        | pinned corpus file,                                              |
 // |                                        | `.corpus-file`), a `spec.patch` done, a `dispatch`,                 |
 // |                                        | `judgment-inputs` or `reopened` fact (spec), a `steered` fact (brief), |
-// |                                        | a vacuity `finding-opened` (its mutant `.patch`),                  |
+// |                                        | a vacuity `finding-opened` (its mutant `.patch`), an older         |
+// |                                        | `issues-captured` fact (its capture),                             |
 // |                                        | a `pack-review-started` fact (its                                  |
 // |                                        | kept `PackReviewInputs`); M4b: a `flow-started` fact (its kept      |
 // |                                        | `FlowInputs`), a `flow-series` fact (the compact series), a        |
@@ -200,10 +202,11 @@ function closureOf(events: readonly Event[], read: (sha: Sha256Hex, ext: string)
     if (m.obligations !== null) input(m.obligations, OBLIGATIONS_INPUT, from);
     if (m.vision !== null) input(m.vision, VISION_INPUT, from);
     // M4a: a corpus arc's pin and every corpus file it pins (named by the pin), guide and Phase-0 record (an earlier
-    // executor's `phase0Issues` capture is ignored: the issues integration was removed in 1.0.0-dev.21).
+    // executor's `phase0Issues` capture remains part of its immutable closure even though issues are no longer used).
     if (m.corpus !== undefined) pin(m.corpus, from);
     if (m.corpusGuide !== undefined) input(m.corpusGuide, CORPUS_GUIDE_INPUT, from);
     if (m.phase0 !== undefined) input(m.phase0, PHASE0_INPUT, from);
+    if (m.phase0Issues !== undefined) input(m.phase0Issues, 'issues.json', from);
     for (const r of p.publication?.renders ?? []) input(r.sha256, RENDER_INPUT, from);
   };
 
@@ -279,6 +282,9 @@ function closureOf(events: readonly Event[], read: (sha: Sha256Hex, ext: string)
         break;
       case 'finding-opened':
         if (f.mutant !== null) input(f.mutant.patchSha256, MUTANT_PATCH_INPUT, by);
+        break;
+      case 'issues-captured':
+        input(f.sha256, 'issues.json', by);
         break;
       case 'pack-review-started':
         input(f.inputsSha256, PACK_REVIEW_INPUT, by);

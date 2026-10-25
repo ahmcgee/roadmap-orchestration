@@ -394,6 +394,9 @@ change's `issuesSha256`, a revision manifest's `phase0Issues` (not compared by a
 record's `issueCapture` and `intake`, a recorded checkpoint answer's `issueIntake`, and an open `issue-policy-untrusted`
 needs-user item (readable and ackable, blocking per its reason, but it holds no admission). An amendment of `source:
 issue` and a finding of lens `issue` stay readable and settle as any other; neither is written any more.
+Legacy `manifest.phase0Issues` and `issues-captured.sha256` still name their kept `.issues.json` bytes in the snapshot
+closure (dev.22): verification and later publication preserve those bytes and their naming hashes, without using them
+for intake. The legacy fact reader validates that digest and preserves the other fields as written.
 
 ## Owner rulings on model ids (DESIGN-1.0.md §4, Routing profiles)
 

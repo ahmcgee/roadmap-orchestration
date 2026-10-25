@@ -185,14 +185,16 @@ export function specsOnlyOf(triggers: readonly AuditTrigger[]): readonly UnitId[
   return units.length === 0 ? null : [...new Set(units)].sort();
 }
 
-// R8 is a git diff and a spec read per publication: read each once per process.
-const unwitnessedMemo = new Map<string, readonly ObligationId[]>();
+// R8 reads the current selection, exemptions, latches and observations, not just the immutable publication.
+// Reuse only at the same journal high-water mark; replace the entry so revisions do not grow the cache.
+const unwitnessedMemo = new Map<string, Readonly<{ at: number; obligations: readonly ObligationId[] }>>();
 
 /** R8: the active future (not latched) obligations a unit or batch publication selected and left unwitnessed on its tree. */
 function unwitnessedBy(ctx: StageContext, h: PublishedHead): readonly ObligationId[] {
   const key = `${ctx.runDir}\0${h.op}`;
+  const at = ctx.journal.view.highWater();
   const memo = unwitnessedMemo.get(key);
-  if (memo !== undefined) return memo;
+  if (memo?.at === at) return memo.obligations;
   const { obligations } = holisticInForce(ctx);
   const view = ctx.journal.view;
   let out: readonly ObligationId[] = [];
@@ -223,7 +225,7 @@ function unwitnessedBy(ctx: StageContext, h: PublishedHead): readonly Obligation
     out = observedViews(ctx, obligations, [...picked.values()], h.head)
       .filter((v) => v.observation === null || v.observation.verdict === 'unwitnessed').map((v) => v.obligation.id).sort(compareIds);
   }
-  unwitnessedMemo.set(key, out);
+  unwitnessedMemo.set(key, { at, obligations: out });
   return out;
 }
 
