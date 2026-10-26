@@ -1003,9 +1003,10 @@ function routingInForce(inForce: InForce): Readonly<{ profile: ProfileName; of: 
 }
 
 /** The log folded, the plan in force, and every unit's line with the run's state: what `status` and `watch` share. */
-function derive(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Derived {
+function derive(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: LogSnapshot): Derived {
   const began = performance.now();
-  const log = readJournal(runDir, arc);
+  const log = snapshot ?? readJournal(runDir, arc);
+  if (log.view.arc !== arc) throw new Error(`status: journal snapshot belongs to ${log.view.arc}, not ${arc}`);
   const foldMs = Math.round(performance.now() - began);
   const { view, events } = log;
   const record = readIf(join(runDir, START_FILE), runStart);
@@ -1746,8 +1747,8 @@ export function statusSingleFlight<T>(runDir: AbsPath, arc: ArcId, read: () => T
   }
 }
 
-export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
-  const d = derive(runDir, arc, hostDir);
+export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: LogSnapshot): Status {
+  const d = derive(runDir, arc, hostDir, snapshot);
   const { view, events, start, inForce } = d;
   const now = Date.now();
   const meter = meterOf(events);

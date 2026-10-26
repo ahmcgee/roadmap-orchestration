@@ -37,6 +37,7 @@ export type Command =
   | Readonly<{ command: 'version' }>
   | Readonly<{ command: 'start'; args: StartArgs }>
   | Readonly<{ command: 'status'; run: RunLocator }>
+  | Readonly<{ command: 'tui'; run: RunLocator }>
   /**
    * `actionable` (`--actionable`): only what the architect acts on (src/watch.ts `ActionableFilter`), null for every
    * event; its `heartbeatMin` (`--heartbeat-min <n>`, only with `--actionable`) is null for the default (HEARTBEAT_MIN);
@@ -232,6 +233,7 @@ export function parseCommand(argv: readonly string[]): Command {
         : null;
       return { command, actionable, run: locator(p, command) };
     }
+    case 'tui':
     case 'status':
     case 'stop': {
       const p = parseRest(rest, LOCATOR, command);

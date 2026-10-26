@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="1000" viewBox="0 0 1100 1000" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="1040" viewBox="0 0 1100 1040" role="img" aria-labelledby="title desc">
 <title id="title">How a roadmap-orchestrator arc runs</title>
 <desc id="desc">A simplified swimlane flowchart in three lanes: you (the owner), the architect (Claude in your session) and the executor (a detached process that runs unattended and calls models for judgment). Bootstrap, once per repo: you write the target state, the architect sets up the repo and you confirm the vision and set K, the number of arcs that may chain. Phase 0, each arc: the architect curates the corpus into obligations and questions, writes the plan and specs, and starts the executor, which runs a pack review and a baseline witness. The unattended run: the executor schedules ready units; each unit, in parallel, goes through plan-check (a design pass by a model), a build (a model), the test lanes, a review gate (a model) and publication onto the arc branch; a red lane (including an own-commit flake unless already standing at the integration tip) or a revise from the gate sends it back to its build for a charged fix round. When a milestone's units have merged, a model walks its journeys; a settled milestone is promoted to a demo you can try. Audits accumulate for the steering checkpoint, every two retired milestones by default after the walk. Any unweighed walk finding, at any severity, gets an immediate checkpoint and holds its round open for repair and re-walk, bounded by walkRounds and always after merged code. A vision edit reopens the immediate trigger for open findings weighed only under the old vision, even after a decision or skip. It also weighs accumulated audit findings without resetting the milestone interval; an unchanged milestone capture is skipped. Design parks, unweighed audit P1s and the final audit also trigger immediately. Without milestones, new audit findings trigger checkpoints. It admits, respecifies or cuts units. Meanwhile the architect watches the run, adjudicates the items it hands over through plan edits and resumes, and brings owner-only decisions and questions to you. Completion: when no work is left the executor closes out the arc, the architect opens a stacked PR and checks in with you; if K arcs have run it stops and you merge the stacked PRs, otherwise it chains into the next arc's Phase 0.</desc>
 <style>
@@ -65,7 +65,7 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 <rect class="box ow" x="36" y="180" width="168" height="50" rx="8"/>
 <text class="t" x="48" y="200">Write the target state</text><text class="b" x="48" y="218">then /orchestrate</text>
 <rect class="box ar" x="260" y="180" width="180" height="50" rx="8"/>
-<text class="t" x="272" y="200">Bootstrap the repo</text><text class="b" x="272" y="218">corpus, systems map</text>
+<text class="t" x="272" y="200">Bootstrap the repo</text><text class="b" x="272" y="218">CLI on PATH, corpus</text>
 <path class="arr" d="M204 200 H258" marker-end="url(#ah)"/>
 <rect class="box ow" x="36" y="246" width="168" height="50" rx="8"/>
 <text class="t" x="48" y="266">Confirm the vision</text><text class="b" x="48" y="284">set K, first slice</text>
@@ -185,4 +185,6 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 <text class="al" x="479" y="943" text-anchor="middle">yes</text>
 <path class="arr" d="M280 950 H24 V359 H258" marker-end="url(#ah)"/>
 <text class="al" x="120" y="943" text-anchor="middle">no: chain the next arc</text>
+<rect x="0" y="1000" width="1100" height="40" fill="#fff"/>
+<text x="24" y="1025" font-size="14" fill="#59636e">Container setup installs roadmap on PATH. Use roadmap tui during execution and for review after completion.</text>
 </svg>

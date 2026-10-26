@@ -8,3 +8,8 @@ npm install -g "@playwright/mcp@${PLAYWRIGHT_MCP_VERSION}"
 cli="$(npm root -g)/@playwright/mcp/node_modules/playwright/cli.js"
 sudo env "PATH=$PATH" node "$cli" install-deps chromium
 node "$cli" install chromium
+
+# Keep this source workspace's CLI available in developer terminals. Installed plugin consumers get the
+# equivalent launcher refresh at skill bootstrap, using that plugin's current cache location.
+roadmap_installer="$(dirname "$(realpath "${BASH_SOURCE[0]}")")/../plugins/roadmap-orchestrator/executor/bin/install-roadmap"
+sudo -n "$(command -v node)" "$roadmap_installer"

@@ -101,6 +101,78 @@ export function readJournal(runDir: AbsPath, arc: ArcId, through: number | null 
   return { view: fold, events };
 }
 
+/** Read-only observer cursor. The returned view is valid until the next read; callers publish derived models.
+ * Appends use the very same verifier as recovery. Never repairs tails or writes caches. A failed fold is
+ * discarded, so a corruption error cannot leave a partly applied cursor available to the next poll.
+ */
+export class ObserverJournal {
+  readonly path: AbsPath;
+  readonly arc: ArcId;
+  #fold: Fold;
+  #events: Event[] = [];
+  #offset = 0;
+  #identity = '';
+  #size = 0;
+  #mtime = 0;
+  #anchor = Buffer.alloc(0);
+  constructor(runDir: AbsPath, arc: ArcId) {
+    this.path = absPath(join(runDir, EVENTS_FILE));
+    this.arc = arc;
+    this.#fold = new Fold(arc);
+  }
+  #reset(): void {
+    this.#fold = new Fold(this.arc);
+    this.#events = [];
+    this.#offset = 0;
+    this.#identity = '';
+    this.#anchor = Buffer.alloc(0);
+  }
+  read(): LogSnapshot {
+    if (!existsSync(this.path)) {
+      this.#reset();
+      return { view: this.#fold, events: this.#events };
+    }
+    const fd = openSync(this.path, 'r');
+    try {
+      const st = fstatSync(fd);
+      const identity = `${st.dev}:${st.ino}`;
+      const anchor = Buffer.alloc(this.#anchor.length);
+      const n = readSync(fd, anchor, 0, anchor.length, this.#offset - anchor.length);
+      if (identity !== this.#identity || st.size < this.#size || n !== anchor.length || !anchor.equals(this.#anchor)
+        || (st.size === this.#size && st.mtimeMs !== this.#mtime)) this.#reset();
+      const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+      const chunk = Buffer.alloc(READ_CHUNK);
+      let carry = Buffer.alloc(0);
+      let pos = this.#offset;
+      while (pos < st.size) {
+        const got = readSync(fd, chunk, 0, Math.min(chunk.length, st.size - pos), pos);
+        if (got === 0) throw new Error(`${this.path}: changed during observation; retrying`);
+        pos += got;
+        const buf = Buffer.concat([carry, chunk.subarray(0, got)]);
+        let start = 0;
+        for (let nl = buf.indexOf(10); nl !== -1; nl = buf.indexOf(10, start)) {
+          const line = buf.subarray(start, nl + 1);
+          this.#events.push(verifyLine(this.path, this.#fold, utf8, line, this.#offset));
+          this.#offset += line.length;
+          start = nl + 1;
+        }
+        carry = Buffer.from(buf.subarray(start));
+      }
+      this.#anchor = Buffer.alloc(Math.min(4096, this.#offset));
+      readSync(fd, this.#anchor, 0, this.#anchor.length, this.#offset - this.#anchor.length);
+      this.#identity = identity;
+      this.#size = st.size;
+      this.#mtime = st.mtimeMs;
+      return { view: this.#fold, events: this.#events };
+    } catch (error) {
+      this.#reset();
+      throw error;
+    } finally {
+      closeSync(fd);
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------------------------------
 // Verification
 

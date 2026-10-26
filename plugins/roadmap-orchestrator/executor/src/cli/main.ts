@@ -62,6 +62,7 @@ import { HOST_DIR } from '../host/hostdir.ts';
 import { CliError, type Command, type RunLocator, parseCommand } from '../input/cli.ts';
 import { readRepoConfig } from '../preflight/checks.ts';
 import { EXIT_HOST_BUSY, EXIT_REFUSED, type StartupRejection } from '../preflight/startup.ts';
+import { tui } from '../tui/main.ts';
 import { status, statusSingleFlight } from '../status.ts';
 import { START_WAIT_MS, launchSupervisor } from '../supervisor.ts';
 import { HEARTBEAT_MIN, watch, watchActionable } from '../watch.ts';
@@ -138,6 +139,9 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       process.exitCode = outcome.code;
       return;
     }
+    case 'tui':
+      await tui(command.run, hostDir);
+      return;
     case 'status': {
       const run = locate(command.run, hostDir);
       process.stdout.write(`${canonicalJson(statusSingleFlight(run.runDir, run.arc, () => status(run.runDir, run.arc, hostDir)))}\n`);

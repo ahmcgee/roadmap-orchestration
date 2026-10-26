@@ -6,7 +6,7 @@ starting `executor/` are under the plugin root.
 
 ## Conventions
 
-- `roadmap` is `executor/bin/roadmap`. Output is one line of canonical JSON unless noted.
+- `roadmap` is the managed PATH launcher for `executor/bin/roadmap` (container setup below). Output is one line of canonical JSON unless noted.
 - Exit codes: 0 done; 64 bad arguments or a CLI error (message on stderr); 70 `start`'s supervisor died or did not
   report ready; 75 another live process holds this host; 78 refused (the rows are in the output, or in `status`).
 - Notation in this file and SCHEMAS.md: `kind{a, b}` is the object `{"type": "kind", "a": …, "b": …}` (rows use
@@ -16,13 +16,32 @@ starting `executor/` are under the plugin root.
   `<arc>/M-n` across arcs), `P-n` Phase-0 question; needs-user ids are `nu-<seq>`, `sup-<g>-<n>`
   or `host-<slug>`.
 
+## Container launcher
+
+At session bootstrap, run `node "<plugin root>/executor/bin/install-roadmap"` from the installed plugin.
+It creates `/usr/local/bin/roadmap`. Use container administrator rights if required; alternatively pass
+`--bin-dir <directory>` for a writable PATH directory. This standalone installer is separate from arc commands.
+It pins the current Node executable and plugin entry point, forwards arguments and signals with `exec`,
+and preserves the caller's working directory and environment. It installs no runtime dependencies and
+creates no arc records. It refuses unrelated files, directories and symlinks. Re-running is idempotent;
+re-running from an updated plugin refreshes only a managed launcher.
+
+The installer reports whether the launcher is reachable through PATH or shadowed. Verify the executable
+location and `roadmap --version` before handing the developer a short command. The plugin and Node
+installation must remain available; refresh the launcher after plugin updates or container rebuilds.
+A user-local directory not already on PATH must also be added to the container environment for future terminals.
+
+After startup, give the developer the actual pinned `roadmap tui --repo <path> --arc <arc>` command; at
+completion, include it again for review. An unpinned `roadmap tui` follows the current host arc. These are
+optional human viewers in another terminal; the architect keeps its actionable watch.
+
 ## CLI
 
 ### Run commands
 
 Each finds the run through the host lock (the one live arc on this host). Add `--repo <path> --arc <arc>` to any
 of them to reach a run with no live owner, e.g. `roadmap status --repo <path> --arc <arc>`. Except `start`,
-`status`, `watch` and `apply --dry-run`, they only queue a file and print `{command, arc, type}`. Queued is not
+`status`, `watch`, `tui` and `apply --dry-run`, they only queue a file and print `{command, arc, type}`. Queued is not
 done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly one of `.applied.json` or
 `.rejected.json` (with every reason). An `apply` waiting for a unit's stage boundary first gets `.queued.json`
 (`waitsFor`, `reason`; 1.0.0-dev.17).
@@ -36,6 +55,70 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
   once the executor passed every startup row; the run goes on. The backend smoke runs after `ready`: a smoke refusal
   shows in `status.rejection` and the run ends `refused`. Exit 78 with the rows, 75 host busy, 70 `failed` or
   `timeout` (read `status` and the supervisor logs in the host dir before starting again). Waits 240 s by default.
+- `roadmap tui`: an interactive, read-only terminal viewer in the executor environment. Follows the host's arc
+  from the map/activity split; `--repo <path> --arc <arc>` pins a retained run. A single tab row contains
+  `1` Dependency map, `2` Activity, `3` Estate and `4` Exceptions. Estate shows retained revisioned inputs and
+  documents at the captured integration commit; `w` reveals inactive entries. Collections start collapsed,
+  with counts; Space expands/collapses a parent and Enter opens its document or a child. Vision clauses,
+  constraints/rulings, obligations, corpus rules and debt share this treatment. Context documents lead,
+  remaining documents sort alphabetically, and numbered entries sort naturally. Search includes collapsed
+  entries and reveals matched children. Expansion survives refresh and detail/back navigation.
+  Estate leads with Vision, Arc scope (selected vision clauses) and Arc execution plan. The scope lists the applied plan’s vision clauses
+  and links to their definitions and planning decisions. Absent vision/slice records explicitly say “Not recorded
+  for this run”; recorded intent is separate and never substituted for a structured vision.
+  Debt has a current ledger, individual items and the published `.roadmap/debt.md` at the captured commit.
+  The current ledger includes inherited debt, Phase-0 dispositions and newly banked items; `w` reveals
+  promoted/resolved items. Missing debt and an empty recorded ledger are distinct.
+  Activity is one browser: `x` expands/restores its pane while preserving selection and search; `g` toggles
+  map context/all activity; `a` toggles latest 20 completions/all retained history. Running invocations remain
+  available. Agent, Command and Queued labels distinguish model invocations, command executions and pending
+  commands; Run means the execution type is unavailable. Walkthroughs and bring-up commands name their
+  recorded milestone; Arc-wide labels cover arc-scoped work without a specific milestone.
+  Agent rows show the model from recorded launch/init metadata, with explicit adapter provenance when present.
+  The header counts active agents/commands, including arc jobs, and states why nothing is active when waiting.
+  Baseline checks of future obligations say `pre-delivery` once recorded witness evidence confirms them;
+  other job checks of still-future requirements say `pre-delivery` (historical, even after arc completion);
+  mutation probes show the recorded smoke verdict. Result preserves the underlying process outcome.
+  Witness activity links to delivering units through the obligation revision and lane hash.
+  Units show milestone memberships; `m` selects the next milestone. Milestone checkpoints stay visible after
+  their gate passes and after settlement. Collapsed unit history does not cross milestone boundaries.
+  Connectors use neutral colour; only status symbols carry state colour. Completed groups and passed,
+  settled milestones retain green checks; cuts and other settled history remain grey.
+  Collapsed groups say completed units only when all members merged; cut/superseded work remains settled,
+  and groups containing conditions are labelled settled items. Milestones remain separate. Esc restores the split after clearing any search.
+  Left/Right or Tab/Shift-Tab switches the visible sections, detail tabs or log sources; arrows or h/j/k/l navigate;
+  Enter opens the named selection; Esc restores the previous location, including its tab, search and position.
+  Unit details distinguish execution status from the specification, settled implementation plan, applied arc
+  plan and recorded intent. Related documents previews each destination and links the latest plan-check input,
+  result and build transcript when recorded. Input is the exact retained agent prompt; the original owner
+  planning conversation is not retained. Missing designs and inputs are explicit. `/` finds without hiding rows or text
+  (`unit:`, `role:`, `status:` work in Activity); Enter jumps, `n` finds the next match and `N` the previous,
+  wrapping at either end. Activity searches all retained invocations; logs search the loaded page. Esc cancels
+  editing or clears the search without moving your position. `?` opens help without
+  changing the underlying location. Logs start at the bottom; Input and Result start at the beginning.
+  Page Up/Down and Home/End navigate; scrolling pauses following with a new-byte count, `f` resumes.
+  Visible source tabs are Messages, Output (readable stdout), Stderr, Runner, Result and Input; `s` cycles them,
+  and `e` expands previews. Structured transcripts, results and estate details use labelled summaries; `r`
+  explicitly toggles readable/raw transcripts, output, results, input or details. Input renders XML prompt
+  envelopes as labelled sections and formats their Markdown/JSON content. Repair turns are labelled; `b`
+  opens the original input when the retained session establishes that relationship. A unit’s planning-input
+  link opens the original prompt, with a separate link to its repair request. Unknown markup remains visible. Estate Markdown renders headings, emphasis, links,
+  lists, quotes, code and tables; wide tables become labelled rows. `c` expands settled graph branches. The dependency map follows connected tracks downward
+  from prerequisites to dependents, with visible branches and joins. Unit labels align; arrows select named
+  nodes. `╳` marks a crossing, not a join; `⇣` is a condition edge and `⇓` a milestone edge. The selection preview
+  names prerequisites, including offscreen endpoints. Activity follows the highlighted map node: linked
+  invocations appear first with `*` and cyan labels; unrelated labels are muted, with status colours preserved.
+  Tab enters Activity and Enter opens logs. Selecting a different map node resets Activity to its first match;
+  ordinary refreshes preserve the cursor. Dense graphs label tracks clipped from the viewport. `q` or Ctrl-C exits only the viewer.
+  Refreshes once per second with one observation in flight. The persistent header shows the current Claude
+  account’s five-hour and weekly percentage used and reset countdowns, even when viewing a historical arc.
+  Usage refreshes in the background every five minutes using existing Claude OAuth credentials (no model
+  calls or credential refresh). Claude’s account-matched local cache is a fallback; stale, expired and absent
+  windows are labelled explicitly. Without readable OAuth credentials, it uses available cached data or
+  shows unavailable. No runtime writes, locks, controls, model calls or
+  saved settings. Keeps the last valid snapshot on errors, and keeps details pinned across host handovers until
+  returning to the map/activity split. Mouse capture stays off. Supports 120×35 and 80×24; `NO_COLOR=1` disables colours and
+  `ROADMAP_TUI_ASCII=1` uses ASCII symbols. Piped terminals are refused; use status/watch for machine output.
 - `roadmap status`: the run as one JSON object ("status" below). One at a time per arc: a second call while one runs
   fails at once.
 - `roadmap watch [--actionable [--heartbeat-min <n>] [--from <seq>]]`: one JSON line per event until killed, each with
