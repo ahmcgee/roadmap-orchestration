@@ -30,7 +30,7 @@ import { dependencyDrawing } from '../src/tui/graph-view.ts';
 import { estateOutline, estateRowLabel } from '../src/tui/estate-tree.ts';
 import { graph } from '../src/tui/graph.ts';
 import { ViewState, matches } from '../src/tui/state.ts';
-import { clip, width, ink, line, paint, plain, stateTone } from '../src/tui/terminal.ts';
+import { clip, width, wrap, fit, ink, line, paint, plain, stateTone } from '../src/tui/terminal.ts';
 import { contentHeight } from '../src/tui/view.ts';
 import { markdown, documentLines } from '../src/tui/markdown.ts';
 import { document, project, summary } from '../src/tui/projection.ts';
@@ -118,7 +118,7 @@ test('observer status parity, stale publication and read-only estate provenance 
   assert.match(ui.render(120, 35, false).join('\n'), /STALE/);
 });
 
-test('graph preserves branching, joins, conditions, milestones and collapsed external connections', () => {
+test('graph preserves branching, joins, conditions and open milestone checkpoints while hiding settled prerequisites', () => {
   const d = observed();
   d.status = { ...d.status, units: d.status.units.map((u) => ({ ...u, state: u.unit === 'root' ? 'merged' : u.state })),
     edges: [...d.status.edges, { type: 'contingent', unit: d.status.units[1]!.unit, edge: 'E-1' as never, condition: 'owner approval', resolved: false },
@@ -128,8 +128,8 @@ test('graph preserves branching, joins, conditions, milestones and collapsed ext
   const rows = graph(d, true); const ids = rows.map((r) => r.id);
   for (const row of rows) for (const dep of row.from) assert.ok(ids.indexOf(dep) < ids.indexOf(row.id), `${dep} precedes ${row.id}`);
   assert.deepEqual(rows.find((r) => r.id === 'join')!.from, ['left', 'right', 'M-1']);
-  const collapsed = graph(d, false); assert.ok(collapsed.some((r) => r.id === 'history:root'));
-  assert.ok(collapsed.find((r) => r.id === 'left')!.from.includes('history:root'));
+  const open = graph(d, false); assert.ok(!open.some((r) => r.id === 'root'));
+  assert.ok(open.find((r) => r.id === 'left')!.from.includes('root'));
   assert.deepEqual(graph(d, true), rows);
   const ui = new ViewState(); ui.accept(d); ui.expandedGraph = true; ui.selected.set('1:0', 'join');
   ui.accept({ ...d, at: new Date().toISOString() }); assert.equal(ui.selection()!.id, 'join');
@@ -743,7 +743,8 @@ test('dependency navigation selects nodes, preserves typed edges, and labels off
   d.status = { ...d.status, edges: [...d.status.edges, { type: 'contingent', unit: 'left', edge: 'E-1', condition: 'approval', resolved: false }, { type: 'milestone', unit: 'join', milestone: 'M-1', passed: false }] as never,
     milestones: [{ id: 'M-1', passed: false, state: 'waiting', round: 0, walks: [], findings: [] }] as never };
   d.milestoneUnits['M-1'] = ['left', 'right'];
-  const drawing = dependencyDrawing(graph(d, true), d, 'join', false, 90).rows.map(plain).join('\n');
+  const next = { ...d };
+  const drawing = dependencyDrawing(graph(next, true), next, 'join', false, 90).rows.map(plain).join('\n');
   assert.match(drawing, /⇣/); assert.match(drawing, /⇓/);
   assert.match(drawing, /E-1.*condition/); assert.match(drawing, /M-1.*milestone/);
 });
@@ -755,23 +756,24 @@ test('Overview prioritizes all retained activity for the map selection and prese
   const recent = Array.from({ length: 20 }, (_, i) => inv(`recent-${i}`, 'right'));
   d.invocations = [inv('live-other', 'right', true), ...recent, inv('old-root', 'root'), inv('old-left', 'left')];
   assert.equal(ui.selection(0)!.id, 'root');
-  assert.equal(ui.rows(1)[0]!.id, 'old-root');
+  assert.equal(ui.rows(1)[0]!.id, 'live-other');
+  assert.equal(ui.rows(1)[1]!.id, 'old-root');
   assert.equal(ui.rows(1).length, 22, 'retains running and latest 20 unrelated completions');
-  assert.equal(ui.selection(1)!.id, 'old-root');
+  assert.equal(ui.selection(1)!.id, 'live-other');
   ui.key('tab', '', 18); ui.key('down', '', 18);
-  assert.equal(ui.selection()!.id, 'live-other');
+  assert.equal(ui.selection()!.id, 'old-root');
   ui.accept({ ...d, invocations: [...d.invocations] });
-  assert.equal(ui.selection()!.id, 'live-other', 'polling does not move the cursor');
+  assert.equal(ui.selection()!.id, 'old-root', 'polling does not move the cursor');
   ui.key('backtab', '', 18); ui.key('down', '', 18);
-  assert.equal(ui.selection(0)!.id, 'left'); assert.equal(ui.selection(1)!.id, 'old-left');
-  ui.key('tab', '', 18); ui.open(); assert.equal(ui.logRequest!.inv, 'old-left');
+  assert.equal(ui.selection(0)!.id, 'left'); assert.equal(ui.selection(1)!.id, 'live-other');
+  ui.key('tab', '', 18); ui.key('down', '', 18); ui.open(); assert.equal(ui.logRequest!.inv, 'old-left');
   ui.key('escape', '', 18); assert.equal(ui.selection()!.id, 'old-left');
   ui.key('', 'g', 18); ui.key('', 'x', 18);
   assert.equal(ui.rows()[0]!.id, 'live-other'); assert.equal(ui.rows().length, 21, 'All activity keeps running-first ordering and its recent history limit');
   assert.equal(ui.activityContext(), null);
 });
 
-test('map activity uses recorded unit, milestone, condition and collapsed membership without matching neighbours or body text', () => {
+test('map activity uses recorded unit, milestone and condition membership without matching neighbours or body text', () => {
   const d = observed(); const ui = new ViewState(); ui.accept(d); ui.expandedGraph = true;
   d.status = { ...d.status, edges: [...d.status.edges, { type: 'contingent', unit: 'left', edge: 'E-1', condition: 'approval', resolved: false }] as never,
     milestones: [{ id: 'M-1', passed: false, state: 'walking', round: 1, walks: [{ job: 'walk-job', round: 1, outcome: null }], findings: [] }] as never };
@@ -782,12 +784,12 @@ test('map activity uses recorded unit, milestone, condition and collapsed member
     assert.deepEqual([...ui.activityContext()!.invocations], expected.map((id) => `inv-${id}`));
   }
   d.status = { ...d.status, units: d.status.units.map((u) => ['root', 'left'].includes(u.unit) ? { ...u, state: 'merged' } : u) };
-  ui.expandedGraph = false;
-  const collapsed = graph(d, false).find((n) => n.members.includes('root'))!;
-  ui.selected.set('1:0', collapsed.id);
+  ui.accept({ ...d }); ui.expandedGraph = false;
+  assert.ok(graph(ui.display!, false).every((n) => !['root', 'left'].includes(n.id)));
+  ui.key('', 'c', 18); ui.selected.set('1:0', 'root');
   assert.deepEqual([...ui.activityContext()!.invocations], ['inv-root']);
-  assert.equal(ui.activityContext()!.label, '1 completed unit');
-  assert.deepEqual(graph(d, false).find((n) => n.members.includes('left'))!.members, ['left'], 'history does not collapse across milestone boundaries');
+  assert.equal(ui.activityContext()!.label, 'root');
+  assert.ok(ui.rows(0).some((n) => n.id === 'left'), 'full map retains settled members of open milestones');
 });
 
 test('Activity communicates map context in colour and monochrome at both terminal sizes, including no matches', () => {
@@ -873,15 +875,20 @@ test('Activity labels agent, command, queued and unavailable execution types in 
 });
 
 
-test('completed groups describe their membership while arc-wide activity is explicitly labelled and independent', () => {
+test('all-settled maps explain the full-map toggle while arc-wide activity remains independent', () => {
   const d = observed(); const ui = new ViewState();
   d.status = { ...d.status, units: d.status.units.map((u) => ({ ...u, state: 'merged' })) };
   d.invocations = [{ ...entry('flow-inv', {}), label: 'flow-1 / flow', unit: 'flow-1', role: 'flow', execution: 'agent', scope: 'arc', attempt: 1,
     session: '', startedAt: d.at, endedAt: d.at, quietMs: 0, latest: 'Arc coordination completed' }];
   ui.accept(d);
-  assert.equal(ui.selection()!.label, '4 completed units [Enter to expand]');
-  assert.equal(ui.activityContext()!.label, '4 completed units');
+  assert.equal(ui.selection(), null);
+  assert.equal(ui.activityContext(), null);
+  const settledFrame = ui.render(120, 35, false).join('\n');
+  assert.match(settledFrame, /All work settled.*c shows full map/);
+  assert.match(settledFrame, /4 settled hidden/);
+  ui.key('', 'c', 18); assert.equal(ui.rows().length, 4);
   assert.equal(ui.activityContext()!.invocations.has('flow-inv'), false);
+  ui.key('', 'c', 18);
   ui.key('tab', '', 18);
   for (const [w, h] of [[120, 35], [80, 24]] as const) for (const expanded of [false, true]) {
     ui.activityExpanded = expanded;
@@ -891,9 +898,10 @@ test('completed groups describe their membership while arc-wide activity is expl
   }
   ui.open(); assert.match(ui.render(120, 35, false).join('\n'), /flow-1.*Arc-wide/);
   d.status = { ...d.status, units: d.status.units.map((u) => u.unit === 'root' ? { ...u, state: 'cut' } : u) };
-  assert.equal(graph(d, false)[0]!.label, '4 settled units [Enter to expand]');
+  assert.deepEqual(graph({ ...d }, false), []);
   d.status = { ...d.status, edges: [...d.status.edges, { type: 'contingent', unit: 'root', edge: 'E-1', condition: 'ready', resolved: true }] as never };
-  assert.equal(graph(d, false)[0]!.label, '5 settled items [Enter to expand]');
+  assert.deepEqual(graph({ ...d }, false), []);
+  assert.equal(graph({ ...d }, true).length, 5);
 });
 
 
@@ -1037,7 +1045,7 @@ test('model annotations use recorded launch/init metadata and explicit adapters,
   assert.equal(reader.read({ ...launch, argv: ['claude', '--model=explicit'] }, path).model, 'explicit');
 });
 
-test('milestones remain visible after passing a gate, retain overlapping membership, and follow replacement units', () => {
+test('open milestones remain visible after passing a gate, retain overlapping membership, and follow replacement units', () => {
   const d = observed(); const ui = new ViewState();
   d.milestoneUnits = { 'MS-1': ['root', 'left'], 'MS-2': ['left', 'join'] };
   d.status = { ...d.status, milestones: [
@@ -1048,7 +1056,7 @@ test('milestones remain visible after passing a gate, retain overlapping members
   const full = graph(d, true); assert.match(full.find((n) => n.id === 'left')!.label, /\[MS-1, MS-2\]/);
   assert.deepEqual(full.find((n) => n.id === 'MS-1')!.from, ['right', 'left']);
   assert.match(full.find((n) => n.id === 'MS-1')!.label, /polishing.*2\/2 units merged/);
-  const collapsed = graph(d, false); assert.ok(collapsed.some((n) => n.id === 'MS-1')); assert.ok(collapsed.some((n) => n.id === 'MS-2'));
+  const open = graph(d, false); assert.ok(open.some((n) => n.id === 'MS-1')); assert.ok(!open.some((n) => n.id === 'MS-2'));
   ui.accept(d); ui.key('', 'm', 18); assert.equal(ui.selection()!.id, 'MS-1'); ui.open();
   assert.ok(ui.related().some((n) => n.id === 'MS-1'), 'status links to milestone definition');
   for (const [w,h] of [[120,35],[80,24]]) { const frame = ui.renderFrame(w!,h!,false); assert.equal(frame.length,h); assert.ok(frame.every((r) => width(plain(r)) === w! - 1)); }
@@ -1139,7 +1147,7 @@ test('purpose verdicts distinguish baseline gaps and caught mutants from real pr
   }
 });
 
-test('graph colours only status markers, with completed groups and passed settled milestones consistently green', () => {
+test('full graph colours only status markers, with merged units and passed settled milestones consistently green', () => {
   const d = observed(); d.status = { ...d.status, units: d.status.units.map((u) => ({ ...u, state: 'merged' })),
     milestones: [{ id: 'MS-1', state: 'settled', passed: true, round: 1, walks: [], findings: [] }] as never };
   d.milestoneUnits = { 'MS-1': ['root','left','right','join'] };
@@ -1152,8 +1160,10 @@ test('graph colours only status markers, with completed groups and passed settle
   }
   d.status = { ...d.status, units: d.status.units.map((u) => u.unit === 'root' ? { ...u,state:'cut' } : u),
     milestones: [{ ...d.status.milestones[0]!, passed:false }] };
-  const nodes = graph(d,false); assert.equal(nodes.find((n) => n.id === 'MS-1')!.markerState,'settled');
-  assert.equal(nodes.find((n) => n.members.includes('root'))!.markerState,'history','cut work is settled, not successful completion');
+  const nodes = graph({ ...d },true); assert.equal(nodes.find((n) => n.id === 'MS-1')!.markerState,'settled');
+  const cut = nodes.find((n) => n.id === 'root')!;
+  assert.equal(stateTone(cut.markerState ?? cut.state), 'muted', 'cut work is settled, not successful completion');
+  assert.deepEqual(graph({ ...d }, false), []);
 });
 
 test('walkthrough and bring-up activities show recorded milestone scope rather than their arc scheduling seat', () => {
@@ -1176,7 +1186,7 @@ test('walkthrough and bring-up activities show recorded milestone scope rather t
   assert.doesNotMatch(ui.render(120,35,false).join('\n'),/Arc-wide/);
 });
 
-test('replacement chains are explicit history, never prerequisites, and remain discoverable when collapsed', () => {
+test('replacement chains are explicit history, never prerequisites, and remain discoverable on the full map', () => {
   const d = observed();
   // Lexicographic order would put the replacement first; explicit lineage orders the versions.
   d.status = { ...d.status, units: d.status.units.map((u) => ({ ...u,
@@ -1192,13 +1202,14 @@ test('replacement chains are explicit history, never prerequisites, and remain d
   assert.ok(full.findIndex((n) => n.id === 'root') < full.findIndex((n) => n.id === 'left'));
   assert.ok(full.findIndex((n) => n.id === 'left') < full.findIndex((n) => n.id === 'right'));
   for (const id of ['root', 'left', 'right']) {
-    const node = compact.find((n) => n.id === id)!; assert.ok(node); assert.deepEqual(node.from, []);
+    assert.ok(!compact.some((n) => n.id === id));
+    const node = full.find((n) => n.id === id)!; assert.deepEqual(node.from, []);
     assert.match(node.label, /MS-1/);
   }
   assert.deepEqual(full.find((n) => n.id === 'join')!.from, ['right']);
   assert.deepEqual(full.find((n) => n.id === 'MS-1')!.from, ['right']);
   assert.match(full.find((n) => n.id === 'MS-1')!.label, /1\/1 units merged/);
-  const ui = new ViewState(); ui.accept(d);
+  const ui = new ViewState(); ui.accept(d); ui.key('', 'c', 18);
   for (const id of ['root', 'left', 'right']) {
     ui.selected.set('1:0', id);
     assert.equal(ui.activityContext()!.label, `${id} · lineage`);
@@ -1212,7 +1223,7 @@ test('replacement chains are explicit history, never prerequisites, and remain d
   assert.equal(ui.pane, 1); assert.equal(ui.related()[ui.linkIndex]!.id, 'lineage:right');
   ui.key('escape', '', 10); assert.equal(ui.selection()!.id, 'left');
   for (const ascii of [false, true]) {
-    const drawing = dependencyDrawing(compact, d, 'left', ascii, 76).rows.map(plain).join('\n');
+    const drawing = dependencyDrawing(full, d, 'left', ascii, 76).rows.map(plain).join('\n');
     assert.match(drawing, /Replaces: root.*Replaced by: right/);
     assert.match(drawing, /Needs: right \(replaces root\)/);
     for (const [w, h] of [[120, 35], [80, 24]]) {
@@ -1235,8 +1246,8 @@ test('specification revisions stay on their unit; similar names and shared docum
   assert.match(ui.render(120, 35, false).join('\n'), /Spec r7/);
   ui.open(); ui.key('right', '', 10); assert.ok(ui.related().every((r) => !r.id.startsWith('lineage:')));
   spec.body = 'This retained specification has been pruned.';
-  assert.equal(graph(d, true).find((n) => n.id === 'root')!.specRevision, undefined);
-  assert.deepEqual(graph(d, true).map((n) => n.id), before);
+  assert.equal(graph({ ...d }, true).find((n) => n.id === 'root')!.specRevision, undefined);
+  assert.deepEqual(graph({ ...d }, true).map((n) => n.id), before);
 });
 
 test('stopped snapshots explain pending walkthroughs and the gates units actually wait for', () => {
@@ -1262,7 +1273,7 @@ test('stopped snapshots explain pending walkthroughs and the gates units actuall
   }
   d.status = { ...d.status, run: { ...d.status.run, owner: { state: 'alive', pid: 1, generation: 1 } } as never,
     milestones: [{ ...d.status.milestones[0]!, round: 1, walks: [{ job: 'walk-1', round: 1, outcome: null }] }] as never };
-  nodes = graph(d, true);
+  nodes = graph({ ...d }, true);
   assert.match(nodes.find((n) => n.id === 'MS-1')!.label, /milestone · walking/); assert.equal(nodes.find((n) => n.id === 'MS-1')!.markerState, 'walking');
   assert.doesNotMatch(executionSummary(d).detail, /stopped/);
 });
@@ -1340,6 +1351,7 @@ test('large Estate collections disclose progressively, sort naturally and reveal
   const index = ui.rows().findIndex((r) => r.id === 'rules');
   assert.deepEqual(ui.rows().slice(index + 1, index + 3).map((r) => r.id), ['C-2', 'C-10']);
   d.estate.find((e) => e.id === 'rules')!.state = 'withdrawn';
+  ui.accept({ ...d });
   assert.ok(!ui.rows().some((r) => r.id === 'C-2'), 'children of a hidden inactive collection do not leak into the root list');
   ui.key('', 'w', 10); assert.ok(ui.rows().some((r) => r.id === 'C-2'));
   ui.accept({ ...d, run: { ...d.run, arc: arcId('another'), runDir: absPath('/tmp/another-estate') } });
@@ -1353,4 +1365,94 @@ test('Estate hierarchy survives nested groups, inactive parents and missing reco
   assert.deepEqual(estateOutline(rows, new Set(['root'])).map((r) => r.id), ['linked', 'orphan', 'root', 'child']);
   assert.match(estateRowLabel(estateOutline(rows).at(-1)!, false), /   └─ leaf/);
   assert.ok(estateOutline(rows.filter((r) => r.id !== 'root'), new Set()).some((r) => r.id === 'child'));
+});
+
+test('Activity puts linked running, other running, linked history, other history and queued commands in order', () => {
+  const d = observed();
+  const inv = (id: string, unit: string, running: boolean): Invocation => ({ ...entry(id, {}, running ? 'running' : 'success'),
+    unit, role: 'build', attempt: 1, session: id, startedAt: d.at, endedAt: running ? null : d.at, quietMs: 0, latest: '' });
+  d.invocations = [inv('history-other', 'left', false), inv('running-other', 'left', true), inv('history-linked', 'root', false), inv('running-linked', 'root', true)];
+  d.status = { ...d.status, commands: { ...d.status.commands, pending: [{ id: 'pending', type: 'resume' }] as never } };
+  const ui = new ViewState(); ui.accept(d);
+  assert.deepEqual(ui.rows(1).map((r) => r.id), ['running-linked', 'running-other', 'history-linked', 'history-other', 'command:pending']);
+  assert.deepEqual([...ui.activityContext()!.invocations], ['history-linked', 'running-linked']);
+  ui.key('', '2', 18); ui.key('', 'g', 18);
+  assert.deepEqual(ui.rows().map((r) => r.id), ['running-other', 'running-linked', 'history-other', 'history-linked', 'command:pending']);
+  assert.equal(ui.activityContext(), null);
+  const settled = { ...d, status: { ...d.status, units: d.status.units.map((u) => ({ ...u, state: 'merged' })) } } as Display;
+  const empty = new ViewState(); empty.accept(settled);
+  assert.equal(empty.selection(0), null); assert.equal(empty.activityContext(), null);
+  assert.deepEqual(empty.rows(1).map((r) => r.id), ['running-other', 'running-linked', 'history-other', 'history-linked', 'command:pending']);
+});
+
+test('open map hides every settled kind, preserves visible lineage and marks hidden dependencies satisfied', () => {
+  const d = observed();
+  d.status = { ...d.status, units: d.status.units.map((u) => ({ ...u, waitingFor: null,
+    state: u.unit === 'root' ? 'superseded' : u.unit === 'left' ? 'merged' : u.unit === 'right' ? 'cut' : 'running',
+    ...(u.unit === 'root' ? { supersededBy: unitId('join') } : {}),
+    ...(u.unit === 'join' ? { lineage: { root: unitId('root'), reenters: unitId('root'), prepared: true } } : {}),
+  })) as typeof d.status.units,
+  edges: [...d.status.edges, { type: 'contingent', unit: 'join', edge: 'E-done', condition: 'approved', resolved: true },
+    { type: 'contingent', unit: 'join', edge: 'E-open', condition: 'pending', resolved: false }] as never,
+  milestones: [{ id: 'MS-done', state: 'settled', passed: true, round: 1, walks: [], findings: [] },
+    { id: 'MS-open', state: 'polishing', passed: true, round: 1, walks: [], findings: [] }] as never };
+  d.milestoneUnits = { 'MS-open': ['root'] };
+  const ui = new ViewState(); ui.accept(d); ui.selected.set('1:0', 'join');
+  assert.deepEqual(new Set(ui.rows().map((r) => r.id)), new Set(['join', 'E-open', 'MS-open']));
+  const drawing = dependencyDrawing(graph(d, false), d, 'join', false).rows.map(plain).join('\n');
+  assert.doesNotMatch(drawing, /\[offscreen\]/); assert.match(drawing, /Replaces: root/);
+  assert.ok(!drawing.includes('root ·'), 'hidden settled nodes draw no row or outgoing rail');
+  for (const ascii of [false, true]) {
+    const frame = ui.render(200, 50, ascii).join('\n');
+    assert.match(frame, /5 settled hidden/); assert.match(frame, /Replaces root/);
+    assert.match(frame, ascii ? /Needs: left \+, right \+, E-done \+, E-open/ : /Needs: left ✓, right ✓, E-done ✓, E-open/);
+    assert.doesNotMatch(frame, /(?:left|right|E-done) \[offscreen\]/);
+  }
+  ui.key('', 'c', 18);
+  assert.equal(ui.rows().length, 8); assert.ok(ui.rows().some((r) => r.id === 'MS-done'));
+  ui.key('', 'c', 18); assert.equal(ui.rows().length, 3);
+});
+
+test('r and R cycle running and preparing map units and open walks in both map modes', () => {
+  const d = observed();
+  d.status = { ...d.status, units: d.status.units.map((u) => ({ ...u, state: u.unit === 'root' ? 'merged' : u.unit === 'left' ? 'preparing' : u.unit === 'join' ? 'running' : 'waiting' })),
+    milestones: [{ id: 'MS-live', state: 'walking', passed: false, round: 1, walks: [{ job: 'walk', round: 1, outcome: null }], findings: [] },
+      { id: 'MS-due', state: 'walking', passed: false, round: 0, walks: [], findings: [] }] as never };
+  for (const full of [false, true]) {
+    const ui = new ViewState(); ui.accept(d); if (full) ui.key('', 'c', 18);
+    const running = ui.rows().filter((r) => ['MS-live', 'left', 'join'].includes(r.id)).map((r) => r.id);
+    ui.selected.set('1:0', running.at(-1)!);
+    for (const id of running) { ui.key('', 'r', 18); assert.equal(ui.selection()!.id, id); }
+    ui.key('', 'r', 18); assert.equal(ui.selection()!.id, running[0]);
+    for (const id of running.toReversed()) { ui.key('', 'R', 18); assert.equal(ui.selection()!.id, id); }
+    ui.selected.set('1:0', 'MS-due'); ui.key('', 'r', 18); assert.equal(ui.selection()!.id, 'MS-live');
+  }
+  const idle = { ...d, status: { ...d.status, units: d.status.units.map((u) => ({ ...u, state: 'waiting' })), milestones: [] } } as Display;
+  const ui = new ViewState(); ui.accept(idle); const selected = ui.selection()!.id;
+  for (const key of ['r', 'R']) { ui.key('', key, 18); assert.equal(ui.selection()!.id, selected); assert.match(ui.render(120, 35, false).join('\n'), /No running items in dependency map/); }
+});
+
+test('r and R cycle only unended Activity invocations, wrap, and report no running items', () => {
+  const d = observed();
+  d.invocations = ['ended', 'live-a', 'live-b'].map((id) => ({ ...entry(id, {}, 'success'), unit: 'root', role: 'build', attempt: 1, session: id,
+    startedAt: d.at, endedAt: id === 'ended' ? d.at : null, quietMs: 0, latest: '' }));
+  const ui = new ViewState(); ui.accept(d); ui.key('', '2', 18); ui.selection(); ui.selected.set('1:1', 'ended');
+  for (const [key, expected] of [['r', 'live-a'], ['r', 'live-b'], ['r', 'live-a'], ['R', 'live-b'], ['R', 'live-a'], ['R', 'live-b']]) {
+    ui.key('', key!, 18); assert.equal(ui.selection()!.id, expected);
+  }
+  ui.accept({ ...d, invocations: d.invocations.map((inv) => ({ ...inv, endedAt: d.at })) });
+  const selected = ui.selection()!.id;
+  for (const key of ['r', 'R']) { ui.key('', key, 18); assert.equal(ui.selection()!.id, selected); assert.match(ui.render(120, 35, false).join('\n'), /No running items in Activity/); }
+  ui.open(); const raw = ui.logRequest!.raw; ui.key('', 'r', 18); assert.equal(ui.logRequest!.raw, !raw);
+});
+
+test('printable ASCII keeps literal cell widths, clipping and wrapping alongside Unicode and controls', () => {
+  const ascii = ' !"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~';
+  assert.equal(width(ascii), ascii.length);
+  for (const columns of [-1, 0, 1, 17, 200]) assert.equal(clip(ascii, columns), ascii.slice(0, Math.max(0, columns)));
+  assert.deepEqual(wrap('abc def\n\nlast', 4), ['abc ', 'def', '', 'last']);
+  assert.deepEqual(wrap('abc', 0), ['a', 'b', 'c']);
+  assert.equal(plain(fit(line(ink('abc'), ink('def')), 5)), 'abcde');
+  assert.equal(clip('a\x1b[31mb\t界\nc', 8), 'ab    界');
+  assert.equal(width('e\u0301界🙂'), 5); assert.equal(clip('e\u0301界🙂', 3), 'e\u0301界');
 });

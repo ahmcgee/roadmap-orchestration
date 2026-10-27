@@ -14,7 +14,7 @@ import { connect, estate } from '../../src/tui/estate.ts';
 import { graph } from '../../src/tui/graph.ts';
 import { Observer } from '../../src/tui/observer.ts';
 import { ViewState } from '../../src/tui/state.ts';
-import type { LogRequest, ObserveReply, ObserveRequest } from '../../src/tui/types.ts';
+import type { Display, LogRequest, ObserveReply, ObserveRequest } from '../../src/tui/types.ts';
 import { contentHeight } from '../../src/tui/view.ts';
 import type { ArcDescriptor } from './unit-common.ts';
 
@@ -112,29 +112,43 @@ const sizes = { replyJsonLength: serialized.length, replyBytes: Buffer.byteLengt
   estateBytes: bytes(reply.display.estate), invocationsBytes: bytes(reply.display.invocations), logReplyBytes: bytes(logReply),
   pageBytes: page.end - page.start, pageLines: page.lines.length };
 
-const makeUI = () => { const ui = new ViewState(); ui.accept(display); return ui; };
+const makeUI = (snapshot: Display = display) => { const ui = new ViewState(); ui.accept(snapshot); return ui; };
+// The retained fixture is stopped: its open invocations do not imply running unit states.
+// For map jump timings only, model those recorded units as running in a fresh immutable snapshot.
+const runningUnits = new Set(display.invocations.filter((inv) => inv.endedAt === null).map((inv) => inv.unit));
+const runningDisplay: Display = { ...display, status: { ...display.status,
+  units: display.status.units.map((unit) => runningUnits.has(unit.unit) ? { ...unit, state: 'running' } : unit) } };
+const syntheticRunningUnits = runningDisplay.status.units.filter((unit) => unit.state === 'running').length;
+assert.ok(syntheticRunningUnits > 1, 'fixture needs several open unit invocations for map cycling');
 const ui = phase('setup.ui', makeUI);
 const accept = measure('ui.accept', () => ui.accept(display));
 const firstRender = measure('ui.render-first', () => ui.renderFrame(columns, rows, false), 1);
 const repeatedRender = measure('ui.render-repeated', () => ui.renderFrame(columns, rows, false));
 const navigation = [];
-for (const expanded of [false, true]) {
+for (const full of [false, true]) {
   for (const pane of [0, 1]) {
     const state = phase('setup.navigation', makeUI);
-    if (expanded) state.key('', 'c', h);
+    if (full) state.key('', 'c', h);
     state.pane = pane;
     state.renderFrame(columns, rows, false);
-    const measurement = measure(`ui.down${steps}.${expanded ? 'expanded' : 'collapsed'}.pane${pane}`, () => {
+    const measurement = measure(`ui.down${steps}.${full ? 'full' : 'open'}.pane${pane}`, () => {
       for (let i = 0; i < steps; i++) { state.key('down', '', h); state.renderFrame(columns, rows, false); }
     }, 1);
-    navigation.push({ expanded, pane, steps, totalMs: measurement.medianMs, perStepMs: measurement.medianMs / steps });
+    const runningState = pane === 0 ? makeUI(runningDisplay) : state;
+    runningState.expandedGraph = full; runningState.pane = pane;
+    runningState.renderFrame(columns, rows, false);
+    const running = measure(`ui.running${steps}.${full ? 'full' : 'open'}.pane${pane}`, () => {
+      for (let i = 0; i < steps; i++) { runningState.key('', 'r', h); runningState.renderFrame(columns, rows, false); }
+    }, 1);
+    navigation.push({ mode: full ? 'full' : 'open', pane, steps, totalMs: measurement.medianMs, perStepMs: measurement.medianMs / steps,
+      nextRunning: { syntheticRunningUnits: pane === 0 ? syntheticRunningUnits : 0, totalMs: running.medianMs, perStepMs: running.medianMs / steps } });
   }
 }
 const estateSwitch = measure('ui.estate-switch-render', () => { ui.key('', '3', h); ui.renderFrame(columns, rows, false); }, 1);
 assert.equal(ui.view, 2);
 const estateRender = measure('ui.estate-render', () => ui.renderFrame(columns, rows, false));
-const isolatedGraph = measure('isolated.graph-collapsed', () => graph(display, false));
-const isolatedExpanded = measure('isolated.graph-expanded', () => graph(display, true));
+const isolatedGraph = measure('isolated.graph-open', () => graph(display, false));
+const isolatedExpanded = measure('isolated.graph-full', () => graph(display, true));
 const snapshot = phase('setup.read-journal', () => readJournal(runDir, arc));
 const isolatedEstate = measure('isolated.estate-including-connect', () => estate(runDir, snapshot.view, absPath(d.repo)), 3);
 // Clear links outside timing: connect mutates entries, and needs the same input on every sample.
@@ -156,7 +170,7 @@ const output = {
     largeLog: { inv: selected.inv, bytes: selected.bytes, first: logFirst, tail: logTail, olderFirst: logOlderFirst, older: logOlder, newer: logNewer } },
   transfer: { clone, cloneWithLog, stringify, ...sizes },
   ui: { accept, firstRender, repeatedRender, navigation, estateSwitch, estateRender, logOpen, logRepeat },
-  isolated: { graph: isolatedGraph, expandedGraph: isolatedExpanded, estateIncludingConnect: isolatedEstate,
+  isolated: { graph: isolatedGraph, fullGraph: isolatedExpanded, estateIncludingConnect: isolatedEstate,
     connect: { medianMs: median(connectSamples), samplesMs: connectSamples }, statusWithSnapshot: isolatedStatus, statusFromDisk: isolatedStatusDisk },
 };
 process.stdout.write(JSON.stringify(output) + '\n');

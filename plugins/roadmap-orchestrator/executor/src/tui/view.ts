@@ -11,7 +11,7 @@ import { executionSummary, unitWaitReason } from './execution.ts';
 import { modelLabel } from './models.ts';
 import { milestoneProgress, milestonePhase } from './milestones.ts';
 import { dependencyDrawing } from './graph-view.ts';
-import type { GraphRow } from './graph.ts';
+import { settledNodeIds, type GraphRow } from './graph.ts';
 import { clip, fit, ink, line, pad, plain, stateTone, symbol, width, wrap, type Line, type Tone } from './terminal.ts';
 
 // Ten rows of persistent context, including the visible pane/source tabs, four of selection detail, one of keyboard hints.
@@ -81,6 +81,7 @@ export function renderView(ui: ViewState, columns: number, rows: number, ascii: 
   const window = (lines: Line[]): Line[] => { ui.offset = Math.min(ui.offset, Math.max(0, lines.length - inner)); return lines.slice(ui.offset, ui.offset + inner); };
 
   let graphVisible = new Set<string>();
+  const dependencyLabel = (id: string): string => d && !ui.expandedGraph && settledNodeIds(d).has(id) ? `${id} ${ascii ? '+' : '✓'}` : graphVisible.has(id) ? id : `${id} [offscreen]`;
   const list = (pane: number, size: number, height: number, name: string): Line[] => {
     const entries = ui.rows(pane); const selection = ui.selection(pane);
     const index = entries.findIndex((e) => e.id === selection?.id); const room = Math.max(1, size - 4);
@@ -92,12 +93,13 @@ export function renderView(ui: ViewState, columns: number, rows: number, ascii: 
       const annotated = Boolean(node?.replaces || node?.replacedBy || node?.redirected || node?.waitReason);
       // At small heights, keep the selected node's relationship note visible beneath it.
       const aboveSelection = Math.floor((roomHeight - Number(annotated)) / 2);
-      const top = Math.max(0, Math.min(Math.max(0, drawing.rows.length - roomHeight), selectedY - aboveSelection));
+      const top = Math.max(0, Math.min(Math.max(0, drawing.length - roomHeight), selectedY - aboveSelection));
       graphVisible = new Set([...drawing.positions].filter(([, y]) => y >= top && y < top + roomHeight).map(([id]) => id));
-      const below = Math.max(0, drawing.rows.length - top - roomHeight);
+      const below = Math.max(0, drawing.length - top - roomHeight);
       const direction = !ascii && d.status.edges.some((edge) => edge.type !== 'after') ? '↓ flow down · ⇣ condition · ⇓ milestone' : `${ascii ? 'v' : '↓'} prerequisite to dependent`;
-      const foot = `${direction}${drawing.hiddenTracks ? `${dot}${drawing.hiddenTracks} tracks offscreen` : ''}${drawing.crossings ? (ascii ? ' | x crossing' : ' · ╳ crossing') : ''}${top || below ? `${dot}${top} above / ${below} below` : ''}`;
-      return panel(name, `${entries.length} nodes`, drawing.rows.length ? drawing.rows.slice(top, top + roomHeight) : [line(ink('No matching nodes', 'muted'))], size, height, ui.pane === 0, 'border', foot);
+      const hidden = ui.expandedGraph ? 0 : settledNodeIds(d).size;
+      const foot = `${hidden ? `${hidden} settled hidden${dot}c full${dot}` : ''}${direction}${drawing.hiddenTracks ? `${dot}${drawing.hiddenTracks} tracks offscreen` : ''}${drawing.crossings ? (ascii ? ' | x crossing' : ' · ╳ crossing') : ''}${top || below ? `${dot}${top} above / ${below} below` : ''}`;
+      return panel(`${name}${hidden ? `${dot}${hidden} settled hidden` : ''}`, `${entries.length} nodes`, drawing.length ? drawing.window(top, roomHeight) : [line(ink(hidden ? 'All work settled · c shows full map' : 'No work recorded', 'muted'))], size, height, ui.pane === 0, 'border', foot);
     }
     const activity = ui.view === 1 && pane === 1;
     const context = ui.view === 1 && pane === 1 ? ui.activityContext() : null;
@@ -210,7 +212,7 @@ export function renderView(ui: ViewState, columns: number, rows: number, ascii: 
     } else body = list(ui.pane, w, bodyHeight, ui.view === 2 ? `Estate (${ui.withdrawn ? 'all' : 'active'})` : noteCount ? 'Exceptions & viewer notes' : 'Exceptions');
   } else body = panel('Connecting', '', wrap('Waiting for host ownership. Use --repo <path> --arc <id> to inspect a retained run.', w - 4).map((text) => line(ink(text, 'muted'))), w, bodyHeight);
 
-  const selection = ui.selection(); const inv = invocation(selection);
+  const selection = ui.detail || ui.logRequest || ui.help ? null : ui.selection(); const inv = invocation(selection);
   let preview: Line[]; let previewTitle = 'Selection';
   if (ui.help) preview = [line(ink('Read-only observation. Keyboard navigation; terminal text selection stays available.', 'muted')), line(ink('? close help', 'accent'))];
   else if (ui.logRequest) {
@@ -244,7 +246,7 @@ export function renderView(ui: ViewState, columns: number, rows: number, ascii: 
     const node = selection as GraphRow;
     const unit = d?.status.units.find((u) => u.unit === node.id);
     const waitReason = unit ? unitWaitReason(unit, graphVisible) : node.waitReason;
-    const dependencies = node.from.map((id) => graphVisible.has(id) ? id : `${id} [offscreen]`).join(', ') || 'none (independent unit)';
+    const dependencies = node.from.map(dependencyLabel).join(', ') || 'none (independent unit)';
     preview = [line(ink(node.label, 'strong', true), ink(`${dot}${node.specRevision === undefined ? 'Spec revision unavailable' : `Spec r${node.specRevision}`}`, 'violet')),
       line(ink(`${[node.replaces ? `Replaces ${node.replaces}` : '', node.replacedBy ? `Replaced by ${node.replacedBy}` : '', waitReason ?? `Needs: ${dependencies}`, node.replaces || node.replacedBy ? 'Enter status / related versions' : 'Enter status / documents'].filter(Boolean).join(dot)}`, 'muted'))];
   } else if (ui.view === 2 && asEstateRow(selection)?.childCount) {
@@ -253,10 +255,10 @@ export function renderView(ui: ViewState, columns: number, rows: number, ascii: 
       line(ink(`Space ${group.expanded ? 'collapse' : 'expand'} contents${dot}Enter open document${dot}/ find including hidden entries`, 'muted'))];
   } else if (selection) {
     preview = [line(ink(selection.label, 'strong', true), ink(`${dot}${selection.provenance}`, 'muted')),
-      line(ink('from' in selection ? (selection as GraphRow).members.length ? `Contains: ${(selection as GraphRow).members.join(', ')}${dot}Enter expands history` : `Needs: ${(selection as GraphRow).from.map((id) => graphVisible.has(id) ? id : `${id} [offscreen]`).join(', ') || 'none (independent unit)'}${dot}Enter opens execution status` : selection.description ?? summary(selection.body), 'muted'))];
+      line(ink('from' in selection ? `Needs: ${(selection as GraphRow).from.map(dependencyLabel).join(', ') || 'none (independent unit)'}${dot}Enter opens execution status` : selection.description ?? summary(selection.body), 'muted'))];
   } else preview = [line(ink('Select an entry to see its details', 'muted')), line(ink('Enter inspect', 'accent'))];
   const footer = line(...hints(ui).flatMap(([key, action]) => [ink(ascii ? key.replace('↑↓', 'j/k').replace('←→', 'h/l') : key, 'accent'), ink(` ${action}  `, 'muted')]));
-  const returnHint = ui.detail || ui.logRequest ? `Esc: ${ui.query ? 'clear search' : ui.backLabel()}` : ui.view === 1 && ui.pane === 0 ? `c ${ui.expandedGraph ? 'collapse' : 'expand'} history` : ui.view === 1 && ui.pane === 1 ? 'a toggle history' : ui.view === 2 ? 'w toggle inactive' : '';
+  const returnHint = ui.detail || ui.logRequest ? `Esc: ${ui.query ? 'clear search' : ui.backLabel()}` : ui.view === 1 && ui.pane === 0 ? `c ${ui.expandedGraph ? 'open work' : 'full map'}` : ui.view === 1 && ui.pane === 1 ? 'a toggle history' : ui.view === 2 ? 'w toggle inactive' : '';
   const frame = [title, tabs, ...runPanel, strip, navigation, ...body, ...panel(previewTitle, returnHint, preview, w, 4), footer];
   // Below the supported 80x24 size, keep input usable and never write beyond the viewport.
   if (rows < 18) return [...frame.slice(0, Math.max(0, rows - 1)), footer].map((row) => fit(row, w));
