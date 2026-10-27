@@ -8,9 +8,9 @@
 // HEAD's check.ts (every criterion passes, and the upgrade forced no park and no new session), or, where the story
 // needs arc judgments the M1 scenario format cannot express, with HEAD's CLI and fakes directly.
 //
-// Which releases: HEAD (1.0.0-dev.22) adopts arcs started on 1.0.0-dev.7 to dev.21, through the defaults of
+// Which releases: HEAD (1.0.0-dev.24) adopts arcs started on 1.0.0-dev.7 to dev.21, through the defaults of
 // src/core/upgrade.ts. Five are covered here. Every unlabelled cell starts its arc on the previous release
-// (PREVIOUS_RELEASE, 1.0.0-dev.21). The dev.20 cells retain legacy snapshot and audit-only skip coverage. The cells
+// (PREVIOUS_RELEASE, 1.0.0-dev.21). The dev.20 cells retain legacy snapshot and audit-only skip coverage; one cell has dev.21 publish a dev.20 arc's ref. The cells
 // labelled `upgrade.dev11.*` start theirs on 1.0.0-dev.11 (DEV11_RELEASE)
 // and those labelled `upgrade.dev10.*` on 1.0.0-dev.10 (DEV10_RELEASE): an arc started on each is in flight, so the
 // dev.11 and dev.10 defaults are live code. The cells labelled `upgrade.dev16.*` start theirs on 1.0.0-dev.16
@@ -439,6 +439,32 @@ for (const release of [DEV20_RELEASE, PREVIOUS_RELEASE]) {
     assert.deepEqual(report.rows, []);
   });
 }
+
+// dev.21 left a dev.20 arc's issues captures out of the snapshots it published; dev.22 required them again, so HEAD
+// must still verify (and chain from) the ref dev.21 left.
+test(`upgrade.snapshot-dev21-of-dev20: a ref ${PREVIOUS_RELEASE.version} published for a ${DEV20_RELEASE.version} arc with issues captures verifies, adopts and passes Phase 0 on HEAD`, T, async () => {
+  const started = await loadFrom<typeof import('../helpers/corpusarc.ts')>(DEV20_RELEASE, 'test/helpers/corpusarc.ts');
+  const adopted = await loadFrom<typeof import('../helpers/corpusarc.ts')>(PREVIOUS_RELEASE, 'test/helpers/corpusarc.ts');
+  const oldInputs = await loadFrom<typeof import('../../src/input/inforce.ts')>(DEV20_RELEASE, 'src/input/inforce.ts');
+  const a = await started.corpusArc();
+  await started.seal(a, { complete: false, before: (j) => {
+    const digest = oldInputs.keepInput(started.runDirOfArc(a), Buffer.from('{"legacyCheckpointCapture":true}\n'), 'issues.json');
+    j.fact({ kind: 'issues-captured', job: j.view.nextJobId('ckpt'), sha256: digest, repo: { host: 'github.com', owner: 'o', name: 'n' },
+      filtered: { comments: 0, pullRequests: 0 } } as Fact);
+  } });
+  // dev.21 completes the arc: its seal commits its own work again, so move the file off that content first.
+  writeFileSync(join(a.repo, 'src', `${a.arc}.ts`), 'interim\n');
+  git(a.repo, 'commit', '--quiet', '--all', '-m', 'interim');
+  await adopted.seal(a);
+  const commit = sha(git(a.repo, 'rev-parse', `refs/roadmap/${a.arc}`));
+  const tree = git(a.repo, 'ls-tree', '-r', '--name-only', commit);
+  assert.doesNotMatch(tree, /\.issues\.json$/m, 'exercise the ref dev.21 published without the issues captures');
+  const check = verifySnapshot(a.repo, commit);
+  assert.equal(check.kind, 'verified', check.kind === 'mismatch' ? check.detail : '');
+  assert.equal(readArcRef(a.repo, a.arc)!.commit, commit);
+  const report = await phase0Check({ repo: a.repo, source: { type: 'ref', arc: a.arc } });
+  assert.deepEqual(report.rows, []);
+});
 
 // ---------------------------------------------------------------------------------------------------
 // Scenario pieces (evals/m1/scenarios/clean.json, whose steps are slug's three then page-id's three)
