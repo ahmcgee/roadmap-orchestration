@@ -1,6 +1,15 @@
 import { safe } from './text.ts';
+const printableAscii = (s: string): boolean => /^[\x20-\x7e]*$/.test(s);
+// Bound retained short spans; long logs never enter these caches.
+const widths = new Map<string, number>();
+const clips = new Map<string, string>();
+function remember<T>(cache: Map<string, T>, key: string, value: T): T {
+  if (cache.size >= 4096) cache.clear();
+  cache.set(key, value); return value;
+}
 const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 export function cellWidth(s: string): number {
+  if (s.length === 1 && printableAscii(s)) return 1;
   if (/^[\p{Mark}\p{Format}]+$/u.test(s)) return 0;
   const cp = s.codePointAt(0) ?? 0;
   // Text-presentation symbols (✔, ℹ, ⚠) occupy one cell unless VS16 requests emoji.
@@ -10,17 +19,31 @@ export function cellWidth(s: string): number {
     || (cp >= 0x2e80 && cp <= 0xa4cf) || (cp >= 0xac00 && cp <= 0xd7a3) || (cp >= 0xf900 && cp <= 0xfaff)
     || (cp >= 0xfe10 && cp <= 0xfe6f) || (cp >= 0xff00 && cp <= 0xff60) || (cp >= 0x20000 && cp <= 0x3fffd))) ? 2 : 1;
 }
-export function width(s: string): number { return [...segmenter.segment(safe(s))].reduce((n, x) => n + cellWidth(x.segment), 0); }
+export function width(s: string): number {
+  if (printableAscii(s)) return s.length;
+  const cached = widths.get(s); if (cached !== undefined) return cached;
+  const cells = [...segmenter.segment(safe(s))].reduce((n, x) => n + cellWidth(x.segment), 0);
+  return s.length <= 512 ? remember(widths, s, cells) : cells;
+}
 export function clip(s: string, columns: number): string {
+  if (printableAscii(s)) return s.slice(0, Math.max(0, columns));
+  const key = s.length <= 512 ? `${columns}\0${s}` : null;
+  const cached = key === null ? undefined : clips.get(key); if (cached !== undefined) return cached;
   let text = ''; let used = 0;
   for (const { segment } of segmenter.segment(safe(s).replace(/\n/g, ' '))) {
     const w = cellWidth(segment); if (used + w > columns) break; text += segment; used += w;
   }
-  return text;
+  return key === null ? text : remember(clips, key, text);
 }
 export function wrap(s: string, columns: number): string[] {
   const out: string[] = [];
   for (const line of safe(s).split('\n')) {
+    if (printableAscii(line)) {
+      const size = Math.max(1, Math.floor(columns));
+      if (!line.length) out.push('');
+      for (let i = 0; i < line.length; i += size) out.push(line.slice(i, i + size));
+      continue;
+    }
     let text = ''; let used = 0;
     for (const { segment } of segmenter.segment(line)) {
       const w = cellWidth(segment);
@@ -58,7 +81,7 @@ export function symbol(state: string, ascii = false): string {
 export type Tone = 'text' | 'muted' | 'strong' | 'accent' | 'wait' | 'fault' | 'good' | 'border' | 'violet';
 export type Span = { text: string; tone: Tone; bold?: boolean; selected?: boolean };
 export type Line = Span[];
-export const ink = (text: string, tone: Tone = 'text', bold = false): Span => ({ text: safe(text).replace(/\n/g, ' '), tone, bold });
+export const ink = (text: string, tone: Tone = 'text', bold = false): Span => ({ text: printableAscii(text) ? text : safe(text).replace(/\n/g, ' '), tone, bold });
 export const line = (...parts: (string | Span)[]): Line => parts.map((part) => typeof part === 'string' ? ink(part) : part);
 export const plain = (row: Line): string => row.map((part) => part.text).join('');
 export function fit(row: Line, columns: number): Line {

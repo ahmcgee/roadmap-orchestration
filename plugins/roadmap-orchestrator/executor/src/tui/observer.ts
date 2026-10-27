@@ -1,10 +1,9 @@
 import { existsSync, statSync } from 'node:fs';
-import { basename, join } from 'node:path';
-import { keptInput, inputPath } from '../input/inforce.ts';
+import { join } from 'node:path';
 import { readClaim } from '../host/lock.ts';
 import { locate, type Run } from '../cli/locate.ts';
 import { ObserverJournal, type LogSnapshot } from '../core/log.ts';
-import { invocationId, invocationIdOf, sha256 } from '../core/ids.ts';
+import { invocationId } from '../core/ids.ts';
 import { readJson } from '../core/fsx.ts';
 import { JUDGMENT_SESSION_ROLES } from '../routing/types.ts';
 import { runStart } from '../core/records.ts';
@@ -15,12 +14,11 @@ import { launchSha256 } from '../runner/launch.ts';
 import { invocationDir } from '../pipeline/invoke.ts';
 import { recordOf } from '../needsuser.ts';
 import { estate } from './estate.ts';
-import { activityState, assessmentExplanation } from './outcome.ts';
+import { activityState } from './outcome.ts';
 import { InvocationRelations } from './relations.ts';
 import { ModelReader } from './models.ts';
 import { TranscriptReader } from './transcript.ts';
-import { project, record } from './projection.ts';
-import { type Display, type Entry, type Invocation, type LogPage, type ObserveRequest, type ObserveReply, pretty } from './types.ts';
+import { type Display, type Entry, type Invocation, type ObserveRequest, type ObserveReply, pretty } from './types.ts';
 
 const entry = (id: string, label: string, state: string, value: unknown): Entry => ({ id, label, state, body: pretty(value), links: [], provenance: 'validated runtime snapshot' });
 
@@ -33,9 +31,6 @@ export class Observer {
   #estate: { key: string; entries: Entry[] } | null = null;
   #view: LogSnapshot['view'] | null = null;
   #ended = new Map<string, Invocation>();
-  #dirs = new Map<string, AbsPath>();
-  #launchHashes = new Map<string, string>();
-  #verifiedPrompts = new Map<string, string>();
 
   observe(request: ObserveRequest): ObserveReply {
     try {
@@ -45,7 +40,6 @@ export class Observer {
         this.#journal = new ObserverJournal(run.runDir, run.arc);
         this.#estate = null;
         this.#ended.clear();
-        this.#dirs.clear(); this.#launchHashes.clear(); this.#verifiedPrompts.clear();
       }
       const snapshot = this.#journal!.read();
       if (snapshot.view !== this.#view) { this.#ended.clear(); this.#logs = new TranscriptReader(); this.#models = new ModelReader(); this.#relations = new InvocationRelations(); this.#estate = null; this.#view = snapshot.view; }
@@ -73,55 +67,10 @@ export class Observer {
       }
       const display: Display = { run, at: new Date().toISOString(), seq: snapshot.view.highWater(), status: s, invocations,
         estate: this.#estate.entries, exceptions, milestoneUnits };
-      let log: LogPage | null = null;
-      if (request.log !== null) {
-        const selected = invocations.find((i) => i.id === request.log!.inv);
-        const dir = this.#dirs.get(request.log.inv);
-        if (request.log.source === 'prompt' && dir) {
-          const launch = runnerFiles(dir, invocationIdOf(request.log.inv)).read('launch.json');
-          if (launch && launchSha256(launch) !== this.#launchHashes.get(request.log.inv)) throw new Error('Recorded prompt launch binding changed');
-          const match = launch?.stdinPath ? /^([0-9a-f]{64})\.prompt\.txt$/.exec(basename(launch.stdinPath)) : null;
-          const missing = (reason: string): LogPage => ({ key: `${request.log!.inv}:prompt`, start: 0, end: 0, size: 0, lines: [reason], error: reason });
-          if (!match) log = missing('No retained agent input prompt is recorded for this invocation.');
-          else {
-            const hash = sha256(match[1]!); const path = inputPath(run.runDir, hash, 'prompt.txt');
-            if (!existsSync(path)) log = missing('The recorded input prompt is unavailable or has been pruned.');
-            else {
-              const stat = statSync(path); const stamp = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}`;
-              if (this.#verifiedPrompts.get(path) !== stamp) {
-                keptInput(run.runDir, hash, 'prompt.txt');
-                this.#verifiedPrompts.delete(path); this.#verifiedPrompts.set(path, stamp);
-                while (this.#verifiedPrompts.size > 8) this.#verifiedPrompts.delete(this.#verifiedPrompts.keys().next().value!);
-              }
-              log = this.#logs.read(path, request.log.before, false, false, request.log.after);
-            }
-          }
-        }
-        else if (request.log.source === 'result' && selected && dir) {
-          const files = runnerFiles(dir, invocationIdOf(selected.id));
-          const result = files.read('result.json');
-          const details = { invocation: JSON.parse(selected.body), launch: files.read('launch.json'), runner: files.read('runner.json'),
-            result: result ?? 'Unavailable or pruned result', exit: files.read('exit.json') };
-          const outcome = record(record(result)['outcome']);
-          const friendly = {
-            ...(selected.execution === 'agent' ? { model: selected.model ?? 'unavailable', backend: selected.backend ?? 'unavailable', adapter: selected.adapter ?? null, requestedModel: selected.requestedModel ?? null } : {}),
-            ...(selected.milestone ? { milestone: selected.milestone } : {}),
-            outcome: activityState(selected), processOutcome: selected.state, ...(assessmentExplanation(selected) ? { explanation: assessmentExplanation(selected) } : {}), role: selected.role, unit: selected.unit, attempt: selected.attempt,
-            ...(outcome['value'] !== undefined ? { report: outcome['value'] } : {}),
-            ...(outcome['detail'] !== undefined ? { detail: outcome['detail'] } : {}),
-            startedAt: selected.startedAt, endedAt: selected.endedAt,
-            result: result?.type === 'backend' && result.outcome.kind === 'success' ? { ...result, outcome: { kind: result.outcome.kind } } : result ?? 'Unavailable or pruned result', executionDetails: { invocation: selected.id, session: selected.session || null, cwd: details.launch?.cwd ?? null, exit: details.exit, diagnostics: 'Press r for full launch arguments and runner metadata.' },
-          };
-          log = { key: `${selected.id}:result`, start: 0, end: 0, size: 0,
-            lines: request.log.raw ? pretty(details).split('\n') : project(friendly).map((row) => row.text), error: null };
-        }
-        else if (dir) log = this.#logs.read(join(dir, request.log.source === 'transcript' ? 'stdout' : request.log.source), request.log.before, ['transcript', 'stdout'].includes(request.log.source) && !request.log.raw, request.log.expanded, request.log.after);
-        else log = { key: request.log.inv, start: 0, end: 0, size: 0, lines: ['Unavailable or pruned invocation'], error: 'Unavailable or pruned invocation' };
-      }
-      return { token: request.token, display, log, error: null };
+      return { token: request.token, display, error: null };
     } catch (error) {
       // Retain the last published model on the UI thread, never publish a partial observation.
-      return { token: request.token, display: null, log: null, error: error instanceof Error ? error.message : String(error) };
+      return { token: request.token, display: null, error: error instanceof Error ? error.message : String(error) };
     }
   }
 
@@ -143,10 +92,9 @@ export class Observer {
       if (e.type !== 'intent' || e.kind !== 'proc.spawn') continue;
       const id = invocationId(e.op, e.ordinal);
       retained.add(id);
-      const dir = invocationDir(run.runDir, id);
-      this.#dirs.set(id, dir); this.#launchHashes.set(id, e.expect.launchSha256);
       const cached = this.#ended.get(id);
       if (cached) { const { assessment: _assessment, ...base } = cached; rows.push({ ...base, ...relations.get(id) }); continue; }
+      const dir = invocationDir(run.runDir, id);
       const files = runnerFiles(dir, id);
       const launch = files.read('launch.json');
       if (launch !== null && launchSha256(launch) !== e.expect.launchSha256) throw new Error(`${dir}/launch.json does not hash to its recorded launchSha256`);
@@ -166,6 +114,7 @@ export class Observer {
       const inputKind = launch?.terminal.type === 'backend' ? launch.terminal.session.mode === 'fresh' ? 'initial'
         : JUDGMENT_SESSION_ROLES.some((judgmentRole) => judgmentRole === role) ? 'repair' : 'resume' : undefined;
       const row: Invocation = {
+        launchSha256: e.expect.launchSha256,
         ...relations.get(id),
         ...(inputKind ? { inputKind } : {}),
         ...((launch?.terminal.type === 'backend' || result?.type === 'backend') ? this.#models.read(launch, join(dir, 'stdout')) : {}),

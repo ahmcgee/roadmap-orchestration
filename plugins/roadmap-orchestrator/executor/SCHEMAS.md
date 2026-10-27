@@ -5068,11 +5068,21 @@ validation; they are not misrepresented as an arc that never recorded a vision.
 JSON keys are unchanged. `ObserverJournal` uses the existing complete-line parser, hash-chain verifier and
 fold invariants. It advances from its byte cursor, ignores an incomplete terminal record, rebuilds after
 replacement or truncation, and refuses complete-record corruption without repairing anything. Its view
-belongs to the worker and is valid until the next read. The worker publishes derived display data, never
+belongs to the display worker and is valid until the next read. The display worker publishes derived display data, never
 its mutable journal fold. Observation errors preserve the previous display with a stale timestamp.
 
-The terminal owns one worker request at a time and polls at most every second, backing off so observation takes at most a fifth of the time. Ordinary scrolling and searching
-are local; only a change of run, source, raw/expanded mode or byte page requests an immediate observation.
+The viewer runs two worker threads. The display worker (`Observer.observe`) serves display data only, with no
+log field. The log worker (`log-worker.ts`, `log-reader.ts`) serves every log source (Messages, Output, Stderr,
+Runner, Result, Input). Each has its own single in-flight request and token, so a log page never waits behind
+a status observation. A log request carries the run, the selected Invocation row and its recorded
+`launchSha256`; prompt hash checks are still verified. Each worker is polled at most every second, backing off
+so observation takes at most a fifth of the time. Ordinary scrolling and searching are local; a changed
+selection or `ViewState.logKey()` (run, source, raw/expanded mode, byte page) requests at once, while local
+scrolling or search inside a loaded page leaves the key unchanged. An open log polls even when paused, so
+PAUSED counts new bytes. Keypresses apply at once; draws are coalesced to at most one per event-loop turn.
+Either worker exiting fails the viewer. Derived display data (graph, indexes, activity context, rows, drawing
+geometry) is computed once per published Display snapshot; snapshots are replaced, never mutated. Printable-ASCII
+text takes a fast width/clip path with results identical to the general one.
 The displayed log page keeps one bounded formatted layout, reused across keys and unchanged worker
 publications; source content, width and rendering mode invalidate the projection, while searches reuse it. Runner metadata uses the existing
 schema and invocation-binding validators; scheduler/owner/heartbeat state uses canonical status derivation.
@@ -5110,42 +5120,49 @@ from a recorded empty ledger. Working-tree edits are never included.
 The dependency map uses stable prerequisite-first ordering and connected downward tracks with aligned
 unit labels. Each open track has one named destination; duplicate destinations join at that node. Crossings
 are distinct from joins. Condition and milestone edges use distinct arrows. Connector segments always
-use the neutral border colour; only node symbols carry status colour. Collapsed groups made entirely of
-merged/passed nodes retain a green completion check, as do milestones that are both passed and settled.
-Other settled history stays muted; a passing gate alone does not mark an active walkthrough complete. Scrolling follows the selected
+use the neutral border colour; only node symbols carry status colour. By default the map shows open work
+only: settled units (merged, cut, superseded), resolved conditions and settled milestones are hidden, and `c`
+toggles the full map. Hidden settled prerequisites draw no rails or offscreen notes, and the preview marks them
+satisfied (✓, `+` in ASCII); open offscreen prerequisites keep their notes. An entirely settled map shows one
+muted line explaining `c`. The panel title and foot count hidden settled nodes. In the full map settled
+history stays muted; merged/passed nodes and milestones both passed and settled keep a green completion check.
+A passing gate alone does not mark an active walkthrough complete. Scrolling follows the selected
 node; the preview names offscreen prerequisites, and clipped tracks are counted explicitly. No nesting
 implies containment and edge records do not create extra keyboard stops. Compact Activity names the selected
 map node and prioritizes all its retained invocations, including those outside the latest 20 completions.
 Linked rows carry `*` and cyan labels; unrelated rows keep status colours with muted labels. Matching uses
-unit identity, collapsed members, milestone member units and recorded walkthrough jobs, or the unit gated
+unit identity, milestone member units and recorded walkthrough jobs, or the unit gated
 by a contingent condition. Arc witness commands additionally link through the obligations recorded before
 launch and the exact lane revision; mutation smoke links through its recorded unit. It does not infer
 relationships from log text or include adjacent graph units.
 Units carry their milestone memberships, including overlapping memberships and replacement-unit lineage.
-Canonical `lineage.reenters` / `supersededBy` produce explicit Replaces / Replaced by annotations, retained
-through collapsed history. They order versions chronologically without creating prerequisite edges.
+Canonical `lineage.reenters` / `supersededBy` produce explicit Replaces / Replaced by annotations. They order versions chronologically without creating prerequisite edges.
 A declared `after.on` different from `after.effective` is shown as a redirected prerequisite. Unit selection
 includes the explicit lineage's retained invocations; labels retain the actual unit. Related documents
 links previous/replacement unit status, including their specifications and planning artifacts. The selected
 unit's `Spec rN` comes from the content-addressed specification revision, never an invocation attempt.
 No replacement is inferred from names, paths or specification revision numbers.
-Milestone nodes show member progress and canonical checkpoint state, and remain visible after a passing
-gate or settlement. Canonical `walking` with no open recorded walk is presented as “walkthrough pending”
+Milestone nodes show member progress and canonical checkpoint state; open checkpoints stay visible
+in the default map, and settled milestones appear in the full map. Canonical `walking` with no open recorded walk is presented as “walkthrough pending”
 with a waiting marker; an open walk keeps its walking state. `waitingFor` supplies explicit unresolved
 constraints beside units and in their preview/detail. A `no-owner` run with no active invocations is
-presented with a bold amber STOPPED badge and stop marker, plus a bold amber notice that work will not advance. Canonical status JSON is unchanged. Worker stdout/stderr is buffered by stream, bounded and deduplicated
+presented with a bold amber STOPPED badge and stop marker, plus a bold amber notice that work will not advance. Canonical status JSON is unchanged. Both workers' stdout/stderr is buffered by stream, bounded and deduplicated
 in viewer memory, and inspected under Exceptions & notes. Known upgrade-default messages explain older
 record compatibility; other diagnostics retain their original text without assuming they are harmless.
 Informational notes neither replace the run banner nor count as exceptions or faults; observation failures
 remain separately visible as stale/error state.
-History collapses only within the same milestone membership; `m` cycles checkpoints.
+`m` cycles checkpoints.
 Walkthrough invocation ownership comes from `walk-started{job,milestone}` and bring-up ownership from
 the spawn subject. Their list, selection and transcript headings say `Milestone <id>` instead of Arc-wide;
 the original executor scheduling scope remains inspectable.
 Changing the map selection resets the related Activity cursor; polling and pane switches preserve it.
 A single navigation row contains `1` Dependency map, `2` Activity, `3` Estate and `4` Exceptions. Activity is one browser with a compact pane and an
-expanded table (`x`), sharing selection, search, scope and history controls. `g` clears/restores map context;
-all-activity mode lists running invocations before recent completions. `a` reveals all retained history.
+expanded table (`x`), sharing selection, search, scope and history controls. `g` clears/restores map context.
+Activity orders running invocations first (those linked to the map selection, then others), then linked
+history, other history, then queued commands. `a` reveals all retained history. `r` / `R` select the
+next/previous running item, wrapping, on the dependency map (units running or preparing, milestones with an
+open walk) and in Activity (invocations with `endedAt` null); with nothing running, the navigation line says so.
+In detail and log views `r` still toggles raw/readable.
 Section searches are independent; Activity search never changes the selected map node.
 `/` jumps to matches without removing rows or lines; `n` and `N` cycle forward/backward with wraparound.
 Activity search includes all retained invocations. Transcript search is limited to its decoded page and is
@@ -5155,8 +5172,7 @@ Rows label Agent, Command or Queued activity. Execution type comes from the vali
 recorded result, never a guessed role name. Missing type information is labelled Run. Expanded Activity
 retains the displayed arc until returning to the split. Recorded arc-backend subjects and arc parents
 without unit ownership carry an Arc-wide label in both Activity layouts and log headings. This does not
-infer membership in a selected unit group. Collapsed merged-unit groups use “completed units”; groups
-including cut/superseded units use “settled units”, and mixed node types use “settled items”. Compact rows omit bare attempt numbers; the
+infer membership in a selected unit group. Compact rows omit bare attempt numbers; the
 expanded table and selection preview label execution attempts explicitly. Unit stage attempts advance
 across stage starts, not only retries, and multiple invocations can share an attempt. They are not unique
 invocation identifiers. No recorded invocation or command is mutated.

@@ -70,8 +70,9 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
   The current ledger includes inherited debt, Phase-0 dispositions and newly banked items; `w` reveals
   promoted/resolved items. Missing debt and an empty recorded ledger are distinct.
   Activity is one browser: `x` expands/restores its pane while preserving selection and search; `g` toggles
-  map context/all activity; `a` toggles latest 20 completions/all retained history. Running invocations remain
-  available. Agent, Command and Queued labels distinguish model invocations, command executions and pending
+  map context/all activity; `a` toggles latest 20 completions/all retained history. Running invocations always lead (linked first), then linked history, other history
+  and queued commands. `r` / `R` jumps to the next / previous running item on the map or Activity, wrapping;
+  the map includes preparing units and milestones with open walks. A notice explains when none are running. Agent, Command and Queued labels distinguish model invocations, command executions and pending
   commands; Run means the execution type is unavailable. Walkthroughs and bring-up commands name their
   recorded milestone; Arc-wide labels cover arc-scoped work without a specific milestone.
   Agent rows show the model from recorded launch/init metadata, with explicit adapter provenance when present.
@@ -80,12 +81,14 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
   other job checks of still-future requirements say `pre-delivery` (historical, even after arc completion);
   mutation probes show the recorded smoke verdict. Result preserves the underlying process outcome.
   Witness activity links to delivering units through the obligation revision and lane hash.
-  Units show milestone memberships; `m` selects the next milestone. Milestone checkpoints stay visible after
-  their gate passes and after settlement. Collapsed unit history does not cross milestone boundaries.
-  Connectors use neutral colour; only status symbols carry state colour. Completed groups and passed,
-  settled milestones retain green checks; cuts and other settled history remain grey.
-  Collapsed groups say completed units only when all members merged; cut/superseded work remains settled,
-  and groups containing conditions are labelled settled items. Milestones remain separate. Esc restores the split after clearing any search.
+  Units show milestone memberships; `m` selects the next milestone. The map shows open work by default:
+  merged, cut and superseded units, resolved conditions and settled milestones are hidden. Open milestones
+  stay visible after their gate passes. `c` toggles the full map; the panel counts hidden settled nodes.
+  Hidden settled prerequisites draw no rails or offscreen notes; the preview marks them done with `✓`.
+  Visible replacements retain Replaces / Replaced by notes; the full map reveals settled versions.
+  Connectors use neutral colour; only status symbols carry state colour. Merged units and passed settled
+  milestones retain green checks on the full map; cuts and other settled history remain grey.
+  Esc restores the split after clearing any search.
   Left/Right or Tab/Shift-Tab switches the visible sections, detail tabs or log sources; arrows or h/j/k/l navigate;
   Enter opens the named selection; Esc restores the previous location, including its tab, search and position.
   Unit details distinguish execution status from the specification, settled implementation plan, applied arc
@@ -103,12 +106,12 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
   envelopes as labelled sections and formats their Markdown/JSON content. Repair turns are labelled; `b`
   opens the original input when the retained session establishes that relationship. A unit’s planning-input
   link opens the original prompt, with a separate link to its repair request. Unknown markup remains visible. Estate Markdown renders headings, emphasis, links,
-  lists, quotes, code and tables; wide tables become labelled rows. `c` expands settled graph branches. The dependency map follows connected tracks downward
+  lists, quotes, code and tables; wide tables become labelled rows. `c` toggles open work / full map. The dependency map follows connected tracks downward
   from prerequisites to dependents, with visible branches and joins. Unit labels align; arrows select named
   nodes. `╳` marks a crossing, not a join; `⇣` is a condition edge and `⇓` a milestone edge. The selection preview
   names prerequisites, including offscreen endpoints. Activity follows the highlighted map node: linked
-  invocations appear first with `*` and cyan labels; unrelated labels are muted, with status colours preserved.
-  Tab enters Activity and Enter opens logs. Selecting a different map node resets Activity to its first match;
+  invocations carry `*` and cyan labels within the running-first order; unrelated labels are muted, with status colours preserved.
+  Tab enters Activity and Enter opens logs. Selecting a different map node resets Activity to its first row;
   ordinary refreshes preserve the cursor. Dense graphs label tracks clipped from the viewport. `q` or Ctrl-C exits only the viewer.
   Refreshes once per second with one observation in flight, backing off so observing takes at most a fifth of the time; keys observe at once. The persistent header shows the current Claude
   account’s five-hour and weekly percentage used and reset countdowns, even when viewing a historical arc.

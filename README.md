@@ -146,7 +146,8 @@ on stable ports beside the old one and switches over once it is ready. `roadmap 
 For a human view inside the executor environment, run `roadmap tui`. A single navigation row contains
 `1` Dependency map, `2` Activity, `3` Estate and `4` Exceptions; Tab or Left/Right moves between them.
 The map and compact Activity remain side by side (stacked at 80 columns). Highlighting a map node brings
-its related activity first, marked `*` in cyan; other activity stays visible with muted labels. `x` expands
+all its related activity into Activity, marked `*` in cyan. Running invocations always lead (linked first),
+then linked history, other history and queued commands; other activity keeps muted labels. `x` expands
 or restores Activity, `g` toggles map context/all activity, and `a` reveals all retained history. Rows distinguish
 Agent, Command and Queued work; Arc-wide labels explain work outside individual units. Supporting status
 and output are indented beneath their own activity row. Enter opens logs or the selected item's details.
@@ -155,15 +156,19 @@ commands, including arc-wide jobs, and explains when execution is waiting. Confi
 of future requirements say `pre-delivery`; they and successful mutation detections are distinguished from faults; Result retains
 the original command outcome. Earlier audit checks of still-future requirements say `pre-delivery`,
 which describes the check's timing, even after the arc completes. Witness checks link to units through the recorded obligations.
-Milestone labels show membership, progress and checkpoint state; `m` moves between milestones. Milestones
-stay visible when settled, and collapsed history respects milestone boundaries. Walkthroughs and bring-up
-commands name their recorded milestone. Graph connectors remain neutral; completed groups and successfully
-settled milestones use the same green check as merged units. A due walkthrough says “walkthrough pending”;
+Milestone labels show membership, progress and checkpoint state; `m` moves between milestones. The map
+shows open work by default: merged, cut and superseded units, resolved conditions and settled milestones
+are hidden. `c` toggles the full map; the panel counts hidden settled nodes. Open milestone checkpoints stay
+visible after their gate passes. Hidden settled prerequisites are satisfied, shown as `✓` in the preview.
+On the map and Activity, `r` / `R` jumps to the next / previous running item, wrapping at either end;
+the map includes preparing units and milestones with open walkthroughs. A notice explains when none are running.
+Walkthroughs and bring-up commands name their recorded milestone. Graph connectors remain neutral; successfully
+settled milestones on the full map use the same green check as merged units. A due walkthrough says “walkthrough pending”;
 waiting units name their outstanding gate or dependency. The bold amber “Executor stopped” banner and STOPPED badge mean work cannot advance.
 Compatibility diagnostics are informational viewer notes under `4 Exceptions & notes`, with a plain-language
 explanation and technical details. They never replace the run status or increase exception/fault counts.
-Explicit unit replacements show “Replaces” / “Replaced by”, separately from dependency paths. Both versions
-stay visible when history collapses; selecting either highlights their combined activity, with each row
+Explicit unit replacements show “Replaces” / “Replaced by” on visible nodes, separately from dependency paths.
+`c` reveals settled versions; selecting either highlights their combined activity, with each row
 retaining its actual unit. Related documents links between versions. Redirected prerequisites name both
 the declared unit and its replacement. The selection preview shows the retained specification revision;
 revising a specification in place does not create another node.
@@ -189,7 +194,7 @@ end. Activity searches all retained invocations; transcripts search the loaded p
 available for older/newer pages. Esc clears the search without moving your position, then returns to the
 previous location. `?` explains the available controls. Unit details link specifications, implementation
 plans, planning inputs and results. Readable structured records, Markdown and prompt sections are the
-default; `r` toggles raw data, and `b` opens the original input from a repair turn when retained.
+default; `r` toggles raw data in details and logs, and `b` opens the original input from a repair turn when retained.
 
 The viewer refreshes automatically and makes no runtime writes. `roadmap tui --repo <path> --arc <id>` pins
 a retained run. Revision hashes and captured commits identify the documents shown; unapplied edits are

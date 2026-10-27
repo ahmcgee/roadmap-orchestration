@@ -61,7 +61,7 @@ r = contextFor(d);
 try { assert.deepEqual(await runUnit(r.ctx, r.unit('multiply-v2'), admitAll), { kind: 'merged' }); }
 finally { r.journal.close(); }
 writeFileSync(join(d.runDir, 'start.json'), JSON.stringify({ v: 1, generation: 1, at: new Date().toISOString(), repo: d.repo, planFile: d.planPath, profile: 'default' }));
-const reply = new Observer().observe({ locator: { type: 'host' }, hostDir: absPath(d.hostDir), pinned: { arc: arcId(d.arc), runDir: absPath(d.runDir) }, log: null, token: 1 });
+const reply = new Observer().observe({ locator: { type: 'host' }, hostDir: absPath(d.hostDir), pinned: { arc: arcId(d.arc), runDir: absPath(d.runDir) }, token: 1 });
 assert.equal(reply.error, null);
 assert.deepEqual(reply.display!.exceptions, []);
 assert.ok(reply.display!.invocations.filter((i) => i.execution === 'agent').every((i) => i.model === 'scripted-fixture'));

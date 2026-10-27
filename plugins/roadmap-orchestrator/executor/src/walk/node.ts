@@ -24,15 +24,26 @@ function rootOf(units: ReadonlyMap<UnitId, PlanUnit>, id: UnitId): UnitId {
   return at;
 }
 
+const edgeCache = new WeakMap<PlanM1, ReadonlyMap<UnitId, readonly MilestoneId[]>>();
+
 /**
  * The milestones each planned unit's node edges point at, by unit (only units with at least one): the milestones M one of
  * whose units (by lineage) the unit descends from through `after`, the unit not being one of M's own. In plan order.
  */
 export function milestoneEdges(plan: PlanM1): ReadonlyMap<UnitId, readonly MilestoneId[]> {
+  const cached = edgeCache.get(plan);
+  if (cached) return cached;
   const milestones = milestonesOf(plan);
-  if (milestones.length === 0) return new Map();
+  if (milestones.length === 0) {
+    const empty = new Map<UnitId, readonly MilestoneId[]>(); edgeCache.set(plan, empty); return empty;
+  }
   const units = new Map(plan.units.map((u) => [u.id, u]));
-  const root = (id: UnitId): UnitId => rootOf(units, id);
+  const roots = new Map<UnitId, UnitId>();
+  const root = (id: UnitId): UnitId => {
+    const known = roots.get(id);
+    if (known !== undefined) return known;
+    const r = rootOf(units, id); roots.set(id, r); return r;
+  };
   // The dependency graph over lineage roots: every member's `after` edges belong to its lineage.
   const deps = new Map<UnitId, Set<UnitId>>();
   for (const u of plan.units) {
@@ -41,16 +52,23 @@ export function milestoneEdges(plan: PlanM1): ReadonlyMap<UnitId, readonly Miles
     for (const d of u.after) set.add(root(d));
     deps.set(r, set);
   }
+  const memberships = milestones.map((m) => {
+    const roots = m.units.map(root);
+    return { id: m.id, roots, own: new Set(roots) };
+  });
   const ancestors = new Map<UnitId, ReadonlySet<UnitId>>();
-  const ancestorsOf = (r: UnitId, path: ReadonlySet<UnitId> = new Set()): ReadonlySet<UnitId> => {
+  const path = new Set<UnitId>();
+  const ancestorsOf = (r: UnitId): ReadonlySet<UnitId> => {
     const known = ancestors.get(r);
     if (known !== undefined) return known;
     if (path.has(r)) throw new Error(`the plan's after edges have a cycle through ${r}`);
+    path.add(r);
     const out = new Set<UnitId>();
     for (const d of deps.get(r) ?? []) {
       out.add(d);
-      for (const a of ancestorsOf(d, new Set([...path, r]))) out.add(a);
+      for (const a of ancestorsOf(d)) out.add(a);
     }
+    path.delete(r);
     ancestors.set(r, out);
     return out;
   };
@@ -59,12 +77,12 @@ export function milestoneEdges(plan: PlanM1): ReadonlyMap<UnitId, readonly Miles
     const r = root(u.id);
     if ((units.get(r)?.origin ?? 'planned') !== 'planned') continue;
     const above = ancestorsOf(r);
-    for (const m of milestones) {
-      const own = new Set(m.units.map(root));
-      if (own.has(r) || ![...own].some((x) => above.has(x))) continue;
-      out.set(u.id, [...(out.get(u.id) ?? []), m.id]);
+    for (const m of memberships) {
+      if (m.own.has(r) || !m.roots.some((x) => above.has(x))) continue;
+      const edges = out.get(u.id) ?? []; edges.push(m.id); out.set(u.id, edges);
     }
   }
+  edgeCache.set(plan, out);
   return out;
 }
 
@@ -82,8 +100,11 @@ export const milestonePassedSeq = (view: JournalView, m: MilestoneId): number | 
  */
 export function milestoneWaits(view: JournalView, plan: PlanM1): ReadonlyMap<UnitId, readonly MilestoneId[]> {
   const out = new Map<UnitId, readonly MilestoneId[]>();
-  for (const [unit, ms] of milestoneEdges(plan)) {
-    const open = ms.filter((m) => !milestonePassed(view, m));
+  const edges = milestoneEdges(plan);
+  if (edges.size === 0) return out;
+  const passed = new Set(view.walkFacts().flatMap(({ fact }) => fact.kind === 'milestone-passed' ? [fact.milestone] : []));
+  for (const [unit, ms] of edges) {
+    const open = ms.filter((m) => !passed.has(m));
     if (open.length > 0) out.set(unit, open);
   }
   return out;

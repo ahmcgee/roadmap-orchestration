@@ -918,13 +918,14 @@ function unitLine(x: Inputs, unit: PlanUnit, times: Readonly<{ starts: ReadonlyM
 }
 
 function edgesOf(view: JournalView, plan: PlanM1): readonly EdgeView[] {
+  const passed = new Set(view.walkFacts().flatMap(({ fact }) => fact.kind === 'milestone-passed' ? [fact.milestone] : []));
   return plan.units.flatMap((u) => [
     ...u.after.map((on): EdgeView => {
       const effective = effectiveDependency(view, on);
       return { type: 'after', unit: u.id, on, effective, met: view.unit(effective).status === 'retired' };
     }),
     ...u.contingent.map((e): EdgeView => ({ type: 'contingent', unit: u.id, edge: e.id, condition: e.condition, resolved: view.edgeResolved(e.id) !== null })),
-    ...(milestoneEdges(plan).get(u.id) ?? []).map((milestone): EdgeView => ({ type: 'milestone', unit: u.id, milestone, passed: milestonePassed(view, milestone) })),
+    ...(milestoneEdges(plan).get(u.id) ?? []).map((milestone): EdgeView => ({ type: 'milestone', unit: u.id, milestone, passed: passed.has(milestone) })),
   ]);
 }
 
@@ -1580,7 +1581,8 @@ export function stageTimings(events: readonly Event[], after = 0): readonly Stag
     const f = e.fact;
     const start = starts.get(`${f.unit}/${f.stage}#${f.attempt}`);
     if (start === undefined) continue;
-    by.set(f.stage, [...(by.get(f.stage) ?? []), Math.max(0, Date.parse(e.at) - Date.parse(start))]);
+    const durations = by.get(f.stage) ?? [];
+    durations.push(Math.max(0, Date.parse(e.at) - Date.parse(start))); by.set(f.stage, durations);
   }
   return OUTCOME_STAGES.flatMap((stage) => {
     const ms = [...(by.get(stage) ?? [])].sort((a, b) => a - b);
