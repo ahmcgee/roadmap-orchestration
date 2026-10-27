@@ -14,12 +14,14 @@ the corpus, Phase 0, the plan, adjudicating what the executor hands you, and the
 - `executor/SCHEMAS.md` (from the plugin root) holds every input schema. `reference.md` names the section to read.
 - `RATIONALE-1.0.md` says why the design is what it is. You do not need it to operate.
 
-`roadmap` below is the container command installed from this plugin's `executor/bin/roadmap`.
+`roadmap` below means `<plugin root>/executor/bin/roadmap`. The container command installed below runs the same CLI
+for the developer; your own commands never depend on it.
 
 ## Container command (each session)
 
-Before the first command of a skill session, install or refresh the developer-facing launcher using the
-**currently loaded plugin root**. Do this during initial bootstrap and again on later sessions: plugin updates
+Early in a skill session, install or refresh the developer-facing launcher using the **currently loaded plugin
+root**. It is a convenience for the owner: a failed install is reported in the next check-in and never blocks
+or delays the arc. Do this during initial bootstrap and again on later sessions: plugin updates
 can move the cache directory, and a rebuilt container may have lost the launcher. This step is independent
 of whether the product repo already has its corpus and chain configuration.
 

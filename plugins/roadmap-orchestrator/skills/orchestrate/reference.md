@@ -6,7 +6,7 @@ starting `executor/` are under the plugin root.
 
 ## Conventions
 
-- `roadmap` is the managed PATH launcher for `executor/bin/roadmap` (container setup below). Output is one line of canonical JSON unless noted.
+- `roadmap` is `<plugin root>/executor/bin/roadmap`; the managed PATH launcher (container setup below) runs the same CLI for the developer. Output is one line of canonical JSON unless noted.
 - Exit codes: 0 done; 64 bad arguments or a CLI error (message on stderr); 70 `start`'s supervisor died or did not
   report ready; 75 another live process holds this host; 78 refused (the rows are in the output, or in `status`).
 - Notation in this file and SCHEMAS.md: `kind{a, b}` is the object `{"type": "kind", "a": …, "b": …}` (rows use
@@ -110,7 +110,7 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
   invocations appear first with `*` and cyan labels; unrelated labels are muted, with status colours preserved.
   Tab enters Activity and Enter opens logs. Selecting a different map node resets Activity to its first match;
   ordinary refreshes preserve the cursor. Dense graphs label tracks clipped from the viewport. `q` or Ctrl-C exits only the viewer.
-  Refreshes once per second with one observation in flight. The persistent header shows the current Claude
+  Refreshes once per second with one observation in flight, backing off so observing takes at most a fifth of the time; keys observe at once. The persistent header shows the current Claude
   account’s five-hour and weekly percentage used and reset countdowns, even when viewing a historical arc.
   Usage refreshes in the background every five minutes using existing Claude OAuth credentials (no model
   calls or credential refresh). Claude’s account-matched local cache is a fallback; stale, expired and absent

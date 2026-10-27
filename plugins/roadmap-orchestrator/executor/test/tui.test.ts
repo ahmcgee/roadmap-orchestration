@@ -159,6 +159,25 @@ test('transcript normalization preserves Claude tools, Codex output, nested meta
   assert.ok(width(clip('你好🙂abc', 7)) <= 7);
 });
 
+test('forward paging keeps every byte of a record larger than a page, labelled as fragments', () => {
+  const path = join(tmpDir('tui-oversize'), 'stdout'); const big = 'B'.repeat(PAGE_BYTES + 30_000);
+  writeFileSync(path, `first\n${big}\nlast\n`);
+  const reader = new TranscriptReader(); const label = '[record exceeds page: fragment; raw view available]';
+  let page = reader.read(path, PAGE_BYTES, false, false, 0); const shown = [...page.lines];
+  while (page.end < page.size) {
+    page = reader.read(path, Math.min(page.size, page.end + PAGE_BYTES), false, false, page.end);
+    shown.push(...page.lines);
+  }
+  assert.ok(shown.includes(label), 'a page starting inside the record says so');
+  assert.equal(shown.filter((l) => l !== label).join(''), `first${big}last`);
+});
+
+test('scrolling before the first log page arrives leaves the follow request alone', () => {
+  const ui = new ViewState(); ui.logRequest = { inv: 'x', source: 'transcript', before: null, expanded: false }; ui.follow = true;
+  for (const key of ['down', 'up', 'pageup']) ui.key(key, '', 10);
+  assert.equal(ui.follow, true); assert.equal(ui.logRequest.before, null); assert.equal(ui.logRequest.after, undefined);
+});
+
 test('large transcript paging is bounded, reversible, append-aware, and handles missing/replaced logs', () => {
   const path = join(tmpDir('tui-logs'), 'stdout');
   const lines = Array.from({ length: 12000 }, (_, i) => JSON.stringify({ type: 'message', text: `row-${i} ${'x'.repeat(40)}` }) + '\n');

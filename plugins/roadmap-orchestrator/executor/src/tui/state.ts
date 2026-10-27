@@ -281,6 +281,8 @@ export class ViewState {
   move(delta: number, height: number): void {
     this.#matchCursor = null;
     if (this.logRequest) {
+      // No page loaded yet (or only a placeholder): leaving follow now would request the whole file.
+      if (!this.log || this.log.error) return;
       if (this.follow) { this.follow = false; this.seenSize = this.log?.size ?? 0; this.logRequest.before = this.log?.end ?? null; this.logRequest.after = this.log?.start ?? 0; }
       const end = Math.max(0, this.logLines().length - height);
       if (delta < 0 && this.offset === 0 && this.log && this.log.start > 0) {

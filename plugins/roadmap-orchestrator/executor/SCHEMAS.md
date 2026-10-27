@@ -5071,7 +5071,7 @@ replacement or truncation, and refuses complete-record corruption without repair
 belongs to the worker and is valid until the next read. The worker publishes derived display data, never
 its mutable journal fold. Observation errors preserve the previous display with a stale timestamp.
 
-The terminal owns one worker request at a time and polls every second. Ordinary scrolling and searching
+The terminal owns one worker request at a time and polls at most every second, backing off so observation takes at most a fifth of the time. Ordinary scrolling and searching
 are local; only a change of run, source, raw/expanded mode or byte page requests an immediate observation.
 The displayed log page keeps one bounded formatted layout, reused across keys and unchanged worker
 publications; source content, width and rendering mode invalidate the projection, while searches reuse it. Runner metadata uses the existing

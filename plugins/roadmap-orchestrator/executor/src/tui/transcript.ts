@@ -154,15 +154,16 @@ export class TranscriptReader {
       const bytes = this.bytes(fd, path, start, end, st);
       const n = bytes.length;
       // Pages partition bytes at record boundaries. Oversize records remain inspectable in bounded fragments.
+      // A page read forward (`after`) starts where the previous page ended, possibly inside a record: keep it.
       const preceding = Buffer.alloc(1);
       const boundary = start === 0 || (readSync(fd, preceding, 0, 1, start - 1) === 1 && preceding[0] === 10);
-      const first = !boundary ? bytes.indexOf(10) : -1;
+      const first = !boundary && after === undefined ? bytes.indexOf(10) : -1;
       const offset = first >= 0 && first < n - 1 ? first + 1 : 0;
       const last = bytes.lastIndexOf(10);
       const limit = before !== null && end < st.size && last >= offset ? last + 1 : n;
       const text = bytes.subarray(offset, limit).toString('utf8');
       const lines = text.replace(/\n$/, '').split('\n').flatMap((line) => normalized ? normalize(line, expanded) : [safe(line)]);
-      if (!boundary && first < 0) lines.unshift('[record exceeds page: fragment; raw view available]');
+      if (!boundary && (after !== undefined || first < 0)) lines.unshift('[record exceeds page: fragment; raw view available]');
       const page = { key: path, start: start + offset, end: start + limit, size: st.size, lines, error: null };
       this.cache.set(key, page);
       while (this.cache.size > 8) this.cache.delete(this.cache.keys().next().value!);
