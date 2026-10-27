@@ -113,6 +113,15 @@ describe('the milestone node (src/walk/node.ts)', () => {
     assert.deepEqual(edges(plan), { planned: ['MS-1'] });
   });
 
+  test('node.cycles: repeated reads preserve the exact after-cycle and lineage-cycle errors', () => {
+    const after = planOf([{ id: 'a', after: ['b'] }, { id: 'b', after: ['a'] }], [MILESTONE('MS-1', ['a'])]);
+    const lineage = planOf([{ id: 'a', reenters: 'b' }, { id: 'b', reenters: 'a' }], [MILESTONE('MS-1', ['a'])]);
+    for (let i = 0; i < 2; i++) {
+      assert.throws(() => milestoneEdges(after), { message: "the plan's after edges have a cycle through a" });
+      assert.throws(() => milestoneEdges(lineage), { message: 'the lineage of a re-enters itself at a' });
+    }
+  });
+
   test('node.passes: the waits drop once milestone-passed is in the log; a plan without milestones has no edges', () => {
     const plan = planOf([{ id: 'a' }, { id: 'b', after: ['a'] }], [MILESTONE('MS-1', ['a'])]);
     assert.deepEqual([...milestoneWaits(viewOf({}), plan)], [['b', ['MS-1']]]);

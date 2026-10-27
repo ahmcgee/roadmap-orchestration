@@ -116,7 +116,7 @@ import { performance } from 'node:perf_hooks';
 import { COMMANDS_DIR, incomingPath, pendingCommandIds, readCommand, terminalReceipt } from './commands/queue.ts';
 import { type Sealing, sealingOf } from './commands/gc.ts';
 import {
-  type AmendmentSource, type Event, JUDGMENT_STAGES, type JudgmentStage, type Holder, OUTCOME_STAGES, type OperatorParkKind, type OutcomeStage, type PlanAppliedFact,
+  type AmendmentSource, type Event, type IntentOf, JUDGMENT_STAGES, type JudgmentStage, type Holder, OUTCOME_STAGES, type OperatorParkKind, type OutcomeStage, type PlanAppliedFact,
   type ProbeTarget, type RevisionPayload, type WalkOutcome, holderUnit, parentUnit, probeTargetKey,
 } from './core/events.ts';
 import { AlreadyExistsError, canonicalJson as fileJson, durableUnlink, exclusivePublish, readJson } from './core/fsx.ts';
@@ -918,13 +918,14 @@ function unitLine(x: Inputs, unit: PlanUnit, times: Readonly<{ starts: ReadonlyM
 }
 
 function edgesOf(view: JournalView, plan: PlanM1): readonly EdgeView[] {
+  const passed = new Set(view.walkFacts().flatMap(({ fact }) => fact.kind === 'milestone-passed' ? [fact.milestone] : []));
   return plan.units.flatMap((u) => [
     ...u.after.map((on): EdgeView => {
       const effective = effectiveDependency(view, on);
       return { type: 'after', unit: u.id, on, effective, met: view.unit(effective).status === 'retired' };
     }),
     ...u.contingent.map((e): EdgeView => ({ type: 'contingent', unit: u.id, edge: e.id, condition: e.condition, resolved: view.edgeResolved(e.id) !== null })),
-    ...(milestoneEdges(plan).get(u.id) ?? []).map((milestone): EdgeView => ({ type: 'milestone', unit: u.id, milestone, passed: milestonePassed(view, milestone) })),
+    ...(milestoneEdges(plan).get(u.id) ?? []).map((milestone): EdgeView => ({ type: 'milestone', unit: u.id, milestone, passed: passed.has(milestone) })),
   ]);
 }
 
@@ -1580,7 +1581,8 @@ export function stageTimings(events: readonly Event[], after = 0): readonly Stag
     const f = e.fact;
     const start = starts.get(`${f.unit}/${f.stage}#${f.attempt}`);
     if (start === undefined) continue;
-    by.set(f.stage, [...(by.get(f.stage) ?? []), Math.max(0, Date.parse(e.at) - Date.parse(start))]);
+    const durations = by.get(f.stage) ?? [];
+    durations.push(Math.max(0, Date.parse(e.at) - Date.parse(start))); by.set(f.stage, durations);
   }
   return OUTCOME_STAGES.flatMap((stage) => {
     const ms = [...(by.get(stage) ?? [])].sort((a, b) => a - b);
@@ -1747,6 +1749,24 @@ export function statusSingleFlight<T>(runDir: AbsPath, arc: ArcId, read: () => T
   }
 }
 
+/** These readers select only this unit's spawns. Forward every other journal query unchanged. */
+function unitSpawnReaders(view: JournalView): (unit: UnitId) => JournalView {
+  const byUnit = new Map<UnitId, IntentOf<'proc.spawn'>[]>();
+  for (const spawn of view.opsOf('proc.spawn')) {
+    const subject = spawn.expect.subject;
+    if (subject.purpose !== 'lane' && subject.purpose !== 'backend') continue;
+    const entries = byUnit.get(subject.unit) ?? [];
+    entries.push(spawn); byUnit.set(subject.unit, entries);
+  }
+  return (unit) => new Proxy(view, {
+    get(target, key) {
+      if (key === 'opsOf') return (kind: Parameters<JournalView['opsOf']>[0]) => kind === 'proc.spawn' ? byUnit.get(unit) ?? [] : target.opsOf(kind);
+      const value: unknown = Reflect.get(target, key);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
+
 export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: LogSnapshot): Status {
   const d = derive(runDir, arc, hostDir, snapshot);
   const { view, events, start, inForce } = d;
@@ -1783,11 +1803,15 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?:
   const corpus = revision?.corpus ?? null;
   const reader = on === null || start === null ? null : { journal: { view }, runDir, planFile: start.record.planFile, repo: on.repo };
   const admitted = on === null || corpus === null ? NO_ADMITS : admitViews(view, on.repo, on.plan, meter);
+  const unitReader = unitSpawnReaders(view);
 
   return {
     arc,
     run: { state: d.state, owner: d.owner, heartbeatAt: readIf(join(runDir, HEARTBEAT_FILE), heartbeat)?.at ?? null },
-    units: d.units.map((l) => ({ ...l, failures: laneFailures({ journal: { view }, runDir }, { id: l.unit }), gate: latestGateAnswer({ journal: { view }, runDir }, l.unit) })),
+    units: d.units.map((l) => {
+      const reader = { journal: { view: unitReader(l.unit) }, runDir };
+      return { ...l, failures: laneFailures(reader, { id: l.unit }), gate: latestGateAnswer(reader, l.unit) };
+    }),
     edges: d.plan === null ? [] : edgesOf(view, d.plan),
     runOnly: view.runOnly(),
     needsUser,

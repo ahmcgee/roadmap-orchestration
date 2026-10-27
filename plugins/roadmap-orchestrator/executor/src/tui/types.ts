@@ -1,3 +1,4 @@
+import type { Sha256Hex } from '../core/ids.ts';
 import type { ClaudeUsage } from './usage.ts';
 import type { Run } from '../cli/locate.ts';
 import type { Status } from '../status.ts';
@@ -7,6 +8,7 @@ import type { AbsPath } from '../core/values.ts';
 export type EntryKind = 'unit-status' | 'specification' | 'implementation-plan' | 'arc-plan' | 'intent' | 'vision' | 'vision-clause' | 'vision-question' | 'milestone' | 'milestone-status' | 'arc-slice' | 'debt-ledger' | 'debt-item' | 'document';
 export type Entry = { parentId?: string; kind?: EntryKind; description?: string; id: string; label: string; state: string; body: string; links: string[]; provenance: string };
 export type Invocation = Entry & {
+  launchSha256: Sha256Hex;
   assessment?: 'future-gap' | 'baseline-red' | 'mutation-caught' | 'mutation-survived' | 'mutation-inconclusive';
   relatedUnits?: string[]; context?: string;
   inputKind?: 'initial' | 'repair' | 'resume';
@@ -24,6 +26,8 @@ export type Display = {
 export type LogSource = 'transcript' | 'stdout' | 'stderr' | 'runner.log' | 'result' | 'prompt';
 export type LogRequest = { inv: string; source: LogSource; before: number | null; after?: number; expanded: boolean; raw?: boolean };
 export type LogPage = { key: string; start: number; end: number; size: number; lines: string[]; error: string | null };
-export type ObserveRequest = { locator: RunLocator; hostDir: AbsPath; pinned: Run | null; log: LogRequest | null; token: number };
-export type ObserveReply = { usage?: ClaudeUsage; token: number; display: Display | null; log: LogPage | null; error: string | null };
+export type ObserveRequest = { locator: RunLocator; hostDir: AbsPath; pinned: Run | null; token: number };
+export type ObserveReply = { usage?: ClaudeUsage; token: number; display: Display | null; error: string | null };
+export type LogReadRequest = { run: Run; selected: Invocation; log: LogRequest; token: number };
+export type LogReply = { token: number; log: LogPage; error: string | null };
 export const pretty = (value: unknown): string => JSON.stringify(value, null, 2) ?? String(value);

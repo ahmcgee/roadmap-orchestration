@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { appendFileSync, cpSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { open } from 'node:fs/promises';
+import { once } from 'node:events';
+import { Worker } from 'node:worker_threads';
 import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 import { ObserverJournal, readJournal, openJournal, LogCorruptError } from '../src/core/log.ts';
@@ -25,6 +28,7 @@ import { ViewerDiagnostics } from '../src/tui/diagnostics.ts';
 import { executionSummary } from '../src/tui/execution.ts';
 import { parseObligations, laneRevOf } from '../src/holistic/types.ts';
 import { Observer } from '../src/tui/observer.ts';
+import { LogReader } from '../src/tui/log-reader.ts';
 import { TranscriptReader, normalize, PAGE_BYTES, safe } from '../src/tui/transcript.ts';
 import { dependencyDrawing } from '../src/tui/graph-view.ts';
 import { estateOutline, estateRowLabel } from '../src/tui/estate-tree.ts';
@@ -42,7 +46,7 @@ import { debtKey } from '../src/debt/ledger.ts';
 import { mintDebt } from '../src/debt/mint.ts';
 import { renderDebt } from '../src/docs/debt.ts';
 import { setupCorpusArc } from './fixtures/corpus-unit.ts';
-import type { Display, Entry, Invocation, ObserveRequest } from '../src/tui/types.ts';
+import type { Display, Entry, Invocation, LogReadRequest, ObserveRequest } from '../src/tui/types.ts';
 import { contextFor, setupArc } from './fixtures/unit-common.ts';
 import { tmpDir, git } from './helpers/repo.ts';
 
@@ -50,7 +54,7 @@ function fixture() {
   const d = setupArc({ steps: [], units: [{ id: 'root' }, { id: 'left', after: ['root'] }, { id: 'right', after: ['root'] }, { id: 'join', after: ['left', 'right'] }] });
   const r = contextFor(d); r.journal.close();
   writeFileSync(join(d.runDir, 'start.json'), JSON.stringify({ v: 1, generation: 1, at: new Date().toISOString(), repo: d.repo, planFile: d.planPath, profile: 'default' }));
-  const request: ObserveRequest = { locator: { type: 'host' }, hostDir: absPath(d.hostDir), pinned: { runDir: absPath(d.runDir), arc: arcId(d.arc) }, log: null, token: 1 };
+  const request: ObserveRequest = { locator: { type: 'host' }, hostDir: absPath(d.hostDir), pinned: { runDir: absPath(d.runDir), arc: arcId(d.arc) }, token: 1 };
   return { d, request };
 }
 function contents(dir: string): Record<string, string> {
@@ -64,7 +68,7 @@ function contents(dir: string): Record<string, string> {
 function observed(): Display {
   const { request } = fixture(); const reply = new Observer().observe(request); assert.equal(reply.error, null); return reply.display!;
 }
-const entry = (id: string, body: unknown, state = 'active'): Entry => ({ id, label: id, state, body: JSON.stringify(body), provenance: 'test', links: [] });
+const entry = (id: string, body: unknown, state = 'active'): Entry & Pick<Invocation, 'launchSha256'> => ({ launchSha256: sha256('1'.repeat(64)), id, label: id, state, body: JSON.stringify(body), provenance: 'test', links: [] });
 
 test('tui parser preserves paired locator contract and rejects noninteractive use', () => {
   assert.deepEqual(parseCommand(['tui']), { command: 'tui', run: { type: 'host' } });
@@ -289,6 +293,45 @@ print('PTY PASS 120x35 / 80x24, q SIGTERM SIGINT, restored')
 });
 
 
+test('a log worker serves a page while the display worker is blocked reading an observation', async () => {
+  const { d, request } = fixture();
+  const journal = openJournal(absPath(d.runDir), arcId(d.arc));
+  const intent = journal.begin({ kind: 'proc.spawn', key: opKey('busy-display'), parent: { type: 'arc' }, deadlineAt: null,
+    body: () => ({ expect: { subject: { purpose: 'smoke', check: 'command', target: { type: 'command' } }, launchSha256: sha256('1'.repeat(64)) }, post: null }) });
+  journal.close();
+  const first = new Observer().observe(request); assert.equal(first.error, null);
+  const selected = first.display!.invocations.find((inv) => inv.id === intent.inv)!;
+  const dir = invocationDir(absPath(d.runDir), intent.inv); mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'stdout'), 'independent log page\n');
+  const startPath = join(d.runDir, 'start.json'); const start = readFileSync(startPath);
+  const display = new Worker(new URL('../src/tui/worker.ts', import.meta.url));
+  const logs = new Worker(new URL('../src/tui/log-worker.ts', import.meta.url));
+  let writer: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    rmSync(startPath); assert.equal(spawnSync('mkfifo', [startPath]).status, 0);
+    const order: string[] = [];
+    const observed = once(display, 'message').then(([reply]) => { order.push('display'); return reply; });
+    display.postMessage(request);
+    // Opening the FIFO's writer proves the display worker has opened its reader. Holding it open
+    // leaves that real filesystem read in flight until after the independent log reply arrives.
+    writer = await open(startPath, 'w');
+    const logged = once(logs, 'message').then(([reply]) => { order.push('log'); return reply; });
+    logs.postMessage({ run: first.display!.run, selected, log: { inv: selected.id, source: 'stdout', before: null, expanded: false }, token: 7 } satisfies LogReadRequest);
+    const reply = await logged;
+    assert.equal(reply.token, 7); assert.equal(reply.error, null);
+    assert.deepEqual(reply.log.lines, ['independent log page']); assert.deepEqual(order, ['log']);
+    // Future opens use the regular file again; finish the read already holding the FIFO descriptor.
+    rmSync(startPath); writeFileSync(startPath, start);
+    await writer.writeFile(start); await writer.close(); writer = undefined;
+    const publication = await observed; assert.equal(publication.error, null);
+    assert.deepEqual(order, ['log', 'display']);
+  } finally {
+    rmSync(startPath, { force: true }); writeFileSync(startPath, start);
+    if (writer) { await writer.writeFile(start); await writer.close(); }
+    await Promise.all([display.terminate(), logs.terminate()]);
+  }
+});
+
 test('all retained invocations, lost retries, command sources and invalid runner bindings remain observable', () => {
   const dir = absPath(tmpDir('tui-inv')); const arc = arcId('tui-inv'); const host = absPath(tmpDir('tui-host'));
   const journal = openJournal(dir, arc);
@@ -310,48 +353,54 @@ test('all retained invocations, lost retries, command sources and invalid runner
   const files = runnerFiles(invDir, current.inv);
   files.write('launch.json', launch);
   writeFileSync(join(invDir, 'stdout'), 'lane output\n'); writeFileSync(join(invDir, 'stderr'), 'stderr detail\n'); writeFileSync(join(invDir, 'runner.log'), 'runner detail\n');
-  const request: ObserveRequest = { locator: { type: 'host' }, hostDir: host, pinned: { runDir: dir, arc }, log: null, token: 1 };
+  const request: ObserveRequest = { locator: { type: 'host' }, hostDir: host, pinned: { runDir: dir, arc }, token: 1 };
   const observer = new Observer(); const first = observer.observe(request); assert.equal(first.error, null);
   assert.equal(first.display!.invocations.length, 26);
   assert.equal(first.display!.invocations.find((i) => i.id === current.inv)!.execution, 'command');
   assert.equal(first.display!.invocations.find((i) => i.id === current.inv)!.scope, 'arc');
   const ui = new ViewState(); ui.accept(first.display!); ui.pane = 1; ui.activityExpanded = true; ui.activityAll = true; assert.equal(ui.rows().length, 21);
   ui.key('', 'a', 10); assert.equal(ui.rows().length, 26);
+  const logs = new LogReader();
+  const readLog = (request: LogReadRequest) => logs.read(request);
+  const inputBase = { run: request.pinned!, selected: first.display!.invocations.find((i) => i.id === current.inv)!, token: 1 };
   for (const source of ['stdout', 'stderr', 'runner.log'] as const) {
-    const reply = observer.observe({ ...request, log: { inv: current.inv, source, before: null, expanded: false } });
+    const reply = readLog({ ...inputBase, log: { inv: current.inv, source, before: null, expanded: false } });
     assert.equal(reply.error, null); assert.match(reply.log!.lines.join(' '), /output|detail/);
   }
   const event = JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: 'first line\nsecond line\n', is_error: false }] } });
   writeFileSync(join(invDir, 'stdout'), event + '\n');
-  const readableOutput = observer.observe({ ...request, log: { inv: current.inv, source: 'stdout', before: null, expanded: true } });
+  const readableOutput = readLog({ ...inputBase, log: { inv: current.inv, source: 'stdout', before: null, expanded: true } });
   assert.equal(readableOutput.error, null);
   assert.match(readableOutput.log!.lines.join('\n'), /Tool result.*\n  first line\n  second line/);
   assert.doesNotMatch(readableOutput.log!.lines.join('\n'), /"tool_use_id"|\\n/);
-  const rawOutput = observer.observe({ ...request, log: { inv: current.inv, source: 'stdout', before: null, expanded: true, raw: true } });
+  const rawOutput = readLog({ ...inputBase, log: { inv: current.inv, source: 'stdout', before: null, expanded: true, raw: true } });
   assert.deepEqual(rawOutput.log!.lines, [event], 'raw stdout is preserved behind the explicit toggle');
-  const friendlyResult = observer.observe({ ...request, log: { inv: current.inv, source: 'result', before: null, expanded: false } });
+  const friendlyResult = readLog({ ...inputBase, log: { inv: current.inv, source: 'result', before: null, expanded: false } });
   assert.match(friendlyResult.log!.lines.join('\n'), /Outcome: unowned/);
   assert.match(friendlyResult.log!.lines.join('\n'), /Unavailable or pruned result/);
   assert.doesNotMatch(friendlyResult.log!.lines.join('\n'), /"invocation":/);
-  const rawResult = observer.observe({ ...request, log: { inv: current.inv, source: 'result', before: null, expanded: false, raw: true } });
+  const rawResult = readLog({ ...inputBase, log: { inv: current.inv, source: 'result', before: null, expanded: false, raw: true } });
   assert.match(rawResult.log!.lines.join('\n'), /"invocation":/);
   assert.equal(rawResult.error, null);
-  const inputRequest: ObserveRequest = { ...request, log: { inv: current.inv, source: 'prompt', before: PAGE_BYTES, after: 0, expanded: false } };
+  const inputRequest: LogReadRequest = { run: request.pinned!, selected: first.display!.invocations.find((i) => i.id === current.inv)!, token: 1, log: { inv: current.inv, source: 'prompt', before: PAGE_BYTES, after: 0, expanded: false } };
   const beforeInput = contents(dir);
-  const input = observer.observe(inputRequest); assert.equal(input.error, null);
+  const input = readLog(inputRequest); assert.equal(input.error, null);
   assert.equal(input.log!.start, 0); assert.match(input.log!.lines[0]!, /BEGIN RETAINED INPUT/);
   assert.ok(input.log!.end < input.log!.size, 'long prompts are paged from the beginning');
-  const endInput = observer.observe({ ...inputRequest, log: { inv: current.inv, source: 'prompt', before: null, expanded: false } });
+  const endInput = readLog({ ...inputRequest, log: { inv: current.inv, source: 'prompt', before: null, expanded: false } });
   assert.match(endInput.log!.lines.at(-1)!, /END RETAINED INPUT/);
   assert.deepEqual(contents(dir), beforeInput, 'opening and paging input writes nothing');
   writeFileSync(promptPath, 'tampered input');
-  assert.match(observer.observe(inputRequest).error!, /does not hash/);
+  const corruptInput = readLog(inputRequest); assert.match(corruptInput.error!, /does not hash/);
+  assert.match(corruptInput.log.error!, /does not hash/, 'a log error remains visible across successful display polls');
   rmSync(promptPath);
-  assert.match(observer.observe(inputRequest).log!.lines.join(' '), /unavailable or has been pruned/);
-  const absentInput = observer.observe({ ...inputRequest, log: { ...inputRequest.log!, inv: first.display!.invocations.at(-1)!.id } });
+  assert.match(readLog(inputRequest).log!.lines.join(' '), /unavailable or has been pruned/);
+  const absent = first.display!.invocations.at(-1)!;
+  const absentInput = readLog({ ...inputRequest, selected: absent, log: { ...inputRequest.log, inv: absent.id } });
   assert.match(absentInput.log!.lines.join(' '), /No retained agent input prompt/);
   const file = join(invDir, 'launch.json');
   writeFileSync(file, JSON.stringify({ ...launch, argv: ['changed'] })); assert.match(observer.observe(request).error!, /hash/);
+  assert.match(readLog(inputRequest).error!, /binding changed/);
   writeFileSync(file, JSON.stringify({ ...launch, arc: 'wrong' })); assert.match(observer.observe(request).error!, /arc|expected|op/);
   journal.close();
 });
@@ -946,7 +995,7 @@ test('Debt includes inherited dispositions and newly banked items before publica
   const r = contextFor(d);
   try {
     writeFileSync(join(d.runDir, 'start.json'), JSON.stringify({ v: 1, generation: 1, at: new Date().toISOString(), repo: d.repo, planFile: d.planPath, profile: 'default' }));
-    const request: ObserveRequest = { locator: { type: 'host' }, hostDir: absPath(d.hostDir), pinned: { runDir: r.ctx.runDir, arc: arcId(d.arc) }, log: null, token: 1 };
+    const request: ObserveRequest = { locator: { type: 'host' }, hostDir: absPath(d.hostDir), pinned: { runDir: r.ctx.runDir, arc: arcId(d.arc) }, token: 1 };
     const observer = new Observer(); const first = observer.observe(request); assert.equal(first.error, null);
     assert.equal(first.display!.estate.find((e) => e.id === 'debt')!.label, 'Debt (1 open)');
     const banked = mintDebt(baseline, [], { type: 'gate-note', unit: unitId('u1'), attempt: 1, index: 0, what: 'New maintenance drag' })!;

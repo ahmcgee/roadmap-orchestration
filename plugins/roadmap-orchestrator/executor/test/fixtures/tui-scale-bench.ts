@@ -5,6 +5,8 @@ import assert from 'node:assert/strict';
 import { readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
+import { once } from 'node:events';
+import { Worker } from 'node:worker_threads';
 import { arcId, invocationIdOf } from '../../src/core/ids.ts';
 import { openJournal, readJournal } from '../../src/core/log.ts';
 import { absPath } from '../../src/core/values.ts';
@@ -13,6 +15,7 @@ import { status } from '../../src/status.ts';
 import { connect, estate } from '../../src/tui/estate.ts';
 import { graph } from '../../src/tui/graph.ts';
 import { Observer } from '../../src/tui/observer.ts';
+import { LogReader } from '../../src/tui/log-reader.ts';
 import { ViewState } from '../../src/tui/state.ts';
 import type { LogRequest, ObserveReply, ObserveRequest } from '../../src/tui/types.ts';
 import { contentHeight } from '../../src/tui/view.ts';
@@ -25,7 +28,7 @@ const d = JSON.parse(readFileSync(join(base, 'demo.json'), 'utf8')) as ArcDescri
 const runDir = absPath(d.runDir);
 const arc = arcId(d.arc);
 const hostDir = absPath(d.hostDir);
-const request: ObserveRequest = { locator: { type: 'host' }, hostDir, pinned: { arc, runDir }, log: null, token: 1 };
+const request: ObserveRequest = { locator: { type: 'host' }, hostDir, pinned: { arc, runDir }, token: 1 };
 const columns = 200;
 const rows = 50;
 const h = contentHeight(rows);
@@ -73,8 +76,11 @@ const selected = phase('setup.select-large-log', () => display.invocations.filte
 assert.ok(selected, 'fixture needs at least one ended invocation');
 assert.ok(selected.bytes > 2 * 1024 * 1024, 'fixture needs an ended transcript of several MB');
 const logRequest: LogRequest = { inv: selected.inv, source: 'transcript', before: null, expanded: false };
+const logReader = new LogReader();
+const selectedRow = display.invocations.find((inv) => inv.id === selected.inv)!;
 const observeLog = (log: LogRequest) => {
-  const result = checked(observer.observe({ ...request, log }));
+  const result = logReader.read({ run: display.run, selected: selectedRow, log, token: 1 });
+  assert.equal(result.error, null);
   assert.ok(result.log); assert.equal(result.log.error, null);
   return result;
 };
@@ -103,6 +109,30 @@ assert.ok(olderReply.log!.start < page.start);
 // The same before/after window ViewState.move uses when paging forward from the older page.
 const newerRequest = { ...logRequest, after: olderReply.log!.end, before: Math.min(page.size, olderReply.log!.end + 64 * 1024) };
 const logNewer = measure('observer.log-newer', () => { observeLog(newerRequest); });
+// Measure the actual worker hop while a separate display observation is in flight.
+const logWorkerDuringObservation = await (async () => {
+  const displayWorker = new Worker(new URL('../../src/tui/worker.ts', import.meta.url), { stdout: true, stderr: true });
+  const logWorker = new Worker(new URL('../../src/tui/log-worker.ts', import.meta.url), { stdout: true, stderr: true });
+  for (const worker of [displayWorker, logWorker]) { worker.stdout.resume(); worker.stderr.resume(); }
+  const logMessage = { run: display.run, selected: selectedRow, log: logRequest, token: 1 };
+  const exchange = async (worker: Worker, message: unknown) => {
+    const received = once(worker, 'message'); worker.postMessage(message); return (await received)[0];
+  };
+  try {
+    const [firstDisplay, firstLog] = await Promise.all([exchange(displayWorker, request), exchange(logWorker, logMessage)]);
+    checked(firstDisplay); assert.equal(firstLog.error, null);
+    const samplesMs: number[] = []; const displaySamplesMs: number[] = []; const replyOrder: string[][] = [];
+    for (let i = 0; i < repeats; i++) {
+      const order: string[] = []; const started = performance.now();
+      const observing = exchange(displayWorker, request).then((reply) => { checked(reply); order.push('display'); displaySamplesMs.push(performance.now() - started); });
+      const logged = await exchange(logWorker, logMessage);
+      samplesMs.push(performance.now() - started); order.push('log');
+      assert.equal(logged.error, null); assert.deepEqual(logged.log.lines, page.lines);
+      await observing; replyOrder.push(order);
+    }
+    return { medianMs: median(samplesMs), samplesMs, displaySamplesMs, replyOrder };
+  } finally { await Promise.all([displayWorker.terminate(), logWorker.terminate()]); }
+})();
 const clone = measure('transfer.structured-clone', () => structuredClone(reply));
 const cloneWithLog = measure('transfer.structured-clone-with-log', () => structuredClone(logReply));
 let serialized = '';
@@ -153,7 +183,7 @@ const output = {
   fixture: base, node: process.version, at: new Date().toISOString(), units: display.status.units.length, invocations: display.invocations.length,
   events: reply.display.seq, repeats, coldRepeats: cold.length, viewport: { columns, rows, contentHeight: h },
   observer: { cold: { medianMs: median(cold), samplesMs: cold }, warm: { medianMs: median(warm), samplesMs: warm }, nextPoll,
-    largeLog: { inv: selected.inv, bytes: selected.bytes, first: logFirst, tail: logTail, olderFirst: logOlderFirst, older: logOlder, newer: logNewer } },
+    largeLog: { inv: selected.inv, bytes: selected.bytes, first: logFirst, tail: logTail, olderFirst: logOlderFirst, older: logOlder, newer: logNewer, workerDuringObservation: logWorkerDuringObservation } },
   transfer: { clone, cloneWithLog, stringify, ...sizes },
   ui: { accept, firstRender, repeatedRender, navigation, estateSwitch, estateRender, logOpen, logRepeat },
   isolated: { graph: isolatedGraph, expandedGraph: isolatedExpanded, estateIncludingConnect: isolatedEstate,

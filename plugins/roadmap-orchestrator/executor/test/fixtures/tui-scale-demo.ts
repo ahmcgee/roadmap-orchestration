@@ -205,7 +205,7 @@ try {
   for (let i = 0; i < runningCount; i++) spawn(mergedCount + i, true);
 } finally { r.journal.close(); }
 writeFileSync(join(d.runDir, 'start.json'), JSON.stringify({ v: 1, generation: 1, at: new Date().toISOString(), repo: d.repo, planFile: d.planPath, profile: 'default' }));
-const reply = new Observer().observe({ locator: { type: 'host' }, hostDir: absPath(d.hostDir), pinned: { arc, runDir }, log: null, token: 1 });
+const reply = new Observer().observe({ locator: { type: 'host' }, hostDir: absPath(d.hostDir), pinned: { arc, runDir }, token: 1 });
 assert.equal(reply.error, null);
 assert.equal(reply.display!.status.units.length, unitCount);
 assert.equal(reply.display!.invocations.length, invocationCount);
