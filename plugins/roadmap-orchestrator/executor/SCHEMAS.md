@@ -395,8 +395,8 @@ record's `issueCapture` and `intake`, a recorded checkpoint answer's `issueIntak
 needs-user item (readable and ackable, blocking per its reason, but it holds no admission). An amendment of `source:
 issue` and a finding of lens `issue` stay readable and settle as any other; neither is written any more.
 Legacy `manifest.phase0Issues` and `issues-captured.sha256` still name their kept `.issues.json` bytes in the snapshot
-closure (dev.22): verification and later publication preserve those bytes and their naming hashes, without using them
-for intake. The legacy fact reader validates that digest and preserves the other fields as written.
+closure (dev.22), as optional items (dev.24): a carried one hashes as named and later publication preserves it, and a ref
+without them (dev.21 published one so) still verifies. They are never used for intake. The legacy fact reader validates that digest and preserves the other fields as written.
 
 ## Owner rulings on model ids (DESIGN-1.0.md §4, Routing profiles)
 

@@ -11,7 +11,7 @@
 // | `inputs/<sha256>.<ext>`                | a `plan-applied` (plan, specs, ledger, obligations, vision, payload), |
 // |                                        | a `revision.commit` intent (payload), a kept payload (its manifest's |
 // |                                        | inputs, sidecars, renders; M4a: a corpus arc's pin, guide and       |
-// |                                        | Phase-0 record and legacy issues captures), a kept pin (each     |
+// |                                        | Phase-0 record and legacy issues captures, optional), a kept pin |
 // |                                        | pinned corpus file,                                              |
 // |                                        | `.corpus-file`), a `spec.patch` done, a `dispatch`,                 |
 // |                                        | `judgment-inputs` or `reopened` fact (spec), a `steered` fact (brief), |
@@ -154,6 +154,8 @@ type Source =
   | Readonly<{ type: 'log' }>
   | Readonly<{ type: 'fold' }>
   | Readonly<{ type: 'input'; sha256: Sha256Hex; ext: string }>
+  /** An earlier executor's issues capture (scaffolding, see `legacyIssues`): carried when kept, absent otherwise. */
+  | Readonly<{ type: 'legacy-issues'; sha256: Sha256Hex }>
   | Readonly<{ type: 'start' }>
   | Readonly<{ type: 'inv'; inv: InvocationId; file: 'result.json' | 'reads.json' }>
   /** A witness run keeps its record in its execution's dir (`witnessDir`): `<dir>/witness.json`. */
@@ -163,12 +165,14 @@ type Source =
   | Readonly<{ type: 'red'; path: RepoPath }>
   | Readonly<{ type: 'ack'; id: NeedsUserId }>;
 
+const ISSUES_INPUT = 'issues.json';
+
 type Item = Readonly<{
   path: RepoPath;
   namedBy: NamedBy;
   /** The sha256 the naming record states; null when it names the file without one. */
   sha256: Sha256Hex | null;
-  /** A backend call's reads.json (a Claude call writes one, a Codex call none) and a red lane's red.json. */
+  /** A backend call's reads.json (a Claude call writes one, a Codex call none), a red lane's red.json, and a legacy issues capture. */
   optional: boolean;
   source: Source;
   /** start.json only: the generation the naming `executor-started` fact records. */
@@ -188,6 +192,10 @@ function closureOf(events: readonly Event[], read: (sha: Sha256Hex, ext: string)
   };
   const input = (sha: Sha256Hex, ext: string, by: NamedBy): void =>
     add({ path: repoPath(`inputs/${sha}.${ext}`), namedBy: by, sha256: sha, source: { type: 'input', sha256: sha, ext } });
+  // Scaffolding until no arc started before 1.0.0-dev.21 is in flight: dev.21 left issues captures out of its snapshots
+  // and dev.22 put them back, so a ref dev.21 published lacks them. Nothing reads them; a carried one still hashes.
+  const legacyIssues = (sha: Sha256Hex, by: NamedBy): void =>
+    add({ path: repoPath(`inputs/${sha}.${ISSUES_INPUT}`), namedBy: by, sha256: sha, optional: true, source: { type: 'legacy-issues', sha256: sha } });
   const payload = (sha: Sha256Hex, by: NamedBy): void => {
     const path = repoPath(`inputs/${sha}.${REVISION_INPUT}`);
     if (items.has(path)) return;
@@ -202,11 +210,11 @@ function closureOf(events: readonly Event[], read: (sha: Sha256Hex, ext: string)
     if (m.obligations !== null) input(m.obligations, OBLIGATIONS_INPUT, from);
     if (m.vision !== null) input(m.vision, VISION_INPUT, from);
     // M4a: a corpus arc's pin and every corpus file it pins (named by the pin), guide and Phase-0 record (an earlier
-    // executor's `phase0Issues` capture remains part of its immutable closure even though issues are no longer used).
+    // executor's `phase0Issues` capture, optional: `legacyIssues`).
     if (m.corpus !== undefined) pin(m.corpus, from);
     if (m.corpusGuide !== undefined) input(m.corpusGuide, CORPUS_GUIDE_INPUT, from);
     if (m.phase0 !== undefined) input(m.phase0, PHASE0_INPUT, from);
-    if (m.phase0Issues !== undefined) input(m.phase0Issues, 'issues.json', from);
+    if (m.phase0Issues !== undefined) legacyIssues(m.phase0Issues, from);
     for (const r of p.publication?.renders ?? []) input(r.sha256, RENDER_INPUT, from);
   };
 
@@ -284,7 +292,7 @@ function closureOf(events: readonly Event[], read: (sha: Sha256Hex, ext: string)
         if (f.mutant !== null) input(f.mutant.patchSha256, MUTANT_PATCH_INPUT, by);
         break;
       case 'issues-captured':
-        input(f.sha256, 'issues.json', by);
+        legacyIssues(f.sha256, by);
         break;
       case 'pack-review-started':
         input(f.inputsSha256, PACK_REVIEW_INPUT, by);
@@ -428,6 +436,10 @@ export function collectSnapshot(request: SnapshotPublishRequest): Collected {
         return Buffer.from(fileJson(fold(arc, events)), 'utf8');
       case 'input':
         return mustRead(inputPath(runDir, source.sha256, source.ext), 'kept input');
+      case 'legacy-issues': {
+        const path = inputPath(runDir, source.sha256, ISSUES_INPUT);
+        return existsSync(path) ? readFileSync(path) : null;
+      }
       case 'start':
         return mustRead(startPath, 'start.json');
       case 'inv': {
