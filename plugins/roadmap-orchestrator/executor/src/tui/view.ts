@@ -176,6 +176,7 @@ export function renderView(ui: ViewState, columns: number, rows: number, ascii: 
   else if (ui.view === 1 && ui.activityExpanded) navigation = line(ink(' Activity expanded', 'accent', true), ink(`${dot}x restore${dot}g ${ui.activityAll ? 'map focus' : 'all activity'}${dot}a ${ui.allHistory ? 'recent only' : 'all history'}`, 'muted'));
   else if (ui.view === 1) navigation = line(ink(ui.pane === 0 ? s?.milestones.length ? ` Milestones: ${s.milestones.map((m) => `${m.id} ${milestonePhase(m)}`).join(' · ')} · m next milestone` : ' Milestones: not defined for this run' : ui.pane === 1 ? ' Activity · x expand · g ' + (ui.activityAll ? 'map focus' : 'all activity') : ` Exceptions: ${exceptionCount}${noteCount ? ` · ${noteCount} viewer note` : ''}`, 'muted'), ink(' · ←→ / Tab section', 'muted'));
   else navigation = line(ink(` Estate: ${ui.withdrawn ? 'all recorded entries' : 'active entries'}`, 'muted'), ink(` · w ${ui.withdrawn ? 'hide inactive' : 'include inactive'}`, 'accent'));
+  if (ui.jumpFeedback) navigation = line(ink(` ${ui.jumpFeedback}`, 'wait'));
   if (ui.searching || ui.query) navigation = line(ink(` / ${ui.query}${ui.searching ? '_  Enter find · Esc cancel' : '  ' + (ui.searchFeedback || 'n next · N previous') + ' · Esc clear'}`, 'wait'));
   if (ascii) navigation = navigation.map((part) => ({ ...part, text: part.text.replace(/←→/g, 'h/l').replace(/↑↓/g, 'j/k').replace(/·/g, '|') }));
 

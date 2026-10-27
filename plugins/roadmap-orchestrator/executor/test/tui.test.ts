@@ -728,11 +728,11 @@ test('scrolling reuses formatted pages and unchanged worker snapshots without re
   const lines = Array.from({ length: 500 }, (_, i) => `Report ${i}: ${'Long report detail with words to wrap. '.repeat(4)}`);
   const page = { key: 'result', start: 0, end: 0, size: 0, lines, error: null };
   ui.acceptLog(page, 18); ui.renderFrame(120, 35, false);
-  const frame = ui.logFrame(); const observation = ui.observationKey();
+  const frame = ui.logFrame(); const observation = ui.logKey();
   for (let i = 0; i < 30; i++) {
     ui.key('down', '', 18); ui.renderFrame(120, 35, false);
     assert.equal(ui.logFrame(), frame, 'scrolling does not rewrap the report');
-    assert.equal(ui.observationKey(), observation, 'scrolling needs no new file observation');
+    assert.equal(ui.logKey(), observation, 'scrolling needs no new file observation');
   }
   assert.equal(ui.offset, 30);
   ui.acceptLog({ ...page, lines: [...lines] }, 18);
@@ -740,16 +740,16 @@ test('scrolling reuses formatted pages and unchanged worker snapshots without re
   ui.query = 'Report 42:'; ui.jumpMatch(1, 18, true);
   assert.equal(ui.logFrame(), frame, 'search keeps the full cached page');
   assert.match(plain(frame[ui.offset]!), /Report 42:/);
-  assert.equal(ui.observationKey(), observation, 'filtering is local');
+  assert.equal(ui.logKey(), observation, 'filtering is local');
   ui.query = ''; ui.renderFrame(80, 24, true);
   const narrow = ui.logFrame(); assert.notEqual(narrow, frame); assert.equal(ui.logFrame(), narrow);
   const updated = [...lines]; updated[0] = 'changed result'; ui.acceptLog({ ...page, lines: updated }, 7);
   assert.notEqual(ui.logFrame(), narrow); assert.equal(ui.logLines()[0], 'changed result');
-  ui.key('', 'r', 7); assert.notEqual(ui.observationKey(), observation);
+  ui.key('', 'r', 7); assert.notEqual(ui.logKey(), observation);
   ui.logRequest = { inv: 'stream', source: 'stdout', before: 65536, after: 0, expanded: false };
   ui.acceptLog({ key: 'stream', start: 0, end: 65536, size: 131072, lines: ['last row'], error: null }, 7);
-  ui.offset = 0; const beforePage = ui.observationKey(); ui.key('down', '', 7);
-  assert.notEqual(ui.observationKey(), beforePage, 'crossing a page boundary still requests new content');
+  ui.offset = 0; const beforePage = ui.logKey(); ui.key('down', '', 7);
+  assert.notEqual(ui.logKey(), beforePage, 'crossing a page boundary still requests new content');
 });
 
 
@@ -1071,9 +1071,9 @@ test('search jumps without filtering, cycles and wraps, and preserves a paused t
   ui.acceptLog({ key: 'stream', start: 0, end: 100, size: 100, lines, error: null }, 7);
   ui.key('', '/', 7); ui.key('', 'needle', 7); ui.key('return', '', 7);
   assert.equal(ui.follow, false); assert.equal(ui.offset, 5); assert.equal(ui.logLines().length, 40);
-  const observation = ui.observationKey();
+  const observation = ui.logKey();
   ui.key('', 'n', 7); assert.equal(ui.offset, 25); ui.key('', 'n', 7); assert.equal(ui.offset, 5);
-  assert.equal(ui.observationKey(), observation); assert.match(ui.searchFeedback, /in page/);
+  assert.equal(ui.logKey(), observation); assert.match(ui.searchFeedback, /in page/);
   ui.key('escape', '', 7); assert.equal(ui.offset, 5); assert.ok(ui.logRequest);
   ui.key('', 'f', 7); assert.equal(ui.follow, true);
 });
@@ -1478,7 +1478,8 @@ test('r and R cycle running and preparing map units and open walks in both map m
   }
   const idle = { ...d, status: { ...d.status, units: d.status.units.map((u) => ({ ...u, state: 'waiting' })), milestones: [] } } as Display;
   const ui = new ViewState(); ui.accept(idle); const selected = ui.selection()!.id;
-  for (const key of ['r', 'R']) { ui.key('', key, 18); assert.equal(ui.selection()!.id, selected); assert.match(ui.render(120, 35, false).join('\n'), /No running items in dependency map/); }
+  for (const key of ['r', 'R']) { ui.key('', key, 18); assert.equal(ui.selection()!.id, selected); assert.match(ui.render(120, 35, false).join('\n'), /No running items in the dependency map/); }
+  ui.key('down', '', 18); assert.doesNotMatch(ui.render(120, 35, false).join('\n'), /No running items/, 'jump feedback lasts one key');
 });
 
 test('r and R cycle only unended Activity invocations, wrap, and report no running items', () => {

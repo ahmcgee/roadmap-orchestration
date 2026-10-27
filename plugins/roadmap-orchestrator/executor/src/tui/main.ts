@@ -39,7 +39,7 @@ export async function tui(locator: RunLocator, hostDir: AbsPath): Promise<void> 
   };
   const pinned = () => state.canFollowHost() ? null : state.display?.run ?? null;
   const currentLogKey = (): string => JSON.stringify(state.help || !state.logRequest || !state.display ? null : {
-    run: state.display.run, log: state.logRequest, follow: state.follow,
+    run: state.display.run, log: state.logKey(),
     // A result projection also depends on the selected row (settlement, model and assessment).
     selected: state.logRequest.source === 'result' ? state.display.invocations.find((i) => i.id === state.logRequest!.inv) : null,
   });
@@ -83,7 +83,8 @@ export async function tui(locator: RunLocator, hostDir: AbsPath): Promise<void> 
     if (message.error) state.error = message.error;
     if (message.log && state.logRequest) state.acceptLog(message.log, height());
     scheduleDraw();
-    if (state.follow && !state.help && state.logRequest) logNext = setTimeout(guarded(requestLog), Math.max(POLL_MS, POLL_DUTY * (performance.now() - logSentAt)));
+    // Paused pages poll too: their size counts new bytes.
+    if (!state.help && state.logRequest) logNext = setTimeout(guarded(requestLog), Math.max(POLL_MS, POLL_DUTY * (performance.now() - logSentAt)));
   });
   const keypress = guarded((text: string | undefined, key: Key): void => {
     if (key.ctrl && key.name === 'c') { finish(); return; }

@@ -116,6 +116,8 @@ export class ViewState {
   searching = false;
   query = '';
   searchFeedback = '';
+  /** Shown until the next key. */
+  jumpFeedback = '';
   #matchCursor: { key: string; position: number } | null = null;
   allHistory = false;
   withdrawn = false;
@@ -134,9 +136,8 @@ export class ViewState {
   #activityContext = '';
   #rowCache = new Map<number, { display: Display; key: string; rows: Entry[] }>();
 
-  observationKey(): string {
-    return JSON.stringify({ pinned: this.canFollowHost() ? null : this.display?.run ?? null, log: this.help ? null : this.logRequest });
-  }
+  /** What the log worker must read; local scrolling and search inside a loaded page leave it unchanged. */
+  logKey(): string { return JSON.stringify(this.help ? null : { log: this.logRequest, follow: this.follow }); }
   canFollowHost(): boolean { return this.view === 1 && this.detail === null && this.logRequest === null && !this.help && !this.activityExpanded; }
   accept(display: Display): void {
     if (this.display && this.display.run.runDir !== display.run.runDir) {
@@ -317,12 +318,11 @@ export class ViewState {
         : row.kind === 'milestone-status' && this.display!.status.milestones.find((m) => m.id === row.id)!.walks.some((walk) => walk.outcome === null);
       return active ? [i] : [];
     });
-    if (!running.length) { this.notice = `No running items in ${this.pane === 0 ? 'dependency map' : 'Activity'}`; return; }
+    if (!running.length) { this.jumpFeedback = `No running items in ${this.pane === 0 ? 'the dependency map' : 'Activity'}`; return; }
     const current = rows.findIndex((row) => row.id === selected?.id);
     const index = direction === 1 ? running.find((i) => i > current) ?? running[0]!
       : running.findLast((i) => i < current) ?? running.at(-1)!;
     this.selected.set(`1:${this.pane}`, rows[index]!.id);
-    this.notice = `Running: ${rows[index]!.id}`;
   }
   related() { return (this.detail ? related(this.detail, this.display) : []); }
   location(): Location {
@@ -366,6 +366,7 @@ export class ViewState {
     else this.enter(row);
   }
   key(name: string, text: string, height: number): boolean {
+    this.jumpFeedback = '';
     if (this.searching) {
       if (name === 'return' || name === 'escape') {
         this.searching = false;
