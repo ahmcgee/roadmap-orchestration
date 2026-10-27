@@ -14,7 +14,34 @@ the corpus, Phase 0, the plan, adjudicating what the executor hands you, and the
 - `executor/SCHEMAS.md` (from the plugin root) holds every input schema. `reference.md` names the section to read.
 - `RATIONALE-1.0.md` says why the design is what it is. You do not need it to operate.
 
-`roadmap` below means `<plugin root>/executor/bin/roadmap`.
+`roadmap` below means `<plugin root>/executor/bin/roadmap`. The container command installed below runs the same CLI
+for the developer; your own commands never depend on it.
+
+## Container command (each session)
+
+Early in a skill session, install or refresh the developer-facing launcher using the **currently loaded plugin
+root**. It is a convenience for the owner: a failed install is reported in the next check-in and never blocks
+or delays the arc. Do this during initial bootstrap and again on later sessions: plugin updates
+can move the cache directory, and a rebuilt container may have lost the launcher. This step is independent
+of whether the product repo already has its corpus and chain configuration.
+
+1. Run `node "<plugin root>/executor/bin/install-roadmap"` inside the executor's container. It installs
+   `/usr/local/bin/roadmap`, using the current Node executable and this plugin's CLI entry point. It is
+   idempotent and refreshes only its own managed launcher; it refuses unrelated files or symlinks.
+2. If that directory requires container administrator rights, use
+   `sudo -n "$(command -v node)" "<plugin root>/executor/bin/install-roadmap"`. This is environment setup;
+   it does not start, resume or stop an arc. Do not use a different plugin version found by scanning the cache.
+3. If administrator rights are unavailable, use `--bin-dir` with a writable directory on PATH. A user-local
+   fallback is `$HOME/.local/bin`; add it to the product's devcontainer PATH configuration if needed, so new
+   developer terminals inherit it. Until that is verified, provide the actual launcher path instead of claiming
+   the short command works. The installer reports missing PATH entries and shadowing commands.
+4. Verify `command -v roadmap` and `roadmap --version` against this plugin's own CLI. Refresh the shell's
+   command cache if necessary. Never replace another tool named `roadmap`; report the conflict and use an
+   explicit launcher path or another directory. Keep the plugin installed: the launcher delegates to its code.
+
+The developer runs the TUI in a **separate interactive terminal in this same container**. You continue to
+supervise with `watch --actionable`; never start an interactive TUI in place of your watch or require the
+owner to leave one open.
 
 ## The loop
 
@@ -231,6 +258,10 @@ Keep the arc's inputs in their own directory outside the product working tree, f
 14. **Check.** `roadmap phase0 check --repo <repo> --plan <inputs>/plan.json` until it exits 0. Fix inputs, never
     the rows. Its `sliceCandidates` lists the world clauses whose rules are not all held yet.
 15. **Start.** `roadmap start --repo <repo> --plan <inputs>/plan.json`.
+    Once startup reports ready, include a copyable `roadmap tui --repo <repo> --arc <arc>` command in the
+    next owner-facing update, with the actual absolute repo path and arc id, shell-quoted. Say to open it in
+    another terminal in this container. Also explain that `roadmap tui` follows the host across chained arcs,
+    while the explicit command stays pinned. Closing the viewer leaves execution running.
 
 **Pack review.** A corpus arc's first job reviews the whole pack before anything is admitted; admission waits for
 it (`status.holds` has `pack-review`). Notes go to the brief. A blocking finding raises a `pack-review` item. Fix
@@ -448,8 +479,9 @@ At arc completion (`status.run.state` `complete`, `completion.active`):
 2. `roadmap chain status --repo <repo>` and read `nextStart`, the executor's own answer for the next start. Never
    work it out from `k` and `unackedStarts`. `allowed`: you continue. `limit`: stop with reason `k-limit`; this
    check-in is the final one. `k-unset`: ask K ("Bootstrap" step 3); on resume, write it in the between-arc commit.
-3. Check in ("Check-ins"), ending with the next action, or with the stop. Everything below runs after you are
-   resumed.
+3. Check in ("Check-ins"), ending with the next action, or with the stop. Include the completed arc's pinned
+   `roadmap tui --repo <repo> --arc <arc>` command for reviewing its retained activity and estate after
+   completion or after another arc starts. Everything below runs after you are resumed.
 4. **Read what waits** for the next arc: `<repo>/../roadmap-inputs/_next/` (`vision.md`, `notes.md`) beside
    `status.amendments`, the `finding-deferred` debt and the chain's open questions.
 5. **The vision.** When `_next/vision.md` differs from the confirmed vision document, run the `vision` skill's

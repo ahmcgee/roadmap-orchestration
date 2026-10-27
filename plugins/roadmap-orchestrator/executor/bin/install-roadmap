@@ -1,0 +1,7 @@
+#!/usr/bin/env node
+// Bootstrap entry point; kept separate from commands that observe or control an arc.
+import('../src/cli/install.ts').then(({ installCli }) => installCli(process.argv.slice(2))).catch((error) => {
+  const permissions = ['EACCES', 'EPERM'].includes(error.code);
+  process.stderr.write(`roadmap installer: ${error.message}${permissions ? '\nUse container administrator rights, or --bin-dir with a writable directory on PATH.' : ''}\n`);
+  process.exitCode = 1;
+});

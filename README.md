@@ -6,7 +6,7 @@ converges the codebase on the documented target state, unattended, for a week or
 
 ## Status
 
-**1.0 is in prerelease on `main`** (`1.0.0-dev.19`), and it is what the marketplace installs. Milestones M1 to M4b
+**1.0 is in prerelease on `main`** (`1.0.0-dev.23`), and it is what the marketplace installs. Milestones M1 to M4b
 and the dev.13 milestone walkthroughs have landed. dev.17 made plan-check a design pass, put lanes on cadences
 selected by a systems map, made the gate block only on named defects, and added propagation and deflake units,
 costed environments and per-unit fault isolation. The last 0.x release is at tag `v0.20.0`.
@@ -42,6 +42,14 @@ Then, in the repo you want to build in, run:
 The first run bootstraps the repo and distils the vision with you (it runs the `vision` skill itself). Run
 `/roadmap-orchestrator:vision` on its own later, between arcs, to recalibrate the vision.
 
+The skill installs a managed `/usr/local/bin/roadmap` launcher inside the executor container and refreshes
+it on each skill session. Developers can then use `roadmap tui` in another terminal. After startup and at
+completion, the skill supplies a command pinned to that arc for inspection. The launcher points to the
+installed plugin and the current Node executable; no global npm package or copied executor is required.
+For manual setup, run `node "<plugin root>/executor/bin/install-roadmap"` (with container administrator
+rights if needed), or pass `--bin-dir <directory>` for a writable PATH directory. Unrelated commands are
+never overwritten. Keep the plugin installed; refresh the launcher after updates or container rebuilds.
+
 For local testing before pushing: `/plugin marketplace add ./path/to/this/repo`.
 
 ## How an arc runs
@@ -57,7 +65,7 @@ judgment is needed. Builds run on an efficient model (Sonnet 5.5 under the `clau
 advisor; Opus judges plan-check and the gate at every risk tier.
 
 **1. Bootstrap, once per repo.** You write the target state: detailed documents of what the product must become,
-the corpus. Then you run `/roadmap-orchestrator:orchestrate`. The architect writes the corpus guide, then runs the `vision` skill: it distils your vision in dialogue, one question at a time,
+the corpus. Then you run `/roadmap-orchestrator:orchestrate`. It installs or refreshes the container’s `roadmap` command on PATH. The architect writes the corpus guide, then runs the `vision` skill: it distils your vision in dialogue, one question at a time,
 and plays back the decisions it would make on your behalf. You confirm it explicitly, set K (how many arcs may run
 past your last acknowledged check-in) and pick the first slice of the vision to build. The architect compiles
 `.roadmap/vision.json` and commits `.roadmap/`. It offers a boot hook that brings a dead arc back after a host
@@ -134,6 +142,60 @@ bounded by `walkRounds`; every walk follows merged code. Polish the walker propo
 shows it better. Each settled milestone promotes the demo automatically: the supervisor brings the new version up
 on stable ports beside the old one and switches over once it is ready. `roadmap status` gives the address, and
 `roadmap demo hold|release|down|up` are your controls.
+
+For a human view inside the executor environment, run `roadmap tui`. A single navigation row contains
+`1` Dependency map, `2` Activity, `3` Estate and `4` Exceptions; Tab or Left/Right moves between them.
+The map and compact Activity remain side by side (stacked at 80 columns). Highlighting a map node brings
+its related activity first, marked `*` in cyan; other activity stays visible with muted labels. `x` expands
+or restores Activity, `g` toggles map context/all activity, and `a` reveals all retained history. Rows distinguish
+Agent, Command and Queued work; Arc-wide labels explain work outside individual units. Supporting status
+and output are indented beneath their own activity row. Enter opens logs or the selected item's details.
+Agent rows identify the recorded model and explicitly label adapters. The header counts active agents and
+commands, including arc-wide jobs, and explains when execution is waiting. Confirmed baseline checks
+of future requirements say `pre-delivery`; they and successful mutation detections are distinguished from faults; Result retains
+the original command outcome. Earlier audit checks of still-future requirements say `pre-delivery`,
+which describes the check's timing, even after the arc completes. Witness checks link to units through the recorded obligations.
+Milestone labels show membership, progress and checkpoint state; `m` moves between milestones. Milestones
+stay visible when settled, and collapsed history respects milestone boundaries. Walkthroughs and bring-up
+commands name their recorded milestone. Graph connectors remain neutral; completed groups and successfully
+settled milestones use the same green check as merged units. A due walkthrough says “walkthrough pending”;
+waiting units name their outstanding gate or dependency. The bold amber “Executor stopped” banner and STOPPED badge mean work cannot advance.
+Compatibility diagnostics are informational viewer notes under `4 Exceptions & notes`, with a plain-language
+explanation and technical details. They never replace the run status or increase exception/fault counts.
+Explicit unit replacements show “Replaces” / “Replaced by”, separately from dependency paths. Both versions
+stay visible when history collapses; selecting either highlights their combined activity, with each row
+retaining its actual unit. Related documents links between versions. Redirected prerequisites name both
+the declared unit and its replacement. The selection preview shows the retained specification revision;
+revising a specification in place does not create another node.
+
+For a persistent scripted replacement example (real stages and Git, no model calls), run
+`node test/fixtures/tui-lineage-demo.ts` from `plugins/roadmap-orchestrator/executor/`, then run the printed
+`tui` launcher. This stages a superseded unit, its merged replacement, a downstream dependency and a
+milestone that follows the replacement. It is a stopped snapshot with retained activity, not a live executor.
+
+Estate leads with Vision, Arc scope (the selected vision clauses), the execution plan and recorded intent, then sorts documents
+alphabetically. Collections (vision clauses/questions, constraints/rulings, obligations, corpus rules and
+debt) show counts and start collapsed. Space expands/collapses a selected collection; Enter opens its
+document or a child entry. Numbered entries sort naturally (V-2 before V-10). `/` and `n` search hidden
+entries too and expand the parents of a matched entry. `w` controls inactive entries; collection counts
+reflect that setting. Cross-links remain available independently of the hierarchy. Absent vision and slice records explicitly say
+“Not recorded for this run”; recorded intent remains separate. Debt includes inherited items, recorded
+Phase-0 dispositions and newly banked items, plus the published debt document at the captured integration
+commit. Individual debt items link to recorded units and rulings; `w` reveals promoted/resolved debt and
+other inactive entries. Missing debt records are distinguished from an empty recorded ledger.
+
+`/` finds without hiding content: Enter jumps to a match, `n` advances, and `N` goes back, wrapping at either
+end. Activity searches all retained invocations; transcripts search the loaded page, with Page Up/Down
+available for older/newer pages. Esc clears the search without moving your position, then returns to the
+previous location. `?` explains the available controls. Unit details link specifications, implementation
+plans, planning inputs and results. Readable structured records, Markdown and prompt sections are the
+default; `r` toggles raw data, and `b` opens the original input from a repair turn when retained.
+
+The viewer refreshes automatically and makes no runtime writes. `roadmap tui --repo <path> --arc <id>` pins
+a retained run. Revision hashes and captured commits identify the documents shown; unapplied edits are
+excluded. The header shows the signed-in Claude account's five-hour and weekly usage, reset countdowns
+and freshness, using a read-only request every five minutes with cached fallback. Closing the viewer
+leaves the executor running.
 
 The architect waits on `roadmap watch --actionable`, which wakes it only on key events (a new needs-user item, a
 merge, a park, the run held, blocked or draining, the run ending, your answer) and a 30-minute heartbeat. It never

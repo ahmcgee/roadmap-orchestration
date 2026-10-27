@@ -267,7 +267,7 @@ export function conversionsOf(view: JournalView, job: JobId): readonly Conversio
  * A corpus arc's debt ledger now (DESIGN §2.9): the ledger published at its baseline, each open item's Phase-0
  * disposition in force appended to its history, and the items this arc banked; null for an `architecture-doc` arc.
  */
-export function arcDebtLedger(ctx: Reader): DebtLedger | null {
+export function arcDebtLedger(ctx: Pick<Reader, 'journal' | 'runDir' | 'repo'>): DebtLedger | null {
   const view = ctx.journal.view;
   const inForce = requirePlanInForce(ctx.runDir, view);
   const corpus = revisionInForce(ctx.runDir, inForce).corpus;

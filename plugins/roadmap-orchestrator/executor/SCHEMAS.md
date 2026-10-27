@@ -5035,3 +5035,170 @@ The required upgrade regression also exposed an existing historical-spend gap af
 `xhigh` to `high`: `summitXhighTriple` (`src/core/upgrade.ts`) derives the older hashes for the current and adopted
 builtin seat tables, aliased by `ResolvedRouting.earlierBuiltinRevs` to current bindings. Explicit repo class rebinds
 keep their effort, current routing is unchanged, and no record is rewritten.
+
+
+## Container command installation (1.0.0-dev.22)
+
+`executor/bin/install-roadmap [--bin-dir <directory>]` is a standalone environment bootstrap command,
+not an arc command. The default directory is `/usr/local/bin`. It writes an executable shell launcher
+marked as managed by roadmap-orchestrator, pinning the installer's Node executable and plugin CLI path.
+The launcher `exec`s the CLI, preserving arguments, cwd, environment and terminal signals. Installation
+is idempotent, updates only a managed regular file, refuses unrelated destinations (including symlinks),
+and reports PATH visibility/shadowing. New installs use exclusive creation; updates replace the managed
+file atomically. It neither creates runtime records nor changes executor scheduling or ownership.
+Run it from the currently loaded plugin at each skill session and after container rebuilds. Keep the source
+plugin and Node installation available. The skill hands developers pinned TUI commands after startup and
+completion; the architect's actionable watch remains unchanged.
+
+## Read-only terminal observation (1.0.0-dev.22)
+
+`roadmap tui [--repo <path> --arc <arc>]` adds no persisted schema, command, lock or executor fact.
+Its display model is transient: arc/run identity, observation time and journal high-water, canonical status,
+invocations, exceptions and estate entries. Each estate entry carries its revision and content hash or the
+integration commit captured from the journal (baseline before publication). Unapplied working-tree edits
+are excluded. Structured references supply navigable links; no nested-agent relationship is inferred.
+Estate leads with Vision and Arc scope (selected vision clauses) before the execution plan. Vision comes from the retained revision’s
+vision input; Arc scope (internal `arc-slice`) projects `plan.holistic.advances` from the applied plan and carries that plan’s hash.
+It links to the recorded clause entries, vision, plan and Phase-0 decisions when present. Missing vision
+or slice configuration produces an inspectable “Not recorded for this run” entry, with absence tied to the
+displayed revision. Recorded arc intent remains separate. Missing required retained bytes still fail observation
+validation; they are not misrepresented as an arc that never recorded a vision.
+
+`status(runDir, arc, hostDir, snapshot?)` accepts an already validated `LogSnapshot`; existing callers and
+JSON keys are unchanged. `ObserverJournal` uses the existing complete-line parser, hash-chain verifier and
+fold invariants. It advances from its byte cursor, ignores an incomplete terminal record, rebuilds after
+replacement or truncation, and refuses complete-record corruption without repairing anything. Its view
+belongs to the worker and is valid until the next read. The worker publishes derived display data, never
+its mutable journal fold. Observation errors preserve the previous display with a stale timestamp.
+
+The terminal owns one worker request at a time and polls at most every second, backing off so observation takes at most a fifth of the time. Ordinary scrolling and searching
+are local; only a change of run, source, raw/expanded mode or byte page requests an immediate observation.
+The displayed log page keeps one bounded formatted layout, reused across keys and unchanged worker
+publications; source content, width and rendering mode invalidate the projection, while searches reuse it. Runner metadata uses the existing
+schema and invocation-binding validators; scheduler/owner/heartbeat state uses canonical status derivation.
+Quiet-output age is informational; fault labels come from recorded outcomes.
+The display keeps process outcomes distinct from check verdicts. A failed baseline command is displayed as
+`pre-delivery` only for active future obligations in its launch-time revision, with matching lane revision,
+a certified series and hash-validated witness evidence showing those requirements not held.
+Other job checks (including audits) of still-future, unlatched requirements use `pre-delivery`: a historical
+assessment at that check, not a statement about current delivery. Candidate checks and requirements that
+already had to hold retain their failure status. Evidence is bound to the recorded invocation, lane revision
+and checked commit; later delivery does not relabel historical checks as successes. Missing,
+malformed or corrupt evidence never establishes this classification. Mutation smoke uses the recorded
+`smoke-ran` lane verdict: caught mutations are `probe passed`, surviving ones `probe failed`, inconclusive
+ones remain explicit. These projections do not alter runtime outcomes; readable Result shows both.
+Active counts include all running invocations, including arc-wide jobs. Executor liveness is separate;
+when idle, the header explains blocking owner requests, holds or absent ownership.
+Model annotations use explicit launch flags and recorded stream init metadata, never current routing.
+Only explicit adapter metadata can identify a different execution backend/model; requested models remain
+inspectable. Init reads are bounded to 64 KiB and cached across append-only log growth. Logs use 64 KiB pages with
+at most eight decoded pages and eight raw blocks cached, fetching older pages on demand. Missing or pruned
+logs remain explicit. Raw output is sanitized before terminal rendering; unknown stream events remain
+inspectable. Structured transcript events, results and estate JSON use deterministic labelled projections
+with intent, decisions and criteria before metadata. The readable Result omits bulky launch arguments
+and runner metadata, which remain available in its raw view. Unknown fields remain inspectable; `r` toggles the
+raw record without changing retained data or provenance. `NO_COLOR` and `ROADMAP_TUI_ASCII=1` affect only this viewer process. No mouse capture, model
+calls, external editor, executor lifecycle operation or persisted preference is introduced.
+
+Estate's Debt projection uses the canonical `arcDebtLedger` for corpus runs: baseline committed debt plus
+applied Phase-0 dispositions and journal banking. Banking invalidates the Estate cache before publication.
+Individual items retain status/history and link to recorded units/rulings; promoted/resolved items are hidden
+by default and revealed with `w`. The published debt document is read separately at the snapshot's integration
+commit. Non-corpus runs can expose a structured ledger from that document; no recorded ledger is distinct
+from a recorded empty ledger. Working-tree edits are never included.
+
+The dependency map uses stable prerequisite-first ordering and connected downward tracks with aligned
+unit labels. Each open track has one named destination; duplicate destinations join at that node. Crossings
+are distinct from joins. Condition and milestone edges use distinct arrows. Connector segments always
+use the neutral border colour; only node symbols carry status colour. Collapsed groups made entirely of
+merged/passed nodes retain a green completion check, as do milestones that are both passed and settled.
+Other settled history stays muted; a passing gate alone does not mark an active walkthrough complete. Scrolling follows the selected
+node; the preview names offscreen prerequisites, and clipped tracks are counted explicitly. No nesting
+implies containment and edge records do not create extra keyboard stops. Compact Activity names the selected
+map node and prioritizes all its retained invocations, including those outside the latest 20 completions.
+Linked rows carry `*` and cyan labels; unrelated rows keep status colours with muted labels. Matching uses
+unit identity, collapsed members, milestone member units and recorded walkthrough jobs, or the unit gated
+by a contingent condition. Arc witness commands additionally link through the obligations recorded before
+launch and the exact lane revision; mutation smoke links through its recorded unit. It does not infer
+relationships from log text or include adjacent graph units.
+Units carry their milestone memberships, including overlapping memberships and replacement-unit lineage.
+Canonical `lineage.reenters` / `supersededBy` produce explicit Replaces / Replaced by annotations, retained
+through collapsed history. They order versions chronologically without creating prerequisite edges.
+A declared `after.on` different from `after.effective` is shown as a redirected prerequisite. Unit selection
+includes the explicit lineage's retained invocations; labels retain the actual unit. Related documents
+links previous/replacement unit status, including their specifications and planning artifacts. The selected
+unit's `Spec rN` comes from the content-addressed specification revision, never an invocation attempt.
+No replacement is inferred from names, paths or specification revision numbers.
+Milestone nodes show member progress and canonical checkpoint state, and remain visible after a passing
+gate or settlement. Canonical `walking` with no open recorded walk is presented as “walkthrough pending”
+with a waiting marker; an open walk keeps its walking state. `waitingFor` supplies explicit unresolved
+constraints beside units and in their preview/detail. A `no-owner` run with no active invocations is
+presented with a bold amber STOPPED badge and stop marker, plus a bold amber notice that work will not advance. Canonical status JSON is unchanged. Worker stdout/stderr is buffered by stream, bounded and deduplicated
+in viewer memory, and inspected under Exceptions & notes. Known upgrade-default messages explain older
+record compatibility; other diagnostics retain their original text without assuming they are harmless.
+Informational notes neither replace the run banner nor count as exceptions or faults; observation failures
+remain separately visible as stale/error state.
+History collapses only within the same milestone membership; `m` cycles checkpoints.
+Walkthrough invocation ownership comes from `walk-started{job,milestone}` and bring-up ownership from
+the spawn subject. Their list, selection and transcript headings say `Milestone <id>` instead of Arc-wide;
+the original executor scheduling scope remains inspectable.
+Changing the map selection resets the related Activity cursor; polling and pane switches preserve it.
+A single navigation row contains `1` Dependency map, `2` Activity, `3` Estate and `4` Exceptions. Activity is one browser with a compact pane and an
+expanded table (`x`), sharing selection, search, scope and history controls. `g` clears/restores map context;
+all-activity mode lists running invocations before recent completions. `a` reveals all retained history.
+Section searches are independent; Activity search never changes the selected map node.
+`/` jumps to matches without removing rows or lines; `n` and `N` cycle forward/backward with wraparound.
+Activity search includes all retained invocations. Transcript search is limited to its decoded page and is
+labelled accordingly; paging loads more content. A successful log search suspends follow. Esc returns from
+logs to the same browser, and restores the split from expanded Activity after clearing any active search.
+Rows label Agent, Command or Queued activity. Execution type comes from the validated launch terminal or
+recorded result, never a guessed role name. Missing type information is labelled Run. Expanded Activity
+retains the displayed arc until returning to the split. Recorded arc-backend subjects and arc parents
+without unit ownership carry an Arc-wide label in both Activity layouts and log headings. This does not
+infer membership in a selected unit group. Collapsed merged-unit groups use “completed units”; groups
+including cut/superseded units use “settled units”, and mixed node types use “settled items”. Compact rows omit bare attempt numbers; the
+expanded table and selection preview label execution attempts explicitly. Unit stage attempts advance
+across stage starts, not only retries, and multiple invocations can share an attempt. They are not unique
+invocation identifiers. No recorded invocation or command is mutated.
+
+Estate display entries carry optional viewer-only `parentId` metadata for explicit record containment and
+named document collections. Vision clauses/questions, rulings, obligations, corpus rules, debt, milestone
+journeys and unit plans/witnesses are children of their respective collections. Membership is independent
+of the many-to-many Related documents links. Context documents lead (vision, slice, plan, intent); remaining
+roots sort alphabetically, with natural numeric ordering of children. Groups start collapsed; Space toggles
+the selected parent, Enter opens its document. Search traverses the full active outline and expands the
+ancestors of a matched child; inactive visibility still follows `w`. Expansion and stable selection survive
+refreshes and detail/back navigation, and reset on arc handover. Full-document rendering caches one layout
+so scrolling large collections does not repeatedly decode their content. No runtime/schema records change.
+
+Navigation keeps transient location history (tab, selection, scroll and search), with visible pane/source tabs
+and contextual action hints. Unit status links to its retained specification, settled `spec.design`, applied
+arc plan, recorded direction/vision, and latest recorded plan-check input/result and build transcript. These
+are labelled separately; the original owner planning conversation is not reconstructed. The Input source
+verifies the invocation launch hash and resolves its content-addressed `inputs/<sha256>.prompt.txt` in the
+displayed run, verifying the content hash before paging. A bounded verification cache avoids rehashing
+unchanged prompts on each poll. It never follows the launch’s arbitrary absolute stdin path. Input and Result
+open at the beginning; missing/pruned artifacts stay explicit. The recorded launch session mode distinguishes
+initial, resumed and judgment-repair turns. Original-input links require the same retained unit, role and
+session identity; no relationship is inferred from prompt wording. Prompt envelopes become labelled sections,
+with Markdown/JSON content rendered readably and unknown markup retained. Stdout is decoded by default;
+`r` explicitly selects raw output or exact prompt text. These display entries add no runtime schema.
+
+
+The TUI's Claude account usage is a separate transient observation, never an arc fact. It reads
+`CLAUDE_CONFIG_DIR` (default `~/.claude`) credentials and the account-matched `cachedUsageUtilization`
+from Claude's config (`$CLAUDE_CONFIG_DIR/.claude.json`, or `~/.claude.json` without the override).
+`CLAUDE_CODE_OAUTH_TOKEN`, when supplied, takes precedence and disables cache reuse across identities.
+The worker makes one background `GET https://api.anthropic.com/api/oauth/usage` at a time, at most once
+per five minutes, with a five-second timeout and redirects refused. HTTP 429 backs off at least fifteen
+minutes and honours longer `Retry-After` values. API percentages use 0–100; this is not the 0–1 scale
+of stream rate-limit events. The viewer neither refreshes tokens nor changes Claude configuration.
+It retains good values on service failure, labels observations older than ten minutes stale, and refuses
+to display expired windows as current usage. Account changes clear the previous values. Only percentages,
+reset timestamps, freshness, source and fixed diagnostics leave the worker; tokens and response error
+bodies never enter the display. This is current account usage, including on a pinned historical arc.
+
+Markdown estate details render an inert terminal subset: headings, emphasis, inline code, links with
+visible destinations, lists/tasks, quotes, fenced/indented code, rules and tables. Narrow tables switch
+to labelled records. Links/images are not fetched, and code is never executed. Raw mode preserves the
+source. Structured JSON projections, recorded references and commit/hash provenance remain unchanged.
