@@ -23,26 +23,28 @@ Activity accepts unit:value role:value status:value and plain text
 Page Up/Down: page  Home/End: beginning/end  f: follow transcript
 s: next log source (Messages / Output / Stderr / Runner / Result / Input)
 m: readable Messages from a raw log  b: original input from a resumed session
+r / R: next / previous running item on map or Activity (wraps)
 r: toggle readable / raw detail or transcript
  e: expand result previews  a: all retained invocations / latest 20 completions
- c: expand/collapse settled graph  w: include withdrawn/superseded/exempt estate
+ c: toggle open work / full map  w: include withdrawn/superseded/exempt estate
 q or Ctrl-C: exit viewer  ?: close help
 Colours repeat symbols: activity ●, wait ◇, fault !, completion ✓, history ○.
 Quiet output is information, not a stall diagnosis. Mouse capture is off.
 Paused logs count new bytes; Page Up loads older pages on demand.
 Dependency map: follow paths downward from prerequisites to their dependents.
 m on the map: next milestone. Unit labels show milestone membership.
-Milestone checkpoints stay visible when completed branches collapse.
+Open milestone checkpoints stay visible; settled nodes are hidden until c shows the full map.
 Walkthrough pending means due, not running. Waiting for names outstanding constraints.
 The amber STOPPED badge and bold banner mean execution must resume for work to advance.
 4 Exceptions also contains informational viewer notes; they do not count as faults.
 Open a note for a plain-language explanation and its technical details.
 Replaces / Replaced by: explicit version history, separate from prerequisite paths.
-Both versions stay visible; select either to highlight the lineage's activity.
+Visible versions retain lineage notes; c reveals settled versions. Select a version to highlight its lineage's activity.
 Enter then Related documents opens the previous or replacement version.
 Spec rN in the preview is an input revision of the same unit, not another graph node.
 Paths branch and join; ╳ is a crossing, not a join. The preview names prerequisites.
-Activity follows the highlighted map node: * marks linked invocations, shown first.
+Activity shows running invocations first (linked first), then linked history, other history and queued commands.
+* marks invocations linked to the highlighted map node.
 Other activity stays visible with muted labels. Tab opens Activity; Enter opens logs.
 x: expand/restore Activity, keeping selection and search. Esc also restores the split.
 g: toggle map-related / all activity. a: toggle recent / all retained history.
@@ -51,8 +53,7 @@ Run: execution type unavailable in retained artifacts.
 Milestone labels identify recorded walkthrough and bring-up ownership.
 Arc-wide: work whose recorded scope is the arc, without a specific milestone.
 Graph connectors are neutral. Green checks mark completion, cyan marks selection/activity;
-grey circles mark other settled history. Collapsed completed units retain their green check.
-Completed-unit groups link their members; they do not select the whole arc.
+grey circles mark other settled history on the full map. Hidden settled prerequisites are satisfied.
 Pre-delivery: an earlier baseline/audit/job checked future requirements before delivery.
 This is historical context, not an executor fault or the current requirement state.
 Probe passed: recorded mutation verdict confirms tests detected deliberately broken code.
@@ -131,6 +132,7 @@ export class ViewState {
   #detailLayout: { body: string; width: number; ascii: boolean; raw: boolean; rows: Line[] } | null = null;
   #pageMove: 'older' | 'newer' | 'home' | null = null;
   #activityContext = '';
+  #rowCache = new Map<number, { display: Display; key: string; rows: Entry[] }>();
 
   observationKey(): string {
     return JSON.stringify({ pinned: this.canFollowHost() ? null : this.display?.run ?? null, log: this.help ? null : this.logRequest });
@@ -249,18 +251,24 @@ export class ViewState {
     const observationErrors: Entry[] = this.error ? [{ id: 'observation-error', label: 'Observation error (display is stale)', state: 'failed', body: this.error, links: [], provenance: `last valid ${d?.at ?? 'unavailable'}` }] : [];
     if (this.view === 1 && pane === 2) return [...(d?.exceptions ?? []), ...observationErrors, ...this.diagnostics.entries()];
     if (!d) return [];
+    const context = this.view === 1 && pane === 1 ? this.activityContext() : null;
+    const key = `${this.view}:${this.expandedGraph}:${this.allHistory}:${this.withdrawn}:${this.activityAll}:${context?.id}:${this.view === 2 ? [...this.expandedEstate].join(',') : ''}`;
+    const cached = this.#rowCache.get(pane);
+    if (cached?.display === d && cached.key === key) return cached.rows;
     let rows: Entry[];
     if (this.view === 2) rows = this.estateRows();
     else if (pane === 1) {
       const running = d.invocations.filter((i) => i.endedAt === null);
       const history = d.invocations.filter((i) => i.endedAt !== null);
-      const context = this.view === 1 ? this.activityContext() : null;
       const recent = new Set(history.slice(0, 20).map((i) => i.id));
-      rows = [...groupInvocations(running), ...groupInvocations(this.allHistory ? history : history.filter((i) => recent.has(i.id) || context?.invocations.has(i.id)))];
-      if (context) rows = [...rows.filter((e) => context.invocations.has(e.id)), ...rows.filter((e) => !context.invocations.has(e.id))];
+      const prioritize = (items: Invocation[]) => context
+        ? [...groupInvocations(items.filter((i) => context.invocations.has(i.id))), ...groupInvocations(items.filter((i) => !context.invocations.has(i.id)))]
+        : groupInvocations(items);
+      rows = [...prioritize(running), ...prioritize(this.allHistory ? history : history.filter((i) => recent.has(i.id) || context?.invocations.has(i.id)))];
       if (this.view === 1) rows.push(...d.status.commands.pending.map((c) => ({ id: `command:${c.id}`, label: `Command ${c.id}`, state: 'waiting', body: pretty(c), links: [], provenance: 'command queue' })));
     } else if (pane === 2) rows = d.exceptions;
     else rows = graph(d, this.expandedGraph);
+    this.#rowCache.set(pane, { display: d, key, rows });
     return rows;
   }
   selection(pane = this.pane): Entry | null {
@@ -301,6 +309,21 @@ export class ViewState {
       if (next) this.selected.set(`${this.view}:${this.pane}`, next.id);
     }
   }
+  jumpRunning(direction: 1 | -1): void {
+    const selected = this.selection(); const rows = this.rows();
+    const running = rows.flatMap((row, i) => {
+      const active = this.pane === 1 ? 'endedAt' in row && (row as Invocation).endedAt === null
+        : row.kind === 'unit-status' ? ['running', 'preparing'].includes(row.state)
+        : row.kind === 'milestone-status' && this.display!.status.milestones.find((m) => m.id === row.id)!.walks.some((walk) => walk.outcome === null);
+      return active ? [i] : [];
+    });
+    if (!running.length) { this.notice = `No running items in ${this.pane === 0 ? 'dependency map' : 'Activity'}`; return; }
+    const current = rows.findIndex((row) => row.id === selected?.id);
+    const index = direction === 1 ? running.find((i) => i > current) ?? running[0]!
+      : running.findLast((i) => i < current) ?? running.at(-1)!;
+    this.selected.set(`1:${this.pane}`, rows[index]!.id);
+    this.notice = `Running: ${rows[index]!.id}`;
+  }
   related() { return (this.detail ? related(this.detail, this.display) : []); }
   location(): Location {
     return { detail: this.detail, logRequest: this.logRequest ? { ...this.logRequest } : null, log: this.log, pane: this.pane,
@@ -339,7 +362,6 @@ export class ViewState {
     }
     if (this.detail || this.logRequest) return;
     const row = this.selection(); if (!row) return;
-    if (row.id.startsWith('history:')) { this.expandedGraph = true; this.selected.set(`${this.view}:${this.pane}`, (row as GraphRow).members[0]!); return; }
     if (this.display?.invocations.some((i) => i.id === row.id)) this.enterLog(row.id, 'transcript');
     else this.enter(row);
   }
@@ -400,6 +422,9 @@ export class ViewState {
       if (this.detail) this.setPane((this.pane + 1) % 2);
       else this.selectSection((this.section() + (name === 'backtab' ? 3 : 1)) % 4);
       return false;
+    }
+    if ((text === 'r' || text === 'R') && !this.detail && !this.logRequest && this.view === 1 && this.pane < 2) {
+      this.jumpRunning(text === 'r' ? 1 : -1); return false;
     }
     if (text === 'r' && !this.help) {
       if (this.detail && this.pane === 0) { this.rawDetail = !this.rawDetail; this.offset = 0; }

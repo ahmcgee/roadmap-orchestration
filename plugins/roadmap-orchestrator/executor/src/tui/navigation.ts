@@ -63,7 +63,7 @@ export function hints(ui: ViewState): Hint[] {
   if (ui.detail) return [['←→/Tab', 'tab'], ['↑↓', ui.pane ? 'select' : 'scroll'], ...(ui.pane ? (ui.related().length ? [['Enter', 'open'] as const] : []) : [['r', ui.rawDetail ? 'readable' : 'raw'] as const]), ['/', 'find'], ['Esc', ui.query ? 'clear search' : 'back'], ...tail];
   const selected = ui.selection();
   if (ui.view === 2 && asEstateRow(selected)?.childCount) return [['Space', asEstateRow(selected)!.expanded ? 'collapse' : 'expand'], ['Enter', 'document'], ['↑↓', 'select'], ['/', 'find all'], ...tail];
-  const open = selected?.id.startsWith('history:') ? 'expand' : ui.display?.invocations.some((inv) => inv.id === selected?.id) ? 'transcript' : ui.view === 1 && ui.pane === 0 ? 'status' : 'open';
-  if (ui.view === 1 && ui.pane === 1) return [['x', ui.activityExpanded ? 'restore' : 'expand'], ['g', ui.activityAll ? 'map focus' : 'all activity'], ['↑↓', 'select'], ['Enter', 'open'], ['/', 'find'], ...tail];
-  return [['←→/Tab', 'section'] as const, ...(ui.view === 1 && ui.pane === 0 && ui.display?.status.milestones.length ? [['m', 'milestone'] as const] : []), ['↑↓', 'select'], ...(selected ? [['Enter', open] as const] : []), ['/', 'find'], ...tail];
+  const open = ui.display?.invocations.some((inv) => inv.id === selected?.id) ? 'transcript' : ui.view === 1 && ui.pane === 0 ? 'status' : 'open';
+  if (ui.view === 1 && ui.pane === 1) return [['x', ui.activityExpanded ? 'restore' : 'expand'], ['g', ui.activityAll ? 'map focus' : 'all activity'], ['↑↓', 'select'], ['r/R', 'running'], ['Enter', 'open'], ['/', 'find'], ...tail];
+  return [['←→/Tab', 'section'] as const, ...(ui.view === 1 && ui.pane === 0 ? [['r/R', 'running'] as const, ['c', ui.expandedGraph ? 'open work' : 'full map'] as const] : []), ...(ui.view === 1 && ui.pane === 0 && ui.display?.status.milestones.length ? [['m', 'milestone'] as const] : []), ['↑↓', 'select'], ...(selected ? [['Enter', open] as const] : []), ['/', 'find'], ...tail];
 }
