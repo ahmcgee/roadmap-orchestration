@@ -510,9 +510,11 @@ with a merge commit, then exactly one line: `ROADMAP-SESSION: stopped <reason>`,
 
 A file the build regenerates from others (a bundle, generated types, a lockfile) belongs to every unit that edits its
 sources. Declare it in the plan: `derived: [{sources: [<patterns>], outputs: [<patterns>]}]`. A unit whose scope
-covers a source takes the outputs into its effective scope (its dispatch record's `derived`, shown in `status`), so
-salvage keeps a regenerated output and the candidate allows it. Phase 0 refuses an output that may reach the corpus,
-and one inside the scope of a unit that covers none of its sources (`plan-defect`).
+covers a source takes the outputs into its effective scope (its dispatch record's `derived`, shown in `status`). Any
+other unit whose scope reaches an output has it excluded (`excluded`): salvage reverts its edits there, so a broad scope
+such as `apps/web/**` needs no carving around the output. A unit that needs the output grows its scope by a source;
+growth by the output alone is refused. Phase 0 refuses an output that may reach the corpus. A revision is refused only
+for plan defects it adds; ones already in force show as advisories on the receipt.
 
 Declare the generator too whenever the repo has one: `regenerate: {argv, cwd, env}` on the entry (the shape of a
 resource probe: no shell, `cwd` relative to the repo root, `env: {set, pass}`; pass `PATH` when argv[0] is a bare name).

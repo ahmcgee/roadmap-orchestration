@@ -34,10 +34,11 @@ import type { Fact, StageOutcomeFact } from '../src/core/events.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import { arcId, unitId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
-import { absPath } from '../src/core/values.ts';
+import { absPath, repoPattern } from '../src/core/values.ts';
 import { loadUnitSpec } from '../src/pipeline/stages.ts';
 import { type Gate, consume, runUnit } from '../src/pipeline/unit.ts';
 import { recover } from '../src/recover/recover.ts';
+import { designUnscoped } from '../src/pipeline/design.ts';
 import { splitCutReason } from '../src/input/classify.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
@@ -428,4 +429,17 @@ describe(`matrix row ${POC_STAGE}`, () => {
       }
     });
   }
+});
+
+
+// Derived exclusion (2026-10-27; 1.0.0-dev.26): a broad design keeps the envelope's holes; a named output needs growth.
+test('design.derived-exclusion: broad change patterns inherit exclusions, explicit generated paths stay outside', () => {
+  const scope = { include: [repoPattern('apps/web/**')], exclude: [repoPattern('apps/web/test/fixtures/core-routes.json')] };
+  const paths = [repoPattern('apps/web/**'), repoPattern('apps/web/test/fixtures/core-routes.json'), repoPattern('apps/core/src/routes.ts')];
+  assert.deepEqual(designUnscoped([{ system: null, paths, lines: 10 }], scope), ['apps/core/src/routes.ts', 'apps/web/test/fixtures/core-routes.json']);
+  assert.deepEqual(designUnscoped([{ system: null, paths, lines: 10 }], { ...scope, exclude: [repoPattern('apps/web/test/fixtures')] }), ['apps/core/src/routes.ts', 'apps/web/test/fixtures/core-routes.json'], 'a proposed pattern under a directory exclusion stays outside');
+  const subtree = [{ system: null, paths: [repoPattern('apps/web/test/fixtures/**')], lines: 10 }];
+  assert.deepEqual(designUnscoped(subtree, scope), [], 'a broader proposed pattern retains the individual output hole');
+  assert.deepEqual(designUnscoped(subtree, { ...scope, exclude: [repoPattern('apps/web/test/fixtures/')] }), ['apps/web/test/fixtures/**'], 'a pattern beneath a directory output stays excluded');
+  assert.deepEqual(designUnscoped([{ system: null, paths, lines: 10 }], { ...scope, exclude: [repoPattern('apps/web/test/fixtures/**')] }), ['apps/core/src/routes.ts', 'apps/web/test/fixtures/core-routes.json'], 'an output glob excludes a proposed file pattern');
 });

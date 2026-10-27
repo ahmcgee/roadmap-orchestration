@@ -149,7 +149,7 @@ export type SplitVerdict = Readonly<{ kind: 'faults'; faults: DesignFaults }> | 
 export function judgeSplit(ctx: StageContext, unit: PlanUnit, parent: SpecM1, split: SplitDecision, tip: Sha): SplitVerdict {
   const scope = effectiveScope(dispatchOf(ctx.journal.view, unit.id));
   const designs = new Map<UnitId, DesignRecord>();
-  const faults = splitFaults(ctx, parent, scope, split, tip, (c, d) => {
+  const faults = splitFaults(ctx, parent, scope.include, split, tip, (c, d) => {
     designs.set(c.unit, d);
     return childSpec(parent, c, d, skeletonForces(ctx, split, d));
   });

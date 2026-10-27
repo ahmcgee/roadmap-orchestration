@@ -474,7 +474,7 @@ function diffProductOnly(run: Run): Verdict {
   // other path is under the transient rules, bounded by the union of the units' scopes.
   const published = (p: string): boolean => p.startsWith('.roadmap/') && (ROADMAP_DIR_ALLOWED as readonly string[]).includes(p.split('/')[1]!);
   const violations = transientViolations(
-    { evidenceGlobs: specs.flatMap(laneEvidenceGlobs), scope: specs.flatMap((s) => s.scope) },
+    { evidenceGlobs: specs.flatMap(laneEvidenceGlobs), scope: { include: specs.flatMap((s) => s.scope), exclude: [] }},
     paths.filter((p) => !published(p)),
   );
   return { pass: violations.length === 0, detail: violations.length > 0 ? violations.map((v) => `${v.path} (${v.rule})`).join(', ') : `${paths.length} product paths: ${paths.join(', ')}` };

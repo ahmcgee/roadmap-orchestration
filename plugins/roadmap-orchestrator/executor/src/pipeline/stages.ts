@@ -76,7 +76,7 @@
 // Plan defects (2026-10-16): a lanes attempt whose unit's last two salvages both reverted the same out-of-scope path holds
 // `scope-growth` before anything runs (`repeatedReverts`), the hold a plan-check's proposal raises, with those paths as
 // the one proposal: the builder keeps needing a path its scope lacks, so the root agent decides instead of another fix
-// round. Every bound of what a unit may change reads its dispatch record's `effectiveScope` (scope + derived outputs).
+// round. Every bound of what a unit may change reads its dispatch record's `effectiveScope` (include: scope + derived; exclude: excluded).
 //
 // Every unit's plan-check is one fresh call (dev.17 removed `planCheck.shape: by-builder`, M4a rev 3's in-session
 // assessment and acceptance shape; a plan in force carrying the field reads as uniform, warned). Every build
@@ -100,7 +100,7 @@ import {
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import {
-  type ApprovalFingerprint, type JudgmentSession, type LaneDef, type SpecM1, type SpecPatchOp, type NeedsUserContent, STDERR_FILE, STDOUT_FILE, effectiveScope, specForces,
+  type ApprovalFingerprint, type JudgmentSession, type LaneDef, type SpecM1, type SpecPatchOp, type NeedsUserContent, STDERR_FILE, STDOUT_FILE, effectiveScope, inScope, type EffectiveScope, specForces,
   specRemoves, specRepairs,
 } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
@@ -111,8 +111,8 @@ import { FILES_DIR, capturedEvidence } from '../git/evidence.ts';
 import { GitError, type Identity, git, gitRun, refTarget, revParse } from '../git/git.ts';
 import { mergeHead, resolvedHead } from '../git/mergein.ts';
 import { SalvageStateError, SalvageUnmergedError, checkRejected, planSalvage, type SalvageRules } from '../git/salvage.ts';
-import { unitRegenerateLanes } from '../input/derived.ts';
-import { withinEnvelope } from '../input/envelope.ts';
+import { derivedGrowthReason, unitRegenerateLanes } from '../input/derived.ts';
+import { patternInScope } from '../input/envelope.ts';
 import { type CorpusFileSet, referenceFiles, sameRepoCorpusSet, scopeOverlapsCorpus, scopeReferences } from '../phase0/rows.ts';
 import { diffBase, transientCheck, unitDiffPaths, unitTransientRules } from '../git/transient.ts';
 import {
@@ -173,7 +173,6 @@ import { pressureCause, seriesRuling } from './starved.ts';
 import { checksApply, publishWitnessLaneFiles, requiredAt, witnessPresence } from './witnesscheck.ts';
 import {
   type DecidedRound, type PreparedRound, type RoundCall, type RoundInput, callRound, decidedRound, laneFixRound, prepareRound, resolveContinuation,
-  resumed,
 } from './rounds.ts';
 import { type BuildRound, type Next, type StageOutcome, outcomeFact, transition } from './transitions.ts';
 import { verificationReasons, verifyRunsOf } from './deflake.ts';
@@ -835,7 +834,7 @@ export function judgedAnswer<T>(called: BackendCallOutcome, validate: (value: un
  * The scope growth an answer proposes: its own proposals, and (dev.17) its design records' change paths outside the unit's
  * effective scope, as one proposal (verified like any other: src/pipeline/design.ts `designUnscoped`).
  */
-function growthAnswers(out: PlanCheckOutput, scope: readonly RepoPattern[]): PlanCheckOutput['scopeGrowth'] {
+function growthAnswers(out: PlanCheckOutput, scope: EffectiveScope): PlanCheckOutput['scopeGrowth'] {
   const designs = out.decision === 'split' ? out.split.children.map((c) => c.design) : [designOfAnswer(out)].flatMap((d) => (d === null ? [] : [d]));
   const unscoped = designUnscoped(designs.flatMap((d) => d.changes), scope);
   return unscoped.length === 0 ? out.scopeGrowth : [...out.scopeGrowth, { patterns: unscoped, reason: 'the design record changes it' }];
@@ -1136,8 +1135,8 @@ function pinnedPatch(ctx: StageContext, spec: SpecM1, patch: SpecPatch, captured
  * What a plan-check reads for its proposals: Phase-0 row 10's scan of the spec's `removes` at the tip it checks (outside the
  * envelope `scope` and the spec's own scope), and the proposals the root agent rejected for the unit.
  */
-function planCheckScopeGrowth(ctx: StageContext, unit: UnitId, scope: readonly RepoPattern[], spec: SpecM1, tip: Sha): PlanCheckScopeGrowth {
-  const references = scopeReferences(ctx.repo, tip, unit, [...scope, ...spec.scope], specRemoves(spec)).map((r) => ({ removed: r.removed, referrers: r.referrers }));
+function planCheckScopeGrowth(ctx: StageContext, unit: UnitId, scope: EffectiveScope, spec: SpecM1, tip: Sha): PlanCheckScopeGrowth {
+  const references = scopeReferences(ctx.repo, tip, unit, { include: [...scope.include, ...spec.scope], exclude: scope.exclude }, specRemoves(spec)).map((r) => ({ removed: r.removed, referrers: r.referrers }));
   const rejected = ctx.journal.view.unit(unit).scopeDecisions.filter((d) => d.decision === 'rejected')
     .flatMap((d) => d.proposals.map((p) => ({ patterns: p.patterns, reason: p.reason, rejection: d.reason })));
   return { references, rejected };
@@ -1152,9 +1151,10 @@ export type VerifiedGrowth = Readonly<{ proposals: readonly ScopeGrowthProposal[
  * re-entry rule), matching a file at the tip the plan-check read, covered by no lane's `evidenceGlobs` entry
  * (`evidenceScopeConflicts`, the classifier's), in a same-repo corpus arc clear of the corpus file set
  * (`scopeOverlapsCorpus`, the Phase-0 row's), and never one the root agent rejected for the unit. A proposal keeps the
- * patterns that pass; one left with none is dropped. (`scope accept` then runs the whole classifier on the revision.)
+ * patterns that pass; one left with none is dropped. Derived outputs must be writable after the verified growth covers
+ * their sources. (`scope accept` checks this too, then runs the whole classifier on the revision.)
  */
-function verifiedGrowth(ctx: StageContext, unit: PlanUnit, spec: SpecM1, scope: readonly RepoPattern[], tip: Sha, answers: PlanCheckOutput['scopeGrowth']): VerifiedGrowth {
+function verifiedGrowth(ctx: StageContext, unit: PlanUnit, spec: SpecM1, scope: EffectiveScope, tip: Sha, answers: PlanCheckOutput['scopeGrowth']): VerifiedGrowth {
   if (answers.length === 0) return { proposals: [], dropped: [] };
   const files = git(ctx.repo, ['ls-tree', '-r', '-z', '--name-only', tip]).split('\0').filter((f) => f !== '').map((f) => repoPath(f));
   const rejected = new Set(ctx.journal.view.unit(unit.id).scopeDecisions.filter((d) => d.decision === 'rejected').flatMap((d) => d.proposals.flatMap((p) => p.patterns)));
@@ -1169,20 +1169,29 @@ function verifiedGrowth(ctx: StageContext, unit: PlanUnit, spec: SpecM1, scope: 
       throw error;
     }
     if (p === '.roadmap' || p.startsWith('.roadmap/')) return 'under .roadmap/, which no unit owns';
-    if (withinEnvelope(p, scope)) return 'already inside the scope envelope';
+    if (patternInScope(scope, p)) return 'already inside the scope envelope';
     if (rejected.has(p)) return 'the root agent rejected it for this unit';
     if (!files.some((f) => matchesPattern(f, p))) return `matches no file at the integration tip ${tip}`;
     if (evidenceScopeConflicts(unit.id, [p], spec).length > 0) return 'a lane\'s evidenceGlobs entry covers it, so its content could never be committed';
     if (corpus !== null && scopeOverlapsCorpus(corpus, p)) return 'it may overlap the corpus file set';
     return null;
   };
-  const proposals = answers.flatMap((a) => {
+  const candidates = answers.flatMap((a) => {
     const kept = [...new Set(a.patterns.filter((raw) => {
       const reason = why(raw);
       if (reason !== null) dropped.push(`\`${raw}\`: ${reason}`);
       return reason === null;
     }) as RepoPattern[])].sort();
     return kept.length === 0 ? [] : [{ patterns: kept, reason: a.reason }];
+  });
+  const grownScope = [...unit.scope, ...candidates.flatMap((a) => a.patterns)];
+  const proposals = candidates.flatMap((a) => {
+    const patterns = a.patterns.filter((p) => {
+      const reason = derivedGrowthReason(ctx.plan(), grownScope, p);
+      if (reason !== null) dropped.push(`\`${p}\`: ${reason}`);
+      return reason === null;
+    });
+    return patterns.length === 0 ? [] : [{ ...a, patterns }];
   });
   return { proposals, dropped };
 }
@@ -1226,9 +1235,9 @@ export function salvageRejections(ctx: Readonly<{ journal: Readonly<{ view: Jour
 }
 
 /**
- * Plan defects (2026-10-16): the paths both of the unit's last two salvages reverted as out of scope that could land as
- * scope growth (still outside the effective scope, never rejected by the root agent for the unit, covered by no lane's
- * `evidenceGlobs`, clear of a same-repo corpus), as one proposal with its blocking item; null when there are none.
+ * Plan defects (2026-10-16): the paths both of the unit's last two salvages reverted as out of scope (still outside the
+ * effective scope, never rejected by the root agent, covered by no lane's `evidenceGlobs`, clear of a same-repo corpus),
+ * as one proposal with its blocking item; null when there are none. Excluded outputs name the sources to grow (dev.26).
  */
 function repeatedReverts(ctx: StageContext, unit: PlanUnit, spec: SpecM1): Readonly<{ proposal: ScopeGrowthProposal; needsUser: NeedsUserContent }> | null {
   const salvages = salvageRejections(ctx, unit.id);
@@ -1239,7 +1248,13 @@ function repeatedReverts(ctx: StageContext, unit: PlanUnit, spec: SpecM1): Reado
   const paths = stillOutside(ctx, unit.id, latest.paths).filter((p) => previous.paths.includes(p) && !rejected.has(p)
     && evidenceScopeConflicts(unit.id, [repoPattern(p)], spec).length === 0 && (corpus === null || !scopeOverlapsCorpus(corpus, repoPattern(p))));
   if (paths.length === 0) return null;
-  const reason = `salvage reverted the unit's edits to ${paths.join(', ')} on its last two build rounds (outside its scope)`;
+  const derived = paths.flatMap((p) => {
+    const pattern = repoPattern(p);
+    const reason = derivedGrowthReason(ctx.plan(), [...unit.scope, pattern], pattern);
+    return reason === null ? [] : [`${p}: ${reason}`];
+  });
+  const reason = `salvage reverted the unit's edits to ${paths.join(', ')} on its last two build rounds (outside its scope)`
+    + (derived.length === 0 ? '' : `; ${derived.join('; ')}`);
   const { path } = loadUnitSpec(ctx, unit);
   return {
     proposal: { patterns: paths.map((p) => repoPattern(p)), reason },
@@ -1248,7 +1263,9 @@ function repeatedReverts(ctx: StageContext, unit: PlanUnit, spec: SpecM1): Reado
       subject: { type: 'unit', unit: unit.id },
       reason: 'scope-growth',
       summary: `Unit ${unit.id}: ${reason}, so its build needs ${paths.length === 1 ? 'that path' : 'those paths'} (spec ${path} at rev ${spec.rev}; the reverted versions are kept under ${latest.dir}/files).`,
-      recommendation: `\`roadmap scope accept ${unit.id} --reason <text>\` lands the growth as one ruled revision and re-opens the unit at plan-check on it (its builder is told to restore the reverted versions); `
+      recommendation: (derived.length === 0
+        ? `\`roadmap scope accept ${unit.id} --reason <text>\` lands the growth as one ruled revision and re-opens the unit at plan-check on it (its builder is told to restore the reverted versions); `
+        : 'Apply a ruled scope revision covering the named sources; accepting growth of the outputs alone is refused. ')
         + `\`roadmap scope reject ${unit.id} --reason <text>\` keeps the scope: the lanes run, and the build is told again that the paths are outside it.`,
       options: [],
       evidence: [latest.dir],
@@ -1259,13 +1276,13 @@ function repeatedReverts(ctx: StageContext, unit: PlanUnit, spec: SpecM1): Reado
 /** The paths of `paths` now inside the unit's effective scope (a scope accept took them in since), ascending. */
 export const nowInside = (ctx: StageContext, unit: UnitId, paths: readonly RepoPath[]): readonly RepoPath[] => {
   const scope = effectiveScope(dispatchOf(ctx.journal.view, unit));
-  return [...new Set(paths.filter((p) => scope.some((s) => matchesPattern(p, s))))].sort();
+  return [...new Set(paths.filter((p) => inScope(scope, p)))].sort();
 };
 
 /** The paths of `paths` still outside the unit's effective scope (a scope accept since may have taken some in), ascending. */
 export const stillOutside = (ctx: StageContext, unit: UnitId, paths: readonly RepoPath[]): readonly RepoPath[] => {
   const scope = effectiveScope(dispatchOf(ctx.journal.view, unit));
-  return [...new Set(paths.filter((p) => !scope.some((s) => matchesPattern(p, s))))].sort();
+  return [...new Set(paths.filter((p) => !inScope(scope, p)))].sort();
 };
 
 /**

@@ -26,7 +26,7 @@ export const IDENTITY: Identity = {
 
 export function rules(runDir: string, scope: readonly string[] = ['src'], excluded: readonly string[] = ['src/evidence']): SalvageRules {
   return {
-    scope: scope.map((s): RepoPattern => repoPattern(s)),
+    scope: { include: scope.map((s): RepoPattern => repoPattern(s)), exclude: [] },
     excluded: excluded.map((s): RepoPattern => repoPattern(s)),
     rejectedRoot: absPath(join(runDir, 'rejected')),
   };

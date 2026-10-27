@@ -187,8 +187,12 @@ ${i.direction}
 </direction>
 
 <scope_envelope>
-${bullets(i.scope, '(empty)')}
-</scope_envelope>${scopeGrowthText(i.scopeGrowth)}${staleLinksText(i.staleLinks)}
+${bullets(i.scope.include, '(empty)')}
+</scope_envelope>
+<scope_exclusions>
+Generated outputs: never edit these paths.
+${bullets(i.scope.exclude, '(none)')}
+</scope_exclusions>${scopeGrowthText(i.scopeGrowth)}${staleLinksText(i.staleLinks)}
 
 <risk_floor>${i.risk}</risk_floor>
 

@@ -87,7 +87,8 @@ model backend and takes the host lock.
 
 **3. The run, unattended for days.** A pack review reads the whole plan before any unit is admitted. Units then
 run in parallel across the DAG under resource locks, each through plan-check, a build, the lanes, a gate and a
-candidate merge.
+candidate merge. Units may change generated outputs only when their scope covers a source.
+Plan revisions refuse new plan defects; existing defects remain visible as advisories.
 
 - **Plan-check is a design pass.** An Opus judge works in a checkout of the tip with a shell and web search, and
   writes a design record: what changes in which systems, the interfaces, the failure modes and the test proving each,

@@ -7,7 +7,7 @@
 //   only by a ruled scope-growth apply (src/input/classify.ts), which the next dispatch check re-pins; the fold
 //   refuses any other change of it. Plan defects (2026-10-16): the record also pins `derived`, the outputs of the plan's
 //   `derived` entries whose sources the scope covers (src/input/derived.ts), re-pinned whenever the plan changes them;
-//   everything that bounds what the unit may change reads `effectiveScope` (scope + derived).
+//   everything that bounds what the unit may change reads `effectiveScope` (include: scope + derived; exclude: excluded).
 // - M3: the routing is the unit's (`StageContext.routing(unit)`: the arc's stack with the unit's `route` or
 //   `steer --class` layer on top, src/routing/layers.ts). Every record since 1.0.0-dev.6 pins the unit's bounds
 //   (`bounds`: `boundsOf` its plan `limits`, the transition table's counters and the backend windows) and the
@@ -46,7 +46,7 @@
 //   verdict is read as a unit judgment's (`verdictOf` takes a job parent: a usage limit parks the backend arc-wide).
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { type BackendCall, type ClaudeTriple, type CodexTriple, backendArgv, freshJudgmentSession, promptBytes, resumedJudgmentSession } from '../backends/argv.ts';
+import { type BackendCall, type ClaudeTriple, type CodexTriple, backendArgv, promptBytes, resumedJudgmentSession } from '../backends/argv.ts';
 import { usageLimitResets } from '../backends/errors.ts';
 import { JUDGE_SUBAGENTS } from '../prompts/delegation.ts';
 import {
@@ -62,7 +62,7 @@ import {
 } from '../core/records.ts';
 import { type AbsPath, type BranchName, type IsoTime, type RefName, type RepoPattern, absPath, branchName, isoTimeOf, refName } from '../core/values.ts';
 import { type RoutingBase, inputPath, keepInput } from '../input/inforce.ts';
-import { derivedWidening } from '../input/derived.ts';
+import { derivedExclusions, derivedWidening } from '../input/derived.ts';
 import { type PlanUnit, boundsOf } from '../input/plan.ts';
 import { backendEnv, CODEX_OUTPUT_FILE } from '../preflight/smoke.ts';
 import { instanceEnv } from '../resources/pool.ts';
@@ -217,12 +217,12 @@ export function repin(journal: Journal, routing: ResolvedRouting, record: Dispat
  * What a re-pin changes besides the routing: the bounds a `limits` revision set, a ruled scope growth, a risk the plan
  * raised above the floor (`route`: risk may rise).
  */
-export type PinUpdate = Readonly<{ bounds?: Bounds; scope?: readonly RepoPattern[]; riskFloor?: RiskTier; derived?: readonly RepoPattern[] }>;
+export type PinUpdate = Readonly<{ bounds?: Bounds; scope?: readonly RepoPattern[]; riskFloor?: RiskTier; derived?: readonly RepoPattern[]; excluded?: readonly RepoPattern[] }>;
 
-/** `derived` as a dispatch record holds it: absent when empty. */
-const withDerived = (record: DispatchRecord, derived: readonly RepoPattern[]): DispatchRecord => {
-  const { derived: _was, ...rest } = record;
-  return derived.length === 0 ? rest : { ...rest, derived };
+/** `derived` and `excluded` as a dispatch record holds them: absent when empty (derived exclusion, 2026-10-27; 1.0.0-dev.26). */
+const withDerived = (record: DispatchRecord, derived: readonly RepoPattern[], excluded: readonly RepoPattern[]): DispatchRecord => {
+  const { derived: _was, excluded: _excluded, ...rest } = record;
+  return { ...rest, ...(derived.length === 0 ? {} : { derived }), ...(excluded.length === 0 ? {} : { excluded }) };
 };
 
 /**
@@ -231,10 +231,10 @@ const withDerived = (record: DispatchRecord, derived: readonly RepoPattern[]): D
  */
 function pin(journal: Journal, routing: ResolvedRouting, record: DispatchRecord, update: PinUpdate, kept: SeatRev | null = null): DispatchRecord {
   const riskFloor = update.riskFloor ?? record.riskFloor;
-  const { derived, ...rest } = update;
+  const { derived, excluded, ...rest } = update;
   const next: DispatchRecord = withDerived({
     ...record, ...rest, routingRev: routing.rev, implementerSeatRev: kept ?? implementerSeatRev(routing, riskFloor), at: now(),
-  }, derived ?? record.derived ?? []);
+  }, derived ?? record.derived ?? [], excluded ?? record.excluded ?? []);
   journal.fact({ kind: 'dispatch', record: next });
   return next;
 }
@@ -255,15 +255,17 @@ function pinUpdate(ctx: StageContext, record: DispatchRecord): PinUpdate {
     throw new Error(`unit ${record.unit}: the plan in force scopes it ${scope.join(', ')}, which drops part of its pinned scope ${record.scope.join(', ')}`);
   }
   const derived = derivedWidening(ctx.plan(), scope);
+  const excluded = derivedExclusions(ctx.plan(), scope);
   return {
     ...(same(bounds, boundsOfRecord(record)) ? {} : { bounds }), ...(same(scope, record.scope) ? {} : { scope }),
     ...(riskAbove(unit.risk, record.riskFloor) ? { riskFloor: unit.risk } : {}),
     ...(same(derived, record.derived ?? []) ? {} : { derived }),
+    ...(same(excluded, record.excluded ?? []) ? {} : { excluded }),
   };
 }
 
 const unchanged = (update: PinUpdate): boolean =>
-  update.bounds === undefined && update.scope === undefined && update.riskFloor === undefined && update.derived === undefined;
+  update.bounds === undefined && update.scope === undefined && update.riskFloor === undefined && update.derived === undefined && update.excluded === undefined;
 
 /** `record` under the plan and routing in force: itself when neither changed it; else re-pinned, or the park. */
 function inForce(ctx: StageContext, record: DispatchRecord): Pinned<DispatchRecord> {
@@ -297,7 +299,7 @@ export function firstPin(ctx: StageContext, unit: PlanUnit, spec: SpecState, ris
   return withDerived({
     unit: unit.id, specRev: spec.rev, specSha256: spec.sha256, scope, riskFloor, routingRev: routing.rev,
     implementerSeatRev: implementerSeatRev(routing, riskFloor), at: now(), transientRules: 'm3', bounds: boundsOf(ctx.plan(), unit),
-  }, derivedWidening(ctx.plan(), scope));
+  }, derivedWidening(ctx.plan(), scope), derivedExclusions(ctx.plan(), scope));
 }
 
 /** The pinned record, which every stage after plan-check requires. */

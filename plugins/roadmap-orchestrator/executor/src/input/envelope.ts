@@ -10,6 +10,7 @@
 import { matchesGlob } from 'node:path';
 import type { RulingId, UnitId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
+import type { EffectiveScope } from '../core/records.ts';
 import type { RepoPattern } from '../core/values.ts';
 import type { RulingSidecar } from '../holistic/types.ts';
 import type { Ruling } from '../spec/rulings.ts';
@@ -33,6 +34,14 @@ export function lineageEnvelope(view: JournalView, root: UnitId): readonly RepoP
 /** Whether `pattern` lies within `envelope`: one of its patterns, or matched by one as a path. */
 export const withinEnvelope = (pattern: RepoPattern, envelope: readonly RepoPattern[]): boolean =>
   envelope.some((e) => pattern === e || matchesGlob(pattern, e));
+
+/** Whether a proposed pattern names an excluded output or lies under one; broad patterns retain their holes. */
+export const patternExcluded = (pattern: RepoPattern, outputs: readonly RepoPattern[]): boolean =>
+  withinEnvelope(pattern, outputs) || outputs.some((o) => pattern.startsWith(`${o.replace(/\/+$/, '')}/`));
+
+/** Pattern containment (dev.26): within the inclusion envelope, without naming an excluded output or lying under one. */
+export const patternInScope = (scope: EffectiveScope, pattern: RepoPattern): boolean =>
+  withinEnvelope(pattern, scope.include) && !patternExcluded(pattern, scope.exclude);
 
 /** Backticked tokens of a ruling statement: the patterns it names. */
 const namedPatterns = (statement: string): readonly string[] => [...statement.matchAll(/`([^`]+)`/g)].map((m) => m[1]!);

@@ -8,10 +8,11 @@
 // dispatch.dev16-unstarted-moves (experience-won routing, 1.0.0-dev.17).
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { DispatchRecord } from '../src/core/records.ts';
+import { type DispatchRecord, dispatchRecord, effectiveScope, inScope } from '../src/core/records.ts';
+import { repoPattern, repoPath } from '../src/core/values.ts';
 import { seatRev, sha256, specRev } from '../src/core/ids.ts';
 import {
-  SEAT_TRIPLES, type StageContext, implementerDispatch, implementerSeatRev, judgmentDispatch, pinDispatch, seatTripleOf,
+  SEAT_TRIPLES, type StageContext, implementerDispatch, implementerSeatRev, judgmentDispatch, pinDispatch, firstPin, seatTripleOf,
 } from '../src/pipeline/dispatch.ts';
 import { build, planCheck } from '../src/pipeline/stages.ts';
 import { step } from '../src/pipeline/unit.ts';
@@ -358,4 +359,29 @@ test('dispatch.dev16-unstarted-moves: a dev.16 high unit dispatched but not yet 
   assert.equal(repinned.routingRev, head.routing(null).rev);
   assert.deepEqual(seatTripleOf(repinned.implementerSeatRev), SONNET_MEDIUM, 'the new seat is pinned');
   assert.equal(started(await build(head, run.unit, { kind: 'fresh' })).outcome.kind, 'success');
+});
+
+// Derived exclusion (2026-10-27; 1.0.0-dev.26): the pin, the read-time default and growth all bound the same write set.
+test('dispatch.derived-exclusion: outputs without a source are excluded; source growth and inclusion across entries win', () => {
+  const run = setupUnit({ steps: [] });
+  const entry = { sources: [repoPattern('lib/**')], outputs: [repoPattern('test/generated.json')] };
+  const plan = { ...run.ctx.plan(), derived: [entry] };
+  const ctx = { ...run.ctx, plan: () => plan };
+  const first = seated(pinDispatch(ctx, run.unit, spec1(run)));
+  assert.deepEqual(first.excluded, ['test/generated.json']);
+  assert.equal(inScope(effectiveScope(first), repoPath('test/generated.json')), false);
+  assert.equal(inScope(effectiveScope(first), repoPath('test/sibling.json')), true);
+  const { excluded: _excluded, ...old } = first;
+  const read = dispatchRecord(JSON.parse(JSON.stringify(old)), 'old dispatch');
+  assert.deepEqual(effectiveScope(read).exclude, []);
+  assert.equal(inScope(effectiveScope(read), repoPath('test/generated.json')), true);
+
+  const source = { ...entry, sources: [repoPattern('src/**')] };
+  const shared = { ...plan, derived: [entry, source] };
+  const included = seated(pinDispatch({ ...ctx, plan: () => shared }, run.unit, spec1(run)));
+  assert.equal(included.excluded, undefined, 'an included output is removed from exclusions, including one already inside scope');
+  const grown = { ...run.unit, scope: [...run.unit.scope, repoPattern('lib/**')] };
+  const grownPin = firstPin({ ...ctx, plan: () => ({ ...plan, units: [grown] }) }, grown, spec1(run), grown.risk);
+  assert.equal(grownPin.excluded, undefined);
+  assert.equal(inScope(effectiveScope(grownPin), repoPath('test/generated.json')), true);
 });

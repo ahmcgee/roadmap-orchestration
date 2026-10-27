@@ -975,14 +975,19 @@ defect code can check is refused at Phase 0; one that surfaces at run time parks
 diagnosis instead of charging fix rounds. Test ids are names (node's name path, go's test name, a wrapper's own), so no
 reporter maps an id to its file; the sound rule is that a witness declares its `files` (required at a fresh start, with
 every arc lane's `testPaths`), and code checks the declaration, never infers it. Shared Phase-0 row 11, `plan-defect`,
-in every mode: each witness file of a binding obligation inside its lane (matched by its `testPaths`, and named by its
+at startup: each witness file of a binding obligation inside its lane (matched by its `testPaths`, and named by its
 argv when the argv names test paths: an element equal to it, a directory above it or a glob matching it, resolved
 against the lane's `cwd`; an argv naming none, `npm test`, leaves selection to the runner), and present at the
 integration tip or inside the effective scope of a deliverer or a unit a deliverer runs `after`; derived outputs off
-the corpus and out of the scope of a unit covering none of their sources. The same lane predicate diagnoses a missing
+the corpus. Every revision uses the same defect computation and refuses only defects it adds (canonical JSON
+comparison with the inputs in force); apply and scope accept surface remaining defects as advisories. The same lane predicate diagnoses a missing
 witness at run time (§2.1). Plan `derived: [{sources, outputs}]` names files the build regenerates: a unit whose scope
 covers a source takes the outputs into its effective scope, pinned on its dispatch record (`derived`, shown in
-`status`), which salvage, the gate, the candidate's transient check and recovery read. An entry's `regenerate` (dev.12,
+`status`), which salvage, the gate, the candidate's transient check and recovery read. Outputs the scope may reach
+without covering a source are pinned as `excluded` (derived exclusion, 2026-10-27; 1.0.0-dev.26). EffectiveScope holds
+include (scope + derived) and exclude (excluded, absent means none); `inScope` requires an include match and no exclusion
+match. Inclusion by any source-covered entry wins across entries. An excluded write is ordinary out-of-scope even
+without a generator; prompts show exclusions, and split children and scope growth recompute them from plan scope. An entry's `regenerate` (dev.12,
 the generator's argv, cwd and env) makes regeneration a code-owned invariant: for a unit whose diff touches the entry's
 sources or outputs, the lanes stage runs it first among the fast suite lanes, as the lane `regenerate.<hash>`, in the
 clean checkout of the unit's commit, and every output must come out byte-identical to the commit (no other file
@@ -1341,7 +1346,7 @@ Proven in arc 1 or by a named incident; ported as code, not prose.
 | Refusals | Stop reason → `refusal`, routed up. |
 
 **Salvage** classifies staged, unstaged, untracked and ignored content separately and commits an explicit
-approved path set (inside the effective scope: the pinned scope and its derived outputs; never `.roadmap/`, declared evidence/state or ignored paths) through
+approved path set (inside the effective scope: the pinned scope and its derived outputs, minus excluded outputs; never `.roadmap/`, declared evidence/state or ignored paths) through
 a controlled temporary index, so pre-staged content cannot ride along; rejected content is preserved outside the
 tree, and (scope growth, 2026-10-15) its out-of-scope paths are named to the gate and the next fix round; unmerged
 entries or a failed commit → park, tree preserved. Verification runs in a clean worktree at the

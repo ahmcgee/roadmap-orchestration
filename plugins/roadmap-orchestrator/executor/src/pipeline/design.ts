@@ -45,7 +45,8 @@ import { type RepoPath, type RepoPattern, matchesPattern } from '../core/values.
 import { gitRun } from '../git/git.ts';
 import { laneUnreachable } from '../holistic/witnessfiles.ts';
 import { environmentUnavailable } from '../resources/environments.ts';
-import { withinEnvelope } from '../input/envelope.ts';
+import type { EffectiveScope } from '../core/records.ts';
+import { patternInScope, withinEnvelope } from '../input/envelope.ts';
 import { arcRolesOf } from '../input/inforce.ts';
 import { type SystemsMap, dependentsClosure } from '../input/systems.ts';
 import type { DesignAnswer, ScaffoldDecision, SplitDecision } from '../prompts/schemas.ts';
@@ -259,8 +260,8 @@ export function clauseFaults(
 }
 
 /** The record's change paths outside `scope` (the effective scope), ascending: what joins the answer's scope growth. */
-export const designUnscoped = (changes: readonly DesignChange[], scope: readonly RepoPattern[]): readonly RepoPattern[] =>
-  [...new Set(changes.flatMap((c) => c.paths).filter((p) => !withinEnvelope(p, scope)))].sort();
+export const designUnscoped = (changes: readonly DesignChange[], scope: EffectiveScope): readonly RepoPattern[] =>
+  [...new Set(changes.flatMap((c) => c.paths).filter((p) => !patternInScope(scope, p)))].sort();
 
 /**
  * The builder's departures from a design record (dev.17): of `changed` (existing files the build modified or deleted), the

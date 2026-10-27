@@ -18,6 +18,7 @@
 //
 // Determinism: the tree follows from the worktree content and the rules, and the commit from the tree,
 // parent, recorded identity, dates and message, so a redo from the same inputs makes the same object.
+import { type EffectiveScope, inScope } from '../core/records.ts';
 import { copyFileSync, existsSync, lstatSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -38,8 +39,8 @@ import {
 
 /** The unit's pinned rules, from its dispatch record and spec. Recovery rebuilds the op from the same rules. */
 export type SalvageRules = Readonly<{
-  /** The pinned scope envelope (dispatch record). A path is in scope if it matches a pattern or lies under one. */
-  scope: readonly RepoPattern[];
+  /** The dispatch record's effective write envelope; a derived exclusion rejects as `out-of-scope`. */
+  scope: EffectiveScope;
   /** Declared evidence and state paths (spec lane `evidenceGlobs`): never committed. */
   excluded: readonly RepoPattern[];
   /** Rejected content is preserved under `<rejectedRoot>/<rejectedManifestSha256>/`. */
@@ -99,7 +100,7 @@ const matchesAny = (path: RepoPath, patterns: readonly RepoPattern[]): boolean =
 function rejectReason(rules: SalvageRules, path: RepoPath): RejectReason | null {
   if (path === '.roadmap' || path.startsWith('.roadmap/')) return 'roadmap-dir';
   if (matchesAny(path, rules.excluded)) return 'excluded';
-  if (!matchesAny(path, rules.scope)) return 'out-of-scope';
+  if (!inScope(rules.scope, path)) return 'out-of-scope';
   return null;
 }
 

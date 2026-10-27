@@ -23,19 +23,21 @@
 //   uncommitted ones) is refused at salvage by the candidate's transient check, before any lane: a chargeable fix round
 //   naming it, the build's resources released; once it is removed the unit goes on.
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { applyCommand } from '../src/commands/apply.ts';
 import { readReceipt, submitCommand } from '../src/commands/queue.ts';
 import type { Fact } from '../src/core/events.ts';
-import { arcId, unitId } from '../src/core/ids.ts';
+import { arcId, unitId, sha256 } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import type { CommandBody } from '../src/core/records.ts';
 import { absPath, branchName } from '../src/core/values.ts';
 import { inForceFiles, readInputFiles, requirePlanInForce, revisionInForce } from '../src/input/inforce.ts';
 import { APPLY, phase0InputOf, phase0Rows } from '../src/phase0/rows.ts';
-import { dispatchOf, unitBranch } from '../src/pipeline/dispatch.ts';
+import { checkRejected } from '../src/git/salvage.ts';
+import { dispatchOf, pinDispatch, unitBranch } from '../src/pipeline/dispatch.ts';
+import { loadUnitSpec } from '../src/pipeline/stages.ts';
 import { type Gate, runUnit } from '../src/pipeline/unit.ts';
 import { raiseResult } from '../src/schedule/scheduler.ts';
 import { raisedFor } from '../src/needsuser.ts';
@@ -295,3 +297,107 @@ test('scope.salvage-transient (field report 2026-10-24): a committed out-of-scop
     r.journal.close();
   }
 });
+
+// Derived exclusion (2026-10-27; 1.0.0-dev.26): enforcement does not depend on a regenerate lane.
+for (const regenerate of [false, true]) {
+  test(`scope.derived-excluded: salvage and transient reject a generated test output (regenerate=${regenerate})`, T, async () => {
+    const output = 'test/generated.json';
+    const dirty = codexStep([{ type: 'dirty', files: { [output]: 'hand edit\n' } }, { type: 'commit', message: 'add mul', files: MUL }], { argv: ['exec', '-C'] });
+    const committed = codexStep([{ type: 'commit', message: 'hand edit generated file', files: { [output]: 'hand edit\n' } }], { argv: ['exec', 'resume'] });
+    const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), dirty, gateStep({ decision: 'revise', directives: ['try again'] }), committed] });
+    editPlan(d, (p) => void (p['derived'] = [{ sources: ['lib/**'], outputs: [output], ...(regenerate ? { regenerate: { argv: ['node', '--version'], cwd: '.', env: { set: {}, pass: ['PATH'] } } } : {}) }]));
+    const r = contextFor(d);
+    try {
+      await runUnit(r.ctx, r.unit('u1'), until('gate'));
+      assert.deepEqual(dispatchOf(r.journal.view, U1).excluded, [output]);
+      assert.throws(() => git(d.repo, 'show', `${unitBranch(r.ctx.plan().arc, U1)}:${output}`));
+      const root = join(d.runDir, 'rejected', 'u1');
+      const manifests = readdirSync(root).map((name) => checkRejected(absPath(join(root, name)), sha256(name)));
+      assert.ok(manifests.some((m) => m.kind === 'complete' && m.manifest.entries.some((e) => e.path === output && e.reason === 'out-of-scope')));
+      await runUnit(r.ctx, r.unit('u1'), until('build'));
+      let builds = 0;
+      const refusal = await runUnit(r.ctx, r.unit('u1'), async (next) => next.stage !== 'build' || ++builds === 1);
+      assert.equal(refusal.kind, 'held');
+      assert.ok(outcomes(d).includes('salvage:transient-violation'));
+    } finally { r.journal.close(); }
+  });
+}
+
+test('scope.accept-derived-field: a merged web unit with a broad scope does not refuse growth of another unit', T, async () => {
+  const d = setupArc({ steps: [planCheckStep({ decision: 'approve', scopeGrowth: GROWTH })], units: [{ id: 'u1' }, { id: 'web', scope: ['apps/web/**'] }] });
+  editPlan(d, (p) => void (p['derived'] = [{ sources: ['apps/core/src/**'], outputs: ['apps/web/test/fixtures/core-routes.json'] }]));
+  const r = contextFor(d);
+  try {
+    const web = r.unit('web');
+    const { spec, sha256 } = loadUnitSpec(r.ctx, web);
+    assert.equal(pinDispatch(r.ctx, web, { rev: spec.rev, sha256 }).kind, 'pinned');
+    r.journal.fact({ kind: 'stage-outcome', unit: unitId('web'), stage: 'snapshot', attempt: 1, outcome: 'published', class: 'retire', chargeable: false } as Fact);
+    await holdU1(r);
+    const accepted = await command(r, decide('accept', 'the other unit needs the package script'));
+    assert.equal(accepted.outcome.kind, 'applied', JSON.stringify(accepted.outcome));
+  } finally { r.journal.close(); }
+});
+
+for (const source of [false, true]) {
+  test(`scope.excluded-growth: growth drops an output without its source and accepts both together (source growth=${source})`, T, async () => {
+    const output = 'test/add.test.js';
+    const d = setupArc({ steps: [planCheckStep({ decision: 'approve', scopeGrowth: [{ patterns: source ? [output, 'package.json'] : [output, 'ARCHITECTURE.md'], reason: 'the test needs to change' }] }), planCheckStep({ decision: 'approve' })] });
+    editPlan(d, (p) => void (p['derived'] = [{ sources: ['package.json'], outputs: [output] }]));
+    const r = contextFor(d);
+    try {
+      const item = await holdU1(r);
+      assert.deepEqual(r.journal.view.unit(U1).interrupted?.detail, { kind: 'scope-growth', proposals: [{ patterns: source ? ['package.json', output] : ['ARCHITECTURE.md'], reason: 'the test needs to change' }] });
+      if (!source) assert.ok(item.summary.includes('Code dropped: `test/add.test.js`: a derived output generated from package.json: grow a source instead.'));
+      const accepted = await command(r, decide('accept', 'the plan-check proposes the test and its source when needed'));
+      assert.equal(accepted.outcome.kind, 'applied', JSON.stringify(accepted.outcome));
+      const f = followingContext(r);
+      await runUnit(f, unitInForce(f, 'u1'), until('build'));
+      assert.deepEqual(dispatchOf(r.journal.view, U1).excluded, source ? undefined : [output], 'growth recomputes the exclusion from source coverage');
+    } finally { r.journal.close(); }
+  });
+}
+
+// A pattern already held still inherits its holes; an excluded output needs source coverage.
+test('scope.broad-excluded-growth: an existing broad pattern keeps its exclusions without holding the plan-check', T, async () => {
+  const d = setupArc({ steps: [planCheckStep({ decision: 'approve', scopeGrowth: [{ patterns: ['test/**'], reason: 'the tests change' }] })] });
+  editPlan(d, (p) => void (p['derived'] = [{ sources: ['lib/**'], outputs: ['test/add.test.js'] }]));
+  const r = contextFor(d);
+  try {
+    const held = await runUnit(r.ctx, r.unit('u1'), until('build'));
+    assert.deepEqual(held, { kind: 'held', needsUser: null });
+    assert.deepEqual(outcomes(d), ['plan-check:approve']);
+    assert.deepEqual(dispatchOf(r.journal.view, U1).excluded, ['test/add.test.js']);
+  } finally { r.journal.close(); }
+});
+
+// A repeated-revert hold may predate the verifier, or arise at lanes: accepting it must enforce the same rule.
+for (const explicit of [false, true]) {
+  test(`scope.accept-excluded-refused: repeated generated edits name their sources and cannot land (explicit output=${explicit})`, T, async () => {
+    const output = 'test/generated.json';
+    const dirty = codexStep([{ type: 'dirty', files: { [output]: '{}\n' } }, { type: 'commit', message: 'add mul', files: MUL }], { argv: ['exec', '-C'] });
+    const dirtyAgain = codexStep([{ type: 'dirty', files: { [output]: '{}\n' } }], { argv: ['exec', 'resume'] });
+    const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), dirty, gateStep({ decision: 'revise', directives: ['try again'] }), dirtyAgain] });
+    editPlan(d, (p) => {
+      p['derived'] = [{ sources: ['package.json', 'lib/**'], outputs: [output] }];
+      if (explicit) (p['units'] as { scope: string[] }[])[0]!.scope.push(output);
+    });
+    const r = contextFor(d);
+    try {
+      const held = await runUnit(r.ctx, r.unit('u1'), async () => true);
+      assert.ok(held.kind === 'held' && held.needsUser?.reason === 'scope-growth', JSON.stringify(held));
+      const reason = 'a derived output generated from lib/**, package.json: grow a source instead';
+      assert.ok(held.needsUser.summary.includes(`${output}: ${reason}`), held.needsUser.summary);
+      assert.match(held.needsUser.recommendation, /covering the named sources/);
+      raiseResult(followingContext(r), U1, held);
+      const before = r.journal.view.planApplied()?.rev;
+      const accepted = await command(r, decide('accept', 'the builder keeps needing this output'));
+      assert.equal(accepted.outcome.kind, 'rejected', JSON.stringify(accepted.outcome));
+      const receipt = readReceipt(r.ctx.runDir, accepted.id, 'rejected');
+      assert.ok(receipt?.state === 'rejected', JSON.stringify(receipt));
+      assert.equal(receipt.reason, `scope accept u1: \`${output}\`: ${reason}`);
+      assert.equal(r.journal.view.planApplied()?.rev, before);
+      assert.equal(r.journal.view.unit(U1).status, 'held');
+      assert.deepEqual(r.journal.view.unit(U1).scopeDecisions, []);
+    } finally { r.journal.close(); }
+  });
+}

@@ -29,8 +29,8 @@ import { type TestRef, testRefKey } from '../core/events.ts';
 import { durableMkdir, exclusivePublish } from '../core/fsx.ts';
 import type { LaneId, ResourceInstance, Sha } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
-import { type NeedsUserContent, effectiveScope } from '../core/records.ts';
-import { type AbsPath, type RepoPath, absPath, matchesPattern } from '../core/values.ts';
+import { type NeedsUserContent, effectiveScope, inScope } from '../core/records.ts';
+import { type AbsPath, type RepoPath, absPath } from '../core/values.ts';
 import { SCHEMA_VERSION } from '../core/version.ts';
 import { isAncestor } from '../git/ff.ts';
 import { type RequiredWitness, missingWitnesses, requiredWitnesses } from '../holistic/required.ts';
@@ -178,7 +178,7 @@ export function missingWitnessDefects(ctx: StageContext, unit: PlanUnit, salvage
     return w.files.flatMap((file): PlanDefect[] => {
       const misses = lane === undefined ? null : laneMisses(lane, file);
       if (misses !== null) return [{ type: 'witness-not-in-lane', obligation: o.id, lane: w.lane, file, missing: misses }];
-      if (!present(file) && !scope.some((p) => matchesPattern(file, p))) return [{ type: 'witness-file-unreachable', obligation: o.id, file, units: [unit.id] }];
+      if (!present(file) && !inScope(scope, file)) return [{ type: 'witness-file-unreachable', obligation: o.id, file, units: [unit.id] }];
       return [];
     });
   });
