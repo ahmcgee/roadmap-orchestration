@@ -681,6 +681,8 @@ lost or double-counted. The fold checks monotonic counters on the records each e
 pre-event value once even when the event replaces it several times. Its op indexes retain latest intents in
 first-intent order: kind, canonical parent, stage-parent unit, spawn-subject unit (also backend role) or job,
 and kill-target invocation. Retries update these memberships without changing the op's original order.
+A unit's highest numbered stage start keeps its first-start tie order; each open walk keeps its own proposals
+in log order. Neither lookup scans completed stage starts or unrelated walk history.
 
 **Tail rule**. Verify the valid prefix first. Only a terminal suffix lacking `\n`, or an all-NUL suffix, is
 discardable: save to `events.torn.<off>.<sha8>` (fsync) → truncate (fsync) → `tail-discarded` fact. A saved

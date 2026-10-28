@@ -245,6 +245,35 @@ describe('fold invariants', () => {
     });
   });
 
+  it('open start selection keeps highest-attempt order, first-start ties and closed winners', () => {
+    const records: LogRecord[] = [
+      spawnIntent(1, { stage: 'build', attempt: 4 }), spawnLost(op(1)),
+      spawnIntent(3, { stage: 'lanes', attempt: 1 }), spawnLost(op(3)),
+      stageOutcome({ stage: 'build', attempt: 4, outcome: 'success', class: 'advance' }),
+      spawnIntent(6, { stage: 'gate', attempt: 4 }), spawnLost(op(6)),
+      spawnIntent(8, { stage: 'lanes', attempt: 5 }),
+      stageOutcome({ stage: 'lanes', attempt: 5, outcome: 'green', class: 'advance' }),
+      stageOutcome({ stage: 'gate', attempt: 6, outcome: 'approve', class: 'advance' }),
+      spawnLost(op(8)), spawnIntent(8, { stage: 'lanes', attempt: 5, ordinal: 2 }),
+    ];
+    const starts = new Map<string, { stage: Stage; attempt: number; seq: number }>();
+    const outcomes = new Set<string>();
+    const view = new Fold(ARC);
+    for (const event of chain(records)) {
+      const start = event.type === 'intent' && event.parent.type === 'stage' ? event.parent
+        : event.type === 'fact' && event.fact.kind === 'stage-outcome' ? event.fact : null;
+      if (start !== null) {
+        const key = `${start.stage}#${start.attempt}`;
+        if (!starts.has(key)) starts.set(key, { stage: start.stage, attempt: start.attempt, seq: event.seq });
+        if (event.type === 'fact') outcomes.add(key);
+      }
+      view.apply(event, prevHash(Buffer.from(serializeEvent(event))));
+      const firstHighest = [...starts.values()].sort((a, b) => b.attempt - a.attempt)[0];
+      const expected = firstHighest === undefined || outcomes.has(`${firstHighest.stage}#${firstHighest.attempt}`) ? null : firstHighest;
+      assert.deepEqual(view.unit(U1).open, expected);
+    }
+  });
+
   it('walk openness is per job, and ended or unstarted jobs reject the same records', () => {
     const start = (n: number): LogRecord => ({ type: 'fact', fact: {
       kind: 'walk-started', job: jobId('walk', n), milestone: milestoneIdOf(1), round: 1, sha: sha('a'.repeat(40)), ports: {},
@@ -252,15 +281,20 @@ describe('fold invariants', () => {
     const end = (n: number): LogRecord => ({ type: 'fact', fact: {
       kind: 'walk-ended', job: jobId('walk', n), outcome: 'reported', findings: [], proposals: [], dropped: [],
     } });
-    const proposal: LogRecord = { type: 'fact', fact: {
+    const proposal = { type: 'fact', fact: {
       kind: 'polish-proposed', id: polishIdOf(1), job: jobId('walk', 1), milestone: milestoneIdOf(1), journey: journeyIdOf(1),
       evidence: [], text: 'Polish', unit: { id: unitId('polish-1'), scope: [repoPattern('src/**')], spec: '{}' },
-    } };
+    } } as const satisfies LogRecord;
     fold(ARC, chain([start(1), start(2), end(1), end(2)]));
     refuses(chain([end(1)]), 1, /walk-ended of walk-1, which is not a started, unended walk/);
     refuses(chain([start(1), start(2), end(1), end(1)]), 4, /walk-ended of walk-1, which is not a started, unended walk/);
     refuses(chain([proposal]), 1, /polish-proposed X-1 of walk-1, which is not a started, unended walk/);
     refuses(chain([start(1), start(2), end(1), proposal]), 4, /polish-proposed X-1 of walk-1, which is not a started, unended walk/);
+    const second: LogRecord = { ...proposal, fact: { ...proposal.fact, id: polishIdOf(2), job: jobId('walk', 2) } };
+    const firstEnd: LogRecord = { type: 'fact', fact: { kind: 'walk-ended', job: jobId('walk', 1), outcome: 'reported', findings: [], proposals: [polishIdOf(1)], dropped: [] } };
+    const secondEnd: LogRecord = { type: 'fact', fact: { kind: 'walk-ended', job: jobId('walk', 2), outcome: 'reported', findings: [], proposals: [polishIdOf(2)], dropped: [] } };
+    fold(ARC, chain([start(1), start(2), proposal, second, firstEnd, secondEnd]));
+    refuses(chain([start(1), proposal, end(1)]), 3, /walk-ended of walk-1 names proposals ; it proposed X-1/);
   });
 
   it('a refused event leaves the fold unchanged', () => {

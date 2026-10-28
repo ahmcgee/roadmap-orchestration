@@ -590,6 +590,7 @@ class OpIndex<K> {
     return bucket.snapshot;
   }
 }
+
 /** `starts` and `outcomes` hold `<stage>#<attempt>`; `state.counters.attempts` is `starts.size`. */
 /** `beforeDecided`: the unit's decision and interruption before its latest decided outcome (a reroute restores them). */
 /** `attemptBase`: the attempts a re-entered unit inherits from its lineage (0 otherwise). */
@@ -598,6 +599,8 @@ type UnitEntry = {
   order: number;
   /** Each start `<stage>#<attempt>`, with the seq of the record that first started it. */
   starts: Map<string, number>; outcomes: Set<string>; state: UnitState; attemptBase: number;
+  /** Highest numbered attempt, with the first start winning ties across stages (the full-scan order). */
+  latestStart: UnitState['open'];
   beforeDecided: Readonly<{ decided: StageOutcomeFact | null; interrupted: StageOutcomeFact | null }>;
 };
 
@@ -745,7 +748,8 @@ export class Fold implements JournalView {
   // M4b
   readonly #flowFacts: FlowFactAt[] = [];
   readonly #walkFacts: WalkFactAt[] = [];
-  readonly #openWalks = new Set<JobId>();
+  /** Open walks and their recorded proposals, in log order. */
+  readonly #openWalks = new Map<JobId, PolishId[]>();
   // dev.17
   readonly #flakes: FlakeAt[] = [];
   readonly #propagationFacts: PropagationFactAt[] = [];
@@ -894,7 +898,7 @@ export class Fold implements JournalView {
     if (existing !== undefined) return existing;
     const u: UnitEntry = {
       order: this.#units.size,
-      starts: new Map<string, number>(), outcomes: new Set<string>(), state: this.#fresh(unit, stage), attemptBase: 0,
+      starts: new Map<string, number>(), outcomes: new Set<string>(), latestStart: null, state: this.#fresh(unit, stage), attemptBase: 0,
       beforeDecided: { decided: null, interrupted: null },
     };
     this.#units.set(unit, u);
@@ -908,7 +912,13 @@ export class Fold implements JournalView {
   }
 
   #start(u: UnitEntry, start: string): void {
-    if (!u.starts.has(start)) u.starts.set(start, this.#lastSeq + 1);
+    if (!u.starts.has(start)) {
+      const seq = this.#lastSeq + 1;
+      u.starts.set(start, seq);
+      const at = start.lastIndexOf('#');
+      const attempt = Number(start.slice(at + 1));
+      if (u.latestStart === null || attempt > u.latestStart.attempt) u.latestStart = { stage: start.slice(0, at) as Stage, attempt, seq };
+    }
     this.#setUnitState(u, { ...u.state, counters: { ...u.state.counters, attempts: u.attemptBase + u.starts.size }, open: openStart(u) });
   }
 
@@ -1336,18 +1346,19 @@ export class Fold implements JournalView {
       // once each. What they mean for units and milestones is read from `walkFacts` (agents C, D and G).
       case 'walk-started':
         this.#openJob(f.job, fail);
-        this.#openWalks.add(f.job);
+        this.#openWalks.set(f.job, []);
         this.#walkFacts.push({ seq: at.seq, at: at.at, fact: f });
         return;
       case 'polish-proposed': {
         if (f.id !== this.nextPolishId()) fail(`polish-proposed ${f.id}; the next polish id is ${this.nextPolishId()}`);
         if (!this.#walkOpen(f.job)) fail(`polish-proposed ${f.id} of ${f.job}, which is not a started, unended walk`);
+        this.#openWalks.get(f.job)!.push(f.id);
         this.#walkFacts.push({ seq: at.seq, at: at.at, fact: f });
         return;
       }
       case 'walk-ended': {
         if (!this.#walkOpen(f.job)) fail(`walk-ended of ${f.job}, which is not a started, unended walk`);
-        const proposed = this.#walkFacts.flatMap((x) => (x.fact.kind === 'polish-proposed' && x.fact.job === f.job ? [x.fact.id] : []));
+        const proposed = this.#openWalks.get(f.job)!;
         if (proposed.join(',') !== f.proposals.join(',')) fail(`walk-ended of ${f.job} names proposals ${f.proposals.join(', ')}; it proposed ${proposed.join(', ')}`);
         this.#openWalks.delete(f.job);
         this.#walkFacts.push({ seq: at.seq, at: at.at, fact: f });
@@ -1711,7 +1722,7 @@ export class Fold implements JournalView {
       const counters = c.reset ? { ...o.counters, chargeableFailures: 0 } : o.counters;
       this.#units.set(c.unit, {
         order: this.#units.size,
-        starts: new Map<string, number>(), outcomes: new Set<string>(), attemptBase: o.counters.attempts, beforeDecided: { decided: null, interrupted: null },
+        starts: new Map<string, number>(), outcomes: new Set<string>(), latestStart: null, attemptBase: o.counters.attempts, beforeDecided: { decided: null, interrupted: null },
         state: { ...fresh, counters, lineage: { reenters: c.reenters, root: o.lineage?.root ?? c.reenters, prepared: false } },
       });
       this.#setUnitState(old, { ...o, status: 'superseded', supersededBy: c.unit, park: null });
@@ -2219,12 +2230,7 @@ export class Fold implements JournalView {
 
 /** The highest-attempt start of a unit when it has no outcome yet (`UnitState.open`). */
 function openStart(u: UnitEntry): UnitState['open'] {
-  let latest: { stage: Stage; attempt: number; seq: number } | null = null;
-  for (const [key, seq] of u.starts) {
-    const at = key.lastIndexOf('#');
-    const attempt = Number(key.slice(at + 1));
-    if (latest === null || attempt > latest.attempt) latest = { stage: key.slice(0, at) as Stage, attempt, seq };
-  }
+  const latest = u.latestStart;
   return latest === null || u.outcomes.has(`${latest.stage}#${latest.attempt}`) ? null : latest;
 }
 
