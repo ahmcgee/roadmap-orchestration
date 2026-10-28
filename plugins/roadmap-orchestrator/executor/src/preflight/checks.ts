@@ -306,16 +306,6 @@ export function revisionInputRows(files: InputFiles): Rejection<'plan-invalid'>[
   return out;
 }
 
-/** The arc's log, read-only (the checks run before the journal opens), or `corrupt` (group 4 refuses it as log-corrupt). */
-function arcLog(context: StartupContext): JournalView | 'corrupt' {
-  try {
-    return readJournal(context.runDir, context.plan.arc).view;
-  } catch (error) {
-    if (error instanceof LogCorruptError) return 'corrupt';
-    throw error;
-  }
-}
-
 // ---------------------------------------------------------------------------------------------------
 // Group 2: environment
 
@@ -400,11 +390,10 @@ export function containmentModeCheck(journal: OpenJournal): readonly Rejection<'
  * (`ownArcResidue`) never refuses its start or respawn; the arc disposes of it itself (a retryable park's
  * probe, or a sweep). Every other arc's residue still refuses. A log that does not read owns nothing.
  */
-async function residueCheck(context: StartupContext): Promise<readonly Rejection<'undispositioned-residue'>[]> {
+async function residueCheck(context: StartupContext, view: JournalView | null): Promise<readonly Rejection<'undispositioned-residue'>[]> {
   const rows = await undispositionedResidueCheck.check(context);
   if (rows.length === 0) return [];
-  const view = arcLog(context);
-  const foreign = rows.flatMap((r) => r.residues).filter((key) => view === 'corrupt' || !ownArcResidue(view, key));
+  const foreign = rows.flatMap((r) => r.residues).filter((key) => view === null || !ownArcResidue(view, key));
   return foreign.length === 0 ? [] : [{ kind: 'undispositioned-residue', residues: foreign }];
 }
 
@@ -479,16 +468,6 @@ const filesSource = (files: InputFiles): Source => ({
   plan: files.plan, specOf: (unit) => files.specs.get(unit.id)?.bytes ?? null, ledger: null, checked: files, owner: files,
 });
 
-/** The arc's role set at a start (M4b): its revisions', or `m4b` before its first plan (a corrupt log is refused in group 4). */
-function arcRolesAt(runDir: AbsPath, arc: ArcId): ArcRoleSet | null {
-  try {
-    return arcRolesOf(readJournal(runDir, arc).view.planApplied());
-  } catch (error) {
-    if (error instanceof LogCorruptError) return arcRolesOf(null);
-    throw error;
-  }
-}
-
 /** The arc's log read-only, or null when it does not read (group 4 refuses it as log-corrupt). */
 function readArcView(runDir: AbsPath, arc: ArcId): JournalView | null {
   try {
@@ -506,8 +485,7 @@ function inForceOf(runDir: AbsPath, view: JournalView, inForce: InForce, owner: 
 }
 
 /** On a respawn, the plan in force; null when the log records none (or does not read). */
-function inForceSource(runDir: AbsPath, arc: ArcId): Source | null {
-  const view = readArcView(runDir, arc);
+function inForceSource(runDir: AbsPath, view: JournalView | null): Source | null {
   const inForce = view === null ? null : planInForce(runDir, view);
   return view === null || inForce === null ? null : inForceOf(runDir, view, inForce, null);
 }
@@ -520,9 +498,7 @@ function inForceSource(runDir: AbsPath, arc: ArcId): Source | null {
  * rebase that does not hold (a conflict) refuses here, as `settlePlan` would. The files as they are (a fresh start's source) when the
  * arc has no plan in force or its log does not read.
  */
-function startSource(owner: InputFiles, base: RevisionManifest | null): Source | Rejection<'plan-change-refused'> {
-  const runDir = runDirOf(gitCommonDir(owner.repo), owner.plan.arc);
-  const view = readArcView(runDir, owner.plan.arc);
+function startSource(owner: InputFiles, base: RevisionManifest | null, runDir: AbsPath, view: JournalView | null): Source | Rejection<'plan-change-refused'> {
   const inForce = view === null ? null : planInForce(runDir, view);
   if (view === null || inForce === null) {
     return base === null ? filesSource(owner) : { kind: 'plan-change-refused', reasons: [`start --base: arc ${owner.plan.arc} records no plan in force, so there is nothing to rebase onto; start without --base`] };
@@ -634,14 +610,24 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
   const refused = (rejections: readonly StartupRejection[], claim: HostLockClaim | null = null, journal: OpenJournal | null = null): StartChecks =>
     ({ kind: 'refused', rejections, claim, journal });
 
+  // The supervisor already holds the host claim before spawning this executor. Share the read-only
+  // snapshot across groups 1 and 2; group 4 still opens the writer only after the claim callback passes.
+  const views = new Map<AbsPath, JournalView | null>();
+  const viewAt = (dir: AbsPath, arc: ArcId): JournalView | null => {
+    if (!views.has(dir)) views.set(dir, readArcView(dir, arc));
+    return views.get(dir)!;
+  };
+  let commonDir: AbsPath | undefined;
+  const common = (): AbsPath => commonDir ??= gitCommonDir(input.repo);
   // 1. input
-  const inForce = input.respawn === null ? null : inForceSource(input.respawn.runDir, input.respawn.arc);
+  const inForce = input.respawn === null ? null : inForceSource(input.respawn.runDir, viewAt(input.respawn.runDir, input.respawn.arc));
   let source: Source;
   if (inForce !== null) source = inForce;
   else {
     const owner = ownerFiles(input.planFile, input.repo);
     if ('kind' in owner) return refused([...legacyRoadmapDir(input.repo), owner]);
-    const started = startSource(owner, input.base);
+    const ownerRunDir = runDirOf(common(), owner.plan.arc);
+    const started = startSource(owner, input.base, ownerRunDir, viewAt(ownerRunDir, owner.plan.arc));
     if ('kind' in started) return refused([...legacyRoadmapDir(input.repo), started]);
     source = started;
   }
@@ -652,9 +638,10 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
   } catch (error) {
     return refused([...legacyRoadmapDir(input.repo), schemaRejection(error)]);
   }
-  const runDir = runDirOf(gitCommonDir(input.repo), plan.arc);
+  const runDir = runDirOf(common(), plan.arc);
+  const view = viewAt(runDir, plan.arc);
   const context: StartupContext = {
-    repo: input.repo, planFile: input.planFile, plan, specOf: source.specOf, profile, arcRoles: arcRolesAt(runDir, plan.arc), runDir, hostDir: input.hostDir,
+    repo: input.repo, planFile: input.planFile, plan, specOf: source.specOf, profile, arcRoles: arcRolesOf(view?.planApplied() ?? null), runDir, hostDir: input.hostDir,
     ...(source.ledger === null ? {} : { ledger: source.ledger }),
   };
   const inputRows = [...legacyRoadmapDir(input.repo), ...(await planInvalidCheck.check(context)), ...(source.checked === null ? [] : revisionInputRows(source.checked))];
@@ -664,12 +651,11 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
   if (source.owner !== null) {
     // A brief ack a crash left pending is finished first: the chain rows read the committed acks (BRIEF_ACK).
     finishPendingAcks(input.repo);
-    const log = arcLog(context);
-    const fresh = log !== 'corrupt' && log.planApplied() === null;
+    const fresh = view !== null && view.planApplied() === null;
     const by = fresh ? null : successorOf(input.repo, plan.arc);
     if (by !== null) return refused([{ kind: 'arc-superseded', by }]);
     if (source.checked !== null) {
-      const p0 = phase0Rows(phase0InputOf(source.checked, readRepoConfig(input.repo), log === 'corrupt' ? null : log), fresh ? FRESH_START : RESTART);
+      const p0 = phase0Rows(phase0InputOf(source.checked, readRepoConfig(input.repo), view), fresh ? FRESH_START : RESTART);
       const rows = [...(fresh ? holisticNeedsCorpus(source.checked.plan) : []), ...p0.rows];
       if (rows.length > 0) return refused(rows);
       // Rows 10's, 13's and 14's advisories never refuse a start; the executor's stderr (the supervisor's err file) keeps them, and
@@ -693,7 +679,7 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
     ...(await specLaneCheck(input.env).check(context)),
     ...(await walkToolsCheck(input.env, readRepoConfig(input.repo)).check(context)),
     ...routingRows,
-    ...(await residueCheck(context)),
+    ...(await residueCheck(context, view)),
   ];
   if (environment.length > 0 || resolved === null) return refused(environment);
 

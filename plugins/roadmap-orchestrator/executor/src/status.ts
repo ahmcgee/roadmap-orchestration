@@ -1047,8 +1047,8 @@ function derive(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: LogSna
 }
 
 /** The run's state and each unit's, compactly, and the log's high-water they were derived at (`seq`): what `watch` streams. */
-export function unitStates(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Readonly<{ run: ArcState; units: Readonly<Record<string, string>>; superseded: readonly NeedsUserId[]; seq: number }> {
-  const d = derive(runDir, arc, hostDir);
+export function unitStates(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: LogSnapshot): Readonly<{ run: ArcState; units: Readonly<Record<string, string>>; superseded: readonly NeedsUserId[]; seq: number }> {
+  const d = derive(runDir, arc, hostDir, snapshot);
   const units: Record<string, string> = {};
   for (const l of d.units) units[l.unit] = compactState(l);
   return { run: d.state, units, superseded: [...supersededItems(d.view)].sort(), seq: d.view.highWater() };
@@ -1163,6 +1163,17 @@ export function obligationLeaves(repo: AbsPath, view: JournalView, obligations: 
   return leaf;
 }
 
+// A commit's first-parent trees are immutable. Keep only the current head per repo, so observer polls
+// reuse the history while journal facts (and therefore obligation verdicts) continue to change.
+const firstParentTrees = new Map<AbsPath, Readonly<{ head: Sha; trees: readonly Sha[] }>>();
+function treesOf(repo: AbsPath, head: Sha): readonly Sha[] {
+  const cached = firstParentTrees.get(repo);
+  if (cached?.head === head) return cached.trees;
+  const trees = [...new Set(git(repo, ['log', '--first-parent', '--format=%T', head]).split('\n').filter((t) => t !== '').map((t) => sha(t)))];
+  firstParentTrees.set(repo, { head, trees });
+  return trees;
+}
+
 /** Each non-exempt obligation on the integration head's tree: now true, or not yet with what it waits on. */
 function truths(
   runDir: AbsPath, view: JournalView, lines: readonly UnitCore[], obligations: Obligations, repo: AbsPath, head: Sha,
@@ -1171,7 +1182,7 @@ function truths(
   const byUnit = new Map(lines.map((l) => [l.unit, l]));
   const store = observations({ journal: { view }, runDir });
   // The head's tree first, then each earlier tree of its first-parent history, newest first (a tree once).
-  const trees = [...new Set(git(repo, ['log', '--first-parent', '--format=%T', head]).split('\n').filter((t) => t !== '').map((t) => sha(t)))];
+  const trees = treesOf(repo, head);
   const leaves = new Map<Sha, ReturnType<typeof obligationLeaves>>();
   const leafOn = (tree: Sha, o: ObligationDef): ObligationLeaf => {
     let at = leaves.get(tree);
@@ -1785,6 +1796,9 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?:
   const corpus = revision?.corpus ?? null;
   const reader = on === null || start === null ? null : { journal: { view }, runDir, planFile: start.record.planFile, repo: on.repo };
   const admitted = on === null || corpus === null ? NO_ADMITS : admitViews(view, on.repo, on.plan, meter);
+  const repairs = start === null || plan === null ? [] : repairUnits({
+    journal: { view }, runDir, planDir: absPath(dirname(start.record.planFile)), plan: () => plan,
+  });
 
   return {
     arc,
@@ -1844,12 +1858,10 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?:
     knownDefects: plan === null ? [] : knownDefectViews(view, plan, d.units),
     checkpointWaits: checkpointWaitsOf(view),
     ...admitted,
-    demo: plan === null || start === null ? null : demoStatus({ view, plan, repairs: repairUnits({ journal: { view }, runDir, planDir: absPath(dirname(start.record.planFile)), plan: () => plan }) }, hostDir),
+    demo: plan === null || start === null ? null : demoStatus({ view, plan, repairs }, hostDir),
     flow: start === null || plan === null ? null
       : flowStatus({ runDir, repo: start.record.repo, journal: { view } }, revParse(start.record.repo, branchRef(plan.integrationBranch)), isoTimeOf(new Date(now))),
-    milestones: start === null || plan === null || !hasMilestones(plan) ? [] : milestoneViews(view, plan, repairUnits({
-      journal: { view }, runDir, planDir: absPath(dirname(start.record.planFile)), plan: () => plan,
-    })),
+    milestones: start === null || plan === null || !hasMilestones(plan) ? [] : milestoneViews(view, plan, repairs),
   };
 }
 

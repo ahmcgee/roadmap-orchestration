@@ -157,10 +157,10 @@ import { quiescentGenerations } from '../holistic/convergence.ts';
 import { coverageOf } from '../holistic/coverage.ts';
 import { isActive, raiseFindingItems } from '../holistic/findings.ts';
 import { raiseWalkItems, runWalk, settleWalks, walkPending } from '../walk/walk.ts';
-import { applyPolish, polishPending } from '../walk/polish.ts';
+import { applyPolish, polishDue } from '../walk/polish.ts';
 import { applyDeflake, deflakeJobPending, raiseDeflakeParked } from '../pipeline/deflakemint.ts';
-import { applyPropagation, propagationPending } from '../holistic/propagation.ts';
-import { comparePending, runCompare } from '../walk/compare.ts';
+import { applyPropagation, propagationDue } from '../holistic/propagation.ts';
+import { compareDue, cutDue, runningCompare, runCompare } from '../walk/compare.ts';
 import { walksPending } from '../walk/milestones.ts';
 import { packReviewHolds, packReviewPending, runPackReview, settlePackReviews } from '../holistic/packreview.ts';
 import { type ArcLaneDef, isExempt, laneRevOf } from '../holistic/types.ts';
@@ -1167,11 +1167,11 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
           const out = await runWalk(h.audit);
           return out.kind === 'ended' && out.outcome !== 'abandoned' ? PROGRESS : WAIT;
         });
-      } else if (propagationPending(h.checkpoint)) {
+      } else if (propagationDue(view(), plan()) !== null) {
         trackRetrying('holistic:propagation', 'holistic', async () => ((await applyPropagation(h.checkpoint)).kind === 'applied' ? PROGRESS : WAIT));
-      } else if (polishPending(h.checkpoint)) {
+      } else if (polishDue(view(), plan()) !== null) {
         trackRetrying('holistic:polish', 'holistic', async () => ((await applyPolish(h.checkpoint)).kind === 'applied' ? PROGRESS : WAIT));
-      } else if (comparePending(h.checkpoint)) {
+      } else if (runningCompare(view()) !== null || cutDue(view(), plan()) !== null || compareDue(view(), plan()) !== null) {
         trackRetrying('holistic:compare', 'holistic', async () => {
           const out = await runCompare(h.checkpoint);
           return out.kind === 'judged' || (out.kind === 'cut' && out.committed) ? PROGRESS : WAIT;
