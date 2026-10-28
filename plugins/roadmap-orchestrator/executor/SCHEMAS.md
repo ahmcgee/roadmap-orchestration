@@ -1937,6 +1937,16 @@ residues, the snapshot closure):
    alone). `manifest.json` entries carry `namedBy: log | event{seq} | item{path}`;
    `verifySnapshot` recomputes the closure from the tree's own events and payloads and requires exactly that set, each
    file hashing as listed and as its naming record states. A run dir holds start.json before any snapshot.
+   Publication produces the same tree incrementally: it seeds a temporary index from the previous ref and writes
+   changed blobs in one `hash-object --stdin-paths` process. A process-local closure and fold advance from the last
+   verified publication's exact log prefix. Every named source (including absent optional files) is checked by
+   inode, size, mode, nanosecond mtime and ctime; changed sources are reread and checked against their naming records,
+   with needs-user JSON canonicalised as before. The manifest and complete log/state bytes remain unchanged in format.
+   With a verified base, publication verifies the complete path/mode/object-id set and hashes delta blobs: unchanged
+   Git objects retain their verified bytes. Standalone `verifySnapshot` and recovery always verify the full tree,
+   detecting corruption in unchanged objects too. Startup, a divergent ref/log, or a failed prepare rebuilds the
+   capture with the same collector from empty; no new authoritative cache or record is persisted. The integration
+   slot continues to be held through the snapshot (unit, batch and docs recovery depend on that reservation).
    `namedBy` is required (M4a X0 deleted the dev.5 allowlist reading). Not yet in the closure: commands and their
    receipts.
 
