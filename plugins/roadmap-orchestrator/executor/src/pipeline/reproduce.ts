@@ -31,8 +31,9 @@ import type { MutantOf, OutcomeStage, WitnessFor } from '../core/events.ts';
 import { mutantSubjectDefault } from '../core/upgrade.ts';
 import { type FindingId, type LaneId, type OpId, type ResourceInstance, type ResourceUnit, type Sha, type Sha256Hex, type UnitId, invocationId, opKey } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
+import { specShaInForce } from '../input/inforce.ts';
 import { canonicalJson } from '../core/json.ts';
-import { type NeedsUserContent, STDERR_FILE, STDOUT_FILE, specRepairs } from '../core/records.ts';
+import { type NeedsUserContent, type SpecM1, STDERR_FILE, STDOUT_FILE, specRepairs } from '../core/records.ts';
 import type { FindingState, UnitState } from '../core/state.ts';
 import { type AbsPath, absPath, isoTimeOf, repoPattern } from '../core/values.ts';
 import { capturedEvidence } from '../git/evidence.ts';
@@ -427,12 +428,28 @@ function progressOf(u: UnitState, publishedSeq: number | undefined): RepairProgr
   return d.kind === 'stage' && approved.includes(d.target.stage) ? { kind: 'approved' } : { kind: 'working' };
 }
 
+// A kept spec is immutable. Cache its parsed value by content hash within this journal, while
+// computing progress from the current view on every call. Applies, patches and reopens change the hash.
+const repairSpecs = new WeakMap<JournalView, Readonly<{ runDir: AbsPath; specs: Map<UnitId, Readonly<{ hash: Sha256Hex; spec: SpecM1 }>> }>>();
+
 /** The units of the plan whose specs repair something, in plan order, with their progress (read-only: `status` reads it too). */
 export function repairUnits(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath; planDir: AbsPath; plan: () => PlanM1 }>): readonly RepairUnit[] {
   const view = ctx.journal.view;
   const published = new Map(view.publications().map((p) => [p.unit, p.seq] as const));
+  let cached = repairSpecs.get(view);
+  if (cached === undefined || cached.runDir !== ctx.runDir) {
+    cached = { runDir: ctx.runDir, specs: new Map() };
+    repairSpecs.set(view, cached);
+  }
+  const specs = cached.specs;
   return ctx.plan().units.flatMap((unit) => {
-    const repairs = specRepairs(loadUnitSpec(ctx, unit).spec);
+    const hash = specShaInForce(view, unit.id);
+    let known = specs.get(unit.id);
+    if (known?.hash !== hash) {
+      known = { hash, spec: loadUnitSpec(ctx, unit).spec };
+      specs.set(unit.id, known);
+    }
+    const repairs = specRepairs(known.spec);
     return repairs.length === 0 ? [] : [{ unit: unit.id, repairs, progress: progressOf(view.unit(unit.id), published.get(unit.id)) }];
   });
 }

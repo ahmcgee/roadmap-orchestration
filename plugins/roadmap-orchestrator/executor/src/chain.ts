@@ -9,7 +9,7 @@
 // A start is acked when no chained start lies between it and the chainHead of the committed ack furthest along the
 // chain; the bootstrap arc (no `chain`) counts as acked (R11). Consumers: `phase0Rows` (src/phase0/rows.ts), `roadmap
 // pr`, and C4's `status`, `brief` and `chain status`.
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { type Event, type Fact, parseEventLine, prevHash } from './core/events.ts';
 import { type AmendmentRef, type ArcId, type BriefId, type CommandId, type PhaseQuestionId, type Sha, type Sha256Hex, amendmentRefOf, arcId } from './core/ids.ts';
@@ -149,6 +149,38 @@ export function chainBack(repo: AbsPath, arc: ArcId): ChainBack {
  * plan first), else from its verified ref (a run dir `gc` pruned). Null when none has started.
  */
 export function successorOf(repo: AbsPath, arc: ArcId): ArcId | null {
+  // classify.ts's chain-immutable row fixes the chain at revision 1. Locate its seq cheaply,
+  // then let readJournal verify and fold that prefix with its usual corruption handling.
+  const firstPlanSeq = (dir: AbsPath): number | null => {
+    const fd = openSync(join(dir, EVENTS_FILE), 'r');
+    try {
+      const chunk = Buffer.alloc(64 * 1024);
+      let carry = Buffer.alloc(0);
+      let seq = 0;
+      for (;;) {
+        const n = readSync(fd, chunk);
+        if (n === 0) return null;
+        const bytes = Buffer.concat([carry, chunk.subarray(0, n)]);
+        let start = 0;
+        for (let nl = bytes.indexOf(10); nl !== -1; nl = bytes.indexOf(10, start)) {
+          const line = bytes.subarray(start, nl);
+          start = nl + 1;
+          seq += 1;
+          if (!line.includes('"plan-applied"')) continue;
+          try {
+            const e = JSON.parse(line.toString('utf8')) as Event;
+            if (e.type === 'fact' && e.fact.kind === 'plan-applied') return seq;
+          } catch {
+            // The verifier below reports an invalid complete line, including its byte offset.
+            return null;
+          }
+        }
+        carry = Buffer.from(bytes.subarray(start));
+      }
+    } finally {
+      closeSync(fd);
+    }
+  };
   const common = gitCommonDir(repo);
   const runtime = join(common, 'roadmap-runtime');
   const read = new Set<ArcId>([arc]);
@@ -157,7 +189,7 @@ export function successorOf(repo: AbsPath, arc: ArcId): ArcId | null {
     if (read.has(next) || !existsSync(join(runDir(common, next), EVENTS_FILE))) continue;
     read.add(next);
     const dir = runDir(common, next);
-    if (planInForce(dir, readJournal(dir, next).view)?.plan.chain?.previousArc === arc) return next;
+    if (planInForce(dir, readJournal(dir, next, firstPlanSeq(dir)).view)?.plan.chain?.previousArc === arc) return next;
   }
   for (const next of arcsWithRefs(repo)) {
     if (!read.has(next) && readArcRef(repo, next)?.plan.chain?.previousArc === arc) return next;

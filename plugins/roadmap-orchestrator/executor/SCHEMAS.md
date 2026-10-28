@@ -998,7 +998,10 @@ sha256}}`, whose bytes are kept content-addressed in the run dir (`inputs/<sha25
 else the manifest's; the stages load those bytes, never the live file (whose path they still name for the
 architect). The executor's contexts read `plan()` and `routing()` (the plan in force resolved under the start's
 profile and repo config) from the log at each call. `roadmap apply` and a `start` whose files differ are the only
-ways a revision comes into force; an unapplied edit is ignored, also by a respawn.
+ways a revision comes into force; an unapplied edit is ignored, also by a respawn. The read-only repair-unit
+reader caches each unit's parsed kept spec by its hash in force, per journal view; progress is always read
+from the current view. Evidence edits, patches and reopens therefore invalidate the spec lookup without
+re-reading unchanged specs on scheduler ticks.
 
 `roadmap apply [--base <export.json>] [--dry-run]` hashes the plan file the arc started with (`start.json`) and every
 unit's spec into the command's manifest. The effect (`src/commands/apply.ts`, a mutation, so once its scope has drained
@@ -1286,7 +1289,10 @@ delegated share on its own class); `host{…, log}` (below); `parkedBackends`; `
 `owed`, `completion`: "Choices made in M3 B9"); and the M4a keys (`holds`, `packReview`, `corpus`, `census`, `amendments`,
 `debt`, `chain`, `timings`: "Readings of M4a C4"). The log is read with `readJournal`
 (`src/core/log.ts`: fold without lock, repair, fact or cache write; an unterminated tail is left out); what only
-the scheduler knows comes from `sched.json` while its writer is the live owner. `byModel` is the only place a model
+the scheduler knows comes from `sched.json` while its writer is the live owner. A long-lived watch uses
+`ObserverJournal`, the TUI's incremental verifier, and passes that snapshot to the same derivation. Status's
+first-parent tree history is cached by repository and integration commit; obligation verdicts still derive
+from the current journal. `byModel` is the only place a model
 id appears: seat totals (`meterOf(...).bySeat`) looked up in each revision's table, resolved from the routing
 provenance each plan revision recorded (M3 B9 item 2). The CLI's `status` runs one at a time per run dir (2026-10-23): it holds
 `<runDir>/status.lock` (`StatusLock {v, bootId, holder{pid,start}}`, published write-once; `statusSingleFlight`) while it
