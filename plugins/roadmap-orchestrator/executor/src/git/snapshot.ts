@@ -2,8 +2,8 @@
 // PR diff carries them and the arc's history survives the run dir.
 //
 // The input is frozen at an event high-water seq: the snapshot carries the first `highWater` lines of
-// `events.jsonl` and the state the fold derives from exactly those lines (never the live `state.json` cache,
-// which may already be ahead). Beside them, the snapshot is the transitive closure of the authoritative records
+// `events.jsonl` and `state.json`, the state the fold derives from exactly those lines (the run dir keeps no
+// state file: the live log may already be ahead). Beside them, the snapshot is the transitive closure of the authoritative records
 // those lines name (G6, H6; `closureOf`), each file carried at a path its naming record determines:
 //
 // | Snapshot path                          | Named by                                                           |
@@ -31,8 +31,8 @@
 // | <lane>/red.json`                       | the first run's persisted red class, when written (status' failures) |
 //
 // Paths that name a run-dir file mirror it (`inputs/`, `inv/`, `needs-user/`, `start.json`, a lane's `red.json`,
-// `events.jsonl`, `state.json`); raised needs-user records carry canonical JSON bytes. The run dir's records
-// are restored by copying the tree into it. A witness run keeps its `witness.json` in its own execution's dir
+// `events.jsonl`; `state.json` exists only in the tree); raised needs-user records carry canonical JSON bytes. The
+// run dir's records are restored by copying the tree into it. A witness run keeps its `witness.json` in its own execution's dir
 // (`witnessDir`, written by src/pipeline/lanes.ts `runJourneySeries`): a job's `<runDir>/evidence/jobs/<job>/arc-<lane>-<inv>/` (`jobLaneDir`), a unit candidate's
 // `<runDir>/evidence/<unit>/<attempt>-candidate/journey/arc-<lane>-<inv>/` (`candidateLaneDir`), a mutant's (written by
 // src/pipeline/reproduce.ts) `<runDir>/evidence/mutants/<finding>/<lane>-<inv>/` (`mutantLaneDir`).
