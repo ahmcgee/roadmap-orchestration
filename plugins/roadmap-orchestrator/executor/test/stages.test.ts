@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { invocationId, opKey, resourceName, sha256 } from '../src/core/ids.ts';
 import { isoTimeOf } from '../src/core/values.ts';
-import { EVENTS_FILE, STATE_FILE, openJournal } from '../src/core/log.ts';
+import { EVENTS_FILE, openJournal } from '../src/core/log.ts';
 import { implementerDispatch, judgmentDispatch, unitBranch } from '../src/pipeline/dispatch.ts';
 import { invocationDir, killWorkload } from '../src/pipeline/invoke.ts';
 import { type RoundInput, gateReviseRound } from '../src/pipeline/rounds.ts';
@@ -456,7 +456,7 @@ test('stages.counters-from-fold: attempts and counters are the log\'s, identical
   }
 });
 
-test('stages.no-model-ids: events, the state cache, dispatch facts and needs-user content never name a model; launch.json argv does', T, async () => {
+test('stages.no-model-ids: events, the derived state, dispatch facts and needs-user content never name a model; launch.json argv does', T, async () => {
   // claude-only: the build is Claude's (Sonnet, the efficient class at every risk since dev.17).
   const run = setupUnit({
     profile: 'claude-only',
@@ -478,7 +478,7 @@ test('stages.no-model-ids: events, the state cache, dispatch facts and needs-use
 
   const written = [
     readFileSync(join(run.runDir, EVENTS_FILE), 'utf8'),
-    readFileSync(join(run.runDir, STATE_FILE), 'utf8'),
+    JSON.stringify(run.journal.derived()),
     JSON.stringify(held.needsUser),
     JSON.stringify(red),
   ];

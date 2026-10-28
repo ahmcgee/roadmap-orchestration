@@ -185,7 +185,7 @@ function routingChanged(record: DispatchRecord): Pinned<never> {
 
 /** Whether any implementer call was ever started for `unit`. */
 export function buildStarted(view: JournalView, unit: UnitId): boolean {
-  return view.opsOf('proc.spawn').some((i) => i.expect.subject.purpose === 'backend' && i.expect.subject.role === 'build' && i.expect.subject.unit === unit);
+  return view.spawnsOfUnit(unit, 'build').length > 0;
 }
 
 /**
@@ -790,7 +790,7 @@ async function callJobRole(
  * spawn before a job resumes.
  */
 export function recordedArcCall(ctx: StageContext, job: JobId, role: ArcRole, attempt: number): BackendCallOutcome | null {
-  const spawn = ctx.journal.view.opsOf('proc.spawn').filter((i) => {
+  const spawn = ctx.journal.view.spawnsOfJob(job).filter((i) => {
     const s = i.expect.subject;
     return s.purpose === 'arc-backend' && s.job === job && s.role === role && s.attempt === attempt;
   }).at(-1);

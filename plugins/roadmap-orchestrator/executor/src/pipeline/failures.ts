@@ -101,7 +101,7 @@ export function laneFailures(ctx: Readonly<{ journal: Readonly<{ view: JournalVi
   const open = view.unit(unit.id).open;
   // attempt → lane → its spawns, in log order.
   const attempts = new Map<number, Readonly<{ parent: StageParent; lanes: Map<LaneId, IntentOf<'proc.spawn'>[]> }>>();
-  for (const i of view.opsOf('proc.spawn')) {
+  for (const i of view.spawnsOfUnit(unit.id)) {
     const s = i.expect.subject;
     if (s.purpose !== 'lane' || s.set !== 'spec' || s.unit !== unit.id || i.parent.type !== 'stage' || i.parent.stage !== 'lanes') continue;
     if (open?.stage === 'lanes' && open.attempt === i.parent.attempt) continue;
