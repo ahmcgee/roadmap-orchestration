@@ -1691,7 +1691,10 @@ OwnerOnlyClass, summary}) & {cites: V-n[] (non-empty, unique), evidence (non-emp
 (frozen here in 0a, landed with the modules, because every key of a strict schema is required and the modules,
 fakes and output change together): plan-check output `visionConflict: [{clauses: V-n[] (non-empty), note}]` (each opens a P3
 `plan-check` finding, R17); `PlanCheckInputs.vision: VisionInput | null` (read-only context, marked non-directive);
-`GateInputs.obligations: ObligationView[]` (the selected obligations); the gate never receives the vision.
+`GateInputs.obligations: ObligationView[]` (the directly selected obligations, with observations) and
+`standingObligations: ObligationDef[]` (selected only by the unmapped-path must-hold fallback, rendered as one
+`- <id>: <statement>` line each); the gate never receives the vision. The full selection still binds the approval
+fingerprint, lanes and merge hold.
 
 **The fold** (`src/core/state.ts`, `JournalView.holistic() → HolisticFold`, `state.json` `holistic`):
 `{on (the plan in force records a vision), witnessed, latched, findings: FindingState[] ({...opened, state, owner,

@@ -69,6 +69,7 @@ test('roles.approve-all: an approve-everything gate catches nothing and passes t
     for (const f of ['key.json', 'prompt.txt', 'answer.json', 'transcript.jsonl', 'row.json', 'gate-1.jsonl']) assert.ok(existsSync(join(r.dir, f)), `${r.cell}: ${f}`);
     const prompt = readFileSync(join(r.dir, 'prompt.txt'), 'utf8');
     assert.ok(prompt.length > 0 && !prompt.includes(out), 'the gate prompt never names the eval run dir');
+    assert.match(prompt, /<standing_obligations>\n\(none\)\n<\/standing_obligations>/, 'generated gate cases receive the new input through the production gate');
     const key = JSON.parse(readFileSync(join(r.dir, 'key.json'), 'utf8')) as AnswerKey;
     if (key.plant !== null) assert.equal(r.graded?.verdict, 'missed');
     // Over the large-diff threshold the fake answers one cluster over everything, which code accepted and the grade sees whole.

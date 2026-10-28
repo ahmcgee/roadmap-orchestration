@@ -64,8 +64,13 @@
 //   project` is a skill committed under the checkout's `.claude/skills/`, in a git worktree too. A plugin does not: one a
 //   repo's `.claude/settings.json` enables loads only where it is installed for that path (installed_plugins.json
 //   `projectPath`), so a project-scope install at the repo root reaches neither a unit worktree nor a fresh clone; a
-//   user-scope plugin and the user's own skills never load (user settings are not a source). What stays: the logged-in account's email in a user-context block,
-//   and the built-in plugins, neither of which a flag removes. Calls keep the operator's CLAUDE_CONFIG_DIR on
+//   user-scope plugin and the user's own skills never load (user settings are not a source). Measured on Claude Code
+//   2.1.310 (2026-10-28), project settings also load 19 bundled skills beside the committed project skill.
+//   `CLAUDE_CODE_DISABLE_BUNDLED_SKILLS=1` (backendEnv) leaves the project skill, design, doctor and plugin-authoring;
+//   `--settings` disabling `cc-plugin-plugin-authoring@builtin` removes plugin-authoring too. Design (unusable headless)
+//   and doctor remain; disallowing Skill does not remove their listings. The probe pins exactly that residual pair
+//   plus the project canary. The agents-md and telemetry built-in plugins and the logged-in account's email in a
+//   user-context block stay. Calls keep the operator's CLAUDE_CONFIG_DIR on
 //   purpose: the CLI rewrites `.credentials.json` by temp file and rename, so an arc-private dir linking the
 //   operator's file would fork it at the first OAuth refresh and leave the operator's login dead. An isolated
 //   dir would need a `claude setup-token` token passed as CLAUDE_CODE_OAUTH_TOKEN, which the CLI never refreshes.
@@ -220,8 +225,12 @@ export type BackendCall =
 
 export type Argv = readonly [string, ...string[]];
 
-/** Every Claude call: JSONL on stdout, and no MCP server but those of its own `--mcp-config`. */
-const CLAUDE_COMMON = ['--output-format', 'stream-json', '--verbose', '--strict-mcp-config'] as const;
+/** Every Claude call: JSONL, plugin-authoring disabled, and no MCP server but its own `--mcp-config`. */
+const CLAUDE_COMMON = [
+  '--output-format', 'stream-json', '--verbose',
+  '--settings', JSON.stringify({ enabledPlugins: { 'cc-plugin-plugin-authoring@builtin': false } }),
+  '--strict-mcp-config',
+] as const;
 
 const mcpConfigArgs = (file: AbsPath | null): readonly string[] => (file === null ? [] : ['--mcp-config', file]);
 

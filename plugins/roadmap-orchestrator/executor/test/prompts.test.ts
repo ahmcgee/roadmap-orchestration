@@ -280,7 +280,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
   gate: [
     {
       spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
-      target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A', planCheckNotes: '', obligations: [],
+      target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A', planCheckNotes: '', obligations: [], standingObligations: [],
       diff: { bounded: shown(SHA_A, SHA_B, 'DIFF-A'), claims: { acceptance: [clauseId('A1')], witnesses: [], obligations: [] } },
       laneLedger: [{ lane: laneId('unit'), argv: ['npm', 'test'], expectedExit: 0, exitCode: 0, verdict: 'pass', evidenceDir: absPath('/run/inv/3-1'), ignored: null, reused: null }],
       evidence: [absPath('/run/ev/a')], scope: { excluded: [], patterns: [repoPattern('src/a/**')], growth: [], rejected: [] }, priorRound: null, checks: { witnesses: null, smoke: null, regenerated: [] },
@@ -289,7 +289,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
     {
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
       target: { kind: 'digest', digest: doc('docs/digest.md', 'DIGEST-B'), doc: repoPath('docs/arch2.md') }, direction: 'DIR-B', planCheckNotes: 'NOTES-B',
-      obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)],
+      obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)], standingObligations: [observed('I-3', 'STANDING-B', SHA_A).obligation],
       diff: { bounded: partial(SHA_B, SHA_A, 'DIFF-B', true), claims: { acceptance: [clauseId('A1'), clauseId('A2')], witnesses: [witnessItemId('W-1')], obligations: [obligationId('I-2')] } },
       laneLedger: [{ lane: laneId('lint'), argv: ['npx', 'tsc'], expectedExit: 0, exitCode: 0, verdict: 'pass', evidenceDir: absPath('/run/inv/4-1'),
         ignored: { v: 1, written: { files: 42, bytes: 3_250_000 }, captured: { files: 0, bytes: 0 }, uncaptured: [{ dir: '.local/demo/', files: 42, bytes: 3_250_000, reason: 'not-declared' }] },
@@ -1004,6 +1004,17 @@ describe('M3 prompts: the vision and the arc roles', () => {
     // An answer a dev.16 executor launched has no staleLinks: read as none answered (scaffolding, `planCheckStaleLinksDefault`).
     const { staleLinks: _s, ...dev16 } = ok;
     assert.deepEqual(validatePlanCheckOutput(dev16).staleLinks, []);
+  });
+
+  it('the gate renders standing obligations as compact lines in their own tag after direct obligations', () => {
+    for (const model of ARC_MODELS) {
+      const mod = promptFor('gate', model);
+      assert.ok(mod.fields.includes('standingObligations'));
+      const text = mod.render(SAMPLES.gate[1]);
+      assert.match(text, /<\/obligations>\n\n<standing_obligations>\n- I-3: STANDING-B\n<\/standing_obligations>/, model);
+      assert.match(text, /<obligations>\n- I-2 \(rev 1; must-hold; active\): OBLIGATION-B\n  Anchored at[^]*?  Witness:[^]*?  Observation:[^]*?<\/obligations>/, model);
+      assert.match(mod.render(SAMPLES.gate[0]), /<standing_obligations>\n\(none\)\n<\/standing_obligations>/, model);
+    }
   });
 
   it('the gate (R17) never receives the vision: its selected obligations, without the clauses they serve', () => {

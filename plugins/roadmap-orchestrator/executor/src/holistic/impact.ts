@@ -23,7 +23,7 @@ const anchoredAt = (o: ObligationDef, path: RepoPath): boolean => {
   return src.kind === 'doc' && src.path === path;
 };
 
-export const selectObligations: SelectObligations = (input: ImpactInput) => {
+function select(input: ImpactInput, unmappedFallback: boolean): readonly ObligationId[] {
   const all = new Map<ObligationId, ObligationDef>(input.obligations.obligations.map((o) => [o.id, o]));
   const lanes = new Map(input.obligations.lanes.map((l) => [l.id, l]));
   const mapping = input.obligations.mapping.paths;
@@ -41,7 +41,7 @@ export const selectObligations: SelectObligations = (input: ImpactInput) => {
     for (const o of all.values()) {
       const lane = o.witness === null ? undefined : lanes.get(o.witness.lane);
       if (o.contracts.includes(path) || anchoredAt(o, path) || (lane !== undefined && runsFile(lane, path))) picked.add(o.id);
-      if (mapped.length === 0 && isMustHold(o, input.latched)) picked.add(o.id);
+      if (unmappedFallback && mapped.length === 0 && isMustHold(o, input.latched)) picked.add(o.id);
     }
   }
   for (const o of all.values()) if (o.activation === 'future' && o.deliveredBy.some((u) => units.includes(u))) picked.add(o.id);
@@ -56,4 +56,16 @@ export const selectObligations: SelectObligations = (input: ImpactInput) => {
     }
   }
   return canonicalIds(picked);
-};
+}
+
+export const selectObligations: SelectObligations = (input) => select(input, true);
+
+/** Gate presentation only: direct selection omits the unmapped-path fallback, then applies the same split closure. */
+export function gateObligations(input: ImpactInput): Readonly<{
+  selected: readonly ObligationId[]; direct: readonly ObligationId[]; standing: readonly ObligationId[];
+}> {
+  const selected = selectObligations(input);
+  const direct = select(input, false);
+  const directIds = new Set(direct);
+  return { selected, direct, standing: selected.filter((id) => !directIds.has(id)) };
+}

@@ -6,7 +6,7 @@
 // 2.1.301 capture claude-judgment-subagents is the whole argv, token for token. The implementer captures predate dev.13,
 // which dropped `--disable-slash-commands` from the build argv, and dev.17, which added `--advisor <id>`: the builder's argv
 // less the advisor pair equals the capture less that flag; the 2.1.301 capture claude-build-advisor is the whole build argv. `npm run probe` runs the full argv against
-// the real CLIs.
+// the real CLIs. All Claude captures predate dev.28: their expected argv adds the exact plugin setting pair.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -15,6 +15,15 @@ import { backendArgv, promptBytes } from '../src/backends/argv.ts';
 import { implementerSessionId, judgmentSessionId } from '../src/core/ids.ts';
 import { absPath } from '../src/core/values.ts';
 import { BACKEND_FIXTURES, capturedArgv } from './helpers/scenario.ts';
+
+const SETTINGS = ['--settings', '{"enabledPlugins":{"cc-plugin-plugin-authoring@builtin":false}}'] as const;
+/** Historical captures plus the exact dev.28 settings pair, before --strict-mcp-config. */
+function claudeCapture(name: string): readonly string[] {
+  const argv = capturedArgv(name);
+  const i = argv.indexOf('--strict-mcp-config');
+  assert.ok(i >= 0);
+  return [...argv.slice(0, i), ...SETTINGS, ...argv.slice(i)];
+}
 
 const CLAUDE = { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' } as const;
 const CODEX = { backend: 'codex', model: 'gpt-5.6-sol', effort: 'low' } as const;
@@ -52,7 +61,7 @@ describe('argv', () => {
   });
   it('claude judgment (2.1.301, with the Agent tool), token for token', () => {
     // Captured on 2.1.301 before dev.12 made every judgment's session persist (its repair turn resumes it).
-    const c = capturedArgv('claude-judgment-subagents').filter((t) => t !== '--no-session-persistence');
+    const c = claudeCapture('claude-judgment-subagents').filter((t) => t !== '--no-session-persistence');
     const call = {
       kind: 'claude-judgment', role: 'planCheck', triple: { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'low' }, schemaText: value(c, '--json-schema'),
       session: { backend: 'claude', mode: 'fresh', id: judgmentSessionId(value(c, '--session-id')) }, system: CAPTURED_SYSTEM, evidenceDirs: [],
@@ -63,7 +72,7 @@ describe('argv', () => {
   });
   it('claude judgment', () => {
     // Captured before dev.12: the Agent tool joined the judgment tools and every judgment's session persists.
-    const c = capturedArgv('claude-judgment').map((t) => (t === 'Read,Grep,Glob' ? 'Read,Grep,Glob,Agent' : t)).filter((t) => t !== '--no-session-persistence');
+    const c = claudeCapture('claude-judgment').map((t) => (t === 'Read,Grep,Glob' ? 'Read,Grep,Glob,Agent' : t)).filter((t) => t !== '--no-session-persistence');
     const call = {
       kind: 'claude-judgment', role: 'planCheck', triple: CLAUDE, schemaText: value(c, '--json-schema'),
       session: { backend: 'claude', mode: 'fresh', id: judgmentSessionId(value(c, '--session-id')) },
@@ -84,8 +93,8 @@ describe('argv', () => {
       assert.equal(argv[i + 1], 'claude-opus-5-5');
       return [...argv.slice(0, i), ...argv.slice(i + 2)];
     };
-    const fresh = withoutSlash(capturedArgv('claude-implementer'));
-    const resumed = withoutSlash(capturedArgv('claude-implementer-resume'));
+    const fresh = withoutSlash(claudeCapture('claude-implementer'));
+    const resumed = withoutSlash(claudeCapture('claude-implementer-resume'));
     const id = implementerSessionId(value(fresh, '--session-id'));
     const schemaText = value(fresh, '--json-schema');
     const system = CAPTURED_SYSTEM;
@@ -108,7 +117,7 @@ describe('argv', () => {
     );
   });
   it('claude build with the advisor (2.1.301, dev.17), token for token', () => {
-    const c = capturedArgv('claude-build-advisor');
+    const c = claudeCapture('claude-build-advisor');
     const call = {
       kind: 'claude-build', triple: { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'medium' }, schemaText: value(c, '--json-schema'),
       session: { backend: 'claude', mode: 'fresh', id: implementerSessionId(value(c, '--session-id')) }, system: CAPTURED_SYSTEM, mcpConfig: null, evidenceDirs: [],
@@ -129,7 +138,7 @@ describe('argv', () => {
       session: { backend: 'claude', mode: 'fresh', id }, mcpConfig: mcp, evidenceDirs: dirs, denyWrites: [absPath('/repo'), absPath('/run/events.jsonl')],
     } as const;
     assert.deepEqual(backendArgv(call), [
-      'claude', '-p', '--output-format', 'stream-json', '--verbose', '--strict-mcp-config', '--mcp-config', mcp,
+      'claude', '-p', '--output-format', 'stream-json', '--verbose', ...SETTINGS, '--strict-mcp-config', '--mcp-config', mcp,
       '--setting-sources', 'project', '--json-schema', '{"type":"object"}', '--model', 'claude-opus-5-5', '--effort', 'high',
       '--tools', 'Read,Grep,Glob,Bash,Write,Edit,Agent',
       '--disallowedTools', 'Write(//repo)', 'Write(//repo/**)', 'Edit(//repo)', 'Edit(//repo/**)', 'NotebookEdit(//repo)', 'NotebookEdit(//repo/**)',
@@ -141,7 +150,7 @@ describe('argv', () => {
     // The gate's: no server loads, and the resumed repair turn keeps every other flag.
     const gate = backendArgv({ ...call, role: 'gate', mcpConfig: null, session: { backend: 'claude', mode: 'resume', id }, evidenceDirs: [], denyWrites: [] });
     assert.deepEqual(gate, [
-      'claude', '-p', '--output-format', 'stream-json', '--verbose', '--strict-mcp-config',
+      'claude', '-p', '--output-format', 'stream-json', '--verbose', ...SETTINGS, '--strict-mcp-config',
       '--setting-sources', 'project', '--json-schema', '{"type":"object"}', '--model', 'claude-opus-5-5', '--effort', 'high',
       '--tools', 'Read,Grep,Glob,Bash,Write,Edit,Agent', '--permission-mode', 'bypassPermissions', '--resume', id, '--append-system-prompt', SYSTEM,
     ]);

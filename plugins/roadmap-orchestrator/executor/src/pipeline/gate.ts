@@ -76,7 +76,7 @@ import { type JudgmentSessionId, type ObligationId, type Sha, type UnitId, invoc
 import { canonicalJson } from '../core/json.ts';
 import { type ApprovalFingerprint, type JudgmentSession, type ObligationRev, type SpecM1, effectiveScope, inScope, obligationRevsOf, specObligations, specRemoves, specRepairs, specWitnesses } from '../core/records.ts';
 import { designSize } from '../core/design.ts';
-import { selectObligations } from '../holistic/impact.ts';
+import { gateObligations } from '../holistic/impact.ts';
 import { effectiveRulingRevs } from '../spec/rulings.ts';
 import { type ObligationDef, isExempt } from '../holistic/types.ts';
 import { SchemaError } from '../core/validate.ts';
@@ -173,8 +173,15 @@ function dependencyClosure(ctx: StageContext, unit: PlanUnit): readonly PlanUnit
  * (`selectObligations`); none outside a holistic arc with obligations. A repair of a finding repairs its obligation.
  */
 export function selected(ctx: StageContext, unit: PlanUnit, tip: Sha, head: Sha): readonly ObligationDef[] {
+  return selectedForGate(ctx, unit, tip, head).selected;
+}
+
+/** The same selection partitioned only for the gate's full and compact prompt blocks. */
+function selectedForGate(ctx: StageContext, unit: PlanUnit, tip: Sha, head: Sha): Readonly<{
+  selected: readonly ObligationDef[]; direct: readonly ObligationDef[]; standing: readonly ObligationDef[];
+}> {
   const { obligations } = holisticInForce(ctx);
-  if (obligations === null) return [];
+  if (obligations === null) return { selected: [], direct: [], standing: [] };
   const { spec } = loadUnitSpec(ctx, unit);
   const findings = ctx.journal.view.holistic().findings;
   const repairs = specRepairs(spec).flatMap((r): ObligationId[] => {
@@ -182,7 +189,7 @@ export function selected(ctx: StageContext, unit: PlanUnit, tip: Sha, head: Sha)
     const o = findings.find((f) => f.id === r)?.obligation ?? null;
     return o === null ? [] : [o];
   });
-  const ids = selectObligations({
+  const ids = gateObligations({
     obligations,
     units: [{ unit: unit.id, declared: specObligations(spec), repairs }],
     closure: dependencyClosure(ctx, unit).flatMap((u) => specObligations(loadUnitSpec(ctx, u).spec)),
@@ -190,7 +197,9 @@ export function selected(ctx: StageContext, unit: PlanUnit, tip: Sha, head: Sha)
     revised: [],
     latched: new Set(ctx.journal.view.holistic().latched.map((l) => l.obligation)),
   });
-  return ids.map((id) => obligations.obligations.find((o) => o.id === id)!);
+  const views = (ids: readonly ObligationId[]): readonly ObligationDef[] => ids.map((id) => obligations.obligations.find((o) => o.id === id)!);
+  // An exempt standing obligation holds no merge and asks nothing of the gate, so it is not listed.
+  return { selected: views(ids.selected), direct: views(ids.direct), standing: views(ids.standing).filter((o) => !isExempt(o)) };
 }
 
 /**
@@ -476,7 +485,7 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
     const seat = seated.dispatch;
     const prompt = promptFor('gate', seat.triple.model);
     const target = gateTarget(ctx, tip);
-    const chosen = selected(ctx, unit, tip, head);
+    const chosen = selectedForGate(ctx, unit, tip, head);
     // Over the threshold, the paths the cluster map covers, listed beside the attachment for the session to read.
     const covered = largeDiff === null ? [] : diffPaths(ctx.repo, base, head);
     const list = absPath(join(diffDir, CHANGED_LIST));
@@ -484,13 +493,14 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
     const rendered = prompt.render({
       spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec) }, ...library(ctx, spec, tip), target,
       direction: ctx.plan().direction, planCheckNotes: planCheckNotes(ctx, unit.id),
-      obligations: observedViews(ctx, holisticInForce(ctx).obligations, chosen, tip),
+      obligations: observedViews(ctx, holisticInForce(ctx).obligations, chosen.direct, tip),
+      standingObligations: chosen.standing,
       diff: {
         bounded,
         claims: {
           acceptance: spec.acceptance.filter((a) => a.state === 'active').map((a) => a.id),
           witnesses: specWitnesses(spec).filter((w) => w.state === 'active').map((w) => w.id),
-          obligations: chosen.map((o) => o.id),
+          obligations: chosen.selected.map((o) => o.id),
         },
       },
       // Scope growth (2026-10-15): every out-of-scope path a salvage of the unit reverted (in no diff), still outside the scope.

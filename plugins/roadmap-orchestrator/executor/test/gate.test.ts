@@ -459,8 +459,9 @@ test('gate.obligations-selected: in a holistic arc the gate prompt lists the obl
     assert.equal(outcomes(d).at(-1), 'gate:approve');
     // The diff's paths (src/mul.js, test/mul.test.js) map to no obligation: every must-hold one is selected.
     const [g] = readCalls(d.scenarioPath).filter(isGate);
-    assert.ok(g!.stdin.includes('- I-1 (rev 1; must-hold; active): mul multiplies.'), g!.stdin);
-    assert.ok(g!.stdin.includes('- I-2 (rev 1; must-hold; active): add stays fixed.'));
+    assert.match(g!.stdin, /<obligations>\n\(none\)\n<\/obligations>/);
+    assert.match(g!.stdin, /<standing_obligations>\n- I-1: mul multiplies\.\n- I-2: add stays fixed\.\n<\/standing_obligations>/);
+    assert.match(g!.stdin, /obligations I-1, I-2\n<\/orientation>/);
     assert.deepEqual(r.journal.view.unit(U1).approval?.fingerprint.obligationRevs, [{ id: 'I-1', rev: 1 }, { id: 'I-2', rev: 1 }]);
   } finally {
     r.journal.close();

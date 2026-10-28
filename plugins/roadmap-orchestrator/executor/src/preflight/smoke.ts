@@ -81,16 +81,21 @@ export type InvocationContext = Readonly<{
  * token on refresh and writes `.credentials.json` by temp file and rename (Claude Code 2.1.283), which
  * would replace a symlink to the operator's file with a private file and leave the operator's login on a
  * spent token. The context it would otherwise load is cut by flags (backends/argv.ts) and by
- * `BACKEND_ENV_SET`.
+ * `BACKEND_ENV_SET`: no auto-memory or bundled skills to invite off-task work.
  */
 export const BACKEND_ENV_PASS = ['CLAUDE_CONFIG_DIR', 'CODEX_HOME'] as const;
 
 /**
  * Set for every backend workload. Claude: no auto-memory, so no session reads the operator's project memory
  * or writes one that a later unit would read (verified 2026-09-26: the init event's `memory_paths` is absent
- * with it). Codex ignores it.
+ * with it). Bundled skills are disabled (Claude Code 2.1.310, 2026-10-28) so sessions stay on task;
+ * project skills still load, while argv disables the plugin-authoring built-in plugin. Design and doctor
+ * remain (evals/probe.ts pins that residual pair). Codex ignores these variables.
  */
-export const BACKEND_ENV_SET: Readonly<Record<string, string>> = { CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' };
+export const BACKEND_ENV_SET: Readonly<Record<string, string>> = {
+  CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
+  CLAUDE_CODE_DISABLE_BUNDLED_SKILLS: '1',
+};
 
 export function backendEnv(host: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string>> {
   const out: Record<string, string> = { ...BACKEND_ENV_SET };

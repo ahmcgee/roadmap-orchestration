@@ -494,7 +494,7 @@ test('stages.no-model-ids: events, the state cache, dispatch facts and needs-use
     // Only the implementer gets the owner label: a judgment holds no resource.
     const build = i.expect.subject.purpose === 'backend' && i.expect.subject.role === 'build';
     assert.equal(l.env['RESOURCE_OWNER'], build ? `${run.ctx.plan().arc}/${U1}` : undefined);
-    const base = ['HOME', 'PATH', 'CLAUDE_CODE_DISABLE_AUTO_MEMORY'].concat(['CLAUDE_CONFIG_DIR', 'CODEX_HOME'].filter((k) => process.env[k] !== undefined));
+    const base = ['HOME', 'PATH', 'CLAUDE_CODE_DISABLE_AUTO_MEMORY', 'CLAUDE_CODE_DISABLE_BUNDLED_SKILLS'].concat(['CLAUDE_CONFIG_DIR', 'CODEX_HOME'].filter((k) => process.env[k] !== undefined));
     assert.deepEqual(Object.keys(l.env).sort(), (build ? [...base, 'RESOURCE_OWNER'] : base).sort());
   }
 });
