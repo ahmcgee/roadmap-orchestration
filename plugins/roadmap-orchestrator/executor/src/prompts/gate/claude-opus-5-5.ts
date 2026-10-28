@@ -287,6 +287,8 @@ ${bullets(i.evidence, '(none)')}
 
 <scope_envelope>
 ${bullets(i.scope.patterns, '(empty)')}
+Excluded generated outputs (never edit):
+${bullets(i.scope.excluded, '(none)')}
 </scope_envelope>
 
 <scope_growth>

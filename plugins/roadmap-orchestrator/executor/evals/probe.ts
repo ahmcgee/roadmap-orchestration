@@ -568,7 +568,7 @@ async function main(): Promise<void> {
   const planCheckInputs: PlanCheckInputs = {
     spec: { unit: unitId('u-convert'), rev: specRev(1), markdown: '# Unit u-convert\n\n## Acceptance\n- A1: convert.ts exports toFahrenheit and toCelsius.\n- A2: toFahrenheit rounds its result to the nearest integer.\n\n## Lanes\n(none)' },
     contracts: [], rulings: [], index: MINI_INDEX, target: MINI_ARCH, direction: 'Ship the smallest thing that serves the vision.',
-    scope: [repoPattern('convert.ts')], risk: 'low', checkouts: { tip: { path: m3Dir, at: TREE }, branch: null }, lanePrograms: [], priorRound: null, vision: MINI_VISION, priorInvalid: null,
+    scope: { include: [repoPattern('convert.ts')], exclude: [] }, risk: 'low', checkouts: { tip: { path: m3Dir, at: TREE }, branch: null }, lanePrograms: [], priorRound: null, vision: MINI_VISION, priorInvalid: null,
     scopeGrowth: { references: [], rejected: [] }, escalation: null, milestones: null, staleLinks: [],
     design: { systems: null, lanes: [], forces: [], substantialLines: 200, gateInlineLines: 1310, pocsLeft: 2, scaffold: false }, pocs: [],
   };
@@ -646,7 +646,7 @@ async function main(): Promise<void> {
   const unitLane = { id: UNIT, argv: ['sh', '-c', 'grep -q hello hello.txt'], cwd: repoPath('.'), env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], evidenceExcludes: [] } as const;
   const buildInputs = (worktree: AbsPath, evidenceDir: AbsPath): BuildInputs => ({
     spec: { unit: unitId('u-hello'), rev: specRev(1), markdown: buildSpec }, contracts: [], rulings: [], index: MINI_INDEX, planCheckNotes: '', fastLanes: [unitLane], suiteLanes: [],
-    evidenceDir, worktree, scope: [repoPattern('hello.txt')], fixRound: null, witnessChecks: [], milestones: null, browser: null, certifiedAt: null, handover: null,
+    evidenceDir, worktree, scope: { include: [repoPattern('hello.txt')], exclude: [] }, fixRound: null, witnessChecks: [], milestones: null, browser: null, certifiedAt: null, handover: null,
   });
 
   // (3) A checkpoint answer under the new schema: an admit with `targets`.

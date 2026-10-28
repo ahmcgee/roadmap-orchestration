@@ -132,7 +132,7 @@ import { type ApplyProposal, type NextInputs, type Proposer, type RulingDraft, a
 import { keepOwner } from '../input/rebase.ts';
 import {
   type InForce, type InputFiles, RENDER_INPUT, type RevisionInForce, type RoutingBase, keepCorpusFiles, keepInput, keepRevisionFiles, planInForce, planRouting,
-  readInputFiles, requirePlanInForce, revisionInForce, revisionManifestOf, routingProvenanceOf,
+  readInputFiles, requirePlanInForce, revisionInForce, inForceFiles, revisionManifestOf, routingProvenanceOf,
 } from '../input/inforce.ts';
 import { needsUserAckPath, raiseNeedsUser, raisedFor, raisedWithReason, readNeedsUser, readNeedsUserAck } from '../needsuser.ts';
 import { dispatchOf, repin } from '../pipeline/dispatch.ts';
@@ -140,7 +140,7 @@ import { decidedBy } from '../pipeline/transitions.ts';
 import { applyRows } from '../preflight/checks.ts';
 import { laneRows } from '../preflight/lanerows.ts';
 import type { SourceFile } from '../corpus/source.ts';
-import { APPLY, type Phase0Advisory, phase0InputOf, phase0Rows, sameRepoCorpusSet, scopeOverlapProblems, underRoot, visionLeak } from '../phase0/rows.ts';
+import { APPLY, planDefects, type Phase0Advisory, phase0InputOf, phase0Rows, sameRepoCorpusSet, scopeOverlapProblems, underRoot, visionLeak } from '../phase0/rows.ts';
 import { type SmokeRouting, backendsOf, smokeBackends, smokeRejections } from '../preflight/smoke.ts';
 import type { StartupContext, StartupRejection } from '../preflight/startup.ts';
 import type { ResidueRecipe } from '../recover/residue.ts';
@@ -734,6 +734,11 @@ export function evaluateRevision(
   const set = pin === null || guide === null ? null : sameRepoCorpusSet(pin, guide);
   const overlaps = set === null ? [] : scopeOverlapProblems(set, proposal.plan.units.filter((u) => verdict.scoped.includes(u.id)));
   if (overlaps.length > 0) return { kind: 'rejected', reasons: [rowText({ kind: 'corpus-invalid', problems: overlaps })] };
+  // Every revision refuses only the plan defects it adds (2026-10-27; 1.0.0-dev.26), including executor revisions.
+  const before = inForceFiles(ctx.runDir, ctx.view, inForce, revision, ctx.planFile, proposal.repo);
+  const known = new Set(planDefects(phase0InputOf(before, ctx.routingBase.config, ctx.view), APPLY).map(canonicalJson));
+  const added = planDefects(phase0InputOf(proposal, ctx.routingBase.config, ctx.view), APPLY).filter((d) => !known.has(canonicalJson(d)));
+  if (added.length > 0) return { kind: 'rejected', reasons: [rowText({ kind: 'plan-defect', defects: added })] };
   const manifest = revisionManifestOf(proposal);
   if ('missing' in manifest) return { kind: 'rejected', reasons: manifest.missing };
   const publication = publicationOf(ctx.view, revision, verdict.inputs, proposal);

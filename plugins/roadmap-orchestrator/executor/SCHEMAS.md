@@ -229,7 +229,7 @@ started on dev.10 reads each lane and witness that declares nothing as undeclare
 | obligations file | `WitnessRef + files?: RepoPath[]` (ascending, non-empty; also inside `proofJudgment.witness`) | absent: undeclared (`witnessFilesUndeclared`, warned once); required at a fresh start |
 | obligations file | `ArcLaneDef.testPaths` required at a fresh start | absent: undeclared (`laneTestPathsUndeclared`, warned once). Before 2026-10-21 (1.0.0-dev.16) any witness declaring files made every lane and witness required, so one checkpoint split refused every later apply of the arc; each is now judged on its own |
 | `plan.json` | `+ derived?: [{sources: RepoPattern[], outputs: RepoPattern[]}]` (each non-empty, unique) | absent: none (`derivedOf`; lasting) |
-| `DispatchRecord` | `+ derived?: RepoPattern[]` (ascending, non-empty; read through `effectiveScope`) | absent: none (lasting) |
+| `DispatchRecord` | `+ derived?: RepoPattern[]`, `+ excluded?: RepoPattern[]` (ascending, non-empty; read through `effectiveScope`) | absent: none (lasting; no warning) |
 | `PlanChange` | `+ derived` (no drain) | none |
 | `StartupRejection` | `+ plan-defect{defects: PlanDefect[]}` (non-empty) | none |
 | `stage-outcome` lanes, `StageOutcomeDetail` | `+ plan-defect` (park `operator env`, uncharged; `detail: plan-defect{defects}`); `+ scope-growth` (class `hold`, as plan-check's) | none |
@@ -3783,10 +3783,10 @@ applied `apply` receipt list it, a start writes it to the executor's stderr. The
 A plan defect code can check is refused at Phase 0; one that surfaces at run time parks uncharged with a code-produced
 diagnosis instead of charging fix rounds.
 
-**`PlanDefect`** (src/holistic/types.ts; `planDefectText` renders each in one sentence):
+**`PlanDefect`** (dev.26 removes the former generated-output ownership variant; src/holistic/types.ts; `planDefectText` renders each in one sentence):
 `witness-not-in-lane{obligation, lane, file, missing: test-paths | argv}`, `witness-file-unreachable{obligation, file,
 units: UnitId[]}`, `witness-files-undeclared{obligation}`, `lane-test-paths-undeclared{lane}`,
-`derived-overlaps-corpus{output}`, `derived-output-owned{output, unit}`, and (2026-10-21; 1.0.0-dev.16)
+`derived-overlaps-corpus{output}`, and (2026-10-21; 1.0.0-dev.16)
 `milestone-references-oversize{milestone, bytes, budget, largest: {path, bytes}[]}` (`largest`: at most five, largest
 first). Additive: no earlier record holds it.
 
@@ -3799,8 +3799,8 @@ directory. It reaches the file when it is `.`, the file, a directory above it or
 An argv naming none leaves selection to the runner. The rule errs permissive: an element that only happens to name a
 test directory (a `test` subcommand under `testPaths: [test]`) counts.
 
-**Phase-0 row 11** (src/phase0/rows.ts, every mode), `plan-defect{defects}`: derived outputs in the scope of a unit
-covering none of the entry's sources, and (same-repo corpus) outputs that may reach the corpus file set; for a corpus
+**Phase-0 row 11** (src/phase0/rows.ts, startup rows; APPLY advisories), `plan-defect{defects}`: (same-repo corpus)
+outputs that may reach the corpus file set; for a corpus
 arc's binding obligations (active, not exempt) with declared files, each file in its lane, and present at the
 integration tip (the baseline before the branch exists) or inside the effective scope of a deliverer or a unit a
 deliverer runs `after`, transitively (`units`: the deliverers; empty for a must-hold obligation, whose file must exist).
@@ -3824,8 +3824,22 @@ SHA and outside the unit's effective scope (`units: [the unit]`). Any defect mak
 
 **Derived files** (src/input/derived.ts `derivedWidening`, the one place). A unit whose scope may overlap an entry's
 source takes the entry's outputs; `firstPin` and every re-pin (`pinUpdate`) record them as `DispatchRecord.derived`.
-`effectiveScope(record)` (scope + derived) bounds salvage, recovery's salvage rules, the gate's growth and reverted paths,
-the transient check, plan-check's growth verification and the prompts' scope.
+`derivedExclusions` computes outputs the plan scope may reach while covering none of the entry's sources; these are
+pinned beside `derived` as `DispatchRecord.excluded?: readonly RepoPattern[]` (ascending, non-empty when present).
+Absence means no exclusions, permanently, including records pinned by earlier executors; no warning is emitted.
+Inclusion wins across entries: an output included by any source-covered entry is never excluded by another entry.
+`effectiveScope(record): EffectiveScope` is `{include: readonly RepoPattern[], exclude: readonly RepoPattern[]}`:
+include is scope + derived, exclude is excluded or []. `inScope(scope, path)` is the one path predicate: some include
+matches and no exclude matches, using `matchesPattern`. It bounds salvage, recovery, the gate, transient checks,
+witness reachability and growth; plan-check, build and gate prompts render exclusions. An excluded write is ordinary
+`out-of-scope`, with or without `regenerate`. Split children compute their own exclusions from their plan scope;
+growth of an output alone keeps it excluded until the scope also covers a source.
+
+**Revision delta** (2026-10-27; 1.0.0-dev.26). `planDefects(input, mode)` is shared by Phase 0 and `evaluateRevision`.
+Every revision path refuses `plan-defect{defects}` containing only proposal defects absent from the inputs in force,
+compared by `canonicalJson`. Startup (`FRESH_START`, `RESTART`, `FROM_REF`, `phase0 check`) still reports every defect.
+`Phase0Mode.defects` is false in APPLY: its rows omit these defects after the delta check and its advisories include
+`{kind: 'plan-defect', defects}` when any remain, printed in dry runs and receipts (including scope accept).
 
 **Regenerate checks** (dev.12; src/input/derived.ts, src/pipeline/regenerate.ts). An entry's `regenerate` is the lane
 `regenerate.<12 hex of the entry's canonical hash>` (`regenerateLaneId`; a suite lane may not take the id): the executor's

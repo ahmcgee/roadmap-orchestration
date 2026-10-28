@@ -159,8 +159,12 @@ ${i.planCheckNotes === '' ? '(none)' : i.planCheckNotes}
 <certified_tree>${i.certifiedAt ?? '(none yet: docsOnlySince is null)'}</certified_tree>
 
 <scope_patterns>
-${bullets(i.scope, '(empty)')}
+${bullets(i.scope.include, '(empty)')}
 </scope_patterns>
+<scope_exclusions>
+Generated outputs: never edit these paths.
+${bullets(i.scope.exclude, '(none)')}
+</scope_exclusions>
 
 <fast_lanes>
 ${fastLanesText(i.worktree, i.fastLanes)}

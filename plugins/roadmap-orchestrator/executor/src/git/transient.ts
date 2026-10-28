@@ -13,7 +13,7 @@
 // - The prefix-collision guard refuses a candidate whose new paths would collide on a case-insensitive
 //   filesystem. Collisions already present at T are grandfathered.
 import type { LaneId, Sha } from '../core/ids.ts';
-import { type DispatchRecord, type SpecM1, effectiveScope } from '../core/records.ts';
+import { type DispatchRecord, type SpecM1, effectiveScope, inScope, type EffectiveScope } from '../core/records.ts';
 import { type AbsPath, type RepoPath, type RepoPattern, matchesPattern, repoPath } from '../core/values.ts';
 import { git, lsTree, mergeBase } from './git.ts';
 
@@ -68,7 +68,7 @@ export type LaneEvidenceGlob = Readonly<{ lane: LaneId; glob: RepoPattern }>;
  * H15: no `.roadmap/` path, and every path inside `scope`, the dispatch record's effective scope (its pinned scope,
  * re-pinned on a ruled growth, and its derived outputs). `evidenceGlobs`: the spec's declared lane `evidenceGlobs` (every lane's, active or not), in spec order.
  */
-export type TransientRules = Readonly<{ evidenceGlobs: readonly LaneEvidenceGlob[]; scope: readonly RepoPattern[] }>;
+export type TransientRules = Readonly<{ evidenceGlobs: readonly LaneEvidenceGlob[]; scope: EffectiveScope }>;
 
 /** Every `evidenceGlobs` entry of a spec's lanes, active or not, in spec order. */
 export const laneEvidenceGlobs = (spec: SpecM1): readonly LaneEvidenceGlob[] =>
@@ -95,7 +95,7 @@ function violationOf(rules: TransientRules, path: RepoPath): TransientViolation 
   if (name === 'events.jsonl' || name.startsWith('events.torn.')) return { path, rule: 'executor-file' };
   const parent = segments[segments.length - 2];
   if (parent !== undefined && INVOCATION_DIR.test(parent) && RUNNER_FILES.has(name)) return { path, rule: 'executor-file' };
-  if (!rules.scope.some((p) => matchesPattern(path, p))) return { path, rule: 'out-of-scope' };
+  if (!inScope(rules.scope, path)) return { path, rule: 'out-of-scope' };
   return null;
 }
 

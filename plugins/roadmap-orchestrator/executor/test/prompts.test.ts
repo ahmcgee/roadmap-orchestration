@@ -16,7 +16,7 @@ import {
 } from '../src/holistic/types.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import { SchemaError } from '../src/core/validate.ts';
-import { absPath, planPath, repoPath, repoPattern } from '../src/core/values.ts';
+import { absPath, repoPath, repoPattern } from '../src/core/values.ts';
 import { headingSlug, quotedTextReason } from '../src/docs/contracts.ts';
 import { PROMPTS, SONNET_THINK_FIRST, UnsupportedPromptError, promptFor, support } from '../src/prompts/index.ts';
 import type { BoundedDiff } from '../src/git/boundeddiff.ts';
@@ -210,7 +210,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
   planCheck: [
     {
       spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
-      target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A', scope: [repoPattern('src/a/**')], risk: 'low',
+      target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A', scope: { include: [repoPattern('src/a/**')], exclude: [] }, risk: 'low',
       checkouts: { tip: { path: absPath('/wt/u.plan-check-1'), at: SHA_A }, branch: null },
       lanePrograms: [{ lane: laneId('unit'), argv0: 'npm', resolved: { kind: 'program', realpath: absPath('/usr/lib/node/npm') } }],
       priorRound: null, vision: null, priorInvalid: null, scopeGrowth: { references: [], rejected: [] }, escalation: null, milestones: null, staleLinks: [],
@@ -219,7 +219,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
     {
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
       target: { kind: 'digest', digest: doc('docs/digest.md', 'DIGEST-B'), doc: repoPath('docs/arch2.md') }, direction: 'DIR-B',
-      scope: [repoPattern('src/b/**')], risk: 'high',
+      scope: { include: [repoPattern('src/b/**')], exclude: [] }, risk: 'high',
       checkouts: { tip: { path: absPath('/wt/u.plan-check-2'), at: SHA_B }, branch: { path: absPath('/wt/u.plan-check-2-branch'), at: SHA_A } },
       lanePrograms: [{ lane: laneId('lint'), argv0: 'rg', resolved: { kind: 'not-found' } }],
       priorRound: {
@@ -250,12 +250,12 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
     {
       spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
       planCheckNotes: '', fastLanes: [lane('unit', ['npm', 'test'])], suiteLanes: [], evidenceDir: absPath('/run/ev/a'), worktree: absPath('/wt/a'),
-      scope: [repoPattern('src/a/**')], fixRound: null, witnessChecks: [], milestones: null, browser: null, certifiedAt: null, handover: null,
+      scope: { include: [repoPattern('src/a/**')], exclude: [] }, fixRound: null, witnessChecks: [], milestones: null, browser: null, certifiedAt: null, handover: null,
     },
     {
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
       planCheckNotes: 'NOTES-B', fastLanes: [lane('lint', ['npx', 'tsc', '--noEmit'])], suiteLanes: [lane('eslint', ['npx', 'eslint', '.'])], evidenceDir: absPath('/run/ev/b'), worktree: absPath('/wt/b'),
-      scope: [repoPattern('src/b/**')], fixRound: { failingEvidenceDirs: [absPath('/run/inv/9-1')], directives: ['DIRECTIVE-B'] },
+      scope: { include: [repoPattern('src/b/**')], exclude: [] }, fixRound: { failingEvidenceDirs: [absPath('/run/inv/9-1')], directives: ['DIRECTIVE-B'] },
       witnessChecks: [{ lane: laneId('journey'), command: 'roadmap witness-check --lane-file /run/ev/b/witness/journey.json' }],
       milestones: milestonesSample(), browser: browserSample(), certifiedAt: SHA_B,
       handover: {
@@ -283,7 +283,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A', planCheckNotes: '', obligations: [],
       diff: { bounded: shown(SHA_A, SHA_B, 'DIFF-A'), claims: { acceptance: [clauseId('A1')], witnesses: [], obligations: [] } },
       laneLedger: [{ lane: laneId('unit'), argv: ['npm', 'test'], expectedExit: 0, exitCode: 0, verdict: 'pass', evidenceDir: absPath('/run/inv/3-1'), ignored: null, reused: null }],
-      evidence: [absPath('/run/ev/a')], scope: { patterns: [repoPattern('src/a/**')], growth: [], rejected: [] }, priorRound: null, checks: { witnesses: null, smoke: null, regenerated: [] },
+      evidence: [absPath('/run/ev/a')], scope: { excluded: [], patterns: [repoPattern('src/a/**')], growth: [], rejected: [] }, priorRound: null, checks: { witnesses: null, smoke: null, regenerated: [] },
       escalation: null, largeDiff: null, milestones: null, review: { ledger: [], disputes: [], delta: null }, undeclaredContracts: [],
     },
     {
@@ -294,7 +294,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       laneLedger: [{ lane: laneId('lint'), argv: ['npx', 'tsc'], expectedExit: 0, exitCode: 0, verdict: 'pass', evidenceDir: absPath('/run/inv/4-1'),
         ignored: { v: 1, written: { files: 42, bytes: 3_250_000 }, captured: { files: 0, bytes: 0 }, uncaptured: [{ dir: '.local/demo/', files: 42, bytes: 3_250_000, reason: 'not-declared' }] },
         reused: { at: SHA_A, inv: invocationId(opIdOf('arc-1/4'), 1) } }],
-      evidence: [absPath('/run/ev/b')], scope: { patterns: [repoPattern('src/b/**')], growth: [repoPath('README.md')], rejected: [repoPath('test/b/REVERTED-B.test.ts')] },
+      evidence: [absPath('/run/ev/b')], scope: { excluded: [], patterns: [repoPattern('src/b/**')], growth: [repoPath('README.md')], rejected: [repoPath('test/b/REVERTED-B.test.ts')] },
       priorRound: {
         directives: ['DIRECTIVE-B'], findings: [{
           severity: 'blocking', path: 'src/b/x.ts', text: 'FINDING-B', contractRef: null, experiments: [{ command: 'node EXPERIMENT-B.mjs', output: 'OUTPUT-B' }], debt: null,
@@ -1432,4 +1432,18 @@ describe('dev.13 prompts: the polish judge', () => {
       }
     }
   });
+});
+
+
+it('prompts.derived-exclusion: plan-check, builders and gates render the excluded output data', () => {
+  const output = repoPattern('test/generated-routes.json');
+  for (const role of ['planCheck', 'build', 'gate'] as const) {
+    for (const model of MODEL_IDS) {
+      if (PROMPTS[role][model].type === 'unsupported') continue;
+      const mod = promptFor(role, model);
+      const sample = SAMPLES[role][0];
+      const scope = role === 'gate' ? { ...SAMPLES.gate[0].scope, excluded: [output] } : { ...SAMPLES.build[0].scope, exclude: [output] };
+      assert.ok((mod.render as (i: unknown) => string)({ ...sample, scope }).includes(output), `${role} ${model}: excluded output rendered`);
+    }
+  }
 });

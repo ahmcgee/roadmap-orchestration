@@ -12,7 +12,7 @@ import {
 import type { JsonValue } from './json.ts';
 import {
   type AbsPath, type BootId, type IsoTime, type Nonce, type RepoPath, type RepoPattern, absPath, bootId, isoTime, nonce,
-  repoPath, repoPattern,
+  repoPath, repoPattern, matchesPattern,
 } from './values.ts';
 import {
   type Brand, type Read, Fields, SchemaError, arrayOf, assertUnique, bool, envName, int, literal, nat, nullable, object, oneOf,
@@ -828,13 +828,21 @@ export type DispatchRecord = Readonly<{
    * through `effectiveScope`.
    */
   derived?: readonly RepoPattern[];
+  /** Derived exclusion (2026-10-27; 1.0.0-dev.26): ascending, non-empty; absent: none (lasting, old pins keep their write set). */
+  excluded?: readonly RepoPattern[];
 }>;
 
-/** What a unit may change: its pinned scope and its derived outputs. Salvage, the gate, the candidate and recovery read it. */
-export const effectiveScope = (record: DispatchRecord): readonly RepoPattern[] => [...record.scope, ...(record.derived ?? [])];
+/** What a unit may change: its pinned scope and derived outputs, minus its excluded outputs. Salvage, the gate, the candidate and recovery read it. */
+export type EffectiveScope = Readonly<{ include: readonly RepoPattern[]; exclude: readonly RepoPattern[] }>;
+export const effectiveScope = (record: DispatchRecord): EffectiveScope => ({ include: [...record.scope, ...(record.derived ?? [])], exclude: record.excluded ?? [] });
+
+/** The one path judgement of an effective scope (derived exclusion, 2026-10-27; 1.0.0-dev.26). */
+export const inScope = (scope: EffectiveScope, path: RepoPath): boolean =>
+  scope.include.some((p) => matchesPattern(path, p)) && !scope.exclude.some((p) => matchesPattern(path, p));
 
 export const dispatchRecord: Read<DispatchRecord> = object((f) => {
   const b = f.optional('bounds', bounds);
+  const excluded = f.optional('excluded', sortedBy((v, p) => repoPattern(v, p), (s) => s, { nonEmpty: true }));
   const derived = f.optional('derived', sortedBy((v, p) => repoPattern(v, p), (s) => s, { nonEmpty: true }));
   return {
     unit: f.get('unit', unit),
@@ -848,6 +856,7 @@ export const dispatchRecord: Read<DispatchRecord> = object((f) => {
     transientRules: f.get('transientRules', oneOf(TRANSIENT_RULES)),
     ...(b === undefined ? {} : { bounds: b }),
     ...(derived === undefined ? {} : { derived }),
+    ...(excluded === undefined ? {} : { excluded }),
   };
 });
 

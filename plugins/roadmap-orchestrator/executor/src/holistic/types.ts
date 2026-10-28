@@ -8,7 +8,7 @@
 import {
   type FindingId, type InvocationId, type JobId, type LaneId, type LaneRev, type ObligationId, type PlanRev, type QuestionId, type RoutingRev, type RuleId,
   type RulingId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, envId, findingId, invocationIdOf, jobIdOf, jobIdOfKind, laneId, laneRev,
-  obligationId, planRev, questionId, routingRev, ruleId, ruleSeq, rulingId, sha, sha256, unitId, visionClauseId, type EnvId, idList, idsAscending,
+  obligationId, planRev, questionId, routingRev, ruleId, rulingId, sha, sha256, unitId, visionClauseId, type EnvId, idList, idsAscending,
   type OpportunityId, opportunityId, type MilestoneId, milestoneId,
 } from '../core/ids.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
@@ -296,7 +296,6 @@ const witnessRef: Read<WitnessRef> = object((f) => {
  *   witness-files-undeclared  (a fresh start) an active witness without `files`.
  *   lane-test-paths-undeclared (a fresh start) an arc lane without `testPaths`.
  *   derived-overlaps-corpus   a derived output that may reach the corpus file set.
- *   derived-output-owned      a derived output inside the scope of a unit that covers none of its sources.
  *   milestone-references-oversize (2026-10-21; 1.0.0-dev.16) a milestone whose reference dirs hold more text at the tip
  *                             than `MILESTONE_REFERENCES_BUDGET` (src/phase0/rows.ts): every text file under them is
  *                             inlined whole into each plan-check, build and gate prompt of its units and its walkthrough.
@@ -308,7 +307,6 @@ export type PlanDefect =
   | Readonly<{ type: 'witness-files-undeclared'; obligation: ObligationId }>
   | Readonly<{ type: 'lane-test-paths-undeclared'; lane: LaneId }>
   | Readonly<{ type: 'derived-overlaps-corpus'; output: RepoPattern }>
-  | Readonly<{ type: 'derived-output-owned'; output: RepoPattern; unit: UnitId }>
   | Readonly<{ type: 'milestone-references-oversize'; milestone: MilestoneId; bytes: number; budget: number; largest: readonly Readonly<{ path: RepoPath; bytes: number }>[] }>;
 
 /** A plan defect in one sentence, for a needs-user and a refusal's reader. */
@@ -328,8 +326,6 @@ export function planDefectText(d: PlanDefect): string {
       return `Arc lane ${d.lane} declares no testPaths.`;
     case 'derived-overlaps-corpus':
       return `Derived output ${d.output} may reach the corpus file set.`;
-    case 'derived-output-owned':
-      return `Derived output ${d.output} is inside unit ${d.unit}'s scope, which covers none of its sources.`;
     case 'milestone-references-oversize':
       return `Milestone ${d.milestone}'s references hold ${d.bytes} bytes of text, over the ${d.budget}-byte budget: every text file under them is inlined into `
         + `each plan-check, build and gate prompt of its units and its walkthrough. The largest: ${d.largest.map((f) => `${f.path} (${f.bytes} bytes)`).join(', ')}. `
@@ -350,7 +346,6 @@ export const planDefect: Read<PlanDefect> = tagged('type', {
   'witness-files-undeclared': object((f): PlanDefect => ({ type: f.get('type', literal('witness-files-undeclared')), obligation: f.get('obligation', oid) })),
   'lane-test-paths-undeclared': object((f): PlanDefect => ({ type: f.get('type', literal('lane-test-paths-undeclared')), lane: f.get('lane', (v, p) => laneId(v, p)) })),
   'derived-overlaps-corpus': object((f): PlanDefect => ({ type: f.get('type', literal('derived-overlaps-corpus')), output: f.get('output', patternR) })),
-  'derived-output-owned': object((f): PlanDefect => ({ type: f.get('type', literal('derived-output-owned')), output: f.get('output', patternR), unit: f.get('unit', (v, p) => unitId(v, p)) })),
   'milestone-references-oversize': object((f): PlanDefect => ({
     type: f.get('type', literal('milestone-references-oversize')), milestone: f.get('milestone', (v, p) => milestoneId(v, p)), bytes: f.get('bytes', nat),
     budget: f.get('budget', nat), largest: f.get('largest', arrayOf(object((g) => ({ path: g.get('path', pathR), bytes: g.get('bytes', nat) })), { nonEmpty: true })),

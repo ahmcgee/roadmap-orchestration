@@ -5,6 +5,7 @@
 // The required input set per role (ROLE_INPUTS) comes from DESIGN-1.0.md §2.1 and §4 "Gate inputs"
 // and the M1 plan's gate inputs (R2). Every prompt module must interpolate exactly these fields; the
 // test `prompts.fields==required` holds each module to it.
+import type { EffectiveScope } from '../core/records.ts';
 import { createHash } from 'node:crypto';
 import type { OutcomeStage, TestRef } from '../core/events.ts';
 import type {
@@ -168,7 +169,7 @@ export type PlanCheckInputs = Readonly<{
   target: TargetInput;
   direction: string;
   /** The scope envelope pinned for the unit. */
-  scope: readonly RepoPattern[];
+  scope: EffectiveScope;
   /** The Phase-0 risk floor. */
   risk: RiskTier;
   checkouts: PlanCheckCheckouts;
@@ -264,7 +265,7 @@ export type BuildInputs = Readonly<{
   /** Where the implementer writes decisions.json; outside the worktree, snapshotted by the executor. */
   evidenceDir: AbsPath;
   worktree: AbsPath;
-  scope: readonly RepoPattern[];
+  scope: EffectiveScope;
   fixRound: FixRound | null;
   /**
    * M4a rev 3 (D1, R56): per fast required witness lane, the exact `roadmap witness-check --lane-file <file>` command the
@@ -395,7 +396,7 @@ export type GateInputs = Readonly<{
    * The pinned envelope, the diff's paths outside it, and (scope growth, 2026-10-15) the out-of-scope paths the build edited
    * that salvage reverted (in no diff), still outside the envelope.
    */
-  scope: Readonly<{ patterns: readonly RepoPattern[]; growth: readonly RepoPath[]; rejected: readonly RepoPath[] }>;
+  scope: Readonly<{ patterns: readonly RepoPattern[]; excluded: readonly RepoPattern[]; growth: readonly RepoPath[]; rejected: readonly RepoPath[] }>;
   /** Later gate rounds rule on their own prior round (§3, sf16); null on the first round. */
   priorRound: GatePriorRound | null;
   /** M4a rev 3: the executable checks' results (`GateChecks`). */

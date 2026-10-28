@@ -35,13 +35,14 @@ import {
   type InputFiles, inForceFiles, ledgerPath, requirePlanInForce, revisionInForce, sidecarPath,
 } from '../input/inforce.ts';
 import { parsePlan } from '../input/plan.ts';
+import { derivedGrowthReason } from '../input/derived.ts';
 import { raisedFor } from '../needsuser.ts';
 import { APPLY, phase0InputOf, phase0Rows } from '../phase0/rows.ts';
 import { rulingContextAt } from '../pipeline/publish.ts';
 import { quotedTextReason } from '../docs/contracts.ts';
 import { parseSpec, specBytes } from '../spec/spec.ts';
 import { consistencyRevs, nextRulingId, parseRulings } from '../spec/rulings.ts';
-import { type CommandContext, type Effect, acknowledge, commitUnderFence, evaluateRevision, parentOf, rejectedText } from './apply.ts';
+import { type CommandContext, type Effect, acknowledge, advisoryText, commitUnderFence, evaluateRevision, parentOf, rejectedText } from './apply.ts';
 import { rulingReasons } from './rule.ts';
 
 type ScopeBody = Extract<CommandBody, { type: 'scope-decide' }>;
@@ -123,7 +124,14 @@ async function landGrowth(
   const planUnit = inForce.plan.units.find((p) => p.id === unit);
   const specFile = current.specs.get(unit);
   if (planUnit === undefined || specFile === undefined || specFile.bytes === null) throw new Error(`scope accept ${unit}: a held unit the plan in force does not hold with its spec`);
-  const added = [...new Set(proposals.flatMap((p) => p.patterns))].filter((p) => !planUnit.scope.includes(p)).sort();
+  const patterns = [...new Set(proposals.flatMap((p) => p.patterns))].sort();
+  const grownScope = [...planUnit.scope, ...patterns];
+  const refused = patterns.flatMap((p) => {
+    const reason = derivedGrowthReason(inForce.plan, grownScope, p);
+    return reason === null ? [] : [`\`${p}\`: ${reason}`];
+  });
+  if (refused.length > 0) return { kind: 'rejected', reason: `scope accept ${unit}: ${refused.join('; ')}` };
+  const added = patterns.filter((p) => !planUnit.scope.includes(p));
   if (added.length === 0) return { kind: 'applied', verified: [`unit ${unit}'s plan scope holds every proposed pattern already: nothing to land`] };
 
   const tip = refTarget(ctx.repo, branchRef(inForce.plan.integrationBranch));
@@ -167,7 +175,8 @@ async function landGrowth(
   if (evaluated.kind === 'rejected') return { kind: 'rejected', reason: rejectedText(evaluated.reasons) };
   if (evaluated.kind === 'unchanged') throw new Error(`scope accept ${unit}: a new ruling and a wider scope left the plan in force unchanged`);
   // The Phase-0 rows an apply runs (a corpus arc's corpus overlap among them).
-  const rows = phase0Rows(phase0InputOf(proposal, ctx.routingBase.config, view), APPLY).rows;
+  const p0 = phase0Rows(phase0InputOf(proposal, ctx.routingBase.config, view), APPLY);
+  const rows = p0.rows;
   if (rows.length > 0) return { kind: 'rejected', reason: rejectedText(rows.map((r) => canonicalJson(r))) };
   const committed = await commitUnderFence(ctx, evaluated, proposer, { type: 'command', command: id }, parentOf(id));
   if (committed.kind === 'rejected') return { kind: 'rejected', reason: rejectedText(committed.reasons) };
@@ -176,6 +185,7 @@ async function landGrowth(
     verified: [
       `plan rev ${committed.fact.rev} in force: unit ${unit}'s scope grows by ${added.join(', ')}, ruled by ${ruling}`,
       ...committed.fact.changes.map((c) => canonicalJson(c)),
+      ...p0.advisories.map(advisoryText),
     ],
   };
 }

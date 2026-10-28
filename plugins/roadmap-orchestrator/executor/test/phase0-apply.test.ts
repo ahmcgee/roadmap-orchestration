@@ -10,7 +10,7 @@ import { describe, it } from 'node:test';
 import { type ApplyVerdict, evaluateApply, evaluateRevision } from '../src/commands/apply.ts';
 import { corpusPin } from '../src/commands/corpus.ts';
 import { phase0Check } from '../src/commands/phase0.ts';
-import { commandId, jobId, sha, visionClauseId } from '../src/core/ids.ts';
+import { commandId, jobId, sha, visionClauseId, unitId } from '../src/core/ids.ts';
 import { canonicalJson, sha256Hex } from '../src/core/json.ts';
 import { EVENTS_FILE, type OpenJournal, openJournal } from '../src/core/log.ts';
 import { type AbsPath, absPath } from '../src/core/values.ts';
@@ -19,8 +19,9 @@ import { claimHost, releaseHost } from '../src/host/lock.ts';
 import { registryOf } from '../src/corpus/registry.ts';
 import { parseCorpusPin } from '../src/corpus/types.ts';
 import { INVARIANTS_DOC, parseRulesRegistryBlock } from '../src/docs/invariants.ts';
-import { classify, changesScope } from '../src/input/classify.ts';
+import { classify, changesScope, splitCutReason } from '../src/input/classify.ts';
 import { CORPUS_FILE_INPUT, keptInput, planInForce, readInputFiles, recordPlan, revisionInForce } from '../src/input/inforce.ts';
+import { MILESTONE_REFERENCES_BUDGET } from '../src/phase0/rows.ts';
 import { type StartChecks, type StartInput, runChecks } from '../src/preflight/checks.ts';
 import type { StartupRejection } from '../src/preflight/startup.ts';
 import {
@@ -536,5 +537,58 @@ describe('holistic arcs target a corpus (H4)', () => {
     }
     const out = await start(adopted);
     assert.equal(out.kind, 'passed', JSON.stringify(out.kind === 'refused' ? out.rejections : 'passed'));
+  });
+});
+
+
+// Revision delta (2026-10-27; 1.0.0-dev.26): old defects remain visible without blocking unrelated work.
+describe('revision plan-defect delta', () => {
+  const milestone = (id: string, references: readonly string[]): Json => ({
+    id, text: 'Berths work.', units: ['u1'], design: { supplied: true }, references,
+    bringUp: { setup: [], serve: [], env: {}, seed: [] },
+    journeys: [{ id: `J-${id.slice(3)}`, text: 'Book a berth.', via: 'shell', entry: 'node', budget: null }], resources: [],
+  });
+  it('apply keeps an oversize reference defect as an advisory, and refuses only a newly added defect', T, async () => {
+    const a = await corpusArc({ files: { 'design/large.txt': 'x'.repeat(MILESTONE_REFERENCES_BUDGET + 1) }, plan: { milestones: [milestone('MS-1', ['design'])] } });
+    const j = inForce(a);
+    try {
+      editPlan(a, (p) => ({ ...p, direction: 'Book berths safely.' }));
+      const kept = accepted(await apply(a, j));
+      const advisory = kept.advisories.find((a) => a.kind === 'plan-defect');
+      assert.ok(advisory?.kind === 'plan-defect');
+      assert.deepEqual(advisory.defects.map((d) => d.type), ['milestone-references-oversize']);
+      editPlan(a, (p) => ({ ...p, milestones: [...p['milestones'] as Json[], milestone('MS-2', ['design'])] }));
+      const why = rejected(await apply(a, j));
+      assert.equal(why.length, 1);
+      assert.match(why[0]!, /^\{/, JSON.stringify(why));
+      const row = JSON.parse(why[0]!);
+      assert.equal(row.kind, 'plan-defect');
+      assert.deepEqual(row.defects.map((d: Json) => d['milestone']), ['MS-2']);
+    } finally { j.close(); }
+  });
+
+  it('an executor split that removes a deliverer dependency scope refuses the new unreachable witness', T, async () => {
+    const a = await corpusArc({ activation: 'future', scope: ['src/**', 'test/**'] });
+    const original = readJsonFile(join(a.planDir, 'u1.json'));
+    writeFileSync(join(a.planDir, 'u2.json'), JSON.stringify({ ...original, unit: 'u2', scope: ['src/**'] }));
+    editPlan(a, (p) => ({ ...p, units: [...p['units'] as Json[], { id: 'u2', spec: 'u2.json', risk: 'low', scope: ['src/**'], resources: [], after: ['u1'] }] }));
+    editJsonFile(join(a.planDir, 'obligations.json'), (o) => ({ ...o, obligations: (o['obligations'] as Json[]).map((i) => {
+      const witness = { ...i['witness'] as Json, files: ['test/new.test.ts'] };
+      return { ...i, deliveredBy: ['u2'], witness, proofJudgment: { ...i['proofJudgment'] as Json, witness } };
+    }) }));
+    const j = inForce(a);
+    try {
+      const children = [unitId('u1-child')];
+      writeFileSync(join(a.planDir, 'u1-child.json'), JSON.stringify({ ...original, unit: 'u1-child', scope: ['src/**'] }));
+      editPlan(a, (p) => ({ ...p, units: [
+        { ...(p['units'] as Json[])[0], cut: { reason: splitCutReason(children) } },
+        { id: 'u1-child', spec: 'u1-child.json', risk: 'low', scope: ['src/**'], resources: [] },
+        { ...(p['units'] as Json[])[1], after: ['u1-child'] },
+      ] }));
+      const v = evaluateRevision({ runDir: runDirOfArc(a), view: j.view, hostDir: newHostDir(), planFile: a.planPath, routingBase: BASE, laneEnv: process.env }, filesOf(a), { type: 'split', unit: unitId('u1'), children });
+      assert.equal(v.kind, 'rejected', JSON.stringify(v));
+      assert.ok(v.kind === 'rejected');
+      assert.deepEqual(v.reasons.map((s) => JSON.parse(s)), [{ kind: 'plan-defect', defects: [{ type: 'witness-file-unreachable', obligation: 'I-1', file: 'test/new.test.ts', units: ['u2'] }] }]);
+    } finally { j.close(); }
   });
 });

@@ -64,7 +64,7 @@
 // ff then finds a contract another unit's publication changed, or a ruling a docs publication superseded
 // (`fingerprint-invalid`, a re-gate).
 import { writeFileSync } from 'node:fs';
-import { join, matchesGlob } from 'node:path';
+import { join } from 'node:path';
 import { freshJudgmentSession, resumedJudgmentSession } from '../backends/argv.ts';
 import { crashPoint } from '../core/crash.ts';
 import { normalizeText } from '../corpus/rules.ts';
@@ -74,7 +74,7 @@ import type { GateLargeDiff, IntentOf } from '../core/events.ts';
 import { captureUnderFence } from '../core/fence.ts';
 import { type JudgmentSessionId, type ObligationId, type Sha, type UnitId, invocationId, canonicalIds, compareIds } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
-import { type ApprovalFingerprint, type JudgmentSession, type ObligationRev, type SpecM1, effectiveScope, obligationRevsOf, specObligations, specRemoves, specRepairs, specWitnesses } from '../core/records.ts';
+import { type ApprovalFingerprint, type JudgmentSession, type ObligationRev, type SpecM1, effectiveScope, inScope, obligationRevsOf, specObligations, specRemoves, specRepairs, specWitnesses } from '../core/records.ts';
 import { designSize } from '../core/design.ts';
 import { selectObligations } from '../holistic/impact.ts';
 import { effectiveRulingRevs } from '../spec/rulings.ts';
@@ -472,7 +472,7 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
     // The attached diff's files (what it does not inline) are listed and readable as evidence.
     const evidence = [...laneLedger.map((l) => l.evidenceDir), ...buildEvidence(ctx, unit.id), diffDir];
     const scope = effectiveScope(pinned);
-    const growth = paths.filter((p) => !scope.some((g) => matchesGlob(p, g)));
+    const growth = paths.filter((p) => !inScope(scope, p));
     const seat = seated.dispatch;
     const prompt = promptFor('gate', seat.triple.model);
     const target = gateTarget(ctx, tip);
@@ -494,7 +494,7 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
         },
       },
       // Scope growth (2026-10-15): every out-of-scope path a salvage of the unit reverted (in no diff), still outside the scope.
-      laneLedger, evidence, scope: { patterns: scope, growth, rejected: stillOutside(ctx, unit.id, salvageRejections(ctx, unit.id).flatMap((r) => r.paths)) },
+      laneLedger, evidence, scope: { patterns: scope.include, excluded: scope.exclude, growth, rejected: stillOutside(ctx, unit.id, salvageRejections(ctx, unit.id).flatMap((r) => r.paths)) },
       priorRound: priorRound(ctx, unit.id, head),
       // M4a rev 3 (D1, D2): the executable checks of the series it judges (corpus arcs; null elsewhere).
       checks: gateChecks(ctx, unit, series, head, paths),

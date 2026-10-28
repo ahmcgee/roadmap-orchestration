@@ -10,9 +10,9 @@ import { obligationId, unitId } from '../src/core/ids.ts';
 import { repoPath, repoPattern } from '../src/core/values.ts';
 import { type ArcLaneDef, type PlanDefect, laneRevOf, parseObligations } from '../src/holistic/types.ts';
 import { laneMisses } from '../src/holistic/witnessfiles.ts';
-import { derivedWidening } from '../src/input/derived.ts';
+import { derivedExclusions, derivedWidening } from '../src/input/derived.ts';
 import { parsePlan, regenerateLaneId } from '../src/input/plan.ts';
-import { APPLY, phase0InputOf, phase0Rows } from '../src/phase0/rows.ts';
+import { APPLY, RESTART, phase0InputOf, phase0Rows } from '../src/phase0/rows.ts';
 import { type CorpusArc, PIN_FILE, WITNESS_FILE, check, corpusArc, editJsonFile, editPlan, filesOf, kinds, rowOf } from './helpers/corpusarc.ts';
 
 const T = { timeout: 120_000 };
@@ -126,12 +126,15 @@ describe('declared test paths and witness files', () => {
     assert.deepEqual(phase0Rows(phase0InputOf(filesOf(a), null, null), APPLY).rows, []);
     // I-2's declared file is still checked.
     withI2(['test/new.test.ts']);
-    assert.deepEqual(phase0Rows(phase0InputOf(filesOf(a), null, null), APPLY).rows, [{ kind: 'plan-defect', defects: [{ type: 'witness-file-unreachable', obligation: obligationId('I-2'), file: repoPath('test/new.test.ts'), units: [] }] }]);
+    const applied = phase0Rows(phase0InputOf(filesOf(a), null, null), APPLY);
+    assert.deepEqual(applied.rows, []);
+    assert.deepEqual(applied.advisories, [{ kind: 'plan-defect', defects: [{ type: 'witness-file-unreachable', obligation: obligationId('I-2'), file: repoPath('test/new.test.ts'), units: [] }] }]);
+    assert.deepEqual(phase0Rows(phase0InputOf(filesOf(a), null, null), RESTART).rows, applied.advisories, 'startup still refuses every diagnosed defect');
   });
 });
 
 describe('derived files', () => {
-  it('plan-defect.derived: an output inside a unit that covers none of its sources, or on the corpus, is refused; a source\'s unit takes the outputs in', T, async () => {
+  it('plan-defect.derived: an output without covered sources is excluded, an output on the corpus is refused; a source\'s unit takes the outputs in', T, async () => {
     const plan = (derived: readonly Json[], units: readonly Json[] = []) => (p: Json): Json => ({ ...p, derived, units: [...(p['units'] as Json[]), ...units] });
     const a = await corpusArc();
     editPlan(a, plan([{ sources: ['src/**'], outputs: ['dist/bundle.js'] }]));
@@ -145,7 +148,8 @@ describe('derived files', () => {
     const b = await corpusArc();
     writeFileSync(join(b.planDir, 'u2.json'), JSON.stringify({ ...spec, unit: 'u2', scope: ['dist/**'], obligations: undefined }));
     editPlan(b, plan([{ sources: ['src/**'], outputs: ['dist/bundle.js'] }], [{ id: 'u2', spec: 'u2.json', risk: 'low', scope: ['dist/**'], resources: [] }]));
-    assert.deepEqual(await defects(b), [{ type: 'derived-output-owned', output: repoPattern('dist/bundle.js'), unit: unitId('u2') }]);
+    assert.deepEqual(await defects(b), []);
+    assert.deepEqual(derivedExclusions(filesOf(b).plan, [repoPattern('dist/**')]), ['dist/bundle.js']);
 
     const c = await corpusArc();
     editPlan(c, plan([{ sources: ['src/**'], outputs: ['docs/corpus/generated.md'] }]));

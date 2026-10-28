@@ -48,7 +48,7 @@ describe('transient check', () => {
 
   it('refuses every transient rule and passes product paths', () => {
     const rules: TransientRules = {
-      evidenceGlobs: [{ lane: laneId('unit'), glob: repoPattern('out/lanes') }, { lane: laneId('logs'), glob: repoPattern('**/*.lane.log') }], scope: [repoPattern('**')],
+      evidenceGlobs: [{ lane: laneId('unit'), glob: repoPattern('out/lanes') }, { lane: laneId('logs'), glob: repoPattern('**/*.lane.log') }], scope: { include: [repoPattern('**')], exclude: [] },
     };
     const paths = [
       '.roadmap/config.json', '.roadmap/constraints.md', '.roadmap/contracts/api/v1.md', '.roadmap/debt.md', '.roadmap/invariants.md',
@@ -80,7 +80,7 @@ describe('transient check', () => {
 
   it('m3 rules: the pinned scope passes, a path outside it and every .roadmap/ path are refused', () => {
     const s = scene(base, 'clean');
-    const rules: TransientRules = { evidenceGlobs: [{ lane: laneId('unit'), glob: repoPattern('out/lanes') }], scope: [repoPattern('src'), repoPattern('docs/**/*.md')] };
+    const rules: TransientRules = { evidenceGlobs: [{ lane: laneId('unit'), glob: repoPattern('out/lanes') }], scope: { include: [repoPattern('src'), repoPattern('docs/**/*.md')], exclude: [] }};
     const inScope = commitOn(s.repo, s.m0, { 'src/d.ts': 'export const d = 4;\n', 'docs/guide/x.md': '# x\n' }, 'unit in scope\n');
     assert.equal(planCandidate(s.repo, { ...candidateRequest(worktree(s), inScope), rules }).kind, 'merge');
 

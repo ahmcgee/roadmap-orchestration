@@ -150,7 +150,10 @@ ${i.planCheckNotes === '' ? '(none)' : i.planCheckNotes}
 - Evidence directory: ${i.evidenceDir}
 - Certified tree: ${i.certifiedAt ?? '(none yet: docsOnlySince is null)'}
 - Scope patterns:
-${bullets(i.scope, '(empty)')}
+${bullets(i.scope.include, '(empty)')}
+
+# Excluded generated outputs (never edit)
+${bullets(i.scope.exclude, '(none)')}
 
 # Fast lanes
 ${fastLanesText(i.worktree, i.fastLanes)}${suiteLanes(i)}${witnessChecks(i)}${buildBrowserText(i.browser)}${handover(i)}${fixRound(i)}
