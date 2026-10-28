@@ -42,7 +42,6 @@ import { crashPoint } from '../core/crash.ts';
 import type { Parent } from '../core/events.ts';
 import { captureUnderFence } from '../core/fence.ts';
 import { type FindingId, type JobId, type PolishId, type ServeName, type Sha, canonicalIds, parseInvocationId } from '../core/ids.ts';
-import { readJournal } from '../core/log.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
 import { jobEvidenceRoot } from '../git/snapshot.ts';
@@ -240,7 +239,7 @@ function capture(ctx: WalkContext, due: Readonly<{ milestone: Milestone; round: 
 /**
  * Writes the `milestone-passed` a crash between `walk-ended` and `milestone-passed` cut short (step 8; the scheduler runs
  * it at its start): for each milestone not passed whose latest walk is a round that ended `reported`, no walk of it started
- * since, and which had no active walkthrough P1 as of that end (the log read through it, so a repair landing since does
+ * since, and which had no active walkthrough P1 as of that end (the finding history through it, so a repair landing since does
  * not pass the node without a walk confirming it).
  */
 export function settleWalks(ctx: Pick<StageContext, 'journal' | 'plan' | 'runDir'>): void {
@@ -249,7 +248,7 @@ export function settleWalks(ctx: Pick<StageContext, 'journal' | 'plan' | 'runDir
     const walks = walksOf(view, m.id);
     const last = walks.at(-1);
     if (last?.ended?.outcome !== 'reported' || milestonePassed(view, m.id)) continue;
-    if (activeWalkP1s(readJournal(ctx.runDir, view.arc, last.ended.seq).view, m.id).length > 0) continue;
+    if (activeWalkP1s(view, m.id, last.ended.seq).length > 0) continue;
     ctx.journal.fact({ kind: 'milestone-passed', milestone: m.id, job: last.job });
   }
 }

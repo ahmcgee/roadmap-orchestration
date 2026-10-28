@@ -511,6 +511,11 @@ force, its kept specs and the ledger in force instead (`StartupContext.specOf`, 
 its next generation is a start that reads the files, so an edit a crashed start had not put in force yet is
 classified, not dropped.
 
+Startup groups 1 and 2 share one verified read-only journal cursor. After the host claim, group 4
+rechecks that cursor for appended bytes (rebuilding under the observer's replacement, truncation and
+rewrite rules) and transfers its fold to the writer. Cold open and cursor transfer use the same tail
+repair and saved-fragment fact routine; the read-only checks never repair or write the journal.
+
 ## Ids (`src/core/ids.ts`)
 
 | Type | Form | Derivation |
@@ -683,6 +688,10 @@ first-intent order: kind, canonical parent, stage-parent unit, spawn-subject uni
 and kill-target invocation. Retries update these memberships without changing the op's original order.
 A unit's highest numbered stage start keeps its first-start tie order; each open walk keeps its own proposals
 in log order. Neither lookup scans completed stage starts or unrelated walk history.
+The same fold keeps each finding's states in transition order, with its last state serving current
+readers. `JournalView.findingsAt(seq)` binary-searches each finding's history and returns the states in
+opening order, exactly as a verified prefix replay would. Walk settlement uses the states at `walk-ended`
+so later resolutions or newly opened findings do not change whether that walk passed.
 
 **Tail rule**. Verify the valid prefix first. Only a terminal suffix lacking `\n`, or an all-NUL suffix, is
 discardable: save to `events.torn.<off>.<sha8>` (fsync) → truncate (fsync) → `tail-discarded` fact. A saved

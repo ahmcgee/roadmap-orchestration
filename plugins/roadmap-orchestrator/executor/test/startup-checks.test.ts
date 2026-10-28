@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statfsSync, symlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statfsSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { identityOf, readBootId } from '../src/contain/proc.ts';
@@ -136,6 +136,43 @@ function refusedWith(result: Checked, kind: StartupRejectionKind, exit: 75 | 78)
 }
 
 describe('startup.rejections', () => {
+  it('the post-claim writer verifies appends since the shared startup read, including complete corruption', T, async () => {
+    for (const corrupt of [false, true]) {
+      const s = setup();
+      const first = await runChecks(input(s));
+      assert.equal(first.kind, 'passed');
+      if (first.kind !== 'passed') return;
+      first.journal.close();
+      releaseHost(s.hostDir, first.claim);
+      const next = input(s);
+      let appendedSeq = 0;
+      const result = await runChecks({ ...next, claim: async (ctx) => {
+        const claimed = await next.claim(ctx);
+        assert.equal(claimed.kind, 'claimed');
+        if (corrupt) appendFileSync(join(ctx.runDir, 'events.jsonl'), 'bad complete line\n');
+        else {
+          const journal = openJournal(ctx.runDir, ctx.plan.arc);
+          appendedSeq = journal.fact({ kind: 'executor-started', generation: 2 });
+          journal.close();
+        }
+        return claimed;
+      } });
+      try {
+        if (corrupt) {
+          assert.equal(result.kind, 'refused');
+          if (result.kind === 'refused') assert.deepEqual(result.rejections.map((r) => r.kind), ['log-corrupt']);
+        } else {
+          assert.equal(result.kind, 'passed');
+          assert.equal(result.journal?.view.lastExecutorStarted(), appendedSeq);
+        }
+      } finally {
+        result.journal?.close();
+        assert.ok(result.claim);
+        releaseHost(s.hostDir, result.claim);
+      }
+    }
+  });
+
   it('a fully valid setup produces no rejection: claimed, journal open, mode recorded, both smokes green', T, async () => {
     const s = setup();
     const result = await allChecks(input(s));
