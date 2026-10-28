@@ -9,7 +9,7 @@ import { setImmediate as yieldToLoop } from 'node:timers/promises';
 import { type Event, type LogRecord, parseEventLine } from '../src/core/events.ts';
 import { commandId, opKey, sha256 } from '../src/core/ids.ts';
 import type { IntentBody } from '../src/core/interfaces.ts';
-import { EVENTS_FILE, LogCorruptError, type OpenJournal, STATE_FILE, fragmentName, openJournal, readJournal } from '../src/core/log.ts';
+import { EVENTS_FILE, LogCorruptError, type OpenJournal, fragmentName, openJournal, readJournal } from '../src/core/log.ts';
 import { FoldInvariantError } from '../src/core/state.ts';
 import { sha256Hex } from '../src/core/json.ts';
 import { absPath } from '../src/core/values.ts';
@@ -107,7 +107,7 @@ async function runChild(args: readonly string[], trigger: string | undefined): P
 }
 
 describe('journal append', () => {
-  it('allocates ops from seq, chains lines, and caches state.json', () => {
+  it('allocates ops from seq, chains lines, and replays the live state', () => {
     const dir = tmpDir('log');
     const j = open(dir);
     const a = j.begin({ kind: 'proc.spawn', key: opKey('spawn:a'), parent: stageParent('build', 1), deadlineAt: DEADLINE, body: (op, inv) => {
@@ -119,13 +119,15 @@ describe('journal append', () => {
     assert.equal(j.done(a.op, 'proc.spawn', { kind: 'lost', treeEffects: false }, 'reconciled'), 3);
     assert.equal(j.view.highWater(), 3);
     assert.deepEqual(j.view.openIntents(), []);
+    const live = j.derived();
     j.close();
 
     const logged = events(dir);
     assert.deepEqual(logged.map((e) => e.seq), [1, 2, 3]);
-    // Folding the file from scratch gives what the live journal held, and state.json caches exactly that.
+    // Reopening the authoritative log gives what the live journal held.
     const reopened = open(dir);
-    assert.deepEqual(JSON.parse(readFileSync(join(dir, STATE_FILE), 'utf8')), JSON.parse(JSON.stringify(reopened.derived())));
+    assert.deepEqual(reopened.derived(), live);
+    assert.equal(existsSync(join(dir, 'state.json')), false, 'state.json exists only in snapshot trees');
     assert.equal(reopened.derived().meter[0]?.inputTokens, 3);
     reopened.close();
   });

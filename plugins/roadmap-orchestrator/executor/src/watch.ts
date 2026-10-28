@@ -54,7 +54,7 @@ import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { type ArcId, needsUserId, needsUserIdForOp } from './core/ids.ts';
 import { canonicalJson } from './core/json.ts';
-import { EVENTS_FILE, readJournal } from './core/log.ts';
+import { EVENTS_FILE, ObserverJournal, readJournal } from './core/log.ts';
 import type { AbsPath } from './core/values.ts';
 import { answerNames, commonDirOfRun, unappliedAnswers } from './answers.ts';
 import { CliError } from './input/cli.ts';
@@ -214,6 +214,7 @@ export async function watchActionable(
 export async function watch(
   runDir: AbsPath, arc: ArcId, hostDir: AbsPath, out: (line: string) => void, signal: AbortSignal, afterPoll: () => void = () => {},
 ): Promise<void> {
+  const journal = new ObserverJournal(runDir, arc);
   const seenItems = new Set<string>();
   const seenAcks = new Set<string>();
   const seenSuperseded = new Set<string>();
@@ -231,7 +232,7 @@ export async function watch(
     const next = viewKey(runDir, names, state);
     if (next !== key || view === null) {
       key = next;
-      view = unitStates(runDir, arc, hostDir);
+      view = unitStates(runDir, arc, hostDir, journal.read());
     }
     const seq = view.seq;
     const emit = (line: Record<string, unknown>): void => out(canonicalJson({ ...line, seq }));

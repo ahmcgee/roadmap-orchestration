@@ -3,13 +3,13 @@
 // The plan's snapshot.allowlist, snapshot.manifest-mismatch-detected, and the snapshot.* cells of the
 // candidate.merge / integration.ff / snapshot.publish matrix row.
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { before, describe, it } from 'node:test';
 import { type IntentOf, parseRevisionPayload } from '../src/core/events.ts';
 import {
   type NeedsUserId, type Sha, commandId, envId, invocationDirName, invocationId, jobId, laneId, laneRev, opKey, planRev, seatRev,
-  sha, sha256, specRev, unitId,
+  routingRev, sha, sha256, specRev, unitId,
 } from '../src/core/ids.ts';
 import { needsUserPath, raiseNeedsUser } from '../src/needsuser.ts';
 import { parsePlan } from '../src/input/plan.ts';
@@ -20,13 +20,14 @@ import { type AbsPath, absPath, isoTimeOf, repoPattern } from '../src/core/value
 import { git as gitRaw } from '../src/git/git.ts';
 import { parentsOf } from '../src/git/mergein.ts';
 import {
-  type SnapshotPublishRequest, candidateLaneDir, jobLaneDir, snapshotRef, verifySnapshot,
+  SNAPSHOT_SCHEMA, type SnapshotPublishRequest, candidateLaneDir, collectSnapshot, jobLaneDir, snapshotPublishSteps, snapshotRef, verifySnapshot,
 } from '../src/git/snapshot.ts';
 import { ARC, IDENTITY, cloneRepo, openArc, runOp } from './fixtures/git-common.ts';
 import { UNIT, crashChild8b, recover8b, revOf, sharedBase } from './fixtures/git8b-common.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 import { CANDIDATE_FF_SNAPSHOT, crashCells } from './matrix.ts';
 import { evidenceSnapshotOp, snapshotPublishOp } from '../src/recover/ops.ts';
+import { SCHEMA_VERSION } from '../src/core/version.ts';
 
 const REF = snapshotRef(ARC);
 
@@ -264,6 +265,131 @@ function retreed(repo: AbsPath, commit: string, path: string, text: string | nul
   rmSync(tmp, { recursive: true, force: true });
   return sha(gitRaw(repo, ['commit-tree', tree, '-m', 'tampered'], { identity: IDENTITY }).trim());
 }
+
+/** The original full writer, kept here as an independent oracle for the incremental tree (including its manifest). */
+function fullTree(r: Run, highWater: number): Sha {
+  const collected = collectSnapshot(request(r, highWater));
+  const files = new Map([...collected].map(([path, { bytes }]) => [path as string, bytes]));
+  const entries = [...collected].map(([path, { bytes, namedBy }]) => ({ path, sha256: sha256Hex(bytes), size: bytes.length, namedBy }));
+  entries.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+  files.set('manifest.json', Buffer.from(canonicalJson({ v: SCHEMA_VERSION, schema: SNAPSHOT_SCHEMA, arc: ARC, highWater, files: entries })));
+  const tmp = tmpDir('snapshot-full-oracle');
+  try {
+    const indexFile = absPath(join(tmp, 'index'));
+    const info = [...files].map(([path, bytes]) => `100644 ${gitRaw(r.repo, ['hash-object', '-w', '--stdin'], { input: bytes }).trim()}\t${path}\0`).join('');
+    gitRaw(r.repo, ['update-index', '--add', '-z', '--index-info'], { indexFile, input: info });
+    return sha(gitRaw(r.repo, ['write-tree'], { indexFile }).trim());
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+describe('incremental snapshots', () => {
+  it('every publication equals a full tree: cross-water intent, new input, restart, rewritten records and late/removed optional files', async () => {
+    const r = await holisticRun();
+    const journal = openArc(r.runDir);
+    const spawn = journal.begin({
+      kind: 'proc.spawn', key: opKey('incremental:backend'), parent: { type: 'arc' }, deadlineAt: null,
+      body: () => ({ expect: { subject: { purpose: 'backend', unit: UNIT, role: 'build', tier: 'med', routingRev: routingRev('0123456789abcdef'), attempt: 1 }, launchSha256: sha256('c'.repeat(64)) }, post: null }),
+    });
+    const invDir = join(r.runDir, 'inv', invocationDirName(spawn.inv));
+    mkdirSync(invDir, { recursive: true });
+    const result = '{"outcome":"success"}\n';
+    writeFileSync(join(invDir, 'result.json'), result);
+    journal.close();
+
+    const check = async (): Promise<IntentOf<'snapshot.publish'>> => {
+      const intent = await publish(r);
+      assert.equal(intent.expect.commit.tree, fullTree(r, intent.expect.highWater));
+      assertSnapshot(r, intent);
+      return intent;
+    };
+    const first = await check();
+    assert.ok(!treePaths(r.repo, first.post.new).some((p) => p.endsWith('/result.json')), 'an open spawn names no result');
+
+    const next = openArc(r.runDir);
+    next.done(spawn.op, 'proc.spawn', { kind: 'result', resultSha256: sha256(sha256Hex(result)), summary: { type: 'backend', outcome: 'success' } }, null);
+    const spec = keepInput(r.runDir, Buffer.from('{"new":"spec"}\n'), SPEC_INPUT);
+    next.fact({ kind: 'judgment-inputs', unit: UNIT, stage: 'plan-check', attempt: 1, tip: sha('b'.repeat(40)), head: null, specRev: specRev(2), specSha256: spec, planRev: planRev(1), routingRev: routingRev('0123456789abcdef') });
+    const startPath = join(r.runDir, 'start.json');
+    const start = JSON.parse(readFileSync(startPath, 'utf8'));
+    writeFileSync(startPath, JSON.stringify({ ...start, generation: 2 }) + '\n');
+    next.fact({ kind: 'executor-started', generation: 2 });
+    next.close();
+    const nuPath = needsUserPath(r.runDir, r.needsUser as NeedsUserId);
+    const nu = JSON.parse(readFileSync(nuPath, 'utf8'));
+    writeFileSync(nuPath, JSON.stringify(nu, null, 2) + '\n');
+    const ackPath = join(r.runDir, 'needs-user', `${r.needsUser}.ack.json`);
+    writeFileSync(ackPath, '{"ack":"updated"}\n');
+    const second = await check();
+    assert.ok(treePaths(r.repo, second.post.new).includes(`inputs/${spec}.${SPEC_INPUT}`));
+
+    const reads = join(invDir, 'reads.json');
+    writeFileSync(reads, '{"read":"a"}\n');
+    await check(); // No new naming event: the optional file appeared below the previous high-water.
+    const before = statSync(reads);
+    writeFileSync(reads, '{"read":"b"}\n');
+    utimesSync(reads, before.atime, before.mtime); // Same size and restored mtime; ctime must invalidate the capture.
+    await check();
+    rmSync(reads);
+    await check();
+
+    writeFileSync(nuPath, JSON.stringify({ ...nu, summary: 'changed below high-water' }) + '\n');
+    await assert.rejects(publish(r), /needs-user\/.+ hashes to/);
+    writeFileSync(nuPath, JSON.stringify(nu) + '\n');
+    await check(); // A failed prepare must not leave a partially advanced cache.
+    writeFileSync(join(invDir, 'result.json'), result.replace('success', 'failure'));
+    await assert.rejects(publish(r), /inv\/.+\/result\.json hashes to/);
+    writeFileSync(join(invDir, 'result.json'), result);
+    await check();
+    rmSync(r.witnessFile);
+    await assert.rejects(publish(r), /witness record .* does not exist/);
+  });
+
+  it('incremental verification still requires the recorded manifest digest and high-water mark', async () => {
+    const r = await run();
+    await publish(r);
+    const next = await publish(r);
+    const steps = snapshotPublishSteps(r.repo);
+    await assert.rejects(steps.verify({ ...next, expect: { ...next.expect, highWater: next.expect.highWater + 1 } }), /high-water mark/);
+    await assert.rejects(steps.verify({ ...next, expect: { ...next.expect, manifestSha256: sha256('f'.repeat(64)) } }), /manifest hashes to/);
+    assert.deepEqual(await steps.verify(next), { kind: 'published' });
+  });
+
+  it('a foreign old ref invalidates the cache and contributes no extra paths or modes', async () => {
+    const r = await run();
+    const first = await publish(r);
+    const extra = gitRaw(r.repo, ['hash-object', '-w', '--stdin'], { input: 'foreign raw output\n' }).trim();
+    const entries = gitRaw(r.repo, ['ls-tree', first.post.new]).trimEnd().split('\n').map((line) => line.endsWith('\tstate.json') ? line.replace('100644', '100755') : line);
+    const tree = gitRaw(r.repo, ['mktree'], { input: [...entries, `100644 blob ${extra}\tstdout`].join('\n') + '\n' }).trim();
+    const foreign = gitRaw(r.repo, ['commit-tree', tree, '-m', 'foreign snapshot edit'], { identity: IDENTITY }).trim();
+    gitRaw(r.repo, ['update-ref', REF, foreign]);
+    const next = await publish(r);
+    assert.equal(next.expect.commit.tree, fullTree(r, next.expect.highWater));
+    assertSnapshot(r, next);
+  });
+
+  for (const label of ['snapshot.act-start', 'snapshot.after-commit-tree', 'snapshot.act-end']) {
+    it(`${label}: a publication after an existing snapshot recovers to the same recorded tree and fixed point`, async () => {
+      const r = await run();
+      const first = await publish(r);
+      assert.equal(await crashChild8b({ op: 'snapshot', runDir: r.runDir, repo: r.repo, spec: r.spec }, label, 1), true);
+      const journal = openArc(r.runDir);
+      const recovery = await recover8b(journal, snapshotPublishOp(r.repo));
+      assert.equal(recovery.kind, 'closed');
+      if (recovery.kind !== 'closed') return;
+      const intent = recovery.intent as IntentOf<'snapshot.publish'>;
+      assert.equal(intent.expect.old, first.post.new);
+      assert.equal(intent.expect.commit.tree, fullTree(r, intent.expect.highWater));
+      assertSnapshot(r, intent);
+      const mark = journal.view.highWater();
+      const disposition = await snapshotPublishOp(r.repo).reconcile(intent, journal.view);
+      assert.deepEqual(disposition, { kind: 'done', outcome: { kind: 'published' } });
+      assert.equal(journal.view.highWater(), mark, 'reconciliation at the fixed point appends nothing');
+      journal.close();
+    });
+  }
+});
 
 describe('snapshot closure records', () => {
   it('snapshot.closure-records: kept inputs, the revision payload, start.json and a job witness are carried; tampering fails', async () => {

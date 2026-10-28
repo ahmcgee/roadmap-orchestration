@@ -14,8 +14,8 @@ import type {
   CancelFile, ChildEnd, ContainmentMode, DispatchRecord, ExitFile, KillReason, LaunchFile, ProcIdentity, ResultFile, RunnerFileMap,
   RunnerFileName,
 } from './records.ts';
-import type { ApplyQueued, BackendParkState, EdgeResolvedState, HolisticFold, ProbeState, ResidueState, ResourceEntry, ReviewFold, UnitState } from './state.ts';
-import type { Backend } from '../routing/types.ts';
+import type { ApplyQueued, BackendParkState, EdgeResolvedState, FindingState, HolisticFold, ProbeState, ResidueState, ResourceEntry, ReviewFold, UnitState } from './state.ts';
+import type { Backend, UnitRole } from '../routing/types.ts';
 import type { AbsPath, IsoTime } from './values.ts';
 
 // ---------------------------------------------------------------------------------------------------
@@ -47,6 +47,16 @@ export interface JournalView {
   doneOf(op: OpId): DoneRecord | null;
   /** The latest intent of every op of `kind`, open or closed, in the order the ops began. */
   opsOf<K extends OpKind>(kind: K): readonly IntentOf<K>[];
+  /** `opsOf(kind)` restricted to a canonically equal parent, preserving first-intent order. */
+  opsOfParent<K extends OpKind>(kind: K, parent: Parent): readonly IntentOf<K>[];
+  /** `opsOf(kind)` restricted to stage parents of `unit`, preserving first-intent order. */
+  opsOfUnit<K extends OpKind>(kind: K, unit: UnitId): readonly IntentOf<K>[];
+  /** Spawns whose subject names `unit`; with `role`, only backend spawns of that role. First-intent order. */
+  spawnsOfUnit(unit: UnitId, role?: UnitRole): readonly IntentOf<'proc.spawn'>[];
+  /** Spawns whose subject names `job`, preserving first-intent order. */
+  spawnsOfJob(job: JobId): readonly IntentOf<'proc.spawn'>[];
+  /** Kills targeting `inv`, preserving first-intent order (every reason and scope). */
+  killsOfInvocation(inv: InvocationId): readonly IntentOf<'proc.kill'>[];
   /**
    * Whether a `meter` or `usage-unavailable` fact exists for `inv`. Recovery asks before recording one,
    * since the fact precedes the spawn's done and a crash between them leaves it already written.
@@ -126,6 +136,8 @@ export interface JournalView {
   lastExecutorStarted(): number;
   /** M3: the holistic layer's fold (findings, audits, checkpoints, divergences, completion, …). */
   holistic(): HolisticFold;
+  /** Finding states as of seq, in opening order; reads the verified finding transition history. */
+  findingsAt(seq: number): readonly FindingState[];
   /** dev.17 proportional review: the findings ledger, approvals with their blobs, docs-only checks. */
   review(): ReviewFold;
   /** M4b: every flow fact, in log order, with its seq and time (src/flow/apply.ts derives the decisions' phases from them). */

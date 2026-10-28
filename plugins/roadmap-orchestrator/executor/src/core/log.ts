@@ -14,7 +14,7 @@
 import {
   closeSync, existsSync, fstatSync, fsyncSync, ftruncateSync, openSync, readFileSync, readSync, readdirSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { TextDecoder } from 'node:util';
 import { crashPoint } from './crash.ts';
 import {
@@ -25,13 +25,12 @@ import { CounterRegressionError, appendSync, durableWrite, exclusiveCreate } fro
 import { type ArcId, type InvocationId, type OpId, type Sha256Hex, invocationId, opId, sha256 } from './ids.ts';
 import type { Durable, IntentBody, Journal, JournalView, NewIntent } from './interfaces.ts';
 import { sha256Hex } from './json.ts';
-import { type DerivedState, Fold, FoldInvariantError, type TailDiscarded, writeStateCache } from './state.ts';
+import { type DerivedState, Fold, FoldInvariantError, type TailDiscarded } from './state.ts';
 import { SchemaError } from './validate.ts';
 import { type AbsPath, absPath, isoTime } from './values.ts';
 import { SCHEMA_VERSION } from './version.ts';
 
 export const EVENTS_FILE = 'events.jsonl';
-export const STATE_FILE = 'state.json';
 const FRAGMENT = /^events\.torn\.(0|[1-9][0-9]*)\.([0-9a-f]{8})$/;
 
 export function fragmentName(offset: number, digest: Sha256Hex): string {
@@ -53,31 +52,35 @@ export class LogCorruptError extends Error {
 }
 
 export interface OpenJournal extends Journal {
-  /** The fold of everything appended so far (what `state.json` caches). */
+  /** The fold of everything appended so far. */
   derived(): DerivedState;
   close(): void;
 }
 
 /**
  * Opens (creating if absent) `<runDir>/events.jsonl` for `arc`: verifies it, applies the tail rule,
- * records any fragment that lacks its fact, and refreshes `state.json`. Throws LogCorruptError on corruption.
+ * records any fragment that lacks its fact. Throws LogCorruptError on corruption.
  */
 export function openJournal(runDir: AbsPath, arc: ArcId): OpenJournal {
   const path = absPath(join(runDir, EVENTS_FILE));
   if (!existsSync(path)) exclusiveCreate(path, '');
   const fold = new Fold(arc);
   const { validEnd, size } = verify(path, fold);
+  return finishOpen(runDir, path, fold, validEnd, size);
+}
+
+/** Writer finalisation shared by a cold open and a previously verified observer cursor. */
+function finishOpen(runDir: AbsPath, path: AbsPath, fold: Fold, validEnd: number, size: number): OpenJournal {
   if (validEnd < size) discardTail(runDir, path, validEnd, size);
-  const journal = new FileJournal(path, absPath(join(runDir, STATE_FILE)), fold);
+  const journal = new FileJournal(path, fold);
   for (const fact of unrecordedFragments(runDir, fold)) journal.fact(fact);
-  journal.refreshStateCache();
   return journal;
 }
 
 export type LogSnapshot = Readonly<{ view: JournalView; events: readonly Event[] }>;
 
 /**
- * Reads a run's log without opening it for append: no lock, no tail repair, no fact, no state cache. For
+ * Reads a run's log without opening it for append: no lock, no tail repair, no fact. For
  * readers beside a live executor (`roadmap status`, a previous arc's run dir at takeover). An absent log
  * is empty. Every complete line is verified and folded; a terminal suffix without `\n` is an append in
  * flight (the writer's two-part write, or a torn tail only the owner's open may repair), so it is "not yet
@@ -101,9 +104,10 @@ export function readJournal(runDir: AbsPath, arc: ArcId, through: number | null 
   return { view: fold, events };
 }
 
-/** Read-only observer cursor. The returned view is valid until the next read; callers publish derived models.
- * Appends use the very same verifier as recovery. Never repairs tails or writes caches. A failed fold is
- * discarded, so a corruption error cannot leave a partly applied cursor available to the next poll.
+/** Observer cursor. The returned view is valid until the next read; callers publish derived models.
+ * Reads use the very same verifier as recovery and never repair tails or write files. After the host
+ * claim, open() can transfer the verified fold to a writer. A failed read discards its fold, so a
+ * corruption error cannot leave a partly applied cursor available to the next poll.
  */
 export class ObserverJournal {
   readonly path: AbsPath;
@@ -126,6 +130,20 @@ export class ObserverJournal {
     this.#offset = 0;
     this.#identity = '';
     this.#anchor = Buffer.alloc(0);
+  }
+  /**
+   * After the host claim: verify bytes appended since the last read (or rebuild under read()'s reset
+   * rules), then apply the cold writer's tail/fragment rules. Transfer the fold and reset this observer
+   * so it cannot apply the writer's new events twice.
+   */
+  open(): OpenJournal {
+    if (!existsSync(this.path)) exclusiveCreate(this.path, '');
+    this.read();
+    const fold = this.#fold;
+    const validEnd = this.#offset;
+    const size = this.#size;
+    this.#reset();
+    return finishOpen(absPath(dirname(this.path)), this.path, fold, validEnd, size);
   }
   read(): LogSnapshot {
     if (!existsSync(this.path)) {
@@ -280,7 +298,6 @@ function unrecordedFragments(runDir: AbsPath, fold: Fold): TailDiscarded[] {
 
 class FileJournal implements OpenJournal {
   readonly #path: AbsPath;
-  readonly #statePath: AbsPath;
   readonly #fold: Fold;
   #fd: number | null;
   /** Set while a body callback or an append runs: a body that appends would corrupt seq allocation. */
@@ -288,9 +305,8 @@ class FileJournal implements OpenJournal {
   /** Set when a write failed midway: the fold is ahead of the file, so this journal must not append again. */
   #broken = false;
 
-  constructor(path: AbsPath, statePath: AbsPath, fold: Fold) {
+  constructor(path: AbsPath, fold: Fold) {
     this.#path = path;
-    this.#statePath = statePath;
     this.#fold = fold;
     this.#fd = openSync(path, 'a');
   }
@@ -301,10 +317,6 @@ class FileJournal implements OpenJournal {
 
   derived(): DerivedState {
     return this.#fold.derived();
-  }
-
-  refreshStateCache(): void {
-    writeStateCache(this.#statePath, this.#fold.derived());
   }
 
   close(): void {
@@ -378,15 +390,13 @@ class FileJournal implements OpenJournal {
     const unit = recordUnit(event, (op) => this.#fold.latestIntent(op));
     this.#broken = true;
     crashPoint('log.append.before-write', unit);
-    // Two writes so a crash test can stop between them and leave a torn line. The first half's fsync is
-    // one extra fsync per append; appends are rare enough that this costs nothing that matters.
+    // Two durable writes so a crash test can stop between them and leave a torn line.
     const half = bytes.length >> 1;
     appendSync(this.#fd, bytes.subarray(0, half));
     crashPoint('log.append.after-partial-write', unit);
     appendSync(this.#fd, bytes.subarray(half));
     this.#broken = false;
     crashPoint('log.append.after-fsync', unit);
-    this.refreshStateCache();
     return seq;
   }
 }

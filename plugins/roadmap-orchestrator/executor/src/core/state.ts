@@ -1,18 +1,18 @@
 // The fold: the one derivation of run state from the event log. Everything the executor knows about ops,
-// units, spend and needs-user comes from folding events.jsonl in order; `state.json` is a cache of the
-// result for humans and tools, and nothing reads it back for a decision.
+// units, spend and needs-user comes from folding events.jsonl in order. `state.json` exists only in
+// the snapshot tree, derived from that snapshot's log prefix, and is never read back for a decision.
 //
 // The fold also enforces the log's invariants (SCHEMAS.md "Event log"): a violation throws
 // FoldInvariantError. At open the journal turns that into a refusal (`log-corrupt`); at append it means
 // the caller asked for an illegal record, and nothing is written.
 import {
   type AbortRecord, type AuditInputs, type BackendParkClass, type CoveredRange, type DoneRecord, type Event, type Fact, type HolisticFact, type Holder,
-  type IntentOf, type IntentRecord, type JudgmentInputs, type JudgmentStage, type OpKind, type ParkRecord, type PlanAppliedFact, type ProbeTarget,
+  type IntentOf, type IntentRecord, type JudgmentInputs, type JudgmentStage, type OpKind, type Parent, type ParkRecord, type PlanAppliedFact, type ProbeTarget,
   type ResourceEdge, type RetryStage, type ScopeGrowthProposal, type StageOutcomeFact, JUDGMENT_STAGES, RECLAIM_HOLDERS, RESIDUE_HOLDERS, RETRY_STAGES, RETRYABLE_BACKEND_PARKS,
   prevHash, probeTargetKey, serializeEvent,
 } from './events.ts';
 import { checkpointSkipTriggerOf } from './upgrade.ts';
-import { atomicJson, monotonic } from './fsx.ts';
+import { CounterRegressionError } from './fsx.ts';
 import {
   type AmendmentId, type ArcId, type ClaudeSessionId, type CommandId, type DivergenceId, type EdgeId, type FindingId, type InvocationId, type JobId, type JobKind, type NeedsUserId, type ObligationId,
   type MilestoneId, type OpId, type OpKey, type PlanRev, type PolishId, type ResourceInstance, type ResourceUnit, type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId,
@@ -28,7 +28,7 @@ import { type ApprovalFingerprint, type Bounds, type ContainmentMode, type Dispa
 import { type BundleOutcome, type FindingStateName, type FindingTo, FINDING_MOVES } from '../holistic/types.ts';
 import type { IsoTime } from './values.ts';
 import { SCHEMA_VERSION, type SchemaVersion } from './version.ts';
-import { type Backend, RISK_TIERS, type RiskTier, type Role } from '../routing/types.ts';
+import { type Backend, RISK_TIERS, type RiskTier, type Role, type UnitRole } from '../routing/types.ts';
 
 export class FoldInvariantError extends Error {
   readonly seq: number;
@@ -443,6 +443,8 @@ export type FindingState = Omit<FactOf<'finding-opened'>, 'kind'> & Readonly<{
   last: FindingTo | null;
 }>;
 
+type FindingAt = Readonly<{ seq: number; finding: FindingState }>;
+
 export type AuditState = Readonly<{ started: AuditInputs & Seq; ended: (Omit<FactOf<'audit-ended'>, 'kind' | 'job'> & Seq) | null }>;
 /** A checkpoint job: its captured inputs, and its decision: a bundle outcome, or the plan revision its bundle applied. */
 export type CheckpointState = Readonly<{
@@ -507,7 +509,7 @@ function isWork(record: Event): boolean {
   return false;
 }
 
-/** The fold's result, and the content of the `state.json` cache. Sets are sorted arrays. */
+/** The fold's result, also written as `state.json` in snapshot trees. Sets are sorted arrays. */
 export type DerivedState = Readonly<{
   v: SchemaVersion;
   arc: ArcId;
@@ -548,13 +550,59 @@ export type DerivedState = Readonly<{
 }>;
 
 type Closure = Readonly<{ type: 'done'; record: DoneRecord }> | Readonly<{ type: 'abort'; record: AbortRecord }>;
-type OpEntry = { latest: IntentRecord; closure: Closure | null };
+type OpEntry = { latest: IntentRecord; closure: Closure | null; seq: number; parentKey: string };
+
+/**
+ * Op lists in first-intent order. Retries replace the same entry; a changed spawn subject can move an old
+ * op into another list, so that list is sorted by its original seq on its next read. Published arrays keep
+ * their values across appends, just as a full scan did. Reads between intents reuse the same readonly array.
+ */
+class OpIndex<K> {
+  readonly #buckets = new Map<K, { entries: Map<OpId, OpEntry>; snapshot: readonly IntentRecord[] | null; ordered: boolean; lastSeq: number }>();
+
+  set(key: K, entry: OpEntry): void {
+    let bucket = this.#buckets.get(key);
+    if (bucket === undefined) {
+      bucket = { entries: new Map(), snapshot: null, ordered: true, lastSeq: 0 };
+      this.#buckets.set(key, bucket);
+    }
+    if (!bucket.entries.has(entry.latest.op)) {
+      if (entry.seq < bucket.lastSeq) bucket.ordered = false;
+      bucket.lastSeq = Math.max(bucket.lastSeq, entry.seq);
+    }
+    bucket.entries.set(entry.latest.op, entry);
+    bucket.snapshot = null;
+  }
+
+  delete(key: K, op: OpId): void {
+    const bucket = this.#buckets.get(key)!;
+    bucket.entries.delete(op);
+    bucket.snapshot = null;
+    if (bucket.entries.size === 0) this.#buckets.delete(key);
+  }
+
+  get(key: K): readonly IntentRecord[] {
+    const bucket = this.#buckets.get(key);
+    if (bucket === undefined) return [];
+    if (bucket.snapshot === null) {
+      const entries = [...bucket.entries.values()];
+      if (!bucket.ordered) entries.sort((a, b) => a.seq - b.seq);
+      bucket.snapshot = entries.map((entry) => entry.latest);
+    }
+    return bucket.snapshot;
+  }
+}
+
 /** `starts` and `outcomes` hold `<stage>#<attempt>`; `state.counters.attempts` is `starts.size`. */
 /** `beforeDecided`: the unit's decision and interruption before its latest decided outcome (a reroute restores them). */
 /** `attemptBase`: the attempts a re-entered unit inherits from its lineage (0 otherwise). */
 type UnitEntry = {
+  /** Stable insertion order in the unit table (also excludes units first created by the current event). */
+  order: number;
   /** Each start `<stage>#<attempt>`, with the seq of the record that first started it. */
   starts: Map<string, number>; outcomes: Set<string>; state: UnitState; attemptBase: number;
+  /** Highest numbered attempt, with the first start winning ties across stages (the full-scan order). */
+  latestStart: UnitState['open'];
   beforeDecided: Readonly<{ decided: StageOutcomeFact | null; interrupted: StageOutcomeFact | null }>;
 };
 
@@ -569,50 +617,48 @@ export type CounterRefs = Readonly<{
   meter: ReadonlyMap<string, MeterTotal>;
 }>;
 
-const unitCounters = (unit: UnitId, { counters: c, routedUp }: UnitState): Record<string, number> => {
-  const out: Record<string, number> = {
-    [`unit ${unit} attempts`]: c.attempts,
-    [`unit ${unit} chargeableFailures`]: c.chargeableFailures,
-    [`unit ${unit} redirects`]: c.redirects,
-    [`unit ${unit} reviseRounds`]: c.reviseRounds,
-    [`unit ${unit} candidateReds`]: c.candidateReds,
-    [`unit ${unit} smokeRounds`]: c.smokeRounds,
-  };
-  for (const s of RETRY_STAGES) out[`unit ${unit} retries ${s}`] = c.retries[s];
-  out[`unit ${unit} routedUp`] = routedUp.length;
-  return out;
-};
-
-const meterCounters = (key: string, m: MeterTotal): Record<string, number> => ({
-  [`meter ${key} known`]: m.known,
-  [`meter ${key} unavailable`]: m.unavailable,
-  [`meter ${key} inputTokens`]: m.inputTokens,
-  [`meter ${key} outputTokens`]: m.outputTokens,
-  [`meter ${key} cacheReadTokens`]: m.cacheReadTokens,
-  [`meter ${key} cacheWriteTokens`]: m.cacheWriteTokens,
-  [`meter ${key} turns`]: m.turns,
-  [`meter ${key} costUsd`]: m.costUsd,
-});
+const UNIT_COUNTERS = ['attempts', 'chargeableFailures', 'redirects', 'reviseRounds', 'candidateReds', 'smokeRounds'] as const;
+const METER_COUNTERS = ['known', 'unavailable', 'inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'turns', 'costUsd'] as const;
 
 /**
- * `monotonic()` over every counter in `before` that can differ in `after`: lastSeq, snapshotHighWater and the counters
- * of each record whose reference changed (a vanished record's counters are absent). Its cost is the records an event
- * replaced, not every unit and meter key the arc has.
+ * Checks the same counters and reports the same first regression as `monotonic()`. The fold supplies only
+ * the records an event replaced; callers with complete snapshots may also use this to detect vanished records.
+ * Counter names are formatted only on failure, and unchanged immutable counter records need no comparison.
  */
 export function monotonicSince(before: CounterRefs, after: CounterRefs): void {
-  const was: Record<string, number> = { lastSeq: before.lastSeq, snapshotHighWater: before.snapshotHighWater };
-  const now: Record<string, number> = { lastSeq: after.lastSeq, snapshotHighWater: after.snapshotHighWater };
-  const compare = <K, R>(a: ReadonlyMap<K, R>, b: ReadonlyMap<K, R>, flat: (key: K, r: R) => Record<string, number>): void => {
-    for (const [key, r] of a) {
-      const next = b.get(key);
-      if (next === r) continue;
-      Object.assign(was, flat(key, r));
-      if (next !== undefined) Object.assign(now, flat(key, next));
+  for (const key of ['lastSeq', 'snapshotHighWater'] as const) {
+    if (after[key] < before[key]) throw new CounterRegressionError(key, before[key], after[key]);
+  }
+  for (const [unit, previous] of before.units) {
+    const next = after.units.get(unit);
+    if (next === previous) continue;
+    if (next?.counters !== previous.counters) {
+      for (const key of UNIT_COUNTERS) {
+        const was = previous.counters[key];
+        const now = next?.counters[key];
+        if (now === undefined || now < was) throw new CounterRegressionError(`unit ${unit} ${key}`, was, now);
+      }
+      if (next?.counters.retries !== previous.counters.retries) {
+        for (const stage of RETRY_STAGES) {
+          const was = previous.counters.retries[stage];
+          const now = next?.counters.retries[stage];
+          if (now === undefined || now < was) throw new CounterRegressionError(`unit ${unit} retries ${stage}`, was, now);
+        }
+      }
     }
-  };
-  compare(before.units, after.units, unitCounters);
-  compare(before.meter, after.meter, meterCounters);
-  monotonic(was, now);
+    const was = previous.routedUp.length;
+    const now = next?.routedUp.length;
+    if (now === undefined || now < was) throw new CounterRegressionError(`unit ${unit} routedUp`, was, now);
+  }
+  for (const [key, previous] of before.meter) {
+    const next = after.meter.get(key);
+    if (next === previous) continue;
+    for (const counter of METER_COUNTERS) {
+      const was = previous[counter];
+      const now = next?.[counter];
+      if (now === undefined || now < was) throw new CounterRegressionError(`meter ${key} ${counter}`, was, now);
+    }
+  }
 }
 
 /**
@@ -625,10 +671,21 @@ export class Fold implements JournalView {
   #lastHash: Sha256Hex | null = null;
   #snapshotHighWater = 0;
   readonly #ops = new Map<OpId, OpEntry>();
+  readonly #opsByKind = new OpIndex<OpKind>();
+  readonly #opsByParent = new OpIndex<string>();
+  readonly #opsByUnit = new OpIndex<string>();
+  /** Subject-unit spawns, and backend spawns by subject unit and role. */
+  readonly #spawnsByUnit = new OpIndex<string>();
+  readonly #spawnsByJob = new OpIndex<JobId>();
+  readonly #killsByInvocation = new OpIndex<InvocationId>();
   /** Insertion order is log order: an op is deleted when closed and re-inserted by its retry. */
   readonly #open = new Map<OpId, IntentRecord>();
   readonly #openByKey = new Map<OpKey, OpId>();
   readonly #units = new Map<UnitId, UnitEntry>();
+  /** First pre-event value of each replaced counter record; never copies the whole fold. */
+  readonly #unitBefore = new Map<UnitId, UnitState>();
+  readonly #meterBefore = new Map<string, MeterTotal>();
+  #existingUnits = 0;
   /** Every `dispatch` fact per unit, in log order: the latest is the record in force. */
   readonly #dispatches = new Map<UnitId, DispatchRecord[]>();
   /** M3: the seq of each unit's latest dispatch fact, and of the latest `plan-applied` recording it `unit-changed`. */
@@ -676,7 +733,8 @@ export class Fold implements JournalView {
   readonly #batchMembers = new Map<JobId, readonly UnitId[]>();
   readonly #witnessed: (Omit<FactOf<'witnessed'>, 'kind'> & Seq)[] = [];
   readonly #latched = new Map<ObligationId, Omit<FactOf<'obligation-latched'>, 'kind'> & Seq>();
-  readonly #findings = new Map<FindingId, FindingState>();
+  /** Per-finding states in transition order; the last entry is the current state. */
+  readonly #findings = new Map<FindingId, [FindingAt, ...FindingAt[]]>();
   readonly #audits: { started: AuditInputs & Seq; ended: AuditState['ended'] }[] = [];
   readonly #auditRequests: (Omit<FactOf<'audit-requested'>, 'kind'> & Seq)[] = [];
   readonly #docsCovered: (Omit<FactOf<'docs-covered'>, 'kind'> & Seq)[] = [];
@@ -693,6 +751,8 @@ export class Fold implements JournalView {
   // M4b
   readonly #flowFacts: FlowFactAt[] = [];
   readonly #walkFacts: WalkFactAt[] = [];
+  /** Open walks and their recorded proposals, in log order. */
+  readonly #openWalks = new Map<JobId, PolishId[]>();
   // dev.17
   readonly #flakes: FlakeAt[] = [];
   readonly #propagationFacts: PropagationFactAt[] = [];
@@ -730,7 +790,11 @@ export class Fold implements JournalView {
     if (event.arc !== this.arc) fail(`arc ${event.arc} in the log of arc ${this.arc}`);
     if (event.seq !== this.#lastSeq + 1) fail(`seq not contiguous: expected ${this.#lastSeq + 1}`);
     if (event.prev !== this.#lastHash) fail(`chain broken: prev ${event.prev}, previous line hashes to ${this.#lastHash}`);
-    const before = this.#counterRefs();
+    this.#unitBefore.clear();
+    this.#meterBefore.clear();
+    this.#existingUnits = this.#units.size;
+    const lastSeq = this.#lastSeq;
+    const snapshotHighWater = this.#snapshotHighWater;
     switch (event.type) {
       case 'intent':
         this.#intent(event, fail);
@@ -748,11 +812,20 @@ export class Fold implements JournalView {
     if (isWork(event)) this.#lastWorkSeq = event.seq;
     this.#lastSeq = event.seq;
     this.#lastHash = lineHash;
-    monotonicSince(before, this.#counterRefs());
+    // Preserve the original unit-table order when a bulk event changes several units.
+    const units = this.#unitBefore.size > 1
+      ? new Map([...this.#unitBefore].sort(([a], [b]) => this.#units.get(a)!.order - this.#units.get(b)!.order))
+      : this.#unitBefore;
+    monotonicSince(
+      { lastSeq, snapshotHighWater, units, meter: this.#meterBefore },
+      { lastSeq: this.#lastSeq, snapshotHighWater: this.#snapshotHighWater,
+        units: new Map([...units.keys()].map((unit) => [unit, this.#units.get(unit)!.state])), meter: this.#meter },
+    );
   }
 
   #intent(r: IntentRecord, fail: (detail: string) => never): void {
     const entry = this.#ops.get(r.op);
+    const parentKey = canonicalJson(r.parent);
     if (r.ordinal === 1) {
       if (entry !== undefined) fail(`op ${r.op} already has an intent; a retry takes the next ordinal`);
       const seq = parseOpId(r.op).seq;
@@ -765,7 +838,7 @@ export class Fold implements JournalView {
       if (!retryable(entry.closure)) fail(`retry of ${r.op} after ${closureName(entry.closure)}; only a lost or aborted ordinal is retried`);
       if (r.kind !== prev.kind) fail(`retry of ${r.op} changes kind ${prev.kind} to ${r.kind}`);
       if (r.key !== prev.key) fail(`retry of ${r.op} changes key ${prev.key} to ${r.key}`);
-      if (canonicalJson(r.parent) !== canonicalJson(prev.parent)) fail(`retry of ${r.op} changes its parent`);
+      if (parentKey !== entry.parentKey) fail(`retry of ${r.op} changes its parent`);
       if (r.deadlineAt !== prev.deadlineAt) fail(`retry of ${r.op} changes deadlineAt ${prev.deadlineAt} to ${r.deadlineAt}`);
     }
     const holder = this.#openByKey.get(r.key);
@@ -777,7 +850,28 @@ export class Fold implements JournalView {
       }
     }
 
-    this.#ops.set(r.op, { latest: r, closure: null });
+    const indexed = entry ?? { latest: r, closure: null, seq: this.#lastSeq + 1, parentKey };
+    // Retry bodies may change a spawn's subject; remove its old memberships before replacing latest.
+    if (entry?.latest.kind === 'proc.spawn') {
+      const s = entry.latest.expect.subject;
+      if ('unit' in s && s.unit !== null) this.#spawnsByUnit.delete(s.unit, r.op);
+      if ('job' in s) this.#spawnsByJob.delete(s.job, r.op);
+      if (s.purpose === 'backend') this.#spawnsByUnit.delete(`${s.unit} ${s.role}`, r.op);
+    }
+    if (entry?.latest.kind === 'proc.kill') this.#killsByInvocation.delete(entry.latest.expect.inv, r.op);
+    indexed.latest = r;
+    indexed.closure = null;
+    this.#ops.set(r.op, indexed);
+    this.#opsByKind.set(r.kind, indexed);
+    this.#opsByParent.set(`${r.kind} ${parentKey}`, indexed);
+    if (r.parent.type === 'stage') this.#opsByUnit.set(`${r.kind} ${r.parent.unit}`, indexed);
+    if (r.kind === 'proc.spawn') {
+      const s = r.expect.subject;
+      if ('unit' in s && s.unit !== null) this.#spawnsByUnit.set(s.unit, indexed);
+      if ('job' in s) this.#spawnsByJob.set(s.job, indexed);
+      if (s.purpose === 'backend') this.#spawnsByUnit.set(`${s.unit} ${s.role}`, indexed);
+    }
+    if (r.kind === 'proc.kill') this.#killsByInvocation.set(r.expect.inv, indexed);
     if (r.parent.type === 'job') this.#seeJob(r.parent.job);
     if (r.kind === 'resource.transition') {
       const h = r.expect.holder;
@@ -797,7 +891,7 @@ export class Fold implements JournalView {
     if (r.parent.type === 'stage') {
       const { unit, stage, attempt } = r.parent;
       const u = this.#unit(unit, stage);
-      u.state = { ...u.state, stage };
+      this.#setUnitState(u, { ...u.state, stage });
       this.#start(u, `${stage}#${attempt}`);
     }
   }
@@ -806,7 +900,8 @@ export class Fold implements JournalView {
     const existing = this.#units.get(unit);
     if (existing !== undefined) return existing;
     const u: UnitEntry = {
-      starts: new Map<string, number>(), outcomes: new Set<string>(), state: this.#fresh(unit, stage), attemptBase: 0,
+      order: this.#units.size,
+      starts: new Map<string, number>(), outcomes: new Set<string>(), latestStart: null, state: this.#fresh(unit, stage), attemptBase: 0,
       beforeDecided: { decided: null, interrupted: null },
     };
     this.#units.set(unit, u);
@@ -820,8 +915,14 @@ export class Fold implements JournalView {
   }
 
   #start(u: UnitEntry, start: string): void {
-    if (!u.starts.has(start)) u.starts.set(start, this.#lastSeq + 1);
-    u.state = { ...u.state, counters: { ...u.state.counters, attempts: u.attemptBase + u.starts.size }, open: openStart(u) };
+    if (!u.starts.has(start)) {
+      const seq = this.#lastSeq + 1;
+      u.starts.set(start, seq);
+      const at = start.lastIndexOf('#');
+      const attempt = Number(start.slice(at + 1));
+      if (u.latestStart === null || attempt > u.latestStart.attempt) u.latestStart = { stage: start.slice(0, at) as Stage, attempt, seq };
+    }
+    this.#setUnitState(u, { ...u.state, counters: { ...u.state.counters, attempts: u.attemptBase + u.starts.size }, open: openStart(u) });
   }
 
   #openEntry(op: OpId, what: string, fail: (detail: string) => never): OpEntry {
@@ -866,14 +967,14 @@ export class Fold implements JournalView {
         for (const unit of members) {
           this.#publications.push({ unit, seq });
           const u = this.#unit(unit, 'ff');
-          u.state = { ...u.state, status: 'retired' };
+          this.#setUnitState(u, { ...u.state, status: 'retired' });
         }
       }
     }
     if (intent.kind === 'snapshot.publish') this.#snapshotHighWater = Math.max(this.#snapshotHighWater, intent.expect.highWater);
     if (intent.kind === 'spec.patch' && intent.parent.type === 'stage') {
       const u = this.#unit(intent.parent.unit, intent.parent.stage);
-      u.state = { ...u.state, spec: { rev: intent.post.newRev, sha256: intent.post.newSha256 } };
+      this.#setUnitState(u, { ...u.state, spec: { rev: intent.post.newRev, sha256: intent.post.newSha256 } });
     }
   }
 
@@ -924,7 +1025,7 @@ export class Fold implements JournalView {
           if (f.session !== undefined && f.delegated !== undefined) {
             this.#sessionCharges.set(f.session, addCharged(this.#sessionCharges.get(f.session) ?? null, { tokens: f.usage, delegated: f.delegated }));
           }
-          this.#meter.set(key, {
+          this.#setMeter(key, {
             ...m,
             known: m.known + 1,
             inputTokens: m.inputTokens + f.usage.inputTokens,
@@ -935,7 +1036,7 @@ export class Fold implements JournalView {
             costUsd: m.costUsd + (f.usage.costUsd ?? 0),
           });
         } else {
-          this.#meter.set(key, { ...m, unavailable: m.unavailable + 1 });
+          this.#setMeter(key, { ...m, unavailable: m.unavailable + 1 });
         }
         return;
       }
@@ -965,7 +1066,7 @@ export class Fold implements JournalView {
         // Only the first pin names the spec in force: a re-pin carries the spec its record was first made at.
         const spec = prev === undefined ? specOf(f.record) : null;
         if (spec !== null) this.#pinnedSpec.set(unit, spec);
-        if (u !== undefined) u.state = { ...u.state, risk: riskFloor, buildTier: maxTier(riskFloor, u.state.buildTier), spec: spec ?? u.state.spec, bounds: boundsOfRecord(f.record) };
+        if (u !== undefined) this.#setUnitState(u, { ...u.state, risk: riskFloor, buildTier: maxTier(riskFloor, u.state.buildTier), spec: spec ?? u.state.spec, bounds: boundsOfRecord(f.record) });
         return;
       }
       case 'stage-outcome': {
@@ -1000,33 +1101,33 @@ export class Fold implements JournalView {
         if (entry !== null && f.class !== 'hold' && f.stage !== ENTRY_STAGE[entry.kind]) fail(`stage-outcome for ${f.unit} ${key} while its ${entry.kind} entry is at ${ENTRY_STAGE[entry.kind]}`);
         if (f.class !== 'hold') {
           const ends = f.class === 'park' || f.class === 'stop' || f.class === 'retire' || (f.stage === 'gate' && f.class === 'advance');
-          u.state = { ...u.state, entry: null, steering: ends ? null : u.state.steering };
+          this.#setUnitState(u, { ...u.state, entry: null, steering: ends ? null : u.state.steering });
         }
-        u.state = afterStageOutcome(u.state, f);
+        this.#setUnitState(u, afterStageOutcome(u.state, f));
         // A recovery hold continues nothing (its attempt made no call to continue): the re-run starts from the decision and
         // the interruption before it, as the abandoned attempt's own re-run would have. It holds the unit only while a pause
         // covers it; otherwise the unit stays active and its stage runs again once admitted.
         if (f.cause?.type === 'recovery') {
-          if (!this.#pausedAll && !this.#pausedUnits.has(f.unit)) u.state = { ...u.state, status: 'active' };
-        } else if (f.class === 'hold') u.state = { ...u.state, interrupted: f };
+          if (!this.#pausedAll && !this.#pausedUnits.has(f.unit)) this.#setUnitState(u, { ...u.state, status: 'active' });
+        } else if (f.class === 'hold') this.#setUnitState(u, { ...u.state, interrupted: f });
         else {
           u.beforeDecided = { decided: u.state.decided, interrupted: u.state.interrupted };
-          u.state = { ...u.state, decided: f, interrupted: null, pressureHold: null };
+          this.#setUnitState(u, { ...u.state, decided: f, interrupted: null, pressureHold: null });
         }
         // M4b rev 3 (RC-11): a host-pressure hold waits on admission (ready.ts), not on a resume.
         if (f.cause?.type === 'host-pressure') {
-          u.state = { ...u.state, status: 'active', pressureHold: { inv: f.cause.inv, at: at.at }, pressureHolds: u.state.pressureHolds + 1 };
+          this.#setUnitState(u, { ...u.state, status: 'active', pressureHold: { inv: f.cause.inv, at: at.at }, pressureHolds: u.state.pressureHolds + 1 });
         }
         const park = f.class === 'park' ? f.park ?? unclassedParkRecord(f) : null;
         if (park !== null) {
-          u.state = { ...u.state, park: { seq: at.seq, at: at.at, park, passed: [] } };
+          this.#setUnitState(u, { ...u.state, park: { seq: at.seq, at: at.at, park, passed: [] } });
           this.#unitParkSeqs.set(at.seq, f.unit);
         }
         if (f.class === 'park' || f.class === 'stop' || f.chargeable) {
-          u.state = { ...u.state, failures: [...u.state.failures, { seq: at.seq, fact: f, park }] };
+          this.#setUnitState(u, { ...u.state, failures: [...u.state.failures, { seq: at.seq, fact: f, park }] });
         }
         const lineage = u.state.lineage;
-        if (f.stage === 'prepare' && f.class !== 'park' && f.class !== 'hold' && lineage !== null) u.state = { ...u.state, lineage: { ...lineage, prepared: true } };
+        if (f.stage === 'prepare' && f.class !== 'park' && f.class !== 'hold' && lineage !== null) this.#setUnitState(u, { ...u.state, lineage: { ...lineage, prepared: true } });
         this.#start(u, key);
         return;
       }
@@ -1060,12 +1161,12 @@ export class Fold implements JournalView {
         // G1: only while a charged round is left in the budget.
         if (state.counters.chargeableFailures >= state.bounds.chargeable) fail(`implementer-escalated for ${f.unit} at the chargeable bound`);
         const u = this.#unit(f.unit, 'build');
-        u.state = { ...u.state, buildTier: f.to };
+        this.#setUnitState(u, { ...u.state, buildTier: f.to });
         return;
       }
       case 'approval': {
         const u = this.#unit(f.unit, 'gate');
-        u.state = { ...u.state, approval: { attempt: f.attempt, fingerprint: f.fingerprint } };
+        this.#setUnitState(u, { ...u.state, approval: { attempt: f.attempt, fingerprint: f.fingerprint } });
         this.#approvals.set(f.unit, { seq: at.seq, attempt: f.attempt, fingerprint: f.fingerprint, blobs: f.blobs ?? null });
         return;
       }
@@ -1248,18 +1349,21 @@ export class Fold implements JournalView {
       // once each. What they mean for units and milestones is read from `walkFacts` (agents C, D and G).
       case 'walk-started':
         this.#openJob(f.job, fail);
+        this.#openWalks.set(f.job, []);
         this.#walkFacts.push({ seq: at.seq, at: at.at, fact: f });
         return;
       case 'polish-proposed': {
         if (f.id !== this.nextPolishId()) fail(`polish-proposed ${f.id}; the next polish id is ${this.nextPolishId()}`);
         if (!this.#walkOpen(f.job)) fail(`polish-proposed ${f.id} of ${f.job}, which is not a started, unended walk`);
+        this.#openWalks.get(f.job)!.push(f.id);
         this.#walkFacts.push({ seq: at.seq, at: at.at, fact: f });
         return;
       }
       case 'walk-ended': {
         if (!this.#walkOpen(f.job)) fail(`walk-ended of ${f.job}, which is not a started, unended walk`);
-        const proposed = this.#walkFacts.flatMap((x) => (x.fact.kind === 'polish-proposed' && x.fact.job === f.job ? [x.fact.id] : []));
+        const proposed = this.#openWalks.get(f.job)!;
         if (proposed.join(',') !== f.proposals.join(',')) fail(`walk-ended of ${f.job} names proposals ${f.proposals.join(', ')}; it proposed ${proposed.join(', ')}`);
+        this.#openWalks.delete(f.job);
         this.#walkFacts.push({ seq: at.seq, at: at.at, fact: f });
         return;
       }
@@ -1315,7 +1419,7 @@ export class Fold implements JournalView {
         if (this.#planApplied?.rev !== f.rev) fail(`stale-set of plan rev ${f.rev}, which is not the plan in force (rev ${this.#planApplied?.rev ?? 'none'})`);
         for (const l of f.links) {
           const u = 'unit' in l ? this.#units.get(l.unit) : undefined;
-          if (u !== undefined) u.state = { ...u.state, staleRev: f.rev };
+          if (u !== undefined) this.#setUnitState(u, { ...u.state, staleRev: f.rev });
         }
         this.#propagationFacts.push({ seq: at.seq, at: at.at, fact: f });
         return;
@@ -1325,7 +1429,7 @@ export class Fold implements JournalView {
         if (this.#propagationFacts.some((x) => x.fact.kind === 'stale-answered' && x.fact.unit === f.unit && x.fact.attempt === f.attempt)) {
           fail(`a second stale-answered of unit ${f.unit}'s plan-check attempt ${f.attempt}`);
         }
-        if (u.state.staleRev !== null && u.state.staleRev <= f.rev) u.state = { ...u.state, staleRev: null };
+        if (u.state.staleRev !== null && u.state.staleRev <= f.rev) this.#setUnitState(u, { ...u.state, staleRev: null });
         this.#propagationFacts.push({ seq: at.seq, at: at.at, fact: f });
         return;
       }
@@ -1363,8 +1467,7 @@ export class Fold implements JournalView {
 
   /** A walk job started and not yet ended. */
   #walkOpen(job: JobId): boolean {
-    const facts = this.#walkFacts.map((x) => x.fact);
-    return facts.some((x) => x.kind === 'walk-started' && x.job === job) && !facts.some((x) => x.kind === 'walk-ended' && x.job === job);
+    return this.#openWalks.has(job);
   }
 
   /** A job that opens with this fact must be its kind's next (`nextJobId`). */
@@ -1397,19 +1500,22 @@ export class Fold implements JournalView {
       case 'finding-opened': {
         const next = this.nextFindingId();
         if (f.id !== next) fail(`finding ${f.id} opened; the next finding is ${next}`);
-        const merged = [...this.#findings.values()].find((x) => x.key === f.key && FINDING_MOVES[x.state].length > 0);
-        if (merged !== undefined) fail(`finding ${f.id} has the key of ${merged.id}, which is ${merged.state}: it merges into it`);
+        for (const history of this.#findings.values()) {
+          const x = history.at(-1)!.finding;
+          if (x.key === f.key && FINDING_MOVES[x.state].length > 0) fail(`finding ${f.id} has the key of ${x.id}, which is ${x.state}: it merges into it`);
+        }
         if (f.source.type === 'job') this.#seeJob(f.source.job);
         const { kind: _k, ...rest } = f;
-        this.#findings.set(f.id, { ...rest, state: 'open', owner: null, openedSeq: seq, last: null });
+        this.#findings.set(f.id, [{ seq, finding: { ...rest, state: 'open', owner: null, openedSeq: seq, last: null } }]);
         return;
       }
       case 'finding-transition': {
-        const x = this.#findings.get(f.id);
-        if (x === undefined) return fail(`finding-transition of ${f.id}, which was never opened`);
+        const history = this.#findings.get(f.id);
+        if (history === undefined) return fail(`finding-transition of ${f.id}, which was never opened`);
+        const x = history.at(-1)!.finding;
         if (!FINDING_MOVES[x.state].includes(f.to.state)) fail(`finding ${f.id} moves ${x.state} → ${f.to.state}`);
         const owner = f.to.state === 'owned' || f.to.state === 'fixed-on-branch' ? f.to.unit : f.to.state === 'open' ? null : x.owner;
-        this.#findings.set(f.id, { ...x, state: f.to.state, owner, last: f.to });
+        history.push({ seq, finding: { ...x, state: f.to.state, owner, last: f.to } });
         return;
       }
       case 'audit-started': {
@@ -1588,7 +1694,7 @@ export class Fold implements JournalView {
     }
     for (const e of edits) {
       const entry = this.#unit(e.unit, 'plan-check');
-      entry.state = e.update(entry.state);
+      this.#setUnitState(entry, e.update(entry.state));
     }
     for (const apply of lineages) apply();
     this.#holisticOn = f.visionSha256 !== undefined;
@@ -1621,10 +1727,11 @@ export class Fold implements JournalView {
       const fresh = newUnitState(c.unit, 'prepare', o.risk);
       const counters = c.reset ? { ...o.counters, chargeableFailures: 0 } : o.counters;
       this.#units.set(c.unit, {
-        starts: new Map<string, number>(), outcomes: new Set<string>(), attemptBase: o.counters.attempts, beforeDecided: { decided: null, interrupted: null },
+        order: this.#units.size,
+        starts: new Map<string, number>(), outcomes: new Set<string>(), latestStart: null, attemptBase: o.counters.attempts, beforeDecided: { decided: null, interrupted: null },
         state: { ...fresh, counters, lineage: { reenters: c.reenters, root: o.lineage?.root ?? c.reenters, prepared: false } },
       });
-      old.state = { ...o, status: 'superseded', supersededBy: c.unit, park: null };
+      this.#setUnitState(old, { ...o, status: 'superseded', supersededBy: c.unit, park: null });
     };
   }
 
@@ -1656,10 +1763,10 @@ export class Fold implements JournalView {
     if (!(s.status === 'park-pending' || preparing) || s.open !== null || s.entry !== null) {
       fail(`steered unit ${f.unit}, which is ${s.status}${s.open === null ? '' : ` with ${s.open.stage}#${s.open.attempt} open`}, not parked or preparing`);
     }
-    u.state = {
+    this.#setUnitState(u, {
       ...s, status: 'active', park: null, interrupted: null, pressureHold: null, approval: null,
       entry: { kind: 'steer', seq, command: f.command, brief: f.brief, budgetMin: f.budgetMin, resume: f.resume }, steering: { seq, resume: f.resume },
-    };
+    });
   }
 
   /**
@@ -1672,17 +1779,17 @@ export class Fold implements JournalView {
     if (u === undefined || this.dispatchOf(f.unit) === null) return fail(`merged-in unit ${f.unit}, which was never dispatched`);
     const s = u.state;
     if (!(s.status === 'active' || s.status === 'held' || s.status === 'park-pending') || s.open !== null) fail(`merged-in unit ${f.unit}, which is ${s.status}`);
-    u.state = {
+    this.#setUnitState(u, {
       ...s, status: s.status === 'park-pending' ? 'active' : s.status, park: null, interrupted: null, pressureHold: null, approval: null,
       entry: { kind: 'merge-in', seq, command: f.command }, steering: null,
-    };
+    });
   }
 
   /** The unit re-runs the stage its park decided at: decision and interruption as before the park. */
   #restoreParked(u: UnitEntry, recovery: UnitState['lastRecovery']): void {
     const decided = u.state.decided;
     if (decided === null) throw new Error(`restore of unit ${u.state.unit}, which decided nothing`);
-    u.state = { ...u.state, stage: decided.stage, status: 'active', ...u.beforeDecided, park: null, lastRecovery: recovery ?? u.state.lastRecovery };
+    this.#setUnitState(u, { ...u.state, stage: decided.stage, status: 'active', ...u.beforeDecided, park: null, lastRecovery: recovery ?? u.state.lastRecovery });
   }
 
   /**
@@ -1723,7 +1830,7 @@ export class Fold implements JournalView {
       else passed.push([u, next]);
     }
     this.#probes.set(key, { ...f, seq: at.seq, at: at.at });
-    for (const [u, park] of passed) u.state = { ...u.state, park };
+    for (const [u, park] of passed) this.#setUnitState(u, { ...u.state, park });
     for (const u of recover) {
       const park = u.state.park as ParkState;
       this.#restoreParked(u, { at: at.at, targets: park.park.class === 'retryable' ? park.park.targets : [] });
@@ -1744,7 +1851,7 @@ export class Fold implements JournalView {
     for (const [id, u] of this.#units) {
       if (u.state.status !== 'held' || this.#pausedUnits.has(id)) continue;
       const cause = u.state.interrupted?.cause;
-      if (cause?.type === 'backend' && cause.backend === backend && cause.parkSeq <= seq) u.state = { ...u.state, status: 'active' };
+      if (cause?.type === 'backend' && cause.backend === backend && cause.parkSeq <= seq) this.#setUnitState(u, { ...u.state, status: 'active' });
     }
   }
 
@@ -1770,10 +1877,10 @@ export class Fold implements JournalView {
     }
     const spec = u.state.spec;
     if (spec === null || f.specRev !== spec.rev + 1) fail(`reopen of unit ${f.unit} at spec rev ${f.specRev}; its recorded rev is ${spec?.rev ?? 'none'}`);
-    u.state = {
+    this.#setUnitState(u, {
       ...u.state, stage: 'plan-check', status: 'active', decided: null, interrupted: null, pressureHold: null, park: null, spec: { rev: f.specRev, sha256: f.specSha256 },
       reopened: { command: f.command, specRev: f.specRev }, redirectBase: u.state.counters.redirects, pendingRevision: null,
-    };
+    });
   }
 
   /**
@@ -1789,10 +1896,10 @@ export class Fold implements JournalView {
     if (u.state.staleRev !== f.rev) fail(`stale-reopened of unit ${f.unit} on the stale set of rev ${f.rev}; its unanswered one is ${u.state.staleRev ?? 'none'}`);
     const spec = u.state.spec;
     if (spec === null) return fail(`stale-reopened of unit ${f.unit}, which has no spec recorded`);
-    u.state = {
+    this.#setUnitState(u, {
       ...u.state, stage: 'plan-check', decided: null, interrupted: null, pressureHold: null, park: null,
       reopened: { command: null, specRev: spec.rev }, redirectBase: u.state.counters.redirects,
-    };
+    });
   }
 
   /**
@@ -1810,7 +1917,7 @@ export class Fold implements JournalView {
       return fail(`scope-decided of unit ${f.unit} attempt ${f.attempt}, which is not the unit's scope-growth hold (status ${u.state.status}, held ${held === null ? 'none' : `${held.stage}#${held.attempt} ${held.outcome}`})`);
     }
     const decision: ScopeDecision = { stage, attempt: f.attempt, command: f.command, decision: f.decision, proposals: held.detail.proposals, reason: f.reason };
-    u.state = { ...u.state, status: 'active', scopeDecisions: [...u.state.scopeDecisions, decision] };
+    this.#setUnitState(u, { ...u.state, status: 'active', scopeDecisions: [...u.state.scopeDecisions, decision] });
   }
 
   /**
@@ -1820,7 +1927,7 @@ export class Fold implements JournalView {
    */
   #resumed(target: Extract<Fact, { kind: 'resumed' }>['target'], fail: (detail: string) => never): void {
     const release = (u: UnitEntry): void => {
-      if (u.state.status === 'held') u.state = { ...u.state, status: 'active' };
+      if (u.state.status === 'held') this.#setUnitState(u, { ...u.state, status: 'active' });
     };
     switch (target.type) {
       case 'unit': {
@@ -1845,12 +1952,16 @@ export class Fold implements JournalView {
     }
   }
 
-  /** The records every counter the fold derives lives in, by reference, for the `monotonicSince()` check around each event. */
-  #counterRefs(): CounterRefs {
-    return {
-      lastSeq: this.#lastSeq, snapshotHighWater: this.#snapshotHighWater,
-      units: new Map([...this.#units].map(([unit, u]) => [unit, u.state])), meter: new Map(this.#meter),
-    };
+  /** The one writer of an existing unit's immutable state, capturing its pre-event counters once. */
+  #setUnitState(u: UnitEntry, state: UnitState): void {
+    if (u.order < this.#existingUnits && !this.#unitBefore.has(u.state.unit)) this.#unitBefore.set(u.state.unit, u.state);
+    u.state = state;
+  }
+
+  #setMeter(key: string, total: MeterTotal): void {
+    const before = this.#meter.get(key);
+    if (before !== undefined && !this.#meterBefore.has(key)) this.#meterBefore.set(key, before);
+    this.#meter.set(key, total);
   }
 
   // JournalView ---------------------------------------------------------------------------------------
@@ -1876,9 +1987,27 @@ export class Fold implements JournalView {
   }
 
   opsOf<K extends OpKind>(kind: K): readonly IntentOf<K>[] {
-    const out: IntentOf<K>[] = [];
-    for (const { latest } of this.#ops.values()) if (latest.kind === kind) out.push(latest as IntentOf<K>);
-    return out;
+    return this.#opsByKind.get(kind) as readonly IntentOf<K>[];
+  }
+
+  opsOfParent<K extends OpKind>(kind: K, parent: Parent): readonly IntentOf<K>[] {
+    return this.#opsByParent.get(`${kind} ${canonicalJson(parent)}`) as readonly IntentOf<K>[];
+  }
+
+  opsOfUnit<K extends OpKind>(kind: K, unit: UnitId): readonly IntentOf<K>[] {
+    return this.#opsByUnit.get(`${kind} ${unit}`) as readonly IntentOf<K>[];
+  }
+
+  spawnsOfUnit(unit: UnitId, role?: UnitRole): readonly IntentOf<'proc.spawn'>[] {
+    return this.#spawnsByUnit.get(role === undefined ? unit : `${unit} ${role}`) as readonly IntentOf<'proc.spawn'>[];
+  }
+
+  spawnsOfJob(job: JobId): readonly IntentOf<'proc.spawn'>[] {
+    return this.#spawnsByJob.get(job) as readonly IntentOf<'proc.spawn'>[];
+  }
+
+  killsOfInvocation(inv: InvocationId): readonly IntentOf<'proc.kill'>[] {
+    return this.#killsByInvocation.get(inv) as readonly IntentOf<'proc.kill'>[];
   }
 
   usageRecorded(inv: InvocationId): boolean {
@@ -2037,6 +2166,21 @@ export class Fold implements JournalView {
     return polishIdOf(this.#walkFacts.filter((x) => x.fact.kind === 'polish-proposed').length + 1);
   }
 
+  findingsAt(seq: number): readonly FindingState[] {
+    const out: FindingState[] = [];
+    for (const history of this.#findings.values()) {
+      let low = 0;
+      let high = history.length;
+      while (low < high) {
+        const middle = (low + high) >>> 1;
+        if (history[middle]!.seq <= seq) low = middle + 1;
+        else high = middle;
+      }
+      if (low > 0) out.push(history[low - 1]!.finding);
+    }
+    return out;
+  }
+
   holistic(): HolisticFold {
     const c = this.#completion;
     const active = c !== null && this.#planApplied?.rev === c.planRev && (this.#head === null || this.#head === c.head) && this.#lastReopenSeq < c.seq;
@@ -2044,7 +2188,7 @@ export class Fold implements JournalView {
       on: this.#holisticOn,
       witnessed: this.#witnessed,
       latched: [...this.#latched.values()],
-      findings: [...this.#findings.values()],
+      findings: [...this.#findings.values()].map((history) => history.at(-1)!.finding),
       audits: this.#audits.map((a) => ({ started: a.started, ended: a.ended })),
       auditRequests: this.#auditRequests,
       docsCovered: this.#docsCovered,
@@ -2107,12 +2251,7 @@ export class Fold implements JournalView {
 
 /** The highest-attempt start of a unit when it has no outcome yet (`UnitState.open`). */
 function openStart(u: UnitEntry): UnitState['open'] {
-  let latest: { stage: Stage; attempt: number; seq: number } | null = null;
-  for (const [key, seq] of u.starts) {
-    const at = key.lastIndexOf('#');
-    const attempt = Number(key.slice(at + 1));
-    if (latest === null || attempt > latest.attempt) latest = { stage: key.slice(0, at) as Stage, attempt, seq };
-  }
+  const latest = u.latestStart;
   return latest === null || u.outcomes.has(`${latest.stage}#${latest.attempt}`) ? null : latest;
 }
 
@@ -2133,9 +2272,4 @@ export function fold(arc: ArcId, events: readonly Event[]): DerivedState {
   const f = new Fold(arc);
   for (const event of events) f.apply(event, prevHash(Buffer.from(serializeEvent(event), 'utf8')));
   return f.derived();
-}
-
-/** Rewrites the `state.json` cache. Deliberately write-only: decisions come from the fold, never from here. */
-export function writeStateCache(path: string, state: DerivedState): void {
-  atomicJson(path, state);
 }

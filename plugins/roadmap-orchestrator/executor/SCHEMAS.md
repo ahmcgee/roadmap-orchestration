@@ -25,7 +25,7 @@ Other steps request changes rather than edit.
 
 Arcs run for days to a week and executor fixes land mid-run, so an executor update adopts an arc started on
 the previous release and carries it on; it never forces a new arc and never refuses the previous release's
-runtime state (event log, state cache, invocation files, needs-user, commands and receipts, host files) or run
+runtime state (event log, invocation files, needs-user, commands and receipts, host files) or run
 inputs (plan, specs, ledger).
 
 - A record change is additive. A field the previous release did not write gets a safe default at the read
@@ -402,7 +402,7 @@ without them (dev.21 published one so) still verifies. They are never used for i
 
 1. `launch.json` is the only executor-written file allowed to contain a model id, and only inside `argv`.
    Its `terminal` names `{role, routingRev}` and the backend, never the model or triple.
-2. The `state.no-model-ids` test scope is: the event log, the state cache, needs-user files, receipts,
+2. The `state.no-model-ids` test scope is: the event log, the snapshot state, needs-user files, receipts,
    residues, the snapshot ref, `status` output and meter facts. Startup rejections shown in `status`
    therefore name the seat (`role`, `tier`), routing layer and model class, never the model.
 
@@ -510,6 +510,11 @@ restart checks"); a supervisor's `--respawn` after a crash, once one of its gene
 force, its kept specs and the ledger in force instead (`StartupContext.specOf`, `StartupContext.ledger`). A supervisor whose generations all crashed before readiness passes no `--respawn`:
 its next generation is a start that reads the files, so an edit a crashed start had not put in force yet is
 classified, not dropped.
+
+Startup groups 1 and 2 share one verified read-only journal cursor. After the host claim, group 4
+rechecks that cursor for appended bytes (rebuilding under the observer's replacement, truncation and
+rewrite rules) and transfers its fold to the writer. Cold open and cursor transfer use the same tail
+repair and saved-fragment fact routine; the read-only checks never repair or write the journal.
 
 ## Ids (`src/core/ids.ts`)
 
@@ -674,9 +679,19 @@ names a `backend-park` fact of that backend; `unparked` only of an operator-env 
 seqs (each a unit park the target belongs to, or a park of that backend) and, for a resource target, the seq of a
 `resource.transition{fail}` whose residues name its instance, and a unit park it covers is retryable; a `fail`
 transition is held by a stage; `implementer-escalated` from the unit's current build tier, below the chargeable bound; one
-`judgment-inputs` per `(unit, stage, attempt)`; one `edge-resolved` per edge. `state.json` is a derived cache, never read for a
-decision. Attempts, chargeable failures, stage advancement and meter totals are derived from done records and
-facts keyed by op/inv, so they cannot be lost or double-counted.
+`judgment-inputs` per `(unit, stage, attempt)`; one `edge-resolved` per edge. `state.json` exists only in the
+snapshot tree, derived from its log prefix, and is never read for a decision. Attempts, chargeable failures,
+stage advancement and meter totals are derived from done records and facts keyed by op/inv, so they cannot be
+lost or double-counted. The fold checks monotonic counters on the records each event replaces, retaining the
+pre-event value once even when the event replaces it several times. Its op indexes retain latest intents in
+first-intent order: kind, canonical parent, stage-parent unit, spawn-subject unit (also backend role) or job,
+and kill-target invocation. Retries update these memberships without changing the op's original order.
+A unit's highest numbered stage start keeps its first-start tie order; each open walk keeps its own proposals
+in log order. Neither lookup scans completed stage starts or unrelated walk history.
+The same fold keeps each finding's states in transition order, with its last state serving current
+readers. `JournalView.findingsAt(seq)` binary-searches each finding's history and returns the states in
+opening order, exactly as a verified prefix replay would. Walk settlement uses the states at `walk-ended`
+so later resolutions or newly opened findings do not change whether that walk passed.
 
 **Tail rule**. Verify the valid prefix first. Only a terminal suffix lacking `\n`, or an all-NUL suffix, is
 discardable: save to `events.torn.<off>.<sha8>` (fsync) → truncate (fsync) → `tail-discarded` fact. A saved
@@ -998,7 +1013,10 @@ sha256}}`, whose bytes are kept content-addressed in the run dir (`inputs/<sha25
 else the manifest's; the stages load those bytes, never the live file (whose path they still name for the
 architect). The executor's contexts read `plan()` and `routing()` (the plan in force resolved under the start's
 profile and repo config) from the log at each call. `roadmap apply` and a `start` whose files differ are the only
-ways a revision comes into force; an unapplied edit is ignored, also by a respawn.
+ways a revision comes into force; an unapplied edit is ignored, also by a respawn. The read-only repair-unit
+reader caches each unit's parsed kept spec by its hash in force, per journal view; progress is always read
+from the current view. Evidence edits, patches and reopens therefore invalidate the spec lookup without
+re-reading unchanged specs on scheduler ticks.
 
 `roadmap apply [--base <export.json>] [--dry-run]` hashes the plan file the arc started with (`start.json`) and every
 unit's spec into the command's manifest. The effect (`src/commands/apply.ts`, a mutation, so once its scope has drained
@@ -1286,7 +1304,10 @@ delegated share on its own class); `host{…, log}` (below); `parkedBackends`; `
 `owed`, `completion`: "Choices made in M3 B9"); and the M4a keys (`holds`, `packReview`, `corpus`, `census`, `amendments`,
 `debt`, `chain`, `timings`: "Readings of M4a C4"). The log is read with `readJournal`
 (`src/core/log.ts`: fold without lock, repair, fact or cache write; an unterminated tail is left out); what only
-the scheduler knows comes from `sched.json` while its writer is the live owner. `byModel` is the only place a model
+the scheduler knows comes from `sched.json` while its writer is the live owner. A long-lived watch uses
+`ObserverJournal`, the TUI's incremental verifier, and passes that snapshot to the same derivation. Status's
+first-parent tree history is cached by repository and integration commit; obligation verdicts still derive
+from the current journal. `byModel` is the only place a model
 id appears: seat totals (`meterOf(...).bySeat`) looked up in each revision's table, resolved from the routing
 provenance each plan revision recorded (M3 B9 item 2). The CLI's `status` runs one at a time per run dir (2026-10-23): it holds
 `<runDir>/status.lock` (`StatusLock {v, bootId, holder{pid,start}}`, published write-once; `statusSingleFlight`) while it
@@ -1931,6 +1952,16 @@ residues, the snapshot closure):
    alone). `manifest.json` entries carry `namedBy: log | event{seq} | item{path}`;
    `verifySnapshot` recomputes the closure from the tree's own events and payloads and requires exactly that set, each
    file hashing as listed and as its naming record states. A run dir holds start.json before any snapshot.
+   Publication produces the same tree incrementally: it seeds a temporary index from the previous ref and writes
+   changed blobs in one `hash-object --stdin-paths` process. A process-local closure and fold advance from the last
+   verified publication's exact log prefix. Every named source (including absent optional files) is checked by
+   inode, size, mode, nanosecond mtime and ctime; changed sources are reread and checked against their naming records,
+   with needs-user JSON canonicalised as before. The manifest and complete log/state bytes remain unchanged in format.
+   With a verified base, publication verifies the complete path/mode/object-id set and hashes delta blobs: unchanged
+   Git objects retain their verified bytes. Standalone `verifySnapshot` and recovery always verify the full tree,
+   detecting corruption in unchanged objects too. Startup, a divergent ref/log, or a failed prepare rebuilds the
+   capture with the same collector from empty; no new authoritative cache or record is persisted. The integration
+   slot continues to be held through the snapshot (unit, batch and docs recovery depend on that reservation).
    `namedBy` is required (M4a X0 deleted the dev.5 allowlist reading). Not yet in the closure: commands and their
    receipts.
 

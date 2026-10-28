@@ -35,8 +35,14 @@ import type { LensKind } from './types.ts';
 /** One published `integration.ff`: where the integration head moved, and when (the seq it counts at). */
 export type PublishedHead = Readonly<{ seq: number; op: OpId; old: Sha; head: Sha; subject: 'unit' | 'batch' | 'docs'; pub: JobId | null }>;
 
+// Observers and the scheduler ask repeatedly without an append. A view's high-water changes on
+// every append, including a completion of an already open ff or revision.
+const headsCache = new WeakMap<JournalView, Readonly<{ seq: number; heads: readonly PublishedHead[] }>>();
+
 /** Every published `integration.ff` of the arc, ascending by the seq it counts at. */
 export function publishedHeads(view: JournalView): readonly PublishedHead[] {
+  const cached = headsCache.get(view);
+  if (cached?.seq === view.highWater()) return cached.heads;
   const doneSeqs = [...new Set(view.publications().map((p) => p.seq))];
   let next = 0;
   const out: PublishedHead[] = [];
@@ -56,7 +62,9 @@ export function publishedHeads(view: JournalView): readonly PublishedHead[] {
     out.push({ seq, op: ff.op, old: ff.expect.old, head: ff.expect.new, subject: subject?.type === 'batch' ? 'batch' : 'unit', pub: subject?.type === 'batch' ? subject.job : null });
   }
   if (next !== doneSeqs.length) throw new Error(`the fold records ${doneSeqs.length} publications, the log's published ffs ${next}`);
-  return out.sort((a, b) => a.seq - b.seq);
+  const heads = out.sort((a, b) => a.seq - b.seq);
+  headsCache.set(view, { seq: view.highWater(), heads });
+  return heads;
 }
 
 /** The integration head just before `seq`: the latest head published before it, else the first publication's base, else `tip` (nothing published yet). */
@@ -71,10 +79,14 @@ export type AppliedRevision = Readonly<{ seq: number; commit: IntentOf<'revision
 // Payloads are content-addressed and immutable: read each once per process.
 const payloads = new Map<string, RevisionPayload>();
 
+const revisionsCache = new WeakMap<JournalView, Readonly<{ runDir: AbsPath; seq: number; revisions: readonly AppliedRevision[] }>>();
+
 /** Every applied revision, in log order. */
 export function appliedRevisions(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath }>): readonly AppliedRevision[] {
   const view = ctx.journal.view;
-  return view.opsOf('revision.commit').flatMap((commit) => {
+  const cached = revisionsCache.get(view);
+  if (cached?.seq === view.highWater() && cached.runDir === ctx.runDir) return cached.revisions;
+  const revisions = view.opsOf('revision.commit').flatMap((commit) => {
     const done = view.doneOf(commit.op);
     if (done === null || done.kind !== 'revision.commit') return [];
     const key = `${ctx.runDir}\0${commit.expect.payloadSha256}`;
@@ -85,6 +97,8 @@ export function appliedRevisions(ctx: Readonly<{ journal: Readonly<{ view: Journ
     }
     return [{ seq: parseOpId(commit.op).seq, commit, payload }];
   });
+  revisionsCache.set(view, { runDir: ctx.runDir, seq: view.highWater(), revisions });
+  return revisions;
 }
 
 /** The docs publication a revision carried: the published docs ff begun after its `revision.commit` and before the next one. */

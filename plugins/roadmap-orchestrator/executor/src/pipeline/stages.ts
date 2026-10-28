@@ -630,10 +630,7 @@ export type JudgmentReader = Readonly<{ journal: Readonly<{ view: JournalView }>
 
 /** A unit's backend spawns of one judgment role, in log order. */
 export const judgmentSpawns = (ctx: JudgmentReader, unit: UnitId, role: JudgmentRole): readonly IntentOf<'proc.spawn'>[] =>
-  ctx.journal.view.opsOf('proc.spawn').filter((i) => {
-    const s = i.expect.subject;
-    return s.purpose === 'backend' && s.role === role && s.unit === unit;
-  });
+  ctx.journal.view.spawnsOfUnit(unit, role);
 
 /** The validated output of a judgment spawn, or null when it has none (a fault, a refusal, a malformed answer). */
 export function judgmentOutput<T>(ctx: JudgmentReader, intent: IntentOf<'proc.spawn'>, validate: (value: unknown) => T): T | null {
@@ -1300,8 +1297,7 @@ async function machinePatch(ctx: StageContext, unit: UnitId, parent: StageParent
 
 /** The ops of `kind` a stage attempt began, in log order. */
 export function attemptOps<K extends OpKind>(ctx: StageContext, parent: StageParent, kind: K): readonly IntentOf<K>[] {
-  const key = canonicalJson(parent);
-  return ctx.journal.view.opsOf(kind).filter((i) => canonicalJson(i.parent) === key);
+  return ctx.journal.view.opsOfParent(kind, parent);
 }
 
 /**

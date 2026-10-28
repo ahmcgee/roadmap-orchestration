@@ -62,7 +62,6 @@ import { ENV_INV, ENV_ROLE } from '../contain/session.ts';
 import { scan } from '../contain/proc.ts';
 import { crashPoint } from '../core/crash.ts';
 import { JUDGMENT_STAGES, type OutcomeStage, type StageOutcomeFact, type TestRef, testRefKey } from '../core/events.ts';
-import { canonicalJson } from '../core/json.ts';
 import { mutantSubjectDefault } from '../core/upgrade.ts';
 import { SchemaError } from '../core/validate.ts';
 import { patternPath } from '../git/evidence.ts';
@@ -228,10 +227,7 @@ function heldBy(ctx: StageContext, holder: StageHolder): Reservation<'running', 
 /** The unit's latest successful build: its invocation (the last of its attempt: a collided resume retries), dirs and held reservation. */
 function buildRunOf(ctx: StageContext, unit: PlanUnit): BuildRun {
   const view = ctx.journal.view;
-  const spawn = view.opsOf('proc.spawn').filter((i) => {
-    const s = i.expect.subject;
-    return s.purpose === 'backend' && s.role === 'build' && s.unit === unit.id;
-  }).at(-1);
+  const spawn = view.spawnsOfUnit(unit.id, 'build').at(-1);
   if (spawn === undefined || spawn.parent.type !== 'stage') throw new Error(`unit ${unit.id} has no build invocation`);
   const parent = spawn.parent;
   const inv = invocationId(spawn.op, spawn.ordinal);
@@ -318,7 +314,7 @@ function smokeEvidence(ctx: StageContext, parent: StageParent): readonly AbsPath
 
 /** The spawns a stage attempt made, in log order. */
 const attemptSpawns = (ctx: StageContext, parent: StageParent) =>
-  ctx.journal.view.opsOf('proc.spawn').filter((i) => canonicalJson(i.parent) === canonicalJson(parent));
+  ctx.journal.view.opsOfParent('proc.spawn', parent);
 
 /** Required tests of a recorded outcome that are still required now (a revision since may have dropped some). */
 function stillRequired(refs: readonly TestRef[], required: readonly RequiredWitness[]): readonly TestRef[] {
@@ -515,10 +511,10 @@ async function retire(ctx: StageContext, unit: PlanUnit): Promise<void> {
   const { spec } = loadUnitSpec(ctx, unit);
   for (const created of presentCheckouts(view, unit.id)) await removeCheckout(ctx, created, parent, laneGlobs(ctx, spec));
   const after = ctx.journal.view;
-  const own = after.opsOf('worktree.create').filter((i) => i.parent.type === 'stage' && i.parent.unit === unit.id && i.expect.checkout.type === 'branch'
+  const own = after.opsOfUnit('worktree.create', unit.id).filter((i) => i.parent.type === 'stage' && i.parent.unit === unit.id && i.expect.checkout.type === 'branch'
     && standing(after, i));
   for (const created of own) {
-    const evidenceOp: OpId | undefined = after.opsOf('evidence.snapshot')
+    const evidenceOp: OpId | undefined = after.opsOfUnit('evidence.snapshot', unit.id)
       .filter((i) => i.parent.type === 'stage' && i.parent.unit === unit.id && (i.parent.stage === 'evidence' || i.parent.stage === 'prepare') && after.doneOf(i.op) !== null)
       .at(-1)?.op;
     if (evidenceOp === undefined) throw new Error(`retire of ${unit.id}: its worktree ${created.expect.path} has no build or preparation evidence to cite`);
@@ -772,7 +768,7 @@ export type Gate = (next: NextStage) => Promise<boolean>;
 /** The invocations of the unit's stages: every ordinal of every stage-parented spawn of it. */
 function unitInvocations(ctx: StageContext, unit: UnitId): ReadonlySet<string> {
   const out = new Set<string>();
-  for (const i of ctx.journal.view.opsOf('proc.spawn')) {
+  for (const i of ctx.journal.view.opsOfUnit('proc.spawn', unit)) {
     if (i.parent.type !== 'stage' || i.parent.unit !== unit) continue;
     for (let n = 1; n <= i.ordinal; n++) out.add(invocationId(i.op, n));
   }

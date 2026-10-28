@@ -47,12 +47,16 @@ export type WalkRecord = Readonly<{
 /** Every walk in log order (of `milestone` only, when given). */
 export function walksOf(view: JournalView, milestone?: MilestoneId): readonly WalkRecord[] {
   const out: WalkRecord[] = [];
+  const byJob = new Map<JobId, number>();
   for (const { seq, at, fact: f } of view.walkFacts()) {
     if (f.kind === 'walk-started') {
-      if (milestone === undefined || f.milestone === milestone) out.push({ job: f.job, milestone: f.milestone, round: f.round, sha: f.sha, ports: f.ports, seq, at, ended: null });
+      if (milestone === undefined || f.milestone === milestone) {
+        byJob.set(f.job, out.length);
+        out.push({ job: f.job, milestone: f.milestone, round: f.round, sha: f.sha, ports: f.ports, seq, at, ended: null });
+      }
     } else if (f.kind === 'walk-ended') {
-      const i = out.findIndex((w) => w.job === f.job);
-      if (i >= 0) out[i] = { ...out[i]!, ended: { outcome: f.outcome, findings: f.findings, proposals: f.proposals, dropped: f.dropped, interrupted: f.interrupted === true, seq, at } };
+      const i = byJob.get(f.job);
+      if (i !== undefined) out[i] = { ...out[i]!, ended: { outcome: f.outcome, findings: f.findings, proposals: f.proposals, dropped: f.dropped, interrupted: f.interrupted === true, seq, at } };
     }
   }
   return out;
@@ -224,8 +228,8 @@ export function milestoneState(view: JournalView, m: MilestoneId, p: MilestonePr
 }
 
 /** The active walkthrough P1s of milestone `m`, in id order. */
-export const activeWalkP1s = (view: JournalView, m: MilestoneId): readonly FindingId[] =>
-  canonicalIds(view.holistic().findings.filter((f) => f.lens === 'walkthrough' && f.milestone === m && f.severity === 'P1' && isActive(f)).map((f) => f.id));
+export const activeWalkP1s = (view: JournalView, m: MilestoneId, through?: number): readonly FindingId[] =>
+  canonicalIds((through === undefined ? view.holistic().findings : view.findingsAt(through)).filter((f) => f.lens === 'walkthrough' && f.milestone === m && f.severity === 'P1' && isActive(f)).map((f) => f.id));
 
 /** A due `finding-p1-escalated` of a milestone, parented by the walk job it is about. */
 export type WalkItem = Readonly<{ job: JobId; content: NeedsUserContent }>;
