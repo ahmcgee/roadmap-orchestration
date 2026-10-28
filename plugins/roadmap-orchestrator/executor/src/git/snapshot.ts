@@ -31,9 +31,9 @@
 // | <lane>/red.json`                       | the first run's persisted red class, when written (status' failures) |
 //
 // Paths that name a run-dir file mirror it (`inputs/`, `inv/`, `needs-user/`, `start.json`, a lane's `red.json`,
-// `events.jsonl`, `state.json`), so the run dir's records are restored by copying the tree into it. A witness run
-// keeps its `witness.json` in its own execution's dir (`witnessDir`, written by src/pipeline/lanes.ts
-// `runJourneySeries`): a job's `<runDir>/evidence/jobs/<job>/arc-<lane>-<inv>/` (`jobLaneDir`), a unit candidate's
+// `events.jsonl`, `state.json`); raised needs-user records carry canonical JSON bytes. The run dir's records
+// are restored by copying the tree into it. A witness run keeps its `witness.json` in its own execution's dir
+// (`witnessDir`, written by src/pipeline/lanes.ts `runJourneySeries`): a job's `<runDir>/evidence/jobs/<job>/arc-<lane>-<inv>/` (`jobLaneDir`), a unit candidate's
 // `<runDir>/evidence/<unit>/<attempt>-candidate/journey/arc-<lane>-<inv>/` (`candidateLaneDir`), a mutant's (written by
 // src/pipeline/reproduce.ts) `<runDir>/evidence/mutants/<finding>/<lane>-<inv>/` (`mutantLaneDir`).
 //
@@ -58,7 +58,7 @@ import {
   invocationId, parseOpId, sha, sha256,
 } from '../core/ids.ts';
 import type { GitSteps, IntentBody, JournalView } from '../core/interfaces.ts';
-import { canonicalJson, sha256Hex } from '../core/json.ts';
+import { canonicalJson, canonicalRecordBytes, sha256Hex } from '../core/json.ts';
 import { EVENTS_FILE } from '../core/log.ts';
 import { runStart } from '../core/records.ts';
 import { fold } from '../core/state.ts';
@@ -161,6 +161,7 @@ type Source =
   /** A witness run keeps its record in its execution's dir (`witnessDir`): `<dir>/witness.json`. */
   | Readonly<{ type: 'witness'; fact: WitnessedFact }>
   | Readonly<{ type: 'file'; path: AbsPath }>
+  | Readonly<{ type: 'record'; path: AbsPath }>
   /** A spec lane's red class, at its run-dir path (written after its spawn's done: absent after a crash before the write). */
   | Readonly<{ type: 'red'; path: RepoPath }>
   | Readonly<{ type: 'ack'; id: NeedsUserId }>;
@@ -243,7 +244,7 @@ function closureOf(events: readonly Event[], read: (sha: Sha256Hex, ext: string)
       const byIntent: NamedBy = { type: 'event', seq: opened.seq };
       if (intent.kind === 'spec.patch') input(intent.post.newSha256, SPEC_INPUT, byIntent);
       if (intent.kind === 'needsuser.raise') {
-        add({ path: repoPath(`${NEEDS_USER_DIR}/${intent.expect.id}.json`), namedBy: byIntent, sha256: intent.post.sha256, source: { type: 'file', path: intent.expect.path } });
+        add({ path: repoPath(`${NEEDS_USER_DIR}/${intent.expect.id}.json`), namedBy: byIntent, sha256: intent.post.sha256, source: { type: 'record', path: intent.expect.path } });
       }
       if (e.kind === 'evidence.snapshot' && e.outcome.kind === 'captured' && intent.kind === 'evidence.snapshot') {
         add({ path: repoPath(`evidence-manifests/${parseOpId(e.op).seq}.json`), namedBy: by, sha256: e.outcome.manifestSha256, source: { type: 'file', path: manifestPath(intent.expect.dest) } });
@@ -448,6 +449,8 @@ export function collectSnapshot(request: SnapshotPublishRequest): Collected {
       }
       case 'witness':
         return mustRead(join(witnessDir(runDir, source.fact), WITNESS_RECORD_FILE), `${source.fact.lane} witness record (${source.fact.inv})`);
+      case 'record':
+        return canonicalRecordBytes(mustRead(source.path, 'needs-user record'));
       case 'file':
         return mustRead(source.path, 'named record');
       case 'red': {

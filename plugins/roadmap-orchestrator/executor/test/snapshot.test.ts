@@ -3,14 +3,15 @@
 // The plan's snapshot.allowlist, snapshot.manifest-mismatch-detected, and the snapshot.* cells of the
 // candidate.merge / integration.ff / snapshot.publish matrix row.
 import assert from 'node:assert/strict';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { before, describe, it } from 'node:test';
 import { type IntentOf, parseRevisionPayload } from '../src/core/events.ts';
 import {
-  type NeedsUserId, type Sha, commandId, envId, invocationDirName, invocationId, jobId, laneId, laneRev, needsUserIdForOp, opKey, planRev, seatRev,
+  type NeedsUserId, type Sha, commandId, envId, invocationDirName, invocationId, jobId, laneId, laneRev, opKey, planRev, seatRev,
   sha, sha256, specRev, unitId,
 } from '../src/core/ids.ts';
+import { needsUserPath, raiseNeedsUser } from '../src/needsuser.ts';
 import { parsePlan } from '../src/input/plan.ts';
 import { provenanceStack, resolveRouting } from '../src/routing/layers.ts';
 import { canonicalJson, sha256Hex } from '../src/core/json.ts';
@@ -58,18 +59,10 @@ async function run(): Promise<Run> {
   const evidence = await runOp(journal, evidenceSnapshotOp, 'evidence:unit', {
     source: absPath(source), globs: [repoPattern('**/*')], dest: absPath(join(runDir, 'evidence', 'lane-1')),
   });
-  const content = '{"needs":"user"}\n';
-  let needsUser = '';
-  const raised = journal.begin({
-    kind: 'needsuser.raise', key: opKey('needsuser'), parent: { type: 'arc' }, deadlineAt: null,
-    body: (op) => {
-      needsUser = needsUserIdForOp(op);
-      return { expect: { id: needsUserIdForOp(op), path: absPath(join(runDir, 'needs-user', `${needsUser}.json`)), blocking: true }, post: { sha256: sha256(sha256Hex(content)) } };
-    },
-  });
-  mkdirSync(join(runDir, 'needs-user'));
-  writeFileSync(join(runDir, 'needs-user', `${needsUser}.json`), content);
-  journal.done(raised.op, 'needsuser.raise', { kind: 'raised' }, null);
+  const needsUser = raiseNeedsUser(journal, runDir, {
+    blocking: true, subject: { type: 'arc' }, reason: 'lane-blocked', summary: 'lane blocked twice',
+    recommendation: 'look at the lane', options: [], evidence: [],
+  }, { type: 'arc' });
   // The ack file first, then its fact (commands/apply.ts): the fact names it into the closure.
   writeFileSync(join(runDir, 'needs-user', `${needsUser}.ack.json`), '{"ack":true}\n');
   journal.fact({ kind: 'needs-user-acked', id: needsUser as NeedsUserId, command: commandId('cmd-0123456789abcdef'), choice: null });
@@ -134,6 +127,23 @@ describe('snapshot.publish', () => {
     assert.deepEqual(second.expect.commit.parents, [first.post.new]);
     assert.ok(second.expect.highWater > first.expect.highWater, 'the first publication\'s own events are in the second');
     assert.equal(revOf(r.repo, `${REF}^`), first.post.new);
+  });
+
+  it('snapshots a reformatted needs-user as canonical JSON and verifies it; changed content still fails naming the file', async () => {
+    const r = await run();
+    const path = needsUserPath(r.runDir, r.needsUser as NeedsUserId);
+    const record = JSON.parse(readFileSync(path, 'utf8'));
+    writeFileSync(path, JSON.stringify(record, null, 2) + '\n');
+    const intent = await publish(r);
+    assertSnapshot(r, intent);
+    assert.equal(gitRaw(r.repo, ['show', `${intent.post.new}:needs-user/${r.needsUser}.json`]), canonicalJson(record));
+
+    writeFileSync(path, JSON.stringify({ ...record, summary: 'edited summary' }, null, 2) + '\n');
+    await assert.rejects(publish(r), (error: Error) => {
+      assert.ok(error.message.includes(`needs-user/${r.needsUser}.json`), error.message);
+      assert.match(error.message, /hashes to/);
+      return true;
+    });
   });
 
   it('snapshot.manifest-mismatch-detected: a tampered blob or an extra file fails verifySnapshot', async () => {

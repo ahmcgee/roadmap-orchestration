@@ -5,8 +5,8 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it, test } from 'node:test';
-import { type CommandContext, applyAtSafePoint, applyCommand, applyControl } from '../src/commands/apply.ts';
-import { incomingPath, pollCommands, readReceipt, submitCommand, terminalReceipt } from '../src/commands/queue.ts';
+import { type CommandContext, applyCommand, applyControl } from '../src/commands/apply.ts';
+import { incomingPath, isControl, pollCommands, readCommand, readReceipt, receiptPath, receiptSha256, submitCommand, terminalReceipt } from '../src/commands/queue.ts';
 import { type IntentOf, probeTargetKey } from '../src/core/events.ts';
 import { type ArcId, type CommandId, arcId, invocationId, needsUserId, opId, opKey, sha, specRev, unitId } from '../src/core/ids.ts';
 import { type OpenJournal, openJournal } from '../src/core/log.ts';
@@ -40,6 +40,14 @@ function submit(ctx: CommandContext, body: CommandBody): CommandFile {
 }
 
 const poll = (ctx: CommandContext): readonly CommandFile[] => pollCommands(ctx.runDir, ctx.journal.view.arc);
+
+async function applyMutations(ctx: CommandContext) {
+  const outcomes = [];
+  for (const command of poll(ctx).filter((c) => !isControl(c.body))) {
+    outcomes.push({ command: command.id, outcome: await applyCommand(ctx, command) });
+  }
+  return { kind: 'applied', outcomes } as const;
+}
 
 function raise(ctx: CommandContext, blocking = true, options: readonly { id: string; label: string }[] = []) {
   return raiseNeedsUser(ctx.journal, ctx.runDir, {
@@ -126,6 +134,48 @@ describe('command queue', () => {
     journal.close();
   });
 
+  it('receipt hashes use canonical content after a formatting-only re-save', T, async () => {
+    const { ctx, journal } = openCommandRun(newCmdRun());
+    const cmd = submit(ctx, { type: 'pause', target: { type: 'all' } });
+    await applyCommand(ctx, cmd);
+    const before = receiptSha256(ctx.runDir, cmd.id, 'applied');
+    const path = receiptPath(ctx.runDir, cmd.id, 'applied');
+    writeFileSync(path, JSON.stringify(JSON.parse(readFileSync(path, 'utf8')), null, 2) + '\n');
+    assert.equal(receiptSha256(ctx.runDir, cmd.id, 'applied'), before);
+    journal.close();
+  });
+
+  for (const changed of [false, true]) {
+    it(`recovery of an open command.apply ${changed ? 'rejects changed command content' : 'accepts a reformatted incoming command'}`, T, async () => {
+      const run = newCmdRun();
+      const setup = openCommandRun(run);
+      const cmd = submit(setup.ctx, { type: 'pause', target: { type: 'all' } });
+      const before = readCommand(setup.ctx.runDir, cmd.id, setup.journal.view.arc).sha256;
+      setup.journal.close();
+      const trigger = writeTrigger(tmpDir('cmd-record'), { label: 'command.apply.before-effect', occurrence: 1 });
+      const exit = await runFixture('cmd-child.ts', [JSON.stringify(run), cmd.id], { env: { ...process.env, ROADMAP_TEST_CRASH: trigger }, timeoutMs: 30_000 });
+      assert.equal(exit.signal, 'SIGKILL', exit.stderr);
+      assertFired(trigger);
+      const { ctx, stage, journal } = openCommandRun(run);
+      const path = incomingPath(ctx.runDir, cmd.id);
+      const record = JSON.parse(readFileSync(path, 'utf8'));
+      if (changed) record.body.type = 'resume';
+      writeFileSync(path, JSON.stringify(record, null, 2) + '\n');
+      assert.equal(journal.view.openIntents().filter((i) => i.kind === 'command.apply').length, 1);
+      if (changed) {
+        await assert.rejects(recover({ stage, commands: ctx }), new RegExp(`command ${cmd.id} hashes to`));
+        assert.equal(terminalReceipt(ctx.runDir, cmd.id), null);
+      } else {
+        assert.equal(readCommand(ctx.runDir, cmd.id, journal.view.arc).sha256, before);
+        await recover({ stage, commands: ctx });
+        assert.equal(journal.view.openIntents().length, 0);
+        assert.equal(readReceipt(ctx.runDir, cmd.id, 'applied')?.state, 'applied');
+        assert.equal(journal.view.control().pausedAll, true);
+      }
+      journal.close();
+    });
+  }
+
   it('ids sort in submission order', () => {
     const run = newCmdRun();
     const { ctx, journal } = openCommandRun(run);
@@ -164,7 +214,6 @@ describe('command queue', () => {
     const pause = submit(ctx, { type: 'pause', target: { type: 'unit', unit: UNIT } });
     assert.deepEqual(poll(ctx).map((c) => c.id), [resume.id, pause.id]);
 
-    assert.equal((await applyAtSafePoint(ctx, poll(ctx))).kind, 'deferred');
     const control = await applyControl(ctx, poll(ctx));
     assert.deepEqual(control.kind === 'applied' ? control.outcomes.map((o) => [o.command, o.outcome.kind]) : control, [[pause.id, 'applied']]);
     assert.deepEqual(journal.view.control().pausedUnits, [UNIT]);
@@ -183,7 +232,7 @@ describe('command queue', () => {
     assert.equal(journal.view.control().stop, stop.id);
 
     journal.abort(stage.op, 'precondition', 'test: stage over');
-    const mutations = await applyAtSafePoint(ctx, poll(ctx));
+    const mutations = await applyMutations(ctx);
     assert.deepEqual(mutations.kind === 'applied' ? mutations.outcomes.map((o) => o.command) : mutations, [resume.id]);
     assert.deepEqual(journal.view.control(), { stop: stop.id, pausedAll: false, pausedUnits: [] });
     assert.deepEqual(poll(ctx), []);
@@ -198,13 +247,12 @@ describe('command queue', () => {
     assert.equal(before.status, 'held');
     const stage = openStageIntent(journal);
     const resume = submit(ctx, { type: 'resume', target: { type: 'unit', unit: UNIT } });
-    assert.equal((await applyAtSafePoint(ctx, poll(ctx))).kind, 'deferred');
     assert.equal((await applyControl(ctx, poll(ctx))).kind, 'applied', 'no control command pending');
     assert.equal(journal.view.unit(UNIT).status, 'held');
     assert.equal(terminalReceipt(ctx.runDir, resume.id), null);
 
     journal.abort(stage.op, 'precondition', 'test: stage over');
-    assert.equal((await applyAtSafePoint(ctx, poll(ctx))).kind, 'applied');
+    assert.equal((await applyMutations(ctx)).kind, 'applied');
     const after = journal.view.unit(UNIT);
     assert.equal(after.status, 'active');
     assert.equal(after.stage, 'build');
@@ -254,7 +302,7 @@ describe('command queue', () => {
     const one = submit(ctx, { type: 'resume', target: { type: 'unit', unit: UNIT } });
     const unknown = submit(ctx, { type: 'resume', target: { type: 'unit', unit: unitId('nope') } });
     const all = submit(ctx, { type: 'resume', target: { type: 'all' } });
-    await applyAtSafePoint(ctx, poll(ctx));
+    await applyMutations(ctx);
     const refused = readReceipt(ctx.runDir, one.id, 'rejected');
     assert.match(refused?.state === 'rejected' ? refused.reason : '', /whole arc is paused/);
     assert.equal(readReceipt(ctx.runDir, unknown.id, 'rejected')?.state, 'rejected');
@@ -268,7 +316,7 @@ describe('command queue', () => {
 describe('resume.per-class: resume <unit> of a parked unit follows its park\'s class (A7)', () => {
   const resumeU1 = async (ctx: CommandContext) => {
     const cmd = submit(ctx, { type: 'resume', target: { type: 'unit', unit: UNIT } });
-    await applyAtSafePoint(ctx, poll(ctx));
+    await applyMutations(ctx);
     return { cmd, receipt: terminalReceipt(ctx.runDir, cmd.id) };
   };
   const unitFacts = (ctx: CommandContext, kind: string) => events(ctx.runDir).filter((e) => e.type === 'fact' && e.fact.kind === kind);
@@ -371,14 +419,14 @@ describe('resume --backend', () => {
     assert.deepEqual(journal.view.parkedBackends(), ['claude']);
 
     const failed = submit(ctx, { type: 'resume', target: { type: 'backend', backend: 'claude' } });
-    await applyAtSafePoint(ctx, poll(ctx));
+    await applyMutations(ctx);
     const rejected = readReceipt(ctx.runDir, failed.id, 'rejected');
     assert.match(rejected?.state === 'rejected' ? rejected.reason : '', /^smoke-failed: failed: seat planCheck\.low/);
     assert.deepEqual(journal.view.parkedBackends(), ['claude']);
     assert.equal(journal.view.unit(UNIT).status, 'held');
 
     const passed = submit(ctx, { type: 'resume', target: { type: 'backend', backend: 'claude' } });
-    await applyAtSafePoint(ctx, poll(ctx));
+    await applyMutations(ctx);
     assert.equal(readReceipt(ctx.runDir, passed.id, 'applied')?.state, 'applied');
     assert.deepEqual(journal.view.parkedBackends(), []);
     assert.equal(journal.view.unit(UNIT).status, 'active');
@@ -395,7 +443,7 @@ describe('sweep', () => {
     const { ctx, journal } = openCommandRun(run);
     const residue = otherArcResidue(run, DB);
     const cmd = submit(ctx, { type: 'sweep', resource: null });
-    await applyAtSafePoint(ctx, poll(ctx));
+    await applyMutations(ctx);
 
     const receipt = readReceipt(ctx.runDir, cmd.id, 'applied');
     assert.ok(receipt?.state === 'applied');
@@ -418,7 +466,7 @@ describe('sweep', () => {
     otherArcResidue(run, DB);
     writeFileSync(join(run.stateDir, 'db.teardown-fails'), '');
     const first = submit(ctx, { type: 'sweep', resource: DB });
-    await applyAtSafePoint(ctx, poll(ctx));
+    await applyMutations(ctx);
     const r1 = readReceipt(ctx.runDir, first.id, 'applied');
     assert.ok(r1?.state === 'applied');
     assert.match(r1.verified.join('\n'), /teardown failed, left undisposed/);
@@ -428,7 +476,7 @@ describe('sweep', () => {
 
     rmSync(join(run.stateDir, 'db.teardown-fails'));
     const second = submit(ctx, { type: 'sweep', resource: null });
-    await applyAtSafePoint(ctx, poll(ctx));
+    await applyMutations(ctx);
     const r2 = readReceipt(ctx.runDir, second.id, 'applied');
     assert.ok(r2?.state === 'applied');
     assert.match(r2.verified.join('\n'), /: cleaned$/);
@@ -451,7 +499,7 @@ describe('sweep', () => {
     rmSync(join(run.stateDir, 'queue.teardown-fails'));
 
     const cmd = submit(ctx, { type: 'sweep', resource: null });
-    await applyAtSafePoint(ctx, poll(ctx));
+    await applyMutations(ctx);
     assert.equal(readReceipt(ctx.runDir, cmd.id, 'applied')?.state, 'applied');
     assert.deepEqual(undispositioned(absPath(run.hostDir)), []);
     assert.equal(resourceTable(journal.view).get(QUEUE)?.status.state, 'free');

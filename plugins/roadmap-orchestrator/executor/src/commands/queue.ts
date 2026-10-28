@@ -17,7 +17,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { AlreadyExistsError, durableMkdir, exclusivePublish } from '../core/fsx.ts';
 import { type ArcId, type CommandId, type Sha256Hex, commandId, sha256 } from '../core/ids.ts';
-import { canonicalJson, sha256Hex } from '../core/json.ts';
+import { canonicalJson, canonicalRecordBytes, sha256Hex } from '../core/json.ts';
 import {
   CONTROL_COMMANDS, type CommandBody, type CommandFile, type Receipt, commandFile, receipt,
 } from '../core/records.ts';
@@ -97,14 +97,14 @@ export function enqueueCommand(runDir: AbsPath, file: CommandFile): boolean {
 
 export type IncomingCommand = Readonly<{ file: CommandFile; sha256: Sha256Hex }>;
 
-/** One incoming command and the sha256 of its exact bytes (what `command.apply` records). */
+/** One incoming command and the sha256 of its canonical content (what `command.apply` records). */
 export function readCommand(runDir: AbsPath, id: CommandId, arc: ArcId): IncomingCommand {
   const path = incomingPath(runDir, id);
   const bytes = readFileSync(path);
   const file = commandFile(JSON.parse(bytes.toString('utf8')), `${INCOMING}/${id}.json`);
   if (file.id !== id) throw new Error(`${path} carries id ${file.id}`);
   if (file.arc !== arc) throw new Error(`${path} is a command for arc ${file.arc}, in the run dir of arc ${arc}`);
-  return { file, sha256: sha256(sha256Hex(bytes)) };
+  return { file, sha256: sha256(sha256Hex(canonicalRecordBytes(bytes))) };
 }
 
 export function readReceipt(runDir: AbsPath, id: CommandId, state: ReceiptState): Receipt | null {
@@ -135,7 +135,7 @@ export function writeReceipt(runDir: AbsPath, r: Receipt): Sha256Hex {
 }
 
 export const receiptSha256 = (runDir: AbsPath, id: CommandId, state: ReceiptState): Sha256Hex =>
-  sha256(sha256Hex(readFileSync(receiptPath(runDir, id, state))));
+  sha256(sha256Hex(canonicalRecordBytes(readFileSync(receiptPath(runDir, id, state)))));
 
 /** The ids of the incoming commands without a terminal receipt, in id order; read-only (`roadmap gc` reads it too). */
 export function pendingCommandIds(runDir: AbsPath): readonly CommandId[] {

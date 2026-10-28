@@ -35,9 +35,10 @@
 // version keeps serving.
 //
 // A supervisor that starts with the window already at the limit (a start after a crash-limit exit) runs its
-// first executor with `--control-only`: it applies commands before recovery and dispatches only once no
-// blocking needs-user remains (src/executor.ts). The limit leaves no room for a third backoff step: the
-// plan's 2/10/60 s sequence ends at the needs-user on the third crash.
+// first executor with `--control-only`: it applies only pause/stop/ack before recovery; queued rulings and
+// other commands wait until recovery has finished. It dispatches only once no blocking needs-user remains
+// (src/executor.ts). The limit leaves no room for a third backoff step: the plan's 2/10/60 s sequence ends at
+// the needs-user on the third crash.
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { closeSync, existsSync, openSync, readFileSync, readdirSync } from 'node:fs';
@@ -330,7 +331,7 @@ function crashLimitContent(crashes: readonly IsoTime[], evidence: readonly AbsPa
     subject: { type: 'host' },
     reason: 'supervisor-crash-limit',
     summary: `The executor crashed ${crashes.length} times within an hour (${crashes.join(', ')}); the supervisor stopped restarting it. The last crash: ${detail}.`,
-    recommendation: 'Read the executor stderr logs in evidence and fix the cause, then `roadmap ack` this item and `roadmap start`: that start runs control-only and dispatches only once nothing blocking remains.',
+    recommendation: 'Read the executor stderr logs in evidence and fix the cause, then `roadmap ack` this item and `roadmap start`: that start runs control-only, applying only pause/stop/ack until nothing blocking remains; queued rulings and other commands wait until recovery has finished, before dispatch.',
     options: [],
     evidence,
   };

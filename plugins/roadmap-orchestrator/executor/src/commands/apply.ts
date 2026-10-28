@@ -1066,14 +1066,3 @@ export function applyControl(ctx: CommandContext, pending: readonly CommandFile[
   if (ff !== undefined) return Promise.resolve({ kind: 'deferred', reason: `integration.ff ${ff.op} is in its critical section` });
   return applyAll(ctx, pending.filter((c) => isControl(c.body)));
 }
-
-/**
- * Mutations, in id order, only at a safe point: no open stage-level intent. The control-only phase applies
- * them so, before recovery has closed what a crashed executor left open; the scheduler applies each once its
- * scope has drained (A12).
- */
-export function applyAtSafePoint(ctx: CommandContext, pending: readonly CommandFile[]): Promise<ControlResult> {
-  const busy = ctx.journal.view.openIntents().find((i) => i.parent.type === 'stage');
-  if (busy !== undefined) return Promise.resolve({ kind: 'deferred', reason: `${busy.kind} ${busy.op} of a stage is open` });
-  return applyAll(ctx, pending.filter((c) => !isControl(c.body)));
-}
