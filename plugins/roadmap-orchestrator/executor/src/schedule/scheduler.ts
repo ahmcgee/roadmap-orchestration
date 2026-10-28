@@ -1013,7 +1013,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       if (intent.kind !== 'proc.spawn' || !which(intent)) continue;
       const inv: InvocationId = invocationId(intent.op, intent.ordinal);
       const key = `kill:${inv}:${reason}`;
-      if (jobs.has(key) || v.opsOf('proc.kill').some((k) => k.expect.inv === inv && k.expect.reason === reason)) continue;
+      if (jobs.has(key) || v.killsOfInvocation(inv).some((k) => k.expect.reason === reason)) continue;
       // A runner that has not written runner.json may not have exec'd yet: the next poll finds it.
       const files = runnerFiles(invocationDir(runDir, inv), inv);
       if (files.read('runner.json') === null || files.read('exit.json') !== null) continue;

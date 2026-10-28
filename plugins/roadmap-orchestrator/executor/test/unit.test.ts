@@ -9,7 +9,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import { invocationId } from '../src/core/ids.ts';
-import { EVENTS_FILE, STATE_FILE } from '../src/core/log.ts';
+import { EVENTS_FILE } from '../src/core/log.ts';
 import { snapshotRef, verifySnapshot } from '../src/git/snapshot.ts';
 import { unitBranch } from '../src/pipeline/dispatch.ts';
 import { latestCandidate } from '../src/pipeline/integrate.ts';
@@ -139,7 +139,7 @@ describe('unit: one unit merged first time', () => {
     assert.ok(listed.some((a) => a.includes('/evidence/u1/') && a.endsWith('/mul') && readable(a)), `lane evidence among ${listed.join(', ')}`);
     assert.ok(listed.some((a) => a.endsWith('-evidence/build') && readable(a)), `build evidence among ${listed.join(', ')}`);
     assert.ok(call.cwd.includes('u1.gate-'), `the gate runs in its own checkout (dev.13), not ${call.cwd}`);
-    for (const text of [readFileSync(join(r.d.runDir, EVENTS_FILE), 'utf8'), readFileSync(join(r.d.runDir, STATE_FILE), 'utf8')]) {
+    for (const text of [readFileSync(join(r.d.runDir, EVENTS_FILE), 'utf8'), JSON.stringify(r.journal.derived())]) {
       for (const model of MODEL_IDS) assert.ok(!text.includes(model), `${model} in the log or state`);
     }
   });

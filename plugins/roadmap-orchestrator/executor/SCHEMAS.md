@@ -25,7 +25,7 @@ Other steps request changes rather than edit.
 
 Arcs run for days to a week and executor fixes land mid-run, so an executor update adopts an arc started on
 the previous release and carries it on; it never forces a new arc and never refuses the previous release's
-runtime state (event log, state cache, invocation files, needs-user, commands and receipts, host files) or run
+runtime state (event log, invocation files, needs-user, commands and receipts, host files) or run
 inputs (plan, specs, ledger).
 
 - A record change is additive. A field the previous release did not write gets a safe default at the read
@@ -402,7 +402,7 @@ without them (dev.21 published one so) still verifies. They are never used for i
 
 1. `launch.json` is the only executor-written file allowed to contain a model id, and only inside `argv`.
    Its `terminal` names `{role, routingRev}` and the backend, never the model or triple.
-2. The `state.no-model-ids` test scope is: the event log, the state cache, needs-user files, receipts,
+2. The `state.no-model-ids` test scope is: the event log, the snapshot state, needs-user files, receipts,
    residues, the snapshot ref, `status` output and meter facts. Startup rejections shown in `status`
    therefore name the seat (`role`, `tier`), routing layer and model class, never the model.
 
@@ -674,9 +674,13 @@ names a `backend-park` fact of that backend; `unparked` only of an operator-env 
 seqs (each a unit park the target belongs to, or a park of that backend) and, for a resource target, the seq of a
 `resource.transition{fail}` whose residues name its instance, and a unit park it covers is retryable; a `fail`
 transition is held by a stage; `implementer-escalated` from the unit's current build tier, below the chargeable bound; one
-`judgment-inputs` per `(unit, stage, attempt)`; one `edge-resolved` per edge. `state.json` is a derived cache, never read for a
-decision. Attempts, chargeable failures, stage advancement and meter totals are derived from done records and
-facts keyed by op/inv, so they cannot be lost or double-counted.
+`judgment-inputs` per `(unit, stage, attempt)`; one `edge-resolved` per edge. `state.json` exists only in the
+snapshot tree, derived from its log prefix, and is never read for a decision. Attempts, chargeable failures,
+stage advancement and meter totals are derived from done records and facts keyed by op/inv, so they cannot be
+lost or double-counted. The fold checks monotonic counters on the records each event replaces, retaining the
+pre-event value once even when the event replaces it several times. Its op indexes retain latest intents in
+first-intent order: kind, canonical parent, stage-parent unit, spawn-subject unit (also backend role) or job,
+and kill-target invocation. Retries update these memberships without changing the op's original order.
 
 **Tail rule**. Verify the valid prefix first. Only a terminal suffix lacking `\n`, or an all-NUL suffix, is
 discardable: save to `events.torn.<off>.<sha8>` (fsync) → truncate (fsync) → `tail-discarded` fact. A saved

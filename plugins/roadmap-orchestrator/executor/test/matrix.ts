@@ -367,7 +367,7 @@ export const MATRIX: readonly Row[] = [
       },
       B3: { status: 'excluded', why: 'appending is the act: the journal has no act between write and fsync other than the B1 partial write' },
       B4: { status: 'excluded', why: 'append returns right after fsync; B2 is the same durable state' },
-      B5: { status: 'excluded', why: 'the state.json refresh after append is a derived cache that nothing reads' },
+      B5: { status: 'excluded', why: 'state.json exists only in snapshot trees; there is no live cache write' },
     },
   },
   {
