@@ -26,6 +26,8 @@
 //                       a server_tool_use `advisor` block, and the adapter's usage must carry the advisor's Opus spend as
 //                       `delegated` frontier (its own modelUsage entry)
 //   fable.pin           claude-fable-5-1 resolves: one judgment call that returns {ok: true}
+//   claude.project-skills  economy build in a git repo with a committed canary skill: init lists exactly the
+//                       canary, design and doctor (CLAUDE_RESIDUAL_SKILLS), through production argv and env
 //   routing.economy / economy.judgment  (1.0.0-dev.12) the economy class's judgment binding in the default profile is
 //                       claude-haiku-5-5 high (no built-in seat names it since the 2026-10-17 gate eval; kept for a retry);
 //                       one judgment call on that triple under the Haiku gate prompt module's system prompt returns {ok: true}
@@ -132,7 +134,7 @@ import { argvShapeProblem } from '../src/flow/levers.ts';
 import { runProof } from '../src/flow/proof.ts';
 import type { FlowAction, FlowPromptInputs, FlowProposal } from '../src/flow/types.ts';
 import { FLOW_INPUTS_INPUT, FLOW_PROOF_INPUT, keepInput, keptInput } from '../src/input/inforce.ts';
-import { commitAll, writeFiles } from '../test/helpers/repo.ts';
+import { commitAll, makeRepo, writeFiles } from '../test/helpers/repo.ts';
 import { wire } from '../test/fixtures/publish-common.ts';
 import { followingContext } from '../test/fixtures/steer-common.ts';
 import { appendSteps, contextFor, setupArc } from '../test/fixtures/unit-common.ts';
@@ -147,6 +149,9 @@ import { runWalk } from '../src/walk/walk.ts';
 import { scan } from '../src/contain/proc.ts';
 import { runGateTrial } from './roles/gate/arc.ts';
 import { DEV_CELLS, isExecCell } from './roles/gate/cells.ts';
+
+/** Claude Code 2.1.310 (2026-10-28) still lists these after disabling bundled skills and plugin-authoring (argv.ts). */
+const CLAUDE_RESIDUAL_SKILLS = ['design', 'doctor'] as const;
 
 const OPUS = { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' } as const;
 const FABLE = { backend: 'claude', model: 'claude-fable-5-1', effort: 'high' } as const;
@@ -444,6 +449,25 @@ async function main(): Promise<void> {
   const loaded = { tools: init?.['tools'], mcp_servers: init?.['mcp_servers'], skills: init?.['skills'], memory_paths: init?.['memory_paths'] ?? null };
   report(JSON.stringify(loaded) === JSON.stringify({ tools: ['Task', 'Glob', 'Grep', 'Read', 'StructuredOutput'], mcp_servers: [], skills: [], memory_paths: null }),
     'claude.clean-context.init', JSON.stringify(loaded));
+
+  // Project skills still load; every extra bundled skill is a probe failure (Claude Code 2.1.310).
+  const canarySkill = 'runner-context-canary';
+  const skillsRepo = absPath(makeRepo(join(root, 'skills-canary'), { files: {
+    [`.claude/skills/${canarySkill}/SKILL.md`]: `---\nname: ${canarySkill}\ndescription: A canary for the runner context probe.\n---\nReply only as requested.\n`,
+  } }));
+  const skillTriple = boundAt('default', 'economy', 'planCheck');
+  if (skillTriple.backend !== 'claude') throw new Error('the skill probe requires a Claude economy seat');
+  const skills = await backend(ctx, 'claude.project-skills', {
+    check: 'claude-project-skills', routingRev: rev, tier: 'low', system: SYSTEM, schema: okSchema, cwd: skillsRepo,
+    rendered: 'Use no tools. Reply with {"ok": true}.',
+    request: {
+      kind: 'claude-build', triple: { ...skillTriple, effort: 'low' }, session: freshClaudeImplementerSession(), evidenceDirs: [],
+    },
+  }, (v) => JSON.stringify(v) === '{"ok":true}');
+  const skillsInit = readFileSync(join(skills.invDir, STDOUT_FILE), 'utf8').split('\n').filter((l) => l !== '')
+    .map((l) => JSON.parse(l) as Record<string, unknown>).find((e) => e['type'] === 'system' && e['subtype'] === 'init');
+  const listed = skillsInit?.['skills'];
+  report(Array.isArray(listed) && JSON.stringify([...listed].sort()) === JSON.stringify([canarySkill, ...CLAUDE_RESIDUAL_SKILLS].sort()), 'claude.project-skills.init', JSON.stringify({ skills: skillsInit?.['skills'] ?? null }));
 
   // Claude implementer: a write in its cwd (bypassPermissions), then a resume that recalls it.
   const buildDir = dir(join(root, 'build'));

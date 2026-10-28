@@ -156,7 +156,7 @@ export const BROKEN_WALK = walkAnswer({
 });
 
 /** The acting judge's argv, as every walk step expects it: a shell, project settings, no MCP server for shell journeys. */
-export const ACTING_ARGV = ['-p', '--strict-mcp-config', '--setting-sources', 'project', '--tools', 'Read,Grep,Glob,Bash,Write,Edit,Agent', '--permission-mode', 'bypassPermissions', '--session-id'];
+export const ACTING_ARGV = ['-p', '--settings', '{"enabledPlugins":{"cc-plugin-plugin-authoring@builtin":false}}', '--strict-mcp-config', '--setting-sources', 'project', '--tools', 'Read,Grep,Glob,Bash,Write,Edit,Agent', '--permission-mode', 'bypassPermissions', '--session-id'];
 
 /** A walkthrough call of walk `job`: it fetches J-1's entry into its evidence dir, then answers `answer`. */
 export function walkStep(job: string, answer: JsonValue, extra: readonly ClaudeAct[] = []): Step {

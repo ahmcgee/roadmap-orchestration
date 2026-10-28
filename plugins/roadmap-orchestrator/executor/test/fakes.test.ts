@@ -105,7 +105,7 @@ describe('fakes', () => {
       const work = tmpDir('work');
       const s = writeScenario(tmpDir('scenario'), [
         { as: 'codex', expect: { argv: ['exec', '-C', work], argvLacks: ['resume'], cwd: work, stdinContains: ['first'] }, acts: [{ type: 'emit', value: OK }] },
-        { as: 'claude', expect: { argv: ['-p', '--session-id'], argvLacks: ['--resume'], stdinContains: ['second'] }, acts: [{ type: 'emit', value: OK }] },
+        { as: 'claude', expect: { argv: ['-p', '--settings', '{"enabledPlugins":{"cc-plugin-plugin-authoring@builtin":false}}', '--session-id'], argvLacks: ['--resume'], stdinContains: ['second'] }, acts: [{ type: 'emit', value: OK }] },
       ]);
       assert.equal(invoke(s, 'codex', work, 'first prompt').result.outcome.kind, 'success');
       assert.equal(invoke(s, 'claude', work, 'second prompt').result.outcome.kind, 'success');

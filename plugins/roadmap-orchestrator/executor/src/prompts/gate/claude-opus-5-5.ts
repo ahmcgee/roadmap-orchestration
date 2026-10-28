@@ -11,7 +11,8 @@
 // plan-check's notes as facts; correctness-or-acceptance only; bounded, batched reads; premises with
 // evidence as the round handoff, and a later round rules on its prior round's conclusions and the delta.
 // M3 (reviewed 2026-09-30 against the same guides): the candidate's selected obligations with their
-// observations, never their vision clauses (R17: the gate grades spec and contracts, not the vision).
+// observations for direct selections and only id and statement for standing ones, never their vision clauses
+// (R17: the gate grades spec and contracts, not the vision).
 // M4a (reviewed 2026-10-03 against the same guides): the `target` input, the architecture doc or, in a corpus arc,
 // the corpus rules index (T-n) with the pinned files read on demand; the doc's role carries over to the rules.
 // M4a rev 3 (reviewed 2026-10-06 against the same guides): the executable checks run before the gate (witness presence,
@@ -64,7 +65,7 @@
 // finding on an unchanged file rests on a changed hunk or a moved target, else code records it as a note.
 import type { GateInputs, PromptModule } from '../inputs.ts';
 import {
-  boundedDiffText, bullets, milestoneDocuments, milestonesText, documentsXml, escalationText, findingsText, laneLedgerText, obligationsText, premisesText, referenceIndexText, rulingsText, targetDocument, gateChecksText} from '../inputs.ts';
+  boundedDiffText, bullets, milestoneDocuments, milestonesText, documentsXml, escalationText, findingsText, laneLedgerText, obligationsText, standingObligationsText, premisesText, referenceIndexText, rulingsText, targetDocument, gateChecksText} from '../inputs.ts';
 import { GATE_SCHEMA } from '../schemas.ts';
 
 /**
@@ -128,6 +129,7 @@ Classify by what the merge cannot carry, not by how sure you are: a defect you c
 
 <obligations>
 <obligations> lists the obligations this change selects: owner-approved claims about the product, each with the witness tests that prove it and its latest observation. The executor runs the witness lanes on the integration candidate and holds the merge on any selected obligation that does not hold, so you do not re-run them. Judge whether the diff breaks or weakens one: a change that makes an obligation's statement false, or that edits its witness test so the test would pass with the statement false, is a blocking finding that names the obligation id.
+<standing_obligations> lists must-hold obligations selected because the change touches paths no obligation maps; their witness lanes run on the candidate and hold the merge, and their statements let a finding name one the diff plainly breaks.
 </obligations>
 
 <executable_checks>
@@ -245,7 +247,7 @@ export const PROMPT: PromptModule<'gate'> = {
   system,
   schema: GATE_SCHEMA,
   fields: [
-    'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'planCheckNotes', 'obligations', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
+    'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'planCheckNotes', 'obligations', 'standingObligations', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
     'checks', 'escalation', 'largeDiff', 'milestones', 'review', 'undeclaredContracts',
   ],
   render: (i) => `${documentsXml([
@@ -274,6 +276,10 @@ ${i.planCheckNotes === '' ? '(none)' : i.planCheckNotes}
 <obligations>
 ${obligationsText(i.obligations, { serves: false })}
 </obligations>
+
+<standing_obligations>
+${standingObligationsText(i.standingObligations)}
+</standing_obligations>
 
 ${boundedDiffText('diff', i.diff.bounded, i.diff.claims)}
 

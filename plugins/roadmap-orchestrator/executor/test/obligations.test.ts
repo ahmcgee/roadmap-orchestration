@@ -7,7 +7,7 @@ import { type ObligationId, divergenceId, obligationId, rulingId, unitId, vision
 import { canonicalJson } from '../src/core/json.ts';
 import { repoPath } from '../src/core/values.ts';
 import { parseInvariantsBlock, renderInvariants } from '../src/docs/invariants.ts';
-import { selectObligations } from '../src/holistic/impact.ts';
+import { gateObligations, selectObligations } from '../src/holistic/impact.ts';
 import { type ClassifyContext, classifyObligations } from '../src/holistic/obligations.ts';
 import { rederive } from '../src/holistic/rederive.ts';
 import { type Obligations, type RulingSidecar, type Vision, laneRevOf, parseObligations, parseRulingSidecar, parseVision } from '../src/holistic/types.ts';
@@ -217,6 +217,23 @@ describe('impact selection', () => {
     assert.deepEqual(select({ changedPaths: [repoPath('README.md')] }), ids('I-2', 'I-3', 'I-4'));
   });
 
+  it('impact.gate-standing: only fallback selections are standing, including latched future obligations', () => {
+    const input = {
+      obligations: O, units: [{ unit: unitId('tidy'), declared: ids('I-3'), repairs: [] }],
+      closure: [], changedPaths: [repoPath('README.md')], revised: [], latched: new Set(ids('I-1')),
+    };
+    assert.deepEqual(gateObligations(input), { selected: selectObligations(input), direct: ids('I-3'), standing: ids('I-1', 'I-2', 'I-4') });
+    // An unmapped contract/doc/witness path still selects its own obligations directly.
+    assert.deepEqual(gateObligations({ ...input, changedPaths: [repoPath('docs/money.md')] }).direct, ids('I-2', 'I-3'));
+    assert.deepEqual(gateObligations({ ...input, changedPaths: [repoPath('docs/parse.md')] }).direct, ids('I-3', 'I-4'));
+    assert.deepEqual(gateObligations({ ...input, changedPaths: [repoPath('test/journey.test.js')] }).standing, []);
+  });
+
+  it('impact.gate-mapped: a mapped path has no standing obligations', () => {
+    const input = { obligations: O, units: [], closure: [], changedPaths: [repoPath('src/format.js')], revised: [], latched: new Set<ObligationId>() };
+    assert.deepEqual(gateObligations(input), { selected: selectObligations(input), direct: ids('I-3', 'I-4'), standing: [] });
+  });
+
   it('impact.unmapped-selects-latched: a future obligation latched by its publication is must-hold, so a later unit\'s unmapped path selects it', () => {
     // I-1 is future, delivered by `report`; once `report` publishes it latches. `tidy` then changes an unmapped path.
     assert.deepEqual(select({ changedPaths: [repoPath('README.md')], latched: new Set(ids('I-1')) }), ids('I-1', 'I-2', 'I-3', 'I-4'));
@@ -236,6 +253,12 @@ describe('impact selection', () => {
     assert.deepEqual(pick({ changedPaths: [repoPath('src/a.js')] }), ids('I-1', 'I-2', 'I-3', 'I-4'));
     assert.deepEqual(pick({ revised: ids('I-1') }), ids('I-1', 'I-2', 'I-3', 'I-4'));
     assert.deepEqual(pick({ changedPaths: [repoPath('src/b.js')] }), ids('I-5'));
+    const partition = gateObligations({
+      obligations: S, units: [], closure: [], changedPaths: [repoPath('src/a.js'), repoPath('README.md')], revised: [], latched: new Set(),
+    });
+    assert.deepEqual(partition.direct, ids('I-1', 'I-2', 'I-3', 'I-4'));
+    assert.deepEqual(partition.standing, ids('I-5'));
+    assert.deepEqual(partition.selected, pick({ changedPaths: [repoPath('src/a.js'), repoPath('README.md')] }));
   });
 });
 

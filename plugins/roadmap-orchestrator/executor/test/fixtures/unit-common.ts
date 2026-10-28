@@ -189,7 +189,7 @@ export const unitWorktreePath = (r: ArcRun, unit: UnitId = U1): AbsPath => absPa
  * fresh persisted session, no MCP server.
  */
 const GATE: Expect = {
-  argv: ['-p', '--strict-mcp-config', '--setting-sources', 'project', '--tools', 'Read,Grep,Glob,Bash,Write,Edit,Agent', '--permission-mode', 'bypassPermissions', '--session-id'],
+  argv: ['-p', '--settings', '{"enabledPlugins":{"cc-plugin-plugin-authoring@builtin":false}}', '--strict-mcp-config', '--setting-sources', 'project', '--tools', 'Read,Grep,Glob,Bash,Write,Edit,Agent', '--permission-mode', 'bypassPermissions', '--session-id'],
   argvLacks: ['--resume', '--mcp-config', '--no-session-persistence', '--system-prompt'],
 };
 

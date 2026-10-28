@@ -272,13 +272,14 @@ describe('claude', () => {
       assert.equal(Object.hasOwn(init, 'memory_paths'), false);
       assert.ok((init['tools'] as string[]).every((t) => !t.startsWith('mcp__')));
     });
-    it('the argv carries the flags that make it so: no settings and no skill for a judgment, project settings and skills for an implementer', () => {
+    it('the argv carries the flags that make it so: no setting sources or skills for a judgment, project settings and skills for an implementer', () => {
       const judgment = backendArgv({ kind: 'claude-judgment', role: 'planCheck', triple: TRIPLE, session: freshJudgmentSession(), schemaText: '{}', system: 'S', evidenceDirs: [] });
       const build = backendArgv({ kind: 'claude-build', triple: TRIPLE, session: freshClaudeImplementerSession(), schemaText: '{}', system: 'S', mcpConfig: null, evidenceDirs: [] });
       for (const argv of [judgment, build]) {
         for (const flag of ['--strict-mcp-config', '--verbose']) assert.ok(argv.includes(flag), flag);
         assert.equal(argv[argv.indexOf('--output-format') + 1], 'stream-json');
         assert.equal(argv.includes('--mcp-config'), false);
+        assert.deepEqual(JSON.parse(argv[argv.indexOf('--settings') + 1]!), { enabledPlugins: { 'cc-plugin-plugin-authoring@builtin': false } });
       }
       assert.ok(judgment.includes('--disable-slash-commands'), 'a judgment loads no skill');
       assert.ok(!build.includes('--disable-slash-commands'), 'a build loads the project skills (dev.13)');

@@ -382,8 +382,10 @@ export type GateInputs = Readonly<{
   target: GateTargetInput;
   direction: string;
   planCheckNotes: string;
-  /** The obligations the candidate selects, with their observations (never their vision clauses: R17). */
+  /** Directly selected obligations, with their observations (never their vision clauses: R17). */
   obligations: readonly ObligationView[];
+  /** Selected only by the unmapped-path fallback, exempt ones left out: rendered as id and statement, without observations. */
+  standingObligations: readonly ObligationDef[];
   /**
    * `merge-base(T, branch)..head`, recomputed after any merge-in, attached within the gate's budget (src/git/boundeddiff.ts;
    * `from` the base, `to` the head), and what the unit claims, for its orientation.
@@ -750,7 +752,7 @@ export const ROLE_INPUTS = {
     'milestones', 'browser', 'certifiedAt', 'handover',
   ],
   gate: [
-    'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'planCheckNotes', 'obligations', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
+    'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'planCheckNotes', 'obligations', 'standingObligations', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
     'checks', 'escalation', 'largeDiff', 'milestones', 'review', 'undeclaredContracts',
   ],
   lens: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'target', 'checkout', 'specsOnly'],
@@ -1296,6 +1298,11 @@ export function obligationsText(views: readonly ObligationView[], opts: Readonly
     const anchored = src.kind === 'doc' ? `${src.path}${src.anchor}: "${src.quotedText}"` : `corpus rule ${src.rule.id}`;
     return `- ${o.id} (${head.join('; ')}): ${o.statement}\n  Anchored at ${anchored}\n  Witness: ${witness}${delivered}\n  Observation: ${obs}`;
   }).join('\n');
+}
+
+/** The gate's standing obligations need only an id and statement; their lanes still hold the merge. */
+export function standingObligationsText(obligations: readonly ObligationDef[]): string {
+  return obligations.length === 0 ? '(none)' : obligations.map((o) => `- ${o.id}: ${o.statement}`).join('\n');
 }
 
 export function findingViewsText(findings: readonly FindingView[]): string {
