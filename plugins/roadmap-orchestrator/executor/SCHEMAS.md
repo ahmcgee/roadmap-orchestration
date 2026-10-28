@@ -1160,7 +1160,8 @@ unit's `decided` fact; a backend park's by the held attempt), the op a recovery 
 exitCode: 78|75}`; any other end is a thrown error, a crash, which the supervisor counts and which writes no
 exit reason. The executor prints the reason as one canonical JSON line on its stdout. Sequence: the handshake
 (step 14a) → `runChecks` → (refused: `status.rejection.json` for exit 78, `exit.reason.json {refused}`) →
-`start.json`, heartbeat, `executor-started` → the control-only phase when started `--control-only` → `recover` →
+`start.json`, heartbeat, `executor-started` → the control-only phase when started `--control-only` (only
+pause/stop/ack; queued rulings and other commands wait until recovery has finished) → `recover` →
 the outcome of every stage attempt whose backend call recovery closed is recorded (the adopted-build rule below,
 at startup, so a paused unit needs one `resume`; lead ruling 14c) → `smokeCheck` (refused as above, after
 readiness; on a `--respawn` a failed backend is parked `outage` instead, A18) → `schedule`

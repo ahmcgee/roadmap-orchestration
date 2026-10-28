@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it, test } from 'node:test';
 import type { IntentOf } from '../src/core/events.ts';
@@ -60,6 +60,33 @@ describe('needs-user', () => {
     assert.deepEqual(readdirSync(join(runDir, 'needs-user', '.staged')), [], 'nothing staged is left behind');
     journal.close();
   });
+
+  for (const changed of [false, true]) {
+    it(`an open raise's reconciler ${changed ? 'rejects changed content' : 'accepts a reformatted final file'}`, T, async () => {
+      const runDir = absPath(tmpDir('nu-record'));
+      const arc = newArc();
+      const trigger = writeTrigger(tmpDir('nu-trigger'), { label: 'needsuser.raise.after-publish', occurrence: 1 });
+      const exit = await runFixture('needsuser-child.ts', [runDir, arc], { env: { ...process.env, ROADMAP_TEST_CRASH: trigger }, timeoutMs: 20_000 });
+      assert.equal(exit.signal, 'SIGKILL', exit.stderr);
+      assertFired(trigger);
+      const intent = raiseIntent(runDir, arc);
+      const record = JSON.parse(readFileSync(intent.expect.path, 'utf8'));
+      if (changed) record.summary = 'edited summary';
+      writeFileSync(intent.expect.path, JSON.stringify(record, null, 2) + '\n');
+      const journal = openJournal(runDir, arc);
+      const reconcile = () => needsUserReconciler(runDir)(intent, journal.view);
+      if (changed) {
+        await assert.rejects(reconcile, (error: Error) => {
+          assert.ok(error.message.includes(intent.expect.path), error.message);
+          assert.match(error.message, /hashes to/);
+          return true;
+        });
+      } else {
+        assert.deepEqual(await reconcile(), { kind: 'done', outcome: { kind: 'raised' } });
+      }
+      journal.close();
+    });
+  }
 
   it('needsuser.durable-restart: raise, kill the executor, restart: the id is still open and the file matches', T, async () => {
     const runDir = tmpDir('nu-restart');

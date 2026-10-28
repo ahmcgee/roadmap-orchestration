@@ -31,8 +31,8 @@
 //   a mutation's smoke the stop killed.
 //
 // Control-only (`--control-only`, after a supervisor crash-limit exit, R19): before recovery, the executor
-// applies control commands (ack, stop, pause) and mutations at the safe point (sweep, resume), and goes on to
-// recovery and dispatch only once no blocking needs-user remains; a stop ends the run there. So an `ack` of
+// applies only control commands (ack, stop, pause), and goes on to recovery and dispatch only once no blocking
+// needs-user remains; mutations wait until recovery has finished. A stop ends the run there. So an `ack` of
 // the crash limit is applied by a fresh executor even when recovery is what kept crashing.
 //
 // The executor never releases the host: it writes exit.reason.json and exits, and its supervisor releases
@@ -46,7 +46,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { CommandContext } from './commands/apply.ts';
-import { applyAtSafePoint, applyCommand } from './commands/apply.ts';
+import { applyCommand } from './commands/apply.ts';
 import { POLL_MS, isControl, pollCommands } from './commands/queue.ts';
 import { containmentFor, detectContainmentMode } from './contain/detect.ts';
 import { atomicJson, durableMkdir, durableUnlink, exclusivePublish } from './core/fsx.ts';
@@ -358,9 +358,9 @@ type Exec = Readonly<{
 }>;
 
 /**
- * The control-only phase: before recovery, so nobody is inside an integration.ff and control commands apply
- * directly. A command whose op the crashed executor left open is recovery's, and waits for it. Returns a stop,
- * or null once no blocking needs-user remains.
+ * The control-only phase applies only pause/stop/ack before recovery. Only recovery settles what a crashed
+ * executor left holding resources, so no mutation may run before it. A command whose op is open waits for
+ * recovery too. Returns a stop, or null once no blocking needs-user remains.
  */
 async function controlOnly(x: Exec): Promise<ExitReason | null> {
   const arc = x.journal.view.arc;
@@ -370,7 +370,6 @@ async function controlOnly(x: Exec): Promise<ExitReason | null> {
     for (const command of pollCommands(x.stage.runDir, arc)) {
       if (isControl(command.body) && !open.has(command.id)) await applyCommand(x.commands, command);
     }
-    await applyAtSafePoint(x.commands, pollCommands(x.stage.runDir, arc).filter((c) => !open.has(c.id)));
     if (x.journal.view.control().stop !== null) return { kind: 'stop', cause: 'command', needsUser: null };
     if (openBlockingItems(x.stage.runDir, x.journal.view).length === 0) return null;
     await sleep(POLL_MS);

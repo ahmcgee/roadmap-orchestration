@@ -28,6 +28,11 @@ export function canonicalJson(value: unknown): string {
   }
 }
 
+/** Canonical bytes of an executor-written JSON record, unchanged by a formatting-only re-save. */
+export function canonicalRecordBytes(bytes: Buffer): Buffer {
+  return Buffer.from(canonicalJson(JSON.parse(bytes.toString('utf8'))), 'utf8');
+}
+
 /** sha256 hex of a string's UTF-8 bytes or of raw bytes. */
 export function sha256Hex(data: string | Uint8Array): string {
   return createHash('sha256').update(data).digest('hex');

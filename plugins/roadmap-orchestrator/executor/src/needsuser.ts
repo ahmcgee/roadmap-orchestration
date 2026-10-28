@@ -29,7 +29,7 @@ import { type IntentOf, type Parent, parentUnit } from './core/events.ts';
 import { durableMkdir, durableRename, durableWrite, readJson } from './core/fsx.ts';
 import { type NeedsUserId, type Sha256Hex, type SpecRev, type UnitId, needsUserId, needsUserIdForOp, opKey, sha256 } from './core/ids.ts';
 import type { Journal, JournalView, NeedsUserState, Reconciler } from './core/interfaces.ts';
-import { canonicalJson, sha256Hex } from './core/json.ts';
+import { canonicalJson, canonicalRecordBytes, sha256Hex } from './core/json.ts';
 import {
   NEEDS_USER_REASONS, NON_BLOCKING_M3_REASONS, type NeedsUserAck, type NeedsUserReason, type NeedsUserRecord, type Stage, needsUserAck, needsUserRecord,
   type NeedsUserContent, failureRefOf,
@@ -113,7 +113,7 @@ export function needsUserReconciler(runDir: AbsPath): Reconciler<'needsuser.rais
   return async (intent) => {
     const { path, id } = intent.expect;
     if (existsSync(path)) {
-      const actual = fileSha(path);
+      const actual = sha256(sha256Hex(canonicalRecordBytes(readFileSync(path))));
       if (actual !== intent.post.sha256) throw new Error(`needs-user ${path} hashes to ${actual}, not the raised ${intent.post.sha256}`);
       return { kind: 'done', outcome: { kind: 'raised' } };
     }

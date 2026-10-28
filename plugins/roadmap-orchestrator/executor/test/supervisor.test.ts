@@ -9,6 +9,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { after, describe, test } from 'node:test';
+import { pendingCommandIds, readCommand, readReceipt, terminalReceipt } from '../src/commands/queue.ts';
 import { isAlive } from '../src/contain/proc.ts';
 import { needsUserRecord } from '../src/core/records.ts';
 import { EXIT_REASON_FILE } from '../src/executor.ts';
@@ -151,7 +152,7 @@ test('supervisor.ready-generation: start waits for its own generation; older rea
   await until(() => !hostLockHeld(r), WAIT_MS, 'the release');
 });
 
-test('supervisor.control-only-restart: after the crash limit, start runs the executor control-only; it dispatches nothing until the sup item is acknowledged', T, async (t) => {
+test('supervisor.control-only-restart: after the crash limit, start runs the executor control-only; mutations stay pending until recovery and nothing dispatches until the sup item is acknowledged', T, async (t) => {
   const r = setupExec(t, { steps: [...smokes(4), ...UNIT_CLAUDE_ONLY] });
   const g1 = await startPaused(r);
   const supervisor = supervisorOf(r);
@@ -170,7 +171,12 @@ test('supervisor.control-only-restart: after the crash limit, start runs the exe
   assert.ok(cmdline(executor).includes('--control-only'), cmdline(executor).join(' '));
   await until(() => startedGenerations(r).includes(g4), WAIT_MS, 'executor-started of the control-only executor');
   await cli(r, ['resume']);
+  const resumes = pendingCommandIds(absPath(r.runDir)).filter((id) => readCommand(absPath(r.runDir), id, journalOf(r).view.arc).file.body.type === 'resume');
+  assert.equal(resumes.length, 1);
+  const resume = resumes[0]!;
+  assert.equal(terminalReceipt(absPath(r.runDir), resume), null, 'resume stays pending while the sup item is open');
   await sleep(3_000);
+  assert.equal(terminalReceipt(absPath(r.runDir), resume), null, 'control-only still has not applied resume');
   assert.equal(readCalls(r.scenarioPath).length, 3, 'only the three earlier starts\' smokes ran: nothing dispatched while the sup item is open, and the control-only executor smokes after recovery, once it is acknowledged (lead ruling 14c)');
   assert.equal(run.child.exitCode, null, 'the control-only executor waits');
   assert.ok(isAlive(executor));
@@ -181,6 +187,7 @@ test('supervisor.control-only-restart: after the crash limit, start runs the exe
   assert.deepEqual(reasonOf(exit), { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }] });
   assert.deepEqual(outcomes(r), STRAIGHT);
   assert.deepEqual(journalOf(r).view.ackOf(id as never)?.choice, null);
+  assert.equal(readReceipt(absPath(r.runDir), resume, 'applied')?.state, 'applied', 'resume applies after recovery');
 });
 
 test('supervisor.heartbeat-stale: a frozen executor (SIGSTOP) is SIGKILLed once its heartbeat is stale and counted as a crash; the next generation runs', T, async (t) => {
