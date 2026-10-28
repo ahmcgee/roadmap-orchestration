@@ -443,6 +443,8 @@ export type FindingState = Omit<FactOf<'finding-opened'>, 'kind'> & Readonly<{
   last: FindingTo | null;
 }>;
 
+type FindingAt = Readonly<{ seq: number; finding: FindingState }>;
+
 export type AuditState = Readonly<{ started: AuditInputs & Seq; ended: (Omit<FactOf<'audit-ended'>, 'kind' | 'job'> & Seq) | null }>;
 /** A checkpoint job: its captured inputs, and its decision: a bundle outcome, or the plan revision its bundle applied. */
 export type CheckpointState = Readonly<{
@@ -731,7 +733,8 @@ export class Fold implements JournalView {
   readonly #batchMembers = new Map<JobId, readonly UnitId[]>();
   readonly #witnessed: (Omit<FactOf<'witnessed'>, 'kind'> & Seq)[] = [];
   readonly #latched = new Map<ObligationId, Omit<FactOf<'obligation-latched'>, 'kind'> & Seq>();
-  readonly #findings = new Map<FindingId, FindingState>();
+  /** Per-finding states in transition order; the last entry is the current state. */
+  readonly #findings = new Map<FindingId, [FindingAt, ...FindingAt[]]>();
   readonly #audits: { started: AuditInputs & Seq; ended: AuditState['ended'] }[] = [];
   readonly #auditRequests: (Omit<FactOf<'audit-requested'>, 'kind'> & Seq)[] = [];
   readonly #docsCovered: (Omit<FactOf<'docs-covered'>, 'kind'> & Seq)[] = [];
@@ -1497,19 +1500,22 @@ export class Fold implements JournalView {
       case 'finding-opened': {
         const next = this.nextFindingId();
         if (f.id !== next) fail(`finding ${f.id} opened; the next finding is ${next}`);
-        const merged = [...this.#findings.values()].find((x) => x.key === f.key && FINDING_MOVES[x.state].length > 0);
-        if (merged !== undefined) fail(`finding ${f.id} has the key of ${merged.id}, which is ${merged.state}: it merges into it`);
+        for (const history of this.#findings.values()) {
+          const x = history.at(-1)!.finding;
+          if (x.key === f.key && FINDING_MOVES[x.state].length > 0) fail(`finding ${f.id} has the key of ${x.id}, which is ${x.state}: it merges into it`);
+        }
         if (f.source.type === 'job') this.#seeJob(f.source.job);
         const { kind: _k, ...rest } = f;
-        this.#findings.set(f.id, { ...rest, state: 'open', owner: null, openedSeq: seq, last: null });
+        this.#findings.set(f.id, [{ seq, finding: { ...rest, state: 'open', owner: null, openedSeq: seq, last: null } }]);
         return;
       }
       case 'finding-transition': {
-        const x = this.#findings.get(f.id);
-        if (x === undefined) return fail(`finding-transition of ${f.id}, which was never opened`);
+        const history = this.#findings.get(f.id);
+        if (history === undefined) return fail(`finding-transition of ${f.id}, which was never opened`);
+        const x = history.at(-1)!.finding;
         if (!FINDING_MOVES[x.state].includes(f.to.state)) fail(`finding ${f.id} moves ${x.state} → ${f.to.state}`);
         const owner = f.to.state === 'owned' || f.to.state === 'fixed-on-branch' ? f.to.unit : f.to.state === 'open' ? null : x.owner;
-        this.#findings.set(f.id, { ...x, state: f.to.state, owner, last: f.to });
+        history.push({ seq, finding: { ...x, state: f.to.state, owner, last: f.to } });
         return;
       }
       case 'audit-started': {
@@ -2160,6 +2166,21 @@ export class Fold implements JournalView {
     return polishIdOf(this.#walkFacts.filter((x) => x.fact.kind === 'polish-proposed').length + 1);
   }
 
+  findingsAt(seq: number): readonly FindingState[] {
+    const out: FindingState[] = [];
+    for (const history of this.#findings.values()) {
+      let low = 0;
+      let high = history.length;
+      while (low < high) {
+        const middle = (low + high) >>> 1;
+        if (history[middle]!.seq <= seq) low = middle + 1;
+        else high = middle;
+      }
+      if (low > 0) out.push(history[low - 1]!.finding);
+    }
+    return out;
+  }
+
   holistic(): HolisticFold {
     const c = this.#completion;
     const active = c !== null && this.#planApplied?.rev === c.planRev && (this.#head === null || this.#head === c.head) && this.#lastReopenSeq < c.seq;
@@ -2167,7 +2188,7 @@ export class Fold implements JournalView {
       on: this.#holisticOn,
       witnessed: this.#witnessed,
       latched: [...this.#latched.values()],
-      findings: [...this.#findings.values()],
+      findings: [...this.#findings.values()].map((history) => history.at(-1)!.finding),
       audits: this.#audits.map((a) => ({ started: a.started, ended: a.ended })),
       auditRequests: this.#auditRequests,
       docsCovered: this.#docsCovered,

@@ -57,7 +57,7 @@ import { durableMkdir, readJson } from '../core/fsx.ts';
 import { type ArcId, INTEGRATION_SLOT, type ResourceName, type Sha, type UnitId, sha } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
-import { LogCorruptError, type OpenJournal, openJournal, readJournal } from '../core/log.ts';
+import { LogCorruptError, type OpenJournal, ObserverJournal } from '../core/log.ts';
 import type { HostLockClaim, LaneDef, RevisionManifest, SpecM1 } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, absPath, branchName, branchRef, refName } from '../core/values.ts';
@@ -364,10 +364,10 @@ export const routingCheck: StartupCheck<'unsupported-routing'> = {
 // ---------------------------------------------------------------------------------------------------
 // Group 4: the journal
 
-export function openJournalChecked(context: StartupContext): OpenJournal | Rejection<'log-corrupt'> {
+export function openJournalChecked(context: StartupContext, reader = new ObserverJournal(context.runDir, context.plan.arc)): OpenJournal | Rejection<'log-corrupt'> {
   durableMkdir(context.runDir);
   try {
-    return openJournal(context.runDir, context.plan.arc);
+    return reader.open();
   } catch (error) {
     if (!(error instanceof LogCorruptError)) throw error;
     return { kind: 'log-corrupt', file: error.file, offset: error.offset, detail: error.detail };
@@ -469,9 +469,9 @@ const filesSource = (files: InputFiles): Source => ({
 });
 
 /** The arc's log read-only, or null when it does not read (group 4 refuses it as log-corrupt). */
-function readArcView(runDir: AbsPath, arc: ArcId): JournalView | null {
+function readArcView(reader: ObserverJournal): JournalView | null {
   try {
-    return readJournal(runDir, arc).view;
+    return reader.read().view;
   } catch (error) {
     if (error instanceof LogCorruptError) return null;
     throw error;
@@ -613,8 +613,13 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
   // The supervisor already holds the host claim before spawning this executor. Share the read-only
   // snapshot across groups 1 and 2; group 4 still opens the writer only after the claim callback passes.
   const views = new Map<AbsPath, JournalView | null>();
+  const readers = new Map<AbsPath, ObserverJournal>();
   const viewAt = (dir: AbsPath, arc: ArcId): JournalView | null => {
-    if (!views.has(dir)) views.set(dir, readArcView(dir, arc));
+    if (!views.has(dir)) {
+      const reader = new ObserverJournal(dir, arc);
+      readers.set(dir, reader);
+      views.set(dir, readArcView(reader));
+    }
     return views.get(dir)!;
   };
   let commonDir: AbsPath | undefined;
@@ -689,7 +694,7 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
   const { claim } = claimed;
 
   // 4. journal
-  const journal = openJournalChecked(context);
+  const journal = openJournalChecked(context, readers.get(runDir)!);
   if ('kind' in journal) return refused([journal], claim);
   const mode = containmentModeCheck(journal);
   if (mode.length > 0) return refused(mode, claim, journal);

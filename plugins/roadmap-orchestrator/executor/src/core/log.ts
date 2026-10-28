@@ -14,7 +14,7 @@
 import {
   closeSync, existsSync, fstatSync, fsyncSync, ftruncateSync, openSync, readFileSync, readSync, readdirSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { TextDecoder } from 'node:util';
 import { crashPoint } from './crash.ts';
 import {
@@ -66,6 +66,11 @@ export function openJournal(runDir: AbsPath, arc: ArcId): OpenJournal {
   if (!existsSync(path)) exclusiveCreate(path, '');
   const fold = new Fold(arc);
   const { validEnd, size } = verify(path, fold);
+  return finishOpen(runDir, path, fold, validEnd, size);
+}
+
+/** Writer finalisation shared by a cold open and a previously verified observer cursor. */
+function finishOpen(runDir: AbsPath, path: AbsPath, fold: Fold, validEnd: number, size: number): OpenJournal {
   if (validEnd < size) discardTail(runDir, path, validEnd, size);
   const journal = new FileJournal(path, fold);
   for (const fact of unrecordedFragments(runDir, fold)) journal.fact(fact);
@@ -99,9 +104,10 @@ export function readJournal(runDir: AbsPath, arc: ArcId, through: number | null 
   return { view: fold, events };
 }
 
-/** Read-only observer cursor. The returned view is valid until the next read; callers publish derived models.
- * Appends use the very same verifier as recovery. Never repairs tails or writes files. A failed fold is
- * discarded, so a corruption error cannot leave a partly applied cursor available to the next poll.
+/** Observer cursor. The returned view is valid until the next read; callers publish derived models.
+ * Reads use the very same verifier as recovery and never repair tails or write files. After the host
+ * claim, open() can transfer the verified fold to a writer. A failed read discards its fold, so a
+ * corruption error cannot leave a partly applied cursor available to the next poll.
  */
 export class ObserverJournal {
   readonly path: AbsPath;
@@ -124,6 +130,20 @@ export class ObserverJournal {
     this.#offset = 0;
     this.#identity = '';
     this.#anchor = Buffer.alloc(0);
+  }
+  /**
+   * After the host claim: verify bytes appended since the last read (or rebuild under read()'s reset
+   * rules), then apply the cold writer's tail/fragment rules. Transfer the fold and reset this observer
+   * so it cannot apply the writer's new events twice.
+   */
+  open(): OpenJournal {
+    if (!existsSync(this.path)) exclusiveCreate(this.path, '');
+    this.read();
+    const fold = this.#fold;
+    const validEnd = this.#offset;
+    const size = this.#size;
+    this.#reset();
+    return finishOpen(absPath(dirname(this.path)), this.path, fold, validEnd, size);
   }
   read(): LogSnapshot {
     if (!existsSync(this.path)) {

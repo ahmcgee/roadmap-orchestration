@@ -228,8 +228,8 @@ export function milestoneState(view: JournalView, m: MilestoneId, p: MilestonePr
 }
 
 /** The active walkthrough P1s of milestone `m`, in id order. */
-export const activeWalkP1s = (view: JournalView, m: MilestoneId): readonly FindingId[] =>
-  canonicalIds(view.holistic().findings.filter((f) => f.lens === 'walkthrough' && f.milestone === m && f.severity === 'P1' && isActive(f)).map((f) => f.id));
+export const activeWalkP1s = (view: JournalView, m: MilestoneId, through?: number): readonly FindingId[] =>
+  canonicalIds((through === undefined ? view.holistic().findings : view.findingsAt(through)).filter((f) => f.lens === 'walkthrough' && f.milestone === m && f.severity === 'P1' && isActive(f)).map((f) => f.id));
 
 /** A due `finding-p1-escalated` of a milestone, parented by the walk job it is about. */
 export type WalkItem = Readonly<{ job: JobId; content: NeedsUserContent }>;
