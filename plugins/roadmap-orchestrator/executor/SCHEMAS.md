@@ -1681,7 +1681,8 @@ job{job}`, G4); `ResidueState.holder` is the stage or job holder.
 **Stage outcomes and the transition table** (`src/pipeline/transitions.ts`). Stage `reproduce` (a vacuity repair's
 first stage, an admission stage): `reproduced` → plan-check; `not-reproduced` and `inapplicable` → park operator
 design, reason `not-reproduced`; `blocked` → park retryable `lane-blocked`; `interrupted` → hold; `cleanup-failed` →
-park retryable `residue`. Candidate `preempted` (A7) and `finding-blocked` (G10) → candidate again, uncharged
+park retryable `residue`; `env-unavailable` (additive, 2026-10-29) → park retryable on the named environment.
+Candidate `preempted` (A7) and `finding-blocked` (G10) → candidate again, uncharged
 (admission holds it while the P1 blocks: `AdmissionConstraint finding-blocked{finding, obligation}`). The bounds
 are the unit's: `UnitState.bounds` (its latest dispatch record's `bounds`, else `DEFAULT_BOUNDS`) replaces the
 constants in the table (`Bounded.bound` names the field) and in the fold's chargeable invariant; `MAX_*` and
@@ -4635,6 +4636,10 @@ stays 1.
    `PARK_TARGETS` lanes and candidate `env-unavailable: 'environment'`; `ProbeTarget` gains `{type: 'environment',
    environment}` (key `environment:<name>`), whose probe job is the environment's up (when not up) and probe
    (`probeEnvironment`), parent `arc`. A tripped breaker on an environment blocks lanes and candidate admission.
+   The 2026-10-29 mutant fix adds `STAGE_OUTCOME_KINDS.reproduce.env-unavailable` with the same uncharged retryable
+   row and environment target. Candidate mutant acceptance preserves `env-unavailable{environment}` through its
+   existing candidate row. These parks cannot recover from a host probe: up and the environment probe must pass.
+   This is an additive outcome only; no record field or default changes, and earlier outcomes retain their meanings.
 7. **Idle, ends, recovery** (src/schedule/scheduler.ts). Each iteration, after control: every managed environment `up`,
    unused, with no lane holding its unit or waiting for it in the arbiter, idle for `idleMinutes` (at once under
    `pause --all` or a stop) is brought down as tracked job `env-down:<name>`. A stop's end (after `recoverReservations`)
@@ -5328,9 +5333,12 @@ as host pressure. No launch pressure measurement or charging rule changes.
 
 Powered-resource use also covers journeys, mutant reproduction/acceptance/smoke, proof lanes and milestone walkthrough/compare reservations.
 Every request includes the inferred environment names before arbitration, serializing even disjoint resources powered
-by the same environment. Mutant paths share `holdMutantLane`/`releaseMutantLane`; unavailable environments block
-reproduction and candidate acceptance without a red verdict, or park mutation smoke as `env-unavailable`. All release
-earlier successful uses if a later environment fails, and release normal uses after reservation cleanup. A failed environment
+by the same environment. Mutant paths share `holdMutantLane`/`releaseMutantEnvironments`; unavailable environments
+park reproduction, candidate acceptance and mutation smoke as `env-unavailable` on the environment, without a red
+verdict. Each successful environment use ends exactly once in `finally`, including exceptional exits during acquisition
+or a mutant run. Normal runs clean reservations before ending their uses; on a thrown fault, only the in-memory uses
+end while unwinding. Fault recovery retains the reservations until its workload kill/quiescence and cleanup finish,
+then scheduler idle/shutdown can bring the unused environment down. A failed environment
 bring-up leaves a proof without a verdict, or a walk/compare incomplete (`detail: 'env-unavailable'`); no product
 verdict is charged. A walk/compare releases its environment uses after reservation cleanup (`releaseJob`). The
 existing apply classifier compares the complete environment declaration, including `resources`, and refuses a

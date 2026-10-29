@@ -49,11 +49,11 @@ import { type ArcLaneDef, type WitnessRecord, laneRevOf } from '../holistic/type
 import { keepInput } from '../input/inforce.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import type { GateChecks, SmokeNotRun } from '../prompts/inputs.ts';
-import { type Reservation, type StageHolder } from '../resources/reserve.ts';
+import { type Reservation, type StageHolder, cleanup } from '../resources/reserve.ts';
 import { type StageContext, type StageParent, dispatchOf, smokeWorktree } from './dispatch.ts';
 import { type LaneRuntime, laneEnvId, laneRequest } from './lanes.ts';
 import { type LaneCancel, laneAbortReason } from './redlane.ts';
-import { applyMutant, holdMutantLane, releaseMutantLane, removeMutantLeftovers, removeMutantWorktree, runMutantLane } from './reproduce.ts';
+import { applyMutant, holdMutantLane, releaseMutantEnvironments, removeMutantLeftovers, removeMutantWorktree, runMutantLane } from './reproduce.ts';
 import { integrationTip, stageHolder } from './stages.ts';
 import { checksApply, requiredLanes } from './witnesscheck.ts';
 
@@ -193,21 +193,25 @@ export async function mutationSmoke(ctx: StageContext, unit: PlanUnit, parent: S
       await removeMutantWorktree(ctx, parent, worktree, last);
       return held;
     }
-    const r = await runMutantLane(ctx, parent, {
-      of, lane, worktree, tree: applied.tree, dirOf: (invDir) => smokeLaneDir(ctx.runDir, unit.id, parent.attempt, lane.id, basename(invDir)),
-      for: { type: 'smoke', unit: unit.id, attempt: parent.attempt, of: salvaged }, held: held.reservation?.resources ?? [],
-    });
-    last = r.evidence;
-    const failed = await releaseMutantLane(ctx, parent, held.reservation);
-    if (failed.length > 0) {
-      await removeMutantWorktree(ctx, parent, worktree, last);
-      return { kind: 'cleanup-failed', failed };
+    try {
+      const r = await runMutantLane(ctx, parent, {
+        of, lane, worktree, tree: applied.tree, dirOf: (invDir) => smokeLaneDir(ctx.runDir, unit.id, parent.attempt, lane.id, basename(invDir)),
+        for: { type: 'smoke', unit: unit.id, attempt: parent.attempt, of: salvaged }, held: held.reservation?.resources ?? [],
+      });
+      last = r.evidence;
+      const cleaned = held.reservation === null ? null : await cleanup(ctx, held.reservation, parent);
+      if (cleaned?.kind === 'cleanup-failed') {
+        await removeMutantWorktree(ctx, parent, worktree, last);
+        return { kind: 'cleanup-failed', failed: cleaned.failed };
+      }
+      if (r.kind === 'interrupted') {
+        await removeMutantWorktree(ctx, parent, worktree, last);
+        return { kind: 'interrupted', reason: r.reason };
+      }
+      records.set(lane.id, r.kind === 'ran' ? r.record : null);
+    } finally {
+      releaseMutantEnvironments(ctx, held.reservation);
     }
-    if (r.kind === 'interrupted') {
-      await removeMutantWorktree(ctx, parent, worktree, last);
-      return { kind: 'interrupted', reason: r.reason };
-    }
-    records.set(lane.id, r.kind === 'ran' ? r.record : null);
   }
   crashPoint('smoke.after-witnessed', unit.id);
   await removeMutantWorktree(ctx, parent, worktree, last);

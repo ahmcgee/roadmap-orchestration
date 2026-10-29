@@ -54,7 +54,7 @@ import { type Cancelled, type StageContext, type StageParent, enter, evidenceRoo
 import { invocationDir, invoke } from './invoke.ts';
 import { LANE_DEADLINE_MS, LANE_GRACE_MS, LANE_STALL_MS, laneEnv, laneEnvId, laneRequest } from './lanes.ts';
 import { type LaneCancel, laneAbortReason, laneCancelOf } from './redlane.ts';
-import { type Held, type StageDone, at, failedFacts, holdEntry, holisticInForce, integrationTip, loadUnitSpec, record, stageHolder, start } from './stages.ts';
+import { type Held, type StageDone, at, environmentFacts, failedFacts, holdEntry, holisticInForce, integrationTip, loadUnitSpec, record, stageHolder, start } from './stages.ts';
 import { decidedBy } from './transitions.ts';
 import { evidenceSnapshotOp, mutantApplyOp, worktreeRemoveOp } from '../recover/ops.ts';
 
@@ -264,27 +264,27 @@ export async function holdMutantLane(ctx: StageContext, parent: StageParent): Pr
   if (held.kind !== 'held' || held.reservation === null) return held;
   const reservation = held.reservation;
   const used: ResourceName[] = [];
-  for (const env of environmentsOf(ctx.plan()).filter((e) => reservation.resources.includes(e.name))) {
-    const result = await useEnvironment(ctx, env.name, parent);
-    if (result.kind === 'unavailable') {
-      const cleaned = await cleanup(ctx, reservation, parent);
-      for (const name of used) releaseEnvironment(ctx.journal, name);
-      return cleaned.kind === 'cleanup-failed' ? { kind: 'cleanup-failed', failed: cleaned.failed } : { kind: 'env-unavailable', environment: env.name };
+  let ready = false;
+  try {
+    for (const env of environmentsOf(ctx.plan()).filter((e) => reservation.resources.includes(e.name))) {
+      const result = await useEnvironment(ctx, env.name, parent);
+      if (result.kind === 'unavailable') {
+        const cleaned = await cleanup(ctx, reservation, parent);
+        return cleaned.kind === 'cleanup-failed' ? { kind: 'cleanup-failed', failed: cleaned.failed } : { kind: 'env-unavailable', environment: env.name };
+      }
+      used.push(env.name);
     }
-    used.push(env.name);
+    ready = true; // The caller now owns every use, including on an exceptional exit.
+    return held;
+  } finally {
+    if (!ready) for (const name of used) releaseEnvironment(ctx.journal, name);
   }
-  return held;
 }
 
-/** Releases a mutant lane's reservation and its environment uses after cleanup. */
-export async function releaseMutantLane(ctx: StageContext, parent: StageParent, held: Reservation<'running', StageHolder> | null): Promise<readonly ResourceInstance[]> {
-  if (held === null) return [];
-  try {
-    const cleaned = await cleanup(ctx, held, parent);
-    return cleaned.kind === 'cleanup-failed' ? cleaned.failed : [];
-  } finally {
-    for (const env of environmentsOf(ctx.plan())) if (held.resources.includes(env.name)) releaseEnvironment(ctx.journal, env.name);
-  }
+/** Ends the uses only. On a fault, reservation cleanup belongs to fault recovery, after workload quiescence. */
+export function releaseMutantEnvironments(ctx: StageContext, held: Reservation<'running', StageHolder> | null): void {
+  if (held === null) return;
+  for (const env of environmentsOf(ctx.plan())) if (held.resources.includes(env.name)) releaseEnvironment(ctx.journal, env.name);
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -324,27 +324,31 @@ export async function reproduce(ctx: StageContext, unit: PlanUnit): Promise<Stag
     if ('inapplicable' in target) return record(ctx, parent, 'inapplicable', reproduceNeedsUser(ctx, unit, finding.id, 'inapplicable', target.inapplicable));
     const reserved = await reserveLane(ctx, parent, target.lane, first);
     if (reserved.kind === 'cancelled') return reserved;
-    if (reserved.kind === 'env-unavailable') return record(ctx, parent, 'blocked');
+    if (reserved.kind === 'env-unavailable') return record(ctx, parent, 'env-unavailable', null, environmentFacts(reserved.environment));
     if (reserved.kind === 'interrupted') return record(ctx, parent, 'interrupted');
     if (reserved.kind === 'occupied') return record(ctx, parent, 'blocked', reserved.needsUser);
     if (reserved.kind === 'cleanup-failed') return record(ctx, parent, 'cleanup-failed', null, failedFacts(reserved.failed));
-    if (first) await removeMutantLeftovers(ctx, unit.id, parent);
-    first = false;
-    const ran = await runMutant(ctx, parent, target, integrationTip(ctx), reserved.reservation?.resources ?? []);
-    const failed = await releaseMutantLane(ctx, parent, reserved.reservation);
-    if (failed.length > 0) return record(ctx, parent, 'cleanup-failed', null, failedFacts(failed));
-    switch (ran.kind) {
-      case 'inapplicable':
-        return record(ctx, parent, 'inapplicable', reproduceNeedsUser(ctx, unit, finding.id, 'inapplicable', ran.detail));
-      case 'blocked':
-        return record(ctx, parent, 'blocked');
-      case 'interrupted':
-        return record(ctx, parent, 'interrupted');
-      case 'ran':
-        if (ran.verdict === 'held') continue;
-        // The unit driver's `syncRepairs` then dismisses the finding (derived from this outcome).
-        if (ran.verdict === 'not-held') return record(ctx, parent, 'not-reproduced', reproduceNeedsUser(ctx, unit, finding.id, 'not-reproduced', `its witness is ${ran.verdict} on the patched tree`));
-        return record(ctx, parent, 'inapplicable', reproduceNeedsUser(ctx, unit, finding.id, 'inapplicable', `its witness is ${ran.verdict} on the patched tree`));
+    try {
+      if (first) await removeMutantLeftovers(ctx, unit.id, parent);
+      first = false;
+      const ran = await runMutant(ctx, parent, target, integrationTip(ctx), reserved.reservation?.resources ?? []);
+      const cleaned = reserved.reservation === null ? null : await cleanup(ctx, reserved.reservation, parent);
+      if (cleaned?.kind === 'cleanup-failed') return record(ctx, parent, 'cleanup-failed', null, failedFacts(cleaned.failed));
+      switch (ran.kind) {
+        case 'inapplicable':
+          return record(ctx, parent, 'inapplicable', reproduceNeedsUser(ctx, unit, finding.id, 'inapplicable', ran.detail));
+        case 'blocked':
+          return record(ctx, parent, 'blocked');
+        case 'interrupted':
+          return record(ctx, parent, 'interrupted');
+        case 'ran':
+          if (ran.verdict === 'held') continue;
+          // The unit driver's `syncRepairs` then dismisses the finding (derived from this outcome).
+          if (ran.verdict === 'not-held') return record(ctx, parent, 'not-reproduced', reproduceNeedsUser(ctx, unit, finding.id, 'not-reproduced', `its witness is ${ran.verdict} on the patched tree`));
+          return record(ctx, parent, 'inapplicable', reproduceNeedsUser(ctx, unit, finding.id, 'inapplicable', `its witness is ${ran.verdict} on the patched tree`));
+      }
+    } finally {
+      releaseMutantEnvironments(ctx, reserved.reservation);
     }
   }
   return record(ctx, parent, 'reproduced');
@@ -367,6 +371,7 @@ async function reserveLane(ctx: StageContext, parent: StageParent, lane: ArcLane
 /** What the kill check makes of a candidate that was otherwise green. */
 export type MutantEnd =
   | Readonly<{ kind: 'green' | 'red' | 'blocked' }>
+  | Readonly<{ kind: 'env-unavailable'; environment: ResourceName }>
   | Readonly<{ kind: 'interrupted'; reason: LaneCancel }>
   | Readonly<{ kind: 'occupied'; needsUser: NeedsUserContent }>
   | Readonly<{ kind: 'cleanup-failed'; failed: readonly ResourceInstance[] }>;
@@ -390,16 +395,19 @@ export async function mutantAcceptance(ctx: StageContext, unit: PlanUnit, parent
       const grant = await ctx.acquire(request, holder, () => ctx.rank(unit.id), ctx.signal);
       if (grant.kind === 'cancelled') return { kind: 'interrupted', reason: laneAbortReason(ctx.signal) };
       const held = await holdMutantLane(ctx, parent);
-      if (held.kind === 'env-unavailable') return { kind: 'blocked' };
       if (held.kind !== 'held') return held;
       reservation = held.reservation;
     }
-    const ran = await runMutant(ctx, parent, target, commit, reservation?.resources ?? []);
-    const failed = await releaseMutantLane(ctx, parent, reservation);
-    if (failed.length > 0) return { kind: 'cleanup-failed', failed };
-    if (ran.kind === 'blocked') return { kind: 'blocked' };
-    if (ran.kind === 'interrupted') return ran;
-    if (ran.kind === 'ran' && ran.verdict !== 'not-held') survived = true;
+    try {
+      const ran = await runMutant(ctx, parent, target, commit, reservation?.resources ?? []);
+      const cleaned = reservation === null ? null : await cleanup(ctx, reservation, parent);
+      if (cleaned?.kind === 'cleanup-failed') return { kind: 'cleanup-failed', failed: cleaned.failed };
+      if (ran.kind === 'blocked') return { kind: 'blocked' };
+      if (ran.kind === 'interrupted') return ran;
+      if (ran.kind === 'ran' && ran.verdict !== 'not-held') survived = true;
+    } finally {
+      releaseMutantEnvironments(ctx, reservation);
+    }
   }
   return { kind: survived ? 'red' : 'green' };
 }

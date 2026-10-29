@@ -163,6 +163,7 @@ export const TABLE: Table = {
     'not-reproduced': park('not-reproduced', 'design'),
     // The mutant no longer applies: re-evaluated at the next audit; the unit parks meanwhile.
     inapplicable: park('not-reproduced', 'design'),
+    'env-unavailable': park('env-unavailable', 'retryable'),
     blocked: park('lane-blocked', 'retryable'),
     interrupted: hold,
     'cleanup-failed': park('residue', 'retryable'),

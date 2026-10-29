@@ -10,7 +10,7 @@
 // | lanes `blocked` (after its retry), candidate `blocked` | `host`                                    |
 // | build, salvage, teardown, lanes, candidate `cleanup-failed` | one `resource{i}` per failed instance |
 // | salvage `commit-failed`                               | `host`, plus the failed teardown's instances (G6) |
-// | lanes, candidate `env-unavailable` (dev.17)           | `environment{e}`: the lane's environment  |
+// | reproduce, lanes, candidate `env-unavailable`           | `environment{e}`: the lane's environment  |
 // | scaffold, poc `process-fault`, scaffold `lost` (dev.17) | `backend{b}`                              |
 // | scaffold, poc `cleanup-failed` (dev.17)               | one `resource{i}` per failed instance     |
 import type { OutcomeStage, ProbeTarget, StageOutcomeFact, StageOutcomeKind } from '../core/events.ts';
@@ -34,7 +34,7 @@ export const PARK_TARGETS: { readonly [S in OutcomeStage]?: { readonly [K in Sta
   lanes: { blocked: 'host', 'cleanup-failed': 'resources', 'env-unavailable': 'environment' },
   candidate: { blocked: 'host', 'cleanup-failed': 'resources', 'env-unavailable': 'environment' },
   // M3: a vacuity repair's mutant lane parks as a lane does.
-  reproduce: { blocked: 'host', 'cleanup-failed': 'resources' },
+  reproduce: { blocked: 'host', 'cleanup-failed': 'resources', 'env-unavailable': 'environment' },
   // dev.17 (design pass): the scaffold writer's and a proof of concept's call park as a judgment's or a build's does.
   scaffold: { 'process-fault': 'backend', lost: 'backend', 'cleanup-failed': 'resources' },
   poc: { 'process-fault': 'backend', 'cleanup-failed': 'resources' },
