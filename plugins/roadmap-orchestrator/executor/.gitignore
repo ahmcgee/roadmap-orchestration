@@ -1,2 +1,3 @@
 node_modules/
 evals/roles/holdout/
+evals/compaction/holdout/

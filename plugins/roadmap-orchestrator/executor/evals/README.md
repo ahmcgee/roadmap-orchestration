@@ -971,3 +971,75 @@ or after `--max-hours`; at `report.json` it runs one deep retro pass over the wh
 `--allowedTools Read,Glob,Grep`, every other built-in tool disallowed, `--strict-mcp-config` and settings
 `{"autoMemoryEnabled": false}`; same prompt, same JSON-line contract, same retro path. Free test: `test/observer.test.ts` (fake
 `codex` and fake `claude` on PATH).
+
+## Estate compaction (rung 3.5)
+
+```sh
+node evals/compaction/fixture.ts /var/tmp/compaction-inspect --set dev
+node evals/compaction/run.ts --set dev --n 3 --stage both --cap 100
+node evals/compaction/run.ts --set dev --n 1 --stage a --cap 25
+node evals/compaction/run.ts --set holdout --n 3 --stage both --cap 100 --compare <dev run>/summary.json
+node --test test/evals-compaction.test.ts                                      # free
+```
+
+Run when `skills/estate-compaction/` or orchestrate's Phase 0 compaction text changes. The existing
+`evals/roles/triggers.ts <base>` prints `compaction` alongside role names; any edit to the orchestrate skill
+conservatively triggers it. Compaction uses its own run command, separately from the roles dispatcher.
+Do not run paid stages per worktree agent; run once per merged batch, holdout only at acceptance.
+
+`evals/compaction/spec.ts` builds Quaybook (dev: harbour register) and Seedbank (holdout: accession register),
+with shifted rule and ruling locations in holdout. Each has 80 active rules, five retired rule IDs with a high-water
+of 85, 60 obligations including a split family and retired/waived/deferred states, 40 rulings including withdrawn
+and arc-lifetime records, and 15 open debt items. The generator uses executor parsers and renderers for the corpus
+registry, invariants, constraints and debt, a real pin, and a verified completed-arc snapshot. Next-arc inputs have
+`chain`, specs, a census and step-12 carry rules: the retired obligation and withdrawn ruling leave, while an
+arc-lifetime ruling cited by a spec stays. A single empty between-arc commit is ready to amend. Before compaction,
+those inputs pass the real `phase0 check` CLI. Product and input bytes are deterministic after normalizing the
+fixture's absolute root; runtime journal clocks are not part of that comparison.
+
+Fourteen candidates cover rule restatements, subsumption, removed code, an answered assumption, verbose wording,
+cosmetic and universally true trivia, a trivial obligation, folding a standing ruling, merging overlapping rulings, retiring a demo
+choice, and obsolete/duplicate/trivial debt. The owner rejects the banner punctuation retirement and approves the
+other thirteen. Traps are JSON versus CSV exports (a testable distinction), a short integrity rule with recent
+findings and a must-hold obligation, an obligation-disposition ruling, and a slip rule serving the advancing clause.
+`key-dev.json` is tracked and checked against the generator. Holdout's key is generated only in ignored
+`evals/compaction/holdout/key-holdout.json`. Each key includes plain owner answers and the golden approved record.
+Neither key nor golden source record is copied into `stage/`.
+
+Each trial is fresh under `/var/tmp/compaction-eval/<run>/<trial>/`. Stage A and B have separate fixtures and sessions.
+The plugin copy excludes executor evals, tests and node_modules. Architect calls use Opus 5.5 high; owner calls use
+Opus 5.5 medium with no tools, no plugin and only plain owner preferences plus the batch. Both disable automatic
+memory and use strict MCP configuration; an init showing MCP servers or memory paths kills the process group.
+Tool traffic accessing hidden key paths invalidates the session. The root resumes after each numbered batch and
+ends when final text has no numbered decisions. The limits are 30 review turns, 30 minutes per call, 90 minutes per
+stage session. All raw stream-json, argv, stderr, owner exchanges and per-call cost rows remain in the trial.
+`--cap` sums architect and owner `total_cost_usd` results, aborts on excess, and starts no more trials after reaching
+the cap. A call cannot be costed until its result arrives; missing cost is a harness failure. `summary.json` contains
+per-trial grades and costs, failures and the run verdict. Interrupted calls may have unreported spend.
+
+Stage A gates: strict skill-format K-IDs ascending from 1 and required fields; at least 80% recall among owner-approved
+plants with acceptable actions; zero trap violations; trivia retirements/resolutions naming a loss; and every recorded
+action, item, replacement and loss matching an explicitly approved proposal, with rejected items absent. Numbered
+proposals and explicit numbered approve/reject replies are parsed deterministically; unreadable records fail closed.
+Stage B always uses the key's golden record, independently of Stage A. It runs the real `phase0 check` and separately
+calls start's `rederive` against the original published invariants. It checks effects, replacement texts, removed
+obligation families/mappings/spec references, new obligations for rule merges, supersession and redirected spec cites,
+census, T/I/C allocation, arc-lifetime architect Phase-0 rulings where obligations change or debt resolves, ruling
+replacements preserving the originals' kind and lifetime, curation, fold rationale, the unchanged rejected
+plant, and Applied/Blocked rows. A blocked golden decision fails application (the golden set is applicable), while
+preserving its refusal row for review. `--compare` requires a holdout run and a dev summary with the same enabled stages; Stage A recall and
+Stage B pass rate may each drop at most 15 percentage points. Every requested trial and enabled stage must pass.
+
+Cost is an **unmeasured estimate**: roughly $10–$30 per two-stage trial, depending on estate reading and review turns.
+Start with `--n 1 --cap 35`, inspect the transcripts, then choose the batch cap. No paid run was needed to validate
+the fixture. Free tests check both domains, deterministic generation and key IDs, the real CLI before and after a
+scripted golden application, all grading gates, deliberately dropped obligations and reused IDs, rejected decisions,
+and the headless driver's resume, isolation, timeout and cost behavior using a fake `claude` executable.
+
+Skill ambiguities captured by this eval: the skill writes Applied only after `start`
+succeeds, whereas this eval must stop before `start` and still verify markers (the Stage B prompt explicitly requests
+pre-start markers); folding specifies a census entry but leaves the choice of obligation versus production-only
+state to Phase 0. The golden duplicate pair shares one state and witness lane; the fold
+records an operational archive policy as production-only. K-IDs start at 1 because this fixture has no earlier
+compaction record. The grader deliberately requires a substantive loss for the near-duplicate trap even if the
+proposal calls its wording a merger.

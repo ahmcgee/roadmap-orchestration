@@ -1,0 +1,258 @@
+{
+  "set": "dev",
+  "domain": "Quaybook",
+  "goldenRecord": "## K-1 merge\nItems: T-3: A berth booking identifier is unique across the register.; T-14: No two entries in the register have the same berth booking identifier.\nReplacement: T-3: \"A berth booking identifier is unique across the register.\"\nGives up: nothing\nWhy: identifier restatements.\nApproved: 2026-10-01\n\n## K-2 retire\nItems: T-27: The export command refuses invalid dates.\nReplacement: none\nGives up: nothing\nWhy: subsumed date check.\nApproved: 2026-10-01\n\n## K-3 retire\nItems: T-8: The PortLink SOAP bridge retries failed deliveries every ten minutes.\nReplacement: none\nGives up: Ten-minute retries in the removed PortLink SOAP bridge.\nWhy: removed module.\nApproved: 2026-10-01\n\n## K-4 retire\nItems: T-33: Dispatch is allowed until 72 hours before the tide (working assumption P-1).\nReplacement: none\nGives up: The superseded dispatch cutoff assumption P-1.\nWhy: answered assumption.\nApproved: 2026-10-01\n\n## K-5 tighten\nItems: T-49: In order to ensure that the operator can rely on the output when things go wrong, every failed command, without exception, prints its diagnostic to stderr rather than to stdout.\nReplacement: T-49: \"Every failed command prints its diagnostic to stderr, never stdout.\"\nGives up: nothing\nWhy: wordy diagnostic rule.\nApproved: 2026-10-01\n\n## K-6 retire\nItems: T-62: Internal local variable names use lower camel case.; T-63: The command must be implemented in executable program instructions.\nReplacement: none\nGives up: The lower camel case requirement for internal local variable names and the demand that the command execute program instructions.\nWhy: cosmetic variable names.\nApproved: 2026-10-01\n\n## K-7 retire\nItems: I-52: One internal comment is grammatical English.\nReplacement: none\nGives up: A separate test demanding grammatical English in one internal comment.\nWhy: comment witness detail.\nApproved: 2026-10-01\n\n## K-8 fold\nItems: C-4: The Quaybook archive is append-only; corrections add a new revision.\nReplacement: T-?: \"The Quaybook archive is append-only; corrections add a new revision.\"\nGives up: nothing\nWhy: archive standing truth.\nApproved: 2026-10-01\n\n## K-9 merge\nItems: C-12: A request token is accepted once; retries return the stored response.; C-17: Retries with the same request token return the stored response without another mutation.\nReplacement: C-?: \"A request token is accepted once; retries return the stored response without another mutation.\"\nGives up: nothing\nWhy: request token overlap.\nApproved: 2026-10-01\n\n## K-10 retire\nItems: C-23: The first release demo uses the blue harbour slide template.\nReplacement: none\nGives up: The first demo slide template requirement.\nWhy: demo slide choice.\nApproved: 2026-10-01\n\n## K-11 resolve\nItems: B-2: Remove the retry queue in the PortLink SOAP bridge.\nReplacement: none\nGives up: Cleanup of the removed PortLink SOAP bridge retry queue.\nWhy: obsolete queue debt.\nApproved: 2026-10-01\n\n## K-12 resolve\nItems: B-6: Index reserve record lookup; B-1 already tracks the same index.\nReplacement: none\nGives up: nothing\nWhy: duplicate index debt.\nApproved: 2026-10-01\n\n## K-13 resolve\nItems: B-11: Align the success message punctuation with the help footer.\nReplacement: none\nGives up: Success message punctuation stays inconsistent with the help footer.\nWhy: punctuation debt.\nApproved: 2026-10-01\n",
+  "plants": [
+    {
+      "name": "identifier restatements",
+      "ids": [
+        "T-3",
+        "T-14"
+      ],
+      "actions": [
+        "merge"
+      ],
+      "givesUp": "nothing",
+      "lossIds": [],
+      "replacement": {
+        "id": "T-3",
+        "text": "A berth booking identifier is unique across the register."
+      },
+      "trivia": false,
+      "approved": true
+    },
+    {
+      "name": "subsumed date check",
+      "ids": [
+        "T-27"
+      ],
+      "actions": [
+        "retire",
+        "merge"
+      ],
+      "givesUp": "nothing",
+      "lossIds": [],
+      "replacement": null,
+      "trivia": false,
+      "approved": true
+    },
+    {
+      "name": "removed module",
+      "ids": [
+        "T-8"
+      ],
+      "actions": [
+        "retire"
+      ],
+      "givesUp": "Ten-minute retries in the removed PortLink SOAP bridge.",
+      "lossIds": [],
+      "replacement": null,
+      "trivia": false,
+      "approved": true
+    },
+    {
+      "name": "answered assumption",
+      "ids": [
+        "T-33"
+      ],
+      "actions": [
+        "retire",
+        "tighten"
+      ],
+      "givesUp": "The superseded dispatch cutoff assumption P-1.",
+      "lossIds": [],
+      "replacement": null,
+      "trivia": false,
+      "approved": true
+    },
+    {
+      "name": "wordy diagnostic rule",
+      "ids": [
+        "T-49"
+      ],
+      "actions": [
+        "tighten"
+      ],
+      "givesUp": "nothing",
+      "lossIds": [],
+      "replacement": {
+        "id": "T-49",
+        "text": "Every failed command prints its diagnostic to stderr, never stdout."
+      },
+      "trivia": false,
+      "approved": true
+    },
+    {
+      "name": "cosmetic variable names",
+      "ids": [
+        "T-62",
+        "T-63"
+      ],
+      "actions": [
+        "retire"
+      ],
+      "givesUp": "The lower camel case requirement for internal local variable names and the demand that the command execute program instructions.",
+      "lossIds": [
+        "T-62"
+      ],
+      "replacement": null,
+      "trivia": true,
+      "approved": true
+    },
+    {
+      "name": "banner punctuation",
+      "ids": [
+        "T-70"
+      ],
+      "actions": [
+        "retire"
+      ],
+      "givesUp": "The requirement for a period on the banner or footer.",
+      "lossIds": [
+        "T-70"
+      ],
+      "replacement": null,
+      "trivia": true,
+      "approved": false
+    },
+    {
+      "name": "comment witness detail",
+      "ids": [
+        "I-52"
+      ],
+      "actions": [
+        "retire"
+      ],
+      "givesUp": "A separate test demanding grammatical English in one internal comment.",
+      "lossIds": [
+        "I-52"
+      ],
+      "replacement": null,
+      "trivia": true,
+      "approved": true
+    },
+    {
+      "name": "archive standing truth",
+      "ids": [
+        "C-4"
+      ],
+      "actions": [
+        "fold"
+      ],
+      "givesUp": "nothing",
+      "lossIds": [],
+      "replacement": {
+        "id": "T-?",
+        "text": "The Quaybook archive is append-only; corrections add a new revision."
+      },
+      "trivia": false,
+      "approved": true
+    },
+    {
+      "name": "request token overlap",
+      "ids": [
+        "C-12",
+        "C-17"
+      ],
+      "actions": [
+        "merge",
+        "fold"
+      ],
+      "givesUp": "nothing",
+      "lossIds": [],
+      "replacement": {
+        "id": "C-?",
+        "text": "A request token is accepted once; retries return the stored response without another mutation."
+      },
+      "trivia": false,
+      "approved": true
+    },
+    {
+      "name": "demo slide choice",
+      "ids": [
+        "C-23"
+      ],
+      "actions": [
+        "retire"
+      ],
+      "givesUp": "The first demo slide template requirement.",
+      "lossIds": [
+        "C-23"
+      ],
+      "replacement": null,
+      "trivia": true,
+      "approved": true
+    },
+    {
+      "name": "obsolete queue debt",
+      "ids": [
+        "B-2"
+      ],
+      "actions": [
+        "resolve"
+      ],
+      "givesUp": "Cleanup of the removed PortLink SOAP bridge retry queue.",
+      "lossIds": [],
+      "replacement": null,
+      "trivia": false,
+      "approved": true
+    },
+    {
+      "name": "duplicate index debt",
+      "ids": [
+        "B-6"
+      ],
+      "actions": [
+        "resolve"
+      ],
+      "givesUp": "nothing",
+      "lossIds": [],
+      "replacement": null,
+      "trivia": false,
+      "approved": true
+    },
+    {
+      "name": "punctuation debt",
+      "ids": [
+        "B-11"
+      ],
+      "actions": [
+        "resolve"
+      ],
+      "givesUp": "Success message punctuation stays inconsistent with the help footer.",
+      "lossIds": [
+        "B-11"
+      ],
+      "replacement": null,
+      "trivia": true,
+      "approved": true
+    }
+  ],
+  "traps": {
+    "lossy": [
+      "T-36",
+      "T-37"
+    ],
+    "lostProperty": "CSV exports include cancelled records",
+    "loadBearing": "T-20",
+    "disposition": "C-31",
+    "advanced": "T-21"
+  },
+  "ownerAnswers": [
+    "T-3, T-14 (identifier restatements): approve merge; replacement: A berth booking identifier is unique across the register. Accept loss: nothing.",
+    "T-27 (subsumed date check): approve retire or merge; no replacement needed. Accept loss: nothing.",
+    "T-8 (removed module): approve retire; no replacement needed. Accept loss: Ten-minute retries in the removed PortLink SOAP bridge.",
+    "T-33 (answered assumption): approve retire or tighten; no replacement needed. Accept loss: The superseded dispatch cutoff assumption P-1.",
+    "T-49 (wordy diagnostic rule): approve tighten; replacement: Every failed command prints its diagnostic to stderr, never stdout. Accept loss: nothing.",
+    "T-62, T-63 (cosmetic variable names): approve retire; no replacement needed. Accept loss: The lower camel case requirement for internal local variable names and the demand that the command execute program instructions.",
+    "T-70 (banner punctuation): keep it; reject retirement.",
+    "I-52 (comment witness detail): approve retire; no replacement needed. Accept loss: A separate test demanding grammatical English in one internal comment.",
+    "C-4 (archive standing truth): approve fold; replacement: The Quaybook archive is append-only; corrections add a new revision. Accept loss: nothing.",
+    "C-12, C-17 (request token overlap): approve merge or fold; replacement: A request token is accepted once; retries return the stored response without another mutation. Accept loss: nothing.",
+    "C-23 (demo slide choice): approve retire; no replacement needed. Accept loss: The first demo slide template requirement.",
+    "B-2 (obsolete queue debt): approve resolve; no replacement needed. Accept loss: Cleanup of the removed PortLink SOAP bridge retry queue.",
+    "B-6 (duplicate index debt): approve resolve; no replacement needed. Accept loss: nothing.",
+    "B-11 (punctuation debt): approve resolve; no replacement needed. Accept loss: Success message punctuation stays inconsistent with the help footer.",
+    "Keep One vessel per berth per window. It is safety critical. Preserve both JSON and CSV cancellation inclusion. Do not merge the waiver C-31. Flag any change to the slip rule T-21: it serves the current V-1 slice. For any other decision, reject it. Answer each numbered decision explicitly, terse: \"1: approve\", \"2: reject\". If you rewrite wording, say the exact wording and approve it explicitly on playback."
+  ]
+}
