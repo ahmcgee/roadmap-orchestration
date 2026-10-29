@@ -69,7 +69,8 @@ the owner more than $10, anything with legal ramifications. A checkpoint's `owne
 **Owner thoughts while an arc runs** are triaged once. One that changes what this arc must deliver (a `P-n` answer,
 a defect, a correction inside the slice) you apply or rule now. Everything else goes to the next-arc staging dir
 `<repo>/../roadmap-inputs/_next/`: `vision.md`, the owner's working draft of the next vision (edit it with them
-there), and `notes.md`, work for later, deferred rulings and ideas (append). The executor never reads `_next/`.
+there), `notes.md`, work for later, deferred rulings and ideas (append), and `compaction.md`, the owner's approved
+estate compaction decisions (the `estate-compaction` skill writes it). The executor never reads `_next/`.
 `.roadmap/vision.json` and the vision document change only between arcs: a running arc's `apply` refuses a vision
 file that differs from the vision in force (`vision-leak`). `apply --vision-edit` is only for a vision change the
 owner orders for the running arc: commit the edit on the owner's checkout (never on the arc's integration branch),
@@ -143,6 +144,9 @@ made false is a fact-currency fix in the next corpus window, never debt.
 Each step below says what must be true when it is done; how you get there is yours. `phase0 check` runs the
 rows code checks.
 
+**Compaction.** When `_next/compaction.md` holds a decision with neither `Applied` nor `Blocked`, apply each one
+through the steps below as the `estate-compaction` skill's "Applying the record" says, before `start`.
+
 Keep the arc's inputs in their own directory outside the product working tree, for example
 `<repo>/../roadmap-inputs/<arc>/`. For the shapes, read `reference.md` ("Files", "The corpus guide") and the
 `executor/SCHEMAS.md` sections it names; nothing else of the plugin is an example to copy.
@@ -160,8 +164,9 @@ Keep the arc's inputs in their own directory outside the product working tree, f
    Re-pin after every corpus change; `start` re-derives the pin and refuses drift.
 5. **Obligations.** Extract a testable obligation from every rule the slice needs: witness, `deliveredBy`, proof
    judgment, impact mapping, cut line (SCHEMAS.md "M3: the holistic layer"). Each obligation anchors at
-   `rule: {id, textSha256}` from the pin. Done when every extraction agrees with its rule and every disagreement
-   between them is settled.
+   `rule: {id, textSha256}` from the pin. Leave out every obligation the baseline already holds `retired`. A new
+   obligation takes the next `I-n` above the highest in any earlier arc's `obligations.json`. Done when every
+   extraction agrees with its rule and every disagreement between them is settled.
 6. **Census.** One entry per active pinned rule: `obligation{id}`, `out-of-slice`, `untestable` or `prod-only`.
    A claim about something not built yet is a `future` obligation, never `must-hold`. What an existing test already
    checks of a property the code must keep is a `must-hold` obligation witnessed by that test, never `untestable` or
@@ -253,6 +258,20 @@ Keep the arc's inputs in their own directory outside the product working tree, f
       `skills/frontend-design/` directory and its `LICENSE` into the repo's `.claude/skills/frontend-design/`, and
       commit before `start`. Working assumption: proceed without it. It is never a reason to hold the arc.
     - When a milestone settles, its build becomes the demo the owner picks up ("The demo").
+12. **Rulings ledger.** A chained arc's ledger carries the previous arc's final ledger (`roadmap inputs export`) and
+    its sidecars. This Phase 0's rulings take the next ids after it. Leave out:
+    - every withdrawn ruling;
+    - every `lifetime: arc` ruling;
+    - every ruling an applied compaction decision retires.
+
+    A ruling left out loses its ledger line and its sidecar file. Still carry each ruling named by:
+    - a carried obligation's state;
+    - a spec's `cites.rulings`;
+    - this Phase 0's debt `resolve`;
+    - a carried `withdrawn by` line.
+
+    Never drop the ledger's highest-numbered line: the next id is one past the file's highest, and ids are never
+    reused.
 13. **Integration branch.** `git branch <branch> <baseline>` (move it with `git branch -f` while nothing has
     started). One branch per arc, e.g. `arc/<arc>`, checked out in no worktree.
 14. **Check.** `roadmap phase0 check --repo <repo> --plan <inputs>/plan.json` until it exits 0. Fix inputs, never
@@ -481,8 +500,11 @@ At arc completion (`status.run.state` `complete`, `completion.active`):
    check-in is the final one. `k-unset`: ask K ("Bootstrap" step 3); on resume, write it in the between-arc commit.
 3. Check in ("Check-ins"), ending with the next action, or with the stop. Include the completed arc's pinned
    `roadmap tui --repo <repo> --arc <arc>` command for reviewing its retained activity and estate after
-   completion or after another arc starts. Everything below runs after you are resumed.
-4. **Read what waits** for the next arc: `<repo>/../roadmap-inputs/_next/` (`vision.md`, `notes.md`) beside
+   completion or after another arc starts. State the estate's size: active rules, obligations, carried rulings and
+   open debt. When no arc's `next/compaction.md` among the last three has an `Applied` decision, recommend the owner
+   run `/roadmap-orchestrator:estate-compaction`. Ask about every `Blocked` decision. Everything below runs after
+   you are resumed.
+4. **Read what waits** for the next arc: `<repo>/../roadmap-inputs/_next/` (`vision.md`, `notes.md`, `compaction.md`) beside
    `status.amendments`, the `finding-deferred` debt and the chain's open questions.
 5. **The vision.** When `_next/vision.md` differs from the confirmed vision document, run the `vision` skill's
    Calibrate on that draft: its changes reach the vision document only through playback and the owner's
@@ -491,7 +513,7 @@ At arc completion (`status.run.state` `complete`, `completion.active`):
    vision's trade-offs. When no candidate is one you can justify from active clauses, stop with reason
    `vision-silent`. Otherwise report the slice and why at the next check-in; do not wait for approval.
 7. **The between-arc commit.** `git switch -c work/<next arc> <completed head>` (`status.completion.head`). Every
-   corpus edit of the next Phase 0 (amendments, curation, answered questions, the previous arc's mid-arc answers)
+   corpus edit of the next Phase 0 (amendments, curation, compaction, answered questions, the previous arc's mid-arc answers)
    and any change to
    `.roadmap/{vision.json, corpus.md, config.json}` goes into exactly one non-merge commit on that head; amend it
    as Phase 0 goes, and commit it empty (`--allow-empty`) if nothing changed. It touches nothing else. It is the
@@ -499,8 +521,8 @@ At arc completion (`status.run.state` `complete`, `completion.active`):
 8. Phase 0 for the next arc, with `chain: {previousArc, previousHead: <completed head>}` in its plan; `notes.md`
    items it takes on become units, rulings or questions there.
 9. **Hand `_next/` over** when the next arc starts: move it to `<repo>/../roadmap-inputs/<next arc>/next/` and start
-   a fresh `_next/`: `vision.md` a copy of the confirmed vision document (the base of the next draft) and an empty
-   `notes.md`.
+   a fresh `_next/`: `vision.md` a copy of the confirmed vision document (the base of the next draft), an empty
+   `notes.md`, and a `compaction.md` holding each `Blocked` decision, for the owner to rule on at the next check-in.
 
 **Stop.** One final message: the check-in, the request to merge the stacked PRs in order, first into `main`, each
 with a merge commit, then exactly one line: `ROADMAP-SESSION: stopped <reason>`, where reason is `k-limit`,
