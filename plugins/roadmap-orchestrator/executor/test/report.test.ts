@@ -70,6 +70,17 @@ describe('report: the final report ends the build', { concurrency: true }, () =>
     assert.deepEqual(run.exit.child, { type: 'signalled', signal: 'SIGTERM' });
   });
 
+  for (const as of ['claude', 'codex'] as const) {
+    it(`report.${as}-legacy-lingers: an old lanesRun report still ends the build after the grace`, T, async () => {
+      const legacy = { ...report('legacy', true), lanesRun: [{ lane: 'old', exit: 0 }] };
+      const run = await build(as, [{ type: 'emit', value: legacy }, { type: 'hang', ms: LINGER_MS }]);
+      assert.equal(run.exit.cause, 'reported');
+      assert.deepEqual(run.result.outcome, { kind: 'success', value: legacy });
+      assert.deepEqual(buildOutput(legacy, 'build'), report('legacy', true));
+      assert.ok(run.wallMs >= REPORT_GRACE_MS && run.wallMs < REPORT_GRACE_MS + 20_000);
+    });
+  }
+
   it('report.claude-descendant: a final result, the CLI exits, a descendant lives on → killed after the grace, cause reported', T, async () => {
     const pidFile = join(tmpDir('report-pid'), 'pid');
     const run = await build('claude', [

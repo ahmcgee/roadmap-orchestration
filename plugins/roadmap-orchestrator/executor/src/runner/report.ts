@@ -14,7 +14,7 @@
 // it with cause `reported`. Before a final report, waiting is unrestricted; the deadline stays the backstop. A schema
 // without `final` (every judgment, the smoke) is never watched.
 import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, statSync } from 'node:fs';
-import { schemaViolation } from '../backends/adapter.ts';
+import { backendSchemaViolation } from '../backends/adapter.ts';
 import type { BackendTerminal, LaunchTerminal } from '../core/records.ts';
 
 /** How long the runner lets a workload run on after its final report before it ends it (cause `reported`). */
@@ -32,7 +32,7 @@ export function reportWatch(terminal: LaunchTerminal): ReportWatch | null {
   const schema: unknown = JSON.parse(readFileSync(terminal.schemaPath, 'utf8'));
   const final = isObject(schema) && isObject(schema['properties']) ? schema['properties']['final'] : undefined;
   if (!isObject(final) || final['type'] !== 'boolean') return null;
-  const isFinal = (value: unknown): boolean => isObject(value) && value['final'] === true && schemaViolation(schema, value) === null;
+  const isFinal = (value: unknown): boolean => isObject(value) && value['final'] === true && backendSchemaViolation(schema, value, terminal.role) === null;
   return terminal.session.backend === 'claude' ? streamWatch(terminal, isFinal) : fileWatch(terminal, isFinal);
 }
 
