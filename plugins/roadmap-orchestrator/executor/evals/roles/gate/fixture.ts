@@ -220,7 +220,9 @@ function buildCorpusFixture(cell: CorpusCell, o: FixtureOptions): Fixture {
   const vessel = cell.corpus === 'anchor' ? "'anonymous'" : 'input.id';
   const module = `export function vesselExport(input: { id: string; token: string }): { vessel: string } {\n${line}  return { vessel: ${vessel} };\n}\n`;
   const testPath = `packages/${pkg}/test/vessel-export.test.ts`;
-  const test = `import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { vesselExport } from '../src/vessel-export.ts';\ntest('export record shape', () => { assert.equal(typeof vesselExport({ id: 'oak', token: 'private' }).vessel, 'string'); });\n`;
+  // The anchor plant must pass its own test, so only its test is weak; elsewhere a weak test is a real finding.
+  const check = cell.corpus === 'anchor' ? "typeof vesselExport({ id: 'oak', token: 'private' }).vessel, 'string'" : "vesselExport({ id: 'Oak-7', token: 'private' }).vessel, 'Oak-7'";
+  const test = `import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { vesselExport } from '../src/vessel-export.ts';\ntest('export record shape', () => { assert.equal(${check}); });\n`;
   const head = finish(sorted(new Map([...base, [path, module], [testPath, test]])));
   const acceptance = [{ id: 'A1', clause: `Add vesselExport and its test in packages/${pkg}/. It accepts an id and an access token and returns a vessel record, following the corpus export contract.` },
     { id: 'A2', clause: 'goldens/ is regenerated with node tools/gen-goldens.ts. Nothing else changes.' }];
