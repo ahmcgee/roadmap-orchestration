@@ -66,7 +66,7 @@ import {
 import type { GitSteps, IntentBody, JournalView } from '../core/interfaces.ts';
 import { canonicalJson, canonicalRecordBytes, sha256Hex } from '../core/json.ts';
 import { EVENTS_FILE } from '../core/log.ts';
-import { runStart } from '../core/records.ts';
+import { isRed, runStart } from '../core/records.ts';
 import { Fold } from '../core/state.ts';
 import { Fields, type Read, literal, nat, object, positive, sortedBy, tagged, version } from '../core/validate.ts';
 import { type AbsPath, type RefName, type RepoPath, absPath, refName, repoPath } from '../core/values.ts';
@@ -273,7 +273,7 @@ function closureOf(events: readonly Event[], read: (sha: Sha256Hex, ext: string)
         // (src/pipeline/dispatch.ts `evidenceRoot`, lanes.ts `specSeriesRoot`); a red rerun names the same path.
         const s = intent.expect.subject;
         const verdict = e.outcome.summary.type === 'command' ? e.outcome.summary.verdict : null;
-        if (s.purpose === 'lane' && s.set === 'spec' && s.redRev !== undefined && (verdict === 'fail' || verdict === 'stall') && intent.parent.type === 'stage') {
+        if (s.purpose === 'lane' && s.set === 'spec' && s.redRev !== undefined && verdict !== null && isRed(verdict) && intent.parent.type === 'stage') {
           const path = repoPath(`evidence/${s.unit}/${intent.parent.attempt}-${intent.parent.stage}/${s.lane}/${RED_FILE}`);
           add({ path, namedBy: by, sha256: null, optional: true, source: { type: 'red', path } });
         }

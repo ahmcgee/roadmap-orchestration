@@ -41,6 +41,7 @@
 // - M3 step A3 (R11): a steered unit's pass (`UnitState.steering`) exits in `steerExit`, uncharged: a red series or a
 //   gate revise parks `steered` instead of a fix round, and so does a green gate unless the steer said `--resume`.
 //   The steer round itself is an entry outside the table (`UnitState.entry`, src/pipeline/unit.ts).
+import type { OrderingWait } from '../core/ordering.ts';
 import {
   type GateLargeDiff, type HoldCause, type JudgmentStage, type OperatorParkKind, type OutcomeClass, type OutcomeStage, type ParkRecord, type ProbeTarget,
   type RetryStage, type StageOutcomeFact, type StageOutcomeKind, JUDGMENT_STAGES, probeTargetKey,
@@ -253,6 +254,8 @@ export const TABLE: Table = {
   lanes: {
     green: go(at('gate')),
     red: charge(build('fix')),
+    // A same-commit red then green still needs a fix, but does not consume the unit's design-failure bound.
+    flaky: go(build('fix')),
     'not-certified': charge(build('fix')),
     // A lane the runner ended (deadline) or lost: not a product verdict.
     blocked: retry('lane-blocked', 'retryable'),
@@ -529,8 +532,9 @@ export function parkClassOf(u: UnitState, outcome: StageOutcome): ParkClass | nu
  * What only the stage knows about its outcome. `targets`: a retryable park's probe targets (non-empty; a
  * stage that states none leaves the fact without `park`, which the fold reads as an operator park until the
  * stages name their targets: the interim M2 shim, step 7a, src/core/state.ts `unclassedParkRecord`). `cause`: why a hold is not an operator pause or stop (G5).
+ * `ordering`: an explicit design-judgment wait for named units to merge; null means no automatic wake.
  */
-export type OutcomeContext = Readonly<{ targets?: readonly ProbeTarget[]; cause?: HoldCause }>;
+export type OutcomeContext = Readonly<{ targets?: readonly ProbeTarget[]; cause?: HoldCause; ordering?: OrderingWait | null }>;
 
 /** The `stage-outcome` fact that records `outcome` of stage attempt `attempt`, as `transition` decides it. */
 export function outcomeFact(u: UnitState, outcome: StageOutcome, attempt: number, context: OutcomeContext = {}): StageOutcomeFact {
@@ -539,7 +543,9 @@ export function outcomeFact(u: UnitState, outcome: StageOutcome, attempt: number
   if (context.targets !== undefined && parkClass !== 'retryable') throw new Error(`outcomeFact: targets for ${outcome.stage} ${outcome.kind}, which decides no retryable park`);
   if (context.cause !== undefined && d.class !== 'hold') throw new Error(`outcomeFact: a hold cause for ${outcome.stage} ${outcome.kind}, which decides ${d.class}`);
   let park: ParkRecord | null = null;
-  if (parkClass === 'env' || parkClass === 'design') park = { class: 'operator', kind: parkClass };
+  if (context.ordering != null && parkClass !== 'design') throw new Error(`outcomeFact: ordering wait for ${outcome.stage} ${outcome.kind}, which decides no design park`);
+  if (parkClass === 'env') park = { class: 'operator', kind: 'env' };
+  if (parkClass === 'design') park = { class: 'operator', kind: 'design', ...(context.ordering === undefined ? {} : { ordering: context.ordering }) };
   if (parkClass === 'retryable' && context.targets !== undefined) {
     if (context.targets.length === 0) throw new Error(`outcomeFact: a retryable park of ${outcome.stage} ${outcome.kind} with no targets`);
     const targets = [...new Map(context.targets.map((t) => [probeTargetKey(t), t])).entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(([, t]) => t);

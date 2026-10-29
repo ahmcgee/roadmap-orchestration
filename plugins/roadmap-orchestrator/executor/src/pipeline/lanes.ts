@@ -22,14 +22,14 @@
 // rerun (red then green is `flaky`: dev.17, a flake recorded with the tree it was seen on, `observeFlake`, `flakeOn`; a
 // flake of the tip's is the flaky ledger's and forgiven, so the green rerun counts, unless the unit deflakes that lane or
 // the red ran on a saturated host; a flake on the unit's own commit is its red, dev.21, unless it stands as a tip flake;
-// else red). The class is persisted (`red.json`) before the decision. A rerun takes its own reservation,
+// else red; the lanes stage records a same-commit diagnostic pass as `flaky`, an uncharged fix round). The class is persisted (`red.json`) before the decision. A rerun takes its own reservation,
 // runs in the same checkout at the same SHA and keeps its evidence in `<lane>.rerun/`. The ledger holds one
 // record per lane (`LaneRecord`): the run whose verdict counts, with the other run attached.
 //
 // A lane runs under the runner's stall watchdog (LANE_STALL_MS without progress: no CPU time, no output, no
 // process started or ended) and a distant deadline (LANE_DEADLINE_MS), the backstop for a busy loop. A long
-// suite that is working is never cut short. A stalled lane is red, a verdict on the tree: it hung, and the fix
-// round reads its output. A deadline kill or a lost runner is `blocked`, no verdict. The checkout is created just before the first lane runs, so a series that
+// suite that is working is cut short only by its declared timeout or the backstop. A stalled lane is red, a verdict on the tree: it hung, and the fix
+// round reads its output. A configured timeout is red (`timeout`); the default deadline or a lost runner is `blocked`, no verdict. The checkout is created just before the first lane runs, so a series that
 // ends before any lane ran leaves no tree behind.
 //
 // After its snapshots, each lane's census of the gitignored files it wrote is recorded (`ignored.json`, write-
@@ -70,6 +70,7 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { basename, dirname, join, posix } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
+import { sameExecution } from '../input/laneexecution.ts';
 import type { FlakeOn, IntentOf, LaneIdentity, Parent, WitnessFor } from '../core/events.ts';
 import {
   type EnvId, type InvocationId, type JobId, type LaneId, type LaneRev, type OpId, type ResourceInstance, type ResourceName, type ResourceUnit, type Sha, type UnitId,
@@ -77,7 +78,7 @@ import {
 } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
-import { HOST_SIGNATURES_DEV6, spawnPressureOf } from '../core/upgrade.ts';
+import { HOST_SIGNATURES_DEV6, spawnPressureOf, laneTimeoutDefault } from '../core/upgrade.ts';
 import { type ObservationStore, type WitnessedEntry, observationOf, observationStore, reuse, verdictOf } from '../holistic/observe.ts';
 import { type ReuseKey, inputShaOf } from '../git/reusekey.ts';
 import { type SystemsMap, laneInput, laneTestFiles, systemsMapInForce } from '../input/systems.ts';
@@ -135,7 +136,23 @@ export function flakeOn(ctx: ResourceContext, stage: StageParent | null, at: Sha
 export const LANE_STALL_MS = 10 * 60_000;
 /** A lane's deadline: only the backstop for a busy loop, which the stall watchdog cannot see. */
 export const LANE_DEADLINE_MS = 6 * 60 * 60_000;
+const laneDeadlineMs = (lane: Pick<LaneDef, 'timeoutMin'>): number => {
+  if (lane.timeoutMin !== undefined) return lane.timeoutMin * 60_000;
+  laneTimeoutDefault();
+  return LANE_DEADLINE_MS;
+};
 export const LANE_GRACE_MS = 5_000;
+
+/** One deadline and retained terminal for every lane consumer, including mutant and flow proof runs. */
+export function laneCommand(lane: LaneDef) {
+  return {
+    deadlineAt: isoTimeOf(new Date(Date.now() + laneDeadlineMs(lane))),
+    launch: {
+      stallMs: LANE_STALL_MS, graceMs: LANE_GRACE_MS,
+      terminal: { type: 'command', purpose: 'lane', expectedExit: lane.expectedExit, ...(lane.timeoutMin === undefined ? {} : { timeoutMin: lane.timeoutMin }) } as const,
+    },
+  };
+}
 
 /**
  * One run of a lane: what the gate reads (`LaneLedgerEntry`, whose `evidenceDir` holds every snapshot of the
@@ -358,7 +375,7 @@ function readLaneHost(dir: AbsPath): LaneHost | null {
 /**
  * A lane run's record, read from its spawn and invocation files: what ran (the definition), how it ended
  * (result.json, or none when lost with its runner), when (a lane's deadline is its start plus
- * LANE_DEADLINE_MS, so launch.json carries the start;
+ * its retained timeoutMin (else LANE_DEADLINE_MS), so launch.json carries the start;
  * exit.json the end), its evidence dir's census and host samples, and a red run's host signatures. The live
  * series and every later reader build records here, so they are the same record.
  */
@@ -374,7 +391,7 @@ function laneRun(ctx: StageContext, intent: IntentOf<'proc.spawn'>, lane: LaneDe
   if (launch === null) throw new Error(`lane ${lane.id} ${inv}: no launch.json`);
   const result = files.read('result.json');
   if (result !== null && result.type !== 'command') throw new Error(`${inv}: a lane produced a ${result.type} result`);
-  const at = isoTimeOf(new Date(new Date(launch.deadlineAt).getTime() - LANE_DEADLINE_MS));
+  const at = isoTimeOf(new Date(new Date(launch.deadlineAt).getTime() - laneDeadlineMs(launch.terminal.type === 'command' ? launch.terminal : {})));
   const verdict: CommandVerdict = result?.verdict ?? 'process-fault';
   return {
     lane: lane.id, argv: subject.files === undefined ? lane.argv : testArgvOf(lane, subject.files), expectedExit: lane.expectedExit, exitCode: result?.exitCode ?? null, verdict, evidenceDir: dir,
@@ -788,9 +805,10 @@ async function runLane(
   sampleHost: () => HostSample, identity: LaneIdentity, witness: ArcLaneDef | null, files: readonly RepoPath[] | null, verify: number | null,
 ): Promise<Ran> {
   const start = sampleHost();
+  const command = laneCommand(lane);
   const outcome = await invoke(ctx.journal, ctx.containment, {
     runDir: ctx.runDir,
-    origin: { type: 'new', key: opKey(`lane:${parent.unit}`), parent, deadlineAt: isoTimeOf(new Date(Date.now() + LANE_DEADLINE_MS)) },
+    origin: { type: 'new', key: opKey(`lane:${parent.unit}`), parent, deadlineAt: command.deadlineAt },
     subject: {
       purpose: 'lane', unit: parent.unit, lane: lane.id, set, at, redRev: HOST_SIGNATURES_REV, identity, ...(files === null ? {} : { files: [...files].sort() }),
       ...(verify === null ? (lane.stochastic === undefined ? {} : { stochastic: lane.stochastic }) : { verify }),
@@ -806,8 +824,7 @@ async function runLane(
       }
       return {
         argv: files === null ? lane.argv : testArgvOf(lane, [...files].sort()), cwd: absPath(join(tree, lane.cwd)), env: { ...env, ...extra }, stdinPath: null,
-        stallMs: LANE_STALL_MS, graceMs: LANE_GRACE_MS,
-        terminal: { type: 'command', purpose: 'lane', expectedExit: lane.expectedExit },
+        ...command.launch,
       };
     },
   });
@@ -1288,10 +1305,7 @@ export const standInJourneyLane = (def: ArcLaneDef): JourneyLane => ({ ...arcJou
  * so on the same tree the other's run is the suite lane's: an arc lane's (with its reporter's env added), or a spec
  * lane's (`fastSuiteLanes`).
  */
-export function sameExecution(suite: LaneDef, other: LaneDef): boolean {
-  const shape = (l: LaneDef): string => canonicalJson({ argv: l.argv, cwd: l.cwd, set: l.env.set, pass: [...l.env.pass].sort(), expectedExit: l.expectedExit });
-  return shape(suite) === shape(other);
-}
+export { sameExecution } from '../input/laneexecution.ts';
 
 /** Each suite lane's identical arc lane among `arc` (the first, by `sameExecution`), by suite lane id; never a stochastic lane's. */
 export function suiteStandIns(suite: readonly LaneDef[], arc: readonly ArcLaneDef[]): ReadonlyMap<LaneId, ArcLaneDef> {
@@ -1489,9 +1503,10 @@ export async function runJourneySeries(
 
   const runOne = async (lane: JourneyLane, held: readonly ResourceUnit[]): Promise<JourneyRan> => {
     const start = sampleHost();
+    const command = laneCommand(lane.def);
     const outcome = await invoke(ctx.journal, ctx.containment, {
       runDir: ctx.runDir,
-      origin: { type: 'new', key: opKey(`lane:${who}`), parent, deadlineAt: isoTimeOf(new Date(Date.now() + LANE_DEADLINE_MS)) },
+      origin: { type: 'new', key: opKey(`lane:${who}`), parent, deadlineAt: command.deadlineAt },
       subject: {
         purpose: 'journey', lane: lane.def.id, laneRev: lane.laneRev, at, owner: owner.type === 'unit' ? { type: 'unit', unit: owner.parent.unit } : { type: 'job', job: owner.job },
         redRev: HOST_SIGNATURES_REV,
@@ -1502,7 +1517,7 @@ export async function runJourneySeries(
         mkdirSync(dirOf(lane, invDir), { recursive: true });
         return {
           argv: lane.def.argv, cwd: absPath(join(checkout.path, lane.def.cwd)), env: envOf(lane, held, absPath(join(dirOf(lane, invDir), WITNESS_LINES))), stdinPath: null,
-          stallMs: LANE_STALL_MS, graceMs: LANE_GRACE_MS, terminal: { type: 'command', purpose: 'lane', expectedExit: lane.def.expectedExit },
+          ...command.launch,
         };
       },
     });

@@ -11,7 +11,7 @@ import { describe, test } from 'node:test';
 import { applyCommand } from '../src/commands/apply.ts';
 import { submitCommand } from '../src/commands/queue.ts';
 import type { Fact, IntentOf } from '../src/core/events.ts';
-import { findingId, jobId, sha, unitId } from '../src/core/ids.ts';
+import { invocationId, findingId, jobId, sha, unitId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import { mutantSubjectDefault } from '../src/core/upgrade.ts';
 import { absPath } from '../src/core/values.ts';
@@ -19,6 +19,8 @@ import { verifySnapshot } from '../src/git/snapshot.ts';
 import { batchable, findingMetrics, openFinding, ruleFinding } from '../src/holistic/findings.ts';
 import { SPEC_INPUT, inputPath } from '../src/input/inforce.ts';
 import { publishBatch } from '../src/pipeline/integrate.ts';
+import { invocationDir } from '../src/pipeline/invoke.ts';
+import { runnerFiles } from '../src/runner/files.ts';
 import { observations } from '../src/pipeline/lanes.ts';
 import { repairUnits, specFacts } from '../src/pipeline/reproduce.ts';
 import { planCheck } from '../src/pipeline/stages.ts';
@@ -472,3 +474,25 @@ describe(`matrix row ${MUTANT_APPLY}`, () => {
   }
 });
 
+
+test('reproduce.timeout: mutant launches enforce their arc lane limit and retain timeout evidence', T, async () => {
+  const { d } = vacuityArc({ laneExtra: { journey: {
+    timeoutMin: 0.03, argv: ['sh', '-c', 'for n in $(seq 1 100); do echo working; sleep 0.1; done'],
+  } } });
+  const r = contextFor(d);
+  try {
+    await step(r.ctx, r.unit('v1'));
+    const spawns = mutantRuns(r);
+    assert.equal(spawns.length, 1);
+    const spawn = spawns[0]!;
+    const inv = invocationId(spawn.op, spawn.ordinal);
+    const files = runnerFiles(invocationDir(r.ctx.runDir, inv), inv);
+    const launch = files.read('launch.json');
+    assert.ok(launch?.terminal.type === 'command' && launch.terminal.timeoutMin === 0.03);
+    assert.equal(files.read('exit.json')?.cause, 'timeout');
+    const result = files.read('result.json');
+    assert.ok(result?.type === 'command' && result.verdict === 'timeout');
+    assert.deepEqual(worktrees(r), [], 'timed-out mutant checkout is cleaned');
+    assert.ok(!outcomes(d, 'v1').includes('reproduce:reproduced'), 'timeout cannot establish reproduction');
+  } finally { r.journal.close(); }
+});

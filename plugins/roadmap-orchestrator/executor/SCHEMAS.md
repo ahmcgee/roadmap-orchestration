@@ -793,7 +793,7 @@ invocation of `op`, `op` of `arc`) and written by `fsx.durable()`. Workload stdo
 | `launch.json` | `LaunchFile` / `launchFile` | executor, after the spawn intent is durable, before the act | `argv` (argv[0] non-empty; a later argument may be empty), `cwd, env` (declared; no `ROADMAP_*`), `stdinPath\|null, deadlineAt, stallMs\|null` (the runner's stall watchdog: no progress, meaning no member CPU time, no output growth and no member started or ended, for `stallMs` → kill, cause `stall`; lanes carry `LANE_STALL_MS`, every other launch null; required), `graceMs` (≥ `MIN_GRACE_MS` = 1000: the backstop fires at deadline + 2·grace and the runner polls every 500 ms), `containment, test: {crash}\|null, terminal` |
 | `runner.json` | `RunnerFile` / `runnerFile` | runner, before spawning (`child: null`); rewritten after | `runner{pid, start, bootId}, child{pid, start, sid}\|null` |
 | `cancel.json` | `CancelFile` / `cancelFile` | executor, before signalling the workload | `reason: pause\|stop\|recovery\|preempt\|supersede\|teardown, at` (`preempt`: M3, a lane only; `supersede`: M4b, a checkpoint call only; `teardown`: dev.13, a bring-up's serve process only) |
-| `exit.json` | `ExitFile` / `exitFile` | runner, after workload quiescence | `child: exited{code}\|signalled{signal}\|spawn-failed{error}, cause: exited\|deadline\|stall\|cancel\|recovery-kill\|reported, endedAt ≤ quiescedAt` (`reported`: see "The report rule" below) |
+| `exit.json` | `ExitFile` / `exitFile` | runner, after workload quiescence | `child: exited{code}\|signalled{signal}\|spawn-failed{error}, cause: exited\|deadline\|timeout\|stall\|cancel\|recovery-kill\|reported, endedAt ≤ quiescedAt` (`reported`: see "The report rule" below) |
 | `result.json` | `ResultFile` / `resultFile` | executor (the adapter, pure over the files above), after the runner has exited with `exit.json` present; re-run at recovery whenever `exit.json` exists without it (lead ruling, 1a: the runner never runs the adapter, so it needs no backend schema) | union below |
 | `runner.log` | none (plain text, not a record) | the runner's own stdout and stderr, opened by the executor when it starts the runner (`RUNNER_LOG`, `src/runner/launch.ts`) | free text; empty on a clean run |
 
@@ -814,7 +814,7 @@ src/pipeline/dispatch.ts; every judgment's fresh call persists its session); `bu
 `codex{fresh}` (Codex mints its thread id) \| `codex{resume, id}`, ids `ImplementerSessionId`.
 
 `result.json` = `backend{role, routingRev, session, outcome, usage, backendErrors[]}` \| `command{purpose,
-exitCode|null, expectedExit, verdict: pass|fail|stall|process-fault|cancelled}`, `reason: pause|stop` (a command's
+exitCode|null, expectedExit, verdict: pass|fail|stall|timeout|process-fault|cancelled}`, `reason: pause|stop` (a command's
 also `preempt`, M3, and `teardown`, dev.13: a bring-up's serve process) beside `cancelled` only (`exitCode: null` ⇒ not `pass` or `fail`; cause `stall` ⇒ `stall`, whatever the exit: a lane
 that hung is red, a verdict on the tree; cause `cancel` ⇒ `cancelled{reason}` from cancel.json, the same
 interruption a backend call records as outcome `cancelled{reason}`; `classifyCommand(exit, cancel, expectedExit)`).
@@ -4803,7 +4803,7 @@ src/pipeline/deflake.ts, src/pipeline/deflakemint.ts). Record changes are additi
 2. **Forgiveness**: `forgiven` is decided once, at observation (`flakeForgiven`): false when the owner is a deflake unit
    (or a re-entry of one) of one of the event's keys; else true for a flake `on: tip`; for one `on: unit` (dev.21), true
    only when every key stands as a tip flake (`tipFlaky`: a ledger flake after the key's latest merged deflake's
-   publication seq). Forgiven, the lane passes on its green rerun; else it is red, `flaky`, charged, and its fix round is
+   publication seq). Forgiven, the lane passes on its green rerun; else its red record remains `flaky`; the lanes stage records an uncharged `flaky` fix round, and its fix round is
    told so. A unit's own flake is never in the ledger, so it never mints. A read-back (`seriesLedger`) takes the forgiveness from the fact of the red run.
 3. **Due** (`deflakeDue`): per key, nothing while a deflake of it is open or parked; else the flakes after its deflakes
    settled (a merged one's publication seq; a cut one's admission seq). None: nothing. Some, with fewer than two deflakes:
@@ -5277,3 +5277,107 @@ Markdown estate details render an inert terminal subset: headings, emphasis, inl
 visible destinations, lists/tasks, quotes, fenced/indented code, rules and tables. Narrow tables switch
 to labelled records. Links/images are not fetched, and code is never executed. Raw mode preserves the
 source. Structured JSON projections, recorded references and commit/hash provenance remain unchanged.
+
+## Near-duplicate lane advisory
+
+Phase-0 checks and apply emit `lanes-differ-only-env-set{lanes: [<source/id>, <source/id>]}`
+when two active spec, suite or arc commands have identical argv, cwd, sorted env.pass and
+expectedExit and timeoutMin (including absence), but different env.set. This is advisory only: both executions retain their
+own identity and evidence. Exact execution equality is shared with lane deduplication in
+`src/input/laneexecution.ts`.
+
+## Per-lane wall timeout
+
+A spec, suite or arc lane may declare `timeoutMin`: finite positive minutes, including
+fractions, with a duration of at least 1 ms and at most Number.MAX_SAFE_INTEGER ms.
+It is absent by default; absence preserves the previous release's six-hour runner
+backstop and logs `upgrade default (lane.timeoutMin)` once per process when used.
+The absent field stays absent when normalising or hashing older definitions.
+Execution equality includes timeoutMin: absence and an explicit six-hour limit differ
+(backstop versus red timeout), so neither stage deduplication nor arc stand-ins conflate them.
+
+A configured limit is copied to the lane command's `launch.json.terminal.timeoutMin`;
+its absolute `deadlineAt` uses that duration. Only lane commands may carry this field.
+`laneCommand` constructs the deadline and terminal together for spec/suite, journey,
+mutant/reproduce and flow-proof launches; every consumer enforces the same limit.
+At this deadline the runner writes `exit.json.cause: timeout` (the kill reason remains
+`deadline`) and `result.json.verdict: timeout`, a red lane verdict. This differs from
+an unconfigured six-hour `deadline`, which retains its no-verdict/process-fault behavior.
+The stall watchdog still applies independently. A timeout enters the ordinary red-lane
+protocol and supplies failing-lane evidence to the fix round. Historical start times
+are reconstructed from the retained launch limit, never the current lane definition.
+
+## Resuming a scope-growth hold
+
+`resume <unit>` and arc-wide `resume` acknowledge the blocking needs-user item parented
+by each scope-growth hold they clear, before writing `resumed`. This does not accept
+its proposed scope: the stage retries within the scope in force. The ordinary durable
+ack file and `needs-user-acked` fact make interruption between acknowledgment and
+resume replayable. Other holds' items and unrelated blocking items remain untouched.
+
+## Same-commit lane flakes
+
+The lanes stage adds outcome `flaky`: a red series whose failing lanes all passed their
+same-commit diagnostic reruns, with a clean checkout. It starts `build/fix`, class
+`advance`, `chargeable: false`; neither the chargeable failure bound nor candidate-red
+counter grows. Both runs and the existing flake directives remain in the fix round,
+including after recovery. This class does not forgive the lane or turn it into a
+reusable clean pass. Deterministic red-red, dirty checkouts, failed verification repeats
+and witness failures retain their existing outcomes. Host-pressure handling precedes
+this classification. Old `red` facts retain their recorded charge.
+
+## Supervisor executor-exit evidence
+
+For each executor it reaps, the supervisor exclusively publishes
+`<hostDir>/executor.<generation>.exit.json` before restarting or releasing its claim:
+`{v, generation, at, child: exited{code}|signalled{signal}, stages}`.
+`stages` is `{kind: known, last: stage-parent|null, open: stage-parent[]}` from the
+verified complete journal (unit/stage/attempt), or `{kind: unreadable, detail}` when
+that journal is corrupt. A completed unit's terminal retire bookkeeping is not an
+open attempt. An empty startup journal yields no last or open stage. This records
+intentional exits as well as crashes, including an exit that never wrote an executor
+exit reason. Historical generations may lack this new evidence file; adoption does
+not require or manufacture one. GC treats it as a generation file, keeping it with
+any generation cited by an open needs-user item.
+
+## Audit readiness for unwitnessed obligations
+
+An `unwitnessed` audit trigger is suppressed while the obligation has unmerged
+blocking units. Cadence and status share `src/holistic/blocking.ts`: future obligations
+wait on effective lineage heads of `deliveredBy`; must-hold obligations wait on active
+repair owners. Split-parent status continues to aggregate its children's blockers.
+The existing journal-high-water memo invalidates after publications, latches and plan
+revisions; removing a blocker can make a ready future obligation trigger, while a
+new pending blocker suppresses it again. Other audit triggers are unaffected.
+
+The supervisor's exit observer uses the canonical journal reader and its read-time
+defaults. Warnings remain once per reader process: host stderr may contain one copy
+from the executor and another from the supervisor when each reads a legacy record.
+
+
+## Ordering parks and automatic wake
+
+Plan-check `infeasible`/`escalate` and gate `escalate` route up as before; at the escalation
+seat they park operator-design (`escalation`). When the judgment is blocked solely by
+other units needing to merge, its answer declares `ordering: {blockers: [<unit-id>, ...]}`;
+otherwise it declares `ordering: null`. The answer reader accepts older absent fields
+as no wait and logs `upgrade default (ordering)` once per process. Blockers are nonempty,
+unique, known plan units, never self, cut or superseded. The combined plan dependencies
+and current ordering parks must be acyclic. Prose reasons never identify blockers.
+There is no live build `infeasible` producer: that transition is a retained legacy row.
+
+The parking `stage-outcome.park` carries the same additive `ordering` on an uncharged
+operator-design park of those judgment outcomes. No other park acquires automatic wake
+semantics. An older park without the field retains its bytes and reads as no wait, with
+the same warning. Ordering parks are unsettled while waiting and do not raise their own
+needs-user or launch a design-park checkpoint. They retain their park and stage history.
+
+The scheduler checks these parks at publication boundaries and on adoption. Once every
+named blocker has status `retired` (merged), it writes the ordinary `unparked` fact with
+`command: null` and `parkSeq` naming the exact current ordering park. The fold verifies
+the park identity and every merge, then uses the existing park restoration transition:
+the parked stage runs as a fresh attempt, keeping counters and the escalation seat.
+An operator's existing `unparked{command}` remains unchanged and restricted to env parks.
+A duplicate, stale or premature automatic wake is invalid. A cut, an unrelated merge or
+a prose-only/legacy design park cannot satisfy this transition; the owner can still
+respecify or re-enter a design park through the existing command path.

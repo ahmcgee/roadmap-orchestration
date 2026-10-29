@@ -82,6 +82,24 @@ test('verify.verbatim-serial: lanes run one at a time, fast before estate, with 
   assert.equal(headOf(done.verification.path), run.base);
 });
 
+test('verify.timeout: a lane printing progress reaches its configured wall limit, ends red with cause timeout and releases its resources', T, async () => {
+  const run = laneRun([{ id: 'loop', timeoutMin: 0.03, argv: ['sh', '-c', 'for n in $(seq 1 100); do echo working; sleep 0.1; done'], resources: [DB] }], [DB]);
+  const done = started(await lanes(run.ctx, run.unit, run.base));
+  assert.equal(done.outcome.kind, 'red');
+  assert.equal(done.ledger[0]!.verdict, 'timeout');
+  for (const s of laneSpawns(run)) {
+    const inv = invocationId(s.op, s.ordinal);
+    const files = runnerFiles(invocationDir(run.ctx.runDir, inv), inv);
+    assert.equal(files.read('exit.json')?.cause, 'timeout');
+    const result = files.read('result.json');
+    assert.ok(result?.type === 'command' && result.verdict === 'timeout');
+    const launch = files.read('launch.json');
+    assert.ok(launch?.terminal.type === 'command' && launch.terminal.timeoutMin === 0.03);
+  }
+  assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, 1);
+  assert.equal(resourceTable(run.journal.view).get(resourceName(DB))?.status.state, 'free');
+});
+
 test('verify.dirty-tree: a lane that writes into the checkout is not certified (chargeable), its writes preserved', T, async () => {
   // A dirty path is snapshotted as itself even when its name is a glob.
   const writer: LaneJson = { id: 'writer', argv: ['sh', '-c', "mkdir -p out && echo ignored > out/x && echo stray > src/stray.txt && echo odd > 'src/w[1]*.txt'"] };

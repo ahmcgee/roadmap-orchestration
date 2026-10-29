@@ -78,6 +78,7 @@ import { type ArcRef, amendmentsOf, chainBack, committedAcks, completedHeadOf, p
 import { type ArcId, type DebtId, type MilestoneId, type Sha256Hex, type UnitId, DOCS_SYSTEM, phaseQuestionSeq, sha, sha256 } from '../core/ids.ts';
 import { type SpecM1, specForces, specRemoves } from '../core/records.ts';
 import { unknownLaneSystems } from '../input/systems.ts';
+import { sameExecution } from '../input/laneexecution.ts';
 import { sha256Hex } from '../core/json.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { SchemaError } from '../core/validate.ts';
@@ -170,7 +171,7 @@ export type DerivedUnregenerated = Readonly<{ kind: 'derived-unregenerated'; out
 export type MilestoneUnitBeforeDesign = Readonly<{ kind: 'milestone-unit-before-design'; milestone: MilestoneId; unit: UnitId; design: UnitId }>;
 
 /** A Phase-0 advisory: never a refusal (rows 10, 13, 14; dev.26: existing plan defects in APPLY). */
-export type Phase0Advisory = ScopeReference | DerivedUnregenerated | MilestoneUnitBeforeDesign | Row<'plan-defect'>;
+export type Phase0Advisory = ScopeReference | DerivedUnregenerated | MilestoneUnitBeforeDesign | Row<'plan-defect'> | Readonly<{ kind: 'lanes-differ-only-env-set'; lanes: readonly [string, string] }>;
 
 /**
  * The rows found, and on a clean re-derivation the source the pin read (its files are what a start or apply keeps).
@@ -219,7 +220,7 @@ export function phase0Rows(input: Phase0Input, mode: Phase0Mode): Phase0Outcome 
   const { plan } = input;
   rows.push(...milestonesNeedHolisticRows(plan));
   rows.push(...laneTopologyRows(input));
-  const advisories: Phase0Advisory[] = [...referenceRows(input), ...derivedUnregenerated(plan), ...milestoneUnitsBeforeDesign(plan)];
+  const advisories: Phase0Advisory[] = [...referenceRows(input), ...derivedUnregenerated(plan), ...milestoneUnitsBeforeDesign(plan), ...nearDuplicateLanes(input)];
   const defects = planDefects(input, mode);
   if (!mode.defects && defects.length > 0) advisories.push({ kind: 'plan-defect', defects });
   if (plan.target !== 'corpus') {
@@ -702,6 +703,19 @@ export function laneTopologyRows(input: Phase0Input): readonly Row<'plan-invalid
   const suite = new Set<string>(input.plan.suite.lanes.map((l) => l.id));
   for (const s of specs) for (const f of specForces(s)) if (!suite.has(f)) rows.push(schemaRow(`spec ${s.unit}.forces`, `${f}: a suite lane of the plan`));
   return rows;
+}
+
+/** Commands differing only in env.set still run separately; flag the likely duplicate without conflating their evidence. */
+function nearDuplicateLanes(input: Phase0Input): readonly Phase0Advisory[] {
+  const lanes = [
+    ...input.plan.suite.lanes.map((lane) => ({ lane, name: `suite/${lane.id}` })),
+    ...parsedSpecs(input).flatMap((s) => s.lanes.filter((l) => l.state === 'active').map((lane) => ({ lane, name: `${s.unit}/${lane.id}` }))),
+    ...(visionAndObligations(input).obligations?.lanes ?? []).map((lane) => ({ lane, name: `arc/${lane.id}` })),
+  ];
+  return lanes.flatMap((a, i) => lanes.slice(i + 1).flatMap((b): readonly Phase0Advisory[] => {
+    if (sameExecution(a.lane, b.lane) || !sameExecution({ ...a.lane, env: { ...a.lane.env, set: {} } }, { ...b.lane, env: { ...b.lane.env, set: {} } })) return [];
+    return [{ kind: 'lanes-differ-only-env-set', lanes: [a.name, b.name] }];
+  }));
 }
 
 // `walk-tools-missing` (dev.13, agent A): the bring-up programs (argv0) and, for a `browser` journey, the walkthrough MCP

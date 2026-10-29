@@ -35,7 +35,7 @@ import { specShaInForce } from '../input/inforce.ts';
 import { canonicalJson } from '../core/json.ts';
 import { type NeedsUserContent, type SpecM1, STDERR_FILE, STDOUT_FILE, specRepairs } from '../core/records.ts';
 import type { FindingState, UnitState } from '../core/state.ts';
-import { type AbsPath, absPath, isoTimeOf, repoPattern } from '../core/values.ts';
+import { type AbsPath, absPath, repoPattern } from '../core/values.ts';
 import { capturedEvidence } from '../git/evidence.ts';
 import { mutantPatchPath, patchedTree } from '../git/mutant.ts';
 import { mutantLaneDir } from '../git/snapshot.ts';
@@ -52,7 +52,7 @@ import { probe } from '../resources/probe.ts';
 import type { SpecFacts, SpecFactsOf } from '../schedule/ready.ts';
 import { type Cancelled, type StageContext, type StageParent, enter, evidenceRoot, isCancelled, pinDispatch, runOp } from './dispatch.ts';
 import { invocationDir, invoke } from './invoke.ts';
-import { LANE_DEADLINE_MS, LANE_GRACE_MS, LANE_STALL_MS, laneEnv, laneEnvId, laneRequest } from './lanes.ts';
+import { laneCommand, laneEnv, laneEnvId, laneRequest } from './lanes.ts';
 import { type LaneCancel, laneAbortReason, laneCancelOf } from './redlane.ts';
 import { type StageDone, at, failedFacts, holdEntry, holisticInForce, integrationTip, loadUnitSpec, record, stageHolder, start } from './stages.ts';
 import { decidedBy } from './transitions.ts';
@@ -182,15 +182,16 @@ export async function runMutantLane(
   run: Readonly<{ of: MutantOf; lane: ArcLaneDef; worktree: AbsPath; tree: Sha; dirOf: (invDir: string) => AbsPath; for: WitnessFor; held: readonly ResourceUnit[] }>,
 ): Promise<MutantLaneRun> {
   const { lane, worktree, tree } = run;
+  const command = laneCommand(lane);
   const outcome = await invoke(ctx.journal, ctx.containment, {
     runDir: ctx.runDir,
-    origin: { type: 'new', key: opKey(`lane:${parent.unit}`), parent, deadlineAt: isoTimeOf(new Date(Date.now() + LANE_DEADLINE_MS)) },
+    origin: { type: 'new', key: opKey(`lane:${parent.unit}`), parent, deadlineAt: command.deadlineAt },
     subject: { purpose: 'mutant', of: run.of, lane: lane.id, laneRev: laneRevOf(lane), tree },
     launch: (invDir) => {
       mkdirSync(run.dirOf(invDir), { recursive: true });
       return {
         argv: lane.argv, cwd: absPath(join(worktree, lane.cwd)), env: mutantEnv(ctx, parent.unit, lane, run.held, absPath(join(run.dirOf(invDir), WITNESS_LINES))), stdinPath: null,
-        stallMs: LANE_STALL_MS, graceMs: LANE_GRACE_MS, terminal: { type: 'command', purpose: 'lane', expectedExit: lane.expectedExit },
+        ...command.launch,
       };
     },
   });

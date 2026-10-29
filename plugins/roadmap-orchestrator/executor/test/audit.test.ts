@@ -16,11 +16,11 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { describe, test } from 'node:test';
 import { applyCommand, evaluateRevision, keepRevision, payloadOf } from '../src/commands/apply.ts';
 import { submitCommand } from '../src/commands/queue.ts';
-import { type CommandId, type Sha, commandId, findingId, jobId, opKey, sha256, sha, visionClauseId } from '../src/core/ids.ts';
+import { type CommandId, type JobId, type Sha, commandId, findingId, jobId, opKey, sha256, sha, visionClauseId } from '../src/core/ids.ts';
 import { absPath, branchName, isoTimeOf } from '../src/core/values.ts';
 import { MUTANT_PATCH_INPUT } from '../src/git/mutant.ts';
 import { corroborateFinding } from '../src/holistic/findings.ts';
-import { readInputFiles } from '../src/input/inforce.ts';
+import { inForceFiles, requirePlanInForce, revisionInForce, readInputFiles } from '../src/input/inforce.ts';
 import { commitRevision } from '../src/recover/revision.ts';
 import { fakeDocs } from './fixtures/docs-fake.ts';
 import { readJournal } from '../src/core/log.ts';
@@ -28,6 +28,8 @@ import { type AuditContext, runAudit } from '../src/holistic/audit.ts';
 import { type Cadence, DRIFT_THROTTLE_MIN, cadence } from '../src/holistic/cadence.ts';
 import { coverageBase, coverageOf, lensCoverage } from '../src/holistic/coverage.ts';
 import { findingKey } from '../src/holistic/types.ts';
+import { obligationBlockingUnits } from '../src/holistic/blocking.ts';
+import { holisticInForce } from '../src/pipeline/stages.ts';
 import { openBlocking, readNeedsUser } from '../src/needsuser.ts';
 import { LENS_DIFF_BUDGET } from '../src/holistic/lensdiff.ts';
 import { runUnit } from '../src/pipeline/unit.ts';
@@ -97,21 +99,22 @@ describe('cadence', () => {
     const stop = ticking(w);
     try {
       assert.deepEqual([owed(cadence(ctx, ctx.clock)), cadence(ctx, ctx.clock)!.plan], [[], null], 'nothing owed on a fresh arc');
-      const asked = requestAudit(r, ['vision']);
-      assert.deepEqual(cadence(ctx, ctx.clock)!.plan, { triggers: [{ type: 'requested', command: asked }], lenses: ['vision'], generation: 1 });
+      const asked = requestAudit(r, [...L2]);
+      assert.deepEqual(cadence(ctx, ctx.clock)!.plan, { triggers: [{ type: 'requested', command: asked }], lenses: ['invariants', 'vision'], generation: 1 });
       assert.deepEqual(await runUnit(ctx, r.unit('u1'), admitAll), { kind: 'merged' });
-      // R8: u1 selected future I-2 (not completing it: u3 delivers it too), whose test its tree does not report.
-      assert.deepEqual(owed(cadence(ctx, ctx.clock)), ['unwitnessed:I-2', 'requested'], 'one publication of N = 2: no cadence yet');
+      // R8: I-2 cannot be witnessed until u3 merges, so only the requested audit is owed.
+      assert.deepEqual(obligationBlockingUnits(ctx.journal.view, holisticInForce(ctx).obligations!.obligations.find((o) => o.id === 'I-2')!), ['u3']);
+      assert.deepEqual(owed(cadence(ctx, ctx.clock)), ['requested'], 'one publication of N = 2: no cadence yet');
       assert.deepEqual(cadence(ctx, ctx.clock)!.plan?.lenses, ['invariants', 'vision']);
       assert.deepEqual(await runUnit(ctx, r.unit('u2'), admitAll), { kind: 'merged' });
-      assert.deepEqual(owed(cadence(ctx, ctx.clock)), ['cadence', 'unwitnessed:I-2', 'requested']);
-      assert.deepEqual(owed(cadence(ctx, () => 400)), ['cadence', 'unwitnessed:I-2', 'wall-clock', 'requested'], 'the wall clock, while work (u3) remains');
+      assert.deepEqual(owed(cadence(ctx, ctx.clock)), ['cadence', 'requested']);
+      assert.deepEqual(owed(cadence(ctx, () => 400)), ['cadence', 'wall-clock', 'requested'], 'the wall clock, while work (u3) remains');
       await rule(w, r, 'C-2');
-      assert.deepEqual(owed(cadence(ctx, ctx.clock)), ['cadence', 'unwitnessed:I-2', 'drift:2', 'requested'], 'a docs-only rule drifts and is no publication');
+      assert.deepEqual(owed(cadence(ctx, ctx.clock)), ['cadence', 'drift:2', 'requested'], 'a docs-only rule drifts and is no publication');
       const out = await runAudit(ctx);
       assert.ok(out.kind === 'ended' && out.outcome === 'completed', JSON.stringify(out));
       const [s] = started(r);
-      assert.deepEqual(s!.triggers, [{ type: 'cadence' }, { type: 'unwitnessed', obligation: 'I-2' }, { type: 'drift', planRev: 2 }, { type: 'requested', command: asked }], 'coalesced into one audit');
+      assert.deepEqual(s!.triggers, [{ type: 'cadence' }, { type: 'drift', planRev: 2 }, { type: 'requested', command: asked }], 'coalesced into one audit');
       assert.deepEqual([s!.lenses, s!.generation], [['invariants', 'vision'], 1]);
       assert.deepEqual(owed(cadence(ctx, ctx.clock)), [], 'a completed audit consumes every trigger it recorded');
       // Rulings carrying contract ops are publications: two reach N = 2 again.
@@ -146,7 +149,8 @@ describe('cadence', () => {
     const { ctx } = auditContext(r);
     try {
       assert.deepEqual(await runUnit(ctx, r.unit('u1'), admitAll), { kind: 'merged' });
-      assert.deepEqual(owed(cadence(ctx, ctx.clock)), ['unwitnessed:I-2']);
+      await readyDelivery(r);
+      assert.deepEqual(owed(cadence(ctx, ctx.clock)), ['unwitnessed:I-2', 'drift:2']);
     } finally {
       r.journal.close();
     }
@@ -166,10 +170,11 @@ describe('cadence', () => {
       const stop = ticking(w);
       try {
         assert.deepEqual(await runUnit(ctx, r.unit('u1'), admitAll), { kind: 'merged' });
-        assert.deepEqual(owed(cadence(ctx, ctx.clock)), ['unwitnessed:I-2'], 'populate the memo before changing the obligation');
+        await readyDelivery(r);
+        assert.deepEqual(owed(cadence(ctx, ctx.clock)), ['unwitnessed:I-2', 'drift:2'], 'populate the memo with a witness whose delivery is ready');
         await rule(w, r, 'C-2', { obligations: ['I-2'], obligationDispositions: [{ id: 'I-2', disposition }] });
-        assert.deepEqual(owed(cadence(ctx, ctx.clock)), ['drift:2'], 'the ruling still drifts, but the exempt obligation owes no witness');
-        assert.deepEqual(owed(cadence(ctx, ctx.clock)), ['drift:2'], 'the recomputed result is stable');
+        assert.deepEqual(owed(cadence(ctx, ctx.clock)), ['drift:2', 'drift:3'], 'the ruling still drifts, but the exempt obligation owes no witness');
+        assert.deepEqual(owed(cadence(ctx, ctx.clock)), ['drift:2', 'drift:3'], 'the recomputed result is stable');
       } finally {
         stop();
         r.journal.close();
@@ -189,11 +194,16 @@ describe('cadence', () => {
     const { ctx } = auditContext(r);
     try {
       assert.deepEqual(await runUnit(ctx, r.unit('u1'), admitAll), { kind: 'merged' });
-      assert.deepEqual(owed(cadence(ctx, ctx.clock)), ['unwitnessed:I-2']);
+      assert.deepEqual(owed(cadence(ctx, ctx.clock)), [], 'unmerged u2 blocks the witness trigger');
+      await readyDelivery(r);
+      assert.deepEqual(owed(cadence(ctx, ctx.clock)), ['unwitnessed:I-2', 'drift:2'], 'a plan revision removes the blocker and invalidates the memo');
+      editJsonFile(join(d.planPath, '..', 'obligations.json'), (f) => ({ ...f, obligations: (f['obligations'] as Record<string, unknown>[]).map((o) => o['id'] === 'I-2' ? { ...o, deliveredBy: ['u1', 'u2'] } : o) }));
+      await bundleRevision(r, jobId('ckpt', 2));
+      assert.deepEqual(owed(cadence(ctx, ctx.clock)), ['drift:2', 'drift:3'], 'restoring an unmerged deliverer suppresses the cached trigger again');
       scriptTree(control, '*', { outcomes: { t1: 'pass', t2: 'pass' } });
       assert.deepEqual(await runUnit(ctx, r.unit('u2'), admitAll), { kind: 'merged' });
       assert.deepEqual(r.journal.view.holistic().latched.map((l) => l.obligation), ['I-2']);
-      assert.deepEqual(owed(cadence(ctx, ctx.clock)), [], 'the old publication no longer selects an unlatched future obligation');
+      assert.deepEqual(owed(cadence(ctx, ctx.clock)), ['drift:2', 'drift:3'], 'the old publication no longer selects an unlatched future obligation');
     } finally {
       r.journal.close();
     }
@@ -783,26 +793,41 @@ describe(`matrix row ${AUDIT_JOB}`, () => {
 const CKPT = jobId('ckpt', 1);
 
 /** The checkpoint whose bundle the next revision comes from (its generation numbers the audit the revision triggers). */
-function checkpointInputs(r: ArcRun): void {
+function checkpointInputs(r: ArcRun, checkpoint: JobId = CKPT): void {
   const visionSha256 = r.journal.view.planApplied()!.visionSha256!;
   r.journal.fact({
-    kind: 'checkpoint-inputs', job: CKPT, trigger: { type: 'audit', job: jobId('audit', 9) }, generation: 1,
-    vector: { plan: 1, specs: {}, obligationsSha256: null, ledgerSha256: null, visionSha256, contracts: [] },
+    kind: 'checkpoint-inputs', job: checkpoint, trigger: { type: 'audit', job: jobId('audit', 9) }, generation: 1,
+    vector: { plan: r.journal.view.planApplied()!.rev, specs: {}, obligationsSha256: null, ledgerSha256: null, visionSha256, contracts: [] },
     headSha: head(r.d.repo), visionSha256, findings: [], observations: [],
   });
 }
 
 /** Commits the plan files as they stand now as a revision of checkpoint `ckpt-1`'s bundle. */
-async function bundleRevision(r: ArcRun): Promise<void> {
-  checkpointInputs(r);
+async function bundleRevision(r: ArcRun, checkpoint: JobId = CKPT): Promise<void> {
+  checkpointInputs(r, checkpoint);
   const rctx = { runDir: r.ctx.runDir, view: r.journal.view, hostDir: r.ctx.hostDir, planFile: absPath(r.d.planPath), routingBase: { profile: 'default', config: null, arcRoles: 'm4b' }, laneEnv: process.env } as const;
-  const v = evaluateRevision(rctx, readInputFiles(absPath(r.d.planPath), absPath(r.d.repo)), { type: 'bundle', job: CKPT, cites: [visionClauseId('V-1')], evidence: ['the scripted bundle'], admits: [], fixesUnrecorded: [] });
+  const v = evaluateRevision(rctx, readInputFiles(absPath(r.d.planPath), absPath(r.d.repo)), { type: 'bundle', job: checkpoint, cites: [visionClauseId('V-1')], evidence: ['the scripted bundle'], admits: [], fixesUnrecorded: [] });
   assert.equal(v.kind, 'accepted', JSON.stringify(v));
   if (v.kind !== 'accepted') return;
   keepRevision(r.ctx.runDir, v);
   const committed = await commitRevision({ journal: r.journal, runDir: r.ctx.runDir, docs: fakeDocs(r.journal, absPath(r.d.repo), branchName('main')) },
-    payloadOf(v.draft, { type: 'bundle', job: CKPT }), { type: 'job', job: CKPT });
+    payloadOf(v.draft, { type: 'bundle', job: checkpoint }), { type: 'job', job: checkpoint });
   assert.equal(committed.kind, 'applied', JSON.stringify(committed));
+}
+
+/** A revised delivery assignment to an already published unit is ready, but has not latched on a candidate yet. */
+async function readyDelivery(r: ArcRun): Promise<void> {
+  // The design pass revised the merged unit's spec. This checkpoint starts from those retained bytes.
+  const force = requirePlanInForce(r.ctx.runDir, r.journal.view);
+  const files = inForceFiles(r.ctx.runDir, r.journal.view, force, revisionInForce(r.ctx.runDir, force), absPath(r.d.planPath), absPath(r.d.repo));
+  for (const file of files.specs.values()) {
+    assert.ok(file.bytes !== null);
+    writeFileSync(file.path, file.bytes);
+  }
+  editJsonFile(join(r.d.planPath, '..', 'obligations.json'), (f) => ({ ...f,
+    obligations: (f['obligations'] as Record<string, unknown>[]).map((o) => o['id'] === 'I-2' ? { ...o, deliveredBy: ['u1'] } : o),
+  }));
+  await bundleRevision(r);
 }
 
 const editJsonFile = (path: string, edit: (v: Record<string, unknown>) => Record<string, unknown>): void =>

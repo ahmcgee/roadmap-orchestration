@@ -26,7 +26,7 @@ import { status } from '../src/status.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import { sha256Hex } from '../src/core/json.ts';
 import { evidenceDiffers, integrationHistory, numericId, numericRulingIds } from '../src/holistic/bundle.ts';
-import { CAPTURE_WAIT_MAX_MIN, busyHolds, publishing, runCheckpoint } from '../src/holistic/checkpoint.ts';
+import { CAPTURE_WAIT_MAX_MIN, busyHolds, busyWaits, publishing, runCheckpoint } from '../src/holistic/checkpoint.ts';
 import { quiescentGenerations } from '../src/holistic/convergence.ts';
 import type { Observation } from '../src/holistic/observe.ts';
 import type { WitnessRecord } from '../src/holistic/types.ts';
@@ -474,6 +474,7 @@ describe('busy: a bundle touching a unit mid-stage waits for its boundary (C5, R
       assert.deepEqual(first.decision.units, [{ unit: 'u1', stage: 'plan-check', attempt: 1 }]);
       assert.match(first.decision.detail, /u1, which is in plan-check attempt 1/);
       assert.deepEqual([...busyHolds(x.ctx)], ['u1'], 'the scheduler holds u1 at its boundary for the held bundle');
+      assert.deepEqual(busyWaits(x.r.journal.view), [{ job: 'ckpt-1', waitingFor: [{ unit: 'u1', stage: 'plan-check', attempt: 1 }] }], 'status exposes the exact boundary the retained bundle waits for');
       // While the attempt runs, the trigger is not due: no capture, no call (a long stage spans many checkpoint turns).
       for (let i = 0; i < 3; i++) assert.deepEqual(await run(x), { kind: 'none' });
       assert.deepEqual(ckptCalls(x), ['ckpt-1'], 'exactly one paid call before the boundary');
@@ -496,6 +497,7 @@ describe('busy: a bundle touching a unit mid-stage waits for its boundary (C5, R
       assert.deepEqual(bundleSources(x.r).map((b) => b.job), ['ckpt-2']);
       assert.equal(planInForce(x.r).units.find((u) => u.id === 'u1')?.limits?.chargeable, 2);
       assert.deepEqual([...busyHolds(x.ctx)], [], 'decided: the hold is released');
+      assert.deepEqual(busyWaits(x.r.journal.view), [], 'the boundary wait is settled with the held bundle');
     } finally {
       x.r.journal.close();
     }

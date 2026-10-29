@@ -15,6 +15,7 @@
 // | scaffold, poc `cleanup-failed` (dev.17)               | one `resource{i}` per failed instance     |
 import type { OutcomeStage, ProbeTarget, StageOutcomeFact, StageOutcomeKind } from '../core/events.ts';
 import { probeTargetKey } from '../core/events.ts';
+import type { OrderingWait } from '../core/ordering.ts';
 import type { ResourceInstance, ResourceName } from '../core/ids.ts';
 import type { UnitState } from '../core/state.ts';
 import { type NeedsUserContent, type OutcomeContext, type StageOutcome, outcomeFact, parkClassOf } from '../pipeline/transitions.ts';
@@ -42,9 +43,9 @@ export const PARK_TARGETS: { readonly [S in OutcomeStage]?: { readonly [K in Sta
 
 /**
  * What only the stage knows: the backend its call ran on, the instances its cleanup failed (G6: a salvage passes its
- * teardown's), and (dev.17) the environment that did not come up.
+ * teardown's), and (dev.17) the environment that did not come up. `ordering`: a design judgment's explicit blockers.
  */
-export type ParkFacts = Readonly<{ backend: Backend | null; failed: readonly ResourceInstance[]; environment: ResourceName | null }>;
+export type ParkFacts = Readonly<{ backend: Backend | null; failed: readonly ResourceInstance[]; environment: ResourceName | null; ordering?: OrderingWait | null }>;
 
 export const NO_PARK_FACTS: ParkFacts = { backend: null, failed: [], environment: null };
 
@@ -105,8 +106,9 @@ export type ParkedOutcome = Readonly<{ fact: StageOutcomeFact; repeat: boolean }
 export function stageOutcomeFact(
   u: UnitState, outcome: StageOutcome, attempt: number, facts: ParkFacts, now: Date, cause?: OutcomeContext['cause'],
 ): ParkedOutcome {
-  const base: OutcomeContext = cause === undefined ? {} : { cause };
-  if (parkClassOf(u, outcome) !== 'retryable') return { fact: outcomeFact(u, outcome, attempt, base), repeat: false };
+  const cls = parkClassOf(u, outcome);
+  const base: OutcomeContext = { ...(cause === undefined ? {} : { cause }), ...(cls !== 'design' ? {} : { ordering: facts.ordering ?? null }) };
+  if (cls !== 'retryable') return { fact: outcomeFact(u, outcome, attempt, base), repeat: false };
   const targets = parkTargets(outcome, facts);
   const fact = outcomeFact(u, outcome, attempt, { ...base, targets });
   if (!isRepeat(u, targets, now)) return { fact, repeat: false };

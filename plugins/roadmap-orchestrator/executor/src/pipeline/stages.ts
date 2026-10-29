@@ -85,6 +85,7 @@
 //
 // Needs-user content the table does not carry (occupancy detail, a backend park) is returned as
 // `needsUser` for the caller to write (step 13 owns the writer). Nothing written here names a model.
+import { orderingReasons } from '../park/ordering.ts';
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, normalize, relative } from 'node:path';
 import { freshJudgmentSession, resumedJudgmentSession } from '../backends/argv.ts';
@@ -104,7 +105,7 @@ import { selectObligations, unitRules } from '../holistic/impact.ts';
 import { canonicalJson } from '../core/json.ts';
 import {
   type ApprovalFingerprint, type JudgmentSession, type LaneDef, type SpecM1, type SpecPatchOp, type NeedsUserContent, STDERR_FILE, STDOUT_FILE, effectiveScope, inScope, type EffectiveScope, specForces,
-  specRemoves, specRepairs, specObligations,
+  specRemoves, specRepairs, specObligations, isRed,
 } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
 import {
@@ -898,7 +899,7 @@ function judgePlanCheck(ctx: StageContext, unit: PlanUnit, called: BackendCallOu
   if (answer.kind === 'unanswered') return answer;
   if (answer.kind === 'refused') return { kind: 'refused', reasons: answer.reasons, defects: [] };
   const out: PlanCheckOutput = answer.out;
-  const reasons = [...visionCiteReasons(ctx, out)];
+  const reasons = [...visionCiteReasons(ctx, out), ...orderingReasons(ctx, unit.id, 'ordering' in out ? out.ordering ?? null : null)];
   const defects: string[] = [];
   const pinned = dispatchOf(ctx.journal.view, unit.id);
   const scope = effectiveScope(pinned);
@@ -1091,7 +1092,7 @@ export async function planCheckRead(
     const moved = await commitSplit(ctx, unit, parent, called.inv, out.split, judged.split.evaluated);
     return done({ ...held, needsUser: moved });
   }
-  return done(record(ctx, parent, out.decision));
+  return done(record(ctx, parent, out.decision, null, { ...NO_PARK_FACTS, ordering: 'ordering' in out ? out.ordering ?? null : null }));
 }
 
 /** The blocking item of a plan-check's `plan-defect` park (dev.17): every reason code refused the answer for, twice. */
@@ -1741,7 +1742,7 @@ function knownDefectHit(ctx: StageContext, unit: PlanUnit, spec: SpecM1, ledger:
     }
     if (k.match.type !== 'output') continue;
     const { contains } = k.match;
-    const red = ledger.filter((l) => l.lane === k.match.lane && (l.verdict === 'fail' || l.verdict === 'stall'));
+    const red = ledger.filter((l) => l.lane === k.match.lane && isRed(l.verdict));
     const hit = red.some((l) => {
       const dir = invocationDir(ctx.runDir, l.inv);
       return outputTail(join(dir, STDOUT_FILE)).includes(contains) || outputTail(join(dir, STDERR_FILE)).includes(contains);
@@ -1983,6 +1984,10 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
   // The fast suite lanes (the 2026-10-15 batch): only after a green certified spec series.
   const suite = verdict.kind === 'green' ? await fastSuite(ctx, unit, spec, parent, salvaged, rt, carry) : null;
   if (suite !== null) verdict = suite.verdict;
+  if (verdict.kind === 'red') {
+    const red = [...series.ledger, ...(suite?.series?.ledger ?? [])].filter((l) => isRed(l.verdict));
+    if (red.length > 0 && red.every((l) => l.flaky && l.diagnostic?.verdict === 'pass') && series.dirty.length === 0 && (suite?.series?.dirty.length ?? 0) === 0) verdict = { kind: 'flaky' };
+  }
   // D1, D2 (corpus arcs): only after a green certified spec series and a fast suite that passed or was the base's red.
   if ((verdict.kind === 'green' || verdict.kind === 'base-red') && checksApply(ctx)) {
     const checks = await executableChecks(ctx, unit, parent, salvaged, rt);
@@ -1996,7 +2001,7 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
   // A fix round reads the spec series and the fast suite at the salvage SHA (`lanesFixRound`, unit.ts, rebuilds the same).
   const ledger = [...series.ledger, ...(suite?.series?.ledger ?? [])];
   const dirty = [...series.dirty, ...(suite?.series?.dirty ?? [])];
-  const fix = kind === 'red' || (kind === 'not-certified' && dirty.length > 0) ? laneFixRound(ledger, dirty, salvaged) : null;
+  const fix = kind === 'red' || kind === 'flaky' || (kind === 'not-certified' && dirty.length > 0) ? laneFixRound(ledger, dirty, salvaged) : null;
   const facts = verdict.environment === undefined ? failedFacts(verdict.failed ?? []) : environmentFacts(verdict.environment);
   return { ...record(ctx, parent, kind, verdict.needsUser ?? null, facts, verdict.cause, verdict.detail), at: salvaged, ledger: series.ledger, verification: keep, fix };
 }

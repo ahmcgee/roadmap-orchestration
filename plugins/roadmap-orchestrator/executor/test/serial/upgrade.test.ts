@@ -695,7 +695,8 @@ const DEV17_DEFAULTS = /^(lane\.tier\.(spec|suite|arc)|lane-rev\.tier\..+|plan-a
 
 /**
  * The lasting read a dev.20 arc warns for: `spec.design.kind`, a spec no approving plan-check has designed yet
- * (kind `module`), read so on dev.20 and HEAD alike. No fixture records flakes, so `flake-observed.on` is not allowed;
+ * (kind `module`), read so on dev.20 and HEAD alike; lanes lacking timeoutMin retain the six-hour backstop.
+ * No fixture records flakes, so `flake-observed.on` is not allowed;
  * summit-effort routing aliases emit no default warning. Legacy checkpoint skips are expected only by their cell.
  */
 const DEV20_LASTING = /^spec\.design\.kind$/;
@@ -715,14 +716,15 @@ const ISSUES_IGNORED = /^issues\.(issue-intake|issues-captured|checkpoint-inputs
  * started: the dev.17 defaults (`DEV17_DEFAULTS`) and `ISSUES_IGNORED`, its spec lanes' tier read as their cadence among them (the
  * absent systems map is warned only where HEAD reads the map in force, a lane's selection or reuse; asserted in
  * `upgrade.dev16.review-unledgered`, which runs lanes on HEAD). An older release's cells assert the defaults they read
- * instead.
+ * instead. W3 adds the lasting lane.timeoutMin backstop and ordering (no automatic blocker wake) defaults; their
+ * warnings are asserted by stop-mid-build and park-adopted, respectively.
  */
 function assertNoDefaultRead(p: Phase1, expected: readonly string[] = []): void {
   if (p.release !== PREVIOUS_RELEASE && p.release !== DEV20_RELEASE && p.release !== DEV16_RELEASE) return;
   const allowed = p.release === DEV16_RELEASE ? DEV17_DEFAULTS : DEV20_LASTING;
   const kinds = [...hostLogs(p).matchAll(/roadmap: upgrade default \(([^)]+)\)/g)].map((m) => m[1]!);
   for (const kind of kinds) {
-    if (!expected.includes(kind) && !ISSUES_IGNORED.test(kind)) assert.match(kind, allowed, `HEAD read the ${p.release.version} arc with the ${kind} default`);
+    if (!expected.includes(kind) && !ISSUES_IGNORED.test(kind) && kind !== 'lane.timeoutMin' && kind !== 'ordering') assert.match(kind, allowed, `HEAD read the ${p.release.version} arc with the ${kind} default`);
   }
   if (p.release === DEV16_RELEASE) assert.ok(kinds.includes('lane.tier.spec'), `HEAD read the ${p.release.version} spec lanes' tier as their cadence, and warned`);
 }
@@ -824,6 +826,7 @@ test('upgrade.stop-mid-build: HEAD continues the Codex thread the previous relea
     await teardown(scope);
   }
   assertFinished(f);
+  assert.match(hostLogs(p), /roadmap: upgrade default \(lane\.timeoutMin\): a lane without timeoutMin; retains the six-hour deadline backstop/, 'HEAD adopts lanes without the new limit and logs its default');
   const builds = f.calls.slice(SMOKE_CALLS).filter((call) => call.as === 'codex');
   assert.deepEqual(builds.map((b) => b.argv.slice(0, 3)), [['exec', 'resume', MID_BUILD_THREAD]], 'HEAD resumed the thread the previous release started, and started no fresh session');
   const gated = factsOf(f.after, 'judgment-inputs').filter((i) => i.stage === 'gate');
@@ -977,6 +980,7 @@ test('upgrade.park-adopted: a unit the previous release parked lane-blocked (ope
     await teardown(scope);
   }
   assertFinished(f);
+  assert.match(hostLogs(p), /roadmap: upgrade default \(ordering\)/, 'the adopted park defaults to no automatic ordering wake, with a warning');
   assert.deepEqual(factsOf(f.after, 'unparked').map((u) => u.unit), ['page-id'], 'resume page-id unparked it');
   assert.deepEqual(outcomesOf(f.after, 'page-id'), ['lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'], 'HEAD re-ran the lanes, and nothing before them');
 });
@@ -1814,7 +1818,12 @@ test('upgrade.dev20.checkpoint-reentry-with-fixes: a holistic arc whose checkpoi
     await teardown(scope);
   }
   assert.equal(r.exit.kind, 'complete', JSON.stringify(r.exit));
-  assert.equal([...hostLogs(p).matchAll(/roadmap: upgrade default \(checkpoint-skipped\.trigger\)/g)].length, 1, 'the older audit-only skip warns once, and reads as its audit trigger');
+  const warningReaders = readdirSync(p.host).flatMap((name) => {
+    if (!/^(supervisor\.[0-9a-f]+|executor\.\d+)\.err$/.test(name)) return [];
+    const count = [...readFileSync(join(p.host, name), 'utf8').matchAll(/roadmap: upgrade default \(checkpoint-skipped\.trigger\)/g)].length;
+    return count === 0 ? [] : [{ reader: name.startsWith('supervisor.') ? 'supervisor' : 'executor', count }];
+  }).sort((a, b) => a.reader.localeCompare(b.reader));
+  assert.deepEqual(warningReaders, [{ reader: 'executor', count: 1 }, { reader: 'supervisor', count: 1 }], 'the older audit-only skip warns once per reading process, including supervisor exit evidence');
   assert.equal(r.view.unit(unitId(REENTRY)).status, 'retired', 'HEAD merged the re-entry');
   assert.deepEqual(factsOf(r.after, 'plan-applied'), [], 'HEAD\'s start found the previous release\'s revision in force');
   assert.ok(factsOf(r.after, 'witnessed').some((w) => w.for.type === 'candidate' && w.for.unit === REENTRY), 'the brake ran on the re-entry\'s candidate');

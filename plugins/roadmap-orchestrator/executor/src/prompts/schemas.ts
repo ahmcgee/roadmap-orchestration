@@ -33,6 +33,8 @@ import {
   FIXES_UNRECORDED,
   reenterFixesDefault, planCheckDesignDefault,
 } from '../core/upgrade.ts';
+import { type OrderingWait, orderingWait } from '../core/ordering.ts';
+import { orderingDefault } from '../core/upgrade.ts';
 import type { MutantEdit } from '../git/mutant.ts';
 import {
   type ClauseLanes, type DesignChange, type DesignExperiment, type FailureModeProof, type NewSystem, type UnitKind, type Verification, UNIT_KINDS, clauseLanes, designChange, designExperiment, failureModeProof,
@@ -177,7 +179,7 @@ export type PlanCheckOutput = PlanCheckCommon & (
   | Readonly<{ decision: 'scaffold'; patch: null; design: DesignAnswer; scaffold: ScaffoldDecision }>
   | Readonly<{ decision: 'split'; patch: null; split: SplitDecision }>
   | Readonly<{ decision: 'poc'; patch: null; poc: PocDecision }>
-  | Readonly<{ decision: 'infeasible' | 'escalate'; patch: null }>
+  | Readonly<{ decision: 'infeasible' | 'escalate'; patch: null; ordering?: OrderingWait | null }>
   | Readonly<{ decision: 'redirect'; patch: readonly SpecPatchOp[] }>
 );
 /** An answer's design record, or null when its decision carries none. */
@@ -255,6 +257,7 @@ const S_POC = sObj({ questions: sArr(sObj({ id: S_STR, question: S_STR, whyItMat
 
 export const PLAN_CHECK_SCHEMA: Schema = sObj({
   decision: sEnum(PLAN_CHECK_DECISIONS),
+  ordering: { anyOf: [sObj({ blockers: sArr(S_STR) }), { type: 'null' }], description: 'Only infeasible or escalate solely because other units must merge first: name those unit IDs in blockers. Otherwise null. Code wakes the parked check after all blockers merge.' },
   reasons: sArr(S_STR),
   patch: sNullable(sArr(S_PATCH_OP)),
   risk: sEnum(RISK_TIERS),
@@ -366,8 +369,17 @@ export const pocDecision: Read<PocDecision> = object((f) => {
 /** A payload key that must be null (or, on an answer recorded before dev.17, absent) under every other decision. */
 const none = (f: Fields, key: string): void => void f.optional(key, literal(null));
 
+/** Read older answers without changing their shape; new answers may explicitly declare an ordering wait. */
+function answerOrdering(f: Fields, allowed: boolean): OrderingWait | null | undefined {
+  const ordering = f.optional('ordering', nullable(orderingWait));
+  if (ordering === undefined) orderingDefault();
+  if (ordering != null && !allowed) throw new SchemaError(`${f.path}.ordering`, 'null outside an ordering escalation or infeasible decision', ordering);
+  return ordering;
+}
+
 export const planCheckOutput: Read<PlanCheckOutput> = object((f): PlanCheckOutput => {
   const decision = f.get('decision', oneOf(PLAN_CHECK_DECISIONS));
+  const ordering = answerOrdering(f, decision === 'infeasible' || decision === 'escalate');
   const common = {
     reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })),
     risk: f.get('risk', oneOf(RISK_TIERS)),
@@ -400,7 +412,7 @@ export const planCheckOutput: Read<PlanCheckOutput> = object((f): PlanCheckOutpu
     case 'infeasible':
     case 'escalate':
       nullExcept();
-      return { ...common, decision, patch: f.get('patch', literal(null)) };
+      return { ...common, decision, patch: f.get('patch', literal(null)), ...(ordering === undefined ? {} : { ordering }) };
   }
 });
 
@@ -670,11 +682,13 @@ type GateCommon = Readonly<{
   rulings: readonly DisputeRuling[];
 }>;
 export type GateOutput =
-  | (GateCommon & Readonly<{ decision: 'approve' | 'escalate'; directives: readonly [] }>)
+  | (GateCommon & Readonly<{ decision: 'approve'; directives: readonly [] }>)
+  | (GateCommon & Readonly<{ decision: 'escalate'; directives: readonly []; ordering?: OrderingWait | null }>)
   | (GateCommon & Readonly<{ decision: 'revise'; directives: readonly string[] }>);
 
 export const GATE_SCHEMA: Schema = sObj({
   decision: sEnum(GATE_DECISIONS),
+  ordering: { anyOf: [sObj({ blockers: sArr(S_STR) }), { type: 'null' }], description: 'Only escalate solely because other units must merge first: name those unit IDs in blockers. Otherwise null. Code wakes the parked gate after all blockers merge.' },
   findings: sArr(sObj({
     severity: sEnum(FINDING_SEVERITIES_DEV17), path: sNullable(S_STR), text: S_STR, contractRef: sNullable(S_STR), experiments: sArr(sObj({ command: S_STR, output: S_STR })),
     debt: sNullable(sObj({ drag: S_STR })), defect: sNullable(sEnum(DEFECT_CATEGORIES)), reraises: sNullable(S_STR), hunk: sNullable(sObj({ path: S_STR, line: S_INT })),
@@ -730,6 +744,7 @@ const emptyList: Read<readonly []> = (value, path) => {
 
 export const gateOutput: Read<GateOutput> = object((f): GateOutput => {
   const decision = f.get('decision', oneOf(GATE_DECISIONS));
+  const ordering = answerOrdering(f, decision === 'escalate');
   const common = {
     findings: f.get('findings', arrayOf(finding)), reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })), premises: f.get('premises', arrayOf(premise)),
     unreviewed: f.optional('unreviewed', arrayOf(unreviewedEntry)) ?? gateUnreviewedDefault(),
@@ -741,7 +756,7 @@ export const gateOutput: Read<GateOutput> = object((f): GateOutput => {
     const i = common.findings.findIndex((x) => x.severity === 'blocking');
     if (i >= 0) throw new SchemaError(`${f.path}.findings[${i}].severity`, 'no blocking finding on an approve', 'blocking');
   }
-  return { ...common, decision, directives: f.get('directives', emptyList) };
+  return { ...common, decision, directives: f.get('directives', emptyList), ...(decision !== 'escalate' || ordering === undefined ? {} : { ordering }) };
 });
 
 export function validateGateOutput(value: unknown): GateOutput {

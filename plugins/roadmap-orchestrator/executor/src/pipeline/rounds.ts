@@ -87,7 +87,7 @@ import type { RequiredWitness } from '../holistic/required.ts';
 import { type ImplementerSessionId, type InvocationId, type SeatRev, type Sha, type Sha256Hex, type UnitId, invocationId, parseInvocationId } from '../core/ids.ts';
 import { keptInput } from '../input/inforce.ts';
 import type { UnitState } from '../core/state.ts';
-import { type Bounds, type ImplementerSession, STDERR_FILE } from '../core/records.ts';
+import { isRed, type Bounds, type ImplementerSession, STDERR_FILE } from '../core/records.ts';
 import { type AbsPath, type IsoTime, type RefName, type RepoPath, branchRef, isoTimeOf } from '../core/values.ts';
 import { refTarget, revParse } from '../git/git.ts';
 import { type FixRound, ignoredText } from '../prompts/inputs.ts';
@@ -186,6 +186,7 @@ export function failingLaneDirectives(failing: readonly LaneRecord[]): readonly 
     const ignored = l.ignored === null ? null : ignoredText(l.ignored);
     return [
       ...(l.verdict === 'stall' ? [stalledLaneDirective(l.lane, LANE_STALL_MS)] : []),
+      ...(l.verdict === 'timeout' ? [`Lane ${l.lane} exceeded its configured wall timeout; read its output and fix the bounded command.`] : []),
       ...(l.repeat === null ? [] : [repeatRedDirective(l.lane, l.repeat)]),
       ...(l.flaky && l.diagnostic !== null ? [flakyLaneDirective(l.lane, l.diagnostic.evidenceDir)] : []),
       ...(ignored === null ? [] : [`Lane ${l.lane} ${ignored}.`]),
@@ -198,7 +199,7 @@ export const failingEvidenceDirs = (l: LaneRecord): readonly AbsPath[] => (l.fla
 
 /** The fix round after a red or not-certified series: the failing evidence, and for a dirty checkout, why. */
 export function laneFixRound(ledger: readonly LaneRecord[], dirty: readonly string[], salvage: Sha): DecidedRound {
-  const red = ledger.filter((l) => l.verdict === 'fail' || l.verdict === 'stall');
+  const red = ledger.filter((l) => isRed(l.verdict));
   if (red.length > 0) return { kind: 'fix', fix: { failingEvidenceDirs: red.flatMap(failingEvidenceDirs), directives: failingLaneDirectives(red) }, ledger, verification: null, salvage };
   if (dirty.length === 0) throw new Error('laneFixRound: the series was green and clean; there is nothing to fix');
   return {

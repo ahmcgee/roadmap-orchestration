@@ -422,7 +422,7 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
   },
   scaffold: { summary: 'Wrote the api package skeleton.', paths: ['packages/api/index.js', 'packages/api/test/load.test.js', 'package.json'] },
   planCheck: {
-    decision: 'redirect', reasons: ['A1 contradicts C-1'], risk: 'med', notes: '', premises: [{ claim: 'parse.ts exists', evidence: [{ path: 'src/a/parse.ts', line: 1 }] }],
+    decision: 'redirect', ordering: null, reasons: ['A1 contradicts C-1'], risk: 'med', notes: '', premises: [{ claim: 'parse.ts exists', evidence: [{ path: 'src/a/parse.ts', line: 1 }] }],
     design: null, split: null, scaffold: null, poc: null,
     visionConflict: [{ clauses: ['V-1'], note: 'A2 makes rounding permissive, against V-1.' }],
     scopeGrowth: [{ patterns: ['test/legacy/shell.test.ts'], reason: 'it tests the shell page A1 removes' }],
@@ -438,7 +438,7 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
     summary: 'Added the parser.', changedPaths: ['src/a/parse.ts'], lanesRun: [{ lane: 'unit', exit: 0 }], blockers: [], experiments: [], docsOnlySince: null, final: true,
   },
   gate: {
-    decision: 'revise', reasons: ['A2 untested'], directives: ['Add a test for A2.'],
+    decision: 'revise', ordering: null, reasons: ['A2 untested'], directives: ['Add a test for A2.'],
     findings: [{
       severity: 'blocking', path: 'src/a/parse.ts', text: 'A2 has no test.', contractRef: null, experiments: [{ command: 'node -e "parse(\'\')"', output: 'TypeError' }], debt: null,
       defect: 'test-inadequate', reraises: null, hunk: null,
@@ -1489,4 +1489,23 @@ it('prompt sizes count exact UTF-8 stdin bytes and canonical JSON inputs', () =>
   assert.deepEqual(measured.prompt, { bytes: 6, inputs: { text: 8, object: Buffer.byteLength('{"a":"é","z":2}') } });
   assert.deepEqual(promptSize(module, inputs, inputs.text), measured.prompt);
   assert.equal(renderPrompt(module, inputs, 'codex').prompt.bytes, Buffer.byteLength('System π\n\n你好'));
+});
+
+it('ordering answers: only infeasible/escalate can declare nonempty unique blocker identities; older answers stay readable', () => {
+  const ok = OUTPUTS as { readonly [R in Role]: Record<string, unknown> };
+  const ordering = { blockers: ['u-one', 'u-two'] };
+  const plan = { ...ok.planCheck, decision: 'infeasible', patch: null, ordering };
+  const gate = { ...ok.gate, decision: 'escalate', directives: [], ordering };
+  assert.deepEqual((validatePlanCheckOutput(plan) as { ordering: unknown }).ordering, ordering);
+  assert.deepEqual((validateGateOutput(gate) as { ordering: unknown }).ordering, ordering);
+  for (const invalid of [{ blockers: [] }, { blockers: ['u-one', 'u-one'] }]) {
+    assert.throws(() => validatePlanCheckOutput({ ...plan, ordering: invalid }), SchemaError);
+    assert.throws(() => validateGateOutput({ ...gate, ordering: invalid }), SchemaError);
+  }
+  assert.throws(() => validatePlanCheckOutput({ ...plan, decision: 'approve' }), /ordering/);
+  assert.throws(() => validateGateOutput({ ...gate, decision: 'approve' }), /ordering/);
+  const { ordering: _p, ...oldPlan } = plan;
+  const { ordering: _g, ...oldGate } = gate;
+  assert.equal('ordering' in validatePlanCheckOutput(oldPlan), false);
+  assert.equal('ordering' in validateGateOutput(oldGate), false);
 });
