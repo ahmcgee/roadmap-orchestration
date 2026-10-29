@@ -279,6 +279,8 @@ async function integrate(ctx: StageContext, unit: PlanUnit, parent: StageParent,
 /** The mutant kill check's end as a candidate outcome. */
 function mutantEnd(m: MutantEnd): CandidateEnd {
   switch (m.kind) {
+    case 'env-unavailable':
+      return { kind: 'env-unavailable', needsUser: null, failed: [], environment: m.environment };
     case 'green':
     case 'red':
     case 'blocked':

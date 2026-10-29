@@ -1,3 +1,4 @@
+import { certificationEntries } from './execution.ts';
 import { estateOutline, asEstateRow } from './estate-tree.ts';
 import { ViewerDiagnostics } from './diagnostics.ts';
 import { activityState } from './outcome.ts';
@@ -265,7 +266,7 @@ export class ViewState {
       const prioritize = (items: Invocation[]) => context
         ? [...groupInvocations(items.filter((i) => context.invocations.has(i.id))), ...groupInvocations(items.filter((i) => !context.invocations.has(i.id)))]
         : groupInvocations(items);
-      rows = [...prioritize(running), ...prioritize(this.allHistory ? history : history.filter((i) => recent.has(i.id) || context?.invocations.has(i.id)))];
+      rows = [...certificationEntries(d, context?.id), ...prioritize(running), ...prioritize(this.allHistory ? history : history.filter((i) => recent.has(i.id) || context?.invocations.has(i.id)))];
       if (this.view === 1) rows.push(...d.status.commands.pending.map((c) => ({ id: `command:${c.id}`, label: `Command ${c.id}`, state: 'waiting', body: pretty(c), links: [], provenance: 'command queue' })));
     } else if (pane === 2) rows = d.exceptions;
     else rows = graph(d, this.expandedGraph);

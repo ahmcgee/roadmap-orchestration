@@ -129,6 +129,9 @@
 // when nothing changes). Then, for every arc, `arc-completed{planRev, head, highWater, units}` (once while active) and
 // the terminal snapshot (parent `arc`, G8), so `gc` can seal it, and the run ends `complete`. The completion stays active while the plan rev and the
 // head are those it recorded (A20); an admitting apply or a reopen invalidates it, and the arc runs again.
+import { orderingOf, wakeOrdering } from '../park/ordering.ts';
+import { cpuBasis } from '../core/cpu.ts';
+import { schedulerPressureBlockedDefault, schedulerQueuedAtDefault } from '../core/upgrade.ts';
 import type { CommandContext } from '../commands/apply.ts';
 import { applyCommand, applyControl } from '../commands/apply.ts';
 import { isControl, pollCommands, POLL_MS, readReceipt, writeReceipt } from '../commands/queue.ts';
@@ -201,10 +204,10 @@ export const SCHED_FILE = 'sched.json';
 const TASK_STATES = ['idle', 'awaiting-admission', 'in-stage', 'in-chain'] as const satisfies readonly TaskState[];
 
 /** One waiter of the arbiter, in the order it serves them: the unit, the stage attempt it waits for, what it asks. */
-export type QueueEntry = Readonly<{ unit: UnitId; stage: Stage; attempt: number; publication: boolean; request: ResourceRequest; envBlocked: boolean }>;
+export type QueueEntry = Readonly<{ unit: UnitId; stage: Stage; attempt: number; publication: boolean; request: ResourceRequest; envBlocked: boolean; pressureBlocked?: boolean; queuedAt?: number }>;
 
 /** M3 (B7): one job's waiter, served before every unit's: a docs publication's or a batch's slot, or a job's lanes. */
-export type JobQueueEntry = Readonly<{ holder: FirstHolder; request: ResourceRequest; envBlocked: boolean }>;
+export type JobQueueEntry = Readonly<{ holder: FirstHolder; request: ResourceRequest; envBlocked: boolean; pressureBlocked?: boolean; queuedAt?: number }>;
 
 /**
  * `sched.json`: written by the executor process `pid` (status trusts it only while that executor owns the
@@ -223,10 +226,14 @@ export type SchedFile = Readonly<{
 }>;
 
 const units: Read<readonly UnitId[]> = arrayOf((v, p) => unitId(v, p));
-const request: Read<ResourceRequest> = object((f) => ({
-  named: f.get('named', arrayOf((v, p) => resourceName(v, p))), pools: f.get('pools', arrayOf((v, p) => resourceName(v, p))),
-  cpu: f.get('cpu', nat), publication: f.get('publication', bool),
-}));
+const request: Read<ResourceRequest> = object((f) => {
+  const basis = f.optional('cpuBasis', cpuBasis);
+  return {
+    named: f.get('named', arrayOf((v, p) => resourceName(v, p))), pools: f.get('pools', arrayOf((v, p) => resourceName(v, p))),
+    cpu: f.get('cpu', nat), publication: f.get('publication', bool),
+    ...(basis === undefined ? {} : { cpuBasis: basis }),
+  };
+});
 const scope: Read<CommandScope> = tagged('type', {
   arc: object((f): CommandScope => ({ type: f.get('type', literal('arc')) })),
   units: object((f): CommandScope => ({ type: f.get('type', literal('units')), units: f.get('units', units) })),
@@ -245,10 +252,12 @@ export const schedFile: Read<SchedFile> = object((f) => ({
   tasks: f.get('tasks', arrayOf(object((g) => ({ unit: g.get('unit', (v, p) => unitId(v, p)), state: g.get('state', oneOf(TASK_STATES)) })))),
   queue: f.get('queue', arrayOf(object((g): QueueEntry => ({
     unit: g.get('unit', (v, p) => unitId(v, p)), stage: g.get('stage', oneOf(STAGES)), attempt: g.get('attempt', positive),
-    publication: g.get('publication', bool), request: g.get('request', request), envBlocked: g.get('envBlocked', bool),
+    publication: g.get('publication', bool), request: g.get('request', request), envBlocked: g.get('envBlocked', bool), pressureBlocked: g.optional('pressureBlocked', bool) ?? schedulerPressureBlockedDefault(),
+    ...((queuedAt) => queuedAt === undefined ? {} : { queuedAt })(g.optional('queuedAt', nat) ?? schedulerQueuedAtDefault()),
   })))),
   jobQueue: f.get('jobQueue', arrayOf(object((g): JobQueueEntry => ({
-    holder: g.get('holder', firstHolder), request: g.get('request', request), envBlocked: g.get('envBlocked', bool),
+    holder: g.get('holder', firstHolder), request: g.get('request', request), envBlocked: g.get('envBlocked', bool), pressureBlocked: g.optional('pressureBlocked', bool) ?? schedulerPressureBlockedDefault(),
+    ...((queuedAt) => queuedAt === undefined ? {} : { queuedAt })(g.optional('queuedAt', nat) ?? schedulerQueuedAtDefault()),
   })))),
   drains: f.get('drains', arrayOf(object((g) => ({ command: g.get('command', (v, p) => commandId(v, p)), scope: g.get('scope', scope) })))),
 }));
@@ -314,13 +323,16 @@ export function decidedParent(view: JournalView, unit: UnitId): Parent {
   return { type: 'stage', unit, stage: f.stage, attempt: f.attempt };
 }
 
-/** Whether a parked unit waits for the architect: an operator park (a retryable one recovers by its probes). */
-const operatorPark = (view: JournalView, unit: UnitId): boolean => view.unit(unit).park?.park.class !== 'retryable';
+/** Whether a park waits for the architect: operator without an ordering wait (others recover by probes or publication). */
+const operatorPark = (view: JournalView, unit: UnitId): boolean => {
+  const park = view.unit(unit).park?.park ?? null;
+  return park?.class !== 'retryable' && orderingOf(park) === null;
+};
 
 /**
  * Whether a unit is settled for the end of an arc without the holistic layer: merged, cut, superseded, or parked for
  * the architect (an operator park). A retryable park is probed until it recovers, so it is not; nor is an active or
- * held unit.
+ * held unit, or an ordering park waiting for its blockers to merge.
  */
 export function unitSettled(view: JournalView, unit: UnitId): boolean {
   const s = view.unit(unit).status;
@@ -594,7 +606,7 @@ export function readOnlyContexts(x: Readonly<{
     hostEnv: x.hostEnv,
     routing: refuse('resolved routing'), acquire: refuse('reserved'), rank: refuse('ranked'), signal: new AbortController().signal,
   };
-  const arbiter: Arbiter = { acquire: refuse('reserved'), acquireFirst: refuse('reserved'), wake: refuse('woke the arbiter'), waiting: refuse('read waiters'), waitingFirst: refuse('read waiters') };
+  const arbiter: Arbiter = { pressure: new PressureTicks(), acquire: refuse('reserved'), acquireFirst: refuse('reserved'), wake: refuse('woke the arbiter'), waiting: refuse('read waiters'), waitingFirst: refuse('read waiters') };
   const commands = { planFile: x.planFile, routingBase: x.routingBase, docs: refuse('published docs') } as const;
   return { ...holisticContexts({ stage, commands, arbiter }), laneEnv: (lane) => recordedLaneEnv(x.view, lane) };
 }
@@ -773,7 +785,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   /** While the flow job (the flow track's judgment) runs: no holistic job starts (one judgment job at a time). */
   let flowJudging = false;
   let lastTick = 0;
-  const pressure = new PressureTicks();
+  const pressure = arbiter.pressure;
 
   let wakeup: (() => void) | null = null;
   const kick = (): void => wakeup?.();
@@ -1299,9 +1311,9 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       tasks: [...tasks.values()].map((t) => ({ unit: t.unit, state: t.state })).sort((a, b) => (a.unit < b.unit ? -1 : 1)),
       queue: arbiter.waiting().map((w) => ({
         unit: w.holder.unit, stage: holderStage(w.holder), attempt: w.holder.attempt, publication: w.holder.type === 'publication', request: w.request,
-        envBlocked: w.envBlocked,
+        envBlocked: w.envBlocked, pressureBlocked: w.pressureBlocked, queuedAt: w.queuedAt,
       })),
-      jobQueue: arbiter.waitingFirst().map((w) => ({ holder: w.holder, request: w.request, envBlocked: w.envBlocked })),
+      jobQueue: arbiter.waitingFirst().map((w) => ({ holder: w.holder, request: w.request, envBlocked: w.envBlocked, pressureBlocked: w.pressureBlocked, queuedAt: w.queuedAt })),
       drains: pending,
     };
     const text = canonicalJson(file);
@@ -1376,6 +1388,8 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       drains = mutations.map((m) => ({ command: m.command.id, scope: m.scope }));
       // 2. Mutations whose scope is clear.
       startMutations(mutations);
+      // Ordering parks recover at the publication boundary through the ordinary unpark transition.
+      wakeOrdering(x.stage);
       // 3. Due probes.
       startProbes();
       // 4. A halted unit's, the schedule's and the holistic layer's needs-user; the holistic jobs; the end.
@@ -1415,4 +1429,3 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
     });
   }
 }
-

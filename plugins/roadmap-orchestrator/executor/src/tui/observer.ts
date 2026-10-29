@@ -44,14 +44,19 @@ export class Observer {
       const snapshot = this.#journal!.read();
       if (snapshot.view !== this.#view) { this.#ended.clear(); this.#logs = new TranscriptReader(); this.#models = new ModelReader(); this.#relations = new InvocationRelations(); this.#estate = null; this.#view = snapshot.view; }
       const s = status(run.runDir, run.arc, request.hostDir, snapshot);
-      const invocations = this.invocations(run, snapshot, s.run.owner.state === 'alive');
+      const work = new Map([...s.host.work, ...s.units.flatMap((u) => u.work)].map((w) => [String(w.inv), w]));
+      const invocations = this.invocations(run, snapshot, s.run.owner.state === 'alive').map((i) => {
+        const metrics = work.get(i.id);
+        return metrics ? { ...i, work: metrics, body: pretty({ ...JSON.parse(i.body), work: metrics }) } : i;
+      });
       const exceptions: Entry[] = [
         ...s.needsUser.filter((n) => n.blocking).map((n) => entry(n.id, `Owner request ${n.id}: ${n.reason}`, 'waiting', recordOf(run.runDir, n.id))),
         ...s.parkedBackends.map((b) => entry(`backend:${b}`, `Parked backend ${b}`, 'parked', b)),
+        ...s.host.jobQueue.filter((q) => q.pressureBlocked).map((q, i) => entry(`pressure-job:${i}`, `Pressure brake: host CPU saturated while other work holds tokens`, 'held', q)),
         ...s.holds.map((h, i) => entry(`hold:${i}`, `Hold ${pretty(h)}`, 'held', h)),
-        ...s.units.filter((u) => u.state === 'blocked' || u.state === 'held' || u.state === 'parked' || u.failures.length > 0)
+        ...s.units.filter((u) => u.state === 'blocked' || u.state === 'held' || u.state === 'parked' || u.waitingFor?.pressureBlocked || u.failures.length > 0)
           .map((u) => entry(`unit:${u.unit}`, `${u.unit}: ${u.state}${u.failures.length ? ' / recorded failures' : ''}`, u.failures.length ? 'failed' : u.state, u)),
-        ...invocations.filter((i) => /fault|fail|lost|malformed|refusal|stall/.test(activityState(i))).map((i) => ({ ...i, state: activityState(i), label: `${i.unit} ${i.role}: ${activityState(i)}` })),
+        ...invocations.filter((i) => /fault|fail|lost|malformed|refusal|stall|timeout/.test(activityState(i))).map((i) => ({ ...i, state: activityState(i), label: `${i.unit} ${i.role}: ${activityState(i)}` })),
       ];
       const startPath = join(run.runDir, 'start.json');
       const start = existsSync(startPath) ? runStart(readJson(startPath), startPath) : null;

@@ -18,18 +18,19 @@ import { publishOwner } from '../src/host/owner.ts';
 import { nextProbeAt } from '../src/park/schedule.ts';
 import { PARK_ESCALATE_MS } from '../src/schedule/types.ts';
 import { watch } from '../src/watch.ts';
-import { fileSha256 } from '../src/spec/spec.ts';
+import { fileSha256, loadSpec } from '../src/spec/spec.ts';
 import { START_FILE, writeFileNeedsUser } from '../src/executor.ts';
 import { snapshotRef } from '../src/git/snapshot.ts';
 import { openBlocking } from '../src/needsuser.ts';
+import { laneCpuKey } from '../src/resources/calibrate.ts';
 import { MODEL_IDS } from '../src/routing/types.ts';
-import { SESSION_GUARANTEE, STATUS_LOCK, type Status, type UnitStatusLine, status } from '../src/status.ts';
+import { SESSION_GUARANTEE, STATUS_LOCK, type Status, type UnitStatusLine, compactState, status } from '../src/status.ts';
 import { reached, release } from './helpers/barrier.ts';
-import { git } from './helpers/repo.ts';
+import { git, tmpDir } from './helpers/repo.ts';
 import type { Step } from './helpers/scenario.ts';
 import { type Owner, assertNoSurvivors } from './helpers/reap.ts';
 import { BUILD_REPORT, planCheckStep } from './fixtures/stage-common.ts';
-import { type ArcDescriptor, type ArcRun, MUL, codexStep, contextFor, gateStep, mulBuild, setupArc } from './fixtures/unit-common.ts';
+import { type ArcDescriptor, type ArcRun, MUL, MUL_LANE, codexStep, contextFor, gateStep, mulBuild, setupArc, stepUntil } from './fixtures/unit-common.ts';
 import { claimRecord } from './fixtures/host-records.ts';
 import { LANES_BLOCKED, parkBackend, parkUnit } from './fixtures/probe-common.ts';
 import {
@@ -86,7 +87,7 @@ describe('status.subset', () => {
       commands: { pending: [], receipts: [] },
       spend: { byRole: [], byModel: { models: [], unresolvedRevs: [] }, byClass: { classes: [], unresolvedRevs: [] }, byJob: [], bySmoke: [] },
       host: {
-        containment: { mode: null, guarantee: SESSION_GUARANTEE }, resources: [], pools: {}, queue: [], probes: [], backends: [],
+        containment: { mode: null, guarantee: SESSION_GUARANTEE }, resources: [], pools: {}, queue: [], jobQueue: [], work: [], probes: [], backends: [],
         log: { bytes: 0, events: 0, foldMs: 0, compactionDue: false },
       },
       parkedBackends: [],
@@ -139,11 +140,14 @@ describe('status.subset', () => {
     assert.equal(s.run.state, 'complete');
     assert.equal(s.run.owner.state, 'none', 'the lock was released');
     assert.ok(s.run.heartbeatAt !== null, 'the executor wrote its heartbeat');
-    assert.deepEqual(s.units, [{
+    assert.deepEqual(s.units.map(({ certification, work, ...u }) => u), [{
       unit: 'u1', stage: 'retire', status: 'retired', attempts: 12, chargeableFailures: 0, risk: 'med', seat: null,
       state: 'merged', waitingFor: null, holds: [], priority: null, park: null, lineage: null, supersededBy: null, buildTier: 'med', derived: [], running: null, failures: [],
       gate: { attempt: 8, decision: 'approve', findings: [], unreviewed: [] },
     }]);
+    assert.equal(s.units[0]!.certification?.allowance, 3);
+    assert.deepEqual(s.units[0]!.certification?.lanes.map((l) => [l.id, l.state]), [['mul', 'green'], ['suite', 'green']], 'the completed certification retains both spec and suite lanes');
+    assert.ok(s.units[0]!.work.some((w) => w.kind === 'build' && w.cpuBasis?.kind === 'default' && w.measured !== null));
     assert.deepEqual([s.edges, s.runOnly, s.host.resources, s.host.queue, s.host.probes, s.host.backends], [[], null, [], [], [], []]);
     assert.deepEqual(s.host.pools['@cpu']?.used, 0, 'every token released');
     assert.deepEqual(s.needsUser, []);
@@ -373,42 +377,71 @@ test('status.parallel: two independent units build at once and status shows both
   }
 });
 
-test('status.resources: two units want the one instance of a pool; the builder holds it (host.resources, holds), the other waits in the arbiter\'s queue for exactly its entry reservation, the pool shows 1/1 in use; both merge in turn', T, async (t) => {
-  const r = setupExec(t, { units: [{ id: 'u1' }, { id: 'u2' }], steps: [...SMOKE_DEFAULT, ...heldUnit('u1'), ...heldUnit('u2')] });
-  const plan = JSON.parse(readFileSync(r.planPath, 'utf8')) as { resources: unknown[]; units: { resources: string[] }[] };
+test('status.resources: CPU-only builds leave the pool free; one executor lane holds its instance while the other queues with its calibrated reservation; both units merge', T, async (t) => {
+  const barriers = tmpDir('status-lanes');
+  const r = setupExec(t, { units: ['u1', 'u2'].map((id) => ({ id, lanes: [
+    { id: 'a-pool', cadence: 'unit', argv: [process.execPath, join(import.meta.dirname, 'fixtures', 'pm-lane-barrier.ts'), barriers, `${id}.lanes`], resources: ['est'] },
+    { ...MUL_LANE, cadence: 'unit' },
+  ] })), steps: [...SMOKE_DEFAULT, ...heldUnit('u1'), ...heldUnit('u2')] });
+  const plan = JSON.parse(readFileSync(r.planPath, 'utf8')) as { resources: unknown[]; units: { spec: string; resources: string[] }[] };
   const tool = (cmd: 'probe' | 'teardown') => ({ argv: [process.execPath, join(import.meta.dirname, 'fixtures', 'res-tool.ts'), cmd, r.stateDir, 'est'], cwd: '.', env: { set: {}, pass: [] } });
   plan.resources = [{ name: 'est', pool: { size: 1 }, probe: tool('probe'), teardown: tool('teardown') }];
-  for (const u of plan.units) u.resources = ['est'];
+  for (const u of plan.units) {
+    u.resources = ['est'];
+    const path = join(r.planPath, '..', u.spec);
+    const spec = JSON.parse(readFileSync(path, 'utf8'));
+    writeFileSync(path, JSON.stringify({ ...spec, resources: ['est'] }));
+  }
   writeFileSync(r.planPath, JSON.stringify(plan));
   const run = startExec(r);
 
+  await Promise.all(['u1', 'u2'].map((unit) => reached(r.scenarioDir, `${unit}.build`, 60_000)));
   let s = await statusOf(r);
+  assert.deepEqual(s.host.pools['est'], { size: 1, used: 0, dirty: 0 }, 'builders reserve no pool instances');
+  assert.ok(s.units.every((u) => u.running?.stage === 'build' && u.holds.length > 0 && u.holds.every((h) => h.startsWith('@cpu#'))));
+  for (const unit of ['u1', 'u2']) release(r.scenarioDir, `${unit}.build`);
   await until(async () => {
     s = await statusOf(r);
-    return s.units.some((l) => l.running?.stage === 'build') && s.units.some((l) => l.state === 'waiting');
-  }, 60_000, 'one unit building, the other waiting for the pool');
-  const builder = s.units.find((l) => l.running?.stage === 'build')!;
+    return s.units.some((l) => l.running?.stage === 'lanes' && l.holds.some((h) => h === 'est#1')) && s.units.some((l) => l.state === 'waiting');
+  }, 60_000, 'one unit running its lane, the other waiting for the pool');
+  const holder = s.units.find((l) => l.running?.stage === 'lanes' && l.holds.some((h) => h === 'est#1'))!;
   const waiter = s.units.find((l) => l.state === 'waiting')!;
-  const want = { named: [], pools: ['est'], cpu: 4, publication: false };
+  const lane = loadSpec(absPath(join(r.planPath, '..', `${waiter.unit}.json`))).lanes.find((l) => l.id === 'a-pool')!;
+  const cpuBasis = { kind: 'default', key: laneCpuKey(lane), value: 4, samples: 0 };
+  const want = { named: [], pools: ['est'], cpu: 4, cpuBasis, publication: false };
   assert.equal(s.run.state, 'running');
-  assert.deepEqual(waiter.waitingFor, { deps: [], milestones: [], edges: [], resources: want, envBlocked: false, admission: [], drainFor: [] });
-  assert.deepEqual(s.host.queue, [{ unit: waiter.unit, stage: 'build', attempt: waiter.attempts + 1, publication: false, request: want, envBlocked: false }]);
+  assert.ok(waiter.waitingFor!.tokenWaitMs! >= 0);
+  assert.deepEqual(waiter.waitingFor, { tokenWaitMs: waiter.waitingFor!.tokenWaitMs!, deps: [], milestones: [], edges: [], resources: want, envBlocked: false, pressureBlocked: false, admission: [], drainFor: [] });
+  assert.ok(s.host.queue[0]!.queuedAt! > 0);
+  assert.deepEqual(s.host.queue, [{ queuedAt: s.host.queue[0]!.queuedAt, unit: waiter.unit, stage: 'lanes', attempt: waiter.attempts + 1, publication: false, request: want, envBlocked: false, pressureBlocked: false }]);
+  assert.equal(compactState({ ...waiter, waitingFor: { ...waiter.waitingFor!, pressureBlocked: true } }), 'waiting:resources(host-pressure)');
   assert.deepEqual(s.host.pools['est'], { size: 1, used: 1, dirty: 0 });
-  assert.ok(builder.holds.some((h) => h === 'est#1'), JSON.stringify(builder.holds));
+  assert.ok(holder.holds.some((h) => h === 'est#1'), JSON.stringify(holder.holds));
   assert.deepEqual(waiter.holds, [], 'a waiter holds nothing (all-or-none)');
   const est = s.host.resources.find((e) => e.resource === 'est#1');
-  assert.deepEqual(est?.holder, { type: 'stage', unit: builder.unit, stage: 'build', attempt: builder.running?.attempt });
+  assert.deepEqual(est?.holder, { type: 'stage', unit: holder.unit, stage: 'lanes', attempt: holder.running?.attempt });
   assertNoModelIdsInStatus(s);
+  assert.deepEqual(holder.certification?.lanes.map((l) => [l.id, l.state]), [['a-pool', 'running'], ['mul', 'queued'], ['suite', 'queued']]);
+  assert.deepEqual(holder.certification?.lanes[0]?.holds, ['est#1']);
+  assert.equal(holder.certification?.left, 3);
+  assert.ok(waiter.certification?.lanes.every((l) => l.state === 'queued'));
+  const runningWork = holder.work.find((w) => w.inv === holder.certification?.lanes[0]?.inv)!;
+  assert.equal(runningWork.reservedCpu, 4);
+  assert.equal(runningWork.cpuBasis?.kind, 'default');
+  assert.equal(runningWork.measured, null);
+  assert.ok(runningWork.tokenWaitMs! >= 0);
 
-  release(r.scenarioDir, `${builder.unit}.build`);
-  await reached(r.scenarioDir, `${waiter.unit}.build`, 60_000);
-  release(r.scenarioDir, `${waiter.unit}.build`);
+  release(barriers, `${holder.unit}.lanes`);
+  await reached(barriers, `${waiter.unit}.lanes`, 60_000);
+  release(barriers, `${waiter.unit}.lanes`);
   const exit = await run.exit;
   assert.equal(exit.code, 0, exit.stderr);
   assert.equal(reasonOf(exit).kind, 'complete');
   s = await statusOf(r);
   assert.deepEqual(s.units.map((l) => l.state), ['merged', 'merged']);
   assert.deepEqual(s.host.pools['est'], { size: 1, used: 0, dirty: 0 });
+  assert.ok(s.units.every((u) => u.work.some((w) => w.kind === 'build' && w.measured !== null)));
+  assert.ok(s.units.find((u) => u.unit === waiter.unit)!.work.some((w) => w.lane === 'a-pool' && w.tokenWaitMs! > 0));
 });
 
 // In process, over a log written directly: a live owner is a sleeping process named in this run's claim.
@@ -490,4 +523,51 @@ test('status.parks: a retryable park shows its targets, what is outstanding, its
     await kill?.();
     r.journal.close();
   }
+});
+
+
+test('status.certification: timeout red spends allowance, next series is red-first, and an unchanged pass is visibly reused', T, async () => {
+  const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), codexStep([]), gateStep({ decision: 'approve' })],
+    units: [{ id: 'u1', lanes: [
+      { id: 'fast', cadence: 'build', argv: ['true'] },
+      { id: 'slow', cadence: 'unit', timeoutMin: 0.02, argv: ['node', '-e', 'setTimeout(() => {}, 60000)'] },
+      { id: 'tail', cadence: 'unit', argv: ['true'] },
+    ] }], suite: [] });
+  const r = contextFor(d);
+  try {
+    writeStart(d);
+    await stepUntil(r, 'u1', (f) => f.stage === 'lanes' && f.outcome === 'red');
+    let u = statusNow(r).units[0]!;
+    assert.deepEqual([u.certification?.used, u.certification?.left], [1, 2]);
+    assert.deepEqual(u.certification?.lanes.map((l) => [l.id, l.state, l.verdict]), [['fast', 'green', 'pass'], ['slow', 'red', 'timeout'], ['tail', 'queued', null]]);
+    assert.equal(u.work.findLast((w) => w.lane === 'slow')?.cause, 'timeout');
+    const previous = u.certification!.attempt!;
+    await stepUntil(r, 'u1', (f) => f.stage === 'lanes' && f.attempt > previous);
+    u = statusNow(r).units[0]!;
+    assert.deepEqual(u.certification?.lanes.map((l) => [l.id, l.redFirst, l.state]), [['slow', true, 'red'], ['fast', false, 'queued'], ['tail', false, 'queued']]);
+    assert.equal(u.certification?.used, 2);
+  } finally { r.journal.close(); }
+  const reuse = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'revise', directives: ['Explain your implementation.'] }), codexStep([])],
+    units: [{ id: 'u1', lanes: [{ id: 'stable', argv: ['true'] }] }], suite: [] });
+  const rr = contextFor(reuse);
+  try {
+    writeStart(reuse);
+    await stepUntil(rr, 'u1', (f) => f.stage === 'gate');
+    await stepUntil(rr, 'u1', (f) => f.stage === 'lanes');
+    const u = statusNow(rr).units[0]!;
+    assert.equal(u.certification?.lanes[0]?.state, 'reused');
+    assert.ok(u.certification?.lanes[0]?.inv);
+  } finally { rr.journal.close(); }
+});
+
+
+test('status.ordering-park exposes recorded blockers and their outstanding merges', () => {
+  const d = setupArc({ steps: [], units: [{ id: 'u1' }, { id: 'u2' }] });
+  const r = contextFor(d);
+  try {
+    writeStart(d);
+    r.journal.fact({ kind: 'stage-outcome', unit: U('u2'), stage: 'plan-check', attempt: 1, outcome: 'escalate', class: 'park', chargeable: false,
+      park: { class: 'operator', kind: 'design', ordering: { blockers: [U('u1')] } } });
+    assert.deepEqual(statusNow(r).units.find((u) => u.unit === U('u2'))!.park?.ordering, { blockers: ['u1'], outstanding: ['u1'] });
+  } finally { r.journal.close(); }
 });

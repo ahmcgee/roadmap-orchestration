@@ -75,7 +75,7 @@ export const pad = (s: string, n: number): string => { const t = clip(s, n); ret
 export function symbol(state: string, ascii = false): string {
   if (state === 'stopped') return ascii ? '#' : '■';
   return /fail|fault|blocked|lost|malformed|refusal|stall/.test(state) ? '!' : /running|preparing|ready|alive|active|building|walking|polishing/.test(state) ? (ascii ? '>' : '●')
-    : /merged|success|pass|complete/.test(state) ? (ascii ? '+' : '✓') : /held|wait|park|probe unknown/.test(state) ? (ascii ? '?' : '◇') : (ascii ? 'o' : '○');
+    : /merged|success|pass|complete|green|reused/.test(state) ? (ascii ? '+' : '✓') : /held|wait|park|probe unknown|queued/.test(state) ? (ascii ? '?' : '◇') : (ascii ? 'o' : '○');
 }
 /** Only these trusted styles become terminal escapes; captured text always goes through safe(). */
 export type Tone = 'text' | 'muted' | 'strong' | 'accent' | 'wait' | 'fault' | 'good' | 'border' | 'violet';
@@ -95,10 +95,10 @@ export function fit(row: Line, columns: number): Line {
 }
 export function stateTone(state: string): Tone {
   if (state === 'stopped') return 'wait';
-  return /fail|fault|blocked|lost|malformed|refusal|stall|stale/.test(state) ? 'fault'
+  return /fail|fault|blocked|lost|malformed|refusal|stall|stale|timeout|red/.test(state) ? 'fault'
     : /running|preparing|ready|alive|active|building|walking|polishing/.test(state) ? 'accent'
-    : /merged|success|pass|complete/.test(state) ? 'good'
-    : /held|wait|park|probe unknown/.test(state) ? 'wait' : 'muted';
+    : /merged|success|pass|complete|green|reused/.test(state) ? 'good'
+    : /held|wait|park|probe unknown|queued/.test(state) ? 'wait' : 'muted';
 }
 const colors: Record<Tone, number> = { text: 252, muted: 245, strong: 255, accent: 81, wait: 220, fault: 203, good: 114, border: 60, violet: 141 };
 export function paint(row: Line, columns: number, color: boolean): string {

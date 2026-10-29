@@ -28,7 +28,7 @@ import { runUnit, step } from '../src/pipeline/unit.ts';
 import { recover } from '../src/recover/recover.ts';
 import { DOCS_NOT_YET } from '../src/recover/revision.ts';
 import { cpuCapacity } from '../src/resources/pool.ts';
-import { cleanup, heldReservation, reserve, resourceTable } from '../src/resources/reserve.ts';
+import { cleanup, heldReservation, reserve, run as runReservation, resourceTable } from '../src/resources/reserve.ts';
 import { createArbiter } from '../src/schedule/arbiter.ts';
 import type { Acquire } from '../src/schedule/types.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
@@ -467,7 +467,7 @@ describe('publication.ownership: a crash at each boundary of the publication, th
 // ---------------------------------------------------------------------------------------------------
 // Parks
 
-test('park.salvage-and-teardown-fail-restart: a failed salvage whose teardown fails parks on the host and the instance; after a restart both are probed and it re-runs', T, async () => {
+test('park.salvage-and-teardown-fail-restart: an adopted build\'s failed salvage whose teardown fails parks on the host and the instance; after a restart both are probed and it re-runs', T, async () => {
   const run = setupUnit({
     steps: [planCheckStep({ decision: 'approve' }), codexBuild([{ type: 'commit', message: 'fix add', files: ADD_FIX }], { argv: ['exec', '-C'] })],
     resources: [DB],
@@ -475,14 +475,23 @@ test('park.salvage-and-teardown-fail-restart: a failed salvage whose teardown fa
   started(await planCheck(run.ctx, run.unit));
   const b = started(await build(run.ctx, run.unit, { kind: 'fresh' }));
   assert.ok(b.run !== null);
-  assert.deepEqual(b.run.reservation?.resources, [resourceName(DB), ...tokens(4)], 'the build holds its resource and its @cpu');
-  quiesce(run.ctx, U1, b.run);
-  await evidence(run.ctx, run.unit, b.run);
+  assert.deepEqual(b.run.reservation?.resources, tokens(4), 'new builds reserve CPU only');
+  // Reconstruct the running reservation an adopted dev.31 builder journaled before this cutover.
+  // Salvage must still clean that reservation, including its named resource, after restart.
+  const holder = b.run.reservation!.holder;
+  const legacy = reserve(run.ctx, holder, { named: [resourceName(DB)], pools: [], cpu: 0, publication: false }, holder);
+  assert.equal(legacy.state, 'reserved');
+  if (legacy.state !== 'reserved') throw new Error('legacy db reservation refused');
+  runReservation(run.ctx, legacy, holder);
+  const adopted: BuildRun = { ...b.run, reservation: heldReservation(run.ctx, holder, 'running') };
+  assert.deepEqual(adopted.reservation?.resources, [resourceName(DB), ...tokens(4)], 'the adopted build keeps its journaled reservation');
+  quiesce(run.ctx, U1, adopted);
+  await evidence(run.ctx, run.unit, adopted);
   // The host breaks the salvage (HEAD detached), and the build's teardown fails.
   const branch = git(worktreeOf(run), 'rev-parse', '--abbrev-ref', 'HEAD');
   git(worktreeOf(run), 'checkout', '--quiet', '--detach');
   writeFileSync(join(run.stateDir, `${DB}.teardown-fails`), '');
-  const s = await salvage(run.ctx, run.unit, b.run);
+  const s = await salvage(run.ctx, run.unit, adopted);
   assert.equal(s.outcome.kind, 'commit-failed');
   const db = resourceName(DB);
   const targets = [{ type: 'host' }, { type: 'resource', instance: db }];
@@ -519,7 +528,7 @@ test('park.salvage-and-teardown-fail-restart: a failed salvage whose teardown fa
     assert.equal(journal.view.unit(U1).status, 'active', 'recovered once every target passed');
     assert.equal(resourceTable(journal.view).get(db)?.status.state, 'free');
     // The salvage re-runs (its reservation already cleaned) and the unit goes on.
-    const rerun: BuildRun = { ...b.run, reservation: null };
+    const rerun: BuildRun = { ...adopted, reservation: null };
     const again = await salvage(ctx, run.unit, rerun);
     assert.equal(again.outcome.kind, 'committed');
     assert.equal((await teardown(ctx, U1, rerun)).outcome.kind, 'released');
@@ -549,6 +558,7 @@ test('stage.repeat-park: a retryable park on a target the unit recovered on with
 
 test('rounds.no-escalation: red, a stalled fix round, then the next fix round resumes its session on the same seat; nothing escalates', T, async () => {
   const run = setupUnit({
+    unit: { limits: { certifications: 1 } },
     steps: [
       planCheckStep({ decision: 'approve' }),
       codexBuild([], { argv: ['exec', '-C'] }),

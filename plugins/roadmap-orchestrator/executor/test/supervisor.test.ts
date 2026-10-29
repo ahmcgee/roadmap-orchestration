@@ -13,7 +13,7 @@ import { pendingCommandIds, readCommand, readReceipt, terminalReceipt } from '..
 import { isAlive } from '../src/contain/proc.ts';
 import { needsUserRecord } from '../src/core/records.ts';
 import { EXIT_REASON_FILE } from '../src/executor.ts';
-import { HEARTBEAT_STALE_MS, executorLogs, failedPath, readyPath } from '../src/supervisor.ts';
+import { type ExecutorEndRecord, HEARTBEAT_STALE_MS, executorLogs, failedPath, readyPath } from '../src/supervisor.ts';
 import { absPath } from '../src/core/values.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
 import { readCalls } from './helpers/scenario.ts';
@@ -63,6 +63,11 @@ describe('supervisor.intentional-exit', () => {
     assert.equal(startedGenerations(r).length, 1, 'never restarted');
     assert.ok(existsSync(readyPath(absPath(r.hostDir), generation)));
     assert.deepEqual(outcomes(r), STRAIGHT);
+    const end = JSON.parse(readFileSync(hostFile(r, `executor.${generation}.exit.json`), 'utf8')) as ExecutorEndRecord;
+    assert.deepEqual(end.child, { type: 'exited', code: 0 });
+    assert.ok(end.stages.kind === 'known');
+    assert.deepEqual(end.stages.open, []);
+    assert.ok(end.stages.last?.stage === 'retire', JSON.stringify(end));
   });
 
   test('stop is not a crash either: no restart, no crash, the lock released after the executor exits', T, async (t) => {
@@ -96,6 +101,23 @@ test('supervisor.stop-order: stop → the executor writes exit.reason{stop} and 
   assert.deepEqual(stateOf(r).crashes, []);
 });
 
+test('supervisor.crash-stage: a killed executor leaves its signal and open stage in supervisor-owned evidence', T, async (t) => {
+  const r = setupExec(t, { steps: [...smokes(1), blockedCheck('check1'), ...smokes(1)] });
+  const line = startLine(await startCli(r));
+  assert.equal(line.kind, 'ready');
+  const generation = line.generation as number;
+  await reached(r.scenarioDir, 'check1', WAIT_MS);
+  await kill(await executorOf(r, generation));
+  await cli(r, ['pause', '--all']);
+  const path = hostFile(r, `executor.${generation}.exit.json`);
+  await until(() => existsSync(path), WAIT_MS, 'the supervisor exit evidence');
+  const end = JSON.parse(readFileSync(path, 'utf8')) as ExecutorEndRecord;
+  assert.deepEqual(end.child, { type: 'signalled', signal: 'SIGKILL' });
+  assert.ok(end.stages.kind === 'known');
+  assert.deepEqual(end.stages.open, [{ type: 'stage', unit: 'u1', stage: 'plan-check', attempt: 1 }]);
+  assert.deepEqual(end.stages.last, end.stages.open[0]);
+});
+
 test('supervisor.crash-window-persisted: crash 1 under one supervisor, a supervisor restart, crashes 2 and 3 under the next; the third writes sup-<gen>-3 and releases the lock', T, async (t) => {
   const r = setupExec(t, { steps: smokes(5) });
   const g1 = await startPaused(r);
@@ -103,6 +125,9 @@ test('supervisor.crash-window-persisted: crash 1 under one supervisor, a supervi
   const g2 = g1 + 1;
   await idle(r, g2);
   assert.equal(stateOf(r).crashes.length, 1);
+  const end = JSON.parse(readFileSync(hostFile(r, `executor.${g1}.exit.json`), 'utf8')) as ExecutorEndRecord;
+  assert.deepEqual(end.child, { type: 'signalled', signal: 'SIGKILL' });
+  assert.equal(end.generation, g1);
 
   // Restart the supervisor process: kill it first (so nobody counts what follows), then its executor.
   const first = supervisorOf(r);

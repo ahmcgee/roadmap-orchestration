@@ -189,7 +189,7 @@ const deniedGate = () => gateStep({ decision: 'approve' }, {}, [{ type: 'globAbo
 const addDirs = (c: CallRecord): readonly string[] => c.argv.flatMap((t, i) => (c.argv[i - 1] === '--add-dir' ? [t] : []));
 
 test('gate.repair-turn (dev.12): an answer off the gate\'s schema goes back once in its own session with why; the repaired answer is the attempt\'s; refused again, the attempt is malformed', T, async () => {
-  const offSchema: Step = { as: 'claude', expect: {}, acts: [{ type: 'emit', value: { decision: 'approve', findings: [], directives: [], reasons: ['A1 holds'] } }] };
+  const offSchema: Step = { as: 'claude', expect: {}, acts: [{ type: 'emit', value: { decision: 'approve', ordering: null, findings: [], directives: [], reasons: ['A1 holds'] } }] };
   const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), offSchema, gateRepairStep({ decision: 'approve' }, ['premises'])] });
   const r = contextFor(d);
   try {

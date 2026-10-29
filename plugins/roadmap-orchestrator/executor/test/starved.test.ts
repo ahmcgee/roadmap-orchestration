@@ -71,9 +71,9 @@ describe('pressure.transition', () => {
       assert.deepEqual([f.class, f.chargeable, f.park, f.cause], ['hold', false, undefined, { type: 'host-pressure', inv: INV }], `${o.stage}`);
     }
   });
-  it('today\'s handling, for comparison: a red lane charges a fix round, a blocked one retries, a judgment\'s process fault parks', () => {
-    assert.equal(outcomeFact(u, { stage: 'lanes', kind: 'red' }, 5).class, 'park', 'the third chargeable failure parks');
-    assert.equal(outcomeFact(newUnitState(U1, 'lanes', 'med'), { stage: 'lanes', kind: 'red' }, 5).chargeable, true);
+  it('with the certification allowance exhausted: a red lane charges a fix round, a blocked one retries, a judgment\'s process fault parks', () => {
+    assert.equal(outcomeFact({ ...u, counters: { ...u.counters, unchargedLanesReds: 3 } }, { stage: 'lanes', kind: 'red' }, 5).class, 'park', 'the third chargeable failure parks');
+    assert.equal(outcomeFact({ ...u, counters: { ...u.counters, chargeableFailures: 0, unchargedLanesReds: 3 } }, { stage: 'lanes', kind: 'red' }, 5).chargeable, true);
     assert.equal(outcomeFact(u, { stage: 'lanes', kind: 'blocked' }, 5).class, 'retry');
     assert.equal(outcomeFact(u, { stage: 'plan-check', kind: 'process-fault' }, 5).class, 'park');
   });

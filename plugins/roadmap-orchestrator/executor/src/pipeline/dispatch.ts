@@ -66,8 +66,8 @@ import { type RoutingBase, inputPath, keepInput } from '../input/inforce.ts';
 import { derivedExclusions, derivedWidening } from '../input/derived.ts';
 import { type PlanUnit, boundsOf } from '../input/plan.ts';
 import { backendEnv, CODEX_OUTPUT_FILE } from '../preflight/smoke.ts';
-import { instanceEnv } from '../resources/pool.ts';
-import { type ResourceContext, type UnitAcquiringHolder, holderUnits } from '../resources/reserve.ts';
+import { buildCpuKey } from '../resources/calibrate.ts';
+import { type ResourceContext, type UnitAcquiringHolder } from '../resources/reserve.ts';
 import { OWNER_ENV, ownerLabel } from '../resources/teardown.ts';
 import type { ResolvedRouting } from '../routing/layers.ts';
 import { routingChangedRecommendation } from '../needsuser.ts';
@@ -495,12 +495,6 @@ function terminal(spec: BackendCallSpec, c: BackendCall, schemaPath: AbsPath, in
   }
 }
 
-/** `RESOURCE_INSTANCE_<POOL>` for each pool instance the build attempt `parent` holds (none outside a build). */
-function buildInstanceEnv(ctx: StageContext, parent: StageParent): Readonly<Record<string, string>> {
-  if (parent.stage !== 'build') return {};
-  return instanceEnv(holderUnits(ctx.journal.view, { type: 'stage', unit: parent.unit, stage: 'build', attempt: parent.attempt }));
-}
-
 /**
  * An implementer call that resumed a session (a fix, resume, resolve or continue round, or a reopen's respec
  * round) and ended `process-fault` with no complete JSON line on its stdout: the CLI never got as far as its
@@ -588,12 +582,12 @@ export async function callBackend(ctx: StageContext, given: BackendCallSpec): Pr
   // repository and the run dir.
   const denyWrites = r.kind === 'judgment' ? actingWriteDenials(ctx, [spec.cwd]) : [];
   const stdin = inputFile(ctx.runDir, promptBytes(call(spec, schemaText, schemaPath, ctx.runDir, mcpConfig, denyWrites), spec.rendered), 'prompt.txt');
-  // Only the implementer may create resources (its builds run the unit's tooling); a judgment holds none. It
-  // is bound to the pool instances its build holds (F7), as its lanes, probes and teardowns are.
-  const env = role === 'build' ? { ...backendEnv(ctx.hostEnv), [OWNER_ENV]: ownerLabel(ctx.plan().arc, spec.unit), ...buildInstanceEnv(ctx, spec.parent) } : backendEnv(ctx.hostEnv);
+  // Build tooling retains its owner label; pool-instance bindings belong to executor lanes and their reservations.
+  const env = role === 'build' ? { ...backendEnv(ctx.hostEnv), [OWNER_ENV]: ownerLabel(ctx.plan().arc, spec.unit) } : backendEnv(ctx.hostEnv);
   const launch = (origin: SpawnOrigin): LaunchSpec => ({
     runDir: ctx.runDir,
     origin,
+    ...(r.kind === 'implementer' ? { cpuKey: buildCpuKey({ role: 'build', class: ctx.routing(spec.unit).classes.build[r.dispatch.tier], routingRev: r.dispatch.routingRev }) } : {}),
     subject: { purpose: 'backend', ...(spec.prompt === null ? {} : { prompt: spec.prompt }), ...seat, routingRev: spec.request.dispatch.routingRev, unit: spec.unit, attempt: spec.parent.attempt },
     launch: (invDir) => {
       const c = call(spec, schemaText, schemaPath, invDir, mcpConfig, denyWrites);

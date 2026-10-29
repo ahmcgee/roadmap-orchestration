@@ -117,7 +117,10 @@ describe('lanes.test-only (dev.17)', () => {
     const partial = await series(run, 2, specLanes(run), leaf);
     assert.equal(partial.end.kind, 'green');
     assert.deepEqual(partial.ledger.map((l) => [l.reused, l.argv]), [[null, ['node', '--test', 'test/add2.test.js']]]);
-    const s = laneSpawns(run, 'tests')[1]!.expect.subject;
+    const spawns = laneSpawns(run, 'tests');
+    assert.ok(spawns[0]!.expect.cpuKey !== undefined);
+    assert.equal(spawns[1]!.expect.cpuKey, undefined, 'test-only argv never stamps a full-run calibration key');
+    const s = spawns[1]!.expect.subject;
     assert.ok(s.purpose === 'lane' && s.files !== undefined);
     assert.deepEqual(s.purpose === 'lane' ? s.files : null, ['test/add2.test.js']);
     // The partial run is the lane's clean pass on its input now: the same commit reuses it.

@@ -190,7 +190,7 @@ describe('the flaky ledger', () => {
     }
   });
 
-  test('deflake.unit-own: a flake of a spec lane on the unit\'s own commit is its red: a charged fix round; nothing is minted', T, async () => {
+  test('deflake.unit-own: a flake of a spec lane on the unit\'s own commit is flaky: an uncharged fix round; nothing is minted', T, async () => {
     const marker = freshMarker();
     const d = setupArc({
       units: [{ id: 'u1', lanes: [MUL_LANE, flakyLane(marker, 'own')] }],
@@ -199,8 +199,8 @@ describe('the flaky ledger', () => {
     const r = contextFor(d);
     try {
       assert.deepEqual(await run(r, 'u1'), { kind: 'merged' });
-      assert.deepEqual(outcomes(d, 'u1'), [...PRE_LANES, 'lanes:red', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', ...STRAIGHT.slice(PRE_LANES.length)]);
-      assert.equal(r.journal.view.unit(STAGE_U1).counters.chargeableFailures, 1, 'the unit\'s own flake is charged');
+      assert.deepEqual(outcomes(d, 'u1'), [...PRE_LANES, 'lanes:flaky', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', ...STRAIGHT.slice(PRE_LANES.length)]);
+      assert.equal(r.journal.view.unit(STAGE_U1).counters.chargeableFailures, 0, 'the unit\'s own flake is uncharged');
       assert.deepEqual(r.journal.view.flakes().map((x) => [x.fact.owner, x.fact.lane, x.fact.set, x.fact.on, x.fact.forgiven]), [[{ type: 'unit', unit: 'u1' }, 'own', 'spec', 'unit', false]]);
       assert.deepEqual(flakyLedger(r.journal.view, planOf(r)), [], 'a unit\'s own flake is not the ledger\'s');
       assert.equal(pending(r), false, 'nothing is minted');

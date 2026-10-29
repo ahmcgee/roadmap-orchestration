@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   type LogRecord, type OutcomeClass, type OutcomeStage, type RetryStage, type StageOutcomeKind, OUTCOME_STAGES,
-  RETRY_STAGES, STAGE_OUTCOME_KINDS,
+  RETRY_STAGES, STAGE_OUTCOME_KINDS, fact as readFact,
 } from '../src/core/events.ts';
 import { seatRev, specRev } from '../src/core/ids.ts';
 import { type UnitCounters, type UnitState, afterStageOutcome, fold, newUnitState } from '../src/core/state.ts';
@@ -54,7 +54,7 @@ function show(n: Next): string {
 
 function flat(c: UnitCounters): Record<Counter, number> {
   const out: Record<string, number> = {
-    chargeableFailures: c.chargeableFailures, redirects: c.redirects, reviseRounds: c.reviseRounds, candidateReds: c.candidateReds, smokeRounds: c.smokeRounds,
+    chargeableFailures: c.chargeableFailures, unchargedLanesReds: c.unchargedLanesReds, redirects: c.redirects, reviseRounds: c.reviseRounds, candidateReds: c.candidateReds, smokeRounds: c.smokeRounds,
   };
   for (const s of RETRY_STAGES) out[`retries.${s}`] = c.retries[s];
   return out as Record<Counter, number>;
@@ -82,6 +82,7 @@ const ROWS: readonly Row[] = [
   ['reproduce', 'not-reproduced', {}, 'park:not-reproduced', 'park', {}],
   ['reproduce', 'inapplicable', {}, 'park:not-reproduced', 'park', {}],
   ['reproduce', 'blocked', {}, 'park:lane-blocked', 'park', {}],
+  ['reproduce', 'env-unavailable', {}, 'park:env-unavailable', 'park', {}],
   ['reproduce', 'interrupted', {}, 'hold', 'hold', {}],
   ['reproduce', 'cleanup-failed', {}, 'park:residue', 'park', {}],
   // plan-check (fresh judgment)
@@ -163,17 +164,19 @@ const ROWS: readonly Row[] = [
   // lanes (clean detached worktree at the salvage SHA)
   ['lanes', 'green', {}, 'gate@med', 'advance', {}],
   ['lanes', 'green', { promotion: true }, 'gate@escalation', 'advance', {}],
-  ['lanes', 'red', {}, 'build/fix@med', 'advance', { chargeableFailures: 1 }],
-  ['lanes', 'red', { counters: { chargeableFailures: 2 } }, 'park:chargeable-bound', 'park', { chargeableFailures: 1 }],
-  ['lanes', 'not-certified', {}, 'build/fix@med', 'advance', { chargeableFailures: 1 }],
+  ['lanes', 'red', {}, 'build/fix@med', 'advance', { unchargedLanesReds: 1 }],
+  ['lanes', 'red', { counters: { chargeableFailures: 2, unchargedLanesReds: 3 } }, 'park:chargeable-bound', 'park', { chargeableFailures: 1, unchargedLanesReds: -3 }],
+  ['lanes', 'not-certified', {}, 'build/fix@med', 'advance', { unchargedLanesReds: 1 }],
+  ['lanes', 'flaky', {}, 'build/fix@med', 'advance', {}],
+  ['lanes', 'flaky', { counters: { chargeableFailures: 2 } }, 'build/fix@med', 'advance', {}],
   ['lanes', 'blocked', {}, 'lanes', 'retry', { 'retries.lanes': 1 }],
   ['lanes', 'blocked', { counters: { 'retries.lanes': 1 } }, 'park:lane-blocked', 'park', {}],
   ['lanes', 'interrupted', {}, 'hold', 'hold', {}],
   ['lanes', 'cleanup-failed', {}, 'park:residue', 'park', {}],
   ['lanes', 'occupied', {}, 'park:occupancy-unlabelled', 'park', {}],
   // M4a rev 3 (D1): a missing or failing required witness is a C fix round, bounded by the chargeable bound.
-  ['lanes', 'witnesses-missing', {}, 'build/fix@med', 'advance', { chargeableFailures: 1 }],
-  ['lanes', 'witnesses-missing', { counters: { chargeableFailures: 2 } }, 'park:chargeable-bound', 'park', { chargeableFailures: 1 }],
+  ['lanes', 'witnesses-missing', {}, 'build/fix@med', 'advance', { unchargedLanesReds: 1 }],
+  ['lanes', 'witnesses-missing', { counters: { chargeableFailures: 2, unchargedLanesReds: 3 } }, 'park:chargeable-bound', 'park', { chargeableFailures: 1, unchargedLanesReds: -3 }],
   // M4a rev 3 (D2, R38): a smoke survivor gets `smokeRounds` (1) C fix rounds, then the gate decides with it.
   ['lanes', 'smoke-survived', {}, 'build/fix@med', 'smoke', { smokeRounds: 1, chargeableFailures: 1 }],
   ['lanes', 'smoke-survived', { counters: { smokeRounds: 1 } }, 'gate@med', 'advance', {}],
@@ -313,7 +316,7 @@ describe('transitions', () => {
       'plan-check context-exceeded': 'env', 'build context-exceeded': 'env', 'gate context-exceeded': 'env',
       'candidate red': 'design', 'candidate base-red': 'env', 'candidate blocked': 'retryable', 'candidate occupied': 'env', 'candidate cleanup-failed': 'retryable',
       'lanes env-unavailable': 'retryable', 'candidate env-unavailable': 'retryable',
-      'reproduce not-reproduced': 'design', 'reproduce inapplicable': 'design', 'reproduce blocked': 'retryable', 'reproduce cleanup-failed': 'retryable',
+      'reproduce not-reproduced': 'design', 'reproduce inapplicable': 'design', 'reproduce blocked': 'retryable', 'reproduce env-unavailable': 'retryable', 'reproduce cleanup-failed': 'retryable',
       ...Object.fromEntries(['prepare', 'reproduce', 'plan-check', 'build', 'quiesce', 'evidence', 'salvage', 'teardown', 'lanes', 'gate', 'candidate', 'scaffold', 'poc'].map((st) => [`${st} executor-fault`, 'env'])),
       // dev.17 (design pass): a plan defect is the plan's to fix (an apply, then `resume`), as at lanes.
       'plan-check plan-defect': 'env', 'scaffold plan-defect': 'env', 'scaffold refusal': 'design', 'scaffold process-fault': 'retryable', 'scaffold lost': 'retryable',
@@ -344,7 +347,7 @@ describe('transitions', () => {
       }
     }
     assert.equal(parks, ROWS.filter((row) => row[3].startsWith('park:')).length);
-    const bound = outcomeFact(unit({ counters: { chargeableFailures: 2 } }), outcome('lanes', 'red'), 1);
+    const bound = outcomeFact(unit({ counters: { chargeableFailures: 2, unchargedLanesReds: 3 } }), outcome('lanes', 'red'), 1);
     assert.deepEqual(bound.park, { class: 'operator', kind: 'design' }, 'the chargeable bound is a design park');
     const cause = { type: 'backend', backend: 'codex', parkSeq: 12 } as const;
     assert.deepEqual(outcomeFact(unit(), outcome('build', 'interrupted'), 1, { cause }).cause, cause);
@@ -354,7 +357,7 @@ describe('transitions', () => {
   it('transitions.decided-by: the recorded fact alone reads back the decision transition made, for every row and the bound', () => {
     const cases = [
       ...ROWS.map(([stage, kind, given]) => ({ u: unit(given), o: outcome(stage, kind) })),
-      { u: unit({ counters: { chargeableFailures: 2 } }), o: outcome('lanes', 'red') },
+      { u: unit({ counters: { chargeableFailures: 2, unchargedLanesReds: 3 } }), o: outcome('lanes', 'red') },
     ];
     for (const { u, o } of cases) {
       const label = `${o.stage} ${o.kind} ${JSON.stringify(u.counters)}`;
@@ -392,13 +395,57 @@ describe('transitions', () => {
     assert.ok(!OUTCOME_STAGES.includes('retire' as OutcomeStage), 'retire is terminal and reports no outcome');
   });
 
+  it('certification counter resets on a charge; non-certification outcomes retain their ordinary charge', () => {
+    const { state, facts } = drive([outcome('lanes', 'red'), outcome('lanes', 'red'), outcome('gate', 'revise'), outcome('lanes', 'red')]);
+    assert.deepEqual(facts.map((f) => f.chargeable), [false, false, true, false]);
+    assert.equal(state.counters.unchargedLanesReds, 1);
+    assert.equal(state.counters.chargeableFailures, 1);
+  });
+
+  it('a flaky lanes outcome neither consumes nor resets a partly used or exhausted certification allowance', () => {
+    const red = outcome('lanes', 'red');
+    const flaky = outcome('lanes', 'flaky');
+    const partial = drive([red, red, flaky]);
+    assert.equal(partial.state.counters.unchargedLanesReds, 2);
+    assert.equal(partial.state.counters.chargeableFailures, 0);
+    const exhausted = drive([red, red, flaky, red, flaky]);
+    assert.equal(exhausted.state.counters.unchargedLanesReds, 3);
+    assert.equal(exhausted.state.counters.chargeableFailures, 0);
+    const charged = drive([red, red, flaky, red, flaky, red]);
+    assert.deepEqual(charged.facts.map((f) => f.chargeable), [false, false, false, false, false, true]);
+    assert.deepEqual(charged.facts.map((f) => f.unchargedLanesReds), [1, 2, undefined, 3, undefined, 0]);
+    assert.equal(charged.state.counters.unchargedLanesReds, 0);
+    assert.equal(charged.state.counters.chargeableFailures, 1);
+    for (const f of charged.facts.filter((f) => f.outcome === 'flaky')) {
+      assert.deepEqual(readFact(f, 'fact'), f, 'the counterless, uncharged flake remains a valid journal fact');
+      for (const count of [0, 1, 2, 3]) {
+        assert.throws(() => readFact({ ...f, unchargedLanesReds: count }, 'fact'), /only on a certification red/);
+      }
+    }
+  });
+
+  it('the journal rejects a mismatched allowance, charge or class; legacy charged reds default the counter to zero', () => {
+    const fact = outcomeFact(unit(), outcome('lanes', 'red'), 1);
+    for (const bad of [{ ...fact, unchargedLanesReds: 2 }, { ...fact, chargeable: true }, { ...fact, class: 'retry' as const }]) {
+      assert.throws(() => fold(ARC, chain([{ type: 'fact', fact: bad }])), /certification allowance/);
+    }
+    for (const kind of ['red', 'not-certified', 'witnesses-missing'] as const) {
+      const { unchargedLanesReds: _counter, ...legacy } = outcomeFact(unit(), outcome('lanes', kind), 1);
+      assert.throws(() => fold(ARC, chain([{ type: 'fact', fact: legacy }])), /certification allowance/, `${kind}: counterless advancing red`);
+      assert.throws(() => fold(ARC, chain([{ type: 'fact', fact: { ...legacy, class: 'park', park: { class: 'operator', kind: 'env' } } }])), /certification allowance/, `${kind}: no steering pass`);
+      const folded = fold(ARC, chain([{ type: 'fact', fact: { ...legacy, chargeable: true } }]));
+      assert.equal(folded.units[0]!.counters.chargeableFailures, 1);
+      assert.equal(folded.units[0]!.counters.unchargedLanesReds, 0);
+    }
+  });
+
   it('transitions.bound-3: the third chargeable failure parks, whatever its row says', () => {
     const { nexts, state } = drive([
-      outcome('lanes', 'red'), // 1
+      ...Array.from({ length: 4 }, () => outcome('lanes', 'red')), // first charge
       outcome('gate', 'revise'), // 2
       outcome('gate', 'revise'), // 3: a revise round within its bound, but the unit is bounded first
     ]);
-    assert.deepEqual(nexts.map(show), ['build/fix@med', 'build/fix@med', 'park:chargeable-bound']);
+    assert.deepEqual(nexts.map(show), [...Array(5).fill('build/fix@med'), 'park:chargeable-bound']);
     assert.equal(state.counters.chargeableFailures, 3);
     assert.equal(state.counters.reviseRounds, 1, 'the bounded revise round did not happen');
     assert.equal(state.status, 'park-pending');

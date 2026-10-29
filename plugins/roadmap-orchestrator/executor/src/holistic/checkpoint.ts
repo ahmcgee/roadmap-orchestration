@@ -85,6 +85,7 @@
 //
 // OR-Q1: `designParkRoute` tells the scheduler what a design park waits for: the checkpoint (its park item is held
 // back), the owner (`respec-second`, raised here), or its own park item (the checkpoint decided nothing applicable).
+import { orderingOf } from '../park/ordering.ts';
 import { join } from 'node:path';
 import { freshJudgmentSession } from '../backends/argv.ts';
 import { crashPoint } from '../core/crash.ts';
@@ -267,13 +268,13 @@ function appliedBundles(ctx: CheckpointContext): readonly AppliedBundle[] {
 /** A unit's lineage root (itself when it re-enters none). */
 const rootOf = (ctx: CheckpointContext, unit: UnitId): UnitId => ctx.journal.view.unit(unit).lineage?.root ?? unit;
 
-/** The operator-design parks of the plan in force: unit and park seq. */
+/** The operator-design parks needing a checkpoint: explicit ordering waits recover at publication instead. */
 function designParks(ctx: CheckpointContext): readonly Readonly<{ unit: UnitId; seq: number }>[] {
   const view = ctx.journal.view;
   return requirePlanInForce(ctx.runDir, view).plan.units.flatMap((u) => {
     const s = view.unit(u.id);
     const p = s.park;
-    return s.status === 'park-pending' && p !== null && p.park.class === 'operator' && p.park.kind === 'design' ? [{ unit: u.id, seq: p.seq }] : [];
+    return s.status === 'park-pending' && p !== null && p.park.class === 'operator' && p.park.kind === 'design' && orderingOf(p.park) === null ? [{ unit: u.id, seq: p.seq }] : [];
   });
 }
 

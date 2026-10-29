@@ -187,7 +187,7 @@ class LogIndex {
         if (spawn !== undefined) {
           intents.delete(e.op);
           const red = e.type === 'done' && e.kind === 'proc.spawn' && e.outcome.kind === 'result' && e.outcome.summary.type === 'command'
-            && ['pass', 'fail', 'stall'].includes(e.outcome.summary.verdict) ? isRed(e.outcome.summary.verdict) : null;
+            && ['pass', 'fail', 'stall', 'timeout'].includes(e.outcome.summary.verdict) ? isRed(e.outcome.summary.verdict) : null;
           const pressure = e.type === 'done' && e.kind === 'proc.spawn' && e.outcome.kind === 'result' ? spawnPressureOf(e.outcome) : null;
           this.spawns.push({ intent: spawn.intent, seq: spawn.seq, start: spawn.at, end: at, red, pressure });
         }

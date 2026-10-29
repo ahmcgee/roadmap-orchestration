@@ -1,6 +1,7 @@
 // The event log (`events.jsonl`) record types, their validators, canonical serialisation and the chain
 // hash rule. The journal (append, tail, fold) is step 2 and builds on these. SCHEMAS.md "Event log" is the
 // prose twin of this module.
+import { type CpuBasis, cpuBasis } from './cpu.ts';
 import type { Buffer } from 'node:buffer';
 import {
   type AmendmentId, type ArcId, type CommandId, type DebtId, type DivergenceId, type EdgeId, type EnvId, type FindingId, type InvocationId,
@@ -29,7 +30,8 @@ import {
   dispatchRecord, killReason, knownDefectMatch, optionId, pauseTarget, manifestSpecs, resumeTarget, revisionInputs, specPatch, stage, tokenUsage,
   usageUnavailableReason, type Stochastic, stochastic,
 } from './records.ts';
-import { issuesIgnored } from './upgrade.ts';
+import { type OrderingWait, orderingWait } from './ordering.ts';
+import { issuesIgnored, orderingDefault } from './upgrade.ts';
 import {
   type BusyAttempt, type ClassifiedAdmit, type Conversion, type ConversionReason, BUNDLE_REJECTIONS, CONVERSION_REASONS, classifiedAdmit, conversion,
   type AuditTrigger, type BundleOutcome, type CheckpointTrigger, type ContractOp, type DivergenceDraft, type FindingEvidence, type FindingLens,
@@ -236,9 +238,9 @@ export type OpExpect = {
   /** `evidence` is the done evidence.snapshot op whose manifest must be complete before removal. */
   'worktree.remove': Readonly<{ path: AbsPath; evidence: OpId }>;
   /** `resources` in lock order (`compareResourceUnits`): names and pool instances, then `@cpu#*`, `integration-slot` last. */
-  'resource.transition': Readonly<{ holder: Holder; resources: readonly ResourceUnit[]; edge: ResourceEdge }>;
+  'resource.transition': Readonly<{ holder: Holder; resources: readonly ResourceUnit[]; edge: ResourceEdge; cpuBasis?: CpuBasis; tokenWaitMs?: number }>;
   /** The invocation is `op#ordinal`; launch.json is written after the intent and must hash to `launchSha256`. */
-  'proc.spawn': Readonly<{ subject: SpawnSubject; launchSha256: Sha256Hex }>;
+  'proc.spawn': Readonly<{ subject: SpawnSubject; launchSha256: Sha256Hex; cpuKey?: Sha256Hex }>;
   /** `op` scope also kills stray earlier ordinals of the same op. */
   'proc.kill': Readonly<{ inv: InvocationId; scope: 'invocation' | 'op'; reason: KillReason }>;
   /**
@@ -475,7 +477,8 @@ export const STAGE_OUTCOME_KINDS = {
   prepare: ['clean-plan-check', 'clean-build', 'clean-verify', 'conflicted', 'interrupted', 'executor-fault'],
   // A vacuity repair's first stage (M3, B3): the mutant applied and its lane run. `reproduced` goes on to
   // plan-check; `not-reproduced` dismisses the finding and parks; `inapplicable` parks for the next audit.
-  reproduce: ['reproduced', 'not-reproduced', 'inapplicable', 'blocked', 'interrupted', 'cleanup-failed', 'executor-fault'],
+  // `env-unavailable` (2026-10-29, additive) parks on the inferred environment, as lanes and candidate do.
+  reproduce: ['reproduced', 'not-reproduced', 'inapplicable', 'blocked', 'interrupted', 'cleanup-failed', 'executor-fault', 'env-unavailable'],
   // M4a rev 3 (E) to dev.16: `in-session` (a frontier or summit builder under `planCheck.shape: by-builder`: no plan-check
   // call, the build assessed in session). dev.17 records none; read from an older log.
   // Paid M4b run 5: `read-denied`, as at the gate (no longer recorded since 2026-10-16; read from a 1.0.0-dev.11 log).
@@ -513,7 +516,7 @@ export const STAGE_OUTCOME_KINDS = {
   // dev.17: `env-unavailable` (a lane's environment did not come up or failed its probe: a retryable park on the
   // environment, never a red lane), here and at the candidate.
   lanes: [
-    'green', 'red', 'not-certified', 'blocked', 'interrupted', 'occupied', 'cleanup-failed', 'witnesses-missing', 'smoke-survived', 'known-defect', 'base-red',
+    'green', 'red', 'flaky', 'not-certified', 'blocked', 'interrupted', 'occupied', 'cleanup-failed', 'witnesses-missing', 'smoke-survived', 'known-defect', 'base-red',
     'witness-lane-missing', 'plan-defect', 'scope-growth', 'executor-fault', 'env-unavailable',
   ],
   // M4a rev 3 (paid run 11): `unverified` (no green verification checkout of the head: the lanes run again, uncharged).
@@ -598,12 +601,15 @@ export type OperatorParkKind = (typeof OPERATOR_PARK_KINDS)[number];
  * A park's class (A7), written inside the `stage-outcome` fact that parks (F9). `retryable`: the executor
  * probes `targets` and the park recovers once each has a covering passing probe. `operator`: `env` re-runs
  * the stage on `resume <unit>` (an `unparked` fact); `design` needs an applied spec revision (a reopen) or a
- * re-entry. Absent only where the interim M2 shim wrote none (src/pipeline/transitions.ts `outcomeFact`): read as operator, its kind
+ * re-entry. `ordering` names an explicit ordering wait (design only); absent reads as none with a warning.
+ * Only that wait may recover automatically, through `unparked{command: null, parkSeq}` after every blocker merges.
+ * Absent only where the interim M2 shim wrote none (src/pipeline/transitions.ts `outcomeFact`): read as operator, its kind
  * by outcome (src/core/state.ts `unclassedParkRecord`).
  */
 export type ParkRecord =
   | Readonly<{ class: 'retryable'; targets: readonly ProbeTarget[] }>
-  | Readonly<{ class: 'operator'; kind: OperatorParkKind }>;
+  | Readonly<{ class: 'operator'; kind: 'env'; ordering?: null }>
+  | Readonly<{ class: 'operator'; kind: 'design'; ordering?: OrderingWait | null }>;
 
 /**
  * Why a stage was interrupted, when not an operator pause or stop (G5): its backend parked, at the park fact's
@@ -694,10 +700,16 @@ export type StageOutcomeFact = { [S in OutcomeStage]: Readonly<{
   outcome: StageOutcomeKind<S>;
   class: OutcomeClass;
   chargeable: boolean;
+  /** Certification reds only: uncharged reds since the last charge, after this outcome. Absent on dev.31 charged reds or steering parks: 0. */
+  unchargedLanesReds?: number;
   park?: ParkRecord;
   cause?: HoldCause;
   detail?: StageOutcomeDetail;
 }> }[OutcomeStage];
+
+/** The lanes outcomes covered by the uncharged certification allowance. */
+export const certificationRed = (stage: string, outcome: string): boolean =>
+  stage === 'lanes' && (outcome === 'red' || outcome === 'not-certified' || outcome === 'witnesses-missing');
 
 /**
  * What a judgment stage attempt was admitted with (F1), written after its entry reservation and before its
@@ -817,8 +829,10 @@ export type Fact =
   /**
    * `resume <unit>` re-entered a unit parked operator-env (M2): the unit re-runs the stage it parked at as a new,
    * uncharged attempt; its decision and interruption return to what they were before the park.
+   * Automatic ordering wakes instead carry command null and the exact park seq, verified against merged blockers.
    */
   | Readonly<{ kind: 'unparked'; unit: UnitId; command: CommandId }>
+  | Readonly<{ kind: 'unparked'; unit: UnitId; command: null; parkSeq: number }>
   /**
    * A probe (M2): `target` checked for the seqs `covers` (sorted, non-empty): unit parks' stage-outcome seqs, a
    * backend park's seq, and for a resource target the seq of the `resource.transition{fail}` that left an own-arc
@@ -1638,7 +1652,11 @@ export const OP_SCHEMAS: { readonly [K in OpKind]: OpSchema<K> } = {
     outcome: kindOnly('removed'),
   },
   'resource.transition': {
-    expect: object((f) => ({ holder: f.get('holder', holder), resources: f.get('resources', lockOrder), edge: f.get('edge', resourceEdge) })),
+    expect: object((f) => {
+      const basis = f.optional('cpuBasis', cpuBasis);
+      const tokenWaitMs = f.optional('tokenWaitMs', nat);
+      return { holder: f.get('holder', holder), resources: f.get('resources', lockOrder), edge: f.get('edge', resourceEdge), ...(basis === undefined ? {} : { cpuBasis: basis }), ...(tokenWaitMs === undefined ? {} : { tokenWaitMs }) };
+    }),
     post: nothing,
     outcome: kindOnly('transitioned'),
     check: (e, _post, path) => {
@@ -1650,7 +1668,10 @@ export const OP_SCHEMAS: { readonly [K in OpKind]: OpSchema<K> } = {
     },
   },
   'proc.spawn': {
-    expect: object((f) => ({ subject: f.get('subject', spawnSubject), launchSha256: f.get('launchSha256', sha256R) })),
+    expect: object((f) => {
+      const cpuKey = f.optional('cpuKey', sha256R);
+      return { subject: f.get('subject', spawnSubject), launchSha256: f.get('launchSha256', sha256R), ...(cpuKey === undefined ? {} : { cpuKey }) };
+    }),
     post: nothing,
     outcome: tagged('kind', {
       result: object((f): OpOutcome['proc.spawn'] => {
@@ -1963,7 +1984,15 @@ const parkRecord: Read<ParkRecord> = tagged('class', {
   retryable: object((f): ParkRecord => ({
     class: f.get('class', literal('retryable')), targets: f.get('targets', sortedBy(probeTarget, probeTargetKey, { nonEmpty: true })),
   })),
-  operator: object((f): ParkRecord => ({ class: f.get('class', literal('operator')), kind: f.get('kind', oneOf(OPERATOR_PARK_KINDS)) })),
+  operator: object((f): ParkRecord => {
+    const cls = f.get('class', literal('operator'));
+    const kind = f.get('kind', oneOf(OPERATOR_PARK_KINDS));
+    const ordering = f.optional('ordering', nullable(orderingWait));
+    if (ordering === undefined) orderingDefault();
+    if (ordering != null && kind !== 'design') throw new SchemaError(`${f.path}.ordering`, 'ordering only on a design park', ordering);
+    if (kind === 'env') return { class: cls, kind, ...(ordering === undefined ? {} : { ordering: null }) };
+    return { class: cls, kind, ...(ordering === undefined ? {} : { ordering }) };
+  }),
 });
 
 const scopeGrowthProposal: Read<ScopeGrowthProposal> = object((g) => ({
@@ -2499,7 +2528,11 @@ export const fact: Read<Fact> = tagged('kind', {
     kind: f.get('kind', literal('reopened')), unit: f.get('unit', unitR), command: f.get('command', nullable(cmdR)), specRev: f.get('specRev', specRevR),
     specSha256: f.get('specSha256', sha256R),
   })),
-  unparked: object((f): Fact => ({ kind: f.get('kind', literal('unparked')), unit: f.get('unit', unitR), command: f.get('command', cmdR) })),
+  unparked: object((f): Fact => {
+    const base = { kind: f.get('kind', literal('unparked')), unit: f.get('unit', unitR) };
+    const command = f.get('command', nullable(cmdR));
+    return command === null ? { ...base, command, parkSeq: f.get('parkSeq', positive) } : { ...base, command };
+  }),
   probe: object((f): Fact => {
     const out = {
       kind: f.get('kind', literal('probe')), target: f.get('target', probeTarget), covers: f.get('covers', seqSet),
@@ -2613,6 +2646,8 @@ export const fact: Read<Fact> = tagged('kind', {
       class: f.get('class', oneOf(OUTCOME_CLASSES)),
       chargeable: f.get('chargeable', bool),
     } as StageOutcomeFact;
+    const unchargedLanesReds = f.optional('unchargedLanesReds', nat);
+    if (unchargedLanesReds !== undefined && !certificationRed(s, out.outcome)) throw new SchemaError(`${f.path}.unchargedLanesReds`, 'only on a certification red', unchargedLanesReds);
     const park = f.optional('park', parkRecord);
     const cause = f.optional('cause', holdCause);
     const detail = f.optional('detail', stageOutcomeDetail);
@@ -2631,7 +2666,7 @@ export const fact: Read<Fact> = tagged('kind', {
     const holds = out.outcome === 'interrupted' || ((s === 'plan-check' || s === 'lanes') && out.outcome === 'scope-growth') || (s === 'plan-check' && out.outcome === 'split');
     if (holds !== (out.class === 'hold')) throw new SchemaError(`${f.path}.class`, 'hold exactly for an interrupted outcome, a scope-growth or a split', out.class);
     if (out.class === 'hold' && out.chargeable) throw new SchemaError(`${f.path}.chargeable`, 'false for a hold', out.chargeable);
-    return { ...out, ...(park === undefined ? {} : { park }), ...(cause === undefined ? {} : { cause }), ...(detail === undefined ? {} : { detail }) } as StageOutcomeFact;
+    return { ...out, ...(unchargedLanesReds === undefined ? {} : { unchargedLanesReds }), ...(park === undefined ? {} : { park }), ...(cause === undefined ? {} : { cause }), ...(detail === undefined ? {} : { detail }) } as StageOutcomeFact;
   }),
 });
 

@@ -908,11 +908,11 @@ export function fastLanesText(worktree: AbsPath, lanes: readonly BuildLane[]): s
 
 /**
  * The suite lanes a build runs beside its fast lanes (the 2026-10-15 batch), as their exact commands; nothing when the plan
- * has none. Reported as experiments: lanesRun holds the spec's fast lanes only (its schema's enum).
+ * has none. These commands are references for targeted development checks; the executor certifies the full suite.
  */
 export function suiteLanesText(worktree: AbsPath, lanes: readonly BuildLane[]): string {
   if (lanes.length === 0) return '';
-  return `\n\n<suite_lanes>\nThe executor runs these suite lanes after your fast lanes, in a clean checkout of your commit, and a red one comes back to you as a fix round. Run each exactly as written beside the fast lanes, after your last change, until it exits with its expected code, and report each run in experiments under the name suite:<id>, never in lanesRun:\n${fastLanesText(worktree, lanes)}\n</suite_lanes>`;
+  return `\n\n<suite_lanes>\nThe executor runs these suite lanes in its full lanes stage after your final report. Use them as references for targeted checks and report checks you run in experiments; do not rehearse the full suite:\n${fastLanesText(worktree, lanes)}\n</suite_lanes>`;
 }
 
 export function laneLedgerText(ledger: readonly LaneLedgerEntry[]): string {

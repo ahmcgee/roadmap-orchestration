@@ -1,3 +1,4 @@
+import { certification, workRuns, type Certification, type WorkRun } from './status-work.ts';
 // `roadmap status`: DESIGN-1.0.md §2.4, as one agent-facing JSON object (M2's view plus M3's holistic keys).
 //
 // Read only, from anywhere, while an executor runs or when none does: the log is folded without the host
@@ -151,12 +152,13 @@ import { escalateAt, probeTargets, trippedTargets } from './park/schedule.ts';
 import { type RejectionFile, rejectionFile } from './preflight/startup.ts';
 import { judgmentSeat, largeDiffSeat } from './pipeline/transitions.ts';
 import { cpuCapacity, isDirty, poolUnits } from './resources/pool.ts';
+import { obligationBlockingUnits, unmergedOf } from './holistic/blocking.ts';
 import { effectiveDependency } from './schedule/graph.ts';
 import { type SpecFactsOf, admitter, nextStage, rankOf } from './schedule/ready.ts';
 import { repairUnits, specFacts } from './pipeline/reproduce.ts';
 import { observations } from './pipeline/lanes.ts';
 import {
-  type ArcHold, type CompletionBlocker, type HolisticContexts, type QueueEntry, SCHED_FILE, type SchedFile, arcHolds, arcSettled, completionBlockers, dischargingObservation,
+  type ArcHold, type CompletionBlocker, type HolisticContexts, type JobQueueEntry, type QueueEntry, SCHED_FILE, type SchedFile, arcHolds, arcSettled, completionBlockers, dischargingObservation,
   readOnlyContexts, recordedLaneEnv, schedFile, unitSettled,
 } from './schedule/scheduler.ts';
 import { answerLine, commonDirOfRun, unappliedAnswers } from './answers.ts';
@@ -243,6 +245,8 @@ export type WaitingFor = Readonly<{
   edges: readonly EdgeId[];
   resources: ResourceRequest | null;
   envBlocked: boolean;
+  pressureBlocked?: boolean;
+  tokenWaitMs?: number | null;
   admission: readonly AdmissionConstraint[];
   drainFor: readonly CommandId[];
 }>;
@@ -256,6 +260,7 @@ export type WaitingFor = Readonly<{
 export type UnitPark = Readonly<{
   class: 'retryable' | 'operator';
   kind?: OperatorParkKind;
+  ordering?: Readonly<{ blockers: readonly UnitId[]; outstanding: readonly UnitId[] }>;
   targets: readonly ProbeTarget[];
   outstanding: readonly ProbeTarget[];
   nextProbeAt: IsoTime | null;
@@ -282,6 +287,8 @@ export type UnitStatusLine = Readonly<{
   status: string;
   attempts: number;
   chargeableFailures: number;
+  certification: Certification | null;
+  work: readonly WorkRun[];
   risk: RiskTier | null;
   /** The seat the unit's current stage dispatches on, when that stage calls a backend and the unit is dispatched. */
   seat: SeatRef | null;
@@ -311,7 +318,7 @@ export type UnitStatusLine = Readonly<{
   gate: GateAnswerView | null;
 }>;
 /** A unit's line as `derive` (and `watch`) reads it: everything but the failures and the gate answer, which read files. */
-type UnitCore = Omit<UnitStatusLine, 'failures' | 'gate'>;
+type UnitCore = Omit<UnitStatusLine, 'failures' | 'gate' | 'certification' | 'work'>;
 
 /** The routing in force for the latest start, as classes: never a model. */
 export type RoutingView = Readonly<{
@@ -345,6 +352,8 @@ export type HostView = Readonly<{
   pools: Readonly<Record<string, Readonly<{ size: number; used: number; dirty: number }>>>;
   /** The arbiter's waiters, served first to last (sched.json; empty without a live executor). */
   queue: readonly QueueEntry[];
+  jobQueue: readonly JobQueueEntry[];
+  work: readonly WorkRun[];
   probes: readonly ProbeView[];
   /** Backends parked now, with their park epoch and class (F12). */
   backends: readonly Readonly<{ backend: Backend; parkSeq: number; class: string }>[];
@@ -761,7 +770,7 @@ function probesOf(view: JournalView): readonly ProbeView[] {
 function parkOf(view: JournalView, u: UnitState): UnitPark | null {
   if (u.status !== 'park-pending' || u.park === null) return null;
   const { park } = u.park;
-  if (park.class === 'operator') return { class: 'operator', kind: park.kind, targets: [], outstanding: [], nextProbeAt: null, escalateAt: null };
+  if (park.class === 'operator') return { class: 'operator', kind: park.kind, ...(park.ordering ? { ordering: { ...park.ordering, outstanding: park.ordering.blockers.filter((b) => view.unit(b).status !== 'retired') } } : {}), targets: [], outstanding: [], nextProbeAt: null, escalateAt: null };
   const passed = new Set(u.park.passed.map(probeTargetKey));
   const outstanding = park.targets.filter((t) => !passed.has(probeTargetKey(t)));
   // Each outstanding target is next probed at its last failed probe's backoff if that covered this park, else at once.
@@ -890,7 +899,7 @@ function unitLine(x: Inputs, unit: PlanUnit, times: Readonly<{ starts: ReadonlyM
       const inTask = task !== null && (task.state === 'in-stage' || task.state === 'in-chain');
       if (queued !== null) {
         state = 'waiting';
-        waitingFor = waitFor({ resources: queued.request, envBlocked: queued.envBlocked });
+        waitingFor = waitFor({ resources: queued.request, envBlocked: queued.envBlocked, pressureBlocked: queued.pressureBlocked ?? false, tokenWaitMs: queued.queuedAt === undefined ? null : Math.max(0, now - queued.queuedAt) });
       } else if (inTask || (x.sched === null && x.alive && u.open !== null)) {
         state = u.lineage !== null && !u.lineage.prepared ? 'preparing' : 'running';
       } else {
@@ -1064,7 +1073,7 @@ export function compactState(l: UnitCore): string {
     ...(w.deps.length > 0 ? [`deps=${w.deps.join(',')}`] : []),
     ...(w.milestones.length > 0 ? [`milestones=${w.milestones.join(',')}`] : []),
     ...(w.edges.length > 0 ? [`edges=${w.edges.join(',')}`] : []),
-    ...(w.resources !== null ? [w.envBlocked ? 'resources(env-blocked)' : 'resources'] : []),
+    ...(w.resources !== null ? [w.pressureBlocked ? 'resources(host-pressure)' : w.envBlocked ? 'resources(env-blocked)' : 'resources'] : []),
     ...[...new Set(w.admission.map((c) => c.type))],
   ];
   return parts.length === 0 ? l.state : `${l.state}:${parts.join(',')}`;
@@ -1101,7 +1110,7 @@ function unitReason(l: UnitCore): Exclude<ObligationReason, 'spec' | 'witness'> 
     case 'blocked':
       return w !== null && (w.deps.length > 0 || w.edges.length > 0) ? 'waiting-dep' : 'supervision';
     case 'waiting':
-      if (w?.resources !== null && w?.resources !== undefined) return w.envBlocked ? 'host' : 'code';
+      if (w?.resources !== null && w?.resources !== undefined) return w.envBlocked || w.pressureBlocked ? 'host' : 'code';
       return 'waiting-dep';
     case 'awaiting-admission': {
       const types = new Set((w?.admission ?? []).map((c) => c.type));
@@ -1116,11 +1125,6 @@ function unitReason(l: UnitCore): Exclude<ObligationReason, 'spec' | 'witness'> 
     case 'ready':
       return 'code';
   }
-}
-
-/** The effective (lineage-head) units of `units` not merged yet, ascending, each once. */
-function unmergedOf(view: JournalView, units: readonly UnitId[]): readonly UnitId[] {
-  return [...new Set(units.map((u) => effectiveDependency(view, u)).filter((u) => view.unit(u).status !== 'retired'))].sort();
 }
 
 /** An obligation's witness verdict on a tree, the `witnessed` facts of the observations read, and the units it waits on. */
@@ -1138,9 +1142,6 @@ export function obligationLeaves(repo: AbsPath, view: JournalView, obligations: 
   const witnessed = new Map(fold.witnessed.map((w) => [w.seq, w]));
   const lanes = new Map(obligations.lanes.map((l) => [l.id, l]));
   const defs = new Map(obligations.obligations.map((o) => [o.id, o]));
-  const latched = new Set(fold.latched.map((l) => l.obligation));
-  const owners = (id: ObligationId): readonly UnitId[] =>
-    fold.findings.flatMap((f) => (isActive(f) && f.obligation === id && f.owner !== null ? [f.owner] : []));
   const leaf = (o: ObligationDef): ObligationLeaf => {
     if (o.state.type === 'split') {
       const kids = o.state.children.map((c) => defs.get(c)).filter((c): c is ObligationDef => c !== undefined && !isExempt(c)).map(leaf);
@@ -1152,8 +1153,7 @@ export function obligationLeaves(repo: AbsPath, view: JournalView, obligations: 
     if (o.witness === null) throw new Error(`obligation ${o.id} has no witness and is not a split parent`);
     const lane = lanes.get(o.witness.lane);
     if (lane === undefined) throw new Error(`obligation ${o.id} is witnessed on lane ${o.witness.lane}, which the obligations in force do not have`);
-    const future = !isMustHold(o, latched);
-    const units = future ? unmergedOf(view, o.deliveredBy) : unmergedOf(view, owners(o.id));
+    const units = obligationBlockingUnits(view, o);
     const found = onTree(lane);
     if (found === null) return { verdict: 'not-covered', witnessed: [], units };
     const entry = witnessed.get(found.seq);
@@ -1800,10 +1800,15 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?:
     journal: { view }, runDir, planDir: absPath(dirname(start.record.planFile)), plan: () => plan,
   });
 
+  const workContext = start === null || plan === null || inForce === null ? null : readOnlyContexts({
+    view, runDir, repo: start.record.repo, hostDir, planFile: start.record.planFile, plan: () => plan,
+    hostEnv: process.env, routingBase: routingBaseOf(inForce.fact.routingProvenance),
+  }).audit;
+  const work = workContext === null ? [] : workRuns(workContext, events);
   return {
     arc,
     run: { state: d.state, owner: d.owner, heartbeatAt: readIf(join(runDir, HEARTBEAT_FILE), heartbeat)?.at ?? null },
-    units: d.units.map((l) => ({ ...l, failures: laneFailures({ journal: { view }, runDir }, { id: l.unit }), gate: latestGateAnswer({ journal: { view }, runDir }, l.unit) })),
+    units: d.units.map((l) => ({ ...l, certification: workContext === null ? null : certification(workContext, plan!.units.find((u) => u.id === l.unit)!, events, work, d.sched?.queue.find((q) => q.unit === l.unit && q.stage === 'lanes')?.attempt), work: work.filter((r) => r.parent.type === 'stage' && r.parent.unit === l.unit), failures: laneFailures({ journal: { view }, runDir }, { id: l.unit }), gate: latestGateAnswer({ journal: { view }, runDir }, l.unit) })),
     edges: d.plan === null ? [] : edgesOf(view, d.plan),
     runOnly: view.runOnly(),
     needsUser,
@@ -1820,6 +1825,8 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?:
       resources: hostResources(view),
       pools: d.plan === null ? {} : pools(view, d.plan),
       queue: d.sched?.queue ?? [],
+      jobQueue: d.sched?.jobQueue ?? [],
+      work: work.filter((r) => r.parent.type !== 'stage'),
       probes: probesOf(view),
       backends: view.backendParks().map((b) => ({ backend: b.backend, parkSeq: b.seq, class: b.class })),
       log: logOf(runDir, d),

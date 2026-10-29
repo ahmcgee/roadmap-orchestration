@@ -9,8 +9,7 @@
 // the unrunnable unit was refused for that unit's own lanes).
 import type { UnitId } from '../core/ids.ts';
 import type { LaneDef, LaneEnv, SpecM1 } from '../core/records.ts';
-import { type PlanM1, type PlanUnit, derivedOf, environmentOf, environmentsOf, regenerateLaneId } from '../input/plan.ts';
-import { checkBuildLanes } from '../resources/reserve.ts';
+import { type PlanM1, type PlanUnit, derivedOf, environmentOf, environmentsOf, regenerateLaneId, resourceEnvironments } from '../input/plan.ts';
 import { resolveArgv0 } from './argv0.ts';
 import type { CommandProblem, StartupRejection } from './startup.ts';
 
@@ -34,6 +33,9 @@ function laneProblems(plan: PlanM1, unit: UnitId | null, lane: LaneDef, env: Env
   if (lane.environment !== undefined && environmentOf(plan, lane.environment) === null) {
     out.push({ kind: 'spec-lane-unrunnable', unit, lane: lane.id, problem: { type: 'unknown-environment', environment: lane.environment } });
   }
+  if (lane.cadence === 'build' && lane.environment === undefined && resourceEnvironments(plan, lane.resources).length > 0) {
+    out.push({ kind: 'spec-lane-unrunnable', unit, lane: lane.id, problem: { type: 'estate-lane-for-implementer' } });
+  }
   return out;
 }
 
@@ -42,15 +44,11 @@ export const isLive = (plan: PlanM1, unit: PlanUnit): boolean => unit.cut === un
 
 /**
  * The suite lanes and the derived entries' regenerate commands (each under its regenerate lane's id), the active lanes of
- * each live unit of `units` (argv[0], declared host variables, a declared environment, the build-cadence boundary), then every
+ * each live unit of `units` (argv[0], declared host variables, a declared environment), then every
  * resource's probe and teardown command and every environment's probe, up and down (dev.17). `specOf` is the unit's spec under `plan`.
  */
 export function laneRows(plan: PlanM1, units: readonly UnitId[], specOf: (unit: PlanUnit) => SpecM1, env: Env): readonly LaneRow[] {
   const out = plan.suite.lanes.flatMap((lane) => laneProblems(plan, null, lane, env));
-  // dev.17: a build-cadence suite lane runs in the implementer's build too, which never brings an environment up.
-  for (const lane of plan.suite.lanes) {
-    if (lane.cadence === 'build' && lane.environment !== undefined) out.push({ kind: 'spec-lane-unrunnable', unit: null, lane: lane.id, problem: { type: 'estate-lane-for-implementer' } });
-  }
   // dev.12: a derived entry's generator, as the suite lane its regenerate check runs under (`regenerateLaneId`).
   for (const d of derivedOf(plan)) {
     if (d.regenerate !== undefined) out.push(...commandProblems(d.regenerate, env).map((problem): LaneRow => ({ kind: 'spec-lane-unrunnable', unit: null, lane: regenerateLaneId(d), problem })));
@@ -59,7 +57,6 @@ export function laneRows(plan: PlanM1, units: readonly UnitId[], specOf: (unit: 
     if (!units.includes(unit.id) || !isLive(plan, unit)) continue;
     const spec = specOf(unit);
     for (const lane of spec.lanes) if (lane.state === 'active') out.push(...laneProblems(plan, unit.id, lane, env));
-    out.push(...checkBuildLanes(spec, unit));
   }
   for (const r of plan.resources) {
     for (const command of ['probe', 'teardown'] as const) {

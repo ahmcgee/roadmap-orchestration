@@ -4,6 +4,16 @@ Triaged 2026-09-29 against the 1.0 yardstick: unattended, week-plus convergence 
 Rulings that changed behaviour live in SCHEMAS.md, DESIGN-1.0.md and RATIONALE-1.0.md, not here. Items dropped
 at triage stay in git history.
 
+## Deferred from the azure-aks field report (2026-10-29)
+
+- Item 10: cross-unit failure clustering, to recognize one shared cause across repeated unit failures.
+- Item 19: a distinct merge-fallout class for failures introduced by combining otherwise green units.
+- Item 20: environment flapping detection across repeated up/probe/down failures and recoveries.
+- Item 21: a gate missed a numeric budget; first add a gate role-eval dev case before changing gate behaviour.
+- Item 23: a ready-made deflake unit for an operator to apply to a known flaky lane or test.
+- Item 4: diagnose candidate reruns using reuse-key evidence from a real arc; the aggregate 8/19 count cannot establish the cause.
+- Per-lane repeat-output cause: rejected for now; healthy Terraform progress repeats output, so repetition alone is not a hang.
+
 ## Milestones (DESIGN-1.0.md §10)
 
 ### M2 (done: plan `/claude-state/plans/m2-dag-resources.md`, rev 2.1; 1.0.0-dev.5, merged at be76132)
@@ -25,7 +35,6 @@ at triage stay in git history.
 - Handing adopted runners to unit tasks.
 - Async git (git runs through `spawnSync` and blocks the event loop).
 - cgroup CPU enforcement of `@cpu`.
-- Token-cost calibration (`CPU_COST` is unmeasured).
 - Event-log compaction: deferred again by M3 (LR-e).
 - Per-lane `stallMin`.
 - Usage-limit hits under parallel burn: measured in arc 2 (owner ruling D4, 2026-09-30).
@@ -115,7 +124,7 @@ at triage stay in git history.
   - A park checkpoint's diagnosis names salvage's reverted paths but not the lane command a red test belongs to, nor
     whether a red test is in any lane the unit runs (the u1a pattern: 21 attempts against tests its lane never runs).
     Phase 0's witness-in-lane row is the first defence; add it to the diagnosis when a park still shows the pattern.
-- Journalled resource waits (the arbiter's waits are in memory; the series reads stage and slot spans only).
+- Interrupted resource-wait history: dev.32 journals completed reservation waits and shows live queue time; cancelled waits and exact post-recovery tickets remain unrecorded.
 - A cost chart and SPC run rule 4.
 - Ranking pools by utilisation.
 - Feeding `ruler-changed` items into the audit lens inputs (narrowed to the brief and `status.flow`).

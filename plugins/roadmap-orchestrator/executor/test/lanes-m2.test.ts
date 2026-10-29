@@ -18,7 +18,7 @@ import { absPath } from '../src/core/values.ts';
 import type { HostSample } from '../src/host/sample.ts';
 import { parsePlan } from '../src/input/plan.ts';
 import { type StageContext, type StageParent, pinDispatch } from '../src/pipeline/dispatch.ts';
-import { type LaneRuntime, type Series, laneOrder, reserveNow, runLaneSeries, seriesLedger, specSeriesRoot } from '../src/pipeline/lanes.ts';
+import { type LaneRuntime, type Series, laneOrder, laneSummaryIn, reserveNow, runLaneSeries, seriesLedger, specSeriesRoot } from '../src/pipeline/lanes.ts';
 import { laneFixRound } from '../src/pipeline/rounds.ts';
 import { lanes, loadUnitSpec } from '../src/pipeline/stages.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
@@ -60,7 +60,18 @@ const runtime = (ctx: StageContext, sampleHost: () => HostSample, signal: AbortS
   acquire, rank: () => { throw new Error('not ranked'); }, signal, sampleHost,
 });
 
-const readBack = (run: StageRun, ctx: StageContext = run.ctx) => seriesLedger(ctx, PARENT, loadUnitSpec(run.ctx, run.unit).spec.lanes, 'spec', run.base, specSeriesRoot(ctx.runDir, PARENT));
+const readBack = (run: StageRun, ctx: StageContext = run.ctx) => {
+  const lanes = loadUnitSpec(run.ctx, run.unit).spec.lanes;
+  const root = specSeriesRoot(ctx.runDir, PARENT);
+  const records = seriesLedger(ctx, PARENT, lanes, 'spec', run.base, root);
+  assert.ok(records.length > 0, 'the reader comparisons exercise actual lane runs');
+  for (const record of records) {
+    const { inv, verdict, flaky, reused } = record;
+    const summary = laneSummaryIn(ctx, PARENT, lanes.find((l) => l.id === record.lane)!, 'spec', run.base, root);
+    assert.deepEqual(summary && { inv: summary.inv, verdict: summary.verdict, flaky: summary.flaky, reused: summary.reused }, { inv, verdict, flaky, reused }, 'journal-only status agrees with the full lane evidence reader');
+  }
+  return records;
+};
 
 test('lanes.flake-red-green: red then green on the diagnostic rerun at a commit the tip contains is the tip\'s flake: recorded in the flaky ledger and forgiven (the green rerun counts, uncharged); both runs kept', T, async () => {
   const run = laneRun([redGreen('flaky', 'expected 3, got 4')]);
@@ -105,15 +116,16 @@ test('lanes.flake-red-green: red then green on the diagnostic rerun at a commit 
   assert.deepEqual(back, done.ledger);
 });
 
-test('lanes.flake-deflake-own: a deflake unit\'s own flake is not forgiven: red, flaky, charged; the fix round is told', T, async () => {
-  const run = setupUnit({ steps: [], lanes: [redGreen('flaky', 'expected 3, got 4')], unit: { origin: 'deflake', deflake: { keys: [{ type: 'lane', lane: 'flaky' }] } } });
+test('lanes.flake-deflake-own: a deflake unit\'s own flake is not forgiven: flaky, uncharged; the fix round is told', T, async () => {
+  const run = setupUnit({ steps: [], lanes: [redGreen('flaky', 'expected 3, got 4')], unit: { limits: { certifications: 1 }, origin: 'deflake', deflake: { keys: [{ type: 'lane', lane: 'flaky' }] } } });
   pinDispatch(run.ctx, run.unit, keptSpec(run.journal));
   const done = started(await lanes(run.ctx, run.unit, run.base));
-  assert.equal(done.outcome.kind, 'red');
+  assert.equal(done.outcome.kind, 'flaky');
   assert.equal(done.next.kind === 'stage' && done.next.stage, 'build');
   const fact = outcomeFacts(run).at(-1)!;
-  assert.ok(fact.kind === 'stage-outcome' && fact.outcome === 'red' && fact.chargeable, 'its flaky lane is charged as red');
-  assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, 1);
+  assert.ok(fact.kind === 'stage-outcome' && fact.outcome === 'flaky' && !fact.chargeable, 'a same-commit flake is recorded without a lanes-red charge');
+  assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, 0);
+  assert.equal(run.journal.view.unit(U1).counters.unchargedLanesReds, 0, 'a flake does not consume the certification allowance');
   assert.deepEqual(run.journal.view.flakes().map((x) => [x.fact.lane, x.fact.forgiven]), [['flaky', false]], 'the flake is in the ledger all the same');
 
   const [record] = done.ledger;
@@ -136,14 +148,15 @@ test('lanes.flake-deflake-own: a deflake unit\'s own flake is not forgiven: red,
   assert.deepEqual(laneFixRound(back, [], run.base), done.fix);
 });
 
-test('lanes.flake-unit-own: a flake on the unit\'s own commit (one the tip does not contain) is its red: flaky, charged, the fix round told; never the ledger\'s; a standing tip flake of the lane is forgiven', T, async () => {
+test('lanes.flake-unit-own: a flake on the unit\'s own commit (one the tip does not contain) is flaky, uncharged, the fix round told; never the ledger\'s; a standing tip flake of the lane is forgiven', T, async () => {
   const marker = join(tmpDir('red-green'), 'flaky.marker');
   const run = laneRun([{ id: 'flaky', argv: [process.execPath, RED_GREEN, marker, 'expected 3, got 4'] }]);
   // The unit's own commit: the base's tree on a commit no ref of the tip names.
   const own = sha(git(run.repo, ['commit-tree', `${run.base}^{tree}`, '-p', run.base, '-m', 'u1 own']).trim());
   const done = started(await lanes(run.ctx, run.unit, own));
-  assert.equal(done.outcome.kind, 'red');
-  assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, 1);
+  assert.equal(done.outcome.kind, 'flaky');
+  assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, 0);
+  assert.equal(run.journal.view.unit(U1).counters.unchargedLanesReds, 0, 'a flake does not consume the certification allowance');
   const [record] = done.ledger;
   assert.ok(record !== undefined && record.diagnostic !== null);
   assert.deepEqual([record.verdict, record.flaky, record.diagnostic.verdict], ['fail', true, 'pass']);

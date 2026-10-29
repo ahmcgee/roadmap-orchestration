@@ -16,6 +16,7 @@ import { readReceipt, submitCommand, terminalReceipt } from '../src/commands/que
 import type { Fact } from '../src/core/events.ts';
 import { type CommandId, type NeedsUserId, arcId, commandId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
+import { fold } from '../src/core/state.ts';
 import type { CommandBody, NeedsUserContent } from '../src/core/records.ts';
 import { absPath } from '../src/core/values.ts';
 import { BRIEF_INPUT } from '../src/pipeline/rounds.ts';
@@ -243,6 +244,17 @@ describe('steer.resume-vs-park', () => {
       const decided = r.journal.view.unit(U1).decided;
       assert.deepEqual([decided?.class, decided?.chargeable], ['park', false]);
       assert.deepEqual(charged(r), before);
+      const log = readJournal(absPath(d.runDir), arcId(d.arc)).events;
+      const index = log.findLastIndex((e) => e.type === 'fact' && e.fact.kind === 'stage-outcome');
+      const last = log[index]!;
+      assert.ok(last.type === 'fact' && last.fact.kind === 'stage-outcome' && last.fact.stage === 'lanes' && last.fact.outcome === 'red');
+      const { unchargedLanesReds: _counter, ...legacy } = last.fact;
+      for (const outcome of ['red', 'not-certified'] as const) {
+        const adopted = fold(arcId(d.arc), [...log.slice(0, index), { ...last, fact: { ...legacy, outcome } }]);
+        assert.equal(adopted.units.find((u) => u.unit === U1)!.counters.unchargedLanesReds, 0, 'valid dev.31 steering parks retain the warned default');
+        assert.throws(() => fold(arcId(d.arc), [...log.slice(0, index), { ...last, fact: { ...legacy, outcome, park: { class: 'operator', kind: 'design' } } }]), /certification allowance/);
+      }
+      assert.throws(() => fold(arcId(d.arc), [...log.slice(0, index), { ...last, fact: { ...legacy, outcome: 'witnesses-missing' } }]), /certification allowance/, 'steering never exempted a missing witness');
       const calls = readCalls(d.scenarioPath);
       assert.equal(calls.at(-1)?.as, 'codex', 'no call after the steer round: no fix round');
       assert.ok(calls.every((c) => c.step !== null));

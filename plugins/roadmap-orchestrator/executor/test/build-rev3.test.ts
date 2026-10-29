@@ -1,8 +1,8 @@
 // M4a rev 3 build-stage changes through the unit driver, integrated (real processes, real git, fake backends):
 // F8 8d, a resolve round may commit after the merge (`resolvedHead`, src/git/mergein.ts) but must hold the merge of
 // [old, T]: build.resolve-follow-up-commits-accepted, build.resolve-without-merge-in-chain-malformed; I3, the build
-// answer's per-call schema (the spec's fast lane ids, `experiments`) and the resume round quoting why an answer was
-// malformed: build.lane-enum-schema, build.experiments-accepted, build.malformed-keeps-error. dev.12: a decisions.json
+// answer's per-call schema (targeted `experiments`, no `lanesRun`) and the resume round quoting why an answer was
+// malformed: build.certification-schema, build.experiments-accepted, build.malformed-keeps-error. dev.12: a decisions.json
 // that does not validate makes the build malformed, never silently dropped: build.decisions-invalid-malformed.
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -123,7 +123,7 @@ function schemaOf(call: CallRecord): Record<string, unknown> {
 type JsonSchema = Readonly<{ properties: Record<string, JsonSchema>; items: JsonSchema; enum?: readonly string[]; required?: readonly string[] }>;
 
 describe('I3: the build answer schema', () => {
-  test('build.lane-enum-schema: the build call\'s schema enumerates the spec\'s fast lane ids in lanesRun[].lane and has experiments', T, async () => {
+  test('build.certification-schema: the build call\'s schema requests targeted experiments and no lane rehearsal', T, async () => {
     const d = setupArc({ units: [{ id: 'u1', lanes: [MUL_LANE, LINT_LANE] }], steps: [planCheckStep({ decision: 'approve' }), mulBuild()] });
     const r = contextFor(d);
     try {
@@ -131,7 +131,9 @@ describe('I3: the build answer schema', () => {
       assert.equal(outcomes(d).at(-1), 'build:success');
       const [build] = codexCalls(d);
       const schema = schemaOf(build!) as unknown as JsonSchema;
-      assert.deepEqual([...schema.properties['lanesRun']!.items.properties['lane']!.enum!].sort(), ['lint', 'mul']);
+      assert.equal(Object.hasOwn(schema.properties, 'lanesRun'), false);
+      assert.equal(schema.required?.includes('lanesRun'), false);
+      assert.deepEqual(Object.keys(schema.properties).sort(), ['blockers', 'changedPaths', 'docsOnlySince', 'experiments', 'final', 'summary']);
       const experiments = schema.properties['experiments']!;
       assert.deepEqual(Object.keys(experiments.items.properties).sort(), ['argv', 'exit', 'name']);
       assert.ok(schema.required?.includes('experiments'), 'experiments is required');
@@ -140,7 +142,7 @@ describe('I3: the build answer schema', () => {
     }
   });
 
-  test('build.experiments-accepted: an answer naming the spec\'s lanes and listing experiments is a success', T, async () => {
+  test('build.experiments-accepted: a legacy answer carrying lanesRun and targeted experiments is accepted', T, async () => {
     const report = { ...BUILD_REPORT, lanesRun: [{ lane: 'mul', exit: 0 }], experiments: [{ name: 'probe add', argv: ['node', '-e', 'import("./src/add.js")'], exit: 0 }] };
     const d = setupArc({
       steps: [planCheckStep({ decision: 'approve' }), { as: 'codex', expect: { argv: ['exec', '-C'] }, acts: [{ type: 'commit', message: 'add mul', files: MUL }, { type: 'emit', value: report }] }],
@@ -154,8 +156,8 @@ describe('I3: the build answer schema', () => {
     }
   });
 
-  test('build.malformed-keeps-error: an answer naming a lane outside the spec\'s fast lanes is malformed, and the resume round quotes why after RESUME_DIRECTIVE', T, async () => {
-    const report = { ...BUILD_REPORT, lanesRun: [{ lane: 'suite', exit: 0 }] };
+  test('build.malformed-keeps-error: an experiment with a non-integer exit is malformed, and the resume round quotes why after RESUME_DIRECTIVE', T, async () => {
+    const report = { ...BUILD_REPORT, experiments: [{ name: 'probe', argv: ['node', '-e', '0'], exit: 'zero' }] };
     const d = setupArc({
       steps: [
         planCheckStep({ decision: 'approve' }),
@@ -171,9 +173,28 @@ describe('I3: the build answer schema', () => {
       assert.equal(outcomes(d).at(-1), 'build:success', 'the resume round answered');
       const resume = codexCalls(d).at(-1)!;
       assert.equal(resume.step, 2, 'the resume call matched its step');
-      // RESUME_DIRECTIVE, then why: the validation error, naming the lane field and the lane.
-      assert.match(resume.stdin, new RegExp(`${literal(RESUME_DIRECTIVE)}[\\s\\S]*Why it did not match: [^\\n]*lanesRun[^\\n]*`));
-      assert.match(resume.stdin, /Why it did not match: [^\n]*suite/);
+      // RESUME_DIRECTIVE, then why: the validation error, naming the experiment field and its invalid type.
+      assert.match(resume.stdin, new RegExp(`${literal(RESUME_DIRECTIVE)}[\\s\\S]*Why it did not match: [^\\n]*experiments[^\\n]*`));
+      assert.match(resume.stdin, /Why it did not match: [^\n]*exit[^\n]*integer/);
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('build.legacy-does-not-certify: an old report claiming a green lane cannot certify broken code', T, async () => {
+    const broken = { ...MUL, 'src/mul.js': 'export function mul(a, b) { return a + b; }\n' };
+    const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), {
+      as: 'codex', expect: { argv: ['exec', '-C'] }, acts: [
+        { type: 'commit', message: 'broken mul', files: broken },
+        { type: 'emit', value: { ...BUILD_REPORT, lanesRun: [{ lane: 'mul', exit: 0 }] } },
+      ],
+    }] });
+    const r = contextFor(d);
+    try {
+      await stepUntil(r, 'u1', (f) => f.stage === 'lanes');
+      assert.deepEqual(outcomes(d), [...PRE_LANES, 'lanes:red']);
+      assert.equal(r.journal.view.unit(U1).counters.unchargedLanesReds, 1);
+      assert.equal(r.journal.view.unit(U1).approval, null);
     } finally {
       r.journal.close();
     }

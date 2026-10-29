@@ -12,6 +12,9 @@ import { readReceipt, submitCommand } from '../src/commands/queue.ts';
 import type { Fact } from '../src/core/events.ts';
 import { type CommandId, type NeedsUserId, type ProposalId, arcId, jobId, laneId, proposalId, stationId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
+import { invocationId } from '../src/core/ids.ts';
+import { invocationDir } from '../src/pipeline/invoke.ts';
+import { runnerFiles } from '../src/runner/files.ts';
 import type { CommandBody } from '../src/core/records.ts';
 import { absPath } from '../src/core/values.ts';
 import { acceptedProposals, applyPendingFlow, flowApplyHolds, proofDue, rejectionMemory } from '../src/flow/apply.ts';
@@ -51,8 +54,8 @@ const RED = { ...TIMERS, 'test/unit/c.test.js': "import assert from 'node:assert
 type FlowArc = Readonly<{ d: ArcDescriptor; r: ArcRun }>;
 
 /** A unit-common arc whose suite is `SERIAL` over `files` (committed on main), its run dir where the CLI locates it. */
-function flowArc(files: Readonly<Record<string, string>>, env?: LaneJson['env']): FlowArc {
-  const base = setupArc({ steps: [], suite: [{ id: 'suite', argv: SERIAL, ...(env === undefined ? {} : { env }) }] });
+function flowArc(files: Readonly<Record<string, string>>, env?: LaneJson['env'], timeoutMin?: number): FlowArc {
+  const base = setupArc({ steps: [], suite: [{ id: 'suite', argv: SERIAL, ...(timeoutMin === undefined ? {} : { timeoutMin }), ...(env === undefined ? {} : { env }) }] });
   writeFiles(base.repo, files);
   const head = commitAll(base.repo, 'product tests');
   const plan = JSON.parse(readFileSync(base.planPath, 'utf8')) as Record<string, unknown>;
@@ -299,4 +302,24 @@ describe('roadmap flow commands', () => {
     assert.ok(second.kind === 'given' && second.given.id === 'G-2');
     assert.deepEqual(readHostGivens(gitCommonDir(repo)).givens.map((g) => [g.id, g.lever, g.note]), [['G-1', 'concurrency', 'this host has 4 real cores'], ['G-2', 'resource-pool', 'one database only']]);
   });
+});
+
+test('flow.proof-timeout: the old side enforces the lane wall limit and keeps timeout evidence', T, async () => {
+  const { r } = flowArc({ 'test/unit/a.test.js': timer('slow', 10_000) }, undefined, 0.03);
+  try {
+    const { proposal } = propose(r, 1, SUITE_ARGV);
+    await decide(r, proposal.id, 'accept');
+    await runProof(proofCtx(r), proposal, jobId('proof', 1));
+    assert.deepEqual(ofKind(r, 'flow-proof').map((f) => f.outcome), ['red']);
+    const spawns = r.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'proof');
+    assert.equal(spawns.length, 1, 'a timed-out baseline never proceeds to the new side');
+    const spawn = spawns[0]!;
+    const inv = invocationId(spawn.op, spawn.ordinal);
+    const files = runnerFiles(invocationDir(r.ctx.runDir, inv), inv);
+    const launch = files.read('launch.json');
+    assert.ok(launch?.terminal.type === 'command' && launch.terminal.timeoutMin === 0.03);
+    assert.equal(files.read('exit.json')?.cause, 'timeout');
+    const result = files.read('result.json');
+    assert.ok(result?.type === 'command' && result.verdict === 'timeout');
+  } finally { r.journal.close(); }
 });

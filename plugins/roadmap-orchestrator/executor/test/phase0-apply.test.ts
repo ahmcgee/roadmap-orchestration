@@ -113,6 +113,22 @@ function refusedRows(out: StartChecks): readonly StartupRejection[] {
 // ---------------------------------------------------------------------------------------------------
 
 describe('re-pin (the corpus edit class)', () => {
+  it('phase0 and apply advise when two lanes differ only in env.set', T, async () => {
+    const { a, j } = await arcInForce();
+    try {
+      editPlan(a, (p) => ({ ...p, suite: { lanes: [
+        { id: 'one', cadence: 'unit', argv: ['true'], cwd: '.', env: { set: { GOMAXPROCS: '2' }, pass: ['PATH', 'HOME'] }, expectedExit: 0, resources: [], evidenceGlobs: [] },
+        { id: 'two', cadence: 'unit', argv: ['true'], cwd: '.', env: { set: { GOMAXPROCS: '4' }, pass: ['HOME', 'PATH'] }, expectedExit: 0, resources: [], evidenceGlobs: [] },
+      ] } }));
+      const expected = [{ kind: 'lanes-differ-only-env-set', lanes: ['suite/one', 'suite/two'] }];
+      const report = await phase0Check({ repo: a.repo, source: { type: 'plan', plan: a.planPath } });
+      assert.deepEqual(report.advisories.filter((a) => a.kind === 'lanes-differ-only-env-set'), expected);
+      assert.deepEqual(accepted(await apply(a, j)).advisories.filter((a) => a.kind === 'lanes-differ-only-env-set'), expected);
+    } finally {
+      j.close();
+    }
+  });
+
   it('classify.corpus-repin-reword: a rewording of T-2 (same id) re-pins as {corpus}, an arc-wide change', T, async () => {
     const { a, j } = await arcInForce();
     try {

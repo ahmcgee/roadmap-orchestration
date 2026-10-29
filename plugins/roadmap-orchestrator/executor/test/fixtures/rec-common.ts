@@ -48,10 +48,17 @@ export function recoveryContext(r: ArcRun): RecoveryContext {
 
 /** Declares resource `db` (res-tool.ts over `stateDir`) and gives it to every unit, as exec-common does. */
 function withResource(d: ArcDescriptor, stateDir: string): void {
-  const plan = JSON.parse(readFileSync(d.planPath, 'utf8')) as { resources: unknown[]; units: { resources: string[] }[] };
+  const plan = JSON.parse(readFileSync(d.planPath, 'utf8')) as { resources: unknown[]; units: { resources: string[]; spec: string }[] };
   const tool = (cmd: 'probe' | 'teardown') => ({ argv: [process.execPath, fixture('res-tool.ts'), cmd, stateDir, 'db'], cwd: '.', env: { set: {}, pass: [] } });
   plan.resources = [{ name: 'db', probe: tool('probe'), teardown: tool('teardown') }];
-  for (const u of plan.units) u.resources = ['db'];
+  for (const u of plan.units) {
+    u.resources = ['db'];
+    const path = join(d.planPath, '..', u.spec);
+    const spec = JSON.parse(readFileSync(path, 'utf8'));
+    spec.resources = ['db'];
+    for (const lane of spec.lanes) lane.resources = ['db'];
+    writeFileSync(path, JSON.stringify(spec));
+  }
   writeFileSync(d.planPath, JSON.stringify(plan));
 }
 
@@ -101,10 +108,10 @@ const UNIT_CRASH: Partial<Record<RecKind, string>> = {
 };
 /**
  * The occurrence of a unit crash label that leaves the op of its kind open, where it is not the first: plan-check's `@cpu`
- * takes four transitions (reserve, run, clean, release) before the build reserves `db` with its own `@cpu`, the open
+ * and build each take four transitions (reserve, run, clean, release) before the lane reserves `db` with its `@cpu`, the open
  * reservation whose recovery tears `db` down.
  */
-const UNIT_CRASH_OCCURRENCE: Partial<Record<RecKind, number>> = { 'resource.transition': 5 };
+const UNIT_CRASH_OCCURRENCE: Partial<Record<RecKind, number>> = { 'resource.transition': 9 };
 
 export type DeadRun = Readonly<{ d: ArcDescriptor; kind: RecKind; stateDir: string }>;
 

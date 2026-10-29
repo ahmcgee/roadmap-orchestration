@@ -146,7 +146,7 @@ test('executor.pause-holds-then-resume: a pause mid-build interrupts it (held, u
   assert.equal(journalOf(r).view.unit(U1).counters.chargeableFailures, 0, 'the interruption charged nothing');
 });
 
-test('executor.stop-releases-lock: a stop mid-build cancels it, cleans its resources, releases the host and exits stop', T, async (t) => {
+test('executor.stop-releases-lock: a stop mid-build cancels it, releases its CPU reservation and the host and exits stop', T, async (t) => {
   const r = setupExec(t, { resource: true, steps: [...SMOKE_DEFAULT, planCheckStep({ decision: 'approve' }), blockedBuild('build1', false)] });
   const run = startExec(r);
   await reached(r.scenarioDir, 'build1', WAIT_MS);
@@ -161,12 +161,11 @@ test('executor.stop-releases-lock: a stop mid-build cancels it, cleans its resou
   assert.deepEqual(killsOf(r), ['stop']);
   const { view } = journalOf(r);
   assert.deepEqual(view.openIntents(), [], 'nothing left open');
-  // An M2 arc's build also holds `@cpu` tokens (A3), released with it.
+  // Builders reserve CPU only, even when their certifying lanes declare db.
   const table = [...resourceTable(view)].map(([name, e]) => [name, e.status.state]);
-  assert.deepEqual(table.filter(([name]) => !name!.startsWith('@cpu#')), [['db', 'free']], 'the build\'s resource is released');
-  assert.ok(table.every(([, state]) => state === 'free'), JSON.stringify(table));
-  const toolCalls = readFileSync(join(r.stateDir, 'calls.log'), 'utf8').trim().split('\n');
-  assert.deepEqual(toolCalls.map((l) => l.split(' ').slice(0, 2).join(' ')), ['probe db', 'teardown db'], 'probed before the build, torn down after the cancel');
+  assert.deepEqual(table.filter(([name]) => !name!.startsWith('@cpu#')), [], 'the build never acquired a named resource');
+  assert.deepEqual(table, [1, 2, 3, 4].map((n) => [`@cpu#${n}`, 'free']), 'all four reserved tokens were released');
+  assert.equal(existsSync(join(r.stateDir, 'calls.log')), false, 'no probe or teardown before certification');
   const s = await statusOf(r);
   assert.equal(s.run.owner.state, 'none');
   assert.equal(s.run.state, 'no-owner');
@@ -417,6 +416,9 @@ test('executor.pause-fix-round-continues: a pause while a fix round is live (its
       gateStep({ decision: 'approve' }),
     ],
   });
+  const plan = JSON.parse(readFileSync(r.planPath, 'utf8'));
+  plan.limits = { certifications: 1 };
+  writeFileSync(r.planPath, JSON.stringify(plan));
   const run = startExec(r);
   await reached(r.scenarioDir, 'fix1', WAIT_MS);
   await cli(r, ['pause', 'u1']);

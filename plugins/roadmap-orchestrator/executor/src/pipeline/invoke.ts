@@ -71,6 +71,7 @@ export type LaunchSpec = Readonly<{
   runDir: AbsPath;
   origin: SpawnOrigin;
   subject: SpawnSubject;
+  cpuKey?: Sha256Hex;
   launch: (invDir: AbsPath) => LaunchContent;
 }>;
 
@@ -93,7 +94,7 @@ export async function invoke(journal: Journal, containment: Containment, spec: L
     const content = spec.launch(invocationDir(spec.runDir, inv));
     assertPairing(spec.subject, content.terminal);
     launch = prepareLaunch({ v: SCHEMA_VERSION, arc: parseOpId(op).arc, op, inv, ...content, deadlineAt, containment: containment.mode });
-    return { expect: { subject: spec.subject, launchSha256: launchSha256(launch) }, post: null };
+    return { expect: { subject: spec.subject, launchSha256: launchSha256(launch), ...(spec.cpuKey === undefined ? {} : { cpuKey: spec.cpuKey }) }, post: null };
   };
   const { origin } = spec;
   const durable = origin.type === 'new'

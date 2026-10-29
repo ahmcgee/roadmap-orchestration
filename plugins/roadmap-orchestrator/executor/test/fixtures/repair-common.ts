@@ -13,7 +13,7 @@ import { absPath } from '../../src/core/values.ts';
 import { type FindingDraft, keepMutantPatch, openFinding } from '../../src/holistic/findings.ts';
 import { git } from '../helpers/repo.ts';
 import type { Step } from '../helpers/scenario.ts';
-import { type HolisticArc, holisticArc } from './brake-common.ts';
+import { type HolisticArc, type HolisticOptions, holisticArc } from './brake-common.ts';
 import { planCheckStep } from './stage-common.ts';
 import { type ArcDescriptor, codexStep, gateStep } from './unit-common.ts';
 
@@ -73,12 +73,14 @@ export const MAPPED = [{ pattern: 'src/**', obligations: ['I-1'] }, { pattern: '
  * A holistic arc whose only unit, `v1`, is a vacuity repair of F-1 (origin repair, declaring I-1): plan-check, a build
  * committing the strict test, gate, then `more` steps. Every tree's witness passes t1 unless a test scripts it.
  */
-export function vacuityArc(opts: Readonly<{ patch?: string; more?: readonly Step[] }> = {}): HolisticArc {
+export function vacuityArc(opts: Readonly<{ patch?: string; more?: readonly Step[] }> & Pick<HolisticOptions, 'planExtra' | 'laneExtra'> = {}): HolisticArc {
   return holisticArc({
     steps: [planCheckStep({ decision: 'approve' }), buildOf(STRICT_TEST), gateStep({ decision: 'approve' }), ...(opts.more ?? [])],
     units: [{ id: 'v1', origin: 'repair', repairs: ['F-1'], obligations: ['I-1'], lanes: [STRICT_LANE] }],
     obligations: [{ id: 'I-1', testIds: ['t1'] }],
     mapping: MAPPED,
+    ...(opts.planExtra === undefined ? {} : { planExtra: opts.planExtra }),
+    ...(opts.laneExtra === undefined ? {} : { laneExtra: opts.laneExtra }),
     trees: { '*': { outcomes: { t1: 'pass' } } },
     beforeStart: (d) => openBefore(vacuityDraft(d.runDir, opts.patch))(d),
   });

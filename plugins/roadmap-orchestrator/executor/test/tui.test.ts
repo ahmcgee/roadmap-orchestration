@@ -1506,3 +1506,63 @@ test('printable ASCII keeps literal cell widths, clipping and wrapping alongside
   assert.equal(clip('a\x1b[31mb\t界\nc', 8), 'ab    界');
   assert.equal(width('e\u0301界🙂'), 5); assert.equal(clip('e\u0301界🙂', 3), 'e\u0301界');
 });
+
+test('certification projection shows ordered lanes, allowance, held estate and CPU evidence in the existing activity view', () => {
+  const d = observed();
+  const u = d.status.units[0]!;
+  const inv = 'cert-run' as never;
+  const work = { inv, cause: null, parent: { type: 'stage' as const, unit: u.unit, stage: 'lanes' as const, attempt: 2 }, kind: 'lane' as const,
+    lane: 'infra' as never, reservedCpu: 2, cpuBasis: { kind: 'calibrated' as const, key: sha256('1'.repeat(64)), value: 2, samples: 7 },
+    measured: { wallMs: 1000, runMs: 900, waitMs: 200 }, tokenWaitMs: 3500, resources: ['db', 'cloud'] as never[] };
+  d.status = { ...d.status, units: [{ ...u, stage: 'lanes', state: 'running', work: [work], certification: { used: 2, allowance: 3, left: 1, attempt: 2,
+    lanes: [
+      { id: 'infra' as never, set: 'spec', redFirst: true, state: 'running', verdict: null, flaky: false, inv, holds: ['db', 'cloud'] as never[] },
+      { id: 'cached' as never, set: 'spec', redFirst: false, state: 'reused', verdict: 'pass', flaky: false, inv: null, holds: [] },
+      { id: 'fast' as never, set: 'suite', redFirst: false, state: 'queued', verdict: null, flaky: false, inv: null, holds: [] },
+    ] } }] };
+  const ui = new ViewState(); ui.accept(d); ui.pane = 1; ui.activityAll = true;
+  const rows = ui.rows();
+  assert.deepEqual(rows.map((r) => r.state), ['running', 'reused', 'queued']);
+  assert.match(rows[0]!.label, /1\. spec\/infra.*red-first/);
+  assert.match(rows[0]!.description!, /red 2 of 3 uncharged.*1 left.*holds db, cloud/);
+  assert.match(rows[0]!.description!, /2 \(calibrated, 7 samples\).*0.90 cores used, 1.10 demanded.*token wait 3.5s/);
+  for (const [w, h] of [[80, 24], [140, 40]]) {
+    const frame = ui.render(w!, h!, false);
+    assert.equal(frame.length, h);
+    assert.ok(frame.every((line) => width(line) <= w!));
+    assert.match(frame.join('\n'), /infra/);
+  }
+  ui.detail = rows[0]!; ui.pane = 0;
+  assert.match(ui.render(140, 45, false).join('\n'), /Certification: red 2 of 3 uncharged/);
+});
+
+test('TUI pressure brake and ordering park explain their distinct automatic waits', () => {
+  const d = observed(); const u = d.status.units[0]!;
+  const pressure = { ...u, state: 'waiting' as const, waitingFor: { deps: [], milestones: [], edges: [], admission: [], drainFor: [],
+    resources: { named: [], pools: [], cpu: 4, publication: false }, envBlocked: false, pressureBlocked: true, tokenWaitMs: 5000 } };
+  d.status = { ...d.status, units: [pressure] };
+  const ui = new ViewState(); ui.accept(d);
+  assert.match(graph(d, true)[0]!.waitReason!, /pressure brake: host CPU saturated.*token wait 5.0s/);
+  assert.match(ui.render(180, 35, false).join('\n'), /pressure brake/);
+  const parked = { ...u, state: 'parked' as const, park: { class: 'operator' as const, kind: 'design' as const, targets: [], outstanding: [],
+    nextProbeAt: null, escalateAt: null, ordering: { blockers: [unitId('left'), unitId('right')], outstanding: [unitId('right')] } } };
+  const p = { ...d, status: { ...d.status, units: [parked] } };
+  assert.match(graph(p, true)[0]!.waitReason!, /Ordering park: waiting for right; wakes after all blockers merge/);
+});
+
+test('TUI timeout reds stay distinct from a deadline block and CPU bases preserve explicit/default/legacy labels', async () => {
+  const { certificationEntries, cpuSummary } = await import('../src/tui/execution.ts');
+  const d = observed(); const u = d.status.units[0]!;
+  const work = { inv: 'timeout-run' as never, cause: 'timeout' as const, parent: { type: 'stage' as const, unit: u.unit, stage: 'lanes' as const, attempt: 1 },
+    kind: 'lane' as const, lane: 'slow' as never, reservedCpu: 4, cpuBasis: { kind: 'explicit' as const, value: 4 }, measured: null, tokenWaitMs: null, resources: [] };
+  const lane = { id: 'slow' as never, set: 'spec' as const, redFirst: false, state: 'red' as const, verdict: 'timeout' as const, flaky: false, inv: work.inv, holds: [] };
+  d.status = { ...d.status, units: [{ ...u, stage: 'lanes', work: [work], certification: { used: 1, allowance: 3, left: 2, attempt: 1, lanes: [lane] } }] };
+  assert.equal(certificationEntries(d)[0]!.state, 'red:timeout');
+  assert.equal(stateTone('red:timeout'), 'fault');
+  assert.match(cpuSummary(work), /4 \(explicit\).*pending\/unavailable.*token wait unavailable/);
+  assert.match(cpuSummary({ ...work, cpuBasis: { kind: 'default', value: 4, key: sha256('a'.repeat(64)), samples: 2 } }), /default, 2 samples/);
+  assert.match(cpuSummary({ ...work, cpuBasis: null }), /legacy basis unavailable/);
+  const blocked = { ...d, status: { ...d.status, units: [{ ...d.status.units[0]!, work: [{ ...work, cause: 'deadline' as const }],
+    certification: { ...d.status.units[0]!.certification!, lanes: [{ ...lane, state: 'blocked' as const, verdict: 'process-fault' as const }] } }] } };
+  assert.equal(certificationEntries(blocked)[0]!.state, 'blocked:deadline');
+});

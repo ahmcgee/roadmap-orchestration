@@ -79,6 +79,7 @@ export type ArcDescriptor = Readonly<{
 export function laneJson(l: LaneJson): Record<string, unknown> {
   return {
     id: l.id, argv: l.argv, cwd: l.cwd ?? '.', env: { set: l.env?.set ?? {}, pass: l.env?.pass ?? ['PATH'] }, expectedExit: l.expectedExit ?? 0,
+    ...(l.timeoutMin === undefined ? {} : { timeoutMin: l.timeoutMin }),
     ...(l.cadence === undefined ? { tier: l.tier ?? 'fast' } : { cadence: l.cadence }), resources: l.resources ?? [], evidenceGlobs: l.evidenceGlobs ?? [],
     ...(l.inputs === undefined ? {} : { inputs: l.inputs }), ...(l.systems === undefined ? {} : { systems: l.systems }),
     ...(l.readsComments === undefined ? {} : { readsComments: l.readsComments }),
@@ -195,6 +196,7 @@ const GATE: Expect = {
 
 export type GateAnswer = Readonly<{
   decision: 'approve' | 'revise' | 'escalate';
+  ordering?: Readonly<{ blockers: readonly string[] }> | null;
   directives?: readonly string[];
   findings?: readonly JsonValue[];
   premises?: readonly JsonValue[];
@@ -223,7 +225,7 @@ const dev17Finding = (f: JsonValue): JsonValue => {
 };
 
 const gateAnswer = (a: GateAnswer): JsonValue => ({
-  decision: a.decision, findings: (a.findings ?? []).map(dev17Finding), directives: [...(a.directives ?? [])], reasons: ['A1 holds'], premises: [...(a.premises ?? [])],
+  decision: a.decision, ordering: a.ordering ?? null, findings: (a.findings ?? []).map(dev17Finding), directives: [...(a.directives ?? [])], reasons: ['A1 holds'], premises: [...(a.premises ?? [])],
   unreviewed: [...(a.unreviewed ?? [])], clusters: a.clusters ?? null, rulings: [...(a.rulings ?? [])],
 }) as JsonValue;
 

@@ -8,10 +8,12 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { describe, test } from 'node:test';
+import { managedEnv, startedCalls } from './fixtures/env-common.ts';
+import { idleEnvironments } from '../src/resources/environments.ts';
 import { applyCommand } from '../src/commands/apply.ts';
 import { submitCommand } from '../src/commands/queue.ts';
 import type { Fact, IntentOf } from '../src/core/events.ts';
-import { findingId, jobId, sha, unitId } from '../src/core/ids.ts';
+import { invocationId, findingId, jobId, resourceName, sha, unitId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import { mutantSubjectDefault } from '../src/core/upgrade.ts';
 import { absPath } from '../src/core/values.ts';
@@ -19,6 +21,8 @@ import { verifySnapshot } from '../src/git/snapshot.ts';
 import { batchable, findingMetrics, openFinding, ruleFinding } from '../src/holistic/findings.ts';
 import { SPEC_INPUT, inputPath } from '../src/input/inforce.ts';
 import { publishBatch } from '../src/pipeline/integrate.ts';
+import { invocationDir } from '../src/pipeline/invoke.ts';
+import { runnerFiles } from '../src/runner/files.ts';
 import { observations } from '../src/pipeline/lanes.ts';
 import { repairUnits, specFacts } from '../src/pipeline/reproduce.ts';
 import { planCheck } from '../src/pipeline/stages.ts';
@@ -52,7 +56,12 @@ const worktrees = (r: ArcRun): readonly string[] => git(r.d.repo, 'worktree', 'l
 
 describe('vacuity repairs: reproduce and acceptance', () => {
   test('reproduce.reproduced + mutant.kill-in-candidate: the mutant survives the old witness at the tip (reproduced, on to plan-check); the candidate kills it; the repair publishes and resolves its finding', T, async () => {
-    const { d, control } = vacuityArc();
+    const state = tmpDir('repair-powered-env');
+    const cmd = { argv: ['true'], cwd: '.', env: { set: {}, pass: ['PATH'] } };
+    const { d, control } = vacuityArc({
+      laneExtra: { journey: { resources: ['db'] } },
+      planExtra: { resources: [{ name: 'db', probe: cmd, teardown: cmd }], environments: { stack: { ...managedEnv(state, 'stack', 60), resources: ['db'] } } },
+    });
     const tip = tipOf(d);
     const patchedTip = treeWith(d.repo, tip, {}, MUTANT_PATCH);
     const r = contextFor(d);
@@ -60,6 +69,8 @@ describe('vacuity repairs: reproduce and acceptance', () => {
       assert.equal(specFacts(r.ctx)(r.unit('v1')).reproduces, true, 'a vacuity repair reproduces first');
       await step(r.ctx, r.unit('v1'));
       assert.deepEqual(outcomes(d, 'v1'), ['reproduce:reproduced']);
+      assert.deepEqual(startedCalls(state), ['up stack', 'probe stack']);
+      assert.deepEqual(idleEnvironments(r.ctx, Date.now() + 3_600_001, () => false, false), [resourceName('stack')], 'reproduction released its environment use');
       assert.equal(finding(r).state, 'owned', 'the repair owns its finding');
       // The run: the patched tree's real id, purpose mutant, for the finding at the tip; the worktree gone.
       const [w] = mutantWitnessed(r);
@@ -81,6 +92,8 @@ describe('vacuity repairs: reproduce and acceptance', () => {
         'teardown:released', 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published']);
       const candidate = r.journal.view.opsOf('candidate.merge').at(-1)!.post.new;
       const kill = mutantWitnessed(r).at(-1)!;
+      assert.ok(startedCalls(state).filter((c) => c === 'probe stack').length >= 2, 'candidate acceptance probes the inferred environment too');
+      assert.deepEqual(idleEnvironments(r.ctx, Date.now() + 3_600_001, () => false, false), [resourceName('stack')]);
       assert.deepEqual([kill.for, kill.treeSha], [{ type: 'mutant', finding: 'F-1', of: candidate }, treeWith(d.repo, tip, STRICT_TEST, MUTANT_PATCH)]);
       assert.deepEqual(moves(r), ['F-1:owned{v1}', 'F-1:fixed-on-branch{v1}', 'F-1:resolved']);
       const [metric] = findingMetrics(readJournal(r.ctx.runDir, r.journal.view.arc).events, r.journal.view.holistic().findings);
@@ -472,3 +485,25 @@ describe(`matrix row ${MUTANT_APPLY}`, () => {
   }
 });
 
+
+test('reproduce.timeout: mutant launches enforce their arc lane limit and retain timeout evidence', T, async () => {
+  const { d } = vacuityArc({ laneExtra: { journey: {
+    timeoutMin: 0.03, argv: ['sh', '-c', 'for n in $(seq 1 100); do echo working; sleep 0.1; done'],
+  } } });
+  const r = contextFor(d);
+  try {
+    await step(r.ctx, r.unit('v1'));
+    const spawns = mutantRuns(r);
+    assert.equal(spawns.length, 1);
+    const spawn = spawns[0]!;
+    const inv = invocationId(spawn.op, spawn.ordinal);
+    const files = runnerFiles(invocationDir(r.ctx.runDir, inv), inv);
+    const launch = files.read('launch.json');
+    assert.ok(launch?.terminal.type === 'command' && launch.terminal.timeoutMin === 0.03);
+    assert.equal(files.read('exit.json')?.cause, 'timeout');
+    const result = files.read('result.json');
+    assert.ok(result?.type === 'command' && result.verdict === 'timeout');
+    assert.deepEqual(worktrees(r), [], 'timed-out mutant checkout is cleaned');
+    assert.ok(!outcomes(d, 'v1').includes('reproduce:reproduced'), 'timeout cannot establish reproduction');
+  } finally { r.journal.close(); }
+});

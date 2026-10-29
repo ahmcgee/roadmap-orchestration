@@ -14,7 +14,7 @@ import { invocationDir, invoke } from '../src/pipeline/invoke.ts';
 import { requestOf } from '../src/resources/pool.ts';
 import { probe } from '../src/resources/probe.ts';
 import {
-  type Reservation, type ResourceContext, type StageHolder, type SweepHolder, cancel, checkBuildLanes, cleanup, entryOf, buildLanes,
+  type Reservation, type ResourceContext, type StageHolder, type SweepHolder, cancel, cleanup, entryOf, buildLanes,
   lockOrder, reserve, reserveForSweep, resourceTable, run, transition,
 } from '../src/resources/reserve.ts';
 import { stageRecipes } from '../src/resources/teardown.ts';
@@ -47,7 +47,8 @@ test('res.cycle-per-stage', T, async () => {
   const r = newRun();
   const { ctx, journal } = openRun(r);
   const stages = [
-    // The build holds the unit's declared resources for its whole run; its workload is a backend.
+    // An adopted dev.31 build may still hold its journaled named resources until teardown.
+    // New builds request CPU only; this lower-level cycle must still release the older reservation.
     { holder: stageHolder('build'), resources: [QUEUE, DB], work: () => invoke(journal, ctx.containment, specFor(backend({ runDir: r.runDir, arc: r.arc, work: r.repo }, scenario([{ as: 'claude', expect: {}, acts: [{ type: 'emit', value: { ok: true } }] }])))) },
     { holder: stageHolder('lanes'), resources: [DB], work: () => laneInvocation(ctx, stageHolder('lanes')) },
     { holder: stageHolder('candidate'), resources: [INTEGRATION_SLOT, CACHE], work: () => laneInvocation(ctx, stageHolder('candidate'), 'suite') },
@@ -152,7 +153,7 @@ test('res.lock-order', { timeout: 180_000 }, async () => {
   for (let batch = 0; batch < 5; batch++) await Promise.all(Array.from({ length: 10 }, oneRun));
 });
 
-test('res.estate-refused-for-implementer', () => {
+test('res.estate-excluded-from-implementer', () => {
   const lane = (id: string, tier: 'fast' | 'estate', resources: readonly string[], state = 'active') => ({
     id, argv: ['npm', 'test'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, tier, resources, evidenceGlobs: [], state,
   });
@@ -162,25 +163,21 @@ test('res.estate-refused-for-implementer', () => {
     scope: ['src/**'], resources: ['db', 'queue'], decisions: [], facts: [], cites: { contracts: [], rulings: [] },
   }, 'spec');
   const r = newRun();
-  const { ctx, journal } = openRun(r);
+  const { journal } = openRun(r);
   journal.close();
-  const unit = ctx.plan().units[0]!;
 
-  // Fast lanes within the build's own resources, estate lanes needing anything: accepted.
-  const ok = spec([lane('unit', 'fast', ['db']), lane('e2e', 'estate', ['cache', 'db']), lane('old', 'fast', ['cache'], 'struck')]);
-  assert.deepEqual(checkBuildLanes(ok, unit), []);
+  // Resource-bearing lanes belong to the executor, whatever their cadence.
+  const ok = spec([lane('local', 'fast', []), lane('unit', 'fast', ['db']), lane('e2e', 'estate', ['cache', 'db']), lane('old', 'fast', ['cache'], 'struck')]);
   // The implementer's lane list is the fast lanes, and the build prompt shows exactly those.
-  assert.deepEqual(buildLanes(ok).map((l) => l.id), ['unit', 'old']);
+  assert.deepEqual(buildLanes(ok).map((l) => l.id), ['local']);
   const lanesSection = (text: string): string[] => [...text.split('## Lanes')[1]!.split('## Resources')[0]!.matchAll(/^- `([^`]+)`/gm)].map((m) => m[1]!);
   assert.deepEqual(lanesSection(renderSpec(ok, { buildLanesOnly: true })), buildLanes(ok).map((l) => l.id));
   assert.ok(!renderSpec(ok, { buildLanesOnly: true }).includes('e2e'), 'no estate lane is even mentioned to the implementer');
-  assert.deepEqual(lanesSection(renderSpec(ok)), ['unit', 'e2e', 'old'], 'the executor view keeps every lane');
+  assert.deepEqual(lanesSection(renderSpec(ok)), ['local', 'unit', 'e2e', 'old'], 'the executor view keeps every lane');
 
-  // A fast lane that needs a resource the build does not hold gives the implementer estate: refused.
+  // Even declared build resources do not make estate lanes available to the implementer.
   const bad = spec([lane('unit', 'fast', ['db']), lane('smoke', 'fast', ['cache', 'db'])]);
-  assert.deepEqual(checkBuildLanes(bad, unit), [
-    { kind: 'spec-lane-unrunnable', unit: 'u1', lane: 'smoke', problem: { type: 'estate-lane-for-implementer' } },
-  ]);
+  assert.deepEqual(buildLanes(bad).map((l) => l.id), []);
 });
 
 test('res.cancel-kills-then-cleans', T, async () => {

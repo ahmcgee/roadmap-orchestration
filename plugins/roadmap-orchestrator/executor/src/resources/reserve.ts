@@ -42,6 +42,7 @@
 //                                 (`retryReclaim`), in a unit retry's order: it is both the failing and the
 //                                 reclaiming holder, since a job, unlike a stage attempt, outlives its lane.
 // A retry, a job or a sweep takes cleanup-failed back through `reclaim` (cleanup-failed→cleaning), the one way out.
+import type { CpuBasis } from '../core/cpu.ts';
 import { crashPoint } from '../core/crash.ts';
 import { type Holder, type Parent, type ResourceEdge, holderUnit } from '../core/events.ts';
 import {
@@ -53,9 +54,8 @@ import { type HeldState, type ResourceEntry, FREE_RESOURCE, afterEdge, sameHolde
 import type { ResidueKey, SpecM1, Stage } from '../core/records.ts';
 import type { AbsPath } from '../core/values.ts';
 import { type ResidueEntry, readResidues, recordDisposition, undispositioned } from '../host/residues.ts';
-import type { PlanM1, PlanUnit } from '../input/plan.ts';
+import type { PlanM1 } from '../input/plan.ts';
 import { type ProcContext, killWorkload } from '../pipeline/invoke.ts';
-import type { StartupRejection } from '../preflight/startup.ts';
 import { type ResidueRecipe, appendFailedCleanupResidues } from '../recover/residue.ts';
 import type { ResourceRequest } from '../schedule/types.ts';
 import { allocate, instanceEnv } from './pool.ts';
@@ -220,6 +220,8 @@ function journalTransition(
   edge: ResourceEdge,
   parent: Parent,
   recipes: ReadonlyMap<ResourceInstance, ResidueRecipe>,
+  cpuBasis?: CpuBasis,
+  tokenWaitMs?: number,
 ): void {
   const view = ctx.journal.view;
   assertLegal(view, holder, resources, edge);
@@ -228,7 +230,7 @@ function journalTransition(
     key: holderKey(holder),
     parent,
     deadlineAt: null,
-    body: () => ({ expect: { holder, resources, edge }, post: null }),
+    body: () => ({ expect: { holder, resources, edge, ...(cpuBasis === undefined ? {} : { cpuBasis }), ...(tokenWaitMs === undefined ? {} : { tokenWaitMs }) }, post: null }),
   });
   const unit = 'unit' in holder ? holder.unit : undefined;
   crashPoint('resource.after-intent', unit);
@@ -287,6 +289,7 @@ export function reserve<H extends AcquiringHolder>(
   holder: H,
   req: ResourceRequest,
   parent: Parent,
+  tokenWaitMs?: number,
 ): Reservation<'reserved', H> | Refused {
   const plan = ctx.plan();
   const slotAlone = req.publication && req.named.length === 0 && req.pools.length === 0 && req.cpu === 0;
@@ -296,7 +299,7 @@ export function reserve<H extends AcquiringHolder>(
   if (holder.type === 'job' && req.publication) throw new Error(`a job holder never reserves integration-slot: ${canonicalJson(req)}`);
   const got = allocate(resourceTable(ctx.journal.view), plan, req);
   if (got.kind === 'busy') return { state: 'refused', busy: got.busy };
-  journalTransition(ctx, holder, got.units, { type: 'reserve' }, parent, new Map());
+  journalTransition(ctx, holder, got.units, { type: 'reserve' }, parent, new Map(), req.cpuBasis, tokenWaitMs);
   return { state: 'reserved', holder, resources: got.units, recipes: holderRecipes(plan, ctx.repo, holder, got.units) };
 }
 
@@ -485,24 +488,7 @@ export async function retryReclaim(ctx: ResourceContext, holder: ReclaimHolder, 
 // The build-cadence boundary
 
 export type SpecLane = SpecM1['lanes'][number];
-export type BuildLaneRefusal = Extract<StartupRejection, { kind: 'spec-lane-unrunnable' }>;
-
-/**
- * The implementer's lanes: the only source of the lane list a build prompt shows (renderSpec with
- * buildLanesOnly shows exactly these). Lanes of a later cadence are executor-only.
- */
+/** Resource-free build-cadence lanes available for targeted checks inside the implementer's session. */
 export function buildLanes(spec: SpecM1): readonly SpecLane[] {
-  return spec.lanes.filter((l) => l.cadence === 'build');
-}
-
-/**
- * Startup and dispatch check: an active build-cadence lane is one the implementer runs inside its build, which
- * holds exactly the unit's declared resources for its whole run. A build lane that needs any other
- * resource would give the implementer estate it does not hold, so the spec is refused; so is one naming an
- * environment (dev.17), which only the executor brings up.
- */
-export function checkBuildLanes(spec: SpecM1, unit: PlanUnit): readonly BuildLaneRefusal[] {
-  return buildLanes(spec)
-    .filter((l) => l.state === 'active' && (l.environment !== undefined || l.resources.some((r) => !unit.resources.includes(r))))
-    .map((l) => ({ kind: 'spec-lane-unrunnable', unit: unit.id, lane: l.id, problem: { type: 'estate-lane-for-implementer' } }));
+  return spec.lanes.filter((l) => l.cadence === 'build' && l.resources.length === 0 && l.environment === undefined);
 }

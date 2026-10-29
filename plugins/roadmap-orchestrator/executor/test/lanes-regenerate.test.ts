@@ -111,7 +111,10 @@ test('lanes.regenerate-hand-edit: an output edited by hand beside its regenerate
   const done = started(await lanes(run.ctx, run.unit, salvaged));
   assert.equal(done.outcome.kind, 'red', 'a red lane in a certified checkout (the check put the tree back)');
   const fact = outcomeFacts(run).at(-1)!;
-  assert.ok(fact.kind === 'stage-outcome' && fact.chargeable);
+  assert.ok(fact.kind === 'stage-outcome');
+  assert.equal(fact.chargeable, false, 'the first certification red uses the allowance');
+  assert.equal(run.journal.view.unit(U1).counters.unchargedLanesReds, 1);
+  assert.ok(done.fix !== null, 'the hand edit returns to a fix round with evidence');
   // The spec lane, the check at the salvage SHA and its diagnostic rerun, then the check on the base alone (green).
   assert.deepEqual(laneSpawns(run).map((s) => [s.lane, s.set, s.at]), [['unit', 'spec', salvaged], [id, 'suite', salvaged], [id, 'suite', salvaged], [id, 'suite', run.base]]);
   assert.deepEqual(fastCheckouts(run), []);

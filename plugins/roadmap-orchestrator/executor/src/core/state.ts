@@ -9,9 +9,9 @@ import {
   type AbortRecord, type AuditInputs, type BackendParkClass, type CoveredRange, type DoneRecord, type Event, type Fact, type HolisticFact, type Holder,
   type IntentOf, type IntentRecord, type JudgmentInputs, type JudgmentStage, type OpKind, type Parent, type ParkRecord, type PlanAppliedFact, type ProbeTarget,
   type ResourceEdge, type RetryStage, type ScopeGrowthProposal, type StageOutcomeFact, JUDGMENT_STAGES, RECLAIM_HOLDERS, RESIDUE_HOLDERS, RETRY_STAGES, RETRYABLE_BACKEND_PARKS,
-  prevHash, probeTargetKey, serializeEvent,
+  prevHash, probeTargetKey, serializeEvent, certificationRed,
 } from './events.ts';
-import { checkpointSkipTriggerOf } from './upgrade.ts';
+import { checkpointSkipTriggerOf, dev31UnchargedLanesRedsDefault } from './upgrade.ts';
 import { CounterRegressionError } from './fsx.ts';
 import {
   type AmendmentId, type ArcId, type ClaudeSessionId, type CommandId, type DivergenceId, type EdgeId, type FindingId, type InvocationId, type JobId, type JobKind, type NeedsUserId, type ObligationId,
@@ -46,11 +46,13 @@ export type TailDiscarded = Extract<Fact, { kind: 'tail-discarded' }>;
 /** The third chargeable (design-class) failure parks the unit, unless its `limits` say otherwise (M3). */
 export const CHARGEABLE_BOUND = DEFAULT_BOUNDS.chargeable;
 
-/** Cumulative per-unit counters, all `monotonic()`. */
+/** Per-unit counters: cumulative except the resettable certification allowance. */
 export type UnitCounters = Readonly<{
   /** Stage starts: distinct (stage, attempt) pairs named by a stage-parented intent or a stage-outcome fact. */
   attempts: number;
   chargeableFailures: number;
+  /** Certification reds since the last charge; reset on a charge, initially 0. */
+  unchargedLanesReds: number;
   /** Plan-check redirects applied. */
   redirects: number;
   /** Gate revise rounds taken. */
@@ -254,7 +256,7 @@ export function newUnitState(unit: UnitId, stage: Stage, risk: RiskTier | null, 
   const retries = Object.fromEntries(RETRY_STAGES.map((s) => [s, 0])) as Record<RetryStage, number>;
   return {
     unit, stage, risk, status: 'active', routedUp: [], promotion: false, decided: null, interrupted: null, pressureHold: null, pressureHolds: 0,
-    approval: null, open: null, counters: { attempts: 0, chargeableFailures: 0, redirects: 0, reviseRounds: 0, candidateReds: 0, smokeRounds: 0, retries },
+    approval: null, open: null, counters: { attempts: 0, chargeableFailures: 0, unchargedLanesReds: 0, redirects: 0, reviseRounds: 0, candidateReds: 0, smokeRounds: 0, retries },
     spec, reopened: null, pendingRevision: null, staleRev: null, redirectBase: 0,
     park: null, lastRecovery: null, buildTier: risk, lineage: null, supersededBy: null, bounds, entry: null, steering: null, scopeDecisions: [], failures: [],
     pocs: 0,
@@ -283,7 +285,7 @@ const STATUS_OF: Partial<Record<StageOutcomeFact['class'], UnitStatus>> = {
  * function (`src/pipeline/transitions.ts`) share, so the counters a decision predicts are the counters the
  * log derives. `attempts` is left to the caller: it counts stage starts, which the fold sees.
  */
-export function afterStageOutcome(u: UnitState, f: Pick<StageOutcomeFact, 'stage' | 'class' | 'chargeable'>): UnitState {
+export function afterStageOutcome(u: UnitState, f: Pick<StageOutcomeFact, 'stage' | 'outcome' | 'class' | 'chargeable' | 'unchargedLanesReds'>): UnitState {
   const c = u.counters;
   const add = (cls: StageOutcomeFact['class']): number => (f.class === cls ? 1 : 0);
   const judgment = (JUDGMENT_STAGES as readonly Stage[]).includes(f.stage);
@@ -294,6 +296,8 @@ export function afterStageOutcome(u: UnitState, f: Pick<StageOutcomeFact, 'stage
     counters: {
       ...c,
       chargeableFailures: c.chargeableFailures + (f.chargeable ? 1 : 0),
+      unchargedLanesReds: certificationRed(f.stage, f.outcome)
+        ? f.unchargedLanesReds ?? dev31UnchargedLanesRedsDefault() : f.chargeable ? 0 : c.unchargedLanesReds,
       redirects: c.redirects + add('redirect'),
       reviseRounds: c.reviseRounds + add('revise'),
       candidateReds: c.candidateReds + add('candidate-red'),
@@ -721,6 +725,7 @@ export class Fold implements JournalView {
   #runOnly: readonly UnitId[] | null = null;
   /** Rank's seqs (F17): each stage-outcome fact's by `<unit>/<stage>#<attempt>`, each published ff's done, each unit's first naming. */
   readonly #outcomeSeqs = new Map<string, number>();
+  readonly #completedLanes = new Map<UnitId, number>();
   readonly #publications: Readonly<{ unit: UnitId; seq: number }>[] = [];
   readonly #addedSeqs = new Map<UnitId, number>();
   // M3
@@ -1078,6 +1083,16 @@ export class Fold implements JournalView {
         if (f.chargeable && failures + 1 >= bound && f.class !== 'park') {
           fail(`stage-outcome for ${f.unit} ${key} is chargeable failure ${failures + 1}, which parks the unit, but its class is ${f.class} (the unit's bound is ${bound})`);
         }
+        if (certificationRed(f.stage, f.outcome)) {
+          const state = existing?.state ?? newUnitState(f.unit, f.stage, null, null, boundsOfRecord(this.dispatchOf(f.unit)));
+          const steered = state.steering !== null && f.class === 'park' && (f.outcome === 'red' || f.outcome === 'not-certified');
+          // dev.31 charged every certification red except a one-pass steering park. Absence is not an allowance bypass.
+          const charged = !steered && (f.unchargedLanesReds === undefined || state.counters.unchargedLanesReds >= state.bounds.certifications - 1);
+          const count = steered ? state.counters.unchargedLanesReds : charged ? 0 : state.counters.unchargedLanesReds + 1;
+          const cls = steered || (charged && failures + 1 >= bound) ? 'park' : 'advance';
+          if (f.chargeable !== charged || (f.unchargedLanesReds !== undefined && f.unchargedLanesReds !== count) || f.class !== cls
+            || (steered && (f.park?.class !== 'operator' || f.park.kind !== 'env'))) fail(`stage-outcome for ${f.unit} ${key} violates its certification allowance`);
+        }
         const status = existing?.state.status;
         if (status === 'cut' || status === 'superseded') fail(`stage-outcome for ${f.unit} ${key}, which is ${status}`);
         // M4a rev 3 (F4): a unit that hit a known defect prepares again (its decided outcome is lanes `known-defect`).
@@ -1094,6 +1109,7 @@ export class Fold implements JournalView {
         const u = this.#unit(f.unit, f.stage);
         u.outcomes.add(key);
         this.#outcomeSeqs.set(`${f.unit}/${key}`, at.seq);
+        if (f.stage === 'lanes' && f.class !== 'hold') this.#completedLanes.set(f.unit, f.attempt);
         if (f.stage === 'lanes' && f.outcome === 'green') this.#greenLanes.set(f.unit, f.attempt);
         // M3: an entry's stage records its outcome (a hold keeps the entry, whose stage then runs again); a steer pass
         // ends where it parks, stops or retires the unit, or where its gate advances it.
@@ -1120,6 +1136,10 @@ export class Fold implements JournalView {
         }
         const park = f.class === 'park' ? f.park ?? unclassedParkRecord(f) : null;
         if (park !== null) {
+          if (park.class === 'operator' && park.ordering != null) {
+            const eligible = (f.stage === 'plan-check' && (f.outcome === 'infeasible' || f.outcome === 'escalate')) || (f.stage === 'gate' && f.outcome === 'escalate');
+            if (park.kind !== 'design' || !eligible || f.chargeable || park.ordering.blockers.includes(f.unit)) fail(`ordering metadata on an ineligible park of ${f.unit}`);
+          }
           this.#setUnitState(u, { ...u.state, park: { seq: at.seq, at: at.at, park, passed: [] } });
           this.#unitParkSeqs.set(at.seq, f.unit);
         }
@@ -1135,7 +1155,7 @@ export class Fold implements JournalView {
         this.#probe(f, fail, at);
         return;
       case 'unparked':
-        this.#unpark(f.unit, fail);
+        this.#unpark(f, fail);
         return;
       case 'judgment-inputs': {
         const key = `${f.unit} ${f.stage}#${f.attempt}`;
@@ -1738,14 +1758,20 @@ export class Fold implements JournalView {
   /**
    * `resume <unit>` of an operator-env park (M2): the unit re-enters at the stage it parked at; its decision
    * and interruption return to what they were before the park, so the driver re-runs that stage as a new,
-   * uncharged attempt. Nothing else changes.
+   * uncharged attempt. An automatic ordering wake names the exact design park and requires every blocker merged.
+   * Nothing else changes.
    */
-  #unpark(unit: UnitId, fail: (detail: string) => never): void {
+  #unpark(f: Extract<Fact, { kind: 'unparked' }>, fail: (detail: string) => never): void {
+    const { unit } = f;
     const u = this.#units.get(unit);
     const decided = u?.state.decided ?? null;
     const park = u?.state.park ?? null;
     if (u === undefined || u.state.status !== 'park-pending' || decided === null || park === null) return fail(`unpark of unit ${unit}, which is not parked`);
-    if (park.park.class !== 'operator' || park.park.kind !== 'env') fail(`unpark of unit ${unit}, whose park is ${canonicalJson(park.park)}, not operator env`);
+    if (f.command === null) {
+      const ordering = park.park.class === 'operator' ? park.park.ordering ?? null : null;
+      if (park.seq !== f.parkSeq || ordering === null) return fail(`automatic unpark of ${unit} does not name its current ordering park`);
+      if (ordering.blockers.some((b) => this.#units.get(b)?.state.status !== 'retired')) return fail(`automatic unpark of ${unit} before all ordering blockers merged`);
+    } else if (park.park.class !== 'operator' || park.park.kind !== 'env') fail(`unpark of unit ${unit}, whose park is ${canonicalJson(park.park)}, not operator env`);
     this.#restoreParked(u, null);
   }
 
@@ -2097,6 +2123,10 @@ export class Fold implements JournalView {
     const seq = this.#outcomeSeqs.get(`${unit}/${d.stage}#${d.attempt}`);
     if (seq === undefined) throw new Error(`unit ${unit}'s decided outcome ${d.stage}#${d.attempt} has no seq`);
     return seq;
+  }
+
+  completedLanes(unit: UnitId): number | null {
+    return this.#completedLanes.get(unit) ?? null;
   }
 
   publications(): readonly Readonly<{ unit: UnitId; seq: number }>[] {

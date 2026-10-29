@@ -1,6 +1,6 @@
 // The fast suite at the lanes stage (the 2026-10-15 batch; src/pipeline/stages.ts `fastSuite`): after a green spec series
 // the plan's fast suite lanes run at the salvage SHA, less any identical to a spec lane; a red one runs again on the unit's
-// diff base alone. Base green: the unit's red, a chargeable fix round whose evidence and prompt carry the suite lane. Base
+// diff base alone. Base green: the unit's red, an uncharged certification fix round whose evidence and prompt carry the suite lane. Base
 // red: `base-red`, uncharged, on to the gate; a base's verdict is run once per run. Real processes, real git, fake
 // backends. Named tests: lanes.fast-suite-own-red, lanes.fast-suite-base-red, lanes.fast-suite-base-is-salvage.
 import assert from 'node:assert/strict';
@@ -11,7 +11,8 @@ import type { IntentOf } from '../src/core/events.ts';
 import { type Sha, sha } from '../src/core/ids.ts';
 import { worktreeList } from '../src/git/git.ts';
 import { pinDispatch } from '../src/pipeline/dispatch.ts';
-import { type LanesDone, fastSuiteRoot, lanes, planCheck } from '../src/pipeline/stages.ts';
+import { type LanesDone, fastSuiteRoot, lanes, loadUnitSpec, planCheck } from '../src/pipeline/stages.ts';
+import { stageSuiteLanes, suiteStandIns } from '../src/pipeline/lanes.ts';
 import { step } from '../src/pipeline/unit.ts';
 import { git } from './helpers/repo.ts';
 import { type CodexAct, type Expect, type Step, readCalls } from './helpers/scenario.ts';
@@ -51,7 +52,7 @@ function unitCommit(run: StageRun, file: string, text: string): Sha {
 
 const fastCheckouts = (run: StageRun) => worktreeList(run.repo).filter((w) => w.path.includes('.fast-'));
 
-test('lanes.fast-suite-own-red: a fast suite lane red on the unit\'s commit and green on its base is a chargeable fix round with the suite evidence; the builder is shown it, fixes it, and the lanes go green', T, async () => {
+test('lanes.fast-suite-own-red: a fast suite lane red on the unit\'s commit and green on its base is an uncharged certification fix round with the suite evidence; the builder is shown it, fixes it, and the lanes go green', T, async () => {
   // Lint fails on a TODO in src/add.js: the first build leaves one, the fix round removes it. The base has none.
   const lint: LaneJson = { id: 'lint', argv: ['sh', '-c', 'if grep -q TODO src/add.js; then echo "lint: TODO left in src/add.js" >&2; exit 1; fi'] };
   const run = setupUnit({
@@ -70,14 +71,15 @@ test('lanes.fast-suite-own-red: a fast suite lane red on the unit\'s commit and 
   // The plan-check's call, then the build's.
   const fresh = readCalls(run.scenario.path)[1];
   assert.ok(fresh !== undefined);
-  // The builder is shown the fast suite lane it must run, as its exact command; never the identical or the estate one.
+  // The builder is shown the resource-free suite lane it may use for targeted checks, as its exact command; never the identical or the estate one.
   assert.match(fresh.stdin, /# Suite lanes[\s\S]*- lint \(expects exit 0[^)]*\):\n {2}cd \S+ && sh -c /);
   assert.doesNotMatch(fresh.stdin, /- same \(|- e2e \(/);
 
   const red = run.journal.view.unit(U1).decided;
   assert.ok(red !== null && red.stage === 'lanes');
   assert.equal(red.outcome, 'red');
-  assert.equal(red.chargeable, true, 'the unit\'s own red charges');
+  assert.equal(red.chargeable, false, 'the unit\'s own red consumes the certification allowance');
+  assert.equal(red.unchargedLanesReds, 1);
   const salvaged = laneSpawns(run).find((s) => s.set === 'spec')!.at;
   const base = sha(git(run.repo, 'rev-parse', 'main'));
   // The spec lane, then lint at the salvage SHA (red, its diagnostic rerun red), then lint on the base alone (green).
@@ -97,7 +99,8 @@ test('lanes.fast-suite-own-red: a fast suite lane red on the unit\'s commit and 
   while (run.journal.view.unit(U1).decided?.stage !== 'lanes') assert.equal((await step(run.ctx, run.unit)).kind, 'continue');
   const green = run.journal.view.unit(U1).decided;
   assert.equal(green?.outcome, 'green');
-  assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, 1);
+  assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, 0);
+  assert.equal(run.journal.view.unit(U1).counters.unchargedLanesReds, 1);
 });
 
 test('lanes.fast-suite-base-red: a fast suite lane red on the unit\'s base alone too is base-red, uncharged, on to the gate; the base runs once for later attempts', T, async () => {
@@ -136,3 +139,20 @@ test('lanes.fast-suite-base-is-salvage: a unit whose commit is its base fails on
   assert.equal(done.outcome.kind, 'base-red');
   assert.deepEqual(laneSpawns(run).map((s) => [s.lane, s.set]), [['unit', 'spec'], ['lint', 'suite'], ['lint', 'suite']], 'lint and its diagnostic rerun, once');
 });
+
+for (const [specTimeout, suiteTimeout, identical] of [[2, 1, false], [undefined, 360, false], [1, 1, true], [undefined, undefined, true]] as const) {
+  test(`lanes.timeout-equality: spec ${specTimeout}, suite ${suiteTimeout}, identical ${identical}`, T, async () => {
+    const run = setupUnit({
+      steps: [], lanes: [{ ...UNIT, ...(specTimeout === undefined ? {} : { timeoutMin: specTimeout }) }],
+      suite: [{ ...SAME, ...(suiteTimeout === undefined ? {} : { timeoutMin: suiteTimeout }) }],
+    });
+    const spec = loadUnitSpec(run.ctx, run.unit).spec;
+    const active = spec.lanes.filter((l) => l.state === 'active');
+    const suite = run.ctx.plan().suite.lanes;
+    assert.equal(stageSuiteLanes(suite, spec, new Set()).length, identical ? 0 : 1, 'stage dedup respects timeout semantics');
+    assert.equal(suiteStandIns(suite, active.map((l) => ({ ...l, reporter: 'jsonl' }))).size, identical ? 1 : 0, 'arc stand-ins respect the same timeout semantics');
+    pinDispatch(run.ctx, run.unit, keptSpec(run.journal));
+    assert.equal(started(await lanes(run.ctx, run.unit, run.base)).outcome.kind, 'green');
+    assert.deepEqual(laneSpawns(run).map((s) => [s.lane, s.set]), identical ? [['unit', 'spec']] : [['unit', 'spec'], ['same', 'suite']]);
+  });
+}

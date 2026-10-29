@@ -48,7 +48,8 @@ import { fileURLToPath } from 'node:url';
 import { identityOf, signal } from './contain/proc.ts';
 import { crashPoint } from './core/crash.ts';
 import { atomicJson, canonicalJson as fileJson, durableUnlink, exclusivePublish, readJson } from './core/fsx.ts';
-import { LogCorruptError } from './core/log.ts';
+import { LogCorruptError, readJournal } from './core/log.ts';
+import type { Parent } from './core/events.ts';
 import { supervisorNeedsUserId } from './core/ids.ts';
 import { canonicalJson } from './core/json.ts';
 import {
@@ -102,6 +103,39 @@ export const executorLogs = (dir: AbsPath, generation: number): Logs =>
 const supervisorLogs = (dir: AbsPath, token: string): Logs =>
   ({ out: hostPath(dir, `supervisor.${token}.out`), err: hostPath(dir, `supervisor.${token}.err`) });
 
+type HeldStage = Extract<Parent, { type: 'stage' }>;
+export type ExecutorEndRecord = Readonly<{
+  v: typeof SCHEMA_VERSION; generation: number; at: IsoTime;
+  child: Readonly<{ type: 'exited'; code: number }> | Readonly<{ type: 'signalled'; signal: NodeJS.Signals }>;
+  stages: Readonly<{ kind: 'known'; last: HeldStage | null; open: readonly HeldStage[] }> | Readonly<{ kind: 'unreadable'; detail: string }>;
+}>;
+
+/** Supervisor-owned evidence: survives an executor crash and is written before any restart or claim release. */
+function recordExecutorEnd(dir: AbsPath, claim: HostLockClaim, how: Exited): void {
+  let stages: ExecutorEndRecord['stages'];
+  try {
+    const { view, events } = readJournal(claim.runDir, claim.arc);
+    const held = events.flatMap((e): readonly HeldStage[] => {
+      if (e.type === 'intent' && e.parent.type === 'stage') return [e.parent];
+      if (e.type === 'fact' && e.fact.kind === 'stage-outcome') return [{ type: 'stage', unit: e.fact.unit, stage: e.fact.stage, attempt: e.fact.attempt }];
+      return [];
+    });
+    stages = { kind: 'known', last: held.at(-1) ?? null, open: view.plannedUnits().flatMap((unit) => {
+      const open = view.unit(unit).open;
+      return open === null || view.unit(unit).status === 'retired' ? [] : [{ type: 'stage' as const, unit, stage: open.stage, attempt: open.attempt }];
+    }) };
+  } catch (error) {
+    if (!(error instanceof LogCorruptError)) throw error;
+    stages = { kind: 'unreadable', detail: error.message };
+  }
+  if (how.code === null && how.signal === null) throw new Error(`executor generation ${claim.generation}: exit without a status or signal`);
+  const record: ExecutorEndRecord = {
+    v: SCHEMA_VERSION, generation: claim.generation, at: isoTimeOf(new Date()),
+    child: how.code !== null ? { type: 'exited', code: how.code } : { type: 'signalled', signal: how.signal! }, stages,
+  };
+  exclusivePublish(hostPath(dir, `executor.${claim.generation}.exit.json`), fileJson(record));
+}
+
 export type SupervisorArgs = Readonly<{
   hostDir: AbsPath;
   repo: AbsPath;
@@ -127,7 +161,7 @@ function emit(line: SupervisorLine): void {
 // ---------------------------------------------------------------------------------------------------
 // Generation files: what each generation leaves in the host dir, pruned by `roadmap gc` (A5b)
 
-const GENERATION_FILE = /^(?:handshake|supervisor\.ready|supervisor\.failed)\.([1-9][0-9]*)$|^executor\.([1-9][0-9]*)\.(?:out|err)$/;
+const GENERATION_FILE = /^(?:handshake|supervisor\.ready|supervisor\.failed)\.([1-9][0-9]*)$|^executor\.([1-9][0-9]*)\.(?:out|err|exit\.json)$/;
 const SUPERVISOR_OUT = /^supervisor\.([0-9a-f]{16})\.out$/;
 const SUPERVISOR_LOG = /^supervisor\.([0-9a-f]{16})\.(?:out|err)$/;
 
@@ -305,6 +339,7 @@ async function superviseOne(args: SupervisorArgs, claim: HostLockClaim, controlO
     }
   }
   const how: Exited = exited;
+  recordExecutorEnd(dir, claim, how);
 
   const owed = (failure: Owed): Owed => (ready ? { kind: 'none' } : failure);
   const reason = exitReasonOf(dir, claim.generation);

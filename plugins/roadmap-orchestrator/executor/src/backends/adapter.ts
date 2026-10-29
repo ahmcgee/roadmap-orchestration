@@ -133,6 +133,19 @@ function readText(path: string): string | null {
   return existsSync(path) ? readFileSync(path, 'utf8') : null;
 }
 
+/** dev.32: old build reports may retain lanesRun, which no longer supplies certification evidence.
+ * Keep the launched schema strict for every other field and preserve schemas of adopted invocations.
+ * The build reader still validates the legacy field's shape when consuming the report.
+ */
+export function backendSchemaViolation(schema: unknown, value: unknown, role: BackendTerminal['role']): string | null {
+  if (role === 'build' && isObject(schema) && isObject(schema['properties'])
+    && !Object.hasOwn(schema['properties'], 'lanesRun') && isObject(value)) {
+    const { lanesRun: _legacy, ...report } = value;
+    return schemaViolation(schema, report);
+  }
+  return schemaViolation(schema, value);
+}
+
 function read(terminal: BackendTerminal, stdoutPath: AbsPath): BackendReading {
   const backend = terminal.session.backend;
   try {
@@ -150,7 +163,7 @@ function backendOutcome(exit: ExitFile, cancel: CancelFile | null, terminal: Bac
   let why = reading.output.kind === 'absent' ? reading.output.why : '';
   if (reading.output.kind === 'present') {
     const schema: unknown = JSON.parse(readFileSync(terminal.schemaPath, 'utf8'));
-    const violation = schemaViolation(schema, reading.output.value);
+    const violation = backendSchemaViolation(schema, reading.output.value, terminal.role);
     valid = violation === null;
     if (violation !== null) why = `schema violation at ${violation}`;
   }

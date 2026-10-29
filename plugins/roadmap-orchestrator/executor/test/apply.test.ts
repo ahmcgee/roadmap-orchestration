@@ -25,6 +25,7 @@ import {
 } from '../src/input/inforce.ts';
 import { pinDispatch, repin, runOp } from '../src/pipeline/dispatch.ts';
 import { loadUnitSpec } from '../src/pipeline/stages.ts';
+import { outcomeFact } from '../src/pipeline/transitions.ts';
 import { reentryAllowed } from '../src/pipeline/unit.ts';
 import { type StageHolder, reserve } from '../src/resources/reserve.ts';
 import { requestOf } from '../src/resources/pool.ts';
@@ -328,6 +329,20 @@ const ROWS: readonly Row[] = [
     expect: { busy: [{ unit: 'u1', stage: 'build', attempt: 2 }] },
   },
   {
+    name: 'lane CPU cost edit while lanes run: busy at the lanes boundary, without interrupting the stage',
+    setup: (r) => {
+      inFlight(r);
+      r.journal.begin({ kind: 'worktree.create', key: opKey('worktree:u1:verify'), parent: { type: 'stage', unit: U1, stage: 'lanes', attempt: 2 }, deadlineAt: null, body: () => ({
+        expect: { path: absPath(tmpDir('apply-cost-wt')), checkout: { type: 'detached', at: sha('0'.repeat(40)) } }, post: null,
+      }) });
+    },
+    edit: (d) => editSpec(d, 'u1', (s) => {
+      s['rev'] = Number(s['rev']) + 1;
+      s['lanes'] = (s['lanes'] as Json[]).map((l) => ({ ...l, cpu: 1 }));
+    }),
+    expect: { busy: [{ unit: 'u1', stage: 'lanes', attempt: 2 }] },
+  },
+  {
     // dev.17: an edit refused whatever the boundary is refused now, never queued.
     name: 'rev + 2 of a unit running an attempt: refused now, not busy',
     setup: (r) => {
@@ -414,7 +429,10 @@ const ROWS: readonly Row[] = [
     name: 'suite lanes while a unit\'s lanes red awaits its fix round: refused',
     setup: (r) => {
       pin(r, 'u1');
-      decide(r, 'u1', 'lanes', 'red', 'advance');
+      const state = r.journal.view.unit(U1);
+      const red = outcomeFact(state, { stage: 'lanes', kind: 'red' }, state.counters.attempts + 1);
+      assert.equal(red.unchargedLanesReds, 1);
+      r.journal.fact(red);
     },
     edit: (d) => editPlan(d, (p) => void p.suite.lanes.push({ ...p.suite.lanes[0]!, id: 'suite2' })),
     expect: [/suite lanes may not change while a lanes attempt runs them or its fix round reads them \(unit u1\)/],

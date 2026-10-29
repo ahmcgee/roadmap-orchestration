@@ -114,6 +114,8 @@ export interface JournalView {
   applyQueued(command: CommandId): ApplyQueued | null;
   /** M2 (rank, F17): the seq of the stage-outcome fact that is `unit(id).decided`, or null while it is null. */
   decidedSeq(unit: UnitId): number | null;
+  /** Latest lanes attempt with a non-hold outcome; crash-abandoned attempts never supply red-first priority. */
+  completedLanes(unit: UnitId): number | null;
   /** M2 (rank, F17): every published `integration.ff` of a unit's ff stage, the unit and its done record's seq, in log order. */
   publications(): readonly Readonly<{ unit: UnitId; seq: number }>[];
   /** M2 (rank, F17): the seq of the first `plan-applied` fact that named the unit, or null if none did. */

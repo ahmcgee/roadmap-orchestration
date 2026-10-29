@@ -41,9 +41,10 @@
 // - M3 step A3 (R11): a steered unit's pass (`UnitState.steering`) exits in `steerExit`, uncharged: a red series or a
 //   gate revise parks `steered` instead of a fix round, and so does a green gate unless the steer said `--resume`.
 //   The steer round itself is an entry outside the table (`UnitState.entry`, src/pipeline/unit.ts).
+import type { OrderingWait } from '../core/ordering.ts';
 import {
   type GateLargeDiff, type HoldCause, type JudgmentStage, type OperatorParkKind, type OutcomeClass, type OutcomeStage, type ParkRecord, type ProbeTarget,
-  type RetryStage, type StageOutcomeFact, type StageOutcomeKind, JUDGMENT_STAGES, probeTargetKey,
+  type RetryStage, type StageOutcomeFact, type StageOutcomeKind, JUDGMENT_STAGES, probeTargetKey, certificationRed,
 } from '../core/events.ts';
 import { type Bounds, DEFAULT_BOUNDS, type NeedsUserReason } from '../core/records.ts';
 import { type UnitCounters, type UnitState, afterStageOutcome, redirectsSinceEdit } from '../core/state.ts';
@@ -163,6 +164,7 @@ export const TABLE: Table = {
     'not-reproduced': park('not-reproduced', 'design'),
     // The mutant no longer applies: re-evaluated at the next audit; the unit parks meanwhile.
     inapplicable: park('not-reproduced', 'design'),
+    'env-unavailable': park('env-unavailable', 'retryable'),
     blocked: park('lane-blocked', 'retryable'),
     interrupted: hold,
     'cleanup-failed': park('residue', 'retryable'),
@@ -252,7 +254,10 @@ export const TABLE: Table = {
   teardown: { released: go(at('lanes')), 'cleanup-failed': park('residue', 'retryable'), 'executor-fault': fault },
   lanes: {
     green: go(at('gate')),
+    // `decide` applies the uncharged certification allowance before the chargeable bound.
     red: charge(build('fix')),
+    // A same-commit red then green still needs a fix, but does not consume the unit's design-failure bound.
+    flaky: go(build('fix')),
     'not-certified': charge(build('fix')),
     // A lane the runner ended (deadline) or lost: not a product verdict.
     blocked: retry('lane-blocked', 'retryable'),
@@ -260,7 +265,7 @@ export const TABLE: Table = {
     occupied: park('occupancy-unlabelled', 'env'),
     // A lane's resources could not be cleaned: a residue, never released.
     'cleanup-failed': park('residue', 'retryable'),
-    // M4a rev 3 (D1): a green certified series lacks a required witness, or it fails: a C fix round listing them.
+    // M4a rev 3 (D1): a green certified series lacks a required witness, or it fails: a certification fix round listing them.
     'witnesses-missing': charge(build('fix')),
     // M4a rev 3 (D2, R38): a smoke target survived the reverted production diff: `smokeRounds` C fix rounds, then the
     // gate decides with the survivors.
@@ -490,7 +495,9 @@ function steerExit(u: UnitState, o: StageOutcome): Decision | null {
 function decide(u: UnitState, o: StageOutcome): Decision {
   const exit = steerExit(u, o);
   if (exit !== null) return exit;
-  const d = apply(u, o, ruleOf(o), '');
+  const raw = apply(u, o, ruleOf(o), '');
+  const d = certificationRed(o.stage, o.kind) && u.counters.unchargedLanesReds < u.bounds.certifications - 1
+    ? { ...raw, chargeable: false } : raw;
   if (d.chargeable && u.counters.chargeableFailures + 1 >= u.bounds.chargeable) {
     return halt('park', 'chargeable-bound', o, `: chargeable failure ${u.counters.chargeableFailures + 1} of ${u.bounds.chargeable}`, 'design', true);
   }
@@ -510,7 +517,8 @@ export function transition(u: UnitState, outcome: StageOutcome): Next {
     case 'hold':
       return { kind: 'hold' };
     case 'stage': {
-      const after = afterStageOutcome(u, { stage: outcome.stage, class: d.class, chargeable: d.chargeable });
+      const after = afterStageOutcome(u, { stage: outcome.stage, outcome: outcome.kind, class: d.class, chargeable: d.chargeable,
+        ...certificationCounter(u, outcome, d) });
       const t = d.step.target;
       if (t.stage === 'build') return { kind: 'stage', stage: 'build', round: t.round, seat: risk(after), counters: after.counters };
       if (isJudgment(t.stage)) return { kind: 'stage', stage: t.stage, seat: judgmentSeat(after, t.stage), counters: after.counters };
@@ -529,8 +537,15 @@ export function parkClassOf(u: UnitState, outcome: StageOutcome): ParkClass | nu
  * What only the stage knows about its outcome. `targets`: a retryable park's probe targets (non-empty; a
  * stage that states none leaves the fact without `park`, which the fold reads as an operator park until the
  * stages name their targets: the interim M2 shim, step 7a, src/core/state.ts `unclassedParkRecord`). `cause`: why a hold is not an operator pause or stop (G5).
+ * `ordering`: an explicit design-judgment wait for named units to merge; null means no automatic wake.
  */
-export type OutcomeContext = Readonly<{ targets?: readonly ProbeTarget[]; cause?: HoldCause }>;
+export type OutcomeContext = Readonly<{ targets?: readonly ProbeTarget[]; cause?: HoldCause; ordering?: OrderingWait | null }>;
+
+/** The counter written on certification reds; other outcomes carry no certification field. */
+function certificationCounter(u: UnitState, o: StageOutcome, d: Decision): Pick<StageOutcomeFact, 'unchargedLanesReds'> {
+  return certificationRed(o.stage, o.kind) ? { unchargedLanesReds: d.chargeable ? 0
+    : u.steering !== null && d.class === 'park' ? u.counters.unchargedLanesReds : u.counters.unchargedLanesReds + 1 } : {};
+}
 
 /** The `stage-outcome` fact that records `outcome` of stage attempt `attempt`, as `transition` decides it. */
 export function outcomeFact(u: UnitState, outcome: StageOutcome, attempt: number, context: OutcomeContext = {}): StageOutcomeFact {
@@ -539,7 +554,9 @@ export function outcomeFact(u: UnitState, outcome: StageOutcome, attempt: number
   if (context.targets !== undefined && parkClass !== 'retryable') throw new Error(`outcomeFact: targets for ${outcome.stage} ${outcome.kind}, which decides no retryable park`);
   if (context.cause !== undefined && d.class !== 'hold') throw new Error(`outcomeFact: a hold cause for ${outcome.stage} ${outcome.kind}, which decides ${d.class}`);
   let park: ParkRecord | null = null;
-  if (parkClass === 'env' || parkClass === 'design') park = { class: 'operator', kind: parkClass };
+  if (context.ordering != null && parkClass !== 'design') throw new Error(`outcomeFact: ordering wait for ${outcome.stage} ${outcome.kind}, which decides no design park`);
+  if (parkClass === 'env') park = { class: 'operator', kind: 'env' };
+  if (parkClass === 'design') park = { class: 'operator', kind: 'design', ...(context.ordering === undefined ? {} : { ordering: context.ordering }) };
   if (parkClass === 'retryable' && context.targets !== undefined) {
     if (context.targets.length === 0) throw new Error(`outcomeFact: a retryable park of ${outcome.stage} ${outcome.kind} with no targets`);
     const targets = [...new Map(context.targets.map((t) => [probeTargetKey(t), t])).entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(([, t]) => t);
@@ -547,6 +564,7 @@ export function outcomeFact(u: UnitState, outcome: StageOutcome, attempt: number
   }
   return {
     kind: 'stage-outcome', unit: u.unit, stage: outcome.stage, attempt, outcome: outcome.kind, class: d.class, chargeable: d.chargeable,
+    ...certificationCounter(u, outcome, d),
     ...(park === null ? {} : { park }), ...(context.cause === undefined ? {} : { cause: context.cause }),
   } as StageOutcomeFact;
 }

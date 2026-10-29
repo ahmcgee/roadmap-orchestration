@@ -10,10 +10,11 @@
 import type { CheckpointTrigger, CensusEntry, ClassifiedAdmit, Conversion, Obligations } from '../holistic/types.ts';
 import type { DiffShown, FlakeOn, FlakyFact, GateLargeDiff, JudgmentInputs, MutantOf, Parent, RevisionSource } from './events.ts';
 import type { ApprovalBlobs, GateReview } from './review.ts';
-import type { FindingId, JobId, LaneId, ObligationId, UnitId } from './ids.ts';
+import type { FindingId, JobId, LaneId, ObligationId, UnitId, Sha256Hex } from './ids.ts';
 import type { PressureAvailability } from '../host/pressure.ts';
 import type { LaunchCpu, ResultFile } from './records.ts';
 import { canonicalJson } from './json.ts';
+import type { CpuBasis } from './cpu.ts';
 import type { ClassTable, Triple } from '../routing/types.ts';
 
 const warned = new Set<string>();
@@ -648,4 +649,61 @@ export function checkpointSkipTriggerOf(s: Readonly<{ trigger?: CheckpointTrigge
  */
 export function summitXhighTriple(triple: Triple): Triple {
   return { ...triple, effort: 'xhigh' };
+}
+
+/** A lane or launch without timeoutMin retains the previous release's six-hour backstop. */
+export function laneTimeoutDefault(): void {
+  warnDefaulted('lane.timeoutMin', 'a lane without timeoutMin; retains the six-hour deadline backstop');
+}
+
+/** Ordering metadata was absent on older parks and judgment answers: never infer a wait from their prose. */
+export function orderingDefault(): null {
+  warnDefaulted('ordering', 'a park or judgment answer without ordering metadata; no automatic blocker wake');
+  return null;
+}
+
+// Calibrated resources: absent measurement keys and reservation bases on earlier records stay unmeasured.
+export function spawnCpuKeyOf(spawn: Readonly<{ cpuKey?: Sha256Hex }>): Sha256Hex | null {
+  if (spawn.cpuKey !== undefined) return spawn.cpuKey;
+  warnDefaulted('proc.spawn.cpuKey', 'a spawn without a CPU calibration key; excluded from calibration');
+  return null;
+}
+
+export function reservationCpuBasisOf(expect: Readonly<{ cpuBasis?: CpuBasis }>): CpuBasis | null {
+  if (expect.cpuBasis !== undefined) return expect.cpuBasis;
+  warnDefaulted('resource.transition.cpuBasis', 'a reservation without a CPU basis; its recorded tokens remain authoritative');
+  return null;
+}
+
+export function environmentResourcesDefault(): readonly never[] {
+  warnDefaulted('environment.resources', 'an environment without resources; read as []');
+  return [];
+}
+
+export function schedulerPressureBlockedDefault(): false {
+  warnDefaulted('sched.pressureBlocked', 'an earlier scheduler view has no admission brake; read as false');
+  return false;
+}
+
+// 1.0.0-dev.31 -> turn-boundary certification. Delete once no dev.31 arc is in flight.
+export function dev31CertificationsDefault(): number {
+  warnDefaulted('dispatch.bounds.certifications', 'a dispatch without certifications (dev.31 or earlier); read as 4, uncharged lanes reds start at 0');
+  return 4;
+}
+
+export function dev31UnchargedLanesRedsDefault(): number {
+  warnDefaulted('stage-outcome.unchargedLanesReds', 'a lanes red without its counter (dev.31 or earlier); read as 0, preserving its recorded charge');
+  return 0;
+}
+
+/** Queue time is distinct from the runner's CPU scheduling wait. Older reservations did not record it. */
+export function reservationTokenWaitOf(expect: Readonly<{ tokenWaitMs?: number }>): number | null {
+  if (expect.tokenWaitMs !== undefined) return expect.tokenWaitMs;
+  warnDefaulted('resource.transition.tokenWaitMs', 'a reservation without queue timing; token wait is unavailable');
+  return null;
+}
+
+export function schedulerQueuedAtDefault(): undefined {
+  warnDefaulted('sched.queuedAt', 'an earlier scheduler view has no queue start time; token wait is unavailable');
+  return undefined;
 }

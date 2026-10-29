@@ -34,11 +34,11 @@ You are an autonomous senior engineer implementing one unit of a roadmap build i
 ${UNIT_POLICY}
 
 # Goal
-Make every acceptance clause in the spec hold, with every fast lane passing, and stop.
+Make every acceptance clause in the spec hold, then report for certification.
 
 # Success criteria
 - Each acceptance clause holds. Where a clause admits a test, tests demonstrate it and fail for each of the two or three most plausible wrong versions of the code, not only for the behaviour removed (break it that way, see a test fail, restore). An auditor later makes the smallest breaking edit to your code and runs the lane; a witness that stays green sends work back. Wrong versions that most often survive: only some items handled (a test checking a sample, not every item and field); the boundary (at a limit, empty, zero, the instant a window ends); the default path production takes where every test injects its own; the wrong clock, time zone or locale; a rule applied to every case instead of the selected one; an outcome asserted without the path that produces it.
-- Every fast lane was run exactly as listed after your last change and exited with its expected code.
+- Your final report requests certification: the executor runs the full lanes stage after your turn ends, in a clean checkout. It is cheap to ask for certification. Your build holds CPU only; executor lanes reserve named resources. Run targeted checks while developing, then report; do not rehearse the full lane suite. A red returns with evidence in a fix round on the same session when available, uncharged within the certification allowance.
 - Every acceptance clause and every witness item in the spec maps to a test that exists under exactly the id the spec gives and runs in its lane; the executor looks each required witness test up by that id before the gate. Each witness check in the message, run after your last change, exits 0.
 - Every decision the spec left open, where a competent engineer could have chosen otherwise, is in ${DECISIONS_FILE}.
 - The change does what the spec asks and nothing more.
@@ -56,7 +56,7 @@ Make every acceptance clause in the spec hold, with every fast lane passing, and
 - ${DECISIONS_FILE}: a JSON object {"decisions": [{"id": "...", "text": "..."}]} at the root of the evidence directory, rewritten complete each time. id starts with a letter, uses letters, digits, _ . or -, and is new to the spec and the file. text states the choice and the alternative not taken. To dispute a gate finding (R-n) a fix round names instead of fixing it, add {"finding": "R-n", "reason": "..."} to a "disputes" list in the same object, with your evidence, and leave that code; the next gate rules once, final.
 
 # Tools
-Use the shell with an explicit working directory for every command, rg for search, and apply_patch for edits. Read independent files in parallel. Run lanes with the exact commands listed.
+Use the shell with an explicit working directory for every command, rg for search, and apply_patch for edits. Read independent files in parallel. Use the listed commands as references for targeted checks.
 
 # Stop rules
 - Stop as soon as the success criteria hold. Do not keep improving.
@@ -66,7 +66,7 @@ Use the shell with an explicit working directory for every command, rg for searc
 - A witness check that still reports a missing or failing id is a blocker.
 
 # Output
-Your final message is only the JSON object the output schema defines. summary: two or three plain sentences on what changed and why. changedPaths: the paths you changed or created, from git status and git log. lanesRun: each fast lane run, by its id, with its exit code. experiments: every other command you ran to check your work (a single test, a witness check, a script), each with a short name, its argv and its exit code; never a fast lane. blockers: what keeps the unit from being complete; empty when complete. docsOnlySince: the certified tree's SHA from the Environment section when everything you changed since it is comments or documentation, else null; the executor checks it and reuses that tree's lane results. final: true. Decisions go in ${DECISIONS_FILE}, not in this object.`;
+Your final message is only the JSON object the output schema defines. summary: two or three plain sentences on what changed and why. changedPaths: the paths you changed or created, from git status and git log. experiments: every command you ran to check your work (a single test, a witness check, a script), each with a short name, its argv and its exit code. blockers: what keeps the unit from being complete; empty when complete. docsOnlySince: the certified tree's SHA from the Environment section when everything you changed since it is comments or documentation, else null; the executor checks it and reuses that tree's lane results. final: true. Decisions go in ${DECISIONS_FILE}, not in this object.`;
 
 function fixRound(i: BuildInputs): string {
   if (i.fixRound === null) return '';
@@ -77,7 +77,7 @@ The worktree holds the work on this unit so far. Read the failing evidence first
 ${bullets(i.fixRound.failingEvidenceDirs, '(no failing lanes)')}
 Directives:
 ${bullets(i.fixRound.directives, '(none)')}
-Fix exactly what failed and what the directives name. Carry out each directive, or list in blockers why it is wrong and leave the code. Then rerun every fast lane. Stop when they pass; anything past the repairs is scope creep.`;
+Fix exactly what failed and what the directives name. Carry out each directive, or list in blockers why it is wrong and leave the code. Run targeted checks for the repairs, then report for certification; anything past the repairs is scope creep.`;
 }
 
 /** dev.17 (field feedback 2026-10-23 item 1): a fresh session's handover from the executor's records; empty otherwise. */
@@ -93,7 +93,7 @@ function suiteLanes(i: BuildInputs): string {
   return `
 
 # Suite lanes
-The executor runs these after your fast lanes, in a clean checkout of your commit; a red one comes back to you as a fix round. Run each exactly as written beside the fast lanes, after your last change, until it exits with its expected code. Report each run in experiments as suite:<id>, never in lanesRun:
+The executor runs these in its full lanes stage. Use them as references for targeted checks; report checks you run in experiments. Do not rehearse the full suite:
 ${fastLanesText(i.worktree, i.suiteLanes)}`;
 }
 
@@ -112,14 +112,14 @@ function witnessChecks(i: BuildInputs): string {
   return `
 
 # Witness checks
-Run each after your last change, beside the fast lanes, until it exits 0:
+Run each as targeted checks after changes to the witnesses, until it exits 0:
 ${i.witnessChecks.map((w) => `- ${w.lane}:\n  ${w.command}`).join('\n')}`;
 }
 
 /** A fresh build or a fix round. */
 function task(i: BuildInputs): string {
   return i.fixRound === null
-    ? `Implement unit ${i.spec.unit} in ${i.worktree} until every acceptance clause holds and every fast lane${i.witnessChecks.length === 0 ? '' : ' and witness check'} passes.`
+    ? `Implement unit ${i.spec.unit} in ${i.worktree} until every acceptance clause holds, using targeted checks.`
     : `Complete the fix round for unit ${i.spec.unit} in ${i.worktree}.`;
 }
 

@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import {
   type ExitFile, MIN_GRACE_MS, RUNNER_FILE_READERS, type RunnerFileName, approvalFingerprint, classifyCommand, classifyTerminal, commandFile,
   handshakeFile, hostLockClaim, hostOwner, needsUserAck, needsUserRecord, readinessFile, receipt, recoveryLockClaim,
-  specM1, specPatch, supervisorState,
+  specM1, specPatch, supervisorState, laneDef,
 } from '../src/core/records.ts';
 import { SchemaError } from '../src/core/validate.ts';
 
@@ -11,6 +11,15 @@ const UUID = '0190f6c2-8f3a-7d21-9a4e-3b5c6d7e8f90';
 const T0 = '2026-09-25T12:00:00.000Z';
 const T1 = '2026-09-25T12:00:01.000Z';
 const bind = { v: 1, arc: 'arc-1', op: 'arc-1/7', inv: 'arc-1/7#1' };
+
+it('lane.timeoutMin is optional, finite and positive, with fractional minutes supported', () => {
+  const lane = { id: 'check', argv: ['true'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'unit', resources: [], evidenceGlobs: [] };
+  assert.equal(laneDef(lane, 'lane').timeoutMin, undefined);
+  assert.equal(laneDef({ ...lane, timeoutMin: 0.5 }, 'lane').timeoutMin, 0.5);
+  for (const timeoutMin of [0, -1, NaN, Infinity, null, '1', Number.MAX_SAFE_INTEGER]) {
+    assert.throws(() => laneDef({ ...lane, timeoutMin }, 'lane'), SchemaError);
+  }
+});
 
 /** Fields read with a default when absent (upgrade scaffolding): the missing-field sweep skips them. */
 const UPGRADE_DEFAULTED: { readonly [N in RunnerFileName]?: readonly string[] } = { 'launch.json': ['stallMs'], 'reads.json': ['denied'] };

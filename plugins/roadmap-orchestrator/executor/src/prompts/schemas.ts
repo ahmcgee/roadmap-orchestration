@@ -33,6 +33,8 @@ import {
   FIXES_UNRECORDED,
   reenterFixesDefault, planCheckDesignDefault,
 } from '../core/upgrade.ts';
+import { type OrderingWait, orderingWait } from '../core/ordering.ts';
+import { orderingDefault } from '../core/upgrade.ts';
 import type { MutantEdit } from '../git/mutant.ts';
 import {
   type ClauseLanes, type DesignChange, type DesignExperiment, type FailureModeProof, type NewSystem, type UnitKind, type Verification, UNIT_KINDS, clauseLanes, designChange, designExperiment, failureModeProof,
@@ -177,7 +179,7 @@ export type PlanCheckOutput = PlanCheckCommon & (
   | Readonly<{ decision: 'scaffold'; patch: null; design: DesignAnswer; scaffold: ScaffoldDecision }>
   | Readonly<{ decision: 'split'; patch: null; split: SplitDecision }>
   | Readonly<{ decision: 'poc'; patch: null; poc: PocDecision }>
-  | Readonly<{ decision: 'infeasible' | 'escalate'; patch: null }>
+  | Readonly<{ decision: 'infeasible' | 'escalate'; patch: null; ordering?: OrderingWait | null }>
   | Readonly<{ decision: 'redirect'; patch: readonly SpecPatchOp[] }>
 );
 /** An answer's design record, or null when its decision carries none. */
@@ -255,6 +257,7 @@ const S_POC = sObj({ questions: sArr(sObj({ id: S_STR, question: S_STR, whyItMat
 
 export const PLAN_CHECK_SCHEMA: Schema = sObj({
   decision: sEnum(PLAN_CHECK_DECISIONS),
+  ordering: { anyOf: [sObj({ blockers: sArr(S_STR) }), { type: 'null' }], description: 'Only infeasible or escalate solely because other units must merge first: name those unit IDs in blockers. Otherwise null. Code wakes the parked check after all blockers merge.' },
   reasons: sArr(S_STR),
   patch: sNullable(sArr(S_PATCH_OP)),
   risk: sEnum(RISK_TIERS),
@@ -366,8 +369,17 @@ export const pocDecision: Read<PocDecision> = object((f) => {
 /** A payload key that must be null (or, on an answer recorded before dev.17, absent) under every other decision. */
 const none = (f: Fields, key: string): void => void f.optional(key, literal(null));
 
+/** Read older answers without changing their shape; new answers may explicitly declare an ordering wait. */
+function answerOrdering(f: Fields, allowed: boolean): OrderingWait | null | undefined {
+  const ordering = f.optional('ordering', nullable(orderingWait));
+  if (ordering === undefined) orderingDefault();
+  if (ordering != null && !allowed) throw new SchemaError(`${f.path}.ordering`, 'null outside an ordering escalation or infeasible decision', ordering);
+  return ordering;
+}
+
 export const planCheckOutput: Read<PlanCheckOutput> = object((f): PlanCheckOutput => {
   const decision = f.get('decision', oneOf(PLAN_CHECK_DECISIONS));
+  const ordering = answerOrdering(f, decision === 'infeasible' || decision === 'escalate');
   const common = {
     reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })),
     risk: f.get('risk', oneOf(RISK_TIERS)),
@@ -400,7 +412,7 @@ export const planCheckOutput: Read<PlanCheckOutput> = object((f): PlanCheckOutpu
     case 'infeasible':
     case 'escalate':
       nullExcept();
-      return { ...common, decision, patch: f.get('patch', literal(null)) };
+      return { ...common, decision, patch: f.get('patch', literal(null)), ...(ordering === undefined ? {} : { ordering }) };
   }
 });
 
@@ -456,19 +468,16 @@ export function validateScaffoldOutput(value: unknown): ScaffoldOutput {
 // ---------------------------------------------------------------------------------------------------
 // build
 
-export type LaneRun = Readonly<{ lane: LaneId; exit: number }>;
-/** M4a rev 3 (I3, F25): anything else the implementer ran, named, with its argv and exit. */
+/** M4a rev 3 (I3, F25): a development check the implementer ran, named, with its argv and exit. */
 export type Experiment = Readonly<{ name: string; argv: readonly string[]; exit: number }>;
 export type BuildOutput = Readonly<{
   /** Two or three sentences: what changed and why. */
   summary: string;
   /** The implementer's claim; the executor reads the truth from git at salvage. */
   changedPaths: readonly string[];
-  /** Every fast lane the implementer ran before finishing, with its exit code. */
-  lanesRun: readonly LaneRun[];
   /** What kept the unit from being complete; empty when it is. Decisions go to decisions.json, never here. */
   blockers: readonly string[];
-  /** M4a rev 3 (I3): every other command it ran (never a fast lane); a 1.0.0-dev.6 answer has none (`buildExperimentsDefault`). */
+  /** M4a rev 3 (I3): every command it ran to check its work; a 1.0.0-dev.6 answer has none (`buildExperimentsDefault`). */
   experiments: readonly Experiment[];
   /**
    * dev.17 (proportional review): the tested SHA since which the build says it changed only comments and documentation, or
@@ -497,49 +506,35 @@ const S_DOCS_ONLY_SINCE: Schema = {
   description: 'The full SHA of the last tree the executor certified for this unit, when everything you changed since it is comments or documentation only; otherwise null.',
 };
 
-/** The build answer's schema; `lanes` (M4a rev 3, I3) the spec's fast lane ids, which `lanesRun[].lane` then enumerates. */
-export function buildSchemaFor(lanes: readonly LaneId[] | null): Schema {
-  return sObj({
-    summary: S_STR,
-    changedPaths: sArr(S_STR),
-    lanesRun: sArr(sObj({ lane: lanes === null || lanes.length === 0 ? S_STR : sEnum(lanes), exit: S_INT })),
-    blockers: sArr(S_STR),
-    experiments: sArr(sObj({ name: S_STR, argv: sArr(S_STR), exit: S_INT })),
-    docsOnlySince: S_DOCS_ONLY_SINCE,
-    final: S_FINAL,
-  });
-}
-/**
- * The build role's schema as its prompt modules carry it: any lane id (I3). Each build call writes its own,
- * `buildSchemaFor(<its spec's fast lanes>)` (src/pipeline/stages.ts `buildLaneIds`), and its answer is read with the same lanes.
- */
-export const BUILD_SCHEMA: Schema = buildSchemaFor(null);
+/** The final build report requests certification by the executor's lanes stage. */
+export const BUILD_SCHEMA: Schema = sObj({
+  summary: S_STR,
+  changedPaths: sArr(S_STR),
+  blockers: sArr(S_STR),
+  experiments: sArr(sObj({ name: S_STR, argv: sArr(S_STR), exit: S_INT })),
+  docsOnlySince: S_DOCS_ONLY_SINCE,
+  final: S_FINAL,
+});
 
 const decision: Read<NoteDef> = object((f) => ({ id: f.get('id', (v, p): ClauseId => clauseId(v, p)), text: f.get('text', str) }));
 
 const experiment: Read<Experiment> = object((g) => ({ name: g.get('name', str), argv: g.get('argv', arrayOf(text, { nonEmpty: true })), exit: g.get('exit', int(0, 255)) }));
 
-/** A build answer; `lanes` (M4a rev 3, I3): the spec's fast lanes, the only lanes `lanesRun` may name (null: any lane id). */
-export function buildOutputFor(lanes: readonly LaneId[] | null): Read<BuildOutput> {
-  return object((f) => {
-    const experiments = f.optional('experiments', arrayOf(experiment));
-    const final = f.optional('final', literal(true));
-    const docsOnlySince = f.optional('docsOnlySince', nullable((v, p): Sha => sha(v, p)));
-    return {
-      summary: f.get('summary', str),
-      changedPaths: f.get('changedPaths', arrayOf(str)),
-      lanesRun: f.get('lanesRun', arrayOf(object((g) => ({
-        lane: g.get('lane', (v, p): LaneId => (lanes === null ? laneId(v, p) : oneOf(lanes)(v, p) as LaneId)),
-        exit: g.get('exit', int(0, 255)),
-      })))),
-      blockers: f.get('blockers', arrayOf(str)),
-      experiments: experiments ?? buildExperimentsDefault(),
-      docsOnlySince: docsOnlySince === undefined ? buildDocsOnlySinceDefault() : docsOnlySince,
-      final: final ?? buildFinalDefault(),
-    };
-  });
-}
-export const buildOutput: Read<BuildOutput> = buildOutputFor(null);
+/** Old answers may carry lanesRun; it is accepted and ignored, never certification evidence. */
+export const buildOutput: Read<BuildOutput> = object((f) => {
+  f.optional('lanesRun', arrayOf(object((g) => ({ lane: g.get('lane', (v, p) => laneId(v, p)), exit: g.get('exit', int(0, 255)) }))));
+  const experiments = f.optional('experiments', arrayOf(experiment));
+  const final = f.optional('final', literal(true));
+  const docsOnlySince = f.optional('docsOnlySince', nullable((v, p): Sha => sha(v, p)));
+  return {
+    summary: f.get('summary', str),
+    changedPaths: f.get('changedPaths', arrayOf(str)),
+    blockers: f.get('blockers', arrayOf(str)),
+    experiments: experiments ?? buildExperimentsDefault(),
+    docsOnlySince: docsOnlySince === undefined ? buildDocsOnlySinceDefault() : docsOnlySince,
+    final: final ?? buildFinalDefault(),
+  };
+});
 
 export function validateBuildOutput(value: unknown): BuildOutput {
   return buildOutput(value, 'build');
@@ -670,11 +665,13 @@ type GateCommon = Readonly<{
   rulings: readonly DisputeRuling[];
 }>;
 export type GateOutput =
-  | (GateCommon & Readonly<{ decision: 'approve' | 'escalate'; directives: readonly [] }>)
+  | (GateCommon & Readonly<{ decision: 'approve'; directives: readonly [] }>)
+  | (GateCommon & Readonly<{ decision: 'escalate'; directives: readonly []; ordering?: OrderingWait | null }>)
   | (GateCommon & Readonly<{ decision: 'revise'; directives: readonly string[] }>);
 
 export const GATE_SCHEMA: Schema = sObj({
   decision: sEnum(GATE_DECISIONS),
+  ordering: { anyOf: [sObj({ blockers: sArr(S_STR) }), { type: 'null' }], description: 'Only escalate solely because other units must merge first: name those unit IDs in blockers. Otherwise null. Code wakes the parked gate after all blockers merge.' },
   findings: sArr(sObj({
     severity: sEnum(FINDING_SEVERITIES_DEV17), path: sNullable(S_STR), text: S_STR, contractRef: sNullable(S_STR), experiments: sArr(sObj({ command: S_STR, output: S_STR })),
     debt: sNullable(sObj({ drag: S_STR })), defect: sNullable(sEnum(DEFECT_CATEGORIES)), reraises: sNullable(S_STR), hunk: sNullable(sObj({ path: S_STR, line: S_INT })),
@@ -730,6 +727,7 @@ const emptyList: Read<readonly []> = (value, path) => {
 
 export const gateOutput: Read<GateOutput> = object((f): GateOutput => {
   const decision = f.get('decision', oneOf(GATE_DECISIONS));
+  const ordering = answerOrdering(f, decision === 'escalate');
   const common = {
     findings: f.get('findings', arrayOf(finding)), reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })), premises: f.get('premises', arrayOf(premise)),
     unreviewed: f.optional('unreviewed', arrayOf(unreviewedEntry)) ?? gateUnreviewedDefault(),
@@ -741,7 +739,7 @@ export const gateOutput: Read<GateOutput> = object((f): GateOutput => {
     const i = common.findings.findIndex((x) => x.severity === 'blocking');
     if (i >= 0) throw new SchemaError(`${f.path}.findings[${i}].severity`, 'no blocking finding on an approve', 'blocking');
   }
-  return { ...common, decision, directives: f.get('directives', emptyList) };
+  return { ...common, decision, directives: f.get('directives', emptyList), ...(decision !== 'escalate' || ordering === undefined ? {} : { ordering }) };
 });
 
 export function validateGateOutput(value: unknown): GateOutput {

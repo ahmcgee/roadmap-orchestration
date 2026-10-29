@@ -5,7 +5,7 @@
 // `JournalView.unit`, so a restart sees exactly what the log says.
 //
 // Every stage a unit is admitted into takes its entry reservation before its first journaled op (A1, F6):
-// plan-check and gate `@cpu`×1 (`judgmentEntry`, held until the call is read), build the unit's resources and
+// plan-check and gate `@cpu`×1 (`judgmentEntry`, held until the call is read), build only
 // `@cpu`×`buildCpu` (`buildEntry`, held through the build chain to teardown), lanes its first lane's set
 // (lanes.ts `seriesEntry`). The grant's `reserve` transition is the
 // attempt's first op, so a wait the task's signal cancels (pause, stop) starts nothing (`Cancelled`): no
@@ -80,11 +80,12 @@
 //
 // Every unit's plan-check is one fresh call (dev.17 removed `planCheck.shape: by-builder`, M4a rev 3's in-session
 // assessment and acceptance shape; a plan in force carrying the field reads as uniform, warned). Every build
-// call writes its own answer schema (`buildSchemaFor` of the spec's fast lanes, I3) and, in a corpus arc, publishes the
+// call uses the build answer schema (`BUILD_SCHEMA`) and, in a corpus arc, publishes the
 // lane files its witness-check commands read (witnesscheck.ts, R56).
 //
 // Needs-user content the table does not carry (occupancy detail, a backend park) is returned as
 // `needsUser` for the caller to write (step 13 owns the writer). Nothing written here names a model.
+import { orderingReasons } from '../park/ordering.ts';
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, normalize, relative } from 'node:path';
 import { freshJudgmentSession, resumedJudgmentSession } from '../backends/argv.ts';
@@ -104,7 +105,7 @@ import { selectObligations, unitRules } from '../holistic/impact.ts';
 import { canonicalJson } from '../core/json.ts';
 import {
   type ApprovalFingerprint, type JudgmentSession, type LaneDef, type SpecM1, type SpecPatchOp, type NeedsUserContent, STDERR_FILE, STDOUT_FILE, effectiveScope, inScope, type EffectiveScope, specForces,
-  specRemoves, specRepairs, specObligations,
+  specRemoves, specRepairs, specObligations, isRed,
 } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
 import {
@@ -114,7 +115,7 @@ import { FILES_DIR, capturedEvidence } from '../git/evidence.ts';
 import { GitError, type Identity, git, gitRun, refTarget, revParse } from '../git/git.ts';
 import { mergeHead, resolvedHead } from '../git/mergein.ts';
 import { SalvageStateError, SalvageUnmergedError, checkRejected, planSalvage, type SalvageRules } from '../git/salvage.ts';
-import { derivedGrowthReason, unitRegenerateLanes } from '../input/derived.ts';
+import { derivedGrowthReason, unitRegenerateLanes, regenerateLanes } from '../input/derived.ts';
 import { patternInScope } from '../input/envelope.ts';
 import { type CorpusFileSet, referenceFiles, sameRepoCorpusSet, scopeOverlapsCorpus, scopeReferences } from '../phase0/rows.ts';
 import { diffBase, transientCheck, unitDiffPaths, unitTransientRules } from '../git/transient.ts';
@@ -136,7 +137,7 @@ import type {
 import { type Handover, visionInputOf } from '../prompts/inputs.ts';
 import { handoverOf, lineageOf, unmetClauses } from './handover.ts';
 import {
-  DECISIONS_FILE, type DecisionsFile, type PlanCheckOutput, type Premise, buildOutputFor, buildSchemaFor, designOfAnswer, validateDecisionsFile, validatePlanCheckOutput,
+  DECISIONS_FILE, type DecisionsFile, type PlanCheckOutput, type Premise, buildOutput, BUILD_SCHEMA, designOfAnswer, validateDecisionsFile, validatePlanCheckOutput,
 } from '../prompts/schemas.ts';
 import type { DesignRecord } from '../core/design.ts';
 import { POC_LIMIT, SUBSTANTIAL_SYSTEM_LINES, departures, designFaults, designUnscoped, gateInlineLines, pinDesign, pocReasons, scaffoldInForce, scaffoldReasons } from './design.ts';
@@ -146,6 +147,7 @@ import { judgmentRepairDirective } from '../prompts/directives.ts';
 import { type ParkFacts, NO_PARK_FACTS, repeatNeedsUser, stageOutcomeFact } from '../park/table.ts';
 import { resolveArgv0 } from '../preflight/argv0.ts';
 import type { JudgmentRole, JudgmentSeat, Triple } from '../routing/types.ts';
+import { buildCpuKey, cpuCost } from '../resources/calibrate.ts';
 import { buildCpu, requestOf } from '../resources/pool.ts';
 import { probe } from '../resources/probe.ts';
 import { environmentUnavailable } from '../resources/environments.ts';
@@ -166,7 +168,7 @@ import {
 } from './dispatch.ts';
 import { invocationDir, quiescent } from './invoke.ts';
 import {
-  type LaneRecord, type LaneRuntime, type Series, type VerificationTree, builderSuiteLanes, dirtyPaths, dirtySnapshot, laneOrder, laneRuntime, mapInForce, presentCheckouts, removeCheckout,
+  type LaneRecord, type LaneRuntime, type Series, type VerificationTree, builderSuiteLanes, dirtyPaths, dirtySnapshot, laneOrder, laneRuntime, laneRecordIn, laneSummaryIn, seriesOrder, mapInForce, presentCheckouts, removeCheckout,
   LANE_DEADLINE_MS, type Reusable, removeVerificationTree, runLaneSeries, seriesEntry, specSeriesRoot, stageSuiteLanes,
 } from './lanes.ts';
 import { certifiedTree, docsOnlyCarry } from './docsonly.ts';
@@ -238,9 +240,14 @@ export const stageHolder = (parent: StageParent): StageHolder => ({ type: 'stage
 /** A judgment's entry reservation: `@cpu`×1. */
 export const judgmentEntry = (): ResourceRequest => ({ named: [], pools: [], cpu: CPU_COST.judgment, publication: false });
 
-/** A build's entry reservation: the unit's declared resources and its `@cpu` (`buildCpu`). */
-export const buildEntry = (ctx: StageContext, unit: PlanUnit): ResourceRequest | null =>
-  nonEmpty(requestOf(ctx.plan(), unit.resources, buildCpu(unit)));
+/** A build's entry reservation: only calibrated `@cpu`; named resources belong to executor lanes. */
+export const buildEntry = (ctx: StageContext, unit: PlanUnit): ResourceRequest | null => {
+  const tier = ctx.journal.view.unit(unit.id).buildTier;
+  if (tier === null) throw new Error(`unit ${unit.id} has no build tier at admission`);
+  const routing = ctx.routing(unit.id);
+  const basis = cpuCost(ctx, buildCpuKey({ role: 'build', class: routing.classes.build[tier], routingRev: routing.rev }), CPU_COST.build, unit.cpu);
+  return nonEmpty(requestOf(ctx.plan(), [], buildCpu(unit, basis), basis));
+};
 
 /** What an attempt holds once its entry grant is probed and running, or why it may not run. */
 export type Held =
@@ -898,7 +905,7 @@ function judgePlanCheck(ctx: StageContext, unit: PlanUnit, called: BackendCallOu
   if (answer.kind === 'unanswered') return answer;
   if (answer.kind === 'refused') return { kind: 'refused', reasons: answer.reasons, defects: [] };
   const out: PlanCheckOutput = answer.out;
-  const reasons = [...visionCiteReasons(ctx, out)];
+  const reasons = [...visionCiteReasons(ctx, out), ...orderingReasons(ctx, unit.id, 'ordering' in out ? out.ordering ?? null : null)];
   const defects: string[] = [];
   const pinned = dispatchOf(ctx.journal.view, unit.id);
   const scope = effectiveScope(pinned);
@@ -1091,7 +1098,7 @@ export async function planCheckRead(
     const moved = await commitSplit(ctx, unit, parent, called.inv, out.split, judged.split.evaluated);
     return done({ ...held, needsUser: moved });
   }
-  return done(record(ctx, parent, out.decision));
+  return done(record(ctx, parent, out.decision, null, { ...NO_PARK_FACTS, ordering: 'ordering' in out ? out.ordering ?? null : null }));
 }
 
 /** The blocking item of a plan-check's `plan-defect` park (dev.17): every reason code refused the answer for, twice. */
@@ -1391,12 +1398,6 @@ export type BuildDone = StageDone<'build'> & Readonly<{ run: BuildRun | null }>;
 const activeBuildLanes = (spec: SpecM1): readonly BuildLane[] =>
   buildLanes(spec).filter((l): l is SpecM1['lanes'][number] & BuildLane => l.state === 'active' && l.cadence === 'build');
 
-/** The fast lane ids a build call's answer may name (I3): its schema's enum, and its reader's (null: none declared). */
-export const buildLaneIds = (spec: SpecM1): readonly LaneId[] | null => {
-  const ids = activeBuildLanes(spec).map((l) => l.id);
-  return ids.length === 0 ? null : ids;
-};
-
 export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput): Promise<BuildDone | Cancelled> {
   const parent = at(start(ctx, unit.id, 'build'), 'build');
   const entered = await enter(ctx, stageHolder(parent), buildEntry(ctx, unit));
@@ -1434,15 +1435,17 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
   const browser = buildBrowser(ctx, unit.id, dispatch.triple.backend, work);
   // D1 (R56): the lane files of the fast required witness lanes, published before the call, and their commands.
   const witnessChecks = checksApply(ctx) ? publishWitnessLaneFiles(ctx, unit, work, requiredAt(ctx, unit, revParse(round.worktree, 'HEAD'))) : [];
-  const lanes = buildLaneIds(spec);
   // Field feedback 2026-10-23 item 1: a call on a fresh session gets the handover (src/pipeline/handover.ts); a resumed one does not.
   const handover = handoverOf(ctx, unit.id, spec, parent);
   const handed = (call: RoundCall): Handover | null => (call.session.mode === 'fresh' ? handover : null);
+  const state = ctx.journal.view.unit(unit.id);
+  const allowance = Math.max(0, state.bounds.certifications - 1 - state.counters.unchargedLanesReds);
   const render = (call: RoundCall) => renderPrompt(prompt, {
     spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec, { buildLanesOnly: true }) }, ...lib,
     planCheckNotes: planCheckNotes(ctx, unit.id),
     fastLanes: activeBuildLanes(spec), suiteLanes: builderSuiteLanes(ctx.plan().suite.lanes, spec), evidenceDir: work, worktree: round.worktree, scope: effectiveScope(pinned),
-    fixRound: call.fixRound, witnessChecks, milestones, browser: browser?.input ?? null, certifiedAt: certifiedTree(ctx, unit.id), handover: handed(call),
+    fixRound: call.fixRound === null ? null : { ...call.fixRound, directives: [...call.fixRound.directives,
+      `Certification allowance: ${allowance} uncharged red certifications remaining before the next charge.`] }, witnessChecks, milestones, browser: browser?.input ?? null, certifiedAt: certifiedTree(ctx, unit.id), handover: handed(call),
   }, dispatch.triple.backend);
   const callFor = (prepared: PreparedRound) => (call: RoundCall): BackendCallSpec => ({
     unit: unit.id, parent,
@@ -1450,7 +1453,7 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
       kind: 'implementer', dispatch, session: call.session, evidenceDirs: [...new Set([work, ...call.evidenceDirs, ...(handed(call)?.evidence ?? []), ledgerDir(ctx)])],
       mcpConfig: browser?.mcpConfig ?? null,
     },
-    system: prompt.system, ...render(call), schema: buildSchemaFor(lanes), cwd: prepared.worktree, deadlineAt: prepared.deadlineAt,
+    system: prompt.system, ...render(call), schema: BUILD_SCHEMA, cwd: prepared.worktree, deadlineAt: prepared.deadlineAt,
   });
   const called = await callRound(ctx, round, callFor(round));
   // Field feedback 2026-10-23 item 4: a resolve round that reported final with nothing beyond the merge while clauses are unmet
@@ -1484,7 +1487,7 @@ export async function buildRead(
   let malformed = false;
   if (v.kind === 'success') {
     try {
-      buildOutputFor(buildLaneIds(loadUnitSpec(ctx, unit).spec))(v.value, 'build');
+      buildOutput(v.value, 'build');
     } catch (error) {
       if (!(error instanceof SchemaError)) throw error;
       malformed = true;
@@ -1560,7 +1563,8 @@ export async function evidence(ctx: StageContext, unit: PlanUnit, run: BuildRun)
   await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${unit.id}`, parent, {
     source: ctx.runDir, globs: [`${inv}/stdout`, `${inv}/stderr`, `${work}/**`].map((g) => repoPattern(g)), dest: dirs[0]!,
   });
-  const globs = unique(activeBuildLanes(spec).flatMap((l) => l.evidenceGlobs));
+  // Keep declared build outputs, including resource-bearing lanes an adopted dev.31 build could run.
+  const globs = unique(spec.lanes.filter((l) => l.state === 'active' && l.cadence === 'build').flatMap((l) => l.evidenceGlobs));
   if (globs.length > 0) {
     dirs.push(absPath(join(root, 'tree')));
     await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${unit.id}`, parent, { source: run.worktree, globs, dest: dirs[1]! });
@@ -1741,7 +1745,7 @@ function knownDefectHit(ctx: StageContext, unit: PlanUnit, spec: SpecM1, ledger:
     }
     if (k.match.type !== 'output') continue;
     const { contains } = k.match;
-    const red = ledger.filter((l) => l.lane === k.match.lane && (l.verdict === 'fail' || l.verdict === 'stall'));
+    const red = ledger.filter((l) => l.lane === k.match.lane && isRed(l.verdict));
     const hit = red.some((l) => {
       const dir = invocationDir(ctx.runDir, l.inv);
       return outputTail(join(dir, STDOUT_FILE)).includes(contains) || outputTail(join(dir, STDERR_FILE)).includes(contains);
@@ -1785,6 +1789,8 @@ async function executableChecks(ctx: StageContext, unit: PlanUnit, parent: Stage
   }
   const d2 = await mutationSmoke(ctx, unit, parent, salvaged, d1.required, rt);
   switch (d2.kind) {
+    case 'env-unavailable':
+      return { kind: 'env-unavailable', environment: d2.environment };
     case 'not-run':
       return { kind: 'green' };
     case 'ran':
@@ -1809,7 +1815,7 @@ async function executableChecks(ctx: StageContext, unit: PlanUnit, parent: Stage
 // builder's lint or typecheck red is a fix round of its own build, not a candidate red. A failed fast suite (a red lane,
 // or a changed checkout) runs again on the unit's diff base alone (`diffBase(T, salvage)`: what the unit built on), the
 // red lane only (or, for a changed checkout, every lane that ran), under `<attempt root>/_base`. Base green: the unit's
-// red, a chargeable fix round with the fast suite's evidence (`red`, or `not-certified` for a changed checkout). Base
+// red, a certification fix round with the fast suite's evidence (`red`, or `not-certified` for a changed checkout). Base
 // failed too: `base-red`, uncharged, on to the gate. The candidate stays the one place that decides a broken base: its
 // suite runs on the current tip, so a tip that fixed the base since passes, and a tip still red is its `base-red` (merges
 // halt, `needs-user`). A park here could not heal: the unit's commit never contains a later fix of its base, and only
@@ -1907,17 +1913,35 @@ export function forcedLanes(view: JournalView, spec: SpecM1): ReadonlySet<LaneId
 }
 
 /** The lanes of a lanes attempt's fast suite at `salvaged`: the regenerate checks the unit's diff calls for, then the stage's suite lanes. */
-function fastSuiteLanes(ctx: StageContext, spec: SpecM1, salvaged: Sha): readonly LaneDef[] {
+export function fastSuiteLanes(ctx: StageContext, spec: SpecM1, salvaged: Sha): readonly LaneDef[] {
   // dev.12: the regenerate checks of the derived entries the unit's diff touches go first (src/input/derived.ts).
   const regenerate = unitRegenerateLanes(ctx.plan(), unitDiffPaths(ctx.repo, integrationTip(ctx), salvaged));
   return [...regenerate, ...stageSuiteLanes(ctx.plan().suite.lanes, spec, forcedLanes(ctx.journal.view, spec))];
 }
 
+/** Reds in the unit's latest completed lanes attempt, excluding holds and the suite's diagnostic base run. */
+export function previousLaneReds(ctx: StageContext, unit: PlanUnit, spec: SpecM1, attempt = ctx.journal.view.completedLanes(unit.id)): Readonly<{ spec: ReadonlySet<LaneId>; suite: ReadonlySet<LaneId> }> {
+  if (attempt === null) return { spec: new Set(), suite: new Set() };
+  const previous: StageParent = { type: 'stage', unit: unit.id, stage: 'lanes', attempt };
+  const path = verificationWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, previous.attempt);
+  const created = ctx.journal.view.opsOf('worktree.create').find((i) => i.expect.path === path);
+  // A completed attempt may park before running anything (for example a missing witness lane).
+  if (created === undefined) return { spec: new Set(), suite: new Set() };
+  if (created.expect.checkout.type !== 'detached') throw new Error(`lanes ${unit.id}#${previous.attempt}: no detached verification checkout`);
+  const at = created.expect.checkout.at;
+  const reds = (lanes: readonly LaneDef[], set: 'spec' | 'suite', root: AbsPath): ReadonlySet<LaneId> => new Set(lanes.filter((lane) => {
+    const record = laneSummaryIn(ctx, previous, lane, set, at, root);
+    return record !== null && isRed(record.verdict);
+  }).map((lane) => lane.id));
+  return { spec: reds(spec.lanes, 'spec', specSeriesRoot(ctx.runDir, previous)),
+    suite: reds([...regenerateLanes(ctx.plan()), ...ctx.plan().suite.lanes], 'suite', fastSuiteRoot(ctx.runDir, previous, 'suite')) };
+}
+
 /** The fast suite after a green spec series: its verdict, and its series at the salvage SHA (null when it has no lane). */
 async function fastSuite(
-  ctx: StageContext, unit: PlanUnit, spec: SpecM1, parent: StageParent, salvaged: Sha, rt: LaneRuntime, carry: ReadonlyMap<LaneId, Reusable>,
+  ctx: StageContext, unit: PlanUnit, spec: SpecM1, parent: StageParent, salvaged: Sha, rt: LaneRuntime, carry: ReadonlyMap<LaneId, Reusable>, red: ReadonlySet<LaneId>,
 ): Promise<Readonly<{ verdict: LanesVerdict; series: Series | null }>> {
-  const lanes = fastSuiteLanes(ctx, spec, salvaged);
+  const lanes = seriesOrder(fastSuiteLanes(ctx, spec, salvaged), red);
   if (lanes.length === 0) return { verdict: { kind: 'green' }, series: null };
   const series = await fastSuiteSeries(ctx, parent, lanes, salvaged, 'suite', rt, verifyRunsOf(unit, approvedVerification(ctx, unit)), carry);
   const fault = suiteFault(ctx, unit.id, series);
@@ -1938,7 +1962,8 @@ async function fastSuite(
 
 export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): Promise<LanesDone | Cancelled> {
   const { spec } = loadUnitSpec(ctx, unit);
-  const order = laneOrder(spec);
+  const red = previousLaneReds(ctx, unit, spec);
+  const order = seriesOrder(laneOrder(spec), red.spec);
   const parent = at(start(ctx, unit.id, 'lanes'), 'lanes');
   // F4: a known defect matched by lane holds the unit before anything runs (uncharged; it waits at prepare).
   const cancelled = cancelledNow(ctx);
@@ -1981,8 +2006,12 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
     if (hit !== null) verdict = { kind: 'known-defect', detail: { kind: 'known-defect', id: hit.id, match: hit.match } };
   }
   // The fast suite lanes (the 2026-10-15 batch): only after a green certified spec series.
-  const suite = verdict.kind === 'green' ? await fastSuite(ctx, unit, spec, parent, salvaged, rt, carry) : null;
+  const suite = verdict.kind === 'green' ? await fastSuite(ctx, unit, spec, parent, salvaged, rt, carry, red.suite) : null;
   if (suite !== null) verdict = suite.verdict;
+  if (verdict.kind === 'red') {
+    const red = [...series.ledger, ...(suite?.series?.ledger ?? [])].filter((l) => isRed(l.verdict));
+    if (red.length > 0 && red.every((l) => l.flaky && l.diagnostic?.verdict === 'pass') && series.dirty.length === 0 && (suite?.series?.dirty.length ?? 0) === 0) verdict = { kind: 'flaky' };
+  }
   // D1, D2 (corpus arcs): only after a green certified spec series and a fast suite that passed or was the base's red.
   if ((verdict.kind === 'green' || verdict.kind === 'base-red') && checksApply(ctx)) {
     const checks = await executableChecks(ctx, unit, parent, salvaged, rt);
@@ -1996,7 +2025,7 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
   // A fix round reads the spec series and the fast suite at the salvage SHA (`lanesFixRound`, unit.ts, rebuilds the same).
   const ledger = [...series.ledger, ...(suite?.series?.ledger ?? [])];
   const dirty = [...series.dirty, ...(suite?.series?.dirty ?? [])];
-  const fix = kind === 'red' || (kind === 'not-certified' && dirty.length > 0) ? laneFixRound(ledger, dirty, salvaged) : null;
+  const fix = kind === 'red' || kind === 'flaky' || (kind === 'not-certified' && dirty.length > 0) ? laneFixRound(ledger, dirty, salvaged) : null;
   const facts = verdict.environment === undefined ? failedFacts(verdict.failed ?? []) : environmentFacts(verdict.environment);
   return { ...record(ctx, parent, kind, verdict.needsUser ?? null, facts, verdict.cause, verdict.detail), at: salvaged, ledger: series.ledger, verification: keep, fix };
 }

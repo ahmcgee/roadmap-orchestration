@@ -19,7 +19,7 @@
 //
 // Forgiveness (`flakeForgiven`): a flaky lane counts as passed (its green rerun's verdict) when the flake is the tip's,
 // for every owner but a deflake unit of one of the event's keys, which must fix it. A unit's own flake (`on: unit`) is red,
-// `flaky`, charged: its fix round is told the lane is flaky (the red-lane path's `flakyLaneDirective`) and the builder
+// `flaky`, and its lanes-stage fix round is uncharged: its fix round is told the lane is flaky (the red-lane path's `flakyLaneDirective`) and the builder
 // fixes it; unless every key of it is a standing tip flake (`tipFlaky`: a ledger flake since the key's latest merged
 // deflake published), which the unit did not bring and the ledger fixes, so the unit keeps its one-rerun forgiveness while
 // a deflake unit works.

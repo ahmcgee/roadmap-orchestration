@@ -20,7 +20,7 @@ import {
 } from './validate.ts';
 import type { SchemaVersion } from './version.ts';
 import {
-  type LaneKind, applyExpectRevDefault, applyVisionEditDefault, designKindDefault, dev6SmokeBounds, issuesIgnored, laneCadenceDefault, laneInputsDropped,
+  type LaneKind, applyExpectRevDefault, applyVisionEditDefault, designKindDefault, dev6SmokeBounds, dev31CertificationsDefault, issuesIgnored, laneCadenceDefault, laneInputsDropped,
 } from './upgrade.ts';
 import { type DesignRecord, type UnitKind, designRecord } from './design.ts';
 import { type ContractPin, type Pinned, type RequirementPin, type SpecPin, UNPINNED, pinTarget, specPin } from './pins.ts';
@@ -140,6 +140,13 @@ const argv: Read<readonly string[]> = (v, p) => {
   return out;
 };
 const exitCode = int(0, 255);
+/** Minutes may be fractional; their millisecond duration must be positive and safely representable. */
+const timeoutMin: Read<number> = (value, path) => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value * 60_000 < 1 || value * 60_000 > Number.MAX_SAFE_INTEGER) {
+    throw new SchemaError(path, 'positive minutes (at least 1 ms, a finite safe duration)', value);
+  }
+  return value;
+};
 
 // ---------------------------------------------------------------------------------------------------
 // Runner files: every one is bound to one invocation by {v, arc, op, inv}, with inv = op#ordinal.
@@ -175,7 +182,7 @@ type BackendTerminalBase = Readonly<{
 export type BackendTerminal =
   | (BackendTerminalBase & Readonly<{ role: JudgmentSessionRole; session: JudgmentSession }>)
   | (BackendTerminalBase & Readonly<{ role: ImplementerRole; session: ImplementerSession }>);
-export type CommandTerminal = Readonly<{ type: 'command'; purpose: CommandPurpose; expectedExit: number }>;
+export type CommandTerminal = Readonly<{ type: 'command'; purpose: CommandPurpose; expectedExit: number; timeoutMin?: number }>;
 export type LaunchTerminal = BackendTerminal | CommandTerminal;
 
 /**
@@ -216,11 +223,12 @@ const implementerSession: Read<ImplementerSession> = (value, path) => {
 };
 
 const launchTerminal: Read<LaunchTerminal> = tagged('type', {
-  command: object((f): LaunchTerminal => ({
-    type: f.get('type', literal('command')),
-    purpose: f.get('purpose', oneOf(COMMAND_PURPOSES)),
-    expectedExit: f.get('expectedExit', exitCode),
-  })),
+  command: object((f): LaunchTerminal => {
+    const purpose = f.get('purpose', oneOf(COMMAND_PURPOSES));
+    const timeout = f.optional('timeoutMin', timeoutMin);
+    if (timeout !== undefined && purpose !== 'lane') throw new SchemaError(`${f.path}.timeoutMin`, 'only on a lane command', timeout);
+    return { type: f.get('type', literal('command')), purpose, expectedExit: f.get('expectedExit', exitCode), ...(timeout === undefined ? {} : { timeoutMin: timeout }) };
+  }),
   backend: (value, path) => {
     const r = new Fields(value, path).get('role', role);
     return object((f): LaunchTerminal => {
@@ -303,7 +311,7 @@ export type ChildEnd =
  * final, schema-valid report was on its output for `REPORT_GRACE_MS` while the workload still ran (a pending wake-up,
  * monitor or background process; src/runner/report.ts): the report, not the kill, decides the outcome.
  */
-export const EXIT_CAUSES = ['exited', 'deadline', 'stall', 'cancel', 'recovery-kill', 'reported'] as const;
+export const EXIT_CAUSES = ['exited', 'deadline', 'timeout', 'stall', 'cancel', 'recovery-kill', 'reported'] as const;
 export type ExitCause = (typeof EXIT_CAUSES)[number];
 
 /**
@@ -457,14 +465,15 @@ export type BackendOutcomeKind = BackendOutcome['kind'];
 export type TerminalOutcome = Exclude<BackendOutcome, { kind: 'refusal' }>;
 
 /**
+ * `timeout`: the configured lane wall limit expired, a red verdict.
  * `stall`: the runner's stall watchdog killed the workload; a verdict on the command (it hung), not a process
  * fault. `cancelled`: the executor cancelled it for a pause or stop, the reason beside it (`CommandEnd`), as a
  * backend call's `cancelled{reason}` outcome.
  */
-export const COMMAND_VERDICTS = ['pass', 'fail', 'stall', 'process-fault', 'cancelled'] as const;
+export const COMMAND_VERDICTS = ['pass', 'fail', 'stall', 'timeout', 'process-fault', 'cancelled'] as const;
 export type CommandVerdict = (typeof COMMAND_VERDICTS)[number];
 /** A red run: it failed or stalled. */
-export const isRed = (verdict: CommandVerdict): boolean => verdict === 'fail' || verdict === 'stall';
+export const isRed = (verdict: CommandVerdict): boolean => verdict === 'fail' || verdict === 'stall' || verdict === 'timeout';
 /** How a command ended: its exit code (null when the child never exited with one) and verdict. */
 export type CommandEnd = Readonly<{ exitCode: number | null }> & (
   | Readonly<{ verdict: Exclude<CommandVerdict, 'cancelled'> }>
@@ -594,7 +603,7 @@ export function classifyCommand(exit: ExitFile, cancel: CancelFile | null, expec
     return { exitCode, verdict: 'cancelled', reason: cancel.reason };
   }
   if (exit.cause === 'reported') throw new Error(`${exit.inv}: exit cause reported for a command (only a backend reports)`);
-  if (exit.cause === 'stall') return { exitCode, verdict: 'stall' };
+  if (exit.cause === 'stall' || exit.cause === 'timeout') return { exitCode, verdict: exit.cause };
   if (processFault(exit) !== null) return { exitCode, verdict: 'process-fault' };
   return { exitCode, verdict: exitCode === expectedExit ? 'pass' : 'fail' };
 }
@@ -758,6 +767,8 @@ export const obligationRevsOf = (fp: ApprovalFingerprint): readonly ObligationRe
 export type Bounds = Readonly<{
   /** The chargeable failure that reaches this parks the unit (design). */
   chargeable: number;
+  /** Every nth certification red is charged; the preceding reds are uncharged. */
+  certifications: number;
   /** Plan-check redirects since the architect's latest spec revision. */
   redirects: number;
   reviseRounds: number;
@@ -774,22 +785,24 @@ export type Bounds = Readonly<{
   smokeRuns: number;
 }>;
 export const BOUND_FIELDS = [
-  'chargeable', 'redirects', 'reviseRounds', 'candidateReds', 'retries', 'judgmentDeadlineMin', 'freshBuildMin', 'editAllowanceMin', 'smokeRounds', 'smokeRuns',
+  'chargeable', 'redirects', 'reviseRounds', 'candidateReds', 'retries', 'judgmentDeadlineMin', 'freshBuildMin', 'editAllowanceMin', 'smokeRounds', 'smokeRuns', 'certifications',
 ] as const satisfies readonly (keyof Bounds)[];
-/** The bound fields a 1.0.0-dev.6 dispatch record carries; the rest (`smokeRounds`, `smokeRuns`) read as the defaults. */
+/** The bound fields a 1.0.0-dev.6 dispatch record carries; later fields read as the defaults. */
 export const DEV6_BOUND_FIELDS = BOUND_FIELDS.slice(0, 8) as readonly (keyof Bounds)[];
 /** The built-in bounds: M2's constants and M4a rev 3's smoke bounds (unmeasured defaults). */
 export const DEFAULT_BOUNDS: Bounds = {
   chargeable: 3, redirects: 2, reviseRounds: 2, candidateReds: 1, retries: 1, judgmentDeadlineMin: 45, freshBuildMin: 180, editAllowanceMin: 60,
-  smokeRounds: 1, smokeRuns: 2,
+  smokeRounds: 1, smokeRuns: 2, certifications: 4,
 };
 /**
- * Bounds as a dispatch record holds them: every field since M4a rev 3; a 1.0.0-dev.6 record's lack the smoke bounds,
- * read byte-preserving (G14) and completed by `boundsOfRecord` (`dev6SmokeBounds`, src/core/upgrade.ts).
+ * Bounds as recorded, byte-preserving (G14): dev.6 lacks the smoke bounds, dev.31 lacks certifications.
+ * `boundsOfRecord` fills those defaults with a logged upgrade warning (src/core/upgrade.ts).
  */
-export type BoundsRecord = Omit<Bounds, 'smokeRounds' | 'smokeRuns'> & Partial<Pick<Bounds, 'smokeRounds' | 'smokeRuns'>>;
+export type BoundsRecord = Omit<Bounds, 'smokeRounds' | 'smokeRuns' | 'certifications'> & Partial<Pick<Bounds, 'smokeRounds' | 'smokeRuns' | 'certifications'>>;
 export const bounds: Read<BoundsRecord> = object((f) => {
   const out: Record<string, number> = Object.fromEntries(DEV6_BOUND_FIELDS.map((k) => [k, f.get(k, positive)]));
+  const certifications = f.optional('certifications', positive);
+  if (certifications !== undefined) out['certifications'] = certifications;
   const rounds = f.optional('smokeRounds', positive);
   const runs = f.optional('smokeRuns', positive);
   if ((rounds === undefined) !== (runs === undefined)) throw new SchemaError(`${f.path}.smokeRounds`, 'both smoke bounds or neither (a 1.0.0-dev.6 record)', { rounds, runs });
@@ -860,11 +873,12 @@ export const dispatchRecord: Read<DispatchRecord> = object((f) => {
   };
 });
 
-/** The bounds a dispatch record pins: its own (a dev.6 record's smoke bounds defaulted), or the built-in ones when it names none. */
+/** The bounds a dispatch record pins, defaulting absent smoke and certification bounds; built-in ones before a pin. */
 export function boundsOfRecord(record: DispatchRecord | null): Bounds {
   const b = record?.bounds;
   if (b === undefined) return DEFAULT_BOUNDS;
-  return b.smokeRounds === undefined || b.smokeRuns === undefined ? { ...b, ...dev6SmokeBounds() } : (b as Bounds);
+  return { ...b, ...(b.smokeRounds === undefined || b.smokeRuns === undefined ? dev6SmokeBounds() : {}),
+    certifications: b.certifications ?? dev31CertificationsDefault() } as Bounds;
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -910,8 +924,10 @@ export type LaneDef = Readonly<{
    * excludes; declared `evidenceGlobs` are never filtered. Optional in spec.json, read as [] when absent.
    */
   evidenceExcludes: readonly RepoPattern[];
-  /** `@cpu` tokens the lane takes (M2); absent: its cadence's default (build 2, else 4). Absent stays absent. */
+  /** Explicit `@cpu` tokens (M2); absent: calibrated at scheduling time, default build 2, else 4. Absent stays absent. */
   cpu?: number;
+  /** Wall limit in minutes; absent keeps the six-hour runner backstop (no red timeout verdict). */
+  timeoutMin?: number;
   /**
    * dev.17: the systems of the repo's systems map the lane tests (non-empty, unique when present; `docs` names the docs
    * class). Its reuse key reads their paths (with what they depend on and the shared areas), and a candidate or batch lane
@@ -928,8 +944,8 @@ export type LaneDef = Readonly<{
   stochastic?: Stochastic;
   /**
    * dev.17: the plan environment the lane runs against (plan `environments`), reserved with its resources and brought up
-   * before it runs (src/resources/environments.ts); absent: none. An arc lane never names one (`laneFields`), and a
-   * `build`-cadence lane (the implementer runs it) never does (`estate-lane-for-implementer`).
+   * before it runs (src/resources/environments.ts); absent: none. An arc lane never names one (`laneFields`).
+   * Environment-backed build-cadence lanes are executor-only, omitted from builder development checks.
    */
   environment?: ResourceName;
   /**
@@ -978,6 +994,7 @@ function laneFields(f: Fields, kind: LaneKind | null): LaneDef {
     evidenceExcludes: f.optional('evidenceExcludes', arrayOf((v, p) => repoPattern(v, p))) ?? [],
   };
   const cpu = f.optional('cpu', positive);
+  const timeout = f.optional('timeoutMin', timeoutMin);
   if (kind === 'spec' && f.optional('inputs', arrayOf((v, p) => repoPattern(v, p), { nonEmpty: true })) !== undefined) laneInputsDropped(id);
   const systems = f.optional('systems', arrayOf((v, p) => systemName(v, p), { nonEmpty: true }));
   const testArgv = f.optional('testArgv', argv);
@@ -997,7 +1014,7 @@ function laneFields(f: Fields, kind: LaneKind | null): LaneDef {
     throw new SchemaError(`${f.path}.environment`, 'absent on an arc lane (environments are a spec or suite lane\'s)', environment);
   }
   return {
-    ...out, ...(cpu === undefined ? {} : { cpu }), ...(systems === undefined ? {} : { systems }), ...(testArgv === undefined ? {} : { testArgv }),
+    ...out, ...(cpu === undefined ? {} : { cpu }), ...(timeout === undefined ? {} : { timeoutMin: timeout }), ...(systems === undefined ? {} : { systems }), ...(testArgv === undefined ? {} : { testArgv }),
     ...(stoch === undefined ? {} : { stochastic: stoch }), ...(environment === undefined ? {} : { environment }),
     ...(readsComments === undefined ? {} : { readsComments }),
   };
@@ -1753,7 +1770,7 @@ export const NEEDS_USER_REASONS = [
   // 1.0.0-dev.17, non-blocking: the executor threw inside a unit's task or an arc job while it held only that unit's or job's
   // own state (src/schedule/fault.ts): the unit parked `executor-fault`, or the job ended faulted; the item cites the stack.
   'executor-fault',
-  // dev.17: a lane's environment did not come up or failed its probe (lanes or candidate `env-unavailable`: a retryable park
+  // dev.17: a lane's environment did not come up or failed its probe (reproduce, lanes or candidate `env-unavailable`: a retryable park
   // on the environment, probed until it comes up).
   'env-unavailable',
   // dev.17 (flaky ledger), non-blocking: a deflake unit parked, so the code edges it held dropped (src/pipeline/deflake.ts);

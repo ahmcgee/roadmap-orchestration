@@ -10,6 +10,7 @@ import type { JournalView } from '../core/interfaces.ts';
 import type { CommandBody, LaneCadence, NeedsUserReason } from '../core/records.ts';
 import type { PlanM1, PlanUnit, UnitOrigin, UnitPriority } from '../input/plan.ts';
 import type { PressureNow } from '../host/pressure.ts';
+import type { CpuBasis } from '../core/cpu.ts';
 import type { Backend } from '../routing/types.ts';
 
 // ---------------------------------------------------------------------------------------------------
@@ -30,7 +31,7 @@ export type ChainStage = (typeof BUILD_CHAIN)[number] | (typeof PUBLICATION_CHAI
 export type TaskState = 'idle' | 'awaiting-admission' | 'in-stage' | 'in-chain';
 
 // ---------------------------------------------------------------------------------------------------
-// Capacity (A3): token costs, all unmeasured defaults
+// Capacity (A3): fallback token costs; build and lane reservations calibrate at scheduling time
 
 /** `@cpu` tokens per holder kind. Probes and teardowns take none. */
 export const CPU_COST = { judgment: 1, build: 4, lane: { build: 2, unit: 4, candidate: 4, batch: 4 } } as const satisfies Readonly<{
@@ -46,12 +47,13 @@ export type ResourceRequest = Readonly<{
   /** Pools this request takes one instance of each, ascending. */
   pools: readonly ResourceName[];
   cpu: number;
+  cpuBasis?: CpuBasis;
   publication: boolean;
 }>;
 
 /**
  * Each stage's entry reservation (F6), taken before the stage's first journaled op: plan-check and gate
- * `@cpu`×1; build the unit's resources and `@cpu`×(`unit.cpu ?? 4`); lanes the first lane's set; candidate the
+ * `@cpu`×1; build calibrated `@cpu` only (unit.cpu overrides); lanes the first lane's set; candidate the
  * publication (`integration-slot`); prepare none. A wait cancelled by pause or stop journals nothing.
  */
 export type EntryReservation = (plan: PlanM1, unit: PlanUnit, stage: AdmissionStage) => ResourceRequest | null;

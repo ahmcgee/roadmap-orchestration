@@ -20,9 +20,9 @@
 // Waits name the one that holds under `-p` (CLI 2.1.288): Monitor; a wake-up or background command dies with the turn.
 // M4a rev 3 (reviewed 2026-10-06 against the same guides): before finishing, a checklist from each acceptance clause and
 // witness item to the test that shows it, by its exact id (retro F05: correct code returned for missing witness tests);
-// the per-lane witness check commands, run after the last change beside the fast lanes, a missing id a blocker (D1, R56);
+// per-lane witness commands for targeted checks, a missing id a blocker (D1, R56);
 // a negative witness drives the real entry point with an injected fixture, never a helper (F20); `experiments` for every
-// other command run. (The in-session assessment, E/R55, went with `planCheck.shape: by-builder` in dev.17.)
+// development check run. (The in-session assessment, E/R55, went with `planCheck.shape: by-builder` in dev.17.)
 // W3 (2026-10-16; re-reviewed 2026-10-17 against "Prompting best practices", "Prompting Claude Opus 5.5" and "Prompting
 // Claude Sonnet 5.5" alone): delegation (BUILD_DELEGATION, re-derived from those guides);
 // <safety> no longer repeats UNIT_POLICY's "do not kill a process this unit did not start". Further trims wait for the
@@ -75,11 +75,11 @@ Write a general solution that is correct for all valid inputs, not just the test
 </correctness>
 
 <witnesses>
-Before you finish, go through the spec's acceptance clauses and its witness items one at a time. For each, name the test that shows it, and confirm a test with exactly the id the spec gives exists and runs in its lane: the executor looks a required witness test up by its exact id before the gate, and a missing or renamed one sends the unit back. When the message lists witness checks, run each one after your last change, beside the fast lanes, until it exits 0. A check that still reports a missing or failing id is a blocker.
+Before you finish, go through the spec's acceptance clauses and its witness items one at a time. For each, name the test that shows it, and confirm a test with exactly the id the spec gives exists and runs in its lane: the executor looks a required witness test up by its exact id before the gate, and a missing or renamed one sends the unit back. When the message lists witness checks, run each one as targeted checks after changes to the witnesses, until it exits 0. A check that still reports a missing or failing id is a blocker.
 </witnesses>
 
 <lanes>
-Before you finish, run every fast lane listed in the message exactly as written, after your last change, and repeat after fixing until each exits with its expected code. Report each run in lanesRun. A lane you cannot get to pass is a blocker. Estate lanes are not yours: the executor runs them later, so do not run them or start the clusters, containers or services they use.
+Your final report requests certification: the executor runs the full lanes stage after your turn ends, in a clean checkout. It is cheap to ask for certification. Your build holds CPU only; executor lanes reserve named resources. Run targeted checks while developing, then report; do not rehearse the full lane suite. A red returns with evidence in a fix round on the same session when available, uncharged within the certification allowance. Estate lanes are not yours: the executor runs them later, so do not run them or start the clusters, containers or services they use.
 </lanes>
 
 <decisions>
@@ -93,7 +93,7 @@ This host runs sibling units and the orchestrator. Stay inside the worktree and 
 </safety>
 
 <report>
-Your final message is the structured report. summary: two or three plain sentences on what changed and why, plus anything you left alone that someone should know. changedPaths: the repository paths you changed or created in this run, read from git status and git log rather than recalled. lanesRun: each fast lane run, by its id, with its exit code. experiments: every other command you ran to check your work (a single test, a witness check, a script, a probe), each with a short name, its argv and its exit code; never a fast lane. blockers: what keeps the unit from being complete, one per entry; empty when it is complete. docsOnlySince: when the message names the unit's last certified tree and everything you changed since that tree is comments or documentation, that tree's SHA; otherwise null. The executor checks the claim against the diff and then reuses that tree's lane results instead of running the lanes again, so claim it only when it is true. final: true (false only in a report you give while you wait, see above). Stop when the spec's clauses hold and the fast lanes pass; finishing early is correct, and work beyond the spec is scope creep the gate rejects.
+Your final message is the structured report. summary: two or three plain sentences on what changed and why, plus anything you left alone that someone should know. changedPaths: the repository paths you changed or created in this run, read from git status and git log rather than recalled. experiments: every command you ran to check your work (a single test, a witness check, a script, a probe), each with a short name, its argv and its exit code. blockers: what keeps the unit from being complete, one per entry; empty when it is complete. docsOnlySince: when the message names the unit's last certified tree and everything you changed since that tree is comments or documentation, that tree's SHA; otherwise null. The executor checks the claim against the diff and then reuses that tree's lane results instead of running the lanes again, so claim it only when it is true. final: true (false only in a report you give while you wait, see above). Stop when the spec's clauses hold and report for certification; finishing early is correct, and work beyond the spec is scope creep the gate rejects.
 </report>
 
 ${BUILD_DELEGATION}`;
@@ -107,7 +107,7 @@ This is a fix round on the work in this worktree. Read the failing evidence firs
 ${bullets(i.fixRound.failingEvidenceDirs, '(no failing lanes)')}
 Directives to carry out:
 ${bullets(i.fixRound.directives, '(none)')}
-Fix exactly what failed and what the directives name, nothing adjacent. Do not re-litigate a directive: carry it out, dispute the gate finding behind it (see decisions), or record in a blocker why it is wrong and leave the code as it is. Then run every fast lane again and return the report. The same scope, safety and decision rules apply.
+Fix exactly what failed and what the directives name, nothing adjacent. Do not re-litigate a directive: carry it out, dispute the gate finding behind it (see decisions), or record in a blocker why it is wrong and leave the code as it is. Run targeted checks for the repairs, then return the report to request certification. The same scope, safety and decision rules apply.
 </fix_round>`;
 }
 
@@ -123,8 +123,8 @@ ${handoverText(i.handover)}
 /** The ask: a fresh build or a fix round. */
 function ask(i: BuildInputs): string {
   return i.fixRound === null
-    ? `Implement unit ${i.spec.unit} (spec revision ${i.spec.rev}) in ${i.worktree} until every acceptance clause holds and every fast lane${i.witnessChecks.length === 0 ? '' : ' and witness check'} passes, then return your report.`
-    : `Carry out this fix round for unit ${i.spec.unit} in ${i.worktree}, run the fast lanes${i.witnessChecks.length === 0 ? '' : ' and the witness checks'}, then return your report.`;
+    ? `Implement unit ${i.spec.unit} (spec revision ${i.spec.rev}) in ${i.worktree} until every acceptance clause holds, using targeted checks, then return your report.`
+    : `Carry out this fix round for unit ${i.spec.unit} in ${i.worktree}, run targeted checks, then return your report for certification.`;
 }
 
 export const PROMPT: PromptModule<'build'> = {
