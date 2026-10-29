@@ -96,11 +96,12 @@ test('verify.timeout: a lane printing progress reaches its configured wall limit
     const launch = files.read('launch.json');
     assert.ok(launch?.terminal.type === 'command' && launch.terminal.timeoutMin === 0.03);
   }
-  assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, 1);
+  assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, 0);
+  assert.equal(run.journal.view.unit(U1).counters.unchargedLanesReds, 1, 'a timeout consumes one uncharged certification red');
   assert.equal(resourceTable(run.journal.view).get(resourceName(DB))?.status.state, 'free');
 });
 
-test('verify.dirty-tree: a lane that writes into the checkout is not certified (chargeable), its writes preserved', T, async () => {
+test('verify.dirty-tree: a lane that writes into the checkout is not certified, consumes its uncharged allowance, and preserves its writes', T, async () => {
   // A dirty path is snapshotted as itself even when its name is a glob.
   const writer: LaneJson = { id: 'writer', argv: ['sh', '-c', "mkdir -p out && echo ignored > out/x && echo stray > src/stray.txt && echo odd > 'src/w[1]*.txt'"] };
   const run = laneRun([writer]);
@@ -109,8 +110,9 @@ test('verify.dirty-tree: a lane that writes into the checkout is not certified (
   assert.equal(done.outcome.kind, 'not-certified');
   assert.ok(done.next.kind === 'stage' && done.next.stage === 'build' && done.next.round === 'fix');
   const fact = outcomeFacts(run).at(-1)!;
-  assert.ok(fact.kind === 'stage-outcome' && fact.outcome === 'not-certified' && fact.chargeable, 'not-certified charges');
-  assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, 1);
+  assert.ok(fact.kind === 'stage-outcome' && fact.outcome === 'not-certified' && !fact.chargeable && fact.unchargedLanesReds === 1, 'not-certified consumes one uncharged certification red');
+  assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, 0);
+  assert.equal(run.journal.view.unit(U1).counters.unchargedLanesReds, 1);
   // The dirty checkout is never kept; what the lane wrote is snapshotted first (ignored output is not dirt).
   assert.equal(done.verification, null);
   assert.ok(!worktreeList(run.repo).some((w) => w.path.includes('.verify-')));
