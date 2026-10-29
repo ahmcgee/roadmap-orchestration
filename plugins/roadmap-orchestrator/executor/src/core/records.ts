@@ -140,6 +140,13 @@ const argv: Read<readonly string[]> = (v, p) => {
   return out;
 };
 const exitCode = int(0, 255);
+/** Minutes may be fractional; their millisecond duration must be positive and safely representable. */
+const timeoutMin: Read<number> = (value, path) => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value * 60_000 < 1 || value * 60_000 > Number.MAX_SAFE_INTEGER) {
+    throw new SchemaError(path, 'positive minutes (at least 1 ms, a finite safe duration)', value);
+  }
+  return value;
+};
 
 // ---------------------------------------------------------------------------------------------------
 // Runner files: every one is bound to one invocation by {v, arc, op, inv}, with inv = op#ordinal.
@@ -175,7 +182,7 @@ type BackendTerminalBase = Readonly<{
 export type BackendTerminal =
   | (BackendTerminalBase & Readonly<{ role: JudgmentSessionRole; session: JudgmentSession }>)
   | (BackendTerminalBase & Readonly<{ role: ImplementerRole; session: ImplementerSession }>);
-export type CommandTerminal = Readonly<{ type: 'command'; purpose: CommandPurpose; expectedExit: number }>;
+export type CommandTerminal = Readonly<{ type: 'command'; purpose: CommandPurpose; expectedExit: number; timeoutMin?: number }>;
 export type LaunchTerminal = BackendTerminal | CommandTerminal;
 
 /**
@@ -216,11 +223,12 @@ const implementerSession: Read<ImplementerSession> = (value, path) => {
 };
 
 const launchTerminal: Read<LaunchTerminal> = tagged('type', {
-  command: object((f): LaunchTerminal => ({
-    type: f.get('type', literal('command')),
-    purpose: f.get('purpose', oneOf(COMMAND_PURPOSES)),
-    expectedExit: f.get('expectedExit', exitCode),
-  })),
+  command: object((f): LaunchTerminal => {
+    const purpose = f.get('purpose', oneOf(COMMAND_PURPOSES));
+    const timeout = f.optional('timeoutMin', timeoutMin);
+    if (timeout !== undefined && purpose !== 'lane') throw new SchemaError(`${f.path}.timeoutMin`, 'only on a lane command', timeout);
+    return { type: f.get('type', literal('command')), purpose, expectedExit: f.get('expectedExit', exitCode), ...(timeout === undefined ? {} : { timeoutMin: timeout }) };
+  }),
   backend: (value, path) => {
     const r = new Fields(value, path).get('role', role);
     return object((f): LaunchTerminal => {
@@ -303,7 +311,7 @@ export type ChildEnd =
  * final, schema-valid report was on its output for `REPORT_GRACE_MS` while the workload still ran (a pending wake-up,
  * monitor or background process; src/runner/report.ts): the report, not the kill, decides the outcome.
  */
-export const EXIT_CAUSES = ['exited', 'deadline', 'stall', 'cancel', 'recovery-kill', 'reported'] as const;
+export const EXIT_CAUSES = ['exited', 'deadline', 'timeout', 'stall', 'cancel', 'recovery-kill', 'reported'] as const;
 export type ExitCause = (typeof EXIT_CAUSES)[number];
 
 /**
@@ -457,14 +465,15 @@ export type BackendOutcomeKind = BackendOutcome['kind'];
 export type TerminalOutcome = Exclude<BackendOutcome, { kind: 'refusal' }>;
 
 /**
+ * `timeout`: the configured lane wall limit expired, a red verdict.
  * `stall`: the runner's stall watchdog killed the workload; a verdict on the command (it hung), not a process
  * fault. `cancelled`: the executor cancelled it for a pause or stop, the reason beside it (`CommandEnd`), as a
  * backend call's `cancelled{reason}` outcome.
  */
-export const COMMAND_VERDICTS = ['pass', 'fail', 'stall', 'process-fault', 'cancelled'] as const;
+export const COMMAND_VERDICTS = ['pass', 'fail', 'stall', 'timeout', 'process-fault', 'cancelled'] as const;
 export type CommandVerdict = (typeof COMMAND_VERDICTS)[number];
 /** A red run: it failed or stalled. */
-export const isRed = (verdict: CommandVerdict): boolean => verdict === 'fail' || verdict === 'stall';
+export const isRed = (verdict: CommandVerdict): boolean => verdict === 'fail' || verdict === 'stall' || verdict === 'timeout';
 /** How a command ended: its exit code (null when the child never exited with one) and verdict. */
 export type CommandEnd = Readonly<{ exitCode: number | null }> & (
   | Readonly<{ verdict: Exclude<CommandVerdict, 'cancelled'> }>
@@ -594,7 +603,7 @@ export function classifyCommand(exit: ExitFile, cancel: CancelFile | null, expec
     return { exitCode, verdict: 'cancelled', reason: cancel.reason };
   }
   if (exit.cause === 'reported') throw new Error(`${exit.inv}: exit cause reported for a command (only a backend reports)`);
-  if (exit.cause === 'stall') return { exitCode, verdict: 'stall' };
+  if (exit.cause === 'stall' || exit.cause === 'timeout') return { exitCode, verdict: exit.cause };
   if (processFault(exit) !== null) return { exitCode, verdict: 'process-fault' };
   return { exitCode, verdict: exitCode === expectedExit ? 'pass' : 'fail' };
 }
@@ -912,6 +921,8 @@ export type LaneDef = Readonly<{
   evidenceExcludes: readonly RepoPattern[];
   /** `@cpu` tokens the lane takes (M2); absent: its cadence's default (build 2, else 4). Absent stays absent. */
   cpu?: number;
+  /** Wall limit in minutes; absent keeps the six-hour runner backstop (no red timeout verdict). */
+  timeoutMin?: number;
   /**
    * dev.17: the systems of the repo's systems map the lane tests (non-empty, unique when present; `docs` names the docs
    * class). Its reuse key reads their paths (with what they depend on and the shared areas), and a candidate or batch lane
@@ -978,6 +989,7 @@ function laneFields(f: Fields, kind: LaneKind | null): LaneDef {
     evidenceExcludes: f.optional('evidenceExcludes', arrayOf((v, p) => repoPattern(v, p))) ?? [],
   };
   const cpu = f.optional('cpu', positive);
+  const timeout = f.optional('timeoutMin', timeoutMin);
   if (kind === 'spec' && f.optional('inputs', arrayOf((v, p) => repoPattern(v, p), { nonEmpty: true })) !== undefined) laneInputsDropped(id);
   const systems = f.optional('systems', arrayOf((v, p) => systemName(v, p), { nonEmpty: true }));
   const testArgv = f.optional('testArgv', argv);
@@ -997,7 +1009,7 @@ function laneFields(f: Fields, kind: LaneKind | null): LaneDef {
     throw new SchemaError(`${f.path}.environment`, 'absent on an arc lane (environments are a spec or suite lane\'s)', environment);
   }
   return {
-    ...out, ...(cpu === undefined ? {} : { cpu }), ...(systems === undefined ? {} : { systems }), ...(testArgv === undefined ? {} : { testArgv }),
+    ...out, ...(cpu === undefined ? {} : { cpu }), ...(timeout === undefined ? {} : { timeoutMin: timeout }), ...(systems === undefined ? {} : { systems }), ...(testArgv === undefined ? {} : { testArgv }),
     ...(stoch === undefined ? {} : { stochastic: stoch }), ...(environment === undefined ? {} : { environment }),
     ...(readsComments === undefined ? {} : { readsComments }),
   };

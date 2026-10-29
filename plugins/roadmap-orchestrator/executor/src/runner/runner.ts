@@ -112,7 +112,7 @@ export async function runnerMain(): Promise<void> {
     else cpu?.observeTree(workload.child);
     const cancel = files.read('cancel.json');
     if (cancel !== null) return cancel.reason === 'recovery' ? { cause: 'recovery-kill', reason: 'recovery' } : { cause: 'cancel', reason: cancel.reason };
-    if (Date.now() >= deadline) return { cause: 'deadline', reason: 'deadline' };
+    if (Date.now() >= deadline) return { cause: launch.terminal.type === 'command' && launch.terminal.timeoutMin !== undefined ? 'timeout' : 'deadline', reason: 'deadline' };
     if (reported()) return { cause: 'reported', reason: 'reported' };
     return members !== null && stalled(members) ? { cause: 'stall', reason: 'stall' } : null;
   };

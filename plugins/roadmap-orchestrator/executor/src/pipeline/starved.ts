@@ -29,7 +29,7 @@ function runOf(runDir: AbsPath, inv: InvocationId, pressure: number | null, red:
   if (pressure === null) return { inv, end: 'other', pressure };
   const exit = runnerFiles(invocationDir(runDir, inv), inv).read('exit.json');
   if (exit === null) throw new Error(`${inv}: a run with pressure ${pressure} and no exit.json`);
-  return { inv, end: exit.cause === 'deadline' || exit.cause === 'stall' ? exit.cause : red ? 'red' : 'other', pressure };
+  return { inv, end: exit.cause === 'timeout' ? 'deadline' : exit.cause === 'deadline' || exit.cause === 'stall' ? exit.cause : red ? 'red' : 'other', pressure };
 }
 
 /** The ruling over a backend call `inv` of `unit` that ended `process-fault` (its spawn's done record carries the pressure). */

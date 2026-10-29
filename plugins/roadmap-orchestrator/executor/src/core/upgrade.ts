@@ -649,3 +649,8 @@ export function checkpointSkipTriggerOf(s: Readonly<{ trigger?: CheckpointTrigge
 export function summitXhighTriple(triple: Triple): Triple {
   return { ...triple, effort: 'xhigh' };
 }
+
+/** A lane or launch without timeoutMin retains the previous release's six-hour backstop. */
+export function laneTimeoutDefault(): void {
+  warnDefaulted('lane.timeoutMin', 'a lane without timeoutMin; retains the six-hour deadline backstop');
+}

@@ -104,7 +104,7 @@ import { selectObligations, unitRules } from '../holistic/impact.ts';
 import { canonicalJson } from '../core/json.ts';
 import {
   type ApprovalFingerprint, type JudgmentSession, type LaneDef, type SpecM1, type SpecPatchOp, type NeedsUserContent, STDERR_FILE, STDOUT_FILE, effectiveScope, inScope, type EffectiveScope, specForces,
-  specRemoves, specRepairs, specObligations,
+  specRemoves, specRepairs, specObligations, isRed,
 } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
 import {
@@ -1741,7 +1741,7 @@ function knownDefectHit(ctx: StageContext, unit: PlanUnit, spec: SpecM1, ledger:
     }
     if (k.match.type !== 'output') continue;
     const { contains } = k.match;
-    const red = ledger.filter((l) => l.lane === k.match.lane && (l.verdict === 'fail' || l.verdict === 'stall'));
+    const red = ledger.filter((l) => l.lane === k.match.lane && isRed(l.verdict));
     const hit = red.some((l) => {
       const dir = invocationDir(ctx.runDir, l.inv);
       return outputTail(join(dir, STDOUT_FILE)).includes(contains) || outputTail(join(dir, STDERR_FILE)).includes(contains);

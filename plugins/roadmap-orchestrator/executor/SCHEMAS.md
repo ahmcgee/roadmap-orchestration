@@ -793,7 +793,7 @@ invocation of `op`, `op` of `arc`) and written by `fsx.durable()`. Workload stdo
 | `launch.json` | `LaunchFile` / `launchFile` | executor, after the spawn intent is durable, before the act | `argv` (argv[0] non-empty; a later argument may be empty), `cwd, env` (declared; no `ROADMAP_*`), `stdinPath\|null, deadlineAt, stallMs\|null` (the runner's stall watchdog: no progress, meaning no member CPU time, no output growth and no member started or ended, for `stallMs` → kill, cause `stall`; lanes carry `LANE_STALL_MS`, every other launch null; required), `graceMs` (≥ `MIN_GRACE_MS` = 1000: the backstop fires at deadline + 2·grace and the runner polls every 500 ms), `containment, test: {crash}\|null, terminal` |
 | `runner.json` | `RunnerFile` / `runnerFile` | runner, before spawning (`child: null`); rewritten after | `runner{pid, start, bootId}, child{pid, start, sid}\|null` |
 | `cancel.json` | `CancelFile` / `cancelFile` | executor, before signalling the workload | `reason: pause\|stop\|recovery\|preempt\|supersede\|teardown, at` (`preempt`: M3, a lane only; `supersede`: M4b, a checkpoint call only; `teardown`: dev.13, a bring-up's serve process only) |
-| `exit.json` | `ExitFile` / `exitFile` | runner, after workload quiescence | `child: exited{code}\|signalled{signal}\|spawn-failed{error}, cause: exited\|deadline\|stall\|cancel\|recovery-kill\|reported, endedAt ≤ quiescedAt` (`reported`: see "The report rule" below) |
+| `exit.json` | `ExitFile` / `exitFile` | runner, after workload quiescence | `child: exited{code}\|signalled{signal}\|spawn-failed{error}, cause: exited\|deadline\|timeout\|stall\|cancel\|recovery-kill\|reported, endedAt ≤ quiescedAt` (`reported`: see "The report rule" below) |
 | `result.json` | `ResultFile` / `resultFile` | executor (the adapter, pure over the files above), after the runner has exited with `exit.json` present; re-run at recovery whenever `exit.json` exists without it (lead ruling, 1a: the runner never runs the adapter, so it needs no backend schema) | union below |
 | `runner.log` | none (plain text, not a record) | the runner's own stdout and stderr, opened by the executor when it starts the runner (`RUNNER_LOG`, `src/runner/launch.ts`) | free text; empty on a clean run |
 
@@ -814,7 +814,7 @@ src/pipeline/dispatch.ts; every judgment's fresh call persists its session); `bu
 `codex{fresh}` (Codex mints its thread id) \| `codex{resume, id}`, ids `ImplementerSessionId`.
 
 `result.json` = `backend{role, routingRev, session, outcome, usage, backendErrors[]}` \| `command{purpose,
-exitCode|null, expectedExit, verdict: pass|fail|stall|process-fault|cancelled}`, `reason: pause|stop` (a command's
+exitCode|null, expectedExit, verdict: pass|fail|stall|timeout|process-fault|cancelled}`, `reason: pause|stop` (a command's
 also `preempt`, M3, and `teardown`, dev.13: a bring-up's serve process) beside `cancelled` only (`exitCode: null` ⇒ not `pass` or `fail`; cause `stall` ⇒ `stall`, whatever the exit: a lane
 that hung is red, a verdict on the tree; cause `cancel` ⇒ `cancelled{reason}` from cancel.json, the same
 interruption a backend call records as outcome `cancelled{reason}`; `classifyCommand(exit, cancel, expectedExit)`).
@@ -5285,3 +5285,20 @@ when two active spec, suite or arc commands have identical argv, cwd, sorted env
 expectedExit, but different env.set. This is advisory only: both executions retain their
 own identity and evidence. Exact execution equality is shared with lane deduplication in
 `src/input/laneexecution.ts`.
+
+## Per-lane wall timeout
+
+A spec, suite or arc lane may declare `timeoutMin`: finite positive minutes, including
+fractions, with a duration of at least 1 ms and at most Number.MAX_SAFE_INTEGER ms.
+It is absent by default; absence preserves the previous release's six-hour runner
+backstop and logs `upgrade default (lane.timeoutMin)` once per process when used.
+The absent field stays absent when normalising or hashing older definitions.
+
+A configured limit is copied to the lane command's `launch.json.terminal.timeoutMin`;
+its absolute `deadlineAt` uses that duration. Only lane commands may carry this field.
+At this deadline the runner writes `exit.json.cause: timeout` (the kill reason remains
+`deadline`) and `result.json.verdict: timeout`, a red lane verdict. This differs from
+an unconfigured six-hour `deadline`, which retains its no-verdict/process-fault behavior.
+The stall watchdog still applies independently. A timeout enters the ordinary red-lane
+protocol and supplies failing-lane evidence to the fix round. Historical start times
+are reconstructed from the retained launch limit, never the current lane definition.

@@ -53,6 +53,7 @@ export type LaneJson = Readonly<{
   cwd?: string;
   env?: Readonly<{ set?: Readonly<Record<string, string>>; pass?: readonly string[] }>;
   expectedExit?: number;
+  timeoutMin?: number;
   /** The dev.16 form (default `fast` when no cadence is given). */
   tier?: 'fast' | 'estate';
   /** dev.17: written instead of `tier` when given. */
@@ -129,6 +130,7 @@ function laneJson(l: LaneJson): Record<string, unknown> {
     ...(l.cadence === undefined ? { tier: l.tier ?? 'fast' } : { cadence: l.cadence }), resources: l.resources ?? [], evidenceGlobs: l.evidenceGlobs ?? [],
     ...(l.evidenceExcludes === undefined ? {} : { evidenceExcludes: l.evidenceExcludes }), ...(l.inputs === undefined ? {} : { inputs: l.inputs }),
     ...(l.systems === undefined ? {} : { systems: l.systems }), ...(l.testArgv === undefined ? {} : { testArgv: l.testArgv }),
+    ...(l.timeoutMin === undefined ? {} : { timeoutMin: l.timeoutMin }),
     ...(l.stochastic === undefined ? {} : { stochastic: l.stochastic }), ...(l.environment === undefined ? {} : { environment: l.environment }),
     state: 'active',
   };
