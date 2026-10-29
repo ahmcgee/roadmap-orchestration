@@ -14,7 +14,7 @@
 // (`usageRecorded`) before writing one, so it is never written twice. `invoke` never retries: a retry is
 // the caller's second call with `origin: retry`, which the journal gives the next ordinal and the op's
 // original deadline.
-import type { PromptSize } from '../prompts/index.ts';
+import type { PromptSize } from '../core/records.ts';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { writeResult } from '../backends/adapter.ts';

@@ -1,6 +1,7 @@
 // The prompt table: one decision per (role, model). PromptTable is a mapped type over the closed ModelId
 // union, so adding a model fails compilation here until every role names a prompt module, a reviewed
 // `inherits`, or `unsupported` (DESIGN-1.0.md §4, Prompt–model coupling; test parse.new-model-fails).
+import type { PromptSize } from '../core/records.ts';
 import type { ModelId, PromptSupport, PromptTable, Role } from '../routing/types.ts';
 import { PROMPT as BUILD_LUNA } from './build/gpt-5.6-luna.ts';
 import { PROMPT as BUILD_OPUS } from './build/claude-opus-5-5.ts';
@@ -303,7 +304,6 @@ export function promptFor<R extends Role>(role: R, model: ModelId): PromptModule
 }
 
 /** Exact UTF-8 stdin size and, per module input, canonical JSON bytes (an approximation of its rendered section). */
-export type PromptSize = Readonly<{ bytes: number; inputs: Readonly<Record<string, number>> }>;
 export function promptSize<I>(module: Readonly<{ fields: readonly (keyof I & string)[] }>, inputs: I, stdin: string): PromptSize {
   return { bytes: Buffer.byteLength(stdin, 'utf8'), inputs: Object.fromEntries(module.fields.map((field) => [field, Buffer.byteLength(canonicalJson(inputs[field]), 'utf8')])) };
 }

@@ -1,7 +1,6 @@
 // The event log (`events.jsonl`) record types, their validators, canonical serialisation and the chain
 // hash rule. The journal (append, tail, fold) is step 2 and builds on these. SCHEMAS.md "Event log" is the
 // prose twin of this module.
-import type { PromptSize } from '../prompts/index.ts';
 import type { Buffer } from 'node:buffer';
 import {
   type AmendmentId, type ArcId, type CommandId, type DebtId, type DivergenceId, type EdgeId, type EnvId, type FindingId, type InvocationId,
@@ -26,7 +25,7 @@ import { canonicalJson, sha256Hex } from './json.ts';
 import {
   COMMAND_VERDICTS, DEMO_ACTS, LENS_KIND_NAMES, type ApprovalFingerprint, type DemoAct, type BackendOutcomeKind, type CommandVerdict, type ContainmentMode,
   type DispatchRecord, type KillReason, type KnownDefectMatch, type LensKindName, type PauseTarget, type PlanManifest, type RedRev, type ResidueRecord, type ResumeTarget,
-  type RevisionManifest, type SpecPatch, type Stage, type TokenUsage, type ClassUsage, classUsages, type UsageUnavailableReason, approvalFingerprint, containmentMode,
+  type RevisionManifest, type SpecPatch, type Stage, type TokenUsage, type ClassUsage, type PromptSize, classUsages, type UsageUnavailableReason, approvalFingerprint, containmentMode,
   dispatchRecord, killReason, knownDefectMatch, optionId, pauseTarget, manifestSpecs, resumeTarget, revisionInputs, specPatch, stage, tokenUsage,
   usageUnavailableReason, type Stochastic, stochastic,
 } from './records.ts';

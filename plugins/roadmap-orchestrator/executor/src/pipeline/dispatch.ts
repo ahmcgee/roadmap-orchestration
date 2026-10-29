@@ -44,7 +44,7 @@
 //   on the judgment profile at the role's one seat `arc` of the arc's routing, spawned as `arc-backend` under `job{job}`
 //   and metered to the job by role and routingRev. A resumed job reads a call it made back (`recordedArcCall`); its
 //   verdict is read as a unit judgment's (`verdictOf` takes a job parent: a usage limit parks the backend arc-wide).
-import type { PromptSize } from '../prompts/index.ts';
+import type { PromptSize } from '../core/records.ts';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { type BackendCall, type ClaudeTriple, type CodexTriple, backendArgv, promptBytes, resumedJudgmentSession } from '../backends/argv.ts';
