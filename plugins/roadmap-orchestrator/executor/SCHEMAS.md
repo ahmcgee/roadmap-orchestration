@@ -5345,3 +5345,7 @@ repair owners. Split-parent status continues to aggregate its children's blocker
 The existing journal-high-water memo invalidates after publications, latches and plan
 revisions; removing a blocker can make a ready future obligation trigger, while a
 new pending blocker suppresses it again. Other audit triggers are unaffected.
+
+The supervisor's exit observer uses the canonical journal reader and its read-time
+defaults. Warnings remain once per reader process: host stderr may contain one copy
+from the executor and another from the supervisor when each reads a legacy record.

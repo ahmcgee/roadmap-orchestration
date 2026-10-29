@@ -1816,7 +1816,12 @@ test('upgrade.dev20.checkpoint-reentry-with-fixes: a holistic arc whose checkpoi
     await teardown(scope);
   }
   assert.equal(r.exit.kind, 'complete', JSON.stringify(r.exit));
-  assert.equal([...hostLogs(p).matchAll(/roadmap: upgrade default \(checkpoint-skipped\.trigger\)/g)].length, 1, 'the older audit-only skip warns once, and reads as its audit trigger');
+  const warningReaders = readdirSync(p.host).flatMap((name) => {
+    if (!/^(supervisor\.[0-9a-f]+|executor\.\d+)\.err$/.test(name)) return [];
+    const count = [...readFileSync(join(p.host, name), 'utf8').matchAll(/roadmap: upgrade default \(checkpoint-skipped\.trigger\)/g)].length;
+    return count === 0 ? [] : [{ reader: name.startsWith('supervisor.') ? 'supervisor' : 'executor', count }];
+  }).sort((a, b) => a.reader.localeCompare(b.reader));
+  assert.deepEqual(warningReaders, [{ reader: 'executor', count: 1 }, { reader: 'supervisor', count: 1 }], 'the older audit-only skip warns once per reading process, including supervisor exit evidence');
   assert.equal(r.view.unit(unitId(REENTRY)).status, 'retired', 'HEAD merged the re-entry');
   assert.deepEqual(factsOf(r.after, 'plan-applied'), [], 'HEAD\'s start found the previous release\'s revision in force');
   assert.ok(factsOf(r.after, 'witnessed').some((w) => w.for.type === 'candidate' && w.for.unit === REENTRY), 'the brake ran on the re-entry\'s candidate');
