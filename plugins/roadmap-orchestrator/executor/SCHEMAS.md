@@ -5353,3 +5353,31 @@ new pending blocker suppresses it again. Other audit triggers are unaffected.
 The supervisor's exit observer uses the canonical journal reader and its read-time
 defaults. Warnings remain once per reader process: host stderr may contain one copy
 from the executor and another from the supervisor when each reads a legacy record.
+
+
+## Ordering parks and automatic wake
+
+Plan-check `infeasible`/`escalate` and gate `escalate` route up as before; at the escalation
+seat they park operator-design (`escalation`). When the judgment is blocked solely by
+other units needing to merge, its answer declares `ordering: {blockers: [<unit-id>, ...]}`;
+otherwise it declares `ordering: null`. The answer reader accepts older absent fields
+as no wait and logs `upgrade default (ordering)` once per process. Blockers are nonempty,
+unique, known plan units, never self, cut or superseded. The combined plan dependencies
+and current ordering parks must be acyclic. Prose reasons never identify blockers.
+There is no live build `infeasible` producer: that transition is a retained legacy row.
+
+The parking `stage-outcome.park` carries the same additive `ordering` on an uncharged
+operator-design park of those judgment outcomes. No other park acquires automatic wake
+semantics. An older park without the field retains its bytes and reads as no wait, with
+the same warning. Ordering parks are unsettled while waiting and do not raise their own
+needs-user or launch a design-park checkpoint. They retain their park and stage history.
+
+The scheduler checks these parks at publication boundaries and on adoption. Once every
+named blocker has status `retired` (merged), it writes the ordinary `unparked` fact with
+`command: null` and `parkSeq` naming the exact current ordering park. The fold verifies
+the park identity and every merge, then uses the existing park restoration transition:
+the parked stage runs as a fresh attempt, keeping counters and the escalation seat.
+An operator's existing `unparked{command}` remains unchanged and restricted to env parks.
+A duplicate, stale or premature automatic wake is invalid. A cut, an unrelated merge or
+a prose-only/legacy design park cannot satisfy this transition; the owner can still
+respecify or re-enter a design park through the existing command path.

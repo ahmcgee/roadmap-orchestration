@@ -716,14 +716,15 @@ const ISSUES_IGNORED = /^issues\.(issue-intake|issues-captured|checkpoint-inputs
  * started: the dev.17 defaults (`DEV17_DEFAULTS`) and `ISSUES_IGNORED`, its spec lanes' tier read as their cadence among them (the
  * absent systems map is warned only where HEAD reads the map in force, a lane's selection or reuse; asserted in
  * `upgrade.dev16.review-unledgered`, which runs lanes on HEAD). An older release's cells assert the defaults they read
- * instead.
+ * instead. W3 adds the lasting lane.timeoutMin backstop and ordering (no automatic blocker wake) defaults; their
+ * warnings are asserted by stop-mid-build and park-adopted, respectively.
  */
 function assertNoDefaultRead(p: Phase1, expected: readonly string[] = []): void {
   if (p.release !== PREVIOUS_RELEASE && p.release !== DEV20_RELEASE && p.release !== DEV16_RELEASE) return;
   const allowed = p.release === DEV16_RELEASE ? DEV17_DEFAULTS : DEV20_LASTING;
   const kinds = [...hostLogs(p).matchAll(/roadmap: upgrade default \(([^)]+)\)/g)].map((m) => m[1]!);
   for (const kind of kinds) {
-    if (!expected.includes(kind) && !ISSUES_IGNORED.test(kind) && kind !== 'lane.timeoutMin') assert.match(kind, allowed, `HEAD read the ${p.release.version} arc with the ${kind} default`);
+    if (!expected.includes(kind) && !ISSUES_IGNORED.test(kind) && kind !== 'lane.timeoutMin' && kind !== 'ordering') assert.match(kind, allowed, `HEAD read the ${p.release.version} arc with the ${kind} default`);
   }
   if (p.release === DEV16_RELEASE) assert.ok(kinds.includes('lane.tier.spec'), `HEAD read the ${p.release.version} spec lanes' tier as their cadence, and warned`);
 }
@@ -979,6 +980,7 @@ test('upgrade.park-adopted: a unit the previous release parked lane-blocked (ope
     await teardown(scope);
   }
   assertFinished(f);
+  assert.match(hostLogs(p), /roadmap: upgrade default \(ordering\)/, 'the adopted park defaults to no automatic ordering wake, with a warning');
   assert.deepEqual(factsOf(f.after, 'unparked').map((u) => u.unit), ['page-id'], 'resume page-id unparked it');
   assert.deepEqual(outcomesOf(f.after, 'page-id'), ['lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'], 'HEAD re-ran the lanes, and nothing before them');
 });

@@ -85,6 +85,7 @@
 //
 // Needs-user content the table does not carry (occupancy detail, a backend park) is returned as
 // `needsUser` for the caller to write (step 13 owns the writer). Nothing written here names a model.
+import { orderingReasons } from '../park/ordering.ts';
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, normalize, relative } from 'node:path';
 import { freshJudgmentSession, resumedJudgmentSession } from '../backends/argv.ts';
@@ -898,7 +899,7 @@ function judgePlanCheck(ctx: StageContext, unit: PlanUnit, called: BackendCallOu
   if (answer.kind === 'unanswered') return answer;
   if (answer.kind === 'refused') return { kind: 'refused', reasons: answer.reasons, defects: [] };
   const out: PlanCheckOutput = answer.out;
-  const reasons = [...visionCiteReasons(ctx, out)];
+  const reasons = [...visionCiteReasons(ctx, out), ...orderingReasons(ctx, unit.id, 'ordering' in out ? out.ordering ?? null : null)];
   const defects: string[] = [];
   const pinned = dispatchOf(ctx.journal.view, unit.id);
   const scope = effectiveScope(pinned);
@@ -1091,7 +1092,7 @@ export async function planCheckRead(
     const moved = await commitSplit(ctx, unit, parent, called.inv, out.split, judged.split.evaluated);
     return done({ ...held, needsUser: moved });
   }
-  return done(record(ctx, parent, out.decision));
+  return done(record(ctx, parent, out.decision, null, { ...NO_PARK_FACTS, ordering: 'ordering' in out ? out.ordering ?? null : null }));
 }
 
 /** The blocking item of a plan-check's `plan-defect` park (dev.17): every reason code refused the answer for, twice. */

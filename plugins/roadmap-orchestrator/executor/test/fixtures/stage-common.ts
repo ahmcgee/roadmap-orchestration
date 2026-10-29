@@ -266,6 +266,7 @@ export type PlanCheckAnswer = Readonly<{
   risk?: RiskTier;
   patch?: readonly JsonValue[];
   notes?: string;
+  ordering?: Readonly<{ blockers: readonly string[] }> | null;
   premises?: readonly JsonValue[];
   /** M3 (R17): vision conflicts the check reports (default none). */
   visionConflict?: readonly Readonly<{ clauses: readonly string[]; note: string }>[];
@@ -301,7 +302,7 @@ export function planCheckStep(a: PlanCheckAnswer, expect: Expect = {}, before: r
 /** A plan-check's answer as the fake emits it. */
 export const planCheckAnswer = (a: PlanCheckAnswer): JsonValue =>
   ({
-    decision: a.decision, reasons: ['C-1 holds'], patch: a.patch ?? null, risk: a.risk ?? 'med', notes: a.notes ?? '', premises: [...(a.premises ?? [])], visionConflict: [...(a.visionConflict ?? [])],
+    decision: a.decision, ordering: a.ordering ?? null, reasons: ['C-1 holds'], patch: a.patch ?? null, risk: a.risk ?? 'med', notes: a.notes ?? '', premises: [...(a.premises ?? [])], visionConflict: [...(a.visionConflict ?? [])],
     scopeGrowth: (a.scopeGrowth ?? []).map((g) => ({ patterns: [...g.patterns], reason: g.reason })), staleLinks: (a.staleLinks ?? []).map((l) => ({ ...l })),
     // dev.17: an approve's design record defaults by the `planCheck` act (a module change of the scope's first pattern).
     ...(a.design === undefined ? {} : { design: a.design }), split: a.split ?? null, scaffold: a.scaffold ?? null, poc: a.poc ?? null,

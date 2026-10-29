@@ -63,6 +63,7 @@
 // after a crash is consumed against those inputs (`consumeJudgment`): its approval records the captured fingerprint;
 // ff then finds a contract another unit's publication changed, or a ruling a docs publication superseded
 // (`fingerprint-invalid`, a re-gate).
+import { orderingReasons } from '../park/ordering.ts';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { freshJudgmentSession, resumedJudgmentSession } from '../backends/argv.ts';
@@ -555,6 +556,8 @@ export async function gateRead(
   let out: GateOutput;
   try {
     out = validate(v.value);
+    const reasons = orderingReasons(ctx, unit.id, out.decision === 'escalate' ? out.ordering ?? null : null);
+    if (reasons.length > 0) throw new SchemaError('gate.ordering', reasons.join('; '), out);
   } catch (error) {
     if (error instanceof SchemaError) return done(record(ctx, parent, 'malformed'));
     throw error;
@@ -569,7 +572,7 @@ export async function gateRead(
   };
   if (out.decision !== 'approve') {
     ledger(new Set());
-    return done(record(ctx, parent, out.decision));
+    return done(record(ctx, parent, out.decision, null, { backend: null, failed: [], environment: null, ordering: out.decision === 'escalate' ? out.ordering ?? null : null }));
   }
   const approved = ctx.journal.view.unit(unit.id).approval;
   if (approved !== null && approved.attempt === parent.attempt) {

@@ -29,7 +29,8 @@ import {
   dispatchRecord, killReason, knownDefectMatch, optionId, pauseTarget, manifestSpecs, resumeTarget, revisionInputs, specPatch, stage, tokenUsage,
   usageUnavailableReason, type Stochastic, stochastic,
 } from './records.ts';
-import { issuesIgnored } from './upgrade.ts';
+import { type OrderingWait, orderingWait } from './ordering.ts';
+import { issuesIgnored, orderingDefault } from './upgrade.ts';
 import {
   type BusyAttempt, type ClassifiedAdmit, type Conversion, type ConversionReason, BUNDLE_REJECTIONS, CONVERSION_REASONS, classifiedAdmit, conversion,
   type AuditTrigger, type BundleOutcome, type CheckpointTrigger, type ContractOp, type DivergenceDraft, type FindingEvidence, type FindingLens,
@@ -598,12 +599,15 @@ export type OperatorParkKind = (typeof OPERATOR_PARK_KINDS)[number];
  * A park's class (A7), written inside the `stage-outcome` fact that parks (F9). `retryable`: the executor
  * probes `targets` and the park recovers once each has a covering passing probe. `operator`: `env` re-runs
  * the stage on `resume <unit>` (an `unparked` fact); `design` needs an applied spec revision (a reopen) or a
- * re-entry. Absent only where the interim M2 shim wrote none (src/pipeline/transitions.ts `outcomeFact`): read as operator, its kind
+ * re-entry. `ordering` names an explicit ordering wait (design only); absent reads as none with a warning.
+ * Only that wait may recover automatically, through `unparked{command: null, parkSeq}` after every blocker merges.
+ * Absent only where the interim M2 shim wrote none (src/pipeline/transitions.ts `outcomeFact`): read as operator, its kind
  * by outcome (src/core/state.ts `unclassedParkRecord`).
  */
 export type ParkRecord =
   | Readonly<{ class: 'retryable'; targets: readonly ProbeTarget[] }>
-  | Readonly<{ class: 'operator'; kind: OperatorParkKind }>;
+  | Readonly<{ class: 'operator'; kind: 'env'; ordering?: null }>
+  | Readonly<{ class: 'operator'; kind: 'design'; ordering?: OrderingWait | null }>;
 
 /**
  * Why a stage was interrupted, when not an operator pause or stop (G5): its backend parked, at the park fact's
@@ -817,8 +821,10 @@ export type Fact =
   /**
    * `resume <unit>` re-entered a unit parked operator-env (M2): the unit re-runs the stage it parked at as a new,
    * uncharged attempt; its decision and interruption return to what they were before the park.
+   * Automatic ordering wakes instead carry command null and the exact park seq, verified against merged blockers.
    */
   | Readonly<{ kind: 'unparked'; unit: UnitId; command: CommandId }>
+  | Readonly<{ kind: 'unparked'; unit: UnitId; command: null; parkSeq: number }>
   /**
    * A probe (M2): `target` checked for the seqs `covers` (sorted, non-empty): unit parks' stage-outcome seqs, a
    * backend park's seq, and for a resource target the seq of the `resource.transition{fail}` that left an own-arc
@@ -1963,7 +1969,15 @@ const parkRecord: Read<ParkRecord> = tagged('class', {
   retryable: object((f): ParkRecord => ({
     class: f.get('class', literal('retryable')), targets: f.get('targets', sortedBy(probeTarget, probeTargetKey, { nonEmpty: true })),
   })),
-  operator: object((f): ParkRecord => ({ class: f.get('class', literal('operator')), kind: f.get('kind', oneOf(OPERATOR_PARK_KINDS)) })),
+  operator: object((f): ParkRecord => {
+    const cls = f.get('class', literal('operator'));
+    const kind = f.get('kind', oneOf(OPERATOR_PARK_KINDS));
+    const ordering = f.optional('ordering', nullable(orderingWait));
+    if (ordering === undefined) orderingDefault();
+    if (ordering != null && kind !== 'design') throw new SchemaError(`${f.path}.ordering`, 'ordering only on a design park', ordering);
+    if (kind === 'env') return { class: cls, kind, ...(ordering === undefined ? {} : { ordering: null }) };
+    return { class: cls, kind, ...(ordering === undefined ? {} : { ordering }) };
+  }),
 });
 
 const scopeGrowthProposal: Read<ScopeGrowthProposal> = object((g) => ({
@@ -2499,7 +2513,11 @@ export const fact: Read<Fact> = tagged('kind', {
     kind: f.get('kind', literal('reopened')), unit: f.get('unit', unitR), command: f.get('command', nullable(cmdR)), specRev: f.get('specRev', specRevR),
     specSha256: f.get('specSha256', sha256R),
   })),
-  unparked: object((f): Fact => ({ kind: f.get('kind', literal('unparked')), unit: f.get('unit', unitR), command: f.get('command', cmdR) })),
+  unparked: object((f): Fact => {
+    const base = { kind: f.get('kind', literal('unparked')), unit: f.get('unit', unitR) };
+    const command = f.get('command', nullable(cmdR));
+    return command === null ? { ...base, command, parkSeq: f.get('parkSeq', positive) } : { ...base, command };
+  }),
   probe: object((f): Fact => {
     const out = {
       kind: f.get('kind', literal('probe')), target: f.get('target', probeTarget), covers: f.get('covers', seqSet),

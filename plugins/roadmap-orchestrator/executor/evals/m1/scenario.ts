@@ -112,7 +112,7 @@ export function fakeSteps(scenario: M1Scenario, profile: ProfileName): readonly 
   const steps = scenario.steps.map((s): Step => {
     const stdin: Expect = s.stdinContains === undefined ? {} : { stdinContains: s.stdinContains };
     // dev.17: a plan-check answer carries the design payload keys (`planCheck` act: an approve's design record defaulted).
-    if (s.role !== 'build') return { as: 'claude', expect: { ...judgment(s.role), ...stdin }, acts: [{ type: s.role === 'planCheck' ? 'planCheck' : 'emit', value: s.answer }] };
+    if (s.role !== 'build') return { as: 'claude', expect: { ...judgment(s.role), ...stdin }, acts: [{ type: s.role === 'planCheck' ? 'planCheck' : 'emit', value: { ordering: null, ...s.answer as Record<string, JsonValue> } }] };
     const acts = [...s.acts, { type: 'emit', value: BUILD_REPORT } as const];
     const expect = { ...buildExpect(profile, s.round), ...stdin };
     return profile === 'default' ? { as: 'codex', expect, acts } : { as: 'claude', expect, acts };

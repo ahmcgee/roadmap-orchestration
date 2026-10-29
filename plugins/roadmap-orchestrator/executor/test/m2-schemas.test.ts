@@ -1,5 +1,6 @@
 // M2 records (SCHEMAS.md "M2"): round-trips of every new or changed record and the validators' refusals.
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { describe, it } from 'node:test';
 import { type Envelope, type Event, type Fact, type LogRecord, parseEventLine, probeTargetKey, serializeEvent } from '../src/core/events.ts';
 import {
@@ -208,5 +209,38 @@ describe('M2 plan fields', () => {
     refuses({ ...base, capacity: { cpu: 0 }, units: [u('a')] }, 'plan.capacity.cpu');
     refuses({ ...base, resources: [{ name: 'estate', probe: tool, teardown: tool, pool: { size: 0 } }], units: [u('a')] }, 'plan.resources[0].pool.size');
     refuses({ ...base, units: [u('a', { origin: 'imported' })] }, 'plan.units[0].origin');
+  });
+});
+
+describe('ordering park records', () => {
+  const parked = (ordering: unknown) => fact({
+    kind: 'stage-outcome', unit, stage: 'plan-check', attempt: 2, outcome: 'infeasible', class: 'park', chargeable: false,
+    park: { class: 'operator', kind: 'design', ordering },
+  });
+  it('round-trips an explicit wait and its exact automatic wake; refuses missing, empty or duplicate blockers', () => {
+    roundTrip(event(parked({ blockers: ['u2', 'u3'] })));
+    roundTrip(event(parked(null)));
+    roundTrip(event(fact({ kind: 'unparked', unit, command: null, parkSeq: 2 })));
+    for (const ordering of [{}, { blockers: [] }, { blockers: ['u2', 'u2'] }]) refusesLine(parked(ordering), /blockers/);
+    refusesLine(fact({ kind: 'unparked', unit, command: null }), /parkSeq/);
+    refusesLine(fact({ kind: 'unparked', unit, command: cmd, parkSeq: 2 }), /parkSeq/);
+    refusesLine(fact({ kind: 'stage-outcome', unit, stage: 'candidate', attempt: 2, outcome: 'base-red', class: 'park', chargeable: false,
+      park: { class: 'operator', kind: 'env', ordering: { blockers: ['u2'] } } }), /ordering/);
+  });
+  it('an older park reads byte-for-byte as no ordering wait and warns once in a real reader process', () => {
+    const old = serializeEvent(event(fact({ kind: 'stage-outcome', unit, stage: 'plan-check', attempt: 2, outcome: 'infeasible', class: 'park', chargeable: false,
+      park: { class: 'operator', kind: 'design' } })));
+    const child = spawnSync(process.execPath, ['--input-type=module', '-e', `
+      import { parseEventLine, serializeEvent } from './src/core/events.ts';
+      import { orderingOf } from './src/park/ordering.ts';
+      const raw = process.argv[1];
+      for (let i = 0; i < 2; i++) {
+        const event = parseEventLine(raw.trimEnd());
+        if (orderingOf(event.fact.park) !== null) throw new Error('legacy park gained a wait');
+        if (serializeEvent(event) !== raw) throw new Error('legacy bytes changed');
+      }
+    `, old], { encoding: 'utf8' });
+    assert.equal(child.status, 0, child.stderr);
+    assert.equal((child.stderr.match(/upgrade default \(ordering\)/g) ?? []).length, 1);
   });
 });

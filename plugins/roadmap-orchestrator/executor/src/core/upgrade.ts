@@ -654,3 +654,9 @@ export function summitXhighTriple(triple: Triple): Triple {
 export function laneTimeoutDefault(): void {
   warnDefaulted('lane.timeoutMin', 'a lane without timeoutMin; retains the six-hour deadline backstop');
 }
+
+/** Ordering metadata was absent on older parks and judgment answers: never infer a wait from their prose. */
+export function orderingDefault(): null {
+  warnDefaulted('ordering', 'a park or judgment answer without ordering metadata; no automatic blocker wake');
+  return null;
+}

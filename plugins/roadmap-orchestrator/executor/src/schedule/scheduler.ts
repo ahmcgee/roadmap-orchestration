@@ -129,6 +129,7 @@
 // when nothing changes). Then, for every arc, `arc-completed{planRev, head, highWater, units}` (once while active) and
 // the terminal snapshot (parent `arc`, G8), so `gc` can seal it, and the run ends `complete`. The completion stays active while the plan rev and the
 // head are those it recorded (A20); an admitting apply or a reopen invalidates it, and the arc runs again.
+import { orderingOf, wakeOrdering } from '../park/ordering.ts';
 import type { CommandContext } from '../commands/apply.ts';
 import { applyCommand, applyControl } from '../commands/apply.ts';
 import { isControl, pollCommands, POLL_MS, readReceipt, writeReceipt } from '../commands/queue.ts';
@@ -314,13 +315,16 @@ export function decidedParent(view: JournalView, unit: UnitId): Parent {
   return { type: 'stage', unit, stage: f.stage, attempt: f.attempt };
 }
 
-/** Whether a parked unit waits for the architect: an operator park (a retryable one recovers by its probes). */
-const operatorPark = (view: JournalView, unit: UnitId): boolean => view.unit(unit).park?.park.class !== 'retryable';
+/** Whether a park waits for the architect: operator without an ordering wait (others recover by probes or publication). */
+const operatorPark = (view: JournalView, unit: UnitId): boolean => {
+  const park = view.unit(unit).park?.park ?? null;
+  return park?.class !== 'retryable' && orderingOf(park) === null;
+};
 
 /**
  * Whether a unit is settled for the end of an arc without the holistic layer: merged, cut, superseded, or parked for
  * the architect (an operator park). A retryable park is probed until it recovers, so it is not; nor is an active or
- * held unit.
+ * held unit, or an ordering park waiting for its blockers to merge.
  */
 export function unitSettled(view: JournalView, unit: UnitId): boolean {
   const s = view.unit(unit).status;
@@ -1376,6 +1380,8 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       drains = mutations.map((m) => ({ command: m.command.id, scope: m.scope }));
       // 2. Mutations whose scope is clear.
       startMutations(mutations);
+      // Ordering parks recover at the publication boundary through the ordinary unpark transition.
+      wakeOrdering(x.stage);
       // 3. Due probes.
       startProbes();
       // 4. A halted unit's, the schedule's and the holistic layer's needs-user; the holistic jobs; the end.
