@@ -404,10 +404,14 @@ describe('transitions', () => {
     for (const bad of [{ ...fact, unchargedLanesReds: 2 }, { ...fact, chargeable: true }, { ...fact, class: 'retry' as const }]) {
       assert.throws(() => fold(ARC, chain([{ type: 'fact', fact: bad }])), /certification allowance/);
     }
-    const { unchargedLanesReds: _counter, ...legacy } = fact;
-    const folded = fold(ARC, chain([{ type: 'fact', fact: { ...legacy, chargeable: true } }]));
-    assert.equal(folded.units[0]!.counters.chargeableFailures, 1);
-    assert.equal(folded.units[0]!.counters.unchargedLanesReds, 0);
+    for (const kind of ['red', 'not-certified', 'witnesses-missing'] as const) {
+      const { unchargedLanesReds: _counter, ...legacy } = outcomeFact(unit(), outcome('lanes', kind), 1);
+      assert.throws(() => fold(ARC, chain([{ type: 'fact', fact: legacy }])), /certification allowance/, `${kind}: counterless advancing red`);
+      assert.throws(() => fold(ARC, chain([{ type: 'fact', fact: { ...legacy, class: 'park', park: { class: 'operator', kind: 'env' } } }])), /certification allowance/, `${kind}: no steering pass`);
+      const folded = fold(ARC, chain([{ type: 'fact', fact: { ...legacy, chargeable: true } }]));
+      assert.equal(folded.units[0]!.counters.chargeableFailures, 1);
+      assert.equal(folded.units[0]!.counters.unchargedLanesReds, 0);
+    }
   });
 
   it('transitions.bound-3: the third chargeable failure parks, whatever its row says', () => {

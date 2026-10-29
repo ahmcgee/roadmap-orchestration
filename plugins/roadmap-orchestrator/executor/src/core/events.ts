@@ -694,7 +694,7 @@ export type StageOutcomeFact = { [S in OutcomeStage]: Readonly<{
   outcome: StageOutcomeKind<S>;
   class: OutcomeClass;
   chargeable: boolean;
-  /** Certification reds only: uncharged reds since the last charge, after this outcome. Absent on dev.31: 0. */
+  /** Certification reds only: uncharged reds since the last charge, after this outcome. Absent on dev.31 charged reds or steering parks: 0. */
   unchargedLanesReds?: number;
   park?: ParkRecord;
   cause?: HoldCause;

@@ -56,23 +56,23 @@ test('certification: limits.certifications=1 charges the first red and honors th
   } finally { r.journal.close(); }
 });
 
-for (const set of ['spec', 'suite'] as const) test(`certification: ${set} retries its previous red before build cadence and stops there`, T, async () => {
+for (const set of ['spec', 'suite'] as const) test(`certification: ${set} executes its previous red before build cadence after a repair changes every lane input`, T, async () => {
   const lanes = [{ id: 'fast', cadence: 'build' as const, argv: ['true'] },
-    { id: 'red', cadence: 'unit' as const, argv: ['node', '-e', "process.exit(require('node:fs').existsSync('src/mul.js') ? 1 : 0)"] },
+    { id: 'red', cadence: 'unit' as const, argv: ['node', '-e', "process.exit(require('node:fs').existsSync('src/mul.js') && !require('node:fs').existsSync('src/fixed.js') ? 1 : 0)"] },
     { id: 'tail', cadence: 'unit' as const, argv: ['true'] }];
-  const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), codexStep([], { argv: ['exec', 'resume'] })],
+  const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), codexStep([{ type: 'commit', message: 'repair', files: { 'src/fixed.js': 'export const fixed = true;\n' } }], { argv: ['exec', 'resume'] })],
     units: [{ id: 'u1', lanes: set === 'spec' ? lanes : [] }], suite: set === 'suite' ? lanes : [] });
   const r = contextFor(d);
   try {
     await stepUntil(r, 'u1', (f) => f.stage === 'lanes' && f.outcome === 'red');
     const first = r.journal.view.unit(U1).decided!.attempt;
-    await stepUntil(r, 'u1', (f) => f.stage === 'lanes' && f.attempt > first && f.outcome === 'red');
+    await stepUntil(r, 'u1', (f) => f.stage === 'lanes' && f.attempt > first && f.outcome === 'green');
     const second = r.journal.view.unit(U1).decided!.attempt;
     const spawns = intents(d.runDir, 'proc.spawn').filter((i) => i.kind === 'proc.spawn' && i.parent.type === 'stage' && i.parent.stage === 'lanes');
     const order = (attempt: number) => spawns.flatMap((i) => i.kind === 'proc.spawn' && i.parent.type === 'stage' && i.parent.attempt === attempt
       && i.expect.subject.purpose === 'lane' && i.expect.subject.set === set ? [i.expect.subject.lane] : []);
     assert.deepEqual([...new Set(order(first))], ['fast', 'red']);
-    assert.deepEqual([...new Set(order(second))], ['red']);
+    assert.deepEqual(order(second), ['red', 'fast', 'tail'], 'changed inputs force every lane to execute, with the previous red first');
   } finally { r.journal.close(); }
 });
 

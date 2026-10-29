@@ -33,13 +33,16 @@ resets it to 0, and parks if it reaches `bounds.chargeable`. Any other charge al
 existing transition is unchanged. A steered one-pass red still parks uncharged and leaves the allowance unchanged.
 
 New certification-red `stage-outcome` facts carry `unchargedLanesReds`, the count after their outcome. The journal
-checks it, chargeability and class against the allowance and chargeable bound. Old facts omit it: read-time default
-0 with `dev31UnchargedLanesRedsDefault`'s warning, preserving their recorded charges and decisions. No other outcome
+checks it, chargeability and class against the allowance and chargeable bound. Old facts omit it only for a charged
+red or a valid one-pass steering park: read-time default 0 with `dev31UnchargedLanesRedsDefault`'s warning, preserving
+their recorded charges and decisions. No other outcome
 carries the field. Fix prompts name the remaining uncharged allowance, including after restart. `PREVIOUS_RELEASE`
 is dev.31; upgrade cells cover a held named build reservation and a charged lanes red.
 
-The lanes stage runs the previous attempt's red lanes first within both its spec series and fast suite, then cadence
-order, stopping at the first red. Builds reserve only `@cpu`; resource-bearing or environment-backed build-cadence
+The lanes stage runs the latest completed attempt's red lanes first within both its spec series and fast suite,
+then cadence order, stopping at the first red. The fold's `completedLanes` excludes holds, including recovery holds
+that close crash-abandoned attempts; an incomplete attempt never supplies ordering evidence. Builds reserve only
+`@cpu`; resource-bearing or environment-backed build-cadence
 lanes are executor-only and omitted from builder lane lists. The plan/spec resource declarations remain the envelope
 checked at preflight, widening and apply. An adopted build keeps its journaled named reservation through teardown.
 Builds receive no pool-instance bindings. The final build report requests certification; development uses targeted
@@ -656,7 +659,8 @@ started before the latest `executor-started`, leaves `decided` and `interrupted`
 the abandoned attempt did), and sets the unit `held` while it or the arc is paused, else `active`.
 
 Certification-red outcomes add optional `unchargedLanesReds` (non-negative): the count after this outcome, required
-on new records and absent on dev.31 ones (read as 0, warned). It appears only on lanes `red`, `not-certified` and
+on new records and absent on valid dev.31 charged reds or steering parks (read as 0, warned). It appears only on
+lanes `red`, `not-certified` and
 `witnesses-missing`. The fold validates the allowance, charge and class; see "Turn-boundary certification" above.
 
 The fold derives each unit's `UnitState` from these facts through `afterStageOutcome` (`src/core/state.ts`),

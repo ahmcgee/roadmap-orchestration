@@ -166,7 +166,7 @@ import {
 } from './dispatch.ts';
 import { invocationDir, quiescent } from './invoke.ts';
 import {
-  type LaneRecord, type LaneRuntime, type Series, type VerificationTree, builderSuiteLanes, dirtyPaths, dirtySnapshot, laneOrder, laneRuntime, latestSpecSeries, laneRecordIn, seriesOrder, mapInForce, presentCheckouts, removeCheckout,
+  type LaneRecord, type LaneRuntime, type Series, type VerificationTree, builderSuiteLanes, dirtyPaths, dirtySnapshot, laneOrder, laneRuntime, laneRecordIn, seriesOrder, mapInForce, presentCheckouts, removeCheckout,
   LANE_DEADLINE_MS, type Reusable, removeVerificationTree, runLaneSeries, seriesEntry, specSeriesRoot, stageSuiteLanes,
 } from './lanes.ts';
 import { certifiedTree, docsOnlyCarry } from './docsonly.ts';
@@ -1438,7 +1438,7 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
     planCheckNotes: planCheckNotes(ctx, unit.id),
     fastLanes: activeBuildLanes(spec), suiteLanes: builderSuiteLanes(ctx.plan().suite.lanes, spec), evidenceDir: work, worktree: round.worktree, scope: effectiveScope(pinned),
     fixRound: call.fixRound === null ? null : { ...call.fixRound, directives: [...call.fixRound.directives,
-      `Certification allowance: ${allowance} uncharged red certifications remaining before the next charge. Run targeted checks, then return your final report to request the executor's full lanes stage.`] }, witnessChecks, milestones, browser: browser?.input ?? null, certifiedAt: certifiedTree(ctx, unit.id), handover: handed(call),
+      `Certification allowance: ${allowance} uncharged red certifications remaining before the next charge.`] }, witnessChecks, milestones, browser: browser?.input ?? null, certifiedAt: certifiedTree(ctx, unit.id), handover: handed(call),
   }, dispatch.triple.backend);
   const callFor = (prepared: PreparedRound) => (call: RoundCall): BackendCallSpec => ({
     unit: unit.id, parent,
@@ -1910,13 +1910,16 @@ function fastSuiteLanes(ctx: StageContext, spec: SpecM1, salvaged: Sha): readonl
   return [...regenerate, ...stageSuiteLanes(ctx.plan().suite.lanes, spec, forcedLanes(ctx.journal.view, spec))];
 }
 
-/** Reds in the unit's previous lanes attempt, excluding the suite's diagnostic base run. */
+/** Reds in the unit's latest completed lanes attempt, excluding holds and the suite's diagnostic base run. */
 function previousLaneReds(ctx: StageContext, unit: PlanUnit, spec: SpecM1): Readonly<{ spec: ReadonlySet<LaneId>; suite: ReadonlySet<LaneId> }> {
-  const previous = latestSpecSeries(ctx, unit.id);
-  if (previous === null) return { spec: new Set(), suite: new Set() };
+  const attempt = ctx.journal.view.completedLanes(unit.id);
+  if (attempt === null) return { spec: new Set(), suite: new Set() };
+  const previous: StageParent = { type: 'stage', unit: unit.id, stage: 'lanes', attempt };
   const path = verificationWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, previous.attempt);
   const created = ctx.journal.view.opsOf('worktree.create').find((i) => i.expect.path === path);
-  if (created === undefined || created.expect.checkout.type !== 'detached') throw new Error(`lanes ${unit.id}#${previous.attempt}: no detached verification checkout`);
+  // A completed attempt may park before running anything (for example a missing witness lane).
+  if (created === undefined) return { spec: new Set(), suite: new Set() };
+  if (created.expect.checkout.type !== 'detached') throw new Error(`lanes ${unit.id}#${previous.attempt}: no detached verification checkout`);
   const at = created.expect.checkout.at;
   const reds = (lanes: readonly LaneDef[], set: 'spec' | 'suite', root: AbsPath): ReadonlySet<LaneId> => new Set(lanes.filter((lane) =>
     laneRecordIn(ctx, previous, lane, set, at, root)?.verdict === 'fail').map((lane) => lane.id));

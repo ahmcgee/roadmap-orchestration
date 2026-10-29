@@ -725,6 +725,7 @@ export class Fold implements JournalView {
   #runOnly: readonly UnitId[] | null = null;
   /** Rank's seqs (F17): each stage-outcome fact's by `<unit>/<stage>#<attempt>`, each published ff's done, each unit's first naming. */
   readonly #outcomeSeqs = new Map<string, number>();
+  readonly #completedLanes = new Map<UnitId, number>();
   readonly #publications: Readonly<{ unit: UnitId; seq: number }>[] = [];
   readonly #addedSeqs = new Map<UnitId, number>();
   // M3
@@ -1082,13 +1083,15 @@ export class Fold implements JournalView {
         if (f.chargeable && failures + 1 >= bound && f.class !== 'park') {
           fail(`stage-outcome for ${f.unit} ${key} is chargeable failure ${failures + 1}, which parks the unit, but its class is ${f.class} (the unit's bound is ${bound})`);
         }
-        if (f.unchargedLanesReds !== undefined) {
+        if (certificationRed(f.stage, f.outcome)) {
           const state = existing?.state ?? newUnitState(f.unit, f.stage, null, null, boundsOfRecord(this.dispatchOf(f.unit)));
           const steered = state.steering !== null && f.class === 'park' && (f.outcome === 'red' || f.outcome === 'not-certified');
-          const charged = !steered && state.counters.unchargedLanesReds >= state.bounds.certifications - 1;
+          // dev.31 charged every certification red except a one-pass steering park. Absence is not an allowance bypass.
+          const charged = !steered && (f.unchargedLanesReds === undefined || state.counters.unchargedLanesReds >= state.bounds.certifications - 1);
           const count = steered ? state.counters.unchargedLanesReds : charged ? 0 : state.counters.unchargedLanesReds + 1;
           const cls = steered || (charged && failures + 1 >= bound) ? 'park' : 'advance';
-          if (f.chargeable !== charged || f.unchargedLanesReds !== count || f.class !== cls) fail(`stage-outcome for ${f.unit} ${key} violates its certification allowance`);
+          if (f.chargeable !== charged || (f.unchargedLanesReds !== undefined && f.unchargedLanesReds !== count) || f.class !== cls
+            || (steered && (f.park?.class !== 'operator' || f.park.kind !== 'env'))) fail(`stage-outcome for ${f.unit} ${key} violates its certification allowance`);
         }
         const status = existing?.state.status;
         if (status === 'cut' || status === 'superseded') fail(`stage-outcome for ${f.unit} ${key}, which is ${status}`);
@@ -1106,6 +1109,7 @@ export class Fold implements JournalView {
         const u = this.#unit(f.unit, f.stage);
         u.outcomes.add(key);
         this.#outcomeSeqs.set(`${f.unit}/${key}`, at.seq);
+        if (f.stage === 'lanes' && f.class !== 'hold') this.#completedLanes.set(f.unit, f.attempt);
         if (f.stage === 'lanes' && f.outcome === 'green') this.#greenLanes.set(f.unit, f.attempt);
         // M3: an entry's stage records its outcome (a hold keeps the entry, whose stage then runs again); a steer pass
         // ends where it parks, stops or retires the unit, or where its gate advances it.
@@ -2109,6 +2113,10 @@ export class Fold implements JournalView {
     const seq = this.#outcomeSeqs.get(`${unit}/${d.stage}#${d.attempt}`);
     if (seq === undefined) throw new Error(`unit ${unit}'s decided outcome ${d.stage}#${d.attempt} has no seq`);
     return seq;
+  }
+
+  completedLanes(unit: UnitId): number | null {
+    return this.#completedLanes.get(unit) ?? null;
   }
 
   publications(): readonly Readonly<{ unit: UnitId; seq: number }>[] {

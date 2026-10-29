@@ -137,6 +137,7 @@ export const CORPUS_AMENDMENT = 'corpus amendments (M4a CORPUS_AMENDMENT: after 
 export const BRIEF_ACK = 'brief ack (M4a CLI brief --ack: the pending marker, the ack commands under deterministic ids, the committed marker)';
 export const ANSWER_RECORD = 'owner answer (M4a CLI roadmap answer: the answer published write-once by link, latest k in force)';
 export const LANE_REUSE = 'lane reuse (M4a rev 3 N1 LANE_REUSE: a spec lane reused from a certified series, lane-reused keyed (parent, lane), then the remaining lanes)';
+export const LANE_PRIORITY = 'lane priority (certification: the first lane reused, then a spawn; ordering reads only a completed lanes attempt)';
 export const SERIES_CERTIFIED = 'series certificate (M4a rev 3 N1 SERIES_CERTIFIED: lanes, a clean census, the checkout\'s removal, then series-certified)';
 export const RED_CLASS = 'red class (M4a rev 3 N1 RED_CLASS: a red run\'s evidence and host.json, red.json write-once, then the rerun decision)';
 export const WITNESS_FILES = 'witness lane files (M4a rev 3 N3 WITNESS_FILES: <evidenceDir>/witness/<lane>.json per fast required lane, write-once, then the build call)';
@@ -1924,6 +1925,17 @@ export const MATRIX: readonly Row[] = [
         labels: ['lanes.after-reused'],
         recovery: 'the lane-reused fact durable, the lane\'s record not yet in the stage\'s ledger: nothing is open; the crashed attempt is abandoned and the restart reuses again from the same certified series (a second lane-reused, both from the one execution); the lane runs once overall, no backend call twice, the outcomes of an uncrashed run',
       },
+    },
+  },
+  {
+    row: LANE_PRIORITY,
+    test: 'test/lanes-rev3.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: { status: 'crash', labels: ['spawn.after-intent'], recovery: 'the first lane reused, the next spawn intent has no launch: recovery closes it and abandons the attempt; ordering reads the previous completed attempt, the first lane reuses again and the next lane runs' },
+      B3: { status: 'excluded', why: 'spawn act recovery is covered by the proc.spawn row; this row pins which attempt supplies ordering evidence' },
+      B4: { status: 'excluded', why: 'spawn completion recovery is covered by the proc.spawn row' },
+      B5: { status: 'crash', labels: ['lanes.after-reused'], recovery: 'the first lane reused before any verification checkout exists: the incomplete attempt supplies no ordering evidence, the restart reuses the first lane again and completes the remaining lanes' },
     },
   },
   {

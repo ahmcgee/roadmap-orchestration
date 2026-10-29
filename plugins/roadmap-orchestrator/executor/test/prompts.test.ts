@@ -25,7 +25,7 @@ import {
   CHECKPOINT_SCHEMA, CLUSTER_REVIEWS, GATE_SCHEMA, PLAN_CHECK_SCHEMA, ROLE_SCHEMAS, ROLE_VALIDATORS, type RoleOutputs, BUILD_SCHEMA,
   validateBuildOutput, validateCheckpointOutput, validateDecisionsFile, validateGateOutput, validatePackReviewOutput, validatePlanCheckOutput,
 } from '../src/prompts/schemas.ts';
-import { repeatRedDirective, smokeFixDirectives, witnessFixDirectives } from '../src/prompts/directives.ts';
+import { RESOLVE_DIRECTIVE, RESPEC_DIRECTIVE, RESPEC_FRESH_DIRECTIVE, STEER_DIRECTIVE, resolveUnmetDirective, repeatRedDirective, smokeFixDirectives, witnessFixDirectives } from '../src/prompts/directives.ts';
 import { arcStack, resolveRouting, seatsInForce } from '../src/routing/layers.ts';
 import { FRESH_ROLES, MODEL_IDS, PROFILES, ROLES, type Role, WALK_ROLES, atSeat } from '../src/routing/types.ts';
 
@@ -1324,6 +1324,14 @@ describe('M4a rev 3 prompts: executable checks, the checkpoint admits', () => {
     for (const needle of [/Cross-check each spec through its rules to the census/, /whose rule's census state is not obligation for it/, /naming a rule the census marks out-of-slice/,
       /do not pin the product's own clock seam/, /the existing tests the change affects included/, /real clock or the host time zone/, /fixed date the change invalidates/,
       /real wait in a fast lane/, /calls a helper instead of driving the real entry point/]) assert.match(sys, needle);
+  });
+
+  it('resolve, respec and steer directives request targeted checks and executor certification', () => {
+    for (const directive of [RESOLVE_DIRECTIVE, RESPEC_DIRECTIVE, RESPEC_FRESH_DIRECTIVE, STEER_DIRECTIVE,
+      resolveUnmetDirective([{ clause: 'A1', text: 'Implement the change.' }])]) {
+      assert.match(directive, /run targeted checks and return your report for executor certification/);
+      assert.doesNotMatch(directive, /run the fast lanes/);
+    }
   });
 
   it('fix-round directives: witnesses missing or failing name what requires them; smoke survivors; a repeated red is not flaky', () => {
