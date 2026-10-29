@@ -695,7 +695,8 @@ const DEV17_DEFAULTS = /^(lane\.tier\.(spec|suite|arc)|lane-rev\.tier\..+|plan-a
 
 /**
  * The lasting read a dev.20 arc warns for: `spec.design.kind`, a spec no approving plan-check has designed yet
- * (kind `module`), read so on dev.20 and HEAD alike. No fixture records flakes, so `flake-observed.on` is not allowed;
+ * (kind `module`), read so on dev.20 and HEAD alike; lanes lacking timeoutMin retain the six-hour backstop.
+ * No fixture records flakes, so `flake-observed.on` is not allowed;
  * summit-effort routing aliases emit no default warning. Legacy checkpoint skips are expected only by their cell.
  */
 const DEV20_LASTING = /^spec\.design\.kind$/;
@@ -722,7 +723,7 @@ function assertNoDefaultRead(p: Phase1, expected: readonly string[] = []): void 
   const allowed = p.release === DEV16_RELEASE ? DEV17_DEFAULTS : DEV20_LASTING;
   const kinds = [...hostLogs(p).matchAll(/roadmap: upgrade default \(([^)]+)\)/g)].map((m) => m[1]!);
   for (const kind of kinds) {
-    if (!expected.includes(kind) && !ISSUES_IGNORED.test(kind)) assert.match(kind, allowed, `HEAD read the ${p.release.version} arc with the ${kind} default`);
+    if (!expected.includes(kind) && !ISSUES_IGNORED.test(kind) && kind !== 'lane.timeoutMin') assert.match(kind, allowed, `HEAD read the ${p.release.version} arc with the ${kind} default`);
   }
   if (p.release === DEV16_RELEASE) assert.ok(kinds.includes('lane.tier.spec'), `HEAD read the ${p.release.version} spec lanes' tier as their cadence, and warned`);
 }
@@ -824,6 +825,7 @@ test('upgrade.stop-mid-build: HEAD continues the Codex thread the previous relea
     await teardown(scope);
   }
   assertFinished(f);
+  assert.match(hostLogs(p), /roadmap: upgrade default \(lane\.timeoutMin\): a lane without timeoutMin; retains the six-hour deadline backstop/, 'HEAD adopts lanes without the new limit and logs its default');
   const builds = f.calls.slice(SMOKE_CALLS).filter((call) => call.as === 'codex');
   assert.deepEqual(builds.map((b) => b.argv.slice(0, 3)), [['exec', 'resume', MID_BUILD_THREAD]], 'HEAD resumed the thread the previous release started, and started no fresh session');
   const gated = factsOf(f.after, 'judgment-inputs').filter((i) => i.stage === 'gate');
