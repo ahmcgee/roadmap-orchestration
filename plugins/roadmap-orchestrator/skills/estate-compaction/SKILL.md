@@ -78,9 +78,14 @@ Then give the owner the scale: the count of each kind and how much of it each ju
 
 There are five actions. Each one applies to particular kinds:
 
-- **retire**: a rule, obligation or ruling that no longer holds or no longer matters. Examples: about something the
-  product no longer has; a working assumption whose question is answered; overtaken by a later decision; trivially
-  true of any implementation.
+- **retire**: a rule, obligation or ruling that no longer holds, no longer matters, or is trivial.
+  - No longer holds or matters: about something the product no longer has; a working assumption whose question is
+    answered; overtaken by a later decision.
+  - Trivial: true of any reasonable implementation; a cosmetic preference no judgment should spend attention on; an
+    obligation witnessing a detail no failure would ever hinge on; a ruling that settled a one-off detail nothing
+    later depends on.
+
+  Retiring trivia gives up the demand itself, so "Gives up" names it.
 - **merge**: several rules, obligations or rulings that state one property, overlap, or where one implies another.
   The result is one replacement. Never merge a ruling that dispositions an obligation (`obligationDispositions`
   non-empty): the obligation's state names it.
@@ -89,9 +94,8 @@ There are five actions. Each one applies to particular kinds:
 - **fold**: a standing ruling that states a lasting truth about the target becomes a corpus rule. Rulings accumulate
   as patches; the corpus is where the target lives.
 - **resolve**: open debt that is obsolete (its code is gone, or another item or unit already covers it), that
-  duplicates another item, or that is trivial. Debt is substantive drag on later work. An item whose drag is
-  negligible, a nitpick that should have been released, never needed a unit: resolve it with "Gives up" naming
-  what stays unfixed.
+  duplicates another item, or that is trivial. Debt is substantive drag on later work, so an item whose drag is
+  negligible (a nitpick that should have been released) never needed a unit. "Gives up" names what stays unfixed.
 
 **The no-loss test**, for every merge, tighten and fold:
 1. List each property the originals demand: every testable consequence, every prohibition.
