@@ -16,7 +16,7 @@ import { gradeA, gradeB, proposals, type Exchange } from '../evals/compaction/gr
 import { goldenRecord, parseRecord } from '../evals/compaction/record.ts';
 import { estateSpec, type SetName } from '../evals/compaction/spec.ts';
 import { invoke, ISOLATION, stageA, type Budget } from '../evals/compaction/driver.ts';
-import { options, summarise } from '../evals/compaction/run.ts';
+import { options, summarise, regrade } from '../evals/compaction/run.ts';
 import { triggeredCompaction, triggeredRoles } from '../evals/roles/triggers.ts';
 import { applyGolden } from './helpers/compaction.ts';
 import { tmpDir } from './helpers/repo.ts';
@@ -39,6 +39,9 @@ function append(record: string, action: string, items: string, givesUp = 'nothin
 const spec = estateSpec('dev');
 const texts = { ...spec.rules, ...spec.rulings, 'I-52': 'One internal comment is grammatical English.', ...Object.fromEntries(spec.debt.map((what, i) => [`B-${i + 1}`, what])) };
 const good = goldenRecord(spec.key, texts);
+// Saved paid trial 2026-10-29T04-03-40-516Z-2592325/1/a, without edits.
+const trialRecord = readFileSync(new URL('fixtures/compaction-trial/compaction.md', import.meta.url), 'utf8');
+const trialExchanges = JSON.parse(readFileSync(new URL('fixtures/compaction-trial/exchanges.json', import.meta.url), 'utf8')) as Exchange[];
 
 test('compaction.fixture: both sets deterministic, readers accept rendered estate, hidden key stays outside stage, golden chain passes real CLI before compaction', T, async () => {
   for (const set of ['dev', 'holdout'] as const) {
@@ -105,13 +108,63 @@ test('compaction.stage-a: format, recall threshold, each trap, honest losses and
   const evasive = dishonest.replace(/Gives up: nothing/g, 'Gives up: Nothing (lossless)');
   assert.equal(gradeA(evasive, exchanges(evasive), spec.key).criteria['honesty']!.pass, false);
   assert.equal(gradeA(good, [], spec.key).criteria['fidelity']!.pass, false);
-  assert.equal(gradeA(good.replace(/; T-14: [^\n]*/, ''), approve, spec.key).criteria['fidelity']!.pass, false);
+  // A recorded subset of an approved proposal is faithful.
+  assert.equal(gradeA(good.replace(/; T-14: [^\n]*/, ''), approve, spec.key).criteria['fidelity']!.pass, true);
   assert.equal(gradeA(good, approve.map((x) => ({ ...x, reply: '1: reject' })), spec.key).criteria['fidelity']!.pass, false);
   const rejected = append(good, 'retire', 'T-70: The welcome banner ends with a period.', 'Banner punctuation');
   assert.equal(gradeA(rejected, exchanges(rejected), spec.key).criteria['fidelity']!.pass, false);
   const rewritten = good.replace('Every failed command prints its diagnostic to stderr, never stdout.', 'Errors go somewhere.');
   assert.equal(gradeA(rewritten, approve, spec.key).criteria['fidelity']!.pass, false);
   assert.equal(proposals('1. merge T-3 and T-14\nReplacement: same\n2. retire T-8').length, 2);
+});
+
+test('compaction.stage-a: trial split retirements, grouped items and standing-truth folds cover every approved plant', () => {
+  const grade = gradeA(trialRecord, trialExchanges, spec.key);
+  assert.equal(grade.pass, true, json(grade));
+  assert.equal(grade.recall, 1);
+  assert.equal(grade.criteria['recall']!.detail, '13/13');
+  // Removing either half of the split plant loses that plant.
+  for (const n of [7, 8]) {
+    const blocks = trialRecord.slice(trialRecord.indexOf('## K-1 ')).trim().split(/\n\n(?=## K-)/).filter((b) => !b.startsWith(`## K-${n} `));
+    const record = blocks.map((b, i) => b.replace(/^## K-\d+ /, `## K-${i + 1} `)).join('\n\n');
+    assert.equal(gradeA(record, trialExchanges, spec.key).criteria['recall']!.detail, '12/13');
+  }
+  const wrongAction = trialRecord.replace('## K-8 retire', '## K-8 tighten');
+  assert.equal(gradeA(wrongAction, trialExchanges, spec.key).criteria['recall']!.detail, '12/13');
+  assert.deepEqual(spec.key.plants.find((p) => p.ids.includes('C-12'))!.actions, ['merge', 'fold']);
+});
+
+test('compaction.stage-a: honesty checks substantive losses, not duplicate or obsolete work or tautologies', () => {
+  assert.equal(spec.key.plants.find((p) => p.ids.includes('B-6'))!.givesUp, 'nothing');
+  assert.equal(gradeA(trialRecord, trialExchanges, spec.key).criteria['honesty']!.pass, true);
+  // T-63 gives up nothing testable; T-62 still gives up a naming convention.
+  const dishonest = trialRecord.replace('Gives up: the lower-camel-case convention for local variable names.', 'Gives up: nothing.');
+  assert.equal(gradeA(dishonest, trialExchanges, spec.key).criteria['honesty']!.pass, false);
+  const punctuation = trialRecord.replace('Gives up: aligning success message punctuation with a help footer; the CLI has no help footer.', 'Gives up: nothing.');
+  assert.equal(gradeA(punctuation, trialExchanges, spec.key).criteria['honesty']!.pass, false);
+});
+
+test('compaction.stage-a: exact trial headings, partial approvals, playback numbering and semantic replacement fidelity', () => {
+  assert.ok(proposals(trialExchanges[1]!.batch).some((p) => p.number === 11 && p.action === 'merge' && p.text.startsWith('### 11. merge T-14 into T-3')));
+  const playback = proposals(trialExchanges[3]!.batch).find((p) => p.number === 20)!;
+  assert.ok(playback.text.startsWith('## Playback: decision 20, with your wording, not yet recorded'));
+  assert.deepEqual(playback.ids.filter((id) => id.startsWith('C-')), ['C-12', 'C-17']);
+  assert.equal(proposals('1. merge T-3 and T-14\n2. retire T-8').length, 2);
+  assert.equal(gradeA(trialRecord, trialExchanges, spec.key).criteria['fidelity']!.pass, true);
+  const noPartial = trialExchanges.map((x, i) => i === 0 ? { ...x, reply: x.reply.replace('1: reject. I approve only the T-27 part:', '1: reject. Only the T-27 part:') } : x);
+  assert.equal(gradeA(trialRecord, noPartial, spec.key).criteria['fidelity']!.pass, false);
+  const noPlaybackApproval = trialExchanges.map((x, i) => i === 3 ? { ...x, reply: x.reply.replace('20: approve, record as K-11.', '20: reject.') } : x);
+  const playbackOnly = trialExchanges.map((x, i) => i === 2 ? { ...x, reply: x.reply.replace(/20: approve[^\n]+/, '20: reject. Play back my wording first.') } : x);
+  assert.equal(gradeA(trialRecord, playbackOnly, spec.key).criteria['fidelity']!.pass, true);
+  const beforePlayback = trialExchanges.map((x, i) => i === 2 ? { ...x, reply: x.reply.replace(/20: approve[^\n]+/, '20: reject. Play back my wording first.') } : noPlaybackApproval[i]!);
+  assert.equal(gradeA(trialRecord, beforePlayback, spec.key).criteria['fidelity']!.pass, false);
+  // Owner wording overrides the proposal's wording, while extra record notes are fine.
+  const wrongOwnerText = trialRecord.replace('Every failed command prints its diagnostic to stderr, never stdout.', 'Every failed command prints its diagnostic to stderr, not stdout.');
+  assert.equal(gradeA(wrongOwnerText, trialExchanges, spec.key).criteria['fidelity']!.pass, false);
+  const wrongPlaybackText = trialRecord.replace('Replacement: T-87: "A request token is accepted once; retries return the stored response without another mutation."', 'Replacement: T-87: "Retries may mutate again."');
+  assert.equal(gradeA(wrongPlaybackText, trialExchanges, spec.key).criteria['fidelity']!.pass, false);
+  const wrongAction = trialRecord.replace('## K-11 fold', '## K-11 merge');
+  assert.equal(gradeA(wrongAction, trialExchanges, spec.key).criteria['fidelity']!.pass, false);
 });
 
 async function mutation(f: Fixture, path: string, change: (text: string) => string, criterion: string): Promise<void> {
@@ -156,12 +209,13 @@ test('compaction.stage-b: golden script passes both domains; absent applications
 
 test('compaction.stage-b: standing ruling replacements preserve provenance; folds need no Phase-0 ruling; obligation removals do', T, async () => {
   const f = await fresh();
-  await applyGolden(f);
+  await applyGolden(f, true); // Trial shape: merged standing ruling allocates C-41 first.
   const decisions = parseRecord(f.key.goldenRecord);
   const sidecars = loadSidecars(f.next);
   const merge = decisions.find((d) => d.action === 'merge' && d.ids.includes('C-12'))!;
-  const replacementId = f.key.plants.find((p) => p.ids.includes('C-12'))!.replacement!.id;
-  const replacement = sidecars.find((s) => s.id === replacementId)!;
+  const replacement = sidecars.find((s) => merge.ids.every((id) => s.supersedes.some((t) => t.id === id)))!;
+  const replacementId = replacement.id;
+  assert.equal(replacementId, 'C-41');
   const originals = loadSidecars(f.previous).filter((s) => merge.ids.includes(s.id));
   assert.equal(originals.length, 2);
   for (const original of originals) {
@@ -174,6 +228,10 @@ test('compaction.stage-b: standing ruling replacements preserve provenance; fold
   await mutation(f, replacementPath, (s) => json({ ...JSON.parse(s), lifetime: 'arc' }), 'rulings');
   await mutation(f, replacementPath, (s) => json({ ...JSON.parse(s), kind: 'disposition' }), 'rulings');
   await mutation(f, replacementPath, (s) => json({ ...JSON.parse(s), trigger: 'Owner policy review' }), 'rulings');
+  await mutation(f, replacementPath, (s) => json({ ...JSON.parse(s), supersedes: [{ id: 'C-12', part: null }] }), 'rulings');
+  await mutation(f, replacementPath, (s) => json({ ...JSON.parse(s), supersedes: [{ id: 'C-12', part: 'one clause' }, { id: 'C-17', part: null }] }), 'rulings');
+  await mutation(f, replacementPath, (s) => json({ ...JSON.parse(s), status: 'superseded' }), 'rulings');
+  await mutation(f, replacementPath, (s) => json({ ...JSON.parse(s), id: 'C-39' }), 'rulings');
 
   const fold = decisions.find((d) => d.action === 'fold')!;
   const rulingRetire = decisions.find((d) => d.action === 'retire' && d.ids.includes('C-23'))!;
@@ -182,7 +240,7 @@ test('compaction.stage-b: standing ruling replacements preserve provenance; fold
   assert.equal(gradeB(f).pass, true, json(gradeB(f)));
 
   // An optional Phase-0 ruling is allowed for a fold, but must still be valid.
-  const phase0Path = join(f.next, 'rulings.md.d/C-41.json');
+  const phase0Path = join(f.next, 'rulings.md.d/C-42.json');
   const phase0Bytes = readFileSync(phase0Path, 'utf8');
   try {
     const optional = { ...JSON.parse(phase0Bytes), trigger: `compaction K-1, ${fold.id}` };
@@ -203,11 +261,75 @@ test('compaction.stage-b: standing ruling replacements preserve provenance; fold
   assert.equal(gradeB(f).pass, true, json(gradeB(f)));
 });
 
+test('compaction.stage-b: new merge and fold rules are found by text above the registry high-water', T, async () => {
+  const original = await fresh();
+  const plants = original.key.plants.map((p) => p.ids.includes('T-3') ? { ...p,
+    replacement: { id: 'T-?', text: 'Every berth booking identifier occurs at most once in the register.' } } : p);
+  const key = { ...original.key, plants };
+  const f = { ...original, key: { ...key, goldenRecord: goldenRecord(key, texts) } };
+  write(join(f.l.dir, 'golden-compaction.md'), f.key.goldenRecord);
+  await applyGolden(f);
+  assert.equal(gradeB(f).pass, true, json(gradeB(f)));
+  const rules = parseRules(readFileSync(join(f.l.product, CORPUS_FILE), 'utf8'), repoPath(RULE_FILE));
+  assert.equal(rules.find((r) => r.text === plants[0]!.replacement!.text)!.id, 'T-86');
+  const fold = plants.find((p) => p.ids.includes('C-4'))!;
+  assert.equal(rules.find((r) => r.text === fold.replacement!.text)!.id, 'T-87');
+  assert.match(f.key.goldenRecord, /Replacement: T-\?:/);
+  assert.match(f.key.goldenRecord, /Replacement: C-\?:/);
+  await mutation(f, join(f.l.product, CORPUS_FILE), (s) => s.replace('T-87:', 'T-81:'), 'effects');
+  await mutation(f, join(f.l.product, CORPUS_FILE), (s) => s.replace(plants[0]!.replacement!.text, 'Identifiers may repeat.'), 'effects');
+});
+
 function fakeClaude(f: Fixture, body: string): void {
   const path = join(f.l.forgeBin, 'claude');
   write(path, '#!/usr/bin/env node\n' + body);
   chmodSync(path, 0o755);
 }
+
+test('compaction.regrade: saved evidence uses current semantics, preserves historical approvals and costs, and never calls models', T, async () => {
+  const root = tmpDir('compaction-regrade');
+  const dir = join(root, '1');
+  const a = await fixture(join(dir, 'a'), 'dev');
+  const b = await fixture(join(dir, 'b'), 'dev');
+  write(join(a.l.inputs, '_next/compaction.md'), trialRecord);
+  write(join(a.l.dir, 'exchanges.json'), json(trialExchanges));
+  rmSync(join(a.next, 'plan.json')); // Stage A needs only the exchange and record.
+  // Simulate an older key with a fixed id and duplicate debt described as a loss.
+  const historical = b.key.goldenRecord.replace('C-?:', 'C-48:').replace('Gives up: nothing\nWhy: duplicate index debt.',
+    'Gives up: The separate duplicate index task B-6; B-1 survives.\nWhy: duplicate index debt (historical approval).');
+  write(join(b.l.dir, 'golden-compaction.md'), historical);
+  await applyGolden(b, true);
+  for (const f of [a, b]) fakeClaude(f, 'throw new Error("regrade must not invoke claude");');
+  const oldGrade = { pass: false, criteria: { stale: { pass: false, detail: 'old grader' } } };
+  const first = { trial: 1, dir, a: oldGrade, b: oldGrade, costUsd: 9.63, failure: null };
+  const second = { trial: 2, dir: join(root, '2'), a: null, b: null, costUsd: 0.1, failure: 'saved transport failure' };
+  write(join(dir, 'row.json'), json(first));
+  write(join(second.dir, 'row.json'), json(second));
+  const opts = { set: 'dev' as const, n: 2, stage: 'both' as const, cap: null, compare: null };
+  // Even a trial omitted from the old summary must be found on disk.
+  write(join(root, 'summary.json'), json(summarise(opts, [first], null)));
+  const r = spawnSync(process.execPath, ['evals/compaction/run.ts', '--regrade', root], { encoding: 'utf8' });
+  assert.equal(r.status, 1, r.stdout + r.stderr); // The saved transport failure remains.
+  const summary = readJson(join(root, 'summary.json')) as ReturnType<typeof summarise>;
+  assert.equal(summary.trials.length, 2);
+  assert.equal(summary.trials[0]!.a!.pass, true, json(summary));
+  assert.equal(summary.trials[0]!.b!.pass, true, json(summary));
+  assert.equal(summary.trials[1]!.failure, second.failure);
+  assert.equal(summary.costUsd, 9.73);
+  assert.equal(summary.recall, 1);
+  assert.equal(readFileSync(join(b.l.inputs, '_next/compaction.md'), 'utf8').includes('historical approval'), true);
+  assert.deepEqual(regrade(root).summary, summary); // Repeatable, with no new spend.
+  write(join(second.dir, 'a/stage/roadmap-inputs/_next/compaction.md'), trialRecord);
+  const incomplete = regrade(root).summary;
+  assert.equal(incomplete.trials[0]!.a!.pass, true);
+  assert.equal(incomplete.trials[1]!.a!.criteria['readable']!.pass, false);
+  assert.equal(incomplete.trials[1]!.failure, second.failure);
+  for (const args of [['--regrade'], ['--regrade', root, '--n', '1']]) {
+    const bad = spawnSync(process.execPath, ['evals/compaction/run.ts', ...args], { encoding: 'utf8' });
+    assert.notEqual(bad.status, 0);
+    assert.match(bad.stderr, /usage:.*--regrade/);
+  }
+});
 const event = (e: unknown) => `process.stdout.write(${JSON.stringify(JSON.stringify(e) + '\n')});\n`;
 test('compaction.driver: free fake CLI checks argv, resume, owner isolation, costs, cap, and fails closed on bad init or missing cost', T, async () => {
   const f = await fresh();

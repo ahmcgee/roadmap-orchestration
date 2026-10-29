@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { sha256Hex } from '../../src/core/json.ts';
 import { pinSha256 } from '../../src/corpus/pin.ts';
 import { ruleTextSha256 } from '../../src/corpus/rules.ts';
+import { parseRulesRegistryBlock } from '../../src/docs/invariants.ts';
 import { parseObligations, parseRulingSidecar } from '../../src/holistic/types.ts';
 import { parsePhase0Record } from '../../src/phase0/types.ts';
 import { parseRulings } from '../../src/spec/rulings.ts';
@@ -11,7 +12,7 @@ import { CORPUS_FILE, git, json, loadSidecars, obligation, pin, readJson, sideca
 import { parseRecord } from '../../evals/compaction/record.ts';
 
 type Obj = Record<string, unknown>;
-export async function applyGolden(f: Fixture): Promise<void> {
+export async function applyGolden(f: Fixture, replacementsFirst = false): Promise<void> {
   const decisions = parseRecord(readFileSync(join(f.l.dir, 'golden-compaction.md'), 'utf8'));
   const previous = parseObligations(readJson(join(f.next, 'obligations.json')));
   let obligations = [...previous.obligations];
@@ -22,10 +23,14 @@ export async function applyGolden(f: Fixture): Promise<void> {
   const phase0 = JSON.parse(json(parsePhase0Record(readJson(join(f.next, 'phase0.json'))))) as Obj;
   const curation = phase0['curation'] as Obj[];
   const debt = phase0['debt'] as { id: string; disposition: unknown }[];
-  let nextC = 41;
-  let nextI = 61;
+  let nextC = Math.max(...parseRulings(readFileSync(join(f.previous, 'rulings.md'), 'utf8'), 'rulings.md').map((r) => Number(r.id.slice(2)))) + 1;
+  let nextI = Math.max(...parseObligations(readJson(join(f.previous, 'obligations.json'))).obligations.map((o) => Number(o.id.slice(2)))) + 1;
+  let nextT = parseRulesRegistryBlock(git(f.l.product, 'show', `${f.previousHead}:.roadmap/invariants.md`))!.highWater + 1;
+  const allocated = new Map(replacementsFirst ? decisions.filter((d) => d.ids[0]?.startsWith('C-') && ['merge', 'tighten'].includes(d.action)).map((d) => [d.id, `C-${nextC++}`]) : []);
   for (const d of decisions) {
-    const p = f.key.plants.find((p) => p.ids.every((id) => d.ids.includes(id)))!;
+    const plant = f.key.plants.find((p) => p.ids.every((id) => d.ids.includes(id)))!;
+    const p = { ...plant, replacement: plant.replacement === null ? null : { ...plant.replacement,
+      id: plant.replacement.id === 'T-?' ? `T-${nextT++}` : plant.replacement.id === 'C-?' ? allocated.get(d.id) ?? `C-${nextC}` : plant.replacement.id } };
     const kind = p.ids[0]![0];
     let removed = obligations.filter((o) => p.ids.includes(o.id) || (kind === 'T' && p.ids.includes(o.rule?.id ?? ''))).map((o) => o.id);
     if (d.action === 'tighten') removed = [];
@@ -48,6 +53,7 @@ export async function applyGolden(f: Fixture): Promise<void> {
         sidecars = sidecars.map((s) => parseRulingSidecar({ ...s, docRefs: s.docRefs.map((ref) => 'rule' in ref && ref.rule === p.ids[0] ? { ...ref, textSha256: ruleTextSha256(p.replacement!.text) } : ref) }));
       }
       if (d.action === 'merge') {
+        if (!p.ids.includes(p.replacement!.id)) corpus = corpus.replace('\n```\n', `\n${p.replacement!.id}: ${p.replacement!.text}\n\`\`\`\n`);
         const id = `I-${nextI++}`;
         obligations.push(parseObligations({ ...previous, obligations: [obligation(id, p.replacement!.id, p.replacement!.text)], mapping: { paths: [] }, census: [{ rule: p.replacement!.id, state: { type: 'obligation', id } }] }).obligations[0]!);
         census.push({ rule: p.replacement!.id as typeof census[number]['rule'], state: { type: 'obligation', id: id as typeof obligations[number]['id'] } });

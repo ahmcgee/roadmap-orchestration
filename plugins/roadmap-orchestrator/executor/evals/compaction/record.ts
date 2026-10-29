@@ -29,7 +29,7 @@ export function parseRecord(text: string): readonly Decision[] {
 export function goldenRecord(key: Key, texts: Readonly<Record<string, string>>): string {
   return key.plants.filter((p) => p.approved).map((p, i) => [
     `## K-${i + 1} ${p.actions[0]}`, `Items: ${p.ids.map((id) => `${id}: ${texts[id]}`).join('; ')}`,
-    `Replacement: ${p.replacement === null ? 'none' : `${p.replacement.id}: ${p.replacement.text}`}`,
+    `Replacement: ${p.replacement === null ? 'none' : `${p.replacement.id}: "${p.replacement.text}"`}`,
     `Gives up: ${p.givesUp}`, `Why: ${p.name}.`, 'Approved: 2026-10-01',
   ].join('\n')).join('\n\n') + '\n';
 }

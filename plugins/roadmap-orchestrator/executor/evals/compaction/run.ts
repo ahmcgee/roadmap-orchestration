@@ -1,8 +1,10 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { trial, type Budget, type Stage, type Trial } from './driver.ts';
-import { json, write } from './fixture.ts';
-import { setName, type SetName } from './spec.ts';
+import { layout } from '../m4a/layout.ts';
+import { json, readJson, write, type Fixture } from './fixture.ts';
+import { gradeA, gradeB, type Exchange, type Grade } from './grade.ts';
+import { estateSpec, setName, type SetName } from './spec.ts';
 
 export type Options = Readonly<{ set: SetName; n: number; stage: Stage; cap: number | null; compare: string | null }>;
 export function options(args: readonly string[]): Options {
@@ -49,8 +51,60 @@ export async function run(opts: Options): Promise<{ path: string; summary: Summa
   write(path, json(summary));
   return { path, summary };
 }
+
+/** Reuse saved evidence and the current key; never stage a fixture or invoke a model. */
+export function regrade(dir: string): { path: string; summary: Summary } {
+  const root = resolve(dir);
+  const path = join(root, 'summary.json');
+  const previous = readJson(path) as Summary;
+  if (previous.schema !== 'roadmap/compaction-eval') throw new Error('expected a compaction summary');
+  const set = setName(previous.set);
+  const rows = readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory() && /^[1-9]\d*$/.test(d.name))
+    .sort((a, b) => Number(a.name) - Number(b.name)).map((d): Trial => {
+      const trialDir = join(root, d.name);
+      const saved = readJson(join(trialDir, 'row.json')) as Trial;
+      const restoredB = (): Fixture => {
+        const l = layout(join(trialDir, 'b'));
+        const next = join(l.inputs, 'arc-next');
+        const plan = readJson(join(next, 'plan.json')) as { chain: { previousArc: string; previousHead: string } };
+        // Grade the record actually handed to Phase 0, including old key wording.
+        // Current semantic expectations must not rewrite that historical approval.
+        const key = { ...estateSpec(set).key, goldenRecord: readFileSync(join(l.dir, 'golden-compaction.md'), 'utf8') };
+        return { l, key, next, previous: join(l.inputs, plan.chain.previousArc), previousHead: plan.chain.previousHead };
+      };
+      const checked = (grade: () => Grade): Grade => {
+        try { return grade(); }
+        catch (e) { return { pass: false, criteria: { readable: { pass: false, detail: String(e) } } }; }
+      };
+      let a: Grade | null = null, b: Grade | null = null;
+      if (previous.stage !== 'b' && existsSync(join(trialDir, 'a/stage'))) {
+        a = checked(() => {
+          const l = layout(join(trialDir, 'a'));
+          const record = join(l.inputs, '_next/compaction.md');
+          return gradeA(existsSync(record) ? readFileSync(record, 'utf8') : '', readJson(join(l.dir, 'exchanges.json')) as Exchange[], estateSpec(set).key);
+        });
+      }
+      if (previous.stage !== 'a' && existsSync(join(trialDir, 'b/stage'))) b = checked(() => gradeB(restoredB()));
+      const row = { ...saved, trial: Number(d.name), dir: trialDir, a, b };
+      write(join(trialDir, 'row.json'), json(row));
+      return row;
+    });
+  let summary = summarise({ set, n: previous.requested, stage: previous.stage, cap: null, compare: null }, rows, null);
+  if (previous.comparison) {
+    const devRecall = previous.comparison.devRecall;
+    const passRate = rows.length ? rows.filter((t) => t.b?.pass).length / rows.length : 0;
+    const stageB = previous.comparison.stageB === null ? null : { ...previous.comparison.stageB, passRate, pass: passRate >= previous.comparison.stageB.devPassRate - 0.15 };
+    const comparison = { devRecall, gap: devRecall === null || summary.recall === null ? null : devRecall - summary.recall, stageB,
+      pass: (previous.stage === 'b' || (devRecall !== null && summary.recall !== null && summary.recall >= devRecall - 0.15)) && (stageB?.pass ?? true) };
+    summary = { ...summary, comparison, pass: summary.pass && comparison.pass };
+  }
+  write(path, json(summary));
+  return { path, summary };
+}
 if (import.meta.main) {
-  const r = await run(options(process.argv.slice(2)));
+  const args = process.argv.slice(2);
+  if (args[0] === '--regrade' && (args.length !== 2 || !args[1])) throw new Error('usage: node evals/compaction/run.ts --regrade <run dir>');
+  const r = args[0] === '--regrade' ? regrade(args[1]!) : await run(options(args));
   process.stdout.write(json({ summary: r.path, pass: r.summary.pass, costUsd: r.summary.costUsd }));
   process.exitCode = r.summary.pass ? 0 : 1;
 }

@@ -5,7 +5,9 @@ export type SetName = 'dev' | 'holdout';
 export type Action = 'retire' | 'merge' | 'tighten' | 'fold' | 'resolve';
 export type Plant = Readonly<{
   name: string; ids: readonly string[]; actions: readonly Action[]; approved: boolean;
-  givesUp: string; trivia: boolean; replacement: Readonly<{ id: string; text: string }> | null;
+  // Only these ids give up a substantive demand: a split tautology or already
+  // completed/duplicate work must not inherit another item's loss.
+  givesUp: string; lossIds: readonly string[]; trivia: boolean; replacement: Readonly<{ id: string; text: string }> | null;
 }>;
 export type Key = Readonly<{
   set: SetName; domain: string; goldenRecord: string; plants: readonly Plant[];
@@ -89,22 +91,25 @@ export function estateSpec(set: SetName): EstateSpec {
   debt[1] = `Remove the retry queue in the ${oldModule}.`;
   debt[5] = `Index ${commands[0]} record lookup; B-1 already tracks the same index.`;
   debt[10] = 'Align the success message punctuation with the help footer.';
-  const plant = (name: string, ids: string[], actions: Action[], givesUp: string, replacement: Plant['replacement'] = null, trivia = false, approved = true): Plant =>
-    ({ name, ids, actions, givesUp, replacement, trivia, approved });
+  const plant = (name: string, ids: string[], actions: Action[], givesUp: string, replacement: Plant['replacement'] = null, trivia = false, approved = true, lossIds = givesUp === 'nothing' ? [] : ids): Plant =>
+    ({ name, ids, actions, givesUp, lossIds, replacement, trivia, approved });
   const plants = [
     plant('identifier restatements', ['T-3', 'T-14'], ['merge'], 'nothing', { id: 'T-3', text: rules['T-3']! }),
     plant('subsumed date check', ['T-27'], ['retire', 'merge'], 'nothing'),
-    plant('removed module', ['T-8'], ['retire'], `Ten-minute retries in the removed ${oldModule}.`),
-    plant('answered assumption', ['T-33'], ['retire', 'tighten'], 'The superseded dispatch cutoff assumption P-1.'),
+    plant('removed module', ['T-8'], ['retire'], `Ten-minute retries in the removed ${oldModule}.`, null, false, true, []),
+    plant('answered assumption', ['T-33'], ['retire', 'tighten'], 'The superseded dispatch cutoff assumption P-1.', null, false, true, []),
     plant('wordy diagnostic rule', ['T-49'], ['tighten'], 'nothing', { id: 'T-49', text: 'Every failed command prints its diagnostic to stderr, never stdout.' }),
-    plant('cosmetic variable names', ['T-62', 'T-63'], ['retire'], 'The lower camel case requirement for internal local variable names and the demand that the command execute program instructions.', null, true),
+    plant('cosmetic variable names', ['T-62', 'T-63'], ['retire'], 'The lower camel case requirement for internal local variable names and the demand that the command execute program instructions.', null, true, true, ['T-62']),
     plant('banner punctuation', ['T-70'], ['retire'], 'The requirement for a period on the banner or footer.', null, true, false),
     plant('comment witness detail', ['I-52'], ['retire'], 'A separate test demanding grammatical English in one internal comment.', null, true),
-    plant('archive standing truth', ['C-4'], ['fold'], 'nothing', { id: 'T-86', text: rulings['C-4']! }),
-    plant('request token overlap', ['C-12', 'C-17'], ['merge'], 'nothing', { id: 'C-48', text: 'A request token is accepted once; retries return the stored response without another mutation.' }),
+    plant('archive standing truth', ['C-4'], ['fold'], 'nothing', { id: 'T-?', text: rulings['C-4']! }),
+    // Of the five actions, these lasting overlapping truths permit either one
+    // standing replacement ruling or one corpus rule. Other plants retain their
+    // kind-specific actions (debt resolves, trivia retires, verbose text tightens).
+    plant('request token overlap', ['C-12', 'C-17'], ['merge', 'fold'], 'nothing', { id: 'C-?', text: 'A request token is accepted once; retries return the stored response without another mutation.' }),
     plant('demo slide choice', ['C-23'], ['retire'], 'The first demo slide template requirement.', null, true),
-    plant('obsolete queue debt', ['B-2'], ['resolve'], `Cleanup of the removed ${oldModule} retry queue.`),
-    plant('duplicate index debt', ['B-6'], ['resolve'], 'The separate duplicate index task B-6; B-1 survives.'),
+    plant('obsolete queue debt', ['B-2'], ['resolve'], `Cleanup of the removed ${oldModule} retry queue.`, null, false, true, []),
+    plant('duplicate index debt', ['B-6'], ['resolve'], 'nothing'),
     plant('punctuation debt', ['B-11'], ['resolve'], 'Success message punctuation stays inconsistent with the help footer.', null, true),
   ];
   const sentence = (text: string): string => `${text.replace(/\.+$/, '')}.`;
