@@ -43,9 +43,10 @@ export const TRIGGERS: Readonly<Record<EvalRole, readonly string[]>> = {
 /** Paths a role's globs match that do not trigger it. */
 const EXCLUDED: Readonly<Partial<Record<EvalRole, readonly string[]>>> = { walkthrough: POLISH_MODULES };
 
-/** The roles `paths` (relative to executor/) trigger, in TRIGGERS order. */
+/** The roles `paths` (relative to executor/) trigger, in TRIGGERS order. This file only chooses evals and runs none,
+ * so its own changes trigger nothing. */
 export function triggeredRoles(paths: readonly string[]): readonly EvalRole[] {
-  return (Object.keys(TRIGGERS) as EvalRole[]).filter((role) => paths.some((p) => TRIGGERS[role].some((g) => matchesGlob(p, g)) && !(EXCLUDED[role] ?? []).includes(p)));
+  return (Object.keys(TRIGGERS) as EvalRole[]).filter((role) => paths.some((p) => p !== 'evals/roles/triggers.ts' && TRIGGERS[role].some((g) => matchesGlob(p, g)) && !(EXCLUDED[role] ?? []).includes(p)));
 }
 
 /** Skill evaluation, separate from the role dispatcher. Orchestrate is intentionally conservative:

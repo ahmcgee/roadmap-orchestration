@@ -335,4 +335,5 @@ test('roles.triggers: gate paths trigger the gate eval; shared paths (routing) t
   assert.deepEqual(triggeredRoles(['src/git/boundeddiff.ts', 'README.md']), ['gate']);
   assert.deepEqual(triggeredRoles(['src/routing/classes.ts']), ['gate', 'walkthrough', 'polishJudge', 'verifier', 'scaffold']);
   assert.deepEqual(triggeredRoles(['src/holistic/audit.ts', 'test/gate.test.ts']), []);
+  assert.deepEqual(triggeredRoles(['evals/roles/triggers.ts']), []);
 });
