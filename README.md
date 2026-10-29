@@ -79,8 +79,7 @@ Questions the vision cannot settle are ranked (`P-n`), each with the working ass
 so nothing waits on you. Wherever units combine into something someone can use end to end, the plan marks a
 milestone with its journeys, and a design unit writes the milestone's design references before its other units
 start. The architect maps the repo's systems once, in `.roadmap/config.json`: each system's paths, tests and
-dependencies. Every test lane declares the systems it tests and its cadence: `build` (the builder runs it in its
-loop), `unit` (after the build), `candidate` (on the merge) or `batch` (end-to-end runs too slow for every merge,
+dependencies. Every test lane declares the systems it tests and its cadence: `build` (cheap targeted development checks and executor certification), `unit` (after the build), `candidate` (on the merge) or `batch` (end-to-end runs too slow for every merge,
 kept off the merge path). Lanes that need costly infrastructure name an environment. Then the plan and one spec per
 unit, `roadmap phase0 check` until it is clean, and `roadmap start`. The executor refuses bad inputs (including plan
 defects code can catch, such as a witness its lane never runs or a lane naming an unmapped system), smokes each
@@ -98,15 +97,19 @@ Plan revisions refuse new plan defects; existing defects remain visible as advis
   spec, split the unit into smaller ones, have a cheap model scaffold a new system's skeleton first, or ask for up
   to two throwaway proofs of concept whose lessons, never code, reach the build. A unit whose scope proves too
   narrow is held with a proposed scope growth for the architect to accept or reject.
-- **The build** runs in the unit's own git worktree. Code reverts any path it edits outside the scope, and the same path
+- **The build** runs in the unit's own git worktree, holding CPU tokens only. The builder runs targeted checks
+  while developing, then reports to request certification; it does not rehearse the full lanes. Code reverts any path it edits outside the scope, and the same path
   reverted on two build rounds running is held as a scope growth too. A build that starts on a fresh session
   after earlier work, such as a re-entry, a steer or a new seat, gets a handover built by code: the park diagnosis, the last
   gate's findings, the clauses still unmet and the last red evidence.
 - **The lanes** run the spec's lanes, then the plan's `build`- and `unit`-cadence suite lanes and any the spec
-  forces, then the required witnesses and mutation smoke. A lane's pass is reused on any later commit that leaves
+  forces, then the required witnesses and mutation smoke, after the build has quiesced. Each series runs its previous
+  red lanes first, then cadence order, stopping at the first red. A lane's optional `timeoutMin` ends it with a
+  distinct timeout red; absent that limit, the six-hour deadline backstop remains. A lane's pass is reused on any later commit that leaves
   its systems unchanged. When a fix round only touched comments and docs, code and a cheap verifier certify that,
   and the earlier passes carry over. Environments come up on first use and go down when idle; one that fails to
-  come up parks the unit until it recovers, never a red lane.
+  come up parks the unit until it recovers, never a red lane. An environment can name the resources it powers;
+  using one brings the environment up and keeps it in use.
 - **The gate** is a fresh Opus judge in its own checkout with a shell, so it can run experiments. A diff too large
   to read whole is reviewed in clusters. It blocks only on a named defect: incorrect behaviour, a contract violation,
   a security or data-loss problem, an unmet requirement, or a test cited as proof that does not prove it. Comment
@@ -117,16 +120,27 @@ Plan revisions refuse new plan defects; existing defects remain visible as advis
   suite lanes the systems map selects (every lane for an unmapped path, none for a docs-only diff), then
   fast-forwards the arc branch.
 
-A red lane, a gate revise or a red candidate sends the unit back to its build for a charged fix round. A gate
-revises at most twice before the unit goes to the escalation seat, the summit class (Opus at high effort). A red candidate
-retries once, and the third charged failure parks the unit. A lane that goes red then green on a rerun of the same
-tree is a flake, recorded in the flaky ledger. On a unit's own commit (its lanes, witness check or scaffold dry run),
-it is the unit's red: a charged fix round tells the builder the lane is flaky, forgiven only if it is already a standing
-tip flake. Only flakes seen on the integration tip are forgiven and mint deflake units to fix the test (a deflake
+Certification has an uncharged allowance: the first three lanes-stage reds (`red`, `not-certified` or
+`witnesses-missing`) return evidence to the builder for an uncharged fix round. The fourth is charged and resets the
+allowance; the third chargeable failure parks the unit. Plan or unit `limits.certifications` and `limits.chargeable`
+override those bounds. Any charge resets the allowance. Gate revise and candidate red keep their existing charges:
+a gate revises at most twice before escalating to the summit seat, and a red candidate retries once.
+
+A lane that goes red then green on a rerun of the same commit is flaky. At the lanes stage it returns an uncharged
+fix round with both runs as evidence, without consuming or resetting the certification allowance; it must be fixed
+before proceeding to the gate unless already forgiven as a standing tip flake. Only flakes seen on the integration tip are forgiven and mint deflake units to fix the test (a deflake
 unit's own flake still counts as red). A deflake's scope is the systems the lane declares, else the systems holding
 the flaky test's file, with what they depend on.
 No unit may write the corpus, so when neither maps and the fallback would reach it, no unit is minted and you get
 a `deflake-unscoped` item asking for the lane's systems or a systems map.
+A plan-check or gate can name structured ordering blockers when it parks a unit. The scheduler wakes that park
+automatically after every named blocker merges.
+
+CPU reservations calibrate from completed runs, with explicit `cpu` values taking precedence and defaults used until
+there are enough samples. Saturated host pressure holds new builds and lanes while another workload holds CPU
+tokens; judgments and the first workload can still progress. `roadmap tui` shows certification allowance, ordered lane
+states, held estate, reserved versus measured CPU, token waits and the pressure-brake reason.
+
 When a requirement or contract changes mid-arc, code mints a propagation unit that re-witnesses the merged code
 against the new revision; units linked to the change re-open at plan-check, and none reaches its gate until the
 propagation unit merges. A fault confined to one unit parks only that unit and the arc goes on; a crashed executor

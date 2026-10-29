@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="1040" viewBox="0 0 1100 1040" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="1250" viewBox="0 0 1100 1250" role="img" aria-labelledby="title desc">
 <title id="title">How a roadmap-orchestrator arc runs</title>
-<desc id="desc">A simplified swimlane flowchart in three lanes: you (the owner), the architect (Claude in your session) and the executor (a detached process that runs unattended and calls models for judgment). Bootstrap, once per repo: you write the target state, the architect sets up the repo and you confirm the vision and set K, the number of arcs that may chain. Phase 0, each arc: the architect curates the corpus into obligations and questions, writes the plan and specs, and starts the executor, which runs a pack review and a baseline witness. Estate compaction, optional and whenever you choose (while an arc runs or between arcs): the architect proposes retire, merge, tighten and fold decisions in batches, you approve each, and the approved decisions wait in roadmap-inputs/_next/compaction.md until the next Phase 0 applies them. The unattended run: the executor schedules ready units; each unit, in parallel, goes through plan-check (a design pass by a model), a build (a model), the test lanes, a review gate (a model) and publication onto the arc branch; a red lane (including an own-commit flake unless already standing at the integration tip) or a revise from the gate sends it back to its build for a charged fix round. When a milestone's units have merged, a model walks its journeys; a settled milestone is promoted to a demo you can try. Audits accumulate for the steering checkpoint, every two retired milestones by default after the walk. Any unweighed walk finding, at any severity, gets an immediate checkpoint and holds its round open for repair and re-walk, bounded by walkRounds and always after merged code. A vision edit reopens the immediate trigger for open findings weighed only under the old vision, even after a decision or skip. It also weighs accumulated audit findings without resetting the milestone interval; an unchanged milestone capture is skipped. Design parks, unweighed audit P1s and the final audit also trigger immediately. Without milestones, new audit findings trigger checkpoints. It admits, respecifies or cuts units. Meanwhile the architect watches the run, adjudicates the items it hands over through plan edits and resumes, and brings owner-only decisions and questions to you. Completion: when no work is left the executor closes out the arc, the architect opens a stacked PR and checks in with you, stating the estate size and recommending compaction when none was applied in the last three arcs; if K arcs have run it stops and you merge the stacked PRs, otherwise it chains into the next arc's Phase 0.</desc>
+<desc id="desc">A simplified swimlane flowchart in three lanes: you (the owner), the architect (Claude in your session) and the executor (a detached process that runs unattended and calls models for judgment). Bootstrap, once per repo: you write the target state, the architect sets up the repo and you confirm the vision and set K, the number of arcs that may chain. Phase 0, each arc: the architect curates the corpus into obligations and questions, writes the plan and specs, and starts the executor, which runs a pack review and a baseline witness. Estate compaction, optional and whenever you choose (while an arc runs or between arcs): the architect proposes retire, merge, tighten and fold decisions in batches, you approve each, and the approved decisions wait in roadmap-inputs/_next/compaction.md until the next Phase 0 applies them. The unattended run: the executor schedules ready units; each unit, in parallel, goes through plan-check (a design pass by a model), a build (a model), the test lanes, a review gate (a model) and publication onto the arc branch; The builder uses targeted checks, then requests executor certification. Lanes run previous reds first. The first three certification reds return uncharged fix rounds; the fourth charges and resets the allowance, parking at the chargeable bound. A same-commit flake returns an uncharged fix round without spending that allowance. Gate revise stays charged. Ordering parks wake after all named blockers merge. A lane timeoutMin produces a timeout red. When a milestone's units have merged, a model walks its journeys; a settled milestone is promoted to a demo you can try. Audits accumulate for the steering checkpoint, every two retired milestones by default after the walk. Any unweighed walk finding, at any severity, gets an immediate checkpoint and holds its round open for repair and re-walk, bounded by walkRounds and always after merged code. A vision edit reopens the immediate trigger for open findings weighed only under the old vision, even after a decision or skip. It also weighs accumulated audit findings without resetting the milestone interval; an unchanged milestone capture is skipped. Design parks, unweighed audit P1s and the final audit also trigger immediately. Without milestones, new audit findings trigger checkpoints. It admits, respecifies or cuts units. Meanwhile the architect watches the run, adjudicates the items it hands over through plan edits and resumes, and brings owner-only decisions and questions to you. Completion: when no work is left the executor closes out the arc, the architect opens a stacked PR and checks in with you, stating the estate size and recommending compaction when none was applied in the last three arcs; if K arcs have run it stops and you merge the stacked PRs, otherwise it chains into the next arc's Phase 0.</desc>
 <style>
 text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, "DejaVu Sans", sans-serif; fill: #1f2328; }
 .h1 { font-size: 22px; font-weight: 700; }
@@ -33,7 +33,7 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0 0 L10 5 L0 10 z"/></marker>
 </defs>
 
-<rect width="1100" height="1000" fill="#ffffff"/>
+<rect width="1100" height="1250" fill="#ffffff"/>
 
 <text class="h1" x="24" y="36">How a roadmap-orchestrator arc runs</text>
 <text class="sub" x="24" y="58">The big picture. Phase 0 through completion repeats for each chained arc, up to K.</text>
@@ -118,10 +118,10 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 <text class="t" x="575" y="596" text-anchor="middle">Plan-check</text><text class="b" x="575" y="612" text-anchor="middle">design pass</text>
 <rect class="chip" x="555" y="619" width="40" height="13" rx="6.5"/><text class="chipt" x="575" y="629" text-anchor="middle">model</text>
 <rect class="box step" x="639" y="574" width="90" height="64" rx="7"/>
-<text class="t" x="684" y="596" text-anchor="middle">Build</text><text class="b" x="684" y="612" text-anchor="middle">own worktree</text>
+<text class="t" x="684" y="596" text-anchor="middle">Build</text><text class="b" x="684" y="612" text-anchor="middle">targeted only</text>
 <rect class="chip" x="664" y="619" width="40" height="13" rx="6.5"/><text class="chipt" x="684" y="629" text-anchor="middle">model</text>
 <rect class="box step" x="748" y="574" width="90" height="64" rx="7"/>
-<text class="t" x="793" y="596" text-anchor="middle">Lanes</text><text class="b" x="793" y="612" text-anchor="middle">tests, smoke</text>
+<text class="t" x="793" y="596" text-anchor="middle">Lanes</text><text class="b" x="793" y="612" text-anchor="middle">red-first tests</text>
 <rect class="box step" x="857" y="574" width="90" height="64" rx="7"/>
 <text class="t" x="902" y="596" text-anchor="middle">Gate</text><text class="b" x="902" y="612" text-anchor="middle">fresh review</text>
 <rect class="chip" x="882" y="619" width="40" height="13" rx="6.5"/><text class="chipt" x="902" y="629" text-anchor="middle">model</text>
@@ -133,7 +133,7 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 <path class="arr" d="M947 600 H964" marker-end="url(#ah)"/>
 <path class="arr" d="M902 638 V656 H684 V640" marker-end="url(#ah)"/>
 <path class="arr" d="M793 638 V656"/>
-<text class="al" x="793" y="675" text-anchor="middle">red (incl. own flake) or revise: charged fix round</text>
+<text class="al" x="793" y="675" text-anchor="middle">lanes red: 3 free fixes, 4th charged; gate revise: charged</text>
 
 <rect class="box ex" x="530" y="712" width="190" height="50" rx="8"/>
 <text class="t" x="542" y="732">Milestone walk</text><text class="b" x="542" y="750">journeys end to end</text>
@@ -193,4 +193,21 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 <text class="al" x="120" y="943" text-anchor="middle">no: chain the next arc</text>
 <rect x="0" y="1000" width="1100" height="40" fill="#fff"/>
 <text x="24" y="1025" font-size="14" fill="#59636e">Container setup installs roadmap on PATH. Use roadmap tui during execution and for review after completion.</text>
+<!-- Certification detail uses the same light swimlane palette. -->
+<rect class="box ex" x="24" y="1050" width="1052" height="176" rx="10"/>
+<text class="lt ex" x="42" y="1075">Certification loop (default bounds)</text>
+<rect class="box step" x="42" y="1090" width="222" height="56" rx="7"/>
+<text class="t" x="153" y="1112" text-anchor="middle">Build → report</text>
+<text class="b" x="153" y="1132" text-anchor="middle">targeted checks; no full rehearsal</text>
+<path class="arr" d="M264 1118 H294" marker-end="url(#ah)"/>
+<rect class="box step" x="296" y="1090" width="222" height="56" rx="7"/>
+<text class="t" x="407" y="1112" text-anchor="middle">Quiesce → lanes</text>
+<text class="b" x="407" y="1132" text-anchor="middle">red-first; timeoutMin → timeout red</text>
+<path class="arr" d="M518 1118 H548" marker-end="url(#ah)"/>
+<rect class="box step" x="550" y="1090" width="506" height="56" rx="7"/>
+<text class="t" x="803" y="1112" text-anchor="middle">Red → fix uncharged ×3; 4th → charge, reset allowance</text>
+<text class="b" x="803" y="1132" text-anchor="middle">chargeable bound reached → park; otherwise → build fix</text>
+<text class="b" x="42" y="1170">Same-commit flaky → uncharged fix; allowance unchanged. Green → gate → candidate → publish.</text>
+<text class="b" x="42" y="1192">Ordering park → wait for every named blocker to merge → automatically retry the parked stage.</text>
+<text class="b" x="42" y="1214">Builds hold CPU only; lanes hold their estate. CPU calibrates from runs; pressure can hold admission.</text>
 </svg>
