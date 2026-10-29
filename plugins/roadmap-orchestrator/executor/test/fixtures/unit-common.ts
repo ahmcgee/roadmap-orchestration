@@ -79,6 +79,7 @@ export type ArcDescriptor = Readonly<{
 export function laneJson(l: LaneJson): Record<string, unknown> {
   return {
     id: l.id, argv: l.argv, cwd: l.cwd ?? '.', env: { set: l.env?.set ?? {}, pass: l.env?.pass ?? ['PATH'] }, expectedExit: l.expectedExit ?? 0,
+    ...(l.timeoutMin === undefined ? {} : { timeoutMin: l.timeoutMin }),
     ...(l.cadence === undefined ? { tier: l.tier ?? 'fast' } : { cadence: l.cadence }), resources: l.resources ?? [], evidenceGlobs: l.evidenceGlobs ?? [],
     ...(l.inputs === undefined ? {} : { inputs: l.inputs }), ...(l.systems === undefined ? {} : { systems: l.systems }),
     ...(l.readsComments === undefined ? {} : { readsComments: l.readsComments }),

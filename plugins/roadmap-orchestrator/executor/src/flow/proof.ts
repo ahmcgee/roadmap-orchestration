@@ -20,7 +20,7 @@ import type { Parent } from '../core/events.ts';
 import { type JobId, type Sha, opKey } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
 import { type LaneDef, STDERR_FILE, STDOUT_FILE } from '../core/records.ts';
-import { type AbsPath, absPath, branchRef, isoTimeOf, repoPattern } from '../core/values.ts';
+import { type AbsPath, absPath, branchRef, repoPattern } from '../core/values.ts';
 import { revParse } from '../git/git.ts';
 import { jobEvidenceRoot } from '../git/snapshot.ts';
 import type { WitnessTest } from '../holistic/types.ts';
@@ -28,7 +28,7 @@ import { WITNESS_LINES, collectWitness, witnessEnv } from '../holistic/witness.t
 import { FLOW_PROOF_INPUT, keepInput, requirePlanInForce, revisionInForce } from '../input/inforce.ts';
 import { runOp } from '../pipeline/dispatch.ts';
 import { invocationDir, invoke } from '../pipeline/invoke.ts';
-import { LANE_DEADLINE_MS, LANE_GRACE_MS, LANE_STALL_MS, laneRequest, removeJobCheckouts, suiteStandIns } from '../pipeline/lanes.ts';
+import { laneCommand, laneRequest, removeJobCheckouts, suiteStandIns } from '../pipeline/lanes.ts';
 import { releaseEnvironment, useEnvironment } from '../resources/environments.ts';
 import { probe } from '../resources/probe.ts';
 import { instanceEnv } from '../resources/pool.ts';
@@ -139,16 +139,16 @@ async function runHeld(
     env[name] = value;
   }
   const startedAt = Date.now();
+  const command = laneCommand(lane);
   const outcome = await invoke(ctx.journal, ctx.containment, {
     runDir: ctx.runDir,
-    origin: { type: 'new', key: opKey(`lane:${job}`), parent, deadlineAt: isoTimeOf(new Date(Date.now() + LANE_DEADLINE_MS)) },
+    origin: { type: 'new', key: opKey(`lane:${job}`), parent, deadlineAt: command.deadlineAt },
     subject: { purpose: 'proof', job, proposal: proposal.id, lane: lane.id, side, at: head },
     launch: (invDir) => {
       mkdirSync(dirOf(invDir), { recursive: true });
       const executor = { [OWNER_ENV]: jobOwnerLabel(ctx.plan().arc, job), ...instanceEnv(held?.resources ?? []), ...witnessEnv(reporter, absPath(join(dirOf(invDir), WITNESS_LINES))) };
       return {
-        argv: lane.argv, cwd: absPath(join(checkout, lane.cwd)), env: { ...env, ...executor }, stdinPath: null, stallMs: LANE_STALL_MS, graceMs: LANE_GRACE_MS,
-        terminal: { type: 'command', purpose: 'lane', expectedExit: lane.expectedExit },
+        argv: lane.argv, cwd: absPath(join(checkout, lane.cwd)), env: { ...env, ...executor }, stdinPath: null, ...command.launch,
       };
     },
   });

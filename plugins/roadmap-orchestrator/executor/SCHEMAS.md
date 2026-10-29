@@ -5298,6 +5298,8 @@ Execution equality includes timeoutMin: absence and an explicit six-hour limit d
 
 A configured limit is copied to the lane command's `launch.json.terminal.timeoutMin`;
 its absolute `deadlineAt` uses that duration. Only lane commands may carry this field.
+`laneCommand` constructs the deadline and terminal together for spec/suite, journey,
+mutant/reproduce and flow-proof launches; every consumer enforces the same limit.
 At this deadline the runner writes `exit.json.cause: timeout` (the kill reason remains
 `deadline`) and `result.json.verdict: timeout`, a red lane verdict. This differs from
 an unconfigured six-hour `deadline`, which retains its no-verdict/process-fault behavior.

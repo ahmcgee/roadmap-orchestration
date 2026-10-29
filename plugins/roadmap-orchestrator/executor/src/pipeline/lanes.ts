@@ -143,6 +143,17 @@ const laneDeadlineMs = (lane: Pick<LaneDef, 'timeoutMin'>): number => {
 };
 export const LANE_GRACE_MS = 5_000;
 
+/** One deadline and retained terminal for every lane consumer, including mutant and flow proof runs. */
+export function laneCommand(lane: LaneDef) {
+  return {
+    deadlineAt: isoTimeOf(new Date(Date.now() + laneDeadlineMs(lane))),
+    launch: {
+      stallMs: LANE_STALL_MS, graceMs: LANE_GRACE_MS,
+      terminal: { type: 'command', purpose: 'lane', expectedExit: lane.expectedExit, ...(lane.timeoutMin === undefined ? {} : { timeoutMin: lane.timeoutMin }) } as const,
+    },
+  };
+}
+
 /**
  * One run of a lane: what the gate reads (`LaneLedgerEntry`, whose `evidenceDir` holds every snapshot of the
  * run, and its ignored-output census), plus its invocation, its times, and `fixDirs`: the snapshot `files`
@@ -794,9 +805,10 @@ async function runLane(
   sampleHost: () => HostSample, identity: LaneIdentity, witness: ArcLaneDef | null, files: readonly RepoPath[] | null, verify: number | null,
 ): Promise<Ran> {
   const start = sampleHost();
+  const command = laneCommand(lane);
   const outcome = await invoke(ctx.journal, ctx.containment, {
     runDir: ctx.runDir,
-    origin: { type: 'new', key: opKey(`lane:${parent.unit}`), parent, deadlineAt: isoTimeOf(new Date(Date.now() + laneDeadlineMs(lane))) },
+    origin: { type: 'new', key: opKey(`lane:${parent.unit}`), parent, deadlineAt: command.deadlineAt },
     subject: {
       purpose: 'lane', unit: parent.unit, lane: lane.id, set, at, redRev: HOST_SIGNATURES_REV, identity, ...(files === null ? {} : { files: [...files].sort() }),
       ...(verify === null ? (lane.stochastic === undefined ? {} : { stochastic: lane.stochastic }) : { verify }),
@@ -812,8 +824,7 @@ async function runLane(
       }
       return {
         argv: files === null ? lane.argv : testArgvOf(lane, [...files].sort()), cwd: absPath(join(tree, lane.cwd)), env: { ...env, ...extra }, stdinPath: null,
-        stallMs: LANE_STALL_MS, graceMs: LANE_GRACE_MS,
-        terminal: { type: 'command', purpose: 'lane', expectedExit: lane.expectedExit, ...(lane.timeoutMin === undefined ? {} : { timeoutMin: lane.timeoutMin }) },
+        ...command.launch,
       };
     },
   });
@@ -1492,9 +1503,10 @@ export async function runJourneySeries(
 
   const runOne = async (lane: JourneyLane, held: readonly ResourceUnit[]): Promise<JourneyRan> => {
     const start = sampleHost();
+    const command = laneCommand(lane.def);
     const outcome = await invoke(ctx.journal, ctx.containment, {
       runDir: ctx.runDir,
-      origin: { type: 'new', key: opKey(`lane:${who}`), parent, deadlineAt: isoTimeOf(new Date(Date.now() + laneDeadlineMs(lane.def))) },
+      origin: { type: 'new', key: opKey(`lane:${who}`), parent, deadlineAt: command.deadlineAt },
       subject: {
         purpose: 'journey', lane: lane.def.id, laneRev: lane.laneRev, at, owner: owner.type === 'unit' ? { type: 'unit', unit: owner.parent.unit } : { type: 'job', job: owner.job },
         redRev: HOST_SIGNATURES_REV,
@@ -1505,7 +1517,7 @@ export async function runJourneySeries(
         mkdirSync(dirOf(lane, invDir), { recursive: true });
         return {
           argv: lane.def.argv, cwd: absPath(join(checkout.path, lane.def.cwd)), env: envOf(lane, held, absPath(join(dirOf(lane, invDir), WITNESS_LINES))), stdinPath: null,
-          stallMs: LANE_STALL_MS, graceMs: LANE_GRACE_MS, terminal: { type: 'command', purpose: 'lane', expectedExit: lane.def.expectedExit, ...(lane.def.timeoutMin === undefined ? {} : { timeoutMin: lane.def.timeoutMin }) },
+          ...command.launch,
         };
       },
     });
