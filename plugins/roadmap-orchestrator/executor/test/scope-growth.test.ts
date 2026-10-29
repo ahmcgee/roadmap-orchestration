@@ -40,7 +40,7 @@ import { dispatchOf, pinDispatch, unitBranch } from '../src/pipeline/dispatch.ts
 import { loadUnitSpec } from '../src/pipeline/stages.ts';
 import { type Gate, runUnit } from '../src/pipeline/unit.ts';
 import { raiseResult } from '../src/schedule/scheduler.ts';
-import { raisedFor } from '../src/needsuser.ts';
+import { raisedFor, openBlocking } from '../src/needsuser.ts';
 import { fakeDocs } from './fixtures/docs-fake.ts';
 import { SCENARIO_TIMEOUT_MS, planCheckStep } from './fixtures/stage-common.ts';
 import { followingContext, unitInForce } from './fixtures/steer-common.ts';
@@ -89,6 +89,28 @@ async function holdU1(r: ArcRun) {
   assert.ok(held.kind === 'held' && held.needsUser?.reason === 'scope-growth', JSON.stringify(held));
   raiseResult(f, U1, held);
   return held.needsUser;
+}
+
+for (const target of [{ type: 'unit', unit: U1 }, { type: 'all' }] as const) {
+  test(`scope.resume-${target.type}: resuming supersedes the blocking scope-growth item before clearing the hold`, T, async () => {
+    const d = setupArc({ steps: [planCheckStep({ decision: 'approve', scopeGrowth: GROWTH }), planCheckStep({ decision: 'approve' })] });
+    const r = contextFor(d);
+    try {
+      await holdU1(r);
+      const item = raisedFor(r.journal.view, { type: 'stage', unit: U1, stage: 'plan-check', attempt: 1 });
+      assert.ok(item !== null);
+      assert.equal(openBlocking(r.journal.view).length, 1);
+      const resumed = await command(r, { type: 'resume', target });
+      assert.equal(resumed.outcome.kind, 'applied');
+      assert.equal(r.journal.view.ackOf(item)?.command, resumed.id);
+      assert.deepEqual(openBlocking(r.journal.view), []);
+      assert.equal(r.journal.view.unit(U1).status, 'active');
+      const again = await runUnit(followingContext(r), unitInForce(followingContext(r), 'u1'), until('build'));
+      assert.deepEqual(again, { kind: 'held', needsUser: null }, 'the next plan-check completes without the obsolete item blocking admission');
+    } finally {
+      r.journal.close();
+    }
+  });
 }
 
 test('scope.accept: a verified proposal holds the unit; `scope accept` lands one ruled revision, nothing written into the owner\'s files, and the re-opened plan-check re-pins the wider scope before any build', T, async () => {

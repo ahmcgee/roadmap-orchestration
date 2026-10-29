@@ -5302,3 +5302,11 @@ an unconfigured six-hour `deadline`, which retains its no-verdict/process-fault 
 The stall watchdog still applies independently. A timeout enters the ordinary red-lane
 protocol and supplies failing-lane evidence to the fix round. Historical start times
 are reconstructed from the retained launch limit, never the current lane definition.
+
+## Resuming a scope-growth hold
+
+`resume <unit>` and arc-wide `resume` acknowledge the blocking needs-user item parented
+by each scope-growth hold they clear, before writing `resumed`. This does not accept
+its proposed scope: the stage retries within the scope in force. The ordinary durable
+ack file and `needs-user-acked` fact make interruption between acknowledgment and
+resume replayable. Other holds' items and unrelated blocking items remain untouched.

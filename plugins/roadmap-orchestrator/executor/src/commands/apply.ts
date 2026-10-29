@@ -365,7 +365,7 @@ function parkReason(f: StageOutcomeFact): string {
   return decided.kind === 'park' ? decided.reason : f.outcome;
 }
 
-/** The park's open needs-user, acknowledged by this command (unless another already did). */
+/** The parked or held outcome's open needs-user, acknowledged by this command (unless another already did). */
 export function acknowledgePark(ctx: CommandContext, id: CommandId, unitId: UnitId, f: StageOutcomeFact): readonly string[] {
   const item = raisedFor(ctx.journal.view, { type: 'stage', unit: unitId, stage: f.stage, attempt: f.attempt });
   if (item === null) return [];
@@ -463,6 +463,10 @@ async function resumeParked(ctx: CommandContext, id: CommandId, unitId: UnitId):
 
 async function resume(ctx: CommandContext, id: CommandId, target: Extract<CommandBody, { type: 'resume' }>['target']): Promise<Effect> {
   const view = ctx.journal.view;
+  const closeScopeHold = (unit: UnitId): readonly string[] => {
+    const u = view.unit(unit);
+    return u.status === 'held' && u.interrupted?.outcome === 'scope-growth' ? acknowledgePark(ctx, id, unit, u.interrupted) : [];
+  };
   switch (target.type) {
     case 'unit': {
       if (!ctx.plan().units.some((u) => u.id === target.unit)) return { kind: 'rejected', reason: `unknown unit ${target.unit}` };
@@ -491,14 +495,16 @@ async function resume(ctx: CommandContext, id: CommandId, target: Extract<Comman
       if (!paused && u.status === 'retired') return { kind: 'rejected', reason: `unit ${target.unit} is merged` };
       if (!paused && u.status === 'cut') return { kind: 'rejected', reason: `unit ${target.unit} is cut` };
       if (!paused && u.status === 'superseded') return { kind: 'rejected', reason: `unit ${target.unit} is superseded by ${u.supersededBy}; resume that unit` };
+      const verified = closeScopeHold(target.unit);
       if (paused || u.status === 'held') ctx.journal.fact({ kind: 'resumed', command: id, target });
-      return { kind: 'applied', verified: [`unit ${target.unit} neither paused nor held`] };
+      return { kind: 'applied', verified: [...verified, `unit ${target.unit} neither paused nor held`] };
     }
     case 'all': {
       const c = view.control();
+      const verified = ctx.plan().units.flatMap((u) => closeScopeHold(u.id));
       const done = !c.pausedAll && c.pausedUnits.length === 0 && ctx.plan().units.every((u) => view.unit(u.id).status !== 'held');
       if (!done) ctx.journal.fact({ kind: 'resumed', command: id, target });
-      return { kind: 'applied', verified: ['no unit paused or held'] };
+      return { kind: 'applied', verified: [...verified, 'no unit paused or held'] };
     }
     case 'backend': {
       const resumed = await ctx.probes.prober.resumeBackend(target.backend, id, ctx.probes.signal);
