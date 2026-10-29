@@ -163,6 +163,12 @@ test('compaction.stage-a: exact trial headings, partial approvals, playback numb
   assert.equal(gradeA(wrongOwnerText, trialExchanges, spec.key).criteria['fidelity']!.pass, false);
   const wrongPlaybackText = trialRecord.replace('Replacement: T-87: "A request token is accepted once; retries return the stored response without another mutation."', 'Replacement: T-87: "Retries may mutate again."');
   assert.equal(gradeA(wrongPlaybackText, trialExchanges, spec.key).criteria['fidelity']!.pass, false);
+  // Per-item approvals under a rejected bundle approve only the ids they name.
+  const bundle = { batch: '### 5. retire T-62, T-63, T-70\n- **Items:** T-62 "Internal local variable names use lower camel case."; T-63; T-70\n- **Replacement:** none.\n- **Gives up:** the camel-case and banner-period demands.', reply: '5: reject as bundled.\n- T-62: approve retire.\n- T-70: keep.\n\n6: reject' };
+  const retire = (id: string): string => `## K-1 retire\nItems: ${id} "text"\nReplacement: none\nGives up: the demand.\nWhy: cosmetic.\nApproved: 2026-10-29\n`;
+  assert.equal(gradeA(retire('T-62'), [bundle], spec.key).criteria['fidelity']!.pass, true);
+  assert.equal(gradeA(retire('T-63'), [bundle], spec.key).criteria['fidelity']!.pass, false);
+  assert.equal(gradeA(retire('T-62'), [{ ...bundle, reply: '5: reject as bundled.\n- T-62: keep.\n\n6: approve' }], spec.key).criteria['fidelity']!.pass, false);
   const wrongAction = trialRecord.replace('## K-11 fold', '## K-11 merge');
   assert.equal(gradeA(wrongAction, trialExchanges, spec.key).criteria['fidelity']!.pass, false);
 });
