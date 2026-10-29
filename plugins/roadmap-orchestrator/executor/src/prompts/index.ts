@@ -17,6 +17,8 @@ import { PROMPT as VERIFIER_HAIKU } from './verifier/claude-haiku-5-5.ts';
 import { PROMPT as SCAFFOLD_HAIKU } from './scaffold/claude-haiku-5-5.ts';
 import { POC_PROMPT } from './poc/claude-opus-5-5.ts';
 import type { PocInputs } from './inputs.ts';
+import { promptBytes } from '../backends/argv.ts';
+import { canonicalJson } from '../core/json.ts';
 import type { JsonValue } from '../core/json.ts';
 
 /** Every Codex judgment triple is unsupported in M1 (R21); layers.ts reports it as `codex-judgment`. */
@@ -243,7 +245,7 @@ export const PROMPTS: PromptTable<PromptModules> = {
  * build's, so its table follows build's models. One module, task-only text (the job, the unattended-run rule, the answer),
  * written to the Opus 5.5 guide; Codex takes it with its system text leading stdin, as it takes every brief.
  */
-export type PocModule = Readonly<{ system: string; render: (inputs: PocInputs) => string; schema: JsonValue }>;
+export type PocModule = Readonly<{ fields: readonly (keyof PocInputs)[]; system: string; render: (inputs: PocInputs) => string; schema: JsonValue }>;
 export const POC_PROMPTS: { readonly [M in ModelId]: PromptSupport<PocModule> } = {
   'claude-opus-5-5': { type: 'prompt', prompt: POC_PROMPT },
   'claude-sonnet-5-5': {
@@ -298,4 +300,16 @@ export function promptFor<R extends Role>(role: R, model: ModelId): PromptModule
     case 'unsupported':
       throw new UnsupportedPromptError(role, model, s.reason);
   }
+}
+
+/** Exact UTF-8 stdin size and, per module input, canonical JSON bytes (an approximation of its rendered section). */
+export type PromptSize = Readonly<{ bytes: number; inputs: Readonly<Record<string, number>> }>;
+export function promptSize<I>(module: Readonly<{ fields: readonly (keyof I & string)[] }>, inputs: I, stdin: string): PromptSize {
+  return { bytes: Buffer.byteLength(stdin, 'utf8'), inputs: Object.fromEntries(module.fields.map((field) => [field, Buffer.byteLength(canonicalJson(inputs[field]), 'utf8')])) };
+}
+
+/** Render and measure together. Codex build stdin includes the system text (`backends/argv.ts`, promptBytes). */
+export function renderPrompt<I>(module: Readonly<{ system: string; fields: readonly (keyof I & string)[]; render: (inputs: I) => string }>, inputs: I, backend: 'claude' | 'codex' = 'claude'): Readonly<{ rendered: string; prompt: PromptSize }> {
+  const rendered = module.render(inputs);
+  return { rendered, prompt: promptSize(module, inputs, promptBytes({ kind: backend === 'codex' ? 'codex-build' : 'claude-build', system: module.system }, rendered)) };
 }

@@ -36,7 +36,7 @@
 // eligibility (`findingBlocking`, integrate.ts) without voiding the judgment (paid M4b run 6).
 //
 // M4a: a corpus arc's gate reads the rules index and the pinned corpus materialised read-only without the vision
-// document (`gateTarget`, M3 R17), its directory added to the session's readable dirs.
+// document (`unitTarget`, M3 R17), its directory added to the session's readable dirs.
 //
 // Debt (M4a R7, DEBT_BANK): an approval in a corpus arc banks each `pre-existing` finding (dev.12 round 2) of the
 // approving answer, and each `note` whose `debt` names its drag on future work (dev.13, owner ruling 2026-10-20: a note
@@ -74,8 +74,9 @@ import type { GateLargeDiff, IntentOf } from '../core/events.ts';
 import { captureUnderFence } from '../core/fence.ts';
 import { type JudgmentSessionId, type ObligationId, type Sha, type UnitId, invocationId, canonicalIds, compareIds } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
-import { type ApprovalFingerprint, type JudgmentSession, type ObligationRev, type SpecM1, effectiveScope, inScope, obligationRevsOf, specObligations, specRemoves, specRepairs, specWitnesses } from '../core/records.ts';
+import { type ApprovalFingerprint, type JudgmentSession, type ObligationRev, type SpecM1, effectiveScope, inScope, obligationRevsOf, specRemoves, specWitnesses } from '../core/records.ts';
 import { designSize } from '../core/design.ts';
+import { ruleMentions } from '../holistic/rederive.ts';
 import { gateObligations } from '../holistic/impact.ts';
 import { effectiveRulingRevs } from '../spec/rulings.ts';
 import { type ObligationDef, isExempt } from '../holistic/types.ts';
@@ -88,7 +89,7 @@ import { diffBase, unitDiffPaths } from '../git/transient.ts';
 import { regenerateLane } from '../input/derived.ts';
 import { type PlanUnit, derivedOf, targetDocumentPaths } from '../input/plan.ts';
 import { judgmentRepairDirective } from '../prompts/directives.ts';
-import { promptFor } from '../prompts/index.ts';
+import { type PromptSize, renderPrompt, promptFor } from '../prompts/index.ts';
 import type { GateChecks, GatePriorRound, RegeneratedCheck } from '../prompts/inputs.ts';
 import { type GateOutput, clusterCoverage, validateGateOutput } from '../prompts/schemas.ts';
 import type { ApprovalBlobs, GateReview } from '../core/review.ts';
@@ -108,7 +109,7 @@ import { laneRecordIn, latestSpecSeries, observedViews, seriesLedger, seriesTree
 import { gateSmokeChecks } from './smoke.ts';
 import { gateWitnessChecks } from './witnesscheck.ts';
 import {
-  type PlanCheckDone, type StageDone, at, changedPremiseFiles, corpusInForce, enterJudgment, gateTarget, holisticInForce, inMs, integrationTip, type JudgmentReader, judgmentOutput,
+  type PlanCheckDone, type StageDone, at, changedPremiseFiles, corpusInForce, enterJudgment, unitTarget, unitImpactInput, holisticInForce, inMs, integrationTip, type JudgmentReader, judgmentOutput,
   judgmentSpawns, ledger, ledgerDir, library, loadUnitSpec, planCheckNotes, planCheckRead, record, releaseJudgment, rulingSidecars, start, targetDirs, verdictKind,
   escalationOf, fastSuiteRoot, judgedAnswer, removeJudgmentCheckouts, salvageRejections, stillOutside, unitMilestones, writeJudgmentInputs,
 } from './stages.ts';
@@ -152,22 +153,6 @@ export function fingerprintAt(ctx: StageContext, unit: PlanUnit, tip: Sha): Appr
 // ---------------------------------------------------------------------------------------------------
 // The obligations a unit's diff selects (M3)
 
-/** The unit's dependency closure in the plan in force: every unit it runs `after`, transitively. */
-function dependencyClosure(ctx: StageContext, unit: PlanUnit): readonly PlanUnit[] {
-  const byId = new Map(ctx.plan().units.map((u) => [u.id, u]));
-  const seen = new Set<UnitId>();
-  const walk = (u: PlanUnit): void => {
-    for (const d of u.after) {
-      const dep = byId.get(d);
-      if (dep === undefined || seen.has(d)) continue;
-      seen.add(d);
-      walk(dep);
-    }
-  };
-  walk(unit);
-  return [...seen].sort().map((id) => byId.get(id)!);
-}
-
 /**
  * The obligations in force the unit's candidate diff `tip..head` (its merge base with `tip`) selects, ascending by id
  * (`selectObligations`); none outside a holistic arc with obligations. A repair of a finding repairs its obligation.
@@ -183,20 +168,7 @@ function selectedForGate(ctx: StageContext, unit: PlanUnit, tip: Sha, head: Sha)
   const { obligations } = holisticInForce(ctx);
   if (obligations === null) return { selected: [], direct: [], standing: [] };
   const { spec } = loadUnitSpec(ctx, unit);
-  const findings = ctx.journal.view.holistic().findings;
-  const repairs = specRepairs(spec).flatMap((r): ObligationId[] => {
-    if (r.startsWith('I-')) return [r as ObligationId];
-    const o = findings.find((f) => f.id === r)?.obligation ?? null;
-    return o === null ? [] : [o];
-  });
-  const ids = gateObligations({
-    obligations,
-    units: [{ unit: unit.id, declared: specObligations(spec), repairs }],
-    closure: dependencyClosure(ctx, unit).flatMap((u) => specObligations(loadUnitSpec(ctx, u).spec)),
-    changedPaths: unitDiffPaths(ctx.repo, tip, head),
-    revised: [],
-    latched: new Set(ctx.journal.view.holistic().latched.map((l) => l.obligation)),
-  });
+  const ids = gateObligations(unitImpactInput(ctx, unit, spec, unitDiffPaths(ctx.repo, tip, head)));
   const views = (ids: readonly ObligationId[]): readonly ObligationDef[] => ids.map((id) => obligations.obligations.find((o) => o.id === id)!);
   // An exempt standing obligation holds no merge and asks nothing of the gate, so it is not listed.
   return { selected: views(ids.selected), direct: views(ids.direct), standing: views(ids.standing).filter((o) => !isExempt(o)) };
@@ -395,7 +367,7 @@ type GateCapture =
   | Readonly<{ kind: 'delta-empty'; fingerprint: ApprovalFingerprint; blobs: ApprovalBlobs }>
   | Readonly<{ kind: 'routing-changed'; needsUser: NeedsUserContent }>
   | Readonly<{
-    kind: 'captured'; fingerprint: ApprovalFingerprint; seat: JudgmentDispatch; rendered: string; system: string; schema: JsonValue; evidence: readonly AbsPath[];
+    kind: 'captured'; fingerprint: ApprovalFingerprint; seat: JudgmentDispatch; prompt: PromptSize; rendered: string; system: string; schema: JsonValue; evidence: readonly AbsPath[];
     /** The unit's tip the gate judges (the verification checkout's commit): its own checkout is made there. */
     head: Sha;
     /** The answer's validator for this diff (`gateAnswerFor`). */
@@ -484,13 +456,14 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
     const growth = paths.filter((p) => !inScope(scope, p));
     const seat = seated.dispatch;
     const prompt = promptFor('gate', seat.triple.model);
-    const target = gateTarget(ctx, tip);
     const chosen = selectedForGate(ctx, unit, tip, head);
+    const prior = priorRound(ctx, unit.id, head);
+    const target = unitTarget(ctx, tip, 'without-vision', chosen.selected, ruleMentions(renderSpec(spec) + '\n' + (prior?.findings.map((f) => f.contractRef ?? '').join('\n') ?? '')));
     // Over the threshold, the paths the cluster map covers, listed beside the attachment for the session to read.
     const covered = largeDiff === null ? [] : diffPaths(ctx.repo, base, head);
     const list = absPath(join(diffDir, CHANGED_LIST));
     if (largeDiff !== null) writeFileSync(list, covered.map((p) => `${p}\n`).join(''));
-    const rendered = prompt.render({
+    const measured = renderPrompt(prompt, {
       spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec) }, ...library(ctx, spec, tip), target,
       direction: ctx.plan().direction, planCheckNotes: planCheckNotes(ctx, unit.id),
       obligations: observedViews(ctx, holisticInForce(ctx).obligations, chosen.direct, tip),
@@ -505,7 +478,7 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
       },
       // Scope growth (2026-10-15): every out-of-scope path a salvage of the unit reverted (in no diff), still outside the scope.
       laneLedger, evidence, scope: { patterns: scope.include, excluded: scope.exclude, growth, rejected: stillOutside(ctx, unit.id, salvageRejections(ctx, unit.id).flatMap((r) => r.paths)) },
-      priorRound: priorRound(ctx, unit.id, head),
+      priorRound: prior,
       // M4a rev 3 (D1, D2): the executable checks of the series it judges (corpus arcs; null elsewhere).
       checks: gateChecks(ctx, unit, series, head, paths),
       escalation: escalationOf(ctx, unit.id, 'gate', seat.tier, validateGateOutput),
@@ -523,7 +496,7 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
       designEstimate: spec.design === undefined ? null : designSize(spec.design),
     });
     return {
-      kind: 'captured', fingerprint, seat, rendered, system: prompt.system, schema: prompt.schema, evidence, head, dirs: targetDirs(target),
+      kind: 'captured', fingerprint, seat, ...measured, system: prompt.system, schema: prompt.schema, evidence, head, dirs: targetDirs(target),
       validate: gateAnswerFor(largeDiff, covered, reviewRules(ctx.repo, head, review)),
     };
   });
@@ -545,7 +518,7 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
   const session = freshJudgmentSession();
   const call = (s: JudgmentSession, text: string): Promise<BackendCallOutcome> => callBackend(ctx, {
     unit: unit.id, parent, request: { kind: 'judgment', dispatch: seat, session: s, evidenceDirs: [...captured.evidence, ledgerDir(ctx), ...captured.dirs] },
-    system: captured.system, rendered: text, schema: captured.schema, cwd,
+    system: captured.system, rendered: text, prompt: s.mode === 'fresh' ? captured.prompt : null, schema: captured.schema, cwd,
     deadlineAt: inMs(judgmentDeadlineMs(dispatchOf(ctx.journal.view, unit.id))),
   });
   const called = await call(session, captured.rendered);

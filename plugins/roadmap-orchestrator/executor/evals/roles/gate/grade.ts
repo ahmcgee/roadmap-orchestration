@@ -18,6 +18,7 @@
 // - Clusters (the large-diff gate, 1.0.0-dev.12; `gradeClusters`): of the paths the gate's cluster map had to cover (the
 //   diff's paths, as the executor listed them), how many no cluster covers and how many more than one does, and the files
 //   per review depth (description, routine, close). Reported, never failed: code already refuses an incomplete map.
+import { ruleMentions } from '../../../src/holistic/rederive.ts';
 import { matchesGlob } from 'node:path';
 import type { DiffShown } from '../../../src/core/events.ts';
 import { type RepoPath, matchesPattern } from '../../../src/core/values.ts';
@@ -65,7 +66,9 @@ export function grade(key: AnswerKey, shown: DiffShown, prompt: string, t: Trans
     silent: omitted.filter((p) => !declaredPaths.includes(p) && !touched(t, p)).length,
   };
   const blockingFindings = answer.findings.filter((f) => f.severity === 'blocking');
-  const flagged = answer.decision !== 'approve';
+  const unshown = new Set(key.unshownRules ?? []);
+  const citesUnshown = answer.findings.some((f) => ruleMentions(`${f.contractRef ?? ''} ${f.text}`).some((id) => unshown.has(id)));
+  const flagged = answer.decision !== 'approve' || citesUnshown;
   if (key.plant === null) {
     return {
       verdict: flagged ? 'false-positive' : 'clean-pass', placement: null, placementMiss: false, looked: null, localised: false,

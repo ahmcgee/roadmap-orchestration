@@ -47,6 +47,11 @@ export function censusProblems(o: Obligations & Readonly<{ census: readonly Cens
 
 const RULE_MENTION = /(?<![A-Za-z0-9-])T-[1-9][0-9]*(?![0-9])/g;
 
+/** Rule ids mentioned in text, once each in mention order. The canonical T-n parser. */
+export function ruleMentions(text: string): readonly RuleId[] {
+  return [...new Set(text.match(RULE_MENTION) ?? [])] as RuleId[];
+}
+
 /**
  * The specs against the census (M4a rev 3, H3, F07; `spec-census-mismatch`), one predicate for every place it holds: the
  * Phase-0 rows of `start`, `apply` and `phase0 check` (src/phase0/rows.ts) and, since run 10 (C), the classifier of every
@@ -80,8 +85,7 @@ export function specCensusMismatches(specs: readonly SpecM1[], obligations: Obli
       ...specWitnesses(spec).filter((w) => w.state === 'active').map((w) => ({ id: w.id, text: `${w.testId} ${w.skeleton}` })),
     ];
     for (const item of cited) {
-      for (const mention of new Set(item.text.match(RULE_MENTION) ?? [])) {
-        const rule = mention as RuleId;
+      for (const rule of ruleMentions(item.text)) {
         if (stateOf.get(rule)?.type === 'out-of-slice') out.push({ type: 'spec-census-mismatch', unit: spec.unit, item: item.id, rule, state: 'out-of-slice' });
       }
     }

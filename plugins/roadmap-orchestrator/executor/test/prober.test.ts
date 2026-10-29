@@ -238,7 +238,7 @@ describe('dispatch: backend park epochs, hold causes, instance env, sessions (G5
     const parent = { type: 'stage', unit: run.unit.id, stage: 'plan-check', attempt: 1 } as const;
     const called = await callBackend(capacity, {
       unit: run.unit.id, parent, request: { kind: 'judgment', dispatch: seated(judgmentDispatch(run.ctx, run.unit.id, 'plan-check')), session: freshJudgmentSession(), evidenceDirs: [] },
-      system: 'check', rendered: 'check', schema: SMOKE_SCHEMA, cwd: run.repo, deadlineAt: isoTimeOf(new Date(Date.now() + 60_000)),
+      system: 'check', prompt: null, rendered: 'check', schema: SMOKE_SCHEMA, cwd: run.repo, deadlineAt: isoTimeOf(new Date(Date.now() + 60_000)),
     });
     const v = verdictOf(capacity, parent, called);
     assert.equal(v.kind, 'interrupted');
@@ -265,7 +265,7 @@ describe('dispatch: backend park epochs, hold causes, instance env, sessions (G5
     const parent = { type: 'stage', unit: run.unit.id, stage: 'plan-check', attempt: 1 } as const;
     const called = await callBackend(run.ctx, {
       unit: run.unit.id, parent, request: { kind: 'judgment', dispatch: seated(judgmentDispatch(run.ctx, run.unit.id, 'plan-check')), session: freshJudgmentSession(), evidenceDirs: [] },
-      system: 'check', rendered: 'check', schema: SMOKE_SCHEMA, cwd: run.repo, deadlineAt: isoTimeOf(new Date(Date.now() + 60_000)),
+      system: 'check', prompt: null, rendered: 'check', schema: SMOKE_SCHEMA, cwd: run.repo, deadlineAt: isoTimeOf(new Date(Date.now() + 60_000)),
     });
     const v = verdictOf(run.ctx, parent, called);
     assert.ok(v.kind === 'interrupted');
@@ -282,7 +282,7 @@ describe('dispatch: backend park epochs, hold causes, instance env, sessions (G5
     const parent = { type: 'stage', unit: run.unit.id, stage: 'plan-check', attempt: 1 } as const;
     const called = await callBackend(run.ctx, {
       unit: run.unit.id, parent, request: { kind: 'judgment', dispatch: seated(judgmentDispatch(run.ctx, run.unit.id, 'plan-check')), session: freshJudgmentSession(), evidenceDirs: [] },
-      system: 'check', rendered: 'check', schema: SMOKE_SCHEMA, cwd: run.repo, deadlineAt: isoTimeOf(new Date(Date.now() + 60_000)),
+      system: 'check', prompt: null, rendered: 'check', schema: SMOKE_SCHEMA, cwd: run.repo, deadlineAt: isoTimeOf(new Date(Date.now() + 60_000)),
     });
     const v = verdictOf(run.ctx, parent, called);
     assert.ok(v.kind === 'interrupted', `not a process fault: ${v.kind}`);
@@ -307,7 +307,7 @@ describe('dispatch: backend park epochs, hold causes, instance env, sessions (G5
     const cwd = tmpDir('impl-cwd');
     const called = await callBackend(ctx, {
       unit: U1, parent, request: { kind: 'implementer', dispatch: seated(implementerDispatch(ctx, U1)), session: freshClaudeImplementerSession(), evidenceDirs: [], mcpConfig: null },
-      system: 'build', rendered: 'build', schema: SMOKE_SCHEMA, cwd: absPath(cwd), deadlineAt: isoTimeOf(new Date(Date.now() + 60_000)),
+      system: 'build', prompt: null, rendered: 'build', schema: SMOKE_SCHEMA, cwd: absPath(cwd), deadlineAt: isoTimeOf(new Date(Date.now() + 60_000)),
     });
     const launch = runnerFiles(called.invDir, called.inv).read('launch.json');
     assert.equal(launch?.env['RESOURCE_INSTANCE_ESTATE'], '1');

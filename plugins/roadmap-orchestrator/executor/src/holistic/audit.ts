@@ -88,7 +88,7 @@ import {
 import { type JourneyEnd, arcJourneyLane, dirtySnapshot, jobSeriesCheckout, observedViews, removeJobCheckouts, runJourneySeries } from '../pipeline/lanes.ts';
 import { architecture, docAt, inMs, judgmentEntry, ledgerDir, ledgerPath, targetDirs } from '../pipeline/stages.ts';
 import { judgmentRepairDirective } from '../prompts/directives.ts';
-import { promptFor } from '../prompts/index.ts';
+import { renderPrompt, promptFor } from '../prompts/index.ts';
 import { type FindingView, type LensInputs, type RenderedSpec, visionInputOf } from '../prompts/inputs.ts';
 import { renderSpec } from '../spec/render.ts';
 import { parseSpec } from '../spec/spec.ts';
@@ -328,7 +328,7 @@ function lensInputs(ctx: StageContext, s: Started, r: Recorded, lens: LensKind, 
     priorFindings: findingViews(ctx.journal.view.holistic().findings, s.priorFindings),
     contracts: ctx.plan().contracts.map((c) => docAt(ctx, sha, c)),
     rulings: rulings.flatMap((x) => (x.status === 'active' ? [{ id: x.id, text: x.text }] : [])),
-    index: { contracts: [], rulings: rulings.flatMap((x) => (x.status === 'withdrawn' ? [{ id: x.id, line: `withdrawn by ${x.by}` }] : [])), ledger: ledgerPath(ctx) },
+    index: { contracts: [], rulings: [], withdrawn: rulings.filter((x) => x.status === 'withdrawn').map((x) => x.id), ledger: ledgerPath(ctx) },
     target: architecture(ctx, sha),
     checkout,
     // M4a rev 3 (H2, R61): an audit every trigger of which is a specs-only drift reads those units' specs.
@@ -548,8 +548,8 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
         job, role: 'lens', attempt, system: prompt.system, cwd: checkout, evidenceDirs: [ledgerDir(ctx), diffDir, ...targetDirs(inputs.target)],
         deadlineAt: inMs(minutesMs(ctx.plan().limits?.judgmentDeadlineMin ?? DEFAULT_BOUNDS.judgmentDeadlineMin)),
         ...(repair === null
-          ? { rendered: prompt.render(inputs), schema: prompt.schema, session: freshJudgmentSession() }
-          : { rendered: judgmentRepairDirective(repair.reasons), schema: repair.turn.schema, session: repair.turn.session }),
+          ? { ...renderPrompt(prompt, inputs), schema: prompt.schema, session: freshJudgmentSession() }
+          : { prompt: null, rendered: judgmentRepairDirective(repair.reasons), schema: repair.turn.schema, session: repair.turn.session }),
       }));
     }
     return { read: readLens(ctx, job, called), called };

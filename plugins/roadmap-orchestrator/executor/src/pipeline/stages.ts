@@ -95,13 +95,16 @@ import {
 import { captureUnderFence, holdFence } from '../core/fence.ts';
 import { durableMkdir } from '../core/fsx.ts';
 import {
-  type InvocationId, type JudgmentSessionId, type LaneId, type ResourceInstance, type ResourceName, type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId, invocationId,
+  type RuleId, type ObligationId, type InvocationId, type JudgmentSessionId, type LaneId, type ResourceInstance, type ResourceName, type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId, invocationId,
 } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
+import { censusOf } from '../core/upgrade.ts';
+import { ruleMentions } from '../holistic/rederive.ts';
+import { selectObligations, unitRules } from '../holistic/impact.ts';
 import { canonicalJson } from '../core/json.ts';
 import {
   type ApprovalFingerprint, type JudgmentSession, type LaneDef, type SpecM1, type SpecPatchOp, type NeedsUserContent, STDERR_FILE, STDOUT_FILE, effectiveScope, inScope, type EffectiveScope, specForces,
-  specRemoves, specRepairs,
+  specRemoves, specRepairs, specObligations,
 } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
 import {
@@ -124,10 +127,10 @@ import {
 } from '../input/plan.ts';
 import { type CorpusView, materialiseCorpus } from '../corpus/materialise.ts';
 import { openFinding, visionConflictDraft } from '../holistic/findings.ts';
-import { type Obligations, type RulingSidecar, type Vision, parseObligations, parseRulingSidecar, parseVision } from '../holistic/types.ts';
-import { promptFor } from '../prompts/index.ts';
+import { type ImpactInput, type ObligationDef, type Obligations, type RulingSidecar, type Vision, parseObligations, parseRulingSidecar, parseVision } from '../holistic/types.ts';
+import { renderPrompt, promptFor } from '../prompts/index.ts';
 import type {
-  ArchitectureInput, BuildBrowser, Checkout, CorpusInput, DocText, EscalationInput, BuildLane, GateTargetInput, MilestonesInput,
+  UnitTargetInput, ArchitectureInput, BuildBrowser, Checkout, CorpusInput, DocText, EscalationInput, BuildLane, GateTargetInput, MilestonesInput,
   PlanCheckCheckouts, PlanCheckDesignInput, PlanCheckPriorRound, PlanCheckScopeGrowth, ReferenceIndex, RulingText, TargetInput, UnitMilestone, VisionInput,
 } from '../prompts/inputs.ts';
 import { type Handover, visionInputOf } from '../prompts/inputs.ts';
@@ -406,7 +409,7 @@ export type Library = Readonly<{ contracts: readonly DocText[]; rulings: readonl
 
 /**
  * The unit's library at `tip`: the contracts and active rulings its spec cites, in full, and every other
- * plan contract and ledger ruling as one index line (a withdrawn ruling, cited or not, is its fold line).
+ * plan contract and active ledger ruling as one index line; withdrawn rulings contribute ids only.
  * Startup refuses a cite the plan or ledger does not hold (the plan-invalid `unknown-cite` row).
  */
 export function library(ctx: StageContext, spec: SpecM1, tip: Sha): Library {
@@ -417,7 +420,8 @@ export function library(ctx: StageContext, spec: SpecM1, tip: Sha): Library {
     rulings: rulings.flatMap((r) => (r.status === 'active' && cited(r) ? [{ id: r.id, text: r.text }] : [])),
     index: {
       contracts: ctx.plan().contracts.filter((c) => !spec.cites.contracts.includes(c)).map((path) => ({ path, heading: firstHeading(docAt(ctx, tip, path).text) })),
-      rulings: rulings.filter((r) => !cited(r)).map((r) => ({ id: r.id, line: r.status === 'active' ? firstSentence(r.text) : `withdrawn by ${r.by}` })),
+      rulings: rulings.flatMap((r) => r.status === 'active' && !cited(r) ? [{ id: r.id, line: firstSentence(r.text) }] : []),
+      withdrawn: rulings.filter((r) => r.status === 'withdrawn').map((r) => r.id),
       ledger: ledgerPath(ctx),
     },
   };
@@ -459,21 +463,29 @@ export function buildBrowser(
 }
 
 /**
- * The target a judgment embeds at `tip` (plan-check, the lenses, the checkpoint): an `architecture-doc` arc's digest when
+ * The full target an arc judgment embeds at `tip` (the lenses, the checkpoint): an `architecture-doc` arc's digest when
  * the plan names one, else the whole doc; a corpus arc's pinned corpus in force (`corpusTarget`), the vision document
- * included. The gate's is `gateTarget`.
+ * included. Unit judgments use `unitTarget`.
  */
 export function architecture(ctx: StageContext, tip: Sha): TargetInput {
   return documentTarget(ctx, tip) ?? corpusTarget(ctx, 'full');
 }
 
-/** The gate's target: as `architecture`, but a corpus arc's view omits the vision document (M3 R17). */
-export function gateTarget(ctx: StageContext, tip: Sha): GateTargetInput {
-  return documentTarget(ctx, tip) ?? { ...corpusTarget(ctx, 'without-vision'), visionDoc: null };
+/** A unit's target: selected anchors, universally binding rules and explicit mentions. The gate's view omits vision (M3 R17). */
+export function unitTarget(ctx: StageContext, tip: Sha, view: 'without-vision', anchoredBy: readonly ObligationDef[], mentioned: readonly RuleId[]): GateTargetInput;
+export function unitTarget(ctx: StageContext, tip: Sha, view: CorpusView, anchoredBy: readonly ObligationDef[], mentioned: readonly RuleId[]): UnitTargetInput;
+export function unitTarget(ctx: StageContext, tip: Sha, view: CorpusView, anchoredBy: readonly ObligationDef[], mentioned: readonly RuleId[]): UnitTargetInput {
+  const doc = documentTarget(ctx, tip);
+  if (doc !== null) return doc;
+  const full = corpusTarget(ctx, view);
+  const obligations = holisticInForce(ctx).obligations;
+  if (obligations === null) throw new Error('a corpus target requires obligations');
+  const rules = unitRules(corpusInForce(ctx).pin.value, censusOf(obligations) ?? [], anchoredBy, mentioned);
+  return { kind: 'unit-corpus', rules, others: full.rulesIndex.length - rules.length, dir: full.dir, visionDoc: full.visionDoc };
 }
 
 /** The directories a judgment reads beside its checkout for `target`: a corpus arc's materialised pin (`--add-dir`). */
-export const targetDirs = (target: TargetInput): readonly AbsPath[] => (target.kind === 'corpus' ? [target.dir] : []);
+export const targetDirs = (target: TargetInput | UnitTargetInput): readonly AbsPath[] => (target.kind === 'corpus' || target.kind === 'unit-corpus' ? [target.dir] : []);
 
 function documentTarget(ctx: StageContext, tip: Sha): ArchitectureInput | null {
   const t = targetDocuments(ctx.plan());
@@ -504,6 +516,42 @@ function corpusTarget(ctx: StageContext, view: CorpusView): CorpusInput {
     return bytes;
   });
   return { kind: 'corpus', rulesIndex: pin.value.rules, dir, visionDoc: view === 'full' ? pin.value.vision.path : null };
+}
+
+/** The unit's dependency closure in the plan in force: every unit it runs `after`, transitively. */
+function dependencyClosure(ctx: StageContext, unit: PlanUnit): readonly PlanUnit[] {
+  const byId = new Map(ctx.plan().units.map((u) => [u.id, u]));
+  const seen = new Set<UnitId>();
+  const walk = (u: PlanUnit): void => {
+    for (const d of u.after) {
+      const dep = byId.get(d);
+      if (dep === undefined || seen.has(d)) continue;
+      seen.add(d);
+      walk(dep);
+    }
+  };
+  walk(unit);
+  return [...seen].sort().map((id) => byId.get(id)!);
+}
+
+/** The shared impact input for a unit judgment; plan-check has no changed paths yet. */
+export function unitImpactInput(ctx: StageContext, unit: PlanUnit, spec: SpecM1, changedPaths: readonly RepoPath[]): ImpactInput {
+  const { obligations } = holisticInForce(ctx);
+  if (obligations === null) throw new Error('unit impact requires obligations');
+  const findings = ctx.journal.view.holistic().findings;
+  const repairs = specRepairs(spec).flatMap((r): ObligationId[] => {
+    if (r.startsWith('I-')) return [r as ObligationId];
+    const o = findings.find((f) => f.id === r)?.obligation ?? null;
+    return o === null ? [] : [o];
+  });
+  return {
+    obligations,
+    units: [{ unit: unit.id, declared: specObligations(spec), repairs }],
+    closure: dependencyClosure(ctx, unit).flatMap((u) => specObligations(loadUnitSpec(ctx, u).spec)),
+    changedPaths,
+    revised: [],
+    latched: new Set(ctx.journal.view.holistic().latched.map((l) => l.obligation)),
+  };
 }
 
 /** The product documents whose change touches the unit's authority: every plan contract, the architecture doc and its digest. */
@@ -750,8 +798,10 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
   const captured = await captureUnderFence(ctx.journal, () => {
     const now = loadUnitSpec(ctx, unit);
     const checkouts = planCheckCheckoutsAt(ctx, unit.id, parent, integrationTip(ctx));
-    const target = architecture(ctx, checkouts.tip.at);
-    const rendered = prompt.render({
+    const impact = holisticInForce(ctx).obligations === null ? null : unitImpactInput(ctx, unit, now.spec, []);
+    const anchoredBy = impact === null ? [] : selectObligations(impact).map((id) => impact.obligations.obligations.find((o) => o.id === id)!);
+    const target = unitTarget(ctx, checkouts.tip.at, 'full', anchoredBy, ruleMentions(renderSpec(now.spec)));
+    const measured = renderPrompt(prompt, {
       spec: { unit: unit.id, rev: now.spec.rev, markdown: renderSpec(now.spec) }, ...library(ctx, now.spec, checkouts.tip.at), target,
       direction: ctx.plan().direction, scope: effectiveScope(pinned), risk: pinned.riskFloor, checkouts,
       lanePrograms: laneOrder(now.spec).map((l) => ({ lane: l.id, argv0: l.argv[0]!, resolved: resolveArgv0(l, ctx.hostEnv) })),
@@ -768,9 +818,9 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
       pocs: pocReports(ctx, unit.id),
     });
     writeJudgmentInputs(ctx, parent, { tip: checkouts.tip.at, head: null, specRev: now.spec.rev, specSha256: now.sha256, routingRev: seat.routingRev });
-    return { checkouts, rendered, target };
+    return { checkouts, measured, target };
   });
-  const { checkouts, rendered, target } = captured;
+  const { checkouts, measured, target } = captured;
   const entered = await enterJudgment(ctx, parent);
   if (isCancelled(entered)) return entered;
   // Checkouts an earlier attempt left (a crash cut its stage short) go first: this attempt makes its own.
@@ -780,9 +830,9 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
   const schema = prompt.schema;
   const call = (s: JudgmentSession, text: string): Promise<BackendCallOutcome> => callBackend(ctx, {
     unit: unit.id, parent, request: { kind: 'judgment', dispatch: seat, session: s, evidenceDirs: dirs },
-    system: prompt.system, rendered: text, schema, cwd: checkouts.tip.path, deadlineAt: inMs(judgmentDeadlineMs(pinned)),
+    system: prompt.system, rendered: text, prompt: s.mode === 'fresh' ? measured.prompt : null, schema, cwd: checkouts.tip.path, deadlineAt: inMs(judgmentDeadlineMs(pinned)),
   });
-  const called = await call(session, rendered);
+  const called = await call(session, measured.rendered);
   // A refused answer goes back once, in the same session, with every reason (the repair turn), before anything is recorded.
   return planCheckRead(ctx, unit, parent, called, session.id, (reasons) => call(resumedJudgmentSession(session.id), judgmentRepairDirective(reasons)));
 }
@@ -1388,19 +1438,19 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
   // Field feedback 2026-10-23 item 1: a call on a fresh session gets the handover (src/pipeline/handover.ts); a resumed one does not.
   const handover = handoverOf(ctx, unit.id, spec, parent);
   const handed = (call: RoundCall): Handover | null => (call.session.mode === 'fresh' ? handover : null);
-  const render = (call: RoundCall): string => prompt.render({
+  const render = (call: RoundCall) => renderPrompt(prompt, {
     spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec, { buildLanesOnly: true }) }, ...lib,
     planCheckNotes: planCheckNotes(ctx, unit.id),
     fastLanes: activeBuildLanes(spec), suiteLanes: builderSuiteLanes(ctx.plan().suite.lanes, spec), evidenceDir: work, worktree: round.worktree, scope: effectiveScope(pinned),
     fixRound: call.fixRound, witnessChecks, milestones, browser: browser?.input ?? null, certifiedAt: certifiedTree(ctx, unit.id), handover: handed(call),
-  });
+  }, dispatch.triple.backend);
   const callFor = (prepared: PreparedRound) => (call: RoundCall): BackendCallSpec => ({
     unit: unit.id, parent,
     request: {
       kind: 'implementer', dispatch, session: call.session, evidenceDirs: [...new Set([work, ...call.evidenceDirs, ...(handed(call)?.evidence ?? []), ledgerDir(ctx)])],
       mcpConfig: browser?.mcpConfig ?? null,
     },
-    system: prompt.system, rendered: render(call), schema: buildSchemaFor(lanes), cwd: prepared.worktree, deadlineAt: prepared.deadlineAt,
+    system: prompt.system, ...render(call), schema: buildSchemaFor(lanes), cwd: prepared.worktree, deadlineAt: prepared.deadlineAt,
   });
   const called = await callRound(ctx, round, callFor(round));
   // Field feedback 2026-10-23 item 4: a resolve round that reported final with nothing beyond the merge while clauses are unmet

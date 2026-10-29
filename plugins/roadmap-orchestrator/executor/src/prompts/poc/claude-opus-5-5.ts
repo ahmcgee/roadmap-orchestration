@@ -46,4 +46,7 @@ ${bullets(i.lessons, '(none)')}
 Answer ${i.questions.map((q) => q.id).join(', ')} for unit ${i.spec.unit}.`;
 }
 
-export const POC_PROMPT = { system: POC_SYSTEM, render: renderPoc, schema: POC_SCHEMA } as const;
+export const POC_PROMPT = {
+  fields: ['spec', 'brief', 'questions', 'worktree', 'tip', 'evidenceDir', 'lessons'],
+  system: POC_SYSTEM, render: renderPoc, schema: POC_SCHEMA,
+} as const;

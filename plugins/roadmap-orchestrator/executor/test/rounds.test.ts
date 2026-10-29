@@ -113,7 +113,7 @@ test('rounds.session-unrecoverable: a resumed fix session that dies before print
   const spec = (call: Parameters<Parameters<typeof callRound>[2]>[0]) => ({
     unit: U1, parent,
     request: { kind: 'implementer', dispatch, session: call.session, evidenceDirs: [work, ...call.evidenceDirs], mcpConfig: null } as const,
-    system: prompt.system, rendered: JSON.stringify(call.fixRound), schema: prompt.schema, cwd: round.worktree, deadlineAt: round.deadlineAt,
+    system: prompt.system, prompt: null, rendered: JSON.stringify(call.fixRound), schema: prompt.schema, cwd: round.worktree, deadlineAt: round.deadlineAt,
   });
   const called = await callRound(run.ctx, round, spec);
   const done = await buildRead(run.ctx, run.unit, parent, 'fix', called, null);

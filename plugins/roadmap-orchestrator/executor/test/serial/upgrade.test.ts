@@ -1565,6 +1565,8 @@ async function routingStable(release: Release): Promise<Readonly<{
   assert.equal(out.code, 0, out.stderr);
   const spend = (JSON.parse(out.stdout) as { spend: { byRole: { calls: number }[]; byModel: { models: { model: string; calls: number }[]; unresolvedRevs: string[] } } }).spend;
   const total = (xs: readonly { calls: number }[]): number => xs.reduce((n, x) => n + x.calls, 0);
+  const historical = factsOf(before, 'meter');
+  assert.ok(historical.length > 0 && historical.every((f) => f.prompt === undefined), 'adopted facts without prompt still resolve spend');
   const metered = meterOf(journalOf(p).events);
   assert.deepEqual(spend.byModel.unresolvedRevs, []);
   assert.equal(total(spend.byModel.models), total(metered.bySeat), 'every metered seat call resolves to a model');

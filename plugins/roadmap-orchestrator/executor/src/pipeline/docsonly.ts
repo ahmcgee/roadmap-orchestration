@@ -27,7 +27,7 @@ import { git } from '../git/git.ts';
 import { pathClass } from '../input/systems.ts';
 import { type LineKind, languageOf, lineKinds } from './comments.ts';
 import type { PlanUnit } from '../input/plan.ts';
-import { promptFor } from '../prompts/index.ts';
+import { renderPrompt, promptFor } from '../prompts/index.ts';
 import type { VerifierHunk } from '../prompts/inputs.ts';
 import { hunkClear, validateBuildOutput, validateVerifierOutput, verifierSchemaFor } from '../prompts/schemas.ts';
 import { type StageContext, type StageParent, callBackend, dispatchOf, judgmentDeadlineMs, verificationWorktree, verifierDispatch } from './dispatch.ts';
@@ -162,7 +162,7 @@ async function askVerifier(ctx: StageContext, unit: PlanUnit, parent: StageParen
   const ids = hunks.map((h) => h.id);
   const called = await callBackend(ctx, {
     unit: unit.id, parent, request: { kind: 'judgment', dispatch, session: freshJudgmentSession(), evidenceDirs: [] },
-    system: prompt.system, rendered: prompt.render({ unit: unit.id, since, at, hunks }), schema: verifierSchemaFor(ids), cwd: ctx.repo,
+    system: prompt.system, ...renderPrompt(prompt, { unit: unit.id, since, at, hunks }), schema: verifierSchemaFor(ids), cwd: ctx.repo,
     deadlineAt: inMs(judgmentDeadlineMs(dispatchOf(ctx.journal.view, unit.id))),
   });
   const judged = judgedAnswer(called, validateVerifierOutput);

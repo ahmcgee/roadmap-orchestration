@@ -288,7 +288,7 @@ export function backendArgv(call: BackendCall): Argv {
  * rendered prompt alone; Codex has no system channel, so its stdin is `system`, a blank line, then the
  * rendered prompt.
  */
-export function promptBytes(call: BackendCall, rendered: string): string {
+export function promptBytes<C extends Pick<BackendCall, 'kind' | 'system'>>(call: C, rendered: string): string {
   switch (call.kind) {
     case 'claude-judgment':
     case 'claude-build':

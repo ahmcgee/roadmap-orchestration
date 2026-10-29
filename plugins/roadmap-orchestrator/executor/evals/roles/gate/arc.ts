@@ -39,10 +39,17 @@ import { type ArcDescriptor, type ArcRun, U1, contextFor, isGateCall, laneJson, 
 import { repositoryPaths, scanTranscript } from '../../m4a/transcript.ts';
 import { TEST_ARGV } from '../gen/tsrepo.ts';
 import { type Transcript, type Usage, parseEvents, readTranscript, sumUsage, toolCounts, unavailableCalls, usageOf } from '../transcript.ts';
-import type { Cell } from './cells.ts';
+import { isCorpusCell, type Cell } from './cells.ts';
 import { type AnswerKey, DERIVED, DERIVED_PATTERNS, type Fixture, buildFixture, materialise } from './fixture.ts';
 import { boundedDiff, diffPaths } from '../../../src/git/boundeddiff.ts';
 import { GATE_DIFF_BUDGET, largeDiffOf } from '../../../src/pipeline/gate.ts';
+import { guideAt } from '../../../src/corpus/guide.ts';
+import { derivePin, writePin } from '../../../src/corpus/pin.ts';
+import { EMPTY_REGISTRY } from '../../../src/corpus/registry.ts';
+import { openSource } from '../../../src/corpus/source.ts';
+import { PHASE0_FILE, PIN_FILE, writePhase0 } from '../../../test/helpers/corpusarc.ts';
+import { witnessLaneArgv, writeWitnessControl } from '../../../test/helpers/witness.ts';
+import { laneRevOf, parseObligations } from '../../../src/holistic/types.ts';
 import { absPath } from '../../../src/core/values.ts';
 import { type ClusterGrade, type Graded, grade, gradeClusters, touched } from './grade.ts';
 import type { ReadOnlyArm } from './readonly.ts';
@@ -137,6 +144,7 @@ export function setupGateArc(f: Fixture, kind: GateKind, risk: RiskTier, config:
     schema: 'roadmap/spec-m1', unit: 'u1', rev: 1, lanes: [{ ...laneJson(LANE), state: 'active' }],
     acceptance: f.acceptance.map((c) => ({ id: c.id, clause: c.clause, failLoudIfUndelivered: true, state: 'active' })),
     scope: SCOPE, resources: [], decisions: [], facts: [], cites: { contracts: ['contracts/api.md'], rulings: ['C-1'] },
+    ...(isCorpusCell(f.cell) ? { obligations: ['I-1'] } : {}),
     ...(f.removes.length === 0 ? {} : { removes: f.removes }),
   }));
   cpSync(RULINGS, join(planDir, 'rulings.md'));
@@ -144,10 +152,11 @@ export function setupGateArc(f: Fixture, kind: GateKind, risk: RiskTier, config:
   const planPath = join(planDir, 'plan.json');
   writeFileSync(planPath, JSON.stringify({
     schema: 'roadmap/plan-m1', arc, integrationBranch: 'main', baseline: base,
-    worktreeRoot: tmpDir('roles-wt'), contracts: ['contracts/api.md'], rulings: 'rulings.md', architectureDoc: 'ARCHITECTURE.md',
+    worktreeRoot: tmpDir('roles-wt'), contracts: ['contracts/api.md'], rulings: 'rulings.md', ...(isCorpusCell(f.cell) ? { corpus: PIN_FILE, phase0: PHASE0_FILE, holistic: { advances: ['V-1'], obligations: 'obligations.json' } } : { architectureDoc: 'ARCHITECTURE.md' }),
     direction: 'Keep every sweep mechanical: behaviour never changes unless the spec says so.', suite: { lanes: [laneJson({ ...LANE, id: 'suite' })] }, resources: [],
     derived: DERIVED, units: [{ id: 'u1', spec: 'u1.json', risk, scope: SCOPE, resources: [] }],
   }));
+  if (isCorpusCell(f.cell)) writeCorpusInputs(repo, planDir, base);
   const scenarioDir = tmpDir('roles-scenario');
   const runDir = tmpDir('roles-run');
   const steps: Step[] = [
@@ -438,4 +447,28 @@ export async function runGateTrial(o: TrialOptions): Promise<TrialRow> {
   };
   writeFileSync(join(o.out, 'row.json'), `${JSON.stringify(row, null, 2)}\n`);
   return row;
+}
+
+/** Pin and census through the production readers, just as the corpus unit harness records its first revision. */
+function writeCorpusInputs(repo: string, planDir: string, base: string): void {
+  const guide = guideAt(absPath(repo), sha(base));
+  if (guide === null) throw new Error('a corpus fixture has no guide');
+  const source = openSource(absPath(repo), guide.guide, { rev: base, fetch: false });
+  if (source.kind === 'refused') throw new Error(JSON.stringify(source.problem));
+  const derived = derivePin(guide, source.opened, EMPTY_REGISTRY);
+  if (derived.kind === 'refused') throw new Error(JSON.stringify(derived.problems));
+  const pin = derived.pin;
+  writePin(absPath(join(planDir, PIN_FILE)), pin);
+  writePhase0(planDir, {});
+  const control = join(planDir, 'witness-control.json');
+  writeWitnessControl(control, { trees: { '*': { outcomes: { export: 'pass' } } } });
+  const lane = { ...laneJson({ id: 'journey', argv: witnessLaneArgv('jsonl', planDir, control) }), reporter: 'jsonl' };
+  const laneRev = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'export', lanes: [lane], obligations: [], mapping: { paths: [] } }).lanes[0]!);
+  const witness = { lane: 'journey', testIds: ['export'] };
+  writeFileSync(join(planDir, 'obligations.json'), JSON.stringify({
+    schema: 'roadmap/obligations-m3', cutLine: 'vessel export ships', lanes: [lane], mapping: { paths: [] },
+    obligations: [{ id: 'I-1', rev: 1, statement: 'Vessel exports satisfy the export contract.', rule: { id: 'T-1', textSha256: pin.rules[0]!.textSha256 }, serves: ['V-1'], witness,
+      proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev, witness }, deliveredBy: [], activation: 'must-hold', contracts: [], state: { type: 'active' } }],
+    census: pin.rules.map((r) => ({ rule: r.id, state: r.id === 'T-1' ? { type: 'obligation', id: 'I-1' } : { type: r.id === 'T-2' ? 'untestable' : 'out-of-slice' } })),
+  }));
 }

@@ -109,7 +109,7 @@ const OUTCOMES: { readonly [K in OpKind]: readonly OpOutcome[K][] } = {
 const FACTS: readonly Fact[] = [
   { kind: 'tail-discarded', offset: 1024, length: 17, sha256: H },
   { kind: 'containment-mode', mode: 'session' },
-  { kind: 'meter', inv, routingRev: rev, subject: { type: 'seat', role: 'gate', tier: 'escalation', unit, attempt: 1 }, usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: null, turns: 7, costUsd: 0.25 } },
+  { kind: 'meter', prompt: { bytes: 431, inputs: { target: 211, spec: 45 } }, inv, routingRev: rev, subject: { type: 'seat', role: 'gate', tier: 'escalation', unit, attempt: 1 }, usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: null, turns: 7, costUsd: 0.25 } },
   { kind: 'usage-unavailable', inv, routingRev: rev, subject: { type: 'smoke', backend: 'codex' }, reason: 'no-result' },
   { kind: 'dispatch', record: { unit, specRev: specRev(1), specSha256: H, scope: [repoPattern('src/**')], riskFloor: 'med', routingRev: rev, implementerSeatRev: seatRev('fedcba9876543210'), at, transientRules: 'm3' } },
   { kind: 'stage-outcome', unit, stage: 'gate', attempt: 2, outcome: 'revise', class: 'revise', chargeable: true },

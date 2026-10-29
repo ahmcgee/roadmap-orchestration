@@ -76,12 +76,20 @@ const viewDir = (a: CorpusUnitArc, pinSha: string, view: 'full' | 'without-visio
   join(a.d.runDir, 'corpus', `${pinSha.slice(0, 8)}${view === 'full' ? '' : '.no-vision'}`);
 
 /** The arc with a published debt ledger at its baseline and B-1 kept, its gate approving with `FINDINGS`. */
-function debtArc(extraGates: number = 0): Promise<CorpusUnitArc> {
+async function debtArc(extraGates: number = 0): Promise<CorpusUnitArc> {
   const gates = Array.from({ length: 1 + extraGates }, () => gateStep({ decision: 'approve', findings: FINDINGS, unreviewed: UNREVIEWED }));
-  return setupCorpusArc([planCheckStep({ decision: 'approve' }), mulBuild(), ...gates], {
+  const arc = await setupCorpusArc([planCheckStep({ decision: 'approve' }), mulBuild(), ...gates], {
     baseline: { [DEBT_DOC]: renderDebt(BASELINE_DEBT) },
     phase0: { debt: [{ id: 'B-1', disposition: { type: 'keep', reason: 'not this arc' } }] },
   });
+  const specPath = join(arc.planDir, 'u1.json');
+  const spec = JSON.parse(readFileSync(specPath, 'utf8'));
+  writeFileSync(specPath, JSON.stringify({ ...spec, obligations: ['I-1'] }));
+  const path = join(arc.planDir, 'obligations.json');
+  const obligations = JSON.parse(readFileSync(path, 'utf8'));
+  obligations.census.find((e: { rule: string }) => e.rule === 'T-3').state = { type: 'untestable' };
+  writeFileSync(path, JSON.stringify(obligations));
+  return arc;
 }
 
 /** What the approving gate says it did not review (dev.12 round 2): recorded and shown, never enforced. */
@@ -124,7 +132,7 @@ describe('a corpus arc\'s unit through its gate', T, () => {
       assert.equal(sha256Hex(readFileSync(path)), f.sha256, `${f.path} holds its pinned bytes`);
     }
     assert.throws(() => writeFileSync(join(dir, a.pin.files[0]!.path), 'edited'), /EACCES/);
-    for (const rule of a.pin.rules) assert.ok(check.stdin.includes(rule.text), `the rules index carries ${rule.id}`);
+    for (const rule of a.pin.rules) assert.equal(check.stdin.includes(rule.text), ['T-1', 'T-3'].includes(rule.id), `plan-check embeds exactly the chosen rules: ${rule.id}`);
     assert.ok(check.stdin.includes(`${dir}/${a.pin.vision.path}`), 'plan-check is told where the vision doc is');
   });
 
@@ -136,7 +144,7 @@ describe('a corpus arc\'s unit through its gate', T, () => {
     // The run dir, which holds both views, is readable (2026-10-16): the gate is pointed only at the view without the vision.
     assert.ok(g.stdin.includes(dir) && !new RegExp(`${viewDir(a, a.pinSha256, 'full')}[/\\s]`).test(g.stdin), 'never told of the full view');
     assert.deepEqual(filesUnder(dir), a.pin.files.filter((f) => f.path !== a.pin.vision.path).map((f) => f.path).sort());
-    for (const rule of a.pin.rules) assert.ok(g.stdin.includes(rule.text), `the rules index carries ${rule.id}`);
+    for (const rule of a.pin.rules) assert.equal(g.stdin.includes(rule.text), ['T-1', 'T-3'].includes(rule.id), `gate embeds exactly the chosen rules: ${rule.id}`);
     const vision = readFileSync(join(a.d.repo, VISION_PATH), 'utf8').split('\n').find((l) => l.startsWith('A calm'))!;
     for (const text of [vision, a.pin.vision.path, 'Every vessel finds a berth.']) assert.ok(!g.stdin.includes(text), `the gate prompt carries "${text}"`);
   });

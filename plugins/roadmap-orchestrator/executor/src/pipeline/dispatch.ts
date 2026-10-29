@@ -44,6 +44,7 @@
 //   on the judgment profile at the role's one seat `arc` of the arc's routing, spawned as `arc-backend` under `job{job}`
 //   and metered to the job by role and routingRev. A resumed job reads a call it made back (`recordedArcCall`); its
 //   verdict is read as a unit judgment's (`verdictOf` takes a job parent: a usage limit parks the backend arc-wide).
+import type { PromptSize } from '../prompts/index.ts';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { type BackendCall, type ClaudeTriple, type CodexTriple, backendArgv, promptBytes, resumedJudgmentSession } from '../backends/argv.ts';
@@ -438,6 +439,7 @@ export type BackendCallSpec = Readonly<{
   request: BackendRequest;
   system: string;
   rendered: string;
+  prompt: PromptSize | null;
   schema: JsonValue;
   /** The session's working directory: the tree a judge reads (the gate's own throwaway checkout, dev.13), or the worktree an implementer edits. */
   cwd: AbsPath;
@@ -592,7 +594,7 @@ export async function callBackend(ctx: StageContext, given: BackendCallSpec): Pr
   const launch = (origin: SpawnOrigin): LaunchSpec => ({
     runDir: ctx.runDir,
     origin,
-    subject: { purpose: 'backend', ...seat, routingRev: spec.request.dispatch.routingRev, unit: spec.unit, attempt: spec.parent.attempt },
+    subject: { purpose: 'backend', ...(spec.prompt === null ? {} : { prompt: spec.prompt }), ...seat, routingRev: spec.request.dispatch.routingRev, unit: spec.unit, attempt: spec.parent.attempt },
     launch: (invDir) => {
       const c = call(spec, schemaText, schemaPath, invDir, mcpConfig, denyWrites);
       return { argv: backendArgv(c), cwd: spec.cwd, env, stdinPath: stdin, stallMs: null, graceMs: BACKEND_GRACE_MS, terminal: terminal(spec, c, schemaPath, invDir) };
@@ -634,6 +636,7 @@ export type ArcCallSpec = Readonly<{
   attempt: number;
   system: string;
   rendered: string;
+  prompt: PromptSize | null;
   schema: JsonValue;
   cwd: AbsPath;
   evidenceDirs: readonly AbsPath[];
@@ -704,6 +707,7 @@ export type ActingJudgeCallSpec = Readonly<{
   attempt: number;
   system: string;
   rendered: string;
+  prompt: PromptSize | null;
   schema: JsonValue;
   cwd: AbsPath;
   evidenceDirs: readonly AbsPath[];
@@ -759,7 +763,7 @@ export const MCP_CONFIG_INPUT = 'mcp.json';
 
 /** The spawn of a job's arc-role call `c` (a judgment or an acting judge), shared by `callArcRole` and `callActingJudge`. */
 async function callJobRole(
-  ctx: StageContext, spec: Readonly<{ job: JobId; role: ArcRole; attempt: number; rendered: string; cwd: AbsPath; deadlineAt: IsoTime; session: JudgmentSession }>,
+  ctx: StageContext, spec: Readonly<{ job: JobId; role: ArcRole; attempt: number; rendered: string; prompt: PromptSize | null; cwd: AbsPath; deadlineAt: IsoTime; session: JudgmentSession }>,
   { seat, routingRev }: ReturnType<typeof arcSeat>, c: Extract<BackendCall, { kind: 'claude-judgment' | 'claude-acting-judge' }>,
 ): Promise<BackendCallOutcome> {
   const { session } = spec;
@@ -769,7 +773,7 @@ async function callJobRole(
   const launch = (origin: SpawnOrigin): LaunchSpec => ({
     runDir: ctx.runDir,
     origin,
-    subject: { purpose: 'arc-backend', ...seat, routingRev, job: spec.job, attempt: spec.attempt },
+    subject: { purpose: 'arc-backend', ...(spec.prompt === null ? {} : { prompt: spec.prompt }), ...seat, routingRev, job: spec.job, attempt: spec.attempt },
     launch: (invDir) => ({
       argv: backendArgv(c), cwd: spec.cwd, env, stdinPath: stdin, stallMs: null, graceMs: BACKEND_GRACE_MS,
       terminal: { type: 'backend', purpose: 'backend', routingRev, schemaPath, outputPath: absPath(join(invDir, STDOUT_FILE)), role: spec.role, session },

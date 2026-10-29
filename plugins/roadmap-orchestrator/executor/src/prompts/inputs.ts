@@ -45,11 +45,12 @@ export type BuildLane = LaneDef & Readonly<{ cadence: 'build' }>;
 /**
  * What a prompt does not embed, one line each, readable on demand (arc-1 feedback item 12): every plan
  * contract the spec does not cite (path and first Markdown heading), and every ruling not cited in full
- * (its id and first sentence, or the ruling that withdrew it). `ledger` is the rulings file's path.
+ * (its id and first sentence). Withdrawn rulings contribute ids alone. `ledger` is the rulings file's path.
  */
 export type ReferenceIndex = Readonly<{
   contracts: readonly Readonly<{ path: RepoPath; heading: string }>[];
   rulings: readonly Readonly<{ id: RulingId; line: string }>[];
+  withdrawn: readonly RulingId[];
   ledger: AbsPath;
 }>;
 
@@ -70,8 +71,11 @@ export type ArchitectureInput =
 export type CorpusInput = Readonly<{ kind: 'corpus'; rulesIndex: readonly PinnedRule[]; dir: AbsPath; visionDoc: RepoPath | null }>;
 /** What a judgment's `target` input holds: an `architecture-doc` arc's doc or digest, or a corpus arc's corpus. */
 export type TargetInput = ArchitectureInput | CorpusInput;
+/** A unit judgment embeds its obligation anchors, universally binding rules and explicit rule mentions. */
+export type UnitCorpusInput = Readonly<{ kind: 'unit-corpus'; rules: readonly PinnedRule[]; others: number; dir: AbsPath; visionDoc: RepoPath | null }>;
+export type UnitTargetInput = ArchitectureInput | UnitCorpusInput;
 /** The gate's target: never the vision doc (M3 R17), so a corpus target carries none. */
-export type GateTargetInput = ArchitectureInput | (CorpusInput & Readonly<{ visionDoc: null }>);
+export type GateTargetInput = ArchitectureInput | (UnitCorpusInput & Readonly<{ visionDoc: null }>);
 
 /** A fix round resumes the build session with what failed. `directives` are the gate's (or, for a
  * conflict or scope-growth round, the executor's) instructions; either list may be empty, not both. */
@@ -166,7 +170,7 @@ export type PlanCheckInputs = Readonly<{
   contracts: readonly DocText[];
   rulings: readonly RulingText[];
   index: ReferenceIndex;
-  target: TargetInput;
+  target: UnitTargetInput;
   direction: string;
   /** The scope envelope pinned for the unit. */
   scope: EffectiveScope;
@@ -1167,16 +1171,20 @@ export function ignoredText(c: IgnoredCensus): string | null {
 
 /**
  * The target's entry in a documents block: the whole architecture doc, or the digest naming the doc's path; or, in a
- * corpus arc, the rules index (every active T-n by file and section) naming the read-only directory of the pinned
+ * corpus arc, the rules index (selected rules for a unit, every active rule for an arc judgment) naming the read-only directory of the pinned
  * corpus files, and the vision document there when the role reads it. `hashes` adds each rule's text hash, which a
  * ruling's rule reference must quote (the checkpoint).
  */
-export function targetDocument(t: TargetInput, opts: Readonly<{ hashes: boolean }> = { hashes: false }): Readonly<{ source: string; content: string }> {
+export function targetDocument(t: TargetInput | UnitTargetInput, opts: Readonly<{ hashes: boolean }> = { hashes: false }): Readonly<{ source: string; content: string }> {
   switch (t.kind) {
     case 'full':
       return { source: `architecture doc ${t.doc.path}`, content: t.doc.text };
     case 'digest':
       return { source: `architecture digest ${t.digest.path} (the full architecture doc is ${t.doc} in the repository)`, content: t.digest.text };
+    case 'unit-corpus': {
+      const vision = t.visionDoc === null ? '' : `; the vision document is ${t.dir}/${t.visionDoc} (it holds no rules)`;
+      return { source: `corpus rules index (the pinned corpus files are read-only under ${t.dir}${vision})`, content: `${rulesIndexText(t.rules, opts)}\n${t.others} other active rules are readable in ${t.dir}.` };
+    }
     case 'corpus': {
       const vision = t.visionDoc === null ? '' : `; the vision document is ${t.dir}/${t.visionDoc} (it holds no rules)`;
       return { source: `corpus rules index (the pinned corpus files are read-only under ${t.dir}${vision})`, content: rulesIndexText(t.rulesIndex, opts) };
@@ -1212,6 +1220,7 @@ export function referenceIndexText(index: ReferenceIndex): string {
     contracts.length === 0 ? '(none)' : contracts.join('\n'),
     'Rulings not embedded:',
     rulings.length === 0 ? '(none)' : rulings.join('\n'),
+    ...(index.withdrawn.length === 0 ? [] : [`Withdrawn rulings (never cite): ${index.withdrawn.join(', ')}`]),
   ].join('\n');
 }
 
@@ -1245,15 +1254,17 @@ export function findingsText(findings: readonly GateFinding[]): string {
 // M3 text helpers: the vision, obligations, findings, coverage and divergences as the judgments read them.
 
 /**
- * Every clause, one per line, world clauses first; a tradeoff with its rank, a withdrawn clause marked so it is never
+ * Every active clause in full, world clauses first; a tradeoff with its rank. Withdrawn clause ids alone, never
  * cited (H16). Then the arc's slice and the horizon (the active clauses outside it), and the open questions with the
  * clauses they bear on and their working assumptions (closed ones omitted).
  */
 export function visionText(v: VisionInput): string {
-  const ordered = [...v.clauses.filter((c) => c.kind === 'world'), ...v.clauses.filter((c) => c.kind !== 'world')];
+  const active = v.clauses.filter((c) => c.state === 'active');
+  const withdrawn = v.clauses.filter((c) => c.state === 'withdrawn').map((c) => c.id);
+  const ordered = [...active.filter((c) => c.kind === 'world'), ...active.filter((c) => c.kind !== 'world')];
   const lines = ordered.map((c) => {
     const kind = c.rank === null ? c.kind : `${c.kind}, rank ${c.rank}`;
-    return `${c.id} (${kind}${c.state === 'withdrawn' ? ', WITHDRAWN: never cite it' : ''}): ${c.text}`;
+    return `${c.id} (${kind}): ${c.text}`;
   });
   const horizon = v.clauses.filter((c) => c.state === 'active' && !v.advances.includes(c.id)).map((c) => c.id);
   const open = v.questions.filter((q) => q.state === 'open');
@@ -1262,6 +1273,7 @@ export function visionText(v: VisionInput): string {
     : ['Open questions:', ...open.map((q) => `- ${q.id} (bears on ${q.bears.join(', ')}): ${q.text}\n  Working assumption: ${q.assumption}`)];
   return [
     `Vision revision ${v.rev}`, ...lines,
+    ...(withdrawn.length === 0 ? [] : [`Withdrawn, never cite: ${withdrawn.join(', ')}`]),
     `This arc advances: ${v.advances.join(', ')}`, `Horizon (active, beyond this arc): ${horizon.join(', ') || 'none'}`, ...questions,
   ].join('\n');
 }
@@ -1281,13 +1293,14 @@ function obligationState(o: ObligationDef): string {
 }
 
 /**
- * One obligation per entry: statement, anchor, witness and its observation on the tree under review. `serves`
+ * Active obligations in full: statement, anchor, witness and observation on the tree under review. Non-active ones: id and state only. `serves`
  * names the vision clauses it serves; the gate renders without them (R17: the gate never reads the vision).
  */
 export function obligationsText(views: readonly ObligationView[], opts: Readonly<{ serves: boolean }>): string {
   if (views.length === 0) return '(none)';
   return views.map((v) => {
     const o = v.obligation;
+    if (o.state.type !== 'active') return `- ${o.id}: ${obligationState(o)}`;
     const head = [
       `rev ${o.rev}`, v.latched ? 'must-hold (latched)' : o.activation, obligationState(o), ...(v.exempt ? ['exempt'] : []), ...(opts.serves ? [`serves ${o.serves.join(', ') || 'none'}`] : []),
     ];
