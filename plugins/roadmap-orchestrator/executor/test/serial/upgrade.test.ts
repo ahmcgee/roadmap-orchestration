@@ -8,8 +8,8 @@
 // HEAD's check.ts (every criterion passes, and the upgrade forced no park and no new session), or, where the story
 // needs arc judgments the M1 scenario format cannot express, with HEAD's CLI and fakes directly.
 //
-// Which releases: HEAD (1.0.0-dev.24) adopts arcs started on 1.0.0-dev.7 to dev.21, through the defaults of
-// src/core/upgrade.ts. Five are covered here. Every unlabelled cell starts its arc on the previous release
+// Which releases: HEAD (1.0.0-dev.32) adopts dev.31 and retained older arcs through the defaults of
+// src/core/upgrade.ts. The previous release and five historical baselines are covered here. Every unlabelled cell starts its arc on the previous release
 // (PREVIOUS_RELEASE, 1.0.0-dev.31). The dev.20 cells retain legacy snapshot and audit-only skip coverage; one cell has dev.21 publish a dev.20 arc's ref. The cells
 // labelled `upgrade.dev11.*` start theirs on 1.0.0-dev.11 (DEV11_RELEASE)
 // and those labelled `upgrade.dev10.*` on 1.0.0-dev.10 (DEV10_RELEASE): an arc started on each is in flight, so the
