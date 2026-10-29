@@ -5321,3 +5321,17 @@ including after recovery. This class does not forgive the lane or turn it into a
 reusable clean pass. Deterministic red-red, dirty checkouts, failed verification repeats
 and witness failures retain their existing outcomes. Host-pressure handling precedes
 this classification. Old `red` facts retain their recorded charge.
+
+## Supervisor executor-exit evidence
+
+For each executor it reaps, the supervisor exclusively publishes
+`<hostDir>/executor.<generation>.exit.json` before restarting or releasing its claim:
+`{v, generation, at, child: exited{code}|signalled{signal}, stages}`.
+`stages` is `{kind: known, last: stage-parent|null, open: stage-parent[]}` from the
+verified complete journal (unit/stage/attempt), or `{kind: unreadable, detail}` when
+that journal is corrupt. A completed unit's terminal retire bookkeeping is not an
+open attempt. An empty startup journal yields no last or open stage. This records
+intentional exits as well as crashes, including an exit that never wrote an executor
+exit reason. Historical generations may lack this new evidence file; adoption does
+not require or manufacture one. GC treats it as a generation file, keeping it with
+any generation cited by an open needs-user item.
