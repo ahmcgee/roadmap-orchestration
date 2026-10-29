@@ -88,8 +88,10 @@ There are five actions. Each one applies to particular kinds:
   inside a rule line (rationale belongs in prose).
 - **fold**: a standing ruling that states a lasting truth about the target becomes a corpus rule. Rulings accumulate
   as patches; the corpus is where the target lives.
-- **resolve**: open debt that is obsolete (its code is gone, or another item or unit already covers it) or that
-  duplicates another item.
+- **resolve**: open debt that is obsolete (its code is gone, or another item or unit already covers it), that
+  duplicates another item, or that is trivial. Debt is substantive drag on later work. An item whose drag is
+  negligible, a nitpick that should have been released, never needed a unit: resolve it with "Gives up" naming
+  what stays unfixed.
 
 **The no-loss test**, for every merge, tighten and fold:
 1. List each property the originals demand: every testable consequence, every prohibition.
