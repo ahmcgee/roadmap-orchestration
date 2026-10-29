@@ -595,7 +595,7 @@ export async function callBackend(ctx: StageContext, given: BackendCallSpec): Pr
   const launch = (origin: SpawnOrigin): LaunchSpec => ({
     runDir: ctx.runDir,
     origin,
-    ...(role === 'build' ? { cpuKey: buildCpuKey(r.dispatch.triple) } : {}),
+    ...(r.kind === 'implementer' ? { cpuKey: buildCpuKey({ role: 'build', class: ctx.routing(spec.unit).classes.build[r.dispatch.tier], routingRev: r.dispatch.routingRev }) } : {}),
     subject: { purpose: 'backend', ...(spec.prompt === null ? {} : { prompt: spec.prompt }), ...seat, routingRev: spec.request.dispatch.routingRev, unit: spec.unit, attempt: spec.parent.attempt },
     launch: (invDir) => {
       const c = call(spec, schemaText, schemaPath, invDir, mcpConfig, denyWrites);

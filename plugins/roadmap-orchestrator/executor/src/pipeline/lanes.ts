@@ -794,7 +794,7 @@ async function runLane(
   const start = sampleHost();
   const outcome = await invoke(ctx.journal, ctx.containment, {
     runDir: ctx.runDir,
-    cpuKey: laneCpuKey(lane),
+    ...(files === null ? { cpuKey: laneCpuKey(lane) } : {}),
     origin: { type: 'new', key: opKey(`lane:${parent.unit}`), parent, deadlineAt: isoTimeOf(new Date(Date.now() + LANE_DEADLINE_MS)) },
     subject: {
       purpose: 'lane', unit: parent.unit, lane: lane.id, set, at, redRev: HOST_SIGNATURES_REV, identity, ...(files === null ? {} : { files: [...files].sort() }),

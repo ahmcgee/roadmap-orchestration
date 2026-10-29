@@ -36,7 +36,7 @@
 import { basename } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import { type SmokeVerdict, type TestRef, testRefKey } from '../core/events.ts';
-import { type LaneId, type ObligationId, type ResourceInstance, type Sha, type Sha256Hex, compareIds } from '../core/ids.ts';
+import { type LaneId, type ObligationId, type ResourceInstance, type ResourceName, type Sha, type Sha256Hex, compareIds } from '../core/ids.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import type { NeedsUserContent } from '../core/records.ts';
 import { type RepoPath, matchesPattern, repoPath } from '../core/values.ts';
@@ -49,12 +49,11 @@ import { type ArcLaneDef, type WitnessRecord, laneRevOf } from '../holistic/type
 import { keepInput } from '../input/inforce.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import type { GateChecks, SmokeNotRun } from '../prompts/inputs.ts';
-import { probe } from '../resources/probe.ts';
-import { type Reservation, type StageHolder, cleanup, heldReservation, run } from '../resources/reserve.ts';
+import { type Reservation, type StageHolder } from '../resources/reserve.ts';
 import { type StageContext, type StageParent, dispatchOf, smokeWorktree } from './dispatch.ts';
 import { type LaneRuntime, laneEnvId, laneRequest } from './lanes.ts';
 import { type LaneCancel, laneAbortReason } from './redlane.ts';
-import { applyMutant, removeMutantLeftovers, removeMutantWorktree, runMutantLane } from './reproduce.ts';
+import { applyMutant, holdMutantLane, releaseMutantLane, removeMutantLeftovers, removeMutantWorktree, runMutantLane } from './reproduce.ts';
 import { integrationTip, stageHolder } from './stages.ts';
 import { checksApply, requiredLanes } from './witnesscheck.ts';
 
@@ -64,7 +63,8 @@ export type SmokeEnd =
   | Readonly<{ kind: 'ran'; verdict: SmokeVerdict; targets: readonly RequiredWitness[] }>
   | Readonly<{ kind: 'interrupted'; reason: LaneCancel }>
   | Readonly<{ kind: 'occupied'; needsUser: NeedsUserContent }>
-  | Readonly<{ kind: 'cleanup-failed'; failed: readonly ResourceInstance[] }>;
+  | Readonly<{ kind: 'cleanup-failed'; failed: readonly ResourceInstance[] }>
+  | Readonly<{ kind: 'env-unavailable'; environment: ResourceName }>;
 
 /** What a smoke would run, once its bound holds: the targets, their lanes, the production paths and the diff base. */
 type SmokePlan = Readonly<{ targets: readonly RequiredWitness[]; refs: readonly TestRef[]; lanes: readonly ArcLaneDef[]; base: Sha; prod: readonly RepoPath[] }>;
@@ -147,13 +147,7 @@ async function reserve(
   const holder = stageHolder(parent);
   const grant = await rt.acquire(request, holder, rt.rank, rt.signal);
   if (grant.kind === 'cancelled') return { kind: 'interrupted', reason: laneAbortReason(rt.signal) };
-  const reserved = heldReservation(ctx, holder, 'reserved');
-  const occupancy = await probe(ctx, reserved, parent);
-  if (occupancy.kind === 'parked') {
-    const cleaned = await cleanup(ctx, reserved, parent);
-    return cleaned.kind === 'cleanup-failed' ? { kind: 'cleanup-failed', failed: cleaned.failed } : { kind: 'occupied', needsUser: occupancy.needsUser };
-  }
-  return { kind: 'held', reservation: run(ctx, reserved, parent) };
+  return holdMutantLane(ctx, parent);
 }
 
 /** Records the attempt's `smoke-ran` and returns its end. */
@@ -204,10 +198,10 @@ export async function mutationSmoke(ctx: StageContext, unit: PlanUnit, parent: S
       for: { type: 'smoke', unit: unit.id, attempt: parent.attempt, of: salvaged }, held: held.reservation?.resources ?? [],
     });
     last = r.evidence;
-    const released = held.reservation === null ? null : await cleanup(ctx, held.reservation, parent);
-    if (released?.kind === 'cleanup-failed') {
+    const failed = await releaseMutantLane(ctx, parent, held.reservation);
+    if (failed.length > 0) {
       await removeMutantWorktree(ctx, parent, worktree, last);
-      return { kind: 'cleanup-failed', failed: released.failed };
+      return { kind: 'cleanup-failed', failed };
     }
     if (r.kind === 'interrupted') {
       await removeMutantWorktree(ctx, parent, worktree, last);

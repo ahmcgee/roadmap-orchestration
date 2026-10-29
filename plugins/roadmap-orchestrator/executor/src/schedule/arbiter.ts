@@ -14,6 +14,7 @@
 //     - environment-blocked (F8: a named resource dirty, or a pool without a healthy instance; `envBlocked`) are
 //       set aside: never granted, never blocking anyone. They re-activate by themselves once the residue is
 //       disposed and the unit released, at the next wake.
+//     - pressure-held workloads are also set aside before overlap checks, including jobs before unit judgments.
 //     - an active waiter whose request overlaps a blocked higher-ranked one (a shared named resource or pool,
 //       `@cpu` included, or both publications; `overlaps`) waits: backfill is disjoint-only, so a lower rank never
 //       overtakes a higher one on what the higher one waits for.
@@ -109,9 +110,6 @@ export function createArbiter(ctx: ResourceContext): Arbiter {
   const pressureBlocked = (w: UnitWaiter | FirstWaiter): boolean => {
     if (w.request.cpu === 0) return false;
     const h = w.holder;
-    // Reacquiring a live build's CPU after certification resumes admitted work; it is not a new admission.
-    if (h.type === 'stage' && h.stage === 'build' && ctx.journal.view.opsOfParent('proc.spawn', parentOf(h)).some((i) =>
-      i.expect.subject.purpose === 'backend' && i.expect.subject.role === 'build' && ctx.journal.view.doneOf(i.op) === null)) return false;
     const workload = w.request.cpuBasis !== undefined || (h.type === 'stage' && ['build', 'scaffold', 'poc', 'lanes', 'candidate'].includes(h.stage));
     if (!workload) return false; // Judgments never wait on the admission brake.
     const hot = hostPressure(pressure.ticks(), 0);

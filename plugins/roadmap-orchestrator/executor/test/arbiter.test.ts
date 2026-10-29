@@ -458,3 +458,37 @@ test('arbiter.pressure-brake: job lanes at one calibrated CPU wait, while an arc
   transition(ctx, holder, held, { type: 'release' }, { type: 'job', job: holder.job });
   journal.close();
 });
+
+
+test('arbiter.pressure-brake: restart rebuilds job and unit waits over actual reservations, preserving judgment exemption', T, async () => {
+  const r = newRun();
+  const before = openPoolRun(r);
+  const active = holderOf('active');
+  assert.equal(reserve(before.ctx, active, req({ cpu: 1 }), stageParent(active)).state, 'reserved');
+  before.journal.close();
+  const { ctx, journal } = openPoolRun(r);
+  const arb = createArbiter(ctx);
+  arb.pressure.record({ atMs: 0, runNs: 0, waitNs: 0 });
+  arb.pressure.record({ atMs: 60_000, runNs: 0, waitNs: 1e9 });
+  const controller = new AbortController();
+  const request = req({ cpu: 1, cpuBasis: { kind: 'default', key: sha256('b'.repeat(64)), value: 1, samples: 0 } });
+  const job = { type: 'job', job: jobId('audit', 1) } as const;
+  const pendingJob = arb.acquireFirst(request, job, controller.signal);
+  const lane = { ...holderOf('lane'), stage: 'lanes' } as const;
+  const pendingLane = wait(arb, request, lane, rank('lane', 1), controller.signal);
+  assert.equal(arb.waitingFirst()[0]?.pressureBlocked, true);
+  assert.equal(arb.waiting()[0]?.pressureBlocked, true);
+  const judge = { ...holderOf('judge'), stage: 'gate' } as const;
+  assert.equal((await wait(arb, req({ cpu: 1 }), judge, rank('judge', 2)).done).kind, 'granted', 'a first-queue job cannot overlap-block a unit judgment');
+  release(ctx, active);
+  release(ctx, judge);
+  arb.wake();
+  assert.equal((await pendingJob).kind, 'granted', 'queued work is not a reservation: the lone workload progresses');
+  assert.equal(arb.waiting()[0]?.pressureBlocked, true, 'only the granted job now holds the brake');
+  controller.abort();
+  assert.equal((await pendingLane.done).kind, 'cancelled');
+  const held = holderUnits(journal.view, job);
+  transition(ctx, job, held, { type: 'clean', from: 'reserved' }, { type: 'job', job: job.job });
+  transition(ctx, job, held, { type: 'release' }, { type: 'job', job: job.job });
+  journal.close();
+});

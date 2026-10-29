@@ -38,6 +38,8 @@ export type ChecksOptions = Readonly<{
   files?: readonly string[];
   /** The journey lane's `testPaths` (default none); its argv, given the jsonl wrapper (default the wrapper). */
   testPaths?: readonly string[] | undefined;
+  /** Resources borrowed by the journey and mutation smoke. */
+  resources?: readonly string[];
   argv?: (wrapper: string) => readonly string[];
   /** u1's spec lane `mul` runs this argv instead (a colocated test file). */
   specLane?: readonly string[];
@@ -66,7 +68,7 @@ export async function checksArc(opts: ChecksOptions): Promise<ChecksArc> {
   const wrapper = join(planDir, 'jsonl-lane.sh');
   editJson(join(planDir, 'obligations.json'), (o) => {
     const lanes = o['lanes'] as Json[];
-    const lane: Json = { ...lanes[0]!, argv: opts.argv?.(wrapper) ?? lanes[0]!['argv'], ...(opts.testPaths === undefined ? {} : { testPaths: opts.testPaths }) };
+    const lane: Json = { ...lanes[0]!, ...(opts.resources === undefined ? {} : { resources: opts.resources }), argv: opts.argv?.(wrapper) ?? lanes[0]!['argv'], ...(opts.testPaths === undefined ? {} : { testPaths: opts.testPaths }) };
     o['lanes'] = [lane];
     const laneRev = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [lane], obligations: [], mapping: { paths: [] } }).lanes[0]!);
     const [i1] = o['obligations'] as Json[];

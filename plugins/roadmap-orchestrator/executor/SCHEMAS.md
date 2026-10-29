@@ -5285,7 +5285,7 @@ source. Structured JSON projections, recorded references and commit/hash provena
 
 ## Calibrated CPU reservations and powered resources (2026-10-29; items 6, 8)
 
-`src/resources/calibrate.ts` learns scheduling costs from completed lane and build invocations' validated `exit.json`
+`src/resources/calibrate.ts` learns scheduling costs from completed full lane (including journey/proof) and build invocations' validated `exit.json`
 `cpu: LaunchCpu | null`. A qualifying run has `wallMs >= 30_000`; its demand is `(runMs + waitMs) / wallMs` cores.
 For each key, keep the last ten qualifying runs. Fewer than three samples uses `CPU_COST`; otherwise reserve
 `max(1, min(CPU_COST, ceil(p90 demand)))`, with nearest-rank p90. A lane's explicit `cpu` or a unit's explicit `cpu`
@@ -5293,17 +5293,21 @@ always overrides calibration, even above the default. Plan-load and apply over-c
 unmeasured defaults or explicit values: calibration cannot make an otherwise invalid plan admissible.
 
 The lane key hashes canonical `{kind: 'lane', argv, cwd, set: env.set, pass: sorted env.pass, expectedExit}`. The build
-key hashes canonical `{kind: 'build', backend, model, effort}`; only the hash is persisted. Execution shape and seat
-changes start separate histories. The key never uses `laneRev` (which includes explicit `cpu`), and measured costs are
-never written into plan/spec definitions, `LaneIdentity`, reuse keys or witness keys. The per-journal reader caches
-completed invocation ids; repeated scheduling reads do not reread their runner files or count a sample twice. A
+key hashes canonical `{kind: 'build', role: 'build', class: BuildClass, routingRev}`; the spawn key and reservation
+basis persist this hash, never a model id. Execution shape, class and routing revision changes start separate histories.
+Earlier triple-based hashes remain readable but cannot match the new seat keys. Lane cwd is the validated path relative
+to the checkout, never an invocation-specific absolute launch cwd. File-targeted (`subject.files`) runs have no full-run
+key and are excluded from full-run history, including earlier spawns that incorrectly carried that key. The key never
+uses `laneRev` (which includes explicit `cpu`), and measured costs are never written into plan/spec definitions, `LaneIdentity`, reuse keys or witness keys. The per-journal reader caches
+completed invocation ids only after their exit file appears; an absent `exit.json` is retried on later reads. Samples
+retain invocation order even when an earlier exit file appears late. Repeated reads never count a sample twice. A
 restart rebuilds the history from durable records and runner files.
 
 Additive records (schema version unchanged):
 
 | Record | Field | Read of an earlier record |
 |---|---|---|
-| `proc.spawn.expect` (lane, proof lane or build) | `cpuKey?: Sha256Hex` | absent → no calibration key (`spawnCpuKeyOf`), warned once, excluded from history; no inference from earlier launch argv |
+| `proc.spawn.expect` (full lane, journey, proof lane or build) | `cpuKey?: Sha256Hex` | absent → no calibration key (`spawnCpuKeyOf`), warned once, excluded from history; no inference from earlier launch argv |
 | `ResourceRequest` and `resource.transition.expect` on reserve | `cpuBasis?: CpuBasis` | absent → unmeasured (`reservationCpuBasisOf` returns null with a warning); recorded token units stay authoritative |
 | `sched.json.queue[]`, `jobQueue[]` | `pressureBlocked?: boolean` | absent → false, warned once; non-authoritative derived view |
 | `EnvironmentDecl` (disk and parsed) | `resources?: ResourceName[]` | absent → `[]`, warned once by `environmentResources`; raw input bytes remain unchanged |
@@ -5314,13 +5318,19 @@ the arbiter to the reservation intent, so waiting never loses the value actually
 
 The arbiter shares the scheduler's `PressureTicks`. While `hostPressure(ticks, 0) >= PRESSURE_SATURATED` over the
 recent minute, it sets aside new build and lane requests, including job lanes, before overlap/backfill ordering.
-Judgments, slot-only requests and re-acquisition for an already live build invocation are exempt. The brake never holds when no resource-table entry holds or transitions
+Judgments and slot-only requests are exempt. Certification runs after build quiescence in the lanes stage; there is no
+live-build release/re-acquisition exemption. The brake never holds when no resource-table entry holds or transitions
 an `@cpu` token, so external saturation cannot deadlock the arc: one workload always advances. The next wake on a
 release or cooling tick reevaluates waiters in their usual rank order. `status` exposes `pressureBlocked` on the
-unit's `waitingFor` and host queues; its compact state says `waiting:resources(host-pressure)` and classes the wait
+unit's `waitingFor` and host queues; waiters rebuild over the recovered resource table after restart, with a fresh
+pressure window. Its compact state says `waiting:resources(host-pressure)` and classes the wait
 as host pressure. No launch pressure measurement or charging rule changes.
 
-Powered-resource use also covers proof lanes and milestone walkthrough/compare reservations. A failed environment
+Powered-resource use also covers journeys, mutant reproduction/acceptance/smoke, proof lanes and milestone walkthrough/compare reservations.
+Every request includes the inferred environment names before arbitration, serializing even disjoint resources powered
+by the same environment. Mutant paths share `holdMutantLane`/`releaseMutantLane`; unavailable environments block
+reproduction and candidate acceptance without a red verdict, or park mutation smoke as `env-unavailable`. All release
+earlier successful uses if a later environment fails, and release normal uses after reservation cleanup. A failed environment
 bring-up leaves a proof without a verdict, or a walk/compare incomplete (`detail: 'env-unavailable'`); no product
 verdict is charged. A walk/compare releases its environment uses after reservation cleanup (`releaseJob`). The
 existing apply classifier compares the complete environment declaration, including `resources`, and refuses a

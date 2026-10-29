@@ -18,8 +18,10 @@ import { reserveJob, releaseJob } from '../src/walk/walk.ts';
 import { milestoneJson } from './fixtures/walk-common.ts';
 import { milestonesOf } from '../src/input/plan.ts';
 import { type StageParent, pinDispatch } from '../src/pipeline/dispatch.ts';
-import { type LaneRuntime, laneOrder, reserveNow, runJourneySeries, runLaneSeries, specSeriesRoot, suiteJourneyLane } from '../src/pipeline/lanes.ts';
+import { type LaneRuntime, laneOrder, laneRequest, reserveNow, runJourneySeries, runLaneSeries, specSeriesRoot, suiteJourneyLane } from '../src/pipeline/lanes.ts';
 import { createArbiter } from '../src/schedule/arbiter.ts';
+import { holdMutantLane, releaseMutantLane } from '../src/pipeline/reproduce.ts';
+import { cleanup, heldReservation } from '../src/resources/reserve.ts';
 import { lanes, loadUnitSpec } from '../src/pipeline/stages.ts';
 import { designFaults } from '../src/pipeline/design.ts';
 import { laneRows } from '../src/preflight/lanerows.ts';
@@ -391,5 +393,50 @@ test('env.powered-suite-resource: a job lane inherits its environment without an
   assert.equal(result.end.kind, 'ran');
   assert.deepEqual(startedCalls(state), ['up stack', 'probe stack']);
   assert.deepEqual(run.journal.view.resources().get(STACK)?.status, { state: 'free' });
+  run.journal.close();
+});
+
+
+test('env.powered-mutant: inferred environment serializes disjoint resources and holds the idle clock until cleanup', T, async () => {
+  const { run, state } = withEnv((s) => ({ ...managedEnv(s, 'stack', 0.001), resources: ['db'] }), [{ id: 'one', resources: ['db'], argv: ['true'] }]);
+  const raw = JSON.parse(readFileSync(run.ctx.planFile, 'utf8'));
+  raw.resources.push({ ...raw.resources.find((r: { name: string }) => r.name === 'db'), name: 'other' });
+  raw.environments.stack.resources.push('other');
+  const plan = parsePlan(raw);
+  const ctx = { ...run.ctx, plan: () => plan };
+  const lane = loadUnitSpec(ctx, run.unit).spec.lanes[0]!;
+  const parent = { type: 'stage', unit: U1, stage: 'reproduce', attempt: 1 } as const;
+  const request = laneRequest(ctx, lane)!;
+  assert.ok(request.named.includes(STACK), 'dependency is added before admission');
+  await reserveNow(ctx)(request, parent, () => { throw new Error('unused'); }, new AbortController().signal);
+  const held = await holdMutantLane(ctx, parent);
+  assert.ok(held.kind === 'held');
+  assert.deepEqual(startedCalls(state), ['up stack', 'probe stack']);
+  assert.deepEqual(idleEnvironments(ctx, Date.now() + 60_000, never, true), []);
+  const arb = createArbiter(ctx);
+  const job = { type: 'job', job: jobId('audit', 1) } as const;
+  const waiting = arb.acquireFirst(laneRequest(ctx, { ...lane, resources: [resourceName('other')] })!, job, new AbortController().signal);
+  assert.equal(arb.waitingFirst().length, 1, 'the shared environment name serializes otherwise disjoint resources');
+  assert.deepEqual(await releaseMutantLane(ctx, parent, held.reservation), []);
+  assert.deepEqual(idleEnvironments(ctx, Date.now() + 60_000, never, false), [STACK]);
+  arb.wake();
+  assert.equal((await waiting).kind, 'granted');
+  assert.equal((await cleanup(ctx, heldReservation(ctx, job, 'reserved'), job)).kind, 'released');
+  run.journal.close();
+});
+
+test('env.powered-mutant-failure: a later unavailable environment releases the reservation and earlier uses', T, async () => {
+  const { run, state } = withEnv((s) => ({ ...managedEnv(s, 'stack', 0.001), resources: ['db'] }), [{ id: 'one', resources: ['db'], argv: ['true'] }]);
+  const raw = JSON.parse(readFileSync(run.ctx.planFile, 'utf8'));
+  raw.environments.zed = { ...managedEnv(state, 'zed', 0.001), resources: ['db'] };
+  const plan = parsePlan(raw);
+  const ctx = { ...run.ctx, plan: () => plan };
+  writeFileSync(join(state, 'zed.up-fails'), '');
+  const parent = { type: 'stage', unit: U1, stage: 'reproduce', attempt: 1 } as const;
+  await reserveNow(ctx)(laneRequest(ctx, loadUnitSpec(ctx, run.unit).spec.lanes[0]!)!, parent, () => { throw new Error('unused'); }, new AbortController().signal);
+  assert.deepEqual(await holdMutantLane(ctx, parent), { kind: 'env-unavailable', environment: 'zed' });
+  assert.deepEqual(idleEnvironments(ctx, Date.now() + 60_000, never, false), [STACK]);
+  assert.ok([...run.journal.view.resources().values()].every((r) => r.status.state === 'free'));
+  assert.deepEqual(startedCalls(state), ['up stack', 'probe stack', 'up zed', 'down zed']);
   run.journal.close();
 });

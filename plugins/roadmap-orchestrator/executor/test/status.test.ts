@@ -23,7 +23,7 @@ import { START_FILE, writeFileNeedsUser } from '../src/executor.ts';
 import { snapshotRef } from '../src/git/snapshot.ts';
 import { openBlocking } from '../src/needsuser.ts';
 import { buildCpuKey } from '../src/resources/calibrate.ts';
-import { dispatchOf, seatTripleOf } from '../src/pipeline/dispatch.ts';
+import { dispatchOf } from '../src/pipeline/dispatch.ts';
 import { MODEL_IDS } from '../src/routing/types.ts';
 import { SESSION_GUARANTEE, STATUS_LOCK, type Status, type UnitStatusLine, compactState, status } from '../src/status.ts';
 import { reached, release } from './helpers/barrier.ts';
@@ -392,7 +392,7 @@ test('status.resources: two units want the one instance of a pool; the builder h
   const builder = s.units.find((l) => l.running?.stage === 'build')!;
   const waiter = s.units.find((l) => l.state === 'waiting')!;
   const dispatch = dispatchOf(journalOf(r).view, unitId(waiter.unit));
-  const cpuBasis = { kind: 'default', key: buildCpuKey(seatTripleOf(dispatch.implementerSeatRev)), value: 4, samples: 0 };
+  const cpuBasis = { kind: 'default', key: buildCpuKey({ role: 'build', class: 'efficient', routingRev: dispatch.routingRev }), value: 4, samples: 0 };
   const want = { named: [], pools: ['est'], cpu: 4, cpuBasis, publication: false };
   assert.equal(s.run.state, 'running');
   assert.deepEqual(waiter.waitingFor, { deps: [], milestones: [], edges: [], resources: want, envBlocked: false, pressureBlocked: false, admission: [], drainFor: [] });
