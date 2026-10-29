@@ -253,6 +253,8 @@ export const TABLE: Table = {
   lanes: {
     green: go(at('gate')),
     red: charge(build('fix')),
+    // A same-commit red then green still needs a fix, but does not consume the unit's design-failure bound.
+    flaky: go(build('fix')),
     'not-certified': charge(build('fix')),
     // A lane the runner ended (deadline) or lost: not a product verdict.
     blocked: retry('lane-blocked', 'retryable'),

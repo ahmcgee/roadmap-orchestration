@@ -164,6 +164,8 @@ const ROWS: readonly Row[] = [
   ['lanes', 'green', {}, 'gate@med', 'advance', {}],
   ['lanes', 'green', { promotion: true }, 'gate@escalation', 'advance', {}],
   ['lanes', 'red', {}, 'build/fix@med', 'advance', { chargeableFailures: 1 }],
+  ['lanes', 'flaky', {}, 'build/fix@med', 'advance', {}],
+  ['lanes', 'flaky', { counters: { chargeableFailures: 2 } }, 'build/fix@med', 'advance', {}],
   ['lanes', 'red', { counters: { chargeableFailures: 2 } }, 'park:chargeable-bound', 'park', { chargeableFailures: 1 }],
   ['lanes', 'not-certified', {}, 'build/fix@med', 'advance', { chargeableFailures: 1 }],
   ['lanes', 'blocked', {}, 'lanes', 'retry', { 'retries.lanes': 1 }],

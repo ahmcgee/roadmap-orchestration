@@ -4803,7 +4803,7 @@ src/pipeline/deflake.ts, src/pipeline/deflakemint.ts). Record changes are additi
 2. **Forgiveness**: `forgiven` is decided once, at observation (`flakeForgiven`): false when the owner is a deflake unit
    (or a re-entry of one) of one of the event's keys; else true for a flake `on: tip`; for one `on: unit` (dev.21), true
    only when every key stands as a tip flake (`tipFlaky`: a ledger flake after the key's latest merged deflake's
-   publication seq). Forgiven, the lane passes on its green rerun; else it is red, `flaky`, charged, and its fix round is
+   publication seq). Forgiven, the lane passes on its green rerun; else its red record remains `flaky`; the lanes stage records an uncharged `flaky` fix round, and its fix round is
    told so. A unit's own flake is never in the ledger, so it never mints. A read-back (`seriesLedger`) takes the forgiveness from the fact of the red run.
 3. **Due** (`deflakeDue`): per key, nothing while a deflake of it is open or parked; else the flakes after its deflakes
    settled (a merged one's publication seq; a cut one's admission seq). None: nothing. Some, with fewer than two deflakes:
@@ -5310,3 +5310,14 @@ by each scope-growth hold they clear, before writing `resumed`. This does not ac
 its proposed scope: the stage retries within the scope in force. The ordinary durable
 ack file and `needs-user-acked` fact make interruption between acknowledgment and
 resume replayable. Other holds' items and unrelated blocking items remain untouched.
+
+## Same-commit lane flakes
+
+The lanes stage adds outcome `flaky`: a red series whose failing lanes all passed their
+same-commit diagnostic reruns, with a clean checkout. It starts `build/fix`, class
+`advance`, `chargeable: false`; neither the chargeable failure bound nor candidate-red
+counter grows. Both runs and the existing flake directives remain in the fix round,
+including after recovery. This class does not forgive the lane or turn it into a
+reusable clean pass. Deterministic red-red, dirty checkouts, failed verification repeats
+and witness failures retain their existing outcomes. Host-pressure handling precedes
+this classification. Old `red` facts retain their recorded charge.

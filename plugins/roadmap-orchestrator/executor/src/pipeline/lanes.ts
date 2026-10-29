@@ -22,7 +22,7 @@
 // rerun (red then green is `flaky`: dev.17, a flake recorded with the tree it was seen on, `observeFlake`, `flakeOn`; a
 // flake of the tip's is the flaky ledger's and forgiven, so the green rerun counts, unless the unit deflakes that lane or
 // the red ran on a saturated host; a flake on the unit's own commit is its red, dev.21, unless it stands as a tip flake;
-// else red). The class is persisted (`red.json`) before the decision. A rerun takes its own reservation,
+// else red; the lanes stage records a same-commit diagnostic pass as `flaky`, an uncharged fix round). The class is persisted (`red.json`) before the decision. A rerun takes its own reservation,
 // runs in the same checkout at the same SHA and keeps its evidence in `<lane>.rerun/`. The ledger holds one
 // record per lane (`LaneRecord`): the run whose verdict counts, with the other run attached.
 //
