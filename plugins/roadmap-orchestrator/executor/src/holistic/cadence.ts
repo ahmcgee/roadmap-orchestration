@@ -8,7 +8,8 @@
 //                 revision's docs publication that carries contract ops (a rule's); a docs-only one is not counted
 //   unwitnessed   R8: a unit or batch publication that selected an active future (not latched) obligation left
 //                 unwitnessed on its tree (no observation there, or verdict `unwitnessed`). An exempt one (waived,
-//                 deferred, retired: a ruling released it) is owed no witness and triggers nothing (field fix, 2026-10-24)
+//                 deferred, retired: a ruling released it) is owed no witness and triggers nothing (field fix, 2026-10-24).
+//                 Pending blocking units suppress this trigger until merged (status's canonical blockingUnits).
 //   drift         a revision from a bundle, a rule (its ledger or sidecars changed), `reverse`, or an architect spec,
 //                 obligation, mapping or vision edit (R15: a vision revision, and the arc turning holistic): runs
 //                 L ∩ {drift, vision}, or all of L when that is empty. Change-sensitive (M4a rev 3, H2, R61): a bundle
@@ -49,6 +50,7 @@
 // Time: `Clock(seq)` is the minutes since the fact at `seq` was written. `processClock` is the executor's: it times a
 // fact from when this process first saw it (a fact older than the process from the process's start), so a restart
 // delays a wall-clock trigger, never fires one early.
+import { obligationBlockingUnits } from './blocking.ts';
 import type { AuditTrigger } from './types.ts';
 import { type LensKind, isMustHold, LENS_KINDS } from './types.ts';
 import type { Parent, PlanChange } from '../core/events.ts';
@@ -212,7 +214,7 @@ function unwitnessedBy(ctx: StageContext, h: PublishedHead): readonly Obligation
       for (const o of selected(ctx, unit, h.old, h.head)) {
         switch (o.state.type) {
           case 'active':
-            if (o.witness !== null && !isMustHold(o, latched)) picked.set(o.id, o);
+            if (o.witness !== null && !isMustHold(o, latched) && obligationBlockingUnits(view, o).length === 0) picked.set(o.id, o);
             break;
           // A split one is witnessed through its children; an exempt one was released by a ruling.
           case 'split': case 'waived': case 'deferred': case 'retired':

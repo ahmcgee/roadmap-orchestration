@@ -151,6 +151,7 @@ import { escalateAt, probeTargets, trippedTargets } from './park/schedule.ts';
 import { type RejectionFile, rejectionFile } from './preflight/startup.ts';
 import { judgmentSeat, largeDiffSeat } from './pipeline/transitions.ts';
 import { cpuCapacity, isDirty, poolUnits } from './resources/pool.ts';
+import { obligationBlockingUnits, unmergedOf } from './holistic/blocking.ts';
 import { effectiveDependency } from './schedule/graph.ts';
 import { type SpecFactsOf, admitter, nextStage, rankOf } from './schedule/ready.ts';
 import { repairUnits, specFacts } from './pipeline/reproduce.ts';
@@ -1118,11 +1119,6 @@ function unitReason(l: UnitCore): Exclude<ObligationReason, 'spec' | 'witness'> 
   }
 }
 
-/** The effective (lineage-head) units of `units` not merged yet, ascending, each once. */
-function unmergedOf(view: JournalView, units: readonly UnitId[]): readonly UnitId[] {
-  return [...new Set(units.map((u) => effectiveDependency(view, u)).filter((u) => view.unit(u).status !== 'retired'))].sort();
-}
-
 /** An obligation's witness verdict on a tree, the `witnessed` facts of the observations read, and the units it waits on. */
 export type ObligationLeaf = Readonly<{ verdict: ObligationTruth['verdict']; witnessed: readonly WitnessedEntry[]; units: readonly UnitId[] }>;
 
@@ -1138,9 +1134,6 @@ export function obligationLeaves(repo: AbsPath, view: JournalView, obligations: 
   const witnessed = new Map(fold.witnessed.map((w) => [w.seq, w]));
   const lanes = new Map(obligations.lanes.map((l) => [l.id, l]));
   const defs = new Map(obligations.obligations.map((o) => [o.id, o]));
-  const latched = new Set(fold.latched.map((l) => l.obligation));
-  const owners = (id: ObligationId): readonly UnitId[] =>
-    fold.findings.flatMap((f) => (isActive(f) && f.obligation === id && f.owner !== null ? [f.owner] : []));
   const leaf = (o: ObligationDef): ObligationLeaf => {
     if (o.state.type === 'split') {
       const kids = o.state.children.map((c) => defs.get(c)).filter((c): c is ObligationDef => c !== undefined && !isExempt(c)).map(leaf);
@@ -1152,8 +1145,7 @@ export function obligationLeaves(repo: AbsPath, view: JournalView, obligations: 
     if (o.witness === null) throw new Error(`obligation ${o.id} has no witness and is not a split parent`);
     const lane = lanes.get(o.witness.lane);
     if (lane === undefined) throw new Error(`obligation ${o.id} is witnessed on lane ${o.witness.lane}, which the obligations in force do not have`);
-    const future = !isMustHold(o, latched);
-    const units = future ? unmergedOf(view, o.deliveredBy) : unmergedOf(view, owners(o.id));
+    const units = obligationBlockingUnits(view, o);
     const found = onTree(lane);
     if (found === null) return { verdict: 'not-covered', witnessed: [], units };
     const entry = witnessed.get(found.seq);

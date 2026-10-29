@@ -5335,3 +5335,13 @@ intentional exits as well as crashes, including an exit that never wrote an exec
 exit reason. Historical generations may lack this new evidence file; adoption does
 not require or manufacture one. GC treats it as a generation file, keeping it with
 any generation cited by an open needs-user item.
+
+## Audit readiness for unwitnessed obligations
+
+An `unwitnessed` audit trigger is suppressed while the obligation has unmerged
+blocking units. Cadence and status share `src/holistic/blocking.ts`: future obligations
+wait on effective lineage heads of `deliveredBy`; must-hold obligations wait on active
+repair owners. Split-parent status continues to aggregate its children's blockers.
+The existing journal-high-water memo invalidates after publications, latches and plan
+revisions; removing a blocker can make a ready future obligation trigger, while a
+new pending blocker suppresses it again. Other audit triggers are unaffected.
