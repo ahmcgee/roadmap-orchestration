@@ -147,6 +147,7 @@ import { judgmentRepairDirective } from '../prompts/directives.ts';
 import { type ParkFacts, NO_PARK_FACTS, repeatNeedsUser, stageOutcomeFact } from '../park/table.ts';
 import { resolveArgv0 } from '../preflight/argv0.ts';
 import type { JudgmentRole, JudgmentSeat, Triple } from '../routing/types.ts';
+import { buildCpuKey, cpuCost } from '../resources/calibrate.ts';
 import { buildCpu, requestOf } from '../resources/pool.ts';
 import { probe } from '../resources/probe.ts';
 import { environmentUnavailable } from '../resources/environments.ts';
@@ -240,8 +241,13 @@ export const stageHolder = (parent: StageParent): StageHolder => ({ type: 'stage
 export const judgmentEntry = (): ResourceRequest => ({ named: [], pools: [], cpu: CPU_COST.judgment, publication: false });
 
 /** A build's entry reservation: the unit's declared resources and its `@cpu` (`buildCpu`). */
-export const buildEntry = (ctx: StageContext, unit: PlanUnit): ResourceRequest | null =>
-  nonEmpty(requestOf(ctx.plan(), unit.resources, buildCpu(unit)));
+export const buildEntry = (ctx: StageContext, unit: PlanUnit): ResourceRequest | null => {
+  const tier = ctx.journal.view.unit(unit.id).buildTier;
+  if (tier === null) throw new Error(`unit ${unit.id} has no build tier at admission`);
+  const routing = ctx.routing(unit.id);
+  const basis = cpuCost(ctx, buildCpuKey({ role: 'build', class: routing.classes.build[tier], routingRev: routing.rev }), CPU_COST.build, unit.cpu);
+  return nonEmpty(requestOf(ctx.plan(), unit.resources, buildCpu(unit, basis), basis));
+};
 
 /** What an attempt holds once its entry grant is probed and running, or why it may not run. */
 export type Held =
@@ -1786,6 +1792,8 @@ async function executableChecks(ctx: StageContext, unit: PlanUnit, parent: Stage
   }
   const d2 = await mutationSmoke(ctx, unit, parent, salvaged, d1.required, rt);
   switch (d2.kind) {
+    case 'env-unavailable':
+      return { kind: 'env-unavailable', environment: d2.environment };
     case 'not-run':
       return { kind: 'green' };
     case 'ran':

@@ -74,7 +74,7 @@ stays 1 and the plan literal stays `roadmap/plan-m1` (LR-1). Every change was ad
 |---|---|---|
 | `plan-applied` | `+ scheduling?: 'dag'` (rev 1 only, and only in a log with no `dispatch` fact) | absent on rev 1 → a legacy arc (`isLegacy`): dev.4's serial frontier (`legacyNext`, a port of `nextUnit` + `dispatchBlock`/`settledForAfter`, G4), no `@cpu` requests, a declared `cpu` stays a named resource, no over-capacity row for its existing requests; warn once |
 | `plan.json` | optional `capacity`, resource `pool`, unit `origin`, `cpu`, `contingent`, `reenters`, `cut` | absent (`contingent` reads `[]`) |
-| `LaneDef` | `+ cpu?` | absent → the tier's cost (`CPU_COST`) |
+| `LaneDef` | `+ cpu?` | absent → calibrated at scheduling time, fallback the cadence's cost (`CPU_COST`) |
 | `stage-outcome` | `+ park?`, `+ cause?`; stage `prepare` | `park` absent on a park → operator, `design` for the chargeable bound and the design outcomes (refusal, escalate, infeasible, risk-lowered, scope-widened, redirect, revise, malformed, empty-diff, red), `env` otherwise (`legacyParkRecord`); `cause` absent → an operator hold (pause, stop, or a dev.4 usage-limit hold) |
 | New facts | `unparked`, `probe`, `judgment-inputs`, `edge-resolved`, `run-only`, `implementer-escalated` | none |
 | `rerouted` | kept readable, no longer the resume's record | read as `unparked` (`rerouteAsUnpark`); warn once |
@@ -1437,7 +1437,7 @@ The records are in place above; this section fixes their semantics and the sched
 (`src/schedule/types.ts`, `src/schedule/graph.ts`), which later steps implement. DESIGN-1.0.md §2.2 is the prose.
 
 **Resources.** `ResourceUnit = ResourceName | PoolInstance | CpuToken` (Ids). Holders reserve all-or-none in lock
-order. `CPU_COST`: judgment 1, build `unit.cpu ?? 4`, fast lane 2, estate lane 4 (`LaneDef.cpu` overrides), probe
+order. `CPU_COST` (unmeasured defaults, calibrated at scheduling time below): judgment 1, build `unit.cpu ?? 4`, fast lane 2, estate lane 4 (`LaneDef.cpu` overrides), probe
 and teardown 0; the `@cpu` pool has `plan.capacity.cpu ?? availableParallelism()` tokens. Entry reservations (`EntryReservation`, F6), taken before a stage's first journaled op: plan-check and gate
 `@cpu`×1; build the unit's resources and its `@cpu`; lanes the first lane's set; candidate the publication
 (`integration-slot`, held by `publication{unit, attempt}` through `ff` and `snapshot` once green, A2); prepare none.
@@ -1681,7 +1681,8 @@ job{job}`, G4); `ResidueState.holder` is the stage or job holder.
 **Stage outcomes and the transition table** (`src/pipeline/transitions.ts`). Stage `reproduce` (a vacuity repair's
 first stage, an admission stage): `reproduced` → plan-check; `not-reproduced` and `inapplicable` → park operator
 design, reason `not-reproduced`; `blocked` → park retryable `lane-blocked`; `interrupted` → hold; `cleanup-failed` →
-park retryable `residue`. Candidate `preempted` (A7) and `finding-blocked` (G10) → candidate again, uncharged
+park retryable `residue`; `env-unavailable` (additive, 2026-10-29) → park retryable on the named environment.
+Candidate `preempted` (A7) and `finding-blocked` (G10) → candidate again, uncharged
 (admission holds it while the P1 blocks: `AdmissionConstraint finding-blocked{finding, obligation}`). The bounds
 are the unit's: `UnitState.bounds` (its latest dispatch record's `bounds`, else `DEFAULT_BOUNDS`) replaces the
 constants in the table (`Bounded.bound` names the field) and in the fold's chargeable invariant; `MAX_*` and
@@ -4597,14 +4598,18 @@ DESIGN-1.0.md §2.2 Environments). Every change is additive: a dev.16 plan, spec
 fields, kinds or values and reads unchanged (absent `environments`: none, lasting, not scaffolding); `SCHEMA_VERSION`
 stays 1.
 
-1. **Plan** (`plan.json`, `src/input/plan.ts`): `environments?: {<name>: {probe, up?, down?, idleMinutes?}}`, each a
+1. **Plan** (`plan.json`, `src/input/plan.ts`): `environments?: {<name>: {probe, up?, down?, idleMinutes?, resources?}}`, each a
    `ToolCommand` (as a resource's probe), `idleMinutes` a positive number (fractions allowed). `up`, `down` and
    `idleMinutes` come together (a managed environment) or not at all (a plain one); anything else is a schema error.
-   Parsed to `PlanM1.environments: EnvironmentDecl[]` ascending by name, `{name, probe, lifecycle: {up, down,
+   Parsed to `PlanM1.environments: EnvironmentDecl[]` ascending by name, `{name, probe, resources?: ResourceName[], lifecycle: {up, down,
    idleMinutes} | null}` (`environmentsOf`, `environmentOf`). The name is a `ResourceName` in the resource namespace:
-   never `integration-slot`, never a declared resource's name.
+   never `integration-slot`, never a declared resource's name. `resources` names the declared resources it powers,
+   unique within the list; undeclared names, environments and the slot are refused by `parsePlan`, shared by Phase 0
+   and apply. Absent reads as `[]` with a warning (`environmentResources`), without changing earlier input hashes.
 2. **Lane** (`LaneDef.environment?: ResourceName`, spec and suite lanes): absent, none. `laneRequest` adds it to the
-   lane's named resources, so the reservation (and `resource.transition`) carries the environment's name as a plain
+   lane's named resources, as does requesting any resource in an environment's `resources` list (pool requests
+   included). Explicit and inherited environment names are deduplicated. Each is brought up and probed before the
+   lane, released after its cleanup; if a later environment fails, earlier uses are released too. Thus the reservation (and `resource.transition`) carries the environment's name as a plain
    named unit; it has no probe or teardown recipe there (`instancesOf(plan, …)` leaves it out). Refused: on an arc lane
    (`laneFields`, a schema error at the obligations read); on a `build`-cadence lane, spec or suite (`spec-lane-unrunnable`
    `estate-lane-for-implementer`: the implementer runs those, and never brings an environment up); naming an
@@ -4631,6 +4636,10 @@ stays 1.
    `PARK_TARGETS` lanes and candidate `env-unavailable: 'environment'`; `ProbeTarget` gains `{type: 'environment',
    environment}` (key `environment:<name>`), whose probe job is the environment's up (when not up) and probe
    (`probeEnvironment`), parent `arc`. A tripped breaker on an environment blocks lanes and candidate admission.
+   The 2026-10-29 mutant fix adds `STAGE_OUTCOME_KINDS.reproduce.env-unavailable` with the same uncharged retryable
+   row and environment target. Candidate mutant acceptance preserves `env-unavailable{environment}` through its
+   existing candidate row. These parks cannot recover from a host probe: up and the environment probe must pass.
+   This is an additive outcome only; no record field or default changes, and earlier outcomes retain their meanings.
 7. **Idle, ends, recovery** (src/schedule/scheduler.ts). Each iteration, after control: every managed environment `up`,
    unused, with no lane holding its unit or waiting for it in the arbiter, idle for `idleMinutes` (at once under
    `pause --all` or a stop) is brought down as tracked job `env-down:<name>`. A stop's end (after `recoverReservations`)
@@ -5381,3 +5390,61 @@ An operator's existing `unparked{command}` remains unchanged and restricted to e
 A duplicate, stale or premature automatic wake is invalid. A cut, an unrelated merge or
 a prose-only/legacy design park cannot satisfy this transition; the owner can still
 respecify or re-enter a design park through the existing command path.
+
+
+## Calibrated CPU reservations and powered resources (2026-10-29; items 6, 8)
+
+`src/resources/calibrate.ts` learns scheduling costs from completed full lane (including journey/proof) and build invocations' validated `exit.json`
+`cpu: LaunchCpu | null`. A qualifying run has `wallMs >= 30_000`; its demand is `(runMs + waitMs) / wallMs` cores.
+For each key, keep the last ten qualifying runs. Fewer than three samples uses `CPU_COST`; otherwise reserve
+`max(1, min(CPU_COST, ceil(p90 demand)))`, with nearest-rank p90. A lane's explicit `cpu` or a unit's explicit `cpu`
+always overrides calibration, even above the default. Plan-load and apply over-capacity validation still use the
+unmeasured defaults or explicit values: calibration cannot make an otherwise invalid plan admissible.
+
+The lane key hashes canonical `{kind: 'lane', argv, cwd, set: env.set, pass: sorted env.pass, expectedExit}`. The build
+key hashes canonical `{kind: 'build', role: 'build', class: BuildClass, routingRev}`; the spawn key and reservation
+basis persist this hash, never a model id. Execution shape, class and routing revision changes start separate histories.
+Earlier triple-based hashes remain readable but cannot match the new seat keys. Lane cwd is the validated path relative
+to the checkout, never an invocation-specific absolute launch cwd. File-targeted (`subject.files`) runs have no full-run
+key and are excluded from full-run history, including earlier spawns that incorrectly carried that key. The key never
+uses `laneRev` (which includes explicit `cpu`), and measured costs are never written into plan/spec definitions, `LaneIdentity`, reuse keys or witness keys. The per-journal reader caches
+completed invocation ids only after their exit file appears; an absent `exit.json` is retried on later reads. Samples
+retain invocation order even when an earlier exit file appears late. Repeated reads never count a sample twice. A
+restart rebuilds the history from durable records and runner files.
+
+Additive records (schema version unchanged):
+
+| Record | Field | Read of an earlier record |
+|---|---|---|
+| `proc.spawn.expect` (full lane, journey, proof lane or build) | `cpuKey?: Sha256Hex` | absent → no calibration key (`spawnCpuKeyOf`), warned once, excluded from history; no inference from earlier launch argv |
+| `ResourceRequest` and `resource.transition.expect` on reserve | `cpuBasis?: CpuBasis` | absent → unmeasured (`reservationCpuBasisOf` returns null with a warning); recorded token units stay authoritative |
+| `sched.json.queue[]`, `jobQueue[]` | `pressureBlocked?: boolean` | absent → false, warned once; non-authoritative derived view |
+| `EnvironmentDecl` (disk and parsed) | `resources?: ResourceName[]` | absent → `[]`, warned once by `environmentResources`; raw input bytes remain unchanged |
+
+`CpuBasis` is `explicit{value}` or `default{key, value, samples}` or `calibrated{key, value, samples}`. `value` is the
+reserved token count; `samples` counts the qualifying runs in the ten-run window. Requests carry this basis through
+the arbiter to the reservation intent, so waiting never loses the value actually used.
+
+The arbiter shares the scheduler's `PressureTicks`. While `hostPressure(ticks, 0) >= PRESSURE_SATURATED` over the
+recent minute, it sets aside new build and lane requests, including job lanes, before overlap/backfill ordering.
+Judgments and slot-only requests are exempt. Certification runs after build quiescence in the lanes stage; there is no
+live-build release/re-acquisition exemption. The brake never holds when no resource-table entry holds or transitions
+an `@cpu` token, so external saturation cannot deadlock the arc: one workload always advances. The next wake on a
+release or cooling tick reevaluates waiters in their usual rank order. `status` exposes `pressureBlocked` on the
+unit's `waitingFor` and host queues; waiters rebuild over the recovered resource table after restart, with a fresh
+pressure window. Its compact state says `waiting:resources(host-pressure)` and classes the wait
+as host pressure. No launch pressure measurement or charging rule changes.
+
+Powered-resource use also covers journeys, mutant reproduction/acceptance/smoke, proof lanes and milestone walkthrough/compare reservations.
+Every request includes the inferred environment names before arbitration, serializing even disjoint resources powered
+by the same environment. Mutant paths share `holdMutantLane`/`releaseMutantEnvironments`; unavailable environments
+park reproduction, candidate acceptance and mutation smoke as `env-unavailable` on the environment, without a red
+verdict. Each successful environment use ends exactly once in `finally`, including exceptional exits during acquisition
+or a mutant run. Normal runs clean reservations before ending their uses; on a thrown fault, only the in-memory uses
+end while unwinding. Fault recovery retains the reservations until its workload kill/quiescence and cleanup finish,
+then scheduler idle/shutdown can bring the unused environment down. A failed environment
+bring-up leaves a proof without a verdict, or a walk/compare incomplete (`detail: 'env-unavailable'`); no product
+verdict is charged. A walk/compare releases its environment uses after reservation cleanup (`releaseJob`). The
+existing apply classifier compares the complete environment declaration, including `resources`, and refuses a
+change while its environment is held or not down. Phase 0 and apply both use the shared `parsePlan` and `laneRows`
+validators, including refusal of build-cadence lanes inheriting an environment through their resources.

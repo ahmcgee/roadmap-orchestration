@@ -244,6 +244,7 @@ export type WaitingFor = Readonly<{
   edges: readonly EdgeId[];
   resources: ResourceRequest | null;
   envBlocked: boolean;
+  pressureBlocked?: boolean;
   admission: readonly AdmissionConstraint[];
   drainFor: readonly CommandId[];
 }>;
@@ -891,7 +892,7 @@ function unitLine(x: Inputs, unit: PlanUnit, times: Readonly<{ starts: ReadonlyM
       const inTask = task !== null && (task.state === 'in-stage' || task.state === 'in-chain');
       if (queued !== null) {
         state = 'waiting';
-        waitingFor = waitFor({ resources: queued.request, envBlocked: queued.envBlocked });
+        waitingFor = waitFor({ resources: queued.request, envBlocked: queued.envBlocked, pressureBlocked: queued.pressureBlocked ?? false });
       } else if (inTask || (x.sched === null && x.alive && u.open !== null)) {
         state = u.lineage !== null && !u.lineage.prepared ? 'preparing' : 'running';
       } else {
@@ -1065,7 +1066,7 @@ export function compactState(l: UnitCore): string {
     ...(w.deps.length > 0 ? [`deps=${w.deps.join(',')}`] : []),
     ...(w.milestones.length > 0 ? [`milestones=${w.milestones.join(',')}`] : []),
     ...(w.edges.length > 0 ? [`edges=${w.edges.join(',')}`] : []),
-    ...(w.resources !== null ? [w.envBlocked ? 'resources(env-blocked)' : 'resources'] : []),
+    ...(w.resources !== null ? [w.pressureBlocked ? 'resources(host-pressure)' : w.envBlocked ? 'resources(env-blocked)' : 'resources'] : []),
     ...[...new Set(w.admission.map((c) => c.type))],
   ];
   return parts.length === 0 ? l.state : `${l.state}:${parts.join(',')}`;
@@ -1102,7 +1103,7 @@ function unitReason(l: UnitCore): Exclude<ObligationReason, 'spec' | 'witness'> 
     case 'blocked':
       return w !== null && (w.deps.length > 0 || w.edges.length > 0) ? 'waiting-dep' : 'supervision';
     case 'waiting':
-      if (w?.resources !== null && w?.resources !== undefined) return w.envBlocked ? 'host' : 'code';
+      if (w?.resources !== null && w?.resources !== undefined) return w.envBlocked || w.pressureBlocked ? 'host' : 'code';
       return 'waiting-dep';
     case 'awaiting-admission': {
       const types = new Set((w?.admission ?? []).map((c) => c.type));

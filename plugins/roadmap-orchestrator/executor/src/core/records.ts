@@ -919,7 +919,7 @@ export type LaneDef = Readonly<{
    * excludes; declared `evidenceGlobs` are never filtered. Optional in spec.json, read as [] when absent.
    */
   evidenceExcludes: readonly RepoPattern[];
-  /** `@cpu` tokens the lane takes (M2); absent: its cadence's default (build 2, else 4). Absent stays absent. */
+  /** Explicit `@cpu` tokens (M2); absent: calibrated at scheduling time, default build 2, else 4. Absent stays absent. */
   cpu?: number;
   /** Wall limit in minutes; absent keeps the six-hour runner backstop (no red timeout verdict). */
   timeoutMin?: number;
@@ -1765,7 +1765,7 @@ export const NEEDS_USER_REASONS = [
   // 1.0.0-dev.17, non-blocking: the executor threw inside a unit's task or an arc job while it held only that unit's or job's
   // own state (src/schedule/fault.ts): the unit parked `executor-fault`, or the job ended faulted; the item cites the stack.
   'executor-fault',
-  // dev.17: a lane's environment did not come up or failed its probe (lanes or candidate `env-unavailable`: a retryable park
+  // dev.17: a lane's environment did not come up or failed its probe (reproduce, lanes or candidate `env-unavailable`: a retryable park
   // on the environment, probed until it comes up).
   'env-unavailable',
   // dev.17 (flaky ledger), non-blocking: a deflake unit parked, so the code edges it held dropped (src/pipeline/deflake.ts);

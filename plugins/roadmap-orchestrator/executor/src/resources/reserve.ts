@@ -42,6 +42,7 @@
 //                                 (`retryReclaim`), in a unit retry's order: it is both the failing and the
 //                                 reclaiming holder, since a job, unlike a stage attempt, outlives its lane.
 // A retry, a job or a sweep takes cleanup-failed back through `reclaim` (cleanup-failed→cleaning), the one way out.
+import type { CpuBasis } from '../core/cpu.ts';
 import { crashPoint } from '../core/crash.ts';
 import { type Holder, type Parent, type ResourceEdge, holderUnit } from '../core/events.ts';
 import {
@@ -220,6 +221,7 @@ function journalTransition(
   edge: ResourceEdge,
   parent: Parent,
   recipes: ReadonlyMap<ResourceInstance, ResidueRecipe>,
+  cpuBasis?: CpuBasis,
 ): void {
   const view = ctx.journal.view;
   assertLegal(view, holder, resources, edge);
@@ -228,7 +230,7 @@ function journalTransition(
     key: holderKey(holder),
     parent,
     deadlineAt: null,
-    body: () => ({ expect: { holder, resources, edge }, post: null }),
+    body: () => ({ expect: { holder, resources, edge, ...(cpuBasis === undefined ? {} : { cpuBasis }) }, post: null }),
   });
   const unit = 'unit' in holder ? holder.unit : undefined;
   crashPoint('resource.after-intent', unit);
@@ -296,7 +298,7 @@ export function reserve<H extends AcquiringHolder>(
   if (holder.type === 'job' && req.publication) throw new Error(`a job holder never reserves integration-slot: ${canonicalJson(req)}`);
   const got = allocate(resourceTable(ctx.journal.view), plan, req);
   if (got.kind === 'busy') return { state: 'refused', busy: got.busy };
-  journalTransition(ctx, holder, got.units, { type: 'reserve' }, parent, new Map());
+  journalTransition(ctx, holder, got.units, { type: 'reserve' }, parent, new Map(), req.cpuBasis);
   return { state: 'reserved', holder, resources: got.units, recipes: holderRecipes(plan, ctx.repo, holder, got.units) };
 }
 

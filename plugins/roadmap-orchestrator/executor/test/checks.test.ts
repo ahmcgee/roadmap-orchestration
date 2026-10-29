@@ -9,9 +9,11 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import type { Fact, IntentOf } from '../src/core/events.ts';
-import { arcId, unitId } from '../src/core/ids.ts';
+import { arcId, resourceName, unitId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
+import { managedEnv, startedCalls } from './fixtures/env-common.ts';
+import { idleEnvironments } from '../src/resources/environments.ts';
 import { ROADMAP_BIN } from '../src/pipeline/witnesscheck.ts';
 import { step } from '../src/pipeline/unit.ts';
 import { unitTip } from '../src/pipeline/gate.ts';
@@ -284,9 +286,18 @@ async function smoked(steps: ChecksOptions['steps'], mutant: TreePlan | null, ov
 
 describe('D2 mutation smoke', () => {
   test('smoke.killed-green: the target fails with the production change reverted: killed, green, and the gate reads it', T, async () => {
-    const { a, r } = await smoked([planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })], { outcomes: { t1: 'fail' } });
+    const state = tmpDir('smoke-powered-env');
+    const cmd = { argv: ['true'], cwd: '.', env: { set: {}, pass: ['PATH'] } };
+    const { a, r } = await smoked([planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })], { outcomes: { t1: 'fail' } }, {
+      resources: ['db'], plan: (p) => {
+        p['resources'] = [{ name: 'db', probe: cmd, teardown: cmd }];
+        p['environments'] = { stack: { ...managedEnv(state, 'stack', 60), resources: ['db'] } };
+      },
+    });
     try {
       assert.equal(lanesFacts(a.d).at(-1)!.outcome, 'green');
+      assert.deepEqual(startedCalls(state), ['up stack', 'probe stack', 'probe stack'], 'journey and smoke each use the inferred environment');
+      assert.deepEqual(idleEnvironments(r.ctx, Date.now() + 3_600_001, () => false, false), [resourceName('stack')], 'smoke released its environment use');
       const [ran] = smokeRan(a.d);
       assert.deepEqual(ran?.verdict, { killed: [{ lane: 'journey', testId: 't1' }], survived: [], inconclusive: [] });
       const [m] = smokeRuns(a.d);

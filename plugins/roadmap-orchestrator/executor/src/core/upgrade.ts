@@ -10,10 +10,11 @@
 import type { CheckpointTrigger, CensusEntry, ClassifiedAdmit, Conversion, Obligations } from '../holistic/types.ts';
 import type { DiffShown, FlakeOn, FlakyFact, GateLargeDiff, JudgmentInputs, MutantOf, Parent, RevisionSource } from './events.ts';
 import type { ApprovalBlobs, GateReview } from './review.ts';
-import type { FindingId, JobId, LaneId, ObligationId, UnitId } from './ids.ts';
+import type { FindingId, JobId, LaneId, ObligationId, UnitId, Sha256Hex } from './ids.ts';
 import type { PressureAvailability } from '../host/pressure.ts';
 import type { LaunchCpu, ResultFile } from './records.ts';
 import { canonicalJson } from './json.ts';
+import type { CpuBasis } from './cpu.ts';
 import type { ClassTable, Triple } from '../routing/types.ts';
 
 const warned = new Set<string>();
@@ -659,4 +660,27 @@ export function laneTimeoutDefault(): void {
 export function orderingDefault(): null {
   warnDefaulted('ordering', 'a park or judgment answer without ordering metadata; no automatic blocker wake');
   return null;
+}
+
+// Calibrated resources: absent measurement keys and reservation bases on earlier records stay unmeasured.
+export function spawnCpuKeyOf(spawn: Readonly<{ cpuKey?: Sha256Hex }>): Sha256Hex | null {
+  if (spawn.cpuKey !== undefined) return spawn.cpuKey;
+  warnDefaulted('proc.spawn.cpuKey', 'a spawn without a CPU calibration key; excluded from calibration');
+  return null;
+}
+
+export function reservationCpuBasisOf(expect: Readonly<{ cpuBasis?: CpuBasis }>): CpuBasis | null {
+  if (expect.cpuBasis !== undefined) return expect.cpuBasis;
+  warnDefaulted('resource.transition.cpuBasis', 'a reservation without a CPU basis; its recorded tokens remain authoritative');
+  return null;
+}
+
+export function environmentResourcesDefault(): readonly never[] {
+  warnDefaulted('environment.resources', 'an environment without resources; read as []');
+  return [];
+}
+
+export function schedulerPressureBlockedDefault(): false {
+  warnDefaulted('sched.pressureBlocked', 'an earlier scheduler view has no admission brake; read as false');
+  return false;
 }

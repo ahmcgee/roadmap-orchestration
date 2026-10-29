@@ -1,6 +1,6 @@
 // Plan environments (dev.17; SCHEMAS.md "dev.17: environments", DESIGN-1.0.md §2.2 Environments): a costed thing a lane runs
 // against (a database, a cluster, a cloud stack), declared once in plan.json `environments` and named by a lane's
-// `environment`. Use is serialised by the reservation cycle: the environment's name is a named resource unit the lane
+// `environment`, or inherited from a requested resource in its `resources` list. Use is serialised by the reservation cycle: the environment's name is a named resource unit the lane
 // reserves with its resources (src/resources/pool.ts), so one lane at a time uses it. This module owns the rest:
 //
 //   lifecycle   down → starting → up → stopping → down, one transition at a time. The journal is the state machine:

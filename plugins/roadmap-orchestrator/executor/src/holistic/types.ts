@@ -476,6 +476,7 @@ export function parseObligations(value: unknown): Obligations {
  * caller wrote, and an absent-means-none field (`cpu`, `inputs`, `testPaths`) stays absent: one encoding per lane. A
  * generator that hashes raw JSON gets the executor's rev (F15). The executor's dev.6 revs are this form already.
  */
+// CPU calibration is reservation metadata only: it never changes this definition, revision or any reuse/witness key.
 export function laneRevOf(lane: LaneDef | ArcLaneDef): LaneRev {
   return laneRev(sha256Hex(canonicalJson(normalisedLane(lane))).slice(0, 16));
 }

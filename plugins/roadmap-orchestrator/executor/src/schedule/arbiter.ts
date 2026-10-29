@@ -14,6 +14,7 @@
 //     - environment-blocked (F8: a named resource dirty, or a pool without a healthy instance; `envBlocked`) are
 //       set aside: never granted, never blocking anyone. They re-activate by themselves once the residue is
 //       disposed and the unit released, at the next wake.
+//     - pressure-held workloads are also set aside before overlap checks, including jobs before unit judgments.
 //     - an active waiter whose request overlaps a blocked higher-ranked one (a shared named resource or pool,
 //       `@cpu` included, or both publications; `overlaps`) waits: backfill is disjoint-only, so a lower rank never
 //       overtakes a higher one on what the higher one waits for.
@@ -21,6 +22,8 @@
 // A wait cancelled by its signal (pause, stop) resolves `cancelled` at once and journals nothing: it held nothing.
 //
 // The scheduler calls `wake` after every release and disposal and on each tick (src/schedule/scheduler.ts).
+import { PressureTicks, PRESSURE_SATURATED, hostPressure } from '../host/pressure.ts';
+import { parseResourceUnit } from '../core/ids.ts';
 import type { Holder, Parent } from '../core/events.ts';
 import { canonicalJson } from '../core/json.ts';
 import { envBlocked, overlaps } from '../resources/pool.ts';
@@ -30,7 +33,7 @@ import {
 import { type Acquire, type Grant, type Rank, type ResourceRequest, compareRank } from './types.ts';
 
 /** A units' waiter as `status` shows it, in the order the arbiter serves them. */
-export type WaiterView = Readonly<{ holder: UnitAcquiringHolder; request: ResourceRequest; rank: Rank; envBlocked: boolean }>;
+export type WaiterView = Readonly<{ holder: UnitAcquiringHolder; request: ResourceRequest; rank: Rank; envBlocked: boolean; pressureBlocked: boolean }>;
 
 /** A job's holder that waits before every unit: a docs publication's slot, a repair batch's slot (M3 B2), or a job's lanes. */
 export type FirstHolder = DocsHolder | BatchHolder | JobHolder;
@@ -43,6 +46,7 @@ export type FirstHolder = DocsHolder | BatchHolder | JobHolder;
 export type AcquireFirst = (request: ResourceRequest, holder: FirstHolder, signal: AbortSignal, onBlocked?: () => void, parent?: Parent) => Promise<Grant>;
 
 export type Arbiter = Readonly<{
+  pressure: PressureTicks;
   acquire: Acquire;
   acquireFirst: AcquireFirst;
   /** Re-evaluates every waiter: grants what can be granted now. */
@@ -54,7 +58,7 @@ export type Arbiter = Readonly<{
 }>;
 
 /** A job's waiter as `sched.json` lists it, in the order the arbiter serves them (before every unit). */
-export type FirstWaiterView = Readonly<{ holder: FirstHolder; request: ResourceRequest; envBlocked: boolean }>;
+export type FirstWaiterView = Readonly<{ holder: FirstHolder; request: ResourceRequest; envBlocked: boolean; pressureBlocked: boolean }>;
 
 type Waiter<H extends AcquiringHolder> = {
   readonly request: ResourceRequest;
@@ -88,6 +92,7 @@ function acquiring(holder: Holder): UnitAcquiringHolder {
 }
 
 export function createArbiter(ctx: ResourceContext): Arbiter {
+  const pressure = new PressureTicks();
   const units: UnitWaiter[] = [];
   const first: FirstWaiter[] = [];
 
@@ -102,12 +107,23 @@ export function createArbiter(ctx: ResourceContext): Arbiter {
   const ordered = (): readonly Readonly<{ w: UnitWaiter; rank: Rank }>[] =>
     units.map((w) => ({ w, rank: w.rank() })).sort((a, b) => compareRank(a.rank, b.rank));
 
+  const pressureBlocked = (w: UnitWaiter | FirstWaiter): boolean => {
+    if (w.request.cpu === 0) return false;
+    const h = w.holder;
+    const workload = w.request.cpuBasis !== undefined || (h.type === 'stage' && ['build', 'scaffold', 'poc', 'lanes', 'candidate'].includes(h.stage));
+    if (!workload) return false; // Judgments never wait on the admission brake.
+    const hot = hostPressure(pressure.ticks(), 0);
+    if (hot === null || hot < PRESSURE_SATURATED) return false;
+    // Always allow one workload to make progress, even when other host users saturate the CPUs.
+    return [...resourceTable(ctx.journal.view)].some(([u, e]) => parseResourceUnit(u).type === 'cpu' && (e.pending !== null || e.status.state !== 'free'));
+  };
+
   const wake = (): void => {
     const plan = ctx.plan();
     const blocked: ResourceRequest[] = [];
     const refused: FirstWaiter[] = [];
     for (const w of [...first]) {
-      if (envBlocked(resourceTable(ctx.journal.view), plan, w.request)) continue;
+      if (envBlocked(resourceTable(ctx.journal.view), plan, w.request) || pressureBlocked(w)) continue;
       if (blocked.some((b) => overlaps(b, w.request))) {
         blocked.push(w.request);
         continue;
@@ -119,7 +135,7 @@ export function createArbiter(ctx: ResourceContext): Arbiter {
       } else settle(first, w, { kind: 'granted', units: got.resources });
     }
     for (const { w } of ordered()) {
-      if (envBlocked(resourceTable(ctx.journal.view), plan, w.request)) continue;
+      if (envBlocked(resourceTable(ctx.journal.view), plan, w.request) || pressureBlocked(w)) continue;
       if (blocked.some((b) => overlaps(b, w.request))) {
         blocked.push(w.request);
         continue;
@@ -163,14 +179,14 @@ export function createArbiter(ctx: ResourceContext): Arbiter {
   const waiting = (): readonly WaiterView[] => {
     const plan = ctx.plan();
     const table = resourceTable(ctx.journal.view);
-    return ordered().map(({ w, rank }) => ({ holder: w.holder, request: w.request, rank, envBlocked: envBlocked(table, plan, w.request) }));
+    return ordered().map(({ w, rank }) => ({ holder: w.holder, request: w.request, rank, envBlocked: envBlocked(table, plan, w.request), pressureBlocked: pressureBlocked(w) }));
   };
 
   const waitingFirst = (): readonly FirstWaiterView[] => {
     const plan = ctx.plan();
     const table = resourceTable(ctx.journal.view);
-    return first.map((w) => ({ holder: w.holder, request: w.request, envBlocked: envBlocked(table, plan, w.request) }));
+    return first.map((w) => ({ holder: w.holder, request: w.request, envBlocked: envBlocked(table, plan, w.request), pressureBlocked: pressureBlocked(w) }));
   };
 
-  return { acquire, acquireFirst, wake, waiting, waitingFirst };
+  return { pressure, acquire, acquireFirst, wake, waiting, waitingFirst };
 }

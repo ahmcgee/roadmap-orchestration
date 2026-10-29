@@ -24,7 +24,8 @@ import {
 } from '../core/ids.ts';
 import type { LaneDef, SpecM1 } from '../core/records.ts';
 import { type ResourceEntry, FREE_RESOURCE } from '../core/state.ts';
-import { type PlanM1, type PlanUnit, type ResourceDecl, environmentOf } from '../input/plan.ts';
+import { type PlanM1, type PlanUnit, type ResourceDecl, environmentOf, resourceEnvironments } from '../input/plan.ts';
+import type { CpuBasis } from '../core/cpu.ts';
 import { CPU_COST, type ResourceRequest } from '../schedule/types.ts';
 
 // ---------------------------------------------------------------------------------------------------
@@ -35,11 +36,11 @@ export function cpuCapacity(plan: PlanM1, host: number = availableParallelism())
   return plan.capacity?.cpu ?? host;
 }
 
-/** `@cpu` tokens a build of `unit` takes. */
-export const buildCpu = (unit: PlanUnit): number => unit.cpu ?? CPU_COST.build;
+/** A build's explicit override, else its scheduling-time calibration (the default at plan validation). */
+export const buildCpu = (unit: PlanUnit, basis?: CpuBasis): number => unit.cpu ?? basis?.value ?? CPU_COST.build;
 
-/** `@cpu` tokens a lane takes: its own `cpu`, else its cadence's default. */
-export const laneCpu = (lane: LaneDef): number => lane.cpu ?? CPU_COST.lane[lane.cadence];
+/** A lane's explicit override, else its scheduling-time calibration (the cadence default at plan validation). */
+export const laneCpu = (lane: LaneDef, basis?: CpuBasis): number => lane.cpu ?? basis?.value ?? CPU_COST.lane[lane.cadence];
 
 /** The declaration a named resource or a pool is declared by; the slot has none, so it is a bug here. */
 export function declOf(plan: PlanM1, name: ResourceName): ResourceDecl {
@@ -53,15 +54,17 @@ const isPool = (plan: PlanM1, name: ResourceName): boolean => environmentOf(plan
 
 /**
  * A request from declared names: pools (declared with `pool`) take one instance each, the rest (environments included)
- * are named, and `integration-slot` makes it a publication. `cpu` tokens are the caller's.
+ * are named, and `integration-slot` makes it a publication. Environments powering any requested resource join the
+ * named set. `cpu` tokens and their optional recorded basis are the caller's.
  */
-export function requestOf(plan: PlanM1, names: readonly ResourceName[], cpu: number): ResourceRequest {
+export function requestOf(plan: PlanM1, names: readonly ResourceName[], cpu: number, cpuBasis?: CpuBasis): ResourceRequest {
   if (new Set(names).size !== names.length) throw new Error(`duplicate resources in ${JSON.stringify(names)}`);
-  const declared = names.filter((n) => n !== INTEGRATION_SLOT);
+  const declared = [...new Set([...names.filter((n) => n !== INTEGRATION_SLOT), ...resourceEnvironments(plan, names)])];
   return {
     named: declared.filter((n) => !isPool(plan, n)).sort(),
     pools: declared.filter((n) => isPool(plan, n)).sort(),
     cpu,
+    ...(cpuBasis === undefined ? {} : { cpuBasis }),
     publication: names.includes(INTEGRATION_SLOT),
   };
 }

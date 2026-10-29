@@ -82,6 +82,7 @@ const ROWS: readonly Row[] = [
   ['reproduce', 'not-reproduced', {}, 'park:not-reproduced', 'park', {}],
   ['reproduce', 'inapplicable', {}, 'park:not-reproduced', 'park', {}],
   ['reproduce', 'blocked', {}, 'park:lane-blocked', 'park', {}],
+  ['reproduce', 'env-unavailable', {}, 'park:env-unavailable', 'park', {}],
   ['reproduce', 'interrupted', {}, 'hold', 'hold', {}],
   ['reproduce', 'cleanup-failed', {}, 'park:residue', 'park', {}],
   // plan-check (fresh judgment)
@@ -315,7 +316,7 @@ describe('transitions', () => {
       'plan-check context-exceeded': 'env', 'build context-exceeded': 'env', 'gate context-exceeded': 'env',
       'candidate red': 'design', 'candidate base-red': 'env', 'candidate blocked': 'retryable', 'candidate occupied': 'env', 'candidate cleanup-failed': 'retryable',
       'lanes env-unavailable': 'retryable', 'candidate env-unavailable': 'retryable',
-      'reproduce not-reproduced': 'design', 'reproduce inapplicable': 'design', 'reproduce blocked': 'retryable', 'reproduce cleanup-failed': 'retryable',
+      'reproduce not-reproduced': 'design', 'reproduce inapplicable': 'design', 'reproduce blocked': 'retryable', 'reproduce env-unavailable': 'retryable', 'reproduce cleanup-failed': 'retryable',
       ...Object.fromEntries(['prepare', 'reproduce', 'plan-check', 'build', 'quiesce', 'evidence', 'salvage', 'teardown', 'lanes', 'gate', 'candidate', 'scaffold', 'poc'].map((st) => [`${st} executor-fault`, 'env'])),
       // dev.17 (design pass): a plan defect is the plan's to fix (an apply, then `resume`), as at lanes.
       'plan-check plan-defect': 'env', 'scaffold plan-defect': 'env', 'scaffold refusal': 'design', 'scaffold process-fault': 'retryable', 'scaffold lost': 'retryable',

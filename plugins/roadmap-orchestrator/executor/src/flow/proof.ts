@@ -14,6 +14,8 @@
 //
 // Crash: a proof started and not ended (no `flow-proof` of its job) is run again from the start under the same job id,
 // its leftover checkouts removed first (residues by job, `removeJobCheckouts`).
+import { resourceEnvironments } from '../input/plan.ts';
+import { laneCpuKey } from '../resources/calibrate.ts';
 import { mkdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import type { Parent } from '../core/events.ts';
@@ -103,6 +105,8 @@ async function runSide(ctx: ProofContext, job: JobId, proposal: FlowProposal, la
   const holder: JobHolder = { type: 'job', job };
   const parent: Parent = { type: 'job', job };
   const request = laneRequest(ctx, lane);
+  const environments = resourceEnvironments(ctx.plan(), request?.named ?? []);
+  const used: typeof environments[number][] = [];
   let held: Reservation<'running', JobHolder> | null = null;
   if (request !== null) {
     const grant = await ctx.acquireFirst(request, holder, NEVER);
@@ -110,17 +114,21 @@ async function runSide(ctx: ProofContext, job: JobId, proposal: FlowProposal, la
     const reserved = heldReservation(ctx, holder, 'reserved');
     if ((await probe(ctx, reserved, parent)).kind === 'parked') throw new Error(`${job}: suite lane ${lane.id}'s resources are occupied; a proof waits on a free reservation only`);
     // dev.17: the lane's environment; one that does not come up gives this side no verdict (unprovable), as a lost run does.
-    if (lane.environment !== undefined && (await useEnvironment(ctx, lane.environment, parent)).kind === 'unavailable') {
-      const cleaned = await cleanup(ctx, reserved, parent);
-      if (cleaned.kind !== 'released') throw new Error(`${job}: suite lane ${lane.id}'s reservation was not released: ${cleaned.kind}`);
-      return { passed: null, tests: null, minutes: 0 };
+    for (const name of environments) {
+      if ((await useEnvironment(ctx, name, parent)).kind === 'unavailable') {
+        const cleaned = await cleanup(ctx, reserved, parent);
+        for (const ready of used) releaseEnvironment(ctx.journal, ready);
+        if (cleaned.kind !== 'released') throw new Error(`${job}: suite lane ${lane.id}'s reservation was not released: ${cleaned.kind}`);
+        return { passed: null, tests: null, minutes: 0 };
+      }
+      used.push(name);
     }
     held = run(ctx, reserved, parent);
   }
   try {
     return await runHeld(ctx, job, proposal, lane, side, head, reporter, parent, held);
   } finally {
-    if (lane.environment !== undefined) releaseEnvironment(ctx.journal, lane.environment);
+    for (const name of used) releaseEnvironment(ctx.journal, name);
   }
 }
 
@@ -142,6 +150,7 @@ async function runHeld(
   const command = laneCommand(lane);
   const outcome = await invoke(ctx.journal, ctx.containment, {
     runDir: ctx.runDir,
+    cpuKey: laneCpuKey(lane),
     origin: { type: 'new', key: opKey(`lane:${job}`), parent, deadlineAt: command.deadlineAt },
     subject: { purpose: 'proof', job, proposal: proposal.id, lane: lane.id, side, at: head },
     launch: (invDir) => {

@@ -5,9 +5,9 @@
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, it } from 'node:test';
+import { describe, it, test } from 'node:test';
 import { setImmediate as tick } from 'node:timers/promises';
-import { type ResourceUnit, INTEGRATION_SLOT, arcId, parseResourceUnit, poolInstance, unitId } from '../src/core/ids.ts';
+import { type ResourceUnit, INTEGRATION_SLOT, arcId, jobId, sha256, parseResourceUnit, poolInstance, unitId } from '../src/core/ids.ts';
 import { openJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
 import { isDirty, overlaps } from '../src/resources/pool.ts';
@@ -348,7 +348,7 @@ describe('res.no-overlap-randomized', () => {
           else cancels += 1;
         });
         // acquire evaluates at once: compare against the queue including the new waiter (nothing is dirty here).
-        check([...before, { holder, request: l.request, rank: rk, envBlocked: false }].sort((a, b) => compareRank(a.rank, b.rank)));
+        check([...before, { holder, request: l.request, rank: rk, envBlocked: false, pressureBlocked: false }].sort((a, b) => compareRank(a.rank, b.rank)));
       } else if (roll < 0.85 && held.length > 0) {
         const l = pick(held);
         release(ctx, l.holder);
@@ -387,4 +387,108 @@ describe('res.no-overlap-randomized', () => {
     const reopened = openJournal(absPath(r.runDir), arcId(r.arc));
     reopened.close();
   });
+});
+
+
+describe('arbiter.pressure-brake', () => {
+  it('admits a lone workload under saturation, exempts judgments, and drains without starving a lane', T, async () => {
+    const { ctx, journal } = openPoolRun(newRun());
+    const arb = createArbiter(ctx);
+    arb.pressure.record({ atMs: 0, runNs: 0, waitNs: 0 });
+    arb.pressure.record({ atMs: 60_000, runNs: 1e9, waitNs: 9e9 });
+    const first = holderOf('first');
+    const lone = wait(arb, req({ cpu: 1 }), first, rank('first', 1));
+    assert.equal((await lone.done).kind, 'granted', 'external saturation cannot deadlock the arc');
+    const lane = { ...holderOf('lane'), stage: 'lanes' } as const;
+    const queued = wait(arb, req({ cpu: 1 }), lane, rank('lane', 2));
+    await tick();
+    assert.equal(queued.box.grant, null, 'brake holds despite spare tokens');
+    assert.equal(arb.waiting()[0]?.pressureBlocked, true);
+    const judge = { ...holderOf('judge'), stage: 'gate' } as const;
+    const judgment = wait(arb, req({ cpu: 1 }), judge, rank('judge', 3));
+    assert.equal((await judgment.done).kind, 'granted', 'a braked higher-ranked lane never blocks a judgment');
+    release(ctx, first);
+    arb.wake();
+    await tick();
+    assert.equal(queued.box.grant, null, 'the judgment still holds CPU');
+    release(ctx, judge);
+    arb.wake();
+    assert.equal((await queued.done).kind, 'granted', 'the oldest workload advances when the CPU pool is empty');
+    release(ctx, lane);
+    journal.close();
+  });
+
+  it('releases the brake when recent pressure clears while another workload still holds CPU', T, async () => {
+    const { ctx, journal } = openPoolRun(newRun());
+    const arb = createArbiter(ctx);
+    arb.pressure.record({ atMs: 0, runNs: 0, waitNs: 0 });
+    arb.pressure.record({ atMs: 60_000, runNs: 1e9, waitNs: 9e9 });
+    const first = holderOf('first');
+    await wait(arb, req({ cpu: 1 }), first, rank('first', 1)).done;
+    const next = holderOf('next');
+    const queued = wait(arb, req({ cpu: 1 }), next, rank('next', 2));
+    arb.pressure.record({ atMs: 120_000, runNs: 11e9, waitNs: 9e9 });
+    arb.wake();
+    assert.equal((await queued.done).kind, 'granted');
+    release(ctx, first);
+    release(ctx, next);
+    journal.close();
+  });
+});
+
+
+test('arbiter.pressure-brake: job lanes at one calibrated CPU wait, while an arc judgment passes their queue', T, async () => {
+  const { ctx, journal } = openPoolRun(newRun());
+  const arb = createArbiter(ctx);
+  arb.pressure.record({ atMs: 0, runNs: 0, waitNs: 0 });
+  arb.pressure.record({ atMs: 60_000, runNs: 0, waitNs: 1e9 });
+  const first = holderOf('first');
+  await wait(arb, req({ cpu: 1 }), first, rank('first', 1)).done;
+  const controller = new AbortController();
+  const lane = arb.acquireFirst(req({ cpu: 1, cpuBasis: { kind: 'calibrated', key: sha256('a'.repeat(64)), value: 1, samples: 3 } }), { type: 'job', job: jobId('audit', 1) }, controller.signal);
+  assert.equal(arb.waitingFirst()[0]?.pressureBlocked, true);
+  const judgment = await arb.acquireFirst(req({ cpu: 1 }), { type: 'job', job: jobId('audit', 2) }, controller.signal);
+  assert.equal(judgment.kind, 'granted');
+  controller.abort();
+  assert.equal((await lane).kind, 'cancelled', 'cancellation while braked never acquires');
+  release(ctx, first);
+  const holder = { type: 'job', job: jobId('audit', 2) } as const;
+  const held = holderUnits(ctx.journal.view, holder);
+  transition(ctx, holder, held, { type: 'clean', from: 'reserved' }, { type: 'job', job: holder.job });
+  transition(ctx, holder, held, { type: 'release' }, { type: 'job', job: holder.job });
+  journal.close();
+});
+
+
+test('arbiter.pressure-brake: restart rebuilds job and unit waits over actual reservations, preserving judgment exemption', T, async () => {
+  const r = newRun();
+  const before = openPoolRun(r);
+  const active = holderOf('active');
+  assert.equal(reserve(before.ctx, active, req({ cpu: 1 }), stageParent(active)).state, 'reserved');
+  before.journal.close();
+  const { ctx, journal } = openPoolRun(r);
+  const arb = createArbiter(ctx);
+  arb.pressure.record({ atMs: 0, runNs: 0, waitNs: 0 });
+  arb.pressure.record({ atMs: 60_000, runNs: 0, waitNs: 1e9 });
+  const controller = new AbortController();
+  const request = req({ cpu: 1, cpuBasis: { kind: 'default', key: sha256('b'.repeat(64)), value: 1, samples: 0 } });
+  const job = { type: 'job', job: jobId('audit', 1) } as const;
+  const pendingJob = arb.acquireFirst(request, job, controller.signal);
+  const lane = { ...holderOf('lane'), stage: 'lanes' } as const;
+  const pendingLane = wait(arb, request, lane, rank('lane', 1), controller.signal);
+  assert.equal(arb.waitingFirst()[0]?.pressureBlocked, true);
+  assert.equal(arb.waiting()[0]?.pressureBlocked, true);
+  const judge = { ...holderOf('judge'), stage: 'gate' } as const;
+  assert.equal((await wait(arb, req({ cpu: 1 }), judge, rank('judge', 2)).done).kind, 'granted', 'a first-queue job cannot overlap-block a unit judgment');
+  release(ctx, active);
+  release(ctx, judge);
+  arb.wake();
+  assert.equal((await pendingJob).kind, 'granted', 'queued work is not a reservation: the lone workload progresses');
+  assert.equal(arb.waiting()[0]?.pressureBlocked, true, 'only the granted job now holds the brake');
+  controller.abort();
+  assert.equal((await pendingLane.done).kind, 'cancelled');
+  const held = holderUnits(journal.view, job);
+  transition(ctx, job, held, { type: 'clean', from: 'reserved' }, { type: 'job', job: job.job });
+  transition(ctx, job, held, { type: 'release' }, { type: 'job', job: job.job });
+  journal.close();
 });

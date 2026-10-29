@@ -1,6 +1,7 @@
 // The event log (`events.jsonl`) record types, their validators, canonical serialisation and the chain
 // hash rule. The journal (append, tail, fold) is step 2 and builds on these. SCHEMAS.md "Event log" is the
 // prose twin of this module.
+import { type CpuBasis, cpuBasis } from './cpu.ts';
 import type { Buffer } from 'node:buffer';
 import {
   type AmendmentId, type ArcId, type CommandId, type DebtId, type DivergenceId, type EdgeId, type EnvId, type FindingId, type InvocationId,
@@ -237,9 +238,9 @@ export type OpExpect = {
   /** `evidence` is the done evidence.snapshot op whose manifest must be complete before removal. */
   'worktree.remove': Readonly<{ path: AbsPath; evidence: OpId }>;
   /** `resources` in lock order (`compareResourceUnits`): names and pool instances, then `@cpu#*`, `integration-slot` last. */
-  'resource.transition': Readonly<{ holder: Holder; resources: readonly ResourceUnit[]; edge: ResourceEdge }>;
+  'resource.transition': Readonly<{ holder: Holder; resources: readonly ResourceUnit[]; edge: ResourceEdge; cpuBasis?: CpuBasis }>;
   /** The invocation is `op#ordinal`; launch.json is written after the intent and must hash to `launchSha256`. */
-  'proc.spawn': Readonly<{ subject: SpawnSubject; launchSha256: Sha256Hex }>;
+  'proc.spawn': Readonly<{ subject: SpawnSubject; launchSha256: Sha256Hex; cpuKey?: Sha256Hex }>;
   /** `op` scope also kills stray earlier ordinals of the same op. */
   'proc.kill': Readonly<{ inv: InvocationId; scope: 'invocation' | 'op'; reason: KillReason }>;
   /**
@@ -476,7 +477,8 @@ export const STAGE_OUTCOME_KINDS = {
   prepare: ['clean-plan-check', 'clean-build', 'clean-verify', 'conflicted', 'interrupted', 'executor-fault'],
   // A vacuity repair's first stage (M3, B3): the mutant applied and its lane run. `reproduced` goes on to
   // plan-check; `not-reproduced` dismisses the finding and parks; `inapplicable` parks for the next audit.
-  reproduce: ['reproduced', 'not-reproduced', 'inapplicable', 'blocked', 'interrupted', 'cleanup-failed', 'executor-fault'],
+  // `env-unavailable` (2026-10-29, additive) parks on the inferred environment, as lanes and candidate do.
+  reproduce: ['reproduced', 'not-reproduced', 'inapplicable', 'blocked', 'interrupted', 'cleanup-failed', 'executor-fault', 'env-unavailable'],
   // M4a rev 3 (E) to dev.16: `in-session` (a frontier or summit builder under `planCheck.shape: by-builder`: no plan-check
   // call, the build assessed in session). dev.17 records none; read from an older log.
   // Paid M4b run 5: `read-denied`, as at the gate (no longer recorded since 2026-10-16; read from a 1.0.0-dev.11 log).
@@ -1644,7 +1646,10 @@ export const OP_SCHEMAS: { readonly [K in OpKind]: OpSchema<K> } = {
     outcome: kindOnly('removed'),
   },
   'resource.transition': {
-    expect: object((f) => ({ holder: f.get('holder', holder), resources: f.get('resources', lockOrder), edge: f.get('edge', resourceEdge) })),
+    expect: object((f) => {
+      const basis = f.optional('cpuBasis', cpuBasis);
+      return { holder: f.get('holder', holder), resources: f.get('resources', lockOrder), edge: f.get('edge', resourceEdge), ...(basis === undefined ? {} : { cpuBasis: basis }) };
+    }),
     post: nothing,
     outcome: kindOnly('transitioned'),
     check: (e, _post, path) => {
@@ -1656,7 +1661,10 @@ export const OP_SCHEMAS: { readonly [K in OpKind]: OpSchema<K> } = {
     },
   },
   'proc.spawn': {
-    expect: object((f) => ({ subject: f.get('subject', spawnSubject), launchSha256: f.get('launchSha256', sha256R) })),
+    expect: object((f) => {
+      const cpuKey = f.optional('cpuKey', sha256R);
+      return { subject: f.get('subject', spawnSubject), launchSha256: f.get('launchSha256', sha256R), ...(cpuKey === undefined ? {} : { cpuKey }) };
+    }),
     post: nothing,
     outcome: tagged('kind', {
       result: object((f): OpOutcome['proc.spawn'] => {

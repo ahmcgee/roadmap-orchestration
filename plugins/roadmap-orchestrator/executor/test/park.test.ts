@@ -67,7 +67,7 @@ describe('park table', () => {
         assert.equal(new Set(keys).size, keys.length);
       }
     }
-    assert.equal(rows, 21, 'plan-check/build/gate/scaffold/poc process-fault, build and scaffold lost, eight cleanup-failed (salvage\'s since 2026-10-24), lanes, candidate and reproduce blocked, salvage commit-failed, lanes and candidate env-unavailable');
+    assert.equal(rows, 22, 'plan-check/build/gate/scaffold/poc process-fault, build and scaffold lost, eight cleanup-failed (salvage\'s since 2026-10-24), lanes, candidate and reproduce blocked, salvage commit-failed, reproduce, lanes and candidate env-unavailable');
     assert.equal(Object.keys(PARK_TARGETS).length, 10);
   });
 
@@ -83,6 +83,7 @@ describe('park table', () => {
     assert.throws(() => parkTargets({ stage: 'lanes', kind: 'cleanup-failed' }, NO_PARK_FACTS), /needs its failed instances/);
     assert.throws(() => parkTargets({ stage: 'salvage', kind: 'unmerged' }, NO_PARK_FACTS), /decides no retryable park/);
     assert.deepEqual(parkTargets({ stage: 'lanes', kind: 'env-unavailable' }, { backend: null, failed: [], environment: resourceName('stack') }), [{ type: 'environment', environment: 'stack' }]);
+    assert.deepEqual(parkTargets({ stage: 'reproduce', kind: 'env-unavailable' }, { backend: null, failed: [], environment: resourceName('stack') }), [{ type: 'environment', environment: 'stack' }]);
     assert.throws(() => parkTargets({ stage: 'candidate', kind: 'env-unavailable' }, NO_PARK_FACTS), /needs its environment/);
   });
 

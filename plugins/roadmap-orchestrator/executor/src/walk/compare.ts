@@ -60,10 +60,9 @@ import { renderPrompt, promptFor } from '../prompts/index.ts';
 import { type PolishJudgeInputs, visionInputOf } from '../prompts/inputs.ts';
 import { type PolishJudgeOutput, validatePolishJudgeOutput } from '../prompts/schemas.ts';
 import { worktreeCreateOp } from '../recover/ops.ts';
-import { cleanup } from '../resources/reserve.ts';
 import { type Instance, allocatePorts, bringUp, substitutePorts, tearDown } from './bringup.ts';
 import { evidencePath } from './report.ts';
-import { type WalkContext, WALK_SESSION_MIN, reserveJob } from './walk.ts';
+import { type WalkContext, WALK_SESSION_MIN, reserveJob, releaseJob } from './walk.ts';
 
 /** What a compare needs: a walk's context (processes, resources, the arbiter's first-served waits) and the fenced commit's. */
 export type CompareContext = WalkContext & FencedCommitContext;
@@ -215,13 +214,12 @@ export async function runCompare(ctx: CompareContext): Promise<CompareOutcome> {
   if (unit?.polish === undefined) throw new Error(`${started.job}: unit ${started.unit} is no polish unit of the plan in force`);
   const m = milestoneOf(plan, unit.polish.milestone);
   const r = await reserveJob(ctx, started.job, m);
-  if (r === 'occupied' || r === 'cleanup-failed') return { kind: 'incomplete', job: started.job, detail: r };
+  if (typeof r === 'string') return { kind: 'incomplete', job: started.job, detail: r };
   let out: CompareOutcome;
   try {
     out = await compareOnce(ctx, started, m, unit);
   } finally {
-    const cleaned = await cleanup(ctx, r, { type: 'job', job: started.job });
-    if (cleaned.kind !== 'released') throw new Error(`${started.job}: its reservation was not released: ${cleaned.kind}`);
+    await releaseJob(ctx, r);
   }
   if (out.kind === 'judged' && out.decision === 'drop') await cutDropped(ctx, unit);
   return out;
