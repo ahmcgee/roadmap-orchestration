@@ -70,6 +70,7 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { basename, dirname, join, posix } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
+import { sameExecution } from '../input/laneexecution.ts';
 import type { FlakeOn, IntentOf, LaneIdentity, Parent, WitnessFor } from '../core/events.ts';
 import {
   type EnvId, type InvocationId, type JobId, type LaneId, type LaneRev, type OpId, type ResourceInstance, type ResourceName, type ResourceUnit, type Sha, type UnitId,
@@ -1288,10 +1289,7 @@ export const standInJourneyLane = (def: ArcLaneDef): JourneyLane => ({ ...arcJou
  * so on the same tree the other's run is the suite lane's: an arc lane's (with its reporter's env added), or a spec
  * lane's (`fastSuiteLanes`).
  */
-export function sameExecution(suite: LaneDef, other: LaneDef): boolean {
-  const shape = (l: LaneDef): string => canonicalJson({ argv: l.argv, cwd: l.cwd, set: l.env.set, pass: [...l.env.pass].sort(), expectedExit: l.expectedExit });
-  return shape(suite) === shape(other);
-}
+export { sameExecution } from '../input/laneexecution.ts';
 
 /** Each suite lane's identical arc lane among `arc` (the first, by `sameExecution`), by suite lane id; never a stochastic lane's. */
 export function suiteStandIns(suite: readonly LaneDef[], arc: readonly ArcLaneDef[]): ReadonlyMap<LaneId, ArcLaneDef> {

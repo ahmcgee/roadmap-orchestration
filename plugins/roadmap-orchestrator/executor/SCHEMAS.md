@@ -5277,3 +5277,11 @@ Markdown estate details render an inert terminal subset: headings, emphasis, inl
 visible destinations, lists/tasks, quotes, fenced/indented code, rules and tables. Narrow tables switch
 to labelled records. Links/images are not fetched, and code is never executed. Raw mode preserves the
 source. Structured JSON projections, recorded references and commit/hash provenance remain unchanged.
+
+## Near-duplicate lane advisory
+
+Phase-0 checks and apply emit `lanes-differ-only-env-set{lanes: [<source/id>, <source/id>]}`
+when two active spec, suite or arc commands have identical argv, cwd, sorted env.pass and
+expectedExit, but different env.set. This is advisory only: both executions retain their
+own identity and evidence. Exact execution equality is shared with lane deduplication in
+`src/input/laneexecution.ts`.
