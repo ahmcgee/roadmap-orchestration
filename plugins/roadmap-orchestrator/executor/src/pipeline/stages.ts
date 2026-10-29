@@ -168,7 +168,7 @@ import {
 } from './dispatch.ts';
 import { invocationDir, quiescent } from './invoke.ts';
 import {
-  type LaneRecord, type LaneRuntime, type Series, type VerificationTree, builderSuiteLanes, dirtyPaths, dirtySnapshot, laneOrder, laneRuntime, laneRecordIn, seriesOrder, mapInForce, presentCheckouts, removeCheckout,
+  type LaneRecord, type LaneRuntime, type Series, type VerificationTree, builderSuiteLanes, dirtyPaths, dirtySnapshot, laneOrder, laneRuntime, laneRecordIn, laneSummaryIn, seriesOrder, mapInForce, presentCheckouts, removeCheckout,
   LANE_DEADLINE_MS, type Reusable, removeVerificationTree, runLaneSeries, seriesEntry, specSeriesRoot, stageSuiteLanes,
 } from './lanes.ts';
 import { certifiedTree, docsOnlyCarry } from './docsonly.ts';
@@ -1930,7 +1930,7 @@ export function previousLaneReds(ctx: StageContext, unit: PlanUnit, spec: SpecM1
   if (created.expect.checkout.type !== 'detached') throw new Error(`lanes ${unit.id}#${previous.attempt}: no detached verification checkout`);
   const at = created.expect.checkout.at;
   const reds = (lanes: readonly LaneDef[], set: 'spec' | 'suite', root: AbsPath): ReadonlySet<LaneId> => new Set(lanes.filter((lane) => {
-    const record = laneRecordIn(ctx, previous, lane, set, at, root);
+    const record = laneSummaryIn(ctx, previous, lane, set, at, root);
     return record !== null && isRed(record.verdict);
   }).map((lane) => lane.id));
   return { spec: reds(spec.lanes, 'spec', specSeriesRoot(ctx.runDir, previous)),

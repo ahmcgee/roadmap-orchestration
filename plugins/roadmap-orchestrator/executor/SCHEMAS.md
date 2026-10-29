@@ -46,8 +46,9 @@ that close crash-abandoned attempts; an incomplete attempt never supplies orderi
 lanes are executor-only and omitted from builder lane lists. The plan/spec resource declarations remain the envelope
 checked at preflight, widening and apply. An adopted build keeps its journaled named reservation through teardown.
 Builds receive no pool-instance bindings. The final build report requests certification; development uses targeted
-checks. `BUILD_SCHEMA` drops `lanesRun`; the reader accepts and ignores it in old answers, which retain their launch's
-old schema for recovery. `experiments` records development checks. There is no certification CLI or live-session channel.
+checks. `BUILD_SCHEMA` drops `lanesRun`; the adapter and final-report watcher accept it on build answers, and the build
+reader validates its legacy shape then ignores it. Adopted invocations retain their launch's old schema for recovery.
+`experiments` records development checks. There is no certification CLI or live-session channel.
 
 **1.0.0-dev.30 → 1.0.0-dev.31 (2026-10-29, judgment prompt reductions and size telemetry).**
 `backend` and `arc-backend` spawn subjects and `meter` facts add optional
@@ -1993,7 +1994,10 @@ residues, the snapshot closure):
    at `inputs/<sha>.<ext>` (everything a `plan-applied` or kept payload names, the payload's renders, `spec.patch`
    outputs, the specs `dispatch`, `judgment-inputs` and `reopened` name, `steered` briefs); `start.json` (named by the
    latest `executor-started`, its generation matching); every done backend or arc-backend spawn's `result.json`
-   (`reads.json` where written); each `witnessed` fact's record (a job's, a candidate's or a mutant's run) as
+   (`reads.json` where written); `exit.json` for done lanes, builds, journeys, proofs and mutants (CPU telemetry, optional
+   for earlier snapshots). Certification status uses the journal's command verdict summaries and the retained red
+   classifications, including suite reds under `_suite/`; launch files and their environment values remain local.
+   Each `witnessed` fact's record (a job's, a candidate's or a mutant's run) as
    `witness/<seq>-<ord>.json`; needs-user records and acks; evidence manifests; each red `redRev`-stamped spec lane's
    `red.json` at its run-dir path `evidence/<unit>/<attempt>-lanes/<lane>/red.json` (named by the red spawn's done,
    optional: absent after a crash before the write; M4a rev 3, so `status.units[].failures` restores from the ref

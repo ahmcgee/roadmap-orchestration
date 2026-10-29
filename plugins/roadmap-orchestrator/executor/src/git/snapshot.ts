@@ -24,6 +24,7 @@
 // | `start.json`                           | the latest `executor-started` fact (its generation)                |
 // | `inv/<seq>-<ordinal>/result.json`,     | a backend `proc.spawn` done `result` (reads.json: a Claude call's)  |
 // | `reads.json`                           |                                                                    |
+// | `inv/<seq>-<ordinal>/exit.json`       | a done lane/build/journey/proof/mutant spawn: CPU telemetry         |
 // | `witness/<seq>-<ordinal>.json`         | a `witnessed` fact (a job's, a candidate's or a mutant's run): its `witness.json` |
 // | `needs-user/<id>.json`, `<id>.ack.json`| a done `needsuser.raise` intent; a `needs-user-acked` fact          |
 // | `evidence-manifests/<seq>.json`        | a done `evidence.snapshot` (the manifest only, never raw evidence) |
@@ -163,7 +164,7 @@ type Source =
   /** An earlier executor's issues capture (scaffolding, see `legacyIssues`): carried when kept, absent otherwise. */
   | Readonly<{ type: 'legacy-issues'; sha256: Sha256Hex }>
   | Readonly<{ type: 'start' }>
-  | Readonly<{ type: 'inv'; inv: InvocationId; file: 'result.json' | 'reads.json' }>
+  | Readonly<{ type: 'inv'; inv: InvocationId; file: 'result.json' | 'reads.json' | 'exit.json' }>
   /** A witness run keeps its record in its execution's dir (`witnessDir`): `<dir>/witness.json`. */
   | Readonly<{ type: 'witness'; fact: WitnessedFact }>
   | Readonly<{ type: 'file'; path: AbsPath }>
@@ -269,12 +270,22 @@ function closureOf(events: readonly Event[], read: (sha: Sha256Hex, ext: string)
           add({ path: repoPath(`${dir}/reads.json`), namedBy: by, sha256: null, optional: true, source: { type: 'inv', inv, file: 'reads.json' } });
           add({ path: repoPath(`${dir}/result.json`), namedBy: by, sha256: e.outcome.resultSha256, source: { type: 'inv', inv, file: 'result.json' } });
         }
-        // A red spec lane's class (redlane.ts), in its first run's dir under the lanes attempt's evidence root
+        // Work telemetry reads exits. Launch environments remain local, outside the snapshot.
+        // Optional for snapshots from earlier releases, whose closure did not retain these records.
+        const subject = intent.expect.subject;
+        const work = subject.purpose === 'lane' || subject.purpose === 'journey' || subject.purpose === 'proof' || subject.purpose === 'mutant'
+          || (subject.purpose === 'backend' && subject.role === 'build');
+        if (work) {
+          const inv = invocationId(intent.op, intent.ordinal);
+          const dir = `${INV_DIR}/${invocationDirName(inv)}`;
+          add({ path: repoPath(`${dir}/exit.json`), namedBy: by, sha256: null, optional: true, source: { type: 'inv', inv, file: 'exit.json' } });
+        }
+        // A red spec or fast-suite lane's class (redlane.ts), in its first run's dir under the lanes attempt's evidence root
         // (src/pipeline/dispatch.ts `evidenceRoot`, lanes.ts `specSeriesRoot`); a red rerun names the same path.
         const s = intent.expect.subject;
         const verdict = e.outcome.summary.type === 'command' ? e.outcome.summary.verdict : null;
-        if (s.purpose === 'lane' && s.set === 'spec' && s.redRev !== undefined && verdict !== null && isRed(verdict) && intent.parent.type === 'stage') {
-          const path = repoPath(`evidence/${s.unit}/${intent.parent.attempt}-${intent.parent.stage}/${s.lane}/${RED_FILE}`);
+        if (s.purpose === 'lane' && s.redRev !== undefined && verdict !== null && isRed(verdict) && intent.parent.type === 'stage' && (s.set === 'spec' || intent.parent.stage === 'lanes')) {
+          const path = repoPath(`evidence/${s.unit}/${intent.parent.attempt}-${intent.parent.stage}/${s.set === 'suite' ? '_suite/' : ''}${s.lane}/${RED_FILE}`);
           add({ path, namedBy: by, sha256: null, optional: true, source: { type: 'red', path } });
         }
       }

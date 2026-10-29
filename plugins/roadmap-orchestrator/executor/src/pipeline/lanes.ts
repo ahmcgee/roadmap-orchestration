@@ -441,29 +441,35 @@ export function dev6RedClass(runDir: AbsPath, inv: InvocationId, dir: AbsPath): 
  * A lane's record from its first run and its rerun, if any: the reading `redLane` made live (redlane.ts). `forgiven`: the
  * flake's `flake-observed` fact forgave it (dev.17), so the green rerun counts.
  */
-function laneRecord(first: LaneRun, rerun: LaneRun | null, forgiven = false): LaneRecord {
-  const cls = redClassOf(first);
-  const base = {
-    voided: null, diagnostic: null, flaky: false, repeat: cls?.kind === 'repeat' ? { attempt: cls.attempt, inv: cls.inv } : null,
-    hostSuspected: first.signatures.length === 0 ? null : { signatures: first.signatures, busy: hostWasBusy(first.host) },
-  };
-  if (rerun === null) return { ...first, ...base };
+type LaneVerdict = Pick<LaneRun, 'lane' | 'inv' | 'verdict'>;
+
+/** The same counted run for the full evidence reader and the journal-only status reader. */
+function countedRerun(first: LaneVerdict, rerun: LaneVerdict | null, cls: RedClass | null, forgiven: boolean): Readonly<{ rerun: boolean; flaky: boolean }> {
+  if (rerun === null) return { rerun: false, flaky: false };
   if (!isRed(first.verdict)) throw new Error(`lane ${first.lane} was rerun after a ${first.verdict} run (${first.inv})`);
   if (cls === null) throw new Error(`lane ${first.lane} was rerun after ${first.inv}, whose red class (red.json) was never written: a stamped run's class is written before any rerun`);
   switch (cls.kind) {
     case 'host-signature':
-      return { ...rerun, ...base, voided: first };
+      return { rerun: true, flaky: false };
     case 'diagnostic':
-      if (forgiven) {
-        if (rerun.verdict !== 'pass') throw new Error(`lane ${first.lane}: a forgiven flake whose rerun ${rerun.inv} did not pass`);
-        return { ...rerun, ...base, voided: first, flaky: true };
-      }
-      return { ...first, ...base, diagnostic: rerun, flaky: rerun.verdict === 'pass' };
+      if (forgiven && rerun.verdict !== 'pass') throw new Error(`lane ${first.lane}: a forgiven flake whose rerun ${rerun.inv} did not pass`);
+      return { rerun: forgiven, flaky: rerun.verdict === 'pass' };
     case 'signature-without-evidence':
       throw new Error(`lane ${first.lane} was rerun after a signature without host evidence (${first.inv})`);
     case 'repeat':
       throw new Error(`lane ${first.lane} was rerun after a repeat of ${cls.inv} (${first.inv})`);
   }
+}
+
+function laneRecord(first: LaneRun, rerun: LaneRun | null, forgiven = false): LaneRecord {
+  const cls = redClassOf(first);
+  const counted = countedRerun(first, rerun, cls, forgiven);
+  const base = {
+    voided: null, diagnostic: null, flaky: counted.flaky, repeat: cls?.kind === 'repeat' ? { attempt: cls.attempt, inv: cls.inv } : null,
+    hostSuspected: first.signatures.length === 0 ? null : { signatures: first.signatures, busy: hostWasBusy(first.host) },
+  };
+  if (rerun === null) return { ...first, ...base };
+  return counted.rerun ? { ...rerun, ...base, voided: first } : { ...first, ...base, diagnostic: rerun };
 }
 
 /** A red run's failure signature (redlane.ts `failureSignature`) from its output files, its checkout masked. */
@@ -561,14 +567,18 @@ function laneSpawns(view: JournalView, parent: StageParent, lane: LaneId, at: Sh
 const verifiedLane = (lane: LaneDef, runs: number): LaneDef => ({ ...lane, stochastic: { runs, minPasses: runs } });
 
 /** A stochastic lane's record from its runs (see the header): its last passing run once `minPasses` passed, else its last run. */
-function stochasticRecord(lane: LaneDef, runs: readonly LaneRun[]): LaneRecord {
+function stochasticCounted<T extends LaneVerdict>(lane: LaneDef, runs: readonly T[]): T {
   const s = lane.stochastic;
   if (s === undefined) throw new Error(`lane ${lane.id} is not stochastic`);
   if (runs.length > s.runs) throw new Error(`stochastic lane ${lane.id} ran ${runs.length} times; it runs at most ${s.runs}`);
   const passed = runs.filter((r) => r.verdict === 'pass');
   const counted = passed.length >= s.minPasses ? passed.at(-1) : runs.at(-1);
   if (counted === undefined) throw new Error(`stochastic lane ${lane.id}: no run`);
-  return { ...counted, voided: null, diagnostic: null, flaky: false, repeat: null, hostSuspected: null };
+  return counted;
+}
+
+function stochasticRecord(lane: LaneDef, runs: readonly LaneRun[]): LaneRecord {
+  return { ...stochasticCounted(lane, runs), voided: null, diagnostic: null, flaky: false, repeat: null, hostSuspected: null };
 }
 
 /** The record of a series' runs of `lane` (its first run and its rerun, or a stochastic lane's runs), as the series combined them. */
@@ -1246,6 +1256,41 @@ export function laneRecordIn(ctx: StageContext, parent: StageParent, lane: LaneD
   if (spawns.length > 0) return spawnRecord(ctx, parent, lane, spawns, root);
   const reused = ctx.journal.view.holistic().laneReuses.find((r) => r.lane === lane.id && sameParent(r.parent, parent) && (r.set ?? 'spec') === set && (r.at ?? at) === at);
   return reused === undefined ? null : reusedRecord(ctx, reused.from, lane);
+}
+
+/** Certification status needs verdicts, not launch environments or raw evidence. All verdicts are journaled. */
+export function laneSummaryIn(ctx: StageContext, parent: StageParent, lane: LaneDef, set: LaneSet, at: Sha, root: AbsPath): Pick<LaneRecord, 'inv' | 'verdict' | 'flaky' | 'reused'> | null {
+  const view = ctx.journal.view;
+  const spawns = laneSpawns(view, parent, lane.id, at, set);
+  if (spawns.length === 0) {
+    const reuse = view.holistic().laneReuses.find((r) => r.lane === lane.id && sameParent(r.parent, parent) && (r.set ?? 'spec') === set && (r.at ?? at) === at);
+    if (reuse === undefined) return null;
+    const source = view.latestIntent(parseInvocationId(reuse.from.inv).op);
+    if (source.kind !== 'proc.spawn' || source.expect.subject.purpose !== 'lane' || source.parent.type !== 'stage') throw new Error(`${reuse.from.inv}: not a lane spawn`);
+    const sourceRoot = seriesRootOf(ctx, reuse.from.inv);
+    if (sourceRoot === null) throw new Error(`${reuse.from.inv}: no series evidence`);
+    const record = laneSummaryIn(ctx, source.parent, lane, source.expect.subject.set, reuse.from.at, sourceRoot);
+    if (record === null || record.inv !== reuse.from.inv) throw new Error(`${reuse.from.inv}: not its series' counted run`);
+    return { ...record, reused: { at: reuse.from.at, inv: reuse.from.inv } };
+  }
+  const observations = spawns.map((i): LaneVerdict => {
+    const done = view.doneOf(i.op);
+    if (done === null) throw new Error(`${i.op}: unfinished lane has no verdict`);
+    if (done.kind !== 'proc.spawn') throw new Error(`${i.op}: not a spawn result`);
+    if (done.outcome.kind === 'result' && done.outcome.summary.type !== 'command') throw new Error(`${i.op}: lane has a backend result`);
+    return { lane: lane.id, inv: invocationId(i.op, i.ordinal), verdict: done.outcome.kind === 'result' && done.outcome.summary.type === 'command' ? done.outcome.summary.verdict : 'process-fault' };
+  });
+  const subject = spawns[0]!.expect.subject;
+  if (subject.purpose !== 'lane') throw new Error(`${spawns[0]!.op}: not a lane`);
+  const runs = subject.verify === undefined ? lane : verifiedLane(lane, subject.verify);
+  if (runs.stochastic !== undefined) return { ...stochasticCounted(runs, observations), flaky: false, reused: null };
+  const [first, rerun, ...more] = observations;
+  if (more.length > 0) throw new Error(`lane ${lane.id} ran ${spawns.length} times in series ${parent.unit} ${parent.stage}#${parent.attempt}; a lane runs at most twice`);
+  // Unstamped legacy executions need the historical red-class reconstruction from their local evidence.
+  if (rerun !== undefined && subject.redRev === undefined) return laneRecordIn(ctx, parent, lane, set, at, root);
+  const cls = rerun === undefined ? null : readRedClass(laneDir(root, lane, 'first'))?.class ?? null;
+  const counted = countedRerun(first!, rerun ?? null, cls, flakeOf(view, first!.inv)?.forgiven ?? false);
+  return { ...(counted.rerun ? rerun! : first!), flaky: counted.flaky, reused: null };
 }
 
 /**

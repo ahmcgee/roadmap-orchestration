@@ -18,7 +18,7 @@ import { absPath } from '../src/core/values.ts';
 import type { HostSample } from '../src/host/sample.ts';
 import { parsePlan } from '../src/input/plan.ts';
 import { type StageContext, type StageParent, pinDispatch } from '../src/pipeline/dispatch.ts';
-import { type LaneRuntime, type Series, laneOrder, reserveNow, runLaneSeries, seriesLedger, specSeriesRoot } from '../src/pipeline/lanes.ts';
+import { type LaneRuntime, type Series, laneOrder, laneSummaryIn, reserveNow, runLaneSeries, seriesLedger, specSeriesRoot } from '../src/pipeline/lanes.ts';
 import { laneFixRound } from '../src/pipeline/rounds.ts';
 import { lanes, loadUnitSpec } from '../src/pipeline/stages.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
@@ -60,7 +60,18 @@ const runtime = (ctx: StageContext, sampleHost: () => HostSample, signal: AbortS
   acquire, rank: () => { throw new Error('not ranked'); }, signal, sampleHost,
 });
 
-const readBack = (run: StageRun, ctx: StageContext = run.ctx) => seriesLedger(ctx, PARENT, loadUnitSpec(run.ctx, run.unit).spec.lanes, 'spec', run.base, specSeriesRoot(ctx.runDir, PARENT));
+const readBack = (run: StageRun, ctx: StageContext = run.ctx) => {
+  const lanes = loadUnitSpec(run.ctx, run.unit).spec.lanes;
+  const root = specSeriesRoot(ctx.runDir, PARENT);
+  const records = seriesLedger(ctx, PARENT, lanes, 'spec', run.base, root);
+  assert.ok(records.length > 0, 'the reader comparisons exercise actual lane runs');
+  for (const record of records) {
+    const { inv, verdict, flaky, reused } = record;
+    const summary = laneSummaryIn(ctx, PARENT, lanes.find((l) => l.id === record.lane)!, 'spec', run.base, root);
+    assert.deepEqual(summary && { inv: summary.inv, verdict: summary.verdict, flaky: summary.flaky, reused: summary.reused }, { inv, verdict, flaky, reused }, 'journal-only status agrees with the full lane evidence reader');
+  }
+  return records;
+};
 
 test('lanes.flake-red-green: red then green on the diagnostic rerun at a commit the tip contains is the tip\'s flake: recorded in the flaky ledger and forgiven (the green rerun counts, uncharged); both runs kept', T, async () => {
   const run = laneRun([redGreen('flaky', 'expected 3, got 4')]);
@@ -106,7 +117,7 @@ test('lanes.flake-red-green: red then green on the diagnostic rerun at a commit 
 });
 
 test('lanes.flake-deflake-own: a deflake unit\'s own flake is not forgiven: flaky, uncharged; the fix round is told', T, async () => {
-  const run = setupUnit({ steps: [], lanes: [redGreen('flaky', 'expected 3, got 4')], unit: { origin: 'deflake', deflake: { keys: [{ type: 'lane', lane: 'flaky' }] } } });
+  const run = setupUnit({ steps: [], lanes: [redGreen('flaky', 'expected 3, got 4')], unit: { limits: { certifications: 1 }, origin: 'deflake', deflake: { keys: [{ type: 'lane', lane: 'flaky' }] } } });
   pinDispatch(run.ctx, run.unit, keptSpec(run.journal));
   const done = started(await lanes(run.ctx, run.unit, run.base));
   assert.equal(done.outcome.kind, 'flaky');

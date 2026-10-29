@@ -28,7 +28,7 @@ import { status } from '../src/status.ts';
 import { runOp } from './fixtures/git-common.ts';
 import { EXEC_TIMEOUT_MS, type ExecRun, SMOKE_DEFAULT, setupExec, startExec } from './fixtures/exec-common.ts';
 import { planCheckStep } from './fixtures/stage-common.ts';
-import { gateStep, mulBuild } from './fixtures/unit-common.ts';
+import { MUL, codexStep, gateStep, mulBuild } from './fixtures/unit-common.ts';
 import { assertNoSurvivors } from './helpers/reap.ts';
 import { type CorpusArc, PHASE0_FILE, PIN_FILE, corpusArc, newHostDir, runDirOfArc, seal } from './helpers/corpusarc.ts';
 import { git, tmpDir } from './helpers/repo.ts';
@@ -38,8 +38,13 @@ after(assertNoSurvivors);
 const T = { timeout: EXEC_TIMEOUT_MS };
 
 /** One unit run to complete by the real executor: plan-check and gate are Claude judgments, the build Codex's. */
-async function completedArc(t: Parameters<typeof setupExec>[0]): Promise<ExecRun> {
-  const r = setupExec(t, { steps: [...SMOKE_DEFAULT, planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })] });
+async function completedArc(t: Parameters<typeof setupExec>[0], red: 'spec' | 'suite' | null = null): Promise<ExecRun> {
+  const broken = { 'src/mul.js': 'export function mul(a, b) { return a + b; }\n' };
+  const r = setupExec(t, {
+    ...(red === 'suite' ? { units: [{ id: 'u1', lanes: [{ id: 'unit', argv: ['true'] }] }], suite: [{ id: 'suite', argv: ['node', '--test'] }] } : {}),
+    steps: [...SMOKE_DEFAULT, planCheckStep({ decision: 'approve' }), mulBuild(red === null ? {} : broken),
+      ...(red === null ? [] : [codexStep([{ type: 'commit', message: 'fix mul', files: MUL }], { argv: ['exec', 'resume'] })]), gateStep({ decision: 'approve' })],
+  });
   const exit = await startExec(r).exit;
   assert.equal(exit.code, 0, exit.stderr);
   return r;
@@ -73,6 +78,13 @@ function expectedClosure(r: ExecRun, events: readonly Event[]): ReadonlyMap<stri
       const dir = `inv/${invocationDirName(invocationId(intent.op, intent.ordinal))}`;
       out.set(`${dir}/result.json`, e.outcome.resultSha256);
       if (existsSync(join(r.runDir, dir, 'reads.json'))) out.set(`${dir}/reads.json`, null);
+    }
+    if (e.kind === 'proc.spawn' && e.outcome.kind === 'result' && intent.kind === 'proc.spawn') {
+      const s = intent.expect.subject;
+      const dir = `inv/${invocationDirName(invocationId(intent.op, intent.ordinal))}`;
+      if (s.purpose === 'lane' || s.purpose === 'journey' || s.purpose === 'proof' || s.purpose === 'mutant' || (s.purpose === 'backend' && s.role === 'build')) {
+        out.set(`${dir}/exit.json`, null);
+      }
     }
   }
   return out;
@@ -122,8 +134,8 @@ function restore(r: ExecRun, commit: Sha, runDir: AbsPath): void {
   }
 }
 
-test('snapshot.reconstruct-alone: the run dir deleted and restored from the ref alone derives the same status', T, async (t) => {
-  const r = await completedArc(t);
+for (const red of [null, 'spec', 'suite'] as const) test(`snapshot.reconstruct-alone${red === null ? '' : ` after ${red} red`}: the run dir deleted and restored from the ref alone derives the same status`, T, async (t) => {
+  const r = await completedArc(t, red);
   const runDir = absPath(r.runDir);
   const arc = arcId(r.arc);
   // The terminal snapshot: everything the arc logged, published through the op at the log's high-water mark.
@@ -134,7 +146,12 @@ test('snapshot.reconstruct-alone: the run dir deleted and restored from the ref 
   journal.close();
   const before = status(runDir, arc, absPath(r.hostDir));
   const at = refAt(r);
-  assert.equal(verifySnapshot(absPath(r.repo), at).kind, 'verified');
+  const verified = verifySnapshot(absPath(r.repo), at);
+  assert.equal(verified.kind, 'verified');
+  assert.ok(verified.kind === 'verified');
+  assert.equal([...verified.files.keys()].some((p) => p.endsWith('/launch.json')), false, 'launch environments stay local');
+  assert.equal(before.units[0]!.certification?.used, red === null ? 0 : 1);
+  if (red !== null) assert.ok([...verified.files.keys()].some((p) => p.endsWith('/red.json') && (red !== 'suite' || p.includes('/_suite/'))), 'the prior red classification is retained');
 
   rmSync(runDir, { recursive: true, force: true });
   restore(r, at, runDir);

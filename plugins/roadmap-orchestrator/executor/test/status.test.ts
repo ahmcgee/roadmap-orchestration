@@ -146,7 +146,7 @@ describe('status.subset', () => {
       gate: { attempt: 8, decision: 'approve', findings: [], unreviewed: [] },
     }]);
     assert.equal(s.units[0]!.certification?.allowance, 3);
-    assert.ok(s.units[0]!.certification?.lanes.every((l) => l.state === 'green'));
+    assert.deepEqual(s.units[0]!.certification?.lanes.map((l) => [l.id, l.state]), [['mul', 'green'], ['suite', 'green']], 'the completed certification retains both spec and suite lanes');
     assert.ok(s.units[0]!.work.some((w) => w.kind === 'build' && w.cpuBasis?.kind === 'default' && w.measured !== null));
     assert.deepEqual([s.edges, s.runOnly, s.host.resources, s.host.queue, s.host.probes, s.host.backends], [[], null, [], [], [], []]);
     assert.deepEqual(s.host.pools['@cpu']?.used, 0, 'every token released');

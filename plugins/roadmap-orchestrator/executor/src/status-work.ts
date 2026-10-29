@@ -11,7 +11,7 @@ import type { StageContext, StageParent } from './pipeline/dispatch.ts';
 import { verificationWorktree } from './pipeline/dispatch.ts';
 import { unitTip } from './pipeline/gate.ts';
 import { invocationDir } from './pipeline/invoke.ts';
-import { laneOrder, laneRecordIn, seriesOrder, specSeriesRoot } from './pipeline/lanes.ts';
+import { laneOrder, laneSummaryIn, seriesOrder, specSeriesRoot } from './pipeline/lanes.ts';
 import { fastSuiteLanes, fastSuiteRoot, loadUnitSpec, previousLaneReds } from './pipeline/stages.ts';
 import { runnerFiles } from './runner/files.ts';
 
@@ -83,7 +83,7 @@ export function certification(ctx: StageContext, unit: PlanUnit, events: readonl
     const last = spawns.at(-1);
     const live = last !== undefined && view.doneOf(last.op) === null;
     // Reading the aggregate before settlement would falsely turn an unfinished run into a process fault.
-    const record = live ? null : laneRecordIn(ctx, parent, lane, set, at, root);
+    const record = live ? null : laneSummaryIn(ctx, parent, lane, set, at, root);
     const inv = live ? invocationId(last.op, last.ordinal) : record?.inv ?? null;
     const run = runs.find((r) => r.inv === inv);
     const verdict = record?.verdict ?? null;
