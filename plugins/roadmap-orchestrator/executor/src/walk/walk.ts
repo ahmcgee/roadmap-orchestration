@@ -35,6 +35,7 @@
 //      Before the end, a `reported` walk dismisses (code, `not-reproduced`) the still-active P1s of the milestone's
 //      earlier `bring-up-failed` walks: its product came up, so they no longer hold (a fixed environment, 2026-10-24).
 //      A crash between the end and the pass is settled by `settleWalks` (the scheduler's start, and every run).
+import { useEnvironment, releaseEnvironment } from '../resources/environments.ts';
 import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { freshJudgmentSession } from '../backends/argv.ts';
@@ -49,7 +50,7 @@ import { removeCheckout } from '../holistic/audit.ts';
 import { integrationHeadNow } from '../holistic/cadence.ts';
 import { isActive, openFinding, raisedWith, ruleFinding } from '../holistic/findings.ts';
 import type { Vision } from '../holistic/types.ts';
-import { type Milestone, type PlanM1, advancesOf, milestoneOf, milestonesOf, walkRoundsOf } from '../input/plan.ts';
+import { type Milestone, type PlanM1, advancesOf, milestoneOf, milestonesOf, resourceEnvironments, walkRoundsOf } from '../input/plan.ts';
 import { raiseNeedsUser, raisedFor } from '../needsuser.ts';
 import {
   type BackendCallOutcome, type RepairTurn, type StageContext, arcSeat, callActingJudge, recordedArcCall, repairTurnOf, runOp, verdictOf,
@@ -208,7 +209,7 @@ function readWalk(ctx: StageContext, job: JobId, called: BackendCallOutcome, che
  * the milestone's resources and `@cpu`×WALK_CPU, served first and probed; `occupied` when a resource is occupied (the
  * reservation released).
  */
-export async function reserveJob(ctx: WalkContext, job: JobId, m: Milestone): Promise<Reservation<'running', JobHolder> | 'occupied' | 'cleanup-failed'> {
+export async function reserveJob(ctx: WalkContext, job: JobId, m: Milestone): Promise<Reservation<'running', JobHolder> | 'occupied' | 'cleanup-failed' | 'env-unavailable'> {
   const holder: JobHolder = { type: 'job', job };
   const parent: Parent = { type: 'job', job };
   const grant = await ctx.acquireFirst(requestOf(ctx.plan(), m.resources, WALK_CPU), holder, NEVER);
@@ -220,7 +221,27 @@ export async function reserveJob(ctx: WalkContext, job: JobId, m: Milestone): Pr
     const cleaned = await cleanup(ctx, reserved, parent);
     return cleaned.kind === 'cleanup-failed' ? 'cleanup-failed' : 'occupied';
   }
+  const used: ReturnType<typeof resourceEnvironments>[number][] = [];
+  for (const name of resourceEnvironments(ctx.plan(), m.resources)) {
+    const env = await useEnvironment(ctx, name, parent);
+    if (env.kind === 'unavailable') {
+      const cleaned = await cleanup(ctx, reserved, parent);
+      for (const ready of used) releaseEnvironment(ctx.journal, ready);
+      return cleaned.kind === 'cleanup-failed' ? 'cleanup-failed' : 'env-unavailable';
+    }
+    used.push(name);
+  }
   return run(ctx, reserved, parent);
+}
+
+/** Cleans a walk or compare reservation and ends its use of every environment powering its resources. */
+export async function releaseJob(ctx: WalkContext, reservation: Reservation<'running', JobHolder>): Promise<void> {
+  try {
+    const cleaned = await cleanup(ctx, reservation, { type: 'job', job: reservation.holder.job });
+    if (cleaned.kind !== 'released') throw new Error(`${reservation.holder.job}: its reservation was not released: ${cleaned.kind}`);
+  } finally {
+    for (const env of ctx.plan().environments ?? []) if (reservation.resources.includes(env.name)) releaseEnvironment(ctx.journal, env.name);
+  }
 }
 
 /**
@@ -298,12 +319,11 @@ export async function runWalk(ctx: WalkContext): Promise<WalkRunOutcome> {
   const batch = await runBatchPoint(ctx, walk.job, walk.sha, milestoneOf(ctx.plan(), walk.milestone), (d) => void openFinding(ctx.journal, d));
   if (batch.kind === 'no-verdict') return { kind: 'incomplete', job: walk.job, detail: endDetail(batch.end) };
   const r = await reserveJob(ctx, walk.job, milestoneOf(ctx.plan(), walk.milestone));
-  if (r === 'occupied' || r === 'cleanup-failed') return { kind: 'incomplete', job: walk.job, detail: r };
+  if (typeof r === 'string') return { kind: 'incomplete', job: walk.job, detail: r };
   try {
     return await walkOnce(ctx, walk);
   } finally {
-    const cleaned = await cleanup(ctx, r, { type: 'job', job: walk.job });
-    if (cleaned.kind !== 'released') throw new Error(`${walk.job}: its reservation was not released: ${cleaned.kind}`);
+    await releaseJob(ctx, r);
   }
 }
 

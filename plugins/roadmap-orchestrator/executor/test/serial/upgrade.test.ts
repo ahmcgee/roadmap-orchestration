@@ -700,6 +700,9 @@ const DEV17_DEFAULTS = /^(lane\.tier\.(spec|suite|arc)|lane-rev\.tier\..+|plan-a
  */
 const DEV20_LASTING = /^spec\.design\.kind$/;
 
+// Calibrated resources do not infer execution keys or reservation bases for earlier launches.
+const RESOURCE_DEFAULTS = /^(proc\.spawn\.cpuKey|resource\.transition\.cpuBasis|environment\.resources|sched\.pressureBlocked)$/;
+
 /**
  * dev.21 removed the GitHub issues integration: what an arc started before it holds for issues (its Phase-0 record's
  * capture and intake, its manifests' `phase0Issues`, its checkpoints' captures, intake and recorded `issueIntake`) is read
@@ -722,7 +725,7 @@ function assertNoDefaultRead(p: Phase1, expected: readonly string[] = []): void 
   const allowed = p.release === DEV16_RELEASE ? DEV17_DEFAULTS : DEV20_LASTING;
   const kinds = [...hostLogs(p).matchAll(/roadmap: upgrade default \(([^)]+)\)/g)].map((m) => m[1]!);
   for (const kind of kinds) {
-    if (!expected.includes(kind) && !ISSUES_IGNORED.test(kind)) assert.match(kind, allowed, `HEAD read the ${p.release.version} arc with the ${kind} default`);
+    if (!expected.includes(kind) && !ISSUES_IGNORED.test(kind) && !RESOURCE_DEFAULTS.test(kind)) assert.match(kind, allowed, `HEAD read the ${p.release.version} arc with the ${kind} default`);
   }
   if (p.release === DEV16_RELEASE) assert.ok(kinds.includes('lane.tier.spec'), `HEAD read the ${p.release.version} spec lanes' tier as their cadence, and warned`);
 }

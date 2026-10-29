@@ -74,7 +74,7 @@ stays 1 and the plan literal stays `roadmap/plan-m1` (LR-1). Every change was ad
 |---|---|---|
 | `plan-applied` | `+ scheduling?: 'dag'` (rev 1 only, and only in a log with no `dispatch` fact) | absent on rev 1 → a legacy arc (`isLegacy`): dev.4's serial frontier (`legacyNext`, a port of `nextUnit` + `dispatchBlock`/`settledForAfter`, G4), no `@cpu` requests, a declared `cpu` stays a named resource, no over-capacity row for its existing requests; warn once |
 | `plan.json` | optional `capacity`, resource `pool`, unit `origin`, `cpu`, `contingent`, `reenters`, `cut` | absent (`contingent` reads `[]`) |
-| `LaneDef` | `+ cpu?` | absent → the tier's cost (`CPU_COST`) |
+| `LaneDef` | `+ cpu?` | absent → calibrated at scheduling time, fallback the cadence's cost (`CPU_COST`) |
 | `stage-outcome` | `+ park?`, `+ cause?`; stage `prepare` | `park` absent on a park → operator, `design` for the chargeable bound and the design outcomes (refusal, escalate, infeasible, risk-lowered, scope-widened, redirect, revise, malformed, empty-diff, red), `env` otherwise (`legacyParkRecord`); `cause` absent → an operator hold (pause, stop, or a dev.4 usage-limit hold) |
 | New facts | `unparked`, `probe`, `judgment-inputs`, `edge-resolved`, `run-only`, `implementer-escalated` | none |
 | `rerouted` | kept readable, no longer the resume's record | read as `unparked` (`rerouteAsUnpark`); warn once |
@@ -1437,7 +1437,7 @@ The records are in place above; this section fixes their semantics and the sched
 (`src/schedule/types.ts`, `src/schedule/graph.ts`), which later steps implement. DESIGN-1.0.md §2.2 is the prose.
 
 **Resources.** `ResourceUnit = ResourceName | PoolInstance | CpuToken` (Ids). Holders reserve all-or-none in lock
-order. `CPU_COST`: judgment 1, build `unit.cpu ?? 4`, fast lane 2, estate lane 4 (`LaneDef.cpu` overrides), probe
+order. `CPU_COST` (unmeasured defaults, calibrated at scheduling time below): judgment 1, build `unit.cpu ?? 4`, fast lane 2, estate lane 4 (`LaneDef.cpu` overrides), probe
 and teardown 0; the `@cpu` pool has `plan.capacity.cpu ?? availableParallelism()` tokens. Entry reservations (`EntryReservation`, F6), taken before a stage's first journaled op: plan-check and gate
 `@cpu`×1; build the unit's resources and its `@cpu`; lanes the first lane's set; candidate the publication
 (`integration-slot`, held by `publication{unit, attempt}` through `ff` and `snapshot` once green, A2); prepare none.
@@ -4597,14 +4597,18 @@ DESIGN-1.0.md §2.2 Environments). Every change is additive: a dev.16 plan, spec
 fields, kinds or values and reads unchanged (absent `environments`: none, lasting, not scaffolding); `SCHEMA_VERSION`
 stays 1.
 
-1. **Plan** (`plan.json`, `src/input/plan.ts`): `environments?: {<name>: {probe, up?, down?, idleMinutes?}}`, each a
+1. **Plan** (`plan.json`, `src/input/plan.ts`): `environments?: {<name>: {probe, up?, down?, idleMinutes?, resources?}}`, each a
    `ToolCommand` (as a resource's probe), `idleMinutes` a positive number (fractions allowed). `up`, `down` and
    `idleMinutes` come together (a managed environment) or not at all (a plain one); anything else is a schema error.
-   Parsed to `PlanM1.environments: EnvironmentDecl[]` ascending by name, `{name, probe, lifecycle: {up, down,
+   Parsed to `PlanM1.environments: EnvironmentDecl[]` ascending by name, `{name, probe, resources?: ResourceName[], lifecycle: {up, down,
    idleMinutes} | null}` (`environmentsOf`, `environmentOf`). The name is a `ResourceName` in the resource namespace:
-   never `integration-slot`, never a declared resource's name.
+   never `integration-slot`, never a declared resource's name. `resources` names the declared resources it powers,
+   unique within the list; undeclared names, environments and the slot are refused by `parsePlan`, shared by Phase 0
+   and apply. Absent reads as `[]` with a warning (`environmentResources`), without changing earlier input hashes.
 2. **Lane** (`LaneDef.environment?: ResourceName`, spec and suite lanes): absent, none. `laneRequest` adds it to the
-   lane's named resources, so the reservation (and `resource.transition`) carries the environment's name as a plain
+   lane's named resources, as does requesting any resource in an environment's `resources` list (pool requests
+   included). Explicit and inherited environment names are deduplicated. Each is brought up and probed before the
+   lane, released after its cleanup; if a later environment fails, earlier uses are released too. Thus the reservation (and `resource.transition`) carries the environment's name as a plain
    named unit; it has no probe or teardown recipe there (`instancesOf(plan, …)` leaves it out). Refused: on an arc lane
    (`laneFields`, a schema error at the obligations read); on a `build`-cadence lane, spec or suite (`spec-lane-unrunnable`
    `estate-lane-for-implementer`: the implementer runs those, and never brings an environment up); naming an
@@ -5277,3 +5281,48 @@ Markdown estate details render an inert terminal subset: headings, emphasis, inl
 visible destinations, lists/tasks, quotes, fenced/indented code, rules and tables. Narrow tables switch
 to labelled records. Links/images are not fetched, and code is never executed. Raw mode preserves the
 source. Structured JSON projections, recorded references and commit/hash provenance remain unchanged.
+
+
+## Calibrated CPU reservations and powered resources (2026-10-29; items 6, 8)
+
+`src/resources/calibrate.ts` learns scheduling costs from completed lane and build invocations' validated `exit.json`
+`cpu: LaunchCpu | null`. A qualifying run has `wallMs >= 30_000`; its demand is `(runMs + waitMs) / wallMs` cores.
+For each key, keep the last ten qualifying runs. Fewer than three samples uses `CPU_COST`; otherwise reserve
+`max(1, min(CPU_COST, ceil(p90 demand)))`, with nearest-rank p90. A lane's explicit `cpu` or a unit's explicit `cpu`
+always overrides calibration, even above the default. Plan-load and apply over-capacity validation still use the
+unmeasured defaults or explicit values: calibration cannot make an otherwise invalid plan admissible.
+
+The lane key hashes canonical `{kind: 'lane', argv, cwd, set: env.set, pass: sorted env.pass, expectedExit}`. The build
+key hashes canonical `{kind: 'build', backend, model, effort}`; only the hash is persisted. Execution shape and seat
+changes start separate histories. The key never uses `laneRev` (which includes explicit `cpu`), and measured costs are
+never written into plan/spec definitions, `LaneIdentity`, reuse keys or witness keys. The per-journal reader caches
+completed invocation ids; repeated scheduling reads do not reread their runner files or count a sample twice. A
+restart rebuilds the history from durable records and runner files.
+
+Additive records (schema version unchanged):
+
+| Record | Field | Read of an earlier record |
+|---|---|---|
+| `proc.spawn.expect` (lane, proof lane or build) | `cpuKey?: Sha256Hex` | absent → no calibration key (`spawnCpuKeyOf`), warned once, excluded from history; no inference from earlier launch argv |
+| `ResourceRequest` and `resource.transition.expect` on reserve | `cpuBasis?: CpuBasis` | absent → unmeasured (`reservationCpuBasisOf` returns null with a warning); recorded token units stay authoritative |
+| `sched.json.queue[]`, `jobQueue[]` | `pressureBlocked?: boolean` | absent → false, warned once; non-authoritative derived view |
+| `EnvironmentDecl` (disk and parsed) | `resources?: ResourceName[]` | absent → `[]`, warned once by `environmentResources`; raw input bytes remain unchanged |
+
+`CpuBasis` is `explicit{value}` or `default{key, value, samples}` or `calibrated{key, value, samples}`. `value` is the
+reserved token count; `samples` counts the qualifying runs in the ten-run window. Requests carry this basis through
+the arbiter to the reservation intent, so waiting never loses the value actually used.
+
+The arbiter shares the scheduler's `PressureTicks`. While `hostPressure(ticks, 0) >= PRESSURE_SATURATED` over the
+recent minute, it sets aside new build and lane requests, including job lanes, before overlap/backfill ordering.
+Judgments, slot-only requests and re-acquisition for an already live build invocation are exempt. The brake never holds when no resource-table entry holds or transitions
+an `@cpu` token, so external saturation cannot deadlock the arc: one workload always advances. The next wake on a
+release or cooling tick reevaluates waiters in their usual rank order. `status` exposes `pressureBlocked` on the
+unit's `waitingFor` and host queues; its compact state says `waiting:resources(host-pressure)` and classes the wait
+as host pressure. No launch pressure measurement or charging rule changes.
+
+Powered-resource use also covers proof lanes and milestone walkthrough/compare reservations. A failed environment
+bring-up leaves a proof without a verdict, or a walk/compare incomplete (`detail: 'env-unavailable'`); no product
+verdict is charged. A walk/compare releases its environment uses after reservation cleanup (`releaseJob`). The
+existing apply classifier compares the complete environment declaration, including `resources`, and refuses a
+change while its environment is held or not down. Phase 0 and apply both use the shared `parsePlan` and `laneRows`
+validators, including refusal of build-cadence lanes inheriting an environment through their resources.

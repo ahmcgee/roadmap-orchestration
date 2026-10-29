@@ -67,6 +67,9 @@
 // the first), stopping once `minPasses` passed or can no longer pass; the lane passes with `minPasses` passes, and its
 // record is its last passing run (else its last run). Never the red-lane protocol, never flaky. A deflake unit's
 // verification (dev.17, `verify` on its spawns) runs its lane the same way with every run required to pass.
+import { resourceEnvironments } from '../input/plan.ts';
+import { cpuCost, laneCpuKey } from '../resources/calibrate.ts';
+import { CPU_COST } from '../schedule/types.ts';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { basename, dirname, join, posix } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
@@ -267,11 +270,12 @@ export function laneEnv(ctx: StageContext, unit: UnitId, lane: LaneDef, held: re
   return env;
 }
 
-/** What a lane reserves: its declared resources, its environment's unit (dev.17) and its `@cpu` tokens; null when nothing. */
+/** A lane's resources, explicit/inherited environments and calibrated `@cpu` tokens; null when nothing. */
 export function laneRequest(ctx: ResourceContext, lane: LaneDef): ResourceRequest | null {
-  const cpu = laneCpu(lane);
+  const basis = cpuCost(ctx, laneCpuKey(lane), CPU_COST.lane[lane.cadence], lane.cpu);
+  const cpu = laneCpu(lane, basis);
   const names = lane.environment === undefined ? lane.resources : [...lane.resources, lane.environment];
-  return names.length === 0 && cpu === 0 ? null : requestOf(ctx.plan(), names, cpu);
+  return names.length === 0 && cpu === 0 ? null : requestOf(ctx.plan(), names, cpu, basis);
 }
 
 /**
@@ -790,6 +794,7 @@ async function runLane(
   const start = sampleHost();
   const outcome = await invoke(ctx.journal, ctx.containment, {
     runDir: ctx.runDir,
+    cpuKey: laneCpuKey(lane),
     origin: { type: 'new', key: opKey(`lane:${parent.unit}`), parent, deadlineAt: isoTimeOf(new Date(Date.now() + LANE_DEADLINE_MS)) },
     subject: {
       purpose: 'lane', unit: parent.unit, lane: lane.id, set, at, redRev: HOST_SIGNATURES_REV, identity, ...(files === null ? {} : { files: [...files].sort() }),
@@ -911,6 +916,7 @@ export async function runLaneSeries(
 
   const attempt = async (lane: LaneDef, which: Which, identity: LaneIdentity, files: readonly RepoPath[] | null, verifyRuns: number | null = null): Promise<Attempt> => {
     const request = laneRequest(ctx, lane);
+    const environments: ResourceName[] = [];
     let held: Reservation<'running', StageHolder> | null = null;
     if (request !== null) {
       if (!entry) {
@@ -925,15 +931,17 @@ export async function runLaneSeries(
         return { kind: 'ended', end: cleaned.kind === 'cleanup-failed' ? { kind: 'cleanup-failed', failed: cleaned.failed } : { kind: 'occupied', needsUser: occupancy.needsUser }, ran: null };
       }
       // dev.17: the lane's environment, its unit reserved above: up when it is not, then its probe.
-      if (lane.environment !== undefined) {
-        const env = await useEnvironment(ctx, lane.environment, parent);
+      for (const name of resourceEnvironments(ctx.plan(), request.named)) {
+        const env = await useEnvironment(ctx, name, parent);
         if (env.kind === 'unavailable') {
           const cleaned = await cleanup(ctx, reserved, parent);
+          for (const used of environments) releaseEnvironment(ctx.journal, used);
           return {
             kind: 'ended', ran: null,
             end: cleaned.kind === 'cleanup-failed' ? { kind: 'cleanup-failed', failed: cleaned.failed } : { kind: 'env-unavailable', environment: env.environment, detail: env.detail },
           };
         }
+        environments.push(name);
       }
       held = run(ctx, reserved, parent);
     }
@@ -947,7 +955,7 @@ export async function runLaneSeries(
       }
       return { kind: 'ran', ran };
     } finally {
-      if (lane.environment !== undefined) releaseEnvironment(ctx.journal, lane.environment);
+      for (const name of environments) releaseEnvironment(ctx.journal, name);
     }
   };
 
@@ -1491,6 +1499,7 @@ export async function runJourneySeries(
     const start = sampleHost();
     const outcome = await invoke(ctx.journal, ctx.containment, {
       runDir: ctx.runDir,
+      cpuKey: laneCpuKey(lane.def),
       origin: { type: 'new', key: opKey(`lane:${who}`), parent, deadlineAt: isoTimeOf(new Date(Date.now() + LANE_DEADLINE_MS)) },
       subject: {
         purpose: 'journey', lane: lane.def.id, laneRev: lane.laneRev, at, owner: owner.type === 'unit' ? { type: 'unit', unit: owner.parent.unit } : { type: 'job', job: owner.job },
@@ -1531,6 +1540,7 @@ export async function runJourneySeries(
 
   const attempt = async (lane: JourneyLane): Promise<JourneyAttempt> => {
     const request = laneRequest(ctx, lane.def);
+    const environments: ResourceName[] = [];
     let held: Reservation<'running', StageHolder | JobHolder> | null = null;
     if (request !== null) {
       const grant = owner.type === 'unit'
@@ -1548,15 +1558,17 @@ export async function runJourneySeries(
       }
       // dev.17: a suite lane's environment (an arc lane names none). One that does not come up gives no verdict: the
       // series is blocked, and its job retries on the no-verdict backoff.
-      if (lane.def.environment !== undefined) {
-        const env = await useEnvironment(ctx, lane.def.environment, parent);
+      for (const name of resourceEnvironments(ctx.plan(), request.named)) {
+        const env = await useEnvironment(ctx, name, parent);
         if (env.kind === 'unavailable') {
           const cleaned = await cleanup(ctx, reserved, parent);
+          for (const used of environments) releaseEnvironment(ctx.journal, used);
           return {
             kind: 'ended', ran: null,
             end: cleaned.kind === 'cleanup-failed' ? { kind: 'cleanup-failed', failed: cleaned.failed } : { kind: 'blocked', lane: lane.def.id, detail: `environment ${env.environment}: ${env.detail}` },
           };
         }
+        environments.push(name);
       }
       held = run(ctx, reserved, parent);
     }
@@ -1570,7 +1582,7 @@ export async function runJourneySeries(
       }
       return { kind: 'ran', ran };
     } finally {
-      if (lane.def.environment !== undefined) releaseEnvironment(ctx.journal, lane.def.environment);
+      for (const name of environments) releaseEnvironment(ctx.journal, name);
     }
   };
 

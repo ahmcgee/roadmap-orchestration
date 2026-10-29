@@ -66,6 +66,7 @@ import { type RoutingBase, inputPath, keepInput } from '../input/inforce.ts';
 import { derivedExclusions, derivedWidening } from '../input/derived.ts';
 import { type PlanUnit, boundsOf } from '../input/plan.ts';
 import { backendEnv, CODEX_OUTPUT_FILE } from '../preflight/smoke.ts';
+import { buildCpuKey } from '../resources/calibrate.ts';
 import { instanceEnv } from '../resources/pool.ts';
 import { type ResourceContext, type UnitAcquiringHolder, holderUnits } from '../resources/reserve.ts';
 import { OWNER_ENV, ownerLabel } from '../resources/teardown.ts';
@@ -594,6 +595,7 @@ export async function callBackend(ctx: StageContext, given: BackendCallSpec): Pr
   const launch = (origin: SpawnOrigin): LaunchSpec => ({
     runDir: ctx.runDir,
     origin,
+    ...(role === 'build' ? { cpuKey: buildCpuKey(r.dispatch.triple) } : {}),
     subject: { purpose: 'backend', ...(spec.prompt === null ? {} : { prompt: spec.prompt }), ...seat, routingRev: spec.request.dispatch.routingRev, unit: spec.unit, attempt: spec.parent.attempt },
     launch: (invDir) => {
       const c = call(spec, schemaText, schemaPath, invDir, mcpConfig, denyWrites);

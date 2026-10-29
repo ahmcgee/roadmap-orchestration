@@ -24,7 +24,7 @@ import { type PropagationTarget, propagationTarget } from '../core/stale.ts';
 import {
   BOUND_FIELDS, type Bounds, DEFAULT_BOUNDS, type FailureRef, failureRef, type KnownDefectMatch, type LaneDef, type LaneEnv, knownDefectMatch, laneDefOf, laneEnv,
 } from '../core/records.ts';
-import { planCheckShapeDefault } from '../core/upgrade.ts';
+import { planCheckShapeDefault, environmentResourcesDefault } from '../core/upgrade.ts';
 import { type FlakyKey, flakyKey, flakyKeyOf } from '../core/flaky.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { Fields, type Read, SchemaError, arrayOf, assertUnique, literal, nullable, object, oneOf, positive, sortedBy, str, stringMap, tagged } from '../core/validate.ts';
@@ -54,15 +54,16 @@ export type ResourceDecl = Readonly<{ name: ResourceName; probe: ToolCommand; te
 
 /**
  * dev.17 (SCHEMAS.md "dev.17: environments"): a costed environment a lane runs against (`LaneDef.environment`). On disk
- * `environments: {<name>: {up?, down?, probe, idleMinutes?}}`; `up`, `down` and `idleMinutes` come together or not at all.
+ * `environments: {<name>: {up?, down?, probe, idleMinutes?, resources?}}`; `up`, `down` and `idleMinutes` come together or not at all.
  * With them the executor owns its lifecycle (src/resources/environments.ts): brought up lazily at a lane's first use, kept
  * up while lanes keep using it, brought down `idleMinutes` (a positive number, fractions allowed) after its last use.
  * Without them it is a plain resource: reserved and probed, never started or stopped by the executor. The name shares the
  * resource namespace (a lane reserves it as a named resource unit, which serialises its use), so it is never also a
- * declared resource. The probe answers exit 0 when the environment is up and usable; anything else is a failed probe.
+ * declared resource. Its optional `resources` names declared resources it powers: reserving any one also reserves
+ * and uses this environment. Absent reads as [] with a warning, without changing earlier plan hashes. The probe answers exit 0 when the environment is up and usable; anything else is a failed probe.
  */
 export type EnvironmentLifecycle = Readonly<{ up: ToolCommand; down: ToolCommand; idleMinutes: number }>;
-export type EnvironmentDecl = Readonly<{ name: ResourceName; probe: ToolCommand; lifecycle: EnvironmentLifecycle | null }>;
+export type EnvironmentDecl = Readonly<{ name: ResourceName; probe: ToolCommand; resources?: readonly ResourceName[]; lifecycle: EnvironmentLifecycle | null }>;
 
 /**
  * Where a unit came from (M2): `checkpoint` units rank before `planned` ones among unpromoted waiters; M3's
@@ -169,7 +170,7 @@ export type PlanUnit = Readonly<{
   /** M2: contingent edges ([] when absent); ids unique across the plan. */
   contingent: readonly ContingentEdge[];
   origin?: UnitOrigin;
-  /** M2: `@cpu` tokens a build of this unit takes; absent: 4. */
+  /** M2: explicit build `@cpu` tokens; absent: calibrated at scheduling time, default 4. */
   cpu?: number;
   reenters?: Reentry;
   cut?: Cut;
@@ -501,14 +502,17 @@ const positiveMinutes: Read<number> = (value, path) => {
 
 const environmentDecl = (name: ResourceName): Read<EnvironmentDecl> => object((f) => {
   const probe = f.get('probe', toolCommand);
+  const resources = f.optional('resources', arrayOf(resourceName));
+  if (resources !== undefined) assertUnique(resources, (name) => name, `${f.path}.resources`);
+  const powered = resources === undefined ? {} : { resources };
   const up = f.optional('up', toolCommand);
   const down = f.optional('down', toolCommand);
   const idleMinutes = f.optional('idleMinutes', positiveMinutes);
-  if (up === undefined && down === undefined && idleMinutes === undefined) return { name, probe, lifecycle: null };
+  if (up === undefined && down === undefined && idleMinutes === undefined) return { name, probe, ...powered, lifecycle: null };
   if (up === undefined || down === undefined || idleMinutes === undefined) {
     throw new SchemaError(f.path, 'up, down and idleMinutes together (a managed environment), or none of them (a plain one)', { up, down, idleMinutes });
   }
-  return { name, probe, lifecycle: { up, down, idleMinutes } };
+  return { name, probe, ...powered, lifecycle: { up, down, idleMinutes } };
 });
 
 /** `environments`: an object keyed by environment name, read ascending by name. */
@@ -523,6 +527,16 @@ const environmentsR: Read<readonly EnvironmentDecl[]> = (value, path) => {
 
 /** dev.17: the plan's environments (none when it declares none). */
 export const environmentsOf = (plan: Pick<PlanM1, 'environments'>): readonly EnvironmentDecl[] => plan.environments ?? [];
+
+/** Resources powered by an environment; absent on an earlier declaration, read without rewriting its bytes. */
+export function environmentResources(environment: EnvironmentDecl): readonly ResourceName[] {
+  if (environment.resources !== undefined) return environment.resources;
+  return environmentResourcesDefault();
+}
+
+/** Every environment used by these resource names, ascending and unique (explicit environments included). */
+export const resourceEnvironments = (plan: PlanM1, names: readonly ResourceName[]): readonly ResourceName[] =>
+  environmentsOf(plan).filter((e) => names.includes(e.name) || environmentResources(e).some((name) => names.includes(name))).map((e) => e.name);
 
 /** The environment `name` declares, or null when `name` is not an environment (a resource, the slot, or nothing). */
 export const environmentOf = (plan: Pick<PlanM1, 'environments'>, name: ResourceName): EnvironmentDecl | null =>
@@ -795,6 +809,7 @@ export function parsePlan(value: unknown): PlanM1 {
     assertUnique([...out.suite.lanes.map((l) => l.id), ...derivedOf(out).filter((d) => d.regenerate !== undefined).map(regenerateLaneId)], (id) => id, 'plan.suite.lanes');
     assertUnique(out.resources, (r) => r.name, 'plan.resources');
     for (const e of environmentsOf(out)) {
+      for (const name of environmentResources(e)) if (!out.resources.some((r) => r.name === name)) throw new SchemaError(`plan.environments.${e.name}.resources`, 'declared resource names', name);
       if (out.resources.some((r) => r.name === e.name)) throw new SchemaError(`plan.environments.${e.name}`, 'a name no declared resource has (environments share the resource namespace)', e.name);
     }
     assertUnique(out.units, (u) => u.id, 'plan.units');

@@ -9,7 +9,7 @@
 // the unrunnable unit was refused for that unit's own lanes).
 import type { UnitId } from '../core/ids.ts';
 import type { LaneDef, LaneEnv, SpecM1 } from '../core/records.ts';
-import { type PlanM1, type PlanUnit, derivedOf, environmentOf, environmentsOf, regenerateLaneId } from '../input/plan.ts';
+import { type PlanM1, type PlanUnit, derivedOf, environmentOf, environmentsOf, regenerateLaneId, resourceEnvironments } from '../input/plan.ts';
 import { checkBuildLanes } from '../resources/reserve.ts';
 import { resolveArgv0 } from './argv0.ts';
 import type { CommandProblem, StartupRejection } from './startup.ts';
@@ -33,6 +33,9 @@ function laneProblems(plan: PlanM1, unit: UnitId | null, lane: LaneDef, env: Env
   const out: LaneRow[] = commandProblems(lane, env).map((problem) => ({ kind: 'spec-lane-unrunnable', unit, lane: lane.id, problem }));
   if (lane.environment !== undefined && environmentOf(plan, lane.environment) === null) {
     out.push({ kind: 'spec-lane-unrunnable', unit, lane: lane.id, problem: { type: 'unknown-environment', environment: lane.environment } });
+  }
+  if (lane.cadence === 'build' && lane.environment === undefined && resourceEnvironments(plan, lane.resources).length > 0) {
+    out.push({ kind: 'spec-lane-unrunnable', unit, lane: lane.id, problem: { type: 'estate-lane-for-implementer' } });
   }
   return out;
 }

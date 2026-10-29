@@ -910,7 +910,7 @@ export type LaneDef = Readonly<{
    * excludes; declared `evidenceGlobs` are never filtered. Optional in spec.json, read as [] when absent.
    */
   evidenceExcludes: readonly RepoPattern[];
-  /** `@cpu` tokens the lane takes (M2); absent: its cadence's default (build 2, else 4). Absent stays absent. */
+  /** Explicit `@cpu` tokens (M2); absent: calibrated at scheduling time, default build 2, else 4. Absent stays absent. */
   cpu?: number;
   /**
    * dev.17: the systems of the repo's systems map the lane tests (non-empty, unique when present; `docs` names the docs

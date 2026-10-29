@@ -1,6 +1,7 @@
 // The event log (`events.jsonl`) record types, their validators, canonical serialisation and the chain
 // hash rule. The journal (append, tail, fold) is step 2 and builds on these. SCHEMAS.md "Event log" is the
 // prose twin of this module.
+import { type CpuBasis, cpuBasis } from './cpu.ts';
 import type { Buffer } from 'node:buffer';
 import {
   type AmendmentId, type ArcId, type CommandId, type DebtId, type DivergenceId, type EdgeId, type EnvId, type FindingId, type InvocationId,
@@ -236,9 +237,9 @@ export type OpExpect = {
   /** `evidence` is the done evidence.snapshot op whose manifest must be complete before removal. */
   'worktree.remove': Readonly<{ path: AbsPath; evidence: OpId }>;
   /** `resources` in lock order (`compareResourceUnits`): names and pool instances, then `@cpu#*`, `integration-slot` last. */
-  'resource.transition': Readonly<{ holder: Holder; resources: readonly ResourceUnit[]; edge: ResourceEdge }>;
+  'resource.transition': Readonly<{ holder: Holder; resources: readonly ResourceUnit[]; edge: ResourceEdge; cpuBasis?: CpuBasis }>;
   /** The invocation is `op#ordinal`; launch.json is written after the intent and must hash to `launchSha256`. */
-  'proc.spawn': Readonly<{ subject: SpawnSubject; launchSha256: Sha256Hex }>;
+  'proc.spawn': Readonly<{ subject: SpawnSubject; launchSha256: Sha256Hex; cpuKey?: Sha256Hex }>;
   /** `op` scope also kills stray earlier ordinals of the same op. */
   'proc.kill': Readonly<{ inv: InvocationId; scope: 'invocation' | 'op'; reason: KillReason }>;
   /**
@@ -1638,7 +1639,10 @@ export const OP_SCHEMAS: { readonly [K in OpKind]: OpSchema<K> } = {
     outcome: kindOnly('removed'),
   },
   'resource.transition': {
-    expect: object((f) => ({ holder: f.get('holder', holder), resources: f.get('resources', lockOrder), edge: f.get('edge', resourceEdge) })),
+    expect: object((f) => {
+      const basis = f.optional('cpuBasis', cpuBasis);
+      return { holder: f.get('holder', holder), resources: f.get('resources', lockOrder), edge: f.get('edge', resourceEdge), ...(basis === undefined ? {} : { cpuBasis: basis }) };
+    }),
     post: nothing,
     outcome: kindOnly('transitioned'),
     check: (e, _post, path) => {
@@ -1650,7 +1654,10 @@ export const OP_SCHEMAS: { readonly [K in OpKind]: OpSchema<K> } = {
     },
   },
   'proc.spawn': {
-    expect: object((f) => ({ subject: f.get('subject', spawnSubject), launchSha256: f.get('launchSha256', sha256R) })),
+    expect: object((f) => {
+      const cpuKey = f.optional('cpuKey', sha256R);
+      return { subject: f.get('subject', spawnSubject), launchSha256: f.get('launchSha256', sha256R), ...(cpuKey === undefined ? {} : { cpuKey }) };
+    }),
     post: nothing,
     outcome: tagged('kind', {
       result: object((f): OpOutcome['proc.spawn'] => {

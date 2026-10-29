@@ -13,7 +13,10 @@ import { readJournal } from '../src/core/log.ts';
 import { absPath, repoPattern } from '../src/core/values.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { arcLaneDef } from '../src/holistic/types.ts';
-import { parsePlan } from '../src/input/plan.ts';
+import { environmentResources, parsePlan, resourceEnvironments } from '../src/input/plan.ts';
+import { reserveJob, releaseJob } from '../src/walk/walk.ts';
+import { milestoneJson } from './fixtures/walk-common.ts';
+import { milestonesOf } from '../src/input/plan.ts';
 import { type StageParent, pinDispatch } from '../src/pipeline/dispatch.ts';
 import { type LaneRuntime, laneOrder, reserveNow, runJourneySeries, runLaneSeries, specSeriesRoot, suiteJourneyLane } from '../src/pipeline/lanes.ts';
 import { createArbiter } from '../src/schedule/arbiter.ts';
@@ -327,4 +330,66 @@ describe('env.schema', () => {
     ]);
     assert.throws(() => arcLaneDef({ ...lane('arc', 'candidate', 'stack'), reporter: 'jsonl' }, 'lane'), /absent on an arc lane/);
   });
+});
+
+
+test('env.powered-resource: a lane without environment inherits it from its resource, keeping it up through cleanup', T, async () => {
+  const { run, state } = withEnv((s) => ({ ...managedEnv(s, 'stack', 0.001), resources: ['db'] }), [
+    { id: 'resource-user', cadence: 'unit', resources: ['db'], argv: [process.execPath, '-e', 'setTimeout(() => {}, 300)'] },
+  ]);
+  const pending = series(run, 1);
+  await until(() => startedCalls(state).includes('probe stack') && laneSpawns(run).length > 0, 30_000, 'powered resource lane started');
+  assert.deepEqual(idleEnvironments(run.ctx, Date.now() + 60_000, never, true), [], 'active resource use holds the idle clock');
+  assert.equal((await pending).end.kind, 'green');
+  assert.deepEqual(startedCalls(state), ['up stack', 'probe stack']);
+  assert.deepEqual(run.journal.view.resources().get(STACK)?.status, { state: 'free' });
+  assert.deepEqual(idleEnvironments(run.ctx, Date.now() + 60_000, never, false), [STACK]);
+  assert.equal(await bringDown(run.ctx, STACK, ARC), true);
+});
+
+test('env.powered-resource-validation: references must be declared once; inherited estate lanes are refused at phase0/apply validation', () => {
+  const { run } = withEnv((s) => ({ ...managedEnv(s, 'stack', 60), resources: ['db'] }), [{ id: 'one', resources: ['db'], argv: ['sh', '-c', 'exit 0'] }]);
+  const plan = run.ctx.plan();
+  assert.deepEqual(resourceEnvironments(plan, [resourceName('db'), STACK]), [STACK], 'explicit plus inherited use is unique');
+  assert.deepEqual(environmentResources(plan.environments![0]!), [resourceName('db')]);
+  const fast = { ...loadUnitSpec(run.ctx, run.unit).spec.lanes[0]!, cadence: 'build' as const };
+  const spec = { ...loadUnitSpec(run.ctx, run.unit).spec, lanes: [fast] };
+  assert.ok(laneRows(plan, [U1], () => spec, run.ctx.hostEnv).some((row) => row.problem.type === 'estate-lane-for-implementer'));
+  const raw = JSON.parse(readFileSync(run.ctx.planFile, 'utf8'));
+  raw.environments.stack.resources = ['missing'];
+  assert.throws(() => parsePlan(raw), /declared resource names/);
+  raw.environments.stack.resources = ['db', 'db'];
+  assert.throws(() => parsePlan(raw), SchemaError);
+  run.journal.close();
+});
+
+
+test('env.powered-job-resource: walkthrough and compare reservations bring up and hold the environment they borrow', T, async () => {
+  const { run, state } = withEnv((s) => ({ ...managedEnv(s, 'stack', 0.001), resources: ['db'] }), []);
+  const raw = JSON.parse(readFileSync(run.ctx.planFile, 'utf8'));
+  raw.milestones = [milestoneJson({ units: [U1], resources: ['db'] })];
+  const plan = parsePlan(raw);
+  const ctx = { ...run.ctx, plan: () => plan, acquireFirst: createArbiter({ ...run.ctx, plan: () => plan }).acquireFirst };
+  const reservation = await reserveJob(ctx, jobId('walk', 1), milestonesOf(plan)[0]!);
+  assert.ok(typeof reservation !== 'string');
+  assert.deepEqual(startedCalls(state), ['up stack', 'probe stack']);
+  assert.deepEqual(idleEnvironments(ctx, Date.now() + 60_000, never, true), []);
+  await releaseJob(ctx, reservation);
+  assert.deepEqual(idleEnvironments(ctx, Date.now() + 60_000, never, false), [STACK]);
+  run.journal.close();
+});
+
+
+test('env.powered-suite-resource: a job lane inherits its environment without an explicit environment field', T, async () => {
+  const state = tmpDir('env-state');
+  const run = setupUnit({ steps: [], suite: [{ id: 'suite-resource', cadence: 'candidate', resources: ['db'], argv: ['sh', '-c', 'exit 0'] }], environments: { stack: { ...managedEnv(state, 'stack', 60), resources: ['db'] } as never } });
+  const arbiter = createArbiter(run.ctx);
+  const ctx = { ...run.ctx, acquireFirst: arbiter.acquireFirst };
+  const result = await runJourneySeries(ctx, { type: 'job', job: jobId('audit', 1), acquireFirst: ctx.acquireFirst }, [suiteJourneyLane(ctx.plan().suite.lanes[0]!)], {
+    path: absPath(join(tmpDir('env-resource-journey'), 'checkout')), checkout: { type: 'detached', at: run.base },
+  }, { reuse: false, stop: () => false });
+  assert.equal(result.end.kind, 'ran');
+  assert.deepEqual(startedCalls(state), ['up stack', 'probe stack']);
+  assert.deepEqual(run.journal.view.resources().get(STACK)?.status, { state: 'free' });
+  run.journal.close();
 });
