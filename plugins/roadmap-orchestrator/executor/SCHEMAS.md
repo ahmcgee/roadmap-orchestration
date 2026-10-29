@@ -1,6 +1,6 @@
 # Executor schemas and contracts (frozen in M1 step 1a; M2 additions in M2 step 0a; M3 additions in M3 step 0a; M4a additions in M4a step 0a; M4a rev 3 additions in step N0; dev.13 additions in dev.13 step 0)
 
-The specification every later step compiles against, current as of 1.0.0-dev.7 (M4a). M2's records and scheduling
+The specification every later step compiles against, updated through 1.0.0-dev.32. M2's records and scheduling
 interfaces are in place below and summarised in "M2: scheduling, resources, parks"; M3's are in "M3: the holistic
 layer", whose later "Choices made in M3 …" sections state the rule where an earlier section is
 superseded; M4a's are in "M4a: corpus, debt, forge, brief, chaining", which supersedes the M3 text it names
@@ -23,7 +23,7 @@ Other steps request changes rather than edit.
 
 ## Record evolution (owner ruling, 2026-09-26)
 
-**Turn-boundary certification (after dev.31).** `SCHEMA_VERSION` stays 1. Certification is the existing lanes stage,
+**1.0.0-dev.31 → 1.0.0-dev.32: turn-boundary certification.** `SCHEMA_VERSION` stays 1. Certification is the existing lanes stage,
 after build quiescence and teardown, in a clean detached checkout. `Bounds.certifications` defaults to 4 and is
 positive, overridable through plan or unit `limits`. A dev.31 dispatch without it reads as 4, warned by
 `dev31CertificationsDefault`; its raw bytes stay unchanged. `UnitCounters.unchargedLanesReds` starts at 0 and is
@@ -77,12 +77,12 @@ inputs (plan, specs, ledger).
   versions for as long as an arc on the older one may be in flight.
 - `test/serial/upgrade.test.ts` is the guard: it starts the M1 fixture on `PREVIOUS_RELEASE` (extracted with `git
   archive`), stops it mid-arc, and finishes it on HEAD. Move `PREVIOUS_RELEASE` at each release.
-- Only the previous release is adopted (owner ruling OR-L4): 1.0.0-dev.6 by M4a, 1.0.0-dev.7 since M4b (1.0.0-dev.8,
+- Historical adoption baseline (owner ruling OR-L4; superseded by the current baseline above): 1.0.0-dev.6 by M4a, 1.0.0-dev.7 since M4b (1.0.0-dev.8,
   `PREVIOUS_RELEASE` b55ad88). Since 1.0.0-dev.13 `PREVIOUS_RELEASE` is 4ef225c (1.0.0-dev.12, PR #114); arcs started on
   dev.7 to dev.11 stay adopted through their defaults until none is in flight. Arcs started on dev.10 and dev.11 may be in
   flight, so the test also starts arcs on them (`DEV10_RELEASE` b1c3666, the `upgrade.dev10.*` cells; `DEV11_RELEASE`
   1f7f696, the `upgrade.dev11.*` cells); it starts none on dev.7 to dev.9. An
-  arc started on an earlier release finishes on the executor release it started on. M4a step X0 deleted every older read-time layer (the 1.0.0-dev.1, dev.3, dev.4 and
+  arc outside that historical coverage finished on its original executor. M4a step X0 deleted every older read-time layer (the 1.0.0-dev.1, dev.3, dev.4 and
   dev.5 defaults recorded below as history), so each field those releases lacked is required where it was defaulted:
   `launch.json` `stallMs`; a first start records revision 1 before anything runs (no arc without a `plan-applied`);
   `plan-applied` `scheduling: 'dag'` on rev 1 (exactly there), `source`, `payloadSha256`, `rulingsSha256`,
@@ -100,7 +100,7 @@ stays 1 and the plan literal stays `roadmap/plan-m1` (LR-1). Every change was ad
 |---|---|---|
 | `plan-applied` | `+ scheduling?: 'dag'` (rev 1 only, and only in a log with no `dispatch` fact) | absent on rev 1 → a legacy arc (`isLegacy`): dev.4's serial frontier (`legacyNext`, a port of `nextUnit` + `dispatchBlock`/`settledForAfter`, G4), no `@cpu` requests, a declared `cpu` stays a named resource, no over-capacity row for its existing requests; warn once |
 | `plan.json` | optional `capacity`, resource `pool`, unit `origin`, `cpu`, `contingent`, `reenters`, `cut` | absent (`contingent` reads `[]`) |
-| `LaneDef` | `+ cpu?` | absent → calibrated at scheduling time, fallback the cadence's cost (`CPU_COST`) |
+| `LaneDef` | `+ cpu?` | absent → the cadence's cost (`CPU_COST`); dev.32 adds scheduling-time calibration below |
 | `stage-outcome` | `+ park?`, `+ cause?`; stage `prepare` | `park` absent on a park → operator, `design` for the chargeable bound and the design outcomes (refusal, escalate, infeasible, risk-lowered, scope-widened, redirect, revise, malformed, empty-diff, red), `env` otherwise (`legacyParkRecord`); `cause` absent → an operator hold (pause, stop, or a dev.4 usage-limit hold) |
 | New facts | `unparked`, `probe`, `judgment-inputs`, `edge-resolved`, `run-only`, `implementer-escalated` | none |
 | `rerouted` | kept readable, no longer the resume's record | read as `unparked` (`rerouteAsUnpark`); warn once |
@@ -494,16 +494,16 @@ in a repo's class rebinds (`.roadmap/config.json` `routing.classes`). Built-in p
 | `routing?` | `RoutingLayer` | the `plan` routing layer: a class per seat; a triple or a `classes` key is refused (a plan cannot rebind a class) |
 | `capacity?` (M2) | `{cpu?: positive}` | the `@cpu` pool's size; absent: `availableParallelism()` |
 | `suite.lanes` | `LaneDef[]` | executor-only suite lanes |
-| `resources` | `ResourceDecl[]` | `{name, probe: ToolCommand, teardown: ToolCommand, pool?: {size: positive}}`; `integration-slot` is built in and may not be declared. A pool (M2) has instances `<name>#1..size`; a request by name takes one; each workload of the holder gets `RESOURCE_INSTANCE_<NAME>=<n>` (upper case, `-` → `_`), persisted in `launch.json` `env` and the residue's teardown recipe |
-| `units` | `PlanUnit[]` (non-empty) | a unit entering the plan (a fresh arc's rev 1, a unit a revision adds) may not take an `id` of the form `batch-<digits>`, `jobs` or `mutants` (`reservedUnitIdReason`: a `plan-change-refused` reason, not a schema rule, so an adopted arc's units keep their ids; M3: a repair batch's candidate ref `refs/roadmap-run/<arc>/candidate/<batch-n>` shares the units' candidate ref namespace, and `<runDir>/evidence/<unit>/` sits beside `evidence/jobs/` and `evidence/mutants/`). `{id: UnitId, spec: PlanPath, risk: RiskTier, scope: RepoPattern[] (non-empty), resources: ResourceName[], after?: UnitId[]}`; `after` (parsed as `[]` when absent) names units earlier in plan order, never the unit itself, each once: the unit is not dispatched while any of them is neither merged nor parked with its needs-user acknowledged (arc-1 feedback item 17; since M2, merged only, D1). M2 optional fields: `origin?: planned\|checkpoint`, `cpu?: positive` (build `@cpu` tokens, default 4), `contingent?: [{id: EdgeId, condition}]` (read as `[]`; ids unique across the plan), `reenters?: {unit (earlier in plan order, not itself), enterAt?: plan-check\|build\|verify, reset?: {ruling: RulingId}}`, `cut?: {reason, ruling?: RulingId}` |
+| `resources` | `ResourceDecl[]` | `{name, probe: ToolCommand, teardown: ToolCommand, pool?: {size: positive}}`; `integration-slot` is built in and may not be declared. A pool (M2) has instances `<name>#1..size`; a request by name takes one; each executor workload using the pool gets `RESOURCE_INSTANCE_<NAME>=<n>` (upper case, `-` → `_`), persisted in `launch.json` `env` and the residue's teardown recipe |
+| `units` | `PlanUnit[]` (non-empty) | a unit entering the plan (a fresh arc's rev 1, a unit a revision adds) may not take an `id` of the form `batch-<digits>`, `jobs` or `mutants` (`reservedUnitIdReason`: a `plan-change-refused` reason, not a schema rule, so an adopted arc's units keep their ids; M3: a repair batch's candidate ref `refs/roadmap-run/<arc>/candidate/<batch-n>` shares the units' candidate ref namespace, and `<runDir>/evidence/<unit>/` sits beside `evidence/jobs/` and `evidence/mutants/`). `{id: UnitId, spec: PlanPath, risk: RiskTier, scope: RepoPattern[] (non-empty), resources: ResourceName[], after?: UnitId[]}`; `after` (parsed as `[]` when absent) names units earlier in plan order, never the unit itself, each once: the unit is not dispatched while any of them is neither merged nor parked with its needs-user acknowledged (arc-1 feedback item 17; since M2, merged only, D1). M2 optional fields: `origin?: planned\|checkpoint`, `cpu?: positive` (explicit build `@cpu` override; absent: calibrated, fallback 4), `contingent?: [{id: EdgeId, condition}]` (read as `[]`; ids unique across the plan), `reenters?: {unit (earlier in plan order, not itself), enterAt?: plan-check\|build\|verify, reset?: {ruling: RulingId}}`, `cut?: {reason, ruling?: RulingId}` |
 | `holistic?` (M3, A5) | `{vision: PlanPath, advances: V-n[] (ascending, non-empty), obligations?: PlanPath, audit?: {every?: positive, lenses?: LensKind[] (ascending, non-empty), wallClockMin?: positive}, checkpoint?: {everyMilestones?: positive}}` | present exactly when the arc runs the holistic layer; `vision` names a `roadmap/vision-m3` file, `advances` the slice of it this arc moves toward (active clauses of the vision, at least one `world`; checked at startup and on every classified revision, `advancesReasons`; owner-only: only an `apply` changes it, `PlanChange` `advances`; the other active clauses are the horizon), `obligations` a `roadmap/obligations-m3` file (absent: none); `audit.every` N (default 5, D3), `audit.lenses` the required lens set L (default all four, H9, `lensSetOf`), `wallClockMin` (default 360); `checkpoint.everyMilestones` K (default 2, `DEFAULT_CHECKPOINT`), milestone steering cadence ("Milestone checkpoint cadence" below). An apply may add it, never remove it |
 | `limits?` (M3) | `{chargeable?, certifications?, redirects?, reviseRounds?, candidateReds?, retries?, judgmentDeadlineMin?, freshBuildMin?, editAllowanceMin?, convergenceK?}`, all positive | the units' bounds over the built-in ones (`DEFAULT_BOUNDS`: 3, 4, 2, 2, 1, 1, 45, 180, 60) and the arc's convergence K (default 3); a unit's own `limits` (same fields but `convergenceK`) override them (`boundsOf(plan, unit)`). Unit M3 fields: `routing?: RoutingLayer` (the unit layer, `route` and `steer --class`), `limits?`, and `origin: repair` (needs a spec with non-empty `repairs`) |
 
 `ToolCommand = {argv, cwd: RepoPath, env: LaneEnv}`, run from the repo root. Probe exit contract
 (`PROBE_EXIT`): `0` free, `10` occupied under this unit's own label, `11` unlabelled or foreign; any other exit
 is a probe process fault. A probe and a teardown get the unit's owner label `<arc>/<unit>` in `RESOURCE_OWNER`
-(step 10), and so does an implementer call (a build runs the unit's tooling); a judgment call and a smoke do
-not (they hold no resource). A residue records the teardown resolved with it. `parsePlan` checks shape and in-file uniqueness only; references that need the
+(step 10). Builds retain `RESOURCE_OWNER` for attribution but receive no pool-instance bindings and
+reserve no named resources; the executor runs resource-backed lanes. A judgment call has no resource owner. A residue records the teardown resolved with it. `parsePlan` checks shape and in-file uniqueness only; references that need the
 filesystem, git or specs are startup rows.
 
 **Rulings ledger** (`src/spec/rulings.ts`): one ruling per line, `C-<n> — <rule>`, rule text only; provenance
@@ -628,7 +628,7 @@ in the line belongs to `arc`.
 | `reopened` | `unit, command\|null, specRev, specSha256`: a unit re-opened on an applied revision of its spec (`specRev` = the unit's recorded spec rev + 1, hashing to `specSha256`, its `pendingRevision`): by `resume <unit>` of a unit parked at `plan-check` or `gate` (`command` the resume), or by the driver at an in-flight unit's next stage boundary that allows re-entry (`command` the apply that recorded the revision, null for a start). The unit starts over at plan-check as a new attempt: `decided` and `interrupted` null, `stage` plan-check, `status` active; counters, `routedUp`, `promotion`, `approval`, the branch, worktree and implementer session are kept; `redirectBase` = `counters.redirects` |
 | `resumed` | `command, target: all\|unit{unit}\|backend{backend}`: `unit` clears that unit's pause and hold (refused by the fold while `pause --all` holds); `all` clears every pause and hold; `backend` clears that backend's park (refused unless parked) and the holds of units no pause covers. A cleared hold moves no counter: the next stage start is a new, uncharged attempt (step 13) |
 | `approval` | `unit, attempt, fingerprint: ApprovalFingerprint`: the gate at `attempt` approved; recorded before its stage-outcome, read by the candidate and ff stages (step 12) |
-| `unparked` (M2) | `unit, command`: `resume <unit>` of a unit parked operator-env; `decided` and `interrupted` return to what they were before the park, so the unit re-runs the parked stage as a new, uncharged attempt |
+| `unparked` (M2) | `unit, command`: `resume <unit>` of an operator-env park, or `command: null, parkSeq` for automatic wake of the exact ordering park after every blocker merges; `decided` and `interrupted` return to their pre-park values, so the stage re-runs as a new, uncharged attempt |
 | `probe` (M2) | `target: ProbeTarget, covers: number[] (park seqs, and for a resource target the fail seq of its own-arc residue; ascending, non-empty), result: pass\|fail, nextProbeAt: IsoTime\|null` (null exactly on a pass): see "M2: parks" |
 | `judgment-inputs` (M2) | `unit, stage: plan-check\|gate, attempt, tip: Sha, head: Sha\|null (the unit commit; null exactly for a plan-check), specRev, specSha256, planRev, routingRev, fingerprint?: ApprovalFingerprint` (M3 Checkpoint A: a gate's captured approval fingerprint, `unitCommit` = `head`; required on a gate's, never on a plan-check's), `diffShown?: {inlined, notInlined}` (1.0.0-dev.12: the paths the gate's bounded diff inlined and did not, ascending; a gate's only, absent on a dev.11 one), `largeDiff?: {overflow} | null` (1.0.0-dev.12: the large-diff threshold, null under it; a gate's only, absent on a dev.11 one): written before its spawn (F1); since M3 Checkpoint A under the fence BEFORE the attempt's entry reservation. One per started `(unit, stage, attempt)`: a later one replaces it only while no op or outcome started that attempt (its `@cpu` wait was cancelled). A recovered call is consumed against it (`gateRead` with `fingerprint`; a recovered gate call without its inputs fails loud) |
 | `edge-resolved` (M2) | `edge: EdgeId, command, evidence` (non-empty text): `resolve-edge`; once per edge |
@@ -716,7 +716,7 @@ is the fold's, `JournalView.resources()`); `scheduling` only on rev 1 of a log w
 unit not retired, cut or superseded; `unit-reentered` of a parked or held unit, as an id new to the log and
 listed in the fact's manifest; a re-entering unit's first dispatch does not lower its lineage's floor; no
 dispatch or stage outcome of a cut or superseded unit; `prepare` only for a re-entering unit; a hold's `cause`
-names a `backend-park` fact of that backend; `unparked` only of an operator-env park; a `probe` covers only park
+names a `backend-park` fact of that backend; `unparked` only of an operator-env park or a satisfied ordering park with its exact `parkSeq`; a `probe` covers only park
 seqs (each a unit park the target belongs to, or a park of that backend) and, for a resource target, the seq of a
 `resource.transition{fail}` whose residues name its instance, and a unit park it covers is retryable; a `fail`
 transition is held by a stage; `implementer-escalated` from the unit's current build tier, below the chargeable bound; one
@@ -750,8 +750,8 @@ fragment with no matching fact is re-recorded at the next start. Any invalid com
 |---|---|---|---|
 | `worktree.create` | `path, checkout: branch{branch, at, createBranch} \| detached{at}` | `null` | `created{head}` |
 | `worktree.remove` | `path, evidence: OpId` (done `evidence.snapshot`) | `null` | `removed` |
-| `resource.transition` | `holder, resources: ResourceUnit[]` (lock order), `edge` | `null` | `transitioned` |
-| `proc.spawn` | `subject: SpawnSubject, launchSha256` | `null` | `result{resultSha256, summary}` \| `lost{treeEffects}` |
+| `resource.transition` | `holder, resources: ResourceUnit[]` (lock order), `edge`, reserve-only `cpuBasis?, tokenWaitMs?` | `null` | `transitioned` |
+| `proc.spawn` | `subject: SpawnSubject, launchSha256, cpuKey?` | `null` | `result{resultSha256, summary}` \| `lost{treeEffects}` |
 | `proc.kill` | `inv, scope: invocation\|op, reason` | `null` | `quiesced` |
 | `evidence.snapshot` | `source, globs, dest, notRegular?` (2026-10-21; 1.0.0-dev.16: the named paths left uncaptured as symlinks or special files, "Field fixes: snapshot symlinks, restart checks"); `globs` may be empty: a verification checkout whose series never ran is removed citing a complete manifest of zero files (lead ruling 14c). A snapshot of named files (dirty paths, a lane's ignored capture) passes each as its exact glob, metacharacters wrapped in one-character classes (`a[1].log` → `a[[]1[]].log`; `literalPattern`, `src/git/evidence.ts`): node's globSync has no escape character | `{manifest}` | `captured{manifestSha256, files}` |
 | `salvage.commit` | see git table | `{new}` | `committed` |
@@ -824,7 +824,7 @@ invocation of `op`, `op` of `arc`) and written by `fsx.durable()`. Workload stdo
 | `launch.json` | `LaunchFile` / `launchFile` | executor, after the spawn intent is durable, before the act | `argv` (argv[0] non-empty; a later argument may be empty), `cwd, env` (declared; no `ROADMAP_*`), `stdinPath\|null, deadlineAt, stallMs\|null` (the runner's stall watchdog: no progress, meaning no member CPU time, no output growth and no member started or ended, for `stallMs` → kill, cause `stall`; lanes carry `LANE_STALL_MS`, every other launch null; required), `graceMs` (≥ `MIN_GRACE_MS` = 1000: the backstop fires at deadline + 2·grace and the runner polls every 500 ms), `containment, test: {crash}\|null, terminal` |
 | `runner.json` | `RunnerFile` / `runnerFile` | runner, before spawning (`child: null`); rewritten after | `runner{pid, start, bootId}, child{pid, start, sid}\|null` |
 | `cancel.json` | `CancelFile` / `cancelFile` | executor, before signalling the workload | `reason: pause\|stop\|recovery\|preempt\|supersede\|teardown, at` (`preempt`: M3, a lane only; `supersede`: M4b, a checkpoint call only; `teardown`: dev.13, a bring-up's serve process only) |
-| `exit.json` | `ExitFile` / `exitFile` | runner, after workload quiescence | `child: exited{code}\|signalled{signal}\|spawn-failed{error}, cause: exited\|deadline\|timeout\|stall\|cancel\|recovery-kill\|reported, endedAt ≤ quiescedAt` (`reported`: see "The report rule" below) |
+| `exit.json` | `ExitFile` / `exitFile` | runner, after workload quiescence | `child: exited{code}\|signalled{signal}\|spawn-failed{error}, cause: exited\|deadline\|timeout\|stall\|cancel\|recovery-kill\|reported, endedAt ≤ quiescedAt` (`reported`: see "The report rule" below), `cpu?: LaunchCpu|null` (completed workload measurement; "Rev 3: host pressure") |
 | `result.json` | `ResultFile` / `resultFile` | executor (the adapter, pure over the files above), after the runner has exited with `exit.json` present; re-run at recovery whenever `exit.json` exists without it (lead ruling, 1a: the runner never runs the adapter, so it needs no backend schema) | union below |
 | `runner.log` | none (plain text, not a record) | the runner's own stdout and stderr, opened by the executor when it starts the runner (`RUNNER_LOG`, `src/runner/launch.ts`) | free text; empty on a clean run |
 
@@ -838,7 +838,7 @@ StructuredOutput call at every turn end, so a turn ended to wait answers the sch
 deadline stays the backstop. Every other schema (judgments, the assessment, the smoke) is never watched.
 
 `terminal` = `backend{purpose: backend|smoke, role, routingRev, schemaPath, outputPath, session}` \|
-`command{purpose: lane|teardown|probe|smoke, expectedExit}`. Sessions: a judgment role takes
+`command{purpose: lane|teardown|probe|smoke|environment, expectedExit, timeoutMin?}` (only lane commands may set `timeoutMin`). Sessions: a judgment role takes
 `{backend:'claude', mode:'fresh', id: JudgmentSessionId}`, or `mode:'resume'` with the id of its refused answer's session,
 its one repair turn (2026-10-15 `planCheck` and `checkpoint`; dev.12 every judgment role, `repairTurnOf` in
 src/pipeline/dispatch.ts; every judgment's fresh call persists its session); `build` takes `claude{fresh|resume, id}` \|
@@ -898,7 +898,9 @@ the last `type: "result"` event, the object `--output-format json` prints alone.
 leaves is dropped and the events before it are kept; a malformed complete line is malformed output.
 
 `refusal` is the adapter's reading of a backend stop reason (step 4). Commands: `classifyCommand(exit,
-expectedExit)`, same rule 1, then `exitCode === expectedExit` → `pass`, else `fail`.
+cancel, expectedExit)` handles cancellation first, then `stall` and configured `timeout` as distinct red verdicts;
+`deadline`, recovery kills, signals and failed spawns are `process-fault` (blocked, not a product red).
+Otherwise `exitCode === expectedExit` → `pass`, else `fail`.
 
 ## Approval fingerprint and dispatch record
 
@@ -983,7 +985,7 @@ Each lane of a series has a dir `<series
 root>/<lane id>/`: `output` (its stdout and stderr), `tree` (its declared `evidenceGlobs` in the checkout, when it
 declares any), `ignored` (below) and `ignored.json`. After the lane's snapshots the executor lists the checkout's
 untracked ignored files one by one (`git ls-files --others --ignored --exclude-standard`) and keeps those whose
-ctime is at or after the lane's start: the files the lane wrote. When the lane did not pass (`fail`, `stall`,
+ctime is at or after the lane's start: the files the lane wrote. When the lane did not pass (`fail`, `stall`, `timeout`,
 `process-fault`, `cancelled`, lost) the ones its `tree` did not capture are selected, in path order, skipping non-regular
 files, paths under a build-output dir at any depth (`bin obj dist build target node_modules .venv __pycache__`),
 paths matching the default secret excludes (`**/*.key **/*.pem **/*.p12 **/*.pfx **/*kubeconfig* **/.*kubeconfig*
@@ -1363,10 +1365,11 @@ fold's `UnitStatus`, or `held-after:<ids>` while `after` units it waits on are n
   `waiting` (its task waits in the arbiter's queue, or it waits on dependencies or contingent edges); `awaiting-admission` (its next stage is not admitted now);
   `ready` (it may start);
 - `waitingFor{deps, edges, resources: ResourceRequest|null, envBlocked, admission: AdmissionConstraint[],
-  drainFor: CommandId[]}|null`;
+  drainFor: CommandId[], pressureBlocked?: boolean, tokenWaitMs?: number|null}|null`;
 - `holds`: every resource unit held or in transition by one of its holders (stage, publication, retry);
 - `priority{origin, waitStartSeq, bypassMerges, promoted}|null` (`rankOf`, active units only);
-- `park{class, kind? (operator), targets, outstanding, nextProbeAt (null: due now), escalateAt|null}|null`;
+- `park{class, kind? (operator), targets, outstanding, nextProbeAt (null: due now), escalateAt|null, ordering?: {blockers, outstanding}}|null`;
+- `certification` and `work` (the shared certification/CPU projection described below);
 - `lineage{reenters, root, prepared}|null`, `supersededBy|null`, `buildTier` (a tier, never a model);
 - `running{stage, attempt, elapsed (ms since the attempt's first op, or null), deadline (the earliest of its open
   ops'), resources (= holds)}|null`, set exactly when `state` is `running` or `preparing`.
@@ -1374,7 +1377,8 @@ fold's `UnitStatus`, or `held-after:<ids>` while `after` units it waits on are n
 `edges`: `after{unit, on, effective (effectiveDependency), met}` and `contingent{unit, edge, condition, resolved}`
 per unit of the plan in force. `host`: `containment{mode, guarantee}`; `resources[{resource, state, holder|null,
 pending}]` (every unit not free or with a transition open); `pools{<pool>: {size, used, dirty}}` (`@cpu` and each
-declared pool); `queue` (`sched.json`'s, empty without a live executor); `probes[{target, parks (the seqs a probe
+declared pool); `queue` and `jobQueue` (`sched.json`'s, empty without a live executor);
+`work` (arc-wide build/lane invocation telemetry); `probes[{target, parks (the seqs a probe
 now covers: park seqs and a residue's fail seq), nextProbeAt (null: due now), lastResult|null, tripped}]` (every
 target with a current retryable park or an own-arc residue, `probeTargets`); `backends[{backend, parkSeq, class}]`.
 
@@ -1468,11 +1472,12 @@ The records are in place above; this section fixes their semantics and the sched
 (`src/schedule/types.ts`, `src/schedule/graph.ts`), which later steps implement. DESIGN-1.0.md §2.2 is the prose.
 
 **Resources.** `ResourceUnit = ResourceName | PoolInstance | CpuToken` (Ids). Holders reserve all-or-none in lock
-order. `CPU_COST` (unmeasured defaults, calibrated at scheduling time below): judgment 1, build `unit.cpu ?? 4`, fast lane 2, estate lane 4 (`LaneDef.cpu` overrides), probe
-and teardown 0; the `@cpu` pool has `plan.capacity.cpu ?? availableParallelism()` tokens. Entry reservations (`EntryReservation`, F6), taken before a stage's first journaled op: plan-check and gate
+order. `CPU_COST` supplies fallback costs: judgment 1, build 4, build-cadence lane 2, other lane 4.
+Build and lane reservations are calibrated at scheduling time as described below; explicit `unit.cpu` or `LaneDef.cpu` overrides. Probe
+and teardown cost 0; the `@cpu` pool has `plan.capacity.cpu ?? availableParallelism()` tokens. Entry reservations (`EntryReservation`, F6), taken before a stage's first journaled op: plan-check and gate
 `@cpu`×1; build only its `@cpu` (an adopted dev.31 named reservation remains held until teardown); lanes the first lane's set; candidate the publication
 (`integration-slot`, held by `publication{unit, attempt}` through `ff` and `snapshot` once green, A2); prepare none.
-`Acquire(request: ResourceRequest{named, pools, cpu, publication}, holder, rank, signal) → granted{units} |
+`Acquire(request: ResourceRequest{named, pools, cpu, publication, cpuBasis?}, holder, rank, signal) → granted{units} |
 cancelled` (a cancelled wait journals nothing). Plan-load refusal for a new arc or a new pool:
 `plan-invalid{over-capacity{unit|null, lane|null, resource, requested, total}}`. Reclaim order under a `retry`
 holder (F2): `reclaim` → teardown → on pass the residue's `cleaned` disposition in the host index → `release`.
@@ -1483,7 +1488,7 @@ lanes `blocked` (after its retry), candidate `blocked`, salvage `commit-failed`;
 `routing-changed`, `occupied`, salvage `unmerged`, candidate `base-red`; every other park is operator `design`
 (the chargeable bound, a refusal or escalation at the top seat, a bounded round or retry run out, `empty-diff`,
 a red candidate). `ParkRecord = retryable{targets: ProbeTarget[] (sorted by probeTargetKey, unique, non-empty)} |
-operator{kind: env|design}`, written inside the parking fact (F9). `ProbeTarget = backend{backend} | host |
+operator{kind: env|design, ordering?: {blockers: UnitId[]}}`, written inside the parking fact (F9). `ProbeTarget = backend{backend} | host |
 resource{instance: ResourceInstance}` (one per failed instance, F10; `probeTargetKey`: `backend:<b>`, `host`,
 `resource:<i>`). A park at seq P recovers when every target has a `probe{result: pass}` whose `covers` includes P;
 the fold then restores `decided`/`interrupted` to their pre-park values (the parked stage re-runs) and records
@@ -1491,8 +1496,9 @@ the fold then restores `decided`/`interrupted` to their pre-park values (the par
 parked nothing (other than a resource target's residue fail seq, below), of an operator park, or of a park that
 does not target the probed target is refused. A host
 probe's `covers` are the parks it ran each local check for, fixed when it starts (G7). The resource target's
-pass is written only after its reclaim order completed. `unparked` re-runs an operator-env park; a design park
-needs `reopened` or a re-entry.
+pass is written only after its reclaim order completed. Operator `unparked` re-runs an operator-env park.
+A design park needs `reopened` or a re-entry unless it carries structured ordering blockers: their merges
+automatically write `unparked{command: null, parkSeq}` ("Ordering parks and automatic wake").
 
 **Residue probing (lead ruling 2026-09-30).** Residue repair is keyed to the residue, not to a park: a failed
 cleanup that no stage outcome parks (recovery's cleanup of a killed holder, whose attempt gets no outcome) is
@@ -3070,7 +3076,7 @@ outcome without a lineage.
 
 **Transition rows** (`src/pipeline/transitions.ts`, final): plan-check `in-session` → `build('fresh')`; build `infeasible` →
 park `escalation`, design (a build has no escalation seat to route up to; reading N0-1 below), `risk-raised` →
-`build('fresh')`; lanes `witnesses-missing` → charged `build('fix')`, `smoke-survived` → the bounded `smoke` round
+`build('fresh')`; lanes `witnesses-missing` → `build('fix')` within the certification allowance (uncharged for the first three by default, the fourth charged), `smoke-survived` → the bounded `smoke` round
 (`smokeRounds`, charged, `build('fix')`; past the bound `go(gate)`), `known-defect` → `prepare` (uncharged). A bounded
 round's `then` may be a `go` (the smoke round's), read back by `decidedBy` as its target. `Target` admits `prepare`;
 the unit driver's `prepare` arm takes a known-defect unit back (N3; readings of steps N1–N5, 14). `ROUND_COUNTERS.smoke = smokeRounds`.
@@ -3740,7 +3746,7 @@ under 5 s read up to 0.88 at concurrency 8 (process start-up), which is why they
 `host-pressure{inv}`, so no counter moves and no retry is spent. `pressureRuling` (src/host/pressure.ts, pure) reads the
 runs that ended an attempt without a pass as `PressureRun{inv, end: deadline | stall | red | other, pressure}`
 (src/pipeline/starved.ts reads the end from exit.json's cause and the pressure from the spawn's done record): a run at or
-above `PRESSURE_SATURATED` ended by `deadline` or `stall` is `starved`; else a `red` one is `red-rerun` unless the attempt
+above `PRESSURE_SATURATED` ended by `deadline`, configured `timeout` (mapped to `deadline`), or `stall` is `starved`; else a `red` one is `red-rerun` unless the attempt
 is itself the rerun after a host-pressure hold; null pressure, a clear host, or `STARVED_MAX` holds behind the unit
 (starved and red reruns counted alike) is `counts`, today's handling. It is read for a unit's backend calls that end
 `process-fault` (`verdictOf`, plan-check, build, gate; a job's call never), and for the red or blocked lane of a spec
@@ -3761,9 +3767,10 @@ any crash does, and the hold's release is derived from the log, the ticks and th
 Builders handed over code the candidate's suite rejected (lint, an unused helper): their prompt named only the spec's
 fast lanes. Now the lanes stage runs the plan's fast suite lanes in code, and the build prompt names them.
 
-- **Which lanes** (`fastSuiteLanes`, src/pipeline/lanes.ts): the plan's suite lanes of tier `fast`, in declared order,
-  less each one identical to an active spec lane (`sameExecution`: argv, cwd, declared env, expected exit), whose pass the
-  spec series already is. Estate suite lanes stay the candidate's alone.
+- **Which lanes** (`fastSuiteLanes`, src/pipeline/stages.ts): suite lanes of cadence `build` and `unit`, plus
+  forced lanes, less each one identical to an active spec lane (`sameExecution`: argv, cwd, declared env,
+  expected exit and timeoutMin), whose pass the spec series already is. Within each spec/suite series, the
+  previous completed attempt's reds run first, then cadence order. Other suite lanes wait for their cadence.
 - **When and where** (src/pipeline/stages.ts `fastSuite`): only after a green certified spec series, before the D1/D2
   checks; in their own detached checkout of the salvage SHA (`fastSuiteWorktree(..., 'suite')`, `<unit>.fast-suite-<attempt>`),
   each lane under its own reservation through the stage's `acquire`, as `lane{set: suite}` spawns of the lanes attempt,
@@ -4639,10 +4646,11 @@ stays 1.
    lane's named resources, as does requesting any resource in an environment's `resources` list (pool requests
    included). Explicit and inherited environment names are deduplicated. Each is brought up and probed before the
    lane, released after its cleanup; if a later environment fails, earlier uses are released too. Thus the reservation (and `resource.transition`) carries the environment's name as a plain
-   named unit; it has no probe or teardown recipe there (`instancesOf(plan, …)` leaves it out). Refused: on an arc lane
-   (`laneFields`, a schema error at the obligations read); on a `build`-cadence lane, spec or suite (`spec-lane-unrunnable`
-   `estate-lane-for-implementer`: the implementer runs those, and never brings an environment up); naming an
-   undeclared environment (`spec-lane-unrunnable` problem `{type: 'unknown-environment', environment}`). The resource
+   named unit; it has no probe or teardown recipe there (`instancesOf(plan, …)` leaves it out). Explicit
+   environments on build-cadence spec/suite lanes are allowed and executor-only. Explicit `environment` on an
+   arc lane is refused (`laneFields`); an arc lane may inherit environments through its resources. The current
+   preflight rule still refuses a build-cadence lane with powered resources but no explicit environment
+   (`spec-lane-unrunnable`, `estate-lane-for-implementer`). Naming an undeclared environment is refused too (`spec-lane-unrunnable` problem `{type: 'unknown-environment', environment}`). The resource
    variant of `spec-lane-unrunnable` gains `command: 'up' | 'down'` beside `probe | teardown`: an environment's
    commands are checked as a resource's (argv[0], declared host variables).
 3. **Spawns.** `SpawnSubject` `{purpose: 'environment', environment, action: 'up' | 'down' | 'probe'}` (`ENVIRONMENT_ACTIONS`),
@@ -4736,9 +4744,10 @@ flight); `SCHEMA_VERSION` stays 1. Lane environments and the flaky ledger have s
 1. **Cadence** (src/core/records.ts). The lanes stage runs the spec lanes, then the suite lanes of cadence `build` and
    `unit` and the lanes the unit forces (`stageSuiteLanes`; its spec's `forces` and, for a unit repairing a batch lane's
    P1, that lane: src/pipeline/stages.ts `forcedLanes`), less one identical to an active spec lane. The builder is given
-   the `build` ones (`builderSuiteLanes`). A candidate (a unit's, a repair batch's, a docs publication's) runs the suite
+   only resource-free, environment-free `build` ones as targeted development checks (`builderSuiteLanes`); it does not rehearse full lanes. A candidate (a unit's, a repair batch's, a docs publication's) runs the suite
    lanes of cadence `build`, `unit` and `candidate` its diff selects (src/pipeline/integrate.ts `candidateLanes`). `@cpu`:
-   a build lane 2, any other 4 (`CPU_COST.lane`). A series runs in cadence order. Build prompt inputs keep their names
+   calibrated from full-run demand, falling back to build lane 2 or other lane 4 (`CPU_COST.lane`), unless explicitly overridden.
+   Certification series run the previous completed attempt's reds first, then cadence order. Build prompt inputs keep their names
    (`fastLanes`, `suiteLanes`), typed `BuildLane`. Plan-check and checkpoint lane items write `cadence: build|unit`.
 2. **Systems map and selection** (src/input/systems.ts). `pathClass` (memoised per map), `laneSelected` (a lane listing
    no systems: always; an unmapped path: every lane; a docs-only diff: only a lane listing `docs`), `laneInput`, and
@@ -5358,7 +5367,7 @@ resume replayable. Other holds' items and unrelated blocking items remain untouc
 The lanes stage adds outcome `flaky`: a red series whose failing lanes all passed their
 same-commit diagnostic reruns, with a clean checkout. It starts `build/fix`, class
 `advance`, `chargeable: false`; neither the chargeable failure bound nor candidate-red
-counter grows. Both runs and the existing flake directives remain in the fix round,
+counter grows, and `unchargedLanesReds` is neither consumed nor reset. Both runs and the existing flake directives remain in the fix round,
 including after recovery. This class does not forgive the lane or turn it into a
 reusable clean pass. Deterministic red-red, dirty checkouts, failed verification repeats
 and witness failures retain their existing outcomes. Host-pressure handling precedes
@@ -5428,7 +5437,7 @@ respecify or re-enter a design park through the existing command path.
 For each key, keep the last ten qualifying runs. Fewer than three samples uses `CPU_COST`; otherwise reserve
 `max(1, min(CPU_COST, ceil(p90 demand)))`, with nearest-rank p90. A lane's explicit `cpu` or a unit's explicit `cpu`
 always overrides calibration, even above the default. Plan-load and apply over-capacity validation still use the
-unmeasured defaults or explicit values: calibration cannot make an otherwise invalid plan admissible.
+fallback defaults or explicit values: calibration cannot make an otherwise invalid plan admissible.
 
 The lane key hashes canonical `{kind: 'lane', argv, cwd, set: env.set, pass: sorted env.pass, expectedExit}`. The build
 key hashes canonical `{kind: 'build', role: 'build', class: BuildClass, routingRev}`; the spawn key and reservation
@@ -5448,6 +5457,8 @@ Additive records (schema version unchanged):
 | `proc.spawn.expect` (full lane, journey, proof lane or build) | `cpuKey?: Sha256Hex` | absent → no calibration key (`spawnCpuKeyOf`), warned once, excluded from history; no inference from earlier launch argv |
 | `ResourceRequest` and `resource.transition.expect` on reserve | `cpuBasis?: CpuBasis` | absent → unmeasured (`reservationCpuBasisOf` returns null with a warning); recorded token units stay authoritative |
 | `sched.json.queue[]`, `jobQueue[]` | `pressureBlocked?: boolean` | absent → false, warned once; non-authoritative derived view |
+| `resource.transition.expect` on reserve | `tokenWaitMs?: number` (non-negative) | absent → unknown/null (`reservationTokenWaitOf`), warned once; never inferred as zero |
+| `sched.json.queue[]`, `jobQueue[]` | `queuedAt?: number` (epoch ms) | absent → unknown/absent (`schedulerQueuedAtDefault`), warned once |
 | `EnvironmentDecl` (disk and parsed) | `resources?: ResourceName[]` | absent → `[]`, warned once by `environmentResources`; raw input bytes remain unchanged |
 
 `CpuBasis` is `explicit{value}` or `default{key, value, samples}` or `calibrated{key, value, samples}`. `value` is the
@@ -5476,4 +5487,39 @@ bring-up leaves a proof without a verdict, or a walk/compare incomplete (`detail
 verdict is charged. A walk/compare releases its environment uses after reservation cleanup (`releaseJob`). The
 existing apply classifier compares the complete environment declaration, including `resources`, and refuses a
 change while its environment is held or not down. Phase 0 and apply both use the shared `parsePlan` and `laneRows`
-validators, including refusal of build-cadence lanes inheriting an environment through their resources.
+validators, including refusal of build-cadence lanes inheriting an environment through their resources without
+an explicit `environment`.
+
+
+## Certification and CPU observation (1.0.0-dev.32)
+
+JSON status and the TUI worker use one read-only projection in `src/status-work.ts`. Each unit has
+`certification: {used, allowance, left, attempt, lanes}`: `allowance = certifications - 1`, `used` is the
+resettable uncharged-red counter, and `left` is the number of uncharged reds remaining before the next
+charge. `attempt` is null when there is no certification attempt; an attempt without retained evidence can
+have an empty lane list.
+Lanes are ordered exactly as the executor's spec series followed by its fast suite, red-first within each.
+Each row has `{id, set: spec|suite, redFirst, state: queued|running|red|green|reused|blocked, verdict, flaky, inv, holds}`.
+`holds` names a running lane's non-CPU resources and environments. Diagnostic flaky passes remain red; reuse
+is distinct from a fresh green. Timeout is a red verdict; an unconfigured deadline is a blocked process fault.
+
+Each unit's `work` and `host.work` (arc-wide invocations) hold
+`{inv, cause, parent, kind: build|lane, lane|null, reservedCpu|null, cpuBasis|null, measured|null, tokenWaitMs|null, resources}`.
+Reservation counts and `cpuBasis` come from the reservation in force at that spawn's journal position, never
+a new calibration estimate. `measured` is validated exit-file `LaunchCpu {wallMs, runMs, waitMs}`; it is null
+while running or when unavailable. Used cores are `runMs / wallMs`; demand cores include CPU scheduler wait:
+`(runMs + waitMs) / wallMs`. These are completed-run averages, not live CPU utilization.
+
+The arbiter records `tokenWaitMs` on a granted reservation: elapsed time from enqueuing to grant of the whole
+all-or-none request, including named-resource contention and pressure-brake delay. It is separate from
+`LaunchCpu.waitMs` (runnable threads waiting for CPU). A live queue's `queuedAt` provides the current elapsed
+wait, exposed as unit `waitingFor.tokenWaitMs`; old queues show unknown. Cancelled waits have no reservation
+record, and recovery starts a new queue interval. The reserve-only timing field is additive; legacy records
+retain their bytes and warn once with `resource.transition.tokenWaitMs` or `sched.queuedAt`.
+
+Unit previews show allowance, Activity adds ordered certification rows while lanes run or wait for resources,
+and invocation rows/details show reserved CPU with explicit/default/calibrated basis, sample count where
+applicable, measured use and token wait. Pressure-brake waits name host saturation and their elapsed wait.
+Ordering parks expose declared `blockers` and still-unmerged `outstanding` ids, independently of ordinary
+`after` dependencies. Exceptions and lane rows distinguish red timeout from blocked deadline. Old runs
+with no reservation basis or wait measurement remain explicitly unknown.

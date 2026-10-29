@@ -944,8 +944,8 @@ export type LaneDef = Readonly<{
   stochastic?: Stochastic;
   /**
    * dev.17: the plan environment the lane runs against (plan `environments`), reserved with its resources and brought up
-   * before it runs (src/resources/environments.ts); absent: none. An arc lane never names one (`laneFields`), and a
-   * `build`-cadence lane (the implementer runs it) never does (`estate-lane-for-implementer`).
+   * before it runs (src/resources/environments.ts); absent: none. An arc lane never names one (`laneFields`).
+   * Environment-backed build-cadence lanes are executor-only, omitted from builder development checks.
    */
   environment?: ResourceName;
   /**
