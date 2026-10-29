@@ -5,6 +5,7 @@
 // knowndefect.consumed-after-fixer-merged, and the crash row "Prepare `known-defect`" (label
 // prepare.known-defect-after-mergein). The predicate-level knowndefect.* tests are in test/ready.test.ts.
 import assert from 'node:assert/strict';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { describe, test } from 'node:test';
 import type { StageOutcomeFact } from '../src/core/events.ts';
 import { arcId, unitId } from '../src/core/ids.ts';
@@ -173,6 +174,9 @@ describe('known defect matched by output', () => {
       ...of('u1', [planCheckStep({ decision: 'approve' }), mulBuild(), fix]),
       ...of('u2', [planCheckStep({ decision: 'approve' }), mulBuild({ 'src/fix.js': 'export const fixed = true;\n' }), gateStep({ decision: 'approve' })]),
     ], { lanes: [BUGGY_LANE] });
+    const plan = JSON.parse(readFileSync(d.planPath, 'utf8'));
+    plan.limits = { certifications: 1 };
+    writeFileSync(d.planPath, JSON.stringify(plan));
     const r = contextFor(d);
     try {
       // output-match-uncharged: the lane ran red, its output names K-1.

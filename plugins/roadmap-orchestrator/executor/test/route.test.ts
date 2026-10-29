@@ -173,7 +173,7 @@ test('limits.windows-and-bounds: the plan\'s and the unit\'s limits are pinned a
       gateStep({ decision: 'approve' }),
     ],
   });
-  editPlan(d, (p) => void (p['limits'] = { reviseRounds: 1, freshBuildMin: 2, judgmentDeadlineMin: 3 }));
+  editPlan(d, (p) => void (p['limits'] = { reviseRounds: 1, freshBuildMin: 2, judgmentDeadlineMin: 3, certifications: 1 }));
   editUnit(d, 'u1', (u) => void (u['limits'] = { editAllowanceMin: 5 }));
   recordFirst(d);
   const r = contextFor(d);
@@ -183,7 +183,7 @@ test('limits.windows-and-bounds: the plan\'s and the unit\'s limits are pinned a
     const first = r.journal.view.dispatchOf(U1)!;
     assert.deepEqual(first.bounds, boundsOf(ctx.plan(), unitOf(ctx, 'u1')));
     assert.deepEqual(first.bounds, {
-      chargeable: 3, redirects: 2, reviseRounds: 1, candidateReds: 1, retries: 1, judgmentDeadlineMin: 3, freshBuildMin: 2, editAllowanceMin: 5, smokeRounds: 1, smokeRuns: 2,
+      chargeable: 3, redirects: 2, reviseRounds: 1, candidateReds: 1, retries: 1, judgmentDeadlineMin: 3, freshBuildMin: 2, editAllowanceMin: 5, smokeRounds: 1, smokeRuns: 2, certifications: 1,
     }, 'the built-in bounds, the plan\'s limits, then the unit\'s own');
     assert.equal(first.transientRules, 'm3');
 

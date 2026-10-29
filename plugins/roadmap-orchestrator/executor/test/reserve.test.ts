@@ -47,7 +47,8 @@ test('res.cycle-per-stage', T, async () => {
   const r = newRun();
   const { ctx, journal } = openRun(r);
   const stages = [
-    // The build holds the unit's declared resources for its whole run; its workload is a backend.
+    // An adopted dev.31 build may still hold its journaled named resources until teardown.
+    // New builds request CPU only; this lower-level cycle must still release the older reservation.
     { holder: stageHolder('build'), resources: [QUEUE, DB], work: () => invoke(journal, ctx.containment, specFor(backend({ runDir: r.runDir, arc: r.arc, work: r.repo }, scenario([{ as: 'claude', expect: {}, acts: [{ type: 'emit', value: { ok: true } }] }])))) },
     { holder: stageHolder('lanes'), resources: [DB], work: () => laneInvocation(ctx, stageHolder('lanes')) },
     { holder: stageHolder('candidate'), resources: [INTEGRATION_SLOT, CACHE], work: () => laneInvocation(ctx, stageHolder('candidate'), 'suite') },

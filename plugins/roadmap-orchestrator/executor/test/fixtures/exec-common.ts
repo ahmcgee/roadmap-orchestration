@@ -48,10 +48,17 @@ export function setupExec(t: Owner, opts: ExecOptions): ExecRun {
   const d = setupArc(opts);
   const stateDir = tmpDir('exec-res');
   if (opts.resource === true) {
-    const plan = JSON.parse(readFileSync(d.planPath, 'utf8')) as { resources: unknown[]; units: { resources: string[] }[] };
+    const plan = JSON.parse(readFileSync(d.planPath, 'utf8')) as { resources: unknown[]; units: { resources: string[]; spec: string }[] };
     const tool = (cmd: 'probe' | 'teardown') => ({ argv: [process.execPath, fixture('res-tool.ts'), cmd, stateDir, 'db'], cwd: '.', env: { set: {}, pass: [] } });
     plan.resources = [{ name: 'db', probe: tool('probe'), teardown: tool('teardown') }];
-    for (const u of plan.units) u.resources = ['db'];
+    for (const u of plan.units) {
+      u.resources = ['db'];
+      const path = join(d.planPath, '..', u.spec);
+      const spec = JSON.parse(readFileSync(path, 'utf8'));
+      spec.resources = ['db'];
+      for (const lane of spec.lanes) lane.resources = ['db'];
+      writeFileSync(path, JSON.stringify(spec));
+    }
     writeFileSync(d.planPath, JSON.stringify(plan));
   }
   const common = git(d.repo, 'rev-parse', '--path-format=absolute', '--git-common-dir');

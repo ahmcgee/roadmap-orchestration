@@ -7,7 +7,8 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { freshClaudeImplementerSession, freshJudgmentSession } from '../src/backends/argv.ts';
 import type { ProbeTarget, StageOutcomeFact } from '../src/core/events.ts';
-import { commandId, implementerSessionId, invocationId, opId, poolInstance, sha256, specRev, unitId } from '../src/core/ids.ts';
+import { commandId, implementerSessionId, invocationId, opId, poolInstance, sha, sha256, specRev, unitId } from '../src/core/ids.ts';
+import { laneDef } from '../src/core/records.ts';
 import type { BackendResult, ImplementerSession, JudgmentSession } from '../src/core/records.ts';
 import { absPath, isoTimeOf } from '../src/core/values.ts';
 import { readResidues, undispositioned } from '../src/host/residues.ts';
@@ -16,11 +17,12 @@ import { dueJobs } from '../src/park/schedule.ts';
 import {
   type BackendCallOutcome, type BackendCallSpec, callBackend, implementerDispatch, judgmentDispatch, pinDispatch, sessionNeverPersisted, verdictOf,
 } from '../src/pipeline/dispatch.ts';
+import { laneRuntime, runLaneSeries } from '../src/pipeline/lanes.ts';
 import { outcomeFact } from '../src/pipeline/transitions.ts';
 import { SMOKE_SCHEMA } from '../src/preflight/smoke.ts';
 import { cleanup, reserve, run as runReservation } from '../src/resources/reserve.ts';
 import { runnerFiles } from '../src/runner/files.ts';
-import { git, tmpDir } from './helpers/repo.ts';
+import { git, makeRepo, tmpDir } from './helpers/repo.ts';
 import { BACKEND_FIXTURES, capturedClaudeResult, readCalls } from './helpers/scenario.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import { JUDGE_SUBAGENTS } from '../src/prompts/delegation.ts';
@@ -296,23 +298,31 @@ describe('dispatch: backend park epochs, hold causes, instance env, sessions (G5
     run.journal.close();
   });
 
-  it('the implementer launch env binds the pool instances its build holds (F7)', T, async () => {
-    const r = newProbeRun([{ as: 'claude', expect: { argv: ['-p'] }, acts: [{ type: 'emit', value: OK }] }]);
+  it('the certifying lane launch env binds the pool instance its reservation holds (F7)', T, async () => {
+    const r = newProbeRun([]);
+    makeRepo(r.repo, { files: { 'src/check.js': 'export const check = true;\n' } });
     const { ctx, journal } = openProbeRun(r);
-    const unit = ctx.plan().units[0]!;
-    seated(pinDispatch(ctx, unit, { rev: specRev(1), sha256: sha256('1'.repeat(64)) }));
-    const parent = { type: 'stage', unit: U1, stage: 'build', attempt: 1 } as const;
-    const got = reserve(ctx, { type: 'stage', unit: U1, stage: 'build', attempt: 1 }, { named: [], pools: [ESTATE], cpu: 0, publication: false }, parent);
-    assert.equal(got.state, 'reserved');
-    const cwd = tmpDir('impl-cwd');
-    const called = await callBackend(ctx, {
-      unit: U1, parent, request: { kind: 'implementer', dispatch: seated(implementerDispatch(ctx, U1)), session: freshClaudeImplementerSession(), evidenceDirs: [], mcpConfig: null },
-      system: 'build', prompt: null, rendered: 'build', schema: SMOKE_SCHEMA, cwd: absPath(cwd), deadlineAt: isoTimeOf(new Date(Date.now() + 60_000)),
-    });
-    const launch = runnerFiles(called.invDir, called.inv).read('launch.json');
-    assert.equal(launch?.env['RESOURCE_INSTANCE_ESTATE'], '1');
-    assert.equal(launch?.env['RESOURCE_OWNER'], `${ctx.plan().arc}/u1`);
-    journal.close();
+    try {
+      const unit = ctx.plan().units[0]!;
+      seated(pinDispatch(ctx, unit, { rev: specRev(1), sha256: sha256('1'.repeat(64)) }));
+      const parent = { type: 'stage', unit: U1, stage: 'lanes', attempt: 1 } as const;
+      const lane = laneDef({ id: 'bound', argv: [process.execPath, '-e',
+        `const assert = require('node:assert/strict'); assert.equal(process.env.RESOURCE_INSTANCE_ESTATE, '1'); assert.equal(process.env.RESOURCE_OWNER, ${JSON.stringify(`${ctx.plan().arc}/u1`)});`],
+        cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [ESTATE], evidenceGlobs: [] }, 'lane');
+      const series = await runLaneSeries(ctx, parent, [lane], 'spec', {
+        path: absPath(join(tmpDir('bound-lane'), 'checkout')), checkout: { type: 'detached', at: sha(git(r.repo, 'rev-parse', 'HEAD')) },
+      }, absPath(tmpDir('bound-evidence')), laneRuntime(ctx, U1), false);
+      assert.equal(series.end.kind, 'green');
+      assert.equal(series.ledger.length, 1, 'the bound lane actually ran');
+      const inv = series.ledger[0]!.inv;
+      const spawn = journal.view.opsOf('proc.spawn').find((i) => invocationId(i.op, i.ordinal) === inv)!;
+      const reserveOp = journal.view.opsOf('resource.transition').find((i) => i.expect.edge.type === 'reserve')!;
+      assert.ok(reserveOp.expect.resources.includes(poolInstance(ESTATE, 1)));
+      assert.ok(spawn.expect.subject.purpose === 'lane');
+      assert.equal(journal.view.resources().get(poolInstance(ESTATE, 1))?.status.state, 'free', 'the lane cleaned up its instance');
+    } finally {
+      journal.close();
+    }
   });
 
   it('sessionNeverPersisted: a resumed session\'s process fault with no complete JSON object line on stdout, and nothing else', () => {

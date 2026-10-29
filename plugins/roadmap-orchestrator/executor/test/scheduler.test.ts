@@ -55,7 +55,7 @@ function editPlan(d: ArcDescriptor, edit: (plan: Json & { units: Json[] }) => vo
 }
 
 /**
- * Declares resource `db`, held by every unit's build: its probe is res-tool.ts (free), its teardown parks at
+ * Declares resource `db`, held by every unit's certifying lane: its probe is res-tool.ts (free), its teardown parks at
  * barrier `teardown` in `dir` for up to 10 minutes, as a slow estate teardown would.
  */
 function slowTeardown(d: ArcDescriptor, dir: string, stateDir: string): void {
@@ -65,7 +65,15 @@ function slowTeardown(d: ArcDescriptor, dir: string, stateDir: string): void {
       probe: { argv: [process.execPath, fixture('res-tool.ts'), 'probe', stateDir, 'db'], cwd: '.', env: { set: {}, pass: [] } },
       teardown: { argv: [process.execPath, fixture('barrier-child.ts'), dir, 'teardown', '600000'], cwd: '.', env: { set: {}, pass: [] } },
     }];
-    for (const u of p.units) u['resources'] = ['db'];
+    for (const u of p.units) {
+      u['resources'] = ['db'];
+      const path = join(d.planPath, '..', u['spec'] as string);
+      const spec = JSON.parse(readFileSync(path, 'utf8'));
+      spec.resources = ['db'];
+      for (const lane of spec.lanes) lane.resources = ['db'];
+      writeFileSync(path, JSON.stringify(spec));
+    }
+    p['suite'] = { lanes: [] };
   });
 }
 
@@ -179,7 +187,7 @@ test('sched.pause-holds-nothing: a pause ends a unit\'s task at its admission bo
   }
 });
 
-test('sched.chain-completes-under-pause: a pause while a build\'s chain runs (its teardown slow) lets the chain finish; the unit then stops at its next admission boundary holding nothing, and a resume runs it to merge', T, async () => {
+test('sched.chain-completes-under-pause: a pause during a lane\'s slow cleanup lets cleanup finish; the unit then stops at its next admission boundary holding nothing, and a resume runs it to merge', T, async () => {
   const dir = tmpDir('teardown-barrier');
   const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })] });
   slowTeardown(d, dir, tmpDir('res-state'));
@@ -187,12 +195,13 @@ test('sched.chain-completes-under-pause: a pause while a build\'s chain runs (it
   try {
     const s = startScheduler(r);
     await reached(dir, 'teardown', WAIT_MS);
+    assert.ok(heldBy(r, U1).includes('db'), 'the lane still holds db while teardown runs');
     await receiptOf(r, submit(r, { type: 'pause', target: { type: 'unit', unit: U1 } }));
     release(dir, 'teardown');
-    await until(() => outcomes(d).includes('teardown:released'), 'the chain to finish');
+    await until(() => outcomes(d).includes('lanes:green'), 'the lane cleanup to finish');
     await sleep(2_500);
-    assert.deepEqual(outcomes(d), STRAIGHT.slice(0, 6), 'the chain ran to its end, then nothing: lanes are an admission boundary');
-    assert.ok(allFree(r), 'the chain released the build\'s reservation');
+    assert.deepEqual(outcomes(d), STRAIGHT.slice(0, 7), 'the lane cleaned up and passed; gate is the next admission boundary');
+    assert.ok(allFree(r), 'the lane released its named resource and CPU reservation');
     assert.deepEqual(r.journal.view.opsOf('proc.kill'), [], 'nothing of the chain was killed');
     await receiptOf(r, submit(r, { type: 'resume', target: { type: 'unit', unit: U1 } }));
     assert.deepEqual(await s.end, { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }] });
@@ -213,20 +222,21 @@ test('sched.stop-during-teardown: a stop while a teardown runs (a 10-min fake) n
     }, { type: 'arc' });
     const s = startScheduler(r);
     await reached(dir, 'teardown', WAIT_MS);
+    assert.ok(heldBy(r, U1).includes('db'), 'the lane still holds db while teardown runs');
     const stop = submit(r, { type: 'stop' });
     assert.equal((await receiptOf(r, stop)).state, 'applied');
     // Stopping, the scheduler still applies control commands.
     assert.equal((await receiptOf(r, submit(r, { type: 'ack', needsUser: item, choice: null }))).state, 'applied');
     assert.notEqual(r.journal.view.ackOf(item), null);
     await sleep(2_000);
-    assert.ok(!outcomes(d).includes('teardown:released'), 'the teardown still runs');
+    assert.ok(!outcomes(d).includes('lanes:green'), 'the lane teardown still runs');
     let ended = false;
     void s.end.then(() => (ended = true));
     await sleep(1_500);
     assert.equal(ended, false, 'the run waits for the teardown');
     release(dir, 'teardown');
     assert.deepEqual(await s.end, { kind: 'stop', cause: 'command', needsUser: null });
-    assert.deepEqual(outcomes(d), STRAIGHT.slice(0, 6), 'the chain finished; lanes never started');
+    assert.deepEqual(outcomes(d), STRAIGHT.slice(0, 7), 'the lane cleanup finished; gate never started');
     assert.deepEqual(r.journal.view.opsOf('proc.kill'), [], 'the teardown was not killed');
     assert.ok(allFree(r));
   } finally {
