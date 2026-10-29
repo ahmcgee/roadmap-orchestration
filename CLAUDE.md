@@ -14,7 +14,21 @@ inside the skill address agents running an arc with it; they do not bind you her
 
 ## Eval ladder
 
-A change is not done until the ladder passes, in order (from `executor/`):
+A change is not done until the rungs it triggers pass, in order (from `executor/`). Run a rung because it can
+catch a regression in what changed, not for ceremony:
+
+- Docs only (README, `docs/`, this file, comments): no rungs.
+- Executor code, tests or tooling that leave agent behaviour unchanged (refactors, perf, TUI, state/records,
+  scheduler mechanics, test helpers): rungs 1–2. Rung 3 only if backend CLI invocation or parsing changed.
+- Agent behaviour changes: everything an agent is given or asked to do, i.e. skill text, seat prompts, role
+  inputs or output schemas, routing, or the arc flow a fixture exercises. These run rungs 1–3 plus the paid
+  rungs the change triggers (3.5 by path trigger; 4 only when the fixture exercises the changed behaviour).
+
+Paid rungs are pre-authorised when triggered and skipped when not; the PR says which rungs ran, which were
+skipped and why. While iterating, run the affected test files directly; the full `npm test` runs once on the
+finished batch.
+
+The rungs:
 
 1. `npm run typecheck`
 2. `npm test` (`node --test --test-concurrency=8 test/*.test.ts`: eight files at a time, each about one runnable
