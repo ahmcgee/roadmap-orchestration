@@ -14,7 +14,7 @@ import { implementerSessionId } from '../src/core/ids.ts';
 import type { BackendResult, ExitFile, LaunchTerminal } from '../src/core/records.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { absPath } from '../src/core/values.ts';
-import { buildOutputFor, buildSchemaFor } from '../src/prompts/schemas.ts';
+import { buildOutput, BUILD_SCHEMA } from '../src/prompts/schemas.ts';
 import { awaitRunner, prepareLaunch, startRunner } from '../src/runner/launch.ts';
 import { REPORT_GRACE_MS } from '../src/runner/report.ts';
 import { launchBase, newInvocation } from './helpers/invocation.ts';
@@ -27,7 +27,7 @@ const LINGER_MS = 120_000;
 const INTERIM_WAIT_MS = REPORT_GRACE_MS + 5_000;
 const T = { timeout: REPORT_GRACE_MS + 60_000 };
 
-const report = (summary: string, final: boolean) => ({ summary, changedPaths: [], lanesRun: [], blockers: [], experiments: [], docsOnlySince: null, final });
+const report = (summary: string, final: boolean) => ({ summary, changedPaths: [], blockers: [], experiments: [], docsOnlySince: null, final });
 
 type Run = Readonly<{ exit: ExitFile; result: BackendResult; wallMs: number }>;
 
@@ -36,7 +36,7 @@ async function build(as: 'claude' | 'codex', acts: readonly Act[]): Promise<Run>
   const scenario = writeScenario(tmpDir('report-scenario'), [{ as, expect: {}, acts } as never]);
   const inv = newInvocation();
   const schemaPath = absPath(join(inv.root, 'schema.json'));
-  writeFileSync(schemaPath, `${canonicalJson(buildSchemaFor(null))}\n`);
+  writeFileSync(schemaPath, `${canonicalJson(BUILD_SCHEMA)}\n`);
   const session = randomUUID();
   const outputPath = absPath(join(inv.invDir, as === 'claude' ? 'stdout' : 'last.json'));
   const base = { type: 'backend', purpose: 'backend', routingRev: ROUTING_REV, schemaPath, outputPath, role: 'build' } as const;
@@ -113,11 +113,11 @@ describe('report: reading a reported build', () => {
   });
 
   it('report.build-reader: an answer that is not final is not a report; one an earlier executor recorded reads as final', () => {
-    assert.equal(buildOutputFor(null)(report('s', true), 'build').final, true);
-    assert.throws(() => buildOutputFor(null)(report('s', false), 'build'), SchemaError);
+    assert.equal(buildOutput(report('s', true), 'build').final, true);
+    assert.throws(() => buildOutput(report('s', false), 'build'), SchemaError);
     const { final: _, ...earlier } = report('s', true);
-    assert.equal(buildOutputFor(null)(earlier, 'build').final, true);
-    const schema = buildSchemaFor(null) as { required: string[]; properties: Record<string, { type: string }> };
+    assert.equal(buildOutput(earlier, 'build').final, true);
+    const schema = BUILD_SCHEMA as { required: string[]; properties: Record<string, { type: string }> };
     assert.equal(schema.properties['final']?.type, 'boolean');
     assert.ok(schema.required.includes('final'));
   });

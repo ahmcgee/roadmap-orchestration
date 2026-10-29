@@ -179,7 +179,8 @@ test('stages.red-lane-fix-round: the resumed implementer reads the failing evide
   const failing = red.fix.fix.failingEvidenceDirs;
   assert.deepEqual(failing, [join(red.ledger[0]!.evidenceDir, 'output', 'files')]);
   assert.match(readFileSync(join(failing[0]!, 'stdout'), 'utf8'), /ADD-MARKER/);
-  assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, 1);
+  assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, 0);
+  assert.equal(run.journal.view.unit(U1).counters.unchargedLanesReds, 1);
 
   const second = await buildToLanes(run, red.fix);
   assert.notEqual(second.sha, first.sha, 'the fix is a new commit on the unit branch');
@@ -353,7 +354,8 @@ test('stages.salvage-unmerged-parks: an unmerged index parks the unit with the t
   assert.equal(s.sha, null);
   assert.equal(readFileSync(join(wt, 'src', 'add.js'), 'utf8'), before, 'the tree is preserved');
   assert.deepEqual(intents(run.runDir, 'salvage.commit'), [], 'refused before any intent');
-  assert.equal(resourceTable(run.journal.view).get(resourceName(DB))?.status.state, 'free');
+  assert.equal(resourceTable(run.journal.view).get(resourceName(DB)), undefined);
+  assert.ok([...resourceTable(run.journal.view).values()].every((r) => r.status.state === 'free'));
   assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, 0);
 });
 
@@ -408,7 +410,8 @@ test('stages.interrupted-holds: a pause mid-build holds the unit, moves no count
   assert.equal(after.status, 'held');
   assert.equal(after.stage, 'build');
   assert.deepEqual({ ...after.counters, attempts: 0 }, { ...before, attempts: 0 }, 'no counter but attempts moves');
-  assert.equal(resourceTable(run.journal.view).get(resourceName(DB))?.status.state, 'free', 'the build\'s resources are released');
+  assert.equal(resourceTable(run.journal.view).get(resourceName(DB)), undefined, 'the build never reserved named resources');
+  assert.ok([...resourceTable(run.journal.view).values()].every((r) => r.status.state === 'free'));
   assert.deepEqual(run.journal.view.parkedBackends(), []);
 });
 

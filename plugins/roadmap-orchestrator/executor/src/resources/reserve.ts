@@ -53,9 +53,8 @@ import { type HeldState, type ResourceEntry, FREE_RESOURCE, afterEdge, sameHolde
 import type { ResidueKey, SpecM1, Stage } from '../core/records.ts';
 import type { AbsPath } from '../core/values.ts';
 import { type ResidueEntry, readResidues, recordDisposition, undispositioned } from '../host/residues.ts';
-import type { PlanM1, PlanUnit } from '../input/plan.ts';
+import type { PlanM1 } from '../input/plan.ts';
 import { type ProcContext, killWorkload } from '../pipeline/invoke.ts';
-import type { StartupRejection } from '../preflight/startup.ts';
 import { type ResidueRecipe, appendFailedCleanupResidues } from '../recover/residue.ts';
 import type { ResourceRequest } from '../schedule/types.ts';
 import { allocate, instanceEnv } from './pool.ts';
@@ -485,24 +484,7 @@ export async function retryReclaim(ctx: ResourceContext, holder: ReclaimHolder, 
 // The build-cadence boundary
 
 export type SpecLane = SpecM1['lanes'][number];
-export type BuildLaneRefusal = Extract<StartupRejection, { kind: 'spec-lane-unrunnable' }>;
-
-/**
- * The implementer's lanes: the only source of the lane list a build prompt shows (renderSpec with
- * buildLanesOnly shows exactly these). Lanes of a later cadence are executor-only.
- */
+/** Resource-free build-cadence lanes available for targeted checks inside the implementer's session. */
 export function buildLanes(spec: SpecM1): readonly SpecLane[] {
-  return spec.lanes.filter((l) => l.cadence === 'build');
-}
-
-/**
- * Startup and dispatch check: an active build-cadence lane is one the implementer runs inside its build, which
- * holds exactly the unit's declared resources for its whole run. A build lane that needs any other
- * resource would give the implementer estate it does not hold, so the spec is refused; so is one naming an
- * environment (dev.17), which only the executor brings up.
- */
-export function checkBuildLanes(spec: SpecM1, unit: PlanUnit): readonly BuildLaneRefusal[] {
-  return buildLanes(spec)
-    .filter((l) => l.state === 'active' && (l.environment !== undefined || l.resources.some((r) => !unit.resources.includes(r))))
-    .map((l) => ({ kind: 'spec-lane-unrunnable', unit: unit.id, lane: l.id, problem: { type: 'estate-lane-for-implementer' } }));
+  return spec.lanes.filter((l) => l.cadence === 'build' && l.resources.length === 0 && l.environment === undefined);
 }

@@ -23,6 +23,29 @@ Other steps request changes rather than edit.
 
 ## Record evolution (owner ruling, 2026-09-26)
 
+**Turn-boundary certification (after dev.31).** `SCHEMA_VERSION` stays 1. Certification is the existing lanes stage,
+after build quiescence and teardown, in a clean detached checkout. `Bounds.certifications` defaults to 4 and is
+positive, overridable through plan or unit `limits`. A dev.31 dispatch without it reads as 4, warned by
+`dev31CertificationsDefault`; its raw bytes stay unchanged. `UnitCounters.unchargedLanesReds` starts at 0 and is
+resettable (excluded from monotonic counters). A lanes `red`, `not-certified` or `witnesses-missing` is uncharged
+while that count is below `certifications - 1`: increment it and return a fix round. The next red is charged,
+resets it to 0, and parks if it reaches `bounds.chargeable`. Any other charge also resets the allowance; its
+existing transition is unchanged. A steered one-pass red still parks uncharged and leaves the allowance unchanged.
+
+New certification-red `stage-outcome` facts carry `unchargedLanesReds`, the count after their outcome. The journal
+checks it, chargeability and class against the allowance and chargeable bound. Old facts omit it: read-time default
+0 with `dev31UnchargedLanesRedsDefault`'s warning, preserving their recorded charges and decisions. No other outcome
+carries the field. Fix prompts name the remaining uncharged allowance, including after restart. `PREVIOUS_RELEASE`
+is dev.31; upgrade cells cover a held named build reservation and a charged lanes red.
+
+The lanes stage runs the previous attempt's red lanes first within both its spec series and fast suite, then cadence
+order, stopping at the first red. Builds reserve only `@cpu`; resource-bearing or environment-backed build-cadence
+lanes are executor-only and omitted from builder lane lists. The plan/spec resource declarations remain the envelope
+checked at preflight, widening and apply. An adopted build keeps its journaled named reservation through teardown.
+Builds receive no pool-instance bindings. The final build report requests certification; development uses targeted
+checks. `BUILD_SCHEMA` drops `lanesRun`; the reader accepts and ignores it in old answers, which retain their launch's
+old schema for recovery. `experiments` records development checks. There is no certification CLI or live-session channel.
+
 **1.0.0-dev.30 → 1.0.0-dev.31 (2026-10-29, judgment prompt reductions and size telemetry).**
 `backend` and `arc-backend` spawn subjects and `meter` facts add optional
 `prompt: {bytes: number, inputs: Record<string, number>}`. `bytes` is the exact UTF-8 length of composed stdin
@@ -471,7 +494,7 @@ in a repo's class rebinds (`.roadmap/config.json` `routing.classes`). Built-in p
 | `resources` | `ResourceDecl[]` | `{name, probe: ToolCommand, teardown: ToolCommand, pool?: {size: positive}}`; `integration-slot` is built in and may not be declared. A pool (M2) has instances `<name>#1..size`; a request by name takes one; each workload of the holder gets `RESOURCE_INSTANCE_<NAME>=<n>` (upper case, `-` → `_`), persisted in `launch.json` `env` and the residue's teardown recipe |
 | `units` | `PlanUnit[]` (non-empty) | a unit entering the plan (a fresh arc's rev 1, a unit a revision adds) may not take an `id` of the form `batch-<digits>`, `jobs` or `mutants` (`reservedUnitIdReason`: a `plan-change-refused` reason, not a schema rule, so an adopted arc's units keep their ids; M3: a repair batch's candidate ref `refs/roadmap-run/<arc>/candidate/<batch-n>` shares the units' candidate ref namespace, and `<runDir>/evidence/<unit>/` sits beside `evidence/jobs/` and `evidence/mutants/`). `{id: UnitId, spec: PlanPath, risk: RiskTier, scope: RepoPattern[] (non-empty), resources: ResourceName[], after?: UnitId[]}`; `after` (parsed as `[]` when absent) names units earlier in plan order, never the unit itself, each once: the unit is not dispatched while any of them is neither merged nor parked with its needs-user acknowledged (arc-1 feedback item 17; since M2, merged only, D1). M2 optional fields: `origin?: planned\|checkpoint`, `cpu?: positive` (build `@cpu` tokens, default 4), `contingent?: [{id: EdgeId, condition}]` (read as `[]`; ids unique across the plan), `reenters?: {unit (earlier in plan order, not itself), enterAt?: plan-check\|build\|verify, reset?: {ruling: RulingId}}`, `cut?: {reason, ruling?: RulingId}` |
 | `holistic?` (M3, A5) | `{vision: PlanPath, advances: V-n[] (ascending, non-empty), obligations?: PlanPath, audit?: {every?: positive, lenses?: LensKind[] (ascending, non-empty), wallClockMin?: positive}, checkpoint?: {everyMilestones?: positive}}` | present exactly when the arc runs the holistic layer; `vision` names a `roadmap/vision-m3` file, `advances` the slice of it this arc moves toward (active clauses of the vision, at least one `world`; checked at startup and on every classified revision, `advancesReasons`; owner-only: only an `apply` changes it, `PlanChange` `advances`; the other active clauses are the horizon), `obligations` a `roadmap/obligations-m3` file (absent: none); `audit.every` N (default 5, D3), `audit.lenses` the required lens set L (default all four, H9, `lensSetOf`), `wallClockMin` (default 360); `checkpoint.everyMilestones` K (default 2, `DEFAULT_CHECKPOINT`), milestone steering cadence ("Milestone checkpoint cadence" below). An apply may add it, never remove it |
-| `limits?` (M3) | `{chargeable?, redirects?, reviseRounds?, candidateReds?, retries?, judgmentDeadlineMin?, freshBuildMin?, editAllowanceMin?, convergenceK?}`, all positive | the units' bounds over the built-in ones (`DEFAULT_BOUNDS`: 3, 2, 2, 1, 1, 45, 180, 60) and the arc's convergence K (default 3); a unit's own `limits` (same fields but `convergenceK`) override them (`boundsOf(plan, unit)`). Unit M3 fields: `routing?: RoutingLayer` (the unit layer, `route` and `steer --class`), `limits?`, and `origin: repair` (needs a spec with non-empty `repairs`) |
+| `limits?` (M3) | `{chargeable?, certifications?, redirects?, reviseRounds?, candidateReds?, retries?, judgmentDeadlineMin?, freshBuildMin?, editAllowanceMin?, convergenceK?}`, all positive | the units' bounds over the built-in ones (`DEFAULT_BOUNDS`: 3, 4, 2, 2, 1, 1, 45, 180, 60) and the arc's convergence K (default 3); a unit's own `limits` (same fields but `convergenceK`) override them (`boundsOf(plan, unit)`). Unit M3 fields: `routing?: RoutingLayer` (the unit layer, `route` and `steer --class`), `limits?`, and `origin: repair` (needs a spec with non-empty `repairs`) |
 
 `ToolCommand = {argv, cwd: RepoPath, env: LaneEnv}`, run from the repo root. Probe exit contract
 (`PROBE_EXIT`): `0` free, `10` occupied under this unit's own label, `11` unlabelled or foreign; any other exit
@@ -632,10 +655,14 @@ src/pipeline/unit.ts) with an uncharged `interrupted` hold; the fold requires it
 started before the latest `executor-started`, leaves `decided` and `interrupted` as they were (the re-run starts where
 the abandoned attempt did), and sets the unit `held` while it or the arc is paused, else `active`.
 
+Certification-red outcomes add optional `unchargedLanesReds` (non-negative): the count after this outcome, required
+on new records and absent on dev.31 ones (read as 0, warned). It appears only on lanes `red`, `not-certified` and
+`witnesses-missing`. The fold validates the allowance, charge and class; see "Turn-boundary certification" above.
+
 The fold derives each unit's `UnitState` from these facts through `afterStageOutcome` (`src/core/state.ts`),
 the same function the transition table uses, so a decision's counters are the log's:
 `{unit, stage, risk, status: active|held|park-pending|stop-pending|retired, counters: {attempts,
-chargeableFailures, redirects, reviseRounds, candidateReds, retries: {plan-check, build, lanes, gate}},
+chargeableFailures, unchargedLanesReds, redirects, reviseRounds, candidateReds, retries: {plan-check, build, lanes, gate}},
 routedUp: JudgmentStage[], promotion, decided, interrupted, approval, open, spec: {rev, sha256}|null, reopened: {command|null,
 specRev}|null, pendingRevision: {rev, sha256, command|null}|null, redirectBase}`. `decided` is the unit's latest stage-outcome fact
 whose class is not `hold` (null before one, and after a `reopened` fact): the unit driver (`src/pipeline/unit.ts`) reads the next stage from
@@ -672,7 +699,7 @@ until fsync returns for the full line.
 
 **Fold invariants** (violation = refuse): contiguous seq; chain intact; ≤ 1 open intent per key; done/abort
 match an open intent; ordinal strictly increasing per key; a retry (same op, next ordinal) inherits
-`deadlineAt`, `key` and `parent`; counters `monotonic()`; one `stage-outcome` per `(unit, stage, attempt)`;
+`deadlineAt`, `key` and `parent`; cumulative counters `monotonic()` (the certification allowance is resettable); one `stage-outcome` per `(unit, stage, attempt)`;
 the chargeable outcome that reaches `CHARGEABLE_BOUND` (3) has class `park`; a later `dispatch` of a unit keeps
 its `scope` and does not lower its `riskFloor`; a `reopened` fact names a unit that is `park-pending` with its
 `decided` stage `plan-check` or `gate`, or `active` with a pending revision, at `specRev` = its recorded `spec.rev` +
@@ -1439,7 +1466,7 @@ The records are in place above; this section fixes their semantics and the sched
 **Resources.** `ResourceUnit = ResourceName | PoolInstance | CpuToken` (Ids). Holders reserve all-or-none in lock
 order. `CPU_COST`: judgment 1, build `unit.cpu ?? 4`, fast lane 2, estate lane 4 (`LaneDef.cpu` overrides), probe
 and teardown 0; the `@cpu` pool has `plan.capacity.cpu ?? availableParallelism()` tokens. Entry reservations (`EntryReservation`, F6), taken before a stage's first journaled op: plan-check and gate
-`@cpu`×1; build the unit's resources and its `@cpu`; lanes the first lane's set; candidate the publication
+`@cpu`×1; build only its `@cpu` (an adopted dev.31 named reservation remains held until teardown); lanes the first lane's set; candidate the publication
 (`integration-slot`, held by `publication{unit, attempt}` through `ff` and `snapshot` once green, A2); prepare none.
 `Acquire(request: ResourceRequest{named, pools, cpu, publication}, holder, rank, signal) → granted{units} |
 cancelled` (a cancelled wait journals nothing). Plan-load refusal for a new arc or a new pool:
@@ -3085,10 +3112,8 @@ cwd (relative to the worktree), env: {set, pass}, reporter, required: string[] (
 **Role schemas** (`src/prompts/schemas.ts`). `BuildOutput + experiments: [{name, argv (non-empty), exit}], + final: true`
 (the report rule: the schema's `final` is a boolean, the reader admits only `true`, so a session that ended on an interim
 answer is a malformed build and its resume quotes why);
-`buildSchemaFor(lanes | null)` (the per-call schema: `lanesRun[].lane` an enum of the spec's fast lanes when it has any;
-`experiments`) and `buildOutputFor(lanes | null)` (the validator, a lane outside `lanes` refused). `BUILD_SCHEMA` is `buildSchemaFor(null)`,
-the role's one schema as its prompt modules carry it (N3 deleted the pre-N3 literal); each call writes its own over
-`buildLaneIds(spec)` (src/pipeline/stages.ts). `checkpointSchemaFor(ids | null)` likewise (paid M4b run 5): `ids =
+`BUILD_SCHEMA` is the build role's single schema and `buildOutput` its validator. `lanesRun` is absent from new reports;
+old answers carrying it are accepted and ignored. `experiments` holds targeted checks the builder ran. `checkpointSchemaFor(ids | null)` likewise (paid M4b run 5): `ids =
 CheckpointIds{arcLanes, splittable, obligations}` (`checkpointIdsOf(obligations)` over the captured obligations, null
 without them) make a split child's `witness.lane` an enum of the arc lanes, a split's `obligation` one of the active
 obligations and a dispose's `obligation` one of the obligations in force (an empty set stays any string); unit ids stay
@@ -3307,8 +3332,8 @@ sections and marks converted amendments.
     write-back (`writeBack`, shared with `rule`; a command already applied finishes it through `writeBackAfter`). A
     `--ruling` apply never takes the already-in-force shortcut. (2026-10-16: no write-back; the check reads every apply's
     merged ledger, "Apply rebase".)
-17. **Build schema, resume, resolve (N3, I3, 8d).** Each build call writes `buildSchemaFor(buildLaneIds(spec))` and reads
-    its answer with the same lanes; a resume round quotes why the answer was malformed (`resumeDirectives`,
+17. **Build schema, resume, resolve (N3, I3, 8d).** Each build call writes `BUILD_SCHEMA` and reads
+    its answer with `buildOutput`; a resume round quotes why the answer was malformed (`resumeDirectives`,
     src/pipeline/unit.ts `malformedError`). `resolvedHead` (src/git/mergein.ts): a resolve round may leave HEAD on
     first-parent non-merge commits after the merge `[old, T]`. Every implementer directive's text lives in
     src/prompts/directives.ts, from which src/pipeline/rounds.ts builds rounds.
@@ -3742,7 +3767,7 @@ fast lanes. Now the lanes stage runs the plan's fast suite lanes in code, and th
 - **A failed fast suite** (a red lane, or a changed checkout) runs again on the unit's diff base alone, `diffBase(T,
   salvage)`: the red lane only (a series stops at it), or every lane that ran for a changed checkout, in
   `<unit>.fast-base-<attempt>`, evidence under `_base`. Base green → `red` (or `not-certified` for a changed checkout), a
-  chargeable fix round whose evidence is the spec series' and the fast suite's at the salvage SHA (the live `laneFixRound`
+  fix round, uncharged within the certification allowance, whose evidence is the spec series' and the fast suite's at the salvage SHA (the live `laneFixRound`
   and the rebuilt `lanesFixRound`, src/pipeline/unit.ts, read both). Base failed too → `base-red{base, lanes,
   changedCheckout}`, uncharged, `go(gate)`; the D1/D2 checks still run. A base equal to the salvage SHA (a unit with
   nothing of its own) failed by the fast suite's own run. A base check without a verdict (blocked, interrupted, occupied,
@@ -3758,8 +3783,8 @@ fast lanes. Now the lanes stage runs the plan's fast suite lanes in code, and th
 - **Apply.** The suite lanes may not change while a lanes attempt is open or a unit's decided outcome is lanes `red` or
   `not-certified` (its fix round reads the fast suite back by the definitions in force), as at a candidate.
 - **Prompt.** `BuildInputs.suiteLanes`: both build modules render them, when there are any, as exact commands the builder
-  runs beside its fast lanes after its last change, reported as `experiments` (`suite:<id>`); `lanesRun` stays the spec's
-  fast lanes (its schema's enum).
+  may use for targeted development checks, reported as `experiments`. Only resource-free build-cadence lanes are
+  shown. The final report requests the executor's full lanes stage; builders do not rehearse the full suite.
 - **Flow.** A lanes attempt's suite spawns are service of `stage:lanes` (`spawnStation`); `suiteRunOf` reads only a
   candidate's or a batch's suite runs, so `suiteRuns`, `firstRunReds` and the suite-lane levers' metrics are unchanged.
 

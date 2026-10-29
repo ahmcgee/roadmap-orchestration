@@ -223,9 +223,10 @@ export function laneRuntime(ctx: StageContext, unit: UnitId): LaneRuntime {
   return { acquire: ctx.acquire, rank: () => ctx.rank(unit), signal: ctx.signal, sampleHost: readHostSample };
 }
 
-/** In cadence order (build, unit, candidate, batch); declared order within a cadence. */
-export function seriesOrder<L extends LaneDef>(lanes: readonly L[]): readonly L[] {
-  return LANE_CADENCES.flatMap((c) => lanes.filter((l) => l.cadence === c));
+/** Previously red lanes first, then cadence order; declared order within a cadence. */
+export function seriesOrder<L extends LaneDef>(lanes: readonly L[], red: ReadonlySet<LaneId> = new Set()): readonly L[] {
+  const cadence = LANE_CADENCES.flatMap((c) => lanes.filter((l) => l.cadence === c));
+  return [...cadence.filter((l) => red.has(l.id)), ...cadence.filter((l) => !red.has(l.id))];
 }
 
 /** The spec's series: struck and deferred lanes do not run. */
@@ -243,9 +244,9 @@ export function stageSuiteLanes(suite: readonly LaneDef[], spec: SpecM1, forced:
   return seriesOrder(suite.filter((l) => (cadenceAtOrBefore(l.cadence, 'unit') || forced.has(l.id)) && !active.some((s) => sameExecution(l, s))));
 }
 
-/** The suite lanes a builder runs before its final report: the build-cadence ones of `stageSuiteLanes`. */
+/** Resource-free build-cadence suite lanes available for the builder's targeted checks. */
 export const builderSuiteLanes = (suite: readonly LaneDef[], spec: SpecM1): readonly BuildLane[] =>
-  stageSuiteLanes(suite, spec, new Set()).filter((l): l is BuildLane => l.cadence === 'build');
+  stageSuiteLanes(suite, spec, new Set()).filter((l): l is BuildLane => l.cadence === 'build' && l.resources.length === 0 && l.environment === undefined);
 
 /**
  * The lane's declared env verbatim (`set`, and `pass` copied from the host), plus the unit's owner label and

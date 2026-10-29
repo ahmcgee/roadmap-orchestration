@@ -22,7 +22,7 @@ import { PROMPTS, SONNET_THINK_FIRST, UnsupportedPromptError, promptSize, render
 import type { BoundedDiff } from '../src/git/boundeddiff.ts';
 import { type RoleInputs, ROLE_INPUTS, UNIT_POLICY, laneCommand, obligationsText, pasted, pastedAs, targetDocument } from '../src/prompts/inputs.ts';
 import {
-  CHECKPOINT_SCHEMA, CLUSTER_REVIEWS, GATE_SCHEMA, PLAN_CHECK_SCHEMA, ROLE_SCHEMAS, ROLE_VALIDATORS, type RoleOutputs, buildSchemaFor,
+  CHECKPOINT_SCHEMA, CLUSTER_REVIEWS, GATE_SCHEMA, PLAN_CHECK_SCHEMA, ROLE_SCHEMAS, ROLE_VALIDATORS, type RoleOutputs, BUILD_SCHEMA,
   validateBuildOutput, validateCheckpointOutput, validateDecisionsFile, validateGateOutput, validatePackReviewOutput, validatePlanCheckOutput,
 } from '../src/prompts/schemas.ts';
 import { repeatRedDirective, smokeFixDirectives, witnessFixDirectives } from '../src/prompts/directives.ts';
@@ -435,7 +435,7 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
     ],
   },
   build: {
-    summary: 'Added the parser.', changedPaths: ['src/a/parse.ts'], lanesRun: [{ lane: 'unit', exit: 0 }], blockers: [], experiments: [], docsOnlySince: null, final: true,
+    summary: 'Added the parser.', changedPaths: ['src/a/parse.ts'], blockers: [], experiments: [], docsOnlySince: null, final: true,
   },
   gate: {
     decision: 'revise', reasons: ['A2 untested'], directives: ['Add a test for A2.'],
@@ -595,7 +595,7 @@ describe('prompts', () => {
     for (const model of ['claude-opus-5-5', 'gpt-5.6-luna'] as const) {
       const mod = promptFor('build', model);
       const sys = mod.system;
-      for (const needle of [/fast lane/, /decisions\.json/, /\.roadmap\//, /[Ee]state lanes/, /Committing is optional/]) {
+      for (const needle of [/targeted checks/, /certification allowance/, /full lanes stage/, /decisions\.json/, /\.roadmap\//, /[Ee]state lanes/, /Committing is optional/]) {
         assert.match(sys, needle, `build/${model}: ${needle}`);
       }
       assert.doesNotMatch(sys, /decisionsRecorded/, `build/${model}: decisions go only to decisions.json`);
@@ -1194,23 +1194,23 @@ describe('M4a rev 3 prompts: executable checks, the checkpoint admits', () => {
       assert.doesNotMatch(plain, /witness-check/, `${model}: no witness checks without required witnesses`);
       const text = mod.render({ ...SAMPLES.build[1], fixRound: null });
       assert.match(text, /- journey:\n {2}roadmap witness-check --lane-file \/run\/ev\/b\/witness\/journey\.json/, `${model}: the exact command per lane`);
-      assert.match(text, /every fast lane and witness check passes/, `${model}: the ask names the witness checks`);
-      for (const needle of [/after your last change/, /exactly the id the spec gives/, /witness item/, /missing or failing id is a blocker/,
-        /real entry point/, /injected/, /never a helper|calls a helper directly/, /experiments/, /never a fast lane/]) {
+      assert.match(text, /using targeted checks/, `${model}: the ask names the witness checks`);
+      for (const needle of [/after changes to the witnesses|after your last change/, /exactly the id the spec gives/, /witness item/, /missing or failing id is a blocker/,
+        /real entry point/, /injected/, /never a helper|calls a helper directly/, /experiments/, /do not rehearse the full lane suite/]) {
         assert.match(mod.system + text, needle, `build/${model}: ${needle}`);
       }
       // prompt fields == schema required: the report the schema asks for is the report the prompt describes.
-      namesEvery(mod.system, requiredKeys(buildSchemaFor(null)), `build/${model}`);
+      namesEvery(mod.system, requiredKeys(BUILD_SCHEMA), `build/${model}`);
     }
   });
 
-  it('prompts.build-suite-lanes: the plan\'s fast suite lanes as exact commands run beside the fast lanes, reported as experiments; nothing without them', () => {
+  it('prompts.build-suite-lanes: the plan\'s resource-free suite lanes as references for targeted checks, reported as experiments; nothing without them', () => {
     for (const model of BUILDERS) {
       const mod = promptFor('build', model);
       assert.doesNotMatch(mod.render(SAMPLES.build[0]), /[Ss]uite lanes?/, `${model}: no suite section without suite lanes`);
       const text = mod.render({ ...SAMPLES.build[1], fixRound: null });
       assert.match(text, /- eslint \(expects exit 0\):\n {2}cd \/wt\/b && env CI=1 npx eslint \./, `${model}: the exact command`);
-      for (const needle of [/after your fast lanes/, /fix round/, /after your last change/, /experiments/, /suite:<id>/, /never in lanesRun/]) {
+      for (const needle of [/full lanes stage/, /targeted checks/, /experiments/, /[Dd]o not rehearse the full suite/]) {
         assert.match(text, needle, `build/${model}: ${needle}`);
       }
     }

@@ -20,7 +20,7 @@ import {
 } from './validate.ts';
 import type { SchemaVersion } from './version.ts';
 import {
-  type LaneKind, applyExpectRevDefault, applyVisionEditDefault, designKindDefault, dev6SmokeBounds, issuesIgnored, laneCadenceDefault, laneInputsDropped,
+  type LaneKind, applyExpectRevDefault, applyVisionEditDefault, designKindDefault, dev6SmokeBounds, dev31CertificationsDefault, issuesIgnored, laneCadenceDefault, laneInputsDropped,
 } from './upgrade.ts';
 import { type DesignRecord, type UnitKind, designRecord } from './design.ts';
 import { type ContractPin, type Pinned, type RequirementPin, type SpecPin, UNPINNED, pinTarget, specPin } from './pins.ts';
@@ -758,6 +758,8 @@ export const obligationRevsOf = (fp: ApprovalFingerprint): readonly ObligationRe
 export type Bounds = Readonly<{
   /** The chargeable failure that reaches this parks the unit (design). */
   chargeable: number;
+  /** Every nth certification red is charged; the preceding reds are uncharged. */
+  certifications: number;
   /** Plan-check redirects since the architect's latest spec revision. */
   redirects: number;
   reviseRounds: number;
@@ -774,22 +776,24 @@ export type Bounds = Readonly<{
   smokeRuns: number;
 }>;
 export const BOUND_FIELDS = [
-  'chargeable', 'redirects', 'reviseRounds', 'candidateReds', 'retries', 'judgmentDeadlineMin', 'freshBuildMin', 'editAllowanceMin', 'smokeRounds', 'smokeRuns',
+  'chargeable', 'redirects', 'reviseRounds', 'candidateReds', 'retries', 'judgmentDeadlineMin', 'freshBuildMin', 'editAllowanceMin', 'smokeRounds', 'smokeRuns', 'certifications',
 ] as const satisfies readonly (keyof Bounds)[];
-/** The bound fields a 1.0.0-dev.6 dispatch record carries; the rest (`smokeRounds`, `smokeRuns`) read as the defaults. */
+/** The bound fields a 1.0.0-dev.6 dispatch record carries; later fields read as the defaults. */
 export const DEV6_BOUND_FIELDS = BOUND_FIELDS.slice(0, 8) as readonly (keyof Bounds)[];
 /** The built-in bounds: M2's constants and M4a rev 3's smoke bounds (unmeasured defaults). */
 export const DEFAULT_BOUNDS: Bounds = {
   chargeable: 3, redirects: 2, reviseRounds: 2, candidateReds: 1, retries: 1, judgmentDeadlineMin: 45, freshBuildMin: 180, editAllowanceMin: 60,
-  smokeRounds: 1, smokeRuns: 2,
+  smokeRounds: 1, smokeRuns: 2, certifications: 4,
 };
 /**
- * Bounds as a dispatch record holds them: every field since M4a rev 3; a 1.0.0-dev.6 record's lack the smoke bounds,
- * read byte-preserving (G14) and completed by `boundsOfRecord` (`dev6SmokeBounds`, src/core/upgrade.ts).
+ * Bounds as recorded, byte-preserving (G14): dev.6 lacks the smoke bounds, dev.31 lacks certifications.
+ * `boundsOfRecord` fills those defaults with a logged upgrade warning (src/core/upgrade.ts).
  */
-export type BoundsRecord = Omit<Bounds, 'smokeRounds' | 'smokeRuns'> & Partial<Pick<Bounds, 'smokeRounds' | 'smokeRuns'>>;
+export type BoundsRecord = Omit<Bounds, 'smokeRounds' | 'smokeRuns' | 'certifications'> & Partial<Pick<Bounds, 'smokeRounds' | 'smokeRuns' | 'certifications'>>;
 export const bounds: Read<BoundsRecord> = object((f) => {
   const out: Record<string, number> = Object.fromEntries(DEV6_BOUND_FIELDS.map((k) => [k, f.get(k, positive)]));
+  const certifications = f.optional('certifications', positive);
+  if (certifications !== undefined) out['certifications'] = certifications;
   const rounds = f.optional('smokeRounds', positive);
   const runs = f.optional('smokeRuns', positive);
   if ((rounds === undefined) !== (runs === undefined)) throw new SchemaError(`${f.path}.smokeRounds`, 'both smoke bounds or neither (a 1.0.0-dev.6 record)', { rounds, runs });
@@ -860,11 +864,12 @@ export const dispatchRecord: Read<DispatchRecord> = object((f) => {
   };
 });
 
-/** The bounds a dispatch record pins: its own (a dev.6 record's smoke bounds defaulted), or the built-in ones when it names none. */
+/** The bounds a dispatch record pins, defaulting absent smoke and certification bounds; built-in ones before a pin. */
 export function boundsOfRecord(record: DispatchRecord | null): Bounds {
   const b = record?.bounds;
   if (b === undefined) return DEFAULT_BOUNDS;
-  return b.smokeRounds === undefined || b.smokeRuns === undefined ? { ...b, ...dev6SmokeBounds() } : (b as Bounds);
+  return { ...b, ...(b.smokeRounds === undefined || b.smokeRuns === undefined ? dev6SmokeBounds() : {}),
+    certifications: b.certifications ?? dev31CertificationsDefault() } as Bounds;
 }
 
 // ---------------------------------------------------------------------------------------------------

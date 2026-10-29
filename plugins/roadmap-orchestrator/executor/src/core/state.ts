@@ -9,9 +9,9 @@ import {
   type AbortRecord, type AuditInputs, type BackendParkClass, type CoveredRange, type DoneRecord, type Event, type Fact, type HolisticFact, type Holder,
   type IntentOf, type IntentRecord, type JudgmentInputs, type JudgmentStage, type OpKind, type Parent, type ParkRecord, type PlanAppliedFact, type ProbeTarget,
   type ResourceEdge, type RetryStage, type ScopeGrowthProposal, type StageOutcomeFact, JUDGMENT_STAGES, RECLAIM_HOLDERS, RESIDUE_HOLDERS, RETRY_STAGES, RETRYABLE_BACKEND_PARKS,
-  prevHash, probeTargetKey, serializeEvent,
+  prevHash, probeTargetKey, serializeEvent, certificationRed,
 } from './events.ts';
-import { checkpointSkipTriggerOf } from './upgrade.ts';
+import { checkpointSkipTriggerOf, dev31UnchargedLanesRedsDefault } from './upgrade.ts';
 import { CounterRegressionError } from './fsx.ts';
 import {
   type AmendmentId, type ArcId, type ClaudeSessionId, type CommandId, type DivergenceId, type EdgeId, type FindingId, type InvocationId, type JobId, type JobKind, type NeedsUserId, type ObligationId,
@@ -46,11 +46,13 @@ export type TailDiscarded = Extract<Fact, { kind: 'tail-discarded' }>;
 /** The third chargeable (design-class) failure parks the unit, unless its `limits` say otherwise (M3). */
 export const CHARGEABLE_BOUND = DEFAULT_BOUNDS.chargeable;
 
-/** Cumulative per-unit counters, all `monotonic()`. */
+/** Per-unit counters: cumulative except the resettable certification allowance. */
 export type UnitCounters = Readonly<{
   /** Stage starts: distinct (stage, attempt) pairs named by a stage-parented intent or a stage-outcome fact. */
   attempts: number;
   chargeableFailures: number;
+  /** Certification reds since the last charge; reset on a charge, initially 0. */
+  unchargedLanesReds: number;
   /** Plan-check redirects applied. */
   redirects: number;
   /** Gate revise rounds taken. */
@@ -254,7 +256,7 @@ export function newUnitState(unit: UnitId, stage: Stage, risk: RiskTier | null, 
   const retries = Object.fromEntries(RETRY_STAGES.map((s) => [s, 0])) as Record<RetryStage, number>;
   return {
     unit, stage, risk, status: 'active', routedUp: [], promotion: false, decided: null, interrupted: null, pressureHold: null, pressureHolds: 0,
-    approval: null, open: null, counters: { attempts: 0, chargeableFailures: 0, redirects: 0, reviseRounds: 0, candidateReds: 0, smokeRounds: 0, retries },
+    approval: null, open: null, counters: { attempts: 0, chargeableFailures: 0, unchargedLanesReds: 0, redirects: 0, reviseRounds: 0, candidateReds: 0, smokeRounds: 0, retries },
     spec, reopened: null, pendingRevision: null, staleRev: null, redirectBase: 0,
     park: null, lastRecovery: null, buildTier: risk, lineage: null, supersededBy: null, bounds, entry: null, steering: null, scopeDecisions: [], failures: [],
     pocs: 0,
@@ -283,7 +285,7 @@ const STATUS_OF: Partial<Record<StageOutcomeFact['class'], UnitStatus>> = {
  * function (`src/pipeline/transitions.ts`) share, so the counters a decision predicts are the counters the
  * log derives. `attempts` is left to the caller: it counts stage starts, which the fold sees.
  */
-export function afterStageOutcome(u: UnitState, f: Pick<StageOutcomeFact, 'stage' | 'class' | 'chargeable'>): UnitState {
+export function afterStageOutcome(u: UnitState, f: Pick<StageOutcomeFact, 'stage' | 'outcome' | 'class' | 'chargeable' | 'unchargedLanesReds'>): UnitState {
   const c = u.counters;
   const add = (cls: StageOutcomeFact['class']): number => (f.class === cls ? 1 : 0);
   const judgment = (JUDGMENT_STAGES as readonly Stage[]).includes(f.stage);
@@ -294,6 +296,8 @@ export function afterStageOutcome(u: UnitState, f: Pick<StageOutcomeFact, 'stage
     counters: {
       ...c,
       chargeableFailures: c.chargeableFailures + (f.chargeable ? 1 : 0),
+      unchargedLanesReds: certificationRed(f.stage, f.outcome)
+        ? f.unchargedLanesReds ?? dev31UnchargedLanesRedsDefault() : f.chargeable ? 0 : c.unchargedLanesReds,
       redirects: c.redirects + add('redirect'),
       reviseRounds: c.reviseRounds + add('revise'),
       candidateReds: c.candidateReds + add('candidate-red'),
@@ -1077,6 +1081,14 @@ export class Fold implements JournalView {
         const bound = existing?.state.bounds.chargeable ?? boundsOfRecord(this.dispatchOf(f.unit)).chargeable;
         if (f.chargeable && failures + 1 >= bound && f.class !== 'park') {
           fail(`stage-outcome for ${f.unit} ${key} is chargeable failure ${failures + 1}, which parks the unit, but its class is ${f.class} (the unit's bound is ${bound})`);
+        }
+        if (f.unchargedLanesReds !== undefined) {
+          const state = existing?.state ?? newUnitState(f.unit, f.stage, null, null, boundsOfRecord(this.dispatchOf(f.unit)));
+          const steered = state.steering !== null && f.class === 'park' && (f.outcome === 'red' || f.outcome === 'not-certified');
+          const charged = !steered && state.counters.unchargedLanesReds >= state.bounds.certifications - 1;
+          const count = steered ? state.counters.unchargedLanesReds : charged ? 0 : state.counters.unchargedLanesReds + 1;
+          const cls = steered || (charged && failures + 1 >= bound) ? 'park' : 'advance';
+          if (f.chargeable !== charged || f.unchargedLanesReds !== count || f.class !== cls) fail(`stage-outcome for ${f.unit} ${key} violates its certification allowance`);
         }
         const status = existing?.state.status;
         if (status === 'cut' || status === 'superseded') fail(`stage-outcome for ${f.unit} ${key}, which is ${status}`);

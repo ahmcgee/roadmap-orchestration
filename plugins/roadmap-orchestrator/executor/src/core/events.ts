@@ -694,10 +694,16 @@ export type StageOutcomeFact = { [S in OutcomeStage]: Readonly<{
   outcome: StageOutcomeKind<S>;
   class: OutcomeClass;
   chargeable: boolean;
+  /** Certification reds only: uncharged reds since the last charge, after this outcome. Absent on dev.31: 0. */
+  unchargedLanesReds?: number;
   park?: ParkRecord;
   cause?: HoldCause;
   detail?: StageOutcomeDetail;
 }> }[OutcomeStage];
+
+/** The lanes outcomes covered by the uncharged certification allowance. */
+export const certificationRed = (stage: string, outcome: string): boolean =>
+  stage === 'lanes' && (outcome === 'red' || outcome === 'not-certified' || outcome === 'witnesses-missing');
 
 /**
  * What a judgment stage attempt was admitted with (F1), written after its entry reservation and before its
@@ -2613,6 +2619,8 @@ export const fact: Read<Fact> = tagged('kind', {
       class: f.get('class', oneOf(OUTCOME_CLASSES)),
       chargeable: f.get('chargeable', bool),
     } as StageOutcomeFact;
+    const unchargedLanesReds = f.optional('unchargedLanesReds', nat);
+    if (unchargedLanesReds !== undefined && !certificationRed(s, out.outcome)) throw new SchemaError(`${f.path}.unchargedLanesReds`, 'only on a certification red', unchargedLanesReds);
     const park = f.optional('park', parkRecord);
     const cause = f.optional('cause', holdCause);
     const detail = f.optional('detail', stageOutcomeDetail);
@@ -2631,7 +2639,7 @@ export const fact: Read<Fact> = tagged('kind', {
     const holds = out.outcome === 'interrupted' || ((s === 'plan-check' || s === 'lanes') && out.outcome === 'scope-growth') || (s === 'plan-check' && out.outcome === 'split');
     if (holds !== (out.class === 'hold')) throw new SchemaError(`${f.path}.class`, 'hold exactly for an interrupted outcome, a scope-growth or a split', out.class);
     if (out.class === 'hold' && out.chargeable) throw new SchemaError(`${f.path}.chargeable`, 'false for a hold', out.chargeable);
-    return { ...out, ...(park === undefined ? {} : { park }), ...(cause === undefined ? {} : { cause }), ...(detail === undefined ? {} : { detail }) } as StageOutcomeFact;
+    return { ...out, ...(unchargedLanesReds === undefined ? {} : { unchargedLanesReds }), ...(park === undefined ? {} : { park }), ...(cause === undefined ? {} : { cause }), ...(detail === undefined ? {} : { detail }) } as StageOutcomeFact;
   }),
 });
 

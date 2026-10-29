@@ -6,7 +6,7 @@
 // `result` per turn, `result_index` 0, 1, 2, each schema-valid). A schema-valid result alone therefore does not say
 // the build is done; the answer says so itself.
 //
-// A role whose schema declares a top-level boolean `final` (the build answer, src/prompts/schemas.ts `buildSchemaFor`)
+// A role whose schema declares a top-level boolean `final` (the build answer, src/prompts/schemas.ts `BUILD_SCHEMA`)
 // marks its final report `final: true` and an answer it gives only because it ends a turn to wait `final: false`.
 // The runner watches the terminal's output: Claude's stdout stream (its latest `result` event's `structured_output`),
 // Codex's `-o` file (written once, at the end of the turn). Once the latest report is schema-valid and final, and the

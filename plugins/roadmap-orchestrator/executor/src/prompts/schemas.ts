@@ -456,19 +456,16 @@ export function validateScaffoldOutput(value: unknown): ScaffoldOutput {
 // ---------------------------------------------------------------------------------------------------
 // build
 
-export type LaneRun = Readonly<{ lane: LaneId; exit: number }>;
-/** M4a rev 3 (I3, F25): anything else the implementer ran, named, with its argv and exit. */
+/** M4a rev 3 (I3, F25): a development check the implementer ran, named, with its argv and exit. */
 export type Experiment = Readonly<{ name: string; argv: readonly string[]; exit: number }>;
 export type BuildOutput = Readonly<{
   /** Two or three sentences: what changed and why. */
   summary: string;
   /** The implementer's claim; the executor reads the truth from git at salvage. */
   changedPaths: readonly string[];
-  /** Every fast lane the implementer ran before finishing, with its exit code. */
-  lanesRun: readonly LaneRun[];
   /** What kept the unit from being complete; empty when it is. Decisions go to decisions.json, never here. */
   blockers: readonly string[];
-  /** M4a rev 3 (I3): every other command it ran (never a fast lane); a 1.0.0-dev.6 answer has none (`buildExperimentsDefault`). */
+  /** M4a rev 3 (I3): every command it ran to check its work; a 1.0.0-dev.6 answer has none (`buildExperimentsDefault`). */
   experiments: readonly Experiment[];
   /**
    * dev.17 (proportional review): the tested SHA since which the build says it changed only comments and documentation, or
@@ -497,49 +494,35 @@ const S_DOCS_ONLY_SINCE: Schema = {
   description: 'The full SHA of the last tree the executor certified for this unit, when everything you changed since it is comments or documentation only; otherwise null.',
 };
 
-/** The build answer's schema; `lanes` (M4a rev 3, I3) the spec's fast lane ids, which `lanesRun[].lane` then enumerates. */
-export function buildSchemaFor(lanes: readonly LaneId[] | null): Schema {
-  return sObj({
-    summary: S_STR,
-    changedPaths: sArr(S_STR),
-    lanesRun: sArr(sObj({ lane: lanes === null || lanes.length === 0 ? S_STR : sEnum(lanes), exit: S_INT })),
-    blockers: sArr(S_STR),
-    experiments: sArr(sObj({ name: S_STR, argv: sArr(S_STR), exit: S_INT })),
-    docsOnlySince: S_DOCS_ONLY_SINCE,
-    final: S_FINAL,
-  });
-}
-/**
- * The build role's schema as its prompt modules carry it: any lane id (I3). Each build call writes its own,
- * `buildSchemaFor(<its spec's fast lanes>)` (src/pipeline/stages.ts `buildLaneIds`), and its answer is read with the same lanes.
- */
-export const BUILD_SCHEMA: Schema = buildSchemaFor(null);
+/** The final build report requests certification by the executor's lanes stage. */
+export const BUILD_SCHEMA: Schema = sObj({
+  summary: S_STR,
+  changedPaths: sArr(S_STR),
+  blockers: sArr(S_STR),
+  experiments: sArr(sObj({ name: S_STR, argv: sArr(S_STR), exit: S_INT })),
+  docsOnlySince: S_DOCS_ONLY_SINCE,
+  final: S_FINAL,
+});
 
 const decision: Read<NoteDef> = object((f) => ({ id: f.get('id', (v, p): ClauseId => clauseId(v, p)), text: f.get('text', str) }));
 
 const experiment: Read<Experiment> = object((g) => ({ name: g.get('name', str), argv: g.get('argv', arrayOf(text, { nonEmpty: true })), exit: g.get('exit', int(0, 255)) }));
 
-/** A build answer; `lanes` (M4a rev 3, I3): the spec's fast lanes, the only lanes `lanesRun` may name (null: any lane id). */
-export function buildOutputFor(lanes: readonly LaneId[] | null): Read<BuildOutput> {
-  return object((f) => {
-    const experiments = f.optional('experiments', arrayOf(experiment));
-    const final = f.optional('final', literal(true));
-    const docsOnlySince = f.optional('docsOnlySince', nullable((v, p): Sha => sha(v, p)));
-    return {
-      summary: f.get('summary', str),
-      changedPaths: f.get('changedPaths', arrayOf(str)),
-      lanesRun: f.get('lanesRun', arrayOf(object((g) => ({
-        lane: g.get('lane', (v, p): LaneId => (lanes === null ? laneId(v, p) : oneOf(lanes)(v, p) as LaneId)),
-        exit: g.get('exit', int(0, 255)),
-      })))),
-      blockers: f.get('blockers', arrayOf(str)),
-      experiments: experiments ?? buildExperimentsDefault(),
-      docsOnlySince: docsOnlySince === undefined ? buildDocsOnlySinceDefault() : docsOnlySince,
-      final: final ?? buildFinalDefault(),
-    };
-  });
-}
-export const buildOutput: Read<BuildOutput> = buildOutputFor(null);
+/** Old answers may carry lanesRun; it is accepted and ignored, never certification evidence. */
+export const buildOutput: Read<BuildOutput> = object((f) => {
+  f.optional('lanesRun', arrayOf(object((g) => ({ lane: g.get('lane', (v, p) => laneId(v, p)), exit: g.get('exit', int(0, 255)) }))));
+  const experiments = f.optional('experiments', arrayOf(experiment));
+  const final = f.optional('final', literal(true));
+  const docsOnlySince = f.optional('docsOnlySince', nullable((v, p): Sha => sha(v, p)));
+  return {
+    summary: f.get('summary', str),
+    changedPaths: f.get('changedPaths', arrayOf(str)),
+    blockers: f.get('blockers', arrayOf(str)),
+    experiments: experiments ?? buildExperimentsDefault(),
+    docsOnlySince: docsOnlySince === undefined ? buildDocsOnlySinceDefault() : docsOnlySince,
+    final: final ?? buildFinalDefault(),
+  };
+});
 
 export function validateBuildOutput(value: unknown): BuildOutput {
   return buildOutput(value, 'build');

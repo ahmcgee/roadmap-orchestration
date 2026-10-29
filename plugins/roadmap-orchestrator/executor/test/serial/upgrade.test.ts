@@ -10,7 +10,7 @@
 //
 // Which releases: HEAD (1.0.0-dev.24) adopts arcs started on 1.0.0-dev.7 to dev.21, through the defaults of
 // src/core/upgrade.ts. Five are covered here. Every unlabelled cell starts its arc on the previous release
-// (PREVIOUS_RELEASE, 1.0.0-dev.21). The dev.20 cells retain legacy snapshot and audit-only skip coverage; one cell has dev.21 publish a dev.20 arc's ref. The cells
+// (PREVIOUS_RELEASE, 1.0.0-dev.31). The dev.20 cells retain legacy snapshot and audit-only skip coverage; one cell has dev.21 publish a dev.20 arc's ref. The cells
 // labelled `upgrade.dev11.*` start theirs on 1.0.0-dev.11 (DEV11_RELEASE)
 // and those labelled `upgrade.dev10.*` on 1.0.0-dev.10 (DEV10_RELEASE): an arc started on each is in flight, so the
 // dev.11 and dev.10 defaults are live code. The cells labelled `upgrade.dev16.*` start theirs on 1.0.0-dev.16
@@ -290,9 +290,11 @@ type Release = Readonly<{ sha: string; version: string }>;
  * The previous release: its executor starts the arc, HEAD's finishes it, in every cell not labelled with an older
  * release. At each release, move it to the last released commit, the merge of the previous release's PR into main.
  * Merges here are merge commits, so a merged branch's shas stay reachable and `git archive` finds them. Now:
- * 1.0.0-dev.21, merged to main as PR #125, merge commit 03a45d7 (schema version 1).
+ * 1.0.0-dev.31, merged to main as PR #135 (schema version 1).
  */
-const PREVIOUS_RELEASE: Release = { sha: '03a45d7000565ac49491a6b15d6062ecb78e6313', version: '1.0.0-dev.21' };
+const PREVIOUS_RELEASE: Release = { sha: '9480057a78fe8d5660b0d6672341c8f473cda821', version: '1.0.0-dev.31' };
+/** dev.21's incomplete snapshot of an adopted dev.20 arc remains covered. */
+const DEV21_RELEASE: Release = { sha: '03a45d7000565ac49491a6b15d6062ecb78e6313', version: '1.0.0-dev.21' };
 /** dev.20 snapshots and audit-only skips still have to be adopted after the issues integration was removed. */
 const DEV20_RELEASE: Release = { sha: '6aea2bb5729a2c700a30cef65ff13f89a9838b5f', version: '1.0.0-dev.20' };
 /**
@@ -319,7 +321,7 @@ const DEV11_RELEASE: Release = { sha: '1f7f69681fbf637126046dfc0c01617b1adfdb17'
  * test starts none.
  */
 const DEV10_RELEASE: Release = { sha: 'b1c3666843fa458c46eb2e541c97f62dd0244328', version: '1.0.0-dev.10' };
-const RELEASES: readonly Release[] = [PREVIOUS_RELEASE, DEV20_RELEASE, DEV16_RELEASE, DEV11_RELEASE, DEV10_RELEASE];
+const RELEASES: readonly Release[] = [PREVIOUS_RELEASE, DEV21_RELEASE, DEV20_RELEASE, DEV16_RELEASE, DEV11_RELEASE, DEV10_RELEASE];
 /**
  * The releases before 1.0.0-dev.17: their lanes declare `tier`, not `cadence`, and their strict judgment schemas refuse
  * dev.17's answer fields (plan-check `staleLinks`; gate `rulings`, a finding's `defect`, `reraises` and `hunk`).
@@ -442,9 +444,9 @@ for (const release of [DEV20_RELEASE, PREVIOUS_RELEASE]) {
 
 // dev.21 left a dev.20 arc's issues captures out of the snapshots it published; dev.22 required them again, so HEAD
 // must still verify (and chain from) the ref dev.21 left.
-test(`upgrade.snapshot-dev21-of-dev20: a ref ${PREVIOUS_RELEASE.version} published for a ${DEV20_RELEASE.version} arc with issues captures verifies, adopts and passes Phase 0 on HEAD`, T, async () => {
+test(`upgrade.snapshot-dev21-of-dev20: a ref ${DEV21_RELEASE.version} published for a ${DEV20_RELEASE.version} arc with issues captures verifies, adopts and passes Phase 0 on HEAD`, T, async () => {
   const started = await loadFrom<typeof import('../helpers/corpusarc.ts')>(DEV20_RELEASE, 'test/helpers/corpusarc.ts');
-  const adopted = await loadFrom<typeof import('../helpers/corpusarc.ts')>(PREVIOUS_RELEASE, 'test/helpers/corpusarc.ts');
+  const adopted = await loadFrom<typeof import('../helpers/corpusarc.ts')>(DEV21_RELEASE, 'test/helpers/corpusarc.ts');
   const oldInputs = await loadFrom<typeof import('../../src/input/inforce.ts')>(DEV20_RELEASE, 'src/input/inforce.ts');
   const a = await started.corpusArc();
   await started.seal(a, { complete: false, before: (j) => {
@@ -722,7 +724,7 @@ function assertNoDefaultRead(p: Phase1, expected: readonly string[] = []): void 
   const allowed = p.release === DEV16_RELEASE ? DEV17_DEFAULTS : DEV20_LASTING;
   const kinds = [...hostLogs(p).matchAll(/roadmap: upgrade default \(([^)]+)\)/g)].map((m) => m[1]!);
   for (const kind of kinds) {
-    if (!expected.includes(kind) && !ISSUES_IGNORED.test(kind)) assert.match(kind, allowed, `HEAD read the ${p.release.version} arc with the ${kind} default`);
+    if (!expected.includes(kind) && !ISSUES_IGNORED.test(kind) && kind !== 'dispatch.bounds.certifications' && kind !== 'stage-outcome.unchargedLanesReds') assert.match(kind, allowed, `HEAD read the ${p.release.version} arc with the ${kind} default`);
   }
   if (p.release === DEV16_RELEASE) assert.ok(kinds.includes('lane.tier.spec'), `HEAD read the ${p.release.version} spec lanes' tier as their cadence, and warned`);
 }
@@ -833,6 +835,43 @@ test('upgrade.stop-mid-build: HEAD continues the Codex thread the previous relea
   // (no default, `assertNoDefaultRead`), and with no flake since, its deflake job mints nothing.
   assert.deepEqual(factsOf(f.after, 'flake-observed'), []);
   assert.deepEqual(factsOf(f.after, 'plan-applied').filter((x) => x.source.type === 'deflake'), [], 'no deflake unit');
+});
+
+for (const stage of ['build', 'lanes-red'] as const) test(`upgrade.certification-${stage}: dev.31's held build resources and charged red survive adoption`, T, async () => {
+  const c = clean();
+  const files = pageIdFiles(c);
+  const built: M1Step = stage === 'build' ? c.pageId.build : { ...c.pageId.build, acts: [{ type: 'commit', message: 'page-id red', files: {
+    ...files, 'src/page-id.js': 'export function pageId() { return "wrong"; }\n',
+  } }] };
+  const p = await preparePrevious([...c.slug, c.pageId.planCheck, built], []);
+  await crashPrevious(p, { label: 'unit.after-stage', occurrence: stage === 'build' ? 2 : 7, unit: 'page-id' });
+  const mid = journalOf(p).view;
+  const u = mid.unit(unitId('page-id'));
+  assert.equal(u.decided?.outcome, stage === 'build' ? 'success' : 'red');
+  assert.equal(u.bounds.certifications, 4, 'the adopted dispatch defaults its certification bound');
+  assert.equal(u.counters.unchargedLanesReds, 0, 'dev.31 had no uncharged certification reds');
+  assert.equal(u.counters.chargeableFailures, stage === 'build' ? 0 : 1, 'the old charge is preserved');
+  const held = mid.resources().get(resourceName(RESOURCE));
+  assert.equal(held?.status.state, stage === 'build' ? 'running' : 'free');
+  const head: readonly M1Step[] = stage === 'build' ? [c.pageId.gate]
+    : [{ ...c.pageId.build, round: 'resume', stdinContains: ['Certification allowance: 3 uncharged red certifications remaining'] }, c.pageId.gate];
+  const scope = scopeOf(p);
+  let f: Finished;
+  track(scope);
+  try { f = await finishOnHead(p, head); } finally { await teardown(scope); }
+  assertFinished(f);
+  assert.equal(f.view.unit(unitId('page-id')).counters.chargeableFailures, stage === 'build' ? 0 : 1);
+  assert.equal(f.view.unit(unitId('page-id')).counters.unchargedLanesReds, 0);
+  assert.match(hostLogs(p), /upgrade default \(dispatch\.bounds\.certifications\)/);
+  if (stage === 'lanes-red') assert.match(hostLogs(p), /upgrade default \(stage-outcome\.unchargedLanesReds\)/);
+  if (stage === 'build') {
+    const cleanup = f.after.filter((e) => e.type === 'intent' && e.kind === 'resource.transition'
+      && e.expect.holder.type === 'stage' && e.expect.holder.unit === 'page-id' && e.expect.holder.stage === 'build');
+    assert.deepEqual(cleanup.map((e) => e.type === 'intent' && e.kind === 'resource.transition' && e.expect.edge.type), ['clean', 'release']);
+    assert.ok(cleanup.every((e) => e.type === 'intent' && e.kind === 'resource.transition' && e.expect.resources.includes(resourceName(RESOURCE))));
+    assert.ok(f.after.some((e) => e.type === 'intent' && e.kind === 'proc.spawn' && e.expect.subject.purpose === 'teardown'
+      && e.expect.subject.resource === RESOURCE), 'startup recovery tears down the held dev.31 resource before releasing it');
+  }
 });
 
 test('upgrade.reopen-mid-plan-check: a unit the previous release parked, re-opened and stopped mid-judgment finishes on HEAD', T, async () => {
@@ -994,7 +1033,8 @@ test('upgrade.named-cpu-low-host: the previous release\'s plan\'s named resource
       // The same state-dir resource as `scratch`, under its own owner file.
       const cpu = JSON.parse(JSON.stringify(scratch).replaceAll('scratch', 'cpu')) as { name: string };
       assert.equal(cpu.name, 'cpu');
-      for (const u of plan.units) editJson<{ resources: string[] }>(join(l.input, u.spec), (spec) => ({ ...spec, resources: [...withCpu(spec.resources)] }));
+      for (const u of plan.units) editJson<{ resources: string[]; lanes: { resources: string[] }[] }>(join(l.input, u.spec), (spec) => ({ ...spec, resources: [...withCpu(spec.resources)],
+        lanes: spec.lanes.map((lane) => ({ ...lane, resources: [...withCpu(lane.resources)] })) }));
       return { ...plan, resources: [...plan.resources, cpu], units: plan.units.map((u) => ({ ...u, resources: [...withCpu(u.resources)] })) };
     });
   });
@@ -1566,7 +1606,9 @@ async function routingStable(release: Release): Promise<Readonly<{
   const spend = (JSON.parse(out.stdout) as { spend: { byRole: { calls: number }[]; byModel: { models: { model: string; calls: number }[]; unresolvedRevs: string[] } } }).spend;
   const total = (xs: readonly { calls: number }[]): number => xs.reduce((n, x) => n + x.calls, 0);
   const historical = factsOf(before, 'meter');
-  assert.ok(historical.length > 0 && historical.every((f) => f.prompt === undefined), 'adopted facts without prompt still resolve spend');
+  assert.ok(historical.length > 0);
+  assert.ok(historical.every((f) => release === PREVIOUS_RELEASE && f.subject.type !== 'smoke' ? f.prompt !== undefined : f.prompt === undefined),
+    'dev.31 seat calls record prompt sizes; smokes and older adopted facts without them still resolve spend');
   const metered = meterOf(journalOf(p).events);
   assert.deepEqual(spend.byModel.unresolvedRevs, []);
   assert.equal(total(spend.byModel.models), total(metered.bySeat), 'every metered seat call resolves to a model');

@@ -57,9 +57,9 @@
 //                       admit carries `targets`
 //   m4a3.witness-check  `roadmap witness-check` over a real `node --test` run of a 2-test file with the node-test witness
 //                       reporter: exit 0 when both required ids pass, 78 listing the missing id when one is absent
-//   m4a3.sonnet-build   claude-sonnet-5-5 medium build through the real build prompt and buildSchemaFor (`experiments`): the
-//                       answer validates (buildOutputFor), the fast lane is reported, the file exists
-//   m4b.build-wait-report  (M4b, the report rule) claude-sonnet-5-5 low build through the real build prompt and buildSchemaFor,
+//   m4a3.sonnet-build   claude-sonnet-5-5 medium build through the real build prompt and BUILD_SCHEMA (`experiments`): the
+//                       answer validates (buildOutput), the probe certifies the fast lane afterward, the file exists
+//   m4b.build-wait-report  (M4b, the report rule) claude-sonnet-5-5 low build through the real build prompt and BUILD_SCHEMA,
 //                       told to start a 20 s command with Monitor and end its turn to wait: stdout must hold an interim
 //                       `final: false` result, then the final `final: true` one; the answer must validate with ready.txt and
 //                       hello.txt written, and the invocation end as `exited` or `reported`
@@ -119,7 +119,7 @@ import { parsePhase0Record } from '../src/phase0/types.ts';
 import { promptFor } from '../src/prompts/index.ts';
 import type { ArchitectureInput, BuildInputs, CheckpointInputs, LensInputs, ObligationView, PackReviewPromptInputs, PlanCheckInputs, VisionInput } from '../src/prompts/inputs.ts';
 import {
-  checkpointSchemaFor, ROLE_VALIDATORS, type RoleOutputs, buildOutputFor, buildSchemaFor,
+  checkpointSchemaFor, ROLE_VALIDATORS, type RoleOutputs, buildOutput, BUILD_SCHEMA,
 } from '../src/prompts/schemas.ts';
 import { ROADMAP_BIN } from '../src/pipeline/witnesscheck.ts';
 import {
@@ -715,23 +715,22 @@ async function main(): Promise<void> {
       'm4a3.witness-check.missing', `exit=${red.status} stdout=${JSON.stringify(red.stdout)}`);
   });
 
-  // (5) Sonnet 5.5 medium build under the per-call build schema (`experiments`).
+  // (5) Sonnet 5.5 medium build reports for certification; the probe runs its lane afterward.
   await rev3('m4a3.sonnet-build', async () => {
     const worktree = gitRepo(join(root, 'sonnet-b-repo'), { 'README.md': 'fixture\n' });
     const evidenceDir = dir(join(root, 'sonnet-b-evidence'));
     const prompt = promptFor('build', SONNET.model);
-    const lanes = [UNIT];
     await backend(ctx, 'm4a3.sonnet-build', {
-      check: 'm4a3-sonnet-build', routingRev: rev, tier: 'med', system: prompt.system, schema: buildSchemaFor(lanes), cwd: worktree,
+      check: 'm4a3-sonnet-build', routingRev: rev, tier: 'med', system: prompt.system, schema: BUILD_SCHEMA, cwd: worktree,
       rendered: prompt.render(buildInputs(worktree, evidenceDir)),
       request: { kind: 'claude-build', triple: SONNET, session: freshClaudeImplementerSession(), evidenceDirs: [evidenceDir] },
     }, (v) => {
       try {
-        const out = buildOutputFor(lanes)(v, 'build');
-        const ran = out.lanesRun.some((l) => l.lane === UNIT && l.exit === 0);
+        const out = buildOutput(v, 'build');
         const wrote = existsSync(join(worktree, 'hello.txt'));
-        report(ran && wrote && out.blockers.length === 0, 'm4a3.sonnet-build.answer',
-          `lanesRun=${JSON.stringify(out.lanesRun)} experiments=${JSON.stringify(out.experiments)} blockers=${JSON.stringify(out.blockers)} hello.txt=${wrote}`);
+        const certified = spawnSync(unitLane.argv[0], unitLane.argv.slice(1), { cwd: worktree, encoding: 'utf8' }).status === unitLane.expectedExit;
+        report(certified && wrote && out.blockers.length === 0, 'm4a3.sonnet-build.answer',
+          `experiments=${JSON.stringify(out.experiments)} blockers=${JSON.stringify(out.blockers)} hello.txt=${wrote}`);
         return true;
       } catch (e) {
         report(false, 'm4a3.sonnet-build.validate', e instanceof Error ? e.message : String(e));
@@ -747,16 +746,15 @@ async function main(): Promise<void> {
     const worktree = gitRepo(join(root, 'wait-b-repo'), { 'README.md': 'fixture\n' });
     const evidenceDir = dir(join(root, 'wait-b-evidence'));
     const prompt = promptFor('build', SONNET.model);
-    const lanes = [UNIT];
     const waitSpec = `${buildSpec}\n\n## Notes\n- Before writing hello.txt, wait for a slow dependency: start \`sh -c 'sleep 20 && echo ready > ready.txt'\` in the repository root with the Monitor tool, then end your turn without another tool call to wait for it. When it has completed and ready.txt exists, write hello.txt, run the fast lane and report.`;
     const inputs = buildInputs(worktree, evidenceDir);
     const done = await backend(ctx, 'm4b.build-wait-report', {
-      check: 'm4b-build-wait-report', routingRev: rev, tier: 'low', system: prompt.system, schema: buildSchemaFor(lanes), cwd: worktree,
+      check: 'm4b-build-wait-report', routingRev: rev, tier: 'low', system: prompt.system, schema: BUILD_SCHEMA, cwd: worktree,
       rendered: prompt.render({ ...inputs, spec: { ...inputs.spec, markdown: waitSpec } }),
       request: { kind: 'claude-build', triple: { ...SONNET, effort: 'low' }, session: freshClaudeImplementerSession(), evidenceDirs: [evidenceDir] },
     }, (v) => {
       try {
-        const out = buildOutputFor(lanes)(v, 'build');
+        const out = buildOutput(v, 'build');
         const waited = existsSync(join(worktree, 'ready.txt'));
         const wrote = existsSync(join(worktree, 'hello.txt'));
         report(waited && wrote, 'm4b.build-wait-report.answer', `final=${out.final} ready.txt=${waited} hello.txt=${wrote} blockers=${JSON.stringify(out.blockers)}`);

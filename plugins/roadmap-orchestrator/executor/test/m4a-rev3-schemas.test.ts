@@ -24,7 +24,7 @@ import { CliError, parseCommand } from '../src/input/cli.ts';
 import { knownDefectsOf, parsePlan, priorityOf } from '../src/input/plan.ts';
 import { DETAILED_OUTCOMES, STAGE_OUTCOME_KINDS } from '../src/core/events.ts';
 import {
-  BUILD_SCHEMA, CHECKPOINT_SCHEMA, buildOutputFor, buildSchemaFor, validateBuildOutput, validateCheckpointOutput,
+  BUILD_SCHEMA, CHECKPOINT_SCHEMA, buildOutput, validateBuildOutput, validateCheckpointOutput,
 } from '../src/prompts/schemas.ts';
 import { schemaViolation } from '../src/backends/adapter.ts';
 import { parseSpec, specBytes } from '../src/spec/spec.ts';
@@ -334,16 +334,17 @@ describe('m4a-rev3 apply body (I2, step N3)', () => {
 });
 
 describe('m4a-rev3 role schemas', () => {
-  it('the build answer: experiments, and a per-call lane enum', () => {
+  it('the build answer: targeted experiments, with old lanesRun accepted and ignored', () => {
     const answer = { summary: 's', changedPaths: [], lanesRun: [{ lane: 'unit', exit: 0 }], blockers: [], experiments: [{ name: 'probe', argv: ['node', 'x.js'], exit: 1 }], final: true };
-    assert.deepEqual(validateBuildOutput(answer).experiments, answer.experiments);
-    assert.throws(() => buildOutputFor([laneId('lint')])(answer, 'build'), /one of lint/);
-    assert.equal(buildOutputFor([laneId('unit')])(answer, 'build').lanesRun[0]!.lane, 'unit');
-    const schema = buildSchemaFor([laneId('lint'), laneId('unit')]) as { properties: { lanesRun: { items: { properties: { lane: unknown } } }; experiments: unknown } };
-    assert.deepEqual(schema.properties.lanesRun.items.properties.lane, { type: 'string', enum: ['lint', 'unit'] });
-    assert.ok(schema.properties.experiments !== undefined);
-    assert.deepEqual(BUILD_SCHEMA, buildSchemaFor(null), 'one schema for the build role: the modules carry buildSchemaFor(null), each call its own lanes');
-    assert.ok('experiments' in (BUILD_SCHEMA as { properties: object }).properties);
+    const out = buildOutput(answer, 'build');
+    assert.deepEqual(out.experiments, answer.experiments);
+    assert.ok(!('lanesRun' in out));
+    const { lanesRun: _old, ...current } = answer;
+    assert.deepEqual(buildOutput(current, 'build'), out);
+    const schema = BUILD_SCHEMA as { required: string[]; properties: Record<string, unknown> };
+    assert.ok(!('lanesRun' in schema.properties));
+    assert.ok(!schema.required.includes('lanesRun'));
+    assert.ok('experiments' in schema.properties);
   });
 
 });

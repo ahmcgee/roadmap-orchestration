@@ -67,7 +67,7 @@ import { SchemaError } from '../core/validate.ts';
 import { patternPath } from '../git/evidence.ts';
 import { candidateLaneDir, smokeLaneDir } from '../git/snapshot.ts';
 import type { RequiredWitness } from '../holistic/required.ts';
-import { DECISIONS_FILE, buildOutputFor } from '../prompts/schemas.ts';
+import { DECISIONS_FILE, buildOutput } from '../prompts/schemas.ts';
 import { type InvocationId, type OpId, type ResourceInstance, type Sha, type UnitId, invocationId } from '../core/ids.ts';
 import { type EntryPoint, type UnitState, openAttempt } from '../core/state.ts';
 import { NO_PARK_FACTS } from '../park/table.ts';
@@ -100,7 +100,7 @@ import {
   witnessCheckoutFixRound, witnessFixRound,
 } from './rounds.ts';
 import {
-  type BuildRun, type StageDone, at, build, buildLaneIds, buildRead, evidence, failedFacts, fastSuiteRoot, keptSpecPath, laneGlobs, lanes, loadUnitSpec,
+  type BuildRun, type StageDone, at, build, buildRead, evidence, failedFacts, fastSuiteRoot, keptSpecPath, laneGlobs, lanes, loadUnitSpec,
   nowInside, planCheck, planCheckAnswerOf, quiesce, readDecisions, record, recordedCall, salvage, salvageRejections, stillOutside, teardown,
 } from './stages.ts';
 import { poc } from './poc.ts';
@@ -279,7 +279,7 @@ function malformedError(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact):
   if (called.result.outcome.kind === 'malformed') return called.result.outcome.detail;
   if (called.result.outcome.kind !== 'success') return null;
   try {
-    buildOutputFor(buildLaneIds(loadUnitSpec(ctx, unit).spec))(called.result.outcome.value, 'build');
+    buildOutput(called.result.outcome.value, 'build');
   } catch (error) {
     if (error instanceof SchemaError) return error.message;
     throw error;

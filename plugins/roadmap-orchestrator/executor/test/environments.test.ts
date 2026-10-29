@@ -316,14 +316,14 @@ describe('env.schema', () => {
     assert.throws(() => parsePlan(base({ environments: { 'integration-slot': { probe: cmd } } })), SchemaError);
   });
 
-  it('a lane naming an undeclared environment, and a build-cadence lane naming one, are unrunnable; an arc lane never names one', () => {
+  it('an undeclared environment is unrunnable; declared build-cadence environments are executor-only; an arc lane never names one', () => {
     const lane = (id: string, cadence: 'build' | 'candidate', environment: string) => ({
       id, argv: ['true'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence, resources: [], evidenceGlobs: [], environment,
     });
     const plan = parsePlan(base({ environments: { stack: { probe: cmd } }, suite: { lanes: [lane('known', 'candidate', 'stack'), lane('unknown', 'candidate', 'nope'), lane('fast', 'build', 'stack')] } }));
     const rows = laneRows(plan, [], () => { throw new Error('no unit is checked'); }, process.env);
     assert.deepEqual(rows.map((r) => ('lane' in r ? [r.lane, r.problem.type] : null)), [
-      ['unknown', 'unknown-environment'], ['fast', 'estate-lane-for-implementer'],
+      ['unknown', 'unknown-environment'],
     ]);
     assert.throws(() => arcLaneDef({ ...lane('arc', 'candidate', 'stack'), reporter: 'jsonl' }, 'lane'), /absent on an arc lane/);
   });
