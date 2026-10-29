@@ -50,6 +50,23 @@ async function mergeWith(files: Readonly<Record<string, string>>): Promise<reado
 }
 
 describe('candidate lane selection (dev.17)', () => {
+  test('candidate.reuses-fast-suite: a candidate with the same input reuses the lanes-stage pass through the reuse key', T, async () => {
+    const d = setupArc({
+      steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })],
+      units: [{ id: 'u1', lanes: [OK_LANE] }],
+      suite: [{ id: 'shared', cadence: 'unit', argv: ['sh', '-c', ': shared'], systems: ['math'] }], systemsMap: MAP,
+    });
+    const r = contextFor(d);
+    try {
+      assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), admitAll), { kind: 'merged' }, outcomes(d).join(' '));
+      assert.deepEqual(candidateSuiteSpawns(d.runDir), []);
+      const reused = r.journal.view.holistic().laneReuses.filter((l) => l.parent.type === 'stage' && l.parent.stage === 'candidate');
+      assert.deepEqual(reused.map((l) => [l.lane, l.set, l.from.parent.type === 'stage' ? l.from.parent.stage : null]), [['shared', 'suite', 'lanes']]);
+    } finally {
+      r.journal.close();
+    }
+  });
+
   test('candidate.selects-by-systems: a diff in one system runs the lanes listing it and the lane listing none, nothing else', T, async () => {
     assert.deepEqual(await mergeWith(MUL), ['math', 'whole']);
   });
