@@ -93,6 +93,7 @@ export function gradeB(f: Fixture): Grade {
     const before = parseInvariantsBlock(baseline)!;
     const next = parseObligations(readJson(join(f.next, 'obligations.json')));
     const sidecars = loadSidecars(f.next);
+    const previousSidecars = loadSidecars(f.previous);
     criteria['rederive'] = verdict(rederive(baseline, next, sidecars));
     const rules = parseRules(readFileSync(join(f.l.product, CORPUS_FILE), 'utf8'), repoPath(RULE_FILE));
     const registry = parseRulesRegistryBlock(baseline)!;
@@ -128,7 +129,8 @@ export function gradeB(f: Fixture): Grade {
     criteria['ids'] = verdict(ids);
     const effects: string[] = [];
     const markers: string[] = [];
-    const lifetime: string[] = [];
+    const rulingProblems: string[] = [];
+    const replacementRulings = new Set(f.key.plants.flatMap((p) => p.replacement?.id.startsWith('C-') ? [p.replacement.id] : []));
     const corpus = readFileSync(join(f.l.product, CORPUS_FILE), 'utf8');
     for (const d of golden) {
       const actual = applied.find((a) => a.id === d.id);
@@ -145,7 +147,7 @@ export function gradeB(f: Fixture): Grade {
         if (id.startsWith('T-') && ['retire', 'merge'].includes(d.action) && id !== p.replacement?.id && rules.some((r) => r.id === id)) effects.push(`${d.id}: ${id} still active`);
         if (id.startsWith('I-') && next.obligations.some((o) => o.id === id)) effects.push(`${d.id}: ${id} still present`);
         if (id.startsWith('C-') && ['retire', 'fold'].includes(d.action) && (ledger.some((r) => r.id === id) || sidecars.some((s) => s.id === id))) effects.push(`${d.id}: ${id} not removed`);
-        if (id.startsWith('C-') && d.action === 'merge') {
+        if (id.startsWith('C-') && ['merge', 'tighten'].includes(d.action)) {
           const old = ledger.find((r) => r.id === id);
           const s = sidecars.find((s) => s.id === id);
           const replacement = sidecars.find((s) => s.id === p.replacement!.id);
@@ -171,16 +173,28 @@ export function gradeB(f: Fixture): Grade {
         if (!phase0.curation.some((c) => c.what.startsWith(`compaction ${d.id}:`))) effects.push(`${d.id}: missing curation`);
       }
       if (d.action === 'fold' && (!corpus.includes(d.id) || !corpus.includes(p.ids[0]!))) effects.push(`${d.id}: fold rationale missing`);
-      if (d.action !== 'tighten') {
-        const rulings = sidecars.filter((s) => namesDecision(s.trigger, d.id));
-        if (!rulings.length) lifetime.push(`${d.id}: no compaction ruling`);
-        for (const s of rulings) if (s.lifetime !== 'arc' || s.kind !== 'disposition' || s.ruledBy.type !== 'architect' || s.consistency.by.type !== 'architect' || s.consistency.verdict !== 'consistent' || s.docRefs.length === 0) lifetime.push(`${d.id}: invalid Phase-0 ruling ${s.id}`);
+      if (p.ids[0]!.startsWith('C-') && ['merge', 'tighten'].includes(d.action)) {
+        const replacement = sidecars.find((s) => s.id === p.replacement?.id);
+        if (!replacement) rulingProblems.push(`${d.id}: replacement ruling missing`);
+        else {
+          if (!namesDecision(replacement.trigger, d.id)) rulingProblems.push(`${d.id}: replacement ruling ${replacement.id} trigger missing decision`);
+          for (const id of p.ids) {
+            const original = previousSidecars.find((s) => s.id === id);
+            if (!original || replacement.kind !== original.kind || replacement.lifetime !== original.lifetime) rulingProblems.push(`${d.id}: replacement ruling ${replacement.id} must preserve ${id} kind and lifetime`);
+          }
+        }
       }
+      const needsPhase0 = (['retire', 'merge'].includes(d.action) && p.ids.some((id) => id.startsWith('T-') && before.obligations.some((o) => o.rule?.id === id)))
+        || (['retire', 'merge', 'tighten'].includes(d.action) && p.ids.some((id) => id.startsWith('I-')))
+        || (d.action === 'resolve' && p.ids.some((id) => id.startsWith('B-')));
+      const rulings = sidecars.filter((s) => !replacementRulings.has(s.id) && namesDecision(s.trigger, d.id));
+      if (needsPhase0 && !rulings.length) rulingProblems.push(`${d.id}: no compaction ruling`);
+      for (const s of rulings) if (s.lifetime !== 'arc' || s.kind !== 'disposition' || s.ruledBy.type !== 'architect' || s.consistency.by.type !== 'architect' || s.consistency.verdict !== 'consistent' || s.docRefs.length === 0) rulingProblems.push(`${d.id}: invalid Phase-0 ruling ${s.id}`);
     }
     if (applied.length !== golden.length) markers.push('unexpected decisions');
     criteria['effects'] = verdict(effects);
     criteria['markers'] = verdict(markers);
-    criteria['rulings'] = verdict(lifetime);
+    criteria['rulings'] = verdict(rulingProblems);
     criteria['rejectedUntouched'] = verdict(f.key.plants.filter((p) => !p.approved).flatMap((p) => p.ids.filter((id) => !rules.some((r) => r.id === id && r.textSha256 === registry.active.find((r) => r.id === id)?.textSha256))));
   } catch (e) { criteria['readable'] = { pass: false, detail: String(e) }; }
   return result(criteria);

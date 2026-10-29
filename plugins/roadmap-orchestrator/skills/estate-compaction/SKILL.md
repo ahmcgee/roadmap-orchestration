@@ -157,8 +157,8 @@ reused, and an id that has left `invariants.md` is not otherwise guarded.
   - The replacement takes the next `T-n` above the high-water. It keeps an original's id only when it says what that
     original said, with only restatements absorbed.
   - Delete the other originals and their census entries.
-  - Give the replacement one census entry. When the originals' census states differ, the decision says which state
-    holds.
+  - Give the replacement one census entry. When the originals' census states differ, the decision's Replacement says
+    which state holds.
   - Anchor one new obligation on the replacement and remove the originals' obligations. Its witness is one when the
     originals share a lane. When they span lanes, it is a split parent with one child per lane, and the census names
     the parent. It carries a proof judgment like any new obligation.
@@ -173,8 +173,9 @@ reused, and an id that has left `invariants.md` is not otherwise guarded.
 
 ### Rulings
 
-- **Merge and tighten.** Write one new ruling with the replacement text whose `supersedes` names the originals. Fold
-  each original's ledger line to `C-n — withdrawn by C-m`, set its sidecar's `status` to `superseded`, and point each
+- **Merge and tighten.** Write one new ruling with the replacement text whose `supersedes` names the originals. It
+  is the merged ruling itself, not a Phase-0 ruling: it keeps the originals' `kind` and `lifetime`, so a standing
+  ruling stays standing, and its `trigger` names the `K-n`. Fold each original's ledger line to `C-n — withdrawn by C-m`, set its sidecar's `status` to `superseded`, and point each
   carried spec's `cites.rulings` at the new ruling.
 - **Fold.** Add the rule to the corpus, with its census entry and rationale prose citing the ruling and `K-n`. The
   ruling then leaves the ledger as a retirement does.
@@ -194,7 +195,9 @@ Corpus edits go in the between-arc commit. Each also needs a `curation` entry wh
 - `fact-currency` for a retirement the product overtook;
 - `structural` for an owner's retirement of a claim still true, the `what` saying so.
 
-A Phase-0 ruling is an architect sidecar (SCHEMAS.md "Ruling sidecars") with these fields:
+A decision needs a Phase-0 ruling only where this section names one: removing or amending an obligation, and
+resolving debt. One ruling may carry several decisions. Retiring or folding a ruling, and tightening a rule, need
+none. A Phase-0 ruling is an architect sidecar (SCHEMAS.md "Ruling sidecars") with these fields:
 - `kind: disposition`, `ruledBy` and `consistency.by` both `{type: architect}`, `consistency.verdict: consistent`,
   and `judgedRevs` the revisions it was written against.
 - `lifetime: arc`: it is needed only at this arc's start, so it leaves at the next Phase 0.

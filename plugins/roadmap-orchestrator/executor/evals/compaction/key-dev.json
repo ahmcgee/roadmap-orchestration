@@ -214,20 +214,20 @@
     "advanced": "T-21"
   },
   "ownerAnswers": [
-    "T-3, T-14 (identifier restatements): approve merge; replacement: A berth booking identifier is unique across the register.. Accept loss: nothing.",
+    "T-3, T-14 (identifier restatements): approve merge; replacement: A berth booking identifier is unique across the register. Accept loss: nothing.",
     "T-27 (subsumed date check): approve retire or merge; no replacement needed. Accept loss: nothing.",
-    "T-8 (removed module): approve retire; no replacement needed. Accept loss: Ten-minute retries in the removed PortLink SOAP bridge..",
-    "T-33 (answered assumption): approve retire or tighten; no replacement needed. Accept loss: The superseded dispatch cutoff assumption P-1..",
-    "T-49 (wordy diagnostic rule): approve tighten; replacement: Every failed command prints its diagnostic to stderr, never stdout.. Accept loss: nothing.",
-    "T-62, T-63 (cosmetic variable names): approve retire; no replacement needed. Accept loss: The lower camel case requirement for internal local variable names and the demand that the command execute program instructions..",
+    "T-8 (removed module): approve retire; no replacement needed. Accept loss: Ten-minute retries in the removed PortLink SOAP bridge.",
+    "T-33 (answered assumption): approve retire or tighten; no replacement needed. Accept loss: The superseded dispatch cutoff assumption P-1.",
+    "T-49 (wordy diagnostic rule): approve tighten; replacement: Every failed command prints its diagnostic to stderr, never stdout. Accept loss: nothing.",
+    "T-62, T-63 (cosmetic variable names): approve retire; no replacement needed. Accept loss: The lower camel case requirement for internal local variable names and the demand that the command execute program instructions.",
     "T-70 (banner punctuation): keep it; reject retirement.",
-    "I-52 (comment witness detail): approve retire; no replacement needed. Accept loss: A separate test demanding grammatical English in one internal comment..",
-    "C-4 (archive standing truth): approve fold; replacement: The Quaybook archive is append-only; corrections add a new revision.. Accept loss: nothing.",
-    "C-12, C-17 (request token overlap): approve merge; replacement: A request token is accepted once; retries return the stored response without another mutation.. Accept loss: nothing.",
-    "C-23 (demo slide choice): approve retire; no replacement needed. Accept loss: The first demo slide template requirement..",
-    "B-2 (obsolete queue debt): approve resolve; no replacement needed. Accept loss: Cleanup of the removed PortLink SOAP bridge retry queue..",
-    "B-6 (duplicate index debt): approve resolve; no replacement needed. Accept loss: The separate duplicate index task B-6; B-1 survives..",
-    "B-11 (punctuation debt): approve resolve; no replacement needed. Accept loss: Success message punctuation stays inconsistent with the help footer..",
+    "I-52 (comment witness detail): approve retire; no replacement needed. Accept loss: A separate test demanding grammatical English in one internal comment.",
+    "C-4 (archive standing truth): approve fold; replacement: The Quaybook archive is append-only; corrections add a new revision. Accept loss: nothing.",
+    "C-12, C-17 (request token overlap): approve merge; replacement: A request token is accepted once; retries return the stored response without another mutation. Accept loss: nothing.",
+    "C-23 (demo slide choice): approve retire; no replacement needed. Accept loss: The first demo slide template requirement.",
+    "B-2 (obsolete queue debt): approve resolve; no replacement needed. Accept loss: Cleanup of the removed PortLink SOAP bridge retry queue.",
+    "B-6 (duplicate index debt): approve resolve; no replacement needed. Accept loss: The separate duplicate index task B-6; B-1 survives.",
+    "B-11 (punctuation debt): approve resolve; no replacement needed. Accept loss: Success message punctuation stays inconsistent with the help footer.",
     "Keep One vessel per berth per window. It is safety critical. Preserve both JSON and CSV cancellation inclusion. Do not merge the waiver C-31. Flag any change to the slip rule T-21: it serves the current V-1 slice. For any other decision, reject it. Answer each numbered decision explicitly, terse: \"1: approve\", \"2: reject\". If you rewrite wording, say the exact wording and approve it explicitly on playback."
   ]
 }

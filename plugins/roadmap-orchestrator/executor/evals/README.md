@@ -1024,7 +1024,8 @@ proposals and explicit numbered approve/reject replies are parsed deterministica
 Stage B always uses the key's golden record, independently of Stage A. It runs the real `phase0 check` and separately
 calls start's `rederive` against the original published invariants. It checks effects, replacement texts, removed
 obligation families/mappings/spec references, new obligations for rule merges, supersession and redirected spec cites,
-census, T/I/C allocation, arc-lifetime architect compaction rulings, curation, fold rationale, the unchanged rejected
+census, T/I/C allocation, arc-lifetime architect Phase-0 rulings where obligations change or debt resolves, ruling
+replacements preserving the originals' kind and lifetime, curation, fold rationale, the unchanged rejected
 plant, and Applied/Blocked rows. A blocked golden decision fails application (the golden set is applicable), while
 preserving its refusal row for review. `--compare` requires a holdout run and a dev summary with the same enabled stages; Stage A recall and
 Stage B pass rate may each drop at most 15 percentage points. Every requested trial and enabled stage must pass.
@@ -1035,16 +1036,10 @@ the fixture. Free tests check both domains, deterministic generation and key IDs
 scripted golden application, all grading gates, deliberately dropped obligations and reused IDs, rejected decisions,
 and the headless driver's resume, isolation, timeout and cost behavior using a fake `claude` executable.
 
-Skill ambiguities captured by this eval, without changing either skill: the skill writes Applied only after `start`
+Skill ambiguities captured by this eval: the skill writes Applied only after `start`
 succeeds, whereas this eval must stop before `start` and still verify markers (the Stage B prompt explicitly requests
 pre-start markers); folding specifies a census entry but leaves the choice of obligation versus production-only
-state to Phase 0; and merge decisions with different census states need to state the chosen state, but the record
-format has no dedicated census-state field. The golden duplicate pair shares one state and witness lane; the fold
+state to Phase 0. The golden duplicate pair shares one state and witness lane; the fold
 records an operational archive policy as production-only. K-IDs start at 1 because this fixture has no earlier
 compaction record. The grader deliberately requires a substantive loss for the near-duplicate trap even if the
 proposal calls its wording a merger.
-
-A standing-ruling merge also leaves a lifetime question: whether its replacement is the arc-lifetime Phase-0
-ruling itself, or a separate standing replacement with arc-lifetime bookkeeping. The golden application uses the
-replacement as the Phase-0 ruling (`lifetime: arc`), matching this eval's explicit requirement; it does not test that
-replacement's survival at a later arc boundary.

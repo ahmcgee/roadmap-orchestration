@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, writeFileSync, chmodSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { test } from 'node:test';
 import { repoPath } from '../src/core/values.ts';
@@ -46,6 +46,10 @@ test('compaction.fixture: both sets deterministic, readers accept rendered estat
     const aBytes = bytes(a.l.stage), bBytes = bytes(b.l.stage);
     assert.deepEqual(Object.fromEntries(Object.entries(aBytes).map(([p, s]) => [p, s.replaceAll(a.l.dir, '<fixture>')])), Object.fromEntries(Object.entries(bBytes).map(([p, s]) => [p, s.replaceAll(b.l.dir, '<fixture>')])));
     assert.deepEqual(readJson(join(a.l.dir, 'key.json')), a.key);
+    for (const answer of a.key.ownerAnswers) {
+      assert.doesNotMatch(answer, /\.\./);
+      assert.match(answer, /\.$/);
+    }
     const invariantText = readFileSync(join(a.l.product, '.roadmap/invariants.md'), 'utf8');
     const obs = parseInvariantsBlock(invariantText)!;
     const registry = parseRulesRegistryBlock(invariantText)!;
@@ -148,6 +152,55 @@ test('compaction.stage-b: golden script passes both domains; absent applications
     assert.ok(parseRules(readFileSync(join(f.l.product, CORPUS_FILE), 'utf8'), repoPath(RULE_FILE)).length < 80);
     assert.equal(gradeB(f).pass, true);
   }
+});
+
+test('compaction.stage-b: standing ruling replacements preserve provenance; folds need no Phase-0 ruling; obligation removals do', T, async () => {
+  const f = await fresh();
+  await applyGolden(f);
+  const decisions = parseRecord(f.key.goldenRecord);
+  const sidecars = loadSidecars(f.next);
+  const merge = decisions.find((d) => d.action === 'merge' && d.ids.includes('C-12'))!;
+  const replacementId = f.key.plants.find((p) => p.ids.includes('C-12'))!.replacement!.id;
+  const replacement = sidecars.find((s) => s.id === replacementId)!;
+  const originals = loadSidecars(f.previous).filter((s) => merge.ids.includes(s.id));
+  assert.equal(originals.length, 2);
+  for (const original of originals) {
+    assert.equal(replacement.kind, original.kind);
+    assert.equal(replacement.lifetime, original.lifetime);
+  }
+  assert.equal(replacement.lifetime, 'standing');
+  assert.match(replacement.trigger, new RegExp(`\\b${merge.id}\\b`));
+  const replacementPath = join(f.next, 'rulings.md.d', `${replacementId}.json`);
+  await mutation(f, replacementPath, (s) => json({ ...JSON.parse(s), lifetime: 'arc' }), 'rulings');
+  await mutation(f, replacementPath, (s) => json({ ...JSON.parse(s), kind: 'disposition' }), 'rulings');
+  await mutation(f, replacementPath, (s) => json({ ...JSON.parse(s), trigger: 'Owner policy review' }), 'rulings');
+
+  const fold = decisions.find((d) => d.action === 'fold')!;
+  const rulingRetire = decisions.find((d) => d.action === 'retire' && d.ids.includes('C-23'))!;
+  const ruleWithoutObligations = decisions.find((d) => d.ids.includes('T-62'))!;
+  for (const d of [fold, rulingRetire, ruleWithoutObligations]) assert.ok(!sidecars.some((s) => s.trigger.includes(d.id)), d.id);
+  assert.equal(gradeB(f).pass, true, json(gradeB(f)));
+
+  // An optional Phase-0 ruling is allowed for a fold, but must still be valid.
+  const phase0Path = join(f.next, 'rulings.md.d/C-41.json');
+  const phase0Bytes = readFileSync(phase0Path, 'utf8');
+  try {
+    const optional = { ...JSON.parse(phase0Bytes), trigger: `compaction K-1, ${fold.id}` };
+    write(phase0Path, json(optional));
+    assert.equal(gradeB(f).pass, true, json(gradeB(f)));
+    await mutation(f, phase0Path, () => json({ ...optional, lifetime: 'standing' }), 'rulings');
+  } finally { write(phase0Path, phase0Bytes); }
+
+  const retire = decisions.find((d) => d.action === 'retire' && d.ids.includes('T-27'))!;
+  const required = sidecars.find((s) => s.trigger === `compaction ${retire.id}`)!;
+  assert.ok(required.obligationDispositions.some((o) => o.id === 'I-27' && o.disposition === 'retired'));
+  const requiredPath = join(f.next, 'rulings.md.d', `${required.id}.json`);
+  const requiredBytes = readFileSync(requiredPath, 'utf8');
+  try {
+    rmSync(requiredPath);
+    await mutation(f, join(f.next, 'rulings.md'), (s) => s.split('\n').filter((line) => !line.startsWith(`${required.id} — `)).join('\n'), 'rulings');
+  } finally { write(requiredPath, requiredBytes); }
+  assert.equal(gradeB(f).pass, true, json(gradeB(f)));
 });
 
 function fakeClaude(f: Fixture, body: string): void {

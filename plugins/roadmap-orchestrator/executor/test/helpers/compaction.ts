@@ -66,19 +66,22 @@ export async function applyGolden(f: Fixture): Promise<void> {
       census.push({ rule: p.replacement!.id as typeof census[number]['rule'], state: { type: 'prod-only' } });
       curation.push({ tier: 'structural', what: `compaction ${d.id}: ${p.name}`, files: ['register.md'], rules: [p.replacement!.id] });
     }
-    if (d.action !== 'tighten') {
-      const id = `C-${nextC++}`;
-      const statement = kind === 'C' && d.action === 'merge' ? p.replacement!.text : `${d.id}: ${p.ids.join(', ')}: ${d.why} Gives up: ${d.givesUp}`;
-      if (kind === 'C' && d.action === 'merge') {
+    const replacesRuling = kind === 'C' && ['merge', 'tighten'].includes(d.action);
+    if (removed.length || (kind === 'B' && d.action === 'resolve') || replacesRuling) {
+      const id = replacesRuling ? p.replacement!.id : `C-${nextC}`;
+      nextC = Math.max(nextC, Number(id.slice(2)) + 1);
+      const original = replacesRuling ? sidecars.find((s) => s.id === p.ids[0])! : undefined;
+      const statement = replacesRuling ? p.replacement!.text : `${d.id}: ${p.ids.join(', ')}: ${d.why} Gives up: ${d.givesUp}`;
+      if (replacesRuling) {
         ledger = ledger.map((r) => p.ids.includes(r.id) ? { id: r.id, status: 'withdrawn', by: id as typeof r.id } : r);
         sidecars = sidecars.map((s) => p.ids.includes(s.id) ? { ...s, status: 'superseded' } : s);
       }
-      const s = sidecar(id, statement, git(f.l.product, 'rev-parse', 'HEAD'), { kind: 'disposition', lifetime: 'arc', trigger: `compaction ${d.id}`,
-        obligations: removed, obligationDispositions: removed.map((id) => ({ id, disposition: 'retired' })), supersedes: kind === 'C' && d.action === 'merge' ? p.ids.map((id) => ({ id, part: null })) : [] });
+      const s = sidecar(id, statement, git(f.l.product, 'rev-parse', 'HEAD'), { kind: original?.kind ?? 'disposition', lifetime: original?.lifetime ?? 'arc', trigger: `compaction ${d.id}`,
+        obligations: removed, obligationDispositions: removed.map((id) => ({ id, disposition: 'retired' })), supersedes: replacesRuling ? p.ids.map((id) => ({ id, part: null })) : [] });
       sidecars.push(s);
       ledger.push({ id: s.id, status: 'active', text: s.statement });
       if (kind === 'B') for (const b of debt) if (p.ids.includes(b.id)) b.disposition = { type: 'resolve', ruling: id };
-      if (kind === 'C' && d.action === 'merge') {
+      if (replacesRuling) {
         const spec = readJson(join(f.next, 'slips.json')) as { cites: { contracts: string[]; rulings: string[] } };
         spec.cites.rulings = [...new Set(spec.cites.rulings.map((r) => p.ids.includes(r) ? id : r))];
         write(join(f.next, 'slips.json'), json(spec));
