@@ -11,7 +11,8 @@ import type { IntentOf } from '../src/core/events.ts';
 import { type Sha, sha } from '../src/core/ids.ts';
 import { worktreeList } from '../src/git/git.ts';
 import { pinDispatch } from '../src/pipeline/dispatch.ts';
-import { type LanesDone, fastSuiteRoot, lanes, planCheck } from '../src/pipeline/stages.ts';
+import { type LanesDone, fastSuiteRoot, lanes, loadUnitSpec, planCheck } from '../src/pipeline/stages.ts';
+import { stageSuiteLanes, suiteStandIns } from '../src/pipeline/lanes.ts';
 import { step } from '../src/pipeline/unit.ts';
 import { git } from './helpers/repo.ts';
 import { type CodexAct, type Expect, type Step, readCalls } from './helpers/scenario.ts';
@@ -136,3 +137,20 @@ test('lanes.fast-suite-base-is-salvage: a unit whose commit is its base fails on
   assert.equal(done.outcome.kind, 'base-red');
   assert.deepEqual(laneSpawns(run).map((s) => [s.lane, s.set]), [['unit', 'spec'], ['lint', 'suite'], ['lint', 'suite']], 'lint and its diagnostic rerun, once');
 });
+
+for (const [specTimeout, suiteTimeout, identical] of [[2, 1, false], [undefined, 360, false], [1, 1, true], [undefined, undefined, true]] as const) {
+  test(`lanes.timeout-equality: spec ${specTimeout}, suite ${suiteTimeout}, identical ${identical}`, T, async () => {
+    const run = setupUnit({
+      steps: [], lanes: [{ ...UNIT, ...(specTimeout === undefined ? {} : { timeoutMin: specTimeout }) }],
+      suite: [{ ...SAME, ...(suiteTimeout === undefined ? {} : { timeoutMin: suiteTimeout }) }],
+    });
+    const spec = loadUnitSpec(run.ctx, run.unit).spec;
+    const active = spec.lanes.filter((l) => l.state === 'active');
+    const suite = run.ctx.plan().suite.lanes;
+    assert.equal(stageSuiteLanes(suite, spec, new Set()).length, identical ? 0 : 1, 'stage dedup respects timeout semantics');
+    assert.equal(suiteStandIns(suite, active.map((l) => ({ ...l, reporter: 'jsonl' }))).size, identical ? 1 : 0, 'arc stand-ins respect the same timeout semantics');
+    pinDispatch(run.ctx, run.unit, keptSpec(run.journal));
+    assert.equal(started(await lanes(run.ctx, run.unit, run.base)).outcome.kind, 'green');
+    assert.deepEqual(laneSpawns(run).map((s) => [s.lane, s.set]), identical ? [['unit', 'spec']] : [['unit', 'spec'], ['same', 'suite']]);
+  });
+}

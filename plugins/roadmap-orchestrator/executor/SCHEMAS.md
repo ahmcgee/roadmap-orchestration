@@ -5282,7 +5282,7 @@ source. Structured JSON projections, recorded references and commit/hash provena
 
 Phase-0 checks and apply emit `lanes-differ-only-env-set{lanes: [<source/id>, <source/id>]}`
 when two active spec, suite or arc commands have identical argv, cwd, sorted env.pass and
-expectedExit, but different env.set. This is advisory only: both executions retain their
+expectedExit and timeoutMin (including absence), but different env.set. This is advisory only: both executions retain their
 own identity and evidence. Exact execution equality is shared with lane deduplication in
 `src/input/laneexecution.ts`.
 
@@ -5293,6 +5293,8 @@ fractions, with a duration of at least 1 ms and at most Number.MAX_SAFE_INTEGER 
 It is absent by default; absence preserves the previous release's six-hour runner
 backstop and logs `upgrade default (lane.timeoutMin)` once per process when used.
 The absent field stays absent when normalising or hashing older definitions.
+Execution equality includes timeoutMin: absence and an explicit six-hour limit differ
+(backstop versus red timeout), so neither stage deduplication nor arc stand-ins conflate them.
 
 A configured limit is copied to the lane command's `launch.json.terminal.timeoutMin`;
 its absolute `deadlineAt` uses that duration. Only lane commands may carry this field.
