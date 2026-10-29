@@ -7,7 +7,7 @@ import { HELP } from './state.ts';
 import { summary } from './projection.ts';
 import type { Entry, Invocation } from './types.ts';
 import { activityState, assessmentExplanation } from './outcome.ts';
-import { executionSummary, unitWaitReason } from './execution.ts';
+import { certificationSummary, cpuSummary, executionSummary, unitWaitReason } from './execution.ts';
 import { modelLabel } from './models.ts';
 import { milestoneProgress, milestonePhase } from './milestones.ts';
 import { dependencyDrawing } from './graph-view.ts';
@@ -144,7 +144,7 @@ export function renderView(ui: ViewState, columns: number, rows: number, ascii: 
           : line(marker, type, ' ', ink(pad(unit, unitWidth), labelTone, active || linked), ' ', ink(pad(inv.role, roleWidth), context ? labelTone : 'text', linked));
         content.push(selectedRow(row, active, room));
         const session = inv.session ? `${inv.session.slice(0, 8)}${dot}` : '';
-        const latest = `${inv.context ? inv.context + dot : ''}${inv.inputKind === 'repair' ? 'Repair turn · ' : inv.inputKind === 'resume' ? 'Resumed session · ' : ''}${inv.latest || (inv.endedAt ? 'No recorded output' : 'Awaiting output')}`;
+        const latest = `${inv.work ? cpuSummary(inv.work) + dot : ''}${inv.context ? inv.context + dot : ''}${inv.inputKind === 'repair' ? 'Repair turn · ' : inv.inputKind === 'resume' ? 'Resumed session · ' : ''}${inv.latest || (inv.endedAt ? 'No recorded output' : 'Awaiting output')}`;
         const scope = scopeLabel(inv) && (inv.milestone || !inv.context) ? [ink(`${scopeLabel(inv)}${dot}`, 'violet')] : [];
         const detail = table ? line(ink(detailPrefix, 'muted'), ...scope, ink(`${session}${latest}`, 'muted'))
           : line(ink(detailPrefix, 'muted'), ...scope, ink(`${symbol(state, ascii)} ${state}`, stateTone(state)), ink(`${dot}${inv.execution === 'agent' ? modelLabel(inv) + dot : ''}${duration}${dot}${latest}`, 'muted'));
@@ -156,10 +156,10 @@ export function renderView(ui: ViewState, columns: number, rows: number, ascii: 
         row = line(marker, ink(pad(label, documentWidth), 'strong', active), ' ', ink(pad(e.state, 14), stateTone(e.state)), ' ', ink(e.provenance, 'muted'));
       } else {
         const stateWidth = Math.min(15, Math.floor(room / 4));
-        row = line(marker, ...(activity ? [ink('Queued  ', 'wait')] : []), ink(pad(label, Math.max(0, room - stateWidth - 3 - (activity ? 9 : 0))), labelTone, active), ' ', ink(pad(e.state, stateWidth), stateTone(e.state)));
+        row = line(marker, ...(activity ? [ink(e.kind === 'lane-status' ? 'Lane    ' : 'Queued  ', 'wait')] : []), ink(pad(label, Math.max(0, room - stateWidth - 3 - (activity ? 9 : 0))), labelTone, active), ' ', ink(pad(e.state, stateWidth), stateTone(e.state)));
       }
       content.push(selectedRow(row, active, room));
-      if (activity) content.push(line(ink(`${detailPrefix}${clip(summary(e.body), Math.max(0, room - width(detailPrefix)))}`, 'muted')));
+      if (activity) content.push(line(ink(`${detailPrefix}${clip(e.description ?? summary(e.body), Math.max(0, room - width(detailPrefix)))}`, 'muted')));
     });
     if (!entries.length) content.push(line(ink(pane === 2 ? 'All clear. No exceptions recorded.' : 'No entries yet', 'muted')));
     const range = entries.length ? `${start + 1}-${start + visible.length}/${entries.length}` : '0 items';
@@ -237,7 +237,7 @@ export function renderView(ui: ViewState, columns: number, rows: number, ascii: 
   } else if (inv) {
     previewTitle = `Selected invocation${scopeLabel(inv) ? ` · ${scopeLabel(inv)}` : ''}`;
     preview = [line(ink(`${inv.execution === 'agent' ? 'Agent' : inv.execution === 'command' ? 'Command' : 'Run'}: ${inv.label}`, 'strong', true), ink(`${dot}`, 'muted'), ...badge(activityState(inv)), ink(`${dot}execution attempt ${inv.attempt}${dot}quiet ${inv.quietMs === null ? 'unknown' : elapsed(inv.quietMs)}`, 'muted')),
-      line(ink(inv.execution === 'agent' ? `Model: ${modelLabel(inv)}${inv.adapter ? ` (${inv.adapter}; requested ${inv.requestedModel ?? 'unavailable'})` : ''}${dot}${assessmentExplanation(inv) || inv.latest || 'No recorded output'}` : assessmentExplanation(inv) || inv.latest || 'No recorded output', 'muted'))];
+      line(ink(inv.work ? cpuSummary(inv.work) : inv.execution === 'agent' ? `Model: ${modelLabel(inv)}${inv.adapter ? ` (${inv.adapter}; requested ${inv.requestedModel ?? 'unavailable'})` : ''}${dot}${assessmentExplanation(inv) || inv.latest || 'No recorded output'}` : assessmentExplanation(inv) || inv.latest || 'No recorded output', 'muted'))];
   } else if (selection?.kind === 'milestone-status' && d) {
     const milestone = d.status.milestones.find((m) => m.id === selection.id)!;
     previewTitle = `Milestone ${milestone.id}`;
@@ -248,7 +248,7 @@ export function renderView(ui: ViewState, columns: number, rows: number, ascii: 
     const unit = d?.status.units.find((u) => u.unit === node.id);
     const waitReason = unit ? unitWaitReason(unit, graphVisible) : node.waitReason;
     const dependencies = node.from.map(dependencyLabel).join(', ') || 'none (independent unit)';
-    preview = [line(ink(node.label, 'strong', true), ink(`${dot}${node.specRevision === undefined ? 'Spec revision unavailable' : `Spec r${node.specRevision}`}`, 'violet')),
+    preview = [line(ink(`${node.label}${unit?.certification ? dot + certificationSummary(unit) : ''}`, 'strong', true), ink(`${dot}${node.specRevision === undefined ? 'Spec revision unavailable' : `Spec r${node.specRevision}`}`, 'violet')),
       line(ink(`${[node.replaces ? `Replaces ${node.replaces}` : '', node.replacedBy ? `Replaced by ${node.replacedBy}` : '', waitReason ?? `Needs: ${dependencies}`, node.replaces || node.replacedBy ? 'Enter status / related versions' : 'Enter status / documents'].filter(Boolean).join(dot)}`, 'muted'))];
   } else if (ui.view === 2 && asEstateRow(selection)?.childCount) {
     const group = asEstateRow(selection)!;

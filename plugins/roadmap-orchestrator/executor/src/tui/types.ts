@@ -1,14 +1,16 @@
 import type { Sha256Hex } from '../core/ids.ts';
 import type { ClaudeUsage } from './usage.ts';
 import type { Run } from '../cli/locate.ts';
+import type { WorkRun } from '../status-work.ts';
 import type { Status } from '../status.ts';
 import type { RunLocator } from '../input/cli.ts';
 import type { AbsPath } from '../core/values.ts';
 
-export type EntryKind = 'unit-status' | 'specification' | 'implementation-plan' | 'arc-plan' | 'intent' | 'vision' | 'vision-clause' | 'vision-question' | 'milestone' | 'milestone-status' | 'arc-slice' | 'debt-ledger' | 'debt-item' | 'document';
+export type EntryKind = 'unit-status' | 'lane-status' | 'specification' | 'implementation-plan' | 'arc-plan' | 'intent' | 'vision' | 'vision-clause' | 'vision-question' | 'milestone' | 'milestone-status' | 'arc-slice' | 'debt-ledger' | 'debt-item' | 'document';
 export type Entry = { parentId?: string; kind?: EntryKind; description?: string; id: string; label: string; state: string; body: string; links: string[]; provenance: string };
 export type Invocation = Entry & {
   launchSha256: Sha256Hex;
+  work?: WorkRun;
   assessment?: 'future-gap' | 'baseline-red' | 'mutation-caught' | 'mutation-survived' | 'mutation-inconclusive';
   relatedUnits?: string[]; context?: string;
   inputKind?: 'initial' | 'repair' | 'resume';
