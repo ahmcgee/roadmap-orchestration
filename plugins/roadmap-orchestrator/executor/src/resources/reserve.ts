@@ -221,6 +221,7 @@ function journalTransition(
   parent: Parent,
   recipes: ReadonlyMap<ResourceInstance, ResidueRecipe>,
   cpuBasis?: CpuBasis,
+  tokenWaitMs?: number,
 ): void {
   const view = ctx.journal.view;
   assertLegal(view, holder, resources, edge);
@@ -229,7 +230,7 @@ function journalTransition(
     key: holderKey(holder),
     parent,
     deadlineAt: null,
-    body: () => ({ expect: { holder, resources, edge, ...(cpuBasis === undefined ? {} : { cpuBasis }) }, post: null }),
+    body: () => ({ expect: { holder, resources, edge, ...(cpuBasis === undefined ? {} : { cpuBasis }), ...(tokenWaitMs === undefined ? {} : { tokenWaitMs }) }, post: null }),
   });
   const unit = 'unit' in holder ? holder.unit : undefined;
   crashPoint('resource.after-intent', unit);
@@ -288,6 +289,7 @@ export function reserve<H extends AcquiringHolder>(
   holder: H,
   req: ResourceRequest,
   parent: Parent,
+  tokenWaitMs?: number,
 ): Reservation<'reserved', H> | Refused {
   const plan = ctx.plan();
   const slotAlone = req.publication && req.named.length === 0 && req.pools.length === 0 && req.cpu === 0;
@@ -297,7 +299,7 @@ export function reserve<H extends AcquiringHolder>(
   if (holder.type === 'job' && req.publication) throw new Error(`a job holder never reserves integration-slot: ${canonicalJson(req)}`);
   const got = allocate(resourceTable(ctx.journal.view), plan, req);
   if (got.kind === 'busy') return { state: 'refused', busy: got.busy };
-  journalTransition(ctx, holder, got.units, { type: 'reserve' }, parent, new Map(), req.cpuBasis);
+  journalTransition(ctx, holder, got.units, { type: 'reserve' }, parent, new Map(), req.cpuBasis, tokenWaitMs);
   return { state: 'reserved', holder, resources: got.units, recipes: holderRecipes(plan, ctx.repo, holder, got.units) };
 }
 

@@ -53,7 +53,7 @@ export type ResourceRequest = Readonly<{
 
 /**
  * Each stage's entry reservation (F6), taken before the stage's first journaled op: plan-check and gate
- * `@cpu`×1; build the unit's resources and `@cpu`×(`unit.cpu ?? 4`); lanes the first lane's set; candidate the
+ * `@cpu`×1; build calibrated `@cpu` only (unit.cpu overrides); lanes the first lane's set; candidate the
  * publication (`integration-slot`); prepare none. A wait cancelled by pause or stop journals nothing.
  */
 export type EntryReservation = (plan: PlanM1, unit: PlanUnit, stage: AdmissionStage) => ResourceRequest | null;

@@ -33,7 +33,7 @@ import {
 import { type Acquire, type Grant, type Rank, type ResourceRequest, compareRank } from './types.ts';
 
 /** A units' waiter as `status` shows it, in the order the arbiter serves them. */
-export type WaiterView = Readonly<{ holder: UnitAcquiringHolder; request: ResourceRequest; rank: Rank; envBlocked: boolean; pressureBlocked: boolean }>;
+export type WaiterView = Readonly<{ holder: UnitAcquiringHolder; request: ResourceRequest; rank: Rank; envBlocked: boolean; pressureBlocked: boolean; queuedAt: number }>;
 
 /** A job's holder that waits before every unit: a docs publication's slot, a repair batch's slot (M3 B2), or a job's lanes. */
 export type FirstHolder = DocsHolder | BatchHolder | JobHolder;
@@ -58,9 +58,10 @@ export type Arbiter = Readonly<{
 }>;
 
 /** A job's waiter as `sched.json` lists it, in the order the arbiter serves them (before every unit). */
-export type FirstWaiterView = Readonly<{ holder: FirstHolder; request: ResourceRequest; envBlocked: boolean; pressureBlocked: boolean }>;
+export type FirstWaiterView = Readonly<{ holder: FirstHolder; request: ResourceRequest; envBlocked: boolean; pressureBlocked: boolean; queuedAt: number }>;
 
 type Waiter<H extends AcquiringHolder> = {
+  readonly queuedAt: number;
   readonly request: ResourceRequest;
   readonly holder: H;
   readonly signal: AbortSignal;
@@ -128,7 +129,7 @@ export function createArbiter(ctx: ResourceContext): Arbiter {
         blocked.push(w.request);
         continue;
       }
-      const got = reserve(ctx, w.holder, w.request, w.parent);
+      const got = reserve(ctx, w.holder, w.request, w.parent, Math.max(0, Date.now() - w.queuedAt));
       if (got.state === 'refused') {
         blocked.push(w.request);
         refused.push(w);
@@ -140,7 +141,7 @@ export function createArbiter(ctx: ResourceContext): Arbiter {
         blocked.push(w.request);
         continue;
       }
-      const got = reserve(ctx, w.holder, w.request, parentOf(w.holder));
+      const got = reserve(ctx, w.holder, w.request, parentOf(w.holder), Math.max(0, Date.now() - w.queuedAt));
       if (got.state === 'refused') blocked.push(w.request);
       else settle(units, w, { kind: 'granted', units: got.resources });
     }
@@ -153,7 +154,7 @@ export function createArbiter(ctx: ResourceContext): Arbiter {
     if (units.some((w) => sameHolder(w.holder, h))) throw new Error(`${canonicalJson(h)} already waits`);
     if (signal.aborted) return Promise.resolve({ kind: 'cancelled' });
     return new Promise<Grant>((resolve) => {
-      const w: UnitWaiter = { request, holder: h, rank, signal, resolve, onAbort: () => settle(units, w, { kind: 'cancelled' }) };
+      const w: UnitWaiter = { queuedAt: Date.now(), request, holder: h, rank, signal, resolve, onAbort: () => settle(units, w, { kind: 'cancelled' }) };
       signal.addEventListener('abort', w.onAbort, { once: true });
       units.push(w);
       wake();
@@ -169,7 +170,7 @@ export function createArbiter(ctx: ResourceContext): Arbiter {
     const reservedFor = parent ?? parentOf(holder);
     if (signal.aborted) return Promise.resolve({ kind: 'cancelled' });
     return new Promise<Grant>((resolve) => {
-      const w: FirstWaiter = { request, holder, signal, resolve, onBlocked, parent: reservedFor, onAbort: () => settle(first, w, { kind: 'cancelled' }) };
+      const w: FirstWaiter = { queuedAt: Date.now(), request, holder, signal, resolve, onBlocked, parent: reservedFor, onAbort: () => settle(first, w, { kind: 'cancelled' }) };
       signal.addEventListener('abort', w.onAbort, { once: true });
       first.push(w);
       wake();
@@ -179,13 +180,13 @@ export function createArbiter(ctx: ResourceContext): Arbiter {
   const waiting = (): readonly WaiterView[] => {
     const plan = ctx.plan();
     const table = resourceTable(ctx.journal.view);
-    return ordered().map(({ w, rank }) => ({ holder: w.holder, request: w.request, rank, envBlocked: envBlocked(table, plan, w.request), pressureBlocked: pressureBlocked(w) }));
+    return ordered().map(({ w, rank }) => ({ holder: w.holder, request: w.request, rank, envBlocked: envBlocked(table, plan, w.request), pressureBlocked: pressureBlocked(w), queuedAt: w.queuedAt }));
   };
 
   const waitingFirst = (): readonly FirstWaiterView[] => {
     const plan = ctx.plan();
     const table = resourceTable(ctx.journal.view);
-    return first.map((w) => ({ holder: w.holder, request: w.request, envBlocked: envBlocked(table, plan, w.request), pressureBlocked: pressureBlocked(w) }));
+    return first.map((w) => ({ holder: w.holder, request: w.request, envBlocked: envBlocked(table, plan, w.request), pressureBlocked: pressureBlocked(w), queuedAt: w.queuedAt }));
   };
 
   return { pressure, acquire, acquireFirst, wake, waiting, waitingFirst };

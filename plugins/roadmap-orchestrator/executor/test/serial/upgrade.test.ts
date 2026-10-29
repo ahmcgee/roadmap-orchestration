@@ -704,7 +704,7 @@ const DEV17_DEFAULTS = /^(lane\.tier\.(spec|suite|arc)|lane-rev\.tier\..+|plan-a
 const DEV20_LASTING = /^spec\.design\.kind$/;
 
 // Calibrated resources do not infer execution keys or reservation bases for earlier launches.
-const RESOURCE_DEFAULTS = /^(proc\.spawn\.cpuKey|resource\.transition\.cpuBasis|environment\.resources|sched\.pressureBlocked)$/;
+const RESOURCE_DEFAULTS = /^(proc\.spawn\.cpuKey|resource\.transition\.cpuBasis|resource\.transition\.tokenWaitMs|environment\.resources|sched\.pressureBlocked|sched\.queuedAt)$/;
 
 /**
  * dev.21 removed the GitHub issues integration: what an arc started before it holds for issues (its Phase-0 record's

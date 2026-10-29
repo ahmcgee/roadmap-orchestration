@@ -131,7 +131,7 @@
 // head are those it recorded (A20); an admitting apply or a reopen invalidates it, and the arc runs again.
 import { orderingOf, wakeOrdering } from '../park/ordering.ts';
 import { cpuBasis } from '../core/cpu.ts';
-import { schedulerPressureBlockedDefault } from '../core/upgrade.ts';
+import { schedulerPressureBlockedDefault, schedulerQueuedAtDefault } from '../core/upgrade.ts';
 import type { CommandContext } from '../commands/apply.ts';
 import { applyCommand, applyControl } from '../commands/apply.ts';
 import { isControl, pollCommands, POLL_MS, readReceipt, writeReceipt } from '../commands/queue.ts';
@@ -204,10 +204,10 @@ export const SCHED_FILE = 'sched.json';
 const TASK_STATES = ['idle', 'awaiting-admission', 'in-stage', 'in-chain'] as const satisfies readonly TaskState[];
 
 /** One waiter of the arbiter, in the order it serves them: the unit, the stage attempt it waits for, what it asks. */
-export type QueueEntry = Readonly<{ unit: UnitId; stage: Stage; attempt: number; publication: boolean; request: ResourceRequest; envBlocked: boolean; pressureBlocked?: boolean }>;
+export type QueueEntry = Readonly<{ unit: UnitId; stage: Stage; attempt: number; publication: boolean; request: ResourceRequest; envBlocked: boolean; pressureBlocked?: boolean; queuedAt?: number }>;
 
 /** M3 (B7): one job's waiter, served before every unit's: a docs publication's or a batch's slot, or a job's lanes. */
-export type JobQueueEntry = Readonly<{ holder: FirstHolder; request: ResourceRequest; envBlocked: boolean; pressureBlocked?: boolean }>;
+export type JobQueueEntry = Readonly<{ holder: FirstHolder; request: ResourceRequest; envBlocked: boolean; pressureBlocked?: boolean; queuedAt?: number }>;
 
 /**
  * `sched.json`: written by the executor process `pid` (status trusts it only while that executor owns the
@@ -253,9 +253,11 @@ export const schedFile: Read<SchedFile> = object((f) => ({
   queue: f.get('queue', arrayOf(object((g): QueueEntry => ({
     unit: g.get('unit', (v, p) => unitId(v, p)), stage: g.get('stage', oneOf(STAGES)), attempt: g.get('attempt', positive),
     publication: g.get('publication', bool), request: g.get('request', request), envBlocked: g.get('envBlocked', bool), pressureBlocked: g.optional('pressureBlocked', bool) ?? schedulerPressureBlockedDefault(),
+    ...((queuedAt) => queuedAt === undefined ? {} : { queuedAt })(g.optional('queuedAt', nat) ?? schedulerQueuedAtDefault()),
   })))),
   jobQueue: f.get('jobQueue', arrayOf(object((g): JobQueueEntry => ({
     holder: g.get('holder', firstHolder), request: g.get('request', request), envBlocked: g.get('envBlocked', bool), pressureBlocked: g.optional('pressureBlocked', bool) ?? schedulerPressureBlockedDefault(),
+    ...((queuedAt) => queuedAt === undefined ? {} : { queuedAt })(g.optional('queuedAt', nat) ?? schedulerQueuedAtDefault()),
   })))),
   drains: f.get('drains', arrayOf(object((g) => ({ command: g.get('command', (v, p) => commandId(v, p)), scope: g.get('scope', scope) })))),
 }));
@@ -1309,9 +1311,9 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       tasks: [...tasks.values()].map((t) => ({ unit: t.unit, state: t.state })).sort((a, b) => (a.unit < b.unit ? -1 : 1)),
       queue: arbiter.waiting().map((w) => ({
         unit: w.holder.unit, stage: holderStage(w.holder), attempt: w.holder.attempt, publication: w.holder.type === 'publication', request: w.request,
-        envBlocked: w.envBlocked, pressureBlocked: w.pressureBlocked,
+        envBlocked: w.envBlocked, pressureBlocked: w.pressureBlocked, queuedAt: w.queuedAt,
       })),
-      jobQueue: arbiter.waitingFirst().map((w) => ({ holder: w.holder, request: w.request, envBlocked: w.envBlocked, pressureBlocked: w.pressureBlocked })),
+      jobQueue: arbiter.waitingFirst().map((w) => ({ holder: w.holder, request: w.request, envBlocked: w.envBlocked, pressureBlocked: w.pressureBlocked, queuedAt: w.queuedAt })),
       drains: pending,
     };
     const text = canonicalJson(file);

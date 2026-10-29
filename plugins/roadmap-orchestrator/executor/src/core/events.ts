@@ -238,7 +238,7 @@ export type OpExpect = {
   /** `evidence` is the done evidence.snapshot op whose manifest must be complete before removal. */
   'worktree.remove': Readonly<{ path: AbsPath; evidence: OpId }>;
   /** `resources` in lock order (`compareResourceUnits`): names and pool instances, then `@cpu#*`, `integration-slot` last. */
-  'resource.transition': Readonly<{ holder: Holder; resources: readonly ResourceUnit[]; edge: ResourceEdge; cpuBasis?: CpuBasis }>;
+  'resource.transition': Readonly<{ holder: Holder; resources: readonly ResourceUnit[]; edge: ResourceEdge; cpuBasis?: CpuBasis; tokenWaitMs?: number }>;
   /** The invocation is `op#ordinal`; launch.json is written after the intent and must hash to `launchSha256`. */
   'proc.spawn': Readonly<{ subject: SpawnSubject; launchSha256: Sha256Hex; cpuKey?: Sha256Hex }>;
   /** `op` scope also kills stray earlier ordinals of the same op. */
@@ -1654,7 +1654,8 @@ export const OP_SCHEMAS: { readonly [K in OpKind]: OpSchema<K> } = {
   'resource.transition': {
     expect: object((f) => {
       const basis = f.optional('cpuBasis', cpuBasis);
-      return { holder: f.get('holder', holder), resources: f.get('resources', lockOrder), edge: f.get('edge', resourceEdge), ...(basis === undefined ? {} : { cpuBasis: basis }) };
+      const tokenWaitMs = f.optional('tokenWaitMs', nat);
+      return { holder: f.get('holder', holder), resources: f.get('resources', lockOrder), edge: f.get('edge', resourceEdge), ...(basis === undefined ? {} : { cpuBasis: basis }), ...(tokenWaitMs === undefined ? {} : { tokenWaitMs }) };
     }),
     post: nothing,
     outcome: kindOnly('transitioned'),

@@ -348,7 +348,7 @@ describe('res.no-overlap-randomized', () => {
           else cancels += 1;
         });
         // acquire evaluates at once: compare against the queue including the new waiter (nothing is dirty here).
-        check([...before, { holder, request: l.request, rank: rk, envBlocked: false, pressureBlocked: false }].sort((a, b) => compareRank(a.rank, b.rank)));
+        check([...before, { holder, request: l.request, rank: rk, envBlocked: false, pressureBlocked: false, queuedAt: Date.now() }].sort((a, b) => compareRank(a.rank, b.rank)));
       } else if (roll < 0.85 && held.length > 0) {
         const l = pick(held);
         release(ctx, l.holder);

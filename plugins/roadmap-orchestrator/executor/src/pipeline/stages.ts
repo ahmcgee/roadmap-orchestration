@@ -1913,15 +1913,14 @@ export function forcedLanes(view: JournalView, spec: SpecM1): ReadonlySet<LaneId
 }
 
 /** The lanes of a lanes attempt's fast suite at `salvaged`: the regenerate checks the unit's diff calls for, then the stage's suite lanes. */
-function fastSuiteLanes(ctx: StageContext, spec: SpecM1, salvaged: Sha): readonly LaneDef[] {
+export function fastSuiteLanes(ctx: StageContext, spec: SpecM1, salvaged: Sha): readonly LaneDef[] {
   // dev.12: the regenerate checks of the derived entries the unit's diff touches go first (src/input/derived.ts).
   const regenerate = unitRegenerateLanes(ctx.plan(), unitDiffPaths(ctx.repo, integrationTip(ctx), salvaged));
   return [...regenerate, ...stageSuiteLanes(ctx.plan().suite.lanes, spec, forcedLanes(ctx.journal.view, spec))];
 }
 
 /** Reds in the unit's latest completed lanes attempt, excluding holds and the suite's diagnostic base run. */
-function previousLaneReds(ctx: StageContext, unit: PlanUnit, spec: SpecM1): Readonly<{ spec: ReadonlySet<LaneId>; suite: ReadonlySet<LaneId> }> {
-  const attempt = ctx.journal.view.completedLanes(unit.id);
+export function previousLaneReds(ctx: StageContext, unit: PlanUnit, spec: SpecM1, attempt = ctx.journal.view.completedLanes(unit.id)): Readonly<{ spec: ReadonlySet<LaneId>; suite: ReadonlySet<LaneId> }> {
   if (attempt === null) return { spec: new Set(), suite: new Set() };
   const previous: StageParent = { type: 'stage', unit: unit.id, stage: 'lanes', attempt };
   const path = verificationWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, previous.attempt);

@@ -695,3 +695,15 @@ export function dev31UnchargedLanesRedsDefault(): number {
   warnDefaulted('stage-outcome.unchargedLanesReds', 'a lanes red without its counter (dev.31 or earlier); read as 0, preserving its recorded charge');
   return 0;
 }
+
+/** Queue time is distinct from the runner's CPU scheduling wait. Older reservations did not record it. */
+export function reservationTokenWaitOf(expect: Readonly<{ tokenWaitMs?: number }>): number | null {
+  if (expect.tokenWaitMs !== undefined) return expect.tokenWaitMs;
+  warnDefaulted('resource.transition.tokenWaitMs', 'a reservation without queue timing; token wait is unavailable');
+  return null;
+}
+
+export function schedulerQueuedAtDefault(): undefined {
+  warnDefaulted('sched.queuedAt', 'an earlier scheduler view has no queue start time; token wait is unavailable');
+  return undefined;
+}
