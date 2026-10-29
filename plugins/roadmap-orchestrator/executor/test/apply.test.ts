@@ -328,6 +328,20 @@ const ROWS: readonly Row[] = [
     expect: { busy: [{ unit: 'u1', stage: 'build', attempt: 2 }] },
   },
   {
+    name: 'lane CPU cost edit while lanes run: busy at the lanes boundary, without interrupting the stage',
+    setup: (r) => {
+      inFlight(r);
+      r.journal.begin({ kind: 'worktree.create', key: opKey('worktree:u1:verify'), parent: { type: 'stage', unit: U1, stage: 'lanes', attempt: 2 }, deadlineAt: null, body: () => ({
+        expect: { path: absPath(tmpDir('apply-cost-wt')), checkout: { type: 'detached', at: sha('0'.repeat(40)) } }, post: null,
+      }) });
+    },
+    edit: (d) => editSpec(d, 'u1', (s) => {
+      s['rev'] = Number(s['rev']) + 1;
+      s['lanes'] = (s['lanes'] as Json[]).map((l) => ({ ...l, cpu: 1 }));
+    }),
+    expect: { busy: [{ unit: 'u1', stage: 'lanes', attempt: 2 }] },
+  },
+  {
     // dev.17: an edit refused whatever the boundary is refused now, never queued.
     name: 'rev + 2 of a unit running an attempt: refused now, not busy',
     setup: (r) => {
