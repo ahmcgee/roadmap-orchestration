@@ -29,6 +29,9 @@ A change is not done until the ladder passes, in order (from `executor/`):
    evals/roles/triggers.ts <base>` names the roles a batch's changes trigger; none triggered, the rung is skipped), once per
    merged batch, never per worktree agent. The holdout set (untracked `evals/roles/holdout/`, `--set holdout --compare
    <dev summary.json>`) runs only at acceptance.
+   Estate compaction (`node evals/compaction/run.ts --set dev --n 3 --stage both --cap <usd>`) also runs at this rung
+   when `skills/estate-compaction/` or orchestrate's Phase 0 compaction text changes; the path trigger conservatively
+   treats any orchestrate skill edit as triggering it. Its holdout is untracked and runs only at acceptance.
 4. The paid fixture (`evals/m1/`; `evals/m5/`, the UI end to end, when milestones, walks, design units or the demo
    changed): once per merged batch, never per worktree agent
 

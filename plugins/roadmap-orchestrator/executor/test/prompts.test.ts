@@ -18,7 +18,7 @@ import type { JsonValue } from '../src/core/json.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { absPath, repoPath, repoPattern } from '../src/core/values.ts';
 import { headingSlug, quotedTextReason } from '../src/docs/contracts.ts';
-import { PROMPTS, SONNET_THINK_FIRST, UnsupportedPromptError, promptFor, support } from '../src/prompts/index.ts';
+import { PROMPTS, SONNET_THINK_FIRST, UnsupportedPromptError, promptSize, renderPrompt, promptFor, support } from '../src/prompts/index.ts';
 import type { BoundedDiff } from '../src/git/boundeddiff.ts';
 import { type RoleInputs, ROLE_INPUTS, UNIT_POLICY, laneCommand, obligationsText, pasted, pastedAs, targetDocument } from '../src/prompts/inputs.ts';
 import {
@@ -48,7 +48,7 @@ const SHA_A = sha('a'.repeat(40));
 const SHA_B = sha('b'.repeat(40));
 
 const index = (c: string, r: string, ledger: string) => ({
-  contracts: [{ path: repoPath(c), heading: `${c} heading` }], rulings: [{ id: rulingId(r), line: `${r} first sentence.` }], ledger: absPath(ledger),
+  contracts: [{ path: repoPath(c), heading: `${c} heading` }], rulings: [{ id: rulingId(r), line: `${r} first sentence.` }], withdrawn: [], ledger: absPath(ledger),
 });
 const premise = (claim: string, path: string) => ({ claim, evidence: [{ path, line: 3 }] });
 
@@ -83,6 +83,11 @@ const corpusTarget = (dir: string, visionDoc: string | null) => ({
     pinnedRule('T-4', 'Amounts never round twice.'),
   ],
 });
+const unitCorpusTarget = (dir: string, visionDoc: string | null) => ({
+  kind: 'unit-corpus' as const, dir: absPath(dir), visionDoc: visionDoc === null ? null : repoPath(visionDoc),
+  rules: [pinnedRule('T-2', 'Totals reconcile monthly.')], others: 3,
+});
+
 const findingView = (id: string, claim: string) => ({
   id: findingId(id), lens: 'invariants' as const, severity: 'P1' as const, state: 'open' as const, obligation: obligationId('I-1'), claim, owner: null,
 });
@@ -837,7 +842,8 @@ describe('M3 prompts: the vision and the arc roles', () => {
     const text = promptFor('checkpoint', 'claude-opus-5-5').render({ ...SAMPLES.checkpoint[0], vision: v });
     assert.match(text, /<vision>\nVision revision 3\nV-4 \(world\): W\nV-1 \(purpose\): P\n/);
     assert.match(text, /V-2 \(tradeoff, rank 1\): T/);
-    assert.match(text, /V-3 \(good, WITHDRAWN: never cite it\): G/);
+    assert.match(text, /Withdrawn, never cite: V-3/);
+    assert.doesNotMatch(text, /V-3 \(/);
     assert.match(text, /\nThis arc advances: V-1, V-4\nHorizon \(active, beyond this arc\): V-2\nOpen questions:\n- Q-1 \(bears on V-1, V-4\): Q\n {2}Working assumption: A\n<\/vision>/);
     assert.doesNotMatch(text, /CLOSED/, 'a closed question is omitted');
   });
@@ -1045,22 +1051,32 @@ describe('M4a prompts: the corpus target, checkpoint intake, the pack review, un
     for (const [role, model] of JUDGMENTS) {
       const mod = promptFor(role, model) as { system: string; render: (i: unknown) => string };
       assert.match(mod.system, /In a corpus arc the corpus/, `${role}/${model}`);
-      const target = corpusTarget('/run/corpus/0123abcd', role === 'gate' ? null : 'docs/vision.md');
+      const target = role === 'gate' || role === 'planCheck' ? unitCorpusTarget('/run/corpus/0123abcd', role === 'gate' ? null : 'docs/vision.md') : corpusTarget('/run/corpus/0123abcd', 'docs/vision.md');
       const text = mod.render({ ...SAMPLES[role][0], target });
       assert.match(text, /<source>corpus rules index \(the pinned corpus files are read-only under \/run\/corpus\/0123abcd/, `${role}/${model}`);
       assert.match(text, / {4}T-2( \[textSha256 c{64}\])?: Totals reconcile monthly\./, `${role}/${model}`);
+      if (role === 'gate' || role === 'planCheck') {
+        assert.match(text, /3 other active rules are readable in \/run\/corpus\/0123abcd/);
+        assert.doesNotMatch(text, /Amounts render with two decimals/);
+      } else assert.match(text, /Amounts render with two decimals/);
       assert.doesNotMatch(text, /ARCH-A/, `${role}/${model}: the corpus replaces the architecture doc`);
       assert.equal(/textSha256/.test(text), role === 'checkpoint', `${role}/${model}: only the checkpoint, which writes rule refs, gets the hashes`);
     }
   });
 
+  it('a lens cannot receive a unit corpus target', () => {
+    // @ts-expect-error lenses require the complete corpus index
+    const bad: RoleInputs['lens'] = { ...SAMPLES.lens[0], target: unitCorpusTarget('/d', null) };
+    void bad;
+  });
+
   it('the gate never sees the vision doc: its corpus target carries none, by type and in text (M3 R17)', () => {
     // @ts-expect-error a gate's corpus target cannot name the vision doc
-    const bad: RoleInputs['gate'] = { ...SAMPLES.gate[1], target: corpusTarget('/run/corpus/0123abcd', 'docs/vision.md') };
+    const bad: RoleInputs['gate'] = { ...SAMPLES.gate[1], target: unitCorpusTarget('/run/corpus/0123abcd', 'docs/vision.md') };
     void bad;
     for (const model of ['claude-opus-5-5', 'claude-fable-5-1'] as const) {
       const mod = promptFor('gate', model);
-      const text = mod.render({ ...SAMPLES.gate[1], target: { ...corpusTarget('/run/corpus/0123abcd', null), visionDoc: null } });
+      const text = mod.render({ ...SAMPLES.gate[1], target: { ...unitCorpusTarget('/run/corpus/0123abcd', null), visionDoc: null } });
       assert.doesNotMatch(mod.system + text, /\bvision\b|V-1|serves/i, model);
       assert.match(mod.system, /corpus rule('s)? T-n in contractRef/, model);
     }
@@ -1457,4 +1473,20 @@ it('prompts.derived-exclusion: plan-check, builders and gates render the exclude
       assert.ok((mod.render as (i: unknown) => string)({ ...sample, scope }).includes(output), `${role} ${model}: excluded output rendered`);
     }
   }
+});
+
+it('non-active obligations render only their id and state', () => {
+  const waived = { ...observed('I-2', 'HIDDEN STATEMENT', SHA_A), obligation: { ...obligation('I-2', 'HIDDEN STATEMENT'), state: { type: 'waived' as const, ruling: rulingId('C-3') } } };
+  const text = obligationsText([waived], { serves: true });
+  assert.equal(text, '- I-2: waived by C-3');
+  assert.doesNotMatch(text, /Anchored at/);
+});
+
+it('prompt sizes count exact UTF-8 stdin bytes and canonical JSON inputs', () => {
+  const module = { system: 'System π', fields: ['text', 'object'] as const, render: (i: { text: string; object: { z: number; a: string } }) => i.text };
+  const inputs = { text: '你好', object: { z: 2, a: 'é' } };
+  const measured = renderPrompt(module, inputs);
+  assert.deepEqual(measured.prompt, { bytes: 6, inputs: { text: 8, object: Buffer.byteLength('{"a":"é","z":2}') } });
+  assert.deepEqual(promptSize(module, inputs, inputs.text), measured.prompt);
+  assert.equal(renderPrompt(module, inputs, 'codex').prompt.bytes, Buffer.byteLength('System π\n\n你好'));
 });

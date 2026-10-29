@@ -118,7 +118,7 @@ import { repairUnits } from '../pipeline/reproduce.ts';
 import { architecture, docAt, inMs, ledgerDir, ledgerPath, targetDirs } from '../pipeline/stages.ts';
 import { lineageDiagnosis } from '../pipeline/handover.ts';
 import { judgmentRepairDirective } from '../prompts/directives.ts';
-import { promptFor } from '../prompts/index.ts';
+import { renderPrompt, promptFor } from '../prompts/index.ts';
 import { type CheckpointInputs, type CheckpointSpec, type FindingView, type ManifestEntry, type ManifestKind, type ParkDiagnosis, type TriggerView, visionInputOf } from '../prompts/inputs.ts';
 import { type CheckpointIds, type CheckpointOutput, checkpointSchemaFor, validateCheckpointOutput } from '../prompts/schemas.ts';
 import { worktreeCreateOp } from '../recover/ops.ts';
@@ -805,7 +805,7 @@ function checkpointInputs(ctx: CheckpointContext, s: Captured, r: Recorded): Che
     divergences: uncoveredDivergences(ctx.journal.view).map((d) => ({ id: d.id, type: d.type, what: d.what })),
     contracts: r.plan.contracts.map((c) => docAt(ctx, s.headSha, c)),
     rulings: rulings.flatMap((x) => (x.status === 'active' ? [{ id: x.id, text: x.text }] : [])),
-    index: { contracts: [], rulings: rulings.flatMap((x) => (x.status === 'withdrawn' ? [{ id: x.id, line: `withdrawn by ${x.by}` }] : [])), ledger: ledgerPath(ctx) },
+    index: { contracts: [], rulings: [], withdrawn: rulings.filter((x) => x.status === 'withdrawn').map((x) => x.id), ledger: ledgerPath(ctx) },
     target: architecture(ctx, s.headSha),
     direction: r.plan.direction,
     manifest: manifestOf(ctx, s),
@@ -977,13 +977,13 @@ async function ask(ctx: CheckpointContext, s: Captured): Promise<Asked> {
     await removeJobCheckouts(ctx, s.job);
     await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${s.job}`, jobParent(s.job), { path: checkout, checkout: { type: 'detached', at: s.headSha } });
     const inputs = checkpointInputs(ctx, s, r);
-    const rendered = prompt.render(inputs);
+    const measured = renderPrompt(prompt, inputs);
     const called = await withCpu(ctx, s.job, async () => {
       // Findings may settle while this job waits for its CPU seat. Check again at the call boundary.
       const carried = s.trigger.type === 'park' ? null : unchanged(ctx);
       if (carried !== null) return { kind: 'not-needed' as const, carried };
       return supersedable(ctx, s, () => callArcRole(ctx, {
-        job: s.job, role: 'checkpoint', attempt, system: prompt.system, rendered, schema: checkpointSchemaFor(checkpointIdsOf(r.obligations)), cwd: checkout,
+        job: s.job, role: 'checkpoint', attempt, system: prompt.system, ...measured, schema: checkpointSchemaFor(checkpointIdsOf(r.obligations)), cwd: checkout,
         evidenceDirs: [ledgerDir(ctx), ...targetDirs(inputs.target), ...walkEvidenceOf(ctx)],
         deadlineAt: inMs(minutesMs(ctx.plan().limits?.judgmentDeadlineMin ?? DEFAULT_BOUNDS.judgmentDeadlineMin)), session: freshJudgmentSession(),
       }));
@@ -1034,7 +1034,7 @@ async function repairCall(ctx: CheckpointContext, s: Captured, inv: InvocationId
       const carried = s.trigger.type === 'park' ? null : unchanged(ctx);
       if (carried !== null) return { kind: 'not-needed' as const, carried };
       return supersedable(ctx, s, () => callArcRole(ctx, {
-        job: s.job, role: 'checkpoint', attempt, system: prompt.system, rendered: judgmentRepairDirective(reasons), schema: turn.schema,
+        job: s.job, role: 'checkpoint', attempt, system: prompt.system, prompt: null, rendered: judgmentRepairDirective(reasons), schema: turn.schema,
         cwd: checkout, evidenceDirs: [ledgerDir(ctx), ...targetDirs(architecture(ctx, s.headSha)), ...walkEvidenceOf(ctx)],
         deadlineAt: inMs(minutesMs(ctx.plan().limits?.judgmentDeadlineMin ?? DEFAULT_BOUNDS.judgmentDeadlineMin)), session: turn.session,
       }));

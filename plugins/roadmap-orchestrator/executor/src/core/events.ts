@@ -25,7 +25,7 @@ import { canonicalJson, sha256Hex } from './json.ts';
 import {
   COMMAND_VERDICTS, DEMO_ACTS, LENS_KIND_NAMES, type ApprovalFingerprint, type DemoAct, type BackendOutcomeKind, type CommandVerdict, type ContainmentMode,
   type DispatchRecord, type KillReason, type KnownDefectMatch, type LensKindName, type PauseTarget, type PlanManifest, type RedRev, type ResidueRecord, type ResumeTarget,
-  type RevisionManifest, type SpecPatch, type Stage, type TokenUsage, type ClassUsage, classUsages, type UsageUnavailableReason, approvalFingerprint, containmentMode,
+  type RevisionManifest, type SpecPatch, type Stage, type TokenUsage, type ClassUsage, type PromptSize, classUsages, type UsageUnavailableReason, approvalFingerprint, containmentMode,
   dispatchRecord, killReason, knownDefectMatch, optionId, pauseTarget, manifestSpecs, resumeTarget, revisionInputs, specPatch, stage, tokenUsage,
   usageUnavailableReason, type Stochastic, stochastic,
 } from './records.ts';
@@ -177,8 +177,8 @@ export type Dev6MutantSubject = Readonly<{ purpose: 'mutant'; finding: FindingId
  * frozen 1.0.0-dev.6 table), `identity` on a spec lane's (`LaneIdentity`), and a mutant's `of` (`MutantOf`).
  */
 export type SpawnSubject =
-  | (Readonly<{ purpose: 'backend'; routingRev: RoutingRev; unit: UnitId; attempt: number }> & UnitSeatRef)
-  | (Readonly<{ purpose: 'arc-backend'; routingRev: RoutingRev; job: JobId; attempt: number }> & ArcSeatRef)
+  | (Readonly<{ purpose: 'backend'; prompt?: PromptSize; routingRev: RoutingRev; unit: UnitId; attempt: number }> & UnitSeatRef)
+  | (Readonly<{ purpose: 'arc-backend'; prompt?: PromptSize; routingRev: RoutingRev; job: JobId; attempt: number }> & ArcSeatRef)
   /** dev.17: `identity` on a suite lane's journey (a batch point's, a publication's), so a batch point finds its clean passes. */
   | Readonly<{ purpose: 'journey'; lane: LaneId; laneRev: LaneRev; at: Sha; owner: LaneOwner; redRev?: RedRev; identity?: LaneIdentity }>
   | MutantSubject
@@ -764,7 +764,7 @@ export type Fact =
    * Both absent: a Codex call's, or one an executor before 1.0.0-dev.12 wrote (nothing delegated).
    */
   | Readonly<{
-    kind: 'meter'; inv: InvocationId; routingRev: RoutingRev; subject: MeterSubject; usage: TokenUsage; session?: ClaudeSessionId; delegated?: readonly ClassUsage[];
+    kind: 'meter'; prompt?: PromptSize; inv: InvocationId; routingRev: RoutingRev; subject: MeterSubject; usage: TokenUsage; session?: ClaudeSessionId; delegated?: readonly ClassUsage[];
   }>
   /** `streamed` (dev.17): what a judgment's stream without a result showed (records.ts `Usage`); the meter counts its tokens. */
   | Readonly<{ kind: 'usage-unavailable'; inv: InvocationId; routingRev: RoutingRev; subject: MeterSubject; reason: UsageUnavailableReason; streamed?: TokenUsage }>
@@ -1514,13 +1514,25 @@ const resourceEdge: Read<ResourceEdge> = tagged('type', {
   })),
 });
 
+const promptSizeRead: Read<PromptSize> = object((f) => ({
+  bytes: f.get('bytes', nat),
+  inputs: f.get('inputs', (value, path) => {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new SchemaError(path, 'input byte counts', value);
+    return Object.fromEntries(Object.entries(value).map(([key, bytes]) => [key, nat(bytes, `${path}.${key}`)]));
+  }),
+}));
+function promptField(f: Fields): Readonly<{ prompt?: PromptSize }> {
+  const prompt = f.optional('prompt', promptSizeRead);
+  return prompt === undefined ? {} : { prompt };
+}
+
 const spawnSubject: Read<SpawnSubject> = tagged('purpose', {
   backend: object((f): SpawnSubject => ({
-    purpose: f.get('purpose', literal('backend')), ...unitSeatFields(f), routingRev: f.get('routingRev', revR),
+    purpose: f.get('purpose', literal('backend')), ...promptField(f), ...unitSeatFields(f), routingRev: f.get('routingRev', revR),
     unit: f.get('unit', unitR), attempt: f.get('attempt', positive),
   })),
   'arc-backend': object((f): SpawnSubject => ({
-    purpose: f.get('purpose', literal('arc-backend')), ...arcSeatFields(f), routingRev: f.get('routingRev', revR),
+    purpose: f.get('purpose', literal('arc-backend')), ...promptField(f), ...arcSeatFields(f), routingRev: f.get('routingRev', revR),
     job: f.get('job', jobR), attempt: f.get('attempt', positive),
   })),
   journey: object((f): SpawnSubject => {
@@ -2446,7 +2458,7 @@ export const fact: Read<Fact> = tagged('kind', {
     const delegated = f.optional('delegated', classUsages);
     if ((session === undefined) !== (delegated === undefined)) throw new SchemaError(f.path, 'session and delegated together, or neither', { session, delegated });
     return {
-      kind: f.get('kind', literal('meter')), inv: f.get('inv', invR), routingRev: f.get('routingRev', revR), subject: f.get('subject', meterSubject),
+      kind: f.get('kind', literal('meter')), ...promptField(f), inv: f.get('inv', invR), routingRev: f.get('routingRev', revR), subject: f.get('subject', meterSubject),
       usage: f.get('usage', tokenUsage), ...(session === undefined || delegated === undefined ? {} : { session, delegated }),
     };
   }),

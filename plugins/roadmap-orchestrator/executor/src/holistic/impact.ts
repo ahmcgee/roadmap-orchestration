@@ -9,6 +9,9 @@
 //   - a revision publication's added, split or re-witnessed obligations (G12);
 // then the split closure (H14), to a fixed point: a selected child selects its parent, a selected parent its
 // children. An id the obligations file does not hold is a caller bug and throws.
+import type { CorpusPin, PinnedRule } from '../corpus/types.ts';
+import type { CensusEntry } from './types.ts';
+import type { RuleId } from '../core/ids.ts';
 import { posix } from 'node:path';
 import { type ObligationId, canonicalIds } from '../core/ids.ts';
 import { type RepoPath, matchesPattern } from '../core/values.ts';
@@ -68,4 +71,17 @@ export function gateObligations(input: ImpactInput): Readonly<{
   const direct = select(input, false);
   const directIds = new Set(direct);
   return { selected, direct, standing: selected.filter((id) => !directIds.has(id)) };
+}
+
+/** Unit corpus presentation: anchors, universally binding census rules and explicit mentions, in pin order.
+ * An exempt obligation may anchor a retired rule absent from the pin; it contributes no embedded rule.
+ */
+export function unitRules(pin: CorpusPin, census: readonly CensusEntry[], anchoredBy: readonly ObligationDef[], mentioned: readonly RuleId[]): readonly PinnedRule[] {
+  const ids = new Set<RuleId>(mentioned);
+  for (const o of anchoredBy) {
+    const source = obligationSource(o);
+    if (source.kind === 'rule') ids.add(source.rule.id);
+  }
+  for (const e of census) if (e.state.type === 'untestable' || e.state.type === 'prod-only') ids.add(e.rule);
+  return pin.rules.filter((r) => ids.has(r.id));
 }

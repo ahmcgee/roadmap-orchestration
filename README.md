@@ -40,7 +40,8 @@ Then, in the repo you want to build in, run:
 ```
 
 The first run bootstraps the repo and distils the vision with you (it runs the `vision` skill itself). Run
-`/roadmap-orchestrator:vision` on its own later, between arcs, to recalibrate the vision.
+`/roadmap-orchestrator:vision` on its own later, between arcs, to recalibrate the vision, and
+`/roadmap-orchestrator:estate-compaction` at any time to prune what the arcs have accumulated.
 
 The skill installs a managed `/usr/local/bin/roadmap` launcher inside the executor container and refreshes
 it on each skill session. Developers can then use `roadmap tui` in another terminal. After startup and at
@@ -282,6 +283,16 @@ has nothing left to advance, or when you tell it to. Acknowledging a brief frees
 the vision between arcs; and you merge the stacked PRs in order, first into `main`, each with a merge commit. CI
 failures or review comments on a PR become fix units in the arc, never hand edits.
 
+**Estate compaction, whenever you choose.** The estate the arcs carry (corpus rules, obligations, rulings, open
+debt) only grows, and the judgments read it all again on every arc. Each check-in states its size and recommends
+compaction when none has been applied in three arcs. Run `/roadmap-orchestrator:estate-compaction`, while an arc runs
+or between arcs, and the architect proposes in batches: retire what no longer matters, merge what overlaps, tighten
+what is verbose and fold lasting rulings into the corpus, each with what it gives up. You approve each change. The
+approved decisions wait in `roadmap-inputs/_next/compaction.md`, and the next Phase 0 applies them through the same
+corpus edits, rulings and debt dispositions it always uses, so the executor's checks still guard every change. What
+changes no meaning needs no review: every Phase 0 drops obligations already retired, and withdrawn and arc-lifetime
+rulings nothing still names.
+
 ## Layout
 
 ```
@@ -291,6 +302,7 @@ plugins/roadmap-orchestrator/
   executor/                         # the 1.0 executor (TypeScript on Node 24)
   skills/orchestrate/               # SKILL.md, reference.md (every command), RATIONALE-1.0.md
   skills/vision/                    # SKILL.md: distil and calibrate the arc's vision in dialogue
+  skills/estate-compaction/         # SKILL.md: prune the accumulated estate with you, applied at Phase 0
 docs/flow.svg                       # how an arc runs: simplified overview
 docs/flow-bpmn.svg                  # how an arc runs: the detailed process in BPMN
 DESIGN-1.0.md                       # binding 1.0 design brief

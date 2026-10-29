@@ -56,7 +56,7 @@ import { holisticInForce, inMs } from '../pipeline/stages.ts';
 import { referenceFiles } from '../phase0/rows.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
 import { judgmentRepairDirective } from '../prompts/directives.ts';
-import { promptFor } from '../prompts/index.ts';
+import { renderPrompt, promptFor } from '../prompts/index.ts';
 import { type PolishJudgeInputs, visionInputOf } from '../prompts/inputs.ts';
 import { type PolishJudgeOutput, validatePolishJudgeOutput } from '../prompts/schemas.ts';
 import { worktreeCreateOp } from '../recover/ops.ts';
@@ -359,8 +359,8 @@ async function compareOnce(ctx: CompareContext, c: CompareRecord, m: Milestone, 
       called = await callActingJudge(ctx, {
         job, role: 'polishJudge', attempt, system: prompt.system, cwd, evidenceDirs: dirs, mcpConfig, deadlineAt,
         ...(repair === null
-          ? { rendered: prompt.render(inputsOf()), schema: prompt.schema, session: freshJudgmentSession() }
-          : { rendered: judgmentRepairDirective(repair.reasons), schema: repair.turn.schema, session: repair.turn.session }),
+          ? { ...renderPrompt(prompt, inputsOf()), schema: prompt.schema, session: freshJudgmentSession() }
+          : { prompt: null, rendered: judgmentRepairDirective(repair.reasons), schema: repair.turn.schema, session: repair.turn.session }),
       });
     }
     return { read: readJudge(ctx, job, called, dirs), called };

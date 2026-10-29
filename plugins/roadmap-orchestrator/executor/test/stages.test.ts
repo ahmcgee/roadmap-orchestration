@@ -15,10 +15,12 @@ import { EVENTS_FILE, openJournal } from '../src/core/log.ts';
 import { implementerDispatch, judgmentDispatch, unitBranch } from '../src/pipeline/dispatch.ts';
 import { invocationDir, killWorkload } from '../src/pipeline/invoke.ts';
 import { type RoundInput, gateReviseRound } from '../src/pipeline/rounds.ts';
+import { promptFor } from '../src/prompts/index.ts';
+import { contextFor, gateStep, mulBuild, setupArc, stepUntil } from './fixtures/unit-common.ts';
 import { NO_SESSION_NOTE, RESUME_DIRECTIVE } from '../src/prompts/directives.ts';
 import { runnerFiles } from '../src/runner/files.ts';
 import {
-  type BuildDone, type BuildRun, type LanesDone, build, evidence, lanes, library, loadUnitSpec, planCheck, quiesce, salvage, teardown,
+  type BuildDone, type BuildRun, type LanesDone, build, evidence, lanes, library, loadUnitSpec, planCheck, quiesce, salvage, teardown, judgmentSpawns,
 } from '../src/pipeline/stages.ts';
 import type { Next } from '../src/pipeline/transitions.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
@@ -580,7 +582,7 @@ test('plan-check.cites: a redirect may add a ledger ruling to the cites, which t
     // 2026-10-15: the repair turn is told why; repeating the cite, the attempt is malformed and the retry is told why too.
     planCheckRepairStep({ decision: 'redirect', patch: [{ op: 'cite', contracts: ['contracts/nope.md'], rulings: [] }] }, [nope]),
     planCheckStep({ decision: 'redirect', patch: [{ op: 'cite', contracts: [], rulings: ['C-2'] }] }, {
-      stdinContains: ['C-1: Arithmetic helpers live in src/', '- C-2: Second rule here.\n', '- C-3: withdrawn by C-2', `Your previous answer on this unit was refused, so nothing of it was applied and the spec is unchanged: ${nope}.`],
+      stdinContains: ['C-1: Arithmetic helpers live in src/', '- C-2: Second rule here.\n', 'Withdrawn rulings (never cite): C-3', `Your previous answer on this unit was refused, so nothing of it was applied and the spec is unchanged: ${nope}.`],
     }),
     planCheckStep({ decision: 'approve' }, { stdinContains: ['C-2: Second rule here. More text follows.'] }),
   ]);
@@ -596,14 +598,34 @@ test('plan-check.cites: a redirect may add a ledger ruling to the cites, which t
   assert.ok(readCalls(run.scenario.path).every((c) => c.step !== null), 'the index, then the full text');
 });
 
-test('library.withdrawn-not-embedded: a cited ruling that is withdrawn is never embedded in full; its fold line is indexed', () => {
+test('library.withdrawn-not-embedded: a cited ruling that is withdrawn is never embedded in full; its id is indexed as withdrawn', () => {
   const run = setupUnit({ steps: [] });
   writeFileSync(join(run.planDir, 'rulings.md'), 'C-1 — withdrawn by C-2\nC-2 — Helpers live in lib/. Tests too.\n');
   applyFilesNow(run);
   const lib = library(run.ctx, loadUnitSpec(run.ctx, run.unit).spec, run.base);
   assert.deepEqual(lib.rulings, [], 'the spec cites C-1, which is withdrawn');
-  assert.deepEqual(lib.index.rulings, [{ id: 'C-1', line: 'withdrawn by C-2' }, { id: 'C-2', line: 'Helpers live in lib/.' }]);
+  assert.deepEqual(lib.index.rulings, [{ id: 'C-2', line: 'Helpers live in lib/.' }]);
   assert.deepEqual(lib.contracts.map((c) => c.path), ['contracts/api.md']);
   assert.deepEqual(lib.index.contracts, []);
+  assert.deepEqual(lib.index.withdrawn, ['C-1']);
   run.journal.close();
+});
+
+test('gate prompt telemetry records every role input and the exact stdin file bytes', T, async () => {
+  const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })] });
+  const r = contextFor(d);
+  try {
+    await stepUntil(r, 'u1', (f) => f.stage === 'gate');
+    const spawn = judgmentSpawns(r.ctx, U1, 'gate')[0]!;
+    assert.equal(spawn.expect.subject.purpose, 'backend');
+    if (spawn.expect.subject.purpose !== 'backend') throw new Error('expected a backend spawn');
+    const prompt = spawn.expect.subject.prompt;
+    assert.ok(prompt !== undefined);
+    assert.deepEqual(Object.keys(prompt.inputs).sort(), [...promptFor('gate', 'claude-opus-5-5').fields].sort());
+    const inv = invocationId(spawn.op, spawn.ordinal);
+    const path = runnerFiles(invocationDir(r.ctx.runDir, inv), inv).read('launch.json')!.stdinPath!;
+    assert.equal(prompt.bytes, readFileSync(path).byteLength);
+    const meters = events(r.ctx.runDir).flatMap((e) => e.type === 'fact' && e.fact.kind === 'meter' ? [e.fact] : []);
+    assert.deepEqual(meters.find((f) => f.inv === inv)?.prompt, prompt);
+  } finally { r.journal.close(); }
 });

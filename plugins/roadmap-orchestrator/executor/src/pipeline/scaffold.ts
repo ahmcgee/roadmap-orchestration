@@ -32,7 +32,7 @@ import { git, revParse } from '../git/git.ts';
 import { type SalvageRules, planSalvage } from '../git/salvage.ts';
 import { type ArcLaneDef } from '../holistic/types.ts';
 import type { PlanUnit } from '../input/plan.ts';
-import { promptFor } from '../prompts/index.ts';
+import { renderPrompt, promptFor } from '../prompts/index.ts';
 import { type ScaffoldDecision, SCAFFOLD_SCHEMA, validateScaffoldOutput } from '../prompts/schemas.ts';
 import { cleanup } from '../resources/reserve.ts';
 import { renderSpec } from '../spec/render.ts';
@@ -187,14 +187,14 @@ export async function scaffold(ctx: StageContext, unit: PlanUnit): Promise<Stage
   const { worktree } = await ensureWorktree(ctx, unit.id, parent);
   const { spec } = loadUnitSpec(ctx, unit);
   const prompt = promptFor('scaffold', seated.dispatch.triple.model);
-  const rendered = prompt.render({
+  const measured = renderPrompt(prompt, {
     spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec) }, scaffold: decision, worktree,
     loadLane: { id: lane.id, argv: lane.argv, cwd: lane.cwd, testPaths: lane.testPaths ?? [] },
     retry: prior?.kind === 'scaffold-refused' ? { reasons: prior.reasons, laneEvidence: prior.laneEvidence } : null,
   });
   const called: BackendCallOutcome = await callBackend(ctx, {
     unit: unit.id, parent, request: { kind: 'scaffold', dispatch: seated.dispatch, session: freshJudgmentSession() },
-    system: prompt.system, rendered, schema: SCAFFOLD_SCHEMA, cwd: worktree, deadlineAt: inMs(minutesMs(SCAFFOLD_MINUTES)),
+    system: prompt.system, ...measured, schema: SCAFFOLD_SCHEMA, cwd: worktree, deadlineAt: inMs(minutesMs(SCAFFOLD_MINUTES)),
   });
   const v = verdictOf(ctx, parent, called);
   if (v.kind === 'interrupted') return release(() => record(ctx, parent, 'interrupted', v.needsUser, undefined, v.cause ?? undefined));

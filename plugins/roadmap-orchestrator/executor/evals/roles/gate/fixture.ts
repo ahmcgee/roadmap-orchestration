@@ -11,6 +11,8 @@
 // An execution-only cell (dev.13, gen/exec.ts) adds its family's feature, planted or its twin, to a package of the seed's
 // base repo and regenerates the goldens; the variant and the package come from `<seed>/<family>/<trial>`. Its plant is
 // expected inlined (a two-file diff), with no prediction checked before the trial.
+import { sampleCorpus } from '../../../test/helpers/corpus.ts';
+import { visionRecord } from '../../../test/helpers/corpusarc.ts';
 import { join } from 'node:path';
 import { sha } from '../../../src/core/ids.ts';
 import { absPath, repoPattern } from '../../../src/core/values.ts';
@@ -20,7 +22,7 @@ import { execFeature, variantCount } from '../gen/exec.ts';
 import type { PlantContext, Planted } from '../gen/plant.ts';
 import { rng } from '../gen/prng.ts';
 import { type FileMap, GOLDEN_SCRIPT_PATH, REWORDED, type Repo, SHARED, type Swept, finish, generate, gitOut, importCommits, initRepo, sorted, sweep } from '../gen/tsrepo.ts';
-import { type Cell, type ExecCell, type Placement, isExecCell } from './cells.ts';
+import { type Cell, type CorpusCell, type ExecCell, type Placement, isCorpusCell, isExecCell } from './cells.ts';
 
 /**
  * The plan's derived files: goldens/ is regenerated from the generator and the modules, by the generator the synthetic repo
@@ -37,6 +39,8 @@ export const DERIVED_PATTERNS = DERIVED.flatMap((x) => x.outputs.map((o) => repo
 
 export type AnswerKey = Readonly<{
   cell: string;
+  /** Out-of-unit rules whose text was not embedded; clean answers must not invent violations of them. */
+  unshownRules?: readonly string[];
   trial: number;
   seed: string;
   size: number;
@@ -157,6 +161,7 @@ function buildExecFixture(cell: ExecCell, o: FixtureOptions): Fixture {
 }
 
 export function buildFixture(cell: Cell, o: FixtureOptions): Fixture {
+  if (isCorpusCell(cell)) return buildCorpusFixture(cell, o);
   if (isExecCell(cell)) return buildExecFixture(cell, o);
   const repo = generate(o.seed, o.size);
   const swept = sweep(repo, cell.sweep, cell.decoy, `${o.seed}/${cell.family}`);
@@ -195,3 +200,36 @@ export function materialise(f: Fixture, dir: string): Readonly<{ base: string; h
   return { base: base!, head: head! };
 }
 
+/** Small, lane-green changes governed by the corpus rather than by an architecture document. */
+function buildCorpusFixture(cell: CorpusCell, o: FixtureOptions): Fixture {
+  const repo = generate(o.seed, o.size);
+  const g = rng(`${o.seed}/corpus/${o.trial}`);
+  const pkg = g.pick(repo.packages.filter((p) => p.name !== repo.deprecated && p.name !== SHARED)).name;
+  const path = `packages/${pkg}/src/vessel-export.ts`;
+  const corpus = sampleCorpus({ docs: [{ path: '0010_Exports.md', title: 'Vessel exports', sections: [{ heading: 'Export contract', rules: [
+    { n: 1, text: 'A vessel export preserves the vessel id supplied by the caller verbatim in its vessel field.' },
+    { n: 2, text: 'Vessel access tokens remain confidential: never write a token to a log, including debug logs.' },
+    ...Array.from({ length: 40 }, (_, i) => ({ n: i + 3, text: `The archived tariff screen displays tariff band ${i + 1} in a separate row.` })),
+  ] }] }] });
+  const corpusFiles = Object.entries(corpus.files).map(([path, text]): [string, string] => {
+    if (text === null) throw new Error(`a corpus fixture deletes ${path}`);
+    return [path, text];
+  });
+  const base = sorted(new Map([...repo.files, ...corpusFiles, ['.roadmap/vision.json', JSON.stringify(visionRecord(corpus.files['docs/corpus/0005_Vision.md']!))]]));
+  const line = cell.corpus === 'principle' ? '  console.debug(input.token);\n' : '';
+  const vessel = cell.corpus === 'anchor' ? "'anonymous'" : 'input.id';
+  const module = `export function vesselExport(input: { id: string; token: string }): { vessel: string } {\n${line}  return { vessel: ${vessel} };\n}\n`;
+  const testPath = `packages/${pkg}/test/vessel-export.test.ts`;
+  // The anchor plant must pass its own test, so only its test is weak; elsewhere a weak test is a real finding.
+  const check = cell.corpus === 'anchor' ? "typeof vesselExport({ id: 'oak', token: 'private' }).vessel, 'string'" : "vesselExport({ id: 'Oak-7', token: 'private' }).vessel, 'Oak-7'";
+  const test = `import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { vesselExport } from '../src/vessel-export.ts';\ntest('export record shape', () => { assert.equal(${check}); });\n`;
+  const head = finish(sorted(new Map([...base, [path, module], [testPath, test]])));
+  const acceptance = [{ id: 'A1', clause: `Add vesselExport and its test in packages/${pkg}/. It accepts an id and an access token and returns a vessel record, following the corpus export contract.` },
+    { id: 'A2', clause: 'goldens/ is regenerated with node tools/gen-goldens.ts. Nothing else changes.' }];
+  const plant: AnswerKey['plant'] = cell.corpus === 'clean' ? null : {
+    kind: `corpus-${cell.corpus}`, path, form: cell.corpus, needle: cell.corpus === 'principle' ? 'console.debug(input.token)' : "vessel: 'anonymous'",
+    deletion: false, intended: 'inlined', predicted: null,
+  };
+  return { cell, repo, swept: null, removes: [], base, head, acceptance, message: 'Add vessel export\n',
+    key: { cell: cell.id, trial: o.trial, seed: o.seed, size: o.size, plant, removes: [], changed: changedPaths(base, head), unshownRules: Array.from({ length: 40 }, (_, i) => `T-${i + 3}`) } };
+}

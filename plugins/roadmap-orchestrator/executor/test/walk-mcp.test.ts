@@ -85,7 +85,7 @@ describe('walkthrough MCP config', () => {
     const runDir = absPath(tmpDir('walk-mcp-run'));
     const repo = absPath('/repo');
     const spec: ActingJudgeCallSpec = {
-      job: jobId('walk', 1), role: 'walkthrough', attempt: 1, system: 'SYS', rendered: 'R', schema: { type: 'object' }, cwd: absPath('/wt/walk-1.walk'),
+      job: jobId('walk', 1), role: 'walkthrough', attempt: 1, system: 'SYS', prompt: null, rendered: 'R', schema: { type: 'object' }, cwd: absPath('/wt/walk-1.walk'),
       evidenceDirs: [absPath(`${runDir}/evidence/jobs/walk-1`), absPath('/elsewhere')], mcpConfig: '{"mcpServers":{}}\n', deadlineAt: isoTime('2026-10-18T00:00:00.000Z'),
       session: freshJudgmentSession(),
     };

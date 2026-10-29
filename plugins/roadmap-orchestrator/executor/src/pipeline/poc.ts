@@ -28,7 +28,7 @@ import { type Read, arrayOf, nullable, object, positive, str } from '../core/val
 import { type AbsPath, absPath } from '../core/values.ts';
 import { git } from '../git/git.ts';
 import type { PlanUnit } from '../input/plan.ts';
-import { pocPromptFor } from '../prompts/index.ts';
+import { renderPrompt, pocPromptFor } from '../prompts/index.ts';
 import { type PocDecision, type PocQuestion, pocOutputFor } from '../prompts/schemas.ts';
 import type { PocReport } from '../prompts/inputs.ts';
 import { pocQuestionId } from '../core/ids.ts';
@@ -140,10 +140,10 @@ export async function poc(ctx: StageContext, unit: PlanUnit): Promise<StageDone<
     unit: unit.id, parent,
     request: { kind: 'implementer', dispatch: seated.dispatch, session: freshSession(seated.dispatch), evidenceDirs: [work], mcpConfig: null },
     system: prompt.system,
-    rendered: prompt.render({
+    ...renderPrompt(prompt, {
       spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec) }, brief: decision.brief, questions: decision.questions, worktree, tip, evidenceDir: work,
       lessons: pocLessons(ctx, unit.id),
-    }),
+    }, seated.dispatch.triple.backend),
     schema: prompt.schema, cwd: worktree, deadlineAt: inMs(minutesMs(POC_MINUTES)),
   });
   const v = verdictOf(ctx, parent, called);

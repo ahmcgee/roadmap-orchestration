@@ -43,14 +43,23 @@ export const TRIGGERS: Readonly<Record<EvalRole, readonly string[]>> = {
 /** Paths a role's globs match that do not trigger it. */
 const EXCLUDED: Readonly<Partial<Record<EvalRole, readonly string[]>>> = { walkthrough: POLISH_MODULES };
 
-/** The roles `paths` (relative to executor/) trigger, in TRIGGERS order. */
+/** The roles `paths` (relative to executor/) trigger, in TRIGGERS order. This file only chooses evals and runs none,
+ * so its own changes trigger nothing. */
 export function triggeredRoles(paths: readonly string[]): readonly EvalRole[] {
-  return (Object.keys(TRIGGERS) as EvalRole[]).filter((role) => paths.some((p) => TRIGGERS[role].some((g) => matchesGlob(p, g)) && !(EXCLUDED[role] ?? []).includes(p)));
+  return (Object.keys(TRIGGERS) as EvalRole[]).filter((role) => paths.some((p) => p !== 'evals/roles/triggers.ts' && TRIGGERS[role].some((g) => matchesGlob(p, g)) && !(EXCLUDED[role] ?? []).includes(p)));
+}
+
+/** Skill evaluation, separate from the role dispatcher. Orchestrate is intentionally conservative:
+ * a path trigger cannot distinguish its Phase-0 paragraph from other edits in that file. */
+export function triggeredCompaction(paths: readonly string[]): boolean {
+  return paths.some((p) => ['../skills/estate-compaction/**', '../skills/orchestrate/SKILL.md', 'evals/compaction/**'].some((g) => matchesGlob(p, g)));
 }
 
 if (import.meta.main) {
   const base = process.argv[2] ?? 'origin/main';
-  const r = spawnSync('git', ['diff', '--name-only', '--relative', `${base}...HEAD`], { encoding: 'utf8' });
+  const r = spawnSync('git', ['diff', '--name-only', '--relative=plugins/roadmap-orchestrator', `${base}...HEAD`], { encoding: 'utf8' });
   if (r.status !== 0) throw new Error(`git diff ${base}...HEAD: ${r.stderr}`);
-  for (const role of triggeredRoles(r.stdout.split('\n').filter((l) => l !== ''))) process.stdout.write(`${role}\n`);
+  const paths = r.stdout.split('\n').filter((l) => l !== '').map((p) => p.startsWith('executor/') ? p.slice('executor/'.length) : `../${p}`);
+  for (const role of triggeredRoles(paths)) process.stdout.write(`${role}\n`);
+  if (triggeredCompaction(paths)) process.stdout.write('compaction\n');
 }

@@ -1823,3 +1823,6 @@ export const needsUserAck: Read<NeedsUserAck> = object((f) => ({
   choice: f.get('choice', nullable(optionId)),
   at: f.get('at', time),
 }));
+
+/** A call's prompt size (dev.31): exact stdin bytes and, per prompt-module input, its canonical JSON bytes (`promptSize`, src/prompts/index.ts). */
+export type PromptSize = Readonly<{ bytes: number; inputs: Readonly<Record<string, number>> }>;

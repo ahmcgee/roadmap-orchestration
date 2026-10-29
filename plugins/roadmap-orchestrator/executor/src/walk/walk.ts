@@ -61,7 +61,7 @@ import { holisticInForce, inMs, loadUnitSpec } from '../pipeline/stages.ts';
 import { referenceFiles } from '../phase0/rows.ts';
 import { repairUnits } from '../pipeline/reproduce.ts';
 import { judgmentRepairDirective } from '../prompts/directives.ts';
-import { promptFor } from '../prompts/index.ts';
+import { renderPrompt, promptFor } from '../prompts/index.ts';
 import { type KeptTweak, type WalkFindingView, type WalkthroughInputs, visionInputOf } from '../prompts/inputs.ts';
 import { type WalkthroughOutput, validateWalkthroughOutput } from '../prompts/schemas.ts';
 import { worktreeCreateOp } from '../recover/ops.ts';
@@ -364,8 +364,8 @@ async function walkOnce(ctx: WalkContext, w: WalkRecord): Promise<WalkRunOutcome
       called = await callActingJudge(ctx, {
         job, role: 'walkthrough', attempt, system: prompt.system, cwd: checkout, evidenceDirs: [evidenceDir], mcpConfig, deadlineAt,
         ...(repair === null
-          ? { rendered: prompt.render(inputs), schema: prompt.schema, session: freshJudgmentSession() }
-          : { rendered: judgmentRepairDirective(repair.reasons), schema: repair.turn.schema, session: repair.turn.session }),
+          ? { ...renderPrompt(prompt, inputs), schema: prompt.schema, session: freshJudgmentSession() }
+          : { prompt: null, rendered: judgmentRepairDirective(repair.reasons), schema: repair.turn.schema, session: repair.turn.session }),
       });
     }
     return { read: readWalk(ctx, job, called, check), called };

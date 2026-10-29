@@ -282,7 +282,7 @@ const MINI_OBLIGATIONS: readonly ObligationView[] = [{
 /** The fixture's arc lanes (the obligations file's `lanes`): the ids a checkpoint's schema closes. */
 const MINI_ARC_LANES = [{ id: laneId('unit') }] as const;
 const MINI_ARCH: ArchitectureInput = { kind: 'full', doc: { path: repoPath('docs/arch.md'), text: '# Architecture\n\nOne module, convert.ts, exports toFahrenheit and toCelsius.' } };
-const MINI_INDEX = { contracts: [], rulings: [], ledger: absPath('/nonexistent/rulings.md') } as const;
+const MINI_INDEX = { contracts: [], rulings: [], withdrawn: [], ledger: absPath('/nonexistent/rulings.md') } as const;
 const MINI_DIFF = `diff --git a/convert.ts b/convert.ts
 new file mode 100644
 --- /dev/null

@@ -258,7 +258,8 @@ Not queued, no host lock, no run needed. Run them any time, a running arc includ
 the pin (`corpus pin --out`) and the Phase-0 record. The executor keeps each by
 hash at `start` and `apply`; editing them later changes nothing until `apply`. Beside the arcs' directories, the
 operator log `skill-feedback.md` ("The operator log") and the next-arc staging dir `_next/`: `vision.md` (the owner's
-working draft of the next vision) and `notes.md` (work for later, deferred rulings, ideas). The executor never reads
+working draft of the next vision), `notes.md` (work for later, deferred rulings, ideas) and `compaction.md` (approved
+estate compaction decisions, `K-n`, from the `estate-compaction` skill; Phase 0 applies them). The executor never reads
 `_next/`; the Chaining step reads it and hands it to the next arc's directory.
 
 **In-tree `.roadmap/`** holds exactly: `contracts/`, `constraints.md`, `invariants.md` (with the `json roadmap-rules`

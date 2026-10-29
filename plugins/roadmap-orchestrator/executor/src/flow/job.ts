@@ -42,7 +42,7 @@ import { type BackendCallOutcome, type JobParent, arcSeat, callArcRole, minutesM
 import { removeJobCheckouts } from '../pipeline/lanes.ts';
 import { inMs } from '../pipeline/stages.ts';
 import { judgmentRepairDirective } from '../prompts/directives.ts';
-import { promptFor } from '../prompts/index.ts';
+import { renderPrompt, promptFor } from '../prompts/index.ts';
 import { validateFlowOutput } from '../prompts/schemas.ts';
 import { worktreeCreateOp } from '../recover/ops.ts';
 import { constraintWindow, codeConstraintOf, windowPressure } from './constraint.ts';
@@ -203,8 +203,8 @@ async function call(
     job, role: 'flow', attempt, system: prompt.system, cwd: checkout, evidenceDirs: [],
     deadlineAt: inMs(minutesMs(ctx.plan().limits?.judgmentDeadlineMin ?? DEFAULT_BOUNDS.judgmentDeadlineMin)),
     ...(repair === null
-      ? { rendered: prompt.render(promptInputs satisfies FlowPromptInputs), schema: prompt.schema, session: freshJudgmentSession() }
-      : { rendered: judgmentRepairDirective([repair.reason]), schema: repair.turn.schema, session: repair.turn.session }),
+      ? { ...renderPrompt(prompt, promptInputs satisfies FlowPromptInputs), schema: prompt.schema, session: freshJudgmentSession() }
+      : { prompt: null, rendered: judgmentRepairDirective([repair.reason]), schema: repair.turn.schema, session: repair.turn.session }),
   }));
   await removeCheckout(ctx, job, checkout);
   return called;

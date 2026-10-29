@@ -45,12 +45,18 @@ export type SweepCell = Readonly<{
 }>;
 /** An execution-only cell (dev.13): its family's feature, planted or its clean twin. */
 export type ExecCell = Readonly<{ id: string; family: ExecFamily; what: string; exec: Readonly<{ planted: boolean }> }>;
-export type Cell = SweepCell | ExecCell;
+/** Corpus cells reach the same unit driver, with one universal principle and one obligation anchor embedded. */
+export type CorpusCell = Readonly<{ id: string; family: 'C1' | 'C2' | 'C3'; what: string; corpus: 'principle' | 'anchor' | 'clean' }>;
+export type Cell = SweepCell | ExecCell | CorpusCell;
+export const isCorpusCell = (c: Cell): c is CorpusCell => 'corpus' in c;
 
 export const isExecCell = (c: Cell): c is ExecCell => 'exec' in c;
-export const isPlanted = (c: Cell): boolean => (isExecCell(c) ? c.exec.planted : c.plant !== null);
+export const isPlanted = (c: Cell): boolean => (isCorpusCell(c) ? c.corpus !== 'clean' : isExecCell(c) ? c.exec.planted : c.plant !== null);
 
 export const DEV_CELLS: readonly Cell[] = [
+  { id: 'C1', family: 'C1', what: 'corpus: token confidentiality principle violated', corpus: 'principle' },
+  { id: 'C2', family: 'C2', what: 'corpus: the unit obligation anchor violated', corpus: 'anchor' },
+  { id: 'C3', family: 'C3', what: 'corpus: clean export among many out-of-unit rules', corpus: 'clean' },
   { id: 'G0', family: 'G0', what: 'small diff, collateral logic edit (calibration)', sweep: { scope: 'package' }, decoy: 'none', plant: { plant: LOGIC_EDIT, placement: 'any' } },
   { id: 'G1', family: 'G1', what: 'full sweep, clean', sweep: FULL_SWEEP, decoy: 'none', plant: null },
   { id: 'G2a', family: 'G2', what: 'wrong-symbol rename, inlined', sweep: FULL_SWEEP, decoy: 'none', plant: { plant: WRONG_SYMBOL, placement: 'inlined' } },

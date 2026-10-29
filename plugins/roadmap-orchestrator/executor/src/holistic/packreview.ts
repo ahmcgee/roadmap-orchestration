@@ -57,7 +57,7 @@ import { removeJobCheckouts } from '../pipeline/lanes.ts';
 import { inMs } from '../pipeline/stages.ts';
 import { parsePhase0Record } from '../phase0/types.ts';
 import { judgmentRepairDirective } from '../prompts/directives.ts';
-import { promptFor } from '../prompts/index.ts';
+import { renderPrompt, promptFor } from '../prompts/index.ts';
 import { type PackReviewDelta, type PackReviewPromptInputs, type PreviousPackFinding, visionInputOf } from '../prompts/inputs.ts';
 import { type PackReviewOutput, validatePackReviewOutput } from '../prompts/schemas.ts';
 import { worktreeCreateOp } from '../recover/ops.ts';
@@ -355,8 +355,8 @@ async function ask(ctx: CheckpointContext, inputs: PackReviewInputs, delta: Pack
         job, role: 'packReview', attempt, system: prompt.system, cwd: checkout, evidenceDirs: [],
         deadlineAt: inMs(minutesMs(ctx.plan().limits?.judgmentDeadlineMin ?? DEFAULT_BOUNDS.judgmentDeadlineMin)),
         ...(turn === null || refused === null
-          ? { rendered: prompt.render(promptInputs(ctx, inputs, delta)), schema: prompt.schema, session: freshJudgmentSession() }
-          : { rendered: judgmentRepairDirective([refused.detail]), schema: turn.schema, session: turn.session }),
+          ? { ...renderPrompt(prompt, promptInputs(ctx, inputs, delta)), schema: prompt.schema, session: freshJudgmentSession() }
+          : { prompt: null, rendered: judgmentRepairDirective([refused.detail]), schema: turn.schema, session: turn.session }),
       }));
       await removeCheckout(ctx, job, checkout);
     }

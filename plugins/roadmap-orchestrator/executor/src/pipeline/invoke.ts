@@ -14,6 +14,7 @@
 // (`usageRecorded`) before writing one, so it is never written twice. `invoke` never retries: a retry is
 // the caller's second call with `origin: retry`, which the journal gives the next ordinal and the op's
 // original deadline.
+import type { PromptSize } from '../core/records.ts';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { writeResult } from '../backends/adapter.ts';
@@ -187,15 +188,15 @@ function doneOutcome(outcome: InvocationOutcome, pressure: number | null): OpOut
   return { kind: 'result', resultSha256: outcome.resultSha256, summary, pressure };
 }
 
-type Charge = Readonly<{ routingRev: RoutingRev; subject: MeterSubject }>;
+type Charge = Readonly<{ prompt?: PromptSize; routingRev: RoutingRev; subject: MeterSubject }>;
 
 /** Whom a backend spawn's usage is charged to (a unit's seat, or its backend's smoke); commands carry no usage. */
 export function chargeOf(subject: SpawnSubject): Charge | null {
   switch (subject.purpose) {
     case 'backend':
-      return { routingRev: subject.routingRev, subject: { type: 'seat', ...unitSeatRef(subject.role, subject.tier), unit: subject.unit, attempt: subject.attempt } };
+      return { ...(subject.prompt === undefined ? {} : { prompt: subject.prompt }), routingRev: subject.routingRev, subject: { type: 'seat', ...unitSeatRef(subject.role, subject.tier), unit: subject.unit, attempt: subject.attempt } };
     case 'arc-backend':
-      return { routingRev: subject.routingRev, subject: { type: 'job', role: subject.role, tier: subject.tier, job: subject.job, attempt: subject.attempt } };
+      return { ...(subject.prompt === undefined ? {} : { prompt: subject.prompt }), routingRev: subject.routingRev, subject: { type: 'job', role: subject.role, tier: subject.tier, job: subject.job, attempt: subject.attempt } };
     case 'smoke':
       return subject.target.type === 'backend' ? { routingRev: subject.target.routingRev, subject: { type: 'smoke', backend: subject.target.backend } } : null;
     case 'lane':
@@ -216,7 +217,10 @@ export function chargeOf(subject: SpawnSubject): Charge | null {
  * session, so a resumed session is never charged twice for its earlier processes.
  */
 export function usageFact(view: Pick<JournalView, 'sessionCharge'>, charge: Charge, inv: InvocationId, usage: Usage, session: string | null): Fact {
-  if (usage.kind === 'unavailable') return { kind: 'usage-unavailable', inv, ...charge, reason: usage.reason, ...(usage.streamed === undefined ? {} : { streamed: usage.streamed }) };
+  if (usage.kind === 'unavailable') {
+    const { prompt: _prompt, ...billing } = charge;
+    return { kind: 'usage-unavailable', inv, ...billing, reason: usage.reason, ...(usage.streamed === undefined ? {} : { streamed: usage.streamed }) };
+  }
   if (usage.delegated === undefined) return { kind: 'meter', inv, ...charge, usage: usage.tokens };
   if (session === null) throw new Error(`${inv}: a Claude call's usage without its session`);
   const id = claudeSessionId(session, `${inv} session`);

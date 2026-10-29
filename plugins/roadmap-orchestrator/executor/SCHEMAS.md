@@ -23,6 +23,16 @@ Other steps request changes rather than edit.
 
 ## Record evolution (owner ruling, 2026-09-26)
 
+**1.0.0-dev.30 → 1.0.0-dev.31 (2026-10-29, judgment prompt reductions and size telemetry).**
+`backend` and `arc-backend` spawn subjects and `meter` facts add optional
+`prompt: {bytes: number, inputs: Record<string, number>}`. `bytes` is the exact UTF-8 length of composed stdin
+(`promptBytes`); each input count is the UTF-8 length of that module field's canonical JSON, an approximation of
+its rendered section. A missing `prompt` means not recorded (an older release, a repair directive or a smoke),
+never zero. Readers preserve absence and spend resolves as before; no schema-version bump or warning is needed
+for an optional observation. Invocation retries retain the captured measurement. Gate and plan-check embed selected
+corpus rules; arc judgments retain the full index. Vision and ruling withdrawals retain ids only in prompts,
+and non-active obligations retain id and state. These prompt input changes do not change persisted input records.
+
 Arcs run for days to a week and executor fixes land mid-run, so an executor update adopts an arc started on
 the previous release and carries it on; it never forces a new arc and never refuses the previous release's
 runtime state (event log, invocation files, needs-user, commands and receipts, host files) or run
@@ -579,7 +589,7 @@ in the line belongs to `arc`.
 |---|---|
 | `tail-discarded` | `offset, length, sha256` (fragment file `events.torn.<offset>.<sha256[0:8]>`) |
 | `containment-mode` | `mode: session\|cgroup` |
-| `meter` | `inv, routingRev, subject: MeterSubject, usage: TokenUsage, session?: ClaudeSessionId, delegated?: ClassUsage[]` (2026-10-16: `session` and `delegated` together on a Claude call's fact; `usage` is what the invocation is charged, its session's cumulative reading less what the session's earlier facts charged, and `delegated` the subagents' share of it per usage class); a seat subject's `(role, tier)` is the seat (`tier` is `low\|med\|high`, or `escalation` for a judgment role), so `(role, tier, routingRev)` names one seat and a by-model view is exact (lead ruling, 13b) |
+| `meter` | `inv, routingRev, subject: MeterSubject, usage: TokenUsage, session?: ClaudeSessionId, delegated?: ClassUsage[], prompt?: {bytes, inputs}` (2026-10-16: `session` and `delegated` together on a Claude call's fact; `usage` is what the invocation is charged, its session's cumulative reading less what the session's earlier facts charged, and `delegated` the subagents' share of it per usage class); a seat subject's `(role, tier)` is the seat (`tier` is `low\|med\|high`, or `escalation` for a judgment role), so `(role, tier, routingRev)` names one seat and a by-model view is exact (lead ruling, 13b) |
 | `usage-unavailable` | `inv, routingRev, subject: MeterSubject, reason: no-result\|absent\|malformed` |
 | `dispatch` | `record: DispatchRecord` |
 | `stage-outcome` | `unit, stage, attempt, outcome, class, chargeable, park?, cause?`: one per `(unit, stage, attempt)`; see below |
@@ -722,7 +732,7 @@ fragment with no matching fact is re-recorded at the next start. Any invalid com
 | `needsuser.raise` | `id, path, blocking` | `{sha256}` | `raised` |
 | `command.apply` | `command, commandSha256` | `null` | `applied{receiptSha256}` \| `rejected{reason}` |
 
-`SpawnSubject`: `backend{role, tier, routingRev, unit, attempt}` \| `lane{unit, lane, set: spec\|suite, at: Sha}` (a `suite` lane under a
+`SpawnSubject`: `backend{role, tier, routingRev, unit, attempt, prompt?}` \| `lane{unit, lane, set: spec\|suite, at: Sha}` (a `suite` lane under a
 candidate attempt, or, since the 2026-10-15 batch, a lanes attempt's fast suite) \|
 `teardown|probe{unit\|null, resource: ResourceInstance}` \| `smoke{check, target: backend{backend, role, tier, routingRev} \| command}`
 (M3 adds `arc-backend`, `journey`, `mutant`: "M3: the holistic layer").
@@ -1662,7 +1672,7 @@ chain commit. Keys: `revision` for `revision.commit`.
 attempt}` (a repair batch's slot, G5, H4), `job{job}` (a job's lanes); keys `resources:docs/<pub>`,
 `resources:batch/<finding>/<attempt>`, `resources:job/<job>`; `holderUnit(holder)` (null for sweep, docs, batch,
 job). `RECLAIM_HOLDERS += job`; `RESIDUE_HOLDERS = stage, job` (a failed cleanup under either records residues).
-`Parent += job{job}`. `SpawnSubject += arc-backend{role, tier: arc, routingRev, job, attempt}` (a lens or checkpoint
+`Parent += job{job}`. `SpawnSubject += arc-backend{role, tier: arc, routingRev, job, attempt, prompt?}` (a lens or checkpoint
 call), `journey{lane, laneRev, at, owner: unit{unit}|job{job}}`, `mutant{finding, lane, laneRev, tree}`; the unit
 `backend` subject names a `UnitSeatRef`. `MeterSubject += job{job, attempt, role, tier: arc}`; `seat` names a
 `UnitSeatRef`. `ResidueKey = {arc, inv, resource} & (unit | job)` (exactly one; `residueOwner(key) → unit{unit} |

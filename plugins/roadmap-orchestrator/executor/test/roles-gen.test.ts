@@ -9,7 +9,7 @@ import { sha } from '../src/core/ids.ts';
 import { absPath } from '../src/core/values.ts';
 import { boundedDiff } from '../src/git/boundeddiff.ts';
 import { GATE_DIFF_BUDGET } from '../src/pipeline/gate.ts';
-import { DEV_CELLS, type SweepCell, isExecCell } from '../evals/roles/gate/cells.ts';
+import { DEV_CELLS, type SweepCell, isCorpusCell, isExecCell } from '../evals/roles/gate/cells.ts';
 import { DERIVED_PATTERNS, type Fixture, buildFixture, materialise, trimEnds } from '../evals/roles/gate/fixture.ts';
 import { rng } from '../evals/roles/gen/prng.ts';
 import { TEST_ARGV, generate, gitOut } from '../evals/roles/gen/tsrepo.ts';
@@ -18,7 +18,7 @@ import { tmpDir } from './helpers/repo.ts';
 /** A sweep cell (the execution-only cells are roles-gate-exec.test.ts's). */
 const cell = (id: string): SweepCell => {
   const c = DEV_CELLS.find((x) => x.id === id)!;
-  if (isExecCell(c)) throw new Error(`${id} is an execution-only cell`);
+  if (isExecCell(c) || isCorpusCell(c)) throw new Error(`${id} is an execution-only cell`);
   return c;
 };
 /** A cell, or (`<id>*`) the cell with placement `any`: the same plant without the bounded-diff placement checks. */
@@ -50,7 +50,7 @@ test('roles.size-knob: the file count follows the size knob within a few percent
 
 test('roles.plant-in-diff: every planted dev cell plants inside the diff, away from both ends, with its needle in place', () => {
   // Placement `any` only: the inlined and omitted cells are placement-omitted's (each placement check is a bounded diff).
-  const sweeps = DEV_CELLS.flatMap((x) => (isExecCell(x) ? [] : [x]));
+  const sweeps = DEV_CELLS.flatMap((x) => (isExecCell(x) || isCorpusCell(x) ? [] : [x]));
   for (const c of [...sweeps.filter((x) => x.plant !== null && x.plant.placement === 'any'), cellOf('G2a*'), cellOf('G3a*')]) {
     const f = buildFixture(c, { seed: 'gen-test', trial: 0, size: 300, scratch: tmpDir('roles-scratch') });
     const swept = f.swept!;

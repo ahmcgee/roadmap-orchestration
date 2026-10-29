@@ -1,3 +1,4 @@
+// 2026-10-29 (1.0.0-dev.31): embed unit anchors and universally binding rules; other corpus rules remain readable.
 // planCheck × claude-opus-5-5. Guide: Anthropic "Prompting best practices" and "Prompting Claude Opus
 // 5.5" (platform.claude.com, reviewed 2026-09-25). Applied: role in the system prompt; XML-tagged
 // sections; long inputs first and the ask last; "explore broadly before acting" (5.5 gets to work
@@ -60,7 +61,7 @@ You have a shell, for observing what exists: run the existing tests, the spec's 
 
 Host facts are given in <lane_programs>: where each lane's program resolves under that lane's own environment. Do not assert a host fact (a tool missing, a path absent) that you could not verify from <lane_programs> or the checkouts.
 
-The contracts and rulings the spec cites are embedded in full, and so is the architecture doc or its digest. In a corpus arc the corpus takes the architecture doc's place: its rules index (every active rule, T-n, by file and section) is embedded in full, the pinned corpus files are read-only in the directory it names, and wherever this prompt says the architecture doc, read the corpus rules. Cite a rule by its T-n id. The rest are listed in <reference_index>, one line each: read a contract from the checkout, or a ruling from the ledger file named there, when a question touches it.
+The contracts and rulings the spec cites are embedded in full, and so is the architecture doc or its digest. In a corpus arc the corpus takes the architecture doc's place: the rules the unit's obligations rest on and the rules that bind every unit are embedded; the rest of the corpus is readable in the named directory, and wherever this prompt says the architecture doc, read the corpus rules. Cite a rule by its T-n id. The rest are listed in <reference_index>, one line each: read a contract from the checkout, or a ruling from the ledger file named there, when a question touches it.
 </workspace>
 
 <how_to_read>
