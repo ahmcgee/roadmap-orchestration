@@ -343,7 +343,7 @@ describe('startup.rejections', () => {
     assert.deepEqual(resolveArgv0(cmd(join(bin, 'tool'), {}), {}), { kind: 'program', realpath: realpathSync(join(dir, 'lib', 'tool')) });
   });
 
-  it('spec-lane-unrunnable: argv[0] unresolvable, env prerequisite missing, estate lane for the implementer (78)', T, async () => {
+  it('spec-lane-unrunnable: argv[0] unresolvable or env prerequisite missing (78); estate build lanes are executor-only', T, async () => {
     const s = setup();
     write({
       ...s,
@@ -360,7 +360,7 @@ describe('startup.rejections', () => {
     });
     const rejections = refusedWith(await allChecks(input(s)), 'spec-lane-unrunnable', 78);
     assert.deepEqual(rejections.map((r) => (r.kind === 'spec-lane-unrunnable' && 'lane' in r ? `${r.lane} ${r.problem.type}` : null)), [
-      'ghost argv0-unresolvable', 'needsenv env-missing', 'estate estate-lane-for-implementer',
+      'ghost argv0-unresolvable', 'needsenv env-missing',
     ]);
   });
 

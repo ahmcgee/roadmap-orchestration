@@ -4,7 +4,7 @@
 // Items keep their authored order (the patch appends). Sets whose order carries no meaning (scope,
 // resources, a lane's env names, resources and evidence globs, the cites) are sorted. Struck and deferred items are
 // always shown with their state: ids are never reused, and a reader must see what was withdrawn.
-// `buildLanesOnly` is the implementer's view: lanes of a later cadence are left out entirely, without even a mention.
+// `buildLanesOnly` is the implementer's view: resource-bearing lanes and lanes of a later cadence are left out entirely.
 // M3 (A13): the obligations a unit declares and what a repair unit repairs follow, each only when the spec has it.
 // M4a rev 3: a spec's witness items follow its facts, and a spec lane's `inputs` its evidence, each only when present, so
 // a spec without them renders as before. Scope growth (2026-10-15): what the unit removes or renames follows its scope, only

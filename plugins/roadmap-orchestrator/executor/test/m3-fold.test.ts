@@ -54,7 +54,7 @@ const dispatch = (unit: UnitId, bounds?: object): LogRecord => fact({
   },
 });
 const chargeable = (unit: UnitId, attempt: number, cls: string): LogRecord =>
-  fact({ kind: 'stage-outcome', unit, stage: 'lanes', attempt, outcome: 'red', class: cls, chargeable: true, ...(cls === 'park' ? { park: { class: 'operator', kind: 'design' } } : {}) });
+  fact({ kind: 'stage-outcome', unit, stage: cls === 'candidate-red' ? 'candidate' : 'lanes', attempt, outcome: 'red', class: cls, chargeable: true, ...(cls === 'park' ? { park: { class: 'operator', kind: 'design' } } : {}) });
 const completed = (rev: number, head = A, highWater = 1): LogRecord => fact({ kind: 'arc-completed', planRev: rev, head, highWater, units: ['u1'] });
 
 function folded(records: readonly LogRecord[]): Fold {

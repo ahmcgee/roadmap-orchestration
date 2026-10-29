@@ -70,7 +70,8 @@ describe('D1 witness presence', () => {
     try {
       const f = lanesFacts(a.d).at(-1)!;
       assert.equal(f.outcome, 'witnesses-missing');
-      assert.equal(f.chargeable, true);
+      assert.equal(f.chargeable, false);
+      assert.equal(f.unchargedLanesReds, 1);
       assert.deepEqual(f.detail, { kind: 'witnesses-missing', missing: [{ lane: 'journey', testId: 't1' }], failed: [] });
       assert.equal(journeyRuns(a.d, f.attempt).length, 1, 'the witness lane ran once at the salvage SHA');
       assert.equal(gateCalls(a.d).length, 0, 'the gate is not called');

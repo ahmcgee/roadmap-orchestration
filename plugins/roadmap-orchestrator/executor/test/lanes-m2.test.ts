@@ -114,6 +114,7 @@ test('lanes.flake-deflake-own: a deflake unit\'s own flake is not forgiven: flak
   const fact = outcomeFacts(run).at(-1)!;
   assert.ok(fact.kind === 'stage-outcome' && fact.outcome === 'flaky' && !fact.chargeable, 'a same-commit flake is recorded without a lanes-red charge');
   assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, 0);
+  assert.equal(run.journal.view.unit(U1).counters.unchargedLanesReds, 0, 'a flake does not consume the certification allowance');
   assert.deepEqual(run.journal.view.flakes().map((x) => [x.fact.lane, x.fact.forgiven]), [['flaky', false]], 'the flake is in the ledger all the same');
 
   const [record] = done.ledger;
@@ -144,6 +145,7 @@ test('lanes.flake-unit-own: a flake on the unit\'s own commit (one the tip does 
   const done = started(await lanes(run.ctx, run.unit, own));
   assert.equal(done.outcome.kind, 'flaky');
   assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, 0);
+  assert.equal(run.journal.view.unit(U1).counters.unchargedLanesReds, 0, 'a flake does not consume the certification allowance');
   const [record] = done.ledger;
   assert.ok(record !== undefined && record.diagnostic !== null);
   assert.deepEqual([record.verdict, record.flaky, record.diagnostic.verdict], ['fail', true, 'pass']);

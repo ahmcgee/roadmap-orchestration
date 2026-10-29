@@ -684,3 +684,14 @@ export function schedulerPressureBlockedDefault(): false {
   warnDefaulted('sched.pressureBlocked', 'an earlier scheduler view has no admission brake; read as false');
   return false;
 }
+
+// 1.0.0-dev.31 -> turn-boundary certification. Delete once no dev.31 arc is in flight.
+export function dev31CertificationsDefault(): number {
+  warnDefaulted('dispatch.bounds.certifications', 'a dispatch without certifications (dev.31 or earlier); read as 4, uncharged lanes reds start at 0');
+  return 4;
+}
+
+export function dev31UnchargedLanesRedsDefault(): number {
+  warnDefaulted('stage-outcome.unchargedLanesReds', 'a lanes red without its counter (dev.31 or earlier); read as 0, preserving its recorded charge');
+  return 0;
+}

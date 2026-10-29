@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import type { Fact, IntentOf } from '../src/core/events.ts';
 import type { JsonValue } from '../src/core/json.ts';
-import { type Sha, jobId, opKey, resourceName, sha } from '../src/core/ids.ts';
+import { type Sha, invocationId, jobId, opKey, resourceName, sha } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import { type LaneDef, RED_FILE, redFile } from '../src/core/records.ts';
 import { absPath, isoTimeOf, repoPattern } from '../src/core/values.ts';
@@ -36,7 +36,7 @@ import { assertFired, writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
 import { commitAll, git, tmpDir, writeFiles } from './helpers/repo.ts';
 import { readCalls } from './helpers/scenario.ts';
-import { LANE_REUSE, RED_CLASS, SERIES_CERTIFIED, crashCells } from './matrix.ts';
+import { LANE_PRIORITY, LANE_REUSE, RED_CLASS, SERIES_CERTIFIED, crashCells } from './matrix.ts';
 import { holisticArc } from './fixtures/brake-common.ts';
 import { wire } from './fixtures/publish-common.ts';
 import { DB, type LaneJson, SCENARIO_TIMEOUT_MS, type StageRun, U1, admitAll, keptSpec, planCheckStep, setupUnit, spawnIntents, started } from './fixtures/stage-common.ts';
@@ -449,6 +449,47 @@ const FIX_OUTCOMES = [
 ];
 
 describe('crash rows', () => {
+  for (const cell of crashCells(LANE_PRIORITY)) test(`crash LANE_PRIORITY (${cell.label}): first lane reused, incomplete attempt excluded from ordering`, T, async () => {
+    const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(),
+      gateStep({ decision: 'revise', directives: ['Explain the implementation.'] }),
+      codexStep([{ type: 'commit', message: 'explain mul', files: { 'src/mul.js': `// Multiply the inputs.\n${MUL['src/mul.js']}` } }], { argv: ['exec', 'resume'] }),
+      gateStep({ decision: 'approve' })], units: [{ id: 'u1', lanes: [STABLE, MUL_LANE] }], systemsMap: CRASH_MAP });
+    const r = contextFor(d);
+    let completed: number;
+    try {
+      await stepUntil(r, 'u1', (f) => f.stage === 'lanes' && f.outcome === 'green');
+      completed = r.journal.view.unit(U1).decided!.attempt;
+      await stepUntil(r, 'u1', (f) => f.stage === 'teardown' && f.attempt > completed);
+    } finally { r.journal.close(); }
+    const trigger = writeTrigger(tmpDir('priority-crash'), { label: cell.label, occurrence: 1, unit: 'u1' });
+    const env = { ...process.env, ROADMAP_TEST_CRASH: trigger };
+    const first = await runFixture('unit-child.ts', [JSON.stringify(d), 'u1'], { env, timeoutMs: SCENARIO_TIMEOUT_MS });
+    assert.equal(first.signal, 'SIGKILL', first.stderr);
+    assertFired(trigger);
+    const crashed = contextFor(d);
+    try {
+      const open = crashed.journal.view.unit(U1).open!;
+      assert.equal(open.stage, 'lanes');
+      assert.equal(crashed.journal.view.completedLanes(U1), completed);
+      const reuse = factsOf(d.runDir, d.arc).filter((f) => f.kind === 'lane-reused' && f.lane === 'stable' && f.parent.type === 'stage' && f.parent.attempt === open.attempt);
+      assert.equal(reuse.length, 1, 'the first lane was reused before the crash');
+      const spawns = arcSpawns(d, 'mul').filter((i) => i.parent.type === 'stage' && i.parent.attempt === open.attempt);
+      if (cell.label === 'spawn.after-intent') {
+        assert.equal(spawns.length, 1);
+        assert.equal(existsSync(join(invocationDir(absPath(d.runDir), invocationId(spawns[0]!.op, spawns[0]!.ordinal)), 'launch.json')), false);
+      } else {
+        assert.equal(spawns.length, 0);
+        assert.equal(crashed.journal.view.opsOf('worktree.create').some((i) => i.expect.path === verificationWorktree(crashed.ctx.plan().worktreeRoot, crashed.ctx.plan().arc, U1, open.attempt)), false);
+      }
+    } finally { crashed.journal.close(); }
+    const resumed = await runFixture('stage-child.ts', [JSON.stringify(d), 'u1'], { env, timeoutMs: SCENARIO_TIMEOUT_MS });
+    assert.equal(resumed.code, 0, resumed.stderr);
+    assert.deepEqual(JSON.parse(resumed.stdout), { kind: 'merged' });
+    assert.deepEqual(outcomes(d), [...FIX_OUTCOMES.slice(0, 6), 'lanes:green', 'gate:revise', ...FIX_OUTCOMES.slice(7)]);
+    assert.equal(arcSpawns(d, 'stable').length, 1, 'both incomplete and restarted attempts reuse the first lane');
+    assert.equal(readCalls(d.scenarioPath).length, 5, 'no backend call twice');
+  });
+
   test('crash LANE_REUSE (lanes.after-reused): killed after recording a reuse across the fix commit; the restart reuses again, never runs the lane twice', T, async () => {
     const { d } = await crashThenResume(FIX_STEPS, labelOf(LANE_REUSE));
     assert.deepEqual(outcomes(d), FIX_OUTCOMES, 'the same outcomes as an uncrashed run');
