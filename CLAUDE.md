@@ -58,6 +58,9 @@ fake-backend scripts behind PATH shims. Add no other test hooks to production co
 
 ## Standing rules
 
+- Claude-only routing is the first-class system. Design, probe and evaluate every feature for Claude backends first.
+  Codex backend support stays, but keep it simple: a working, unpolished path is enough, and Codex never drives
+  the design or adds complexity to the Claude path.
 - Illegal states unrepresentable: branded ids, discriminated unions, closed enums.
 - Fail loud on anything that should not happen; no speculative guards.
 - One canonical way to do a thing.
