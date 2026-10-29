@@ -9,11 +9,11 @@
 //   build        a live build runner (the fake implementer parks at barrier b-pin);
 //   judgment     a live gate runner (the fake gate parks at b-pin), its judgment-inputs durable;
 //   lane         a spec lane holding estate#1 (cm-pin.ts; A's own estate lane takes #2);
-//   teardown     the teardown of B's build resource `slow` (cm-pin.ts as its teardown);
+//   teardown     the teardown of B's lane resource `slow` (cm-pin.ts as its teardown);
 //   publication  waiting in memory for the publication slot, which a third unit C (u3) holds while its
 //                candidate's estate suite lane parks at c-pin (cm-pin.ts); B starts once C holds it (`b-go`), A once B
 //                waits for it;
-//   residue      a retryable park on estate#1: B's build teardown failed, and so did the first probe's
+//   residue      a retryable park on estate#1: B's lane teardown failed, and so did the first probe's
 //                reclaim (the estate fake fails two teardowns), so the next probe is a minute away.
 // Pins are released when A has merged, or when a crashed executor's successor has started (its recovery
 // adopts a pinned runner by waiting for it); the publication pin when A's gate approves. The residue park is
@@ -146,6 +146,18 @@ export function layoutConcurrent(t: Owner, peer: Peer): Concurrent {
       }
     }
   });
+  // Fresh builds reserve CPU only. Put each named resource on the lane that uses it,
+  // so the reference and every crash cell actually exercise its cleanup and recovery.
+  for (const [unit, resources] of [
+    [A, ['db']],
+    [B, peer === 'teardown' ? ['slow'] : peer === 'residue' ? ['estate'] : []],
+  ] as const) {
+    const specPath = join(r.planPath, '..', `${unit}.json`);
+    const spec = JSON.parse(readFileSync(specPath, 'utf8')) as { resources: string[]; lanes: { resources: string[] }[] };
+    spec.resources = [...resources];
+    spec.lanes[0]!.resources = [...resources];
+    writeFileSync(specPath, JSON.stringify(spec));
+  }
   if (peer === 'lane') {
     // The estate lanes' argv names this run's state dir and barriers, known only now: A's holds its instance
     // briefly (the estate fake), B's holds estate#1 at the pin.

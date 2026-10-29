@@ -276,6 +276,9 @@ function expectedEnd(ref: Reference, r: ExecRun, trace: Trace) {
 /** What each reference shows of its peer beyond the oracle. */
 function peerReference(ref: Reference, c: Concurrent): void {
   const { r } = c.laid;
+  const dbCleanups = spawnsOf(ref.snap).filter((i) => subjectUnit(i) === A && i.expect.subject.purpose === 'teardown' && i.expect.subject.resource === 'db');
+  assert.ok(dbCleanups.length > 0, 'A exercises named-resource cleanup in every reference');
+  for (const i of dbCleanups) assert.equal(parentStage(ref.snap.view, i.parent), 'lanes', 'A holds db for certification');
   if (ref.peer === 'lane') {
     // A took estate#2 while B held estate#1.
     const lanes = spawnsOf(ref.snap).filter((i) => i.expect.subject.purpose === 'lane' && i.expect.subject.lane === 'estate-a');
@@ -285,7 +288,7 @@ function peerReference(ref: Reference, c: Concurrent): void {
   if (ref.peer === 'publication') assert.ok(assertPublicationSafe(r, ref.snap) > 0, 'a grant was ranked against a waiter');
   if (ref.peer === 'residue') {
     const b = ref.outcomes[B]!;
-    assert.ok(b.includes('teardown:cleanup-failed') && b.includes('teardown:released'), 'B parked on its teardown and ran it again once the park recovered');
+    assert.ok(b.includes('lanes:cleanup-failed') && b.includes('lanes:green'), 'B parked on its lane cleanup and completed certification once the park recovered');
   }
 }
 
