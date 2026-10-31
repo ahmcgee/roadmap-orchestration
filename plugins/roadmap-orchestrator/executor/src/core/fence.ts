@@ -7,7 +7,7 @@
 //   durable     the open `revision.commit` intent (key `revision`, at most one): what a crash leaves; recovery
 //               finishes or aborts it before anything else reads or revises (src/recover/revision.ts)
 //
-// Every capture of revision-sensitive inputs (`judgment-inputs`, `audit-started`, `checkpoint-inputs`, a bundle's
+// Every capture of revision-sensitive inputs (`judgment-inputs`, `audit-started`, a revision's
 // final staleness check) takes the fence briefly: `captureUnderFence` waits for it, runs the capture synchronously
 // (read, then write its fact, nothing awaited), and releases it. So no reader sees the window between a docs `ff`
 // and its `plan-applied`, where new contract blobs sit beside an old ledger or plan.

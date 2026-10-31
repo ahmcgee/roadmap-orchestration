@@ -394,7 +394,7 @@ test('probe.capacity-recovers-held-unit: end to end, a capacity error at gate pa
     const probe = events.find((e) => e.type === 'fact' && e.fact.kind === 'probe');
     assert.ok(probe?.type === 'fact' && probe.fact.kind === 'probe');
     assert.deepEqual([probe.fact.result, probe.fact.covers], ['pass', [park.seq]]);
-    assert.deepEqual(outcomes(d), [...STRAIGHT.slice(0,7),'gate:interrupted',...STRAIGHT.slice(7)], 'the held gate ran again once the probe passed');
+    assert.deepEqual(outcomes(d), [...STRAIGHT.slice(1,7),'gate:interrupted',...STRAIGHT.slice(7)], 'the held gate ran again once the probe passed');
     assert.equal(r.journal.view.unit(U1).counters.chargeableFailures, 0);
   } finally {
     r.journal.close();

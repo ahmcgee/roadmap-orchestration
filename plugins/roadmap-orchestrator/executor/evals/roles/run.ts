@@ -57,7 +57,7 @@ export function parseRun(argv: readonly string[]): RunOptions {
       cap: { type: 'string' }, 'trial-cap': { type: 'string' }, 'read-only': { type: 'boolean', default: false }, baseline: { type: 'string' },
     },
   });
-  if (positionals.length !== 1 || positionals[0] !== 'gate') throw new Error(`${USAGE}\n(the gate's options; another role's: node evals/roles/run.ts walkthrough|polishJudge|verifier|scaffold --help)`);
+  if (positionals.length !== 1 || positionals[0] !== 'gate') throw new Error(`${USAGE}\n(the gate's options; another role's: node evals/roles/run.ts walkthrough|polishJudge|verifier|pre-build|campaignAudit --help)`);
   if (values.set !== 'dev' && values.set !== 'holdout') throw new Error(USAGE);
   const int = intOption;
   const usd = usdOption;

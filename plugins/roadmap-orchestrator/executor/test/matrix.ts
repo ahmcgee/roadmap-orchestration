@@ -113,7 +113,7 @@ export const CONCURRENT_TEARDOWN = 'concurrent: A through the pipeline, peer B i
 export const CONCURRENT_PUBLICATION = 'concurrent: A through the pipeline, peer B waiting for the publication slot (in memory)';
 export const CONCURRENT_RESIDUE = 'concurrent: A through the pipeline, peer B in a retryable residue park';
 export const CONCURRENT_AUDIT = 'concurrent job: an audit job stepping (audit-1: its checkout, lens call, evidence, facts), units u1 and u2 in live build runners';
-export const CONCURRENT_APPLY = 'concurrent root apply: command.apply, revision.commit and revision notice while units u1 and u2 have live build runners';
+export const CONCURRENT_APPLY = 'concurrent root apply: campaign request, command.apply and revision.commit while units u1 and u2 have live build runners';
 export const CONCURRENT_BATCH = 'concurrent job: a repair batch publishing (batch-1: its slot, chained candidate, lanes, batch ff, snapshot), unit u3 in a live build runner';
 export const CONCURRENT_PREEMPT = 'concurrent job: a rule\'s docs publication preempting u1\'s candidate before green (the preempt kill, docs commit, lanes, docs ff, revision, snapshot)';
 export const CONCURRENT_DEBT = 'concurrent job: a corpus arc\'s gate approval banking its note (u1\'s, u2\'s) while the audit and checkpoint jobs step';
@@ -1107,7 +1107,7 @@ export const MATRIX: readonly Row[] = [
   {
     row: CONCURRENT_AUDIT,
     test: 'test/serial/concurrent-matrix.test.ts',
-    cells: jobCells([...LOG_APPENDS, 'audit.after-started', 'audit.after-lens', 'audit.before-ended', 'audit.after-ended', ...JOB_OPS], {
+    cells: jobCells([...LOG_APPENDS, 'audit.after-started', 'audit.after-lens', 'audit.before-ended', 'audit.after-ended', 'needsuser.raise.before-publish', 'needsuser.raise.after-publish', ...JOB_OPS], {
       B1: 'audit-started or audit-ended lost (a torn line discarded once): the audit captures again from the same state, or ends again, once',
       B2: 'the audit\'s open op closed by its reconciler (a spawn lost, the rest redone or reconciled), or audit-started durable with nothing run: the job resumes as audit-1 from its recorded inputs, its lens asked once',
       B3: 'inside the audit\'s op or after its lens was read: finished or redone; the job resumes, consuming the call it made',
@@ -1119,12 +1119,12 @@ export const MATRIX: readonly Row[] = [
     row: CONCURRENT_APPLY,
     test: 'test/serial/concurrent-matrix.test.ts',
     cells: jobCells([...LOG_APPENDS, 'plan.apply.after-inputs', 'revision.commit.after-intent', 'revision.commit.after-fact', 'needsuser.raise.before-publish', 'needsuser.raise.after-publish', 'command.apply.before-effect', 'command.apply.after-effect', 'command.apply.after-receipt'], {
-      B1: 'checkpoint-inputs lost: captured again once; the bundle\'s plan-applied or divergence lost inside its revision.commit: the revision finished from its kept payload (reconciled)',
-      B2: 'the checkpoint\'s open op closed by its reconciler, or checkpoint-inputs durable with nothing asked, or the bundle\'s revision.commit open: the job resumes as ckpt-1, asks once, and the revision is finished from its payload (reconciled) or aborted and activated again; one plan-applied{bundle}',
-      B3: 'inside the checkpoint\'s op, or the revision\'s bytes kept before its commit: finished or redone; the call consumed, never asked again',
-      B4: 'the call read or the revision\'s plan-applied written: consumed and finished (reconciled); one plan-applied, one divergence, one digest',
-      B5: 'nothing open: the aftermath written only where missing',
-    }, PEERS_IN_BUILDS, 'no checkpoint label falls on this boundary'),
+      B1: 'a plan-applied or item-closure fact is absent after the crash: the command and revision reconcile from their kept inputs',
+      B2: 'the campaign request raise or root command/revision is open: recovery finishes each exactly once',
+      B3: 'the root revision inputs are kept before activation: recovery finishes the same accepted edit',
+      B4: 'the request file, revision fact or root receipt is durable: recovery consumes it, closing the request once',
+      B5: 'nothing is open: durable request, revision and receipt remain singular',
+    }, PEERS_IN_BUILDS, 'no root decision label falls on this boundary'),
   },
   {
     row: CONCURRENT_BATCH,

@@ -1,20 +1,4 @@
-// M4a rev 3 step N2 (B, C, H4, H5): a checkpoint's admit classes, conversions, busy deferral, evidence per test, ruling
-// stamps and ids, split census moves, input manifest, embedded specs and closeout, over real corpus arcs (real git, real
-// processes, the fake claude answering lens and checkpoint calls by job, the fake gh as the forge). Named tests:
-// bundle.decision-persists-conversions, bundle.opportunity-joins-advances, bundle.opportunity-unwitnessed-converts, bundle.all-converted-no-op,
-// bundle.follow-up-overrun-converts-with-debt, bundle.admit-targets-checked,
-// bundle.recovery-no-reclassify, admits.architecture-doc-arc-unclassified, revision.evidence-head-superset-accepted,
-// revision.evidence-equal-results-new-inv, revision.evidence-outcome-changed-rejected, revision.evidence-test-removed-rejected,
-// revision.evidence-malformed-or-empty-rejected, revision.evidence-selection-loss-rejected,
-// revision.evidence-env-or-rev-differs-rejected, bundle.ruling-corpus-consistency-stamped, bundle.ruling-id-leading-zero,
-// bundle.split-census-out-of-slice-moved, bundle.split-census-other-state-reason, bundle.busy-live-attempt,
-// checkpoint.busy-waits-for-boundary (arc feedback 2026-10-24: the held bundle re-decided with no call),
-// checkpoint.busy-redecide-stale-falls-back, classify.open-attempt-running-vs-abandoned, checkpoint.capture-waits-for-publication and
-// checkpoint.capture-wait-bounded (paid M4a run 10, R-15), checkpoint.manifest-content-addressed,
-// checkpoint.specs-embedded-with-occupied-ids, checkpoint.next-ruling-id, checkpoint.closeout-delta-when-unchanged,
-// bundle.merged-since-capture-stale, bundle.merged-at-capture-invalid, checkpoint.refused-carried-across-triggers (paid M4a
-// run 12), checkpoint.final-unchanged-skipped, checkpoint.resumed-equal-capture, checkpoint.skipped-nothing-new (arc feedback 2026-10-16), checkpoint.schema-closed-ids
-// (paid M4b run 5).
+// Per-test evidence comparison, root revision concurrency, and audit integration-history coverage.
 import assert from 'node:assert/strict';
 import { readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -170,25 +154,6 @@ describe('the capture waits for a publication in flight (R-15)', () => {
 });
 
 // ---------------------------------------------------------------------------------------------------
-// H4, H5: the checkpoint's inputs
-
-/** The text of a tag in a prompt. */
-const tagOf = (stdin: string, tag: string): string => {
-  const m = new RegExp(`<${tag}>\\n([\\s\\S]*?)\\n</${tag}>`).exec(stdin);
-  assert.ok(m !== null, `the prompt has <${tag}>`);
-  return m[1]!;
-};
-
-describe('the checkpoint\'s inputs (H4, H5)', () => {
-
-});
-
-describe('a unit merged around the capture (paid M4a run 10)', () => {
-  const patchU1: JsonValue = { op: 'patch-spec', unit: 'u1', patch: [{ op: 'cite', contracts: ['contracts/api.md'], rulings: [] }], cites: ['V-1'], evidence: ['audit-1'] };
-  const toMerge = (): readonly Step[] => [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })];
-  const ckptBarrier = { type: 'barrier', name: 'ckpt', timeoutMs: 120_000 } as const;
-});
-
 describe('an owner commit on the integration branch (dev.13 arc, audit-24)', () => {
   test('history.unpublished-head-resolves: an audit ending on a commit the owner put on the branch places it at its nearest published ancestor', T, async () => {
     const x = await arc([planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' }), lensStep('audit-2', 'invariants')]);

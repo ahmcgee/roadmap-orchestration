@@ -2,7 +2,7 @@ import { systemName } from '../src/core/ids.ts';
 // The targeted probe (`npm run probe`): the production argv builder, runner and adapter against the real,
 // authenticated CLIs, through src/preflight/smoke.ts. Pennies per run. Checks:
 //
-//   smoke.<backend>     smoke() under the default profile, exactly as `roadmap start` runs it (Claude: planCheck.low, the frontier
+//   smoke.<backend>     smoke() under the default profile, exactly as `roadmap start` runs it (Claude: verifier.low, the frontier
 //                       class's judgment binding since dev.17, claude-opus-5-5 medium)
 //   codex.fresh/resume  gpt-5.6-luna, effort low, strict schema; the resume continues the fresh thread
 //   shell.lane          a real shell command through the runner, graded on exit code and stdout
@@ -41,21 +41,11 @@ import { systemName } from '../src/core/ids.ts';
 //                       must carry the token, which only the killed conversation holds
 //   codex.killed-resume the same with gpt-5.6-luna, effort low: killed after thread.started and the file;
 //                       the resume uses the thread id the adapter read into result.json
-//   m3.lens             lens.arc seat (efficient: claude-sonnet-5-5 high): the real lens prompt module and LENS_SCHEMA over a tiny
-//                       fixture (2-clause vision, one obligation, a trivial diff), inputs built as production
-//                       does; the adapter must return success and validateLensOutput must accept it
-//   m3.checkpoint       checkpoint.arc seat (claude-fable-5-1): the real checkpoint module and its per-call closed schema (checkpointSchemaFor)
-//                       over a tiny input set; the output must validate (a no-op is expected)
-//   m3.pre-build       planCheck.med seat (frontier since dev.17: claude-opus-5-5 medium) with a vision input: the real pre-build module and PLAN_CHECK_SCHEMA;
-//                       the output must validate and carry a visionConflict array
-//   forge.*             (M4a) the executor's own src/forge functions against the real ahmcgee/roadmap-orchestration, read-only:
-//                       resolveRepo (the identity every `gh pr` call names)
-//   routing.m4a         the default table's packReview.arc is claude-opus-5-5 medium, checkpoint.arc claude-opus-5-5 high
+//   m3.campaign-audit   production campaignAudit prompt and schema on its summit seat over a tiny range
+//   m3.pre-build        production verifier prompt and schema in pre-build mode over one spec
+//   routing.m4a         the default table's packReview.arc is claude-opus-5-5 medium, campaignAudit.arc claude-opus-5-5 high
 //   m4a.pack-review     packReview.arc (frontier, corpus arc scope): the real prompt module over a tiny corpus pack; the
 //                       answer must validate against PackReviewOutput
-//   m4a.checkpoint-summit  checkpoint.arc (summit): the real checkpoint module; the output must validate
-//   m4a3.checkpoint-targets  the checkpoint (corpus arc, summit seat) told to admit one unit: the answer validates and the
-//                       admit carries `targets`
 //   m4a3.witness-check  `roadmap witness-check` over a real `node --test` run of a 2-test file with the node-test witness
 //                       reporter: exit 0 when both required ids pass, 78 listing the missing id when one is absent
 //   m4a3.sonnet-build   claude-sonnet-5-5 medium build through the real build prompt and BUILD_SCHEMA (`experiments`): the

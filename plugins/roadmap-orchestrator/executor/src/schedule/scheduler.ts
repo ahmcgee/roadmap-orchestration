@@ -865,7 +865,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       && (r.progress.kind === 'working' || r.progress.kind === 'approved'));
     const waiting = new Set(live.filter((r) => {
       const t = tasks.get(r.unit);
-      const next = upcoming(v.unit(r.unit), specOf(planUnit(r.unit)).reproduces);
+      const next = upcoming(v.unit(r.unit), specOf(planUnit(r.unit)).reproduces, specOf(planUnit(r.unit)).review);
       return r.progress.kind === 'approved' && next?.kind === 'admission' && next.stage === 'candidate' && (t === undefined || t.state === 'awaiting-admission' || t.state === 'idle');
     }).map((r) => r.unit));
     /** The batch of `group` (findings in canonical order, the first its key): every unit repairing one directly, once all wait. */
@@ -916,7 +916,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       const w = task.waiting;
       if (w === null) continue;
       const u = view().unit(task.unit);
-      const next = upcoming(u, specOf(planUnit(task.unit)).reproduces);
+      const next = upcoming(u, specOf(planUnit(task.unit)).reproduces, specOf(planUnit(task.unit)).review);
       // Ended at this boundary: a pause or stop, or the unit moved on without it (cut, superseded, re-opened, retired).
       if (stopping !== null || task.abort.signal.aborted || u.status !== 'active' || next?.kind !== 'admission' || next.stage !== w.stage) {
         endTask(task);
@@ -943,7 +943,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   const startChains = (): void => {
     for (const unit of plan().units) {
       const u = view().unit(unit.id);
-      if (!tasks.has(unit.id) && u.status === 'active' && nextStage(u, specOf(unit).reproduces)?.kind === 'chain') startTask(unit);
+      if (!tasks.has(unit.id) && u.status === 'active' && nextStage(u, specOf(unit).reproduces, specOf(unit).review)?.kind === 'chain') startTask(unit);
     }
     for (const id of retiring) {
       if (tasks.has(id)) continue;

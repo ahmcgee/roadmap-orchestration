@@ -73,7 +73,7 @@ async function sealArc(s: Stack, name: string, from: string, previous: Sealed | 
     const applied = recordPlan(j, runDir, readInputFiles(absPath(planPath), absPath(s.repo)), [], BASE);
     for (let n = 1; n <= amendments; n++) {
       j.fact({
-        kind: 'corpus-amendment', id: amendmentIdOf(n), source: {type: 'root', command: commandId('cmd-0000000000000001')}, rules: [ruleId(`T-${n}`)],
+        kind: 'corpus-amendment', id: amendmentIdOf(n), source: {type: 'root', command: commandId(`cmd-${String(n).padStart(16, '0')}`)}, rules: [ruleId(`T-${n}`)],
         proposal: `Tighten rule T-${n}.`, why: `divergence D-${n}`, evidence: [],
       });
     }

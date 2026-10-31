@@ -611,8 +611,8 @@ const JOB_ROW_NAMES: readonly JobRow[] = ['audit', 'apply', 'batch', 'preempt'];
 const JOB_PEER: Readonly<Record<JobRow, HolisticPeer>> = { audit: 'jobs', apply: 'jobs', batch: 'batch', preempt: 'preempt' };
 /** The units whose build is live while the scenario's job steps. */
 const LIVE_BUILDS: Readonly<Record<HolisticPeer, readonly string[]>> = { jobs: [A, B], batch: [C], preempt: [] };
-/** The applied bundle raises its divergence digest and the schema 2 revision notice. */
-const JOB_NEEDS_USER: Readonly<Record<HolisticPeer, readonly string[]>> = { jobs: ['revision-notice'], batch: [], preempt: [] };
+/** The campaign request is answered by root apply; its recorded item remains part of the oracle. */
+const JOB_NEEDS_USER: Readonly<Record<HolisticPeer, readonly string[]>> = { jobs: ['owner-request'], batch: [], preempt: [] };
 const jobRowLabels = (row: JobRow): readonly string[] => [...new Set(crashCells(JOB_ROWS[row]).map((c) => c.label))].sort();
 const jobBoundaryOf = (row: JobRow, label: string): Boundary => crashCells(JOB_ROWS[row]).find((c) => c.label === label)!.boundary;
 /** The scenario's units in plan order (the batch scenario admits its repair units after u3). */

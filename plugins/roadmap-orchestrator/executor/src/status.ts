@@ -67,7 +67,6 @@ import { type Certification,type WorkRun,certification,workRuns } from './status
 //                 evidence, its bundle and its compensation hint (H13)
 //   decisionsSince  what was decided since the architect last acknowledged a divergence digest (the whole arc
 //                 before one): rulings, bundles, patches, re-entries, cuts, steers, divergences, reversals and the audits
-//                 whose checkpoint was suppressed by nothing-new or equal-input guards (`checkpoint-skipped`)
 //   convergence   K, the applied bundles counted against it since the counter last cleared, the open brake items
 //   findings      the active findings and `findingMetrics` (B3); dev.13 the released findings by who released them and
 //                 the admits a brake converted (src/holistic/tail.ts)
@@ -851,7 +850,7 @@ function idleState(x: Inputs, unit: PlanUnit, u: UnitState): Readonly<{ state: U
   const milestones = deps.length > 0 ? [] : milestoneWaits(view, plan).get(unit.id) ?? [];
   if (deps.some((d) => dead(view, d))) return { state: 'blocked', waitingFor: waitFor({ deps, edges }) };
   if (deps.length > 0 || edges.length > 0 || milestones.length > 0) return { state: 'waiting', waitingFor: waitFor({ deps, milestones, edges }) };
-  const next = nextStage(u, x.spec(unit).reproduces);
+  const next = nextStage(u, x.spec(unit).reproduces, x.spec(unit).review);
   const routing = x.routing;
   if (next?.kind === 'admission' && routing !== null) {
     const a = admitter(routing, x.spec)({

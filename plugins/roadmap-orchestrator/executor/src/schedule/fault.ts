@@ -127,7 +127,7 @@ function faultedAttempt(ctx: StageContext, unit: PlanUnit): (StageParent & Reado
   const view = ctx.journal.view;
   const open = openAttempt(view, unit.id);
   const u = view.unit(unit.id);
-  const next = open === null ? upcoming(u, specFacts(ctx)(unit).reproduces) : null;
+  const next = open === null ? upcoming(u, specFacts(ctx)(unit).reproduces, specFacts(ctx)(unit).review) : null;
   const stage = open?.stage ?? next?.stage ?? null;
   const fault = FAULT_STAGES.find((s) => s === stage);
   if (fault === undefined) return null;

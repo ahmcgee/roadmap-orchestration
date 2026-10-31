@@ -799,7 +799,7 @@ export const auditTrigger: Read<AuditTrigger> = tagged('type', {
 });
 
 /**
- * The revision vector a checkpoint read (`checkpoint-inputs`) and a bundle's staleness check compares (H3: the
+ * The revision vector read for a revision proposal and compared by its staleness check (H3: the
  * vision sha always): the plan rev, each spec's rev, the obligations, ledger and vision bytes, the contract blobs.
  */
 export type RevisionVector = Readonly<{

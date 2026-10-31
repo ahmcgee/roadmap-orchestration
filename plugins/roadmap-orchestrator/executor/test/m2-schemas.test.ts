@@ -215,7 +215,7 @@ describe('M2 plan fields', () => {
 
 describe('ordering park records', () => {
   const parked = (ordering: unknown) => fact({
-    kind: 'stage-outcome', unit, stage: 'pre-build', attempt: 2, outcome: 'infeasible', class: 'park', chargeable: false,
+    kind: 'stage-outcome', unit, stage: 'gate', attempt: 2, outcome: 'escalate', class: 'park', chargeable: false,
     park: { class: 'operator', kind: 'design', ordering },
   });
   it('round-trips an explicit wait and its exact automatic wake; refuses missing, empty or duplicate blockers', () => {
@@ -229,7 +229,7 @@ describe('ordering park records', () => {
       park: { class: 'operator', kind: 'env', ordering: { blockers: ['u2'] } } }), /ordering/);
   });
   it('a park without optional ordering reads byte-for-byte with no wait or adoption warning', () => {
-    const old = serializeEvent(event(fact({ kind: 'stage-outcome', unit, stage: 'pre-build', attempt: 2, outcome: 'infeasible', class: 'park', chargeable: false,
+    const old = serializeEvent(event(fact({ kind: 'stage-outcome', unit, stage: 'gate', attempt: 2, outcome: 'escalate', class: 'park', chargeable: false,
       park: { class: 'operator', kind: 'design' } })));
     const child = spawnSync(process.execPath, ['--input-type=module', '-e', `
       import { parseEventLine, serializeEvent } from './src/core/events.ts';

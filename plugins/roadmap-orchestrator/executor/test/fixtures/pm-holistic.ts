@@ -180,11 +180,11 @@ export function ownerOf(view: JournalView, e: Event): string {
     case 'fact': {
       // A lane-reused or series-certified fact (M4a rev 3 N1) belongs to the stage or job whose series it records.
       if (e.fact.kind === 'lane-reused' || e.fact.kind === 'series-certified') return ofParent(e.fact.parent);
-      const f = e.fact as Readonly<{ kind: string; inv?: string; job?: unknown; pub?: unknown; for?: Readonly<{ type: string; job?: string }>; unit?: unknown; source?: Readonly<{ type: string; job?: string; command?: string }> }>;
+      const f = e.fact as Readonly<{ kind: string; command?: unknown; inv?: string; job?: unknown; pub?: unknown; for?: Readonly<{ type: string; job?: string }>; unit?: unknown; source?: Readonly<{ type: string; job?: string; command?: string }> }>;
       if (f.kind === 'meter' || f.kind === 'usage-unavailable') return ofParent(view.latestIntent(parseInvocationId(f.inv as InvocationId).op).parent);
       const job = typeof f.job === 'string' ? f.job : typeof f.pub === 'string' ? f.pub : f.for?.type === 'job' ? f.for.job : f.source?.type === 'bundle' ? f.source.job : undefined;
       if (job !== undefined) return `job:${job}`;
-      if (f.source?.type === 'command') return 'command';
+      if (f.source?.type === 'command' || f.kind === 'needs-user-acked' && typeof f.command === 'string') return 'command';
       return typeof f.unit === 'string' ? `unit:${f.unit}` : 'arc';
     }
   }

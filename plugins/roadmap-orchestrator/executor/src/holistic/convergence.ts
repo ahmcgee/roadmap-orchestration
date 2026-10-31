@@ -1,21 +1,4 @@
-// Convergence brakes and generations (M3 step B6; DESIGN-1.0.md §2.8; plan "Generations and convergence", A9, OR-Q2/3,
-// R10). Brakes act on the checkpoint only: they turn its bundles into `bundle-request`s and never halt a unit. Everything
-// here is derived from the log, so a crash anywhere loses nothing (`raiseBound` raises what is due, once).
-//
-//   material op      any op but a `request` and an `admit` of a repair unit (R10: repairing is the arc converging)
-//   causal identity  `(subject, lineage root)`: each finding or obligation an op is about (its own obligation, and every
-//                    `F-n` / `I-n` of the arc its evidence names) with the lineage root of the unit it acts on (null for
-//                    an arc-level op). An op about no finding or obligation has no identity: it counts toward K alone
-//   identity bound   a bundle with a material op on an identity an earlier applied bundle already changed (since the
-//                    latest acknowledged `convergence-identity`) is the second: it becomes a `bundle-request`, and a
-//                    non-blocking `convergence-identity` item is raised with it
-//   arc counter K    applied bundles since the latest unit publication, newly latched obligation or acknowledged
-//                    `convergence-bound`; at K (`limits.convergenceK`, default 3) one durable non-blocking
-//                    `convergence-bound` is raised (`raiseBound`)
-//   open brake       a raised `convergence-bound` or `convergence-identity` item not yet acknowledged: while one is
-//                    open, every bundle becomes a `bundle-request` (A9)
-//   quiescence       a generation whose checkpoint decided `no-op` under the vision in force, or whose request the
-//                    owner answered without `apply` (`quiescentGenerations`; a vision revision reopens it, H3)
+// Status convergence counters derived from recorded revisions, and completed campaign-audit generations.
 import { type FindingId,type JobId,type NeedsUserId,type ObligationId,type Sha256Hex,type UnitId,canonicalIds } from '../core/ids.ts';
 import type { Journal,JournalView } from '../core/interfaces.ts';
 import type { NeedsUserReason } from '../core/records.ts';
@@ -120,15 +103,7 @@ export function brakesOf(
 const withObligations = (known: ReadonlySet<string>, ops: readonly BundleOp[]): ReadonlySet<string> =>
   new Set([...known, ...ops.flatMap((op) => (op.op === 'obligation-split' ? [op.obligation] : []))]);
 
-/**
- * The generations quiescent under the vision in force (`visionSha256`): each with a checkpoint, captured under that
- * vision, that decided `no-op`, or whose request (`bundle-request` or `owner-request`) the owner answered without
- * `apply`: a declined or acknowledged request ends that trigger's decision, nothing applied, the findings it concerned
- * as they are; or whose checkpoint was suppressed by the nothing-new or equal-input guard (`checkpoint-skipped`,
- * under that vision). An unanswered request
- * waits on its open item; one answered `apply` is enacted by the trigger's next job.
- * A vision revision since reopens them all (H3).
- */
+/** Completed campaign-audit generations under the current vision. */
 export function quiescentGenerations(view: JournalView, visionSha256: Sha256Hex): ReadonlySet<number> {
   return new Set(view.holistic().audits.filter((a) => a.started.visionSha256 === visionSha256 && a.ended?.outcome === 'completed').map((a) => a.started.generation));
 }
