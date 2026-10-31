@@ -346,9 +346,6 @@ describe('facts, plan changes, manifests and fingerprints', () => {
   });
 });
 
-describe('checkpoint child schemas', () => {
-});
-
 describe('startup rows, brief and ack', () => {
   it('every M4a row round-trips through the rejection file and refuses (78)', () => {
     const rows = [

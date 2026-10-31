@@ -181,6 +181,3 @@ describe('fakes.pack-review', () => {
     assert.throws(() => packReviewAnswer([{ target: { type: 'unit' } }]));
   });
 });
-
-describe('fakes.checkpoint-m4a', () => {
-});

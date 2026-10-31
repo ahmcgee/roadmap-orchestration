@@ -7,10 +7,8 @@ function covered(view: JournalView): ReadonlySet<DivergenceId> {
   return new Set(view.holistic().digests.filter((d) => view.ackOf(d.needsUser) !== null).flatMap((d) => d.ids));
 }
 
-/** Every divergence not covered by an acknowledged digest, ascending (`status.divergences`, the checkpoint's input). */
+/** Every divergence not covered by an acknowledged digest, ascending (`status.divergences`). */
 export function uncoveredDivergences(view: JournalView): HolisticFold['divergences'] {
   const done = covered(view);
   return view.holistic().divergences.filter((d) => !done.has(d.id));
 }
-
-const DIGEST_IDS = /\bD-[1-9][0-9]*\b/g;

@@ -6,7 +6,6 @@
 //   classify.witness-reuse           a witness item naming an obligation restates its witness exactly (every proposer)
 //   stage.witness-lane-park          a dev.9 arc whose spec in force holds such an item parks the unit at build, naming it,
 //                                    with no build call (it crash-looped the supervisor before)
-//   schemas.checkpoint-ruling-text   a checkpoint answer recorded before structured rulings reads its JSON text as written
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { describe,test } from 'node:test';
@@ -98,8 +97,4 @@ describe('a spec in force from an arc started on 1.0.0-dev.9', () => {
       r.journal.close();
     }
   });
-});
-
-describe('checkpoint rulings (arc feedback #3)', () => {
-  
 });

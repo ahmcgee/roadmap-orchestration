@@ -289,12 +289,6 @@ describe('m4a-rev3 plan and spec', () => {
   });
 });
 
-describe('m4a-rev3 apply body (I2, step N3)', () => {
-
-
-
-});
-
 describe('m4a-rev3 role schemas', () => {
   it('the build answer: targeted experiments, with old lanesRun accepted and ignored', () => {
     const answer = {  summary: 's', grounding: {specWrong: null, touches: []}, tooBig: null, notes: [], lanesRun: [{ lane: 'unit', exit: 0 }], blockers: [], experiments: [{ name: 'probe', argv: ['node', 'x.js'], exit: 1 }], final: true };

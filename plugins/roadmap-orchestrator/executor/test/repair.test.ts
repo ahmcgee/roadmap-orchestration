@@ -357,12 +357,6 @@ describe(`matrix row ${FF_ELIGIBILITY}`, () => {
 });
 
 // ---------------------------------------------------------------------------------------------------
-// Plan-check (R17, AX carry-forward)
-
-describe('pre-build and the findings store', () => {
-});
-
-// ---------------------------------------------------------------------------------------------------
 // Crash: mutant.apply (the matrix row MUTANT_APPLY)
 
 /** How recovery closes the apply a crash at each label cut short: redone from its intent, reconciled from the patched tree, or live. */

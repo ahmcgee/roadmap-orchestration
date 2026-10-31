@@ -405,10 +405,6 @@ describe('the vision confirmed against the pin', () => {
   });
 });
 
-describe('the vision leak (row 12)', () => {
-
-});
-
 describe('vision edits publish (dev.16)', () => {
   const V3 = { id: 'V-3', kind: 'good', text: 'Quiet nights.', rank: null, state: 'active' };
   const renderMap = (v: Extract<ApplyVerdict, { kind: 'accepted' }>): ReadonlyMap<string, string> =>

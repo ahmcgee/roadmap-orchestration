@@ -6,15 +6,13 @@ import { describe,test } from 'node:test';
 import { applyCommand } from '../src/commands/apply.ts';
 import { submitCommand } from '../src/commands/queue.ts';
 import { type EnvId,type InvocationId,type LaneId,type LaneRev,type Sha,type Sha256Hex,arcId,unitId } from '../src/core/ids.ts';
-import type { JsonValue } from '../src/core/json.ts';
 import { sha256Hex } from '../src/core/json.ts';
 import { evidenceDiffers,integrationHistory } from '../src/holistic/bundle.ts';
 import type { Observation } from '../src/holistic/observe.ts';
 import type { WitnessRecord } from '../src/holistic/types.ts';
-import { requirePlanInForce,revisionInForce } from '../src/input/inforce.ts';
 import { runUnit } from '../src/pipeline/unit.ts';
 import { status } from '../src/status.ts';
-import { admitOp, checkpointContext, completedAudit, factsOfKind } from './fixtures/checkpoint-common.ts';
+import { checkpointContext, completedAudit, factsOfKind } from './fixtures/checkpoint-common.ts';
 import { type CorpusHolisticArc, corpusHolisticArc } from './fixtures/corpus-holistic.ts';
 import { VISION_PATH } from './fixtures/corpus-unit.ts';
 import { stepTo, unitOf } from './fixtures/route-common.ts';
@@ -22,10 +20,9 @@ import { SCENARIO_TIMEOUT_MS,admitAll,planCheckStep } from './fixtures/stage-com
 import { type ArcRun, applyBody, contextFor, gateStep, mulBuild } from './fixtures/unit-common.ts';
 import { reached,release } from './helpers/barrier.ts';
 import { sampleCorpus } from './helpers/corpus.ts';
-import { withForge } from './helpers/corpusarc.ts';
 import { lensStep } from './helpers/holistic.ts';
 import { git } from './helpers/repo.ts';
-import { type Step,readCalls } from './helpers/scenario.ts';
+import { type Step } from './helpers/scenario.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 type Json = Record<string, unknown>;
@@ -108,19 +105,9 @@ describe('the evidence base, per test (C1, R58)', () => {
     assert.match(evidenceDiffers(cited, observation([t('a', 'pass'), t('b', 'fail')], { laneRev: 'bbbbbbbbbbbbbbbb' as LaneRev }))!, /ran under lane rev aaaaaaaaaaaaaaaa/);
   });
 });
-const ruleOp = (id: string): JsonValue => ({ op: 'rule', ruling: id, cites: ['V-1'], evidence: ['audit-1'] });
-
-const splitTo = (rule: string): JsonValue => ({
-  op: 'obligation-split', obligation: 'I-1', cites: ['V-1'], evidence: ['audit-1 found I-1 too coarse'],
-  children: [{ id: 'I-2', statement: 'A berth is never double-booked.', docRef: null, rule, witness: { lane: 'journey', testIds: ['t1'], files: [] }, activation: 'must-hold', deliveredBy: [] }],
-});
-const census = (r: ArcRun) => revisionInForce(r.ctx.runDir, requirePlanInForce(r.ctx.runDir, r.journal.view)).obligations!.value.census;
-
-describe('rulings and split census (C2–C4)', () => {
-});
 
 const pcBarrier = {type: 'barrier', name: 'pc', timeoutMs: 120_000} as const;
-describe('busy: a bundle touching a unit mid-stage waits for its boundary (C5, R50)', () => {
+describe('root apply while an attempt is live or abandoned', () => {
 
   test('classify.open-attempt-running-vs-abandoned: an attempt an executor restart found open does not refuse an edit (arc feedback 2026-10-15: the startup records it); the revision is pending', T, async () => {
     const pc = planCheckStep({ decision: 'approve' });
@@ -142,15 +129,6 @@ describe('busy: a bundle touching a unit mid-stage waits for its boundary (C5, R
       x.r.journal.close();
     }
   });
-});
-
-// ---------------------------------------------------------------------------------------------------
-// R-15 (paid M4a run 10): the capture waits at the publication boundary
-
-const gateBarrier = { type: 'barrier', name: 'gate', timeoutMs: 120_000 } as const;
-const toGate = (): readonly Step[] => [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' }, {}, [gateBarrier])];
-
-describe('the capture waits for a publication in flight (R-15)', () => {
 });
 
 // ---------------------------------------------------------------------------------------------------

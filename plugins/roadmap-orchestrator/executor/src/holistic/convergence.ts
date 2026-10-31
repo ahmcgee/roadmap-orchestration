@@ -1,10 +1,10 @@
 // Status convergence counters derived from recorded revisions, and completed campaign-audit generations.
 import { type FindingId,type JobId,type NeedsUserId,type ObligationId,type Sha256Hex,type UnitId,canonicalIds } from '../core/ids.ts';
-import type { Journal,JournalView } from '../core/interfaces.ts';
+import type { JournalView } from '../core/interfaces.ts';
 import type { NeedsUserReason } from '../core/records.ts';
 import type { AbsPath } from '../core/values.ts';
 import { DEFAULT_CONVERGENCE_K,type PlanM1 } from '../input/plan.ts';
-import { raiseNeedsUser,readNeedsUser } from '../needsuser.ts';
+import { readNeedsUser } from '../needsuser.ts';
 import type { BundleOp } from '../prompts/schemas.ts';
 
 /** One causal identity: a finding or obligation, and the lineage root of the unit acted on (null: arc-level). */

@@ -82,9 +82,6 @@ const L2: readonly Lens[] = ['invariants'];
 const I1 = { obligations: [{ id: 'I-1', testIds: ['t1'] }], trees: { '*': { outcomes: { t1: 'pass' as const } } } };
 const barrierLens = (job: string, lens: Lens) => lensStep(job, lens, [], [{ type: 'barrier', name: 'lens', timeoutMs: 120_000 }]);
 
-describe('cadence', () => {
-});
-
 describe('the audit job', () => {
   test('audit.immutable-inputs: the capture records the revisions, owners, prior findings and high water; the lenses read those, not what lands meanwhile; each call is metered to the job by role and routingRev', T, async () => {
     const { d } = auditArc({
@@ -516,9 +513,6 @@ async function readyDelivery(r: ArcRun): Promise<void> {
 const editJsonFile = (path: string, edit: (v: Record<string, unknown>) => Record<string, unknown>): void =>
   writeFileSync(path, JSON.stringify(edit(JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>)));
 const L3: readonly Lens[] = ['drift', 'invariants', 'invariants'];
-
-describe('change-sensitive drift (M4a rev 3, H2)', () => {
-});
 
 describe('cross-lens dedupe within one audit (M4a rev 3, H7)', () => {
   const SAME = { obligation: 'I-1', cause: 'mul: returns a float for integer inputs', evidence: [{ path: 'src/mul.js', line: 2 }] } as const;
