@@ -239,8 +239,6 @@ export function maxTier(a: RiskTier, b: RiskTier | null): RiskTier {
 /** The stage an entry point runs (M3): a steer's round is a build, a merge-in re-enters at lanes. */
 export const ENTRY_STAGE = { steer: 'build', 'merge-in': 'lanes' } as const satisfies Readonly<Record<EntryPoint['kind'], Stage>>;
 
-/** Redirects applied since the architect's latest spec revision: what MAX_REDIRECTS bounds. */
-
 const specOf = (record: DispatchRecord): SpecState => ({ rev: record.specRev, sha256: record.specSha256 });
 
 const STATUS_OF: Partial<Record<StageOutcomeFact['class'], UnitStatus>> = {

@@ -411,7 +411,7 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
   let made = false;
   const covered: LensKind[] = [];
   let outcome: 'completed' | 'abandoned' = 'completed';
-  const order = runOrder(s.lenses);
+  const order = s.lenses;
   /**
    * One call of `lens` as `attempt` over `chunk`: the recorded one consumed, else asked (lazily making the checkout): fresh,
    * or the repair turn `repair` (its refused call's session resumed, told every reason).

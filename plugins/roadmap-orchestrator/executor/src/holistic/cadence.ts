@@ -37,7 +37,7 @@ export function processClock(view: JournalView, now: () => number = Date.now): C
 /** What an audit started now records: its coalesced triggers, the lenses they call for (ascending), its generation. */
 export type AuditPlan = Readonly<{ triggers: readonly AuditTrigger[]; lenses: readonly LensKind[]; generation: number }>;
 
-/** The cadence now: the base, the owed triggers (as an audit would record them), whether one is due, and whether owed long. */
+/** The cadence now: the base, the owed triggers (as an audit would record them), whether one is due, and whether one is due. */
 export type Cadence = Readonly<{
   base: CoverageBase;
   /** The integration head now. */
@@ -55,14 +55,11 @@ const TERMINAL = ['retired', 'cut', 'superseded'];
 /** Whether a unit of the plan in force can still publish. */
 export const workRemains = (ctx: Pick<StageContext, 'journal' | 'plan'>): boolean => ctx.plan().units.some((u) => !TERMINAL.includes(ctx.journal.view.unit(u.id).status));
 
-/** The lens run order: the vision first (its reading frames the others), then the rest ascending. */
-export const runOrder = (lenses: readonly LensKind[]): readonly LensKind[] => [...lenses.filter((l) => l === 'vision'), ...lenses.filter((l) => l !== 'vision')];
-
 /** The latest audit whose outcome is `completed`, or null. */
 const lastCompleted = (audits: readonly AuditState[]): AuditState | null => audits.filter((a) => a.ended?.outcome === 'completed').at(-1) ?? null;
 
 /** The cadence now; null outside a holistic arc. */
-export function cadence(ctx: StageContext, _clock: Clock): Cadence | null {
+export function cadence(ctx: StageContext, clock: Clock): Cadence | null {
   const view = ctx.journal.view;
   if (!view.holistic().on || ctx.plan().holistic === undefined) return null;
   const base = coverageBase(ctx, integrationHeadNow(ctx));
@@ -75,7 +72,7 @@ export function cadence(ctx: StageContext, _clock: Clock): Cadence | null {
   const requested = fold.auditRequests.find((q) => q.seq > (lastCompleted(fold.audits)?.started.seq ?? 0));
   const final = !workRemains(ctx) && !fold.findings.some(f => f.severity === 'P1' && isActive(f)) && (!fold.audits.some((a) => a.ended?.outcome === 'completed' && a.started.visionSha256 === base.visionSha256) || lensCoverage(fold, base, 'invariants').watermark !== head);
   const owed: AuditTrigger[] = milestone !== undefined ? [{type: 'milestone', milestone: milestone.id}] : requested !== undefined ? [{type: 'requested', command: requested.command}] : final ? [{type: 'final'}] : [];
-  const retryReady = latest?.ended?.outcome !== 'abandoned' || (requested?.seq ?? 0) > latest.started.seq || _clock(latest.started.seq) >= AUDIT_RETRY_MIN;
+  const retryReady = latest?.ended?.outcome !== 'abandoned' || (requested?.seq ?? 0) > latest.started.seq || clock(latest.started.seq) >= AUDIT_RETRY_MIN;
   const due = owed.length > 0 && retryReady && !fold.audits.some((a) => a.ended === null);
   return {base, head, owed, due, plan: due ? {triggers: owed, lenses: ['invariants'], generation: Math.max(0, ...fold.audits.map((a) => a.started.generation)) + 1} : null};
 }

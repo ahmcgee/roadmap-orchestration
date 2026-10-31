@@ -9,8 +9,7 @@
 //   `released` (dev.13) is suppressed whatever its evidence. A vacuity finding's mutant patch
 //   is made at admission and kept content-addressed first (`admitMutant`: the lens's edits made a patch by git,
 //   `editsPatch`, or a recorded pre-M4b patch syntax-checked, `checkPatch`; then `keepMutantPatch`,
-//   `inputs/<sha256>.patch`), so its fact names kept bytes; a mutant that cannot be made refuses the draft (H6). Within one
-//   audit, a second lens's draft with an equal `crossKey` corroborates the first (`corroborateFinding`, H7).
+//   `inputs/<sha256>.patch`), so its fact names kept bytes; a mutant that cannot be made refuses the draft.
 // - **States (R5).** `open → owned → fixed-on-branch → resolved`, or `ruled`. Ownership follows the units that repair a
 //   finding (`ownershipMoves`, driven by src/pipeline/reproduce.ts `syncRepairs`): the first live unit whose spec
 //   repairs it owns it; its gate's approval standing makes it `fixed-on-branch`; its publication resolves it. A
@@ -131,11 +130,6 @@ export function openFinding(journal: Journal, draft: FindingDraft): FindingOpen 
   return { kind: 'opened', id };
 }
 
-/**
- * The cross-lens key of a draft (H7, R62): its repo evidence paths (relative ones; absolute and evidence-dir paths are
- * not the product's), sorted and once each, its obligation and its cause; the lens is left out. Within one audit, a
- * second lens's draft with an equal key is the same defect (src/holistic/audit.ts); across audits `findingKey` dedupes.
- */
 /**
  * Code's P1 over a must-hold (or latched) obligation not held on an audit snapshot (`lens: witness`): one stable cause
  * per obligation, citing the clauses it serves.

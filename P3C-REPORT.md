@@ -513,3 +513,77 @@ Canonical matrix rows removed (the same [C] and [P] deletion authorities above):
 - [P] `POC_STAGE` (`test/design.test.ts`).
 
 Partial feature-arm removals: the legacy positive `planCheck.shape` reader assertion now asserts rejection; pre-build redirect/refusal counter exercises use gate revise/refusal instead; removed checkpoint capture requirements from divergence fixtures while retaining numbering, duplicate, digest and status assertions; removed checkpoint fields from empty-state snapshots; park-table totals changed from 22 rows/10 stage keys to 16/7 for the deleted pre-build/scaffold/PoC retry rows. The fake lens P0 refusal assertion moved into the retained fake-audit case. No retained assertion was dropped with a deleted wrapper. Removed ten empty `describe` wrappers left by the retired cases (two in `audit`, one each in `fakes-m4a`, `m4a-rev3-schemas`, `m4a-schemas`, `phase0-apply`, `repair`, `judge-validation`, and two in `revision-evidence`); these contained no test cases or assertions.
+
+
+## Continuation 3
+
+The campaign audit is one fresh role judging invariants, vacuity and cross-unit interaction together. This follows Agent surface decisions: “drop rolling per-merge lenses; one fresh-context whole-range audit per milestone (invariants + vacuity + cross-unit interaction, doc drift as cheap tail)”. Bounded diff attachments and durable partial coverage remain useful inside that one campaign, so `lensdiff.ts` and `lensCoverage` stay with runtime coverage. Restored real publication chunking, both chunk runner-exit recovery boundaries, partial failure followed by draining, and a single-call audit exercising all three concerns. Removed cross-lens keys, corroboration facts and merge machinery. `AUDIT_RETRY_MIN` names the abandoned-job backoff; the old publication/time-based audit-owed notification and checkpoint milestone knob are deleted, including their readers. Cadence's header now documents its actual milestone/request/final triggers.
+
+Fable §1 says “campaign audit ... replacing lens + checkpoint, findings + request ops only, never amends the plan (checkpoint BundleOp machinery deleted; root amends via apply --reason)”. Accordingly, deleted tail/brake/admit classification, obsolete bundle sources and their readers, and the unwritten corpus-amendment chain (fact/fold, ids, chain/Phase-0 obligations, brief/status/PR payloads). Shared unit admission used by deflake and polish now lives in `holistic/admission.ts`. Historical run-9 classification helpers and checkpoint-only evidence comparators go with the deleted producer. Generic revision, notice recovery, owner-head audit coverage, census, debt and chain assertions remain. The three tail-file cases exercising live released-finding suppression, P1 release refusal and gate debt selection moved into `findings.test.ts` and `gate.test.ts`.
+
+Owner sign-off: “plan-check retired as a seat (split/scaffold/poc are root decisions)”. Added root split CAS refusal against an intervening revision and explicit deflake split refusal; restored clause-unexercised through root apply and the P2 root-repair/merge/re-walk loop. The retired checkpoint part of the latter stays deleted. The schema hard cut is explicit in Cross-cutting: “SCHEMA_VERSION 2, pre-break run dir refused loud at startup”; deleted redirect round/counters/bounds, stale-answer input/output helpers and old in-session build outcomes, with schema refusal assertions replacing acceptance of those outcomes. Existing stale-set writing and boundary reopening remain.
+
+Agent surface decisions: “PlanUnit.review?: 'always'|'never' root override”; Fable §5: “Fix rounds: findings + evidence, failing lane evidence, red-on-unit/green-on-base, notes, cap state”. Added full-pipeline tests for a marker-free `review: always` and a gate-revise fix build receiving finding/experiment evidence and the live cap/allowance JSON. No production test seam was added. Removed stale implementation comments and the empty `gate` eval trigger entry; retained CLI eval aliases. No changes to `src/prompts/flow/`, CLAUDE.md, version, external prose, or paid evals.
+
+Verification is recorded below after completion. Initial focused runs: 322 passes/10 failures (first affected batch), 50 passes/3 failures (depth batch), and 225 passes/7 failures (second affected batch). Failures exposed stale fixtures/assertions during migration; all final outcomes and any locked timing reruns are listed below. The new split race was corrected to hash the actual split proposal before the concurrent revision, so it exercises CAS rather than input-integrity refusal.
+
+Removed cases in this continuation: **56 named cases plus 2 parameterized transition rows = 58 cases**. The following [C] authority applies individually to every listed case: Fable §1, “campaign audit ... replacing lens + checkpoint ... checkpoint BundleOp machinery deleted; root amends via apply --reason”; for `findings.cross-key`, also Agent surface decisions, “drop rolling per-merge lenses; one fresh-context whole-range audit per milestone”. Root-authored census, evidence and debt assertions from mixed cases survive; only checkpoint amendment/classification/corroboration portions were removed. The deleted Phase-0 amendment-disposition/id cases additionally follow the same §1 removal of amendment proposals as audit output; the root now changes normative inputs through apply.
+
+- [C] `test/admits-run9.test.ts` — admits.run9-exact: the recorded run-9 admits classify on the structural floor: every in-slice repair stays a repair
+- [C] `test/admits-run9.test.ts` — admits.run9-declared-targets: cancel-texts declaring T-44 (citing V-5) is O-1; cancel-text-first its follow-up; cancel-text-staged converts
+- [C] `test/admits-run9.test.ts` — admits.run9-declared-ordering: draught-refusal declaring its out-of-slice draught rules takes O-1 first; cancel-texts converts over-budget
+- [C] `test/admits-run9.test.ts` — admits.run9-unwitnessed-opportunity: draught-refusal with no obligation serving V-7 converts unwitnessed, spending no budget; cancel-texts takes O-1
+- [C] `test/admits.test.ts` — admits.table-row-1: an invalid repair ref is a reason, never a class
+- [C] `test/admits.test.ts` — admits.table-row-2: a repair attributed wholly to opportunity O-1, out ⊆ OC(O-1), no follow-up yet → O-1 follow-up
+- [C] `test/admits.test.ts` — admits.table-row-3: the same with O-1 already followed up → converted follow-up-overrun naming O-1 (LR-k)
+- [C] `test/admits.test.ts` — admits.table-row-4: a repair touching only the slice, no lineage → repair{followUp: null}
+- [C] `test/admits.test.ts` — admits.table-row-5 / admits.dishonest-citation-invalid: targeting out-of-slice T-2 without citing a clause outside the slice is invalid
+- [C] `test/admits.test.ts` — admits.table-row-6: honest work outside the slice with the budget spent → converted over-budget
+- [C] `test/admits.test.ts` — admits.table-row-7: the same with the budget left but no witness → converted unwitnessed (paid M4b runs 3 and 5)
+- [C] `test/admits.test.ts` — admits.table-row-8: honest work outside the slice, the budget left, witnessed → opportunity O-1, its cited clauses joining advances
+- [C] `test/admits.test.ts` — admits.table-row-9: no repairs, in-slice clauses only → oversight
+- [C] `test/admits.test.ts` — admits.table-row-10: no repairs and no world clause touched → converted unrelated
+- [C] `test/admits.test.ts` — admits.table-total: every generated combination of refs, attribution, out-of-slice touch, follow-ups and budget lands on exactly one row
+- [C] `test/admits.test.ts` — admits.opportunity-clause-without-lineage-spends: work on O-1's clause V-3 without its lineage spends budget (over-budget), never a free follow-up
+- [C] `test/admits.test.ts` — budgets count earlier ops of the same bundle: a second opportunity in one bundle converts over-budget
+- [C] `test/admits.test.ts` — admits.ref-holds-invalid: repairing an obligation that holds on the head is invalid
+- [C] `test/admits.test.ts` — admits.ref-exempt-invalid: repairing a deferred obligation is invalid
+- [C] `test/admits.test.ts` — admits.ref-resolved-invalid: repairing a finding the checkpoint was not given is invalid; an unheld obligation is a valid ref
+- [C] `test/admits.test.ts` — admits.impact-mapped-not-touched: an obligation the impact mapping selects for the scope is no declared target (admitOpOf)
+- [C] `test/admits.test.ts` — admits.split-child-out-of-slice-targets: an obligation the admit delivers (a split child at T-2) targets T-2
+- [C] `test/admits.test.ts` — admits.exempt-delivered-not-touched: a waived obligation the admit delivers is no target
+- [C] `test/admits.test.ts` — admits.finding-clauses-are-context (LR-m): a finding over [V-1, V-3] repaired citing V-1 is a repair; its V-3 is no scope
+- [C] `test/admits.test.ts` — a repaired finding's obligation is a target: F-1 on I-3 at out-of-slice T-2
+- [C] `test/admits.test.ts` — admits.declared-target-out-of-slice (LR-m): declaring T-2 is opportunity work; declaring T-1 or T-3 is not
+- [C] `test/admits.test.ts` — admits.target-unknown-invalid: a target no active rule of the pin is a reason
+- [C] `test/admits.test.ts` — admits.attr-audit-lens-range: an audit lens finding names the units merged in that lens's range touching its paths
+- [C] `test/admits.test.ts` — admits.attr-witness-union-range: a witness finding reads the union of its audit's ranges
+- [C] `test/admits.test.ts` — admits.attr-pre-build-ambiguous: a pre-build finding is unattributable, so its repair never follows up an opportunity
+- [C] `test/admits.test.ts` — admits.attr-absolute-paths-ignored: absolute (evidence-dir) paths name no unit
+- [C] `test/admits.test.ts` — admits.attr-obligation-held-window: an obligation names the units after its last held head up to its first not-held one
+- [C] `test/admits.test.ts` — admits.attr-shared-file-ambiguous: a path two lineages touched is a partial overlap: no follow-up
+- [C] `test/admits.test.ts` — re-entries share their lineage: a fix of O-1's re-entered unit is O-1's follow-up
+- [C] `test/admits.test.ts` — admits.follow-up-overrun-converts-with-debt: the overrun converts and banks one debt item naming O-1, idempotent by source
+- [C] `test/admits.test.ts` — admits.conversion-referenced-is-invalid: another op naming a converted admit makes the bundle invalid
+- [C] `test/findings.test.ts` — findings.cross-key (H7): the lens and absolute paths are left out; obligation, cause and repo paths (set, sorted) count
+- [C] `test/ids.test.ts` — amendmentRefKey orders by arc, then by number
+- [C] `test/m4a-rev3-schemas.test.ts` — a bundle revision's source carries its admit classes and conversions, together or not at all (dev.13: a brake's conversions alone)
+- [C] `test/phase0.test.ts` — phase0.amendment-undispositioned: every amendment of the previous arc's verified ref needs a disposition
+- [C] `test/revision-evidence.test.ts` — revision.evidence-head-superset-accepted: the head records every cited test with its outcome, and more
+- [C] `test/revision-evidence.test.ts` — revision.evidence-equal-results-new-inv: equal results under another invocation and tree hold (the records' hashes differ)
+- [C] `test/revision-evidence.test.ts` — revision.evidence-outcome-changed-rejected
+- [C] `test/revision-evidence.test.ts` — revision.evidence-test-removed-rejected
+- [C] `test/revision-evidence.test.ts` — revision.evidence-malformed-or-empty-rejected
+- [C] `test/revision-evidence.test.ts` — revision.evidence-selection-loss-rejected
+- [C] `test/revision-evidence.test.ts` — revision.evidence-env-or-rev-differs-rejected
+- [C] `test/revision.test.ts` — classify.advances-bundle-opportunity-only: a bundle adds exactly the clauses of the opportunities it admits, and removes none
+- [C] `test/tail.test.ts` — an admit whose every repair is below a brake converts: settled when each is below the settled brake, else regress
+- [C] `test/tail.test.ts` — an admit naming one beside other repairs is a reason, never a silent drop
+- [C] `test/tail.test.ts` — tail.regress-attribution: a lens finding whose attribution (its lens's range, its evidence paths) is wholly finding-origin is below the regress brake
+- [C] `test/tail.test.ts` — tail.regress-range: with no attribution, the lens's covered range holding only finding-origin merges decides
+- [C] `test/tail.test.ts` — tail.exempt: no brake for a P1, a finding that an obligation is broken or a walkthrough finding; the settled brake spares a non-negotiable clause
+- [C] `test/tail.test.ts` — finding-origin: origin repair, or a spec repairing a finding
+- [C] `test/tail.test.ts` — every milestone passed and every unit not finding-origin merged or cut; a plan without milestones needs the second alone
+- [C] `test/tail.test.ts` — tail.release-reader: code's release names its job and reason, and only ever releases
+
+The two removed `test/transitions.test.ts` rows are `build/infeasible` and `build/risk-raised` (old in-session plan-check assessment). Each follows Owner sign-off “plan-check retired as a seat” plus Cross-cutting “pre-break run dir refused loud at startup”. Mixed state snapshots drop only redirect fields, and mixed schema cases now assert these removed build outcomes are refused. No other test case is removed. Previously removed kept behavior restored/adapted here: `audit.range-chunked`, `audit.coverage`, `audit.one-call-per-lens` → one campaign seat, `design.clause-unexercised`, `split.revision-race`, and `walk.deviation-loop`. `audit.cross-lens-merge-corroborated`, audit-owed and checkpoint milestone cadence remain deleted with their corresponding features.

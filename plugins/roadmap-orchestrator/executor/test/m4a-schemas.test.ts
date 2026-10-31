@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { brief } from '../src/commands/brief.ts';
 import { chainStatus } from '../src/commands/chain.ts';
 import { type Envelope,type Event,type Fact,type LogRecord,parseEventLine,serializeEvent } from '../src/core/events.ts';
-import { InvalidIdError, amendmentRef, amendmentRefOf, arcId, briefId, commandId, debtId, jobId, jobIdOf, parseAmendmentRef, phaseQuestionId, ruleId, sha, sha256 } from '../src/core/ids.ts';
+import { InvalidIdError, arcId, briefId, commandId, debtId, jobId, jobIdOf, phaseQuestionId, ruleId, sha, sha256 } from '../src/core/ids.ts';
 import { canonicalJson } from '../src/core/json.ts';
 import { } from '../src/core/projections.ts';
 import { NEEDS_USER_REASONS,approvalFingerprint,needsUserRecord,revisionInputs } from '../src/core/records.ts';
@@ -130,11 +130,9 @@ describe('M4a ids', () => {
     assert.equal(ruleId('T-12'), 'T-12');
     assert.equal(debtId('B-1'), 'B-1');
     assert.equal(phaseQuestionId('P-3'), 'P-3');
-    assert.equal(amendmentRefOf(ARC, 'M-4' as never), 'arc-2/M-4');
-    assert.deepEqual(parseAmendmentRef(amendmentRef('arc-1/M-2')), { arc: 'arc-1', id: 'M-2' });
     assert.equal(briefId('0123456789abcdef'), '0123456789abcdef');
     assert.equal(jobIdOf('review-1'), jobId('review', 1));
-    for (const [read, bad] of [[ruleId, 'T-0'], [debtId, 'B-01'], [phaseQuestionId, 'P-'], [briefId, 'ABC'], [amendmentRef, 'M-1']] as const) {
+    for (const [read, bad] of [[ruleId, 'T-0'], [debtId, 'B-01'], [phaseQuestionId, 'P-'], [briefId, 'ABC']] as const) {
       assert.throws(() => (read as (v: unknown) => unknown)(bad), InvalidIdError, String(bad));
     }
   });
@@ -170,6 +168,7 @@ describe('plan.target-union', () => {
       ['corpus without holistic', { ...corpusPlan, holistic: undefined }, /^plan\.holistic$/],
       ['holistic.vision with corpus', { ...corpusPlan, holistic: { ...corpusPlan.holistic, vision: 'vision.json' } }, /^plan\.holistic\.vision$/],
       ['holistic without vision on an architecture-doc plan', { ...docPlan, holistic: { advances: ['V-1'] } }, /^plan\.holistic\.vision$/],
+      ['retired checkpoint cadence', {...corpusPlan, holistic: {...corpusPlan.holistic, checkpoint: {everyMilestones: 2}}}, /^plan\.holistic\.checkpoint$/],
       ['a chain without its head', { ...corpusPlan, chain: { previousArc: 'arc-1' } }, /^plan\.chain\.previousHead$/],
     ];
     for (const [what, raw, field] of cases) {

@@ -78,7 +78,7 @@ export type Next =
 // The table
 
 /**
- * The built-in bounds (`DEFAULT_BOUNDS`); a unit's `limits` override them (M3). Two redirects, not one: arc 1's
+ * The built-in bounds (`DEFAULT_BOUNDS`); a unit's `limits` override them. Two revise rounds: arc 1's
  * high-risk adopted units each found real defects in a second round (arc-1 feedback item 2).
  */
 export const MAX_REVISE_ROUNDS = DEFAULT_BOUNDS.reviseRounds;

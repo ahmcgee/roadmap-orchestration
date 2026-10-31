@@ -733,3 +733,23 @@ describe('gate.cluster-coverage: the large-diff answer\'s cluster map against th
     assert.equal(gateAnswerFor(null, [])(answer(null)).clusters, null);
   });
 });
+
+import { gateDebtNotes } from '../src/pipeline/gate.ts';
+describe('tail.gate-debt', () => {
+  const f = (severity: 'blocking' | 'note' | 'pre-existing' | 'ride-along', text: string, debt: Readonly<{ drag: string }> | null) => ({evidence: ["fixture:1"],
+    severity, path: null, text, contractRef: null, experiments: [], debt, defect: severity === 'blocking' ? 'incorrect-behaviour' as const : null, reraises: null, hunk: null,
+  });
+  it('a note banks only with a drag; a pre-existing defect always; a dev.12 note as dev.12 banked it; never a blocking finding or a blank text', () => {
+    assert.deepEqual(gateDebtNotes([
+      f('note', 'parse re-reads the file per call.', { drag: 'Every reader of big inputs  pays it.' }),
+      f('note', 'The earlier finding is resolved.', null),
+      f('note', 'A test could also check the empty case.', { drag: '  ' }),
+      f('pre-existing', 'add() drops a trailing zero.', null),
+      f('blocking', 'mul is wrong.', { drag: 'x' }),
+      f('note', '  ', { drag: 'x' }),
+    ]), [
+      { index: 0, what: 'parse re-reads the file per call. Drag: Every reader of big inputs pays it.' },
+      { index: 3, what: 'add() drops a trailing zero.' },
+    ]);
+  });
+});

@@ -192,7 +192,7 @@ describe('roadmap brief', () => {
     await write(a2, (j) => divergence(j, 2, 1, 1, 'a tide window is an hour'));
     const later = (await payloadOf(a2)).payload;
     assert.deepEqual(arcOf(later, 'arc-2').divergences, [{ id: 'D-2', type: 'interpretation', what: 'a tide window is an hour' }]);
-    assert.deepEqual(arcOf(later, 'arc-2').decisions, ['divergence D-2: interpretation: a tide window is an hour (ckpt-1)']);
+    assert.deepEqual(arcOf(later, 'arc-2').decisions, ['divergence D-2: interpretation: a tide window is an hour (executor)']);
     assert.deepEqual(arcOf(later, 'arc-1').divergences, []);
   });
 

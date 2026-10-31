@@ -309,7 +309,7 @@ describe('status M3', () => {
       r.journal.fact({ kind: 'divergence-digest', needsUser: digest, ids: ['D-1', 'D-2'] } as unknown as Fact);
       assert.deepEqual(statusOf(r).divergences.map((x) => [x.id, x.digest]), [['D-1', digest], ['D-2', digest]], 'an open digest binds them');
       const bound = item(r, 'convergence-bound', false);
-      assert.deepEqual(statusOf(r).convergence, { k: 3, counter: 1, since: 0, open: [bound] });
+      assert.deepEqual(statusOf(r).convergence, { k: 3, counter: 0, since: 0, open: [bound] });
       ack(r, digest);
       ack(r, bound);
       s = statusOf(r);

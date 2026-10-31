@@ -694,8 +694,6 @@ export type MutantRef = Readonly<{ patchSha256: Sha256Hex; lane: LaneId }>;
  * the regress brake (code a finding-origin unit introduced: only a P1 spawns a unit); `settled`, one below the settled
  * brake (every milestone passed and every planned unit merged).
  */
-export const RELEASE_REASONS = ['p3', 'regress', 'settled'] as const;
-export type ReleaseReason = (typeof RELEASE_REASONS)[number];
 /** Who ruled a finding: a checkpoint's `findingDispositions`, a ruling, or code (a mutant not reproduced). */
 /**
  * `code`: a reproduce that killed the mutant dismisses its finding (`not-reproduced`); run 10 (F) the close-out defers an
@@ -704,8 +702,7 @@ export type ReleaseReason = (typeof RELEASE_REASONS)[number];
  */
 export type FindingRuledBy =
   | Readonly<{ type: 'ruling'; ruling: RulingId }>
-  | Readonly<{ type: 'code'; reason: 'not-reproduced' | 'close-out' }>
-  | Readonly<{ type: 'release'; job: JobId; reason: ReleaseReason }>;
+  | Readonly<{ type: 'code'; reason: 'not-reproduced' | 'close-out' }>;
 /**
  * dev.13 `released` (owner ruling 2026-10-20: "if we do not fix a nitpick right away, it is released"): a finding nobody
  * will act on, recorded but never debt, and never reopened by the same key (`admissionOf`). `accepted`: real, and handled
@@ -753,13 +750,11 @@ export const findingTo: Read<FindingTo> = tagged('state', {
     const out = {
       state: f.get('state', literal('ruled')),
       disposition: f.get('disposition', oneOf(FINDING_DISPOSITIONS)),
-      by: f.get('by', tagged<'ruling' | 'code' | 'release', FindingRuledBy>('type', {
+      by: f.get('by', tagged<'ruling' | 'code', FindingRuledBy>('type', {
         ruling: object((g) => ({ type: g.get('type', literal('ruling')), ruling: g.get('ruling', rid) })),
         code: object((g) => ({ type: g.get('type', literal('code')), reason: g.get('reason', oneOf(['not-reproduced', 'close-out'] as const)) })),
-        release: object((g) => ({ type: g.get('type', literal('release')), job: g.get('job', jobR), reason: g.get('reason', oneOf(RELEASE_REASONS)) })),
       })),
     };
-    if (out.by.type === 'release' && out.disposition !== 'released') throw new SchemaError(`${f.path}.disposition`, 'released (a code release releases)', out.disposition);
     return out;
   }),
 });

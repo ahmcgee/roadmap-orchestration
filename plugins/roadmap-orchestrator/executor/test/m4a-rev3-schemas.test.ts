@@ -170,7 +170,7 @@ describe('m4a-rev3 facts and outcomes', () => {
     refuses(outcome('lanes', 'witnesses-missing', 'advance', true), /detail$/);
     refuses(outcome('lanes', 'witnesses-missing', 'advance', true, { kind: 'witnesses-missing', missing: [], failed: [] }), /detail$/);
     refuses(outcome('lanes', 'green', 'advance', false, missing), /detail$/);
-    refuses(outcome('pre-build', 'approve', 'advance', false, { kind: 'infeasible', notes: 'n' }), /detail$/);
+    refuses(outcome('pre-build', 'approve', 'advance', false, { kind: 'infeasible', notes: 'n' }), /detail.kind$/);
     refuses(outcome('lanes', 'known-defect', 'advance', false, missing), /detail$/);
     // The 2026-10-15 batch: a fast suite red on the unit's diff base alone too.
     const base = '0'.repeat(40);

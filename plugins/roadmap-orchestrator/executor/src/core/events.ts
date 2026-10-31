@@ -539,7 +539,7 @@ export type RetryStage = (typeof RETRY_STAGES)[number];
 
 /**
  * What a recorded outcome did to the unit, as the transition table decided it; the fold derives the
- * unit's counters and status from it. `advance`: on to another stage, no counter. `redirect`, `revise`,
+ * unit's counters and status from it. `advance`: on to another stage, no counter. `revise`,
  * `candidate-red`, `smoke` (M4a rev 3: a mutation-smoke fix round): a bounded round within its bound. `retry`: the stage's one uncharged retry.
  * `route-up`: re-dispatched at the role's escalation seat. `trigger`: a risk trigger (contract path touched,
  * scope growth) that puts the next judgment dispatch on the escalation seat. `hold`: the stage was interrupted
@@ -619,7 +619,6 @@ export type StageOutcomeDetail =
   | Readonly<{ kind: 'witnesses-missing'; missing: readonly TestRef[]; failed: readonly TestRef[] }>
   | Readonly<{ kind: 'smoke-survived'; obligations: readonly ObligationId[]; testIds: readonly TestRef[] }>
   | Readonly<{ kind: 'known-defect'; id: KnownDefectId; match: KnownDefectMatch }>
-  | Readonly<{ kind: 'infeasible'; notes: string }>
   | Readonly<{ kind: 'base-red'; base: Sha; lanes: readonly LaneId[]; changedCheckout: boolean }>
   /**
    * Scope growth (2026-10-15): the pre-build's proposals code verified (`ScopeGrowthProposal`), in answer order; at lanes
@@ -636,7 +635,7 @@ export type StageOutcomeDetail =
   | Readonly<{ kind: 'executor-fault'; stack: string }>;
 /** The (stage, outcome) pairs that carry a detail, keyed `<stage>/<outcome>`, with the detail's kind. */
 export const DETAILED_OUTCOMES = {
-  'lanes/witnesses-missing': 'witnesses-missing', 'lanes/smoke-survived': 'smoke-survived', 'lanes/known-defect': 'known-defect', 'build/infeasible': 'infeasible',
+  'lanes/witnesses-missing': 'witnesses-missing', 'lanes/smoke-survived': 'smoke-survived', 'lanes/known-defect': 'known-defect',
   'lanes/base-red': 'base-red',
   'lanes/plan-defect': 'plan-defect',
   'build/context-exceeded': 'context-exceeded', 'gate/context-exceeded': 'context-exceeded',
@@ -776,7 +775,7 @@ export type Fact =
    * whose bytes hash to `specSha256`): by `resume <unit>` of a unit parked at a judgment stage (`command`: the
    * resume), or by the driver at an in-flight unit's next stage boundary that allows it (`command`: the apply
    * that recorded the revision, null for a start). The unit re-enters at pre-build as a new attempt; its
-   * counters are kept, and the redirect bound counts from here.
+   * counters are kept.
    */
   | Readonly<{ kind: 'reopened'; unit: UnitId; command: CommandId | null; specRev: SpecRev; specSha256: Sha256Hex }>
   /**
@@ -1887,7 +1886,6 @@ const stageOutcomeDetail: Read<StageOutcomeDetail> = tagged('kind', {
   'known-defect': object((f): StageOutcomeDetail => ({
     kind: f.get('kind', literal('known-defect')), id: f.get('id', (v, p) => knownDefectId(v, p)), match: f.get('match', knownDefectMatch),
   })),
-  infeasible: object((f): StageOutcomeDetail => ({ kind: f.get('kind', literal('infeasible')), notes: f.get('notes', str) })),
   'base-red': object((f): StageOutcomeDetail => {
     const out = {
       kind: f.get('kind', literal('base-red')), base: f.get('base', shaR), lanes: f.get('lanes', arrayOf(laneR)), changedCheckout: f.get('changedCheckout', bool),

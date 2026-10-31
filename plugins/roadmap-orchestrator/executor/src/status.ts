@@ -443,8 +443,7 @@ function tailCounts(view: JournalView): Pick<Status['findings'], 'released' | 'r
   for (const f of view.holistic().findings) {
     const last = f.last;
     if (last?.state !== 'ruled' || last.disposition !== 'released') continue;
-    if (last.by.type === 'release') released[last.by.reason]++;
-    else if (last.by.type === 'code' && last.by.reason === 'close-out') released.closeOut++;
+    if (last.by.type === 'code' && last.by.reason === 'close-out') released.closeOut++;
     else released.checkpoint++;
   }
   const conversions: readonly Conversion[] = [];

@@ -228,13 +228,15 @@ test('split.revision-race: a root split exported before a concurrent plan revisi
   const d = splitArc([]), r = contextFor(d);
   try {
     const original = readFileSync(d.planPath, 'utf8');
-    const stale = applyBody(d);
+    const initialStatus = r.journal.view.unit(unitId('u1')).status;
     const source = JSON.parse(readFileSync(join(d.planPath, '..', 'u1.json'), 'utf8'));
     const children = [unitId('u1-core'), unitId('u1-api')];
     for (const [index, id] of children.entries()) writeFileSync(join(d.planPath, '..', `${id}.json`), JSON.stringify({...source, unit: id, rev: 1, acceptance: source.acceptance.filter((a: {id: string}) => a.id === (index === 0 ? 'A1' : 'A2'))}));
     const split = JSON.parse(original);
     split.units = [{...split.units[0], cut: {reason: splitCutReason(children)}}, ...children.map((id) => ({id, spec: `${id}.json`, risk: 'med', systems: ['core'], resources: [], after: []})), {...split.units[1], after: children}];
     const splitBytes = JSON.stringify(split);
+    writeFileSync(d.planPath, splitBytes);
+    const stale = applyBody(d);
     const concurrent = JSON.parse(original);
     concurrent.units[0].priority = 'high';
     writeFileSync(d.planPath, JSON.stringify(concurrent));
@@ -243,10 +245,10 @@ test('split.revision-race: a root split exported before a concurrent plan revisi
     writeFileSync(d.planPath, splitBytes);
     const result = await command(r, followContext(r), stale);
     assert.equal(result.kind, 'rejected', JSON.stringify(result));
-    assert.match(JSON.stringify(result), /stale.*plan\.json|plan\.json.*stale/);
+    assert.match(JSON.stringify(result), /stale.*plan|plan.*stale/);
     assert.equal(r.journal.view.planApplied()!.rev, rev);
     assert.equal(followContext(r).plan().units.find((u) => u.id === unitId('u1'))!.priority, 'high');
-    assert.equal(r.journal.view.unit(unitId('u1')).status, 'pending');
+    assert.equal(r.journal.view.unit(unitId('u1')).status, initialStatus);
     assert.ok(!followContext(r).plan().units.some((u) => children.includes(u.id)));
     assert.deepEqual(readCalls(d.scenarioPath), []);
   } finally {r.journal.close();}

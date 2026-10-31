@@ -130,7 +130,7 @@ describe('status.subset', () => {
     const s = after_;
     assert.deepEqual(Object.keys(s).sort(), [
       'admits', 'answers', 'arc', 'audit', 'census', 'chain', 'commands', 'completion', 'convergence', 'corpus', 'debt', 'decisionsSince', 'deferred', 'demo',
-      'divergences', 'drift', 'edges', 'findings', 'flow', 'holds', 'holistic', 'host', 'knownDefects', 'milestones', 'needsUser', 'notYetTrue', 'nowTrue', 'opportunities', 'owed',
+      'divergences', 'drift', 'edges', 'findings', 'flow', 'holds', 'holistic', 'host', 'knownDefects', 'milestones', 'needsUser', 'notYetTrue', 'nowTrue', 'opportunities',
       'packReview', 'parkedBackends', 'plan', 'rejection', 'routing', 'run', 'runOnly', 'spend', 'target', 'timings', 'units', 'vision', 'waived',
     ]);
     assert.equal(s.plan?.rev, 1, 'the first start put plan.json in force as revision 1');

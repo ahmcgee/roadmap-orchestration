@@ -1,14 +1,13 @@
 // `roadmap pr --repo <path> --arc <arc>` (M4a, OR-Q19, OR-L5, OR-L7): a host act, idempotent, the forge its only record.
 //
 // It reads the arc from its verified `refs/roadmap/<arc>` alone, through the chain's one derivation (src/chain.ts, H20):
-// the plan in force (integration branch, `chain`), the latest `arc-completed` head (no plan revision after it), and the
-// `corpus-amendment` facts. Then:
+// the plan in force (integration branch, `chain`) and latest `arc-completed` head (no plan revision after it). Then:
 // 1. pushes the completed head to `origin`'s integration branch by a leased fast-forward, never `main` (src/forge/push.ts);
 // 2. derives the base: `main` for the chain's first arc, else the previous arc's branch. A previous arc whose PR merged
 //    with a merge commit (its head in the merge's history) hands its own base down, walking the chain; one merged by
 //    squash or rebase stops the walk at its branch and flags `needsRebase`;
 // 3. finds the arc's PR by head: an open one is re-targeted when its base differs; a merged one is reported as is; none
-//    is created with a code-rendered body that lists the arc's amendments and says to merge with merge commits.
+//    is created with a code-rendered body that says to merge with merge commits.
 // A closed, unmerged PR is the owner's decision and is refused, as is any forge or git failure (a CLI error).
 //
 // Supersession (owner ruling 2026-10-16): when arc N+1 started on arc N's head before N's PR merged, fixes N's PR needs

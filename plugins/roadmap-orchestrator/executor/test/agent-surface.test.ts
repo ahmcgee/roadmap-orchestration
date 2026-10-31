@@ -310,7 +310,7 @@ test('surface.fix-round: a gate revision delivers findings, experiments and live
     assert.match(prompt, /node test\/restart\.js: restarted without the write/);
     const cap = JSON.parse(/<cap_and_allowance>([^<]+)<\/cap_and_allowance>/.exec(prompt)![1]!);
     assert.equal(cap.builds, 2);
-    assert.ok(cap.judgedStages >= 5);
+    assert.equal(cap.judgedStages, 4);
     assert.equal(cap.chargeableFailures, 1);
     assert.equal(cap.chargeableBound, 3);
     assert.equal(cap.certificationAllowance, 3);

@@ -238,3 +238,33 @@ describe('needs-user items and instrumentation', () => {
     ]);
   });
 });
+
+describe('tail.released', () => {
+  const tailDraft = (over: Partial<FindingDraft> = {}): FindingDraft => ({
+    lens: 'vacuity', severity: 'P3', obligation: null, visionClauses: [], claim: 'the test asserts nothing', cause: 'list: no assertion',
+    evidence: [{ path: 'test/a.test.ts', blob: sha('b'.repeat(40)) }], mutant: null, source: { type: 'job', job: jobId('audit', 2) }, gateHadPassed: false, ...over,
+  });
+  it('tail.released-suppressed: a released key never opens again, whatever its evidence', () => {
+    const j = openJournal(absPath(tmpDir('tail-released')), ARC);
+    try {
+      assert.deepEqual(openFinding(j, tailDraft()), { kind: 'opened', id: 'F-1' });
+      ruleFinding(j, findingId('F-1'), 'released', { type: 'code', reason: 'close-out' });
+      assert.deepEqual(openFinding(j, tailDraft()), { kind: 'suppressed', by: 'F-1' });
+      assert.deepEqual(openFinding(j, tailDraft({ evidence: [{ path: 'test/a.test.ts', blob: sha('c'.repeat(40)) }] })), { kind: 'suppressed', by: 'F-1' }, 'a changed blob does not lift a release');
+      assert.deepEqual(openFinding(j, tailDraft({ cause: 'list: another gap' })), { kind: 'opened', id: 'F-2' });
+      ruleFinding(j, findingId('F-2'), 'released', { type: 'code', reason: 'close-out' });
+      assert.throws(() => ruleFinding(j, findingId('F-2'), 'released', { type: 'code', reason: 'close-out' }), /finding F-2 is ruled/, 'terminal');
+    } finally {
+      j.close();
+    }
+  });
+  it('tail.p1-never-released: close-out never releases a P1', () => {
+    const j = openJournal(absPath(tmpDir('tail-p1')), ARC);
+    try {
+      openFinding(j, tailDraft({ severity: 'P1', obligation: obligationId('I-1') }));
+      assert.throws(() => ruleFinding(j, findingId('F-1'), 'released', { type: 'code', reason: 'close-out' }), /P1s never bank \(only a disposition ruling releases one\)/);
+    } finally {
+      j.close();
+    }
+  });
+});

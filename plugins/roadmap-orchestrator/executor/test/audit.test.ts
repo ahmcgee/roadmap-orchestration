@@ -680,7 +680,7 @@ test('audit.range-chunked: a range over the budget is reviewed chunk by chunk in
     const { d } = auditArc({
       steps: [
         ...TWO_BIG,
-        lensStep('audit-1', 'invariants', [], [], ['bigone000100']), { as: 'claude', unit: 'audit-1', lens: 'invariants', expect: {}, acts: [{ type: 'exit', code: 1 }] },
+        lensStep('audit-1', 'invariants', [], [], ['bigone000100']), { as: 'claude', unit: 'audit-1', expect: {}, acts: [{ type: 'exit', code: 1 }] },
         lensStep('audit-2', 'invariants', [], [], ['bigtwo000100']),
       ],
       ...TWO_UNITS, audit: { every: 5, lenses: [...L2], wallClockMin: 1 },
@@ -719,7 +719,7 @@ test('audit.range-chunked: a range over the budget is reviewed chunk by chunk in
 test('audit.coverage-and-one-campaign-call: one fresh seat judges invariants, vacuity and cross-unit interactions and covers their shared range', T, async () => {
   const evidence = [{path: 'src/add.js', line: 2}];
   const {d} = auditArc({
-    steps: [lensStep('audit-1', 'invariants', [
+    steps: [...unitSteps('u1', moduleFiles('mul', '*')), lensStep('audit-1', 'invariants', [
       {obligation: 'I-1', severity: 'P2', cause: 'add: invalid input accepted', claim: 'Invariant violation', evidence},
       {obligation: 'I-1', severity: 'P2', cause: 'add: vacuous zero check', claim: 'Vacuous witness', evidence, mutant: {lane: 'journey', edits: [{path: 'src/add.js', old: 'a + b', new: 'a - b'}]}},
       {obligation: 'I-1', severity: 'P2', cause: 'add and mul: inconsistent operand handling', claim: 'Cross-unit interaction', evidence},
@@ -727,6 +727,9 @@ test('audit.coverage-and-one-campaign-call: one fresh seat judges invariants, va
   });
   const r = contextFor(d), {ctx} = auditContext(r);
   try {
+    const from = head(d.repo);
+    assert.deepEqual(await runUnit(ctx, r.unit('u1'), admitAll), {kind: 'merged'});
+    const to = head(d.repo);
     requestAudit(r);
     const out = await runAudit(ctx);
     assert.ok(out.kind === 'ended' && out.outcome === 'completed', JSON.stringify(out));
@@ -737,6 +740,8 @@ test('audit.coverage-and-one-campaign-call: one fresh seat judges invariants, va
     assert.deepEqual(r.journal.view.holistic().findings.map((f) => [f.claim, f.lens]), [['Invariant violation', 'invariants'], ['Vacuous witness', 'vacuity'], ['Cross-unit interaction', 'invariants']]);
     assert.deepEqual(started(r)[0]!.lenses, ['invariants']);
     assert.deepEqual(out.covered, ['invariants']);
+    assert.deepEqual(ended(r)[0]!.covered, [{lens: 'invariants', from, to}]);
+    assert.deepEqual(watermarks(ctx, ['invariants']), [['invariants', to, false]]);
     assert.deepEqual(ended(r)[0]!.findings, out.findings);
     assert.equal(r.journal.view.planApplied()!.rev, 1, 'the audit never amends the plan');
     assert.deepEqual(await runAudit(ctx), {kind: 'none'});
