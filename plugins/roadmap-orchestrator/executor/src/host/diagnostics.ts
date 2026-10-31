@@ -17,7 +17,7 @@ export function oomForPid(text: string, pid: number): readonly string[] {
 }
 export function killEvidence(pid: number, oomBefore: number | null, watchdog: boolean, sinceMs = Date.now()) {
   let kernel: Reading;
-  try { kernel = { kind: 'readable', text: execFileSync('dmesg', ['--ctime', '--level=err,warn', '--since', new Date(sinceMs).toISOString()], { encoding: 'utf8', timeout: 1000, maxBuffer: 2 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] }) }; }
+  try { kernel = { kind: 'readable', text: execFileSync('dmesg', ['--ctime', '--level=err,warn', '--since', `@${Math.floor(sinceMs / 1000)}`], { encoding: 'utf8', timeout: 1000, maxBuffer: 2 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] }) }; }
   catch (e) { kernel = { kind: 'unavailable', reason: (e as Error).message }; }
   const matching = kernel.kind === 'readable' ? oomForPid(kernel.text, pid).slice(-20) : [];
   const after = readOomKills();

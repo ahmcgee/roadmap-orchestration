@@ -17,6 +17,7 @@ test('SIGKILL diagnostics attribute OOM only to matching kernel evidence and rec
   assert.deepEqual(oomForPid('some unrelated pid=123', 123), []);
   const evidence = killEvidence(2147483647, null, false);
   assert.equal(evidence.cause, 'external-unknown');
+  if (evidence.dmesg.kind === 'unavailable') assert.doesNotMatch(evidence.dmesg.reason, /invalid time value/);
   for (const r of Object.values(evidence.pressure)) assert.ok(r.kind === 'readable' || r.kind === 'unavailable');
   assert.equal(killEvidence(2147483647, null, true).cause, 'supervisor-watchdog');
 });
