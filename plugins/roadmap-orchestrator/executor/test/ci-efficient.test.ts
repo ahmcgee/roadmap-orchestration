@@ -91,6 +91,9 @@ test('ci attempts: all uncharged attempts count; plan-check excluded; M4 at 8/20
   assert.deepEqual(await runUnit(stages.ctx, stages.unit, admitAll), replayed, 'live and restarted caps return the same blocking owner item');
   assert.equal(replayed?.needsUser?.blocking, true);
   assert.equal(replayed?.needsUser?.reason, 'attempt-cap');
+  stages.journal.fact({ kind: 'steered', unit: U1, command: commandId('cmd-aaaaaaaaaaaaaaaa'), brief: sha256('0'.repeat(64)), budgetMin: 1, resume: true });
+  assert.equal(stages.journal.view.unit(U1).status, 'active');
+  assert.deepEqual(await runUnit(stages.ctx, stages.unit, admitAll), replayed, 'a root-reactivated unit over its cap still returns a park, never null');
 });
 
 for (const baseGreen of [true, false]) test(`ci repeated red compares diffBase (${baseGreen ? 'green charges regression' : 'red follows base-red'})`, T, async () => {

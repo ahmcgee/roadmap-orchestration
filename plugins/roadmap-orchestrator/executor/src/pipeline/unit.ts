@@ -683,6 +683,12 @@ async function stepOnce(ctx: StageContext, unit: PlanUnit): Promise<Step> {
   }
 }
 
+/** The one owner item for a total-attempt cap, including a root-reactivated unit still over its cap. */
+function attemptCapResult(ctx: StageContext, unit: PlanUnit): Extract<UnitResult, Readonly<{ kind: 'parked' }>> {
+  const count = ctx.journal.view.attemptCounts(unit.id);
+  return { kind: 'parked', needsUser: { reason: 'attempt-cap', summary: `${unit.id}: ${count.builds} builds / ${count.judged} judged stages reached the total attempt cap; root intervention required`, blocking: true, options: [], subject: { type: 'unit', unit: unit.id }, recommendation: 'Revise, split, steer or cut the unit from the root.', evidence: [] } };
+}
+
 /**
  * The result of a unit its latest decision parked or stopped, with its needs-user content, read without
  * running anything; null for any other unit. The scheduler raises a restarted arc's due items from it.
@@ -690,10 +696,7 @@ async function stepOnce(ctx: StageContext, unit: PlanUnit): Promise<Step> {
 export function haltResult(ctx: StageContext, unit: PlanUnit): Extract<UnitResult, Readonly<{ kind: 'parked' | 'stopped' }>> | null {
   const u = ctx.journal.view.unit(unit.id);
   const f = u.decided;
-  if (u.status === 'park-pending' && ctx.journal.view.ciFacts().some((f) => f.kind === 'attempt-capped' && f.unit === unit.id)) {
-    const count = ctx.journal.view.attemptCounts(unit.id);
-    return { kind: 'parked', needsUser: { reason: 'attempt-cap', summary: `${unit.id}: ${count.builds} builds / ${count.judged} judged stages reached the total attempt cap; root intervention required`, blocking: true, options: [], subject: { type: 'unit', unit: unit.id }, recommendation: 'Revise, split, steer or cut the unit from the root.', evidence: [] } };
-  }
+  if (u.status === 'park-pending' && ctx.journal.view.ciFacts().some((f) => f.kind === 'attempt-capped' && f.unit === unit.id)) return attemptCapResult(ctx, unit);
   // An entry a command set runs next, whatever the decision before it (M3).
   if (f === null || u.entry !== null) return null;
   const decided = decidedBy(f);
@@ -806,7 +809,7 @@ export async function runUnit(ctx: StageContext, unit: PlanUnit, gate: Gate): Pr
   for (;;) {
     const due = upcoming(ctx.journal.view.unit(unit.id), specFacts(ctx)(unit).reproduces);
     const count = attemptSignals(ctx.journal, unit.id, due?.kind === 'admission');
-    if (count.capped) return haltResult(ctx, unit)!;
+    if (count.capped) return attemptCapResult(ctx, unit);
     const u = ctx.journal.view.unit(unit.id);
     const next = upcoming(u, specFacts(ctx)(unit).reproduces);
     if (unit.spike !== undefined && next?.stage === 'candidate') {
