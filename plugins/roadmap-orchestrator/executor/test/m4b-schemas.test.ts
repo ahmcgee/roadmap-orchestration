@@ -4,11 +4,9 @@ import { describe,it } from 'node:test';
 import { schemaViolation } from '../src/backends/adapter.ts';
 import { type Envelope,type Event,type Fact,type LogRecord,parseEventLine,prevHash,serializeEvent } from '../src/core/events.ts';
 import {
-arcId,jobId,opId,opKey,sha,sha256,
+arcId,jobId,opId,sha256,
 } from '../src/core/ids.ts';
-import { canonicalJson } from '../src/core/json.ts';
 import { spawnPressureOf,startPressureOf } from '../src/core/projections.ts';
-import { commandBody } from '../src/core/records.ts';
 import { Fold } from '../src/core/state.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { isoTime } from '../src/core/values.ts';
@@ -21,10 +19,8 @@ import { ARC as LOG_ARC,H as LOG_H,PROVENANCE,appliedFields,chain } from './fixt
 import { checkpointAnswer } from './helpers/holistic.ts';
 
 const ARC = arcId('arc-3');
-const A = sha('a'.repeat(40));
 const H = sha256('d'.repeat(64));
 const AT = isoTime('2026-10-08T12:00:00.000Z');
-const CMD = 'cmd-0123456789abcdef';
 
 const envelope = (seq: number): Envelope => ({ v: 2, seq, prev: seq === 1 ? null : H, at: AT, arc: ARC });
 function roundTrip(record: LogRecord): Event {

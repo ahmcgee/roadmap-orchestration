@@ -28,16 +28,6 @@ import { systemName } from '../../src/core/ids.ts';
 //     vision-silent  after arc 1, a draft of arc 2 whose `phase0 check` reports no slice candidate: stops `vision-silent`
 //   any other wake (a unit merged while the run runs: its timing is the backends') needs nothing: "Nothing for me"
 //
-// M4b: in both scripts arc 1 (guard, confirm and the six read-outs) starts behind `run-only guard confirm quay-list`, so
-// on its `run: blocked` wake (the three merged, everything else held) the root agent works the flow loop in its turn.
-// `story` (`flowLoop`): two `flow request`s (the second the cooldown's one bypass), each run's proposal accepted (the
-// replay bait, its proof `changed`; the plant lane at six files a time, proof `preserved`, applied), then `run-only
-// --clear`, so the other five read-outs are the revision's verdict window; at arc 1's completion it reads the verdict.
-// `vision-silent` (`flowNoAction`): it waits for the third merge's constraint-shift run to end with no proposal, then
-// lifts the limit. Arc 2's plan carries arc 1's suite lanes as they
-// ended; the root agent requests one flow run right after arc 2's start and rejects its build-class proposal on the
-// item's wake. The scripted root agent waits on the journal's frozen flow facts (`untilFact`).
-//
 // Every command's failure is loud (the process exits non-zero; the driver records the session failed).
 import { spawn,spawnSync } from 'node:child_process';
 import { createHash,randomUUID } from 'node:crypto';
@@ -89,9 +79,8 @@ type State = {
   paused: Readonly<{ unit: string; lane: string }> | null;
   /** The owner's answer to P-1 as `roadmap answer` recorded it (the `answer` wake), applied by arc 2's Phase 0 and carried by arc 3's. */
   p1: Readonly<{ answer: string; at: string }> | null;
-  /** M4b, story: arc 1's flow loop ran on its blocked wake (`flowLoop`); arc 2's proposal was rejected on its item's wake. */
-  flowDone: boolean;
-  flowRejected: boolean;
+  /** Arc 1's blocked wake released the remaining read-outs. */
+  readoutsReleased: boolean;
 };
 
 /** The parts of `roadmap status` the scripted root agent reads. */
@@ -199,7 +188,7 @@ class Turn {
 
   /**
    * In-turn waiting (a Monitor) on `arc`'s journal until `pick` finds a fact; fails loud after `timeoutMs`. The scripted
-   * root agent's one read of the log itself: the flow facts are frozen (SCHEMAS.md "M4b"), status.flow is step B1's.
+   * root agent reads the journal's recorded facts while supervising the arc.
    */
   untilFact<T>(arc: string, what: string, pick: (facts: readonly Fact[]) => T | undefined, timeoutMs = 300_000): T {
     const dir = absPath(join(layout(this.dir).product, '.git', 'roadmap-runtime', arc));
@@ -418,7 +407,7 @@ function bootstrap(c: Ctx, answer: string): string {
   if (k === undefined) throw new Error(`the owner's answer names no K: ${answer}`);
   const a = bootstrapArc1(c, k);
   c.state.arcs.push(a);
-  // M4b: three units run before the flow loop decides (`flowLoop`, `flowNoAction`), five after it: a verdict needs three a side.
+  // Three units run before the blocked wake, then the root releases the remaining read-outs.
   mkdirSync(join(layout(c.dir).product, '.git', 'roadmap-runtime', a.arc), { recursive: true });
   c.t.roadmap(['run-only', 'guard', 'confirm', 'quay-list', '--repo', layout(c.dir).product, '--arc', a.arc]);
   start(c, a);
@@ -447,7 +436,7 @@ function onWake(c: Ctx, prompt: string): string {
       c.state.packFixed = true;
       return `The pack review's blocking finding on guard was right: guard's spec now says a refused booking writes nothing (rev 2), applied; the changed pack is reviewed again. ${RUNNING(current)}`;
     }
-    if (w.event === 'units' && w.run === 'blocked' && current.n === 1 && !c.state.flowDone) return releaseReadouts(c, current);
+    if (w.event === 'units' && w.run === 'blocked' && current.n === 1 && !c.state.readoutsReleased) return releaseReadouts(c, current);
     if (w.event === 'units' && w.run === 'blocked' && current.n === 2 && !c.state.blockedSeen) {
       // cutoff merged and notice waits behind the run-only limit, as intended. The fixture's audit of cutoff waits for
       // this wake (scenario.ts BLOCKED_SEEN_BARRIER), so its checkpoints run while this turn supervises (`superviseArc2`).
@@ -467,7 +456,7 @@ function onWake(c: Ctx, prompt: string): string {
 function releaseReadouts(c: Ctx, a: ArcState): string {
   assertHeldAfterQuay(c, a);
   c.t.roadmap(['run-only', '--clear', '--repo', layout(c.dir).product, '--arc', a.arc]);
-  c.state.flowDone = true;
+  c.state.readoutsReleased = true;
   return `guard, confirm and quay-list merged. I lifted the run-only limit. ${RUNNING(a)}`;
 }
 
@@ -540,7 +529,6 @@ function arc2(c: Ctx, reply: string): string {
   mkdirSync(join(l.product, '.git', 'roadmap-runtime', a.arc), { recursive: true });
   c.t.roadmap(['run-only', 'cutoff', '--repo', l.product, '--arc', a.arc]);
   start(c, a);
-  // M4b: one flow run now, so its cooldown covers the arc (no constraint-shift run is left to the merges' timing).
   const after = (JSON.parse(c.t.roadmap(['chain', 'status', '--repo', l.product])) as { answers: readonly unknown[] }).answers;
   if (after.length !== 0) throw new Error(`story: arc 2 applies P-1, so chain status should list no answer: ${JSON.stringify(after)}`);
   c.state.phase = 'running';
@@ -639,7 +627,7 @@ if (import.meta.main) {
   let state: State;
   if (resume === undefined) {
     if (existsSync(statePath)) throw new Error(`${statePath} exists: a fresh session in a used fixture`);
-    state = { session: randomUUID(), script: fakeScript(script), phase: 'new', arcs: [], packFixed: false, blockedSeen: false, paused: null, p1: null, flowDone: false, flowRejected: false };
+    state = { session: randomUUID(), script: fakeScript(script), phase: 'new', arcs: [], packFixed: false, blockedSeen: false, paused: null, p1: null, readoutsReleased: false };
   } else {
     state = JSON.parse(readFileSync(statePath, 'utf8')) as State;
     if (state.session !== resume) throw new Error(`resume ${resume}, but the session is ${state.session}`);

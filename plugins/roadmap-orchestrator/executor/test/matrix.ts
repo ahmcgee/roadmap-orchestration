@@ -131,8 +131,6 @@ export const FF_ELIGIBILITY = 'ff eligibility (M3 B2/B3: a unit ff redone only w
 export const JOB_RESIDUE = 'job-owned residue (M3 G4, H4: a job lane\'s failed cleanup, reclaimed under the job)';
 export const DEBT_BANK = 'debt bank (M4a DEBT_BANK: a corpus arc\'s approval, then its gate notes banked as debt-banked facts)';
 export const PACK_REVIEW_JOB = 'pack review job (M4a PACK_REVIEW_JOB: PackReviewInputs kept, pack-review-started, the call, pack-review-ended, the blocking item)';
-export const FLOW_JOB = 'flow job (M4b: FlowInputs kept, flow-started, the call, flow-ended, the flow-proposal item)';
-export const FLOW_SERIES = 'flow series at completion (M4b: the compact series kept, flow-series, then arc-completed)';
 export const CORPUS_AMENDMENT = 'corpus amendments (M4a CORPUS_AMENDMENT: after the decision, corpus-amendment facts keyed by source)';
 export const BRIEF_ACK = 'brief ack (M4a CLI brief --ack: the pending marker, the ack commands under deterministic ids, the committed marker)';
 export const ANSWER_RECORD = 'owner answer (M4a CLI roadmap answer: the answer published write-once by link, latest k in force)';
@@ -184,7 +182,6 @@ const PIPELINE_LABELS: Readonly<Record<Boundary, readonly string[]>> = {
 };
 /**
  * A supervised run to its end adds its completion (M3 B7: every arc writes `arc-completed`, then its terminal snapshot),
- * and before it the flow series (M4b: `flow-series`, then `arc-completed`).
  */
 /**
  * The straight run completes; dev.17: its candidate reuses the suite lane the lanes stage passed on the same tree (the one
@@ -231,7 +228,7 @@ const HOLISTIC_RECOVERY: Readonly<Record<Boundary, string>> = {
   B1: 'the M3 fact (a witness, the latch, an audit\'s start or end, a checkpoint\'s inputs, the bundle\'s plan-applied or divergence, the digest, a no-op decision, docs-covered, docs-published, arc-completed) or the rev 3 one (smoke-ran, a corpus amendment) is absent after the restart, a torn line discarded once: the job or the unit\'s stage resumes and writes it once (a capture from the same inputs, a smoke run again within its allowance), the arc ends as uncrashed',
   B2: 'the job\'s open op (its slot or lane reservation, checkout, lane, lens, checkpoint or pack-review call, evidence, docs commit, docs ff, snapshot, the bundle\'s revision, the digest item) is closed as its reconciler says (a spawn lost, the rest redone or reconciled), or a capture fact (pack-review-started included) is durable with nothing run: the job resumes as the same job from its recorded inputs, every backend call made once; an unpublished close-out is abandoned and runs again as the next docs publication; the build\'s witness lane files published with no call made: the restarted build publishes the same bytes and calls once; the smoke\'s patch kept or its mutant.apply open: redone, the lanes attempt run again (one more smoke execution, within the allowance); the arc ends as uncrashed',
   B3: 'inside the job\'s op: its reconciler finishes or redoes it (a live lane adopted, the same SHAs), a lens read resumes at the next lens, a close-out ff published is finished (docs-covered, docs-published, the snapshot, the slot released); a mutant checkout made, its patch not applied: removed and redone; the arc ends as uncrashed',
-  B4: 'the op\'s postcondition holds (reconciled); a read call (the pack review\'s included) or a decided bundle is consumed from the record (never asked again), its aftermath written only where missing (a flow-series written, arc-completed not: no second series, the arc completes; the review ended once; its amendments, a converted admit\'s included, once each; a gate note banked once after its approval); a frontier dispatch pinned, its in-session outcome unwritten: the next attempt finds the pin; a smoke\'s mutant lanes witnessed, its run unrecorded: run again within the allowance; one plan-applied, one divergence per (job, index), one digest; the arc ends as uncrashed',
+  B4: 'the op\'s postcondition holds (reconciled); a read call (the pack review\'s included) or a decided bundle is consumed from the record (never asked again), its aftermath written only where missing (the review ended once; its amendments, a converted admit\'s included, once each; a gate note banked once after its approval); a frontier dispatch pinned, its in-session outcome unwritten: the next attempt finds the pin; a smoke\'s mutant lanes witnessed, its run unrecorded: run again within the allowance; one plan-applied, one divergence per (job, index), one digest; the arc ends as uncrashed',
   B5: 'nothing is open: the job, the close-out or the completion runs on from its facts (no second latch, audit-ended, docs-published or arc-completed; the terminal snapshot published by the restart); a witness check\'s certified observation reused, never run twice; a smoke-ran read back by its key (no second execution), or a mutant applied with its lanes not run: run again within the allowance; the arc ends as uncrashed',
 };
 
@@ -245,7 +242,7 @@ const PIPELINE_RECOVERY: Readonly<Record<Boundary, string>> = {
   B1: 'the torn or unwritten record is absent after the restart (a torn line is discarded with one tail-discarded fact); a lost done leaves its op open for its reconciler, a lost intent never began; the arc ends as uncrashed',
   B2: 'the supervisor restarts the executor; the open op is redone (a spawn with no runner is closed lost and its stage runs again, the call made once; the start\'s revision.commit is finished from its kept payload, reconciled); the arc ends as uncrashed: same stage outcomes, tree, one publication per unit, one usage fact per invocation',
   B3: 'the reconciler finishes or redoes the op from its postcondition (a live runner adopted, an exited one re-adapted); the same SHAs; no backend call twice; a start cut short between keeping the plan\'s bytes and its plan-applied fact records revision 1 on the respawn; the arc ends as uncrashed',
-  B4: 'the postcondition holds: the op closes reconciled (a spawn with exit.json re-adapted, redone), its result consumed, never dispatched again; the start\'s revision.commit with its plan-applied written closes reconciled, no second fact; a flow-series written, arc-completed not: the restart keeps no second series and completes (one flow-series per completion); the arc ends as uncrashed',
+  B4: 'the postcondition holds: the op closes reconciled (a spawn with exit.json re-adapted, redone), its result consumed, never dispatched again; the start\'s revision.commit with its plan-applied written closes reconciled, no second fact; the arc ends as uncrashed',
   B5: 'nothing is open for recovery: a stage cut short after its last op runs again as a new attempt (a completed backend call is consumed, not re-run); the arc ends as uncrashed',
 };
 
