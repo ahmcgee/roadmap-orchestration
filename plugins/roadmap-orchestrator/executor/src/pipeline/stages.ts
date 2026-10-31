@@ -1849,7 +1849,7 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
     const hit = knownDefectHit(ctx, unit, spec, series.ledger);
     if (hit !== null) verdict = { kind: 'known-defect', detail: { kind: 'known-defect', id: hit.id, match: hit.match } };
   }
-  if (verdict.kind === 'red' && end.kind === 'red' && end.lane.repeat !== null && ctx.journal.view.completedLanesOutcome(unit.id)?.outcome !== 'known-defect') {
+  if (verdict.kind === 'red' && end.kind === 'red' && (end.lane.repeat !== null || red.spec.has(end.lane.lane)) && !end.lane.flaky && ctx.journal.view.completedLanesOutcome(unit.id)?.outcome !== 'known-defect') {
     const base = diffBase(ctx.repo, integrationTip(ctx), salvaged);
     const failing = order.filter((l) => l.id === end.lane.lane);
     const check = await baseCheck(ctx, parent, base, failing, rt, 'spec');

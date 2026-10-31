@@ -164,7 +164,7 @@ for (const where of ['spec', 'suite'] as const) test(`ci capture (${where}) boot
   let output: string;
   if (where === 'suite') {
     assert.deepEqual(await runUnit(run.ctx, run.unit, admitAll), { kind: 'merged' });
-    const call = readCalls(run.scenario.path).find((c) => c.stdin.includes('# Lane ledger') && c.stdin.includes('- capture: pass'));
+    const call = readCalls(run.scenario.path).find((c) => c.stdin.includes('<lane_ledger>') && c.stdin.includes('- capture: pass'));
     assert.ok(call, 'the gate receives capture evidence from the suite');
     const snapshot = run.journal.view.opsOf('evidence.snapshot').find((i) => i.expect.globs.includes(repoPattern('captures/**')));
     assert.ok(snapshot); output = join(snapshot.expect.dest, 'files');
