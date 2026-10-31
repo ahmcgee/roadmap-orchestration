@@ -209,6 +209,7 @@ test('fixture red candidate → fix → fresh gate → green: the suite is red o
     gateStep({ decision: 'approve' }),
     codexStep([
       { type: 'readFromPrompt', pattern: suiteOutput, file: 'stdout', contains: 'ADD-MARKER' },
+      { type: 'readFromPrompt', pattern: `(${literal(d.runDir)}\\/evidence\\/u1\\/[0-9]+-candidate\\/base)`, file: 'suite/output/files/stdout', contains: 'fail 0' },
       { type: 'commit', message: 'fix add', files: { 'src/add.js': ADD_FIXED } },
     ], { argv: ['exec', 'resume'] }),
     gateStep({ decision: 'approve' }),

@@ -34,7 +34,8 @@ test('certification: three reds free, fourth charged, allowance resets, twelfth 
     const builds = readCalls(d.scenarioPath).filter(c=>c.as==='codex'||(c.argv[c.argv.indexOf('--json-schema')+1]??'').includes('"grounding"'));
     assert.equal(builds.length, 12);
     const diagnosis = readCalls(d.scenarioPath).find((c) => c.stdin.includes('<mode>diagnosis</mode>'));
-    assert.ok(diagnosis?.stdin.includes(`${d.runDir}/evidence/u1/`), 'diagnosis receives the failing evidence locations');
+    assert.ok(diagnosis !== undefined, 'M4 runs a diagnosis');
+    assert.ok(diagnosis.stdin.includes(`${d.runDir}/evidence/u1/`), 'diagnosis receives the failing evidence locations');
     assert.ok(diagnosis.stdin.includes('u1/lanes#'), 'diagnosis identifies the failed attempts');
     for (let i = 1; i < builds.length; i++) {
       if(i<8)assert.deepEqual(builds[i]!.argv.slice(0,2),['exec','resume']);

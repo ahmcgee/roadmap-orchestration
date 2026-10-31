@@ -254,7 +254,12 @@ function candidateRed(ctx: StageContext, unit: PlanUnit, at: StageParent): Reado
   const failing = suite.filter((l) => l.verdict !== 'pass');
   // M3: a green suite with red held claims (the brake): the obligations and journey lanes left red.
   if (failing.length === 0 && seriesDirty(view, candidateSeriesRoot(ctx.runDir, at)).length === 0) return { fix: candidateBrakeFix(ctx, unit, at), suite };
-  return { fix: { failingEvidenceDirs: (failing.length > 0 ? failing : suite).flatMap(failingEvidenceDirs), directives: failingLaneDirectives(failing) }, suite };
+  const baseEvidence = absPath(join(evidenceRoot(ctx.runDir, at), 'base'));
+  const comparison = existsSync(baseEvidence) ? [baseEvidence] : [];
+  return {fix: {
+    failingEvidenceDirs: [...(failing.length > 0 ? failing : suite).flatMap(failingEvidenceDirs), ...comparison],
+    directives: [...failingLaneDirectives(failing), ...(comparison.length === 0 ? [] : [`The suite failed on the unit candidate and passed on the integration base. Compare its failing evidence with the passing base evidence in ${baseEvidence}.`])],
+  }, suite};
 }
 
 /**
