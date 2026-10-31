@@ -190,7 +190,7 @@ describe('snapshot.publish', () => {
 const PLAN = {
   schema: 'roadmap/plan-m1', arc: ARC, integrationBranch: 'main', baseline: 'a'.repeat(40), worktreeRoot: '/var/tmp/roadmap-wt', contracts: [],
   rulings: 'rulings.md', architectureDoc: 'docs/architecture.md', direction: 'Converge on the documented target state.',
-  suite: { lanes: [{ id: 'suite', argv: ['npm', 'test'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [] }] },
+  suite: { lanes: [{ id: 'suite', argv: ['npm', 'test'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [] }] },
   resources: [], units: [{ id: UNIT, spec: 'unit-a.spec.json', risk: 'med', scope: ['src/**'], resources: [] }],
 };
 
@@ -208,11 +208,11 @@ async function holisticRun(witnessFor: 'job' | 'candidate' = 'job'): Promise<Hol
   const ledgerSha = keepInput(r.runDir, Buffer.from('C-1 — a rule\n'), RULINGS_INPUT);
   const provenance = routingProvenanceOf({ profile: 'default' as never, config: null, arcRoles: 'm4b' }, parsePlan(PLAN));
   const payloadSha = keepPayload(r.runDir, parseRevisionPayload({
-    v: 1, source: { type: 'start' }, base: 0, rev: 1,
+    v: 2, source: { type: 'start' }, base: 0, rev: 1,
     manifest: { planSha256: planSha, specs: { [UNIT]: specSha }, rulings: { ledgerSha256: ledgerSha, sidecars: {} }, obligations: null, vision: null },
     changes: [], dispositions: [], divergences: [], publication: null, routingProvenance: provenance,
   }));
-  writeFileSync(join(r.runDir, 'start.json'), `${JSON.stringify({ v: 1, generation: 1, at: '2026-09-30T00:00:00.000Z', repo: r.repo, planFile: '/plan/plan.json', profile: 'default' })}\n`);
+  writeFileSync(join(r.runDir, 'start.json'), `${JSON.stringify({ v: 2, generation: 1, at: '2026-09-30T00:00:00.000Z', repo: r.repo, planFile: '/plan/plan.json', profile: 'default' })}\n`);
   const journal = openArc(r.runDir);
   journal.fact({
     kind: 'plan-applied', rev: planRev(1), command: null, planSha256: planSha, specs: { [UNIT]: specSha }, changes: [], scheduling: 'dag',

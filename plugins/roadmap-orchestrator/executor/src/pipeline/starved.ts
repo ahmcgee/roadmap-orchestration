@@ -9,7 +9,7 @@ import type { HoldCause } from '../core/events.ts';
 import { type InvocationId, parseInvocationId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import type { UnitState } from '../core/state.ts';
-import { spawnPressureOf } from '../core/upgrade.ts';
+import { spawnPressureOf } from '../core/projections.ts';
 import { type PressureHolds, type PressureRun, type PressureRuling, pressureRuling } from '../host/pressure.ts';
 import { isRed } from '../core/records.ts';
 import type { AbsPath } from '../core/values.ts';

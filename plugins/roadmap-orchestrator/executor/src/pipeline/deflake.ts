@@ -46,7 +46,7 @@ import { type FlakyEvent, type FlakyKey, type FlakyLedgerEntry, flakyKeyOf } fro
 import { type InvocationId, type LaneId, type SystemName, type UnitId, parseInvocationId } from '../core/ids.ts';
 import type { FlakeAt, Journal, JournalView } from '../core/interfaces.ts';
 import { cadenceAtOrBefore, type LaneDef, type SpecM1, specForces } from '../core/records.ts';
-import { flakeOnDefault, flakyLedgerDefault } from '../core/upgrade.ts';
+
 import type { AbsPath, RepoPattern } from '../core/values.ts';
 import { lineageMembers } from '../input/envelope.ts';
 import { BATCH_VERIFICATION_RUNS, DEFAULT_VERIFICATION_LANE_MINUTES, type PlanM1, type PlanUnit } from '../input/plan.ts';
@@ -135,7 +135,7 @@ export type LedgerEntry = FlakyLedgerEntry & Readonly<{ at: readonly FlakeAt[]; 
 
 /** The tree flake `fact` was seen on: its `on`, or (written before dev.21) as its red run's stage says (`flakeOnDefault`). */
 export function flakeOnOf(view: JournalView, fact: FlakyFact): FlakeOn {
-  return fact.on ?? flakeOnDefault(fact, view.latestIntent(parseInvocationId(fact.event.red).op).parent);
+  return fact.on!;
 }
 
 /**
@@ -144,7 +144,7 @@ export function flakeOnOf(view: JournalView, fact: FlakyFact): FlakeOn {
  * once).
  */
 export function flakyLedger(view: JournalView, plan: PlanM1): readonly LedgerEntry[] {
-  if (view.planApplied()?.systemsMap === undefined) flakyLedgerDefault();
+
   const entries = new Map<string, { key: FlakyKey; at: FlakeAt[]; set: FlakyLaneSet }>();
   for (const x of view.flakes()) {
     if (flakeOnOf(view, x.fact) !== 'tip') continue;

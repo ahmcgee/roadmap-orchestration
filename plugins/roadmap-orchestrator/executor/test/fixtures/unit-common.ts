@@ -1,3 +1,4 @@
+import { requirePlanInForce, revisionInForce } from '../../src/input/inforce.ts';
 // Shared by the gate, integrate and unit driver tests (and the unit-child fixture): an arc over a real git
 // repo made from test/fixtures/unit-repo, whose integration tip is green by default (`add` fixed at T) so
 // the plan's suite (`node --test`, every test file) passes there. Each unit's job is to add `mul` with its
@@ -80,7 +81,7 @@ export function laneJson(l: LaneJson): Record<string, unknown> {
   return {
     id: l.id, argv: l.argv, cwd: l.cwd ?? '.', env: { set: l.env?.set ?? {}, pass: l.env?.pass ?? ['PATH'] }, expectedExit: l.expectedExit ?? 0,
     ...(l.timeoutMin === undefined ? {} : { timeoutMin: l.timeoutMin }),
-    ...(l.cadence === undefined ? { tier: l.tier ?? 'fast' } : { cadence: l.cadence }), resources: l.resources ?? [], evidenceGlobs: l.evidenceGlobs ?? [],
+    ...(l.cadence === undefined ? { cadence: l.tier === 'estate' ? 'unit' : 'build' } : { cadence: l.cadence }), resources: l.resources ?? [], evidenceGlobs: l.evidenceGlobs ?? [],
     ...(l.inputs === undefined ? {} : { inputs: l.inputs }), ...(l.systems === undefined ? {} : { systems: l.systems }),
     ...(l.readsComments === undefined ? {} : { readsComments: l.readsComments }),
   };
@@ -173,11 +174,13 @@ export function commandContextFor(r: ArcRun, stage: StageContext = r.ctx): Comma
 export function applyBody(d: ArcDescriptor, base: RevisionManifest | null = null): Extract<CommandBody, { type: 'apply' }> {
   const manifest = revisionManifestOf(readInputFiles(absPath(d.planPath), absPath(d.repo)));
   if ('missing' in manifest) throw new Error(manifest.missing.join('; '));
-  return { type: 'apply', base, manifest, visionEdit: false };
+  const view = readJournal(absPath(d.runDir), arcId(d.arc)).view;
+  const force = requirePlanInForce(absPath(d.runDir), view);
+  return { type: 'apply', planFile: absPath(d.planPath), rev: force.rev, reason: 'Test revision reason', base: base ?? revisionInForce(absPath(d.runDir), force).manifest, manifest };
 }
 
 /** An `apply` that declares a vision edit (`roadmap apply --vision-edit`): a changed vision file is otherwise `vision-leak`. */
-export const visionApplyBody = (d: ArcDescriptor): CommandBody => ({ ...applyBody(d), visionEdit: true });
+export const visionApplyBody = (d: ArcDescriptor): CommandBody => applyBody(d);
 
 export const U1: UnitId = unitId('u1');
 export const unitWorktreePath = (r: ArcRun, unit: UnitId = U1): AbsPath => absPath(join(r.ctx.plan().worktreeRoot, r.ctx.plan().arc, unit));
@@ -224,9 +227,9 @@ const dev17Finding = (f: JsonValue): JsonValue => {
   return { defect: o['severity'] === 'blocking' ? 'incorrect-behaviour' : null, reraises: null, hunk: null, ...o };
 };
 
-const gateAnswer = (a: GateAnswer): JsonValue => ({
+const gateAnswer = (a: GateAnswer): JsonValue => ({rulings: [], 
   decision: a.decision, ordering: a.ordering ?? null, findings: (a.findings ?? []).map(dev17Finding), directives: [...(a.directives ?? [])], reasons: ['A1 holds'], premises: [...(a.premises ?? [])],
-  unreviewed: [...(a.unreviewed ?? [])], clusters: a.clusters ?? null, rulings: [...(a.rulings ?? [])],
+  unreviewed: [...(a.unreviewed ?? [])], clusters: a.clusters ?? null, 
 }) as JsonValue;
 
 /**

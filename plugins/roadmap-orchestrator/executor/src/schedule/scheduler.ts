@@ -131,7 +131,7 @@
 // head are those it recorded (A20); an admitting apply or a reopen invalidates it, and the arc runs again.
 import { orderingOf, wakeOrdering } from '../park/ordering.ts';
 import { cpuBasis } from '../core/cpu.ts';
-import { schedulerPressureBlockedDefault, schedulerQueuedAtDefault } from '../core/upgrade.ts';
+
 import type { CommandContext } from '../commands/apply.ts';
 import { applyCommand, applyControl } from '../commands/apply.ts';
 import { isControl, pollCommands, POLL_MS, readReceipt, writeReceipt } from '../commands/queue.ts';
@@ -162,7 +162,6 @@ import { isActive, raiseFindingItems } from '../holistic/findings.ts';
 import { raiseWalkItems, runWalk, settleWalks, walkPending } from '../walk/walk.ts';
 import { applyPolish, polishDue } from '../walk/polish.ts';
 import { applyDeflake, deflakeJobPending, raiseDeflakeParked } from '../pipeline/deflakemint.ts';
-import { applyPropagation, propagationDue } from '../holistic/propagation.ts';
 import { compareDue, cutDue, runningCompare, runCompare } from '../walk/compare.ts';
 import { walksPending } from '../walk/milestones.ts';
 import { packReviewHolds, packReviewPending, runPackReview, settlePackReviews } from '../holistic/packreview.ts';
@@ -252,12 +251,12 @@ export const schedFile: Read<SchedFile> = object((f) => ({
   tasks: f.get('tasks', arrayOf(object((g) => ({ unit: g.get('unit', (v, p) => unitId(v, p)), state: g.get('state', oneOf(TASK_STATES)) })))),
   queue: f.get('queue', arrayOf(object((g): QueueEntry => ({
     unit: g.get('unit', (v, p) => unitId(v, p)), stage: g.get('stage', oneOf(STAGES)), attempt: g.get('attempt', positive),
-    publication: g.get('publication', bool), request: g.get('request', request), envBlocked: g.get('envBlocked', bool), pressureBlocked: g.optional('pressureBlocked', bool) ?? schedulerPressureBlockedDefault(),
-    ...((queuedAt) => queuedAt === undefined ? {} : { queuedAt })(g.optional('queuedAt', nat) ?? schedulerQueuedAtDefault()),
+    publication: g.get('publication', bool), request: g.get('request', request), envBlocked: g.get('envBlocked', bool), pressureBlocked: g.get('pressureBlocked', bool),
+    ...((queuedAt) => queuedAt === undefined ? {} : { queuedAt })(g.get('queuedAt', nat)),
   })))),
   jobQueue: f.get('jobQueue', arrayOf(object((g): JobQueueEntry => ({
-    holder: g.get('holder', firstHolder), request: g.get('request', request), envBlocked: g.get('envBlocked', bool), pressureBlocked: g.optional('pressureBlocked', bool) ?? schedulerPressureBlockedDefault(),
-    ...((queuedAt) => queuedAt === undefined ? {} : { queuedAt })(g.optional('queuedAt', nat) ?? schedulerQueuedAtDefault()),
+    holder: g.get('holder', firstHolder), request: g.get('request', request), envBlocked: g.get('envBlocked', bool), pressureBlocked: g.get('pressureBlocked', bool),
+    ...((queuedAt) => queuedAt === undefined ? {} : { queuedAt })(g.get('queuedAt', nat)),
   })))),
   drains: f.get('drains', arrayOf(object((g) => ({ command: g.get('command', (v, p) => commandId(v, p)), scope: g.get('scope', scope) })))),
 }));
@@ -1045,7 +1044,8 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       killLive('stop', stopKills);
       return;
     }
-    const paused = (unit: UnitId): boolean => c.pausedAll || c.pausedUnits.includes(unit);
+    const steering = new Set(pollCommands(runDir, view().arc).flatMap((c) => c.body.type === 'steer' ? [c.body.unit] : []));
+    const paused = (unit: UnitId): boolean => c.pausedAll || c.pausedUnits.includes(unit) || steering.has(unit);
     for (const task of tasks.values()) if (paused(task.unit) && !task.abort.signal.aborted) task.abort.abort('pause');
     killLive('pause', (intent) => (intent.parent.type === 'stage' && PAUSE_KILLS.includes(intent.expect.subject.purpose) && paused(intent.parent.unit))
       || (c.pausedAll && intent.expect.subject.purpose === 'proof'));
@@ -1179,8 +1179,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
           const out = await runWalk(h.audit);
           return out.kind === 'ended' && out.outcome !== 'abandoned' ? PROGRESS : WAIT;
         });
-      } else if (propagationDue(view(), plan()) !== null) {
-        trackRetrying('holistic:propagation', 'holistic', async () => ((await applyPropagation(h.checkpoint)).kind === 'applied' ? PROGRESS : WAIT));
+
       } else if (polishDue(view(), plan()) !== null) {
         trackRetrying('holistic:polish', 'holistic', async () => ((await applyPolish(h.checkpoint)).kind === 'applied' ? PROGRESS : WAIT));
       } else if (runningCompare(view()) !== null || cutDue(view(), plan()) !== null || compareDue(view(), plan()) !== null) {

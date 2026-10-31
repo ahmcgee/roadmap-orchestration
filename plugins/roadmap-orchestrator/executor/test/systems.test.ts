@@ -147,18 +147,14 @@ describe('reusekey.input-sha', () => {
 
 describe('lanes.cadence', () => {
   const LANE = { id: 'l', argv: ['true'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, resources: [], evidenceGlobs: [], evidenceExcludes: [] };
-  it('a dev.16 tier reads as its kind\'s cadence; tier beside cadence is refused; each kind takes its cadences', () => {
-    const cadence = (kind: 'spec' | 'suite' | 'arc', tier: string) => laneDefOf(kind)({ ...LANE, tier }, 'l').cadence;
-    assert.deepEqual([cadence('spec', 'fast'), cadence('spec', 'estate')], ['build', 'unit']);
-    assert.deepEqual([cadence('suite', 'fast'), cadence('suite', 'estate')], ['build', 'candidate']);
-    assert.deepEqual([cadence('arc', 'fast'), cadence('arc', 'estate')], ['build', 'candidate']);
-    assert.throws(() => laneDefOf('spec')({ ...LANE, tier: 'fast', cadence: 'build' }, 'l'), /tier/);
-    assert.throws(() => laneDefOf('spec')({ ...LANE, cadence: 'candidate' }, 'l'), /cadence/);
-    assert.throws(() => laneDefOf('arc')({ ...LANE, cadence: 'batch' }, 'l'), /cadence/);
-    assert.equal(laneDefOf('suite')({ ...LANE, cadence: 'batch' }, 'l').cadence, 'batch');
-    assert.throws(() => laneDef({ ...LANE, tier: 'fast' }, 'l'), SchemaError, 'the normalised form takes cadence only');
-    assert.throws(() => laneDefOf('spec')(LANE, 'l'), /cadence/, 'neither: required');
-    assert.ok(cadenceAtOrBefore('build', 'candidate') && cadenceAtOrBefore('candidate', 'candidate') && !cadenceAtOrBefore('batch', 'candidate'));
+  it('cadence is required, tier is refused, and each kind takes its cadences', () => {
+    assert.throws(() => laneDefOf('spec')({...LANE, tier: 'fast'}, 'l'), /cadence/);
+    assert.throws(() => laneDefOf('spec')({...LANE, cadence: 'candidate'}, 'l'), /cadence/);
+    assert.throws(() => laneDefOf('arc')({...LANE, cadence: 'batch'}, 'l'), /cadence/);
+    assert.equal(laneDefOf('suite')({...LANE, cadence: 'batch'}, 'l').cadence, 'batch');
+    assert.equal(laneDef({...LANE, cadence: 'build'}, 'l').cadence, 'build');
+    assert.throws(() => laneDefOf('spec')(LANE, 'l'), /cadence/);
+    assert.ok(cadenceAtOrBefore('build', 'candidate') && !cadenceAtOrBefore('batch', 'candidate'));
   });
 
   it('systems, testArgv and stochastic: validated; never testArgv or stochastic on an arc lane', () => {
@@ -189,15 +185,9 @@ describe('lanes.cadence', () => {
     assert.equal(specM1(spec, 's').forces, undefined);
   });
 
-  it('upgrade: a dev.16 lane rev (tier in place of cadence) matches the lane it read as; another does not', () => {
-    const legacy = { ...LANE, tier: 'fast', reporter: 'jsonl' };
-    const parsed = parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [legacy], obligations: [], mapping: { paths: [] } }).lanes[0]!;
-    const { cadence: _c, ...rest } = parsed;
-    const dev16 = sha256Hex(canonicalJson({ ...rest, tier: 'fast' })).slice(0, 16) as never;
-    assert.notEqual(dev16, laneRevOf(parsed));
-    assert.equal(laneRevMatches(dev16, parsed), true);
-    const estate = sha256Hex(canonicalJson({ ...rest, tier: 'estate' })).slice(0, 16) as never;
-    assert.equal(laneRevMatches(estate, parsed), false, 'a build lane was fast');
-    assert.equal(laneRevMatches(dev16, { ...parsed, systems: ['api'] as SystemName[] }), false, 'a dev.17 field: no dev.16 form');
+  it('lane revisions compare exactly', () => {
+    const lane = laneDefOf('spec')({...LANE, cadence: 'build'}, 'l');
+    assert.equal(laneRevMatches(laneRevOf(lane), lane), true);
+    assert.equal(laneRevMatches('0000000000000000' as never, lane), false);
   });
 });

@@ -31,7 +31,7 @@ const suiteCopy = (envSet: Readonly<Record<string, string>>) => (x: ArcDescripto
   const planDir = join(x.planPath, '..');
   const arcLane = (JSON.parse(readFileSync(join(planDir, 'obligations.json'), 'utf8')) as { lanes: Json[] }).lanes[0]!;
   const { reporter: _r, ...def } = arcLane;
-  const suiteLane = { ...def, id: 'suite-journey', tier: 'estate', env: { set: envSet, pass: ['PATH'] } };
+  const suiteLane = { ...def, id: 'suite-journey', cadence: 'unit', env: { set: envSet, pass: ['PATH'] } };
   const plan = JSON.parse(readFileSync(x.planPath, 'utf8')) as Json;
   writeFileSync(x.planPath, JSON.stringify({ ...plan, suite: { lanes: [suiteLane] } }));
 };

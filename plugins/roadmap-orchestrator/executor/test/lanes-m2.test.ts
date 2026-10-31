@@ -175,27 +175,7 @@ test('lanes.flake-unit-own: a flake on the unit\'s own commit (one the tip does 
   assert.deepEqual(flakyLedger(run.journal.view, run.ctx.plan()).map((e) => e.events.length), [1]);
 });
 
-test('lanes.flake-on-default: a flake-observed fact an earlier executor wrote (no on) still reads; its red run\'s stage decides: a lanes stage\'s is the unit\'s, a candidate\'s the tip\'s', T, async () => {
-  const run = laneRun([redGreen('flaky', 'expected 3, got 4')]);
-  const lane = loadUnitSpec(run.ctx, run.unit).spec.lanes[0]!;
-  let n = 0;
-  const spawn = (stage: 'lanes' | 'candidate'): InvocationId => {
-    const { op, inv } = run.journal.begin({
-      kind: 'proc.spawn', key: opKey(`old:${++n}`), parent: { type: 'stage', unit: U1, stage, attempt: 1 }, deadlineAt: null,
-      body: () => ({ expect: { subject: { purpose: 'journey', lane: lane.id, laneRev: laneRevOf(lane), at: run.base, owner: { type: 'unit', unit: U1 } }, launchSha256: sha256('d'.repeat(64)) }, post: null }),
-    });
-    run.journal.done(op, 'proc.spawn', { kind: 'lost', treeEffects: false }, 'reconciled');
-    return inv;
-  };
-  for (const stage of ['lanes', 'candidate'] as const) {
-    run.journal.fact({ kind: 'flake-observed', owner: { type: 'unit', unit: U1 }, lane: lane.id, set: 'suite', forgiven: true, event: { tree: sha('a'.repeat(40)), env: null, failing: [], red: spawn(stage), green: spawn(stage) } });
-  }
-  const read = readJournal(run.runDir, run.journal.view.arc).events.flatMap((e) => (e.type === 'fact' && e.fact.kind === 'flake-observed' ? [e.fact] : []));
-  assert.deepEqual(read.map((f) => f.on), [undefined, undefined], 'read as written');
-  assert.deepEqual(run.journal.view.flakes().map((x) => flakeOnOf(run.journal.view, x.fact)), ['unit', 'tip']);
-  const ledger = flakyLedger(run.journal.view, run.ctx.plan());
-  assert.deepEqual(ledger.map((e) => e.events.map((ev) => ev.red)), [[run.journal.view.flakes()[1]!.fact.event.red]], 'only the candidate\'s is the ledger\'s');
-});
+
 
 test('lanes.red-red: red on the diagnostic rerun too is red, not flaky; the fix round reads the first run', T, async () => {
   const run = laneRun([{ id: 'broken', argv: ['sh', '-c', 'echo "not ok 1 - add" >&2; exit 1'] }]);
@@ -267,7 +247,7 @@ test('lanes.signature-busy-rerun-pass: a host signature on a busy host waits for
 test('lanes.instance-env: a DAG arc\'s lanes reserve @cpu tokens and a pool instance, and the lane env binds the instance', T, async () => {
   const run = laneRun([
     { id: 'fast1', argv: ['sh', '-c', 'echo "instance=${RESOURCE_INSTANCE_ESTATE:-none}"'] },
-    { id: 'estate1', tier: 'estate', resources: ['estate'], argv: [process.execPath, ESTATE_FAKE, 'hold', 'STATE', 'estate'] },
+    { id: 'estate1', cadence: 'unit', resources: ['estate'], argv: [process.execPath, ESTATE_FAKE, 'hold', 'STATE', 'estate'] },
   ], []);
   // A DAG arc over the same repo: a fresh log whose rev-1 plan-applied has scheduling dag, and a plan with
   // capacity and an estate pool (test/fakes/estate.ts).

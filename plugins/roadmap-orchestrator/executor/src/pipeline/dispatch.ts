@@ -71,7 +71,7 @@ import { type ResourceContext, type UnitAcquiringHolder } from '../resources/res
 import { OWNER_ENV, ownerLabel } from '../resources/teardown.ts';
 import type { ResolvedRouting } from '../routing/layers.ts';
 import { routingChangedRecommendation } from '../needsuser.ts';
-import { implementerSeatKept } from '../core/upgrade.ts';
+
 import {
   type ArcRole, type ArcSeatRef, type WalkRole, type Backend, CLAUDE_EFFORTS, CLAUDE_MODELS, CODEX_EFFORTS, CODEX_MODELS, RISK_TIERS, type Triple, type JudgmentRole, type JudgmentSeat, type RiskTier, type Role, type UnitSeatRef, seatRef, unitSeatRef,
 } from '../routing/types.ts';
@@ -207,9 +207,7 @@ export function repin(journal: Journal, routing: ResolvedRouting, record: Dispat
   const onFloor = (journal.view.unit(record.unit).buildTier ?? record.riskFloor) === record.riskFloor;
   const pinnedSeat = seatTripleOf(record.implementerSeatRev);
   if (onFloor && !sameSession(pinnedSeat, seat) && buildStarted(journal.view, record.unit)) {
-    if (record.routingRev !== routing.preDev17Rev || update.riskFloor !== undefined) return null;
-    implementerSeatKept(record.unit, `${pinnedSeat.backend} ${pinnedSeat.model}`);
-    return pin(journal, routing, record, update, record.implementerSeatRev);
+    return null;
   }
   return pin(journal, routing, record, update);
 }
@@ -294,7 +292,7 @@ export function pinDispatch(ctx: StageContext, unit: PlanUnit, spec: SpecState):
  * A unit's first dispatch record at risk floor `riskFloor`: its plan scope, its routing in force, its bounds (`boundsOf`
  * the plan in force) and the M3 transient rules (H15). prepare.ts pins a re-entry with it too.
  */
-export function firstPin(ctx: StageContext, unit: PlanUnit, spec: SpecState, riskFloor: RiskTier): DispatchRecord {
+export function firstPin(ctx: Pick<StageContext, 'plan' | 'routing'>, unit: PlanUnit, spec: SpecState, riskFloor: RiskTier): DispatchRecord {
   const routing = ctx.routing(unit.id);
   const scope = [...unit.scope].sort();
   return withDerived({

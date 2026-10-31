@@ -52,7 +52,7 @@ import {
   type FlowStage, HELD_STATION, SLOT_STATION, SLOT_WAIT_STATION, parseJobId, parseStationId, stationId,
 } from '../core/ids.ts';
 import { isRed, obligationRevsOf, type Stage } from '../core/records.ts';
-import { spawnPressureOf } from '../core/upgrade.ts';
+import { spawnPressureOf } from '../core/projections.ts';
 import { type IsoTime, isoTime } from '../core/values.ts';
 import { type Obligations, parseObligations } from '../holistic/types.ts';
 import { drainsArc } from '../input/classify.ts';

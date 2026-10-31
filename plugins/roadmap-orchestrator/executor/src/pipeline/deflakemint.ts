@@ -279,7 +279,8 @@ export async function applyDeflake(ctx: DeflakeContext): Promise<DeflakeOutcome>
   if (verdict.kind === 'rejected') throw new Error(`the deflake revision admitting ${ids.join(', ')} is refused: ${verdict.reasons.join('; ')}`);
   if (verdict.kind === 'unchanged') throw new Error(`admitting ${ids.join(', ')} left the plan unchanged`);
   const out = await commitUnderFence(ctx, verdict, { type: 'deflake' }, { type: 'deflake' }, { type: 'arc' });
-  if (out.kind === 'rejected') return { kind: 'retry', reasons: out.reasons };
+  if (out.kind === 'rejected' && out.reasons.some((r) => r.startsWith('stale:'))) return applyDeflake(ctx);
+  if (out.kind === 'rejected') return {kind: 'retry', reasons: out.reasons};
   crashPoint('deflake.after-revision');
   return { kind: 'applied', admitted: ids, ...done };
 }

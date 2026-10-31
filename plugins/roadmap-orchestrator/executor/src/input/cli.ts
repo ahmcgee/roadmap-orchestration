@@ -24,7 +24,7 @@ export class CliError extends Error {
  * `base`: the `export.json` of the export the files' edit started from (`--base`, as `apply --base`; null: the owner's files
  * of their latest apply).
  */
-export type StartArgs = Readonly<{ repo: string; plan: string; profile: ProfileName | null; waitMs: number | null; base: string | null }>;
+export type StartArgs = Readonly<{ repo: string; plan: string; profile: ProfileName | null; waitMs: number | null }>;
 
 /**
  * How a run command finds its run: through the host lock claim (the one live arc on this host), or
@@ -56,17 +56,17 @@ export type Command =
    * landed with the edits as one revision. `visionEdit` (`--vision-edit`): the apply declares a vision edit
    * (src/phase0/rows.ts `visionLeak`).
    */
-  | Readonly<{ command: 'apply'; base: string | null; dryRun: boolean; rulings: readonly string[]; visionEdit: boolean; run: RunLocator }>
+  | Readonly<{ command: 'apply'; from: string; rev: number; reason: string; dryRun: boolean; run: RunLocator }>
   /** A contingent edge's condition is met, on the architect's evidence (M2). */
   | Readonly<{ command: 'resolve-edge'; edge: EdgeId; evidence: string; run: RunLocator }>
   /** Admission limited to these units (ascending, unique), or unlimited again (`--clear`: null) (M2). */
   | Readonly<{ command: 'run-only'; units: readonly UnitId[] | null; run: RunLocator }>
   /** M3: a ruling sidecar file (`roadmap/ruling-m3`), hashed and queued. */
-  | Readonly<{ command: 'rule'; record: string; run: RunLocator }>
   /** M3 (H13): the compensating revision of one divergence. */
   | Readonly<{ command: 'reverse'; divergence: DivergenceId; run: RunLocator }>
   /** M3: an alternate implementer entry for a parked or preparing unit; `class` null keeps its routing. */
   | Readonly<{ command: 'steer'; unit: UnitId; brief: string; budgetMin: number; class: BuildClass | null; resume: boolean; run: RunLocator }>
+  | Readonly<{ command: 'note'; unit: UnitId; brief: string; run: RunLocator }>
   | Readonly<{ command: 'merge-in'; unit: UnitId; run: RunLocator }>
   /** M3: an audit of these lenses (`--lens a,b`, ascending), or of the arc's lens set (null). */
   | Readonly<{ command: 'audit'; lenses: readonly LensKindName[] | null; run: RunLocator }>
@@ -176,7 +176,7 @@ function locator(p: Parsed, command: string): RunLocator {
 }
 
 export function parseStartArgs(argv: readonly string[]): StartArgs {
-  const p = parseRest(argv, { repo: 'value', plan: 'value', profile: 'value', wait: 'value', base: 'value' }, 'start');
+  const p = parseRest(argv, { repo: 'value', plan: 'value', profile: 'value', wait: 'value' }, 'start');
   positionals(p, 'start', 0);
   const repo = value(p, 'repo');
   const plan = value(p, 'plan');
@@ -188,7 +188,6 @@ export function parseStartArgs(argv: readonly string[]): StartArgs {
     repo, plan,
     profile: profile === undefined ? null : arg('start', '--profile', (v, path) => profileName(v, path ?? '--profile'), profile),
     waitMs: wait === undefined ? null : waitMs(wait),
-    base: value(p, 'base') ?? null,
   };
 }
 
@@ -271,11 +270,13 @@ export function parseCommand(argv: readonly string[]): Command {
       return { command, resource: r === undefined ? null : arg(command, '--resource', resourceName, r), run: locator(p, command) };
     }
     case 'apply': {
-      const p = parseRest(rest, { ...LOCATOR, base: 'value', 'dry-run': 'switch', ruling: 'many', 'vision-edit': 'switch' }, command);
+      const p = parseRest(rest, { ...LOCATOR, from: 'value', rev: 'value', reason: 'value', 'dry-run': 'switch' }, command);
       positionals(p, command, 0);
-      const rulings = values(p, 'ruling');
-      if (new Set(rulings).size !== rulings.length) throw new CliError('apply: a --ruling file given twice');
-      return { command, base: value(p, 'base') ?? null, dryRun: p.flags.has('dry-run'), rulings, visionEdit: p.flags.has('vision-edit'), run: locator(p, command) };
+      const rev = Number(required(p, command, 'rev', '<N>'));
+      if (!Number.isSafeInteger(rev) || rev < 1) throw new CliError('apply: --rev must be a positive integer');
+      const reason = required(p, command, 'reason', '<line>').trim();
+      if (!reason || /[\r\n]/.test(reason)) throw new CliError('apply: --reason must be one non-empty line');
+      return { command, from: required(p, command, 'from', '<dir>'), rev, reason, dryRun: p.flags.has('dry-run'), run: locator(p, command) };
     }
     case 'resolve-edge': {
       const p = parseRest(rest, { ...LOCATOR, evidence: 'value' }, command);
@@ -292,13 +293,13 @@ export function parseCommand(argv: readonly string[]): Command {
       const units = [...new Set(p.positionals.map((u) => arg(command, '<unit>', unitId, u)))].sort();
       return { command, units: clear ? null : units, run: locator(p, command) };
     }
-    case 'rule': {
-      const p = parseRest(rest, LOCATOR, command);
-      return { command, record: onePositional(p, command, '<record.json>'), run: locator(p, command) };
-    }
     case 'reverse': {
       const p = parseRest(rest, LOCATOR, command);
       return { command, divergence: arg(command, '<D-n>', divergenceId, onePositional(p, command, '<D-n>')), run: locator(p, command) };
+    }
+    case 'note': {
+      const p = parseRest(rest, { ...LOCATOR, brief: 'value' }, command);
+      return { command, unit: arg(command, '<unit>', unitId, onePositional(p, command, '<unit>')), brief: required(p, command, 'brief', '<file>'), run: locator(p, command) };
     }
     case 'steer': {
       const p = parseRest(rest, { ...LOCATOR, brief: 'value', budget: 'value', class: 'value', resume: 'switch' }, command);
@@ -456,7 +457,7 @@ export function parseCommand(argv: readonly string[]): Command {
     }
     default:
       throw new CliError(
-        `unknown command ${JSON.stringify(command ?? '')}; expected one of --version, start, status, watch, stop, pause, ack, resume, sweep, apply, resolve-edge, run-only, rule, reverse, steer, merge-in, audit, close-admissions, gc, phase0 check, corpus pin, brief, pr, chain status, answer, witness-check, resume-arc, inputs export, flow accept, flow reject, flow request, flow given, scope accept, scope reject, demo up, demo down, demo hold, demo release`,
+        `unknown command ${JSON.stringify(command ?? '')}; expected one of --version, start, status, watch, stop, pause, ack, resume, sweep, apply, resolve-edge, run-only, reverse, steer, note, merge-in, audit, close-admissions, gc, phase0 check, corpus pin, brief, pr, chain status, answer, witness-check, resume-arc, inputs export, flow accept, flow reject, flow request, flow given, scope accept, scope reject, demo up, demo down, demo hold, demo release`,
       );
   }
 }

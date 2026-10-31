@@ -40,7 +40,7 @@ function stateText(o: ObligationDef): string {
     case 'waived':
     case 'deferred':
     case 'retired':
-      return `${s.type} by ${s.ruling}`;
+      return `${s.type} by ${s.reason}`;
   }
 }
 

@@ -51,7 +51,7 @@ export async function setupCorpusArc(steps: readonly Step[], opts: CorpusUnitOpt
   const control = join(planDir, 'witness-control.json');
   writeWitnessControl(control, { trees: { '*': { outcomes: { t1: 'pass' } } } });
   const journey = {
-    id: 'journey', argv: witnessLaneArgv('jsonl', planDir, control), cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, tier: 'fast',
+    id: 'journey', argv: witnessLaneArgv('jsonl', planDir, control), cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, cadence: 'build',
     resources: [], evidenceGlobs: [], reporter: 'jsonl',
   };
   const laneRev = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [journey], obligations: [], mapping: { paths: [] } }).lanes[0]!);

@@ -3,7 +3,7 @@
 // the real one (src/pipeline/publish.ts) over one arbiter the unit's stages share, and `rule` records whose
 // consistency is judged at the current tip (fresh, G21). Also `closedAs`, how recovery closed the ops a crash left open,
 // which the crash tests of the docs publication, latch, batch and audit rows compare to their row's recovery text.
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { CommandContext } from '../../src/commands/apply.ts';
 import { submitCommand } from '../../src/commands/queue.ts';
@@ -22,11 +22,10 @@ import { readInputFiles, recordPlan } from '../../src/input/inforce.ts';
 import type { StageContext } from '../../src/pipeline/dispatch.ts';
 import { docsPublisher, rulingContextAt } from '../../src/pipeline/publish.ts';
 import { type Arbiter, createArbiter } from '../../src/schedule/arbiter.ts';
-import { consistencyRevs } from '../../src/spec/rulings.ts';
 import { bytesSha256 } from '../../src/spec/spec.ts';
 import { git, tmpDir } from '../helpers/repo.ts';
 import type { LaneJson } from './stage-common.ts';
-import { type ArcDescriptor, type ArcOptions, type ArcRun, commandContextFor, setupArc } from './unit-common.ts';
+import { type ArcDescriptor, type ArcOptions, type ArcRun, applyBody, commandContextFor, setupArc } from './unit-common.ts';
 
 /** Lays out a unit-common arc (`edit` changes its files first) and records them as revision 1, as an M3 first start does. */
 export function publishArc(opts: ArcOptions, edit: (d: ArcDescriptor) => void = () => {}): ArcDescriptor {
@@ -67,7 +66,7 @@ export function barrierSuite(dir: string): LaneJson {
     "  while (!fs.existsSync(d + '/lane.release')) { if (Date.now() > until) process.exit(3); process.stdout.write('.'); Atomics.wait(cell, 0, 0, 50); }",
     '}',
   ].join('\n');
-  return { id: 'suite', tier: 'estate', argv: ['node', '-e', script, dir] };
+  return { id: 'suite', cadence: 'unit', argv: ['node', '-e', script, dir] };
 }
 
 /**
@@ -85,9 +84,7 @@ export function ruleRecord(r: ArcRun, id: string, over: Record<string, unknown> 
     consistency: { verdict: 'consistent', judgedRevs: { head: tip, ledgerSha256: 'a'.repeat(64), obligationsSha256: null, visionSha256: null, contracts: [] }, by: { type: 'architect' } },
     ...over,
   };
-  const fresh = consistencyRevs(parseRulingSidecar({ ...draft, id: id === 'C-?' ? 'C-1' : id }), rulingContextAt({ journal: r.journal, runDir: r.ctx.runDir, planFile: absPath(r.d.planPath), repo: r.ctx.repo }, tip));
-  if ('reasons' in fresh) throw new Error(fresh.reasons.join('; '));
-  return { ...draft, consistency: { ...(draft['consistency'] as object), judgedRevs: fresh.revs } };
+  return draft;
 }
 
 /** A contract op on contracts/api.md, listed in the ruling's contractRefs. */
@@ -98,10 +95,10 @@ export const API_OP = {
 
 /** Writes `record` to a file and submits `rule <file>`. */
 export function submitRule(r: ArcRun, record: Record<string, unknown>): CommandFile {
-  const path = join(tmpDir('rule-record'), `${String(record['id'])}.json`);
-  const bytes = Buffer.from(`${JSON.stringify(record, null, 2)}\n`, 'utf8');
-  writeFileSync(path, bytes);
-  return submitCommand(r.ctx.runDir, r.ctx.plan().arc, { type: 'rule', path: absPath(path), sha256: bytesSha256(bytes) });
+  const path = join(r.d.planPath, '..', 'rulings.md');
+  const text = readFileSync(path, 'utf8').replace(/^C-1 — .+$/m, `C-1 — ${String(record['statement'])}`);
+  writeFileSync(path, text);
+  return submitCommand(r.ctx.runDir, r.ctx.plan().arc, applyBody(r.d));
 }
 
 

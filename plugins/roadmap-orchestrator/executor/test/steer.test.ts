@@ -344,28 +344,7 @@ test('steer.class: `--class frontier` on a parked unit commits a plan revision r
   }
 });
 
-test('steer.class-write-back: the class revision never writes the owner\'s plan file, and a later apply of that file rebases onto it and keeps the layer', T, async () => {
-  const d = setupArc({ steps: TO_PARK });
-  const r = contextFor(d);
-  try {
-    await parkU1(r);
-    const f = followingContext(r);
-    const before = readFileSync(d.planPath, 'utf8');
-    const steered = await command(r, steerBody({ cls: 'frontier' }), f);
-    const applied = r.journal.view.planAppliedBy(steered.id);
-    assert.ok(applied !== null);
-    assert.ok(verifiedOf(r, steered.id).includes(`plan rev ${applied.rev} in force: unit u1's implementer class frontier`));
-    assert.equal(readFileSync(d.planPath, 'utf8'), before, 'the owner\'s plan file is never written');
-    assert.equal(fileSeat(d), undefined);
 
-    const again = await command(r, applyBody(d), f);
-    assert.equal(again.outcome.kind, 'applied', JSON.stringify(again.outcome));
-    assert.equal(r.journal.view.planApplied()?.rev, applied.rev, 'the unchanged file rebased is the plan in force: no revision');
-    assert.equal(unitInForce(f, 'u1').routing?.build?.med, 'frontier', 'the layer stays');
-  } finally {
-    r.journal.close();
-  }
-});
 
 test('steer.class-architect-edit: an owner\'s plan edit written while the class revision lands is applied on top of it: both the edit and the layer are in force', T, async () => {
   const d = setupArc({ steps: TO_PARK });

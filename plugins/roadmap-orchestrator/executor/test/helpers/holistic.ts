@@ -80,7 +80,7 @@ export function checkpointAnswer(spec: CheckpointSpec): JsonValue {
     decision: spec.decision,
     reasons: ['scripted checkpoint'],
     ops: [...(spec.ops ?? [])],
-    rulings: (spec.rulings ?? []).map((r) => (typeof r === 'string' ? JSON.parse(r) as JsonValue : r)),
+    
     findingDispositions: (spec.findingDispositions ?? []).map((d) => ({ ...d })),
     interpretations: (spec.interpretations ?? []).map((i) => ({ clauses: [...i.clauses], situation: i.situation, reading: i.reading })),
     cites: { vision: ['V-1'], observations: [], findings: [] },

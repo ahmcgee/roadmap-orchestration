@@ -275,7 +275,7 @@ describe('a walk report held to its inputs (src/walk/report.ts)', () => {
   test('report.polish-refusals: a scope covering no reference, an id the plan holds, a spec for another unit', () => {
     const d = dir();
     const spec = (unit: string) => ({
-      schema: 'roadmap/spec-m1', unit, rev: 1, lanes: [{ id: 'l', argv: ['true'], cwd: '.', env: { set: [], pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], evidenceExcludes: [], state: 'active' }],
+      schema: 'roadmap/spec-m1', unit, rev: 1, lanes: [{ id: 'l', argv: ['true'], cwd: '.', env: { set: [], pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], evidenceExcludes: [], state: 'active' }],
       acceptance: [{ id: 'A1', clause: 'c', failLoudIfUndelivered: true, state: 'active' }], scope: ['design/**'], resources: [], decisions: [], facts: [],
       cites: { contracts: [], rulings: [] }, obligations: [], repairs: [],
     });

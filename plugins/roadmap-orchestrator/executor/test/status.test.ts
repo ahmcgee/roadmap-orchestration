@@ -24,7 +24,7 @@ import { snapshotRef } from '../src/git/snapshot.ts';
 import { openBlocking } from '../src/needsuser.ts';
 import { laneCpuKey } from '../src/resources/calibrate.ts';
 import { MODEL_IDS } from '../src/routing/types.ts';
-import { SESSION_GUARANTEE, STATUS_LOCK, type Status, type UnitStatusLine, compactState, status } from '../src/status.ts';
+import { SESSION_GUARANTEE, type Status, type UnitStatusLine, compactState, status } from '../src/status.ts';
 import { reached, release } from './helpers/barrier.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 import type { Step } from './helpers/scenario.ts';
@@ -184,20 +184,7 @@ describe('status.subset', () => {
     for (const t of s.timings) assert.ok(t.count >= 1 && t.p50Ms <= t.maxMs, JSON.stringify(t));
   });
 
-  test('status.single-flight: a status while another holds the run\'s status.lock is refused; a dead holder\'s lock is replaced', T, async () => {
-    const lock = join(r.runDir, STATUS_LOCK);
-    // The running status is a live process holding the lock for as long as the test needs: a real status ends too fast to overlap.
-    const holder = spawn('sleep', ['60'], { stdio: 'ignore' });
-    const gone = new Promise((resolve) => holder.once('exit', resolve));
-    const { pid, start } = identityOf(holder.pid!);
-    writeFileSync(lock, JSON.stringify({ v: SCHEMA_VERSION, bootId: readBootId(), holder: { pid, start } }));
-    await assert.rejects(statusOf(r), new RegExp(`another status of arc ${r.arc} is running \\(pid ${pid}\\); run one at a time`));
-    assert.ok(existsSync(lock), 'the refused status leaves the holder\'s lock');
-    holder.kill('SIGKILL');
-    await gone;
-    assert.equal((await statusOf(r)).arc, r.arc, 'the dead holder\'s lock is replaced');
-    assert.ok(!existsSync(lock), 'the status released its lock');
-  });
+  
 });
 
 /** Every file under `dir`, relative to it. */

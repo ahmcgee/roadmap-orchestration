@@ -388,7 +388,7 @@ describe('the stop rule (evals/m5/log.ts)', () => {
 
 describe('the log and the files (evals/m5/log.ts, check.ts)', () => {
   test('evals-m5.log-of: dispatches, unit publications, walks, passes, findings, tweaks, refusals and promotions from events', () => {
-    const ev = (seq: number, rec: object): Event => ({ v: 1, seq, prev: null, at: '2026-10-18T00:00:00.000Z', arc: 'arc-1', ...rec }) as unknown as Event;
+    const ev = (seq: number, rec: object): Event => ({ v: 2, seq, prev: null, at: '2026-10-18T00:00:00.000Z', arc: 'arc-1', ...rec }) as unknown as Event;
     const fact = (seq: number, f: object): Event => ev(seq, { type: 'fact', fact: f });
     const events = [
       fact(1, { kind: 'dispatch', record: { unit: 'design' } }),

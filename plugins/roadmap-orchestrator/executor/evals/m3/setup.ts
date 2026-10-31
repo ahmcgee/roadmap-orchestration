@@ -181,7 +181,7 @@ export function obligationsFile(l: Layout, pin: CorpusPin): unknown {
       const witness = { lane: o.lane, testIds: [WITNESS_TESTS[o.id]], files: [...lanes.find((x) => x.id === o.lane)!.testPaths] };
       return {
         id: o.id, rev: 1, statement: o.statement, rule: ruleRef(o.rule), serves: o.serves,
-        witness, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: revs.get(o.lane), witness },
+        witness, proofJudgment: { verdict: 'proves', obligationRev: 1,  witness },
         deliveredBy: [...o.deliveredBy], activation: o.activation, contracts: [...o.contracts], state: { type: 'active' },
       };
     }),

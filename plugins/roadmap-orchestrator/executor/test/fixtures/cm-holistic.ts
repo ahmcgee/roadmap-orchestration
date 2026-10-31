@@ -33,7 +33,6 @@ import type { LogSnapshot } from '../../src/core/log.ts';
 import { absPath } from '../../src/core/values.ts';
 import { parseRulingSidecar } from '../../src/holistic/types.ts';
 import { rulingContextAt } from '../../src/pipeline/publish.ts';
-import { consistencyRevs } from '../../src/spec/rulings.ts';
 import { bytesSha256 } from '../../src/spec/spec.ts';
 import { release } from '../helpers/barrier.ts';
 import { checkpointAnswer, checkpointStep, lensStep, packReviewStep } from '../helpers/holistic.ts';
@@ -76,7 +75,7 @@ const keyed = (unit: string, steps: readonly Step[]): readonly Step[] => steps.m
 const build = (files: Readonly<Record<string, string>>, barrier?: string): Step =>
   codexStep([...(barrier === undefined ? [] : [{ type: 'barrier' as const, name: barrier, timeoutMs: PIN_TIMEOUT_MS, perUnit: true as const }]), { type: 'commit', message: 'add work', files }], { argv: ['exec', '-C'] });
 const pinLane = (barriers: string, name: string): Json =>
-  ({ id: name, argv: [process.execPath, CM_PIN, barriers, name], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], state: 'active' });
+  ({ id: name, argv: [process.execPath, CM_PIN, barriers, name], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], state: 'active' });
 
 /** The log's facts of `kind` so far (none before the log exists). */
 const factsNow = (r: ExecRun, kind: string): readonly Json[] =>
@@ -135,10 +134,8 @@ function ruleC2(r: ExecRun): string {
     consistency: { verdict: 'consistent', judgedRevs: { head: tip, ledgerSha256: 'a'.repeat(64), obligationsSha256: null, visionSha256: null, contracts: [] }, by: { type: 'architect' } },
   };
   const reader = { journal: journalOf(r), runDir: absPath(r.runDir), planFile: absPath(r.planPath), repo: absPath(r.repo) };
-  const fresh = consistencyRevs(parseRulingSidecar(draft), rulingContextAt(reader as never, tip));
-  if ('reasons' in fresh) throw new Error(fresh.reasons.join('; '));
   const path = join(tmpDir('cm-rule'), 'C-2.json');
-  writeFileSync(path, `${JSON.stringify({ ...draft, consistency: { ...(draft['consistency'] as Json), judgedRevs: fresh.revs } }, null, 2)}\n`);
+  writeFileSync(path, `${JSON.stringify(draft, null, 2)}\n`);
   return path;
 }
 
@@ -224,7 +221,8 @@ export function layoutHolisticConcurrent(t: Owner, peer: HolisticPeer): Holistic
   const hooks: readonly Hook[] = [
     once('rule', () => existsSync(join(barriers, 'lane.reached')), () => {
       const path = ruleC2(r);
-      submit(r, { type: 'rule', path: absPath(path), sha256: bytesSha256(readFileSync(path)) });
+      writeFileSync(join(r.planPath, '..', 'rulings.md'), 'C-1 — Helpers take finite numbers.\n');
+      submit(r, applyBody(r));
     }),
     once('release', () => restarted(r), () => writeFileSync(join(barriers, 'lane.release'), '')),
   ];

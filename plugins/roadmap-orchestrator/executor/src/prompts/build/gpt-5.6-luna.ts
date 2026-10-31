@@ -127,7 +127,7 @@ export const PROMPT: PromptModule<'build'> = {
   system,
   schema: BUILD_SCHEMA,
   fields: [
-    'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks',
+    'notes', 'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks',
     'milestones', 'browser', 'certifiedAt', 'handover',
   ],
   render: (i) => `# Spec (unit ${i.spec.unit}, revision ${i.spec.rev})
@@ -143,6 +143,7 @@ ${rulingsText(i.rulings)}
 ${referenceIndexText(i.index)}${designReferences(i)}${milestonesText(i.milestones)}
 
 # Plan-check notes
+${i.notes.length === 0 ? '' : `<notes>\n${JSON.stringify(i.notes)}\n</notes>\n`}
 ${i.planCheckNotes === '' ? '(none)' : i.planCheckNotes}
 
 # Environment

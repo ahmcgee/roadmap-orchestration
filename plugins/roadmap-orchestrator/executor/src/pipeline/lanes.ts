@@ -81,7 +81,7 @@ import {
 } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
-import { HOST_SIGNATURES_DEV6, spawnPressureOf, laneTimeoutDefault } from '../core/upgrade.ts';
+import { spawnPressureOf } from '../core/projections.ts';
 import { type ObservationStore, type WitnessedEntry, observationOf, observationStore, reuse, verdictOf } from '../holistic/observe.ts';
 import { type ReuseKey, inputShaOf } from '../git/reusekey.ts';
 import { type SystemsMap, laneInput, laneTestFiles, systemsMapInForce } from '../input/systems.ts';
@@ -141,7 +141,7 @@ export const LANE_STALL_MS = 10 * 60_000;
 export const LANE_DEADLINE_MS = 6 * 60 * 60_000;
 const laneDeadlineMs = (lane: Pick<LaneDef, 'timeoutMin'>): number => {
   if (lane.timeoutMin !== undefined) return lane.timeoutMin * 60_000;
-  laneTimeoutDefault();
+
   return LANE_DEADLINE_MS;
 };
 export const LANE_GRACE_MS = 5_000;
@@ -401,7 +401,7 @@ function laneRun(ctx: StageContext, intent: IntentOf<'proc.spawn'>, lane: LaneDe
   return {
     lane: lane.id, argv: subject.files === undefined ? lane.argv : testArgvOf(lane, subject.files), expectedExit: lane.expectedExit, exitCode: result?.exitCode ?? null, verdict, evidenceDir: dir,
     ignored: readCensus(dir), inv, at, endedAt: files.read('exit.json')?.endedAt ?? at, fixDirs: fixDirsOf(dir, lane),
-    host: readLaneHost(dir), signatures: isRed(verdict) ? outputSignatures([join(invDir, STDOUT_FILE), join(invDir, STDERR_FILE)], redRev === null ? HOST_SIGNATURES_DEV6 : HOST_SIGNATURES) : [],
+    host: readLaneHost(dir), signatures: isRed(verdict) ? outputSignatures([join(invDir, STDOUT_FILE), join(invDir, STDERR_FILE)], HOST_SIGNATURES) : [],
     // A run's own record; a reused lane's ledger entry sets it (`reusedRecord`).
     reused: null, redRev, pressure: donePressure(ctx.journal.view, intent.op),
   };
@@ -423,18 +423,6 @@ function redClassOf(run: LaneRun): RedClass | null {
   if (!isRed(run.verdict)) return null;
   if (run.redRev === null) return classifyRed(evidenceOf(run), null);
   return readRedClass(run.evidenceDir)?.class ?? null;
-}
-
-/**
- * 1.0.0-dev.6 adoption (temporary scaffolding, deleted with `HOST_SIGNATURES_DEV6`): the class of an unstamped red run,
- * which dev.6 never persisted, re-derived from its raw evidence with the frozen table, as `redClassOf` does; null once
- * that evidence is gone (gc, or a run dir restored from the snapshot ref, which never carries raw output).
- */
-export function dev6RedClass(runDir: AbsPath, inv: InvocationId, dir: AbsPath): RedClass | null {
-  const invDir = invocationDir(runDir, inv);
-  const output = [join(invDir, STDOUT_FILE), join(invDir, STDERR_FILE)];
-  if (!output.every((f) => existsSync(f))) return null;
-  return classifyRed({ signatures: outputSignatures(output, HOST_SIGNATURES_DEV6), host: readLaneHost(dir) }, null);
 }
 
 /**

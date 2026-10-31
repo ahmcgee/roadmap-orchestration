@@ -18,7 +18,7 @@ import { holderUnits, resourceTable } from '../src/resources/reserve.ts';
 import { reached, release } from './helpers/barrier.ts';
 import { type Wired, publishArc, ruleRecord, submitRule, wire } from './fixtures/publish-common.ts';
 import { rulingId } from '../src/core/ids.ts';
-import { gateDiffShownOf, gateLargeDiffOf } from '../src/core/upgrade.ts';
+import { gateDiffShownOf, gateLargeDiffOf } from '../src/core/projections.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { absPath, repoPath } from '../src/core/values.ts';
@@ -136,7 +136,7 @@ test('gate.revise: the directives go to a fix round, and the next gate rules on 
     steps: [
       planCheckStep({ decision: 'approve' }),
       mulBuild(),
-      gateStep({ decision: 'revise', directives: [directive], findings: [finding], premises }),
+      gateStep({rulings: [],  decision: 'revise', directives: [directive], findings: [finding], premises }),
       codexStep([{ type: 'commit', message: 'default export', files: { 'src/mul.js': `${MUL['src/mul.js']}export default mul;\n` } }], { argv: ['exec', 'resume'], stdinContains: [directive] }),
       gateStep({ decision: 'approve' }, {
         stdinContains: [
@@ -189,7 +189,7 @@ const deniedGate = () => gateStep({ decision: 'approve' }, {}, [{ type: 'globAbo
 const addDirs = (c: CallRecord): readonly string[] => c.argv.flatMap((t, i) => (c.argv[i - 1] === '--add-dir' ? [t] : []));
 
 test('gate.repair-turn (dev.12): an answer off the gate\'s schema goes back once in its own session with why; the repaired answer is the attempt\'s; refused again, the attempt is malformed', T, async () => {
-  const offSchema: Step = { as: 'claude', expect: {}, acts: [{ type: 'emit', value: { decision: 'approve', ordering: null, findings: [], directives: [], reasons: ['A1 holds'] } }] };
+  const offSchema: Step = { as: 'claude', expect: {}, acts: [{ type: 'emit', value: {rulings: [],  decision: 'approve', ordering: null, findings: [], directives: [], reasons: ['A1 holds'] } }] };
   const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), offSchema, gateRepairStep({ decision: 'approve' }, ['premises'])] });
   const r = contextFor(d);
   try {
@@ -426,12 +426,12 @@ const VISION = {
   ],
   questions: [],
 };
-const JOURNEY = { id: 'journey', argv: ['node', '-e', '0'], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], reporter: 'jsonl' };
+const JOURNEY = { id: 'journey', argv: ['node', '-e', '0'], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], reporter: 'jsonl' };
 const LANE_REV = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [JOURNEY], obligations: [], mapping: { paths: [] } }).lanes[0]!);
 function obligation(id: string, statement: string): Record<string, unknown> {
   return {
     id, rev: 1, statement, docRef: { path: 'ARCHITECTURE.md', anchor: 'Architecture', quotedText: 'One module' }, serves: ['V-1'],
-    witness: { lane: 'journey', testIds: [`t-${id}`] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: LANE_REV, witness: { lane: 'journey', testIds: [`t-${id}`] } },
+    witness: { lane: 'journey', testIds: [`t-${id}`] }, proofJudgment: { verdict: 'proves', obligationRev: 1,  witness: {  testIds: [`t-${id}`] } },
     deliveredBy: [], activation: 'must-hold', contracts: [], state: { type: 'active' },
   };
 }
@@ -715,7 +715,7 @@ test('gate.large-diff-seat: at med risk the large diff seats the gate on high; a
 });
 
 describe('gate.cluster-coverage: the large-diff answer\'s cluster map against the diff\'s paths', () => {
-  const answer = (clusters: JsonValue): JsonValue => ({ decision: 'approve', findings: [], directives: [], reasons: ['A1 holds'], premises: [], unreviewed: [], clusters });
+  const answer = (clusters: JsonValue): JsonValue => ({rulings: [],  decision: 'approve', findings: [], directives: [], reasons: ['A1 holds'], premises: [], unreviewed: [], clusters });
   const paths = ['packages/a/src/x.ts', 'packages/a/src/y.ts', 'packages/b/[id].tsx', 'README.md'].map((p) => repoPath(p));
   const large = { overflow: 2 };
   const refused = (f: () => unknown, pattern: RegExp): void => {

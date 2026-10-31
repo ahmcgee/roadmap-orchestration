@@ -221,7 +221,7 @@ describe('tail.released', () => {
 });
 
 describe('tail.gate-debt', () => {
-  const f = (severity: 'blocking' | 'note' | 'pre-existing' | 'ride-along', text: string, debt: Readonly<{ drag: string }> | null | 'unrecorded') => ({
+  const f = (severity: 'blocking' | 'note' | 'pre-existing' | 'ride-along', text: string, debt: Readonly<{ drag: string }> | null) => ({
     severity, path: null, text, contractRef: null, experiments: [], debt, defect: severity === 'blocking' ? 'incorrect-behaviour' as const : null, reraises: null, hunk: null,
   });
   it('a note banks only with a drag; a pre-existing defect always; a dev.12 note as dev.12 banked it; never a blocking finding or a blank text', () => {
@@ -230,13 +230,11 @@ describe('tail.gate-debt', () => {
       f('note', 'The earlier finding is resolved.', null),
       f('note', 'A test could also check the empty case.', { drag: '  ' }),
       f('pre-existing', 'add() drops a trailing zero.', null),
-      f('note', 'Rename mul.', 'unrecorded'),
       f('blocking', 'mul is wrong.', { drag: 'x' }),
       f('note', '  ', { drag: 'x' }),
     ]), [
       { index: 0, what: 'parse re-reads the file per call. Drag: Every reader of big inputs pays it.' },
       { index: 3, what: 'add() drops a trailing zero.' },
-      { index: 4, what: 'Rename mul.' },
     ]);
   });
 });

@@ -354,7 +354,7 @@ describe('D2 mutation smoke', () => {
     // stage (no fast suite, stages.ts `fastSuite`, either).
     const estateSuite = (p: Record<string, unknown>): void => {
       const suite = p['suite'] as { lanes: Record<string, unknown>[] };
-      p['suite'] = { ...suite, lanes: suite.lanes.map((l) => ({ ...l, tier: 'estate' })) };
+      p['suite'] = { ...suite, lanes: suite.lanes.map((l) => ({ ...l, cadence: 'unit' })) };
     };
     const { a, r } = await smoked([planCheckStep({ decision: 'approve' }), mulBuild(), NOOP_FIX, gateStep({ decision: 'approve' })], null, { noSpecLanes: true, plan: estateSuite });
     try {

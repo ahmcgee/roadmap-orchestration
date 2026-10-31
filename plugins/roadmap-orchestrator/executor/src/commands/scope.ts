@@ -30,7 +30,6 @@ import { type CommandBody, type SpecM1, specRemoves } from '../core/records.ts';
 import { type RepoPath, type RepoPattern, branchRef, matchesPattern, repoPath } from '../core/values.ts';
 import { git, refTarget } from '../git/git.ts';
 import { type RulingSidecar, RULING_SCHEMA, parseRulingSidecar } from '../holistic/types.ts';
-import { type RulingRecord, withRulings } from '../input/classify.ts';
 import {
   type InputFiles, inForceFiles, ledgerPath, requirePlanInForce, revisionInForce, sidecarPath,
 } from '../input/inforce.ts';
@@ -41,9 +40,8 @@ import { APPLY, phase0InputOf, phase0Rows } from '../phase0/rows.ts';
 import { rulingContextAt } from '../pipeline/publish.ts';
 import { quotedTextReason } from '../docs/contracts.ts';
 import { parseSpec, specBytes } from '../spec/spec.ts';
-import { consistencyRevs, nextRulingId, parseRulings } from '../spec/rulings.ts';
+import { parseRulings } from '../spec/rulings.ts';
 import { type CommandContext, type Effect, acknowledge, advisoryText, commitUnderFence, evaluateRevision, parentOf, rejectedText } from './apply.ts';
-import { rulingReasons } from './rule.ts';
 
 type ScopeBody = Extract<CommandBody, { type: 'scope-decide' }>;
 
@@ -78,33 +76,8 @@ const decidedText = (unit: UnitId, stage: ScopeHoldStage, attempt: number, decis
   ? `unit ${unit}: the scope growth of ${stage}#${attempt} accepted; the unit re-opens at plan-check on its grown spec`
   : `unit ${unit}: the scope growth of ${stage}#${attempt} rejected; ${stage === 'lanes' ? 'the lanes run' : 'the plan-check runs again'} within the scope`;
 
-/** One line of ledger text: no newline, no backtick (the statement's backticks name exactly the added patterns). */
-const plain = (text: string): string => text.replace(/`/g, '\'').replace(/\s+/g, ' ').trim();
-
-/** `spec` grown by `added` (those its scope lacks), citing `ruling`, at rev + 1. */
-export function grownSpec(spec: SpecM1, added: readonly RepoPattern[], ruling: RulingId): SpecM1 {
-  return {
-    ...spec, rev: specRev(spec.rev + 1), scope: [...spec.scope, ...added.filter((p) => !spec.scope.includes(p))],
-    cites: { ...spec.cites, rulings: spec.cites.rulings.includes(ruling) ? spec.cites.rulings : [...spec.cites.rulings, ruling] },
-  };
-}
-
-/**
- * The doc ref of a growth ruling: a line of the first file at the tip the added patterns take in, preferring one that names
- * something the spec removes (why the file needs the unit), quoted as its own anchor; null when no file has a quotable line.
- */
-function growthDocRef(
-  docAt: (path: RepoPath) => string | null, files: readonly RepoPath[], added: readonly RepoPattern[], removes: readonly string[],
-): RulingSidecar['docRefs'][number] | null {
-  for (const path of files.filter((f) => added.some((p) => matchesPattern(f, p)))) {
-    const text = docAt(path);
-    if (text === null) continue;
-    const lines = text.split('\n').map((l) => l.trim()).filter((l) => l !== '');
-    const ordered = [...lines.filter((l) => removes.some((r) => l.includes(r))), ...lines];
-    const quote = ordered.find((l) => quotedTextReason(text, l, l) === null);
-    if (quote !== undefined) return { path, anchor: quote, quotedText: quote, relation: 'consistent' };
-  }
-  return null;
+export function grownSpec(spec: SpecM1, added: readonly RepoPattern[]): SpecM1 {
+  return { ...spec, rev: specRev(spec.rev + 1), scope: [...spec.scope, ...added.filter((p) => !spec.scope.includes(p))] };
 }
 
 /** The accepted growth as one ruled revision (step 1), or why it may not land. */
@@ -134,28 +107,7 @@ async function landGrowth(
   const added = patterns.filter((p) => !planUnit.scope.includes(p));
   if (added.length === 0) return { kind: 'applied', verified: [`unit ${unit}'s plan scope holds every proposed pattern already: nothing to land`] };
 
-  const tip = refTarget(ctx.repo, branchRef(inForce.plan.integrationBranch));
-  if (tip === null) throw new Error(`integration ${inForce.plan.integrationBranch} does not exist`);
-  const rctx = { ...rulingContextAt(ctx, tip), units: inForce.plan.units.map((p) => p.id) };
   const spec = parseSpec(specFile.bytes, specFile.path);
-  const files = git(ctx.repo, ['ls-tree', '-r', '-z', '--name-only', tip]).split('\0').filter((f) => f !== '').map((f) => repoPath(f));
-  const docRef = growthDocRef(rctx.docAt, files, added, specRemoves(spec));
-  if (docRef === null) return { kind: 'rejected', reason: `scope accept ${unit}: no file at the integration tip ${tip} the growth takes in has a line its ruling could quote` };
-  const ruling = nextRulingId(parseRulings(revision.ledger.bytes.toString('utf8'), 'the rulings ledger in force'));
-  const why = proposals.map((p) => plain(p.reason)).join('; ');
-  const draft: RulingSidecar = {
-    schema: RULING_SCHEMA, id: ruling,
-    statement: `Unit ${unit}'s scope grows by ${added.map((p) => `\`${p}\``).join(', ')}: proposed by its plan-check (${why}), accepted by the root agent (${plain(reason)}).`,
-    kind: 'decision', ruledBy: { type: 'architect' }, trigger: `roadmap scope accept ${unit} (${id}) on plan-check#${attempt}`, supersedes: [], condition: null,
-    docRefs: [docRef], contractRefs: [], contractOps: [], obligations: [], obligationDispositions: [], cites: [], evidence: [],
-    appliesTo: { type: 'units', units: [unit] }, lifetime: 'arc', status: 'active',
-    consistency: { verdict: 'consistent', judgedRevs: { ...rctx.inForce, contracts: [] }, by: { type: 'architect' } },
-  };
-  const revs = consistencyRevs(draft, rctx);
-  if ('reasons' in revs) throw new Error(`scope accept ${unit}: a growth ruling names no contract, yet ${revs.reasons.join('; ')}`);
-  const bytes = Buffer.from(`${JSON.stringify({ ...draft, consistency: { ...draft.consistency, judgedRevs: revs.revs } }, null, 2)}\n`, 'utf8');
-  const record: RulingRecord = { path: sidecarPath(ledgerPath(ctx.planFile, inForce.plan), ruling), bytes, sidecar: parseRulingSidecar(JSON.parse(bytes.toString('utf8'))) };
-
   // The plan's own JSON with the unit's scope widened, so every other byte stays as written; the spec at rev + 1.
   const raw = JSON.parse(current.planBytes.toString('utf8')) as { units: { id: string; scope: string[] }[] };
   const entry = raw.units.find((x) => x.id === unit);
@@ -164,12 +116,10 @@ async function landGrowth(
   const planBytes = Buffer.from(`${JSON.stringify(raw, null, 2)}\n`, 'utf8');
   const base: InputFiles = {
     ...current, plan: parsePlan(JSON.parse(planBytes.toString('utf8'))), planBytes,
-    specs: new Map([...current.specs, [unit, { path: specFile.path, bytes: specBytes(grownSpec(spec, added, ruling)) }]]),
+    specs: new Map([...current.specs, [unit, { path: specFile.path, bytes: specBytes(grownSpec(spec, added)) }]]),
   };
-  const invalid = rulingReasons(ctx, base, [record]);
-  if (invalid.length > 0) return { kind: 'rejected', reason: rejectedText(invalid) };
-  const proposal = withRulings(base, [record]);
-  const proposer = { type: 'apply', rulings: [ruling] } as const;
+  const proposal = base;
+  const proposer = { type: 'apply', reason } as const;
   const rctx2 = { runDir: ctx.runDir, view, hostDir: ctx.hostDir, planFile: ctx.planFile, routingBase: ctx.routingBase, laneEnv: ctx.laneEnv };
   const evaluated = evaluateRevision(rctx2, proposal, proposer);
   if (evaluated.kind === 'rejected') return { kind: 'rejected', reason: rejectedText(evaluated.reasons) };
@@ -183,7 +133,7 @@ async function landGrowth(
   return {
     kind: 'applied',
     verified: [
-      `plan rev ${committed.fact.rev} in force: unit ${unit}'s scope grows by ${added.join(', ')}, ruled by ${ruling}`,
+      `plan rev ${committed.fact.rev} in force: unit ${unit}'s scope grows by ${added.join(', ')}: ${reason}`,
       ...committed.fact.changes.map((c) => canonicalJson(c)),
       ...p0.advisories.map(advisoryText),
     ],

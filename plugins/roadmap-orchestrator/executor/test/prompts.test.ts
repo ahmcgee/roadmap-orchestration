@@ -58,7 +58,7 @@ const vision = (rev: number, text: string) => ({
 });
 const obligation = (id: string, statement: string): ObligationDef => ({
   id: obligationId(id), rev: 1, statement, docRef: { path: repoPath('docs/target.md'), anchor: '#a', quotedText: statement }, serves: [visionClauseId('V-1')],
-  witness: { lane: laneId('journey'), testIds: ['t1'] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: laneRev('0123456789abcdef'), witness: { lane: laneId('journey'), testIds: ['t1'] } },
+  witness: { lane: laneId('journey'), testIds: ['t1'] }, proofJudgment: { verdict: 'proves', obligationRev: 1,  witness: {  testIds: ['t1'] } },
   deliveredBy: [], activation: 'must-hold', contracts: [], state: { type: 'active' },
 });
 const observed = (id: string, statement: string, tree: typeof SHA_A) => ({
@@ -252,12 +252,12 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
     },
   ],
   build: [
-    {
+    { notes: [], 
       spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
       planCheckNotes: '', fastLanes: [lane('unit', ['npm', 'test'])], suiteLanes: [], evidenceDir: absPath('/run/ev/a'), worktree: absPath('/wt/a'),
       scope: { include: [repoPattern('src/a/**')], exclude: [] }, fixRound: null, witnessChecks: [], milestones: null, browser: null, certifiedAt: null, handover: null,
     },
-    {
+    { notes: [], 
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
       planCheckNotes: 'NOTES-B', fastLanes: [lane('lint', ['npx', 'tsc', '--noEmit'])], suiteLanes: [lane('eslint', ['npx', 'eslint', '.'])], evidenceDir: absPath('/run/ev/b'), worktree: absPath('/wt/b'),
       scope: { include: [repoPattern('src/b/**')], exclude: [] }, fixRound: { failingEvidenceDirs: [absPath('/run/inv/9-1')], directives: ['DIRECTIVE-B'] },
@@ -297,7 +297,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)], standingObligations: [observed('I-3', 'STANDING-B', SHA_A).obligation],
       diff: { bounded: partial(SHA_B, SHA_A, 'DIFF-B', true), claims: { acceptance: [clauseId('A1'), clauseId('A2')], witnesses: [witnessItemId('W-1')], obligations: [obligationId('I-2')] } },
       laneLedger: [{ lane: laneId('lint'), argv: ['npx', 'tsc'], expectedExit: 0, exitCode: 0, verdict: 'pass', evidenceDir: absPath('/run/inv/4-1'),
-        ignored: { v: 1, written: { files: 42, bytes: 3_250_000 }, captured: { files: 0, bytes: 0 }, uncaptured: [{ dir: '.local/demo/', files: 42, bytes: 3_250_000, reason: 'not-declared' }] },
+        ignored: { v: 2, written: { files: 42, bytes: 3_250_000 }, captured: { files: 0, bytes: 0 }, uncaptured: [{ dir: '.local/demo/', files: 42, bytes: 3_250_000, reason: 'not-declared' }] },
         reused: { at: SHA_A, inv: invocationId(opIdOf('arc-1/4'), 1) } }],
       evidence: [absPath('/run/ev/b')], scope: { excluded: [], patterns: [repoPattern('src/b/**')], growth: [repoPath('README.md')], rejected: [repoPath('test/b/REVERTED-B.test.ts')] },
       priorRound: {
@@ -437,13 +437,13 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
   build: {
     summary: 'Added the parser.', changedPaths: ['src/a/parse.ts'], blockers: [], experiments: [], docsOnlySince: null, final: true,
   },
-  gate: {
+  gate: {rulings: [], 
     decision: 'revise', ordering: null, reasons: ['A2 untested'], directives: ['Add a test for A2.'],
     findings: [{
       severity: 'blocking', path: 'src/a/parse.ts', text: 'A2 has no test.', contractRef: null, experiments: [{ command: 'node -e "parse(\'\')"', output: 'TypeError' }], debt: null,
       defect: 'test-inadequate', reraises: null, hunk: null,
     }],
-    premises: [], unreviewed: [], clusters: null, rulings: [],
+    premises: [], unreviewed: [], clusters: null, 
   },
   verifier: { hunks: [{ id: 'h1', kind: 'comment', executable: false, toolDirective: false, behaviourChange: false }] },
   lens: {
@@ -453,7 +453,7 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
   checkpoint: {
     decision: 'bundle', reasons: ['F-1 needs a repair'],
     ops: [{ op: 'cut', unit: 'u-one', reason: 'superseded by the repair', cites: ['V-1'], evidence: ['F-1'] }],
-    rulings: [], findingDispositions: [], interpretations: [], cites: { vision: ['V-1'], observations: [], findings: ['F-1'] }, premises: [],
+     findingDispositions: [], interpretations: [], cites: { vision: ['V-1'], observations: [], findings: ['F-1'] }, premises: [],
     corpusAmendments: [{ rules: ['T-1'], proposal: 'Allow three decimals for rates.', why: 'F-1 shows rates lose precision (V-1).' }],
   },
 };
@@ -721,15 +721,15 @@ describe('output validators', () => {
     assert.throws(() => validateGateOutput({ ...ok.gate, directives: [] }), SchemaError);
     assert.throws(() => validateGateOutput({ ...ok.gate, decision: 'approve' }), SchemaError);
     const note = [{ severity: 'note', path: null, text: 'fine', contractRef: 'C-1' }];
-    assert.throws(() => validateGateOutput({ ...ok.gate, decision: 'approve', directives: [], findings: ok.gate['findings'] }), SchemaError);
-    validateGateOutput({ ...ok.gate, decision: 'approve', directives: [], findings: note });
-    validateGateOutput({ ...ok.gate, decision: 'escalate', directives: [], findings: ok.gate['findings'] });
+    assert.throws(() => validateGateOutput({rulings: [],  ...ok.gate, decision: 'approve', directives: [], findings: ok.gate['findings'] }), SchemaError);
+    validateGateOutput({rulings: [],  ...ok.gate, decision: 'approve', directives: [], findings: note });
+    validateGateOutput({rulings: [],  ...ok.gate, decision: 'escalate', directives: [], findings: ok.gate['findings'] });
   });
 
   it('gate (dev.12 round 2): a pre-existing finding never blocks an approve; unreviewed is recorded as given, and a dev.11 answer without it reads as unknown (null)', () => {
     const pre = [{ severity: 'pre-existing', path: 'src/old.ts', text: 'Off by one since before the unit: the base has it.', contractRef: null }];
     const unreviewed = [{ path: 'packages/*/golden/**', reason: 'regenerated goldens, judged through the generator' }];
-    const out = validateGateOutput({ ...ok.gate, decision: 'approve', directives: [], findings: pre, unreviewed });
+    const out = validateGateOutput({rulings: [],  ...ok.gate, decision: 'approve', directives: [], findings: pre, unreviewed });
     assert.deepEqual(out.findings, pre.map((f) => ({ ...f, experiments: [], debt: 'unrecorded', defect: null, reraises: null, hunk: null })), 'a finding without experiments (a dev.12 answer) cites none; its debt is unrecorded; dev.17 fields read null');
     assert.deepEqual(out.unreviewed, unreviewed);
     const { unreviewed: _u, ...dev11 } = ok.gate;
@@ -1484,9 +1484,9 @@ it('prompts.derived-exclusion: plan-check, builders and gates render the exclude
 });
 
 it('non-active obligations render only their id and state', () => {
-  const waived = { ...observed('I-2', 'HIDDEN STATEMENT', SHA_A), obligation: { ...obligation('I-2', 'HIDDEN STATEMENT'), state: { type: 'waived' as const, ruling: rulingId('C-3') } } };
+  const waived = { ...observed('I-2', 'HIDDEN STATEMENT', SHA_A), obligation: { ...obligation('I-2', 'HIDDEN STATEMENT'), state: { type: 'waived' as const, reason: 'test disposition', rev: 2 } } };
   const text = obligationsText([waived], { serves: true });
-  assert.equal(text, '- I-2: waived by C-3');
+  assert.equal(text, '- I-2: waived by test disposition');
   assert.doesNotMatch(text, /Anchored at/);
 });
 

@@ -15,7 +15,7 @@ import { canonicalJson, sha256Hex } from '../core/json.ts';
 import {
   LENS_KIND_NAMES, type LaneDef, type LensKindName, type RepairRef, type Stage, laneDef, laneDefOf, laneEnv, repairRef,
 } from '../core/records.ts';
-import { legacyTierOf, minimalLaneRev, tierLaneRev } from '../core/upgrade.ts';
+
 import {
   type Read, Fields, SchemaError, arrayOf, assertUnique, bool, literal, nat, nullable, object, oneOf, positive, sortedBy, str, tagged,
   text, version,
@@ -201,13 +201,13 @@ export type WitnessRef = Readonly<{ lane: LaneId; testIds: readonly string[]; fi
  * the witness lane's `laneRev`, and the complete witness definition (`witness`: the lane id and every test id, in
  * the obligation's order; Checkpoint A). A change of any makes it stale (the classifier asks a fresh one).
  */
-export type ProofJudgment = Readonly<{ verdict: 'proves' | 'insufficient'; obligationRev: number; laneRev: LaneRev; witness: WitnessRef }>;
+export type ProofJudgment = Readonly<{ verdict: 'proves' | 'insufficient'; obligationRev: number; witness: Readonly<{ testIds: readonly string[]; files?: readonly RepoPath[] }> }>;
 
 /** H14: a split parent's witness and proof are null; every other state keeps both. */
 export type ObligationState =
   | Readonly<{ type: 'active' }>
   | Readonly<{ type: 'split'; children: readonly ObligationId[] }>
-  | Readonly<{ type: 'waived' | 'deferred' | 'retired'; ruling: RulingId }>;
+  | Readonly<{ type: 'waived' | 'deferred' | 'retired'; reason: string; rev: number }>;
 
 export type ObligationDef = Readonly<{
   id: ObligationId;
@@ -270,9 +270,9 @@ export const arcLaneDef: Read<ArcLaneDef> = (value, path) => {
 const obligationState: Read<ObligationState> = tagged('type', {
   active: object((f): ObligationState => ({ type: f.get('type', literal('active')) })),
   split: object((f): ObligationState => ({ type: f.get('type', literal('split')), children: f.get('children', idList(oid, { nonEmpty: true, legacyStringOrder: true })) })),
-  waived: object((f): ObligationState => ({ type: f.get('type', literal('waived')), ruling: f.get('ruling', rid) })),
-  deferred: object((f): ObligationState => ({ type: f.get('type', literal('deferred')), ruling: f.get('ruling', rid) })),
-  retired: object((f): ObligationState => ({ type: f.get('type', literal('retired')), ruling: f.get('ruling', rid) })),
+  waived: object((f): ObligationState => ({ type: f.get('type', literal('waived')), reason: f.get('reason', str), rev: f.get('rev', positive) })),
+  deferred: object((f): ObligationState => ({ type: f.get('type', literal('deferred')), reason: f.get('reason', str), rev: f.get('rev', positive) })),
+  retired: object((f): ObligationState => ({ type: f.get('type', literal('retired')), reason: f.get('reason', str), rev: f.get('rev', positive) })),
 });
 
 export const docRef: Read<DocRef> = object(docRefFields);
@@ -355,8 +355,7 @@ export const planDefect: Read<PlanDefect> = tagged('type', {
 const proofJudgment: Read<ProofJudgment> = object((f) => ({
   verdict: f.get('verdict', oneOf(['proves', 'insufficient'] as const)),
   obligationRev: f.get('obligationRev', positive),
-  laneRev: f.get('laneRev', (v, p) => laneRev(v, p)),
-  witness: f.get('witness', witnessRef),
+  witness: f.get('witness', object((g) => ({ testIds: g.get('testIds', arrayOf(str, { nonEmpty: true })), ...(g.optional('files', sortedBy(pathR, (p) => p, {nonEmpty: true})) === undefined ? {} : {files: g.get('files', sortedBy(pathR, (p) => p, {nonEmpty: true}))}) }))),
 }));
 
 const obligationAnchor = (f: Fields): ObligationAnchor => {
@@ -494,16 +493,7 @@ function normalisedLane(lane: LaneDef | ArcLaneDef): LaneDef | ArcLaneDef {
  * with a lane goes here.
  */
 export function laneRevMatches(recorded: LaneRev, lane: LaneDef | ArcLaneDef): boolean {
-  if (recorded === laneRevOf(lane)) return true;
-  const revOf = (v: object): LaneRev => laneRev(sha256Hex(canonicalJson(v)).slice(0, 16));
-  const { evidenceExcludes, ...minimal } = normalisedLane(lane);
-  if (evidenceExcludes.length === 0 && recorded === revOf(minimal)) return minimalLaneRev(lane.id);
-  const { cadence, ...rest } = normalisedLane(lane);
-  const tier = legacyTierOf(cadence);
-  if (tier === null || rest.systems !== undefined || rest.testArgv !== undefined || rest.stochastic !== undefined || rest.readsComments !== undefined) return false;
-  const { evidenceExcludes: excludes, ...restMinimal } = rest;
-  const forms = [{ ...rest, tier }, ...(excludes.length === 0 ? [{ ...restMinimal, tier }] : [])];
-  return forms.some((f) => recorded === revOf(f)) && tierLaneRev(lane.id);
+  return recorded === laneRevOf(lane);
 }
 
 /** An obligation is exempt while waived, deferred or retired (only a disposition ruling exempts one). */

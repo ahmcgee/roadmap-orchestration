@@ -675,7 +675,7 @@ test('evals-m4a.wake-key (paid run 2): needs-user ids are arc-scoped, so an id r
 // ---------------------------------------------------------------------------------------------------
 // M4b: the flow criteria and the fail-fast on synthetic records (no run needed)
 
-const lane = (id: string, argv: readonly string[]) => ({ id, argv: [...argv], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [] });
+const lane = (id: string, argv: readonly string[]) => ({ id, argv: [...argv], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [] });
 const planOf = (argv: readonly string[], units = MIN_ARC1_UNITS): PlanM1 => ({
   suite: { lanes: [lane(SUITE_LANE, argv), lane(REPLAY_LANE.id, REPLAY_LANE.argv)] }, units: Array.from({ length: units }, (_, i) => ({ id: `u${i + 1}` })),
 }) as unknown as PlanM1;

@@ -234,7 +234,7 @@ const writeFile = (path: string, text: string): void => {
 };
 
 function arcLane(id: string, journey: string) {
-  return { id, argv: ['node', '--test', journey], cwd: '.', env: PASS_PATH, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], reporter: 'node-test', testPaths: [...TEST_PATHS] };
+  return { id, argv: ['node', '--test', journey], cwd: '.', env: PASS_PATH, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], reporter: 'node-test', testPaths: [...TEST_PATHS] };
 }
 
 type Pin = Readonly<{ rules: readonly Readonly<{ id: string; textSha256: string }>[] }>;
@@ -260,7 +260,7 @@ function obligationsOf(n: ArcNo, pin: Pin) {
       const future = o.deliveredIn === n;
       return {
         id: o.id, rev: 1, statement: o.statement, rule: ref(o.rule), serves: o.serves, witness,
-        proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: revs.get(o.lane), witness },
+        proofJudgment: { verdict: 'proves', obligationRev: 1,  witness },
         deliveredBy: future ? [...o.deliveredBy] : [], activation: future ? 'future' : 'must-hold', contracts: [], state: { type: 'active' },
       };
     }),

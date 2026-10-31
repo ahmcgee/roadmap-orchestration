@@ -119,8 +119,8 @@ export type Concurrent = Readonly<{ peer: Peer; laid: Laid; stateDir: string }>;
 export function layoutConcurrent(t: Owner, peer: Peer): Concurrent {
   const barriers = tmpDir('cm-barriers');
   const units: UnitSpecJson[] = [
-    { id: A, lanes: peer === 'lane' ? [MUL_LANE, { id: 'estate-a', tier: 'estate', resources: ['estate'], argv: ['ESTATE_A'] }] : [MUL_LANE] },
-    { id: B, lanes: peer === 'lane' ? [TWO_LANE, { id: 'estate-b', tier: 'estate', resources: ['estate'], argv: ['ESTATE_B'] }] : [TWO_LANE] },
+    { id: A, lanes: peer === 'lane' ? [MUL_LANE, { id: 'estate-a', cadence: 'unit', resources: ['estate'], argv: ['ESTATE_A'] }] : [MUL_LANE] },
+    { id: B, lanes: peer === 'lane' ? [TWO_LANE, { id: 'estate-b', cadence: 'unit', resources: ['estate'], argv: ['ESTATE_B'] }] : [TWO_LANE] },
     ...(peer === 'publication' ? [{ id: C, lanes: [THREE_LANE] }] : []),
   ];
   const r = setupExec(t, { steps: [], units });
@@ -134,7 +134,7 @@ export function layoutConcurrent(t: Owner, peer: Peer): Concurrent {
       ...(peer === 'teardown' ? [{ name: 'slow', probe: command([process.execPath, fixture('res-tool.ts'), 'probe', stateDir, 'slow']), teardown: command([process.execPath, CM_PIN, barriers, PIN]) }] : []),
     ];
     // Estate: only a candidate runs it (C's, holding the slot), never a unit's lanes stage.
-    if (peer === 'publication') plan.suite.lanes.push(lane({ id: 'c-pin', tier: 'estate', argv: [process.execPath, CM_PIN, barriers, C_PIN] }));
+    if (peer === 'publication') plan.suite.lanes.push(lane({ id: 'c-pin', cadence: 'unit', argv: [process.execPath, CM_PIN, barriers, C_PIN] }));
     for (const u of plan.units) {
       if (u.id === A) {
         u['resources'] = ['db'];

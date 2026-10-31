@@ -129,7 +129,7 @@ import {
 import type { JournalView } from './core/interfaces.ts';
 import { EVENTS_FILE, type LogSnapshot, readJournal } from './core/log.ts';
 import type { HolisticFold, Lineage, ResourceEntry, UnitState } from './core/state.ts';
-import { type KnownDefectMatch, type StatusLock, statusLock } from './core/records.ts';
+import { type KnownDefectMatch,  } from './core/records.ts';
 import { type CorpusInForce, type InForce, PLAN_INPUT, RULING_INPUT, type RevisionInForce, keptInput, keptPayload, planInForce, revisionInForce, routingBaseOf } from './input/inforce.ts';
 import {
   type CommandBody, type ContainmentMode, type NeedsUserReason, type Receipt, type RunStart, type Stage, heartbeat, runStart,
@@ -142,7 +142,7 @@ import { type GateAnswerView, latestGateAnswer } from './pipeline/gate.ts';
 import { busyWaits, checkpointMilestonesRemaining } from './holistic/checkpoint.ts';
 import { integrationHistory, recordedAdmits } from './holistic/bundle.ts';
 import { findingAttribution, opportunityClauses } from './holistic/admits.ts';
-import { checkpointSkipTriggerOf, gateLargeDiffOf } from './core/upgrade.ts';
+import { checkpointSkipTriggerOf, gateLargeDiffOf } from './core/projections.ts';
 import { type KnownDefect, type PlanM1, type PlanUnit, advancesOf, hasMilestones, knownDefectsOf, lensSetOf, milestonesOf, parsePlan } from './input/plan.ts';
 import { type MilestoneState, milestoneProgress, milestoneState, walksOf } from './walk/milestones.ts';
 import { milestoneEdges, milestonePassed, milestoneWaits } from './walk/node.ts';
@@ -554,8 +554,8 @@ export type Status = Readonly<{
   target: TargetView | null;
   nowTrue: readonly ObligationTruth[];
   notYetTrue: readonly ObligationPending[];
-  waived: readonly Readonly<{ obligation: ObligationId; ruling: RulingId }>[];
-  deferred: readonly Readonly<{ obligation: ObligationId; ruling: RulingId }>[];
+  waived: readonly Readonly<{ obligation: ObligationId; reason: string }>[];
+  deferred: readonly Readonly<{ obligation: ObligationId; reason: string }>[];
   vision: VisionView | null;
   divergences: readonly DivergenceView[];
   decisionsSince: readonly Decision[];
@@ -1272,8 +1272,8 @@ function targetOf(view: JournalView, plan: PlanM1, obligations: Obligations, t: 
   };
 }
 
-function exemptBy(obligations: Obligations | null, type: 'waived' | 'deferred'): readonly Readonly<{ obligation: ObligationId; ruling: RulingId }>[] {
-  return (obligations?.obligations ?? []).flatMap((o) => (o.state.type === type ? [{ obligation: o.id, ruling: o.state.ruling }] : []))
+function exemptBy(obligations: Obligations | null, type: 'waived' | 'deferred'): readonly Readonly<{ obligation: ObligationId; reason: string }>[] {
+  return (obligations?.obligations ?? []).flatMap((o) => (o.state.type === type ? [{ obligation: o.id, reason: o.state.reason }] : []))
     .sort((a, b) => compareIds(a.obligation, b.obligation));
 }
 
@@ -1724,40 +1724,6 @@ export function admitViews(view: JournalView, repo: AbsPath, plan: PlanM1, meter
     }];
   });
   return { admits, opportunities, drift };
-}
-
-export const STATUS_LOCK = 'status.lock';
-
-/**
- * Runs `read` as the run's only `roadmap status` (2026-10-23: 110 overlapping polls of a 38k-event arc exhausted the
- * host and starved its executor). `status.lock` names its holder: a live holder refuses at once, loud; a dead one's
- * lock (a status killed by a timeout never releases) is replaced. Two replacers of one dead lock race on the create,
- * and the loser refuses; one that removed the dead lock just after the other replaced it lets two statuses run once.
- * An arc that never started has no run dir, and no log to fold: its status takes no lock.
- */
-export function statusSingleFlight<T>(runDir: AbsPath, arc: ArcId, read: () => T): T {
-  if (!existsSync(runDir)) return read();
-  const path = join(runDir, STATUS_LOCK);
-  const claim = (): boolean => {
-    try {
-      exclusivePublish(path, fileJson({ v: SCHEMA_VERSION, bootId: readBootId(), holder: selfIdentity() } satisfies StatusLock));
-      return true;
-    } catch (error) {
-      if (error instanceof AlreadyExistsError) return false;
-      throw error;
-    }
-  };
-  if (!claim()) {
-    const held = statusLock(readJson(path), path);
-    if (isAlive(held.holder, held.bootId)) throw new CliError(`status: another status of arc ${arc} is running (pid ${held.holder.pid}); run one at a time`);
-    durableUnlink(path);
-    if (!claim()) throw new CliError(`status: another status of arc ${arc} replaced the stale ${STATUS_LOCK} first; run one at a time`);
-  }
-  try {
-    return read();
-  } finally {
-    durableUnlink(path);
-  }
 }
 
 export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: LogSnapshot): Status {

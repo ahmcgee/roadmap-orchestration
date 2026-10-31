@@ -222,7 +222,7 @@ describe('series certificates and lane reuse (F1a)', () => {
   });
 
   test('lanes.inputs-refused-off-spec: a suite lane or an arc lane declaring inputs is refused (a spec lane\'s are dropped since dev.17)', () => {
-    const lane = { id: 'l', argv: ['true'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], inputs: ['src/**'] };
+    const lane = { id: 'l', argv: ['true'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], inputs: ['src/**'] };
     const plan = {
       schema: 'roadmap/plan-m1', arc: 'arc-1', integrationBranch: 'main', baseline: 'a'.repeat(40), worktreeRoot: '/tmp/wt', contracts: [], rulings: 'r.md',
       architectureDoc: 'A.md', direction: 'd', suite: { lanes: [lane] }, resources: [], units: [{ id: 'u1', spec: 'u1.json', risk: 'low', scope: ['src/**'], resources: [] }],

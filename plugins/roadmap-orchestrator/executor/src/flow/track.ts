@@ -25,7 +25,7 @@ import { canonicalJson } from '../core/json.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { type IsoTime, isoTimeOf } from '../core/values.ts';
 import { submittedAtMs } from '../commands/queue.ts';
-import { dev7ArcRolesDefault } from '../core/upgrade.ts';
+
 import type { CheckpointContext } from '../holistic/bundle.ts';
 import { workRemains } from '../holistic/cadence.ts';
 import { drainsArc } from '../input/classify.ts';
@@ -54,7 +54,6 @@ const now = (): IsoTime => isoTimeOf(new Date());
  */
 export function flowOn(view: JournalView): boolean {
   if (arcRolesOf(view.planApplied()) !== null) return true;
-  dev7ArcRolesDefault();
   return false;
 }
 

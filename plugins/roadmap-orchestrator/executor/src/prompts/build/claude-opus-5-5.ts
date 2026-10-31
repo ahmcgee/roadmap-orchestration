@@ -131,7 +131,7 @@ export const PROMPT: PromptModule<'build'> = {
   system,
   schema: BUILD_SCHEMA,
   fields: [
-    'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks',
+    'notes', 'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks',
     'milestones', 'browser', 'certifiedAt', 'handover',
   ],
   render: (i) => `${documentsXml([
@@ -149,6 +149,7 @@ ${referenceIndexText(i.index)}
 </reference_index>${milestonesText(i.milestones)}
 
 <plan_check_notes>
+${i.notes.length === 0 ? '' : `<notes>\n${JSON.stringify(i.notes)}\n</notes>\n`}
 ${i.planCheckNotes === '' ? '(none)' : i.planCheckNotes}
 </plan_check_notes>
 

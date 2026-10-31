@@ -199,7 +199,7 @@ test('fixture conflict → merge-in → resolve: T moves under the approved unit
 
 test('fixture red candidate → fix → fresh gate → green: the suite is red on the candidate and green at T alone', T, async () => {
   // An estate suite lane: the lanes stage's fast suite (stages.ts `fastSuite`) would catch the broken add before the candidate.
-  const d = setupArc({ steps: [], suite: [{ ...SUITE_LANE, tier: 'estate' }] });
+  const d = setupArc({ steps: [], suite: [{ ...SUITE_LANE, cadence: 'unit' }] });
   const suiteOutput = `(${literal(d.runDir)}\\/evidence\\/u1\\/[0-9]+-candidate\\/candidate\\/suite\\/output\\/files)`;
   appendSteps(d, [
     planCheckStep({ decision: 'approve' }),

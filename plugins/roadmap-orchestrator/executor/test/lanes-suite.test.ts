@@ -28,7 +28,7 @@ const UNIT: LaneJson = { id: 'unit', argv: ['true'] };
 /** A suite lane identical to the spec's: its pass is the spec series', so it never runs at the lanes stage. */
 const SAME: LaneJson = { id: 'same', argv: ['true'] };
 /** An estate suite lane: the candidate's alone. */
-const E2E: LaneJson = { id: 'e2e', argv: ['false'], tier: 'estate' };
+const E2E: LaneJson = { id: 'e2e', argv: ['false'], cadence: 'unit' };
 
 type LaneSubject = Readonly<{ lane: string; set: string; at: Sha; attempt: number }>;
 /** The lane spawns, in order: which lane, which set, at which commit, under which lanes attempt. */

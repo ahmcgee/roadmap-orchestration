@@ -15,11 +15,11 @@ import { advancesReasons, citeReasons, visionCoverage, visionEditReasons } from 
 import { coverageText } from '../src/prompts/inputs.ts';
 
 const LANE = {
-  id: 'journey', argv: ['node', '--test', 'journey.test.js'], cwd: 'test', env: { set: {}, pass: [] }, expectedExit: 0, tier: 'fast', resources: [],
+  id: 'journey', argv: ['node', '--test', 'journey.test.js'], cwd: 'test', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [],
   evidenceGlobs: [], evidenceExcludes: [], reporter: 'node-test',
 };
 const LANE_REV = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [LANE], obligations: [], mapping: { paths: [] } }).lanes[0]!);
-const proof = (id: string, rev = 1, testIds: readonly string[] = [id]): object => ({ verdict: 'proves', obligationRev: rev, laneRev: LANE_REV, witness: { lane: 'journey', testIds } });
+const proof = (id: string, rev = 1, testIds: readonly string[] = [id]): object => ({ verdict: 'proves', obligationRev: rev,  witness: {  testIds } });
 
 type Raw = Record<string, unknown>;
 const ob = (id: string, over: Raw = {}): Raw => ({
@@ -62,8 +62,8 @@ const ruling = (id: string, dispositions: readonly Readonly<{ id: string; dispos
   },
 });
 
-const ARCHITECT: ClassifyContext = { vision: VISION, rulings: [], author: { type: 'architect' }, latched: new Set(), published: new Set() };
-const withRulings = (rulings: readonly RulingSidecar[]): ClassifyContext => ({ ...ARCHITECT, rulings });
+const ARCHITECT: ClassifyContext = { vision: VISION, author: { type: 'architect' }, latched: new Set(), published: new Set() };
+const withRulings = (rulings: readonly RulingSidecar[]): ClassifyContext => ({ ...ARCHITECT, author: {type: 'architect', reason: rulings[0]?.statement ?? '', rev: 2} });
 const replace = (id: string, over: Raw): Raw[] => BASE.map((o) => (o['id'] === id ? { ...o, ...over } : o));
 
 describe('obligation edits', () => {
@@ -85,21 +85,19 @@ describe('obligation edits', () => {
       [file(replace('I-3', { statement: 'Unknown commands exit 64.', rev: 2, proofJudgment: proof('I-3', 2) })), 'statement changed', 'amended'],
       [file(replace('I-3', { docRef: { path: 'docs/target.md', anchor: '#cli', quotedText: 'exit' }, rev: 2, proofJudgment: proof('I-3', 2) })), 'docRef changed', 'amended'],
       [file(replace('I-3', { activation: 'future', deliveredBy: ['tidy'], rev: 2, proofJudgment: proof('I-3', 2) })), 'must-hold → future', 'amended'],
-      [file(replace('I-3', { state: { type: 'waived', ruling: 'C-5' } })), 'waived by C-5', 'waived'],
+      [file(replace('I-3', { state: { type: 'waived', reason: 'test disposition', rev: 2 } })), 'waived: test disposition', 'waived'],
       [file(replace('I-3', { witness: { lane: 'journey', testIds: ['other'] }, proofJudgment: proof('I-3', 1, ['other']) })), 'witness no longer names "I-3"', 'amended'],
     ];
     for (const [obligations, what, disposition] of cases) {
       const v = classifyObligations(PREV, obligations, ARCHITECT);
-      assert.ok(v.reasons.some((r) => r.startsWith(`I-3 is weakened (${what}) without a ruling in force naming it ${disposition}`)), `${what}: ${JSON.stringify(v.reasons)}`);
+      assert.ok(v.reasons.some((r) => r.startsWith(`I-3 is weakened (${what}) without an apply --reason`)), `${what}: ${JSON.stringify(v.reasons)}`);
       const ok = classifyObligations(PREV, obligations, withRulings([ruling('C-5', [{ id: 'I-3', disposition }])]));
       assert.deepEqual(ok.reasons, [], what);
-      assert.ok(ok.changes.some((c) => c.type === 'disposed' && c.id === 'I-3' && c.disposition === disposition && c.ruling === 'C-5'), what);
+      assert.ok(ok.changes.some((c) => c.type === 'disposed' && c.id === 'I-3' && c.disposition === disposition && c.reason === ruling('C-5', []).statement), what);
     }
-    // A ruling naming another disposition does not do; a state's own ruling must be the one.
-    assert.ok(classifyObligations(PREV, file(replace('I-3', { state: { type: 'waived', ruling: 'C-5' } })), withRulings([ruling('C-5', [{ id: 'I-3', disposition: 'deferred' }])])).reasons.length > 0);
-    assert.ok(classifyObligations(PREV, file(replace('I-3', { state: { type: 'waived', ruling: 'C-5' } })), withRulings([ruling('C-6', [{ id: 'I-3', disposition: 'waived' }])])).reasons.length > 0);
+    assert.ok(classifyObligations(PREV, WITHOUT_I3(), {...ARCHITECT, author: {type: 'architect', reason: ''}}).reasons.length > 0);
     // Restoring, and strengthening, need none.
-    const waived = file(replace('I-3', { state: { type: 'waived', ruling: 'C-5' } }));
+    const waived = file(replace('I-3', { state: { type: 'waived', reason: 'test disposition', rev: 2 } }));
     assert.deepEqual(classifyObligations(waived, PREV, ARCHITECT).changes, [{ type: 'restored', id: 'I-3' }]);
     const latched = classifyObligations(PREV, file(replace('I-1', { activation: 'must-hold', rev: 2, proofJudgment: proof('I-1', 2) })), ARCHITECT);
     assert.deepEqual(latched, { changes: [{ type: 'edited', id: 'I-1', fields: ['activation'] }], mapping: false, lanes: [], cutLine: false, reasons: [] });
@@ -107,18 +105,22 @@ describe('obligation edits', () => {
 
   it('obligations.revs-and-proofs: the rev rises exactly with a normative change; a stale proof judgment is refused; a new witness must prove; a proof binds the complete witness definition', () => {
     assert.deepEqual(classifyObligations(PREV, file(replace('I-2', { rev: 2, proofJudgment: proof('I-2', 2) })), ARCHITECT).reasons, ['I-2 takes rev 1, not 2 (the rev rises exactly when its statement, docRef, rule or activation changes)']);
-    assert.deepEqual(classifyObligations(PREV, file(replace('I-2', { proofJudgment: { ...proof('I-2'), laneRev: '0000000000000000' } })), ARCHITECT).reasons,
-      [`I-2's proof judgment is stale (judged obligation rev 1, lane 0000000000000000; now rev 1, lane ${LANE_REV})`]);
+    assert.deepEqual(classifyObligations(PREV, file(replace('I-2', { proofJudgment: { ...proof('I-2'), obligationRev: 2 } })), ARCHITECT).reasons,
+      ["I-2's proof judgment is stale (judged obligation rev 2; now 1)"]);
     // Checkpoint A: a witness whose test set grows (lane and obligation revs unchanged) needs a fresh proof of that witness.
     const grownWitness = { lane: 'journey', testIds: ['I-2', 'half-even'] };
     const unreviewed = classifyObligations(PREV, file(replace('I-2', { witness: grownWitness })), ARCHITECT);
-    assert.deepEqual(unreviewed.reasons, [`I-2's proof judgment is stale (judged witness {"lane":"journey","testIds":["I-2"]}; now {"lane":"journey","testIds":["I-2","half-even"]})`]);
+    assert.deepEqual(unreviewed.reasons, ["I-2's proof judgment is stale (judged test ids or files differ)"]);
     const grown = classifyObligations(PREV, file(replace('I-2', { witness: grownWitness, proofJudgment: proof('I-2', 1, grownWitness.testIds) })), ARCHITECT);
     assert.deepEqual(grown, { changes: [{ type: 'witness', id: 'I-2' }], mapping: false, lanes: [], cutLine: false, reasons: [] });
-    // A proof of the same tests on another lane id is stale too.
-    const otherLane = { lane: 'suite', testIds: ['I-2'] };
-    assert.deepEqual(classifyObligations(PREV, file(replace('I-2', { proofJudgment: { ...proof('I-2'), witness: otherLane } })), ARCHITECT).reasons,
-      [`I-2's proof judgment is stale (judged witness {"lane":"suite","testIds":["I-2"]}; now {"lane":"journey","testIds":["I-2"]})`]);
+    // Moving a witness to another lane with the same ids/files reuses its proof judgment.
+    const movedRaw = JSON.parse(JSON.stringify(PREV)) as {lanes: {id: string}[]; obligations: {id: string; witness: {lane: string}}[]};
+    movedRaw.lanes.push({...movedRaw.lanes[0]!, id: 'journey2'});
+    movedRaw.obligations.find((o) => o.id === 'I-2')!.witness.lane = 'journey2';
+    const rebound = classifyObligations(PREV, parseObligations(movedRaw), ARCHITECT);
+    assert.deepEqual(rebound.reasons, []);
+    assert.ok(rebound.changes.some((c) => c.type === 'witness' && c.id === 'I-2'));
+    assert.ok(!rebound.changes.some((c) => c.type === 'disposed'));
     const unproven = classifyObligations(PREV, file(replace('I-2', { witness: { lane: 'journey', testIds: ['I-2', 'x'] }, proofJudgment: { ...proof('I-2', 1, ['I-2', 'x']), verdict: 'insufficient' } })), ARCHITECT);
     assert.deepEqual(unproven.reasons, ["I-2's witness is judged insufficient (a new witness must prove it)"]);
     const moved = classifyObligations(PREV, file(BASE, [{ pattern: 'src/**', obligations: ['I-3'] }]), ARCHITECT);
@@ -279,28 +281,28 @@ describe('invariants.md and re-derivation', () => {
 
   it('rederive.drop-refused: a published id missing or weakened needs a Phase-0 ruling; a split parent is present; new ids are free', () => {
     const published = renderInvariants(PREV, []);
-    assert.deepEqual(rederive(null, PREV, []), []);
-    assert.deepEqual(rederive('# Invariants\n', PREV, []), []);
-    assert.deepEqual(rederive(published, file([...BASE, ob('I-9')]), []), []);
+    assert.deepEqual(rederive(null, PREV, {}), []);
+    assert.deepEqual(rederive('# Invariants\n', PREV, {}), []);
+    assert.deepEqual(rederive(published, file([...BASE, ob('I-9')]), {}), []);
     const dropped = WITHOUT_I3();
-    assert.deepEqual(rederive(published, dropped, []), ['obligation-dropped: I-3 (removed) has no Phase-0 ruling naming it retired']);
-    assert.deepEqual(rederive(published, dropped, [ruling('C-1', [{ id: 'I-3', disposition: 'retired' }])]), []);
-    assert.deepEqual(rederive(published, null, []).length, 3);
+    assert.deepEqual(rederive(published, dropped, {}), ['obligation-dropped: I-3 (removed) has no Phase-0 reason for retired']);
+    assert.deepEqual(rederive(published, dropped, {'I-3': 'retire after review'}), []);
+    assert.deepEqual(rederive(published, null, {}).length, 3);
     const weakened = file(replace('I-2', { activation: 'future', deliveredBy: ['tidy'], rev: 2, proofJudgment: proof('I-2', 2) }));
-    assert.deepEqual(rederive(published, weakened, []), ['obligation-dropped: I-2 (must-hold → future) has no Phase-0 ruling naming it amended']);
+    assert.deepEqual(rederive(published, weakened, {}), ['obligation-dropped: I-2 (must-hold → future) has no Phase-0 reason for amended']);
     const split = file([
       ...replace('I-2', { witness: null, proofJudgment: null, state: { type: 'split', children: ['I-4'] } }),
       ob('I-4', { parent: 'I-2', statement: 'Money is never mis-rounded. Totals round half-even.' }),
     ]);
-    assert.deepEqual(rederive(published, split, []), []);
-    const retired = renderInvariants(file(replace('I-3', { state: { type: 'retired', ruling: 'C-2' } })), []);
-    assert.deepEqual(rederive(retired, WITHOUT_I3(), []), [], 'a retired obligation may leave');
+    assert.deepEqual(rederive(published, split, {}), []);
+    const retired = renderInvariants(file(replace('I-3', { state: { type: 'retired', reason: 'test disposition', rev: 2 } })), []);
+    assert.deepEqual(rederive(retired, WITHOUT_I3(), {}), [], 'a retired obligation may leave');
   });
 });
 
 describe('the vision record', () => {
   it('vision.coverage: advanced clauses unserved, the horizon, obligations serving no active clause, withdrawn clauses still cited', () => {
-    const o = file([...BASE, ob('I-4', { serves: ['V-4'] }), ob('I-5', { serves: ['V-3'], state: { type: 'waived', ruling: 'C-1' } })]);
+    const o = file([...BASE, ob('I-4', { serves: ['V-4'] }), ob('I-5', { serves: ['V-3'], state: { type: 'waived', reason: 'test disposition', rev: 2 } })]);
     const advances = ['V-2', 'V-3', 'V-5'].map((c) => visionClauseId(c));
     const citers = [{ id: rulingId('C-2'), cites: [visionClauseId('V-4')] }, { id: divergenceId('D-1'), cites: [visionClauseId('V-2')] }];
     assert.deepEqual(visionCoverage(VISION, advances, o, citers, []), {

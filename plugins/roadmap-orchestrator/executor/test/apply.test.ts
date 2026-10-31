@@ -1125,7 +1125,7 @@ test('apply.lane-row-live-units (paid M4b run 3, OP-3): the lane row checks what
     // A successor carrying the same lane is refused for its own lane.
     parkAtGate(r, 'u3');
     reenter('u5', 'u3')(d);
-    editSpec(d, 'u5', (s) => void (s['lanes'] = [{ ...unrunnable, cwd: '.', expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], state: 'active' }]));
+    editSpec(d, 'u5', (s) => void (s['lanes'] = [{ ...unrunnable, cwd: '.', expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], state: 'active' }]));
     assert.match(reason((await command(r, applyBody(d))).outcome), row('u5'));
     editPlan(d, (p) => void (p.units = p.units.filter((u) => u.id !== 'u5')));
     // A cut of the parked u3: the row never runs on what the revision retires.

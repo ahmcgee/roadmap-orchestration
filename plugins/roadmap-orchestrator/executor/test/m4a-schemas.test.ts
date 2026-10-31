@@ -18,7 +18,7 @@ import { canonicalJson } from '../src/core/json.ts';
 import { brief } from '../src/commands/brief.ts';
 import { chainStatus } from '../src/commands/chain.ts';
 import { approvalFingerprint, needsUserRecord, NEEDS_USER_REASONS, revisionInputs } from '../src/core/records.ts';
-import { censusOf, checkpointSkipTriggerOf } from '../src/core/upgrade.ts';
+import { censusOf, checkpointSkipTriggerOf } from '../src/core/projections.ts';
 import { Fields, SchemaError } from '../src/core/validate.ts';
 import { absPath, isoTime, repoPath } from '../src/core/values.ts';
 import { parseCorpusGuide, parseCorpusPin, parseRulesRegistry } from '../src/corpus/types.ts';
@@ -47,7 +47,7 @@ const H2 = sha256('e'.repeat(64));
 const AT = isoTime('2026-10-03T12:00:00.000Z');
 const CMD = commandId('cmd-0123456789abcdef');
 
-const envelope = (seq: number): Envelope => ({ v: 1, seq, prev: seq === 1 ? null : H, at: AT, arc: ARC });
+const envelope = (seq: number): Envelope => ({ v: 2, seq, prev: seq === 1 ? null : H, at: AT, arc: ARC });
 function roundTrip(record: LogRecord): Event {
   const e = { ...envelope(2), ...record } as Event;
   const line = serializeEvent(e);
@@ -89,7 +89,7 @@ const pin = {
 };
 
 const witness = { lane: 'journey', testIds: ['t1'] };
-const proof = { verdict: 'proves', obligationRev: 1, laneRev: '0123456789abcdef', witness };
+const proof = { verdict: 'proves', obligationRev: 1,  witness };
 const ruleObligation = (id: string, rule: string) => ({
   id, rev: 1, statement: `statement ${id}`, rule: { id: rule, textSha256: H }, serves: ['V-1'], witness, proofJudgment: proof, deliveredBy: [],
   activation: 'must-hold', contracts: [], state: { type: 'active' },
@@ -367,7 +367,7 @@ describe('facts, plan changes, manifests and fingerprints', () => {
       assert.ok(NEEDS_USER_REASONS.includes(reason));
       assert.equal(m3Blocking(reason), true, reason);
       needsUserRecord({
-        v: 1, id: 'nu-4', arc: 'arc-2', raisedAt: AT, blocking: true, subject: { type: 'arc' }, reason, summary: 's', recommendation: 'r', options: [], evidence: [],
+        v: 2, id: 'nu-4', arc: 'arc-2', raisedAt: AT, blocking: true, subject: { type: 'arc' }, reason, summary: 's', recommendation: 'r', options: [], evidence: [],
       }, 'nu');
     }
   });
@@ -412,7 +412,7 @@ describe('startup rows, brief and ack', () => {
       { kind: 'tree-uncommitted', paths: ['.roadmap/config.json', '.roadmap/vision.json'] },
       { kind: 'holistic-needs-corpus' },
     ];
-    const file = { v: 1, at: AT, rejections: rows };
+    const file = { v: 2, at: AT, rejections: rows };
     same((v) => rejectionFile(v, 'rejection'), file);
     for (const row of rejectionFile(file, 'rejection').rejections) assert.equal(exitCodeFor(row), 78, row.kind);
     assert.throws(() => rejectionFile({ ...file, rejections: [{ kind: 'corpus-invalid', problems: [] }] }, 'rejection'), /problems/);
@@ -465,38 +465,10 @@ describe('startup rows, brief and ack', () => {
   });
 });
 
-describe('upgrade.defaults-dev6', () => {
-  it('a dev.6 obligations file reads with no census (vacuous)', () => {
-    const { rule: _r, ...noAnchor } = ruleObligation('I-1', 'T-2');
-    const dev6 = parseObligations(obligationsFile([{ ...noAnchor, docRef: { path: 'docs/arch.md', anchor: '#a', quotedText: 'q' } }]));
-    assert.equal(censusOf(dev6), null);
-    assert.deepEqual(censusOf(parseObligations(obligationsFile([], []))), []);
-  });
 
-  it('a checkpoint answer carries amendments and each split child\'s rule (a dev.6 answer\'s shape is not adopted since 1.0.0-dev.8)', () => {
-    const child = { id: 'I-5', statement: 's', docRef: { path: 'docs/arch.md', anchor: '#a', quotedText: 'q' }, rule: null, witness, activation: 'must-hold', deliveredBy: [] };
-    const answer = {
-      decision: 'bundle', reasons: ['r'], ops: [{ op: 'obligation-split', obligation: 'I-1', children: [child], cites: ['V-1'], evidence: ['F-1'] }],
-      rulings: [], findingDispositions: [], interpretations: [], cites: { vision: ['V-1'], observations: [], findings: [] }, premises: [],
-      corpusAmendments: [],
-    };
-    const op = validateCheckpointOutput(answer).ops[0]!;
-    assert.ok(op.op === 'obligation-split' && op.children[0]!.rule === null);
-    const { corpusAmendments: _c, ...noAmendments } = answer;
-    const { rule: _r, ...noRule } = child;
-    for (const dev6 of [noAmendments, { ...answer, ops: [{ ...answer.ops[0], children: [noRule] }] }]) assert.throws(() => validateCheckpointOutput(dev6), SchemaError);
-    // M4a's own: a rule-anchored child and amendments.
-    const m4 = validateCheckpointOutput({
-      ...answer, ops: [{ ...answer.ops[0], children: [{ ...child, docRef: null, rule: 'T-2' }] }],
-      corpusAmendments: [{ rules: ['T-2'], proposal: 'p', why: 'w' }],
-    });
-    assert.equal(m4.corpusAmendments.length, 1);
-    assert.throws(() => validateCheckpointOutput({ ...answer, ops: [{ ...answer.ops[0], children: [{ ...child, rule: 'T-2' }] }] }), /exactly one of docRef and rule/);
-  });
-});
 
 // The issues integration was removed in 1.0.0-dev.21; what an earlier executor or plan wrote for it reads as written and is
-// ignored (src/core/upgrade.ts `issuesIgnored`; scaffolding, deleted with it).
+// ignored (src/core/projections.ts `issuesIgnored`; scaffolding, deleted with it).
 describe('upgrade.issues-ignored', () => {
   it('facts: issue-intake and issues-captured, checkpoint-inputs.issues, a phase0 change\'s issuesSha256 and an amendment from an issue read byte-identically', () => {
     roundTrip(fact({ kind: 'issue-intake', job: 'ckpt-2', issue: 'issue-3', outcome: { type: 'acted', on: { type: 'ops', indexes: [0, 2] } } }));
@@ -521,7 +493,7 @@ describe('upgrade.issues-ignored', () => {
     const legacy = { ...phase0, issueCapture: { file: 'issues.json', sha256: H }, intake: [{ issue: 'issue-3', outcome: { type: 'none', reason: 'planned' } }] };
     assert.deepEqual(parsePhase0Record(legacy), parsePhase0Record(phase0), 'read and ignored');
     const answer = {
-      decision: 'no-op', reasons: ['r'], ops: [], rulings: [], findingDispositions: [], interpretations: [], cites: { vision: ['V-1'], observations: [], findings: [] },
+      decision: 'no-op', reasons: ['r'], ops: [],  findingDispositions: [], interpretations: [], cites: { vision: ['V-1'], observations: [], findings: [] },
       premises: [], corpusAmendments: [],
     };
     assert.deepEqual(validateCheckpointOutput({ ...answer, issueIntake: [{ issue: 'issue-3', outcome: { type: 'none', reason: 'x' } }] }), validateCheckpointOutput(answer));
@@ -564,7 +536,7 @@ describe('upgrade.legacy-id-order', () => {
   it('a checkpoint answer\'s lists come in any order and read canonical, so no fact built from them is refused for order', () => {
     const child = { id: 'I-12', statement: 's', docRef: null, rule: 'T-2', witness, activation: 'must-hold', deliveredBy: ['u2', 'u1'] };
     const out = validateCheckpointOutput({
-      decision: 'bundle', reasons: ['r'], rulings: [], findingDispositions: [], premises: [],
+      decision: 'bundle', reasons: ['r'],  findingDispositions: [], premises: [],
       ops: [{ op: 'obligation-split', obligation: 'I-1', children: [child], cites: ['V-10', 'V-2'], evidence: ['F-1'] }],
       interpretations: [{ clauses: ['V-11', 'V-3'], situation: 's', reading: 'r' }],
       cites: { vision: ['V-10', 'V-9'], observations: [], findings: ['F-12', 'F-3'] },

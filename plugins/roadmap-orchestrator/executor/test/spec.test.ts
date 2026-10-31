@@ -28,12 +28,12 @@ const SPEC_KEY = opKey('spec:u1');
 
 const FAST_LANE = {
   id: 'unit-tests', argv: ['npm', 'test'], cwd: '.', env: { set: { ZED: '1', ALPHA: 'a b' }, pass: ['PATH', 'HOME'] },
-  expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: ['out/b.log', 'out/a.log'], state: 'active',
+  expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: ['out/b.log', 'out/a.log'], state: 'active',
 };
 // Every token of this lane is distinctive, so a leak into the implementer's view is detectable.
 const ESTATE_LANE = {
   id: 'estateJourney', argv: ['estate-runner', '--estate-flag'], cwd: 'estate-dir', env: { set: { ESTATE_SECRET: 'estate-value' }, pass: ['ESTATE_PASS'] },
-  expectedExit: 3, tier: 'estate', resources: ['estate-db'], evidenceGlobs: ['estate-evidence/**'], state: 'active',
+  expectedExit: 3, cadence: 'unit', resources: ['estate-db'], evidenceGlobs: ['estate-evidence/**'], state: 'active',
 };
 
 /** The authored form: a unit spec as Phase 0 writes it, keys in authoring order. */

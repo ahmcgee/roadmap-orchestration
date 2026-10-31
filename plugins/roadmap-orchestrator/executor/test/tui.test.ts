@@ -53,7 +53,7 @@ import { tmpDir, git } from './helpers/repo.ts';
 function fixture() {
   const d = setupArc({ steps: [], units: [{ id: 'root' }, { id: 'left', after: ['root'] }, { id: 'right', after: ['root'] }, { id: 'join', after: ['left', 'right'] }] });
   const r = contextFor(d); r.journal.close();
-  writeFileSync(join(d.runDir, 'start.json'), JSON.stringify({ v: 1, generation: 1, at: new Date().toISOString(), repo: d.repo, planFile: d.planPath, profile: 'default' }));
+  writeFileSync(join(d.runDir, 'start.json'), JSON.stringify({ v: 2, generation: 1, at: new Date().toISOString(), repo: d.repo, planFile: d.planPath, profile: 'default' }));
   const request: ObserveRequest = { locator: { type: 'host' }, hostDir: absPath(d.hostDir), pinned: { runDir: absPath(d.runDir), arc: arcId(d.arc) }, token: 1 };
   return { d, request };
 }
@@ -344,7 +344,7 @@ test('all retained invocations, lost retries, command sources and invalid runner
   const promptPath = inputPath(dir, keepInput(dir, Buffer.from(prompt), 'prompt.txt'), 'prompt.txt');
   let launch!: LaunchFile;
   const current = journal.begin({ kind: 'proc.spawn', key: opKey('spawn:running'), parent: { type: 'arc' }, deadlineAt: null, body: (op, inv) => {
-    launch = { v: 1, arc, op, inv, argv: ['node', '-e', ''], cwd: dir, env: {}, stdinPath: promptPath,
+    launch = { v: 2, arc, op, inv, argv: ['node', '-e', ''], cwd: dir, env: {}, stdinPath: promptPath,
       deadlineAt: isoTime('2099-01-01T00:00:00.000Z'), stallMs: null, graceMs: 1000, containment: 'session', test: null,
       terminal: { type: 'command', purpose: 'smoke', expectedExit: 0 } };
     return { expect: { ...body().expect, launchSha256: launchSha256(launch) }, post: null };
@@ -1002,7 +1002,7 @@ test('Debt includes inherited dispositions and newly banked items before publica
   const { d } = await setupCorpusArc([], { baseline: { '.roadmap/debt.md': renderDebt(baseline) }, phase0: { debt: [{ id: 'B-1', disposition: { type: 'keep', reason: 'Deferred until next slice' } }] } });
   const r = contextFor(d);
   try {
-    writeFileSync(join(d.runDir, 'start.json'), JSON.stringify({ v: 1, generation: 1, at: new Date().toISOString(), repo: d.repo, planFile: d.planPath, profile: 'default' }));
+    writeFileSync(join(d.runDir, 'start.json'), JSON.stringify({ v: 2, generation: 1, at: new Date().toISOString(), repo: d.repo, planFile: d.planPath, profile: 'default' }));
     const request: ObserveRequest = { locator: { type: 'host' }, hostDir: absPath(d.hostDir), pinned: { runDir: r.ctx.runDir, arc: arcId(d.arc) }, token: 1 };
     const observer = new Observer(); const first = observer.observe(request); assert.equal(first.error, null);
     assert.equal(first.display!.estate.find((e) => e.id === 'debt')!.label, 'Debt (1 open)');
@@ -1133,7 +1133,7 @@ test('arc witness commands link through the obligation revision and lane hash, n
   assert.deepEqual(linked.get('arc/10#1')?.relatedUnits, ['u1']); assert.match(linked.get('arc/10#1')!.context!, /Baseline witness check.*I-1 → u1.*before delivery/);
   assert.equal(linked.has('arc/11#1'), false);
   const witness = { lane: lane.id, laneRev: laneRevOf(lane), envId: '0123456789abcdef', treeSha: '1'.repeat(40), inv: 'arc/10#1', purpose: 'witness' };
-  const record = { v: 1, ...witness, runner: lane.reporter, malformed: false, records: [{ testId: 't1', selected: 1, outcome: 'fail' }] };
+  const record = { v: 2, ...witness, runner: lane.reporter, malformed: false, records: [{ testId: 't1', selected: 1, outcome: 'fail' }] };
   const bytes = JSON.stringify(record);
   const fact = { kind: 'witnessed', ...witness, for: { type: 'job', job: 'baseline-1' }, recordsSha256: sha256Hex(bytes) };
   const dir = witnessDir(absPath(d.runDir), { ...fact, seq: 20 } as never); mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, 'witness.json'), bytes);

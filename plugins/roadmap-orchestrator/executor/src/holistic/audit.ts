@@ -68,7 +68,7 @@ import type { AuditInputs, LensRefusal, Parent } from '../core/events.ts';
 import { captureUnderFence } from '../core/fence.ts';
 import { canonicalJson } from '../core/json.ts';
 import { crashPoint } from '../core/crash.ts';
-import { auditDiffBudgetOf } from '../core/upgrade.ts';
+import { auditDiffBudgetOf } from '../core/projections.ts';
 import { type FindingId, type JobId, type LaneId, type NeedsUserId, type ObligationId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, parseInvocationId, parseJobId, canonicalIds } from '../core/ids.ts';
 import type { AuditState, FindingState } from '../core/state.ts';
 import { SchemaError } from '../core/validate.ts';

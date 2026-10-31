@@ -7,7 +7,7 @@ import type {
   PlanAppliedFact, PropagationFact, RecoveredBy, WalkFact, FlakyFact,
 } from './events.ts';
 import type {
-  AmendmentId, ArcId, ClaudeSessionId, CommandId, DivergenceId, EdgeId, FindingId, InvocationId, JobId, JobKind, MilestoneId, NeedsUserId, OpId, OpKey, PolishId, ResourceUnit, Sha, UnitId,
+  AmendmentId, ArcId, ClaudeSessionId, CommandId, DivergenceId, EdgeId, FindingId, InvocationId, JobId, JobKind, MilestoneId, NeedsUserId, OpId, OpKey, PolishId, ResourceUnit, Sha, Sha256Hex, UnitId,
 } from './ids.ts';
 import type { SessionCharge } from './usage.ts';
 import type {
@@ -156,6 +156,8 @@ export interface JournalView {
   /** dev.17: every `flake-observed` fact, in log order, with its seq (the flaky ledger, src/pipeline/deflake.ts). */
   flakes(): readonly FlakeAt[];
   /** dev.17: every propagation fact (stale sets, stale re-opens, refused propagations), in log order, with its seq and time. */
+  notes(unit: UnitId): readonly Readonly<{ command: CommandId; brief: Sha256Hex; seq: number }>[];
+  buildNotes(unit: UnitId, attempt: number): readonly Sha256Hex[];
   propagationFacts(): readonly PropagationFactAt[];
 }
 

@@ -22,7 +22,7 @@ import type { Obligations } from '../src/holistic/types.ts';
 import { checkpointAnswer } from './helpers/holistic.ts';
 import { arcStack, parseRepoConfig, resolveRouting, routingRevOf, seatsInForce } from '../src/routing/layers.ts';
 import { routingProvenance } from '../src/routing/types.ts';
-import { spawnPressureOf, startPressureOf } from '../src/core/upgrade.ts';
+import { spawnPressureOf, startPressureOf } from '../src/core/projections.ts';
 
 const ARC = arcId('arc-3');
 const A = sha('a'.repeat(40));
@@ -30,7 +30,7 @@ const H = sha256('d'.repeat(64));
 const AT = isoTime('2026-10-08T12:00:00.000Z');
 const CMD = 'cmd-0123456789abcdef';
 
-const envelope = (seq: number): Envelope => ({ v: 1, seq, prev: seq === 1 ? null : H, at: AT, arc: ARC });
+const envelope = (seq: number): Envelope => ({ v: 2, seq, prev: seq === 1 ? null : H, at: AT, arc: ARC });
 function roundTrip(record: LogRecord): Event {
   const e = { ...envelope(2), ...record } as Event;
   const line = serializeEvent(e);
@@ -212,7 +212,7 @@ describe('m4b kept records', () => {
     assert.throws(() => parseFlowSeries({ ...series, points: [{ ...point, leadMin: 31 }] }), (e: unknown) => e instanceof SchemaError && /\.minutes$/.test(e.field));
     assert.throws(() => parseFlowSeries({ ...series, points: [{ ...point, minutes: { 'slot:integration': 10, 'stage:build': 20 } }] }), SchemaError);
     assert.throws(() => parseFlowSeries({ ...series, accounting: { ...series.accounting, tAdvances: 1 } }), SchemaError);
-    assert.throws(() => parseFlowSeries({ ...series, v: 1 }), SchemaError);
+    assert.throws(() => parseFlowSeries({ ...series, v: 2 }), SchemaError);
     assert.throws(() => parseFlowSeries({ ...series, points: [point, point] }), SchemaError);
   });
 

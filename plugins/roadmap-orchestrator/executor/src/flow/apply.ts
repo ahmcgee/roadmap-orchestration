@@ -117,6 +117,7 @@ async function applyOne(ctx: FlowApplyContext, proposal: FlowProposal): Promise<
     return;
   }
   const out = await commitUnderFence(ctx, evaluated, { type: 'executor' }, { type: 'flow', proposal: proposal.id }, { type: 'job', job: proposalJob(proposal.id) });
+  if (out.kind === 'rejected' && out.reasons.some((r) => r.startsWith('stale:'))) return applyOne(ctx, proposal);
   if (out.kind === 'rejected') return;
   settle(ctx, proposal, out.fact);
 }

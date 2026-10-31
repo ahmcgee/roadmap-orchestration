@@ -254,6 +254,7 @@ export type PlanCheckScopeGrowth = Readonly<{
 }>;
 
 export type BuildInputs = Readonly<{
+  notes: readonly string[];
   spec: RenderedSpec;
   contracts: readonly DocText[];
   rulings: readonly RulingText[];
@@ -752,7 +753,7 @@ export const ROLE_INPUTS = {
     'scopeGrowth', 'escalation', 'milestones', 'staleLinks', 'design', 'pocs',
   ],
   build: [
-    'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks',
+    'notes', 'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks',
     'milestones', 'browser', 'certifiedAt', 'handover',
   ],
   gate: [
@@ -1288,7 +1289,7 @@ function obligationState(o: ObligationDef): string {
     case 'waived':
     case 'deferred':
     case 'retired':
-      return `${s.type} by ${s.ruling}`;
+      return `${s.type} by ${s.reason}`;
   }
 }
 

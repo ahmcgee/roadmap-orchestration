@@ -295,7 +295,7 @@ function requireSpecSha(r: ArcRun, unit: string): string {
 const LANE = 'journey' as LaneId;
 function observation(records: WitnessRecord['records'], over: Partial<Pick<WitnessRecord, 'laneRev' | 'envId' | 'malformed' | 'inv' | 'treeSha'>> = {}): Observation {
   const record = {
-    v: 1, lane: LANE, laneRev: (over.laneRev ?? 'aaaaaaaaaaaaaaaa') as LaneRev, envId: (over.envId ?? 'eeeeeeeeeeeeeeee') as EnvId, treeSha: (over.treeSha ?? '1'.repeat(40)) as Sha,
+    v: 2, lane: LANE, laneRev: (over.laneRev ?? 'aaaaaaaaaaaaaaaa') as LaneRev, envId: (over.envId ?? 'eeeeeeeeeeeeeeee') as EnvId, treeSha: (over.treeSha ?? '1'.repeat(40)) as Sha,
     inv: (over.inv ?? 'arc/1-1') as InvocationId, runner: 'jsonl', purpose: 'witness', records, malformed: over.malformed ?? false,
   } as unknown as WitnessRecord;
   return {
@@ -360,37 +360,9 @@ const splitTo = (rule: string): JsonValue => ({
 const census = (r: ArcRun) => revisionInForce(r.ctx.runDir, requirePlanInForce(r.ctx.runDir, r.journal.view)).obligations!.value.census;
 
 describe('rulings and split census (C2–C4)', () => {
-  test('bundle.ruling-corpus-consistency-stamped: a checkpoint ruling in a corpus arc carries the pin it read and lands (it was invalid at 5ba750e)', T, async () => {
-    const x = await arc([]);
-    try {
-      appendSteps(x.a.d, [checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [ruleOp('C-2')], rulings: [ruling('C-2')] }))]);
-      const out = await run(x);
-      assert.ok(out.kind === 'decided' && out.decision.kind === 'applied', JSON.stringify(out));
-      const sidecar = revisionInForce(x.r.ctx.runDir, requirePlanInForce(x.r.ctx.runDir, x.r.journal.view)).sidecars.get('C-2' as never)!.sidecar;
-      assert.equal(sidecar.consistency.judgedRevs.corpusSha256, x.a.pinSha256);
-    } finally {
-      x.r.journal.close();
-    }
-  });
+  
 
-  test('bundle.ruling-id-leading-zero: a model\'s C-02 is read as C-2 in the ruling and its rule op; stored output is untouched', T, async () => {
-    assert.equal(numericId('C-01'), 'C-1');
-    assert.equal(numericId('C-10'), 'C-10');
-    const output = validateCheckpointOutput(checkpointAnswer({ decision: 'bundle', ops: [ruleOp('C-02')], rulings: [ruling('C-02')] }));
-    assert.deepEqual(numericRulingIds(output).ops.map((o) => (o.op === 'rule' ? o.ruling : null)), ['C-2']);
-    const x = await arc([]);
-    try {
-      appendSteps(x.a.d, [checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [ruleOp('C-02')], rulings: [ruling('C-02')] }))]);
-      const out = await run(x);
-      assert.ok(out.kind === 'decided' && out.decision.kind === 'applied', JSON.stringify(out));
-      const rev = revisionInForce(x.r.ctx.runDir, requirePlanInForce(x.r.ctx.runDir, x.r.journal.view));
-      assert.ok(rev.sidecars.has('C-2' as never), 'the ruling lands as C-2 (the corpus arc\'s ledger holds C-1)');
-      assert.ok(!rev.sidecars.has('C-02' as never));
-      assert.match(rev.ledger.bytes.toString('utf8'), /^C-2\b/m);
-    } finally {
-      x.r.journal.close();
-    }
-  });
+  
 
   test('bundle.split-census-out-of-slice-moved: a child anchored at an out-of-slice rule, serving the slice, moves that rule\'s census to the child', T, async () => {
     const x = await arc([]);

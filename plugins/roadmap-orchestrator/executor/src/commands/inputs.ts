@@ -35,24 +35,13 @@ export type InputsExportArgs = Readonly<{ repo: AbsPath; arc: ArcId; out: AbsPat
  */
 export type InputsExport = Readonly<{ planRev: PlanRev; specRevs: Readonly<Record<UnitId, SpecRev>>; base: RevisionManifest }>;
 
-/** The `base` of an `export.json` (`apply --base`, `start --base`); a CliError naming `command` when the file is not an export's. */
-export function exportBase(path: AbsPath, command: 'apply' | 'start'): RevisionManifest {
-  if (!existsSync(path)) throw new CliError(`${command} --base: no file ${path}`);
-  let value: unknown;
-  try {
-    value = JSON.parse(readFileSync(path, 'utf8'));
-  } catch (error) {
-    if (!(error instanceof SyntaxError)) throw error;
-    throw new CliError(`${command} --base: ${path} is not JSON: ${error.message}`);
-  }
-  const base = typeof value === 'object' && value !== null ? (value as { base?: unknown }).base : undefined;
-  if (base === undefined) throw new CliError(`${command} --base: ${path} names no base (not an ${EXPORT_FILE} of \`roadmap inputs export\`, or one an earlier release wrote: export again)`);
-  try {
-    return applyManifest(base, `${path}.base`);
-  } catch (error) {
-    if (!(error instanceof SchemaError)) throw error;
-    throw new CliError(`${command} --base: ${error.message}`);
-  }
+/** Read an export's revision and manifest before accepting an edit of it. */
+export function readExport(dir: AbsPath, rev: number): InputsExport {
+  const path = join(dir, EXPORT_FILE);
+  if (!existsSync(path)) throw new CliError(`apply --from: no export at ${path}`);
+  const value = JSON.parse(readFileSync(path, 'utf8')) as InputsExport;
+  if (value.planRev !== rev) throw new CliError(`apply --rev ${rev}: export is of rev ${value.planRev}`);
+  return { ...value, base: applyManifest(value.base, `${path}.base`) };
 }
 
 export async function exportInputs(args: InputsExportArgs): Promise<InputsExport> {

@@ -14,7 +14,7 @@ import { isoTime } from '../src/core/values.ts';
 
 const tool = { argv: ['make', 'probe'], cwd: '.', env: { set: {}, pass: [] } };
 const SEED = ['node', '--test', '--test-concurrency=1', 'test/unit/*.test.js'];
-const lane = (id: string, argv: readonly string[]) => ({ id, argv, cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [] });
+const lane = (id: string, argv: readonly string[]) => ({ id, argv, cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [] });
 
 function rawPlan(): Record<string, unknown> {
   return {

@@ -164,13 +164,13 @@ import { RISK_TIERS, type RiskTier, UNIT_ROLES } from '../routing/types.ts';
 import { readJournal } from '../core/log.ts';
 import { effectiveGraph, findCycle } from '../schedule/graph.ts';
 import type { CommandScope, ScopeOf } from '../schedule/types.ts';
-import { type Ruling, ledgerAfter, nextRulingId, parseRulings, sidecarsAfter } from '../spec/rulings.ts';
+import { type Ruling, parseRulings } from '../spec/rulings.ts';
 import { SpecFileError, bytesSha256, evidenceScopeConflicts, parseSpec } from '../spec/spec.ts';
 import {
   type InForce, type InputFile, type InputFiles, PLAN_INPUT, type RevisionInForce, type RoutingBase, SPEC_INPUT, inputPath, keptInput, phase0RecordOf, planInForce, planRouting,
   inForceFiles, readInputFiles, revisionInForce, revisionManifestOf, sidecarPath, specShaInForce, unitRouting,
 } from './inforce.ts';
-import { baseFiles, ownerBase, rebaseInputs } from './rebase.ts';
+import { baseFiles, compareAndSwap } from './cas.ts';
 import { lineageEnvelope, rulingNaming, withinEnvelope } from './envelope.ts';
 import {
   type KnownDefect, type PlanM1, type PlanUnit, boundsOf, derivedOf, environmentOf, environmentsOf, hasMilestones, knownDefectsOf, milestonesNeedHolistic, milestonesOf, parsePlan,
@@ -188,7 +188,7 @@ import {
  * apply's `rulings` (M4a rev 3, I2): the ids its `--ruling` records land (absent: none), the only ledger change it may make.
  */
 export type Proposer =
-  | Readonly<{ type: 'apply'; rulings?: readonly RulingId[] }>
+  | Readonly<{ type: 'apply'; reason?: string }>
   | Readonly<{ type: 'rule' | 'reverse' | 'start' | 'executor' }>
   /**
    * 2026-10-15 (arc feedback #3): a plan-check redirect's patch of its own unit's spec, validated (never committed: the
@@ -201,7 +201,7 @@ export type Proposer =
    * release's, `reenterFixesDefault`): adopted as recorded, the `fixes` rows do not bind them (`fixesReasons`).
    */
   | Readonly<{
-    type: 'bundle'; job: JobId; cites: readonly VisionClauseId[]; evidence: readonly string[]; admits: readonly ClassifiedAdmit[]; fixesUnrecorded: readonly UnitId[];
+    type: 'bundle'; job: JobId; cites: readonly VisionClauseId[]; evidence: readonly string[]; admits: readonly ClassifiedAdmit[]; 
   }>
   /** dev.13 (agent D): the code-applied polish revision of walk `job` (src/walk/polish.ts): it only admits that walk's proposals. */
   | Readonly<{ type: 'walk'; job: JobId }>
@@ -220,6 +220,7 @@ export type Proposer =
 
 /** The revision's inputs beyond plan and specs, parsed (what renders and the payload are built from). */
 export type NextInputs = Readonly<{
+  reason?: string | undefined;
   ledger: readonly Ruling[];
   sidecars: readonly RulingSidecar[];
   obligations: Obligations | null;
@@ -239,7 +240,7 @@ export type Classified =
    */
   | Readonly<{
     kind: 'accepted'; changes: readonly PlanChange[]; scoped: readonly UnitId[]; routings: readonly ResolvedRouting[];
-    dispositions: readonly Readonly<{ obligation: ObligationId; disposition: ObligationDisposition; ruling: RulingId }>[];
+    dispositions: readonly Readonly<{ obligation: ObligationId; disposition: ObligationDisposition; reason: string; rev: number }>[];
     dropped: readonly Readonly<{ obligation: ObligationId; sentences: readonly string[] }>[];
     inputs: NextInputs;
   }>
@@ -418,12 +419,7 @@ function phase0Risk(input: ClassifyInput, unit: UnitId): RiskTier | null {
 function riskFloorReason(input: ClassifyInput, unit: PlanUnit, spec: SpecM1 | null, inputs: NextInputs, ledger: Ledger): string | null {
   const floor = phase0Risk(input, unit.id);
   if (floor === null || !riskAbove(floor, unit.risk)) return null;
-  const ruled = (spec?.cites.rulings ?? []).some((id) => {
-    const s = inputs.sidecars.find((x) => x.id === id);
-    return rulingReason(ledger, id, `unit ${unit.id}'s risk`) === null && s !== undefined && s.status === 'active'
-      && s.appliesTo.type === 'units' && s.appliesTo.units.includes(unit.id);
-  });
-  return ruled ? null : `unit ${unit.id}: risk ${unit.risk} is below its Phase-0 floor ${floor}; lowering it needs its spec to cite an active ruling for ${unit.id}`;
+  return input.proposer.type === 'apply' && input.proposer.reason?.trim() ? null : `unit ${unit.id}: risk ${unit.risk} is below its Phase-0 floor ${floor}; lowering it needs apply --reason`;
 }
 
 /**
@@ -489,18 +485,11 @@ function reentryRow(
     reasons.push(`unit ${unit.id} re-enters ${re.unit}, whose lineage (root ${root}) was never dispatched, so it has no scope envelope`);
   } else {
     const outside = [...new Set(unit.scope.filter((p) => !withinEnvelope(p, envelope)))].sort();
-    const ruling = outside.length === 0 ? null : rulingNaming(unit.id, envelope, outside, spec?.cites.rulings ?? [], inputs.ledger, inputs.sidecars);
-    if (ruling !== null) widened = { patterns: outside, ruling };
-    else if (outside.length > 0) {
-      reasons.push(`unit ${unit.id}: scope ${outside.join(', ')} lies outside its lineage's envelope ${envelope.join(', ')} (every scope ${root}'s lineage was `
-        + `dispatched with), and its spec cites no active ruling for ${unit.id} that names exactly those patterns`);
-    }
+    if (outside.length > 0 && !inputs.reason?.trim()) reasons.push(`unit ${unit.id}: scope beyond the lineage envelope needs apply --reason`);
+
   }
   if (old.risk !== null && maxTier(unit.risk, old.risk) !== unit.risk) reasons.push(`unit ${unit.id}: risk ${unit.risk} is below its lineage's floor ${old.risk}`);
-  if (re.reset !== undefined) {
-    const r = rulingReason(ledger, re.reset.ruling, `unit ${unit.id}'s reset`);
-    if (r !== null) reasons.push(r);
-  }
+  if (re.reset !== undefined && !(input.proposer.type === 'apply' && input.proposer.reason?.trim())) reasons.push(`unit ${unit.id}: resetting counters needs apply --reason`);
   reasons.push(...fixesReasons(input, unit));
   if (reasons.length > 0) return reasons;
   const change = { type: 'unit-reentered', unit: unit.id, reenters: re.unit, reset: re.reset !== undefined } as const;
@@ -523,7 +512,7 @@ function lineageOf(view: JournalView, old: UnitId): readonly UnitId[] {
  * release's checkpoint answer recorded before `fixes` (the bundle proposer's `fixesUnrecorded`).
  */
 function fixesReasons(input: ClassifyInput, unit: PlanUnit): readonly string[] {
-  if (input.proposer.type === 'bundle' && input.proposer.fixesUnrecorded.includes(unit.id)) return [];
+  if (input.proposer.type === 'bundle' && false) return [];
   const re = unit.reenters!;
   const lineage = lineageOf(input.view, re.unit);
   if (re.fixes === undefined) {
@@ -572,13 +561,6 @@ function nextInputsOf(input: ClassifyInput, reasons: string[]): Readonly<{ ledge
     }
   }
   const sidecars: RulingSidecar[] = [];
-  for (const [id, file] of next.sidecars) {
-    const s = parsedInput('ruling sidecar', file.path, file.bytes, parseRulingSidecar, reasons);
-    if (s === null) continue;
-    if (s.id !== id) reasons.push(`the ruling sidecar ${file.path} holds ${s.id}`);
-    else if ('rulings' in ledger && !ledger.rulings.some((r) => r.id === id)) reasons.push(`the ruling sidecar ${file.path} names ${id}, which the ledger does not hold`);
-    else sidecars.push(s);
-  }
   const obligations = next.obligations === null ? null : parsedInput('obligations file', next.obligations.path, next.obligations.bytes, parseObligations, reasons);
   const vision = next.vision === null ? null : parsedInput('vision file', next.vision.path, next.vision.bytes, parseVision, reasons);
   const sha = (bytes: Buffer | null | undefined): string | null => (bytes === null || bytes === undefined ? null : bytesSha256(bytes));
@@ -588,6 +570,7 @@ function nextInputsOf(input: ClassifyInput, reasons: string[]): Readonly<{ ledge
   return {
     ledger,
     inputs: {
+      reason: input.proposer.type === 'apply' ? input.proposer.reason : undefined,
       ledger: 'rulings' in ledger ? ledger.rulings : [],
       sidecars,
       obligations,
@@ -648,10 +631,8 @@ function scopeGrowthReason(
   if (same([...was].sort(), [...now].sort())) return null;
   const added = now.filter((p) => !was.includes(p)).sort();
   if (was.some((p) => !now.includes(p))) return `unit ${unit} is dispatched: ${fixed} (a scope may only grow, backed by a ruling)`;
-  const backing = rulingNaming(unit, was, added, spec?.cites.rulings ?? [], inputs.ledger, inputs.sidecars);
-  return backing === null
-    ? `unit ${unit} is dispatched: its ${what} grows by ${added.join(', ')} without its spec citing an active ruling for ${unit} that names exactly those patterns`
-    : null;
+  if (inputs.reason?.trim()) return null;
+  return `unit ${unit}: growing ${what} needs apply --reason`;
 }
 
 /** Classifies the files against the plan in force. */
@@ -734,7 +715,7 @@ export function classify(input: ClassifyInput): Classified {
       cutNow.add(unit.id);
       const refusal = proposer.type === 'compare' && proposer.unit === unit.id ? droppedCutRefusal(view, unit)
         : proposer.type === 'split' && proposer.unit === unit.id ? splitCutRefusal(view, unit.id) : cutRefusal(view, unit.id);
-      const ruling = unit.cut.ruling === undefined ? null : rulingReason(ledger, unit.cut.ruling, `unit ${unit.id}'s cut`);
+      const ruling = (proposer.type === 'apply' && proposer.reason?.trim()) || proposer.type === 'split' || proposer.type === 'compare' ? null : 'cut needs apply --reason';
       if (refusal !== null) reasons.push(refusal);
       if (ruling !== null) reasons.push(ruling);
       if (refusal === null && ruling === null) {
@@ -937,7 +918,7 @@ export function classify(input: ClassifyInput): Classified {
   if (changes.some((c) => c.type === 'plan-field' && (c.field === 'contracts' || c.field === 'rulings'))) for (const u of plan.units) scoped.add(u.id);
 
   // M3: the rulings ledger and its sidecars (A3), holistic (A5), the vision (A14), the obligations.
-  const landsRulings = proposer.type === 'rule' || proposer.type === 'bundle' || (proposer.type === 'apply' && (proposer.rulings ?? []).length > 0);
+  const landsRulings = proposer.type === 'apply';
   if (inputs.changed.rulings && !landsRulings) {
     reasons.push(`the rulings ledger ${next.ledger.path} or its sidecars differ from the ledger in force: it is executor-owned after start (A3); a ruling lands through \`roadmap rule\``);
   }
@@ -973,7 +954,6 @@ export function classify(input: ClassifyInput): Classified {
   // dev.17: deflake units and their code proposer.
   deflakeRows(cur, plan, proposer, changes, reasons);
   // dev.17: propagation units and their code proposer.
-  propagationRows(cur, plan, proposer, changes, reasons);
 
   if (reasons.length > 0) return { kind: 'rejected', reasons: [...reasons, ...busy.map(busyText)] };
   if (busy.length > 0) return { kind: 'busy', busy, changes };
@@ -1253,24 +1233,6 @@ function deflakeRows(cur: PlanM1, plan: PlanM1, proposer: Proposer, changes: rea
   if (other.length > 0) reasons.push(`the deflake revision only admits deflake units; it also changes ${other.map((c) => canonicalJson(c)).join(', ')}`);
 }
 
-/**
- * dev.17 (propagation): a propagation unit added (not a re-entry) only by the propagation revision of the stale set it names
- * (proposer `propagation{rev}`), which only adds such units.
- */
-function propagationRows(cur: PlanM1, plan: PlanM1, proposer: Proposer, changes: readonly PlanChange[], reasons: string[]): void {
-  const curIds = new Set(cur.units.map((u) => u.id));
-  const added = plan.units.filter((u) => !curIds.has(u.id) && u.origin === 'propagation' && u.reenters === undefined);
-  for (const u of added) {
-    if (proposer.type !== 'propagation') reasons.push(`unit ${u.id} is a propagation unit: only the executor mints one, from a stale set, not a ${proposer.type}`);
-    else if (u.propagation!.rev !== proposer.rev) reasons.push(`unit ${u.id} names the stale set of rev ${u.propagation!.rev}; this revision mints rev ${proposer.rev}'s`);
-  }
-  if (proposer.type === 'propagation') {
-    const ids = new Set<string>(added.map((u) => u.id));
-    const other = changes.filter((c) => !(c.type === 'unit-added' && ids.has(c.unit)));
-    if (other.length > 0) reasons.push(`the propagation revision of rev ${proposer.rev} only mints its propagation units; it also changes ${other.map((c) => canonicalJson(c)).join(', ')}`);
-  }
-}
-
 type ObligationRows = Readonly<{
   changes: readonly PlanChange[];
   dispositions: Extract<Classified, { kind: 'accepted' }>['dispositions'];
@@ -1287,9 +1249,9 @@ function obligationRows(input: ClassifyInput, inputs: NextInputs, reasons: strin
     return none;
   }
   if (next === null || !inputs.changed.obligations) return none;
-  const author = input.proposer.type === 'bundle' ? { type: 'checkpoint' as const, cites: input.proposer.cites } : { type: 'architect' as const };
+  const author = input.proposer.type === 'bundle' ? { type: 'checkpoint' as const, cites: input.proposer.cites } : { type: 'architect' as const, reason: input.proposer.type === 'apply' ? input.proposer.reason : undefined, rev: input.inForce.rev + 1 };
   const v = classifyObligations(prev, next, {
-    vision: inputs.vision, rulings: inputs.sidecars, author,
+    vision: inputs.vision, author,
     latched: new Set(input.view.holistic().latched.map((l) => l.obligation)), published: new Set(input.view.publications().map((p) => p.unit)),
   });
   reasons.push(...v.reasons);
@@ -1304,7 +1266,7 @@ function obligationRows(input: ClassifyInput, inputs: NextInputs, reasons: strin
         reasons.push(`${c.id} is split into ${was.state.children.join(', ')} and stays split: disposition its children instead (H14)`);
         continue;
       }
-      dispositions.push({ obligation: c.id, disposition: c.disposition, ruling: c.ruling });
+      dispositions.push({ obligation: c.id, disposition: c.disposition, reason: c.reason, rev: c.rev });
     }
     if (c.type === 'split' && c.dropped.length > 0) dropped.push({ obligation: c.id, sentences: c.dropped });
     changes.push({ type: 'obligation', id: c.id, edit: c.type });
@@ -1564,136 +1526,16 @@ export function changesScope(changes: readonly PlanChange[], cur: PlanM1, next: 
 /** What an apply's proposal reads besides the owner's files: the log, the run dir and the revision in force. */
 export type ProposalContext = Readonly<{ runDir: AbsPath; view: JournalView; inForce: InForce; revision: RevisionInForce }>;
 
-/** An apply's proposal: the merged files with its rulings landed, the owner's files it was rebased from, and its numbered rulings. */
-export type ApplyProposal = Readonly<{ next: InputFiles; owner: InputFiles; records: readonly RulingRecord[] }>;
-
-/**
- * The proposal an `apply` makes (and a start whose files differ, with no manifest and no rulings): the owner's files, which
- * must still hash to its manifest (null: a dry run or a start, which read them now), rebased from `base` (null: the
- * default base, `ownerBase`) onto the files in force (src/input/rebase.ts), then its `--ruling` records numbered and landed
- * on the merged ledger (M4a rev 3, I2: `withRulings`), which must be the ledger in force. Otherwise why it does not hold:
- * files missing or changed since hashed, base bytes not kept, a conflict.
- */
-export function applyProposal(
-  ctx: ProposalContext, files: InputFiles, manifest: RevisionManifest | null, base: RevisionManifest | null, drafts: readonly RulingDraft[],
-): ApplyProposal | Readonly<{ reasons: readonly string[] }> {
+/** An edit of an exported revision, composed with untouched files in force. */
+export type ApplyProposal = Readonly<{ next: InputFiles }>;
+export function applyProposal(ctx: ProposalContext, files: InputFiles, manifest: RevisionManifest | null, base: RevisionManifest): ApplyProposal | Readonly<{ reasons: readonly string[] }> {
   const actual = revisionManifestOf(files);
   if ('missing' in actual) return { reasons: actual.missing };
-  if (manifest !== null) {
-    // An apply an earlier CLI queued hashed the issue capture too (`phase0Issues`): not compared (`issuesIgnored`; scaffolding).
-    const { phase0Issues: _issues, ...expected } = manifest;
-    if (!same(actual, expected)) return { reasons: [manifestMismatch(files, expected, actual)] };
-  }
-  const from = baseFiles(ctx.runDir, base ?? ownerBase(ctx.runDir, ctx.view, ctx.view.arc), files.planFile, files.repo);
+  if (manifest !== null && !same(actual, manifest)) return { reasons: [manifestMismatch(files, manifest, actual)] };
+  const from = baseFiles(ctx.runDir, base, files.planFile, files.repo);
   if ('reasons' in from) return from;
-  const theirs = inForceFiles(ctx.runDir, ctx.view, ctx.inForce, ctx.revision, files.planFile, files.repo);
-  const merged = rebaseInputs(from.files, files, theirs);
-  if ('reasons' in merged) return merged;
-  const next = merged.next;
-  if (drafts.length > 0) {
-    const sidecars = (f: InputFiles): string => canonicalJson([...f.sidecars].map(([id, x]) => [id, bytesSha256(x.bytes)]));
-    if (next.ledger.bytes === null || theirs.ledger.bytes === null || !next.ledger.bytes.equals(theirs.ledger.bytes) || sidecars(next) !== sidecars(theirs)) {
-      return { reasons: [`the rulings ledger ${files.ledger.path} or its sidecars change the ledger in force: \`apply --ruling\` lands its rulings on the ledger in force; leave the ledger and its sidecars as they are`] };
-    }
-  }
-  const records = numberRulings(drafts, next.ledger.bytes);
-  return { next: withRulings(next, records), owner: files, records };
-}
-
-/** The placeholder id an owner's ruling record may carry: the executor numbers it when it lands (the ledger's next C-n). */
-export const UNNUMBERED = 'C-?';
-
-/** A ruling record a `rule` or an `apply --ruling` lands, numbered (`numberRulings`): the bytes it lands, parsed as a sidecar. */
-export type RulingRecord = Readonly<{ path: AbsPath; bytes: Buffer; sidecar: RulingSidecar }>;
-/** A ruling record as the CLI hashed it: its JSON, and its id, or null for `C-?` (numbered when it lands). */
-export type RulingDraft = Readonly<{ path: AbsPath; bytes: Buffer; raw: Readonly<Record<string, unknown>>; id: RulingId | null }>;
-
-/**
- * The ruling record at `file.path`, which must still hash to `file.sha256` and parse as a ruling sidecar (its id a C-n, or
- * `C-?`); else why not.
- */
-export function readRulingRecord(file: HashedFile): RulingDraft | string {
-  if (!existsSync(file.path)) return `the ruling record ${file.path} does not exist`;
-  const bytes = readFileSync(file.path);
-  if (bytesSha256(bytes) !== file.sha256) return `the ruling record ${file.path} changed since the command hashed it`;
-  try {
-    const raw = JSON.parse(bytes.toString('utf8')) as unknown;
-    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw new SchemaError('ruling', 'a ruling sidecar object', raw);
-    const record = raw as Readonly<Record<string, unknown>>;
-    const unnumbered = record['id'] === UNNUMBERED;
-    const sidecar = parseRulingSidecar(unnumbered ? { ...record, id: 'C-1' } : record);
-    return { path: file.path, bytes, raw: record, id: unnumbered ? null : sidecar.id };
-  } catch (error) {
-    if (!(error instanceof SchemaError || error instanceof SyntaxError)) throw error;
-    return `the ruling record ${file.path} is not a ruling sidecar: ${error.message}`;
-  }
-}
-
-/**
- * The records numbered, in order, on `ledger`: a `C-?` record takes the ledger's next C-n after the records before it (its
- * bytes then its JSON with that id); a numbered one stays as written (validation refuses an id that is not next).
- */
-export function numberRulings(drafts: readonly RulingDraft[], ledger: Buffer | null): readonly RulingRecord[] {
-  let text = ledger?.toString('utf8') ?? '';
-  return drafts.map((d) => {
-    let record: RulingRecord;
-    if (d.id !== null) record = { path: d.path, bytes: d.bytes, sidecar: parseRulingSidecar(d.raw) };
-    else {
-      const id = nextRulingId(parseRulings(text, 'the rulings ledger'));
-      const raw = Object.fromEntries(Object.entries(d.raw).map(([k, v]) => [k, k === 'id' ? id : v]));
-      record = { path: d.path, bytes: Buffer.from(`${JSON.stringify(raw, null, 2)}\n`, 'utf8'), sidecar: parseRulingSidecar(raw) };
-    }
-    text = ledgerAfter(text, record.sidecar);
-    return record;
-  });
-}
-
-/** A sidecar's bytes as the executor writes one it changed (a superseded status): its record as JSON. */
-const sidecarBytes = (s: RulingSidecar): Buffer => Buffer.from(`${JSON.stringify(s, null, 2)}\n`, 'utf8');
-
-/** The dispositions that are an obligation state (`amended` is none: it authorizes an amendment, §2.8). */
-const TERMINAL: readonly string[] = ['waived', 'deferred', 'retired'];
-
-/**
- * The obligations file with `sidecar`'s terminal dispositions applied: each such obligation's `state` becomes
- * `{type: <disposition>, ruling}`, the file's JSON edited in place. The classifier then checks the change like any other.
- */
-function obligationsAfter(current: InputFile | null, sidecar: RulingSidecar): InputFile | null {
-  const terminal = sidecar.obligationDispositions.filter((d) => TERMINAL.includes(d.disposition));
-  if (terminal.length === 0) return current;
-  if (current === null || current.bytes === null) throw new Error(`${sidecar.id} dispositions ${terminal.map((d) => d.id).join(', ')}, but the revision holds no obligations (validation names only obligations it holds)`);
-  const raw = JSON.parse(current.bytes.toString('utf8')) as { obligations: { id: ObligationId; state: unknown }[] };
-  for (const d of terminal) {
-    const o = raw.obligations.find((x) => x.id === d.id);
-    if (o === undefined) throw new Error(`${sidecar.id} dispositions ${d.id}, which the revision's obligations do not hold (validation names only obligations it holds)`);
-    o.state = { type: d.disposition, ruling: sidecar.id };
-  }
-  return { path: current.path, bytes: Buffer.from(`${JSON.stringify(raw, null, 2)}\n`, 'utf8') };
-}
-
-/**
- * The one way a ruling lands in a revision (`rule`, `apply --ruling`; A3, I2): `files` with each record, in order, landed:
- * the ledger after it (`ledgerAfter`: its line appended, fully superseded rulings folded), the sidecars after it
- * (`sidecarsAfter`: its bytes as recorded, a sidecar it supersedes rewritten, every other one's bytes kept) and its
- * terminal obligation dispositions applied. Validation (`validateRuling`) is the caller's (src/commands/rule.ts).
- */
-export function withRulings(files: InputFiles, records: readonly RulingRecord[]): InputFiles {
-  let out = files;
-  for (const r of records) {
-    const ledger = out.ledger.bytes;
-    if (ledger === null) throw new Error(`ruling ${r.sidecar.id} lands on the ledger ${out.ledger.path}, which does not exist`);
-    const kept = new Map([...out.sidecars].map(([id, f]) => [id, { ...f, sidecar: parseRulingSidecar(JSON.parse(f.bytes.toString('utf8'))) }] as const));
-    const sidecars = new Map(sidecarsAfter([...kept.values()].map((k) => k.sidecar), r.sidecar).map((s) => {
-      const k = kept.get(s.id);
-      const bytes = s.id === r.sidecar.id ? r.bytes : k !== undefined && k.sidecar.status === s.status ? k.bytes : sidecarBytes(s);
-      return [s.id, { path: sidecarPath(out.ledger.path, s.id), bytes }] as const;
-    }));
-    out = {
-      ...out, ledger: { path: out.ledger.path, bytes: Buffer.from(ledgerAfter(ledger.toString('utf8'), r.sidecar), 'utf8') }, sidecars,
-      obligations: obligationsAfter(out.obligations, r.sidecar),
-    };
-  }
-  return out;
+  const current = inForceFiles(ctx.runDir, ctx.view, ctx.inForce, ctx.revision, files.planFile, files.repo);
+  return compareAndSwap(from.files, files, current);
 }
 
 /** Which files no longer hash to what the command's manifest recorded. */
@@ -1740,10 +1582,10 @@ export function commandScope(sc: ScopeContext): ScopeOf {
     switch (body.type) {
       case 'resume':
         return body.target.type === 'all' ? ARC : body.target.type === 'unit' ? unitsScope([body.target.unit]) : NONE;
+      case 'note':
       case 'sweep':
       case 'resolve-edge':
       case 'run-only':
-      case 'rule':
       case 'audit':
       case 'close-admissions':
       case 'flow-decide':
@@ -1762,19 +1604,17 @@ export function commandScope(sc: ScopeContext): ScopeOf {
         if (inForce === null) return NONE;
         let files: InputFiles;
         try {
-          files = readInputFiles(sc.planFile, sc.repo);
+          files = readInputFiles(body.planFile, sc.repo, true);
         } catch (error) {
           if (!(error instanceof SchemaError || error instanceof SyntaxError)) throw error;
           return NONE;
         }
-        const drafts = (body.rulings ?? []).map(readRulingRecord);
-        if (drafts.some((r) => typeof r === 'string')) return NONE;
         const revision = revisionInForce(sc.runDir, inForce);
-        const proposal = applyProposal({ runDir: sc.runDir, view, inForce, revision }, files, body.manifest, body.base, drafts as readonly RulingDraft[]);
+        const proposal = applyProposal({ runDir: sc.runDir, view, inForce, revision }, files, body.manifest, body.base);
         if ('reasons' in proposal) return ARC;
         const verdict = classify({
           runDir: sc.runDir, view, inForce, revision, next: proposal.next, residues: undispositioned(sc.hostDir), routing: sc.routingBase,
-          proposer: proposal.records.length === 0 ? { type: 'apply' } : { type: 'apply', rulings: proposal.records.map((r) => r.sidecar.id) },
+          proposer: { type: 'apply', reason: body.reason },
         });
         if (verdict.kind === 'busy') return unionScope(changesScope(verdict.changes, inForce.plan, proposal.next.plan), verdict.busy.map((b) => b.unit));
         return verdict.kind === 'accepted' ? changesScope(verdict.changes, inForce.plan, proposal.next.plan) : NONE;

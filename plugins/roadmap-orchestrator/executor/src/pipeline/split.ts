@@ -1,3 +1,5 @@
+import { revParse } from '../git/git.ts';
+import { branchRef } from '../core/values.ts';
 // The split revision (dev.17, design pass; DESIGN-1.0.md "Design pass"; SCHEMAS.md "dev.17: the design pass"). A plan-check
 // that finds its unit oversize (mixed concerns, or more than the gate reads inline) answers `split`: child units, the edges
 // among them and, for mixed concerns, the skeleton that lands first. Code builds and applies it:
@@ -164,11 +166,11 @@ export function judgeSplit(ctx: StageContext, unit: PlanUnit, parent: SpecM1, sp
 }
 
 /** The needs-user of a split the arc moved under before it could commit. */
-function movedNeedsUser(unit: PlanUnit, reasons: readonly string[]): NeedsUserContent {
+function splitNotice(unit: PlanUnit, reasons: readonly string[]): NeedsUserContent {
   return {
-    blocking: true,
+    blocking: false,
     subject: { type: 'unit', unit: unit.id },
-    reason: 'plan-defect',
+    reason: 'revision-notice',
     summary: `Unit ${unit.id}: its plan-check split it, but the split revision no longer lands: ${reasons.join('; ')}. The unit is held at plan-check, uncharged.`,
     recommendation: `\`roadmap resume ${unit.id}\` runs its plan-check again on the plan as it is now.`,
     options: [],
@@ -186,7 +188,15 @@ export async function commitSplit(
   };
   const proposer = proposerOf(unit.id, split);
   const out = await commitUnderFence(fenced, evaluated, proposer, { type: 'split', unit: unit.id, inv }, parent);
-  if (out.kind === 'rejected') return movedNeedsUser(unit, out.reasons);
+  if (out.kind === 'rejected') {
+    if (out.reasons.some((r) => r.startsWith('stale:'))) {
+      const current = loadUnitSpec(ctx, unit).spec;
+      const next = judgeSplit(ctx, unit, current, split, revParse(ctx.repo, branchRef(ctx.plan().integrationBranch)));
+      if (next.kind === 'faults') return splitNotice(unit, [...next.faults.reasons, ...next.faults.defects]);
+      return commitSplit(ctx, unit, parent, inv, split, next.evaluated);
+    }
+    return splitNotice(unit, out.reasons);
+  }
   crashPoint('split.after-commit', unit.id);
   return null;
 }
@@ -201,6 +211,6 @@ export type HeldSplit = Readonly<{ split: SplitDecision; inv: InvocationId; tip:
  */
 export async function finishSplit(ctx: StageContext, unit: PlanUnit, held: HeldSplit, parent: StageParent): Promise<NeedsUserContent | null> {
   const verdict = judgeSplit(ctx, unit, loadUnitSpec(ctx, unit).spec, held.split, held.tip);
-  if (verdict.kind === 'faults') return movedNeedsUser(unit, [...verdict.faults.reasons, ...verdict.faults.defects]);
+  if (verdict.kind === 'faults') return splitNotice(unit, [...verdict.faults.reasons, ...verdict.faults.defects]);
   return commitSplit(ctx, unit, parent, held.inv, held.split, verdict.evaluated);
 }

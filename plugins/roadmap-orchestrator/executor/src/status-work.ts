@@ -4,7 +4,7 @@ import type { Event, Parent } from './core/events.ts';
 import { invocationId, parseResourceUnit, type InvocationId, type LaneId, type ResourceUnit } from './core/ids.ts';
 import type { CommandVerdict, ExitCause, LaunchCpu } from './core/records.ts';
 import { boundsOfRecord, isRed } from './core/records.ts';
-import { exitCpuOf, reservationCpuBasisOf, reservationTokenWaitOf } from './core/upgrade.ts';
+import { exitCpuOf, reservationCpuBasisOf, reservationTokenWaitOf } from './core/projections.ts';
 import { canonicalJson } from './core/json.ts';
 import type { PlanUnit } from './input/plan.ts';
 import type { StageContext, StageParent } from './pipeline/dispatch.ts';

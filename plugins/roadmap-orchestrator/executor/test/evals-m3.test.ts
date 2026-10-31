@@ -98,7 +98,7 @@ function runArcLane(o: ObligationsFile, lane: string, cwd: string) {
 function verdictIn(o: ObligationsFile, id: string, file: string): ObservationVerdict {
   const witness = o.obligations.find((x) => x.id === id)!.witness!;
   const records = [...readWitnessFile(file)].sort((a, b) => (a.testId < b.testId ? -1 : 1));
-  return verdictOf({ v: 1, lane: witness.lane, laneRev: '0000000000000000', envId: '0000000000000000', treeSha: '0'.repeat(40), inv: 'x', runner: 'node-test', purpose: 'witness', records, malformed: false } as never, witness);
+  return verdictOf({ v: 2, lane: witness.lane, laneRev: '0000000000000000', envId: '0000000000000000', treeSha: '0'.repeat(40), inv: 'x', runner: 'node-test', purpose: 'witness', records, malformed: false } as never, witness);
 }
 
 const LANE_OF: Readonly<Record<string, string>> = { 'I-1': 'reconcile', 'I-2': MONEY_LANE, 'I-3': 'cli' };

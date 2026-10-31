@@ -11,7 +11,7 @@ import {
   type ResourceEdge, type RetryStage, type ScopeGrowthProposal, type StageOutcomeFact, JUDGMENT_STAGES, RECLAIM_HOLDERS, RESIDUE_HOLDERS, RETRY_STAGES, RETRYABLE_BACKEND_PARKS,
   prevHash, probeTargetKey, serializeEvent, certificationRed,
 } from './events.ts';
-import { checkpointSkipTriggerOf, dev31UnchargedLanesRedsDefault } from './upgrade.ts';
+import { checkpointSkipTriggerOf } from './projections.ts';
 import { CounterRegressionError } from './fsx.ts';
 import {
   type AmendmentId, type ArcId, type ClaudeSessionId, type CommandId, type DivergenceId, type EdgeId, type FindingId, type InvocationId, type JobId, type JobKind, type NeedsUserId, type ObligationId,
@@ -297,7 +297,7 @@ export function afterStageOutcome(u: UnitState, f: Pick<StageOutcomeFact, 'stage
       ...c,
       chargeableFailures: c.chargeableFailures + (f.chargeable ? 1 : 0),
       unchargedLanesReds: certificationRed(f.stage, f.outcome)
-        ? f.unchargedLanesReds ?? dev31UnchargedLanesRedsDefault() : f.chargeable ? 0 : c.unchargedLanesReds,
+        ? f.unchargedLanesReds! : f.chargeable ? 0 : c.unchargedLanesReds,
       redirects: c.redirects + add('redirect'),
       reviseRounds: c.reviseRounds + add('revise'),
       candidateReds: c.candidateReds + add('candidate-red'),
@@ -748,6 +748,7 @@ export class Fold implements JournalView {
   readonly #checkpointSkips: (Omit<FactOf<'checkpoint-skipped'>, 'kind'> & Seq)[] = [];
   readonly #divergences: (Omit<FactOf<'divergence'>, 'kind'> & Seq)[] = [];
   readonly #digests: (Omit<FactOf<'divergence-digest'>, 'kind'> & Seq)[] = [];
+  readonly #noted: Readonly<{unit: UnitId; command: CommandId; brief: Sha256Hex; seq: number}>[] = [];
   readonly #steered: (Omit<FactOf<'steered'>, 'kind'> & Seq)[] = [];
   readonly #mergedIn: (Omit<FactOf<'merged-in'>, 'kind'> & Seq)[] = [];
   readonly #debt: BankedDebt[] = [];
@@ -1615,6 +1616,9 @@ export class Fold implements JournalView {
         this.#digests.push({ ...rest, seq });
         return;
       }
+      case 'noted':
+        this.#noted.push({ unit: f.unit, command: f.command, brief: f.brief, seq });
+        return;
       case 'steered': {
         const { kind: _k, ...rest } = f;
         this.#steered.push({ ...rest, seq });
@@ -1782,13 +1786,9 @@ export class Fold implements JournalView {
    * resumed restores the decision before that park).
    */
   #steer(f: Extract<Fact, { kind: 'steered' }>, seq: number, fail: (detail: string) => never): void {
-    const u = this.#units.get(f.unit);
-    if (u === undefined || this.dispatchOf(f.unit) === null) return fail(`steered unit ${f.unit}, which was never dispatched`);
+    const u = this.#units.get(f.unit) ?? this.#unit(f.unit, 'build');
     const s = u.state;
-    const preparing = s.status === 'active' && s.decided?.stage === 'prepare';
-    if (!(s.status === 'park-pending' || preparing) || s.open !== null || s.entry !== null) {
-      fail(`steered unit ${f.unit}, which is ${s.status}${s.open === null ? '' : ` with ${s.open.stage}#${s.open.attempt} open`}, not parked or preparing`);
-    }
+    if (['retired', 'cut', 'superseded', 'stop-pending'].includes(s.status) || s.open !== null) fail(`steered finished or running unit ${f.unit} (${s.status})`);
     this.#setUnitState(u, {
       ...s, status: 'active', park: null, interrupted: null, pressureHold: null, approval: null,
       entry: { kind: 'steer', seq, command: f.command, brief: f.brief, budgetMin: f.budgetMin, resume: f.resume }, steering: { seq, resume: f.resume },
@@ -2184,6 +2184,13 @@ export class Fold implements JournalView {
     return this.#flakes;
   }
 
+  notes(unit: UnitId): readonly Readonly<{command: CommandId; brief: Sha256Hex; seq: number}>[] { return this.#noted.filter((n) => n.unit === unit); }
+  buildNotes(unit: UnitId, attempt: number): readonly Sha256Hex[] {
+    const starts = this.#units.get(unit)?.starts ?? new Map<string, number>();
+    const current = starts.get(`build#${attempt}`) ?? this.#lastSeq + 1;
+    const previous = Math.max(0, ...[...starts].filter(([k, seq]) => k.startsWith('build#') && seq < current).map(([, seq]) => seq));
+    return this.notes(unit).filter((n) => n.seq > previous && n.seq < current).map((n) => n.brief);
+  }
   propagationFacts(): readonly PropagationFactAt[] {
     return this.#propagationFacts;
   }

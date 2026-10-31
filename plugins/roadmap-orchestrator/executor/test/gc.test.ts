@@ -159,7 +159,7 @@ function generations(dir: AbsPath, n: number): void {
     writeFileSync(hostPath(dir, `supervisor.ready.${g}`), '');
     writeFileSync(hostPath(dir, `executor.${g}.out`), '');
     writeFileSync(hostPath(dir, `executor.${g}.err`), `generation ${g}\n`);
-    writeFileSync(hostPath(dir, `executor.${g}.exit.json`), JSON.stringify({ v: 1, generation: g, at: '2026-10-29T00:00:00.000Z', child: { type: 'exited', code: 0 }, stages: { kind: 'known', last: null, open: [] } }));
+    writeFileSync(hostPath(dir, `executor.${g}.exit.json`), JSON.stringify({ v: 2, generation: g, at: '2026-10-29T00:00:00.000Z', child: { type: 'exited', code: 0 }, stages: { kind: 'known', last: null, open: [] } }));
   }
   writeFileSync(hostPath(dir, 'host.generation'), `${n}\n`);
 }

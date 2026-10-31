@@ -140,7 +140,7 @@ export const STRAIGHT_OUTCOMES = {
  */
 export const BUMPY: Scenario = {
   // u2 is gated after u1 merged: the explicit edge the serial story meant (an M2 arc schedules a DAG).
-  arc: () => ({ units: [{ id: 'u1' }, { id: 'u2', lanes: [TWO_LANE], after: ['u1'] }], suite: [{ ...SUITE_LANE, tier: 'estate' }] }),
+  arc: () => ({ units: [{ id: 'u1' }, { id: 'u2', lanes: [TWO_LANE], after: ['u1'] }], suite: [{ ...SUITE_LANE, cadence: 'unit' }] }),
   steps: (r) => [
     planCheckStep({ decision: 'redirect', patch: [{ op: 'add', section: 'decisions', item: DECISION }] }),
     { ...planCheckStep({ decision: 'approve' }), expect: { ...planCheckStep({ decision: 'approve' }).expect, stdinContains: [DECISION.text] } },
@@ -251,7 +251,7 @@ export const STALE: Scenario = {
  */
 export const STALE_LANE: Scenario = {
   arc: (barriers) => ({
-    suite: [SUITE_LANE, { id: 'advance', tier: 'estate', argv: [process.execPath, fixture('pm-lane-barrier.ts'), barriers, 'suite'] }],
+    suite: [SUITE_LANE, { id: 'advance', cadence: 'unit', argv: [process.execPath, fixture('pm-lane-barrier.ts'), barriers, 'suite'] }],
   }),
   steps: STALE.steps,
   hooks: (r, barriers) => [atBarrier(barriers, 'suite', () => void advanceIntegration(r.repo, NOTES, 'unrelated work lands first'))],

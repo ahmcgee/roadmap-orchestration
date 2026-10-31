@@ -4,7 +4,7 @@ import { type InvocationId, type RoutingRev, type Sha256Hex, invocationId, parse
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import type { LaneDef, LaunchCpu } from '../core/records.ts';
-import { spawnCpuKeyOf, exitCpuOf } from '../core/upgrade.ts';
+import { spawnCpuKeyOf, exitCpuOf } from '../core/projections.ts';
 import type { AbsPath } from '../core/values.ts';
 import { invocationDir } from '../pipeline/invoke.ts';
 import type { BuildClass } from '../routing/types.ts';

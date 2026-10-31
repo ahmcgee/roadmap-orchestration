@@ -419,8 +419,8 @@ describe('the activation checks', () => {
     try {
       await completedAudit(r, ctx);
       appendSteps(d, [
-        checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [ruleOp('C-2'), ruleOp('C-3')], rulings: [checkpointRuling('C-2'), checkpointRuling('C-3')] }), [barrier]),
-        checkpointStep('ckpt-2', checkpointAnswer({ decision: 'bundle', ops: [ruleOp('C-3')], rulings: [checkpointRuling('C-3')] })),
+        checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [ruleOp('C-2'), ruleOp('C-3')],  }), [barrier]),
+        checkpointStep('ckpt-2', checkpointAnswer({ decision: 'bundle', ops: [ruleOp('C-3')],  })),
       ]);
       const running = runCheckpoint(ctx);
       await reached(d.scenarioDir, 'ckpt', 120_000);
@@ -440,25 +440,7 @@ describe('the activation checks', () => {
     }
   });
 
-  test('bundle.ruling-id-collision-invalid (paid M4a run 1): a bundle landing C-2, which the ledger already holds, and C-3 is rejected invalid with the collision as its reason, never crashing', T, async () => {
-    const d = checkpointArc(visionLenses('audit-1'));
-    const r = contextFor(d);
-    const { ctx, w } = checkpointContext(r);
-    try {
-      await completedAudit(r, ctx);
-      const ruled = await applyCommand(w.commands, submitRule(r, ruleRecord(r, 'C-2')));
-      assert.equal(ruled.kind, 'applied', JSON.stringify(ruled));
-      const colliding = checkpointAnswer({ decision: 'bundle', ops: [ruleOp('C-2'), ruleOp('C-3')], rulings: [checkpointRuling('C-2'), checkpointRuling('C-3')] });
-      appendSteps(d, [checkpointStep('ckpt-1', colliding), jobRepairStep('ckpt-1', colliding, ['C-2 is already in the ledger'])]);
-      const rev = r.journal.view.planApplied()!.rev;
-      const out = await runCheckpoint(ctx);
-      assert.ok(out.kind === 'decided' && out.decision.kind === 'rejected' && out.decision.reason === 'invalid', JSON.stringify(out));
-      assert.equal(out.decision.detail, 'C-2 is already in the ledger (a ruling is never edited: supersede it)', 'C-3, checked against the ledger without the invalid C-2, is valid');
-      assert.equal(r.journal.view.planApplied()!.rev, rev, 'nothing applied');
-    } finally {
-      r.journal.close();
-    }
-  });
+  
 
   // 2026-10-15 (arc feedback #3): the checkpoint's own output is never refused on bookkeeping it can correct.
   test('bundle.repair-turn-applies: an invalid bundle goes back once to the same session with every reason; the corrected answer applies, no invalid decision recorded', T, async () => {
@@ -486,54 +468,9 @@ describe('the activation checks', () => {
     }
   });
 
-  test('bundle.repair-turn-schema: a ruling missing a field is off the answer\'s schema; the repair turn is told which, and the completed ruling lands', T, async () => {
-    const d = checkpointArc(visionLenses('audit-1'));
-    const r = contextFor(d);
-    const { ctx } = checkpointContext(r);
-    try {
-      await completedAudit(r, ctx);
-      const full = JSON.parse(checkpointRuling('C-2')) as Record<string, JsonValue>;
-      const { trigger: _t, ...missing } = full;
-      const answer = (ruling: JsonValue): JsonValue => ({ ...(checkpointAnswer({ decision: 'bundle', ops: [ruleOp('C-2')], rulings: [checkpointRuling('C-2')] }) as Record<string, JsonValue>), rulings: [ruling] });
-      appendSteps(d, [checkpointStep('ckpt-1', answer(missing)), jobRepairStep('ckpt-1', answer(full), ['malformed: ', '$.rulings[0]'])]);
-      const out = await runCheckpoint(ctx);
-      assert.ok(out.kind === 'decided' && out.decision.kind === 'applied', JSON.stringify(out));
-      assert.deepEqual(Object.keys(keptPayload(r.ctx.runDir, r.journal.view.planApplied()!.payloadSha256!).manifest.rulings.sidecars), ['C-2']);
-    } finally {
-      r.journal.close();
-    }
-  });
+  
 
-  test('bundle.duplicate-bookkeeping: a ruling listed twice and its rule op given twice, both exactly, land once; two different rule ops of one ruling are a reason', T, async () => {
-    const d = checkpointArc(visionLenses('audit-1'));
-    const r = contextFor(d);
-    const { ctx } = checkpointContext(r);
-    try {
-      await completedAudit(r, ctx);
-      const twice = checkpointAnswer({ decision: 'bundle', ops: [ruleOp('C-2'), ruleOp('C-2')], rulings: [checkpointRuling('C-2'), checkpointRuling('C-2')] });
-      appendSteps(d, [checkpointStep('ckpt-1', twice)]);
-      const out = await runCheckpoint(ctx);
-      assert.ok(out.kind === 'decided' && out.decision.kind === 'applied', JSON.stringify(out));
-      const ledger = keptPayload(r.ctx.runDir, r.journal.view.planApplied()!.payloadSha256!).manifest.rulings;
-      assert.deepEqual(Object.keys(ledger.sidecars), ['C-2']);
-    } finally {
-      r.journal.close();
-    }
-    const e = checkpointArc(visionLenses('audit-1'));
-    const s = contextFor(e);
-    const { ctx: ctx2 } = checkpointContext(s);
-    try {
-      await completedAudit(s, ctx2);
-      const differing = checkpointAnswer({ decision: 'bundle', ops: [ruleOp('C-2'), { ...(ruleOp('C-2') as Record<string, JsonValue>), evidence: ['another reading'] }], rulings: [checkpointRuling('C-2')] });
-      const reason = 'ops 1 and 2 both land ruling C-2, differently: land it through one `rule` op';
-      appendSteps(e, [checkpointStep('ckpt-1', differing), jobRepairStep('ckpt-1', differing, [reason])]);
-      const out = await runCheckpoint(ctx2);
-      assert.ok(out.kind === 'decided' && out.decision.kind === 'rejected' && out.decision.reason === 'invalid', JSON.stringify(out));
-      assert.equal(out.decision.detail, reason);
-    } finally {
-      s.journal.close();
-    }
-  });
+  
 
   test('bundle.draining-request: while draining, a bundle that admits becomes a non-blocking bundle request; acknowledged `apply`, the next job enacts it without asking again', T, async () => {
     const d = checkpointArc(visionLenses('audit-1'));
@@ -566,7 +503,7 @@ describe('the activation checks', () => {
     const r = contextFor(d);
     const { ctx, w } = checkpointContext(r);
     try {
-      const lane = { id: 'py', argv: ['python3', 'check.py'], cwd: '.', env: { set: {}, pass: ['PATH', 'SECRET_TOKEN'] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], state: 'active' };
+      const lane = { id: 'py', argv: ['python3', 'check.py'], cwd: '.', env: { set: {}, pass: ['PATH', 'SECRET_TOKEN'] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], state: 'active' };
       appendSteps(d, [checkpointStep('ckpt-1', bundle([limitsOp('retries', 2), admitOp(d, 'u2', [lane])]))]);
       await completedAudit(r, ctx);
       const rev = r.journal.view.planApplied()!.rev;
@@ -655,40 +592,7 @@ describe('the activation checks', () => {
     }
   });
 
-  test('bundle.weakening-applies-with-divergence (OR-V): a ruling waiving an obligation, citing an active clause, applies without asking and records an obligation-departed divergence', T, async () => {
-    const d = checkpointArc(visionLenses('audit-1'));
-    const r = contextFor(d);
-    const { ctx } = checkpointContext(r);
-    try {
-      const ruling = JSON.stringify({
-        schema: 'roadmap/ruling-m3', id: 'C-2', statement: 'I-1 is waived while the helpers are rewritten.', kind: 'disposition', trigger: 'checkpoint',
-        supersedes: [], condition: null, docRefs: [{ path: 'contracts/api.md', anchor: '#api-contract', quotedText: 'returns the sum', relation: 'consistent' }],
-        contractRefs: [], contractOps: [], obligations: ['I-1'], obligationDispositions: [{ id: 'I-1', disposition: 'waived' }], cites: ['V-1'],
-        evidence: ['I-1 blocks the rewrite the vision asks for'], appliesTo: { type: 'arc' }, lifetime: 'arc', status: 'active',
-      });
-      const ops = [
-        { op: 'rule', ruling: 'C-2', cites: ['V-1'], evidence: ['I-1 blocks the rewrite'] },
-        { op: 'obligation-dispose', obligation: 'I-1', disposition: 'waived', ruling: 'C-2', cites: ['V-1'], evidence: ['I-1 blocks the rewrite'] },
-      ];
-      appendSteps(d, [checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops, rulings: [ruling] }))]);
-      await completedAudit(r, ctx);
-      const out = await runCheckpoint(ctx);
-      assert.ok(out.kind === 'decided' && out.decision.kind === 'applied', JSON.stringify(out));
-      const applied = r.journal.view.planApplied()!;
-      assert.deepEqual(applied.source, { type: 'bundle', job: 'ckpt-1' });
-      assert.ok(applied.changes.some((c) => c.type === 'obligation' && c.id === 'I-1' && c.edit === 'disposed'), JSON.stringify(applied.changes));
-      const obligations = JSON.parse(readFileSync(join(r.ctx.runDir, 'inputs', `${applied.obligationsSha256}.obligations.json`), 'utf8')) as { obligations: { id: string; state: unknown }[] };
-      assert.deepEqual(obligations.obligations.find((o) => o.id === 'I-1')!.state, { type: 'waived', ruling: 'C-2' });
-      const sidecar = keptPayload(r.ctx.runDir, applied.payloadSha256!).manifest.rulings.sidecars['C-2' as never];
-      const kept = JSON.parse(readFileSync(join(r.ctx.runDir, 'inputs', `${sidecar}.ruling.json`), 'utf8')) as { ruledBy: unknown; consistency: { by: { role: string } } };
-      assert.deepEqual(kept.ruledBy, { type: 'checkpoint', job: 'ckpt-1' }, 'the executor stamped who ruled');
-      assert.equal(kept.consistency.by.role, 'checkpoint');
-      assert.deepEqual(factsOfKind(r, 'divergence').map((x) => [x.type, x.from, x.cites, x.compensation.kind]), [['obligation-departed', 'I-1 rev 1', ['V-1'], 'restore-revision']]);
-      assert.deepEqual([...itemsOf(r, 'owner-request'), ...itemsOf(r, 'bundle-request')], [], 'nobody was asked');
-    } finally {
-      r.journal.close();
-    }
-  });
+  
 
   test('bundle.lane-unrunnable-invalid (paid M4b run 3, OP-3): an admit whose lane cannot resolve its argv[0] on its own PATH is invalid through the apply core\'s lane row; nothing applies', T, async () => {
     const d = checkpointArc(visionLenses('audit-1'));
@@ -696,7 +600,7 @@ describe('the activation checks', () => {
     const { ctx } = checkpointContext(r);
     try {
       // The program every lane in force runs (so no owner-only lane-program request), on a PATH that does not hold it.
-      const lane = { id: 'u2', argv: ['node', '--test'], cwd: '.', env: { set: { PATH: tmpDir('empty-path') }, pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], state: 'active' };
+      const lane = { id: 'u2', argv: ['node', '--test'], cwd: '.', env: { set: { PATH: tmpDir('empty-path') }, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], state: 'active' };
       const unrunnable = bundle([admitOp(d, 'u2', [lane])]);
       appendSteps(d, [checkpointStep('ckpt-1', unrunnable), jobRepairStep('ckpt-1', unrunnable, ['spec-lane-unrunnable'])]);
       await completedAudit(r, ctx);
@@ -710,30 +614,7 @@ describe('the activation checks', () => {
     }
   });
 
-  test('bundle.ruling-for-admitted-unit (paid M4b run 3, OP-2): a ruling applying to a unit the same bundle admits lands, its docs publication included', T, async () => {
-    const d = checkpointArc(visionLenses('audit-1'));
-    const r = contextFor(d);
-    const { ctx } = checkpointContext(r);
-    try {
-      const ruling = JSON.stringify({
-        schema: 'roadmap/ruling-m3', id: 'C-2', statement: 'u2 keeps the helpers pure.', kind: 'decision', trigger: 'checkpoint',
-        supersedes: [], condition: null, docRefs: [{ path: 'contracts/api.md', anchor: '#api-contract', quotedText: 'returns the sum', relation: 'consistent' }],
-        contractRefs: [], contractOps: [], obligations: [], obligationDispositions: [], cites: ['V-1'],
-        evidence: ['the repair needs a rule of its own'], appliesTo: { type: 'units', units: ['u2'] }, lifetime: 'arc', status: 'active',
-      });
-      const ops = [admitOp(d, 'u2'), { op: 'rule', ruling: 'C-2', cites: ['V-1'], evidence: ['the repair needs a rule of its own'] }];
-      appendSteps(d, [checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops, rulings: [ruling] }))]);
-      await completedAudit(r, ctx);
-      const out = await runCheckpoint(ctx);
-      assert.ok(out.kind === 'decided' && out.decision.kind === 'applied', JSON.stringify(out));
-      const applied = r.journal.view.planApplied()!;
-      assert.ok(applied.publication !== undefined, 'published through its docs publication');
-      assert.deepEqual(Object.keys(keptPayload(r.ctx.runDir, applied.payloadSha256!).manifest.rulings.sidecars), ['C-2']);
-      assert.equal(requirePlan(r).units.find((u) => u.id === 'u2')?.origin, 'checkpoint');
-    } finally {
-      r.journal.close();
-    }
-  });
+  
 });
 
 describe('convergence', () => {

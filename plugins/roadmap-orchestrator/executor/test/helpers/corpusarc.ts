@@ -49,7 +49,7 @@ export function visionRecord(visionText: string | null): Json {
   };
 }
 
-const lane = (id: string): Json => ({ id, argv: ['node', '-e', '0'], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [] });
+const lane = (id: string): Json => ({ id, argv: ['node', '-e', '0'], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [] });
 const arcLane = { ...lane('journey'), reporter: 'jsonl', testPaths: ['test'] };
 /** The witness test file I-1 declares (in the baseline). */
 export const WITNESS_FILE = 'test/berths.test.ts';
@@ -65,7 +65,7 @@ export function obligationsFile(pin: CorpusPin, opts: Readonly<{ activation?: 'm
     schema: 'roadmap/obligations-m3', cutLine: 'the berth booking ships', lanes: [arcLane],
     obligations: [{
       id: 'I-1', rev: 1, statement: 'A berth is never double-booked.', rule: { id: 'T-1', textSha256: t1.textSha256 }, serves: ['V-1'], witness,
-      proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: LANE_REV, witness }, deliveredBy: opts.activation === 'future' ? ['u1'] : [],
+      proofJudgment: { verdict: 'proves', obligationRev: 1,  witness }, deliveredBy: opts.activation === 'future' ? ['u1'] : [],
       activation: opts.activation ?? 'must-hold', contracts: [], state: { type: 'active' },
     }],
     mapping: { paths: [] },

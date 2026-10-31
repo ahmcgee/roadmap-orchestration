@@ -28,7 +28,7 @@ import { canonicalIds, divergenceId } from '../core/ids.ts';
 import type { Journal, JournalView } from '../core/interfaces.ts';
 import type { HolisticFold } from '../core/state.ts';
 import type { AbsPath, RepoPath } from '../core/values.ts';
-import { FIXES_UNRECORDED } from '../core/upgrade.ts';
+
 import { raiseNeedsUser, readNeedsUser } from '../needsuser.ts';
 import type { BundleOp, CheckpointOutput } from '../prompts/schemas.ts';
 import { type DivergenceDraft, type Preimage, type RevisionVector, type RulingSidecar, rulingRefSource } from './types.ts';
@@ -74,7 +74,7 @@ function ofOp(b: DivergenceBase, op: BundleOp, rulings: ReadonlyMap<string, Ruli
     case 'admit':
       return [plan(`admits ${op.unit.id} (origin ${op.unit.origin}, risk ${op.unit.risk}, scope ${op.unit.scope.join(', ')}${op.unit.after.length === 0 ? '' : `, after ${op.unit.after.join(', ')}`})`)];
     case 'reenter':
-      return [plan(`${op.unit} re-enters ${op.reenters}${op.fixes === null || op.fixes === FIXES_UNRECORDED ? '' : ` to fix ${op.fixes}`}${op.enterAt === null ? '' : ` at ${op.enterAt}`}${op.reset === null ? '' : `, its chargeable failures reset under ${op.reset}`}`)];
+      return [plan(`${op.unit} re-enters ${op.reenters}${op.fixes === null ? '' : ` to fix ${op.fixes}`}${op.enterAt === null ? '' : ` at ${op.enterAt}`}${op.reset === null ? '' : `, its chargeable failures reset under ${op.reset}`}`)];
     case 'cut':
       return [plan(`cuts ${op.unit}: ${op.reason}`)];
     case 'route':
@@ -94,38 +94,6 @@ function ofOp(b: DivergenceBase, op: BundleOp, rulings: ReadonlyMap<string, Ruli
       }];
     }
     case 'obligation-split':
-    case 'obligation-dispose': {
-      const rev = b.obligationRevs.get(op.obligation);
-      const what = op.op === 'obligation-split'
-        ? `splits ${op.obligation} into ${op.children.map((c) => c.id).join(', ')}`
-        : `${op.disposition === 'amended' ? 'authorizes an amendment of' : op.disposition === 'waived' ? 'waives' : op.disposition === 'deferred' ? 'defers' : 'retires'} ${op.obligation} under ${op.ruling}`;
-      return [{
-        ...common, type: 'obligation-departed', from: `${op.obligation} rev ${rev ?? '?'}`, what,
-        preimage: { ...planPreimage(b), obligationsSha256: b.obligationsSha256 }, compensation: restore(`the obligations before ${op.obligation}'s ${op.op === 'obligation-split' ? 'split' : 'disposition'}`),
-      }];
-    }
-    case 'rule': {
-      const s = rulings.get(op.ruling);
-      if (s === undefined) throw new Error(`rule ${op.ruling}, which the bundle's rulings do not hold (validation refuses it)`);
-      const pre = (paths: readonly RepoPath[]): Preimage => ({
-        ...planPreimage(b), ledgerSha256: b.ledgerSha256,
-        contracts: [...new Set(paths)].sort().flatMap((path) => {
-          const blob = b.blobAt(path);
-          return blob === null ? [] : [{ path, blob }];
-        }),
-      });
-      // A rule ref is never `deviates` (K19), so only the doc arm departs here.
-      const deviations = s.docRefs.map(rulingRefSource).flatMap((d) => (d.kind === 'doc' && d.relation === 'deviates' ? [d] : [])).map((d): DivergenceDraft => ({
-        ...common, type: 'target-departed', from: `${d.path}${d.anchor}`, what: `${s.id} deviates from ${JSON.stringify(d.quotedText)}: ${s.statement}`,
-        preimage: pre([d.path]), compensation: supersede(s.id),
-      }));
-      const edits = [...new Set(s.contractOps.map((o) => o.path))].sort().map((path): DivergenceDraft => ({
-        ...common, type: 'contract-departed', from: `${path}${s.contractOps.find((o) => o.path === path)!.anchor}`,
-        what: `${s.id} edits ${path}: ${s.contractOps.filter((o) => o.path === path).map((o) => `${JSON.stringify(o.oldText)} → ${JSON.stringify(o.newText)}`).join('; ')}`,
-        preimage: pre([path]), compensation: supersede(s.id),
-      }));
-      return [...deviations, ...edits];
-    }
     case 'invalidate-approval':
     case 'request':
       return [];

@@ -1,7 +1,7 @@
 // Hand-written validation primitives. Every boundary reader takes `unknown` and either returns the typed
 // value or throws a SchemaError naming the field path and the offending value. A reader is a plain
 // function `(value, path) => T`, so readers compose without a library.
-import { legacyIdOrder } from './upgrade.ts';
+
 import { SCHEMA_VERSION, type SchemaVersion } from './version.ts';
 
 declare const brand: unique symbol;
@@ -129,10 +129,6 @@ export function sortedBy<T>(
     const out = read(value, path);
     const bad = firstUnordered(out, key);
     if (bad === null) return out;
-    if (opts.legacyKey !== undefined && firstUnordered(out, opts.legacyKey) === null) {
-      legacyIdOrder(path);
-      return out;
-    }
     throw new SchemaError(`${path}[${bad}]`, `entries strictly ascending${opts.order === undefined ? '' : ` ${opts.order}`} (sorted, no duplicates)`, value);
   };
 }

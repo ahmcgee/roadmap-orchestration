@@ -394,7 +394,7 @@ describe('flow history: other arcs\' series', () => {
   const PLAN_JSON = {
     schema: 'roadmap/plan-m1', arc: 'arc-a', integrationBranch: 'integration/arc-a', baseline: 'a'.repeat(40), worktreeRoot: '/var/tmp/roadmap-wt',
     contracts: [], rulings: 'rulings.jsonl', architectureDoc: 'docs/architecture.md', direction: 'Converge.',
-    suite: { lanes: [{ id: 'suite', argv: ['npm', 'test'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [] }] },
+    suite: { lanes: [{ id: 'suite', argv: ['npm', 'test'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [] }] },
     resources: [], units: [{ id: 'u1', spec: 'specs/u1.json', risk: 'med', scope: ['src/**'], resources: [] }],
   };
   /** The arc's ref; `completedAt`: the minute of its `arc-completed` (null: none). */

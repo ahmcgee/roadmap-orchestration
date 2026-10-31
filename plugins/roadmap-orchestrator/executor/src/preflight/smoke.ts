@@ -16,7 +16,7 @@
 // `smokeOutages`, src/preflight/checks.ts `smokeCheck`).
 import { join } from 'node:path';
 import { launchPressure } from '../host/pressure.ts';
-import { exitCpuOf } from '../core/upgrade.ts';
+import { exitCpuOf } from '../core/projections.ts';
 import { resultBytes, writeResult } from '../backends/adapter.ts';
 import {
   type Argv, type BackendCall, type ClaudeImplementerSession, type ClaudeTriple, type CodexSession, type CodexTriple,

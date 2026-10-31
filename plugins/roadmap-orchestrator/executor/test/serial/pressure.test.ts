@@ -25,7 +25,7 @@ import { arcId, invocationId, unitId } from '../../src/core/ids.ts';
 import { readJournal } from '../../src/core/log.ts';
 import { absPath } from '../../src/core/values.ts';
 import { HOST_WINDOW_MS, PRESSURE_SATURATED, PressureTicks, pressureAvailability, readHostCpu } from '../../src/host/pressure.ts';
-import { spawnPressureOf } from '../../src/core/upgrade.ts';
+import { spawnPressureOf } from '../../src/core/projections.ts';
 import { invocationDir } from '../../src/pipeline/invoke.ts';
 import { specFacts } from '../../src/pipeline/reproduce.ts';
 import { type Gate, runUnit } from '../../src/pipeline/unit.ts';

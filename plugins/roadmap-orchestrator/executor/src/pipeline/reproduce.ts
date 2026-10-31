@@ -28,7 +28,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import type { MutantOf, OutcomeStage, WitnessFor } from '../core/events.ts';
-import { mutantSubjectDefault } from '../core/upgrade.ts';
+import { mutantOf } from '../core/projections.ts';
 import { type FindingId, type LaneId, type OpId, type ResourceInstance, type ResourceName, type ResourceUnit, type Sha, type Sha256Hex, type UnitId, invocationId, opKey } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { specShaInForce } from '../input/inforce.ts';
@@ -495,7 +495,7 @@ function codeDismissals(ctx: StageContext): readonly FindingId[] {
     const killed = view.opsOf('proc.spawn').flatMap((i) => {
       const s = i.expect.subject;
       if (!(i.parent.type === 'stage' && i.parent.unit === unit.id && i.parent.stage === 'reproduce' && i.parent.attempt === d.attempt && s.purpose === 'mutant')) return [];
-      const of = mutantSubjectDefault(s);
+      const of = mutantOf(s);
       return of.type === 'finding' ? [of.finding] : [];
     }).at(-1);
     if (killed === undefined) throw new Error(`unit ${unit.id}: reproduce attempt ${d.attempt} decided not-reproduced without a mutant run`);

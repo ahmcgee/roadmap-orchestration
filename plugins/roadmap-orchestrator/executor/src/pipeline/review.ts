@@ -35,7 +35,7 @@ import { specLinksOf } from '../holistic/staleset.ts';
 import {
   type ApprovalBlobs, type FindingsLedgerEntry, type GateDelta, type GateReview, type LedgerOutcome, type ReviewDispute, isSettled, movedTargets,
 } from '../core/review.ts';
-import { approvalBlobsOf } from '../core/upgrade.ts';
+import { approvalBlobsOf } from '../core/projections.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, type RepoPath, absPath, repoPath } from '../core/values.ts';
 import { git, gitRun } from '../git/git.ts';

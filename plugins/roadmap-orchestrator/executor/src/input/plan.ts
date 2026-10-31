@@ -24,7 +24,7 @@ import { type PropagationTarget, propagationTarget } from '../core/stale.ts';
 import {
   BOUND_FIELDS, type Bounds, DEFAULT_BOUNDS, type FailureRef, failureRef, type KnownDefectMatch, type LaneDef, type LaneEnv, knownDefectMatch, laneDefOf, laneEnv,
 } from '../core/records.ts';
-import { planCheckShapeDefault, environmentResourcesDefault } from '../core/upgrade.ts';
+
 import { type FlakyKey, flakyKey, flakyKeyOf } from '../core/flaky.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { Fields, type Read, SchemaError, arrayOf, assertUnique, literal, nullable, object, oneOf, positive, sortedBy, str, stringMap, tagged } from '../core/validate.ts';
@@ -100,9 +100,9 @@ export type ReentryPoint = (typeof REENTRY_POINTS)[number];
  * re-entries applied before it carry none; the classifier requires it of every re-entry an apply adds whose lineage
  * recorded a failure.
  */
-export type Reentry = Readonly<{ unit: UnitId; enterAt?: ReentryPoint; reset?: Readonly<{ ruling: RulingId }>; fixes?: FailureRef }>;
+export type Reentry = Readonly<{ unit: UnitId; enterAt?: ReentryPoint; reset?: Readonly<{ reason: string }>; fixes?: FailureRef }>;
 /** `cut` (M2): the unit is out of scope; a ruling may back the reason. */
-export type Cut = Readonly<{ reason: string; ruling?: RulingId }>;
+export type Cut = Readonly<{ reason: string }>;
 
 /**
  * M3 (`limits`): overrides of the built-in bounds (`DEFAULT_BOUNDS`), all positive. A unit's override its own;
@@ -531,7 +531,7 @@ export const environmentsOf = (plan: Pick<PlanM1, 'environments'>): readonly Env
 /** Resources powered by an environment; absent on an earlier declaration, read without rewriting its bytes. */
 export function environmentResources(environment: EnvironmentDecl): readonly ResourceName[] {
   if (environment.resources !== undefined) return environment.resources;
-  return environmentResourcesDefault();
+  return [];
 }
 
 /** Every environment used by these resource names, ascending and unique (explicit environments included). */
@@ -546,7 +546,7 @@ const rulingR: Read<RulingId> = (v, p) => rulingId(v, p);
 
 const reentry: Read<Reentry> = object((f) => {
   const enterAt = f.optional('enterAt', oneOf(REENTRY_POINTS));
-  const reset = f.optional('reset', object((g) => ({ ruling: g.get('ruling', rulingR) })));
+  const reset = f.optional('reset', object((g) => ({ reason: g.get('reason', str) })));
   const fixes = f.optional('fixes', failureRef);
   return {
     unit: f.get('unit', (v, p) => unitId(v, p)), ...(enterAt === undefined ? {} : { enterAt }), ...(reset === undefined ? {} : { reset }), ...(fixes === undefined ? {} : { fixes }),
@@ -554,8 +554,7 @@ const reentry: Read<Reentry> = object((f) => {
 });
 
 const cut: Read<Cut> = object((f) => {
-  const ruling = f.optional('ruling', rulingR);
-  return { reason: f.get('reason', str), ...(ruling === undefined ? {} : { ruling }) };
+  return { reason: f.get('reason', str) };
 });
 
 const planUnit: Read<PlanUnit> = object((f) => {
@@ -774,7 +773,7 @@ export function parsePlan(value: unknown): PlanM1 {
     const knownDefects = f.optional('knownDefects', arrayOf(knownDefect, { nonEmpty: true }));
     // dev.17: a dev.16 plan's `planCheck.shape` is read and dropped (every plan-check is uniform now), warned.
     const legacyPlanCheck = f.optional('planCheck', object((g) => ({ shape: g.get('shape', oneOf(LEGACY_PLAN_CHECK_SHAPES)) })));
-    if (legacyPlanCheck !== undefined) planCheckShapeDefault(legacyPlanCheck.shape);
+
     const derived = f.optional('derived', arrayOf(derivedFiles));
     const milestones = f.optional('milestones', arrayOf(milestone, { nonEmpty: true }));
     const environments = f.optional('environments', environmentsR);

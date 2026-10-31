@@ -138,7 +138,7 @@ test('evals-m4a.profile-criterion: every arc\'s first plan-applied is under the 
 /** An arc log for `pressure-recorded` from its records (cast, never parsed); its flow runs kept inputs at window pressure `window`. */
 function pressureArc(records: readonly object[], window: number | null = 0.6): PressureArc {
   // A minute between records: every lane run is long enough to carry a pressure, unless a record gives its own `at`.
-  const events = records.map((r, i) => ({ v: 1, seq: i + 1, prev: null, at: new Date(Date.parse('2026-10-09T10:00:00.000Z') + i * 60_000).toISOString(), arc: 'arc-p', ...r })) as unknown as Event[];
+  const events = records.map((r, i) => ({ v: 2, seq: i + 1, prev: null, at: new Date(Date.parse('2026-10-09T10:00:00.000Z') + i * 60_000).toISOString(), arc: 'arc-p', ...r })) as unknown as Event[];
   return { arc: 'arc-p', events, flowInputs: () => ({ pressure: { now: null, threshold: 0.5, available: true, window, cpuInUse: 2, hostCpus: 8 } }) as unknown as FlowInputs };
 }
 const startRec = (pressure: 'available' | 'unavailable') => ({ type: 'fact', fact: { kind: 'executor-started', generation: 1, pressure } });

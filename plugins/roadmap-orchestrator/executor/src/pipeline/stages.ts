@@ -99,7 +99,7 @@ import {
   type RuleId, type ObligationId, type InvocationId, type JudgmentSessionId, type LaneId, type ResourceInstance, type ResourceName, type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId, invocationId,
 } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
-import { censusOf } from '../core/upgrade.ts';
+import { censusOf } from '../core/projections.ts';
 import { ruleMentions } from '../holistic/rederive.ts';
 import { selectObligations, unitRules } from '../holistic/impact.ts';
 import { canonicalJson } from '../core/json.ts';
@@ -177,7 +177,7 @@ import { mutationSmoke, survivingObligations } from './smoke.ts';
 import { pressureCause, seriesRuling } from './starved.ts';
 import { checksApply, publishWitnessLaneFiles, requiredAt, witnessPresence } from './witnesscheck.ts';
 import {
-  type DecidedRound, type PreparedRound, type RoundCall, type RoundInput, callRound, decidedRound, laneFixRound, prepareRound, resolveContinuation,
+  type DecidedRound, type PreparedRound, type RoundCall, type RoundInput, callRound, decidedRound, laneFixRound, prepareRound, steerBrief, resolveContinuation,
 } from './rounds.ts';
 import { type BuildRound, type Next, type StageOutcome, outcomeFact, transition } from './transitions.ts';
 import { verificationReasons, verifyRunsOf } from './deflake.ts';
@@ -1442,6 +1442,7 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
   const allowance = Math.max(0, state.bounds.certifications - 1 - state.counters.unchargedLanesReds);
   const render = (call: RoundCall) => renderPrompt(prompt, {
     spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec, { buildLanesOnly: true }) }, ...lib,
+    notes: ctx.journal.view.buildNotes(unit.id, parent.attempt).map((sha) => steerBrief(ctx.runDir, sha)),
     planCheckNotes: planCheckNotes(ctx, unit.id),
     fastLanes: activeBuildLanes(spec), suiteLanes: builderSuiteLanes(ctx.plan().suite.lanes, spec), evidenceDir: work, worktree: round.worktree, scope: effectiveScope(pinned),
     fixRound: call.fixRound === null ? null : { ...call.fixRound, directives: [...call.fixRound.directives,

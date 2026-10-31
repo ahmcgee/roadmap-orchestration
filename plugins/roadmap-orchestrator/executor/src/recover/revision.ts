@@ -56,7 +56,7 @@ export async function commitRevision(ctx: RevisionCommitContext, payload: Revisi
     docs = outcome;
     crashPoint('revision.commit.after-docs');
   }
-  const fact = appendRevision(ctx.journal, commit, payload, docs?.publication ?? null);
+  const fact = appendRevision(ctx.journal, ctx.runDir, commit, payload, docs?.publication ?? null);
   closeRevision(ctx.journal, commit.op, false);
   // The publication's slot is held through the activation: no unit publishes between its docs ff and its plan-applied.
   if (docs !== null) await docs.settle();
@@ -93,7 +93,7 @@ export function revisionReconciler(runDir: AbsPath, journal: Journal): Reconcile
       if (docs.kind === 'not-published') return { kind: 'abort', detail: `its docs publication did not publish; the source (${JSON.stringify(intent.expect.source)}) re-evaluates` };
       publication = docs.publication;
     }
-    appendRevision(journal, intent, payload, publication);
+    appendRevision(journal, runDir, intent, payload, publication);
     return { kind: 'done', outcome: { kind: 'applied' } };
   };
 }

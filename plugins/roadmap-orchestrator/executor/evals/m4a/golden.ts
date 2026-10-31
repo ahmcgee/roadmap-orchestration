@@ -378,7 +378,7 @@ export type SpecSeed = Pick<UnitSeed, 'scope' | 'unitLane' | 'acceptance' | 'wit
 export const PASS_PATH = { set: {}, pass: ['PATH'] } as const;
 
 export function specLane(id: string, argv: readonly string[], env: Readonly<{ set: Readonly<Record<string, string>>; pass: readonly string[] }> = PASS_PATH) {
-  return { id, argv: [...argv], cwd: '.', env: { set: { ...env.set }, pass: [...env.pass] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], state: 'active' };
+  return { id, argv: [...argv], cwd: '.', env: { set: { ...env.set }, pass: [...env.pass] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], state: 'active' };
 }
 
 export function specOf(u: SpecSeed, extraLanes: readonly ReturnType<typeof specLane>[] = []) {
@@ -408,7 +408,7 @@ export const SHARD = { argv: SEED_SUITE_ARGV.map((a) => (a === PLANT.serial ? '-
  */
 export function suiteLanes(sharded: boolean) {
   const lane = (id: string, argv: readonly string[], cpu?: number) => ({
-    id, argv: [...argv], cwd: '.', env: { set: {}, pass: ['PATH', 'HOME'] }, expectedExit: 0, tier: 'estate', resources: [], evidenceGlobs: [], ...(cpu === undefined ? {} : { cpu }),
+    id, argv: [...argv], cwd: '.', env: { set: {}, pass: ['PATH', 'HOME'] }, expectedExit: 0, cadence: 'unit', resources: [], evidenceGlobs: [], ...(cpu === undefined ? {} : { cpu }),
   });
   return [sharded ? lane(SUITE_LANE, SHARD.argv, SHARD.cpu) : lane(SUITE_LANE, SEED_SUITE_ARGV), lane(REPLAY_LANE.id, REPLAY_LANE.argv)];
 }

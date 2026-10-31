@@ -59,7 +59,7 @@ const SUBJECTS = /\b(?:F|I)-[1-9][0-9]*\b/g;
  */
 export function identitiesOf(op: BundleOp, known: ReadonlySet<string>, rootOf: (unit: UnitId) => UnitId): readonly Identity[] {
   if (!isMaterial(op)) return [];
-  const own = op.op === 'obligation-split' || op.op === 'obligation-dispose' ? [op.obligation as string] : [];
+  const own = op.op === 'obligation-split' ? [op.obligation as string] : [];
   const named = op.evidence.flatMap((e) => e.match(SUBJECTS) ?? []).filter((s) => known.has(s));
   const unit = unitOf(op);
   const root = unit === null ? null : rootOf(unit);
@@ -119,7 +119,7 @@ export function brakesOf(
 
 /** The subjects an op may name: the arc's findings and obligations (an op's own obligation counts as known). */
 const withObligations = (known: ReadonlySet<string>, ops: readonly BundleOp[]): ReadonlySet<string> =>
-  new Set([...known, ...ops.flatMap((op) => (op.op === 'obligation-split' || op.op === 'obligation-dispose' ? [op.obligation] : []))]);
+  new Set([...known, ...ops.flatMap((op) => (op.op === 'obligation-split' ? [op.obligation] : []))]);
 
 /** The identities of `ops` another applied bundle already changed: a non-empty list is the identity bound hit. */
 export function secondChanges(brakes: Brakes, ops: readonly BundleOp[], known: ReadonlySet<string>, rootOf: (unit: UnitId) => UnitId): readonly string[] {

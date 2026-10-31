@@ -2,7 +2,7 @@
 // shared startup rows report (`phase0Rows`, C1's src/phase0/rows.ts, run by `start`, `apply` and `phase0 check`), the
 // brief ack marker and the brief payload (C4). Types and readers only.
 import { OUTCOME_STAGES, type OutcomeStage } from '../core/events.ts';
-import { issuesIgnored, scopeOverlapFixDefault } from '../core/upgrade.ts';
+
 import {
   type AmendmentRef, type ArcId, type ClauseId, type DebtId, type DivergenceId, type JobId, type NeedsUserId, type ObligationId, type PhaseQuestionId,
   type RuleId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, amendmentRef, arcId, briefId, clauseId, debtId, divergenceId,
@@ -117,7 +117,7 @@ export const phase0Record: Read<Phase0Record> = object((f) => {
   // A record written for an earlier executor names its issue capture and intake (the issues integration was removed in
   // 1.0.0-dev.21): read and ignored (`issuesIgnored`; scaffolding).
   for (const legacy of ['issueCapture', 'intake'] as const) {
-    if (f.optional(legacy, (v) => v) !== undefined) issuesIgnored(`phase0.${legacy}`);
+
   }
   return out;
 });
@@ -159,7 +159,7 @@ export const corpusProblem: Read<CorpusProblem> = tagged('type', {
   'scope-overlaps-corpus': object((f): CorpusProblem => {
     const unit = f.get('unit', (v, p) => unitId(v, p));
     const fix = f.optional('fix', str);
-    if (fix === undefined) scopeOverlapFixDefault(unit);
+
     return { type: f.get('type', literal('scope-overlaps-corpus')), unit, fix: fix ?? scopeOverlapFix(unit) };
   }),
   'contract-overlaps-corpus': object((f): CorpusProblem => ({ type: f.get('type', literal('contract-overlaps-corpus')), path: f.get('path', pathR) })),

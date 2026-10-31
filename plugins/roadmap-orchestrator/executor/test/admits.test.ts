@@ -109,7 +109,7 @@ describe('admit classes: the decision table (R45)', () => {
     assert.deepEqual(one(world(), admit('more', v(1, 3))).conversions, unwitnessed, 'no obligation of the bundle is delivered by it');
     assert.deepEqual(one(world({ obligationList: [witnessOf('more', v(1))] }), admit('more', v(1, 3))).conversions, unwitnessed, 'its obligation serves only the slice');
     assert.deepEqual(one(world({ obligationList: [witnessOf('other', v(3))] }), admit('more', v(1, 3))).conversions, unwitnessed, 'another unit delivers the one serving V-3');
-    const waived = ob(obligation('I-w', v(3), { deliveredBy: ['more'], activation: 'future', state: { type: 'waived', ruling: 'C-1' } as ObligationDef['state'] }), true);
+    const waived = ob(obligation('I-w', v(3), { deliveredBy: ['more'], activation: 'future', state: { type: 'waived', reason: 'test disposition', rev: 2 } as ObligationDef['state'] }), true);
     assert.deepEqual(one(world({ obligationList: [waived] }), admit('more', v(1, 3))).conversions, unwitnessed, 'an exempt obligation witnesses nothing');
   });
 
@@ -172,7 +172,7 @@ describe('admit classes: repair refs and touched clauses (R45, R47)', () => {
   });
 
   test('admits.ref-exempt-invalid: repairing a deferred obligation is invalid', () => {
-    const out = one(world({ obligationList: [ob(obligation('I-1', v(1), { state: { type: 'deferred', ruling: 'C-1' } as ObligationDef['state'] }))] }), admit('fix', v(1), ['I-1']));
+    const out = one(world({ obligationList: [ob(obligation('I-1', v(1), { state: { type: 'deferred', reason: 'test disposition', rev: 2 } as ObligationDef['state'] }))] }), admit('fix', v(1), ['I-1']));
     assert.match(out.reasons[0]!, /repair-ref-exempt: I-1 is deferred/);
   });
 
@@ -199,7 +199,7 @@ describe('admit classes: repair refs and touched clauses (R45, R47)', () => {
   });
 
   test('admits.exempt-delivered-not-touched: a waived obligation the admit delivers is no target', () => {
-    const w = world({ obligationList: [ob(obligation('I-2', v(3), { deliveredBy: ['gap'], activation: 'future', state: { type: 'waived', ruling: 'C-1' } as ObligationDef['state'], rule: 'T-2' }), true)] });
+    const w = world({ obligationList: [ob(obligation('I-2', v(3), { deliveredBy: ['gap'], activation: 'future', state: { type: 'waived', reason: 'test disposition', rev: 2 } as ObligationDef['state'], rule: 'T-2' }), true)] });
     assert.deepEqual(one(w, admit('gap', v(1))).classes[0]!.class, { type: 'oversight', clauses: ['V-1'] });
   });
 

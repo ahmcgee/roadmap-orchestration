@@ -26,7 +26,7 @@ const A = sha('a'.repeat(40));
 const H = sha256('d'.repeat(64));
 const AT = isoTime('2026-10-18T12:00:00.000Z');
 
-const envelope = (seq: number): Envelope => ({ v: 1, seq, prev: seq === 1 ? null : H, at: AT, arc: arcId('arc-3') });
+const envelope = (seq: number): Envelope => ({ v: 2, seq, prev: seq === 1 ? null : H, at: AT, arc: arcId('arc-3') });
 function roundTrip(record: LogRecord): Event {
   const e = { ...envelope(2), ...record } as Event;
   const line = serializeEvent(e);

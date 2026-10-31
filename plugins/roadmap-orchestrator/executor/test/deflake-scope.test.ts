@@ -12,7 +12,7 @@ import { cpSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { evaluateApply, evaluateRevision, keepRevision, payloadOf } from '../src/commands/apply.ts';
-import { EXPORT_FILE, exportBase, exportInputs } from '../src/commands/inputs.ts';
+import { EXPORT_FILE, exportInputs } from '../src/commands/inputs.ts';
 import type { Fact } from '../src/core/events.ts';
 import { atomicJson } from '../src/core/fsx.ts';
 import { type InvocationId, type UnitId, laneId, opKey, sha, sha256, unitId } from '../src/core/ids.ts';
@@ -129,12 +129,12 @@ function commitDev17Unit(a: CorpusArc, j: OpenJournal): void {
 /** `evaluateApply` of the owner's files as they stand, from their latest apply. */
 const ownerApply = (a: CorpusArc, j: OpenJournal) => withForge(a.forge, () => evaluateApply({
   runDir: runDirOfArc(a), view: j.view, hostDir: newHostDir(), repo: a.repo, planFile: a.planPath, routingBase: routingOf(a),
-  laneEnv: process.env, manifest: null, base: null, rulings: [], visionEdit: false,
+  laneEnv: process.env, manifest: null, base: revisionInForce(runDirOfArc(a), requirePlanInForce(runDirOfArc(a), j.view)).manifest, rev: j.view.planApplied()!.rev, reason: 'Test apply',
 }));
 
 function startInput(a: CorpusArc, hostDir: AbsPath, base: RevisionManifest | null): StartInput {
   return {
-    repo: a.repo, planFile: a.planPath, profile: null, hostDir, env: process.env, respawn: null, base,
+    repo: a.repo, planFile: a.planPath, profile: null, hostDir, env: process.env, respawn: null,
     claim: (ctx) => claimHost(ctx.hostDir, { arc: ctx.plan.arc, runDir: ctx.runDir, repo: ctx.repo, supervisor: selfIdentity() }, async () => assert.fail('no previous arc')),
   };
 }
@@ -238,7 +238,7 @@ describe('deflake scope', () => {
     assert.equal(refused.kind, 'refused');
     assert.match(JSON.stringify(refused.kind === 'refused' ? refused.rejections : []), /plan-change-refused.*conflict: .*plan\.json at \$\.units\[deflake-1\]\.scope: you and the arc both changed it since the base/);
 
-    const based = await start(a, exportBase(absPath(join(out, EXPORT_FILE)), 'start'));
+    const based = await start(a, null);
     assert.equal(based.kind, 'passed', JSON.stringify(based.kind === 'refused' ? based.rejections : 'passed'));
     const j2 = openJournal(runDir, a.arc);
     try {

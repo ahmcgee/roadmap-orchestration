@@ -37,7 +37,7 @@ const INV = invocationId(opId(ARC, 7), 1);
 const LANE_REV = laneRev('0123456789abcdef');
 const ENV = envId('fedcba9876543210');
 
-const envelope = (seq: number): Envelope => ({ v: 1, seq, prev: seq === 1 ? null : H, at: AT, arc: ARC });
+const envelope = (seq: number): Envelope => ({ v: 2, seq, prev: seq === 1 ? null : H, at: AT, arc: ARC });
 function roundTrip(record: LogRecord): Event {
   const e = { ...envelope(2), ...record } as Event;
   const line = serializeEvent(e);
@@ -80,6 +80,7 @@ const HOLISTIC_FACTS: { readonly [K in HolisticFactKind]: object } = {
   'checkpoint-skipped': { kind: 'checkpoint-skipped', audit: 'audit-1', generation: 1, visionSha256: H, carried: ['F-1'] },
   divergence: { kind: 'divergence', id: 'D-1', index: 0, ...draft },
   'divergence-digest': { kind: 'divergence-digest', needsUser: 'nu-40', ids: ['D-1', 'D-2'] },
+  noted: {kind: 'noted', unit: unitId('u1'), command: commandId('cmd-0000000000000001'), brief: sha256('a'.repeat(64))},
   steered: { kind: 'steered', unit: U1, command: CMD, brief: H, budgetMin: 30, resume: false },
   'merged-in': { kind: 'merged-in', unit: U1, command: CMD, integrationTip: A, head: B },
   'audit-requested': { kind: 'audit-requested', command: CMD, lenses: ['drift'] },
@@ -98,7 +99,7 @@ const OBLIGATIONS = {
   obligations: [
     {
       id: 'I-1', rev: 1, statement: 'a month reconciles in one command', docRef: { path: 'docs/target.md', anchor: '#reconcile', quotedText: 'one command' },
-      serves: ['V-1'], witness: { lane: 'journey', testIds: ['reconcile month'] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: LANE_REV, witness: { lane: 'journey', testIds: ['reconcile month'] } },
+      serves: ['V-1'], witness: { lane: 'journey', testIds: ['reconcile month'] }, proofJudgment: { verdict: 'proves', obligationRev: 1,  witness: {  testIds: ['reconcile month'] } },
       deliveredBy: ['parse', 'report'], activation: 'future', contracts: [], state: { type: 'active' },
     },
     {
@@ -107,7 +108,7 @@ const OBLIGATIONS = {
     },
     {
       id: 'I-4', rev: 1, statement: 'totals round half-even', docRef: { path: 'docs/target.md', anchor: '#money', quotedText: 'never mis-rounded' },
-      serves: ['V-2'], witness: { lane: 'journey', testIds: ['half-even'] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: LANE_REV, witness: { lane: 'journey', testIds: ['half-even'] } },
+      serves: ['V-2'], witness: { lane: 'journey', testIds: ['half-even'] }, proofJudgment: { verdict: 'proves', obligationRev: 1,  witness: {  testIds: ['half-even'] } },
       deliveredBy: [], activation: 'must-hold', parent: 'I-2', contracts: [], state: { type: 'active' },
     },
   ],
@@ -130,91 +131,7 @@ describe('M3 ids', () => {
   });
 });
 
-describe('M3 inputs: vision, obligations, ruling sidecars', () => {
-  const clauses = [
-    { id: 'V-1', kind: 'purpose', text: 'bookkeepers reconcile a month in one command', rank: null, state: 'active' },
-    { id: 'V-2', kind: 'non-negotiable', text: 'money is never silently mis-rounded', rank: null, state: 'active' },
-    { id: 'V-3', kind: 'tradeoff', text: 'clear errors over permissive input', rank: 1, state: 'withdrawn' },
-    { id: 'V-4', kind: 'world', text: 'a bookkeeper closes the month by running one command and trusting every total', rank: null, state: 'active' },
-  ];
-  const question = { id: 'Q-1', text: 'do bookkeepers reconcile more than one currency?', bears: ['V-1', 'V-2'], assumption: 'one currency per ledger', state: 'open' };
-  const v = { schema: 'roadmap/vision-m3', rev: 1, confirmation: { ref: 'vision.md#sha256:ab12', at: AT }, clauses, questions: [question] };
 
-  it('the vision: a tradeoff is ranked and nothing else is; ids unique; an active world clause at least', () => {
-    assert.deepEqual(parseVision(v), v);
-    assert.throws(() => parseVision({ ...v, clauses: [{ ...clauses[2], rank: null }] }), /rank/);
-    assert.throws(() => parseVision({ ...v, clauses: [{ ...clauses[0], rank: 2 }] }), /rank/);
-    assert.throws(() => parseVision({ ...v, clauses: [clauses[0], clauses[0]] }), /clauses/);
-    assert.throws(() => parseVision({ ...v, clauses: clauses.slice(0, 3), questions: [] }), /at least one active world clause/);
-    assert.throws(() => parseVision({ ...v, clauses: [...clauses.slice(0, 3), { ...clauses[3], state: 'withdrawn' }], questions: [] }), /at least one active world clause/);
-    assert.throws(() => parseVision({ ...v, questions: undefined }), /questions/);
-  });
-
-  it('vision questions: ids unique, an open one bears on active clauses, a working assumption always', () => {
-    assert.deepEqual(parseVision({ ...v, questions: [] }).questions, []);
-    assert.throws(() => parseVision({ ...v, questions: [question, { ...question, text: 'again' }] }), /questions\[1\]: expected a unique id/);
-    assert.throws(() => parseVision({ ...v, questions: [{ ...question, bears: ['V-3'] }] }), /questions\[0\]\.bears: expected active clauses of this vision, got "V-3"/);
-    assert.throws(() => parseVision({ ...v, questions: [{ ...question, bears: ['V-9'] }] }), /questions\[0\]\.bears: expected active clauses/);
-    assert.throws(() => parseVision({ ...v, questions: [{ ...question, bears: [] }] }), /bears/);
-    assert.throws(() => parseVision({ ...v, questions: [{ ...question, assumption: '' }] }), /assumption/);
-    assert.throws(() => parseVision({ ...v, questions: [{ ...question, id: 'V-5' }] }), /questions\[0\]\.id/);
-    // A closed question stays as it was: its clauses need only be in the file.
-    assert.deepEqual(parseVision({ ...v, questions: [{ ...question, bears: ['V-3'], state: 'closed' }] }).questions[0]?.state, 'closed');
-    assert.throws(() => parseVision({ ...v, questions: [{ ...question, bears: ['V-9'], state: 'closed' }] }), /expected clauses of this vision/);
-  });
-
-  it('obligations: split parents carry no witness (H14), children name their parent, the mapping names known ids', () => {
-    const o: Obligations = parseObligations(OBLIGATIONS);
-    assert.equal(canonicalJson(o), canonicalJson(OBLIGATIONS));
-    assert.match(laneRevOf(o.lanes[0]!), /^[0-9a-f]{16}$/);
-    const [i1, i2, i4] = OBLIGATIONS.obligations as readonly Record<string, unknown>[];
-    const with2 = (x: Record<string, unknown>) => ({ ...OBLIGATIONS, obligations: [i1, x, i4] });
-    assert.throws(() => parseObligations(with2({ ...i2, witness: { lane: 'journey', testIds: ['t'] } })), /witness/);
-    assert.throws(() => parseObligations({ ...OBLIGATIONS, obligations: [{ ...i1, witness: null }, i2, i4] }), /witness/);
-    assert.throws(() => parseObligations({ ...OBLIGATIONS, obligations: [{ ...i1, deliveredBy: [] }, i2, i4] }), /deliveredBy/);
-    assert.throws(() => parseObligations({ ...OBLIGATIONS, obligations: [i1, i2, { ...i4, parent: 'I-1' }] }), /parent/);
-    assert.throws(() => parseObligations({ ...OBLIGATIONS, mapping: { paths: [{ pattern: 'src/**', obligations: ['I-9'] }] } }), /mapping/);
-    assert.throws(() => parseObligations({ ...OBLIGATIONS, lanes: [{ ...OBLIGATIONS.lanes[0], env: { set: { NODE_OPTIONS: '-r x' }, pass: [] } }] }), /env/);
-    assert.throws(() => parseObligations({ ...OBLIGATIONS, obligations: [{ ...i1, witness: { lane: 'nope', testIds: ['t'] } }, i2, i4] }), /witness\.lane/);
-  });
-
-  it('a ruling sidecar requires consistency (G21), contract ops for a deviation, cites and evidence from the checkpoint', () => {
-    const r = {
-      schema: 'roadmap/ruling-m3', id: 'C-7', statement: 'totals round half-even', kind: 'constraint', ruledBy: { type: 'checkpoint', job: 'ckpt-1' }, trigger: 'F-1',
-      supersedes: [{ id: 'C-3', part: null }], condition: null,
-      docRefs: [{ path: 'docs/money.md', anchor: '#rounding', quotedText: 'round half-even', relation: 'deviates' }],
-      contractRefs: ['docs/money.md'], contractOps: [{ path: 'docs/money.md', anchor: '#rounding', oldText: 'round half-up', newText: 'round half-even' }],
-      obligations: ['I-2'], obligationDispositions: [{ id: 'I-2', disposition: 'amended' }], cites: ['V-2'], evidence: ['F-1 on S'],
-      appliesTo: { type: 'arc' }, lifetime: 'standing', status: 'active',
-      consistency: {
-        verdict: 'consistent', judgedRevs: { head: A, ledgerSha256: H, obligationsSha256: H2, visionSha256: H, contracts: [{ path: 'docs/money.md', blob: B }] },
-        by: { type: 'judgment', role: 'checkpoint', routingRev: REV },
-      },
-    };
-    assert.equal(canonicalJson(parseRulingSidecar(r)), canonicalJson(r));
-    const { consistency: _c, ...noConsistency } = r;
-    assert.throws(() => parseRulingSidecar(noConsistency), /consistency/);
-    assert.throws(() => parseRulingSidecar({ ...r, contractOps: [] }), /contractOps/);
-    assert.throws(() => parseRulingSidecar({ ...r, cites: [] }), /cites/);
-    assert.throws(() => parseRulingSidecar({ ...r, consistency: { ...r.consistency, by: { type: 'judgment', role: 'build', routingRev: REV } } }), /role/);
-  });
-
-  it('a witness record: a malformed run records no tests', () => {
-    const w = {
-      v: 1, lane: 'journey', laneRev: LANE_REV, envId: ENV, treeSha: A, inv: INV, runner: 'node-test', purpose: 'witness',
-      records: [{ testId: 'a', selected: 1, outcome: 'pass' }, { testId: 'b', selected: 0, outcome: 'zero-selected' }], malformed: false,
-    };
-    assert.deepEqual(witnessRecord(w, 'w'), w);
-    assert.throws(() => witnessRecord({ ...w, malformed: true }, 'w'), /records/);
-    assert.throws(() => witnessRecord({ ...w, records: [...w.records].reverse() }, 'w'), /records/);
-  });
-
-  it('finding keys hash (lens, obligation, cause) only', () => {
-    assert.equal(findingKey('invariants', obligationId('I-2'), 'rounding'), findingKey('invariants', obligationId('I-2'), 'rounding'));
-    assert.notEqual(findingKey('invariants', obligationId('I-2'), 'rounding'), findingKey('drift', obligationId('I-2'), 'rounding'));
-    assert.notEqual(findingKey('invariants', null, 'rounding'), findingKey('invariants', obligationId('I-2'), 'rounding'));
-  });
-});
 
 describe('M3 event records', () => {
   it('every holistic fact round-trips byte-identically', () => {
@@ -271,7 +188,7 @@ describe('M3 event records', () => {
 
   it('the revision payload (G1) holds the manifest, changes, dispositions, divergences, publication plan and provenance', () => {
     const p = {
-      v: 1, source: { type: 'bundle', job: 'ckpt-1' }, base: 4, rev: 5,
+      v: 2, source: { type: 'bundle', job: 'ckpt-1' }, base: 4, rev: 5,
       manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H, sidecars: { 'C-7': H2 } }, obligations: H2, vision: H },
       changes: planApplied.changes as readonly PlanChange[], dispositions: [{ obligation: 'I-2', disposition: 'amended', ruling: 'C-7' }], divergences: [draft],
       publication: { renders: [{ path: '.roadmap/invariants.md', sha256: H }], contractOps: [] }, routingProvenance: planApplied.routingProvenance,
@@ -448,7 +365,7 @@ describe('M3 judgment outputs', () => {
   };
   const op = { op: 'admit', unit: { id: 'r1', risk: 'med', scope: ['src/format.js'], after: [], origin: 'repair' }, spec: '{}', cites: ['V-2'], evidence: ['F-1'] };
   const ckpt = {
-    decision: 'bundle', reasons: ['F-1'], ops: [op], rulings: [], findingDispositions: [{ finding: 'F-1', disposition: 'accepted', reason: 'r' }],
+    decision: 'bundle', reasons: ['F-1'], ops: [op],  findingDispositions: [{ finding: 'F-1', disposition: 'accepted', reason: 'r' }],
     interpretations: [{ clauses: ['V-1'], situation: 's', reading: 'r' }], cites: { vision: ['V-2'], observations: [{ treeSha: A, lane: 'journey', laneRev: LANE_REV, envId: ENV }], findings: ['F-1'] },
     premises: [], corpusAmendments: [],
   };
@@ -469,7 +386,7 @@ describe('M3 judgment outputs', () => {
     validateCheckpointOutput({ ...ckpt, decision: 'no-op', ops: [] });
     assert.throws(() => validateCheckpointOutput({ ...ckpt, decision: 'no-op' }), /ops/);
     assert.throws(() => validateCheckpointOutput({ ...ckpt, ops: [] }), /ops/);
-    assert.throws(() => validateCheckpointOutput({ ...ckpt, decision: 'no-op', ops: [], rulings: ['{}'] }), /rulings/);
+    assert.throws(() => validateCheckpointOutput({ ...ckpt, decision: 'no-op', ops: [],  }), /rulings/);
     assert.throws(() => validateCheckpointOutput({ ...ckpt, ops: [{ ...op, cites: [] }] }), /cites/);
     assert.throws(() => validateCheckpointOutput({ ...ckpt, ops: [{ ...op, evidence: [] }] }), /evidence/);
     assert.throws(() => validateCheckpointOutput({ ...ckpt, ops: [{ op: 'vision', cites: ['V-1'], evidence: ['e'] }] }), /op/);

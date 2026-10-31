@@ -1,3 +1,4 @@
+import { raiseNeedsUser, raisedWithReason } from '../needsuser.ts';
 // The plan in force (owner ruling 2026-09-29; SCHEMAS.md "Plan in force"): not the files, but a fold of the
 // event log. The latest `plan-applied` fact names a revision, the hash of plan.json's bytes and of every unit's
 // spec.json; the bytes themselves are kept content-addressed in the run dir (`inputs/<sha256>.plan.json`,
@@ -141,19 +142,6 @@ const SIDECAR_NAME = /^(C-[0-9]+)\.json$/;
 
 const inputFile = (path: AbsPath): InputFile => ({ path, bytes: existsSync(path) ? readFileSync(path) : null });
 
-/** The sidecar files of `ledger` by id, ascending; a file there not named `C-<n>.json` is refused (SchemaError). */
-function readSidecars(ledger: AbsPath): ReadonlyMap<RulingId, Readonly<{ path: AbsPath; bytes: Buffer }>> {
-  const dir = sidecarDir(ledger);
-  if (!existsSync(dir)) return new Map();
-  const entries = readdirSync(dir).map((name) => {
-    const m = SIDECAR_NAME.exec(name);
-    if (m === null) throw new SchemaError(join(dir, name), 'a ruling sidecar named C-<n>.json', name);
-    const path = sidecarPath(ledger, rulingId(m[1], join(dir, name)));
-    return [rulingId(m[1]), { path, bytes: readFileSync(path) }] as const;
-  });
-  return new Map(entries.sort(([a], [b]) => compareIds(a, b)));
-}
-
 /**
  * The vision file (`visionFile`): beside the plan for an `architecture-doc` arc, `<repo>/.roadmap/vision.json` for a
  * corpus arc (R1); null when the arc has none.
@@ -182,7 +170,7 @@ export function phase0RecordOf(bytes: Buffer | null): Phase0Record | null {
 }
 
 /** Reads the plan (parsed: throws SchemaError or SyntaxError) and the bytes of every input it names. */
-export function readInputFiles(planFile: AbsPath, repo: AbsPath): InputFiles {
+export function readInputFiles(planFile: AbsPath, repo: AbsPath, exported = false): InputFiles {
   const planBytes = readFileSync(planFile);
   const plan = parsePlan(JSON.parse(planBytes.toString('utf8')));
   const specs = new Map(plan.units.map((u) => [u.id, inputFile(specFilePath(planFile, u))] as const));
@@ -191,9 +179,9 @@ export function readInputFiles(planFile: AbsPath, repo: AbsPath): InputFiles {
   let corpus: CorpusInputFiles | null = null;
   if (plan.target === 'corpus') corpus = { pin: beside(plan.corpus), guide: guideFileAt(repo, plan.baseline), phase0: beside(plan.phase0) };
   return {
-    repo, planFile, plan, planBytes, specs, ledger: inputFile(ledger), sidecars: readSidecars(ledger),
+    repo, planFile, plan, planBytes, specs, ledger: inputFile(ledger), sidecars: new Map(),
     obligations: plan.holistic?.obligations === undefined ? null : beside(plan.holistic.obligations),
-    vision: visionInput(plan, repo, inputFile, planFile),
+    vision: visionInput(plan, exported ? absPath(join(dirname(planFile), 'repo')) : repo, inputFile, planFile),
     corpus,
   };
 }
@@ -391,7 +379,7 @@ export function planAppliedOf(payload: RevisionPayload, payloadSha256: Sha256Hex
  * payload exactly, then its divergences in order, each once per `(job, index)`, then (dev.17) its stale set, once per rev.
  * The caller writes the done.
  */
-export function appendRevision(journal: Journal, commit: IntentOf<'revision.commit'>, payload: RevisionPayload, publication: Publication | null): PlanAppliedFact {
+export function appendRevision(journal: Journal, runDir: AbsPath, commit: IntentOf<'revision.commit'>, payload: RevisionPayload, publication: Publication | null): PlanAppliedFact {
   const inForce = journal.view.planApplied();
   let fact: PlanAppliedFact;
   if (inForce !== null && inForce.rev === commit.expect.rev) {
@@ -413,7 +401,10 @@ export function appendRevision(journal: Journal, commit: IntentOf<'revision.comm
   // dev.17 (propagation): the stale set, once per rev.
   if (payload.stale !== undefined && !journal.view.propagationFacts().some((x) => x.fact.kind === 'stale-set' && x.fact.rev === payload.rev)) {
     journal.fact({ kind: 'stale-set', rev: payload.rev, ...payload.stale });
-    crashPoint('propagation.after-stale-set');
+  }
+  if (!['start', 'command', 'bundle'].includes(payload.source.type) && raisedWithReason(journal.view, runDir, {type: 'op', op: commit.op}, 'revision-notice') === null) {
+    raiseNeedsUser(journal, runDir, {blocking: false, subject: {type: 'arc'}, reason: 'revision-notice',
+      summary: `Executor revision ${payload.rev} (${payload.source.type}) is in force.`, recommendation: 'Review the revision when convenient.', options: [], evidence: []}, {type: 'op', op: commit.op});
   }
   return fact;
 }
@@ -447,7 +438,7 @@ export function closeRevision(journal: Journal, op: OpId, recovered: boolean): v
 export function commitRevisionNow(journal: Journal, runDir: AbsPath, payload: RevisionPayload, parent: Parent): PlanAppliedFact {
   if (payload.publication !== null) throw new Error(`revision ${payload.rev} carries a docs publication; it commits through src/recover/revision.ts`);
   const commit = beginRevision(journal, runDir, payload, parent);
-  const fact = appendRevision(journal, commit, payload, null);
+  const fact = appendRevision(journal, runDir, commit, payload, null);
   closeRevision(journal, commit.op, false);
   return fact;
 }
@@ -523,10 +514,7 @@ const json = (bytes: Buffer): unknown => JSON.parse(bytes.toString('utf8'));
 /** The inputs in force beyond plan and specs: the latest `plan-applied`'s payload manifest's. */
 export function revisionInForce(runDir: AbsPath, inForce: InForce): RevisionInForce {
   const { manifest } = keptPayload(runDir, inForce.fact.payloadSha256);
-  const sidecars = new Map(Object.entries(manifest.rulings.sidecars).map(([id, sha]) => {
-    const bytes = kept(runDir, sha, RULING_INPUT);
-    return [id as RulingId, { sha256: sha, bytes, sidecar: parseRulingSidecar(json(bytes)) }] as const;
-  }).sort(([a], [b]) => compareIds(a, b)));
+  const sidecars: RevisionInForce['sidecars'] = new Map();
   const parsed = <T>(sha: Sha256Hex | null, ext: string, parse: (v: unknown) => T): Readonly<{ sha256: Sha256Hex; bytes: Buffer; value: T }> | null => {
     if (sha === null) return null;
     const bytes = kept(runDir, sha, ext);

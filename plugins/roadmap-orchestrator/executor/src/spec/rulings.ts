@@ -100,87 +100,6 @@ export type RulingContext = Readonly<{
   corpus: RulingCorpus | null;
 }>;
 
-/** The contracts a ruling names or edits, ascending: what its `consistency` must have judged. */
-const judgedPaths = (s: RulingSidecar): readonly RepoPath[] => [...new Set([...s.contractRefs, ...s.contractOps.map((o) => o.path)])].sort();
-
-/** The `judgedRevs` a fresh `consistency` of `s` records: the revisions in force and the head blob of each contract it names or edits. */
-export function consistencyRevs(s: RulingSidecar, ctx: Pick<RulingContext, 'inForce' | 'blobAt'>): Readonly<{ revs: Consistency['judgedRevs'] }> | Readonly<{ reasons: readonly string[] }> {
-  const missing = judgedPaths(s).filter((p) => ctx.blobAt(p) === null);
-  if (missing.length > 0) return { reasons: missing.map((p) => `${s.id} names contract ${p}, which is not at the head`) };
-  return { revs: { ...ctx.inForce, contracts: judgedPaths(s).map((path) => ({ path, blob: ctx.blobAt(path)! })) } };
-}
-
-/** Why `s` may not land on the revisions in force; empty when it may. */
-export function validateRuling(s: RulingSidecar, ctx: RulingContext): readonly string[] {
-  const out: string[] = [];
-  const at = s.id;
-  // Identity.
-  const expected = nextRulingId(ctx.ledger);
-  if (ctx.ledger.some((r) => r.id === s.id)) out.push(`${at} is already in the ledger (a ruling is never edited: supersede it)`);
-  else if (s.id !== expected) out.push(`${at} is not the ledger's next id (${expected})`);
-  if (s.status !== 'active') out.push(`${at} lands with status active, not ${s.status}`);
-  if (s.statement.includes('\n') || s.statement.trim() !== s.statement) out.push(`${at}'s statement is one line without surrounding space (a ledger line)`);
-  if (WITHDRAWN.test(s.statement)) out.push(`${at}'s statement reads as a withdrawn fold`);
-  // Supersession.
-  s.supersedes.forEach((t, i) => {
-    const target = ctx.ledger.find((r) => r.id === t.id);
-    if (t.id === s.id) out.push(`${at} supersedes itself`);
-    else if (target === undefined) out.push(`${at} supersedes ${t.id}, which is not in the ledger`);
-    else if (target.status !== 'active') out.push(`${at} supersedes ${t.id}, which is already withdrawn by ${target.by}`);
-    if (s.supersedes.findIndex((u) => u.id === t.id) !== i) out.push(`${at} supersedes ${t.id} twice`);
-  });
-  // Document references.
-  for (const d of s.docRefs.map(rulingRefSource)) {
-    if (d.kind === 'rule') {
-      if (ctx.corpus === null) out.push(`${at} rule ref ${d.rule}: the arc has no corpus pin (a rule ref is a corpus arc's)`);
-      else if (ctx.corpus.rules.get(d.rule) !== d.textSha256) out.push(`${at} rule ref ${d.rule}: not an active rule of the corpus pin in force with text hash ${d.textSha256}`);
-      continue;
-    }
-    const doc = ctx.docAt(d.path);
-    const why = doc === null ? 'no such document at the head' : quotedTextReason(doc, d.anchor, d.quotedText);
-    if (why !== null) out.push(`${at} docRef ${d.path}: ${why}`);
-  }
-  // Contract ops.
-  for (const op of s.contractOps) {
-    if (ctx.corpus?.inFileSet(op.path) === true) out.push(`${at} contract op on ${op.path}, which is a corpus file (contract ops never target the corpus: propose a corpus amendment)`);
-    else if (!ctx.documents.includes(op.path)) out.push(`${at} contract op on ${op.path}, which is not a plan contract or architecture doc`);
-    if (!s.contractRefs.includes(op.path)) out.push(`${at} contract op on ${op.path}, which its contractRefs do not list`);
-  }
-  const applied = applyContractOps(s.contractOps, s.id, ctx.docAt);
-  if ('reasons' in applied) out.push(...applied.reasons.map((r) => `${at} ${r}`));
-  // Obligations.
-  const known = new Set(ctx.obligations?.obligations.map((o) => o.id) ?? []);
-  for (const id of s.obligations) if (!known.has(id)) out.push(`${at} names obligation ${id}, which is not in force`);
-  for (const d of s.obligationDispositions) if (!s.obligations.includes(d.id)) out.push(`${at} dispositions ${d.id} without naming it in obligations`);
-  // Vision and units.
-  out.push(...citeReasons(ctx.vision, s.cites, at));
-  if (s.appliesTo.type === 'units') for (const u of s.appliesTo.units) if (!ctx.units.includes(u)) out.push(`${at} applies to ${u}, which is not a planned unit`);
-  // Consistency (G21).
-  const c = s.consistency;
-  if (c.verdict !== 'consistent') out.push(`${at}'s consistency judgment found it inconsistent`);
-  if (s.ruledBy.type === 'checkpoint' && c.by.type !== 'judgment') out.push(`${at} is the checkpoint's: its consistency is a judgment's`);
-  const fresh = consistencyRevs(s, ctx);
-  if ('reasons' in fresh) out.push(...fresh.reasons);
-  else if (staleParts(c.judgedRevs, fresh.revs).length > 0) out.push(`${at}'s consistency is stale: judged ${staleParts(c.judgedRevs, fresh.revs).join(', ')} at other revisions than those in force`);
-  return out;
-}
-
-function staleParts(judged: Consistency['judgedRevs'], now: Consistency['judgedRevs']): readonly string[] {
-  const keys = ['ledgerSha256', 'obligationsSha256', 'visionSha256', 'corpusSha256', 'contracts'] as const;
-  return keys.filter((k) => canonicalJson(judged[k] ?? null) !== canonicalJson(now[k] ?? null));
-}
-
-/** The ledger text with `s` in force: fully superseded rulings folded to `withdrawn by`, its line appended, every other byte kept. */
-export function ledgerAfter(text: string, s: RulingSidecar): string {
-  const folded = new Set<string>(s.supersedes.filter((t) => t.part === null).map((t) => t.id));
-  const lines = text.split('\n').map((line) => {
-    const m = RULING_LINE.exec(line);
-    return m !== null && folded.has(m[1]!) ? `${m[1]} — withdrawn by ${s.id}` : line;
-  });
-  const body = lines.join('\n');
-  return `${body === '' || body.endsWith('\n') ? body : `${body}\n`}${s.id} — ${s.statement}\n`;
-}
-
 /**
  * The effective revision of every ruling a ruling in force partially supersedes, from the sidecars in force (absent:
  * 1; Checkpoint A): what an approval fingerprint's
@@ -199,8 +118,3 @@ export function effectiveRulingRevs(sidecars: readonly RulingSidecar[]): Readonl
   return revs;
 }
 
-/** The sidecars in force with `s` landed: each one it fully supersedes marked `superseded`, `s` added; ascending by id. */
-export function sidecarsAfter(sidecars: readonly RulingSidecar[], s: RulingSidecar): readonly RulingSidecar[] {
-  const folded = new Set<string>(s.supersedes.filter((t) => t.part === null).map((t) => t.id));
-  return [...sidecars.map((x) => (folded.has(x.id) ? { ...x, status: 'superseded' as const } : x)), s].sort((a, b) => compareIds(a.id, b.id));
-}

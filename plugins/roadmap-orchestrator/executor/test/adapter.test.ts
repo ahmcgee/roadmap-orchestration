@@ -8,7 +8,7 @@ import type { BackendOutcomeKind, ExitFile, ResultFile } from '../src/core/recor
 import { tmpDir } from './helpers/repo.ts';
 import { CAPACITY_TEXT, editClaudeResult, fixtureInvocation, writeExit, writeLaunch } from './helpers/scenario.ts';
 
-const BIND = { v: 1, arc: 'arc-1', op: 'arc-1/7', inv: 'arc-1/7#1' } as const;
+const BIND = { v: 2, arc: 'arc-1', op: 'arc-1/7', inv: 'arc-1/7#1' } as const;
 const EXIT0: ExitFile['child'] = { type: 'exited', code: 0 };
 const EXIT1: ExitFile['child'] = { type: 'exited', code: 1 };
 

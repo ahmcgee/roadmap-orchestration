@@ -19,7 +19,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { writeResult } from '../backends/adapter.ts';
 import { launchPressure } from '../host/pressure.ts';
-import { exitCpuOf } from '../core/upgrade.ts';
+import { exitCpuOf } from '../core/projections.ts';
 import { scan } from '../contain/proc.ts';
 import { ENV_INV, ENV_ROLE } from '../contain/session.ts';
 import { crashPoint } from '../core/crash.ts';

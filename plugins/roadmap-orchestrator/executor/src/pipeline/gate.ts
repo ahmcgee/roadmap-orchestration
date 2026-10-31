@@ -1,3 +1,4 @@
+import { bytesSha256 } from '../spec/spec.ts';
 // The gate stage (plan "Pipeline", gate row; Authority and Gate inputs, R2; DESIGN-1.0.md §4 Independence).
 //
 // A fresh acting-judge session (resumed only for its repair turn; dev.13, `claude-acting-judge`) on the gate role's seat, which a pending risk promotion or a
@@ -84,7 +85,7 @@ import { type ObligationDef, isExempt } from '../holistic/types.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, type RepoPath, absPath, matchesPattern, repoPath } from '../core/values.ts';
 import { type BoundedDiff, boundedDiff, diffPaths } from '../git/boundeddiff.ts';
-import { GATE_DEBT_UNRECORDED, gateLargeDiffOf } from '../core/upgrade.ts';
+import { gateLargeDiffOf } from '../core/projections.ts';
 import { git, refTarget, revParse } from '../git/git.ts';
 import { diffBase, unitDiffPaths } from '../git/transient.ts';
 import { regenerateLane } from '../input/derived.ts';
@@ -95,7 +96,7 @@ import { renderPrompt, promptFor } from '../prompts/index.ts';
 import type { GateChecks, GatePriorRound, RegeneratedCheck } from '../prompts/inputs.ts';
 import { type GateOutput, clusterCoverage, validateGateOutput } from '../prompts/schemas.ts';
 import type { ApprovalBlobs, GateReview } from '../core/review.ts';
-import { gateReviewOf } from '../core/upgrade.ts';
+import { gateReviewOf } from '../core/projections.ts';
 import { approvalBlobs, gateDelta, ledgerFact, openDisputes, reviewInput, reviewRules, unitLedger } from './review.ts';
 import { renderSpec } from '../spec/render.ts';
 import { runnerFiles } from '../runner/files.ts';
@@ -138,7 +139,7 @@ export function fingerprintAt(ctx: StageContext, unit: PlanUnit, tip: Sha): Appr
   const { spec } = loadUnitSpec(ctx, unit);
   const paths = [...new Set<RepoPath>([...spec.cites.contracts, ...targetDocumentPaths(ctx.plan())])].sort();
   const rulings = ledger(ctx).filter((r) => r.status === 'active' && spec.cites.rulings.includes(r.id)).map((r) => r.id);
-  const revs = effectiveRulingRevs(rulingSidecars(ctx));
+  const revs = new Map(ledger(ctx).filter((r) => r.status === 'active').map((r) => [r.id, parseInt(bytesSha256(Buffer.from(canonicalJson(r))).slice(0, 12), 16) + 1]));
   const head = unitTip(ctx, unit.id);
   // Choice 1 of M3 0a: absent exactly when no obligation is selected.
   const obligationRevs: readonly ObligationRev[] = selected(ctx, unit, tip, head).filter((o) => !isExempt(o)).map((o) => ({ id: o.id, rev: o.rev }));
@@ -595,7 +596,7 @@ export async function gateRead(
 export function gateDebtNotes(findings: GateOutput['findings']): readonly Readonly<{ index: number; what: string }>[] {
   return findings.flatMap((f, index) => {
     if (f.severity === 'blocking' || normalizeText(f.text) === '') return [];
-    if (f.severity === 'pre-existing' || f.debt === GATE_DEBT_UNRECORDED) return [{ index, what: f.text }];
+    if (f.severity === 'pre-existing') return [{ index, what: f.text }];
     const drag = f.debt === null ? '' : normalizeText(f.debt.drag);
     return drag === '' ? [] : [{ index, what: `${f.text} Drag: ${drag}` }];
   });

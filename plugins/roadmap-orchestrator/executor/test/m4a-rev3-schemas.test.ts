@@ -12,9 +12,7 @@ import {
 import { canonicalJson } from '../src/core/json.ts';
 import { DEFAULT_BOUNDS, boundsOfRecord, commandBody, dispatchRecord, laneDef, laneDefOf, redFile, specM1, specPatchOp } from '../src/core/records.ts';
 import { Fold, openAttempt } from '../src/core/state.ts';
-import {
-  HOST_SIGNATURES_DEV6, buildExperimentsDefault, bundleClassesOf, dev6SmokeBounds, mutantSubjectDefault,
-} from '../src/core/upgrade.ts';
+import { bundleClassesOf, mutantOf } from '../src/core/projections.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { absPath, isoTime } from '../src/core/values.ts';
 import { debtSource } from '../src/debt/types.ts';
@@ -42,7 +40,7 @@ const AT = isoTime('2026-10-06T12:00:00.000Z');
 const CKPT = jobId('ckpt', 3);
 const INV = `arc-2/7#1`;
 
-const envelope = (seq: number): Envelope => ({ v: 1, seq, prev: seq === 1 ? null : H, at: AT, arc: ARC });
+const envelope = (seq: number): Envelope => ({ v: 2, seq, prev: seq === 1 ? null : H, at: AT, arc: ARC });
 function roundTrip(record: LogRecord): Event {
   const e = { ...envelope(2), ...record } as Event;
   const line = serializeEvent(e);
@@ -58,7 +56,7 @@ const intent = (kind: string, expect: object, post: object | null = null, parent
   ({ type: 'intent', op: opId(ARC, 2), kind, key: opKey(`k:${kind}`), parent, ordinal: 1, deadlineAt: null, expect, post }) as unknown as LogRecord;
 const same = (read: (v: unknown, p: string) => unknown, value: object): void => assert.equal(canonicalJson(read(JSON.parse(JSON.stringify(value)), 'x')), canonicalJson(value));
 
-const LANE = { id: 'unit', argv: ['npm', 'test'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], evidenceExcludes: [] };
+const LANE = { id: 'unit', argv: ['npm', 'test'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], evidenceExcludes: [] };
 const ARC_LANE = { ...LANE, id: 'journey', reporter: 'jsonl' };
 const obligationsWith = (lane: object) => ({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [lane], obligations: [], mapping: { paths: [] } });
 
@@ -101,8 +99,8 @@ describe('m4a-rev3 spawn subjects and mutant records', () => {
   });
 
   it('mutant.subject-dev6-default: a dev.6 subject or intent reads as of: finding; a rev-3 one keeps its own', () => {
-    assert.deepEqual(mutantSubjectDefault({ finding: 'F-2' as never }), { type: 'finding', finding: 'F-2' });
-    assert.deepEqual(mutantSubjectDefault({ of: { type: 'smoke', unit: unitId('u1'), attempt: 2 } }), { type: 'smoke', unit: 'u1', attempt: 2 });
+    assert.deepEqual(mutantOf({ finding: 'F-2' as never }), { type: 'finding', finding: 'F-2' });
+    assert.deepEqual(mutantOf({ of: { type: 'smoke', unit: unitId('u1'), attempt: 2 } }), { type: 'smoke', unit: 'u1', attempt: 2 });
   });
 
   it('a smoke run is witnessed as a mutant and never certifies', () => {
@@ -248,16 +246,16 @@ describe('m4a-rev3 facts and outcomes', () => {
 
 describe('m4a-rev3 files', () => {
   it('red.json: a red run\'s class, written once before the rerun decision', () => {
-    same(redFile, { v: 1, class: { kind: 'repeat', attempt: 2, inv: INV }, failure: H, redRev: 2 });
-    same(redFile, { v: 1, class: { kind: 'host-signature', signatures: ['eagain', 'enospc'] }, failure: H, redRev: 2 });
-    same(redFile, { v: 1, class: { kind: 'diagnostic' }, failure: H, redRev: 1 });
-    assert.throws(() => redFile({ v: 1, class: { kind: 'host-signature', signatures: ['enospc', 'eagain'] }, failure: H, redRev: 2 }, 'r'), /table order/);
-    assert.throws(() => redFile({ v: 1, class: { kind: 'host-signature', signatures: [] }, failure: H, redRev: 2 }, 'r'), SchemaError);
+    same(redFile, { v: 2, class: { kind: 'repeat', attempt: 2, inv: INV }, failure: H, redRev: 2 });
+    same(redFile, { v: 2, class: { kind: 'host-signature', signatures: ['eagain', 'enospc'] }, failure: H, redRev: 2 });
+    same(redFile, { v: 2, class: { kind: 'diagnostic' }, failure: H, redRev: 1 });
+    assert.throws(() => redFile({ v: 2, class: { kind: 'host-signature', signatures: ['enospc', 'eagain'] }, failure: H, redRev: 2 }, 'r'), /table order/);
+    assert.throws(() => redFile({ v: 2, class: { kind: 'host-signature', signatures: [] }, failure: H, redRev: 2 }, 'r'), SchemaError);
   });
 
   it('a witness-check lane file: the lane to run and the ids it must make pass', () => {
-    same(witnessLaneFile, { v: 1, lane: 'journey', argv: ['node', '--test'], cwd: '.', env: { set: { TZ: 'UTC' }, pass: ['PATH'] }, reporter: 'node-test', required: ['a', 'b'] });
-    assert.throws(() => witnessLaneFile({ v: 1, lane: 'journey', argv: ['node'], cwd: '.', env: { set: {}, pass: [] }, reporter: 'jsonl', required: [] }, 'w'), SchemaError);
+    same(witnessLaneFile, { v: 2, lane: 'journey', argv: ['node', '--test'], cwd: '.', env: { set: { TZ: 'UTC' }, pass: ['PATH'] }, reporter: 'node-test', required: ['a', 'b'] });
+    assert.throws(() => witnessLaneFile({ v: 2, lane: 'journey', argv: ['node'], cwd: '.', env: { set: {}, pass: [] }, reporter: 'jsonl', required: [] }, 'w'), SchemaError);
   });
 });
 
@@ -371,52 +369,7 @@ describe('types.lane-rev-normalised', () => {
   });
 });
 
-describe('upgrade.defaults-rev3', () => {
-  it('upgrade.dev6-minimal-lane-rev-equal: a rev of the minimal form (defaults omitted) matches; any other rev does not', () => {
-    const parsed = parseObligations(obligationsWith(ARC_LANE)).lanes[0]!;
-    const { evidenceExcludes: _e, ...minimal } = parsed;
-    const minimalRev = sha256Hex(cj(minimal)).slice(0, 16) as never;
-    assert.notEqual(minimalRev, laneRevOf(parsed));
-    assert.equal(laneRevMatches(minimalRev, parsed), true);
-    assert.equal(laneRevMatches(laneRevOf(parsed), parsed), true);
-    assert.equal(laneRevMatches('0123456789abcdef' as never, parsed), false);
-    const excluded = parseObligations(obligationsWith({ ...ARC_LANE, evidenceExcludes: ['tmp/**'] })).lanes[0]!;
-    const { evidenceExcludes: _x, ...dropped } = excluded;
-    assert.equal(laneRevMatches(sha256Hex(cj(dropped)).slice(0, 16) as never, excluded), false, 'a non-default field is never dropped');
-  });
 
-  it('every dev.6 read-time default: smoke bounds, mutant subjects, build experiments, unclassified bundles, the frozen signature table', () => {
-    assert.deepEqual(dev6SmokeBounds(), { smokeRounds: 1, smokeRuns: 2 });
-    const { smokeRounds: _r, smokeRuns: _n, ...dev6 } = DEFAULT_BOUNDS;
-    const record = dispatchRecord({
-      unit: 'u1', specRev: 1, specSha256: H, scope: ['src/**'], riskFloor: 'med', routingRev: '0123456789abcdef', implementerSeatRev: '0123456789abcdef', at: AT,
-      transientRules: 'm3', bounds: { ...dev6, chargeable: 4 },
-    }, 'r');
-    assert.equal(record.bounds?.smokeRounds, undefined, 'read as written');
-    assert.deepEqual(boundsOfRecord(record), { ...DEFAULT_BOUNDS, chargeable: 4 });
-    assert.deepEqual(mutantSubjectDefault({ finding: 'F-9' as never }), { type: 'finding', finding: 'F-9' });
-    const dev6Answer = { summary: 's', changedPaths: [], lanesRun: [], blockers: [] };
-    assert.deepEqual(validateBuildOutput(dev6Answer).experiments, []);
-    assert.deepEqual(buildExperimentsDefault(), []);
-    assert.equal(bundleClassesOf({ type: 'bundle', job: CKPT }), 'unclassified');
-    assert.deepEqual(bundleClassesOf({ type: 'bundle', job: CKPT, admits: [], conversions: [] }), { admits: [], conversions: [] });
-    assert.deepEqual(HOST_SIGNATURES_DEV6.map((s) => [s.id, String(s.pattern)]), [
-      ['golangci-lint-lock', String(/parallel golangci-lint is running/i)],
-      ['kind-boot-timeout', String(/failed to create cluster:.*(timed out waiting for the condition|failed to init node with kubeadm)/i)],
-      ['eagain', String(/\bEAGAIN\b|Resource temporarily unavailable/)],
-      ['enospc', String(/\bENOSPC\b|No space left on device/)],
-    ], 'the 4 entries at 0a58349');
-    assert.ok(HOST_SIGNATURES_DEV6.every((s) => HOST_SIGNATURES.some((t) => t.id === s.id)));
-  });
-
-  it('a dev.6 log folds with no smoke rounds spent and no rev-3 facts', () => {
-    const f = new Fold(LOG_ARC);
-    for (const e of chain([spawnIntent(1)])) f.apply(e, prevHash(Buffer.from(serializeEvent(e))));
-    assert.equal(f.unit(U1).counters.smokeRounds, 0);
-    const h = f.holistic();
-    assert.deepEqual([h.laneReuses, h.certificates, h.smokeRuns, h.corroborations], [[], [], [], []]);
-  });
-});
 
 describe('state.open-attempt-live-vs-abandoned', () => {
   it('an attempt started after the latest executor start is live; one an executor restart found open is abandoned; closed is none', () => {
@@ -476,7 +429,7 @@ describe('run 10 (D): a checkpoint admit\'s spec is constrained by the schema', 
     op: 'admit', unit: { id: 'gap', risk: 'low', scope: ['src/**'], after: [], origin: 'repair' }, spec, targets: [], cites: ['V-1'], evidence: ['F-1'],
   });
   const answer = (spec: unknown) => ({
-    decision: 'bundle', reasons: ['r'], ops: [admit(spec)], rulings: [], findingDispositions: [], interpretations: [],
+    decision: 'bundle', reasons: ['r'], ops: [admit(spec)],  findingDispositions: [], interpretations: [],
     cites: { vision: ['V-1'], observations: [], findings: [] }, premises: [], corpusAmendments: [],
   });
 

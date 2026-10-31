@@ -109,7 +109,7 @@ export function gradeB(f: Fixture): Grade {
     const next = parseObligations(readJson(join(f.next, 'obligations.json')));
     const sidecars = loadSidecars(f.next);
     const previousSidecars = loadSidecars(f.previous);
-    criteria['rederive'] = verdict(rederive(baseline, next, sidecars));
+    criteria['rederive'] = verdict(rederive(baseline, next, Object.fromEntries(sidecars.flatMap((s) => s.obligationDispositions.map((d) => [d.id, s.statement])))));
     const rules = parseRules(readFileSync(join(f.l.product, CORPUS_FILE), 'utf8'), repoPath(RULE_FILE));
     const registry = parseRulesRegistryBlock(baseline)!;
     criteria['census'] = verdict([

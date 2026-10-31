@@ -166,7 +166,8 @@ export async function cutDropped(ctx: CompareContext, unit: PlanUnit): Promise<C
   const evaluated = evaluateRevision(rctx, files, proposer);
   if (evaluated.kind !== 'accepted') throw new Error(`the cut of dropped tweak ${unit.id} was refused: ${evaluated.kind === 'rejected' ? evaluated.reasons.join('; ') : 'unchanged'}`);
   const out = await commitUnderFence(ctx, evaluated, proposer, proposer, { type: 'arc' });
-  if (out.kind === 'rejected') return { kind: 'cut', unit: unit.id, committed: false };
+  if (out.kind === 'rejected' && out.reasons.some((r) => r.startsWith('stale:'))) return cutDropped(ctx, unit);
+  if (out.kind === 'rejected') return {kind: 'cut', unit: unit.id, committed: false};
   crashPoint('compare.after-cut');
   return { kind: 'cut', unit: unit.id, committed: true };
 }

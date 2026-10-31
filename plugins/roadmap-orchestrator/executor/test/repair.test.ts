@@ -15,7 +15,7 @@ import { submitCommand } from '../src/commands/queue.ts';
 import type { Fact, IntentOf } from '../src/core/events.ts';
 import { invocationId, findingId, jobId, resourceName, sha, unitId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
-import { mutantSubjectDefault } from '../src/core/upgrade.ts';
+import { mutantOf } from '../src/core/projections.ts';
 import { absPath } from '../src/core/values.ts';
 import { verifySnapshot } from '../src/git/snapshot.ts';
 import { batchable, findingMetrics, openFinding, ruleFinding } from '../src/holistic/findings.ts';
@@ -80,7 +80,7 @@ describe('vacuity repairs: reproduce and acceptance', () => {
       assert.deepEqual(spawn!.expect.subject, { purpose: 'mutant', of: { type: 'finding', finding: 'F-1' }, lane: 'journey', laneRev: w.laneRev, tree: patchedTip });
       assert.deepEqual(spawn!.parent, { type: 'stage', unit: 'v1', stage: 'reproduce', attempt: 1 });
       const apply = r.journal.view.opsOf('mutant.apply')[0]!;
-      assert.deepEqual([apply.expect.at, mutantSubjectDefault(apply.expect), r.journal.view.doneOf(apply.op)?.kind === 'mutant.apply' && r.journal.view.doneOf(apply.op)?.outcome], [tip, { type: 'finding', finding: 'F-1' }, { kind: 'applied', tree: patchedTip }]);
+      assert.deepEqual([apply.expect.at, mutantOf(apply.expect), r.journal.view.doneOf(apply.op)?.kind === 'mutant.apply' && r.journal.view.doneOf(apply.op)?.outcome], [tip, { type: 'finding', finding: 'F-1' }, { kind: 'applied', tree: patchedTip }]);
       assert.deepEqual(worktrees(r), [], 'the mutant worktree is removed');
       assert.equal([...observations(r.ctx).values()].some((o) => o.key.treeSha === patchedTip), false, 'a mutant run never certifies (G13)');
       assert.equal(specFacts(r.ctx)(r.unit('v1')).reproduces, true);

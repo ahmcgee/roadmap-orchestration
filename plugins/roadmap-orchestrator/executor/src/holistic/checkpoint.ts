@@ -89,7 +89,7 @@ import { orderingOf } from '../park/ordering.ts';
 import { join } from 'node:path';
 import { freshJudgmentSession } from '../backends/argv.ts';
 import { crashPoint } from '../core/crash.ts';
-import { checkpointSkipTriggerOf } from '../core/upgrade.ts';
+import { checkpointSkipTriggerOf } from '../core/projections.ts';
 import type { Parent } from '../core/events.ts';
 import { captureUnderFence } from '../core/fence.ts';
 import { canonicalJson } from '../core/json.ts';

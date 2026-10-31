@@ -68,7 +68,7 @@ import { type ArcRef, amendmentsOf, arcsWithRefs, committedAcks, completedHeadOf
 import { phase0Check } from '../../src/commands/phase0.ts';
 import type { Event, Fact } from '../../src/core/events.ts';
 import { type ArcId, type Sha256Hex, HOST_CPU_STATION } from '../../src/core/ids.ts';
-import { spawnPressureOf, startPressureOf } from '../../src/core/upgrade.ts';
+import { spawnPressureOf, startPressureOf } from '../../src/core/projections.ts';
 import { PRESSURE_MIN_WALL_MS, PRESSURE_SATURATED } from '../../src/host/pressure.ts';
 import type { LaneDef } from '../../src/core/records.ts';
 import { type FlowInputs, type FlowProposal, parseFlowInputs } from '../../src/flow/types.ts';

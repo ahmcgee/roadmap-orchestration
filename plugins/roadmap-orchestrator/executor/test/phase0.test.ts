@@ -149,7 +149,7 @@ describe('the pack\'s specs against the census (M4a rev 3, H3)', () => {
     const t2 = pin.rules.find((r) => r.id === 'T-2')!;
     editJsonFile(join(a.planDir, 'obligations.json'), (o) => {
       const i1 = (o['obligations'] as Json[])[0]!;
-      return { ...o, obligations: [i1, { ...i1, id: 'I-2', statement: 'A booking names one berth.', rule: { id: 'T-2', textSha256: t2.textSha256 }, state: { type: 'deferred', ruling: 'C-1' } }] };
+      return { ...o, obligations: [i1, { ...i1, id: 'I-2', statement: 'A booking names one berth.', rule: { id: 'T-2', textSha256: t2.textSha256 }, state: { type: 'deferred', reason: 'test disposition', rev: 2 } }] };
     });
     await green(a);
     editJsonFile(join(a.planDir, 'u1.json'), (s) => ({
@@ -202,11 +202,11 @@ describe('exempt obligations and retired rules (LR-C1-2)', () => {
     const pin = JSON.parse(readFileSync(join(a.planDir, PIN_FILE), 'utf8')) as { retired: Json[]; highWater: number };
     assert.deepEqual(pin.retired, [RETIRED], 'the pin retires T-9');
     await green(a);
-    withI2(a, RETIRED, { type: 'deferred', ruling: 'C-1' });
+    withI2(a, RETIRED, { type: 'deferred', reason: 'test disposition', rev: 2 });
     await green(a);
-    withI2(a, { ...RETIRED, textSha256: sha256Hex('another text') }, { type: 'deferred', ruling: 'C-1' });
+    withI2(a, { ...RETIRED, textSha256: sha256Hex('another text') }, { type: 'deferred', reason: 'test disposition', rev: 2 });
     assert.deepEqual(await phase0Problems(a), [{ type: 'obligation-rule-unresolved', obligation: 'I-2' }]);
-    withI2(a, { id: 'T-8', textSha256: RETIRED.textSha256 }, { type: 'waived', ruling: 'C-1' });
+    withI2(a, { id: 'T-8', textSha256: RETIRED.textSha256 }, { type: 'waived', reason: 'test disposition', rev: 2 });
     assert.deepEqual(await phase0Problems(a), [{ type: 'obligation-rule-unresolved', obligation: 'I-2' }]);
   });
 
@@ -215,9 +215,9 @@ describe('exempt obligations and retired rules (LR-C1-2)', () => {
     const a = await corpusArc();
     const pin = JSON.parse(readFileSync(join(a.planDir, PIN_FILE), 'utf8')) as { retired: Json[] };
     assert.deepEqual(pin.retired, []);
-    withI2(a, RETIRED, { type: 'retired', ruling: 'C-1' });
+    withI2(a, RETIRED, { type: 'retired', reason: 'test disposition', rev: 2 });
     await green(a);
-    withI2(a, RETIRED, { type: 'deferred', ruling: 'C-1' });
+    withI2(a, RETIRED, { type: 'deferred', reason: 'test disposition', rev: 2 });
     assert.deepEqual(await phase0Problems(a), [{ type: 'obligation-rule-unresolved', obligation: 'I-2' }]);
   });
 
@@ -228,8 +228,8 @@ describe('exempt obligations and retired rules (LR-C1-2)', () => {
     assert.equal(ruleAnchorResolves(o, pin), true);
     const at = (rule: Json, state: Json) => ({ ...o, rule, state }) as unknown as typeof o;
     assert.equal(ruleAnchorResolves(at(RETIRED, { type: 'active' }), pin), false);
-    assert.equal(ruleAnchorResolves(at(RETIRED, { type: 'retired', ruling: 'C-1' }), pin), true);
-    assert.equal(ruleAnchorResolves(at({ id: 'T-1', textSha256: sha256Hex('reworded') }, { type: 'waived', ruling: 'C-1' }), pin), false);
+    assert.equal(ruleAnchorResolves(at(RETIRED, { type: 'retired', reason: 'test disposition', rev: 2 }), pin), true);
+    assert.equal(ruleAnchorResolves(at({ id: 'T-1', textSha256: sha256Hex('reworded') }, { type: 'waived', reason: 'test disposition', rev: 2 }), pin), false);
   });
 });
 

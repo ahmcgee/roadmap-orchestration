@@ -66,7 +66,7 @@ import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { Fields, type Read, SchemaError, arrayOf, object, positive, str, stringMap } from '../core/validate.ts';
 import { type RepoGiven, repoGiven } from '../flow/types.ts';
 import { type SystemsMap, systemsMap } from '../input/systems.ts';
-import { EARLIER_BUILTIN_SEATS, PRE_DEV17_BUILTIN_SEATS, dev7ArcRolesDefault, summitXhighTriple } from '../core/upgrade.ts';
+
 import { type PlanM1, type PlanTargetKind, hasMilestones } from '../input/plan.ts';
 import type { StartupRejection } from '../preflight/startup.ts';
 import { support } from '../prompts/index.ts';
@@ -234,7 +234,7 @@ export function planStack(
 export function provenanceStack(p: RoutingProvenance, arcScope: ArcScope, unit: UnitId | null, milestones: boolean): RoutingStack {
   return scoped({
     profile: p.profile, classes: p.repoConfig.classes, repoConfig: p.repoConfig.seats, plan: p.planLayer, unit: unit === null ? null : p.unitLayers[unit] ?? null,
-  }, arcScope, p.arcRoles ?? dev7ArcRolesDefault(), milestones);
+  }, arcScope, p.arcRoles ?? 'dev17', milestones);
 }
 
 export type SeatSources = SeatTable<RoutingLayerName>;
@@ -276,19 +276,7 @@ const LAYERS = [['unit', 'unit'], ['plan', 'plan'], ['repo-config', 'repoConfig'
  * every seat naming the class, else the catalogue's build triple at a build seat and its judgment triple at any other.
  */
 export function resolveRouting(stack: RoutingStack): ResolvedRouting {
-  const current = resolveRoutingUnder(BUILTIN_SEATS, stack);
-  const earlier = EARLIER_BUILTIN_SEATS.map((seats) => resolveRoutingUnder(seats, stack));
-  const xhigh = [current, ...earlier].map((r, i) => {
-    const table = seatTable((s) => {
-      const triple = atSeat(r.table, s);
-      return atSeat(r.classes, s) === 'summit' && r.bindings.summit === 'builtin' ? summitXhighTriple(triple) : triple;
-    });
-    return routingRevOf(table, r.arcScope, r.arcRoles, r.milestones, i === 0);
-  });
-  return {
-    ...current, earlierBuiltinRevs: [...new Set([...earlier.map((r) => r.rev), ...xhigh])].filter((rev) => rev !== current.rev),
-    preDev17Rev: resolveRoutingUnder(PRE_DEV17_BUILTIN_SEATS, stack).rev,
-  };
+  return resolveRoutingUnder(BUILTIN_SEATS, stack);
 }
 
 /**

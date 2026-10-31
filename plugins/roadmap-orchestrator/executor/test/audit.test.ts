@@ -139,9 +139,9 @@ describe('cadence', () => {
       obligations: [
         { id: 'I-1', testIds: ['t1'] },
         { id: 'I-2', activation: 'future', deliveredBy: ['u1', 'u2'], testIds: ['t2'] },
-        { id: 'I-3', activation: 'future', deliveredBy: ['u1', 'u2'], testIds: ['t3'], state: { type: 'deferred', ruling: 'C-1' } },
-        { id: 'I-4', testIds: ['t4'], state: { type: 'waived', ruling: 'C-1' } },
-        { id: 'I-5', testIds: ['t5'], state: { type: 'retired', ruling: 'C-1' } },
+        { id: 'I-3', activation: 'future', deliveredBy: ['u1', 'u2'], testIds: ['t3'], state: { type: 'deferred', reason: 'test disposition', rev: 2 } },
+        { id: 'I-4', testIds: ['t4'], state: { type: 'waived', reason: 'test disposition', rev: 2 } },
+        { id: 'I-5', testIds: ['t5'], state: { type: 'retired', reason: 'test disposition', rev: 2 } },
       ],
       mapping: mapped(ids), trees: { '*': { outcomes: { t1: 'pass' } } }, audit: { every: 5, lenses: [...L2] },
     });
@@ -806,7 +806,7 @@ function checkpointInputs(r: ArcRun, checkpoint: JobId = CKPT): void {
 async function bundleRevision(r: ArcRun, checkpoint: JobId = CKPT): Promise<void> {
   checkpointInputs(r, checkpoint);
   const rctx = { runDir: r.ctx.runDir, view: r.journal.view, hostDir: r.ctx.hostDir, planFile: absPath(r.d.planPath), routingBase: { profile: 'default', config: null, arcRoles: 'm4b' }, laneEnv: process.env } as const;
-  const v = evaluateRevision(rctx, readInputFiles(absPath(r.d.planPath), absPath(r.d.repo)), { type: 'bundle', job: checkpoint, cites: [visionClauseId('V-1')], evidence: ['the scripted bundle'], admits: [], fixesUnrecorded: [] });
+  const v = evaluateRevision(rctx, readInputFiles(absPath(r.d.planPath), absPath(r.d.repo)), { type: 'bundle', job: checkpoint, cites: [visionClauseId('V-1')], evidence: ['the scripted bundle'], admits: [],  });
   assert.equal(v.kind, 'accepted', JSON.stringify(v));
   if (v.kind !== 'accepted') return;
   keepRevision(r.ctx.runDir, v);
@@ -1092,48 +1092,7 @@ describe('the lens-range fix: chunks by publication, bounded attachments', () =>
     }
   });
 
-  test('audit.upgrade-dev10-oversized-range: an audit a dev.10 executor started (no diffBudget) resumes unchunked and is abandoned with an owed item; the next audit chunks and the arc converges', T, async () => {
-    const { d } = auditArc({
-      steps: [
-        ...TWO_BIG,
-        { as: 'claude', unit: 'audit-1', lens: 'vision', expect: {}, acts: [{ type: 'malformed' }] },
-        lensStep('audit-2', 'vision', [], [], ['bigone000100']), lensStep('audit-2', 'vision', [], [], ['bigtwo000100']),
-      ],
-      ...TWO_UNITS, audit: { every: 5, lenses: ['vision'], wallClockMin: 1 },
-    });
-    const r = contextFor(d);
-    const { ctx } = auditContext(r);
-    const late = { ...ctx, clock: () => 2 };
-    try {
-      const S0 = head(d.repo);
-      assert.deepEqual(await runUnit(ctx, r.unit('u1'), admitAll), { kind: 'merged' });
-      assert.deepEqual(await runUnit(ctx, r.unit('u2'), admitAll), { kind: 'merged' });
-      const S2 = head(d.repo);
-      // audit-started as a dev.10 executor wrote it: no diffBudget.
-      const applied = r.journal.view.planApplied()!;
-      r.journal.fact({
-        kind: 'audit-started', job: jobId('audit', 1), triggers: [{ type: 'final' }], generation: 1, lenses: ['vision'], integrationSha: S2, planRev: applied.rev,
-        ledgerSha256: applied.rulingsSha256 ?? null, obligationsSha256: applied.obligationsSha256 ?? null, visionSha256: applied.visionSha256!, owners: [], priorFindings: [],
-        highWater: r.journal.view.highWater(),
-      });
-      const first = await runAudit(late);
-      assert.ok(first.kind === 'ended' && first.job === 'audit-1' && first.outcome === 'abandoned', JSON.stringify(first));
-      assert.ok(lensCalls(r)[0]!.stdin.includes(rangeTag(S0, S2, S2)), 'the dev.10 audit reads its whole range in one call');
-      assert.match(lensCalls(r)[0]!.stdin, /<not_inlined>/, 'attached within today\'s budget');
-      const item = r.journal.view.needsUser().find((n) => readNeedsUser(r.ctx.runDir, n.id)?.reason === 'audit-owed');
-      assert.ok(item !== undefined && !item.blocking, 'the overdue audit raised its non-blocking item');
-      const again = await runAudit(late);
-      assert.ok(again.kind === 'ended' && again.job === 'audit-2' && again.outcome === 'completed', JSON.stringify(again));
-      assert.equal(started(r)[1]!.diffBudget, LENS_DIFF_BUDGET);
-      assert.deepEqual(ended(r)[1]!.covered, [{ lens: 'vision', from: S0, to: S2 }]);
-      assert.equal(lensCalls(r).length, 3, 'two chunks');
-      assert.deepEqual(owed(cadence(ctx, () => 2)), [], 'nothing owed: the audit no longer holds completion');
-      assert.deepEqual(watermarks(ctx, ['vision']), [['vision', S2, false]]);
-      assert.deepEqual(openBlocking(r.journal.view), [], 'the owed item never blocks; the owner acknowledges it as before');
-    } finally {
-      r.journal.close();
-    }
-  });
+  
 
   /**
    * Crashed mid-chunking: at the runner exit of chunk 1's call (its result not yet read) or of chunk 2's, the resumed

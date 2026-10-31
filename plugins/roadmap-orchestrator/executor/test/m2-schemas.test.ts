@@ -24,7 +24,7 @@ const rev = routingRev('0123456789abcdef');
 const at = isoTime('2026-09-30T12:00:00.000Z');
 
 function event(record: LogRecord, seq = 2): Event {
-  const env: Envelope = { v: 1, seq, prev: H, at, arc };
+  const env: Envelope = { v: 2, seq, prev: H, at, arc };
   return { ...env, ...record } as Event;
 }
 

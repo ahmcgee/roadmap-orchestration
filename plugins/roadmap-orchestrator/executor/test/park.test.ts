@@ -277,7 +277,7 @@ function foldAt(records: readonly (readonly [LogRecord, IsoTime])[]): Fold {
   const fold = new Fold(arc);
   let prev: Event | null = null;
   for (const [i, [record, at]] of records.entries()) {
-    const event = { v: 1, seq: i + 1, prev: prev === null ? null : prevHash(Buffer.from(serializeEvent(prev))), at, arc, ...record } as Event;
+    const event = { v: 2, seq: i + 1, prev: prev === null ? null : prevHash(Buffer.from(serializeEvent(prev))), at, arc, ...record } as Event;
     fold.apply(event, prevHash(Buffer.from(serializeEvent(event))));
     prev = event;
   }

@@ -75,8 +75,8 @@ test('review.defect-required: a blocking finding without a defect is refused thr
   const d = setupArc({
     steps: [
       planCheckStep({ decision: 'approve' }), mulBuild(),
-      gateStep({ decision: 'revise', directives: ['Handle negatives.'], findings: [blocking('src/mul.js', 'mul is wrong for negatives.', { defect: null })] }),
-      gateRepairStep({ decision: 'revise', directives: ['Handle negatives.'], findings: [blocking('src/mul.js', 'mul is wrong for negatives.', { defect: 'incorrect-behaviour' })] }, ['names no defect']),
+      gateStep({rulings: [],  decision: 'revise', directives: ['Handle negatives.'], findings: [blocking('src/mul.js', 'mul is wrong for negatives.', { defect: null })] }),
+      gateRepairStep({rulings: [],  decision: 'revise', directives: ['Handle negatives.'], findings: [blocking('src/mul.js', 'mul is wrong for negatives.', { defect: 'incorrect-behaviour' })] }, ['names no defect']),
     ],
   });
   const r = contextFor(d);
@@ -103,7 +103,7 @@ test('review.ride-along: comment and doc findings never block; each enters the l
     await stepUntil(r, 'u1', (f) => f.stage === 'gate');
     assert.equal(outcomes(d).at(-1), 'gate:approve');
     assert.deepEqual(ledgerOf(r), [['R-1', 'src/mul.js', 'released'], ['R-2', 'test/mul.test.js', 'released']]);
-    const read = validateGateOutput({ decision: 'approve', findings, directives: [], reasons: ['ok'], premises: [], unreviewed: [], clusters: null, rulings: [] });
+    const read = validateGateOutput({ decision: 'approve', findings, directives: [], reasons: ['ok'], premises: [], unreviewed: [], clusters: null,  });
     assert.deepEqual(gateDebtNotes(read.findings).map((n) => n.index), [0], 'a ride-along finding is debt only with its drag');
     assert.ok(factsOf(d, 'approval').at(-1)!.blobs !== undefined, 'the approval records its blobs');
   } finally {
@@ -121,7 +121,7 @@ async function toRevise(r: ArcRun): Promise<string> {
 }
 
 const reviseSteps = (): readonly Step[] => [
-  planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'revise', directives: ['Document mul.'], findings: [blocking('src/mul.js', 'mul is undocumented.', { defect: 'requirement-unmet' })] }),
+  planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({rulings: [],  decision: 'revise', directives: ['Document mul.'], findings: [blocking('src/mul.js', 'mul is undocumented.', { defect: 'requirement-unmet' })] }),
 ];
 
 test('review.docs-only-code: a fix that adds only whole-line comments, claimed docs-only since the certified tree, carries the lane passes over by code alone; a lane reading comments runs again', T, async () => {
@@ -174,7 +174,7 @@ test('review.docs-only-template-literal: a comment-looking line added inside a m
   const d = setupArc({
     steps: [
       planCheckStep({ decision: 'approve' }), mulBuild(MUL_TEMPLATE),
-      gateStep({ decision: 'revise', directives: ['Document mul.'], findings: [blocking('src/mul.js', 'mul is undocumented.', { defect: 'requirement-unmet' })] }),
+      gateStep({rulings: [],  decision: 'revise', directives: ['Document mul.'], findings: [blocking('src/mul.js', 'mul is undocumented.', { defect: 'requirement-unmet' })] }),
     ],
   });
   const r = contextFor(d);
@@ -270,7 +270,7 @@ test('review.docs-only-refused: the verifier finds a behaviour change; the claim
 /** gate 1 revises: a blocking finding on the test (R-1) and a note on src/mul.js (R-2, settled released at once). */
 const reraiseSteps = (): readonly Step[] => [
   planCheckStep({ decision: 'approve' }), mulBuild(),
-  gateStep({
+  gateStep({rulings: [], 
     decision: 'revise', directives: ['Test negatives.'],
     findings: [blocking('test/mul.test.js', 'No negative case.', { defect: 'test-inadequate' }), note('src/mul.js', 'mul could name its parameters.')],
   }),
@@ -281,7 +281,7 @@ test('review.reraise-refused: a blocking finding raising a settled one again whi
   const d = setupArc({
     steps: [
       ...reraiseSteps(), fixBuild(NEGATIVE_TEST),
-      gateStep({ decision: 'revise', directives: ['Name the parameters.'], findings: [blocking('src/mul.js', 'mul could name its parameters.', { reraises: 'R-2' })] }),
+      gateStep({rulings: [],  decision: 'revise', directives: ['Name the parameters.'], findings: [blocking('src/mul.js', 'mul could name its parameters.', { reraises: 'R-2' })] }),
       gateRepairStep({ decision: 'approve' }, ['raises R-2 again, which is settled (released), and src/mul.js has not changed since it was raised']),
     ],
   });
@@ -304,7 +304,7 @@ test('review.reraise-anchor-changed: once the settled finding\'s file changed, r
   const d = setupArc({
     steps: [
       ...reraiseSteps(), fixBuild({ ...NEGATIVE_TEST, 'src/mul.js': MUL['src/mul.js'].replace('(a, b)', '(x, y)').replace('a * b', 'x * y') }),
-      gateStep({ decision: 'revise', directives: ['Name the parameters for what they are.'], findings: [blocking('src/mul.js', 'x and y say nothing either.', { reraises: 'R-2' })] }),
+      gateStep({rulings: [],  decision: 'revise', directives: ['Name the parameters for what they are.'], findings: [blocking('src/mul.js', 'x and y say nothing either.', { reraises: 'R-2' })] }),
     ],
   });
   const r = contextFor(d);
@@ -326,7 +326,7 @@ test('review.dispute-ruled-once: a builder\'s dispute goes to the next gate, whi
   appendSteps(d, [
     fixBuild(NEGATIVE_TEST, null, [{ type: 'writeToPrompt', pattern: workDirPattern(d), file: 'decisions.json', text: dispute }]),
     gateStep({ decision: 'approve' }, { stdinContains: ['<disputes>', 'R-1: mul is undocumented.', 'Dispute: The contract asks for exactly this.'] }),
-    gateRepairStep({ decision: 'approve', rulings: [{ finding: 'R-1', ruling: 'overruled', reason: 'The contract says so.' }] }, ['rulings misses the disputes of R-1']),
+    gateRepairStep({ decision: 'approve',  }, ['rulings misses the disputes of R-1']),
   ]);
   const r = contextFor(d);
   try {
@@ -360,7 +360,7 @@ test('review.delta-demotes: on a re-gate a blocking finding on an unchanged file
   const r = contextFor(d);
   try {
     await approvedThenContractMoves(r);
-    appendSteps(d, [gateStep({ decision: 'revise', directives: ['Rename mul.'], findings: [blocking('src/mul.js', 'mul should be named times.')] }, {
+    appendSteps(d, [gateStep({rulings: [],  decision: 'revise', directives: ['Rename mul.'], findings: [blocking('src/mul.js', 'mul should be named times.')] }, {
       stdinContains: ['These files you approved are unchanged.', '- src/mul.js', 'Targets your approval bound that moved since (contracts, rulings, requirements):\n- contracts/api.md'],
     })]);
     await stepUntil(r, 'u1', (f) => f.stage === 'gate');
@@ -379,7 +379,7 @@ test('review.delta-scope: a blocking finding resting on a moved contract stands;
   try {
     await approvedThenContractMoves(r);
     appendSteps(d, [
-      gateStep({ decision: 'revise', directives: ['Document the product as the contract now says.'], findings: [blocking('src/mul.js', 'mul is not described as the product.', { contractRef: 'contracts/api.md#mul' })] }),
+      gateStep({rulings: [],  decision: 'revise', directives: ['Document the product as the contract now says.'], findings: [blocking('src/mul.js', 'mul is not described as the product.', { contractRef: 'contracts/api.md#mul' })] }),
       fixBuild(MUL_LINE_COMMENT),
       gateStep({ decision: 'approve' }, { stdinContains: ['they are under review:\n- src/mul.js\n', 'These files you approved are unchanged. They are in your checkout to read for context, and they are not under review:\n- test/mul.test.js\n'] }),
     ]);

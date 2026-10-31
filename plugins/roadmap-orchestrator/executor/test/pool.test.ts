@@ -158,7 +158,7 @@ describe('res.over-capacity', () => {
         { id: 'u1', spec: 'u1.json', risk: 'low', scope: ['src/**'], resources: [DB, ESTATE], cpu: 6 },
         { id: 'u2', spec: 'u2.json', risk: 'low', scope: ['src/**'], resources: [] },
       ],
-      suite: { lanes: [{ id: 'suite', argv: ['true'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, tier: 'estate', resources: [], evidenceGlobs: [] }] },
+      suite: { lanes: [{ id: 'suite', argv: ['true'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'unit', resources: [], evidenceGlobs: [] }] },
     });
     const specs = new Map([[unitId('u2'), spec([lane('big', 'build', 'active', 8), lane('parked', 'unit', 'deferred', 9), lane('ok', 'unit', 'active')])]]);
     assert.deepEqual(overCapacity(plan, { cpu: 4 }, specs), [

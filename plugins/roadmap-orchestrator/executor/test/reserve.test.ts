@@ -155,7 +155,7 @@ test('res.lock-order', { timeout: 180_000 }, async () => {
 
 test('res.estate-excluded-from-implementer', () => {
   const lane = (id: string, tier: 'fast' | 'estate', resources: readonly string[], state = 'active') => ({
-    id, argv: ['npm', 'test'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, tier, resources, evidenceGlobs: [], state,
+    id, argv: ['npm', 'test'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: tier === 'fast' ? 'build' : 'unit', resources, evidenceGlobs: [], state,
   });
   const spec = (lanes: readonly unknown[]) => specM1({
     schema: 'roadmap/spec-m1', unit: 'u1', rev: 1, lanes,

@@ -33,7 +33,7 @@
 //
 // `runCli` takes the host directory, as every host function does: `main` passes HOST_DIR, tests a temp dir.
 import { existsSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { submitCommand } from '../commands/queue.ts';
 import { evaluateApply } from '../commands/apply.ts';
@@ -44,7 +44,7 @@ import { chainStatus } from '../commands/chain.ts';
 import { corpusPin } from '../commands/corpus.ts';
 import { phase0Check } from '../commands/phase0.ts';
 import { openPr } from '../commands/pr.ts';
-import { exportBase, exportInputs } from '../commands/inputs.ts';
+import { readExport, exportInputs } from '../commands/inputs.ts';
 import { flowCommand } from '../commands/flow.ts';
 import { type Run, locate } from './locate.ts';
 import { resumeArc } from '../commands/resumearc.ts';
@@ -52,7 +52,7 @@ import { witnessCheck } from '../commands/witnesscheck.ts';
 import { readJson } from '../core/fsx.ts';
 import { readJournal } from '../core/log.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
-import { sha256 } from '../core/ids.ts';
+import { planRev, sha256 } from '../core/ids.ts';
 import { type CommandBody, type HashedFile, type RevisionManifest, type RunStart, runStart } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
 import { START_FILE } from '../executor.ts';
@@ -63,7 +63,7 @@ import { CliError, type Command, type RunLocator, parseCommand } from '../input/
 import { readRepoConfig } from '../preflight/checks.ts';
 import { EXIT_HOST_BUSY, EXIT_REFUSED, type StartupRejection } from '../preflight/startup.ts';
 import { tui } from '../tui/main.ts';
-import { status, statusSingleFlight } from '../status.ts';
+import { status } from '../status.ts';
 import { START_WAIT_MS, launchSupervisor } from '../supervisor.ts';
 import { HEARTBEAT_MIN, watch, watchActionable } from '../watch.ts';
 
@@ -100,24 +100,17 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
     case 'apply': {
       const run = locate(command.run, hostDir);
       const start = startOf(run);
-      // M4a rev 3 (I2): each `--ruling` sidecar hashed like a `rule` record, in the order given.
-      const rulings = command.rulings.map((f) => hashedFile('apply --ruling', f));
-      const base = command.base === null ? null : exportBase(absPath(resolve(command.base)), 'apply');
+      const from = absPath(resolve(command.from));
+      const exported = readExport(from, command.rev);
+      const planFile = absPath(join(from, basename(start.planFile)));
+      const base = exported.base;
       if (command.dryRun) {
-        process.stdout.write(`${canonicalJson(await dryRun(run, start, hostDir, base, rulings, command.visionEdit))}\n`);
+        process.stdout.write(`${canonicalJson(await dryRun(run, start, hostDir, planFile, base, command.rev, command.reason))}\n`);
         return;
       }
-      let manifest: ReturnType<typeof revisionManifestOf>;
-      try {
-        manifest = revisionManifestOf(readInputFiles(start.planFile, start.repo));
-      } catch (error) {
-        if (!(error instanceof SchemaError || error instanceof SyntaxError)) throw error;
-        throw new CliError(`apply: ${start.planFile} does not load: ${error.message}`);
-      }
+      const manifest = revisionManifestOf(readInputFiles(planFile, start.repo, true));
       if ('missing' in manifest) throw new CliError(`apply: ${manifest.missing.join('; ')}`);
-      return submit(command.run, hostDir, {
-        type: 'apply', base, manifest, ...(rulings.length === 0 ? {} : { rulings }), visionEdit: command.visionEdit,
-      });
+      return submit(command.run, hostDir, { type: 'apply', planFile, base, manifest, rev: planRev(command.rev), reason: command.reason });
     }
     case 'watch': {
       const run = locate(command.run, hostDir);
@@ -129,11 +122,8 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       return;
     }
     case 'start': {
-      const base = command.args.base === null ? null : absPath(resolve(command.args.base));
-      // Read here first, so a file that is no export's is a usage error, not a refused executor.
-      if (base !== null) exportBase(base, 'start');
       const outcome = await launchSupervisor({
-        hostDir, repo: absPath(resolve(command.args.repo)), planFile: absPath(resolve(command.args.plan)), profile: command.args.profile, heartbeatStaleMs: null, base,
+        hostDir, repo: absPath(resolve(command.args.repo)), planFile: absPath(resolve(command.args.plan)), profile: command.args.profile, heartbeatStaleMs: null,
       }, process.env, command.args.waitMs ?? START_WAIT_MS);
       process.stdout.write(`${outcome.line}\n`);
       process.exitCode = outcome.code;
@@ -144,13 +134,13 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       return;
     case 'status': {
       const run = locate(command.run, hostDir);
-      process.stdout.write(`${canonicalJson(statusSingleFlight(run.runDir, run.arc, () => status(run.runDir, run.arc, hostDir)))}\n`);
+      process.stdout.write(`${canonicalJson(status(run.runDir, run.arc, hostDir))}\n`);
       return;
     }
-    case 'rule':
-      return submit(command.run, hostDir, { type: 'rule', ...hashedFile('rule', command.record) });
     case 'reverse':
       return submit(command.run, hostDir, { type: 'reverse', divergence: command.divergence });
+    case 'note':
+      return submit(command.run, hostDir, { type: 'note', unit: command.unit, brief: hashedFile('note', command.brief) });
     case 'steer':
       return submit(command.run, hostDir, {
         type: 'steer', unit: command.unit, brief: hashedFile('steer', command.brief), budgetMin: command.budgetMin, class: command.class, resume: command.resume,
@@ -287,11 +277,11 @@ function startOf(run: Run): RunStart {
 }
 
 /** `apply --dry-run`: the executor's evaluation, read-only, over the log as `status` reads it. */
-async function dryRun(run: Run, start: RunStart, hostDir: AbsPath, base: RevisionManifest | null, rulings: readonly HashedFile[], visionEdit: boolean): Promise<unknown> {
+async function dryRun(run: Run, start: RunStart, hostDir: AbsPath, planFile: AbsPath, base: RevisionManifest, rev: number, reason: string): Promise<unknown> {
   const { view } = readJournal(run.runDir, run.arc);
   const verdict = await evaluateApply({
-    runDir: run.runDir, view, hostDir, repo: start.repo, planFile: start.planFile, routingBase: { profile: start.profile, config: readRepoConfig(start.repo), arcRoles: arcRolesOf(view.planApplied()) },
-    laneEnv: process.env, manifest: null, base, rulings, visionEdit,
+    runDir: run.runDir, view, hostDir, repo: start.repo, planFile, routingBase: { profile: start.profile, config: readRepoConfig(start.repo), arcRoles: arcRolesOf(view.planApplied()) },
+    laneEnv: process.env, manifest: null, base, rev, reason,
   });
   switch (verdict.kind) {
     case 'rejected':
@@ -304,7 +294,7 @@ async function dryRun(run: Run, start: RunStart, hostDir: AbsPath, base: Revisio
     case 'accepted':
       return {
         dryRun: true, kind: 'accepted', rev: verdict.rev, nextRev: verdict.evaluated.draft.rev, changes: verdict.evaluated.draft.changes, smoke: verdict.smoke,
-        advisories: verdict.advisories, numbered: verdict.numbered, warnings: verdict.warnings,
+        advisories: verdict.advisories, warnings: verdict.warnings,
       };
   }
 }

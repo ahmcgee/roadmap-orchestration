@@ -95,7 +95,7 @@ import { docsCommitOp, evidenceSnapshotOp, integrationFfOp, snapshotPublishOp, w
 import { spawnReconciler } from '../recover/spawn.ts';
 import type { AcquireFirst } from '../schedule/arbiter.ts';
 import type { ResourceRequest } from '../schedule/types.ts';
-import { type RulingContext, ledgerAfter, parseRulings, validateRuling } from '../spec/rulings.ts';
+import { type RulingContext, parseRulings } from '../spec/rulings.ts';
 import { baselineDebtAt, rulingCorpusOf } from '../phase0/rows.ts';
 import { preemptCandidate } from './integrate.ts';
 import { type JourneySeries, arcJourneyLane, mapInForce, runJourneySeries, seriesOrder, suiteJourneyLane } from './lanes.ts';
@@ -299,27 +299,10 @@ function docsFiles(ctx: Reader, payload: RevisionPayload, tip: Sha): Files {
   const renders: DocsFile[] = [
     ...publication.renders.map((r) => ({ path: r.path, bytes: keptOr(ctx.runDir, r.sha256, RENDER_INPUT) })), ...(debt === null ? [] : [debt]),
   ];
-  const landed = landedSidecars(ctx, payload);
-  const ops = landed.flatMap((s) => s.contractOps);
-  if (canonicalJson(ops) !== canonicalJson(publication.contractOps)) {
-    throw new Error(`revision ${payload.rev}: its publication's contract ops are not its new rulings' (${canonicalJson(publication.contractOps)} vs ${canonicalJson(ops)})`);
-  }
-  // The rulings land with the revision's own plan: its units are the ones a ruling may apply to.
-  const planBytes = keptOr(ctx.runDir, payload.manifest.planSha256, PLAN_INPUT);
-  const base = { ...rulingContextAt(ctx, tip), units: parsePlan(JSON.parse(planBytes.toString('utf8'))).units.map((u) => u.id) };
   const reasons: string[] = [];
-  let ledgerText = revisionInForce(ctx.runDir, requirePlanInForce(ctx.runDir, ctx.journal.view)).ledger.bytes.toString('utf8');
-  const edited = new Map<RepoPath, string>();
-  const docAt = (path: RepoPath): string | null => edited.get(path) ?? base.docAt(path);
-  for (const s of landed) {
-    const why = validateRuling(s, { ...base, ledger: parseRulings(ledgerText, 'the rulings ledger') });
-    reasons.push(...why);
-    if (why.length === 0) ledgerText = ledgerAfter(ledgerText, s); // an invalid ruling never folds in (bundle.ts proposalOf)
-    const applied = applyContractOps(s.contractOps, s.id, docAt);
-    if ('reasons' in applied) reasons.push(...applied.reasons.map((r) => `${s.id} ${r}`));
-    else for (const e of applied.edits) edited.set(e.path, e.text);
-  }
-  if (reasons.length > 0) return { kind: 'refused', reasons };
+  const applied = applyContractOps(publication.contractOps, `revision-${payload.rev}`, (path) => textAt(ctx.repo, tip, path));
+  if ('reasons' in applied) return {kind: 'refused', reasons: applied.reasons};
+  const edited = new Map(applied.edits.map((e) => [e.path, e.text]));
   const contractPaths = [...edited.keys()].sort();
   return { kind: 'files', files: [...renders, ...contractPaths.map((path) => ({ path, bytes: Buffer.from(edited.get(path)!, 'utf8') }))], contractPaths };
 }

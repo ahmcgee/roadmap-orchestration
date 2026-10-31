@@ -26,7 +26,7 @@ test('unit rules union anchors, universal census states and mentions in pin orde
     { rule: ruleId('T-3'), state: { type: 'prod-only' } },
     { rule: ruleId('T-6'), state: { type: 'out-of-slice' } },
   ];
-  const retired: ObligationDef = { ...anchored(99), state: { type: 'waived', ruling: rulingId('C-1') } };
+  const retired: ObligationDef = { ...anchored(99), state: { type: 'waived', reason: 'test disposition', rev: 2 } };
   assert.deepEqual(unitRules(pin, census, [anchored(4), retired], [ruleId('T-5'), ruleId('T-2')]), pin.rules.slice(1, 5));
   assert.deepEqual(unitRules(pin, [], [], []), []);
 });

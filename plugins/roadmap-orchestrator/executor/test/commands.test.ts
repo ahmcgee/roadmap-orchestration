@@ -49,7 +49,7 @@ async function applyMutations(ctx: CommandContext) {
   return { kind: 'applied', outcomes } as const;
 }
 
-function raise(ctx: CommandContext, blocking = true, options: readonly { id: string; label: string }[] = []) {
+function raise(ctx: CommandContext, blocking = true, options: readonly { id: string; label: string }[] = [{id: 'ack', label: 'Acknowledge'}]) {
   return raiseNeedsUser(ctx.journal, ctx.runDir, {
     blocking, subject: { type: 'unit', unit: UNIT }, reason: 'lane-blocked', summary: 'lane blocked twice', recommendation: 'look at the lane', options, evidence: [],
   }, { type: 'arc' });
@@ -600,4 +600,29 @@ describe(`matrix row ${COMMAND_APPLY}`, () => {
       });
     }
   }
+});
+
+test('closure-by-subject: one command closes every item for its unit and preserves other subjects', async () => {
+  const {ctx, journal} = openCommandRun(newCmdRun());
+  try {
+    const first = raise(ctx, true, []), second = raise(ctx, false, []);
+    const other = raiseNeedsUser(journal, ctx.runDir, {blocking: false, subject: {type: 'arc'}, reason: 'lane-blocked', summary: 'arc item', recommendation: 'review', options: [], evidence: []}, {type: 'arc'});
+    const cmd = submit(ctx, {type: 'pause', target: {type: 'unit', unit: UNIT}});
+    assert.equal((await applyCommand(ctx, cmd)).kind, 'applied');
+    assert.equal(journal.view.ackOf(first)?.command, cmd.id);
+    assert.equal(journal.view.ackOf(second)?.command, cmd.id);
+    assert.equal(journal.view.ackOf(other), null);
+  } finally {journal.close();}
+});
+test('ack-with-options: items without choices require an action on their subject', async () => {
+  const {ctx, journal} = openCommandRun(newCmdRun());
+  try {
+    const noOptions = raise(ctx, true, []);
+    const refused = await applyCommand(ctx, submit(ctx, {type: 'ack', needsUser: noOptions, choice: null}));
+    assert.equal(refused.kind, 'rejected');
+    assert.equal(journal.view.ackOf(noOptions), null);
+    const offered = raise(ctx, true, [{id: 'keep', label: 'Keep'}]);
+    assert.equal((await applyCommand(ctx, submit(ctx, {type: 'ack', needsUser: offered, choice: 'keep'}))).kind, 'applied');
+    assert.equal(journal.view.ackOf(offered)?.choice, 'keep');
+  } finally {journal.close();}
 });

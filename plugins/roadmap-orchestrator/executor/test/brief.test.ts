@@ -334,7 +334,7 @@ describe('roadmap brief', () => {
       // `roadmap start` of arc 2 (its startup checks, as the executor runs them).
       const hostDir = newHostDir();
       const out = await withForge(a2.forge, () => runChecks({
-        repo: a2.repo, planFile: a2.planPath, profile: null, hostDir, env: process.env, respawn: null, base: null,
+        repo: a2.repo, planFile: a2.planPath, profile: null, hostDir, env: process.env, respawn: null,
         claim: (ctx) => claimHost(ctx.hostDir, { arc: ctx.plan.arc, runDir: ctx.runDir, repo: ctx.repo, supervisor: selfIdentity() }, async () => assert.fail('no previous arc')),
       }));
       out.journal?.close();
@@ -361,7 +361,7 @@ test('brief.ack-ids-ordinal: an ack command id is the marker\'s at (ms) and the 
   assert.ok(ackCommandId(isoTime('2026-10-03T12:00:00.001Z'), 0) > ackCommandId(at, MAX_ACK_ITEMS - 1), 'a later marker\'s acks sort after');
   const runDir = absPath(tmpDir('brief-enqueue'));
   mkdirSync(runDir, { recursive: true });
-  const file = { v: 1, id: ackCommandId(at, 0), arc: arcId('arc-2'), at, body: { type: 'ack', needsUser: needsUserId('nu-3'), choice: null } } as const;
+  const file = { v: 2, id: ackCommandId(at, 0), arc: arcId('arc-2'), at, body: { type: 'ack', needsUser: needsUserId('nu-3'), choice: null } } as const;
   assert.equal(enqueueCommand(runDir, file), true);
   assert.equal(enqueueCommand(runDir, file), false, 'the same bytes are already enqueued');
   assert.throws(() => enqueueCommand(runDir, { ...file, body: { ...file.body, needsUser: needsUserId('nu-4') } }), /exists with other bytes/);

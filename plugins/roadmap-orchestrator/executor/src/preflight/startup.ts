@@ -75,6 +75,7 @@ export type StartupRejection =
   // Host rows from the plan's "Host lock and ownership" and "Tail rule" sections, also refused at start.
   | Readonly<{ kind: 'recovery-holder-dead'; pid: number }>
   | Readonly<{ kind: 'owner-mismatch'; detail: string }>
+  | Readonly<{ kind: 'schema-version'; path: AbsPath; recorded: number; expected: number; detail: string }>
   | Readonly<{ kind: 'log-corrupt'; file: AbsPath; offset: number; detail: string }>
   | Readonly<{ kind: 'containment-mode-changed'; recorded: 'session' | 'cgroup'; detected: 'session' | 'cgroup' }>
   // Row: a start whose plan.json or specs differ from the plan in force, with a change the apply rules refuse
@@ -95,7 +96,6 @@ export type StartupRejection =
   | Readonly<{ kind: 'plan-defect'; defects: readonly PlanDefect[] }>
   // An apply's vision file differs from the vision in force and the apply declares no vision edit (`--vision-edit`;
   // src/phase0/rows.ts `visionLeak`): a next-arc draft belongs in `draft` (`_next/vision.md`) until the between-arc window.
-  | Readonly<{ kind: 'vision-leak'; inForce: Sha256Hex | null; committed: Sha256Hex | null; draft: AbsPath }>
   // A start of an arc with a plan in force (a reopen) after arc `by` started on its head (src/chain.ts `successorOf`):
   // its PR's fixes are priority units of `by`, whose PR supersedes its own (`roadmap pr --supersede-previous`).
   | Readonly<{ kind: 'arc-superseded'; by: ArcId }>
@@ -134,6 +134,7 @@ export function exitCodeFor(rejection: StartupRejection): typeof EXIT_REFUSED | 
     case 'plan-invalid':
     case 'recovery-holder-dead':
     case 'owner-mismatch':
+    case 'schema-version':
     case 'log-corrupt':
     case 'containment-mode-changed':
     case 'plan-change-refused':
@@ -144,7 +145,6 @@ export function exitCodeFor(rejection: StartupRejection): typeof EXIT_REFUSED | 
     case 'tree-uncommitted':
     case 'holistic-needs-corpus':
     case 'plan-defect':
-    case 'vision-leak':
     case 'arc-superseded':
     case 'milestones-need-holistic':
     case 'walk-tools-missing':
@@ -261,6 +261,7 @@ export const startupRejection: Read<StartupRejection> = tagged<StartupRejectionK
   'plan-invalid': object((f): StartupRejection => ({ kind: f.get('kind', literal('plan-invalid')), problem: f.get('problem', planProblem) })),
   'recovery-holder-dead': object((f): StartupRejection => ({ kind: f.get('kind', literal('recovery-holder-dead')), pid: f.get('pid', positive) })),
   'owner-mismatch': object((f): StartupRejection => ({ kind: f.get('kind', literal('owner-mismatch')), detail: f.get('detail', str) })),
+  'schema-version': object((f): StartupRejection => ({ kind: f.get('kind', literal('schema-version')), path: f.get('path', abs), recorded: f.get('recorded', nat), expected: f.get('expected', positive), detail: f.get('detail', str) })),
   'log-corrupt': object((f): StartupRejection => ({ kind: f.get('kind', literal('log-corrupt')), file: f.get('file', abs), offset: f.get('offset', nat), detail: f.get('detail', str) })),
   'containment-mode-changed': object((f): StartupRejection => ({
     kind: f.get('kind', literal('containment-mode-changed')), recorded: f.get('recorded', containment), detected: f.get('detected', containment),
@@ -279,10 +280,6 @@ export const startupRejection: Read<StartupRejection> = tagged<StartupRejectionK
   })),
   'holistic-needs-corpus': object((f): StartupRejection => ({ kind: f.get('kind', literal('holistic-needs-corpus')) })),
   'plan-defect': object((f): StartupRejection => ({ kind: f.get('kind', literal('plan-defect')), defects: f.get('defects', arrayOf(planDefect, { nonEmpty: true })) })),
-  'vision-leak': object((f): StartupRejection => ({
-    kind: f.get('kind', literal('vision-leak')), inForce: f.get('inForce', nullable(sha256R)), committed: f.get('committed', nullable(sha256R)),
-    draft: f.get('draft', (v, p): AbsPath => absPath(v, p)),
-  })),
   'arc-superseded': object((f): StartupRejection => ({ kind: f.get('kind', literal('arc-superseded')), by: f.get('by', (v, p): ArcId => arcId(v, p)) })),
   'milestones-need-holistic': object((f): StartupRejection => ({ kind: f.get('kind', literal('milestones-need-holistic')) })),
   'walk-tools-missing': object((f): StartupRejection => ({

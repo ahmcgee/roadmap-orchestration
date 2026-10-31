@@ -53,7 +53,7 @@ describe('witness files against their lane', () => {
   it('plan-defect.argv-forms: the forms an argv names its test files by', () => {
     const lane = (argv: readonly string[], cwd = '.', testPaths: readonly string[] | null = ['test']): ArcLaneDef => parseObligations({
       schema: 'roadmap/obligations-m3', cutLine: 'x', obligations: [], mapping: { paths: [] },
-      lanes: [{ id: 'journey', argv, cwd, env: { set: {}, pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], reporter: 'jsonl', ...(testPaths === null ? {} : { testPaths }) }],
+      lanes: [{ id: 'journey', argv, cwd, env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], reporter: 'jsonl', ...(testPaths === null ? {} : { testPaths }) }],
     }).lanes[0]!;
     const file = repoPath('test/unit/a.test.ts');
     // The runner selects (no test path named): testPaths alone decides.
@@ -183,7 +183,7 @@ describe('derived files', () => {
     const ids = (derived: readonly Json[]) => parsePlan({ ...base, derived }).derived!.map(regenerateLaneId);
     assert.deepEqual(ids([entry(GEN), other]), [...ids([other, entry(GEN)])].reverse());
     const suite = base['suite'] as { lanes: Json[] };
-    const taken = { ...(suite.lanes[0] ?? { argv: ['true'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [] }), id: ids([entry(GEN)])[0] };
+    const taken = { ...(suite.lanes[0] ?? { argv: ['true'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [] }), id: ids([entry(GEN)])[0] };
     assert.throws(() => parsePlan({ ...base, suite: { lanes: [...suite.lanes, taken] }, derived: [entry(GEN)] }), /plan\.suite\.lanes/);
   });
 });

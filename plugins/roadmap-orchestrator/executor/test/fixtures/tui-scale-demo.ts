@@ -130,7 +130,7 @@ function spawn(i: number, running: boolean): void {
   const durable = r.journal.begin({ kind: 'proc.spawn', key: opKey(`scale:${index}`), parent: job ? { type: 'job', job } : parent, deadlineAt,
     body: (op, inv) => {
       const dir = invocationDir(runDir, inv);
-      launch = { v: 1, arc, op, inv, argv: stage === 'lanes' && !walk ? ['node', '--test', 'test/mul.test.js']
+      launch = { v: 2, arc, op, inv, argv: stage === 'lanes' && !walk ? ['node', '--test', 'test/mul.test.js']
         : ['claude', '-p', '--output-format', 'stream-json', '--model', 'scripted-scale-fixture'],
       cwd: absPath(d.repo), env: {}, stdinPath: subject.purpose === 'lane' ? null : promptPaths[index % 10 === 0 ? 1 : 0]!,
       deadlineAt, stallMs: null, graceMs: 1000, containment: 'session', test: null,
@@ -153,7 +153,7 @@ function spawn(i: number, running: boolean): void {
   writeFileSync(join(dir, 'runner.log'), 'Synthetic runner records; no process was launched.\n');
   if (running) { runningInvocation ??= durable.inv; return; }
   if (large && (!largeInvocation || statSync(join(invocationDir(runDir, largeInvocation), 'stdout')).size < target)) largeInvocation = durable.inv;
-  const binding = { v: 1 as const, arc, op: durable.op, inv: durable.inv };
+  const binding = { v: 2 as const, arc, op: durable.op, inv: durable.inv };
   const now = isoTime(new Date().toISOString());
   files.write('exit.json', { ...binding, child: { type: 'exited', code: 0 }, cause: 'exited', endedAt: now, quiescedAt: now, cpu: null });
   const result: ResultFile = launch.terminal.type === 'command' ? { ...binding, type: 'command', purpose: 'lane', expectedExit: 0, exitCode: 0, verdict: 'pass' }
@@ -204,7 +204,7 @@ try {
   }
   for (let i = 0; i < runningCount; i++) spawn(mergedCount + i, true);
 } finally { r.journal.close(); }
-writeFileSync(join(d.runDir, 'start.json'), JSON.stringify({ v: 1, generation: 1, at: new Date().toISOString(), repo: d.repo, planFile: d.planPath, profile: 'default' }));
+writeFileSync(join(d.runDir, 'start.json'), JSON.stringify({ v: 2, generation: 1, at: new Date().toISOString(), repo: d.repo, planFile: d.planPath, profile: 'default' }));
 const reply = new Observer().observe({ locator: { type: 'host' }, hostDir: absPath(d.hostDir), pinned: { arc, runDir }, token: 1 });
 assert.equal(reply.error, null);
 assert.equal(reply.display!.status.units.length, unitCount);

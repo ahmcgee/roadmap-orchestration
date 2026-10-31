@@ -1,3 +1,4 @@
+import { requirePlanInForce } from '../src/input/inforce.ts';
 // M4a step C1: the corpus arc's revisions and starts. The classifier's corpus and Phase-0 edit classes, the target kind
 // and the chain fixed, the shared Phase-0 rows on every apply (re-derivation, census, rules resolved, the vision
 // confirmed, the tree), and a start's rows (`runChecks`): the vision, the tree, the kept corpus inputs.
@@ -63,7 +64,7 @@ async function repin(a: CorpusArc, commit: string): Promise<string> {
 function apply(a: CorpusArc, j: OpenJournal, visionEdit = false): Promise<ApplyVerdict> {
   return evaluateApply({
     runDir: runDirOfArc(a), view: j.view, hostDir: newHostDir(), repo: a.repo, planFile: a.planPath, routingBase: BASE,
-    laneEnv: process.env, manifest: null, base: null, rulings: [], visionEdit,
+    laneEnv: process.env, manifest: null, base: revisionInForce(runDirOfArc(a), requirePlanInForce(runDirOfArc(a), j.view)).manifest, rev: j.view.planApplied()!.rev, reason: 'Test apply',
   });
 }
 
@@ -82,7 +83,7 @@ const pinnedHash = (a: CorpusArc, rule: string): string =>
 
 function startInput(repo: AbsPath, planFile: AbsPath, hostDir: AbsPath): StartInput {
   return {
-    repo, planFile, profile: null, hostDir, env: process.env, respawn: null, base: null,
+    repo, planFile, profile: null, hostDir, env: process.env, respawn: null,
     claim: (ctx) => claimHost(ctx.hostDir, { arc: ctx.plan.arc, runDir: ctx.runDir, repo: ctx.repo, supervisor: selfIdentity() }, async () => assert.fail('no previous arc')),
   };
 }
@@ -248,7 +249,7 @@ describe('re-pin (the corpus edit class)', () => {
     const v = accepted(await ownerAnswer(true));
     const types = v.evaluated.draft.changes.map((c) => c.type).sort();
     assert.ok(['corpus', 'phase0', 'obligation'].every((t) => types.includes(t as never)), JSON.stringify(v.evaluated.draft.changes));
-    assert.deepEqual([...new Set(v.evaluated.draft.dispositions.map((d) => `${d.obligation} ${d.disposition} ${d.ruling}`))], ['I-1 amended C-2']);
+    assert.deepEqual([...new Set(v.evaluated.draft.dispositions.map((d) => `${d.obligation} ${d.disposition} ${d.reason}`))], ['I-1 amended Test apply']);
   });
 
   it('classify.corpus-repin-not-by-start: a start may not re-pin (architect apply only)', T, async () => {
@@ -318,7 +319,7 @@ describe('the specs against the census at every revision (run 10, C)', () => {
       const row = canonicalJson({ kind: 'phase0-invalid', problems: [{ type: 'spec-census-mismatch', unit: 'u1', item: 'A2', rule: 'T-2', state: 'out-of-slice' }] });
       assert.deepEqual(rejected(await apply(a, j)), [row], 'the apply: the classifier\'s row alone, naming unit, item and rule');
       const ctx = { runDir: runDirOfArc(a), view: j.view, hostDir: newHostDir(), planFile: a.planPath, routingBase: BASE, laneEnv: process.env };
-      const bundle = evaluateRevision(ctx, filesOf(a), { type: 'bundle', job: jobId('ckpt', 1), cites: [visionClauseId('V-1')], evidence: ['e'], admits: [], fixesUnrecorded: [] });
+      const bundle = evaluateRevision(ctx, filesOf(a), { type: 'bundle', job: jobId('ckpt', 1), cites: [visionClauseId('V-1')], evidence: ['e'], admits: [],  });
       assert.equal(bundle.kind, 'rejected');
       if (bundle.kind !== 'rejected') return;
       assert.deepEqual(bundle.reasons, [
@@ -497,7 +498,7 @@ describe('the tree and the forge at start', () => {
     // A plain (non-holistic) architecture-doc arc: an uncommitted new vision.json.
     const repo = absPath(makeRepo(tmpDir('c1-doc'), { files: { 'README.md': 'hello\n', 'ARCHITECTURE.md': 'arch\n' } }));
     const planDir = tmpDir('c1-doc-plan');
-    const lane = { id: 'suite', argv: ['node', '-e', '0'], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [] };
+    const lane = { id: 'suite', argv: ['node', '-e', '0'], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [] };
     writeFileSync(join(planDir, 'u1.json'), JSON.stringify({
       schema: 'roadmap/spec-m1', unit: 'u1', rev: 1, lanes: [{ ...lane, id: 'unit', state: 'active' }],
       acceptance: [{ id: 'A1', clause: 'It works.', failLoudIfUndelivered: true, state: 'active' }],

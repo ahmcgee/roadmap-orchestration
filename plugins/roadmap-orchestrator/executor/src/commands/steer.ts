@@ -28,15 +28,15 @@ import type { CommandId, UnitId } from '../core/ids.ts';
 import type { CommandBody } from '../core/records.ts';
 import { absPath } from '../core/values.ts';
 import { capturedEvidence } from '../git/evidence.ts';
-import { inForceFiles, keepInput, planRouting, requirePlanInForce, revisionInForce } from '../input/inforce.ts';
+import { inForceFiles, keepInput, specBytesOf, specShaInForce, planRouting, requirePlanInForce, revisionInForce } from '../input/inforce.ts';
 import { parsePlan } from '../input/plan.ts';
-import { unitWorktree } from '../pipeline/dispatch.ts';
+import { firstPin, unitWorktree } from '../pipeline/dispatch.ts';
 import { dirtySnapshot } from '../pipeline/lanes.ts';
 import { BRIEF_INPUT } from '../pipeline/rounds.ts';
 import { backendsOf, smokeBackends, smokeRejections } from '../preflight/smoke.ts';
 import { evidenceSnapshotOp } from '../recover/ops.ts';
 import type { RoutingLayer } from '../routing/types.ts';
-import { bytesSha256 } from '../spec/spec.ts';
+import { bytesSha256, parseSpec } from '../spec/spec.ts';
 import { runOp } from '../pipeline/dispatch.ts';
 import { type CommandContext, type Effect, acknowledgePark, commitUnderFence, evaluateRevision, parentOf, rejectedText } from './apply.ts';
 
@@ -48,16 +48,19 @@ export async function steer(ctx: CommandContext, id: CommandId, body: SteerBody)
   if (view.holistic().steered.some((s) => s.command === id)) return { kind: 'applied', verified: [`unit ${body.unit} steered by ${id}`] };
   const unit = ctx.plan().units.find((u) => u.id === body.unit);
   if (unit === undefined) return { kind: 'rejected', reason: `unknown unit ${body.unit}` };
-  if (view.dispatchOf(unit.id) === null) return { kind: 'rejected', reason: `unit ${unit.id} was never dispatched: there is nothing to steer yet; it plan-checks when it runs` };
   const u = view.unit(unit.id);
-  const preparing = u.status === 'active' && u.decided?.stage === 'prepare';
-  if (!(u.status === 'park-pending' || preparing) || u.open !== null || u.entry !== null) {
-    return { kind: 'rejected', reason: `unit ${unit.id} is ${u.status}: only a parked unit, or a re-entry prepared and not yet started, can be steered` };
-  }
+  if (unit.cut !== undefined || ['retired', 'cut', 'superseded', 'stop-pending'].includes(u.status)) return { kind: 'rejected', reason: `unit ${unit.id} is finished (${u.status})` };
+  if (u.open !== null) return { kind: 'rejected', reason: `unit ${unit.id} still has a running attempt; steer waits for its cancellation and cleanup` };
   if (!existsSync(body.brief.path)) return { kind: 'rejected', reason: `the brief ${body.brief.path} does not exist` };
   const brief = readFileSync(body.brief.path);
   if (bytesSha256(brief) !== body.brief.sha256) return { kind: 'rejected', reason: `the brief ${body.brief.path} changed since the command hashed it` };
 
+  if (view.dispatchOf(unit.id) === null) {
+    const sha256 = specShaInForce(view, unit.id);
+    const spec = parseSpec(specBytesOf(ctx.runDir, sha256), absPath(join(ctx.planDir, unit.spec)));
+    const record = firstPin({ plan: ctx.plan, routing: (id) => ctx.routing(id).resolved }, unit, { rev: spec.rev, sha256 }, unit.risk);
+    ctx.journal.fact({ kind: 'dispatch', record });
+  }
   const verified: string[] = [];
   if (body.class !== null) {
     const routed = await routeClass(ctx, id, unit.id, body.class);

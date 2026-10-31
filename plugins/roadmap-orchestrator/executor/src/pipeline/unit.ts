@@ -62,7 +62,7 @@ import { ENV_INV, ENV_ROLE } from '../contain/session.ts';
 import { scan } from '../contain/proc.ts';
 import { crashPoint } from '../core/crash.ts';
 import { JUDGMENT_STAGES, type OutcomeStage, type StageOutcomeFact, type TestRef, testRefKey } from '../core/events.ts';
-import { mutantSubjectDefault } from '../core/upgrade.ts';
+import { mutantOf } from '../core/projections.ts';
 import { SchemaError } from '../core/validate.ts';
 import { patternPath } from '../git/evidence.ts';
 import { candidateLaneDir, smokeLaneDir } from '../git/snapshot.ts';
@@ -306,7 +306,7 @@ function smokeEvidence(ctx: StageContext, parent: StageParent): readonly AbsPath
   return ctx.journal.view.opsOf('proc.spawn').flatMap((i) => {
     const s = i.expect.subject;
     if (s.purpose !== 'mutant') return [];
-    const of = mutantSubjectDefault(s);
+    const of = mutantOf(s);
     if (of.type !== 'smoke' || of.unit !== parent.unit || !attempts.has(of.attempt)) return [];
     return [smokeLaneDir(ctx.runDir, of.unit, of.attempt, s.lane, basename(invocationDir(ctx.runDir, invocationId(i.op, i.ordinal))))];
   });

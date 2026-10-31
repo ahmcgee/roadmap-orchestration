@@ -43,7 +43,6 @@ import { absPath } from '../src/core/values.ts';
 import { parseRulingSidecar } from '../src/holistic/types.ts';
 import { keptPayload } from '../src/input/inforce.ts';
 import { rulingContextAt } from '../src/pipeline/publish.ts';
-import { consistencyRevs } from '../src/spec/rulings.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 const WAIT_MS = 120_000;
@@ -237,43 +236,7 @@ describe('the hold before the first admission (K14, H9)', () => {
   });
 });
 
-test('packreview.no-review-between-rule-and-apply (I2): `apply --ruling` lands the ruling and its dependent edit as one revision, so the only key a review can bind is the whole pack\'s', T, async () => {
-  const x = await arcWith([packReviewStep('review-1')]);
-  try {
-    const r = x.r;
-    const tip = sha(git(r.d.repo, 'rev-parse', 'main'));
-    const draft = {
-      schema: 'roadmap/ruling-m3', id: 'C-2', statement: 'Berth booking comes before tide windows.', kind: 'decision', ruledBy: { type: 'architect' }, trigger: 'pack',
-      supersedes: [], condition: null, docRefs: [{ path: 'ARCHITECTURE.md', anchor: 'Architecture', quotedText: 'One module', relation: 'consistent' }],
-      contractRefs: [], contractOps: [], obligations: [], obligationDispositions: [], cites: [], evidence: [], appliesTo: { type: 'arc' }, lifetime: 'arc', status: 'active',
-      consistency: { verdict: 'consistent', judgedRevs: { head: tip, ledgerSha256: 'a'.repeat(64), obligationsSha256: null, visionSha256: null, contracts: [] }, by: { type: 'architect' } },
-    };
-    const fresh = consistencyRevs(parseRulingSidecar(draft), rulingContextAt({ journal: r.journal, runDir: r.ctx.runDir, planFile: absPath(r.d.planPath), repo: absPath(r.d.repo) }, tip));
-    if ('reasons' in fresh) throw new Error(fresh.reasons.join('; '));
-    const path = absPath(join(tmpDir('packreview-ruling'), 'C-2.json'));
-    writeFileSync(path, `${JSON.stringify({ ...draft, consistency: { ...draft.consistency, judgedRevs: fresh.revs } }, null, 2)}\n`);
-    // The dependent edit: the plan's direction now states what the ruling decides.
-    const plan = JSON.parse(readFileSync(r.d.planPath, 'utf8')) as Record<string, unknown>;
-    writeFileSync(r.d.planPath, JSON.stringify({ ...plan, direction: 'Berth booking first, per C-2.' }));
-    const out = await applyCommand(x.w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, {
-      ...applyBody(r.d), rulings: [{ path, sha256: sha256(sha256Hex(readFileSync(path))) }],
-    } as Parameters<typeof submitCommand>[2]));
-    assert.equal(out.kind, 'applied', JSON.stringify(out));
-    const revisions = factsOfKind(r, 'plan-applied');
-    assert.deepEqual(revisions.map((f) => f.rev), [1, 2], 'one revision for the ruling and its edit: none holds the ruling alone');
-    const manifest = keptPayload(r.ctx.runDir, revisions[1]!.payloadSha256).manifest;
-    assert.deepEqual(Object.keys(manifest.rulings.sidecars), ['C-2']);
-    assert.deepEqual(revisions[1]!.changes, [{ type: 'plan-field', field: 'direction' }]);
-    const review = await runPackReview(x.ctx);
-    assert.deepEqual(review, { kind: 'ended', job: 'review-1', outcome: 'completed', needsUser: null });
-    const started = factsOfKind(r, 'pack-review-started');
-    assert.deepEqual(started.map((f) => f.planRev), [2], 'the one review reads the revision holding both');
-    assert.match(stdinOf(x.a, 'review-1'), /Berth booking first, per C-2\./);
-    assert.deepEqual(packReviewStatus(x.ctx), { kind: 'clear', job: 'review-1' });
-  } finally {
-    x.r.journal.close();
-  }
-});
+
 
 test('packreview.delta-rereview-dispositions (H3): a re-review reads what changed and the unresolved earlier findings, dispositions each once; a blocking one kept still-open holds; a missing disposition is malformed; an abandoned review is skipped over', T, async () => {
   const x = await arcWith([

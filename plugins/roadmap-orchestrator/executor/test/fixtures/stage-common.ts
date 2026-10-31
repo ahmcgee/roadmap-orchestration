@@ -127,7 +127,7 @@ export type StageRun = Readonly<{
 function laneJson(l: LaneJson): Record<string, unknown> {
   return {
     id: l.id, argv: l.argv, cwd: l.cwd ?? '.', env: { set: l.env?.set ?? {}, pass: l.env?.pass ?? ['PATH'] }, expectedExit: l.expectedExit ?? 0,
-    ...(l.cadence === undefined ? { tier: l.tier ?? 'fast' } : { cadence: l.cadence }), resources: l.resources ?? [], evidenceGlobs: l.evidenceGlobs ?? [],
+    ...(l.cadence === undefined ? { cadence: l.tier === 'estate' ? 'unit' : 'build' } : { cadence: l.cadence }), resources: l.resources ?? [], evidenceGlobs: l.evidenceGlobs ?? [],
     ...(l.evidenceExcludes === undefined ? {} : { evidenceExcludes: l.evidenceExcludes }), ...(l.inputs === undefined ? {} : { inputs: l.inputs }),
     ...(l.systems === undefined ? {} : { systems: l.systems }), ...(l.testArgv === undefined ? {} : { testArgv: l.testArgv }),
     ...(l.timeoutMin === undefined ? {} : { timeoutMin: l.timeoutMin }),
@@ -139,7 +139,7 @@ function laneJson(l: LaneJson): Record<string, unknown> {
 /** A suite lane as plan.json writes it: a spec lane's shape without its item state. */
 function suiteLaneJson(l: LaneJson): Record<string, unknown> {
   const { state: _state, ...lane } = laneJson(l);
-  return lane;
+  return {...lane, cadence: l.cadence ?? (l.tier === 'estate' ? 'candidate' : 'build')};
 }
 
 /**

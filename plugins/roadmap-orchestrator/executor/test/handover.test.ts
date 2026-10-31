@@ -91,7 +91,7 @@ test('handover.reentry: a re-entry\'s first build is a fresh session given the h
       as: 'codex', expect: { argv: ['exec', 'resume', thread] },
       acts: [{ type: 'commit', message: 'fix mul', files: MUL }, { type: 'writeToPrompt', pattern: workDirPattern(d), file: 'decisions.json', text: decisions }, { type: 'emit', value: BUILD_REPORT }],
     },
-    gateStep({ decision: 'revise', directives: ['HANDOVER-DIRECTIVE: test mul(0, n)'], findings: [{ severity: 'blocking', path: 'src/mul.js', text: 'HANDOVER-FINDING: mul(0, n) untested', contractRef: null, experiments: [], debt: null }] }),
+    gateStep({rulings: [],  decision: 'revise', directives: ['HANDOVER-DIRECTIVE: test mul(0, n)'], findings: [{ severity: 'blocking', path: 'src/mul.js', text: 'HANDOVER-FINDING: mul(0, n) untested', contractRef: null, experiments: [], debt: null }] }),
     { as: 'codex', expect: { argv: ['exec', 'resume', thread] }, acts: [{ type: 'commit', message: 'more tests', files: { 'test/mul-two.test.js': MUL['test/mul.test.js'] } }, { type: 'emit', value: fixReport }] },
     gateStep({ decision: 'escalate' }), gateStep({ decision: 'escalate' }),
     // u2: plan-check, then the fresh build the test checks, then the gate.

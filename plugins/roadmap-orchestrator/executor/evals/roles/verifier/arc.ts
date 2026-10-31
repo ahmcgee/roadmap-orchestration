@@ -156,7 +156,7 @@ export function setupVerifierArc(f: VerifierFixture, config: RepoConfig | null):
     steps: [
       { as: 'claude', expect: { argv: ['-p'] }, acts: [{ type: 'planCheck', value: planCheckAnswer({ decision: 'approve', risk: VERIFIER_RISK }) }] },
       { ...build.fresh, acts: [{ type: 'commit', message: 'add mul', files: { ...MUL, [f.cell.path]: f.cell.before } }, { type: 'emit', value: BUILD_REPORT }] },
-      gateStep({ decision: 'revise', directives: ['Document mul.'], findings: [REVISE] }),
+      gateStep({rulings: [],  decision: 'revise', directives: ['Document mul.'], findings: [REVISE] }),
     ],
   });
   return config === null ? d : { ...d, config };

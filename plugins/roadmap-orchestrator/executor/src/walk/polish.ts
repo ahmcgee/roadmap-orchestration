@@ -136,7 +136,8 @@ export async function applyPolish(ctx: PolishContext): Promise<PolishOutcome> {
     return { kind: 'applied', admitted: [], refused };
   }
   const out = await commitUnderFence(ctx, together, { type: 'walk', job: due.walk.job }, { type: 'walk', job: due.walk.job }, { type: 'job', job: due.walk.job });
-  if (out.kind === 'rejected') return { kind: 'retry', reasons: out.reasons };
+  if (out.kind === 'rejected' && out.reasons.some((r) => r.startsWith('stale:'))) return applyPolish(ctx);
+  if (out.kind === 'rejected') return {kind: 'retry', reasons: out.reasons};
   crashPoint('polish.after-revision');
   return { kind: 'applied', admitted: alone.map((p) => p.unit.id), refused };
 }

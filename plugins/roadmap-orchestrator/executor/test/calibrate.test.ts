@@ -6,7 +6,7 @@ import { laneDef } from '../src/core/records.ts';
 import { laneRevOf } from '../src/holistic/types.ts';
 import { buildCpuKey, calibratedCpu, cpuDemand, laneCpuKey } from '../src/resources/calibrate.ts';
 import { reserve, cleanup } from '../src/resources/reserve.ts';
-import { reservationCpuBasisOf, spawnCpuKeyOf } from '../src/core/upgrade.ts';
+import { reservationCpuBasisOf, spawnCpuKeyOf } from '../src/core/projections.ts';
 import { requestOf, buildCpu, laneCpu } from '../src/resources/pool.ts';
 import { build, buildEntry, evidence, planCheck, quiesce, salvage, teardown } from '../src/pipeline/stages.ts';
 import { BUILD_REPORT, planCheckStep, started, setupUnit } from './fixtures/stage-common.ts';

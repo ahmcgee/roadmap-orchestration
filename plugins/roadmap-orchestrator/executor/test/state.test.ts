@@ -122,7 +122,7 @@ describe('fold derives', () => {
 
   it('an empty log', () => {
     assert.deepEqual(fold(ARC, []), {
-      v: 1, arc: ARC, plan: null, lastSeq: 0, snapshotHighWater: 0, openIntents: [], units: [], meter: [], needsUser: [], needsUserBlocking: [], needsUserAcked: [],
+      v: 2, arc: ARC, plan: null, lastSeq: 0, snapshotHighWater: 0, openIntents: [], units: [], meter: [], needsUser: [], needsUserBlocking: [], needsUserAcked: [],
       control: { stop: null, pausedAll: false, pausedUnits: [] }, containmentMode: null, tailDiscarded: [], parkedBackends: [],
       backendParks: [], resources: [], runOnly: null, resolvedEdges: [],
       holistic: {

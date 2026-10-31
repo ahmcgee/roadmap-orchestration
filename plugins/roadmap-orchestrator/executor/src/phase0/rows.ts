@@ -97,7 +97,7 @@ import {
   type Obligations, type PlanDefect, type Vision, isExempt, parseObligations, parseVision,
 } from '../holistic/types.ts';
 import { laneMisses } from '../holistic/witnessfiles.ts';
-import { laneTestPathsUndeclared, witnessFilesUndeclared } from '../core/upgrade.ts';
+
 import { derivedExclusions, derivedWidening } from '../input/derived.ts';
 import { visionUnconfirmed } from '../holistic/vision.ts';
 import { mayOverlap } from '../input/classify.ts';
@@ -495,7 +495,6 @@ function witnessDefects(input: Phase0Input, obligations: Obligations, fresh: boo
   for (const lane of obligations.lanes) {
     if (lane.testPaths !== undefined) continue;
     if (fresh) out.push({ type: 'lane-test-paths-undeclared', lane: lane.id });
-    else laneTestPathsUndeclared(lane.id);
   }
   let tip: ReadonlySet<string> | null = null;
   const atTip = (file: RepoPath): boolean => {
@@ -506,7 +505,7 @@ function witnessDefects(input: Phase0Input, obligations: Obligations, fresh: boo
     const w = o.witness!;
     if (w.files === undefined) {
       if (fresh) out.push({ type: 'witness-files-undeclared', obligation: o.id });
-      else witnessFilesUndeclared(o.id);
+      
       continue;
     }
     // A witness on no arc lane is the classifier's refusal (every revision), not this row's.
@@ -736,14 +735,4 @@ export function visionAndObligations(input: Phase0Input): Readonly<{ vision: Vis
 // 12. The vision leak (an apply only)
 
 /** Where the next arc's vision draft belongs: `_next/vision.md` in the inputs dir that holds the arc's plan dir. */
-export const nextVisionDraft = (planFile: AbsPath): AbsPath => absPath(join(dirname(dirname(planFile)), '_next', 'vision.md'));
 
-/**
- * Row 12: the apply's vision rebased onto the files in force (`committed`: its bytes' sha256, null when absent) is not the vision in force
- * (`inForce`), and the apply does not declare a vision edit.
- */
-export function visionLeak(planFile: AbsPath, vision: Buffer | null, inForce: Sha256Hex | null, declared: boolean): readonly Row<'vision-leak'>[] {
-  const committed = vision === null ? null : sha256(sha256Hex(vision));
-  if (declared || committed === inForce) return [];
-  return [{ kind: 'vision-leak', inForce, committed, draft: nextVisionDraft(planFile) }];
-}

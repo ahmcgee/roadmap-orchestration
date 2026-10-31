@@ -47,7 +47,7 @@ type Raw = Record<string, unknown>;
 type Setup = Readonly<{ repo: AbsPath; planDir: string; planFile: AbsPath; hostDir: AbsPath; binDir: string; plan: Raw; spec: Raw; arc: string }>;
 
 const lane = (over: Raw = {}): Raw => ({
-  id: 'unit', argv: ['node', '-e', '0'], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], ...over,
+  id: 'unit', argv: ['node', '-e', '0'], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], ...over,
 });
 const tool = { argv: ['node', '-e', '0'], cwd: '.', env: { set: {}, pass: ['PATH'] } };
 
@@ -87,7 +87,6 @@ function input(s: Setup, reconcile: () => Promise<PreviousArcVerdict> = async ()
     repo: s.repo, planFile: s.planFile, profile: null, hostDir: s.hostDir,
     env: { ...process.env, PATH: `${s.binDir}:${process.env['PATH'] ?? ''}` },
     respawn: null,
-    base: null,
     claim: (ctx) => claimHost(ctx.hostDir, { arc: ctx.plan.arc, runDir: ctx.runDir, repo: ctx.repo, supervisor: selfIdentity() }, reconcile),
   };
 }

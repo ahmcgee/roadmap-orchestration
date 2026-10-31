@@ -131,7 +131,7 @@ test('verify.dirty-tree: a lane that writes into the checkout is not certified, 
 });
 
 test('lanes.occupied-before-tree: unlabelled occupancy parks before any lane runs or any checkout exists', T, async () => {
-  const run = laneRun([{ id: 'needs-db', argv: ['true'], tier: 'estate', resources: [DB] }], [DB]);
+  const run = laneRun([{ id: 'needs-db', argv: ['true'], cadence: 'unit', resources: [DB] }], [DB]);
   writeFileSync(join(run.stateDir, `${DB}.occupant`), 'someone-else');
   const done = started(await lanes(run.ctx, run.unit, run.base));
   assert.equal(done.outcome.kind, 'occupied');
@@ -210,7 +210,7 @@ test('lanes.ignored-capture: a failing lane\'s undeclared ignored output is capt
   assert.deepEqual(capturedFiles(join(dir, 'ignored')), ['.local/demo/a[1]*.log', '.local/demo/run.log']);
   assert.deepEqual(record.fixDirs, ['output', 'tree', 'ignored'].map((d) => join(dir, d, 'files')));
   const census = {
-    v: 1, written: { files: 5, bytes: 9 + 4 + 5 + 4 + 4 }, captured: { files: 3, bytes: 9 + 4 + 5 },
+    v: 2, written: { files: 5, bytes: 9 + 4 + 5 + 4 + 4 }, captured: { files: 3, bytes: 9 + 4 + 5 },
     uncaptured: [{ dir: '.local/demo/', reason: 'excluded', files: 1, bytes: 4 }, { dir: 'node_modules/dep/', reason: 'build-output', files: 1, bytes: 4 }],
   };
   assert.deepEqual(record.ignored, census);

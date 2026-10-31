@@ -31,7 +31,7 @@ import {
   usageUnavailableReason, type Stochastic, stochastic,
 } from './records.ts';
 import { type OrderingWait, orderingWait } from './ordering.ts';
-import { issuesIgnored, orderingDefault } from './upgrade.ts';
+
 import {
   type BusyAttempt, type ClassifiedAdmit, type Conversion, type ConversionReason, BUNDLE_REJECTIONS, CONVERSION_REASONS, classifiedAdmit, conversion,
   type AuditTrigger, type BundleOutcome, type CheckpointTrigger, type ContractOp, type DivergenceDraft, type FindingEvidence, type FindingLens,
@@ -1015,6 +1015,7 @@ export type HolisticFact =
   | (Readonly<{ kind: 'divergence'; id: DivergenceId; index: number }> & DivergenceDraft)
   /** H11: the digest item binds exactly these ids; its acknowledgement covers them. */
   | Readonly<{ kind: 'divergence-digest'; needsUser: NeedsUserId; ids: readonly DivergenceId[] }>
+  | Readonly<{ kind: 'noted'; unit: UnitId; command: CommandId; brief: Sha256Hex }>
   | Readonly<{ kind: 'steered'; unit: UnitId; command: CommandId; brief: Sha256Hex; budgetMin: number; resume: boolean }>
   | Readonly<{ kind: 'merged-in'; unit: UnitId; command: CommandId; integrationTip: Sha; head: Sha }>
   | Readonly<{ kind: 'audit-requested'; command: CommandId; lenses: readonly LensKindName[] | null }>
@@ -1349,13 +1350,12 @@ export type RevisionPayload = Readonly<{
   rev: PlanRev;
   manifest: RevisionManifest;
   changes: readonly PlanChange[];
-  dispositions: readonly Readonly<{ obligation: ObligationId; disposition: ObligationDisposition; ruling: RulingId }>[];
+  dispositions: readonly Readonly<{ obligation: ObligationId; disposition: ObligationDisposition; reason: string; rev: number }>[];
   divergences: readonly DivergenceDraft[];
   publication: Readonly<{ renders: readonly Readonly<{ path: RepoPath; sha256: Sha256Hex }>[]; contractOps: readonly ContractOp[] }> | null;
   routingProvenance: RoutingProvenance;
   /** dev.17: the repo config's systems map (src/input/systems.ts; null: none); absent on a payload a dev.16 executor kept. */
   systemsMap?: SystemsMap | null;
-  owner?: RevisionManifest;
   /**
    * dev.17 (propagation): the revision's stale set (src/holistic/propagation.ts `staleSetOf`), present exactly when it changes
    * a target a link may name (a requirement's rev, a contract, a vision clause); its `stale-set` fact is appended from it.
@@ -1931,7 +1931,7 @@ const planChange: Read<PlanChange> = tagged('type', {
     const out = { type: f.get('type', literal('phase0')), sha256: f.get('sha256', sha256R) };
     const issuesSha256 = f.optional('issuesSha256', sha256R);
     if (issuesSha256 === undefined) return out;
-    issuesIgnored('plan-changed.phase0.issuesSha256');
+
     return { ...out, issuesSha256 };
   }),
   'unit-priority': object((f): PlanChange => ({ type: f.get('type', literal('unit-priority')), unit: f.get('unit', unitR) })),
@@ -1953,7 +1953,7 @@ export const revisionPayload: Read<RevisionPayload> = object((f) => {
     manifest: f.get('manifest', object((g) => ({ planSha256: g.get('planSha256', sha256R), specs: g.get('specs', manifestSpecs), ...revisionInputs(g) }))),
     changes: f.get('changes', arrayOf(planChange)),
     dispositions: f.get('dispositions', arrayOf(object((g) => ({
-      obligation: g.get('obligation', obligationR), disposition: g.get('disposition', oneOf(OBLIGATION_DISPOSITIONS)), ruling: g.get('ruling', (v, p): RulingId => rulingId(v, p)),
+      obligation: g.get('obligation', obligationR), disposition: g.get('disposition', oneOf(OBLIGATION_DISPOSITIONS)), reason: g.get('reason', str), rev: g.get('rev', positive),
     })))),
     divergences: f.get('divergences', arrayOf(divergenceDraft)),
     publication: f.get('publication', nullable(object((g) => ({
@@ -1963,10 +1963,9 @@ export const revisionPayload: Read<RevisionPayload> = object((f) => {
     routingProvenance: f.get('routingProvenance', routingProvenance),
   };
   const systems = f.optional('systemsMap', nullable(systemsMap));
-  const owner = f.optional('owner', object((g) => ({ planSha256: g.get('planSha256', sha256R), specs: g.get('specs', manifestSpecs), ...revisionInputs(g) })));
   const stale = f.optional('stale', staleSet);
   if (out.rev !== out.base + 1) throw new SchemaError(`${f.path}.rev`, String(out.base + 1), out.rev);
-  return { ...out, ...(systems === undefined ? {} : { systemsMap: systems }), ...(owner === undefined ? {} : { owner }), ...(stale === undefined ? {} : { stale }) };
+  return { ...out, ...(systems === undefined ? {} : { systemsMap: systems }), ...(stale === undefined ? {} : { stale }) };
 });
 
 export function parseRevisionPayload(value: unknown): RevisionPayload {
@@ -1988,7 +1987,7 @@ const parkRecord: Read<ParkRecord> = tagged('class', {
     const cls = f.get('class', literal('operator'));
     const kind = f.get('kind', oneOf(OPERATOR_PARK_KINDS));
     const ordering = f.optional('ordering', nullable(orderingWait));
-    if (ordering === undefined) orderingDefault();
+
     if (ordering != null && kind !== 'design') throw new SchemaError(`${f.path}.ordering`, 'ordering only on a design park', ordering);
     if (kind === 'env') return { class: cls, kind, ...(ordering === undefined ? {} : { ordering: null }) };
     return { class: cls, kind, ...(ordering === undefined ? {} : { ordering }) };
@@ -2083,7 +2082,7 @@ const ruleList: Read<readonly RuleId[]> = idList((v, p) => ruleId(v, p), { legac
 
 /** Scaffolding (`issuesIgnored`): JSON the removed issues integration wrote, `what` naming it; returned as written. */
 const issuesLegacy = <T>(what: string): Read<T> => (value) => {
-  issuesIgnored(what);
+
   return value as T;
 };
 
@@ -2091,7 +2090,7 @@ const amendmentSource: Read<AmendmentSource> = tagged('type', {
   checkpoint: object((f): AmendmentSource => ({ type: f.get('type', literal('checkpoint')), job: f.get('job', ckptJobR), index: f.get('index', nat) })),
   divergence: object((f): AmendmentSource => ({ type: f.get('type', literal('divergence')), divergence: f.get('divergence', (v, p) => divergenceId(v, p)) })),
   issue: object((f): AmendmentSource => {
-    issuesIgnored('corpus-amendment.source.issue');
+
     return { type: f.get('type', literal('issue')), job: f.get('job', ckptJobR), issue: f.get('issue', str) };
   }),
   admit: object((f): AmendmentSource => ({
@@ -2463,6 +2462,7 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
     kind: f.get('kind', literal('divergence-digest')), needsUser: f.get('needsUser', (v, p): NeedsUserId => needsUserId(v, p)),
     ids: f.get('ids', idList((v, p): DivergenceId => divergenceId(v, p), { nonEmpty: true, legacyStringOrder: true })),
   })),
+  noted: object((f): Fact => ({ kind: f.get('kind', literal('noted')), unit: f.get('unit', unitR), command: f.get('command', cmdR), brief: f.get('brief', sha256R) })),
   steered: object((f): Fact => ({
     kind: f.get('kind', literal('steered')), unit: f.get('unit', unitR), command: f.get('command', cmdR), brief: f.get('brief', sha256R),
     budgetMin: f.get('budgetMin', positive), resume: f.get('resume', bool),
