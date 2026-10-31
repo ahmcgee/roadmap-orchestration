@@ -10,6 +10,6 @@ export function captureLaunch(lane: LaneDef, env: Readonly<Record<string, string
   if (slot === undefined) throw new Error(`capture ${lane.id}: ${lane.capture.port} must be a leased pool instance`);
   return { argv: [process.execPath, fileURLToPath(new URL('./capture-runner.ts', import.meta.url))], env: { ...env,
     ROADMAP_CAPTURE_CONFIG: JSON.stringify(lane.capture), ROADMAP_CAPTURE_DIR: dir,
-    ROADMAP_CAPTURE_STATES: JSON.stringify(lane.capture.states), ROADMAP_CAPTURE_SLOT: slot,
+    ROADMAP_CAPTURE_STATES: JSON.stringify(lane.capture.states), ROADMAP_CAPTURE_SLOT: slot, ROADMAP_CAPTURE_PORT: String((lane.capture.portBase ?? 20000) + Number(slot)),
   } };
 }

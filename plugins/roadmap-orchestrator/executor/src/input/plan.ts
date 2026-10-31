@@ -691,6 +691,10 @@ export function milestoneRefusals(plan: PlanM1): readonly Readonly<{ path: strin
     m.units.forEach((u, j) => {
       if (!units.has(u)) out.push({ path: `${at}.units[${j}]`, expected: `a unit of the plan (milestone ${m.id})`, value: u });
     });
+    for (const id of m.lanes ?? []) {
+      const lane = plan.suite.lanes.find((l) => l.id === id);
+      if (lane === undefined) out.push({ path: `${at}.lanes`, expected: 'suite lane ids declared by the plan', value: id });
+    }
     const design = designUnitOf(m);
     if (design !== null) {
       const d = units.get(design);
@@ -812,7 +816,7 @@ export function parsePlan(value: unknown): PlanM1 {
     if (out.previousHead !== undefined && out.chain !== undefined) throw new SchemaError('plan.previousHead', 'a foreign predecessor only without plan.chain', out.previousHead);
     // dev.17: a batch lane runs at milestones, cadence audits and the close-out, which only the holistic layer has.
     out.suite.lanes.forEach((l, i) => {
-      if (l.cadence === 'batch' && out.holistic === undefined) throw new SchemaError(`plan.suite.lanes[${i}].cadence`, 'build, unit or candidate outside a holistic arc (a batch lane runs at milestones, audits and the close-out)', l.cadence);
+      if ((l.cadence === 'batch' || l.cadence === 'milestone') && out.holistic === undefined) throw new SchemaError(`plan.suite.lanes[${i}].cadence`, 'build, unit or candidate outside a holistic arc (a batch lane runs at milestones, audits and the close-out)', l.cadence);
     });
     assertUnique(knownDefectsOf(out), (k) => k.id, 'plan.knownDefects');
     assertUnique(out.contracts, (c) => c, 'plan.contracts');

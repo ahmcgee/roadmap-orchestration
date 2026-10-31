@@ -445,7 +445,7 @@ export function parseCommand(argv: readonly string[]): Command {
     }
     default:
       throw new CliError(
-        `unknown command ${JSON.stringify(command ?? '')}; expected one of --version, start, status, watch, stop, pause, ack, resume, sweep, apply, resolve-edge, run-only, reverse, steer, note, merge-in, audit, close-admissions, gc, phase0 check, corpus pin, brief, pr, chain status, answer, witness-check, resume-arc, inputs export, flow accept, flow reject, flow request, flow given, demo up, demo down, demo hold, demo release`,
+        `unknown command ${JSON.stringify(command ?? '')}; expected one of --version, start, status, watch, stop, pause, ack, resume, sweep, apply, resolve-edge, run-only, reverse, steer, note, witness, merge-in, audit, close-admissions, gc, phase0 check, corpus pin, brief, pr, chain status, answer, witness-check, resume-arc, inputs export, flow accept, flow reject, flow request, flow given, demo up, demo down, demo hold, demo release`,
       );
   }
 }

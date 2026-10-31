@@ -714,7 +714,7 @@ export class Fold implements JournalView {
   #runOnly: readonly UnitId[] | null = null;
   /** Rank's seqs (F17): each stage-outcome fact's by `<unit>/<stage>#<attempt>`, each published ff's done, each unit's first naming. */
   readonly #outcomeSeqs = new Map<string, number>();
-  readonly #completedLanes = new Map<UnitId, number>();
+  readonly #completedLanes = new Map<UnitId, StageOutcomeFact>();
   readonly #publications: Readonly<{ unit: UnitId; seq: number }>[] = [];
   readonly #addedSeqs = new Map<UnitId, number>();
   // M3
@@ -1123,7 +1123,7 @@ export class Fold implements JournalView {
         const u = this.#unit(f.unit, f.stage);
         u.outcomes.add(key);
         this.#outcomeSeqs.set(`${f.unit}/${key}`, at.seq);
-        if (f.stage === 'lanes' && f.class !== 'hold') this.#completedLanes.set(f.unit, f.attempt);
+        if (f.stage === 'lanes' && f.class !== 'hold') this.#completedLanes.set(f.unit, f);
         if (f.stage === 'lanes' && f.outcome === 'green') this.#greenLanes.set(f.unit, f.attempt);
         // M3: an entry's stage records its outcome (a hold keeps the entry, whose stage then runs again); a steer pass
         // ends where it parks, stops or retires the unit, or where its gate advances it.
@@ -2105,8 +2105,10 @@ export class Fold implements JournalView {
     return seq;
   }
 
+  completedLanesOutcome(unit: UnitId): StageOutcomeFact | null { return this.#completedLanes.get(unit) ?? null; }
+
   completedLanes(unit: UnitId): number | null {
-    return this.#completedLanes.get(unit) ?? null;
+    return this.#completedLanes.get(unit)?.attempt ?? null;
   }
 
   publications(): readonly Readonly<{ unit: UnitId; seq: number }>[] {

@@ -1,3 +1,4 @@
+import { attemptSignals } from './attempts.ts';
 // The unit driver: `runUnit(ctx, unit, gate)` loops stage → transition → next until the unit is merged,
 // parked, held or stopped. The scheduler (src/schedule/scheduler.ts) runs one per unit in flight, as that
 // unit's task.
@@ -799,13 +800,9 @@ function assertQuiescent(ctx: StageContext, unit: UnitId): void {
  */
 export async function runUnit(ctx: StageContext, unit: PlanUnit, gate: Gate): Promise<UnitResult> {
   for (;;) {
-    const count = ctx.journal.view.attemptCounts(unit.id);
-    if ((count.builds >= 8 || count.judged >= 20) && !ctx.journal.view.ciFacts().some((f) => f.kind === 'attempt-marker' && f.unit === unit.id)) {
-      ctx.journal.fact({ kind: 'attempt-marker', unit: unit.id, marker: 'M4', ...count });
-    }
     const due = upcoming(ctx.journal.view.unit(unit.id), specFacts(ctx)(unit).reproduces);
-    if (due?.kind === 'admission' && (count.builds >= 16 || count.judged >= 40)) {
-      if (!ctx.journal.view.ciFacts().some((f) => f.kind === 'attempt-capped' && f.unit === unit.id)) ctx.journal.fact({ kind: 'attempt-capped', unit: unit.id, ...count });
+    const count = attemptSignals(ctx.journal, unit.id, due?.kind === 'admission');
+    if (count.capped) {
       return { kind: 'parked', needsUser: { reason: 'attempt-cap', summary: `${unit.id}: ${count.builds} builds / ${count.judged} judged stages reached the total attempt cap; root intervention required`, blocking: true, options: [], subject: { type: 'unit', unit: unit.id }, recommendation: 'Revise, split, steer or cut the unit from the root.', evidence: [] } };
     }
     const u = ctx.journal.view.unit(unit.id);

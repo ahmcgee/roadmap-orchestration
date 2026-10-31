@@ -651,6 +651,7 @@ function laneHistory(ctx: StageContext, unit: UnitId, lane: LaneDef, exclude: St
   const view = ctx.journal.view;
   const ran: LaneHistoryEntry[] = executionsOf(view, lane.id)
     .filter((e) => e.set === 'spec' && e.parent.unit === unit && !sameParent(e.parent, exclude))
+    .filter((e) => seriesRootOf(ctx, invocationId(e.spawns[0]!.op, e.spawns[0]!.ordinal)) === specSeriesRoot(ctx.runDir, e.parent))
     .map((e) => ({ seq: e.seq, parent: e.parent, execution: e.parent, at: e.at, record: spawnRecord(ctx, e.parent, lane, e.spawns, specSeriesRoot(ctx.runDir, e.parent)), reused: false }));
   const reused: LaneHistoryEntry[] = view.holistic().laneReuses
     .filter((r) => r.lane === lane.id && (r.set ?? 'spec') === 'spec' && r.parent.type === 'stage' && r.parent.unit === unit && !sameParent(r.parent, exclude))
@@ -1361,7 +1362,7 @@ export { sameExecution } from '../input/laneexecution.ts';
 /** Each suite lane's identical arc lane among `arc` (the first, by `sameExecution`), by suite lane id; never a stochastic lane's. */
 export function suiteStandIns(suite: readonly LaneDef[], arc: readonly ArcLaneDef[]): ReadonlyMap<LaneId, ArcLaneDef> {
   return new Map(suite.flatMap((s) => {
-    const a = s.stochastic === undefined ? arc.find((l) => sameExecution(s, l)) : undefined;
+    const a = s.stochastic === undefined ? arc.find((l) => l.witnessClass !== 'external' && sameExecution(s, l)) : undefined;
     return a === undefined ? [] : [[s.id, a] as const];
   }));
 }

@@ -101,7 +101,7 @@ export function walkArc(opts: WalkArcOptions): ArcDescriptor {
     writeFileSync(x.planPath, JSON.stringify({
       ...plan, baseline: git(x.repo, 'rev-parse', 'main'),
       holistic: { vision: 'vision.json', advances: ADVANCES, obligations: 'obligations.json', audit: { lenses: opts.auditLenses ?? ['vision'], every: 100 } },
-      milestones: [opts.milestone ?? milestoneJson()],
+      milestones: [opts.milestone ?? { ...milestoneJson(), lanes: (opts.suite ?? []).filter((l) => l.cadence === 'batch' || l.cadence === 'milestone').map((l) => l.id) }],
       ...(opts.walkRounds === undefined ? {} : { limits: { walkRounds: opts.walkRounds } }),
     }));
   });

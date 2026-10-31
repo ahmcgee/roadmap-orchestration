@@ -438,6 +438,7 @@ export function gradeTree(
   // non-exempt child holds. Not its effect: a held future child completing here is `latch`, one delivered elsewhere
   // `measured`, and neither is `discharged` (paid m3 run 7: a repair of a latched parent split into such children).
   const holds = (o: ObligationDef): boolean => {
+    if (externalIds.has(o.id)) return true; // Root evidence follows publication, including a split parent's external leaves.
     if (o.state.type !== 'split') return o.witness !== null && verdict(o, o.witness) === 'held';
     return o.state.children.every((c) => {
       const child = byId.get(c);

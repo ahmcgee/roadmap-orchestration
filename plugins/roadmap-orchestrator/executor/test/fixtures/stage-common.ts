@@ -89,6 +89,7 @@ export type SetupOptions = Readonly<{
   risk?: RiskTier;
   /** The unit's declared resources (each is a res-tool resource). */
   resources?: readonly string[];
+  resourceDefs?: readonly JsonValue[];
   profile?: ProfileName;
   /** The repo's .gitignore; default `out/`. */
   gitignore?: string;
@@ -237,7 +238,7 @@ export function setupUnit(opts: SetupOptions): StageRun {
   writeFileSync(planPath, JSON.stringify({
     schema: 'roadmap/plan-m1', arc, integrationBranch: 'main', baseline: base, worktreeRoot: tmpDir('stage-wt'),
     contracts: ['contracts/api.md'], rulings: 'rulings.md', architectureDoc: 'ARCHITECTURE.md', direction: 'Keep it small.',
-    suite: { lanes: (opts.suite ?? []).map(suiteLaneJson) }, resources: [{ name: DB, probe: tool('probe'), teardown: tool('teardown') }],
+    suite: { lanes: (opts.suite ?? []).map(suiteLaneJson) }, resources: [{ name: DB, probe: tool('probe'), teardown: tool('teardown') }, ...(opts.resourceDefs ?? [])],
     units: [{ id: U1, spec: 'u1.json', risk: opts.risk ?? 'med', systems: Object.keys((opts.systemsMap as { systems: object } | undefined)?.systems ?? { app: true }).slice(0, 1).map((s) => systemName(s)), resources: opts.resources ?? [], ...opts.unit }],
     ...(opts.derived === undefined ? {} : { derived: opts.derived }),
     ...(opts.environments === undefined ? {} : { environments: opts.environments }),

@@ -274,7 +274,7 @@ const WITNESS_FILE_ENV = 'ROADMAP_WITNESS_FILE';
 const declaredEnv: Read<Readonly<Record<string, string>>> = (value, path) => {
   const env = stringMap(value, path);
   for (const k of Object.keys(env)) {
-    if (k.startsWith('ROADMAP_') && k !== WITNESS_FILE_ENV) throw new SchemaError(`${path}.${k}`, 'a declared variable (ROADMAP_* are set by the runner)', env[k]);
+    if (k.startsWith('ROADMAP_') && k !== WITNESS_FILE_ENV && !['ROADMAP_CAPTURE_CONFIG', 'ROADMAP_CAPTURE_DIR', 'ROADMAP_CAPTURE_STATES', 'ROADMAP_CAPTURE_SLOT', 'ROADMAP_CAPTURE_PORT'].includes(k)) throw new SchemaError(`${path}.${k}`, 'a declared variable (ROADMAP_* are set by the runner)', env[k]);
   }
   return env;
 };
@@ -905,7 +905,7 @@ export type LaneDef = Readonly<{
   estMin?: number;
   placement?: 'local' | 'shared-resource' | 'cross-system';
   kind?: 'integration' | 'capture';
-  capture?: Readonly<{ up: readonly string[]; script: readonly string[]; states: readonly string[]; port: ResourceName }>;
+  capture?: Readonly<{ up: readonly string[]; script: readonly string[]; states: readonly string[]; port: ResourceName; portBase?: number }>;
 
   resources: readonly ResourceName[];
   evidenceGlobs: readonly RepoPattern[];
@@ -986,7 +986,7 @@ function laneFields(f: Fields, kind: LaneKind | null): LaneDef {
   const estMin = f.optional('estMin', timeoutMin);
   const placement = f.optional('placement', oneOf(['local', 'shared-resource', 'cross-system'] as const));
   const laneKind = f.optional('kind', oneOf(['integration', 'capture'] as const));
-  const capture = f.optional('capture', object((g) => ({ up: g.get('up', argv), script: g.get('script', argv), states: g.get('states', arrayOf(str, { nonEmpty: true })), port: g.get('port', resource) })));
+  const capture = f.optional('capture', object((g) => ({ up: g.get('up', argv), script: g.get('script', argv), states: g.get('states', arrayOf(str, { nonEmpty: true })), port: g.get('port', resource), ...(g.optional('portBase', positive) === undefined ? {} : { portBase: g.get('portBase', positive) }) })));
   if ((laneKind === 'capture') !== (capture !== undefined)) throw new SchemaError(`${f.path}.capture`, 'present exactly for a capture lane', capture);
   if (capture !== undefined && capture.states.some((s) => !/^[a-zA-Z0-9_-]+$/.test(s))) throw new SchemaError(`${f.path}.capture.states`, 'safe file names', capture.states);
   if (capture !== undefined && !out.resources.includes(capture.port)) throw new SchemaError(`${f.path}.capture.port`, 'a leased resource of this lane', capture.port);

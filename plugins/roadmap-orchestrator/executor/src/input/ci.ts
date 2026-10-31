@@ -8,7 +8,7 @@ export function lanePlacementReasons(lane: LaneDef, unit?: PlanUnit): readonly s
   const whole = lane.inputs?.some((p) => p === '**' || p === '**/*' || p === '*') ?? false;
   if (local && (lane.cost === 'expensive' || whole)) out.push(`lane ${lane.id}: expensive or whole-repo lanes must move to candidate`);
   if ((lane.cadence === 'batch' || lane.cadence === 'milestone') && lane.placement !== 'shared-resource' && lane.placement !== 'cross-system') out.push(`lane ${lane.id}: milestone lanes must declare shared-resource or cross-system placement; expensive local lanes move to candidate`);
-  if (unit !== undefined && unit.spike === undefined && (lane.kind === 'integration' || !local)) out.push(`unit ${unit.id}: integration lane ${lane.id} belongs on a candidate or milestone, except in a spike`);
+  if (unit !== undefined && unit.spike === undefined && (lane.kind === 'integration' || lane.placement === 'shared-resource' || lane.placement === 'cross-system' || !local)) out.push(`unit ${unit.id}: integration lane ${lane.id} belongs on a candidate or milestone, except in a spike`);
   return out;
 }
 export function ciReasons(plan: PlanM1, specs: readonly SpecM1[]): readonly string[] {
@@ -24,7 +24,7 @@ export function ciReasons(plan: PlanM1, specs: readonly SpecM1[]): readonly stri
     for (const l of s.lanes.filter((l) => l.state === 'active')) out.push(...lanePlacementReasons(l, u));
     for (const id of s.forces ?? []) {
       const lane = plan.suite.lanes.find((l) => l.id === id);
-      if (lane !== undefined && u?.spike === undefined && (lane.cost === 'expensive' || lane.kind === 'integration' || !['build', 'unit'].includes(lane.cadence))) out.push(`unit ${s.unit}: forced integration lane ${id} must move to candidate or milestone`);
+      if (lane !== undefined && u?.spike === undefined && (lane.cost === 'expensive' || lane.kind === 'integration' || lane.placement === 'shared-resource' || lane.placement === 'cross-system')) out.push(`unit ${s.unit}: forced integration lane ${id} must move to candidate or milestone`);
     }
   }
   for (const m of plan.milestones ?? []) for (const id of m.lanes ?? []) {

@@ -58,12 +58,12 @@ const laneSpawns = (run: StageRun, lane: string): readonly IntentOf<'proc.spawn'
 
 describe('lanes.reuse-key (dev.17)', () => {
   test('lanes.reuse-by-systems: a lane listing systems is reused on a commit that changed only other systems or docs; a change in its own system, or an unmapped path, reruns it', T, async () => {
-    const run = unitRun({ lanes: [{ id: 'add', cadence: 'build', argv: ['true'], systems: ['add'] }, { id: 'whole', cadence: 'build', argv: ['true'] }], systemsMap: MAP });
+    const run = unitRun({ lanes: [{ id: 'add', cadence: 'build', argv: ['true'], systems: ['add'] }, { id: 'whole', cadence: 'build', argv: ['true'], systems: ['add', 'other'] }], systemsMap: MAP });
     const first = await series(run, 1, specLanes(run), run.base);
     assert.equal(first.end.kind, 'green');
     const other = commit(run, { 'src/other/x.js': 'export const x = 1;\n' });
     const second = await series(run, 2, specLanes(run), other);
-    assert.deepEqual(second.ledger.map((l) => [l.lane, l.reused?.at ?? null]), [['add', run.base], ['whole', null]], 'another system changed: add reused; a lane listing none reads it');
+    assert.deepEqual(second.ledger.map((l) => [l.lane, l.reused?.at ?? null]), [['add', run.base], ['whole', null]], 'another system changed: add reused; a lane explicitly listing all systems reads it');
     const docs = commit(run, { 'docs/guide.md': '# guide\n' });
     const third = await series(run, 3, specLanes(run), docs);
     assert.deepEqual(third.ledger.map((l) => [l.lane, l.reused?.at ?? null]), [['add', run.base], ['whole', other]], 'a docs-only change: every lane reused');

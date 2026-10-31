@@ -293,6 +293,9 @@ function closureOf(events: readonly Event[], read: (sha: Sha256Hex, ext: string)
       case 'dispatch':
         input(f.record.specSha256, SPEC_INPUT, by);
         break;
+      case 'external-witness':
+        if (f.evidenceSha256 !== null) input(f.evidenceSha256, 'external-evidence', by);
+        break;
       case 'judgment-inputs':
       case 'reopened':
         input(f.specSha256, SPEC_INPUT, by);

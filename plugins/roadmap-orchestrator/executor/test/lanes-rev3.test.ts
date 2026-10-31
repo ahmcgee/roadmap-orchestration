@@ -181,8 +181,8 @@ describe('series certificates and lane reuse (F1a)', () => {
     assert.deepEqual(reuses(run), []);
   });
 
-  test('lanes.systems-untouched-reused / lanes.systems-touched-reruns / lanes.no-systems-reruns-on-new-sha (dev.17: inputs folded into the reuse key): across SHAs only a lane whose systems the diff leaves alone is reused', T, async () => {
-    const run = unitRunWith([{ id: 'add', argv: ['node', '--test', 'test/add.test.js'], systems: ['add'] }, { id: 'plain', argv: ['true'] }], {
+  test('lanes.systems-untouched-reused / lanes.systems-touched-reruns / lanes.explicit-whole-input-reruns-on-new-sha: systems reuse and explicit whole-tree input invalidation across SHAs', T, async () => {
+    const run = unitRunWith([{ id: 'add', argv: ['node', '--test', 'test/add.test.js'], systems: ['add'] }, { id: 'plain', argv: ['true'], inputs: ['**'] }], {
       systems: { add: { paths: ['src/add.js'], tests: ['test/add.test.js'] }, other: { paths: ['src/other.js'] } },
     });
     writeFiles(run.repo, { 'src/add.js': 'export function add(a, b) {\n  return a + b;\n}\n' });
@@ -191,7 +191,7 @@ describe('series certificates and lane reuse (F1a)', () => {
     assert.equal(first.end.kind, 'green');
     const other = commit(run, { 'src/other.js': 'export const other = 1;\n' });
     const second = await series(run, 2, specLanes(run), other);
-    assert.deepEqual(second.ledger.map((l) => [l.lane, l.reused?.at ?? null]), [['add', fixed], ['plain', null]], 'add reused from the earlier SHA; plain, listing no systems, reran');
+    assert.deepEqual(second.ledger.map((l) => [l.lane, l.reused?.at ?? null]), [['add', fixed], ['plain', null]], 'add reused from the earlier SHA; plain, declaring whole-tree inputs, reran');
     const touched = commit(run, { 'test/add.test.js': `${readFileSync(join(run.repo, 'test', 'add.test.js'), 'utf8')}\n// touched\n` });
     const third = await series(run, 3, specLanes(run), touched);
     assert.deepEqual(third.ledger.map((l) => l.reused), [null, null], 'its system changed: add reran');

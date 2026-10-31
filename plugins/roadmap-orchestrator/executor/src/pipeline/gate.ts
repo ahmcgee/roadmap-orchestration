@@ -112,7 +112,7 @@ import { gateSmokeChecks } from './smoke.ts';
 import {
 type JudgmentReader,
 type PlanCheckDone,type StageDone,at,changedPremiseFiles,corpusInForce,enterJudgment,
-escalationOf,fastSuiteRoot,
+escalationOf,fastSuiteRoot,fastSuiteLanes,
 holisticInForce,inMs,integrationTip,
 judgedAnswer,
 judgmentOutput,
@@ -462,7 +462,7 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
     const largeDiff = largeDiffOf(bounded);
     const seated = judgmentDispatch(ctx, unit.id, 'gate', largeDiff);
     if (seated.kind !== 'pinned') return { kind: 'routing-changed', needsUser: seated.needsUser };
-    const laneLedger = seriesLedger(ctx, series, spec.lanes, 'spec', head, specSeriesRoot(ctx.runDir, series));
+    const laneLedger = [...seriesLedger(ctx, series, spec.lanes, 'spec', head, specSeriesRoot(ctx.runDir, series)), ...fastSuiteLanes(ctx, spec, head).filter((l) => l.kind === 'capture').flatMap((l) => { const record = laneRecordIn(ctx, series, l, 'suite', head, fastSuiteRoot(ctx.runDir, series, 'suite')); return record === null ? [] : [record]; })];
     // The attached diff's files (what it does not inline) are listed and readable as evidence.
     const evidence = [...laneLedger.map((l) => l.evidenceDir), ...buildEvidence(ctx, unit.id), diffDir];
     const map = mapInForce(ctx.journal.view);

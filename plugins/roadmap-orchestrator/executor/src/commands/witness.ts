@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, lstatSync } from 'node:fs';
 import type { CommandId } from '../core/ids.ts';
 import { sha256 } from '../core/ids.ts';
 import { sha256Hex } from '../core/json.ts';
@@ -21,6 +21,7 @@ export function witness(ctx: CommandContext, command: CommandId, body: Extract<C
   const head = revParse(ctx.repo, branchRef(ctx.plan().integrationBranch));
   let evidenceSha256 = null;
   if (body.evidenceFile !== null) {
+    if (!existsSync(body.evidenceFile.path) || !lstatSync(body.evidenceFile.path).isFile()) return { kind: 'rejected', reason: 'external witness evidence is not a regular file' };
     const bytes = readFileSync(body.evidenceFile.path);
     evidenceSha256 = sha256(sha256Hex(bytes));
     if (evidenceSha256 !== body.evidenceFile.sha256) return { kind: 'rejected', reason: 'external witness evidence changed since submission' };
