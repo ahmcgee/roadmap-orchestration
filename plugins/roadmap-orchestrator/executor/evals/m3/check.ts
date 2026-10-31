@@ -1,4 +1,5 @@
-import { repoPattern } from '../../src/core/values.ts';
+import { protectedPaths } from '../../src/input/protected.ts';
+import { laneEvidenceGlobs, transientViolations } from '../../src/git/transient.ts';
 // The M3 paid fixture, step 3: `node evals/m3/check.ts <dir>` grades a finished run (setup → driver) from the log,
 // the repo, the run dir and report.json. Agent-facing output: one JSON line `{pass, criteria[{name, pass, detail}],
 // notExercised[], cannotShow[]}`, then the two lists as lines. Exits 1 when any criterion fails.
@@ -61,14 +62,14 @@ import { type ArcId, type CommandId, type NeedsUserId, type OpId, type UnitId, a
 import type { JournalView } from '../../src/core/interfaces.ts';
 import { readJournal } from '../../src/core/log.ts';
 import { RUNNER_FILE_READERS, type ResultFile } from '../../src/core/records.ts';
-import { type AbsPath, absPath, matchesPattern, repoPath } from '../../src/core/values.ts';
+import { type AbsPath, absPath, repoPath } from '../../src/core/values.ts';
 import { candidateRef } from '../../src/git/candidate.ts';
 import { git, refTarget, revParse } from '../../src/git/git.ts';
 import { snapshotRef, verifySnapshot, witnessDir } from '../../src/git/snapshot.ts';
 import { verdictOf } from '../../src/holistic/observe.ts';
 import { type Obligations, type ObservationVerdict, isExempt, parseObligations, witnessRecord } from '../../src/holistic/types.ts';
 import { WITNESS_RECORD_FILE } from '../../src/holistic/witness.ts';
-import { OBLIGATIONS_INPUT, keptInput, requirePlanInForce } from '../../src/input/inforce.ts';
+import { OBLIGATIONS_INPUT, keptInput, requirePlanInForce, revisionInForce } from '../../src/input/inforce.ts';
 import { type PlanM1, parsePlan } from '../../src/input/plan.ts';
 import { readNeedsUser } from '../../src/needsuser.ts';
 import { pendingCommandIds, readCommand } from '../../src/commands/queue.ts';
@@ -627,26 +628,15 @@ function headIsPublication(run: Run): Verdict {
   return verdict(problems, `integration ${integration} = the ${last.subject} publication ${last.op}`);
 }
 
-/**
- * The arc's diff is product inside the scopes in force plus the living docs: every changed path matches the scope of
- * some unit of the plan in force (bundle-admitted units included; its plan scope or its latest spec's scope, so a
- * ruled growth counts) or is a living `.roadmap/` doc, and the close-out put the rendered docs in it.
- */
+/** Ordinary product paths pass; executor-rendered docs are allowed, and all remaining paths use repository protection. */
 function diffProductAndDocs(run: Run): Verdict {
-  const units = requirePlanInForce(run.runDir, run.view).plan.units;
-  const scopes = units.flatMap((u) => {
-    const spec = run.view.unit(u.id).spec === null ? null : specOf(run, u.id);
-    return u.systems.map((pattern) => ({ unit: u.id as string, pattern: repoPattern('**') }));
-  });
+  const force = requirePlanInForce(run.runDir, run.view);
+  const specs = force.plan.units.filter((u) => run.view.unit(u.id).spec !== null).map((u) => specOf(run, u.id));
   const paths = git(run.repo, ['diff', '--name-only', `${MAIN}...${run.plan.integrationBranch}`]).split('\n').filter((p) => p !== '');
-  const problems: string[] = [];
-  const owned: string[] = [];
-  for (const p of paths) {
-    if (RENDERED.includes(p) || p.startsWith('.roadmap/contracts/')) continue;
-    const by = scopes.find((x) => matchesPattern(repoPath(p), x.pattern));
-    if (by === undefined) problems.push(`${p}: no scope in force matches it (units ${units.map((u) => u.id).join(', ')}), and it is no living .roadmap doc`);
-    else owned.push(`${p} (${by.unit})`);
-  }
+  const product = paths.filter((p) => !RENDERED.includes(p) && !p.startsWith('.roadmap/contracts/')).map((p) => repoPath(p));
+  const violations = transientViolations({ evidenceGlobs: specs.flatMap(laneEvidenceGlobs), protectedPaths: protectedPaths(revisionInForce(run.runDir, force).corpus) }, product);
+  const problems = violations.map((v) => `${v.path} (${v.rule})`);
+  const owned = product.filter((p) => !violations.some((v) => v.path === p));
   if (!paths.some((p) => RENDERED.includes(p))) {
     const closeOut = factsOf(run, 'docs-published').some((f) => f.source === 'close-out');
     problems.push(`no rendered living doc (${RENDERED.join(', ')}) in the diff: ${closeOut ? 'the close-out publication changed neither' : 'no close-out publication happened'}`);

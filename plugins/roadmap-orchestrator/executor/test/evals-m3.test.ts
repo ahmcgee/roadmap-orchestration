@@ -357,6 +357,29 @@ describe('evals-m3: the fake-backed fixture run, branch R', () => {
     return tampered;
   }
 
+  test('evals-m3.tamper-product: product beyond unit systems passes; protected run state fails the product-and-docs criterion', async () => {
+    const repo = layout(fx.dir).repo;
+    const previous = git(repo, 'rev-parse', INTEGRATION);
+    const worktree = join(tmpDir('m3-tamper-product'), 'wt');
+    git(repo, 'worktree', 'add', '--quiet', worktree, INTEGRATION);
+    try {
+      writeFileSync(join(worktree, 'outside-systems.txt'), 'ordinary product\n');
+      git(worktree, 'add', 'outside-systems.txt');
+      git(worktree, 'commit', '--quiet', '-m', 'product beyond declared systems');
+      assert.equal(criterion(await check(fx.dir), 'diff-product-and-docs').pass, true);
+      writeFileSync(join(worktree, '.roadmap', 'state.json'), '{}\n');
+      git(worktree, 'add', '.roadmap/state.json');
+      git(worktree, 'commit', '--quiet', '-m', 'tamper with protected run state');
+      const tampered = await check(fx.dir);
+      assert.equal(criterion(tampered, 'diff-product-and-docs').pass, false);
+      assert.match(criterion(tampered, 'diff-product-and-docs').detail, /\.roadmap\/state\.json \(protected-path\)/);
+    } finally {
+      git(repo, 'worktree', 'remove', '--force', worktree);
+      git(repo, 'update-ref', `refs/heads/${INTEGRATION}`, previous);
+    }
+    assert.deepEqual(failing(await check(fx.dir)), [], 'restoring the integration branch restores every criterion');
+  });
+
   test('evals-m3.tamper-digest: a digest the driver did not acknowledge fails divergence-digest-bound', async () => {
     const tampered = await tamper((d) => ({ ...d, acks: d.acks.filter((a) => a.reason !== 'divergence-digest') }));
     assert.deepEqual(failing(tampered), ['divergence-digest-bound']);
