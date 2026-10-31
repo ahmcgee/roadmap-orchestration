@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { arcId, laneId, unitId } from '../src/core/ids.ts';
 import type { Event, StageOutcomeFact } from '../src/core/events.ts';
 import { parseCommand } from '../src/input/cli.ts';
 import { parsePlan } from '../src/input/plan.ts';
-import { summarize } from '../src/status/summary.ts';
+import { statusSummary, summarize } from '../src/status/summary.ts';
 import { status } from '../src/status.ts';
 import { absPath } from '../src/core/values.ts';
 import { contextFor, setupArc } from './fixtures/unit-common.ts';
@@ -29,4 +29,13 @@ test('expectations are optional finite nonnegative USD and can be exceeded witho
   assert.equal(parsePlan(raw).expectations, undefined);
   assert.deepEqual(parsePlan({ ...raw, expectations: { arcUsd: 0 } }).expectations, { arcUsd: 0 });
   for (const n of [-1, Infinity, '2']) assert.throws(() => parsePlan({ ...raw, expectations: { arcUsd: n } }));
+});
+
+test('status --summary reads expectations from the recorded plan and bounds the feed to the status snapshot', () => {
+  const d = setupArc({ steps: [] });
+  writeFileSync(d.planPath, JSON.stringify({ ...JSON.parse(readFileSync(d.planPath, 'utf8')), expectations: { arcUsd: 5, perMilestoneUsd: 1 } }));
+  contextFor(d).journal.close();
+  const summary = statusSummary(absPath(d.runDir), arcId(d.arc), absPath(d.hostDir));
+  assert.equal(summary.planRev, 1); assert.equal(summary.progress.total, 1);
+  assert.equal(summary.spend.expectedUsd, 5); assert.equal(summary.spend.differenceUsd, -5); assert.equal(summary.spend.costUsd, 0);
 });

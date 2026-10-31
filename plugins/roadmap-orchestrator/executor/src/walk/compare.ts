@@ -147,7 +147,7 @@ export const compareEvidenceDir = (ctx: Pick<CompareContext, 'runDir'>, job: Job
 /** Writes `tweak-judged` (step 7, or step 2's / 5's code drop). */
 function judge(ctx: CompareContext, unit: UnitId, decision: 'keep' | 'drop', reason: Extract<WalkFact, { kind: 'tweak-judged' }>['reason']): CompareOutcome {
   const compare = comparesOf(ctx.journal.view).findLast((c) => c.unit === unit);
-  if (compare !== undefined) jobStageOutcome(ctx.journal, compare.job, 'experience-verdict', null, decision, []);
+  if (compare !== undefined) jobStageOutcome(ctx.journal, compare.job, 'experience-verdict', ctx.plan().units.find((u) => u.id === unit)?.polish?.milestone ?? null, decision, []);
   ctx.journal.fact({ kind: 'tweak-judged', unit, decision, reason });
   crashPoint('compare.after-judged');
   return { kind: 'judged', unit, decision, reason };

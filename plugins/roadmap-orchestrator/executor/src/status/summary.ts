@@ -27,7 +27,17 @@ export function summarize(s: Status, events: readonly Event[], plan: PlanM1 | nu
   const meter = meterOf(events);
   const ms = s.milestones.map((m) => {
     const units = new Set(plan?.milestones?.find((x) => x.id === m.id)?.units ?? []);
-    const costUsd = meter.byUnit.filter((u) => units.has(u.unit)).reduce((n, u) => n + u.costUsd, 0);
+    for (let changed = true; changed;) {
+      changed = false;
+      for (const u of plan?.units ?? []) if (!units.has(u.id) && (u.polish?.milestone === m.id || (u.reenters !== undefined && units.has(u.reenters.unit)))) { units.add(u.id); changed = true; }
+    }
+    const jobs = new Set(events.flatMap((e) => {
+      if (e.type !== 'fact') return [];
+      const f = e.fact;
+      return (f.kind === 'walk-started' && f.milestone === m.id) || (f.kind === 'compare-started' && units.has(f.unit)) ? [f.job] : [];
+    }));
+    const costUsd = meter.byUnit.filter((u) => units.has(u.unit)).reduce((n, u) => n + u.costUsd, 0)
+      + meter.byJob.filter((j) => jobs.has(j.job)).reduce((n, j) => n + j.costUsd, 0);
     return { id: m.id, state: m.state, round: m.round, findings: m.findings.length, costUsd, expectedUsd: expected?.perMilestoneUsd ?? null };
   });
   const states: Record<string, number> = {};
@@ -39,7 +49,7 @@ export function summarize(s: Status, events: readonly Event[], plan: PlanM1 | nu
     spend: { costUsd: totalUsd, expectedUsd: expected?.arcUsd ?? null,
       differenceUsd: expected?.arcUsd === undefined ? null : totalUsd - expected.arcUsd,
       estimatedCalls: events.filter((e) => e.type === 'fact' && e.fact.kind === 'meter' && e.fact.usage.costEstimated === true).length,
-      unavailableCalls: s.spend.byRole.reduce((n, r) => n + r.unavailable, 0) },
+      unavailableCalls: s.spend.byRole.reduce((n, r) => n + r.unavailable, 0) + s.spend.bySmoke.reduce((n, r) => n + r.unavailable, 0) },
     milestones: ms, caught: caughtOf(events),
     verdicts: events.flatMap((e) => e.type === 'fact' && e.fact.kind === 'stage-outcome' && !('unit' in e.fact) ? [e.fact] : []),
     captures: events.flatMap((e) => {
@@ -54,7 +64,7 @@ export function summarize(s: Status, events: readonly Event[], plan: PlanM1 | nu
 
 export function statusSummary(runDir: AbsPath, arc: ArcId, hostDir: AbsPath) {
   const s = status(runDir, arc, hostDir);
-  const { view, events } = readJournal(runDir, arc);
+  const { view, events } = readJournal(runDir, arc, s.host.log.events);
   const applied = view.planApplied();
   const bytes = applied === null ? null : keptInput(runDir, applied.planSha256, PLAN_INPUT);
   if (applied !== null && bytes === null) throw new Error(`Missing plan ${applied.planSha256}`);
