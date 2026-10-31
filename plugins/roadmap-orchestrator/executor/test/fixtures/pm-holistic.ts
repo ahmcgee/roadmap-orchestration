@@ -185,7 +185,7 @@ export function contextOf(view: JournalView, e: Event): string {
 
 /**
  * The M3 facts whose append the holistic row crashes (each kind's first, at every log.append label), and the M4a ones of
- * the story (u1's smoke-ran, the checkpoints' corpus amendments).
+ * the story (u1's smoke-ran).
  */
 export const M3_FACTS: readonly string[] = [
   'witnessed', 'obligation-latched', 'audit-started', 'audit-ended', 'plan-applied',
@@ -193,11 +193,11 @@ export const M3_FACTS: readonly string[] = [
 ];
 
 /** Labels only the holistic layer reaches (the row crashes each at occurrence 1, and 2 where it repeats). */
-export const M3_ONLY = /^(audit|checkpoint|bundle|closeout|docs|latch|complete|debt)\./;
+export const M3_ONLY = /^(audit|closeout|docs|latch|complete|debt)\./;
 /**
  * Labels only a corpus arc's M4a rev 3 unit stages reach (the witness lane files and presence check, the mutation smoke and its mutant.apply): crashed as the M3-only ones, at 1 and 2.
  */
-export const REV3_ONLY = /^(plancheck|build|witnesscheck|smoke|mutant)\./;
+export const REV3_ONLY = /^(build|witnesscheck|smoke|mutant)\./;
 /** A log append's record is in flight at these labels (the crash leaves it out of the log). */
 export const IN_FLIGHT: readonly string[] = ['log.append.before-write', 'log.append.after-partial-write'];
 
