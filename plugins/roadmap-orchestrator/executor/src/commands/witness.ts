@@ -35,13 +35,15 @@ export function witness(ctx: CommandContext, command: CommandId, body: Extract<C
     const unit = o.deliveredBy[0]!;
     ctx.journal.fact({ kind: 'obligation-latched', obligation: o.id, unit, treeSha: revParse(ctx.repo, `${head}^{tree}`) });
   }
-  if (body.result === 'fail') for (const unit of o.deliveredBy) {
-    if (ctx.journal.view.unit(unit).status !== 'retired') continue;
+  if (body.result === 'fail') for (const deliverer of o.deliveredBy) {
+    let unit = deliverer;
+    while (ctx.journal.view.unit(unit).supersededBy !== null) unit = ctx.journal.view.unit(unit).supersededBy!;
+    if (ctx.journal.view.unit(unit).status === 'cut') continue;
     if (ctx.journal.view.ciFacts().some((f) => f.kind === 'external-reopened' && f.command === command && f.unit === unit)) continue;
     const brief = Buffer.from(`External witness ${o.id} failed. Evidence: ${body.evidence}. Reproduce and repair the delivered claim.\n`);
     keepInput(ctx.runDir, brief, 'brief.md');
     if (!ctx.journal.view.notes(unit).some((n) => n.command === command)) ctx.journal.fact({ kind: 'noted', unit, command, brief: sha256(sha256Hex(brief)) });
-    ctx.journal.fact({ kind: 'external-reopened', command, unit });
+    if (ctx.journal.view.dispatchOf(unit) !== null) ctx.journal.fact({ kind: 'external-reopened', command, unit });
   }
   return { kind: 'applied', verified: [`external witness ${o.id}: ${body.result}; evidence ${body.evidence}${evidenceSha256 === null ? '' : ` (sha256 ${evidenceSha256})`}`] };
 }
