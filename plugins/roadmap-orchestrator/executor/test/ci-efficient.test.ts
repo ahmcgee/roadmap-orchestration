@@ -151,6 +151,9 @@ test('ci spike delivers the gated report and retires without a candidate or inte
   const base = git(run.repo, 'rev-parse', 'main');
   assert.deepEqual(await runUnit(run.ctx, run.unit, admitAll), { kind: 'merged' });
   assert.equal(run.journal.view.unit(U1).status, 'retired');
+  const calls = readCalls(run.scenario.path);
+  assert.ok(calls.some((c) => c.stdin.includes('Question: Can multiplication use this stack?')));
+  assert.ok(calls.some((c) => c.stdin.includes('The report and its evidence are the deliverable')));
   assert.equal(git(run.repo, 'rev-parse', 'main'), base);
   assert.equal(run.journal.view.opsOf('candidate.merge').length, 0);
   assert.equal(run.journal.view.opsOf('integration.ff').length, 0);

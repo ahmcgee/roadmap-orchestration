@@ -478,7 +478,7 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
     const list = absPath(join(diffDir, CHANGED_LIST));
     if (largeDiff !== null) writeFileSync(list, covered.map((p) => `${p}\n`).join(''));
     const measured = renderPrompt(prompt, {
-      spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec) }, intent: spec.intent, nonGoals: spec.nonGoals, ...library(ctx, spec, tip), target,
+      spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec, unit.spike === undefined ? {} : { spike: unit.spike }) }, intent: spec.intent, nonGoals: spec.nonGoals, ...library(ctx, spec, tip), target,
       systemNotes: systemNotes(ctx.repo, head, unit.systems, ctx.routingBase.config),
       direction: ctx.plan().direction, planCheckNotes: planCheckNotes(ctx, unit.id),
       obligations: observedViews(ctx, holisticInForce(ctx).obligations, chosen.direct, tip),

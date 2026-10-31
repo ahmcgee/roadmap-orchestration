@@ -830,7 +830,7 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
     const anchoredBy = impact === null ? [] : selectObligations(impact).map((id) => impact.obligations.obligations.find((o) => o.id === id)!);
     const target = unitTarget(ctx, checkouts.tip.at, 'full', anchoredBy, ruleMentions(renderSpec(now.spec)));
     const measured = renderPrompt(prompt, {
-      spec: { unit: unit.id, rev: now.spec.rev, markdown: renderSpec(now.spec) }, intent: now.spec.intent, nonGoals: now.spec.nonGoals, ...library(ctx, now.spec, checkouts.tip.at), target,
+      spec: { unit: unit.id, rev: now.spec.rev, markdown: renderSpec(now.spec, unit.spike === undefined ? {} : { spike: unit.spike }) }, intent: now.spec.intent, nonGoals: now.spec.nonGoals, ...library(ctx, now.spec, checkouts.tip.at), target,
       direction: ctx.plan().direction, systems: unit.systems, risk: pinned.riskFloor, checkouts,
       lanePrograms: laneOrder(now.spec).map((l) => ({ lane: l.id, argv0: l.argv[0]!, resolved: resolveArgv0(l, ctx.hostEnv) })),
       priorRound: planCheckPriorRound(ctx, unit.id, checkouts),
@@ -1287,7 +1287,7 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
   const state = ctx.journal.view.unit(unit.id);
   const allowance = Math.max(0, state.bounds.certifications - 1 - state.counters.unchargedLanesReds);
   const render = (call: RoundCall) => renderPrompt(prompt, {
-    spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec, { buildLanesOnly: true }) }, intent: spec.intent, nonGoals: spec.nonGoals, ...lib,
+    spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec, { buildLanesOnly: true, ...(unit.spike === undefined ? {} : { spike: unit.spike }) }) }, intent: spec.intent, nonGoals: spec.nonGoals, ...lib,
     systemNotes: systemNotes(ctx.repo, revParse(round.worktree, 'HEAD'), unit.systems, ctx.routingBase.config),
     notes: ctx.journal.view.buildNotes(unit.id, parent.attempt).map((sha) => steerBrief(ctx.runDir, sha)),
     planCheckNotes: planCheckNotes(ctx, unit.id),
