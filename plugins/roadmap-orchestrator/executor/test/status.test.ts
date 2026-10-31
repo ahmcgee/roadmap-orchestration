@@ -397,7 +397,7 @@ test('status.resources: CPU-only builds leave the pool free; one executor lane h
   for (const unit of ['u1', 'u2']) release(r.scenarioDir, `${unit}.build`);
   await until(async () => {
     s = await statusOf(r);
-    return s.units.some((l) => l.running?.stage === 'lanes' && l.holds.some((h) => h === 'est#1')) && s.units.some((l) => l.state === 'waiting');
+    return s.units.some((l) => l.running?.stage === 'lanes' && l.holds.some((h) => h === 'est#1') && l.certification?.lanes[0]?.state === 'running') && s.units.some((l) => l.state === 'waiting');
   }, 60_000, 'one unit running its lane, the other waiting for the pool');
   const holder = s.units.find((l) => l.running?.stage === 'lanes' && l.holds.some((h) => h === 'est#1'))!;
   const waiter = s.units.find((l) => l.state === 'waiting')!;
