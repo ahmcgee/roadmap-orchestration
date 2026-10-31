@@ -5,7 +5,7 @@ import { systemName } from '../src/core/ids.ts';
 // review.reraise-refused, review.reraise-anchor-changed,
 // review.dispute-ruled-once, review.delta-demotes, review.delta-scope, review.delta-empty, review.delta-design-revision
 // (dev.17 design pass: a design record's revision keeps the delta), review.reentry-scope-carry and
-// review.reentry-scope-out (field report 2026-10-24: a scope-only re-entry carries the approval, unless the diff leaves its scope).
+// review.reentry-protected-path (approval carry requires a diff free of protected paths and transient artifacts).
 import assert from 'node:assert/strict';
 import { readFileSync,writeFileSync } from 'node:fs';
 import { dirname,join } from 'node:path';
@@ -20,7 +20,7 @@ import type { SpecM1,SpecPatch } from '../src/core/records.ts';
 import { runOp,unitBranch } from '../src/pipeline/dispatch.ts';
 import { certifiedTree,readByCode } from '../src/pipeline/docsonly.ts';
 import { fingerprintAt,gateDebtNotes } from '../src/pipeline/gate.ts';
-import { gateDelta } from '../src/pipeline/review.ts';
+import { approvalBlobs,gateDelta } from '../src/pipeline/review.ts';
 import { at,keptSpecPath,loadUnitSpec,record,start } from '../src/pipeline/stages.ts';
 import { runUnit } from '../src/pipeline/unit.ts';
 import { validateGateOutput } from '../src/prompts/schemas.ts';
@@ -32,7 +32,7 @@ import {
 syncInputs,type ArcRun,MUL,SUITE_LANE,U1,appendSteps,applyBody,commandContextFor,contextFor,gateRepairStep,gateStep,isGateCall,mulBuild,outcomes,setupArc,stepUntil,
 workDirPattern,
 } from './fixtures/unit-common.ts';
-import { git } from './helpers/repo.ts';
+import { commitAll,git } from './helpers/repo.ts';
 import { type CallRecord,type Step,readCalls } from './helpers/scenario.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
@@ -501,4 +501,22 @@ test('review.reentry-scope-carry: a re-entry that changes only the scope, at the
   } finally {
     r.journal.close();
   }
+});
+
+
+test('review.reentry-protected-path: an otherwise carryable historical approval touching protected paths is not carried', T, async () => {
+  const r = await systemOnlyReentry(['app']);
+  try {
+    const tip = sha(git(r.d.repo, 'rev-parse', 'main'));
+    const branch = unitBranch(r.ctx.plan().arc, U2);
+    const worktree = r.journal.view.opsOf('worktree.create').find((i) => i.expect.checkout.type === 'branch' && i.expect.checkout.branch === branch)!.expect.path;
+    writeFileSync(join(worktree, '.roadmap/config.json'), readFileSync(join(worktree, '.roadmap/config.json'), 'utf8') + '\n');
+    const head = sha(commitAll(worktree, 'historical protected diff'));
+    const previous = r.journal.view.review().approval(U1)!;
+    // Record an approval from before this protection was enforced. Its head, requirements and blob records all match.
+    const spec = loadUnitSpec(r.ctx, r.unit('u1')).spec;
+    r.journal.fact({ kind: 'approval', unit: U1, attempt: previous.attempt, fingerprint: { ...previous.fingerprint, unitCommit: head }, blobs: approvalBlobs(r.ctx.repo, U1, spec.rev, tip, head) });
+    assert.equal(r.journal.view.review().approval(U1)!.fingerprint.unitCommit, head);
+    assert.equal(gateDelta(r.ctx, U2, loadUnitSpec(r.ctx, r.unit('u2')).spec, tip, head, fingerprintAt(r.ctx, r.unit('u2'), tip)), null, '.roadmap/config.json blocks carrying an approval even at the identical approved commit');
+  } finally { r.journal.close(); }
 });

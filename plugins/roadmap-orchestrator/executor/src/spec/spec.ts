@@ -1,3 +1,5 @@
+import { git } from '../git/git.ts';
+import { type SystemsMap, inUnitSystems } from '../input/systems.ts';
 // A unit's spec.json: the run input the plan's `units[].spec` names, never a product-tree file. Reading
 // goes through the frozen `specM1` validator; writing is canonical and durable, so the bytes of a written
 // spec are a function of its value and the `spec.patch` op can predict its file hash before acting.
@@ -5,11 +7,11 @@
 // The revision is the integer `rev` the file carries (SCHEMAS.md: `SpecRev` is an integer >= 1, bumped by
 // exactly one per `spec.patch`). Content identity is the sha256 of the file's bytes, which the op records.
 import { readFileSync } from 'node:fs';
-import { type Sha256Hex, type UnitId, sha256 } from '../core/ids.ts';
+import { type Sha256Hex, type UnitId, type SystemName, sha256 } from '../core/ids.ts';
 import { canonicalJson as fileJson } from '../core/fsx.ts';
 import { sha256Hex } from '../core/json.ts';
 import { type SpecM1, specM1 } from '../core/records.ts';
-import { type AbsPath, type RepoPattern, matchesPattern, repoPath } from '../core/values.ts';
+import { type AbsPath, type RepoPattern, matchesPattern, mayOverlap, repoPath } from '../core/values.ts';
 
 export class SpecFileError extends Error {
   readonly path: AbsPath;
@@ -46,4 +48,20 @@ export function bytesSha256(bytes: Buffer): Sha256Hex {
 
 export function fileSha256(path: AbsPath): Sha256Hex {
   return bytesSha256(readFileSync(path));
+}
+
+/** Authoring guard: lane outputs cannot hide tracked source/tests of the unit's systems or repository protection.
+ * Called only for touched units (all units at first start), never while reading an unchanged spec in force.
+ */
+export function evidenceScopeConflicts(
+  unit: UnitId, systems: readonly SystemName[], spec: SpecM1,
+  context: Readonly<{ repo: AbsPath; at: string; map: SystemsMap | null; protectedPaths: readonly RepoPattern[] }>,
+): readonly string[] {
+  const tracked = git(context.repo, ['ls-tree', '-r', '--name-only', '-z', context.at]).split('\0').filter((p) => p !== '').map((p) => repoPath(p));
+  const own = tracked.filter((p) => context.map !== null && inUnitSystems(context.map, systems, p));
+  return spec.lanes.flatMap((lane) => lane.evidenceGlobs.flatMap((glob) => [
+    ...own.filter((p) => matchesPattern(p, glob)).map((p) => `tracked path \`${p}\` of the unit's systems`),
+    ...context.protectedPaths.filter((p) => mayOverlap(glob, p)).map((p) => `protectedPaths entry \`${p}\``),
+  ].map((covered) => `unit ${unit} lane ${lane.id}: evidenceGlobs entry \`${glob}\` covers ${covered}. evidenceGlobs declare `
+    + `the files the lane's run writes (its outputs), which are never committed or merged: narrow the entry to lane outputs.`)));
 }

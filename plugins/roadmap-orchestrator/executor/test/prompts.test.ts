@@ -525,6 +525,16 @@ function assertStrict(schema: JsonValue, path: string): void {
 }
 
 describe('prompts', () => {
+  it('prompts.gate-system-traits: declared and actual-diff traits are rendered in every supported gate prompt', () => {
+    for (const model of MODEL_IDS) {
+      const supported = support('gate', model);
+      if (supported.type !== 'prompt') continue;
+      const text = supported.prompt.render(SAMPLES.gate[1]);
+      assert.match(text, /<system_traits>- persistent<\/system_traits>/, model);
+      assert.match(text, /<reach_traits>- redacts<\/reach_traits>/, model);
+    }
+  });
+
   it('prompts.fields==required: every module lists and interpolates exactly its role inputs', () => {
     for (const role of ROLES) {
       const [a, b] = SAMPLES[role];

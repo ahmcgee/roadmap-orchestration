@@ -1,3 +1,4 @@
+import { systemsMapInForce } from '../input/systems.ts';
 // The milestone walk job (dev.13, plan §2; SCHEMAS.md "dev.13"; DESIGN-1.0.md §2.12): one durable job `walk-<n>` at a
 // time, arc-wide, modelled on the audit's lifecycle (src/holistic/audit.ts). A walk brings the milestone's product up
 // from the integration SHA and an acting judge (`walkthrough`) uses it along the milestone's journeys.
@@ -338,7 +339,7 @@ async function walkOnce(ctx: WalkContext, w: WalkRecord): Promise<WalkRunOutcome
   const evidenceDir = walkEvidenceDir(ctx, job);
   mkdirSync(evidenceDir, { recursive: true });
   const { vision, input: visionInput } = visionInForce(ctx);
-  const check = { milestone: m, plan, vision, evidenceDir };
+  const check = { milestone: m, plan, vision, evidenceDir, systemsMap: systemsMapInForce(ctx.journal.view.planApplied()) };
   const deadlineAt = inMs(WALK_SESSION_MIN * 60_000);
   const prompt = promptFor('walkthrough', arcSeat(ctx, 'walkthrough').triple.model);
   const mcpConfig = walkSessionMcp(ctx.routingBase.config?.walkthrough?.mcp, m, evidenceDir);

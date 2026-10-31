@@ -32,9 +32,14 @@ test('systems are required and declared; intent/nonGoals are required on specs; 
   assert.match(JSON.stringify((await check(arc)).rows), /unknown.*declared system/);
   const path = absPath(join(arc.planDir, 'u1.json'));
   const spec = JSON.parse(readFileSync(path, 'utf8'));
+  editPlan(arc, () => plan);
   for (const field of ['intent', 'nonGoals']) {
     const copy = { ...spec }; delete copy[field];
     assert.throws(() => parseSpec(Buffer.from(JSON.stringify(copy)), path), new RegExp(field));
+    writeFileSync(path, JSON.stringify(copy));
+    const refused = (await check(arc)).rows;
+    assert.ok(refused.some((r) => r.kind === 'plan-invalid' && JSON.stringify(r).includes(field)), JSON.stringify(refused));
+    writeFileSync(path, JSON.stringify(spec));
   }
   assert.throws(() => parseSpec(Buffer.from(JSON.stringify({ ...spec, nonGoals: [] })), path), /nonGoals/);
   assert.throws(() => systemsMap({ systems: { app: { paths: ['src/**'], traits: ['unknown'] } } }, 'map'), /traits/);
@@ -66,7 +71,7 @@ test('salvage and transient share protected pinned paths; other product paths su
 });
 
 test('writes beyond unit systems merge and reach the gate with intent/nonGoals', { timeout: SCENARIO_TIMEOUT_MS }, async () => {
-  const d = setupArc({ steps: [] });
+  const d = setupArc({ steps: [], units: [{ id: 'u1', systems: ['app'] }], systemsMap: { systems: { app: { paths: ['src/**', 'test/**', 'contracts/**'], traits: ['persistent'] }, outside: { paths: ['outside/**'], traits: ['redacts'] } } } });
   const specPath = join(d.planPath, '..', 'u1.json');
   const spec = JSON.parse(readFileSync(specPath, 'utf8'));
   spec.intent = 'Make multiplication correct.'; spec.nonGoals = ['Do not change addition.'];
@@ -78,6 +83,8 @@ test('writes beyond unit systems merge and reach the gate with intent/nonGoals',
     assert.equal(git(d.repo, 'show', 'main:outside/helper.js'), 'export const helper = 1;');
     const gate = readCalls(d.scenarioPath).find((c) => c.stdin.includes('<reach>'))!;
     assert.match(gate.stdin, /<reach>\n?- outside\/helper.js/);
+    assert.match(gate.stdin, /<system_traits>- persistent<\/system_traits>/);
+    assert.match(gate.stdin, /<reach_traits>- persistent\n- redacts<\/reach_traits>/);
     for (const call of readCalls(d.scenarioPath).filter((c) => c.as === 'codex' || c.stdin.includes('<reach>'))) {
       assert.match(call.stdin, /Make multiplication correct/);
       assert.match(call.stdin, /Do not change addition/);
@@ -93,4 +100,15 @@ test('system overlap is advisory, including when units share an entire system', 
   const report = await check(arc);
   assert.deepEqual(report.rows, []);
   assert.deepEqual(report.advisories, [{ kind: 'system-overlap', units: ['u1', 'u2'], systems: ['app'] }]);
+});
+
+
+test('phase0 refuses an undeclared obligation mapping.systems entry', async () => {
+  const arc = await corpusArc();
+  const path = join(arc.planDir, 'obligations.json');
+  const obligations = JSON.parse(readFileSync(path, 'utf8'));
+  obligations.mapping.systems = [{ system: 'unknown', obligations: ['I-1'] }];
+  writeFileSync(path, JSON.stringify(obligations));
+  const rows = (await check(arc)).rows;
+  assert.ok(rows.some((r) => r.kind === 'plan-invalid' && r.problem.type === 'schema' && r.problem.field === 'obligations.mapping.systems' && /unknown.*declared system/.test(r.problem.detail)), JSON.stringify(rows));
 });

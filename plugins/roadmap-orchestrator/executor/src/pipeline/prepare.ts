@@ -1,5 +1,32 @@
-// Prepare a re-entry on its predecessor branch, retaining the lineage risk floor, then merge integration and capture evidence.
-// A return from a known defect reuses its worktree and repeats only the merge and evidence capture.
+// The stage `prepare` (M2; DESIGN-1.0.md §4 Re-entry, SCHEMAS.md "M2", amendments A6 and F14): a re-entered unit's
+// first stage, which readies its worktree before the pipeline takes it on; and (M4a rev 3, F4) a unit's way back from a
+// known defect (its decided outcome is lanes `known-defect`), once admission lets it in (the defect's fixer merged, or
+// the entry was removed or retargeted).
+//
+// Cause `re-entry`:
+//
+//   1. worktree.create   the unit worktree on a new branch `roadmap/<arc>/<unit>` at the tip of the unit it
+//                        re-enters (the integration tip when that unit never had a branch: it parked before
+//                        its first build);
+//   2. dispatch          its first dispatch pins at least the lineage's inherited risk floor, with its own routing,
+//                        bounds and spec identity (M3, `firstPin`); systems are plan inputs, never a file envelope;
+//   3. mergein.prepare   of the integration tip T into the branch, unless the branch already contains T;
+//   4. evidence.snapshot of the prepared worktree: what it holds beyond its commit (a conflicted merge's
+//                        files; a clean preparation's manifest has zero files). `retire` cites it (F14).
+//
+// Outcomes (all `advance`, transitions.ts): `conflicted` when the merge-in conflicted (MERGE_HEAD = T is kept,
+// A6: a resolve round in a fresh session, since no session inherits), else the plan's `enterAt`:
+// `clean-plan-check` (also when absent: approvals do not inherit, so the spec is checked again),
+// `clean-build` (a fresh round) or `clean-verify` (lanes at the prepared head).
+//
+// Cause `known-defect` (F4): steps 3 and 4 only, in the unit's own worktree (it built), scoped to the prepare attempts
+// after the known-defect outcome (never an earlier preparation's merge, e.g. the re-entry's), with crash label
+// `prepare.known-defect-after-mergein` after the merge-in. Outcomes: `conflicted` (a resolve round), else `clean-verify`
+// (lanes at the prepared head).
+//
+// Re-entry after a crash: the attempt a crash cut short runs again as a new attempt once `recover()` has
+// closed its open intent through the op's own M1 reconciler. Each step the log shows done (a created
+// worktree, the dispatch fact, a done merge-in, a done snapshot) is read back, never repeated.
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { crashPoint } from '../core/crash.ts';

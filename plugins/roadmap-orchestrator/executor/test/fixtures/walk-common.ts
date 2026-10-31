@@ -86,7 +86,7 @@ export function walkArc(opts: WalkArcOptions): ArcDescriptor {
   writeWitnessControl(control, { trees: { '*': { outcomes: { t1: 'pass' } } } });
   return publishArc({
     steps: opts.steps, units: [{ id: 'u1' }, { id: 'u2', after: ['u1'] }, { id: 'u3' }],
-    ...(opts.suite === undefined ? {} : { suite: opts.suite }), ...(opts.systemsMap === undefined ? {} : { systemsMap: opts.systemsMap }),
+    ...(opts.suite === undefined ? {} : { suite: opts.suite }), systemsMap: opts.systemsMap ?? { systems: { app: { paths: ['src/**', 'test/**', 'contracts/**', 'ARCHITECTURE.md', 'design/**', 'product/**'] } } },
   }, (x) => {
     for (const [path, text] of Object.entries(PRODUCT)) {
       mkdirSync(join(x.repo, path, '..'), { recursive: true });
@@ -142,7 +142,7 @@ export function walkAnswer(spec: WalkAnswerSpec = {}): JsonValue {
     findings: (spec.findings ?? []).map((f) => ({
       class: f.class, journey: f.journey, evidence: [...(f.evidence ?? [J1_EVIDENCE])], claim: f.claim, cause: f.cause, against: f.against, paths: [...(f.paths ?? [])],
     })),
-    polish: (spec.polish ?? []).map((p) => ({ journey: p.journey, evidence: [J1_EVIDENCE], text: p.text, unit: { id: p.unit.id, systems: [systemName('app')], spec: p.unit.spec } })),
+    polish: (spec.polish ?? []).map((p) => ({ journey: p.journey, evidence: [J1_EVIDENCE], text: p.text, unit: { id: p.unit.id, systems: p.unit.systems, spec: p.unit.spec } })),
     premises: [],
     reasons: ['scripted walk'],
   } as unknown as JsonValue;

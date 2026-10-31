@@ -153,6 +153,16 @@ describe('derived files', () => {
     assert.deepEqual(await defects(c), [{ type: 'derived-overlaps-corpus', output: repoPattern('docs/corpus/generated.md') }]);
   });
 
+  it('plan-defect.derived-system-advisory: sources or outputs intersecting live unit systems advise; unrelated entries and cut units do not', T, async () => {
+    const a = await corpusArc();
+    editPlan(a, (p) => ({ ...p, derived: [{ sources: ['lib/**'], outputs: ['dist/lib.js'] }] }));
+    assert.deepEqual((await check(a)).advisories, []);
+    editPlan(a, (p) => ({ ...p, derived: [{ sources: ['lib/**'], outputs: ['src/generated.js'] }] }));
+    assert.deepEqual((await check(a)).advisories, [{ kind: 'derived-unregenerated', outputs: [repoPattern('src/generated.js')], units: [unitId('u1')] }]);
+    editPlan(a, (p) => ({ ...p, units: (p['units'] as Json[]).map((u) => ({ ...u, cut: { reason: 'not needed' } })) }));
+    assert.deepEqual((await check(a)).advisories, []);
+  });
+
   it('plan-defect.regenerate: a regenerate argv is well-formed and runnable; an entry a unit takes in without one is advised, never refused', T, async () => {
     const GEN = { argv: ['node', 'tools/gen.mjs'], cwd: '.', env: { set: {}, pass: ['PATH'] } };
     const entry = (regenerate?: Json): Json => ({ sources: ['src/**'], outputs: ['dist/bundle.js'], ...(regenerate === undefined ? {} : { regenerate }) });
@@ -161,7 +171,7 @@ describe('derived files', () => {
     editPlan(a, (p) => ({ ...p, derived: [entry()] }));
     const advised = await check(a);
     assert.deepEqual(advised.rows, []);
-    assert.deepEqual(advised.advisories, []);
+    assert.deepEqual(advised.advisories, [{ kind: 'derived-unregenerated', outputs: [repoPattern('dist/bundle.js')], units: [unitId('u1')] }]);
     // A runnable generator: neither.
     editPlan(a, (p) => ({ ...p, derived: [entry(GEN)] }));
     const clean = await check(a);

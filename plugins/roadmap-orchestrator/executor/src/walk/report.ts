@@ -1,3 +1,4 @@
+import { type SystemsMap, systemsForPatterns } from '../input/systems.ts';
 // A walkthrough's report, held to its inputs and minted (dev.13, plan §2 "Output", "Minting"; SCHEMAS.md "dev.13",
 // "Outputs"). The schema reader (src/prompts/schemas.ts `validateWalkthroughOutput`) holds the answer to its shape and
 // the rules inside it; `walkRefusals` adds what needs the walk's inputs, each reason one sentence for the one repair turn
@@ -7,7 +8,7 @@
 //   - a `design` or `contract` finding's path lies inside one of the milestone's references;
 //   - a cited vision clause (`vision`, or a floor's source) exists and is active, and a floor's is non-negotiable (a
 //     floor whose source is a repository file is read as given: the reference's quality-floor section);
-//   - a polish unit's scope covers one of the milestone's references, its spec is the unit's own (`unit` its id, rev 1),
+//   - a polish unit's systems cover every milestone reference, its spec is the unit's own (`unit` its id, rev 1),
 //     and its id is no unit of the plan.
 // Minting (`mintWalk`): `breaks` opens a P1, `deviates` a P2 (lens `walkthrough`, the milestone named, no obligation),
 // through the one findings store (dedupe `findingKey('walkthrough', null, cause)`); each polish proposal is a
@@ -16,7 +17,7 @@
 import { existsSync, statSync } from 'node:fs';
 import { isAbsolute, relative, resolve } from 'node:path';
 import type { WalkFact } from '../core/events.ts';
-import { type FindingId, type JobId, type PolishId, type Sha, type UnitId, type VisionClauseId, canonicalIds } from '../core/ids.ts';
+import { type FindingId, type JobId, type PolishId, type Sha, type UnitId, type VisionClauseId, type SystemName, canonicalIds } from '../core/ids.ts';
 import type { Journal } from '../core/interfaces.ts';
 import { specM1 } from '../core/records.ts';
 import type { AbsPath, RepoPath, RepoPattern } from '../core/values.ts';
@@ -27,7 +28,7 @@ import type { Milestone, PlanM1 } from '../input/plan.ts';
 import type { WalkFinding, WalkthroughOutput } from '../prompts/schemas.ts';
 
 /** What a report is held to: the milestone, the plan in force, the vision in force and the evidence dir. */
-export type WalkCheck = Readonly<{ milestone: Milestone; plan: PlanM1; vision: Vision; evidenceDir: AbsPath }>;
+export type WalkCheck = Readonly<{ milestone: Milestone; plan: PlanM1; vision: Vision; evidenceDir: AbsPath; systemsMap: SystemsMap | null }>;
 
 /** A cited evidence file's absolute path, or null when it lies outside the evidence dir. */
 export function evidencePath(evidenceDir: AbsPath, cited: string): string | null {
@@ -38,6 +39,19 @@ export function evidencePath(evidenceDir: AbsPath, cited: string): string | null
 
 /** Whether `path` lies at or under one of `references`. */
 const inside = (references: readonly RepoPath[], path: string): boolean => references.some((r) => path === r || path.startsWith(`${r}/`));
+
+/** Why a polish unit does not cover every reference. Unmapped references require a systems-map declaration. */
+export function referenceCoverageReasons(map: SystemsMap | null, systems: readonly SystemName[], references: readonly RepoPath[]): readonly string[] {
+  return references.flatMap((path) => {
+    const owners = map === null ? [] : systemsForPatterns(map, [path]);
+    if (owners.length === 0) return [`reference ${path} maps to no system: declare its system in systemsMap before proposing polish`];
+    const missing = owners.filter((s) => !systems.includes(s));
+    return missing.length === 0 ? [] : [`reference ${path} requires systems ${missing.join(', ')}: a polish unit must include the systems containing every milestone reference`];
+  });
+}
+
+export const coversReference = (map: SystemsMap | null, systems: readonly SystemName[], references: readonly RepoPath[]): boolean =>
+  referenceCoverageReasons(map, systems, references).length === 0;
 
 /** Every reason the report cannot be minted as given (see the header); empty when it can. */
 export function walkRefusals(c: WalkCheck, out: WalkthroughOutput): readonly string[] {
@@ -83,6 +97,7 @@ export function walkRefusals(c: WalkCheck, out: WalkthroughOutput): readonly str
   out.polish.forEach((x, i) => {
     const where = `polish proposal ${i + 1} (unit ${x.unit.id})`;
     cite(where, x.evidence);
+    reasons.push(...referenceCoverageReasons(c.systemsMap, x.unit.systems, m.references).map((r) => `${where}: ${r}`));
     if (planned.has(x.unit.id)) reasons.push(`${where}: ${x.unit.id} is already a unit of the plan; name a new unit`);
     const spec = specM1(JSON.parse(x.unit.spec), `${where}.spec`);
     if (spec.unit !== x.unit.id || spec.rev !== 1) reasons.push(`${where}: its spec is unit ${spec.unit} rev ${spec.rev}; a proposal's spec is its own unit's, rev 1`);

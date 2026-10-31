@@ -301,6 +301,8 @@ export function splitFaults(
     const map = mapInForce(ctx.journal.view);
     const unknown = c.systems.filter((s) => map === null || !Object.hasOwn(map.systems, s));
     if (unknown.length > 0) defects.push(`child ${c.unit} names undeclared systems ${unknown.join(', ')}`);
+    const outside = c.systems.filter((s) => !systems.includes(s));
+    if (outside.length > 0) defects.push(`child ${c.unit} names systems outside parent ${parent.unit}: ${outside.join(', ')}`);
     const stray = c.obligations.filter((o) => !(parent.obligations ?? []).includes(o));
     if (stray.length > 0) defects.push(`child ${c.unit} declares ${stray.join(', ')}, which the parent does not`);
   }

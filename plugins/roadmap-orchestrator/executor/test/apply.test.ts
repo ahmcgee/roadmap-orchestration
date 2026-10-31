@@ -4,8 +4,8 @@
 // matrix row. Named tests: apply.classifier-table, apply.fold, apply.rejections, apply.smoke-new-backend,
 // apply.crash-cells, apply.recovered-after-start; M4a rev 3 (N3): classify.priority-edit-no-drain,
 // classify.plan-check-shape-dropped, classify.knowndefect-refusals, classify.knowndefect-cycle-refused,
-// classify.knowndefect-cut-fixer-refused, classify.reentry-widen-with-ruling, classify.reentry-widen-without-ruling-refused; M2: apply.cut-*, apply.reenter-*, apply.pool-*,
-// apply.capacity-*, apply.after-non-prefix-* (G3), apply.revalidate-after-smoke, cmd.scope,
+// classify.knowndefect-cut-fixer-refused, classify.evidence-covers-scope; M2: apply.cut-*, apply.reenter-*, apply.pool-*,
+// apply.capacity-*, apply.after-non-prefix-* (G3), apply.revalidate-after-smoke,
 // apply.stale-after-evidence-revision, classify.evidence-covers-scope (M4b run 3).
 import assert from 'node:assert/strict';
 import { mkdirSync,readFileSync,writeFileSync } from 'node:fs';
@@ -19,7 +19,7 @@ import { openJournal,readJournal } from '../src/core/log.ts';
 import type { CommandBody,ResidueKey } from '../src/core/records.ts';
 import { FoldInvariantError } from '../src/core/state.ts';
 import { absPath } from '../src/core/values.ts';
-import { type Classified,changesScope,classify,commandScope } from '../src/input/classify.ts';
+import { type Classified,changesScope,classify,commandScope,splitCutReason } from '../src/input/classify.ts';
 import {
 PLAN_INPUT,SPEC_INPUT,keptInput,planInForce,readInputFiles,recordPlan,requirePlanInForce,revisionInForce,specShaInForce,
 } from '../src/input/inforce.ts';
@@ -105,7 +105,7 @@ function classifyNow(r: ArcRun, residues: readonly ResidueKey[] = [], reason = '
   const inForce = requirePlanInForce(runDir, r.journal.view);
   return classify({
     runDir, view: r.journal.view, inForce, revision: revisionInForce(runDir, inForce), next: readInputFiles(absPath(r.d.planPath), absPath(r.d.repo)), residues,
-    routing: routingBase, proposer: { type: 'apply', reason },
+    routing: { ...routingBase, config: r.d.config ?? null }, proposer: { type: 'apply', reason },
   });
 }
 
@@ -205,6 +205,38 @@ const ROWS: readonly Row[] = [
     expect: () => [{ type: 'unit-changed', unit: unitId('u2') }],
   },
   { name: 'an evidence-only edit of an in-flight unit: in force at once', setup: inFlight, edit: (d) => editSpec(d, 'u1', evidenceGlobs), expect: (r) => [specChange(r.d, 'u1', 'evidence', 1)] },
+  {
+    name: "classify.evidence-covers-scope: evidenceGlobs naming tracked paths of the unit's systems or protection are refused, naming lane, entry and path",
+    edit: (d) => {
+      editSpec(d, 'u2', (s) => void (s['lanes'] = (s['lanes'] as Json[]).map((l) => ({ ...l, evidenceGlobs: ['src/add.js', 'test/add.test.js', 'coverage/**'] }))));
+      editSpec(d, 'u3', (s) => void (s['lanes'] = (s['lanes'] as Json[]).map((l) => ({ ...l, evidenceGlobs: ['.roadmap/**'] }))));
+    },
+    expect: [
+      /^unit u2 lane mul: evidenceGlobs entry `src\/add.js` covers tracked path `src\/add.js` of the unit's systems/,
+      /^unit u2 lane mul: evidenceGlobs entry `test\/add.test.js` covers tracked path `test\/add.test.js` of the unit's systems/,
+      /^unit u3 lane mul: evidenceGlobs entry `\.roadmap\/\*\*` covers protectedPaths entry `\.roadmap`/,
+    ],
+  },
+  {
+    name: 'classify.evidence-covers-scope: a spec in force that breaks the rule stays readable; an edit not touching its unit applies',
+    before: (d) => editSpec(d, 'u1', (s) => void (s['lanes'] = (s['lanes'] as Json[]).map((l) => ({ ...l, evidenceGlobs: ['src/add.js'] })))),
+    setup: inFlight,
+    edit: (d) => editSpec(d, 'u2', addClause),
+    expect: (r) => [specChange(r.d, 'u2', 'undispatched', 1)],
+  },
+  {
+    name: 'classify.evidence-covers-scope: an in-flight evidence edit applies once fixed, and is refused while it keeps the conflict',
+    before: (d) => editSpec(d, 'u1', (s) => void (s['lanes'] = (s['lanes'] as Json[]).map((l) => ({ ...l, evidenceGlobs: ['src/add.js'] })))),
+    setup: inFlight,
+    edit: (d, r) => {
+      editSpec(d, 'u1', (s) => void (s['lanes'] = (s['lanes'] as Json[]).map((l) => ({ ...l, evidenceGlobs: ['src/add.js', 'out/**'] }))));
+      const kept = classifyNow(r);
+      assert.equal(kept.kind, 'rejected', JSON.stringify(kept));
+      if (kept.kind === 'rejected') assert.deepEqual(kept.reasons.map((x) => x.split('. evidenceGlobs')[0]), ["unit u1 lane mul: evidenceGlobs entry `src/add.js` covers tracked path `src/add.js` of the unit's systems"]);
+      editSpec(d, 'u1', evidenceGlobs);
+    },
+    expect: (r) => [specChange(r.d, 'u1', 'evidence', 1)],
+  },
   { name: 'any other edit at the same rev: refused', setup: inFlight, edit: (d) => editSpec(d, 'u1', addClause), expect: [/changed but is still at rev 1; a revision sets rev 2/] },
   { name: 'rev + 1 of an in-flight unit: pending', setup: inFlight, edit: revise, expect: (r) => [specChange(r.d, 'u1', 'revision', 2)] },
   { name: 'rev + 2: refused', setup: inFlight, edit: (d) => editSpec(d, 'u1', (s) => void (s['rev'] = 3)), expect: [/is at rev 3, but the unit's recorded rev is 1; a revision sets rev 2/] },
@@ -1218,4 +1250,23 @@ describe(`matrix row ${PLAN_APPLY}`, () => {
   }
 
 
+});
+
+
+test('classify.split-systems: the revision classifier also refuses a child outside its parent systems', T, () => {
+  const d = setupArc({ steps: [], units: [{ id: 'u1', systems: ['app'] }] });
+  const r = contextFor(d);
+  try {
+    addUnit(d, 'u1a');
+    editPlan(d, (p) => {
+      p.units[0]!['cut'] = { reason: splitCutReason([unitId('u1a')]) };
+      p.units[1]!['systems'] = ['lib'];
+    });
+    const inForce = requirePlanInForce(r.ctx.runDir, r.journal.view);
+    const v = classify({ runDir: r.ctx.runDir, view: r.journal.view, inForce, revision: revisionInForce(r.ctx.runDir, inForce),
+      next: readInputFiles(absPath(d.planPath), absPath(d.repo)), residues: [], routing: r.ctx.routingBase,
+      proposer: { type: 'split', unit: U1, children: [unitId('u1a')] } });
+    assert.equal(v.kind, 'rejected', JSON.stringify(v));
+    if (v.kind === 'rejected') assert.ok(v.reasons.includes('child u1a names systems outside parent u1: lib'), JSON.stringify(v));
+  } finally { r.journal.close(); }
 });

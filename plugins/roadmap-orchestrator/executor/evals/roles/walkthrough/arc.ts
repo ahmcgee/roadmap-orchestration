@@ -1,3 +1,4 @@
+import { systemsMapInForce } from '../../../src/input/systems.ts';
 // One walkthrough trial end to end, through the production walk job, as the gate eval runs the production gate: a
 // holistic arc whose repository is the cell's product (product.ts) and whose plan has one milestone (fixture.ts) over one
 // unit, u1. u1 merges through the arc harness (fake plan-check, build and gate; its lanes, the product's own tests, run
@@ -354,7 +355,7 @@ function refusals(r: ArcRun, value: unknown): string {
   const plan = requirePlanInForce(r.ctx.runDir, r.journal.view).plan;
   const vision = holisticInForce(r.ctx).vision;
   if (vision === null) throw new Error('a walk trial without its vision in force');
-  return walkRefusals({ milestone: milestonesOf(plan)[0]!, plan, vision, evidenceDir: jobEvidenceRoot(r.ctx.runDir, JOB) }, output).join('; ');
+  return walkRefusals({ systemsMap: systemsMapInForce(r.journal.view.planApplied()), milestone: milestonesOf(plan)[0]!, plan, vision, evidenceDir: jobEvidenceRoot(r.ctx.runDir, JOB) }, output).join('; ');
 }
 
 const emptyMethod: WalkRow['method'] = { available: [], tools: {}, browserCalls: 0, shellCalls: 0, subagents: [], denials: 0, unavailable: [] };

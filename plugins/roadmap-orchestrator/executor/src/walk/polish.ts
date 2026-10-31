@@ -1,3 +1,5 @@
+import { systemsMapInForce } from '../input/systems.ts';
+import { referenceCoverageReasons } from './report.ts';
 // The code-applied polish revision (dev.13, plan §4 "Polish skips the checkpoint", R3 revised; SCHEMAS.md "dev.13"): a
 // walk's polish proposals are full units the walkthrough authored, and code admits them as one plan revision under the
 // revision fence, through THE admit path a checkpoint `admit` takes (src/holistic/bundle.ts `admitUnit` and
@@ -8,10 +10,10 @@
 // (`polish-refused{proposal, reasons}`, settled: never applied) when
 //   - the arc is draining (admissions closed);
 //   - it is not from its milestone's latest round (a later walk of the milestone ended as a round since);
-//   - its scope covers none of the milestone's references (src/walk/report.ts `coversReference`);
+//   - its systems do not cover every milestone reference (src/walk/report.ts `coversReference`);
 //   - the admit path or the classifier refuses its unit admitted alone.
 // The rest are admitted together: each a unit with origin `polish`, `polish{milestone, proposal}`, risk `high` (Opus
-// judges design tweaks; dev.17: an efficient builder), `after: []`, the milestone's resources, the proposal's scope and spec. The whole revision refused
+// judges design tweaks; dev.17: an efficient builder), `after: []`, the milestone's resources, the proposal's systems and spec. The whole revision refused
 // (the units refused together, each accepted alone) refuses each of them with its reasons. The commit is
 // `plan-applied{source: walk{job}}` with proposer `walk{job}` (src/input/classify.ts `polishRows`); a commit the arc moved
 // under is retried at the next run. The rounds brake treats a refused proposal as settled (src/walk/milestones.ts).
@@ -91,7 +93,7 @@ function evaluate(ctx: PolishContext, current: InputFiles, m: Milestone, job: Wa
 
 /** Why `p`, of walk `w` on `m`, is refused before its unit is admitted (see the header); empty when it is not. */
 function preReasons(view: JournalView, w: WalkRecord, m: Milestone, p: Proposed): readonly string[] {
-  const reasons: string[] = [];
+  const reasons = [...referenceCoverageReasons(systemsMapInForce(view.planApplied()), p.unit.systems, m.references)];
   const draining = view.holistic().draining;
   if (draining !== null) reasons.push(`the arc is draining (admissions closed by ${draining.command}): no polish unit is admitted`);
   const latest = walksOf(view, m.id).filter((x) => x.ended !== null && x.ended.outcome !== 'abandoned').at(-1);

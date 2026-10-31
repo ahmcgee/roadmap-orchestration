@@ -1,6 +1,6 @@
 // `roadmap phase0 check --repo <path> (--plan <file> | --from-ref <arc>)` (M4a, OR-Q16, K20): read-only, no host lock,
 // deterministic. Exit 0 with no rows, else 78; JSON rows plus `sliceCandidates` (src/holistic/vision.ts, R15) and the
-// advisory `advisories` (row 10, `scope-references-outside`; row 13, `derived-unregenerated`; row 14, `milestone-unit-before-design`:
+// advisory `advisories` (row 10, `system-overlap`; row 13, `derived-unregenerated`; row 14, `milestone-unit-before-design`:
 // never a refusal, so never the exit code's).
 //
 //   --plan      the files as a fresh start reads them: `runChecks`' pure rows (the `.roadmap/` layout, plan-invalid, the

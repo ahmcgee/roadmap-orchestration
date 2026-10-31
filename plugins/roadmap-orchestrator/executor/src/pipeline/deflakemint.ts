@@ -1,3 +1,27 @@
+// The code-applied deflake revision and the flaky ledger's items (dev.17; DESIGN-1.0.md §4 "Flaky ledger", SCHEMAS.md
+// "dev.17: the flaky ledger"). What is due is src/pipeline/deflake.ts `deflakeDue`; this module acts on it. No model call.
+//
+// `applyDeflake` (the scheduler's `deflake` job, every arc, holistic or not):
+//   1. each key flaking again after two deflake units raises one non-blocking `flake-recurring` item (subject the arc,
+//      evidence the flake's red and green runs); no third deflake is minted. Raised once per flake (`recurringRaised`).
+//   2. the keys due a deflake unit are admitted as deflake units in one revision under the revision fence, through THE admit
+//      path (src/holistic/bundle.ts `admitUnit`, `fillMappedObligations`, then the classifier, `evaluateRevision`): one
+//      unit per lane and count, `deflake-<n>`, origin `deflake` with its keys, risk `med`, `after: []` and in no milestone
+//      (milestone-exempt), ranked with the repair units (`ORIGIN_RANK`). Its spec seed (`deflakeSpec`) carries the lane
+//      (a spec lane copied from the unit that saw it; a suite lane in `forces`; an arc lane's failing tests as witness
+//      items), the outcomes it may reach, the flakes it fixes, and the earlier deflake units of its keys (a second deflake
+//      is told of the first). A lane no longer defined anywhere is never minted for (the job waits). The commit is `plan-applied{source:
+//      deflake}`, proposer `deflake` (src/input/classify.ts `deflakeRows`); a commit the arc moved under is retried at the
+//      next run. Not while the arc drains (admissions closed).
+//      Its systems (`deflakeSystems`), the first available: lane systems, flaky test-file membership, owner unit
+//      systems, then every mapped system. Dependency closure participates. All-system deflakes are admitted normally;
+//      salvage and transient validation protect repository paths independently of the declared systems.
+//
+// `raiseDeflakeParked` (each scheduler iteration): a deflake unit parked raises one non-blocking `deflake-parked` item per
+// park, parented by the parking stage attempt, next to whatever item the park raises itself. Its edges dropped with the park
+// (deflake.ts `deflakeHold`).
+//
+// Crash labels: `deflake.after-recurring` (an item raised, the revision not yet), `deflake.after-revision`.
 import { join } from 'node:path';
 import { type FencedCommitContext,commitUnderFence,evaluateRevision } from '../commands/apply.ts';
 import { crashPoint } from '../core/crash.ts';

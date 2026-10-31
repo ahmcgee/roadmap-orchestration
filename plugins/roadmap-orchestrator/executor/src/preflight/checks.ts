@@ -1,3 +1,6 @@
+import { parseCorpusPin } from '../corpus/types.ts';
+import { referenceCommit } from '../phase0/rows.ts';
+import { protectedPaths } from '../input/protected.ts';
 import { SCHEMA_VERSION } from '../core/version.ts';
 // The startup rejection table's checks (SCHEMAS.md "Startup rejection table") and their composition.
 //
@@ -12,16 +15,10 @@ import { SCHEMA_VERSION } from '../core/version.ts';
 //   3. host claim   host-busy, previous-arc-unreconciled, recovery-holder-dead, owner-mismatch (step 7)
 //   4. journal      log-corrupt at open, containment-mode-changed; a first start records the mode; last, the
 //                   plan in force (`settlePlan`): a first start records the files (M3: after the Phase-0 row
-//                   `obligation-dropped`, and the classifier's lane-evidence row `evidenceScopeConflicts` over
-//                   every unit, both reported as plan-change-refused), a later start rebases them from the owner's
-//                   files of the latest revision applied from them, or with `start --base` from an export's manifest
-//                   (`StartInput.base`, as `apply --base`; deflake scope, 2026-10-23), onto the files in force (src/input/rebase.ts:
-//                   files unchanged since are the plan in force) and applies a change through the apply core
-//                   (src/commands/apply.ts `evaluateRevision`, source `start`) or refuses (plan-change-refused, a
-//                   conflict included, and a change needing a docs publication: rulings, obligations, a corpus arc's
-//                   vision, which go through an apply); a revision a crash left mid-commit is recovery's first, and so
-//                   is a committed command (its `command.apply` still open with its revision in force: recovery
-//                   finishes it), so the files wait for the next start.
+//                   `obligation-dropped`, and lane evidence covering tracked paths in unit systems or protectedPaths over
+//                   every unit, both reported as plan-change-refused). A later start uses the plan in force;
+//                   revisions land through CAS apply.
+//                   Recovery finishes an interrupted revision or committed command before startup records any plan.
 //
 // M3: group 1 also loads the ruling sidecars, the obligations and the vision the files name (`revisionInputRows`).
 //
@@ -88,7 +85,7 @@ resolveRouting,selectProfile,unsupportedSeats,
 } from '../routing/layers.ts';
 import type { ArcRoleSet,ProfileName } from '../routing/types.ts';
 import { type Ruling,loadRulings,parseRulings } from '../spec/rulings.ts';
-import { SpecFileError,parseSpec } from '../spec/spec.ts';
+import { SpecFileError,evidenceScopeConflicts,parseSpec } from '../spec/spec.ts';
 import { laneRows } from './lanerows.ts';
 import { type SmokePark,type SmokeReport,type SmokeRouting,backendEnv,smoke,smokeOutages,smokeRejections } from './smoke.ts';
 import type { StartupCheck,StartupContext,StartupRejection } from './startup.ts';
@@ -527,6 +524,16 @@ export function settlePlan(
     const reserved = files.plan.units.map((u) => reservedUnitIdReason(u.id)).filter((r) => r !== null);
     if (reserved.length > 0) return [{ kind: 'plan-change-refused', reasons: reserved }];
     // The classifier's lane-evidence row, over every unit (group 1 already refused a spec that does not load).
+    const evidence = files.plan.units.flatMap((u) => {
+      const file = files.specs.get(u.id)!;
+      return evidenceScopeConflicts(u.id, u.systems, parseSpec(file.bytes!, file.path), {
+        repo: context.repo, at: referenceCommit(context.repo, files.plan), map: routingBase.config?.systemsMap ?? null,
+        protectedPaths: protectedPaths(files.corpus === null ? null : {
+          pin: { value: parseCorpusPin(JSON.parse(files.corpus.pin.bytes!.toString('utf8'))) }, guide: { bytes: files.corpus.guide.bytes! },
+        }),
+      });
+    });
+    if (evidence.length > 0) return [{ kind: 'plan-change-refused', reasons: evidence }];
     const dropped = obligationDropped(context, files);
     if (dropped.length > 0) return [{ kind: 'plan-change-refused', reasons: dropped }];
     keepCorpusFiles(context.runDir, corpusFiles);

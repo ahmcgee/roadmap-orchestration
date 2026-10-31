@@ -1,3 +1,4 @@
+import { systemsMap } from '../src/input/systems.ts';
 // Spec loading, rendering and patching (src/spec/*), and the spec.patch reconciler (src/recover/spec.ts).
 // Integrated tier: real files, and a child process SIGKILLed at the op's crashPoints for the spec.patch
 // row of the crash matrix (test/matrix.ts).
@@ -6,21 +7,21 @@ import { readFileSync,rmSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe,it } from 'node:test';
 import type { IntentOf } from '../src/core/events.ts';
-import { opKey,sha256 } from '../src/core/ids.ts';
+import { opKey,sha256,systemName } from '../src/core/ids.ts';
 import { openJournal } from '../src/core/log.ts';
 import { type SpecM1,type SpecPatch,specM1,specPatch } from '../src/core/records.ts';
 import { SchemaError } from '../src/core/validate.ts';
-import { type AbsPath,absPath } from '../src/core/values.ts';
+import { type AbsPath,absPath,repoPattern } from '../src/core/values.ts';
 import { SPEC_INPUT,keepInput,keptInput } from '../src/input/inforce.ts';
 import { reconcileSpecPatch } from '../src/recover/spec.ts';
 import { SpecPatchOpError,SpecPatchStaleError,applySpecPatch,specPatchOp } from '../src/spec/patch.ts';
 import { renderSpec } from '../src/spec/render.ts';
 import { parseRulings } from '../src/spec/rulings.ts';
-import { bytesSha256,fileSha256,loadSpec,parseSpec,specBytes } from '../src/spec/spec.ts';
+import { bytesSha256,evidenceScopeConflicts,fileSha256,loadSpec,parseSpec,specBytes } from '../src/spec/spec.ts';
 import { ARC } from './fixtures/log-records.ts';
 import { assertFired,writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
-import { tmpDir } from './helpers/repo.ts';
+import { makeRepo,tmpDir } from './helpers/repo.ts';
 import { SPEC_PATCH,crashCells } from './matrix.ts';
 
 const CHILD_TIMEOUT_MS = 20_000;
@@ -415,5 +416,23 @@ describe('rulings ledger', () => {
     assert.throws(() => ledger(['C-1 — withdrawn by C-9']), SchemaError, 'the withdrawing ruling must be in the ledger');
     assert.throws(() => ledger(['C-1 — One.', 'C-1 — Two.']), SchemaError, 'an id listed twice');
     assert.throws(() => ledger(['C-1: no em dash']), SchemaError);
+  });
+});
+
+
+describe('lane evidence and systems', () => {
+  it('spec.evidence-covers-systems: tracks source, tests, shared and contract paths, protects corpus patterns, and permits other systems/output carve-outs', () => {
+    const repo = absPath(makeRepo(tmpDir('spec-evidence'), { files: {
+      'src/app.ts': 'source', 'test/app.test.ts': 'tests', 'shared.json': '{}', 'contract.md': 'contract', 'lib/other.ts': 'other', 'docs/pin.md': 'corpus',
+    } }));
+    const map = systemsMap({ systems: { app: { paths: ['src/**'], tests: ['test/**'] }, lib: { paths: ['lib/**'] } },
+      shared: [{ paths: ['shared.json'], dependents: ['app'] }], contracts: { 'contract.md': ['app'] } }, 'map');
+    const spec = specM1({ ...RAW_SPEC, lanes: [{ ...FAST_LANE, evidenceGlobs: ['src/**/*.ts', 'test/**', 'shared.json', 'contract.md', 'docs/pin.md', '.roadmap/reports/**', 'docs/corpus/new/**', 'out/**', 'lib/**'] }] }, 'spec');
+    const reasons = evidenceScopeConflicts(spec.unit, [systemName('app')], spec, { repo, at: 'HEAD', map,
+      protectedPaths: ['.roadmap', 'docs/pin.md', 'docs/corpus/**'].map((p) => repoPattern(p)) });
+    assert.equal(reasons.length, 7, reasons.join('\n'));
+    for (const path of ['src/app.ts', 'test/app.test.ts', 'shared.json', 'contract.md']) assert.ok(reasons.some((s) => s.includes(`tracked path \`${path}\``)), reasons.join('\n'));
+    for (const path of ['.roadmap', 'docs/pin.md', 'docs/corpus/**']) assert.ok(reasons.some((s) => s.includes(`protectedPaths entry \`${path}\``)), reasons.join('\n'));
+    assert.ok(reasons.every((s) => !s.includes('entry `lib/**`') && !s.includes('entry `out/**`')));
   });
 });

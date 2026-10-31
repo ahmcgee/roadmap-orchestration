@@ -34,7 +34,7 @@ import { reached as barrierReached,release as barrierRelease } from './helpers/b
 //   which contract); the gate's inputs record the design's size estimate.
 // split.crash.*, poc.crash.*: the matrix rows DESIGN_SPLIT and POC_STAGE (test/matrix.ts).
 import assert from 'node:assert/strict';
-import { existsSync,readFileSync } from 'node:fs';
+import { existsSync,readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe,test } from 'node:test';
 import type { Fact,StageOutcomeFact } from '../src/core/events.ts';
@@ -211,7 +211,7 @@ test('design.clause-unnamed: a clause no lane is named for is refused through th
 /** u1 with a second acceptance clause (so a split can partition its items) and u2 after it. */
 function splitArc(steps: Parameters<typeof setupArc>[0]['steps']): ArcDescriptor {
   const d = setupArc({
-    steps, units: [{ id: 'u1' }, { id: 'u2', after: ['u1'] }],
+    steps, units: [{ id: 'u1', systems: ['core', 'api'] }, { id: 'u2', after: ['u1'] }],
     suite: [{ id: 'suite', argv: ['node', '--test'] }, { id: 'e2e', argv: ['node', '--test'], cadence: 'candidate' }],
     systemsMap: SYSTEMS,
   });
@@ -262,6 +262,23 @@ test('design.oversize-split: an oversize design is refused; the split of mixed c
   } finally {
     r.journal.close();
   }
+});
+
+test('design.split-systems: a declared child system outside its parent is a plan defect', T, async () => {
+  const split = { children: [child('u1a', ['A1'], 'core', 20), child('u1b', ['A2'], 'api', 20)], edges: [], skeleton: null };
+  const d = splitArc([planCheckStep({ decision: 'split', split }), planCheckRepairStep({ decision: 'split', split }, ['child u1b names systems outside parent u1: api'])]);
+  const raw = JSON.parse(readFileSync(d.planPath, 'utf8'));
+  raw.units[0].systems = ['core'];
+  writeFileSync(d.planPath, JSON.stringify(raw));
+  const r = contextFor(d);
+  try {
+    const parked = await runUnit(r.ctx, r.unit('u1'), until('build'));
+    assert.ok(parked.kind === 'parked', JSON.stringify(parked));
+    assert.equal(parked.needsUser.reason, 'plan-defect');
+    assert.match(parked.needsUser.summary, /child u1b names systems outside parent u1: api/);
+    assert.deepEqual(outcomes(d), ['plan-check:plan-defect']);
+    assert.equal(r.journal.view.planApplied()!.rev, 1, 'no split revision');
+  } finally { r.journal.close(); }
 });
 
 test('design.split-defect: a split whose children do not partition the parent\'s items is refused twice: an uncharged plan-defect park', T, async () => {

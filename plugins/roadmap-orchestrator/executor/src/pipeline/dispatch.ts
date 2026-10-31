@@ -1,3 +1,39 @@
+// Dispatch: who acts for a unit, on which seat, under which pinned authority, and the backend call that
+// puts them to work (plan "Authority", R2; DESIGN-1.0.md §4 Independence, Actors are roles).
+//
+// - A dispatch fact pins the unit's risk floor, routingRev, implementer seat hash, bounds and spec identity.
+//   Risk promotions re-pin with a higher floor; a limits revision re-pins at the next dispatch check. Unit systems
+//   stay revisioned plan inputs; write protection comes from the shared protectedPaths definition.
+// - Routing is the unit's stack (`StageContext.routing(unit)`), including its route or steer --class layer.
+// - A routing change mid-unit (a new routingRev at a later dispatch; lead ruling, arc-1 feedback item 7):
+//   every judgment is a fresh session (its repair turn resumes only its own), so a judgment seat may change harmlessly; the implementer's session
+//   resumes, so its session key (`implementerSessionKey`: backend and model, R4) may not change. The unit is re-pinned
+//   under the new rev (a new dispatch fact, floor unchanged) when no build has started for it or its
+//   implementer seat keeps its key under both revs (an effort-only change re-pins, and the session resumes with the new
+//   `--effort`; OR-L3); otherwise the stage parks it (`routing-changed`) with a needs-user naming the seat, never a
+//   model. The pinned seat's triple is read back from its `implementerSeatRev` (`seatTripleOf`), and the implementer builds on it.
+//   A steer round (R11) starts a fresh implementer session, so it re-pins whatever the seat (`steerDispatch`):
+//   `steer --class` moves the implementer seat on purpose.
+// - Seats: the implementer sits on the unit's risk tier for the whole unit (it keeps its model); a
+//   judgment stage sits on `judgmentSeat` (transitions.ts): the role's `escalation` seat once it routed up
+//   (for the rest of the unit) or while a risk trigger is pending (the next judgment dispatch only). A gate whose diff is
+//   over the large-diff threshold sits at least at `high` (`largeDiffSeat`, 1.0.0-dev.12), recorded on its judgment-inputs.
+// - The backend call: prompt text and schema are content-addressed input files written before the spawn
+//   intent; the launch names the role and routingRev, never the model, except in argv (launch.json is the
+//   one executor-written file allowed a model id). The workload env is `backendEnv(host)`; the implementer's
+//   adds the unit's owner label and the pool instances its build holds (F7), so whatever it starts carries them.
+// - The verdict: a cancel for pause or stop is an interruption, not a fault; a failed call whose backend
+//   reported a usage limit or capacity error parks that backend arc-wide (`backend-park`, its seq the park's
+//   epoch) and holds the stage with that park as the hold's cause (G5; lead ruling: outcome != success AND
+//   class in {usage-limit, capacity}); platform or backend error entries on a success are informational. M4b rev 3
+//   (RC-11): a unit's call that its deadline or stall watchdog ended under host pressure is starved, a hold with cause
+//   `host-pressure` (starved.ts), not a process fault.
+// - An implementer call that resumes a session and ends `process-fault` with no complete JSON line on stdout
+//   never had its session persisted (`sessionNeverPersisted`; rounds.ts `callRound` re-runs it fresh).
+// - M3 (LR-d): the arc roles' call (`callArcRole`): a lens of an audit or a checkpoint, a job's fresh read-only session
+//   on the judgment profile at the role's one seat `arc` of the arc's routing, spawned as `arc-backend` under `job{job}`
+//   and metered to the job by role and routingRev. A resumed job reads a call it made back (`recordedArcCall`); its
+//   verdict is read as a unit judgment's (`verdictOf` takes a job parent: a usage limit parks the backend arc-wide).
 import { existsSync,readFileSync,readdirSync,statSync } from 'node:fs';
 import { join } from 'node:path';
 import { type BackendCall,type ClaudeTriple,type CodexTriple,backendArgv,promptBytes,resumedJudgmentSession } from '../backends/argv.ts';

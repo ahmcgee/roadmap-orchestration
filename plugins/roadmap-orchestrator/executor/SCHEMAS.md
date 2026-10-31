@@ -62,11 +62,15 @@ intersecting live unit systems; the row never holds admission.
 `protectedPaths(corpus)` is the single write-boundary definition: `.roadmap/` and the same-repository pinned
 corpus file set. Salvage and transient validation use it, including recovery, with `protected-path` violations.
 Declared evidence and transient artifact checks remain. External corpus files are outside the product repository.
-Derived entries retain only their code-owned regenerate lanes; outputs are ordinary diff paths.
+Derived entries retain only their code-owned regenerate lanes; outputs are ordinary diff paths. Row 13 advises
+`derived-unregenerated{outputs,units}` when an entry has no generator and its sources or outputs may overlap the
+systems of a live unit. This is advisory, never a write boundary.
 
 Obligation mapping is `mapping.systems:[{system:SystemName,obligations:ObligationId[]}]`. Declaration checks use
 unit systems; actual diff impact uses the recorded systems map and retains the unmapped-path must-hold fallback.
-Split, checkpoint admit and polish children name systems. Witness file reachability uses deliverer systems and
+Split, checkpoint admit and polish children name systems. Split children must use a subset of their parent's
+systems, checked both before minting and by the revision classifier. Polish must include the systems containing
+every milestone reference; unmapped references refuse the proposal and request a systemsMap declaration. Witness file reachability uses deliverer systems and
 their dependency units. Deflake selection uses lane systems, test membership, owner systems, then all mapped systems.
 
 A foreign-baseline first arc supplies `plan.baseline` and `plan.previousHead` (the equivalent start input).
@@ -614,12 +618,14 @@ are not patchable in M1.
 **Lane evidence** (`src/pipeline/lanes.ts`, `src/git/ignored.ts`). A lane's `evidenceGlobs` name the files its run
 writes (its outputs: logs, reports, coverage), never the unit's source or tests: salvage never commits a match and the
 transient check refuses one at the candidate. So the classifier, for every unit a revision adds or whose entry or spec
-it changes (every `apply`, `start`, flow apply and checkpoint bundle), a fresh start, for every unit, and a plan-check
-redirect's patch (malformed, the retry told why, as the census gate), refuse an entry that covers a pattern of the unit's scope (the plan
-entry's and the spec's): a literal scope path it matches, or the identical pattern (`evidenceScopeConflicts`,
-src/spec/spec.ts; `plan-change-refused`, one reason per lane, entry and scope pattern). A wildcard scope pattern an
-entry only overlaps (`src/**` and `src/**/*.log`) is a carve-out and allowed. A spec already in force is never refused
-for it (an older release's arc): only an edit touching its unit, which an `evidenceGlobs` edit at the current rev fixes.
+it changes (every `apply`, flow apply and checkpoint bundle), a fresh start for every unit, and a plan-check
+patch (malformed, the retry told why), refuse an entry matching any tracked path in the unit's systems, or
+reaching a `protectedPaths` entry (`evidenceScopeConflicts`, src/spec/spec.ts; `plan-change-refused` at startup).
+System membership uses the systemsMap's paths, tests, shared areas and contract consumers, without dependent
+closure. Tracked paths come from the integration tip (the baseline before that branch exists). Protection uses
+prefix-conservative pattern overlap, including corpus include patterns for files not yet present. Each reason names
+the unit, lane, evidence entry and covered path or protection entry. Other lane-output carve-outs remain allowed.
+A spec already in force stays readable: only a revision touching its unit is refused until the entry is fixed.
 Each lane of a series has a dir `<series
 root>/<lane id>/`: `output` (its stdout and stderr), `tree` (its declared `evidenceGlobs` in the checkout, when it
 declares any), `ignored` (below) and `ignored.json`. After the lane's snapshots the executor lists the checkout's
@@ -732,7 +738,7 @@ The rules (`PlanChange` names what each accepted change is):
 | An undispatched unit | any plan field and its spec, now | `unit-changed`, `spec{edit: undispatched}` |
 | A dispatched unit's plan entry | `spec` path, `risk`, `scope`, `resources` and a new `after`: refused; dropping an `after`: now | `unit-changed` |
 | A dispatched unit's spec | lane `evidenceGlobs`/`evidenceExcludes` only, at its rev: in force at once; rev + 1 with scope and resources unchanged: pending until it re-opens (in flight: at its next boundary whose next stage is plan-check, lanes, gate or a fresh or fix build, via `reopened`; parked at plan-check or gate: by `resume <unit>`); the recorded spec again: a pending revision withdrawn; anything else, and any edit of a merged, approved or publishing, stopped, or otherwise parked unit: refused. A revision at or below a recorded rev that the executor's own `spec.patch` set (the implementer's decisions appended at evidence, which can land while the revision is unapplied, A12) is refused naming that revision, where its bytes are kept, and the rev to set on top of it (lead ruling: no auto-rebase) | `spec{edit: evidence \| revision \| withdrawn, specRev, specSha256}` |
-| Lane evidence (M4b run 3) | any proposer (an apply, a start, a flow apply, a checkpoint bundle); a unit added, or whose entry or spec changes: no lane's `evidenceGlobs` entry covers a pattern of its scope ("Lane evidence", `evidenceScopeConflicts`); a fresh start checks every unit; a spec in force untouched by the revision is never refused | (a refusal only) |
+| Lane evidence (M4b run 3) | any proposer (an apply, a start, a flow apply, a checkpoint bundle); a unit added, or whose entry or spec changes: no lane's `evidenceGlobs` entry covers a tracked path of its systems or a protectedPaths entry ("Lane evidence", `evidenceScopeConflicts`); a fresh start checks every unit; a spec in force untouched by the revision is never refused | (a refusal only) |
 | Routing | re-resolved; unsupported seats refused; a newly seated backend smoked; a moved implementer seat then parks its unit `routing-changed` at its next dispatch (the mid-unit routing ruling) | `routing{routingRev}` |
 | Resource declaration | add: now; change or remove: refused while the resource is held (not free, or a transition open) or an undisposed residue names it | `resource{resource, edit: added \| changed \| removed}` |
 | Suite lanes | now (the next candidate runs them); refused while a candidate op is open or a unit is active past a candidate attempt | `suite` |
@@ -3503,7 +3509,7 @@ each named in the lane's stdout with a bounded difference (`SHOWN_FILES` 20, `SH
 checkout put back as the commit holds it, so the series certifies and the red lane is the one finding. Exit 1 on a
 difference or a generator that failed or could not start. Startup runs the generator's argv[0] and declared variables as
 that lane's `spec-lane-unrunnable{unit: null, lane}` row; Phase-0 row 13 advises `derived-unregenerated{outputs, units}`
-for an entry without `regenerate` whose outputs a live unit's effective scope may reach (never a refusal). The gate's
+for an entry without `regenerate` whose sources or outputs may intersect a live unit's systems (never a refusal). The gate's
 `checks.regenerated` (gate.ts `regeneratedChecks`) tells, per entry whose outputs the diff touches, whether its lane in
 the latest lanes attempt passed at the head (`verified`), was red (`differs`, with its evidence dir), did not run
 (`not-run`), or the entry has no generator (`no-generator`).
@@ -3647,7 +3653,7 @@ standards` section; an outcome or a refusal, never a mechanism; unranked (`rank:
 | Fact | Fields | Reader and fold rules |
 |---|---|---|
 | `walk-started` | `job: walk-n, milestone, round: positive, sha, ports: Record<ServeName, 1..65535>` | opens the job (the next `walk-n`); `sha` the integration SHA captured under the revision fence |
-| `polish-proposed` | `id: X-n, job, milestone, journey, evidence: string[] (non-empty), text, unit: {id, scope (ascending, non-empty), spec: spec.json canonical text}` | the next `X-n`; its walk started and not ended |
+| `polish-proposed` | `id: X-n, job, milestone, journey, evidence: string[] (non-empty), text, unit: {id, systems (ascending, non-empty), spec: spec.json canonical text}` | the next `X-n`; its walk started and not ended |
 | `walk-ended` | `job, outcome: reported \| bring-up-failed \| abandoned, findings: F-n[], proposals: X-n[], dropped: X-n[]` | once per started walk; `proposals` exactly the walk's `polish-proposed` ids in order; `dropped` ⊆ `proposals`; proposals only when `reported`; `bring-up-failed` names its P1; `abandoned` none |
 | `tweak-judged` | `unit, decision: keep \| drop, reason: judged \| reference-untouched` | once per unit; `reference-untouched` is a `drop` |
 | `milestone-passed` | `milestone, job` | once per milestone; `job` an ended walk |
@@ -3761,7 +3767,7 @@ servers ("Build sessions" below).
 `WALKTHROUGH_SCHEMA` / `validateWalkthroughOutput` → `WalkthroughOutput = {final: true, journeys: {journey, outcome:
 completed | blocked, evidence: string[], note}[] (non-empty, journeys unique), findings: {class: breaks | deviates, journey,
 evidence (non-empty), claim, cause, against: journey | contract{path: RepoPath, anchor, dependents} | floor{text,
-source: RepoPath | V-n} | design{path, anchor} | vision{clause}, paths: RepoPath[]}[], polish: {journey, evidence (non-empty), text, unit: {id, scope (non-empty), spec}}[]
+source: RepoPath | V-n} | design{path, anchor} | vision{clause}, paths: RepoPath[]}[], polish: {journey, evidence (non-empty), text, unit: {id, systems (non-empty), spec}}[]
 (unit ids unique), premises, reasons}`. The reader's rules: `final` true only; a finding or polish names a reported
 journey; `breaks` cites `journey`, `contract` (owner ruling 2026-10-18: where the contract is stated, and who builds
 on it) or `floor`, `deviates` `design` or `vision` (`WALK_AGAINST`: a declared floor missed is always `breaks`); a `blocked`
@@ -3769,7 +3775,7 @@ journey has a `breaks` finding on it. A polish `spec` is an admit's spec object 
 canonical text), not the plan's `string` (step 0 decided: one admit path with two authors). The walk job's validation
 (agent C) adds what needs its inputs: every journey reported, cited evidence files under the evidence dir, a design or
 contract path inside a milestone reference, vision clauses active, a floor's vision clause `non-negotiable` (a floor whose
-source is a repository path is taken as given: a reference's quality-floor section), a polish scope covering a reference;
+source is a repository path is taken as given: a reference's quality-floor section), a polish unit whose systems cover every reference;
 one repair turn.
 
 **Gate answer, `findings[].experiments`** (agent I): `GATE_SCHEMA`'s finding gains `experiments: {command: string, output:
@@ -3863,8 +3869,8 @@ No new reason (step 0 decided). `finding-p1-escalated` (blocking) is raised also
   a lost call retried once. Call 1 is the walk; call 2 its one repair turn (`repairTurnOf`); refused again, interrupted,
   failed or parked, the walk ends `abandoned` and the same round is due again, once ("The abandonment brakes" below).
 - **Validation** (`walkRefusals`): a cited evidence path is read relative to the evidence dir, or absolute inside it, and
-  must be a file there; a polish scope covers a reference when a pattern's literal part lies inside a reference dir or holds
-  one; a polish unit's spec must be its own unit's at rev 1 and its id no unit of the plan.
+  must be a file there; a polish unit must name every system containing each milestone reference (shared and
+  contract consumers included). An unmapped reference refuses with a request to declare its system; a polish unit's spec must be its own unit's at rev 1 and its id no unit of the plan.
 - **A walkthrough finding keeps its cause** (`finding-opened + cause?`, present only on a walkthrough finding; absent:
   none, lasting): the next walk is shown it (`WalkFindingView`) and re-reports a defect still present under exactly that
   cause, so the key dedupes it.
@@ -3915,11 +3921,11 @@ No new reason (step 0 decided). `finding-p1-escalated` (blocking) is raised also
   order that ended `reported` with an applied proposal (proposals less `dropped`) carried by no plan unit and not refused.
   A proposal is refused, `polish-refused{proposal: X-n, reasons (non-empty)}` (once per proposal; settled: never applied, and
   the rounds brake's `pending: polish` treats it as settled), when the arc is draining, when it is not from its milestone's
-  latest round, when its scope covers no milestone reference (`coversReference`), or when the admit path or the classifier
+  latest round, when its systems do not cover every milestone reference (`coversReference`), or when the admit path or the classifier
   refuses its unit admitted alone; the rest are admitted together (refused together, each is refused with the combined
   reasons). THE admit path (src/holistic/bundle.ts `admitUnit`, `fillMappedObligations`; a checkpoint `admit` takes it
   too): the unit not planned, its spec a unit spec of that unit at rev 1, then its entry `{id, spec: <id>.json, risk: high,
-  scope, resources: the milestone's, after: [], origin: polish, polish: {milestone, proposal}}`; then `evaluateRevision`
+  systems, resources: the milestone's, after: [], origin: polish, polish: {milestone, proposal}}`; then `evaluateRevision`
   with proposer `walk{job}` and `commitUnderFence` with source `walk{job}` (parent the walk job). A commit the arc moved
   under is retried at the next run.
 - **Classifier rows** (`polishRows`, src/input/classify.ts; `Proposer + walk{job} | compare{unit}`): a polish unit added
@@ -4355,7 +4361,7 @@ DESIGN-1.0.md §2.1 "Design pass". Additive; `SCHEMA_VERSION` stays 1; every rea
 
 | Record | Change | Read-time default |
 |---|---|---|
-| Plan-check answer (`PLAN_CHECK_SCHEMA`, `planCheckOutput`) | `decision` + `split`, `scaffold`, `poc`; every answer carries `design`, `split`, `scaffold`, `poc` (strict schema: each null unless its decision: `design` on approve and scaffold). `design` is the wire form of the design record: paths and ids (`interfaces [{type: contract\|file, path}]`, `breaks {tests, docs}: path[]`, failure-mode `requirements: I-n[]`), which code pins at the tip the check read (`pinDesign`). `split {children [{unit, scope, items (parent acceptance and witness ids), obligations, design}] ≥ 2 distinct, edges [{from, to}], skeleton {unit, lane} \| null}` (D0 typed children as specs; code builds them from the parent's instead). `scaffold {newSystem, entryPoints ≥ 1, exports, loadTest {lane, testId}, manifest [{path, entry}]}`. `poc {questions [{id: PQ-n, question, whyItMatters}] ≥ 1, brief}` | an answer recorded before: no design record (`planCheckDesignDefault`, logged), and none of the payloads |
+| Plan-check answer (`PLAN_CHECK_SCHEMA`, `planCheckOutput`) | `decision` + `split`, `scaffold`, `poc`; every answer carries `design`, `split`, `scaffold`, `poc` (strict schema: each null unless its decision: `design` on approve and scaffold). `design` is the wire form of the design record: paths and ids (`interfaces [{type: contract\|file, path}]`, `breaks {tests, docs}: path[]`, failure-mode `requirements: I-n[]`), which code pins at the tip the check read (`pinDesign`). `split {children [{unit, systems (a subset of the parent's), items (parent acceptance and witness ids), obligations, design}] ≥ 2 distinct, edges [{from, to}], skeleton {unit, lane} \| null}` (D0 typed children as specs; code builds them from the parent's instead). `scaffold {newSystem, entryPoints ≥ 1, exports, loadTest {lane, testId}, manifest [{path, entry}]}`. `poc {questions [{id: PQ-n, question, whyItMatters}] ≥ 1, brief}` | an answer recorded before: no design record (`planCheckDesignDefault`, logged), and none of the payloads |
 | `SpecPatchOp` | `+ {op: design, record: DesignRecord}`: the record replaces the spec's; written only by the executor (plan-check's approve or scaffold, `by: planCheck`), offered by no model's patch schema | — |
 | `spec.json` (render) | the design record renders after the spec's repairs (`## Design`: kind and size, changes, interfaces, failure modes, breaks, new system) | — |
 | Stage outcomes | `plan-check`: `+ split` (class hold, detail `split {children}`), `scaffold`, `poc`, `plan-defect` (park, operator env, uncharged, detail `design-defect {reasons}`). New stages, appended to `STAGES`: `scaffold` (`scaffolded` → build fresh; `refused` → scaffold, detail `scaffold-refused {reasons, laneEvidence}`; `plan-defect`; `refusal`; `process-fault`; `lost`; `interrupted`; `routing-changed`; `context-exceeded`; `occupied`; `cleanup-failed`; `executor-fault`) and `poc` (`answered`, `unanswered` → plan-check; `process-fault`, `interrupted`, `routing-changed`, `context-exceeded`, `occupied`, `cleanup-failed`, `executor-fault`). Both are admission stages, flow stations and fault stages | — |

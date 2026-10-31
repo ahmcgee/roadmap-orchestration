@@ -1,4 +1,4 @@
-import { inUnitSystems } from '../input/systems.ts';
+import { inUnitSystems, systemsForPatterns } from '../input/systems.ts';
 // The shared Phase-0 startup rows (M4a "`roadmap phase0 check`", step C1): one rule, run by `start` (src/preflight/
 // checks.ts), `apply` (src/commands/apply.ts) and `roadmap phase0 check` (src/commands/phase0.ts, both modes).
 // Synchronous: git runs as spawnSync reads.
@@ -28,13 +28,13 @@ import { inUnitSystems } from '../input/systems.ts';
 //   9. tree        (live) `.roadmap/{vision.json, corpus.md, config.json}` equal to their blobs at HEAD (`tree-uncommitted`,
 //                  K18), for every arc.
 //  10. system overlap (advisory): live units that declare a common system; never an admission hold.
-//  11. plan defects (derived exclusion, 2026-10-27; 1.0.0-dev.26): `plan-defect{defects}`, what no build round could fix.
+//  11. plan defects: `plan-defect{defects}`, what no build round could fix.
 //                  Startup reports all; APPLY advises after evaluateRevision refuses only the defects the revision adds.
 //                  - derived files: for a same-repo corpus, an output that may reach the corpus file set
-//                    (`derived-overlaps-corpus`). Outputs without covered sources are scope exclusions (dev.26).
+//                    (`derived-overlaps-corpus`).
 //                  - witnesses (a corpus arc's binding obligations): each declared witness file inside its lane
 //                    (`witness-not-in-lane`, src/holistic/witnessfiles.ts `laneMisses`), and present at the integration
-//                    tip (the baseline before the branch exists) or inside the effective scope of a deliverer or a unit
+//                    tip (the baseline before the branch exists) or inside the systems of a deliverer or a unit
 //                    a deliverer runs after, transitively (`witness-file-unreachable`). At a fresh start every arc lane
 //                    declares `testPaths` and every binding witness `files` (`lane-test-paths-undeclared`,
 //                    `witness-files-undeclared`). Otherwise each lane and witness is judged on its own (2026-10-21;
@@ -51,6 +51,7 @@ import { inUnitSystems } from '../input/systems.ts';
 //                  `.roadmap/vision.json` only in the between-arc window, so a draft committed there mid-arc never rides
 //                  along with an unrelated apply. Not one of `phase0Rows`: it reads the revision in force, which only a
 //                  running arc has.
+//  13. derived regeneration (advisory): an entry without a generator whose sources or outputs intersect live unit systems.
 //  14. design first (advisory, never a rejection; every arc, every mode; dev.13) a live unit of a milestone that does not run
 //                  after the milestone's design unit, transitively: `milestone-unit-before-design{milestone, unit, design}`.
 //  15. milestones (every arc, every mode; dev.13) milestones on a plan without `holistic`: `milestones-need-holistic`.
@@ -146,7 +147,7 @@ export type Phase0Input = Readonly<{
 export type MilestoneUnitBeforeDesign = Readonly<{ kind: 'milestone-unit-before-design'; milestone: MilestoneId; unit: UnitId; design: UnitId }>;
 
 /** A Phase-0 advisory: never a refusal (rows 10, 13, 14; dev.26: existing plan defects in APPLY). */
-export type Phase0Advisory = Readonly<{kind: 'system-overlap'; units: readonly [UnitId, UnitId]; systems: readonly import('../core/ids.ts').SystemName[]}> | MilestoneUnitBeforeDesign | Row<'plan-defect'> | Readonly<{ kind: 'lanes-differ-only-env-set'; lanes: readonly [string, string] }>;
+export type Phase0Advisory = Readonly<{ kind: 'derived-unregenerated'; outputs: readonly RepoPattern[]; units: readonly UnitId[] }> | Readonly<{kind: 'system-overlap'; units: readonly [UnitId, UnitId]; systems: readonly import('../core/ids.ts').SystemName[]}> | MilestoneUnitBeforeDesign | Row<'plan-defect'> | Readonly<{ kind: 'lanes-differ-only-env-set'; lanes: readonly [string, string] }>;
 
 /**
  * The rows found, and on a clean re-derivation the source the pin read (its files are what a start or apply keeps).
@@ -195,7 +196,7 @@ export function phase0Rows(input: Phase0Input, mode: Phase0Mode): Phase0Outcome 
   const { plan } = input;
   rows.push(...milestonesNeedHolisticRows(plan));
   rows.push(...laneTopologyRows(input));
-  const advisories: Phase0Advisory[] = [...systemOverlap(input), ...milestoneUnitsBeforeDesign(plan), ...nearDuplicateLanes(input)];
+  const advisories: Phase0Advisory[] = [...systemOverlap(input), ...derivedUnregenerated(input), ...milestoneUnitsBeforeDesign(plan), ...nearDuplicateLanes(input)];
   const defects = planDefects(input, mode);
   if (!mode.defects && defects.length > 0) advisories.push({ kind: 'plan-defect', defects });
   if (plan.target !== 'corpus') {
@@ -664,4 +665,16 @@ function systemOverlap(input: Phase0Input): readonly Phase0Advisory[] {
     return systems.length === 0 ? [] : [{ kind: 'system-overlap' as const, units: [u.id, v.id] as const, systems }];
   }));
 
+}
+
+/** Row 13: a missing generator for a derived entry any live unit's systems may touch. Advisory only. */
+function derivedUnregenerated(input: Phase0Input): readonly Phase0Advisory[] {
+  const map = input.config?.systemsMap;
+  if (map === undefined) return [];
+  return derivedOf(input.plan).flatMap((d) => {
+    if (d.regenerate !== undefined) return [];
+    const systems = systemsForPatterns(map, [...d.sources, ...d.outputs]);
+    const units = input.plan.units.filter((u) => isLive(input.plan, u) && !input.settled.has(u.id) && u.systems.some((s) => systems.includes(s))).map((u) => u.id).sort();
+    return units.length === 0 ? [] : [{ kind: 'derived-unregenerated' as const, outputs: d.outputs, units }];
+  });
 }

@@ -25,7 +25,7 @@
 import { type LaneId,type SystemName,DOCS_SYSTEM,systemName } from '../core/ids.ts';
 import type { LaneDef } from '../core/records.ts';
 import { type Read,Fields,SchemaError,arrayOf,assertUnique,object,oneOf } from '../core/validate.ts';
-import { type RepoPath,type RepoPattern,matchesPattern,repoPath,repoPattern } from '../core/values.ts';
+import { type RepoPath,type RepoPattern,matchesPattern,mayOverlap,repoPath,repoPattern } from '../core/values.ts';
 
 
 export const SYSTEM_TRAITS = ['persistent', 'redacts'] as const;
@@ -213,3 +213,15 @@ export const systemReach = (map: SystemsMap, systems: readonly SystemName[], pat
   [...new Set(paths.filter((p) => !inUnitSystems(map, systems, p)))].sort();
 export const systemTraits = (map: SystemsMap, systems: Iterable<SystemName>): readonly SystemTrait[] =>
   [...new Set([...systems].flatMap((s) => map.systems[s]?.traits ?? []))].sort();
+
+/** Systems containing a reference or derived area, including directory references and shared/contract consumers.
+ * Prefix-conservative overlap also accounts for paths that will be created by a unit.
+ */
+export function systemsForPatterns(map: SystemsMap, patterns: readonly string[]): readonly SystemName[] {
+  const hit = (paths: readonly string[]): boolean => paths.some((p) => patterns.some((r) => mayOverlap(p, r)));
+  const names = new Set<SystemName>();
+  for (const [name, def] of Object.entries(map.systems) as [SystemName, SystemDef][]) if (hit([...def.paths, ...def.tests])) names.add(name);
+  for (const shared of map.shared) if (hit(shared.paths)) for (const name of shared.dependents) names.add(name);
+  for (const [path, consumers] of Object.entries(map.contracts)) if (hit([path])) for (const name of consumers) names.add(name);
+  return [...names].sort();
+}

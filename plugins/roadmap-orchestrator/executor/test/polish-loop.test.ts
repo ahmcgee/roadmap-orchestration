@@ -35,7 +35,7 @@ import { type Step, readCalls } from './helpers/scenario.ts';
 import { moduleFiles, unitSteps } from './fixtures/audit-common.ts';
 import { SCENARIO_TIMEOUT_MS } from './fixtures/stage-common.ts';
 import { type ArcRun, appendSteps, contextFor } from './fixtures/unit-common.ts';
-import { ACTING_ARGV, KEEP_FILES, SCOPE, polishSteps, proposal, unitInForce, walkAnswer, walkArc, walkContext, walkStep } from './fixtures/walk-common.ts';
+import { ACTING_ARGV, KEEP_FILES, SCOPE, milestoneJson, polishSteps, proposal, unitInForce, walkAnswer, walkArc, walkContext, walkStep } from './fixtures/walk-common.ts';
 import { COMPARE_JOB, POLISH_REVISION, crashCells } from './matrix.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS * 3 };
@@ -91,6 +91,27 @@ function judgeStep(job: string, decision: 'keep' | 'drop'): Step {
 
 const DROP_FILES = { 'design/README.md': '# Greeter design\n\nShout.\n', 'product/greeting.txt': 'HELLO\n' };
 const NOREF_FILES = { 'product/greeting.txt': 'hi\n' };
+
+test('polish.system-coverage: admission rechecks every reference, refusing missing systems and unmapped references', T, async () => {
+  for (const unmapped of [false, true]) {
+    const d = walkArc({ steps: [], milestone: milestoneJson({ references: ['design', 'extra'] }), systemsMap: { systems: {
+      app: { paths: ['design/**', 'src/**', 'test/**', 'contracts/**'] }, ...(unmapped ? {} : { other: { paths: ['extra/**'] } }),
+    } } });
+    const r = contextFor(d);
+    try {
+      const proposed = proposal(d, 'tw-partial', 'polish only the first reference');
+      r.journal.fact({ kind: 'walk-started', job: 'walk-1' as never, milestone: 'MS-1' as never, round: 1, sha: r.ctx.plan().baseline, ports: {} });
+      r.journal.fact({ kind: 'polish-proposed', id: 'X-1' as never, job: 'walk-1' as never, milestone: 'MS-1' as never,
+        journey: 'J-1' as never, evidence: ['/kept/shot.png'], text: proposed.text,
+        unit: { id: 'tw-partial' as never, systems: [systemName('app')], spec: JSON.stringify(proposed.unit.spec) } });
+      r.journal.fact({ kind: 'walk-ended', job: 'walk-1' as never, outcome: 'reported', findings: [], proposals: ['X-1' as never], dropped: [] });
+      assert.deepEqual(await ticking(r, applyPolish), { kind: 'applied', admitted: [], refused: ['X-1'] });
+      const reason = factsOf(r, 'polish-refused')[0]!.reasons.join('; ');
+      assert.match(reason, unmapped ? /reference extra maps to no system/ : /reference extra requires systems other/);
+      assert.equal(r.journal.view.planApplied()!.rev, 1, 'no revision admitted a partial reference cover');
+    } finally { r.journal.close(); }
+  }
+});
 
 describe('fix units and the polish loop (dev.13 agent D)', () => {
   test('polish.loop: four proposals → three admitted by code, one refused → compare keeps one, drops one (cut), code drops the reference-untouched one → the kept tweak lands → settled at the bound', T, async () => {

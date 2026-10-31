@@ -137,6 +137,29 @@ function refusedWith(result: Checked, kind: StartupRejectionKind, exit: 75 | 78)
 }
 
 describe('startup.rejections', () => {
+  it('plan-change-refused: lane evidence covering tracked unit-system source or protected paths is refused before the first plan is recorded', T, async () => {
+    for (const entry of ['src/index.ts', '.roadmap/**']) {
+      const s = setup();
+      if (entry.startsWith('src/')) {
+        mkdirSync(join(s.repo, 'src'), { recursive: true });
+        writeFileSync(join(s.repo, entry), 'export const value = 1;\n');
+        s.plan['baseline'] = commitAll(s.repo, 'tracked system source');
+      }
+      s.spec['lanes'] = [{ ...lane({ evidenceGlobs: [entry] }), state: 'active' }];
+      write(s);
+      const checked = await allChecks(input(s));
+      try {
+        const rows = refusedWith(checked, 'plan-change-refused', 78);
+        assert.match(JSON.stringify(rows), /unit u1 lane unit: evidenceGlobs entry/);
+        assert.match(JSON.stringify(rows), entry.startsWith('src/') ? /tracked path.*src\/index.ts.*systems/ : /protectedPaths entry.*roadmap/);
+        const j = openJournal(runDirOf(s), arcId(s.arc));
+        try { assert.equal(j.view.planApplied(), null); } finally { j.close(); }
+      } finally {
+        if (checked.kind === 'refused' && checked.claim !== null) releaseHost(s.hostDir, checked.claim);
+      }
+    }
+  });
+
   it('the post-claim writer verifies appends since the shared startup read, including complete corruption', T, async () => {
     for (const corrupt of [false, true]) {
       const s = setup();

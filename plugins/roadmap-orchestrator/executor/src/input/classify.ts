@@ -1,3 +1,6 @@
+import { mayOverlap } from '../core/values.ts';
+import { protectedPaths } from './protected.ts';
+import { referenceCommit } from '../phase0/rows.ts';
 // Classify a proposal against the plan in force. Every refused edit contributes its reason.
 // Root applies authorize weakenings with their reason; automatic revisions retain the frozen contract gate.
 import type { IntentOf,PlanChange } from '../core/events.ts';
@@ -38,7 +41,7 @@ import { RISK_TIERS,type RiskTier,UNIT_ROLES } from '../routing/types.ts';
 import { effectiveGraph,findCycle } from '../schedule/graph.ts';
 import type { CommandScope,ScopeOf } from '../schedule/types.ts';
 import { type Ruling,parseRulings } from '../spec/rulings.ts';
-import { SpecFileError,bytesSha256,parseSpec } from '../spec/spec.ts';
+import { SpecFileError,bytesSha256,evidenceScopeConflicts,parseSpec } from '../spec/spec.ts';
 import { baseFiles,compareAndSwap } from './cas.ts';
 import {
 type InForce,
@@ -459,18 +462,7 @@ function quietly<T>(bytes: Buffer | null, parse: (v: unknown) => T): T | null {
   }
 }
 
-/** The literal prefix of a pattern (before its first glob character): two patterns may overlap when one's prefixes the other's. */
-const literalPrefix = (p: string): string => {
-  const i = p.search(/[*?[{]/);
-  return i === -1 ? p : p.slice(0, i);
-};
-/** Prefix-conservative overlap of two repo patterns: false only when no path can match both. */
-export function mayOverlap(a: string, b: string): boolean {
-  const x = literalPrefix(a);
-  const y = literalPrefix(b);
-  return x.startsWith(y) || y.startsWith(x);
-}
-
+export { mayOverlap } from '../core/values.ts';
 /** What a unit has spent of each counted bound (the time bounds count nothing). */
 function spentOf(u: UnitState): Readonly<Partial<Record<keyof Bounds, number>>> {
   return {
@@ -1008,7 +1000,7 @@ function polishRows(view: JournalView, cur: PlanM1, plan: PlanM1, proposer: Prop
     const p = proposals.get(origin.proposal);
     if (p === undefined || p.job !== proposer.job) reasons.push(`unit ${u.id} carries proposal ${origin.proposal}, which is no proposal of ${proposer.job}`);
     else if (p.milestone !== origin.milestone) reasons.push(`unit ${u.id} names milestone ${origin.milestone}; its proposal ${p.id} is of ${p.milestone}`);
-    else if (p.unit.id !== u.id || !same([...u.systems].sort(), p.unit.systems)) reasons.push(`unit ${u.id} is not the unit proposal ${p.id} names (${p.unit.id}, scope ${p.unit.systems.join(', ')})`);
+    else if (p.unit.id !== u.id || !same([...u.systems].sort(), p.unit.systems)) reasons.push(`unit ${u.id} is not the unit proposal ${p.id} names (${p.unit.id}, systems ${p.unit.systems.join(', ')})`);
   }
   if (proposer.type === 'walk') {
     const added = new Set(plan.units.filter((u) => !curIds.has(u.id) && u.origin === 'polish').map((u) => u.id as string));
@@ -1047,6 +1039,11 @@ function splitRows(cur: PlanM1, plan: PlanM1, proposer: Proposer, changes: reado
     const u = plan.units.find((x) => x.id === id);
     if (u === undefined || curIds.has(id)) reasons.push(`the split of ${proposer.unit} adds ${id}, a new unit`);
     else if (u.reenters !== undefined || u.origin !== parent?.origin) reasons.push(`child ${id} of ${proposer.unit} is no re-entry and takes its parent's origin`);
+  }
+  const parentSystems = cur.units.find((u) => u.id === proposer.unit)?.systems ?? [];
+  for (const u of plan.units.filter((u) => children.has(u.id))) {
+    const outside = u.systems.filter((s) => !parentSystems.includes(s));
+    if (outside.length > 0) reasons.push(`child ${u.id} names systems outside parent ${proposer.unit}: ${outside.join(', ')}`);
   }
   for (const u of plan.units) {
     const was = cur.units.find((x) => x.id === u.id);
@@ -1151,6 +1148,11 @@ function specRows(input: ClassifyInput, inputs: NextInputs, specs: ReadonlyMap<U
     if (spec === undefined) continue;
     if (touched.has(unit.id) || (inputs.changed.obligations && live(unit))) reasons.push(...witnessLaneReasons(unit.id, spec, obligations));
     if (!touched.has(unit.id)) continue;
+    reasons.push(...evidenceScopeConflicts(unit.id, unit.systems, spec, {
+      repo: input.next.repo, at: referenceCommit(input.next.repo, input.next.plan), map: input.routing.config?.systemsMap ?? null,
+      protectedPaths: protectedPaths(input.next.corpus === null || inputs.corpus?.pin == null || input.next.corpus.guide.bytes === null ? null
+        : { pin: { value: inputs.corpus.pin }, guide: { bytes: input.next.corpus.guide.bytes } }),
+    }));
     reasons.push(...witnessReuseReasons(unit.id, spec, obligations));
     const declared = specObligations(spec);
     const byId = new Map((obligations?.obligations ?? []).map((o) => [o.id, o]));
