@@ -21,7 +21,7 @@ import type { AcquireFirst } from '../schedule/arbiter.ts';
 import type { StageContext } from './dispatch.ts';
 import { type JourneyEnd, jobSeriesCheckout, laneNow, passedOnInput, runJourneySeries, suiteJourneyLane } from './lanes.ts';
 
-/** The plan's batch lanes, in declared order. */
+/** Plain batch suites plus this milestone's explicit additions, in declared order. */
 export const batchLanesOf = (ctx: Pick<StageContext, 'plan'>, milestone: Milestone | null = null): readonly LaneDef[] => {
   const selected = new Set((ctx.plan().milestones ?? []).flatMap((m) => m.lanes ?? []));
   const additional = new Set(milestone?.lanes ?? []);

@@ -186,7 +186,7 @@ for (const where of ['spec', 'suite'] as const) for (const designCited of [false
     units: [{ id: U1, lanes: where === 'spec' ? [capture] : [] }], suite: where === 'suite' ? [capture] : [],
     planExtra: {
       resources: [{ name: 'ports', pool: { size: 2 }, probe: { argv: ['true'], cwd: '.', env: { set: {}, pass: ['PATH'] } }, teardown: { argv: ['true'], cwd: '.', env: { set: {}, pass: ['PATH'] } } }],
-      ...(designCited ? { milestones: [milestoneJson({ references: ['contracts'], bringUp: { setup: [], serve: [], env: {}, seed: [] } })] } : {}),
+      ...(designCited ? { milestones: [milestoneJson({ references: ['contracts'], bringUp: { setup: [], serve: [], env: {}, seed: [] }, journeys: [{ id: 'J-1', text: 'Read the captured states.', via: 'shell', entry: 'node --version', budget: null }] })] } : {}),
     },
     beforeStart: (d) => {
       mkdirSync(join(d.repo, 'scripts'), { recursive: true });
@@ -199,11 +199,13 @@ for (const where of ['spec', 'suite'] as const) for (const designCited of [false
   });
   const run = contextFor(h.d);
   assert.deepEqual(await runUnit(run.ctx, run.unit(U1), admitAll), { kind: 'merged' });
+  assert.equal(run.journal.view.completedLanesOutcome(U1)?.outcome, 'green');
   const call = readCalls(h.d.scenarioPath).find((c) => c.stdin.includes('<lane_ledger>'));
   assert.ok(call, 'the gate ran');
   assert.equal(call.stdin.includes('- capture: pass'), designCited, 'only a design-cited gate receives capture evidence');
   const snapshot = run.journal.view.opsOf('evidence.snapshot').find((i) => i.expect.globs.includes(repoPattern('captures/**')));
   assert.ok(snapshot);
+  assert.equal(call.stdin.includes(join(snapshot.expect.dest, '..')), designCited, 'capture evidence directories follow the design citation');
   const output = join(snapshot.expect.dest, 'files');
   for (const state of ['home', 'empty']) assert.equal(readFileSync(join(output, 'captures', state+'.png')).toString('base64'), png);
   assert.ok([...run.journal.view.resources().values()].every((r) => r.status.state === 'free'));
