@@ -153,7 +153,6 @@ export type CorpusProblem =
   | Readonly<{ type: 'guide-missing' }>
   | Readonly<{ type: 'source-unreadable'; detail: string }>
   | Readonly<{ type: 'source-remote-mismatch' }>
-  /** `fix`: what the owner does about it (`scopeOverlapFix`); read as that, warned, when a dev.17 rejection lacks it (`scopeOverlapFixDefault`). */
   | Readonly<{ type: 'contract-overlaps-corpus'; path: RepoPath }>;
 
 export const corpusProblem: Read<CorpusProblem> = tagged('type', {

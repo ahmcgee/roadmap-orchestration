@@ -1,3 +1,5 @@
+// Prepare a re-entry on its predecessor branch, retaining the lineage risk floor, then merge integration and capture evidence.
+// A return from a known defect reuses its worktree and repeats only the merge and evidence capture.
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { crashPoint } from '../core/crash.ts';
@@ -40,8 +42,7 @@ function preparedOps<K extends OpKind>(view: JournalView, unit: UnitId, kind: K,
 
 /**
  * The re-entered unit's dispatch record: the one already pinned (an earlier attempt's), or its first pin,
- * recorded now within the lineage's envelope (or the patterns its re-entry widened it by) at no less than the
- * inherited floor.
+ * recorded at no less than the inherited risk floor.
  */
 function pinReentry(ctx: StageContext, unit: PlanUnit, lineage: Lineage): DispatchRecord {
   const view = ctx.journal.view;

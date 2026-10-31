@@ -129,7 +129,7 @@ function walkAnswer(f: PolishFixture, planDir: string): JsonValue {
     final: true,
     journeys: f.walk.milestone.journeys.map((j) => ({ journey: j.id, outcome: 'completed', evidence: [WALK_NOTE], note: 'walked' })),
     findings: [],
-    polish: [{ journey: f.family.journey, evidence: [WALK_NOTE], text: f.cell.proposal, unit: { id: POLISH_UNIT, spec } }],
+    polish: [{ journey: f.family.journey, evidence: [WALK_NOTE], text: f.cell.proposal, unit: { id: POLISH_UNIT, systems: ['app'], spec } }],
     premises: [],
     reasons: ['walked every journey'],
   } as unknown as JsonValue;

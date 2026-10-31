@@ -623,8 +623,7 @@ const obligationsPreimage = (inForce: InForce, revision: RevisionInForce): Preim
 /**
  * The apply core (G1, A2): evaluates a proposal (the files an `apply` or a start read; the plan in force plus a
  * bundle's ops; the ledger plus a `rule`'s sidecar; a divergence's preimage for `reverse`) against the plan in force,
- * synchronously and without effect: the classifier (src/input/classify.ts), the lane row and the corpus overlap rule
- * over the units it changes (src/phase0/rows.ts `scopeOverlapProblems`; deflake scope, 2026-10-23), then the payload's
+ * synchronously and without effect: the classifier (src/input/classify.ts) and shared startup rows, then the payload's
  * publication plan and divergences. A caller evaluates once, runs what it must await (the startup rows, a smoke), then takes the fence
  * (src/core/fence.ts) and evaluates again: a draft that differs is stale. `proposer` is who proposes it; a
  * bundle's cites and evidence back the `split-dropped` divergences its splits record (H14).

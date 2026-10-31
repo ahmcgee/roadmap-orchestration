@@ -1134,9 +1134,8 @@ function obligationRows(input: ClassifyInput, inputs: NextInputs, reasons: strin
 }
 
 /**
- * The spec rows of every unit the revision adds or whose spec or entry it changes: no lane's `evidenceGlobs` entry
- * covers a pattern of its scope (src/spec/spec.ts `evidenceScopeConflicts`); its declared obligations exist and
- * cover every non-exempt obligation of a mapping pattern that may overlap its scope (prefix-conservative); a `repair`
+ * The spec rows of every unit the revision adds or whose spec or entry it changes: its declared obligations exist and
+ * cover every non-exempt obligation mapped to its declared systems; a `repair`
  * unit declares repairs, each an obligation or a finding of the arc; (2026-10-15) a witness item naming an obligation
  * restates that obligation's witness exactly (`witnessReuseReasons`). And (2026-10-15, arc feedback #3) every active
  * witness item names an arc lane in force (`witnessLaneReasons`): of those units, and of every unit that can still run

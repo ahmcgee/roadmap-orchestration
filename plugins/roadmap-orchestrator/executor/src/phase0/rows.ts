@@ -6,10 +6,7 @@ import { inUnitSystems } from '../input/systems.ts';
 //   1. corpus      the pin re-derived from the guide committed at the plan's baseline (LR-A1-1), its source at the pinned
 //                  commit and the baseline's rules registry, and required equal (`corpus-invalid`: pin-drift, rule-reused,
 //                  rule-retired-reappears, rules-in-vision, guide-missing, source-unreadable, source-remote-mismatch); for
-//                  a same-repo source, no unit scope and no plan contract overlapping the corpus file set (every pinned
-//                  file plus every path matching root/include, R32): `scope-overlaps-corpus` (a cut unit excepted, and
-//                  one the arc settled: merged, superseded or cut; its `fix` names how to narrow the unit), `contract-overlaps-corpus`. The unit rule (`scopeOverlapProblems`)
-//                  is also every revision's, over the units it changes (src/commands/apply.ts `evaluateRevision`).
+//                  a same-repo source, plan contracts do not overlap the corpus file set (`contract-overlaps-corpus`).
 //                  Malformed corpus text throws `CorpusFormatError` (LR-A1-2), never a row.
 //   2-3. census    one state per active pinned rule, none dangling, every obligation's rule resolved: a binding one's
 //                  active, a waived or deferred one's active or retired (LR-C1-2; src/holistic/rederive.ts
@@ -30,11 +27,7 @@ import { inUnitSystems } from '../input/systems.ts';
 //   8. chain       (a fresh start, live) K, the baseline rules and the ack limit (src/chain.ts; H12, R11).
 //   9. tree        (live) `.roadmap/{vision.json, corpus.md, config.json}` equal to their blobs at HEAD (`tree-uncommitted`,
 //                  K18), for every arc.
-//  10. references  (advisory, never a rejection; every arc, every mode; scope growth 2026-10-15) per unit whose spec declares
-//                  `removes`: each entry searched for literally (`git grep -l -F`) at the integration tip (the baseline before
-//                  the branch exists), the hits inside the unit's scope (plan and spec) or under `.roadmap/` dropped:
-//                  `scope-references-outside{unit, removed, referrers}`, the referrers being the patterns its scope lacks
-//                  (`scopeReferences`, which plan-check reads too).
+//  10. system overlap (advisory): live units that declare a common system; never an admission hold.
 //  11. plan defects (derived exclusion, 2026-10-27; 1.0.0-dev.26): `plan-defect{defects}`, what no build round could fix.
 //                  Startup reports all; APPLY advises after evaluateRevision refuses only the defects the revision adds.
 //                  - derived files: for a same-repo corpus, an output that may reach the corpus file set
@@ -58,9 +51,6 @@ import { inUnitSystems } from '../input/systems.ts';
 //                  `.roadmap/vision.json` only in the between-arc window, so a draft committed there mid-arc never rides
 //                  along with an unrelated apply. Not one of `phase0Rows`: it reads the revision in force, which only a
 //                  running arc has.
-//  13. regenerate (advisory, never a rejection; every arc, every mode; dev.12) a derived entry declaring no `regenerate` whose
-//                  outputs a live unit's effective scope may reach: `derived-unregenerated{outputs, units}`. Its outputs are
-//                  checked by no regeneration, so a hand edit in them is caught only by a reader (src/input/derived.ts).
 //  14. design first (advisory, never a rejection; every arc, every mode; dev.13) a live unit of a milestone that does not run
 //                  after the milestone's design unit, transitively: `milestone-unit-before-design{milestone, unit, design}`.
 //  15. milestones (every arc, every mode; dev.13) milestones on a plan without `holistic`: `milestones-need-holistic`.
@@ -301,7 +291,7 @@ export function sameRepoCorpusSet(pin: CorpusPin, guide: Buffer): CorpusFileSet 
 }
 
 /** Whether scope pattern `s` may reach the corpus file set: it matches a pinned file, or may overlap an include pattern (R32). */
-export const scopeOverlapsCorpus = (set: CorpusFileSet, s: RepoPattern): boolean =>
+const patternOverlapsCorpus = (set: CorpusFileSet, s: RepoPattern): boolean =>
   set.files.some((f) => matchesPattern(f, s)) || set.patterns.some((p) => mayOverlap(s, p));
 
 function overlapProblems(plan: PlanM1, set: CorpusFileSet, settled: ReadonlySet<UnitId>): readonly CorpusProblem[] {
@@ -389,7 +379,7 @@ function referencesOversize(repo: AbsPath, plan: PlanM1): readonly PlanDefect[] 
 
 /** Each derived output that may reach a same-repo corpus file set. */
 const derivedOnCorpus = (plan: PlanM1, set: CorpusFileSet): readonly PlanDefect[] =>
-  [...new Set(derivedOf(plan).flatMap((d) => d.outputs))].filter((o) => scopeOverlapsCorpus(set, o)).map((output) => ({ type: 'derived-overlaps-corpus', output }));
+  [...new Set(derivedOf(plan).flatMap((d) => d.outputs))].filter((o) => patternOverlapsCorpus(set, o)).map((output) => ({ type: 'derived-overlaps-corpus', output }));
 
 /** `units` and every unit they run after, transitively. */
 function withDependencies(plan: PlanM1, units: readonly UnitId[]): readonly PlanUnit[] {

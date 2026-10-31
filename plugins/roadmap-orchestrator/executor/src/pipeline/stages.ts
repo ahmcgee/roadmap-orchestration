@@ -142,7 +142,7 @@ type KnownDefect,type PlanUnit,advancesOf,designUnitOf,knownDefectsOf,milestones
 } from '../input/plan.ts';
 import { orderingReasons } from '../park/ordering.ts';
 import { NO_PARK_FACTS,type ParkFacts,repeatNeedsUser,stageOutcomeFact } from '../park/table.ts';
-import { type CorpusFileSet,referenceFiles,sameRepoCorpusSet,scopeOverlapsCorpus, } from '../phase0/rows.ts';
+import { referenceFiles } from '../phase0/rows.ts';
 import { resolveArgv0 } from '../preflight/argv0.ts';
 import { judgmentRepairDirective } from '../prompts/directives.ts';
 import { promptFor,renderPrompt } from '../prompts/index.ts';
@@ -1183,12 +1183,6 @@ function pinnedPatch(ctx: StageContext, spec: SpecM1, patch: SpecPatch, captured
   const after = applySpecPatch(spec, patch);
   const obligations = obligationsAtRev(ctx.journal.view, ctx.runDir, captured.planRev);
   return { ...patch, pins: pinsOf(after, obligations, (path) => blobAt(ctx, captured.tip, path) as Sha | null) };
-}
-
-/** A same-repo corpus arc's corpus file set in force; null for a corpus kept in another repository. */
-function corpusSet(ctx: StageContext): CorpusFileSet | null {
-  const c = corpusInForce(ctx);
-  return sameRepoCorpusSet(c.pin.value, c.guide.bytes);
 }
 
 /**
