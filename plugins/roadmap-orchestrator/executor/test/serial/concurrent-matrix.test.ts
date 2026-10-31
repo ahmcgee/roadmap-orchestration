@@ -80,7 +80,7 @@ import { type Sampled, capturesInsideRevisions, describeRecord, holisticProduct,
 import { A, B, C, type Concurrent, type Peer, PEERS, layoutConcurrent } from '../fixtures/cm-common.ts';
 import { type ExecRun, journalOf } from '../fixtures/exec-common.ts';
 import { type Hook, type Laid, callsMatchSteps, finalReason, supervisedRun } from '../fixtures/pm-common.ts';
-import { BATCH_TRACE, LABEL_TRACE, appendTrace, assertRevisionNoticeRecovery, inRevisionAt, traceAt } from '../fixtures/pm-trace.ts';
+import { BATCH_TRACE, LABEL_TRACE, appendTrace, assertRevisionNoticeRecovery, inCommandAt, inRevisionAt, traceAt } from '../fixtures/pm-trace.ts';
 import { startCli, startLine, startedGenerations, stateOf } from '../fixtures/sup-common.ts';
 
 after(assertNoSurvivors);
@@ -782,8 +782,10 @@ async function jobCell(t: Owner, ref: JobReference, row: JobRow, c: Sampled): Pr
   }
   // The job's recovery is the label's (a log append's: the record's), the peers' the adoption of their live builds.
   const cut = ref.snap.events[c.seq - 1]!;
-  const label = c.label.startsWith('log.append.') ? appendTrace(c.label, cut, inRevisionAt(ref.snap.events, cut.seq)) : (row === 'batch' ? BATCH_TRACE[c.label] : undefined) ?? traceAt(c.label, ref.snap.events, c.seq);
+  const label = c.label.startsWith('log.append.') ? appendTrace(c.label, cut, inRevisionAt(ref.snap.events, cut.seq) || inCommandAt(ref.snap.events, cut.seq)) : (row === 'batch' ? BATCH_TRACE[c.label] : undefined) ?? traceAt(c.label, ref.snap.events, c.seq);
   if (label === undefined) throw new Error(`no recovery trace is declared for ${c.label}`);
+  const rootCommand = crash.view.openIntents().find((i) => i.kind === 'command.apply');
+  if (rootCommand !== undefined) assert.equal(end.view.doneOf(rootCommand.op)?.recoveredBy, 'reconciled', 'the open root apply reconciles its receipt and subject closure');
   const by = recoveredByOwner(end);
   const jobBy = [...by].filter(([o]) => !o.startsWith('unit:')).flatMap(([, v]) => v.map((x) => x.split(':')[1]!));
   for (const v of jobBy) assert.ok((label.recoveredBy as readonly string[]).includes(v), `the job's op recovered ${v}; ${c.label} allows ${label.recoveredBy.join('|') || 'nothing'}: ${JSON.stringify([...by])}`);

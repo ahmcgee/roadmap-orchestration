@@ -65,4 +65,3 @@ ${instanceText('after', i.after)}
 <evidence_dir>${i.evidenceDir}</evidence_dir>
 
 Walk ${i.journey.id} on the before instance and on the after instance, keep your evidence in ${i.evidenceDir}, then return your decision on proposal ${i.proposal.id}.`;
-

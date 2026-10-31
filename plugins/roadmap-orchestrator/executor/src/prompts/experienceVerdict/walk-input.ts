@@ -94,4 +94,3 @@ ${openFindingsText(i.findings)}
 <evidence_dir>${i.evidenceDir}</evidence_dir>
 
 Walk round ${i.round} of milestone ${i.milestone.id}: use the running product along every journey above, keep your evidence in ${i.evidenceDir}, then return your report.`;
-

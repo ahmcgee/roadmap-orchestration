@@ -139,18 +139,19 @@ export const BATCH_TRACE: Readonly<Record<string, Trace>> = { 'ff.act-start': R(
  * lost done leaves its op open with its act complete (reconciled), a lost usage fact leaves its spawn open
  * (reconciled), a lost intent or other fact leaves nothing open. After the fsync the record is durable: an
  * intent is its op's B2 state, anything else leaves nothing open. M3: a fact a `revision.commit` writes inside
- * its op (its plan-applied, its divergences; `inRevision`: that op was open when the record was appended) leaves
- * the revision open, lost or durable: recovery finishes it from its kept payload (reconciled).
+ * its op (its plan-applied, its divergences; `inMutation`: the revision or root command was open when the record was appended) leaves
+ * the revision open, lost or durable: recovery finishes it from its kept payload (reconciled). The same applies
+ * to facts written inside an open root command, whose receipt reconciliation completes its subject closure.
  */
-export function appendTrace(label: string, e: Event, inRevision = false): Trace {
+export function appendTrace(label: string, e: Event, inMutation = false): Trace {
   const tailDiscarded = label === 'log.append.after-partial-write';
-  const revisionFact = e.type === 'fact' && inRevision;
+  const mutationFact = e.type === 'fact' && inMutation;
   if (label === 'log.append.after-fsync') {
-    if (revisionFact) return R('reconciled');
+    if (mutationFact) return R('reconciled');
     if (e.type !== 'intent') return NONE;
     return R(...(FROM_B2[e.kind] ?? ['redone']));
   }
-  const lostOpen = e.type === 'done' || revisionFact || (e.type === 'fact' && (e.fact.kind === 'meter' || e.fact.kind === 'usage-unavailable'));
+  const lostOpen = e.type === 'done' || mutationFact || (e.type === 'fact' && (e.fact.kind === 'meter' || e.fact.kind === 'usage-unavailable'));
   return { recoveredBy: lostOpen ? ['reconciled'] : [], required: lostOpen, tailDiscarded };
 }
 
@@ -165,8 +166,20 @@ export function inRevisionAt(events: readonly Event[], seq: number): boolean {
   return open.size > 0;
 }
 
+/** A root apply remains open while its inputs and subject-closure facts are published. */
+export function inCommandAt(events: readonly Event[], seq: number): boolean {
+  const open = new Set<string>();
+  for (const e of events) {
+    if (e.seq >= seq) break;
+    if (e.type === 'intent' && e.kind === 'command.apply') open.add(e.op);
+    if ((e.type === 'done' || e.type === 'abort') && open.has(e.op)) open.delete(e.op);
+  }
+  return open.size > 0;
+}
+
 /** A notice inside a revision recovers its child raise and then reconciles its parent commit. */
 export function traceAt(label: string, events: readonly Event[], seq: number): Trace | undefined {
+  if (label === 'plan.apply.after-inputs' && inCommandAt(events, seq + 1)) return R('reconciled');
   if (label === 'needsuser.raise.before-publish' && inRevisionAt(events, seq)) return R('redone', 'reconciled');
   return LABEL_TRACE[label];
 }
