@@ -43,7 +43,7 @@ async function build(as: 'claude' | 'codex', acts: readonly Act[]): Promise<Run>
   const terminal: LaunchTerminal = as === 'claude'
     ? { ...base, session: { backend: 'claude', mode: 'fresh', id: implementerSessionId(session) } }
     : { ...base, session: { backend: 'codex', mode: 'fresh' } };
-  const argv = as === 'claude' ? ['claude', '-p', '--session-id', session] : ['codex', 'exec', '--json', '-o', outputPath, '-'];
+  const argv = as === 'claude' ? ['claude', '-p', '--session-id', session] : ['codex', 'exec', '-m', 'gpt-5.6-luna', '--json', '-o', outputPath, '-'];
   const launch = prepareLaunch({ ...launchBase(inv, { argv, deadlineMs: 5 * 60_000 }), env: { PATH: `${scenario.binDir}:${process.env['PATH']}` }, terminal });
   const started = Date.now();
   const handle = startRunner(inv.invDir, launch);
