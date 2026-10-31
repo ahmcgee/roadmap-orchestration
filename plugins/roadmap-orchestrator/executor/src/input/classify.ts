@@ -1,6 +1,6 @@
 // Classify a proposal against the plan in force. Every refused edit contributes its reason.
 // Root applies authorize weakenings with their reason; automatic revisions retain the frozen contract gate.
-import type { IntentOf,PlanChange } from '../core/events.ts';
+import type { IntentOf,PlanChange,ReentryWidening } from '../core/events.ts';
 import { PLAN_FIELDS } from '../core/events.ts';
 import {
 type JobId,type ObligationId,
@@ -356,19 +356,23 @@ function reentryRow(
   const reasons: string[] = [];
   const root = old.lineage?.root ?? re.unit;
   const envelope = lineageEnvelope(view, root);
+  let widened: ReentryWidening | null = null;
   if (envelope.length === 0) {
     reasons.push(`unit ${unit.id} re-enters ${re.unit}, whose lineage (root ${root}) was never dispatched, so it has no scope envelope`);
   } else {
     const outside = [...new Set(unit.scope.filter((p) => !withinEnvelope(p, envelope)))].sort();
-    if (outside.length > 0 && !inputs.reason?.trim()) reasons.push(`unit ${unit.id}: scope beyond the lineage envelope needs apply --reason`);
+    if (outside.length > 0) {
+      if (!inputs.reason?.trim()) reasons.push(`unit ${unit.id}: scope beyond the lineage envelope needs apply --reason`);
+      else widened = {patterns: outside, reason: inputs.reason};
+    }
 
   }
-  if (old.risk !== null && maxTier(unit.risk, old.risk) !== unit.risk && !inputs.reason?.trim()) reasons.push(`unit ${unit.id}: risk ${unit.risk} is below its lineage's floor ${old.risk}`);
+  if (old.risk !== null && maxTier(unit.risk, old.risk) !== unit.risk) reasons.push(`unit ${unit.id}: risk ${unit.risk} is below its lineage's floor ${old.risk}`);
   if (re.reset !== undefined && !(input.proposer.type === 'apply' && input.proposer.reason?.trim())) reasons.push(`unit ${unit.id}: resetting counters needs apply --reason`);
   reasons.push(...fixesReasons(input, unit));
   if (reasons.length > 0) return reasons;
   const change = { type: 'unit-reentered', unit: unit.id, reenters: re.unit, reset: re.reset !== undefined } as const;
-  return change;
+  return widened === null ? change : {...change, widened};
 }
 
 /** The re-entered unit `old`, then each unit its lineage re-entered before it, back to the root. */

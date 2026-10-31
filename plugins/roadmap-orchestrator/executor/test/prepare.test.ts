@@ -79,7 +79,7 @@ function reenteredArc(s: Setup): Arc {
   writeFileSync(d.planPath, JSON.stringify(plan));
   recordPlan(r.journal, absPath(d.runDir), readInputFiles(absPath(d.planPath), absPath(d.repo)), [
     { type: 'unit-added', unit: U2 },
-    { type: 'unit-reentered', unit: U2, reenters: U1, reset: false, ...(s.widened === undefined ? {} : { widened: { patterns: s.widened.map((x) => repoPattern(x)), ruling: rulingId('C-1') } }) },
+    { type: 'unit-reentered', unit: U2, reenters: U1, reset: false, ...(s.widened === undefined ? {} : { widened: { patterns: s.widened.map((x) => repoPattern(x)), reason: 'Reviewed the widening' } }) },
   ], { profile: 'default', config: null, arcRoles: 'm4b' });
   assert.equal(r.journal.view.unit(U1).status, 'superseded');
   r.journal.close();

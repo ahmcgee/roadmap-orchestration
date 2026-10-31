@@ -181,7 +181,7 @@ export function applyBody(d: ArcDescriptor, base: RevisionManifest | null = null
   if ('missing' in manifest) throw new Error(manifest.missing.join('; '));
   const view = readJournal(absPath(d.runDir), arcId(d.arc)).view;
   const force = requirePlanInForce(absPath(d.runDir), view);
-  return { type: 'apply', planFile: absPath(d.planPath), rev: force.rev, reason: 'Test revision reason', base: base ?? revisionInForce(absPath(d.runDir), force).manifest, manifest };
+  return { type: 'apply', planFile: absPath(d.planPath), rev: force.rev, reason: 'Test revision reason', base: base ?? (() => { const m = revisionManifestOf(inForceFiles(absPath(d.runDir), view, force, revisionInForce(absPath(d.runDir), force), absPath(d.planPath), absPath(d.repo))); if ('missing' in m) throw new Error(m.missing.join('; ')); return m; })(), manifest };
 }
 
 /** A revision that includes the edited vision. */
@@ -317,5 +317,7 @@ export function syncInputs(r: ArcRun): RevisionManifest {
   for (const file of [...f.specs.values(), f.ledger, f.obligations, f.vision]) if (file?.bytes != null) {
     mkdirSync(dirname(file.path), {recursive: true}); writeFileSync(file.path, file.bytes);
   }
-  return rev.manifest;
+  const manifest = revisionManifestOf(f);
+  if ('missing' in manifest) throw new Error(manifest.missing.join('; '));
+  return manifest;
 }

@@ -68,15 +68,9 @@ export function compareAndSwap(base: InputFiles, edited: InputFiles, current: In
     const e = bytesOf(edited.specs.get(id));
     const c = bytesOf(current.specs.get(id));
     const path = edited.specs.get(id)?.path ?? base.specs.get(id)?.path ?? current.specs.get(id)!.path;
-    let bytes = choose(path, b, e, c);
-    if (!sameBytes(b, e) && bytes !== null && c !== null) {
-      const raw = JSON.parse(bytes.toString('utf8')) as {rev: number};
-      raw.rev = (JSON.parse(c.toString('utf8')) as {rev: number}).rev + 1;
-      bytes = Buffer.from(`${JSON.stringify(raw, null, 2)}\n`);
-    }
-    selected.set(id, bytes);
+    selected.set(id, choose(path, b, e, c));
   }
-  const specs = new Map(plan.units.map((u) => [u.id, {path: specFilePath(edited.planFile, u), bytes: selected.get(u.id) ?? null}] as const));
+
   const file = (b: InputFile | null, e: InputFile | null, c: InputFile | null): InputFile | null => {
     const bytes = choose(e?.path ?? b?.path ?? c?.path ?? 'removed input', bytesOf(b), bytesOf(e), bytesOf(c));
     const at = e ?? c;
@@ -90,6 +84,16 @@ export function compareAndSwap(base: InputFiles, edited: InputFiles, current: In
     guide: file(base.corpus?.guide ?? null, edited.corpus?.guide ?? null, current.corpus?.guide ?? null)!,
     phase0: file(base.corpus?.phase0 ?? null, edited.corpus?.phase0 ?? null, current.corpus?.phase0 ?? null)!,
   };
-  if (reasons.length > 0) return { reasons };
+  if (reasons.length > 0) return { reasons: [...new Set(reasons)] };
+  const specs = new Map(plan.units.map((u) => {
+    let bytes = selected.get(u.id) ?? null;
+    const c = bytesOf(current.specs.get(u.id));
+    if (!sameBytes(bytesOf(base.specs.get(u.id)), bytesOf(edited.specs.get(u.id))) && bytes !== null && c !== null) {
+      const raw = JSON.parse(bytes.toString('utf8')) as {rev: number};
+      raw.rev = (JSON.parse(c.toString('utf8')) as {rev: number}).rev + 1;
+      bytes = Buffer.from(`${JSON.stringify(raw, null, 2)}\n`);
+    }
+    return [u.id, {path: specFilePath(edited.planFile, u), bytes}] as const;
+  }));
   return { next: { ...edited, plan, planBytes, specs, ledger, obligations, vision, corpus } };
 }

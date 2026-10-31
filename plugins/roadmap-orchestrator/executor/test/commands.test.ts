@@ -350,7 +350,8 @@ describe('resume.per-class: resume <unit> of a parked unit follows its park\'s c
     assert.deepEqual(journal.view.unit(UNIT).park?.park, { class: 'operator', kind: 'env' });
     const { cmd, receipt } = await resumeU1(ctx);
     assert.ok(receipt?.state === 'applied', JSON.stringify(receipt));
-    assert.deepEqual(receipt.verified.slice(-1), ['unit u1 re-entered at lanes']);
+    assert.ok(receipt.verified.includes('unit u1 re-entered at lanes'));
+    assert.ok(receipt.verified.includes(`needs-user ${item} acknowledged in the log`));
     const u = journal.view.unit(UNIT);
     assert.deepEqual([u.status, u.stage, u.park], ['active', 'lanes', null]);
     assert.equal(unitFacts(ctx, 'unparked').length, 1);

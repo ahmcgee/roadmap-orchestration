@@ -1,14 +1,17 @@
+import { refTarget, revParse } from '../git/git.ts';
+import { maxTier } from '../core/state.ts';
+import { worktreeCreateOp } from '../recover/ops.ts';
 // Steer any unfinished unit. The scheduler drains a running invocation before this fresh steer round.
 import { existsSync,readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { CommandId,UnitId } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
 import type { CommandBody } from '../core/records.ts';
-import { absPath } from '../core/values.ts';
+import { absPath, branchRef } from '../core/values.ts';
 import { capturedEvidence } from '../git/evidence.ts';
 import { inForceFiles,keepInput,planRouting,requirePlanInForce,revisionInForce,specBytesOf,specShaInForce } from '../input/inforce.ts';
 import { parsePlan } from '../input/plan.ts';
-import { firstPin,runOp,unitWorktree } from '../pipeline/dispatch.ts';
+import { firstPin,runOp,unitWorktree,unitBranch } from '../pipeline/dispatch.ts';
 import { dirtySnapshot } from '../pipeline/lanes.ts';
 import { BRIEF_INPUT } from '../pipeline/rounds.ts';
 import { backendsOf,smokeBackends,smokeRejections } from '../preflight/smoke.ts';
@@ -32,10 +35,19 @@ export async function steer(ctx: CommandContext, id: CommandId, body: SteerBody)
   const brief = readFileSync(body.brief.path);
   if (bytesSha256(brief) !== body.brief.sha256) return { kind: 'rejected', reason: `the brief ${body.brief.path} changed since the command hashed it` };
 
+  if (u.lineage !== null) {
+    const worktree = unitWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id);
+    if (!existsSync(worktree)) {
+      const from = refTarget(ctx.repo, unitBranch(ctx.plan().arc, u.lineage.reenters)) ?? revParse(ctx.repo, branchRef(ctx.plan().integrationBranch));
+      await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${unit.id}:unit`, parentOf(id), {
+        path: worktree, checkout: {type: 'branch', branch: unitBranch(ctx.plan().arc, unit.id), at: from, createBranch: true},
+      });
+    }
+  }
   if (view.dispatchOf(unit.id) === null) {
     const sha256 = specShaInForce(view, unit.id);
     const spec = parseSpec(specBytesOf(ctx.runDir, sha256), absPath(join(ctx.planDir, unit.spec)));
-    const record = firstPin({ plan: ctx.plan, routing: (id) => ctx.routing(id).resolved }, unit, { rev: spec.rev, sha256 }, unit.risk);
+    const record = firstPin({ plan: ctx.plan, routing: (id) => ctx.routing(id).resolved }, unit, { rev: spec.rev, sha256 }, maxTier(unit.risk, u.risk));
     ctx.journal.fact({ kind: 'dispatch', record });
   }
   const verified: string[] = [];
@@ -100,6 +112,7 @@ async function routeClass(ctx: CommandContext, id: CommandId, unit: UnitId, cls:
     for (const b of need) before.add(b);
   }
   const committed = await commitUnderFence(ctx, evaluated, { type: 'apply' }, { type: 'command', command: id }, parentOf(id));
+  if (committed.kind === 'rejected' && committed.reasons.some((r) => r.startsWith('stale:'))) return routeClass(ctx, id, unit, cls);
   if (committed.kind === 'rejected') return { kind: 'rejected', reason: rejectedText(committed.reasons) };
   return {
     kind: 'applied',

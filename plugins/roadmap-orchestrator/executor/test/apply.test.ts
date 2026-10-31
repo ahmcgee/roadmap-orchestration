@@ -849,7 +849,7 @@ const M4A_ROWS: readonly Row[] = [
     },
     expect: () => [
       { type: 'unit-added', unit: unitId('u4') },
-      { type: 'unit-reentered', unit: unitId('u4'), reenters: U1, reset: false },
+      { type: 'unit-reentered', unit: unitId('u4'), reenters: U1, reset: false, widened: {patterns: ['docs/**'], reason: 'Reviewed revision'} },
     ] as unknown as readonly PlanChange[],
   },
   {

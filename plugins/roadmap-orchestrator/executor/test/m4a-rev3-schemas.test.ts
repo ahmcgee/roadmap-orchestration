@@ -220,8 +220,8 @@ describe('m4a-rev3 facts and outcomes', () => {
       routingProvenance: { profile: 'default', repoConfig: { seats: null, classes: null }, planLayer: null, unitLayers: {} },
     });
     roundTrip(applied([{ type: 'unit-priority', unit: 'u1' }, { type: 'known-defects' }, { type: 'plan-check-shape' }]));
-    roundTrip(applied([{ type: 'unit-reentered', unit: 'u2', reenters: 'u1', reset: false, widened: { patterns: ['src/b/**', 'test/b/**'], ruling: 'C-4' } }]));
-    refuses(applied([{ type: 'unit-reentered', unit: 'u2', reenters: 'u1', reset: false, widened: { patterns: [], ruling: 'C-4' } }]), /patterns$/);
+    roundTrip(applied([{ type: 'unit-reentered', unit: 'u2', reenters: 'u1', reset: false, widened: { patterns: ['src/b/**', 'test/b/**'], reason: 'Reviewed the widening' } }]));
+    refuses(applied([{ type: 'unit-reentered', unit: 'u2', reenters: 'u1', reset: false, widened: { patterns: [], reason: 'Reviewed the widening' } }]), /patterns$/);
   });
 
   it('a dispatch record\'s bounds carry the smoke bounds; a dev.6 record\'s, without them, read as written', () => {

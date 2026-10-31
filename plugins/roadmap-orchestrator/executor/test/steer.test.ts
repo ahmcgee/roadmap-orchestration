@@ -1,3 +1,6 @@
+import { git } from './helpers/repo.ts';
+import { syncInputs } from './fixtures/unit-common.ts';
+import { unitId } from '../src/core/ids.ts';
 // `roadmap steer` (src/commands/steer.ts) and its steer pass (src/pipeline/{unit,rounds,transitions}.ts), integrated and
 // fake-backed over a unit-common arc: a unit parked by two gate escalations is steered through the command path; its
 // steer round is a fresh, uncharged implementer session on the brief with the budget as its window; the pass exits by
@@ -450,5 +453,28 @@ test('note delivery: records a fact without reopening, and the next build receiv
     assert.equal(outcomes(d).at(-1), 'build:success');
     assert.ok(readCalls(d.scenarioPath).at(-1)!.stdin.includes(text));
     assert.notEqual(readCalls(d.scenarioPath).at(-1)!.step, null);
+  } finally {r.journal.close();}
+});
+
+
+test('steer.unprepared-reentry: a new successor keeps its predecessor branch before its first build', T, async () => {
+  const d = setupArc({steps: TO_PARK});
+  const r = contextFor(d);
+  try {
+    await parkU1(r);
+    const f = followingContext(r);
+    syncInputs(r);
+    const before = git(d.repo, 'rev-parse', `roadmap/${d.arc}/u1`);
+    const raw = JSON.parse(readFileSync(d.planPath, 'utf8')) as {units: Record<string, unknown>[]};
+    const spec = JSON.parse(readFileSync(join(d.planPath, '..', 'u1.json'), 'utf8'));
+    writeFileSync(join(d.planPath, '..', 'u2.json'), JSON.stringify({...spec, unit: 'u2', rev: 1}));
+    raw.units.push({...raw.units[0], id: 'u2', spec: 'u2.json', reenters: {unit: 'u1', fixes: 'u1/gate#2'}});
+    writeFileSync(d.planPath, JSON.stringify(raw));
+    assert.equal((await command(r, applyBody(d), f)).outcome.kind, 'applied');
+    const body = {...steerBody(), unit: unitId('u2')};
+    const out = await command(r, body, f);
+    assert.equal(out.outcome.kind, 'applied', JSON.stringify(out));
+    assert.equal(git(d.repo, 'rev-parse', `roadmap/${d.arc}/u2`), before);
+    assert.equal(r.journal.view.unit(unitId('u2')).entry?.kind, 'steer');
   } finally {r.journal.close();}
 });

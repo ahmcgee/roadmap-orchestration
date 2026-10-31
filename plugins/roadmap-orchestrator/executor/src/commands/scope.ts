@@ -99,6 +99,7 @@ async function landGrowth(
   const rows = p0.rows;
   if (rows.length > 0) return { kind: 'rejected', reason: rejectedText(rows.map((r) => canonicalJson(r))) };
   const committed = await commitUnderFence(ctx, evaluated, proposer, { type: 'command', command: id }, parentOf(id));
+  if (committed.kind === 'rejected' && committed.reasons.some((r) => r.startsWith('stale:'))) return landGrowth(ctx, id, unit, attempt, proposals, reason);
   if (committed.kind === 'rejected') return { kind: 'rejected', reason: rejectedText(committed.reasons) };
   return {
     kind: 'applied',

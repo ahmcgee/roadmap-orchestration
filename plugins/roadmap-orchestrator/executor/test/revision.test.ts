@@ -1,3 +1,4 @@
+import { readNeedsUser } from '../src/needsuser.ts';
 // M3 step A2: the revisioned-input core (src/commands/apply.ts `evaluateRevision`, `commitUnderFence`;
 // src/input/{classify,inforce}.ts; src/recover/revision.ts; src/core/fence.ts; src/commands/reverse.ts), over real
 // arcs (real git, real journals). The docs publication is step A4's: a stand-in (test/fixtures/docs-fake.ts) writes
@@ -971,7 +972,7 @@ describe(`matrix row ${REVERSE}`, () => {
         await recover({ stage: r.ctx, commands: ctxOf(r) });
 
         assert.deepEqual(r.journal.view.openIntents(), [], 'no open intents');
-        assert.deepEqual(r.journal.view.opsOf('needsuser.raise'), [], 'no needs-user');
+        assert.deepEqual(r.journal.view.opsOf('needsuser.raise').map((i) => {const n = readNeedsUser(r.ctx.runDir, i.expect.id)!; return [n.reason, n.blocking];}), [['revision-notice', false]], 'only the original bundle notice');
         const facts = applied(r);
         assert.deepEqual(facts.map((f) => [f.rev, f.command]), [[1, null], [2, null], [3, id]], 'one compensating plan-applied, naming the command');
         assert.deepEqual(facts[2]!.changes, [{ type: 'unit-removed', unit: 'u2' }]);

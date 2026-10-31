@@ -1384,7 +1384,7 @@ export type PlanChange =
  * M4a rev 3 (F5): a re-entry leaving its lineage's scope envelope, accepted on an active ruling applying to the new unit
  * whose statement names exactly the added patterns (ascending, non-empty).
  */
-export type ReentryWidening = Readonly<{ patterns: readonly RepoPattern[]; ruling: RulingId }>;
+export type ReentryWidening = Readonly<{ patterns: readonly RepoPattern[]; reason: string }>;
 
 /**
  * `restored` (M3 step A2): an exempt obligation active again; `edited`: its serves, contracts, deliveredBy changed, or
@@ -1975,7 +1975,7 @@ const planChange: Read<PlanChange> = tagged('type', {
     const out = { type: f.get('type', literal('unit-reentered')), unit: f.get('unit', unitR), reenters: f.get('reenters', unitR), reset: f.get('reset', bool) };
     if (out.reenters === out.unit) throw new SchemaError(`${f.path}.reenters`, 'a unit other than the re-entering one', out.reenters);
     const widened = f.optional('widened', object((g): ReentryWidening => ({
-      patterns: g.get('patterns', sortedBy((v, p) => repoPattern(v, p), (x) => x, { nonEmpty: true })), ruling: g.get('ruling', (v, p): RulingId => rulingId(v, p)),
+      patterns: g.get('patterns', sortedBy((v, p) => repoPattern(v, p), (x) => x, { nonEmpty: true })), reason: g.get('reason', str),
     })));
     return widened === undefined ? out : { ...out, widened };
   }),
