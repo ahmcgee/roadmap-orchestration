@@ -186,7 +186,7 @@ export function setup(dir: string): void {
     },
     resources: [resourceDecl(l.resource)],
     // `page-id` builds on `slug` (it imports slugify): an explicit edge, since an M2 arc schedules a DAG.
-    units: UNITS.map((id) => ({ id, spec: `${id}.json`, risk: 'med', systems: [systemName('app')], resources: [RESOURCE], ...(id === 'page-id' ? { after: ['slug'] } : {}) })),
+    units: UNITS.map((id) => ({ id, spec: `${id}.json`, review: 'always', risk: 'med', systems: [systemName('app')], resources: [RESOURCE], ...(id === 'page-id' ? { after: ['slug'] } : {}) })),
   }));
 }
 

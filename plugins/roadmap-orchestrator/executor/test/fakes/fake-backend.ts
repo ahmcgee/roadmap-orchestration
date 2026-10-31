@@ -352,7 +352,8 @@ function perform(act: Act, call: Call, step: Step, index: number, scenarioDir: s
       claudeAdvisedResult(call, session(), act.value);
       return;
     case 'planCheck': {
-      const value = planCheckValue(call, act.value, scenarioDir);
+      const old = act.value as Record<string, JsonValue>;
+      const value = call.stdin.includes('<mode>pre-build</mode>') ? {decision: 'approve', ordering: null, findings: [], directives: [], reasons: old['reasons'] ?? ['Reviewed'], premises: old['premises'] ?? [], standing: [], clusters: null, rulings: []} : planCheckValue(call, act.value, scenarioDir);
       claudeResult(session(), { result: JSON.stringify(value), structured_output: value });
       return;
     }

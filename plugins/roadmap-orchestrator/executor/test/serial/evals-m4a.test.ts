@@ -37,7 +37,7 @@ import { fakeArc,fakeHostDir } from '../../evals/m4a/fake-root.ts';
 import { FILES,FITS_WITNESS,LANES,READOUTS,REPLAY_LANE,SHARD,SLOW_LANE,SUITE_LANE,corpusFor,rawCorpus,unitsOf } from '../../evals/m4a/golden.ts';
 import { type ArcView,defectVerdicts,matches,readKey,spanPresent } from '../../evals/m4a/key.ts';
 import { PLANT,SEED_SUITE_ARGV,layout } from '../../evals/m4a/layout.ts';
-import { DRIFT_CHECKPOINT,FLOW_1,FLOW_2 } from '../../evals/m4a/scenario.ts';
+import { FLOW_1, FLOW_2 } from '../../evals/m4a/scenario.ts';
 import { CLOCK_FILE,FAKE_TICK_MS,PAID_TICK } from '../../evals/m4a/setup.ts';
 import { ANSWER_KEY,needles,toolTraffic } from '../../evals/m4a/transcript.ts';
 import { type ArcRef,amendmentsOf } from '../../src/chain.ts';
@@ -349,12 +349,12 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
   });
 
   test('evals-m4a.amendments-debt: arc 1 banks a gate note and a deferred finding and derives two amendments; arc 2 dispositions all four', () => {
-    assert.deepEqual(factsOf(arc1, 'corpus-amendment').map((a) => a.source.type), ['checkpoint', 'checkpoint']);
+    assert.deepEqual(factsOf(arc1, 'corpus-amendment'), [], 'campaign audits leave corpus amendments to the root');
     assert.deepEqual(factsOf(arc1, 'debt-banked').map((d) => d.bankReason).sort(), ['finding-deferred', 'gate-note']);
     const { one, two } = chainOf(absPath(layout(story.dir).product));
     const p0 = arcView(two!).phase0;
     assert.deepEqual(p0.amendments.map((a) => a.id), amendmentsOf(one!).map((a) => a.id));
-    assert.deepEqual(p0.amendments.map((a) => a.disposition.type).sort(), ['applied', 'deferred']);
+    assert.deepEqual(p0.amendments, []);
     assert.deepEqual(p0.debt.map((d) => d.disposition.type).sort(), ['keep', 'promote']);
     const head = (r: ArcRef) => spawnSync('git', ['-C', layout(story.dir).product, 'show', `${r.view.holistic().completion!.head}:.roadmap/debt.md`], { encoding: 'utf8' }).stdout;
     const ledger = parseDebtBlock(head(two!));
@@ -551,12 +551,9 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
   });
 
   test('evals-m4a.opportunity: arc 2\'s checkpoint admits fits as the opportunity O-1 with its witness (V-7 joins advances) and converts the over-budget day view into an amendment, which arc 3 applies as T-25', () => {
-    const bundle = factsOf(arc2, 'plan-applied').find((p) => p.source?.type === 'bundle');
-    assert.ok(bundle !== undefined && bundle.source?.type === 'bundle');
-    assert.deepEqual(bundle.source.admits, [{ index: 0, unit: 'fits', class: { type: 'opportunity', id: 'O-1', clauses: ['V-7'] } }]);
-    assert.deepEqual(bundle.source.conversions, [{ index: 1, unit: 'dayview', reason: 'over-budget', opportunity: null }]);
-    const [amendment] = factsOf(arc2, 'corpus-amendment');
-    assert.deepEqual(amendment?.source, { type: 'admit', job: 'ckpt-1', index: 1, reason: 'over-budget' });
+    const authored = factsOf(arc2, 'plan-applied').find((p) => p.changes.some((c) => c.type === 'unit-added' && c.unit === 'fits'));
+    assert.ok(authored?.source.type === 'command', 'the root authors the additional unit through apply');
+    assert.deepEqual(factsOf(arc2, 'corpus-amendment'), []);
     assert.deepEqual(named(outcomesOf(arc2, 'fits')).filter((o) => o.startsWith('ff:')), ['ff:published'], 'fits merged');
     assert.deepEqual(named(outcomesOf(arc2, 'dayview')), [], 'the converted unit never ran');
     const two = chainOf(absPath(layout(story.dir).product)).two!;
@@ -573,11 +570,11 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     assert.deepEqual(obligations.census?.find((e) => e.rule === FITS_WITNESS.child.rule)?.state, { type: 'obligation', id: FITS_WITNESS.child.id });
     assert.ok(factsOf(arc2, 'obligation-latched').some((f) => f.obligation === FITS_WITNESS.child.id), 'fits\' publication latched its witness');
     // The bundle's drift audit and its checkpoint ran before notice was admitted (the root agent waited on them).
-    const drift = factsOf(arc2, 'checkpoint-inputs').find((f) => f.job === DRIFT_CHECKPOINT)!;
-    assert.ok(factsOf(arc2, 'dispatch').filter((d) => d.record.unit === 'notice').every((d) => d.seq > drift.seq));
-    const arc3 = JSON.parse(readFileSync(join(layout(story.dir).inputs, fakeArc(story.dir, 3), 'phase0.json'), 'utf8')) as { amendments: { id: string; disposition: unknown }[] };
-    assert.equal(amendmentsOf(two).length, 1);
-    assert.deepEqual(arc3.amendments, amendmentsOf(two).map((a) => ({ id: a.id, disposition: { type: 'applied', rules: ['T-25'] } })), 'arc 2\'s one amendment, the converted admit');
+    const audited = factsOf(arc2, 'audit-ended').find((f) => f.job === 'audit-1')!;
+    assert.ok(factsOf(arc2, 'dispatch').filter((d) => d.record.unit === 'notice').every((d) => d.seq > audited.seq));
+    const arc3 = JSON.parse(readFileSync(join(layout(story.dir).inputs, fakeArc(story.dir, 3), 'phase0.json'), 'utf8')) as {amendments: unknown[]};
+    assert.deepEqual(amendmentsOf(two), []);
+    assert.deepEqual(arc3.amendments, []);
   });
 
   test('evals-m4a.lane-reuse-after-pause: the root agent pauses notice in its hung slow lane and resumes it; the resumed attempt reuses the unit lane\'s pass and logs one intervention', () => {

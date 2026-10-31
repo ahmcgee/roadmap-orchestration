@@ -155,8 +155,7 @@ test('apply.exec-revision-in-flight: rev + 1 of a held unit\'s spec (paused mid-
   const id = await apply(r);
   await until(() => receiptOf(r, id) !== null, WAIT_MS, 'the apply to land while u1 is held');
   assert.equal(receiptOf(r, id)?.state, 'applied');
-  // dev.17 (the design pass): the first approve landed its design record as rev 2 in force, so the owner's edit rebases on it: rev 3.
-  assert.equal(journalOf(r).view.unit(U1).pendingRevision?.rev, 3, 'held pending: a continued build does not re-enter');
+  assert.equal(journalOf(r).view.unit(U1).pendingRevision?.rev, 2, 'held pending: a continued build does not re-enter');
   await cli(r, ['resume', 'u1']);
   const exit = await run.exit;
   assert.equal(exit.code, 0, exit.stderr);
@@ -165,13 +164,13 @@ test('apply.exec-revision-in-flight: rev + 1 of a held unit\'s spec (paused mid-
   // The continued build's chain (quiesce → teardown) ran on rev 1; the unit re-entered before its lanes.
   assert.deepEqual(outcomes(r), ['plan-check:approve', 'build:interrupted', ...STRAIGHT.slice(1, 6), ...STRAIGHT]);
   const applied = seqOf(r, (f) => f.kind === 'plan-applied' && f.command === id);
-  const reopened = seqOf(r, (f) => f.kind === 'reopened' && f.command === id && f.specRev === 3);
+  const reopened = seqOf(r, (f) => f.kind === 'reopened' && f.command === id && f.specRev === 2);
   assert.ok(outcomeSeq(r, 'u1', 'build') < applied && applied < outcomeSeq(r, 'u1', 'build', 2), 'applied while the unit was held');
   assert.ok(outcomeSeq(r, 'u1', 'teardown') < reopened && reopened < outcomeSeq(r, 'u1', 'plan-check', 2), 're-opened at the boundary before lanes');
   const { view } = journalOf(r);
-  assert.equal(view.unit(U1).approval?.fingerprint.specRev, 4, 'approved on the revision, its design record landed as rev 4');
+  assert.equal(view.unit(U1).approval?.fingerprint.specRev, 2, 'approved on the root-authored revision');
   // The only spec patches are the two approves' design records: none of the build's decisions while the revision was pending.
-  assert.deepEqual(view.opsOf('spec.patch').map((p) => [p.parent.type === 'stage' ? p.parent.stage : null, p.expect.patch.ops.map((o) => o.op)]), [['plan-check', ['design']], ['plan-check', ['design']]],
+  assert.deepEqual(view.opsOf('spec.patch').map((p) => [p.parent.type === 'stage' ? p.parent.stage : null, p.expect.patch.ops.map((o) => o.op)]), [],
     'no executor patch of a spec whose revision is pending');
   assert.ok(readCalls(r.scenarioPath).every((c) => c.step !== null), 'the build after the re-entry resumed the session, told the spec was amended');
 });
@@ -219,11 +218,10 @@ test('apply.exec-queued-at-boundary: rev + 1 of a unit\'s spec applied while its
   assert.ok(receipt.verified.some((l) => /^queued behind the stage boundary of u1 \(seq \d+\); applied there$/.test(l)), JSON.stringify(receipt.verified));
   assert.deepEqual(kills(r), [], 'the running build was not interrupted');
   const applied = seqOf(r, (f) => f.kind === 'plan-applied' && f.command === id);
-  // dev.17 (the design pass): the first approve landed its design record as rev 2 in force, so the owner's edit rebases on it: rev 3.
-  const reopened = seqOf(r, (f) => f.kind === 'reopened' && f.command === id && f.specRev === 3);
+  const reopened = seqOf(r, (f) => f.kind === 'reopened' && f.command === id && f.specRev === 2);
   assert.ok(outcomeSeq(r, 'u1', 'build') < applied, 'applied after the build recorded its outcome');
   assert.ok(applied < reopened && reopened < outcomeSeq(r, 'u1', 'plan-check', 2), 're-opened at plan-check on the revision');
-  assert.equal(journalOf(r).view.unit(U1).approval?.fingerprint.specRev, 4, 'approved on the revision, its design record landed as rev 4');
+  assert.equal(journalOf(r).view.unit(U1).approval?.fingerprint.specRev, 2, 'approved on the root-authored revision');
   assert.deepEqual((await statusOf(r)).needsUser.filter((n) => n.reason === 'apply-dropped'), []);
   assert.ok(readCalls(r.scenarioPath).every((c) => c.step !== null));
 });
@@ -252,8 +250,7 @@ test('apply.exec-queued-dropped: a spec edit queued behind a running gate that a
   assert.ok(receipt?.state === 'rejected', JSON.stringify(receipt));
   assert.match(receipt.reason, /unit u1 is (approved and publishing|merged); its spec is fixed/);
   assert.deepEqual(factsOf(r, 'plan-applied').map((f) => f.command), [null], 'nothing of the edit is in force');
-  // dev.17 (the design pass): rev 2 is the plan-check approve's design record, the spec the unit was approved on.
-  assert.equal(journalOf(r).view.unit(U1).approval?.fingerprint.specRev, 2);
+  assert.equal(journalOf(r).view.unit(U1).approval?.fingerprint.specRev, 1);
   const dropped = (await statusOf(r)).needsUser.filter((n) => n.reason === 'apply-dropped');
   assert.equal(dropped.length, 1, 'one item, raised once');
   assert.equal(dropped[0]!.blocking, false);
@@ -301,39 +298,34 @@ for (const cell of crashCells(QUEUED_APPLY)) {
       assert.equal(receipt?.state, 'rejected', JSON.stringify(receipt));
       assert.equal(items.length, 1, 'the one apply-dropped item');
       assert.deepEqual(factsOf(r, 'plan-applied').map((f) => f.command), [null]);
-      // dev.17 (the design pass): rev 2 is the plan-check approve's design record, the spec the unit was approved on.
-      assert.equal(journalOf(r).view.unit(U1).approval?.fingerprint.specRev, 2);
+          assert.equal(journalOf(r).view.unit(U1).approval?.fingerprint.specRev, 1);
     } else {
       assert.equal(receipt?.state, 'applied', JSON.stringify(receipt));
       assert.deepEqual(items, []);
       assert.deepEqual(factsOf(r, 'plan-applied').map((f) => f.command), [null, id], 'the revision recorded once');
-      // dev.17 (the design pass): the edit rebases on the first approve's design record (rev 2) as rev 3, and the second
-      // approve lands its own as rev 4.
-      assert.equal(journalOf(r).view.unit(U1).approval?.fingerprint.specRev, 4, 'approved on the revision, its design record landed as rev 4');
+          // approve lands its own as rev 4.
+      assert.equal(journalOf(r).view.unit(U1).approval?.fingerprint.specRev, 2, 'approved on the root-authored revision');
     }
     assert.deepEqual(journalOf(r).view.openIntents(), []);
   });
 }
 
 test('apply.exec-routing-parks: a routing apply that moves the building unit\'s implementer seat parks it routing-changed at its next dispatch', T, async (t) => {
-  const r = setupExec(t, { steps: [...SMOKE_DEFAULT, planCheckStep({ decision: 'approve' }), blockedBuild('build1')] });
+  const r = setupExec(t, {steps: [...SMOKE_DEFAULT, planCheckStep({decision: 'approve'}), blockedBuild('build1'), gateStep({decision: 'approve'})]});
   const run = startExec(r);
   await reached(r.scenarioDir, 'build1', WAIT_MS);
   await exportForEdit(r);
-  editPlan(r, (p) => void (p['routing'] = { build: { med: 'frontier' } }));
+  editPlan(r, (p) => void (p['routing'] = {build: {med: 'frontier'}}));
   const id = await apply(r);
   release(r.scenarioDir, 'build1');
-  await until(() => journalOf(r).view.unit(U1).status === 'park-pending', WAIT_MS, 'u1 to park');
-  assert.equal(receiptOf(r, id)?.state, 'applied');
-  const u = journalOf(r).view.unit(U1);
-  assert.deepEqual([u.decided?.stage, u.decided?.outcome], ['gate', 'routing-changed']);
-  assert.deepEqual(outcomes(r).slice(0, 7), STRAIGHT.slice(0, 7), 'the build\'s chain and lanes ran; the gate dispatch parked');
-  await until(async () => (await statusOf(r)).needsUser.some((n) => n.reason === 'routing-changed'), WAIT_MS, 'the routing-changed needs-user');
-  assert.deepEqual(kills(r), []);
-  await cli(r, ['stop']);
   const exit = await run.exit;
   assert.equal(exit.code, 0, exit.stderr);
-  assert.equal(reasonOf(exit).kind, 'stop');
+  assert.equal(receiptOf(r, id)?.state, 'applied');
+  assert.equal(journalOf(r).view.unit(U1).status, 'retired');
+  assert.deepEqual(outcomes(r), STRAIGHT, 'the routing revision continues through the independent gate');
+  assert.deepEqual((await statusOf(r)).needsUser.filter((n) => n.reason === 'routing-changed'), []);
+  assert.deepEqual(kills(r), []);
+  assert.equal(reasonOf(exit).kind, 'complete');
 });
 
 test('apply.exec-resume-at-boundary: a pause and a resume of an idle unit (u2, after u1) apply while another unit builds: their scope is u2 alone (A12), not a boundary of u1', T, async (t) => {

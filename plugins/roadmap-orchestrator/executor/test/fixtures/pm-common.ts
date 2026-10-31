@@ -143,7 +143,7 @@ export const BUMPY: Scenario = {
   arc: () => ({ units: [{ id: 'u1' }, { id: 'u2', lanes: [TWO_LANE], after: ['u1'] }], suite: [{ ...SUITE_LANE, cadence: 'candidate' }] }),
   steps: (r) => [
     planCheckStep({decision: 'approve'}),
-    codexStep([{ type: 'dirty', files: { ...MUL, 'src/mul.js': MUL_WRONG } }], { argv: ['exec', '-C'] }),
+    codexStep([{type: 'writeToPrompt', pattern: workDirPattern(r), file: 'decisions.json', text: JSON.stringify({decisions: [DECISION]})}, { type: 'dirty', files: { ...MUL, 'src/mul.js': MUL_WRONG } }], { argv: ['exec', '-C'] }),
     codexStep([
       { type: 'readFromPrompt', pattern: laneOutput(r, 'u1', 'mul'), file: 'stdout', contains: 'MUL-MARKER' },
       { type: 'commit', message: 'fix mul', files: { 'src/mul.js': MUL['src/mul.js'] } },

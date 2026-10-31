@@ -91,7 +91,7 @@ const SMOKE_OK: JsonValue = { ok: true };
 const judgment = (role: 'planCheck' | 'gate'): Expect => (role === 'gate'
   ? { argv: ['-p', '--tools', 'Read,Grep,Glob,Bash,Write,Edit,Agent', '--permission-mode', 'bypassPermissions', '--session-id'], argvLacks: ['--resume', '--mcp-config', '--no-session-persistence'] }
   : {
-    argv: ['-p', '--tools', 'Read,Grep,Glob,Bash,Write,Edit,Agent,WebSearch,WebFetch', '--permission-mode', 'bypassPermissions', '--session-id'],
+    argv: ['-p', '--tools', 'Read,Grep,Glob,Bash,Write,Edit,Agent', '--permission-mode', 'bypassPermissions', '--session-id'],
     argvLacks: ['--resume', '--mcp-config', '--no-session-persistence'],
   });
 
@@ -109,13 +109,15 @@ function buildExpect(profile: ProfileName, round: 'fresh' | 'resume'): Expect {
 
 /** The fake backend steps that play `scenario` under `profile`. */
 export function fakeSteps(scenario: M1Scenario, profile: ProfileName): readonly Step[] {
+  let highRisk = false;
   const steps = scenario.steps.map((s): Step => {
+    if (s.role === 'planCheck') highRisk = (s.answer as Record<string, JsonValue>)['risk'] === 'high';
     const stdin: Expect = s.stdinContains === undefined ? {} : { stdinContains: s.stdinContains };
     // dev.17: a plan-check answer carries the design payload keys (`planCheck` act: an approve's design record defaulted).
-    if (s.role !== 'build') return { as: 'claude', expect: { ...judgment(s.role), ...stdin }, acts: [{ type: s.role === 'planCheck' ? 'planCheck' : 'emit', value: { ordering: null, ...s.answer as Record<string, JsonValue> } }] };
+    if (s.role !== 'build') return { ...(s.role === 'planCheck' ? {review: true as const} : {}), as: 'claude', expect: { ...judgment(s.role), ...stdin }, acts: [{ type: s.role === 'planCheck' ? 'planCheck' : 'emit', value: { ordering: null, ...s.answer as Record<string, JsonValue> } }] };
     const acts = [...s.acts, { type: 'emit', value: BUILD_REPORT } as const];
-    const expect = { ...buildExpect(profile, s.round), ...stdin };
-    return profile === 'default' ? { as: 'codex', expect, acts } : { as: 'claude', expect, acts };
+    const expect = {...buildExpect(highRisk ? 'claude-only' : profile, s.round), ...stdin};
+    return profile === 'default' && !highRisk ? { as: 'codex', expect, acts } : { as: 'claude', expect, acts };
   });
   return [...smokeSteps(profile), ...steps];
 }

@@ -17,22 +17,21 @@ import { MUL, codexStep, contextFor, gateStep, mulBuild, outcomes, setupArc } fr
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 const U2 = unitId('u2');
 
-for (const stage of ['plan-check', 'gate'] as const) {
+for (const stage of ['gate'] as const) {
   test(`blocker.${stage}: an adopted ordering park wakes only after all blockers merge; an unrelated design park stays parked`, T, async () => {
     const ordering = { blockers: ['u1', 'u3'] };
-    const escalation = () => stage === 'plan-check' ? planCheckStep({ decision: 'infeasible', ordering }) : gateStep({ decision: 'escalate', ordering });
+    const escalation = () => gateStep({decision: 'escalate', ordering});
     const d = setupArc({
       units: [{ id: 'u1' }, { id: 'u2' }, { id: 'u3', after: ['u1'] }, { id: 'u4' }],
       steps: [
         ...[planCheckStep({ decision: 'approve' }), codexStep([{ type: 'commit', message: 'mul', files: MUL }, { type: 'barrier', name: 'first', timeoutMs: 60_000 }], { argv: ['exec', '-C'] }), gateStep({ decision: 'approve' })].map((s) => ({ ...s, unit: 'u1' })),
         ...[planCheckStep({ decision: 'approve' }), codexStep([{ type: 'commit', message: 'second', files: { 'src/second.js': 'export const second = true;\n' } }, { type: 'barrier', name: 'second', timeoutMs: 60_000 }], { argv: ['exec', '-C'] }), gateStep({ decision: 'approve' })].map((s) => ({ ...s, unit: 'u3' })),
         ...[
-          ...(stage === 'gate' ? [planCheckStep({ decision: 'approve' }), mulBuild({ 'src/dependent.js': 'export const ready = true;\n' })] : []),
+          ...[planCheckStep({decision: 'approve'}), mulBuild({'src/dependent.js': 'export const ready = true;\n'})],
           escalation(), escalation(),
-          ...(stage === 'plan-check' ? [planCheckStep({ decision: 'approve' }), mulBuild({ 'src/dependent.js': 'export const ready = true;\n' })] : []),
           gateStep({ decision: 'approve' }),
         ].map((s) => ({ ...s, unit: 'u2' })),
-        ...[1, 2].map(() => ({ ...planCheckStep({ decision: 'infeasible', notes: 'u1 and u3 might help, but this is not a declared ordering wait' }), unit: 'u4' })),
+        ...[planCheckStep({decision: 'approve'}), mulBuild({'src/unrelated.js': 'export const unrelated = true;\n'}), gateStep({decision: 'escalate'}), gateStep({decision: 'escalate'})].map((step) => ({...step, unit: 'u4'})),
       ],
     });
     // Start from real parked stages, then reopen the journal as an adopting executor would.

@@ -38,7 +38,7 @@ import { join } from 'node:path';
 import type { JsonValue } from '../../src/core/json.ts';
 import { validateFlowOutput } from '../../src/prompts/schemas.ts';
 import type { ProfileName } from '../../src/routing/types.ts';
-import { admitSpecWire,checkpointAnswer,checkpointStep,lensStep,noteLensStep,packReviewStep,packTargetOf } from '../../test/helpers/holistic.ts';
+import { admitSpecWire, checkpointAnswer, lensStep, packReviewStep, packTargetOf } from '../../test/helpers/holistic.ts';
 import type { Step } from '../../test/helpers/scenario.ts';
 import { type M1Step,fakeSteps } from '../m1/scenario.ts';
 import type { FakeScript } from './fake-root.ts';
@@ -129,17 +129,8 @@ const JOBS_1: readonly Step[] = [
     { job: 'review-1', index: 0, disposition: 'resolved' },
   ]),
   lensStep('audit-1', 'vision', [{ severity: 'P2', obligation: null, visionClauses: ['V-5'], claim: DEFERRED_CLAIM, cause: 'no cancellation template is sent', evidence: [{ path: 'src/cli.js', line: 50 }] }]),
-  checkpointStep('ckpt-1', checkpointAnswer({
-    decision: 'no-op',
-    findingDispositions: [{ finding: 'F-1', disposition: 'deferred', reason: 'Cancellations are the next slice\'s scene (V-5), not this one\'s.' }],
-    corpusAmendments: [CHECKPOINT_AMENDMENT, HEIGHTS_AMENDMENT],
-  })),
-  // The read-outs' publications owe four more cadence audits, the last the final one. audit-2..audit-4 find nothing new
-  // after the settled ckpt-1, so they have no checkpoint (checkpoint-skipped); the final audit's is ckpt-2.
-  lensStep('audit-2', 'vision'),
-  lensStep('audit-3', 'vision'),
-  lensStep('audit-4', 'vision'),
-  lensStep('audit-5', 'vision'), checkpointStep('ckpt-2', NO_OP),
+
+  lensStep('audit-2', 'invariants'),
 ];
 
 /** A checkpoint `admit` of golden.ts's `OPPORTUNITY[id]`: its targets, citing the one clause it advances. */
@@ -170,20 +161,8 @@ function fitsWitnessOp(): JsonValue {
 
 const JOBS_2: readonly Step[] = [
   packReviewStep('review-1'),
-  lensStep('audit-1', 'vision', [], [{ type: 'barrier', name: BLOCKED_SEEN_BARRIER, timeoutMs: HOLD_MS }]),
-  checkpointStep('ckpt-1', checkpointAnswer({
-    decision: 'bundle', ops: [admitOp('fits'), admitOp('dayview'), fitsWitnessOp()],
-  })),
-  // The drift audit notes a new gap (F-1), so its checkpoint runs (the root agent waits on it) and dismisses it, leaving no
-  // debt; audit-3 finds nothing new after it (checkpoint-skipped), and the final audit-4's checkpoint is ckpt-3.
-  noteLensStep('audit-2'),
-  checkpointStep(DRIFT_CHECKPOINT, checkpointAnswer({
-    decision: 'no-op',
-    findingDispositions: [{ finding: 'F-1', disposition: 'dismissed', reason: 'The noted gap is not this slice\'s.' }],
-  })),
-  lensStep('audit-3', 'vision'),
-  lensStep('audit-4', 'vision'),
-  checkpointStep('ckpt-3', NO_OP),
+  lensStep('audit-1', 'invariants', [], [{type: 'barrier', name: BLOCKED_SEEN_BARRIER, timeoutMs: HOLD_MS}]),
+  lensStep('audit-2', 'invariants'),
 ];
 
 // ---------------------------------------------------------------------------------------------------

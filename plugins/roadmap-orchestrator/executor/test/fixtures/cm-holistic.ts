@@ -31,7 +31,7 @@ import type { LogSnapshot } from '../../src/core/log.ts';
 import { absPath } from '../../src/core/values.ts';
 
 import { release } from '../helpers/barrier.ts';
-import { checkpointAnswer,checkpointStep,lensStep,packReviewStep } from '../helpers/holistic.ts';
+import { checkpointAnswer, lensStep, packReviewStep } from '../helpers/holistic.ts';
 import { fixture } from '../helpers/proc.ts';
 import type { Owner } from '../helpers/reap.ts';
 import { tmpDir } from '../helpers/repo.ts';
@@ -145,19 +145,16 @@ export function layoutHolisticConcurrent(t: Owner, peer: HolisticPeer): Holistic
       packReviewStep('review-1'),
       ...keyed('u1', [approve, build(MUL, 'build'), gateStep({ decision: 'approve', findings: [gateNote('mul')] })]),
       ...keyed('u2', [approve, build(TWO, 'build'), gateStep({ decision: 'approve', findings: [gateNote('two')] })]),
-      lensStep('audit-1', 'vision'), checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [LIMITS] })),
-      // audit-2 finds nothing new after the settled ckpt-1: no checkpoint (checkpoint-skipped); the final audit-3's is ckpt-2.
-      lensStep('audit-2', 'vision'),
-      lensStep('audit-3', 'vision'), checkpointStep('ckpt-2', NOOP),
+      lensStep('audit-1', 'vision'), lensStep('audit-2', 'vision'),
     ]);
     const pinned = (u: string): boolean => existsSync(join(r.scenarioDir, `${u}.build.reached`));
     const hooks: readonly Hook[] = [
       once('audit', () => pinned('u1') && pinned('u2'), () => submit(r, { type: 'audit', lenses: null })),
-      once('release-builds', () => factsNow(r, 'divergence-digest').length > 0 || restarted(r), () => {
+      once('release-builds', () => factsNow(r, 'audit-ended').some((f) => f['job'] === 'audit-1') || restarted(r), () => {
         release(r.scenarioDir, 'u1.build');
         release(r.scenarioDir, 'u2.build');
       }),
-      once('release-lanes', () => factsNow(r, 'checkpoint-skipped').some((f) => f['audit'] === 'audit-2'), () => {
+      once('release-lanes', () => factsNow(r, 'audit-ended').some((f) => f['job'] === 'audit-1'), () => {
         release(barriers, 'u1-lanes');
         release(barriers, 'u2-lanes');
       }),
@@ -172,10 +169,10 @@ export function layoutHolisticConcurrent(t: Owner, peer: HolisticPeer): Holistic
       ...SMOKE_DEFAULT,
       packReviewStep('review-1'),
       ...keyed('u3', [approve, build(TWO, 'build'), gateStep({ decision: 'approve' })]),
-      lensStep('audit-1', 'vision', [{ severity: 'P1', obligation: 'I-2', claim: 'I-2 is not held on the audited head' }]), checkpointStep('ckpt-1', NOOP),
+      lensStep('audit-1', 'vision', [{ severity: 'P1', obligation: 'I-2', claim: 'I-2 is not held on the audited head' }]),
       ...keyed('u1', [approve, build(MUL), gateStep({ decision: 'approve' })]),
       ...keyed('u2', [approve, build(DIV), gateStep({ decision: 'approve' })]),
-      lensStep('audit-2', 'vision'), checkpointStep('ckpt-2', NOOP),
+      lensStep('audit-2', 'vision'),
     ]);
     const batchPublished = (): boolean => {
       if (!existsSync(join(r.runDir, 'events.jsonl'))) return false;
@@ -184,7 +181,7 @@ export function layoutHolisticConcurrent(t: Owner, peer: HolisticPeer): Holistic
     };
     const hooks: readonly Hook[] = [
       once('audit', () => existsSync(join(r.scenarioDir, 'u3.build.reached')), () => submit(r, { type: 'audit', lenses: null })),
-      once('admit-repairs', () => factsNow(r, 'bundle-decided').some((f) => f['job'] === 'ckpt-1'), () => {
+      once('admit-repairs', () => factsNow(r, 'audit-ended').some((f) => f['job'] === 'audit-1'), () => {
         exportCurrentInputs(r);
         admitRepairs(r);
         submit(r, applyBody(r));

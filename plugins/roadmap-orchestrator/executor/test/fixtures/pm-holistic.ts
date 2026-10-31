@@ -37,7 +37,7 @@ import { inRevisionAt } from './pm-trace.ts';
 import type { ExecRun } from './exec-common.ts';
 import type { Scenario } from './pm-common.ts';
 import { BUILD_REPORT, planCheckStep } from './stage-common.ts';
-import { MUL, gateStep } from './unit-common.ts';
+import { MUL, gateStep, workDirPattern } from './unit-common.ts';
 
 type Json = Record<string, unknown>;
 
@@ -116,7 +116,7 @@ export const HOLISTIC: Scenario = {
   prepare: holistic,
   steps: (r) => [
     packReviewStep('review-1'),
-    ...keyed('u1', [planCheckStep({ decision: 'approve', risk: 'high' }), IMPLEMENT, gateStep({ decision: 'approve', findings: [GATE_NOTE] })]),
+    ...keyed('u1', [planCheckStep({ decision: 'approve', risk: 'high' }), {...IMPLEMENT, acts: [{type: 'writeToPrompt', pattern: workDirPattern(r), file: 'decisions.json', text: JSON.stringify({decisions: [{id: 'witnesses', text: 'Confirm multiplication through the named journey witness.'}]})}, ...IMPLEMENT.acts]}, gateStep({ decision: 'approve', findings: [GATE_NOTE] })]),
     lensStep('audit-1', 'vision'),
 
   ],

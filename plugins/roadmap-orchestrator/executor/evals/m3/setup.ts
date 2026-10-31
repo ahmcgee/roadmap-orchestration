@@ -351,7 +351,7 @@ export async function setup(dir: string): Promise<void> {
     resources: [],
     holistic: { advances: ADVANCES, obligations: 'obligations.json', audit: { every: AUDIT_EVERY, lenses: [...LENSES] } },
     limits: { convergenceK: CONVERGENCE_K },
-    units: UNITS.map((id) => ({ id, spec: `${id}.json`, risk: 'med', systems: systemsForPaths(SCOPES[id]), resources: [], after: after[id] })),
+    units: UNITS.map((id) => ({ id, spec: `${id}.json`, review: 'always', risk: 'med', systems: systemsForPaths(SCOPES[id]), resources: [], after: after[id] })),
   }));
 }
 

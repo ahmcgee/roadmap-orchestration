@@ -1,4 +1,4 @@
-import { systemName } from '../../src/core/ids.ts';
+
 // The scripted root agent of fake M4a runs (`driver --fake <script>`): it stands in for the headless `claude -p` session,
 // one process per turn, speaking the same stream-json the driver reads (an init event, a Bash `tool_use` and its
 // `tool_result` per command, the final text, a `result`), and keeps its state in `fake/root-state.json`. It follows
@@ -53,12 +53,12 @@ import { parseDebtBlock } from '../../src/docs/debt.ts';
 import { laneRevOf,parseObligations } from '../../src/holistic/types.ts';
 import {
 type ArcNo,ARC1_CURATION,ARC1_QUESTION,CENSUS_OTHERS,CORPUS_ROOT,DIRECTION,FILES,LANES,MAPPING,FIXTURE_SYSTEMS,OBLIGATIONS,
-PASS_PATH,
+PASS_PATH,OPPORTUNITY,FITS_WITNESS,
 SLICES,SLOW_LANE,TEST_PATHS,UNITS,corpusFor,
 specLane,specOf,suiteLanes,unitsOf,
 } from './golden.ts';
 import { MAIN,layout } from './layout.ts';
-import { BLOCKED_SEEN_BARRIER,CHECKPOINT_AMENDMENT,DRIFT_CHECKPOINT,FLOW_1,FLOW_2 } from './scenario.ts';
+import { BLOCKED_SEEN_BARRIER, CHECKPOINT_AMENDMENT, FLOW_1, FLOW_2 } from './scenario.ts';
 
 export const FAKE_SCRIPTS = ['story', 'vision-silent'] as const;
 export type FakeScript = (typeof FAKE_SCRIPTS)[number];
@@ -236,7 +236,7 @@ const writeFile = (path: string, text: string): void => {
 };
 
 function arcLane(id: string, journey: string) {
-  return { id, argv: ['node', '--test', journey], cwd: '.', env: PASS_PATH, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], reporter: 'node-test', testPaths: [...TEST_PATHS] };
+  return { id, argv: ['node', '--test', journey], cwd: '.', env: PASS_PATH,OPPORTUNITY,FITS_WITNESS, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], reporter: 'node-test', testPaths: [...TEST_PATHS] };
 }
 
 type Pin = Readonly<{ rules: readonly Readonly<{ id: string; textSha256: string }>[] }>;
@@ -353,7 +353,7 @@ function composeArc(c: Ctx, n: ArcNo, baseline: string, opts: Readonly<{ answer?
     // Arc 2 audits every publication: cutoff's audit is the one whose checkpoint admits the opportunity.
     holistic: { advances: slice.advances, obligations: 'obligations.json', audit: { every: n === 2 ? 1 : 2, lenses: ['vision'] } },
     limits: { convergenceK: 3 },
-    units: units.map((u) => ({ id: u.id, spec: `${u.id}.json`, risk: u.risk, systems: u.systems, resources: [], after: u.after.filter((a) => units.some((x) => x.id === a)) })),
+    units: units.map((u) => ({ id: u.id, spec: `${u.id}.json`, review: 'always', risk: u.risk, systems: u.systems, resources: [], after: u.after.filter((a) => units.some((x) => x.id === a)) })),
     ...(opts.previous === undefined ? {} : { chain: { previousArc: opts.previous.arc, previousHead: opts.previous.head } }),
   }));
   c.t.git('branch', `arc/${arc}`, baseline);
@@ -480,6 +480,8 @@ function onWake(c: Ctx, prompt: string): string {
  * other five read-outs are admitted after the revision.
  */
 function flowLoop(c: Ctx, a: ArcState): string {
+  c.t.roadmap(['audit', '--repo', layout(c.dir).product, '--arc', a.arc]);
+  c.t.untilFact(a.arc, 'the requested campaign audit', (facts) => facts.find((x) => x.kind === 'audit-ended' && x.job === 'audit-1'));
   const l = layout(c.dir);
   const at = ['--repo', l.product, '--arc', a.arc];
   assertHeldAfterQuay(c, a);
@@ -516,6 +518,8 @@ function assertHeldAfterQuay(c: Ctx, a: ArcState): void {
  * runs, whatever the timing (the held units keep work remaining); it answers noAction, and the root agent lifts the limit.
  */
 function flowNoAction(c: Ctx, a: ArcState): string {
+  c.t.roadmap(['audit', '--repo', layout(c.dir).product, '--arc', a.arc]);
+  c.t.untilFact(a.arc, 'the requested campaign audit', (facts) => facts.find((x) => x.kind === 'audit-ended' && x.job === 'audit-1'));
   assertHeldAfterQuay(c, a);
   const ended = c.t.untilFact(a.arc, 'flow-1 ended', (facts) => facts.find((x): x is Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: 'flow-ended' }> => x.kind === 'flow-ended' && x.job === 'flow-1'));
   if (ended.outcome !== 'done' || ended.proposal !== null) throw new Error(`vision-silent: flow-1 should end done with no proposal: ${JSON.stringify(ended)}`);
@@ -639,18 +643,39 @@ function logIntervention(c: Ctx, arc: string, lever: string, bullets: Readonly<{
 function superviseArc2(c: Ctx, a: ArcState): string {
   const l = layout(c.dir);
   const at = ['--repo', l.product, '--arc', a.arc];
-  c.t.untilFact(a.arc, `checkpoint ${DRIFT_CHECKPOINT} decided`, (facts) => facts.find((x) => x.kind === 'bundle-decided' && x.job === DRIFT_CHECKPOINT));
-  const decided = JSON.parse(c.t.roadmap(['status', ...at])) as Status;
-  const o = decided.opportunities;
-  if (o.length !== 1 || o[0]!.units.join() !== 'fits') throw new Error(`the checkpoint should have admitted fits as the one opportunity: ${JSON.stringify(o)}`);
-  if (!decided.needsUser.some((x) => x.reason === 'divergence-digest')) throw new Error(`the bundle raised no divergence digest: ${JSON.stringify(decided.needsUser)}`);
+  c.t.roadmap(['audit', ...at]);
+  c.t.untilFact(a.arc, 'the campaign audit reported', (facts) => facts.find((x) => x.kind === 'audit-ended' && x.job === 'audit-1'));
+  const exported = join(l.inputs, `${a.arc}-root-fits`);
+  const base = JSON.parse(c.t.roadmap(['inputs', 'export', ...at, '--out', exported])) as {planRev: number};
+  const plan = JSON.parse(readFileSync(join(exported, 'plan.json'), 'utf8'));
+  const obligations = JSON.parse(readFileSync(join(exported, 'obligations.json'), 'utf8'));
+  const fit = OPPORTUNITY.fits;
+  const spec = {...specOf({id: fit.unit.id, systems: fit.unit.systems, unitLane: fit.unitLane, acceptance: fit.acceptance}), obligations: [FITS_WITNESS.parent, FITS_WITNESS.child.id]};
+  writeFile(join(exported, 'fits.json'), json(spec));
+  plan.units.push({...fit.unit, origin: 'planned', review: 'always', spec: 'fits.json', resources: []});
+  plan.holistic.advances = [...FITS_WITNESS.cites];
+  const parent = obligations.obligations.find((o: {id: string}) => o.id === FITS_WITNESS.parent);
+  const witness = {lane: FITS_WITNESS.child.lane, testIds: [FITS_WITNESS.child.test], files: ['journeys/berths.journey.js']};
+  const pin = JSON.parse(readFileSync(join(exported, plan.corpus), 'utf8')) as Pin;
+  obligations.obligations.push(
+    {...parent, id: FITS_WITNESS.restated, parent: parent.id, rev: 1, serves: [...FITS_WITNESS.cites], activation: 'must-hold', deliveredBy: [], proofJudgment: {...parent.proofJudgment, obligationRev: 1}},
+    {...parent, id: FITS_WITNESS.child.id, parent: parent.id, rev: 1, serves: [...FITS_WITNESS.cites], statement: FITS_WITNESS.child.statement, rule: pin.rules.find((r) => r.id === FITS_WITNESS.child.rule), witness, activation: 'future', deliveredBy: ['fits'], proofJudgment: {verdict: 'proves', obligationRev: 1, witness: {testIds: witness.testIds, files: witness.files}}},
+  );
+  parent.rev += 1;
+  parent.state = {type: 'split', children: [FITS_WITNESS.restated, FITS_WITNESS.child.id]};
+  parent.witness = null;
+  parent.proofJudgment = null;
+  obligations.census.find((e: {rule: string}) => e.rule === FITS_WITNESS.child.rule).state = {type: 'obligation', id: FITS_WITNESS.child.id};
+  writeFile(join(exported, 'plan.json'), json(plan));
+  writeFile(join(exported, 'obligations.json'), json(obligations));
+  c.t.roadmap(['apply', ...at, '--from', exported, '--rev', String(base.planRev), '--reason', 'The root adds fits with its draught witness and keeps the parent obligation as a split restatement.']);
   c.t.roadmap(['run-only', '--clear', ...at]);
   const hung = c.t.until(a.arc, `notice running its ${SLOW_LANE.id} lane`, (s) => unitOf(s, 'notice').running?.lane?.id === SLOW_LANE.id);
   c.state.paused = { unit: 'notice', lane: JSON.stringify(unitOf(hung, 'notice').running!.lane) };
   c.t.roadmap(['pause', 'notice', ...at]);
   c.t.until(a.arc, 'notice held', (s) => unitOf(s, 'notice').state === 'held');
   return [
-    `cutoff merged; notice waited behind my run-only limit for the checkpoints. The checkpoint admitted fits as this arc's opportunity (O-1, V-7) and converted the day view into an amendment (D-1 is in the digest); then I lifted the run-only limit.`,
+    `cutoff merged; notice waited behind my run-only limit for the checkpoints. The root admitted fits with its witness using apply --reason and left the day view for a later slice; then I lifted the run-only limit.`,
     `notice's ${SLOW_LANE.id} lane hung: I paused notice and resume it on the next wake. ${RUNNING(a)}`,
   ].join('\n');
 }

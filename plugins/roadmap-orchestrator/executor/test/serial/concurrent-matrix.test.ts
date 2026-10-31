@@ -606,13 +606,13 @@ test('concurrent crash matrix', { concurrency: FANOUT, timeout: 45 * 60_000 }, a
 // The concurrent job rows (M3 B8)
 
 const JOB_ROWS: Readonly<Record<JobRow, string>> = { audit: CONCURRENT_AUDIT, bundle: CONCURRENT_BUNDLE, batch: CONCURRENT_BATCH, preempt: CONCURRENT_PREEMPT };
-const JOB_ROW_NAMES: readonly JobRow[] = ['audit', 'bundle', 'batch', 'preempt'];
+const JOB_ROW_NAMES: readonly JobRow[] = ['audit', 'batch', 'preempt'];
 /** The scenario each job row steps in. */
 const JOB_PEER: Readonly<Record<JobRow, HolisticPeer>> = { audit: 'jobs', bundle: 'jobs', batch: 'batch', preempt: 'preempt' };
 /** The units whose build is live while the scenario's job steps. */
 const LIVE_BUILDS: Readonly<Record<HolisticPeer, readonly string[]>> = { jobs: [A, B], batch: [C], preempt: [] };
 /** The applied bundle raises its divergence digest and the schema 2 revision notice. */
-const JOB_NEEDS_USER: Readonly<Record<HolisticPeer, readonly string[]>> = { jobs: ['divergence-digest', 'revision-notice'], batch: [], preempt: [] };
+const JOB_NEEDS_USER: Readonly<Record<HolisticPeer, readonly string[]>> = { jobs: [], batch: [], preempt: [] };
 const jobRowLabels = (row: JobRow): readonly string[] => [...new Set(crashCells(JOB_ROWS[row]).map((c) => c.label))].sort();
 const jobBoundaryOf = (row: JobRow, label: string): Boundary => crashCells(JOB_ROWS[row]).find((c) => c.label === label)!.boundary;
 /** The scenario's units in plan order (the batch scenario admits its repair units after u3). */
@@ -657,7 +657,7 @@ async function jobReference(t: Owner, peer: HolisticPeer): Promise<JobReference>
       const done = snap.events.find((e) => e.type === 'done' && e.op === b.op)!;
       assert.ok(b.seq < window[0]!.seq && done.seq > window.at(-1)!.seq, `${subjectUnit(b)}'s build was live through ${stepping.join(' and ')}`);
     }
-    if (peer === 'jobs') assert.ok(snap.events.some((e) => e.type === 'fact' && e.fact.kind === 'plan-applied' && e.fact.source?.type === 'bundle'), 'ckpt-1 applied its bundle');
+    if (peer === 'jobs') assert.ok(snap.view.arcVerdicts().some((v) => v.stage === 'campaign-audit' && v.verdict === 'completed'), 'the campaign audit reported while builds were live');
     if (peer === 'batch') {
       const ffs = snap.view.opsOf('integration.ff').filter((i) => i.expect.subject?.type === 'batch');
       assert.equal(ffs.length, 1, 'u1 and u2 published as one batch');

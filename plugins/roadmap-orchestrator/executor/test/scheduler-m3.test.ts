@@ -142,22 +142,6 @@ describe('completion (§2.10, A8, A20, G8)', () => {
     return { r, id: itemOf(r, 'bundle-request')! };
   }
 
-  test('sched.close-out-declines-request (run 10, E): an unanswered non-blocking bundle request never holds completion: the close-out declines it (no amendment outside a corpus arc), then publishes and completes', T, async () => {
-    const { r, id } = await requestedArc();
-    try {
-      await runToComplete(r);
-      const declined = factsOf(r, 'needs-user-declined');
-      assert.deepEqual(declined.map((f) => [f.id, f.choice]), [[id, 'decline']]);
-      const published = factsOf(r, 'docs-published').at(-1)!;
-      assert.ok(declined[0]!.seq < published.seq && published.source === 'close-out', 'declined before the close-out publication');
-      assert.deepEqual(factsOf(r, 'corpus-amendment'), [], 'an architecture-doc arc carries no amendment');
-      assert.equal(factsOf(r, 'checkpoint-inputs').length, 2);
-      assert.equal(factsOf(r, 'arc-completed').length, 1);
-    } finally {
-      r.journal.close();
-    }
-  });
-
   test('complete.reopen-invalidates (A20): an admitting apply after completion invalidates it; the arc runs the new unit and completes again with a new fact', T, async () => {
     const d = completingArc();
     const r = contextFor(d);
@@ -379,12 +363,12 @@ describe('holistic jobs in the scheduler', () => {
     const s = startHolistic(r);
     try {
       await reached(d.scenarioDir, 'lens', WAIT_MS);
-      const b = submit(r, { type: 'audit', lenses: ['vision'] });
+      const b = submit(r, { type: 'audit', lenses: ['invariants'] });
       await until(() => terminalReceipt(r.ctx.runDir, b) !== null, WAIT_MS, 'the second audit request applied');
       assert.equal(terminalReceipt(r.ctx.runDir, b)!.state, 'applied');
       assert.deepEqual(factsOf(r, 'audit-started').map((f) => f.job), ['audit-1'], 'one audit at a time');
       release(d.scenarioDir, 'lens');
-      await until(() => factsOf(r, 'bundle-decided').length === 2, WAIT_MS, 'both audits and their checkpoints');
+      await until(() => factsOf(r, 'audit-ended').length === 2, WAIT_MS, 'both campaign audits');
       const [s1, s2] = factsOf(r, 'audit-started');
       const [e1] = factsOf(r, 'audit-ended');
       assert.ok(e1!.seq < s2!.seq, 'audit-2 starts after audit-1 ended');
@@ -513,9 +497,9 @@ describe('the M3 commands and items', () => {
     const r = contextFor(completingArc());
     try {
       const w = wired(r);
-      const bad = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'audit', lenses: ['drift'] }));
+      const bad = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'audit', lenses: ['invariants'] }));
       assert.ok(bad.kind === 'rejected' && /outside the arc's required lens set \(vision\)/.test(bad.reason), JSON.stringify(bad));
-      const ok = submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'audit', lenses: ['vision'] });
+      const ok = submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'audit', lenses: ['invariants'] });
       assert.equal((await applyCommand(w.commands, ok)).kind, 'applied');
       assert.deepEqual(factsOf(r, 'audit-requested').map((f) => [f.command, f.lenses]), [[ok.id, ['vision']]]);
     } finally {

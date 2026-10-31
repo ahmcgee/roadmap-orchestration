@@ -1,3 +1,9 @@
+import { runAudit } from '../src/holistic/audit.ts';
+import { cadence } from '../src/holistic/cadence.ts';
+import { runWalk } from '../src/walk/walk.ts';
+import { walkArc, walkContext, walkStep, walkAnswer } from './fixtures/walk-common.ts';
+import { unitSteps, moduleFiles } from './fixtures/audit-common.ts';
+import { lensStep } from './helpers/holistic.ts';
 import { wire } from './fixtures/publish-common.ts';
 import { join } from 'node:path';
 import { holisticArc } from './fixtures/brake-common.ts';
@@ -13,7 +19,7 @@ import { standingRules } from '../src/pipeline/gate.ts';
 import { planCheck, build, loadUnitSpec } from '../src/pipeline/stages.ts';
 import { runUnit } from '../src/pipeline/unit.ts';
 import { methodModules } from '../src/prompts/method/index.ts';
-import { validateBuildOutput, validateGateOutput } from '../src/prompts/schemas.ts';
+import { validateBuildOutput, validateGateOutput, validateCampaignAuditOutput } from '../src/prompts/schemas.ts';
 import { seatTripleOf } from '../src/pipeline/dispatch.ts';
 import { buildTriple } from '../src/pipeline/dispatch.ts';
 import { readNeedsUser } from '../src/needsuser.ts';
@@ -213,4 +219,33 @@ test('surface.diagnosis: the M4 signal adds build memory and moves remaining def
     assert.equal(buildTriple(r.ctx, unitId('u1'), 'med').backend, 'claude');
     assert.equal(readCalls(d.scenarioPath).filter((c) => c.as === 'codex').length, 0);
   } finally {r.journal.close();}
+});
+
+test('surface.campaign-schema: only request ops, and dismissals require counter-evidence', () => {
+  const base = {reasons: ['Audited'], premises: [], findings: [], requests: []};
+  assert.deepEqual(validateCampaignAuditOutput(base).requests, []);
+  assert.throws(() => validateCampaignAuditOutput({...base, requests: [{op: 'cut', unit: 'u1'}]}));
+  const request = {op: 'request', summary: 'Reconsider F-1', evidence: ['test/mul.js:1'], dismisses: 'F-1', counterEvidence: null};
+  assert.throws(() => validateCampaignAuditOutput({...base, requests: [request]}), /counter-evidence/);
+  assert.equal(validateCampaignAuditOutput({...base, requests: [{...request, counterEvidence: 'Restart experiment retained the committed write.'}]}).requests.length, 1);
+});
+
+test('surface.milestone: one combined experience verdict and one campaign audit, both recorded with finding counts', {timeout: 120_000}, async () => {
+  const d = walkArc({steps: [...unitSteps('u1', moduleFiles('mul', '*')), walkStep('walk-1', walkAnswer()), lensStep('audit-1', 'invariants')]});
+  const r = contextFor(d);
+  const {ctx, w} = walkContext(r);
+  const tick = setInterval(() => w.arbiter.wake(), 50);
+  try {
+    assert.equal(cadence(ctx, () => 0)?.due, false);
+    await runUnit(w.stage, r.unit('u1'), admitAll);
+    assert.ok(cadence(ctx, () => 0)?.owed.some((t) => t.type === 'milestone'));
+    assert.equal((await runWalk(ctx)).kind, 'ended');
+    const before = r.journal.view.planApplied()!.rev;
+    const audit = await runAudit({...ctx, clock: () => 0});
+    assert.ok(audit.kind === 'ended' && audit.outcome === 'completed', JSON.stringify(audit));
+    assert.equal(r.journal.view.planApplied()!.rev, before, 'the audit cannot amend the plan');
+    assert.deepEqual(r.journal.view.arcVerdicts().map((v) => [v.stage, v.verdict, v.findings]), [['experience-verdict', 'reported', 0], ['campaign-audit', 'completed', 0]]);
+    assert.deepEqual(await runAudit({...ctx, clock: () => 0}), {kind: 'none'});
+    assert.equal(r.journal.view.arcVerdicts().length, 2);
+  } finally {clearInterval(tick); r.journal.close();}
 });
