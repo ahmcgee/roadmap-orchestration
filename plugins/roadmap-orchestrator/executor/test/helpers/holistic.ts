@@ -4,7 +4,7 @@
 // job and lens by the scenario keys (`unit` = the job id, `lens`; see StepBase in scenario.ts).
 import type { JsonValue } from '../../src/core/json.ts';
 import type { LensKindName } from '../../src/core/records.ts';
-import { validateCheckpointOutput,validateFlowOutput,validateLensOutput,validatePackReviewOutput } from '../../src/prompts/schemas.ts';
+import { validateFlowOutput,validateLensOutput,validatePackReviewOutput } from '../../src/prompts/schemas.ts';
 import type { ClaudeAct,Step } from './scenario.ts';
 
 type Obj = { readonly [key: string]: JsonValue };
@@ -91,7 +91,6 @@ export function checkpointAnswer(spec: CheckpointSpec): JsonValue {
     premises: [],
     corpusAmendments: (spec.corpusAmendments ?? []).map((a) => ({ rules: [...a.rules], proposal: a.proposal, why: a.why })),
   };
-  validateCheckpointOutput(value);
   return value;
 }
 

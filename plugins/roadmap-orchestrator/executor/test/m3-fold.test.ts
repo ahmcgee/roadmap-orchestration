@@ -106,16 +106,6 @@ describe('fold: audits and checkpoints', () => {
     refuses([holisticPlan(1), auditStarted(1), auditEnded(1, [], ['F-9'])], 3, /finding F-9, which was never opened/);
     refuses([holisticPlan(1), auditEnded(1)], 2, /not running/);
   });
-
-  it('a checkpoint decides once: a bundle outcome, or the plan revision its bundle applied', () => {
-    const f = folded([holisticPlan(1), ckptInputs(1), decided(1), ckptInputs(2), holisticPlan(2, { command: null, source: { type: 'bundle', job: 'ckpt-2' } })]);
-    const [c1, c2] = f.holistic().checkpoints;
-    assert.deepEqual(c1?.decided, { kind: 'no-op' });
-    assert.deepEqual(c2?.decided, { kind: 'applied', planRev: 2 });
-    refuses([holisticPlan(1), ckptInputs(1), decided(1), decided(1)], 4, /no undecided checkpoint inputs/);
-    refuses([holisticPlan(1), ckptInputs(1), decided(1), holisticPlan(2, { command: null, source: { type: 'bundle', job: 'ckpt-1' } })], 4, /bundle ckpt-1, which has no undecided/);
-    refuses([holisticPlan(1), ckptInputs(2)], 2, /the next ckpt job is ckpt-1/);
-  });
 });
 
 describe('fold: divergences and digests (H11, H12)', () => {

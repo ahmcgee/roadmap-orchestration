@@ -199,7 +199,7 @@ test('publish.green-not-preempted: once a candidate is green its ff and snapshot
 });
 
 test('docs.transient: a docs publication\'s diff is exactly its rendered files and its contract ops\' paths; a unit dispatched under dev.6 may not touch the in-tree .roadmap/', T, async () => {
-  // C-2 rewrites contracts/api.md, which u1 cites: its plan-check answers the stale link (dev.17 propagation).
+  // C-2 rewrites contracts/api.md, which u1 cites: its pre-build answers the stale link (dev.17 propagation).
   const answered = planCheckStep(
     { decision: 'approve' },
   );
@@ -226,7 +226,7 @@ test('docs.transient: a docs publication\'s diff is exactly its rendered files a
     ]);
     assert.deepEqual(await runUnit(w.stage, r.unit('u1'), admitAll), { kind: 'merged' }, outcomes(d).join(' '));
     assert.deepEqual(outcomes(d), [
-      'plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:transient-violation',
+      'pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:transient-violation',
       'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve',
       'candidate:green', 'ff:published', 'snapshot:published',
     ]);

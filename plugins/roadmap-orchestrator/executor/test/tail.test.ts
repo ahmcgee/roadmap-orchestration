@@ -14,7 +14,7 @@ import { SchemaError } from '../src/core/validate.ts';
 import { absPath } from '../src/core/values.ts';
 import { type FindingDraft,openFinding,ruleFinding } from '../src/holistic/findings.ts';
 import {
-type Brake,type TailUnit,type TailWorld,brakeConversions,brakeOf,findingOriginRoots,introducedByFindingOrigin,settledPoint,tailRulings,
+type Brake,type TailUnit,type TailWorld,brakeConversions,brakeOf,findingOriginRoots,introducedByFindingOrigin,settledPoint,
 } from '../src/holistic/tail.ts';
 import { findingTo } from '../src/holistic/types.ts';
 import type { PlanM1 } from '../src/input/plan.ts';
@@ -33,58 +33,6 @@ const finding = (n: number, over: Partial<FindingState> = {}): FindingState => (
   state: 'open', owner: null, openedSeq: n, last: null, ...over,
 });
 
-describe('tail.rulings: what a decision\'s dispositions become, and what code releases', () => {
-  const brakes = new Map<FindingId, Brake>([[F(3), 'regress'], [F(4), 'settled'], [F(7), 'regress'], [F(9), 'settled']]);
-  const findings = [
-    finding(1, { severity: 'P3' }), finding(2, { severity: 'P3' }), finding(3), finding(4), finding(5), finding(6, { severity: 'P3' }),
-    finding(7), finding(8, { severity: 'P3', state: 'owned', owner: unitId('r1') }), finding(9), finding(10, { severity: 'P1', obligation: obligationId('I-1') }),
-    finding(11, { severity: 'P3' }), finding(13), finding(14), finding(12, { severity: 'P3', state: 'ruled', last: { state: 'ruled', disposition: 'dismissed', by: { type: 'checkpoint', job: jobId('ckpt', 1) } } }),
-  ];
-  const out = tailRulings({
-    job: CKPT, findings, captured: findings.map((f) => f.id),
-    dispositions: [
-      { finding: F(1), disposition: 'deferred' }, // a P3 deferred: released
-      { finding: F(2), disposition: 'accepted' }, // a P3 accepted, nothing fixes it: released
-      { finding: F(3), disposition: 'deferred' }, // a P2 below a brake, deferred: deferred (it banks)
-      { finding: F(4), disposition: 'accepted' }, // a P2 below a brake, accepted, nothing fixes it: released (settled)
-      { finding: F(5), disposition: 'deferred' }, // a P2 under no brake: as given
-      { finding: F(6), disposition: 'dismissed' }, // dismissed stays dismissed
-      { finding: F(11), disposition: 'accepted' }, // a P3 accepted that an admit repairs: unwritten (the repairs route)
-      { finding: F(13), disposition: 'accepted' }, // a P2 accepted that an admit repairs (m5 run 6, F-18): unwritten
-      { finding: F(14), disposition: 'deferred' }, // a P2 deferred that an admit repairs: unwritten
-      { finding: F(12), disposition: 'released' }, // no longer active: nothing
-    ],
-    repaired: new Set([F(11), F(13), F(14)]),
-    brakeOfId: (id) => brakes.get(id) ?? null,
-  });
-  const by = (n: number) => out.filter((r) => r.finding === F(n)).map((r) => [r.disposition, r.by.type === 'release' ? r.by.reason : r.by.type]);
-
-  it('a P3 the decision does not fix is released whatever its disposition; one an admit repairs keeps it', () => {
-    assert.deepEqual(by(1), [['released', 'p3']]);
-    assert.deepEqual(by(2), [['released', 'p3']]);
-    assert.deepEqual(by(11), [], 'its repair owns it');
-  });
-  it('tail.repaired-unruled: a finding the decision repairs is never ruled, whatever its disposition: its unit owns it and resolves it on publication', () => {
-    assert.deepEqual(by(13), []);
-    assert.deepEqual(by(14), []);
-  });
-  it('a P2 below a brake: deferred banks (the checkpoint\'s call), accepted while nothing fixes it is released, undisposed is released', () => {
-    assert.deepEqual(by(3), [['deferred', 'checkpoint']]);
-    assert.deepEqual(by(4), [['released', 'settled']]);
-    assert.deepEqual(by(7), [['released', 'regress']]);
-    assert.deepEqual(by(9), [['released', 'settled']]);
-  });
-  it('a P2 under no brake, a dismissal, a P1, an owned P3 and a finding no longer active are left as they are', () => {
-    assert.deepEqual(by(5), [['deferred', 'checkpoint']]);
-    assert.deepEqual(by(6), [['dismissed', 'checkpoint']]);
-    assert.deepEqual(by(8), [], 'owned: its unit fixes it');
-    assert.deepEqual(by(10), [], 'a P1 left to its repair');
-    assert.deepEqual(by(12), []);
-  });
-  it('the dispositions come first, in order, then the releases of the shown findings, in order', () => {
-    assert.deepEqual(out.map((r) => r.finding), [F(1), F(2), F(3), F(4), F(5), F(6), F(7), F(9)]);
-  });
-});
 
 const admit = (index: number, unit: string, repairs: readonly string[]) => ({
   index, op: { op: 'admit', unit: { id: unitId(unit) } } as Extract<BundleOp, { op: 'admit' }>, repairs,
@@ -197,8 +145,8 @@ describe('tail.released', () => {
       assert.deepEqual(openFinding(j, draft()), { kind: 'suppressed', by: 'F-1' });
       assert.deepEqual(openFinding(j, draft({ evidence: [{ path: 'test/a.test.ts', blob: sha('c'.repeat(40)) }] })), { kind: 'suppressed', by: 'F-1' }, 'a changed blob does not lift a release');
       assert.deepEqual(openFinding(j, draft({ cause: 'list: another gap' })), { kind: 'opened', id: 'F-2' });
-      ruleFinding(j, F(2), 'released', { type: 'checkpoint', job: CKPT });
-      assert.throws(() => ruleFinding(j, F(2), 'released', { type: 'checkpoint', job: CKPT }), /finding F-2 is ruled/, 'terminal');
+      ruleFinding(j, F(2), 'released', { type: 'code', reason: 'close-out' });
+      assert.throws(() => ruleFinding(j, F(2), 'released', { type: 'code', reason: 'close-out' }), /finding F-2 is ruled/, 'terminal');
     } finally {
       j.close();
     }
@@ -207,7 +155,7 @@ describe('tail.released', () => {
     const j = openJournal(absPath(tmpDir('tail-p1')), ARC);
     try {
       openFinding(j, draft({ severity: 'P1', obligation: obligationId('I-1') }));
-      assert.throws(() => ruleFinding(j, F(1), 'released', { type: 'checkpoint', job: CKPT }), /P1s never bank \(only a disposition ruling releases one\)/);
+      assert.throws(() => ruleFinding(j, F(1), 'released', { type: 'code', reason: 'close-out' }), /P1s never bank \(only a disposition ruling releases one\)/);
     } finally {
       j.close();
     }

@@ -8,7 +8,7 @@ import { type UnitId,arcId,commandId,invocationId,jobId,journeyIdOf,laneId,miles
 import { DEFAULT_BOUNDS,type Stage } from '../src/core/records.ts';
 import { type CounterRefs,Fold,FoldInvariantError,type MeterTotal,fold,monotonicSince,newUnitState } from '../src/core/state.ts';
 import { absPath,isoTime,refName,repoPattern } from '../src/core/values.ts';
-import { DEV17_UNIT_ROLES,type RiskTier,UNIT_ROLES } from '../src/routing/types.ts';
+import { type RiskTier,UNIT_ROLES } from '../src/routing/types.ts';
 import {
 ARC,AT,H,REV,U1,appliedFields,chain,commandIntent,inv1,meter,needsUserIntent,snapshotIntent,spawnIntent,spawnLost,spawnResult,stageParent,
 } from './fixtures/log-records.ts';
@@ -34,7 +34,7 @@ function refuses(events: readonly Event[], seq: number, detail: RegExp): void {
 describe('fold derives', () => {
   it('open intents, units, meter, needs-user, snapshot high-water, last seq', () => {
     const state = fold(ARC, chain([
-      spawnIntent(1, { stage: 'plan-check', role: 'verifier' }), // 1
+      spawnIntent(1, { stage: 'pre-build', role: 'verifier' }), // 1
       meter(inv1(1), 'verifier', 100, 10, 5), // 2
       spawnResult(op(1)), // 3
       spawnIntent(4), // 4 build attempt 1
@@ -51,7 +51,7 @@ describe('fold derives', () => {
     assert.equal(state.lastSeq, 13);
     assert.equal(state.snapshotHighWater, 10);
     assert.deepEqual(state.openIntents.map((i) => i.op), [op(4), op(13)]);
-    // Stage starts: plan-check#1, build#1, build#2. The retry at seq 7 is not a new start.
+    // Stage starts: pre-build#1, build#1, build#2. The retry at seq 7 is not a new start.
     const u1 = newUnitState(U1, 'build', null);
     assert.deepEqual(state.units, [{ ...u1, counters: { ...u1.counters, attempts: 3 }, open: { stage: 'build', attempt: 2, seq: 13 } }], 'build#2 has no outcome: open (first started at seq 13)');
     assert.deepEqual(state.needsUser, ['nu-9']);
@@ -65,19 +65,19 @@ describe('fold derives', () => {
   it('state.stage-outcome-derives-counters: counters, seats and status from stage-outcome facts', () => {
     const state = fold(ARC, chain([
       dispatch('low'), // 1
-      spawnIntent(2, { stage: 'plan-check', role: 'verifier' }), // 2 plan-check#1 starts
+      spawnIntent(2, { stage: 'pre-build', role: 'verifier' }), // 2 pre-build#1 starts
       spawnResult(op(2)), // 3
-      stageOutcome({ stage: 'plan-check', attempt: 1, outcome: 'redirect', class: 'redirect' }), // 4
-      stageOutcome({ stage: 'plan-check', attempt: 2, outcome: 'refusal', class: 'route-up' }), // 5 a start with no intent
-      stageOutcome({ stage: 'plan-check', attempt: 3, outcome: 'approve', class: 'advance' }), // 6
-      dispatch('med'), // 7 the plan-check raised the risk: re-pinned
+      stageOutcome({ stage: 'pre-build', attempt: 1, outcome: 'redirect', class: 'redirect' }), // 4
+      stageOutcome({ stage: 'pre-build', attempt: 2, outcome: 'refusal', class: 'route-up' }), // 5 a start with no intent
+      stageOutcome({ stage: 'pre-build', attempt: 3, outcome: 'approve', class: 'advance' }), // 6
+      dispatch('med'), // 7 the pre-build raised the risk: re-pinned
       stageOutcome({ stage: 'build', attempt: 1, outcome: 'malformed', class: 'retry' }), // 8
       stageOutcome({ stage: 'build', attempt: 2, outcome: 'success', class: 'advance' }), // 9
       stageOutcome({ stage: 'salvage', attempt: 1, outcome: 'committed-contract-touched', class: 'trigger' }), // 10
       stageOutcome({ stage: 'lanes', attempt: 1, outcome: 'red', class: 'advance', chargeable: true }), // 11
     ]));
     assert.deepEqual(state.units, [{
-      unit: U1, stage: 'lanes', risk: 'med', status: 'active', routedUp: ['plan-check'], promotion: true, approval: null, open: null, interrupted: null,
+      unit: U1, stage: 'lanes', risk: 'med', status: 'active', routedUp: ['pre-build'], promotion: true, approval: null, open: null, interrupted: null,
       pressureHold: null, pressureHolds: 0, spec: { rev: 1, sha256: H }, reopened: null, pendingRevision: null, staleRev: null, redirectBase: 0,
       park: null, lastRecovery: null, buildTier: 'med', lineage: null, supersededBy: null, bounds: DEFAULT_BOUNDS, entry: null, steering: null, pocs: 0,
       // The charged lanes red is the unit's one failure outcome (arc feedback 2026-10-16: what a re-entry's `fixes` names).
@@ -87,7 +87,7 @@ describe('fold derives', () => {
       decided: { kind: 'stage-outcome', unit: U1, stage: 'lanes', attempt: 1, outcome: 'red', class: 'advance', chargeable: true },
       counters: {
         attempts: 7, chargeableFailures: 1, unchargedLanesReds: 0, redirects: 1, reviseRounds: 0, candidateReds: 0, smokeRounds: 0,
-        retries: { 'plan-check': 0, build: 1, lanes: 0, gate: 0 },
+        retries: { 'pre-build': 0, build: 1, lanes: 0, gate: 0 },
       },
     }]);
 
@@ -315,7 +315,7 @@ describe('fold indexes', () => {
     const records: LogRecord[] = [];
     const retried: IntentOf<'proc.spawn'>[] = [];
     for (const unit of units.slice(0, 3)) {
-      for (const [stage, role] of [['plan-check', 'planCheck'], ['build', 'build'], ['gate', 'gate']] as const) {
+      for (const [stage, role] of [['pre-build', 'verifier'], ['build', 'build'], ['gate', 'verifier']] as const) {
         const base = spawnIntent(records.length + 1, { stage, role });
         assert.equal(base.kind, 'proc.spawn');
         const spawn: IntentOf<'proc.spawn'> = {
@@ -402,7 +402,7 @@ describe('fold indexes', () => {
       const spawns = all.filter((i) => i.kind === 'proc.spawn');
       for (const unit of units) {
         assert.deepEqual(view.spawnsOfUnit(unit), spawns.filter((i) => 'unit' in i.expect.subject && i.expect.subject.unit === unit));
-        for (const role of [...UNIT_ROLES, ...DEV17_UNIT_ROLES]) {
+        for (const role of [...UNIT_ROLES, ]) {
           assert.deepEqual(view.spawnsOfUnit(unit, role), spawns.filter((i) => {
             const s = i.expect.subject;
             return s.purpose === 'backend' && s.unit === unit && s.role === role;
@@ -471,16 +471,16 @@ describe('fold: command effects (step 13)', () => {
     refuses(chain([ack, ack]), 2, /second acknowledgement/);
   });
 
-  it('state.reopen: a reopen of a unit parked at a judgment stage onto the next spec rev starts it over at plan-check, counters kept and the redirect bound reset; any other reopen is refused', () => {
+  it('state.reopen: a reopen of a unit parked at a judgment stage onto the next spec rev starts it over at pre-build, counters kept and the redirect bound reset; any other reopen is refused', () => {
     const H2 = sha256('e'.repeat(64));
     const reopen = (rev: number): LogRecord => fact({ kind: 'reopened', unit: U1, command: C, specRev: specRev(rev), specSha256: H2 });
-    const redirect = stageOutcome({ stage: 'plan-check', attempt: 1, outcome: 'redirect', class: 'redirect' });
+    const redirect = stageOutcome({ stage: 'pre-build', attempt: 1, outcome: 'redirect', class: 'redirect' });
     const gatePark = stageOutcome({ stage: 'gate', attempt: 2, outcome: 'escalate', class: 'park' });
     const s = fold(ARC, chain([dispatch('med'), redirect, gatePark, reopen(2)]));
     const u = s.units[0]!;
     assert.deepEqual(
       [u.status, u.stage, u.decided, u.spec, u.reopened, u.redirectBase, u.counters.redirects, u.counters.attempts],
-      ['active', 'plan-check', null, { rev: 2, sha256: H2 }, { command: C, specRev: 2 }, 1, 1, 2],
+      ['active', 'pre-build', null, { rev: 2, sha256: H2 }, { command: C, specRev: 2 }, 1, 1, 2],
     );
     refuses(chain([dispatch('med'), redirect, reopen(2)]), 3, /which is active without a pending revision/);
     refuses(chain([dispatch('med'), stageOutcome({ stage: 'lanes', attempt: 1, outcome: 'blocked', class: 'park' }), reopen(2)]), 3, /parked at lanes, not at a judgment stage/);

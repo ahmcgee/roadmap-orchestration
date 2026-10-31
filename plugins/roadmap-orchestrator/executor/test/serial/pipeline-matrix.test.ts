@@ -162,7 +162,7 @@ async function crashCell(
 }
 
 /** Labels of a row's crash cells, as a sorted set. */
-const rowLabels = (row: string): readonly string[] => [...new Set(crashCells(row).filter((c) => row !== PIPELINE_HOLISTIC || !/^(checkpoint|bundle|amendment)\./.test(c.label)).map((c) => c.label))].sort();
+const rowLabels = (row: string): readonly string[] => [...new Set(crashCells(row).map((c) => c.label))].sort();
 const boundaryOf = (row: string, label: string): Boundary => {
   const c = crashCells(row).find((x) => x.label === label);
   if (c === undefined) throw new Error(`${row} has no cell for ${label}`);
@@ -252,7 +252,7 @@ async function runnerDeath(t: Owner, ref: Reference): Promise<void> {
   assert.equal(readCalls(r.scenarioPath).filter((c) => c.as === 'codex' && c.step !== null).length, 2, 'the codex smoke and the one build');
   assertOracle(run, {
     integration: 'main', baseline: baselineOf(r), tree: ref.tree, units: { u1: 'merged' },
-    outcomes: { u1: ['plan-check:approve', 'build:lost-tree-effects', ...STRAIGHT_OUTCOMES.u1.slice(2)] }, needsUser: [], trace: UNCRASHED,
+    outcomes: { u1: ['pre-build:approve', 'build:lost-tree-effects', ...STRAIGHT_OUTCOMES.u1.slice(2)] }, needsUser: [], trace: UNCRASHED,
   });
 }
 

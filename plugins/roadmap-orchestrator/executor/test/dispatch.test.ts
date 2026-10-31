@@ -1,5 +1,5 @@
 // The dispatch record and seats (src/pipeline/dispatch.ts): pinned once per unit with the routingRev in
-// force and the implementer seat's hash, re-pinned (never lowered, never widened) when plan-check raises the
+// force and the implementer seat's hash, re-pinned (never lowered, never widened) when pre-build raises the
 // risk, re-pinned when a routing change leaves the implementer's session key (backend, model) alone or no build has
 // started (an effort-only change resumes the session with the new effort, R4/OR-L3), and a park (never a crash) when
 // the change moves the backend or model of an implementer whose session already exists. M4a named tests:
@@ -11,7 +11,7 @@ import { test } from 'node:test';
 import { seatRev,sha256,specRev } from '../src/core/ids.ts';
 import { type DispatchRecord } from '../src/core/records.ts';
 import { SEAT_TRIPLES, type StageContext, implementerDispatch, implementerSeatRev, judgmentDispatch, pinDispatch, seatTripleOf } from '../src/pipeline/dispatch.ts';
-import { build,planCheck } from '../src/pipeline/stages.ts';
+import { build,preBuild } from '../src/pipeline/stages.ts';
 import { largeDiffSeat } from '../src/pipeline/transitions.ts';
 import { step } from '../src/pipeline/unit.ts';
 import { type RoutingStack,arcStack,parseRepoConfig,resolveRouting } from '../src/routing/layers.ts';
@@ -40,12 +40,12 @@ test('dispatch.pinned-once: the first dispatch pins scope, risk floor, routingRe
   assert.match(first.implementerSeatRev, /^[0-9a-f]{16}$/);
   assert.deepEqual(seated(pinDispatch(run.ctx, run.unit, { rev: specRev(2), sha256: sha256('2'.repeat(64)) })), first, 'a later call returns the pinned record');
   assert.equal(dispatches(run).length, 1);
-  assert.equal(seated(judgmentDispatch(run.ctx, U1, 'plan-check')).tier, 'low');
+  assert.equal(seated(judgmentDispatch(run.ctx, U1, 'pre-build')).tier, 'low');
   assert.equal(seated(implementerDispatch(run.ctx, U1)).triple.backend, 'codex', 'default profile: the efficient class builds low');
   // 1.0.0-dev.12: a gate over the large-diff threshold sits at least at high; only a gate takes a large diff.
   assert.equal(seated(judgmentDispatch(run.ctx, U1, 'gate')).tier, 'low');
   assert.equal(seated(judgmentDispatch(run.ctx, U1, 'gate', { overflow: 1 })).tier, 'high');
-  assert.throws(() => judgmentDispatch(run.ctx, U1, 'plan-check', { overflow: 1 }), /a large diff given to a plan-check seat/);
+  assert.throws(() => judgmentDispatch(run.ctx, U1, 'pre-build', { overflow: 1 }), /a large diff given to a pre-build seat/);
   assert.deepEqual(JUDGMENT_SEATS.map((t: JudgmentSeat) => largeDiffSeat(t, { overflow: 3 })), ['high', 'high', 'high', 'escalation']);
   assert.deepEqual(JUDGMENT_SEATS.map((t: JudgmentSeat) => largeDiffSeat(t, null)), ['low', 'med', 'high', 'escalation']);
 });
@@ -54,7 +54,7 @@ test('dispatch.repin-before-build: a routing change before any build re-pins the
   const run = setupUnit({ steps: [planCheckStep({ decision: 'approve' })] });
   seated(pinDispatch(run.ctx, run.unit, spec1(run)));
   const changed = rerouted(run, { build: { med: 'frontier' }, verifier: { med: 'summit' } });
-  const done = started(await planCheck(changed, run.unit));
+  const done = started(await preBuild(changed, run.unit));
   assert.equal(done.outcome.kind, 'approve');
   const [first, repinned] = dispatches(run);
   assert.equal(repinned?.routingRev, changed.routing(null).rev);
@@ -72,7 +72,7 @@ async function builtOnce(extra: Steps): Promise<StageRun> {
 /** A unit whose fresh build ran with session-establishing output `first`, malformed. */
 async function builtWith(first: Extract<Steps[number], { as: 'codex' }>['acts'][number], extra: Steps): Promise<StageRun> {
   const run = setupUnit({ steps: [planCheckStep({ decision: 'approve' }), { as: 'codex', expect: { argv: ['exec', '-C'] }, acts: [first] }, ...extra] });
-  started(await planCheck(run.ctx, run.unit));
+  started(await preBuild(run.ctx, run.unit));
   const malformed = started(await build(run.ctx, run.unit, { kind: 'fresh' }));
   assert.equal(malformed.outcome.kind, 'malformed');
   return run;
@@ -180,7 +180,7 @@ async function dev6Built(extra: Steps): Promise<StageRun> {
   });
   // dev.6's built-in seats built high on frontier (a plan layer stands for them: HEAD's built-ins build every tier efficient).
   const dev6 = under(run, { ...rebound(DEV6, { build: { high: 'frontier' } }), arcScope: 'architecture-doc' });
-  started(await planCheck(dev6, run.unit));
+  started(await preBuild(dev6, run.unit));
   const malformed = started(await build(dev6, run.unit, { kind: 'fresh' }));
   assert.equal(malformed.outcome.kind, 'malformed');
   return run;

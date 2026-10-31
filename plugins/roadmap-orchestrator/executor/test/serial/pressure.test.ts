@@ -1,13 +1,13 @@
-import { planCheck } from '../../src/pipeline/stages.ts';
+import { preBuild } from '../../src/pipeline/stages.ts';
 // M4b rev 3 (RC-11, step H2): charging under real host pressure, integrated (real processes, real git, fake backends,
 // this host's schedstat). CPU burners (4 × availableParallelism busy loops) saturate the host, so a cpu-bound launch
 // waits for a cpu most of its time: its pressure (its own cpu wait, src/host/pressure.ts) is well above
 // PRESSURE_SATURATED (about 0.7 on a 16-cpu host; 2 × cpus gives about 0.5, too close to the threshold to test). The
 // test keeps its own tick history of the host's cpu wait, one reading a second, as the scheduler does. Unit u1 runs
 // through the unit driver:
-//   1. its plan-check call (deadline: the unit's `limits.judgmentDeadlineMin` of 1 minute) spins on a cpu and is killed
+//   1. its pre-build call (deadline: the unit's `limits.judgmentDeadlineMin` of 1 minute) spins on a cpu and is killed
 //      by its deadline while starved of one: `starved`, a `host-pressure` hold: not chargeable, no retry, no park;
-//   2. driven on past the hold (the test's gate admits), its plan-check, build and lanes run under pressure; lane
+//   2. driven on past the hold (the test's gate admits), its pre-build, build and lanes run under pressure; lane
 //      `flaky` spins for 6 s and is red on its first run (green on its diagnostic rerun): red under pressure, held for
 //      its one rerun, uncharged, no fix round; after a minute of ticks the real admitter still holds the re-run: the
 //      host stays saturated;
@@ -64,7 +64,7 @@ after(() => {
 });
 
 /** The admission the scheduler would give `stage` of u1 now, over the test's tick history. */
-const admission = (r: ArcRun, stage: 'plan-check' | 'lanes'): Admission => admitter((u) => r.ctx.routing(u).table, specFacts(r.ctx))({
+const admission = (r: ArcRun, stage: 'pre-build' | 'lanes'): Admission => admitter((u) => r.ctx.routing(u).table, specFacts(r.ctx))({
   view: r.journal.view, plan: r.ctx.plan(), unit: r.unit('u1'), stage, blocking: [], drains: [], tripped: [], pressure: { ticks: ticks.ticks(), nowMs: Date.now() },
 });
 /** The real admitter at every admission boundary; chains always run. */
@@ -94,7 +94,7 @@ describe('host pressure (RC-11)', () => {
     const spin = `node -e 'const end = Date.now() + 6000; while (Date.now() < end) {}'`;
     const flaky = { id: 'flaky', argv: ['sh', '-c', `[ -e "$STATE/ran" ] && exit 0; touch "$STATE/ran"; ${spin}; exit 1`], env: { set: { STATE: state }, pass: ['PATH'] } };
     const answer = planCheckStep({ decision: 'approve' });
-    if (answer.as !== 'claude') throw new Error('a plan-check is a Claude judgment');
+    if (answer.as !== 'claude') throw new Error('a pre-build is a Claude judgment');
     const hung: Step = { ...answer, acts: [{ type: 'spin', ms: 180_000 }, ...answer.acts] };
     const d = setupArc({
       units: [{ id: 'u1', lanes: [MUL_LANE, flaky] }],
@@ -106,9 +106,9 @@ describe('host pressure (RC-11)', () => {
       startBurners();
       await sleep(2_000);
 
-      // 1. The plan-check call, spinning on a starved cpu, outlives its 1-minute deadline: starved.
-      await planCheck(r.ctx,r.unit('u1'));
-      assert.deepEqual(outcomes(d), ['plan-check:approve']);
+      // 1. The pre-build call, spinning on a starved cpu, outlives its 1-minute deadline: starved.
+      await preBuild(r.ctx,r.unit('u1'));
+      assert.deepEqual(outcomes(d), ['pre-build:approve']);
       const starved = outcomeFacts(d).at(-1)!;
       const review=r.journal.view.surfaceFacts().findLast(f=>f.kind==='review-completed');
       assert.ok(review?.kind==='review-completed'&&review.note!==null, 'the failed review becomes build memory');
@@ -117,12 +117,12 @@ describe('host pressure (RC-11)', () => {
       assert.ok(call.pressure !== null && call.pressure >= PRESSURE_SATURATED, `the call's pressure ${call.pressure} is saturated`);
       assert.deepEqual([starved.chargeable, starved.park], [false, undefined], 'the review annotates without a charge or park');
       const u = r.journal.view.unit(U1);
-      assert.deepEqual([u.status, u.counters.chargeableFailures, u.counters.retries['plan-check'], u.pressureHolds], ['active', 0, 0, 0], 'no retry or pressure hold spent on an annotation');
+      assert.deepEqual([u.status, u.counters.chargeableFailures, u.counters.retries['pre-build'], u.pressureHolds], ['active', 0, 0, 0], 'no retry or pressure hold spent on an annotation');
 
       // 2. On under pressure: the red lane is held for its one rerun, uncharged, no fix round.
       assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), admitAll), { kind: 'held', needsUser: null });
       assert.deepEqual(outcomes(d), [
-        'plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:interrupted',
+        'pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:interrupted',
       ]);
       const red = outcomeFacts(d).at(-1)!;
       assert.ok(red.cause?.type === 'host-pressure');

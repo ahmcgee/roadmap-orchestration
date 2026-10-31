@@ -98,11 +98,11 @@ describe('the audit job', () => {
       const base = head(d.repo);
       assert.deepEqual(await runUnit(ctx, r.unit('u2'), admitAll), { kind: 'merged' });
       await stepUntil(r, 'u1', (f) => f.stage === 'gate' && f.outcome === 'approve');
-      // A plan-check vision conflict of u1, owned by u1: its branch is an owner the lenses read.
+      // A pre-build vision conflict of u1, owned by u1: its branch is an owner the lenses read.
       r.journal.fact({
-        kind: 'finding-opened', id: r.journal.view.nextFindingId(), key: findingKey('plan-check', null, 'mul may round'), lens: 'plan-check', severity: 'P3',
+        kind: 'finding-opened', id: r.journal.view.nextFindingId(), key: findingKey('pre-build', null, 'mul may round'), lens: 'pre-build', severity: 'P3',
         obligation: null, visionClauses: [VISION.clauses[0].id as never], claim: 'mul may round', evidence: [], mutant: null,
-        source: { type: 'stage', unit: r.unit('u1').id, stage: 'plan-check', attempt: 1 }, gateHadPassed: false,
+        source: { type: 'stage', unit: r.unit('u1').id, stage: 'pre-build', attempt: 1 }, gateHadPassed: false,
       });
       r.journal.fact({ kind: 'finding-transition', id: r.journal.view.holistic().findings[0]!.id, to: { state: 'owned', unit: r.unit('u1').id } });
       requestAudit(r);
@@ -483,18 +483,11 @@ describe(`matrix row ${AUDIT_JOB}`, () => {
 const CKPT = jobId('ckpt', 1);
 
 /** The checkpoint whose bundle the next revision comes from (its generation numbers the audit the revision triggers). */
-function checkpointInputs(r: ArcRun, checkpoint: JobId = CKPT): void {
-  const visionSha256 = r.journal.view.planApplied()!.visionSha256!;
-  r.journal.fact({
-    kind: 'checkpoint-inputs', job: checkpoint, trigger: { type: 'audit', job: jobId('audit', 9) }, generation: 1,
-    vector: { plan: r.journal.view.planApplied()!.rev, specs: {}, obligationsSha256: null, ledgerSha256: null, visionSha256, contracts: [] },
-    headSha: head(r.d.repo), visionSha256, findings: [], observations: [],
-  });
-}
+
 
 /** Commits the plan files as they stand now as a revision of checkpoint `ckpt-1`'s bundle. */
 async function bundleRevision(r: ArcRun, checkpoint: JobId = CKPT): Promise<void> {
-  checkpointInputs(r, checkpoint);
+
   const rctx = { runDir: r.ctx.runDir, view: r.journal.view, hostDir: r.ctx.hostDir, planFile: absPath(r.d.planPath), routingBase: r.ctx.routingBase, laneEnv: process.env } as const;
   const v = evaluateRevision(rctx, readInputFiles(absPath(r.d.planPath), absPath(r.d.repo)), { type: 'bundle', job: checkpoint, cites: [visionClauseId('V-1')], evidence: ['the scripted bundle'], admits: [],  });
   assert.equal(v.kind, 'accepted', JSON.stringify(v));
@@ -609,9 +602,9 @@ describe('the lens-range fix: chunks by publication, bounded attachments', () =>
       // u2 approved, not merged, owning a finding: its branch is an owner the lens reads.
       await stepUntil(r, 'u2', (f) => f.stage === 'gate' && f.outcome === 'approve');
       r.journal.fact({
-        kind: 'finding-opened', id: r.journal.view.nextFindingId(), key: findingKey('plan-check', null, 'owner gap'), lens: 'plan-check', severity: 'P3',
+        kind: 'finding-opened', id: r.journal.view.nextFindingId(), key: findingKey('pre-build', null, 'owner gap'), lens: 'pre-build', severity: 'P3',
         obligation: null, visionClauses: [VISION.clauses[0].id as never], claim: 'owner gap', evidence: [], mutant: null,
-        source: { type: 'stage', unit: r.unit('u2').id, stage: 'plan-check', attempt: 1 }, gateHadPassed: false,
+        source: { type: 'stage', unit: r.unit('u2').id, stage: 'pre-build', attempt: 1 }, gateHadPassed: false,
       });
       r.journal.fact({ kind: 'finding-transition', id: r.journal.view.holistic().findings[0]!.id, to: { state: 'owned', unit: r.unit('u2').id } });
       requestAudit(r);

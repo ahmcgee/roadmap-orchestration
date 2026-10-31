@@ -516,24 +516,24 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
 
   test('evals-m4a.witness-missing: guard\'s first build passes its unit lane but fails the berths witness, so a fix round naming the test comes before any gate', () => {
     const guard = outcomesOf(arc1, 'guard');
-    assert.deepEqual(named(guard).filter((o) => /^(lanes|gate|build|plan-check):/.test(o)), ['plan-check:approve', 'build:success', 'lanes:witnesses-missing', 'build:success', 'lanes:green', 'gate:approve']);
+    assert.deepEqual(named(guard).filter((o) => /^(lanes|gate|build|pre-build):/.test(o)), ['pre-build:approve', 'build:success', 'lanes:witnesses-missing', 'build:success', 'lanes:green', 'gate:approve']);
     const missing = guard.find((o) => o.outcome === 'witnesses-missing')!;
     assert.deepEqual(missing.detail, { kind: 'witnesses-missing', missing: [], failed: [{ lane: 'berths', testId: LANES.find((x) => x.id === 'berths')!.test }] });
     // The fix round's call is the scenario's resume step that expects the failing id in its prompt (every step played once).
     const calls = callsOf(story.dir, 1).filter((c) => c.unit === 'guard');
-    assert.equal(calls.length, 4, 'plan-check, build, the witness fix round, gate');
+    assert.equal(calls.length, 4, 'pre-build, build, the witness fix round, gate');
     assert.match(calls[2]!.stdin, /Failing: test "a berth is never booked twice for one tide window" on lane berths/);
     assert.match(calls[2]!.stdin, /witness-check --lane-file/, 'the fix round names the witness check command');
   });
 
-  test('evals-m4a.smoke-survivor: confirm (high risk) is plan-checked and built; smoke finds W-1 surviving, one fix round, then the gate', () => {
+  test('evals-m4a.smoke-survivor: confirm (high risk) is pre-builded and built; smoke finds W-1 surviving, one fix round, then the gate', () => {
     const confirm = outcomesOf(arc1, 'confirm');
-    assert.deepEqual(named(confirm).filter((o) => /^(lanes|gate|build|plan-check):/.test(o)), [
-      'plan-check:approve', 'build:success', 'lanes:smoke-survived', 'build:success', 'lanes:smoke-survived', 'gate:approve',
+    assert.deepEqual(named(confirm).filter((o) => /^(lanes|gate|build|pre-build):/.test(o)), [
+      'pre-build:approve', 'build:success', 'lanes:smoke-survived', 'build:success', 'lanes:smoke-survived', 'gate:approve',
     ]);
     const calls = callsOf(story.dir, 1).filter((c) => c.unit === 'confirm');
-    assert.equal(calls.length, 4, 'plan-check, build, the smoke fix round, gate');
-    assert.ok(calls[0]!.argv.includes('--tools') && calls[3]!.argv.includes('--tools'), 'plan-check and the gate judge');
+    assert.equal(calls.length, 4, 'pre-build, build, the smoke fix round, gate');
+    assert.ok(calls[0]!.argv.includes('--tools') && calls[3]!.argv.includes('--tools'), 'pre-build and the gate judge');
     const tides = { lane: 'tides', testId: LANES.find((x) => x.id === 'tides')!.test };
     const ran = factsOf(arc1, 'smoke-ran').filter((f) => f.unit === 'confirm');
     assert.equal(ran.length, 2);

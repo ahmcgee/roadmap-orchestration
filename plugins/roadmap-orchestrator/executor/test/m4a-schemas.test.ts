@@ -18,7 +18,7 @@ InvalidIdError,amendmentRef,amendmentRefOf,arcId,briefId,commandId,debtId,jobId,
 parseAmendmentRef,phaseQuestionId,ruleId,sha,sha256,unitId,
 } from '../src/core/ids.ts';
 import { canonicalJson } from '../src/core/json.ts';
-import { checkpointSkipTriggerOf } from '../src/core/projections.ts';
+import { } from '../src/core/projections.ts';
 import { NEEDS_USER_REASONS,approvalFingerprint,needsUserRecord,revisionInputs } from '../src/core/records.ts';
 import { Fields,SchemaError } from '../src/core/validate.ts';
 import { absPath,isoTime } from '../src/core/values.ts';
@@ -31,7 +31,7 @@ import { contractOpDocuments,parsePlan,targetDocumentPaths,targetDocuments,visio
 import { m3Blocking } from '../src/needsuser.ts';
 import { parseAckMarker,parseBriefPayload,parsePhase0Record } from '../src/phase0/types.ts';
 import { exitCodeFor,rejectionFile } from '../src/preflight/startup.ts';
-import { validateCheckpointOutput,validatePackReviewOutput } from '../src/prompts/schemas.ts';
+import { validatePackReviewOutput } from '../src/prompts/schemas.ts';
 import { parseRepoConfig } from '../src/routing/layers.ts';
 import { BUILTIN_SEATS } from '../src/routing/profiles.ts';
 import { ARC_ROLES,ROLES } from '../src/routing/types.ts';
@@ -282,7 +282,7 @@ describe('facts, plan changes, manifests and fingerprints', () => {
   it('every M4a fact round-trips byte-identically', () => {
     for (const f of Object.values(M4A_FACTS)) roundTrip(fact(f));
     roundTrip(fact({ ...M4A_FACTS['debt-banked'], source: { type: 'finding', finding: 'F-4' } }));
-    roundTrip(fact({ ...M4A_FACTS['corpus-amendment'], source: { type: 'divergence', divergence: 'D-3' } }));
+    roundTrip(fact({ ...M4A_FACTS['corpus-amendment'], source: {type: 'root', command: commandId('cmd-0000000000000001')} }));
   });
 
   it('schema 2 refuses removed issue records and amendment sources', () => {
@@ -307,34 +307,6 @@ describe('facts, plan changes, manifests and fingerprints', () => {
       kind: 'plan-applied', rev: 2, command: CMD, planSha256: H, specs: { u1: H },
       changes: [{ type: 'corpus', pinSha256: H, guideSha256: H2 }, { type: 'phase0', sha256: H2 }], ...appliedFields(2, CMD),
     }));
-  });
-
-  it('checkpoint-inputs: corpusSha256 round-trips; a dev.6 fact without it reads as written', () => {
-    const inputs = {
-      kind: 'checkpoint-inputs', job: 'ckpt-1', trigger: { type: 'audit', job: 'audit-1' }, generation: 1,
-      vector: { plan: 4, specs: { u1: 2 }, obligationsSha256: H2, ledgerSha256: H, visionSha256: H, contracts: [] }, headSha: A, visionSha256: H, findings: [], observations: [],
-    };
-    const dev6 = roundTrip(fact(inputs));
-    assert.ok(dev6.type === 'fact' && dev6.fact.kind === 'checkpoint-inputs' && dev6.fact.corpusSha256 === undefined);
-    roundTrip(fact({ ...inputs, corpusSha256: H2 }));
-  });
-
-  it('milestone cadence: positive optional plan knob, additive trigger, and byte-preserving audit-only skips', () => {
-    assert.equal(parsePlan(corpusPlan).holistic!.checkpoint, undefined, 'absence reads with the runtime default of 2');
-    const withKnob = (n: number) => ({ ...corpusPlan, holistic: { ...corpusPlan.holistic, checkpoint: { everyMilestones: n } } });
-    assert.equal(parsePlan(withKnob(3)).holistic!.checkpoint!.everyMilestones, 3);
-    for (const n of [0, -1, 1.5]) assert.throws(() => parsePlan(withKnob(n)), /everyMilestones/);
-    const skipped = { kind: 'checkpoint-skipped', trigger: {type: 'audit', job: 'audit-1'}, generation: 1, visionSha256: H, carried: [] };
-    const old = roundTrip(fact(skipped));
-    assert.ok(old.type === 'fact' && old.fact.kind === 'checkpoint-skipped');
-    assert.deepEqual(checkpointSkipTriggerOf(old.fact), { type: 'audit', job: 'audit-1' });
-    const trigger = { type: 'milestone', milestones: ['MS-1', 'MS-2'] };
-    roundTrip(fact({ kind: 'checkpoint-skipped', trigger, generation: 2, visionSha256: H, carried: [] }));
-    const inputs = { kind: 'checkpoint-inputs', job: 'ckpt-1', trigger, generation: 2, vector: { plan: 1, specs: {}, obligationsSha256: null, ledgerSha256: H, visionSha256: H, contracts: [] }, headSha: A, visionSha256: H, findings: [], observations: [] };
-    roundTrip(fact(inputs));
-    refusesFact({ ...inputs, trigger: { type: 'milestone', milestones: [] } }, /milestones/);
-    refusesFact({ ...inputs, trigger: { type: 'milestone', milestones: ['MS-2', 'MS-1'] } }, /milestones/);
-    for (const type of ['audit', 'walk']) roundTrip(fact({ ...inputs, trigger: { type, job: `${type}-1` } }));
   });
 
   it('revision inputs: the three corpus digests together or not at all', () => {
@@ -375,26 +347,6 @@ describe('facts, plan changes, manifests and fingerprints', () => {
 });
 
 describe('checkpoint child schemas', () => {
-  it('a checkpoint answer requires corpusAmendments and exactly one anchor on every split child', () => {
-    const child = { id: 'I-5', statement: 's', docRef: { path: 'docs/arch.md', anchor: '#a', quotedText: 'q' }, rule: null, witness, activation: 'must-hold', deliveredBy: [] };
-    const answer = {
-      decision: 'bundle', reasons: ['r'], ops: [{ op: 'obligation-split', obligation: 'I-1', children: [child], cites: ['V-1'], evidence: ['F-1'] }],
-      findingDispositions: [], interpretations: [], cites: { vision: ['V-1'], observations: [], findings: [] }, premises: [],
-      corpusAmendments: [],
-    };
-    const op = validateCheckpointOutput(answer).ops[0]!;
-    assert.ok(op.op === 'obligation-split' && op.children[0]!.rule === null);
-    const { corpusAmendments: _c, ...noAmendments } = answer;
-    const { rule: _r, ...noRule } = child;
-    for (const invalid of [noAmendments, { ...answer, ops: [{ ...answer.ops[0], children: [noRule] }] }]) assert.throws(() => validateCheckpointOutput(invalid), SchemaError);
-    // M4a's own: a rule-anchored child and amendments.
-    const m4 = validateCheckpointOutput({
-      ...answer, ops: [{ ...answer.ops[0], children: [{ ...child, docRef: null, rule: 'T-2' }] }],
-      corpusAmendments: [{ rules: ['T-2'], proposal: 'p', why: 'w' }],
-    });
-    assert.equal(m4.corpusAmendments.length, 1);
-    assert.throws(() => validateCheckpointOutput({ ...answer, ops: [{ ...answer.ops[0], children: [{ ...child, rule: 'T-2' }] }] }), /exactly one of docRef and rule/);
-  });
 });
 
 describe('startup rows, brief and ack', () => {
@@ -478,26 +430,7 @@ describe('startup rows, brief and ack', () => {
 
 describe('numbered-id order', () => {
   it('facts refuse a list in neither canonical nor historical order', () => {
-    refusesFact({ kind: 'corpus-amendment', id: 'M-1', source: { type: 'divergence', divergence: 'D-3' }, rules: ['T-9', 'T-10', 'T-2'], proposal: 'p', why: 'w', evidence: [] }, /^event\.fact\.rules\[2\]$/);
-  });
-
-
-
-
-  it('a checkpoint answer\'s lists come in any order and read canonical, so no fact built from them is refused for order', () => {
-    const child = { id: 'I-12', statement: 's', docRef: null, rule: 'T-2', witness, activation: 'must-hold', deliveredBy: ['u2', 'u1'] };
-    const out = validateCheckpointOutput({
-      decision: 'bundle', reasons: ['r'],  findingDispositions: [], premises: [],
-      ops: [{ op: 'obligation-split', obligation: 'I-1', children: [child], cites: ['V-10', 'V-2'], evidence: ['F-1'] }],
-      interpretations: [{ clauses: ['V-11', 'V-3'], situation: 's', reading: 'r' }],
-      cites: { vision: ['V-10', 'V-9'], observations: [], findings: ['F-12', 'F-3'] },
-      corpusAmendments: [{ rules: ['T-120', 'T-42'], proposal: 'p', why: 'w' }],
-    });
-    const op = out.ops[0]!;
-    assert.ok(op.op === 'obligation-split');
-    assert.deepEqual([op.cites, op.children[0]!.deliveredBy], [['V-2', 'V-10'], ['u1', 'u2']]);
-    assert.deepEqual([out.interpretations[0]!.clauses, out.cites.vision, out.cites.findings], [['V-3', 'V-11'], ['V-9', 'V-10'], ['F-3', 'F-12']]);
-    assert.deepEqual(out.corpusAmendments[0]!.rules, ['T-42', 'T-120']);
+    refusesFact({ kind: 'corpus-amendment', id: 'M-1', source: {type: 'root', command: commandId('cmd-0000000000000001')}, rules: ['T-9', 'T-10', 'T-2'], proposal: 'p', why: 'w', evidence: [] }, /^event\.fact\.rules\[2\]$/);
   });
 
   it('the census and the pin were always numeric: string order is refused there', () => {

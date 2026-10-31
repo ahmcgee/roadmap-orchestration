@@ -1,10 +1,10 @@
-// The re-entry stage `prepare` (src/pipeline/prepare.ts), integrated over real git: prepare.clean-plan-check,
+// The re-entry stage `prepare` (src/pipeline/prepare.ts), integrated over real git: prepare.clean-pre-build,
 // prepare.clean-build, prepare.clean-verify, prepare.conflicted, prepare.evidence, M4a rev 3:
 // prepare.reentry-widened-envelope (F5), prepare.known-defect-clean, prepare.known-defect-conflicted,
 // prepare.known-defect-attempt-scoped (F4), and a crash at every op boundary of the stage (the crash-matrix boundaries B2-B5; B1 is the journal.append row's), each restarted
 // through `recover()` and the stage again, as the executor does.
 //
-// The arc: unit u1 is dispatched (its plan-check raised the floor to high), branched with a change to
+// The arc: unit u1 is dispatched (its pre-build raised the floor to high), branched with a change to
 // src/add.js and held; a plan revision adds u2, which re-enters u1. The integration tip then advances with a
 // conflicting change to src/add.js (conflict), an unrelated file (clean), or not at all (up to date).
 //
@@ -42,7 +42,7 @@ const ADD_MAIN = 'export function add(a, b) {\n  return b + a; // integration\n}
 
 type Tip = 'conflict' | 'clean' | 'up-to-date';
 /** `widened`: the patterns the `unit-reentered` change records as widened on a ruling (F5). */
-type Setup = Readonly<{ tip: Tip; enterAt?: 'plan-check' | 'build' | 'verify'; scope?: readonly string[]; widened?: readonly string[] }>;
+type Setup = Readonly<{ tip: Tip; enterAt?: 'pre-build' | 'build' | 'verify'; scope?: readonly string[]; widened?: readonly string[] }>;
 type Arc = Readonly<{ d: ArcDescriptor; oldTip: string; tip: string }>;
 
 /** u1 dispatched (floor raised to high), branched and held; u2 re-enters it in plan rev 2; the tip advanced per `tip`. */
@@ -54,7 +54,7 @@ function reenteredArc(s: Setup): Arc {
   const pinned = pinDispatch(r.ctx, u1, { rev: spec.rev, sha256 });
   assert.equal(pinned.kind, 'pinned');
   if (pinned.kind === 'pinned') raiseRisk(r.ctx, pinned.dispatch, 'high', { rev: spec.rev, sha256 });
-  record(r.ctx, at(start(r.ctx, U1, 'plan-check'), 'plan-check'), 'interrupted');
+  record(r.ctx, at(start(r.ctx, U1, 'pre-build'), 'pre-build'), 'interrupted');
   assert.equal(r.journal.view.unit(U1).status, 'held');
 
   const oldBranch = unitBranch(r.ctx.plan().arc, U1).replace(/^refs\/heads\//, '');
@@ -110,13 +110,13 @@ function assertCleanMerge(arc: Arc, r: ArcRun, done: PrepareDone): void {
 }
 
 const outcomeTests = (): unknown => describe('prepare: outcomes', { concurrency: true }, () => {
-  test('prepare.clean-plan-check: a clean merge-in with no enterAt enters at plan-check', T, async () => {
+  test('prepare.clean-pre-build: a clean merge-in with no enterAt enters at pre-build', T, async () => {
     const { arc, r, done } = await prepared({ tip: 'clean' });
     try {
-      assert.equal(done.outcome.kind, 'clean-plan-check');
-      assert.equal(done.next.kind === 'stage' ? done.next.stage : done.next.kind, 'plan-check');
+      assert.equal(done.outcome.kind, 'clean-pre-build');
+      assert.equal(done.next.kind === 'stage' ? done.next.stage : done.next.kind, 'pre-build');
       assertCleanMerge(arc, r, done);
-      assert.deepEqual(outcomes(arc.d, 'u2'), ['prepare:clean-plan-check']);
+      assert.deepEqual(outcomes(arc.d, 'u2'), ['prepare:clean-pre-build']);
       const pins = r.journal.view.dispatchesOf(U2);
       assert.equal(pins.length, 1);
     } finally {
@@ -184,7 +184,7 @@ const outcomeTests = (): unknown => describe('prepare: outcomes', { concurrency:
   test('prepare.up-to-date: a branch that already holds T is not merged into again', T, async () => {
     const { arc, r, done } = await prepared({ tip: 'up-to-date' });
     try {
-      assert.equal(done.outcome.kind, 'clean-plan-check');
+      assert.equal(done.outcome.kind, 'clean-pre-build');
       assert.equal(done.head, arc.oldTip);
       assert.equal(r.journal.view.opsOf('mergein.prepare').length, 0);
       assert.equal(capturedEvidence(r.journal.view, done.evidence).manifest.files.length, 0, 'a clean preparation snapshots zero files');
@@ -327,7 +327,7 @@ function assertRecovered(arc: Arc, tip: 'conflict' | 'clean'): void {
   const r = contextFor(arc.d);
   try {
     const view = r.journal.view;
-    assert.deepEqual(outcomes(arc.d, 'u2'), [tip === 'conflict' ? 'prepare:conflicted' : 'prepare:clean-plan-check'], 'one outcome');
+    assert.deepEqual(outcomes(arc.d, 'u2'), [tip === 'conflict' ? 'prepare:conflicted' : 'prepare:clean-pre-build'], 'one outcome');
     assert.deepEqual(view.openIntents(), [], 'nothing left open');
     const ofU2 = <K extends 'worktree.create' | 'mergein.prepare' | 'evidence.snapshot'>(kind: K) =>
       view.opsOf(kind).filter((i) => i.parent.type === 'stage' && i.parent.unit === U2 && view.doneOf(i.op) !== null);
@@ -374,7 +374,7 @@ if (process.env['PREPARE_CHILD'] !== undefined) {
           if (c.label === 'log.append.after-fsync') assert.equal(lastAppend(arc.d), APPENDS[c.occurrence - 1], 'crashed right after that append');
           const second = await child(arc.d, { ...env, PREPARE_RECOVER: '1' });
           assert.equal(second.code, 0, second.stderr);
-          assert.deepEqual(JSON.parse(second.stdout), { kind: tip === 'conflict' ? 'conflicted' : 'clean-plan-check' });
+          assert.deepEqual(JSON.parse(second.stdout), { kind: tip === 'conflict' ? 'conflicted' : 'clean-pre-build' });
           assertRecovered(arc, tip);
         });
       }

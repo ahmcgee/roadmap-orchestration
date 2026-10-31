@@ -10,7 +10,7 @@
 //
 // M3 (B3): two facts about a unit come from its spec in force, which only the pipeline reads (`SpecFacts`,
 // src/pipeline/reproduce.ts `specFacts`): whether it is a vacuity repair that reproduces its mutant first (its first
-// stage is `reproduce`, not plan-check), and the obligations it repairs, which exempt it from an active P1's
+// stage is `reproduce`, not pre-build), and the obligations it repairs, which exempt it from an active P1's
 // `finding-blocked` at candidate admission (G10). Repair units rank first (R6, `ORIGIN_RANK`).
 //
 // M4a rev 3: a unit's plan `priority` ranks first (F1b, R42, `compareRank`). Known defects (F4, R49): one predicate,
@@ -64,7 +64,7 @@ const isAdmissionStage = (s: OutcomeStage): s is AdmissionStage => (ADMISSION_ST
  * read only when one is pending (src/holistic/staleset.ts `propagationHolds`).
  */
 export type SpecFacts = Readonly<{
-  reproduces: boolean; repairs: ReadonlySet<ObligationId>;
+  review?: boolean; reproduces: boolean; repairs: ReadonlySet<ObligationId>;
   /** dev.17: its spec lanes, forces and witness lanes (src/pipeline/deflake.ts `specLaneIds`), read when a deflake edge may hold it. */
   lanes: () => ReadonlySet<LaneId>;
   links: () => SpecLinks;
@@ -73,14 +73,14 @@ export type SpecFactsOf = (unit: PlanUnit) => SpecFacts;
 
 /**
  * The stage a unit runs next, from its latest decided outcome: before one (or after a reopen) its first stage,
- * `reproduce` for a vacuity repair (`reproduces`, M3 B3), else plan-check; `prepare` for a re-entry that has not
+ * `reproduce` for a vacuity repair (`reproduces`, M3 B3), else pre-build; `prepare` for a re-entry that has not
  * prepared yet. null when the decision ends the unit's stages (a park, a stop or a retire). A chain stage runs
  * without admission (F5). M3: an entry a command set goes first (a steer's round is a build, a merge-in's lanes:
  * `ENTRY_STAGE`).
  */
-export function nextStage(u: UnitState, reproduces: boolean): NextStage | null {
+export function nextStage(u: UnitState, reproduces: boolean, review = true): NextStage | null {
   if (u.entry !== null) return { kind: 'admission', stage: ENTRY_STAGE[u.entry.kind] };
-  if (u.decided === null) return { kind: 'admission', stage: u.lineage !== null && !u.lineage.prepared ? 'prepare' : reproduces ? 'reproduce' : 'plan-check' };
+  if (u.decided === null) return { kind: 'admission', stage: u.lineage !== null && !u.lineage.prepared ? 'prepare' : reproduces ? 'reproduce' : review ? 'pre-build' : 'build' };
   const d = decidedBy(u.decided);
   if (d.kind !== 'stage') return null;
   const s = d.target.stage;
@@ -90,7 +90,7 @@ export function nextStage(u: UnitState, reproduces: boolean): NextStage | null {
 // ---------------------------------------------------------------------------------------------------
 // Admission (A12, A17)
 
-const ROLE_OF: Readonly<Record<JudgmentStage, JudgmentRole>> = { 'plan-check': 'planCheck', gate: 'gate' };
+const ROLE_OF: Readonly<Record<JudgmentStage, JudgmentRole>> = { 'pre-build': 'verifier', gate: 'verifier' };
 
 /** Open blocking items with these reasons hold every admission; so does any item whose subject is the host. */
 const ADMISSION_BLOCKING: readonly NeedsUserReason[] = ['recovery-required', 'log-corrupt', 'supervisor-crash-limit'];
@@ -105,8 +105,7 @@ function backendOf(routing: RoutingTable, u: UnitState, unit: PlanUnit, stage: A
     const j = stage as JudgmentStage;
     return routing[ROLE_OF[j]][judgmentSeat({ ...u, risk: u.risk ?? unit.risk }, j)].backend;
   }
-  if (stage === 'build' || stage === 'poc') return routing.build[u.buildTier ?? unit.risk].backend;
-  if (stage === 'scaffold') return routing.scaffold[u.risk ?? unit.risk].backend;
+  if (stage === 'build') return routing.build[u.buildTier ?? unit.risk].backend;
   return null;
 }
 
@@ -118,7 +117,7 @@ function backendOf(routing: RoutingTable, u: UnitState, unit: PlanUnit, stage: A
 function breakerBlocks(target: ProbeTarget, stage: AdmissionStage, backend: Backend | null): boolean {
   switch (target.type) {
     case 'host':
-      return stage === 'build' || stage === 'lanes' || stage === 'reproduce' || stage === 'scaffold' || stage === 'poc';
+      return stage === 'build' || stage === 'lanes' || stage === 'reproduce';
     case 'backend':
       return target.backend === backend;
     case 'resource':
@@ -285,7 +284,7 @@ export function ready(input: ReadyInput): readonly ReadyUnit[] {
   for (const unit of plan.units.filter((u) => dependenciesMet(view, u, waits))) {
     const u = view.unit(unit.id);
     if (u.status !== 'active') continue;
-    const next = nextStage(u, input.spec(unit).reproduces);
+    const next = nextStage(u, input.spec(unit).reproduces, input.spec(unit).review);
     if (next?.kind !== 'admission') continue;
     if (admit({ ...input, unit, stage: next.stage }).kind !== 'admit') continue;
     out.push({ unit, stage: next.stage, rank: rankOf(view, plan, unit.id) });

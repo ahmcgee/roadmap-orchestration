@@ -45,7 +45,7 @@ describe('opening and dedupe', () => {
       assert.deepEqual(opened.map((f) => [f.id, f.state]), [['F-1', 'open'], ['F-2', 'open'], ['F-3', 'open']]);
       assert.notEqual(opened[0]!.key, opened[1]!.key);
 
-      ruleFinding(j, findingId('F-1'), 'dismissed', { type: 'checkpoint', job: jobId('ckpt', 1) });
+      ruleFinding(j, findingId('F-1'), 'dismissed', { type: 'code', reason: 'close-out' });
       assert.deepEqual(openFinding(j, draft()), { kind: 'suppressed', by: 'F-1' });
       assert.deepEqual(openFinding(j, draft({ evidence: [{ path: 'src/other.js', blob: B2 }] })), { kind: 'suppressed', by: 'F-1' },
         'a path the dismissal did not cite is not a changed blob');
@@ -55,7 +55,7 @@ describe('opening and dedupe', () => {
       assert.deepEqual(openFinding(j, draft({ evidence: [{ path: 'src/parse.js', blob: B2 }] })), { kind: 'merged', id: 'F-4' });
 
       // A resolved or deferred finding is not a dismissal: its key opens again.
-      ruleFinding(j, findingId('F-2'), 'deferred', { type: 'checkpoint', job: jobId('ckpt', 1) });
+      ruleFinding(j, findingId('F-2'), 'deferred', { type: 'code', reason: 'close-out' });
       assert.deepEqual(openFinding(j, draft({ cause: 'another cause' })), { kind: 'opened', id: 'F-5' });
 
       // A vacuity finding's patch is kept (keepMutantPatch) before its fact names it.
@@ -75,7 +75,7 @@ describe('opening and dedupe', () => {
     const a = openJournal(runDir, ARC);
     try {
       assert.deepEqual(openFinding(a, draft()), { kind: 'opened', id: 'F-1' });
-      ruleFinding(a, findingId('F-1'), 'dismissed', { type: 'checkpoint', job: jobId('ckpt', 1) });
+      ruleFinding(a, findingId('F-1'), 'dismissed', { type: 'code', reason: 'close-out' });
     } finally {
       a.close();
     }
@@ -95,13 +95,13 @@ describe('opening and dedupe', () => {
     }
   });
 
-  it('findings.drafts: code\'s witness P1 has one stable cause per obligation; a plan-check vision conflict is a P3 from its attempt', () => {
+  it('findings.drafts: code\'s witness P1 has one stable cause per obligation; a pre-build vision conflict is a P3 from its attempt', () => {
     const w1 = witnessFindingDraft({ obligation: I1, serves: [], job: jobId('audit', 1), claim: 'I-1 not held at a', evidence: [], gateHadPassed: true });
     const w2 = witnessFindingDraft({ obligation: I1, serves: [], job: jobId('audit', 2), claim: 'I-1 not held at b', evidence: [], gateHadPassed: false });
     assert.equal(w1.cause, w2.cause);
     assert.deepEqual([w1.lens, w1.severity, w1.obligation], ['witness', 'P1', 'I-1']);
     const c = visionConflictDraft({ unit: U1, attempt: 2, clauses: ['V-2' as never, 'V-1' as never], note: 'A2 accepts any input' });
-    assert.deepEqual([c.lens, c.severity, c.obligation, c.source], ['plan-check', 'P3', null, { type: 'stage', unit: U1, stage: 'plan-check', attempt: 2 }]);
+    assert.deepEqual([c.lens, c.severity, c.obligation, c.source], ['pre-build', 'P3', null, { type: 'stage', unit: U1, stage: 'pre-build', attempt: 2 }]);
   });
 });
 
@@ -129,15 +129,15 @@ function folded(records: readonly LogRecord[], events: Event[] = chain(records))
 const unitOf = (unit: string, repairs: readonly string[], progress: RepairUnit['progress']): RepairUnit => ({ unit: unitId(unit), repairs: repairs as never, progress });
 
 describe('ruling and ownership', () => {
-  it('findings.p1-never-banks: a checkpoint may dismiss a P1, never defer or accept it; a ruling may; a P3 may be deferred', () => {
+  it('findings.p1-never-banks: automatic settlement may dismiss a P1, never defer or accept it; a root ruling may; a P3 may be deferred', () => {
     const view = folded([plan(1), opened(1), opened(2, { severity: 'P3', lens: 'vision', visionClauses: ['V-1'], obligation: null })]);
     const [p1, p3] = view.holistic().findings;
-    const ckpt = { type: 'checkpoint', job: jobId('ckpt', 1) } as const;
-    assert.equal(rulingRefusal(p1!, 'dismissed', ckpt), null);
-    assert.match(rulingRefusal(p1!, 'deferred', ckpt) ?? '', /P1s never bank/);
-    assert.match(rulingRefusal(p1!, 'accepted', ckpt) ?? '', /P1s never bank/);
+    const automatic = { type: 'code', reason: 'close-out' } as const;
+    assert.equal(rulingRefusal(p1!, 'dismissed', automatic), null);
+    assert.match(rulingRefusal(p1!, 'deferred', automatic) ?? '', /P1s never bank/);
+    assert.match(rulingRefusal(p1!, 'accepted', automatic) ?? '', /P1s never bank/);
     assert.equal(rulingRefusal(p1!, 'deferred', { type: 'ruling', ruling: 'C-2' as never }), null, 'a disposition ruling defers it');
-    assert.equal(rulingRefusal(p3!, 'deferred', ckpt), null);
+    assert.equal(rulingRefusal(p3!, 'deferred', automatic), null);
   });
 
   it('findings.ownership: the first live repairer owns a finding, its standing approval fixes it on its branch, its publication resolves it; a unit gone releases it', () => {
@@ -238,7 +238,7 @@ describe('needs-user items and instrumentation', () => {
   it('findings.metrics: lens, severity, gateHadPassed, disposition, merged and time to resolve, per finding', () => {
     const records = [plan(1), opened(1, { gateHadPassed: true }), opened(2, { severity: 'P3', lens: 'vision', visionClauses: ['V-1'], obligation: null }), opened(3, { severity: 'P2' }),
       move(1, { state: 'owned', unit: 'u1' }), move(1, { state: 'fixed-on-branch', unit: 'u1' }), move(1, { state: 'resolved' }),
-      move(2, { state: 'ruled', disposition: 'deferred', by: { type: 'checkpoint', job: 'ckpt-1' } })];
+      move(2, { state: 'ruled', disposition: 'deferred', by: { type: 'code', reason: 'close-out' } })];
     const events = chain(records).map((e, i) => ({ ...e, at: isoTime(new Date(Date.parse(AT) + i * 1000).toISOString()) }));
     const rechained = events.reduce<Event[]>((out, e) => [...out, { ...e, prev: out.length === 0 ? null : prevHash(Buffer.from(serializeEvent(out.at(-1)!))) }], []);
     const view = folded(records, rechained);

@@ -30,73 +30,25 @@ export type Triple =
   | { readonly backend: 'claude'; readonly model: ClaudeModelId; readonly effort: ClaudeEffort }
   | { readonly backend: 'codex'; readonly model: CodexModelId; readonly effort: CodexEffort };
 
-/**
- * `lens` and `checkpoint` (M3), `packReview` (M4a, OR-Q16), `flow` (M4b), `walkthrough` and `polishJudge` (dev.13) are the
- * arc roles: roles that run for the arc, not for a unit, on the one seat `arc`. They come last, so every earlier role keeps
- * its place in seat order.
- */
-// Only these actors can be recorded or selected by a routing layer.
+/** The only actors selectable by routing and recordable in schema 2. */
 export const ROLES = ['build', 'verifier', 'packReview', 'flow', 'experienceVerdict', 'campaignAudit'] as const;
-// Offline historical prompt/schema fixtures are kept typed while their feature-specific cases are retired.
-export type RetiredRole = 'planCheck' | 'gate' | 'lens' | 'checkpoint' | 'walkthrough' | 'polishJudge' | 'scaffold';
-export type Role = (typeof ROLES)[number] | RetiredRole;
-/**
- * The unit pipeline's roles (M1), every arc hashes, and (dev.17, proportional review) `verifier`: the economy role that
- * classifies the hunks of a build's docs-only claim at the unit's lanes stage (src/pipeline/docsonly.ts). It sits on the
- * unit's risk tier like build. dev.17's `scaffold` is in force only under the `dev17` role set (`DEV17_UNIT_ROLES`).
- */
+export type Role = (typeof ROLES)[number];
 export const UNIT_ROLES = ['build', 'verifier'] as const satisfies readonly Role[];
-/**
- * The roles a release before 1.0.0-dev.17 never had: an earlier release's built-in seats hash without them, so `status` still
- * aliases the revs it recorded (src/routing/layers.ts `routingRevOf`).
- */
-export const DEV17_ROLES = ['verifier', 'scaffold'] as const satisfies readonly Role[];
-/**
- * dev.17 (design pass): the unit roles in force only in an arc of the `dev17` role set (`ARC_ROLE_SETS`): `scaffold`, which
- * writes a new system's skeleton a plan-check's `scaffold` decision specifies (src/pipeline/scaffold.ts). An adopted arc of
- * an earlier release neither hashes nor runs it, so its routing revs are unchanged (src/routing/layers.ts `unitRolesInForce`).
- */
-export const DEV17_UNIT_ROLES = [] as const satisfies readonly Role[];
-/** Every role a unit's call may sit on. */
-export type UnitRole = (typeof UNIT_ROLES)[number] | 'planCheck' | 'gate' | 'scaffold';
+export type UnitRole = (typeof UNIT_ROLES)[number];
 export const ARC_ROLES = ['packReview', 'flow', 'experienceVerdict', 'campaignAudit'] as const satisfies readonly Role[];
-export type ArcRole = (typeof ARC_ROLES)[number] | 'lens' | 'checkpoint' | 'walkthrough' | 'polishJudge';
-/** The judgment roles of a unit's pipeline. */
-export type JudgmentRole = 'planCheck' | 'gate' | 'verifier';
+export type ArcRole = (typeof ARC_ROLES)[number];
+export type JudgmentRole = 'verifier';
 export type ImplementerRole = 'build';
-/**
- * Every role that runs a fresh read-only session on the judgment profile (`claude-judgment`, `JUDGMENT_TOOLS`): the judging
- * arc roles and (dev.17) the docs-only verifier. An explicit list (dev.13): the gate and the walk roles judge by acting, and
- * (dev.17) so does plan-check.
- */
 export const FRESH_ROLES = ['packReview', 'flow', 'campaignAudit'] as const satisfies readonly Role[];
-export type FreshRole = (typeof FRESH_ROLES)[number] | 'lens' | 'checkpoint' | 'verifier';
-/**
- * dev.13: the arc roles that use the product (`claude-acting-judge` with the walkthrough MCP servers, cwd a detached
- * checkout of the product), in force only when the plan has milestones (src/routing/layers.ts `arcRolesInForce`).
- */
+export type FreshRole = (typeof FRESH_ROLES)[number];
 export const WALK_ROLES = ['experienceVerdict'] as const satisfies readonly ArcRole[];
-export type WalkRole = (typeof WALK_ROLES)[number] | 'walkthrough' | 'polishJudge';
-/**
- * dev.13: the roles that may run as an acting judge (`claude-acting-judge`, src/backends/argv.ts): the gate (owner
- * 2026-10-18: a shell for ad hoc experiments in a throwaway checkout of the unit's tip, no MCP server) and the walk roles.
- * dev.17 (design pass): plan-check, in its throwaway checkouts of the tip and the unit branch, with web search and fetch
- * besides (`PLAN_CHECK_TOOLS`).
- */
+export type WalkRole = (typeof WALK_ROLES)[number];
 export const ACTING_JUDGE_ROLES = [...WALK_ROLES, 'verifier'] as const satisfies readonly Role[];
-export type ActingJudgeRole = (typeof ACTING_JUDGE_ROLES)[number] | WalkRole | 'gate' | 'planCheck';
-/**
- * The roles whose session may change things: the implementer, the acting judges (dev.13) and (dev.17) the scaffold writer.
- * Every other role is a `FreshRole`.
- */
+export type ActingJudgeRole = (typeof ACTING_JUDGE_ROLES)[number];
 export const ACTING_ROLES = ['build', ...ACTING_JUDGE_ROLES] as const satisfies readonly Role[];
 export type ActingRole = (typeof ACTING_ROLES)[number];
-/**
- * The roles whose session is a `JudgmentSession` (fresh, or resumed once for the repair turn): every role but `build`. The
- * scaffold writer's session is always fresh (its retry is a new attempt).
- */
-export type JudgmentSessionRole = FreshRole | ActingJudgeRole | 'scaffold';
-export const JUDGMENT_SESSION_ROLES = [...FRESH_ROLES, ...ACTING_JUDGE_ROLES, 'scaffold'] as const satisfies readonly Role[];
+export type JudgmentSessionRole = FreshRole | ActingJudgeRole;
+export const JUDGMENT_SESSION_ROLES = [...FRESH_ROLES, ...ACTING_JUDGE_ROLES] as const satisfies readonly Role[];
 
 /** A unit's risk. Never `escalation`: that seat is a judgment role's route-up target, not a risk. */
 export const RISK_TIERS = ['low', 'med', 'high'] as const;
@@ -110,11 +62,11 @@ export const ARC_SEATS = ['arc'] as const;
 export type ArcSeat = (typeof ARC_SEATS)[number];
 /** Any role's seat name; `SeatRef` pairs one with a role that has it. */
 export type Seat = JudgmentSeat | ArcSeat;
-/** Build and (dev.17) the verifier and scaffold have the three risk seats; each unit judgment role has four; each arc role has `arc`. */
+/** Build has risk seats, verifier adds escalation, and each arc role has one arc seat. */
 export type SeatOf<R extends Role> = R extends ArcRole ? ArcSeat : R extends JudgmentRole ? JudgmentSeat : RiskTier;
 export const SEATS: { readonly [R in Role]: readonly SeatOf<R>[] } = {
-  planCheck: JUDGMENT_SEATS, build: RISK_TIERS, gate: JUDGMENT_SEATS, lens: ARC_SEATS, checkpoint: ARC_SEATS, packReview: ARC_SEATS, flow: ARC_SEATS,
-  experienceVerdict: ARC_SEATS, campaignAudit: ARC_SEATS, walkthrough: ARC_SEATS, polishJudge: ARC_SEATS, verifier: JUDGMENT_SEATS, scaffold: RISK_TIERS,
+  build: RISK_TIERS, verifier: JUDGMENT_SEATS, packReview: ARC_SEATS, flow: ARC_SEATS,
+  experienceVerdict: ARC_SEATS, campaignAudit: ARC_SEATS,
 };
 /** One seat of the table, `role.tier`: `build.escalation` is unrepresentable. */
 export type SeatRef = { [R in Role]: Readonly<{ role: R; tier: SeatOf<R> }> }[Role];
@@ -217,7 +169,7 @@ export function seatFields(f: Fields): SeatRef {
 
 /** `seatFields` limited to the unit roles: a unit's call never sits on an arc seat. */
 export function unitSeatFields(f: Fields): UnitSeatRef {
-  const r = f.get('role', oneOf([...UNIT_ROLES, ...DEV17_UNIT_ROLES]));
+  const r = f.get('role', oneOf(UNIT_ROLES));
   return { role: r, tier: f.get('tier', oneOf(SEATS[r] as readonly Seat[])) } as UnitSeatRef;
 }
 

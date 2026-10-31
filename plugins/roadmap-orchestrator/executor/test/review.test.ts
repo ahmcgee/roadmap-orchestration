@@ -259,7 +259,7 @@ test('review.delta-empty: a re-gate after an unchanged fix round with nothing mo
   }
 });
 
-test('review.delta-design-revision: a design record a plan-check lands after an approval keeps the delta (empty, nothing changed) and mints no propagation; any other spec revision voids it', T, async () => {
+test('review.delta-design-revision: a design record a pre-build lands after an approval keeps the delta (empty, nothing changed) and mints no propagation; any other spec revision voids it', T, async () => {
   const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })] });
   const r = contextFor(d);
   try {
@@ -267,7 +267,7 @@ test('review.delta-design-revision: a design record a plan-check lands after an 
     assert.equal(outcomes(d).at(-1), 'gate:approve');
     const head = r.journal.view.review().approval(U1)!.fingerprint.unitCommit;
     const tip = sha(git(d.repo, 'rev-parse', 'main'));
-    const patchSpec = async (ops: SpecPatch['ops'], stage: 'plan-check' | 'evidence'): Promise<SpecM1> => {
+    const patchSpec = async (ops: SpecPatch['ops'], stage: 'pre-build' | 'evidence'): Promise<SpecM1> => {
       const { path, spec, sha256 } = loadUnitSpec(r.ctx, r.unit('u1'));
       const attempt = r.journal.view.unit(U1).counters.attempts + 1;
       await runOp(r.journal, specPatchOp(r.ctx.runDir), 'spec:u1', { type: 'stage', unit: U1, stage, attempt }, {
@@ -275,9 +275,9 @@ test('review.delta-design-revision: a design record a plan-check lands after an 
       });
       return loadUnitSpec(r.ctx, r.unit('u1')).spec;
     };
-    // A plan-check's approve again: its design record lands on the spec's next revision, the unit's own plan.
+    // A pre-build's approve again: its design record lands on the spec's next revision, the unit's own plan.
     const approved = loadUnitSpec(r.ctx, r.unit('u1')).spec;
-    const redesigned = await patchSpec([{ op: 'design', record: (() => {const result = pinDesign(r.ctx, {kind: 'module', changes: [{system: null, paths: [repoPattern('src/**')], lines: 1}], interfaces: [], failureModes: [], clauses: [], breaks: {tests: [], docs: []}, experiments: [], newSystem: null, verification: null}, tip); if (result.kind !== 'pinned') throw new Error(result.reasons.join('; ')); return result.record;})() }], 'plan-check');
+    const redesigned = await patchSpec([{ op: 'design', record: (() => {const result = pinDesign(r.ctx, {kind: 'module', changes: [{system: null, paths: [repoPattern('src/**')], lines: 1}], interfaces: [], failureModes: [], clauses: [], breaks: {tests: [], docs: []}, experiments: [], newSystem: null, verification: null}, tip); if (result.kind !== 'pinned') throw new Error(result.reasons.join('; ')); return result.record;})() }], 'pre-build');
     assert.equal(redesigned.rev, approved.rev + 1);
     assert.equal(gateDelta(r.ctx, U1, redesigned, tip, head, fingerprintAt(r.ctx, r.unit('u1'), tip)), 'empty');
     assert.deepEqual(r.journal.view.propagationFacts(), [], 'a design record mints no propagation');

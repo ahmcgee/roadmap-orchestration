@@ -1,7 +1,7 @@
 import { systemsMapInForce } from '../../../src/input/systems.ts';
 // One walkthrough trial end to end, through the production walk job, as the gate eval runs the production gate: a
 // holistic arc whose repository is the cell's product (product.ts) and whose plan has one milestone (fixture.ts) over one
-// unit, u1. u1 merges through the arc harness (fake plan-check, build and gate; its lanes, the product's own tests, run
+// unit, u1. u1 merges through the arc harness (fake pre-build, build and gate; its lanes, the product's own tests, run
 // for real), which makes the milestone's walk due; then `runWalk` (src/walk/walk.ts) runs walk-1 exactly as an arc does:
 // the capture, the detached checkout, the bring-up (src/walk/bringup.ts), the inputs, the acting-judge call
 // (dispatch.ts `callActingJudge`, the walkthrough seat, the repo config's walkthrough MCP servers substituted by
@@ -396,7 +396,7 @@ export async function runWalkTrial(o: Omit<WalkWorkerArgs, 'cell'> & Readonly<{ 
     return { stdout, events, usage: result === undefined ? null : usageOf(result) };
   });
   perCall.forEach((c, i) => writeFileSync(join(o.out, `walk-${i + 1}.jsonl`), c.stdout));
-  // The walk's acting-judge calls (dev.13: the units' gates act too, under bypassPermissions, and dev.17 their plan-checks, so both are left out).
+  // The walk's acting-judge calls (dev.13: the units' gates act too, under bypassPermissions, and dev.17 their pre-builds, so both are left out).
   const calls = readCalls(d.scenarioPath).filter((c) => c.argv.includes('--strict-mcp-config') && c.argv.includes('bypassPermissions') && !isGateCall(c) && !isPlanCheckCall(c));
   writeFileSync(join(o.out, 'prompt.txt'), calls[0]?.stdin ?? '');
   writeFileSync(join(o.out, 'argv.json'), `${JSON.stringify(calls[0]?.argv ?? [], null, 2)}\n`);

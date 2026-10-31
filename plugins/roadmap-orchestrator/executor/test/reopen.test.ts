@@ -38,7 +38,7 @@ import {
 
 after(assertNoSurvivors);
 
-const STRAIGHT = ['plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'];
+const STRAIGHT = ['pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'];
 const BRANCH = 'integration';
 type Json = Record<string, unknown>;
 

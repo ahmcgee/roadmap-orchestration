@@ -309,7 +309,7 @@ const witnessRef: Read<WitnessRef> = object((f) => {
  *   derived-overlaps-corpus   a derived output that may reach the corpus file set.
  *   milestone-references-oversize (2026-10-21; 1.0.0-dev.16) a milestone whose reference dirs hold more text at the tip
  *                             than `MILESTONE_REFERENCES_BUDGET` (src/phase0/rows.ts): every text file under them is
- *                             inlined whole into each plan-check, build and gate prompt of its units and its walkthrough.
+ *                             inlined whole into each pre-build, build and gate prompt of its units and its walkthrough.
  *                             `bytes` the total, `largest` its largest text files (at most five, largest first).
  */
 export type PlanDefect =
@@ -339,7 +339,7 @@ export function planDefectText(d: PlanDefect): string {
       return `Derived output ${d.output} may reach the corpus file set.`;
     case 'milestone-references-oversize':
       return `Milestone ${d.milestone}'s references hold ${d.bytes} bytes of text, over the ${d.budget}-byte budget: every text file under them is inlined into `
-        + `each plan-check, build and gate prompt of its units and its walkthrough. The largest: ${d.largest.map((f) => `${f.path} (${f.bytes} bytes)`).join(', ')}. `
+        + `each pre-build, build and gate prompt of its units and its walkthrough. The largest: ${d.largest.map((f) => `${f.path} (${f.bytes} bytes)`).join(', ')}. `
         + 'Narrow `references` to the design documents; build output and comps belong outside them.';
   }
 }
@@ -664,13 +664,13 @@ const rulingRef: Read<RulingRef> = (value, path) => typeof value === 'object' &&
 
 export const FINDING_SEVERITIES = ['P1', 'P2', 'P3'] as const;
 export type FindingSeverity = (typeof FINDING_SEVERITIES)[number];
-/** Who opened it: a lens, code over a witness (a must-hold not held on an audit snapshot), or plan-check (R17). */
+/** Who opened it: a lens, code over a witness (a must-hold not held on an audit snapshot), or pre-build (R17). */
 /**
  * dev.13: `walkthrough` (a milestone walk opens a P1 for a break, a P2 for a deviation, never a P3; code opens a P1 for a
  * failed bring-up of a walk or the demo). A walkthrough finding names its milestone (`finding-opened.milestone`) and may
  * have no obligation.
  */
-export const FINDING_LENSES = [...LENS_KINDS, 'witness', 'plan-check', 'walkthrough'] as const;
+export const FINDING_LENSES = [...LENS_KINDS, 'witness', 'pre-build', 'walkthrough'] as const;
 export type FindingLens = (typeof FINDING_LENSES)[number];
 /** `fixed-on-branch` (R5): the owner's gate approved. `resolved` and `ruled` are terminal. */
 export const FINDING_STATES = ['open', 'owned', 'fixed-on-branch', 'resolved', 'ruled'] as const;
@@ -678,13 +678,13 @@ export type FindingStateName = (typeof FINDING_STATES)[number];
 /** A cited evidence item: a path (repo or evidence dir) and its blob when it names one; a changed blob lifts a dismissal. */
 export type FindingEvidence = Readonly<{ path: string; blob: Sha | null }>;
 /**
- * `stage`: a plan-check's vision conflict (R17), or (M4a rev 3, E; recorded before dev.17) the in-session assessment's at the unit's build attempt;
- * both open P3 `plan-check`-lens findings.
+ * `stage`: a pre-build's vision conflict (R17), or (M4a rev 3, E; recorded before dev.17) the in-session assessment's at the unit's build attempt;
+ * both open P3 `pre-build`-lens findings.
  */
 /** dev.13: `demo`, the demo's bring-up of `sha` failed (`demo-failed`): a walkthrough P1 with no job. */
 export type FindingSource =
   | Readonly<{ type: 'job'; job: JobId }>
-  | Readonly<{ type: 'stage'; unit: UnitId; stage: 'plan-check' | 'build'; attempt: number }>
+  | Readonly<{ type: 'stage'; unit: UnitId; stage: 'pre-build' | 'build'; attempt: number }>
   | Readonly<{ type: 'demo'; sha: Sha }>;
 /** A vacuity finding's mutant: the patch (kept content-addressed) and the lane that should kill it. */
 export type MutantRef = Readonly<{ patchSha256: Sha256Hex; lane: LaneId }>;
@@ -703,7 +703,6 @@ export type ReleaseReason = (typeof RELEASE_REASONS)[number];
  * checkpoint `job`'s decision was applied, for `reason` (only with disposition `released`).
  */
 export type FindingRuledBy =
-  | Readonly<{ type: 'checkpoint'; job: JobId }>
   | Readonly<{ type: 'ruling'; ruling: RulingId }>
   | Readonly<{ type: 'code'; reason: 'not-reproduced' | 'close-out' }>
   | Readonly<{ type: 'release'; job: JobId; reason: ReleaseReason }>;
@@ -739,7 +738,7 @@ export const findingEvidence: Read<FindingEvidence> = object((f) => ({ path: f.g
 export const findingSource: Read<FindingSource> = tagged('type', {
   job: object((f): FindingSource => ({ type: f.get('type', literal('job')), job: f.get('job', jobR) })),
   stage: object((f): FindingSource => ({
-    type: f.get('type', literal('stage')), unit: f.get('unit', (v, p) => unitId(v, p)), stage: f.get('stage', oneOf(['plan-check', 'build'] as const)),
+    type: f.get('type', literal('stage')), unit: f.get('unit', (v, p) => unitId(v, p)), stage: f.get('stage', oneOf(['pre-build', 'build'] as const)),
     attempt: f.get('attempt', positive),
   })),
   demo: object((f): FindingSource => ({ type: f.get('type', literal('demo')), sha: f.get('sha', shaR) })),
@@ -754,8 +753,7 @@ export const findingTo: Read<FindingTo> = tagged('state', {
     const out = {
       state: f.get('state', literal('ruled')),
       disposition: f.get('disposition', oneOf(FINDING_DISPOSITIONS)),
-      by: f.get('by', tagged<'checkpoint' | 'ruling' | 'code' | 'release', FindingRuledBy>('type', {
-        checkpoint: object((g) => ({ type: g.get('type', literal('checkpoint')), job: g.get('job', jobR) })),
+      by: f.get('by', tagged<'ruling' | 'code' | 'release', FindingRuledBy>('type', {
         ruling: object((g) => ({ type: g.get('type', literal('ruling')), ruling: g.get('ruling', rid) })),
         code: object((g) => ({ type: g.get('type', literal('code')), reason: g.get('reason', oneOf(['not-reproduced', 'close-out'] as const)) })),
         release: object((g) => ({ type: g.get('type', literal('release')), job: g.get('job', jobR), reason: g.get('reason', oneOf(RELEASE_REASONS)) })),

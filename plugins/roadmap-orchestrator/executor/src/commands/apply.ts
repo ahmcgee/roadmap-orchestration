@@ -323,7 +323,7 @@ function reopen(ctx: CommandContext, id: CommandId, unitId: UnitId, f: StageOutc
   }
   const verified: string[] = [];
   ctx.journal.fact({ kind: 'reopened', unit: unitId, command: id, specRev: revision.rev, specSha256: revision.sha256 });
-  verified.push(`unit ${unitId} re-opened at plan-check on spec rev ${revision.rev}`);
+  verified.push(`unit ${unitId} re-opened at pre-build on spec rev ${revision.rev}`);
   return { kind: 'applied', verified };
 }
 
@@ -399,7 +399,7 @@ async function resume(ctx: CommandContext, id: CommandId, target: Extract<Comman
       };
       // Run again after a crash past the reopen: its fact is the postcondition.
       if (u.reopened?.command === id) {
-        return { kind: 'applied', verified: [`unit ${target.unit} re-opened at plan-check on spec rev ${u.reopened.specRev}`, ...unpause()] };
+        return { kind: 'applied', verified: [`unit ${target.unit} re-opened at pre-build on spec rev ${u.reopened.specRev}`, ...unpause()] };
       }
       if (u.status === 'park-pending') {
         const parked = await resumeParked(ctx, id, target.unit);
@@ -793,11 +793,6 @@ export async function evaluateApply(input: ApplyInput): Promise<ApplyVerdict> {
  */
 export function applyWarnings(view: JournalView, plan: PlanM1, changes: readonly PlanChange[]): readonly string[] {
   const out: string[] = [];
-  for (const c of view.holistic().checkpoints) {
-    if (c.decided !== null) continue;
-    out.push(`warning: checkpoint ${c.inputs.job} is running on plan rev ${c.inputs.vector.plan}; a bundle of it that touches what this revision changes `
-      + 'is rejected stale when it lands, and its spend is wasted (apply after it decides unless the edit cannot wait)');
-  }
   for (const c of changes) {
     if (c.type !== 'unit-reentered' || c.reset) continue;
     const unit = plan.units.find((u) => u.id === c.unit);

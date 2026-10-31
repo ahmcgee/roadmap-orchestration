@@ -1,9 +1,9 @@
 // One polish-judge trial end to end, through the production compare job, as the walkthrough eval runs the production
 // walk: the walkthrough eval's milestone arc (walkthrough/arc.ts `setupMilestoneArc`) over the cell's before product.
-// u1 merges through the arc harness (fake plan-check, build and gate; the product's own tests run for real), which makes
+// u1 merges through the arc harness (fake pre-build, build and gate; the product's own tests run for real), which makes
 // walk-1 due; walk-1 runs through the production walk job with a scripted walker whose one polish proposal is the cell's
 // (its text, its journey, its unit u2 over the reference and the product, citing the walk's note of what it saw); the
-// production polish revision (src/walk/polish.ts `applyPolish`) admits u2; u2 runs its pipeline (fake plan-check, a fake
+// production polish revision (src/walk/polish.ts `applyPolish`) admits u2; u2 runs its pipeline (fake pre-build, a fake
 // build committing the cell's after-state, real lanes, fake gate) and waits at its candidate admission for its compare;
 // then `runCompare` (src/walk/compare.ts) runs compare-1 exactly as an arc does: the capture under the fence, the
 // reservation, two detached checkouts brought up side by side (before: the integration tip; after: u2's approved

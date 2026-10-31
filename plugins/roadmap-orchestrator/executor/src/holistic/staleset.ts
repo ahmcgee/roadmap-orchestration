@@ -1,5 +1,5 @@
 // Propagation in code (dev.17, experience-won E; DESIGN-1.0.md §2.8 "Propagation"; SCHEMAS.md "dev.17: propagation"), the
-// pure half: what a revision leaves stale, what a unit's plan-check must answer, the pins a plan-check writes, and the code
+// pure half: what a revision leaves stale, what a unit's pre-build must answer, the pins a pre-build writes, and the code
 // edges a propagation unit holds. No model, no effect; src/holistic/propagation.ts mints the propagation units.
 //
 //   stale set     at every revision (the apply core, src/commands/apply.ts `evaluateRevision`): its targets are the
@@ -11,9 +11,9 @@
 //                 failure modes and contract interfaces) are stale; the merged artifacts are the declared witness files of each
 //                 changed requirement and of each active obligation binding a changed contract (`witness`). A witness without
 //                 declared `files` (an arc started before dev.11) names none, so nothing merged is re-witnessed for it.
-//   unit links    a unit's plan-check is given its stale links recorded since its last answer (`unitStaleLinks`) and must
+//   unit links    a unit's pre-build is given its stale links recorded since its last answer (`unitStaleLinks`) and must
 //                 answer each by its key, `updated` (a redirect) or `confirmed`, with a reason (`staleAnswerReasons`).
-//   pins          a plan-check redirect's patch pins every link of the patched spec at the revisions the check read
+//   pins          a pre-build redirect's patch pins every link of the patched spec at the revisions the check read
 //                 (`pinsOf`): the requirements at the plan rev its inputs captured, the contracts at the tip it read.
 //   edges         a unit's gate waits while a propagation unit is neither merged nor cut when the unit links its target
 //                 (a requirement or contract link) or its design record's breaks touch a file it re-witnesses
@@ -117,14 +117,14 @@ export function staleSetOf(i: StaleInputs): StaleSet | null {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// A unit's stale links and its plan-check's answer
+// A unit's stale links and its pre-build's answer
 
 /** A unit's stale link with the stale set that recorded it (its plan rev) and the target that changed. */
 export type StaleLinkAt = Readonly<{ rev: PlanRev; link: UnitStaleLink; target: StaleTarget }>;
 
 /**
- * The stale links of `unit` its plan-check attempt `attempt` answers: every unit link of the stale sets recorded up to plan rev
- * `upTo` (the revisions the check's inputs captured) and after the latest rev any other plan-check of the unit answered,
+ * The stale links of `unit` its pre-build attempt `attempt` answers: every unit link of the stale sets recorded up to plan rev
+ * `upTo` (the revisions the check's inputs captured) and after the latest rev any other pre-build of the unit answered,
  * one per key (the latest set's when several name it), in log order.
  */
 export function unitStaleLinks(view: JournalView, unit: UnitId, upTo: PlanRev, attempt: number): readonly StaleLinkAt[] {
@@ -144,7 +144,7 @@ export function unitStaleLinks(view: JournalView, unit: UnitId, upTo: PlanRev, a
   return [...byKey.values()];
 }
 
-/** What changed under a stale link, in one line for the plan-check (its key leads). */
+/** What changed under a stale link, in one line for the pre-build (its key leads). */
 export function staleLinkText(s: StaleLinkAt): string {
   const t = s.target;
   const change = t.type === 'requirement'
@@ -152,19 +152,19 @@ export function staleLinkText(s: StaleLinkAt): string {
     : t.type === 'contract' ? `contract ${t.path} was rewritten by a ruling's contract ops` : `vision clause ${t.id} changed (vision rev ${t.visionRev})`;
   const l = s.link;
   const what = l.type === 'spec'
-    ? `the spec links ${causeKey(l.target)}${l.cause.type === 'vision-clause' ? `, an obligation serving ${l.cause.id}` : ''} (pinned ${l.pinned === UNPINNED ? 'nowhere: written before pins or never revised by a plan-check' : l.pinned.type === 'requirement' ? `at rev ${l.pinned.rev}` : `at blob ${l.pinned.blob.slice(0, 12)}`})`
+    ? `the spec links ${causeKey(l.target)}${l.cause.type === 'vision-clause' ? `, an obligation serving ${l.cause.id}` : ''} (pinned ${l.pinned === UNPINNED ? 'nowhere: written before pins or never revised by a pre-build' : l.pinned.type === 'requirement' ? `at rev ${l.pinned.rev}` : `at blob ${l.pinned.blob.slice(0, 12)}`})`
     : l.type === 'failure-mode' ? `design failure mode ${l.failureMode} bears on ${l.requirement} (pinned at rev ${l.pinned})` : `design interface ${l.path} (pinned at blob ${l.pinned.slice(0, 12)})`;
   return `${staleLinkKey(l)}: ${what}; ${change} at plan rev ${s.rev}`;
 }
 
 /**
- * Why a plan-check's stale-link answers do not settle `links`: an approve, a scaffold or a redirect answers each link once, by its key,
+ * Why a pre-build's stale-link answers do not settle `links`: an approve, a scaffold or a redirect answers each link once, by its key,
  * and only a redirect (whose patch changes the spec) answers `updated`. Empty when they settle them (or the decision is
  * neither, which settles nothing).
  */
 export function staleAnswerReasons(links: readonly StaleLinkAt[], answers: readonly StaleAnswer[], decision: string): readonly string[] {
   // A scaffold (dev.17, the design pass) goes on to its build as an approve does, so it answers them too; a split's children
-  // and a poc's next plan-check answer them instead.
+  // and a poc's next pre-build answer them instead.
   if (decision !== 'approve' && decision !== 'scaffold' && decision !== 'redirect') return [];
   const keys = new Set(links.map((s) => staleLinkKey(s.link)));
   const reasons: string[] = [];

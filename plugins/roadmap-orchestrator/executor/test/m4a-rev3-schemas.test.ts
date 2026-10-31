@@ -22,8 +22,7 @@ import { type ArcLaneDef,admitClass,conversion,laneRevOf,parseObligations,witnes
 import { CliError,parseCommand } from '../src/input/cli.ts';
 import { knownDefectsOf,parsePlan,priorityOf } from '../src/input/plan.ts';
 import {
-BUILD_SCHEMA,CHECKPOINT_SCHEMA,buildOutput,
-validateCheckpointOutput
+BUILD_SCHEMA,buildOutput,
 } from '../src/prompts/schemas.ts';
 import { compareRank } from '../src/schedule/types.ts';
 import { parseSpec,specBytes } from '../src/spec/spec.ts';
@@ -135,17 +134,6 @@ describe('m4a-rev3 checkpoint records', () => {
     assert.throws(() => conversion({ index: 1, unit: 'u7', reason: 'follow-up-overrun', opportunity: null }, 'x'), /the opportunity/);
   });
 
-  it('bundle-decided: an all-converted no-op lists its conversions; a busy rejection names the open attempts', () => {
-    roundTrip(fact({ kind: 'bundle-decided', job: CKPT, outcome: { kind: 'no-op', conversions: [conversions[1]] } }));
-    roundTrip(fact({ kind: 'bundle-decided', job: CKPT, outcome: { kind: 'no-op' } }));
-    refuses(fact({ kind: 'bundle-decided', job: CKPT, outcome: { kind: 'no-op', conversions: [] } }), /conversions$/);
-    const busy = { kind: 'rejected', reason: 'busy', detail: 'u1 is running build attempt 3', units: [{ unit: 'u1', stage: 'build', attempt: 3 }] };
-    roundTrip(fact({ kind: 'bundle-decided', job: CKPT, outcome: busy }));
-    const { units: _u, ...busyBare } = busy;
-    refuses(fact({ kind: 'bundle-decided', job: CKPT, outcome: busyBare }), /units$/);
-    refuses(fact({ kind: 'bundle-decided', job: CKPT, outcome: { ...busy, reason: 'invalid' } }), /units$/);
-  });
-
   it('a converted admit\'s amendment and its overrun debt name their source; the debt names the opportunity', () => {
     roundTrip(fact({ kind: 'corpus-amendment', id: 'M-1', source: { type: 'admit', job: CKPT, index: 1, reason: 'follow-up-overrun' }, rules: [], proposal: 'p', why: 'w', evidence: [] }));
     const debt = { kind: 'debt-banked', id: 'B-4', bankReason: 'opportunity-overrun', what: 'the third repair of O-1', key: H, source: { type: 'admit', job: CKPT, index: 1 }, opportunity: 'O-1' };
@@ -157,9 +145,9 @@ describe('m4a-rev3 checkpoint records', () => {
     same(debtSource, { type: 'admit', job: CKPT, index: 0 });
   });
 
-  it('an in-session assessment opens a P3 plan-check finding from its build attempt', () => {
+  it('an in-session assessment opens a P3 pre-build finding from its build attempt', () => {
     roundTrip(fact({
-      kind: 'finding-opened', id: 'F-1', key: H, lens: 'plan-check', severity: 'P3', obligation: null, visionClauses: ['V-2'], claim: 'c', evidence: [], mutant: null,
+      kind: 'finding-opened', id: 'F-1', key: H, lens: 'pre-build', severity: 'P3', obligation: null, visionClauses: ['V-2'], claim: 'c', evidence: [], mutant: null,
       source: { type: 'stage', unit: 'u1', stage: 'build', attempt: 1 }, gateHadPassed: false,
     }));
   });
@@ -196,11 +184,11 @@ describe('m4a-rev3 facts and outcomes', () => {
     roundTrip(outcome('lanes', 'known-defect', 'advance', false, { kind: 'known-defect', id: 'K-1', match: { type: 'output', lane: 'mul', contains: 'boom' } }));
     roundTrip(outcome('build', 'infeasible', 'park', false, { kind: 'infeasible', notes: 'the corpus forbids it' }));
     roundTrip(outcome('build', 'risk-raised', 'advance', false));
-    roundTrip(outcome('plan-check', 'in-session', 'advance', false));
+    roundTrip(outcome('pre-build', 'in-session', 'advance', false));
     refuses(outcome('lanes', 'witnesses-missing', 'advance', true), /detail$/);
     refuses(outcome('lanes', 'witnesses-missing', 'advance', true, { kind: 'witnesses-missing', missing: [], failed: [] }), /detail$/);
     refuses(outcome('lanes', 'green', 'advance', false, missing), /detail$/);
-    refuses(outcome('plan-check', 'infeasible', 'route-up', false, { kind: 'infeasible', notes: 'n' }), /detail$/);
+    refuses(outcome('pre-build', 'infeasible', 'route-up', false, { kind: 'infeasible', notes: 'n' }), /detail$/);
     refuses(outcome('lanes', 'known-defect', 'advance', false, missing), /detail$/);
     // The 2026-10-15 batch: a fast suite red on the unit's diff base alone too.
     const base = '0'.repeat(40);
@@ -214,13 +202,13 @@ describe('m4a-rev3 facts and outcomes', () => {
     }
   });
 
-  it('plan changes: priority, known defects, plan-check shape; a re-entry', () => {
+  it('plan changes: priority, known defects, pre-build shape; a re-entry', () => {
     const applied = (changes: readonly object[]) => fact({
       kind: 'plan-applied', rev: 2, command: 'cmd-0123456789abcdef', planSha256: H, specs: { u1: H }, changes,
       source: { type: 'command', command: 'cmd-0123456789abcdef' }, payloadSha256: H, rulingsSha256: H,
       routingProvenance: { profile: 'default', repoConfig: { seats: null, classes: null }, planLayer: null, unitLayers: {} },
     });
-    roundTrip(applied([{ type: 'unit-priority', unit: 'u1' }, { type: 'known-defects' }, { type: 'plan-check-shape' }]));
+    roundTrip(applied([{ type: 'unit-priority', unit: 'u1' }, { type: 'known-defects' }, { type: 'pre-build-shape' }]));
     roundTrip(applied([{ type: 'unit-reentered', unit: 'u2', reenters: 'u1', reset: false }]));
   });
 
@@ -259,7 +247,7 @@ describe('m4a-rev3 plan and spec', () => {
     direction: 'd', suite: { lanes: [] }, resources: [], units: [unit, { ...unit, id: 'u2', spec: 'specs/u2.json' }], architectureDoc: 'docs/arch.md',
   };
 
-  it('plan.knowndefects-parse: known defects and unit priority; absent reads as none and normal; a dev.16 plan-check shape reads and drops (dev.17)', () => {
+  it('plan.knowndefects-parse: known defects and unit priority; absent reads as none and normal; a dev.16 pre-build shape reads and drops (dev.17)', () => {
     const p = parsePlan({
       ...plan, units: [{ ...unit, priority: 'high' }, { ...unit, id: 'u2', spec: 'specs/u2.json' }], planCheck: { shape: 'by-builder' },
       knownDefects: [{ id: 'K-1', match: { type: 'lane', lane: 'e2e' }, fixUnit: 'u2' }, { id: 'K-2', match: { type: 'output', lane: 'unit', contains: 'ETIMEDOUT' }, fixUnit: 'u2' }],
@@ -405,30 +393,6 @@ describe('run 10 (D): a checkpoint admit\'s spec is constrained by the schema', 
   const answer = (spec: unknown) => ({
     decision: 'bundle', reasons: ['r'], ops: [admit(spec)],  findingDispositions: [], interpretations: [],
     cites: { vision: ['V-1'], observations: [], findings: [] }, premises: [], corpusAmendments: [],
-  });
-
-  it('checkpoint.admit-spec-schema: the wire object conforms; JSON text or a spec missing a field is a schema violation the adapter catches', () => {
-    assert.equal(schemaViolation(CHECKPOINT_SCHEMA, answer(wire)), null);
-    assert.match(schemaViolation(CHECKPOINT_SCHEMA, answer(JSON.stringify(wire))) ?? '', /ops\[0\]/);
-    const { acceptance: _a, ...missing } = wire;
-    assert.match(schemaViolation(CHECKPOINT_SCHEMA, answer(missing)) ?? '', /ops\[0\]/);
-    assert.match(schemaViolation(CHECKPOINT_SCHEMA, answer({ ...wire, schema: 'roadmap/spec-m2' })) ?? '', /ops\[0\]/);
-    assert.match(schemaViolation(CHECKPOINT_SCHEMA, answer({ ...wire, witnesses: [] })) ?? '', /ops\[0\]/, 'no witness items in an admit');
-  });
-
-  it('checkpoint.admit-spec-read: the reader turns the wire object into spec.json\'s canonical text (env.set a map, empty lists absent) and refuses a spec the spec reader refuses', () => {
-    const out = validateCheckpointOutput(answer(wire));
-    const op = out.ops[0]!;
-    assert.equal(op.op, 'admit');
-    if (op.op !== 'admit') return;
-    const spec = parseSpec(Buffer.from(op.spec, 'utf8'), absPath('/gap.json'));
-    assert.equal(op.spec, specBytes(spec).toString('utf8'), 'canonical text');
-    assert.deepEqual(spec.lanes[0]!.env, { set: { TZ: 'UTC' }, pass: [] });
-    assert.equal(spec.obligations, undefined, 'obligations [] reads as none');
-    assert.deepEqual(spec.repairs, ['F-1']);
-    assert.throws(() => validateCheckpointOutput(answer({ ...wire, acceptance: [] })), (e: unknown) => e instanceof SchemaError && e.field.startsWith('checkpoint.ops[0].spec'));
-    assert.throws(() => validateCheckpointOutput(answer({ ...wire, facts: [{ id: 'A1', text: 't', state: 'active' }] })), /a unique id/);
-    assert.throws(() => validateCheckpointOutput(answer({ ...wire, lanes: [{ ...wire.lanes[0], env: { set: [{ name: 'A', value: '1' }, { name: 'A', value: '2' }], pass: [] } }] })), SchemaError);
   });
 
 

@@ -11,7 +11,7 @@ import { submitCommand } from '../../src/commands/queue.ts';
 import { type CommandId, commandId } from '../../src/core/ids.ts';
 import type { JsonValue } from '../../src/core/json.ts';
 import { runAudit } from '../../src/holistic/audit.ts';
-import type { CheckpointContext } from '../../src/holistic/checkpoint.ts';
+import type { CheckpointContext } from '../../src/holistic/bundle.ts';
 import type { Clock } from '../../src/holistic/cadence.ts';
 import type { Step } from '../helpers/scenario.ts';
 import { admitSpecWire, lensStep, noteLensStep } from '../helpers/holistic.ts';

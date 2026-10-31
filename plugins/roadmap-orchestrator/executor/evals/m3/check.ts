@@ -49,7 +49,7 @@ import { laneEvidenceGlobs, transientViolations } from '../../src/git/transient.
 // M1/M2 standing criteria, over this run:
 //   run-ended (complete), units-settled (merged, or cut or superseded by a bundle), head-is-publication (the head is the last publication's commit: a unit's
 //   tested candidate or the docs commit), diff-product-and-docs (units' scopes plus the living `.roadmap/` docs,
-//   constraints.md, invariants.md and the corpus arc's debt.md included), snapshot-verifies, judgment-fresh (plan-check, gate, lens,
+//   constraints.md, invariants.md and the corpus arc's debt.md included), snapshot-verifies, judgment-fresh (pre-build, gate, lens,
 //   checkpoint and pack-review calls; a judgment's one repair turn resumes its own fresh session), meter-covers-calls (unit and arc calls), no-model-ids
 //
 // The non-exercised list names what this run's journal shows no trace of, from: rule, reverse, steer, merge-in,
@@ -198,13 +198,11 @@ function branchOf(run: Run): Readonly<{ branch: StoryBranch; detail: string }> |
 }
 
 /** The checkpoint that ran on audit `job`, and its decision (`applied` for a bundle revision). */
-function checkpointOf(run: Run, job: string): Readonly<{ job: string; decision: string }> | null {
-  const inputs = factsOf(run, 'checkpoint-inputs').filter((f) => f.trigger.type === 'audit' && f.trigger.job === job);
-  const last = inputs.at(-1);
-  if (last === undefined) return null;
-  const decided = factsOf(run, 'bundle-decided').find((f) => f.job === last.job);
-  if (decided !== undefined) return { job: last.job, decision: decided.outcome.kind === 'rejected' ? `rejected:${decided.outcome.reason}` : decided.outcome.kind };
-  return factsOf(run, 'plan-applied').some((f) => f.source?.type === 'bundle' && f.source.job === last.job) ? { job: last.job, decision: 'applied' } : { job: last.job, decision: 'undecided' };
+function rootApplyAfterAudit(run: Run, job: string): Readonly<{job: string; decision: string}> | null {
+  const audit = factsOf(run, 'audit-ended').find((a) => a.job === job);
+  if (audit === undefined) return null;
+  const revision = factsOf(run, 'plan-applied').find((f) => f.seq > audit.seq && f.source?.type === 'command');
+  return revision?.source?.type === 'command' ? {job: revision.source.command, decision: 'applied'} : null;
 }
 
 const verdict = (problems: readonly string[], ok: string): Verdict => ({ pass: problems.length === 0, detail: problems.length > 0 ? problems.join('; ') : ok });
@@ -272,9 +270,7 @@ function staleWhole(run: Run): Verdict {const apply=run.report.devices.staleAppl
 function bundlesWhole(run: Run): Verdict {
   const problems: string[] = [];
   const applied = bundleRevisions(run);
-  for (const d of factsOf(run, 'bundle-decided')) {
-    if (applied.some((f) => f.source?.type === 'bundle' && f.source.job === d.job)) problems.push(`${d.job} decided ${d.outcome.kind} and applied`);
-  }
+
   if (applied.length === 0) problems.push('no bundle revision');
   const held = new Map(run.report.status.nowTrue.map((o) => [o.obligation as string, o.verdict]));
   const lines: string[] = [];
@@ -298,7 +294,7 @@ function bundlesWhole(run: Run): Verdict {
   }
   const requests = run.report.devices.acks.filter((a) => a.reason === 'bundle-request');
   const answered = requests.map((a) => `${a.needsUser}:${a.choice ?? 'ack'}`).join(', ');
-  return verdict(problems, `bundle revisions ${applied.map((b) => b.rev).join(', ')}; ${lines.join('; ') || 'no unit added'}; ${factsOf(run, 'bundle-decided').length} decided bundles applied nothing; ${requests.length} bundle requests answered by the driver${requests.length === 0 ? '' : ` (${answered})`} (informational)`);
+  return verdict(problems, `bundle revisions ${applied.map((b) => b.rev).join(', ')}; ${lines.join('; ') || 'no unit added'}; ${requests.length} bundle requests answered by the driver${requests.length === 0 ? '' : ` (${answered})`} (informational)`);
 }
 
 function bundleDivergences(run: Run): Verdict {
@@ -455,7 +451,7 @@ function driftAudit(run: Run): Verdict {
   const fits = exact ? JSON.stringify(ran) === JSON.stringify([...floor].sort()) : floor.every((l) => ran.includes(l)) && ran.every((l) => (LENSES as readonly string[]).includes(l));
   if (!ran.includes('vision') || !fits) problems.push(`${audit.job} (${JSON.stringify(audit.triggers)}) ran ${JSON.stringify(audit.lenses)}, not what its triggers require (${exact ? '' : 'at least '}${JSON.stringify(floor)})`);
   if (factsOf(run, 'audit-ended').find((e) => e.job === audit.job)?.outcome !== 'completed') problems.push(`${audit.job} did not complete`);
-  const ck = checkpointOf(run, audit.job);
+  const ck = rootApplyAfterAudit(run, audit.job);
   // Nothing new since a settled checkpoint: the audit has none (`checkpoint-skipped`, arc feedback 2026-10-16).
   const after = ck === null ? 'its checkpoint skipped' : `${ck.job} ${ck.decision}`;
   return verdict(problems, `${audit.job} (${JSON.stringify(audit.triggers)}) ran ${audit.lenses.join(', ')}, as its triggers require; ${after}`);
@@ -470,7 +466,7 @@ function finalAudit(run: Run): Verdict {
   const lastUnit = publications(run).filter((p) => p.subject !== 'docs').at(-1);
   if (lastUnit === undefined || last.integrationSha !== lastUnit.new) problems.push(`${last.job} audited ${last.integrationSha}, not the last unit publication ${lastUnit?.new}`);
   if (factsOf(run, 'audit-ended').find((e) => e.job === last.job)?.outcome !== 'completed') problems.push(`${last.job} did not complete`);
-  const ck = checkpointOf(run, last.job);
+  const ck = rootApplyAfterAudit(run, last.job);
 
   return verdict(problems, `${last.job} final on ${last.integrationSha}, ran ${last.lenses.join(', ')}; ${ck?.job} no-op`);
 }
@@ -675,7 +671,7 @@ function judgmentFresh(run: Run): Verdict {
     roles.add(role);
     const { inv, launch } = launchOf(run, i);
     const t = launch.terminal;
-    // A judgment's repair turn (2026-10-15 plan-check and the checkpoint; dev.12 every role) resumes its own earlier fresh session, once.
+    // A judgment's repair turn (2026-10-15 pre-build and the checkpoint; dev.12 every role) resumes its own earlier fresh session, once.
     if (t.type === 'backend' && t.role !== 'build' && t.session.mode === 'resume') {
       if (seen.get(t.session.id) === undefined) problems.push(`${inv}: a repair turn resumes ${t.session.id}, no earlier fresh judgment session`);
       if (repaired.has(t.session.id)) problems.push(`${inv}: a second repair turn of ${t.session.id}`);
@@ -795,9 +791,7 @@ function exercised(run: Run): ReadonlySet<Branch> {
   if (factsOf(run, 'admissions-closed').length > 0) out.add('draining');
   const goLanes = new Set(run.obligations.lanes.filter((l) => l.reporter === 'go-test-json').map((l) => l.id as string));
   if (factsOf(run, 'witnessed').some((f) => goLanes.has(f.lane))) out.add('real go');
-  for (const d of factsOf(run, 'bundle-decided')) {
-    if (d.outcome.kind === 'rejected' && d.outcome.reason === 'invalid' && checkpointOps(run, d.job).length >= 2) out.add('literal partial bundle');
-  }
+
   return out;
 }
 

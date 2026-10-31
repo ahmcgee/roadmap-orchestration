@@ -48,7 +48,7 @@ after(assertNoSurvivors);
 const T = { timeout: 120_000 };
 const LONG = { timeout: 600_000 };
 const STAGE = { type: 'stage', unit: U1, stage: 'build', attempt: 1 } as const;
-const STRAIGHT = ['plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'];
+const STRAIGHT = ['pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'];
 
 /** The recovery engine in this process over `d`'s journal. */
 async function recoverHere(d: ArcDescriptor): Promise<RecoveryReport> {
@@ -336,7 +336,7 @@ test('recover.adopted-build-consumed: a build whose executor died mid-call is ad
 });
 
 describe('recover.adopted-judgment-consumed: a judgment whose executor died mid-call is adopted and consumed, never asked again', { concurrency: 2 }, () => {
-  for (const [stage, role] of [['plan-check', 'verifier'], ['gate', 'verifier']] as const) {
+  for (const [stage, role] of [['pre-build', 'verifier'], ['gate', 'verifier']] as const) {
     test(stage, T, async () => {
       const d = await strandedCall(stage as CallStage);
       await adoptThenDrive(d);
@@ -431,7 +431,7 @@ describe(`matrix row ${ADVERSARIAL_LIVE_RUNNER}`, { concurrency: 3 }, () => {
 // ---------------------------------------------------------------------------------------------------
 // Adversarial: a cross-arc takeover that dies mid-adoption
 
-/** Arc A parked in a plan-check at barrier `check1`, then its supervisor and executor SIGKILLed: its runner lives. */
+/** Arc A parked in a pre-build at barrier `check1`, then its supervisor and executor SIGKILLed: its runner lives. */
 async function strandedArc(t: Owner): Promise<Readonly<{ a: ExecRun; spawn: IntentRecord }>> {
   const a = setupExec(t, { steps: [...smokes(1), blockedCheck('check1')] });
   const line = startLine(await startCli(a));
@@ -441,7 +441,7 @@ async function strandedArc(t: Owner): Promise<Readonly<{ a: ExecRun; spawn: Inte
   await kill(supervisorOf(a));
   await kill(executor);
   const open = journalOf(a).view.openIntents().filter((i) => i.kind === 'proc.spawn');
-  assert.equal(open.length, 1, 'the plan-check spawn is open');
+  assert.equal(open.length, 1, 'the pre-build spawn is open');
   return { a, spawn: open[0]! };
 }
 

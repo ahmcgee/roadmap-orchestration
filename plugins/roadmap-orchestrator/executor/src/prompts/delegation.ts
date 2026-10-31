@@ -9,7 +9,7 @@
 // applies at xhigh and max effort, where no build seat runs. Edits stay in the main session so one agent knows the
 // worktree's state when it runs the lanes and reports (our own invariant: the report is the session's).
 //
-// Judgment sessions (gate, plan-check, lens, checkpoint, pack review, flow) carry no delegation text (owner ruling
+// Judgment sessions (gate, pre-build, lens, checkpoint, pack review, flow) carry no delegation text (owner ruling
 // 2026-10-17, after the paid gate role eval: one trial fanned out to 25 readers for $32, against ~$2.7 for a typical
 // trial). Nothing tells the judge to delegate or not to. A judge keeps the Agent tool with read-only subagents
 // (argv.ts `JUDGMENT_TOOLS`, metered as before) and arrives at its own method; the prompt does not steer it. One exception
@@ -26,7 +26,7 @@ export const BUILD_DELEGATION = `<subagents>
 You own the unit's outcome, and you may use subagents (the Agent tool) where they help. Choose each one's model for its task: surveying many files for the code a change touches suits a fast, inexpensive model (model: haiku); a hard design sub-question suits a stronger one (model: opus). A subagent's report is a lead: open the code yourself before you change it or rely on it. Make the edits in your own session, so one agent knows the worktree's state when you run the lanes and write the report.
 </subagents>`;
 
-/** Every judgment session (dispatch.ts `judgeSystem`): its subagents, if any, report before its answer. */
+/** Every judgment session: any subagents finish before its structured answer ends the call. */
 export const JUDGE_SUBAGENTS = `<subagents>
 If you start subagents (the Agent tool), run each in the foreground, never in the background, and answer once their reports are in; several started in one turn still run in parallel. Your answer ends the call: a subagent still running then is cut off, and one that fails afterwards can leave the call with no answer.
 </subagents>`;

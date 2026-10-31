@@ -119,7 +119,6 @@ describe('status.subset', () => {
       timings: [],
       answers: [],
       knownDefects: [],
-      checkpointWaits: [],
       admits: [],
       opportunities: [],
       drift: [],
@@ -132,7 +131,7 @@ describe('status.subset', () => {
   test('after a completed run: state, owner, units, spend by role and by model, containment and its narrowed guarantee', () => {
     const s = after_;
     assert.deepEqual(Object.keys(s).sort(), [
-      'admits', 'amendments', 'answers', 'arc', 'audit', 'census', 'chain', 'checkpointWaits', 'commands', 'completion', 'convergence', 'corpus', 'debt', 'decisionsSince', 'deferred', 'demo',
+      'admits', 'amendments', 'answers', 'arc', 'audit', 'census', 'chain', 'commands', 'completion', 'convergence', 'corpus', 'debt', 'decisionsSince', 'deferred', 'demo',
       'divergences', 'drift', 'edges', 'findings', 'flow', 'holds', 'holistic', 'host', 'knownDefects', 'milestones', 'needsUser', 'notYetTrue', 'nowTrue', 'opportunities', 'owed',
       'packReview', 'parkedBackends', 'plan', 'rejection', 'routing', 'run', 'runOnly', 'spend', 'target', 'timings', 'units', 'vision', 'waived',
     ]);
@@ -157,7 +156,7 @@ describe('status.subset', () => {
     assert.deepEqual(s.spend.bySmoke.map((t) => [t.backend, t.calls]), [['claude', 1], ['codex', 1]], 'each start-up smoke apart, by backend');
     assert.deepEqual(s.spend.byModel.unresolvedRevs, []);
     // The one permitted derivation: models named by looking seats up in the routing table at render time.
-    // A med unit: plan-check and gate on frontier (Opus medium, since dev.17), build on efficient (Luna).
+    // A med unit: pre-build and gate on frontier (Opus medium, since dev.17), build on efficient (Luna).
     assert.deepEqual(s.spend.byModel.models.map((m) => [m.model, m.calls]), [['claude-opus-5-5', 2], ['gpt-5.6-luna', 1]]);
     assert.deepEqual(s.host.containment, { mode: 'session', guarantee: SESSION_GUARANTEE });
     assert.match(s.host.containment.guarantee, /setsid\(\) and execs with a cleared environment/);
@@ -234,7 +233,7 @@ test('state.no-model-ids: after full runs under the default and claude-only prof
     assert.ok(MODEL_IDS.some((m) => launches.includes(m)), 'launch.json argv names the models it launched');
   }
   const claudeOnly = await statusOf(runs[1]!);
-  assert.deepEqual(claudeOnly.spend.byModel.models.map((m) => [m.model, m.calls]), [['claude-opus-5-5', 2], ['claude-sonnet-5-5', 1]], 'claude-only (dev.17): Opus plan-checks and gates, Sonnet builds');
+  assert.deepEqual(claudeOnly.spend.byModel.models.map((m) => [m.model, m.calls]), [['claude-opus-5-5', 2], ['claude-sonnet-5-5', 1]], 'claude-only (dev.17): Opus pre-builds and gates, Sonnet builds');
   // The build's advisor spend is its own: delegated to frontier, Opus's class, beside the judgments' own frontier share.
   const advisor = claudeOnly.spend.byClass.classes.find((c) => c.class === 'frontier');
   const efficient = claudeOnly.spend.byClass.classes.find((c) => c.class === 'efficient');
@@ -274,7 +273,7 @@ test('status.sup-items-and-arc-wide-state: file-only sup-/host- items are listed
 
   // u1 parks on a unit-scoped item while u2 runs: running, and the acknowledged host items are gone.
   await reached(r.scenarioDir, 'u2check', 60_000);
-  await until(() => openBlocking(journalOf(r).view).length === 1, 60_000, 'u1 to park, u2 still at its plan-check');
+  await until(() => openBlocking(journalOf(r).view).length === 1, 60_000, 'u1 to park, u2 still at its pre-build');
   const [item] = openBlocking(journalOf(r).view);
   assert.ok(item !== undefined);
   const mid = await statusOf(r);
@@ -464,7 +463,7 @@ const statusNow = (r: ArcRun): Status => status(r.ctx.runDir, arcId(r.d.arc), r.
 const HOST: ProbeTarget = { type: 'host' };
 const U = (id: string): UnitId => unitId(id);
 const designPark = (r: ArcRun, unit: string): number => r.journal.fact({
-  kind: 'stage-outcome', unit: U(unit), stage: 'plan-check', attempt: 1, outcome: 'escalate', class: 'park', chargeable: false, park: { class: 'operator', kind: 'design' },
+  kind: 'stage-outcome', unit: U(unit), stage: 'gate', attempt: 1, outcome: 'escalate', class: 'park', chargeable: false, park: { class: 'operator', kind: 'design' },
 } as Fact);
 
 test('status.parks: a retryable park shows its targets, what is outstanding, its backoff and escalation; the host probe covers both parks and has tripped; an operator park shows its kind and blocks its dependent; a parked backend is listed; with nothing able to move the run is blocked, and a passing probe makes it run', T, async () => {
@@ -561,7 +560,7 @@ test('status.ordering-park exposes recorded blockers and their outstanding merge
   const r = contextFor(d);
   try {
     writeStart(d);
-    r.journal.fact({ kind: 'stage-outcome', unit: U('u2'), stage: 'plan-check', attempt: 1, outcome: 'escalate', class: 'park', chargeable: false,
+    r.journal.fact({ kind: 'stage-outcome', unit: U('u2'), stage: 'gate', attempt: 1, outcome: 'escalate', class: 'park', chargeable: false,
       park: { class: 'operator', kind: 'design', ordering: { blockers: [U('u1')] } } });
     assert.deepEqual(statusNow(r).units.find((u) => u.unit === U('u2'))!.park?.ordering, { blockers: ['u1'], outstanding: ['u1'] });
   } finally { r.journal.close(); }

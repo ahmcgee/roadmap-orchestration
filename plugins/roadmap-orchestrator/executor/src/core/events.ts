@@ -373,7 +373,7 @@ export type RevisionSource =
   | Readonly<{ type: 'walk'; job: JobId }>
   /** dev.13: the cut of polish unit `unit`, which its compare judged `drop` (`polish-dropped`, src/walk/compare.ts). */
   | Readonly<{ type: 'compare'; unit: UnitId }>
-  /** dev.17 (design pass): the split of `unit` its plan-check call `inv` decided (src/pipeline/split.ts). */
+  /** dev.17 (design pass): the split of `unit` its pre-build call `inv` decided (src/pipeline/split.ts). */
   | Readonly<{ type: 'split'; unit: UnitId; inv: InvocationId }>
   /** dev.17 (flaky ledger): the code-applied revision admitting deflake units for the flakes the ledger holds (src/pipeline/deflake.ts). */
   | Readonly<{ type: 'deflake' }>
@@ -500,18 +500,15 @@ export const STAGE_OUTCOME_KINDS = {
   // A re-entered unit's preparation (M2): where the prepared worktree enters. `conflicted` keeps MERGE_HEAD and
   // enters a `resolve` round (A6). `interrupted` (arc feedback 2026-10-15): only ever the recovery hold of a preparation
   // a crash cut short (`cause: recovery`); the stage itself is never cancelled.
-  prepare: ['clean-plan-check', 'clean-build', 'clean-verify', 'conflicted', 'interrupted', 'executor-fault'],
+  prepare: ['clean-pre-build', 'clean-build', 'clean-verify', 'conflicted', 'interrupted', 'executor-fault'],
   // A vacuity repair's first stage (M3, B3): the mutant applied and its lane run. `reproduced` goes on to
-  // plan-check; `not-reproduced` dismisses the finding and parks; `inapplicable` parks for the next audit.
+  // pre-build; `not-reproduced` dismisses the finding and parks; `inapplicable` parks for the next audit.
   // `env-unavailable` (2026-10-29, additive) parks on the inferred environment, as lanes and candidate do.
   reproduce: ['reproduced', 'not-reproduced', 'inapplicable', 'blocked', 'interrupted', 'cleanup-failed', 'executor-fault', 'env-unavailable'],
-  // M4a rev 3 (E) to dev.16: `in-session` (a frontier or summit builder under `planCheck.shape: by-builder`: no plan-check
+  // M4a rev 3 (E) to dev.16: `in-session` (a frontier or summit builder under `planCheck.shape: by-builder`: no pre-build
   // call, the build assessed in session). dev.17 records none; read from an older log.
   // Paid M4b run 5: `read-denied`, as at the gate (no longer recorded since 2026-10-16; read from a 1.0.0-dev.11 log).
-  'plan-check': [
-    'approve', 'redirect', 'infeasible', 'escalate', 'risk-lowered', 'scope-widened', 'refusal', 'malformed', 'process-fault', 'interrupted', 'routing-changed',
-    'in-session', 'read-denied', 'context-exceeded', 'executor-fault', 'split', 'scaffold', 'poc', 'plan-defect',
-  ],
+  'pre-build': ['approve', 'interrupted', 'executor-fault'],
   // M4a rev 3 (E, R55) to dev.16: the in-session assessment found the spec `infeasible`, or raised the risk floor onto
   // another implementer seat (`risk-raised`). dev.17 records neither; read from an older log.
   // 2026-10-15 (arc feedback #3): `witness-lane-missing` (a required witness item names no arc lane in force), at build and lanes.
@@ -541,7 +538,7 @@ export const STAGE_OUTCOME_KINDS = {
   // Paid M4b run 5: `read-denied` (an approve from a session the CLI refused a read: not an approval; one uncharged retry).
   // TEMPORARY SCAFFOLDING (BACKLOG "Scaffolding to delete"): no longer recorded since 2026-10-16, when the judge's read
   // surface widened to the repository and the run dir and a refused read stopped voiding an approval; kept, with its
-  // transition row, so a 1.0.0-dev.11 log whose latest gate or plan-check outcome is one still folds and retries.
+  // transition row, so a 1.0.0-dev.11 log whose latest gate or pre-build outcome is one still folds and retries.
   // dev.17 (proportional review): `delta-empty` (no file changed since the unit's approval and no target it bound moved:
   // code skips the gate and approves again at the new fingerprint, uncharged).
   gate: [
@@ -556,26 +553,16 @@ export const STAGE_OUTCOME_KINDS = {
   ],
   ff: ['published', 'cas-stale', 'fingerprint-invalid', 'foreign-move'],
   snapshot: ['published'],
-  // dev.17 (design pass): the scaffold writer's attempt. `scaffolded`: the skeleton passed code's checks and is the unit's
-  // first executor-authored commit; `refused`: it failed one (one retry, told why); `plan-defect`: refused again, or its
-  // load test cannot run (an uncharged park naming why).
-  scaffold: [
-    'scaffolded', 'refused', 'plan-defect', 'refusal', 'process-fault', 'lost', 'interrupted', 'routing-changed', 'context-exceeded', 'occupied', 'cleanup-failed',
-    'executor-fault',
-  ],
-  // dev.17 (design pass): a proof of concept's throwaway build. `answered`: its closed answer read; `unanswered`: none to read
-  // (malformed, a refusal, lost). Either goes back to a fresh plan-check with the report.
-  poc: ['answered', 'unanswered', 'process-fault', 'interrupted', 'routing-changed', 'context-exceeded', 'occupied', 'cleanup-failed', 'executor-fault'],
 } as const satisfies { readonly [S in Exclude<Stage, 'retire'>]: readonly string[] };
 export type OutcomeStage = keyof typeof STAGE_OUTCOME_KINDS;
 export type StageOutcomeKind<S extends OutcomeStage = OutcomeStage> = (typeof STAGE_OUTCOME_KINDS)[S][number];
 export const OUTCOME_STAGES = Object.keys(STAGE_OUTCOME_KINDS) as readonly OutcomeStage[];
 
 /** Judgment stages run a fresh judgment session; a refusal or escalation there routes up the role's seats. */
-export const JUDGMENT_STAGES = ['plan-check', 'gate'] as const satisfies readonly OutcomeStage[];
+export const JUDGMENT_STAGES = ['pre-build', 'gate'] as const satisfies readonly OutcomeStage[];
 export type JudgmentStage = (typeof JUDGMENT_STAGES)[number];
 /** Stages with an uncharged retry (malformed report, blocked lane). */
-export const RETRY_STAGES = ['plan-check', 'build', 'lanes', 'gate'] as const satisfies readonly OutcomeStage[];
+export const RETRY_STAGES = ['pre-build', 'build', 'lanes', 'gate'] as const satisfies readonly OutcomeStage[];
 export type RetryStage = (typeof RETRY_STAGES)[number];
 
 /**
@@ -663,21 +650,21 @@ export type StageOutcomeDetail =
   | Readonly<{ kind: 'infeasible'; notes: string }>
   | Readonly<{ kind: 'base-red'; base: Sha; lanes: readonly LaneId[]; changedCheckout: boolean }>
   /**
-   * Scope growth (2026-10-15): the plan-check's proposals code verified (`ScopeGrowthProposal`), in answer order; at lanes
+   * Scope growth (2026-10-15): the pre-build's proposals code verified (`ScopeGrowthProposal`), in answer order; at lanes
    * (plan defects, 2026-10-16) one proposal of the paths salvage reverted twice running.
    */
   /** Plan defects (2026-10-16): lanes `plan-defect`, the defects code found behind the missing witnesses (non-empty). */
   | Readonly<{ kind: 'plan-defect'; defects: readonly PlanDefect[] }>
   /**
-   * 2026-10-16: plan-check, build or gate `context-exceeded`, the call whose prompt or context outgrew the model's window and
+   * 2026-10-16: pre-build, build or gate `context-exceeded`, the call whose prompt or context outgrew the model's window and
    * its prompt's size in bytes (stdin and the system prompt; dispatch.ts `verdictOf`).
    */
   | Readonly<{ kind: 'context-exceeded'; inv: InvocationId; promptBytes: number }>
   /** 1.0.0-dev.17: `executor-fault` at any stage that has it, the thrown error's stack (its message when it has none). */
   | Readonly<{ kind: 'executor-fault'; stack: string }>
-  /** dev.17 (design pass): plan-check `split`, the children the split revision adds (two or more, in answer order). */
+  /** dev.17 (design pass): pre-build `split`, the children the split revision adds (two or more, in answer order). */
   | Readonly<{ kind: 'split'; children: readonly UnitId[] }>
-  /** dev.17 (design pass): plan-check or scaffold `plan-defect`, every reason code refused the design for (non-empty). */
+  /** dev.17 (design pass): pre-build or scaffold `plan-defect`, every reason code refused the design for (non-empty). */
   | Readonly<{ kind: 'design-defect'; reasons: readonly string[] }>
   /**
    * dev.17 (design pass): scaffold `refused`, why code refused the skeleton (non-empty) and, when its dry run ran the load
@@ -689,12 +676,12 @@ export const DETAILED_OUTCOMES = {
   'lanes/witnesses-missing': 'witnesses-missing', 'lanes/smoke-survived': 'smoke-survived', 'lanes/known-defect': 'known-defect', 'build/infeasible': 'infeasible',
   'lanes/base-red': 'base-red',
   'lanes/plan-defect': 'plan-defect',
-  'plan-check/context-exceeded': 'context-exceeded', 'build/context-exceeded': 'context-exceeded', 'gate/context-exceeded': 'context-exceeded',
-  'prepare/executor-fault': 'executor-fault', 'reproduce/executor-fault': 'executor-fault', 'plan-check/executor-fault': 'executor-fault',
+  'pre-build/context-exceeded': 'context-exceeded', 'build/context-exceeded': 'context-exceeded', 'gate/context-exceeded': 'context-exceeded',
+  'prepare/executor-fault': 'executor-fault', 'reproduce/executor-fault': 'executor-fault', 'pre-build/executor-fault': 'executor-fault',
   'build/executor-fault': 'executor-fault', 'quiesce/executor-fault': 'executor-fault', 'evidence/executor-fault': 'executor-fault',
   'salvage/executor-fault': 'executor-fault', 'teardown/executor-fault': 'executor-fault', 'lanes/executor-fault': 'executor-fault',
   'gate/executor-fault': 'executor-fault', 'candidate/executor-fault': 'executor-fault',
-  'plan-check/split': 'split', 'plan-check/plan-defect': 'design-defect', 'scaffold/plan-defect': 'design-defect', 'scaffold/refused': 'scaffold-refused', 'scaffold/context-exceeded': 'context-exceeded',
+  'pre-build/split': 'split', 'pre-build/plan-defect': 'design-defect', 'scaffold/plan-defect': 'design-defect', 'scaffold/refused': 'scaffold-refused', 'scaffold/context-exceeded': 'context-exceeded',
   'poc/context-exceeded': 'context-exceeded', 'scaffold/executor-fault': 'executor-fault', 'poc/executor-fault': 'executor-fault',
 } as const satisfies Readonly<Record<string, StageOutcomeDetail['kind']>>;
 
@@ -732,7 +719,7 @@ export type JudgmentInputs = Readonly<{
   attempt: number;
   /** The integration tip the judgment read. */
   tip: Sha;
-  /** The unit commit it read (the gate); null for a plan-check. */
+  /** The unit commit it read (the gate); null for a pre-build. */
   head: Sha | null;
   specRev: SpecRev;
   specSha256: Sha256Hex;
@@ -827,7 +814,7 @@ export type Fact =
    * A unit re-opened on a spec revision the architect applied (`specRev`, the unit's recorded spec rev + 1,
    * whose bytes hash to `specSha256`): by `resume <unit>` of a unit parked at a judgment stage (`command`: the
    * resume), or by the driver at an in-flight unit's next stage boundary that allows it (`command`: the apply
-   * that recorded the revision, null for a start). The unit re-enters at plan-check as a new attempt; its
+   * that recorded the revision, null for a start). The unit re-enters at pre-build as a new attempt; its
    * counters are kept, and the redirect bound counts from here.
    */
   | Readonly<{ kind: 'reopened'; unit: UnitId; command: CommandId | null; specRev: SpecRev; specSha256: Sha256Hex }>
@@ -1010,20 +997,6 @@ export type HolisticFact =
   }>
   /** A17, H8: a docs-only publication covers its own edge U→D by construction. */
   | Readonly<{ kind: 'docs-covered'; pub: JobId; from: Sha; to: Sha }>
-  /**
-   * M4a: `corpusSha256` (the pin in force; absent: none).
-   */
-  | Readonly<{
-    kind: 'checkpoint-inputs'; job: JobId; trigger: CheckpointTrigger; generation: number; vector: RevisionVector; headSha: Sha; visionSha256: Sha256Hex;
-    findings: readonly FindingId[]; observations: readonly ObservationKey[]; corpusSha256?: Sha256Hex;
-  }>
-  | Readonly<{ kind: 'bundle-decided'; job: JobId; outcome: BundleOutcome }>
-  /**
-   * A checkpoint suppressed by `nothingNew` or the equal-input guard: once per trigger, settling its generation as a
-   * no-op. New audit skips also carry `audit` for existing readers; old audit-only records read byte-preserving and
-   * `checkpointSkipTriggerOf` supplies their trigger (warned). A matching older running capture settles here too.
-   */
-  | (Readonly<{ kind: 'checkpoint-skipped'; generation: number; visionSha256: Sha256Hex; carried: readonly FindingId[] }> & (Readonly<{ audit: JobId; trigger?: CheckpointTrigger }> | Readonly<{ audit?: never; trigger: CheckpointTrigger }>))
   /** OR-V.6: `index` orders a job's divergences, so a rewrite after a crash is idempotent (H12). */
   | (Readonly<{ kind: 'divergence'; id: DivergenceId; index: number }> & DivergenceDraft)
   /** H11: the digest item binds exactly these ids; its acknowledgement covers them. */
@@ -1042,12 +1015,7 @@ export type HolisticFact =
  * (R35) a checkpoint `admit` op code converted (`index` the op's, `reason` the conversion's); since run 10 (E) a bundle
  * request the close-out declined.
  */
-export type AmendmentSource =
-  | Readonly<{ type: 'checkpoint'; job: JobId; index: number }>
-  | Readonly<{ type: 'divergence'; divergence: DivergenceId }>
-  | Readonly<{ type: 'admit'; job: JobId; index: number; reason: ConversionReason }>
-  /** Run 10 (E): a non-blocking bundle request of checkpoint `job` nobody answered by the close-out, declined by the executor. */
-  | Readonly<{ type: 'request'; job: JobId; needsUser: NeedsUserId }>;
+export type AmendmentSource = Readonly<{type: 'root'; command: CommandId}>;
 
 /** A mutation smoke's per-target verdicts (D2, Q15), each list ascending by lane then test id. */
 export type SmokeVerdict = Readonly<{ killed: readonly TestRef[]; survived: readonly TestRef[]; inconclusive: readonly TestRef[] }>;
@@ -1235,7 +1203,7 @@ export type PropagationFact =
    */
   | (Readonly<{ kind: 'stale-set'; rev: PlanRev }> & StaleSet)
   /**
-   * An in-flight unit with stale links its plan-check has not answered since they were recorded, re-opened at plan-check at
+   * An in-flight unit with stale links its pre-build has not answered since they were recorded, re-opened at pre-build at
    * its first boundary that allows a re-entry (`reentryAllowed`), as a pending spec revision re-opens one; `rev` is the latest
    * stale set naming it. Its counters are kept.
    */
@@ -1313,7 +1281,7 @@ export type PlanChange =
   /** M4a rev 3 (F4): the plan's `knownDefects` changed. */
   | Readonly<{ type: 'known-defects' }>
   /** M4a rev 3 (E) to dev.16: the plan's `planCheck.shape` changed (no drain). Read from older logs; dev.17 writes none. */
-  | Readonly<{ type: 'plan-check-shape' }>
+  | Readonly<{ type: 'pre-build-shape' }>
   /** Plan defects (2026-10-16): the plan's `derived` entries changed (no drain; each unit re-pins its widening at its next dispatch check). */
   | Readonly<{ type: 'derived' }>
   /**
@@ -1923,7 +1891,7 @@ const planChange: Read<PlanChange> = tagged('type', {
   phase0: object((f): PlanChange => ({ type: f.get('type', literal('phase0')), sha256: f.get('sha256', sha256R) })),
   'unit-priority': object((f): PlanChange => ({ type: f.get('type', literal('unit-priority')), unit: f.get('unit', unitR) })),
   'known-defects': object((f): PlanChange => ({ type: f.get('type', literal('known-defects')) })),
-  'plan-check-shape': object((f): PlanChange => ({ type: f.get('type', literal('plan-check-shape')) })),
+  'pre-build-shape': object((f): PlanChange => ({ type: f.get('type', literal('pre-build-shape')) })),
   derived: object((f): PlanChange => ({ type: f.get('type', literal('derived')) })),
   milestones: object((f): PlanChange => {
     const rewalk = f.optional('rewalk', arrayOf(milestoneR, { nonEmpty: true }));
@@ -2062,16 +2030,7 @@ const bundleOutcome: Read<BundleOutcome> = tagged('kind', {
 const reviewJobR: Read<JobId> = (v, p) => jobIdOfKind('review')(v, p);
 const ruleList: Read<readonly RuleId[]> = idList((v, p) => ruleId(v, p));
 
-const amendmentSource: Read<AmendmentSource> = tagged('type', {
-  checkpoint: object((f): AmendmentSource => ({ type: f.get('type', literal('checkpoint')), job: f.get('job', ckptJobR), index: f.get('index', nat) })),
-  divergence: object((f): AmendmentSource => ({ type: f.get('type', literal('divergence')), divergence: f.get('divergence', (v, p) => divergenceId(v, p)) })),
-  admit: object((f): AmendmentSource => ({
-    type: f.get('type', literal('admit')), job: f.get('job', ckptJobR), index: f.get('index', nat), reason: f.get('reason', oneOf(CONVERSION_REASONS)),
-  })),
-  request: object((f): AmendmentSource => ({
-    type: f.get('type', literal('request')), job: f.get('job', ckptJobR), needsUser: f.get('needsUser', (v, p): NeedsUserId => needsUserId(v, p)),
-  })),
-});
+const amendmentSource: Read<AmendmentSource> = object((f) => ({type: f.get('type', literal('root')), command: f.get('command', cmdR)}));
 
 const testRef: Read<TestRef> = object((f) => ({ lane: f.get('lane', laneR), testId: f.get('testId', str) }));
 /** Test refs ascending by lane, then test id, each once. */
@@ -2349,9 +2308,9 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
     if (out.source.type === 'demo' && !(walk && out.severity === 'P1')) throw new SchemaError(`${f.path}.source`, 'a walk job (only a walkthrough P1 comes from the demo)', out.source);
     if (walk && out.source.type === 'job' && parseJobId(out.source.job).kind !== 'walk') throw new SchemaError(`${f.path}.source.job`, 'a walk-<n> job', out.source.job);
     if (out.mutant !== null && out.lens !== 'vacuity') throw new SchemaError(`${f.path}.mutant`, 'null except for a vacuity finding', out.mutant);
-    // R17: plan-check opens only P3 vision-conflict findings, from its own attempt; every other opener is a job.
-    if ((out.lens === 'plan-check') !== (out.source.type === 'stage')) throw new SchemaError(`${f.path}.source`, out.lens === 'plan-check' ? 'the plan-check attempt' : 'the job that opened it', out.source);
-    if (out.lens === 'plan-check' && (out.severity !== 'P3' || out.visionClauses.length === 0)) throw new SchemaError(`${f.path}.severity`, 'P3 citing vision clauses for a plan-check vision conflict', out.severity);
+    // R17: pre-build opens only P3 vision-conflict findings, from its own attempt; every other opener is a job.
+    if ((out.lens === 'pre-build') !== (out.source.type === 'stage')) throw new SchemaError(`${f.path}.source`, out.lens === 'pre-build' ? 'the pre-build attempt' : 'the job that opened it', out.source);
+    if (out.lens === 'pre-build' && (out.severity !== 'P3' || out.visionClauses.length === 0)) throw new SchemaError(`${f.path}.severity`, 'P3 citing vision clauses for a pre-build vision conflict', out.severity);
     // A must-hold not held on an audit snapshot opens a P1 over its obligation; dev.17: a batch lane red at an audit, a P1 over none.
     if (out.lens === 'witness' && (out.severity !== 'P1' || (out.obligation === null) !== (lane !== undefined))) {
       throw new SchemaError(`${f.path}.severity`, 'P1 over its obligation (or, a batch lane red, over none) for a witness finding', out.severity);
@@ -2397,27 +2356,6 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
     return { ...out, ...(refused === undefined ? {} : { refused }) };
   }),
   'docs-covered': object((f): Fact => ({ kind: f.get('kind', literal('docs-covered')), pub: f.get('pub', docsJobR), from: f.get('from', shaR), to: f.get('to', shaR) })),
-  'checkpoint-inputs': object((f): Fact => {
-    const out = {
-      kind: f.get('kind', literal('checkpoint-inputs')), job: f.get('job', ckptJobR), trigger: f.get('trigger', checkpointTrigger),
-      generation: f.get('generation', positive), vector: f.get('vector', revisionVector), headSha: f.get('headSha', shaR), visionSha256: f.get('visionSha256', sha256R),
-      findings: f.get('findings', findingSet),
-      observations: f.get('observations', sortedBy(observationKey, (k: ObservationKey) => `${k.treeSha}/${k.lane}/${k.laneRev}/${k.envId}`)),
-    };
-    if (out.vector.visionSha256 !== out.visionSha256) throw new SchemaError(`${f.path}.vector.visionSha256`, out.visionSha256, out.vector.visionSha256);
-    const corpusSha256 = f.optional('corpusSha256', sha256R);
-    return { ...out, ...(corpusSha256 === undefined ? {} : { corpusSha256 }) };
-  }),
-  'bundle-decided': object((f): Fact => ({ kind: f.get('kind', literal('bundle-decided')), job: f.get('job', ckptJobR), outcome: f.get('outcome', bundleOutcome) })),
-  'checkpoint-skipped': object((f): Fact => {
-    const kind = f.get('kind', literal('checkpoint-skipped'));
-    const audit = f.optional('audit', auditJobR);
-    const trigger = f.optional('trigger', checkpointTrigger);
-    if (audit === undefined && trigger === undefined) throw new SchemaError(f.path, 'a checkpoint trigger or a legacy audit', null);
-    if (audit !== undefined && trigger !== undefined && (trigger.type !== 'audit' || trigger.job !== audit)) throw new SchemaError(f.path, 'an audit matching the trigger', audit);
-    const rest = { kind, generation: f.get('generation', positive), visionSha256: f.get('visionSha256', sha256R), carried: f.get('carried', findingSet) };
-    return audit === undefined ? { ...rest, trigger: trigger! } : { ...rest, audit, ...(trigger === undefined ? {} : { trigger }) };
-  }),
   divergence: object((f): Fact => ({ kind: f.get('kind', literal('divergence')), id: f.get('id', (v, p): DivergenceId => divergenceId(v, p)), index: f.get('index', nat), ...divergenceDraftFields(f) })),
   'divergence-digest': object((f): Fact => ({
     kind: f.get('kind', literal('divergence-digest')), needsUser: f.get('needsUser', (v, p): NeedsUserId => needsUserId(v, p)),
@@ -2506,19 +2444,19 @@ export const fact: Read<Fact> = tagged('kind', {
       tip: f.get('tip', shaR), head: f.get('head', nullable(shaR)), specRev: f.get('specRev', (v, p) => specRev(v, p)), specSha256: f.get('specSha256', sha256R),
       planRev: f.get('planRev', (v, p) => planRev(v, p)), routingRev: f.get('routingRev', revR),
     };
-    if ((out.stage === 'gate') !== (out.head !== null)) throw new SchemaError(`${f.path}.head`, out.stage === 'gate' ? 'the unit commit the gate read' : 'null for a plan-check', out.head);
+    if ((out.stage === 'gate') !== (out.head !== null)) throw new SchemaError(`${f.path}.head`, out.stage === 'gate' ? 'the unit commit the gate read' : 'null for a pre-build', out.head);
     const fingerprint = f.optional('fingerprint', approvalFingerprint);
-    if ((fingerprint !== undefined) !== (out.stage === 'gate')) throw new SchemaError(`${f.path}.fingerprint`, out.stage === 'gate' ? 'the gate\'s approval fingerprint' : 'absent on a plan-check', fingerprint);
+    if ((fingerprint !== undefined) !== (out.stage === 'gate')) throw new SchemaError(`${f.path}.fingerprint`, out.stage === 'gate' ? 'the gate\'s approval fingerprint' : 'absent on a pre-build', fingerprint);
     const paths = sortedBy((v, p) => repoPath(v, p), (x) => x);
     const diffShown = f.optional('diffShown', object((g): DiffShown => ({ inlined: g.get('inlined', paths), notInlined: g.get('notInlined', paths) })));
-    if (diffShown !== undefined && out.stage !== 'gate') throw new SchemaError(`${f.path}.diffShown`, 'absent on a plan-check', diffShown);
+    if (diffShown !== undefined && out.stage !== 'gate') throw new SchemaError(`${f.path}.diffShown`, 'absent on a pre-build', diffShown);
     const largeDiff = f.optional('largeDiff', nullable(object((g): GateLargeDiff => ({ overflow: g.get('overflow', positive) }))));
-    if (largeDiff !== undefined && out.stage !== 'gate') throw new SchemaError(`${f.path}.largeDiff`, 'absent on a plan-check', largeDiff);
+    if (largeDiff !== undefined && out.stage !== 'gate') throw new SchemaError(`${f.path}.largeDiff`, 'absent on a pre-build', largeDiff);
     const review = f.optional('review', gateReview);
     const standingReview = f.optional('standingReview', arrayOf(object((g) => ({id: g.get('id', str), text: g.get('text', str), evidence: g.get('evidence', arrayOf(str))}))));
-    if (review !== undefined && out.stage !== 'gate') throw new SchemaError(`${f.path}.review`, 'absent on a plan-check', review);
+    if (review !== undefined && out.stage !== 'gate') throw new SchemaError(`${f.path}.review`, 'absent on a pre-build', review);
     const designEstimate = f.optional('designEstimate', nullable(nat));
-    if (designEstimate !== undefined && out.stage !== 'gate') throw new SchemaError(`${f.path}.designEstimate`, 'absent on a plan-check', designEstimate);
+    if (designEstimate !== undefined && out.stage !== 'gate') throw new SchemaError(`${f.path}.designEstimate`, 'absent on a pre-build', designEstimate);
     if (fingerprint === undefined) return out;
     if (fingerprint.unitCommit !== out.head) throw new SchemaError(`${f.path}.fingerprint.unitCommit`, `the head the gate read (${out.head})`, fingerprint.unitCommit);
     return { ...(standingReview === undefined ? {} : {standingReview}),
@@ -2623,8 +2561,8 @@ export const fact: Read<Fact> = tagged('kind', {
     // The fold keys retries and route-ups by stage, so those classes only exist where the stage has them.
     if (out.class === 'retry' && !(RETRY_STAGES as readonly string[]).includes(s)) throw new SchemaError(`${f.path}.class`, `retry only at ${RETRY_STAGES.join(', ')}`, out.class);
     if (out.class === 'route-up' && !(JUDGMENT_STAGES as readonly string[]).includes(s)) throw new SchemaError(`${f.path}.class`, `route-up only at ${JUDGMENT_STAGES.join(', ')}`, out.class);
-    // An interruption or a plan-check split holds the unit, uncharged, until resumed or cut by its split revision.
-    const holds = out.outcome === 'interrupted' || (s === 'plan-check' && out.outcome === 'split');
+    // An interruption or a pre-build split holds the unit, uncharged, until resumed or cut by its split revision.
+    const holds = out.outcome === 'interrupted';
     if (holds !== (out.class === 'hold')) throw new SchemaError(`${f.path}.class`, 'hold exactly for an interrupted outcome or a split', out.class);
     if (out.class === 'hold' && out.chargeable) throw new SchemaError(`${f.path}.chargeable`, 'false for a hold', out.chargeable);
     return { ...out, ...(unchargedLanesReds === undefined ? {} : { unchargedLanesReds }), ...(park === undefined ? {} : { park }), ...(cause === undefined ? {} : { cause }), ...(detail === undefined ? {} : { detail }) } as StageOutcomeFact;

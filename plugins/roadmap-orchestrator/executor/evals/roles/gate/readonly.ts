@@ -12,7 +12,7 @@ import { judgmentSessionId } from '../../../src/core/ids.ts';
 import type { JudgmentSession } from '../../../src/core/records.ts';
 import { type AbsPath, absPath } from '../../../src/core/values.ts';
 import { judgmentSurface } from '../../../src/pipeline/dispatch.ts';
-import { GATE_CHECKOUT } from '../../../src/prompts/gate/claude-opus-5-5.ts';
+import { GATE_CHECKOUT } from '../../../src/prompts/verifier/gate-input.ts';
 import { CLAUDE_EFFORTS, CLAUDE_MODELS, type ClaudeEffort, type ClaudeModelId } from '../../../src/routing/types.ts';
 
 /**

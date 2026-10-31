@@ -115,7 +115,7 @@ describe('M2 event records', () => {
         kind: 'judgment-inputs', unit, stage: 'gate', attempt: 4, tip: A, head: A, specRev: specRev(2), specSha256: H, planRev: planRev(3), routingRev: rev,
         fingerprint: { unitCommit: A, specRev: 2, contractRevs: [], rulingRevs: [] },
       },
-      { kind: 'judgment-inputs', unit, stage: 'plan-check', attempt: 1, tip: A, head: null, specRev: specRev(1), specSha256: H, planRev: planRev(1), routingRev: rev },
+      { kind: 'judgment-inputs', unit, stage: 'pre-build', attempt: 1, tip: A, head: null, specRev: specRev(1), specSha256: H, planRev: planRev(1), routingRev: rev },
       { kind: 'edge-resolved', edge: 'e-top', command: cmd, evidence: 'the migration landed in #412' },
       { kind: 'run-only', command: cmd, units: ['a', 'b'] },
       { kind: 'run-only', command: cmd, units: null },
@@ -134,8 +134,8 @@ describe('M2 event records', () => {
     refusesLine(fact({ kind: 'probe', target: { type: 'host' }, covers: [4, 4], result: 'pass', nextProbeAt: null }), /ascending seqs/);
     refusesLine(fact({ kind: 'probe', target: { type: 'host' }, covers: [4], result: 'pass', nextProbeAt: at }), /null on a pass/);
     refusesLine(fact({ kind: 'probe', target: { type: 'host' }, covers: [4], result: 'fail', nextProbeAt: null }), /next probe time/);
-    refusesLine(fact({ kind: 'judgment-inputs', unit, stage: 'plan-check', attempt: 1, tip: A, head: A, specRev: 1, specSha256: H, planRev: 1, routingRev: rev }), /null for a plan-check/);
-    refusesLine(fact({ kind: 'judgment-inputs', unit, stage: 'build', attempt: 1, tip: A, head: A, specRev: 1, specSha256: H, planRev: 1, routingRev: rev }), /plan-check \| gate/);
+    refusesLine(fact({ kind: 'judgment-inputs', unit, stage: 'pre-build', attempt: 1, tip: A, head: A, specRev: 1, specSha256: H, planRev: 1, routingRev: rev }), /null for a pre-build/);
+    refusesLine(fact({ kind: 'judgment-inputs', unit, stage: 'build', attempt: 1, tip: A, head: A, specRev: 1, specSha256: H, planRev: 1, routingRev: rev }), /pre-build \| gate/);
     refusesLine(fact({ kind: 'run-only', command: cmd, units: ['b', 'a'] }), /ascending/);
     refusesLine(fact({ kind: 'run-only', command: cmd, units: [] }), /non-empty/);
     refusesLine(fact({ kind: 'implementer-escalated', unit, attempt: 6, from: 'high', to: 'high', stalled: 5 }), /below high/);
@@ -215,7 +215,7 @@ describe('M2 plan fields', () => {
 
 describe('ordering park records', () => {
   const parked = (ordering: unknown) => fact({
-    kind: 'stage-outcome', unit, stage: 'plan-check', attempt: 2, outcome: 'infeasible', class: 'park', chargeable: false,
+    kind: 'stage-outcome', unit, stage: 'pre-build', attempt: 2, outcome: 'infeasible', class: 'park', chargeable: false,
     park: { class: 'operator', kind: 'design', ordering },
   });
   it('round-trips an explicit wait and its exact automatic wake; refuses missing, empty or duplicate blockers', () => {
@@ -229,7 +229,7 @@ describe('ordering park records', () => {
       park: { class: 'operator', kind: 'env', ordering: { blockers: ['u2'] } } }), /ordering/);
   });
   it('a park without optional ordering reads byte-for-byte with no wait or adoption warning', () => {
-    const old = serializeEvent(event(fact({ kind: 'stage-outcome', unit, stage: 'plan-check', attempt: 2, outcome: 'infeasible', class: 'park', chargeable: false,
+    const old = serializeEvent(event(fact({ kind: 'stage-outcome', unit, stage: 'pre-build', attempt: 2, outcome: 'infeasible', class: 'park', chargeable: false,
       park: { class: 'operator', kind: 'design' } })));
     const child = spawnSync(process.execPath, ['--input-type=module', '-e', `
       import { parseEventLine, serializeEvent } from './src/core/events.ts';

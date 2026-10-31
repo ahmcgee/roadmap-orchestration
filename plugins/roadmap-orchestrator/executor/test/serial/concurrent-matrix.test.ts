@@ -68,7 +68,7 @@ import { type Owner, assertNoSurvivors } from '../helpers/reap.ts';
 import { git, tmpDir } from '../helpers/repo.ts';
 import { readCalls } from '../helpers/scenario.ts';
 import {
-  type Boundary, CONCURRENT_AUDIT, CONCURRENT_BUILD, CONCURRENT_BUNDLE, CONCURRENT_EXCLUDED_LABELS, CONCURRENT_JUDGMENT, CONCURRENT_LANE, CONCURRENT_PREEMPT,
+  type Boundary, CONCURRENT_AUDIT, CONCURRENT_BUILD, CONCURRENT_APPLY, CONCURRENT_EXCLUDED_LABELS, CONCURRENT_JUDGMENT, CONCURRENT_LANE, CONCURRENT_PREEMPT,
   CONCURRENT_BATCH, CONCURRENT_DEBT, CONCURRENT_PUBLICATION, CONCURRENT_RESIDUE, CONCURRENT_TEARDOWN, crashCells,
 } from '../matrix.ts';
 import {
@@ -362,7 +362,7 @@ function peerEnd(peer: Peer, r: ExecRun, crash: AtCrash, pinnedInv: IntentOf<'pr
       assert.equal(spawnsOf(end).filter((i) => subjectUnit(i) === B && i.expect.subject.purpose === 'backend' && (i.expect.subject as { role: string }).role === 'build').length, 1, 'B\'s build spawned once');
       return;
     case 'judgment': {
-      assert.equal(bCalls.filter((c) => c.as === 'claude').length, 2, 'B\'s plan-check and gate, each called once');
+      assert.equal(bCalls.filter((c) => c.as === 'claude').length, 2, 'B\'s pre-build and gate, each called once');
       const gate = pinnedInv!.parent;
       if (gate.type !== 'stage') throw new Error('the gate is a stage op');
       const { attempt } = gate;
@@ -605,14 +605,14 @@ test('concurrent crash matrix', { concurrency: FANOUT, timeout: 45 * 60_000 }, a
 // ---------------------------------------------------------------------------------------------------
 // The concurrent job rows (M3 B8)
 
-const JOB_ROWS: Readonly<Record<JobRow, string>> = { audit: CONCURRENT_AUDIT, bundle: CONCURRENT_BUNDLE, batch: CONCURRENT_BATCH, preempt: CONCURRENT_PREEMPT };
-const JOB_ROW_NAMES: readonly JobRow[] = ['audit', 'batch', 'preempt'];
+const JOB_ROWS: Readonly<Record<JobRow, string>> = { audit: CONCURRENT_AUDIT, apply: CONCURRENT_APPLY, batch: CONCURRENT_BATCH, preempt: CONCURRENT_PREEMPT };
+const JOB_ROW_NAMES: readonly JobRow[] = ['audit', 'apply', 'batch', 'preempt'];
 /** The scenario each job row steps in. */
-const JOB_PEER: Readonly<Record<JobRow, HolisticPeer>> = { audit: 'jobs', bundle: 'jobs', batch: 'batch', preempt: 'preempt' };
+const JOB_PEER: Readonly<Record<JobRow, HolisticPeer>> = { audit: 'jobs', apply: 'jobs', batch: 'batch', preempt: 'preempt' };
 /** The units whose build is live while the scenario's job steps. */
 const LIVE_BUILDS: Readonly<Record<HolisticPeer, readonly string[]>> = { jobs: [A, B], batch: [C], preempt: [] };
 /** The applied bundle raises its divergence digest and the schema 2 revision notice. */
-const JOB_NEEDS_USER: Readonly<Record<HolisticPeer, readonly string[]>> = { jobs: [], batch: [], preempt: [] };
+const JOB_NEEDS_USER: Readonly<Record<HolisticPeer, readonly string[]>> = { jobs: ['revision-notice'], batch: [], preempt: [] };
 const jobRowLabels = (row: JobRow): readonly string[] => [...new Set(crashCells(JOB_ROWS[row]).map((c) => c.label))].sort();
 const jobBoundaryOf = (row: JobRow, label: string): Boundary => crashCells(JOB_ROWS[row]).find((c) => c.label === label)!.boundary;
 /** The scenario's units in plan order (the batch scenario admits its repair units after u3). */
@@ -650,7 +650,7 @@ async function jobReference(t: Owner, peer: HolisticPeer): Promise<JobReference>
   if (peer !== 'preempt') {
     // The stepping jobs ran while the peers' builds were live.
     const stepping = JOB_ROW_NAMES.filter((row) => JOB_PEER[row] === peer).map((row) => `job:${STEPPING[row as keyof typeof STEPPING]}`);
-    const window = snap.events.filter((e) => stepping.includes(ownerOf(snap.view, e)));
+    const window = snap.events.filter((e) => stepping.includes(ownerOf(snap.view, e)) || peer === 'jobs' && ownerOf(snap.view, e) === 'command');
     const builds = spawnsOf(snap).filter((i) => LIVE_BUILDS[peer].includes(subjectUnit(i) ?? '') && i.expect.subject.purpose === 'backend' && (i.expect.subject as { role: string }).role === 'build');
     assert.equal(builds.length, LIVE_BUILDS[peer].length);
     for (const b of builds) {

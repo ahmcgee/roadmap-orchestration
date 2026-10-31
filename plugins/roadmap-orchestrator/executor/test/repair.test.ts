@@ -1,7 +1,7 @@
 // M3 step B3: findings and repair over real arcs (real git, real processes, fake backends and witness lanes scripted per
 // tree). Named tests: reproduce.reproduced, reproduce.not-reproduced, reproduce.inapplicable, mutant.kill-in-candidate,
 // mutant.survivor-red, p1.blocks-selecting, p1.repair-exempt, p1.opened-mid-candidate-blocks-ff (G10), repair.batch
-// (R7 with B2's publishBatch), findings.plan-check-vision-conflict (R17), plancheck.reads-captured-spec, and the crash
+// (R7 with B2's publishBatch), findings.pre-build-vision-conflict (R17), plancheck.reads-captured-spec, and the crash
 // cells of the matrix rows FF_ELIGIBILITY and MUTANT_APPLY (test/matrix.ts), recovered by the recovery engine.
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
@@ -49,7 +49,7 @@ const finding = (r: ArcRun, id = F1) => r.journal.view.holistic().findings.find(
 const worktrees = (r: ArcRun): readonly string[] => git(r.d.repo, 'worktree', 'list', '--porcelain').split('\n').filter((l) => l.startsWith('worktree ') && l.includes('.mutant-'));
 
 describe('vacuity repairs: reproduce and acceptance', () => {
-  test('reproduce.reproduced + mutant.kill-in-candidate: the mutant survives the old witness at the tip (reproduced, on to plan-check); the candidate kills it; the repair publishes and resolves its finding', T, async () => {
+  test('reproduce.reproduced + mutant.kill-in-candidate: the mutant survives the old witness at the tip (reproduced, on to pre-build); the candidate kills it; the repair publishes and resolves its finding', T, async () => {
     const state = tmpDir('repair-powered-env');
     const cmd = { argv: ['true'], cwd: '.', env: { set: {}, pass: ['PATH'] } };
     const { d, control } = vacuityArc({
@@ -82,7 +82,7 @@ describe('vacuity repairs: reproduce and acceptance', () => {
       // The candidate: its mutant killed by the strict test (scripted: t1 fails on the patched candidate tree).
       scriptTree(control, treeWith(d.repo, tip, STRICT_TEST, MUTANT_PATCH), { outcomes: { t1: 'fail' } });
       assert.deepEqual(await runUnit(r.ctx, r.unit('v1'), admitAll), { kind: 'merged' }, outcomes(d, 'v1').join(' '));
-      assert.deepEqual(outcomes(d, 'v1'), ['reproduce:reproduced', 'plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed',
+      assert.deepEqual(outcomes(d, 'v1'), ['reproduce:reproduced', 'pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed',
         'teardown:released', 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published']);
       const candidate = r.journal.view.opsOf('candidate.merge').at(-1)!.post.new;
       const kill = mutantWitnessed(r).at(-1)!;
@@ -232,7 +232,7 @@ describe('P1 blocking and repair (G10, R6, R7)', () => {
       assert.deepEqual(r.journal.view.opsOf('integration.ff'), [], 'no ff was begun');
       await step(r.ctx, r.unit('u1'));
       assert.equal(outcomes(d, 'u1').at(-1), 'candidate:finding-blocked');
-      ruleFinding(r.journal, F1, 'dismissed', { type: 'checkpoint', job: jobId('ckpt', 1) });
+      ruleFinding(r.journal, F1, 'dismissed', { type: 'code', reason: 'close-out' });
       assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), admitAll), { kind: 'merged' });
       assert.equal(r.journal.view.unit(unitId('u1')).counters.chargeableFailures, 0);
     } finally {
@@ -337,7 +337,7 @@ describe(`matrix row ${FF_ELIGIBILITY}`, () => {
           assert.equal(git(d.repo, 'rev-parse', 'main'), tip, 'still nothing published');
           assert.deepEqual(r.journal.view.publications(), []);
           assert.equal(r.journal.view.unit(U1).counters.chargeableFailures, 0, 'uncharged');
-          ruleFinding(r.journal, F1, 'dismissed', { type: 'checkpoint', job: jobId('ckpt', 1) });
+          ruleFinding(r.journal, F1, 'dismissed', { type: 'code', reason: 'close-out' });
           assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), admitAll), { kind: 'merged' }, outcomes(d, 'u1').join(' '));
         } else {
           assert.deepEqual([done.outcome, done.recoveredBy], [{ kind: 'published' }, c.label === 'ff.act-start' ? 'redone' : 'reconciled']);
@@ -359,7 +359,7 @@ describe(`matrix row ${FF_ELIGIBILITY}`, () => {
 // ---------------------------------------------------------------------------------------------------
 // Plan-check (R17, AX carry-forward)
 
-describe('plan-check and the findings store', () => {
+describe('pre-build and the findings store', () => {
 });
 
 // ---------------------------------------------------------------------------------------------------

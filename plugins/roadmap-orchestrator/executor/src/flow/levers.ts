@@ -46,7 +46,7 @@ export const RULER_PATHS: readonly Readonly<{ path: string; what: string }>[] = 
   { path: 'holistic.audit', what: 'the audit cadence and lens set' },
   { path: 'holistic.advances', what: 'the vision clauses the arc advances' },
   { path: 'vision', what: 'the vision record' },
-  { path: 'routing.<judgment role>', what: 'judgment-seat routing in the plan layer: planCheck, gate, lens, checkpoint, packReview, flow' },
+  { path: 'routing.<judgment role>', what: 'judgment-seat routing in the plan layer: preBuild, gate, lens, checkpoint, packReview, flow' },
   { path: 'units[<id>].routing.<judgment role>', what: 'judgment-seat routing in a unit layer' },
   { path: 'units[<id>].risk', what: 'risk floors' },
 ];

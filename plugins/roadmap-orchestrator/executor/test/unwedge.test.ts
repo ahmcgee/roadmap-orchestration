@@ -67,7 +67,7 @@ function assertRecoveryHold(r: ArcRun, status: 'held' | 'active'): void {
   const u = r.journal.view.unit(U1);
   assert.equal(u.status, status);
   assert.equal(u.open, null, 'no attempt is open');
-  assert.deepEqual([u.decided?.stage, u.decided?.outcome, u.decided?.attempt], ['plan-check', 'approve', 1], 'the decision before is kept');
+  assert.deepEqual([u.decided?.stage, u.decided?.outcome, u.decided?.attempt], ['pre-build', 'approve', 1], 'the decision before is kept');
   assert.equal(u.interrupted, null, 'nothing to continue');
   assert.deepEqual([u.counters.chargeableFailures, u.counters.retries.build, u.counters.attempts], [0, 0, 2]);
   const last = stageOutcomes(r).at(-1);
@@ -85,7 +85,7 @@ describe('a crash-abandoned attempt is held at startup (arc feedback 2026-10-15)
       assert.equal(r.journal.view.unit(U1).status, 'active');
       // The scenario's build step expects a fresh session (`exec -C`): a continue round would not match it.
       assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), admitAll), { kind: 'merged' });
-      assert.deepEqual(outcomes(r.d).slice(0, 3), ['plan-check:approve', 'build:interrupted', 'build:success']);
+      assert.deepEqual(outcomes(r.d).slice(0, 3), ['pre-build:approve', 'build:interrupted', 'build:success']);
     } finally {
       r.journal.close();
     }

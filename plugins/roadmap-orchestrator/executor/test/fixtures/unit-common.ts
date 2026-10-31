@@ -262,7 +262,7 @@ export function isGateCall(c: CallRecord): boolean {
   return c.as === 'claude' && c.cwd.includes('.gate-') && (c.argv[c.argv.indexOf('--json-schema') + 1] ?? '').includes('"directives"');
 }
 
-/** dev.17: a plan-check call, an acting judge since the design pass: its `--tools` carry web search (src/backends/argv.ts `PLAN_CHECK_TOOLS`). */
+/** dev.17: a pre-build call, an acting judge since the design pass: its `--tools` carry web search (src/backends/argv.ts `PLAN_CHECK_TOOLS`). */
 export function isPlanCheckCall(c: CallRecord): boolean {
   return c.as === 'claude' && c.stdin.includes('<mode>pre-build</mode>');
 }

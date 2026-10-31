@@ -66,7 +66,7 @@ test('host.handshake-verifies-self: an owner record naming another pid → the e
   releaseHost(hostDir, claim);
 });
 
-/** Arc A parked in a plan-check at barrier `check1`, then its supervisor and executor SIGKILLed: its runner lives. */
+/** Arc A parked in a pre-build at barrier `check1`, then its supervisor and executor SIGKILLed: its runner lives. */
 async function strandedArc(t: Owner): Promise<Readonly<{ a: ExecRun; spawn: IntentOf<'proc.spawn'> }>> {
   const a = setupExec(t, { steps: [...smokes(1), blockedCheck('check1')] });
   const line = startLine(await startCli(a));
@@ -76,7 +76,7 @@ async function strandedArc(t: Owner): Promise<Readonly<{ a: ExecRun; spawn: Inte
   await kill(supervisorOf(a));
   await kill(executor);
   const open = journalOf(a).view.openIntents().filter((i) => i.kind === 'proc.spawn' && i.expect.subject.purpose === 'backend');
-  assert.equal(open.length, 1, 'the plan-check spawn is open');
+  assert.equal(open.length, 1, 'the pre-build spawn is open');
   return { a, spawn: open[0] as IntentOf<'proc.spawn'> };
 }
 

@@ -8,7 +8,7 @@
 //   - each outcome closes one step: the wait from the previous outcome (or the admission) to the step's first op, then
 //     the service from that op to the outcome. The first op is the earliest stage-parented intent of the unit after the
 //     previous outcome whose attempt has no outcome yet (an attempt a restart cut short is service of the next one); a
-//     stage with no op (quiesce, an in-session plan-check) is all wait;
+//     stage with no op (quiesce, an in-session pre-build) is all wait;
 //   - `wait:<s>` / `stage:<s>` for the pipeline stages (`FLOW_STAGES`); `wait:slot:integration` in front of a candidate
 //     (it ends at the publication's slot reserve, the candidate's first op), less `wait:finding`, the part of that wait
 //     (held time aside) an active P1 finding covers whose obligation the unit's latest approval before the candidate

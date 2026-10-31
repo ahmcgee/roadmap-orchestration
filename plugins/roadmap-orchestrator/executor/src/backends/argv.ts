@@ -114,14 +114,14 @@ export const JUDGMENT_TOOLS = 'Read,Grep,Glob,Agent';
 export const ACTING_JUDGE_TOOLS = 'Read,Grep,Glob,Bash,Write,Edit,Agent';
 
 /**
- * dev.17 (design pass): the plan-check's tools, an acting judge's with web search and fetch, so it can check a library, an
+ * dev.17 (design pass): the pre-build's tools, an acting judge's with web search and fetch, so it can check a library, an
  * API or a standard the spec relies on and cite it. What it fetches is untrusted data, never instructions (its prompt says
  * so); a shell is for observing existing code (tests, build- and unit-cadence lanes, tools) in its own checkouts.
  */
-export const PLAN_CHECK_TOOLS = `${ACTING_JUDGE_TOOLS},WebSearch,WebFetch`;
+export const VERIFIER_TOOLS = `${ACTING_JUDGE_TOOLS},WebSearch,WebFetch`;
 
-/** An acting judge's `--tools` value: plan-check's with the web tools, every other acting judge's `ACTING_JUDGE_TOOLS`. */
-export const actingJudgeTools = (role: ActingJudgeRole): string => (role === 'planCheck' ? PLAN_CHECK_TOOLS : ACTING_JUDGE_TOOLS);
+/** An acting judge's `--tools` value: pre-build's with the web tools, every other acting judge's `ACTING_JUDGE_TOOLS`. */
+export const actingJudgeTools = (role: ActingJudgeRole): string => ACTING_JUDGE_TOOLS;
 
 /** The file-writing tools an acting judge's `--disallowedTools` rules name for each denied path (`writeDenyRules`). */
 export const WRITE_TOOLS = ['Write', 'Edit', 'NotebookEdit'] as const;
@@ -142,10 +142,10 @@ export type BackendCall =
     kind: 'claude-judgment';
     /**
      * A judging arc role (a lens, the checkpoint; M3): a read-only session, fresh or a repair turn. The gate (dev.13) and
-     * plan-check (dev.17) act; `planCheck` here is only the preflight smoke's read-only probe of the plan-check seat
-     * (src/preflight/smoke.ts) and the probe's (evals/probe.ts), never a unit's plan-check.
+     * pre-build (dev.17) act; `planCheck` here is only the preflight smoke's read-only probe of the pre-build seat
+     * (src/preflight/smoke.ts) and the probe's (evals/probe.ts), never a unit's pre-build.
      */
-    role: FreshRole | 'planCheck';
+    role: FreshRole | 'verifier';
     triple: ClaudeTriple;
     session: JudgmentSession;
     /** The role's JSON schema text; Claude takes the schema inline, not as a path. */
@@ -196,19 +196,6 @@ export type BackendCall =
      * the run dir, less what it writes in (dispatch.ts `actingWriteDenials`).
      */
     denyWrites: readonly AbsPath[];
-  }>
-  | Readonly<{
-    /**
-     * dev.17 (design pass): the scaffold writer (`scaffold`, economy), writing a new system's skeleton in the unit worktree
-     * (its cwd): bypassPermissions with the full tool set like a Claude build, `--setting-sources project`, no advisor, no MCP
-     * server, always a fresh session (a retry is a new attempt).
-     */
-    kind: 'claude-scaffold';
-    triple: ClaudeTriple;
-    session: JudgmentSession;
-    schemaText: string;
-    /** The prompt module's standing instructions: `--append-system-prompt`. */
-    system: string;
   }>
   | Readonly<{
     kind: 'codex-build';
@@ -262,13 +249,6 @@ export function backendArgv(call: BackendCall): Argv {
         ...call.evidenceDirs.flatMap((dir) => ['--add-dir', dir]),
       ];
     }
-    case 'claude-scaffold': {
-      if (call.session.mode !== 'fresh') throw new Error(`a scaffold session is always fresh, not a resume of ${call.session.id}`);
-      return [
-        'claude', '-p', ...CLAUDE_COMMON, '--setting-sources', 'project', '--json-schema', call.schemaText, '--model', call.triple.model, '--effort', call.triple.effort,
-        '--permission-mode', 'bypassPermissions', '--session-id', call.session.id, '--append-system-prompt', call.system,
-      ];
-    }
     case 'codex-build': {
       const model = ['-m', call.triple.model, '-c', `model_reasoning_effort=${call.triple.effort}`];
       const output = ['--json', '-o', call.outputPath, '--output-schema', call.schemaPath];
@@ -293,7 +273,6 @@ export function promptBytes<C extends Pick<BackendCall, 'kind' | 'system'>>(call
     case 'claude-judgment':
     case 'claude-build':
     case 'claude-acting-judge':
-    case 'claude-scaffold':
       return rendered;
     case 'codex-build':
       return `${call.system}\n\n${rendered}`;

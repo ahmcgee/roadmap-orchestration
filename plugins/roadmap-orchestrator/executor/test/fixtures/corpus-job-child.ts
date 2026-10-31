@@ -2,7 +2,6 @@
 // PACK_REVIEW_JOB; test/closeout.test.ts: CLOSE_OUT_SETTLEMENT): argv <ArcDescriptor json> <checkpoint | packreview |
 // closeout>. Reopens the corpus arc and runs its checkpoint, its pack review or its close-out settlement once (the fake gh
 // comes first on PATH from the parent's env); the crash trigger in ROADMAP_TEST_CRASH kills it at the row's label.
-import { runCheckpoint } from '../../src/holistic/checkpoint.ts';
 import { settleCloseOut } from '../../src/holistic/closeout.ts';
 import { runPackReview } from '../../src/holistic/packreview.ts';
 import { checkpointContext } from './checkpoint-common.ts';
@@ -15,7 +14,7 @@ if (json === undefined || (job !== 'checkpoint' && job !== 'packreview' && job !
 const r = contextFor(JSON.parse(json) as ArcDescriptor);
 try {
   const { ctx } = checkpointContext(r);
-  const out = job === 'checkpoint' ? await runCheckpoint(ctx) : job === 'packreview' ? await runPackReview(ctx) : { settled: settleCloseOut(ctx) };
+  const out = job === 'packreview' ? await runPackReview(ctx) : { settled: settleCloseOut(ctx) };
   process.stdout.write(`${JSON.stringify(out)}\n`);
 } finally {
   r.journal.close();

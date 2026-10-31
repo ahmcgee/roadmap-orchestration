@@ -119,13 +119,13 @@ describe('a corpus arc\'s unit through its gate', T, () => {
   }, T);
   after(() => r.journal.close());
 
-  it('judgment.corpus-materialised-readonly: plan-check reads the rules index and the pin materialised read-only from kept bytes, the vision doc included', () => {
+  it('judgment.corpus-materialised-readonly: pre-build reads the rules index and the pin materialised read-only from kept bytes, the vision doc included', () => {
     const [check] = readCalls(a.d.scenarioPath);
     assert.ok(check !== undefined && check.as === 'claude' && !isGateCall(check));
     const dir = viewDir(a, a.pinSha256, 'full');
-    assert.ok(readable(addDirs(check), dir), `plan-check may read ${dir}: ${addDirs(check).join(' ')}`);
-    // The run dir, which holds both views, is readable (2026-10-16): plan-check is pointed at the full view.
-    assert.ok(check.stdin.includes(dir), `plan-check is told of the full view ${dir}`);
+    assert.ok(readable(addDirs(check), dir), `pre-build may read ${dir}: ${addDirs(check).join(' ')}`);
+    // The run dir, which holds both views, is readable (2026-10-16): pre-build is pointed at the full view.
+    assert.ok(check.stdin.includes(dir), `pre-build is told of the full view ${dir}`);
     assert.deepEqual(filesUnder(dir), a.pin.files.map((f) => f.path).sort(), 'every pinned file, the vision doc among them');
     for (const f of a.pin.files) {
       const path = join(dir, f.path);
@@ -133,8 +133,8 @@ describe('a corpus arc\'s unit through its gate', T, () => {
       assert.equal(sha256Hex(readFileSync(path)), f.sha256, `${f.path} holds its pinned bytes`);
     }
     assert.throws(() => writeFileSync(join(dir, a.pin.files[0]!.path), 'edited'), /EACCES/);
-    for (const rule of a.pin.rules) assert.equal(check.stdin.includes(rule.text), ['T-1', 'T-3'].includes(rule.id), `plan-check embeds exactly the chosen rules: ${rule.id}`);
-    assert.ok(check.stdin.includes(`${dir}/${a.pin.vision.path}`), 'plan-check is told where the vision doc is');
+    for (const rule of a.pin.rules) assert.equal(check.stdin.includes(rule.text), ['T-1', 'T-3'].includes(rule.id), `pre-build embeds exactly the chosen rules: ${rule.id}`);
+    assert.ok(check.stdin.includes(`${dir}/${a.pin.vision.path}`), 'pre-build is told where the vision doc is');
   });
 
   it('gate.no-vision-doc: the gate reads the rules index and a view of the pin without the vision doc', () => {

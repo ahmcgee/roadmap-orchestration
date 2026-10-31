@@ -145,7 +145,7 @@ const PREAMBLE = `You are a read-only observer of a roadmap-orchestrator arc run
 
 Pipeline, briefly: a root agent session (Claude, the "architect") drives a detached Node executor through the CLI. The executor
 owns every backend call, git ref, lock and evidence dir, and appends facts to a per-arc events.jsonl (seq-ordered). Work flows:
-plan-check (the plan is vetted against the corpus/vision), build (implementer lanes in git worktrees, possibly parallel), gate
+pre-build (the plan is vetted against the corpus/vision), build (implementer lanes in git worktrees, possibly parallel), gate
 (judgment on each lane's output), candidate merge into an integration branch, lens audits, checkpoint bundles (holistic
 reconcile to the vision), and needs-user items raised when the architect must decide. An audit asks each lens of its
 \`audit-started.lenses\` once, in run order (vision first, then the rest ascending): its \`arc-backend\` spawns' \`attempt\` is

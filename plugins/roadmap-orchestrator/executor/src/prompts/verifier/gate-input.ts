@@ -10,7 +10,7 @@ import { methodModules } from '../method/index.ts';
 // Direction as a subordinate tie-breaker; HOST_BAR. LANE_BAR is gone: "every spec lane ran verbatim" is
 // a code assertion in 1.0, so the gate judges what the lanes prove, not whether they ran. From arc 1
 // (feedback items 6, 12, 14, 15, 26, 28c, 29): cited documents in full and an index for the rest; the
-// plan-check's notes as facts; correctness-or-acceptance only; bounded, batched reads; premises with
+// pre-build's notes as facts; correctness-or-acceptance only; bounded, batched reads; premises with
 // evidence as the round handoff, and a later round rules on its prior round's conclusions and the delta.
 // M3 (reviewed 2026-09-30 against the same guides): the candidate's selected obligations with their
 // observations for direct selections and only id and statement for standing ones, never their vision clauses
@@ -63,7 +63,7 @@ import { methodModules } from '../method/index.ts';
 // ride-along, which never blocks. <findings_ledger>, <disputes> and <delta> are the contract of src/pipeline/review.ts:
 // a settled finding is raised again only once its file changed, each dispute is ruled once, and on a delta a blocking
 // finding on an unchanged file rests on a changed hunk or a moved target, else code records it as a note.
-import type { GateInputs, PromptModule } from '../inputs.ts';
+import type { GateInputs } from '../inputs.ts';
 import { boundedDiffText, bullets, milestoneDocuments, milestonesText, documentsXml, escalationText, findingsText, laneLedgerText, obligationsText, standingObligationsText, premisesText, systemNotesText, targetDocument, gateChecksText } from '../inputs.ts';
 import { GATE_SCHEMA } from '../schemas.ts';
 
@@ -161,15 +161,7 @@ Rules for this round:
 </prior_round>`;
 }
 
-export const PROMPT: PromptModule<'gate'> = {
-  system,
-  schema: GATE_SCHEMA,
-  fields: [
-    'systemNotes', 'touches', 'standing', 'method',
-    'spec', 'intent', 'nonGoals', 'contracts', 'index', 'target', 'direction', 'obligations', 'standingObligations', 'diff', 'laneLedger', 'evidence', 'systems', 'reach', 'traits', 'reachTraits', 'priorRound',
-    'checks', 'escalation', 'largeDiff', 'milestones', 'review', 'undeclaredContracts',
-  ],
-  render: (i) => `${documentsXml([
+export const render = (i: GateInputs) => `${documentsXml([
     { source: `spec.json for unit ${i.spec.unit}, revision ${i.spec.rev} (rendered)`, content: i.spec.markdown },
     ...i.contracts.map((c) => ({ source: `contract ${c.path}`, content: c.text })),
     ...milestoneDocuments(i.milestones),
@@ -212,5 +204,4 @@ ${bullets(i.evidence, '(none)')}
 
 <standing_items>${JSON.stringify(i.standing)}</standing_items>
 ${methodModules('verifier', i.method)}
-Gate unit ${i.spec.unit} at head ${i.diff.bounded.to}, spec revision ${i.spec.rev}. Grade each acceptance clause, then return your decision.`,
-};
+Gate unit ${i.spec.unit} at head ${i.diff.bounded.to}, spec revision ${i.spec.rev}. Grade each acceptance clause, then return your decision.`;

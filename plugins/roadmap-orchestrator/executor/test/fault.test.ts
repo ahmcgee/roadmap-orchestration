@@ -32,7 +32,7 @@ after(assertNoSurvivors);
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 const WAIT_MS = 90_000;
 const U2 = unitId('u2');
-const UP_TO_LANES = ['plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released'];
+const UP_TO_LANES = ['pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released'];
 const FROM_GATE = ['gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'];
 
 /** Each step keyed to `unit`: its calls take only these, in order (independent units run at once). */
@@ -102,7 +102,7 @@ test('fault.unit-confined: a throw inside u1\'s lanes parks it executor-fault (u
 
     await receiptOf(r, submit(r, { type: 'resume', target: { type: 'unit', unit: U1 } }));
     await until(() => r.journal.view.unit(U1).status === 'retired', WAIT_MS, 'u1 to merge after its resume');
-    assert.deepEqual(outcomes(d, 'u1'), [...UP_TO_LANES, 'lanes:executor-fault', 'lanes:green', ...FROM_GATE], 'resume re-entered lanes, no new plan-check or build');
+    assert.deepEqual(outcomes(d, 'u1'), [...UP_TO_LANES, 'lanes:executor-fault', 'lanes:green', ...FROM_GATE], 'resume re-entered lanes, no new pre-build or build');
     release(d.scenarioDir, 'u2build');
     assert.deepEqual(await s.end, { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }, { unit: 'u2', result: 'merged' }] });
   } finally {

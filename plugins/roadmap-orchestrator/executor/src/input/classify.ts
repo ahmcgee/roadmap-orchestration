@@ -70,11 +70,11 @@ export type Proposer =
   | Readonly<{ type: 'apply'; reason?: string }>
   | Readonly<{ type: 'reverse' | 'start' | 'executor' }>
   /**
-   * 2026-10-15 (arc feedback #3): a plan-check redirect's patch of its own unit's spec, validated (never committed: the
+   * 2026-10-15 (arc feedback #3): a pre-build redirect's patch of its own unit's spec, validated (never committed: the
    * stage applies it as a machine `spec.patch`) by the same classifier every revision runs. Its unit is mid-attempt and
    * its patch takes the next rev, so the dispatched-spec rules do not apply to that unit's spec.
    */
-  | Readonly<{ type: 'plan-check'; unit: UnitId }>
+  | Readonly<{ type: 'pre-build'; unit: UnitId }>
   /**
    * `fixesUnrecorded`: the units the bundle's `reenter` ops introduce from an answer recorded before `fixes` (a previous
    * release's, `reenterFixesDefault`): adopted as recorded, the `fixes` rows do not bind them (`fixesReasons`).
@@ -87,7 +87,7 @@ export type Proposer =
   /** dev.13 (agent D): the cut of polish unit `unit` its compare judged `drop` (src/walk/compare.ts): it only cuts that unit. */
   | Readonly<{ type: 'compare'; unit: UnitId }>
   /**
-   * dev.17 (design pass): the split revision of `unit`'s plan-check (src/pipeline/split.ts): it cuts `unit` (reason
+   * dev.17 (design pass): the split revision of `unit`'s pre-build (src/pipeline/split.ts): it cuts `unit` (reason
    * `splitCutReason`), adds `children`, moves every unit waiting on `unit` onto all of them and every milestone listing `unit`
    * onto them (`splitRows`).
    */
@@ -215,7 +215,7 @@ function dispatchedSpec(
   const status = u.status;
   if (approvedOrPublishing(u)) return `unit ${unit.id} is ${status === 'retired' ? 'merged' : 'approved and publishing'}; its spec is fixed`;
   if (status === 'stop-pending') return `unit ${unit.id} stopped the arc; its spec is fixed`;
-  if (status === 'park-pending' && (u.decided === null || !['plan-check', 'gate'].includes(u.decided.stage))) {
+  if (status === 'park-pending' && (u.decided === null || !['pre-build', 'gate'].includes(u.decided.stage))) {
     return `unit ${unit.id} is parked at ${u.decided?.stage}, which is final in M1; re-enter the work under a new unit id`;
   }
   const kept = keptInput(input.runDir, recorded.sha256, SPEC_INPUT);
@@ -322,7 +322,7 @@ function cutRefusal(view: JournalView, unit: UnitId): string | null {
 }
 
 /**
- * Why the split revision of `unit` may not cut it (dev.17), or null: its plan-check judges the split while the unit is in its
+ * Why the split revision of `unit` may not cut it (dev.17), or null: its pre-build judges the split while the unit is in its
  * task and records the hold before the commit, so the in-a-task refusal does not apply; a merged or superseded unit is not
  * split.
  */
@@ -600,7 +600,7 @@ export function classify(input: ClassifyInput): Classified {
       }
       continue;
     }
-    if (proposer.type === 'plan-check' && proposer.unit === unit.id) {
+    if (proposer.type === 'pre-build' && proposer.unit === unit.id) {
       if (bytesSha256(file.bytes) !== specShaInForce(view, unit.id)) {
         changes.push({ type: 'spec', unit: unit.id, edit: 'revision', specRev: spec.rev, specSha256: bytesSha256(file.bytes) });
         scoped.add(unit.id);
@@ -1013,8 +1013,8 @@ function polishRows(view: JournalView, cur: PlanM1, plan: PlanM1, proposer: Prop
   }
 }
 
-/** The cut reason of a unit its plan-check split (dev.17, src/pipeline/split.ts): it names the children. */
-export const splitCutReason = (children: readonly UnitId[]): string => `split by its plan-check into ${children.join(', ')}`;
+/** The cut reason of a unit its pre-build split (dev.17, src/pipeline/split.ts): it names the children. */
+export const splitCutReason = (children: readonly UnitId[]): string => `split by its pre-build into ${children.join(', ')}`;
 
 /** Milestone `m` with a split's unit replaced by its children in its units (unchanged when it does not list the unit). */
 function splitMembership<M extends Readonly<{ units: readonly UnitId[] }>>(m: M, proposer: Extract<Proposer, { type: 'split' }>): M {
@@ -1026,7 +1026,7 @@ function splitMembership<M extends Readonly<{ units: readonly UnitId[] }>>(m: M,
  * dev.17 (design pass): the split revision (`split{unit, children}`) changes exactly this: `unit` cut with
  * `splitCutReason(children)`, the children added after it (none a re-entry, each of its origin), each unit that ran after
  * `unit` now after every child instead (and nothing else of it), and the milestones listing `unit` listing the children
- * (`milestoneRows`). The plan-check that split is held (the cut's `cutRefusal` passes). No other proposer adds a unit cut
+ * (`milestoneRows`). The pre-build that split is held (the cut's `cutRefusal` passes). No other proposer adds a unit cut
  * with that reason, so a split is only ever the executor's.
  */
 function splitRows(cur: PlanM1, plan: PlanM1, proposer: Proposer, changes: readonly PlanChange[], reasons: string[]): void {
@@ -1213,8 +1213,8 @@ function censusRows(input: ClassifyInput, inputs: NextInputs, specs: ReadonlyMap
   const problems = specCensusMismatches(input.next.plan.units.flatMap((u) => specs.get(u.id) ?? []), inputs.obligations, census);
   if (problems.length === 0) return;
   const row = canonicalJson({ kind: 'phase0-invalid', problems });
-  if (input.proposer.type === 'plan-check') {
-    // Run 10 (C): a plan-check redirect is told how to fix its own patch.
+  if (input.proposer.type === 'pre-build') {
+    // Run 10 (C): a pre-build redirect is told how to fix its own patch.
     reasons.push(`${row}: ${problems.map((p) => (p.item.startsWith('I-')
       ? `unit ${p.unit} declares ${p.item}, on ${p.rule}, whose census state is ${p.state}`
       : `unit ${p.unit}'s ${p.item.startsWith('W-') ? 'witness item' : 'acceptance clause'} ${p.item} names ${p.rule}, which the census puts out of slice: cite only in-slice rules in an acceptance clause or witness item, or leave ${p.rule} as a note (a facts item, or notes)`)).join('; ')}`);
@@ -1333,11 +1333,11 @@ export function changesScope(changes: readonly PlanChange[], cur: PlanM1, next: 
       case 'corpus':
         break;
       // A Phase-0 record edit changes only the required-review key: nothing running is touched. M4a rev 3: a priority,
-      // known-defect or (dev.16 and earlier) plan-check-shape edit drains nothing either (admission and rank read the plan in force).
+      // known-defect or (dev.16 and earlier) pre-build-shape edit drains nothing either (admission and rank read the plan in force).
       case 'phase0':
       case 'unit-priority':
       case 'known-defects':
-      case 'plan-check-shape':
+      case 'pre-build-shape':
       case 'derived':
       // dev.13: a milestones edit drains nothing (the node gates readiness; a walk reads the plan in force when it starts).
       case 'milestones':

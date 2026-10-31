@@ -50,7 +50,6 @@ test('routing.unit-layer-rev: a unit routing layer gives that unit its own routi
       planCheckStep({ decision: 'approve' }), // u2
       mulBuild(), // u1, on efficient (Codex)
       gateStep({ decision: 'revise', directives: ['Export mul as the default export too.'] }), // u1, on its layer's summit
-      {...claudeBuild(),acts:[{type:'emit',value:BUILD_REPORT}]}, // u1 rerouted
       claudeBuild(), // u2, on its layer's frontier build seat
     ],
   });
@@ -59,7 +58,7 @@ test('routing.unit-layer-rev: a unit routing layer gives that unit its own routi
   const ctx = followContext(r);
   try {
     const arcRev = ctx.routing(null).rev;
-    await stepTo(ctx, 'u1', (f) => f.stage === 'plan-check');
+    await stepTo(ctx, 'u1', (f) => f.stage === 'pre-build');
     assert.equal(r.journal.view.dispatchOf(U1)?.routingRev, arcRev);
 
     syncInputs(r);
@@ -70,7 +69,7 @@ test('routing.unit-layer-rev: a unit routing layer gives that unit its own routi
     assert.equal(ctx.routing(U2).rev, arcRev, 'u2 has no layer: the arc\'s rev');
     assert.deepEqual(r.journal.view.planApplied()?.changes, [{ type: 'routing', routingRev: u1Rev, unit: U1 }]);
 
-    await stepTo(ctx, 'u2', (f) => f.stage === 'plan-check');
+    await stepTo(ctx, 'u2', (f) => f.stage === 'pre-build');
     await stepTo(ctx, 'u1', (f) => f.stage === 'gate');
     assert.deepEqual(outcomes(d, 'u1').at(-1), 'gate:revise');
     const u1Records = r.journal.view.dispatchesOf(U1);
@@ -89,9 +88,10 @@ test('routing.unit-layer-rev: a unit routing layer gives that unit its own routi
     const [u1Moved, u2Moved] = [ctx.routing(U1).rev, ctx.routing(U2).rev];
     assert.deepEqual(r.journal.view.planApplied()?.changes, [{ type: 'routing', routingRev: u1Moved, unit: U1 }, { type: 'routing', routingRev: u2Moved, unit: U2 }]);
 
-    await step(ctx,unitOf(ctx,'u1'));
-    assert.equal(outcomes(d,'u1').at(-1),'build:success');
-    assert.equal(r.journal.view.dispatchesOf(U1).length,3,'the moved builder re-pins without a park');
+    const parked = await step(ctx, unitOf(ctx, 'u1'));
+    assert.ok(parked.kind === 'parked' && parked.needsUser.reason === 'routing-changed', JSON.stringify(parked));
+    assert.equal(outcomes(d, 'u1').at(-1), 'build:routing-changed');
+    assert.equal(r.journal.view.dispatchesOf(U1).length, 2, 'a park re-pins nothing');
 
     await stepTo(ctx, 'u2', (f) => f.stage === 'build');
     assert.equal(outcomes(d, 'u2').at(-1), 'build:success');
@@ -99,9 +99,9 @@ test('routing.unit-layer-rev: a unit routing layer gives that unit its own routi
     assert.deepEqual(u2Records.map((x) => x.routingRev), [arcRev, u2Moved], 'u2 re-pinned under its new unit rev, not parked');
     assert.notEqual(u2Records[1]?.implementerSeatRev, u2Records[0]?.implementerSeatRev);
     const calls = readCalls(d.scenarioPath);
-    assert.equal(calls.length, 6);
+    assert.equal(calls.length, 5);
     assert.ok(calls.every((c) => c.step !== null), 'every call matched its step');
-    assert.deepEqual([calls[5]!.as, seatOf(calls[5]!.argv)], ['claude', FRONTIER], 'u2 built on its layer\'s frontier seat');
+    assert.deepEqual([calls[4]!.as, seatOf(calls[4]!.argv)], ['claude', FRONTIER], 'u2 built on its layer\'s frontier seat');
   } finally {
     r.journal.close();
   }
@@ -129,7 +129,7 @@ test('routing.provenance-recorded: plan-applied records the profile, the repo co
       unitLayers: { u1: { verifier: { med: 'summit' } } },
       arcRoles: 'm4b',
     });
-    await stepTo(ctx, 'u1', (f) => f.stage === 'plan-check');
+    await stepTo(ctx, 'u1', (f) => f.stage === 'pre-build');
     const record = r.journal.view.dispatchOf(U1)!;
     const reproduced = resolveRouting(provenanceStack(provenance!, 'none', U1, false));
     assert.equal(record.routingRev, reproduced.rev, 'the provenance reproduces the unit\'s dispatch rev');
@@ -184,7 +184,7 @@ test('limits.windows-and-bounds: the plan\'s and the unit\'s limits are pinned a
   const r = contextFor(d);
   const ctx = followContext(r);
   try {
-    await stepTo(ctx, 'u1', (f) => f.stage === 'plan-check');
+    await stepTo(ctx, 'u1', (f) => f.stage === 'pre-build');
     const first = r.journal.view.dispatchOf(U1)!;
     assert.deepEqual(first.bounds, boundsOf(ctx.plan(), unitOf(ctx, 'u1')));
     assert.deepEqual(first.bounds, {
@@ -195,14 +195,14 @@ test('limits.windows-and-bounds: the plan\'s and the unit\'s limits are pinned a
     // lanes red (a charged fix round), gate revise (the one revise round), gate revise again: beyond 1 round, route up.
     await stepTo(ctx, 'u1', (f) => f.stage === 'gate' && r.journal.view.unit(U1).counters.reviseRounds === 1 && f.class === 'route-up');
     assert.deepEqual(outcomes(d), [
-      'plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:red',
+      'pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:red',
       'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:revise',
       'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:revise',
     ]);
     const u = r.journal.view.unit(U1);
     assert.deepEqual([u.counters.reviseRounds, u.counters.chargeableFailures, u.routedUp], [1, 2, ['gate']], 'the second revise routed up, uncharged');
 
-    about(windowOf(spawnsOf(r, 'verifier').filter(i=>i.parent.type==='stage'&&i.parent.stage==='plan-check')[0]!), 3 * MIN, 'plan-check');
+    about(windowOf(spawnsOf(r, 'verifier').filter(i=>i.parent.type==='stage'&&i.parent.stage==='pre-build')[0]!), 3 * MIN, 'pre-build');
     const builds = spawnsOf(r, 'build');
     assert.equal(builds.length, 3);
     about(windowOf(builds[0]!), 2 * MIN, 'the fresh build');
@@ -255,7 +255,7 @@ function addRuling(d: ReturnType<typeof setupArc>, id: string, statement: string
 test('route.risk-floor: a risk below its Phase-0 floor is refused unless the unit\'s spec cites an active ruling for it; a dispatched unit\'s risk may rise, re-pinned at its next stage (parked routing-changed once its build started on a seat the raise moves)', T, async () => {
   const d = setupArc({
     units: [{ id: 'u1' }, { id: 'u2' }, { id: 'u3', risk: 'high' }, { id: 'u4', risk: 'high' }],
-    steps: [planCheckStep({decision:'approve'}),mulBuild(),planCheckStep({decision:'approve'}),gateStep({decision:'approve'}),claudeBuild()],
+    steps: [planCheckStep({ decision: 'approve' }), mulBuild(), planCheckStep({ decision: 'approve' }), claudeBuild()],
   });
   addRuling(d, 'C-2', 'u4 is low risk after all.', { appliesTo: { type: 'units', units: ['u4'] } });
   // The plan seats build.high on frontier, so a raise to high moves the implementer (every built-in build seat is efficient since dev.17).
@@ -269,7 +269,7 @@ test('route.risk-floor: a risk below its Phase-0 floor is refused unless the uni
   const ctx = followContext(r);
   try {
     await stepTo(ctx, 'u1', (f) => f.stage === 'lanes' && f.outcome === 'green');
-    await stepTo(ctx, 'u2', (f) => f.stage === 'plan-check');
+    await stepTo(ctx, 'u2', (f) => f.stage === 'pre-build');
 
     syncInputs(r);
     editUnit(d, 'u3', (u) => void (u['risk'] = 'med'));
@@ -290,9 +290,10 @@ test('route.risk-floor: a risk below its Phase-0 floor is refused unless the uni
     assert.deepEqual(r.journal.view.planApplied()?.changes, [{ type: 'unit-changed', unit: U1 }, { type: 'unit-changed', unit: U2 }]);
     assert.deepEqual([r.journal.view.dispatchesOf(U1).length, r.journal.view.dispatchesOf(U2).length], [1, 1], 'an apply re-pins nothing by itself');
 
-    await step(ctx,unitOf(ctx,'u1'));
-    assert.equal(outcomes(d,'u1').at(-1),'gate:approve');
-    assert.deepEqual(r.journal.view.dispatchesOf(U1).map(x=>x.riskFloor),['med','high'],'the risk raise re-pins without a park');
+    const parked = await step(ctx, unitOf(ctx, 'u1'));
+    assert.ok(parked.kind === 'parked' && parked.needsUser.reason === 'routing-changed', JSON.stringify(parked));
+    assert.equal(outcomes(d, 'u1').at(-1), 'gate:routing-changed');
+    assert.deepEqual(r.journal.view.dispatchesOf(U1).map((x) => x.riskFloor), ['med'], 'the park re-pins nothing');
 
     await stepTo(ctx, 'u2', (f) => f.stage === 'build');
     assert.equal(outcomes(d, 'u2').at(-1), 'build:success');
@@ -302,9 +303,9 @@ test('route.risk-floor: a risk below its Phase-0 floor is refused unless the uni
     assert.notEqual(u2[1]!.implementerSeatRev, u2[0]!.implementerSeatRev);
     assert.equal(r.journal.view.unit(U2).buildTier, 'high');
     const calls = readCalls(d.scenarioPath);
-    assert.equal(calls.length, 5);
+    assert.equal(calls.length, 4);
     assert.ok(calls.every((c) => c.step !== null));
-    assert.deepEqual([calls[4]!.as, seatOf(calls[4]!.argv)], ['claude', FRONTIER], 'u2 built on build.high');
+    assert.deepEqual([calls[3]!.as, seatOf(calls[3]!.argv)], ['claude', FRONTIER], 'u2 built on build.high');
   } finally {
     r.journal.close();
   }

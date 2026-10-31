@@ -176,7 +176,7 @@ function sameSpecRequirements(a: SpecM1, b: SpecM1): boolean {
 
 /**
  * Whether the unit's spec went from rev `from` to rev `to` by design records alone (dev.17, the design pass): every revision
- * between is an executor patch whose every op is `design`, the record a plan-check's approve or scaffold lands on the
+ * between is an executor patch whose every op is `design`, the record a pre-build's approve or scaffold lands on the
  * spec's next revision. That revises the unit's own plan, not a requirement or contract the approval bound (those are
  * `movedTargets`, `staleSinceApproval` and `movedInterfaces`), so it keeps the delta.
  */
@@ -192,7 +192,7 @@ function designRevisionsOnly(view: JournalView, unit: UnitId, from: SpecRev, to:
  * The targets the unit's spec links (its requirements, failure modes' requirements, cited and interface contracts:
  * `specLinksOf`) that a stale set recorded after the approval (seq `since`) changed, and the targets of the unit's own stale
  * links in those sets (src/core/stale.ts): requirement ids and contract or interface paths, `movedTargets`' keys. This
- * reads the change, not the spec's pins: a link with no pin (`UNPINNED`, a dev.16 spec or one no plan-check revised) is
+ * reads the change, not the spec's pins: a link with no pin (`UNPINNED`, a dev.16 spec or one no pre-build revised) is
  * moved exactly when its target changed since the approval, never assumed unchanged for want of a pin.
  */
 function staleSinceApproval(view: JournalView, unit: UnitId, spec: SpecM1, since: number): readonly string[] {
@@ -240,7 +240,6 @@ export function reviewRules(repo: AbsPath, head: Sha, review: GateReview): (out:
     const faults: string[] = [];
     const ledger = new Map(review.ledger.map((e) => [e.id as string, e]));
     out.findings.forEach((f, i) => {
-
       if (f.reraises === null) return;
       const e = ledger.get(f.reraises);
       if (e === undefined) faults.push(`findings[${i}].reraises names ${f.reraises}, which is no finding of this unit's ledger`);

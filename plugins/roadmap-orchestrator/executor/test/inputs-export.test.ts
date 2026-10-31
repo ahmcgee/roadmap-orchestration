@@ -1,6 +1,6 @@
 // M4a rev 3 step N6 (I1, F17): `roadmap inputs export --repo <repo> --arc <arc> --out <dir>` (src/commands/inputs.ts),
 // over real arcs whose run dir is the repo's (`<git common dir>/roadmap-runtime/<arc>`): the current input view from the
-// run dir's kept inputs, a plan-check's post-plan spec patch included, the CLI as a child; `export.json`'s `base` is the
+// run dir's kept inputs, a pre-build's post-plan spec patch included, the CLI as a child; `export.json`'s `base` is the
 // manifest of the exported files (what `apply --base` rebases from). Named tests:
 // cli.inputs-export-current-revs, cli.inputs-export-refuses-existing-out.
 import assert from 'node:assert/strict';
@@ -42,7 +42,7 @@ const exportCli = (d: ArcDescriptor, out: string) =>
   runUntilExit(process.execPath, [BIN, 'inputs', 'export', '--repo', d.repo, '--arc', d.arc, '--out', out], { env: { PATH: process.env['PATH'] ?? '', HOME: process.env['HOME'] ?? '/' }, timeoutMs: 60_000 });
 
 describe('roadmap inputs export', () => {
-  test('cli.inputs-export-current-revs: the plan in force and each spec at its current rev, the plan-check machine patch included; export.json names the revs', T, async () => {
+  test('cli.inputs-export-current-revs: the plan in force and each spec at its current rev, the pre-build machine patch included; export.json names the revs', T, async () => {
     const decision = { id: 'R9', text: 'Use the existing multiply helper.' };
     const d = atRepoRunDir(setupArc({steps:[]}));
     appendSteps(d,[planCheckStep({decision:'approve'}),mulBuild({},[{type:'writeToPrompt',pattern:workDirPattern(d),file:'decisions.json',text:JSON.stringify({decisions:[decision]})}])]);

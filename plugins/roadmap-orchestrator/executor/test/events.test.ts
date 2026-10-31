@@ -62,7 +62,7 @@ const INTENTS: { readonly [K in OpKind]: IntentOf<K> } = {
   }, { type: 'clean-merged', new: C }),
   'spec.patch': intent('spec.patch', {
     path: absPath('/run/specs/u1.json'), oldSha256: H, expectRev: specRev(1),
-    patch: { expectRev: specRev(1), by: { role: 'planCheck', routingRev: rev, inv }, ops: [
+    patch: { expectRev: specRev(1), by: { role: 'verifier', routingRev: rev, inv }, ops: [
       { op: 'add', section: 'acceptance', item: { id: clauseId('A2'), clause: 'x', failLoudIfUndelivered: true } },
       { op: 'replace', section: 'lanes', item: { id: laneId('L1'), argv: ['npm', 'test'], cwd: repoPath('.'), env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], evidenceExcludes: [] } },
       { op: 'strike', id: clauseId('F1') },

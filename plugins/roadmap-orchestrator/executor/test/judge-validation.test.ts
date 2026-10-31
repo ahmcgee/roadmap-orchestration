@@ -91,8 +91,8 @@ describe('a spec in force from an arc started on 1.0.0-dev.9', () => {
       assert.equal(parked.needsUser.blocking, true);
       assert.match(parked.needsUser.summary, /^Unit u1: unit u1's witness item W-1 names lane unit-lane, which is not an arc lane in force/);
       assert.match(parked.needsUser.recommendation, /roadmap resume u1/);
-      assert.deepEqual(outcomes(a.d), ['plan-check:approve', 'build:witness-lane-missing']);
-      assert.equal(readCalls(a.d.scenarioPath).length, 1, 'the plan-check only: no build call');
+      assert.deepEqual(outcomes(a.d), ['pre-build:approve', 'build:witness-lane-missing']);
+      assert.equal(readCalls(a.d.scenarioPath).length, 1, 'the pre-build only: no build call');
       assert.equal(r.journal.view.unit(r.unit('u1').id).counters.chargeableFailures, 0, 'uncharged');
     } finally {
       r.journal.close();

@@ -61,7 +61,7 @@ describe('pressure.hold-release', () => {
 describe('pressure.transition', () => {
   const u = { ...newUnitState(U1, 'lanes', 'med'), counters: { ...newUnitState(U1, 'lanes', 'med').counters, chargeableFailures: 2 } };
   const STARVABLE: readonly StageOutcome[] = [
-    { stage: 'plan-check', kind: 'interrupted' }, { stage: 'build', kind: 'interrupted' }, { stage: 'lanes', kind: 'interrupted' },
+    { stage: 'pre-build', kind: 'interrupted' }, { stage: 'build', kind: 'interrupted' }, { stage: 'lanes', kind: 'interrupted' },
     { stage: 'gate', kind: 'interrupted' }, { stage: 'candidate', kind: 'interrupted' },
   ];
   it('the hold a starved or red-rerun run records is uncharged, no fix round and no park, even one failure short of the chargeable bound', () => {
@@ -75,6 +75,6 @@ describe('pressure.transition', () => {
     assert.equal(outcomeFact({ ...u, counters: { ...u.counters, unchargedLanesReds: 3 } }, { stage: 'lanes', kind: 'red' }, 5).class, 'park', 'the third chargeable failure parks');
     assert.equal(outcomeFact({ ...u, counters: { ...u.counters, chargeableFailures: 0, unchargedLanesReds: 3 } }, { stage: 'lanes', kind: 'red' }, 5).chargeable, true);
     assert.equal(outcomeFact(u, { stage: 'lanes', kind: 'blocked' }, 5).class, 'retry');
-    assert.equal(outcomeFact(u, { stage: 'plan-check', kind: 'process-fault' }, 5).class, 'park');
+    assert.equal(outcomeFact(u, { stage: 'gate', kind: 'process-fault' }, 5).class, 'park');
   });
 });

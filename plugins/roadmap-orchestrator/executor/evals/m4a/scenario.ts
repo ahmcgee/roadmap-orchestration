@@ -2,17 +2,17 @@
 // restart at review-1, audit-1, ckpt-1), written by the driver under `fake/arc-<n>/` with its shims; the scripted root
 // agent puts arc n's shims first on PATH when it starts arc n. Unit calls are M1 steps keyed by unit (evals/m1/
 // scenario.ts); pack review, lens and checkpoint calls are 0b's scripted judgments keyed by job (and lens). Every unit's
-// plan-check is one call (dev.17 removed `planCheck.shape: by-builder`) and every build is the efficient class's.
+// pre-build is one call (dev.17 removed `planCheck.shape: by-builder`) and every build is the efficient class's.
 //
 //   arc 1   review-1 holds a blocking finding on guard's spec (the hold; the root agent fixes the pack by `apply`), and
 //           review-2, on the new key, supersedes it with a note. guard builds a
 //           refusal that does not name the vessel holding the berth: its unit lane passes, the berths journey fails,
 //           so witness presence sends it back with the failing id (a witness fix round) before any gate. confirm (high
-//           risk) is plan-checked and built like the others; mutation smoke reverts it and its W-1 witness, the tide table's journey, still passes: one smoke fix round, which
+//           risk) is pre-builded and built like the others; mutation smoke reverts it and its W-1 witness, the tide table's journey, still passes: one smoke fix round, which
 //           leaves the test (the behaviour predates the unit), then the gate approves with the survivor in its checks
 //           and a note (gate-note debt). audit-1's vision lens opens a P2 with no obligation; ckpt-1 defers it
 //           (finding-deferred debt) and proposes two amendments (T-11: confirm cancellations by text; T-5: list the
-//           high-water heights). Then the six read-outs (one module each: plan-check, build, gate), with
+//           high-water heights). Then the six read-outs (one module each: pre-build, build, gate), with
 //           audit-2..audit-5; audit-2..audit-4 find nothing new and have no checkpoint (checkpoint-skipped), and the
 //           final audit-5's checkpoint, ckpt-2, no-ops.
 //   arc 2   review-1, then cutoff builds; audit-1 waits at the `blocked-seen` barrier until the root agent has had the
@@ -51,9 +51,9 @@ export const BLOCKED_SEEN_BARRIER = 'blocked-seen';
 export const DRIFT_CHECKPOINT = 'ckpt-2';
 const HOLD_MS = 20 * 60_000;
 
-const planCheck = (reason: string): M1Step => ({
-  role: 'planCheck',
-  answer: { decision: 'approve', reasons: [reason], patch: null, risk: 'low', notes: '', premises: [], visionConflict: [],  staleLinks: [] },
+const preBuild = (reason: string): M1Step => ({
+  role: 'verifier',
+  answer: {decision: 'approve', ordering: null, findings: [], directives: [], reasons: [reason], premises: [], standing: [], clusters: null, rulings: []},
 });
 const build = (message: string, unit: string): M1Step => ({ role: 'build', round: 'fresh', acts: [{ type: 'commit', message, files: filesOf(join(FILES, 'units', unit)) }] });
 const gate = (reason: string, findings: readonly JsonValue[] = []): M1Step => ({
@@ -83,7 +83,7 @@ const TIDES_TEST = LANES.find((x) => x.id === 'tides')!.test;
 /** Units whose builder is an M1 step (the efficient class: Codex under `default`, Claude under `claude-only`). */
 const M1_UNITS_1: Readonly<Record<string, readonly M1Step[]>> = {
   guard: [
-    planCheck('The spec refuses a second booking of a berth for one window (T-7); scope is the ledger.'),
+    preBuild('The spec refuses a second booking of a berth for one window (T-7); scope is the ledger.'),
     build('guard: refuse a berth booked twice for one window', 'guard-first'),
     {
       role: 'build', round: 'resume', stdinContains: [`Failing: test "${BERTHS_TEST}" on lane berths`],
@@ -93,18 +93,18 @@ const M1_UNITS_1: Readonly<Record<string, readonly M1Step[]>> = {
   ],
 };
 
-/** Arc 1's read-outs (golden.ts `READOUTS`): one new module each, plan-checked, built and gated. */
+/** Arc 1's read-outs (golden.ts `READOUTS`): one new module each, pre-builded, built and gated. */
 const M1_READOUTS: Readonly<Record<string, readonly M1Step[]>> = Object.fromEntries(READOUTS.map((r) => [r.unit, [
-  planCheck(`The spec adds ${r.module} and its test, one new module (${r.rule}).`), build(`${r.unit}: ${r.text}`, r.unit), gate('A1 holds.'),
+  preBuild(`The spec adds ${r.module} and its test, one new module (${r.rule}).`), build(`${r.unit}: ${r.text}`, r.unit), gate('A1 holds.'),
 ]]));
 
 /**
- * confirm, high risk: plan-checked, built, then the smoke fix round resumes the build session and leaves W-1's test, which
+ * confirm, high risk: pre-builded, built, then the smoke fix round resumes the build session and leaves W-1's test, which
  * passed before the unit; then the gate with its note.
  */
 const CONFIRM: Readonly<Record<string, readonly M1Step[]>> = {
   confirm: [
-    { role: 'planCheck', answer: { decision: 'approve', reasons: ['confirm.js sends the template; book calls it after the write.'], patch: null, risk: 'high', notes: '', premises: [], visionConflict: [],  staleLinks: [] } },
+    { role: 'verifier', answer: { decision: 'approve', reasons: ['confirm.js sends the template; book calls it after the write.'], patch: null, risk: 'high', notes: '', premises: [], visionConflict: [],  staleLinks: [] } },
     build('confirm: text the skipper when a booking is made', 'confirm'),
     { role: 'build', round: 'resume', stdinContains: [`Survived: test "${TIDES_TEST}" on lane tides`], acts: [] },
     gate('A1, A2 and A3 hold; W-1 survives smoke because the tide table predates the unit.', [{evidence: ["src/confirm.js:1"],  severity: 'note', path: 'src/confirm.js', text: GATE_NOTE, contractRef: null, experiments: [], debt: { drag: GATE_NOTE_DRAG } }]),
@@ -112,9 +112,9 @@ const CONFIRM: Readonly<Record<string, readonly M1Step[]>> = {
 };
 
 const UNITS_2: Readonly<Record<string, readonly M1Step[]>> = {
-  cutoff: [planCheck('The spec closes cancellations 48 hours before the window opens (T-23).'), build('cutoff: cancellations close 48 hours before the window', 'cutoff'), gate('A1, A2 and A3 hold.')],
-  notice: [planCheck('The spec texts the skipper on a cancellation (T-24).'), build('notice: text the skipper when a booking is cancelled', 'notice'), gate('A1, A2 and A3 hold.')],
-  fits: [planCheck('The spec lists the berths a draught fits (V-7), within the register.'), build('fits: the berths a draught fits', 'fits'), gate('A1 holds.')],
+  cutoff: [preBuild('The spec closes cancellations 48 hours before the window opens (T-23).'), build('cutoff: cancellations close 48 hours before the window', 'cutoff'), gate('A1, A2 and A3 hold.')],
+  notice: [preBuild('The spec texts the skipper on a cancellation (T-24).'), build('notice: text the skipper when a booking is cancelled', 'notice'), gate('A1, A2 and A3 hold.')],
+  fits: [preBuild('The spec lists the berths a draught fits (V-7), within the register.'), build('fits: the berths a draught fits', 'fits'), gate('A1 holds.')],
 };
 
 const NO_OP = checkpointAnswer({ decision: 'no-op' });

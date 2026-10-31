@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { runUnit, step } from '../src/pipeline/unit.ts';
-import { build, planCheck } from '../src/pipeline/stages.ts';
+import { build, preBuild } from '../src/pipeline/stages.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
 import { readCalls } from './helpers/scenario.ts';
 import { events, intents } from './fixtures/invoke-specs.ts';
@@ -91,7 +91,7 @@ test('certification: builds reserve cpu only and omit resource-bearing build lan
     lanes: [{ id: 'local', argv: ['true'] }, { id: 'estate-build', argv: ['echo', 'ESTATE-ONLY-COMMAND'], resources: ['db'] }],
     suite: [{ id: 'estate-suite', argv: ['echo', 'ESTATE-SUITE-COMMAND'], resources: ['db'] }] });
   try {
-    started(await planCheck(run.ctx, run.unit));
+    started(await preBuild(run.ctx, run.unit));
     const done = started(await build(run.ctx, run.unit, { kind: 'fresh' }));
     assert.ok(done.run !== null);
     const held = [...resourceTable(run.journal.view)].filter(([, r]) => r.status.state !== 'free');

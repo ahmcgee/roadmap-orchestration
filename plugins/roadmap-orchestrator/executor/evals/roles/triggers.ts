@@ -1,42 +1,25 @@
-// Which role evals a change triggers (rung 3.5 is path-triggered): the changed paths, relative to executor/, mapped to the
-// roles whose behaviour they can move.
-// - Gate: its prompt modules, the bounded diff, the gate stage's capture, its call (src/pipeline/dispatch.ts: dev.13, the
-//   gate's acting-judge argv is chosen there), the prompt inputs it renders, routing (seats,
-//   classes, models), the judgment argv and tool set, the backend adapter that reads the session, and its eval.
-// - Walkthrough (dev.13): its prompt modules, the walk job (src/walk/: the job, bring-up, report validation and minting,
-//   the milestone node and rounds; not the compare or the polish revision, which are the polish judge's), its MCP config
-//   (src/backends/mcp.ts), the prompt inputs and schemas, routing, the `claude-acting-judge` argv and the reader of its
-//   session, and its eval.
-// - Polish judge (dev.13): its prompt modules, the compare job (src/walk/compare.ts) and the bring-up it shares
-//   (src/walk/bringup.ts), the polish revision that admits the units it judges (src/walk/polish.ts), its MCP config, the
-//   prompt inputs and schemas, routing, the acting-judge argv and reader, and its eval (which runs on the walkthrough
-//   eval's product, so that product triggers it too).
-// - Verifier (dev.17, the docs-only claim): its prompt modules, the docs-only check that reads the diff, calls it and
-//   accepts or refuses (src/pipeline/docsonly.ts, its lexers src/pipeline/comments.ts), the prompt inputs and schemas, routing, the judgment argv and the
-//   reader of its session, and its eval.
-// - Scaffold (dev.17): its prompt modules, the scaffold stage (src/pipeline/scaffold.ts: the call, code's checks, the dry
-//   run, the commit), the prompt inputs and schemas, routing, the `claude-scaffold` argv and the Claude reader, and its eval.
-// The shared harness (evals/roles/*.ts) triggers every role.
-//
-//   node evals/roles/triggers.ts [<base ref>]   prints the triggered roles, one per line (base: origin/main), from
-//                                               `git diff --name-only <base>...HEAD` over executor/
+// Eval path triggers: verifier covers the unit gate mode; pre-build and campaignAudit have small
+// independent dev sets. Walkthrough and polish are experienceVerdict eval modes. Shared schemas,
+// routing, method modules and backend changes trigger the affected live-role evaluations.
 import { spawnSync } from 'node:child_process';
 import { matchesGlob } from 'node:path';
 
-export type EvalRole = 'gate' | 'walkthrough' | 'polishJudge' | 'verifier';
+export type EvalRole = 'gate' | 'walkthrough' | 'polishJudge' | 'verifier' | 'pre-build' | 'campaignAudit';
 
 const SHARED = ['src/prompts/inputs.ts', 'src/prompts/schemas.ts', 'src/routing/**', 'src/backends/argv.ts', 'src/backends/claude.ts', 'evals/roles/*.ts'] as const;
 /** The polish judge's modules under src/walk/: they trigger it alone. */
 const POLISH_MODULES = ['src/walk/compare.ts', 'src/walk/polish.ts'] as const;
 
 export const TRIGGERS: Readonly<Record<EvalRole, readonly string[]>> = {
-  gate: ['src/prompts/verifier/**', 'src/prompts/method/**', 'src/pipeline/surface.ts', 'src/prompts/gate/**', 'src/git/boundeddiff.ts', 'src/pipeline/gate.ts', 'src/pipeline/dispatch.ts', ...SHARED, 'evals/roles/gate/**', 'evals/roles/gen/**'],
-  walkthrough: ['src/prompts/experienceVerdict/**', 'src/prompts/walkthrough/**', 'src/walk/**', 'src/backends/mcp.ts', ...SHARED, 'evals/roles/walkthrough/**'],
+  gate: ['evals/roles/gate/**'],
+  verifier: ['src/prompts/verifier/**', 'src/prompts/method/**', 'src/pipeline/surface.ts', 'src/git/boundeddiff.ts', 'src/pipeline/gate.ts', 'src/pipeline/dispatch.ts', ...SHARED, 'evals/roles/gate/**', 'evals/roles/gen/**'],
+  walkthrough: ['src/prompts/experienceVerdict/**', 'src/walk/**', 'src/backends/mcp.ts', ...SHARED, 'evals/roles/walkthrough/**'],
   polishJudge: [
-    'src/prompts/experienceVerdict/**', 'src/prompts/polishJudge/**', ...POLISH_MODULES, 'src/walk/bringup.ts', 'src/backends/mcp.ts', ...SHARED,
+    'src/prompts/experienceVerdict/**', ...POLISH_MODULES, 'src/walk/bringup.ts', 'src/backends/mcp.ts', ...SHARED,
     'evals/roles/polish/**', 'evals/roles/walkthrough/**',
   ],
-  verifier: [],
+  'pre-build': ['src/prompts/verifier/**', 'src/prompts/method/**', 'src/pipeline/surface.ts', 'src/pipeline/stages.ts', 'evals/roles/surface/**', ...SHARED],
+  campaignAudit: ['src/prompts/campaignAudit/**', 'src/prompts/method/**', 'src/holistic/audit.ts', 'evals/roles/surface/**', ...SHARED],
 };
 
 /** Paths a role's globs match that do not trigger it. */

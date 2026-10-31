@@ -154,7 +154,7 @@ import { revParse } from '../git/git.ts';
 import { jobEvidenceRoot,snapshotRequestOf } from '../git/snapshot.ts';
 import { type AuditContext,auditPending,raiseAuditOwed,runAudit } from '../holistic/audit.ts';
 import { cadence,integrationHeadNow,processClock } from '../holistic/cadence.ts';
-import { type CheckpointContext,type DesignParkRoute,busyHolds,checkpointPending,designParkRoute,runCheckpoint,settleLatest } from '../holistic/checkpoint.ts';
+import type { CheckpointContext } from '../holistic/bundle.ts';
 import { settleCloseOut } from '../holistic/closeout.ts';
 import { quiescentGenerations } from '../holistic/convergence.ts';
 import { coverageOf } from '../holistic/coverage.ts';
@@ -385,56 +385,20 @@ export function recordedLaneEnv(view: JournalView, lane: ArcLaneDef): EnvId | nu
 }
 
 /** OR-Q1: what a unit's design park waits for (null outside a holistic arc, or for any other park). */
-export type ParkRoute = (unit: UnitId) => DesignParkRoute | null;
-
-/** The route of a run: `designParkRoute` over its checkpoint context (null for every park outside a holistic arc). */
-export const designRoute = (h: HolisticContexts): ParkRoute => (unit) => designParkRoute(h.checkpoint, unit);
-
-/** The route of an arc without the holistic layer: every park raises its own item. */
-const NO_ROUTE: ParkRoute = () => null;
-
-// ---------------------------------------------------------------------------------------------------
 // Raising a unit's result
-
-/**
- * OR-Q1: whether a design park's own item is raised now under `route`. `respecified`: the checkpoint applied a
- * revision for it, so a judgment-stage park re-opens on its pending revision (`reopened`, as `resume` would), and a
- * unit a planned unit re-enters goes on in its successor; either way no item. Otherwise its item is raised.
- */
-function raisesParkItem(ctx: StageContext, unit: UnitId, route: DesignParkRoute): boolean {
-  switch (route.kind) {
-    case 'checkpoint':
-    case 'respec-second':
-      return false;
-    case 'park-item':
-      return true;
-    case 'respecified': {
-      const view = ctx.journal.view;
-      const u = view.unit(unit);
-      const p = u.pendingRevision;
-      if (p !== null && u.decided !== null && (JUDGMENT_STAGES as readonly Stage[]).includes(u.decided.stage)) {
-        ctx.journal.fact({ kind: 'reopened', unit, command: p.command, specRev: p.rev, specSha256: p.sha256 });
-        return false;
-      }
-      return !ctx.plan().units.some((x) => x.reenters?.unit === unit);
-    }
-  }
-}
 
 /**
  * Writes the needs-user a unit's result carries, once (`raisedFor`): an operator park's or a stop's, parented by
  * the attempt that decided it (a design park's per `route`, OR-Q1); a hold's (a usage-limited backend), parented by
  * the held attempt. A retryable park asks nobody: its probes recover it, and it escalates on its own after 6 h (D2).
  */
-export function raiseResult(ctx: StageContext, unit: UnitId, result: UnitResult, route: ParkRoute = NO_ROUTE): void {
+export function raiseResult(ctx: StageContext, unit: UnitId, result: UnitResult): void {
   const { journal, runDir } = ctx;
   const view = journal.view;
   if (result.kind === 'parked' && !operatorPark(view, unit)) return;
   if (result.kind === 'parked' || result.kind === 'stopped') {
     const parent = decidedParent(view, unit);
     if (raisedFor(view, parent) !== null) return;
-    const r = result.kind === 'parked' ? route(unit) : null;
-    if (r !== null && !raisesParkItem(ctx, unit, r)) return;
     raiseNeedsUser(journal, runDir, result.needsUser, parent);
     return;
   }
@@ -454,7 +418,7 @@ const CLOSE_OUT_BLOCKERS = ['generation-not-quiescent', 'close-out', 'obligation
 /** Why a holistic arc is not `complete` now: each condition of §2.10 that fails, in this order. */
 export const COMPLETION_BLOCKERS = [
   'units-open', 'blocking-items', 'pending-commands', 'residues', 'baseline-owed', 'audit-pending', 'coverage-outstanding', 'audit-owed',
-  'checkpoint-pending', 'walk-pending', 'generation-not-quiescent', 'close-out', 'obligations-not-discharged',
+  'walk-pending', 'generation-not-quiescent', 'close-out', 'obligations-not-discharged',
 ] as const;
 export type CompletionBlocker = (typeof COMPLETION_BLOCKERS)[number];
 
@@ -570,10 +534,9 @@ export function completionBlockers(h: HolisticContexts, input: Readonly<{ blocki
   if (c === null) throw new Error('a holistic arc without a cadence');
   if (coverageOf(fold, c.base, lensSetOf(holistic), c.head).some((x) => x.outstanding)) out.add('coverage-outstanding');
   if (c.owed.length > 0) out.add('audit-owed');
-  if (checkpointPending(h.checkpoint)) out.add('checkpoint-pending');
   // dev.13: a milestone walk due or running, or a round still open (src/walk/milestones.ts).
   if (hasMilestones(plan) && walksPending(view, plan, repairUnits(ctx))) out.add('walk-pending');
-  const g = Math.max(0, ...fold.audits.map((a) => a.started.generation), ...fold.checkpoints.map((x) => x.inputs.generation));
+  const g = Math.max(0, ...fold.audits.map((a) => a.started.generation));
   const vision = view.planApplied()?.visionSha256;
   if (vision === undefined) throw new Error('a holistic arc whose plan in force records no vision');
   if (g > 0 && !quiescentGenerations(view, vision).has(g)) out.add('generation-not-quiescent');
@@ -756,12 +719,10 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   const scopeOf = commandScope(x.commands);
   const h = holisticContexts(x);
   const holistic = (): boolean => view().holistic().on;
-  const route = designRoute(h);
   const demo = demoTicker(x.stage);
   // A crash right after a checkpoint's decision leaves no checkpoint due, so `runCheckpoint` (which settles too) would
   // not run: the decision's aftermath a crash cut short (a no-op's divergences, dispositions, the digest) is settled here.
   if (holistic()) {
-    settleLatest(h.checkpoint);
     settlePackReviews(h.checkpoint);
     settleWalks(x.stage);
   }
@@ -874,7 +835,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       if (parked === null) throw error;
       return parked;
     };
-    runUnit(ctx, unit, gate).catch(contained).then((result) => raiseResult(x.stage, unit.id, result, route)).catch(fail).finally(() => {
+    runUnit(ctx, unit, gate).catch(contained).then((result) => raiseResult(x.stage, unit.id, result)).catch(fail).finally(() => {
       tasks.delete(unit.id);
       settled();
     });
@@ -895,9 +856,9 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
    * `flowApply` (M4b): an accepted flow proposal waits for its revision, so no new candidate starts. `bundle` (arc feedback
    * 2026-10-24): the units a busy-rejected checkpoint's held bundle waits for (`busyHolds`), held at every admission.
    */
-  type Holds = Readonly<{ arc: boolean; batch: ReadonlySet<UnitId>; flowApply: boolean; bundle: ReadonlySet<UnitId> }>;
+  type Holds = Readonly<{ arc: boolean; batch: ReadonlySet<UnitId>; flowApply: boolean }>;
   const heldBack = (holds: Holds, unit: UnitId, stage: AdmissionStage): boolean =>
-    holds.arc || holds.bundle.has(unit) || (stage === 'candidate' && (holds.batch.has(unit) || holds.flowApply));
+    holds.arc || (stage === 'candidate' && (holds.batch.has(unit) || holds.flowApply));
 
   const approvalKey = (unit: UnitId): string => canonicalJson(view().unit(unit).approval);
 
@@ -1134,7 +1095,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       if (!operatorPark(view(), unit.id) || raisedFor(view(), decidedParent(view(), unit.id)) !== null) continue;
       const halted = haltResult(x.stage, unit);
       if (halted === null) throw new Error(`unit ${unit.id} is ${status}, but its decision halts nothing`);
-      raiseResult(x.stage, unit.id, halted, route);
+      raiseResult(x.stage, unit.id, halted);
     }
     raiseScheduleDue(journal, runDir, new Date());
   };
@@ -1155,10 +1116,6 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   /** Whether every admission is held (`arcHolds`; the baseline job running counts as owed). */
   const arcHeld = (blocking: readonly BlockingItem[]): boolean => holistic() && arcHolds(h, blocking, jobs.has('holistic:baseline')).length > 0;
 
-  /** OR-Q1: a second design park whose `respec-second` the checkpoint job has yet to raise (it raises it when run). */
-  const respecSecondDue = (): boolean => plan().units.some((u) => view().unit(u.id).status === 'park-pending'
-    && raisedFor(view(), decidedParent(view(), u.id)) === null && route(u.id)?.kind === 'respec-second');
-
   /** The one holistic job (baseline, checkpoint, audit), the batch and the close-out, each started when due. */
   const startHolistic = (holds: Holds, batch: BatchPlan): void => {
     if (!holistic()) return;
@@ -1172,8 +1129,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
           const out = await runBaseline(h.audit);
           return out.kind === 'incomplete' ? { kind: 'no-verdict', job, detail: endDetail(out.end) } : PROGRESS;
         });
-      } else if (checkpointPending(h.checkpoint) || respecSecondDue()) {
-        trackRetrying('holistic:checkpoint', 'holistic', async () => (['decided', 'not-needed'].includes((await runCheckpoint(h.checkpoint)).kind) ? PROGRESS : WAIT));
+
       } else if (walkPending(h.audit)) {
         trackRetrying('holistic:walk', 'holistic', async () => {
           const out = await runWalk(h.audit);
@@ -1397,7 +1353,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       demo.tick();
       const blocking = blockingItems(runDir, view());
       const batch = batchPlan();
-      const holds: Holds = { arc: arcHeld(blocking), batch: batch.held, flowApply: flowApplyHeld(view()), bundle: holistic() ? busyHolds(h.checkpoint) : new Set() };
+      const holds: Holds = { arc: arcHeld(blocking), batch: batch.held, flowApply: flowApplyHeld(view()) };
       startHolistic(holds, batch);
       startFlow();
       startDeflake();

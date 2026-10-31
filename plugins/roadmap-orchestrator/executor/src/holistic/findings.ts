@@ -2,7 +2,7 @@
 // store: `finding-opened` and `finding-transition` facts, folded into `HolisticFold.findings` (src/core/state.ts). This
 // module decides what is written and derives everything else from the fold.
 //
-// - **Opening and dedupe.** Openers: an audit's lenses, code's witness P1s and plan-check (R17). `key = findingKey(lens, obligation, cause)`. A key matching an active finding (open, owned,
+// - **Opening and dedupe.** Openers: an audit's lenses, code's witness P1s and pre-build (R17). `key = findingKey(lens, obligation, cause)`. A key matching an active finding (open, owned,
 //   fixed-on-branch) merges into it: nothing is written. A key matching a finding ruled `dismissed` is suppressed unless
 //   a cited evidence blob changed (a path both cite, with a different blob): a dismissal lasts the arc's lifetime (the
 //   growth control is its scope: the arc's own log, never carried into the next arc); one matching a finding ruled
@@ -53,7 +53,7 @@ import {
 // Opening and dedupe
 
 /**
- * A finding before its id and key: what a lens, code over a witness, or plan-check (R17) reports. `cause` feeds the key
+ * A finding before its id and key: what a lens, code over a witness, or pre-build (R17) reports. `cause` feeds the key
  * and is not recorded. A vacuity finding's mutant patch is already kept (`keepMutantPatch`).
  */
 export type FindingDraft = Omit<Extract<HolisticFact, { kind: 'finding-opened' }>, 'kind' | 'id' | 'key'> & Readonly<{ cause: string }>;
@@ -123,7 +123,7 @@ export type FindingOpen = Readonly<{ kind: 'opened' | 'merged'; id: FindingId }>
 
 /**
  * Opens a finding from `draft` (a `finding-opened` fact with the next id), or merges or suppresses it (nothing written).
- * The one store every opener uses (audits, code's witness P1s, plan-check, the checkpoint).
+ * The one store every opener uses (audits, code's witness P1s, pre-build, the checkpoint).
  */
 export function openFinding(journal: Journal, draft: FindingDraft): FindingOpen {
   const key = findingKey(draft.lens, draft.obligation, draft.cause);
@@ -173,8 +173,8 @@ export function visionConflictDraft(input: Readonly<{
   unit: UnitId; attempt: number; clauses: readonly VisionClauseId[]; note: string;
 }>): FindingDraft {
   return {
-    lens: 'plan-check', severity: 'P3', obligation: null, visionClauses: input.clauses, claim: input.note, cause: `${input.unit}: ${input.note}`,
-    evidence: [], mutant: null, source: { type: 'stage', unit: input.unit, stage: 'plan-check', attempt: input.attempt }, gateHadPassed: false,
+    lens: 'pre-build', severity: 'P3', obligation: null, visionClauses: input.clauses, claim: input.note, cause: `${input.unit}: ${input.note}`,
+    evidence: [], mutant: null, source: { type: 'stage', unit: input.unit, stage: 'pre-build', attempt: input.attempt }, gateHadPassed: false,
   };
 }
 

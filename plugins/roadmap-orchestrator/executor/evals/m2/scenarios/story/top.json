@@ -1,18 +1,19 @@
 {
   "steps": [
     {
-      "role": "planCheck",
+      "role": "verifier",
       "answer": {
         "decision": "approve",
+        "ordering": null,
+        "findings": [],
+        "directives": [],
         "reasons": [
           "The spec is consistent with contract one and C-1 to C-3."
         ],
-        "patch": null,
-        "risk": "med",
-        "notes": "",
         "premises": [],
-        "visionConflict": [],
-        "staleLinks": []
+        "standing": [],
+        "clusters": null,
+        "rulings": []
       }
     },
     {

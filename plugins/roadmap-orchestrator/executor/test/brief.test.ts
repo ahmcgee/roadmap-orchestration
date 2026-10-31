@@ -115,7 +115,7 @@ async function chained(): Promise<Chained> {
       checkpointInputs(j, 1);
       divergence(j, 1, 1, 0, 'trust means tested');
       j.fact({
-        kind: 'corpus-amendment', id: amendmentIdOf(1), source: { type: 'divergence', divergence: divergenceIdOf(1) }, rules: [ruleId('T-2')], proposal: 'Name the tide window in every booking.', why: 'D-1', evidence: [],
+        kind: 'corpus-amendment', id: amendmentIdOf(1), source: {type: 'root', command: commandId('cmd-0000000000000001')}, rules: [ruleId('T-2')], proposal: 'Name the tide window in every booking.', why: 'D-1', evidence: [],
       } as Fact);
       arc1Digest = item(j, a1, 'divergence-digest', false);
       j.fact({ kind: 'divergence-digest', needsUser: arc1Digest, ids: [divergenceIdOf(1)] } as Fact);

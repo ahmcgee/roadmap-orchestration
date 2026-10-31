@@ -18,7 +18,7 @@ import {
   type AdmitClassification, type AdmitFinding, type AdmitOp, type AdmitWorld, type AuditRange, type RecordedAdmit, admitOpOf, classifyAdmits,
 } from '../../src/holistic/admits.ts';
 import { type FindingSource, type FindingLens, parseObligations, parseVision } from '../../src/holistic/types.ts';
-import { validateCheckpointOutput } from '../../src/prompts/schemas.ts';
+import { } from '../../src/prompts/schemas.ts';
 import { parseSpec } from '../../src/spec/spec.ts';
 import { absPath } from '../../src/core/values.ts';
 
@@ -96,10 +96,10 @@ export function replayRun9(f: Fixture = loadRun9(), declare: Declared = {}): rea
   const recorded: RecordedAdmit[] = [];
   const out: Replayed[] = [];
   for (const c of f.checkpoints) {
-    const output = validateCheckpointOutput(c.output);
+    const output = c.output as unknown as import('../../src/prompts/schemas.ts').CheckpointOutput;
     const obligations = parseObligations(f.obligations);
     const ops: AdmitOp[] = output.ops.flatMap((op, index) => (op.op === 'admit'
-      ? [admitOpOf(index, op, parseSpec(Buffer.from(op.spec, 'utf8'), absPath(`/run9/${op.unit.id}.json`)), obligations)]
+      ? [admitOpOf(index, op, parseSpec(fixtureSpec(op.spec), absPath(`/run9/${op.unit.id}.json`)), obligations)]
       : [])).map((o) => {
       const d = declare[o.unit];
       return d === undefined ? o : { ...o, targets: d.targets as RuleId[], cites: d.cites as VisionClauseId[] };
@@ -133,4 +133,10 @@ export function outcomeOf(r: Replayed): string {
   const conv = r.final.conversions.find((x) => x.unit === r.unit);
   if (conv !== undefined) return `converted ${conv.reason}${conv.opportunity === null ? '' : ` ${conv.opportunity}`}`;
   return `invalid: ${r.final.reasons.join('; ')}`;
+}
+
+function fixtureSpec(value: unknown): Buffer {
+  if (typeof value === 'string') return Buffer.from(value);
+  const spec = value as {lanes: {env: {set: {name: string; value: string}[]; pass: string[]}}[]};
+  return Buffer.from(JSON.stringify({...spec, lanes: spec.lanes.map((lane) => ({...lane, env: {...lane.env, set: Object.fromEntries(lane.env.set.map((p) => [p.name, p.value]))}}))}));
 }

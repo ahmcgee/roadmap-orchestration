@@ -219,7 +219,7 @@ describe('ruler-changed', () => {
   test('flow.ruler-changed: an apply after the first admission reseating a judgment raises one non-blocking ruler-changed item, listed in status', T, async () => {
     const { d, r, ctx } = arc([planCheckStep({ decision: 'approve' })]);
     try {
-      await stepUntil(r, 'u1', (f) => f.stage === 'plan-check');
+      await stepUntil(r, 'u1', (f) => f.stage === 'pre-build');
       const plan = JSON.parse(readFileSync(d.planPath, 'utf8')) as Record<string, unknown>;
       writeFileSync(d.planPath, JSON.stringify({ ...plan, routing: { verifier: { med: 'summit' } } }));
       const command = submitCommand(r.ctx.runDir, r.journal.view.arc, applyBody(d));

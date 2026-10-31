@@ -9,7 +9,7 @@ import { bytesSha256 } from '../spec/spec.ts';
 // (1.0.0-dev.12, "The large-diff gate" below). Its inputs, snapshotted at the integration tip
 // T the gate judges against: the rendered spec, the spec's cited contracts and active C-nn rulings in full
 // and an index of the rest (arc-1 feedback item 12), the architecture doc or its digest, the Direction, the
-// approving plan-check's notes, the merge-base diff `diffBase(T, head)..head` (recomputed on every call, so
+// approving pre-build's notes, the merge-base diff `diffBase(T, head)..head` (recomputed on every call, so
 // after a merge-in the base is T; attached within `GATE_DIFF_BUDGET` by src/git/boundeddiff.ts, what it does not inline
 // written beside the attempt's evidence and readable, and what it inlined recorded on `judgment-inputs`), the lane ledger of the unit's latest spec series and its evidence dirs,
 // the build's evidence (decisions.json), the declared systems and the diff's reach outside them, and on
@@ -23,7 +23,7 @@ import { bytesSha256 } from '../spec/spec.ts';
 //
 // Outcomes: approve (an `approval` fact binds it to the fingerprint, then the stage-outcome) · revise
 // (a fix round with the directives, bounded by the table) · escalate (route up) · an empty diff is refused
-// before any call (park) · refusal, malformed and faults as at plan-check. An answer off its schema takes the one judgment
+// before any call (park) · refusal, malformed and faults as at pre-build. An answer off its schema takes the one judgment
 // repair turn first (dev.12, `repairTurnOf` in dispatch.ts): its own session resumed with why; refused again, `malformed`.
 //
 // The approval fingerprint (R2) = {unitCommit, specRev, contractRevs, rulingRevs, obligationRevs, corpus}: contractRevs
@@ -110,7 +110,7 @@ import { invocationDir } from './invoke.ts';
 import { laneRecordIn,latestSpecSeries,observedViews,seriesLedger,seriesTree,specSeriesRoot } from './lanes.ts';
 import { approvalBlobs,gateDelta,ledgerFact,openDisputes,reviewInput,reviewRules,unitLedger } from './review.ts';
 import { gateSmokeChecks } from './smoke.ts';
-import { type JudgmentReader, type PlanCheckDone, type StageDone, at, changedPremiseFiles, corpusInForce, enterJudgment, escalationOf, fastSuiteRoot, holisticInForce, inMs, integrationTip, judgedAnswer, judgmentOutput, judgmentSpawns, ledger, ledgerDir, library, loadUnitSpec, record, releaseJudgment, removeJudgmentCheckouts, start, targetDirs, unitImpactInput, unitMilestones, unitTarget, verdictKind, writeJudgmentInputs } from './stages.ts';
+import { type JudgmentReader, type PreBuildDone, type StageDone, at, changedPremiseFiles, corpusInForce, enterJudgment, escalationOf, fastSuiteRoot, holisticInForce, inMs, integrationTip, judgedAnswer, judgmentOutput, judgmentSpawns, ledger, ledgerDir, library, loadUnitSpec, record, releaseJudgment, removeJudgmentCheckouts, start, targetDirs, unitImpactInput, unitMilestones, unitTarget, verdictKind, writeJudgmentInputs } from './stages.ts';
 import { gateWitnessChecks } from './witnesscheck.ts';
 
 /** The unit's approved-or-not commit: its branch tip, which every build round and merge-in moves. */
@@ -534,7 +534,7 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
  * read): an approval records exactly it, and ff re-checks it against the inputs then in force. An approval fact
  * this attempt already recorded is kept, not recorded twice.
  *
- * `repair` is the live attempt's repair turn (dev.12, as at plan-check): an answer off its schema goes back once, in the
+ * `repair` is the live attempt's repair turn (dev.12, as at pre-build): an answer off its schema goes back once, in the
  * same session, with every reason, before anything is recorded; the repair turn's answer is then read as the attempt's,
  * and refused again it is `malformed`. A call consumed after a crash gets none (`repair` null).
  */
@@ -625,21 +625,21 @@ function bankGateNotes(ctx: StageContext, unit: UnitId, attempt: number, finding
 // A judgment call a crash left unrecorded (F1)
 
 /**
- * Records a plan-check or gate attempt from the call recovery closed after a crash, against the attempt's
+ * Records a pre-build or gate attempt from the call recovery closed after a crash, against the attempt's
  * durable `judgment-inputs`: a gate's approval records the fingerprint captured with them (`gateRead`), so it
  * binds what it reviewed, whatever moved since. The unit driver calls it in place of a read at the current tip.
  */
 export async function consumeJudgment(
   ctx: StageContext, unit: PlanUnit, parent: StageParent, called: BackendCallOutcome,
-): Promise<PlanCheckDone | GateDone> {
+): Promise<PreBuildDone | GateDone> {
   if (called.kind === 'lost') throw new Error(`${called.inv}: a lost judgment call is never consumed`);
   const { result } = called;
   if (result.role === 'build') throw new Error(`${called.inv}: an implementer result at ${parent.stage}`);
   switch (parent.stage) {
-    case 'plan-check': {
+    case 'pre-build': {
       await runReview(ctx, unit, parent, 'pre-build');
       await releaseJudgment(ctx, parent);
-      return {...record(ctx, at(parent, 'plan-check'), 'approve'), session: null, specRev: loadUnitSpec(ctx, unit).spec.rev};
+      return {...record(ctx, at(parent, 'pre-build'), 'approve'), session: null, specRev: loadUnitSpec(ctx, unit).spec.rev};
     }
     case 'gate': {
       const inputs = ctx.journal.view.judgmentInputs(unit.id, 'gate', parent.attempt);

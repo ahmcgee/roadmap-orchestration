@@ -33,7 +33,7 @@ import { type TreePlan,scriptTree } from './helpers/witness.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 
-const PRE_LANES = ['plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released'];
+const PRE_LANES = ['pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released'];
 const MERGED = ['gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'];
 
 const facts = (d: ArcDescriptor): readonly Fact[] => readJournal(absPath(d.runDir), arcId(d.arc)).events.flatMap((e) => (e.type === 'fact' ? [e.fact] : []));
@@ -102,7 +102,7 @@ describe('D1 witness presence', () => {
       const u = r.journal.view.unit(unitId('u1'));
       assert.deepEqual([u.status, u.counters.chargeableFailures], ['park-pending', 0]);
       assert.equal(gateCalls(a.d).length, 0, 'the gate is not called');
-      assert.equal(readCalls(a.d.scenarioPath).length, 2, 'no fix round: plan-check and the build only');
+      assert.equal(readCalls(a.d.scenarioPath).length, 2, 'no fix round: pre-build and the build only');
     } finally {
       r.journal.close();
     }

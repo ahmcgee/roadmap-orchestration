@@ -3,10 +3,10 @@ import { systemName } from '../src/core/ids.ts';
 // Named tests: gate.fingerprint-invalidated, gate.risk-promotion; also the approval fingerprint's content,
 // a revise round's directives and their re-check with the round handoff, the fingerprint's cited-only set, and
 // the empty-diff refusal. M3 step A3: gate.inputs-not-in-ff-window (the capture under the revision fence),
-// gate.obligations-selected, plan-check.vision-context. M3 Checkpoint A: gate.no-cpu-fence-deadlock,
+// gate.obligations-selected, pre-build.vision-context. M3 Checkpoint A: gate.no-cpu-fence-deadlock,
 // gate.approval-captured-fingerprint, gate.partial-supersession-regates. 2026-10-16 (the read surface widened; a refused read
-// voids nothing): gate.read-surface, plan-check.read-surface. 2026-10-16 (prompt_too_long): context-exceeded.gate,
-// context-exceeded.plan-check, context-exceeded.build. dev.12: gate.repair-turn; the large-diff gate: gate.large-diff,
+// voids nothing): gate.read-surface, pre-build.read-surface. 2026-10-16 (prompt_too_long): context-exceeded.gate,
+// context-exceeded.pre-build, context-exceeded.build. dev.12: gate.repair-turn; the large-diff gate: gate.large-diff,
 // gate.large-diff-seat, gate.cluster-coverage. dev.13: gate.acting-checkout. dev.16: gate.symlink-in-checkout.
 import assert from 'node:assert/strict';
 import { existsSync,readFileSync,writeFileSync } from 'node:fs';
@@ -116,7 +116,7 @@ test('gate.risk-promotion: a contract path in the unit\'s diff promotes the gate
     await stepUntil(r, 'u1', (f) => f.stage === 'gate');
     assert.equal(outcomes(d).at(-1), 'gate:approve');
     const [planCall, , gateCall] = readCalls(d.scenarioPath);
-    assert.ok(planCall!.argv.includes('claude-opus-5-5') && planCall!.argv.includes('medium'), 'plan-check sat on the unit\'s med seat (frontier: Opus medium, dev.17)');
+    assert.ok(planCall!.argv.includes('claude-opus-5-5') && planCall!.argv.includes('medium'), 'pre-build sat on the unit\'s med seat (frontier: Opus medium, dev.17)');
     assert.ok(gateCall!.argv.includes('claude-opus-5-5') && gateCall!.argv.includes('medium'), 'the gate sat on the escalation seat');
     assert.ok(!planCall!.stdin.includes('<escalation>'), 'no preface below the escalation seat');
     assert.equal(r.journal.view.unit(U1).promotion, false, 'the promotion was for that dispatch only');
@@ -355,16 +355,16 @@ test('context-exceeded.build: a Codex build over its context window parks the sa
   }
 });
 
-test('plan-check.read-surface: the plan-check reads the repository and the run dir; an approve from a session refused a read is an approval', T, async () => {
+test('pre-build.read-surface: the pre-build reads the repository and the run dir; an approve from a session refused a read is an approval', T, async () => {
   const deniedCheck = planCheckStep({ decision: 'approve' }, {}, [{ type: 'globAboveAddDir' }]);
   const d = setupArc({ steps: [deniedCheck, mulBuild(), gateStep({ decision: 'approve' })] });
   const r = contextFor(d);
   try {
     assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), live()), { kind: 'merged' });
-    assert.deepEqual(outcomes(d).filter((o) => o.startsWith('plan-check:')), ['plan-check:approve']);
+    assert.deepEqual(outcomes(d).filter((o) => o.startsWith('pre-build:')), ['pre-build:approve']);
     const check = readCalls(d.scenarioPath).find((c) => c.as === 'claude' && !isGate(c))!;
     assert.deepEqual(addDirs(check).slice(0, 2), [d.repo, d.runDir]);
-    assert.equal(r.journal.view.unit(U1).counters.retries['plan-check'], 0);
+    assert.equal(r.journal.view.unit(U1).counters.retries['pre-build'], 0);
   } finally {
     r.journal.close();
   }
@@ -510,7 +510,7 @@ test('gate.bounded-diff: the gate reads its diff as the bounded attachment (orie
   }
 });
 
-test('plan-check.vision-context: in a holistic arc the plan-check prompt carries the vision clauses in force; the gate prompt does not', T, async () => {
+test('pre-build.vision-context: in a holistic arc the pre-build prompt carries the vision clauses in force; the gate prompt does not', T, async () => {
   const d = holisticArc();
   const r = contextFor(d);
   try {

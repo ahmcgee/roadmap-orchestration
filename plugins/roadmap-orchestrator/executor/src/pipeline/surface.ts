@@ -1,3 +1,4 @@
+import { absPath } from '../core/values.ts';
 import { join } from 'node:path';
 import { raiseNeedsUser, raisedWithReason } from '../needsuser.ts';
 import { worktreeCreateOp } from '../recover/ops.ts';
@@ -20,7 +21,7 @@ import type { MethodContext } from '../prompts/method/index.ts';
 import { validateGateOutput, validateBuildOutput } from '../prompts/schemas.ts';
 import { BRIEF_INPUT } from './rounds.ts';
 import { type StageContext, type StageParent, callBackend, judgmentDeadlineMs, dispatchOf, verifierDispatch, runOp, repairTurnOf, verdictOf } from './dispatch.ts';
-import { holisticInForce, integrationTip, library, visionInput, loadUnitSpec, judgedAnswer, judgmentOutput, inMs, recordedCall, unitMilestones, planCheckWorktree, removeJudgmentCheckouts, unitTarget, targetDirs } from './stages.ts';
+import { holisticInForce, integrationTip, library, visionInput, loadUnitSpec, judgedAnswer, judgmentOutput, inMs, recordedCall, unitMilestones,  removeJudgmentCheckouts, unitTarget, targetDirs } from './stages.ts';
 import { mapInForce } from './lanes.ts';
 import { renderSpec } from '../spec/render.ts';
 
@@ -30,7 +31,8 @@ export function diagnosisDue(view: JournalView, unit: UnitId): boolean {
   const counts = view.judgedAttempts(unit);
   return counts.builds >= 8 || counts.stages >= 20;
 }
-export function proofNotLocal(ctx: StageContext, unit: PlanUnit): boolean {
+type MarkerContext = Readonly<{plan: StageContext['plan']; journal: Readonly<{view: JournalView}>; runDir: import('../core/values.ts').AbsPath}>;
+export function proofNotLocal(ctx: MarkerContext, unit: PlanUnit): boolean {
   const obligations = holisticInForce(ctx).obligations;
   if (obligations === null) return false;
   return obligations.obligations.some((o) => {
@@ -41,7 +43,7 @@ export function proofNotLocal(ctx: StageContext, unit: PlanUnit): boolean {
     return !['build', 'unit'].includes(lane.cadence) || lane.environment !== undefined || lane.resources.some((r) => environmentOf(ctx.plan(), r) !== null);
   });
 }
-export function markers(ctx: StageContext, unit: PlanUnit, spec: SpecM1): readonly Readonly<{marker: Marker; source: string}>[] {
+export function markers(ctx: MarkerContext, unit: PlanUnit, spec: SpecM1): readonly Readonly<{marker: Marker; source: string}>[] {
   if (unit.review === 'never') return [];
   const out: {marker: Marker; source: string}[] = [];
   if ((mapInForce(ctx.journal.view) === null ? [] : systemTraits(mapInForce(ctx.journal.view)!, unit.systems)).length > 0) out.push({marker: 'M1', source: 'dispatch:system-traits'});
@@ -90,7 +92,7 @@ export async function runReview(ctx: StageContext, unit: PlanUnit, parent: Stage
   if (seated.kind !== 'pinned') throw new Error('review routing could not re-pin');
   const dispatch = seated.dispatch;
   const prompt = promptFor('verifier', dispatch.triple.model);
-  const checkout = planCheckWorktree(ctx, parent, 'tip');
+  const checkout = absPath(join(ctx.plan().worktreeRoot, ctx.plan().arc, `${unit.id}.review-${parent.attempt}`));
   const recorded = recordedCall(ctx, parent);
   if (recorded === null) {
     await removeJudgmentCheckouts(ctx, unit.id, parent);

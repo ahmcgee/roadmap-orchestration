@@ -282,7 +282,7 @@ export function exercised(events: readonly Event[]): ReadonlySet<Branch> {
   const mark = (branch: Branch, ...keys: string[]): void => {
     if (keys.some((k) => seen.has(k))) out.add(branch);
   };
-  mark('redirect', 'plan-check:redirect');
+  mark('redirect', 'pre-build:redirect');
   mark('red lane', 'lanes:red');
   mark('conflict/merge-in', 'candidate:conflict');
   mark('red candidate', 'candidate:red');

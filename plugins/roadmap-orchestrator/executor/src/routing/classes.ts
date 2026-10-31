@@ -8,7 +8,7 @@
 // A build class binds twice: the triple its build seats run on and the triple its judgment seats (every role but `build`)
 // run on. A judgment binding is a Claude triple by type: no read-only Codex judgment profile exists (R21). Owner
 // ruling 2026-10-15: the efficient class judges on Sonnet 5.5 at `high` in both profiles (it holds the low-risk
-// plan-check seats, the med gate, the lenses and the flow seat, profiles.ts); its builds stay Luna `medium` under `default`
+// pre-build seats, the med gate, the lenses and the flow seat, profiles.ts); its builds stay Luna `medium` under `default`
 // and Sonnet 5.5 `medium` under `claude-only`, Anthropic's starting point for agentic coding on Sonnet's recalibrated
 // levels (at `low` it may report a change done without running a check). frontier and summit bind one triple for both.
 //

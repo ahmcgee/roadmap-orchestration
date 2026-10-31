@@ -78,7 +78,7 @@ export function estate(runDir: AbsPath, view: JournalView, repo: AbsPath | null)
       view.unit(unit.id).status, 'specification', 'Acceptance criteria, allowed paths, checks and references for this unit.');
     add(`design:${unit.id}`, `Implementation plan: ${unit.id}`, spec?.design ? { unit: unit.id, ...spec.design } :
       'No settled implementation plan is retained in this unit’s current specification. Plan-check results may contain proposals; use Related documents to inspect recorded planning inputs and results.', hash,
-      spec?.design ? 'recorded' : 'unavailable', 'implementation-plan', spec?.design ? 'The design settled by plan-check: changes, interfaces, failure modes and verification.' : 'No settled design is retained yet. Recorded plan-check inputs and results are linked when available.');
+      spec?.design ? 'recorded' : 'unavailable', 'implementation-plan', spec?.design ? 'The design settled by pre-build: changes, interfaces, failure modes and verification.' : 'No settled design is retained yet. Recorded pre-build inputs and results are linked when available.');
     for (const witness of spec?.witnesses ?? []) {
       add(`${unit.id}/${witness.id}`, `Witness ${unit.id}/${witness.id}`, { unit: unit.id, ...witness }, hash, witness.state);
       entries.at(-1)!.parentId = unit.id;

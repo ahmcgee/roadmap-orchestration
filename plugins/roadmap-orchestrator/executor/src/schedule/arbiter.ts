@@ -111,7 +111,7 @@ export function createArbiter(ctx: ResourceContext): Arbiter {
   const pressureBlocked = (w: UnitWaiter | FirstWaiter): boolean => {
     if (w.request.cpu === 0) return false;
     const h = w.holder;
-    const workload = w.request.cpuBasis !== undefined || (h.type === 'stage' && ['build', 'scaffold', 'poc', 'lanes', 'candidate'].includes(h.stage));
+    const workload = w.request.cpuBasis !== undefined || (h.type === 'stage' && ['build', 'lanes', 'candidate'].includes(h.stage));
     if (!workload) return false; // Judgments never wait on the admission brake.
     const hot = hostPressure(pressure.ticks(), 0);
     if (hot === null || hot < PRESSURE_SATURATED) return false;

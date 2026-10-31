@@ -20,7 +20,7 @@ import { isoTime } from '../src/core/values.ts';
 import { type ObligationCase,type ObligationEffect,OBLIGATION_EFFECTS,obligationEffect } from '../src/holistic/table.ts';
 import { type Obligations, findingKey, laneRevOf, parseObligations, parseVision, witnessRecord, OBSERVATION_VERDICTS } from '../src/holistic/types.ts';
 import { DEFAULT_CONVERGENCE_K,boundsOf,lensSetOf,parsePlan } from '../src/input/plan.ts';
-import { validateCheckpointOutput,validateLensOutput } from '../src/prompts/schemas.ts';
+import { validateLensOutput } from '../src/prompts/schemas.ts';
 import { ORIGIN_RANK } from '../src/schedule/types.ts';
 
 const ARC = arcId('arc-1');
@@ -72,13 +72,6 @@ const HOLISTIC_FACTS: { readonly [K in HolisticFactKind]: object } = {
   },
   'audit-ended': { kind: 'audit-ended', job: 'audit-1', covered: [{ lens: 'invariants', from: B, to: A }], findings: ['F-1'], suppressed: 2, outcome: 'completed' },
   'docs-covered': { kind: 'docs-covered', pub: 'docs-1', from: A, to: B },
-  'checkpoint-inputs': {
-    kind: 'checkpoint-inputs', job: 'ckpt-1', trigger: { type: 'audit', job: 'audit-1' }, generation: 1,
-    vector: { plan: 4, specs: { u1: 2 }, obligationsSha256: H2, ledgerSha256: H, visionSha256: H, contracts: [{ path: 'docs/api.md', blob: A }] },
-    headSha: A, visionSha256: H, findings: ['F-1'], observations: [{ treeSha: A, lane: 'journey', laneRev: LANE_REV, envId: ENV }],
-  },
-  'bundle-decided': { kind: 'bundle-decided', job: 'ckpt-1', outcome: { kind: 'rejected', reason: 'stale', detail: 'the plan moved to rev 5' } },
-  'checkpoint-skipped': { kind: 'checkpoint-skipped', audit: 'audit-1', generation: 1, visionSha256: H, carried: ['F-1'] },
   divergence: { kind: 'divergence', id: 'D-1', index: 0, ...draft },
   'divergence-digest': { kind: 'divergence-digest', needsUser: 'nu-40', ids: ['D-1', 'D-2'] },
   noted: {kind: 'noted', unit: unitId('u1'), command: commandId('cmd-0000000000000001'), brief: sha256('a'.repeat(64))},
@@ -205,25 +198,6 @@ describe('M3 event records', () => {
     for (const f of Object.values(HOLISTIC_FACTS)) roundTrip(fact(f));
   });
 
-  it('fact rules: mutant runs never certify (G13), plan-check opens P3 vision conflicts (R17), witness findings are P1', () => {
-    refusesFact({ ...HOLISTIC_FACTS.witnessed, purpose: 'mutant' }, /\.for$/);
-    refusesFact({ ...HOLISTIC_FACTS.witnessed, for: { type: 'mutant', finding: 'F-1', of: A } }, /\.for$/);
-    roundTrip(fact({ ...HOLISTIC_FACTS.witnessed, purpose: 'mutant', for: { type: 'mutant', finding: 'F-1', of: A } }));
-    const opened = HOLISTIC_FACTS['finding-opened'];
-    refusesFact({ ...opened, lens: 'invariants' }, /mutant/);
-    refusesFact({ ...opened, lens: 'plan-check', mutant: null }, /source/);
-    const planCheck = { ...opened, lens: 'plan-check', mutant: null, severity: 'P3', source: { type: 'stage', unit: 'u1', stage: 'plan-check', attempt: 2 } };
-    roundTrip(fact(planCheck));
-    refusesFact({ ...planCheck, severity: 'P2' }, /severity/);
-    refusesFact({ ...planCheck, visionClauses: [] }, /severity/);
-    refusesFact({ ...opened, lens: 'witness', mutant: null, severity: 'P2' }, /severity/);
-    refusesFact({ ...opened, lens: 'vision', mutant: null, severity: 'P1' }, /severity/);
-    refusesFact({ ...HOLISTIC_FACTS['audit-started'], job: 'ckpt-1' }, /job/);
-    refusesFact({ ...HOLISTIC_FACTS['checkpoint-inputs'], visionSha256: H2 }, /vector\.visionSha256/);
-    refusesFact({ ...HOLISTIC_FACTS['divergence-digest'], ids: [] }, /ids/);
-    refusesFact({ ...HOLISTIC_FACTS.divergence, cites: [] }, /cites/);
-  });
-
   const planApplied = {
     kind: 'plan-applied', rev: 5, command: CMD, planSha256: H, specs: { u1: H },
     changes: [
@@ -314,13 +288,13 @@ describe('M3 event records', () => {
     for (const out of ['preempted', 'finding-blocked']) roundTrip(fact({ kind: 'stage-outcome', unit: U1, stage: 'candidate', attempt: 4, outcome: out, class: 'advance', chargeable: false }));
   });
 
-  it('judgment-inputs: a gate\'s carry its captured fingerprint at its head (Checkpoint A); a plan-check\'s never', () => {
+  it('judgment-inputs: a gate\'s carry its captured fingerprint at its head (Checkpoint A); a pre-build\'s never', () => {
     const gate = { kind: 'judgment-inputs', unit: U1, stage: 'gate', attempt: 4, tip: A, head: B, specRev: 2, specSha256: H, planRev: 3, routingRev: REV };
     const fingerprint = { unitCommit: B, specRev: 2, contractRevs: [{ path: 'ARCHITECTURE.md', blob: A }], rulingRevs: [{ id: 'C-1', rev: 2 }] };
     refusesFact(gate, /\.fingerprint$/);
     roundTrip(fact({ ...gate, fingerprint }));
     refusesFact({ ...gate, fingerprint: { ...fingerprint, unitCommit: A } }, /fingerprint\.unitCommit$/);
-    refusesFact({ ...gate, stage: 'plan-check', head: null, fingerprint }, /\.fingerprint$/);
+    refusesFact({ ...gate, stage: 'pre-build', head: null, fingerprint }, /\.fingerprint$/);
   });
 });
 
@@ -443,45 +417,6 @@ describe('M3 judgment outputs', () => {
     assert.throws(() => validateLensOutput({ ...lens, findings: [{ ...lens.findings[0], mutant: { lane: 'journey', edits: [] } }] }), /edits/);
     const legacy = { ...lens, findings: [{ ...lens.findings[0], mutant: { patch: '--- a\n+++ b\n', lane: 'journey' } }] };
     assert.throws(() => validateLensOutput(legacy), /edits/);
-  });
-
-  it('checkpoint: every op cites active-looking clauses and evidence; ops exactly on a bundle; owner-only acts only as a request (A16)', () => {
-    validateCheckpointOutput(ckpt);
-    validateCheckpointOutput({ ...ckpt, decision: 'no-op', ops: [] });
-    assert.throws(() => validateCheckpointOutput({ ...ckpt, decision: 'no-op' }), /ops/);
-    assert.throws(() => validateCheckpointOutput({ ...ckpt, ops: [] }), /ops/);
-    assert.throws(() => validateCheckpointOutput({ ...ckpt, ops: [{ ...op, cites: [] }] }), /cites/);
-    assert.throws(() => validateCheckpointOutput({ ...ckpt, ops: [{ ...op, evidence: [] }] }), /evidence/);
-    assert.throws(() => validateCheckpointOutput({ ...ckpt, ops: [{ op: 'vision', cites: ['V-1'], evidence: ['e'] }] }), /op/);
-    const more = [
-      { op: 'patch-spec', unit: 'u1', patch: [{ op: 'strike', id: 'A3' }] },
-      { op: 'reenter', unit: 'u2', reenters: 'u1', enterAt: null, reset: null, fixes: null },
-      { op: 'cut', unit: 'u1', reason: 'r' },
-      { op: 'route', unit: 'u1', seats: [{ role: 'verifier', tier: 'med', class: 'summit' }] },
-      { op: 'limits', unit: null, limits: [{ field: 'convergenceK', value: 2 }] },
-      {
-        op: 'obligation-split', obligation: 'I-2',
-        children: [{ id: 'I-5', statement: 's', docRef: { path: 'docs/t.md', anchor: '#a', quotedText: 'q' }, rule: null, witness: { lane: 'journey', testIds: ['t'], files: [] }, activation: 'must-hold', deliveredBy: [] }],
-      },
-
-      { op: 'invalidate-approval', unit: 'u1' },
-
-      { op: 'request', class: 'cost', summary: 'a paid estate' },
-    ].map((o) => ({ ...o, cites: ['V-1'], evidence: ['e'] }));
-    const out = validateCheckpointOutput({ ...ckpt, ops: more });
-    assert.equal(out.ops.length, more.length);
-    // A reenter op's `fixes`: absent (an answer a dev.10 executor recorded) is `unrecorded`, never the explicit null.
-    const fixesOf = (o: object): unknown => {
-      const [r] = validateCheckpointOutput({ ...ckpt, ops: [{ ...more[1], ...o }] }).ops;
-      return r?.op === 'reenter' ? r.fixes : assert.fail('a reenter op');
-    };
-    assert.deepEqual([fixesOf({ fixes: null }), fixesOf({ fixes: 'u1/gate#1' })], [null, 'u1/gate#1']);
-    assert.throws(() => fixesOf({fixes: undefined}), /fixes/);
-    assert.throws(() => validateCheckpointOutput({ ...ckpt, ops: [{ ...more[3], seats: [{ role: 'build', tier: 'arc', class: 'summit' }] }] }), /tier/);
-    // economy is judgment-only (1.0.0-dev.12): a route may seat it at a judgment seat, never at a build seat.
-    validateCheckpointOutput({ ...ckpt, ops: [{ ...more[3], seats: [{ role: 'verifier', tier: 'low', class: 'economy' }] }] });
-    assert.throws(() => validateCheckpointOutput({ ...ckpt, ops: [{ ...more[3], seats: [{ role: 'build', tier: 'low', class: 'economy' }] }] }), /class/);
-    assert.throws(() => validateCheckpointOutput({ ...ckpt, ops: [{ ...more[7], class: 'anything' }] }), /class/);
   });
 });
 

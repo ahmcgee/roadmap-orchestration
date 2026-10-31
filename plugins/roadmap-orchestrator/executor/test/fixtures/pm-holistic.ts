@@ -19,7 +19,7 @@ import { systemName } from '../../src/core/ids.ts';
 // generation 2 quiescent; the close-out docs publication `docs-1` (docs.commit, its lanes, the docs ff, docs-covered,
 // docs-published, its snapshot); then `arc-completed` and the terminal snapshot.
 //
-// u1 walks the M4a rev 3 corpus-arc stages (u1 at risk high): its plan-check (one fresh call; dev.17 removed the
+// u1 walks the M4a rev 3 corpus-arc stages (u1 at risk high): its pre-build (one fresh call; dev.17 removed the
 // in-session assessment), the fresh build (its answer reporting an experiment), the witness presence check (D1: I-2's t2 on the journey lane at the
 // salvage SHA, after the lane files for the build) and the mutation smoke (D2: the journey lane declares `testPaths`, so
 // the reverted production diff runs it on the mutant tree, scripted to fail t2: killed, green).
@@ -143,7 +143,7 @@ export const HOLISTIC: Scenario = {
 
 export const HOLISTIC_OUTCOMES = {
   u1: [
-    'plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve',
+    'pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve',
     'candidate:green', 'ff:published', 'snapshot:published',
   ],
 } as const;
@@ -311,7 +311,6 @@ export function holisticRecords(snap: LogSnapshot): unknown {
     },
     audits: facts.flatMap((f) => (f.kind === 'audit-started' ? [f.job] : [])),
     ended: facts.flatMap((f) => (f.kind === 'audit-ended' ? [[f.job, f.outcome]] : [])),
-    checkpoints: facts.flatMap((f) => (f.kind === 'checkpoint-inputs' ? [f.job] : [])),
     divergences: facts.flatMap((f) => (f.kind === 'divergence' ? [[f.id, f.job]] : [])),
     terminal: snap.view.opsOf('snapshot.publish').filter((i) => i.parent.type === 'arc' && snap.view.doneOf(i.op) !== null).length,
     completion: snap.view.holistic().completion?.active ?? null,

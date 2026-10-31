@@ -199,7 +199,7 @@ function briefArc(repo: AbsPath, ref: ArcRef, from: number, pr: BriefPr, previou
     questions: (record?.questions ?? []).map((q) => ({ id: q.id, rank: q.rank, text: q.text, assumption: q.assumption, state: q.state })),
     amendments: facts.flatMap((f) => (f.kind === 'corpus-amendment' ? [{
       id: amendmentRefOf(ref.arc, f.id), rules: f.rules, proposal: f.proposal,
-      admit: f.source.type === 'admit' ? { job: f.source.job, index: f.source.index, reason: f.source.reason } : null,
+      admit: null,
     }] : [])),
     packReviewNotes: facts.flatMap((f) => (f.kind === 'pack-review-ended'
       ? f.findings.flatMap((x) => (x.severity === 'note' ? [{ job: f.job, index: x.index, claim: x.claim }] : [])) : [])),

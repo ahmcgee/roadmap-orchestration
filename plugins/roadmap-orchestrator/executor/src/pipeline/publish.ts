@@ -239,8 +239,8 @@ export function conversionsOf(view: JournalView, job: JobId): readonly Conversio
     const s = i.expect.source;
     if (s.type === 'bundle' && s.job === job) return s.conversions ?? [];
   }
-  const decided = view.holistic().checkpoints.find((c) => c.inputs.job === job)?.decided ?? null;
-  return decided?.kind === 'no-op' ? decided.conversions ?? [] : [];
+
+  return [];
 }
 
 /**

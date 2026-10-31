@@ -56,7 +56,7 @@ describe('m4b ids', () => {
     for (const ok of ['stage:build', 'wait:gate', 'slot:integration', 'wait:slot:integration', 'suite:unit', 'arc-lanes', 'candidate-rest', 'ff', 'snapshot', 'held', 'wait:finding']) {
       assert.equal(stationId(ok), ok);
     }
-    assert.deepEqual(parseStationId('wait:plan-check'), { type: 'wait', stage: 'plan-check' });
+    assert.deepEqual(parseStationId('wait:pre-build'), { type: 'wait', stage: 'pre-build' });
     assert.deepEqual(parseStationId('wait:finding'), { type: 'finding-wait' });
     for (const bad of ['stage:candidate', 'wait:ff', 'stage:retire', 'suite:9x', 'slot', 'idle']) assert.throws(() => stationId(bad), InvalidIdError, bad);
     assert.equal(jobId('proof', 1), 'proof-1');

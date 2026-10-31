@@ -41,7 +41,7 @@ after(assertNoSurvivors);
 const T = { timeout: EXEC_TIMEOUT_MS };
 const WAIT_MS = 60_000;
 const U2 = unitId('u2');
-const STRAIGHT = ['plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'];
+const STRAIGHT = ['pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'];
 const AFTER_BUILD = STRAIGHT.slice(1);
 
 const parentsOf = (repo: string, commit: string): readonly string[] => git(repo, 'rev-list', '--parents', '-n', '1', commit).split(' ').slice(1);
@@ -159,7 +159,7 @@ test('executor.pause-holds-then-resume: a pause mid-build interrupts it (held, u
   const exit = await run.exit;
   assert.equal(exit.code, 0, exit.stderr);
   assert.deepEqual(reasonOf(exit), { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }] });
-  assert.deepEqual(outcomes(r), ['plan-check:approve', 'build:interrupted', ...AFTER_BUILD]);
+  assert.deepEqual(outcomes(r), ['pre-build:approve', 'build:interrupted', ...AFTER_BUILD]);
   const builds = journalOf(r).events.flatMap((e) => (e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact) && e.fact.stage === 'build' ? [e.fact.attempt] : []));
   assert.equal(builds.length, 2);
   assert.notEqual(builds[0], builds[1], 'the resumed build is a new attempt');
@@ -202,7 +202,7 @@ test('executor.restart-clears-stop-not-pause: a restart after pause and stop cle
   const first = startExec(r);
   await reached(r.scenarioDir, 'check1', WAIT_MS);
   await cli(r, ['pause', '--all']);
-  await until(() => has(r, 'plan-check:interrupted'), WAIT_MS, 'the plan-check to be interrupted');
+  await until(() => has(r, 'pre-build:interrupted'), WAIT_MS, 'the pre-build to be interrupted');
   await cli(r, ['stop']);
   const stopped = await first.exit;
   assert.equal(stopped.code, 0, stopped.stderr);
@@ -225,7 +225,7 @@ test('executor.restart-clears-stop-not-pause: a restart after pause and stop cle
   const exit = await second.exit;
   assert.equal(exit.code, 0, exit.stderr);
   assert.deepEqual(reasonOf(exit), { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }] });
-  assert.deepEqual(outcomes(r), ['plan-check:interrupted', ...STRAIGHT]);
+  assert.deepEqual(outcomes(r), ['pre-build:interrupted', ...STRAIGHT]);
   assert.deepEqual(started(r), [1, 2]);
 });
 
@@ -313,10 +313,10 @@ test('executor.park-raised-promptly: a unit that parks has its needs-user raised
   });
   const run = startExec(r);
   await reached(r.scenarioDir, 'u2check', WAIT_MS);
-  await until(() => openBlocking(journalOf(r).view).length === 1, WAIT_MS, 'u1 to park, u2 still at its plan-check');
+  await until(() => openBlocking(journalOf(r).view).length === 1, WAIT_MS, 'u1 to park, u2 still at its pre-build');
   const view = journalOf(r).view;
   const [item] = openBlocking(view);
-  assert.ok(item !== undefined, 'u1\'s needs-user is raised while u2\'s plan-check is in flight');
+  assert.ok(item !== undefined, 'u1\'s needs-user is raised while u2\'s pre-build is in flight');
   const raise = view.opsOf('needsuser.raise');
   assert.equal(raise.length, 1);
   assert.deepEqual(raise[0]!.parent, { type: 'stage', unit: 'u1', stage: 'gate', attempt: view.unit(U1).decided!.attempt });

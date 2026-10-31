@@ -6,7 +6,7 @@
 // executor-verified obligation is reproducing the mutant: `mutant.apply` in a detached worktree at the integration tip
 // (src/git/mutant.ts), then the mutant's lane there under `purpose: mutant` (a `mutant` spawn, a `witnessed{purpose:
 // mutant, for: mutant{finding, of}}` fact naming the patched tree's real id: G13, never certifying). The old witness
-// permitting the mutant (its tests held) is `reproduced` → plan-check. Tests that kill it: `not-reproduced`, the unit
+// permitting the mutant (its tests held) is `reproduced` → pre-build. Tests that kill it: `not-reproduced`, the unit
 // parks and code dismisses the finding (`syncRepairs` reads it from the log). A patch that no longer applies, or a lane
 // no longer in force, or a run that witnessed nothing definite: `inapplicable`, the unit parks and the next audit
 // re-evaluates. Each mutant lane runs under the attempt's stage holder with the lane's own reservation (the first one as
@@ -58,7 +58,8 @@ import { type LaneCancel,laneAbortReason,laneCancelOf } from './redlane.ts';
 import { type Held,type StageDone,at,environmentFacts,failedFacts,holdEntry,holisticInForce,integrationTip,loadUnitSpec,record,stageHolder,start } from './stages.ts';
 import { decidedBy } from './transitions.ts';
 
-type SpecReader = Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath; planDir: AbsPath }>;
+import { markers } from './surface.ts';
+type SpecReader = Readonly<{ plan: StageContext['plan']; journal: Readonly<{ view: JournalView }>; runDir: AbsPath; planDir: AbsPath }>;
 
 // ---------------------------------------------------------------------------------------------------
 // What a unit's spec says about its repairs
@@ -81,10 +82,11 @@ export function specFacts(ctx: SpecReader): SpecFactsOf {
     // dev.17: the unit's spec-side lanes, read only when an open deflake unit asks (src/pipeline/deflake.ts `deflakeHold`).
     const lanes = (): ReadonlySet<LaneId> => specLaneIds(loadUnitSpec(ctx, unit).spec);
     const links = (): SpecLinks => specLinksOf(loadUnitSpec(ctx, unit).spec);
+    const review = markers(ctx, unit, loadUnitSpec(ctx, unit).spec).length > 0;
     const findings = ctx.journal.view.holistic().findings;
-    if (!findings.some(isActive)) return { reproduces: false, repairs: new Set(), lanes, links };
+    if (!findings.some(isActive)) return { review, reproduces: false, repairs: new Set(), lanes, links };
     const repairs = specRepairs(loadUnitSpec(ctx, unit).spec);
-    return { reproduces: vacuityTargets(findings, repairs).length > 0, repairs: repairedObligations(findings, repairs), lanes, links };
+    return { review, reproduces: vacuityTargets(findings, repairs).length > 0, repairs: repairedObligations(findings, repairs), lanes, links };
   };
 }
 
@@ -316,8 +318,8 @@ export async function reproduce(ctx: StageContext, unit: PlanUnit): Promise<Stag
   const targets = vacuityTargets(ctx.journal.view.holistic().findings, specRepairs(spec));
   if (targets.length === 0) throw new Error(`unit ${unit.id}: reproduce, but it repairs no active vacuity finding with a mutant`);
   const parent = at(start(ctx, unit.id, 'reproduce'), 'reproduce');
-  // The unit's first stage pins its dispatch record (scope envelope, risk floor, routing), as plan-check does for any
-  // other unit; after a re-open the record exists, and plan-check re-pins it.
+  // The unit's first stage pins its dispatch record (scope envelope, risk floor, routing), as pre-build does for any
+  // other unit; after a re-open the record exists, and pre-build re-pins it.
   if (ctx.journal.view.dispatchOf(unit.id) === null) pinDispatch(ctx, unit, { rev: spec.rev, sha256 });
   let first = true;
   for (const finding of targets) {

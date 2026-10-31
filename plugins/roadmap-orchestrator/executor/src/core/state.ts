@@ -32,7 +32,6 @@ reviewFindingIdOf
 } from './ids.ts';
 import type { ControlState,FlakeAt,FlowFactAt,JournalView,NeedsUserAckState,NeedsUserState,PropagationFactAt,WalkFactAt } from './interfaces.ts';
 import { canonicalJson } from './json.ts';
-import { checkpointSkipTriggerOf } from './projections.ts';
 import { type ApprovalFingerprint,type Bounds,type ContainmentMode,type DispatchRecord,type ResidueKey,type Stage,DEFAULT_BOUNDS,boundsOfRecord } from './records.ts';
 import type { ApprovalBlobs,FindingsLedgerEntry } from './review.ts';
 import { type SessionCharge,addCharged } from './usage.ts';
@@ -110,9 +109,9 @@ export type EntryPoint =
 /** A unit's position and everything the transition table reads, derived from the log alone. */
 export type UnitState = Readonly<{
   unit: UnitId;
-  /** The stage of its latest stage-parented intent or stage-outcome fact; plan-check after a reopen. */
+  /** The stage of its latest stage-parented intent or stage-outcome fact; pre-build after a reopen. */
   stage: Stage;
-  /** The riskFloor of the unit's latest dispatch fact (a plan-check raise re-pins it); null before one. */
+  /** The riskFloor of the unit's latest dispatch fact (a pre-build raise re-pins it); null before one. */
   risk: RiskTier | null;
   status: UnitStatus;
   counters: UnitCounters;
@@ -123,7 +122,7 @@ export type UnitState = Readonly<{
   /**
    * The latest stage-outcome fact that decided the unit's next step: every class but `hold` (a held stage
    * re-runs what this outcome decided). The unit driver derives its next stage and that stage's inputs from
-   * it; null before the first outcome and after a reopen (both start at plan-check).
+   * it; null before the first outcome and after a reopen (both start at pre-build).
    */
   decided: StageOutcomeFact | null;
   /**
@@ -168,8 +167,8 @@ export type UnitState = Readonly<{
    */
   pendingRevision: Readonly<{ rev: SpecRev; sha256: Sha256Hex; command: CommandId | null }> | null;
   /**
-   * dev.17 (propagation): the latest stale set (its plan rev) naming a link of the unit that no plan-check of it has answered
-   * since (`stale-answered`); null when none. An in-flight unit re-opens at plan-check on it (`stale-reopened`).
+   * dev.17 (propagation): the latest stale set (its plan rev) naming a link of the unit that no pre-build of it has answered
+   * since (`stale-answered`); null when none. An in-flight unit re-opens at pre-build on it (`stale-reopened`).
    */
   staleRev: PlanRev | null;
   /**
@@ -209,10 +208,9 @@ export type UnitState = Readonly<{
    */
   failures: readonly FailedOutcome[];
   /**
-   * dev.17 (design pass): the proofs of concept the unit has run (its `poc` stage outcomes that went back to plan-check), which
+   * dev.17 (design pass): the proofs of concept the unit has run (its `poc` stage outcomes that went back to pre-build), which
    * code bounds per unit (src/pipeline/design.ts `POC_LIMIT`). Derived from the log alone; a reopen keeps it.
    */
-  pocs: number;
 }>;
 
 /**
@@ -250,7 +248,6 @@ export function newUnitState(unit: UnitId, stage: Stage, risk: RiskTier | null, 
     approval: null, open: null, counters: { attempts: 0, chargeableFailures: 0, unchargedLanesReds: 0, redirects: 0, reviseRounds: 0, candidateReds: 0, smokeRounds: 0, retries },
     spec, reopened: null, pendingRevision: null, staleRev: null, redirectBase: 0,
     park: null, lastRecovery: null, buildTier: risk, lineage: null, supersededBy: null, bounds, entry: null, steering: null, failures: [],
-    pocs: 0,
   };
 }
 
@@ -283,7 +280,6 @@ export function afterStageOutcome(u: UnitState, f: Pick<StageOutcomeFact, 'stage
   return {
     ...u,
     stage: f.stage,
-    pocs: u.pocs + (f.stage === 'poc' && f.class === 'advance' ? 1 : 0),
     counters: {
       ...c,
       chargeableFailures: c.chargeableFailures + (f.chargeable ? 1 : 0),
@@ -441,11 +437,6 @@ export type FindingState = Omit<FactOf<'finding-opened'>, 'kind'> & Readonly<{
 type FindingAt = Readonly<{ seq: number; finding: FindingState }>;
 
 export type AuditState = Readonly<{ started: AuditInputs & Seq; ended: (Omit<FactOf<'audit-ended'>, 'kind' | 'job'> & Seq) | null }>;
-/** A checkpoint job: its captured inputs, and its decision: a bundle outcome, or the plan revision its bundle applied. */
-export type CheckpointState = Readonly<{
-  inputs: Omit<FactOf<'checkpoint-inputs'>, 'kind'> & Seq;
-  decided: (Readonly<{ kind: 'applied'; planRev: PlanRev }> | BundleOutcome) | null;
-}>;
 /** A20: the latest `arc-completed`; `active` while the plan rev and the integration head are those it recorded and no reopen followed. */
 export type CompletionState = Omit<FactOf<'arc-completed'>, 'kind'> & Seq & Readonly<{ active: boolean }>;
 
@@ -459,9 +450,7 @@ export type HolisticFold = Readonly<{
   auditRequests: readonly (Omit<FactOf<'audit-requested'>, 'kind'> & Seq)[];
   docsCovered: readonly (Omit<FactOf<'docs-covered'>, 'kind'> & Seq)[];
   docsPublished: readonly (Omit<FactOf<'docs-published'>, 'kind'> & Seq)[];
-  checkpoints: readonly CheckpointState[];
   /** Arc feedback 2026-10-16: the completed audits whose checkpoint was not run, having found nothing new, in log order. */
-  checkpointSkips: readonly (Omit<FactOf<'checkpoint-skipped'>, 'kind'> & Seq)[];
   divergences: readonly (Omit<FactOf<'divergence'>, 'kind'> & Seq)[];
   digests: readonly (Omit<FactOf<'divergence-digest'>, 'kind'> & Seq)[];
   steered: readonly (Omit<FactOf<'steered'>, 'kind'> & Seq)[];
@@ -733,8 +722,6 @@ export class Fold implements JournalView {
   readonly #auditRequests: (Omit<FactOf<'audit-requested'>, 'kind'> & Seq)[] = [];
   readonly #docsCovered: (Omit<FactOf<'docs-covered'>, 'kind'> & Seq)[] = [];
   readonly #docsPublished: (Omit<FactOf<'docs-published'>, 'kind'> & Seq)[] = [];
-  readonly #checkpoints = new Map<JobId, { inputs: CheckpointState['inputs']; decided: CheckpointState['decided'] }>();
-  readonly #checkpointSkips: (Omit<FactOf<'checkpoint-skipped'>, 'kind'> & Seq)[] = [];
   readonly #divergences: (Omit<FactOf<'divergence'>, 'kind'> & Seq)[] = [];
   readonly #digests: (Omit<FactOf<'divergence-digest'>, 'kind'> & Seq)[] = [];
   readonly #arcVerdicts: import('./events.ts').ArcStageVerdict[] = [];
@@ -1040,7 +1027,7 @@ export class Fold implements JournalView {
       case 'dispatch': {
         const { unit, riskFloor } = f.record;
         const prev = this.#dispatches.get(unit)?.at(-1);
-        // A re-pin (a plan-check raise) never lowers the risk floor (R2).
+        // A re-pin (a pre-build raise) never lowers the risk floor (R2).
         if (prev !== undefined && RISK_TIERS.indexOf(riskFloor) < RISK_TIERS.indexOf(prev.riskFloor)) {
           fail(`dispatch of ${unit} lowers riskFloor ${prev.riskFloor} to ${riskFloor}`);
         }
@@ -1128,7 +1115,7 @@ export class Fold implements JournalView {
         const park = f.class === 'park' ? f.park ?? unclassedParkRecord(f) : null;
         if (park !== null) {
           if (park.class === 'operator' && park.ordering != null) {
-            const eligible = (f.stage === 'plan-check' && (f.outcome === 'infeasible' || f.outcome === 'escalate')) || (f.stage === 'gate' && f.outcome === 'escalate');
+            const eligible = (f.stage === 'gate' && f.outcome === 'escalate');
             if (park.kind !== 'design' || !eligible || f.chargeable || park.ordering.blockers.includes(f.unit)) fail(`ordering metadata on an ineligible park of ${f.unit}`);
           }
           this.#setUnitState(u, { ...u.state, park: { seq: at.seq, at: at.at, park, passed: [] } });
@@ -1259,7 +1246,6 @@ export class Fold implements JournalView {
         if (f.id !== next) fail(`corpus amendment ${f.id}; the next amendment is ${next}`);
         const same = this.#amendments.find((x) => canonicalJson(x.source) === canonicalJson(f.source));
         if (same !== undefined) fail(`corpus amendment ${f.id} has the source of ${same.id} (one amendment per source)`);
-        if (f.source.type !== 'divergence') this.#seeJob(f.source.job);
         const { kind: _k, ...rest } = f;
         this.#amendments.push({ ...rest, seq: at.seq });
         return;
@@ -1414,7 +1400,7 @@ export class Fold implements JournalView {
         return;
       }
       // dev.17 (SCHEMAS.md "dev.17: propagation"): the fold keeps every propagation fact (`propagationFacts`), a stale set
-      // once per plan rev and a refusal once per (rev, target); a stale re-open sends its unit back to plan-check. What the
+      // once per plan rev and a refusal once per (rev, target); a stale re-open sends its unit back to pre-build. What the
       // facts mean for units is read from `propagationFacts` (src/holistic/propagation.ts).
       case 'stale-set':
         if (this.#propagationFacts.some((x) => x.fact.kind === 'stale-set' && x.fact.rev === f.rev)) fail(`a second stale-set of plan rev ${f.rev}`);
@@ -1429,7 +1415,7 @@ export class Fold implements JournalView {
         const u = this.#units.get(f.unit);
         if (u === undefined) return fail(`stale-answered of unit ${f.unit}, which never started`);
         if (this.#propagationFacts.some((x) => x.fact.kind === 'stale-answered' && x.fact.unit === f.unit && x.fact.attempt === f.attempt)) {
-          fail(`a second stale-answered of unit ${f.unit}'s plan-check attempt ${f.attempt}`);
+          fail(`a second stale-answered of unit ${f.unit}'s pre-build attempt ${f.attempt}`);
         }
         if (u.state.staleRev !== null && u.state.staleRev <= f.rev) this.#setUnitState(u, { ...u.state, staleRev: null });
         this.#propagationFacts.push({ seq: at.seq, at: at.at, fact: f });
@@ -1538,43 +1524,9 @@ export class Fold implements JournalView {
         this.#docsCovered.push({ ...rest, seq });
         return;
       }
-      case 'checkpoint-inputs': {
-        this.#openJob(f.job, fail);
-        const { kind: _k, ...rest } = f;
-        this.#checkpoints.set(f.job, { inputs: { ...rest, seq }, decided: null });
-        return;
-      }
-      case 'bundle-decided': {
-        const c = this.#checkpoints.get(f.job);
-        if (c === undefined || c.decided !== null) return fail(`bundle-decided of ${f.job}, which has no undecided checkpoint inputs`);
-        c.decided = f.outcome;
-        return;
-      }
-      case 'checkpoint-skipped': {
-        const t = checkpointSkipTriggerOf(f);
-        if (t.type === 'audit') {
-          const a = this.#audits.find((x) => x.started.job === t.job);
-          if (a?.ended?.outcome !== 'completed') return fail(`checkpoint-skipped of ${t.job}, which is no completed audit`);
-          if (a.started.generation !== f.generation) fail(`checkpoint-skipped of ${t.job} at generation ${f.generation}; the audit's is ${a.started.generation}`);
-        }
-        const trigger = canonicalJson(t);
-        if (this.#checkpointSkips.some((s) => canonicalJson(checkpointSkipTriggerOf(s)) === trigger)) fail(`a second checkpoint-skipped of ${trigger}`);
-        const jobs = [...this.#checkpoints.values()].filter((c) => canonicalJson(c.inputs.trigger) === trigger);
-        if (jobs.some((c) => c.decided !== null && c.decided.kind !== 'rejected')) fail(`checkpoint-skipped of ${trigger}, whose checkpoint decided`);
-        // A pre-upgrade capture can resume at an equal decided snapshot. The skip settles it with no paid call.
-        for (const c of jobs) {
-          if (c.decided !== null) continue;
-          if (c.inputs.generation !== f.generation) fail(`checkpoint-skipped of ${trigger} at another generation than its capture`);
-          c.decided = { kind: 'no-op' };
-        }
-        const { kind: _k, ...rest } = f;
-        this.#checkpointSkips.push({ ...rest, seq });
-        return;
-      }
       case 'divergence': {
         const next = this.nextDivergenceId();
         if (f.id !== next) fail(`divergence ${f.id}; the next divergence is ${next}`);
-        if (!this.#checkpoints.has(f.job)) fail(`divergence ${f.id} of ${f.job}, which is no checkpoint job`);
         if (this.#divergences.some((d) => d.job === f.job && d.index === f.index)) fail(`a second divergence ${f.job}#${f.index}`);
         const { kind: _k, ...rest } = f;
         this.#divergences.push({ ...rest, seq });
@@ -1652,8 +1604,6 @@ export class Fold implements JournalView {
     if (this.#planApplied !== null && roles !== f.routingProvenance.arcRoles) fail(`plan-applied rev ${f.rev} records arcRoles ${f.routingProvenance.arcRoles ?? 'none'}; revision 1 fixed ${roles ?? 'none'}`);
     // M3 (A5): the vision, once in force, stays; a bundle's revision is its checkpoint's decision.
     if (this.#holisticOn && f.visionSha256 === undefined) fail(`plan-applied rev ${f.rev} drops the vision (holistic may be added, never removed)`);
-    const bundle = f.source.type === 'bundle' ? this.#checkpoints.get(f.source.job) : undefined;
-    if (f.source.type === 'bundle' && (bundle === undefined || bundle.decided !== null)) fail(`plan-applied from bundle ${f.source.job}, which has no undecided checkpoint inputs`);
     const edits: { unit: UnitId; update: (u: UnitState) => UnitState }[] = [];
     const lineages: (() => void)[] = [];
     for (const c of f.changes) {
@@ -1696,12 +1646,11 @@ export class Fold implements JournalView {
       }
     }
     for (const e of edits) {
-      const entry = this.#unit(e.unit, 'plan-check');
+      const entry = this.#unit(e.unit, 'pre-build');
       this.#setUnitState(entry, e.update(entry.state));
     }
     for (const apply of lineages) apply();
     this.#holisticOn = f.visionSha256 !== undefined;
-    if (bundle !== undefined) bundle.decided = { kind: 'applied', planRev: f.rev };
     // §2.10: an architect admit (an apply that adds units) reopens a draining arc.
     const architect = f.source.type === 'command';
     if (architect && f.changes.some((c) => c.type === 'unit-added')) this.#draining = null;
@@ -1864,7 +1813,7 @@ export class Fold implements JournalView {
    * A reopen: of a unit parked at a judgment stage, or of an active unit on its pending revision (the driver,
    * at a stage boundary), onto the spec rev after the one the log recorded. A pending revision must be the
    * one re-opened on (a reopen written before revisions were applied has none). The unit starts over at
-   * plan-check (no decided outcome) with its counters, routed-up seats and branch kept; the redirect bound
+   * pre-build (no decided outcome) with its counters, routed-up seats and branch kept; the redirect bound
    * counts from here.
    */
   #reopened(f: Extract<Fact, { kind: 'reopened' }>, fail: (detail: string) => never): void {
@@ -1883,13 +1832,13 @@ export class Fold implements JournalView {
     const spec = u.state.spec;
     if (spec === null || f.specRev !== spec.rev + 1) fail(`reopen of unit ${f.unit} at spec rev ${f.specRev}; its recorded rev is ${spec?.rev ?? 'none'}`);
     this.#setUnitState(u, {
-      ...u.state, stage: 'plan-check', status: 'active', decided: null, interrupted: null, pressureHold: null, park: null, spec: { rev: f.specRev, sha256: f.specSha256 },
+      ...u.state, stage: 'pre-build', status: 'active', decided: null, interrupted: null, pressureHold: null, park: null, spec: { rev: f.specRev, sha256: f.specSha256 },
       reopened: { command: f.command, specRev: f.specRev }, redirectBase: u.state.counters.redirects, pendingRevision: null,
     });
   }
 
   /**
-   * dev.17 (propagation): an in-flight unit with unanswered stale links re-opens at plan-check on its spec in force (no spec
+   * dev.17 (propagation): an in-flight unit with unanswered stale links re-opens at pre-build on its spec in force (no spec
    * change): as `reopened` does, its decision and interruption cleared, its counters kept, the redirect bound counted from here,
    * and its next fresh build resuming its implementer session (`reopened`, with no command).
    */
@@ -1902,7 +1851,7 @@ export class Fold implements JournalView {
     const spec = u.state.spec;
     if (spec === null) return fail(`stale-reopened of unit ${f.unit}, which has no spec recorded`);
     this.#setUnitState(u, {
-      ...u.state, stage: 'plan-check', decided: null, interrupted: null, pressureHold: null, park: null,
+      ...u.state, stage: 'pre-build', decided: null, interrupted: null, pressureHold: null, park: null,
       reopened: { command: null, specRev: spec.rev }, redirectBase: u.state.counters.redirects,
     });
   }
@@ -2006,7 +1955,7 @@ export class Fold implements JournalView {
   }
 
   unit(unit: UnitId): UnitState {
-    return this.#units.get(unit)?.state ?? this.#fresh(unit, 'plan-check');
+    return this.#units.get(unit)?.state ?? this.#fresh(unit, 'pre-build');
   }
 
   dispatchOf(unit: UnitId): DispatchRecord | null {
@@ -2147,7 +2096,7 @@ export class Fold implements JournalView {
 
   judgedAttempts(unit: UnitId): Readonly<{builds: number; stages: number}> {
     const starts = [...(this.#units.get(unit)?.starts.keys() ?? [])];
-    return {builds: starts.filter((k) => k.startsWith('build#')).length, stages: starts.filter((k) => /^(plan-check|build|lanes|gate)#/.test(k)).length};
+    return {builds: starts.filter((k) => k.startsWith('build#')).length, stages: starts.filter((k) => /^(pre-build|build|lanes|gate)#/.test(k)).length};
   }
   arcVerdicts(): readonly import('./events.ts').ArcStageVerdict[] { return this.#arcVerdicts; }
   surfaceFacts(): readonly import('./events.ts').SurfaceFact[] { return this.#surfaceFacts; }
@@ -2197,8 +2146,6 @@ export class Fold implements JournalView {
       auditRequests: this.#auditRequests,
       docsCovered: this.#docsCovered,
       docsPublished: this.#docsPublished,
-      checkpoints: [...this.#checkpoints.values()].map((x) => ({ inputs: x.inputs, decided: x.decided })),
-      checkpointSkips: [...this.#checkpointSkips],
       divergences: this.#divergences,
       digests: this.#digests,
       steered: this.#steered,

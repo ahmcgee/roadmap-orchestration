@@ -57,15 +57,11 @@ describe('routing', () => {
     });
     for (const m of MODEL_IDS) assert.doesNotMatch(JSON.stringify(BUILTIN_SEATS), new RegExp(m.replace('.', '\\.')));
     assert.deepEqual(BUILTIN_SEATS, {
-      experienceVerdict: {arc: 'frontier'}, campaignAudit: {arc: 'summit'},
-      planCheck: {low: 'frontier', med: 'frontier', high: 'frontier', escalation: 'summit'},
-      gate: {low: 'frontier', med: 'frontier', high: 'frontier', escalation: 'summit'},
-      lens: {arc: 'efficient'}, checkpoint: {arc: 'summit'},
       build: {low: 'efficient', med: 'efficient', high: 'frontier'},
-      packReview: {arc: 'frontier'}, flow: {arc: 'efficient'}, walkthrough: {arc: 'frontier'}, polishJudge: {arc: 'frontier'},
       verifier: {low: 'frontier', med: 'frontier', high: 'frontier', escalation: 'frontier'},
-      scaffold: {low: 'economy', med: 'economy', high: 'economy'},
-    });;
+      packReview: {arc: 'frontier'}, flow: {arc: 'efficient'},
+      experienceVerdict: {arc: 'frontier'}, campaignAudit: {arc: 'summit'},
+    });;;
   });
 
   it('schema 2 has no pre-break routing aliases; current high seats and explicit repo rebindings remain intact', () => {
@@ -74,13 +70,13 @@ describe('routing', () => {
     for (const rev of ['ec39c27ced3c46bf', '98bcf2744f049328', 'a5c3da09379b0035']) {
       assert.equal(resolved.earlierBuiltinRevs.includes(routingRev(rev)), false, `schema 2 never aliases the pre-break ${rev}`);
     }
-    assert.deepEqual(resolved.table.checkpoint.arc, OPUS_HIGH, 'historical aliases do not change current routing');
+    assert.deepEqual(resolved.table.campaignAudit.arc, OPUS_HIGH, 'historical aliases do not change current routing');
     const rebound = resolveRouting({ ...stack, classes: { summit: FABLE } });
     assert.equal(rebound.earlierBuiltinRevs.includes(routingRev('ec39c27ced3c46bf')), false, 'an explicit class rebind is its own revision');
-    assert.deepEqual(rebound.table.checkpoint.arc, FABLE);
+    assert.deepEqual(rebound.table.campaignAudit.arc, FABLE);
   });
 
-  it('built-in profiles resolve (dev.17): efficient builds every tier (Luna; Sonnet medium under claude-only) and runs the lenses and flow on Sonnet high; Opus medium plan-checks and gates every tier; Opus high holds escalation', () => {
+  it('built-in profiles resolve (dev.17): efficient builds every tier (Luna; Sonnet medium under claude-only) and runs the lenses and flow on Sonnet high; Opus medium pre-builds and gates every tier; Opus high holds escalation', () => {
     const d = resolveRouting(base).table;
     assert.deepEqual(d.build, { low: LUNA, med: LUNA, high: OPUS });
     const c = resolveRouting(arcStack('claude-only', null, null)).table;
@@ -174,7 +170,8 @@ describe('routing', () => {
     assert.deepEqual(r.table.build.low, SOL_HIGH);
     assert.deepEqual(r.table.build.med, SOL_HIGH);
     assert.deepEqual(r.table.build.high, OPUS);
-    assert.deepEqual(r.table.lens.arc, SOL_HIGH, 'a rebind binds the judgment seats that name the class too');
+    assert.deepEqual(r.table.flow.arc, SOL_HIGH, 'a rebind binds the judgment seats that name the class too');
+    assert.deepEqual(r.table.campaignAudit.arc, OPUS_HIGH, 'the summit campaign seat is independent of an efficient rebind');
     assert.equal(r.classes.build.low, 'efficient');
     assert.equal(r.sources.build.low, 'builtin', 'the class was chosen by the profile');
     assert.deepEqual(r.bindings, { efficient: 'repo-config', frontier: 'builtin', summit: 'builtin', economy: 'builtin' });

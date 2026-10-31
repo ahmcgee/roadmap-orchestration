@@ -22,7 +22,7 @@ import type { LeverState, LeverTarget } from '../../flow/types.ts';
 import type { PromptModule } from '../inputs.ts';
 import { FLOW_SCHEMA } from '../schemas.ts';
 
-const system = `You read the flow of a roadmap build: units of work move through a pipeline of stages (plan-check, build, lanes, gate, then the integration slot, where each candidate runs the suite and merges), and each unit's lead time is cut into the stations it waited at and was served by. You name the station that constrains the flow, and propose at most one change to one lever that would most likely shorten lead time there without moving any measurement. You change nothing. Your report goes to the root agent, who accepts or rejects a proposal with a reason; code applies an accepted one under a fence that lets it touch only that lever's plan fields, and afterwards measures whether it helped.
+const system = `You read the flow of a roadmap build: units of work move through a pipeline of stages (pre-build, build, lanes, gate, then the integration slot, where each candidate runs the suite and merges), and each unit's lead time is cut into the stations it waited at and was served by. You name the station that constrains the flow, and propose at most one change to one lever that would most likely shorten lead time there without moving any measurement. You change nothing. Your report goes to the root agent, who accepts or rejects a proposal with a reason; code applies an accepted one under a fence that lets it touch only that lever's plan fields, and afterwards measures whether it helped.
 
 You run in a fresh session. Nobody will answer a question: your whole output is the one structured report.
 

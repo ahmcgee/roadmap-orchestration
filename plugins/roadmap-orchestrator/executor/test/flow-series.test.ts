@@ -27,7 +27,7 @@ const series = (log: FlowLog, plan = PLAN, obligations: ReturnType<typeof obliga
 /** The reference unit: every kind of step, with known waits and services. */
 function reference(log: FlowLog, unit = 'u1'): void {
   log.dispatch(0, unit);
-  log.step(1, 3, unit, 'plan-check', 1, 'approve'); // wait 1, service 2
+  log.step(1, 3, unit, 'pre-build', 1, 'approve'); // wait 1, service 2
   log.step(4, 10, unit, 'build', 2, 'success'); // wait 1, service 6
   log.step(null, 10, unit, 'quiesce', 3, 'empty'); // no op: 0
   log.step(12, 15, unit, 'lanes', 4, 'green'); // wait 2, service 3
@@ -49,7 +49,7 @@ describe('flow series: the station partition', () => {
     assert.equal(p!.admittedAt, atMin(0));
     assert.equal(p!.mergedAt, atMin(27));
     assert.deepEqual(minutes(p!), {
-      'wait:plan-check': 1, 'stage:plan-check': 2, 'wait:build': 1, 'stage:build': 6, 'wait:lanes': 2, 'stage:lanes': 3, 'stage:gate': 2,
+      'wait:pre-build': 1, 'stage:pre-build': 2, 'wait:build': 1, 'stage:build': 6, 'wait:lanes': 2, 'stage:lanes': 3, 'stage:gate': 2,
       'wait:slot:integration': 3, 'suite:suite': 4, 'candidate-rest': 2, ff: 0.5, snapshot: 0.5,
     });
     assert.ok(near(sum(p!), p!.leadMin));
@@ -81,7 +81,7 @@ describe('flow series: the station partition', () => {
       let attempt = 1;
       const steps = 2 + Math.floor(rnd() * 6);
       for (let i = 0; i < steps; i++) {
-        const stage = (['plan-check', 'build', 'lanes', 'gate'] as const)[Math.floor(rnd() * 4)]!;
+        const stage = (['pre-build', 'build', 'lanes', 'gate'] as const)[Math.floor(rnd() * 4)]!;
         if (rnd() < 0.2) log.fact(t + rnd(), { kind: 'paused', command: commandAt(t), target: { type: 'all' } });
         if (rnd() < 0.2) log.fact(t + 1 + rnd(), { kind: 'resumed', command: commandAt(t), target: { type: 'all' } });
         const opAt = rnd() < 0.2 ? null : t + rnd() * 5;
@@ -133,9 +133,9 @@ describe('flow series: held time', () => {
     const log = new FlowLog();
     log.applied(0, 1);
     log.dispatch(0, 'u1');
-    log.step(0, 2, 'u1', 'plan-check', 1, 'escalate', 'park');
+    log.step(0, 2, 'u1', 'pre-build', 1, 'escalate', 'park');
     log.fact(3, { kind: 'paused', command: commandAt(3), target: { type: 'unit', unit: 'u2' } });
-    log.step(30, 32, 'u1', 'plan-check', 2, 'approve'); // 2..30 held
+    log.step(30, 32, 'u1', 'pre-build', 2, 'approve'); // 2..30 held
     log.step(33, 34, 'u1', 'build', 3, 'interrupted', 'hold');
     log.step(40, 41, 'u1', 'build', 4, 'success'); // 34..40 held
     log.candidateStart(41, 'u1', 5);
@@ -143,7 +143,7 @@ describe('flow series: held time', () => {
     log.outcome(42, 'u1', 'ff', 6, 'published');
     log.outcome(42, 'u1', 'snapshot', 7, 'published', 'retire');
     assert.deepEqual(minutes(series(log).points[0]!), {
-      'stage:plan-check': 4, held: 34, 'wait:build': 1, 'stage:build': 2, 'candidate-rest': 1,
+      'stage:pre-build': 4, held: 34, 'wait:build': 1, 'stage:build': 2, 'candidate-rest': 1,
     });
   });
 
@@ -151,7 +151,7 @@ describe('flow series: held time', () => {
     const log = new FlowLog();
     log.applied(0, 1);
     log.dispatch(0, 'parked');
-    log.step(1, 5, 'parked', 'plan-check', 1, 'escalate', 'park');
+    log.step(1, 5, 'parked', 'pre-build', 1, 'escalate', 'park');
     log.dispatch(0, 'stuck');
     log.op(1, 'stuck', 'build', 1);
     log.fact(10, { kind: 'paused', command: commandAt(10), target: { type: 'all' } }); // stuck's service: not held; waiting's wait: held

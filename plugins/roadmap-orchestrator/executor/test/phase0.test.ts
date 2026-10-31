@@ -1,3 +1,4 @@
+import { commandId } from '../src/core/ids.ts';
 // M4a step C1: `roadmap phase0 check` and the shared Phase-0 rows (src/phase0/rows.ts) over real repos, real pins
 // (`roadmap corpus pin`) and real snapshot refs for the chain (src/chain.ts).
 // The classifier's and the apply's and start's sides are test/phase0-apply.test.ts. M4a rev 3 (N5):
@@ -262,7 +263,7 @@ describe('the chain (src/chain.ts)', () => {
     const a1 = await corpusArc();
     const h1 = await seal(a1, {
       before: (j) => j.fact({
-        kind: 'corpus-amendment', id: amendmentIdOf(1), source: { type: 'divergence', divergence: divergenceIdOf(1) }, rules: [ruleId('T-2')],
+        kind: 'corpus-amendment', id: amendmentIdOf(1), source: {type: 'root', command: commandId('cmd-0000000000000001')}, rules: [ruleId('T-2')],
         proposal: 'Name the tide window in every booking.', why: 'D-1', evidence: [],
       }),
     });

@@ -16,7 +16,7 @@
 //
 // Outcomes (all `advance`, transitions.ts): `conflicted` when the merge-in conflicted (MERGE_HEAD = T is kept,
 // A6: a resolve round in a fresh session, since no session inherits), else the plan's `enterAt`:
-// `clean-plan-check` (also when absent: approvals do not inherit, so the spec is checked again),
+// `clean-pre-build` (also when absent: approvals do not inherit, so the spec is checked again),
 // `clean-build` (a fresh round) or `clean-verify` (lanes at the prepared head).
 //
 // Cause `known-defect` (F4): steps 3 and 4 only, in the unit's own worktree (it built), scoped to the prepare attempts
@@ -55,8 +55,8 @@ export type PrepareDone = StageDone<'prepare'> & Readonly<{
   evidence: OpId;
 }>;
 
-const CLEAN: Readonly<Record<ReentryPoint, 'clean-plan-check' | 'clean-build' | 'clean-verify'>> = {
-  'plan-check': 'clean-plan-check',
+const CLEAN: Readonly<Record<ReentryPoint, 'clean-pre-build' | 'clean-build' | 'clean-verify'>> = {
+  'pre-build': 'clean-pre-build',
   build: 'clean-build',
   verify: 'clean-verify',
 };
@@ -124,7 +124,7 @@ export async function prepare(ctx: StageContext, unit: PlanUnit): Promise<Prepar
       source: worktree, ...dirtySnapshot(worktree), dest: absPath(join(evidenceRoot(ctx.runDir, parent), 'prepared')),
     });
 
-  const kind = conflicted ? 'conflicted' : CLEAN[unit.reenters.enterAt ?? 'plan-check'];
+  const kind = conflicted ? 'conflicted' : CLEAN[unit.reenters.enterAt ?? 'pre-build'];
   return { ...record(ctx, parent, kind), worktree, branch, head: revParse(worktree, 'HEAD'), evidence: snapped.op };
 }
 

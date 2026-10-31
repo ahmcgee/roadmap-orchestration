@@ -54,7 +54,7 @@ export const PROMPT: PromptModule<'build'> = {
 <notes>${bullets(i.notes, '(none)')}</notes>${systemNotesText(i.systemNotes)}${milestonesText(i.milestones)}
 <build_lanes>${fastLanesText(i.worktree, i.fastLanes)}</build_lanes>${suiteLanesText(i.worktree, i.suiteLanes)}${witnessChecksText(i.witnessChecks)}${buildBrowserText(i.browser)}
 ${i.handover === null ? '' : `<handover>${handoverText(i.handover)}</handover>`}
-${i.fixRound === null ? '' : `<fix_round>Evidence:\n${bullets(i.fixRound.failingEvidenceDirs, '(none)')}\nFindings and directives:\n${bullets(i.fixRound.directives, '(none)')}</fix_round>`}
+${i.fixRound === null ? '' : `<fix_round>\n<failing_lane_evidence>${bullets(i.fixRound.failingEvidenceDirs, '(none)')}</failing_lane_evidence>\n<findings_and_evidence>${bullets(i.fixRound.directives, '(none)')}</findings_and_evidence>\n<base_comparison>${JSON.stringify(i.fixRound.baseComparison ?? null)}</base_comparison>\n<notes>${bullets(i.notes, '(none)')}</notes>\n<cap_and_allowance>${JSON.stringify(i.fixRound.capState ?? null)}</cap_and_allowance>\n</fix_round>`}
 ${methodModules('build', i.method)}
 Implement unit ${i.spec.unit}, run targeted checks, and return the report.`,
 };

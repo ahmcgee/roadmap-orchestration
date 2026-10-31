@@ -71,7 +71,7 @@ export interface JournalView {
   sessionCharge(session: ClaudeSessionId): SessionCharge | null;
   /**
    * A unit's state as the fold derives it from its stage-outcome facts, stage-parented intents and dispatch
-   * facts; a unit the log has not named yet is fresh at plan-check. The only source of a unit's counters.
+   * facts; a unit the log has not named yet is fresh at pre-build. The only source of a unit's counters.
    */
   unit(unit: UnitId): UnitState;
   /** The unit's latest `dispatch` fact (its routing, spec and risk floor), or null before one. */

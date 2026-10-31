@@ -10,7 +10,7 @@ import { applyPlanEdit } from './fixtures/checkpoint-common.ts';
 // nothing), deflake.reflake (a flake after the deflake merged mints a second, told of the first; one after the second raises
 // `flake-recurring` and mints nothing), deflake.park (a parked deflake drops its edges and raises `deflake-parked`),
 // deflake.verification-budget (runs × the lane's measured median against the verification budget),
-// deflake.verification-budget-repair (an approve over it repaired through the plan-check's repair turn), deflake.verify-runs (a
+// deflake.verification-budget-repair (an approve over it repaired through the pre-build's repair turn), deflake.verify-runs (a
 // deflake unit's verification runs its lane that many times, every run passing), deflake.stochastic (a k-of-n lane never
 // flakes), and the deflake revision's crash cells (deflake.crash.<label>).
 import assert from 'node:assert/strict';
@@ -48,7 +48,7 @@ import { DEFLAKE_REVISION, crashCells } from './matrix.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS * 4 };
 
-const PRE_LANES = ['plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released'];
+const PRE_LANES = ['pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released'];
 const STRAIGHT = [...PRE_LANES, 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'];
 
 /** Each step keyed to `unit`. */
@@ -65,7 +65,7 @@ const DEFLAKE_DESIGN: JsonValue = {
   verification: { type: 'reproduce-then-fix', condition: 'the marker absent: the lane red', runs: 2 },
 };
 /**
- * A unit straight through: approved plan-check (a deflake unit's with its verification), a build committing `files` (a
+ * A unit straight through: approved pre-build (a deflake unit's with its verification), a build committing `files` (a
  * planned unit's beside mul and `flaky/<unit>.txt`, so its candidate runs the flaky lane), an approving gate.
  */
 const straight = (unit: string, files: Readonly<Record<string, string>>): readonly Step[] => unit.startsWith('deflake-')
@@ -76,7 +76,7 @@ const facts = (r: ArcRun): readonly Fact[] => readJournal(r.ctx.runDir, r.journa
 const planOf = (r: ArcRun): PlanM1 => requirePlanInForce(r.ctx.runDir, r.journal.view).plan;
 
 /** The admission the scheduler would give unit `id`'s `stage` now: the real admitter over the plan in force. */
-function admission(r: ArcRun, id: string, stage: 'plan-check' | 'build'): Admission {
+function admission(r: ArcRun, id: string, stage: 'pre-build' | 'build'): Admission {
   const { w } = deflakeContext(r);
   return admitter((u) => r.ctx.routing(u).table, specFacts(w.stage))({
     view: r.journal.view, plan: planOf(r), unit: unitInForce(r, id), stage, blocking: [], drains: [], tripped: [], pressure: { ticks: [], nowMs: 0 },
@@ -84,7 +84,7 @@ function admission(r: ArcRun, id: string, stage: 'plan-check' | 'build'): Admiss
 }
 
 /** A unit driver gate asking the real admitter at every admission boundary; chains always run. */
-const admitted = (r: ArcRun, id: string): Gate => (next) => Promise.resolve(next.kind === 'chain' || admission(r, id, next.stage as 'plan-check').kind === 'admit');
+const admitted = (r: ArcRun, id: string): Gate => (next) => Promise.resolve(next.kind === 'chain' || admission(r, id, next.stage as 'pre-build').kind === 'admit');
 
 /** Runs unit `id` of the plan in force through the driver, over the run's wiring (its arbiter woken meanwhile). */
 async function run(r: ArcRun, id: string, gate: Gate = admitted(r, id)) {
@@ -139,8 +139,8 @@ describe('the flaky ledger', () => {
       assert.equal(first.length, 1);
       assert.deepEqual([first[0]!.owner, first[0]!.lane, first[0]!.set, first[0]!.on, first[0]!.forgiven, first[0]!.event.failing], [{ type: 'unit', unit: 'u1' }, 'flaky', 'suite', 'tip', true, []]);
 
-      // u4 starts (dispatched at plan-check) before the deflake exists: in flight.
-      await stepUntil(r, 'u4', (f) => f.stage === 'plan-check');
+      // u4 starts (dispatched at pre-build) before the deflake exists: in flight.
+      await stepUntil(r, 'u4', (f) => f.stage === 'pre-build');
 
       // The ledger mints one deflake unit for the lane key.
       assert.equal(pending(r), true);
@@ -164,9 +164,9 @@ describe('the flaky ledger', () => {
       // Prioritised: it ranks with the repair units, before every planned waiter.
       assert.ok(compareRank(rankOf(r.journal.view, plan, deflake.id), rankOf(r.journal.view, plan, unitInForce(r, 'u2').id)) < 0);
       // Code edges: u2 (not started, runs flaky) waits; u3 (mul only) does not; the deflake and the unit in flight do not.
-      assert.deepEqual(admission(r, 'u2', 'plan-check'), HELD_BY_DEFLAKE_1);
-      assert.deepEqual(admission(r, 'u3', 'plan-check'), { kind: 'admit' });
-      assert.deepEqual(admission(r, 'deflake-1', 'plan-check'), { kind: 'admit' });
+      assert.deepEqual(admission(r, 'u2', 'pre-build'), HELD_BY_DEFLAKE_1);
+      assert.deepEqual(admission(r, 'u3', 'pre-build'), { kind: 'admit' });
+      assert.deepEqual(admission(r, 'deflake-1', 'pre-build'), { kind: 'admit' });
       assert.deepEqual(admission(r, 'u4', 'build'), { kind: 'admit' });
       assert.deepEqual(await run(r, 'u2'), { kind: 'held', needsUser: null });
       assert.deepEqual(outcomes(d, 'u2'), [], 'held before anything ran');
@@ -181,7 +181,7 @@ describe('the flaky ledger', () => {
       assert.deepEqual(await run(r, 'deflake-1'), { kind: 'merged' });
       assert.deepEqual(outcomes(d, 'deflake-1'), STRAIGHT);
       assert.equal(deflakeState(r.journal.view, deflake.id), 'merged');
-      assert.deepEqual(admission(r, 'u2', 'plan-check'), { kind: 'admit' });
+      assert.deepEqual(admission(r, 'u2', 'pre-build'), { kind: 'admit' });
       assert.deepEqual(await run(r, 'u2'), { kind: 'merged' });
       assert.equal(pending(r), false, 'no flake since the deflake merged');
       raiseDeflakeParked(w.stage);
@@ -262,12 +262,12 @@ describe('the flaky ledger', () => {
     try {
       assert.deepEqual(await run(r, 'u1'), { kind: 'merged' });
       assert.deepEqual(await mint(r), { kind: 'applied', admitted: ['deflake-1'], recurring: 0 });
-      assert.deepEqual(admission(r, 'u2', 'plan-check'), HELD_BY_DEFLAKE_1);
+      assert.deepEqual(admission(r, 'u2', 'pre-build'), HELD_BY_DEFLAKE_1);
       const parked = await run(r, 'deflake-1');
       assert.equal(parked.kind, 'parked');
       assert.equal(deflakeState(r.journal.view, unitInForce(r, 'deflake-1').id), 'parked');
       // The edge dropped.
-      assert.deepEqual(admission(r, 'u2', 'plan-check'), { kind: 'admit' });
+      assert.deepEqual(admission(r, 'u2', 'pre-build'), { kind: 'admit' });
       const { w } = deflakeContext(r);
       raiseDeflakeParked(w.stage);
       raiseDeflakeParked(w.stage);
@@ -326,7 +326,7 @@ describe('the flaky ledger', () => {
   });
 });
 
-describe('the verification budget through the plan-check', () => {
+describe('the verification budget through the pre-build', () => {
   test('deflake.verification-budget-repair: a deflake unit\'s approve over the budget is refused through the repair turn naming the cost; the repaired runs verify the lane', T, async () => {
  const marker=freshMarker();const d=flakyArc(marker,['u1'],[],straight('u1',{}));const r=contextFor(d);
  try {

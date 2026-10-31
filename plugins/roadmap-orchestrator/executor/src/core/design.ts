@@ -1,4 +1,4 @@
-// The design record (dev.17, design pass; SCHEMAS.md "dev.17 records"): what a unit's plan-check settles about the change
+// The design record (dev.17, design pass; SCHEMAS.md "dev.17 records"): what a unit's pre-build settles about the change
 // before it is built, carried on the spec (`SpecM1.design`). Code binds it only as far as code can check (DESIGN-1.0.md):
 // its declared systems against the repository map, its interfaces against the risk trigger, its failure modes against the test items,
 // its breaks against the builder's departures, its clauses against the lanes that can run in the arc. This module is the record and its reader; the checks live with the stages.
@@ -20,7 +20,7 @@ export type UnitKind = (typeof UNIT_KINDS)[number];
 export type DesignChange = Readonly<{
   system: SystemName | null;
   paths: readonly RepoPattern[];
-  /** The changed lines the plan-check estimates here; the record's size estimate is their sum (`designSize`). */
+  /** The changed lines the pre-build estimates here; the record's size estimate is their sum (`designSize`). */
   lines: number;
 }>;
 
@@ -51,7 +51,7 @@ export type DesignInterface = ContractPin | FilePin;
 /** What the change breaks that the unit must update: existing tests and docs, each at its blob when the record was written. */
 export type DesignBreaks = Readonly<{ tests: readonly FilePin[]; docs: readonly FilePin[] }>;
 
-/** An experiment the plan-check ran in its checkout, as run, and what it printed. */
+/** An experiment the pre-build ran in its checkout, as run, and what it printed. */
 export type DesignExperiment = Readonly<{ command: string; output: string }>;
 
 /** A system the unit creates (a `scaffold` decision writes it first): its name, paths and test-file glob. */

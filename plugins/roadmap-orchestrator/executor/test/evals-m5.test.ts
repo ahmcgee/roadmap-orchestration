@@ -225,7 +225,7 @@ describe('the criteria over the log (evals/m5/check.ts)', () => {
     // checkpoint folded into a spec is credited when the plant is gone at the walk (run 5's F-1).
     const other = goodLog({ findings: [{ ...f!, claim: 'J-2: a pasted link searched on a 320 px screen makes the no-match page scroll sideways', cause: 'the heading does not wrap' }] });
     assert.equal((await plantCaughtVerdict(SHAPE, other, wide)).pass, false);
-    const folded = await plantCaughtVerdict(SHAPE, goodLog({ findings: [{ ...f!, lens: 'vision', transitions: [{ seq: 61, to: { state: 'ruled', disposition: 'accepted', by: { type: 'checkpoint', job: jobId('ckpt', 1) } } }] }] }), async () => measured(320));
+    const folded = await plantCaughtVerdict(SHAPE, goodLog({ findings: [{ ...f!, lens: 'vision', transitions: [{ seq: 61, to: { state: 'ruled', disposition: 'accepted', by: { type: 'code', reason: 'close-out' } } }] }] }), async () => measured(320));
     assert.ok(folded.pass, folded.detail);
     assert.match(folded.detail, /prevented upstream: .*named by F-1 \(vision, ruled\)/);
     const unknown = await plantCaughtVerdict(SHAPE, unnamed, async () => ({ kind: 'unknown', detail: 'the server did not come up' }));

@@ -112,7 +112,7 @@ export type ClaudeOnlyAct =
   | Readonly<{ type: 'advised'; value: JsonValue }> | Readonly<{ type: 'globAboveAddDir' }> | Readonly<{ type: 'real'; readOnly?: Readonly<{ repo: string; runDir: string }> }>
   | Readonly<{ type: 'stream'; events: readonly JsonValue[] }>
   /**
-   * dev.17 (design pass): `emit` a plan-check answer. An approve or scaffold without a `design` key carries
+   * dev.17 (design pass): `emit` a pre-build answer. An approve or scaffold without a `design` key carries
    * `defaultDesign(<the first pattern of the call's scope envelope>, <the spec's active acceptance clauses>, <the first spec
    * lane of cadence build or unit in <test_lanes>, else the first lane there not batch and not unavailable>)`: a module change
    * of that pattern, no failure modes, every clause exercised by that lane, so a test about something else needs no design
@@ -121,7 +121,7 @@ export type ClaudeOnlyAct =
   | Readonly<{ type: 'planCheck'; value: JsonValue }>;
 
 /**
- * The design record a plan-check answer without one carries (`planCheck` act): one small module change of `pattern`, each
+ * The design record a pre-build answer without one carries (`planCheck` act): one small module change of `pattern`, each
  * clause of `clauses` exercised by `lane` (item 10).
  */
 export const defaultDesign = (pattern: string, clauses: readonly string[] = [], lane: string | null = null): JsonValue => ({

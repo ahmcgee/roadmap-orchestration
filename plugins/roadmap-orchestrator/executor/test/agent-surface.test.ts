@@ -19,7 +19,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { unitId } from '../src/core/ids.ts';
 import { standingRules } from '../src/pipeline/gate.ts';
-import { planCheck, build, loadUnitSpec } from '../src/pipeline/stages.ts';
+import { preBuild, build, loadUnitSpec } from '../src/pipeline/stages.ts';
 import { runUnit } from '../src/pipeline/unit.ts';
 import { methodModules } from '../src/prompts/method/index.ts';
 import { validateBuildOutput, validateGateOutput, validateCampaignAuditOutput } from '../src/prompts/schemas.ts';
@@ -77,7 +77,7 @@ test('surface.M1: review annotates even on revise, reaches the build and becomes
   const d = setupArc({systemsMap: {systems: {app: {paths: ['src/**', 'test/**', 'contracts/**', 'ARCHITECTURE.md'], traits: ['persistent']}}}, steps: [gateStep({decision: 'revise', directives: ['Check restart'], findings: [{evidence: ["src/mul.js:1:1"], severity: 'blocking', path: 'src/mul.js:1', text: 'Show restart evidence', contractRef: null, experiments: [], debt: null, defect: null, reraises: null, hunk: null}]})]});
   const r = contextFor(d);
   try {
-    const checked = await planCheck(r.ctx, r.unit('u1'));
+    const checked = await preBuild(r.ctx, r.unit('u1'));
     assert.equal('kind' in checked ? checked.kind : checked.outcome.kind, 'approve');
     const items = reviewItems(r.journal.view, unitId('u1'));
     assert.equal(items.length, 1);
@@ -135,7 +135,7 @@ test('surface.specWrong: builder grounding becomes a blocking root item; tooBig 
     const d = setupArc({steps: [{as: 'codex', expect: {}, acts: [{type: 'commit', message: 'grounded build', files: MUL}, {type: 'emit', value: report}]}]});
     const r = contextFor(d);
     try {
-      await planCheck(r.ctx, r.unit('u1'));
+      await preBuild(r.ctx, r.unit('u1'));
       const out = await build(r.ctx, r.unit('u1'), {kind: 'fresh'});
       if ('kind' in out) throw new Error('unexpected cancellation');
       assert.equal(out.outcome.kind, wrong ? 'spec-wrong' : 'success');
@@ -156,7 +156,7 @@ test('surface.M2: a delivered candidate witness triggers review and Claude; revi
   try {
     assert.equal(proofNotLocal(r.ctx, r.unit('u1')), true);
     assert.equal(buildTriple(r.ctx, unitId('u1'), 'med').backend, 'claude');
-    await planCheck(r.ctx, r.unit('u1'));
+    await preBuild(r.ctx, r.unit('u1'));
     assert.ok(r.journal.view.surfaceFacts().some((f) => f.kind === 'review-triggered' && f.marker === 'M2'));
     assert.equal(r.journal.view.dispatchOf(unitId('u1'))!.routingRev, claudeBuilderRouting(r.ctx.routing(unitId('u1'))).rev);
     assert.notEqual(r.journal.view.dispatchOf(unitId('u1'))!.routingRev, r.ctx.routing(unitId('u1')).rev, 'the fallback records its actual routing table');
@@ -172,14 +172,14 @@ test('surface.review-repair: one refused annotation resumes its recorded session
   const d = setupArc({steps: [{...first, acts: [{type: 'malformed'}]}, planCheckRepairStep({decision: 'approve'}, ['the answer does not match its schema'])]});
   const r = contextFor(d);
   try {
-    const out = await planCheck(r.ctx, r.unit('u1'));
+    const out = await preBuild(r.ctx, r.unit('u1'));
     assert.equal('kind' in out ? out.kind : out.outcome.kind, 'approve');
     const calls = readCalls(d.scenarioPath);
     assert.equal(calls.length, 2);
     const flag = (n: number, name: string) => calls[n]!.argv[calls[n]!.argv.indexOf(name) + 1];
     assert.equal(flag(1, '--resume'), flag(0, '--session-id'));
     assert.equal(r.journal.view.surfaceFacts().filter((f) => f.kind === 'review-completed').length, 1);
-    await planCheck(r.ctx, r.unit('u1'));
+    await preBuild(r.ctx, r.unit('u1'));
     assert.equal(readCalls(d.scenarioPath).length, 2, 'no repeated review of unchanged inputs');
   } finally {r.journal.close();}
 });
@@ -190,7 +190,7 @@ test('surface.M3: an apply meaning change reviews a cited obligation even when s
   const w = wire(r);
   const tick = setInterval(() => w.arbiter.wake(), 50);
   try {
-    await planCheck(r.ctx, r.unit('u1'));
+    await preBuild(r.ctx, r.unit('u1'));
     assert.equal(readCalls(a.d.scenarioPath).length, 0);
     syncInputs(r);
     const path = join(a.d.planPath, '..', 'obligations.json');
@@ -203,10 +203,10 @@ test('surface.M3: an apply meaning change reviews a cited obligation even when s
     assert.equal(applied.kind, 'applied', JSON.stringify(applied));
     assert.ok(markers(r.ctx, r.unit('u1'), loadUnitSpec(r.ctx, r.unit('u1')).spec).some((m) => m.marker === 'M3'));
     appendSteps(a.d, [gateStep({decision: 'approve'})]);
-    await planCheck(r.ctx, r.unit('u1'));
+    await preBuild(r.ctx, r.unit('u1'));
     assert.equal(readCalls(a.d.scenarioPath).length, 1);
     assert.equal(r.journal.view.surfaceFacts().filter((f) => f.kind === 'review-triggered' && f.marker === 'M3').length, 1);
-    await planCheck(r.ctx, r.unit('u1'));
+    await preBuild(r.ctx, r.unit('u1'));
     assert.equal(readCalls(a.d.scenarioPath).length, 1, 'the meaning change is consumed once');
   } finally {clearInterval(tick); r.journal.close();}
 });
@@ -261,7 +261,7 @@ test('surface.review-usage-limit: annotation never parks the unit and still park
   const d = setupArc({steps: [{...first, acts: [{type: 'usageLimit'}]}]});
   const r = contextFor(d);
   try {
-    const out = await planCheck(r.ctx, r.unit('u1'));
+    const out = await preBuild(r.ctx, r.unit('u1'));
     assert.equal('kind' in out ? out.kind : out.outcome.kind, 'approve');
     assert.equal(r.journal.view.unit(unitId('u1')).status, 'active');
     assert.deepEqual(r.journal.view.parkedBackends(), ['claude']);

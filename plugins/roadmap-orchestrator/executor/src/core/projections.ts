@@ -16,7 +16,6 @@ export const gateDiffShownOf = (s: JudgmentInputs): DiffShown => s.diffShown!;
 export const gateLargeDiffOf = (s: JudgmentInputs): GateLargeDiff | null => s.largeDiff ?? null;
 export const gateReviewOf = (s: JudgmentInputs): GateReview | null => s.review ?? null;
 export const approvalBlobsOf = (s: Readonly<{unit?: string; blobs: ApprovalBlobs | null}>): ApprovalBlobs | null => s.blobs;
-export const checkpointSkipTriggerOf = (s: Readonly<{trigger?: CheckpointTrigger}>): CheckpointTrigger => s.trigger!;
 export const spawnCpuKeyOf = (s: Readonly<{cpuKey?: Sha256Hex}>): Sha256Hex | null => s.cpuKey ?? null;
 export const reservationCpuBasisOf = (s: Readonly<{cpuBasis?: CpuBasis}>): CpuBasis | null => s.cpuBasis ?? null;
 export const reservationTokenWaitOf = (s: Readonly<{tokenWaitMs?: number}>): number | null => s.tokenWaitMs ?? null;

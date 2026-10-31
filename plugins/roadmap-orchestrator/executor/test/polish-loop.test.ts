@@ -27,7 +27,6 @@ import { milestoneProgress } from '../src/walk/milestones.ts';
 import { applyPolish } from '../src/walk/polish.ts';
 import { runWalk } from '../src/walk/walk.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
-import { checkpointPending } from '../src/holistic/checkpoint.ts';
 import { runFixture } from './helpers/proc.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 import { type Step, readCalls } from './helpers/scenario.ts';
@@ -139,7 +138,6 @@ describe('fix units and the polish loop (dev.13 agent D)', () => {
       const w1 = await runWalk(ctx).finally(() => clearInterval(tick));
       assert.deepEqual(w1, { kind: 'ended', job: 'walk-1', outcome: 'reported', passed: true });
       assert.deepEqual(factsOf(r, 'walk-ended').map((f) => [f.proposals, f.dropped]), [[['X-1', 'X-2', 'X-3', 'X-4'], []]]);
-      assert.equal(checkpointPending(polishContext(r).h), false, 'walk-1 opened nothing: its trigger has nothing new, no checkpoint');
       const m = milestonesOf(planOf(r))[0]!;
       const pending = milestoneProgress(r.journal.view, planOf(r), m, repairUnits(ctx));
       assert.ok(pending.kind === 'round-open' && pending.round.pending === 'polish', JSON.stringify(pending));

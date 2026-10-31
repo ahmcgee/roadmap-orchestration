@@ -3,10 +3,10 @@
 // processes, the fake claude answering lens and checkpoint calls by job, the fake gh as the forge). Named tests:
 // bundle.decision-persists-conversions, bundle.opportunity-joins-advances, bundle.opportunity-unwitnessed-converts, bundle.all-converted-no-op,
 // bundle.follow-up-overrun-converts-with-debt, bundle.admit-targets-checked,
-// bundle.recovery-no-reclassify, admits.architecture-doc-arc-unclassified, bundle.evidence-head-superset-accepted,
-// bundle.evidence-equal-results-new-inv, bundle.evidence-outcome-changed-rejected, bundle.evidence-test-removed-rejected,
-// bundle.evidence-malformed-or-empty-rejected, bundle.evidence-selection-loss-rejected,
-// bundle.evidence-env-or-rev-differs-rejected, bundle.ruling-corpus-consistency-stamped, bundle.ruling-id-leading-zero,
+// bundle.recovery-no-reclassify, admits.architecture-doc-arc-unclassified, revision.evidence-head-superset-accepted,
+// revision.evidence-equal-results-new-inv, revision.evidence-outcome-changed-rejected, revision.evidence-test-removed-rejected,
+// revision.evidence-malformed-or-empty-rejected, revision.evidence-selection-loss-rejected,
+// revision.evidence-env-or-rev-differs-rejected, bundle.ruling-corpus-consistency-stamped, bundle.ruling-id-leading-zero,
 // bundle.split-census-out-of-slice-moved, bundle.split-census-other-state-reason, bundle.busy-live-attempt,
 // checkpoint.busy-waits-for-boundary (arc feedback 2026-10-24: the held bundle re-decided with no call),
 // checkpoint.busy-redecide-stale-falls-back, classify.open-attempt-running-vs-abandoned, checkpoint.capture-waits-for-publication and
@@ -25,7 +25,6 @@ import { type EnvId,type InvocationId,type LaneId,type LaneRev,type Sha,type Sha
 import type { JsonValue } from '../src/core/json.ts';
 import { sha256Hex } from '../src/core/json.ts';
 import { evidenceDiffers,integrationHistory } from '../src/holistic/bundle.ts';
-import { runCheckpoint } from '../src/holistic/checkpoint.ts';
 import type { Observation } from '../src/holistic/observe.ts';
 import type { WitnessRecord } from '../src/holistic/types.ts';
 import { requirePlanInForce,revisionInForce } from '../src/input/inforce.ts';
@@ -73,31 +72,6 @@ async function arc(steps: readonly Step[], opts: Readonly<{ before?: (a: CorpusH
   if (opts.audit !== false) await completedAudit(r, ctx);
   return { a, r, ctx, w };
 }
-const run = (x: Arc) => withForge(x.a.forge, () => runCheckpoint(x.ctx));
-const decisions = (r: ArcRun) => factsOfKind(r, 'bundle-decided').map((f) => [f.job, f.outcome.kind === 'rejected' ? `rejected:${f.outcome.reason}` : f.outcome.kind]);
-const callOf = (x: Arc, job: string) => {
-  const c = readCalls(x.a.d.scenarioPath).find((y) => y.unit === job);
-  assert.ok(c !== undefined, `${job} was called`);
-  return c;
-};
-const ckptCalls = (x: Arc) => readCalls(x.a.d.scenarioPath).flatMap((c) => (c.unit?.startsWith('ckpt-') ? [c.unit] : []));
-const planInForce = (r: ArcRun) => requirePlanInForce(r.ctx.runDir, r.journal.view).plan;
-const bundleSources = (r: ArcRun) => factsOfKind(r, 'plan-applied').flatMap((f) => (f.source.type === 'bundle' ? [f.source] : []));
-
-/** An admit of `id` (u1's spec renamed), citing `cites`. */
-const admitCiting = (x: Arc, id: string, cites: readonly string[]): JsonValue => ({ ...(admitOp(x.a.d, id) as Json), cites: [...cites] } as JsonValue);
-/** The same, before the arc is contextualised (a step scripted at setup). */
-const admitStep = (a: CorpusHolisticArc, id: string, cites: readonly string[]): JsonValue => ({ ...(admitOp(a.d, id) as Json), cites: [...cites] } as JsonValue);
-
-describe('admit classes and conversions in a corpus arc (B)', () => {
-});
-
-function requireSpecSha(r: ArcRun, unit: string): string {
-  const sha = r.journal.view.planApplied()!.specs[unit as never];
-  assert.ok(sha !== undefined, `${unit} has a spec in force`);
-  return sha;
-}
-
 // ---------------------------------------------------------------------------------------------------
 // C1: the per-test evidence comparator (pure)
 
@@ -117,48 +91,38 @@ const t = (testId: string, outcome: 'pass' | 'fail' | 'skip', selected = 1) => (
 describe('the evidence base, per test (C1, R58)', () => {
   const cited = observation([t('a', 'pass'), t('b', 'fail')]);
 
-  test('bundle.evidence-head-superset-accepted: the head records every cited test with its outcome, and more', () => {
+  test('revision.evidence-head-superset-accepted: the head records every cited test with its outcome, and more', () => {
     assert.equal(evidenceDiffers(cited, observation([t('a', 'pass'), t('b', 'fail'), t('c', 'pass')], { treeSha: '2'.repeat(40) as Sha, inv: 'arc/2-1' as InvocationId })), null);
   });
 
-  test('bundle.evidence-equal-results-new-inv: equal results under another invocation and tree hold (the records\' hashes differ)', () => {
+  test('revision.evidence-equal-results-new-inv: equal results under another invocation and tree hold (the records\' hashes differ)', () => {
     const head = observation([t('a', 'pass'), t('b', 'fail')], { treeSha: '2'.repeat(40) as Sha, inv: 'arc/9-1' as InvocationId });
     assert.notEqual(head.recordsSha256, cited.recordsSha256);
     assert.equal(evidenceDiffers(cited, head), null);
   });
 
-  test('bundle.evidence-outcome-changed-rejected', () => {
+  test('revision.evidence-outcome-changed-rejected', () => {
     assert.match(evidenceDiffers(cited, observation([t('a', 'fail'), t('b', 'fail')]))!, /test "a" was pass, is fail on the head/);
   });
 
-  test('bundle.evidence-test-removed-rejected', () => {
+  test('revision.evidence-test-removed-rejected', () => {
     assert.match(evidenceDiffers(cited, observation([t('a', 'pass')]))!, /test "b" is not in the head's record/);
   });
 
-  test('bundle.evidence-malformed-or-empty-rejected', () => {
+  test('revision.evidence-malformed-or-empty-rejected', () => {
     assert.equal(evidenceDiffers(observation([], { malformed: true }), cited), 'is malformed');
     assert.equal(evidenceDiffers(cited, observation([], { malformed: true })), 'is malformed on the head');
     assert.equal(evidenceDiffers(observation([]), cited), 'records no test');
   });
 
-  test('bundle.evidence-selection-loss-rejected', () => {
+  test('revision.evidence-selection-loss-rejected', () => {
     assert.match(evidenceDiffers(observation([t('a', 'pass', 3)]), observation([t('a', 'pass', 2)]))!, /selected 3, 2 on the head/);
   });
 
-  test('bundle.evidence-env-or-rev-differs-rejected', () => {
+  test('revision.evidence-env-or-rev-differs-rejected', () => {
     assert.match(evidenceDiffers(cited, observation([t('a', 'pass'), t('b', 'fail')], { envId: 'ffffffffffffffff' as EnvId }))!, /in env eeeeeeeeeeeeeeee, the head's under/);
     assert.match(evidenceDiffers(cited, observation([t('a', 'pass'), t('b', 'fail')], { laneRev: 'bbbbbbbbbbbbbbbb' as LaneRev }))!, /ran under lane rev aaaaaaaaaaaaaaaa/);
   });
-});
-
-// ---------------------------------------------------------------------------------------------------
-// C2–C4: rulings and split census
-
-/** A checkpoint ruling's JSON text `id` (the executor stamps `ruledBy` and `consistency`). */
-const ruling = (id: string): string => JSON.stringify({
-  schema: 'roadmap/ruling-m3', id, statement: `A berth is held until its window closes (${id}).`, kind: 'decision', trigger: 'checkpoint',
-  supersedes: [], condition: null, docRefs: [{ path: 'docs/corpus/0010_Overview.md', anchor: 'Scope', quotedText: 'berth', relation: 'consistent' }], contractRefs: [], contractOps: [], obligations: [], obligationDispositions: [], cites: ['V-1'],
-  evidence: ['audit-1'], appliesTo: { type: 'arc' }, lifetime: 'arc', status: 'active',
 });
 const ruleOp = (id: string): JsonValue => ({ op: 'rule', ruling: id, cites: ['V-1'], evidence: ['audit-1'] });
 
@@ -171,19 +135,14 @@ const census = (r: ArcRun) => revisionInForce(r.ctx.runDir, requirePlanInForce(r
 describe('rulings and split census (C2–C4)', () => {
 });
 
-// ---------------------------------------------------------------------------------------------------
-// C5: busy
-
-const pcBarrier = { type: 'barrier', name: 'pc', timeoutMs: 120_000 } as const;
-const limitsU1: JsonValue = { op: 'limits', unit: 'u1', limits: [{ field: 'chargeable', value: 2 }], cites: ['V-1'], evidence: ['audit-1'] };
-
+const pcBarrier = {type: 'barrier', name: 'pc', timeoutMs: 120_000} as const;
 describe('busy: a bundle touching a unit mid-stage waits for its boundary (C5, R50)', () => {
 
   test('classify.open-attempt-running-vs-abandoned: an attempt an executor restart found open does not refuse an edit (arc feedback 2026-10-15: the startup records it); the revision is pending', T, async () => {
     const pc = planCheckStep({ decision: 'approve' });
     const x = await arc([{ ...pc, acts: [pcBarrier, ...pc.acts] } as Step], { audit: false });
     try {
-      const unit = stepTo(x.ctx, 'u1', (f) => f.stage === 'plan-check');
+      const unit = stepTo(x.ctx, 'u1', (f) => f.stage === 'pre-build');
       await reached(x.a.d.scenarioDir, 'pc', 120_000);
       x.r.journal.fact({ kind: 'executor-started', generation: 99 });
       const spec = join(x.a.planDir, 'u1.json');

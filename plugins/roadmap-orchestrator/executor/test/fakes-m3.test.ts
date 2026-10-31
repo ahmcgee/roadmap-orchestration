@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import type { JsonValue } from '../src/core/json.ts';
-import { validateCheckpointOutput, validateLensOutput } from '../src/prompts/schemas.ts';
+import {  validateLensOutput } from '../src/prompts/schemas.ts';
 import {
   INVALID_OP, VALID_OP, checkpointAnswer, checkpointStep, interpretationOnlyNoop, lensAnswer, lensStep, twoOpBundleSecondInvalid,
 } from './helpers/holistic.ts';
@@ -48,20 +48,6 @@ describe('fakes.lens', () => {
 
 describe('fakes.checkpoint', () => {
   const ops = (answer: JsonValue): readonly unknown[] => (answer as { ops: unknown[] }).ops;
-
-  it('scripts a two-op bundle whose second op is invalid, and an interpretation-only no-op, per job', () => {
-    const bundle = twoOpBundleSecondInvalid();
-    const noop = interpretationOnlyNoop(['V-2'], 'no clause anticipates a second arc', 'proceed as the first');
-    const s = writeScenario(tmpDir('scenario'), [checkpointStep('ckpt-1', bundle), checkpointStep('ckpt-2', noop)]);
-    const second = validateCheckpointOutput(claude(s.binDir, 'ckpt-2', 'checkpoint inputs').out);
-    assert.equal(second.decision, 'no-op');
-    assert.deepEqual(second.ops, []);
-    assert.deepEqual(second.interpretations.map((i) => i.clauses), [['V-2']]);
-    const first = validateCheckpointOutput(claude(s.binDir, 'ckpt-1', 'checkpoint inputs').out);
-    assert.equal(first.decision, 'bundle');
-    assert.deepEqual(first.ops.map((o) => o.op), ['limits', 'cut']);
-    assert.deepEqual(ops(bundle), [VALID_OP, INVALID_OP]);
-  });
 
   it('a checkpoint answer the reader refuses is never built', () => {
     assert.throws(() => checkpointAnswer({ decision: 'no-op', ops: [VALID_OP] }));

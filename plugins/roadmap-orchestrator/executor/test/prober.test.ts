@@ -46,7 +46,7 @@ const signal = (): AbortSignal => new AbortController().signal;
 const someInv = (arc: string) => invocationId(opId(arc as never, 1), 1);
 
 const hold = (unit: typeof U1, parkSeq: number): StageOutcomeFact => ({
-  kind: 'stage-outcome', unit, stage: 'plan-check', attempt: 1, outcome: 'interrupted', class: 'hold', chargeable: false,
+  kind: 'stage-outcome', unit, stage: 'pre-build', attempt: 1, outcome: 'interrupted', class: 'hold', chargeable: false,
   cause: { type: 'backend', backend: 'claude', parkSeq },
 } as StageOutcomeFact);
 
@@ -237,9 +237,9 @@ describe('dispatch: backend park epochs, hold causes, instance env, sessions (G5
     const run = setupUnit({ steps: [claudeOk], profile: 'claude-only' });
     const capacity = { ...run.ctx, hostEnv: { ...run.ctx.hostEnv, PATH: `${capacityBin()}:${run.ctx.hostEnv['PATH'] ?? ''}` } };
     seated(pinDispatch(run.ctx, run.unit, { rev: specRev(1), sha256: sha256('1'.repeat(64)) }));
-    const parent = { type: 'stage', unit: run.unit.id, stage: 'plan-check', attempt: 1 } as const;
+    const parent = { type: 'stage', unit: run.unit.id, stage: 'pre-build', attempt: 1 } as const;
     const called = await callBackend(capacity, {
-      unit: run.unit.id, parent, request: { kind: 'judgment', dispatch: seated(judgmentDispatch(run.ctx, run.unit.id, 'plan-check')), session: freshJudgmentSession(), evidenceDirs: [] },
+      unit: run.unit.id, parent, request: { kind: 'judgment', dispatch: seated(judgmentDispatch(run.ctx, run.unit.id, 'pre-build')), session: freshJudgmentSession(), evidenceDirs: [] },
       system: 'check', prompt: null, rendered: 'check', schema: SMOKE_SCHEMA, cwd: run.repo, deadlineAt: isoTimeOf(new Date(Date.now() + 60_000)),
     });
     const v = verdictOf(capacity, parent, called);
@@ -249,7 +249,7 @@ describe('dispatch: backend park epochs, hold causes, instance env, sessions (G5
     assert.deepEqual(park && [park.backend, park.class], ['claude', 'capacity']);
     assert.deepEqual(v.cause, { type: 'backend', backend: 'claude', parkSeq: park!.seq }, 'the hold names the park epoch');
     assert.equal(v.needsUser, null, 'a capacity park is retryable: nobody is asked');
-    run.journal.fact(outcomeFact(run.journal.view.unit(run.unit.id), { stage: 'plan-check', kind: 'interrupted' }, 1, { cause: v.cause! }));
+    run.journal.fact(outcomeFact(run.journal.view.unit(run.unit.id), { stage: 'pre-build', kind: 'interrupted' }, 1, { cause: v.cause! }));
     assert.equal(run.journal.view.unit(run.unit.id).status, 'held');
 
     const prober = createProber({ ...run.ctx, profile: 'claude-only', sample: () => BUSY });
@@ -264,9 +264,9 @@ describe('dispatch: backend park epochs, hold causes, instance env, sessions (G5
   it('a usage-limit error keeps its blocking item and names the park as the hold\'s cause', T, async () => {
     const run = setupUnit({ steps: [{ as: 'claude', expect: {}, acts: [{ type: 'usageLimit' }] }], profile: 'claude-only' });
     seated(pinDispatch(run.ctx, run.unit, { rev: specRev(1), sha256: sha256('1'.repeat(64)) }));
-    const parent = { type: 'stage', unit: run.unit.id, stage: 'plan-check', attempt: 1 } as const;
+    const parent = { type: 'stage', unit: run.unit.id, stage: 'pre-build', attempt: 1 } as const;
     const called = await callBackend(run.ctx, {
-      unit: run.unit.id, parent, request: { kind: 'judgment', dispatch: seated(judgmentDispatch(run.ctx, run.unit.id, 'plan-check')), session: freshJudgmentSession(), evidenceDirs: [] },
+      unit: run.unit.id, parent, request: { kind: 'judgment', dispatch: seated(judgmentDispatch(run.ctx, run.unit.id, 'pre-build')), session: freshJudgmentSession(), evidenceDirs: [] },
       system: 'check', prompt: null, rendered: 'check', schema: SMOKE_SCHEMA, cwd: run.repo, deadlineAt: isoTimeOf(new Date(Date.now() + 60_000)),
     });
     const v = verdictOf(run.ctx, parent, called);
@@ -281,9 +281,9 @@ describe('dispatch: backend park epochs, hold causes, instance env, sessions (G5
     const events = readFileSync(join(BACKEND_FIXTURES, 'claude-judgment-usage-limit-subagents', 'stdout'), 'utf8').split('\n').filter((l) => l !== '').map((l) => JSON.parse(l) as JsonValue);
     const run = setupUnit({ steps: [{ as: 'claude', expect: {}, acts: [{ type: 'stream', events }] }], profile: 'claude-only' });
     seated(pinDispatch(run.ctx, run.unit, { rev: specRev(1), sha256: sha256('1'.repeat(64)) }));
-    const parent = { type: 'stage', unit: run.unit.id, stage: 'plan-check', attempt: 1 } as const;
+    const parent = { type: 'stage', unit: run.unit.id, stage: 'pre-build', attempt: 1 } as const;
     const called = await callBackend(run.ctx, {
-      unit: run.unit.id, parent, request: { kind: 'judgment', dispatch: seated(judgmentDispatch(run.ctx, run.unit.id, 'plan-check')), session: freshJudgmentSession(), evidenceDirs: [] },
+      unit: run.unit.id, parent, request: { kind: 'judgment', dispatch: seated(judgmentDispatch(run.ctx, run.unit.id, 'pre-build')), session: freshJudgmentSession(), evidenceDirs: [] },
       system: 'check', prompt: null, rendered: 'check', schema: SMOKE_SCHEMA, cwd: run.repo, deadlineAt: isoTimeOf(new Date(Date.now() + 60_000)),
     });
     const v = verdictOf(run.ctx, parent, called);
@@ -291,7 +291,7 @@ describe('dispatch: backend park epochs, hold causes, instance env, sessions (G5
     assert.deepEqual(run.journal.view.backendParks().map((p) => [p.backend, p.class]), [['claude', 'usage-limit']]);
     assert.equal(v.needsUser?.reason, 'usage-limit');
     assert.match(v.needsUser?.recommendation ?? '', /resets 11:40pm \(UTC\)/);
-    // Every judge carries the subagent constraint (W2) at the end of its module's text; plan-check acts (dev.17, the design
+    // Every judge carries the subagent constraint (W2) at the end of its module's text; pre-build acts (dev.17, the design
     // pass), so its text is appended to Claude Code's default prompt.
     const argv = runnerFiles(called.invDir, called.inv).read('launch.json')!.argv;
     assert.equal(argv[argv.indexOf('--append-system-prompt') + 1], `check\n\n${JUDGE_SUBAGENTS}`);

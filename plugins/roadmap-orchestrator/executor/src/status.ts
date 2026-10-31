@@ -147,7 +147,7 @@ sha
 } from './core/ids.ts';
 import type { JournalView } from './core/interfaces.ts';
 import { EVENTS_FILE,type LogSnapshot,readJournal } from './core/log.ts';
-import { checkpointSkipTriggerOf,gateLargeDiffOf } from './core/projections.ts';
+import { gateLargeDiffOf } from './core/projections.ts';
 import { type CommandBody,type ContainmentMode,type KnownDefectMatch,type NeedsUserReason,type Receipt,type RunStart,type Stage,heartbeat,runStart,} from './core/records.ts';
 import type { HolisticFold,Lineage,ResourceEntry,UnitState } from './core/state.ts';
 import { type AbsPath, type IsoTime, absPath, branchRef, isoTimeOf } from './core/values.ts';
@@ -162,7 +162,6 @@ import { findingAttribution,opportunityClauses } from './holistic/admits.ts';
 import { obligationBlockingUnits,unmergedOf } from './holistic/blocking.ts';
 import type { CheckpointContext } from './holistic/bundle.ts';
 import { integrationHistory,recordedAdmits } from './holistic/bundle.ts';
-import { busyWaits,checkpointMilestonesRemaining } from './holistic/checkpoint.ts';
 import { type AppliedBundle,brakesOf } from './holistic/convergence.ts';
 import { coverageBase,coverageOf } from './holistic/coverage.ts';
 import { uncoveredDivergences } from './holistic/divergence.ts';
@@ -434,13 +433,13 @@ export type DivergenceView = Readonly<{
   digest: NeedsUserId | null;
 }>;
 
-export const DECISION_KINDS = ['ruling', 'bundle', 'patch', 'reenter', 'cut', 'steer', 'divergence', 'reverse', 'checkpoint-skipped'] as const;
+export const DECISION_KINDS = ['ruling', 'bundle', 'patch', 'reenter', 'cut', 'steer', 'divergence', 'reverse'] as const;
 export type DecisionKind = (typeof DECISION_KINDS)[number];
-/** Who decided: the architect (a command, or a start's edited files: null), a checkpoint job, plan-check's redirect, or the executor. */
+/** Who decided: the architect (a command, or a start's edited files: null), a checkpoint job, pre-build's redirect, or the executor. */
 export type RuledBy =
   | Readonly<{ type: 'architect'; command: CommandId | null }>
   | Readonly<{ type: 'checkpoint'; job: JobId }>
-  | Readonly<{ type: 'judgment'; role: 'planCheck' }>
+  | Readonly<{ type: 'judgment'; role: 'verifier' }>
   | Readonly<{ type: 'executor' }>
   /** M4b: an accepted flow proposal's revision. */
   | Readonly<{ type: 'flow'; proposal: ProposalId }>;
@@ -491,9 +490,7 @@ export type AuditView = Readonly<{
   generation: number;
   running: JobId | null;
   /** Wall-clock minutes of the journey lanes checkpoint jobs ran (a running one's up to now). */
-  checkpointLaneMinutes: number;
   /** Null without milestones; otherwise retire this many before the next steering checkpoint. */
-  checkpointMilestonesRemaining: number | null;
 }>;
 
 export type CompletionView = Readonly<{
@@ -595,7 +592,6 @@ export type Status = Readonly<{
   /** M4a rev 3 (F4): the plan's known defects in force and the units each holds at prepare now. */
   knownDefects: readonly KnownDefectView[];
   /** M4a rev 3 (C5): the checkpoints a `busy` rejection keeps waiting for a stage boundary. */
-  checkpointWaits: readonly CheckpointWait[];
   /** M4a rev 3 (OR-A1): a corpus arc's classified checkpoint admits; empty in any other arc. */
   admits: readonly AdmitLine[];
   opportunities: readonly OpportunityLine[];
@@ -626,7 +622,6 @@ export type MilestoneView = Readonly<{
 }>;
 
 export type KnownDefectView = Readonly<{ id: KnownDefectId; match: KnownDefectMatch; fixUnit: UnitId; fixMerged: boolean; holds: readonly UnitId[] }>;
-export type CheckpointWait = Readonly<{ job: JobId; waitingFor: readonly BusyAttempt[]; line: string }>;
 export type AdmitLine = Readonly<{
   /** The seq of the bundle revision's commit intent that recorded it. */
   seq: number; job: JobId; index: number; unit: UnitId; class: AdmitClass['type'];
@@ -661,14 +656,14 @@ function seatOf(view: JournalView, unit: UnitId): UnitStatusLine['seat'] {
   if (u.risk === null) return null;
   if ((JUDGMENT_STAGES as readonly string[]).includes(u.stage)) {
     const stage = u.stage as JudgmentStage;
-    if (stage === 'plan-check') return { role: 'planCheck', tier: judgmentSeat(u, stage) };
+    if (stage === 'pre-build') return { role: 'verifier', tier: judgmentSeat(u, stage) };
     // A running gate attempt's captured inputs say whether its diff is over the large-diff threshold (1.0.0-dev.12).
     const inputs = u.open?.stage === 'gate' ? view.judgmentInputs(unit, 'gate', u.open.attempt) : null;
-    return { role: 'gate', tier: largeDiffSeat(judgmentSeat(u, stage), inputs === null ? null : gateLargeDiffOf(inputs)) };
+    return { role: 'verifier', tier: largeDiffSeat(judgmentSeat(u, stage), inputs === null ? null : gateLargeDiffOf(inputs)) };
   }
   // dev.17 (design pass): a PoC builds on the build seat; the scaffold writer sits on its own seat at the unit's risk.
-  if (u.stage === 'build' || u.stage === 'poc') return { role: 'build', tier: u.risk };
-  return u.stage === 'scaffold' ? { role: 'scaffold', tier: u.risk } : null;
+  if (u.stage === 'build') return { role: 'build', tier: u.risk };
+  return null;
 }
 
 /** The terminal receipts' dir (src/commands/queue.ts writes `<id>.<applied|rejected>.json` there). */
@@ -1051,7 +1046,7 @@ function derive(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: LogSna
         },
       };
     }
-    : specFacts({ journal: { view }, runDir, planDir: absPath(dirname(record.planFile)) });
+    : specFacts({ journal: { view }, runDir, planDir: absPath(dirname(record.planFile)), plan: () => plan! });
   const inputs: Inputs | null = plan === null ? null : {
     view, plan, sched, alive: owner.state === 'alive', blocking, routing: routing === null ? null : (u) => routing.of(u).table, spec,
   };
@@ -1330,9 +1325,9 @@ function rulerOf(f: PlanAppliedFact): RuledBy {
     case 'deflake':
     // dev.17: the code-applied propagation revision is the executor's own.
       return { type: 'executor' };
-    // dev.17 (design pass): a split is its plan-check's decision, applied by code.
+    // dev.17 (design pass): a split is its pre-build's decision, applied by code.
     case 'split':
-      return { type: 'judgment', role: 'planCheck' };
+      return { type: 'judgment', role: 'verifier' };
   }
 }
 
@@ -1382,7 +1377,7 @@ export function decisionsAfter(view: JournalView, events: readonly Event[], sinc
       const intent = view.latestIntent(e.op);
       if (intent.kind !== 'spec.patch') throw new Error(`${e.op} is done as spec.patch but its intent is ${intent.kind}`);
       const unit = parentUnit(intent.parent) ?? 'arc';
-      const ruledBy: RuledBy = intent.expect.patch.by.role === 'planCheck' ? { type: 'judgment', role: 'planCheck' } : { type: 'executor' };
+      const ruledBy: RuledBy = intent.expect.patch.by.role === 'verifier' ? { type: 'judgment', role: 'verifier' } : { type: 'executor' };
       out.push({ seq: e.seq, kind: 'patch', id: unit, oneLine: `${unit} spec rev ${intent.post.newRev} (${intent.expect.patch.ops.length} ops)`, ruledBy });
       continue;
     }
@@ -1414,14 +1409,7 @@ export function decisionsAfter(view: JournalView, events: readonly Event[], sinc
       });
     }
     if (f.kind === 'divergence') out.push({ seq: e.seq, kind: 'divergence', id: f.id, oneLine: `${f.type}: ${f.what}`, ruledBy: { type: 'checkpoint', job: f.job } });
-    if (f.kind === 'checkpoint-skipped') {
-      const trigger = checkpointSkipTriggerOf(f);
-      const id = trigger.type === 'milestone' ? trigger.milestones.join(', ') : trigger.type === 'park' ? trigger.unit : trigger.job;
-      out.push({
-        seq: e.seq, kind: 'checkpoint-skipped', id,
-        oneLine: `no checkpoint after ${id}: it found nothing new${f.carried.length === 0 ? '' : ` (${f.carried.join(', ')} already weighed, inactive or owned)`}`, ruledBy: { type: 'executor' },
-      });
-    }
+
   }
   return out;
 }
@@ -1436,24 +1424,6 @@ function convergenceOf(runDir: AbsPath, view: JournalView, plan: PlanM1): Conver
     ? [] : [{ job: commit.expect.source.job, seq: parseOpId(commit.op).seq, ops: [] }]));
   const brakes = brakesOf(view, runDir, plan, applied, new Set(), (u) => u);
   return { k: brakes.k, counter: brakes.count, since: brakes.since, open: brakes.open };
-}
-
-/** Minutes of the journey lanes checkpoint jobs ran: each spawn from its intent to its done (a running one's to now). */
-function checkpointLaneMinutes(events: readonly Event[], now: number): number {
-  const started = new Map<string, number>();
-  let ms = 0;
-  for (const e of events) {
-    if (e.type === 'intent' && e.kind === 'proc.spawn' && e.ordinal === 1) {
-      const s = e.expect.subject;
-      if (s.purpose === 'journey' && s.owner.type === 'job' && parseJobId(s.owner.job).kind === 'ckpt') started.set(e.op, Date.parse(e.at));
-    }
-    if (e.type === 'done' && started.has(e.op)) {
-      ms += Date.parse(e.at) - started.get(e.op)!;
-      started.delete(e.op);
-    }
-  }
-  for (const at of started.values()) ms += now - at;
-  return ms / 60_000;
 }
 
 function auditOf(runDir: AbsPath, view: JournalView, events: readonly Event[], plan: PlanM1, head: Sha, now: number): AuditView {
@@ -1471,14 +1441,12 @@ function auditOf(runDir: AbsPath, view: JournalView, events: readonly Event[], p
     uncovered: coverage.filter((c) => c.outstanding).map((c) => ({ lens: c.lens, from: c.watermark, to: head })),
     generation: generationOf(fold),
     running: latest !== null && latest.ended === null ? latest.started.job : null,
-    checkpointLaneMinutes: checkpointLaneMinutes(events, now),
-    checkpointMilestonesRemaining: checkpointMilestonesRemaining(view, plan),
   };
 }
 
 /** The highest generation any audit or checkpoint recorded; 0 before one. */
 const generationOf = (fold: HolisticFold): number =>
-  Math.max(0, ...fold.audits.map((a) => a.started.generation), ...fold.checkpoints.map((c) => c.inputs.generation));
+  Math.max(0, ...fold.audits.map((a) => a.started.generation));
 
 type CompletionInputs = Readonly<{ d: Derived; hostDir: AbsPath; pending: number }>;
 
@@ -1649,11 +1617,7 @@ function knownDefectViews(view: JournalView, plan: PlanM1, lines: readonly UnitC
   }));
 }
 
-function checkpointWaitsOf(view: JournalView): readonly CheckpointWait[] {
-  return busyWaits(view).map((w) => ({
-    ...w, line: `checkpoint ${w.job} waiting for ${w.waitingFor.map((b) => `${b.unit} ${b.stage}`).join(', ')} boundary`,
-  }));
-}
+
 
 export type AdmitViews = Readonly<{ admits: readonly AdmitLine[]; opportunities: readonly OpportunityLine[]; drift: readonly DriftLine[] }>;
 const NO_ADMITS: AdmitViews = { admits: [], opportunities: [], drift: [] };
@@ -1665,8 +1629,7 @@ function conversionsAll(view: JournalView): readonly (Conversion & Readonly<{ jo
     if (source.type !== 'bundle' || view.doneOf(commit.op) === null) return [];
     return (source.conversions ?? []).map((c) => ({ job: source.job, ...c }));
   });
-  const noOps = view.holistic().checkpoints.flatMap((c) => (c.decided?.kind === 'no-op' ? (c.decided.conversions ?? []).map((x) => ({ job: c.inputs.job, ...x })) : []));
-  return [...applied, ...noOps];
+  return [...applied, ];
 }
 
 /**
@@ -1817,7 +1780,6 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?:
     timings: stageTimings(events),
     answers: unappliedAnswers(commonDirOfRun(runDir)).map((a) => ({ ...a, line: answerLine(a) })),
     knownDefects: plan === null ? [] : knownDefectViews(view, plan, d.units),
-    checkpointWaits: checkpointWaitsOf(view),
     ...admitted,
     demo: plan === null || start === null ? null : demoStatus({ view, plan, repairs }, hostDir),
     flow: start === null || plan === null ? null

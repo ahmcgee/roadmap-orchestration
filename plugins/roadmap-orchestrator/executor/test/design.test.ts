@@ -1,9 +1,9 @@
 
-// The design pass (dev.17; DESIGN-1.0.md "Design pass"): the plan-check's design record and its code-checked binding,
+// The design pass (dev.17; DESIGN-1.0.md "Design pass"): the pre-build's design record and its code-checked binding,
 // integrated and fake-backed over a unit-common arc (real git, real lanes, the fake claude and codex behind PATH shims).
 //
 // design.record-lands: an approve's design record lands on the spec's next revision, its interfaces and broken files pinned
-//   at their blobs at the tip the check read, written by the plan-check's own spec patch; the build reads it in the spec.
+//   at their blobs at the tip the check read, written by the pre-build's own spec patch; the build reads it in the spec.
 // design.unmapped-repair: a failure mode proven by a lane the unit does not have is refused through the repair turn, which
 //   names it; the corrected answer approves.
 // design.reachability-defect: a test item in a lane whose systems the design never selects is a plan defect: the repair turn,
@@ -21,7 +21,7 @@
 // design.unscoped-growth: a design change outside the scope envelope is a verified scope-growth proposal: the hold.
 // design.scaffold-not-in-force: a scaffold decision in an arc of an earlier role set is refused.
 // design.poc: a PoC builds on the unit's builder seat in a throwaway checkout of the tip; its diff is kept as evidence, the
-//   checkout removed and nothing merged; the next plan-check reads its report; past the unit's two a PoC is refused through
+//   checkout removed and nothing merged; the next pre-build reads its report; past the unit's two a PoC is refused through
 //   the repair turn; the build is told the lessons, never the code.
 // design.departure-and-contract: the build changes an existing test the design does not list (a departure recorded among
 //   the spec's decisions, never refused) and a contract it does not declare (the salvage's risk trigger, and the gate told
@@ -52,7 +52,7 @@ const outcomeOf = (d: ArcDescriptor, stage: string): StageOutcomeFact => {
   return f;
 };
 
-/** A design record as the plan-check writes it, `over` its defaults (one small module change of src/**). */
+/** A design record as the pre-build writes it, `over` its defaults (one small module change of src/**). */
 const design = (over: Readonly<Record<string, JsonValue>> = {}): JsonValue => ({
   kind: 'module', changes: [{ system: null, paths: ['src/**'], lines: 40 }], interfaces: [], failureModes: [], clauses: [{ clause: 'A1', lanes: ['mul'] }], breaks: { tests: [], docs: [] }, experiments: [],
   newSystem: null, verification: null, ...over,
@@ -115,7 +115,7 @@ test('design.departure-and-contract: an unlisted test change is a departure reco
   try {
     const held = await runUnit(r.ctx, r.unit('u1'), until('candidate'));
     assert.equal(held.kind, 'held', JSON.stringify(held));
-    assert.deepEqual(outcomes(d), ['plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed-contract-touched', 'teardown:released', 'lanes:green', 'gate:approve']);
+    assert.deepEqual(outcomes(d), ['pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed-contract-touched', 'teardown:released', 'lanes:green', 'gate:approve']);
     const decisions = loadUnitSpec(r.ctx, r.unit('u1')).spec.decisions;
     assert.equal(decisions.length, 1);
     assert.match(decisions[0]!.id, /^departure\.[0-9a-f]{12}$/);
@@ -128,4 +128,81 @@ test('design.departure-and-contract: an unlisted test change is a departure reco
   } finally {
     r.journal.close();
   }
+});
+
+// The root supplies design records now. The same pin, reachability and clause checks remain independently covered.
+import {pinDesign, designFaults, designSelects, clauseFaults, oversize, substantialSystems, mixedConcerns} from '../src/pipeline/design.ts';
+import {integrationTip} from '../src/pipeline/stages.ts';
+import type {DesignAnswer} from '../src/prompts/schemas.ts';
+import {laneId, clauseId, systemName} from '../src/core/ids.ts';
+import {repoPattern} from '../src/core/values.ts';
+import {command, followContext} from './fixtures/route-common.ts';
+import {applyBody} from './fixtures/unit-common.ts';
+
+function pinnedDesign(r: ReturnType<typeof contextFor>, over: Readonly<Record<string, JsonValue>> = {}) {
+  const result = pinDesign(r.ctx, design(over) as unknown as DesignAnswer, integrationTip(r.ctx));
+  assert.equal(result.kind, 'pinned', JSON.stringify(result));
+  if (result.kind !== 'pinned') throw new Error('design refused');
+  return result.record;
+}
+
+test('design.record-lands: a root apply lands a pinned record and the spec preserves interface and broken-file blobs', T, async () => {
+  const d = setupArc({steps: [], systemsMap: SYSTEMS}), r = contextFor(d);
+  try {
+    const record = pinnedDesign(r, {interfaces: [{type: 'contract', path: 'contracts/api.md'}, {type: 'file', path: 'src/add.js'}], breaks: {tests: ['test/add.test.js'], docs: ['ARCHITECTURE.md']}});
+    assert.equal(record.interfaces.length, 2);
+    assert.ok(record.interfaces.every((p) => /^[0-9a-f]{40}$/.test(p.blob)));
+    assert.ok(record.breaks.tests[0]!.blob.length === 40 && record.breaks.docs[0]!.blob.length === 40);
+    editSpec(d, 'u1', (spec) => {spec['rev'] = 2; spec['design'] = record;});
+    const result = await command(r, r.ctx, applyBody(d));
+    assert.equal(result.kind, 'applied', JSON.stringify(result));
+    assert.deepEqual(loadUnitSpec(followContext(r), r.unit('u1')).spec.design, record);
+  } finally {r.journal.close();}
+});
+
+test('design.pin-refusals: missing files, undeclared contracts, systems and requirements are refused together', () => {
+  const d = setupArc({steps: [], systemsMap: SYSTEMS}), r = contextFor(d);
+  try {
+    const result = pinDesign(r.ctx, design({interfaces: [{type: 'contract', path: 'missing.md'}, {type: 'file', path: 'absent.ts'}], changes: [{system: 'unknown', paths: ['src/**'], lines: 1}], failureModes: [{id: 'FM-1', mode: 'unknown requirement', proof: {type: 'untested', reason: 'no rig'}, requirements: ['I-99']}]}) as unknown as DesignAnswer, integrationTip(r.ctx));
+    assert.equal(result.kind, 'refused');
+    if (result.kind !== 'refused') throw new Error('unexpected pin');
+    for (const match of [/no plan contract/, /no file/, /no obligation/, /does not declare/]) assert.ok(result.reasons.some((s) => match.test(s)), result.reasons.join('; '));
+  } finally {r.journal.close();}
+});
+
+test('design.reachability-defect: a proof lane excluded by systems is still a plan defect', () => {
+  const d = twoClauseArc([]), r = contextFor(d);
+  try {
+    const spec = loadUnitSpec(r.ctx, r.unit('u1')).spec;
+    const record = pinnedDesign(r, {changes: [{system: 'core', paths: ['src/**'], lines: 20}], failureModes: [{id: 'FM-1', mode: 'seam', requirements: [], proof: {type: 'test', test: {type: 'test', lane: 'api-suite', testId: 'seam'}}}], clauses: [{clause: 'A1', lanes: ['mul']}, {clause: 'A2', lanes: ['mul']}]});
+    assert.match(designFaults(r.ctx, spec, record).defects.join('; '), /lists systems \(api\).*never select/);
+    assert.equal(designSelects(d.config?.systemsMap ?? null, {systems: [systemName('api')]}, record.changes), false);
+    assert.equal(designSelects(null, {systems: [systemName('api')]}, record.changes), true);
+  } finally {r.journal.close();}
+});
+
+for (const mode of ['unnamed', 'unknown-clause', 'unknown-lane', 'unreachable', 'runnable'] as const) {
+  test(`design.clause-${mode}: acceptance remains tied to runnable named lanes`, () => {
+    const d = twoClauseArc([]), r = contextFor(d);
+    try {
+      const spec = loadUnitSpec(r.ctx, r.unit('u1')).spec, lane = spec.lanes[0]!;
+      const lanes = new Map([[lane.id, lane]]);
+      const record = {clauses: mode === 'unnamed' ? [] : [{clause: clauseId(mode === 'unknown-clause' ? 'A99' : 'A1'), lanes: [laneId(mode === 'unknown-lane' ? 'missing' : 'mul')]}, {clause: clauseId('A2'), lanes: [lane.id]}]};
+      const faults = clauseFaults(spec, record, lanes, () => mode === 'unreachable' ? 'environment unavailable' : null);
+      if (mode === 'runnable') assert.deepEqual(faults, {reasons: [], defects: []});
+      if (mode === 'unnamed') {assert.equal(faults.defects.length, 2); assert.match(faults.defects.join('; '), /static harness witness.*split.*defer/);}
+      if (mode === 'unknown-clause') assert.match(faults.reasons.join('; '), /no active acceptance clause/);
+      if (mode === 'unknown-lane') assert.match(faults.reasons.join('; '), /no spec, suite or arc lane/);
+      if (mode === 'unreachable') assert.match(faults.defects.join('; '), /environment unavailable/);
+    } finally {r.journal.close();}
+  });
+}
+
+test('design.split-sizing: substantial mixed concerns and oversized records remain root split signals', () => {
+  const changes = [{system: systemName('core'), paths: [repoPattern('src/**')], lines: 300}, {system: systemName('api'), paths: [repoPattern('contracts/**')], lines: 300}];
+  assert.deepEqual(substantialSystems(changes), ['api', 'core']);
+  assert.equal(mixedConcerns(changes), true);
+  assert.match(oversize({changes})!, /mixed concerns: split it/);
+  assert.match(oversize({changes: [{...changes[0]!, lines: 100_000}]})!, /over the .*gate reads inline/);
+  assert.equal(oversize({changes: [{...changes[0]!, lines: 10}]}), null);
 });

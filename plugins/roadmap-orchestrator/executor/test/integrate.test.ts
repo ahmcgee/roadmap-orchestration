@@ -105,7 +105,7 @@ test('merge.transient-refusal: salvage refuses a transient path and sends the un
     const result = await runUnit(r.ctx, r.unit('u1'), live());
     assert.deepEqual(result, { kind: 'merged' });
     assert.deepEqual(outcomes(d), [
-      'plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:transient-violation',
+      'pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:transient-violation',
       'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve',
       'candidate:green', 'ff:published', 'snapshot:published',
     ]);

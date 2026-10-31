@@ -236,17 +236,7 @@ function unwitnessedBy(ctx: StageContext, h: PublishedHead): readonly Obligation
 /** The generation of an audit with `triggers` (see the header). */
 function generationOf(ctx: StageContext, revisions: readonly AppliedRevision[], triggers: readonly AuditTrigger[]): number {
   const h = ctx.journal.view.holistic();
-  const byCheckpoint = new Map(h.checkpoints.map((c) => [c.inputs.job, c.inputs.generation]));
-  const fromBundles = triggers.flatMap((t) => {
-    if (t.type !== 'drift') return [];
-    const source = revisions.find((r) => r.payload.rev === t.planRev)?.payload.source;
-    if (source?.type !== 'bundle') return [];
-    const g = byCheckpoint.get(source.job);
-    if (g === undefined) throw new Error(`plan rev ${t.planRev} was applied by ${source.job}, which has no checkpoint inputs`);
-    return [g + 1];
-  });
-  if (fromBundles.length > 0) return Math.max(...fromBundles);
-  return Math.max(0, ...h.audits.map((a) => a.started.generation), ...h.checkpoints.map((c) => c.inputs.generation)) + 1;
+  return Math.max(0, ...h.audits.map((a) => a.started.generation)) + 1;
 }
 
 /** The latest audit whose outcome is `completed`, or null. */

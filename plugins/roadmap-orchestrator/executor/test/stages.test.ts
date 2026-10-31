@@ -1,10 +1,10 @@
-// The unit stages from plan-check through lanes (src/pipeline/stages.ts), integrated and fake-backed: real
+// The unit stages from pre-build through lanes (src/pipeline/stages.ts), integrated and fake-backed: real
 // processes through the runner, real git, the fake codex and claude behind PATH shims. Includes the two
 // deterministic fixtures of this step (redirect then approve; red lane → fix round reading the evidence
-// dir) and the named tests session.plan-check-repair, redirect.no-widen, backend.usage-limit,
+// dir) and the named tests session.pre-build-repair, redirect.no-widen, backend.usage-limit,
 // stages.interrupted-holds, stages.contract-touched-promotes, stages.counters-from-fold, stages.no-model-ids,
 // rounds.fix-without-session-starts-fresh, rounds.resume-without-session-starts-fresh,
-// rounds.crash-lost-inherits-deadline; and the arc-1 feedback behaviour: plan-check.checkouts, plan-check.prior-round, plan-check.cites, library.withdrawn-not-embedded.
+// rounds.crash-lost-inherits-deadline; and the arc-1 feedback behaviour: pre-build.checkouts, pre-build.prior-round, pre-build.cites, library.withdrawn-not-embedded.
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -19,7 +19,7 @@ import { promptFor } from '../src/prompts/index.ts';
 import { contextFor, gateStep, mulBuild, setupArc, stepUntil } from './fixtures/unit-common.ts';
 import { NO_SESSION_NOTE, RESUME_DIRECTIVE } from '../src/prompts/directives.ts';
 import { runnerFiles } from '../src/runner/files.ts';
-import { type BuildDone, type BuildRun, type LanesDone, build, evidence, lanes, planCheck, quiesce, salvage, teardown, judgmentSpawns } from '../src/pipeline/stages.ts';
+import { type BuildDone, type BuildRun, type LanesDone, build, evidence, lanes, preBuild, quiesce, salvage, teardown, judgmentSpawns } from '../src/pipeline/stages.ts';
 import type { Next } from '../src/pipeline/transitions.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
 import { MODEL_IDS } from '../src/routing/types.ts';
@@ -78,7 +78,7 @@ test('stages.red-lane-fix-round: the resumed implementer reads the failing evide
       { type: 'emit', value: BUILD_REPORT },
     ],
   });
-  assert.equal(show((started(await planCheck(run.ctx, run.unit))).next), 'build/fresh@med');
+  assert.equal(show((started(await preBuild(run.ctx, run.unit))).next), 'build/fresh@med');
   const first = await buildToLanes(run, { kind: 'fresh' });
   const red = started(await lanes(run.ctx, run.unit, first.sha as LanesDone['at']));
   assert.equal(red.outcome.kind, 'red');
@@ -137,7 +137,7 @@ test('rounds.fix-without-session-starts-fresh: after a build lost with tree effe
       { type: 'emit', value: BUILD_REPORT },
     ],
   });
-  started(await planCheck(run.ctx, run.unit));
+  started(await preBuild(run.ctx, run.unit));
   const building = build(run.ctx, run.unit, { kind: 'fresh' });
   await reached(run.scenario.dir, 'lost', 60_000);
   // The runner dies mid-call, after the implementer changed the tree: no session was ever reported.
@@ -171,7 +171,7 @@ test('rounds.resume-without-session-starts-fresh: after a malformed fresh build 
       codexBuild([], { argv: ['exec', '-C'], argvLacks: ['resume'], stdinContains: [RESUME_DIRECTIVE, NO_SESSION_NOTE] }),
     ],
   });
-  started(await planCheck(run.ctx, run.unit));
+  started(await preBuild(run.ctx, run.unit));
   const malformed = started(await build(run.ctx, run.unit, { kind: 'fresh' }));
   assert.equal(malformed.outcome.kind, 'malformed');
   assert.equal(show(malformed.next), 'build/resume@med');
@@ -185,7 +185,7 @@ test('rounds.resume-without-session-starts-fresh: after a malformed fresh build 
 
 test('rounds.crash-lost-inherits-deadline: a build a crash left lost without tree effects re-runs as the next attempt under the deadline the lost call had, as the live retry does', T, async () => {
   const run = setupUnit({ steps: [planCheckStep({ decision: 'approve' }), codexBuild([], { argv: ['exec', '-C'] })] });
-  started(await planCheck(run.ctx, run.unit));
+  started(await preBuild(run.ctx, run.unit));
   const dispatch = seated(implementerDispatch(run.ctx, U1));
   const crashed = { type: 'stage', unit: U1, stage: 'build', attempt: run.journal.view.unit(U1).counters.attempts + 1 } as const;
   const deadlineAt = isoTimeOf(new Date(Date.now() + 20 * 60_000));
@@ -219,7 +219,7 @@ test('rounds.gate-revise: the verification checkout is removed first, then the s
       codexBuild([], { argv: ['exec', 'resume', '00000000-0000-4000-8000-000000000001'], stdinContains: [directive] }),
     ],
   });
-  started(await planCheck(run.ctx, run.unit));
+  started(await preBuild(run.ctx, run.unit));
   const first = await buildToLanes(run, { kind: 'fresh' });
   const green = started(await lanes(run.ctx, run.unit, first.sha as LanesDone['at']));
   assert.equal(green.outcome.kind, 'green');
@@ -229,7 +229,7 @@ test('rounds.gate-revise: the verification checkout is removed first, then the s
   const b = started(await build(run.ctx, run.unit, revise));
   assert.equal(b.outcome.kind, 'success');
   assert.ok(!existsSync(green.verification.path), 'the verification checkout is gone');
-  // The plan-check removed its own checkout of the tip; the verification checkout is removed once, here.
+  // The pre-build removed its own checkout of the tip; the verification checkout is removed once, here.
   const removal = events(run.runDir).filter((e) => e.type === 'intent' && e.kind === 'worktree.remove' && e.expect.path === green.verification!.path);
   assert.equal(removal.length, 1);
   const removed = removal[0]!;
@@ -240,7 +240,7 @@ test('rounds.gate-revise: the verification checkout is removed first, then the s
 
 test('stages.salvage-unmerged-parks: an unmerged index parks the unit with the tree preserved and the build\'s resources released', T, async () => {
   const run = setupUnit({ resources: [DB], steps: [planCheckStep({ decision: 'approve' }), codexBuild([])] });
-  started(await planCheck(run.ctx, run.unit));
+  started(await preBuild(run.ctx, run.unit));
   const b = started(await build(run.ctx, run.unit, { kind: 'fresh' }));
   assert.ok(b.run !== null);
   // What an implementer could leave behind: a merge stopped on a conflict.
@@ -277,7 +277,7 @@ function appendStep(run: StageRun, step: Step): void {
 
 test('backend.usage-limit: a usage-limit error parks the backend arc-wide and holds the unit, uncharged', T, async () => {
   const run = setupUnit({ steps: [planCheckStep({ decision: 'approve' }), { as: 'codex', expect: { argv: ['exec', '-C'] }, acts: [{ type: 'usageLimit' }] }] });
-  started(await planCheck(run.ctx, run.unit));
+  started(await preBuild(run.ctx, run.unit));
   const before = run.journal.view.unit(U1).counters;
   const b = started(await build(run.ctx, run.unit, { kind: 'fresh' }));
   assert.equal(b.outcome.kind, 'interrupted');
@@ -303,7 +303,7 @@ test('stages.interrupted-holds: a pause mid-build holds the unit, moves no count
     resources: [DB],
     steps: [planCheckStep({ decision: 'approve' }), { as: 'codex', expect: { argv: ['exec', '-C'] }, acts: [{ type: 'barrier', name: 'mid-build', timeoutMs: 120_000 }] }],
   });
-  started(await planCheck(run.ctx, run.unit));
+  started(await preBuild(run.ctx, run.unit));
   const before = run.journal.view.unit(U1).counters;
   const building = build(run.ctx, run.unit, { kind: 'fresh' });
   await reached(run.scenario.dir, 'mid-build', 60_000);
@@ -333,7 +333,7 @@ test('stages.contract-touched-promotes: a contract path in the round\'s commits 
       codexBuild([{ type: 'commit', message: 'touch the contract', files: { 'contracts/api.md': '# API contract\n\nChanged.\n', 'src/add.js': 'export const add = (a, b) => a + b;\n' } }]),
     ],
   });
-  started(await planCheck(run.ctx, run.unit));
+  started(await preBuild(run.ctx, run.unit));
   const b = started(await build(run.ctx, run.unit, { kind: 'fresh' }));
   assert.ok(b.run !== null);
   quiesce(run.ctx, U1, b.run);
@@ -353,14 +353,14 @@ test('stages.counters-from-fold: attempts and counters are the log\'s, identical
   const malformed = { ...planCheckStep({ decision: 'approve' }), acts: [{ type: 'malformed' }] } as const;
   const repairedMalformed = { ...planCheckRepairStep({ decision: 'approve' }), acts: [{ type: 'malformed' }] } as const;
   const run = setupUnit({ steps: [malformed, repairedMalformed, planCheckStep({ decision: 'approve' }), codexBuild([])] });
-  const a = started(await planCheck(run.ctx, run.unit));
-  const b = started(await planCheck(run.ctx, run.unit));
+  const a = started(await preBuild(run.ctx, run.unit));
+  const b = started(await preBuild(run.ctx, run.unit));
   const c = started(await build(run.ctx, run.unit, { kind: 'fresh' }));
   assert.deepEqual([a.attempt, b.attempt, c.attempt], [1, 2, 3], 'each stage start is the next attempt of the unit');
   const live = run.journal.view.unit(U1);
   assert.equal(live.counters.attempts, 3);
-  assert.equal(live.counters.retries['plan-check'], 0);
-  assert.deepEqual(outcomeFacts(run).map((f) => (f.kind === 'stage-outcome' && 'unit' in f) && `${f.stage}#${f.attempt}`), ['plan-check#1', 'plan-check#2', 'build#3']);
+  assert.equal(live.counters.retries['pre-build'], 0);
+  assert.deepEqual(outcomeFacts(run).map((f) => (f.kind === 'stage-outcome' && 'unit' in f) && `${f.stage}#${f.attempt}`), ['pre-build#1', 'pre-build#2', 'build#3']);
   run.journal.close();
   const reopened = openJournal(run.runDir, run.ctx.plan().arc);
   try {
@@ -381,7 +381,7 @@ test('stages.no-model-ids: events, the derived state, dispatch facts and needs-u
       { as: 'claude', expect: { argv: ['--resume'] }, acts: [{ type: 'usageLimit' }] },
     ],
   });
-  started(await planCheck(run.ctx, run.unit));
+  started(await preBuild(run.ctx, run.unit));
   const first = await buildToLanes(run, { kind: 'fresh' });
   const red = started(await lanes(run.ctx, run.unit, first.sha as LanesDone['at']));
   assert.equal(red.outcome.kind, 'red');
@@ -419,7 +419,7 @@ function setSteps(run: StageRun, steps: readonly Step[]): void {
 }
 
 const planCheckTree = (run: StageRun, attempt: number, branch = false): string =>
-  join(run.ctx.plan().worktreeRoot, run.ctx.plan().arc, `${U1}.plan-check-${attempt}${branch ? '-branch' : ''}`);
+  join(run.ctx.plan().worktreeRoot, run.ctx.plan().arc, `${U1}.pre-build-${attempt}${branch ? '-branch' : ''}`);
 
 test('gate prompt telemetry records every role input and the exact stdin file bytes', T, async () => {
   const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })] });

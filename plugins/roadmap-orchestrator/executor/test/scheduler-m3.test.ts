@@ -19,7 +19,6 @@ import type { CommandBody } from '../src/core/records.ts';
 import { absPath } from '../src/core/values.ts';
 import { renderConstraints } from '../src/docs/constraints.ts';
 import { runAudit } from '../src/holistic/audit.ts';
-import { runCheckpoint } from '../src/holistic/checkpoint.ts';
 import { quiescentGenerations } from '../src/holistic/convergence.ts';
 import { requirePlanInForce,revisionInForce } from '../src/input/inforce.ts';
 import { m3Blocking,raiseNeedsUser,raisedFor,readNeedsUser } from '../src/needsuser.ts';
@@ -75,7 +74,7 @@ async function stopAndClose(r: ArcRun, s: ReturnType<typeof startHolistic>): Pro
   r.journal.close();
 }
 
-/** u1's plan-check and a build that commits nothing: its gate parks it `empty-diff` (a design park). */
+/** u1's pre-build and a build that commits nothing: its gate parks it `empty-diff` (a design park). */
 const emptyBuild = (): readonly Step[] => [{ ...planCheckStep({ decision: 'approve' }), unit: 'u1' }, { ...codexStep([], { argv: ['exec', '-C'] }), unit: 'u1' }];
 
 describe('completion (§2.10, A8, A20, G8)', () => {
@@ -117,30 +116,6 @@ describe('completion (§2.10, A8, A20, G8)', () => {
       r.journal.close();
     }
   });
-
-  /** checkpointArc's u1, its final audit, and two invalid bundles: ckpt-2 raises a non-blocking bundle request. Run in process up to it. */
-  async function requestedArc(): Promise<Readonly<{ r: ArcRun; id: NeedsUserId }>> {
-    const d = checkpointArc([
-      ...unitSteps('u1', moduleFiles('mul', '*')), lensStep('audit-1', 'vision'),
-      checkpointStep('ckpt-1', twoOpBundleSecondInvalid()), checkpointStep('ckpt-2', twoOpBundleSecondInvalid()),
-    ]);
-    const r = contextFor(d);
-    const w = wired(r);
-    const h = contextsOf(r);
-    const tick = setInterval(() => w.arbiter.wake(), 50);
-    try {
-      assert.deepEqual(await runBaseline(h.audit), { kind: 'held' });
-      assert.deepEqual(await runUnit(w.stage, r.unit('u1'), admitAll), { kind: 'merged' });
-      const audited = await runAudit(h.audit);
-      assert.ok(audited.kind === 'ended' && audited.outcome === 'completed', JSON.stringify(audited));
-      for (const _ of [1, 2]) assert.equal((await runCheckpoint(h.checkpoint)).kind, 'decided');
-    } finally {
-      clearInterval(tick);
-    }
-    assert.deepEqual(factsOf(r, 'bundle-decided').map((f) => [f.job, f.outcome.kind]), [['ckpt-1', 'rejected'], ['ckpt-2', 'requested']]);
-    assert.deepEqual(completionBlockers(contextsOf(r), { blocking: 0, pending: 0 }), ['generation-not-quiescent', 'close-out'], 'the unanswered request holds the generation open');
-    return { r, id: itemOf(r, 'bundle-request')! };
-  }
 
   test('complete.reopen-invalidates (A20): an admitting apply after completion invalidates it; the arc runs the new unit and completes again with a new fact', T, async () => {
     const d = completingArc();

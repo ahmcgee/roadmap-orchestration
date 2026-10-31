@@ -293,8 +293,8 @@ function dispositions(c: Ctx, n: ArcNo, previous: ArcState | undefined, baseline
   if (ref === null) throw new Error(`no ref for ${previous.arc}`);
   const amendments = amendmentsOf(ref).map((a) => {
     // Arc 2 applies arc 1's checkpoint amendment as T-24; arc 3 applies arc 2's converted day-view admit as T-25.
-    const fromCheckpoint = n === 2 && a.fact.source.type === 'checkpoint' && a.fact.proposal === CHECKPOINT_AMENDMENT.proposal;
-    const fromAdmit = n === 3 && a.fact.source.type === 'admit';
+    const fromCheckpoint = n === 2 && a.fact.source.type === 'root' && a.fact.proposal === CHECKPOINT_AMENDMENT.proposal;
+    const fromAdmit = n === 3 && a.fact.source.type === 'root';
     if (fromCheckpoint || fromAdmit) return { id: a.id, disposition: { type: 'applied', rules: [fromCheckpoint ? 'T-24' : 'T-25'] } };
     return { id: a.id, disposition: { type: 'deferred', reason: 'the high-water heights wait for the visiting-yacht scene (V-7)' } };
   });

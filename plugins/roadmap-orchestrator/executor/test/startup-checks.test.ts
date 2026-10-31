@@ -572,7 +572,7 @@ describe('startup.plan-in-force', () => {
     addU2(s);
     assert.equal((await start(input(s))).kind, 'passed');
     const j = openJournal(runDirOf(s), arcId(s.arc));
-    j.fact({ kind: 'stage-outcome', unit: 'u1' as never, stage: 'plan-check', attempt: 1, outcome: 'approve', class: 'advance', chargeable: false });
+    j.fact({ kind: 'stage-outcome', unit: 'u1' as never, stage: 'pre-build', attempt: 1, outcome: 'approve', class: 'advance', chargeable: false });
     j.close();
     const moved = tmpDir('st-wt2');
     writeFileSync(s.planFile, JSON.stringify({ ...s.plan, worktreeRoot: moved, units: [{ id: 'u2', spec: 'u2.json', risk: 'low', systems: [systemName('app')], resources: ['db'] }] }));

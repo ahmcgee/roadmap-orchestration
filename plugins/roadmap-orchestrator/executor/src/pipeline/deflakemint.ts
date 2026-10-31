@@ -146,7 +146,7 @@ function deflakeSpec(id: UnitId, g: MintGroup, lane: SpecM1['lanes'][number] | n
     decisions: [{
       id: 'D-1', state: 'active',
       text: 'Two outcomes only. Fix the test or the code under it so that it is deterministic; or, when the lane needs more cpu or resources than it '
-        + 'declares, say so (an infeasible plan-check naming the need), and the owner declares it through an apply. A cause outside the repository is the '
+        + 'declares, say so (an infeasible pre-build naming the need), and the owner declares it through an apply. A cause outside the repository is the '
         + 'environment probe\'s to catch, never a reason to release the flake. Never quarantine, skip or weaken the test.',
     }],
     facts: [

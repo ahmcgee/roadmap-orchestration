@@ -73,7 +73,7 @@ import type { StartupRejection } from '../preflight/startup.ts';
 import { support } from '../prompts/index.ts';
 import { boundAt } from './classes.ts';
 import { BUILTIN_SEATS } from './profiles.ts';
-import { type ArcRole, type ArcRoleSet, type ClassBindings, type ClassSource, type ClassTable, DEV17_ROLES, MODEL_CLASSES, type ModelClass, type ProfileName, type Role, type RoutingLayer, type RoutingLayerName, type RoutingProvenance, type RoutingTable, SEAT_REFS, type SeatRef, type SeatTable, type Triple, type UnitRole, atSeat, classBindings, profileName, routingLayer, seatTable } from './types.ts';
+import { type ArcRole, type ArcRoleSet, type ClassBindings, type ClassSource, type ClassTable,  MODEL_CLASSES, type ModelClass, type ProfileName, type Role, type RoutingLayer, type RoutingLayerName, type RoutingProvenance, type RoutingTable, SEAT_REFS, type SeatRef, type SeatTable, type Triple, type UnitRole, atSeat, classBindings, profileName, routingLayer, seatTable } from './types.ts';
 
 /**
  * One MCP server a walk session gets (dev.13, `walkthrough.mcp.<name>`): the stdio command Claude Code spawns, with
@@ -176,7 +176,7 @@ export type RoutingStack = Readonly<{
  */
 export type ArcScope = 'none' | PlanTargetKind;
 export const ARC_ROLES_IN_FORCE: { readonly [S in ArcScope]: readonly ArcRole[] } = {
-  none: ['flow'], 'architecture-doc': ['lens', 'checkpoint', 'flow'], corpus: ['lens', 'checkpoint', 'packReview', 'flow'],
+  none: ['flow'], 'architecture-doc': ['campaignAudit', 'flow'], corpus: ['campaignAudit', 'packReview', 'flow'],
 };
 
 /**
@@ -312,7 +312,7 @@ export function resolveRoutingUnder(builtin: ClassTable, stack: RoutingStack): R
  */
 export function routingRevOf(table: RoutingTable, arcScope: ArcScope, arcRoles: ArcRoleSet | null, milestones: boolean, head = true): RoutingRev {
   const inForce = unitRolesInForce(arcRoles);
-  const unitRoles: readonly Role[] = head ? inForce : inForce.filter((r) => !(DEV17_ROLES as readonly Role[]).includes(r));
+  const unitRoles: readonly Role[] = inForce;
   const roles: readonly Role[] = [...unitRoles, ...arcRolesInForce(arcScope, arcRoles, milestones)];
   return routingRev(sha256Hex(canonicalJson(Object.fromEntries(roles.map((r) => [r, table[r]])))).slice(0, 16));
 }

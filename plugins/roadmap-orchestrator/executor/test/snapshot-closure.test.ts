@@ -1,5 +1,5 @@
 // The snapshot closure over a real arc (src/git/snapshot.ts; plan "Snapshot = the transitive closure of
-// authoritative records", G6/H6): `roadmap start` runs one unit through plan-check, build, gate, ff and snapshot
+// authoritative records", G6/H6): `roadmap start` runs one unit through pre-build, build, gate, ff and snapshot
 // with fake backends, then the published ref is checked against the log. Named tests: snapshot.closure,
 // snapshot.reconstruct-alone. M4a step C2, over a sealed corpus arc (test/helpers/corpusarc.ts): snapshot.corpus-closure,
 // snapshot.phase0-closure, snapshot.packreview-closure, and snapshot.reconstruct-alone extended to the corpus inputs and a
@@ -37,7 +37,7 @@ after(assertNoSurvivors);
 
 const T = { timeout: EXEC_TIMEOUT_MS };
 
-/** One unit run to complete by the real executor: plan-check and gate are Claude judgments, the build Codex's. */
+/** One unit run to complete by the real executor: pre-build and gate are Claude judgments, the build Codex's. */
 async function completedArc(t: Parameters<typeof setupExec>[0], red: 'spec' | 'suite' | null = null): Promise<ExecRun> {
   const broken = { 'src/mul.js': 'export function mul(a, b) { return a + b; }\n' };
   const r = setupExec(t, {
@@ -105,9 +105,9 @@ test('snapshot.closure: the ref published after the unit holds every record its 
     if (want !== null) assert.equal(listed.get(path), want, `${path} hashes as its naming record states`);
   }
   const judgments = events.filter((e) => e.type === 'fact' && e.fact.kind === 'judgment-inputs');
-  assert.equal(judgments.length, 2, 'plan-check and gate were admitted with judgment inputs');
+  assert.equal(judgments.length, 2, 'pre-build and gate were admitted with judgment inputs');
   const results = [...expected.keys()].filter((p) => p.endsWith('/result.json'));
-  assert.ok(results.length >= 3, `plan-check, build and gate results are carried: ${results.join(', ')}`);
+  assert.ok(results.length >= 3, `pre-build, build and gate results are carried: ${results.join(', ')}`);
   assert.ok([...expected.keys()].some((p) => p.endsWith('/reads.json')), 'a Claude judgment\'s reads.json is carried');
   for (const path of listed.keys()) assert.ok(!/(^|\/)(stdout|stderr)$/.test(path), `${path}: raw output never enters the snapshot`);
 

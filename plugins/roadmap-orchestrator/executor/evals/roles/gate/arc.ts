@@ -134,7 +134,7 @@ function buildCall(risk: RiskTier, config: RepoConfig | null): Pick<Step, 'as' |
 }
 
 /**
- * Lays out the fixture's repo, plan, spec and scenario (plan-check approves; the build commits the unit's tree). `readOnly`:
+ * Lays out the fixture's repo, plan, spec and scenario (pre-build approves; the build commits the unit's tree). `readOnly`:
  * a real gate runs as the read-only comparison arm.
  */
 export function setupGateArc(f: Fixture, kind: GateKind, risk: RiskTier, config: RepoConfig | null = null, readOnly = false): ArcDescriptor {
@@ -162,7 +162,7 @@ export function setupGateArc(f: Fixture, kind: GateKind, risk: RiskTier, config:
   const scenarioDir = tmpDir('roles-scenario');
   const runDir = tmpDir('roles-run');
   const steps: Step[] = [
-    // The plan-check's risk is the dispatch's: it picks the gate's seat.
+    // The pre-build's risk is the dispatch's: it picks the gate's seat.
     // The build's backend is the one its risk routes to (built-in: codex low/med under the default profile, Claude Opus high).
     { ...buildCall(risk, config), acts: [{ type: 'checkoutTree', sha: head, message: f.message }, { type: 'emit', value: BUILD_REPORT }] },
     ...gateSteps(kind, f.key, kind !== 'real' && overThreshold(repo, base, head, f.removes), readOnly ? { repo, runDir } : null),
@@ -343,7 +343,7 @@ export type TrialOptions = Readonly<{
   seed: string;
   size: number;
   gate: GateKind;
-  /** The unit's risk tier (the plan's and the plan-check's), which picks the gate's seat (built-in since dev.17: frontier at every tier). */
+  /** The unit's risk tier (the plan's and the pre-build's), which picks the gate's seat (built-in since dev.17: frontier at every tier). */
   risk: RiskTier;
   /** The repo config whose `routing.classes` rebinds classes for the trial (run.ts `--rebind`), or null: the built-in bindings. */
   config: RepoConfig | null;

@@ -1,3 +1,4 @@
+import { commandId } from '../src/core/ids.ts';
 import { absPath } from '../src/core/values.ts';
 import { inputShaOf } from '../src/git/reusekey.ts';
 import { systemsMapInForce } from '../src/input/systems.ts';
@@ -89,7 +90,7 @@ describe('status M4a', () => {
       } as Fact);
       // An amendment from a divergence and a banked note.
       r.journal.fact({
-        kind: 'corpus-amendment', id: amendmentIdOf(1), source: { type: 'divergence', divergence: divergenceIdOf(1) }, rules: [], proposal: 'Name the tide window.', why: 'D-1', evidence: [],
+        kind: 'corpus-amendment', id: amendmentIdOf(1), source: {type: 'root', command: commandId('cmd-0000000000000001')}, rules: [], proposal: 'Name the tide window.', why: 'D-1', evidence: [],
       } as Fact);
       const what = 'Tidy the berth helpers.';
       r.journal.fact({
@@ -106,7 +107,7 @@ describe('status M4a', () => {
       });
       assert.ok(s.holds.includes('pack-review'));
       assert.equal('issues' in s, false, 'status shows no issues');
-      assert.deepEqual(s.amendments, [{ id: 'M-1', source: { type: 'divergence', divergence: 'D-1' }, rules: [], proposal: 'Name the tide window.', why: 'D-1' }]);
+      assert.deepEqual(s.amendments, [{ id: 'M-1', source: {type: 'root', command: commandId('cmd-0000000000000001')}, rules: [], proposal: 'Name the tide window.', why: 'D-1' }]);
       assert.deepEqual(s.debt, {
         banked: [{ id: 'B-1', bankReason: 'gate-note', what, seq: s.debt?.banked[0]?.seq }],
         ledger: [{ id: 'B-1', state: 'open', originArc: r.d.arc, what }],

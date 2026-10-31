@@ -263,7 +263,7 @@ test('apply.limits-below-spent: a bound below what a unit has spent is refused; 
   try {
     pin(r, 'u1');
     for (const attempt of [1, 2]) {
-      r.journal.fact({ kind: 'stage-outcome', unit: U1, stage: 'plan-check', attempt, outcome: 'refusal', class: 'retry', chargeable: true } as Fact);
+      r.journal.fact({ kind: 'stage-outcome', unit: U1, stage: 'gate', attempt, outcome: 'revise', class: 'revise', chargeable: true } as Fact);
     }
     assert.equal(r.journal.view.unit(U1).counters.chargeableFailures, 2);
     editPlan(d, (p) => void (p['limits'] = { chargeable: 1 }));
@@ -605,14 +605,7 @@ test('startup.obligation-dropped: a published obligation missing or weakened wit
 const CKPT = jobId('ckpt', 1);
 
 /** A checkpoint job's captured inputs (its trigger a park), so a bundle revision and its divergences may follow. */
-function checkpointInputs(r: ArcRun): void {
-  const visionSha256 = r.journal.view.planApplied()?.visionSha256 ?? sha256(HEX64);
-  r.journal.fact({
-    kind: 'checkpoint-inputs', job: CKPT, trigger: { type: 'park', unit: U1, seq: 1 }, generation: 1,
-    vector: { plan: 1, specs: {}, obligationsSha256: null, ledgerSha256: null, visionSha256, contracts: [] },
-    headSha: sha(revParse(r.d.repo, 'main')), visionSha256, findings: [], observations: [],
-  });
-}
+
 
 const divergence = (kind: 'restore-revision' | 'repair-unit'): DivergenceDraft => ({
   job: CKPT, type: 'plan-departed', from: 'plan rev 1', what: 'admitted u2', cites: ['V-1' as never], evidence: ['the park of u1'],
@@ -622,7 +615,7 @@ const divergence = (kind: 'restore-revision' | 'repair-unit'): DivergenceDraft =
 
 /** A bundle revision admitting u2 (the files' plan), with one divergence; the live files keep u2. */
 function bundleAdmitsU2(r: ArcRun, kind: 'restore-revision' | 'repair-unit'): void {
-  checkpointInputs(r);
+
   addUnit(r.d, 'u2');
   const v = evaluateRevision(rctxOf(r), readInputFiles(absPath(r.d.planPath), absPath(r.d.repo)), { type: 'bundle', job: CKPT, cites: ['V-1' as never], evidence: ['the park of u1'], admits: [],  });
   assert.equal(v.kind, 'accepted', JSON.stringify(v));
@@ -639,7 +632,7 @@ for (const label of ['needsuser.raise.before-publish', 'needsuser.raise.after-pu
     const setup = contextFor(d);
     let payload: RevisionPayload;
     try {
-      checkpointInputs(setup);
+
       addUnit(d, 'u2');
       const verdict = evaluateRevision(rctxOf(setup), readInputFiles(absPath(d.planPath), absPath(d.repo)), {
         type: 'bundle', job: CKPT, cites: ['V-1' as never], evidence: ['the park of u1'], admits: [],
@@ -745,7 +738,7 @@ test('reverse.spec-preimage-exact: a checkpoint that revised a spec a machine `s
     const patched = patch.post.newSha256;
 
     // The checkpoint revises u1's spec (rev 3) and records its preimage: u1 at spec rev 2.
-    checkpointInputs(r);
+
     editSpec(d, 'u1', (x) => {
       x['rev'] = 3;
       (x['facts'] as Json[]).push({ id: 'F9', text: 'the checkpoint narrowed mul', state: 'active' });
@@ -778,7 +771,7 @@ test('reverse.obligation-fresh-rev: a checkpoint that amended I-1 (rev 1 → 2) 
   recordFirst(d);
   const r = contextFor(d);
   try {
-    checkpointInputs(r);
+
     const inForce = requirePlanInForce(r.ctx.runDir, r.journal.view);
     const revision = revisionInForce(r.ctx.runDir, inForce);
     const current = inForceFiles(r.ctx.runDir, r.journal.view, inForce, revision, absPath(d.planPath), absPath(d.repo));
@@ -806,43 +799,6 @@ test('reverse.obligation-fresh-rev: a checkpoint that amended I-1 (rev 1 → 2) 
     const i1 = now.obligations.find((o) => o.id === 'I-1')!;
     assert.deepEqual([i1.statement, i1.rev, i1.proofJudgment], ['mul multiplies. mul(0, x) is 0.', 3, { verdict: 'proves', obligationRev: 3,  witness: {  testIds: ['t-I-1'] } }]);
     assert.deepEqual(lastApplied(r).changes, [{ type: 'obligation', id: 'I-1', edit: 'disposed' }], JSON.stringify(lastApplied(r).changes));
-  } finally {
-    r.journal.close();
-  }
-});
-
-test('split.checkpoint-drop-divergence: a checkpoint split may drop text only citing clauses; code records a `split-dropped` divergence with its preimage', T, async () => {
-  const r = holisticArc();
-  try {
-    checkpointInputs(r);
-    const inForce = requirePlanInForce(r.ctx.runDir, r.journal.view);
-    const revision = revisionInForce(r.ctx.runDir, inForce);
-    const current = inForceFiles(r.ctx.runDir, r.journal.view, inForce, revision, absPath(r.d.planPath), absPath(r.d.repo));
-    const split = {
-      ...OBLIGATIONS,
-      obligations: [
-        { ...OBLIGATIONS.obligations[0], state: { type: 'split', children: ['I-4'] }, witness: null, proofJudgment: null },
-        OBLIGATIONS.obligations[1], obligation('I-4', 'mul multiplies.', { parent: 'I-1' }),
-      ],
-    };
-    const proposal = { ...current, obligations: { path: current.obligations!.path, bytes: Buffer.from(JSON.stringify(split)) } };
-    const byArchitect = evaluateRevision(rctxOf(r), proposal, { type: 'apply' });
-    assert.ok(byArchitect.kind === 'rejected' && byArchitect.reasons.some((x) => /I-1's children drop parent text: "mul\(0, x\) is 0\."/.test(x)));
-    const uncited = evaluateRevision(rctxOf(r), proposal, { type: 'bundle', job: CKPT, cites: [], evidence: ['zero is handled by I-2'], admits: [],  });
-    assert.ok(uncited.kind === 'rejected' && uncited.reasons.some((x) => /I-1's split drops parent text without citing a vision clause/.test(x)));
-    const v = evaluateRevision(rctxOf(r), proposal, { type: 'bundle', cites: ['V-2' as never], job: CKPT, evidence: ['zero is handled by I-2'], admits: [],  });
-    assert.equal(v.kind, 'accepted', JSON.stringify(v));
-    if (v.kind !== 'accepted') return;
-    assert.equal(v.draft.divergences.length, 1);
-    const committed = await commitUnderFence(ctxOf(r), v, { type: 'bundle', cites: ['V-2' as never], job: CKPT, evidence: ['zero is handled by I-2'], admits: [],  }, { type: 'bundle', job: CKPT }, { type: 'job', job: CKPT });
-    assert.equal(committed.kind, 'applied', JSON.stringify(committed));
-    const [d1] = r.journal.view.holistic().divergences;
-    assert.ok(d1 !== undefined);
-    assert.deepEqual([d1.id, d1.type, d1.cites, d1.job, d1.compensation.kind], ['D-1', 'split-dropped', ['V-2'], CKPT, 'restore-revision']);
-    assert.match(d1.what, /drops "mul\(0, x\) is 0\."/);
-    assert.deepEqual(d1.preimage, { planRev: 1, specs: {}, obligationsSha256: revision.obligations!.sha256, ledgerSha256: null, contracts: [] });
-    assert.deepEqual(lastApplied(r).source, { type: 'bundle', job: CKPT });
-    assert.deepEqual(r.journal.view.holistic().checkpoints[0]?.decided, { kind: 'applied', planRev: 2 });
   } finally {
     r.journal.close();
   }

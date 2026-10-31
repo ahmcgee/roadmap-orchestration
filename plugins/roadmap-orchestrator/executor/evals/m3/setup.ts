@@ -38,7 +38,7 @@ import { systemName } from '../../src/core/ids.ts';
 //       regression, branch R only)
 //   I-3 must-hold, serves V-3: unknown commands exit 2
 //
-// The regression (lead ruling after paid runs 1 and 2, whose plan-checks read a rounding change in tidy's spec and
+// The regression (lead ruling after paid runs 1 and 2, whose pre-builds read a rounding change in tidy's spec and
 // redirected it): tidy's diff holds no rounding code at all. Its spec is a one-line consistency change in
 // src/cli.js: `format` prints through `formatDisplay`, the helper `total` already prints through, so both commands
 // show amounts alike (`format 1234.5` prints `1,234.50`). formatDisplay rounds with `toFixed` (binary), which

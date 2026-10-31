@@ -33,7 +33,7 @@ import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, type IsoTime, absPath, isoTimeOf } from '../core/values.ts';
 import type { CheckpointContext } from '../holistic/bundle.ts';
 import { integrationHeadNow } from '../holistic/cadence.ts';
-import { interruptedCall } from '../holistic/checkpoint.ts';
+import { interruptedCall } from '../pipeline/dispatch.ts';
 import { removeCheckout, withCpu } from '../holistic/audit.ts';
 import { FLOW_INPUTS_INPUT, inputPath, keepInput, keptInput, requirePlanInForce, revisionInForce } from '../input/inforce.ts';
 import { advancesOf } from '../input/plan.ts';

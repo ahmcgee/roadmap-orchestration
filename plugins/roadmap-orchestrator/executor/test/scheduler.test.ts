@@ -39,7 +39,7 @@ import { type Step,capturedClaudeResult,readCalls } from './helpers/scenario.ts'
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 const WAIT_MS = 60_000;
 const U2 = unitId('u2');
-const STRAIGHT = ['plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'];
+const STRAIGHT = ['pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'];
 const OK = { ok: true } as const;
 
 type Json = Record<string, unknown>;
@@ -158,14 +158,14 @@ test('sched.pause-holds-nothing: a pause ends a unit\'s task at its admission bo
       ...of('u2', [{ ...check, acts: [{ type: 'barrier', name: 'u2check', timeoutMs: 120_000 }, ...check.acts] } as Step]),
     ],
   });
-  // Five @cpu tokens: both plan-checks (1 each), then u1's build (4); u2's build (4) must wait for u1's.
+  // Five @cpu tokens: both pre-builds (1 each), then u1's build (4); u2's build (4) must wait for u1's.
   editPlan(d, (p) => void (p['capacity'] = { cpu: 5 }));
   const r = contextFor(d);
   try {
     const s = startScheduler(r);
     await reached(d.scenarioDir, 'b1', WAIT_MS);
     release(d.scenarioDir, 'u2check');
-    await until(() => r.journal.view.unit(U2).decided?.stage === 'plan-check', 'u2 to pass its plan-check');
+    await until(() => r.journal.view.unit(U2).decided?.stage === 'pre-build', 'u2 to pass its pre-build');
     await sleep(2_000);
     assert.equal(outcomes(d, 'u2').length, 1, 'u2 waits for its build\'s entry reservation');
     assert.deepEqual(heldBy(r, U2), [], 'waiting, u2 holds nothing');
@@ -176,7 +176,7 @@ test('sched.pause-holds-nothing: a pause ends a unit\'s task at its admission bo
     await until(() => allFree(r), 'every reservation released');
     await sleep(2_000);
     assert.ok(allFree(r), 'paused, neither unit holds anything');
-    assert.deepEqual(outcomes(d, 'u2'), ['plan-check:approve'], 'the cancelled wait journaled no build attempt, no hold');
+    assert.deepEqual(outcomes(d, 'u2'), ['pre-build:approve'], 'the cancelled wait journaled no build attempt, no hold');
     assert.equal(r.journal.view.unit(U2).counters.attempts, 1);
     assert.equal(r.journal.view.unit(U2).status, 'active', 'not held: its build never started');
     assert.equal(r.journal.view.unit(U1).status, 'held');
@@ -361,7 +361,7 @@ test('sched.backend-limit-others-run: with codex parked on a usage limit, u1 (bu
     usageLimit(r, 'codex');
     const s = startScheduler(r);
     await until(() => r.journal.view.unit(U2).status === 'retired', 'u2 to merge');
-    assert.deepEqual(outcomes(d, 'u1'), ['plan-check:approve'], 'u1\'s plan-check (claude) ran; its build (codex) was not admitted');
+    assert.deepEqual(outcomes(d, 'u1'), ['pre-build:approve'], 'u1\'s pre-build (claude) ran; its build (codex) was not admitted');
     assert.equal(r.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'backend' && i.expect.subject.unit === U1 && i.expect.subject.role === 'build').length, 0);
     assert.equal((await receiptOf(r, submit(r, { type: 'resume', target: { type: 'backend', backend: 'codex' } }))).state, 'applied');
     assert.deepEqual(await s.end, { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }, { unit: 'u2', result: 'merged' }] });
@@ -474,13 +474,13 @@ describe('arc.state-predicates', () => {
     assert.equal(unitSettled(folded(base), U1), false, 'active');
     assert.equal(unitSettled(folded([...base, outcome(U1, 'snapshot', 1, 'published', 'retire')]), U1), true, 'merged');
     assert.equal(unitSettled(folded([...base, outcome(U1, 'build', 1, 'interrupted', 'hold')]), U1), false, 'held');
-    assert.equal(unitSettled(folded([...base, outcome(U1, 'plan-check', 1, 'escalate', 'park', { park: { class: 'operator', kind: 'design' } })]), U1), true, 'an operator park');
-    assert.equal(unitSettled(folded([...base, outcome(U1, 'plan-check', 1, 'escalate', 'park')]), U1), true, 'a park without its class (the interim M2 shim), read as operator');
+    assert.equal(unitSettled(folded([...base, outcome(U1, 'pre-build', 1, 'escalate', 'park', { park: { class: 'operator', kind: 'design' } })]), U1), true, 'an operator park');
+    assert.equal(unitSettled(folded([...base, outcome(U1, 'pre-build', 1, 'escalate', 'park')]), U1), true, 'a park without its class (the interim M2 shim), read as operator');
     const retry = outcome(U1, 'build', 1, 'process-fault', 'park', { park: { class: 'retryable', targets: [{ type: 'backend', backend: 'codex' }] } });
     assert.equal(unitSettled(folded([...base, retry]), U1), false, 'a retryable park is probed until it recovers');
     const cut = folded([planApplied(1, [U1, U2]), planApplied(2, [U1, U2], [{ type: 'unit-cut', unit: U2 }])]);
     assert.equal(unitSettled(cut, U2), true, 'cut');
-    const parked = [...base, outcome(U1, 'plan-check', 1, 'escalate', 'park', { park: { class: 'operator', kind: 'design' } })];
+    const parked = [...base, outcome(U1, 'pre-build', 1, 'escalate', 'park', { park: { class: 'operator', kind: 'design' } })];
     const superseded = folded([...parked, planApplied(2, [U1, U2, U3], [{ type: 'unit-added', unit: U3 }, { type: 'unit-reentered', unit: U3, reenters: U1, reset: false }])]);
     assert.equal(unitSettled(superseded, U1), true, 'superseded');
     assert.equal(unitSettled(superseded, U3), false, 'its successor is active');

@@ -4,7 +4,7 @@ import { systemName } from '../src/core/ids.ts';
 // admits.ref-exempt-invalid, admits.ref-resolved-invalid, admits.impact-mapped-not-touched,
 // admits.exempt-delivered-not-touched, admits.finding-clauses-are-context, admits.declared-target-out-of-slice,
 // admits.target-unknown-invalid, admits.split-child-out-of-slice-targets, admits.attr-audit-lens-range,
-// admits.attr-witness-union-range, admits.attr-plan-check-ambiguous, admits.attr-issue-ambiguous (an earlier executor's issue finding),
+// admits.attr-witness-union-range, admits.attr-pre-build-ambiguous, admits.attr-issue-ambiguous (an earlier executor's issue finding),
 // admits.attr-absolute-paths-ignored, admits.attr-obligation-held-window, admits.attr-shared-file-ambiguous,
 // admits.opportunity-clause-without-lineage-spends, admits.follow-up-overrun-converts-with-debt,
 // admits.conversion-referenced-is-invalid, admits.dishonest-citation-invalid. The run-9 replay is test/admits-run9.test.ts.
@@ -19,7 +19,7 @@ type AdmitFinding,type AdmitObligation,type AdmitOp,type AdmitWorld,type AuditRa
 findingAttribution,obligationAttribution,opportunityClauses,
 } from '../src/holistic/admits.ts';
 import type { AdmitClass,ObligationDef,Obligations } from '../src/holistic/types.ts';
-import { validateCheckpointOutput } from '../src/prompts/schemas.ts';
+import type { CheckpointOutput } from '../src/prompts/schemas.ts';
 import { checkpointAnswer } from './helpers/holistic.ts';
 
 const v = (...n: number[]) => n.map((x) => `V-${x}` as VisionClauseId);
@@ -239,8 +239,8 @@ describe('admit classes: attribution (R46)', () => {
     assert.deepEqual(findingAttribution(w, finding('F-1', v(1), { lens: 'witness' })), ['a', 'b']);
   });
 
-  test('admits.attr-plan-check-ambiguous: a plan-check finding is unattributable, so its repair never follows up an opportunity', () => {
-    const f = finding('F-1', v(3), { lens: 'plan-check', source: { type: 'stage', unit: u('opp'), stage: 'plan-check', attempt: 1 } });
+  test('admits.attr-pre-build-ambiguous: a pre-build finding is unattributable, so its repair never follows up an opportunity', () => {
+    const f = finding('F-1', v(3), { lens: 'pre-build', source: { type: 'stage', unit: u('opp'), stage: 'pre-build', attempt: 1 } });
     const w = world({ recorded: [opp('opp', v(3))], merges: [merge('opp', 1)], findingList: [f] });
     assert.deepEqual(findingAttribution(w, f), []);
     assert.equal(one(w, admit('fix', v(3), ['F-1'])).conversions[0]!.reason, 'over-budget', 'ambiguity spends budget');
@@ -285,14 +285,14 @@ describe('admit classes: conversions (R35, LR-k)', () => {
 
   test('admits.conversion-referenced-is-invalid: another op naming a converted admit makes the bundle invalid', () => {
     const spec = { intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'], schema: 'roadmap/spec-m1', unit: 'aside', rev: 1,  resources: [], lanes: [], acceptance: [{id: 'A1', clause: 'Converts the admit', state: 'active', failLoudIfUndelivered: true}], decisions: [], facts: [], cites: {contracts: [], rulings: []}, obligations: [], repairs: [] };
-    const output = validateCheckpointOutput(checkpointAnswer({
+    const output = (checkpointAnswer({
       decision: 'bundle',
       ops: [
         { op: 'admit', unit: { id: 'aside', risk: 'low', systems: [systemName('app')], after: [], origin: 'checkpoint' }, spec: {...spec, unit: 'aside'}, cites: ['V-2'], evidence: ['e'] },
         { op: 'admit', unit: { id: 'next', risk: 'low', systems: [systemName('app')], after: ['aside'], origin: 'checkpoint' }, spec: {...spec, unit: 'next'}, cites: ['V-1'], evidence: ['e'] },
         { op: 'limits', unit: 'aside', limits: [{ field: 'chargeable', value: 2 }], cites: ['V-1'], evidence: ['e'] },
       ],
-    }));
+    }) as unknown as CheckpointOutput);
     const reasons = conversionReasons(output, [{ index: 0, unit: u('aside'), reason: 'unrelated', opportunity: null }]);
     assert.equal(reasons.length, 2, JSON.stringify(reasons));
     assert.match(reasons[0]!, /^op 2 \(admit\) names aside/);

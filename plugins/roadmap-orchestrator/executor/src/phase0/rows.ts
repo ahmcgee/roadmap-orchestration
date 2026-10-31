@@ -338,7 +338,7 @@ function milestoneUnitsBeforeDesign(plan: PlanM1): readonly MilestoneUnitBeforeD
 
 /**
  * The text a milestone's reference dirs may inline into a prompt (2026-10-21; 1.0.0-dev.16). Every text file under them goes
- * whole into each plan-check, build and gate prompt of the milestone's units and into its walkthrough, beside the spec, the
+ * whole into each pre-build, build and gate prompt of the milestone's units and into its walkthrough, beside the spec, the
  * contracts, the architecture doc and the session's own reads. A design reference is prose, tokens and wireframes a model
  * reads whole; 512 KiB (about 150K tokens) is far more than one needs and leaves most of a 1M-token window for the rest,
  * so a set over it almost surely carries build output or comps (the field case's 1.5 MB bundle and 330 KB of comps).

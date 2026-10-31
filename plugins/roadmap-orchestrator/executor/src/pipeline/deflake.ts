@@ -34,11 +34,11 @@
 // select) waits at its first admission until that deflake merges. A deflake unit is never held by an edge. A parked
 // deflake holds nothing (its item is `deflake-parked`), nor does a cut one.
 //
-// Verification (`verificationReasons`): a deflake unit's approving plan-check carries `verification` in its design record:
+// Verification (`verificationReasons`): a deflake unit's approving pre-build carries `verification` in its design record:
 // `reproduce-then-fix` (the induced condition fails the old tree and passes the new), or `repeat` with a rationale. Its
 // `runs` times the lane's measured median duration (the ledger's red and green runs of the key) must fit the verification
 // budget: `limits.verification.lanes[lane]` lane-minutes, else for a batch lane `BATCH_VERIFICATION_RUNS` runs, else
-// `limits.verification.laneMinutes` (default 30). Over it, the plan-check's repair turn names the cost. The lanes stage then
+// `limits.verification.laneMinutes` (default 30). Over it, the pre-build's repair turn names the cost. The lanes stage then
 // runs the deflake unit's lane `runs` times, every run passing (`verify` on its spawns, src/pipeline/lanes.ts).
 import type { DesignRecord,Verification } from '../core/design.ts';
 import { type FlakeOn,type FlakyFact,type FlakyLaneSet,type LaneOwner } from '../core/events.ts';
@@ -328,7 +328,7 @@ export function verificationCap(plan: PlanM1, lane: LaneId, def: LaneDef | null)
 const fmt = (n: number): string => (Math.round(n * 100) / 100).toString();
 
 /**
- * Why an approving plan-check's design record of deflake unit `unit` is refused (see the header); empty for any other unit.
+ * Why an approving pre-build's design record of deflake unit `unit` is refused (see the header); empty for any other unit.
  * `design`: the record its answer carries (absent: none).
  */
 export function verificationReasons(

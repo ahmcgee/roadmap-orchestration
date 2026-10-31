@@ -15,7 +15,7 @@ import { absPath } from '../src/core/values.ts';
 import { boundedDiff } from '../src/git/boundeddiff.ts';
 import { judgmentReadDirs, judgmentSurface } from '../src/pipeline/dispatch.ts';
 import { GATE_DIFF_BUDGET } from '../src/pipeline/gate.ts';
-import { GATE_CHECKOUT } from '../src/prompts/gate/claude-opus-5-5.ts';
+import { GATE_CHECKOUT } from '../src/prompts/verifier/gate-input.ts';
 import { promptFor } from '../src/prompts/index.ts';
 import { type TrialRow, gateArm } from '../evals/roles/gate/arc.ts';
 import { DEV_CELLS, type ExecCell, isExecCell } from '../evals/roles/gate/cells.ts';
@@ -122,7 +122,7 @@ test('roles.read-only-argv: the arm rewrites an acting gate call into the dev.12
   const ctx = { repo: absPath('/repo'), runDir: absPath('/run') };
   const evidenceDirs = judgmentReadDirs(ctx, [absPath('/run/evidence/u1/2-lanes'), absPath('/corpus')]);
   const triple = { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'high' } as const;
-  const system = promptFor('gate', triple.model).system;
+  const system = promptFor('verifier', triple.model).system;
   for (const session of [freshJudgmentSession(), resumedJudgmentSession(freshJudgmentSession().id)]) {
     const acting = backendArgv({ kind: 'claude-acting-judge', role: 'verifier', triple, session, schemaText: '{"type":"object"}', system, mcpConfig: null, evidenceDirs, denyWrites: [ctx.repo, ctx.runDir] });
     const args = readOnlyArgs(acting.slice(1), ctx);
@@ -148,7 +148,7 @@ test('roles.read-only-act: a real act with readOnly runs the next claude on PATH
   const ctx = { repo: absPath(repo), runDir: absPath(runDir) };
   const triple = { backend: 'claude', model: 'claude-opus-5-5', effort: 'medium' } as const;
   const session = freshJudgmentSession();
-  const system = promptFor('gate', triple.model).system;
+  const system = promptFor('verifier', triple.model).system;
   const acting = backendArgv({ kind: 'claude-acting-judge', role: 'verifier', triple, session, schemaText: '{}', system, mcpConfig: null, evidenceDirs: judgmentReadDirs(ctx, []), denyWrites: [ctx.repo, ctx.runDir] });
   const cwd = tmpDir('roles-cwd');
   const r = spawnSync(join(scenario.binDir, 'claude'), acting.slice(1), { cwd, input: 'the prompt\n', encoding: 'utf8', env: { ...process.env, PATH: `${scenario.binDir}:${stub}:${process.env['PATH']}` } });

@@ -29,7 +29,7 @@
 // of the unit that has a session (`lastImplementerSession`); a continue resumes the interrupted one. When
 // there is none (the unit's builds were lost with tree effects, a fresh build was malformed without
 // reporting one, or a fresh Codex exec was interrupted before its thread started), or that session ran on
-// another implementer seat (a plan-check raised the risk after a build, and the raised seat binds another
+// another implementer seat (a pre-build raised the risk after a build, and the raised seat binds another
 // model or backend: a session cannot move across them), the round starts a fresh session instead, on the
 // kept branch and worktree, with the same inputs plus NO_SESSION_NOTE (a continue: its decided round's
 // inputs, then NO_SESSION_NOTE and CONTINUE_FRESH_DIRECTIVE; a reopen's fresh round: RESPEC_FRESH_DIRECTIVE, then
@@ -310,7 +310,7 @@ export function lastImplementerSession(ctx: StageContext, unit: UnitId): SeatedS
 /**
  * The session a round on `dispatch` may resume: `earlier` when its seat has the same session key (R4: backend and
  * model; an effort-only change resumes it with the new `--effort`, OR-L3), else null. A session cannot move across
- * models or backends, so a build whose seat moved to another model (a plan-check risk raise after a build) starts a
+ * models or backends, so a build whose seat moved to another model (a pre-build risk raise after a build) starts a
  * fresh session on the kept branch and worktree, its round's inputs given with NO_SESSION_NOTE.
  */
 function onSeat(dispatch: ImplementerDispatch, earlier: SeatedSession | null): ImplementerSessionId | null {

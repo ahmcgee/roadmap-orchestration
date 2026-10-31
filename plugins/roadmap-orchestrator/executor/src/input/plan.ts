@@ -100,7 +100,7 @@ export type PolishOrigin = Readonly<{ milestone: MilestoneId; proposal: PolishId
 export type ContingentEdge = Readonly<{ id: EdgeId; condition: string }>;
 
 /** Where a re-entry's prepared worktree enters (M2): absent, the preparation decides from the merge. */
-export const REENTRY_POINTS = ['plan-check', 'build', 'verify'] as const;
+export const REENTRY_POINTS = ['pre-build', 'build', 'verify'] as const;
 export type ReentryPoint = (typeof REENTRY_POINTS)[number];
 /**
  * `reenters` (M2): this unit re-enters `unit`, which it supersedes; `reset` (with a ruling) resets its chargeable failures.
@@ -208,12 +208,6 @@ export const priorityOf = (unit: PlanUnit): UnitPriority => unit.priority ?? 'no
  * `knownDefectActive` (src/schedule/ready.ts) holds: until `fixUnit`'s lineage merges. Ids are plan-scoped and never reused.
  */
 export type KnownDefect = Readonly<{ id: KnownDefectId; match: KnownDefectMatch; fixUnit: UnitId }>;
-
-/**
- * M4a rev 3 (E, R40) to dev.16: how plan-check ran, per builder class (`by-builder`) or for every unit alike (`uniform`).
- * Removed in dev.17 (every plan-check is one fresh call); a plan in force carrying it reads as uniform (`planCheckShapeDefault`).
- */
-const LEGACY_PLAN_CHECK_SHAPES = ['uniform', 'by-builder'] as const;
 
 /**
  * Files the build derives from others (a bundle from its sources), checked by regeneration.
@@ -778,8 +772,7 @@ export function parsePlan(value: unknown): PlanM1 {
     const previousHead = f.optional('previousHead', (v, p) => sha(v, p));
     const chain = f.optional('chain', object((g): PlanChain => ({ previousArc: g.get('previousArc', (v, p) => arcId(v, p)), previousHead: g.get('previousHead', (v, p) => sha(v, p)) })));
     const knownDefects = f.optional('knownDefects', arrayOf(knownDefect, { nonEmpty: true }));
-    // dev.17: a dev.16 plan's `planCheck.shape` is read and dropped (every plan-check is uniform now), warned.
-    const legacyPlanCheck = f.optional('planCheck', object((g) => ({ shape: g.get('shape', oneOf(LEGACY_PLAN_CHECK_SHAPES)) })));
+    // dev.17: a dev.16 plan's `planCheck.shape` is read and dropped (every pre-build is uniform now), warned.
 
     const derived = f.optional('derived', arrayOf(derivedFiles));
     const milestones = f.optional('milestones', arrayOf(milestone, { nonEmpty: true }));

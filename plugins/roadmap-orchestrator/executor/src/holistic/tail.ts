@@ -143,50 +143,6 @@ export function brakeConversions(admits: readonly IndexedAdmit[], brakeOfId: (id
   return { conversions, reasons };
 }
 
-/** One finding ruling a settlement writes: the finding, its disposition, who ruled it. */
-export type TailRuling = Readonly<{ finding: FindingId; disposition: FindingDisposition; by: FindingRuledBy }>;
-
-/**
- * The rulings checkpoint `job`'s applied (or no-op) decision writes, in order: each disposition of an active finding it
- * does not repair, as the tail rules bind it, then a code release of each other active, open finding it was shown
- * (`captured`) that nothing fixes and that is a P3 or below a brake. `repaired`: the findings named in the repairs of
- * the units its effective ops admit or re-enter (each follows the repairs route, its disposition unwritten); `brakeOfId`
- * as for `brakeConversions` (the caller adds the job's brake conversions). Pure.
- */
-export function tailRulings(input: Readonly<{
-  job: JobId;
-  findings: readonly FindingState[];
-  captured: readonly FindingId[];
-  dispositions: readonly Readonly<{ finding: FindingId; disposition: FindingDisposition }>[];
-  repaired: ReadonlySet<FindingId>;
-  brakeOfId: (id: FindingId) => Brake | null;
-}>): readonly TailRuling[] {
-  const byId = new Map(input.findings.map((f) => [f.id, f]));
-  const release = (finding: FindingId, reason: ReleaseReason): TailRuling => ({ finding, disposition: 'released', by: { type: 'release', job: input.job, reason } });
-  /** Why code releases `f` while nothing fixes it, or null: a P3, or a P2 below a brake. */
-  const releasable = (f: FindingState): ReleaseReason | null => (f.severity === 'P3' ? 'p3' : f.severity === 'P2' ? input.brakeOfId(f.id) : null);
-  const fixed = (f: FindingState): boolean => input.repaired.has(f.id) || f.state !== 'open';
-  const out: TailRuling[] = [];
-  const disposed = new Set<FindingId>();
-  for (const d of input.dispositions) {
-    disposed.add(d.finding);
-    const f = byId.get(d.finding);
-    if (f === undefined || !isActive(f) || input.repaired.has(f.id)) continue;
-    const reason = releasable(f);
-    const checkpoint = { finding: f.id, disposition: d.disposition, by: { type: 'checkpoint' as const, job: input.job } };
-    if (reason === null || d.disposition === 'dismissed' || d.disposition === 'released') out.push(checkpoint);
-    else if (d.disposition === 'deferred') out.push(reason === 'p3' ? release(f.id, 'p3') : checkpoint);
-    else out.push(fixed(f) ? checkpoint : release(f.id, reason));
-  }
-  for (const id of input.captured) {
-    const f = byId.get(id);
-    if (f === undefined || disposed.has(id) || !isActive(f) || fixed(f)) continue;
-    const reason = releasable(f);
-    if (reason !== null) out.push(release(id, reason));
-  }
-  return out;
-}
-
 /** The repairs of each admit op of `ops` (its spec's), with its index: what the brakes and the settlement read. */
 export function indexedAdmits(ops: readonly Readonly<{ index: number; op: BundleOp }>[], specOf: (op: Extract<BundleOp, { op: 'admit' }>) => Parameters<typeof specRepairs>[0]): readonly IndexedAdmit[] {
   return ops.flatMap(({ index, op }) => (op.op === 'admit' ? [{ index, op, repairs: specRepairs(specOf(op)) }] : []));

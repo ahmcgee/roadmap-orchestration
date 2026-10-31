@@ -13,7 +13,7 @@
 //              applied; its one re-evaluation (ckpt-3) admits the repair alone. Then audit-2 (drift: the
 //              vision lens), whose checkpoint is skipped (nothing new since the settled ckpt-3), and audit-3 (final:
 //              both lenses of L) and ckpt-4 no-op.
-//   prevented  branch P, after paid run 3: tidy's plan-check twice answers `infeasible` with a V-2 vision conflict
+//   prevented  branch P, after paid run 3: tidy's pre-build twice answers `infeasible` with a V-2 vision conflict
 //              (one P3 finding), so tidy parks for design; the park's checkpoint ckpt-1 is held and rejected stale,
 //              its re-evaluation ckpt-2 cuts tidy and admits the repair (repairing the P3). Then audit-1 (drift: the
 //              vision lens), its checkpoint skipped (nothing new); report and the repair merge; audit-2 (final: both
@@ -40,9 +40,9 @@ import { FILES,REPAIR_UNIT,filesOf,repairSpecText } from './setup.ts';
 /** How long a fake barrier waits for the driver (the driver's fake run timeout is shorter). */
 const HOLD_MS = 20 * 60_000;
 
-const planCheck = (reason: string): M1Step => ({
-  role: 'planCheck',
-  answer: { decision: 'approve', reasons: [reason], patch: null, risk: 'med', notes: '', premises: [], visionConflict: [],  staleLinks: [] },
+const preBuild = (reason: string): M1Step => ({
+  role: 'verifier',
+  answer: {decision: 'approve', ordering: null, findings: [], directives: [], reasons: [reason], premises: [], standing: [], clusters: null, rulings: []},
 });
 const build = (message: string, files: Readonly<Record<string, string>>): M1Step => ({ role: 'build', round: 'fresh', acts: [{ type: 'commit', message, files }] });
 const gate = (reason: string): M1Step => ({ role: 'gate', answer: {rulings: [],  decision: 'approve', findings: [], directives: [], reasons: [reason], premises: [], standing: [], clusters: null,  } });
@@ -53,22 +53,22 @@ const unitFiles = (name: string): Readonly<Record<string, string>> => filesOf(jo
 /** The unit calls of branch R's story, by unit, in each unit's own order. */
 export const UNIT_STORY: Readonly<Record<string, readonly M1Step[]>> = {
   parse: [
-    planCheck('The spec is consistent with the ledger contract (ledger file) and C-1, C-2, C-4.'),
+    preBuild('The spec is consistent with the ledger contract (ledger file) and C-1, C-2, C-4.'),
     build('parse: parseLedger', unitFiles('parse')),
     gate('A1, A2 and A3 hold.'),
   ],
   tidy: [
-    planCheck('The spec is a one-line consistency change in src/cli.js; C-3 holds.'),
+    preBuild('The spec is a one-line consistency change in src/cli.js; C-3 holds.'),
     build('tidy: format prints through formatDisplay, as total does', unitFiles('tidy')),
     gate('A1 and A2 hold: format and total print through the same helper.'),
   ],
   report: [
-    planCheck('The spec is consistent with the ledger contract (commands) and C-1 to C-4.'),
+    preBuild('The spec is consistent with the ledger contract (commands) and C-1 to C-4.'),
     build('report: reconcile a month', { ...unitFiles('report'), ...unitFiles('report-on-tidy') }),
     gate('A1, A2 and A3 hold; unknown commands still exit 2.'),
   ],
   [REPAIR_UNIT.id]: [
-    planCheck('The repair restores I-2 within the unit\'s scope.'),
+    preBuild('The repair restores I-2 within the unit\'s scope.'),
     build('fix-rounding: formatDisplay rounds the cents half to even', unitFiles(REPAIR_UNIT.id)),
     gate('A1 and A2 hold.'),
   ],
@@ -87,9 +87,9 @@ const PACK_REVIEW = packReviewStep('review-1');
 
 const JOB_STEPS_R: readonly Step[] = [PACK_REVIEW, lensStep('audit-1', 'invariants'), lensStep('audit-2', 'invariants')];
 
-/** tidy's plan-check in branch P, as paid run 3's: infeasible within its scope, citing V-2 (a P3 finding, merged on the re-check). */
+/** tidy's pre-build in branch P, as paid run 3's: infeasible within its scope, citing V-2 (a P3 finding, merged on the re-check). */
 const INFEASIBLE: M1Step = {
-  role: 'planCheck',
+  role: 'verifier',
   answer: {
     decision: 'infeasible', reasons: ['Routing `format` through formatDisplay breaks I-2: its toFixed prints 0.125 as 0.13; nothing within src/cli.js reconciles A1 with I-2.'],
     patch: null, risk: 'med', notes: 'Drop the unit, or re-scope a unit to src/display.js so formatDisplay rounds half to even.', premises: [],
@@ -106,8 +106,8 @@ export const UNIT_STORY_P: Readonly<Record<string, readonly M1Step[]>> = {
   [REPAIR_UNIT.id]: UNIT_STORY[REPAIR_UNIT.id]!,
 };
 
-/** Branch P's bundle: cut tidy, admit the repair (repairing the plan-check P3 F-1), as paid run 3's ckpt-2. */
-const CUT_TIDY: JsonValue = { op: 'cut', unit: 'tidy', reason: 'Its goal cannot be met within src/cli.js without breaking I-2.', cites: ['V-2'], evidence: ['F-1: plan-check found that format through formatDisplay prints 0.125 as 0.13'] };
+/** Branch P's bundle: cut tidy, admit the repair (repairing the pre-build P3 F-1), as paid run 3's ckpt-2. */
+const CUT_TIDY: JsonValue = { op: 'cut', unit: 'tidy', reason: 'Its goal cannot be met within src/cli.js without breaking I-2.', cites: ['V-2'], evidence: ['F-1: pre-build found that format through formatDisplay prints 0.125 as 0.13'] };
 const PREVENT_BUNDLE = checkpointAnswer({ decision: 'bundle', ops: [ADMIT_REPAIR, CUT_TIDY] });
 
 const JOB_STEPS_P: readonly Step[] = [

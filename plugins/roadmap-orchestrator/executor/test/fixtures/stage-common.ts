@@ -265,7 +265,7 @@ export function setupUnit(opts: SetupOptions): StageRun {
 // Scenario steps
 
 export type PlanCheckAnswer = Readonly<{
-  decision: 'approve' | 'redirect' | 'split' | 'scaffold' | 'poc' | 'infeasible' | 'escalate';
+  decision: 'approve' | 'redirect' | 'split' | 'infeasible' | 'escalate';
   risk?: RiskTier;
   patch?: readonly JsonValue[];
   notes?: string;
@@ -285,10 +285,10 @@ export type PlanCheckAnswer = Readonly<{
   poc?: JsonValue;
 }>;
 
-/** A plan-check the fake Claude answers: an acting judgment (dev.17: shell and web tools, fresh session, no resume). `expect` adds to that check. */
+/** A pre-build the fake Claude answers: an acting judgment (dev.17: shell and web tools, fresh session, no resume). `expect` adds to that check. */
 /**
- * The plan-check's `--tools` (dev.17: an acting judge with web search and fetch, src/backends/argv.ts `PLAN_CHECK_TOOLS`), as
- * the fakes match a plan-check call by.
+ * The pre-build's `--tools` (dev.17: an acting judge with web search and fetch, src/backends/argv.ts `PLAN_CHECK_TOOLS`), as
+ * the fakes match a pre-build call by.
  */
 export const PLAN_CHECK_TOOLS_ARGV = ['--tools', 'Read,Grep,Glob,Bash,Write,Edit,Agent'] as const;
 
@@ -302,7 +302,7 @@ export function planCheckStep(a: PlanCheckAnswer, expect: Expect = {}, before: r
   };
 }
 
-/** A plan-check's answer as the fake emits it. */
+/** A pre-build's answer as the fake emits it. */
 export const planCheckAnswer = (a: PlanCheckAnswer): JsonValue =>
   ({
     decision: a.decision, ordering: a.ordering ?? null, reasons: ['C-1 holds'], patch: a.patch ?? null, risk: a.risk ?? 'med', notes: a.notes ?? '', premises: [...(a.premises ?? [])], visionConflict: [...(a.visionConflict ?? [])],
@@ -312,7 +312,7 @@ export const planCheckAnswer = (a: PlanCheckAnswer): JsonValue =>
   }) as JsonValue;
 
 /**
- * 2026-10-15: a plan-check's repair turn: its session resumed (`--resume`) with the reasons its answer was refused, which
+ * 2026-10-15: a pre-build's repair turn: its session resumed (`--resume`) with the reasons its answer was refused, which
  * the stdin carries (`stdinContains` adds to the directive's opening).
  */
 export function planCheckRepairStep(a: PlanCheckAnswer, stdinContains: readonly string[] = [], before: readonly ClaudeAct[] = []): Step {

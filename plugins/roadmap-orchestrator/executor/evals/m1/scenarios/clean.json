@@ -1,18 +1,19 @@
 {
   "steps": [
     {
-      "role": "planCheck",
+      "role": "verifier",
       "answer": {
         "decision": "approve",
+        "ordering": null,
+        "findings": [],
+        "directives": [],
         "reasons": [
           "The spec is consistent with contract one, C-1 and C-2."
         ],
-        "patch": null,
-        "risk": "med",
-        "notes": "",
         "premises": [],
-        "visionConflict": [],
-        "staleLinks": []
+        "standing": [],
+        "clusters": null,
+        "rulings": []
       }
     },
     {
@@ -45,18 +46,19 @@
       }
     },
     {
-      "role": "planCheck",
+      "role": "verifier",
       "answer": {
         "decision": "approve",
+        "ordering": null,
+        "findings": [],
+        "directives": [],
         "reasons": [
           "The spec is consistent with contract one, C-1 and C-2."
         ],
-        "patch": null,
-        "risk": "med",
-        "notes": "",
         "premises": [],
-        "visionConflict": [],
-        "staleLinks": []
+        "standing": [],
+        "clusters": null,
+        "rulings": []
       }
     },
     {

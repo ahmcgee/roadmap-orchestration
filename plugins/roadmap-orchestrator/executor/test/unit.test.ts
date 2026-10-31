@@ -39,7 +39,7 @@ const T = { timeout: SCENARIO_TIMEOUT_MS };
 const live = (): Gate => admitAll;
 
 /** Every stage of a unit that merges first time, in order. */
-const STRAIGHT = ['plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'];
+const STRAIGHT = ['pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'];
 
 const parentsOf = (repo: string, commit: string): readonly string[] => git(repo, 'rev-list', '--parents', '-n', '1', commit).split(' ').slice(1);
 const gateCalls = (r: ArcRun) => readCalls(r.d.scenarioPath).filter(isGateCall);
@@ -106,7 +106,7 @@ describe('unit: one unit merged first time', () => {
   test('unit.decisions-appended: decisions.json reaches the spec by an executor patch, and the approval carries the new rev', () => {
     assert.equal((JSON.parse(readFileSync(join(r.ctx.planDir, 'u1.json'), 'utf8')) as { rev: number }).rev, 1, 'the owner\'s spec file is never written');
     const { spec } = loadUnitSpec(r.ctx, r.unit('u1'));
-    // dev.17: the approving plan-check's design record is rev 2, the build's decisions rev 3.
+    // dev.17: the approving pre-build's design record is rev 2, the build's decisions rev 3.
     assert.equal(spec.rev, 2, 'the patched spec is in force');
     assert.deepEqual(spec.decisions, [{ id: 'D1', text: 'mul multiplies with the * operator.', state: 'active' }]);
     assert.equal(spec.design, undefined, 'design remains a root decision');
@@ -285,7 +285,7 @@ test('unit.reentrant: a driver killed between two stages is restarted on the sam
   assert.deepEqual(JSON.parse(second.stdout), { kind: 'merged' });
   assert.deepEqual(outcomes(d), STRAIGHT, 'no stage ran twice');
   const calls = readCalls(d.scenarioPath);
-  assert.equal(calls.length, 3, 'one plan-check, one build, one gate');
+  assert.equal(calls.length, 3, 'one pre-build, one build, one gate');
   assert.ok(calls.every((c) => c.step !== null));
 });
 
@@ -376,7 +376,7 @@ test('continue.claude-session: a pause mid fresh build holds it; resume continue
   try {
     await pauseAt(r, 'b1');
     assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), live()), { kind: 'merged' });
-    assert.deepEqual(outcomes(d), ['plan-check:approve', 'build:interrupted', ...STRAIGHT.slice(1)]);
+    assert.deepEqual(outcomes(d), ['pre-build:approve', 'build:interrupted', ...STRAIGHT.slice(1)]);
     const [killed, continued] = implementerCalls(r);
     assert.ok(killed !== undefined && continued !== undefined);
     assert.equal(flag(continued.argv, '--resume'), flag(killed.argv, '--session-id'), 'the session the killed build was launched with');
@@ -405,7 +405,7 @@ test('continue.codex-thread-chain: a Codex build paused after its thread started
     await pauseAt(r, 'b1');
     await pauseAt(r, 'b2');
     assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), live()), { kind: 'merged' });
-    assert.deepEqual(outcomes(d), ['plan-check:approve', 'build:interrupted', 'build:interrupted', ...STRAIGHT.slice(1)]);
+    assert.deepEqual(outcomes(d), ['pre-build:approve', 'build:interrupted', 'build:interrupted', ...STRAIGHT.slice(1)]);
     assert.equal(implementerCalls(r).length, 3);
     mulMerged(r);
   } finally {
@@ -426,7 +426,7 @@ test('continue.no-session-fresh: a Codex exec killed before its thread started h
   try {
     await pauseAt(r, 'b1');
     assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), live()), { kind: 'merged' });
-    assert.deepEqual(outcomes(d), ['plan-check:approve', 'build:interrupted', ...STRAIGHT.slice(1)]);
+    assert.deepEqual(outcomes(d), ['pre-build:approve', 'build:interrupted', ...STRAIGHT.slice(1)]);
     mulMerged(r);
   } finally {
     r.journal.close();

@@ -40,21 +40,29 @@ import {
 DOC_RELATIONS,LENS_KINDS,OBLIGATION_DISPOSITIONS,type ObligationDef,RULE_RELATIONS,RULING_KINDS,RULING_LIFETIMES,RULING_SCHEMA,
 } from '../src/holistic/types.ts';
 import { RESOLVE_DIRECTIVE,RESPEC_DIRECTIVE,RESPEC_FRESH_DIRECTIVE,STEER_DIRECTIVE,repeatRedDirective,resolveUnmetDirective,smokeFixDirectives,witnessFixDirectives } from '../src/prompts/directives.ts';
-import { PROMPTS,SONNET_THINK_FIRST,UnsupportedPromptError,promptFor,promptSize,renderPrompt,support } from '../src/prompts/index.ts';
-import { ROLE_INPUTS,type RoleInputs,UNIT_POLICY,laneCommand,obligationsText,pasted,pastedAs,targetDocument } from '../src/prompts/inputs.ts';
+import { PROMPTS,SONNET_THINK_FIRST,UnsupportedPromptError,promptFor as livePromptFor,promptSize,renderPrompt,support } from '../src/prompts/index.ts';
+import { ROLE_INPUTS,type RoleInputs,type GateInputs,type LensInputs,type WalkthroughInputs,type PolishJudgeInputs,UNIT_POLICY,laneCommand,obligationsText,pasted,pastedAs,targetDocument } from '../src/prompts/inputs.ts';
 import {
-BUILD_SCHEMA,
-CHECKPOINT_SCHEMA,CLUSTER_REVIEWS,GATE_SCHEMA,PLAN_CHECK_SCHEMA,ROLE_SCHEMAS,ROLE_VALIDATORS,type RoleOutputs,
-validateBuildOutput,validateCheckpointOutput,validateDecisionsFile,validateGateOutput,validatePackReviewOutput,validatePlanCheckOutput,
+BUILD_SCHEMA,EXPERIENCE_SCHEMA,
+CLUSTER_REVIEWS,GATE_SCHEMA,ROLE_SCHEMAS,ROLE_VALIDATORS,type RoleOutputs,
+validateBuildOutput,validateDecisionsFile,validateGateOutput,validatePackReviewOutput,
 } from '../src/prompts/schemas.ts';
 import { arcStack,resolveRouting,seatsInForce } from '../src/routing/layers.ts';
 import { FRESH_ROLES,MODEL_IDS,PROFILES,ROLES,type Role,WALK_ROLES,atSeat } from '../src/routing/types.ts';
 
 /**
  * The judging roles with a written Opus module and derived Sonnet and Haiku rows: the read-only ones (but the verifier, dev.17,
- * which has a Haiku module only), the gate (dev.13, an acting judge) and plan-check (dev.17, an acting judge).
+ * which has a Haiku module only), the gate (dev.13, an acting judge) and pre-build (dev.17, an acting judge).
  */
-const JUDGING = [...FRESH_ROLES, 'gate', 'planCheck'] as const;
+const modePrompts = new Map<string, unknown>();
+function promptFor<R extends keyof TestInputs>(role: R, model: (typeof MODEL_IDS)[number]): {system: string; schema: JsonValue; fields: readonly string[]; render: (i: TestInputs[R]) => string} {
+  if (role === 'gate') { const p = livePromptFor('verifier', model); const key = role + p.system; if (!modePrompts.has(key)) modePrompts.set(key, {...p, fields: Object.keys(SAMPLES.gate[0]), render: (i: GateInputs) => p.render({mode: 'gate', brief: i})}); return modePrompts.get(key) as ReturnType<typeof promptFor<R>>; }
+  if (role === 'walkthrough' || role === 'polishJudge') { const p = livePromptFor('experienceVerdict', model); const key = role + p.system; if (!modePrompts.has(key)) modePrompts.set(key, {...p, fields: Object.keys(SAMPLES[role][0]), render: (i: WalkthroughInputs | PolishJudgeInputs) => p.render(role === 'walkthrough' ? {mode: 'walkthrough', brief: i as WalkthroughInputs} : {mode: 'polish', brief: i as PolishJudgeInputs})}); return modePrompts.get(key) as ReturnType<typeof promptFor<R>>; }
+  if (role === 'lens') { const p = livePromptFor('campaignAudit', model); return {...p, render: (i) => {const {lens: _l, rulings: _r, index: _x, ...brief} = i as LensInputs; return p.render({...brief, method: {traits: [], markers: [], unitKind: 'milestone', expensiveLanes: false, ui: false}});}}; }
+  return livePromptFor(role as Role, model) as {system: string; schema: JsonValue; fields: readonly string[]; render: (i: TestInputs[R]) => string};
+}
+
+const JUDGING = [...FRESH_ROLES, 'verifier'] as const;
 
 // Two complete input sets per role that differ in every field, so swapping one field shows whether a
 // module's rendering depends on it.
@@ -73,7 +81,7 @@ const index = (c: string, r: string, ledger: string) => ({
 });
 const premise = (claim: string, path: string) => ({ claim, evidence: [{ path, line: 3 }] });
 
-// M3: the vision, obligations and findings the arc roles (and plan-check and the gate) read.
+// M3: the vision, obligations and findings the arc roles (and pre-build and the gate) read.
 const vision = (rev: number, text: string) => ({
   rev, clauses: [{ id: visionClauseId('V-1'), kind: 'world' as const, text, rank: null, state: 'active' as const }], questions: [], advances: [visionClauseId('V-1')],
 });
@@ -118,14 +126,14 @@ const journeySample = (k: 'A' | 'B') => ({
   budget: k === 'A' ? { steps: 5, seconds: 60 } : null,
 });
 const instanceSample = (k: 'A' | 'B', port: number) => ({ checkout: absPath(`/wt/${k}.walk`), ports: { [serveName('web')]: port }, env: { MODE: k } });
-const walkSample = (k: 'A' | 'B'): RoleInputs['walkthrough'] => ({
+const walkSample = (k: 'A' | 'B'): WalkthroughInputs => ({
   vision: vision(k === 'A' ? 1 : 2, `VISION-${k}`), milestone: { id: milestoneId(k === 'A' ? 'MS-1' : 'MS-2'), text: `MILESTONE-${k}` }, round: k === 'A' ? 1 : 2,
   journeys: [journeySample(k)], references: [doc(`design/${k}.md`, `REFERENCE-${k}`)],
   tweaks: [{ unit: unitId(`tweak-${k.toLowerCase()}`), proposal: polishId(k === 'A' ? 'X-1' : 'X-2'), text: `TWEAK-${k}` }],
   findings: [{ ...findingView(k === 'A' ? 'F-1' : 'F-2', `FINDING-${k}`), cause: `CAUSE-${k}` }], product: instanceSample(k, k === 'A' ? 4100 : 4200),
   units: [spec(k === 'A' ? 1 : 2, `SPEC-${k}`)], evidenceDir: absPath(`/run/evidence/jobs/walk-${k === 'A' ? 1 : 2}`),
 });
-const polishSample = (k: 'A' | 'B'): RoleInputs['polishJudge'] => ({
+const polishSample = (k: 'A' | 'B'): PolishJudgeInputs => ({
   vision: vision(k === 'A' ? 1 : 2, `VISION-${k}`), milestone: { id: milestoneId(k === 'A' ? 'MS-1' : 'MS-2'), text: `MILESTONE-${k}` }, journey: journeySample(k),
   proposal: { id: polishId(k === 'A' ? 'X-1' : 'X-2'), unit: unitId(`tweak-${k.toLowerCase()}`), text: `PROPOSAL-${k}`, evidence: [`shot-${k}.png`] },
   references: [doc(`design/${k}.md`, `REFERENCE-${k}`)], referenceDiff: k === 'A' ? shown(SHA_A, SHA_B, 'DIFF-A') : shown(SHA_B, SHA_A, 'DIFF-B'),
@@ -217,22 +225,8 @@ const partial = (from: Sha, to: Sha, text: string, labelled: boolean): BoundedDi
   };
 };
 
-/** dev.17: a scaffold writer's inputs, every field marked by `k`; `retry` its one retry's reasons, or null. */
-function scaffoldSample(k: string, retry: RoleInputs['scaffold']['retry']): RoleInputs['scaffold'] {
-  return {
-    intent: `INTENT-${k}`, nonGoals: [`NON-GOAL-${k}`], spec: spec(k === 'A' ? 1 : 2, `SPEC-${k}`),
-    scaffold: {
-      newSystem: { name: systemName(`sys${k.toLowerCase()}`), paths: [repoPattern(`packages/${k}/**`)], tests: [repoPattern(`packages/${k}/test/**`)] },
-      entryPoints: [repoPath(`packages/${k}/index.js`)], exports: [`EXPORT-${k}`], loadTest: { lane: laneId(`load${k}`), testId: `LOAD-TEST-${k}` },
-      manifest: [{ path: repoPath('package.json'), entry: `MANIFEST-${k}` }],
-    },
-    loadLane: { id: laneId(`load${k}`), argv: ['node', '--test', `LOAD-ARGV-${k}`], cwd: repoPath('.'), testPaths: [repoPattern(`packages/${k}/test/**`)] },
-    worktree: absPath(`/wt/SCAFFOLD-${k}`),
-    retry,
-  };
-}
-
-const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] } = {
+type TestInputs = RoleInputs & {gate: GateInputs; lens: LensInputs; walkthrough: WalkthroughInputs; polishJudge: PolishJudgeInputs};
+const SAMPLES: { readonly [R in keyof TestInputs]: readonly [TestInputs[R], TestInputs[R]] } = {
   campaignAudit: [
     {method: {traits: [], markers: [], unitKind: 'module', expensiveLanes: false, ui: false},
       vision: vision(1, 'VISION-A'),  obligations: [observed('I-1', 'OBLIGATION-A', SHA_A)], range: { audited: SHA_B, diff: shown(SHA_A, SHA_B, 'RANGE-A') },
@@ -251,42 +245,6 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
     },
   ],
   experienceVerdict: [{mode: 'walkthrough', brief: walkSample('A')}, {mode: 'polish', brief: polishSample('B')}],
-  planCheck: [
-    {
-      intent: 'INTENT-A', nonGoals: ['NON-GOAL-A'], spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
-      target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A', systems: [systemName('app-a')], risk: 'low',
-      checkouts: { tip: { path: absPath('/wt/u.plan-check-1'), at: SHA_A }, branch: null },
-      lanePrograms: [{ lane: laneId('unit'), argv0: 'npm', resolved: { kind: 'program', realpath: absPath('/usr/lib/node/npm') } }],
-      priorRound: null, vision: null, priorInvalid: null,  escalation: null, milestones: null, staleLinks: [],
-      design: { systems: null, lanes: [], forces: [], substantialLines: 200, gateInlineLines: 1310, pocsLeft: 2, scaffold: false }, pocs: [],
-    },
-    {
-      intent: 'INTENT-B', nonGoals: ['NON-GOAL-B'], spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
-      target: { kind: 'digest', digest: doc('docs/digest.md', 'DIGEST-B'), doc: repoPath('docs/arch2.md') }, direction: 'DIR-B',
-      systems: [systemName('app-b')], risk: 'high',
-      checkouts: { tip: { path: absPath('/wt/u.plan-check-2'), at: SHA_B }, branch: { path: absPath('/wt/u.plan-check-2-branch'), at: SHA_A } },
-      lanePrograms: [{ lane: laneId('lint'), argv0: 'rg', resolved: { kind: 'not-found' } }],
-      priorRound: {
-        patch: [{ op: 'strike', id: clauseId('A3') }], reasons: ['A3 contradicts C-2'], premises: [premise('PREMISE-B', 'src/b/x.ts')],
-        patchedRev: specRev(2), changedPremiseFiles: ['src/b/x.ts'],
-      },
-      vision: vision(2, 'VISION-B'),
-      priorInvalid: 'PRIOR-INVALID-B',
-
-      escalation: { kind: 'route-up', first: { decision: 'escalate', reasons: ['ESCALATE-REASON-B'] } }, milestones: milestonesSample(),
-      staleLinks: ['requirement:I-2: STALE-LINK-B'],
-      design: {
-        systems: { systems: { [systemName('api')]: { paths: [repoPattern('src/api/**')], tests: [repoPattern('test/api/**')], dependsOn: [], traits: [] } }, shared: [], contracts: {}, docs: [] },
-        lanes: [{ id: laneId('journey'), kind: 'arc', cadence: 'candidate', systems: [systemName('api')], environment: { name: resourceName('env-b'), unavailable: 'ENV-UNAVAILABLE-B' } }], forces: [laneId('SYSTEMS-B')], substantialLines: 150, gateInlineLines: 900,
-        pocsLeft: 1, scaffold: true,
-      },
-      pocs: [{
-        attempt: 4, questions: [{ id: pocQuestionId('PQ-1'), question: 'POC-QUESTION-B', whyItMatters: 'WHY-B' }], brief: 'POC-BRIEF-B',
-        answer: { answers: [{ questionId: pocQuestionId('PQ-1'), answer: 'POC-ANSWER-B', evidence: 'POC-EVIDENCE-B', confidence: 'high' }], lessons: ['POC-LESSON-B'], surprises: [] },
-        why: null, diff: absPath('/run/ev/u/4-poc/poc.diff'),
-      }],
-    },
-  ],
   build: [
     {target: {kind: 'full', doc: doc('docs/target-0.md', 'TARGET-0')},  notes: ['NOTE-A'],
       systemNotes: [], intent: 'INTENT-A', nonGoals: ['NON-GOAL-A'], spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
@@ -378,35 +336,6 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       specsOnly: [{ unit: unitId('u-two'), rev: specRev(4), markdown: 'SPECS-ONLY-B' }],
     },
   ],
-  checkpoint: [
-    {
-      vision: vision(1, 'VISION-A'), trigger: { type: 'audit', job: jobId('audit', 1) }, priorRejected: [], refused: [], head: SHA_A, plan: 'PLAN-A', findings: [],
-      obligations: [observed('I-1', 'OBLIGATION-A', SHA_A)], coverage: { unservedAdvanced: [], unservedOpportunity: [], horizon: [], obligationsServingNone: [], withdrawnCited: [] }, divergences: [],
-      contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
-      target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A',
-      manifest: [], specs: [], nextRulingId: rulingId('C-2'), diagnosis: null, brakes: { settled: false, findings: [] },
-    },
-    {
-      vision: vision(2, 'VISION-B'), trigger: { type: 'park', unit: unitId('u-two'), seq: 40, cause: { stage: 'candidate', attempt: 9, outcome: 'red', reason: 'candidate-red', design: false, detail: ['TRIGGER-B'] } },
-      priorRejected: [{ job: jobId('ckpt', 2), reason: 'evidence', detail: 'PRIOR-B' }], refused: [{ job: jobId('ckpt', 1), outcome: 'owner-request', reasons: 'REFUSED-B' }], head: SHA_B, plan: 'PLAN-B', findings: [findingView('F-2', 'FINDING-B')],
-      obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)], coverage: { unservedAdvanced: [visionClauseId('V-1')], unservedOpportunity: [], horizon: [], obligationsServingNone: [], withdrawnCited: [] },
-      divergences: [{ id: divergenceId('D-1'), type: 'plan-departed', what: 'DIVERGENCE-B' }], contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')],
-      index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'), target: { kind: 'digest', digest: doc('docs/digest.md', 'DIGEST-B'), doc: repoPath('docs/arch2.md') },
-      direction: 'DIR-B',
-      manifest: [{ kind: 'plan', id: 'plan', path: absPath('/run/inputs/MANIFEST-B.plan.json'), sha256: sha256('b'.repeat(64)) }],
-      specs: [{ unit: unitId('u-two'), rev: specRev(3), markdown: 'SPECS-B', occupied: ['A1', 'W-1'] }],
-      nextRulingId: rulingId('C-9'),
-      diagnosis: {
-        units: [{
-          unit: unitId('u-two'), outcomes: [{ ref: failureRef('u-two/candidate#9', 'ref'), text: 'DIAGNOSIS-OUTCOME-B' }],
-          lanes: [{ ref: failureRef('u-two/lanes#8/unit', 'ref'), class: 'red', hostSuspected: null }], reverted: [{ path: repoPath('gen/DIAGNOSIS-REVERTED-B.js'), salvages: 3 }],
-          witnesses: [{ test: { lane: laneId('journey'), testId: 'DIAGNOSIS-WITNESS-B' }, reason: 'missing', attempt: 8 }],
-        }],
-        reentries: [],
-      },
-      brakes: { settled: true, findings: [{ finding: findingId('F-2'), brake: 'regress' }] },
-    },
-  ],
   packReview: [
     {
       vision: vision(1, 'VISION-A'), plan: 'PLAN-A', specs: [spec(1, 'SPEC-A')], obligations: packObligations('OBLIGATION-A'),
@@ -428,10 +357,9 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
     {mode: 'pre-build', brief: {target: {kind: 'full', doc: doc('docs/target-0.md', 'TARGET-0')}, vision: null, spec: spec(1, 'SPEC-A'), intent: 'INTENT-A', nonGoals: ['NON-GOAL-A'], contracts: [], systems: [systemName('app-a')], method: {traits: [], markers: [], unitKind: 'module', expensiveLanes: false, ui: false}, history: [], standing: []}},
     {mode: 'diagnosis', brief: {target: {kind: 'full', doc: doc('docs/target-1.md', 'TARGET-1')}, vision: null, spec: spec(2, 'SPEC-B'), intent: 'INTENT-B', nonGoals: ['NON-GOAL-B'], contracts: [], systems: [systemName('app-b')], method: {traits: ['persistent'], markers: ['M2'], unitKind: 'design', expensiveLanes: true, ui: true}, history: ['failed build'], standing: []}},
   ],
-  scaffold: [scaffoldSample('A', null), scaffoldSample('B', { reasons: ['RETRY-REASON-B'], laneEvidence: absPath('/run/ev/u/9-scaffold/LANE-B') })],
 };
 
-const OUTPUTS: { readonly [R in Role]: unknown } = {
+const OUTPUTS: Record<keyof TestInputs, unknown> = {
   campaignAudit: {...{
     findings: [{ severity: 'P1', obligation: 'I-1', visionClauses: ['V-1'], claim: 'I-1 is not held.', cause: 'rounding', evidence: [{ path: 'src/a.ts', line: 3 }], mutant: null }],
     reasons: ['I-1 fails on the audited tree'], premises: [],
@@ -470,20 +398,6 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
     findings: [{ severity: 'blocking', target: { type: 'census', rule: 'T-1' }, claim: 'T-1 has no census entry', evidence: [{ path: 'obligations.json', line: 1 }] }],
     dispositions: [{ job: 'review-1', index: 0, disposition: 'still-open' }], reasons: ['the census misses T-1'], premises: [],
   },
-  scaffold: { summary: 'Wrote the api package skeleton.', paths: ['packages/api/index.js', 'packages/api/test/load.test.js', 'package.json'] },
-  planCheck: {
-    decision: 'redirect', ordering: null, reasons: ['A1 contradicts C-1'], risk: 'med', notes: '', premises: [{ claim: 'parse.ts exists', evidence: [{ path: 'src/a/parse.ts', line: 1 }] }],
-    design: null, split: null, scaffold: null, poc: null,
-    visionConflict: [{ clauses: ['V-1'], note: 'A2 makes rounding permissive, against V-1.' }],
-
-    staleLinks: [{ link: 'requirement:I-2', outcome: 'updated', reason: 'A1 now states I-2 at rev 2' }],
-    patch: [
-      { op: 'replace', section: 'lanes', item: { id: 'unit', argv: ['npm', 'test'], cwd: '.', env: { set: [{ name: 'CI', value: '1' }], pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], evidenceExcludes: [] } },
-      { op: 'add', section: 'decisions', item: { id: 'R2', text: 'Use the existing parser.' } },
-      { op: 'strike', id: 'A3' },
-      { op: 'cite', contracts: ['docs/api.md'], rulings: ['C-4'] },
-    ],
-  },
   build: {
     summary: 'Added the parser.', grounding: {specWrong: null, touches: []}, tooBig: null, notes: [], blockers: [], experiments: [],  final: true,
   },
@@ -499,12 +413,6 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
   lens: {
     findings: [{ severity: 'P1', obligation: 'I-1', visionClauses: ['V-1'], claim: 'I-1 is not held.', cause: 'rounding', evidence: [{ path: 'src/a.ts', line: 3 }], mutant: null }],
     reasons: ['I-1 fails on the audited tree'], premises: [],
-  },
-  checkpoint: {
-    decision: 'bundle', reasons: ['F-1 needs a repair'],
-    ops: [{ op: 'cut', unit: 'u-one', reason: 'superseded by the repair', cites: ['V-1'], evidence: ['F-1'] }],
-     findingDispositions: [], interpretations: [], cites: { vision: ['V-1'], observations: [], findings: ['F-1'] }, premises: [],
-    corpusAmendments: [{ rules: ['T-1'], proposal: 'Allow three decimals for rates.', why: 'F-1 shows rates lose precision (V-1).' }],
   },
 };
 
@@ -559,9 +467,9 @@ function assertStrict(schema: JsonValue, path: string): void {
 describe('prompts', () => {
   it('prompts.gate-system-traits: declared and actual-diff traits are rendered in every supported gate prompt', () => {
     for (const model of MODEL_IDS) {
-      const supported = support('gate', model);
+      const supported = support('verifier', model);
       if (supported.type !== 'prompt') continue;
-      const text = supported.prompt.render(SAMPLES.gate[1]);
+      const text = promptFor('gate', model).render(SAMPLES.gate[1]);
       assert.match(text, /<system_traits>- persistent<\/system_traits>/, model);
       assert.match(text, /<reach_traits>- redacts<\/reach_traits>/, model);
     }
@@ -646,11 +554,11 @@ describe('prompts', () => {
 
   it('build prompts cover fast lanes, decisions.json, .roadmap/ and estate lanes', () => { for (const model of ['claude-opus-5-5', 'gpt-5.6-luna'] as const) { const mod = promptFor('build', model); assert.ok(mod.system.includes(UNIT_POLICY)); const text = mod.render(SAMPLES.build[1]); assert.match(text, /\/run\/inv\/9-1/); assert.match(text, /cd \/wt\/b && env CI=1 npx tsc --noEmit/); assert.doesNotMatch(text, /RULE-B|C-8 first sentence|rulings\.md/); assert.deepEqual(Object.keys((ROLE_SCHEMAS.build as {properties: object}).properties), ['summary', 'blockers', 'experiments', 'grounding', 'tooBig', 'notes', 'final']); } });
 
-  it('dev.13: a milestone unit\'s plan-check, build and gate embed its design references as documents and name its milestones; others carry none', () => {
-    for (const role of ['planCheck', 'build', 'gate'] as const) for (const model of MODEL_IDS) {
-      const s = support(role, model);
+  it('dev.13: a milestone unit\'s pre-build, build and gate embed its design references as documents and name its milestones; others carry none', () => {
+    for (const role of ['build', 'gate'] as const) for (const model of MODEL_IDS) {
+      const s = support(role === 'gate' ? 'verifier' : role, model);
       if (s.type !== 'prompt') continue;
-      const mod = s.prompt as { render: (i: unknown) => string };
+      const mod = promptFor(role, model) as {render: (i: unknown) => string};
       const text = mod.render(SAMPLES[role][1]);
       for (const needle of ['REFERENCE-B', 'TOKENS-B', 'design/b/DESIGN.md', 'design/b2/tokens.json', 'design/b/WIRE-B.png', 'MS-2', 'MEMBER-MILESTONE-B', 'MS-3', 'DESIGN-MILESTONE-B']) {
         assert.ok(text.includes(needle), `${role}/${model}: ${needle}`);
@@ -683,14 +591,13 @@ describe('prompts', () => {
   it('judgment prompts: cited documents in full, the rest indexed; host facts only from lane programs; premises', () => { const mod = promptFor('gate', 'claude-opus-5-5'); const text = mod.render(SAMPLES.gate[1]); assert.ok(text.includes('CONTRACT-B')); assert.ok(text.includes('docs/y.md')); assert.ok(text.includes('DIGEST-B')); assert.ok(text.includes('docs/arch2.md')); assert.doesNotMatch(text, /RULE-B|C-8 first sentence|rulings\.md/); assert.ok((GATE_SCHEMA as {required: string[]}).required.includes('premises')); });
 
   it('a later round rules on its prior round: the prior premises, patch and findings are rendered', () => {
-    for (const role of ['planCheck', 'gate'] as const) for (const model of ['claude-opus-5-5'] as const) {
+    for (const role of ['gate'] as const) for (const model of ['claude-opus-5-5'] as const) {
       const mod = promptFor(role, model) as { render: (i: unknown) => string };
       assert.doesNotMatch(mod.render(SAMPLES[role][0]), /PREMISE-B|Re-verify only premises/, `${role}/${model}: no prior round on the first`);
       const text = mod.render(SAMPLES[role][1]);
       assert.match(text, /PREMISE-B \[src\/b\/x\.ts:3\]/, `${role}/${model}: premises with evidence`);
     }
     for (const model of ['claude-opus-5-5', 'claude-fable-5-1'] as const) {
-      assert.match(promptFor('planCheck', model).render(SAMPLES.planCheck[1]), /"op":"strike","id":"A3"/, 'the prior patch');
       assert.match(promptFor('gate', model).render(SAMPLES.gate[1]), /\[blocking\] src\/b\/x\.ts: FINDING-B/, 'the prior findings');
       assert.match(promptFor('gate', model).render(SAMPLES.gate[1]), /FINDING-B\n  ran: node EXPERIMENT-B\.mjs/, 'a prior finding names the experiments it cited');
     }
@@ -705,34 +612,13 @@ describe('prompts', () => {
 });
 
 describe('output validators', () => {
-  const ok = OUTPUTS as { readonly [R in Role]: Record<string, unknown> };
+  const ok = OUTPUTS as { readonly [R in keyof TestInputs]: Record<string, unknown> };
 
-  it('planCheck: patch only with redirect; lane env.set converts to the spec map', () => {
-    const out = validatePlanCheckOutput(ok.planCheck) as Extract<RoleOutputs['planCheck'], { decision: 'redirect' }>;
-    const first = out.patch[0];
-    assert.ok(first !== undefined && first.op === 'replace' && first.section === 'lanes');
-    assert.deepEqual(first.item.env.set, { CI: '1' });
-    assert.throws(() => validatePlanCheckOutput({ ...ok.planCheck, patch: null }), SchemaError);
-    assert.throws(() => validatePlanCheckOutput({ ...ok.planCheck, patch: [] }), SchemaError);
-    assert.throws(() => validatePlanCheckOutput({ ...ok.planCheck, decision: 'approve' }), SchemaError);
-    validatePlanCheckOutput({ ...ok.planCheck, decision: 'approve', patch: null });
-    assert.throws(() => validatePlanCheckOutput({ ...ok.planCheck, decision: 'approve', patch: null, reasons: [] }), SchemaError);
-    const dupEnv = structuredClone(ok.planCheck) as { patch: { item: { env: { set: unknown[] } } }[] };
-    const firstOp = dupEnv.patch[0];
-    assert.ok(firstOp !== undefined);
-    firstOp.item.env.set.push({ name: 'CI', value: '2' });
-    assert.throws(() => validatePlanCheckOutput(dupEnv), SchemaError);
-  });
-
-  it('planCheck and gate: the premises key is required (strict schema) but may be empty; a cite op names at least one document', () => {
-    validatePlanCheckOutput({ ...ok.planCheck, premises: [] });
-    validateGateOutput({ ...ok.gate, premises: [] });
-    const { premises: _p, ...noPremises } = ok.planCheck;
-    assert.throws(() => validatePlanCheckOutput(noPremises), SchemaError);
-    const { premises: _g, ...gateNoPremises } = ok.gate;
-    assert.throws(() => validateGateOutput(gateNoPremises), SchemaError);
-    assert.throws(() => validatePlanCheckOutput({ ...ok.planCheck, patch: [{ op: 'cite', contracts: [], rulings: [] }] }), SchemaError);
-    assert.throws(() => validatePlanCheckOutput({ ...ok.planCheck, premises: [{ claim: 'x', evidence: [{ path: 'a', line: 0 }] }] }), SchemaError);
+  it('verifier: premises are required, may be empty, and evidence lines are positive', () => {
+    validateGateOutput({...ok.gate, premises: []});
+    const {premises: _p, ...missing} = ok.gate;
+    assert.throws(() => validateGateOutput(missing), SchemaError);
+    assert.throws(() => validateGateOutput({...ok.gate, premises: [{claim: 'x', evidence: [{path: 'a', line: 0}]}]}), SchemaError);
   });
 
   it('gate: directives only with revise; approve carries no blocking finding', () => {
@@ -809,12 +695,12 @@ describe('M3 prompts: the vision and the arc roles', () => {
   const ARC_MODELS = ['claude-opus-5-5', 'claude-fable-5-1', 'claude-sonnet-5-5'] as const;
 
   it('the arc roles are supported on every Claude model: lens/Opus and checkpoint/Opus written, Fable inherits, Sonnet adds its line; Codex unsupported', () => {
-    for (const role of ['lens', 'checkpoint'] as const) {
+    for (const role of ['campaignAudit'] as const) {
       assert.equal(PROMPTS[role]['claude-opus-5-5'].type, 'prompt');
       assert.equal(promptFor(role, 'claude-fable-5-1'), promptFor(role, 'claude-opus-5-5'));
       assert.equal(promptFor(role, 'claude-sonnet-5-5').system, `${promptFor(role, 'claude-opus-5-5').system}\n\n${SONNET_THINK_FIRST}`);
     }
-    for (const role of ['lens', 'checkpoint'] as const) {
+    for (const role of ['campaignAudit'] as const) {
       for (const model of ['gpt-5.6-luna', 'gpt-5.6-sol'] as const) assert.throws(() => promptFor(role, model), UnsupportedPromptError);
       for (const model of ARC_MODELS) {
         const s = PROMPTS[role][model];
@@ -824,12 +710,11 @@ describe('M3 prompts: the vision and the arc roles', () => {
   });
 
   it('the vision goes first and in full into every lens and checkpoint prompt, before obligations and plan, and wins a conflict', () => {
-    for (const role of ['lens', 'checkpoint'] as const) for (const model of ARC_MODELS) {
+    for (const role of ['lens'] as const) for (const model of ARC_MODELS) {
       const mod = promptFor(role, model) as { system: string; fields: readonly string[]; render: (i: unknown) => string };
       assert.match(mod.system, /the vision wins/, `${role}/${model}`);
       assert.match(mod.system, /forecloses? a horizon clause/, `${role}/${model}: the horizon is never foreclosed`);
       assert.match(mod.system, /Never (resolve|answer) an open question yourself/, `${role}/${model}`);
-      if (role === 'checkpoint') assert.match(mod.system, /costly to undo if the assumption proves false is a request/, model);
       for (const input of SAMPLES[role]) {
         const text = mod.render(input);
         const v = input.vision;
@@ -837,7 +722,6 @@ describe('M3 prompts: the vision and the arc roles', () => {
         for (const c of v.clauses) assert.ok(text.includes(`${c.id} (${c.kind}): ${c.text}`), `${role}/${model}: clause ${c.id} in full`);
         const at = text.indexOf(v.clauses[0]!.text);
         assert.ok(at < text.indexOf(input.obligations[0]!.obligation.statement), `${role}/${model}: vision before obligations`);
-        if (role === 'checkpoint') assert.ok(at < text.indexOf((input as RoleInputs['checkpoint']).plan), `${role}/${model}: vision before the plan`);
       }
     }
   });
@@ -854,7 +738,7 @@ describe('M3 prompts: the vision and the arc roles', () => {
       questions: [q, { ...q, id: questionId('Q-2'), text: 'CLOSED', state: 'closed' as const }],
       advances: [visionClauseId('V-1'), visionClauseId('V-4')],
     };
-    const text = promptFor('checkpoint', 'claude-opus-5-5').render({ ...SAMPLES.checkpoint[0], vision: v });
+    const text = promptFor('lens', 'claude-opus-5-5').render({ ...SAMPLES.lens[0], vision: v });
     assert.match(text, /<vision>\nVision revision 3\nV-4 \(world\): W\nV-1 \(purpose\): P\n/);
     assert.match(text, /V-2 \(tradeoff, rank 1\): T/);
     assert.match(text, /Withdrawn, never cite: V-3/);
@@ -863,69 +747,16 @@ describe('M3 prompts: the vision and the arc roles', () => {
     assert.doesNotMatch(text, /CLOSED/, 'a closed question is omitted');
   });
 
-  it('the checkpoint conveys OR-V: steer to the vision, cite V-n plus evidence per op, optimistic interpretations, owner-only acts only as requests', () => {
-    const sys = promptFor('checkpoint', 'claude-opus-5-5').system;
-    for (const needle of [
-      /not toward the original plan/, /most optimistic reading/, /interpretations/, /cites the active V-n clauses that demand it/, /evidence/,
-      /amend its statement or anchor, re-anchor it, split it and drop part of its text, retire, waive or defer it/, /amend the implementation contracts/,
-      /irreversible or destructive/, /more than \$10/, /legal ramifications/, /may only request it/, /lane program the plan in force does not already run/,
-      /new environment prerequisite/, /outside the plan's contracts and architecture docs/, /never cited/,
-      /[Nn]obody can answer a question/,
-      /Splitting a must-hold obligation \(a latched one included\) keeps every child that restates it must-hold/,
-    ]) assert.match(sys, needle);
-  });
-
-  it('the checkpoint lists the ruling sidecar\'s required schema value and every closed enum from the reader\'s constants (paid m3 run 7: invalid rulings twice)', () => {
-    const sys = promptFor('checkpoint', 'claude-opus-5-5').system;
-    assert.ok(sys.includes(`- schema: "${RULING_SCHEMA}".`), 'the schema value');
-    for (const [field, values] of [['kind', RULING_KINDS], ['relation', DOC_RELATIONS], ['disposition', OBLIGATION_DISPOSITIONS], ['lifetime', RULING_LIFETIMES]] as const) {
-      assert.ok([`${field}: one of`, `${field} one of`].some((f) => sys.includes(`${f} ${values.map((v) => `"${v}"`).join(', ')}`)), field);
-    }
-    assert.match(sys, /appliesTo: \{"type": "arc"\} or \{"type": "units", "units": \[unit ids, ascending\]\}/);
-  });
-
-  it('the checkpoint never accepts, defers or releases a P1: dismissed, or left to the repair that names it (paid m3 run 9; dev.13 released)', () => {
-    const sys = promptFor('checkpoint', 'claude-opus-5-5').system;
-    assert.ok(sys.includes('A P1 is never accepted, deferred or released by a checkpoint: dismiss it if it is not real; otherwise leave it out of findingDispositions and name it in the repairs of the unit that fixes it'));
-  });
-
-
-  it('the checkpoint states anchors as anchorSection reads them: #<heading-slug> or literal text on exactly one line (paid m3 run 9)', () => {
-    const sys = promptFor('checkpoint', 'claude-opus-5-5').system;
-    assert.match(sys, /An anchor \(in docRefs and contractOps\) is #<heading-slug> for a section, .*\(## Money is #money\).*; otherwise it is literal text found on exactly one line/);
-    const doc = '# Contract\n\n## Money\n\nformatAmount renders two decimals.\n\n## Other\n\nmoney elsewhere\n';
-    assert.equal(headingSlug('Money'), 'money', 'the example is the slug code computes');
-    assert.equal(quotedTextReason(doc, '#money', 'renders two decimals'), null);
-    assert.equal(quotedTextReason(doc, 'formatAmount renders', 'two decimals'), null, 'literal text on one line');
-    assert.match(quotedTextReason(doc, 'money', 'x') ?? '', /matches 0 lines|is not under/, 'a bare word is literal text, not a heading');
-  });
-
   it('a latched future obligation renders as must-hold (latched), so a split can keep its restating child must-hold', () => {
     const view = { ...observed('I-1', 'A month reconciles.', SHA_A), obligation: { ...obligation('I-1', 'A month reconciles.'), activation: 'future' as const, deliveredBy: [unitId('report')] } };
     assert.match(obligationsText([{ ...view, latched: true }], { serves: true }), /^- I-1 \(rev 1; must-hold \(latched\); /);
     assert.match(obligationsText([view], { serves: true }), /^- I-1 \(rev 1; future; /);
   });
 
-  it('the lens prompt carries exactly one `lens: <kind>` marker, and each kind its own brief', () => {
-    const mod = promptFor('lens', 'claude-opus-5-5');
-    const briefs = new Set<string>();
-    for (const kind of LENS_KINDS) {
-      const text = mod.render({ ...SAMPLES.lens[0], lens: kind });
-      const markers = [...(mod.system + text).matchAll(/"lens": "|lens: (invariants|drift|vacuity|vision)\b/g)].map((m) => m[0]);
-      assert.deepEqual(markers, [`lens: ${kind}`], kind);
-      briefs.add(text.slice(text.indexOf('<lens_brief>'), text.indexOf('</lens_brief>')));
-    }
-    assert.equal(briefs.size, LENS_KINDS.length);
-    assert.match(mod.render({ ...SAMPLES.lens[0], lens: 'vision' }), /P2 or P3, never P1/);
-    // M4b: the mutant is exact replacements, never a hand-written diff (a refused draft goes to the repair turn, dev.12).
-    assert.match(mod.render({ ...SAMPLES.lens[0], lens: 'vacuity' }), /edits, one or more exact replacements[\s\S]*occurs exactly once/);
-    assert.doesNotMatch(mod.render({ ...SAMPLES.lens[0], lens: 'vacuity' }), /unified diff/);
-  });
-
   it('the lens: prior findings not repeated, no reasoning field, nobody will answer', () => {
     const sys = promptFor('lens', 'claude-opus-5-5').system;
     for (const needle of [/Do not report one again/, /Nobody will answer a question/]) assert.match(sys, needle);
-    for (const schema of [ROLE_SCHEMAS.lens, ROLE_SCHEMAS.checkpoint]) assert.doesNotMatch(JSON.stringify(schema), /reasoning/);
+    for (const schema of [ROLE_SCHEMAS.campaignAudit]) assert.doesNotMatch(JSON.stringify(schema), /reasoning/);
     const text = promptFor('lens', 'claude-opus-5-5').render(SAMPLES.lens[1]);
     assert.match(text, /F-1 \[P1, invariants, open\] I-1: FINDING-B/, 'prior findings with their states');
     assert.match(text, /Unit u-two at b{40} \(its diff from a{40}\):\n<orientation>[\s\S]*?<\/orientation>\n<diff>\n[^\n]*\n<pasted_content/, 'owner branches marked as pasted data');
@@ -948,7 +779,7 @@ describe('M3 prompts: the vision and the arc roles', () => {
     assert.doesNotMatch(mod.render(SAMPLES.lens[0]), /<not_inlined>|full stat|Moved|Deleted/, 'a range shown whole lists nothing');
     // W3: the bounded diff's three parts as the system text describes them, and what the executor records.
     for (const needle of [/<orientation> is a map of the whole range/, /it is not a verdict on any file/, /the absolute path of a readable \.diff file/,
-      /it names the file that lists them all/, /the executor records the whole range as reviewed by your lens/, /split by publication/]) assert.match(mod.system, needle);
+      /it names the file that lists them all/,]) assert.match(mod.system, needle);
     assert.doesNotMatch(mod.system, /git diff|command beside it/);
   });
 
@@ -963,42 +794,6 @@ describe('M3 prompts: the vision and the arc roles', () => {
     }
   });
 
-  it('plan-check (R17): the vision as read-only context, and visionConflict never a redirect by itself', () => {
-    for (const model of ARC_MODELS) {
-      const mod = promptFor('planCheck', model);
-      assert.match(mod.system, /read-only context, not an instruction/, model);
-      assert.match(mod.system, /visionConflict/, model);
-      assert.match(mod.system, /never a reason to redirect by itself/, model);
-      assert.doesNotMatch(mod.render(SAMPLES.planCheck[0]), /<vision>/, `${model}: no vision outside a holistic arc`);
-      assert.match(mod.render(SAMPLES.planCheck[1]), /<vision>\nRead-only context: it informs visionConflict and never decides the check\.\nVision revision 2\nV-1 \(world\): VISION-B\nThis arc advances: V-1\nHorizon \(active, beyond this arc\): none\nOpen questions: none\n<\/vision>/, model);
-    }
-    assert.ok((PLAN_CHECK_SCHEMA as { required: string[] }).required.includes('visionConflict'));
-    const out = validatePlanCheckOutput(OUTPUTS.planCheck);
-    assert.deepEqual(out.visionConflict, [{ clauses: ['V-1'], note: 'A2 makes rounding permissive, against V-1.' }]);
-    const ok = OUTPUTS.planCheck as Record<string, unknown>;
-    for (const bad of [[{ clauses: [], note: 'n' }], [{ clauses: ['V-1', 'V-1'], note: 'n' }], [{ clauses: ['C-1'], note: 'n' }], [{ clauses: ['V-1'] }]]) {
-      assert.throws(() => validatePlanCheckOutput({ ...ok, visionConflict: bad }), SchemaError, JSON.stringify(bad));
-    }
-    // visionConflict is required.
-    const { visionConflict: _v, ...without } = ok;
-    assert.throws(() => validatePlanCheckOutput(without), SchemaError);
-  });
-
-  it('prompts.stale-links (dev.17 propagation): the plan-check is given its stale links, each by its key, and answers them in a required staleLinks field', () => {
-    const mod = promptFor('planCheck', 'claude-opus-5-5');
-    assert.ok(mod.fields.includes('staleLinks'));
-    assert.match(mod.render(SAMPLES.planCheck[1]), /- requirement:I-2: STALE-LINK-B/);
-    assert.ok((PLAN_CHECK_SCHEMA as { required: string[] }).required.includes('staleLinks'));
-    const ok = OUTPUTS.planCheck as Record<string, unknown>;
-    assert.deepEqual(validatePlanCheckOutput(ok).staleLinks, [{ link: 'requirement:I-2', outcome: 'updated', reason: 'A1 now states I-2 at rev 2' }]);
-    for (const bad of [[{ link: 'requirement:I-2', outcome: 'ignored', reason: 'r' }], [{ link: 'requirement:I-2', outcome: 'confirmed' }]]) {
-      assert.throws(() => validatePlanCheckOutput({ ...ok, staleLinks: bad }), SchemaError, JSON.stringify(bad));
-    }
-    // An answer a dev.16 executor launched has no staleLinks: read as none answered (scaffolding, `planCheckStaleLinksDefault`).
-    const { staleLinks: _s, ...dev16 } = ok;
-    assert.throws(() => validatePlanCheckOutput(dev16), /staleLinks/);
-  });
-
   it('the gate renders standing obligations as compact lines in their own tag after direct obligations', () => {
     for (const model of ARC_MODELS) {
       const mod = promptFor('gate', model);
@@ -1011,8 +806,8 @@ describe('M3 prompts: the vision and the arc roles', () => {
   });
 
   it('the gate (R17) never receives the vision: its selected obligations, without the clauses they serve', () => {
-    assert.ok(!(ROLE_INPUTS.gate as readonly string[]).includes('vision'));
-    assert.ok((ROLE_INPUTS.gate as readonly string[]).includes('obligations'));
+    assert.ok(!(Object.keys(SAMPLES.gate[0]) as readonly string[]).includes('vision'));
+    assert.ok((Object.keys(SAMPLES.gate[0]) as readonly string[]).includes('obligations'));
     for (const model of ARC_MODELS) {
       const mod = promptFor('gate', model);
       const text = mod.render(SAMPLES.gate[1]);
@@ -1023,8 +818,8 @@ describe('M3 prompts: the vision and the arc roles', () => {
 });
 
 describe('M4a prompts: the corpus target, checkpoint intake, the pack review, unattended builds', () => {
-  const JUDGMENTS = [['planCheck', 'claude-opus-5-5'], ['gate', 'claude-opus-5-5'],
-    ['lens', 'claude-opus-5-5'], ['checkpoint', 'claude-opus-5-5']] as const;
+  const JUDGMENTS = [ ['gate', 'claude-opus-5-5'],
+    ['lens', 'claude-opus-5-5']] as const;
 
   it('corpus target: the rules index by file and section, the read-only corpus dir, the vision doc only where the role reads it', () => {
     const doc = targetDocument(corpusTarget('/run/corpus/0123abcd', 'docs/vision.md'));
@@ -1038,28 +833,28 @@ describe('M4a prompts: the corpus target, checkpoint intake, the pack review, un
     for (const [role, model] of JUDGMENTS) {
       const mod = promptFor(role, model) as {system: string; fields: readonly string[]; render: (i: unknown) => string};
       assert.ok(mod.fields.includes('target'), `${role}/${model}`);
-      const target = role === 'gate' || role === 'planCheck' ? unitCorpusTarget('/run/corpus/0123abcd', role === 'gate' ? null : 'docs/vision.md') : corpusTarget('/run/corpus/0123abcd', 'docs/vision.md');
+      const target = role === 'gate' ? unitCorpusTarget('/run/corpus/0123abcd', role === 'gate' ? null : 'docs/vision.md') : corpusTarget('/run/corpus/0123abcd', 'docs/vision.md');
       const text = mod.render({ ...SAMPLES[role][0], target });
       assert.match(text, /<source>corpus rules index \(the pinned corpus files are read-only under \/run\/corpus\/0123abcd/, `${role}/${model}`);
       assert.match(text, / {4}T-2( \[textSha256 c{64}\])?: Totals reconcile monthly\./, `${role}/${model}`);
-      if (role === 'gate' || role === 'planCheck') {
+      if (role === 'gate') {
         assert.match(text, /3 other active rules are readable in \/run\/corpus\/0123abcd/);
         assert.doesNotMatch(text, /Amounts render with two decimals/);
       } else assert.match(text, /Amounts render with two decimals/);
       assert.doesNotMatch(text, /ARCH-A/, `${role}/${model}: the corpus replaces the architecture doc`);
-      assert.equal(/textSha256/.test(text), role === 'checkpoint', `${role}/${model}: only the checkpoint, which writes rule refs, gets the hashes`);
+      assert.equal(/textSha256/.test(text), false, `${role}/${model}: only the checkpoint, which writes rule refs, gets the hashes`);
     }
   });
 
   it('a lens cannot receive a unit corpus target', () => {
     // @ts-expect-error lenses require the complete corpus index
-    const bad: RoleInputs['lens'] = { ...SAMPLES.lens[0], target: unitCorpusTarget('/d', null) };
+    const bad: LensInputs = { ...SAMPLES.lens[0], target: unitCorpusTarget('/d', null) };
     void bad;
   });
 
   it('the gate never sees the vision doc: its corpus target carries none, by type and in text (M3 R17)', () => {
     // @ts-expect-error a gate's corpus target cannot name the vision doc
-    const bad: RoleInputs['gate'] = { ...SAMPLES.gate[1], target: unitCorpusTarget('/run/corpus/0123abcd', 'docs/vision.md') };
+    const bad: GateInputs = { ...SAMPLES.gate[1], target: unitCorpusTarget('/run/corpus/0123abcd', 'docs/vision.md') };
     void bad;
     for (const model of ['claude-opus-5-5', 'claude-fable-5-1'] as const) {
       const mod = promptFor('gate', model);
@@ -1067,30 +862,6 @@ describe('M4a prompts: the corpus target, checkpoint intake, the pack review, un
       assert.doesNotMatch(mod.system + text, /\bvision\b|V-1|serves/i, model);
       assert.ok((GATE_SCHEMA as {properties: {findings: {items: {properties: object}}}}).properties.findings.items.properties.hasOwnProperty('contractRef'), model);
     }
-  });
-
-  it('checkpoint corpus: amendments proposed for the next Phase 0; rule-anchored children and rulings; no issues section', () => {
-    const mod = promptFor('checkpoint', 'claude-opus-5-5');
-    assert.doesNotMatch(mod.render(SAMPLES.checkpoint[1]), /<issues>/);
-    assert.doesNotMatch(mod.system, /issueIntake|<issues>/);
-    for (const needle of [
-      /corpusAmendments: rules, the T-n ids it changes \(empty for a new rule\)/,
-      /the owner's next Phase 0 dispositions it/, /never to the corpus/,
-      /anchored at exactly one of docRef and rule, the other null/, /a rule reference \{rule, textSha256, relation\}/, /A ruling never deviates from a rule/,
-    ]) assert.match(mod.system, needle);
-    assert.ok(mod.system.includes(`relation one of ${RULE_RELATIONS.map((v) => `"${v}"`).join(', ')}`));
-  });
-
-  it('checkpoint schema: corpusAmendments required of the model, issueIntake gone; a dev.6 answer without amendments is refused', () => {
-    const req = (CHECKPOINT_SCHEMA as { required: string[] }).required;
-    assert.ok(req.includes('corpusAmendments') && !req.includes('issueIntake'));
-    const ok = OUTPUTS.checkpoint as Record<string, unknown>;
-    assert.ok(!conforms(CHECKPOINT_SCHEMA, { ...ok, issueIntake: [] }), 'the schema offers no issueIntake');
-    const out = validateCheckpointOutput(ok);
-    assert.deepEqual(out.corpusAmendments, [{ rules: ['T-1'], proposal: 'Allow three decimals for rates.', why: 'F-1 shows rates lose precision (V-1).' }]);
-    assert.throws(() => validateCheckpointOutput({ ...ok, corpusAmendments: [{ rules: ['C-1'], proposal: 'p', why: 'w' }] }), SchemaError);
-    const { corpusAmendments: _c, ...dev6 } = ok;
-    assert.throws(() => validateCheckpointOutput(dev6), SchemaError, 'a dev.6 answer without amendments is not adopted since 1.0.0-dev.8');
   });
 
   it('the pack review is the ported Phase-0 review brief: read-only, the architect adjudicates', () => {
@@ -1193,17 +964,6 @@ describe('M4a rev 3 prompts: executable checks, the checkpoint admits', () => {
     }
   });
 
-  it('plan-check: the failure matrix before a transaction ordering, earlier repairs carried in; clock and entry-point defects (F03, D3)', () => {
-    for (const model of JUDGES) {
-      const sys = promptFor('planCheck', model).system;
-      for (const needle of [/failure matrix/, /staging, a ledger or file save, a publication, a rollback/, /process dying before it, after it/, /earlier repairs of the same transaction/,
-        /add the matrix as a facts item/, /real clock or the host time zone/, /fixed date the change invalidates/, /real wait in a fast lane/, /negative witness/, /real entry point/,
-        /existing tests the change affects/]) {
-        assert.match(sys, needle, `planCheck/${model}: ${needle}`);
-      }
-    }
-  });
-
   it('gate: the executable checks block (missing with what requires it, killed, survived, inconclusive, why smoke did not run) and the D3 and H1 defect classes', () => {
     for (const model of JUDGES) {
       const mod = promptFor('gate', model);
@@ -1231,43 +991,6 @@ describe('M4a rev 3 prompts: executable checks, the checkpoint admits', () => {
 
       assert.doesNotMatch(mod.system + text, /\bvision\b|V-1|serves/i, `${model}: still no vision in the gate`);
     }
-  });
-
-  it('prompts.checkpoint-failure-matrix: a matrix of each step against process death before admitting an ordering repair, prior repairs of the transaction carried in, put in the spec', () => {
-    const sys = promptFor('checkpoint', 'claude-opus-5-5').system;
-    for (const needle of [/# Transaction repairs/, /reorders the steps of a transaction \(staging, a ledger or file save, a publication, a rollback\)/, /write its failure matrix/,
-      /process dies just before the step, just after it, and when the step itself fails/,
-      /Put the matrix in the repair's spec as a facts item/]) assert.match(sys, needle);
-  });
-
-  it('checkpoint admits (OR-A1, LR-k, LR-m, R35): code classifies from declared targets; honest citation; one opportunity, one follow-up; the rest converts to amendments', () => {
-    const sys = promptFor('checkpoint', 'claude-opus-5-5').system;
-    for (const needle of [/# Admits in a corpus arc/, /Code classifies every admit after you decide/, /you do not label it/, /- repair: /, /- oversight: /, /- opportunity: /,
-      /budget of one opportunity/, /at most one follow-up/, /Honest citation: an admit that targets an out-of-slice rule cites the clause outside the slice that the rule advances/,
-      /targets lists the corpus rules \(T-n\) the unit adds or changes behaviour for/, /A finding's vision clauses are context, not scope/, /Every target must be an active rule of the pin/,
-      /code drops an admit that touches no clause, an opportunity over the budget, an opportunity without its witness, and a second follow-up/,
-      /An opportunity is admitted only together with its witness: in the same bundle, an obligation split/, /corpus amendment for the owner's next Phase 0/,
-      /banks a debt item naming the opportunity/, /the whole bundle is invalid instead/, /repair ref to an obligation that holds, an exempt obligation, or a finding no longer active/]) {
-      assert.match(sys, needle);
-    }
-  });
-
-  it('checkpoint inputs (H4, H5, C3, C6): the manifest, never live roadmap-inputs; every spec with its held ids; add vs replace; the next ruling id; the evidence note; the diagnosis right after a park trigger', () => {
-    const mod = promptFor('checkpoint', 'claude-opus-5-5');
-    for (const needle of [/Read a captured input only through its manifest path\. Never read roadmap-inputs/, /add needs an id the spec does not hold, and replace an id it holds/,
-      /takes the id in <next_ruling_id>, and each further one the next number \(C-9, then C-10\), written without leading zeros/,
-      /The head may advance while you decide: an observation stays valid when the head's run keeps every cited test's outcome and selection; cite the observations your ops rest on\./,
-    ]) assert.match(mod.system, needle);
-    assert.doesNotMatch(mod.system, /C-nn new to the ledger/);
-    const text = mod.render(SAMPLES.checkpoint[1]);
-    assert.match(text, /<input_manifest>\n- plan plan: \/run\/inputs\/MANIFEST-B\.plan\.json sha256:b{64}\n<\/input_manifest>/);
-    assert.match(text, /<unit_specs>\n<documents>\n<document index="1">\n<source>spec of unit u-two, revision 3; item ids it holds: A1, W-1<\/source>\n<document_content>\nSPECS-B/);
-    assert.match(text, /<next_ruling_id>C-9<\/next_ruling_id>/);
-    assert.match(text, /<\/trigger>\n\n<diagnosis>\n[^]*Unit u-two:\n- u-two\/candidate#9: DIAGNOSIS-OUTCOME-B\n- u-two\/lanes#8\/unit: lane failure, red\n- Edits to protected paths that salvage reverted: gen\/DIAGNOSIS-REVERTED-B\.js \(3×\)\n- Required witness journey\/DIAGNOSIS-WITNESS-B missing at lanes attempt 8\n<\/diagnosis>/);
-    const first = mod.render(SAMPLES.checkpoint[0]);
-    assert.doesNotMatch(first, /<diagnosis>/);
-    assert.match(first, /<input_manifest>\n\(none\)\n<\/input_manifest>/);
-    assert.match(first, /<unit_specs>\n\(no unit specs\)\n<\/unit_specs>/);
   });
 
   it('prompts.lens-cause-shape: cause as "<affected operation>: <failure condition>", lens-agnostic; a specs-only drift judges the changed specs against the vision', () => {
@@ -1334,7 +1057,7 @@ describe('W3 seat prompts (2026-10-16)', () => {
 
   it('prompts.gate-large-diff: <large_diff> only over the threshold, with its overflow, path count and list, before the ask; the system text says clusters is null otherwise', () => {
     for (const model of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'] as const) {
-      const mod = promptFor('gate', model) as { system: string; render: (i: RoleInputs['gate']) => string };
+      const mod = promptFor('gate', model) as { system: string; render: (i: GateInputs) => string };
       assert.match(mod.system, /clusters is null unless[^.]*<large_diff>/);
       const [small, large] = SAMPLES.gate;
       assert.doesNotMatch(mod.render(small), /<large_diff>/, `${model}: under the threshold the plain prompt`);
@@ -1346,18 +1069,8 @@ describe('W3 seat prompts (2026-10-16)', () => {
     }
   });
 
-  it('prompts.lens-brief-last: the vision opens the lens message and the lens brief sits after the data, just before the ask', () => {
-    const text = promptFor('lens', 'claude-opus-5-5').render(SAMPLES.lens[1]);
-    assert.ok(text.startsWith('<vision>'));
-    const brief = text.indexOf('<lens_brief>');
-    for (const tag of ['<obligations>', '<audited_range', '<owner_branches>', '<prior_findings>', '<checkout>']) {
-      assert.ok(text.indexOf(tag) >= 0 && text.indexOf(tag) < brief, `${tag} before the brief`);
-    }
-    assert.match(text.slice(brief), /^<lens_brief>\nlens: vision\n[^]*<\/lens_brief>\n\nAudit the tree at /);
-  });
-
   it('prompts.escalation-preface: only at the escalation seat, naming a route-up\'s first answer or the risk trigger', () => {
-    for (const [role, name] of [['planCheck', 'plan-check'], ['gate', 'gate']] as const) {
+    for (const [role, name] of [['gate', 'gate']] as const) {
       const mod = promptFor(role, 'claude-opus-5-5') as { render: (i: unknown) => string };
       const base = SAMPLES[role][0];
       assert.doesNotMatch(mod.render(base), /<escalation>/, `${role}: nothing below the seat`);
@@ -1372,14 +1085,14 @@ describe('W3 seat prompts (2026-10-16)', () => {
 
 describe('dev.13 prompts: the walkthrough', () => {
   it('prompts.walkthrough-contract: Fable inherits the Opus module with a dated review; the vision opens the message and the ask closes it; the system text names every field the schema requires', () => {
-    const fable = PROMPTS.walkthrough['claude-fable-5-1'];
+    const fable = PROMPTS.experienceVerdict['claude-fable-5-1'];
     assert.ok(fable.type === 'inherits' && fable.from === 'claude-opus-5-5' && /^\d{4}-\d{2}-\d{2}: /.test(fable.reviewed) && !/placeholder/i.test(fable.reviewed));
     const sample = SAMPLES.walkthrough[0];
     for (const model of ['claude-opus-5-5', 'claude-fable-5-1'] as const) {
       const mod = promptFor('walkthrough', model);
       assert.equal(mod, promptFor('walkthrough', 'claude-opus-5-5'), `${model}: the Opus module`);
-      assert.equal(mod.schema, ROLE_SCHEMAS.walkthrough, model);
-      assert.deepEqual(mod.fields, ROLE_INPUTS.walkthrough, model);
+      assert.equal(mod.schema, EXPERIENCE_SCHEMA, model);
+      assert.deepEqual(mod.fields, Object.keys(SAMPLES.walkthrough[0]), model);
       const text = mod.render(sample);
       assert.ok(text.startsWith('<vision>'), `${model}: the vision first`);
       assert.ok(text.endsWith('return your report.'), `${model}: the ask last`);
@@ -1393,15 +1106,15 @@ describe('dev.13 prompts: the walkthrough', () => {
 
 describe('dev.13 prompts: the polish judge', () => {
   it('prompts.polishJudge-contract: Fable inherits the Opus module with a dated review; the vision opens the message and the ask closes it; both instances, the proposal, the diff and the evidence dirs render; the system text names every field the schema requires', () => {
-    const fable = PROMPTS.polishJudge['claude-fable-5-1'];
+    const fable = PROMPTS.experienceVerdict['claude-fable-5-1'];
     assert.ok(fable.type === 'inherits' && fable.from === 'claude-opus-5-5' && /^\d{4}-\d{2}-\d{2}: /.test(fable.reviewed) && !/placeholder/i.test(fable.reviewed));
     assert.ok(!/PLACEHOLDER/.test(promptFor('polishJudge', 'claude-opus-5-5').system), 'the step-0 placeholder is gone');
     for (const [i, sample] of SAMPLES.polishJudge.entries()) {
       for (const model of ['claude-opus-5-5', 'claude-fable-5-1'] as const) {
         const mod = promptFor('polishJudge', model);
         assert.equal(mod, promptFor('polishJudge', 'claude-opus-5-5'), `${model}: the Opus module`);
-        assert.equal(mod.schema, ROLE_SCHEMAS.polishJudge, model);
-        assert.deepEqual(mod.fields, ROLE_INPUTS.polishJudge, model);
+        assert.equal(mod.schema, EXPERIENCE_SCHEMA, model);
+        assert.deepEqual(mod.fields, Object.keys(SAMPLES.polishJudge[0]), model);
         const text = mod.render(sample);
         assert.ok(text.startsWith('<vision>'), `${model}: the vision first`);
         assert.ok(text.endsWith(`return your decision on proposal ${sample.proposal.id}.`), `${model}: the ask last`);
@@ -1434,20 +1147,14 @@ it('prompt sizes count exact UTF-8 stdin bytes and canonical JSON inputs', () =>
 });
 
 it('ordering answers: only infeasible/escalate can declare nonempty unique blocker identities; older answers stay readable', () => {
-  const ok = OUTPUTS as { readonly [R in Role]: Record<string, unknown> };
+  const ok = OUTPUTS as { readonly [R in keyof TestInputs]: Record<string, unknown> };
   const ordering = { blockers: ['u-one', 'u-two'] };
-  const plan = { ...ok.planCheck, decision: 'infeasible', patch: null, ordering };
   const gate = { ...ok.gate, decision: 'escalate', directives: [], ordering };
-  assert.deepEqual((validatePlanCheckOutput(plan) as { ordering: unknown }).ordering, ordering);
   assert.deepEqual((validateGateOutput(gate) as { ordering: unknown }).ordering, ordering);
   for (const invalid of [{ blockers: [] }, { blockers: ['u-one', 'u-one'] }]) {
-    assert.throws(() => validatePlanCheckOutput({ ...plan, ordering: invalid }), SchemaError);
     assert.throws(() => validateGateOutput({ ...gate, ordering: invalid }), SchemaError);
   }
-  assert.throws(() => validatePlanCheckOutput({ ...plan, decision: 'approve' }), /ordering/);
   assert.throws(() => validateGateOutput({ ...gate, decision: 'approve' }), /ordering/);
-  const { ordering: _p, ...oldPlan } = plan;
   const { ordering: _g, ...oldGate } = gate;
-  assert.equal('ordering' in validatePlanCheckOutput(oldPlan), false);
   assert.equal('ordering' in validateGateOutput(oldGate), false);
 });

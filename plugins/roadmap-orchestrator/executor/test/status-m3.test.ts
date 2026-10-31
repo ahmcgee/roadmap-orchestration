@@ -254,7 +254,7 @@ describe('status M3', () => {
         { lens: 'invariants', coveredTo: t2, outstanding: false, pendingDocs: [] },
       ]);
       assert.deepEqual(s.audit?.uncovered, []);
-      assert.deepEqual([s.audit?.generation, s.audit?.running, s.audit?.checkpointLaneMinutes], [1, null, 0]);
+      assert.deepEqual([s.audit?.generation, s.audit?.running], [1, null]);
       assert.deepEqual(s.findings.active, [{ id: 'F-1', lens: 'invariants', severity: 'P1', state: 'open', owner: null, obligation: 'I-1', claim: 'I-1 is broken' }]);
       assert.deepEqual(s.findings.metrics, [{ id: 'F-1', lens: 'invariants', severity: 'P1', gateHadPassed: true, disposition: null, merged: false, timeToResolveMs: null }]);
 
@@ -263,7 +263,6 @@ describe('status M3', () => {
       const owed = item(r, 'audit-owed', false);
       await sleep(30);
       s = statusOf(r);
-      assert.equal(s.audit?.checkpointLaneMinutes,0,'the campaign audit has no checkpoint lane');
       assert.deepEqual(s.owed, { audits: [owed] });
       assert.deepEqual(s.completion.unmet, [
         'units-open', 'baseline-owed', 'close-out', 'obligations-not-discharged',
@@ -288,7 +287,7 @@ describe('status M3', () => {
       assert.deepEqual(s.convergence, { k: 3, counter: 0, since: 0, open: [] });
 
       checkpointInputs(r, 1, 1);
-      const record = ruleRecord(r, 'C-2', { ruledBy: { type: 'checkpoint', job: 'ckpt-1' }, cites: ['V-1'], evidence: ['scripted evidence'], statement: 'Keep helpers pure.' });
+      const record = ruleRecord(r, 'C-2', { ruledBy: { type: 'code', reason: 'close-out' }, cites: ['V-1'], evidence: ['scripted evidence'], statement: 'Keep helpers pure.' });
       const rulingSha = keepInput(r.ctx.runDir, Buffer.from(`${JSON.stringify(record)}\n`), RULING_INPUT);
       const prev = keptPayload(r.ctx.runDir, r.journal.view.planApplied()!.payloadSha256!);
       // The revision lands C-2 in the ledger with its sidecar, as `rule` and a bundle's activation do.
@@ -306,7 +305,7 @@ describe('status M3', () => {
       } as unknown as RevisionPayload, { type: 'job', job: jobId('ckpt', 1) });
 
       s = statusOf(r);
-      const checkpoint = { type: 'checkpoint', job: 'ckpt-1' };
+      const checkpoint = { type: 'code', reason: 'close-out' };
       assert.deepEqual(s.decisionsSince.map((x) => [x.kind, x.id, x.oneLine, x.ruledBy]), [
         ['bundle', 'ckpt-1', 'plan rev 2: unit-cut u2, limits', checkpoint],
         ['cut', 'u2', 'u2 cut (plan rev 2)', checkpoint],
@@ -336,7 +335,7 @@ describe('status M3', () => {
       r.journal.fact({ kind: 'bundle-decided', job: jobId('ckpt', 2), outcome: { kind: 'no-op' } } as unknown as Fact);
       r.journal.fact({ kind: 'divergence', id: 'D-3', index: 0, ...draft('a later reading'), job: jobId('ckpt', 2) } as unknown as Fact);
       s = statusOf(r);
-      assert.deepEqual(s.decisionsSince.map((x) => [x.kind, x.id, x.ruledBy]), [['divergence', 'D-3', { type: 'checkpoint', job: 'ckpt-2' }]]);
+      assert.deepEqual(s.decisionsSince.map((x) => [x.kind, x.id, x.ruledBy]), [['divergence', 'D-3', { type: 'code', reason: 'close-out' }]]);
       assert.deepEqual(s.divergences.map((x) => [x.id, x.digest]), [['D-3', null]]);
       noModelIds(s);
     } finally {
@@ -420,17 +419,17 @@ describe('status M3', () => {
 });
 
 /** A meter row for u1's seat `role.tier` under `rev`, as an earlier executor recorded it (its spawn, then its usage). */
-function seatMeter(r: ArcRun): (rev: RoutingRev, role: 'planCheck' | 'build' | 'gate', tier: 'low' | 'med', input: number) => void {
+function seatMeter(r: ArcRun): (rev: RoutingRev, role: 'verifier' | 'build' | 'gate', tier: 'low' | 'med', input: number) => void {
   let n = 0;
   return (rev, role, tier, input) => {
     n += 1;
-    const stage = role === 'planCheck' ? 'plan-check' : role;
+    const stage = role === 'verifier' ? 'pre-build' : role;
     const inv = invocationId(r.journal.begin({
       kind: 'proc.spawn', key: opKey(`earlier:${n}`), parent: { type: 'stage', unit: U('u1'), stage, attempt: n }, deadlineAt: null,
-      body: () => ({ expect: { subject: { purpose: 'backend', routingRev: rev, unit: U('u1'), attempt: n, ...unitSeatRef(role, tier) }, launchSha256: sha256('c'.repeat(64)) }, post: null }),
+      body: () => ({ expect: { subject: { purpose: 'backend', routingRev: rev, unit: U('u1'), attempt: n, ...unitSeatRef(role === 'gate' ? 'verifier' : role, tier) }, launchSha256: sha256('c'.repeat(64)) }, post: null }),
     }).op, 1);
     r.journal.fact({
-      kind: 'meter', inv, routingRev: rev, subject: { type: 'seat', ...unitSeatRef(role, tier), unit: U('u1'), attempt: n },
+      kind: 'meter', inv, routingRev: rev, subject: { type: 'seat', ...unitSeatRef(role === 'gate' ? 'verifier' : role, tier), unit: U('u1'), attempt: n },
       usage: { inputTokens: input, outputTokens: 1, cacheReadTokens: null, cacheWriteTokens: null, turns: null, costUsd: null },
     });
   };

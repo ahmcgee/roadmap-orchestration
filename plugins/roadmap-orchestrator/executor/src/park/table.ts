@@ -6,7 +6,7 @@
 //
 // | row                                                   | targets                                   |
 // |-------------------------------------------------------|-------------------------------------------|
-// | plan-check, build, gate `process-fault`; build `lost` | `backend{b}`: the stage's backend          |
+// | pre-build, build, gate `process-fault`; build `lost` | `backend{b}`: the stage's backend          |
 // | lanes `blocked` (after its retry), candidate `blocked` | `host`                                    |
 // | build, salvage, teardown, lanes, candidate `cleanup-failed` | one `resource{i}` per failed instance |
 // | salvage `commit-failed`                               | `host`, plus the failed teardown's instances (G6) |
@@ -27,7 +27,6 @@ export type TargetRule = 'backend' | 'host' | 'resources' | 'host+resources' | '
 
 /** Every retryable park row and its targets; a row absent here decides no retryable park. */
 export const PARK_TARGETS: { readonly [S in OutcomeStage]?: { readonly [K in StageOutcomeKind<S>]?: TargetRule } } = {
-  'plan-check': { 'process-fault': 'backend' },
   build: { 'process-fault': 'backend', lost: 'backend', 'cleanup-failed': 'resources' },
   gate: { 'process-fault': 'backend' },
   salvage: { 'commit-failed': 'host+resources', 'cleanup-failed': 'resources' },
@@ -37,8 +36,6 @@ export const PARK_TARGETS: { readonly [S in OutcomeStage]?: { readonly [K in Sta
   // M3: a vacuity repair's mutant lane parks as a lane does.
   reproduce: { blocked: 'host', 'cleanup-failed': 'resources', 'env-unavailable': 'environment' },
   // dev.17 (design pass): the scaffold writer's and a proof of concept's call park as a judgment's or a build's does.
-  scaffold: { 'process-fault': 'backend', lost: 'backend', 'cleanup-failed': 'resources' },
-  poc: { 'process-fault': 'backend', 'cleanup-failed': 'resources' },
 };
 
 /**

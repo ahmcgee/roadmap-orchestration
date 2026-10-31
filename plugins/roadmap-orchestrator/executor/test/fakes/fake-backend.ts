@@ -25,7 +25,7 @@ type Call = Readonly<{ as: FakeName; argv: readonly string[]; cwd: string; stdin
 
 /**
  * The unit a call belongs to: the owner label `<arc>/<unit>`, else the cwd's basename up to its first dot
- * (see Step): a unit worktree is `<unit>`, a judgment's checkout `<unit>.plan-check-<n>` or `<unit>.verify-<n>`,
+ * (see Step): a unit worktree is `<unit>`, a judgment's checkout `<unit>.pre-build-<n>` or `<unit>.verify-<n>`,
  * and unit ids are slugs, which have no dot.
  */
 export function callUnit(env: Readonly<Record<string, string>>, cwd: string): string | null {

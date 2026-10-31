@@ -86,7 +86,6 @@ for (const stage of ['gate'] as const) {
       const retried = events.find((e) => e.seq > wake.seq && e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact) && e.fact.unit === 'u2');
       assert.ok(retried?.type === 'fact' && (retried.fact.kind === 'stage-outcome' && 'unit' in retried.fact) && retried.fact.stage === stage, 'the normal transition retries the parked stage');
       assert.equal(events.some((e) => e.seq < wake.seq && e.type === 'intent' && e.kind === 'command.apply'), false, 'no operator resume');
-      assert.equal(events.some((e) => e.type === 'fact' && e.fact.kind === 'checkpoint-inputs'), false, 'no checkpoint needed');
     } finally { r.journal.close(); }
   });
 }

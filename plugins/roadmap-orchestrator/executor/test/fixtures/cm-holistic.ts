@@ -150,7 +150,13 @@ export function layoutHolisticConcurrent(t: Owner, peer: HolisticPeer): Holistic
     const pinned = (u: string): boolean => existsSync(join(r.scenarioDir, `${u}.build.reached`));
     const hooks: readonly Hook[] = [
       once('audit', () => pinned('u1') && pinned('u2'), () => submit(r, { type: 'audit', lenses: null })),
-      once('release-builds', () => factsNow(r, 'audit-ended').some((f) => f['job'] === 'audit-1') || restarted(r), () => {
+      once('root-apply', () => factsNow(r, 'audit-ended').some((f) => f['job'] === 'audit-1') && !factsNow(r, 'plan-applied').some((f) => f['rev'] === 2), () => {
+        exportCurrentInputs(r);
+        const plan = JSON.parse(readFileSync(r.planPath, 'utf8')) as Json;
+        writeFileSync(r.planPath, JSON.stringify({...plan, limits: {...plan['limits'] as Json, retries: 2}}));
+        submit(r, applyBody(r));
+      }),
+      once('release-builds', () => factsNow(r, 'plan-applied').some((f) => f['rev'] === 2) || restarted(r), () => {
         release(r.scenarioDir, 'u1.build');
         release(r.scenarioDir, 'u2.build');
       }),
@@ -214,7 +220,7 @@ export function layoutHolisticConcurrent(t: Owner, peer: HolisticPeer): Holistic
 // Sampling: the stepping job's occurrences
 
 /** The stepping jobs: the jobs scenario's audit-1 (the audit row) and ckpt-1 (the bundle row), the batch scenario's batch-1. */
-export const STEPPING = { audit: 'audit-1', bundle: 'ckpt-1', batch: 'batch-1' } as const;
+export const STEPPING = { audit: 'audit-1', apply: 'root-apply', batch: 'batch-1' } as const;
 export type JobRow = keyof typeof STEPPING | 'preempt';
 
 /**
@@ -224,14 +230,19 @@ export type JobRow = keyof typeof STEPPING | 'preempt';
  * each fact kind there.
  */
 export function sampleJob(row: JobRow, record: string, snap: LogSnapshot): readonly Sampled[] {
-  const from = row === 'preempt' ? snap.events.find((e) => e.type === 'intent' && e.kind === 'proc.kill' && e.expect.reason === 'preempt')?.seq : 0;
+  const source = snap.view.opsOf('revision.commit').find((i) => i.expect.rev === 2)?.expect.source;
+  const applyOp = row === 'apply' && source?.type === 'command' ? snap.view.opsOf('command.apply').find((i) => i.expect.command === source.command) : undefined;
+  const apply = applyOp === undefined ? null : snap.events.find((e) => e.type === 'intent' && e.op === applyOp.op);
+  const until = applyOp === undefined ? Infinity : snap.events.find((e) => e.type === 'done' && e.op === applyOp.op)?.seq ?? Infinity;
+  const from = row === 'apply' ? apply?.seq : row === 'preempt' ? snap.events.find((e) => e.type === 'intent' && e.kind === 'proc.kill' && e.expect.reason === 'preempt')?.seq : 0;
   if (from === undefined) throw new Error('the preempt recording has no preempting kill');
   const owned = (owner: string, label: string): boolean => {
+    if (row === 'apply') return owner === 'command';
     if (row !== 'preempt') return owner === `job:${STEPPING[row]}`;
     return owner.startsWith('job:docs-') || owner === 'command' || (label.startsWith('kill.') && owner === 'unit:u1');
   };
   return sampleBy(record, snap, ({ label, e }) => {
-    if (e.seq < from || !owned(ownerOf(snap.view, e), label)) return null;
+    if (e.seq < from || e.seq > until || !owned(ownerOf(snap.view, e), label)) return null;
     if (label.startsWith('log.append.')) return e.type === 'fact' && e.fact.kind !== 'meter' && e.fact.kind !== 'usage-unavailable' ? `fact ${e.fact.kind}` : null;
     return row;
   });

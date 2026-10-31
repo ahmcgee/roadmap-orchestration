@@ -394,7 +394,7 @@ export function proposalJob(id: ProposalId): JobId {
  * The stages a unit's lead time is cut into as `stage:<s>` (service) and `wait:<s>` (the gap before it). The candidate,
  * ff and snapshot stages run inside the integration slot's hold, so they are the slot's components instead.
  */
-export const FLOW_STAGES = ['prepare', 'reproduce', 'plan-check', 'build', 'quiesce', 'evidence', 'salvage', 'teardown', 'lanes', 'gate', 'scaffold', 'poc'] as const satisfies readonly Stage[];
+export const FLOW_STAGES = ['prepare', 'reproduce', 'pre-build', 'build', 'quiesce', 'evidence', 'salvage', 'teardown', 'lanes', 'gate'] as const satisfies readonly Stage[];
 export type FlowStage = (typeof FLOW_STAGES)[number];
 /** The integration slot's service components; with `suite:<lane>` (one per suite lane) they partition its service. */
 export const SLOT_COMPONENTS = ['arc-lanes', 'candidate-rest', 'ff', 'snapshot'] as const;
@@ -600,7 +600,7 @@ const FM = numbered('FailureModeId', 'FM');
 export const failureModeId: IdReader<FailureModeId> = FM.read;
 export const failureModeIdOf = FM.of;
 
-/** A question of a plan-check `poc` decision: `PQ-<n>`, unique in its decision. */
+/** A question of a pre-build `poc` decision: `PQ-<n>`, unique in its decision. */
 export type PocQuestionId = Brand<string, 'PocQuestionId'>;
 const PQ = numbered('PocQuestionId', 'PQ');
 export const pocQuestionId: IdReader<PocQuestionId> = PQ.read;

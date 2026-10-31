@@ -1,3 +1,4 @@
+import { commandId } from '../src/core/ids.ts';
 // M4a step A3: the forge module (src/forge/) and the host act `roadmap pr`, against the stateful fake `gh`
 // (test/fakes/fake-gh.ts, first on PATH) and local bare origins. Named tests: pr.stacked-bases, pr.body-merge-commits,
 // pr.retarget-and-squash-flag, pr.idempotent-rerun, pr.supersede-previous, push.lease, push.never-main.
@@ -72,7 +73,7 @@ async function sealArc(s: Stack, name: string, from: string, previous: Sealed | 
     const applied = recordPlan(j, runDir, readInputFiles(absPath(planPath), absPath(s.repo)), [], BASE);
     for (let n = 1; n <= amendments; n++) {
       j.fact({
-        kind: 'corpus-amendment', id: amendmentIdOf(n), source: { type: 'divergence', divergence: divergenceIdOf(n) }, rules: [ruleId(`T-${n}`)],
+        kind: 'corpus-amendment', id: amendmentIdOf(n), source: {type: 'root', command: commandId('cmd-0000000000000001')}, rules: [ruleId(`T-${n}`)],
         proposal: `Tighten rule T-${n}.`, why: `divergence D-${n}`, evidence: [],
       });
     }
