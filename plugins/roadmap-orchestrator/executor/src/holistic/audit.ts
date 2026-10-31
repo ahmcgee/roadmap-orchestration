@@ -43,7 +43,7 @@ import { probe } from '../resources/probe.ts';
 import { type JobHolder,type Reservation,cleanup,heldReservation,run } from '../resources/reserve.ts';
 import type { AcquireFirst } from '../schedule/arbiter.ts';
 
-import { type Clock, cadence, integrationHeadNow, runOrder } from './cadence.ts';
+import { type Clock, cadence, integrationHeadNow } from './cadence.ts';
 import { coverageBase, lensCoverage, publishedHeads } from './coverage.ts';
 import { type FindingDraft,admitMutant,openFinding,witnessFindingDraft } from './findings.ts';
 import { chunkEnd, LENS_DIFF_BUDGET } from './lensdiff.ts';
