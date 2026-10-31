@@ -21,6 +21,7 @@ export const FROM_B2: Readonly<Record<string, Trace['recoveredBy']>> = {
 
 /** Every executor label but the journal's: what recovery does to the op it cut short. */
 export const LABEL_TRACE: Readonly<Record<string, Trace>> = {
+  'command.apply.queued': R('adopted', 'redone'),
   'command.apply.before-effect': R('reconciled'),
   'command.apply.after-effect': R('reconciled'),
   'command.apply.after-receipt': R('reconciled'),

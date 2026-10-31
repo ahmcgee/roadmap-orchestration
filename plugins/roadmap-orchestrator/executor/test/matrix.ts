@@ -206,7 +206,7 @@ const MERGEIN_LABELS: Readonly<Partial<Record<Boundary, readonly string[]>>> = {
 const HOLISTIC_LABELS: Readonly<Record<Boundary, readonly string[]>> = {
   B1: ['log.append.before-write', 'log.append.after-partial-write'],
   B2: [
-    'command.apply.before-effect', 'log.append.after-fsync', 'spawn.after-intent', 'resource.after-intent', 'worktree.create.act-start', 'worktree.remove.act-start', 'evidence.act-start',
+    'command.apply.queued', 'command.apply.before-effect', 'log.append.after-fsync', 'spawn.after-intent', 'resource.after-intent', 'worktree.create.act-start', 'worktree.remove.act-start', 'evidence.act-start',
     'ff.act-start', 'snapshot.act-start', 'revision.commit.after-intent', 'needsuser.raise.before-publish', 'audit.after-started', 'checkpoint.after-inputs',
     'docs.act-start', 'packreview.after-started', 'witnesscheck.after-lane-files', 'smoke.after-patch-kept', 'mutant.act-start',
   ],

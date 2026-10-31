@@ -132,9 +132,12 @@ export const HOLISTIC: Scenario = {
       const plan = JSON.parse(readFileSync(r.planPath, 'utf8'));
       writeFileSync(r.planPath, JSON.stringify({...plan, limits: {...plan.limits, retries: 4}}));
       submit(r, applyBody(r));
-      // Apply lands at the next safe boundary; the current build must be free to reach it.
-      release(r.scenarioDir, 'root-apply');
     },
+  }, {
+    // Keep the build blocked until the scheduler records the drain. Every recording and crash cell then has
+    // the same apply-queued fact and reaches the same next admission boundary before the revision lands.
+    name: 'release-root-apply', when: () => journalOf(r).events.some((e) => e.type === 'fact' && e.fact.kind === 'apply-queued'),
+    act: async () => release(r.scenarioDir, 'root-apply'),
   }],
 };
 
