@@ -1852,7 +1852,7 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
   if (verdict.kind === 'red' && end.kind === 'red' && (end.lane.repeat !== null || red.spec.has(end.lane.lane)) && !end.lane.flaky && ctx.journal.view.completedLanesOutcome(unit.id)?.outcome !== 'known-defect') {
     const base = diffBase(ctx.repo, integrationTip(ctx), salvaged);
     const failing = order.filter((l) => l.id === end.lane.lane);
-    const check = await baseCheck(ctx, parent, base, failing, rt, 'spec');
+    const check: BaseCheck = base === salvaged ? { kind: 'verdict', failed: true, lanes: [end.lane.lane], changedCheckout: series.dirty.length > 0 } : await baseCheck(ctx, parent, base, failing, rt, 'spec');
     if (check.kind === 'none') verdict = check.verdict;
     else {
       if (!ctx.journal.view.ciFacts().some((f) => f.kind === 'lane-base-compared' && f.unit === unit.id && f.attempt === parent.attempt && f.lane === end.lane.lane)) ctx.journal.fact({ kind: 'lane-base-compared', unit: unit.id, attempt: parent.attempt, lane: end.lane.lane, base, result: check.failed ? 'fail' : 'pass' });

@@ -163,6 +163,8 @@ const ROWS: readonly Row[] = [
   // lanes (clean detached worktree at the salvage SHA)
   ['lanes', 'green', {}, 'gate@med', 'advance', {}],
   ['lanes', 'green', { promotion: true }, 'gate@escalation', 'advance', {}],
+  ['lanes', 'regression', {}, 'build/fix@med', 'advance', { chargeableFailures: 1 }],
+  ['lanes', 'regression', { counters: { chargeableFailures: 2 } }, 'park:chargeable-bound', 'park', { chargeableFailures: 1 }],
   ['lanes', 'red', {}, 'build/fix@med', 'advance', { unchargedLanesReds: 1 }],
   ['lanes', 'red', { counters: { chargeableFailures: 2, unchargedLanesReds: 3 } }, 'park:chargeable-bound', 'park', { chargeableFailures: 1, unchargedLanesReds: -3 }],
   ['lanes', 'not-certified', {}, 'build/fix@med', 'advance', { unchargedLanesReds: 1 }],

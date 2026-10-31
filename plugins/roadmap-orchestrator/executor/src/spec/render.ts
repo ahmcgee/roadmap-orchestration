@@ -37,6 +37,8 @@ function lane(l: LaneDef & Readonly<{ state: ItemState }>): string {
     `  - resources: ${l.resources.length === 0 ? '(none)' : sorted(l.resources).map(code).join(', ')}`,
     `  - evidence: ${l.evidenceGlobs.length === 0 ? '(none)' : sorted(l.evidenceGlobs).map(code).join(', ')}`,
     ...(l.evidenceExcludes.length === 0 ? [] : [`  - evidence excludes: ${sorted(l.evidenceExcludes).map(code).join(', ')}`]),
+    ...(l.inputs === undefined ? [] : [`  - inputs: ${sorted(l.inputs).map(code).join(', ')}`]),
+    ...(l.cost === undefined ? [] : [`  - cost: ${l.cost}${l.estMin === undefined ? '' : ` (estimated ${l.estMin} minutes)`}`]),
     ...(l.systems === undefined ? [] : [`  - systems: ${sorted(l.systems).map(code).join(', ')}`]),
     ...(l.testArgv === undefined ? [] : [`  - test argv: ${code(JSON.stringify(l.testArgv))}`]),
     ...(l.stochastic === undefined ? [] : [`  - stochastic: passes when ${l.stochastic.minPasses} of up to ${l.stochastic.runs} runs pass`]),
