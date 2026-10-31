@@ -25,7 +25,7 @@ All 12 serial files passed individually under the shared lock: **921 tests**.
 
 Earlier runs: migration batch 2,639 passes/106 failures/9 cancellations/1 NOT RUN; concurrent 283 passes/174 failures; pipeline two enumeration failures, then 304 passes/11 failures from the queued-record race; M4a 10 passes/13 failures, then 20 passes/3 failures. The listed final reruns are green. `contain.cgroup-real` is **NOT RUN**, never a pass. No paid eval ran.
 
-Added 16 focused agent-surface cases. The removal inventory below contains 176 individually enumerated named cases (including expanded parameters), plus 34 retired matrix label groups. Generic revision, item-publication, recovery and lane assertions remain; fixture stories now use root CAS apply and current roles. Context-overflow annotation and gate schema cases were migrated. Method-wording checks became input/schema invariants per the task prompt rules. No push, version bump, paid eval, or P4 prose changes.
+Added 16 focused agent-surface cases. The removal inventory below contains 168 individually enumerated named cases after the restorations and retained-case correction recorded below (including expanded parameters), plus 34 retired matrix label groups. Generic revision, item-publication, recovery and lane assertions remain; fixture stories now use root CAS apply and current roles. Context-overflow annotation and gate schema cases were migrated. Method-wording checks became input/schema invariants per the task prompt rules. No push, version bump, paid eval, or P4 prose changes.
 
 Removed-test list (excluded from the 500-word report limit)
 
@@ -89,7 +89,7 @@ All paths below are relative to `plugins/roadmap-orchestrator/executor/`. Plan q
 - [C] bundle.split-census-out-of-slice-moved: a child anchored at an out-of-slice rule, serving the slice, moves that rule's census to the child
 - [C] bundle.split-census-other-state-reason: a child anchored at an untestable rule is invalid, naming the rule, its state and the fix
 - [C] checkpoint.schema-closed-ids (paid M4b run 5, ckpt-4): the call's schema enumerates the arc lanes and obligations, so a split child on a lane that is no arc lane is a schema violation of the answer, never a bundle
-- [C] bundle.busy-live-attempt / checkpoint.busy-waits-for-boundary / classify.open-attempt-running-vs-abandoned
+- [C] bundle.busy-live-attempt / checkpoint.busy-waits-for-boundary
 - [C] checkpoint.busy-redecide-stale-falls-back (arc feedback 2026-10-24): a held bundle the arc moved under is decided stale at its re-decide, with no call; the trigger then asks a fresh call
 - [C] checkpoint.capture-waits-for-publication: a due checkpoint captures nothing while a unit is at gate or approved before its candidate; it captures the head the unit published
 - [C] checkpoint.capture-waits-for-plan-check (R-20): a due checkpoint captures nothing while a unit is in plan-check, which may patch a spec it reads; it captures once the plan-check decides
@@ -151,12 +151,6 @@ All paths below are relative to `plugins/roadmap-orchestrator/executor/`. Plan q
 
 `test/design.test.ts`
 
-- [P] design.record-lands: an approve lands its pinned design record on the spec's next revision, by the plan-check's own patch
-- [P] design.unmapped-repair: a failure mode proven by no lane the unit has is refused through the repair turn; the corrected answer approves
-- [P] design.reachability-defect: a test item in a lane the design's systems never select is a plan defect: the repair turn, then an uncharged park
-- [P] design.clause-unexercised: a clause exercised only by a lane that cannot run before the unit merges is a plan defect: the repair turn, then an uncharged park naming the fixes
-- [P] design.clause-unnamed: a clause no lane is named for is refused through the repair turn; the answer naming a runnable lane approves
-- [P] design.oversize-split: an oversize design is refused; the split of mixed concerns lands as one revision, skeleton first, the dependent on both children
 - [P] design.split-systems: a declared child system outside its parent is a plan defect
 - [P] design.split-defect: a split whose children do not partition the parent's items is refused twice: an uncharged plan-defect park
 - [P] design.scaffold-not-in-force: a scaffold decision in an arc of an earlier role set is refused through the repair turn
@@ -179,7 +173,6 @@ All paths below are relative to `plugins/roadmap-orchestrator/executor/`. Plan q
 
 `test/lifecycle.test.ts`
 
-- [R] reroute.routing-changed-park: resume is rejected while the implementer seat stays moved; once its routing is restored, resume re-pins the unit and re-enters it at the stage it parked at, no spec edit
 
 `test/m4b-schemas.test.ts`
 
@@ -348,3 +341,175 @@ ADMIT_CONVERSIONS
 The holistic pipeline also drops samples whose context is `job:ckpt`, and log samples of retired checkpoint/divergence/corpus-amendment facts. Its remaining generic `plan.apply`, `revision.commit`, and `needsuser.raise` labels are restored with root CAS apply and a nonblocking builder split proposal. Audit whole-range call recovery remains covered; only the second-lens and second-chunk instances disappeared.
 
 Surviving `evals-m4a.fake`, `.brief`, and `.opportunity` cases now check root apply confirmation and empty checkpoint artifacts. Their checkpoint-only digest/amendment subassertions were replaced under [C]; debt, chain, witness, pause/reuse, and root-apply ordering assertions remain.
+
+P3c audit fixes
+
+The pre-audit verification above is historical; this section records the continuation. Deleted the plan-check decision pipeline, scaffold and PoC stages, checkpoint runner and no-op callers, retired prompt directories, output readers and seats. Pre-build is a conditional verifier annotation; unmarked units start at build, including recovery of a completed first call. Root `apply` now exercises retained design pin/reachability/clause/verification checks and split validation; the held split proposer path is gone.
+
+Fix rounds render findings with their evidence and experiments, failing lane evidence, notes, remaining certification allowance and chargeable/build/stage counts. The base-comparison slot is rendered as null until P3b supplies it. Cheap probes name live roles and actual seats. The free M4a scenario supplies plan risk to its fake-step translator, so its high-risk confirmation build uses Claude in both profiles. Verifier prompt/schema/method changes trigger gate-mode and pre-build evaluations. Pre-build and campaign audit each have three dev cells; both CLI dry-runs passed all nine trials without backend calls.
+
+Added or restored **26 cases**: seven audit regressions, eleven design cases, the routing park/resume case, two direct-build recovery crash cases, and five free surface-eval harness cases. Restored the original park assertions for dispatch, route and executor routing changes. The concurrent matrix now races root `command.apply`, `revision.commit` and `needsuser.raise` against live builders. The row spans campaign-request publication and root apply's priority edit and subject closure while both builders remain live.
+
+Audit verification: `npm run typecheck` passes. All **208 non-serial files** ran via `node --test --test-concurrency=4 test/*.test.ts`: 2,799 tests, 2,797 passes, one status-fixture failure and one cgroup NOT RUN. The corrected whole status file passes 9/9, giving **2,798 distinct passing cases and one NOT RUN**. The fixture explicitly marks both review-dependent units `review: always`; every assertion survives. Final whole-file supplements pass: retained-suite cohort 139/139, judge validation 4/4, evidence 9/9, matrix index 6/6 and free eval fixtures 41/41 and 22/22. The locked timing rerun passes 36/36 (apply execution, scheduler and executor), including the earlier timeout and routing park failures.
+
+All **12 serial files pass individually under the shared lock: 937 tests**, zero failures, cancellations or skips. The concurrent run covers 472 crash cells (120 job cells), 16 more cells than the pre-audit run. Both matrices passed again after the shared oracle was updated to require an open root apply to reconcile its receipt and subject closure.
+
+| Serial file | Passed |
+| --- | ---: |
+| `pipeline-matrix.test.ts` | 318 |
+| `concurrent-matrix.test.ts` | 473 |
+| `evals-m4a.test.ts` | 23 |
+| `calibrate.test.ts` | 1 |
+| `evals-m5-reflow.test.ts` | 1 |
+| `walk-browser.test.ts` | 3 |
+| `upgrade.test.ts` | 1 |
+| `pool-crash.test.ts` | 37 |
+| `probe-crash.test.ts` | 16 |
+| `resource-recover.test.ts` | 62 |
+| `pressure.test.ts` | 1 |
+| `roles-default-size.test.ts` | 1 |
+
+Earlier audit runs: the first pipeline and concurrent attempts each failed reference/enumeration before cells ran. The next concurrent run had 468 passes/5 failures (four root-command oracle cells and the parent); its final rerun passes 473/473. M4a progressed from 12 passes/11 failures (high-risk fixture still on Codex), to 20/3 (retired pre-build response causing a repair call), then 22/1 (a late `ruler-changed` notice alongside `units:held`). The unchanged locked timing rerun passed 23/23; the wake assertion was retained unchanged. Exploratory non-serial runs had 2,288 passes/63 failures/10 cancellations/one NOT RUN, then 2,776 passes/20 failures/one NOT RUN; the final batch and corrected whole-file reruns above replace them. No paid eval/probe, push, version bump or P4 prose change. `contain.cgroup-real` remains NOT RUN.
+
+Removal inventory correction: seven earlier named removals are restored/adapted: `design.record-lands`, `design.unmapped-repair`, `design.reachability-defect`, `design.clause-unexercised`, `design.clause-unnamed`, `design.oversize-split`, and `reroute.routing-changed-park`. The original inventory also incorrectly listed `classify.open-attempt-running-vs-abandoned`; it remains covered in `revision-evidence.test.ts` and is excluded from the removal count. The retained split-system guard is tested through root apply. Seven evidence-comparison cases moved from `checkpoint-rev3.test.ts` to `revision-evidence.test.ts`; their assertions survive. Two full-spec wire cases now exercise experience-verdict proposals. Mutant/witness schema assertions and witness-draft assertions survive; only the retired vision-conflict/capture arms were removed.
+
+The corrected phase inventory is **204 removed named cases** (168 earlier + 36 audit removals), plus **49 deleted transition-row assertions**. The earlier 34 retired dynamic matrix label groups remain enumerated above. This audit also removes 11 obsolete row descriptors from the canonical matrix index; the root-apply concurrent row replaces the old bundle family's generic revision/item crash coverage. These categories overlap in feature coverage and are not summed as test-run counts.
+
+Additional named removals (all paths relative to the executor):
+
+`test/prompts.test.ts`
+
+- [P] planCheck: patch only with redirect; lane env.set converts to the spec map
+- [C] the checkpoint conveys OR-V: steer to the vision, cite V-n plus evidence per op, optimistic interpretations, owner-only acts only as requests
+- [C] the checkpoint lists the ruling sidecar's required schema value and every closed enum from the reader's constants (paid m3 run 7: invalid rulings twice)
+- [C] the checkpoint never accepts, defers or releases a P1: dismissed, or left to the repair that names it (paid m3 run 9; dev.13 released)
+- [C] the checkpoint states anchors as anchorSection reads them: #<heading-slug> or literal text on exactly one line (paid m3 run 9)
+- [C] the lens prompt carries exactly one `lens: <kind>` marker, and each kind its own brief
+- [P] pre-build (R17): the vision as read-only context, and visionConflict never a redirect by itself
+- [P] prompts.stale-links (dev.17 propagation): the pre-build is given its stale links, each by its key, and answers them in a required staleLinks field
+- [C] checkpoint corpus: amendments proposed for the next Phase 0; rule-anchored children and rulings; no issues section
+- [C] checkpoint schema: corpusAmendments required of the model, issueIntake gone; a dev.6 answer without amendments is refused
+- [P] pre-build: the failure matrix before a transaction ordering, earlier repairs carried in; clock and entry-point defects (F03, D3)
+- [C] prompts.checkpoint-failure-matrix: a matrix of each step against process death before admitting an ordering repair, prior repairs of the transaction carried in, put in the spec
+- [C] checkpoint admits (OR-A1, LR-k, LR-m, R35): code classifies from declared targets; honest citation; one opportunity, one follow-up; the rest converts to amendments
+- [C] checkpoint inputs (H4, H5, C3, C6): the manifest, never live roadmap-inputs; every spec with its held ids; add vs replace; the next ruling id; the evidence note; the diagnosis right after a park trigger
+- [C] prompts.lens-brief-last: the vision opens the lens message and the lens brief sits after the data, just before the ask
+
+`test/dev17-records.test.ts`
+
+- [P] split: two or more distinct children, edges between distinct children, a skeleton among them
+- [P] scaffold and poc
+
+`test/m3-schemas.test.ts`
+
+- [C] checkpoint: every op cites active-looking clauses and evidence; ops exactly on a bundle; owner-only acts only as a request (A16)
+
+`test/m4a-schemas.test.ts`
+
+- [C] checkpoint-inputs: corpusSha256 round-trips; a dev.6 fact without it reads as written
+- [C] milestone cadence: positive optional plan knob, additive trigger, and byte-preserving audit-only skips
+- [C] a checkpoint answer requires corpusAmendments and exactly one anchor on every split child
+- [C] a checkpoint answer's lists come in any order and read canonical, so no fact built from them is refused for order
+
+`test/m4a-rev3-schemas.test.ts`
+
+- [C] bundle-decided: an all-converted no-op lists its conversions; a busy rejection names the open attempts
+
+`test/fakes-m3.test.ts`
+
+- [C] scripts a two-op bundle whose second op is invalid, and an interpretation-only no-op, per job
+- [C] a checkpoint answer the reader refuses is never built
+- [C] a checkpoint prompt that lists findings (which name lenses) still takes its own job's step
+
+`test/fakes-m4a.test.ts`
+
+- [C] carries corpusAmendments in the frozen shape through the shim
+- [C] an answer always carries corpusAmendments (the schema requires it), empty unless its spec names some
+
+`test/revision.test.ts`
+
+- [C] split.checkpoint-drop-divergence: a checkpoint split may drop text only citing clauses; code records a `split-dropped` divergence with its preimage
+
+`test/m3-fold.test.ts`
+
+- [C] a checkpoint decides once: a bundle outcome, or the plan revision its bundle applied
+
+`test/tail.test.ts`
+
+- [C] a P3 the decision does not fix is released whatever its disposition; one an admit repairs keeps it
+- [C] tail.repaired-unruled: a finding the decision repairs is never ruled, whatever its disposition: its unit owns it and resolves it on publication
+- [C] a P2 below a brake: deferred banks (the checkpoint's call), accepted while nothing fixes it is released, undisposed is released
+- [C] a P2 under no brake, a dismissal, a P1, an owned P3 and a finding no longer active are left as they are
+- [C] the dispositions come first, in order, then the releases of the shown findings, in order
+
+`test/apply.test.ts`
+
+- [P] classify.pre-build-shape-dropped (dev.17): the removed `planCheck.shape` is read and dropped, so adding it changes nothing
+
+Deleted transition rows in `test/transitions.test.ts` ([P] owner: “plan-check retired as a seat (split/scaffold/poc are root decisions)”; [A] owner: “pre-build marker review ANNOTATES”). The generic table, park, hold, charge and live-stage assertions remain.
+
+- [P/A] `['pre-build', 'redirect', {}, 'pre-build@med', 'redirect', { redirects: 1 }],`
+- [P/A] `['pre-build', 'redirect', { counters: { redirects: 1 } }, 'pre-build@med', 'redirect', { redirects: 1 }],`
+- [P/A] `['pre-build', 'redirect', { counters: { redirects: 2 } }, 'pre-build@escalation', 'route-up', {}],`
+- [P/A] `['pre-build', 'redirect', { counters: { redirects: 2 }, routedUp: ['pre-build'] }, 'park:escalation', 'park', {}],`
+- [P/A] `['pre-build', 'redirect', { counters: { redirects: 3 }, redirectBase: 2, routedUp: ['pre-build'] }, 'pre-build@escalation', 'redirect', { redirects: 1 }],`
+- [P/A] `['pre-build', 'redirect', { counters: { redirects: 4 }, redirectBase: 2, routedUp: ['pre-build'] }, 'park:escalation', 'park', {}],`
+- [P/A] `['pre-build', 'infeasible', {}, 'pre-build@escalation', 'route-up', {}],`
+- [P/A] `['pre-build', 'infeasible', { routedUp: ['pre-build'] }, 'park:escalation', 'park', {}],`
+- [P/A] `['pre-build', 'escalate', {}, 'pre-build@escalation', 'route-up', {}],`
+- [P/A] `['pre-build', 'escalate', { risk: 'high' }, 'pre-build@escalation', 'route-up', {}],`
+- [P/A] `['pre-build', 'risk-lowered', {}, 'pre-build@escalation', 'route-up', {}],`
+- [P/A] `['pre-build', 'scope-widened', {}, 'pre-build@escalation', 'route-up', {}],`
+- [P/A] `['pre-build', 'scope-widened', { routedUp: ['pre-build'] }, 'park:escalation', 'park', {}],`
+- [P/A] `['pre-build', 'refusal', {}, 'pre-build@escalation', 'route-up', {}],`
+- [P/A] `['pre-build', 'refusal', { routedUp: ['pre-build'] }, 'park:refusal', 'park', {}],`
+- [P/A] `['pre-build', 'malformed', {}, 'pre-build@med', 'retry', { 'retries.pre-build': 1 }],`
+- [P/A] `['pre-build', 'malformed', { counters: { 'retries.pre-build': 1 } }, 'park:malformed', 'park', {}],`
+- [P/A] `['pre-build', 'read-denied', {}, 'pre-build@med', 'retry', { 'retries.pre-build': 1 }],`
+- [P/A] `['pre-build', 'read-denied', { counters: { 'retries.pre-build': 1 } }, 'park:read-denied', 'park', {}],`
+- [P/A] `['pre-build', 'process-fault', {}, 'park:process-fault', 'park', {}],`
+- [P/A] `['pre-build', 'routing-changed', {}, 'park:routing-changed', 'park', {}],`
+- [P/A] `['pre-build', 'in-session', {}, 'pre-build@med', 'advance', {}],`
+- [P/A] `['pre-build', 'context-exceeded', {}, 'park:context-exceeded', 'park', {}],`
+- [P/A] `['pre-build', 'context-exceeded', { counters: { 'retries.pre-build': 1, chargeableFailures: 2 } }, 'park:context-exceeded', 'park', {}],`
+- [P/A] `['pre-build', 'split', {}, 'hold', 'hold', {}],`
+- [P/A] `['pre-build', 'scaffold', {}, 'scaffold', 'advance', {}],`
+- [P/A] `['pre-build', 'poc', {}, 'poc', 'advance', {}],`
+- [P/A] `['pre-build', 'plan-defect', {}, 'park:plan-defect', 'park', {}],`
+- [P/A] `['scaffold', 'scaffolded', {}, 'build/fresh@med', 'advance', {}],`
+- [P/A] `['scaffold', 'refused', {}, 'scaffold', 'advance', {}],`
+- [P/A] `['scaffold', 'plan-defect', {}, 'park:plan-defect', 'park', {}],`
+- [P/A] `['scaffold', 'refusal', {}, 'park:refusal', 'park', {}],`
+- [P/A] `['scaffold', 'process-fault', {}, 'park:process-fault', 'park', {}],`
+- [P/A] `['scaffold', 'lost', {}, 'park:process-fault', 'park', {}],`
+- [P/A] `['scaffold', 'interrupted', {}, 'hold', 'hold', {}],`
+- [P/A] `['scaffold', 'routing-changed', {}, 'park:routing-changed', 'park', {}],`
+- [P/A] `['scaffold', 'context-exceeded', {}, 'park:context-exceeded', 'park', {}],`
+- [P/A] `['scaffold', 'occupied', {}, 'park:occupancy-unlabelled', 'park', {}],`
+- [P/A] `['scaffold', 'cleanup-failed', {}, 'park:residue', 'park', {}],`
+- [P/A] `['scaffold', 'executor-fault', {}, 'park:executor-fault', 'park', {}],`
+- [P/A] `['poc', 'answered', {}, 'pre-build@med', 'advance', {}],`
+- [P/A] `['poc', 'unanswered', {}, 'pre-build@med', 'advance', {}],`
+- [P/A] `['poc', 'process-fault', {}, 'park:process-fault', 'park', {}],`
+- [P/A] `['poc', 'interrupted', {}, 'hold', 'hold', {}],`
+- [P/A] `['poc', 'routing-changed', {}, 'park:routing-changed', 'park', {}],`
+- [P/A] `['poc', 'context-exceeded', {}, 'park:context-exceeded', 'park', {}],`
+- [P/A] `['poc', 'occupied', {}, 'park:occupancy-unlabelled', 'park', {}],`
+- [P/A] `['poc', 'cleanup-failed', {}, 'park:residue', 'park', {}],`
+- [P/A] `['poc', 'executor-fault', {}, 'park:executor-fault', 'park', {}],`
+
+Canonical matrix rows removed (the same [C] and [P] deletion authorities above):
+
+- [C] `CHECKPOINT_JOB` (`test/checkpoint.test.ts`).
+- [C] `BUNDLE_ACTIVATE` (`test/checkpoint.test.ts`).
+- [C] `NOOP_DIVERGENCE` (`test/checkpoint.test.ts`).
+- [C] `CORPUS_AMENDMENT` (`test/amendments.test.ts`).
+- [C] `ADMIT_CONVERSIONS` (`test/serial/pipeline-matrix.test.ts`).
+- [P] `FIXTURE_REDIRECT` (`test/stages.test.ts`).
+- [C] `FIXTURE_CHECKPOINT_BUSY` (`test/status-rev3.test.ts`).
+- [C] `FIXTURE_CONVERTED_NO_OP` (`test/checkpoint-rev3.test.ts`).
+- [P] `DESIGN_SPLIT` (`test/design.test.ts`).
+- [P] `SCAFFOLD_STAGE` (`test/scaffold.test.ts`).
+- [P] `POC_STAGE` (`test/design.test.ts`).
+
+Partial feature-arm removals: the legacy positive `planCheck.shape` reader assertion now asserts rejection; pre-build redirect/refusal counter exercises use gate revise/refusal instead; removed checkpoint capture requirements from divergence fixtures while retaining numbering, duplicate, digest and status assertions; removed checkpoint fields from empty-state snapshots; park-table totals changed from 22 rows/10 stage keys to 16/7 for the deleted pre-build/scaffold/PoC retry rows. The fake lens P0 refusal assertion moved into the retained fake-audit case. No retained assertion was dropped with a deleted wrapper. Removed ten empty `describe` wrappers left by the retired cases (two in `audit`, one each in `fakes-m4a`, `m4a-rev3-schemas`, `m4a-schemas`, `phase0-apply`, `repair`, `judge-validation`, and two in `revision-evidence`); these contained no test cases or assertions.
