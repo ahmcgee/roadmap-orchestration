@@ -154,10 +154,11 @@ test('evals-m3.setup-valid: setup lays out a valid holistic corpus arc whose wit
   for (const u of plan.units) {
     const spec = loadSpec(absPath(join(l.input, u.spec)));
     assert.equal(spec.unit, u.id);
-    for (const p of spec.nonGoals) assert.ok(mapped.has(p), `${u.id}'s scoped path ${p} is mapped`);
+    for (const system of u.systems) assert.ok(mapped.has(system), `${u.id}'s system ${system} is mapped`);
   }
-  assert.deepEqual(plan.units.find((u) => u.id === 'tidy')!.systems, ['app']);
-  assert.deepEqual(mapped.get('src/cli.js'), ['I-3'], 'tidy\'s one path maps to I-3 only');
+  assert.deepEqual(plan.units.find((u) => u.id === 'tidy')!.systems, ['src-cli-js']);
+  assert.deepEqual(JSON.parse(readFileSync(join(l.repo, '.roadmap/config.json'), 'utf8')).systemsMap.systems['src-cli-js'].paths, ['src/cli.js']);
+  assert.deepEqual(mapped.get('src-cli-js'), ['I-3'], 'tidy\'s one system maps to I-3 only');
   // tidy's spec, the contract it cites and ARCHITECTURE.md say nothing about rounding, and its story diff holds no
   // rounding code: the regression is formatDisplay's existing toFixed, reached by a routing change. (In the corpus arc
   // every judge also reads the rules index, whose T-2 states the rounding rule, as the M3 architecture-doc arc's judges

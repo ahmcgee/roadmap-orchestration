@@ -117,7 +117,7 @@ export async function corpusArc(opts: CorpusArcOptions = {}): Promise<CorpusArc>
   const visionText = corpus.files[`${DEFAULT_CORPUS_ROOT}/${VISION_DOC}`]!;
   const roadmap = {
     '.roadmap/vision.json': `${JSON.stringify(visionRecord(visionText), null, 2)}\n`,
-    ...(opts.config === null ? {} : { '.roadmap/config.json': `${JSON.stringify({ chain: { k: 1 }, systemsMap: { systems: { app: { paths: ['src/**'] }, tests: { paths: ['test/**'] } } }, ...opts.config })}\n` }),
+    ...(opts.config === null ? {} : { '.roadmap/config.json': `${JSON.stringify({ systemsMap: { systems: { app: { paths: ['src/**'] }, tests: { paths: ['test/**'] } } }, ...(opts.config ?? { chain: { k: 1 } }) })}\n` }),
   };
   let repo: AbsPath;
   if (opts.repo === undefined) {
