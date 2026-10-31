@@ -126,7 +126,7 @@ import type { CommandContext } from '../commands/apply.ts';
 import { applyCommand,applyControl } from '../commands/apply.ts';
 import { POLL_MS,isControl,pollCommands,readReceipt,writeReceipt } from '../commands/queue.ts';
 import { crashPoint } from '../core/crash.ts';
-import { type IntentOf,JUDGMENT_STAGES,type Parent,probeTargetKey } from '../core/events.ts';
+import { type IntentOf, type Parent, probeTargetKey } from '../core/events.ts';
 import { atomicJson,canonicalJson } from '../core/fsx.ts';
 import {
 type ArcId,type CommandId,type EnvId,type FindingId,type InvocationId,type JobId,type LaneId,type NeedsUserId,type OpId,type ResourceName,type Sha,type UnitId,arcId,commandId,findingId,
@@ -141,9 +141,9 @@ import { demoTicker,promoteFinal,writeDesired } from '../demo/promote.ts';
 import { beforeCompletion,flowApplyHeld,flowOn,runFlowTrack } from '../flow/track.ts';
 import { revParse } from '../git/git.ts';
 import { jobEvidenceRoot,snapshotRequestOf } from '../git/snapshot.ts';
-import { type AuditContext,auditPending,raiseAuditOwed,runAudit } from '../holistic/audit.ts';
+import { type AuditContext,auditPending,runAudit } from '../holistic/audit.ts';
 import { cadence,integrationHeadNow,processClock } from '../holistic/cadence.ts';
-import type { RevisionContext } from '../holistic/bundle.ts';
+import type { RevisionContext } from '../holistic/admission.ts';
 import { settleCloseOut } from '../holistic/closeout.ts';
 import { quiescentGenerations } from '../holistic/convergence.ts';
 import { coverageOf } from '../holistic/coverage.ts';
@@ -1090,8 +1090,6 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
     lastTick = Date.now();
     raiseFindingItems(journal, runDir, new Date());
     raiseWalkItems(x.stage, new Date());
-    const c = cadence(x.stage, h.audit.clock);
-    if (c !== null) raiseAuditOwed(h.audit, c);
   };
 
   // -------------------------------------------------------------------------------------------------

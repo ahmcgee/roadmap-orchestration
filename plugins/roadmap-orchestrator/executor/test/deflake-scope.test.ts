@@ -1,4 +1,4 @@
-import { systemName } from '../src/core/ids.ts';
+
 // Deflake scope (2026-10-23; src/pipeline/deflakemint.ts `deflakeScope`, src/commands/apply.ts `evaluateRevision`,
 // src/preflight/checks.ts `start --base`), over a same-repo corpus arc (test/helpers/corpusarc.ts: real repos, real pins,
 // the fake forge). The flakes are `flake-observed` facts over journaled journey runs, as a series writes them; the deflake
@@ -12,20 +12,18 @@ import assert from 'node:assert/strict';
 import { mkdirSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe,it } from 'node:test';
-import { evaluateApply,evaluateRevision,keepRevision,payloadOf } from '../src/commands/apply.ts';
-import type { Fact } from '../src/core/events.ts';
-import { type InvocationId,type UnitId,laneId,opKey,sha,sha256,unitId } from '../src/core/ids.ts';
+import { evaluateApply } from '../src/commands/apply.ts';
+
+import { type InvocationId, laneId, opKey, sha, sha256, unitId } from '../src/core/ids.ts';
 import { type OpenJournal,openJournal } from '../src/core/log.ts';
-import { type RevisionManifest,SPEC_SCHEMA } from '../src/core/records.ts';
-import { type AbsPath,absPath } from '../src/core/values.ts';
-import { type RawPlan,admitUnit } from '../src/holistic/bundle.ts';
+import { type RevisionManifest } from '../src/core/records.ts';
+import { type AbsPath } from '../src/core/values.ts';
+
 import { laneRevOf } from '../src/holistic/types.ts';
 import { selfIdentity } from '../src/host/liveness.ts';
 import { claimHost,releaseHost } from '../src/host/lock.ts';
-import {
-type InputFile,type InputFiles,commitRevisionNow,inForceFiles,keepCorpusFiles,recordPlan,requirePlanInForce,revisionInForce,revisionManifestOf,
-} from '../src/input/inforce.ts';
-import { parsePlan } from '../src/input/plan.ts';
+import { inForceFiles, keepCorpusFiles, recordPlan, requirePlanInForce, revisionInForce } from '../src/input/inforce.ts';
+
 import { readNeedsUser } from '../src/needsuser.ts';
 import { APPLY,phase0InputOf,phase0Rows } from '../src/phase0/rows.ts';
 import { type DeflakeContext,applyDeflake,deflakeJobPending } from '../src/pipeline/deflakemint.ts';

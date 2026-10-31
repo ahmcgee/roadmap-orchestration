@@ -7,35 +7,22 @@
 // test `prompts.fields==required` holds each module to it.
 import { createHash } from 'node:crypto';
 import type { OutcomeStage,TestRef } from '../core/events.ts';
-import type {
-ClauseId,DivergenceId,FindingId,InvocationId,JobId,LaneId,MilestoneId,ObligationId,PolishId,
-ResourceName,
-ReviewFindingId,RulingId,ServeName,Sha,Sha256Hex,SpecRev,
-SystemName,
-UnitId,VisionClauseId,
-WitnessItemId,
-} from '../core/ids.ts';
+import type { ClauseId, FindingId, InvocationId, JobId, LaneId, MilestoneId, ObligationId, PolishId, ReviewFindingId, RulingId, ServeName, Sha, SpecRev, SystemName, UnitId, VisionClauseId, WitnessItemId } from '../core/ids.ts';
 import type { JsonValue } from '../core/json.ts';
-import type { CommandVerdict,FailureRef,IgnoredCensus,LaneCadence,LaneDef,NeedsUserReason,SpecPatchOp } from '../core/records.ts';
+import type { CommandVerdict, FailureRef, IgnoredCensus, LaneDef, NeedsUserReason, SpecPatchOp } from '../core/records.ts';
 import type { GateDelta,LedgerOutcome } from '../core/review.ts';
 import type { AbsPath,RepoPath,RepoPattern } from '../core/values.ts';
 import type { PinnedRule } from '../corpus/types.ts';
 import type { FlowPromptInputs } from '../flow/types.ts';
 import { type BoundedDiff,EXAMPLES } from '../git/boundeddiff.ts';
 import type { RequiredWitness } from '../holistic/required.ts';
-import type {
-BundleRejection,DivergenceKind,
-FindingLens,
-FindingSeverity,FindingStateName,
-LensKind,ObligationDef,Obligations,ObservationKey,ObservationVerdict,PackFinding,
-Vision,VisionClause,VisionCoverage,VisionQuestion,
-} from '../holistic/types.ts';
+import type { FindingLens, FindingSeverity, FindingStateName, LensKind, ObligationDef, Obligations, ObservationKey, ObservationVerdict, PackFinding, Vision, VisionClause, VisionCoverage, VisionQuestion } from '../holistic/types.ts';
 import { obligationSource } from '../holistic/types.ts';
 import type { BringUp,Journey } from '../input/plan.ts';
-import type { SystemsMap } from '../input/systems.ts';
+
 import type { Phase0Record } from '../phase0/types.ts';
 import type { Argv0 } from '../preflight/argv0.ts';
-import type { RiskTier,Role } from '../routing/types.ts';
+import type { Role } from '../routing/types.ts';
 import type { GateFinding,Premise } from './schemas.ts';
 
 /** The spec as the one text every role reads: the executor's Markdown rendering of spec.json at `rev`. */
@@ -82,7 +69,6 @@ export type UnitCorpusInput = Readonly<{ kind: 'unit-corpus'; rules: readonly Pi
 export type UnitTargetInput = ArchitectureInput | UnitCorpusInput;
 /** The gate's target: never the vision doc (M3 R17), so a corpus target carries none. */
 export type GateTargetInput = ArchitectureInput | (UnitCorpusInput & Readonly<{ visionDoc: null }>);
-
 
 export type FixRound = Readonly<{ failingEvidenceDirs: readonly AbsPath[]; directives: readonly string[];
   baseComparison?: Readonly<{unit: string; base: string; evidence: readonly string[]}> | null;
@@ -352,7 +338,7 @@ export type GateLargeDiffInput = Readonly<{ overflow: number; changed: number; l
 
 // ---------------------------------------------------------------------------------------------------
 // M3: the arc roles' inputs (frozen in step 0a). The vision comes first and in full in both (A14); on a
-// conflict the vision wins. Plan-check reads it as non-directive context; the gate never does (R17).
+// conflict the vision wins. Builders and verifiers receive the relevant target and acceptance context.
 
 /**
  * The vision as a prompt gets it: every clause, withdrawn ones marked (H16); the open questions; and `advances`, the

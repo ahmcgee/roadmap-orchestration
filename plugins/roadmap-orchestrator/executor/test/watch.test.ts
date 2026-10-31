@@ -100,7 +100,7 @@ test('watch.m3-kinds: the holistic layer\'s items wake the watcher as any needs-
   const hostDir = openHostDir(absPath(join(tmpDir('watch-m3-host'), 'roadmap')));
   const arc = arcId(`w-${randomBytes(5).toString('hex')}`);
   const kinds = [
-    ['owner-request', true], ['divergence-digest', false], ['convergence-bound', false], ['convergence-identity', false], ['audit-owed', false],
+    ['owner-request', true], ['divergence-digest', false], ['convergence-bound', false], ['convergence-identity', false], ['revision-notice', false],
     ['finding-p1-escalated', true], ['new-finding-draining', true], ['pack-review', true],
   ] as const;
   const lines: Line[] = [];
@@ -139,7 +139,7 @@ test('watch.actionable: `--actionable` prints only the open items not seen, each
 
   const journal = openJournal(runDir, arc);
   const raise = (summary: string) => raiseNeedsUser(journal, runDir, {
-    blocking: false, subject: { type: 'arc' }, reason: 'audit-owed', summary, recommendation: 'look', options: [], evidence: [],
+    blocking: false, subject: { type: 'arc' }, reason: 'revision-notice', summary, recommendation: 'look', options: [], evidence: [],
   }, { type: 'arc' });
   const answered = raise('answered before the watch');
   exclusiveCreate(needsUserAckPath(runDir, answered), canonicalJson({ v: SCHEMA_VERSION, id: answered, command: commandId('cmd-00000000000000ab'), choice: null, at: isoTimeOf(new Date()) }));
@@ -178,7 +178,7 @@ test('watch.cursor-replay: a watch restarted with --from <the last seq read> rep
   atomicJson(hostPath(r.ctx.hostDir, HOST_LOCK), claim);
   publishOwner(r.ctx.hostDir, claim, { pid: identityOf(executor.pid).pid, start: identityOf(executor.pid).start });
   const raise = (summary: string) => raiseNeedsUser(r.journal, runDir, {
-    blocking: false, subject: { type: 'arc' }, reason: 'audit-owed', summary, recommendation: 'look', options: [], evidence: [],
+    blocking: false, subject: { type: 'arc' }, reason: 'revision-notice', summary, recommendation: 'look', options: [], evidence: [],
   }, { type: 'arc' });
   /** One actionable watch, from `from`, until `done` holds of its lines, plus three polls for anything further. */
   const session = async (from: number | null, done: (lines: readonly Line[]) => boolean): Promise<readonly Line[]> => {

@@ -1,17 +1,11 @@
-import { mayOverlap } from '../core/values.ts';
+
 import { protectedPaths } from './protected.ts';
 import { referenceCommit } from '../phase0/rows.ts';
 // Classify a proposal against the plan in force. Every refused edit contributes its reason.
 // Root applies authorize weakenings with their reason; automatic revisions retain the frozen contract gate.
 import type { IntentOf,PlanChange } from '../core/events.ts';
 import { PLAN_FIELDS } from '../core/events.ts';
-import {
-type JobId,type ObligationId,
-type ResourceName,type ResourceUnit,type RulingId,type Sha256Hex,type UnitId,type VisionClauseId,
-canonicalIds,
-compareIds,
-parseResourceUnit
-} from '../core/ids.ts';
+import { type JobId, type ObligationId, type ResourceName, type ResourceUnit, type RulingId, type Sha256Hex, type UnitId, compareIds, parseResourceUnit } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import { readJournal } from '../core/log.ts';
@@ -23,11 +17,11 @@ specObligations,specRepairs,specWitnesses
 } from '../core/records.ts';
 import { type UnitState,maxTier,openAttempt } from '../core/state.ts';
 import { SchemaError } from '../core/validate.ts';
-import type { AbsPath,RepoPattern } from '../core/values.ts';
+import type { AbsPath } from '../core/values.ts';
 import { type CorpusPin,parseCorpusPin } from '../corpus/types.ts';
 import { classifyObligations } from '../holistic/obligations.ts';
 import { specCensusMismatches } from '../holistic/rederive.ts';
-import { type BusyAttempt,type ClassifiedAdmit,type ObligationDisposition,type Obligations,type Vision,isExempt,parseObligations,parseVision } from '../holistic/types.ts';
+import { type BusyAttempt, type ObligationDisposition, type Obligations, type Vision, isExempt, parseObligations, parseVision } from '../holistic/types.ts';
 import { advancesReasons,visionEditReasons } from '../holistic/vision.ts';
 import { undispositioned } from '../host/residues.ts';
 import type { Phase0Record } from '../phase0/types.ts';
@@ -46,14 +40,7 @@ import type { CommandScope,ScopeOf } from '../schedule/types.ts';
 import { type Ruling,parseRulings } from '../spec/rulings.ts';
 import { SpecFileError,bytesSha256,evidenceScopeConflicts,parseSpec } from '../spec/spec.ts';
 import { baseFiles,compareAndSwap } from './cas.ts';
-import {
-type InForce,
-type InputFiles,PLAN_INPUT,type RevisionInForce,type RoutingBase,SPEC_INPUT,
-inForceFiles,
-inputPath,keptInput,phase0RecordOf,planInForce,planRouting,
-readInputFiles,revisionInForce,revisionManifestOf,
-specShaInForce,unitRouting
-} from './inforce.ts';
+import { type InForce, type InputFiles, PLAN_INPUT, type RevisionInForce, type RoutingBase, SPEC_INPUT, inForceFiles, inputPath, keptInput, phase0RecordOf, planInForce, planRouting, readInputFiles, revisionInForce, revisionManifestOf, unitRouting } from './inforce.ts';
 import {
 type KnownDefect,type PlanM1,type PlanUnit,boundsOf,derivedOf,environmentOf,environmentsOf,hasMilestones,knownDefectsOf,milestonesNeedHolistic,milestonesOf,parsePlan,
 planFieldValue,priorityOf,reservedUnitIdReason,
@@ -72,13 +59,6 @@ planFieldValue,priorityOf,reservedUnitIdReason,
 export type Proposer =
   | Readonly<{ type: 'apply'; reason?: string }>
   | Readonly<{ type: 'reverse' | 'start' | 'executor' }>
-  /**
-   * `fixesUnrecorded`: the units the bundle's `reenter` ops introduce from an answer recorded before `fixes` (a previous
-   * release's, `reenterFixesDefault`): adopted as recorded, the `fixes` rows do not bind them (`fixesReasons`).
-   */
-  | Readonly<{
-    type: 'bundle'; job: JobId; cites: readonly VisionClauseId[]; evidence: readonly string[]; admits: readonly ClassifiedAdmit[];
-  }>
   /** dev.13 (agent D): the code-applied polish revision of walk `job` (src/walk/polish.ts): it only admits that walk's proposals. */
   | Readonly<{ type: 'walk'; job: JobId }>
   /** dev.13 (agent D): the cut of polish unit `unit` its compare judged `drop` (src/walk/compare.ts): it only cuts that unit. */
@@ -176,20 +156,6 @@ function staleAfterMachineRevision(runDir: AbsPath, unit: UnitId, path: AbsPath,
   return `unit ${unit}: its spec ${path} is at rev ${rev}, but the unit's spec is now rev ${newRev}, a revision the executor wrote from `
     + `the build's evidence (the implementer's recorded decisions, appended at ${at}) before your edit was applied; `
     + `re-apply your edit on top of rev ${newRev} (kept at ${inputPath(runDir, newSha256, SPEC_INPUT)}) and set rev ${newRev + 1}`;
-}
-
-/**
- * M4a rev 3 (OR-A1, B "advances carve-out"): a bundle may change `holistic.advances` only by adding exactly the clauses of
- * the `opportunity` classes its own admits record, removing none. Null when it does; else why not (appended to the
- * owner-only reason).
- */
-function opportunityAdvancesReason(proposer: Extract<Proposer, { type: 'bundle' }>, was: readonly VisionClauseId[], next: readonly VisionClauseId[]): string | null {
-  const opportunity = canonicalIds(proposer.admits.flatMap((a) => (a.class.type === 'opportunity' ? a.class.clauses : [])));
-  const expected = canonicalIds([...was, ...opportunity]);
-  if (opportunity.length > 0 && same(canonicalIds(next), expected)) return null;
-  return opportunity.length === 0
-    ? ' (a bundle adds only the clauses of an opportunity it admits, and this one admits none)'
-    : ` (a bundle adds exactly its opportunities' clauses ${opportunity.join(', ')}, and removes none: expected ${expected.join(', ')})`;
 }
 
 /** The spec change of a dispatched unit, or why it is refused; null when the file is the unit's spec. */
@@ -448,7 +414,6 @@ export { mayOverlap } from '../core/values.ts';
 function spentOf(u: UnitState): Readonly<Partial<Record<keyof Bounds, number>>> {
   return {
     chargeable: u.counters.chargeableFailures,
-    redirects: u.counters.redirects - u.redirectBase,
     reviseRounds: u.counters.reviseRounds,
     candidateReds: u.counters.candidateReds,
     retries: Math.max(0, ...Object.values(u.counters.retries)),
@@ -762,7 +727,7 @@ export function classify(input: ClassifyInput): Classified {
   // The arc's slice of the vision (owner-only, like the vision): it fits the revision's vision whatever changed.
   if (plan.holistic !== undefined && inputs.vision !== null) reasons.push(...advancesReasons(inputs.vision, plan.holistic.advances));
   if (cur.holistic !== undefined && plan.holistic !== undefined && !same(cur.holistic.advances, plan.holistic.advances)) {
-    const why = proposer.type === 'apply' ? null : proposer.type === 'bundle' ? opportunityAdvancesReason(proposer, cur.holistic.advances, plan.holistic.advances) : '';
+    const why = proposer.type === 'apply' ? null : '';
     if (why === null) changes.push({ type: 'advances' });
     else reasons.push(`holistic.advances is owner-only: only an architect \`apply\` changes it, not a ${proposer.type}${why}`);
   }
@@ -1002,6 +967,7 @@ function splitRows(cur: PlanM1, plan: PlanM1, proposer: Proposer, changes: reado
   for (const was of cur.units) {
     const parent = plan.units.find((u) => u.id === was.id);
     if (was.cut !== undefined || parent?.cut === undefined || !parent.cut.reason.startsWith('split into ')) continue;
+    if (was.origin === 'deflake') reasons.push(`unit ${was.id} is a deflake unit: root apply cannot split it; its verification stays with the executor-minted unit`);
     const split = {unit: was.id, children: parent.cut.reason.slice('split into '.length).split(', ') as UnitId[]};
     const children = new Set<string>(split.children);
     const curIds = new Set(cur.units.map((u) => u.id));
@@ -1063,7 +1029,7 @@ function obligationRows(input: ClassifyInput, inputs: NextInputs, reasons: strin
     return none;
   }
   if (next === null || !inputs.changed.obligations) return none;
-  const author = input.proposer.type === 'bundle' ? { type: 'checkpoint' as const, cites: input.proposer.cites } : { type: 'architect' as const, reason: input.proposer.type === 'apply' ? input.proposer.reason : undefined, rev: input.inForce.rev + 1 };
+  const author = { type: 'architect' as const, reason: input.proposer.type === 'apply' ? input.proposer.reason : undefined, rev: input.inForce.rev + 1 };
   const v = classifyObligations(prev, next, {
     vision: inputs.vision, author,
     latched: new Set(input.view.holistic().latched.map((l) => l.obligation)), published: new Set(input.view.publications().map((p) => p.unit)),
@@ -1183,15 +1149,8 @@ function censusRows(input: ClassifyInput, inputs: NextInputs, specs: ReadonlyMap
   if (input.next.plan.target !== 'corpus' || inputs.obligations === null || census === undefined) return;
   const problems = specCensusMismatches(input.next.plan.units.flatMap((u) => specs.get(u.id) ?? []), inputs.obligations, census);
   if (problems.length === 0) return;
-  const row = canonicalJson({ kind: 'phase0-invalid', problems });
-  if (input.proposer.type !== 'bundle') {
-    reasons.push(row);
-    return;
-  }
-  const fixes = problems.map((p) => (p.item.startsWith('I-')
-    ? `unit ${p.unit} declares ${p.item}, on ${p.rule}, whose census state is ${p.state}: declare only obligations the census names for their rule`
-    : `unit ${p.unit}'s ${p.item.startsWith('W-') ? 'witness item' : 'acceptance clause'} ${p.item} names ${p.rule}, which is out of slice: to work on ${p.rule}, admit it as a target of an opportunity whose obligation split anchors a child at ${p.rule} (the census moves), or drop the ${p.rule} citation from ${p.item}`));
-  reasons.push(`${row}: ${fixes.join('; ')}`);
+  reasons.push(canonicalJson({ kind: 'phase0-invalid', problems }));
+
 }
 
 /**

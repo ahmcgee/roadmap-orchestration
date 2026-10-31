@@ -305,3 +305,35 @@ describe(`matrix row ${WALK_JOB}`, () => {
     });
   }
 });
+
+test('walk.deviation-loop: a root-admitted P2 repair holds its round until merge and re-walks merged code', T, async () => {
+    const deviation = walkAnswer({ findings: [{ class: 'deviates', journey: 'J-1', claim: 'The error omits its remedy', cause: 'error text', against: { type: 'design', path: 'design/README.md', anchor: '#errors' }, paths: ['product/server.js'] }] });
+    const d = walkArc({ steps: [...unitSteps('u1', moduleFiles('mul', '*')), ...r1Steps(), walkStep('walk-1', deviation), walkStep('walk-2', walkAnswer())] });
+    const r = contextFor(d);
+    const { ctx, w } = steeringContext(r);
+    const tick = setInterval(() => w.arbiter.wake(), 50);
+    try {
+      await merge(r, 'u1');
+      assert.deepEqual(await walk(r), { kind: 'ended', job: 'walk-1', outcome: 'reported', passed: true });
+      const progress = () => milestoneProgress(r.journal.view, planOf(r), milestonesOf(planOf(r))[0]!, repairUnits(walkContext(r).ctx));
+      const pending = progress();
+      assert.equal(pending.kind, 'settled', 'a P2 alone does not hold the milestone for root action');
+      assert.deepEqual(readyNow(r), ['u3', 'u2'], 'a P2 permits milestone descendants');
+      await admitRepair(r);
+      const repairing = progress();
+      assert.ok(repairing.kind === 'round-open' && repairing.round.pending === null, JSON.stringify(repairing));
+      assert.deepEqual(repairing.round.inFlight, ['r1']);
+      assert.deepEqual(await walk(r), { kind: 'none' }, 'no re-walk before the repair merges');
+      await merge(r, 'r1');
+      assert.equal(r.journal.view.holistic().findings.find((f) => f.id === 'F-1')?.state, 'resolved');
+      assert.deepEqual(progress(), { kind: 'walk-due', round: 2 });
+      assert.deepEqual(await walk(r), { kind: 'ended', job: 'walk-2', outcome: 'reported', passed: true });
+      assert.deepEqual(factsOf(r, 'walk-started').map((f) => [f.job, f.round]), [['walk-1', 1], ['walk-2', 2]]);
+      assert.equal(factsOf(r, 'walk-started')[1]!.sha, git(d.repo, 'rev-parse', 'main'), 're-walk follows the merged repair');
+      assert.equal(progress().kind, 'settled');
+      assert.deepEqual(readCalls(d.scenarioPath).filter((c) => c.step === null), []);
+    } finally {
+      clearInterval(tick);
+      r.journal.close();
+    }
+  });

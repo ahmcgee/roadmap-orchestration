@@ -128,7 +128,7 @@ type CandidateTrees = Readonly<{ candidate: Sha; tip: Sha }>;
 
 const attemptKey = (stage: Stage, attempt: number): string => `${stage}#${attempt}`;
 const HOLDING: readonly OutcomeClass[] = ['hold', 'park', 'stop'];
-const ROUNDS: readonly OutcomeClass[] = ['redirect', 'revise', 'candidate-red', 'smoke'];
+const ROUNDS: readonly OutcomeClass[] = ['revise', 'candidate-red', 'smoke'];
 const isFlowStage = (s: Stage): s is FlowStage => (FLOW_STAGES as readonly string[]).includes(s);
 
 /** The suite lane an arc lane stands in for under the plan in force (F6, `sameExecution`), or null. */

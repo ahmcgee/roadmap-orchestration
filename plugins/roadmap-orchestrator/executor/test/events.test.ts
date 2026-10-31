@@ -83,7 +83,7 @@ const INTENTS: { readonly [K in OpKind]: IntentOf<K> } = {
     ref: refName('refs/roadmap-run/arc-1/docs/docs-1'), old: null, pub: jobId('docs', 1), integrationTip: A, worktree: wt, commit: commit([A] as const),
   }, { new: B }),
   'mutant.apply': intent('mutant.apply', { worktree: wt, at: A, finding: findingId('F-1'), patchSha256: H }, null),
-  'revision.commit': intent('revision.commit', { source: { type: 'bundle', job: jobId('ckpt', 2) }, base: planRev(3), rev: planRev(4), payloadSha256: H, docs: true }, null),
+  'revision.commit': intent('revision.commit', { source: { type: 'walk', job: jobId('walk', 2) }, base: planRev(3), rev: planRev(4), payloadSha256: H, docs: true }, null),
 };
 
 // Every outcome variant of every kind.

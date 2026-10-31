@@ -1,13 +1,12 @@
 // Projections shared by live runtime readers. Schema-2 has no historical record adoption.
-import type { CensusEntry,ClassifiedAdmit,Conversion,Obligations } from '../holistic/types.ts';
+import type { CensusEntry, Obligations } from '../holistic/types.ts';
 import type { PressureAvailability } from '../host/pressure.ts';
 import type { CpuBasis } from './cpu.ts';
-import type { DiffShown,GateLargeDiff,JudgmentInputs,MutantOf,RevisionSource } from './events.ts';
+import type { DiffShown, GateLargeDiff, JudgmentInputs, MutantOf } from './events.ts';
 import type { FindingId,Sha256Hex } from './ids.ts';
 import type { LaunchCpu } from './records.ts';
 import type { ApprovalBlobs,GateReview } from './review.ts';
 export const censusOf = (o: Obligations): readonly CensusEntry[] | null => o.census ?? null;
-export const bundleClassesOf = (s: Extract<RevisionSource, {type: 'bundle'}>): Readonly<{admits: readonly ClassifiedAdmit[]; conversions: readonly Conversion[]}> | 'unclassified' => s.admits === undefined || s.conversions === undefined ? 'unclassified' : {admits: s.admits, conversions: s.conversions};
 export const spawnPressureOf = (s: Readonly<{pressure?: number | null}>): number | null => s.pressure ?? null;
 export const startPressureOf = (s: Readonly<{pressure?: PressureAvailability}>): PressureAvailability => s.pressure!;
 export const exitCpuOf = (s: Readonly<{cpu?: LaunchCpu | null}>): LaunchCpu | null => s.cpu ?? null;

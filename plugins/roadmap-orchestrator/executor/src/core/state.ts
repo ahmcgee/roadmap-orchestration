@@ -5,7 +5,7 @@
 // The fold also enforces the log's invariants (SCHEMAS.md "Event log"): a violation throws
 // FoldInvariantError. At open the journal turns that into a refusal (`log-corrupt`); at append it means
 // the caller asked for an illegal record, and nothing is written.
-import { type BundleOutcome,type FindingStateName,type FindingTo,FINDING_MOVES } from '../holistic/types.ts';
+import { type FindingStateName, type FindingTo, FINDING_MOVES } from '../holistic/types.ts';
 import { type Backend,type RiskTier,type Role,type UnitRole,RISK_TIERS } from '../routing/types.ts';
 import {
 type AbortRecord,type AuditInputs,type BackendParkClass,
@@ -20,16 +20,7 @@ certificationRed,
 prevHash,probeTargetKey,serializeEvent
 } from './events.ts';
 import { CounterRegressionError } from './fsx.ts';
-import {
-type AmendmentId,type ArcId,type ClaudeSessionId,type CommandId,type DivergenceId,type EdgeId,type FindingId,type InvocationId,type JobId,type JobKind,
-type MilestoneId,
-type NeedsUserId,type ObligationId,
-type OpId,type OpKey,type PlanRev,type PolishId,type ResourceInstance,type ResourceUnit,
-type ReviewFindingId,
-type RoutingRev,type Sha,type Sha256Hex,type SpecRev,type UnitId,
-amendmentIdOf,compareResourceUnits,divergenceIdOf,findingIdOf,jobId,parseInvocationId,parseJobId,parseOpId,polishIdOf,
-reviewFindingIdOf
-} from './ids.ts';
+import { type ArcId, type ClaudeSessionId, type CommandId, type DivergenceId, type EdgeId, type FindingId, type InvocationId, type JobId, type JobKind, type MilestoneId, type NeedsUserId, type ObligationId, type OpId, type OpKey, type PlanRev, type PolishId, type ResourceInstance, type ResourceUnit, type ReviewFindingId, type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId, compareResourceUnits, divergenceIdOf, findingIdOf, jobId, parseInvocationId, parseJobId, parseOpId, polishIdOf, reviewFindingIdOf } from './ids.ts';
 import type { ControlState,FlakeAt,FlowFactAt,JournalView,NeedsUserAckState,NeedsUserState,PropagationFactAt,WalkFactAt } from './interfaces.ts';
 import { canonicalJson } from './json.ts';
 import { type ApprovalFingerprint,type Bounds,type ContainmentMode,type DispatchRecord,type ResidueKey,type Stage,DEFAULT_BOUNDS,boundsOfRecord } from './records.ts';
@@ -61,8 +52,6 @@ export type UnitCounters = Readonly<{
   chargeableFailures: number;
   /** Certification reds since the last charge; reset on a charge, initially 0. */
   unchargedLanesReds: number;
-  /** Plan-check redirects applied. */
-  redirects: number;
   /** Gate revise rounds taken. */
   reviseRounds: number;
   /** Red candidates sent back to a fix round. */
@@ -167,15 +156,10 @@ export type UnitState = Readonly<{
    */
   pendingRevision: Readonly<{ rev: SpecRev; sha256: Sha256Hex; command: CommandId | null }> | null;
   /**
-   * dev.17 (propagation): the latest stale set (its plan rev) naming a link of the unit that no pre-build of it has answered
-   * since (`stale-answered`); null when none. An in-flight unit re-opens at pre-build on it (`stale-reopened`).
+   * The latest stale set naming this unit; null when none. A boundary reopens an in-flight unit
+   * at pre-build (`stale-reopened`) so the next build sees the revised inputs.
    */
   staleRev: PlanRev | null;
-  /**
-   * `counters.redirects` at the latest reopen (0 before one): the redirect bound counts only the redirects
-   * since the architect's latest spec revision (`redirectsSinceEdit`).
-   */
-  redirectBase: number;
   /** The unit's park while `park-pending` (M2); null otherwise. */
   park: ParkState | null;
   /** The latest retryable park recovery (M2): when, and the targets that passed; null before one. */
@@ -241,8 +225,8 @@ export function newUnitState(unit: UnitId, stage: Stage, risk: RiskTier | null, 
   const retries = Object.fromEntries(RETRY_STAGES.map((s) => [s, 0])) as Record<RetryStage, number>;
   return {
     unit, stage, risk, status: 'active', routedUp: [], promotion: false, decided: null, interrupted: null, pressureHold: null, pressureHolds: 0,
-    approval: null, open: null, counters: { attempts: 0, chargeableFailures: 0, unchargedLanesReds: 0, redirects: 0, reviseRounds: 0, candidateReds: 0, smokeRounds: 0, retries },
-    spec, reopened: null, pendingRevision: null, staleRev: null, redirectBase: 0,
+    approval: null, open: null, counters: { attempts: 0, chargeableFailures: 0, unchargedLanesReds: 0, reviseRounds: 0, candidateReds: 0, smokeRounds: 0, retries },
+    spec, reopened: null, pendingRevision: null, staleRev: null,
     park: null, lastRecovery: null, buildTier: risk, lineage: null, supersededBy: null, bounds, entry: null, steering: null, failures: [],
   };
 }
@@ -256,7 +240,6 @@ export function maxTier(a: RiskTier, b: RiskTier | null): RiskTier {
 export const ENTRY_STAGE = { steer: 'build', 'merge-in': 'lanes' } as const satisfies Readonly<Record<EntryPoint['kind'], Stage>>;
 
 /** Redirects applied since the architect's latest spec revision: what MAX_REDIRECTS bounds. */
-export const redirectsSinceEdit = (u: UnitState): number => u.counters.redirects - u.redirectBase;
 
 const specOf = (record: DispatchRecord): SpecState => ({ rev: record.specRev, sha256: record.specSha256 });
 
@@ -281,7 +264,6 @@ export function afterStageOutcome(u: UnitState, f: Pick<StageOutcomeFact, 'stage
       chargeableFailures: c.chargeableFailures + (f.chargeable ? 1 : 0),
       unchargedLanesReds: certificationRed(f.stage, f.outcome)
         ? (f.unchargedLanesReds ?? 0) : f.chargeable ? 0 : c.unchargedLanesReds,
-      redirects: c.redirects + add('redirect'),
       reviseRounds: c.reviseRounds + add('revise'),
       candidateReds: c.candidateReds + add('candidate-red'),
       smokeRounds: c.smokeRounds + add('smoke'),
@@ -417,7 +399,6 @@ type FactOf<K extends HolisticFact['kind']> = Extract<HolisticFact, { kind: K }>
 export type BankedDebt = Extract<Fact, { kind: 'debt-banked' }> & Seq;
 type M4aFactOf<K extends Fact['kind']> = Omit<Extract<Fact, { kind: K }>, 'kind'> & Seq;
 /** M4a: a corpus amendment (`M-n`, in id order), its source unique. */
-export type AmendmentState = M4aFactOf<'corpus-amendment'>;
 /** M4a: a pack review job: its kept inputs' fact, and its end (null while running). */
 export type PackReviewState = Readonly<{ started: M4aFactOf<'pack-review-started'>; ended: M4aFactOf<'pack-review-ended'> | null }>;
 
@@ -453,8 +434,6 @@ export type HolisticFold = Readonly<{
   mergedIn: readonly (Omit<FactOf<'merged-in'>, 'kind'> & Seq)[];
   /** M4a (R7): the debt this arc banked, in log order; one per source, id and key (src/debt/mint.ts `mintDebt`). */
   debt: readonly BankedDebt[];
-  /** M4a: the corpus amendments, in id order (src/holistic/amendments.ts). */
-  amendments: readonly AmendmentState[];
   /** M4a: the pack reviews, in job order; at most one running (src/holistic/packreview.ts). */
   packReviews: readonly PackReviewState[];
   /** `close-admissions` latched and no architect admit since (§2.10). */
@@ -466,8 +445,6 @@ export type HolisticFold = Readonly<{
   certificates: readonly CertificateState[];
   /** M4a rev 3 (D2): mutation smoke runs, in log order. */
   smokeRuns: readonly SmokeRunState[];
-  /** M4a rev 3 (H7): cross-lens corroborations, in log order. */
-  corroborations: readonly CorroborationState[];
 }>;
 
 /** M4a rev 3: a lane a series reused (F1a), keyed `(parent, lane)`. */
@@ -477,7 +454,6 @@ export type CertificateState = M4aFactOf<'series-certified'>;
 /** M4a rev 3: a unit attempt's mutation smoke (D2), one per attempt. */
 export type SmokeRunState = M4aFactOf<'smoke-ran'>;
 /** M4a rev 3: a second lens's rationale merged into a finding (H7). */
-export type CorroborationState = M4aFactOf<'finding-corroborated'>;
 
 /** Records after which the arc is not sealed (A20, H5): every record but these quiet ones is work. */
 function isWork(record: Event): boolean {
@@ -597,7 +573,7 @@ export type CounterRefs = Readonly<{
   meter: ReadonlyMap<string, MeterTotal>;
 }>;
 
-const UNIT_COUNTERS = ['attempts', 'chargeableFailures', 'redirects', 'reviseRounds', 'candidateReds', 'smokeRounds'] as const;
+const UNIT_COUNTERS = ['attempts', 'chargeableFailures', 'reviseRounds', 'candidateReds', 'smokeRounds'] as const;
 const METER_COUNTERS = ['known', 'unavailable', 'inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'turns', 'costUsd'] as const;
 
 /**
@@ -726,7 +702,6 @@ export class Fold implements JournalView {
   readonly #steered: (Omit<FactOf<'steered'>, 'kind'> & Seq)[] = [];
   readonly #mergedIn: (Omit<FactOf<'merged-in'>, 'kind'> & Seq)[] = [];
   readonly #debt: BankedDebt[] = [];
-  readonly #amendments: AmendmentState[] = [];
   readonly #packReviews: { started: PackReviewState['started']; ended: PackReviewState['ended'] }[] = [];
   // M4b
   readonly #flowFacts: FlowFactAt[] = [];
@@ -745,7 +720,6 @@ export class Fold implements JournalView {
   readonly #laneReuses: LaneReuseState[] = [];
   readonly #certificates: CertificateState[] = [];
   readonly #smokeRuns: SmokeRunState[] = [];
-  readonly #corroborations: CorroborationState[] = [];
   // dev.17 proportional review (`review()`)
   readonly #ledger = new Map<ReviewFindingId, FindingsLedgerEntry>();
   readonly #ledgered = new Map<string, readonly Readonly<{ index: number; id: ReviewFindingId }>[]>();
@@ -1237,15 +1211,6 @@ export class Fold implements JournalView {
         this.#debt.push({ ...f, seq: at.seq });
         return;
       }
-      case 'corpus-amendment': {
-        const next = this.nextAmendmentId();
-        if (f.id !== next) fail(`corpus amendment ${f.id}; the next amendment is ${next}`);
-        const same = this.#amendments.find((x) => canonicalJson(x.source) === canonicalJson(f.source));
-        if (same !== undefined) fail(`corpus amendment ${f.id} has the source of ${same.id} (one amendment per source)`);
-        const { kind: _k, ...rest } = f;
-        this.#amendments.push({ ...rest, seq: at.seq });
-        return;
-      }
       case 'pack-review-started': {
         const running = this.#packReviews.find((r) => r.ended === null);
         if (running !== undefined) fail(`pack review ${f.job} started while ${running.started.job} is running (one at a time)`);
@@ -1292,12 +1257,6 @@ export class Fold implements JournalView {
         if (this.#acks.has(f.id)) fail(`needs-user ${f.id} declined after it was closed`);
         this.#acks.set(f.id, { command: null, choice: f.choice });
         return;
-      case 'finding-corroborated': {
-        if (!this.#findings.has(f.id)) fail(`finding-corroborated of ${f.id}, which was never opened`);
-        const { kind: _k, ...rest } = f;
-        this.#corroborations.push({ ...rest, seq: at.seq });
-        return;
-      }
       // M4b (SCHEMAS.md "M4b"): the fold sees the jobs the flow facts name and keeps every flow fact (`flowFacts`); a
       // decision names a surviving proposal once, and only an accepted one is applied, once.
       case 'flow-started':
@@ -1407,16 +1366,6 @@ export class Fold implements JournalView {
         }
         this.#propagationFacts.push({ seq: at.seq, at: at.at, fact: f });
         return;
-      case 'stale-answered': {
-        const u = this.#units.get(f.unit);
-        if (u === undefined) return fail(`stale-answered of unit ${f.unit}, which never started`);
-        if (this.#propagationFacts.some((x) => x.fact.kind === 'stale-answered' && x.fact.unit === f.unit && x.fact.attempt === f.attempt)) {
-          fail(`a second stale-answered of unit ${f.unit}'s pre-build attempt ${f.attempt}`);
-        }
-        if (u.state.staleRev !== null && u.state.staleRev <= f.rev) this.#setUnitState(u, { ...u.state, staleRev: null });
-        this.#propagationFacts.push({ seq: at.seq, at: at.at, fact: f });
-        return;
-      }
       case 'stale-reopened':
         this.#staleReopened(f, fail);
         this.#lastReopenSeq = at.seq;
@@ -1829,7 +1778,7 @@ export class Fold implements JournalView {
     if (spec === null || f.specRev !== spec.rev + 1) fail(`reopen of unit ${f.unit} at spec rev ${f.specRev}; its recorded rev is ${spec?.rev ?? 'none'}`);
     this.#setUnitState(u, {
       ...u.state, stage: 'pre-build', status: 'active', decided: null, interrupted: null, pressureHold: null, park: null, spec: { rev: f.specRev, sha256: f.specSha256 },
-      reopened: { command: f.command, specRev: f.specRev }, redirectBase: u.state.counters.redirects, pendingRevision: null,
+      reopened: { command: f.command, specRev: f.specRev }, pendingRevision: null,
     });
   }
 
@@ -1848,7 +1797,7 @@ export class Fold implements JournalView {
     if (spec === null) return fail(`stale-reopened of unit ${f.unit}, which has no spec recorded`);
     this.#setUnitState(u, {
       ...u.state, stage: 'pre-build', decided: null, interrupted: null, pressureHold: null, park: null,
-      reopened: { command: null, specRev: spec.rev }, redirectBase: u.state.counters.redirects,
+      reopened: { command: null, specRev: spec.rev },
     });
   }
 
@@ -1994,7 +1943,6 @@ export class Fold implements JournalView {
     return this.#runOnly;
   }
 
-
   needsUser(): readonly NeedsUserState[] {
     return [...this.#needsUser].sort(([a], [b]) => compare(a, b)).map(([id, { blocking }]) => ({ id, blocking, ack: this.#acks.get(id) ?? null }));
   }
@@ -2055,11 +2003,6 @@ export class Fold implements JournalView {
 
   nextDivergenceId(): DivergenceId {
     return divergenceIdOf(this.#divergences.length + 1);
-  }
-
-  /** M4a: the id the next `corpus-amendment` must carry (`M-<amendments + 1>`, arc-scoped). */
-  nextAmendmentId(): AmendmentId {
-    return amendmentIdOf(this.#amendments.length + 1);
   }
 
   nextJobId(kind: JobKind): JobId {
@@ -2147,14 +2090,12 @@ export class Fold implements JournalView {
       steered: this.#steered,
       mergedIn: this.#mergedIn,
       debt: this.#debt,
-      amendments: this.#amendments,
       packReviews: this.#packReviews.map((r) => ({ started: r.started, ended: r.ended })),
       draining: this.#draining,
       completion: c === null ? null : { ...c, active },
       laneReuses: this.#laneReuses,
       certificates: this.#certificates,
       smokeRuns: this.#smokeRuns,
-      corroborations: this.#corroborations,
     };
   }
 

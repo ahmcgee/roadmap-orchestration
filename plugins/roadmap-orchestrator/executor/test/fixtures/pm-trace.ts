@@ -88,15 +88,10 @@ export const LABEL_TRACE: Readonly<Record<string, Trace>> = {
   'audit.after-lens': NONE,
   'audit.before-ended': NONE,
   'audit.after-ended': NONE,
-  'checkpoint.after-inputs': NONE,
-  'checkpoint.after-call': NONE,
-  'bundle.after-applied': NONE,
-  'bundle.after-decided': NONE,
   // M4a (a corpus arc): the pack review's facts, a checkpoint's amendment settlement.
   'packreview.after-started': NONE,
   'packreview.after-call': NONE,
   'packreview.after-ended': NONE,
-  'amendment.after-decided': NONE,
   'debt.after-approval': NONE,
   // M4a rev 3 N3 (a corpus arc's unit stages): the witness lane files published (no build call); the witness check's series
   // certified (its verdict unwritten); the smoke's patch kept, its mutant applied, its mutant lanes witnessed, its smoke-ran
@@ -114,8 +109,6 @@ export const LABEL_TRACE: Readonly<Record<string, Trace>> = {
   'mutant.act-end': R('reconciled'),
   'mutant.after-done': NONE,
   // M4a rev 3 N2: a decision record's conversion amendment (or an overrun's debt item) written: settled again from the record.
-  'bundle.after-conversion-amendment': NONE,
-  'bundle.after-overrun-debt': NONE,
   // The close-out's docs.commit: open (redone, then the unpublished holder abandoned) or done.
   'docs.act-start': R('redone'),
   'docs.after-commit-tree': R('redone'),

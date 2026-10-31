@@ -112,7 +112,7 @@ async function seal(a: Arc, opts: SealOptions = {}): Promise<Sha> {
     writeFileSync(join(a.runDir, 'work', 'u1', '1-build', 'decisions.json'), '{"decisions":[]}\n');
     if (opts.cite !== undefined) {
       raiseNeedsUser(j, a.runDir, {
-        blocking: false, subject: { type: 'arc' }, reason: 'audit-owed', summary: 'an audit is owed', recommendation: 'run the audit', options: [], evidence: opts.cite,
+        blocking: false, subject: { type: 'arc' }, reason: 'revision-notice', summary: 'an audit is owed', recommendation: 'run the audit', options: [], evidence: opts.cite,
       }, { type: 'arc' });
     }
     const head = sha(revParse(a.repo, 'main'));

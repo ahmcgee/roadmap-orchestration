@@ -437,3 +437,30 @@ describe(`matrix row ${DEFLAKE_REVISION}`, () => {
     });
   }
 });
+
+test('split.deflake-refused: root apply cannot split an executor-minted deflake unit', T, async () => {
+  const d = flakyArc(freshMarker(), ['u1', 'u2'], [], straight('u1', {})), r = contextFor(d);
+  try {
+    assert.deepEqual(await run(r, 'u1'), {kind: 'merged'});
+    assert.equal((await mint(r)).kind, 'applied');
+    const parent = unitInForce(r, 'deflake-1');
+    const {w} = deflakeContext(r);
+    let rejection: unknown;
+    try {
+      await applyPlanEdit(r, w, (plan) => {
+        const units = plan['units'] as Record<string, unknown>[];
+        const entry = units.find((u) => u['id'] === parent.id)!;
+        entry['cut'] = {reason: 'split into deflake-child-1, deflake-child-2'};
+        const spec = JSON.parse(readFileSync(join(d.planPath, '..', `${parent.id}.json`), 'utf8'));
+        for (const id of ['deflake-child-1', 'deflake-child-2']) {
+          writeFileSync(join(d.planPath, '..', `${id}.json`), JSON.stringify({...spec, unit: id, rev: 1}));
+          units.push({...entry, id, spec: `${id}.json`, cut: undefined});
+        }
+      });
+    } catch (error) {rejection = error;}
+    assert.ok(rejection, 'the root split must be rejected');
+    assert.match(String(rejection), /deflake.*(?:cannot split|only the executor)|cannot split.*deflake/);
+    assert.equal(unitInForce(r, 'deflake-1').cut, undefined);
+    assert.ok(!planOf(r).units.some((u) => u.id === 'deflake-child-1'));
+  } finally {r.journal.close();}
+});

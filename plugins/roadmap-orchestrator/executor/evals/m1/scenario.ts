@@ -5,7 +5,7 @@
 // prepended, and every build step ends with the implementer's report.
 //
 //   {"steps": [
-//     {"role": "planCheck", "answer": <pre-build output>},
+//     {"role": "verifier", "answer": <pre-build annotation>},
 //     {"role": "build", "round": "fresh" | "resume", "acts": [<world acts>], "stdinContains"?: [...]},
 //     {"role": "gate", "answer": <gate output>, "stdinContains"?: [...]}
 //   ]}

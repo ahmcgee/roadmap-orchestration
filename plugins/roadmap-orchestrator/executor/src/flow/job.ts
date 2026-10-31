@@ -31,7 +31,7 @@ import { canonicalJson } from '../core/json.ts';
 import { DEFAULT_BOUNDS, type NeedsUserContent } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, type IsoTime, absPath, isoTimeOf } from '../core/values.ts';
-import type { RevisionContext } from '../holistic/bundle.ts';
+import type { RevisionContext } from '../holistic/admission.ts';
 import { integrationHeadNow } from '../holistic/cadence.ts';
 import { interruptedCall } from '../pipeline/dispatch.ts';
 import { removeCheckout, withCpu } from '../holistic/audit.ts';

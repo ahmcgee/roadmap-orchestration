@@ -13,10 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { brief } from '../src/commands/brief.ts';
 import { chainStatus } from '../src/commands/chain.ts';
 import { type Envelope,type Event,type Fact,type LogRecord,parseEventLine,serializeEvent } from '../src/core/events.ts';
-import {
-InvalidIdError,amendmentRef,amendmentRefOf,arcId,briefId,commandId,debtId,jobId,jobIdOf,
-parseAmendmentRef,phaseQuestionId,ruleId,sha,sha256,unitId,
-} from '../src/core/ids.ts';
+import { InvalidIdError, amendmentRef, amendmentRefOf, arcId, briefId, commandId, debtId, jobId, jobIdOf, parseAmendmentRef, phaseQuestionId, ruleId, sha, sha256 } from '../src/core/ids.ts';
 import { canonicalJson } from '../src/core/json.ts';
 import { } from '../src/core/projections.ts';
 import { NEEDS_USER_REASONS,approvalFingerprint,needsUserRecord,revisionInputs } from '../src/core/records.ts';
@@ -114,7 +111,7 @@ const phase0 = {
   corpusDivergences: [{ tier: 'semantic', what: 'no override', preimage: { pinSha256: H, files: [{ path: '0010_Overview.md', sha256: H2 }] }, cites: ['V-2'], rules: ['T-2'] }],
   questions: [{ id: 'P-4', rank: 1, text: '24 h or 48 h?', files: ['0010_Overview.md'], bears: ['T-10', 'V-1'], assumption: '48 h', state: { type: 'answered', answer: '48 h', at: AT } }],
   debt: [{ id: 'B-2', disposition: { type: 'keep', reason: 'later' } }, { id: 'B-10', disposition: { type: 'promote', unit: 'u1' } }],
-  amendments: [{ id: 'arc-1/M-1', disposition: { type: 'applied', rules: ['T-10'] } }],
+
   slice: { advances: ['V-1'], why: 'first slice' },
 };
 
@@ -230,8 +227,6 @@ describe('obligations, census and ruling refs', () => {
     assert.throws(() => parseObligations(obligationsFile([], [{ rule: 'T-3', state: { type: 'untestable' } }, { rule: 'T-2', state: { type: 'untestable' } }])), /census\[1\]/);
   });
 
-
-
   it('a vision confirmation ref: the corpus form and the M3 form', () => {
     assert.deepEqual(parseConfirmationRef(`corpus:0005_Vision.md#sha256:${H}`), { form: 'corpus', path: '0005_Vision.md', sha256: H });
     assert.deepEqual(parseConfirmationRef(`vision.md#sha256:${H}`), { form: 'm3', path: 'vision.md', sha256: H });
@@ -269,9 +264,6 @@ describe('Phase 0, debt and pack review', () => {
 describe('facts, plan changes, manifests and fingerprints', () => {
   const M4A_FACTS: Readonly<Record<string, object>> = {
     'debt-banked': { kind: 'debt-banked', id: 'B-3', bankReason: 'gate-note', what: 'tidy x', key: H, source: { type: 'gate', unit: 'u1', attempt: 2, index: 0 } },
-    'corpus-amendment': {
-      kind: 'corpus-amendment', id: 'M-1', source: {type: 'root', command: CMD}, rules: ['T-2'], proposal: 'p', why: 'w', evidence: [],
-    },
     'pack-review-started': { kind: 'pack-review-started', job: 'review-1', planRev: 1, inputsSha256: H, key: H2 },
     'pack-review-ended': {
       kind: 'pack-review-ended', job: 'review-1', outcome: 'completed',
@@ -282,12 +274,11 @@ describe('facts, plan changes, manifests and fingerprints', () => {
   it('every M4a fact round-trips byte-identically', () => {
     for (const f of Object.values(M4A_FACTS)) roundTrip(fact(f));
     roundTrip(fact({ ...M4A_FACTS['debt-banked'], source: { type: 'finding', finding: 'F-4' } }));
-    roundTrip(fact({ ...M4A_FACTS['corpus-amendment'], source: {type: 'root', command: commandId('cmd-0000000000000001')} }));
   });
 
   it('schema 2 refuses removed issue records and amendment sources', () => {
     for (const kind of ['issue-intake', 'issues-captured']) refusesFact({ kind, job: 'ckpt-1' }, /kind/);
-    refusesFact({ ...M4A_FACTS['corpus-amendment'], source: { type: 'issue', job: 'ckpt-1', issue: 'issue-3' } }, /source.type/);
+    refusesFact({ kind: 'corpus-amendment' }, /kind/);
     const read = (v: unknown) => { const f = new Fields(v, 'manifest'); const out = revisionInputs(f); f.end(); return out; };
     assert.throws(() => read({ rulings: { ledgerSha256: H }, obligations: H2, vision: null, corpus: H, corpusGuide: H, phase0: H, phase0Issues: H2 }), /phase0Issues/);
     assert.throws(() => parsePhase0Record({ ...phase0, issueCapture: { file: 'issues.json', sha256: H } }), /issueCapture/);
@@ -300,7 +291,6 @@ describe('facts, plan changes, manifests and fingerprints', () => {
     refusesFact({ ...M4A_FACTS['pack-review-ended'], outcome: 'abandoned' }, /findings/);
     refusesFact({ ...M4A_FACTS['debt-banked'], bankReason: 'overflow' }, /bankReason/);
   });
-
 
   it('PlanChange arms corpus and phase0 round-trip in plan-applied', () => {
     roundTrip(fact({
@@ -361,7 +351,7 @@ describe('startup rows, brief and ack', () => {
       {
         kind: 'phase0-invalid', problems: [
           { type: 'census-incomplete', rules: ['T-2', 'T-10'] }, { type: 'census-dangling', rules: ['T-1'] }, { type: 'obligation-rule-unresolved', obligation: 'I-2' },
-          { type: 'debt-undispositioned', id: 'B-2' }, { type: 'debt-kept-twice-unasked', id: 'B-3' }, { type: 'amendment-undispositioned', id: 'arc-1/M-2' },
+          { type: 'debt-undispositioned', id: 'B-2' }, { type: 'debt-kept-twice-unasked', id: 'B-3' },
           { type: 'question-reused', id: 'P-2' },
         ],
       },
@@ -392,10 +382,6 @@ describe('startup rows, brief and ack', () => {
         curation: phase0.curation, corpusDivergences: phase0.corpusDivergences,
         debt: { banked: [{ id: 'B-3', what: 'tidy x' }], dispositioned: [{ id: 'B-2', disposition: { type: 'keep', reason: 'later' } }] },
         questions: [{ id: 'P-4', rank: 1, text: 't', assumption: 'a', state: { type: 'open' } }],
-        amendments: [
-          { id: 'arc-2/M-1', rules: ['T-2'], proposal: 'p', admit: null },
-          { id: 'arc-2/M-2', rules: [], proposal: 'q', admit: { job: 'ckpt-2', index: 0, reason: 'unrelated' } },
-        ],
         packReviewNotes: [{ job: 'review-1', index: 1, claim: 'the cut line is vague' }],
         census: { held: 3, obligationRules: 4, outOfSlice: 2, untestable: 1, prodOnly: 1 },
         timings: [{ stage: 'build', count: 3, p50Ms: 60_000, maxMs: 90_000 }],
@@ -423,11 +409,8 @@ describe('startup rows, brief and ack', () => {
   });
 });
 
-
-
 describe('numbered-id order', () => {
   it('facts refuse a list in neither canonical nor historical order', () => {
-    refusesFact({ kind: 'corpus-amendment', id: 'M-1', source: {type: 'root', command: commandId('cmd-0000000000000001')}, rules: ['T-9', 'T-10', 'T-2'], proposal: 'p', why: 'w', evidence: [] }, /^event\.fact\.rules\[2\]$/);
   });
 
   it('the census and the pin were always numeric: string order is refused there', () => {

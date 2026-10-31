@@ -251,16 +251,14 @@ describe('status M3', () => {
 
       // A checkpoint of generation 1 runs a lane; an audit-owed item is raised: the completion predicate (the scheduler's
       // `completionBlockers`) names every gap, the running checkpoint among them.
-      const owed = item(r, 'audit-owed', false);
+      const owed = item(r, 'revision-notice', false);
       await sleep(30);
       s = statusOf(r);
-      assert.deepEqual(s.owed, { audits: [owed] });
       assert.deepEqual(s.completion.unmet, [
         'units-open', 'baseline-owed', 'close-out', 'obligations-not-discharged',
       ]);
       ack(r, owed);
       s = statusOf(r);
-      assert.deepEqual(s.owed, { audits: [] });
       assert.deepEqual(s.completion.unmet, ['units-open', 'baseline-owed', 'close-out', 'obligations-not-discharged'], 'a no-op checkpoint makes generation 1 quiescent');
       assert.equal(s.run.state, 'no-owner', 'a holistic arc is complete only through arc-completed');
       noModelIds(s);
@@ -287,16 +285,15 @@ describe('status M3', () => {
         preimage: { planRev: 1, specs: {}, obligationsSha256: null, ledgerSha256: null, contracts: [] }, compensation: { hint: 'nothing to undo', kind: 'none' },
       }) as const;
       commitRevisionNow(r.journal, r.ctx.runDir, {
-        ...prev, source: { type: 'bundle', job: jobId('ckpt', 1) }, base: planRev(1), rev: planRev(2),
+        ...prev, source: { type: 'walk', job: jobId('walk', 1) }, base: planRev(1), rev: planRev(2),
         manifest: { ...prev.manifest, rulings: { ledgerSha256,  } },
         changes: [{ type: 'unit-cut', unit: U('u2') }, { type: 'limits', unit: null }], dispositions: [],
         divergences: [draft('trust means tested'), draft('helpers stay small')],
       } as unknown as RevisionPayload, { type: 'job', job: jobId('ckpt', 1) });
 
       s = statusOf(r);
-      const checkpoint = { type: 'checkpoint', job: 'ckpt-1' };
+      const checkpoint = { type: 'executor' };
       assert.deepEqual(s.decisionsSince.map((x) => [x.kind, x.id, x.oneLine, x.ruledBy]), [
-        ['bundle', 'ckpt-1', 'plan rev 2: unit-cut u2, limits', checkpoint],
         ['cut', 'u2', 'u2 cut (plan rev 2)', checkpoint],
         ['divergence', 'D-1', 'interpretation: trust means tested', checkpoint],
         ['divergence', 'D-2', 'interpretation: helpers stay small', checkpoint],
@@ -305,7 +302,7 @@ describe('status M3', () => {
         ['D-1', 'ckpt-1', ['V-1'], ['scripted evidence'], { hint: 'nothing to undo', kind: 'none' }, null],
         ['D-2', 'ckpt-1', ['V-1'], ['scripted evidence'], { hint: 'nothing to undo', kind: 'none' }, null],
       ]);
-      assert.deepEqual(s.convergence, { k: 3, counter: 1, since: 0, open: [] });
+      assert.deepEqual(s.convergence, { k: 3, counter: 0, since: 0, open: [] });
       assert.deepEqual(s.vision?.coverage.withdrawnCited, []);
 
       const digest = item(r, 'divergence-digest', false);
@@ -321,7 +318,7 @@ describe('status M3', () => {
       assert.ok((s.convergence?.since ?? 0) > 0);
       r.journal.fact({ kind: 'divergence', id: 'D-3', index: 0, ...draft('a later reading'), job: jobId('ckpt', 2) } as unknown as Fact);
       s = statusOf(r);
-      assert.deepEqual(s.decisionsSince.map((x) => [x.kind, x.id, x.ruledBy]), [['divergence', 'D-3', {type: 'checkpoint', job: 'ckpt-2'}]]);
+      assert.deepEqual(s.decisionsSince.map((x) => [x.kind, x.id, x.ruledBy]), [['divergence', 'D-3', {type: 'executor'}]]);
       assert.deepEqual(s.divergences.map((x) => [x.id, x.digest]), [['D-3', null]]);
       noModelIds(s);
     } finally {
@@ -391,7 +388,7 @@ describe('status M3', () => {
       });
       const s = statusOf(r);
       assert.deepEqual([s.holistic, s.target, s.vision, s.audit, s.convergence], [false, null, null, null, null]);
-      assert.deepEqual([s.nowTrue, s.notYetTrue, s.waived, s.deferred, s.divergences, s.decisionsSince, s.findings, s.owed], [[], [], [], [], [], [], { active: [], metrics: [], released: { checkpoint: 0, p3: 0, regress: 0, settled: 0, closeOut: 0 }, refusedAdmits: { regress: 0, settled: 0 } }, { audits: [] }]);
+      assert.deepEqual([s.nowTrue, s.notYetTrue, s.waived, s.deferred, s.divergences, s.decisionsSince, s.findings], [[], [], [], [], [], [], { active: [], metrics: [], released: { checkpoint: 0, p3: 0, regress: 0, settled: 0, closeOut: 0 }, refusedAdmits: { regress: 0, settled: 0 } }]);
       assert.deepEqual(s.completion, { planRev: null, head: null, active: false, sealed: false, notSealed: 'not completed', unmet: ['units-open'] });
       assert.deepEqual(s.spend.byModel, { models: [{ model: 'gpt-5.6-luna', calls: 1, input: 10, output: 2, cacheRead: 0, cacheWrite: 0, turns: 0, costUsd: 0, unavailable: 0 }], unresolvedRevs: [] });
       assert.equal(s.routing?.rev, rev);
@@ -401,7 +398,7 @@ describe('status M3', () => {
     }
   });
 
-  
+
 });
 
 /** A meter row for u1's seat `role.tier` under `rev`, as an earlier executor recorded it (its spawn, then its usage). */
@@ -420,5 +417,4 @@ function seatMeter(r: ArcRun): (rev: RoutingRev, role: 'verifier' | 'build' | 'g
     });
   };
 }
-
 

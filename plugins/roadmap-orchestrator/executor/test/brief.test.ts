@@ -15,7 +15,7 @@ import { brief } from '../src/commands/brief.ts';
 import { chainStatus } from '../src/commands/chain.ts';
 import { MAX_ACK_ITEMS,ackCommandId,enqueueCommand,incomingPath } from '../src/commands/queue.ts';
 import type { Fact } from '../src/core/events.ts';
-import { type BriefId,type NeedsUserId,amendmentIdOf,arcId,commandId,debtId,divergenceIdOf,jobId,needsUserId,ruleId,sha256 } from '../src/core/ids.ts';
+import { type BriefId, type NeedsUserId, arcId, commandId, debtId, divergenceIdOf, jobId, needsUserId, sha256 } from '../src/core/ids.ts';
 import { canonicalJson } from '../src/core/json.ts';
 import { EVENTS_FILE,type OpenJournal,openJournal } from '../src/core/log.ts';
 import type { NeedsUserReason } from '../src/core/records.ts';
@@ -105,9 +105,6 @@ async function chained(): Promise<Chained> {
   const h1 = await seal(a1, {
     before: (j) => {
       divergence(j, 1, 1, 0, 'trust means tested');
-      j.fact({
-        kind: 'corpus-amendment', id: amendmentIdOf(1), source: {type: 'root', command: commandId('cmd-0000000000000001')}, rules: [ruleId('T-2')], proposal: 'Name the tide window in every booking.', why: 'D-1', evidence: [],
-      } as Fact);
       arc1Digest = item(j, a1, 'divergence-digest', false);
       j.fact({ kind: 'divergence-digest', needsUser: arc1Digest, ids: [divergenceIdOf(1)] } as Fact);
     },
@@ -116,7 +113,7 @@ async function chained(): Promise<Chained> {
   const a2 = await nextArc(a1, h1, 'arc-2');
   editPhase0(a2, (r) => ({
     ...r,
-    amendments: [{ id: 'arc-1/M-1', disposition: { type: 'applied', rules: ['T-2'] } }],
+
     curation: [{ tier: 'structural', what: 'merged the two overviews', files: ['0010_Overview.md'], rules: ['T-1'] }],
     questions: [{ id: 'P-1', rank: 1, text: 'Is the cancellation window 24 h or 48 h?', files: ['0010_Overview.md'], bears: ['T-2'], assumption: '48 h', state: { type: 'open' } }],
   }));
@@ -127,7 +124,7 @@ async function chained(): Promise<Chained> {
     j.fact({ kind: 'divergence-digest', needsUser: ids.digest, ids: [divergenceIdOf(1)] } as Fact);
     ids.bound = item(j, a2, 'convergence-bound', false);
     ids.owner = item(j, a2, 'owner-request', true);
-    ids.owed = item(j, a2, 'audit-owed', false);
+    ids.owed = item(j, a2, 'revision-notice', false);
     const what = 'Tidy the berth helpers.';
     j.fact({ kind: 'debt-banked', id: debtId('B-1'), bankReason: 'gate-note', what, key: debtKey({ unit: null, bankReason: 'gate-note', what }), source: { type: 'gate', unit: 'u1', attempt: 1, index: 0 } } as unknown as Fact);
     packReviewWithNote(j, a2, 'the cut line is vague');
@@ -169,8 +166,7 @@ describe('roadmap brief', () => {
     assert.deepEqual(arcOf(p, 'arc-2').slice, { advances: ['V-1'], why: 'the first slice' });
     assert.deepEqual(one.divergences, [{ id: 'D-1', type: 'interpretation', what: 'trust means tested' }]);
     assert.deepEqual(one.digests, [{ needsUser: items.arc1Digest, ids: ['D-1'] }]);
-    assert.deepEqual(one.decisions, ['divergence D-1: interpretation: trust means tested (ckpt-1)']);
-    assert.deepEqual(one.amendments, [{ id: 'arc-1/M-1', rules: ['T-2'], proposal: 'Name the tide window in every booking.', admit: null }]);
+    assert.deepEqual(one.decisions, ['divergence D-1: interpretation: trust means tested (executor)']);
     assert.deepEqual(one.census, { held: 0, obligationRules: 1, outOfSlice: 1, untestable: 1, prodOnly: 0 });
     assert.deepEqual(one.pr, { type: 'none' }, 'arc 1 integrates on main');
     const two = arcOf(p, 'arc-2');
@@ -179,7 +175,6 @@ describe('roadmap brief', () => {
     assert.deepEqual(two.questions, [{ id: 'P-1', rank: 1, text: 'Is the cancellation window 24 h or 48 h?', assumption: '48 h', state: { type: 'open' } }]);
     assert.deepEqual(two.debt, { banked: [{ id: 'B-1', what: 'Tidy the berth helpers.' }], dispositioned: [] });
     assert.deepEqual(two.packReviewNotes, [{ job: 'review-1', index: 0, claim: 'the cut line is vague' }]);
-    assert.deepEqual(two.amendments, []);
     assert.deepEqual(two.pr, { type: 'none' });
     assert.deepEqual(p.items, [{ arc: 'arc-2', id: items.digest }, { arc: 'arc-2', id: items.bound }].sort((x, y) => (x.id < y.id ? -1 : 1)));
 
@@ -190,7 +185,7 @@ describe('roadmap brief', () => {
     assert.deepEqual(after.chain.unackedStarts, []);
     assert.deepEqual(after.items, []);
     for (const x of after.arcs) {
-      assert.deepEqual([x.divergences, x.digests, x.decisions, x.amendments, x.debt.banked, x.questions, x.curation, x.packReviewNotes], [[], [], [], [], [], [], [], []], x.arc);
+      assert.deepEqual([x.divergences, x.digests, x.decisions, x.debt.banked, x.questions, x.curation, x.packReviewNotes], [[], [], [], [], [], [], []], x.arc);
     }
     assert.deepEqual(arcOf(after, 'arc-1').census, one.census, 'the census is the ref\'s, not a delta');
     // arc 2 moves on: only what came after the ack shows, in arc 2 alone.
@@ -253,7 +248,7 @@ describe('roadmap brief', () => {
     for (const text of [
       `# Roadmap brief ${b.id}`, 'chain: position 2, K 1, unacked starts: arc-2', 'next start: refused: arc-2 is not complete', `ack: roadmap brief --repo <repo> --ack ${b.id}`, '### arc-1', '### arc-2', 'slice: advances V-1: the first slice',
       'D-1 interpretation: a berth is a slot', '#### Questions (working assumptions)', '#1 P-1 open: Is the cancellation window 24 h or 48 h? — assuming: 48 h',
-      'arc-1/M-1 (T-2): Name the tide window in every booking.', 'B-1: Tidy the berth helpers.', 'review-1#0: the cut line is vague',
+      'B-1: Tidy the berth helpers.', 'review-1#0: the cut line is vague',
       'census: 0% held (0/1 obligation rules held; 1 out of slice, 1 untestable, 0 prod-only)', `arc-2/${items.digest}`,
     ]) assert.ok(b.markdown.includes(text), `${text}\n---\n${b.markdown}`);
     // Another payload renders another text: the Markdown depends on nothing else.

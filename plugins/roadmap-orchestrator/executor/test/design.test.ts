@@ -6,7 +6,7 @@ import {join} from 'node:path';
 import {unitId} from '../src/core/ids.ts';
 import {splitCutReason} from '../src/input/classify.ts';
 import { test } from 'node:test';
-import type { Fact,StageOutcomeFact } from '../src/core/events.ts';
+import type { Fact } from '../src/core/events.ts';
 import { arcId } from '../src/core/ids.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import { readJournal } from '../src/core/log.ts';
@@ -204,5 +204,50 @@ test('design.oversize-split: a root apply cuts the mixed parent, partitions its 
     assert.equal(specs[1]!.design?.interfaces[0]?.type, 'contract');
     assert.ok(specs[1]!.design?.interfaces[0]?.blob.length === 40);
     assert.deepEqual(readCalls(d.scenarioPath), [], 'root decisions need no retired seat call');
+  } finally {r.journal.close();}
+});
+
+test('design.clause-unexercised: root apply refuses an acceptance clause whose only lane cannot run before merge', T, async () => {
+  const d = twoClauseArc([]), r = contextFor(d);
+  try {
+    const record = pinnedDesign(r, {changes: [{system: 'core', paths: ['src/**'], lines: 40}], clauses: [{clause: 'A1', lanes: ['mul']}, {clause: 'A2', lanes: ['api-suite']}]});
+    editSpec(d, 'u1', (s) => {s['design'] = record;});
+    const before = r.journal.view.planApplied()!.rev;
+    const result = await command(r, r.ctx, applyBody(d));
+    assert.equal(result.kind, 'rejected', JSON.stringify(result));
+    assert.match(JSON.stringify(result), /acceptance clause A2.*no lane.*before the unit merges/);
+    assert.match(JSON.stringify(result), /api-suite lists systems.*never select/);
+    assert.match(JSON.stringify(result), /static harness witness.*split.*defer/);
+    assert.equal(r.journal.view.planApplied()!.rev, before);
+    assert.equal(r.journal.view.unit(unitId('u1')).counters.chargeableFailures, 0);
+    assert.deepEqual(readCalls(d.scenarioPath), []);
+  } finally {r.journal.close();}
+});
+
+test('split.revision-race: a root split exported before a concurrent plan revision refuses CAS and keeps the concurrent change', T, async () => {
+  const d = splitArc([]), r = contextFor(d);
+  try {
+    const original = readFileSync(d.planPath, 'utf8');
+    const stale = applyBody(d);
+    const source = JSON.parse(readFileSync(join(d.planPath, '..', 'u1.json'), 'utf8'));
+    const children = [unitId('u1-core'), unitId('u1-api')];
+    for (const [index, id] of children.entries()) writeFileSync(join(d.planPath, '..', `${id}.json`), JSON.stringify({...source, unit: id, rev: 1, acceptance: source.acceptance.filter((a: {id: string}) => a.id === (index === 0 ? 'A1' : 'A2'))}));
+    const split = JSON.parse(original);
+    split.units = [{...split.units[0], cut: {reason: splitCutReason(children)}}, ...children.map((id) => ({id, spec: `${id}.json`, risk: 'med', systems: ['core'], resources: [], after: []})), {...split.units[1], after: children}];
+    const splitBytes = JSON.stringify(split);
+    const concurrent = JSON.parse(original);
+    concurrent.units[0].priority = 'high';
+    writeFileSync(d.planPath, JSON.stringify(concurrent));
+    assert.equal((await command(r, r.ctx, applyBody(d))).kind, 'applied');
+    const rev = r.journal.view.planApplied()!.rev;
+    writeFileSync(d.planPath, splitBytes);
+    const result = await command(r, followContext(r), stale);
+    assert.equal(result.kind, 'rejected', JSON.stringify(result));
+    assert.match(JSON.stringify(result), /stale.*plan\.json|plan\.json.*stale/);
+    assert.equal(r.journal.view.planApplied()!.rev, rev);
+    assert.equal(followContext(r).plan().units.find((u) => u.id === unitId('u1'))!.priority, 'high');
+    assert.equal(r.journal.view.unit(unitId('u1')).status, 'pending');
+    assert.ok(!followContext(r).plan().units.some((u) => children.includes(u.id)));
+    assert.deepEqual(readCalls(d.scenarioPath), []);
   } finally {r.journal.close();}
 });

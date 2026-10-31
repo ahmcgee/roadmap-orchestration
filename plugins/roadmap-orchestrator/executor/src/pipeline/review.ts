@@ -45,8 +45,8 @@ import { specLinksOf } from '../holistic/staleset.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import { reviewDisputeDirective } from '../prompts/directives.ts';
 import type { GateReviewInput } from '../prompts/inputs.ts';
-import { DECISIONS_FILE,DEFECT_CATEGORIES,type GateFinding,type GateOutput,validateGateOutput } from '../prompts/schemas.ts';
-import { type StageContext,type StageParent,dispatchOf,workDir } from './dispatch.ts';
+import { DECISIONS_FILE, type GateFinding, type GateOutput, validateGateOutput } from '../prompts/schemas.ts';
+import { type StageContext, type StageParent, workDir } from './dispatch.ts';
 import { type JudgmentReader,judgmentOutput,judgmentSpawns,loadUnitSpec,readDecisions } from './stages.ts';
 
 /** The blob of `path` at `commit`, or null when the commit has no such file. */
@@ -230,7 +230,7 @@ const refKey = (ref: string): string => ref.split('#')[0]!.trim();
 
 /**
  * The answer validator's dev.17 half for a gate attempt given `review` at `head` (gate.ts `gateAnswerFor`): refuses (a
- * `SchemaError`, so the repair turn names why) a blocking finding without a defect, a blocking re-raise of a settled finding
+ * `SchemaError`, so the repair turn names why) a blocking re-raise of a settled finding
  * whose file has not changed, a re-raise of no finding of the unit's ledger, and rulings that are not exactly one per
  * dispute; then demotes, on a delta, each blocking finding on an unchanged file that cites neither a changed hunk nor a moved
  * target (a revise left with no blocking finding reads as an approval). Deterministic in the log and the repository.

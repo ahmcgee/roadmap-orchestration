@@ -17,7 +17,7 @@
 // base, and N's PR is closed with a comment naming it. Every later run, with or without the flag, keeps that: the base
 // walk passes a superseded PR as it passes one merged with a merge commit, and a run finishes a close a crash cut short.
 // Refused: no previous arc, the previous arc's PR merged already, or no open PR of it to supersede.
-import { type ArcRef, ArcRefError, amendmentsOf, completedHeadOf, readArcRef } from '../chain.ts';
+import { type ArcRef, ArcRefError, completedHeadOf, readArcRef } from '../chain.ts';
 import type { ArcId, Sha } from '../core/ids.ts';
 import { type AbsPath, type BranchName, branchName } from '../core/values.ts';
 import { GhError, resolveRepo } from '../forge/gh.ts';
@@ -39,7 +39,6 @@ type CompletedArc = Readonly<{
   branch: BranchName;
   head: Sha;
   previousArc: ArcId | null;
-  amendments: ReturnType<typeof amendmentsOf>;
 }>;
 
 function completedArc(repo: AbsPath, arc: ArcId): CompletedArc {
@@ -58,7 +57,6 @@ function completedArc(repo: AbsPath, arc: ArcId): CompletedArc {
     branch: ref.plan.integrationBranch,
     head: completed.head,
     previousArc: ref.plan.chain?.previousArc ?? null,
-    amendments: amendmentsOf(ref),
   };
 }
 
@@ -130,7 +128,6 @@ export async function openPr(args: PrArgs): Promise<PrOutcome> {
     const base = baseOf(args.repo, forge, arc, supersedes);
     const body = (): string => pullBody({
       arc: arc.arc, branch: arc.branch, head: arc.head, previousArc: arc.previousArc,
-      amendments: arc.amendments.map((a) => ({ ref: a.id, rules: a.fact.rules, proposal: a.fact.proposal, why: a.fact.why })),
       supersedes: supersedes === null || arc.previousArc === null ? null : { url: supersedes, arc: arc.previousArc },
     });
     let result: PrOutcome;

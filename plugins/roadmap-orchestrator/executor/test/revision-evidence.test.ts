@@ -5,11 +5,9 @@ import { join } from 'node:path';
 import { describe,test } from 'node:test';
 import { applyCommand } from '../src/commands/apply.ts';
 import { submitCommand } from '../src/commands/queue.ts';
-import { type EnvId,type InvocationId,type LaneId,type LaneRev,type Sha,type Sha256Hex,arcId,unitId } from '../src/core/ids.ts';
+import { arcId, unitId } from '../src/core/ids.ts';
 import { sha256Hex } from '../src/core/json.ts';
-import { evidenceDiffers,integrationHistory } from '../src/holistic/bundle.ts';
-import type { Observation } from '../src/holistic/observe.ts';
-import type { WitnessRecord } from '../src/holistic/types.ts';
+
 import { runUnit } from '../src/pipeline/unit.ts';
 import { status } from '../src/status.ts';
 import { checkpointContext, completedAudit, factsOfKind } from './fixtures/checkpoint-common.ts';
@@ -54,58 +52,6 @@ async function arc(steps: readonly Step[], opts: Readonly<{ before?: (a: CorpusH
   return { a, r, ctx, w };
 }
 // ---------------------------------------------------------------------------------------------------
-// C1: the per-test evidence comparator (pure)
-
-const LANE = 'journey' as LaneId;
-function observation(records: WitnessRecord['records'], over: Partial<Pick<WitnessRecord, 'laneRev' | 'envId' | 'malformed' | 'inv' | 'treeSha'>> = {}): Observation {
-  const record = {
-    v: 2, lane: LANE, laneRev: (over.laneRev ?? 'aaaaaaaaaaaaaaaa') as LaneRev, envId: (over.envId ?? 'eeeeeeeeeeeeeeee') as EnvId, treeSha: (over.treeSha ?? '1'.repeat(40)) as Sha,
-    inv: (over.inv ?? 'arc/1-1') as InvocationId, runner: 'jsonl', purpose: 'witness', records, malformed: over.malformed ?? false,
-  } as unknown as WitnessRecord;
-  return {
-    key: { treeSha: record.treeSha, lane: LANE, laneRev: record.laneRev, envId: record.envId }, reuse: { inputSha: record.treeSha, lane: LANE, laneRev: record.laneRev, envId: record.envId },
-    recordsSha256: sha256Hex(JSON.stringify(record)) as Sha256Hex, record, seq: 1,
-  };
-}
-const t = (testId: string, outcome: 'pass' | 'fail' | 'skip', selected = 1) => ({ testId, outcome, selected });
-
-describe('the evidence base, per test (C1, R58)', () => {
-  const cited = observation([t('a', 'pass'), t('b', 'fail')]);
-
-  test('revision.evidence-head-superset-accepted: the head records every cited test with its outcome, and more', () => {
-    assert.equal(evidenceDiffers(cited, observation([t('a', 'pass'), t('b', 'fail'), t('c', 'pass')], { treeSha: '2'.repeat(40) as Sha, inv: 'arc/2-1' as InvocationId })), null);
-  });
-
-  test('revision.evidence-equal-results-new-inv: equal results under another invocation and tree hold (the records\' hashes differ)', () => {
-    const head = observation([t('a', 'pass'), t('b', 'fail')], { treeSha: '2'.repeat(40) as Sha, inv: 'arc/9-1' as InvocationId });
-    assert.notEqual(head.recordsSha256, cited.recordsSha256);
-    assert.equal(evidenceDiffers(cited, head), null);
-  });
-
-  test('revision.evidence-outcome-changed-rejected', () => {
-    assert.match(evidenceDiffers(cited, observation([t('a', 'fail'), t('b', 'fail')]))!, /test "a" was pass, is fail on the head/);
-  });
-
-  test('revision.evidence-test-removed-rejected', () => {
-    assert.match(evidenceDiffers(cited, observation([t('a', 'pass')]))!, /test "b" is not in the head's record/);
-  });
-
-  test('revision.evidence-malformed-or-empty-rejected', () => {
-    assert.equal(evidenceDiffers(observation([], { malformed: true }), cited), 'is malformed');
-    assert.equal(evidenceDiffers(cited, observation([], { malformed: true })), 'is malformed on the head');
-    assert.equal(evidenceDiffers(observation([]), cited), 'records no test');
-  });
-
-  test('revision.evidence-selection-loss-rejected', () => {
-    assert.match(evidenceDiffers(observation([t('a', 'pass', 3)]), observation([t('a', 'pass', 2)]))!, /selected 3, 2 on the head/);
-  });
-
-  test('revision.evidence-env-or-rev-differs-rejected', () => {
-    assert.match(evidenceDiffers(cited, observation([t('a', 'pass'), t('b', 'fail')], { envId: 'ffffffffffffffff' as EnvId }))!, /in env eeeeeeeeeeeeeeee, the head's under/);
-    assert.match(evidenceDiffers(cited, observation([t('a', 'pass'), t('b', 'fail')], { laneRev: 'bbbbbbbbbbbbbbbb' as LaneRev }))!, /ran under lane rev aaaaaaaaaaaaaaaa/);
-  });
-});
-
 const pcBarrier = {type: 'barrier', name: 'pc', timeoutMs: 120_000} as const;
 describe('root apply while an attempt is live or abandoned', () => {
 
@@ -144,9 +90,7 @@ describe('an owner commit on the integration branch (dev.13 arc, audit-24)', () 
       await completedAudit(x.r, x.ctx);
       const ended = factsOfKind(x.r, 'audit-ended').find((f) => f.job === 'audit-2');
       assert.ok(ended?.covered.some((c) => c.to === owner), 'audit-2 ends on the owner commit');
-      const history = integrationHistory(x.r.journal.view, x.ctx.repo, owner as Sha);
-      assert.equal(history.positions.get(published as Sha), 1, 'u1 is the first published head');
-      assert.deepEqual(history.audits.get('audit-2' as never)?.map((r) => r.to), [1], 'the owner commit sits at u1\'s position');
+      assert.deepEqual(ended!.covered.map((r) => r.from), [x.ctx.plan().baseline], 'the unified campaign keeps its baseline range even on an owner commit');
       status(x.r.ctx.runDir, arcId(x.r.d.arc), x.r.ctx.hostDir);
     } finally {
       x.r.journal.close();

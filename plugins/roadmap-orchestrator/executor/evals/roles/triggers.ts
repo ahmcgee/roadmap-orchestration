@@ -10,8 +10,7 @@ const SHARED = ['src/prompts/inputs.ts', 'src/prompts/schemas.ts', 'src/routing/
 /** The polish judge's modules under src/walk/: they trigger it alone. */
 const POLISH_MODULES = ['src/walk/compare.ts', 'src/walk/polish.ts'] as const;
 
-export const TRIGGERS: Readonly<Record<EvalRole, readonly string[]>> = {
-  gate: [],
+export const TRIGGERS: Readonly<Record<Exclude<EvalRole, 'gate'>, readonly string[]>> = {
   verifier: ['src/prompts/verifier/**', 'src/prompts/method/**', 'src/pipeline/surface.ts', 'src/git/boundeddiff.ts', 'src/pipeline/gate.ts', 'src/pipeline/dispatch.ts', ...SHARED, 'evals/roles/gate/**', 'evals/roles/gen/**'],
   walkthrough: ['src/prompts/experienceVerdict/**', 'src/walk/**', 'src/backends/mcp.ts', ...SHARED, 'evals/roles/walkthrough/**'],
   polishJudge: [
@@ -28,7 +27,7 @@ const EXCLUDED: Readonly<Partial<Record<EvalRole, readonly string[]>>> = { walkt
 /** The roles `paths` (relative to executor/) trigger, in TRIGGERS order. This file only chooses evals and runs none,
  * so its own changes trigger nothing. */
 export function triggeredRoles(paths: readonly string[]): readonly EvalRole[] {
-  return (Object.keys(TRIGGERS) as EvalRole[]).filter((role) => paths.some((p) => p !== 'evals/roles/triggers.ts' && TRIGGERS[role].some((g) => matchesGlob(p, g)) && !(EXCLUDED[role] ?? []).includes(p)));
+  return (Object.keys(TRIGGERS) as EvalRole[]).filter((role) => paths.some((p) => p !== 'evals/roles/triggers.ts' && TRIGGERS[role as Exclude<EvalRole, 'gate'>].some((g) => matchesGlob(p, g)) && !(EXCLUDED[role] ?? []).includes(p)));
 }
 
 /** Skill evaluation, separate from the role dispatcher. Orchestrate is intentionally conservative:

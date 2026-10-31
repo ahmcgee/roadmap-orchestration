@@ -28,12 +28,10 @@
 //   and its item loses nothing.
 // - **Instrumentation.** `findingMetrics`: per finding `{lens, severity, gateHadPassed, disposition, merged,
 //   timeToResolveMs}`, over the log's events (their times).
-import { isAbsolute } from 'node:path';
-import { canonicalJson, sha256Hex } from '../core/json.ts';
+
+import { canonicalJson } from '../core/json.ts';
 import type { Event, HolisticFact, Parent } from '../core/events.ts';
-import {
-  type FindingId, type JobId, type LaneId, type NeedsUserId, type ObligationId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, canonicalIds, sha256,
-} from '../core/ids.ts';
+import { type FindingId, type JobId, type LaneId, type NeedsUserId, type ObligationId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, canonicalIds } from '../core/ids.ts';
 import type { Journal, JournalView } from '../core/interfaces.ts';
 import type { NeedsUserContent, NeedsUserReason, RepairRef } from '../core/records.ts';
 import type { FindingState } from '../core/state.ts';
@@ -44,10 +42,7 @@ import { checkPatch } from '../git/patchcheck.ts';
 import { keepInput } from '../input/inforce.ts';
 import { raiseNeedsUser, readNeedsUser } from '../needsuser.ts';
 import { PARK_ESCALATE_MS } from '../schedule/types.ts';
-import {
-  type FindingDisposition, type FindingEvidence, type FindingLens, type FindingRuledBy, type FindingSeverity, type FindingSource, type FindingStateName,
-  type FindingTo, type LensKind, FINDING_MOVES, findingKey,
-} from './types.ts';
+import { type FindingDisposition, type FindingEvidence, type FindingLens, type FindingRuledBy, type FindingSeverity, type FindingStateName, type FindingTo, FINDING_MOVES, findingKey } from './types.ts';
 
 // ---------------------------------------------------------------------------------------------------
 // Opening and dedupe
@@ -141,20 +136,6 @@ export function openFinding(journal: Journal, draft: FindingDraft): FindingOpen 
  * not the product's), sorted and once each, its obligation and its cause; the lens is left out. Within one audit, a
  * second lens's draft with an equal key is the same defect (src/holistic/audit.ts); across audits `findingKey` dedupes.
  */
-export function crossKey(draft: FindingDraft): Sha256Hex {
-  const paths = [...new Set(draft.evidence.map((e) => e.path).filter((p) => !isAbsolute(p)))].sort();
-  return sha256(sha256Hex(canonicalJson({ paths, obligation: draft.obligation, cause: draft.cause })));
-}
-
-/**
- * Records that `lens` saw finding `id` too (`finding-corroborated`, keeping its claim as the rationale), once: a resumed
- * audit asking the same lens again writes nothing new.
- */
-export function corroborateFinding(journal: Journal, id: FindingId, lens: LensKind, claim: string): void {
-  if (journal.view.holistic().corroborations.some((c) => c.id === id && c.lens === lens && c.claim === claim)) return;
-  journal.fact({ kind: 'finding-corroborated', id, lens, claim });
-}
-
 /**
  * Code's P1 over a must-hold (or latched) obligation not held on an audit snapshot (`lens: witness`): one stable cause
  * per obligation, citing the clauses it serves.
@@ -167,7 +148,6 @@ export function witnessFindingDraft(input: Readonly<{
     cause: 'witness not held', evidence: input.evidence, mutant: null, source: { type: 'job', job: input.job }, gateHadPassed: input.gateHadPassed,
   };
 }
-
 
 // ---------------------------------------------------------------------------------------------------
 // Ruling

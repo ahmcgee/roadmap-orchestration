@@ -12,7 +12,7 @@ The world clauses describe the target world: who is in it, what they do and expe
 Each open question names the clauses it bears on and a working assumption the arc acts on until the owner answers. The assumption is provisional: judge against it, and a choice resting on it that would be costly to undo if it proves false is worth a finding. Never resolve an open question yourself.
 </vision_first>
 Do not report one again when a prior finding already names it. Nobody will answer a question mid-audit.
-Each finding names cause, the root cause as "<affected operation>: <failure condition>" in lowercase words; describe the defect, not your lens's angle on it, so that any lens finding this same defect would write the same text. Code merges findings of one audit that share their evidence paths, obligation and cause.
+Each finding names cause, the root cause as "<affected operation>: <failure condition>" in lowercase words; describe the verified defect precisely so repeated reports retain a stable identity.
 <orientation> is a map of the whole range; it is not a verdict on any file. Every omitted file has the absolute path of a readable .diff file; when a list is abbreviated, it names the file that lists them all. The audit covers the whole campaign range shown or read.
 `,
   schema: CAMPAIGN_AUDIT_SCHEMA,

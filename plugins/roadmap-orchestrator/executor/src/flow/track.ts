@@ -26,7 +26,7 @@ import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import { type IsoTime,isoTimeOf } from '../core/values.ts';
 
-import type { RevisionContext } from '../holistic/bundle.ts';
+import type { RevisionContext } from '../holistic/admission.ts';
 import { workRemains } from '../holistic/cadence.ts';
 import { drainsArc } from '../input/classify.ts';
 import { FLOW_SERIES_INPUT,arcRolesOf,keepInput } from '../input/inforce.ts';

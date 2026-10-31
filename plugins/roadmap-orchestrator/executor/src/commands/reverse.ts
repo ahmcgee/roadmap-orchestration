@@ -130,7 +130,7 @@ export async function reverse(ctx: CommandContext, id: CommandId, divergence: Di
     return { kind: 'rejected', reason: `${divergence}'s effect is in the product tree: a verified repair unit reverses it (§2.8), not \`reverse\` (${d.compensation.hint})` };
   }
   if (d.compensation.kind === 'none') return { kind: 'rejected', reason: `${divergence} records nothing to restore (${d.compensation.hint})` };
-  const decided = (() => { const revision = view.opsOf('revision.commit').find((i) => i.expect.source.type === 'bundle' && i.expect.source.job === d.job && view.doneOf(i.op) !== null); return revision === undefined ? null : {kind: 'applied' as const, planRev: revision.expect.rev}; })();
+  const decided = (() => { const revision = view.opsOf('revision.commit').find((i) => keptPayload(ctx.runDir, i.expect.payloadSha256).divergences.some((x) => x.job === d.job && x.what === d.what) && view.doneOf(i.op) !== null); return revision === undefined ? null : {kind: 'applied' as const, planRev: revision.expect.rev}; })();
   if (decided?.kind !== 'applied') return { kind: 'rejected', reason: `${divergence}'s checkpoint ${d.job} applied no revision: nothing to restore` };
   const refused: string[] = [];
   if (d.preimage.ledgerSha256 !== null) refused.push(`${divergence} touched the rulings ledger: a ruling is withdrawn by superseding it (\`roadmap rule\`)`);

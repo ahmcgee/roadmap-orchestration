@@ -3,50 +3,18 @@
 // method prose: how a seat reads, reports or delegates is the model's, and its wording is free to change.
 import assert from 'node:assert/strict';
 import { describe,it } from 'node:test';
-import {
-type Sha,
-arcId,
-clauseId,divergenceId,envId,findingId,
-givenId,
-invocationId,
-jobId,
-journeyId,
-laneId,laneRev,
-milestoneId,
-obligationId,
-opIdOf,
-
-polishId,
-proposalId,
-questionId,
-resourceName,
-reviewFindingId,
-ruleId,rulingId,
-serveName,
-sha,sha256,specRev,
-stationId,
-systemName,
-unitId,
-visionClauseId,
-witnessItemId,
-} from '../src/core/ids.ts';
+import { type Sha, arcId, clauseId, envId, findingId, givenId, invocationId, jobId, journeyId, laneId, laneRev, milestoneId, obligationId, opIdOf, polishId, proposalId, questionId, reviewFindingId, ruleId, rulingId, serveName, sha, sha256, specRev, stationId, systemName, unitId, visionClauseId, witnessItemId } from '../src/core/ids.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import { failureRef } from '../src/core/records.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { absPath,isoTime,repoPath,repoPattern } from '../src/core/values.ts';
-import { headingSlug,quotedTextReason } from '../src/docs/contracts.ts';
+
 import type { BoundedDiff } from '../src/git/boundeddiff.ts';
-import {
-DOC_RELATIONS,LENS_KINDS,OBLIGATION_DISPOSITIONS,type ObligationDef,RULE_RELATIONS,RULING_KINDS,RULING_LIFETIMES,RULING_SCHEMA,
-} from '../src/holistic/types.ts';
+import { type ObligationDef } from '../src/holistic/types.ts';
 import { RESOLVE_DIRECTIVE,RESPEC_DIRECTIVE,RESPEC_FRESH_DIRECTIVE,STEER_DIRECTIVE,repeatRedDirective,resolveUnmetDirective,smokeFixDirectives,witnessFixDirectives } from '../src/prompts/directives.ts';
 import { PROMPTS,SONNET_THINK_FIRST,UnsupportedPromptError,promptFor as livePromptFor,promptSize,renderPrompt,support } from '../src/prompts/index.ts';
 import { ROLE_INPUTS,type RoleInputs,type GateInputs,type LensInputs,type WalkthroughInputs,type PolishJudgeInputs,UNIT_POLICY,laneCommand,obligationsText,pasted,pastedAs,targetDocument } from '../src/prompts/inputs.ts';
-import {
-BUILD_SCHEMA,EXPERIENCE_SCHEMA,
-CLUSTER_REVIEWS,GATE_SCHEMA,ROLE_SCHEMAS,ROLE_VALIDATORS,type RoleOutputs,
-validateBuildOutput,validateDecisionsFile,validateGateOutput,validatePackReviewOutput,
-} from '../src/prompts/schemas.ts';
+import { BUILD_SCHEMA, EXPERIENCE_SCHEMA, CLUSTER_REVIEWS, GATE_SCHEMA, ROLE_SCHEMAS, ROLE_VALIDATORS, validateBuildOutput, validateDecisionsFile, validateGateOutput, validatePackReviewOutput } from '../src/prompts/schemas.ts';
 import { arcStack,resolveRouting,seatsInForce } from '../src/routing/layers.ts';
 import { FRESH_ROLES,MODEL_IDS,PROFILES,ROLES,type Role,WALK_ROLES,atSeat } from '../src/routing/types.ts';
 
@@ -100,7 +68,7 @@ const packObligations = (cutLine: string) => ({
 });
 const pinnedRule = (id: string, text: string) => ({ id: ruleId(id), textSha256: sha256('c'.repeat(64)), text, file: repoPath('docs/0010.md'), section: 'Overview' });
 const phase0Of = (why: string) => ({
-  schema: 'roadmap/phase0-m4' as const, curation: [], corpusDivergences: [], questions: [], debt: [], amendments: [],
+  schema: 'roadmap/phase0-m4' as const, curation: [], corpusDivergences: [], questions: [], debt: [],
   slice: { advances: [visionClauseId('V-1')], why },
 });
 const corpusTarget = (dir: string, visionDoc: string | null) => ({

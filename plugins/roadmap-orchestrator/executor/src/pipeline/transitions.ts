@@ -7,10 +7,8 @@
 // Rules the table encodes (test/transitions.test.ts pins them row by row):
 // - `chargeableFailures` grows only on design-class rows (`charge`, the plan's C). Deadline, cancel and
 //   process faults never charge. The third chargeable failure parks the unit, whatever its row says.
-// - Bounded rounds: pre-build redirect ≤ 2, gate revise ≤ 2, red candidate ≤ 1. Within the bound the row's
+// - Bounded rounds: gate revise ≤ 2, red candidate ≤ 1. Within the bound the row's
 //   round runs (and a C row charges); beyond it the exhausted action runs uncharged, as no round happened.
-//   The redirect bound counts only the redirects since the architect's latest spec revision (a reopen,
-//   `redirectsSinceEdit`): pre-build patches bump the rev too, but only a reopen resets the count.
 // - One uncharged retry at pre-build, build (a resume), lanes and gate, then park. Retries are counted per
 //   stage over the whole unit. A backend call lost with its runner is retried once inside its stage, as a new
 //   invocation with the same deadline (dispatch.ts), before any outcome is recorded; an implementer call
@@ -45,7 +43,7 @@ import {
   type RetryStage, type StageOutcomeFact, type StageOutcomeKind, JUDGMENT_STAGES, probeTargetKey, certificationRed,
 } from '../core/events.ts';
 import { type Bounds, DEFAULT_BOUNDS, type NeedsUserReason } from '../core/records.ts';
-import { type UnitCounters, type UnitState, afterStageOutcome, redirectsSinceEdit } from '../core/state.ts';
+import { type UnitCounters, type UnitState, afterStageOutcome } from '../core/state.ts';
 import type { JudgmentSeat, RiskTier } from '../routing/types.ts';
 
 /** One per (stage, kind) of `STAGE_OUTCOME_KINDS`: a gate outcome for a build stage is unrepresentable. */
@@ -83,7 +81,6 @@ export type Next =
  * The built-in bounds (`DEFAULT_BOUNDS`); a unit's `limits` override them (M3). Two redirects, not one: arc 1's
  * high-risk adopted units each found real defects in a second round (arc-1 feedback item 2).
  */
-export const MAX_REDIRECTS = DEFAULT_BOUNDS.redirects;
 export const MAX_REVISE_ROUNDS = DEFAULT_BOUNDS.reviseRounds;
 export const MAX_CANDIDATE_REDS = DEFAULT_BOUNDS.candidateReds;
 export const MAX_RETRIES = DEFAULT_BOUNDS.retries;
@@ -107,7 +104,7 @@ type Hold = Readonly<{ do: 'hold' }>;
 type RouteUp = Readonly<{ do: 'route-up'; reason: 'refusal' | 'escalation' }>;
 /** The stage's one uncharged retry, then park with `reason` and class `park`. */
 type Retry = Readonly<{ do: 'retry'; reason: NeedsUserReason; park: ParkClass }>;
-type BoundedRound = 'redirect' | 'revise' | 'candidate-red' | 'smoke';
+type BoundedRound = 'revise' | 'candidate-red' | 'smoke';
 /**
  * A round the unit may take `bounds[bound]` times; the next one takes `then`, uncharged. M4a rev 3 (D2, R38): the smoke
  * round's `then` goes on to the gate, which decides with the survivors (`Go`, never a halt).
@@ -115,7 +112,7 @@ type BoundedRound = 'redirect' | 'revise' | 'candidate-red' | 'smoke';
 type Bounded<S extends OutcomeStage> = Readonly<{
   do: 'bounded';
   round: BoundedRound;
-  bound: keyof Pick<Bounds, 'redirects' | 'reviseRounds' | 'candidateReds' | 'smokeRounds'>;
+  bound: keyof Pick<Bounds, 'reviseRounds' | 'candidateReds' | 'smokeRounds'>;
   to: Target;
   chargeable: boolean;
   then: S extends JudgmentStage ? RouteUp : Park | Go;
@@ -186,13 +183,6 @@ export const TABLE: Table = {
     'cleanup-failed': park('residue', 'retryable'),
     interrupted: hold,
     'routing-changed': park('routing-changed', 'env'),
-    // M4a rev 3 (E, R55) to dev.16, read from an older log: the in-session assessment found the spec infeasible. A build has
-    // no escalation seat to route up to (route-up is a judgment stage's), so the unit parks for a spec revision with the
-    // escalation's reason.
-    infeasible: park('escalation', 'design'),
-    // To dev.16, read from an older log: the assessment raised the risk floor onto another implementer seat: a fresh build
-    // there, uncharged.
-    'risk-raised': go(build('fresh')),
     // 2026-10-15: a required witness item names no arc lane in force (an arc started on 1.0.0-dev.9; the classifier refuses
     // it since). Uncharged; `resume` re-runs the stage once an `apply` adds the lane, or a re-entry fixes the spec.
     'witness-lane-missing': park('witness-lane-missing', 'env'),
@@ -316,7 +306,7 @@ type Step =
   | Readonly<{ to: 'hold' | 'retire' }>;
 type Decision = Readonly<{ class: OutcomeClass; chargeable: boolean; step: Step }>;
 
-const ROUND_COUNTERS = { redirect: 'redirects', revise: 'reviseRounds', 'candidate-red': 'candidateReds', smoke: 'smokeRounds' } as const satisfies {
+const ROUND_COUNTERS = { revise: 'reviseRounds', 'candidate-red': 'candidateReds', smoke: 'smokeRounds' } as const satisfies {
   readonly [R in BoundedRound]: keyof UnitCounters;
 };
 
@@ -380,7 +370,7 @@ function apply(u: UnitState, o: StageOutcome, rule: Rule<OutcomeStage>, why: str
     case 'go':
       return { class: rule.trigger ? 'trigger' : 'advance', chargeable: rule.chargeable, step: { to: 'stage', target: rule.to } };
     case 'bounded': {
-      const taken = rule.round === 'redirect' ? redirectsSinceEdit(u) : u.counters[ROUND_COUNTERS[rule.round]];
+      const taken = u.counters[ROUND_COUNTERS[rule.round]];
       const max = u.bounds[rule.bound];
       if (taken < max) return { class: rule.round, chargeable: rule.chargeable, step: { to: 'stage', target: rule.to } };
       return apply(u, o, rule.then, `${why} beyond ${max} ${rule.round} round${max === 1 ? '' : 's'}`);
@@ -546,7 +536,6 @@ export function decidedBy(fact: StageOutcomeFact): Decided {
       if (rule.do === 'bounded' && rule.then.do === 'go') return { kind: 'stage', target: rule.then.to };
       if (rule.do !== 'go') throw new Error(`${fact.stage} ${fact.outcome}: class ${fact.class}, but the table's rule is ${rule.do}`);
       return { kind: 'stage', target: rule.to };
-    case 'redirect':
     case 'revise':
     case 'candidate-red':
     case 'smoke':

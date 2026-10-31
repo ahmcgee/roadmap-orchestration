@@ -153,7 +153,7 @@ export async function corpusArc(opts: CorpusArcOptions = {}): Promise<CorpusArc>
 /** Writes the Phase-0 record with `over` on a minimal one. */
 export function writePhase0(planDir: string, over: Json): void {
   writeFileSync(join(planDir, PHASE0_FILE), JSON.stringify({
-    schema: 'roadmap/phase0-m4', curation: [], corpusDivergences: [], questions: [], debt: [], amendments: [],
+    schema: 'roadmap/phase0-m4', curation: [], corpusDivergences: [], questions: [], debt: [],
     slice: { advances: ['V-1'], why: 'the first slice' }, ...over,
   }));
 }

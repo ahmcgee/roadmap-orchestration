@@ -27,7 +27,7 @@ import { seatTripleOf } from '../src/pipeline/dispatch.ts';
 import { buildTriple } from '../src/pipeline/dispatch.ts';
 import { readNeedsUser } from '../src/needsuser.ts';
 import { diagnosisDue, reviewItems, markers, proofNotLocal, methodContext } from '../src/pipeline/surface.ts';
-import { contextFor, setupArc, gateStep, mulBuild, appendSteps, stepUntil, syncInputs, commandContextFor, applyBody } from './fixtures/unit-common.ts';
+import { contextFor, setupArc, gateStep, mulBuild, codexStep, appendSteps, stepUntil, syncInputs, commandContextFor, applyBody } from './fixtures/unit-common.ts';
 import { BUILD_REPORT, admitAll, planCheckStep, planCheckRepairStep } from './fixtures/stage-common.ts';
 import { readCalls } from './helpers/scenario.ts';
 
@@ -276,4 +276,44 @@ test('surface.whole-range: later campaign coverage advances from the same baseli
   const fold={audits:[audit(1,'b'),audit(2,'c')],docsCovered:[]} as unknown as import('../src/core/state.ts').HolisticFold;
   assert.equal(lensCoverage(fold,base,'invariants').watermark,sha('c'.repeat(40)));
   assert.equal(lensCoverage(fold,base,'invariants',20).watermark,sha('b'.repeat(40)));
+});
+
+test('surface.review-always: no marker still runs the pre-build verifier before building', {timeout: 120_000}, async () => {
+  const d = setupArc({steps: [planCheckStep({decision: 'approve'}), mulBuild(), gateStep({decision: 'approve'})]});
+  editPlan(d, (p) => { (p['units'] as Record<string, unknown>[])[0]!['review'] = 'always'; });
+  const r = contextFor(d);
+  try {
+    assert.deepEqual(markers(r.ctx, r.unit('u1'), loadUnitSpec(r.ctx, r.unit('u1')).spec).filter((m) => m.marker !== 'always'), []);
+    assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), admitAll), {kind: 'merged'});
+    const calls = readCalls(d.scenarioPath);
+    assert.equal(calls.length, 3);
+    assert.ok(calls[0]!.stdin.includes('pre-build'));
+    const roles = r.journal.view.spawnsOfUnit(unitId('u1')).flatMap((i) => i.expect.subject.purpose === 'backend' ? [i.expect.subject.role] : []);
+    assert.deepEqual(roles, ['verifier', 'build', 'verifier']);
+    assert.equal(r.journal.view.surfaceFacts().filter((f) => f.kind === 'review-completed' && f.mode === 'pre-build').length, 1);
+    assert.deepEqual(r.journal.view.surfaceFacts().filter((f) => f.kind === 'review-triggered').map((f) => f.marker), ['always']);
+  } finally {r.journal.close();}
+});
+
+test('surface.fix-round: a gate revision delivers findings, experiments and live cap state to the builder', {timeout: 120_000}, async () => {
+  const finding = {severity: 'blocking', path: 'src/mul.js:2', text: 'The retry drops the durable write', contractRef: null, experiments: [{command: 'node test/restart.js', output: 'restarted without the write'}], evidence: ['src/mul.js:2: the acknowledgement precedes persistence'], debt: null, defect: null, reraises: null, hunk: null};
+  const d = setupArc({steps: [mulBuild(), gateStep({decision: 'revise', findings: [finding], directives: ['Persist before acknowledgement']}), codexStep([{type: 'commit', message: 'persist the retry', files: {'src/repaired.js': 'export const repaired = true;\n'}}], {argv: ['exec', 'resume']}), gateStep({decision: 'approve'})]});
+  const r = contextFor(d);
+  try {
+    assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), admitAll), {kind: 'merged'});
+    const calls = readCalls(d.scenarioPath).filter((c) => c.as === 'codex');
+    assert.equal(calls.length, 2);
+    const prompt = calls[1]!.stdin;
+    assert.match(prompt, /<fix_round>/);
+    assert.match(prompt, /The retry drops the durable write/);
+    assert.match(prompt, /src\/mul\.js:2: the acknowledgement precedes persistence/);
+    assert.match(prompt, /node test\/restart\.js: restarted without the write/);
+    const cap = JSON.parse(/<cap_and_allowance>([^<]+)<\/cap_and_allowance>/.exec(prompt)![1]!);
+    assert.equal(cap.builds, 2);
+    assert.ok(cap.judgedStages >= 5);
+    assert.equal(cap.chargeableFailures, 1);
+    assert.equal(cap.chargeableBound, 3);
+    assert.equal(cap.certificationAllowance, 3);
+    assert.equal(r.journal.view.unit(unitId('u1')).counters.reviseRounds, 1);
+  } finally {r.journal.close();}
 });

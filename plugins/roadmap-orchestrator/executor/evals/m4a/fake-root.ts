@@ -44,7 +44,7 @@ import { createHash,randomUUID } from 'node:crypto';
 import { closeSync,cpSync,existsSync,mkdirSync,openSync,readFileSync,rmSync,writeFileSync } from 'node:fs';
 import { join,resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { amendmentsOf,readArcRef } from '../../src/chain.ts';
+import { readArcRef } from '../../src/chain.ts';
 import type { Fact } from '../../src/core/events.ts';
 import { arcId } from '../../src/core/ids.ts';
 import { readJournal } from '../../src/core/log.ts';
@@ -58,7 +58,7 @@ SLICES,SLOW_LANE,TEST_PATHS,UNITS,corpusFor,
 specLane,specOf,suiteLanes,unitsOf,
 } from './golden.ts';
 import { MAIN,layout } from './layout.ts';
-import { BLOCKED_SEEN_BARRIER, CHECKPOINT_AMENDMENT, FLOW_1, FLOW_2 } from './scenario.ts';
+import { BLOCKED_SEEN_BARRIER, FLOW_1, FLOW_2 } from './scenario.ts';
 
 export const FAKE_SCRIPTS = ['story', 'vision-silent'] as const;
 export type FakeScript = (typeof FAKE_SCRIPTS)[number];
@@ -287,17 +287,10 @@ type Ctx = Readonly<{ t: Turn; dir: string; state: State }>;
 
 /** Reads arc n-1's amendments and the baseline's open debt; dispositions per the golden story. */
 function dispositions(c: Ctx, n: ArcNo, previous: ArcState | undefined, baseline: string) {
-  if (previous === undefined) return { debt: [], amendments: [] };
+  if (previous === undefined) return { debt: [],  };
   const l = layout(c.dir);
   const ref = readArcRef(absPath(l.product), arcId(previous.arc));
   if (ref === null) throw new Error(`no ref for ${previous.arc}`);
-  const amendments = amendmentsOf(ref).map((a) => {
-    // Arc 2 applies arc 1's checkpoint amendment as T-24; arc 3 applies arc 2's converted day-view admit as T-25.
-    const fromCheckpoint = n === 2 && a.fact.source.type === 'root' && a.fact.proposal === CHECKPOINT_AMENDMENT.proposal;
-    const fromAdmit = n === 3 && a.fact.source.type === 'root';
-    if (fromCheckpoint || fromAdmit) return { id: a.id, disposition: { type: 'applied', rules: [fromCheckpoint ? 'T-24' : 'T-25'] } };
-    return { id: a.id, disposition: { type: 'deferred', reason: 'the high-water heights wait for the visiting-yacht scene (V-7)' } };
-  });
   const debtMd = c.t.git('show', `${baseline}:.roadmap/debt.md`);
   const ledger = parseDebtBlock(debtMd);
   if (ledger === null) throw new Error('the baseline has no debt block');
@@ -305,7 +298,7 @@ function dispositions(c: Ctx, n: ArcNo, previous: ArcState | undefined, baseline
     id: i.id,
     disposition: n === 2 && i.bankReason === 'finding-deferred' ? { type: 'promote', unit: 'notice' } : { type: 'keep', reason: 'cosmetic; the harbour has no other name in use yet' },
   }));
-  return { debt, amendments };
+  return { debt };
 }
 
 /** Composes arc n's inputs (pin, obligations, specs, ledger, Phase-0 record, plan), its branch, and checks it. */
@@ -332,7 +325,7 @@ function composeArc(c: Ctx, n: ArcNo, baseline: string, opts: Readonly<{ answer?
     const raw = JSON.parse(c.t.roadmap(['corpus', 'pin', '--repo', l.product, '--commit', seed, '--baseline', seed, '--out', join(inputs, 'preimage.corpus.json')])) as { sha256: string; pin: { files: readonly { path: string; sha256: string }[] } };
     preimage = { pinSha256: raw.sha256, files: raw.pin.files.filter((f) => f.path === '0030_Bookings.md') };
   }
-  const { debt, amendments } = dispositions(c, n, opts.previous, baseline);
+  const { debt } = dispositions(c, n, opts.previous, baseline);
   const question = opts.answer === undefined ? { ...ARC1_QUESTION, state: { type: 'open' } } : { ...ARC1_QUESTION, state: { type: 'answered', ...opts.answer } };
   // Arc 1 writes the corpus's suite gate (plant S); a later arc carries the previous arc's suite lanes as they ended.
   const previousRef = opts.previous === undefined ? null : readArcRef(absPath(l.product), arcId(opts.previous.arc));
@@ -343,7 +336,7 @@ function composeArc(c: Ctx, n: ArcNo, baseline: string, opts: Readonly<{ answer?
     curation: n === 1 ? ARC1_CURATION : [{ tier: 'structural', what: n === 2 ? 'applied arc-1/M-1 as T-24; T-23 replaces T-9 per the owner\'s answer to P-1' : 'added the harbour master\'s day view as T-25', files: n === 2 ? ['0030_Bookings.md', '0040_Notifications.md'] : ['0060_Operations.md'], rules: n === 2 ? ['T-23', 'T-24'] : ['T-25'] }],
     corpusDivergences: n === 1 ? [{ tier: 'semantic', what: 'removed the busy-week override that let the harbour master double-book a berth: V-2 says never', preimage, cites: ['V-2'], rules: ['T-7'] }] : [],
     questions: opts.draft === 'vision-silent' ? [{ ...ARC1_QUESTION, state: { type: 'open' } }] : [question],
-    debt, amendments, slice,
+    debt, slice,
   }));
   writeFile(join(inputs, 'plan.json'), json({
     schema: 'roadmap/plan-m1', arc, integrationBranch: `arc/${arc}`, baseline, worktreeRoot: l.worktrees,

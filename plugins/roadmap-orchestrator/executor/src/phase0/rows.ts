@@ -65,11 +65,11 @@ import { inUnitSystems, systemsForPatterns } from '../input/systems.ts';
 import { existsSync,readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { answerLog,latestAnswers,refQuestions,unappliedOf } from '../answers.ts';
-import { type ArcRef,amendmentsOf,chainBack,committedAcks,completedHeadOf,previousIncomplete,questionClosure,quotaOf } from '../chain.ts';
+import { type ArcRef,chainBack,committedAcks,completedHeadOf,previousIncomplete,questionClosure,quotaOf } from '../chain.ts';
 import { type ArcId,type DebtId,type MilestoneId,type UnitId,DOCS_SYSTEM,phaseQuestionSeq,sha } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { sha256Hex } from '../core/json.ts';
-import { type SpecM1,specForces,specRemoves } from '../core/records.ts';
+import { type SpecM1, specForces } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath,type RepoPath,type RepoPattern,absPath,matchesPattern,repoPath,repoPattern } from '../core/values.ts';
 import { readGuideBytes } from '../corpus/guide.ts';
@@ -242,7 +242,6 @@ export function phase0Rows(input: Phase0Input, mode: Phase0Mode): Phase0Outcome 
   if (record !== null) {
     p0.push(...debtProblems(input, record, rows));
     p0.push(...questionProblems(record, previous?.arcs ?? []));
-    p0.push(...amendmentProblems(record, previous?.arcs.at(-1) ?? null, rows));
     if (mode.answers) p0.push(...answerProblems(input.repo, record, previous?.arcs ?? []));
   }
   // 6. The vision confirmed against the pin.
@@ -503,12 +502,6 @@ function questionProblems(record: Phase0Record, closure: readonly ArcRef[]): rea
   });
 }
 
-function amendmentProblems(record: Phase0Record, previous: ArcRef | null, rows: StartupRejection[]): readonly Phase0Problem[] {
-  const owed = previous === null ? [] : amendmentsOf(previous).map((a) => a.id);
-  for (const a of record.amendments) if (!owed.includes(a.id)) rows.push(schemaRow(`plan.phase0.amendments.${a.id}`, `${a.id} is not an amendment of the previous arc's verified ref`));
-  return owed.filter((id) => !record.amendments.some((a) => a.id === id)).map((id) => ({ type: 'amendment-undispositioned', id }));
-}
-
 /** 5a. Every answer in force applied by the record, or by the newest earlier arc of the chain carrying its question. */
 function answerProblems(repo: AbsPath, record: Phase0Record, chain: readonly ArcRef[]): readonly Phase0Problem[] {
   const latest = latestAnswers(answerLog(gitCommonDir(repo)));
@@ -652,11 +645,8 @@ export function visionAndObligations(input: Phase0Input): Readonly<{ vision: Vis
   return { vision: quiet(input.vision, parseVision), obligations: quiet(input.obligations, parseObligations) };
 }
 
-
 // ---------------------------------------------------------------------------------------------------
 // 12. The vision leak (an apply only)
-
-
 
 function systemOverlap(input: Phase0Input): readonly Phase0Advisory[] {
   const units = input.plan.units.filter((u) => u.cut === undefined);

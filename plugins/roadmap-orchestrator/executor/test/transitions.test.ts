@@ -19,7 +19,6 @@ type Given = Readonly<{
   routedUp?: UnitState['routedUp'];
   promotion?: boolean;
   risk?: UnitState['risk'];
-  redirectBase?: number;
 }>;
 
 /** A unit at risk `med` with nothing counted, patched by `g`. */
@@ -30,7 +29,7 @@ function unit(g: Given = {}): UnitState {
     if (name.startsWith('retries.')) c.retries[name.slice('retries.'.length) as RetryStage] = n;
     else c[name as Exclude<Counter, `retries.${RetryStage}`>] = n;
   }
-  return { ...base, counters: c, routedUp: g.routedUp ?? [], promotion: g.promotion ?? false, redirectBase: g.redirectBase ?? 0 };
+  return { ...base, counters: c, routedUp: g.routedUp ?? [], promotion: g.promotion ?? false };
 }
 
 const outcome = <S extends OutcomeStage>(stage: S, kind: StageOutcomeKind<S>): StageOutcome => ({ stage, kind }) as StageOutcome;
@@ -53,7 +52,7 @@ function show(n: Next): string {
 
 function flat(c: UnitCounters): Record<Counter, number> {
   const out: Record<string, number> = {
-    chargeableFailures: c.chargeableFailures, unchargedLanesReds: c.unchargedLanesReds, redirects: c.redirects, reviseRounds: c.reviseRounds, candidateReds: c.candidateReds, smokeRounds: c.smokeRounds,
+    chargeableFailures: c.chargeableFailures, unchargedLanesReds: c.unchargedLanesReds, reviseRounds: c.reviseRounds, candidateReds: c.candidateReds, smokeRounds: c.smokeRounds,
   };
   for (const s of RETRY_STAGES) out[`retries.${s}`] = c.retries[s];
   return out as Record<Counter, number>;
@@ -118,8 +117,6 @@ const ROWS: readonly Row[] = [
   ['build', 'context-exceeded', {}, 'park:context-exceeded', 'park', {}],
   // M4a rev 3 (E, R55) to dev.16, read from an older log: the in-session assessment's outcomes. Infeasible parks design with the escalation's reason (a
   // build has no escalation seat to route up to); a raised floor on another seat builds fresh there, uncharged.
-  ['build', 'infeasible', {}, 'park:escalation', 'park', {}],
-  ['build', 'risk-raised', {}, 'build/fresh@med', 'advance', {}],
   // 2026-10-15 (arc feedback #3): a required witness item on no arc lane in force parks env, uncharged (resume re-runs it).
   ['build', 'witness-lane-missing', {}, 'park:witness-lane-missing', 'park', {}],
   ['build', 'witness-lane-missing', { counters: { chargeableFailures: 2 } }, 'park:witness-lane-missing', 'park', {}],

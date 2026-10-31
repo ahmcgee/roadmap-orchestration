@@ -65,7 +65,7 @@ import { renderSpec } from '../spec/render.ts';
 import { parseSpec } from '../spec/spec.ts';
 import { removeCheckout, withCpu } from './audit.ts';
 import { interruptedCall } from '../pipeline/dispatch.ts';
-import type { RevisionContext } from './bundle.ts';
+import type { RevisionContext } from './admission.ts';
 import { integrationHeadNow } from './cadence.ts';
 import { PACK_REVIEW_INPUTS_SCHEMA, type PackFinding, type PackReviewInputs, parseObligations, parsePackReviewInputs, parseVision } from './types.ts';
 

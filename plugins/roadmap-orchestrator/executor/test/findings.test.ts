@@ -14,12 +14,12 @@ import { Fold } from '../src/core/state.ts';
 import { absPath, isoTime } from '../src/core/values.ts';
 import { MUTANT_PATCH_INPUT, patchedTree } from '../src/git/mutant.ts';
 import {
-  type FindingDraft, type RepairUnit, admitMutant, batchable, crossKey, keepMutantPatch, findingItemsDue, findingMetrics, openFinding, ownershipMoves, repairedObligations, ruleFinding, rulingRefusal,
+  type FindingDraft, type RepairUnit, admitMutant, batchable, keepMutantPatch, findingItemsDue, findingMetrics, openFinding, ownershipMoves, repairedObligations, ruleFinding, rulingRefusal,
   witnessFindingDraft,
 } from '../src/holistic/findings.ts';
 import { inputPath } from '../src/input/inforce.ts';
 import { PARK_ESCALATE_MS } from '../src/schedule/types.ts';
-import { ARC, AT, H, U1, appliedFields, chain } from './fixtures/log-records.ts';
+import { ARC, AT, H, appliedFields, chain } from './fixtures/log-records.ts';
 import { git, makeRepo, tmpDir } from './helpers/repo.ts';
 
 const I1 = obligationId('I-1');
@@ -103,7 +103,6 @@ describe('opening and dedupe', () => {
 
   });
 });
-
 
 // ---------------------------------------------------------------------------------------------------
 // Folded logs
@@ -196,15 +195,6 @@ describe('admission (M4a rev 3)', () => {
     const kept = admitMutant(repo, runDir, at, { kind: 'patch', lane: laneId('journey'), patch });
     assert.ok(kept.kind === 'kept', JSON.stringify(kept));
     assert.equal(readFileSync(inputPath(runDir, kept.mutant.patchSha256, MUTANT_PATCH_INPUT), 'utf8'), patch, 'a recorded well-formed patch is kept as written');
-  });
-
-  it('findings.cross-key (H7): the lens and absolute paths are left out; obligation, cause and repo paths (set, sorted) count', () => {
-    const base = crossKey(draft());
-    assert.equal(crossKey(draft({ lens: 'vision', claim: 'other words', evidence: [{ path: 'src/parse.js', blob: null }, { path: '/run/evidence/x', blob: null }] })), base);
-    assert.equal(crossKey(draft({ evidence: [{ path: 'src/b.js', blob: null }, { path: 'src/parse.js', blob: B1 }] })), crossKey(draft({ evidence: [{ path: 'src/parse.js', blob: B2 }, { path: 'src/b.js', blob: null }] })));
-    assert.notEqual(crossKey(draft({ cause: 'another cause' })), base);
-    assert.notEqual(crossKey(draft({ obligation: null })), base);
-    assert.notEqual(crossKey(draft({ evidence: [{ path: 'src/other.js', blob: B1 }] })), base);
   });
 });
 

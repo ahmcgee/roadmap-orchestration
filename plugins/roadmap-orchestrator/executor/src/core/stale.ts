@@ -7,7 +7,7 @@ import {
 } from './ids.ts';
 import { type Pinned, type SpecPin, UNPINNED, specPin } from './pins.ts';
 import { type RepoPath, repoPath } from './values.ts';
-import { type Read, Fields, SchemaError, arrayOf, assertUnique, literal, object, oneOf, positive, sortedBy, str, tagged } from './validate.ts';
+import { type Read, Fields, SchemaError, arrayOf, assertUnique, literal, object, positive, sortedBy, tagged } from './validate.ts';
 
 /**
  * What a revision changed that links name: a requirement whose normative rev rose (`from` → `to`), a contract a ruling's
@@ -50,9 +50,6 @@ export type StaleSet = Readonly<{ targets: readonly StaleTarget[]; links: readon
  * How a unit's pre-build answered one of its stale links (`staleLinkKey`): `updated` (its redirect's patch changes the spec
  * to the change) or `confirmed` (the spec holds as written under the change), with why.
  */
-export const STALE_OUTCOMES = ['updated', 'confirmed'] as const;
-export type StaleOutcome = (typeof STALE_OUTCOMES)[number];
-export type StaleAnswer = Readonly<{ link: string; outcome: StaleOutcome; reason: string }>;
 
 /** What a propagation unit re-witnesses: a changed requirement at its new rev, or a changed contract. */
 export type PropagationTarget = Readonly<{ type: 'requirement'; id: ObligationId; rev: number }> | Readonly<{ type: 'contract'; path: RepoPath }>;
@@ -137,8 +134,6 @@ export function staleSetFields(f: Fields): StaleSet {
   return out;
 }
 export const staleSet: Read<StaleSet> = object(staleSetFields);
-
-export const staleAnswer: Read<StaleAnswer> = object((f) => ({ link: f.get('link', str), outcome: f.get('outcome', oneOf(STALE_OUTCOMES)), reason: f.get('reason', str) }));
 
 export const propagationTarget: Read<PropagationTarget> = tagged<PropagationTarget['type'], PropagationTarget>('type', {
   requirement: object((f) => ({ type: f.get('type', literal('requirement')), id: f.get('id', oid), rev: f.get('rev', positive) })),

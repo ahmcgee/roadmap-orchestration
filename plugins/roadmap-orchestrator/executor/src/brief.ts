@@ -37,7 +37,7 @@ import { existsSync } from 'node:fs';
 import { answerLine, unappliedAnswers } from './answers.ts';
 import { type ArcRef, committedAcks, completedHeadOf } from './chain.ts';
 import { type ChainLink, chainHead, chainQuota, chainTo, linkOf, prsOf } from './commands/chain.ts';
-import { type ArcId, type BriefId, type Sha, HOST_CPU_STATION, amendmentRefOf, briefId, invocationDirName } from './core/ids.ts';
+import { type ArcId, type BriefId, type Sha, HOST_CPU_STATION, briefId, invocationDirName } from './core/ids.ts';
 import { PRESSURE_SATURATED } from './host/pressure.ts';
 import { canonicalJson, sha256Hex } from './core/json.ts';
 import { type CommandBody, needsUserRecord } from './core/records.ts';
@@ -97,7 +97,7 @@ const refRepairs = (repo: AbsPath, ref: ArcRef): Repairs => ref.plan.units.flatM
 /** A decision as one line of the brief. */
 function decisionLine(d: Decision): string {
   const by = d.ruledBy;
-  const who = by.type === 'architect' ? (by.command === null ? 'architect' : `architect ${by.command}`) : by.type === 'checkpoint' ? by.job : by.type === 'judgment' ? by.role : 'executor';
+  const who = by.type === 'architect' ? (by.command === null ? 'architect' : `architect ${by.command}`) : by.type === 'judgment' ? by.role : 'executor';
   return `${d.kind} ${d.id}: ${d.oneLine} (${who})`;
 }
 
@@ -197,10 +197,6 @@ function briefArc(repo: AbsPath, ref: ArcRef, from: number, pr: BriefPr, previou
       dispositioned: record?.debt ?? [],
     },
     questions: (record?.questions ?? []).map((q) => ({ id: q.id, rank: q.rank, text: q.text, assumption: q.assumption, state: q.state })),
-    amendments: facts.flatMap((f) => (f.kind === 'corpus-amendment' ? [{
-      id: amendmentRefOf(ref.arc, f.id), rules: f.rules, proposal: f.proposal,
-      admit: null,
-    }] : [])),
     packReviewNotes: facts.flatMap((f) => (f.kind === 'pack-review-ended'
       ? f.findings.flatMap((x) => (x.severity === 'note' ? [{ job: f.job, index: x.index, claim: x.claim }] : [])) : [])),
     census: censusAt(repo, ref),
@@ -289,8 +285,6 @@ function arcMarkdown(a: BriefArc): string {
     section('Questions (working assumptions)', [...a.questions].sort((x, y) => x.rank - y.rank).map((q) => `#${q.rank} ${q.id} ${q.state.type === 'open' ? 'open' : `answered: ${q.state.answer}`}: ${q.text} — assuming: ${q.assumption}`)),
     section('Debt banked', a.debt.banked.map((d) => `${d.id}: ${d.what}`)),
     section('Debt dispositioned', a.debt.dispositioned.map((d) => `${d.id}: ${canonicalJson(d.disposition).trim()}`)),
-    section('Amendments', a.amendments.map((x) => `${x.id}${x.rules.length === 0 ? '' : ` (${x.rules.join(', ')})`}${x.admit === null ? ''
-      : ` [converted admit ${x.admit.job}#${x.admit.index}: ${x.admit.reason}]`}: ${x.proposal}`)),
     section('Admits', a.admits.map((x) => `${x.unit} (${x.job}#${x.index}): ${x.class}${x.clauses.length === 0 ? '' : ` ${x.clauses.join(', ')}`}${x.followUp === null ? '' : `, follow-up of ${x.followUp}`}`)),
     section('Opportunities', a.opportunities.map((o) => `${o.id} advances ${o.clauses.join(', ')}: units ${o.units.join(', ')}; ${o.followUps} follow-up${o.followUps === 1 ? '' : 's'}; $${o.spentUsd}${o.overrun.length === 0 ? '' : `; overrun by ${o.overrun.map((x) => `${x.job}#${x.index}`).join(', ')}`}`)),
     section('Drift (findings outside the slice on checkpoint units\' merges)', a.drift.map((d) => `${d.unit} (${d.job}): ${d.findings.length} — ${d.findings.map((f) => `${f.id} ${f.clauses.join(', ')}`).join('; ')}`)),

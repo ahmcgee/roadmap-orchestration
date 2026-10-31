@@ -23,11 +23,7 @@ type CommandContext,type CommandOutcome,type RevisionContext,applyCommand,commit
 import { newCommandId,readReceipt,submitCommand,terminalReceipt } from '../src/commands/queue.ts';
 import type { Fact,IntentOf,PlanAppliedFact,RevisionPayload } from '../src/core/events.ts';
 import { captureUnderFence,holdFence } from '../src/core/fence.ts';
-import {
-type DivergenceId,clauseId,
-invocationIdOf,jobId,opportunityId,
-sha,sha256,unitId
-} from '../src/core/ids.ts';
+import { type DivergenceId, clauseId, invocationIdOf, jobId, unitId } from '../src/core/ids.ts';
 import { canonicalJson } from '../src/core/json.ts';
 import { openJournal,readJournal } from '../src/core/log.ts';
 import type { CommandBody } from '../src/core/records.ts';
@@ -207,10 +203,6 @@ test('apply.ledger-in-manifest: the manifest hashes the ledger and its sidecars,
     r.journal.close();
   }
 });
-
-
-
-
 
 test('apply.route-unit: a unit routing layer re-resolves that unit alone (`routing{routingRev, unit}`), scoped to it, with its provenance recorded', T, async () => {
   const d = setupArc({ steps: [] });
@@ -410,13 +402,6 @@ test('apply.obligation-split-parent-stays: a split parent stays split (H14), and
  * judged fresh against the revisions in force (`consistencyRevs`); its path and hash as the CLI queues them.
  */
 
-
-
-
-
-
-
-
 test('apply.holistic-add: `holistic` and the vision may be added (A5); removing holistic is refused', T, async () => {
   const d = setupArc({ steps: [] });
   recordFirst(d);
@@ -472,39 +457,6 @@ test('apply.advances: the plan\'s slice names active clauses of the revision\'s 
     writeJson(visionFile, VISION);
     editPlan(h.d, (p) => void ((p['holistic'] as Record<string, unknown>)['advances'] = ['V-2', 'V-3']));
     assert.ok(reasons({ type: 'start' }).includes('holistic.advances is owner-only: only an architect `apply` changes it, not a start'));
-  } finally {
-    h.journal.close();
-  }
-});
-
-test('classify.advances-bundle-opportunity-only: a bundle adds exactly the clauses of the opportunities it admits, and removes none', T, async () => {
-  const h = holisticArc();
-  try {
-    // The architect narrows the slice (V-2 leaves it), as revision 2.
-    editPlan(h.d, (p) => void ((p['holistic'] as Record<string, unknown>)['advances'] = ['V-1', 'V-3']));
-    const narrowed = evaluateRevision(rctxOf(h), readInputFiles(absPath(h.d.planPath), absPath(h.d.repo)), { type: 'apply' });
-    assert.ok(narrowed.kind === 'accepted', JSON.stringify(narrowed));
-    keepRevision(h.ctx.runDir, narrowed);
-    commitRevisionNow(h.journal, h.ctx.runDir, payloadOf(narrowed.draft, { type: 'start' }), { type: 'arc' });
-    const opportunity = (clauses: readonly string[]) => [{ index: 0, unit: U1, class: { type: 'opportunity', id: opportunityId('O-1'), clauses: clauses as never } } as const];
-    const bundle = (admits: Extract<Parameters<typeof evaluateRevision>[2], { type: 'bundle' }>['admits']) =>
-      ({ type: 'bundle', job: CKPT, cites: ['V-2' as never], evidence: ['an opportunity'], admits,  }) as const;
-    const evaluate = (advances: readonly string[], admits: Parameters<typeof bundle>[0]) => {
-      editPlan(h.d, (p) => void ((p['holistic'] as Record<string, unknown>)['advances'] = advances));
-      return evaluateRevision(rctxOf(h), readInputFiles(absPath(h.d.planPath), absPath(h.d.repo)), bundle(admits));
-    };
-    // Its opportunity's clause joins the slice: the one bundle change of `advances`.
-    const added = evaluate(['V-1', 'V-2', 'V-3'], opportunity(['V-2']));
-    assert.ok(added.kind === 'accepted', JSON.stringify(added));
-    assert.deepEqual(added.draft.changes, [{ type: 'advances' }]);
-    const refused = (advances: readonly string[], admits: Parameters<typeof bundle>[0], why: RegExp): void => {
-      const v = evaluate(advances, admits);
-      assert.ok(v.kind === 'rejected' && v.reasons.some((r) => /holistic\.advances is owner-only/.test(r) && why.test(r)), JSON.stringify(v));
-    };
-    refused(['V-1', 'V-2', 'V-3'], [], /admits none/);
-    refused(['V-1', 'V-2', 'V-3'], [{ index: 0, unit: U1, class: { type: 'oversight', clauses: ['V-1' as never] } }], /admits none/);
-    refused(['V-1', 'V-2', 'V-3'], opportunity(['V-1']), /expected V-1, V-3/);
-    refused(['V-1', 'V-2'], opportunity(['V-2']), /removes none: expected V-1, V-2, V-3/);
   } finally {
     h.journal.close();
   }
@@ -606,7 +558,6 @@ const CKPT = jobId('ckpt', 1);
 
 /** A checkpoint job's captured inputs (its trigger a park), so a bundle revision and its divergences may follow. */
 
-
 const divergence = (kind: 'restore-revision' | 'repair-unit'): DivergenceDraft => ({
   job: CKPT, type: 'plan-departed', from: 'plan rev 1', what: 'admitted u2', cites: ['V-1' as never], evidence: ['the park of u1'],
   preimage: { planRev: 1, specs: {}, obligationsSha256: null, ledgerSha256: null, contracts: [] },
@@ -617,11 +568,11 @@ const divergence = (kind: 'restore-revision' | 'repair-unit'): DivergenceDraft =
 function bundleAdmitsU2(r: ArcRun, kind: 'restore-revision' | 'repair-unit'): void {
 
   addUnit(r.d, 'u2');
-  const v = evaluateRevision(rctxOf(r), readInputFiles(absPath(r.d.planPath), absPath(r.d.repo)), { type: 'bundle', job: CKPT, cites: ['V-1' as never], evidence: ['the park of u1'], admits: [],  });
+  const v = evaluateRevision(rctxOf(r), readInputFiles(absPath(r.d.planPath), absPath(r.d.repo)), { type: 'apply', reason: 'Root-reviewed revision' });
   assert.equal(v.kind, 'accepted', JSON.stringify(v));
   if (v.kind !== 'accepted') return;
   keepRevision(r.ctx.runDir, v);
-  commitRevisionNow(r.journal, r.ctx.runDir, payloadOf({ ...v.draft, divergences: [divergence(kind)] }, { type: 'bundle', job: CKPT }), { type: 'job', job: CKPT });
+  commitRevisionNow(r.journal, r.ctx.runDir, payloadOf({ ...v.draft, divergences: [divergence(kind)] }, { type: 'walk', job: jobId('walk', 1) }), { type: 'job', job: CKPT });
   assert.deepEqual(r.journal.view.holistic().divergences.map((x) => [x.id, x.index, x.type]), [['D-1', 0, 'plan-departed']]);
 }
 
@@ -634,13 +585,11 @@ for (const label of ['needsuser.raise.before-publish', 'needsuser.raise.after-pu
     try {
 
       addUnit(d, 'u2');
-      const verdict = evaluateRevision(rctxOf(setup), readInputFiles(absPath(d.planPath), absPath(d.repo)), {
-        type: 'bundle', job: CKPT, cites: ['V-1' as never], evidence: ['the park of u1'], admits: [],
-      });
+      const verdict = evaluateRevision(rctxOf(setup), readInputFiles(absPath(d.planPath), absPath(d.repo)), { type: 'apply', reason: 'Root-reviewed revision' });
       assert.equal(verdict.kind, 'accepted', JSON.stringify(verdict));
       assert.ok(verdict.kind === 'accepted');
       keepRevision(setup.ctx.runDir, verdict);
-      payload = payloadOf(verdict.draft, { type: 'bundle', job: CKPT });
+      payload = payloadOf(verdict.draft, { type: 'walk', job: jobId('walk', 1) });
     } finally { setup.journal.close(); }
     const trigger = writeTrigger(tmpDir('revision-notice'), { label, occurrence: 1 });
     const exit = await runFixture('revision-notice-child.ts', [JSON.stringify(d), JSON.stringify(payload)], {
@@ -661,7 +610,7 @@ for (const label of ['needsuser.raise.before-publish', 'needsuser.raise.after-pu
       assert.equal(r.journal.view.doneOf(commit.op)?.recoveredBy, 'reconciled');
       assert.deepEqual(r.journal.view.opsOf('needsuser.raise').map((i) => i.op), [notice.op], 'no duplicate notice intent');
       const item = readNeedsUser(r.ctx.runDir, notice.expect.id)!;
-      assert.deepEqual([item.reason, item.blocking, item.summary], ['revision-notice', false, 'Executor revision 2 (bundle) is in force.']);
+      assert.deepEqual([item.reason, item.blocking, item.summary], ['revision-notice', false, 'Executor revision 2 (walk) is in force.']);
       assert.deepEqual(applied(r).map((f) => f.rev), [1, 2]);
       const highWater = r.journal.view.highWater();
       await recover({ stage: r.ctx, commands: ctxOf(r) });
@@ -743,12 +692,12 @@ test('reverse.spec-preimage-exact: a checkpoint that revised a spec a machine `s
       x['rev'] = 3;
       (x['facts'] as Json[]).push({ id: 'F9', text: 'the checkpoint narrowed mul', state: 'active' });
     });
-    const v = evaluateRevision(rctxOf(r), readInputFiles(absPath(d.planPath), absPath(d.repo)), { type: 'bundle', job: CKPT, cites: ['V-1' as never], evidence: ['the park of u1'], admits: [],  });
+    const v = evaluateRevision(rctxOf(r), readInputFiles(absPath(d.planPath), absPath(d.repo)), { type: 'apply', reason: 'Root-reviewed revision' });
     assert.equal(v.kind, 'accepted', JSON.stringify(v));
     if (v.kind !== 'accepted') return;
     keepRevision(r.ctx.runDir, v);
     const div: DivergenceDraft = { ...divergence('restore-revision'), what: 'narrowed u1', preimage: { planRev: 1, specs: { [U1]: 2 }, obligationsSha256: null, ledgerSha256: null, contracts: [] } };
-    commitRevisionNow(r.journal, r.ctx.runDir, payloadOf({ ...v.draft, divergences: [div] }, { type: 'bundle', job: CKPT }), { type: 'job', job: CKPT });
+    commitRevisionNow(r.journal, r.ctx.runDir, payloadOf({ ...v.draft, divergences: [div] }, { type: 'walk', job: jobId('walk', 1) }), { type: 'job', job: CKPT });
     assert.notEqual(applied(r)[0]!.specs[U1], patched, 'the plan manifest before the act holds rev 1, not the patched rev 2');
 
     const { outcome } = await command(r, { type: 'reverse', divergence: 'D-1' as DivergenceId });
@@ -786,7 +735,7 @@ test('reverse.obligation-fresh-rev: a checkpoint that amended I-1 (rev 1 → 2) 
       preimage: { planRev: 1, specs: {}, obligationsSha256: revision.obligations!.sha256, ledgerSha256: null, contracts: [] },
     };
     const committed = await commitRevision({ journal: r.journal, runDir: r.ctx.runDir, docs: fakeDocs(r.journal, absPath(d.repo), branchName('main')) },
-      payloadOf({ ...v.draft, divergences: [div] }, { type: 'bundle', job: CKPT }), { type: 'job', job: CKPT });
+      payloadOf({ ...v.draft, divergences: [div] }, { type: 'walk', job: jobId('walk', 1) }), { type: 'job', job: CKPT });
     assert.equal(committed.kind, 'applied', JSON.stringify(committed));
 
     const { outcome } = await command(r, { type: 'reverse', divergence: 'D-1' as DivergenceId });

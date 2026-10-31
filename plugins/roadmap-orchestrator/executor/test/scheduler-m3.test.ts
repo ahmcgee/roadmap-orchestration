@@ -42,7 +42,7 @@ import { SCENARIO_TIMEOUT_MS,admitAll,planCheckStep } from './fixtures/stage-com
 import { type ArcDescriptor,type ArcRun,appendSteps,applyBody,codexStep,commandContextFor,contextFor,syncInputs,setupArc } from './fixtures/unit-common.ts';
 import { reached,release } from './helpers/barrier.ts';
 import { assertFired,writeTrigger } from './helpers/crash.ts';
-import { checkpointStep, lensStep, noteLensStep, twoOpBundleSecondInvalid } from './helpers/holistic.ts';
+import { checkpointStep, lensStep, noteLensStep } from './helpers/holistic.ts';
 import { runFixture } from './helpers/proc.ts';
 import { git,tmpDir } from './helpers/repo.ts';
 import { type Step,readCalls } from './helpers/scenario.ts';
@@ -184,7 +184,7 @@ describe('completion (§2.10, A8, A20, G8)', () => {
       assert.deepEqual(await runBaseline(h.audit), { kind: 'held' });
       assert.deepEqual(blockers(), ['units-open', 'close-out'], 'the baseline witnessed every obligation on the head');
       assert.deepEqual(await runUnit(w.stage, r.unit('u1'), admitAll), { kind: 'merged' });
-      assert.deepEqual(blockers(), ['audit-pending', 'coverage-outstanding', 'audit-owed', 'close-out'], 'merged: the final audit is owed');
+      assert.deepEqual(blockers(), ['audit-pending', 'coverage-outstanding', 'revision-notice', 'close-out'], 'merged: the final audit is owed');
       const audited = await runAudit(h.audit);
       assert.ok(audited.kind === 'ended' && audited.outcome === 'completed', JSON.stringify(audited));
       assert.deepEqual(blockers(), ['close-out']);
@@ -194,7 +194,7 @@ describe('completion (§2.10, A8, A20, G8)', () => {
       assert.deepEqual(blockers(), []);
       // A non-blocking item never blocks `complete`.
       raiseNeedsUser(r.journal, r.ctx.runDir, {
-        blocking: false, subject: { type: 'arc' }, reason: 'audit-owed', summary: 'owed', recommendation: 'run it', options: [], evidence: [],
+        blocking: false, subject: { type: 'arc' }, reason: 'revision-notice', summary: 'owed', recommendation: 'run it', options: [], evidence: [],
       }, { type: 'arc' });
       assert.deepEqual(blockers(), []);
     } finally {
@@ -493,7 +493,7 @@ describe('the M3 commands and items', () => {
     assert.equal(m3Blocking('owner-request'), true);
     assert.equal(m3Blocking('obligation-baseline'), true);
     assert.equal(m3Blocking('respec-second'), true);
-    for (const reason of ['bundle-request', 'convergence-bound', 'convergence-identity', 'audit-owed', 'divergence-digest'] as const) assert.equal(m3Blocking(reason), false);
+    for (const reason of ['bundle-request', 'convergence-bound', 'convergence-identity', 'revision-notice', 'divergence-digest'] as const) assert.equal(m3Blocking(reason), false);
     assert.equal(m3Blocking('base-red'), null, 'an earlier reason: its raiser decides');
     const r = contextFor(completingArc());
     try {

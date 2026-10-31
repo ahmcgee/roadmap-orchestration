@@ -15,7 +15,7 @@ proofMinutes,verdictAfter,verdictBefore,
 } from '../flow/types.ts';
 import { type PressureAvailability,PRESSURE_AVAILABILITIES } from '../host/pressure.ts';
 import { type CpuBasis,cpuBasis } from './cpu.ts';
-import { type AmendmentId, type ArcId, type ClaudeSessionId, type CommandId, type DebtId, type DivergenceId, type EdgeId, type EnvId, type FindingId, type InvocationId, type JobId, type JourneyId, type KnownDefectId, type LaneId, type LaneRev, type MilestoneId, type NeedsUserId, type ObligationId, type OpId, type OpKey, type OpportunityId, type PlanRev, type PolishId, type ProposalId, type ResourceInstance, type ResourceName, type ResourceUnit, type RoutingRev, type RuleId, type ServeName, type Sha, type Sha256Hex, type SpecRev, type UnitId, type VisionClauseId, amendmentId, arcId, claudeSessionId, commandId, compareResourceUnits, debtId, divergenceId, edgeId, envId, findingId, idList, invocationIdOf, jobIdOf, jobIdOfKind, journeyId, knownDefectId, laneId, laneRev, milestoneId, needsUserId, obligationId, opIdOf, opKey, opportunityId, parseInvocationId, parseJobId, parseOpId, planRev, polishId, proposalId, proposalJob, resourceInstance, resourceName, resourceUnit, routingRev, ruleId, serveName, sha, sha256, specRev, unitId, visionClauseId } from './ids.ts';
+import { type ArcId, type ClaudeSessionId, type CommandId, type DebtId, type DivergenceId, type EdgeId, type EnvId, type FindingId, type InvocationId, type JobId, type JourneyId, type KnownDefectId, type LaneId, type LaneRev, type MilestoneId, type NeedsUserId, type ObligationId, type OpId, type OpKey, type OpportunityId, type PlanRev, type PolishId, type ProposalId, type ResourceInstance, type ResourceName, type ResourceUnit, type RoutingRev, type ServeName, type Sha, type Sha256Hex, type SpecRev, type UnitId, type VisionClauseId, arcId, claudeSessionId, commandId, compareResourceUnits, debtId, divergenceId, edgeId, envId, findingId, idList, invocationIdOf, jobIdOf, jobIdOfKind, journeyId, knownDefectId, laneId, laneRev, milestoneId, needsUserId, obligationId, opIdOf, opKey, opportunityId, parseInvocationId, parseJobId, parseOpId, planRev, polishId, proposalId, proposalJob, resourceInstance, resourceName, resourceUnit, routingRev, serveName, sha, sha256, specRev, unitId, visionClauseId } from './ids.ts';
 import { canonicalJson,sha256Hex } from './json.ts';
 import { type OrderingWait,orderingWait } from './ordering.ts';
 import {
@@ -44,26 +44,7 @@ tokenUsage,
 usageUnavailableReason,
 } from './records.ts';
 
-import {
-type AuditTrigger,type BundleOutcome,
-type BusyAttempt,
-type ClassifiedAdmit,
-type ContractOp,
-type Conversion,type ConversionReason,
-type DivergenceDraft,type FindingEvidence,type FindingLens,
-type FindingSeverity,type FindingSource,type FindingTo,type MutantRef,type ObligationDisposition,type ObservationKey,type PackDisposition,type PackFinding,
-type PlanDefect,
-type RevisionVector,type WitnessPurpose,
-BUNDLE_REJECTIONS,CONVERSION_REASONS,
-FINDING_LENSES,FINDING_SEVERITIES,OBLIGATION_DISPOSITIONS,WITNESS_PURPOSES,auditTrigger,
-classifiedAdmit,
-contractOp,
-conversion,
-divergenceDraft,divergenceDraftFields,findingEvidence,findingSource,findingTo,mutantRef,observationKey,
-packDisposition,packFinding,
-planDefect,
-revisionVector,
-} from '../holistic/types.ts';
+import { type AuditTrigger, type ContractOp, type DivergenceDraft, type FindingEvidence, type FindingLens, type FindingSeverity, type FindingSource, type FindingTo, type MutantRef, type ObligationDisposition, type PackDisposition, type PackFinding, type PlanDefect, type WitnessPurpose, FINDING_LENSES, FINDING_SEVERITIES, OBLIGATION_DISPOSITIONS, WITNESS_PURPOSES, auditTrigger, contractOp, divergenceDraft, divergenceDraftFields, findingEvidence, findingSource, findingTo, mutantRef, packDisposition, packFinding, planDefect } from '../holistic/types.ts';
 import { type SystemsMap,systemsMap } from '../input/systems.ts';
 import {
 type ArcSeatRef,type Backend,type RiskTier,type RoutingProvenance,type SeatRef,type UnitSeatRef,arcSeatFields,backend,riskTier,
@@ -74,7 +55,7 @@ import { type ReviewFindingId,reviewFindingId } from './ids.ts';
 import {
 type ApprovalBlobs,type FindingsLedgerEntry,type GateReview,type LedgerOutcome,LEDGER_OUTCOMES,approvalBlobs,findingsLedgerEntry,gateReview,
 } from './review.ts';
-import { type StaleAnswer,type StaleSet,staleAnswer,staleSet,staleSetFields } from './stale.ts';
+import { type StaleSet,staleSet,staleSetFields } from './stale.ts';
 import {
 type Read,Fields,SchemaError,arrayOf,assertUnique,bool,int,literal,nat,nullable,object,oneOf,positive,sortedBy,str,tagged,text,
 version,
@@ -364,7 +345,6 @@ export type RevisionBase = PlanRev | 0;
 export type RevisionSource =
   | Readonly<{ type: 'start' }>
   | Readonly<{ type: 'command'; command: CommandId }>
-  | Readonly<{ type: 'bundle'; job: JobId; admits?: readonly ClassifiedAdmit[]; conversions?: readonly Conversion[] }>
   | Readonly<{ type: 'executor'; inv: InvocationId }>
   | Readonly<{ type: 'flow'; proposal: ProposalId }>
   /** dev.13: the code-applied polish revision of walk `job`: its applied proposals admitted as polish units (src/walk/polish.ts). */
@@ -503,16 +483,10 @@ export const STAGE_OUTCOME_KINDS = {
   // pre-build; `not-reproduced` dismisses the finding and parks; `inapplicable` parks for the next audit.
   // `env-unavailable` (2026-10-29, additive) parks on the inferred environment, as lanes and candidate do.
   reproduce: ['reproduced', 'not-reproduced', 'inapplicable', 'blocked', 'interrupted', 'cleanup-failed', 'executor-fault', 'env-unavailable'],
-  // M4a rev 3 (E) to dev.16: `in-session` (a frontier or summit builder under `planCheck.shape: by-builder`: no pre-build
-  // call, the build assessed in session). dev.17 records none; read from an older log.
-  // Paid M4b run 5: `read-denied`, as at the gate (no longer recorded since 2026-10-16; read from a 1.0.0-dev.11 log).
   'pre-build': ['approve', 'interrupted', 'executor-fault'],
-  // M4a rev 3 (E, R55) to dev.16: the in-session assessment found the spec `infeasible`, or raised the risk floor onto
-  // another implementer seat (`risk-raised`). dev.17 records neither; read from an older log.
   // 2026-10-15 (arc feedback #3): `witness-lane-missing` (a required witness item names no arc lane in force), at build and lanes.
   build: ['spec-wrong',
-    'success', 'refusal', 'malformed', 'process-fault', 'lost', 'lost-tree-effects', 'occupied', 'cleanup-failed', 'interrupted', 'routing-changed', 'infeasible',
-    'risk-raised', 'witness-lane-missing', 'context-exceeded', 'executor-fault',
+    'success', 'refusal', 'malformed', 'process-fault', 'lost', 'lost-tree-effects', 'occupied', 'cleanup-failed', 'interrupted', 'routing-changed', 'witness-lane-missing', 'context-exceeded', 'executor-fault',
   ],
   quiesce: ['empty', 'executor-fault'],
   evidence: ['captured', 'executor-fault'],
@@ -573,7 +547,7 @@ export type RetryStage = (typeof RETRY_STAGES)[number];
  * no counter moves, and a resume re-runs the stage as a new attempt. `park`, `stop`, `retire`: the unit
  * parks (needs-user), the arc stops (needs-user), the unit is done.
  */
-export const OUTCOME_CLASSES = ['advance', 'redirect', 'revise', 'candidate-red', 'smoke', 'retry', 'route-up', 'trigger', 'hold', 'park', 'stop', 'retire'] as const;
+export const OUTCOME_CLASSES = ['advance', 'revise', 'candidate-red', 'smoke', 'retry', 'route-up', 'trigger', 'hold', 'park', 'stop', 'retire'] as const;
 export type OutcomeClass = (typeof OUTCOME_CLASSES)[number];
 
 /**
@@ -997,13 +971,6 @@ export type HolisticFact =
   /** A20: active while the plan rev and the integration head are unchanged; `units` the merged units, ascending. */
   | Readonly<{ kind: 'arc-completed'; planRev: PlanRev; head: Sha; highWater: number; units: readonly UnitId[] }>;
 
-/**
- * Where a corpus amendment came from (M4a): a checkpoint's proposal or a divergence code derived it from; since M4a rev 3
- * (R35) a checkpoint `admit` op code converted (`index` the op's, `reason` the conversion's); since run 10 (E) a bundle
- * request the close-out declined.
- */
-export type AmendmentSource = Readonly<{type: 'root'; command: CommandId}>;
-
 /** A mutation smoke's per-target verdicts (D2, Q15), each list ascending by lane then test id. */
 export type SmokeVerdict = Readonly<{ killed: readonly TestRef[]; survived: readonly TestRef[]; inconclusive: readonly TestRef[] }>;
 
@@ -1034,7 +1001,6 @@ export type M4aFact =
   /** A unit attempt's mutation smoke ran (D2, Q17): `key` its allowance key; a later attempt with the same key reuses `verdict`. */
   | Readonly<{ kind: 'smoke-ran'; unit: UnitId; attempt: number; key: Sha256Hex; verdict: SmokeVerdict }>
   /** A second lens's draft merged into finding `id` within one audit (H7, R62): its lens and claim, kept as its rationale. */
-  | Readonly<{ kind: 'finding-corroborated'; id: FindingId; lens: LensKindName; claim: string }>
   /**
    * Run 10 (E): the executor declined a non-blocking needs-user item nobody answered by the close-out (a `bundle-request`),
    * so a non-blocking item never holds completion. It closes the item as an acknowledgement would (`choice`: the item's
@@ -1043,7 +1009,6 @@ export type M4aFact =
    */
   | Readonly<{ kind: 'needs-user-declined'; id: NeedsUserId; choice: string | null; reason: string }>
   /** A proposed change to the corpus, dispositioned at the next Phase 0. */
-  | Readonly<{ kind: 'corpus-amendment'; id: AmendmentId; source: AmendmentSource; rules: readonly RuleId[]; proposal: string; why: string; evidence: readonly string[] }>
   /** A pack review's kept inputs (K8): written after `inputs/<inputsSha256>.pack-review.json` and before the spawn; `key` its required-review key. */
   | Readonly<{ kind: 'pack-review-started'; job: JobId; planRev: PlanRev; inputsSha256: Sha256Hex; key: Sha256Hex }>
   /**
@@ -1196,12 +1161,6 @@ export type PropagationFact =
    */
   | Readonly<{ kind: 'stale-reopened'; unit: UnitId; rev: PlanRev }>
   /**
-   * Plan-check attempt `attempt` of `unit`, judging the revisions of plan rev `rev`, answered every stale link of the unit
-   * recorded up to that rev (`answers`, one per link key, the check `staleAnswerReasons`): written before its approve or
-   * redirect outcome, once per attempt. The links are settled; a later stale set opens new ones.
-   */
-  | Readonly<{ kind: 'stale-answered'; unit: UnitId; attempt: number; rev: PlanRev; answers: readonly StaleAnswer[] }>
-  /**
    * A propagation the code-applied revision did not mint (the arc draining, or the admit path or the classifier refusing its
    * unit): settled, never minted. Once per (`rev`, `target`).
    */
@@ -1267,7 +1226,6 @@ export type PlanChange =
   | Readonly<{ type: 'unit-priority'; unit: UnitId }>
   /** M4a rev 3 (F4): the plan's `knownDefects` changed. */
   | Readonly<{ type: 'known-defects' }>
-  /** M4a rev 3 (E) to dev.16: the plan's `planCheck.shape` changed (no drain). Read from older logs; dev.17 writes none. */
   /** Plan defects (2026-10-16): the plan's `derived` entries changed (no drain; each unit re-pins its widening at its next dispatch check). */
   | Readonly<{ type: 'derived' }>
   /**
@@ -1441,23 +1399,6 @@ const laneOwner: Read<LaneOwner> = tagged('type', {
 const revisionSource: Read<RevisionSource> = tagged('type', {
   start: object((f): RevisionSource => ({ type: f.get('type', literal('start')) })),
   command: object((f): RevisionSource => ({ type: f.get('type', literal('command')), command: f.get('command', cmdR) })),
-  bundle: object((f): RevisionSource => {
-    const admits = f.optional('admits', sortedBy(classifiedAdmit, (x) => String(x.index).padStart(6, '0'), { order: 'by op index' }));
-    const conversions = f.optional('conversions', sortedBy(conversion, (x) => String(x.index).padStart(6, '0'), { order: 'by op index' }));
-    if (admits !== undefined && conversions === undefined) throw new SchemaError(`${f.path}.conversions`, 'conversions beside admits (a classified bundle)', { admits, conversions });
-    const out = { type: f.get('type', literal('bundle')), job: f.get('job', (v, p) => jobIdOfKind('ckpt')(v, p)) };
-    if (conversions === undefined) return out;
-    if (admits === undefined) {
-      // dev.13: a brake's conversions outside a corpus arc (none classified).
-      if (conversions.length === 0 || conversions.some((c) => c.reason !== 'regress-brake' && c.reason !== 'settled-brake')) {
-        throw new SchemaError(`${f.path}.conversions`, 'admits beside conversions (a classified bundle), or only a brake\'s conversions', conversions);
-      }
-      return { ...out, conversions };
-    }
-    const both = [...admits.map((a) => a.index), ...conversions.map((c) => c.index)];
-    if (new Set(both).size !== both.length) throw new SchemaError(`${f.path}.conversions`, 'op indices an admit class does not also name', both);
-    return { ...out, admits, conversions };
-  }),
   executor: object((f): RevisionSource => ({ type: f.get('type', literal('executor')), inv: f.get('inv', invR) })),
   flow: object((f): RevisionSource => ({ type: f.get('type', literal('flow')), proposal: f.get('proposal', proposalR) })),
   walk: object((f): RevisionSource => ({ type: f.get('type', literal('walk')), job: f.get('job', (v, p) => jobIdOfKind('walk')(v, p)) })),
@@ -1986,28 +1927,7 @@ const lensR = oneOf(LENS_KIND_NAMES);
 const lensSet: Read<readonly LensKindName[]> = sortedBy(lensR, (l) => l, { nonEmpty: true });
 const findingSet: Read<readonly FindingId[]> = idList(findingR);
 const auditJobR: Read<JobId> = (v, p) => jobIdOfKind('audit')(v, p);
-const ckptJobR: Read<JobId> = (v, p) => jobIdOfKind('ckpt')(v, p);
-
-const bundleOutcome: Read<BundleOutcome> = tagged('kind', {
-  'no-op': object((f): BundleOutcome => {
-    const conversions = f.optional('conversions', sortedBy(conversion, (x) => String(x.index).padStart(6, '0'), { nonEmpty: true, order: 'by op index' }));
-    return { kind: f.get('kind', literal('no-op')), ...(conversions === undefined ? {} : { conversions }) };
-  }),
-  rejected: object((f): BundleOutcome => {
-    const out = { kind: f.get('kind', literal('rejected')), reason: f.get('reason', oneOf(BUNDLE_REJECTIONS)), detail: f.get('detail', str) };
-    const units = f.optional('units', sortedBy(
-      object((g): BusyAttempt => ({ unit: g.get('unit', unitR), stage: g.get('stage', stage), attempt: g.get('attempt', positive) })), (x) => x.unit, { nonEmpty: true },
-    ));
-    if ((out.reason === 'busy') !== (units !== undefined)) throw new SchemaError(`${f.path}.units`, out.reason === 'busy' ? 'the open attempts a busy bundle touched' : 'absent unless busy', units);
-    return units === undefined ? out : { ...out, units };
-  }),
-  requested: object((f): BundleOutcome => ({ kind: f.get('kind', literal('requested')), needsUser: f.get('needsUser', (v, p) => needsUserId(v, p)) })),
-});
-
 const reviewJobR: Read<JobId> = (v, p) => jobIdOfKind('review')(v, p);
-const ruleList: Read<readonly RuleId[]> = idList((v, p) => ruleId(v, p));
-
-const amendmentSource: Read<AmendmentSource> = object((f) => ({type: f.get('type', literal('root')), command: f.get('command', cmdR)}));
 
 const testRef: Read<TestRef> = object((f) => ({ lane: f.get('lane', laneR), testId: f.get('testId', str) }));
 /** Test refs ascending by lane, then test id, each once. */
@@ -2048,14 +1968,9 @@ const M4A_FACT_READERS: { readonly [K in M4aFactKind]: Read<Fact> } = {
   'smoke-ran': object((f): Fact => ({
     kind: f.get('kind', literal('smoke-ran')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), key: f.get('key', sha256R), verdict: f.get('verdict', smokeVerdict),
   })),
-  'finding-corroborated': object((f): Fact => ({ kind: f.get('kind', literal('finding-corroborated')), id: f.get('id', findingR), lens: f.get('lens', lensR), claim: f.get('claim', str) })),
   'needs-user-declined': object((f): Fact => ({
     kind: f.get('kind', literal('needs-user-declined')), id: f.get('id', (v, p): NeedsUserId => needsUserId(v, p)), choice: f.get('choice', nullable(optionId)),
     reason: f.get('reason', str),
-  })),
-  'corpus-amendment': object((f): Fact => ({
-    kind: f.get('kind', literal('corpus-amendment')), id: f.get('id', (v, p) => amendmentId(v, p)), source: f.get('source', amendmentSource),
-    rules: f.get('rules', ruleList), proposal: f.get('proposal', str), why: f.get('why', str), evidence: f.get('evidence', arrayOf(str)),
   })),
   'pack-review-started': object((f): Fact => ({
     kind: f.get('kind', literal('pack-review-started')), job: f.get('job', reviewJobR), planRev: f.get('planRev', planRevR), inputsSha256: f.get('inputsSha256', sha256R),
@@ -2154,14 +2069,6 @@ const ports: Read<Readonly<Record<ServeName, number>>> = (value, path) => {
 const PROPAGATION_FACT_READERS: { readonly [K in PropagationFactKind]: Read<Fact> } = {
   'stale-set': object((f): Fact => ({ kind: f.get('kind', literal('stale-set')), rev: f.get('rev', (v, p) => planRev(v, p)), ...staleSetFields(f) })),
   'stale-reopened': object((f): Fact => ({ kind: f.get('kind', literal('stale-reopened')), unit: f.get('unit', unitR), rev: f.get('rev', (v, p) => planRev(v, p)) })),
-  'stale-answered': object((f): Fact => {
-    const out = {
-      kind: f.get('kind', literal('stale-answered')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), rev: f.get('rev', (v, p) => planRev(v, p)),
-      answers: f.get('answers', arrayOf(staleAnswer, { nonEmpty: true })),
-    };
-    assertUnique(out.answers, (a) => a.link, `${f.path}.answers`);
-    return out;
-  }),
 
 };
 

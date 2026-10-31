@@ -72,7 +72,6 @@ import { type Certification,type WorkRun,certification,workRuns } from './status
 //                 the admits a brake converted (src/holistic/tail.ts)
 //   audit         per lens in L: its watermark and the docs edges pending a gap (B5 `coverageOf`), the uncovered
 //                 range, the generation, and the minutes of lanes run under checkpoint jobs
-//   owed          the open `audit-owed` items
 //   completion    the latest `arc-completed` (A20 `active`), whether it is sealed (A5b `sealingOf`), the unmet
 //                 clauses of the completion predicate now (the scheduler's `completionBlockers`: one rule)
 //   host.log      the event log's size and fold time: the deferred compaction's trigger (50 MB or 2 s)
@@ -119,31 +118,14 @@ import { type ChainStatus,chainStatusOf,linkOf } from './commands/chain.ts';
 import { type Sealing,sealingOf } from './commands/gc.ts';
 import { COMMANDS_DIR,incomingPath,pendingCommandIds,readCommand,terminalReceipt } from './commands/queue.ts';
 import {
-type AmendmentSource,type Event,
+type Event,
 type Holder,
 JUDGMENT_STAGES,type JudgmentStage,
 OUTCOME_STAGES,type OperatorParkKind,type OutcomeStage,type PlanAppliedFact,
 type ProbeTarget,type RevisionPayload,type WalkOutcome,holderUnit,parentUnit,probeTargetKey,
 } from './core/events.ts';
 import { readJson } from './core/fsx.ts';
-import {
-type AmendmentId,type ArcId,CPU_POOL,type CommandId,type DebtId,type DivergenceId,
-type EdgeId,type FindingId,
-type InvocationId,
-type JobId,
-type KnownDefectId,type LaneId,
-type MilestoneId,
-type NeedsUserId,type ObligationId,
-type OpportunityId,
-type PlanRev,type ProposalId,
-type ResourceUnit,type RoutingRev,
-type RuleId,
-type Sha,type Sha256Hex,type UnitId,type VisionClauseId,
-canonicalIds,commandId,
-compareIds,
-compareResourceUnits,cpuToken,invocationId,parseJobId,parseOpId,
-sha
-} from './core/ids.ts';
+import { type ArcId, CPU_POOL, type CommandId, type DebtId, type DivergenceId, type EdgeId, type FindingId, type InvocationId, type JobId, type KnownDefectId, type LaneId, type MilestoneId, type NeedsUserId, type ObligationId, type OpportunityId, type PlanRev, type ProposalId, type ResourceUnit, type RoutingRev, type RuleId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, canonicalIds, commandId, compareIds, compareResourceUnits, cpuToken, invocationId, sha } from './core/ids.ts';
 import type { JournalView } from './core/interfaces.ts';
 import { EVENTS_FILE,type LogSnapshot,readJournal } from './core/log.ts';
 import { gateLargeDiffOf } from './core/projections.ts';
@@ -157,17 +139,15 @@ import { HEARTBEAT_FILE,REJECTION_FILE,START_FILE } from './executor.ts';
 import { type FlowStatus,flowStatus } from './flow/track.ts';
 import { git,revParse } from './git/git.ts';
 import { witnessDir } from './git/snapshot.ts';
-import { findingAttribution,opportunityClauses } from './holistic/admits.ts';
 import { obligationBlockingUnits,unmergedOf } from './holistic/blocking.ts';
-import type { RevisionContext } from './holistic/bundle.ts';
-import { integrationHistory,recordedAdmits } from './holistic/bundle.ts';
-import { type AppliedBundle,brakesOf } from './holistic/convergence.ts';
+import type { RevisionContext } from './holistic/admission.ts';
+import { brakesOf } from './holistic/convergence.ts';
 import { coverageBase,coverageOf } from './holistic/coverage.ts';
 import { uncoveredDivergences } from './holistic/divergence.ts';
 import { type FindingMetric,type RepairUnit,findingMetrics,isActive } from './holistic/findings.ts';
 import { type Observation,type ObservationStore,type WitnessedEntry,verdictOf } from './holistic/observe.ts';
 import { type PackReviewStatus,packItemOf,packReviewStatus } from './holistic/packreview.ts';
-import { type AdmitClass,type ArcLaneDef,type BusyAttempt,type CensusEntry,type CensusState,type ClauseState,type Compensation,type Conversion,type DivergenceKind,type FindingLens,type FindingSeverity,type FindingStateName,type LensKind,type ObligationDef,type Obligations,type ObservationVerdict,type Vision,type VisionClauseKind,type VisionCoverage,type VisionQuestion,isExempt,isMustHold,observationKeyText } from './holistic/types.ts';
+import { type AdmitClass, type ArcLaneDef, type CensusEntry, type CensusState, type ClauseState, type Compensation, type Conversion, type DivergenceKind, type FindingLens, type FindingSeverity, type FindingStateName, type LensKind, type ObligationDef, type Obligations, type ObservationVerdict, type Vision, type VisionClauseKind, type VisionCoverage, type VisionQuestion, isExempt, isMustHold, observationKeyText } from './holistic/types.ts';
 import { visionCoverage } from './holistic/vision.ts';
 import { isAlive } from './host/liveness.ts';
 import { readClaim } from './host/lock.ts';
@@ -432,12 +412,11 @@ export type DivergenceView = Readonly<{
   digest: NeedsUserId | null;
 }>;
 
-export const DECISION_KINDS = ['ruling', 'bundle', 'patch', 'reenter', 'cut', 'steer', 'divergence', 'reverse'] as const;
+export const DECISION_KINDS = ['ruling', 'patch', 'reenter', 'cut', 'steer', 'divergence', 'reverse'] as const;
 export type DecisionKind = (typeof DECISION_KINDS)[number];
 /** Who decided: the architect (a command, or a start's edited files: null), a checkpoint job, pre-build's redirect, or the executor. */
 export type RuledBy =
   | Readonly<{ type: 'architect'; command: CommandId | null }>
-  | Readonly<{ type: 'checkpoint'; job: JobId }>
   | Readonly<{ type: 'judgment'; role: 'verifier' }>
   | Readonly<{ type: 'executor' }>
   /** M4b: an accepted flow proposal's revision. */
@@ -468,7 +447,7 @@ function tailCounts(view: JournalView): Pick<Status['findings'], 'released' | 'r
     else if (last.by.type === 'code' && last.by.reason === 'close-out') released.closeOut++;
     else released.checkpoint++;
   }
-  const conversions = conversionsAll(view);
+  const conversions: readonly Conversion[] = [];
   return {
     released,
     refusedAdmits: { regress: conversions.filter((c) => c.reason === 'regress-brake').length, settled: conversions.filter((c) => c.reason === 'settled-brake').length },
@@ -568,7 +547,6 @@ export type Status = Readonly<{
    */
   findings: Readonly<{ active: readonly FindingLine[]; metrics: readonly FindingMetric[]; released: TailReleased; refusedAdmits: Readonly<{ regress: number; settled: number }> }>;
   audit: AuditView | null;
-  owed: Readonly<{ audits: readonly NeedsUserId[] }>;
   completion: CompletionView;
   /** M4a: the arc-wide holds on every admission now (the scheduler's `arcHolds`; empty outside a holistic arc). */
   holds: readonly ArcHold[];
@@ -578,8 +556,6 @@ export type Status = Readonly<{
   corpus: CorpusView | null;
   /** M4a: a corpus arc's census, each rule's state and whether its obligation holds on the head; null outside one. */
   census: CensusView | null;
-  /** M4a: the corpus amendments, in id order. */
-  amendments: readonly AmendmentLine[];
   /** M4a: a corpus arc's debt: what this arc banked and its ledger now (`arcDebtLedger`); null outside one. */
   debt: DebtView | null;
   /** M4a: a corpus arc's chain up to it (src/commands/chain.ts, PRs non-fatal); null outside one. */
@@ -735,7 +711,6 @@ function holderOf(e: ResourceEntry): Holder | null {
   if (e.status.state !== 'free') return e.status.holder;
   return e.pending?.expect.holder ?? null;
 }
-
 
 function hostResources(view: JournalView): HostView['resources'] {
   return [...view.resources()].filter(([, e]) => e.status.state !== 'free' || e.pending !== null)
@@ -1310,8 +1285,6 @@ function rulerOf(f: PlanAppliedFact): RuledBy {
       return { type: 'architect', command: null };
     case 'command':
       return { type: 'architect', command: source.command };
-    case 'bundle':
-      return { type: 'checkpoint', job: source.job };
     case 'executor':
       return { type: 'executor' };
     case 'flow':
@@ -1385,7 +1358,6 @@ export function decisionsAfter(view: JournalView, events: readonly Event[], sinc
       if (e.seq <= since) continue;
       const ruledBy = rulerOf(f);
       const summary = f.changes.length === 0 ? 'no change' : f.changes.map((c) => ('unit' in c && c.unit !== undefined && c.unit !== null ? `${c.type} ${c.unit}` : c.type)).join(', ');
-      if (ruledBy.type === 'checkpoint') out.push({ seq: e.seq, kind: 'bundle', id: ruledBy.job, oneLine: `plan rev ${f.rev}: ${summary}`, ruledBy });
       const body = ruledBy.type === 'architect' && ruledBy.command !== null ? read.command(ruledBy.command) : null;
       if (body?.type === 'reverse') out.push({ seq: e.seq, kind: 'reverse', id: body.divergence, oneLine: `plan rev ${f.rev} reverses ${body.divergence}: ${summary}`, ruledBy });
       for (const c of f.changes) {
@@ -1406,7 +1378,7 @@ export function decisionsAfter(view: JournalView, events: readonly Event[], sinc
         ruledBy: { type: 'architect', command: f.command },
       });
     }
-    if (f.kind === 'divergence') out.push({ seq: e.seq, kind: 'divergence', id: f.id, oneLine: `${f.type}: ${f.what}`, ruledBy: { type: 'checkpoint', job: f.job } });
+    if (f.kind === 'divergence') out.push({ seq: e.seq, kind: 'divergence', id: f.id, oneLine: `${f.type}: ${f.what}`, ruledBy: { type: 'executor' } });
 
   }
   return out;
@@ -1418,9 +1390,7 @@ export function decisionsAfter(view: JournalView, events: readonly Event[], sinc
  * recorded call) only feed the identity bound, which the checkpoint applies and status does not render.
  */
 function convergenceOf(runDir: AbsPath, view: JournalView, plan: PlanM1): ConvergenceView {
-  const applied: AppliedBundle[] = view.opsOf('revision.commit').flatMap((commit) => (commit.expect.source.type !== 'bundle' || view.doneOf(commit.op) === null
-    ? [] : [{ job: commit.expect.source.job, seq: parseOpId(commit.op).seq, ops: [] }]));
-  const brakes = brakesOf(view, runDir, plan, applied, new Set(), (u) => u);
+  const brakes = brakesOf(view, runDir, plan);
   return { k: brakes.k, counter: brakes.count, since: brakes.since, open: brakes.open };
 }
 
@@ -1514,7 +1484,6 @@ export type CensusView = Readonly<{
   lastHeld: number;
 }>;
 
-export type AmendmentLine = Readonly<{ id: AmendmentId; source: AmendmentSource; rules: readonly RuleId[]; proposal: string; why: string }>;
 export type DebtView = Readonly<{
   banked: readonly Readonly<{ id: DebtId; bankReason: BankReason; what: string; seq: number }>[];
   ledger: readonly Readonly<{ id: DebtId; state: DebtItem['state']; originArc: ArcId; what: string }>[];
@@ -1615,65 +1584,10 @@ function knownDefectViews(view: JournalView, plan: PlanM1, lines: readonly UnitC
   }));
 }
 
-
-
 export type AdmitViews = Readonly<{ admits: readonly AdmitLine[]; opportunities: readonly OpportunityLine[]; drift: readonly DriftLine[] }>;
 const NO_ADMITS: AdmitViews = { admits: [], opportunities: [], drift: [] };
 
-/** Every conversion the arc recorded: an applied bundle's (its revision source) and an all-converted bundle's (`no-op`). */
-function conversionsAll(view: JournalView): readonly (Conversion & Readonly<{ job: JobId }>)[] {
-  const applied = view.opsOf('revision.commit').flatMap((commit) => {
-    const source = commit.expect.source;
-    if (source.type !== 'bundle' || view.doneOf(commit.op) === null) return [];
-    return (source.conversions ?? []).map((c) => ({ job: source.job, ...c }));
-  });
-  return [...applied, ];
-}
-
-/**
- * A corpus arc's admits, opportunities and drift indicator (B "Visibility", OR-A1): `status` reads them from the run dir,
- * the brief from an arc's snapshot ref (same log, same rule). `repo` is the product repo the merges' paths are read from.
- */
-export function admitViews(view: JournalView, repo: AbsPath, plan: PlanM1, meter: Meter): AdmitViews {
-  const recorded = recordedAdmits(view);
-  if (recorded.length === 0 && conversionsAll(view).length === 0) return NO_ADMITS;
-  const seqOf = new Map(view.opsOf('revision.commit').flatMap((c) => (c.expect.source.type === 'bundle' ? [[c.expect.source.job, parseOpId(c.op).seq] as const] : [])));
-  const clausesOf = (c: AdmitClass): readonly VisionClauseId[] => (c.type === 'repair' ? [] : c.clauses);
-  const admits: AdmitLine[] = recorded.map((a) => ({
-    seq: seqOf.get(a.job)!, job: a.job, index: a.index, unit: a.unit, class: a.class.type, clauses: clausesOf(a.class), followUp: a.class.type === 'repair' ? a.class.followUp : null,
-  }));
-  const rootOf = (u: UnitId): UnitId => view.unit(u).lineage?.root ?? u;
-  const lineageOf = (roots: ReadonlySet<UnitId>): readonly UnitId[] => plan.units.map((u) => u.id).filter((u) => roots.has(rootOf(u))).sort();
-  const conversions = conversionsAll(view);
-  const opportunityAdmits = recorded.filter((a): a is typeof a & Readonly<{ class: Extract<AdmitClass, { type: 'opportunity' }> }> => a.class.type === 'opportunity');
-  const opportunities = opportunityAdmits.map((o): OpportunityLine => {
-    const id = o.class.id;
-    const followUps = recorded.filter((a) => a.class.type === 'repair' && a.class.followUp === id);
-    const units = lineageOf(new Set([o.unit, ...followUps.map((a) => a.unit)].map(rootOf)));
-    const spent = meter.byUnit.filter((t) => units.includes(t.unit)).reduce((sum, t) => sum + t.costUsd, 0);
-    return {
-      id, clauses: o.class.clauses, units, followUps: followUps.length, spentUsd: Math.round(spent * 100) / 100,
-      overrun: conversions.filter((c) => c.reason === 'follow-up-overrun' && c.opportunity === id).map((c) => ({ job: c.job, index: c.index })),
-    };
-  });
-
-  // The drift indicator: findings attributed to a non-opportunity admit's merged lineage whose clauses lie wholly outside S ∪ OC.
-  const inScope = new Set([...advancesOf(plan), ...opportunityAdmits.flatMap((o) => o.class.clauses)]);
-  const others = recorded.filter((a) => a.class.type !== 'opportunity');
-  const findings = view.holistic().findings;
-  const history = others.length === 0 ? null : integrationHistory(view, repo, view.integrationHead() ?? plan.baseline);
-  const drift = history === null ? [] : others.flatMap((a): DriftLine[] => {
-    const merged = lineageOf(new Set([rootOf(a.unit)])).filter((u) => view.unit(u).status === 'retired');
-    if (merged.length === 0) return [];
-    const hits = findings.filter((f) => f.visionClauses.length > 0 && f.visionClauses.every((c) => !inScope.has(c))
-      && findingAttribution(history, { source: f.source, lens: f.lens, paths: f.evidence.map((e) => e.path) }).some((u) => merged.includes(u)));
-    return [{
-      unit: a.unit, job: a.job, class: a.class.type as 'repair' | 'oversight', merged,
-      findings: hits.map((f) => ({ id: f.id, severity: f.severity, clauses: canonicalIds(f.visionClauses), claim: f.claim })),
-    }];
-  });
-  return { admits, opportunities, drift };
-}
+export function admitViews(_view: JournalView, _repo: AbsPath, _plan: PlanM1, _meter: Meter): AdmitViews { return NO_ADMITS; }
 
 export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: LogSnapshot): Status {
   const d = derive(runDir, arc, hostDir, snapshot);
@@ -1704,7 +1618,6 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?:
   const t = on === null || head === null || obligations === null ? { nowTrue: [], notYetTrue: [] }
     : truths(runDir, view, d.units, obligations, on.repo, head);
   const audit = on === null || head === null ? null : auditOf(runDir, view, events, on.plan, head, now);
-  const owed = needsUser.filter((n) => n.reason === 'audit-owed').map((n) => n.id);
   // M4a: the scheduler's holds and the pack review read through the read-only contexts, with the routing in force (the
   // pack review's key binds the arc's routing rev); the baseline job's running is the live scheduler's alone (false).
   const h = on === null || start === null || inForce === null ? null : holisticReader(runDir, hostDir, d, inForce);
@@ -1756,7 +1669,7 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?:
     notYetTrue: t.notYetTrue,
     waived: exemptBy(obligations, 'waived'),
     deferred: exemptBy(obligations, 'deferred'),
-    vision: on === null || revision === null ? null : visionOf(revision, advancesOf(on.plan), fold, opportunityClauses(recordedAdmits(view))),
+    vision: on === null || revision === null ? null : visionOf(revision, advancesOf(on.plan), fold, []),
     divergences: divergencesOf(view),
     decisionsSince: decisionsAfter(view, events, digestAckedAt(view, acks), runDirDecisions(runDir, arc)),
     convergence: on === null ? null : convergenceOf(runDir, view, on.plan),
@@ -1766,13 +1679,11 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?:
       ...tailCounts(view),
     },
     audit,
-    owed: { audits: owed },
     completion: completionOf(runDir, d, { d, hostDir, pending: commands.pending.length }),
     holds: h === null ? [] : arcHolds(h, d.blocking, false),
     packReview: h === null || corpus === null ? null : packReviewOf(h.revision),
     corpus: corpus === null ? null : corpusOf(corpus),
     census: corpus === null || obligations === null ? null : censusOf(obligations, t),
-    amendments: fold.amendments.map((a) => ({ id: a.id, source: a.source, rules: a.rules, proposal: a.proposal, why: a.why })),
     debt: corpus === null || reader === null ? null : debtOf(view, arcDebtLedger(reader)!),
     chain: corpus === null || on === null ? null : chainOf(on.repo, on.plan),
     timings: stageTimings(events),

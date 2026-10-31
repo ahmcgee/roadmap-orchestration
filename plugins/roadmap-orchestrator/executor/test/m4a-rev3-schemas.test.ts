@@ -94,8 +94,6 @@ describe('m4a-rev3 spawn subjects and mutant records', () => {
     refuses(intent('mutant.apply', apply), /\.of$/);
   });
 
-
-
   it('a smoke run is witnessed as a mutant and never certifies', () => {
     const w = { kind: 'witnessed', lane: 'journey', laneRev: '0123456789abcdef', envId: 'fedcba9876543210', treeSha: B, inv: INV, recordsSha256: H };
     roundTrip(fact({ ...w, purpose: 'mutant', for: { type: 'smoke', unit: 'u1', attempt: 2, of: A } }));
@@ -111,20 +109,6 @@ describe('m4a-rev3 checkpoint records', () => {
   ];
   const conversions = [{ index: 1, unit: 'u7', reason: 'follow-up-overrun', opportunity: 'O-1' }, { index: 4, unit: 'u8', reason: 'unrelated', opportunity: null }];
 
-  it('a bundle revision\'s source carries its admit classes and conversions, together or not at all (dev.13: a brake\'s conversions alone)', () => {
-    const expect = (source: object) => ({ source, base: 4, rev: 5, payloadSha256: H, docs: false });
-    roundTrip(intent('revision.commit', expect({ type: 'bundle', job: CKPT, admits, conversions }), null, { type: 'job', job: CKPT }));
-    roundTrip(intent('revision.commit', expect({ type: 'bundle', job: CKPT, admits: [], conversions: [] }), null, { type: 'job', job: CKPT }));
-    roundTrip(intent('revision.commit', expect({ type: 'bundle', job: CKPT }), null, { type: 'job', job: CKPT }));
-    refuses(intent('revision.commit', expect({ type: 'bundle', job: CKPT, admits }), null, { type: 'job', job: CKPT }), /conversions$/);
-    const braked = [{ index: 0, unit: 'u4', reason: 'regress-brake', opportunity: null }, { index: 1, unit: 'u5', reason: 'settled-brake', opportunity: null }];
-    roundTrip(intent('revision.commit', expect({ type: 'bundle', job: CKPT, conversions: braked }), null, { type: 'job', job: CKPT }));
-    refuses(intent('revision.commit', expect({ type: 'bundle', job: CKPT, conversions }), null, { type: 'job', job: CKPT }), /conversions$/);
-    refuses(intent('revision.commit', expect({ type: 'bundle', job: CKPT, conversions: [] }), null, { type: 'job', job: CKPT }), /conversions$/);
-    refuses(intent('revision.commit', expect({ type: 'bundle', job: CKPT, admits, conversions: [{ ...conversions[1], index: 2 }] }), null, { type: 'job', job: CKPT }), /conversions$/);
-    refuses(intent('revision.commit', expect({ type: 'bundle', job: CKPT, admits: [admits[1], admits[0]], conversions }), null, { type: 'job', job: CKPT }), /admits\[1\]$/);
-  });
-
   it('admit classes and conversions: closed, with their cross-field rules', () => {
     for (const a of admits) same(admitClass, a.class);
     for (const c of conversions) same(conversion, c);
@@ -135,7 +119,6 @@ describe('m4a-rev3 checkpoint records', () => {
   });
 
   it('a converted admit\'s amendment and its overrun debt name their source; the debt names the opportunity', () => {
-    roundTrip(fact({ kind: 'corpus-amendment', id: 'M-1', source: {type: 'root', command: commandId('cmd-0123456789abcdef')}, rules: [], proposal: 'p', why: 'w', evidence: [] }));
     const debt = { kind: 'debt-banked', id: 'B-4', bankReason: 'opportunity-overrun', what: 'the third repair of O-1', key: H, source: { type: 'admit', job: CKPT, index: 1 }, opportunity: 'O-1' };
     roundTrip(fact(debt));
     const { opportunity: _o, ...debtBare } = debt;
@@ -172,7 +155,6 @@ describe('m4a-rev3 facts and outcomes', () => {
     roundTrip(fact({ kind: 'smoke-ran', unit: 'u1', attempt: 3, key: H, verdict }));
     refuses(fact({ kind: 'smoke-ran', unit: 'u1', attempt: 3, key: H, verdict: { killed: [], survived: [], inconclusive: [] } }), /verdict$/);
     refuses(fact({ kind: 'smoke-ran', unit: 'u1', attempt: 3, key: H, verdict: { ...verdict, inconclusive: [{ lane: 'journey', testId: 't1' }] } }), /verdict$/);
-    roundTrip(fact({ kind: 'finding-corroborated', id: 'F-4', lens: 'invariants', claim: 'the same defect, seen by invariants' }));
   });
 
   it('the new stage outcomes carry their detail, and only they do', () => {
@@ -182,8 +164,8 @@ describe('m4a-rev3 facts and outcomes', () => {
     roundTrip(outcome('lanes', 'witnesses-missing', 'advance', true, missing));
     roundTrip(outcome('lanes', 'smoke-survived', 'smoke', true, { kind: 'smoke-survived', obligations: ['I-2'], testIds: [{ lane: 'journey', testId: 't2' }] }));
     roundTrip(outcome('lanes', 'known-defect', 'advance', false, { kind: 'known-defect', id: 'K-1', match: { type: 'output', lane: 'mul', contains: 'boom' } }));
-    roundTrip(outcome('build', 'infeasible', 'park', false, { kind: 'infeasible', notes: 'the corpus forbids it' }));
-    roundTrip(outcome('build', 'risk-raised', 'advance', false));
+    refuses(outcome('build', 'infeasible', 'park', false, { kind: 'infeasible', notes: 'the corpus forbids it' }), /outcome$/);
+    refuses(outcome('build', 'risk-raised', 'advance', false), /outcome$/);
     roundTrip(outcome('pre-build', 'approve', 'advance', false));
     refuses(outcome('lanes', 'witnesses-missing', 'advance', true), /detail$/);
     refuses(outcome('lanes', 'witnesses-missing', 'advance', true, { kind: 'witnesses-missing', missing: [], failed: [] }), /detail$/);
@@ -329,8 +311,6 @@ describe('types.lane-rev-normalised', () => {
   });
 });
 
-
-
 describe('state.open-attempt-live-vs-abandoned', () => {
   it('an attempt started after the latest executor start is live; one an executor restart found open is abandoned; closed is none', () => {
     const records: LogRecord[] = [
@@ -388,7 +368,6 @@ describe('run 10 (D): a checkpoint admit\'s spec is constrained by the schema', 
     decision: 'bundle', reasons: ['r'], ops: [admit(spec)],  findingDispositions: [], interpretations: [],
     cites: { vision: ['V-1'], observations: [], findings: [] }, premises: [], corpusAmendments: [],
   });
-
 
 });
 
@@ -457,6 +436,5 @@ describe('experience verdict: proposed unit specs use the strict full-spec wire 
     assert.throws(() => validateWalkthroughOutput(answer({ ...wire, facts: [{ id: 'A1', text: 't', state: 'active' }] })), /a unique id/);
     assert.throws(() => validateWalkthroughOutput(answer({ ...wire, lanes: [{ ...wire.lanes[0], env: { set: [{ name: 'A', value: '1' }, { name: 'A', value: '2' }], pass: [] } }] })), SchemaError);
   });
-
 
 });

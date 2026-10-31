@@ -92,8 +92,6 @@ export type PullBodyInput = Readonly<{
   head: Sha;
   /** The arc this one is stacked on, or null for the chain's first (based on main). */
   previousArc: ArcId | null;
-  /** `<arc>/M-n` and its rules, proposal and why, ascending by id: the corpus amendments arc `arc` derived (OR-L7). */
-  amendments: readonly Readonly<{ ref: string; rules: readonly string[]; proposal: string; why: string }>[];
   /** The previous arc's PR this one supersedes (`roadmap pr --supersede-previous`), or null. */
   supersedes: Readonly<{ url: string; arc: ArcId }> | null;
 }>;
@@ -112,12 +110,6 @@ export function pullBody(input: PullBodyInput): string {
       : input.previousArc === null ? 'The first arc of its chain, based on `main`.' : `Stacked on arc \`${input.previousArc}\`'s pull request; merge that one first.`,
     '',
     MERGE_COMMIT_LINE,
-    '',
-    '## Corpus amendments derived from this arc',
-    '',
-    ...(input.amendments.length === 0
-      ? ['None.']
-      : input.amendments.map((a) => `- \`${a.ref}\`${a.rules.length === 0 ? '' : ` (${a.rules.join(', ')})`}: ${a.proposal} Why: ${a.why}`)),
     '',
   ];
   return lines.join('\n');

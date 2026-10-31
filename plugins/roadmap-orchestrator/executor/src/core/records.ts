@@ -26,12 +26,7 @@ import {
 type Brand,type Read,Fields,SchemaError,arrayOf,assertUnique,bool,envName,int,literal,nat,nullable,object,oneOf,
 positive,sortedBy,str,stringMap,tagged,text,version,
 } from './validate.ts';
-import {
-type AbsPath,type BootId,type IsoTime,type Nonce,type RepoPath,type RepoPattern,absPath,bootId,isoTime,
-matchesPattern,
-nonce,
-repoPath,repoPattern,
-} from './values.ts';
+import { type AbsPath, type BootId, type IsoTime, type Nonce, type RepoPath, type RepoPattern, absPath, bootId, isoTime, nonce, repoPath, repoPattern } from './values.ts';
 import type { SchemaVersion } from './version.ts';
 
 import { type HostSignatureId,HOST_SIGNATURES } from '../host/signatures.ts';
@@ -787,8 +782,6 @@ export type Bounds = Readonly<{
   chargeable: number;
   /** Every nth certification red is charged; the preceding reds are uncharged. */
   certifications: number;
-  /** Plan-check redirects since the architect's latest spec revision. */
-  redirects: number;
   reviseRounds: number;
   candidateReds: number;
   /** Uncharged retries per retry stage. */
@@ -803,11 +796,11 @@ export type Bounds = Readonly<{
   smokeRuns: number;
 }>;
 export const BOUND_FIELDS = [
-  'chargeable', 'redirects', 'reviseRounds', 'candidateReds', 'retries', 'judgmentDeadlineMin', 'freshBuildMin', 'editAllowanceMin', 'smokeRounds', 'smokeRuns', 'certifications',
+  'chargeable', 'reviseRounds', 'candidateReds', 'retries', 'judgmentDeadlineMin', 'freshBuildMin', 'editAllowanceMin', 'smokeRounds', 'smokeRuns', 'certifications',
 ] as const satisfies readonly (keyof Bounds)[];
 /** The bound fields a 1.0.0-dev.6 dispatch record carries; later fields read as the defaults. */
 export const DEFAULT_BOUNDS: Bounds = {
-  chargeable: 3, redirects: 2, reviseRounds: 2, candidateReds: 1, retries: 1, judgmentDeadlineMin: 45, freshBuildMin: 180, editAllowanceMin: 60,
+  chargeable: 3, reviseRounds: 2, candidateReds: 1, retries: 1, judgmentDeadlineMin: 45, freshBuildMin: 180, editAllowanceMin: 60,
   smokeRounds: 1, smokeRuns: 2, certifications: 4,
 };
 export type BoundsRecord = Bounds;
@@ -1681,7 +1674,7 @@ export const NEEDS_USER_REASONS = [
   'obligation-baseline', 'finding-p1-escalated', 'new-finding-draining', 'steered', 'not-reproduced', 'owner-request', 'respec-second',
   // M3, non-blocking: a bundle held for the architect (A9: `apply | reject`); the convergence brakes; an owed audit;
   // the divergence digest (H11).
-  'bundle-request', 'convergence-bound', 'convergence-identity', 'audit-owed', 'divergence-digest',
+  'bundle-request', 'convergence-bound', 'convergence-identity', 'divergence-digest',
   // M4a, blocking (fixed by `m3Blocking`, as the M3 reasons): a pack review's blocking finding, holding admission before
   // the first (K14, H9).
   'pack-review',
@@ -1715,7 +1708,7 @@ export const NEEDS_USER_REASONS = [
 ] as const;
 /** The reasons from M3 on raised non-blocking; every other one is raised blocking. */
 export const NON_BLOCKING_M3_REASONS = [
-  'bundle-request', 'convergence-bound', 'convergence-identity', 'audit-owed', 'divergence-digest', 'flow-proposal', 'flow-host', 'flow-worse', 'flow-invalid',
+  'bundle-request', 'convergence-bound', 'convergence-identity', 'divergence-digest', 'flow-proposal', 'flow-host', 'flow-worse', 'flow-invalid',
   'ruler-changed', 'executor-fault', 'deflake-parked', 'flake-recurring', 'apply-dropped',  'revision-notice',
 ] as const satisfies readonly NeedsUserReason[];
 export type NeedsUserReason = (typeof NEEDS_USER_REASONS)[number];

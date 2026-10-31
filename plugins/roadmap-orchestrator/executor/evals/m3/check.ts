@@ -301,8 +301,8 @@ function bundleDivergences(run: Run): Verdict {
   const problems: string[] = [];
   let v2 = false;
   for (const b of bundleRevisions(run)) {
-    if (b.source?.type !== 'bundle') continue;
-    const job = b.source.job;
+    const job = factsOf(run, 'divergence').find((d) => d.preimage.planRev === b.rev - 1)?.job;
+    if (job === undefined) continue;
     const ds = factsOf(run, 'divergence').filter((d) => d.job === job);
     if (ds.length === 0) problems.push(`${job}'s revision ${b.rev} recorded no divergence`);
     if (ds.some((d) => d.cites.includes('V-2' as never))) v2 = true;
@@ -317,7 +317,7 @@ function prevention(run: Run): Verdict {
   if (b?.branch !== 'P') return { pass: false, detail: `not branch P: ${b?.detail ?? 'no branch'}` };
   const problems: string[] = [];
   const disposer = factsOf(run, 'plan-applied').find((r) => r.changes.some((x) => DISPOSALS.includes(x.type) && 'unit' in x && x.unit === 'tidy'));
-  const job = disposer?.source?.type === 'bundle' ? disposer.source.job : null;
+  const job = null;
   const ds = factsOf(run, 'divergence').filter((d) => d.job === job);
   if (disposer?.source?.type === 'command') {
     const body = readCommand(run.runDir, disposer.source.command, run.arc).file.body;

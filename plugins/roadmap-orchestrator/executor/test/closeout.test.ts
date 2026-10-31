@@ -25,7 +25,6 @@ async function requested(): Promise<Readonly<{a:CorpusHolisticArc}>> {const a=aw
 function settled(r: ArcRun) {
   const fold = r.journal.view.holistic();
   return {
-    amendments: factsOfKind(r, 'corpus-amendment').map((f) => f.source),
     declined: factsOfKind(r, 'needs-user-declined').map((f) => [f.id, f.choice]),
     debt: factsOfKind(r, 'debt-banked').map((f) => [f.bankReason, f.source]),
     findings: fold.findings.map((f) => [f.id, f.state, f.last?.state === 'ruled' ? f.last.by : null]),
@@ -33,7 +32,6 @@ function settled(r: ArcRun) {
 }
 
 const expected = () => ({
-  amendments: [],
   declined: [],
   debt: [['finding-deferred', { type: 'finding', finding: 'F-1' }]],
   findings: [['F-1', 'ruled', { type: 'code', reason: 'close-out' }], ['F-2', 'open', null]],

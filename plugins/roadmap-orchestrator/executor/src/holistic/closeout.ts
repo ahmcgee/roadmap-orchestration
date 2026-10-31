@@ -16,7 +16,7 @@
 import { crashPoint } from '../core/crash.ts';
 import { mintDebt } from '../debt/mint.ts';
 import { baselineDebtAt } from '../phase0/rows.ts';
-import type { RevisionContext } from './bundle.ts';
+import type { RevisionContext } from './admission.ts';
 import { isActive, ruleFinding } from './findings.ts';
 
 /** The option an unanswered request is declined with: its `reject` or `decline`, null when it offers neither. */

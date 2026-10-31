@@ -2,46 +2,20 @@ import { type SystemName, systemName } from '../core/ids.ts';
 // Strict role-result schemas and validators. Verifier pre-build and diagnosis modes annotate;
 // gate mode approves, requests a fix or escalates. Builders report grounding and experiments;
 // campaign audits report findings and root requests. Cross-field checks supplement JSON Schema.
-import { type ClauseId, type FailureModeId, type FindingId, type JourneyId, type LaneId, type ObligationId, type ReviewFindingId, type RuleId, type RulingId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, answerIds, clauseId, failureModeId, findingId, journeyId, laneId, obligationId,  reviewFindingId, ruleId, rulingId, unitId, visionClauseId } from '../core/ids.ts';
-import { type JsonValue,canonicalJson } from '../core/json.ts';
-import { BOUND_FIELDS,type Bounds,type FailureRef,type NoteDef,SPEC_SCHEMA,SPEC_SECTIONS,type SpecPatchOp,failureRef,specM1,specPatchOp } from '../core/records.ts';
+import { type ClauseId, type FailureModeId, type FindingId, type JourneyId, type LaneId, type ObligationId, type ReviewFindingId, type Sha, type UnitId, type VisionClauseId, answerIds, clauseId, findingId, journeyId, laneId, obligationId, reviewFindingId, unitId, visionClauseId } from '../core/ids.ts';
+import { type JsonValue } from '../core/json.ts';
+import { type NoteDef, SPEC_SCHEMA, specM1 } from '../core/records.ts';
 import { type ReviewDispute,reviewDispute } from '../core/review.ts';
-import { Fields, type Read, SchemaError, answerSet, arrayOf, assertUnique, envName, int, literal, nullable, object, oneOf, positive, str, tagged, text } from '../core/validate.ts';
+import { Fields, type Read, SchemaError, arrayOf, assertUnique, envName, int, literal, nullable, object, oneOf, str, tagged, text } from '../core/validate.ts';
 import { type RepoPath,type RepoPattern,matchesPattern,repoPath,repoPattern } from '../core/values.ts';
 import { FLOW_REPORTERS,type FlowOutput,flowOutput } from '../flow/types.ts';
-import {
-ACTIVATIONS,type Activation,
-type DocRef,
-FINDING_DISPOSITIONS,
-type FindingDisposition,type FindingSeverity,
-FINDING_SEVERITIES as LENS_SEVERITIES,
-OWNER_ONLY_CLASSES,
-type ObligationAnchor,
-type ObservationKey,type OwnerOnlyClass,
-PACK_DISPOSITIONS,PACK_SEVERITIES,
-type PackDisposition,
-type PackSeverity,
-type PackTarget,
-type WitnessRef,observationKey,packDisposition,packTarget
-} from '../holistic/types.ts';
-import { REENTRY_POINTS,type ReentryPoint } from '../input/plan.ts';
+import { type FindingSeverity, FINDING_SEVERITIES as LENS_SEVERITIES, PACK_DISPOSITIONS, PACK_SEVERITIES, type PackDisposition, type PackSeverity, type PackTarget, packDisposition, packTarget } from '../holistic/types.ts';
 
 import { type OrderingWait,orderingWait } from '../core/ordering.ts';
 
-import {
-type ClauseLanes,type DesignChange,type DesignExperiment,type FailureModeProof,type NewSystem,
-UNIT_KINDS,
-type UnitKind,type Verification,
-clauseLanes,designChange,designExperiment,failureModeProof,
-newSystem,verification,
-} from '../core/design.ts';
-import { STALE_OUTCOMES,type StaleAnswer,staleAnswer } from '../core/stale.ts';
+import { type ClauseLanes, type DesignChange, type DesignExperiment, type FailureModeProof, type NewSystem, type UnitKind, type Verification } from '../core/design.ts';
 import type { MutantEdit } from '../git/mutant.ts';
-import {
-BUILD_CLASSES,JUDGMENT_SEATS,MODEL_CLASSES,type ModelClass,
-RISK_TIERS,ROLES,type RiskTier,type Role,SEATS,type Seat,
-classAt,
-} from '../routing/types.ts';
+import { BUILD_CLASSES, RISK_TIERS, type Role } from '../routing/types.ts';
 import { specBytes } from '../spec/spec.ts';
 
 // ---------------------------------------------------------------------------------------------------
@@ -342,7 +316,7 @@ const rulingList: Read<readonly DisputeRuling[]> = (value, path) => {
   assertUnique(rulings, (r) => r.finding, path);
   return rulings;
 };
-const unreviewedEntry: Read<GateUnreviewed> = object((f) => ({ path: f.get('path', str), reason: f.get('reason', str) }));
+
 const clusterEntry: Read<GateCluster> = object((f) => ({
   id: f.get('id', str), paths: f.get('paths', arrayOf((v, p) => repoPattern(v, p), { nonEmpty: true })), review: f.get('review', oneOf(CLUSTER_REVIEWS)),
 }));
@@ -397,7 +371,6 @@ export function clusterCoverage(clusters: readonly GateCluster[], paths: readonl
 
 // ---------------------------------------------------------------------------------------------------
 // M3 shared pieces
-
 
 const S_EVIDENCE_LINES = sArr(sObj({ path: S_STR, line: S_INT }));
 const vid: Read<VisionClauseId> = (v, p) => visionClauseId(v, p);
@@ -474,37 +447,6 @@ export function validateLensOutput(value: unknown): LensOutput {
 }
 
 // ---------------------------------------------------------------------------------------------------
-export const BUNDLE_OP_KINDS = [
-  'admit', 'patch-spec', 'reenter', 'cut', 'route', 'limits', 'obligation-split', 'invalidate-approval', 'request',
-] as const;
-export type BundleOpKind = (typeof BUNDLE_OP_KINDS)[number];
-export type SplitChild = Readonly<{
-  id: ObligationId; statement: string; docRef: DocRef | null; rule: RuleId | null; witness: WitnessRef; activation: Activation; deliveredBy: readonly UnitId[];
-}>;
-export type BundleOpBody =
-  /**
-   * `targets` (M4a rev 3, LR-m): the corpus rules the unit adds or changes behaviour for (empty only for pure test,
-   * witness or doc work); an answer recorded before it reads as none (`admitTargetsDefault`).
-   */
-  | Readonly<{
-    op: 'admit'; unit: Readonly<{ id: UnitId; risk: RiskTier; systems: readonly SystemName[]; after: readonly UnitId[]; origin: 'checkpoint' | 'repair' }>; spec: string;
-    targets: readonly RuleId[];
-  }>
-  | Readonly<{ op: 'patch-spec'; unit: UnitId; patch: readonly SpecPatchOp[] }>
-  /**
-   * `fixes` (arc feedback 2026-10-16): the failure it fixes; null when the lineage recorded none; `unrecorded` (the key absent)
-   * on an answer recorded before it (`reenterFixesDefault`), adopted as recorded.
-   */
-  | Readonly<{ op: 'reenter'; unit: UnitId; reenters: UnitId; enterAt: ReentryPoint | null; reset: string | null; fixes: FailureRef | null }>
-  | Readonly<{ op: 'cut'; unit: UnitId; reason: string }>
-  | Readonly<{ op: 'route'; unit: UnitId; seats: readonly Readonly<{ role: Role; tier: Seat; class: ModelClass }>[] }>
-  | Readonly<{ op: 'limits'; unit: UnitId | null; limits: readonly Readonly<{ field: keyof Bounds | 'convergenceK'; value: number }>[] }>
-  | Readonly<{ op: 'obligation-split'; obligation: ObligationId; children: readonly SplitChild[] }>
-  | Readonly<{ op: 'invalidate-approval'; unit: UnitId }>
-  | Readonly<{ op: 'request'; class: OwnerOnlyClass; summary: string }>;
-export type BundleOp = BundleOpBody & Readonly<{ cites: readonly VisionClauseId[]; evidence: readonly string[] }>;
-export type CorpusAmendmentProposal = Readonly<{ rules: readonly RuleId[]; proposal: string; why: string }>;
-export type CheckpointIds = Readonly<{ arcLanes: readonly LaneId[]; splittable: readonly ObligationId[]; obligations: readonly ObligationId[] }>;
 // ---------------------------------------------------------------------------------------------------
 // packReview (M4a, OR-Q16): the pack's blocking findings hold admission until acked or superseded; notes go to the brief.
 

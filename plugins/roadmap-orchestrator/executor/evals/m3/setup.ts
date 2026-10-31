@@ -323,7 +323,7 @@ export async function setup(dir: string): Promise<void> {
   const pinned = await corpusPin({ repo: absPath(l.repo), commit: baseline, baseline: sha(baseline), out: absPath(l.pin) });
   if (pinned.kind !== 'pinned') throw new Error(`corpus pin refused: ${JSON.stringify(pinned.rejection)}`);
   write(l.phase0, json({
-    schema: 'roadmap/phase0-m4', curation: [], corpusDivergences: [], questions: [], debt: [], amendments: [],
+    schema: 'roadmap/phase0-m4', curation: [], corpusDivergences: [], questions: [], debt: [],
     slice: { advances: ADVANCES, why: 'the first slice: the whole month-end story' },
   }));
 

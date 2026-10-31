@@ -66,15 +66,15 @@ import { systemName } from '../src/core/ids.ts';
 //                       plan-declared derived output, is not inlined: the answer validates, a not-inlined file is read or
 //                       grepped (main session or subagent), the init event lists Agent, result.modelUsage is present and
 //                       its per-model costs sum to total_cost_usd. Needs the merged dev.12 tree (W1 bounded diff, W2 Agent)
-//   walk.cli            (dev.13) one real walkthrough through the production walk job on a two-step CLI product (no browser),
-//                       the real claude behind the fake's `real` act on the walkthrough seat (frontier) with the acting-judge
+//   walk.cli            (dev.13) one real experience verdict through the production walk job on a two-step CLI product (no browser),
+//                       the real claude behind the fake's `real` act on the experience verdict seat with the acting-judge
 //                       argv: the report validates (schema and the walk's own checks), the init event lists Bash and Write
 //                       and no MCP server, the session ended exited or reported, and nothing is left behind (no open intent,
 //                       no walk checkout, no live process of the arc); its findings are printed, not graded
-//   polish.compare      (dev.13, agent D) one real polish judge through the production compare job on two tiny instances
+//   polish.compare      (dev.13, agent D) one real experience comparison through the production compare job on two tiny instances
 //                       (before: the greeter answering 500 for want of a greeting; after: a polish unit that configures it
 //                       and says so in the reference), u1, walk-1 and the polish unit through the fakes, the real claude behind
-//                       the fake's `real` act on the polishJudge seat (frontier) with the acting-judge argv: the answer
+//                       the fake's `real` act on the experience verdict seat with the acting-judge argv: the answer
 //                       validates (schema, every cited file in the evidence dirs) and is recorded as tweak-judged{judged},
 //                       the init event lists Bash and no MCP server, the session ended exited or reported, both instances
 //                       came up on distinct ports, and nothing is left behind; its decision is printed, not graded
@@ -94,9 +94,7 @@ import { join } from 'node:path';
 import { freshClaudeImplementerSession,freshJudgmentSession } from '../src/backends/argv.ts';
 import { containmentFor,detectContainmentMode } from '../src/contain/detect.ts';
 import { scan } from '../src/contain/proc.ts';
-import {
-type ImplementerSessionId,arcId,envId,invocationId,jobId,laneId,laneRev,obligationId,proposalId,questionId,ruleId,rulingId,sha,sha256,specRev,stationId,unitId,visionClauseId,
-} from '../src/core/ids.ts';
+import { type ImplementerSessionId, arcId, envId, invocationId, jobId, laneId, laneRev, obligationId, proposalId, questionId, ruleId, sha, sha256, specRev, stationId, unitId, visionClauseId } from '../src/core/ids.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import { canonicalJson } from '../src/core/json.ts';
 import { openJournal } from '../src/core/log.ts';
@@ -119,7 +117,7 @@ import {
 type BackendInvocation,type InvocationContext,type Invoked,SMOKE_SCHEMA,backendEnv,invokeBackend,invokeCommand,smoke,smokeRejections,
 } from '../src/preflight/smoke.ts';
 import { promptFor } from '../src/prompts/index.ts';
-import type { ArchitectureInput,BuildInputs,RoleInputs,LensInputs,ObligationView,PackReviewPromptInputs,VerifierInputs,VisionInput } from '../src/prompts/inputs.ts';
+import type { ArchitectureInput, BuildInputs, RoleInputs, ObligationView, PackReviewPromptInputs, VerifierInputs, VisionInput } from '../src/prompts/inputs.ts';
 import {
 BUILD_SCHEMA,
 ROLE_VALIDATORS,type RoleOutputs,buildOutput,
@@ -127,7 +125,7 @@ ROLE_VALIDATORS,type RoleOutputs,buildOutput,
 } from '../src/prompts/schemas.ts';
 import { boundAt } from '../src/routing/classes.ts';
 import { type ResolvedRouting,arcStack,resolveRouting } from '../src/routing/layers.ts';
-import { type Backend,type JudgmentSeat,type Role,type SeatOf,type SeatRef,atSeat } from '../src/routing/types.ts';
+import { type Backend, type Role, type SeatOf, type SeatRef, atSeat } from '../src/routing/types.ts';
 import { runnerFiles } from '../src/runner/files.ts';
 import { holisticContexts } from '../src/schedule/scheduler.ts';
 import { runCompare } from '../src/walk/compare.ts';
@@ -603,7 +601,7 @@ async function main(): Promise<void> {
     census: [{ rule: 'T-1', state: { type: 'obligation', id: 'I-1' } }, { rule: 'T-2', state: { type: 'out-of-slice' } }],
   };
   const phase0Json = {
-    schema: 'roadmap/phase0-m4', curation: [], corpusDivergences: [], questions: [], debt: [], amendments: [],
+    schema: 'roadmap/phase0-m4', curation: [], corpusDivergences: [], questions: [], debt: [],
     slice: { advances: ['V-1'], why: 'The smallest conversion first.' },
   };
   try {
@@ -643,7 +641,6 @@ async function main(): Promise<void> {
     spec: { unit: unitId('u-hello'), rev: specRev(1), markdown: buildSpec }, contracts: [], index: MINI_INDEX, method: {traits: [], markers: [], unitKind: 'module', expensiveLanes: false, ui: false}, fastLanes: [unitLane], suiteLanes: [],
     evidenceDir, worktree, systems: [systemName('app')], fixRound: null, witnessChecks: [], milestones: null, browser: null, handover: null,
   });
-
 
   // (4) roadmap witness-check over a real node --test run with the node-test witness reporter.
   await rev3('m4a3.witness-check', async () => {
@@ -807,9 +804,9 @@ async function main(): Promise<void> {
     report(u !== null && u.check === 'ok', 'gate.bounded.cost-check', `total_cost_usd=${u?.totalUsd ?? null} per-model sum=${u === null ? null : Object.values(u.byModel).reduce((a, m) => a + m.costUsd, 0)}`);
   });
 
-  // dev.13: one real walkthrough through the production walk job (src/walk/walk.ts), as an arc runs it: u1 merges through the
+  // dev.13: one real experience verdict through the production walk job (src/walk/walk.ts), as an arc runs it: u1 merges through the
   // fakes, then walk-1 brings up a two-step CLI product (setup, no serve entry: nothing long-lived) and the real claude (the
-  // fake's `real` act) walks its two shell journeys on the walkthrough seat (frontier) with the acting-judge argv. Graded
+  // fake's `real` act) walks its two shell journeys on the experience verdict seat with the acting-judge argv. Graded
   // on the contract only: the report validates (schema and the walk's own checks, so every cited evidence file exists in
   // the evidence dir), the session had a shell and no MCP server, its final report ended it, and nothing is left behind
   // (no open intent, no checkout, no live process of the arc). What it found is printed, not graded (the role evals judge).
@@ -857,7 +854,7 @@ async function main(): Promise<void> {
     }
   });
 
-  // dev.13 agent D: one real polish judge through the production compare job (src/walk/compare.ts) on two tiny instances of
+  // dev.13 agent D: one real experience comparison through the production compare job (src/walk/compare.ts) on two tiny instances of
   // the greeter: before, the integration tip (GET / answers 500: no greeting); after, the polish unit tw-keep, which
   // configures the greeting and says so in the design reference. Everything before the judge runs on the fakes. Graded on
   // the contract only (the answer validates and is recorded, a shell and no MCP server, its final answer ended it, both

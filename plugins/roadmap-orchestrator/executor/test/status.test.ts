@@ -107,13 +107,11 @@ describe('status.subset', () => {
       convergence: null,
       findings: { active: [], metrics: [], released: { checkpoint: 0, p3: 0, regress: 0, settled: 0, closeOut: 0 }, refusedAdmits: { regress: 0, settled: 0 } },
       audit: null,
-      owed: { audits: [] },
       completion: { planRev: null, head: null, active: false, sealed: false, notSealed: 'not completed', unmet: ['units-open'] },
       holds: [],
       packReview: null,
       corpus: null,
       census: null,
-      amendments: [],
       debt: null,
       chain: null,
       timings: [],
@@ -131,7 +129,7 @@ describe('status.subset', () => {
   test('after a completed run: state, owner, units, spend by role and by model, containment and its narrowed guarantee', () => {
     const s = after_;
     assert.deepEqual(Object.keys(s).sort(), [
-      'admits', 'amendments', 'answers', 'arc', 'audit', 'census', 'chain', 'commands', 'completion', 'convergence', 'corpus', 'debt', 'decisionsSince', 'deferred', 'demo',
+      'admits', 'answers', 'arc', 'audit', 'census', 'chain', 'commands', 'completion', 'convergence', 'corpus', 'debt', 'decisionsSince', 'deferred', 'demo',
       'divergences', 'drift', 'edges', 'findings', 'flow', 'holds', 'holistic', 'host', 'knownDefects', 'milestones', 'needsUser', 'notYetTrue', 'nowTrue', 'opportunities', 'owed',
       'packReview', 'parkedBackends', 'plan', 'rejection', 'routing', 'run', 'runOnly', 'spend', 'target', 'timings', 'units', 'vision', 'waived',
     ]);
@@ -179,12 +177,12 @@ describe('status.subset', () => {
     assert.deepEqual(s.completion, { planRev: 1, head: git(r.repo, 'rev-parse', 'main'), active: true, sealed: true, notSealed: null, unmet: [] });
     assert.ok(s.host.log.bytes > 0 && s.host.log.events > 0 && !s.host.log.compactionDue, JSON.stringify(s.host.log));
     // M4a: an arc outside the corpus layer has vacuous corpus keys; its timings are its stages' (LR-c).
-    assert.deepEqual([s.holds, s.packReview, s.corpus, s.census, s.amendments, s.debt, s.chain], [[], null, null, null, [], null, null]);
+    assert.deepEqual([s.holds, s.packReview, s.corpus, s.census, s.debt, s.chain], [[], null, null, null, null, null]);
     assert.ok(s.timings.some((t) => t.stage === 'build'), JSON.stringify(s.timings));
     for (const t of s.timings) assert.ok(t.count >= 1 && t.p50Ms <= t.maxMs, JSON.stringify(t));
   });
 
-  
+
 
 });
 
@@ -519,7 +517,6 @@ test('status.parks: a retryable park shows its targets, what is outstanding, its
   }
 });
 
-
 test('status.certification: timeout red spends allowance, next series is red-first, and an unchanged pass is visibly reused', T, async () => {
   const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), codexStep([]), gateStep({ decision: 'approve' })],
     units: [{ id: 'u1', lanes: [
@@ -553,7 +550,6 @@ test('status.certification: timeout red spends allowance, next series is red-fir
     assert.ok(u.certification?.lanes[0]?.inv);
   } finally { rr.journal.close(); }
 });
-
 
 test('status.ordering-park exposes recorded blockers and their outstanding merges', () => {
   const d = setupArc({ steps: [], units: [{ id: 'u1' }, { id: 'u2' }] });
