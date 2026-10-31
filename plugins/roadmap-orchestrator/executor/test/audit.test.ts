@@ -38,7 +38,7 @@ import { VISION,obligationsJson } from './fixtures/brake-common.ts';
 import { fakeDocs } from './fixtures/docs-fake.ts';
 import { API_OP,barrierSuite,closedAs,ruleRecord,submitRule } from './fixtures/publish-common.ts';
 import { SCENARIO_TIMEOUT_MS,admitAll } from './fixtures/stage-common.ts';
-import { type ArcRun,contextFor,stepUntil,visionApplyBody } from './fixtures/unit-common.ts';
+import { type ArcRun,contextFor,stepUntil,syncInputs,visionApplyBody } from './fixtures/unit-common.ts';
 import { reached,release } from './helpers/barrier.ts';
 import { assertFired,writeTrigger } from './helpers/crash.ts';
 import { jobRepairStep,lensAnswer,lensStep } from './helpers/holistic.ts';
@@ -695,6 +695,7 @@ describe('coverage', () => {
       assert.deepEqual(await runUnit(ctx, r.unit('u2'), admitAll), { kind: 'merged' });
       const S2 = head(d.repo);
       assert.deepEqual(watermarks(ctx, L2), [['invariants', S1, true], ['vision', S1, true]], 'S1→S2 is uncovered when the vision changes');
+      syncInputs(r);
       const visionFile = join(d.planPath, '..', 'vision.json');
       const vision = JSON.parse(readFileSync(visionFile, 'utf8')) as typeof VISION;
       writeFileSync(visionFile, JSON.stringify({ ...vision, rev: 2, clauses: [...vision.clauses, { id: 'V-3', kind: 'good', text: 'Errors are explicit.', rank: null, state: 'active' }] }));

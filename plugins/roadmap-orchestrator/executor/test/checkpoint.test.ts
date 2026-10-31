@@ -31,7 +31,7 @@ type Wired,admitOp,applyPlanEdit,applyVision,checkpointArc,checkpointContext,com
 } from './fixtures/checkpoint-common.ts';
 import { ruleRecord,submitRule } from './fixtures/publish-common.ts';
 import { SCENARIO_TIMEOUT_MS,admitAll,planCheckStep,serialRuntime } from './fixtures/stage-common.ts';
-import { type ArcRun,appendSteps,applyBody,codexStep,contextFor,gateStep,mulBuild,stepUntil } from './fixtures/unit-common.ts';
+import { type ArcRun,appendSteps,applyBody,codexStep,contextFor,syncInputs,gateStep,mulBuild,stepUntil } from './fixtures/unit-common.ts';
 import { reached,release } from './helpers/barrier.ts';
 import { assertFired,writeTrigger } from './helpers/crash.ts';
 import { VALID_OP,checkpointAnswer,checkpointStep,interpretationOnlyNoop,jobRepairStep,lensStep,twoOpBundleSecondInvalid } from './helpers/holistic.ts';
@@ -55,6 +55,15 @@ const itemsOf = (r: ArcRun, reason: string) => r.journal.view.needsUser().filter
 async function ack(w: Wired, r: ArcRun, id: string, choice: string | null = null): Promise<void> {
   const out = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'ack', needsUser: id as NeedsUserId, choice }));
   assert.equal(out.kind, 'applied', JSON.stringify(out));
+}
+/** Optionless requests close through an action on their arc, never a bare acknowledgement. */
+async function completeOwnerRequest(w: Wired, r: ArcRun, id: string): Promise<void> {
+  const rejected = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, {type: 'ack', needsUser: id as NeedsUserId, choice: null}));
+  assert.ok(rejected.kind === 'rejected' && rejected.reason.includes('has no options'), JSON.stringify(rejected));
+  assert.equal(r.journal.view.ackOf(id as NeedsUserId), null);
+  syncInputs(r);
+  await applyPlanEdit(r, w, (p) => {p['direction'] = `Owner request ${id} resolved; continue within the slice.`;});
+  assert.notEqual(r.journal.view.ackOf(id as NeedsUserId), null, 'the arc action closes its request');
 }
 const barrier = { type: 'barrier', name: 'ckpt', timeoutMs: 120_000 } as const;
 
@@ -490,7 +499,7 @@ describe('the activation checks', () => {
       assert.equal(r.journal.view.planApplied()!.rev, rev, 'nothing applied, the valid limits op included');
       assert.deepEqual(factsOfKind(r, 'divergence'), []);
       const vision = factsOfKind(r, 'checkpoint-inputs')[0]!.visionSha256;
-      await ack(w, r, out.decision.needsUser);
+      await completeOwnerRequest(w, r, out.decision.needsUser);
       assert.deepEqual([...quiescentGenerations(r.journal.view, vision)], [1], 'the owner answered: the generation is quiescent');
       assert.deepEqual(await runCheckpoint(ctx), { kind: 'none' });
     } finally {
@@ -519,7 +528,7 @@ describe('the activation checks', () => {
       assert.deepEqual(itemsOf(r, 'owner-request').map((n) => n.id), [first], 'raised once');
       const other = await asked();
       assert.notEqual(other, first, 'a different request is its own item');
-      await ack(w, r, first);
+      await completeOwnerRequest(w, r, first);
       const again = await asked();
       assert.ok(again !== first && again !== other, 'answered, the same request is asked anew');
       assert.match(item(r, again).summary, /^Checkpoint ckpt-4 asks for acts only the owner may take: \[config\] provide the walk key\./);

@@ -184,7 +184,8 @@ describe('the flaky ledger', () => {
       assert.deepEqual(await run(r, 'u2'), { kind: 'merged' });
       assert.equal(pending(r), false, 'no flake since the deflake merged');
       raiseDeflakeParked(w.stage);
-      assert.equal(r.journal.view.opsOf('needsuser.raise').length, 0, 'no item');
+      const items = r.journal.view.opsOf('needsuser.raise').map((i) => readNeedsUser(r.ctx.runDir, i.expect.id)!);
+      assert.deepEqual(items.map((i) => [i.reason, i.blocking]), [['revision-notice', false]], 'only the deflake revision notice');
     } finally {
       r.journal.close();
     }
@@ -235,9 +236,10 @@ describe('the flaky ledger', () => {
       assert.deepEqual(await mint(r), { kind: 'applied', admitted: [], recurring: 1 });
       assert.equal(planOf(r).units.filter((u) => u.origin === 'deflake').length, 2, 'no third deflake unit');
       const raises = r.journal.view.opsOf('needsuser.raise');
-      assert.equal(raises.length, 1);
-      const item = readNeedsUser(r.ctx.runDir, raises[0]!.expect.id);
-      assert.ok(item !== null);
+      const items = raises.map((i) => readNeedsUser(r.ctx.runDir, i.expect.id)!);
+      assert.deepEqual(items.map((i) => [i.reason, i.blocking]), [['revision-notice', false], ['revision-notice', false], ['flake-recurring', false]]);
+      const item = items[2];
+      assert.ok(item !== undefined && item !== null);
       assert.deepEqual([item.reason, item.blocking, item.subject], ['flake-recurring', false, { type: 'arc' }]);
       assert.ok(item.evidence.includes(invocationDir(r.ctx.runDir, third.event.red)));
       assert.match(item.summary, /deflake-1 and deflake-2/);

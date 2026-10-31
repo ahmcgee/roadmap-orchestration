@@ -116,7 +116,7 @@ export async function fixture(dir: string, set: SetName): Promise<Fixture> {
   const l = layout(resolve(dir));
   const spec = estateSpec(set);
   const id = (value: string): string => estateId(set, value);
-  for (const d of [l.product, l.inputs, l.worktrees, l.ghConfig, l.xdgConfig, join(l.inputs, '_next')]) mkdirSync(d, { recursive: true });
+  for (const d of [l.product, l.inputs, l.worktrees, l.ghConfig, l.xdgConfig, join(l.inputs, 'drafts')]) mkdirSync(d, { recursive: true });
   write(l.gitConfig, '[user]\n name = Register Owner\n email = owner@example.invalid\n[commit]\n gpgsign = false\n');
   write(join(l.product, 'package.json'), json({ name: spec.key.domain.toLowerCase(), type: 'module', scripts: { test: 'node --test test/' } }));
   for (const [path, bytes] of Object.entries(productFiles(set))) write(join(l.product, path), bytes);
@@ -134,7 +134,7 @@ export async function fixture(dir: string, set: SetName): Promise<Fixture> {
   const obs = Array.from({ length: 57 }, (_, i) => {
     const n = i + 1;
     const o = obligation(`I-${n}`, id(`T-${n}`), spec.rules[id(`T-${n}`)]!, n === 52 ? 'One internal comment is grammatical English.' : spec.rules[id(`T-${n}`)]!) as Record<string, unknown>;
-    if (n >= 54 && n <= 56) o['state'] = { type: ['retired', 'waived', 'deferred'][n - 54], ruling: `C-${n - 24}` };
+    if (n >= 54 && n <= 56) o['state'] = { type: ['retired', 'waived', 'deferred'][n - 54], reason: `Prior disposition recorded in C-${n - 24}`, rev: 1 };
     return o;
   });
   const parent = obligation('I-58', 'T-58', spec.rules['T-58']!) as Record<string, unknown>;

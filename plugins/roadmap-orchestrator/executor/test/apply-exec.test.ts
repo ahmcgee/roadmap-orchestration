@@ -379,8 +379,9 @@ test('apply.exec-respawn-ignores-unapplied-edit: after an executor crash the res
   assert.deepEqual(journalOf(r).view.plannedUnits(), ['u1'], 'the edit was never applied');
   assert.deepEqual(outcomes(r, 'u9'), []);
 
+  appendSteps(r, SMOKE_DEFAULT);
   const again = await startExec(r).exit;
-  assert.equal(again.code, 0, again.stderr);
+  assert.equal(again.code, 0, again.stdout + again.stderr);
   assert.deepEqual(reasonOf(again), {kind: 'complete', units: [{unit: 'u1', result: 'merged'}]});
   assert.deepEqual(journalOf(r).view.plannedUnits(), ['u1'], 'restart never applies local edits');
   assert.deepEqual(outcomes(r, 'u9'), []);

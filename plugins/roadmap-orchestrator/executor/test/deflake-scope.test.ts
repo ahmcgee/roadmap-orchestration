@@ -121,6 +121,17 @@ function commitDev17Unit(a: CorpusArc, j: OpenJournal): void {
   commitRevisionNow(j, runDir, payloadOf(verdict.draft, { type: 'deflake' }), { type: 'arc' });
 }
 
+/** Refresh editable inputs before a CAS edit, preserving executor-minted units. */
+function syncOwnerInputs(a: CorpusArc, j: OpenJournal): void {
+  const dir = runDirOfArc(a);
+  const force = requirePlanInForce(dir, j.view);
+  const files = inForceFiles(dir, j.view, force, revisionInForce(dir, force), a.planPath, a.repo);
+  writeFileSync(a.planPath, files.planBytes);
+  for (const file of [...files.specs.values(), files.ledger, files.obligations, files.vision]) if (file?.bytes != null) {
+    mkdirSync(join(file.path, '..'), {recursive: true}); writeFileSync(file.path, file.bytes);
+  }
+}
+
 /** `evaluateApply` of the owner's files as they stand, from their latest apply. */
 const ownerApply = (a: CorpusArc, j: OpenJournal) => {
   const files = filesOf(a);
@@ -163,12 +174,14 @@ describe('deflake scope', () => {
       assert.deepEqual(minted.scope, ['lib/**', 'src/**', 'test/**'], 'harbour and quay, which it depends on; not signage');
       assert.deepEqual(minted.deflake, { keys: [{ type: 'test', lane: 'journey', testId: BERTHS_TEST }] });
       const [item, ...more] = items(a, j);
-      assert.deepEqual(more, []);
+      assert.deepEqual(more.map(({reason, blocking, subject, summary, options}) => ({reason, blocking, subject, summary, options})),
+        [{reason: 'revision-notice', blocking: false, subject: {type: 'arc'}, summary: 'Executor revision 2 (deflake) is in force.', options: []}]);
       assert.deepEqual([item!.reason, item!.blocking, item!.subject], ['deflake-unscoped', false, { type: 'arc' }]);
       assert.match(item!.summary, /for lane suite: its scope \*\* would reach the corpus file set/);
       assert.match(item!.recommendation, /systems/);
       assert.equal(deflakeJobPending(ctx), false, 'the unscoped group waits on its item');
 
+      syncOwnerInputs(a, j);
       // The owner's unrelated edit lands with the deflake unit in force.
       editPlan(a, (p) => ({ ...p, units: (p['units'] as Json[]).map((u) => ({ ...u, risk: 'med' })) }));
       const verdict = await ownerApply(a, j);
@@ -219,6 +232,7 @@ describe('deflake scope', () => {
     const { a, j } = await arcInForce({ chain: { k: 1 } });
     try {
       commitDev17Unit(a, j);
+      syncOwnerInputs(a, j);
       editPlan(a, (p) => ({ ...p, units: (p['units'] as Json[]).map((u) => ({ ...u, risk: 'med' })) }));
       const building = await ownerApply(a, j);
       assert.equal(building.kind, 'rejected');

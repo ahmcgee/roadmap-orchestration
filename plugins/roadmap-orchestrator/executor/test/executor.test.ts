@@ -10,6 +10,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { after, test } from 'node:test';
+import { exportInputs } from '../src/commands/inputs.ts';
+import { terminalReceipt } from '../src/commands/queue.ts';
+import { commandId } from '../src/core/ids.ts';
 import type { Fact } from '../src/core/events.ts';
 import { arcId, sha, unitId } from '../src/core/ids.ts';
 import { openJournal } from '../src/core/log.ts';
@@ -23,7 +26,7 @@ import { resourceTable } from '../src/resources/reserve.ts';
 import { CONTINUE_DIRECTIVE, NO_SESSION_NOTE } from '../src/prompts/directives.ts';
 import { reached, release } from './helpers/barrier.ts';
 import { runFixture } from './helpers/proc.ts';
-import { git } from './helpers/repo.ts';
+import { git, tmpDir } from './helpers/repo.ts';
 import { type Step, readCalls } from './helpers/scenario.ts';
 import { assertNoSurvivors } from './helpers/reap.ts';
 import { planCheckStep } from './fixtures/stage-common.ts';
@@ -46,6 +49,23 @@ const facts = (r: ExecRun): readonly Fact[] => journalOf(r).events.flatMap((e) =
 const started = (r: ExecRun): readonly number[] => facts(r).flatMap((f) => (f.kind === 'executor-started' ? [f.generation] : []));
 const has = (r: ExecRun, outcome: string): boolean => outcomes(r).includes(outcome);
 const killsOf = (r: ExecRun) => journalOf(r).view.opsOf('proc.kill').map((k) => k.expect.reason);
+
+/** Resolve an optionless unit park by cutting its subject through a root CAS apply. */
+async function cutPark(r: ExecRun, item: string): Promise<void> {
+  const ack = JSON.parse((await cli(r, ['ack', item])).stdout) as {command: string};
+  await until(() => terminalReceipt(absPath(r.runDir), commandId(ack.command)) !== null, WAIT_MS, 'the refused optionless ack');
+  const refused = terminalReceipt(absPath(r.runDir), commandId(ack.command));
+  assert.ok(refused?.state === 'rejected' && refused.reason.includes('has no options'), JSON.stringify(refused));
+  const dir = absPath(join(tmpDir('executor-cut'), 'export'));
+  const exported = await exportInputs({repo: absPath(r.repo), arc: arcId(r.arc), out: dir});
+  const file = join(dir, 'plan.json');
+  const plan = JSON.parse(readFileSync(file, 'utf8')) as {units: {id: string; cut?: {reason: string}}[]};
+  plan.units.find((u) => u.id === 'u1')!.cut = {reason: 'Drop the parked unit after reviewing its escalation.'};
+  writeFileSync(file, JSON.stringify(plan));
+  const applied = JSON.parse((await cli(r, ['apply', '--from', dir, '--rev', String(exported.planRev), '--reason', 'Drop the parked unit after reviewing its escalation.'])).stdout) as {command: string};
+  await until(() => terminalReceipt(absPath(r.runDir), commandId(applied.command)) !== null, WAIT_MS, 'the cut apply');
+  assert.equal(terminalReceipt(absPath(r.runDir), commandId(applied.command))?.state, 'applied');
+}
 
 /** A build that commits mul, then parks at barrier `name` until released or killed. */
 function blockedBuild(name: string, commit: boolean): Step {
@@ -209,7 +229,7 @@ test('executor.restart-clears-stop-not-pause: a restart after pause and stop cle
   assert.deepEqual(started(r), [1, 2]);
 });
 
-test('executor.blocking-needs-user-waits: a parked unit\'s blocking needs-user keeps the executor in its loop; ack lets it finish with the terminal summary', T, async (t) => {
+test('executor.blocking-needs-user-waits: a parked unit\'s blocking needs-user keeps the executor in its loop; a root cut closes the item and completes the arc', T, async (t) => {
   const r = setupExec(t, { steps: [...SMOKE_DEFAULT, planCheckStep({ decision: 'escalate' }), planCheckStep({ decision: 'escalate' })] });
   const run = startExec(r);
   let id = '';
@@ -225,10 +245,10 @@ test('executor.blocking-needs-user-waits: a parked unit\'s blocking needs-user k
   assert.equal(raise.length, 1, 'raised once, though the loop re-reads the arc every poll');
   assert.deepEqual(raise[0]!.parent, { type: 'stage', unit: 'u1', stage: 'plan-check', attempt: 2 }, 'parented by the attempt that parked the unit');
 
-  await cli(r, ['ack', id]);
+  await cutPark(r, id);
   const exit = await run.exit;
   assert.equal(exit.code, 0, exit.stderr);
-  assert.deepEqual(reasonOf(exit), { kind: 'complete', units: [{ unit: 'u1', result: 'parked', needsUser: id }] });
+  assert.deepEqual(reasonOf(exit), { kind: 'complete', units: [{ unit: 'u1', result: 'cut' }] });
   assert.equal(journalOf(r).view.opsOf('needsuser.raise').length, 1);
   assert.equal((await statusOf(r)).run.state, 'complete');
 });
@@ -308,10 +328,10 @@ test('executor.park-raised-promptly: a unit that parks has its needs-user raised
   release(r.scenarioDir, 'u2check');
   await until(() => journalOf(r).view.unit(U2).status === 'retired', WAIT_MS, 'u2 to merge');
   assert.equal(journalOf(r).view.opsOf('needsuser.raise').length, 1, 'raised once, not again when the arc returned');
-  await cli(r, ['ack', item]);
+  await cutPark(r, item);
   const exit = await run.exit;
   assert.equal(exit.code, 0, exit.stderr);
-  assert.deepEqual(reasonOf(exit), { kind: 'complete', units: [{ unit: 'u1', result: 'parked', needsUser: item }, { unit: 'u2', result: 'merged' }] });
+  assert.deepEqual(reasonOf(exit), { kind: 'complete', units: [{ unit: 'u1', result: 'cut' }, { unit: 'u2', result: 'merged' }] });
 });
 
 test('cli.start-wait-flag: start waits 240 s for readiness by default; --wait overrides it, and a start that stops waiting leaves the run going', T, async (t) => {
@@ -330,7 +350,7 @@ test('cli.start-wait-flag: start waits 240 s for readiness by default; --wait ov
   assert.equal((await statusOf(r)).run.state, 'complete');
 });
 
-test('executor.unit-park-does-not-hold-arc, executor.paused-unit-never-dispatched: with u1 parked on an open blocking unit-scoped needs-user, the arc waits at paused u2 without dispatching it; resumed, u2 runs; the run completes once the item is acknowledged', T, async (t) => {
+test('executor.unit-park-does-not-hold-arc, executor.paused-unit-never-dispatched: with u1 parked on an open blocking unit-scoped needs-user, the arc waits at paused u2 without dispatching it; resumed, u2 runs; the run completes once a root cut closes the item', T, async (t) => {
   const escalate = planCheckStep({ decision: 'escalate' });
   const r = setupExec(t, {
     units: [{ id: 'u1' }, { id: 'u2' }],
@@ -367,10 +387,10 @@ test('executor.unit-park-does-not-hold-arc, executor.paused-unit-never-dispatche
   assert.equal(run.child.exitCode, null, 'the executor waits on u1\'s item');
   assert.equal((await statusOf(r)).run.state, 'parked');
 
-  await cli(r, ['ack', item]);
+  await cutPark(r, item);
   const exit = await run.exit;
   assert.equal(exit.code, 0, exit.stderr);
-  assert.deepEqual(reasonOf(exit), { kind: 'complete', units: [{ unit: 'u1', result: 'parked', needsUser: item }, { unit: 'u2', result: 'merged' }] });
+  assert.deepEqual(reasonOf(exit), { kind: 'complete', units: [{ unit: 'u1', result: 'cut' }, { unit: 'u2', result: 'merged' }] });
   assert.deepEqual(outcomes(r, 'u2'), STRAIGHT);
 });
 
@@ -385,7 +405,7 @@ test('executor.arc-wide-park-holds-arc: an open arc-wide needs-user (recovery-re
   mkdirSync(r.runDir, { recursive: true });
   const journal = openJournal(absPath(r.runDir), arcId(r.arc));
   const item = raiseNeedsUser(journal, absPath(r.runDir), {
-    blocking: true, subject: { type: 'unit', unit: U2 }, reason: 'recovery-required', summary: 'seeded', recommendation: 'ack it', options: [], evidence: [],
+    blocking: true, subject: { type: 'unit', unit: U2 }, reason: 'recovery-required', summary: 'seeded', recommendation: 'Acknowledge the verified recovery.', options: [{id: 'acknowledge', label: 'Recovery verified'}], evidence: [],
   }, { type: 'arc' });
   journal.close();
 
@@ -398,7 +418,7 @@ test('executor.arc-wide-park-holds-arc: an open arc-wide needs-user (recovery-re
   assert.equal(run.child.exitCode, null);
   assert.deepEqual(outcomes(r, 'u1'), []);
 
-  await cli(r, ['ack', item]);
+  await cli(r, ['ack', item, '--choice', 'acknowledge']);
   const exit = await run.exit;
   assert.equal(exit.code, 0, exit.stderr);
   assert.deepEqual(reasonOf(exit), { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }, { unit: 'u2', result: 'merged' }] });

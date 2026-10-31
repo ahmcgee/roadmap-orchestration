@@ -345,11 +345,19 @@ function branchOf(l: Layout, events: readonly Event[]): Readonly<{ branch: Story
       : { branch: 'R', why: `tidy published ${head}; I-2 is ${v} there (seq ${first.seq})` };
   }
   for (const b of factsOf(events, 'plan-applied')) {
-    if (b.source?.type !== 'bundle') continue;
     const disposal = b.changes.find((x) => DISPOSALS.includes(x.type) && 'unit' in x && x.unit === TIDY);
-    if (disposal !== undefined) return { branch: 'P', why: `${b.source.job}'s revision ${b.rev} made ${disposal.type} of tidy before it published` };
+    if (disposal !== undefined) return { branch: 'P', why: `revision ${b.rev} made ${disposal.type} of tidy before it published` };
   }
   return null;
+}
+
+/** Record subject closures caused by successful driver commands as well as explicit acks. */
+function recordClosures(l: Layout, d: Devices, events: readonly Event[]): void {
+  for (const f of factsOf(events, 'needs-user-acked')) {
+    if (d.acks.some((a) => a.needsUser === f.id)) continue;
+    const item = readNeedsUser(absPath(l.runDir), f.id);
+    if (item !== null && ACKED_REASONS.includes(item.reason)) d.acks.push({needsUser: f.id, reason: item.reason, choice: f.choice, ack: f.command});
+  }
 }
 
 /**
@@ -359,6 +367,7 @@ function branchOf(l: Layout, events: readonly Event[]): Readonly<{ branch: Story
  */
 function fire(p: Poll): string | null {
   const { l, c, run, d, s, events } = p;
+  recordClosures(l, d, events);
   for (const item of s.needsUser) {
     if (!ACKED_REASONS.includes(item.reason) || d.acks.some((a) => a.needsUser === item.id)) continue;
     const offered = readNeedsUser(absPath(l.runDir), item.id)?.options.some((o) => o.id === 'apply') ?? false;
@@ -395,6 +404,12 @@ function fire(p: Poll): string | null {
     const exported = JSON.parse(cli(c, ['inputs', 'export', '--out', out, ...run])) as {planRev: number};
     const file = join(out, 'plan.json');
     const plan = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+    // The prevented branch needs a root-authorized cut under schema 2. Commit it with the stale-making edit.
+    const units = plan['units'] as {id: string; cut?: {reason: string}}[];
+    if (first.trigger.type === 'park' && first.trigger.unit === TIDY) {
+      const tidy = units.find((u) => u.id === TIDY)!;
+      tidy.cut = {reason: 'Its goal cannot be met within src/cli.js without breaking I-2.'};
+    }
     writeFileSync(file, JSON.stringify({...plan, direction: DIRECTION_EDITED}));
     d.staleApply = { command: submitted(cli(c, ['apply', '--from', out, '--rev', String(exported.planRev), '--reason', 'Refine the direction during checkpoint capture', ...run])), checkpoint: first.job, trigger: triggerText(first.trigger), seq: first.seq };
   }
@@ -484,6 +499,7 @@ export async function drive(args: Args): Promise<Report> {
     }
     ended = exitOf(c.hostDir, ready.generation);
   }
+  if (existsSync(join(l.runDir, 'events.jsonl'))) recordClosures(l, devices, readJournal(absPath(l.runDir), arcId(l.arc)).events);
   const report: Report = {
     schema: REPORT_SCHEMA,
     profile: args.profile,
