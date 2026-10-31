@@ -109,10 +109,17 @@ describe('obligation edits', () => {
     const movedRaw = JSON.parse(JSON.stringify(PREV)) as {lanes: {id: string}[]; obligations: {id: string; witness: {lane: string}}[]};
     movedRaw.lanes.push({...movedRaw.lanes[0]!, id: 'journey2'});
     movedRaw.obligations.find((o) => o.id === 'I-2')!.witness.lane = 'journey2';
-    const rebound = classifyObligations(PREV, parseObligations(movedRaw), ARCHITECT);
+    const movedObligations = parseObligations(movedRaw);
+    const rebound = classifyObligations(PREV, movedObligations, ARCHITECT);
     assert.deepEqual(rebound.reasons, []);
     assert.ok(rebound.changes.some((c) => c.type === 'witness' && c.id === 'I-2'));
     assert.ok(!rebound.changes.some((c) => c.type === 'disposed'));
+    assert.deepEqual(rederive(renderInvariants(PREV, []), movedObligations, {}), [],
+      'moving identical test ids to another lane must never raise obligation-dropped');
+    const editedLane = {...movedRaw, lanes: movedRaw.lanes.map((l) => ({...l, argv: ['node', '--test', '--test-concurrency=2', 'journey.test.js']}))};
+    assert.deepEqual(classifyObligations(movedObligations, parseObligations(editedLane), ARCHITECT).reasons, [],
+      'editing lane argv with identical test ids keeps the proof fresh');
+    assert.deepEqual(rederive(renderInvariants(movedObligations, []), parseObligations(editedLane), {}), []);
     const unproven = classifyObligations(PREV, file(replace('I-2', { witness: { lane: 'journey', testIds: ['I-2', 'x'] }, proofJudgment: { ...proof('I-2', 1, ['I-2', 'x']), verdict: 'insufficient' } })), ARCHITECT);
     assert.deepEqual(unproven.reasons, ["I-2's witness is judged insufficient (a new witness must prove it)"]);
     const moved = classifyObligations(PREV, file(BASE, [{ pattern: 'src/**', obligations: ['I-3'] }]), ARCHITECT);

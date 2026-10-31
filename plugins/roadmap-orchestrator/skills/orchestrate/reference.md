@@ -46,15 +46,13 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
 `.rejected.json` (with every reason). An `apply` waiting for a unit's stage boundary first gets `.queued.json`
 (`waitsFor`, `reason`; 1.0.0-dev.17).
 
-- `roadmap start --repo <path> --plan <plan.json> [--profile default|claude-only] [--wait <ms>] [--base <file>]`:
-  launch, or recover from disk. Without `--profile`, `.roadmap/config.json` chooses, else `default`. On an arc with a
-  plan in force the plan file is your edit: its files are rebased onto the files in force and the startup rows check
-  the result, the ledger in force included (2026-10-21; 1.0.0-dev.16). The rebase starts from the files you last
-  applied, or with `--base` from an `inputs export`'s `export.json`, as `apply --base` does: the way to edit what the
-  executor changed while no executor runs (an arc with no plan in force refuses `--base`). Prints `{"kind":"ready",…}` (exit 0)
-  once the executor passed every startup row; the run goes on. The backend smoke runs after `ready`: a smoke refusal
+- `roadmap start --repo <path> --plan <plan.json> [--profile default|claude-only] [--wait <ms>]`:
+  launch, or recover from disk. Without `--profile`, `.roadmap/config.json` chooses, else `default`.
+  An existing arc restarts on the plan in force; unapplied local edits have no effect. A previous-schema run is
+  refused with `schema-version` (exit 78); finish it with its original executor or start a new arc.
+  Prints `{"kind":"ready",…}` (exit 0) after startup rows pass. The backend smoke runs after `ready`: a smoke refusal
   shows in `status.rejection` and the run ends `refused`. Exit 78 with the rows, 75 host busy, 70 `failed` or
-  `timeout` (read `status` and the supervisor logs in the host dir before starting again). Waits 240 s by default.
+  `timeout` (read `status` and the supervisor logs before starting again). Waits 240 s by default.
 - `roadmap tui`: an interactive, read-only terminal viewer in the executor environment. Follows the host's arc
   from the map/activity split; `--repo <path> --arc <arc>` pins a retained run. A single tab row contains
   `1` Dependency map, `2` Activity, `3` Estate and `4` Exceptions. Estate shows retained revisioned inputs and
@@ -134,20 +132,17 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
   its session). `<unit>` re-opens a unit parked at plan-check or gate after a spec revision was applied (its next build
   resumes the implementer session; one that cannot, on a moved seat, starts fresh with the executor's handover of the
   unit's history), or one parked `routing-changed` once its seat is restored. `--backend` clears a usage-limit park after a passing smoke.
-- `roadmap ack <needs-user-id> [--choice <option-id>]`: answer an item; `--choice` names one of its `options`.
+- `roadmap ack <needs-user-id> [--choice <option-id>]`: answer an item that offers `options`; items without options refuse acknowledgement.
+  `--choice` names an option; it may be omitted only when the item offers a single option.
 - `roadmap sweep [--resource <name>]`: run the recorded teardown of undispositioned residues.
-- `roadmap apply [--base <file>] [--dry-run] [--ruling <file>] [--vision-edit]`: put the edited plan, specs and other
-  revisioned inputs in force at the next stage boundary, rebased onto the plan in force (merged per file from the
-  edit's base: the files you last applied, or with `--base` an `inputs export`'s `export.json`; a value you and the
-  executor both changed is a `conflict` naming the file and JSON path). Each `--ruling` (repeatable) is a ruling sidecar
-  validated as `rule` validates it and landed with the edits as one revision; an id `"C-?"` takes the ledger's next C-n.
-  `--vision-edit` declares a vision edit: without it an apply whose rebased vision differs from the vision in force
-  (you changed the vision file) is refused `vision-leak` (a next-arc draft belongs in `_next/`). In a corpus arc a vision
-  edit is published onto the integration branch by the apply's docs publication: `.roadmap/vision.json`, and with a
-  `same-repo` re-pin the changed vision document, as committed on the owner's checkout (commit them there, never on the
-  integration branch, and never move the integration branch by hand). `--dry-run` always
-  exits 0 and prints `kind`: `rejected{reasons}`, `unchanged{rev}` or `accepted{rev, nextRev, changes, smoke,
-  advisories, numbered}`; it queues nothing.
+- `roadmap apply --from <dir> --rev <n> --reason <text> [--dry-run]`: apply edits made in an `inputs export`
+  directory at its recorded revision N. The reason must be one non-empty line; it authorizes weakenings, cuts,
+  counter resets and risk below a floor. Every edited file must be unchanged in force since N; refusal lists all
+  stale files together. Untouched files take current in-force bytes. An edited spec's revision bumps automatically.
+  Vision edits in corpus arcs publish `.roadmap/vision.json` and, with a same-repo re-pin, the committed vision
+  document onto the integration branch. Commit those repo files on the owner's checkout first.
+  `--dry-run` exits 0 and prints `kind`: `rejected{reasons}`, `unchanged{rev}` or
+  `accepted{rev, nextRev, changes, smoke, advisories}`; it queues nothing.
   `advisories` (also `advisory:` lines in the applied receipt) are `scope-references-outside{unit, removed, referrers}`:
   files outside a unit's scope that still name what its spec `removes`; `derived-unregenerated{outputs, units}`: a
   `derived` entry with no `regenerate` whose outputs those units take in; and `milestone-unit-before-design{milestone,
@@ -156,14 +151,14 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
   is decided again on your revision.
 - `roadmap resolve-edge <edge> --evidence <text>`: a contingent edge's condition is met, on your evidence.
 - `roadmap run-only (<unit>... | --clear)`: limit admission to these units, or lift the limit.
-- `roadmap rule <record.json>`: land a ruling (a `roadmap/ruling-m3` sidecar; id `"C-?"` takes the ledger's next C-n,
-  named in the receipt) through a docs publication. Your ledger file is never written: `inputs export` shows the ledger
-  in force.
 - `roadmap reverse <D-n>`: a compensating revision restoring what divergence D-n's act changed; rejected when a later
   revision changed it again (use `apply`).
 - `roadmap steer <unit> --brief <file> --budget <min> [--class efficient|frontier|summit] [--resume]`: one uncharged
-  implementer round for a parked or `preparing` unit, then salvage, lanes and gate. It parks again unless green and
+  implementer round for any unfinished unit, then salvage, lanes and gate. A running invocation is killed and
+  drained first. It parks again unless green and
   `--resume`. `--class` seats that class at the unit's build tier.
+- `roadmap note <unit> --brief <file>`: record a fact for an unfinished unit without reopening it. The next build
+  round receives the note in `notes[]`; a note arriving during a round reaches the following round.
 - `roadmap merge-in <unit>`: merge the integration tip into a unit's branch (clean merges only); it re-enters at lanes.
 - `roadmap scope accept|reject <unit> --reason <text> [--repo <path> --arc <arc>]`: queued (scope the unit). Your decision on
   the scope growth a unit's plan-check proposed, or the path salvage reverted on its last two rounds (its `scope-growth`
@@ -257,10 +252,8 @@ Not queued, no host lock, no run needed. Run them any time, a running arc includ
 `plan.json`, `specs/<unit>.json`, the rulings ledger, `obligations.json` (with its census), and for a corpus arc
 the pin (`corpus pin --out`) and the Phase-0 record. The executor keeps each by
 hash at `start` and `apply`; editing them later changes nothing until `apply`. Beside the arcs' directories, the
-operator log `skill-feedback.md` ("The operator log") and the next-arc staging dir `_next/`: `vision.md` (the owner's
-working draft of the next vision), `notes.md` (work for later, deferred rulings, ideas) and `compaction.md` (approved
-estate compaction decisions, `K-n`, from the `estate-compaction` skill; Phase 0 applies them). The executor never reads
-`_next/`; the Chaining step reads it and hands it to the next arc's directory.
+operator log `skill-feedback.md` ("The operator log") holds intervention records. Keep future work and approved
+estate compaction decisions outside the product tree; no next-arc directory name is reserved by the executor.
 
 **In-tree `.roadmap/`** holds exactly: `contracts/`, `constraints.md`, `invariants.md` (with the `json roadmap-rules`
 registry), `debt.md` (with the `json roadmap-debt` block), all rendered by the executor; and `config.json`,
@@ -341,17 +334,15 @@ T-13: A cancelled booking frees its berth at once.
 
 - **Inputs.** `roadmap inputs export --repo <path> --arc <arc> --out <dir>` writes the inputs in force from the run
   dir's kept copies: the plan, every spec at its current rev (machine and plan-check patches included), the rulings
-  ledger and sidecars, the obligations, and for a corpus arc the pin and the Phase-0 record. A file
+  ledger, the obligations, and for a corpus arc the pin and the Phase-0 record. A file
   beside the plan keeps its path relative to the plan's directory; a file in the product repo (the vision record)
   goes under `repo/` at its repo path. The corpus guide is not exported (it is the baseline's). `export.json`'s `base`
   is the manifest of the exported files. The executor never writes your input files, so this is the one way to get the
-  files in force: sync the export over your inputs, edit, then `roadmap apply --base <dir>/export.json`; the apply
-  rebases your edit onto whatever the executor did since the export. It reads the run dir only, so it works with the
-  executor down; then `roadmap start --repo <path> --plan <plan.json> --base <dir>/export.json` rebases the edit the same way.
-- **A unit in force that every apply and start refuses** (`corpus-invalid` `scope-overlaps-corpus`, its `fix` naming the
-  unit; an executor-minted unit from before the deflake scope fix): export, sync, narrow the unit's scope off the
-  corpus (or cut it, if it never started a task), then `roadmap apply --base <dir>/export.json` (executor running) or
-  `roadmap start --repo <path> --plan <plan.json> --base <dir>/export.json` (executor down).
+  files in force: edit the export, then `roadmap apply --from <dir> --rev <n> --reason <text>`.
+  Use the export's `planRev` for N. If any edited file became stale, export again and re-apply the edit there.
+  Export works with the executor down; restart on the plan in force before queuing an apply.
+- **A unit in force that every apply refuses** (`corpus-invalid` `scope-overlaps-corpus`): export, narrow the unit's
+  scope off the corpus (or cut it, if it never started a task), then apply the exported edit with its revision and reason.
   A dispatched unit's scope may not shrink: cut it instead, or tell the owner. Once the unit merges, the refusal lifts
   on its own (a merged unit builds nothing more).
 - **Boot hook.** A devcontainer restarts with no executor. `roadmap resume-arc --repo <path>` relaunches a dead
@@ -524,7 +515,7 @@ item and an unapplied answer are printed again. A seq past the log's end is refu
 | `plan-invalid{problem}` | schema, unknown spec path, integration branch missing or in `roadmap/<arc>/`, baseline not an ancestor, unknown resource or cite, a Phase-0 entry naming something absent | fix the input the problem names |
 | `spec-lane-unrunnable` | a lane, probe or teardown command cannot run here | fix the spec or the host |
 | `unsupported-routing` | a seat's class binds an unsupported triple | fix the routing layer it names |
-| `plan-change-refused{reasons}` | the files differ from the plan in force in a way `apply` refuses, or in a way that needs a docs publication (rulings, obligations, a corpus arc's vision record), which only an `apply` runs; also (a fresh start, or any revision touching the unit) a lane's `evidenceGlobs` entry covering its unit's scope (named with lane and entry) | undo that edit; start on the plan in force, then `apply` it (`--vision-edit` for the vision); narrow the entry to the lane's outputs |
+| `plan-change-refused{reasons}` | the files differ from the plan in force in a way `apply` refuses, or in a way that needs a docs publication (rulings, obligations, a corpus arc's vision record), which only an `apply` runs; also (a fresh start, or any revision touching the unit) a lane's `evidenceGlobs` entry covering its unit's scope (named with lane and entry) | undo that edit; start on the plan in force, then apply an exported edit with its revision and reason; narrow the entry to the lane's outputs |
 | `backend-smoke` | a backend's smoke failed | fix that backend's auth or sandbox |
 | `undispositioned-residue` | a residue from earlier work | `roadmap sweep`, or answer its needs-user |
 | `previous-arc-unreconciled`, `recovery-holder-dead`, `owner-mismatch`, `log-corrupt`, `containment-mode-changed` | host-level | read `status` and the needs-user; never clear host files by hand |
@@ -538,7 +529,6 @@ item and an unapplied answer are printed again. A seq past the log's end is refu
 | `chain-invalid{problem}` | `limit{k, unacked}`, `baseline{previous-head-mismatch \| merge-commit \| parent-mismatch \| paths{paths}}`, `previous-incomplete{arc}`, `k-unset` | `limit`: stop (`k-limit`); `baseline`: one non-merge commit on the previous completed head, touching only `.roadmap/` inputs and corpus paths; `k-unset`: bootstrap K. `chain status` `nextStart` answers `limit`, `k-unset` and `previous-incomplete` before you compose the plan |
 | `tree-uncommitted{paths}` | `.roadmap/{vision.json, corpus.md, config.json}` differ from `HEAD` | commit them |
 | `arc-superseded{by}` | a start of an arc with a plan in force (a reopen) after arc `by` started on its head | put the fixes in arc `by` as priority units; at its completion, `pr --supersede-previous` for arc `by` |
-| `vision-leak{inForce, committed, draft}` (`apply` only) | the vision file differs from the vision in force and the apply declares no vision edit | move the draft to `draft` (`<inputs>/_next/vision.md`) and restore `.roadmap/vision.json` and the vision document to the vision in force (commit, re-pin); `--vision-edit` only for a vision change the owner ordered for this arc |
 
 **`apply` rejections** (in the receipt or `--dry-run`): every row above that applies to the edit, plus
 `target-kind-changed` (an `architecture-doc` arc never becomes a corpus arc, nor the reverse), `chain-immutable`
@@ -638,9 +628,8 @@ Blocking unless noted. Read the item file before acting.
 - "dev.17: the flaky ledger": `flake-observed`, deflake units (`origin: deflake`, `deflake.keys`), their code edges,
   `limits.verification {laneMinutes?, lanes?: {<lane>: minutes}}` (a deflake unit's verification budget in lane-minutes;
   default 30, a batch lane 2 runs), `deflake-parked` and `flake-recurring`; deflake scope (2026-10-23): the scope rule,
-  `deflake-unscoped`, the corpus overlap on every revision and `start --base`.
-- "dev.17: propagation": revision pins on a spec and a plan-check patch, a revision's stale set (`stale-set`), the
-  plan-check's `staleLinks` and `stale-answered`, `stale-reopened`, propagation units (`origin: propagation`,
-  `propagation{rev, target}`), `propagation-refused`, and the gate's `propagation` admission hold.
+  `deflake-unscoped`, the corpus overlap on every revision.
+- "Stale-link records (schema 2)": revision pins, `stale-set`, plan-check `staleLinks`, `stale-answered` and
+  `stale-reopened`. Propagation units and their admission holds are removed.
 
 Derived exclusion (2026-10-27; 1.0.0-dev.26): dispatch `excluded` bounds generated writes alongside `derived`; absent means none. Every revision refuses only added plan defects; apply dry runs and receipts also show remaining `plan-defect{defects}` as advisories. Startup and `phase0 check` still report all defects.

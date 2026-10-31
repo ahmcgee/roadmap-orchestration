@@ -67,14 +67,10 @@ Always ask first, whatever autonomy you hold: anything irreversible outside the 
 the owner more than $10, anything with legal ramifications. A checkpoint's `owner-request` item is one of these.
 
 **Owner thoughts while an arc runs** are triaged once. One that changes what this arc must deliver (a `P-n` answer,
-a defect, a correction inside the slice) you apply or rule now. Everything else goes to the next-arc staging dir
-`<repo>/../roadmap-inputs/_next/`: `vision.md`, the owner's working draft of the next vision (edit it with them
-there), `notes.md`, work for later, deferred rulings and ideas (append), and `compaction.md`, the owner's approved
-estate compaction decisions (the `estate-compaction` skill writes it). The executor never reads `_next/`.
-`.roadmap/vision.json` and the vision document change only between arcs: a running arc's `apply` refuses a vision
-file that differs from the vision in force (`vision-leak`). `apply --vision-edit` is only for a vision change the
-owner orders for the running arc: commit the edit on the owner's checkout (never on the arc's integration branch),
-then `apply --vision-edit`; the executor publishes it onto the arc branch. Never move the integration branch by hand.
+a defect, a correction inside the slice) goes through `apply --from <export> --rev N --reason "<line>"` now.
+Keep future work and approved compaction decisions outside the product tree. Vision edits use the same apply:
+commit repo changes on the owner's checkout first; the executor publishes them onto the arc branch.
+Never move the integration branch by hand.
 
 ## Bootstrap (once)
 
@@ -144,7 +140,7 @@ made false is a fact-currency fix in the next corpus window, never debt.
 Each step below says what must be true when it is done; how you get there is yours. `phase0 check` runs the
 rows code checks.
 
-**Compaction.** When `_next/compaction.md` holds a decision with neither `Applied` nor `Blocked`, apply each one
+**Compaction.** When the approved compaction record holds a decision with neither `Applied` nor `Blocked`, apply each one
 through the steps below as the `estate-compaction` skill's "Applying the record" says, before `start`.
 
 Keep the arc's inputs in their own directory outside the product working tree, for example
@@ -258,13 +254,13 @@ Keep the arc's inputs in their own directory outside the product working tree, f
       `skills/frontend-design/` directory and its `LICENSE` into the repo's `.claude/skills/frontend-design/`, and
       commit before `start`. Working assumption: proceed without it. It is never a reason to hold the arc.
     - When a milestone settles, its build becomes the demo the owner picks up ("The demo").
-12. **Rulings ledger.** A chained arc's ledger carries the previous arc's final ledger (`roadmap inputs export`) and
-    its sidecars. This Phase 0's rulings take the next ids after it. Leave out:
+12. **Rulings ledger.** A chained arc's ledger carries the previous arc's final ledger (`roadmap inputs export`)
+    as plain text. This Phase 0's rulings take the next ids after it. Leave out:
     - every withdrawn ruling;
     - every `lifetime: arc` ruling;
     - every ruling an applied compaction decision retires.
 
-    A ruling left out loses its ledger line and its sidecar file. Still carry each ruling named by:
+    A ruling left out loses its ledger line. Still carry each ruling named by:
     - a carried obligation's state;
     - a spec's `cites.rulings`;
     - this Phase 0's debt `resolve`;
@@ -284,8 +280,8 @@ Keep the arc's inputs in their own directory outside the product working tree, f
 
 **Pack review.** A corpus arc's first job reviews the whole pack before anything is admitted; admission waits for
 it (`status.holds` has `pack-review`). Notes go to the brief. A blocking finding raises a `pack-review` item. Fix
-the pack with `roadmap apply` (a changed pack is reviewed again and the new review supersedes the item), or
-`roadmap ack` the item when the finding is wrong, with the reason in your next check-in.
+the pack with an exported apply (a changed pack is reviewed again and the new review supersedes the item).
+Use `roadmap ack` only when an item offers options, choosing one of them.
 
 An arc without the holistic layer still names `architectureDoc` and no corpus. A new holistic arc is always a
 corpus arc (`holistic-needs-corpus`). An arc started on an older release keeps its target until it completes.
@@ -300,8 +296,7 @@ timeout; on its expiry re-arm only the tail (the watch keeps running, so nothing
 session, a host restart, `resume-arc`, a reopened arc), start it with `--from <seq of the last line in watch.jsonl>`,
 or without `--from` when the file is empty: it replays exactly the wakes since that line, merges and parks included,
 so nothing that happened while no watch ran is lost. Never restart or re-arm on a short timer, never wait on plain
-`roadmap watch`, never poll `status` in a loop, and never hand a subagent a `status` poll. `status` runs one at a time
-per arc: a second call while one runs fails at once ("another status of arc ... is running"). Without a Monitor tool,
+`roadmap watch`, never poll `status` in a loop, and never hand a subagent a `status` poll. Without a Monitor tool,
 end your turn while the arc runs; the harness resumes you on the next wake. Every wake costs a model turn (about
 $0.30), so the wakes are few by design.
 
@@ -317,8 +312,8 @@ $0.30), so the wakes are few by design.
   executor cannot apply offers `--choice acknowledge` (you made the change with `apply`, or none is needed) or
   `--choice decline`. One still unanswered when only the close-out is left is declined by the executor, and its
   proposal becomes an amendment for the next Phase 0: a non-blocking item never holds completion. The executor already
-  sent a refused checkpoint or plan-check answer back to its own session once with every reason, and drops a ruling or
-  `rule` op given twice identically: an invalid bundle that reaches you was refused twice on substance, so never
+  sent a refused checkpoint or plan-check answer back to its own session once with every reason: an invalid bundle
+  that reaches you was refused twice on substance, so never
   rebuild it by hand to get past bookkeeping; make the change it needs with `apply`, or decline it.
 - **Checkpoint admits** (corpus arcs). Code classes every unit a checkpoint admits (`status.admits`): `repair`
   (something broken, or a delivered obligation not holding), `oversight` (a gap within the slice's clauses) or
@@ -370,7 +365,7 @@ touches only that lever's plan fields, and judges it on the chart (`status.flow`
   yours that touches one after the first admission raises `ruler-changed` (`status.flow`, the brief). Ack it only for
   a change convergence needed, and say why at the next check-in.
 - **`flow-worse`**: a verdict found an applied change worse. Revert it by `apply` (export, restore the values in the
-  `preimage` of that proposal's `flow-verdict` fact, `apply --base`), then ack. No flow run proposes it again.
+  `preimage` of that proposal's `flow-verdict` fact, `apply --from <export> --rev N --reason "<line>"`), then ack. No flow run proposes it again.
 - **`flow-host`** is advice for the owner (more cores, a faster disk), never applied: put it in your next check-in
   preface, then accept or reject it with a reason.
 - **Givens.** When a lever cannot be tuned on this host and that is self-evident, declare it yourself:
@@ -393,10 +388,10 @@ item does not point at. Check-ins keep their own rule ("Check-ins"). An `answer`
 answer"), whatever else the wake holds.
 
 **Operate** only through the sanctioned levers: `pause`, `resume`, `resume --backend`, `ack`, `apply` (re-entry,
-priority, known defects and `--ruling` included), `rule`, `steer`, `reverse`, `merge-in`, `audit`,
+priority and known defects included), `steer`, `note`, `reverse`, `merge-in`, `audit`,
 `close-admissions`, `flow`, `stop`, `start`, `resume-arc`, `gc`, `inputs export`. Use them when observation says to; that is
 the job. Never patch the plugin or the run dir. To see or recover the inputs in force, `roadmap inputs export` the arc,
-edit the export, then `apply --base <export>/export.json` (`reference.md`, "Recovery"); never copy a historical manifest
+edit the export, then `apply --from <export> --rev N --reason "<line>"` (`reference.md`, "Recovery"); never copy a historical manifest
 back.
 
 Two levers carry their own judgment:
@@ -442,9 +437,8 @@ it goes into the Phase 0 under way. While an arc runs, one `roadmap apply` carri
 - When the answer changes what a rule says: commit the corpus edit on your work branch, descending from the arc's
   baseline (never the integration branch) and re-pin (`corpus pin --commit <that commit> --baseline <the plan's baseline>`).
   A change of meaning retires the old rule id and adds a new one. Update the census, and the in-slice obligations
-  per "Changing the plan": re-anchoring or restating one is a weakening, so the apply carries a ruling naming it
-  `amended` (`apply --ruling <sidecar>`). An obligation of a retired rule that nothing replaces is retired instead (a
-  ruling naming it `retired`), its anchor kept as written: a retired obligation's anchor is not checked against the
+  per "Changing the plan": re-anchoring or restating one is a weakening, so the apply carries a reason authorizing the amendment. An obligation of a retired rule that nothing replaces is retired instead (a
+  disposition `{type: retired, reason, rev}`), its anchor kept as written: a retired obligation's anchor is not checked against the
   pin (2026-10-21; 1.0.0-dev.16). When the new meaning needs code, add the unit that delivers it in the same apply.
 - The next between-arc commit carries that corpus edit again: the integration branch never had it.
 
@@ -504,9 +498,9 @@ At arc completion (`status.run.state` `complete`, `completion.active`):
    open debt. When no arc's `next/compaction.md` among the last three has an `Applied` decision, recommend the owner
    run `/roadmap-orchestrator:estate-compaction`. Ask about every `Blocked` decision. Everything below runs after
    you are resumed.
-4. **Read what waits** for the next arc: `<repo>/../roadmap-inputs/_next/` (`vision.md`, `notes.md`, `compaction.md`) beside
+4. **Read what waits** for the next arc: the saved future-work notes and approved compaction decisions beside
    `status.amendments`, the `finding-deferred` debt and the chain's open questions.
-5. **The vision.** When `_next/vision.md` differs from the confirmed vision document, run the `vision` skill's
+5. **The vision.** When a saved vision draft differs from the confirmed vision document, run the `vision` skill's
    Calibrate on that draft: its changes reach the vision document only through playback and the owner's
    confirmation, compiled to `.roadmap/vision.json` and committed in the between-arc commit (step 7).
 6. Choose the next slice from the census, per the vision: `sliceCandidates` from `phase0 check`, ranked by the
@@ -520,9 +514,8 @@ At arc completion (`status.run.state` `complete`, `completion.active`):
    next arc's baseline.
 8. Phase 0 for the next arc, with `chain: {previousArc, previousHead: <completed head>}` in its plan; `notes.md`
    items it takes on become units, rulings or questions there.
-9. **Hand `_next/` over** when the next arc starts: move it to `<repo>/../roadmap-inputs/<next arc>/next/` and start
-   a fresh `_next/`: `vision.md` a copy of the confirmed vision document (the base of the next draft), an empty
-   `notes.md`, and a `compaction.md` holding each `Blocked` decision, for the owner to rule on at the next check-in.
+9. **Carry future work forward** into the next arc's inputs, including blocked compaction decisions for the
+   owner's next check-in. No next-arc staging directory name is reserved by the executor.
 
 **Stop.** One final message: the check-in, the request to merge the stacked PRs in order, first into `main`, each
 with a merge commit, then exactly one line: `ROADMAP-SESSION: stopped <reason>`, where reason is `k-limit`,
@@ -606,7 +599,7 @@ which paths, and the builder names a path it needs in its report's blockers as a
 the same path on two build rounds running, the unit is held at lanes with the same `scope-growth` item, that path as
 the proposal: `scope accept` re-opens it at plan-check and its builder is told to restore the reverted version;
 `scope reject` lets the lanes run. A gate that escalates
-over one comes to you as a park: grow the scope then by `apply --ruling` with the spec's next rev, or re-enter.
+over one comes to you as a park: grow the scope then by an exported apply with a reason, or re-enter.
 
 ## Proportional review
 
@@ -711,19 +704,12 @@ The executor revises the plan itself (checkpoint admits and cuts, plan-check pat
 classes, scope growth) and never writes into your files: the plan in force lives in the run dir, and
 `roadmap inputs export` is the one way to see it. Your files stay what you last applied.
 
-- **Edit, then apply.** Edit your input files and `roadmap apply` (`--dry-run` first). The apply rebases: each file is
-  merged from what you last applied onto the plan in force, so what the executor did since stays and your edit lands on
-  top. A spec you revise takes your file's `rev` + 1; the executor renumbers it onto its own patches.
-- **Editing what the executor changed** (a spec it patched, a unit a checkpoint admitted): `roadmap inputs export` the
-  arc, sync the export over your input files, edit, and `roadmap apply --base <export>/export.json`. Without `--base`,
-  an edit of a value the executor also changed is a conflict.
-- **A conflict** (you and the executor changed one value differently) rejects the apply naming the file and the JSON
-  path (`conflict: …/u1.json at $.decisions[D1].text`). Export, re-apply your edit on top of the executor's value,
-  apply with `--base`.
-- `start` merges your files the same way: unchanged files restart on the plan in force. Its startup checks read the
-  merged files too (2026-10-21; 1.0.0-dev.16), so a ruling or unit the executor landed since your last apply is known
-  to them: restart with `start --plan <your plan.json>` as it stands, with no `inputs export` sync first. To edit what
-  the executor changed while it is down, export, sync, edit and `start --base <export>/export.json` (as `apply --base`).
+- **Export, edit, then apply.** Export the plan in force, edit that directory, then use
+  `roadmap apply --from <export> --rev N --reason "<line>"` (`--dry-run` first), with N from `export.json`'s
+  `planRev`. Every edited file must still match its exported bytes in force; untouched files take current bytes.
+  Edited specs bump revision automatically.
+- **Stale files** reject the apply together. Export again and re-apply your edit to the current files.
+- `start` restarts on the plan in force. To amend it after downtime, restart first and then queue the exported apply.
 
 The executor applies at the next stage boundary and kills nothing; the receipt says applied or every reason it was
 rejected. An edit you never apply has no effect, even after a restart.
@@ -742,17 +728,11 @@ rejected. An edit you never apply has no effect, even after a restart.
   takes `rev` + 1. A merged, approved or publishing unit's spec is fixed.
 - **Lanes**: a lane's `evidenceGlobs` and `evidenceExcludes` may change at the current rev.
 - **Obligations**: add, split or re-witness freely. Weakening one (remove, change statement or anchor,
-  `must-hold` to `future`, waive, defer, retire) needs a ruling naming it, landed with the edit:
-  `roadmap apply --ruling <sidecar>`. A rule anchor whose hash changed with the statement unchanged is an edit, not
+  `must-hold` to `future`, waive, defer, retire) needs the apply's `--reason` authorizing the edit. A rule anchor whose hash changed with the statement unchanged is an edit, not
   a weakening.
-- **What a change leaves stale** (1.0.0-dev.17): an apply that moves an obligation to a new rev, rewrites a contract
-  (a ruling's contract ops) or edits a vision clause is followed through in code, with nothing to do on your side.
-  Every unit still to land that links the change answers it at its plan-check (one in flight re-opens there first);
-  merged witness tests of a changed obligation, or of one binding a changed contract, are re-witnessed by a
-  `propagate-r<rev>-…` unit the executor mints (milestone-exempt, ranked with repairs), and no unit linking the change,
-  or whose design breaks those tests, passes its gate before that unit merges. A propagation unit that parks holds
-  those gates: resume it, or `cut` it to release them. A vision edit reaches the units through the obligations serving
-  the clause (the checkpoint reconciles the obligations themselves).
+- **What a change leaves stale**: units linking a changed obligation, contract or vision clause answer its stale
+  links at plan-check. Propagation units and their admission holds are removed. A lane move with identical test ids
+  and files is a re-witness; proof judgments remain valid.
 - **Priority, known defects, plan-check shape**: apply at once, draining nothing ("Supervising the executor").
 - **Milestones**: only by `apply`, draining nothing. A milestone being walked waits for its walk to end; once walked it
   stays, with its units and design (plan another milestone for more), while its text, references, bring-up, journeys
@@ -761,17 +741,13 @@ rejected. An edit you never apply has no effect, even after a restart.
 - **Corpus** (a re-pin) and **Phase-0 record** edits are `apply` edit classes; mid-arc, only for an owner's answer.
   A re-pin re-gates every approval.
   Both change the pack, so before the first admission they trigger a new pack review.
-- **Vision**: only a change the owner ordered for this arc, by `apply --vision-edit` (a next-arc draft waits in
-  `_next/`). Never reuse a clause id; withdraw, never delete. Commit `.roadmap/vision.json` (and, with a re-pin, the
+- **Vision**: only a change the owner ordered for this arc, by an exported apply with a reason. Never reuse a clause id; withdraw, never delete. Commit `.roadmap/vision.json` (and, with a re-pin, the
   vision document) on the owner's checkout before the `apply`, never on the integration branch: the apply's docs
   publication lands them on the arc branch, its suite run on them like any docs publication. Never move the
-  integration branch by hand (`update-ref`, a push, a merge into it). A `start` refuses an edited vision record;
-  start on the vision in force, then apply.
+  integration branch by hand (`update-ref`, a push, a merge into it). A restart reads the vision in force; apply exported edits afterwards.
 - **Fixed**: `arc`, `integrationBranch`, `baseline`, `worktreeRoot`, the target kind and `chain`.
-- **Rulings ledger**: only through commands. A ruling and the edits that depend on it go in one
-  `apply --ruling <sidecar>`, so no review sees half of it; `roadmap rule` is for a ruling with no dependent edit.
-  Write a new ruling's id as `"C-?"`: it takes the ledger's next C-n when it lands, and the receipt names it
-  (`ruling <file> numbered C-7`). Cite it by that id in later edits. Never renumber by hand.
+- **Rulings ledger**: plain exported C-n text, editable through the same apply. It has no sidecars or automatic
+  numbering. Apply reasons authorize contract weakenings; dispositions carry `{type, reason, rev}`.
 
 ## Lanes, witnesses and clocks
 
