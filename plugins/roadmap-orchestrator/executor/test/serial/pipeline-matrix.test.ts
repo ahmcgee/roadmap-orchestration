@@ -328,7 +328,7 @@ test('whole-pipeline crash matrix', { concurrency: FANOUT, timeout: 45 * 60_000 
     reference(t, 'malformed', MALFORMED, MALFORMED_OUTCOMES),
     reference(t, 'cancel', CANCEL, CANCEL_OUTCOMES),
     reference(t, 'stale', STALE_LANE, STALE_OUTCOMES),
-    reference(t, 'holistic', HOLISTIC, HOLISTIC_OUTCOMES, {keyed: true}),
+    reference(t, 'holistic', HOLISTIC, HOLISTIC_OUTCOMES, {keyed: true, needsUser: ['split-proposal']}),
   ]);
 
   // Enumeration: each scenario's executor reached exactly its row's labels; the only other process that

@@ -296,7 +296,7 @@ test('gate.read-surface: the gate reads the repository and the run dir; an appro
     const system = gate.argv[gate.argv.indexOf('--append-system-prompt') + 1]!;
     assert.ok(!system.includes('<readable_directories>'), system.slice(-600));
     // The refusal is on record in the call's reads.json, for audit.
-    const inv = events(d.runDir).flatMap((e) => (e.type === 'fact' && e.fact.kind === 'meter' && e.fact.subject.type === 'seat' && e.fact.subject.role === 'verifier' ? [e.fact.inv] : []))[0]!;
+    const inv = events(d.runDir).flatMap((e) => (e.type === 'fact' && e.fact.kind === 'meter' && e.fact.subject.type === 'seat' && e.fact.subject.role === 'verifier' ? [e.fact.inv] : [])).at(-1)!;
     const reads = JSON.parse(readFileSync(join(invocationDir(absPath(d.runDir), inv), 'reads.json'), 'utf8')) as { denied: unknown[] };
     assert.deepEqual(reads.denied, [{ tool: 'Glob', pattern: '**/*', path: dirname(dirname(d.repo)) }]);
     assert.equal(r.journal.view.unit(U1).counters.retries.gate, 0);

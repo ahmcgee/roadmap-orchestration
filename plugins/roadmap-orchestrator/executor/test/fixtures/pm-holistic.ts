@@ -100,7 +100,7 @@ const IMPLEMENT: Step = {
   acts: [
     {type: 'barrier', name: 'root-apply', timeoutMs: 120_000},
     { type: 'commit', message: 'add mul', files: MUL },
-    { type: 'emit', value: { ...BUILD_REPORT, experiments: [{ name: 'mul by hand', argv: ['node', '-e', 'import("./src/mul.js")'], exit: 0 }] } },
+    { type: 'emit', value: { ...BUILD_REPORT, tooBig: {estimate: 'Consider separating follow-up overflow coverage', suggestedChildren: ['overflow coverage']}, experiments: [{ name: 'mul by hand', argv: ['node', '-e', 'import("./src/mul.js")'], exit: 0 }] } },
   ],
 };
 
