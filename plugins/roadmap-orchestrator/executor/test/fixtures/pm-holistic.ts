@@ -90,7 +90,7 @@ function treeWith(repo: string, rev: string, files: Readonly<Record<string, stri
 const keyed = (unit: string, steps: readonly Step[]): readonly Step[] => steps.map((s) => ({ ...s, unit }));
 
 /** The approving gate's note: a corpus arc banks it as debt after the approval (DEBT_BANK, `debt.after-approval`). */
-const GATE_NOTE = {evidence: ["fixture:1"], 
+const GATE_NOTE = {evidence: ["fixture:1"],
   severity: 'note', path: null, text: 'The mul helper has no overflow test.', contractRef: null, experiments: [], debt: { drag: 'Every caller of mul must guard overflow itself until it has one.' },
 } as const;
 

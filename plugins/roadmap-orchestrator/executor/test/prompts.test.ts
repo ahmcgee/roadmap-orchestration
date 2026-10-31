@@ -234,18 +234,18 @@ function scaffoldSample(k: string, retry: RoleInputs['scaffold']['retry']): Role
 
 const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] } = {
   campaignAudit: [
-    {method: {traits: [], markers: [], unitKind: 'module', expensiveLanes: false, ui: false}, 
+    {method: {traits: [], markers: [], unitKind: 'module', expensiveLanes: false, ui: false},
       vision: vision(1, 'VISION-A'),  obligations: [observed('I-1', 'OBLIGATION-A', SHA_A)], range: { audited: SHA_B, diff: shown(SHA_A, SHA_B, 'RANGE-A') },
-      owners: [], priorFindings: [], contracts: [doc('docs/api.md', 'CONTRACT-A')],  
+      owners: [], priorFindings: [], contracts: [doc('docs/api.md', 'CONTRACT-A')],
       target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, checkout: absPath('/wt/audit-1'), specsOnly: null,
     },
-    {method: {traits: ['persistent'], markers: ['M2'], unitKind: 'campaign', expensiveLanes: true, ui: true}, 
+    {method: {traits: ['persistent'], markers: ['M2'], unitKind: 'campaign', expensiveLanes: true, ui: true},
       vision: vision(2, 'VISION-B'),  obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)], range: {
         audited: SHA_A,
         diff: partial(SHA_B, SHA_A, 'RANGE-B', false),
       },
       owners: [{ unit: unitId('u-two'), head: SHA_B, diff: shown(SHA_A, SHA_B, 'OWNER-B') }], priorFindings: [findingView('F-1', 'FINDING-B')], contracts: [doc('docs/b.md', 'CONTRACT-B')],
-       
+
       target: { kind: 'digest', digest: doc('docs/digest.md', 'DIGEST-B'), doc: repoPath('docs/arch2.md') }, checkout: absPath('/wt/audit-2'),
       specsOnly: [{ unit: unitId('u-two'), rev: specRev(4), markdown: 'SPECS-ONLY-B' }],
     },
@@ -319,7 +319,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
     },
   ],
   gate: [
-    {touches: [], 
+    {touches: [],
       standing: [], method: {traits: [], markers: [], unitKind: 'module', expensiveLanes: false, ui: false}, systemNotes: [], intent: 'INTENT-A', nonGoals: ['NON-GOAL-A'], spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')],  index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
       target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A',  obligations: [], standingObligations: [],
       diff: { bounded: shown(SHA_A, SHA_B, 'DIFF-A'), claims: { acceptance: [clauseId('A1')], witnesses: [], obligations: [] } },
@@ -327,9 +327,9 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       reach: [], traits: [], reachTraits: [], evidence: [absPath('/run/ev/a')], systems: [systemName('app-a')], priorRound: null, checks: { witnesses: null, smoke: null, regenerated: [] },
       escalation: null, largeDiff: null, milestones: null, review: { ledger: [], disputes: [], delta: null }, undeclaredContracts: [],
     },
-    {touches: ['BUILDER-TOUCH-B'], 
+    {touches: ['BUILDER-TOUCH-B'],
       standing: [{id: 'PRE-B', text: 'Standing item B', evidence: ['src/b.ts:2']}], method: {traits: ['persistent'], markers: ['M2'], unitKind: 'design', expensiveLanes: true, ui: true}, systemNotes: [repoPath('docs/systems/SYSTEM-NOTES-B.md')], intent: 'INTENT-B', nonGoals: ['NON-GOAL-B'], spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')],  index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
-      target: { kind: 'digest', digest: doc('docs/digest.md', 'DIGEST-B'), doc: repoPath('docs/arch2.md') }, direction: 'DIR-B', 
+      target: { kind: 'digest', digest: doc('docs/digest.md', 'DIGEST-B'), doc: repoPath('docs/arch2.md') }, direction: 'DIR-B',
       obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)], standingObligations: [observed('I-3', 'STANDING-B', SHA_A).obligation],
       diff: { bounded: partial(SHA_B, SHA_A, 'DIFF-B', true), claims: { acceptance: [clauseId('A1'), clauseId('A2')], witnesses: [witnessItemId('W-1')], obligations: [obligationId('I-2')] } },
       laneLedger: [{ lane: laneId('lint'), argv: ['npx', 'tsc'], expectedExit: 0, exitCode: 0, verdict: 'pass', evidenceDir: absPath('/run/inv/4-1'),
@@ -337,7 +337,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
         reused: { at: SHA_A, inv: invocationId(opIdOf('arc-1/4'), 1) } }],
       reach: [repoPath('REACH-B')], traits: ['persistent'], reachTraits: ['redacts'], evidence: [absPath('/run/ev/b')], systems: [systemName('app')],
       priorRound: {
-        directives: ['DIRECTIVE-B'], findings: [{evidence: ["src/b/x.ts:1"], 
+        directives: ['DIRECTIVE-B'], findings: [{evidence: ["src/b/x.ts:1"],
           severity: 'blocking', path: 'src/b/x.ts', text: 'FINDING-B', contractRef: null, experiments: [{ command: 'node EXPERIMENT-B.mjs', output: 'OUTPUT-B' }], debt: null,
           defect: 'incorrect-behaviour', reraises: null, hunk: null,
         }],
@@ -489,7 +489,7 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
   },
   gate: {rulings: [],
     decision: 'revise', ordering: null, reasons: ['A2 untested'], directives: ['Add a test for A2.'],
-    findings: [{evidence: ["src/a/parse.ts:1"], 
+    findings: [{evidence: ["src/a/parse.ts:1"],
       severity: 'blocking', path: 'src/a/parse.ts', text: 'A2 has no test.', contractRef: null, experiments: [{ command: 'node -e "parse(\'\')"', output: 'TypeError' }], debt: null,
       defect: 'test-inadequate', reraises: null, hunk: null,
     }],

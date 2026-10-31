@@ -124,7 +124,7 @@ function exportCurrentInputs(r: ExecRun): void {
 }
 
 /** An approving gate's note: the corpus arc banks it as debt after the approval (DEBT_BANK, `debt.after-approval`). */
-const gateNote = (what: string) => ({evidence: ["fixture:1"], 
+const gateNote = (what: string) => ({evidence: ["fixture:1"],
   severity: 'note', path: null, text: `The ${what} helper has no overflow test.`, contractRef: null, experiments: [],
   debt: { drag: `Every caller of ${what} must guard overflow itself until it has one.` },
 }) as const;

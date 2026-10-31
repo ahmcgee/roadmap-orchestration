@@ -122,7 +122,7 @@ const PROMPT = 'diff --git a/packages/oak/src/rough-edge.ts b/packages/oak/src/r
 const SHOWN: DiffShown = { inlined: [repoPath('packages/oak/src/rough-edge.ts')], notInlined: [repoPath('packages/fern/src/early-index.ts'), repoPath('packages/fern/src/late-gate.ts')] };
 const CITE: GateOutput = {rulings: [], 
   decision: 'revise', findings: [{evidence: ["fixture:1"],  severity: 'blocking', path: KEY.plant!.path, text: 'operator flipped', contractRef: null, experiments: [], debt: null, defect: 'incorrect-behaviour', reraises: null, hunk: null }],
-  directives: ['Restore it.'], reasons: [], premises: [], standing: [], clusters: null, 
+  directives: ['Restore it.'], reasons: [], premises: [], standing: [], clusters: null,
 };
 
 const tool = (id: string, name: string, input: Record<string, unknown>, result: string, parent: string | null = null): readonly Record<string, unknown>[] => [
