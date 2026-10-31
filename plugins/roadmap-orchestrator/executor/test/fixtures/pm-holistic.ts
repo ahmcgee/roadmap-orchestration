@@ -132,11 +132,9 @@ export const HOLISTIC: Scenario = {
       const plan = JSON.parse(readFileSync(r.planPath, 'utf8'));
       writeFileSync(r.planPath, JSON.stringify({...plan, limits: {...plan.limits, retries: 4}}));
       submit(r, applyBody(r));
-      // The watcher keeps polling while the executor applies the root's revision.
+      // Apply lands at the next safe boundary; the current build must be free to reach it.
+      release(r.scenarioDir, 'root-apply');
     },
-  }, {
-    name: 'release-root-revision', when: () => journalOf(r).events.filter((e) => e.type === 'fact' && e.fact.kind === 'plan-applied').length === 2,
-    act: async () => release(r.scenarioDir, 'root-apply'),
   }],
 };
 

@@ -26,7 +26,7 @@ import { validateBuildOutput, validateGateOutput, validateCampaignAuditOutput } 
 import { seatTripleOf } from '../src/pipeline/dispatch.ts';
 import { buildTriple } from '../src/pipeline/dispatch.ts';
 import { readNeedsUser } from '../src/needsuser.ts';
-import { diagnosisDue, reviewItems, markers, proofNotLocal } from '../src/pipeline/surface.ts';
+import { diagnosisDue, reviewItems, markers, proofNotLocal, methodContext } from '../src/pipeline/surface.ts';
 import { contextFor, setupArc, gateStep, mulBuild, appendSteps, stepUntil, syncInputs, commandContextFor, applyBody } from './fixtures/unit-common.ts';
 import { BUILD_REPORT, admitAll, planCheckStep, planCheckRepairStep } from './fixtures/stage-common.ts';
 import { readCalls } from './helpers/scenario.ts';
@@ -163,6 +163,7 @@ test('surface.M2: a delivered candidate witness triggers review and Claude; revi
     const never = {...r.unit('u1'), review: 'never' as const};
     assert.deepEqual(markers(r.ctx, never, loadUnitSpec(r.ctx, never).spec), []);
     assert.equal(proofNotLocal(r.ctx, never), true, 'the builder exclusion remains mechanical');
+    assert.ok(methodContext(r.ctx, never, loadUnitSpec(r.ctx, never).spec).markers.includes('M2'), 'disabling the review seat retains the proof method module');
   } finally {r.journal.close();}
 });
 

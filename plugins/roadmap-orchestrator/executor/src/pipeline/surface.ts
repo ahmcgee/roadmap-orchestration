@@ -68,7 +68,7 @@ export function methodContext(ctx: StageContext, unit: PlanUnit, spec: SpecM1, t
   const map = mapInForce(ctx.journal.view);
   const systems = [...unit.systems, ...touched.filter((t) => map !== null && Object.hasOwn(map.systems, t)) as import('../core/ids.ts').SystemName[], ...touched.flatMap((p) => map === null ? [] : [...pathSystems(map, p as import('../core/values.ts').RepoPath)])];
   const milestones = unitMilestones(ctx, unit.id, integrationTip(ctx));
-  return { traits: map === null ? [] : systemTraits(map, systems), markers: markers(ctx, unit, spec).map((m) => m.marker), unitKind: milestones?.of.some((m) => m.as === 'design') ? 'design' : spec.design?.kind ?? 'module', expensiveLanes: [...spec.lanes, ...ctx.plan().suite.lanes].some((l) => (l as {cost?: string}).cost === 'expensive'), ui: milestones?.of.some((m) => m.dirs.length > 0) ?? false };
+  return { traits: map === null ? [] : systemTraits(map, systems), markers: [...new Set([...markers(ctx, unit, spec).map((m) => m.marker), ...(proofNotLocal(ctx, unit) ? ['M2'] : [])])], unitKind: milestones?.of.some((m) => m.as === 'design') ? 'design' : spec.design?.kind ?? 'module', expensiveLanes: [...spec.lanes, ...ctx.plan().suite.lanes].some((l) => (l as {cost?: string}).cost === 'expensive'), ui: milestones?.of.some((m) => m.dirs.length > 0) ?? false };
 }
 export function reviewItems(view: JournalView, unit: UnitId): readonly ReviewItem[] {
   return view.surfaceFacts().flatMap((f) => f.kind === 'review-completed' && f.unit === unit && f.mode === 'pre-build' ? f.items : []);
