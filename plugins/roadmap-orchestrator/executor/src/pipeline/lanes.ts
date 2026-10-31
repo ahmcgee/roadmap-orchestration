@@ -678,7 +678,7 @@ export function reusablePass(ctx: StageContext, parent: StageParent, lane: LaneD
   for (let i = executions.length - 1; i >= 0; i--) {
     const e = executions[i]!;
     if (!sameIdentity(e.identity, now.identity)) continue;
-    if (e.at !== at && laneInputAt(ctx, lane, e.at, now.systems) !== now.inputSha) continue;
+    if (laneInputAt(ctx, lane, e.at, ctx.plan().units.find((u) => u.id === e.parent.unit)?.systems) !== now.inputSha) continue;
     const record = executionRecord(ctx, lane, e);
     if (record === null || !cleanPass(ctx, record)) return null;
     return { from: { parent: e.parent, inv: record.inv, at: e.at }, record: { ...record, reused: { at: e.at, inv: record.inv } } };
