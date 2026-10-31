@@ -1,54 +1,20 @@
-// Fake-backed M4a runs (`driver --fake <script>`): the backend calls of each arc, one scenario per arc (its job ids
-// restart at review-1, audit-1, ckpt-1), written by the driver under `fake/arc-<n>/` with its shims; the scripted root
-// agent puts arc n's shims first on PATH when it starts arc n. Unit calls are M1 steps keyed by unit (evals/m1/
-// scenario.ts); pack review, lens and checkpoint calls are 0b's scripted judgments keyed by job (and lens). Every unit's
-// pre-build is one call (dev.17 removed `planCheck.shape: by-builder`) and every build is the efficient class's.
-//
-//   arc 1   review-1 holds a blocking finding on guard's spec (the hold; the root agent fixes the pack by `apply`), and
-//           review-2, on the new key, supersedes it with a note. guard builds a
-//           refusal that does not name the vessel holding the berth: its unit lane passes, the berths journey fails,
-//           so witness presence sends it back with the failing id (a witness fix round) before any gate. confirm (high
-//           risk) is pre-builded and built like the others; mutation smoke reverts it and its W-1 witness, the tide table's journey, still passes: one smoke fix round, which
-//           leaves the test (the behaviour predates the unit), then the gate approves with the survivor in its checks
-//           and a note (gate-note debt). audit-1's vision lens opens a P2 with no obligation; ckpt-1 defers it
-//           (finding-deferred debt) and proposes two amendments (T-11: confirm cancellations by text; T-5: list the
-//           high-water heights). Then the six read-outs (one module each: pre-build, build, gate), with
-//           audit-2..audit-5; audit-2..audit-4 find nothing new and have no checkpoint (checkpoint-skipped), and the
-//           final audit-5's checkpoint, ckpt-2, no-ops.
-//   arc 2   review-1, then cutoff builds; audit-1 waits at the `blocked-seen` barrier until the root agent has had the
-//           run's blocked wake (notice behind the run-only limit), so the checkpoints run while that turn supervises in
-//           place; ckpt-1 admits `fits` (the opportunity O-1, V-7, with its witness: I-4 split into I-13 and
-//           fits' I-14 on the berths journey, golden.ts `FITS_WITNESS`) and a day view (V-6, over the budget: converted
-//           into an amendment); the bundle's drift audit-2 (noting a new gap) and ckpt-2 run while the run-only limit
-//           still holds every unit; then notice builds (the root agent pauses it in its hung `slow` lane and resumes
-//           it), audit-3 (nothing new: no checkpoint), fits builds after notice, audit-4 (cadence and final) and ckpt-3.
-//
-// M4b (the flow loop): arc 1, in both scripts,
-// has the six read-outs after confirm (golden.ts `READOUTS`, one unit each), and run-only holds every unit after
-// quay-list until the flow loop has run (three suite runs before the change, confirm's smoke fix round among them,
-// outside the rework guard's window). `story`: two flow runs the root agent requests (the second the cooldown's one
-// bypass, RC-5): flow-1 proposes the bait, the witness-lane fake `replay` at `--test-concurrency=6` (accepted; its proof
-// is `changed`); flow-2 the plant lane `suite` at six files a time (accepted; proof `preserved`, applied, then the other
-// five read-outs are its verdict window's suite runs). `vision-silent`: the third merge's constraint-shift run, flow-1,
-// answers noAction. Arc 1's eight publications owe audit-1..audit-5; ckpt-1 and the final ckpt-2 run. Arc 2 carries arc 1's
-// suite lanes; the root agent requests one flow run right after the start (flow-1: a build-class step it rejects on its
-// item's wake), so its cooldown covers the arc. The flow calls are judgment steps keyed by job id (`flow-<n>`), each
-// answer checked by the frozen reader (FLOW_SCHEMA).
+// Free M4a fixture scenarios: scripted root sessions drive the real staged CLI and fake backends.
+// Arc 1 covers pack review, a witness fix, high-risk Opus builds, smoke survival, campaign audit and flow changes.
+// Arc 2 covers root-authored opportunity admission, a paused lane and its reuse, and a rejected flow proposal.
+// Both profiles share the story; high-risk builds use Claude, while eligible low-risk builds follow the profile.
 import { join } from 'node:path';
 import type { JsonValue } from '../../src/core/json.ts';
 import { validateFlowOutput } from '../../src/prompts/schemas.ts';
-import type { ProfileName } from '../../src/routing/types.ts';
-import { admitSpecWire, checkpointAnswer, lensStep, packReviewStep, packTargetOf } from '../../test/helpers/holistic.ts';
+import type { ProfileName,RiskTier } from '../../src/routing/types.ts';
+import { lensStep, packReviewStep, packTargetOf } from '../../test/helpers/holistic.ts';
 import type { Step } from '../../test/helpers/scenario.ts';
 import { type M1Step,fakeSteps } from '../m1/scenario.ts';
 import type { FakeScript } from './fake-root.ts';
-import { FILES,FITS_WITNESS,LANES,OBLIGATIONS,OPPORTUNITY,READOUTS,REPLAY_LANE,SHARD,SUITE_LANE,filesOf,specOf } from './golden.ts';
+import { FILES,LANES,READOUTS,REPLAY_LANE,SHARD,SUITE_LANE,filesOf } from './golden.ts';
 import { PLANT } from './layout.ts';
 
 /** The barrier arc 2's audit-1 waits at until the root agent had the run's blocked wake (fake-root.ts releases it). */
 export const BLOCKED_SEEN_BARRIER = 'blocked-seen';
-/** Arc 2's checkpoint of the drift audit ckpt-1's bundle owes: the root agent lifts the run-only limit once it decided. */
-export const DRIFT_CHECKPOINT = 'ckpt-2';
 const HOLD_MS = 20 * 60_000;
 
 const preBuild = (reason: string): M1Step => ({
@@ -117,8 +83,6 @@ const UNITS_2: Readonly<Record<string, readonly M1Step[]>> = {
   fits: [preBuild('The spec lists the berths a draught fits (V-7), within the register.'), build('fits: the berths a draught fits', 'fits'), gate('A1 holds.')],
 };
 
-const NO_OP = checkpointAnswer({ decision: 'no-op' });
-
 const JOBS_1: readonly Step[] = [
   packReviewStep('review-1', [{
     severity: 'blocking', target: packTargetOf.unit('guard'),
@@ -132,32 +96,6 @@ const JOBS_1: readonly Step[] = [
 
   lensStep('audit-2', 'invariants'),
 ];
-
-/** A checkpoint `admit` of golden.ts's `OPPORTUNITY[id]`: its targets, citing the one clause it advances. */
-function admitOp(id: keyof typeof OPPORTUNITY): JsonValue {
-  const o = OPPORTUNITY[id];
-  const spec = specOf({ id: o.unit.id, systems: o.unit.systems, unitLane: o.unitLane, acceptance: o.acceptance });
-  return {
-    op: 'admit', unit: { ...o.unit, systems: [...o.unit.systems], after: [...o.unit.after] }, spec: admitSpecWire(spec), targets: [...o.targets],
-    cites: [...o.cites], evidence: [o.why],
-  };
-}
-
-/** fits' witness (golden.ts `FITS_WITNESS`): I-4 split into its restatement and the draught child fits delivers. */
-function fitsWitnessOp(): JsonValue {
-  const w = FITS_WITNESS;
-  const parent = OBLIGATIONS.find((o) => o.id === w.parent)!;
-  const seed = LANES.find((x) => x.id === parent.lane)!;
-  const test = seed.test;
-  const childFile = LANES.find((x) => x.id === w.child.lane)!.journey;
-  return {
-    op: 'obligation-split', obligation: w.parent, cites: [...w.cites], evidence: [w.why],
-    children: [
-      { id: w.restated, statement: parent.statement, docRef: null, rule: parent.rule, witness: { lane: parent.lane, testIds: [test], files: [seed.journey] }, activation: 'must-hold', deliveredBy: [] },
-      { id: w.child.id, statement: w.child.statement, docRef: null, rule: w.child.rule, witness: { lane: w.child.lane, testIds: [w.child.test], files: [childFile] }, activation: 'future', deliveredBy: ['fits'] },
-    ],
-  };
-}
 
 const JOBS_2: readonly Step[] = [
   packReviewStep('review-1'),
@@ -238,10 +176,10 @@ export const VISION_SILENT_FLOW: JsonValue = {
 /** The fake backend steps of arc `n` (1 or 2) under `profile` for `script`: the start's smoke, the units' calls, the jobs'. */
 export function arcSteps(n: 1 | 2, profile: ProfileName, script: FakeScript): readonly Step[] {
   const smoke = fakeSteps({ steps: [] }, profile);
-  const m1 = (units: Readonly<Record<string, readonly M1Step[]>>): readonly Step[] =>
-    Object.entries(units).flatMap(([unit, steps]) => fakeSteps({ steps }, profile).slice(smoke.length).map((s): Step => ({ ...s, unit })));
+  const m1 = (units: Readonly<Record<string, readonly M1Step[]>>, risk: RiskTier = 'low'): readonly Step[] =>
+    Object.entries(units).flatMap(([unit, steps]) => fakeSteps({ steps }, profile, risk).slice(smoke.length).map((s): Step => ({ ...s, unit })));
   const story = script === 'story';
   if (n === 2) return [...smoke, ...m1(UNITS_2), ...JOBS_2, ...(story ? [flowStep(FLOW_2.buildClass.job, FLOW_2.buildClass.answer)] : [])];
   const flow = story ? Object.values(FLOW_1).map((f) => flowStep(f.job, f.answer)) : [flowStep('flow-1', VISION_SILENT_FLOW)];
-  return [...smoke, ...m1(M1_UNITS_1), ...m1(M1_READOUTS), ...m1(CONFIRM), ...JOBS_1, ...flow];
+  return [...smoke, ...m1(M1_UNITS_1), ...m1(M1_READOUTS), ...m1(CONFIRM, 'high'), ...JOBS_1, ...flow];
 }

@@ -14,7 +14,7 @@
 // relative to the call's working directory, the unit worktree.
 import { readFileSync } from 'node:fs';
 import type { JsonValue } from '../../src/core/json.ts';
-import type { ProfileName } from '../../src/routing/types.ts';
+import type { ProfileName,RiskTier } from '../../src/routing/types.ts';
 import type { Expect, Step, WorldAct } from '../../test/helpers/scenario.ts';
 
 export type M1Step =
@@ -108,12 +108,12 @@ function buildExpect(profile: ProfileName, round: 'fresh' | 'resume'): Expect {
 }
 
 /** The fake backend steps that play `scenario` under `profile`. */
-export function fakeSteps(scenario: M1Scenario, profile: ProfileName): readonly Step[] {
-  let highRisk = false;
+export function fakeSteps(scenario: M1Scenario, profile: ProfileName, risk: RiskTier = 'med'): readonly Step[] {
+  const highRisk = risk === 'high';
   const steps = scenario.steps.map((s): Step => {
 
     const stdin: Expect = s.stdinContains === undefined ? {} : { stdinContains: s.stdinContains };
-    // dev.17: a pre-build answer carries the design payload keys (`planCheck` act: an approve's design record defaulted).
+    // Review annotation does not change the builder's risk; the caller supplies the plan's risk.
     if (s.role !== 'build') return { ...(s.role === 'verifier' ? {review: true as const} : {}), as: 'claude', expect: { ...judgment(s.role), ...stdin }, acts: [{ type: 'emit', value: { ordering: null, ...s.answer as Record<string, JsonValue> } }] };
     const acts = [...s.acts, { type: 'emit', value: BUILD_REPORT } as const];
     const expect = {...buildExpect(highRisk ? 'claude-only' : profile, s.round), ...stdin};

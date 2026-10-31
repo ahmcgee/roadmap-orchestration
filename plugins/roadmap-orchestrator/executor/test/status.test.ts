@@ -467,7 +467,7 @@ const designPark = (r: ArcRun, unit: string): number => r.journal.fact({
 } as Fact);
 
 test('status.parks: a retryable park shows its targets, what is outstanding, its backoff and escalation; the host probe covers both parks and has tripped; an operator park shows its kind and blocks its dependent; a parked backend is listed; with nothing able to move the run is blocked, and a passing probe makes it run', T, async () => {
-  const d = setupArc({ steps: [{...planCheckStep({decision: 'approve'}), unit: 'u4'}], units: [{ id: 'u1' }, { id: 'u2' }, { id: 'u3', after: ['u2'] }, { id: 'u4' }] });
+  const d = setupArc({ steps: ['u1', 'u4'].map((unit) => ({...planCheckStep({decision: 'approve'}), unit})), units: [{ id: 'u1' }, { id: 'u2' }, { id: 'u3', after: ['u2'] }, { id: 'u4' }] });
   const r = contextFor(d);
   let kill: (() => Promise<void>) | null = null;
   try {

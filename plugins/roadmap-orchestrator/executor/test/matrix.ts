@@ -96,7 +96,7 @@ export const ADVERSARIAL_LIVE_RUNNER = 'adversarial: crash during recovery with 
 export const ADVERSARIAL_TAKEOVER = 'adversarial: cross-arc takeover with a live runner crashed mid-adoption';
 export const PIPELINE_STRAIGHT = 'whole pipeline: one unit straight through (supervised roadmap start)';
 export const PIPELINE_BUMPY = 'whole pipeline: two units through every bumpy branch (supervised roadmap start)';
-export const PIPELINE_HOLISTIC = 'whole pipeline: a holistic arc through baseline, a unit, audits, checkpoints, close-out and completion (supervised roadmap start)';
+export const PIPELINE_HOLISTIC = 'whole pipeline: a holistic arc through baseline, a unit, root apply, campaign audit, close-out and completion (supervised roadmap start)';
 export const PIPELINE_RUNNER_DEATH = 'whole pipeline: runner death mid-build';
 export const PIPELINE_SUPERVISOR_DEATH = 'whole pipeline: supervisor death mid-run';
 export const PIPELINE_HOST_DEATH = 'whole pipeline: supervisor and executor death mid-build';
@@ -116,8 +116,8 @@ export const CONCURRENT_AUDIT = 'concurrent job: an audit job stepping (audit-1:
 export const CONCURRENT_APPLY = 'concurrent root apply: campaign request, command.apply and revision.commit while units u1 and u2 have live build runners';
 export const CONCURRENT_BATCH = 'concurrent job: a repair batch publishing (batch-1: its slot, chained candidate, lanes, batch ff, snapshot), unit u3 in a live build runner';
 export const CONCURRENT_PREEMPT = 'concurrent job: a rule\'s docs publication preempting u1\'s candidate before green (the preempt kill, docs commit, lanes, docs ff, revision, snapshot)';
-export const CONCURRENT_DEBT = 'concurrent job: a corpus arc\'s gate approval banking its note (u1\'s, u2\'s) while the audit and checkpoint jobs step';
-export const INPUT_CAPTURE_FENCE = 'input capture under the fence (M3 H2: judgment-inputs, audit-started, checkpoint-inputs never inside an open revision.commit)';
+export const CONCURRENT_DEBT = 'concurrent job: a corpus arc\'s gate approval banking its note (u1\'s, u2\'s) while the campaign audit and root decision step';
+export const INPUT_CAPTURE_FENCE = 'input capture under the fence (M3 H2: judgment-inputs and audit-started never inside an open revision.commit)';
 export const REVERSE = 'reverse <D-n> (M3 H13: a compensating revision, committed as revision.commit)';
 export const FF_ELIGIBILITY = 'ff eligibility (M3 B2/B3: a unit ff redone only while its fingerprint and finding eligibility hold)';
 export const JOB_RESIDUE = 'job-owned residue (M3 G4, H4: a job lane\'s failed cleanup, reclaimed under the job)';
@@ -214,10 +214,10 @@ const HOLISTIC_LABELS: Readonly<Record<Boundary, readonly string[]>> = {
 };
 
 const HOLISTIC_RECOVERY: Readonly<Record<Boundary, string>> = {
-  B1: 'the M3 fact (a witness, the latch, an audit\'s start or end, a checkpoint\'s inputs, the bundle\'s plan-applied or divergence, the digest, a no-op decision, docs-covered, docs-published, arc-completed) or the rev 3 one (smoke-ran, a corpus amendment) is absent after the restart, a torn line discarded once: the job or the unit\'s stage resumes and writes it once (a capture from the same inputs, a smoke run again within its allowance), the arc ends as uncrashed',
-  B2: 'the job\'s open op (its slot or lane reservation, checkout, lane, lens, checkpoint or pack-review call, evidence, docs commit, docs ff, snapshot, the bundle\'s revision, the digest item) is closed as its reconciler says (a spawn lost, the rest redone or reconciled), or a capture fact (pack-review-started included) is durable with nothing run: the job resumes as the same job from its recorded inputs, every backend call made once; an unpublished close-out is abandoned and runs again as the next docs publication; the build\'s witness lane files published with no call made: the restarted build publishes the same bytes and calls once; the smoke\'s patch kept or its mutant.apply open: redone, the lanes attempt run again (one more smoke execution, within the allowance); the arc ends as uncrashed',
+  B1: 'the M3 fact (a witness, the latch, an audit\'s start or end, root plan-applied, docs-covered, docs-published, arc-completed) or the rev 3 one (smoke-ran) is absent after the restart, a torn line discarded once: the job or the unit\'s stage resumes and writes it once (a capture from the same inputs, a smoke run again within its allowance), the arc ends as uncrashed',
+  B2: 'the job\'s open op (its slot or lane reservation, checkout, lane, campaign-audit or pack-review call, evidence, docs commit, docs ff, snapshot, the root revision and owner item) is closed as its reconciler says (a spawn lost, the rest redone or reconciled), or a capture fact (pack-review-started included) is durable with nothing run: the job resumes as the same job from its recorded inputs, every backend call made once; an unpublished close-out is abandoned and runs again as the next docs publication; the build\'s witness lane files published with no call made: the restarted build publishes the same bytes and calls once; the smoke\'s patch kept or its mutant.apply open: redone, the lanes attempt run again (one more smoke execution, within the allowance); the arc ends as uncrashed',
   B3: 'inside the job\'s op: its reconciler finishes or redoes it (a live lane adopted, the same SHAs), a lens read resumes at the next lens, a close-out ff published is finished (docs-covered, docs-published, the snapshot, the slot released); a mutant checkout made, its patch not applied: removed and redone; the arc ends as uncrashed',
-  B4: 'the op\'s postcondition holds (reconciled); a read call (the pack review\'s included) or a decided bundle is consumed from the record (never asked again), its aftermath written only where missing (a flow-series written, arc-completed not: no second series, the arc completes; the review ended once; its amendments, a converted admit\'s included, once each; a gate note banked once after its approval); a frontier dispatch pinned, its in-session outcome unwritten: the next attempt finds the pin; a smoke\'s mutant lanes witnessed, its run unrecorded: run again within the allowance; one plan-applied, one divergence per (job, index), one digest; the arc ends as uncrashed',
+  B4: 'the op\'s postcondition holds (reconciled); a read call (the pack review\'s included) or a root revision is consumed from the record (never asked again), its aftermath written only where missing (a flow-series written, arc-completed not: no second series, the arc completes; the review ended once; a gate note banked once after its approval); a frontier dispatch pinned, its in-session outcome unwritten: the next attempt finds the pin; a smoke\'s mutant lanes witnessed, its run unrecorded: run again within the allowance; one plan-applied and one owner item; the arc ends as uncrashed',
   B5: 'nothing is open: the job, the close-out or the completion runs on from its facts (no second latch, audit-ended, docs-published or arc-completed; the terminal snapshot published by the restart); a witness check\'s certified observation reused, never run twice; a smoke-ran read back by its key (no second execution), or a mutant applied with its lanes not run: run again within the allowance; the arc ends as uncrashed',
 };
 
@@ -1049,8 +1049,7 @@ export const MATRIX: readonly Row[] = [
   },
   {
     // The holistic scenario (test/fixtures/pm-holistic.ts HOLISTIC), a corpus arc (M4a D0): review-1 (the pack review),
-    // each checkpoint's amendment settlement, baseline-1, u1 with a journey lane and I-2 latched,
-    // audit-1, ckpt-1 applying a bundle (revision, divergence, digest), audit-2, ckpt-2 an interpretation-only no-op,
+    // baseline-1, u1 with a journey lane and I-2 latched, a queued root apply, its split-request owner item, audit-1,
     // the close-out docs-1, arc-completed and the terminal snapshot, through `roadmap start`. Its occurrences are
     // sampled by context (`sampleHolistic`): each M3-only label at 1 and 2, each log append at each M3 fact kind's
     // first, every other label at its first occurrence in each job kind, a candidate's arc lane and the arc's own

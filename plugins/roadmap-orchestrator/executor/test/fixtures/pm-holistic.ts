@@ -2,22 +2,15 @@ import { absPath } from '../../src/core/values.ts';
 import { release } from '../helpers/barrier.ts';
 import { submit } from './cm-common.ts';
 import { journalOf } from './exec-common.ts';
-import { systemName } from '../../src/core/ids.ts';
 // The holistic whole-pipeline scenario (M3 B8; test/serial/pipeline-matrix.test.ts): an exec-common arc made holistic on a
 // corpus target (M4a D0, corpus-target.ts: a fresh holistic start targets a corpus; obligations witnessed on a fake
 // `journey` arc lane, the required lens set L = {vision}) and run by the real supervised `roadmap start` through the
 // whole-pipeline harness (pm-common.ts), keyed per unit and per job.
 //
-// The story: the start's revision 1; the pack review `review-1` (no finding) before the first admission; the baseline witness job (A6) runs the journey lane on the baseline before any
-// admission; u1 (declaring I-1 must-hold and delivering I-2 future) walks its pipeline, its candidate running the
-// journey lane, and its ff latches I-2 (obligation-latched); the final audit `audit-1` (the journey lane, its vision
-// lens); the checkpoint `ckpt-1` applies a bundle (an arc-wide limits op: a revision committed through the fence,
-// its divergence facts and digest item); the drift audit `audit-2` of generation 2, noting a new gap F-1 (so its
-// checkpoint runs: an audit that found nothing new has none); the checkpoint `ckpt-2`, dismissing F-1, a bundle
-// whose one op (an admit serving no world clause) code converts (M4a rev 3, B: `unrelated`), so a no-op carrying its
-// conversion and its interpretation (H12: one divergence, no revision; the conversion's corpus amendment), which makes
-// generation 2 quiescent; the close-out docs publication `docs-1` (docs.commit, its lanes, the docs ff, docs-covered,
-// docs-published, its snapshot); then `arc-completed` and the terminal snapshot.
+// The story: review-1 admits the corpus pack, baseline-1 checks the journey witness, and u1 builds at high risk.
+// Root apply queues an arc-wide retry-limit edit while u1 is building; the build's split request exercises durable
+// owner-item publication. The journey lane proves I-2 at publication, audit-1 reviews the completed range, and
+// docs-1 publishes close-out before arc-completed and its terminal snapshot.
 //
 // u1 walks the M4a rev 3 corpus-arc stages (u1 at risk high): its pre-build (one fresh call; dev.17 removed the
 // in-session assessment), the fresh build (its answer reporting an experiment), the witness presence check (D1: I-2's t2 on the journey lane at the
@@ -29,9 +22,9 @@ import { join } from 'node:path';
 import type { Event, Parent } from '../../src/core/events.ts';
 import { type InvocationId, parseInvocationId } from '../../src/core/ids.ts';
 import type { JournalView } from '../../src/core/interfaces.ts';
-import { type JsonValue, canonicalJson } from '../../src/core/json.ts';
+import { canonicalJson } from '../../src/core/json.ts';
 import type { LogSnapshot } from '../../src/core/log.ts';
-import { admitSpecWire, lensStep, packReviewStep } from '../helpers/holistic.ts';
+import { lensStep, packReviewStep } from '../helpers/holistic.ts';
 import { git, tmpDir } from '../helpers/repo.ts';
 import type { Step } from '../helpers/scenario.ts';
 import { writeWitnessControl } from '../helpers/witness.ts';
@@ -51,8 +44,6 @@ const MAPPED = ['app'].map((system) => ({ system, obligations: ['I-1', 'I-2'] })
 const OBLIGATIONS = [
   { id: 'I-1', testIds: ['t1'], files: ['test/add.test.js'] }, { id: 'I-2', activation: 'future' as const, deliveredBy: ['u1'], testIds: ['t2'], files: ['test/mul.test.js'] },
 ];
-/** The applied bundle's one op: an arc-wide limit changed (material, no docs), citing V-1. */
-const LIMITS = { op: 'limits', unit: null, limits: [{ field: 'retries', value: 2 }], cites: ['V-1'], evidence: ['scripted evidence'] };
 
 /**
  * Makes the laid-out arc holistic on a corpus target (corpus-target.ts): obligations over a journey witness lane,
@@ -94,7 +85,7 @@ const GATE_NOTE = {evidence: ["fixture:1"],
   severity: 'note', path: null, text: 'The mul helper has no overflow test.', contractRef: null, experiments: [], debt: { drag: 'Every caller of mul must guard overflow itself until it has one.' },
 } as const;
 
-/** u1's fresh build (dev.17: the efficient class at build.high, Codex under the default profile): mul committed; the answer reports an experiment (I3). */
+/** u1's high-risk Opus build commits mul and reports an experiment. */
 const IMPLEMENT: Step = {
   as: 'claude', expect: {argv: ['--model', 'claude-opus-5-5']},
   acts: [
@@ -103,18 +94,6 @@ const IMPLEMENT: Step = {
     { type: 'emit', value: { ...BUILD_REPORT, tooBig: {estimate: 'Consider separating follow-up overflow coverage', suggestedChildren: ['overflow coverage']}, experiments: [{ name: 'mul by hand', argv: ['node', '-e', 'import("./src/mul.js")'], exit: 0 }] } },
   ],
 };
-
-/**
- * ckpt-2's one op: an admit citing only the purpose clause V-1 and delivering nothing (it declares the must-hold I-1, which
- * never counts as touched), so it touches no world clause: converted `unrelated`.
- */
-function asideAdmit(r: ExecRun): JsonValue {
-  const spec = JSON.parse(readFileSync(join(r.planPath, '..', 'u1.json'), 'utf8')) as Json;
-  return {
-    op: 'admit', unit: { id: 'aside', risk: 'med', systems: [systemName('app')], after: [], origin: 'checkpoint' },
-    spec: admitSpecWire({ ...spec, unit: 'aside', rev: 1, obligations: ['I-1'] }), targets: [], cites: ['V-1'], evidence: ['scripted evidence'],
-  };
-}
 
 export const HOLISTIC: Scenario = {
   arc: () => ({}),
@@ -192,7 +171,7 @@ export function ownerOf(view: JournalView, e: Event): string {
 
 /**
  * The context of a log record, as the holistic row samples it: `unit` (a unit's own), `unit:journey` (a unit
- * candidate's arc lane), the job kind (`job:baseline`, `job:audit`, `job:ckpt`, `job:docs`: the id's prefix), or `arc`
+ * candidate's arc lane), the job kind (`job:baseline`, `job:audit`, `job:docs`: the id's prefix), or `arc`
  * (a command's records too).
  */
 export function contextOf(view: JournalView, e: Event): string {
