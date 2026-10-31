@@ -113,6 +113,8 @@ test('supervisor.crash-stage: a killed executor leaves its signal and open stage
   await until(() => existsSync(path), WAIT_MS, 'the supervisor exit evidence');
   const end = JSON.parse(readFileSync(path, 'utf8')) as ExecutorEndRecord;
   assert.deepEqual(end.child, { type: 'signalled', signal: 'SIGKILL' });
+  assert.equal(end.killEvidence?.cause, 'external-unknown');
+  assert.ok(end.killEvidence?.pressure.memory.kind === 'readable' || end.killEvidence?.pressure.memory.kind === 'unavailable');
   assert.ok(end.stages.kind === 'known');
   assert.deepEqual(end.stages.open, [{ type: 'stage', unit: 'u1', stage: 'plan-check', attempt: 1 }]);
   assert.deepEqual(end.stages.last, end.stages.open[0]);

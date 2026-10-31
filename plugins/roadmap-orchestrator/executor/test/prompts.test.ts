@@ -556,7 +556,8 @@ describe('prompts', () => {
   it('prompts.every-supported-seat-renders: deterministic, and the schema accepts a sample output', () => {
     const seats = builtinSeats();
     assert.ok(seats.length >= 7);
-    for (const role of ROLES) assert.ok(seats.some(([r]) => r === role), `${role}: seated by a built-in profile`);
+    for (const role of ROLES.filter((r) => r !== 'flow')) assert.ok(seats.some(([r]) => r === role), `${role}: seated by a built-in profile`);
+    assert.ok(!seats.some(([r]) => r === 'flow'), 'the retired flow role is never seated');
     for (const [role, model] of seats) {
       const mod = promptFor(role, model) as { system: string; schema: JsonValue; render: (i: unknown) => string };
       for (const input of SAMPLES[role]) {
