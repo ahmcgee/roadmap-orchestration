@@ -19,14 +19,16 @@ export function witness(ctx: CommandContext, command: CommandId, body: Extract<C
   const lane = obligations?.lanes.find((l) => l.id === o?.witness?.lane);
   if (o === undefined || o.state.type !== 'active' || lane?.witnessClass !== 'external') return { kind: 'rejected', reason: `${body.obligation} is not an active external witness obligation` };
   const head = revParse(ctx.repo, branchRef(ctx.plan().integrationBranch));
-  let evidenceSha256 = null;
-  if (body.evidenceFile !== null) {
+  const recorded = ctx.journal.view.ciFacts().find((f) => f.kind === 'external-witness' && f.command === command);
+  if (recorded === undefined && head !== body.expectedHead) return { kind: 'rejected', reason: `external witness is stale: submitted at ${body.expectedHead}, integration is now ${head}` };
+  let evidenceSha256 = recorded?.kind === 'external-witness' ? recorded.evidenceSha256 : null;
+  if (recorded === undefined && body.evidenceFile !== null) {
     if (!existsSync(body.evidenceFile.path) || !lstatSync(body.evidenceFile.path).isFile()) return { kind: 'rejected', reason: 'external witness evidence is not a regular file' };
     const bytes = readFileSync(body.evidenceFile.path);
     evidenceSha256 = sha256(sha256Hex(bytes));
     if (evidenceSha256 !== body.evidenceFile.sha256) return { kind: 'rejected', reason: 'external witness evidence changed since submission' };
     keepInput(ctx.runDir, bytes, 'external-evidence');
-  } else if (!/^https?:\/\//.test(body.evidence)) return { kind: 'rejected', reason: 'external witness needs a file or HTTP(S) evidence URL' };
+  } else if (recorded === undefined && !/^https?:\/\//.test(body.evidence)) return { kind: 'rejected', reason: 'external witness needs a file or HTTP(S) evidence URL' };
   if (!ctx.journal.view.ciFacts().some((f) => f.kind === 'external-witness' && f.command === command)) ctx.journal.fact({
     kind: 'external-witness', command, obligation: o.id, obligationRev: o.rev, laneRev: laneRevOf(lane), head,
     inputSha: inputShaOf(ctx.repo, revParse(ctx.repo, `${head}^{tree}`), lane, systemsMapInForce(ctx.journal.view.planApplied())), result: body.result, evidence: body.evidence, evidenceSha256,

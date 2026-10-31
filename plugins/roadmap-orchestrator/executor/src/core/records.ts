@@ -1563,7 +1563,7 @@ export type CommandBody =
    */
   | Readonly<{ type: 'steer'; unit: UnitId; brief: Readonly<{ path: AbsPath; sha256: Sha256Hex }>; budgetMin: number; class: BuildClass | null; resume: boolean }>
   /** `roadmap merge-in <u>` (M3): the integration head into the unit branch. Scope {u}. */
-  | Readonly<{ type: 'witness'; obligation: ObligationId; result: 'pass' | 'fail'; evidence: string; evidenceFile: HashedFile | null }>
+  | Readonly<{ type: 'witness'; obligation: ObligationId; expectedHead: Sha; result: 'pass' | 'fail'; evidence: string; evidenceFile: HashedFile | null }>
   | Readonly<{ type: 'note'; unit: UnitId; brief: HashedFile }>
   | Readonly<{ type: 'merge-in'; unit: UnitId }>
   /** `roadmap audit [--lens <k,…>]` (M3): an audit of those lenses (ascending), or of the arc's lens set L (null). Scope ∅. */
@@ -1629,7 +1629,7 @@ export const commandBody: Read<CommandBody> = tagged('type', {
     type: f.get('type', literal('run-only')), units: f.get('units', nullable(sortedBy(unit, (u) => u, { nonEmpty: true }))),
   })),
   reverse: object((f): CommandBody => ({ type: f.get('type', literal('reverse')), divergence: f.get('divergence', (v, p) => divergenceId(v, p)) })),
-  witness: object((f): CommandBody => ({ type: f.get('type', literal('witness')), obligation: f.get('obligation', (v, p) => obligationId(v, p)), result: f.get('result', oneOf(['pass', 'fail'] as const)), evidence: f.get('evidence', str), evidenceFile: f.get('evidenceFile', nullable(hashedFile)) })),
+  witness: object((f): CommandBody => ({ type: f.get('type', literal('witness')), obligation: f.get('obligation', (v, p) => obligationId(v, p)), expectedHead: f.get('expectedHead', (v, p) => sha(v, p)), result: f.get('result', oneOf(['pass', 'fail'] as const)), evidence: f.get('evidence', str), evidenceFile: f.get('evidenceFile', nullable(hashedFile)) })),
   note: object((f): CommandBody => ({ type: f.get('type', literal('note')), unit: f.get('unit', unit), brief: f.get('brief', hashedFile) })),
   steer: object((f): CommandBody => ({
     type: f.get('type', literal('steer')),

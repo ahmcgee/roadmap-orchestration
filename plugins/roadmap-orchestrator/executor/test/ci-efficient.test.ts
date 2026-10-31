@@ -105,7 +105,8 @@ test('ci external witness: root command records immutable evidence, refuses loca
   assert.equal(parsed.command, 'witness');
   const evidence = absPath(join(h.d.repo, 'ci-result.json'));
   writeFileSync(evidence, '{"passed":true}');
-  const body = { type: 'witness', obligation: obligationId('I-1'), result: 'pass', evidence: 'https://ci.example/run/1', evidenceFile: null } as const;
+  const body = { type: 'witness', obligation: obligationId('I-1'), expectedHead: sha(git(h.d.repo, 'rev-parse', run.ctx.plan().integrationBranch)), result: 'pass', evidence: 'https://ci.example/run/1', evidenceFile: null } as const;
+  assert.equal(witness(w.commands, commandId('cmd-0000000000000000'), { ...body, expectedHead: sha('0'.repeat(40)) }).kind, 'rejected');
   const out = witness(w.commands, commandId('cmd-1111111111111111'), body);
   assert.equal(out.kind, 'applied');
   const defs = holisticInForce(run.ctx).obligations!;
@@ -120,6 +121,7 @@ test('ci external witness: root command records immutable evidence, refuses loca
   const fileBody = { ...body, evidence, evidenceFile: { path: evidence, sha256: sha256(sha256Hex(bytes)) } };
   assert.equal(witness(w.commands, commandId('cmd-3333333333333333'), fileBody).kind, 'applied');
   writeFileSync(evidence, 'changed');
+  assert.equal(witness(w.commands, commandId('cmd-3333333333333333'), fileBody).kind, 'applied', 'replay consumes the durable result after the original file changes');
   assert.equal(witness(w.commands, commandId('cmd-4444444444444444'), fileBody).kind, 'rejected');
   const local = contextFor(holisticArc({ steps: [], obligations: [{ id: 'I-1', testIds: ['ci'] }], trees: {}, mapping: [] }).d);
   assert.equal(witness(checkpointContext(local).w.commands, commandId('cmd-5555555555555555'), body).kind, 'rejected');
