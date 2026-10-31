@@ -1,4 +1,5 @@
-import { milestonePassed } from '../walk/node.ts';
+import { lensCoverage } from './coverage.ts';
+import { milestoneReached } from '../walk/milestones.ts';
 // Audit cadence (M3 step B5; DESIGN-1.0.md §2.5 "Triggers", "Owed"; D3, R8, R15, H3, H9, OR-Q2): which triggers are
 // owed, whether an audit is due, which lenses it runs and which generation it records. Derived from the log each time
 // (nothing of it is persisted but the `audit-started` that consumes it).
@@ -259,11 +260,12 @@ export function cadence(ctx: StageContext, _clock: Clock): Cadence | null {
   const head = integrationHeadNow(ctx);
   const fold = view.holistic();
   const audited = new Set(fold.audits.filter((a) => a.ended?.outcome === 'completed').flatMap((a) => a.started.triggers.filter((t) => t.type === 'milestone').map((t) => t.type === 'milestone' ? t.milestone : '')));
-  const milestone = (ctx.plan().milestones ?? []).find((m) => milestonePassed(view, m.id) && !audited.has(m.id));
+  const milestone = (ctx.plan().milestones ?? []).find((m) => milestoneReached(view, m) && !audited.has(m.id));
   const latest = fold.audits.at(-1);
-  const requested = fold.auditRequests.find((q) => q.seq > (latest?.started.seq ?? 0));
-  const final = !workRemains(ctx) && !(ctx.plan().milestones?.length) && !fold.audits.some((a) => a.ended?.outcome === 'completed' && a.started.integrationSha === head);
+  const requested = fold.auditRequests.find((q) => q.seq > (lastCompleted(fold.audits)?.started.seq ?? 0));
+  const final = !workRemains(ctx) && (!fold.audits.some((a) => a.ended?.outcome === 'completed' && a.started.visionSha256 === base.visionSha256) || lensCoverage(fold, base, 'invariants').watermark !== head);
   const owed: AuditTrigger[] = milestone !== undefined ? [{type: 'milestone', milestone: milestone.id}] : requested !== undefined ? [{type: 'requested', command: requested.command}] : final ? [{type: 'final'}] : [];
-  const due = owed.length > 0 && !fold.audits.some((a) => a.ended === null);
+  const retryReady = latest?.ended?.outcome !== 'abandoned' || (requested?.seq ?? 0) > latest.started.seq || _clock(latest.started.seq) >= 360;
+  const due = owed.length > 0 && retryReady && !fold.audits.some((a) => a.ended === null);
   return {base, head, owed, due, plan: due ? {triggers: owed, lenses: ['invariants'], generation: Math.max(0, ...fold.audits.map((a) => a.started.generation)) + 1} : null, owedLong: false, episode: {type: 'arc'}};
 }

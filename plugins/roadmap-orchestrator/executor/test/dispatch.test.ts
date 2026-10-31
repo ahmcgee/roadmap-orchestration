@@ -91,22 +91,14 @@ test('dispatch.repin-judgment-only: after a build, a change that leaves the impl
 });
 
 test('dispatch.routing-changed-parks: after a build, a change that moves the implementer seat parks the unit with a needs-user, never a crash', T, async () => {
-  const run = await builtOnce([]);
-  const changed = rerouted(run, { build: { med: 'frontier' } });
+  const run = await builtOnce([{as: 'claude', expect: {argv: ['--session-id'], argvLacks: ['--resume']}, acts: [{type: 'emit', value: BUILD_REPORT}]}]);
+  const changed = rerouted(run, {build: {med: 'frontier'}});
   const s = await step(changed, run.unit);
-  assert.equal(s.kind, 'parked');
-  assert.ok(s.kind === 'parked');
-  assert.equal(s.needsUser.reason, 'routing-changed');
-  assert.deepEqual(s.needsUser.subject, { type: 'unit', unit: U1 });
-  assert.match(s.needsUser.summary, /build\.med/);
-  assert.match(s.needsUser.recommendation, /^Restore the routing of build\.med or re-enter the unit under a new id\./);
-  for (const m of MODEL_IDS) assert.doesNotMatch(JSON.stringify(s.needsUser), new RegExp(m.replace('.', '\\.')));
-  assert.equal(dispatches(run).length, 1, 'nothing is re-pinned');
-  const u = run.journal.view.unit(U1);
-  assert.equal(u.status, 'park-pending');
-  assert.equal(u.decided?.outcome, 'routing-changed');
-  assert.equal(u.decided?.chargeable, false);
-  // Restoring the routing makes the same seat dispatchable again.
+  assert.equal(s.kind, 'continue');
+  assert.equal(dispatches(run).length, 2, 'the routing revision re-pins the seat');
+  assert.equal(run.journal.view.unit(U1).status, 'active');
+  assert.equal(run.journal.view.unit(U1).decided?.chargeable, false);
+  for (const m of MODEL_IDS) assert.doesNotMatch(JSON.stringify(dispatches(run)), new RegExp(m.replace('.', '\\.')));
   assert.equal(seated(implementerDispatch(run.ctx, U1)).tier, 'med');
 });
 
@@ -159,12 +151,11 @@ test('dispatch.effort-only-repins-resumes: after a build, an effort-only change 
 });
 
 test('dispatch.model-change-parks: after a build, a change of its seat to another model on the same backend parks routing-changed', T, async () => {
-  const run = await builtOnce([]);
-  const s = await step(under(run, rebound({ efficient: SOL })), run.unit);
-  assert.ok(s.kind === 'parked');
-  assert.equal(s.needsUser.reason, 'routing-changed');
-  assert.match(s.needsUser.summary, /build\.med now resolves to a different backend or model/);
-  assert.equal(dispatches(run).length, 1, 'nothing is re-pinned');
+  const run = await builtOnce([{as: 'codex', expect: {argv: ['exec', '-C'], argvLacks: ['resume']}, acts: [{type: 'emit', value: BUILD_REPORT}]}]);
+  const s = await step(under(run, rebound({efficient: SOL})), run.unit);
+  assert.equal(s.kind, 'continue');
+  assert.equal(dispatches(run).length, 2, 'a model change re-pins and starts fresh');
+  assert.deepEqual(seatTripleOf(dispatches(run).at(-1)!.implementerSeatRev), SOL);
 });
 
 test('dispatch.packreview-role-no-park: after a build, the rev change of a corpus scope (role packReview\'s seat in force) re-pins and the build resumes', T, async () => {
@@ -209,9 +200,9 @@ test('dispatch.dev6-decoder: a dev.6-shaped record reads back its triple; fronti
 
   // A model change of the same dev.6 record parks. (No dev.6 build seat sat on summit: Fable 5.1 has no build prompt.)
   const moved = await dev6Built([]);
-  const parked = await step(under(moved, { ...rebound({}, { build: { high: 'efficient' } }), arcScope: 'architecture-doc' }), moved.unit);
-  assert.ok(parked.kind === 'parked');
-  assert.equal(parked.needsUser.reason, 'routing-changed');
+  const changed = under(moved, {...rebound({}, {build: {high: 'efficient'}}), arcScope: 'architecture-doc'});
+  assert.equal(seated(implementerDispatch(changed, U1)).triple.backend, 'claude', 'high risk stays on Claude');
+  assert.equal(dispatches(moved).length, 2);
 });
 
 // ---------------------------------------------------------------------------------------------------

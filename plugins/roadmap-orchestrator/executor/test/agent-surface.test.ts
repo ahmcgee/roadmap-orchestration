@@ -1,3 +1,6 @@
+import { wire } from './fixtures/publish-common.ts';
+import { join } from 'node:path';
+import { holisticArc } from './fixtures/brake-common.ts';
 import { editPlan } from './fixtures/route-common.ts';
 import { MUL } from './fixtures/unit-common.ts';
 import { applyCommand } from '../src/commands/apply.ts';
@@ -7,16 +10,16 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { unitId } from '../src/core/ids.ts';
 import { standingRules } from '../src/pipeline/gate.ts';
-import { planCheck, build } from '../src/pipeline/stages.ts';
+import { planCheck, build, loadUnitSpec } from '../src/pipeline/stages.ts';
 import { runUnit } from '../src/pipeline/unit.ts';
 import { methodModules } from '../src/prompts/method/index.ts';
 import { validateBuildOutput, validateGateOutput } from '../src/prompts/schemas.ts';
 import { seatTripleOf } from '../src/pipeline/dispatch.ts';
 import { buildTriple } from '../src/pipeline/dispatch.ts';
 import { readNeedsUser } from '../src/needsuser.ts';
-import { diagnosisDue, reviewItems } from '../src/pipeline/surface.ts';
+import { diagnosisDue, reviewItems, markers, proofNotLocal } from '../src/pipeline/surface.ts';
 import { contextFor, setupArc, gateStep, mulBuild, appendSteps, stepUntil, syncInputs, commandContextFor, applyBody } from './fixtures/unit-common.ts';
-import { BUILD_REPORT, admitAll } from './fixtures/stage-common.ts';
+import { BUILD_REPORT, admitAll, planCheckStep, planCheckRepairStep } from './fixtures/stage-common.ts';
 import { readCalls } from './helpers/scenario.ts';
 
 const answer = {decision: 'approve' as const, ordering: null, findings: [], directives: [], reasons: ['Checked'], premises: [], standing: [], clusters: null, rulings: []};
@@ -136,4 +139,78 @@ test('surface.specWrong: builder grounding becomes a blocking root item; tooBig 
       }
     } finally {r.journal.close();}
   }
+});
+
+test('surface.M2: a delivered candidate witness triggers review and Claude; review never suppresses the seat only', {timeout: 120_000}, async () => {
+  const a = holisticArc({steps: [gateStep({decision: 'approve'})], units: [{id: 'u1', obligations: ['I-1']}], obligations: [{id: 'I-1', activation: 'future', deliveredBy: ['u1'], testIds: ['t1']}], mapping: [], laneExtra: {journey: {cadence: 'candidate'}}, trees: {'*': {outcomes: {t1: 'pass'}}}});
+  const r = contextFor(a.d);
+  try {
+    assert.equal(proofNotLocal(r.ctx, r.unit('u1')), true);
+    assert.equal(buildTriple(r.ctx, unitId('u1'), 'med').backend, 'claude');
+    await planCheck(r.ctx, r.unit('u1'));
+    assert.ok(r.journal.view.surfaceFacts().some((f) => f.kind === 'review-triggered' && f.marker === 'M2'));
+    const never = {...r.unit('u1'), review: 'never' as const};
+    assert.deepEqual(markers(r.ctx, never, loadUnitSpec(r.ctx, never).spec), []);
+    assert.equal(proofNotLocal(r.ctx, never), true, 'the builder exclusion remains mechanical');
+  } finally {r.journal.close();}
+});
+
+test('surface.review-repair: one refused annotation resumes its recorded session without holding the unit', {timeout: 120_000}, async () => {
+  const first = planCheckStep({decision: 'approve'});
+  const d = setupArc({steps: [{...first, acts: [{type: 'malformed'}]}, planCheckRepairStep({decision: 'approve'}, ['the answer does not match its schema'])]});
+  const r = contextFor(d);
+  try {
+    const out = await planCheck(r.ctx, r.unit('u1'));
+    assert.equal('kind' in out ? out.kind : out.outcome.kind, 'approve');
+    const calls = readCalls(d.scenarioPath);
+    assert.equal(calls.length, 2);
+    const flag = (n: number, name: string) => calls[n]!.argv[calls[n]!.argv.indexOf(name) + 1];
+    assert.equal(flag(1, '--resume'), flag(0, '--session-id'));
+    assert.equal(r.journal.view.surfaceFacts().filter((f) => f.kind === 'review-completed').length, 1);
+    await planCheck(r.ctx, r.unit('u1'));
+    assert.equal(readCalls(d.scenarioPath).length, 2, 'no repeated review of unchanged inputs');
+  } finally {r.journal.close();}
+});
+
+test('surface.M3: an apply meaning change reviews a cited obligation even when specRev stays fixed', {timeout: 120_000}, async () => {
+  const a = holisticArc({steps: [], units: [{id: 'u1', obligations: ['I-1']}], obligations: [{id: 'I-1', activation: 'future', deliveredBy: ['u1'], testIds: ['t1']}], mapping: [], trees: {'*': {outcomes: {t1: 'pass'}}}});
+  const r = contextFor(a.d);
+  const w = wire(r);
+  const tick = setInterval(() => w.arbiter.wake(), 50);
+  try {
+    await planCheck(r.ctx, r.unit('u1'));
+    assert.equal(readCalls(a.d.scenarioPath).length, 0);
+    syncInputs(r);
+    const path = join(a.d.planPath, '..', 'obligations.json');
+    const raw = JSON.parse(readFileSync(path, 'utf8'));
+    raw.obligations[0].statement = 'I-1 also refuses invalid operands.';
+    raw.obligations[0].rev = 2;
+    raw.obligations[0].proofJudgment.obligationRev = 2;
+    writeFileSync(path, JSON.stringify(raw));
+    const applied = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.ctx.plan().arc, applyBody(a.d)));
+    assert.equal(applied.kind, 'applied', JSON.stringify(applied));
+    assert.ok(markers(r.ctx, r.unit('u1'), loadUnitSpec(r.ctx, r.unit('u1')).spec).some((m) => m.marker === 'M3'));
+    appendSteps(a.d, [gateStep({decision: 'approve'})]);
+    await planCheck(r.ctx, r.unit('u1'));
+    assert.equal(readCalls(a.d.scenarioPath).length, 1);
+    assert.equal(r.journal.view.surfaceFacts().filter((f) => f.kind === 'review-triggered' && f.marker === 'M3').length, 1);
+    await planCheck(r.ctx, r.unit('u1'));
+    assert.equal(readCalls(a.d.scenarioPath).length, 1, 'the meaning change is consumed once');
+  } finally {clearInterval(tick); r.journal.close();}
+});
+
+test('surface.diagnosis: the M4 signal adds build memory and moves remaining default builds to Claude', {timeout: 120_000}, async () => {
+  const d = setupArc({steps: [gateStep({decision: 'approve', reasons: ['The repeated red needs a narrow restart experiment.']}), {as: 'claude', expect: {argv: ['--model', 'claude-sonnet-5-5'], stdinContains: ['narrow restart experiment']}, acts: [{type: 'commit', message: 'diagnosed build', files: MUL}, {type: 'emit', value: BUILD_REPORT}]}, gateStep({decision: 'approve'})]});
+  const r = contextFor(d);
+  try {
+    const countAttempts = r.journal.view.judgedAttempts.bind(r.journal.view);
+    Object.assign(r.journal.view, {judgedAttempts: () => ({builds: 8, stages: 20})});
+    await runUnit(r.ctx, r.unit('u1'), admitAll);
+    Object.assign(r.journal.view, {judgedAttempts: countAttempts});
+    assert.equal(r.journal.view.unit(unitId('u1')).status, 'retired');
+    assert.ok(r.journal.view.surfaceFacts().some((f) => f.kind === 'review-triggered' && f.marker === 'M4'));
+    assert.ok(r.journal.view.surfaceFacts().some((f) => f.kind === 'review-completed' && f.mode === 'diagnosis' && f.note !== null));
+    assert.equal(buildTriple(r.ctx, unitId('u1'), 'med').backend, 'claude');
+    assert.equal(readCalls(d.scenarioPath).filter((c) => c.as === 'codex').length, 0);
+  } finally {r.journal.close();}
 });

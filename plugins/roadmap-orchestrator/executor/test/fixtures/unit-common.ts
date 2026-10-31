@@ -19,12 +19,12 @@ import type { CommandBody,RevisionManifest } from '../../src/core/records.ts';
 import { type AbsPath,absPath } from '../../src/core/values.ts';
 import { openHostDir } from '../../src/host/hostdir.ts';
 import { inForceFiles,readInputFiles,revisionManifestOf } from '../../src/input/inforce.ts';
-import { type PlanUnit,parsePlan } from '../../src/input/plan.ts';
+import { type PlanUnit, parsePlan } from '../../src/input/plan.ts';
 import type { StageContext } from '../../src/pipeline/dispatch.ts';
 import { step } from '../../src/pipeline/unit.ts';
 import { backendEnv } from '../../src/preflight/smoke.ts';
 import { DOCS_NOT_YET } from '../../src/recover/revision.ts';
-import { type RepoConfig, arcStack, resolveRouting } from '../../src/routing/layers.ts';
+import { type RepoConfig, planStack, resolveRouting } from '../../src/routing/layers.ts';
 import type { ArcRoleSet,RiskTier } from '../../src/routing/types.ts';
 import { makeRepo,revParse,tmpDir } from '../helpers/repo.ts';
 import { type CallRecord,type ClaudeAct,type CodexAct,type Expect,type Step,writeScenario } from '../helpers/scenario.ts';
@@ -139,7 +139,7 @@ export function contextFor(d: ArcDescriptor): ArcRun {
   if (journal.view.planApplied() === null) {
     recordFirstPlan(journal, absPath(d.runDir), absPath(d.planPath), absPath(d.repo), 'default', d.config ?? null, d.arcRoles ?? 'm4b');
   }
-  const routing = resolveRouting({ ...arcStack('default', d.config ?? null, plan.routing ?? null), arcRoles: d.arcRoles ?? 'm4b' });
+  const routing = resolveRouting(planStack('default', d.config ?? null, plan, d.arcRoles ?? 'm4b'));
   const resources = {
     journal, containment: sessionContainment, runDir: absPath(d.runDir), plan: () => plan, repo: absPath(d.repo),
     hostDir: openHostDir(absPath(d.hostDir)),
@@ -206,6 +206,7 @@ const GATE: Expect = {
 };
 
 export type GateAnswer = Readonly<{
+  reasons?: readonly string[];
   decision: 'approve' | 'revise' | 'escalate';
   ordering?: Readonly<{ blockers: readonly string[] }> | null;
   directives?: readonly string[];
@@ -237,7 +238,7 @@ const dev17Finding = (f: JsonValue): JsonValue => {
 
 const gateAnswer = (a: GateAnswer): JsonValue => ({
   rulings: [...(a.rulings ?? [])],
-  decision: a.decision, ordering: a.ordering ?? null, findings: (a.findings ?? []).map(dev17Finding), directives: [...(a.directives ?? [])], reasons: ['A1 holds'], premises: [...(a.premises ?? [])],
+  decision: a.decision, ordering: a.ordering ?? null, findings: (a.findings ?? []).map(dev17Finding), directives: [...(a.directives ?? [])], reasons: [...(a.reasons ?? ['A1 holds'])], premises: [...(a.premises ?? [])],
   standing: [...(a.standing ?? [])], clusters: a.clusters ?? null,
 }) as JsonValue;
 

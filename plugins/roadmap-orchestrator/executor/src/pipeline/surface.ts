@@ -79,8 +79,9 @@ export async function runReview(ctx: StageContext, unit: PlanUnit, parent: Stage
   const view = ctx.journal.view;
   const capturedPlanRev = view.planApplied()!.rev;
   if (unit.review === 'never') return;
-  if (view.surfaceFacts().some((f) => f.kind === 'review-completed' && f.unit === unit.id && f.mode === mode && (mode === 'diagnosis' || f.specRev === spec.rev))) return;
+  const prior = view.surfaceFacts().findLast((f) => f.kind === 'review-completed' && f.unit === unit.id && f.mode === mode);
   const triggers = mode === 'diagnosis' ? diagnosisDue(view, unit.id) ? [{marker: 'M4' as const, source: 'attempts:8-builds-or-20-judged'}] : [] : markers(ctx, unit, spec);
+  if (prior?.kind === 'review-completed' && (mode === 'diagnosis' || prior.specRev === spec.rev && !triggers.some((t) => t.marker === 'M3'))) return;
   if (triggers.length === 0) return;
   for (const t of triggers) if (!view.surfaceFacts().some((f) => f.kind === 'review-triggered' && f.unit === unit.id && f.specRev === spec.rev && f.marker === t.marker && f.source === t.source)) ctx.journal.fact({kind: 'review-triggered', unit: unit.id, specRev: spec.rev, ...t});
   const seated = verifierDispatch(ctx, unit.id);

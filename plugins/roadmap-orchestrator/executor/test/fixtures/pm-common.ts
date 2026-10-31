@@ -142,8 +142,7 @@ export const BUMPY: Scenario = {
   // u2 is gated after u1 merged: the explicit edge the serial story meant (an M2 arc schedules a DAG).
   arc: () => ({ units: [{ id: 'u1' }, { id: 'u2', lanes: [TWO_LANE], after: ['u1'] }], suite: [{ ...SUITE_LANE, cadence: 'candidate' }] }),
   steps: (r) => [
-    planCheckStep({ decision: 'redirect', patch: [{ op: 'add', section: 'decisions', item: DECISION }] }),
-    { ...planCheckStep({ decision: 'approve' }), expect: { ...planCheckStep({ decision: 'approve' }).expect, stdinContains: [DECISION.text] } },
+    planCheckStep({decision: 'approve'}),
     codexStep([{ type: 'dirty', files: { ...MUL, 'src/mul.js': MUL_WRONG } }], { argv: ['exec', '-C'] }),
     codexStep([
       { type: 'readFromPrompt', pattern: laneOutput(r, 'u1', 'mul'), file: 'stdout', contains: 'MUL-MARKER' },
@@ -169,7 +168,7 @@ export const BUMPY: Scenario = {
 const BUILT = ['build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released'] as const;
 export const BUMPY_OUTCOMES = {
   u1: [
-    'plan-check:redirect', 'plan-check:approve', ...BUILT, 'lanes:red', ...BUILT, 'lanes:green', 'gate:revise', ...BUILT, 'lanes:green', 'gate:approve',
+    'plan-check:approve', ...BUILT, 'lanes:red', ...BUILT, 'lanes:green', 'gate:revise', ...BUILT, 'lanes:green', 'gate:approve',
     'candidate:green', 'ff:published', 'snapshot:published',
   ],
   u2: [

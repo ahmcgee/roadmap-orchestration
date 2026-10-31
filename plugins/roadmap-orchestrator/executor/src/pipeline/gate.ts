@@ -465,7 +465,7 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
     const list = absPath(join(diffDir, CHANGED_LIST));
     if (largeDiff !== null) writeFileSync(list, covered.map((p) => `${p}\n`).join(''));
     const measured = renderPrompt(prompt, {mode: 'gate', brief: {
-      touches, standing: reviewItems(ctx.journal.view, unit.id), method: methodContext(ctx, unit, spec, paths),
+      touches, standing: reviewItems(ctx.journal.view, unit.id), method: methodContext(ctx, unit, spec, [...paths, ...touches]),
       spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec) }, intent: spec.intent, nonGoals: spec.nonGoals, ...library(ctx, spec, tip), target,
       systemNotes: systemNotes(ctx.repo, head, unit.systems, ctx.routingBase.config),
       direction: ctx.plan().direction,

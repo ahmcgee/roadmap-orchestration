@@ -659,7 +659,7 @@ test('roles.walk-caps: --trial-cap kills an overspending session (void cap, its 
 test('roles.walk-seat: the arm is the walkthrough seat (frontier, Opus 5.5 medium); --rebind moves it through the repo config; a seat with no walkthrough prompt is refused', () => {
   assert.equal(walkSeat(null).arm, 'walkthrough.arc frontier claude-opus-5-5:medium');
   assert.equal(walkSeat(rebindConfig(['frontier=claude-opus-5-5:xhigh'])).arm, 'walkthrough.arc frontier (rebound) claude-opus-5-5:xhigh');
-  assert.throws(() => walkSeat(rebindConfig(['frontier=claude-sonnet-5-5:high'])), /walkthrough/);
+  assert.throws(() => walkSeat(rebindConfig(['frontier=claude-sonnet-5-5:high'])), /experienceVerdict/);
   assert.throws(() => walkSeat(rebindConfig(['frontier=gpt-5.6-sol:high'])), /Claude only|walkthrough|frontier/);
   assert.equal(substitutePorts('http://127.0.0.1:{port:web}/x', { web: 4100 } as never), 'http://127.0.0.1:4100/x');
   assert.throws(() => substitutePorts('{port:api}', { web: 1 } as never), /names no allocated port/);

@@ -19,7 +19,6 @@ import type { SpecM1,SpecPatch } from '../src/core/records.ts';
 import { runOp,unitBranch } from '../src/pipeline/dispatch.ts';
 import { repoPattern } from '../src/core/values.ts';
 import { pinDesign } from '../src/pipeline/design.ts';
-import { certifiedTree } from '../src/pipeline/docsonly.ts';
 import { fingerprintAt,gateDebtNotes } from '../src/pipeline/gate.ts';
 import { approvalBlobs,gateDelta } from '../src/pipeline/review.ts';
 import { at,keptSpecPath,loadUnitSpec,record,start } from '../src/pipeline/stages.ts';
@@ -88,19 +87,6 @@ test('review.ride-along: comment and doc findings never block; each enters the l
   }
 });
 
-/** Takes u1 to a gate revise on src/mul.js after a green lanes attempt; returns the certified tree. */
-async function toRevise(r: ArcRun): Promise<string> {
-  await stepUntil(r, 'u1', (f) => f.stage === 'gate');
-  assert.equal(outcomes(r.d).at(-1), 'gate:revise');
-  const certified = certifiedTree(r.ctx, U1);
-  assert.ok(certified !== null);
-  return certified;
-}
-
-const reviseSteps = (): readonly Step[] => [
-  planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({rulings: [],  decision: 'revise', directives: ['Document mul.'], findings: [blocking('src/mul.js', 'mul is undocumented.', { defect: 'requirement-unmet' })] }),
-];
-
 
 
 
@@ -166,6 +152,10 @@ test('review.reraise-anchor-changed: once the settled finding\'s file changed, r
     r.journal.close();
   }
 });
+
+const reviseSteps = (): readonly Step[] => [
+  planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({rulings: [],  decision: 'revise', directives: ['Document mul.'], findings: [blocking('src/mul.js', 'mul is undocumented.', { defect: 'requirement-unmet' })] }),
+];
 
 test('review.dispute-ruled-once: a builder\'s dispute goes to the next gate, which must rule on it; the ruling is final, and a later gate is not asked again', T, async () => {
   const dispute = JSON.stringify({ decisions: [], disputes: [{ finding: 'R-1', reason: 'The contract asks for exactly this.' }] });

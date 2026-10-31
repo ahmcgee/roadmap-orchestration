@@ -128,10 +128,10 @@ const RULINGS = '# Rulings\n\nC-1 — Every ledgerly surface follows the design 
 /** The walk seat under the run's routing (the built-in seats with the walk roles in force, `--rebind` applied), as the arm names it. */
 export function walkSeat(config: RepoConfig | null): Readonly<{ arm: string }> {
   const r = resolveRouting({ ...arcStack('default', config, null), arcScope: 'corpus', arcRoles: 'm4b', milestones: true });
-  const t = r.table.walkthrough.arc;
+  const t = r.table.experienceVerdict.arc;
   if (t.backend !== 'claude') throw new Error(`the walkthrough seat bound to ${t.model}: walks run on Claude only (codex-judgment)`);
-  promptFor('walkthrough', t.model); // a rebind onto a model with no walkthrough prompt fails here, before any trial
-  const cls = r.classes.walkthrough.arc;
+  promptFor('experienceVerdict', t.model); // a rebind onto a model with no walkthrough prompt fails here, before any trial
+  const cls = r.classes.experienceVerdict.arc;
   return { arm: `walkthrough.arc ${cls}${r.bindings[cls] === 'repo-config' ? ' (rebound)' : ''} ${t.model}:${t.effort}` };
 }
 
@@ -256,7 +256,7 @@ export function setupMilestoneArc(f: Pick<WalkFixture, 'files' | 'milestone'>, c
     schema: 'roadmap/plan-m1', arc, integrationBranch: 'main', baseline: revParse(repo, 'main'), worktreeRoot: tmpDir('walk-wt'),
     contracts: [`${REFERENCE}/api.md`], rulings: 'rulings.md', architectureDoc: 'ARCHITECTURE.md', direction: 'Ship the milestone to its design reference.',
     suite: { lanes: [laneJson({ ...lane, id: 'suite' })] }, resources: [],
-    units: [{ id: MILESTONE_UNIT, spec: `${MILESTONE_UNIT}.json`, risk: 'med', systems: ['app'], resources: [] }],
+    units: [{ id: MILESTONE_UNIT, spec: `${MILESTONE_UNIT}.json`, risk: 'med', review: 'always', systems: ['app'], resources: [] }],
     holistic: { vision: 'vision.json', advances: ADVANCES, obligations: 'obligations.json', audit: { lenses: ['vision'], every: 100 } },
     milestones: [JSON.parse(JSON.stringify(f.milestone)) as JsonValue],
   }));

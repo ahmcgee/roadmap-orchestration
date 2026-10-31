@@ -90,7 +90,7 @@ describe('completion (§2.10, A8, A20, G8)', () => {
       assert.ok(baseline.length > 0 && baseline.every((f) => f.seq < firstOutcome), 'the baseline witnessed before any unit stage (A6)');
       const [started] = factsOf(r, 'audit-started');
       assert.deepEqual(started!.triggers, [{ type: 'final' }], 'the final audit, no work left');
-      assert.deepEqual(factsOf(r, 'bundle-decided').map((f) => [f.job, f.outcome.kind]), [['ckpt-1', 'no-op']]);
+      assert.deepEqual(r.journal.view.arcVerdicts().map((f) => [f.stage, f.verdict, f.findings]), [['campaign-audit', 'completed', 0]]);
       const [published] = factsOf(r, 'docs-published');
       assert.deepEqual([published!.pub, published!.source, published!.commit], ['docs-1', 'close-out', head(d)], 'the close-out published the head');
       const [covered] = factsOf(r, 'docs-covered');
@@ -190,7 +190,7 @@ describe('completion (§2.10, A8, A20, G8)', () => {
     const r = contextFor(d);
     try {
       await runToComplete(r);
-      const g1 = factsOf(r, 'checkpoint-inputs')[0]!;
+      const g1 = factsOf(r, 'audit-started')[0]!;
       await applyVision(r, wired(r), [{ id: 'V-3', kind: 'good', text: 'Errors are explicit.', rank: null, state: 'active' }]);
       const visionNow = r.journal.view.planApplied()!.visionSha256!;
       assert.notEqual(visionNow, g1.visionSha256);
@@ -200,8 +200,8 @@ describe('completion (§2.10, A8, A20, G8)', () => {
       assert.equal(r.journal.view.holistic().completion?.active, false);
       await runToComplete(r);
       const [, a2] = factsOf(r, 'audit-started');
-      assert.deepEqual([a2!.lenses, a2!.triggers.map((t) => t.type)], [['vision'], ['drift']]);
-      const g2 = factsOf(r, 'checkpoint-inputs')[1]!;
+      assert.deepEqual([a2!.lenses, a2!.triggers.map((t) => t.type)], [['invariants'], ['final']]);
+      const g2 = factsOf(r, 'audit-started')[1]!;
       assert.deepEqual([g2.generation, g2.visionSha256], [2, visionNow]);
       assert.deepEqual([...quiescentGenerations(r.journal.view, visionNow)], [2]);
       const completions = factsOf(r, 'arc-completed');
@@ -228,8 +228,8 @@ describe('completion (§2.10, A8, A20, G8)', () => {
       assert.deepEqual(blockers(), ['audit-pending', 'coverage-outstanding', 'audit-owed', 'close-out'], 'merged: the final audit is owed');
       const audited = await runAudit(h.audit);
       assert.ok(audited.kind === 'ended' && audited.outcome === 'completed', JSON.stringify(audited));
-      assert.deepEqual(blockers(), ['checkpoint-pending', 'generation-not-quiescent', 'close-out']);
-      assert.equal((await runCheckpoint(h.checkpoint)).kind, 'decided');
+      assert.deepEqual(blockers(), ['close-out']);
+      assert.deepEqual(r.journal.view.arcVerdicts().map((f) => f.verdict), ['completed']);
       assert.deepEqual(blockers(), ['close-out'], 'quiescent: only the close-out is left');
       assert.equal((await publishCloseOut(h.docs)).kind, 'published');
       assert.deepEqual(blockers(), []);

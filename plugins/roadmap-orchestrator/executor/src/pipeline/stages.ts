@@ -127,7 +127,7 @@ RULINGS_INPUT,SPEC_INPUT,VISION_INPUT,inForceFiles,
 inputPath,keptInput,keptPayload,parseUnitSpec,requirePlanInForce,revisionInForce,specBytesOf,specShaInForce
 } from '../input/inforce.ts';
 import {
-type KnownDefect,type PlanUnit,advancesOf,designUnitOf,knownDefectsOf,milestonesOf,parsePlan,targetDocumentPaths,targetDocuments,
+type KnownDefect,type PlanUnit,boundsOf,advancesOf,designUnitOf,knownDefectsOf,milestonesOf,parsePlan,targetDocumentPaths,targetDocuments,
 } from '../input/plan.ts';
 import { orderingReasons } from '../park/ordering.ts';
 import { NO_PARK_FACTS,type ParkFacts,repeatNeedsUser,stageOutcomeFact } from '../park/table.ts';
@@ -1229,7 +1229,7 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
   const render = (call: RoundCall) => renderPrompt(prompt, {
     target, spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec, { buildLanesOnly: true }) }, intent: spec.intent, nonGoals: spec.nonGoals, ...lib,
     systemNotes: systemNotes(ctx.repo, revParse(round.worktree, 'HEAD'), unit.systems, ctx.routingBase.config),
-    notes: [...ctx.journal.view.spawnsOfUnit(unit.id, 'build').slice(-1).flatMap((i) => judgmentOutput(ctx, i, (v) => buildOutput(v, 'build'))?.notes ?? []), ...ctx.journal.view.buildNotes(unit.id, parent.attempt).map((sha) => steerBrief(ctx.runDir, sha)), ...ctx.journal.view.surfaceFacts().flatMap((f) => f.kind === 'review-completed' && f.unit === unit.id && f.note !== null ? [steerBrief(ctx.runDir, f.note)] : []), ...ctx.journal.view.surfaceFacts().flatMap((f) => f.kind === 'review-completed' && f.unit === unit.id && f.mode === 'pre-build' ? f.items.map((x) => `${x.id}: ${x.text} (${x.evidence.join('; ')})`) : [])],
+    notes: [`Attempt state: ${ctx.journal.view.judgedAttempts(unit.id).builds} builds, ${ctx.journal.view.judgedAttempts(unit.id).stages} judged stages; diagnosis at 8 builds or 20 stages. Chargeable failures ${ctx.journal.view.unit(unit.id).counters.chargeableFailures}/${boundsOf(ctx.plan(), unit).chargeable}.`, ...ctx.journal.view.spawnsOfUnit(unit.id, 'build').slice(-1).flatMap((i) => judgmentOutput(ctx, i, (v) => buildOutput(v, 'build'))?.notes ?? []), ...ctx.journal.view.buildNotes(unit.id, parent.attempt).map((sha) => steerBrief(ctx.runDir, sha)), ...ctx.journal.view.surfaceFacts().flatMap((f) => f.kind === 'review-completed' && f.unit === unit.id && f.note !== null ? [steerBrief(ctx.runDir, f.note)] : []), ...ctx.journal.view.surfaceFacts().flatMap((f) => f.kind === 'review-completed' && f.unit === unit.id && f.mode === 'pre-build' ? f.items.map((x) => `${x.id}: ${x.text} (${x.evidence.join('; ')})`) : [])],
     method: methodContext(ctx, unit, spec),
     fastLanes: activeBuildLanes(spec), suiteLanes: builderSuiteLanes(ctx.plan().suite.lanes, spec), evidenceDir: work, worktree: round.worktree, systems: unit.systems,
     fixRound: call.fixRound === null ? null : { ...call.fixRound, directives: [...call.fixRound.directives,

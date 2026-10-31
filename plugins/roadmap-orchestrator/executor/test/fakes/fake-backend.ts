@@ -37,6 +37,7 @@ export function callUnit(env: Readonly<Record<string, string>>, cwd: string): st
 
 /** The lens kind a lens prompt names: `lens` then the kind, however the inputs serialise it (`"lens": "drift"`, `lens: drift`). */
 export function callLens(stdin: string): LensKindName | null {
+  if (stdin.includes('<audited_range') && stdin.includes('<prior_findings>')) return 'invariants';
   const found = /\blens\W{1,4}(invariants|drift|vacuity|vision)\b/.exec(stdin)?.[1];
   return found === undefined ? null : (found as LensKindName);
 }

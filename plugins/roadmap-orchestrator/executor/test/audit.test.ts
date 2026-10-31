@@ -78,7 +78,7 @@ function ticking(w: Wired): () => void {
   const timer = setInterval(() => w.arbiter.wake(), 50);
   return () => clearInterval(timer);
 }
-const L2: readonly Lens[] = ['invariants', 'vision'];
+const L2: readonly Lens[] = ['invariants'];
 const I1 = { obligations: [{ id: 'I-1', testIds: ['t1'] }], trees: { '*': { outcomes: { t1: 'pass' as const } } } };
 const barrierLens = (job: string, lens: Lens) => lensStep(job, lens, [], [{ type: 'barrier', name: 'lens', timeoutMs: 120_000 }]);
 
@@ -88,7 +88,7 @@ describe('cadence', () => {
 describe('the audit job', () => {
   test('audit.immutable-inputs: the capture records the revisions, owners, prior findings and high water; the lenses read those, not what lands meanwhile; each call is metered to the job by role and routingRev', T, async () => {
     const { d } = auditArc({
-      steps: [...unitSteps('u2', moduleFiles('div', '/')), ...unitSteps('u1', moduleFiles('mul', '*')), barrierLens('audit-1', 'vision'), lensStep('audit-1', 'invariants')],
+      steps: [...unitSteps('u2', moduleFiles('div', '/')), ...unitSteps('u1', moduleFiles('mul', '*')), barrierLens('audit-1', 'invariants')],
       units: [{ id: 'u1' }, { id: 'u2', lanes: [] }], ...I1, mapping: [], audit: { lenses: [...L2] },
     });
     const r = contextFor(d);
@@ -108,6 +108,7 @@ describe('the audit job', () => {
       requestAudit(r);
       const S = head(d.repo);
       const before = r.journal.view.planApplied()!;
+      requestAudit(r);
       const audit = runAudit(ctx);
       await reached(d.scenarioDir, 'lens', 120_000);
       await rule(w, r, 'C-2', API_OP);
@@ -133,7 +134,6 @@ describe('the audit job', () => {
       const usage = factsOf(r).flatMap((f) => ((f.kind === 'meter' || f.kind === 'usage-unavailable') && f.subject.type === 'job' ? [[f.subject, f.routingRev]] : []));
       assert.deepEqual(usage, [
         [{ type: 'job', role: 'campaignAudit', tier: 'arc', job: 'audit-1', attempt: 1 }, ctx.routing(null).rev],
-        [{ type: 'job', role: 'campaignAudit', tier: 'arc', job: 'audit-1', attempt: 2 }, ctx.routing(null).rev],
       ]);
       assert.deepEqual(r.journal.view.openIntents(), []);
     } finally {
@@ -144,7 +144,7 @@ describe('the audit job', () => {
 
   for (const earlierOperations of [1, 2, 3]) {
     test(`audit.lost-call-cap: ${earlierOperations} earlier operations of one logical lens call survive a restart; only two reissues are allowed`, T, async () => {
-      const { d } = auditArc({ steps: [lensStep('audit-1', 'vision')], units: [{ id: 'u1' }], ...I1, mapping: [], audit: { lenses: ['vision'] } });
+      const { d } = auditArc({ steps: [lensStep('audit-1', 'invariants')], units: [{ id: 'u1' }], ...I1, mapping: [], audit: { lenses: ['invariants'] } });
       const setup = contextFor(d);
       requestAudit(setup);
       setup.journal.close();
@@ -177,9 +177,9 @@ describe('the audit job', () => {
 
   test('audit.race-ends-before-merge: an audit that ended before a merge leaves the merge outstanding, and it counts toward the next cadence', T, async () => {
     const { d } = auditArc({
-      steps: [...unitSteps('u1', moduleFiles('mul', '*')), ...unitSteps('u2', moduleFiles('div', '/')), lensStep('audit-1', 'vision'), lensStep('audit-2', 'vision')],
+      steps: [...unitSteps('u1', moduleFiles('mul', '*')), ...unitSteps('u2', moduleFiles('div', '/')), lensStep('audit-1', 'invariants'), lensStep('audit-2', 'invariants')],
       units: [{ id: 'u1', obligations: ['I-1'] }, { id: 'u2', obligations: ['I-1'] }, { id: 'u3', obligations: ['I-1'] }], ...I1, mapping: mapped(['I-1']),
-      audit: { every: 1, lenses: ['vision'] },
+      audit: { every: 1, lenses: ['invariants'] },
     });
     const r = contextFor(d);
     const { ctx } = auditContext(r);
@@ -187,14 +187,16 @@ describe('the audit job', () => {
       const S = head(d.repo);
       assert.deepEqual(await runUnit(ctx, r.unit('u1'), admitAll), { kind: 'merged' });
       const S1 = head(d.repo);
+      requestAudit(r);
       assert.equal((await runAudit(ctx)).kind, 'ended');
-      assert.deepEqual(ended(r)[0]!.covered, [{ lens: 'vision', from: S, to: S1 }]);
+      assert.deepEqual(ended(r)[0]!.covered, [{ lens: 'invariants', from: S, to: S1 }]);
       assert.deepEqual(await runUnit(ctx, r.unit('u2'), admitAll), { kind: 'merged' });
       const S2 = head(d.repo);
-      assert.deepEqual(watermarks(ctx, ['vision']), [['vision', S1, true]], 'the merge after the audit is outstanding');
-      assert.deepEqual(owed(cadence(ctx, ctx.clock)), ['cadence'], 'and counts toward the next cadence');
+      assert.deepEqual(watermarks(ctx, ['invariants']), [['invariants', S1, true]], 'the merge after the audit is outstanding');
+      assert.deepEqual(owed(cadence(ctx, ctx.clock)), [], 'publications do not trigger rolling audits');
+      requestAudit(r);
       assert.equal((await runAudit(ctx)).kind, 'ended');
-      assert.deepEqual(ended(r)[1]!.covered, [{ lens: 'vision', from: S1, to: S2 }]);
+      assert.deepEqual(ended(r)[1]!.covered, [{lens: 'invariants', from: S, to: S2}]);
     } finally {
       r.journal.close();
     }
@@ -203,11 +205,11 @@ describe('the audit job', () => {
   test('audit.race-merge-during-audit: a merge landing while the audit runs stays outstanding (coverage stops at the audited SHA); the P1 it opened is re-witnessed on the new head', T, async () => {
     // I-2 (on its own lane) is broken everywhere; u1 and u2 select I-1 alone, so their candidates never run its lane.
     const { d } = auditArc({
-      steps: [...unitSteps('u1', moduleFiles('mul', '*')), ...unitSteps('u2', moduleFiles('div', '/')), barrierLens('audit-1', 'vision')],
+      steps: [...unitSteps('u1', moduleFiles('mul', '*')), ...unitSteps('u2', moduleFiles('div', '/')), barrierLens('audit-1', 'invariants')],
       units: [{ id: 'u1', obligations: ['I-1'] }, { id: 'u2', obligations: ['I-1'] }, { id: 'u3', obligations: ['I-1'] }],
       obligations: [{ id: 'I-1', testIds: ['t1'] }, { id: 'I-2', testIds: ['t2'], lane: 'other' }], lanes: ['journey', 'other'],
       mapping: mapped(['I-1']), trees: { '*': { outcomes: { t1: 'pass' } } }, ownControl: { other: { '*': { outcomes: { t2: 'fail' } } } },
-      audit: { every: 1, lenses: ['vision'] },
+      audit: { every: 1, lenses: ['invariants'] },
     });
     const r = contextFor(d);
     const { ctx, w } = auditContext(r);
@@ -216,6 +218,7 @@ describe('the audit job', () => {
       const S = head(d.repo);
       assert.deepEqual(await runUnit(ctx, r.unit('u1'), admitAll), { kind: 'merged' });
       const S1 = head(d.repo);
+      requestAudit(r);
       const audit = runAudit(ctx);
       await reached(d.scenarioDir, 'lens', 120_000);
       assert.deepEqual(r.journal.view.holistic().findings.map((f) => [f.id, f.lens, f.severity, f.obligation]), [['F-1', 'witness', 'P1', 'I-2']], 'code opened the P1 before the lenses');
@@ -224,13 +227,13 @@ describe('the audit job', () => {
       release(d.scenarioDir, 'lens');
       const out = await audit;
       assert.ok(out.kind === 'ended' && out.outcome === 'completed', JSON.stringify(out));
-      assert.deepEqual(ended(r)[0]!.covered, [{ lens: 'vision', from: S, to: S1 }], 'coverage stops at the audited SHA');
+      assert.deepEqual(ended(r)[0]!.covered, [{ lens: 'invariants', from: S, to: S1 }], 'coverage stops at the audited SHA');
       assert.deepEqual(ended(r)[0]!.findings, ['F-1']);
       assert.deepEqual(out.rewitnessed, [{ finding: 'F-1', obligation: 'I-2', head: S2, verdict: 'not-held' }]);
       assert.deepEqual(factsOf(r).flatMap((f) => (f.kind === 'witnessed' && f.for.type === 'job' ? [[f.lane, f.treeSha]] : [])),
         [['other', treeOf(d.repo, S1)], ['other', treeOf(d.repo, S2)]], 'I-1\'s lane reused from u1\'s candidate; then the P1\'s lane alone, on the new head');
-      assert.deepEqual(watermarks(ctx, ['vision']), [['vision', S1, true]]);
-      assert.deepEqual(owed(cadence(ctx, ctx.clock)), ['cadence']);
+      assert.deepEqual(watermarks(ctx, ['invariants']), [['invariants', S1, true]]);
+      assert.deepEqual(owed(cadence(ctx, ctx.clock)), []);
       assert.deepEqual(r.journal.view.openIntents(), []);
     } finally {
       stop();
@@ -240,7 +243,7 @@ describe('the audit job', () => {
 
   test('audit.skipped-on-park: a lens that hits a usage limit parks its backend and abandons the audit; while it is parked a due audit is skipped and its triggers stay owed', T, async () => {
     const { d } = auditArc({
-      steps: [{ as: 'claude', unit: 'audit-1', lens: 'vision', expect: {}, acts: [{ type: 'usageLimit' }] }],
+      steps: [{ as: 'claude', unit: 'audit-1', lens: 'invariants', expect: {}, acts: [{ type: 'usageLimit' }] }],
       units: [{ id: 'u1' }], ...I1, mapping: [], audit: { lenses: [...L2] },
     });
     const r = contextFor(d);
@@ -266,7 +269,7 @@ describe('the audit job', () => {
 
   test('audit.starts-in-ff-window (H2): an audit due while a revision holds the fence (its docs publication before the ff) captures the state after the activation', T, async () => {
     const barrier = tmpDir('barrier');
-    const { d } = auditArc({ steps: [lensStep('audit-1', 'vision')], suite: [barrierSuite(barrier)], units: [{ id: 'u1' }], ...I1, mapping: [], audit: { lenses: ['vision'] } });
+    const { d } = auditArc({ steps: [lensStep('audit-1', 'invariants')], suite: [barrierSuite(barrier)], units: [{ id: 'u1' }], ...I1, mapping: [], audit: { lenses: ['invariants'] } });
     const r = contextFor(d);
     const { ctx, w } = auditContext(r);
     const stop = ticking(w);
@@ -284,8 +287,9 @@ describe('the audit job', () => {
       const applied = r.journal.view.planApplied()!;
       const s = started(r)[0]!;
       assert.deepEqual([s.planRev, s.ledgerSha256, s.integrationSha], [2, applied.rulingsSha256, applied.publication!.head], 'the post-activation state');
-      assert.deepEqual(s.triggers, [{ type: 'drift', planRev: 2 }, { type: 'requested', command: asked }]);
-      assert.match(lensCalls(r)[0]!.stdin, /finite numbers/, 'the lens reads the activated ruling and contract');
+      assert.deepEqual(s.triggers, [{type: 'requested', command: asked}]);
+      assert.doesNotMatch(lensCalls(r)[0]!.stdin, /<rulings>/, 'the ledger is not a seat input');
+      assert.match(lensCalls(r)[0]!.stdin, /finite numbers/, 'published changes remain in the range diff');
     } finally {
       stop();
       r.journal.close();
@@ -296,7 +300,7 @@ describe('the audit job', () => {
 describe('coverage', () => {
   test('coverage.docs-edge-contiguous (H8): a docs-only publication covers its own edge U→D, extending a watermark only once it reaches U; its drift trigger is kept', T, async () => {
     const { d } = auditArc({
-      steps: [...unitSteps('u1', moduleFiles('mul', '*')), barrierLens('audit-1', 'vision'), lensStep('audit-1', 'invariants')],
+      steps: [...unitSteps('u1', moduleFiles('mul', '*')), barrierLens('audit-1', 'invariants')],
       units: [{ id: 'u1', obligations: ['I-1'] }, { id: 'u2', obligations: ['I-1'] }], ...I1, mapping: mapped(['I-1']), audit: { every: 5, lenses: [...L2] },
     });
     const r = contextFor(d);
@@ -305,8 +309,8 @@ describe('coverage', () => {
     try {
       await rule(w, r, 'C-2');
       const D1 = head(d.repo);
-      assert.deepEqual(watermarks(ctx, L2), [['invariants', D1, false], ['vision', D1, false]], 'the edge S→D1 is contiguous: both lenses reach D1');
-      assert.deepEqual(cadence(ctx, ctx.clock)!.plan, { triggers: [{ type: 'drift', planRev: 2 }], lenses: ['vision'], generation: 1 }, 'the drift trigger is kept: L ∩ {drift, vision}');
+      assert.deepEqual(watermarks(ctx, L2), [['invariants', D1, false]], 'the edge S→D1 is contiguous: both lenses reach D1');
+      assert.equal(cadence(ctx, ctx.clock)!.plan, null, 'ledger edits do not start rolling audits');
       assert.deepEqual(await runUnit(ctx, r.unit('u1'), admitAll), { kind: 'merged' });
       const S1 = head(d.repo);
       requestAudit(r);
@@ -314,14 +318,14 @@ describe('coverage', () => {
       await reached(d.scenarioDir, 'lens', 120_000);
       await rule(w, r, 'C-3', { statement: 'Helpers never round.' });
       const D2 = head(d.repo);
-      assert.deepEqual(watermarks(ctx, L2), [['invariants', D1, true], ['vision', D1, true]], 'the edge S1→D2 does not reach from D1: kept, not applied');
+      assert.deepEqual(watermarks(ctx, L2), [['invariants', D1, true]], 'the edge S1→D2 does not reach from D1: kept, not applied');
       const base = coverageBase(ctx, D2)!;
-      assert.deepEqual(lensCoverage(r.journal.view.holistic(), base, 'vision').pendingDocs.map((e) => [e.from, e.to]), [[S1, D2]]);
+      assert.deepEqual(lensCoverage(r.journal.view.holistic(), base, 'invariants').pendingDocs.map((e) => [e.from, e.to]), [[S1, D2]]);
       release(d.scenarioDir, 'lens');
       const out = await audit;
       assert.ok(out.kind === 'ended' && out.outcome === 'completed', JSON.stringify(out));
-      assert.deepEqual(ended(r)[0]!.covered, [{ lens: 'invariants', from: D1, to: S1 }, { lens: 'vision', from: D1, to: S1 }]);
-      assert.deepEqual(watermarks(ctx, L2), [['invariants', D2, false], ['vision', D2, false]], 'the gap closed: the kept edge applies');
+      assert.deepEqual(ended(r)[0]!.covered, [{lens: 'invariants', from: base.head, to: S1}]);
+      assert.deepEqual(watermarks(ctx, L2), [['invariants', D2, false]], 'the gap closed: the kept edge applies');
     } finally {
       stop();
       r.journal.close();
@@ -330,7 +334,7 @@ describe('coverage', () => {
 
   test('coverage.docs-edge-subsumed (paid m3 run 8): a docs edge the watermark passes inside an audit\'s range, without following it, is not pending', T, async () => {
     const { d } = auditArc({
-      steps: [...unitSteps('u1', moduleFiles('mul', '*')), lensStep('audit-1', 'vision'), lensStep('audit-1', 'invariants')],
+      steps: [...unitSteps('u1', moduleFiles('mul', '*')), lensStep('audit-1', 'invariants')],
       units: [{ id: 'u1', obligations: ['I-1'] }], ...I1, mapping: mapped(['I-1']), audit: { every: 5, lenses: [...L2] },
     });
     const r = contextFor(d);
@@ -343,14 +347,14 @@ describe('coverage', () => {
       // The docs edge S1→D1 does not reach from the watermark S: kept, pending.
       await rule(w, r, 'C-2');
       const D1 = head(d.repo);
-      const pending = () => lensCoverage(r.journal.view.holistic(), coverageBase(ctx, D1)!, 'vision').pendingDocs.map((e) => [e.from, e.to]);
+      const pending = () => lensCoverage(r.journal.view.holistic(), coverageBase(ctx, D1)!, 'invariants').pendingDocs.map((e) => [e.from, e.to]);
       assert.deepEqual(pending(), [[S1, D1]]);
       // The audit at D1 covers S→D1 across the edge: the watermark passes it without following it.
       requestAudit(r);
       const out = await runAudit(ctx);
       assert.ok(out.kind === 'ended' && out.outcome === 'completed', JSON.stringify(out));
-      assert.deepEqual(ended(r)[0]!.covered, [{ lens: 'invariants', from: S, to: D1 }, { lens: 'vision', from: S, to: D1 }]);
-      assert.deepEqual(watermarks(ctx, L2), [['invariants', D1, false], ['vision', D1, false]]);
+      assert.deepEqual(ended(r)[0]!.covered, [{lens: 'invariants', from: S, to: D1}]);
+      assert.deepEqual(watermarks(ctx, L2), [['invariants', D1, false]]);
       assert.deepEqual(pending(), [], 'subsumed by audit-1\'s range, not pending');
     } finally {
       stop();
@@ -362,7 +366,7 @@ describe('coverage', () => {
     const { d } = auditArc({
       steps: [
         ...unitSteps('u1', moduleFiles('mul', '*')), ...unitSteps('u2', moduleFiles('div', '/')),
-        lensStep('audit-1', 'vision'), lensStep('audit-1', 'invariants'), lensStep('audit-2', 'vision'),
+        lensStep('audit-1', 'invariants'), lensStep('audit-2', 'invariants'),
       ],
       units: [{ id: 'u1', obligations: ['I-1'] }, { id: 'u2', obligations: ['I-1'] }, { id: 'u3', obligations: ['I-1'] }], ...I1, mapping: mapped(['I-1']),
       audit: { every: 5, lenses: [...L2] },
@@ -378,7 +382,7 @@ describe('coverage', () => {
       assert.equal((await runAudit(ctx)).kind, 'ended');
       assert.deepEqual(await runUnit(ctx, r.unit('u2'), admitAll), { kind: 'merged' });
       const S2 = head(d.repo);
-      assert.deepEqual(watermarks(ctx, L2), [['invariants', S1, true], ['vision', S1, true]], 'S1→S2 is uncovered when the vision changes');
+      assert.deepEqual(watermarks(ctx, L2), [['invariants', S1, true]], 'S1→S2 is uncovered when the vision changes');
       syncInputs(r);
       const visionFile = join(d.planPath, '..', 'vision.json');
       const vision = JSON.parse(readFileSync(visionFile, 'utf8')) as typeof VISION;
@@ -388,16 +392,17 @@ describe('coverage', () => {
       const base = coverageBase(ctx, S2)!;
       assert.deepEqual([base.head, base.visionSha256], [S, r.journal.view.planApplied()!.visionSha256], 'the arc\'s base, and the vision now in force');
       assert.deepEqual(lensCoverage(r.journal.view.holistic(), base, 'invariants').followed, [], 'audit-1\'s range was recorded under the old vision');
-      assert.deepEqual(watermarks(ctx, L2), [['invariants', S, true], ['vision', S, true]], 'every lens\'s coverage is cleared back to the arc\'s base');
+      assert.deepEqual(watermarks(ctx, L2), [['invariants', S, true]], 'every lens\'s coverage is cleared back to the arc\'s base');
       const rev = r.journal.view.planApplied()!.rev;
       assert.equal(cadence(ctx, ctx.clock)!.plan, null, 'u3 remains and audit-1 just started: the drift is throttled');
       const settled = { ...ctx, clock: () => DRIFT_THROTTLE_MIN };
-      assert.deepEqual(cadence(settled, settled.clock)!.plan, { triggers: [{ type: 'drift', planRev: rev }], lenses: ['vision'], generation: 2 });
+      assert.equal(cadence(settled, settled.clock)!.plan, null);
+      requestAudit(r);
       const out = await runAudit(settled);
       assert.ok(out.kind === 'ended' && out.outcome === 'completed', JSON.stringify(out));
       assert.equal(started(r)[1]!.visionSha256, base.visionSha256);
-      assert.deepEqual(ended(r)[1]!.covered, [{ lens: 'vision', from: S, to: S2 }], 'the vision lens covers everything up to S2, S1→S2 included');
-      assert.deepEqual(watermarks(ctx, L2), [['invariants', S, true], ['vision', S2, false]], 'invariants stays owed until its own next audit');
+      assert.deepEqual(ended(r)[1]!.covered, [{ lens: 'invariants', from: S, to: S2 }], 'the vision lens covers everything up to S2, S1→S2 included');
+      assert.deepEqual(watermarks(ctx, L2), [['invariants', S2, false]], 'the campaign audit covers the range under the new vision');
     } finally {
       stop();
       r.journal.close();
@@ -415,7 +420,7 @@ describe(`matrix row ${AUDIT_JOB}`, () => {
    * call whose result is unread, the earlier lens's read already durable as audit.after-lens#1 leaves it). audit.after-lens
    * #1 follows the first lens's read, #2 the second's (every lens read, the checkout not yet removed).
    */
-  const OCCURRENCES: Readonly<Record<string, readonly number[]>> = { 'spawn.after-runner-exit': [1, 2], 'audit.after-lens': [1, 2] };
+  const OCCURRENCES: Readonly<Record<string, readonly number[]>> = { 'spawn.after-runner-exit': [1, 2], 'audit.after-lens': [1] };
   /**
    * How recovery closes the ops each crash leaves open (closedAs), per `label#occurrence`: a spawn whose runner exited
    * before its result was certified is redone (the result re-derived from exit.json, never asked again); the job's own
@@ -427,14 +432,14 @@ describe(`matrix row ${AUDIT_JOB}`, () => {
   };
   /** The lens calls asked before each crash; the resumed job asks only the rest. */
   const LENSES_ASKED: Readonly<Record<string, readonly string[]>> = {
-    'audit.after-started#1': [], 'spawn.after-runner-exit#1': [], 'spawn.after-runner-exit#2': ['vision'], 'audit.after-lens#1': ['vision'],
-    'audit.after-lens#2': ['vision', 'invariants'], 'audit.before-ended#1': ['vision', 'invariants'], 'audit.after-ended#1': ['vision', 'invariants'],
+    'audit.after-started#1': [], 'spawn.after-runner-exit#1': [], 'spawn.after-runner-exit#2': ['invariants'], 'audit.after-lens#1': ['invariants'],
+    'audit.after-lens#2': ['invariants'], 'audit.before-ended#1': ['invariants'], 'audit.after-ended#1': ['invariants'],
   };
   /** The job's arc lane spawns: the lane cut short at its runner's exit runs again on resume (no witnessed fact before). */
   const laneSpawns = (r: ArcRun): number => r.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'journey').length;
   for (const cell of crashCells(AUDIT_JOB)) for (const occurrence of OCCURRENCES[cell.label] ?? [1]) {
     test(`audit crashed at ${cell.boundary} ${cell.label}#${occurrence}: ${cell.recovery.slice(0, 80)}…`, T, async () => {
-      const { d } = auditArc({ steps: [lensStep('audit-1', 'vision'), lensStep('audit-1', 'invariants')], units: [{ id: 'u1' }], ...I1, mapping: [], audit: { lenses: [...L2] } });
+      const { d } = auditArc({ steps: [lensStep('audit-1', 'invariants')], units: [{ id: 'u1' }], ...I1, mapping: [], audit: { lenses: [...L2] } });
       const setup = contextFor(d);
       requestAudit(setup);
       setup.journal.close();
@@ -459,7 +464,7 @@ describe(`matrix row ${AUDIT_JOB}`, () => {
         if (cell.label === 'audit.after-ended') assert.deepEqual(out, { kind: 'none' });
         else assert.ok(out.kind === 'ended' && out.outcome === 'completed' && out.job === 'audit-1', JSON.stringify(out));
         assert.deepEqual([started(r).length, ended(r).map((e) => e.outcome)], [1, ['completed']]);
-        assert.deepEqual(lensCalls(r).map((c) => c.lens), ['vision', 'invariants'], 'no lens asked twice');
+        assert.deepEqual(lensCalls(r).map((c) => c.lens), ['invariants'], 'no lens asked twice');
         assert.equal(laneSpawns(r), cell.label === 'spawn.after-runner-exit' && occurrence === 1 ? 2 : 1, 'the arc lane runs again only when cut short');
         assert.deepEqual(r.journal.view.openIntents(), []);
         assert.equal(git(d.repo, 'worktree', 'list', '--porcelain').includes('audit-1.'), false, 'no audit checkout left');
@@ -517,7 +522,7 @@ async function readyDelivery(r: ArcRun): Promise<void> {
 
 const editJsonFile = (path: string, edit: (v: Record<string, unknown>) => Record<string, unknown>): void =>
   writeFileSync(path, JSON.stringify(edit(JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>)));
-const L3: readonly Lens[] = ['drift', 'invariants', 'vision'];
+const L3: readonly Lens[] = ['drift', 'invariants', 'invariants'];
 
 describe('change-sensitive drift (M4a rev 3, H2)', () => {
 });
@@ -542,7 +547,7 @@ describe('cross-lens dedupe within one audit (M4a rev 3, H7)', () => {
       requestAudit(r);
       const out = await runAudit(ctx);
       assert.ok(out.kind === 'ended' && out.outcome === 'completed', JSON.stringify(out));
-      assert.deepEqual(out.covered, ['vacuity']);
+      assert.deepEqual(out.covered, ['invariants']);
       const [first, repair] = auditCalls(r);
       assert.equal(auditCalls(r).length, 2);
       assert.equal(repair!.argv[repair!.argv.indexOf('--resume') + 1], first!.argv[first!.argv.indexOf('--session-id') + 1], 'the repair turn resumes the lens\'s session');
@@ -589,9 +594,9 @@ describe('the lens-range fix: chunks by publication, bounded attachments', () =>
         // Each unit's diff overflows the gate's budget too: its gate answers with a cluster map covering every changed path.
         ...unitSteps('u1', { ...moduleFiles('mul', '*'), 'src/huge.js': bigSource('hugeone', 300_000), 'dist/bundle.js': 'export const bundled = true;\n' }, { clusters: [{ id: 'all', paths: ['**'], review: 'close' }] }),
         ...unitSteps('u2', { 'src/ownerbig.js': bigSource('ownerbig', 300_000), 'src/owner.js': 'export const owner = 1;\n' }, { clusters: [{ id: 'all', paths: ['**'], review: 'close' }] }),
-        lensStep('audit-1', 'vision'),
+        lensStep('audit-1', 'invariants'),
       ],
-      units: [{ id: 'u1' }, { id: 'u2' }], ...I1, mapping: [], audit: { lenses: ['vision'] },
+      units: [{ id: 'u1' }, { id: 'u2' }], ...I1, mapping: [], audit: { lenses: ['invariants'] },
       planExtra: { derived: [{ sources: ['src/**'], outputs: ['dist/**'] }] },
     });
     const r = contextFor(d);
@@ -612,7 +617,7 @@ describe('the lens-range fix: chunks by publication, bounded attachments', () =>
       requestAudit(r);
       const out = await runAudit(ctx);
       assert.ok(out.kind === 'ended' && out.outcome === 'completed', JSON.stringify(out));
-      assert.deepEqual(ended(r)[0]!.covered, [{ lens: 'vision', from: S0, to: S1 }], 'the whole publication is covered by the one call');
+      assert.deepEqual(ended(r)[0]!.covered, [{ lens: 'invariants', from: S0, to: S1 }], 'the whole publication is covered by the one call');
       const [call] = lensCalls(r);
       const stdin = call!.stdin;
       assert.ok(stdin.includes(rangeTag(S0, S1, S1)));
@@ -632,7 +637,7 @@ describe('the lens-range fix: chunks by publication, bounded attachments', () =>
       assert.ok(stdin.includes(`- src/ownerbig.js (new source, over the budget, `) && stdin.includes(join(diffDir, 'owner-u2', 'files', 'src/ownerbig.js.diff')), 'the owner\'s branch is bounded too');
       assert.doesNotMatch(stdin, /git diff [0-9a-f]{40}/, 'no git command: a lens has no shell');
       assert.match(stdin, /^\+export const owner = 1;/m);
-      assert.deepEqual(watermarks(ctx, ['vision']), [['vision', S1, false]]);
+      assert.deepEqual(watermarks(ctx, ['invariants']), [['invariants', S1, false]]);
     } finally {
       stop();
       r.journal.close();
@@ -645,11 +650,11 @@ describe('the lens-range fix: chunks by publication, bounded attachments', () =>
    * Crashed mid-chunking: at the runner exit of chunk 1's call (its result not yet read) or of chunk 2's, the resumed
    * job consumes the calls it made (redone from exit.json) and asks only the rest, at the same attempts.
    */
-  for (const [occurrence, before] of [[CHUNK_SPAWN[0], 1], [CHUNK_SPAWN[1], 2]] as const) {
+  for (const [occurrence, before] of [[CHUNK_SPAWN[0], 1]] as const) {
     test(`audit.chunk-crash-resume: crashed at the runner exit of chunk ${before}'s call, the job resumes and asks no chunk twice`, T, async () => {
       const { d } = auditArc({
-        steps: [...TWO_BIG, lensStep('audit-1', 'vision', [], [], ['bigone000100']), lensStep('audit-1', 'vision', [], [], ['bigtwo000100'])],
-        ...TWO_UNITS, audit: { every: 5, lenses: ['vision'] },
+        steps: [...TWO_BIG, lensStep('audit-1', 'invariants')],
+        ...TWO_UNITS, audit: { every: 5, lenses: ['invariants'] },
       });
       const setup = contextFor(d);
       const S0 = head(d.repo);
@@ -674,8 +679,8 @@ describe('the lens-range fix: chunks by publication, bounded attachments', () =>
         await recover({ stage: ctx, commands: w.commands });
         const out = await runAudit(ctx);
         assert.ok(out.kind === 'ended' && out.job === 'audit-1' && out.outcome === 'completed', JSON.stringify(out));
-        assert.deepEqual(ended(r)[0]!.covered, [{ lens: 'vision', from: S0, to: S2 }]);
-        assert.equal(lensCalls(r).length, 2, 'no chunk asked twice');
+        assert.deepEqual(ended(r)[0]!.covered, [{ lens: 'invariants', from: S0, to: S2 }]);
+        assert.equal(lensCalls(r).length, 1, 'the whole-range report was consumed without a second call');
         assert.deepEqual(r.journal.view.openIntents(), []);
         assert.deepEqual(await runAudit(ctx), { kind: 'none' });
       } finally {

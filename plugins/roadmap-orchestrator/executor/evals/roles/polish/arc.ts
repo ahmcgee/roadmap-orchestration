@@ -111,10 +111,10 @@ export type PolishWorkerArgs = Readonly<{
 /** The polishJudge seat under the run's routing (the walk roles in force, `--rebind` applied), as the arm names it. */
 export function polishSeat(config: RepoConfig | null): Readonly<{ arm: string }> {
   const r = resolveRouting({ ...arcStack('default', config, null), arcScope: 'corpus', arcRoles: 'm4b', milestones: true });
-  const t = r.table.polishJudge.arc;
+  const t = r.table.experienceVerdict.arc;
   if (t.backend !== 'claude') throw new Error(`the polishJudge seat bound to ${t.model}: compares run on Claude only (codex-judgment)`);
-  promptFor('polishJudge', t.model); // a rebind onto a model with no polishJudge prompt fails here, before any trial
-  const cls = r.classes.polishJudge.arc;
+  promptFor('experienceVerdict', t.model); // a rebind onto a model with no polishJudge prompt fails here, before any trial
+  const cls = r.classes.experienceVerdict.arc;
   return { arm: `polishJudge.arc ${cls}${r.bindings[cls] === 'repo-config' ? ' (rebound)' : ''} ${t.model}:${t.effort}` };
 }
 

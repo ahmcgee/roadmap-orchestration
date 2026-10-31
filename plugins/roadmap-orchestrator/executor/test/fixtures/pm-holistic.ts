@@ -27,7 +27,7 @@ import { type InvocationId, parseInvocationId } from '../../src/core/ids.ts';
 import type { JournalView } from '../../src/core/interfaces.ts';
 import { type JsonValue, canonicalJson } from '../../src/core/json.ts';
 import type { LogSnapshot } from '../../src/core/log.ts';
-import { admitSpecWire, checkpointAnswer, checkpointStep, lensStep, noteLensStep, packReviewStep } from '../helpers/holistic.ts';
+import { admitSpecWire, lensStep, packReviewStep } from '../helpers/holistic.ts';
 import { git, tmpDir } from '../helpers/repo.ts';
 import type { Step } from '../helpers/scenario.ts';
 import { writeWitnessControl } from '../helpers/witness.ts';
@@ -92,7 +92,7 @@ const GATE_NOTE = {evidence: ["fixture:1"],
 
 /** u1's fresh build (dev.17: the efficient class at build.high, Codex under the default profile): mul committed; the answer reports an experiment (I3). */
 const IMPLEMENT: Step = {
-  as: 'codex', expect: { argv: ['exec', '-C'] },
+  as: 'claude', expect: {argv: ['--model', 'claude-opus-5-5']},
   acts: [
     { type: 'commit', message: 'add mul', files: MUL },
     { type: 'emit', value: { ...BUILD_REPORT, experiments: [{ name: 'mul by hand', argv: ['node', '-e', 'import("./src/mul.js")'], exit: 0 }] } },
@@ -118,14 +118,7 @@ export const HOLISTIC: Scenario = {
     packReviewStep('review-1'),
     ...keyed('u1', [planCheckStep({ decision: 'approve', risk: 'high' }), IMPLEMENT, gateStep({ decision: 'approve', findings: [GATE_NOTE] })]),
     lensStep('audit-1', 'vision'),
-    checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [LIMITS] })),
-    // audit-2 notes a new gap (F-1), so its checkpoint runs (an audit that found nothing new has none: checkpoint-skipped);
-    // ckpt-2 dismisses it, so nothing is left to bank at close-out.
-    noteLensStep('audit-2'),
-    checkpointStep('ckpt-2', checkpointAnswer({
-      decision: 'bundle', ops: [asideAdmit(r)], interpretations: [{ clauses: ['V-1'], situation: 'scripted situation', reading: 'scripted reading' }],
-      findingDispositions: [{ finding: 'F-1', disposition: 'dismissed', reason: 'scripted: the gap is not this slice\'s' }],
-    })),
+
   ],
   hooks: () => [],
 };
@@ -198,8 +191,8 @@ export function contextOf(view: JournalView, e: Event): string {
  * the story (u1's smoke-ran, the checkpoints' corpus amendments).
  */
 export const M3_FACTS: readonly string[] = [
-  'witnessed', 'obligation-latched', 'audit-started', 'audit-ended', 'checkpoint-inputs', 'plan-applied', 'divergence', 'divergence-digest',
-  'bundle-decided', 'docs-covered', 'docs-published', 'arc-completed', 'debt-banked', 'smoke-ran', 'corpus-amendment',
+  'witnessed', 'obligation-latched', 'audit-started', 'audit-ended', 'plan-applied',
+  'docs-covered', 'docs-published', 'arc-completed', 'debt-banked', 'smoke-ran',
 ];
 
 /** Labels only the holistic layer reaches (the row crashes each at occurrence 1, and 2 where it repeats). */

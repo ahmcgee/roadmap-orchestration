@@ -102,7 +102,7 @@ import type { AcquireFirst } from '../schedule/arbiter.ts';
 import { renderSpec } from '../spec/render.ts';
 import { parseSpec } from '../spec/spec.ts';
 import { type Cadence,type Clock,cadence,integrationHeadNow,runOrder,specsOnlyOf } from './cadence.ts';
-import { coverageBase,lensCoverage,publishedHeads } from './coverage.ts';
+import { coverageBase, publishedHeads } from './coverage.ts';
 import { type FindingDraft,admitMutant,corroborateFinding,crossKey,openFinding,witnessFindingDraft } from './findings.ts';
 import { LENS_DIFF_BUDGET } from './lensdiff.ts';
 import { verdictOf as witnessVerdict } from './observe.ts';
@@ -560,7 +560,7 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
   /** Admits a report's drafts (each finding opened at once); returns the refused ones, recorded in the tally. */
   const admitReport = (lens: LensKind, attempt: number, output: LensOutput): readonly LensRefusal[] => {
     if ('requests' in output) for (const request of (output as import('../prompts/schemas.ts').CampaignAuditOutput).requests) {
-      if (!ctx.journal.view.opsOf('needsuser.raise').some((i) => i.parent.type === 'job' && i.parent.job === job && readNeedsUser(ctx.runDir, i.expect.id)?.summary === request.summary)) raiseNeedsUser(ctx.journal, ctx.runDir, {blocking: true, subject: {type: 'arc'}, reason: 'owner-request', summary: request.summary, recommendation: 'The root reviews the evidence and amends through apply --reason.', evidence: [jobEvidenceRoot(ctx.runDir, job)], options: []}, parent);
+      if (!ctx.journal.view.opsOf('needsuser.raise').some((i) => i.parent.type === 'job' && i.parent.job === job && readNeedsUser(ctx.runDir, i.expect.id)?.summary === request.summary)) raiseNeedsUser(ctx.journal, ctx.runDir, {blocking: true, subject: {type: 'arc'}, reason: 'owner-request', summary: request.summary, recommendation: `Evidence: ${request.evidence.join('; ')}. ${request.dismisses === null ? '' : `Dismiss ${request.dismisses} only on counter-evidence: ${request.counterEvidence}. `}The root reviews and amends through apply --reason.`, evidence: [jobEvidenceRoot(ctx.runDir, job)], options: []}, parent);
     }
     const refused: LensRefusal[] = [];
     for (const f of output.findings) {
@@ -583,7 +583,7 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
   const reached = new Map<LensKind, Sha>();
   let further = 0;
   for (const [i, lens] of order.entries()) {
-    let from = lensCoverage(ctx.journal.view.holistic(), base, lens, s.seq).watermark;
+    let from = base.head;
     let attempt = i + 1;
     let read: LensRead;
     for (;;) {
@@ -638,7 +638,7 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
   if (made) await removeCheckout(ctx, job, checkout);
   crashPoint('audit.before-ended');
   const ranges = order.flatMap((lens) => {
-    const from = lensCoverage(ctx.journal.view.holistic(), base, lens, s.seq).watermark;
+    const from = base.head;
     const to = reached.get(lens);
     return to === undefined || to === from ? [] : [{ lens, from, to }];
   }).sort((a, b) => (a.lens < b.lens ? -1 : 1));
