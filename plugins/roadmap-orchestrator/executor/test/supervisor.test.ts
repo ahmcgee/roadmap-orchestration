@@ -5,28 +5,28 @@
 // supervisor.crash-window-persisted, supervisor.ready-generation, supervisor.control-only-restart,
 // supervisor.heartbeat-stale.
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync,mkdirSync,readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { after,describe,test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { after, describe, test } from 'node:test';
-import { pendingCommandIds, readCommand, readReceipt, terminalReceipt } from '../src/commands/queue.ts';
+import { pendingCommandIds,readCommand,readReceipt,terminalReceipt } from '../src/commands/queue.ts';
 import { isAlive } from '../src/contain/proc.ts';
 import { needsUserRecord } from '../src/core/records.ts';
-import { EXIT_REASON_FILE } from '../src/executor.ts';
-import { type ExecutorEndRecord, HEARTBEAT_STALE_MS, executorLogs, failedPath, readyPath } from '../src/supervisor.ts';
 import { absPath } from '../src/core/values.ts';
-import { assertFired, writeTrigger } from './helpers/crash.ts';
-import { readCalls } from './helpers/scenario.ts';
-import { tmpDir } from './helpers/repo.ts';
-import { reached } from './helpers/barrier.ts';
-import { assertNoSurvivors } from './helpers/reap.ts';
-import { EXEC_TIMEOUT_MS, type ExecRun, cli, hostFile, hostLockHeld, journalOf, reasonOf, setupExec, startExec, until } from './fixtures/exec-common.ts';
+import { EXIT_REASON_FILE } from '../src/executor.ts';
+import { type ExecutorEndRecord,HEARTBEAT_STALE_MS,executorLogs,failedPath,readyPath } from '../src/supervisor.ts';
+import { EXEC_TIMEOUT_MS,type ExecRun,cli,hostFile,hostLockHeld,journalOf,reasonOf,setupExec,startExec,until } from './fixtures/exec-common.ts';
 import {
-  CLAUDE_ONLY, UNIT_CLAUDE_ONLY, WAIT_MS, blockedCheck, claimOf, cmdline, executorOf, executorsOf, gone, idle, kill, launchDirect, ownerOf, pausedFromTheStart, smokes,
-  startCli, startLine, startedGenerations, stateOf, supervisorOf, watchEnd,
+CLAUDE_ONLY,UNIT_CLAUDE_ONLY,WAIT_MS,blockedCheck,claimOf,cmdline,executorOf,executorsOf,gone,idle,kill,launchDirect,ownerOf,pausedFromTheStart,smokes,
+startCli,startLine,startedGenerations,stateOf,supervisorOf,watchEnd,
 } from './fixtures/sup-common.ts';
-import { SUPERVISOR_HOST, crashCells } from './matrix.ts';
 import { outcomes } from './fixtures/unit-common.ts';
+import { reached } from './helpers/barrier.ts';
+import { assertFired,writeTrigger } from './helpers/crash.ts';
+import { assertNoSurvivors } from './helpers/reap.ts';
+import { tmpDir } from './helpers/repo.ts';
+import { readCalls } from './helpers/scenario.ts';
+import { SUPERVISOR_HOST,crashCells } from './matrix.ts';
 
 // Every supervised run a test here started is stopped by its teardown; nothing of them outlives the file.
 after(assertNoSurvivors);

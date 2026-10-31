@@ -2,13 +2,13 @@
 // leaves missing (`missingWitnesses`, the one comparator of the lanes stage and `witness-check`). Pure: the journal view is
 // a stub holding exactly what `requiredWitnesses` reads (published merges, latched obligations).
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
-import type { DoneRecord, IntentRecord } from '../src/core/events.ts';
-import { type ObligationId, type Sha, envId, invocationIdOf, laneId, laneRev, opId, sha, unitId } from '../src/core/ids.ts';
+import { describe,it } from 'node:test';
+import type { DoneRecord,IntentRecord } from '../src/core/events.ts';
+import { type ObligationId,type Sha,envId,invocationIdOf,laneId,laneRev,opId,sha,unitId } from '../src/core/ids.ts';
 import type { JournalView } from '../src/core/interfaces.ts';
-import { type SpecM1, specM1 } from '../src/core/records.ts';
-import { missingWitnesses, requiredWitnesses, smokeTargets } from '../src/holistic/required.ts';
-import { type Obligations, type WitnessRecord, parseObligations } from '../src/holistic/types.ts';
+import { type SpecM1,specM1 } from '../src/core/records.ts';
+import { missingWitnesses,requiredWitnesses,smokeTargets } from '../src/holistic/required.ts';
+import { type Obligations,type WitnessRecord,parseObligations } from '../src/holistic/types.ts';
 
 const ARC = 'arc-1';
 const C1 = sha('1'.repeat(40));

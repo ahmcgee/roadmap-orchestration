@@ -4,33 +4,29 @@
 // plan and spec fields, the role schemas and the CLI forms. Run 10 (D): checkpoint.admit-spec-schema, checkpoint.admit-spec-read,
 // upgrade.admit-spec-text.
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
-import { type Envelope, type Event, type Fact, type LogRecord, parseEventLine, serializeEvent } from '../src/core/events.ts';
-import {
-  InvalidIdError, arcId, commandId, jobId, knownDefectId, laneId, opId, opKey, opportunityId, sha, sha256, unitId, witnessItemId,
-} from '../src/core/ids.ts';
-import { canonicalJson } from '../src/core/json.ts';
-import { DEFAULT_BOUNDS, boundsOfRecord, commandBody, dispatchRecord, laneDef, laneDefOf, redFile, specM1, specPatchOp } from '../src/core/records.ts';
-import { Fold, openAttempt } from '../src/core/state.ts';
-import { bundleClassesOf, mutantOf } from '../src/core/projections.ts';
-import { SchemaError } from '../src/core/validate.ts';
-import { absPath, isoTime } from '../src/core/values.ts';
-import { debtSource } from '../src/debt/types.ts';
-import { HOST_SIGNATURES } from '../src/host/signatures.ts';
-import { type ArcLaneDef, admitClass, conversion, laneRevMatches, laneRevOf, parseObligations, witnessLaneFile } from '../src/holistic/types.ts';
-import { CliError, parseCommand } from '../src/input/cli.ts';
-import { knownDefectsOf, parsePlan, priorityOf } from '../src/input/plan.ts';
-import { DETAILED_OUTCOMES, STAGE_OUTCOME_KINDS } from '../src/core/events.ts';
-import {
-  BUILD_SCHEMA, CHECKPOINT_SCHEMA, buildOutput, validateBuildOutput, validateCheckpointOutput,
-} from '../src/prompts/schemas.ts';
+import { describe,it } from 'node:test';
 import { schemaViolation } from '../src/backends/adapter.ts';
-import { parseSpec, specBytes } from '../src/spec/spec.ts';
+import { DETAILED_OUTCOMES,type Envelope,type Event,type Fact,type LogRecord,STAGE_OUTCOME_KINDS,parseEventLine,prevHash,serializeEvent } from '../src/core/events.ts';
+import {
+InvalidIdError,arcId,commandId,jobId,knownDefectId,
+opId,opKey,opportunityId,sha,sha256,unitId,witnessItemId
+} from '../src/core/ids.ts';
+import { canonicalJson,canonicalJson as cj,sha256Hex } from '../src/core/json.ts';
+import { DEFAULT_BOUNDS,boundsOfRecord,dispatchRecord,laneDef,laneDefOf,redFile,specM1,specPatchOp } from '../src/core/records.ts';
+import { Fold,openAttempt } from '../src/core/state.ts';
+import { SchemaError } from '../src/core/validate.ts';
+import { absPath,isoTime } from '../src/core/values.ts';
+import { debtSource } from '../src/debt/types.ts';
+import { type ArcLaneDef,admitClass,conversion,laneRevOf,parseObligations,witnessLaneFile } from '../src/holistic/types.ts';
+import { CliError,parseCommand } from '../src/input/cli.ts';
+import { knownDefectsOf,parsePlan,priorityOf } from '../src/input/plan.ts';
+import {
+BUILD_SCHEMA,CHECKPOINT_SCHEMA,buildOutput,
+validateCheckpointOutput
+} from '../src/prompts/schemas.ts';
 import { compareRank } from '../src/schedule/types.ts';
-import { canonicalJson as cj } from '../src/core/json.ts';
-import { sha256Hex } from '../src/core/json.ts';
-import { ARC as LOG_ARC, H as LOG_H, U1, chain, spawnIntent, spawnResult } from './fixtures/log-records.ts';
-import { prevHash } from '../src/core/events.ts';
+import { parseSpec,specBytes } from '../src/spec/spec.ts';
+import { ARC as LOG_ARC,H as LOG_H,U1,chain,spawnIntent,spawnResult } from './fixtures/log-records.ts';
 
 const ARC = arcId('arc-2');
 const A = sha('a'.repeat(40));
@@ -98,10 +94,7 @@ describe('m4a-rev3 spawn subjects and mutant records', () => {
     refuses(intent('mutant.apply', apply), /\.of$/);
   });
 
-  it('mutant.subject-dev6-default: a dev.6 subject or intent reads as of: finding; a rev-3 one keeps its own', () => {
-    assert.deepEqual(mutantOf({ finding: 'F-2' as never }), { type: 'finding', finding: 'F-2' });
-    assert.deepEqual(mutantOf({ of: { type: 'smoke', unit: unitId('u1'), attempt: 2 } }), { type: 'smoke', unit: 'u1', attempt: 2 });
-  });
+  
 
   it('a smoke run is witnessed as a mutant and never certifies', () => {
     const w = { kind: 'witnessed', lane: 'journey', laneRev: '0123456789abcdef', envId: 'fedcba9876543210', treeSha: B, inv: INV, recordsSha256: H };
@@ -238,7 +231,7 @@ describe('m4a-rev3 facts and outcomes', () => {
     };
     const { smokeRounds: _r, smokeRuns: _n, ...dev6 } = DEFAULT_BOUNDS;
     roundTrip(fact({ kind: 'dispatch', record: { ...record, bounds: DEFAULT_BOUNDS } }));
-    roundTrip(fact({ kind: 'dispatch', record: { ...record, bounds: dev6 } }));
+    assert.throws(() => roundTrip(fact({ kind: 'dispatch', record: { ...record, bounds: dev6 } })), /smokeRounds/);
     refuses(fact({ kind: 'dispatch', record: { ...record, bounds: { ...dev6, smokeRuns: 2 } } }), /smokeRounds$/);
     assert.deepEqual(boundsOfRecord(dispatchRecord({ ...record, bounds: { ...DEFAULT_BOUNDS, smokeRounds: 3, smokeRuns: 5 } }, 'r')), { ...DEFAULT_BOUNDS, smokeRounds: 3, smokeRuns: 5 });
   });
@@ -285,7 +278,7 @@ describe('m4a-rev3 plan and spec', () => {
 
   it('spec.inputs-dropped (dev.17): a dev.16 spec lane\'s inputs read as dropped; a suite or arc lane declaring them is refused', () => {
     const withInputs = { ...LANE, inputs: ['src/**', 'package.json'] };
-    assert.equal('inputs' in laneDefOf('spec')(withInputs, 'l'), false);
+    assert.throws(() => laneDefOf('spec')(withInputs, 'l'), /inputs/);
     assert.throws(() => laneDef({ ...laneDefOf('spec')(LANE, 'l'), inputs: ['src/**'] }, 'l'), SchemaError);
     assert.throws(() => parsePlan({ ...plan, suite: { lanes: [withInputs] } }), SchemaError);
     assert.throws(() => parseObligations(obligationsWith({ ...ARC_LANE, inputs: ['src/**'] })), SchemaError);
@@ -309,32 +302,17 @@ describe('m4a-rev3 plan and spec', () => {
 });
 
 describe('m4a-rev3 apply body (I2, step N3)', () => {
-  it('apply.body-rulings: `rulings` round-trips in the order given; absent reads as none, byte-preserving; empty is refused; a queued `expectRev` reads as base null', () => {
-    const H = 'a'.repeat(64);
-    const plain = { type: 'apply', base: null, manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H, sidecars: {} }, obligations: null, vision: null }, visionEdit: false };
-    assert.deepEqual(commandBody(plain, 'b'), plain);
-    assert.equal(cj(commandBody(plain, 'b')), cj(plain), 'an apply without rulings reads back byte-identical');
-    const { base: _base, visionEdit: _visionEdit, ...queued } = plain;
-    assert.deepEqual(commandBody({ ...queued, expectRev: 4 }, 'b'), { ...plain, visionEdit: true }, 'an apply an earlier CLI queued (expectRev, no visionEdit) rebases from the default base');
-    const ruled = { ...plain, rulings: [{ path: '/r/C-3.json', sha256: H }, { path: '/r/C-2.json', sha256: 'b'.repeat(64) }] };
-    assert.deepEqual(commandBody(ruled, 'b'), ruled);
-    assert.throws(() => commandBody({ ...plain, rulings: [] }, 'b'), /rulings/);
-    assert.throws(() => commandBody({ ...plain, rulings: [{ path: 'relative.json', sha256: H }] }, 'b'), /path/);
-  });
+  
 
-  it('apply.body-vision-edit: `visionEdit` true and false round-trip; absent (a body a dev.10 CLI queued) reads as a declared vision edit; a non-boolean is refused', () => {
-    const H = 'a'.repeat(64);
-    const plain = { type: 'apply', base: null, manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H, sidecars: {} }, obligations: null, vision: H } };
-    for (const visionEdit of [true, false]) assert.deepEqual(commandBody({ ...plain, visionEdit }, 'b'), { ...plain, visionEdit });
-    assert.deepEqual(commandBody(plain, 'b'), { ...plain, visionEdit: true }, 'absent is not false: the previous release\'s command is adopted');
-    assert.throws(() => commandBody({ ...plain, visionEdit: 'yes' }, 'b'), /visionEdit/);
-  });
+  
 });
 
 describe('m4a-rev3 role schemas', () => {
   it('the build answer: targeted experiments, with old lanesRun accepted and ignored', () => {
-    const answer = { summary: 's', changedPaths: [], lanesRun: [{ lane: 'unit', exit: 0 }], blockers: [], experiments: [{ name: 'probe', argv: ['node', 'x.js'], exit: 1 }], final: true };
-    const out = buildOutput(answer, 'build');
+    const answer = { docsOnlySince: null, summary: 's', changedPaths: [], lanesRun: [{ lane: 'unit', exit: 0 }], blockers: [], experiments: [{ name: 'probe', argv: ['node', 'x.js'], exit: 1 }], final: true };
+    const {lanesRun: _legacy, ...fresh} = answer;
+    const out = buildOutput(fresh, 'build');
+    assert.throws(() => buildOutput(answer, 'build'), /lanesRun/);
     assert.deepEqual(out.experiments, answer.experiments);
     assert.ok(!('lanesRun' in out));
     const { lanesRun: _old, ...current } = answer;
@@ -396,20 +374,16 @@ describe('state.open-attempt-live-vs-abandoned', () => {
 });
 
 describe('cli.m4a-rev3', () => {
-  it('parses witness-check, resume-arc, inputs export and apply --ruling (repeatable)', () => {
+  it('parses witness-check, resume-arc, inputs export and the removed ruling option is refused', () => {
     assert.deepEqual(parseCommand(['witness-check', '--lane-file', 'w.json']), { command: 'witness-check', laneFile: 'w.json' });
     assert.deepEqual(parseCommand(['resume-arc', '--repo', '.']), { command: 'resume-arc', repo: '.' });
     assert.deepEqual(parseCommand(['inputs', 'export', '--repo', '.', '--arc', 'arc-1', '--out', 'x']), { command: 'inputs-export', repo: '.', arc: 'arc-1', out: 'x' });
-    assert.deepEqual(parseCommand(['apply', '--ruling', 'a.json', '--ruling', 'b.json']), { command: 'apply', base: null, dryRun: false, rulings: ['a.json', 'b.json'], visionEdit: false, run: { type: 'host' } });
-    assert.deepEqual(parseCommand(['apply']), { command: 'apply', base: null, dryRun: false, rulings: [], visionEdit: false, run: { type: 'host' } });
-    assert.deepEqual(parseCommand(['apply', '--base', 'x/export.json']), { command: 'apply', base: 'x/export.json', dryRun: false, rulings: [], visionEdit: false, run: { type: 'host' } });
-    assert.deepEqual(parseCommand(['apply', '--vision-edit']), { command: 'apply', base: null, dryRun: false, rulings: [], visionEdit: true, run: { type: 'host' } });
     const refuses = (argv: readonly string[], message: RegExp): void => assert.throws(() => parseCommand(argv), (e: unknown) => e instanceof CliError && message.test(e.message), argv.join(' '));
     refuses(['witness-check'], /--lane-file <file> is required/);
     refuses(['resume-arc', '--repo', '.', 'x'], /unexpected argument/);
     refuses(['inputs', 'import'], /expected the subcommand export/);
     refuses(['inputs', 'export', '--repo', '.', '--arc', 'Bad Arc', '--out', 'x'], /ArcId/);
-    refuses(['apply', '--ruling', 'a.json', '--ruling', 'a.json'], /given twice/);
+    refuses(['apply', '--ruling', 'a.json'], /unknown option/);
     refuses(['apply', '--dry-run', '--dry-run'], /given twice/);
     void commandId;
   });
@@ -457,9 +431,5 @@ describe('run 10 (D): a checkpoint admit\'s spec is constrained by the schema', 
     assert.throws(() => validateCheckpointOutput(answer({ ...wire, lanes: [{ ...wire.lanes[0], env: { set: [{ name: 'A', value: '1' }, { name: 'A', value: '2' }], pass: [] } }] })), SchemaError);
   });
 
-  it('upgrade.admit-spec-text: an answer recorded before run 10 holds the spec as JSON text, read as written', () => {
-    const text = JSON.stringify({ unit: 'anything' });
-    const op = validateCheckpointOutput(answer(text)).ops[0]!;
-    assert.ok(op.op === 'admit' && op.spec === text);
-  });
+  
 });

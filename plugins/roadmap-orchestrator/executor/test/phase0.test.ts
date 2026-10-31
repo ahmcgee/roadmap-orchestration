@@ -3,32 +3,30 @@
 // The classifier's and the apply's and start's sides are test/phase0-apply.test.ts. M4a rev 3 (N5):
 // phase0.spec-census-mismatch-row. Run 10 (C): phase0.spec-census-witness-items. 2026-10-21: phase0.retired-rule-anchor.
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync,readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, it } from 'node:test';
+import { describe,it } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { acksDir, amendmentsOf, arcsWithRefs, chainBack, completedHeadOf, readArcRef } from '../src/chain.ts';
+import { acksDir,amendmentsOf,arcsWithRefs,chainBack,completedHeadOf,readArcRef } from '../src/chain.ts';
 import { phase0Check } from '../src/commands/phase0.ts';
-import { amendmentIdOf, arcId, divergenceIdOf, obligationId, ruleId, unitId } from '../src/core/ids.ts';
+import { amendmentIdOf,arcId,divergenceIdOf,obligationId,ruleId,unitId } from '../src/core/ids.ts';
+import { canonicalJson,sha256Hex } from '../src/core/json.ts';
 import { specM1 } from '../src/core/records.ts';
-import { specCensusMismatches } from '../src/holistic/rederive.ts';
-import { canonicalJson, sha256Hex } from '../src/core/json.ts';
-import { repoPath } from '../src/core/values.ts';
-import { debtKey } from '../src/debt/ledger.ts';
-import { renderDebt } from '../src/docs/debt.ts';
 import { normalizeText } from '../src/corpus/rules.ts';
 import { parseCorpusPin } from '../src/corpus/types.ts';
+import { debtKey } from '../src/debt/ledger.ts';
+import { renderDebt } from '../src/docs/debt.ts';
 import { ruleAnchorResolves } from '../src/holistic/obligations.ts';
+import { specCensusMismatches } from '../src/holistic/rederive.ts';
 import { parseObligations } from '../src/holistic/types.ts';
-import { planInForce, revisionInForce } from '../src/input/inforce.ts';
-import { rulingCorpusOf } from '../src/phase0/rows.ts';
 import { scopeOverlapFix } from '../src/phase0/types.ts';
 import {
-  type CorpusArc, PIN_FILE, betweenArc, check, corpusArc, editJsonFile, editPhase0, editPlan, inForce, kinds, nextArc, phase0Of, rowOf,
-  runDirOfArc, seal, visionRecord, withForge,
+type CorpusArc,PIN_FILE,betweenArc,check,corpusArc,editJsonFile,editPhase0,editPlan,
+kinds,nextArc,phase0Of,rowOf,
+seal,visionRecord,withForge
 } from './helpers/corpusarc.ts';
 import { runUntilExit } from './helpers/proc.ts';
-import { commitAll, git, writeFiles } from './helpers/repo.ts';
+import { commitAll,git,writeFiles } from './helpers/repo.ts';
 
 const T = { timeout: 120_000 };
 type Json = Record<string, unknown>;
@@ -124,21 +122,7 @@ describe('phase0 check', () => {
     assert.deepEqual(await corpusProblems(a), [{ type: 'contract-overlaps-corpus', path: 'docs/corpus/sub/0099_New.md' }]);
   });
 
-  it('ruling.corpus-in-force: the ruling context of a corpus arc in force: its active rules and its same-repo corpus file set', T, async () => {
-    const a = await corpusArc();
-    const j = inForce(a);
-    try {
-      const runDir = runDirOfArc(a);
-      const corpus = revisionInForce(runDir, planInForce(runDir, j.view)!).corpus;
-      assert.ok(corpus !== null);
-      const r = rulingCorpusOf(corpus);
-      assert.deepEqual([...r.rules.keys()], ['T-1', 'T-2', 'T-3']);
-      assert.equal(r.rules.get(ruleId('T-1')), corpus.pin.value.rules[0]!.textSha256);
-      assert.deepEqual(['docs/corpus/0010_Overview.md', 'docs/corpus/sub/new.md', 'src/berths.ts', 'docs/api.md'].map((p) => r.inFileSet(repoPath(p))), [true, true, false, false]);
-    } finally {
-      j.close();
-    }
-  });
+  
 });
 
 describe('the pack\'s specs against the census (M4a rev 3, H3)', () => {

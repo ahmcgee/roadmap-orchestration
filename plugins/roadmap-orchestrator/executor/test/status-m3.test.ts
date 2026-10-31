@@ -4,38 +4,38 @@
 // status.decisions-since, status.divergences-since-ack, status.completion-sealed, status.log-size, status.non-holistic-arc,
 // status.dev9-alias.
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, statSync } from 'node:fs';
+import { mkdirSync,readFileSync,statSync } from 'node:fs';
 import { join } from 'node:path';
+import { describe,it } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { describe, it } from 'node:test';
 import { submitCommand } from '../src/commands/queue.ts';
-import type { Fact, IntentOf, RevisionPayload } from '../src/core/events.ts';
+import type { Fact,IntentOf,RevisionPayload } from '../src/core/events.ts';
 import {
-  type RoutingRev, type Sha, type UnitId, arcId, commandId, envId, invocationId, jobId, opKey, planRev, sha, sha256, unitId,
+type RoutingRev,type Sha,type UnitId,arcId,commandId,envId,invocationId,jobId,opKey,planRev,sha,sha256,unitId,
 } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
-import { snapshotRequestOf, witnessDir } from '../src/git/snapshot.ts';
-import { type ArcLaneDef, laneRevOf, parseObligations, parseRulingSidecar } from '../src/holistic/types.ts';
-import { witnessRecordOf, writeWitnessRecord } from '../src/holistic/witness.ts';
+import { snapshotRequestOf,witnessDir } from '../src/git/snapshot.ts';
+import { type ArcLaneDef,laneRevOf,parseObligations } from '../src/holistic/types.ts';
+import { witnessRecordOf,writeWitnessRecord } from '../src/holistic/witness.ts';
 import {
-  RULINGS_INPUT, RULING_INPUT, commitRevisionNow, keepInput, keptPayload,
+RULINGS_INPUT,RULING_INPUT,commitRevisionNow,keepInput,keptPayload,
 } from '../src/input/inforce.ts';
-const ledgerAfter = (text: string, s: {id: string; statement: string}): string => `${text}${s.id} — ${s.statement}\n`;
 import { raiseNeedsUser } from '../src/needsuser.ts';
 import { executorIdentity } from '../src/pipeline/stages.ts';
 import { snapshotPublishOp } from '../src/recover/ops.ts';
-import { resolveRouting, resolveRoutingUnder } from '../src/routing/layers.ts';
+import { resolveRouting } from '../src/routing/layers.ts';
+const ledgerAfter = (text: string, s: {id: string; statement: string}): string => `${text}${s.id} — ${s.statement}\n`;
 
-import { MODEL_IDS, unitSeatRef } from '../src/routing/types.ts';
-import { type Status, status } from '../src/status.ts';
 import type { NeedsUserReason } from '../src/core/records.ts';
-import { runOp } from './fixtures/git-common.ts';
+import { MODEL_IDS,unitSeatRef } from '../src/routing/types.ts';
+import { type Status,status } from '../src/status.ts';
 import { auditArc } from './fixtures/audit-common.ts';
-import { VISION, holisticArc, tipTree } from './fixtures/brake-common.ts';
+import { VISION,holisticArc,tipTree } from './fixtures/brake-common.ts';
+import { runOp } from './fixtures/git-common.ts';
 import { ruleRecord } from './fixtures/publish-common.ts';
-import { type ArcRun, contextFor, setupArc } from './fixtures/unit-common.ts';
-import { commitAll, git, writeFiles } from './helpers/repo.ts';
+import { type ArcRun,contextFor,setupArc } from './fixtures/unit-common.ts';
+import { commitAll,git,writeFiles } from './helpers/repo.ts';
 
 const T = { timeout: 60_000 };
 const U = (id: string): UnitId => unitId(id);
@@ -295,14 +295,14 @@ describe('status M3', () => {
       const prev = keptPayload(r.ctx.runDir, r.journal.view.planApplied()!.payloadSha256!);
       // The revision lands C-2 in the ledger with its sidecar, as `rule` and a bundle's activation do.
       const ledgerText = readFileSync(join(r.ctx.runDir, 'inputs', `${prev.manifest.rulings.ledgerSha256}.${RULINGS_INPUT}`), 'utf8');
-      const ledgerSha256 = keepInput(r.ctx.runDir, Buffer.from(ledgerAfter(ledgerText, parseRulingSidecar(record))), RULINGS_INPUT);
+      const ledgerSha256 = keepInput(r.ctx.runDir, Buffer.from(`${ledgerText}C-2 — Keep helpers pure.\n`), RULINGS_INPUT);
       const draft = (what: string) => ({
         job: jobId('ckpt', 1), type: 'interpretation', from: 'V-1', what, cites: ['V-1'], evidence: ['scripted evidence'],
         preimage: { planRev: 1, specs: {}, obligationsSha256: null, ledgerSha256: null, contracts: [] }, compensation: { hint: 'nothing to undo', kind: 'none' },
       }) as const;
       commitRevisionNow(r.journal, r.ctx.runDir, {
         ...prev, source: { type: 'bundle', job: jobId('ckpt', 1) }, base: planRev(1), rev: planRev(2),
-        manifest: { ...prev.manifest, rulings: { ledgerSha256, sidecars: { ...prev.manifest.rulings.sidecars, 'C-2': rulingSha } } },
+        manifest: { ...prev.manifest, rulings: { ledgerSha256,  } },
         changes: [{ type: 'unit-cut', unit: U('u2') }, { type: 'limits', unit: null }], dispositions: [],
         divergences: [draft('trust means tested'), draft('helpers stay small')],
       } as unknown as RevisionPayload, { type: 'job', job: jobId('ckpt', 1) });

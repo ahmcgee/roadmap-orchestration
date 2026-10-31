@@ -2,7 +2,7 @@
 // value or throws a SchemaError naming the field path and the offending value. A reader is a plain
 // function `(value, path) => T`, so readers compose without a library.
 
-import { SCHEMA_VERSION, type SchemaVersion } from './version.ts';
+import { SCHEMA_VERSION,type SchemaVersion } from './version.ts';
 
 declare const brand: unique symbol;
 /** A nominal subtype: a `Brand<string, 'Sha'>` is a string only the Sha constructor can produce. */

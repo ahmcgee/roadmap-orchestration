@@ -12,31 +12,31 @@
 // Void: `cap` (the spend brake, run.ts `--trial-cap`, killed the session), `error`, `code-decided` (code settled a hunk
 // without the verifier: a fixture bug, cells.ts), `invalid` (the verifier gave no answer code accepts: off its schema, or
 // not one entry per hunk), `needle` (the session touched the eval's own files).
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { mkdirSync,writeFileSync } from 'node:fs';
+import { dirname,join } from 'node:path';
+import { readClaude } from '../../../src/backends/claude.ts';
 import type { StageOutcomeFact } from '../../../src/core/events.ts';
-import { type InvocationId, invocationId } from '../../../src/core/ids.ts';
+import { type InvocationId,invocationId } from '../../../src/core/ids.ts';
 import type { JsonValue } from '../../../src/core/json.ts';
 import { SchemaError } from '../../../src/core/validate.ts';
-import { readClaude } from '../../../src/backends/claude.ts';
-import { invocationDir } from '../../../src/pipeline/invoke.ts';
 import { certifiedTree } from '../../../src/pipeline/docsonly.ts';
+import { invocationDir } from '../../../src/pipeline/invoke.ts';
 import { promptFor } from '../../../src/prompts/index.ts';
-import { type VerifierOutput, hunkClear, validateVerifierOutput } from '../../../src/prompts/schemas.ts';
-import { type RepoConfig, arcStack, resolveRouting } from '../../../src/routing/layers.ts';
+import { type VerifierOutput,hunkClear,validateVerifierOutput } from '../../../src/prompts/schemas.ts';
+import { type RepoConfig,arcStack,resolveRouting } from '../../../src/routing/layers.ts';
 import { modelInfo } from '../../../src/routing/models.ts';
 import type { RiskTier } from '../../../src/routing/types.ts';
 import { runnerFiles } from '../../../src/runner/files.ts';
-import { BUILD_REPORT, planCheckAnswer } from '../../../test/fixtures/stage-common.ts';
-import { type ArcDescriptor, type ArcRun, MUL, U1, appendSteps, contextFor, gateStep, setupArc, stepUntil } from '../../../test/fixtures/unit-common.ts';
-import { type Step, readCalls } from '../../../test/helpers/scenario.ts';
-import { repositoryPaths, scanTranscript } from '../../m4a/transcript.ts';
+import { BUILD_REPORT,planCheckAnswer } from '../../../test/fixtures/stage-common.ts';
+import { type ArcDescriptor,type ArcRun,MUL,U1,appendSteps,contextFor,gateStep,setupArc,stepUntil } from '../../../test/fixtures/unit-common.ts';
+import { type Step,readCalls } from '../../../test/helpers/scenario.ts';
+import { repositoryPaths,scanTranscript } from '../../m4a/transcript.ts';
 import type { CellSet } from '../gate/cells.ts';
-import { type Usage, parseEvents, readTranscript, sumUsage, usageOf } from '../transcript.ts';
-import { OVERSPEND, readStdout } from '../walkthrough/arc.ts';
+import { type Usage,parseEvents,readTranscript,sumUsage,usageOf } from '../transcript.ts';
+import { OVERSPEND,readStdout } from '../walkthrough/arc.ts';
 import type { VerifierCell } from './cells.ts';
-import { type HunkExpect, flagged } from './families.ts';
-import { type VerifierFixture, buildVerifierFixture, keyOf } from './fixture.ts';
+import { type HunkExpect,flagged } from './families.ts';
+import { type VerifierFixture,buildVerifierFixture,keyOf } from './fixture.ts';
 
 /**
  * Degenerate verifiers, each knowing the key: `oracle` answers every hunk as its key says; `clear-all` calls every hunk a

@@ -20,14 +20,14 @@
 // that evidence is gone.
 import { join } from 'node:path';
 import type { IntentOf } from '../core/events.ts';
-import { type LaneId, type UnitId, invocationId } from '../core/ids.ts';
+import { type LaneId,type UnitId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
-import { type CommandVerdict, type FailureRef, failureRefOf, isRed, parseFailureRef } from '../core/records.ts';
+import { type CommandVerdict,type FailureRef,failureRefOf,isRed,parseFailureRef } from '../core/records.ts';
 import type { FailedOutcome } from '../core/state.ts';
-import { type AbsPath, absPath } from '../core/values.ts';
+import { type AbsPath,absPath } from '../core/values.ts';
 import type { StageParent } from './dispatch.ts';
-import { type HostSuspected, specSeriesRoot } from './lanes.ts';
-import { type RedClass, readRedClass } from './redlane.ts';
+import { type HostSuspected,specSeriesRoot } from './lanes.ts';
+import { type RedClass,readRedClass } from './redlane.ts';
 
 export const FAILURE_CLASSES = ['red', 'flaky', 'repeat'] as const;
 export type FailureClass = (typeof FAILURE_CLASSES)[number];

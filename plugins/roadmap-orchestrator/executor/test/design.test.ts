@@ -1,3 +1,10 @@
+import { setTimeout as delay } from 'node:timers/promises';
+import { evaluateRevision,keepRevision,payloadOf } from '../src/commands/apply.ts';
+import { holdFence } from '../src/core/fence.ts';
+import { commitRevisionNow,inForceFiles,requirePlanInForce,revisionInForce } from '../src/input/inforce.ts';
+import { parsePlan } from '../src/input/plan.ts';
+import { readNeedsUser } from '../src/needsuser.ts';
+import { reached as barrierReached,release as barrierRelease } from './helpers/barrier.ts';
 // The design pass (dev.17; DESIGN-1.0.md "Design pass"): the plan-check's design record and its code-checked binding,
 // integrated and fake-backed over a unit-common arc (real git, real lanes, the fake claude and codex behind PATH shims).
 //
@@ -27,30 +34,30 @@
 //   which contract); the gate's inputs record the design's size estimate.
 // split.crash.*, poc.crash.*: the matrix rows DESIGN_SPLIT and POC_STAGE (test/matrix.ts).
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync,readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, test } from 'node:test';
-import type { Fact, StageOutcomeFact } from '../src/core/events.ts';
+import { describe,test } from 'node:test';
+import type { Fact,StageOutcomeFact } from '../src/core/events.ts';
+import { arcId,commandId,unitId } from '../src/core/ids.ts';
 import type { JsonValue } from '../src/core/json.ts';
-import { arcId, unitId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
-import { absPath, repoPattern } from '../src/core/values.ts';
-import { loadUnitSpec } from '../src/pipeline/stages.ts';
-import { type Gate, consume, runUnit } from '../src/pipeline/unit.ts';
-import { recover } from '../src/recover/recover.ts';
-import { designUnscoped } from '../src/pipeline/design.ts';
+import { absPath,repoPattern } from '../src/core/values.ts';
 import { splitCutReason } from '../src/input/classify.ts';
-import { assertFired, writeTrigger } from './helpers/crash.ts';
-import { runFixture } from './helpers/proc.ts';
-import { git, tmpDir } from './helpers/repo.ts';
-import { readCalls } from './helpers/scenario.ts';
-import { SCENARIO_TIMEOUT_MS, planCheckRepairStep, planCheckStep } from './fixtures/stage-common.ts';
-import { followingContext, unitInForce } from './fixtures/steer-common.ts';
-import { editSpec } from './fixtures/route-common.ts';
-import { type ArcDescriptor, MUL, U1, codexStep, contextFor, gateStep, isGateCall, mulBuild, outcomes, setupArc } from './fixtures/unit-common.ts';
+import { designUnscoped } from '../src/pipeline/design.ts';
+import { loadUnitSpec } from '../src/pipeline/stages.ts';
+import { type Gate,consume,runUnit } from '../src/pipeline/unit.ts';
+import { recover } from '../src/recover/recover.ts';
 import { intents } from './fixtures/invoke-specs.ts';
 import { recoveryContext } from './fixtures/rec-common.ts';
-import { DESIGN_SPLIT, POC_STAGE, crashCells } from './matrix.ts';
+import { editSpec } from './fixtures/route-common.ts';
+import { SCENARIO_TIMEOUT_MS,planCheckRepairStep,planCheckStep } from './fixtures/stage-common.ts';
+import { followingContext,unitInForce } from './fixtures/steer-common.ts';
+import { type ArcDescriptor,MUL,U1,codexStep,contextFor,gateStep,isGateCall,mulBuild,outcomes,setupArc } from './fixtures/unit-common.ts';
+import { assertFired,writeTrigger } from './helpers/crash.ts';
+import { runFixture } from './helpers/proc.ts';
+import { git,tmpDir } from './helpers/repo.ts';
+import { readCalls } from './helpers/scenario.ts';
+import { DESIGN_SPLIT,POC_STAGE,crashCells } from './matrix.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 /** Admits every stage but `stop`: the unit's task ends there, held. */
@@ -442,4 +449,44 @@ test('design.derived-exclusion: broad change patterns inherit exclusions, explic
   assert.deepEqual(designUnscoped(subtree, scope), [], 'a broader proposed pattern retains the individual output hole');
   assert.deepEqual(designUnscoped(subtree, { ...scope, exclude: [repoPattern('apps/web/test/fixtures/')] }), ['apps/web/test/fixtures/**'], 'a pattern beneath a directory output stays excluded');
   assert.deepEqual(designUnscoped([{ system: null, paths, lines: 10 }], { ...scope, exclude: [repoPattern('apps/web/test/fixtures/**')] }), ['apps/core/src/routes.ts', 'apps/web/test/fixtures/core-routes.json'], 'an output glob excludes a proposed file pattern');
+});
+
+
+test('split.revision-race: a concurrent revision is preserved, the split retries and emits a nonblocking revision notice', T, async () => {
+  const split = {children: [child('u1-core', ['A1'], 'core', 100), child('u1-api', ['A2'], 'api', 100)], edges: [], skeleton: null};
+  const d = splitArc([planCheckStep({decision: 'split', split}, {}, [{type: 'barrier', name: 'split-race', timeoutMs: 30000}])]);
+  const r = contextFor(d);
+  const pending = runUnit(r.ctx, r.unit('u1'), until('build'));
+  await barrierReached(d.scenarioDir, 'split-race', 30000);
+  const {release} = await holdFence(r.journal);
+  let unlocked = false;
+  try {
+    barrierRelease(d.scenarioDir, 'split-race');
+    for (let i = 0; i < 2000 && r.journal.view.unit(U1).interrupted?.outcome !== 'split'; i++) await delay(5);
+    assert.equal(r.journal.view.unit(U1).interrupted?.outcome, 'split');
+    const force = requirePlanInForce(r.ctx.runDir, r.journal.view);
+    const rev = revisionInForce(r.ctx.runDir, force);
+    const current = inForceFiles(r.ctx.runDir, r.journal.view, force, rev, r.ctx.planFile, r.ctx.repo);
+    const raw = {...JSON.parse(current.planBytes.toString('utf8')), direction: 'Keep the concurrent direction.'};
+    const next = {...current, plan: parsePlan(raw), planBytes: Buffer.from(JSON.stringify(raw))};
+    const evaluated = evaluateRevision({runDir: r.ctx.runDir, view: r.journal.view, hostDir: r.ctx.hostDir, planFile: r.ctx.planFile, routingBase: r.ctx.routingBase, laneEnv: r.ctx.hostEnv}, next, {type: 'apply', reason: 'Concurrent direction edit'});
+    assert.equal(evaluated.kind, 'accepted');
+    if (evaluated.kind !== 'accepted') throw new Error(JSON.stringify(evaluated));
+    keepRevision(r.ctx.runDir, evaluated);
+    const id = commandId('cmd-0000000000000011');
+    commitRevisionNow(r.journal, r.ctx.runDir, payloadOf(evaluated.draft, {type: 'command', command: id}), {type: 'command', command: id});
+    release(); unlocked = true;
+    assert.deepEqual(await pending, {kind: 'held', needsUser: null});
+    const f = followingContext(r);
+    assert.equal(f.plan().direction, 'Keep the concurrent direction.');
+    assert.equal(r.journal.view.planApplied()?.rev, 3);
+    assert.equal(r.journal.view.unit(U1).status, 'cut');
+    const notices = r.journal.view.needsUser().map((n) => readNeedsUser(r.ctx.runDir, n.id)!).filter((n) => n.reason === 'revision-notice');
+    assert.equal(notices.length, 1);
+    assert.equal(notices[0]!.blocking, false);
+    assert.equal(r.journal.view.needsUser().some((n) => n.blocking), false);
+  } finally {
+    if (!unlocked) release();
+    r.journal.close();
+  }
 });

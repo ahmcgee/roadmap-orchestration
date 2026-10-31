@@ -1,23 +1,23 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { chmodSync,existsSync,readdirSync,readFileSync,rmSync,writeFileSync } from 'node:fs';
+import { join,relative } from 'node:path';
 import { test } from 'node:test';
+import { invoke,ISOLATION,stageA,type Budget } from '../evals/compaction/driver.ts';
+import { CORPUS_FILE,fixture,git,json,loadSidecars,phase0Cli,readJson,RULE_FILE,write,type Fixture } from '../evals/compaction/fixture.ts';
+import { gradeA,gradeB,proposals,type Exchange } from '../evals/compaction/grade.ts';
+import { goldenRecord,parseRecord } from '../evals/compaction/record.ts';
+import { options,regrade,summarise } from '../evals/compaction/run.ts';
+import { estateSpec,type SetName } from '../evals/compaction/spec.ts';
+import { stagePlugin } from '../evals/m4a/driver.ts';
+import { triggeredCompaction,triggeredRoles } from '../evals/roles/triggers.ts';
 import { repoPath } from '../src/core/values.ts';
 import { parseGuideText } from '../src/corpus/guide.ts';
 import { parseRules } from '../src/corpus/rules.ts';
-import { parseInvariantsBlock, parseRulesRegistryBlock } from '../src/docs/invariants.ts';
 import { parseDebtBlock } from '../src/docs/debt.ts';
+import { parseInvariantsBlock,parseRulesRegistryBlock } from '../src/docs/invariants.ts';
 import { parseVision } from '../src/holistic/types.ts';
 import { parseRulings } from '../src/spec/rulings.ts';
-import { stagePlugin } from '../evals/m4a/driver.ts';
-import { fixture, phase0Cli, loadSidecars, json, readJson, write, git, CORPUS_FILE, RULE_FILE, type Fixture } from '../evals/compaction/fixture.ts';
-import { gradeA, gradeB, proposals, type Exchange } from '../evals/compaction/grade.ts';
-import { goldenRecord, parseRecord } from '../evals/compaction/record.ts';
-import { estateSpec, type SetName } from '../evals/compaction/spec.ts';
-import { invoke, ISOLATION, stageA, type Budget } from '../evals/compaction/driver.ts';
-import { options, summarise, regrade } from '../evals/compaction/run.ts';
-import { triggeredCompaction, triggeredRoles } from '../evals/roles/triggers.ts';
 import { applyGolden } from './helpers/compaction.ts';
 import { tmpDir } from './helpers/repo.ts';
 
@@ -185,7 +185,7 @@ async function mutation(f: Fixture, path: string, change: (text: string) => stri
 test('compaction.stage-b: golden script passes both domains; absent applications, dropped obligations, reused T/I/C ids, false markers and altered approvals fail', T, async () => {
   for (const set of ['dev', 'holdout'] as const) {
     const f = await fresh(set);
-    write(join(f.l.inputs, '_next/compaction.md'), readFileSync(join(f.l.dir, 'golden-compaction.md'), 'utf8'));
+    write(join(f.l.inputs, 'drafts/compaction.md'), readFileSync(join(f.l.dir, 'golden-compaction.md'), 'utf8'));
     const before = gradeB(f);
     assert.equal(before.pass, false);
     assert.equal(before.criteria['phase0']!.pass, true);
@@ -199,7 +199,7 @@ test('compaction.stage-b: golden script passes both domains; absent applications
     await mutation(f, obs, (s) => s.replaceAll('I-61', 'I-54'), 'ids');
     await mutation(f, join(f.next, 'rulings.md'), (s) => s.replace(/C-40 — .+/, 'C-40 — Repurposed identity.'), 'ids');
     await mutation(f, obs, (s) => { const o = JSON.parse(s); o.census.pop(); return json(o); }, 'census');
-    const record = join(f.l.inputs, '_next/compaction.md');
+    const record = join(f.l.inputs, 'drafts/compaction.md');
     await mutation(f, record, (s) => s.replace(/Applied: arc-next/g, ''), 'markers');
     await mutation(f, record, (s) => s.replace('Gives up: nothing', 'Gives up: new loss'), 'markers');
     await mutation(f, join(f.next, 'rulings.md.d/C-41.json'), (s) => s.replace('"lifetime": "arc"', '"lifetime": "standing"'), 'rulings');
@@ -297,7 +297,7 @@ test('compaction.regrade: saved evidence uses current semantics, preserves histo
   const dir = join(root, '1');
   const a = await fixture(join(dir, 'a'), 'dev');
   const b = await fixture(join(dir, 'b'), 'dev');
-  write(join(a.l.inputs, '_next/compaction.md'), trialRecord);
+  write(join(a.l.inputs, 'drafts/compaction.md'), trialRecord);
   write(join(a.l.dir, 'exchanges.json'), json(trialExchanges));
   rmSync(join(a.next, 'plan.json')); // Stage A needs only the exchange and record.
   // Simulate an older key with a fixed id and duplicate debt described as a loss.
@@ -323,9 +323,9 @@ test('compaction.regrade: saved evidence uses current semantics, preserves histo
   assert.equal(summary.trials[1]!.failure, second.failure);
   assert.equal(summary.costUsd, 9.73);
   assert.equal(summary.recall, 1);
-  assert.equal(readFileSync(join(b.l.inputs, '_next/compaction.md'), 'utf8').includes('historical approval'), true);
+  assert.equal(readFileSync(join(b.l.inputs, 'drafts/compaction.md'), 'utf8').includes('historical approval'), true);
   assert.deepEqual(regrade(root).summary, summary); // Repeatable, with no new spend.
-  write(join(second.dir, 'a/stage/roadmap-inputs/_next/compaction.md'), trialRecord);
+  write(join(second.dir, 'a/stage/roadmap-inputs/drafts/compaction.md'), trialRecord);
   const incomplete = regrade(root).summary;
   assert.equal(incomplete.trials[0]!.a!.pass, true);
   assert.equal(incomplete.trials[1]!.a!.criteria['readable']!.pass, false);
@@ -372,7 +372,7 @@ test('compaction.driver-review: fake root resumes after explicit owner answers, 
   const init = event({ type: 'system', subtype: 'init', session_id: 'review-session', mcp_servers: [] });
   const result = (text: string) => event({ type: 'result', session_id: 'review-session', result: text, total_cost_usd: 0.1 });
   fakeClaude(f, `const { writeFileSync } = require('node:fs');\nconst a=process.argv.slice(2);\n` + init +
-    `if (a.includes('medium')) { ${result(reply)} } else if (a.includes('--resume')) { writeFileSync(${JSON.stringify(join(f.l.inputs, '_next/compaction.md'))}, ${JSON.stringify(good)}); ${result('Recorded the approved decisions. Review complete.')} } else { ${result(batch)} }`);
+    `if (a.includes('medium')) { ${result(reply)} } else if (a.includes('--resume')) { writeFileSync(${JSON.stringify(join(f.l.inputs, 'drafts/compaction.md'))}, ${JSON.stringify(good)}); ${result('Recorded the approved decisions. Review complete.')} } else { ${result(batch)} }`);
   const budget: Budget = { spent: 0, cap: 1 };
   const g = await stageA(f, budget);
   assert.equal(g.pass, true, json(g));

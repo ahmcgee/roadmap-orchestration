@@ -10,43 +10,43 @@
 // lens-range fix (2026-10-16): audit.range-chunked, audit.oversized-publication-bounded, audit.upgrade-dev10-oversized-range,
 // audit.chunk-crash-resume.
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { readFileSync,readdirSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { describe,test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { describe, test } from 'node:test';
-import { applyCommand, evaluateRevision, keepRevision, payloadOf } from '../src/commands/apply.ts';
+import { applyCommand,evaluateRevision,keepRevision,payloadOf } from '../src/commands/apply.ts';
 import { submitCommand } from '../src/commands/queue.ts';
-import { type CommandId, type JobId, type Sha, commandId, findingId, jobId, opKey, sha256, sha, visionClauseId } from '../src/core/ids.ts';
-import { absPath, branchName, isoTimeOf } from '../src/core/values.ts';
-import { MUTANT_PATCH_INPUT } from '../src/git/mutant.ts';
-import { corroborateFinding } from '../src/holistic/findings.ts';
-import { inForceFiles, requirePlanInForce, revisionInForce, readInputFiles } from '../src/input/inforce.ts';
-import { commitRevision } from '../src/recover/revision.ts';
-import { fakeDocs } from './fixtures/docs-fake.ts';
+import { type CommandId,type JobId,type Sha,commandId,findingId,jobId,opKey,sha,sha256,visionClauseId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
-import { type AuditContext, runAudit } from '../src/holistic/audit.ts';
-import { type Cadence, DRIFT_THROTTLE_MIN, cadence } from '../src/holistic/cadence.ts';
-import { coverageBase, coverageOf, lensCoverage } from '../src/holistic/coverage.ts';
-import { findingKey } from '../src/holistic/types.ts';
+import { absPath,branchName,isoTimeOf } from '../src/core/values.ts';
+import { MUTANT_PATCH_INPUT } from '../src/git/mutant.ts';
+import { type AuditContext,runAudit } from '../src/holistic/audit.ts';
 import { obligationBlockingUnits } from '../src/holistic/blocking.ts';
-import { holisticInForce } from '../src/pipeline/stages.ts';
-import { openBlocking, readNeedsUser } from '../src/needsuser.ts';
+import { type Cadence,DRIFT_THROTTLE_MIN,cadence } from '../src/holistic/cadence.ts';
+import { coverageBase,coverageOf,lensCoverage } from '../src/holistic/coverage.ts';
+import { corroborateFinding } from '../src/holistic/findings.ts';
 import { LENS_DIFF_BUDGET } from '../src/holistic/lensdiff.ts';
+import { findingKey } from '../src/holistic/types.ts';
+import { inForceFiles,readInputFiles,requirePlanInForce,revisionInForce } from '../src/input/inforce.ts';
+import { readNeedsUser } from '../src/needsuser.ts';
+import { holisticInForce } from '../src/pipeline/stages.ts';
 import { runUnit } from '../src/pipeline/unit.ts';
 import { recover } from '../src/recover/recover.ts';
-import { reached, release } from './helpers/barrier.ts';
-import { assertFired, writeTrigger } from './helpers/crash.ts';
-import { jobRepairStep, lensAnswer, lensStep } from './helpers/holistic.ts';
+import { commitRevision } from '../src/recover/revision.ts';
+import { auditArc,auditContext,factsOf,mapped,moduleFiles,unitSteps } from './fixtures/audit-common.ts';
+import { VISION,obligationsJson } from './fixtures/brake-common.ts';
+import { fakeDocs } from './fixtures/docs-fake.ts';
+import { API_OP,barrierSuite,closedAs,ruleRecord,submitRule } from './fixtures/publish-common.ts';
+import { SCENARIO_TIMEOUT_MS,admitAll } from './fixtures/stage-common.ts';
+import { type ArcRun,contextFor,stepUntil,visionApplyBody } from './fixtures/unit-common.ts';
+import { reached,release } from './helpers/barrier.ts';
+import { assertFired,writeTrigger } from './helpers/crash.ts';
+import { jobRepairStep,lensAnswer,lensStep } from './helpers/holistic.ts';
 import { runFixture } from './helpers/proc.ts';
-import { git, tmpDir } from './helpers/repo.ts';
-import { scriptTree } from './helpers/witness.ts';
+import { git,tmpDir } from './helpers/repo.ts';
 import { readCalls } from './helpers/scenario.ts';
-import { AUDIT_JOB, crashCells } from './matrix.ts';
-import { auditArc, auditContext, factsOf, mapped, moduleFiles, unitSteps } from './fixtures/audit-common.ts';
-import { VISION, obligationsJson } from './fixtures/brake-common.ts';
-import { API_OP, barrierSuite, closedAs, ruleRecord, submitRule } from './fixtures/publish-common.ts';
-import { SCENARIO_TIMEOUT_MS, admitAll } from './fixtures/stage-common.ts';
-import { type ArcRun, applyBody, contextFor, stepUntil, visionApplyBody } from './fixtures/unit-common.ts';
+import { scriptTree } from './helpers/witness.ts';
+import { AUDIT_JOB,crashCells } from './matrix.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 type Lens = 'invariants' | 'drift' | 'vacuity' | 'vision';
@@ -87,7 +87,7 @@ const I1 = { obligations: [{ id: 'I-1', testIds: ['t1'] }], trees: { '*': { outc
 const barrierLens = (job: string, lens: Lens) => lensStep(job, lens, [], [{ type: 'barrier', name: 'lens', timeoutMs: 120_000 }]);
 
 describe('cadence', () => {
-  test('cadence.triggers: every trigger the log holds is owed and coalesces into one audit-started; N counts unit and contract-op publications, never a docs-only one', T, async () => {
+  test('cadence.triggers: every trigger the log holds is owed and coalesces into one audit-started; N counts unit publications, never a docs-only one', T, async () => {
     const { d } = auditArc({
       steps: [...unitSteps('u1', moduleFiles('mul', '*')), ...unitSteps('u2', moduleFiles('div', '/')), lensStep('audit-1', 'vision'), lensStep('audit-1', 'invariants')],
       units: [{ id: 'u1', obligations: ['I-1', 'I-2'] }, { id: 'u2', obligations: ['I-1', 'I-2'] }, { id: 'u3', obligations: ['I-1', 'I-2'] }],
@@ -117,14 +117,14 @@ describe('cadence', () => {
       assert.deepEqual(s!.triggers, [{ type: 'cadence' }, { type: 'drift', planRev: 2 }, { type: 'requested', command: asked }], 'coalesced into one audit');
       assert.deepEqual([s!.lenses, s!.generation], [['invariants', 'vision'], 1]);
       assert.deepEqual(owed(cadence(ctx, ctx.clock)), [], 'a completed audit consumes every trigger it recorded');
-      // Rulings carrying contract ops are publications: two reach N = 2 again.
+      // Plain ledger edits publish docs but never count toward N.
       await rule(w, r, 'C-3', API_OP);
       assert.deepEqual(owed(cadence(ctx, ctx.clock)), ['drift:3']);
       await rule(w, r, 'C-4', {
         contractRefs: ['contracts/api.md'],
         contractOps: [{ path: 'contracts/api.md', anchor: '#api-contract', oldText: 'the sum of two finite numbers', newText: 'the exact sum of two finite numbers' }],
       });
-      assert.deepEqual(owed(cadence(ctx, ctx.clock)), ['cadence', 'drift:3', 'drift:4']);
+      assert.deepEqual(owed(cadence(ctx, ctx.clock)), ['drift:3', 'drift:4']);
     } finally {
       stop();
       r.journal.close();

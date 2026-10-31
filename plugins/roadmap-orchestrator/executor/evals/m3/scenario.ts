@@ -32,12 +32,15 @@ import { join } from 'node:path';
 import type { JsonValue } from '../../src/core/json.ts';
 import type { ProfileName } from '../../src/routing/types.ts';
 import {
-  INVALID_OP, admitSpecWire, checkpointAnswer, jobRepairStep, checkpointStep, flowStep, lensStep, packReviewStep, twoOpBundleSecondInvalid,
+INVALID_OP,admitSpecWire,checkpointAnswer,
+checkpointStep,flowStep,
+jobRepairStep,
+lensStep,packReviewStep,twoOpBundleSecondInvalid,
 } from '../../test/helpers/holistic.ts';
 import type { Step } from '../../test/helpers/scenario.ts';
-import { type M1Step, fakeSteps } from '../m1/scenario.ts';
-import { FAKE_CKPT_HOLD, FAKE_FLOW_HOLD } from './layout.ts';
-import { FILES, REPAIR_UNIT, filesOf, repairSpecText } from './setup.ts';
+import { type M1Step,fakeSteps } from '../m1/scenario.ts';
+import { FAKE_CKPT_HOLD,FAKE_FLOW_HOLD } from './layout.ts';
+import { FILES,REPAIR_UNIT,filesOf,repairSpecText } from './setup.ts';
 
 /** How long a fake barrier waits for the driver (the driver's fake run timeout is shorter). */
 const HOLD_MS = 20 * 60_000;

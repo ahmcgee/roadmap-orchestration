@@ -36,10 +36,10 @@
 // the slice, so the paid root agent plans as many as the fake does: three suite runs before the flow revision (guard,
 // confirm, quay-list) and up to five after it, at least the three a conclusive verdict reads (MIN_VERDICT_SAMPLES on both
 // sides) even when two more integrate while the flow run is decided. The driver fails fast below six (driver.ts).
-import { readFileSync, readdirSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { readFileSync,readdirSync } from 'node:fs';
+import { join,relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PLANT, SEED_SUITE_ARGV } from './layout.ts';
+import { PLANT,SEED_SUITE_ARGV } from './layout.ts';
 
 export const FILES = fileURLToPath(new URL('./files/', import.meta.url));
 export const CORPUS_ROOT = 'docs/corpus';
@@ -408,7 +408,7 @@ export const SHARD = { argv: SEED_SUITE_ARGV.map((a) => (a === PLANT.serial ? '-
  */
 export function suiteLanes(sharded: boolean) {
   const lane = (id: string, argv: readonly string[], cpu?: number) => ({
-    id, argv: [...argv], cwd: '.', env: { set: {}, pass: ['PATH', 'HOME'] }, expectedExit: 0, cadence: 'unit', resources: [], evidenceGlobs: [], ...(cpu === undefined ? {} : { cpu }),
+    id, argv: [...argv], cwd: '.', env: { set: {}, pass: ['PATH', 'HOME'] }, expectedExit: 0, cadence: 'candidate', resources: [], evidenceGlobs: [], ...(cpu === undefined ? {} : { cpu }),
   });
   return [sharded ? lane(SUITE_LANE, SHARD.argv, SHARD.cpu) : lane(SUITE_LANE, SEED_SUITE_ARGV), lane(REPLAY_LANE.id, REPLAY_LANE.argv)];
 }

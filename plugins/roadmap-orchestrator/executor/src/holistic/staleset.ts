@@ -18,19 +18,16 @@
 //   edges         a unit's gate waits while a propagation unit is neither merged nor cut when the unit links its target
 //                 (a requirement or contract link) or its design record's breaks touch a file it re-witnesses
 //                 (`propagationHolds`). A propagation unit never waits on another.
-import { canonicalJson } from '../core/json.ts';
-import type { ObligationId, PlanRev, Sha, UnitId, VisionClauseId } from '../core/ids.ts';
+import type { ObligationId,PlanRev,Sha,UnitId,VisionClauseId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
-import { type ContractPin, type RequirementPin, type SpecPin, UNPINNED } from '../core/pins.ts';
-import { type SpecM1, specPinOf, specRequirementLinks } from '../core/records.ts';
+import { canonicalJson } from '../core/json.ts';
+import { type ContractPin,type RequirementPin,type SpecPin,UNPINNED } from '../core/pins.ts';
+import { type SpecM1,specPinOf,specRequirementLinks } from '../core/records.ts';
 import {
-  type PropagationTarget, type StaleAnswer, type StaleCause, type StaleLink, type StaleSet, type StaleTarget, type UnitStaleLink, causeKey, isUnitLink, staleLinkKey,
+type StaleAnswer,type StaleCause,type StaleLink,type StaleSet,type StaleTarget,type UnitStaleLink,causeKey,isUnitLink,staleLinkKey
 } from '../core/stale.ts';
 import type { RepoPath } from '../core/values.ts';
-import { lineageMembers } from '../input/envelope.ts';
-import type { PlanM1, PlanUnit } from '../input/plan.ts';
-import type { AdmissionConstraint } from '../schedule/types.ts';
-import type { Obligations, Vision } from './types.ts';
+import type { Obligations,Vision } from './types.ts';
 
 // ---------------------------------------------------------------------------------------------------
 // The stale set

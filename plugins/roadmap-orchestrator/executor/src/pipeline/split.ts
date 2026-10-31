@@ -1,5 +1,5 @@
-import { revParse } from '../git/git.ts';
 import { branchRef } from '../core/values.ts';
+import { revParse } from '../git/git.ts';
 // The split revision (dev.17, design pass; DESIGN-1.0.md "Design pass"; SCHEMAS.md "dev.17: the design pass"). A plan-check
 // that finds its unit oversize (mixed concerns, or more than the gate reads inline) answers `split`: child units, the edges
 // among them and, for mixed concerns, the skeleton that lands first. Code builds and applies it:
@@ -21,26 +21,26 @@ import { branchRef } from '../core/values.ts';
 //              `split.after-hold`, `split.after-commit`. A crash between them is finished at the next start
 //              (`finishSplit`, from the recorded call); a commit the arc moved under is refused with a needs-user, and
 //              `resume <unit>` re-runs the plan-check.
-import { dirname, join, posix } from 'node:path';
+import { dirname,join,posix } from 'node:path';
+import { type FencedCommitContext,type RevisionVerdict,commitUnderFence,evaluateRevision } from '../commands/apply.ts';
 import { crashPoint } from '../core/crash.ts';
 import type { DesignRecord } from '../core/design.ts';
-import { type InvocationId, type LaneId, type Sha, type UnitId, specRev } from '../core/ids.ts';
-import { type NeedsUserContent, SPEC_SCHEMA, type SpecM1, effectiveScope, specForces, specWitnesses } from '../core/records.ts';
+import { type InvocationId,type LaneId,type Sha,type UnitId,specRev } from '../core/ids.ts';
+import { type NeedsUserContent,SPEC_SCHEMA,type SpecM1,effectiveScope,specForces,specWitnesses } from '../core/records.ts';
 import { maxTier } from '../core/state.ts';
 import { SchemaError } from '../core/validate.ts';
 import { absPath } from '../core/values.ts';
-import { type FencedCommitContext, type RevisionVerdict, commitUnderFence, evaluateRevision } from '../commands/apply.ts';
-import { type Proposer, splitCutReason } from '../input/classify.ts';
-import { type InputFile, type InputFiles, inForceFiles, requirePlanInForce, revisionInForce } from '../input/inforce.ts';
-import { type PlanM1, type PlanUnit, parsePlan } from '../input/plan.ts';
+import { type Proposer,splitCutReason } from '../input/classify.ts';
+import { type InputFile,type InputFiles,inForceFiles,requirePlanInForce,revisionInForce } from '../input/inforce.ts';
+import { type PlanM1,type PlanUnit,parsePlan } from '../input/plan.ts';
 import { dependentsClosure } from '../input/systems.ts';
-import type { SplitDecision, UnitSplitChild } from '../prompts/schemas.ts';
+import type { SplitDecision,UnitSplitChild } from '../prompts/schemas.ts';
 import { DOCS_NOT_YET } from '../recover/revision.ts';
 import { specBytes } from '../spec/spec.ts';
-import { type DesignFaults, splitFaults } from './design.ts';
-import { type StageContext, type StageParent, dispatchOf } from './dispatch.ts';
+import { type DesignFaults,splitFaults } from './design.ts';
+import { type StageContext,type StageParent,dispatchOf } from './dispatch.ts';
 import { mapInForce } from './lanes.ts';
-import { holisticInForce, loadUnitSpec } from './stages.ts';
+import { holisticInForce,loadUnitSpec } from './stages.ts';
 
 /** The lanes the skeleton's spanning lane adds to a child's forces: the lane, when it is a batch lane the child's design touches. */
 function skeletonForces(ctx: Pick<StageContext, 'plan' | 'journal' | 'runDir'>, split: SplitDecision, design: DesignRecord): readonly LaneId[] {

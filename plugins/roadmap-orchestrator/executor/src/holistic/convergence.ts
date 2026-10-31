@@ -16,13 +16,13 @@
 //                    open, every bundle becomes a `bundle-request` (A9)
 //   quiescence       a generation whose checkpoint decided `no-op` under the vision in force, or whose request the
 //                    owner answered without `apply` (`quiescentGenerations`; a vision revision reopens it, H3)
-import { type FindingId, type JobId, type NeedsUserId, type ObligationId, type Sha256Hex, type UnitId, canonicalIds } from '../core/ids.ts';
-import type { Journal, JournalView } from '../core/interfaces.ts';
+import { type FindingId,type JobId,type NeedsUserId,type ObligationId,type Sha256Hex,type UnitId,canonicalIds } from '../core/ids.ts';
+import type { Journal,JournalView } from '../core/interfaces.ts';
 import type { NeedsUserReason } from '../core/records.ts';
 import type { HolisticFold } from '../core/state.ts';
 import type { AbsPath } from '../core/values.ts';
-import { DEFAULT_CONVERGENCE_K, type PlanM1 } from '../input/plan.ts';
-import { raiseNeedsUser, readNeedsUser } from '../needsuser.ts';
+import { DEFAULT_CONVERGENCE_K,type PlanM1 } from '../input/plan.ts';
+import { raiseNeedsUser,readNeedsUser } from '../needsuser.ts';
 import type { BundleOp } from '../prompts/schemas.ts';
 
 /** One causal identity: a finding or obligation, and the lineage root of the unit acted on (null: arc-level). */
@@ -142,7 +142,7 @@ export function raiseBound(ctx: Readonly<{ journal: Journal; runDir: AbsPath }>,
     reason: 'convergence-bound',
     summary: `The checkpoint applied ${brakes.count} bundles (${counted.map((a) => a.job).join(', ')}) with no unit published and no obligation newly held since: the convergence bound K = ${brakes.k} is reached. Units keep running; the checkpoint's next bundles wait for the owner as bundle requests.`,
     recommendation: 'Review what the checkpoint changed (`roadmap status`: plan revisions and divergences). Acknowledge this item to let the checkpoint apply bundles again; raise `limits.convergenceK` by `roadmap apply` to allow more.',
-    options: [],
+    options: [{id: 'acknowledge', label: 'Acknowledge'}],
     evidence: [],
   }, { type: 'job', job: at.job });
 }

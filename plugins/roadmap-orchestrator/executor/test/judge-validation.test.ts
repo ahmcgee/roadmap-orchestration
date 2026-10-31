@@ -9,17 +9,15 @@
 //   schemas.checkpoint-ruling-text   a checkpoint answer recorded before structured rulings reads its JSON text as written
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { describe, test } from 'node:test';
+import { describe,test } from 'node:test';
 import { applyCommand } from '../src/commands/apply.ts';
 import { submitCommand } from '../src/commands/queue.ts';
 import { step } from '../src/pipeline/unit.ts';
-import { CHECKPOINT_SCHEMA, validateCheckpointOutput } from '../src/prompts/schemas.ts';
-import { schemaViolation } from '../src/backends/adapter.ts';
-import { readCalls } from './helpers/scenario.ts';
 import { checksArc } from './fixtures/checks-common.ts';
-import { editJson, editSpec } from './fixtures/route-common.ts';
-import { SCENARIO_TIMEOUT_MS, planCheckStep } from './fixtures/stage-common.ts';
-import { type ArcRun, applyBody, commandContextFor, contextFor, outcomes } from './fixtures/unit-common.ts';
+import { editJson,editSpec } from './fixtures/route-common.ts';
+import { SCENARIO_TIMEOUT_MS,planCheckStep } from './fixtures/stage-common.ts';
+import { type ArcRun,applyBody,commandContextFor,contextFor,outcomes } from './fixtures/unit-common.ts';
+import { readCalls } from './helpers/scenario.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 type Json = Record<string, unknown>;

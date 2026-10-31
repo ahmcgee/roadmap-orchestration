@@ -17,22 +17,22 @@
 //
 // Each effect checks its postcondition first, so a re-run after a crash (recovery's `finish`) writes nothing twice.
 import { existsSync } from 'node:fs';
-import { type ArcId, type CommandId, type NeedsUserId, type ProposalId, proposalJob } from '../core/ids.ts';
-import { canonicalJson } from '../core/json.ts';
+import { locate } from '../cli/locate.ts';
+import { type ArcId,type CommandId,type NeedsUserId,type ProposalId,proposalJob } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
+import { canonicalJson } from '../core/json.ts';
 import { readJournal } from '../core/log.ts';
 import type { CommandBody } from '../core/records.ts';
-import { type AbsPath, isoTimeOf } from '../core/values.ts';
-import { locate } from '../cli/locate.ts';
-import { acceptedProposals, decisionOf, proposalOf } from '../flow/apply.ts';
+import { type AbsPath,isoTimeOf } from '../core/values.ts';
+import { acceptedProposals,decisionOf,proposalOf } from '../flow/apply.ts';
 import { declareHostGiven } from '../flow/givens.ts';
-import { rejectionKeyOf, rejectionKeyText } from '../flow/levers.ts';
-import type { FlowLever, HostGiven } from '../flow/types.ts';
+import { rejectionKeyOf,rejectionKeyText } from '../flow/levers.ts';
+import type { FlowLever,HostGiven } from '../flow/types.ts';
 import { readHostFingerprint } from '../host/sample.ts';
 import type { RunLocator } from '../input/cli.ts';
 import { readNeedsUser } from '../needsuser.ts';
 import { gitCommonDir } from '../preflight/checks.ts';
-import { type CommandContext, type Effect, acknowledge } from './apply.ts';
+import { type CommandContext,type Effect } from './apply.ts';
 import { submitCommand } from './queue.ts';
 
 export type FlowArgs =
@@ -96,7 +96,6 @@ export function decideFlow(ctx: FlowCommandContext, id: CommandId, body: Extract
   } else {
     verified.push(`${body.proposal} was ${done.decision} by ${done.command} already`);
   }
-  for (const item of proposalItems(ctx, body.proposal)) verified.push(...acknowledge(ctx, id, item, null));
   const proposal = proposalOf(view, body.proposal)!;
   if (body.decision === 'reject') verified.push(`rejection key ${rejectionKeyText(rejectionKeyOf(proposal))} remembered`);
   else {

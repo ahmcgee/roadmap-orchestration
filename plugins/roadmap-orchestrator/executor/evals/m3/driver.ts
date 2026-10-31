@@ -57,34 +57,34 @@
 // then SIGKILLs. The driver refuses a fixture dir that already holds a report or a run dir: a fixture is set up and
 // run once.
 import { spawnSync } from 'node:child_process';
-import { accessSync, constants, existsSync, mkdirSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { accessSync,constants,existsSync,mkdirSync,readFileSync,readdirSync,symlinkSync,writeFileSync } from 'node:fs';
+import { join,resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { fileURLToPath } from 'node:url';
 import { terminalReceipt } from '../../src/commands/queue.ts';
-import { isAlive, statOf } from '../../src/contain/proc.ts';
-import type { Event, Fact } from '../../src/core/events.ts';
+import { isAlive,statOf } from '../../src/contain/proc.ts';
+import type { Event,Fact } from '../../src/core/events.ts';
 import { readJson } from '../../src/core/fsx.ts';
-import { type NeedsUserId, arcId, commandId } from '../../src/core/ids.ts';
+import { type NeedsUserId,arcId,commandId } from '../../src/core/ids.ts';
 import { readJournal } from '../../src/core/log.ts';
-import { type ProcIdentity, executorExitReason } from '../../src/core/records.ts';
-import { type AbsPath, absPath } from '../../src/core/values.ts';
-import { EXIT_REASON_FILE, type ExitReason } from '../../src/executor.ts';
-import { HOST_DIR, hostPath } from '../../src/host/hostdir.ts';
-import { type ProfileName, profileName } from '../../src/routing/types.ts';
-import type { ArcState, Status } from '../../src/status.ts';
-import { executorLogs, lastLine } from '../../src/supervisor.ts';
-import type { BundleOutcome, CheckpointTrigger } from '../../src/holistic/types.ts';
-import { readNeedsUser } from '../../src/needsuser.ts';
+import { type ProcIdentity,executorExitReason } from '../../src/core/records.ts';
+import { type AbsPath,absPath } from '../../src/core/values.ts';
+import { EXIT_REASON_FILE,type ExitReason } from '../../src/executor.ts';
 import { revParse } from '../../src/git/git.ts';
 import { witnessDir } from '../../src/git/snapshot.ts';
 import { verdictOf } from '../../src/holistic/observe.ts';
-import { type ObservationVerdict, parseObligations, witnessRecord } from '../../src/holistic/types.ts';
+import type { BundleOutcome,CheckpointTrigger } from '../../src/holistic/types.ts';
+import { type ObservationVerdict,parseObligations,witnessRecord } from '../../src/holistic/types.ts';
 import { WITNESS_RECORD_FILE } from '../../src/holistic/witness.ts';
+import { HOST_DIR,hostPath } from '../../src/host/hostdir.ts';
+import { readNeedsUser } from '../../src/needsuser.ts';
+import { type ProfileName,profileName } from '../../src/routing/types.ts';
+import type { ArcState,Status } from '../../src/status.ts';
+import { executorLogs,lastLine } from '../../src/supervisor.ts';
 import { writeShims } from '../../test/fakes/shim.ts';
-import { FAKE_CKPT_HOLD, FAKE_FLOW_HOLD, FIRST, type Layout, MONEY_LANE, type StoryBranch, UNITS, barrierFile, layout } from './layout.ts';
-import { type StoryName, storyName, storySteps } from './scenario.ts';
-import { DIRECTION_EDITED, json } from './setup.ts';
+import { FAKE_CKPT_HOLD,FAKE_FLOW_HOLD,FIRST,type Layout,MONEY_LANE,type StoryBranch,UNITS,barrierFile,layout } from './layout.ts';
+import { type StoryName,storyName,storySteps } from './scenario.ts';
+import { DIRECTION_EDITED,json } from './setup.ts';
 
 const BIN_ROADMAP = fileURLToPath(new URL('../../bin/roadmap', import.meta.url));
 const EXEC_CLI = fileURLToPath(new URL('../../test/fixtures/exec-cli.ts', import.meta.url));
@@ -391,8 +391,12 @@ function fire(p: Poll): string | null {
 
   const [first] = factsOf(events, 'checkpoint-inputs');
   if (d.staleApply === null && first !== undefined) {
-    editDirection(l);
-    d.staleApply = { command: submitted(cli(c, ['apply', ...run])), checkpoint: first.job, trigger: triggerText(first.trigger), seq: first.seq };
+    const out = join(l.fake, 'direction-export');
+    const exported = JSON.parse(cli(c, ['inputs', 'export', '--out', out, ...run])) as {planRev: number};
+    const file = join(out, 'plan.json');
+    const plan = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+    writeFileSync(file, JSON.stringify({...plan, direction: DIRECTION_EDITED}));
+    d.staleApply = { command: submitted(cli(c, ['apply', '--from', out, '--rev', String(exported.planRev), '--reason', 'Refine the direction during checkpoint capture', ...run])), checkpoint: first.job, trigger: triggerText(first.trigger), seq: first.seq };
   }
   if (d.staleApply !== null && d.staleApplied === null) {
     const receipt = terminalReceipt(absPath(l.runDir), commandId(d.staleApply.command));

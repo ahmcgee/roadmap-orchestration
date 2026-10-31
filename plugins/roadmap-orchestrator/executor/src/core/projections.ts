@@ -1,11 +1,11 @@
 // Projections shared by live runtime readers. Schema-2 has no historical record adoption.
-import type { CheckpointTrigger, CensusEntry, ClassifiedAdmit, Conversion, Obligations } from '../holistic/types.ts';
-import type { DiffShown, GateLargeDiff, JudgmentInputs, MutantOf, RevisionSource } from './events.ts';
-import type { ApprovalBlobs, GateReview } from './review.ts';
-import type { FindingId, Sha256Hex } from './ids.ts';
+import type { CensusEntry,CheckpointTrigger,ClassifiedAdmit,Conversion,Obligations } from '../holistic/types.ts';
 import type { PressureAvailability } from '../host/pressure.ts';
-import type { LaunchCpu } from './records.ts';
 import type { CpuBasis } from './cpu.ts';
+import type { DiffShown,GateLargeDiff,JudgmentInputs,MutantOf,RevisionSource } from './events.ts';
+import type { FindingId,Sha256Hex } from './ids.ts';
+import type { LaunchCpu } from './records.ts';
+import type { ApprovalBlobs,GateReview } from './review.ts';
 export const censusOf = (o: Obligations): readonly CensusEntry[] | null => o.census ?? null;
 export const bundleClassesOf = (s: Extract<RevisionSource, {type: 'bundle'}>): Readonly<{admits: readonly ClassifiedAdmit[]; conversions: readonly Conversion[]}> | 'unclassified' => s.admits === undefined || s.conversions === undefined ? 'unclassified' : {admits: s.admits, conversions: s.conversions};
 export const spawnPressureOf = (s: Readonly<{pressure?: number | null}>): number | null => s.pressure ?? null;

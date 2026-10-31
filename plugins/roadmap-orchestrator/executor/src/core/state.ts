@@ -5,30 +5,39 @@
 // The fold also enforces the log's invariants (SCHEMAS.md "Event log"): a violation throws
 // FoldInvariantError. At open the journal turns that into a refusal (`log-corrupt`); at append it means
 // the caller asked for an illegal record, and nothing is written.
+import { type BundleOutcome,type FindingStateName,type FindingTo,FINDING_MOVES } from '../holistic/types.ts';
+import { type Backend,type RiskTier,type Role,type UnitRole,RISK_TIERS } from '../routing/types.ts';
 import {
-  type AbortRecord, type AuditInputs, type BackendParkClass, type CoveredRange, type DoneRecord, type Event, type Fact, type HolisticFact, type Holder,
-  type IntentOf, type IntentRecord, type JudgmentInputs, type JudgmentStage, type OpKind, type Parent, type ParkRecord, type PlanAppliedFact, type ProbeTarget,
-  type ResourceEdge, type RetryStage, type ScopeGrowthProposal, type StageOutcomeFact, JUDGMENT_STAGES, RECLAIM_HOLDERS, RESIDUE_HOLDERS, RETRY_STAGES, RETRYABLE_BACKEND_PARKS,
-  prevHash, probeTargetKey, serializeEvent, certificationRed,
+type AbortRecord,type AuditInputs,type BackendParkClass,
+type DoneRecord,type Event,type Fact,
+type Holder,
+type HolisticFact,
+type IntentOf,type IntentRecord,type JudgmentInputs,type JudgmentStage,type OpKind,type Parent,type ParkRecord,type PlanAppliedFact,type ProbeTarget,
+type ResourceEdge,type RetryStage,type ScopeGrowthProposal,type StageOutcomeFact,JUDGMENT_STAGES,RECLAIM_HOLDERS,RESIDUE_HOLDERS,
+RETRYABLE_BACKEND_PARKS,
+RETRY_STAGES,
+certificationRed,
+prevHash,probeTargetKey,serializeEvent
 } from './events.ts';
-import { checkpointSkipTriggerOf } from './projections.ts';
 import { CounterRegressionError } from './fsx.ts';
 import {
-  type AmendmentId, type ArcId, type ClaudeSessionId, type CommandId, type DivergenceId, type EdgeId, type FindingId, type InvocationId, type JobId, type JobKind, type NeedsUserId, type ObligationId,
-  type MilestoneId, type OpId, type OpKey, type PlanRev, type PolishId, type ResourceInstance, type ResourceUnit, type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId,
-  JOB_KINDS, amendmentIdOf, compareResourceUnits, divergenceIdOf, findingIdOf, jobId, parseInvocationId, parseJobId, parseOpId, polishIdOf,
-  type ReviewFindingId, reviewFindingIdOf,
+type AmendmentId,type ArcId,type ClaudeSessionId,type CommandId,type DivergenceId,type EdgeId,type FindingId,type InvocationId,type JobId,type JobKind,
+type MilestoneId,
+type NeedsUserId,type ObligationId,
+type OpId,type OpKey,type PlanRev,type PolishId,type ResourceInstance,type ResourceUnit,
+type ReviewFindingId,
+type RoutingRev,type Sha,type Sha256Hex,type SpecRev,type UnitId,
+amendmentIdOf,compareResourceUnits,divergenceIdOf,findingIdOf,jobId,parseInvocationId,parseJobId,parseOpId,polishIdOf,
+reviewFindingIdOf
 } from './ids.ts';
-import type { ControlState, FlowFactAt, JournalView, NeedsUserAckState, NeedsUserState, PropagationFactAt, WalkFactAt, FlakeAt } from './interfaces.ts';
-import { causeKey } from './stale.ts';
-import type { ApprovalBlobs, FindingsLedgerEntry } from './review.ts';
+import type { ControlState,FlakeAt,FlowFactAt,JournalView,NeedsUserAckState,NeedsUserState,PropagationFactAt,WalkFactAt } from './interfaces.ts';
 import { canonicalJson } from './json.ts';
-import { type SessionCharge, addCharged } from './usage.ts';
-import { type ApprovalFingerprint, type Bounds, type ContainmentMode, type DispatchRecord, type ResidueKey, type Stage, DEFAULT_BOUNDS, boundsOfRecord } from './records.ts';
-import { type BundleOutcome, type FindingStateName, type FindingTo, FINDING_MOVES } from '../holistic/types.ts';
+import { checkpointSkipTriggerOf } from './projections.ts';
+import { type ApprovalFingerprint,type Bounds,type ContainmentMode,type DispatchRecord,type ResidueKey,type Stage,DEFAULT_BOUNDS,boundsOfRecord } from './records.ts';
+import type { ApprovalBlobs,FindingsLedgerEntry } from './review.ts';
+import { type SessionCharge,addCharged } from './usage.ts';
 import type { IsoTime } from './values.ts';
-import { SCHEMA_VERSION, type SchemaVersion } from './version.ts';
-import { type Backend, RISK_TIERS, type RiskTier, type Role, type UnitRole } from '../routing/types.ts';
+import { type SchemaVersion,SCHEMA_VERSION } from './version.ts';
 
 export class FoldInvariantError extends Error {
   readonly seq: number;
@@ -1454,12 +1463,6 @@ export class Fold implements JournalView {
         this.#propagationFacts.push({ seq: at.seq, at: at.at, fact: f });
         return;
       }
-      case 'propagation-refused':
-        if (this.#propagationFacts.some((x) => x.fact.kind === 'propagation-refused' && x.fact.rev === f.rev && causeKey(x.fact.target) === causeKey(f.target))) {
-          fail(`a second propagation-refused of ${causeKey(f.target)} (stale set of rev ${f.rev})`);
-        }
-        this.#propagationFacts.push({ seq: at.seq, at: at.at, fact: f });
-        return;
       case 'stale-reopened':
         this.#staleReopened(f, fail);
         this.#lastReopenSeq = at.seq;

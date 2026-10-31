@@ -8,39 +8,39 @@
 // context-exceeded.plan-check, context-exceeded.build. dev.12: gate.repair-turn; the large-diff gate: gate.large-diff,
 // gate.large-diff-seat, gate.cluster-coverage. dev.13: gate.acting-checkout. dev.16: gate.symlink-in-checkout.
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { describe, it, test } from 'node:test';
+import { existsSync,readFileSync,writeFileSync } from 'node:fs';
+import { dirname,join } from 'node:path';
+import { describe,it,test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { applyCommand, evaluateRevision, keepRevision, payloadOf } from '../src/commands/apply.ts';
+import { ACTING_JUDGE_TOOLS,writeDenyRules } from '../src/backends/argv.ts';
+import { applyCommand,evaluateRevision,keepRevision,payloadOf } from '../src/commands/apply.ts';
 import { holdFence } from '../src/core/fence.ts';
-import { holderUnits, resourceTable } from '../src/resources/reserve.ts';
-import { reached, release } from './helpers/barrier.ts';
-import { type Wired, publishArc, ruleRecord, submitRule, wire } from './fixtures/publish-common.ts';
 import { rulingId } from '../src/core/ids.ts';
-import { gateDiffShownOf, gateLargeDiffOf } from '../src/core/projections.ts';
 import type { JsonValue } from '../src/core/json.ts';
+import { gateDiffShownOf,gateLargeDiffOf } from '../src/core/projections.ts';
 import { SchemaError } from '../src/core/validate.ts';
-import { absPath, repoPath } from '../src/core/values.ts';
-import { CHANGED_LIST, CLUSTER_PATHS_SHOWN, gateAnswerFor } from '../src/pipeline/gate.ts';
-import { ACTING_JUDGE_TOOLS, writeDenyRules } from '../src/backends/argv.ts';
-import { FILES_DIR, readManifest } from '../src/git/evidence.ts';
-import { evidenceRoot, judgeSystem, verificationWorktree } from '../src/pipeline/dispatch.ts';
+import { absPath,repoPath } from '../src/core/values.ts';
+import { FILES_DIR,readManifest } from '../src/git/evidence.ts';
+import { laneRevOf,parseObligations } from '../src/holistic/types.ts';
+import { commitRevisionNow,readInputFiles } from '../src/input/inforce.ts';
+import { evidenceRoot,judgeSystem,verificationWorktree } from '../src/pipeline/dispatch.ts';
+import { CHANGED_LIST,CLUSTER_PATHS_SHOWN,gateAnswerFor } from '../src/pipeline/gate.ts';
+import { invocationDir } from '../src/pipeline/invoke.ts';
+import { loadUnitSpec } from '../src/pipeline/stages.ts';
+import type { Gate } from '../src/pipeline/unit.ts';
+import { runUnit,step } from '../src/pipeline/unit.ts';
 import { promptFor } from '../src/prompts/index.ts';
 import { clusterCoverage } from '../src/prompts/schemas.ts';
-import { laneRevOf, parseObligations } from '../src/holistic/types.ts';
-import { commitRevisionNow, readInputFiles } from '../src/input/inforce.ts';
-import { invocationDir } from '../src/pipeline/invoke.ts';
-import { runUnit, step } from '../src/pipeline/unit.ts';
-import { git, tmpDir } from './helpers/repo.ts';
-import { type CallRecord, type Step, readCalls } from './helpers/scenario.ts';
-import { events } from './fixtures/invoke-specs.ts';
-import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
-import type { Gate } from '../src/pipeline/unit.ts';
-import { type ArcDescriptor, MUL, U1, codexStep, contextFor, gateRepairStep, gateStep, isGateCall as isGate, mulBuild, outcomes, setupArc, stepUntil } from './fixtures/unit-common.ts';
-import { BASE, editPlan, followContext, planDirOf, recordFirst, stepTo, unitOf } from './fixtures/route-common.ts';
+import { holderUnits,resourceTable } from '../src/resources/reserve.ts';
 import { specBytes } from '../src/spec/spec.ts';
-import { loadUnitSpec } from '../src/pipeline/stages.ts';
+import { events } from './fixtures/invoke-specs.ts';
+import { type Wired,publishArc,ruleRecord,submitRule,wire } from './fixtures/publish-common.ts';
+import { BASE,editPlan,followContext,planDirOf,recordFirst,stepTo,unitOf } from './fixtures/route-common.ts';
+import { SCENARIO_TIMEOUT_MS,admitAll,planCheckStep } from './fixtures/stage-common.ts';
+import { type ArcDescriptor,MUL,U1,codexStep,contextFor,gateRepairStep,gateStep,isGateCall as isGate,mulBuild,outcomes,setupArc,stepUntil } from './fixtures/unit-common.ts';
+import { reached,release } from './helpers/barrier.ts';
+import { git,tmpDir } from './helpers/repo.ts';
+import { type CallRecord,type Step,readCalls } from './helpers/scenario.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 /** Every stage admitted at once: the unit runs on its own. */
@@ -621,25 +621,7 @@ test('gate.approval-captured-fingerprint: a docs-only rule superseding a cited r
   }
 });
 
-test('gate.partial-supersession-regates: an approved unit citing C-1; C-2 partially supersedes C-1; ff re-gates and the new approval binds C-1 at rev 2', T, async () => {
-  const d = publishArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' }), gateStep({ decision: 'approve' })] });
-  const r = contextFor(d);
-  const w = wire(r);
-  const stop = ticking(w);
-  try {
-    await stepUntil(r, 'u1', (f) => f.stage === 'gate' && f.outcome === 'approve');
-    assert.deepEqual(r.journal.view.unit(U1).approval!.fingerprint.rulingRevs, [{ id: rulingId('C-1'), rev: 1 }]);
-    const outcome = await applyCommand(w.commands, submitRule(r, ruleRecord(r, 'C-2', { supersedes: [{ id: 'C-1', part: 'where helpers are tested' }] })));
-    assert.equal(outcome.kind, 'applied', JSON.stringify(outcome));
-    assert.deepEqual(await runUnit(w.stage, r.unit('u1'), live()), { kind: 'merged' });
-    assert.ok(outcomes(d).includes('ff:fingerprint-invalid'), outcomes(d).join(' '));
-    assert.equal(readCalls(d.scenarioPath).filter(isGate).length, 2);
-    assert.deepEqual(approvals(d).map((a) => a.fingerprint.rulingRevs), [[{ id: rulingId('C-1'), rev: 1 }], [{ id: rulingId('C-1'), rev: 2 }]]);
-  } finally {
-    stop();
-    r.journal.close();
-  }
-});
+
 
 // ---------------------------------------------------------------------------------------------------
 // The large-diff gate (1.0.0-dev.12)

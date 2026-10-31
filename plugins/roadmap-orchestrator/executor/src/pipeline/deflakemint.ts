@@ -31,24 +31,24 @@
 //
 // Crash labels: `deflake.after-recurring` (an item raised, the revision not yet), `deflake.after-revision`.
 import { join } from 'node:path';
-import { type FencedCommitContext, commitUnderFence, evaluateRevision } from '../commands/apply.ts';
+import { type FencedCommitContext,commitUnderFence,evaluateRevision } from '../commands/apply.ts';
 import { crashPoint } from '../core/crash.ts';
 import type { Parent } from '../core/events.ts';
-import { type FlakyKey, testFileOf } from '../core/flaky.ts';
-import { type ClauseId, type SystemName, type UnitId, unitId, witnessItemIdOf } from '../core/ids.ts';
-import type { Journal, JournalView } from '../core/interfaces.ts';
-import { type LaneDef, SPEC_SCHEMA, type SpecM1 } from '../core/records.ts';
+import { type FlakyKey,testFileOf } from '../core/flaky.ts';
+import { type ClauseId,type SystemName,type UnitId,unitId,witnessItemIdOf } from '../core/ids.ts';
+import type { Journal,JournalView } from '../core/interfaces.ts';
+import { type LaneDef,SPEC_SCHEMA,type SpecM1 } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
-import { type AbsPath, type RepoPattern, absPath, repoPattern } from '../core/values.ts';
-import { type RawPlan, admitUnit, fillMappedObligations } from '../holistic/bundle.ts';
-import { type InputFile, type InputFiles, inForceFiles, requirePlanInForce, revisionInForce } from '../input/inforce.ts';
+import { type AbsPath,type RepoPattern,absPath,repoPattern } from '../core/values.ts';
+import { type RawPlan,admitUnit,fillMappedObligations } from '../holistic/bundle.ts';
 import { lineageMembers } from '../input/envelope.ts';
-import { type PlanM1, type PlanUnit, parsePlan } from '../input/plan.ts';
-import { type SystemsMap, dependenciesClosure, pathSystems, systemsMapInForce } from '../input/systems.ts';
-import { raiseNeedsUser, raisedWithReason, readNeedsUser } from '../needsuser.ts';
-import { sameRepoCorpusSet, scopeOverlapsCorpus } from '../phase0/rows.ts';
+import { type InputFile,type InputFiles,inForceFiles,requirePlanInForce,revisionInForce } from '../input/inforce.ts';
+import { type PlanM1,type PlanUnit,parsePlan } from '../input/plan.ts';
+import { type SystemsMap,dependenciesClosure,pathSystems,systemsMapInForce } from '../input/systems.ts';
+import { raiseNeedsUser,raisedWithReason,readNeedsUser } from '../needsuser.ts';
+import { sameRepoCorpusSet,scopeOverlapsCorpus } from '../phase0/rows.ts';
 import { parseSpec } from '../spec/spec.ts';
-import { type MintGroup, type Recurring, deflakeDue, deflakeState, deflakeUnits, flakeRuns, keyLabel } from './deflake.ts';
+import { type MintGroup,type Recurring,deflakeDue,deflakeState,deflakeUnits,flakeRuns,keyLabel } from './deflake.ts';
 import { invocationDir } from './invoke.ts';
 
 /** What the deflake revision needs: the fenced commit's context and the repository. */

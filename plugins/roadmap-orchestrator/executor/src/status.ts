@@ -1,4 +1,4 @@
-import { certification, workRuns, type Certification, type WorkRun } from './status-work.ts';
+import { type Certification,type WorkRun,certification,workRuns } from './status-work.ts';
 // `roadmap status`: DESIGN-1.0.md §2.4, as one agent-facing JSON object (M2's view plus M3's holistic keys).
 //
 // Read only, from anywhere, while an executor runs or when none does: the log is folded without the host
@@ -111,93 +111,100 @@ import { certification, workRuns, type Certification, type WorkRun } from './sta
 //                 clauses (`advances ∪ OC`)
 //   milestones    (dev.13) each plan milestone: its state (src/walk/milestones.ts `milestoneState`), whether its node
 //                 passed, its last round, its walks and its active walkthrough findings; `edges` adds each node edge
-import { existsSync, readdirSync, statSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync,readdirSync,statSync } from 'node:fs';
+import { dirname,join } from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { COMMANDS_DIR, incomingPath, pendingCommandIds, readCommand, terminalReceipt } from './commands/queue.ts';
-import { type Sealing, sealingOf } from './commands/gc.ts';
+import { answerLine,commonDirOfRun,unappliedAnswers } from './answers.ts';
+import { chainBack,readArcRef } from './chain.ts';
+import { type ChainStatus,chainStatusOf,linkOf } from './commands/chain.ts';
+import { type Sealing,sealingOf } from './commands/gc.ts';
+import { COMMANDS_DIR,incomingPath,pendingCommandIds,readCommand,terminalReceipt } from './commands/queue.ts';
 import {
-  type AmendmentSource, type Event, JUDGMENT_STAGES, type JudgmentStage, type Holder, OUTCOME_STAGES, type OperatorParkKind, type OutcomeStage, type PlanAppliedFact,
-  type ProbeTarget, type RevisionPayload, type WalkOutcome, holderUnit, parentUnit, probeTargetKey,
+type AmendmentSource,type Event,
+type Holder,
+JUDGMENT_STAGES,type JudgmentStage,
+OUTCOME_STAGES,type OperatorParkKind,type OutcomeStage,type PlanAppliedFact,
+type ProbeTarget,type RevisionPayload,type WalkOutcome,holderUnit,parentUnit,probeTargetKey,
 } from './core/events.ts';
-import { AlreadyExistsError, canonicalJson as fileJson, durableUnlink, exclusivePublish, readJson } from './core/fsx.ts';
+import { readJson } from './core/fsx.ts';
 import {
-  type AmendmentId, type ArcId, CPU_POOL, type CommandId, type DebtId, type DivergenceId, type RuleId, type EdgeId, type FindingId, type JobId, type NeedsUserId, type ObligationId, type PlanRev, type ProposalId,
-  type ResourceUnit, type RoutingRev, type RulingId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, type InvocationId, type KnownDefectId, type LaneId,
-  type OpportunityId, type MilestoneId, canonicalIds, commandId, compareResourceUnits, cpuToken, invocationId, parseJobId, parseOpId, compareIds, sha,
+type AmendmentId,type ArcId,CPU_POOL,type CommandId,type DebtId,type DivergenceId,
+type EdgeId,type FindingId,
+type InvocationId,
+type JobId,
+type KnownDefectId,type LaneId,
+type MilestoneId,
+type NeedsUserId,type ObligationId,
+type OpportunityId,
+type PlanRev,type ProposalId,
+type ResourceUnit,type RoutingRev,
+type RuleId,
+type Sha,type Sha256Hex,type UnitId,type VisionClauseId,
+canonicalIds,commandId,
+compareIds,
+compareResourceUnits,cpuToken,invocationId,parseJobId,parseOpId,
+sha
 } from './core/ids.ts';
 import type { JournalView } from './core/interfaces.ts';
-import { EVENTS_FILE, type LogSnapshot, readJournal } from './core/log.ts';
-import type { HolisticFold, Lineage, ResourceEntry, UnitState } from './core/state.ts';
-import { type KnownDefectMatch,  } from './core/records.ts';
-import { type CorpusInForce, type InForce, PLAN_INPUT, RULING_INPUT, type RevisionInForce, keptInput, keptPayload, planInForce, revisionInForce, routingBaseOf } from './input/inforce.ts';
-import {
-  type CommandBody, type ContainmentMode, type NeedsUserReason, type Receipt, type RunStart, type Stage, heartbeat, runStart,
-} from './core/records.ts';
-import { type AbsPath, type IsoTime, type RepoPattern, absPath, branchRef, isoTimeOf } from './core/values.ts';
-import { HEARTBEAT_FILE, REJECTION_FILE, START_FILE } from './executor.ts';
-import { type BlockingItem, blockingItems, fileNeedsUser, holdsUnit, openNeedsUser, recordOf, supersededItems } from './needsuser.ts';
-import { type LaneFailure, laneFailures } from './pipeline/failures.ts';
-import { type GateAnswerView, latestGateAnswer } from './pipeline/gate.ts';
-import { busyWaits, checkpointMilestonesRemaining } from './holistic/checkpoint.ts';
-import { integrationHistory, recordedAdmits } from './holistic/bundle.ts';
-import { findingAttribution, opportunityClauses } from './holistic/admits.ts';
-import { checkpointSkipTriggerOf, gateLargeDiffOf } from './core/projections.ts';
-import { type KnownDefect, type PlanM1, type PlanUnit, advancesOf, hasMilestones, knownDefectsOf, lensSetOf, milestonesOf, parsePlan } from './input/plan.ts';
-import { type MilestoneState, milestoneProgress, milestoneState, walksOf } from './walk/milestones.ts';
-import { milestoneEdges, milestonePassed, milestoneWaits } from './walk/node.ts';
-import { type ClassTotal, type JobTotal, type Meter, type ModelTotal, type RoleTotal, type SmokeTotal, byClass, byModel, meterOf, ownShare } from './meter.ts';
-import { type DemoStatus, demoStatus } from './demo/promote.ts';
-import { escalateAt, probeTargets, trippedTargets } from './park/schedule.ts';
-import { type RejectionFile, rejectionFile } from './preflight/startup.ts';
-import { judgmentSeat, largeDiffSeat } from './pipeline/transitions.ts';
-import { cpuCapacity, isDirty, poolUnits } from './resources/pool.ts';
-import { obligationBlockingUnits, unmergedOf } from './holistic/blocking.ts';
-import { effectiveDependency } from './schedule/graph.ts';
-import { type SpecFactsOf, admitter, nextStage, rankOf } from './schedule/ready.ts';
-import { repairUnits, specFacts } from './pipeline/reproduce.ts';
-import { observations } from './pipeline/lanes.ts';
-import {
-  type ArcHold, type CompletionBlocker, type HolisticContexts, type JobQueueEntry, type QueueEntry, SCHED_FILE, type SchedFile, arcHolds, arcSettled, completionBlockers, dischargingObservation,
-  readOnlyContexts, recordedLaneEnv, schedFile, unitSettled,
-} from './schedule/scheduler.ts';
-import { answerLine, commonDirOfRun, unappliedAnswers } from './answers.ts';
-import { chainBack, readArcRef } from './chain.ts';
-import { type ChainStatus, chainStatusOf, linkOf } from './commands/chain.ts';
+import { EVENTS_FILE,type LogSnapshot,readJournal } from './core/log.ts';
+import { checkpointSkipTriggerOf,gateLargeDiffOf } from './core/projections.ts';
+import { type CommandBody,type ContainmentMode,type KnownDefectMatch,type NeedsUserReason,type Receipt,type RunStart,type Stage,heartbeat,runStart,} from './core/records.ts';
+import type { HolisticFold,Lineage,ResourceEntry,UnitState } from './core/state.ts';
+import { type AbsPath,type IsoTime,type RepoPattern,absPath,branchRef,isoTimeOf } from './core/values.ts';
 import type { CorpusPin } from './corpus/types.ts';
-import type { BankReason, DebtItem, DebtLedger } from './debt/types.ts';
+import type { BankReason,DebtItem,DebtLedger } from './debt/types.ts';
+import { type DemoStatus,demoStatus } from './demo/promote.ts';
+import { HEARTBEAT_FILE,REJECTION_FILE,START_FILE } from './executor.ts';
+import { type FlowStatus,flowStatus } from './flow/track.ts';
+import { git,revParse } from './git/git.ts';
+import { witnessDir } from './git/snapshot.ts';
+import { findingAttribution,opportunityClauses } from './holistic/admits.ts';
+import { obligationBlockingUnits,unmergedOf } from './holistic/blocking.ts';
 import type { CheckpointContext } from './holistic/bundle.ts';
-import { type PackReviewStatus, packItemOf, packReviewStatus } from './holistic/packreview.ts';
-import type { BriefArc, OwnerAnswer, StageTiming } from './phase0/types.ts';
+import { integrationHistory,recordedAdmits } from './holistic/bundle.ts';
+import { busyWaits,checkpointMilestonesRemaining } from './holistic/checkpoint.ts';
+import { type AppliedBundle,brakesOf } from './holistic/convergence.ts';
+import { coverageBase,coverageOf } from './holistic/coverage.ts';
+import { uncoveredDivergences } from './holistic/divergence.ts';
+import { type FindingMetric,type RepairUnit,findingMetrics,isActive } from './holistic/findings.ts';
+import { type Observation,type ObservationStore,type WitnessedEntry,verdictOf } from './holistic/observe.ts';
+import { type PackReviewStatus,packItemOf,packReviewStatus } from './holistic/packreview.ts';
+import { type AdmitClass,type ArcLaneDef,type BusyAttempt,type CensusEntry,type CensusState,type ClauseState,type Compensation,type Conversion,type DivergenceKind,type FindingLens,type FindingSeverity,type FindingStateName,type LensKind,type ObligationDef,type Obligations,type ObservationVerdict,type Vision,type VisionClauseKind,type VisionCoverage,type VisionQuestion,isExempt,isMustHold,observationKeyText } from './holistic/types.ts';
+import { visionCoverage } from './holistic/vision.ts';
+import { isAlive } from './host/liveness.ts';
+import { readClaim } from './host/lock.ts';
+import { readOwner } from './host/owner.ts';
+import { type CorpusInForce,type InForce,PLAN_INPUT,RULING_INPUT,type RevisionInForce,keptInput,keptPayload,planInForce,revisionInForce,routingBaseOf } from './input/inforce.ts';
+import { type KnownDefect,type PlanM1,type PlanUnit,advancesOf,hasMilestones,knownDefectsOf,lensSetOf,milestonesOf,parsePlan } from './input/plan.ts';
+import { type ClassTotal,type JobTotal,type Meter,type ModelTotal,type RoleTotal,type SmokeTotal,byClass,byModel,meterOf,ownShare } from './meter.ts';
+import { type BlockingItem,blockingItems,fileNeedsUser,holdsUnit,openNeedsUser,recordOf,supersededItems } from './needsuser.ts';
+import { escalateAt,probeTargets,trippedTargets } from './park/schedule.ts';
+import type { BriefArc,OwnerAnswer,StageTiming } from './phase0/types.ts';
+import { type LaneFailure,laneFailures } from './pipeline/failures.ts';
+import { type GateAnswerView,latestGateAnswer } from './pipeline/gate.ts';
+import { observations } from './pipeline/lanes.ts';
 import { arcDebtLedger } from './pipeline/publish.ts';
-import type { AdmissionConstraint, Rank, ResourceRequest } from './schedule/types.ts';
+import { repairUnits,specFacts } from './pipeline/reproduce.ts';
+import { judgmentSeat,largeDiffSeat } from './pipeline/transitions.ts';
+import { type RejectionFile,rejectionFile } from './preflight/startup.ts';
+import { cpuCapacity,isDirty,poolUnits } from './resources/pool.ts';
 import {
-  type ResolvedRouting, type SeatSources, arcScopeOf, provenanceStack, resolveRouting,
+type ResolvedRouting,type SeatSources,arcScopeOf,provenanceStack,resolveRouting,
 } from './routing/layers.ts';
 import {
-  type Backend, type ClassSource, type ClassTable, type ModelClass, type ProfileName, type RiskTier, type SeatRef,
-  type RoutingTable,
+type Backend,type ClassSource,type ClassTable,type ModelClass,type ProfileName,type RiskTier,
+type RoutingTable,
+type SeatRef,
 } from './routing/types.ts';
-import { readClaim } from './host/lock.ts';
-import { isAlive, selfIdentity } from './host/liveness.ts';
-import { readBootId } from './contain/proc.ts';
-import { CliError } from './input/cli.ts';
-import { SCHEMA_VERSION } from './core/version.ts';
-import { readOwner } from './host/owner.ts';
-import { git, revParse } from './git/git.ts';
-import { type FlowStatus, flowStatus } from './flow/track.ts';
-import { witnessDir } from './git/snapshot.ts';
-import { coverageBase, coverageOf } from './holistic/coverage.ts';
-import { type AppliedBundle, brakesOf } from './holistic/convergence.ts';
-import { uncoveredDivergences } from './holistic/divergence.ts';
-import { type FindingMetric, type RepairUnit, findingMetrics, isActive } from './holistic/findings.ts';
-import { type Observation, type ObservationStore, type WitnessedEntry, verdictOf } from './holistic/observe.ts';
+import { effectiveDependency } from './schedule/graph.ts';
+import { type SpecFactsOf,admitter,nextStage,rankOf } from './schedule/ready.ts';
 import {
-  type ClauseState, type Compensation, type DivergenceKind, type FindingLens, type FindingSeverity, type FindingStateName, type LensKind,
-  type ArcLaneDef, type CensusEntry, type CensusState, type ObligationDef, type Obligations, type ObservationVerdict, type Vision, type VisionClauseKind, type VisionCoverage, type VisionQuestion, isExempt, isMustHold,
-  type AdmitClass, type BusyAttempt, type Conversion, observationKeyText, parseRulingSidecar,
-} from './holistic/types.ts';
-import { visionCoverage } from './holistic/vision.ts';
+type ArcHold,type CompletionBlocker,type HolisticContexts,type JobQueueEntry,type QueueEntry,SCHED_FILE,type SchedFile,arcHolds,arcSettled,completionBlockers,dischargingObservation,
+readOnlyContexts,recordedLaneEnv,schedFile,unitSettled,
+} from './schedule/scheduler.ts';
+import type { AdmissionConstraint,Rank,ResourceRequest } from './schedule/types.ts';
+import { type MilestoneState,milestoneProgress,milestoneState,walksOf } from './walk/milestones.ts';
+import { milestoneEdges,milestonePassed,milestoneWaits } from './walk/node.ts';
 
 export type OwnerState = Readonly<{ state: 'alive' | 'dead' | 'none'; generation: number | null; pid: number | null }>;
 
@@ -1117,7 +1124,7 @@ function unitReason(l: UnitCore): Exclude<ObligationReason, 'spec' | 'witness'> 
       if (types.has('paused') || types.has('blocking-item') || types.has('run-only')) return 'supervision';
       if (types.has('backend-parked') || types.has('breaker') || types.has('host-pressure')) return 'host';
       // A known defect waits on its fixer unit (F4); dev.17, a code edge on its deflake or propagation unit.
-      if (types.has('known-defect') || types.has('deflake') || types.has('propagation')) return 'waiting-dep';
+      if (types.has('known-defect') || types.has('deflake')) return 'waiting-dep';
       return 'code';
     }
     case 'running':
@@ -1281,7 +1288,6 @@ function visionOf(revision: RevisionInForce, advances: readonly VisionClauseId[]
   if (revision.vision === null) return null;
   const v = revision.vision.value;
   const citers = [
-    ...[...revision.sidecars].map(([id, s]) => ({ id, cites: s.sidecar.cites })),
     ...fold.divergences.map((d) => ({ id: d.id, cites: d.cites })),
   ];
   return {
@@ -1322,7 +1328,6 @@ function rulerOf(f: PlanAppliedFact): RuledBy {
     // dev.17: the code-applied deflake revision is the executor's own.
     case 'deflake':
     // dev.17: the code-applied propagation revision is the executor's own.
-    case 'propagation':
       return { type: 'executor' };
     // dev.17 (design pass): a split is its plan-check's decision, applied by code.
     case 'split':
@@ -1371,7 +1376,6 @@ function digestAckedAt(view: JournalView, acks: ReadonlyMap<NeedsUserId, number>
  */
 export function decisionsAfter(view: JournalView, events: readonly Event[], since: number, read: DecisionReader): readonly Decision[] {
   const out: Decision[] = [];
-  let sidecars = new Set<string>();
   for (const e of events) {
     if (e.type === 'done' && e.kind === 'spec.patch' && e.seq > since) {
       const intent = view.latestIntent(e.op);
@@ -1384,23 +1388,6 @@ export function decisionsAfter(view: JournalView, events: readonly Event[], sinc
     if (e.type !== 'fact') continue;
     const f = e.fact;
     if (f.kind === 'plan-applied') {
-      const added = new Set<string>();
-      let ids = sidecars;
-      if (f.payloadSha256 !== undefined) {
-        const payload = read.payload(f.payloadSha256);
-        const rulings = payload.manifest.rulings.sidecars;
-        ids = new Set(Object.keys(rulings));
-        // The arc's first revision states its starting rulings: nothing was decided in the arc yet.
-        if (payload.base !== 0) for (const id of ids) if (!sidecars.has(id)) added.add(id);
-        if (e.seq > since) {
-          for (const id of [...added].sort((a, b) => compareIds(a as RulingId, b as RulingId))) {
-            const r = parseRulingSidecar(JSON.parse(read.ruling(rulings[id as RulingId]!).toString('utf8')));
-            const ruledBy: RuledBy = r.ruledBy.type === 'checkpoint' ? { type: 'checkpoint', job: r.ruledBy.job } : { type: 'architect', command: f.command };
-            out.push({ seq: e.seq, kind: 'ruling', id, oneLine: r.statement, ruledBy });
-          }
-        }
-      }
-      sidecars = ids;
       if (e.seq <= since) continue;
       const ruledBy = rulerOf(f);
       const summary = f.changes.length === 0 ? 'no change' : f.changes.map((c) => ('unit' in c && c.unit !== undefined && c.unit !== null ? `${c.type} ${c.unit}` : c.type)).join(', ');

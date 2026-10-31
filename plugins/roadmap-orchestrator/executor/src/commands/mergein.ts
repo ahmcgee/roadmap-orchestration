@@ -16,14 +16,14 @@
 // superseded or stopped unit; a worktree not clean or mid-merge; a conflict; nothing to merge.
 import { existsSync } from 'node:fs';
 import type { CommandId } from '../core/ids.ts';
-import { type RepoPath, branchRef } from '../core/values.ts';
+import { type RepoPath,branchRef } from '../core/values.ts';
 import { isAncestor } from '../git/ff.ts';
-import { refTarget, revParse } from '../git/git.ts';
-import { MergeinStateError, type MergeinRequest } from '../git/mergein.ts';
-import { runPrepared, unitBranch, unitWorktree } from '../pipeline/dispatch.ts';
+import { refTarget,revParse } from '../git/git.ts';
+import { type MergeinRequest,MergeinStateError } from '../git/mergein.ts';
+import { runPrepared,unitBranch,unitWorktree } from '../pipeline/dispatch.ts';
 import { executorIdentity } from '../pipeline/stages.ts';
 import { mergeinOp } from '../recover/ops.ts';
-import { type CommandContext, type Effect, acknowledgePark, parentOf } from './apply.ts';
+import { type CommandContext,type Effect,parentOf } from './apply.ts';
 
 const MERGEABLE = new Set(['active', 'held', 'park-pending']);
 
@@ -69,7 +69,6 @@ export async function mergeIn(ctx: CommandContext, id: CommandId, unitId: string
     throw new Error(`merge-in ${id} of ${unit.id}: its mergein.prepare ${intent.op} did not end clean-merged`);
   }
   const verified: string[] = [];
-  if (u.status === 'park-pending' && u.decided !== null) verified.push(...acknowledgePark(ctx, id, unit.id, u.decided));
   ctx.journal.fact({ kind: 'merged-in', unit: unit.id, command: id, integrationTip: intent.expect.integrationTip, head: intent.post.new });
   verified.push(`integration ${intent.expect.integrationTip} merged into ${unit.id} at ${intent.post.new}; it re-enters at its lanes`);
   return { kind: 'applied', verified };

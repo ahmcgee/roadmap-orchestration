@@ -4,11 +4,11 @@
 // The case table itself is `table.total` in test/m3-schemas.test.ts. `gradeTree` (src/pipeline/integrate.ts): a red
 // lane witnessing only measured obligations is never unexplained.
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
-import { type ObligationId, type UnitId, laneId, obligationId, unitId } from '../src/core/ids.ts';
-import { type ObligationEffect, brakesOn, completes, latches, obligationEffects } from '../src/holistic/table.ts';
-import { type ObligationDef, OBSERVATION_VERDICTS, type ObservationVerdict, parseObligations, witnessRecord } from '../src/holistic/types.ts';
-import { type Claims, gradeTree } from '../src/pipeline/integrate.ts';
+import { describe,it } from 'node:test';
+import { type ObligationId,type UnitId,laneId,obligationId,unitId } from '../src/core/ids.ts';
+import { type ObligationEffect,brakesOn,completes,latches,obligationEffects } from '../src/holistic/table.ts';
+import { OBSERVATION_VERDICTS,type ObligationDef,type ObservationVerdict,parseObligations,witnessRecord } from '../src/holistic/types.ts';
+import { type Claims,gradeTree } from '../src/pipeline/integrate.ts';
 import type { JourneyRun } from '../src/pipeline/lanes.ts';
 
 const LANE_REV = '0123456789abcdef';

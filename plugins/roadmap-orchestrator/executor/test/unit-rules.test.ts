@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { obligationId, rulingId, ruleId, sha, sha256 } from '../src/core/ids.ts';
+import { obligationId,ruleId,sha,sha256 } from '../src/core/ids.ts';
 import { repoPath } from '../src/core/values.ts';
 import type { CorpusPin } from '../src/corpus/types.ts';
 import { unitRules } from '../src/holistic/impact.ts';
 import { ruleMentions } from '../src/holistic/rederive.ts';
-import type { CensusEntry, ObligationDef } from '../src/holistic/types.ts';
+import type { CensusEntry,ObligationDef } from '../src/holistic/types.ts';
 
 const hash = sha256('a'.repeat(64));
 const pin: CorpusPin = {

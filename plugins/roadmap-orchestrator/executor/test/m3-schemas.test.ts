@@ -2,26 +2,24 @@
 // records, ruling sidecars, revision payloads, every new fact and plan-applied field, command bodies, plan and spec
 // fields, the lens and checkpoint outputs, and the obligation transition table (`table.total`).
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { describe,it } from 'node:test';
 import {
-  type Envelope, type Event, type Fact, type HolisticFactKind, type LogRecord, type PlanChange, parseEventLine, parseRevisionPayload, serializeEvent,
+type Envelope,type Event,type Fact,type HolisticFactKind,type LogRecord,type PlanChange,parseEventLine,parseRevisionPayload,serializeEvent,
 } from '../src/core/events.ts';
 import {
-  InvalidIdError, arcId, commandId, divergenceId, envId, findingId, findingIdOf, invocationId, jobId, jobIdOf, jobIdOfKind, laneId, laneRev,
-  obligationId, opId, parseJobId, routingRev, sha, sha256, unitId, visionClauseId,
+InvalidIdError,arcId,commandId,divergenceId,envId,findingId,findingIdOf,invocationId,jobId,jobIdOf,jobIdOfKind,laneId,laneRev,
+obligationId,opId,parseJobId,routingRev,sha,sha256,unitId,visionClauseId,
 } from '../src/core/ids.ts';
 import { canonicalJson } from '../src/core/json.ts';
 import {
-  DEFAULT_BOUNDS, approvalFingerprint, commandBody, dispatchRecord, obligationRevsOf, residueKey, residueOwner, specM1, specObligations,
+DEFAULT_BOUNDS,approvalFingerprint,commandBody,dispatchRecord,obligationRevsOf,residueKey,residueOwner,specM1,specObligations,
 } from '../src/core/records.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { isoTime } from '../src/core/values.ts';
-import { type ObligationCase, OBLIGATION_EFFECTS, type ObligationEffect, obligationEffect } from '../src/holistic/table.ts';
-import {
-  type Obligations, OBSERVATION_VERDICTS, findingKey, laneRevOf, parseObligations, parseRulingSidecar, parseVision, witnessRecord,
-} from '../src/holistic/types.ts';
-import { DEFAULT_CONVERGENCE_K, boundsOf, lensSetOf, parsePlan } from '../src/input/plan.ts';
-import { validateCheckpointOutput, validateLensOutput } from '../src/prompts/schemas.ts';
+import { type ObligationCase,type ObligationEffect,OBLIGATION_EFFECTS,obligationEffect } from '../src/holistic/table.ts';
+import { OBSERVATION_VERDICTS } from '../src/holistic/types.ts';
+import { DEFAULT_CONVERGENCE_K,boundsOf,lensSetOf,parsePlan } from '../src/input/plan.ts';
+import { validateCheckpointOutput,validateLensOutput } from '../src/prompts/schemas.ts';
 import { ORIGIN_RANK } from '../src/schedule/types.ts';
 
 const ARC = arcId('arc-1');
@@ -189,8 +187,8 @@ describe('M3 event records', () => {
   it('the revision payload (G1) holds the manifest, changes, dispositions, divergences, publication plan and provenance', () => {
     const p = {
       v: 2, source: { type: 'bundle', job: 'ckpt-1' }, base: 4, rev: 5,
-      manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H, sidecars: { 'C-7': H2 } }, obligations: H2, vision: H },
-      changes: planApplied.changes as readonly PlanChange[], dispositions: [{ obligation: 'I-2', disposition: 'amended', ruling: 'C-7' }], divergences: [draft],
+      manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H,  }, obligations: H2, vision: H },
+      changes: planApplied.changes as readonly PlanChange[], dispositions: [{ obligation: 'I-2', disposition: 'amended', reason: 'Approved revision', rev: 5 }], divergences: [draft],
       publication: { renders: [{ path: '.roadmap/invariants.md', sha256: H }], contractOps: [] }, routingProvenance: planApplied.routingProvenance,
     };
     assert.equal(canonicalJson(parseRevisionPayload(p)), canonicalJson(p));
@@ -288,7 +286,7 @@ describe('M3 file records', () => {
 
   it('command bodies: the M3 commands, and an apply manifest with its revision inputs (G15)', () => {
     const bodies = [
-      { type: 'rule', path: '/r/rulings/C-7.json', sha256: H },
+      
       { type: 'reverse', divergence: 'D-3' },
       { type: 'steer', unit: 'u1', brief: { path: '/r/brief.md', sha256: H }, budgetMin: 45, class: 'frontier', resume: true },
       { type: 'steer', unit: 'u1', brief: { path: '/r/brief.md', sha256: H }, budgetMin: 45, class: null, resume: false },
@@ -296,18 +294,15 @@ describe('M3 file records', () => {
       { type: 'audit', lenses: ['drift', 'vision'] },
       { type: 'audit', lenses: null },
       { type: 'close-admissions' },
-      { type: 'apply', base: null, manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H, sidecars: {} }, obligations: null, vision: H2 }, visionEdit: false },
-      {
-        type: 'apply', base: { planSha256: H2, specs: { u1: H2 }, rulings: { ledgerSha256: H2, sidecars: {} }, obligations: null, vision: H },
-        manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H, sidecars: {} }, obligations: null, vision: H2 }, visionEdit: true,
-      },
+      { type: 'apply', planFile: '/r/plan.json', rev: 1, reason: 'Root approved', base: {planSha256: H, specs: {u1: H}, rulings: {ledgerSha256: H}, obligations: null, vision: H2}, manifest: {planSha256: H2, specs: {u1: H}, rulings: {ledgerSha256: H}, obligations: null, vision: H2} },
     ];
     for (const b of bodies) assert.deepEqual(commandBody(b, 'b'), b);
     assert.throws(() => commandBody({ type: 'steer', unit: 'u1', brief: { path: '/r/b', sha256: H }, budgetMin: 0, class: null, resume: false }, 'b'), /budgetMin/);
     assert.throws(() => commandBody({ type: 'audit', lenses: ['vision', 'drift'] }, 'b'), /lenses/);
-    assert.throws(() => commandBody({ type: 'apply', base: null, manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H, sidecars: {} } } }, 'b'), /obligations/);
-    assert.throws(() => commandBody({ type: 'apply', base: null, manifest: { planSha256: H, specs: { u1: H } } }, 'b'), /rulings/);
-    assert.throws(() => commandBody({ type: 'apply', manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H, sidecars: {} }, obligations: null, vision: H2 } }, 'b'), /base/);
+    const apply = bodies.at(-1)!;
+    assert.throws(() => commandBody({...apply, manifest: {planSha256: H, specs: {u1: H}, rulings: {ledgerSha256: H}}}, 'b'), /obligations/);
+    assert.throws(() => commandBody({...apply, manifest: {planSha256: H, specs: {u1: H}}}, 'b'), /rulings/);
+    assert.throws(() => commandBody({...apply, base: undefined}, 'b'), /base/);
   });
 
   it('spec: obligations and repairs, absent when none', () => {
@@ -354,7 +349,7 @@ describe('M3 file records', () => {
     assert.throws(() => parsePlan({ ...base, holistic: { vision: 'v.json', advances: ['V-2', 'V-1'] } }), /holistic\.advances\[1\]/);
     assert.throws(() => parsePlan({ ...base, limits: { chargeable: 0 } }), /limits\.chargeable/);
     assert.throws(() => parsePlan({ ...base, units: [{ ...unit, limits: { convergenceK: 2 } }] }), /convergenceK/);
-    assert.deepEqual(ORIGIN_RANK, { repair: 0, deflake: 0, propagation: 0, checkpoint: 1, polish: 2, planned: 3 });
+    assert.deepEqual(ORIGIN_RANK, { repair: 0, deflake: 0, checkpoint: 1, polish: 2, planned: 3 });
   });
 });
 
@@ -363,7 +358,7 @@ describe('M3 judgment outputs', () => {
     findings: [{ severity: 'P2', obligation: null, visionClauses: ['V-1'], claim: 'c', cause: 'k', evidence: [{ path: 'src/a.js', line: 2 }], mutant: { lane: 'journey', edits: [{ path: 'src/a.js', old: 'a', new: '' }] } }],
     reasons: ['r'], premises: [],
   };
-  const op = { op: 'admit', unit: { id: 'r1', risk: 'med', scope: ['src/format.js'], after: [], origin: 'repair' }, spec: '{}', cites: ['V-2'], evidence: ['F-1'] };
+  const op = { op: 'admit', unit: { id: 'r1', risk: 'med', scope: ['src/format.js'], after: [], origin: 'repair' }, spec: {schema: 'roadmap/spec-m1', unit: 'r1', rev: 1, scope: ['src/format.js'], resources: [], lanes: [], acceptance: [{id: 'A1', clause: 'Fix the report', state: 'active', failLoudIfUndelivered: true}], decisions: [], facts: [], cites: {contracts: [], rulings: []}, obligations: [], repairs: []}, targets: [], cites: ['V-2'], evidence: ['F-1'] };
   const ckpt = {
     decision: 'bundle', reasons: ['F-1'], ops: [op],  findingDispositions: [{ finding: 'F-1', disposition: 'accepted', reason: 'r' }],
     interpretations: [{ clauses: ['V-1'], situation: 's', reading: 'r' }], cites: { vision: ['V-2'], observations: [{ treeSha: A, lane: 'journey', laneRev: LANE_REV, envId: ENV }], findings: ['F-1'] },
@@ -378,7 +373,7 @@ describe('M3 judgment outputs', () => {
     assert.deepEqual(validateLensOutput(lens).findings[0]!.mutant, { kind: 'edits', lane: 'journey', edits: [{ path: 'src/a.js', old: 'a', new: '' }] });
     assert.throws(() => validateLensOutput({ ...lens, findings: [{ ...lens.findings[0], mutant: { lane: 'journey', edits: [] } }] }), /edits/);
     const legacy = { ...lens, findings: [{ ...lens.findings[0], mutant: { patch: '--- a\n+++ b\n', lane: 'journey' } }] };
-    assert.deepEqual(validateLensOutput(legacy).findings[0]!.mutant, { kind: 'patch', lane: 'journey', patch: '--- a\n+++ b\n' });
+    assert.throws(() => validateLensOutput(legacy), /edits/);
   });
 
   it('checkpoint: every op cites active-looking clauses and evidence; ops exactly on a bundle; owner-only acts only as a request (A16)', () => {
@@ -386,13 +381,12 @@ describe('M3 judgment outputs', () => {
     validateCheckpointOutput({ ...ckpt, decision: 'no-op', ops: [] });
     assert.throws(() => validateCheckpointOutput({ ...ckpt, decision: 'no-op' }), /ops/);
     assert.throws(() => validateCheckpointOutput({ ...ckpt, ops: [] }), /ops/);
-    assert.throws(() => validateCheckpointOutput({ ...ckpt, decision: 'no-op', ops: [],  }), /rulings/);
     assert.throws(() => validateCheckpointOutput({ ...ckpt, ops: [{ ...op, cites: [] }] }), /cites/);
     assert.throws(() => validateCheckpointOutput({ ...ckpt, ops: [{ ...op, evidence: [] }] }), /evidence/);
     assert.throws(() => validateCheckpointOutput({ ...ckpt, ops: [{ op: 'vision', cites: ['V-1'], evidence: ['e'] }] }), /op/);
     const more = [
       { op: 'patch-spec', unit: 'u1', patch: [{ op: 'strike', id: 'A3' }] },
-      { op: 'reenter', unit: 'u2', reenters: 'u1', enterAt: null, reset: 'C-4' },
+      { op: 'reenter', unit: 'u2', reenters: 'u1', enterAt: null, reset: null, fixes: null },
       { op: 'cut', unit: 'u1', reason: 'r' },
       { op: 'route', unit: 'u1', seats: [{ role: 'gate', tier: 'med', class: 'summit' }] },
       { op: 'limits', unit: null, limits: [{ field: 'convergenceK', value: 2 }] },
@@ -400,9 +394,9 @@ describe('M3 judgment outputs', () => {
         op: 'obligation-split', obligation: 'I-2',
         children: [{ id: 'I-5', statement: 's', docRef: { path: 'docs/t.md', anchor: '#a', quotedText: 'q' }, rule: null, witness: { lane: 'journey', testIds: ['t'], files: [] }, activation: 'must-hold', deliveredBy: [] }],
       },
-      { op: 'obligation-dispose', obligation: 'I-3', disposition: 'deferred', ruling: 'C-9' },
+      
       { op: 'invalidate-approval', unit: 'u1' },
-      { op: 'rule', ruling: 'C-9' },
+      
       { op: 'request', class: 'cost', summary: 'a paid estate' },
     ].map((o) => ({ ...o, cites: ['V-1'], evidence: ['e'] }));
     const out = validateCheckpointOutput({ ...ckpt, ops: more });
@@ -412,12 +406,13 @@ describe('M3 judgment outputs', () => {
       const [r] = validateCheckpointOutput({ ...ckpt, ops: [{ ...more[1], ...o }] }).ops;
       return r?.op === 'reenter' ? r.fixes : assert.fail('a reenter op');
     };
-    assert.deepEqual([fixesOf({}), fixesOf({ fixes: null }), fixesOf({ fixes: 'u1/gate#1' })], ['unrecorded', null, 'u1/gate#1']);
+    assert.deepEqual([fixesOf({ fixes: null }), fixesOf({ fixes: 'u1/gate#1' })], [null, 'u1/gate#1']);
+    assert.throws(() => fixesOf({fixes: undefined}), /fixes/);
     assert.throws(() => validateCheckpointOutput({ ...ckpt, ops: [{ ...more[3], seats: [{ role: 'build', tier: 'arc', class: 'summit' }] }] }), /tier/);
     // economy is judgment-only (1.0.0-dev.12): a route may seat it at a judgment seat, never at a build seat.
     validateCheckpointOutput({ ...ckpt, ops: [{ ...more[3], seats: [{ role: 'gate', tier: 'low', class: 'economy' }] }] });
     assert.throws(() => validateCheckpointOutput({ ...ckpt, ops: [{ ...more[3], seats: [{ role: 'build', tier: 'low', class: 'economy' }] }] }), /class/);
-    assert.throws(() => validateCheckpointOutput({ ...ckpt, ops: [{ ...more[9], class: 'anything' }] }), /class/);
+    assert.throws(() => validateCheckpointOutput({ ...ckpt, ops: [{ ...more[7], class: 'anything' }] }), /class/);
   });
 });
 

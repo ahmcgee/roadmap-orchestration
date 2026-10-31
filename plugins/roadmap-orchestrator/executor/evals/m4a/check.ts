@@ -60,39 +60,39 @@
 // the vision-silent stop. A mid-arc re-pin stays listed: the owner's P-1 answer is released at arc 1's completion and
 // lands mid-arc only when the root agent started arc 2 before the answer came (paid run 5), else in arc 2's Phase 0.
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync,mkdirSync,mkdtempSync,readFileSync,readdirSync,rmSync,statSync,writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join, relative, resolve } from 'node:path';
+import { basename,join,relative,resolve } from 'node:path';
 import { computeBrief } from '../../src/brief.ts';
-import { type ArcRef, amendmentsOf, arcsWithRefs, committedAcks, completedHeadOf, readArcRef, unackedStarts } from '../../src/chain.ts';
+import { type ArcRef,amendmentsOf,arcsWithRefs,committedAcks,completedHeadOf,readArcRef,unackedStarts } from '../../src/chain.ts';
 import { phase0Check } from '../../src/commands/phase0.ts';
-import type { Event, Fact } from '../../src/core/events.ts';
-import { type ArcId, type Sha256Hex, HOST_CPU_STATION } from '../../src/core/ids.ts';
-import { spawnPressureOf, startPressureOf } from '../../src/core/projections.ts';
-import { PRESSURE_MIN_WALL_MS, PRESSURE_SATURATED } from '../../src/host/pressure.ts';
+import type { Event,Fact } from '../../src/core/events.ts';
+import { type ArcId,HOST_CPU_STATION,type Sha256Hex } from '../../src/core/ids.ts';
+import { spawnPressureOf,startPressureOf } from '../../src/core/projections.ts';
 import type { LaneDef } from '../../src/core/records.ts';
-import { type FlowInputs, type FlowProposal, parseFlowInputs } from '../../src/flow/types.ts';
-import { collectWitness, witnessEnv } from '../../src/holistic/witness.ts';
-import { type ArcLaneDef, type Obligations, type WitnessTest, laneRevOf, parseObligations } from '../../src/holistic/types.ts';
-import { type PlanM1, parsePlan } from '../../src/input/plan.ts';
-import { readNeedsUser } from '../../src/needsuser.ts';
-import { type AbsPath, absPath } from '../../src/core/values.ts';
-import { parseCorpusPin } from '../../src/corpus/types.ts';
-import { MERGE_COMMIT_LINE } from '../../src/forge/pr.ts';
-import { git, gitCommonDir } from '../../src/git/git.ts';
-import { censusProblems } from '../../src/holistic/rederive.ts';
-import { CORPUS_FILE_INPUT, CORPUS_GUIDE_INPUT, CORPUS_INPUT, FLOW_INPUTS_INPUT, OBLIGATIONS_INPUT, PACK_REVIEW_INPUT, PHASE0_INPUT, PLAN_INPUT } from '../../src/input/inforce.ts';
-import { runDir } from '../../src/input/cli.ts';
-import { parsePhase0Record } from '../../src/phase0/types.ts';
 import { type HostLockClaim } from '../../src/core/records.ts';
+import { type AbsPath,absPath } from '../../src/core/values.ts';
+import { parseCorpusPin } from '../../src/corpus/types.ts';
+import { type FlowInputs,type FlowProposal,parseFlowInputs } from '../../src/flow/types.ts';
+import { MERGE_COMMIT_LINE } from '../../src/forge/pr.ts';
+import { git,gitCommonDir } from '../../src/git/git.ts';
+import { censusProblems } from '../../src/holistic/rederive.ts';
+import { type ArcLaneDef,type Obligations,type WitnessTest,laneRevOf,parseObligations } from '../../src/holistic/types.ts';
+import { collectWitness,witnessEnv } from '../../src/holistic/witness.ts';
 import { readClaim } from '../../src/host/lock.ts';
-import { MODEL_IDS, type ProfileName } from '../../src/routing/types.ts';
+import { PRESSURE_MIN_WALL_MS,PRESSURE_SATURATED } from '../../src/host/pressure.ts';
+import { runDir } from '../../src/input/cli.ts';
+import { CORPUS_FILE_INPUT,CORPUS_GUIDE_INPUT,CORPUS_INPUT,FLOW_INPUTS_INPUT,OBLIGATIONS_INPUT,PACK_REVIEW_INPUT,PHASE0_INPUT,PLAN_INPUT } from '../../src/input/inforce.ts';
+import { type PlanM1,parsePlan } from '../../src/input/plan.ts';
+import { readNeedsUser } from '../../src/needsuser.ts';
+import { parsePhase0Record } from '../../src/phase0/types.ts';
+import { MODEL_IDS,type ProfileName } from '../../src/routing/types.ts';
 import { readStore } from '../../test/fakes/gh-store.ts';
-import { DENIED, type Released, type Report, UNSTAGED, plantLaneOf } from './driver.ts';
-import { type ArcView, defectVerdicts, readKey } from './key.ts';
-import { type Layout, MAIN, PLANT, layout } from './layout.ts';
+import { DENIED,type Released,type Report,UNSTAGED,plantLaneOf } from './driver.ts';
+import { type ArcView,defectVerdicts,readKey } from './key.ts';
+import { type Layout,MAIN,PLANT,layout } from './layout.ts';
 import { SEED_FILE } from './setup.ts';
-import { needles, scanTranscript } from './transcript.ts';
+import { needles,scanTranscript } from './transcript.ts';
 
 export const NOT_EXERCISED = [
   'other-repo and checkout corpus sources', 'a mid-arc re-pin', 'debt promote',

@@ -38,25 +38,26 @@
 // item's wake. The scripted root agent waits on the journal's frozen flow facts (`untilFact`).
 //
 // Every command's failure is loud (the process exits non-zero; the driver records the session failed).
-import { spawnSync } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
-import { spawn } from 'node:child_process';
-import { closeSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { spawn,spawnSync } from 'node:child_process';
+import { createHash,randomUUID } from 'node:crypto';
+import { closeSync,cpSync,existsSync,mkdirSync,openSync,readFileSync,rmSync,writeFileSync } from 'node:fs';
+import { join,resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { amendmentsOf, readArcRef } from '../../src/chain.ts';
+import { amendmentsOf,readArcRef } from '../../src/chain.ts';
 import type { Fact } from '../../src/core/events.ts';
 import { arcId } from '../../src/core/ids.ts';
 import { readJournal } from '../../src/core/log.ts';
 import { absPath } from '../../src/core/values.ts';
 import { parseDebtBlock } from '../../src/docs/debt.ts';
-import { laneRevOf, parseObligations } from '../../src/holistic/types.ts';
+import { laneRevOf,parseObligations } from '../../src/holistic/types.ts';
 import {
-  type ArcNo, ARC1_CURATION, ARC1_QUESTION, CENSUS_OTHERS, CORPUS_ROOT, DIRECTION, FILES, LANES, MAPPING, OBLIGATIONS, SLICES, SLOW_LANE, TEST_PATHS, UNITS, corpusFor,
-  PASS_PATH, specLane, specOf, suiteLanes, unitsOf,
+type ArcNo,ARC1_CURATION,ARC1_QUESTION,CENSUS_OTHERS,CORPUS_ROOT,DIRECTION,FILES,LANES,MAPPING,OBLIGATIONS,
+PASS_PATH,
+SLICES,SLOW_LANE,TEST_PATHS,UNITS,corpusFor,
+specLane,specOf,suiteLanes,unitsOf,
 } from './golden.ts';
-import { MAIN, layout } from './layout.ts';
-import { BLOCKED_SEEN_BARRIER, CHECKPOINT_AMENDMENT, DRIFT_CHECKPOINT, FLOW_1, FLOW_2 } from './scenario.ts';
+import { MAIN,layout } from './layout.ts';
+import { BLOCKED_SEEN_BARRIER,CHECKPOINT_AMENDMENT,DRIFT_CHECKPOINT,FLOW_1,FLOW_2 } from './scenario.ts';
 
 export const FAKE_SCRIPTS = ['story', 'vision-silent'] as const;
 export type FakeScript = (typeof FAKE_SCRIPTS)[number];
@@ -260,7 +261,7 @@ function obligationsOf(n: ArcNo, pin: Pin) {
       const future = o.deliveredIn === n;
       return {
         id: o.id, rev: 1, statement: o.statement, rule: ref(o.rule), serves: o.serves, witness,
-        proofJudgment: { verdict: 'proves', obligationRev: 1,  witness },
+        proofJudgment: { verdict: 'proves', obligationRev: 1,  witness: {testIds: witness.testIds, ...(('files' in witness ? {files: witness.files} : {}))} },
         deliveredBy: future ? [...o.deliveredBy] : [], activation: future ? 'future' : 'must-hold', contracts: [], state: { type: 'active' },
       };
     }),

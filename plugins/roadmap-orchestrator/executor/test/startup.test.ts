@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
-import { arcId, invocationIdOf, milestoneId, laneId, phaseQuestionId, obligationId, resourceName, ruleId, sha, sha256, unitId } from '../src/core/ids.ts';
-import { absPath, planPath, repoPath } from '../src/core/values.ts';
-import { EXIT_HOST_BUSY, EXIT_REFUSED, type StartupRejection, type StartupRejectionKind, exitCodeFor } from '../src/preflight/startup.ts';
+import { describe,it } from 'node:test';
+import { arcId,invocationIdOf,laneId,milestoneId,obligationId,phaseQuestionId,resourceName,ruleId,sha,sha256,unitId } from '../src/core/ids.ts';
+import { absPath,planPath,repoPath } from '../src/core/values.ts';
+import { EXIT_HOST_BUSY,EXIT_REFUSED,type StartupRejection,type StartupRejectionKind,exitCodeFor } from '../src/preflight/startup.ts';
 
 const arc = arcId('arc-1');
 const unit = unitId('u1');

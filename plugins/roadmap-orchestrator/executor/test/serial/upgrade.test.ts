@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { runChecks, gitCommonDir } from '../../src/preflight/checks.ts';
-import { runDir } from '../../src/input/cli.ts';
 import { arcId } from '../../src/core/ids.ts';
 import { absPath } from '../../src/core/values.ts';
+import { runDir } from '../../src/input/cli.ts';
+import { gitCommonDir,runChecks } from '../../src/preflight/checks.ts';
 import { setupArc } from '../fixtures/unit-common.ts';
 // PREVIOUS_RELEASE is re-pointed to the first post-break release once one exists.
 const PREVIOUS_RELEASE = '1.0.0-dev.32';

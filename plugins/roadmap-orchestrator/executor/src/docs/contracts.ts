@@ -12,7 +12,6 @@
 // is disjoint from every other (2026-10-15, arc feedback #3: two ops in one section are fine when their ranges are), so
 // their order cannot matter; they apply from the last range to the first. Every edited document's first line cites the
 // ruling: `<!-- revised by C-3, C-7 -->` (added, or extended).
-import type { RulingId } from '../core/ids.ts';
 import type { RepoPath } from '../core/values.ts';
 import type { ContractOp } from '../holistic/types.ts';
 

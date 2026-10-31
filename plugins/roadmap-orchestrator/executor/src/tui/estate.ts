@@ -1,11 +1,11 @@
-import { planInForce, revisionInForce, keptInput, inputPath, specShaInForce, SPEC_INPUT } from '../input/inforce.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import type { AbsPath } from '../core/values.ts';
 import { gitRun } from '../git/git.ts';
+import { inputPath,keptInput,planInForce,revisionInForce,SPEC_INPUT,specShaInForce } from '../input/inforce.ts';
+import { targetDocumentPaths } from '../input/plan.ts';
 import { parseSpec } from '../spec/spec.ts';
 import { debtEntries } from './debt-estate.ts';
-import { targetDocumentPaths } from '../input/plan.ts';
-import { type Entry, type EntryKind, pretty } from './types.ts';
+import { type Entry,type EntryKind,pretty } from './types.ts';
 
 /** Explicit references only: equality of recorded string values, never inferred semantic relationships. */
 export function connect(entries: Entry[]): Entry[] {
@@ -85,10 +85,6 @@ export function estate(runDir: AbsPath, view: JournalView, repo: AbsPath | null)
     }
   }
   add('rulings', 'Constraints & rulings', revision.ledger.bytes.toString(), revision.ledger.sha256);
-  for (const [id, sidecar] of revision.sidecars) {
-    add(id, `Ruling ${id}`, sidecar.sidecar, sidecar.sha256, sidecar.sidecar.status);
-    entries.at(-1)!.parentId = 'rulings';
-  }
   for (const [label, input] of [['Vision', revision.vision], ['Obligations', revision.obligations]] as const) {
     if (input !== null) {
       if (label !== 'Vision') add(label.toLowerCase(), label, input.value, input.sha256);

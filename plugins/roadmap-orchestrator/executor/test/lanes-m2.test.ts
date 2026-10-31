@@ -5,29 +5,28 @@
 // executor's fact without `on`), lanes.red-red, lanes.signature-no-evidence,
 // lanes.signature-busy-rerun-pass, lanes.instance-env, lanes.pause-mid-series.
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync,mkdirSync,readFileSync,rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
-import type { Fact, Holder, IntentOf } from '../src/core/events.ts';
-import { appliedFields } from './fixtures/log-records.ts';
-import { type InvocationId, arcId, opKey, planRev, resourceName, sha, sha256, unitId } from '../src/core/ids.ts';
-import { openJournal, readJournal } from '../src/core/log.ts';
-import { laneRevOf } from '../src/holistic/types.ts';
+import { fileURLToPath } from 'node:url';
+import type { Fact,Holder,IntentOf } from '../src/core/events.ts';
+import { arcId,planRev,resourceName,sha,sha256 } from '../src/core/ids.ts';
+import { openJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
+import { git,revParse } from '../src/git/git.ts';
 import type { HostSample } from '../src/host/sample.ts';
 import { parsePlan } from '../src/input/plan.ts';
-import { type StageContext, type StageParent, pinDispatch } from '../src/pipeline/dispatch.ts';
-import { type LaneRuntime, type Series, laneOrder, laneSummaryIn, reserveNow, runLaneSeries, seriesLedger, specSeriesRoot } from '../src/pipeline/lanes.ts';
+import { flakyLedger } from '../src/pipeline/deflake.ts';
+import { type StageContext,type StageParent,pinDispatch } from '../src/pipeline/dispatch.ts';
+import { type LaneRuntime,type Series,laneOrder,laneSummaryIn,reserveNow,runLaneSeries,seriesLedger,specSeriesRoot } from '../src/pipeline/lanes.ts';
 import { laneFixRound } from '../src/pipeline/rounds.ts';
-import { lanes, loadUnitSpec } from '../src/pipeline/stages.ts';
+import { lanes,loadUnitSpec } from '../src/pipeline/stages.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
-import type { Acquire, ResourceRequest } from '../src/schedule/types.ts';
-import { tmpDir } from './helpers/repo.ts';
-import { git, revParse } from '../src/git/git.ts';
-import { flakeOnOf, flakyLedger } from '../src/pipeline/deflake.ts';
+import type { Acquire,ResourceRequest } from '../src/schedule/types.ts';
 import { intents } from './fixtures/invoke-specs.ts';
-import { DB, type LaneJson, SCENARIO_TIMEOUT_MS, type StageRun, U1, keptSpec, launchOf, outcomeFacts, setupUnit, spawnIntents, started } from './fixtures/stage-common.ts';
+import { appliedFields } from './fixtures/log-records.ts';
+import { DB,type LaneJson,SCENARIO_TIMEOUT_MS,type StageRun,U1,keptSpec,launchOf,outcomeFacts,setupUnit,spawnIntents,started } from './fixtures/stage-common.ts';
+import { tmpDir } from './helpers/repo.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 const RED_GREEN = fileURLToPath(new URL('./fakes/red-green.ts', import.meta.url));
@@ -247,7 +246,7 @@ test('lanes.signature-busy-rerun-pass: a host signature on a busy host waits for
 test('lanes.instance-env: a DAG arc\'s lanes reserve @cpu tokens and a pool instance, and the lane env binds the instance', T, async () => {
   const run = laneRun([
     { id: 'fast1', argv: ['sh', '-c', 'echo "instance=${RESOURCE_INSTANCE_ESTATE:-none}"'] },
-    { id: 'estate1', cadence: 'unit', resources: ['estate'], argv: [process.execPath, ESTATE_FAKE, 'hold', 'STATE', 'estate'] },
+    { id: 'estate1', cadence: 'candidate', resources: ['estate'], argv: [process.execPath, ESTATE_FAKE, 'hold', 'STATE', 'estate'] },
   ], []);
   // A DAG arc over the same repo: a fresh log whose rev-1 plan-applied has scheduling dag, and a plan with
   // capacity and an estate pool (test/fakes/estate.ts).

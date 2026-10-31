@@ -129,70 +129,70 @@
 // when nothing changes). Then, for every arc, `arc-completed{planRev, head, highWater, units}` (once while active) and
 // the terminal snapshot (parent `arc`, G8), so `gc` can seal it, and the run ends `complete`. The completion stays active while the plan rev and the
 // head are those it recorded (A20); an admitting apply or a reopen invalidates it, and the arc runs again.
-import { orderingOf, wakeOrdering } from '../park/ordering.ts';
 import { cpuBasis } from '../core/cpu.ts';
+import { orderingOf,wakeOrdering } from '../park/ordering.ts';
 
+import { dirname,join } from 'node:path';
 import type { CommandContext } from '../commands/apply.ts';
-import { applyCommand, applyControl } from '../commands/apply.ts';
-import { isControl, pollCommands, POLL_MS, readReceipt, writeReceipt } from '../commands/queue.ts';
-import { dirname, join } from 'node:path';
+import { applyCommand,applyControl } from '../commands/apply.ts';
+import { POLL_MS,isControl,pollCommands,readReceipt,writeReceipt } from '../commands/queue.ts';
 import { crashPoint } from '../core/crash.ts';
-import { type IntentOf, JUDGMENT_STAGES, type Parent, probeTargetKey } from '../core/events.ts';
-import { atomicJson, canonicalJson } from '../core/fsx.ts';
+import { type IntentOf,JUDGMENT_STAGES,type Parent,probeTargetKey } from '../core/events.ts';
+import { atomicJson,canonicalJson } from '../core/fsx.ts';
 import {
-  type ArcId, type CommandId, type EnvId, type FindingId, type InvocationId, type JobId, type LaneId, type NeedsUserId, type OpId, type ResourceName, type Sha, type UnitId, arcId, commandId, findingId,
-  invocationId, jobIdOf, jobIdOfKind, parseJobId, resourceName, unitId,
+type ArcId,type CommandId,type EnvId,type FindingId,type InvocationId,type JobId,type LaneId,type NeedsUserId,type OpId,type ResourceName,type Sha,type UnitId,arcId,commandId,findingId,
+invocationId,jobIdOf,jobIdOfKind,parseJobId,resourceName,unitId,
 } from '../core/ids.ts';
-import type { Containment, Journal, JournalView } from '../core/interfaces.ts';
-import { type CommandFile, type NeedsUserContent, STAGES, type Stage } from '../core/records.ts';
-import { type Read, arrayOf, bool, literal, nat, object, oneOf, positive, tagged, version } from '../core/validate.ts';
-import { SCHEMA_VERSION, type SchemaVersion } from '../core/version.ts';
+import type { Containment,Journal,JournalView } from '../core/interfaces.ts';
+import { type CommandFile,type NeedsUserContent,STAGES,type Stage } from '../core/records.ts';
+import { type Read,arrayOf,bool,literal,nat,object,oneOf,positive,tagged,version } from '../core/validate.ts';
+import { type AbsPath,absPath,isoTimeOf } from '../core/values.ts';
+import { SCHEMA_VERSION,type SchemaVersion } from '../core/version.ts';
+import { demoTicker,promoteFinal,writeDesired } from '../demo/promote.ts';
+import { beforeCompletion,flowApplyHeld,flowOn,runFlowTrack } from '../flow/track.ts';
 import { revParse } from '../git/git.ts';
-import { jobEvidenceRoot, snapshotRequestOf } from '../git/snapshot.ts';
-import { type AuditContext, auditPending, raiseAuditOwed, runAudit } from '../holistic/audit.ts';
-import { cadence, integrationHeadNow, processClock } from '../holistic/cadence.ts';
-import { type CheckpointContext, type DesignParkRoute, busyHolds, checkpointPending, designParkRoute, runCheckpoint, settleLatest } from '../holistic/checkpoint.ts';
+import { jobEvidenceRoot,snapshotRequestOf } from '../git/snapshot.ts';
+import { type AuditContext,auditPending,raiseAuditOwed,runAudit } from '../holistic/audit.ts';
+import { cadence,integrationHeadNow,processClock } from '../holistic/cadence.ts';
+import { type CheckpointContext,type DesignParkRoute,busyHolds,checkpointPending,designParkRoute,runCheckpoint,settleLatest } from '../holistic/checkpoint.ts';
 import { settleCloseOut } from '../holistic/closeout.ts';
-import { beforeCompletion, flowApplyHeld, flowOn, runFlowTrack } from '../flow/track.ts';
-import { demoTicker, promoteFinal, writeDesired } from '../demo/promote.ts';
-import { PressureTicks, hostPressure, readHostCpu } from '../host/pressure.ts';
 import { quiescentGenerations } from '../holistic/convergence.ts';
 import { coverageOf } from '../holistic/coverage.ts';
-import { isActive, raiseFindingItems } from '../holistic/findings.ts';
-import { raiseWalkItems, runWalk, settleWalks, walkPending } from '../walk/walk.ts';
-import { applyPolish, polishDue } from '../walk/polish.ts';
-import { applyDeflake, deflakeJobPending, raiseDeflakeParked } from '../pipeline/deflakemint.ts';
-import { compareDue, cutDue, runningCompare, runCompare } from '../walk/compare.ts';
-import { walksPending } from '../walk/milestones.ts';
-import { packReviewHolds, packReviewPending, runPackReview, settlePackReviews } from '../holistic/packreview.ts';
-import { type ArcLaneDef, isExempt, laneRevOf } from '../holistic/types.ts';
-import { type Observation, type ObservationStore, reuse, verdictOf as witnessVerdict } from '../holistic/observe.ts';
-import type { RoutingBase } from '../input/inforce.ts';
-import { type AbsPath, absPath, isoTimeOf } from '../core/values.ts';
+import { isActive,raiseFindingItems } from '../holistic/findings.ts';
+import { type Observation,type ObservationStore,reuse,verdictOf as witnessVerdict } from '../holistic/observe.ts';
+import { packReviewHolds,packReviewPending,runPackReview,settlePackReviews } from '../holistic/packreview.ts';
+import { type ArcLaneDef,isExempt,laneRevOf } from '../holistic/types.ts';
+import { PressureTicks,hostPressure,readHostCpu } from '../host/pressure.ts';
 import { commandScope } from '../input/classify.ts';
-import { type PlanM1, type PlanUnit, hasMilestones, lensSetOf } from '../input/plan.ts';
-import { type BlockingItem, blockingItems, holdsUnit, openBlocking, raiseNeedsUser, raisedFor, readNeedsUser } from '../needsuser.ts';
+import type { RoutingBase } from '../input/inforce.ts';
+import { type PlanM1,type PlanUnit,hasMilestones,lensSetOf } from '../input/plan.ts';
+import { type BlockingItem,blockingItems,holdsUnit,openBlocking,raiseNeedsUser,raisedFor,readNeedsUser } from '../needsuser.ts';
 import type { ProberHandle } from '../park/probe.ts';
-import { raiseDue as raiseScheduleDue, trippedTargets } from '../park/schedule.ts';
-import { baselineDue, runBaseline } from '../pipeline/baseline.ts';
-import { type StageContext, runOp } from '../pipeline/dispatch.ts';
-import { type BatchOutcome, batchRepairs, finishBatch, findingBlocking, heldBatch, publishBatch } from '../pipeline/integrate.ts';
-import { invocationDir, killWorkload } from '../pipeline/invoke.ts';
-import { arcLaneKey, laneEnvId, observations } from '../pipeline/lanes.ts';
-import { type DocsContext, closeOutFiles, endDetail, publishCloseOut } from '../pipeline/publish.ts';
-import { repairUnits, specFacts } from '../pipeline/reproduce.ts';
-import { at, executorIdentity, holisticInForce, record, start } from '../pipeline/stages.ts';
-import { type Gate, type UnitResult, haltResult, runUnit, upcoming } from '../pipeline/unit.ts';
+import { raiseDue as raiseScheduleDue,trippedTargets } from '../park/schedule.ts';
+import { baselineDue,runBaseline } from '../pipeline/baseline.ts';
+import { applyDeflake,deflakeJobPending,raiseDeflakeParked } from '../pipeline/deflakemint.ts';
+import { type StageContext,runOp } from '../pipeline/dispatch.ts';
+import { type BatchOutcome,batchRepairs,findingBlocking,finishBatch,heldBatch,publishBatch } from '../pipeline/integrate.ts';
+import { invocationDir,killWorkload } from '../pipeline/invoke.ts';
+import { arcLaneKey,laneEnvId,observations } from '../pipeline/lanes.ts';
+import { type DocsContext,closeOutFiles,endDetail,publishCloseOut } from '../pipeline/publish.ts';
+import { repairUnits,specFacts } from '../pipeline/reproduce.ts';
+import { at,executorIdentity,holisticInForce,record,start } from '../pipeline/stages.ts';
+import { type Gate,type UnitResult,haltResult,runUnit,upcoming } from '../pipeline/unit.ts';
 import { snapshotPublishOp } from '../recover/ops.ts';
 import { recoverReservations } from '../recover/resource.ts';
-import { bringDown, downEnvironments, idleEnvironments, settleEnvironments } from '../resources/environments.ts';
+import { bringDown,downEnvironments,idleEnvironments,settleEnvironments } from '../resources/environments.ts';
 import { holderStage } from '../resources/reserve.ts';
 import { runnerFiles } from '../runner/files.ts';
-import type { Arbiter, FirstHolder } from './arbiter.ts';
+import { compareDue,cutDue,runCompare,runningCompare } from '../walk/compare.ts';
+import { walksPending } from '../walk/milestones.ts';
+import { applyPolish,polishDue } from '../walk/polish.ts';
+import { raiseWalkItems,runWalk,settleWalks,walkPending } from '../walk/walk.ts';
+import type { Arbiter,FirstHolder } from './arbiter.ts';
+import { faultJob,faultUnit,jobFaultOpen } from './fault.ts';
 import { holdCycle } from './graph.ts';
-import { faultJob, faultUnit, jobFaultOpen } from './fault.ts';
-import { admitter, findingBlock, nextStage, rankOf, ready } from './ready.ts';
-import { type AdmissionStage, type CommandScope, PARK_ESCALATE_MS, PROBE_BACKOFF_MIN, type ResourceRequest, type TaskState } from './types.ts';
+import { admitter,findingBlock,nextStage,rankOf,ready } from './ready.ts';
+import { type AdmissionStage,type CommandScope,PARK_ESCALATE_MS,PROBE_BACKOFF_MIN,type ResourceRequest,type TaskState } from './types.ts';
 
 // ---------------------------------------------------------------------------------------------------
 // sched.json: the scheduler's in-memory view, for `status` only

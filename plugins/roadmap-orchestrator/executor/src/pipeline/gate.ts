@@ -64,58 +64,68 @@ import { bytesSha256 } from '../spec/spec.ts';
 // after a crash is consumed against those inputs (`consumeJudgment`): its approval records the captured fingerprint;
 // ff then finds a contract another unit's publication changed, or a ruling a docs publication superseded
 // (`fingerprint-invalid`, a re-gate).
-import { orderingReasons } from '../park/ordering.ts';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { freshJudgmentSession, resumedJudgmentSession } from '../backends/argv.ts';
+import { freshJudgmentSession,resumedJudgmentSession } from '../backends/argv.ts';
 import { crashPoint } from '../core/crash.ts';
+import { designSize } from '../core/design.ts';
+import type { GateLargeDiff,IntentOf } from '../core/events.ts';
+import { captureUnderFence } from '../core/fence.ts';
+import { type JudgmentSessionId,type ObligationId,type Sha,type UnitId,canonicalIds,compareIds,invocationId } from '../core/ids.ts';
+import type { JsonValue } from '../core/json.ts';
+import { canonicalJson } from '../core/json.ts';
+import { gateLargeDiffOf,gateReviewOf } from '../core/projections.ts';
+import type { NeedsUserContent,PromptSize } from '../core/records.ts';
+import { type ApprovalFingerprint,type JudgmentSession,type ObligationRev,type SpecM1,effectiveScope,inScope,obligationRevsOf,specRemoves,specWitnesses } from '../core/records.ts';
+import type { ApprovalBlobs,GateReview } from '../core/review.ts';
+import { SchemaError } from '../core/validate.ts';
+import { type AbsPath,type RepoPath,absPath,matchesPattern,repoPath } from '../core/values.ts';
 import { normalizeText } from '../corpus/rules.ts';
 import { mintDebt } from '../debt/mint.ts';
-import { baselineDebtAt } from '../phase0/rows.ts';
-import type { GateLargeDiff, IntentOf } from '../core/events.ts';
-import { captureUnderFence } from '../core/fence.ts';
-import { type JudgmentSessionId, type ObligationId, type Sha, type UnitId, invocationId, canonicalIds, compareIds } from '../core/ids.ts';
-import { canonicalJson } from '../core/json.ts';
-import { type ApprovalFingerprint, type JudgmentSession, type ObligationRev, type SpecM1, effectiveScope, inScope, obligationRevsOf, specRemoves, specWitnesses } from '../core/records.ts';
-import { designSize } from '../core/design.ts';
-import { ruleMentions } from '../holistic/rederive.ts';
+import { type BoundedDiff,boundedDiff,diffPaths } from '../git/boundeddiff.ts';
+import { git,refTarget,revParse } from '../git/git.ts';
+import { diffBase,unitDiffPaths } from '../git/transient.ts';
 import { gateObligations } from '../holistic/impact.ts';
-import { effectiveRulingRevs } from '../spec/rulings.ts';
-import { type ObligationDef, isExempt } from '../holistic/types.ts';
-import { SchemaError } from '../core/validate.ts';
-import { type AbsPath, type RepoPath, absPath, matchesPattern, repoPath } from '../core/values.ts';
-import { type BoundedDiff, boundedDiff, diffPaths } from '../git/boundeddiff.ts';
-import { gateLargeDiffOf } from '../core/projections.ts';
-import { git, refTarget, revParse } from '../git/git.ts';
-import { diffBase, unitDiffPaths } from '../git/transient.ts';
+import { ruleMentions } from '../holistic/rederive.ts';
+import { type ObligationDef,isExempt } from '../holistic/types.ts';
 import { regenerateLane } from '../input/derived.ts';
-import { type PlanUnit, derivedOf, targetDocumentPaths } from '../input/plan.ts';
+import { type PlanUnit,derivedOf,targetDocumentPaths } from '../input/plan.ts';
+import { orderingReasons } from '../park/ordering.ts';
+import { baselineDebtAt } from '../phase0/rows.ts';
 import { judgmentRepairDirective } from '../prompts/directives.ts';
-import type { PromptSize } from '../core/records.ts';
-import { renderPrompt, promptFor } from '../prompts/index.ts';
-import type { GateChecks, GatePriorRound, RegeneratedCheck } from '../prompts/inputs.ts';
-import { type GateOutput, clusterCoverage, validateGateOutput } from '../prompts/schemas.ts';
-import type { ApprovalBlobs, GateReview } from '../core/review.ts';
-import { gateReviewOf } from '../core/projections.ts';
-import { approvalBlobs, gateDelta, ledgerFact, openDisputes, reviewInput, reviewRules, unitLedger } from './review.ts';
-import { renderSpec } from '../spec/render.ts';
+import { promptFor,renderPrompt } from '../prompts/index.ts';
+import type { GateChecks,GatePriorRound,RegeneratedCheck } from '../prompts/inputs.ts';
+import { type GateOutput,clusterCoverage,validateGateOutput } from '../prompts/schemas.ts';
+import { worktreeCreateOp } from '../recover/ops.ts';
 import { runnerFiles } from '../runner/files.ts';
-import type { JsonValue } from '../core/json.ts';
-import type { NeedsUserContent } from '../core/records.ts';
+import { renderSpec } from '../spec/render.ts';
 import {
-  type BackendCallOutcome, type Cancelled, type JudgmentDispatch, type StageContext, type StageParent, callBackend, cancelledNow, dispatchOf, evidenceRoot, isCancelled, judgmentDeadlineMs,
-  judgmentDispatch, runOp, unitBranch, verdictOf, verificationWorktree,
+type BackendCallOutcome,type Cancelled,type JudgmentDispatch,type StageContext,type StageParent,callBackend,cancelledNow,dispatchOf,evidenceRoot,isCancelled,judgmentDeadlineMs,
+judgmentDispatch,runOp,unitBranch,verdictOf,verificationWorktree,
 } from './dispatch.ts';
 import { invocationDir } from './invoke.ts';
-import { worktreeCreateOp } from '../recover/ops.ts';
-import { laneRecordIn, latestSpecSeries, observedViews, seriesLedger, seriesTree, specSeriesRoot } from './lanes.ts';
+import { laneRecordIn,latestSpecSeries,observedViews,seriesLedger,seriesTree,specSeriesRoot } from './lanes.ts';
+import { approvalBlobs,gateDelta,ledgerFact,openDisputes,reviewInput,reviewRules,unitLedger } from './review.ts';
 import { gateSmokeChecks } from './smoke.ts';
-import { gateWitnessChecks } from './witnesscheck.ts';
 import {
-  type PlanCheckDone, type StageDone, at, changedPremiseFiles, corpusInForce, enterJudgment, unitTarget, unitImpactInput, holisticInForce, inMs, integrationTip, type JudgmentReader, judgmentOutput,
-  judgmentSpawns, ledger, ledgerDir, library, loadUnitSpec, planCheckNotes, planCheckRead, record, releaseJudgment, rulingSidecars, start, targetDirs, verdictKind,
-  escalationOf, fastSuiteRoot, judgedAnswer, removeJudgmentCheckouts, salvageRejections, stillOutside, unitMilestones, writeJudgmentInputs,
+type JudgmentReader,
+type PlanCheckDone,type StageDone,at,changedPremiseFiles,corpusInForce,enterJudgment,
+escalationOf,fastSuiteRoot,
+holisticInForce,inMs,integrationTip,
+judgedAnswer,
+judgmentOutput,
+judgmentSpawns,ledger,ledgerDir,library,loadUnitSpec,planCheckNotes,planCheckRead,record,releaseJudgment,
+removeJudgmentCheckouts,salvageRejections,
+start,
+stillOutside,
+targetDirs,
+unitImpactInput,
+unitMilestones,
+unitTarget,
+verdictKind,
+writeJudgmentInputs,
 } from './stages.ts';
+import { gateWitnessChecks } from './witnesscheck.ts';
 
 /** The unit's approved-or-not commit: its branch tip, which every build round and merge-in moves. */
 export function unitTip(ctx: StageContext, unit: UnitId): Sha {

@@ -57,60 +57,59 @@
 // Needs-user content is produced here, never written: the scheduler writes it. A halt's item names its
 // evidence and says what `resume` does for it (`haltNeedsUser`).
 import { existsSync } from 'node:fs';
-import { basename, join } from 'node:path';
-import { ENV_INV, ENV_ROLE } from '../contain/session.ts';
+import { basename,join } from 'node:path';
 import { scan } from '../contain/proc.ts';
+import { ENV_INV,ENV_ROLE } from '../contain/session.ts';
 import { crashPoint } from '../core/crash.ts';
-import { JUDGMENT_STAGES, type OutcomeStage, type StageOutcomeFact, type TestRef, testRefKey } from '../core/events.ts';
+import { JUDGMENT_STAGES,type OutcomeStage,type StageOutcomeFact,type TestRef,testRefKey } from '../core/events.ts';
+import { type OpId,type ResourceInstance,type Sha,type UnitId,invocationId } from '../core/ids.ts';
 import { mutantOf } from '../core/projections.ts';
+import { type NeedsUserContent,type NeedsUserReason,STDERR_FILE,STDOUT_FILE,type Stage } from '../core/records.ts';
+import { type EntryPoint,type UnitState,openAttempt } from '../core/state.ts';
 import { SchemaError } from '../core/validate.ts';
-import { patternPath } from '../git/evidence.ts';
-import { candidateLaneDir, smokeLaneDir } from '../git/snapshot.ts';
-import type { RequiredWitness } from '../holistic/required.ts';
-import { DECISIONS_FILE, buildOutput } from '../prompts/schemas.ts';
-import { type InvocationId, type OpId, type ResourceInstance, type Sha, type UnitId, invocationId } from '../core/ids.ts';
-import { type EntryPoint, type UnitState, openAttempt } from '../core/state.ts';
-import { NO_PARK_FACTS } from '../park/table.ts';
-import { ADMISSION_STAGES } from '../schedule/types.ts';
-import { type NeedsUserReason, type NeedsUserContent, STDERR_FILE, STDOUT_FILE, type Stage } from '../core/records.ts';
-import { type AbsPath, absPath } from '../core/values.ts';
-import { reentryRecommendation, reopenRecommendation, routingChangedRecommendation } from '../needsuser.ts';
-import { failuresText, laneFailures } from './failures.ts';
-import { capturedEvidence } from '../git/evidence.ts';
+import { type AbsPath,absPath } from '../core/values.ts';
+import { capturedEvidence,patternPath } from '../git/evidence.ts';
+import { candidateLaneDir,smokeLaneDir } from '../git/snapshot.ts';
 import { standing } from '../git/worktree.ts';
+import type { RequiredWitness } from '../holistic/required.ts';
 import { regenerateLanes } from '../input/derived.ts';
 import type { PlanUnit } from '../input/plan.ts';
-import { type NextStage, nextStage } from '../schedule/ready.ts';
-import { type Reservation, type StageHolder, heldReservation, holderUnits, resourceTable, sameHolder } from '../resources/reserve.ts';
+import { reentryRecommendation,reopenRecommendation,routingChangedRecommendation } from '../needsuser.ts';
+import { NO_PARK_FACTS } from '../park/table.ts';
+import { restoredPathsDirective,revertedPathsDirective } from '../prompts/directives.ts';
+import type { FixRound } from '../prompts/inputs.ts';
+import { DECISIONS_FILE,buildOutput } from '../prompts/schemas.ts';
+import { worktreeRemoveOp } from '../recover/ops.ts';
+import { type Reservation,type StageHolder,heldReservation,holderUnits,resourceTable,sameHolder } from '../resources/reserve.ts';
+import type { Role } from '../routing/types.ts';
+import { type NextStage,nextStage } from '../schedule/ready.ts';
+import { ADMISSION_STAGES } from '../schedule/types.ts';
 import {
-  type Cancelled, type StageContext, type StageParent, dispatchOf, evidenceRoot, isCancelled, runOp, unitBranch, unitWorktree, verificationWorktree, witnessWorktree, workDir,
+type Cancelled,type StageContext,type StageParent,dispatchOf,evidenceRoot,isCancelled,runOp,unitBranch,unitWorktree,verificationWorktree,witnessWorktree,workDir,
 } from './dispatch.ts';
-import { consumeJudgment, gate, gateDirectives, unitTip } from './gate.ts';
-import { disputeDirective } from './review.ts';
+import { failuresText,laneFailures } from './failures.ts';
+import { consumeJudgment,gate,gateDirectives,unitTip } from './gate.ts';
 import {
-  batchMemberFix, candidate, candidateBrakeFix, candidateRefusalFix, candidateSeriesRoot, ff, latestCandidate, memberBatchCandidate, salvageRefusalFix, snapshot,
+batchMemberFix,candidate,candidateBrakeFix,candidateRefusalFix,candidateSeriesRoot,ff,latestCandidate,memberBatchCandidate,salvageRefusalFix,snapshot,
 } from './integrate.ts';
 import { invocationDir } from './invoke.ts';
-import { type LaneRecord, latestSpecSeries, presentCheckouts, removeCheckout, seriesDirty, seriesLedger, seriesTree, specSeriesRoot } from './lanes.ts';
-import type { FixRound } from '../prompts/inputs.ts';
-import { prepare } from './prepare.ts';
-import { mutantFix, reproduce, specFacts, syncRepairs } from './reproduce.ts';
-import {
-  type DecidedRound, type RoundInput, candidateFixRound, failingEvidenceDirs, failingLaneDirectives, gateReviseRound, laneFixRound, smokeFixRound, steerBrief,
-  witnessCheckoutFixRound, witnessFixRound,
-} from './rounds.ts';
-import {
-  type BuildRun, type StageDone, at, build, buildRead, evidence, failedFacts, fastSuiteRoot, keptSpecPath, laneGlobs, lanes, loadUnitSpec,
-  nowInside, planCheck, planCheckAnswerOf, quiesce, readDecisions, record, recordedCall, salvage, salvageRejections, stillOutside, teardown,
-} from './stages.ts';
+import { type LaneRecord,latestSpecSeries,presentCheckouts,removeCheckout,seriesDirty,seriesLedger,seriesTree,specSeriesRoot } from './lanes.ts';
 import { poc } from './poc.ts';
+import { prepare } from './prepare.ts';
+import { mutantFix,reproduce,specFacts,syncRepairs } from './reproduce.ts';
+import { disputeDirective } from './review.ts';
+import {
+type DecidedRound,type RoundInput,candidateFixRound,failingEvidenceDirs,failingLaneDirectives,gateReviseRound,laneFixRound,smokeFixRound,steerBrief,
+witnessCheckoutFixRound,witnessFixRound,
+} from './rounds.ts';
 import { scaffold } from './scaffold.ts';
 import { finishSplit } from './split.ts';
-import { restoredPathsDirective, revertedPathsDirective } from '../prompts/directives.ts';
-import type { Role } from '../routing/types.ts';
+import {
+type BuildRun,type StageDone,at,build,buildRead,evidence,failedFacts,fastSuiteRoot,keptSpecPath,laneGlobs,lanes,loadUnitSpec,
+nowInside,planCheck,planCheckAnswerOf,quiesce,readDecisions,record,recordedCall,salvage,salvageRejections,stillOutside,teardown,
+} from './stages.ts';
+import { type Next,type Target,decidedBy } from './transitions.ts';
 import { requiredAt } from './witnesscheck.ts';
-import { type Next, type Target, decidedBy } from './transitions.ts';
-import { worktreeRemoveOp } from '../recover/ops.ts';
 
 export type UnitResult =
   | Readonly<{ kind: 'merged' }>

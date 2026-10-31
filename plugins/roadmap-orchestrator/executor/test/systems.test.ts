@@ -2,19 +2,17 @@
 // systems map's reader, a path's class, candidate selection, a lane's input and its reuse key over real git trees, leaf
 // test files, cadence and its dev.16 defaults, the dev.16 lane rev, and Phase-0 row 16.
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
-import { type LaneId, type SystemName, sha } from '../src/core/ids.ts';
-import { canonicalJson } from '../src/core/json.ts';
-import { sha256Hex } from '../src/core/json.ts';
-import { type LaneDef, cadenceAtOrBefore, laneDef, laneDefOf, specM1 } from '../src/core/records.ts';
+import { describe,it } from 'node:test';
+import { type LaneId,type SystemName,sha } from '../src/core/ids.ts';
+import { type LaneDef,cadenceAtOrBefore,laneDef,laneDefOf,specM1 } from '../src/core/records.ts';
 import { SchemaError } from '../src/core/validate.ts';
-import { absPath, repoPath } from '../src/core/values.ts';
-import { inputShaOf, reuseKeyText } from '../src/git/reusekey.ts';
-import { laneRevMatches, laneRevOf, parseObligations } from '../src/holistic/types.ts';
+import { absPath,repoPath } from '../src/core/values.ts';
+import { inputShaOf,reuseKeyText } from '../src/git/reusekey.ts';
+import { laneRevMatches,laneRevOf,parseObligations } from '../src/holistic/types.ts';
 import { parsePlan } from '../src/input/plan.ts';
-import { type SystemsMap, laneInput, laneSelected, laneTestFiles, pathClass, systemsMap, systemsMapInForce, unknownLaneSystems } from '../src/input/systems.ts';
+import { type SystemsMap,laneInput,laneSelected,laneTestFiles,pathClass,systemsMap,systemsMapInForce,unknownLaneSystems } from '../src/input/systems.ts';
 import { parseRepoConfig } from '../src/routing/layers.ts';
-import { commitAll, git, makeRepo, tmpDir, writeFiles } from './helpers/repo.ts';
+import { commitAll,git,makeRepo,tmpDir,writeFiles } from './helpers/repo.ts';
 
 const MAP_JSON = {
   systems: {

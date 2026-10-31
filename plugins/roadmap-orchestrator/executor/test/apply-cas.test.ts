@@ -3,24 +3,24 @@
 // refuses. Over unit-common arcs (real git, the command path, the executor's own `spec.patch` op). Named tests:
 // rebase.export-race, rebase.same-spec-other-field, rebase.same-field-conflict, rebase.start-keeps-executor-acts.
 import assert from 'node:assert/strict';
-import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { mkdirSync,readFileSync,writeFileSync } from 'node:fs';
+import { dirname,join } from 'node:path';
 import { test } from 'node:test';
-import { type CommandOutcome, applyCommand } from '../src/commands/apply.ts';
+import { type CommandOutcome,applyCommand } from '../src/commands/apply.ts';
 import { exportInputs } from '../src/commands/inputs.ts';
 import { submitCommand } from '../src/commands/queue.ts';
 import type { Fact } from '../src/core/events.ts';
-import { arcId, clauseId, invocationIdOf, unitId } from '../src/core/ids.ts';
-import type { CommandBody, SpecPatchOp } from '../src/core/records.ts';
+import { arcId,clauseId,invocationIdOf,unitId } from '../src/core/ids.ts';
+import type { CommandBody,SpecPatchOp } from '../src/core/records.ts';
 import { absPath } from '../src/core/values.ts';
 import { runDir } from '../src/input/cli.ts';
-import { inForceFiles, readInputFiles, requirePlanInForce, revisionInForce } from '../src/input/inforce.ts';
-import { pinDispatch, runOp } from '../src/pipeline/dispatch.ts';
+import { inForceFiles,requirePlanInForce,revisionInForce } from '../src/input/inforce.ts';
+import { pinDispatch,runOp } from '../src/pipeline/dispatch.ts';
 import { loadUnitSpec } from '../src/pipeline/stages.ts';
-import { gitCommonDir, settlePlan } from '../src/preflight/checks.ts';
+import { gitCommonDir } from '../src/preflight/checks.ts';
 import { specPatchOp } from '../src/spec/patch.ts';
+import { type ArcDescriptor,type ArcRun,applyBody,commandContextFor,contextFor,setupArc } from './fixtures/unit-common.ts';
 import { tmpDir } from './helpers/repo.ts';
-import { type ArcDescriptor, type ArcRun, applyBody, commandContextFor, contextFor, setupArc } from './fixtures/unit-common.ts';
 
 const T = { timeout: 60_000 };
 type Json = Record<string, unknown>;

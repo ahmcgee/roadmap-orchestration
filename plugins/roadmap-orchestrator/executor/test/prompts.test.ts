@@ -2,32 +2,53 @@
 // their data is absent, the schema, tool-surface facts, invariants such as "the gate never receives the vision"), never
 // method prose: how a seat reads, reports or delegates is the model's, and its wording is free to change.
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { describe,it } from 'node:test';
 import {
-  clauseId, divergenceId, envId, findingId, jobId, laneId, laneRev, obligationId, questionId, ruleId, rulingId, sha, sha256, specRev, unitId,
-  type Sha, visionClauseId, invocationId, opIdOf, witnessItemId, arcId, givenId, proposalId, stationId, journeyId, milestoneId, polishId, serveName, pocQuestionId, resourceName,
-  systemName,
+type Sha,
+arcId,
+clauseId,divergenceId,envId,findingId,
+givenId,
+invocationId,
+jobId,
+journeyId,
+laneId,laneRev,
+milestoneId,
+obligationId,
+opIdOf,
+pocQuestionId,
+polishId,
+proposalId,
+questionId,
+resourceName,
+reviewFindingId,
+ruleId,rulingId,
+serveName,
+sha,sha256,specRev,
+stationId,
+systemName,
+unitId,
+visionClauseId,
+witnessItemId,
 } from '../src/core/ids.ts';
-import { isoTime } from '../src/core/values.ts';
-import { reviewFindingId } from '../src/core/ids.ts';
-import { failureRef } from '../src/core/records.ts';
-import {
-  DOC_RELATIONS, LENS_KINDS, OBLIGATION_DISPOSITIONS, type ObligationDef, RULE_RELATIONS, RULING_KINDS, RULING_LIFETIMES, RULING_SCHEMA,
-} from '../src/holistic/types.ts';
 import type { JsonValue } from '../src/core/json.ts';
+import { failureRef } from '../src/core/records.ts';
 import { SchemaError } from '../src/core/validate.ts';
-import { absPath, repoPath, repoPattern } from '../src/core/values.ts';
-import { headingSlug, quotedTextReason } from '../src/docs/contracts.ts';
-import { PROMPTS, SONNET_THINK_FIRST, UnsupportedPromptError, promptSize, renderPrompt, promptFor, support } from '../src/prompts/index.ts';
+import { absPath,isoTime,repoPath,repoPattern } from '../src/core/values.ts';
+import { headingSlug,quotedTextReason } from '../src/docs/contracts.ts';
 import type { BoundedDiff } from '../src/git/boundeddiff.ts';
-import { type RoleInputs, ROLE_INPUTS, UNIT_POLICY, laneCommand, obligationsText, pasted, pastedAs, targetDocument } from '../src/prompts/inputs.ts';
 import {
-  CHECKPOINT_SCHEMA, CLUSTER_REVIEWS, GATE_SCHEMA, PLAN_CHECK_SCHEMA, ROLE_SCHEMAS, ROLE_VALIDATORS, type RoleOutputs, BUILD_SCHEMA,
-  validateBuildOutput, validateCheckpointOutput, validateDecisionsFile, validateGateOutput, validatePackReviewOutput, validatePlanCheckOutput,
+DOC_RELATIONS,LENS_KINDS,OBLIGATION_DISPOSITIONS,type ObligationDef,RULE_RELATIONS,RULING_KINDS,RULING_LIFETIMES,RULING_SCHEMA,
+} from '../src/holistic/types.ts';
+import { RESOLVE_DIRECTIVE,RESPEC_DIRECTIVE,RESPEC_FRESH_DIRECTIVE,STEER_DIRECTIVE,repeatRedDirective,resolveUnmetDirective,smokeFixDirectives,witnessFixDirectives } from '../src/prompts/directives.ts';
+import { PROMPTS,SONNET_THINK_FIRST,UnsupportedPromptError,promptFor,promptSize,renderPrompt,support } from '../src/prompts/index.ts';
+import { ROLE_INPUTS,type RoleInputs,UNIT_POLICY,laneCommand,obligationsText,pasted,pastedAs,targetDocument } from '../src/prompts/inputs.ts';
+import {
+BUILD_SCHEMA,
+CHECKPOINT_SCHEMA,CLUSTER_REVIEWS,GATE_SCHEMA,PLAN_CHECK_SCHEMA,ROLE_SCHEMAS,ROLE_VALIDATORS,type RoleOutputs,
+validateBuildOutput,validateCheckpointOutput,validateDecisionsFile,validateGateOutput,validatePackReviewOutput,validatePlanCheckOutput,
 } from '../src/prompts/schemas.ts';
-import { RESOLVE_DIRECTIVE, RESPEC_DIRECTIVE, RESPEC_FRESH_DIRECTIVE, STEER_DIRECTIVE, resolveUnmetDirective, repeatRedDirective, smokeFixDirectives, witnessFixDirectives } from '../src/prompts/directives.ts';
-import { arcStack, resolveRouting, seatsInForce } from '../src/routing/layers.ts';
-import { FRESH_ROLES, MODEL_IDS, PROFILES, ROLES, type Role, WALK_ROLES, atSeat } from '../src/routing/types.ts';
+import { arcStack,resolveRouting,seatsInForce } from '../src/routing/layers.ts';
+import { FRESH_ROLES,MODEL_IDS,PROFILES,ROLES,type Role,WALK_ROLES,atSeat } from '../src/routing/types.ts';
 
 /**
  * The judging roles with a written Opus module and derived Sonnet and Haiku rows: the read-only ones (but the verifier, dev.17,

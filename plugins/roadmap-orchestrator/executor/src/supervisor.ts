@@ -41,39 +41,39 @@
 // the needs-user on the third crash.
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { closeSync, existsSync, openSync, readFileSync, readdirSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { closeSync,existsSync,openSync,readFileSync,readdirSync } from 'node:fs';
+import { basename,dirname,join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
-import { identityOf, signal } from './contain/proc.ts';
+import { identityOf,signal } from './contain/proc.ts';
 import { crashPoint } from './core/crash.ts';
-import { atomicJson, canonicalJson as fileJson, durableUnlink, exclusivePublish, readJson } from './core/fsx.ts';
-import { LogCorruptError, readJournal } from './core/log.ts';
 import type { Parent } from './core/events.ts';
+import { atomicJson,durableUnlink,exclusivePublish,canonicalJson as fileJson,readJson } from './core/fsx.ts';
 import { supervisorNeedsUserId } from './core/ids.ts';
 import { canonicalJson } from './core/json.ts';
+import { LogCorruptError,readJournal } from './core/log.ts';
 import {
-  type ExecutorExitReason, type HostLockClaim, type NeedsUserContent, type ProcIdentity, type ReadinessFile, type SupervisorState, executorExitReason, heartbeat,
-  readinessFile, supervisorState,
+type ExecutorExitReason,type HostLockClaim,type NeedsUserContent,type ProcIdentity,type ReadinessFile,type SupervisorState,executorExitReason,heartbeat,
+readinessFile,supervisorState,
 } from './core/records.ts';
-import { type Read, literal, object, positive, tagged } from './core/validate.ts';
-import { type AbsPath, type IsoTime, absPath, isoTimeOf } from './core/values.ts';
+import { type Read,literal,object,positive,tagged } from './core/validate.ts';
+import { type AbsPath,type IsoTime,absPath,isoTimeOf } from './core/values.ts';
 import { SCHEMA_VERSION } from './core/version.ts';
-import {
-  EXIT_REASON_FILE, HEARTBEAT_FILE, type RefusedReason, executorArgv, exitLine, raiseClaimRefusal, refusedOf, refusedReason, writeFileNeedsUser,
-  writeRejection,
-} from './executor.ts';
 import { startDemoKeeper } from './demo/keeper.ts';
+import {
+EXIT_REASON_FILE,HEARTBEAT_FILE,type RefusedReason,executorArgv,exitLine,raiseClaimRefusal,refusedOf,refusedReason,writeFileNeedsUser,
+writeRejection,
+} from './executor.ts';
 import { compactResidues } from './host/compact.ts';
-import { hostPath, openHostDir } from './host/hostdir.ts';
+import { hostPath,openHostDir } from './host/hostdir.ts';
 import { selfIdentity } from './host/liveness.ts';
-import { claimHost, releaseHost, renewClaim } from './host/lock.ts';
-import { createHandshake, publishOwner } from './host/owner.ts';
+import { claimHost,releaseHost,renewClaim } from './host/lock.ts';
+import { createHandshake,publishOwner } from './host/owner.ts';
 import { runDir as runDirOf } from './input/cli.ts';
-import { gitCommonDir, legacyRoadmapDir, loadPlan } from './preflight/checks.ts';
+import { gitCommonDir,legacyRoadmapDir,loadPlan } from './preflight/checks.ts';
 import type { StartupRejection } from './preflight/startup.ts';
 import { reconcilePreviousArc } from './recover/recover.ts';
-import { type ProfileName, profileName } from './routing/types.ts';
+import { type ProfileName,profileName } from './routing/types.ts';
 
 export const SUPERVISOR_STATE = 'supervisor.state.json';
 export const SUPERVISOR_ENTRY = fileURLToPath(new URL('./entry/supervisor.ts', import.meta.url));

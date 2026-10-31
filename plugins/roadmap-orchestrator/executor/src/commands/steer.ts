@@ -1,44 +1,21 @@
-// `roadmap steer <u> --brief <f> --budget <min> [--class <c>] [--resume]` (M3 step A3; DESIGN-1.0.md §2.3, R11): the
-// architect's alternate implementer entry for a parked unit, or a re-entry whose preparation decided where it enters
-// and that has not started there (`preparing`). Mutation, scope {u}. The effect, each step only where missing (a run
-// again after a crash finds what is done):
-//
-//   1. `--class`: the unit's routing layer seats that class at `build.<its build tier>`, a revision of the plan in
-//      force (the `route` edit class, `routing{routingRev, unit}`, source the command) committed through the apply core
-//      and the fence, after a smoke of any backend it newly seats; the steer record then names a new routingRev.
-//      Nothing is written into the owner's plan file (2026-10-16): a later `apply` rebases onto the layer
-//      (src/input/rebase.ts).
-//   2. The brief, kept content-addressed (`inputs/<sha256>.brief.md`): the steer round reads it from there.
-//   3. The pre-steer state saved: an `evidence.snapshot` of the unit worktree (what it holds beyond its commit; the
-//      commit stays on the branch the round builds on).
-//   4. A park's open needs-user acknowledged by this command.
-//   5. `steered{unit, command, brief, budgetMin, resume}`, the postcondition: the fold invalidates the unit's approval,
-//      clears its park and sets its steer round (src/core/state.ts). The driver then runs one uncharged steer round, a
-//      fresh session with the brief and the budget as its window, then salvage → lanes → gate; the table's steer rows
-//      park it `steered` unless the pass is green and `--resume` was given (src/pipeline/transitions.ts `steerExit`).
-//
-// Refused: an unknown unit; a unit never dispatched (nothing to steer: it plan-checks when it runs); one not parked or
-// preparing; a brief that no longer hashes to what the CLI recorded. A steer session never becomes a judgment session:
-// every judgment runs a fresh one (`freshJudgmentSession`). Widening the envelope is impossible by construction: the
-// steer round runs under the pinned scope, and salvage enforces it.
-import { existsSync, readFileSync } from 'node:fs';
+// Steer any unfinished unit. The scheduler drains a running invocation before this fresh steer round.
+import { existsSync,readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { CommandId,UnitId } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
-import type { CommandId, UnitId } from '../core/ids.ts';
 import type { CommandBody } from '../core/records.ts';
 import { absPath } from '../core/values.ts';
 import { capturedEvidence } from '../git/evidence.ts';
-import { inForceFiles, keepInput, specBytesOf, specShaInForce, planRouting, requirePlanInForce, revisionInForce } from '../input/inforce.ts';
+import { inForceFiles,keepInput,planRouting,requirePlanInForce,revisionInForce,specBytesOf,specShaInForce } from '../input/inforce.ts';
 import { parsePlan } from '../input/plan.ts';
-import { firstPin, unitWorktree } from '../pipeline/dispatch.ts';
+import { firstPin,runOp,unitWorktree } from '../pipeline/dispatch.ts';
 import { dirtySnapshot } from '../pipeline/lanes.ts';
 import { BRIEF_INPUT } from '../pipeline/rounds.ts';
-import { backendsOf, smokeBackends, smokeRejections } from '../preflight/smoke.ts';
+import { backendsOf,smokeBackends,smokeRejections } from '../preflight/smoke.ts';
 import { evidenceSnapshotOp } from '../recover/ops.ts';
 import type { RoutingLayer } from '../routing/types.ts';
-import { bytesSha256, parseSpec } from '../spec/spec.ts';
-import { runOp } from '../pipeline/dispatch.ts';
-import { type CommandContext, type Effect, acknowledgePark, commitUnderFence, evaluateRevision, parentOf, rejectedText } from './apply.ts';
+import { bytesSha256,parseSpec } from '../spec/spec.ts';
+import { type CommandContext,type Effect,commitUnderFence,evaluateRevision,parentOf,rejectedText } from './apply.ts';
 
 type SteerBody = Extract<CommandBody, { type: 'steer' }>;
 
@@ -70,7 +47,6 @@ export async function steer(ctx: CommandContext, id: CommandId, body: SteerBody)
   keepInput(ctx.runDir, brief, BRIEF_INPUT);
   verified.push(`brief ${body.brief.sha256} kept`);
   verified.push(...await savePreSteer(ctx, id, unit.id));
-  if (u.decided !== null && u.status === 'park-pending') verified.push(...acknowledgePark(ctx, id, unit.id, u.decided));
   ctx.journal.fact({ kind: 'steered', unit: unit.id, command: id, brief: body.brief.sha256, budgetMin: body.budgetMin, resume: body.resume });
   verified.push(`unit ${unit.id} steered: one steer round of ${body.budgetMin} min, then lanes and gate; ${body.resume ? 'a green pass goes on' : 'it parks for review'}`);
   return { kind: 'applied', verified };

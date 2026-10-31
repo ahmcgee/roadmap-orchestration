@@ -1,28 +1,15 @@
-// `roadmap inputs export --repo <repo> --arc <arc> --out <dir>` (M4a rev 3, I1, F17): a host act, read-only, no lock.
-// Writes the arc's complete current input view from the run dir's kept inputs (`inForceFiles`, src/input/inforce.ts:
-// the plan in force, every unit's spec at its current rev including the executor's and plan-check's post-plan
-// patches, the rulings ledger and its sidecars, the obligations, the vision, and a corpus arc's pin and Phase-0 record)
-// into `--out`, which must not exist, plus `export.json {planRev, specRevs, base}`, `base` the manifest of
-// the exported files (every byte kept in the run dir). The one way to get the files in force (the executor never writes
-// into the owner's files): export, edit, `apply --base <out>/export.json`, which rebases the edit onto whatever the arc did
-// since (src/input/rebase.ts); never copying a historical manifest by hand. With the executor down, `start --base
-// <out>/export.json` rebases the edit the same way (deflake scope, 2026-10-23). Reads the run dir only: it needs no executor.
-//
-// Layout: a file beside the plan (start.json's plan file) keeps its path relative to the plan's directory; a file in
-// the product repo (a corpus arc's vision record) goes under `repo/` at its repo path. The corpus guide is not exported:
-// it is the one committed at the plan's baseline, which no apply edits.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative, sep } from 'node:path';
-import { canonicalJson } from '../core/json.ts';
+// Export the plan in force and its current spec bytes, with export.json recording revision and base manifest.
+import { existsSync,mkdirSync,readFileSync,writeFileSync } from 'node:fs';
+import { dirname,join,relative,sep } from 'node:path';
 import { readJson } from '../core/fsx.ts';
-import type { ArcId, PlanRev, SpecRev, UnitId } from '../core/ids.ts';
+import type { ArcId,PlanRev,SpecRev,UnitId } from '../core/ids.ts';
+import { canonicalJson } from '../core/json.ts';
 import { readJournal } from '../core/log.ts';
-import { type RevisionManifest, applyManifest, runStart } from '../core/records.ts';
-import { SchemaError } from '../core/validate.ts';
+import { type RevisionManifest,applyManifest,runStart } from '../core/records.ts';
 import type { AbsPath } from '../core/values.ts';
 import { START_FILE } from '../executor.ts';
-import { CliError, runDir } from '../input/cli.ts';
-import { type InputFile, inForceFiles, parseUnitSpec, planInForce, revisionInForce, revisionManifestOf } from '../input/inforce.ts';
+import { CliError,runDir } from '../input/cli.ts';
+import { type InputFile,inForceFiles,parseUnitSpec,planInForce,revisionInForce,revisionManifestOf } from '../input/inforce.ts';
 import { gitCommonDir } from '../preflight/checks.ts';
 
 export const EXPORT_FILE = 'export.json';
@@ -78,7 +65,6 @@ export async function exportInputs(args: InputsExportArgs): Promise<InputsExport
     specRevs[unit] = parseUnitSpec(f.bytes!, f.path, unit).rev;
   }
   write(files.ledger);
-  for (const s of files.sidecars.values()) write(s);
   for (const f of [files.obligations, files.vision]) if (f !== null) write(f);
   if (files.corpus !== null) {
     write(files.corpus.pin);

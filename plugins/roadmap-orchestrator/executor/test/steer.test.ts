@@ -8,36 +8,36 @@
 // Named tests: steer.round-uncharged, steer.resume-vs-park, steer.never-judge, steer.rejections, steer.class,
 // steer.class-write-back, steer.class-architect-edit, steer.crash-cells.
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { readFileSync,readdirSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, test } from 'node:test';
-import { type CommandOutcome, applyCommand } from '../src/commands/apply.ts';
-import { readReceipt, submitCommand, terminalReceipt } from '../src/commands/queue.ts';
+import { describe,test } from 'node:test';
+import { type CommandOutcome,applyCommand } from '../src/commands/apply.ts';
+import { readReceipt,submitCommand,terminalReceipt } from '../src/commands/queue.ts';
 import type { Fact } from '../src/core/events.ts';
-import { type CommandId, type NeedsUserId, arcId, commandId } from '../src/core/ids.ts';
+import { type CommandId,type NeedsUserId,arcId,commandId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
+import type { CommandBody,NeedsUserContent } from '../src/core/records.ts';
 import { fold } from '../src/core/state.ts';
-import type { CommandBody, NeedsUserContent } from '../src/core/records.ts';
 import { absPath } from '../src/core/values.ts';
+import { keptInput } from '../src/input/inforce.ts';
+import { openBlocking,raiseNeedsUser } from '../src/needsuser.ts';
+import type { StageContext } from '../src/pipeline/dispatch.ts';
+import { handoverOf } from '../src/pipeline/handover.ts';
 import { BRIEF_INPUT } from '../src/pipeline/rounds.ts';
+import { loadUnitSpec } from '../src/pipeline/stages.ts';
+import { type Gate,runUnit,step } from '../src/pipeline/unit.ts';
 import { STEER_DIRECTIVE } from '../src/prompts/directives.ts';
 import { handoverText } from '../src/prompts/inputs.ts';
-import { handoverOf } from '../src/pipeline/handover.ts';
-import { loadUnitSpec } from '../src/pipeline/stages.ts';
-import { keptInput } from '../src/input/inforce.ts';
-import { openBlocking, raiseNeedsUser } from '../src/needsuser.ts';
-import type { StageContext } from '../src/pipeline/dispatch.ts';
-import { type Gate, runUnit, step } from '../src/pipeline/unit.ts';
 import { recover } from '../src/recover/recover.ts';
-import { bytesSha256, fileSha256 } from '../src/spec/spec.ts';
-import { assertFired, writeTrigger } from './helpers/crash.ts';
+import { bytesSha256,fileSha256 } from '../src/spec/spec.ts';
+import { BUILD_REPORT,SCENARIO_TIMEOUT_MS,admitAll,planCheckStep } from './fixtures/stage-common.ts';
+import { followingContext,unitInForce } from './fixtures/steer-common.ts';
+import { type ArcDescriptor,type ArcRun,U1,applyBody,codexStep,commandContextFor,contextFor,gateStep,mulBuild,outcomes,setupArc } from './fixtures/unit-common.ts';
+import { assertFired,writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
 import { tmpDir } from './helpers/repo.ts';
-import { type CallRecord, type Step, readCalls } from './helpers/scenario.ts';
-import { BUILD_REPORT, SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
-import { followingContext, unitInForce } from './fixtures/steer-common.ts';
-import { type ArcDescriptor, type ArcRun, U1, applyBody, codexStep, commandContextFor, contextFor, gateStep, mulBuild, outcomes, setupArc } from './fixtures/unit-common.ts';
-import { STEER, crashCells } from './matrix.ts';
+import { type CallRecord,type Step,readCalls } from './helpers/scenario.ts';
+import { STEER,crashCells } from './matrix.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 const live = (): Gate => admitAll;
@@ -248,10 +248,10 @@ describe('steer.resume-vs-park', () => {
       const index = log.findLastIndex((e) => e.type === 'fact' && e.fact.kind === 'stage-outcome');
       const last = log[index]!;
       assert.ok(last.type === 'fact' && last.fact.kind === 'stage-outcome' && last.fact.stage === 'lanes' && last.fact.outcome === 'red');
-      const { unchargedLanesReds: _counter, ...legacy } = last.fact;
+      const legacy = last.fact;
       for (const outcome of ['red', 'not-certified'] as const) {
         const adopted = fold(arcId(d.arc), [...log.slice(0, index), { ...last, fact: { ...legacy, outcome } }]);
-        assert.equal(adopted.units.find((u) => u.unit === U1)!.counters.unchargedLanesReds, 0, 'valid dev.31 steering parks retain the warned default');
+        assert.equal(adopted.units.find((u) => u.unit === U1)!.counters.unchargedLanesReds, 0, 'steering parks remain uncharged');
         assert.throws(() => fold(arcId(d.arc), [...log.slice(0, index), { ...last, fact: { ...legacy, outcome, park: { class: 'operator', kind: 'design' } } }]), /certification allowance/);
       }
       assert.throws(() => fold(arcId(d.arc), [...log.slice(0, index), { ...last, fact: { ...legacy, outcome: 'witnesses-missing' } }]), /certification allowance/, 'steering never exempted a missing witness');
@@ -290,30 +290,19 @@ test('steer.never-judge: the gate after a steer round is a fresh judgment sessio
   }
 });
 
-test('steer.rejections: an active unit, and a brief whose bytes changed after hashing, are rejected with no steered fact', T, async () => {
-  const d = setupArc({ steps: TO_PARK });
-  const r = contextFor(d);
+test('steer accepts an active unfinished unit, and refuses a changed brief', T, async () => {
+  const d = setupArc({steps: TO_PARK}); const r = contextFor(d);
   try {
-    // Active: the unit has built and is not parked.
-    const built = await step(r.ctx, r.unit('u1'));
-    assert.equal(built.kind, 'continue');
-    await step(r.ctx, r.unit('u1'));
-    assert.equal(outcomes(d).at(-1), 'build:success');
-    const active = await command(r, steerBody());
-    assert.deepEqual(active.outcome, { kind: 'rejected', reason: 'unit u1 is active: only a parked unit, or a re-entry prepared and not yet started, can be steered' });
-    assert.deepEqual(steeredFacts(d), []);
-
     await parkU1(r);
-    const brief = writeBrief();
-    writeFileSync(brief.path, `${BRIEF} (edited after the CLI hashed it)`);
-    const changed = await command(r, steerBody({ brief }));
-    assert.deepEqual(changed.outcome, { kind: 'rejected', reason: `the brief ${brief.path} changed since the command hashed it` });
-    assert.deepEqual(steeredFacts(d), []);
-    assert.equal(r.journal.view.unit(U1).status, 'park-pending', 'a rejected steer changes nothing');
-    assert.equal(readdirSync(join(d.runDir, 'inputs')).filter((n) => n.endsWith(`.${BRIEF_INPUT}`)).length, 0, 'no brief kept');
-  } finally {
-    r.journal.close();
-  }
+    const brief = writeBrief(); writeFileSync(brief.path, 'changed');
+    const rejected = await command(r, steerBody({brief}));
+    assert.equal(rejected.outcome.kind, 'rejected'); assert.deepEqual(steeredFacts(d), []);
+    assert.equal((await command(r, steerBody())).outcome.kind, 'applied');
+    assert.equal(r.journal.view.unit(U1).entry?.kind, 'steer');
+    // A second steer before the next build replaces the entry of this unfinished active unit.
+    assert.equal((await command(r, steerBody())).outcome.kind, 'applied');
+    assert.equal(r.journal.view.unit(U1).status, 'active');
+  } finally {r.journal.close();}
 });
 
 test('steer.class: `--class frontier` on a parked unit commits a plan revision routing u1, and the steer round runs fresh on the new seat (Claude)', T, async () => {
@@ -352,6 +341,7 @@ test('steer.class-architect-edit: an owner\'s plan edit written while the class 
   try {
     await parkU1(r);
     const f = followingContext(r);
+    const exportBase = applyBody(d).base;
     // The owner's edit in progress: a new direction.
     const edited = `${JSON.stringify({ ...(JSON.parse(readFileSync(d.planPath, 'utf8')) as Record<string, unknown>), direction: 'Keep the helpers tiny.' })}\n`;
     writeFileSync(d.planPath, edited);
@@ -361,10 +351,10 @@ test('steer.class-architect-edit: an owner\'s plan edit written while the class 
     assert.equal(unitInForce(f, 'u1').routing?.build?.med, 'frontier', 'the revision is in force');
     assert.equal(readFileSync(d.planPath, 'utf8'), edited, 'the owner\'s file is untouched');
 
-    const again = await command(r, applyBody(d), f);
-    assert.equal(again.outcome.kind, 'applied', JSON.stringify(again.outcome));
-    assert.equal(r.journal.view.planApplied()?.rev, applied.rev + 1);
-    assert.equal(f.plan().direction, 'Keep the helpers tiny.', 'the owner\'s edit');
+    const again = await command(r, applyBody(d, exportBase), f);
+    assert.equal(again.outcome.kind, 'rejected', JSON.stringify(again.outcome));
+    assert.equal(r.journal.view.planApplied()?.rev, applied.rev);
+    assert.equal(f.plan().direction, r.ctx.plan().direction, 'the stale plan edit cannot overwrite the class revision');
     assert.equal(unitInForce(f, 'u1').routing?.build?.med, 'frontier', 'and the layer');
   } finally {
     r.journal.close();
@@ -442,4 +432,23 @@ describe(`matrix row ${STEER}`, () => {
       }
     });
   }
+});
+
+test('note delivery: records a fact without reopening, and the next build receives notes[]', T, async () => {
+  const text = 'NOTE-DELIVERY-MARKER: preserve the arithmetic boundary';
+  const build = mulBuild();
+  const d = setupArc({steps: [planCheckStep({decision: 'approve'}), {...build, expect: {...build.expect, stdinContains: [text]}} as Step]});
+  const r = contextFor(d);
+  try {
+    const path = join(d.scenarioDir, 'note.md'); writeFileSync(path, text);
+    const before = r.journal.view.unit(U1);
+    const cmd = await command(r, {type: 'note', unit: U1, brief: {path: absPath(path), sha256: bytesSha256(Buffer.from(text))}});
+    assert.equal(cmd.outcome.kind, 'applied');
+    assert.deepEqual(r.journal.view.unit(U1), before, 'a note never opens or reopens a stage');
+    assert.equal(r.journal.view.notes(U1).length, 1);
+    await step(r.ctx, r.unit('u1')); await step(r.ctx, r.unit('u1'));
+    assert.equal(outcomes(d).at(-1), 'build:success');
+    assert.ok(readCalls(d.scenarioPath).at(-1)!.stdin.includes(text));
+    assert.notEqual(readCalls(d.scenarioPath).at(-1)!.step, null);
+  } finally {r.journal.close();}
 });

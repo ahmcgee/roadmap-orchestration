@@ -67,63 +67,70 @@
 // the first), stopping once `minPasses` passed or can no longer pass; the lane passes with `minPasses` passes, and its
 // record is its last passing run (else its last run). Never the red-lane protocol, never flaky. A deflake unit's
 // verification (dev.17, `verify` on its spawns) runs its lane the same way with every run required to pass.
-import { resourceEnvironments } from '../input/plan.ts';
-import { cpuCost, laneCpuKey } from '../resources/calibrate.ts';
-import { CPU_COST } from '../schedule/types.ts';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { basename, dirname, join, posix } from 'node:path';
+import { existsSync,mkdirSync,readFileSync } from 'node:fs';
+import { basename,dirname,join,posix } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
-import { sameExecution } from '../input/laneexecution.ts';
-import type { FlakeOn, IntentOf, LaneIdentity, Parent, WitnessFor } from '../core/events.ts';
+import type { FlakeOn,IntentOf,LaneIdentity,Parent,WitnessFor } from '../core/events.ts';
+import type { FlakyEvent } from '../core/flaky.ts';
+import { exclusivePublish,canonicalJson as fileJson,readJson } from '../core/fsx.ts';
 import {
-  type EnvId, type InvocationId, type JobId, type LaneId, type LaneRev, type OpId, type ResourceInstance, type ResourceName, type ResourceUnit, type Sha, type UnitId,
-  invocationDirName, invocationId, laneRev, opKey, parseInvocationId, parseOpId, sha256,
+type EnvId,type InvocationId,type JobId,type LaneId,type LaneRev,type OpId,type ResourceInstance,type ResourceName,type ResourceUnit,type Sha,type UnitId,
+invocationDirName,invocationId,laneRev,opKey,parseInvocationId,parseOpId,sha256,
 } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
-import { canonicalJson, sha256Hex } from '../core/json.ts';
+import { canonicalJson,sha256Hex } from '../core/json.ts';
 import { spawnPressureOf } from '../core/projections.ts';
-import { type ObservationStore, type WitnessedEntry, observationOf, observationStore, reuse, verdictOf } from '../holistic/observe.ts';
-import { type ReuseKey, inputShaOf } from '../git/reusekey.ts';
-import { type SystemsMap, laneInput, laneTestFiles, systemsMapInForce } from '../input/systems.ts';
-import { type ArcLaneDef, type ObligationDef, type Obligations, type WitnessRecord, isExempt, laneRevOf } from '../holistic/types.ts';
-import { WITNESS_LINES, WITNESS_RECORD_FILE, collectWitness, envIdOf, hostIdentity, witnessEnv, witnessRecordOf, writeWitnessRecord } from '../holistic/witness.ts';
-import { git, revParse } from '../git/git.ts';
-import { isAncestor } from '../git/ff.ts';
-import { candidateLaneDir, jobEvidenceRoot, jobLaneDir, witnessDir } from '../git/snapshot.ts';
-import type { AcquireFirst } from '../schedule/arbiter.ts';
-import { exclusivePublish, canonicalJson as fileJson, readJson } from '../core/fsx.ts';
 import {
-  type CommandVerdict, type IgnoredCensus, isRed, type LaneDef, type RedRev, type SpecM1, STDERR_FILE, STDOUT_FILE, type NeedsUserContent, ignoredCensus,
-  LANE_CADENCES, TEST_FILES_TOKEN, cadenceAtOrBefore,
+type CommandVerdict,type IgnoredCensus,
+LANE_CADENCES,
+type LaneDef,
+type NeedsUserContent,
+type RedRev,
+STDERR_FILE,STDOUT_FILE,
+type SpecM1,
+TEST_FILES_TOKEN,cadenceAtOrBefore,
+ignoredCensus,
+isRed,
 } from '../core/records.ts';
-import { type AbsPath, type IsoTime, type RepoPath, type RepoPattern, absPath, branchRef, isoTimeOf, repoPath, repoPattern } from '../core/values.ts';
-import { type EvidenceManifest, FILES_DIR, capturedEvidence, manifestPath, namedPathGlobs, patternPath, readManifest } from '../git/evidence.ts';
-import { ignoredWrites, planIgnored } from '../git/ignored.ts';
-import { statusPorcelainV2Z } from '../git/git.ts';
-import { type WorktreeCreateRequest, removedSince, standing } from '../git/worktree.ts';
-import { type HostSample, readHostSample } from '../host/sample.ts';
+import { type AbsPath,type IsoTime,type RepoPath,type RepoPattern,absPath,branchRef,isoTimeOf,repoPath,repoPattern } from '../core/values.ts';
+import { type EvidenceManifest,FILES_DIR,capturedEvidence,manifestPath,namedPathGlobs,patternPath,readManifest } from '../git/evidence.ts';
+import { isAncestor } from '../git/ff.ts';
+import { git,revParse,statusPorcelainV2Z } from '../git/git.ts';
+import { ignoredWrites,planIgnored } from '../git/ignored.ts';
+import { type ReuseKey,inputShaOf } from '../git/reusekey.ts';
+import { candidateLaneDir,jobEvidenceRoot,jobLaneDir,witnessDir } from '../git/snapshot.ts';
+import { type WorktreeCreateRequest,removedSince,standing } from '../git/worktree.ts';
+import { type ObservationStore,type WitnessedEntry,observationOf,observationStore,reuse,verdictOf } from '../holistic/observe.ts';
+import { type ArcLaneDef,type ObligationDef,type Obligations,type WitnessRecord,isExempt,laneRevOf } from '../holistic/types.ts';
+import { WITNESS_LINES,WITNESS_RECORD_FILE,collectWitness,envIdOf,hostIdentity,witnessEnv,witnessRecordOf,writeWitnessRecord } from '../holistic/witness.ts';
 import { PRESSURE_SATURATED } from '../host/pressure.ts';
-import { HOST_SIGNATURES, HOST_SIGNATURES_REV, type HostSignatureId, outputSignatures, outputTail } from '../host/signatures.ts';
-import { type Argv0, resolveArgv0 } from '../preflight/argv0.ts';
-import type { BuildLane, LaneLedgerEntry, ObligationView } from '../prompts/inputs.ts';
-import { instanceEnv, laneCpu, requestOf } from '../resources/pool.ts';
-import { releaseEnvironment, useEnvironment } from '../resources/environments.ts';
+import { type HostSample,readHostSample } from '../host/sample.ts';
+import { HOST_SIGNATURES,HOST_SIGNATURES_REV,type HostSignatureId,outputSignatures,outputTail } from '../host/signatures.ts';
+import { sameExecution } from '../input/laneexecution.ts';
+import { resourceEnvironments } from '../input/plan.ts';
+import { type SystemsMap,laneInput,laneTestFiles,systemsMapInForce } from '../input/systems.ts';
+import { type Argv0,resolveArgv0 } from '../preflight/argv0.ts';
+import type { BuildLane,LaneLedgerEntry,ObligationView } from '../prompts/inputs.ts';
+import { evidenceSnapshotOp,worktreeCreateOp,worktreeRemoveOp } from '../recover/ops.ts';
+import { cpuCost,laneCpuKey } from '../resources/calibrate.ts';
+import { releaseEnvironment,useEnvironment } from '../resources/environments.ts';
+import { instanceEnv,laneCpu,requestOf } from '../resources/pool.ts';
 import { probe } from '../resources/probe.ts';
 import {
-  type JobHolder, type Reservation, type ResourceContext, type SpecLane, type StageHolder, cleanup, heldReservation, jobOwnerLabel, reserve, run,
+type JobHolder,type Reservation,type ResourceContext,type SpecLane,type StageHolder,cleanup,heldReservation,jobOwnerLabel,reserve,run,
 } from '../resources/reserve.ts';
-import { OWNER_ENV, ownerLabel } from '../resources/teardown.ts';
+import { OWNER_ENV,ownerLabel } from '../resources/teardown.ts';
 import { runnerFiles } from '../runner/files.ts';
-import type { Acquire, Rank, ResourceRequest } from '../schedule/types.ts';
-import { type StageContext, type StageParent, evidenceRoot, runOp, verificationWorktree } from './dispatch.ts';
-import { invocationDir, invoke } from './invoke.ts';
+import type { AcquireFirst } from '../schedule/arbiter.ts';
+import type { Acquire,Rank,ResourceRequest } from '../schedule/types.ts';
+import { CPU_COST } from '../schedule/types.ts';
+import { flakeOf,observeFlake } from './deflake.ts';
+import { type StageContext,type StageParent,evidenceRoot,runOp,verificationWorktree } from './dispatch.ts';
+import { invocationDir,invoke } from './invoke.ts';
 import {
-  type FailureSignature, type LaneCancel, type LaneHost, type RedClass, type RedEvidence, type RepeatOf, classifyRed, failureSignature, hostWasBusy,
-  laneAbortReason, laneCancelOf, readRedClass, redLane, writeRedClass,
+type FailureSignature,type LaneCancel,type LaneHost,type RedClass,type RedEvidence,type RepeatOf,classifyRed,failureSignature,hostWasBusy,
+laneAbortReason,laneCancelOf,readRedClass,redLane,writeRedClass,
 } from './redlane.ts';
-import { evidenceSnapshotOp, worktreeCreateOp, worktreeRemoveOp } from '../recover/ops.ts';
-import { flakeOf, observeFlake } from './deflake.ts';
-import type { FlakyEvent } from '../core/flaky.ts';
 
 /**
  * The tree a flake of a run at `at` was seen on (dev.21, src/core/events.ts `FlakeOn`): a unit's own (`unit`) when a unit

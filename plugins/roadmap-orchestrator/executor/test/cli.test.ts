@@ -1,15 +1,15 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync,readFileSync,readdirSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { describe,it } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { describe, it } from 'node:test';
 import { arcId } from '../src/core/ids.ts';
 import { commandFile } from '../src/core/records.ts';
 import { absPath } from '../src/core/values.ts';
-import { CliError, parseCommand, parseStartArgs, runDir } from '../src/input/cli.ts';
+import { CliError,parseCommand,parseStartArgs,runDir } from '../src/input/cli.ts';
 import { runUntilExit } from './helpers/proc.ts';
-import { makeRepo, tmpDir } from './helpers/repo.ts';
+import { makeRepo,tmpDir } from './helpers/repo.ts';
 
 const HOST = { type: 'host' } as const;
 const EXPLICIT = ['--repo', '/r', '--arc', 'arc-1'];

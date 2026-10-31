@@ -2,21 +2,23 @@
 // RunnerFiles (3a), Adapter (4), GitOp (8a/8b), Reconciler per op kind (3c, 7, 8a, 8b, 9, 10, 13). The
 // reservation cycle's typed handles live beside their one implementation, src/resources/reserve.ts (10).
 // Interfaces only; no behaviour here.
+import type { Backend,UnitRole } from '../routing/types.ts';
 import type {
-  AbortCode, DoneRecord, Fact, FlowFact, GitOpKind, IntentOf, IntentRecord, JudgmentInputs, JudgmentStage, OpExpect, OpKind, OpOutcome, OpPost, Parent,
-  PlanAppliedFact, PropagationFact, RecoveredBy, WalkFact, FlakyFact,
+AbortCode,DoneRecord,Fact,
+FlakyFact,
+FlowFact,GitOpKind,IntentOf,IntentRecord,JudgmentInputs,JudgmentStage,OpExpect,OpKind,OpOutcome,OpPost,Parent,
+PlanAppliedFact,PropagationFact,RecoveredBy,WalkFact,
 } from './events.ts';
 import type {
-  AmendmentId, ArcId, ClaudeSessionId, CommandId, DivergenceId, EdgeId, FindingId, InvocationId, JobId, JobKind, MilestoneId, NeedsUserId, OpId, OpKey, PolishId, ResourceUnit, Sha, Sha256Hex, UnitId,
+AmendmentId,ArcId,ClaudeSessionId,CommandId,DivergenceId,EdgeId,FindingId,InvocationId,JobId,JobKind,MilestoneId,NeedsUserId,OpId,OpKey,PolishId,ResourceUnit,Sha,Sha256Hex,UnitId,
 } from './ids.ts';
-import type { SessionCharge } from './usage.ts';
 import type {
-  CancelFile, ChildEnd, ContainmentMode, DispatchRecord, ExitFile, KillReason, LaunchFile, ProcIdentity, ResultFile, RunnerFileMap,
-  RunnerFileName,
+CancelFile,ChildEnd,ContainmentMode,DispatchRecord,ExitFile,KillReason,LaunchFile,ProcIdentity,ResultFile,RunnerFileMap,
+RunnerFileName,
 } from './records.ts';
-import type { ApplyQueued, BackendParkState, EdgeResolvedState, FindingState, HolisticFold, ProbeState, ResidueState, ResourceEntry, ReviewFold, UnitState } from './state.ts';
-import type { Backend, UnitRole } from '../routing/types.ts';
-import type { AbsPath, IsoTime } from './values.ts';
+import type { ApplyQueued,BackendParkState,EdgeResolvedState,FindingState,HolisticFold,ProbeState,ResidueState,ResourceEntry,ReviewFold,UnitState } from './state.ts';
+import type { SessionCharge } from './usage.ts';
+import type { AbsPath,IsoTime } from './values.ts';
 
 // ---------------------------------------------------------------------------------------------------
 // Journal: the one serialised writer of events.jsonl. Every append returns only after the full line is

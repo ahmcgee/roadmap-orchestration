@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { runGateTrial } from '../evals/roles/gate/arc.ts';
-import { DEV_CELLS, isCorpusCell } from '../evals/roles/gate/cells.ts';
+import { DEV_CELLS,isCorpusCell } from '../evals/roles/gate/cells.ts';
 import { buildFixture } from '../evals/roles/gate/fixture.ts';
 import { grade } from '../evals/roles/gate/grade.ts';
 import { readTranscript } from '../evals/roles/transcript.ts';

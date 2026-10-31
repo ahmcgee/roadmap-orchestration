@@ -12,21 +12,23 @@
 //
 // A Claude call's Read/Grep/Glob calls, and those the CLI refused, are written beside result.json as reads.json
 // (`ReadsFile`), by the same write-once rule; Codex writes none.
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync,readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { durableWrite } from '../core/fsx.ts';
 
-import { implementerSessionId, type ImplementerSessionId } from '../core/ids.ts';
+import { type ImplementerSessionId,implementerSessionId } from '../core/ids.ts';
 import type { AdapterInput } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import {
-  type BackendError, type BackendOutcome, type BackendResult, type BackendTerminal, type CancelFile, type ExitFile, type ReadsFile, type ToolRead,
-  type ResultFile, type Usage, RUNNER_FILE_READERS, STDERR_FILE, STDOUT_FILE, classifyCommand, classifyTerminal,
+type BackendError,type BackendOutcome,type BackendResult,type BackendTerminal,type CancelFile,type ExitFile,type ReadsFile,
+type ResultFile,
+type ToolRead,
+type Usage,RUNNER_FILE_READERS,STDERR_FILE,STDOUT_FILE,classifyCommand,classifyTerminal,
 } from '../core/records.ts';
-import { type AbsPath, absPath } from '../core/values.ts';
+import { type AbsPath,absPath } from '../core/values.ts';
 import { readClaude } from './claude.ts';
 import { readCodex } from './codex.ts';
-import { MalformedOutputError, ResultConflictError, UnsupportedSchemaError } from './errors.ts';
+import { MalformedOutputError,ResultConflictError,UnsupportedSchemaError } from './errors.ts';
 
 /** What one backend invocation reported, before schema validation and the precedence rule. */
 export type BackendReading = Readonly<{

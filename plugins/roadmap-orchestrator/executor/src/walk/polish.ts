@@ -17,18 +17,18 @@
 // under is retried at the next run. The rounds brake treats a refused proposal as settled (src/walk/milestones.ts).
 // Crash labels: `polish.after-refused` (a refusal written, the revision not yet), `polish.after-revision`.
 import { join } from 'node:path';
+import { type FencedCommitContext,type RevisionVerdict,commitUnderFence,evaluateRevision } from '../commands/apply.ts';
 import { crashPoint } from '../core/crash.ts';
 import type { WalkFact } from '../core/events.ts';
-import type { JournalView } from '../core/interfaces.ts';
 import type { UnitId } from '../core/ids.ts';
+import type { JournalView } from '../core/interfaces.ts';
 import { SchemaError } from '../core/validate.ts';
-import { absPath } from '../core/values.ts';
-import { type FencedCommitContext, type RevisionVerdict, commitUnderFence, evaluateRevision } from '../commands/apply.ts';
-import { type RawPlan, admitUnit, fillMappedObligations } from '../holistic/bundle.ts';
-import { type InputFile, type InputFiles, inForceFiles, requirePlanInForce, revisionInForce } from '../input/inforce.ts';
-import { type Milestone, type PlanM1, milestoneOf, parsePlan } from '../input/plan.ts';
 import type { AbsPath } from '../core/values.ts';
-import { type WalkRecord, refusedProposals, walksOf } from './milestones.ts';
+import { absPath } from '../core/values.ts';
+import { type RawPlan,admitUnit,fillMappedObligations } from '../holistic/bundle.ts';
+import { type InputFile,type InputFiles,inForceFiles,requirePlanInForce,revisionInForce } from '../input/inforce.ts';
+import { type Milestone,type PlanM1,milestoneOf,parsePlan } from '../input/plan.ts';
+import { type WalkRecord,refusedProposals,walksOf } from './milestones.ts';
 import { coversReference } from './report.ts';
 
 type Proposed = Extract<WalkFact, { kind: 'polish-proposed' }>;

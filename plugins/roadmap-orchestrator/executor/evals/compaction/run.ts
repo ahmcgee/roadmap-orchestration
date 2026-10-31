@@ -1,10 +1,10 @@
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { join, resolve } from 'node:path';
-import { trial, type Budget, type Stage, type Trial } from './driver.ts';
+import { existsSync,readFileSync,readdirSync } from 'node:fs';
+import { join,resolve } from 'node:path';
 import { layout } from '../m4a/layout.ts';
-import { json, readJson, write, type Fixture } from './fixture.ts';
-import { gradeA, gradeB, type Exchange, type Grade } from './grade.ts';
-import { estateSpec, setName, type SetName } from './spec.ts';
+import { trial,type Budget,type Stage,type Trial } from './driver.ts';
+import { json,readJson,write,type Fixture } from './fixture.ts';
+import { gradeA,gradeB,type Exchange,type Grade } from './grade.ts';
+import { estateSpec,setName,type SetName } from './spec.ts';
 
 export type Options = Readonly<{ set: SetName; n: number; stage: Stage; cap: number | null; compare: string | null }>;
 export function options(args: readonly string[]): Options {
@@ -80,7 +80,7 @@ export function regrade(dir: string): { path: string; summary: Summary } {
       if (previous.stage !== 'b' && existsSync(join(trialDir, 'a/stage'))) {
         a = checked(() => {
           const l = layout(join(trialDir, 'a'));
-          const record = join(l.inputs, '_next/compaction.md');
+          const record = join(l.inputs, 'drafts/compaction.md');
           return gradeA(existsSync(record) ? readFileSync(record, 'utf8') : '', readJson(join(l.dir, 'exchanges.json')) as Exchange[], estateSpec(set).key);
         });
       }

@@ -1,15 +1,15 @@
 // Scripted golden application, exclusively a free-test oracle. Never staged or used by the paid driver.
-import { readFileSync, rmSync } from 'node:fs';
+import { readFileSync,rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { CORPUS_FILE,git,json,loadSidecars,obligation,pin,readJson,sidecar,write,type Fixture } from '../../evals/compaction/fixture.ts';
+import { parseRecord } from '../../evals/compaction/record.ts';
 import { sha256Hex } from '../../src/core/json.ts';
 import { pinSha256 } from '../../src/corpus/pin.ts';
 import { ruleTextSha256 } from '../../src/corpus/rules.ts';
 import { parseRulesRegistryBlock } from '../../src/docs/invariants.ts';
-import { parseObligations, parseRulingSidecar } from '../../src/holistic/types.ts';
+import { parseObligations } from '../../src/holistic/types.ts';
 import { parsePhase0Record } from '../../src/phase0/types.ts';
 import { parseRulings } from '../../src/spec/rulings.ts';
-import { CORPUS_FILE, git, json, loadSidecars, obligation, pin, readJson, sidecar, write, type Fixture } from '../../evals/compaction/fixture.ts';
-import { parseRecord } from '../../evals/compaction/record.ts';
 
 type Obj = Record<string, unknown>;
 export async function applyGolden(f: Fixture, replacementsFirst = false): Promise<void> {
@@ -50,7 +50,7 @@ export async function applyGolden(f: Fixture, replacementsFirst = false): Promis
         const old = previous.census!.find((e) => e.rule === p.ids[0])!;
         census.push(old);
         obligations = obligations.map((o) => 'rule' in o && o.rule !== undefined && o.rule.id === p.ids[0] ? { ...o, rule: { id: o.rule.id, textSha256: ruleTextSha256(p.replacement!.text) } } : o);
-        sidecars = sidecars.map((s) => parseRulingSidecar({ ...s, docRefs: s.docRefs.map((ref) => 'rule' in ref && ref.rule === p.ids[0] ? { ...ref, textSha256: ruleTextSha256(p.replacement!.text) } : ref) }));
+        sidecars = sidecars.map((s) => ({ ...s, docRefs: s.docRefs.map((ref) => 'rule' in ref && ref.rule === p.ids[0] ? { ...ref, textSha256: ruleTextSha256(p.replacement!.text) } : ref) }));
       }
       if (d.action === 'merge') {
         if (!p.ids.includes(p.replacement!.id)) corpus = corpus.replace('\n```\n', `\n${p.replacement!.id}: ${p.replacement!.text}\n\`\`\`\n`);
@@ -118,6 +118,6 @@ export async function applyGolden(f: Fixture, replacementsFirst = false): Promis
   const pinned = await pin(f.l, f.next);
   // Bind every new ruling to the exact final inputs, keeping original provenance unchanged.
   const revs = { head: baseline, ledgerSha256: sha256Hex(ledgerBytes), obligationsSha256: sha256Hex(json(next)), visionSha256: sha256Hex(readFileSync(join(f.l.product, '.roadmap/vision.json'))), corpusSha256: pinSha256(pinned), contracts: [] };
-  for (const s of sidecars) write(join(f.next, 'rulings.md.d', `${s.id}.json`), json(parseRulingSidecar(Number(s.id.slice(2)) > 40 ? { ...s, consistency: { ...s.consistency, judgedRevs: revs } } : s)));
-  write(join(f.l.inputs, '_next/compaction.md'), readFileSync(join(f.l.dir, 'golden-compaction.md'), 'utf8').replace(/(Approved: [^\n]+)/g, '$1\nApplied: arc-next'));
+  for (const s of sidecars) write(join(f.next, 'rulings.md.d', `${s.id}.json`), json(Number(s.id.slice(2)) > 40 ? { ...s, consistency: { ...s.consistency, judgedRevs: revs } } : s));
+  write(join(f.l.inputs, 'drafts/compaction.md'), readFileSync(join(f.l.dir, 'golden-compaction.md'), 'utf8').replace(/(Approved: [^\n]+)/g, '$1\nApplied: arc-next'));
 }

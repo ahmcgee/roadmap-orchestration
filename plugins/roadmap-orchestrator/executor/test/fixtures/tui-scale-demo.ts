@@ -1,25 +1,25 @@
 // Persistent scale example. Synthetic workload; real git, retained inputs, journal and runner schemas.
 // Run from executor/: node test/fixtures/tui-scale-demo.ts [new-directory]
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { chmodSync,mkdirSync,mkdtempSync,readFileSync,statSync,writeFileSync } from 'node:fs';
+import { dirname,join,resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
-import type { OutcomeStage, SpawnSubject } from '../../src/core/events.ts';
-import { type InvocationId, arcId, implementerSessionId, judgmentSessionId, laneId, milestoneId, opKey, sha, sha256, specRev, unitId } from '../../src/core/ids.ts';
+import { fileURLToPath } from 'node:url';
+import type { OutcomeStage,SpawnSubject } from '../../src/core/events.ts';
+import { type InvocationId,arcId,implementerSessionId,judgmentSessionId,laneId,milestoneId,opKey,sha,sha256,specRev,unitId } from '../../src/core/ids.ts';
 import { sha256Hex } from '../../src/core/json.ts';
-import type { LaunchFile, ResultFile } from '../../src/core/records.ts';
-import { absPath, isoTime, refName, repoPath } from '../../src/core/values.ts';
-import { inputPath, keepInput, specShaInForce } from '../../src/input/inforce.ts';
+import type { LaunchFile,ResultFile } from '../../src/core/records.ts';
+import { absPath,isoTime,refName,repoPath } from '../../src/core/values.ts';
+import { inputPath,keepInput,specShaInForce } from '../../src/input/inforce.ts';
 import { pinDispatch } from '../../src/pipeline/dispatch.ts';
 import { invocationDir } from '../../src/pipeline/invoke.ts';
-import { at, record, start } from '../../src/pipeline/stages.ts';
+import { at,record,start } from '../../src/pipeline/stages.ts';
 import { runnerFiles } from '../../src/runner/files.ts';
 import { launchSha256 } from '../../src/runner/launch.ts';
 import { Observer } from '../../src/tui/observer.ts';
 import { git } from '../helpers/repo.ts';
-import { VISION, ADVANCES } from './brake-common.ts';
-import { contextFor, setupArc } from './unit-common.ts';
+import { ADVANCES,VISION } from './brake-common.ts';
+import { contextFor,setupArc } from './unit-common.ts';
 
 const DEFAULT_UNITS = 205;
 const DEFAULT_INVOCATIONS = 3000;

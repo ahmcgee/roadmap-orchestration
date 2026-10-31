@@ -3,18 +3,18 @@
 // shell wrapper appending jsonl lines, and malformed or missing output, which makes every declared test unwitnessed.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync,mkdtempSync,readFileSync,rmSync,writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { after, describe, it } from 'node:test';
-import { envId, invocationId, arcId, opId, sha, sha256 } from '../src/core/ids.ts';
+import { after,describe,it } from 'node:test';
+import { arcId,envId,invocationId,opId,sha,sha256 } from '../src/core/ids.ts';
 import { sha256Hex } from '../src/core/json.ts';
-import { absPath, type AbsPath } from '../src/core/values.ts';
+import { absPath,type AbsPath } from '../src/core/values.ts';
 import { verdictOf } from '../src/holistic/observe.ts';
-import { type ArcLaneDef, type WitnessTest, laneRevOf, parseObligations, witnessRecord } from '../src/holistic/types.ts';
+import { laneRevOf,parseObligations,witnessRecord,type ArcLaneDef,type WitnessTest } from '../src/holistic/types.ts';
 import {
-  NODE_WITNESS_REPORTER, WITNESS_FILE_ENV, WITNESS_RECORD_FILE, collectWitness, envIdOf, hostIdentity, parseGoTestJson, parseWitnessLines,
-  witnessEnv, witnessRecordOf, writeWitnessRecord,
+NODE_WITNESS_REPORTER,WITNESS_FILE_ENV,WITNESS_RECORD_FILE,collectWitness,envIdOf,hostIdentity,parseGoTestJson,parseWitnessLines,
+witnessEnv,witnessRecordOf,writeWitnessRecord,
 } from '../src/holistic/witness.ts';
 
 const root = mkdtempSync(join(tmpdir(), 'witness-test-'));

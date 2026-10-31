@@ -76,56 +76,57 @@
 // the convergence bound when due (over the effective ops), the divergence digest when due. Each is idempotent, and
 // `settleDecided` rewrites what a crash lost.
 import { join } from 'node:path';
-import type { Parent } from '../core/events.ts';
+import { type RevisionContext,evaluateRevision,keepRevision,payloadOf } from '../commands/apply.ts';
 import { crashPoint } from '../core/crash.ts';
-import type { JournalView } from '../core/interfaces.ts';
+import type { Parent } from '../core/events.ts';
 import { holdFence } from '../core/fence.ts';
-import { type JsonValue, canonicalJson } from '../core/json.ts';
 import {
-  type FindingId, type InvocationId, type JobId, type LaneId, type NeedsUserId, type ObligationId, type PlanRev, type RoutingRev, type RuleId, type RulingId, type Sha,
-  type ResourceName, type Sha256Hex, type UnitId, type VisionClauseId, parseInvocationId, specRev, canonicalIds, type NumberedId, compareIds,
+type FindingId,type InvocationId,type JobId,type LaneId,type NeedsUserId,type ObligationId,type PlanRev,
+type ResourceName,
+type RoutingRev,type RuleId,
+type Sha,
+type Sha256Hex,type UnitId,type VisionClauseId,
+canonicalIds,
+parseInvocationId,specRev
 } from '../core/ids.ts';
-import { type LaneDef, type NeedsUserContent, type NeedsUserReason, type SpecM1, specObligations, specRepairs } from '../core/records.ts';
-import { type CheckpointState, openAttempt } from '../core/state.ts';
+import type { JournalView } from '../core/interfaces.ts';
+import { canonicalJson } from '../core/json.ts';
 import { bundleClassesOf } from '../core/projections.ts';
+import { type LaneDef,type NeedsUserContent,type NeedsUserReason,type SpecM1,specObligations,specRepairs } from '../core/records.ts';
+import { type CheckpointState,openAttempt } from '../core/state.ts';
 import { SchemaError } from '../core/validate.ts';
-import { type AbsPath, type RepoPath, type RepoPattern, absPath, branchRef } from '../core/values.ts';
-import { git, revParse } from '../git/git.ts';
-import {
-  type InForce, type InputFile, type InputFiles, type RevisionInForce, type RoutingBase, inForceFiles, keptPayload, ledgerPath, requirePlanInForce, revisionInForce,
-  sidecarPath,
-} from '../input/inforce.ts';
-import { type DeflakeOrigin, type PlanM1, type PolishOrigin, type PropagationOrigin, advancesOf, contractOpDocuments, parsePlan } from '../input/plan.ts';
-import type { RiskTier } from '../routing/types.ts';
-import { type RevisionContext, evaluateRevision, keepRevision, payloadOf } from '../commands/apply.ts';
-import { mayOverlap } from '../input/classify.ts';
-import { openNeedsUser, raiseNeedsUser, readNeedsUser } from '../needsuser.ts';
-import { arcLaneKey, laneEnvId, mapInForce, observations, observedViews } from '../pipeline/lanes.ts';
-import { conversionsOf, rulingContextAt } from '../pipeline/publish.ts';
-import { loadUnitSpec } from '../pipeline/stages.ts';
-import { type BundleOp, type CheckpointOutput, splitChildAnchor } from '../prompts/schemas.ts';
-import { type DocsPublisher, commitRevision } from '../recover/revision.ts';
-import { SpecPatchOpError, SpecPatchStaleError, applySpecPatch } from '../spec/patch.ts';
-import { parseRulings } from '../spec/rulings.ts';
-import { SpecFileError, parseSpec, specBytes } from '../spec/spec.ts';
+import { type AbsPath,type RepoPath,type RepoPattern,absPath,branchRef } from '../core/values.ts';
 import { mintDebt } from '../debt/mint.ts';
-import { baselineDebtAt } from '../phase0/rows.ts';
-import {
-  type AdmitClassification, type AdmitOp, type AdmitWorld, type AuditRange, type RecordedAdmit, type UnitMerge, admitOpOf, classifyAdmits, conversionReasons, namedUnits, opportunityClauses,
-} from './admits.ts';
-import { admitSummary, amendmentReasons, appendAmendment, checkpointAmendments, conversionAmendment, divergenceAmendments } from './amendments.ts';
-import type { AuditContext } from './audit.ts';
-import { type AppliedBundle, brakesOf, raiseBound, secondChanges } from './convergence.ts';
-import { publishedHeads } from './coverage.ts';
-import { type DivergenceBase, appendDivergences, interpretationDivergences, opDivergences, raiseDigest } from './divergence.ts';
-import { isActive, ruleFinding, rulingRefusal } from './findings.ts';
-import { type Brake, type TailWorld, brakeConversions, brakeOf, findingOriginRoots, indexedAdmits, settledPoint, tailRulings } from './tail.ts';
-import { type Observation, observedVerdict, reuse } from './observe.ts';
+import { git,revParse } from '../git/git.ts';
 import { inputShaOf } from '../git/reusekey.ts';
+import { mayOverlap } from '../input/classify.ts';
 import {
-  type BundleRejection, type BusyAttempt, type ClassifiedAdmit, type Conversion, type ObligationAnchor, isBrakeConversion, type ObligationDef, type Obligations, type OwnerOnlyClass, type RevisionVector,
-  type RulingSidecar, isExempt, isMustHold, laneRevOf, observationKeyText, parseObligations, parseRulingSidecar, planDefectText,
-} from './types.ts';
+type InForce,type InputFile,type InputFiles,type RevisionInForce,type RoutingBase,inForceFiles,keptPayload,
+requirePlanInForce,revisionInForce
+} from '../input/inforce.ts';
+import { type DeflakeOrigin,type PlanM1,type PolishOrigin,advancesOf,contractOpDocuments,parsePlan } from '../input/plan.ts';
+import { openNeedsUser,raiseNeedsUser,readNeedsUser } from '../needsuser.ts';
+import { baselineDebtAt } from '../phase0/rows.ts';
+import { arcLaneKey,laneEnvId,mapInForce,observations,observedViews } from '../pipeline/lanes.ts';
+import { conversionsOf,rulingContextAt } from '../pipeline/publish.ts';
+import { loadUnitSpec } from '../pipeline/stages.ts';
+import { type BundleOp,type CheckpointOutput,splitChildAnchor } from '../prompts/schemas.ts';
+import { type DocsPublisher,commitRevision } from '../recover/revision.ts';
+import type { RiskTier } from '../routing/types.ts';
+import { SpecPatchOpError,SpecPatchStaleError,applySpecPatch } from '../spec/patch.ts';
+import { SpecFileError,parseSpec,specBytes } from '../spec/spec.ts';
+import {
+type AdmitClassification,type AdmitOp,type AdmitWorld,type AuditRange,type RecordedAdmit,type UnitMerge,admitOpOf,classifyAdmits,conversionReasons,namedUnits,opportunityClauses,
+} from './admits.ts';
+import { admitSummary,amendmentReasons,appendAmendment,checkpointAmendments,conversionAmendment,divergenceAmendments } from './amendments.ts';
+import type { AuditContext } from './audit.ts';
+import { type AppliedBundle,brakesOf,raiseBound,secondChanges } from './convergence.ts';
+import { publishedHeads } from './coverage.ts';
+import { type DivergenceBase,appendDivergences,interpretationDivergences,opDivergences,raiseDigest } from './divergence.ts';
+import { isActive,ruleFinding,rulingRefusal } from './findings.ts';
+import { type Observation,observedVerdict,reuse } from './observe.ts';
+import { type Brake,type TailWorld,brakeConversions,brakeOf,findingOriginRoots,indexedAdmits,settledPoint,tailRulings } from './tail.ts';
+import { type BundleRejection,type BusyAttempt,type ClassifiedAdmit,type Conversion,type ObligationAnchor,type ObligationDef,type Obligations,type OwnerOnlyClass,type RevisionVector,isBrakeConversion,isExempt,isMustHold,laneRevOf,observationKeyText,parseObligations,planDefectText } from './types.ts';
 import { citeReasons } from './vision.ts';
 import { laneMisses } from './witnessfiles.ts';
 
@@ -296,12 +297,10 @@ type Proposal = Readonly<{
   files: InputFiles;
   /** The obligations with the ops applied (the obligations in force when they do not parse or nothing touched them). */
   obligations: Obligations | null;
-  landing: readonly RulingSidecar[];
   touched: Touched;
   /** The lanes the ops bring in (an admitted spec's, a patch's added or replaced lanes). */
   lanes: readonly LaneDef[];
   /** Contract ops of landing rulings on a path outside the plan's contracts and architecture doc (H10). */
-  outsidePaths: readonly RepoPath[];
   reasons: readonly string[];
 }>;
 
@@ -313,7 +312,6 @@ type RawObligations = Record<string, unknown> & { obligations: RawObligation[] }
 const TERMINAL = ['waived', 'deferred', 'retired'] as const;
 const isTerminal = (d: string): d is (typeof TERMINAL)[number] => (TERMINAL as readonly string[]).includes(d);
 const jsonBytes = (value: unknown): Buffer => Buffer.from(`${JSON.stringify(value, null, 2)}\n`, 'utf8');
-const judgedPaths = (s: RulingSidecar): readonly RepoPath[] => [...new Set([...s.contractRefs, ...s.contractOps.map((o) => o.path)])].sort();
 
 /** The routing rev the checkpoint call `inv` ran under (its spawn's subject). */
 function callRoutingRev(ctx: CheckpointContext, inv: InvocationId): RoutingRev {
@@ -333,8 +331,6 @@ export const numericId = <T extends string>(id: T): T => id.replace(/^([A-Z])-0+
 export function numericRulingIds(output: CheckpointOutput): CheckpointOutput {
   const ops = output.ops.map((op): BundleOp => {
     switch (op.op) {
-      case 'reenter':
-        return op.reset === null ? op : { ...op, reset: numericId(op.reset) };
       case 'patch-spec':
         return { ...op, patch: op.patch.map((x) => (x.op === 'cite' ? { ...x, rulings: x.rulings.map(numericId) } : x)) };
       default:
@@ -372,7 +368,7 @@ function mappedObligations(obligations: Obligations, scope: readonly string[], d
  */
 export type AdmitEntry = Readonly<{
   id: UnitId; risk: RiskTier; scope: readonly RepoPattern[]; after: readonly UnitId[]; resources: readonly ResourceName[];
-  origin: 'checkpoint' | 'repair' | 'polish' | 'deflake' | 'propagation'; polish?: PolishOrigin; deflake?: DeflakeOrigin; propagation?: PropagationOrigin;
+  origin: 'checkpoint' | 'repair' | 'polish' | 'deflake'; polish?: PolishOrigin; deflake?: DeflakeOrigin;
 }>;
 
 /**
@@ -395,7 +391,7 @@ export function admitUnit(plan: RawPlan, specs: Map<UnitId, InputFile>, entry: A
   plan.units.push({
     id: entry.id, spec: `${entry.id}.json`, risk: entry.risk, scope: entry.scope, resources: entry.resources, after: entry.after, origin: entry.origin,
     ...(entry.polish === undefined ? {} : { polish: entry.polish }), ...(entry.deflake === undefined ? {} : { deflake: entry.deflake }),
-    ...(entry.polish === undefined ? {} : { polish: entry.polish }), ...(entry.propagation === undefined ? {} : { propagation: entry.propagation }),
+    ...(entry.polish === undefined ? {} : { polish: entry.polish }),
   });
   specs.set(entry.id, { path: specPath, bytes: specBytes(spec) });
   return { spec };
@@ -439,8 +435,6 @@ function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, rev
   };
   const specPath = (id: UnitId): AbsPath => absPath(join(ctx.planFile, '..', `${id}.json`));
 
-  const landing: readonly RulingSidecar[] = [];
-  const outsidePaths: readonly RepoPath[] = [];
 
   opts.ops.forEach(({ op, index: i }) => {
     const at = `op ${i + 1} (${op.op})`;
@@ -618,7 +612,7 @@ function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, rev
       reasons.push(`the obligations with the ops applied do not parse: ${error.message}`);
     }
   }
-  if (parsed === null || reasons.length > 0) return { files: current, obligations: obligationsNow, landing, touched, lanes, outsidePaths, reasons };
+  if (parsed === null || reasons.length > 0) return { files: current, obligations: obligationsNow, touched, lanes, reasons };
 
   fillMappedObligations(obligationsAfter, parsed, specs, authored);
 
@@ -629,7 +623,7 @@ function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, rev
     specs: new Map(parsed.units.map((u) => [u.id, specs.get(u.id) ?? { path: specPath(u.id), bytes: null }] as const)),
     obligations,
   };
-  return { files, obligations: obligationsAfter, landing, touched, lanes, outsidePaths, reasons };
+  return { files, obligations: obligationsAfter, touched, lanes, reasons };
 }
 
 /**
@@ -773,7 +767,6 @@ function ownerOnly(ctx: CheckpointContext, a: Activation, p: Proposal, inForce: 
     if (!programs.has(l.argv[0])) out.push({ class: 'lane-program', summary: `lane ${l.id} runs ${JSON.stringify(l.argv[0])}, which no lane of the plan in force runs` });
     for (const name of l.env.pass.filter((n) => !passed.has(n))) out.push({ class: 'env-prerequisite', summary: `lane ${l.id} passes ${name}, which no lane of the plan in force needs` });
   }
-  for (const path of p.outsidePaths) out.push({ class: 'contract-path', summary: `a contract op edits ${path}, outside the plan's contracts and architecture doc` });
   return out;
 }
 
@@ -1025,8 +1018,8 @@ function decided(ctx: CheckpointContext, job: JobId, decision: Exclude<BundleDec
 }
 
 const NO_PROPOSAL = (current: InputFiles, obligations: Obligations | null): Proposal => ({
-  files: current, obligations, landing: [], touched: { plan: false, specs: new Set<UnitId>(), obligations: false, ledger: false, contracts: new Set<RepoPath>() },
-  lanes: [], outsidePaths: [], reasons: [],
+  files: current, obligations, touched: { plan: false, specs: new Set<UnitId>(), obligations: false, ledger: false, contracts: new Set<RepoPath>() },
+  lanes: [], reasons: [],
 });
 
 /** A judged bundle code commits (step 10): the evaluated revision with its divergences, and its source. */
@@ -1192,7 +1185,7 @@ function judge(ctx: CheckpointContext, a: Activation): BundleDecision | Refused 
   };
   const draft = {
     ...evaluated.draft,
-    divergences: [...evaluated.draft.divergences, ...opDivergences(base, ops.map((x) => x.op), p.landing), ...interpretationDivergences(a.job, a.captured.vector, a.output)],
+    divergences: [...evaluated.draft.divergences, ...opDivergences(base, ops.map((x) => x.op)), ...interpretationDivergences(a.job, a.captured.vector, a.output)],
   };
 
   const source = classes !== null

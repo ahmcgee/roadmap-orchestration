@@ -8,11 +8,11 @@
 //   the files an agent loads at run time (each SKILL.md, reference.md) no display name or model family
 //   name either. RATIONALE-1.0.md is maintainer text that cites the models arc 1 ran on as evidence.
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { readFileSync,readdirSync } from 'node:fs';
+import { join,relative } from 'node:path';
+import { describe,it } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { describe, it } from 'node:test';
-import { type Command, parseCommand } from '../src/input/cli.ts';
+import { type Command,parseCommand } from '../src/input/cli.ts';
 import { MODELS } from '../src/routing/models.ts';
 
 const SKILLS = fileURLToPath(new URL('../../skills/', import.meta.url));

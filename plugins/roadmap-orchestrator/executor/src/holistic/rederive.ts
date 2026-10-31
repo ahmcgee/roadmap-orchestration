@@ -4,13 +4,13 @@
 // test, `weakeningsOf`) with no Phase-0 ruling dispositioning it. A split parent is present; a retired one may
 // leave; new ids are free; no block (a first arc) means nothing to diff. Pure. In a corpus arc the census is diffed
 // against the pin too (`censusProblems`, M4a step C1), and the specs against the census (`specCensusMismatches`).
-import { type CorpusPin, activeRules } from '../corpus/types.ts';
+import type { ClauseId,RuleId,WitnessItemId } from '../core/ids.ts';
+import { type SpecM1,specObligations,specWitnesses } from '../core/records.ts';
+import { type CorpusPin,activeRules } from '../corpus/types.ts';
 import { parseInvariantsBlock } from '../docs/invariants.ts';
-import type { ClauseId, RuleId, WitnessItemId } from '../core/ids.ts';
-import { type SpecM1, specObligations, specWitnesses } from '../core/records.ts';
 import type { Phase0Problem } from '../phase0/types.ts';
-import { ruleAnchorResolves, weakeningsOf } from './obligations.ts';
-import { type CensusEntry, type CensusState, type ObligationDef, type Obligations, type RulingSidecar, obligationSource } from './types.ts';
+import { ruleAnchorResolves,weakeningsOf } from './obligations.ts';
+import { type CensusEntry,type CensusState,type ObligationDef,type Obligations,obligationSource } from './types.ts';
 
 /** Why the new obligations drop or weaken a published one silently; empty when nothing is dropped. */
 export function rederive(baselineInvariants: string | null, next: Obligations | null, reasons: Readonly<Record<string, string>>): readonly string[] {

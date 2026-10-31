@@ -1,13 +1,13 @@
 // M2 records (SCHEMAS.md "M2"): round-trips of every new or changed record and the validators' refusals.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { describe, it } from 'node:test';
-import { type Envelope, type Event, type Fact, type LogRecord, parseEventLine, probeTargetKey, serializeEvent } from '../src/core/events.ts';
+import { describe,it } from 'node:test';
+import { type Envelope,type Event,type Fact,type LogRecord,parseEventLine,probeTargetKey,serializeEvent } from '../src/core/events.ts';
 import {
-  CPU_POOL, INTEGRATION_SLOT, arcId, commandId, compareResourceUnits, cpuToken, edgeId, invocationId, opId, opKey,
-  parseResourceUnit, planRev, resourceInstance, resourceName, resourceUnit, routingRev, sha, sha256, specRev, unitId,
+CPU_POOL,INTEGRATION_SLOT,arcId,commandId,compareResourceUnits,cpuToken,edgeId,invocationId,opId,opKey,
+parseResourceUnit,planRev,resourceInstance,resourceName,resourceUnit,routingRev,sha,sha256,specRev,unitId,
 } from '../src/core/ids.ts';
-import { commandBody, laneDef, residueKey } from '../src/core/records.ts';
+import { commandBody,laneDef,residueKey } from '../src/core/records.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { isoTime } from '../src/core/values.ts';
 import { parsePlan } from '../src/input/plan.ts';

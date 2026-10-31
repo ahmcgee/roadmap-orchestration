@@ -2,21 +2,22 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { describe, it } from 'node:test';
-import { routingRev, unitId, visionClauseId } from '../src/core/ids.ts';
+import { describe,it } from 'node:test';
+import { routingRev,unitId,visionClauseId } from '../src/core/ids.ts';
 import { canonicalJson } from '../src/core/json.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { planPath } from '../src/core/values.ts';
 import { support } from '../src/prompts/index.ts';
 
-import { CLASS_CATALOGUE, boundAt } from '../src/routing/classes.ts';
+import { CLASS_CATALOGUE,boundAt } from '../src/routing/classes.ts';
 import {
-  type RoutingStack, arcStack, parseRepoConfig, planStack, resolveRouting, resolveRoutingUnder, routingRevOf, seatsInForce, selectProfile, unsupportedSeats,
+type RoutingStack,arcStack,parseRepoConfig,planStack,resolveRouting,
+routingRevOf,seatsInForce,selectProfile,unsupportedSeats
 } from '../src/routing/layers.ts';
 import { MODELS } from '../src/routing/models.ts';
 import { BUILTIN_SEATS } from '../src/routing/profiles.ts';
 import {
-  FRESH_ROLES, MODEL_IDS, PROFILES, type Role, type RoutingLayer, type RoutingTable, SEAT_REFS, type Seat, type Triple, atSeat, routingLayer,
+FRESH_ROLES,MODEL_IDS,PROFILES,type Role,type RoutingLayer,type RoutingTable,SEAT_REFS,type Seat,type Triple,atSeat,routingLayer,
 } from '../src/routing/types.ts';
 
 const EXECUTOR = new URL('..', import.meta.url).pathname;

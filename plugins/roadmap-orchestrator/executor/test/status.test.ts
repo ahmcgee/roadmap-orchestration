@@ -4,38 +4,38 @@
 // process, over a log written directly).
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { basename, join, relative } from 'node:path';
-import { after, before, describe, test } from 'node:test';
-import { identityOf, readBootId } from '../src/contain/proc.ts';
-import type { Fact, ProbeTarget } from '../src/core/events.ts';
+import { mkdirSync,readFileSync,readdirSync,writeFileSync } from 'node:fs';
+import { basename,join,relative } from 'node:path';
+import { after,before,describe,test } from 'node:test';
+import { identityOf,readBootId } from '../src/contain/proc.ts';
+import type { Fact,ProbeTarget } from '../src/core/events.ts';
 import { atomicJson } from '../src/core/fsx.ts';
-import { type UnitId, arcId, commandId, hostNeedsUserId, supervisorNeedsUserId, unitId } from '../src/core/ids.ts';
-import { type AbsPath, absPath, isoTimeOf } from '../src/core/values.ts';
+import { type UnitId,arcId,commandId,hostNeedsUserId,supervisorNeedsUserId,unitId } from '../src/core/ids.ts';
+import { type AbsPath,absPath,isoTimeOf } from '../src/core/values.ts';
 import { SCHEMA_VERSION } from '../src/core/version.ts';
-import { HOST_LOCK, hostPath } from '../src/host/hostdir.ts';
-import { publishOwner } from '../src/host/owner.ts';
-import { nextProbeAt } from '../src/park/schedule.ts';
-import { PARK_ESCALATE_MS } from '../src/schedule/types.ts';
-import { watch } from '../src/watch.ts';
-import { fileSha256, loadSpec } from '../src/spec/spec.ts';
-import { START_FILE, writeFileNeedsUser } from '../src/executor.ts';
+import { START_FILE,writeFileNeedsUser } from '../src/executor.ts';
 import { snapshotRef } from '../src/git/snapshot.ts';
+import { HOST_LOCK,hostPath } from '../src/host/hostdir.ts';
+import { publishOwner } from '../src/host/owner.ts';
 import { openBlocking } from '../src/needsuser.ts';
+import { nextProbeAt } from '../src/park/schedule.ts';
 import { laneCpuKey } from '../src/resources/calibrate.ts';
 import { MODEL_IDS } from '../src/routing/types.ts';
-import { SESSION_GUARANTEE, type Status, type UnitStatusLine, compactState, status } from '../src/status.ts';
-import { reached, release } from './helpers/barrier.ts';
-import { git, tmpDir } from './helpers/repo.ts';
-import type { Step } from './helpers/scenario.ts';
-import { type Owner, assertNoSurvivors } from './helpers/reap.ts';
-import { BUILD_REPORT, planCheckStep } from './fixtures/stage-common.ts';
-import { type ArcDescriptor, type ArcRun, MUL, MUL_LANE, codexStep, contextFor, gateStep, mulBuild, setupArc, stepUntil } from './fixtures/unit-common.ts';
-import { claimRecord } from './fixtures/host-records.ts';
-import { LANES_BLOCKED, parkBackend, parkUnit } from './fixtures/probe-common.ts';
+import { PARK_ESCALATE_MS } from '../src/schedule/types.ts';
+import { fileSha256,loadSpec } from '../src/spec/spec.ts';
+import { SESSION_GUARANTEE,type Status,type UnitStatusLine,compactState,status } from '../src/status.ts';
+import { watch } from '../src/watch.ts';
 import {
-  EXEC_TIMEOUT_MS, type ExecRun, SMOKE_CLAUDE_ONLY, SMOKE_DEFAULT, cli, journalOf, reasonOf, setupExec, startExec, statusOf, until,
+EXEC_TIMEOUT_MS,type ExecRun,SMOKE_CLAUDE_ONLY,SMOKE_DEFAULT,cli,journalOf,reasonOf,setupExec,startExec,statusOf,until,
 } from './fixtures/exec-common.ts';
+import { claimRecord } from './fixtures/host-records.ts';
+import { LANES_BLOCKED,parkBackend,parkUnit } from './fixtures/probe-common.ts';
+import { BUILD_REPORT,planCheckStep } from './fixtures/stage-common.ts';
+import { type ArcDescriptor,type ArcRun,MUL,MUL_LANE,codexStep,contextFor,gateStep,mulBuild,setupArc,stepUntil } from './fixtures/unit-common.ts';
+import { reached,release } from './helpers/barrier.ts';
+import { type Owner,assertNoSurvivors } from './helpers/reap.ts';
+import { git,tmpDir } from './helpers/repo.ts';
+import type { Step } from './helpers/scenario.ts';
 
 // Every supervised run a test here started is stopped by its teardown; nothing of them outlives the file.
 after(assertNoSurvivors);

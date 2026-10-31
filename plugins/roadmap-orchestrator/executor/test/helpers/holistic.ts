@@ -4,8 +4,8 @@
 // job and lens by the scenario keys (`unit` = the job id, `lens`; see StepBase in scenario.ts).
 import type { JsonValue } from '../../src/core/json.ts';
 import type { LensKindName } from '../../src/core/records.ts';
-import { validateCheckpointOutput, validateFlowOutput, validateLensOutput, validatePackReviewOutput } from '../../src/prompts/schemas.ts';
-import type { ClaudeAct, Step } from './scenario.ts';
+import { validateCheckpointOutput,validateFlowOutput,validateLensOutput,validatePackReviewOutput } from '../../src/prompts/schemas.ts';
+import type { ClaudeAct,Step } from './scenario.ts';
 
 type Obj = { readonly [key: string]: JsonValue };
 
@@ -79,7 +79,11 @@ export function checkpointAnswer(spec: CheckpointSpec): JsonValue {
   const value: Obj = {
     decision: spec.decision,
     reasons: ['scripted checkpoint'],
-    ops: [...(spec.ops ?? [])],
+    ops: (spec.ops ?? []).map((value) => {
+      const op = value as Record<string, JsonValue>;
+      if (op['op'] !== 'admit') return value;
+      return {...op, targets: op['targets'] ?? [], spec: typeof op['spec'] === 'string' ? admitSpecWire(JSON.parse(op['spec'])) : op['spec']!};
+    }),
     
     findingDispositions: (spec.findingDispositions ?? []).map((d) => ({ ...d })),
     interpretations: (spec.interpretations ?? []).map((i) => ({ clauses: [...i.clauses], situation: i.situation, reading: i.reading })),

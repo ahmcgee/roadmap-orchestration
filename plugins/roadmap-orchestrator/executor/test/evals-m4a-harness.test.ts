@@ -8,26 +8,26 @@
 // evals-m4a.watch-absorbs-routine, evals-m4a.terminal-seq-and-post-run, evals-m4a.cost-deltas-and-unknowns.
 import assert from 'node:assert/strict';
 import { spawn as spawnProc } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync,mkdirSync,readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { after,test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { after, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
+import { CRITERIA,LEVERS,type PressureArc,check,hostReleasedVerdict,interventionsOf,parseOperatorLog,pressureRecordedVerdict,profileVerdict } from '../evals/m4a/check.ts';
+import { type ArcForensics,LIMITS,arcForensics,drive,fixtureProcesses,initialPrompt,isWatchTail,killProcs,postRunOf,stopHeldArc } from '../evals/m4a/driver.ts';
+import { fakeArc,fakeHostDir } from '../evals/m4a/fake-root.ts';
+import { layout } from '../evals/m4a/layout.ts';
+import { costTotals,exportCosts,invocationCosts,rootCosts } from '../evals/m4a/transcript.ts';
 import type { Event } from '../src/core/events.ts';
 import { arcId } from '../src/core/ids.ts';
 import { absPath } from '../src/core/values.ts';
-import { claimHost, readClaim, releaseHost } from '../src/host/lock.ts';
-import { selfIdentity } from '../src/host/liveness.ts';
-import { type ArcForensics, LIMITS, arcForensics, drive, fixtureProcesses, initialPrompt, isWatchTail, killProcs, postRunOf, stopHeldArc } from '../evals/m4a/driver.ts';
-import { ActionableFilter, HEARTBEAT_MIN } from '../src/watch.ts';
-import { CRITERIA, LEVERS, type PressureArc, check, hostReleasedVerdict, interventionsOf, parseOperatorLog, pressureRecordedVerdict, profileVerdict } from '../evals/m4a/check.ts';
 import type { FlowInputs } from '../src/flow/types.ts';
-import { layout } from '../evals/m4a/layout.ts';
-import { costTotals, exportCosts, invocationCosts, rootCosts } from '../evals/m4a/transcript.ts';
-import { fakeArc, fakeHostDir } from '../evals/m4a/fake-root.ts';
+import { selfIdentity } from '../src/host/liveness.ts';
+import { claimHost,readClaim,releaseHost } from '../src/host/lock.ts';
+import { ActionableFilter,HEARTBEAT_MIN } from '../src/watch.ts';
 import { runUntilExit } from './helpers/proc.ts';
-import { type RunScope, assertNoSurvivors, teardown, track } from './helpers/reap.ts';
-import { git, makeRepo, tmpDir } from './helpers/repo.ts';
+import { type RunScope,assertNoSurvivors,teardown,track } from './helpers/reap.ts';
+import { git,makeRepo,tmpDir } from './helpers/repo.ts';
 
 after(assertNoSurvivors);
 

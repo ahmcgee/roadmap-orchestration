@@ -25,28 +25,28 @@
 // What a gate attempt was given is recorded on its `judgment-inputs` (`GateReview`), so the rules its answer is held to
 // follow from the log on replay and recovery; an attempt a dev.16 executor captured has none and is read without them.
 import { join } from 'node:path';
-import { type ReviewFindingId, type Sha, type SpecRev, type UnitId, reviewFindingIdOf } from '../core/ids.ts';
-import { type ReviewFact, parentUnit } from '../core/events.ts';
-import type { ApprovalFingerprint, SpecM1 } from '../core/records.ts';
+import { type ReviewFact,parentUnit } from '../core/events.ts';
+import { type ReviewFindingId,type Sha,type SpecRev,type UnitId,reviewFindingIdOf } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
-import type { ReviewApproval } from '../core/state.ts';
-import { isUnitLink } from '../core/stale.ts';
-import { specLinksOf } from '../holistic/staleset.ts';
-import {
-  type ApprovalBlobs, type FindingsLedgerEntry, type GateDelta, type GateReview, type LedgerOutcome, type ReviewDispute, isSettled, movedTargets,
-} from '../core/review.ts';
-import { approvalBlobsOf } from '../core/projections.ts';
-import { SchemaError } from '../core/validate.ts';
-import { type AbsPath, type RepoPath, absPath, repoPath } from '../core/values.ts';
-import { git, gitRun } from '../git/git.ts';
-import { transientCheck, unitDiffPaths, unitTransientRules } from '../git/transient.ts';
 import { canonicalJson } from '../core/json.ts';
+import { approvalBlobsOf } from '../core/projections.ts';
+import type { ApprovalFingerprint,SpecM1 } from '../core/records.ts';
+import {
+type ApprovalBlobs,type FindingsLedgerEntry,type GateDelta,type GateReview,type LedgerOutcome,type ReviewDispute,isSettled,movedTargets,
+} from '../core/review.ts';
+import { isUnitLink } from '../core/stale.ts';
+import type { ReviewApproval } from '../core/state.ts';
+import { SchemaError } from '../core/validate.ts';
+import { type AbsPath,type RepoPath,absPath,repoPath } from '../core/values.ts';
+import { git,gitRun } from '../git/git.ts';
+import { transientCheck,unitDiffPaths,unitTransientRules } from '../git/transient.ts';
+import { specLinksOf } from '../holistic/staleset.ts';
+import type { PlanUnit } from '../input/plan.ts';
 import { reviewDisputeDirective } from '../prompts/directives.ts';
 import type { GateReviewInput } from '../prompts/inputs.ts';
-import { DECISIONS_FILE, DEFECT_CATEGORIES, type GateFinding, type GateOutput, validateGateOutput } from '../prompts/schemas.ts';
-import type { PlanUnit } from '../input/plan.ts';
-import { type StageContext, type StageParent, dispatchOf, workDir } from './dispatch.ts';
-import { type JudgmentReader, judgmentOutput, judgmentSpawns, loadUnitSpec, readDecisions } from './stages.ts';
+import { DECISIONS_FILE,DEFECT_CATEGORIES,type GateFinding,type GateOutput,validateGateOutput } from '../prompts/schemas.ts';
+import { type StageContext,type StageParent,dispatchOf,workDir } from './dispatch.ts';
+import { type JudgmentReader,judgmentOutput,judgmentSpawns,loadUnitSpec,readDecisions } from './stages.ts';
 
 /** The blob of `path` at `commit`, or null when the commit has no such file. */
 export function blobAt(repo: AbsPath, commit: Sha, path: string): Sha | null {

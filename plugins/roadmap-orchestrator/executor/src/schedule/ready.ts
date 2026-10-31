@@ -28,26 +28,26 @@
 // M4b rev 3 (RC-11): a unit whose run was starved, or red under host pressure with its rerun pending, stays active and
 // re-runs its held stage once admitted; admission holds it under `host-pressure{inv}` until a scheduler tick since the
 // hold shows the host's cpu wait over a minute below `PRESSURE_SATURATED`, or `STARVED_HOLD_MS` pass (`pressureHoldWaits`, src/host/pressure.ts).
-import { type OutcomeStage, JUDGMENT_STAGES, type JudgmentStage, type ProbeTarget } from '../core/events.ts';
-import type { LaneId, ObligationId, UnitId } from '../core/ids.ts';
+import { JUDGMENT_STAGES,type JudgmentStage,type OutcomeStage,type ProbeTarget } from '../core/events.ts';
+import type { LaneId,ObligationId,UnitId } from '../core/ids.ts';
+import type { JournalView } from '../core/interfaces.ts';
+import { canonicalJson } from '../core/json.ts';
+import { type NeedsUserReason,obligationRevsOf } from '../core/records.ts';
+import { ENTRY_STAGE,type UnitState } from '../core/state.ts';
+import { p1Blocking } from '../holistic/findings.ts';
+import { type SpecLinks } from '../holistic/staleset.ts';
+import { pressureHoldWaits } from '../host/pressure.ts';
+import { lineageMembers } from '../input/envelope.ts';
+import { type KnownDefect,type PlanM1,type PlanUnit,knownDefectsOf,priorityOf } from '../input/plan.ts';
 import { systemsMapInForce } from '../input/systems.ts';
 import { deflakeHold } from '../pipeline/deflake.ts';
-import type { JournalView } from '../core/interfaces.ts';
-import { type NeedsUserReason, obligationRevsOf } from '../core/records.ts';
-import { ENTRY_STAGE, type UnitState } from '../core/state.ts';
-import { p1Blocking } from '../holistic/findings.ts';
-import { pressureHoldWaits } from '../host/pressure.ts';
-import { type SpecLinks } from '../holistic/staleset.ts';
-import { canonicalJson } from '../core/json.ts';
-import { lineageMembers } from '../input/envelope.ts';
-import { type KnownDefect, type PlanM1, type PlanUnit, knownDefectsOf, priorityOf } from '../input/plan.ts';
-import { judgmentSeat, decidedBy } from '../pipeline/transitions.ts';
-import type { Backend, JudgmentRole, RoutingTable } from '../routing/types.ts';
-import { milestoneEdges, milestonePassedSeq, milestoneWaits } from '../walk/node.ts';
+import { decidedBy,judgmentSeat } from '../pipeline/transitions.ts';
+import type { Backend,JudgmentRole,RoutingTable } from '../routing/types.ts';
+import { milestoneEdges,milestonePassedSeq,milestoneWaits } from '../walk/node.ts';
 import { effectiveDependency } from './graph.ts';
 import {
-  ADMISSION_STAGES, type Admission, type AdmissionConstraint, type AdmissionStage, type Admit, type AdmitInput, type ChainStage, type CommandScope,
-  PROMOTION_BYPASS, type Rank, compareRank,
+ADMISSION_STAGES,type Admission,type AdmissionConstraint,type AdmissionStage,type Admit,type AdmitInput,type ChainStage,type CommandScope,
+PROMOTION_BYPASS,type Rank,compareRank,
 } from './types.ts';
 
 // ---------------------------------------------------------------------------------------------------

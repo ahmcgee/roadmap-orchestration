@@ -8,16 +8,16 @@
 // admits.opportunity-clause-without-lineage-spends, admits.follow-up-overrun-converts-with-debt,
 // admits.conversion-referenced-is-invalid, admits.dishonest-citation-invalid. The run-9 replay is test/admits-run9.test.ts.
 import assert from 'node:assert/strict';
-import { describe, test } from 'node:test';
-import type { FindingId, JobId, ObligationId, RuleId, UnitId, VisionClauseId } from '../src/core/ids.ts';
-import type { RepairRef, SpecM1 } from '../src/core/records.ts';
+import { describe,test } from 'node:test';
+import type { FindingId,JobId,ObligationId,RuleId,UnitId,VisionClauseId } from '../src/core/ids.ts';
+import type { RepairRef,SpecM1 } from '../src/core/records.ts';
 import { mintDebt } from '../src/debt/mint.ts';
 import { DEBT_SCHEMA } from '../src/debt/types.ts';
 import {
-  type AdmitFinding, type AdmitObligation, type AdmitOp, type AdmitWorld, type AuditRange, type RecordedAdmit, type UnitMerge, admitOpOf, classifyAdmits, conversionReasons,
-  findingAttribution, obligationAttribution, opportunityClauses,
+type AdmitFinding,type AdmitObligation,type AdmitOp,type AdmitWorld,type AuditRange,type RecordedAdmit,type UnitMerge,admitOpOf,classifyAdmits,conversionReasons,
+findingAttribution,obligationAttribution,opportunityClauses,
 } from '../src/holistic/admits.ts';
-import type { AdmitClass, ObligationDef, Obligations } from '../src/holistic/types.ts';
+import type { AdmitClass,ObligationDef,Obligations } from '../src/holistic/types.ts';
 import { validateCheckpointOutput } from '../src/prompts/schemas.ts';
 import { checkpointAnswer } from './helpers/holistic.ts';
 
@@ -287,12 +287,12 @@ describe('admit classes: conversions (R35, LR-k)', () => {
   });
 
   test('admits.conversion-referenced-is-invalid: another op naming a converted admit makes the bundle invalid', () => {
-    const spec = JSON.stringify({ unit: 'aside' });
+    const spec = { schema: 'roadmap/spec-m1', unit: 'aside', rev: 1, scope: ['src/**'], resources: [], lanes: [], acceptance: [{id: 'A1', clause: 'Converts the admit', state: 'active', failLoudIfUndelivered: true}], decisions: [], facts: [], cites: {contracts: [], rulings: []}, obligations: [], repairs: [] };
     const output = validateCheckpointOutput(checkpointAnswer({
       decision: 'bundle',
       ops: [
-        { op: 'admit', unit: { id: 'aside', risk: 'low', scope: ['src/**'], after: [], origin: 'checkpoint' }, spec, cites: ['V-2'], evidence: ['e'] },
-        { op: 'admit', unit: { id: 'next', risk: 'low', scope: ['src/**'], after: ['aside'], origin: 'checkpoint' }, spec, cites: ['V-1'], evidence: ['e'] },
+        { op: 'admit', unit: { id: 'aside', risk: 'low', scope: ['src/**'], after: [], origin: 'checkpoint' }, spec: {...spec, unit: 'aside'}, cites: ['V-2'], evidence: ['e'] },
+        { op: 'admit', unit: { id: 'next', risk: 'low', scope: ['src/**'], after: ['aside'], origin: 'checkpoint' }, spec: {...spec, unit: 'next'}, cites: ['V-1'], evidence: ['e'] },
         { op: 'limits', unit: 'aside', limits: [{ field: 'chargeable', value: 2 }], cites: ['V-1'], evidence: ['e'] },
       ],
     }));

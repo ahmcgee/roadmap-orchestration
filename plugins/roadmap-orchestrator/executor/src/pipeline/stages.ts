@@ -85,109 +85,141 @@
 //
 // Needs-user content the table does not carry (occupancy detail, a backend park) is returned as
 // `needsUser` for the caller to write (step 13 owns the writer). Nothing written here names a model.
-import { orderingReasons } from '../park/ordering.ts';
-import { existsSync, readFileSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, normalize, relative } from 'node:path';
-import { freshJudgmentSession, resumedJudgmentSession } from '../backends/argv.ts';
+import { existsSync,readFileSync } from 'node:fs';
+import { basename,dirname,isAbsolute,join,normalize,relative } from 'node:path';
+import { freshJudgmentSession,resumedJudgmentSession } from '../backends/argv.ts';
 import { walkMcpConfig } from '../backends/mcp.ts';
+import { evaluateRevision } from '../commands/apply.ts';
+import type { DesignRecord,Verification } from '../core/design.ts';
 import {
-  BACKEND_PARK_CLASSES, type DiffShown, type GateLargeDiff, type HoldCause, type IntentOf, type JudgmentStage, type OpKind, type OutcomeStage, type ScopeGrowthProposal, type StageOutcomeDetail, type StageOutcomeKind,
+BACKEND_PARK_CLASSES,type DiffShown,type GateLargeDiff,type HoldCause,type IntentOf,type JudgmentStage,type OpKind,type OutcomeStage,type ScopeGrowthProposal,type StageOutcomeDetail,type StageOutcomeKind,
 } from '../core/events.ts';
-import { captureUnderFence, holdFence } from '../core/fence.ts';
+import { captureUnderFence,holdFence } from '../core/fence.ts';
 import { durableMkdir } from '../core/fsx.ts';
 import {
-  type RuleId, type ObligationId, type InvocationId, type JudgmentSessionId, type LaneId, type ResourceInstance, type ResourceName, type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId, invocationId,
+type InvocationId,type JudgmentSessionId,type LaneId,
+type ObligationId,
+type ResourceInstance,type ResourceName,type RoutingRev,
+type RuleId,
+type Sha,type Sha256Hex,type SpecRev,type UnitId,invocationId,
 } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
-import { censusOf } from '../core/projections.ts';
-import { ruleMentions } from '../holistic/rederive.ts';
-import { selectObligations, unitRules } from '../holistic/impact.ts';
 import { canonicalJson } from '../core/json.ts';
+import { censusOf } from '../core/projections.ts';
 import {
-  type ApprovalFingerprint, type JudgmentSession, type LaneDef, type SpecM1, type SpecPatchOp, type NeedsUserContent, STDERR_FILE, STDOUT_FILE, effectiveScope, inScope, type EffectiveScope, specForces,
-  specRemoves, specRepairs, specObligations, isRed,
+type ApprovalFingerprint,
+type EffectiveScope,
+type JudgmentSession,type LaneDef,
+type NeedsUserContent,STDERR_FILE,STDOUT_FILE,
+type SpecM1,type SpecPatchOp,
+effectiveScope,inScope,
+isRed,
+specForces,
+specObligations,
+specRemoves,specRepairs,
 } from '../core/records.ts';
+import type { GateReview } from '../core/review.ts';
 import { SchemaError } from '../core/validate.ts';
 import {
-  type AbsPath, type RefName, type RepoPath, type RepoPattern, absPath, branchRef, gitDate, isoTimeOf, matchesPattern, repoPath, repoPattern,
+type AbsPath,type RefName,type RepoPath,type RepoPattern,absPath,branchRef,gitDate,isoTimeOf,matchesPattern,repoPath,repoPattern,
 } from '../core/values.ts';
-import { FILES_DIR, capturedEvidence } from '../git/evidence.ts';
-import { GitError, type Identity, git, gitRun, refTarget, revParse } from '../git/git.ts';
-import { mergeHead, resolvedHead } from '../git/mergein.ts';
-import { SalvageStateError, SalvageUnmergedError, checkRejected, planSalvage, type SalvageRules } from '../git/salvage.ts';
-import { derivedGrowthReason, unitRegenerateLanes, regenerateLanes } from '../input/derived.ts';
+import { type CorpusView,materialiseCorpus } from '../corpus/materialise.ts';
+import { FILES_DIR,capturedEvidence } from '../git/evidence.ts';
+import { GitError,type Identity,git,gitRun,refTarget,revParse } from '../git/git.ts';
+import { mergeHead,resolvedHead } from '../git/mergein.ts';
+import { type SalvageRules,SalvageStateError,SalvageUnmergedError,checkRejected,planSalvage } from '../git/salvage.ts';
+import { diffBase,transientCheck,unitDiffPaths,unitTransientRules } from '../git/transient.ts';
+import { openFinding,visionConflictDraft } from '../holistic/findings.ts';
+import { selectObligations,unitRules } from '../holistic/impact.ts';
+import { ruleMentions } from '../holistic/rederive.ts';
+import { type ImpactInput,type ObligationDef,type Obligations,type Vision,parseObligations,parseVision } from '../holistic/types.ts';
+import { witnessLaneReasons } from '../input/classify.ts';
+import { derivedGrowthReason,regenerateLanes,unitRegenerateLanes } from '../input/derived.ts';
 import { patternInScope } from '../input/envelope.ts';
-import { type CorpusFileSet, referenceFiles, sameRepoCorpusSet, scopeOverlapsCorpus, scopeReferences } from '../phase0/rows.ts';
-import { diffBase, transientCheck, unitDiffPaths, unitTransientRules } from '../git/transient.ts';
 import {
-  type CorpusInForce, type InputFiles, type LoadedSpec, CORPUS_FILE_INPUT, OBLIGATIONS_INPUT, PLAN_INPUT, RULING_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, inForceFiles,
-  inputPath, keptInput, keptPayload, parseUnitSpec, requirePlanInForce, revisionInForce, specBytesOf, specShaInForce,
+CORPUS_FILE_INPUT,
+type CorpusInForce,type InputFiles,type LoadedSpec,
+OBLIGATIONS_INPUT,PLAN_INPUT,
+RULINGS_INPUT,SPEC_INPUT,VISION_INPUT,inForceFiles,
+inputPath,keptInput,keptPayload,parseUnitSpec,requirePlanInForce,revisionInForce,specBytesOf,specShaInForce
 } from '../input/inforce.ts';
 import {
-  type KnownDefect, type PlanUnit, advancesOf, designUnitOf, knownDefectsOf, milestonesOf, parsePlan, targetDocumentPaths, targetDocuments,
+type KnownDefect,type PlanUnit,advancesOf,designUnitOf,knownDefectsOf,milestonesOf,parsePlan,targetDocumentPaths,targetDocuments,
 } from '../input/plan.ts';
-import { type CorpusView, materialiseCorpus } from '../corpus/materialise.ts';
-import { openFinding, visionConflictDraft } from '../holistic/findings.ts';
-import { type ImpactInput, type ObligationDef, type Obligations, type RulingSidecar, type Vision, parseObligations, parseRulingSidecar, parseVision } from '../holistic/types.ts';
-import { renderPrompt, promptFor } from '../prompts/index.ts';
-import type {
-  UnitTargetInput, ArchitectureInput, BuildBrowser, Checkout, CorpusInput, DocText, EscalationInput, BuildLane, GateTargetInput, MilestonesInput,
-  PlanCheckCheckouts, PlanCheckDesignInput, PlanCheckPriorRound, PlanCheckScopeGrowth, ReferenceIndex, RulingText, TargetInput, UnitMilestone, VisionInput,
-} from '../prompts/inputs.ts';
-import { type Handover, visionInputOf } from '../prompts/inputs.ts';
-import { handoverOf, lineageOf, unmetClauses } from './handover.ts';
-import {
-  DECISIONS_FILE, type DecisionsFile, type PlanCheckOutput, type Premise, buildOutput, BUILD_SCHEMA, designOfAnswer, validateDecisionsFile, validatePlanCheckOutput,
-} from '../prompts/schemas.ts';
-import type { DesignRecord } from '../core/design.ts';
-import { POC_LIMIT, SUBSTANTIAL_SYSTEM_LINES, departures, designFaults, designUnscoped, gateInlineLines, pinDesign, pocReasons, scaffoldInForce, scaffoldReasons } from './design.ts';
-import { pocLessons, pocReports } from './poc.ts';
-import { type SplitVerdict, commitSplit, judgeSplit } from './split.ts';
-import { judgmentRepairDirective } from '../prompts/directives.ts';
-import { type ParkFacts, NO_PARK_FACTS, repeatNeedsUser, stageOutcomeFact } from '../park/table.ts';
+import { orderingReasons } from '../park/ordering.ts';
+import { NO_PARK_FACTS,type ParkFacts,repeatNeedsUser,stageOutcomeFact } from '../park/table.ts';
+import { type CorpusFileSet,referenceFiles,sameRepoCorpusSet,scopeOverlapsCorpus,scopeReferences } from '../phase0/rows.ts';
 import { resolveArgv0 } from '../preflight/argv0.ts';
-import type { JudgmentRole, JudgmentSeat, Triple } from '../routing/types.ts';
-import { buildCpuKey, cpuCost } from '../resources/calibrate.ts';
-import { buildCpu, requestOf } from '../resources/pool.ts';
-import { probe } from '../resources/probe.ts';
+import { judgmentRepairDirective } from '../prompts/directives.ts';
+import { promptFor,renderPrompt } from '../prompts/index.ts';
+import type {
+ArchitectureInput,BuildBrowser,
+BuildLane,
+Checkout,CorpusInput,DocText,EscalationInput,
+GateTargetInput,MilestonesInput,
+PlanCheckCheckouts,PlanCheckDesignInput,PlanCheckPriorRound,PlanCheckScopeGrowth,ReferenceIndex,RulingText,TargetInput,UnitMilestone,
+UnitTargetInput,
+VisionInput,
+} from '../prompts/inputs.ts';
+import { type Handover,visionInputOf } from '../prompts/inputs.ts';
+import {
+BUILD_SCHEMA,
+DECISIONS_FILE,type DecisionsFile,type PlanCheckOutput,type Premise,buildOutput,
+designOfAnswer,validateDecisionsFile,validatePlanCheckOutput,
+} from '../prompts/schemas.ts';
+import { evidenceSnapshotOp,salvageCommitOp,worktreeCreateOp,worktreeRemoveOp } from '../recover/ops.ts';
+import { buildCpuKey,cpuCost } from '../resources/calibrate.ts';
 import { environmentUnavailable } from '../resources/environments.ts';
-import { type Reservation, type StageHolder, cleanup, buildLanes, heldReservation, holderUnits, run } from '../resources/reserve.ts';
-import { knownDefectActive } from '../schedule/ready.ts';
-import { CPU_COST, type ResourceRequest } from '../schedule/types.ts';
-import { renderSpec } from '../spec/render.ts';
-import { evidenceScopeConflicts, specBytes } from '../spec/spec.ts';
-import { evaluateRevision } from '../commands/apply.ts';
-import { witnessLaneReasons } from '../input/classify.ts';
-import { type Ruling, parseRulings } from '../spec/rulings.ts';
-import { SpecPatchOpError, SpecPatchStaleError, applySpecPatch, specPatchOp } from '../spec/patch.ts';
+import { buildCpu,requestOf } from '../resources/pool.ts';
+import { probe } from '../resources/probe.ts';
+import { type Reservation,type StageHolder,buildLanes,cleanup,heldReservation,holderUnits,run } from '../resources/reserve.ts';
+import type { JudgmentRole,JudgmentSeat,Triple } from '../routing/types.ts';
 import { runnerFiles } from '../runner/files.ts';
+import { knownDefectActive } from '../schedule/ready.ts';
+import { CPU_COST,type ResourceRequest } from '../schedule/types.ts';
+import { SpecPatchOpError,SpecPatchStaleError,applySpecPatch,specPatchOp } from '../spec/patch.ts';
+import { renderSpec } from '../spec/render.ts';
+import { type Ruling,parseRulings } from '../spec/rulings.ts';
+import { evidenceScopeConflicts,specBytes } from '../spec/spec.ts';
+import { verificationReasons,verifyRunsOf } from './deflake.ts';
+import { POC_LIMIT,SUBSTANTIAL_SYSTEM_LINES,departures,designFaults,designUnscoped,gateInlineLines,pinDesign,pocReasons,scaffoldInForce,scaffoldReasons } from './design.ts';
 import {
-  type BackendCallOutcome, type BackendCallSpec, type BackendVerdict, type Cancelled, type ImplementerDispatch, type Pinned, type StageContext, type StageParent,
-  backendOf, callBackend, cancelledNow, dispatchOf, enter, evidenceRoot, implementerDispatch, isCancelled, judgmentDeadlineMs, judgmentDispatch, nonEmpty, pinDispatch,
-  fastSuiteWorktree, raiseRisk, riskAbove, runOp, runPrepared, steerDispatch, unitBranch, unitWorktree, verdictOf, verificationWorktree, workDir,
+type BackendCallOutcome,type BackendCallSpec,type BackendVerdict,type Cancelled,type ImplementerDispatch,type Pinned,type StageContext,type StageParent,
+backendOf,callBackend,cancelledNow,dispatchOf,enter,evidenceRoot,
+fastSuiteWorktree,
+implementerDispatch,isCancelled,judgmentDeadlineMs,judgmentDispatch,nonEmpty,pinDispatch,
+raiseRisk,riskAbove,runOp,runPrepared,steerDispatch,unitBranch,unitWorktree,verdictOf,verificationWorktree,workDir,
 } from './dispatch.ts';
-import { invocationDir, quiescent } from './invoke.ts';
+import { certifiedTree,docsOnlyCarry } from './docsonly.ts';
+import { handoverOf,lineageOf,unmetClauses } from './handover.ts';
+import { invocationDir,quiescent } from './invoke.ts';
 import {
-  type LaneRecord, type LaneRuntime, type Series, type VerificationTree, builderSuiteLanes, dirtyPaths, dirtySnapshot, laneOrder, laneRuntime, laneRecordIn, laneSummaryIn, seriesOrder, mapInForce, presentCheckouts, removeCheckout,
-  LANE_DEADLINE_MS, type Reusable, removeVerificationTree, runLaneSeries, seriesEntry, specSeriesRoot, stageSuiteLanes,
+LANE_DEADLINE_MS,
+type LaneRecord,type LaneRuntime,
+type Reusable,
+type Series,type VerificationTree,builderSuiteLanes,dirtyPaths,dirtySnapshot,laneOrder,laneRuntime,
+laneSummaryIn,
+mapInForce,presentCheckouts,removeCheckout,
+removeVerificationTree,runLaneSeries,seriesEntry,
+seriesOrder,
+specSeriesRoot,stageSuiteLanes
 } from './lanes.ts';
-import { certifiedTree, docsOnlyCarry } from './docsonly.ts';
-import type { GateReview } from '../core/review.ts';
-import { mutationSmoke, survivingObligations } from './smoke.ts';
-import { pressureCause, seriesRuling } from './starved.ts';
-import { checksApply, publishWitnessLaneFiles, requiredAt, witnessPresence } from './witnesscheck.ts';
+import { pocLessons,pocReports } from './poc.ts';
 import {
-  type DecidedRound, type PreparedRound, type RoundCall, type RoundInput, callRound, decidedRound, laneFixRound, prepareRound, steerBrief, resolveContinuation,
+type DecidedRound,type PreparedRound,type RoundCall,type RoundInput,callRound,decidedRound,laneFixRound,prepareRound,
+resolveContinuation,
+steerBrief,
 } from './rounds.ts';
-import { type BuildRound, type Next, type StageOutcome, outcomeFact, transition } from './transitions.ts';
-import { verificationReasons, verifyRunsOf } from './deflake.ts';
-import type { Verification } from '../core/design.ts';
-import { evidenceSnapshotOp, salvageCommitOp, worktreeCreateOp, worktreeRemoveOp } from '../recover/ops.ts';
+import { mutationSmoke,survivingObligations } from './smoke.ts';
+import { type SplitVerdict,commitSplit,judgeSplit } from './split.ts';
+import { pressureCause,seriesRuling } from './starved.ts';
+import { type BuildRound,type Next,type StageOutcome,outcomeFact,transition } from './transitions.ts';
+import { checksApply,publishWitnessLaneFiles,requiredAt,witnessPresence } from './witnesscheck.ts';
 // dev.17 (propagation)
-import { type PlanRev, parseInvocationId } from '../core/ids.ts';
+import { type PlanRev,parseInvocationId } from '../core/ids.ts';
 import type { SpecPatch } from '../core/records.ts';
+import { pinsOf,staleAnswerReasons,staleLinkText,unitStaleLinks } from '../holistic/staleset.ts';
 import { obligationsAtRev } from '../input/inforce.ts';
-import { pinsOf, staleAnswerReasons, staleLinkText, unitStaleLinks } from '../holistic/staleset.ts';
 
 /** One stage attempt, recorded. `needsUser`: content beyond the table's own, for the caller to write. */
 export type StageDone<S extends OutcomeStage> = Readonly<{
@@ -356,11 +388,7 @@ export function ledger(ctx: StageContext): readonly Ruling[] {
   return parseRulings(kept(ctx, payload.manifest.rulings.ledgerSha256, RULINGS_INPUT).toString('utf8'), ledgerPath(ctx));
 }
 
-/** The ruling sidecars in force (M3). */
-export function rulingSidecars(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath }>): readonly RulingSidecar[] {
-  const payload = payloadInForce(ctx);
-  return Object.values(payload.manifest.rulings.sidecars).map((sha) => parseRulingSidecar(JSON.parse(kept(ctx, sha, RULING_INPUT).toString('utf8'))));
-}
+
 
 /** The latest revision's payload. */
 function payloadInForce(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath }>): ReturnType<typeof keptPayload> {

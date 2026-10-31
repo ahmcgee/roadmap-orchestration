@@ -8,21 +8,24 @@
 // dispatch.dev16-unstarted-moves (experience-won routing, 1.0.0-dev.17).
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { type DispatchRecord, dispatchRecord, effectiveScope, inScope } from '../src/core/records.ts';
-import { repoPattern, repoPath } from '../src/core/values.ts';
-import { seatRev, sha256, specRev } from '../src/core/ids.ts';
+import { seatRev,sha256,specRev } from '../src/core/ids.ts';
+import { type DispatchRecord,dispatchRecord,effectiveScope,inScope } from '../src/core/records.ts';
+import { repoPath,repoPattern } from '../src/core/values.ts';
 import {
-  SEAT_TRIPLES, type StageContext, implementerDispatch, implementerSeatRev, judgmentDispatch, pinDispatch, firstPin, seatTripleOf,
+SEAT_TRIPLES,type StageContext,
+firstPin,
+implementerDispatch,implementerSeatRev,judgmentDispatch,pinDispatch,
+seatTripleOf,
 } from '../src/pipeline/dispatch.ts';
-import { build, planCheck } from '../src/pipeline/stages.ts';
-import { step } from '../src/pipeline/unit.ts';
+import { build,planCheck } from '../src/pipeline/stages.ts';
 import { largeDiffSeat } from '../src/pipeline/transitions.ts';
-import { type RoutingStack, arcStack, parseRepoConfig, resolveRouting, resolveRoutingUnder } from '../src/routing/layers.ts';
+import { step } from '../src/pipeline/unit.ts';
+import { type RoutingStack,arcStack,parseRepoConfig,resolveRouting } from '../src/routing/layers.ts';
 
 import {
-  CLAUDE_EFFORTS, CLAUDE_MODELS, CODEX_EFFORTS, CODEX_MODELS, JUDGMENT_SEATS, type JudgmentSeat, MODEL_IDS, RISK_TIERS, type RoutingLayer, type Triple, routingLayer,
+CLAUDE_EFFORTS,CLAUDE_MODELS,CODEX_EFFORTS,CODEX_MODELS,JUDGMENT_SEATS,type JudgmentSeat,MODEL_IDS,RISK_TIERS,type RoutingLayer,type Triple,routingLayer,
 } from '../src/routing/types.ts';
-import { BUILD_REPORT, HIGH_BUILDS_ON_FRONTIER, SCENARIO_TIMEOUT_MS, type StageRun, U1, facts, planCheckStep, seated, setupUnit, started } from './fixtures/stage-common.ts';
+import { BUILD_REPORT,HIGH_BUILDS_ON_FRONTIER,SCENARIO_TIMEOUT_MS,type StageRun,U1,facts,planCheckStep,seated,setupUnit,started } from './fixtures/stage-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 /** The unit's spec in force at rev 1: the kept spec its first start recorded. */

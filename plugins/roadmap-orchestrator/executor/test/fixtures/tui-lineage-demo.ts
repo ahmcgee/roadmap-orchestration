@@ -1,18 +1,18 @@
 // Persistent TUI example: real git, stages and runner records; scripted model backends only.
 // Run from executor/: node test/fixtures/tui-lineage-demo.ts [new-directory]
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { chmodSync,mkdirSync,mkdtempSync,readFileSync,writeFileSync } from 'node:fs';
+import { dirname,join,resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { arcId, unitId } from '../../src/core/ids.ts';
+import { arcId,unitId } from '../../src/core/ids.ts';
 import { absPath } from '../../src/core/values.ts';
-import { readInputFiles, recordPlan } from '../../src/input/inforce.ts';
-import { at, record, start } from '../../src/pipeline/stages.ts';
+import { readInputFiles,recordPlan } from '../../src/input/inforce.ts';
+import { at,record,start } from '../../src/pipeline/stages.ts';
 import { runUnit } from '../../src/pipeline/unit.ts';
 import { Observer } from '../../src/tui/observer.ts';
-import { VISION, ADVANCES } from './brake-common.ts';
-import { admitAll, planCheckStep } from './stage-common.ts';
-import { contextFor, setupArc, stepUntil, mulBuild, gateStep } from './unit-common.ts';
+import { ADVANCES,VISION } from './brake-common.ts';
+import { admitAll,planCheckStep } from './stage-common.ts';
+import { contextFor,gateStep,mulBuild,setupArc,stepUntil } from './unit-common.ts';
 
 const base = process.argv[2] ? resolve(process.argv[2]) : mkdtempSync('/var/tmp/roadmap-lineage-demo-');
 if (process.argv[2]) mkdirSync(base); // Never overwrite an existing example.

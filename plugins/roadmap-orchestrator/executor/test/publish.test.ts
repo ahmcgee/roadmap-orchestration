@@ -6,45 +6,42 @@
 // startup.pending-write-back).
 // dev.16: publish.vision-edit (a vision edit publishes the vision files onto integration).
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync,readFileSync,readdirSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { describe,test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { describe, test } from 'node:test';
-import { applyCommand, evaluateApply } from '../src/commands/apply.ts';
-import { readReceipt, submitCommand } from '../src/commands/queue.ts';
-import type { Fact, IntentOf, IntentRecord, PlanAppliedFact } from '../src/core/events.ts';
-import { INTEGRATION_SLOT, findingId, invocationDirName, jobId, laneId, obligationId, sha, sha256, unitId } from '../src/core/ids.ts';
+import { applyCommand } from '../src/commands/apply.ts';
+import { corpusPin } from '../src/commands/corpus.ts';
+import { readReceipt,submitCommand } from '../src/commands/queue.ts';
+import type { Fact,IntentOf,IntentRecord,PlanAppliedFact } from '../src/core/events.ts';
+import { INTEGRATION_SLOT,findingId,invocationDirName,jobId,laneId,sha,sha256,unitId } from '../src/core/ids.ts';
+import { sha256Hex } from '../src/core/json.ts';
 import { readJournal } from '../src/core/log.ts';
-import { absPath } from '../src/core/values.ts';
-import { bytesSha256 } from '../src/spec/spec.ts';
+import { absPath,repoPath } from '../src/core/values.ts';
 import { changedPaths } from '../src/git/docs.ts';
 import { git as rawGit } from '../src/git/git.ts';
-import { jobLaneDir, verifySnapshot } from '../src/git/snapshot.ts';
-import { isExempt } from '../src/holistic/types.ts';
-import { readInputFiles, requirePlanInForce, revisionInForce } from '../src/input/inforce.ts';
-import { corpusPin } from '../src/commands/corpus.ts';
-import { sha256Hex } from '../src/core/json.ts';
-import { settlePlan } from '../src/preflight/checks.ts';
+import { jobLaneDir,verifySnapshot } from '../src/git/snapshot.ts';
 import { docsTransientViolations } from '../src/git/transient.ts';
-import { laneRevOf, parseObligations } from '../src/holistic/types.ts';
-import { runUnit, step } from '../src/pipeline/unit.ts';
+import { laneRevOf,parseObligations } from '../src/holistic/types.ts';
+import { requirePlanInForce,revisionInForce } from '../src/input/inforce.ts';
+import { runUnit,step } from '../src/pipeline/unit.ts';
 import { recover } from '../src/recover/recover.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
-import { reached } from './helpers/barrier.ts';
-import { assertFired, writeTrigger } from './helpers/crash.ts';
-import { runFixture } from './helpers/proc.ts';
-import { commitAll, git, tmpDir } from './helpers/repo.ts';
-import { PIN_FILE, VISION_DOC } from './helpers/corpusarc.ts';
-import { VISION_PATH, setupCorpusArc } from './fixtures/corpus-unit.ts';
-import { readCalls } from './helpers/scenario.ts';
-import { witnessLaneArgv, writeWitnessControl } from './helpers/witness.ts';
-import { DOCS_PUBLICATION, PREEMPT, crashCells } from './matrix.ts';
-import { API_OP, barrierSuite, closedAs, publishArc, ruleRecord, submitRule, wire } from './fixtures/publish-common.ts';
-import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
+import { bytesSha256 } from '../src/spec/spec.ts';
+import { VISION_PATH,setupCorpusArc } from './fixtures/corpus-unit.ts';
+import { API_OP,barrierSuite,closedAs,publishArc,ruleRecord,submitRule,wire } from './fixtures/publish-common.ts';
+import { SCENARIO_TIMEOUT_MS,admitAll,planCheckStep } from './fixtures/stage-common.ts';
 import {
-  type ArcDescriptor, type ArcOptions, type ArcRun, U1, appendSteps, applyBody, codexStep, contextFor, gateStep, isGateCall, mulBuild, outcomes, stepUntil,
-  visionApplyBody,
+type ArcDescriptor,type ArcOptions,type ArcRun,U1,appendSteps,applyBody,codexStep,contextFor,gateStep,isGateCall,mulBuild,outcomes,stepUntil,
+visionApplyBody,
 } from './fixtures/unit-common.ts';
+import { PIN_FILE,VISION_DOC } from './helpers/corpusarc.ts';
+import { assertFired,writeTrigger } from './helpers/crash.ts';
+import { runFixture } from './helpers/proc.ts';
+import { commitAll,git,tmpDir } from './helpers/repo.ts';
+import { readCalls } from './helpers/scenario.ts';
+import { witnessLaneArgv,writeWitnessControl } from './helpers/witness.ts';
+import { DOCS_PUBLICATION,PREEMPT,crashCells } from './matrix.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 type Json = Record<string, unknown>;
@@ -131,8 +128,7 @@ test('publish.green-not-preempted: once a candidate is green its ff and snapshot
 test('docs.transient: a docs publication\'s diff is exactly its rendered files and its contract ops\' paths; a unit dispatched under dev.6 may not touch the in-tree .roadmap/', T, async () => {
   // C-2 rewrites contracts/api.md, which u1 cites: its plan-check answers the stale link (dev.17 propagation).
   const answered = planCheckStep(
-    { decision: 'approve', staleLinks: [{ link: 'contract:contracts/api.md', outcome: 'confirmed', reason: 'mul does not depend on how sums are stated' }] },
-    { stdinContains: ['<stale_links>', 'contract:contracts/api.md'] },
+    { decision: 'approve' },
   );
   const d = publishArc({ steps: [answered, mulBuild({ '.roadmap/constraints.md': 'hand-written\n' })] });
   const r = contextFor(d);
@@ -144,9 +140,9 @@ test('docs.transient: a docs publication\'s diff is exactly its rendered files a
     assert.equal(outcome.kind, 'applied', JSON.stringify(outcome));
     const at = head(d);
     const diff = changedPaths(absPath(d.repo), sha(tip), sha(at));
-    assert.deepEqual(diff, ['.roadmap/constraints.md', 'contracts/api.md']);
+    assert.deepEqual(diff, ['.roadmap/constraints.md']);
     assert.deepEqual(docsTransientViolations(diff, diff), []);
-    assert.deepEqual(docsTransientViolations(diff, [diff[0]!]).map((v) => [v.path, v.rule]), [['contracts/api.md', 'not-docs']]);
+    assert.deepEqual(docsTransientViolations([...diff, repoPath('contracts/api.md')], diff).map((v) => [v.path, v.rule]), [['contracts/api.md', 'not-docs']]);
     // The unit (dispatched on the published tip) overwrites the rendered constraints.md: refused at salvage, a
     // fix round restores the executor's rendering, then it merges.
     appendSteps(d, [
@@ -201,7 +197,7 @@ function holisticArc(steps: ArcOptions['steps'], scripted: Readonly<Record<strin
       schema: 'roadmap/obligations-m3', cutLine: 'mul ships', lanes: [journey], mapping: { paths: [] },
       obligations: [{
         id: 'I-1', rev: 1, statement: 'add adds.', docRef: { path: 'ARCHITECTURE.md', anchor: 'Architecture', quotedText: 'One module' }, serves: ['V-1'],
-        witness: { lane: 'journey', testIds: ['t-I-1'] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev, witness: {  testIds: ['t-I-1'] } }, deliveredBy: [], activation: 'must-hold',
+        witness: { lane: 'journey', testIds: ['t-I-1'] }, proofJudgment: { verdict: 'proves', obligationRev: 1,  witness: {  testIds: ['t-I-1'] } }, deliveredBy: [], activation: 'must-hold',
         contracts: [], state: { type: 'active' },
       }],
     }));

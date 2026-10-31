@@ -2,26 +2,26 @@
 // Integrated tier: real files, and a child process SIGKILLed at the op's crashPoints for the spec.patch
 // row of the crash matrix (test/matrix.ts).
 import assert from 'node:assert/strict';
-import { readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { readFileSync,rmSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, it } from 'node:test';
+import { describe,it } from 'node:test';
 import type { IntentOf } from '../src/core/events.ts';
-import { opKey, sha256 } from '../src/core/ids.ts';
-import { type SpecM1, type SpecPatch, specM1, specPatch } from '../src/core/records.ts';
-import { SchemaError } from '../src/core/validate.ts';
-import { type AbsPath, absPath } from '../src/core/values.ts';
+import { opKey,sha256 } from '../src/core/ids.ts';
 import { openJournal } from '../src/core/log.ts';
-import { SPEC_INPUT, keepInput, keptInput } from '../src/input/inforce.ts';
+import { type SpecM1,type SpecPatch,specM1,specPatch } from '../src/core/records.ts';
+import { SchemaError } from '../src/core/validate.ts';
+import { type AbsPath,absPath } from '../src/core/values.ts';
+import { SPEC_INPUT,keepInput,keptInput } from '../src/input/inforce.ts';
 import { reconcileSpecPatch } from '../src/recover/spec.ts';
-import { SpecPatchOpError, SpecPatchStaleError, applySpecPatch, specPatchOp } from '../src/spec/patch.ts';
+import { SpecPatchOpError,SpecPatchStaleError,applySpecPatch,specPatchOp } from '../src/spec/patch.ts';
 import { renderSpec } from '../src/spec/render.ts';
 import { parseRulings } from '../src/spec/rulings.ts';
-import { bytesSha256, fileSha256, loadSpec, parseSpec, specBytes } from '../src/spec/spec.ts';
-import { assertFired, writeTrigger } from './helpers/crash.ts';
+import { bytesSha256,fileSha256,loadSpec,parseSpec,specBytes } from '../src/spec/spec.ts';
+import { ARC } from './fixtures/log-records.ts';
+import { assertFired,writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
 import { tmpDir } from './helpers/repo.ts';
-import { ARC } from './fixtures/log-records.ts';
-import { SPEC_PATCH, crashCells } from './matrix.ts';
+import { SPEC_PATCH,crashCells } from './matrix.ts';
 
 const CHILD_TIMEOUT_MS = 20_000;
 const SPEC_KEY = opKey('spec:u1');
@@ -256,8 +256,7 @@ describe('spec witnesses (M4a rev 3)', () => {
     assert.match(renderSpec(spec), /  - test argv: `\["node","--test","\{files\}"\]`/);
     assert.match(renderSpec(spec), /  - stochastic: passes when 2 of up to 3 runs pass/);
     assert.doesNotMatch(renderSpec(SPEC), /systems:|test argv:|stochastic:/);
-    const legacy = specM1({ ...RAW_SPEC, lanes: [{ ...FAST_LANE, inputs: ['src/widget/**'] }] }, 'spec');
-    assert.doesNotMatch(renderSpec(legacy), /inputs:/);
+    assert.throws(() => specM1({ ...RAW_SPEC, lanes: [{ ...FAST_LANE, inputs: ['src/widget/**'] }] }, 'spec'), /inputs/);
   });
 });
 

@@ -1,33 +1,43 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { existsSync,mkdirSync,readFileSync,readdirSync,writeFileSync } from 'node:fs';
+import { dirname,join,resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { corpusPin } from '../../src/commands/corpus.ts';
-import { arcId, sha } from '../../src/core/ids.ts';
+import { arcId,sha } from '../../src/core/ids.ts';
 import { sha256Hex } from '../../src/core/json.ts';
 import { openJournal } from '../../src/core/log.ts';
-import { absPath, repoPath } from '../../src/core/values.ts';
+import { absPath,repoPath } from '../../src/core/values.ts';
 import { parseGuideText } from '../../src/corpus/guide.ts';
-import { parseRules, ruleTextSha256 } from '../../src/corpus/rules.ts';
-import { parseRulesRegistry, type CorpusPin } from '../../src/corpus/types.ts';
+import { parseRules,ruleTextSha256 } from '../../src/corpus/rules.ts';
+import { parseRulesRegistry,type CorpusPin } from '../../src/corpus/types.ts';
 import { debtKey } from '../../src/debt/ledger.ts';
 import { parseDebtLedger } from '../../src/debt/types.ts';
 import { renderConstraints } from '../../src/docs/constraints.ts';
 import { renderDebt } from '../../src/docs/debt.ts';
 import { renderInvariants } from '../../src/docs/invariants.ts';
 import { snapshotRequestOf } from '../../src/git/snapshot.ts';
-import { laneRevOf, parseObligations, parseRulingSidecar, parseVision, type RulingSidecar } from '../../src/holistic/types.ts';
-import { keepCorpusFiles, readInputFiles, recordPlan } from '../../src/input/inforce.ts';
+import { laneRevOf,parseObligations,parseVision } from '../../src/holistic/types.ts';
+import { keepCorpusFiles,readInputFiles,recordPlan } from '../../src/input/inforce.ts';
 import { parsePlan } from '../../src/input/plan.ts';
-import { APPLY, phase0InputOf, phase0Rows } from '../../src/phase0/rows.ts';
+import { APPLY,phase0InputOf,phase0Rows } from '../../src/phase0/rows.ts';
 import { parsePhase0Record } from '../../src/phase0/types.ts';
 import { snapshotPublishOp } from '../../src/recover/ops.ts';
 import { parseRulings } from '../../src/spec/rulings.ts';
-import { runOp, IDENTITY } from '../../test/fixtures/git-common.ts';
-import { layout, type Layout } from '../m4a/layout.ts';
-import { forgeStore, writeForge } from '../m4a/setup.ts';
+import { IDENTITY,runOp } from '../../test/fixtures/git-common.ts';
+import { layout,type Layout } from '../m4a/layout.ts';
+import { forgeStore,writeForge } from '../m4a/setup.ts';
 import { productFiles } from './product.ts';
-import { estateId, estateSpec, setName, type Key, type SetName } from './spec.ts';
+import { estateId,estateSpec,setName,type Key,type SetName } from './spec.ts';
+
+/** Curation oracle metadata, independent of executor inputs. */
+export type RulingSidecar = {
+  id: import('../../src/core/ids.ts').RulingId; statement: string; kind: string; lifetime: string; status: string;
+  trigger: string; ruledBy: {type: string};
+  supersedes: {id: string; part: string | null}[];
+  docRefs: ({rule: string; textSha256: string; relation?: string} | {path: string; anchor: string; quotedText: string; relation?: string})[];
+  obligationDispositions: {id: string; disposition: string}[];
+  consistency: {judgedRevs: unknown; verdict: string; by: {type: string}};
+};
 
 export const CLI = fileURLToPath(new URL('../../bin/roadmap', import.meta.url));
 export const CORPUS_FILE = 'docs/corpus/register.md';
@@ -56,13 +66,13 @@ export async function pin(l: Layout, inputs: string): Promise<CorpusPin> {
 export function obligation(id: string, rule: string, text: string, statement = text): unknown {
   const witness = { lane: 'register', testIds: [id], files: ['test/register.test.js'] };
   return { id, rev: 1, statement, rule: { id: rule, textSha256: ruleTextSha256(text) }, serves: ['V-1'], witness,
-    proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev, witness }, deliveredBy: [], activation: 'must-hold', contracts: [], state: { type: 'active' } };
+    proofJudgment: { verdict: 'proves', obligationRev: 1,  witness: {testIds: witness.testIds, ...(('files' in witness ? {files: witness.files} : {}))} }, deliveredBy: [], activation: 'must-hold', contracts: [], state: { type: 'active' } };
 }
 
 export function sidecar(id: string, statement: string, head: string, over: Record<string, unknown> = {}): RulingSidecar {
-  return parseRulingSidecar({ schema: 'roadmap/ruling-m3', id, statement, kind: 'constraint', ruledBy: { type: 'architect' }, trigger: 'Owner policy review', supersedes: [], condition: null,
+  return { schema: 'roadmap/ruling-m3', id: id as RulingSidecar['id'], statement, kind: 'constraint', ruledBy: { type: 'architect' }, trigger: 'Owner policy review', supersedes: [], condition: null,
     docRefs: [{ path: CORPUS_FILE, anchor: 'Register', quotedText: 'Register', relation: 'consistent' }], contractRefs: [], contractOps: [], obligations: [], obligationDispositions: [], cites: [], evidence: [], appliesTo: { type: 'arc' }, lifetime: 'standing', status: 'active',
-    consistency: { verdict: 'consistent', judgedRevs: { head, ledgerSha256: sha256Hex('previous ledger'), obligationsSha256: null, visionSha256: null, contracts: [] }, by: { type: 'architect' } }, ...over });
+    consistency: { verdict: 'consistent', judgedRevs: { head, ledgerSha256: sha256Hex('previous ledger'), obligationsSha256: null, visionSha256: null, contracts: [] }, by: { type: 'architect' } }, ...over } as RulingSidecar;
 }
 export function ledgerText(sidecars: readonly RulingSidecar[]): string {
   const text = '# Rulings\n\n' + sidecars.map((s) => `${s.id} — ${s.status === 'superseded' ? 'withdrawn by C-40' : s.statement}`).join('\n') + '\n';
@@ -70,7 +80,7 @@ export function ledgerText(sidecars: readonly RulingSidecar[]): string {
   return text;
 }
 export function loadSidecars(inputs: string): readonly RulingSidecar[] {
-  return readdirSync(join(inputs, 'rulings.md.d')).sort((a, b) => Number(a.slice(2, -5)) - Number(b.slice(2, -5))).map((f) => parseRulingSidecar(readJson(join(inputs, 'rulings.md.d', f))));
+  return readdirSync(join(inputs, 'rulings.md.d')).sort((a, b) => Number(a.slice(2, -5)) - Number(b.slice(2, -5))).map((f) => readJson(join(inputs, 'rulings.md.d', f)) as RulingSidecar);
 }
 
 function writeInputs(l: Layout, inputs: string, baseline: string, obligations: unknown, ledger: string, sidecars: readonly RulingSidecar[], set: SetName, chain?: { previousArc: string; previousHead: string }): void {
@@ -152,7 +162,7 @@ export async function fixture(dir: string, set: SetName): Promise<Fixture> {
     ...(['C-30', 'C-31', 'C-32'].includes(id) ? { kind: 'disposition', obligations: [`I-${Number(id.slice(2)) + 24}`], obligationDispositions: [{ id: `I-${Number(id.slice(2)) + 24}`, disposition: id === 'C-30' ? 'retired' : id === 'C-31' ? 'waived' : 'deferred' }] } : {}),
   }));
   const ledger = ledgerText(sidecars);
-  write(join(l.product, '.roadmap/constraints.md'), renderConstraints(parseRulings(ledger, 'rulings.md'), sidecars, 'close-out'));
+  write(join(l.product, '.roadmap/constraints.md'), renderConstraints(parseRulings(ledger, 'rulings.md'), 'close-out'));
   write(join(l.product, 'docs/last-check-in.md'), `# Last check-in\n\n${spec.context}\n\nRecent findings: F-1 and F-2 found violations of ${id('T-20')} / I-20 during register mutation. Both were fixed before completion.\nNext slice advances V-1; the slip rule ${id('T-21')} serves it.\n`);
   git(l.product, 'add', '.');
   git(l.product, 'commit', '--quiet', '-m', 'Previous arc close-out');

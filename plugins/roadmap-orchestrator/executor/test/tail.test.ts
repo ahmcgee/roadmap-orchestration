@@ -5,16 +5,16 @@
 // (tail.released-suppressed), the ruling reader (tail.release-reader) and which gate notes are debt (tail.gate-debt).
 // The bundle and settlement over real arcs are in test/checkpoint.test.ts (tail.*-arc).
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
-import { type FindingId, type MilestoneId, type UnitId, findingId, jobId, obligationId, sha, sha256, unitId, visionClauseId } from '../src/core/ids.ts';
+import { describe,it } from 'node:test';
+import { type FindingId,type MilestoneId,type UnitId,findingId,jobId,obligationId,sha,sha256,unitId,visionClauseId } from '../src/core/ids.ts';
 import type { JournalView } from '../src/core/interfaces.ts';
 import { openJournal } from '../src/core/log.ts';
 import type { FindingState } from '../src/core/state.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { absPath } from '../src/core/values.ts';
-import { type FindingDraft, openFinding, ruleFinding } from '../src/holistic/findings.ts';
+import { type FindingDraft,openFinding,ruleFinding } from '../src/holistic/findings.ts';
 import {
-  type Brake, type TailUnit, type TailWorld, brakeConversions, brakeOf, findingOriginRoots, introducedByFindingOrigin, settledPoint, tailRulings,
+type Brake,type TailUnit,type TailWorld,brakeConversions,brakeOf,findingOriginRoots,introducedByFindingOrigin,settledPoint,tailRulings,
 } from '../src/holistic/tail.ts';
 import { findingTo } from '../src/holistic/types.ts';
 import type { PlanM1 } from '../src/input/plan.ts';

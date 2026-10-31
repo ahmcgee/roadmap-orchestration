@@ -14,11 +14,11 @@
 // carried a revision is read from the log alone: the docs `integration.ff` begun after its `revision.commit`
 // (one revision commits at a time, and a close-out publication never runs inside one).
 import { crashPoint } from '../core/crash.ts';
-import type { IntentOf, Parent, PlanAppliedFact, RevisionPayload } from '../core/events.ts';
+import type { IntentOf,Parent,PlanAppliedFact,RevisionPayload } from '../core/events.ts';
 import type { OpId } from '../core/ids.ts';
-import type { Journal, JournalView, Reconciler } from '../core/interfaces.ts';
+import type { Journal,JournalView,Reconciler } from '../core/interfaces.ts';
 import type { AbsPath } from '../core/values.ts';
-import { type Publication, appendRevision, beginRevision, closeRevision, keptPayload } from '../input/inforce.ts';
+import { type Publication,appendRevision,beginRevision,closeRevision,keptPayload } from '../input/inforce.ts';
 
 /**
  * A docs publication's end: its `ff` published (the pub and the new head, and `settle`: what follows the revision's

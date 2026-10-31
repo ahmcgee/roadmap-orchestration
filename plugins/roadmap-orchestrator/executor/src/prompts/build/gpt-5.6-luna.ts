@@ -23,9 +23,9 @@
 // dev.13: a milestone unit's design references and milestones, as the Claude module's; `browser` is always null on this
 // seat (Codex gets no MCP config), rendered by the shared helper all the same.
 // dev.17 (field feedback 2026-10-23 item 1): a session that does not continue its own gets the shared handover text.
-import type { BuildInputs, PromptModule } from '../inputs.ts';
-import { UNIT_POLICY, bullets, buildBrowserText, fastLanesText, handoverText, milestonesText, referenceIndexText, rulingsText } from '../inputs.ts';
-import { BUILD_SCHEMA, DECISIONS_FILE } from '../schemas.ts';
+import type { BuildInputs,PromptModule } from '../inputs.ts';
+import { UNIT_POLICY,buildBrowserText,bullets,fastLanesText,handoverText,milestonesText,referenceIndexText,rulingsText } from '../inputs.ts';
+import { BUILD_SCHEMA,DECISIONS_FILE } from '../schemas.ts';
 
 const system = `# Role
 You are an autonomous senior engineer implementing one unit of a roadmap build in a git worktree. You work alone and unattended: nobody reads progress updates or answers questions. When you exit, the executor keeps your in-scope changes, runs the spec's lanes in a clean checkout, and a reviewer gates the result against the spec.

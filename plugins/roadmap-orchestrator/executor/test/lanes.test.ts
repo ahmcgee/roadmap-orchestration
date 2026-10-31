@@ -2,29 +2,28 @@
 // verbatim in a clean detached checkout of the salvage SHA, each under its reservation, with one evidence
 // dir per lane. Named tests: verify.verbatim-serial, verify.dirty-tree.
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync,readFileSync,rmSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { invocationId, laneId, opIdOf, resourceName, sha, specRev } from '../src/core/ids.ts';
-import { readInputFiles, recordPlan } from '../src/input/inforce.ts';
-import { fileSha256 } from '../src/spec/spec.ts';
+import { invocationId,laneId,opIdOf,resourceName,sha,specRev } from '../src/core/ids.ts';
+import { absPath,isoTimeOf } from '../src/core/values.ts';
 import { checkManifest } from '../src/git/evidence.ts';
 import { worktreeList } from '../src/git/git.ts';
-import { pinDispatch, unitBranch } from '../src/pipeline/dispatch.ts';
+import { readInputFiles,recordPlan } from '../src/input/inforce.ts';
+import { pinDispatch,unitBranch } from '../src/pipeline/dispatch.ts';
 import { fingerprintAt } from '../src/pipeline/gate.ts';
-import { laneLedgerText } from '../src/prompts/inputs.ts';
-import { killWorkload } from '../src/pipeline/invoke.ts';
-import { LANE_STALL_MS, type LaneRecord, seriesDirty, seriesLedger, specSeriesRoot } from '../src/pipeline/lanes.ts';
+import { invocationDir,killWorkload } from '../src/pipeline/invoke.ts';
+import { LANE_STALL_MS,type LaneRecord,seriesDirty,seriesLedger,specSeriesRoot } from '../src/pipeline/lanes.ts';
 import { laneFixRound } from '../src/pipeline/rounds.ts';
-import { lanes, loadUnitSpec } from '../src/pipeline/stages.ts';
-import { invocationDir } from '../src/pipeline/invoke.ts';
+import { lanes,loadUnitSpec } from '../src/pipeline/stages.ts';
+import { laneLedgerText } from '../src/prompts/inputs.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
 import { runnerFiles } from '../src/runner/files.ts';
-import { absPath, isoTimeOf } from '../src/core/values.ts';
+import { fileSha256 } from '../src/spec/spec.ts';
+import { events,intents } from './fixtures/invoke-specs.ts';
+import { DB,type LaneJson,SCENARIO_TIMEOUT_MS,type StageRun,U1,headOf,keptSpec,launchOf,outcomeFacts,setupUnit,spawnIntents,started } from './fixtures/stage-common.ts';
 import { waitFor } from './helpers/invocation.ts';
-import { git, tmpDir } from './helpers/repo.ts';
-import { events, intents } from './fixtures/invoke-specs.ts';
-import { DB, type LaneJson, SCENARIO_TIMEOUT_MS, type StageRun, U1, keptSpec, headOf, launchOf, outcomeFacts, setupUnit, spawnIntents, started } from './fixtures/stage-common.ts';
+import { git,tmpDir } from './helpers/repo.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 
@@ -131,7 +130,7 @@ test('verify.dirty-tree: a lane that writes into the checkout is not certified, 
 });
 
 test('lanes.occupied-before-tree: unlabelled occupancy parks before any lane runs or any checkout exists', T, async () => {
-  const run = laneRun([{ id: 'needs-db', argv: ['true'], cadence: 'unit', resources: [DB] }], [DB]);
+  const run = laneRun([{ id: 'needs-db', argv: ['true'], cadence: 'candidate', resources: [DB] }], [DB]);
   writeFileSync(join(run.stateDir, `${DB}.occupant`), 'someone-else');
   const done = started(await lanes(run.ctx, run.unit, run.base));
   assert.equal(done.outcome.kind, 'occupied');

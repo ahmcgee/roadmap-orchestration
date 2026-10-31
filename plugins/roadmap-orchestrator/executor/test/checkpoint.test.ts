@@ -6,40 +6,40 @@
 // convergence.bound-identity, bundle.compensating, digest.binds-ids (H11), divergence.preimage-no-inverse (H13), divergence.patch-of-introduced-unit, bundle.fault-decided,
 // ckpt.design-park-respec-first (OR-Q1), ckpt.park-cause, bundle.p1-left-to-repair, and the crash cells of the matrix rows CHECKPOINT_JOB and BUNDLE_ACTIVATE.
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, test } from 'node:test';
+import { describe,test } from 'node:test';
 import { applyCommand } from '../src/commands/apply.ts';
-import { readReceipt, submitCommand } from '../src/commands/queue.ts';
-import { type DivergenceId, type NeedsUserId, arcId, commandId, jobIdOf, unitId } from '../src/core/ids.ts';
-import { absPath } from '../src/core/values.ts';
-import { status } from '../src/status.ts';
+import { readReceipt,submitCommand } from '../src/commands/queue.ts';
+import { type DivergenceId,type NeedsUserId,arcId,commandId,jobIdOf,unitId } from '../src/core/ids.ts';
 import type { JsonValue } from '../src/core/json.ts';
-import { designParkRoute, outputOf, runCheckpoint } from '../src/holistic/checkpoint.ts';
+import { absPath } from '../src/core/values.ts';
+import { designParkRoute,outputOf,runCheckpoint } from '../src/holistic/checkpoint.ts';
 import { quiescentGenerations } from '../src/holistic/convergence.ts';
-import { raiseDigest, uncoveredDivergences } from '../src/holistic/divergence.ts';
+import { raiseDigest,uncoveredDivergences } from '../src/holistic/divergence.ts';
 import { findingKey } from '../src/holistic/types.ts';
-import { SPEC_INPUT, inputPath, keptPayload, requirePlanInForce } from '../src/input/inforce.ts';
+import { SPEC_INPUT,inputPath,requirePlanInForce } from '../src/input/inforce.ts';
 import { readNeedsUser } from '../src/needsuser.ts';
 import { syncRepairs } from '../src/pipeline/reproduce.ts';
 import { runUnit } from '../src/pipeline/unit.ts';
 import { recover } from '../src/recover/recover.ts';
-import { reached, release } from './helpers/barrier.ts';
-import { assertFired, writeTrigger } from './helpers/crash.ts';
-import { VALID_OP, checkpointAnswer, jobRepairStep, checkpointStep, interpretationOnlyNoop, lensStep, twoOpBundleSecondInvalid } from './helpers/holistic.ts';
-import { runFixture } from './helpers/proc.ts';
-import { git, tmpDir } from './helpers/repo.ts';
-import { type Step, readCalls } from './helpers/scenario.ts';
-import { BUNDLE_ACTIVATE, CHECKPOINT_JOB, crashCells } from './matrix.ts';
-import {
-  type Wired, admitOp, applyPlanEdit, applyVision, checkpointArc, checkpointContext, completedAudit, factsOfKind, limitsOp, noteLenses, visionLenses,
-} from './fixtures/checkpoint-common.ts';
-import { auditArc, mapped } from './fixtures/audit-common.ts';
-import { ruleRecord, submitRule } from './fixtures/publish-common.ts';
-import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep, serialRuntime } from './fixtures/stage-common.ts';
-import { type ArcRun, appendSteps, applyBody, codexStep, contextFor, gateStep, mulBuild, stepUntil } from './fixtures/unit-common.ts';
+import { status } from '../src/status.ts';
+import { auditArc,mapped } from './fixtures/audit-common.ts';
 import { candidateTree } from './fixtures/brake-common.ts';
+import {
+type Wired,admitOp,applyPlanEdit,applyVision,checkpointArc,checkpointContext,completedAudit,factsOfKind,limitsOp,noteLenses,visionLenses,
+} from './fixtures/checkpoint-common.ts';
+import { ruleRecord,submitRule } from './fixtures/publish-common.ts';
+import { SCENARIO_TIMEOUT_MS,admitAll,planCheckStep,serialRuntime } from './fixtures/stage-common.ts';
+import { type ArcRun,appendSteps,applyBody,codexStep,contextFor,gateStep,mulBuild,stepUntil } from './fixtures/unit-common.ts';
+import { reached,release } from './helpers/barrier.ts';
+import { assertFired,writeTrigger } from './helpers/crash.ts';
+import { VALID_OP,checkpointAnswer,checkpointStep,interpretationOnlyNoop,jobRepairStep,lensStep,twoOpBundleSecondInvalid } from './helpers/holistic.ts';
+import { runFixture } from './helpers/proc.ts';
+import { git,tmpDir } from './helpers/repo.ts';
+import { type Step,readCalls } from './helpers/scenario.ts';
 import { scriptTree } from './helpers/witness.ts';
+import { BUNDLE_ACTIVATE,CHECKPOINT_JOB,crashCells } from './matrix.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 
@@ -412,33 +412,7 @@ describe('the activation checks', () => {
     }
   });
 
-  test('bundle.rule-race-stale (paid M4a run 1): a `rule` landing C-2 during the checkpoint call, whose bundle lands C-2 and C-3, rejects the bundle stale, never crashing; the re-evaluation lands C-3', T, async () => {
-    const d = checkpointArc(visionLenses('audit-1'));
-    const r = contextFor(d);
-    const { ctx, w } = checkpointContext(r);
-    try {
-      await completedAudit(r, ctx);
-      appendSteps(d, [
-        checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [ruleOp('C-2'), ruleOp('C-3')],  }), [barrier]),
-        checkpointStep('ckpt-2', checkpointAnswer({ decision: 'bundle', ops: [ruleOp('C-3')],  })),
-      ]);
-      const running = runCheckpoint(ctx);
-      await reached(d.scenarioDir, 'ckpt', 120_000);
-      const ruled = await applyCommand(w.commands, submitRule(r, ruleRecord(r, 'C-2')));
-      assert.equal(ruled.kind, 'applied', JSON.stringify(ruled));
-      release(d.scenarioDir, 'ckpt');
-      const first = await running;
-      assert.ok(first.kind === 'decided' && first.decision.kind === 'rejected' && first.decision.reason === 'stale', JSON.stringify(first));
-      assert.match(first.decision.detail, /the rulings ledger changed since the checkpoint read it/);
-      const second = await runCheckpoint(ctx);
-      assert.ok(second.kind === 'decided' && second.decision.kind === 'applied', JSON.stringify(second));
-      assert.deepEqual(decisions(r), [['ckpt-1', 'rejected:stale']]);
-      assert.deepEqual(bundleRevs(r), [[r.journal.view.planApplied()!.rev, 'ckpt-2']]);
-      assert.deepEqual(Object.keys(keptPayload(r.ctx.runDir, r.journal.view.planApplied()!.payloadSha256!).manifest.rulings.sidecars).sort(), ['C-2', 'C-3'], 'the owner\'s C-2 and the re-evaluation\'s C-3 (C-1 is a ledger line without a sidecar)');
-    } finally {
-      r.journal.close();
-    }
-  });
+  
 
   
 

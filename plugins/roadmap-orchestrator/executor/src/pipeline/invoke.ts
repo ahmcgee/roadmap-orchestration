@@ -14,34 +14,34 @@
 // (`usageRecorded`) before writing one, so it is never written twice. `invoke` never retries: a retry is
 // the caller's second call with `origin: retry`, which the journal gives the next ordinal and the op's
 // original deadline.
-import type { PromptSize } from '../core/records.ts';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync,readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { writeResult } from '../backends/adapter.ts';
-import { launchPressure } from '../host/pressure.ts';
-import { exitCpuOf } from '../core/projections.ts';
 import { scan } from '../contain/proc.ts';
-import { ENV_INV, ENV_ROLE } from '../contain/session.ts';
+import { ENV_INV,ENV_ROLE } from '../contain/session.ts';
 import { crashPoint } from '../core/crash.ts';
 import {
-  type Fact, type IntentOf, type MeterSubject, type OpExpect, type OpOutcome, type Parent, type RecoveredBy, type ResultSummary, type SpawnSubject,
-  parentUnit,
+type Fact,type IntentOf,type MeterSubject,type OpExpect,type OpOutcome,type Parent,type RecoveredBy,type ResultSummary,type SpawnSubject,
+parentUnit,
 } from '../core/events.ts';
 import {
-  type InvocationId, type OpId, type OpKey, type RoutingRev, type Sha256Hex, claudeSessionId, invocationDirName, invocationId, opKey,
-  parseInvocationId, parseOpId, sha256,
+type InvocationId,type OpId,type OpKey,type RoutingRev,type Sha256Hex,claudeSessionId,invocationDirName,invocationId,opKey,
+parseInvocationId,parseOpId,sha256,
 } from '../core/ids.ts';
-import { chargedUsage } from '../core/usage.ts';
-import type { Containment, IntentBody, Journal, JournalView, RunnerFiles, WorkloadRef } from '../core/interfaces.ts';
+import type { Containment,IntentBody,Journal,JournalView,RunnerFiles,WorkloadRef } from '../core/interfaces.ts';
 import { sha256Hex } from '../core/json.ts';
+import { exitCpuOf } from '../core/projections.ts';
+import type { PromptSize } from '../core/records.ts';
 import {
-  type CancelReason, type LaunchFile, type LaunchTerminal, type ProcIdentity, type ResultFile, type Usage, STDOUT_FILE,
+type CancelReason,type LaunchFile,type LaunchTerminal,type ProcIdentity,type ResultFile,type Usage,STDOUT_FILE,
 } from '../core/records.ts';
-import { type AbsPath, type IsoTime, absPath } from '../core/values.ts';
+import { chargedUsage } from '../core/usage.ts';
+import { type AbsPath,type IsoTime,absPath } from '../core/values.ts';
 import { SCHEMA_VERSION } from '../core/version.ts';
-import { type SeatRef, unitSeatRef } from '../routing/types.ts';
+import { launchPressure } from '../host/pressure.ts';
+import { unitSeatRef } from '../routing/types.ts';
 import { runnerFiles } from '../runner/files.ts';
-import { awaitRunner, cancel, launchSha256, prepareLaunch, startRunner } from '../runner/launch.ts';
+import { awaitRunner,cancel,launchSha256,prepareLaunch,startRunner } from '../runner/launch.ts';
 
 /** Where an invocation's files live: `<runDir>/inv/<seq>-<ordinal>/` (SCHEMAS.md "Runner files"). */
 export function invocationDir(runDir: AbsPath, inv: InvocationId): AbsPath {

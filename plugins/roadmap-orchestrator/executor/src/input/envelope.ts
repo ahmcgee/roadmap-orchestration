@@ -8,12 +8,10 @@
 //                     besides those already held. A dispatched unit's scope growth (classify `scopeGrowthReason`) and a
 //                     re-entry widening its lineage's envelope (`unit-reentered.widened`) both use it.
 import { matchesGlob } from 'node:path';
-import type { RulingId, UnitId } from '../core/ids.ts';
+import type { UnitId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import type { EffectiveScope } from '../core/records.ts';
 import type { RepoPattern } from '../core/values.ts';
-import type { RulingSidecar } from '../holistic/types.ts';
-import type { Ruling } from '../spec/rulings.ts';
 
 /** The members of `root`'s lineage in order: `root`, then each unit that re-entered the previous one. */
 export function lineageMembers(view: JournalView, root: UnitId): readonly UnitId[] {
@@ -43,22 +41,3 @@ export const patternExcluded = (pattern: RepoPattern, outputs: readonly RepoPatt
 export const patternInScope = (scope: EffectiveScope, pattern: RepoPattern): boolean =>
   withinEnvelope(pattern, scope.include) && !patternExcluded(pattern, scope.exclude);
 
-/** Backticked tokens of a ruling statement: the patterns it names. */
-const namedPatterns = (statement: string): readonly string[] => [...statement.matchAll(/`([^`]+)`/g)].map((m) => m[1]!);
-
-/**
- * The ruling backing `added` (ascending) for `unit`: the first of `cites` active in `ledger` and as a sidecar, applying to
- * `unit`, whose statement names exactly `added` besides the patterns of `held`. Null when none does.
- */
-export function rulingNaming(
-  unit: UnitId, held: readonly RepoPattern[], added: readonly RepoPattern[], cites: readonly RulingId[], ledger: readonly Ruling[], sidecars: readonly RulingSidecar[],
-): RulingId | null {
-  const want = JSON.stringify([...added].sort());
-  return cites.find((id) => {
-    const r = ledger.find((x) => x.id === id);
-    const s = sidecars.find((x) => x.id === id);
-    if (r?.status !== 'active' || s === undefined || s.status !== 'active') return false;
-    if (s.appliesTo.type !== 'units' || !s.appliesTo.units.includes(unit)) return false;
-    return JSON.stringify([...new Set(namedPatterns(s.statement).filter((p) => !held.includes(p as RepoPattern)))].sort()) === want;
-  }) ?? null;
-}

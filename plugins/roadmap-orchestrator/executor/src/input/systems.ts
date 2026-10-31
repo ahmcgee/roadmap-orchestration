@@ -22,10 +22,10 @@
 // whose class meets the lane's systems closed over what they depend on (a lane listing none: every path but the docs
 // class), the docs class when the lane lists `docs`. Paths that belong to other systems only are left out, so a change
 // there keeps the lane's key.
-import { type LaneId, type SystemName, DOCS_SYSTEM, systemName } from '../core/ids.ts';
+import { type LaneId,type SystemName,DOCS_SYSTEM,systemName } from '../core/ids.ts';
 import type { LaneDef } from '../core/records.ts';
-import { type Read, Fields, SchemaError, arrayOf, assertUnique, object } from '../core/validate.ts';
-import { type RepoPath, type RepoPattern, matchesPattern, repoPath, repoPattern } from '../core/values.ts';
+import { type Read,Fields,SchemaError,arrayOf,assertUnique,object } from '../core/validate.ts';
+import { type RepoPath,type RepoPattern,matchesPattern,repoPath,repoPattern } from '../core/values.ts';
 
 
 export type SystemDef = Readonly<{ paths: readonly RepoPattern[]; tests: readonly RepoPattern[]; dependsOn: readonly SystemName[] }>;

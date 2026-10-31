@@ -6,11 +6,11 @@ import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { invocationId, opIdOf } from '../src/core/ids.ts';
+import { invocationId,opIdOf } from '../src/core/ids.ts';
 
 import type { HostSample } from '../src/host/sample.ts';
-import { HOST_SIGNATURES, HOST_SIGNATURES_REV, SIGNATURE_TAIL_BYTES, matchSignatures, outputSignatures } from '../src/host/signatures.ts';
-import { type LaneHost, type RerunEnd, abortReason, afterRerun, classifyRed, failureSignature, redLane, waitForClearHost } from '../src/pipeline/redlane.ts';
+import { HOST_SIGNATURES,SIGNATURE_TAIL_BYTES,matchSignatures,outputSignatures } from '../src/host/signatures.ts';
+import { type LaneHost,type RerunEnd,abortReason,afterRerun,classifyRed,failureSignature,redLane,waitForClearHost } from '../src/pipeline/redlane.ts';
 import { tmpDir } from './helpers/repo.ts';
 
 const sample = (load1: number, memAvailableKb = 900_000): HostSample => ({ load1, cpus: 16, memTotalKb: 1_000_000, memAvailableKb });

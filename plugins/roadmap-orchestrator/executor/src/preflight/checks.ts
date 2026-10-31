@@ -51,46 +51,48 @@ import { SCHEMA_VERSION } from '../core/version.ts';
 //
 // Order within groups 1 and 2 follows the table. Nothing here names a model: routing refusals name the
 // seat and the layer.
-import { accessSync, constants, existsSync, readFileSync, readdirSync, statSync, statfsSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { accessSync,constants,existsSync,readFileSync,readdirSync,statSync,statfsSync } from 'node:fs';
+import { dirname,join } from 'node:path';
+import { finishPendingAcks,successorOf } from '../chain.ts';
 import { detectContainmentMode } from '../contain/detect.ts';
-import { durableMkdir, readJson } from '../core/fsx.ts';
-import { type ArcId, INTEGRATION_SLOT, type ResourceName, type Sha, type UnitId, sha } from '../core/ids.ts';
+import { durableMkdir,readJson } from '../core/fsx.ts';
+import { type ArcId,INTEGRATION_SLOT,type ResourceName,type Sha,type UnitId,sha } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
-import { LogCorruptError, type OpenJournal, ObserverJournal } from '../core/log.ts';
-import type { HostLockClaim, LaneDef, RevisionManifest, SpecM1 } from '../core/records.ts';
+import { LogCorruptError,ObserverJournal,type OpenJournal } from '../core/log.ts';
+import type { HostLockClaim,LaneDef,SpecM1 } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
-import { type AbsPath, absPath, branchName, branchRef, refName } from '../core/values.ts';
-import { gitRun, refTarget } from '../git/git.ts';
-import { ownArcResidue, undispositionedResidueCheck } from '../host/residues.ts';
-import type { ClaimOutcome } from '../host/lock.ts';
-import { evaluateRevision, keepRevision, payloadOf } from '../commands/apply.ts';
-import { parseObligations, parseRulingSidecar, parseVision } from '../holistic/types.ts';
-import { advancesReasons } from '../holistic/vision.ts';
+import { type AbsPath,absPath,branchName,branchRef,refName } from '../core/values.ts';
+import type { SourceFile } from '../corpus/source.ts';
+import { gitRun,refTarget } from '../git/git.ts';
 import { rederive } from '../holistic/rederive.ts';
+import { parseObligations,parseVision } from '../holistic/types.ts';
+import { advancesReasons } from '../holistic/vision.ts';
+import type { ClaimOutcome } from '../host/lock.ts';
+import { ownArcResidue,undispositionedResidueCheck } from '../host/residues.ts';
 import { runDir as runDirOf } from '../input/cli.ts';
 import {
-  type InForce, type InputFiles, type RoutingBase, appendRevision, arcRolesOf, closeRevision, commitRevisionNow, keepCorpusFiles, keptPayload, openRevision, planInForce, readInputFiles,
-  recordPlan, revisionInForce, specBytesOf, specShaInForce,
+type InForce,type InputFiles,type RoutingBase,appendRevision,arcRolesOf,closeRevision,
+keepCorpusFiles,keptPayload,openRevision,planInForce,readInputFiles,
+recordPlan,revisionInForce,specBytesOf,specShaInForce
 } from '../input/inforce.ts';
-import { applyProposal } from '../input/classify.ts';
-import { CORPUS_VISION_FILE, type PlanM1, type PlanUnit, parsePlan, reservedUnitIdReason, visionFile } from '../input/plan.ts';
-import type { SourceFile } from '../corpus/source.ts';
-import { finishPendingAcks, successorOf } from '../chain.ts';
-import { FRESH_START, RESTART, holisticNeedsCorpus, phase0InputOf, phase0Rows } from '../phase0/rows.ts';
+import { CORPUS_VISION_FILE,type PlanM1,type PlanUnit,parsePlan,reservedUnitIdReason,visionFile } from '../input/plan.ts';
+import { FRESH_START,RESTART,holisticNeedsCorpus,phase0InputOf,phase0Rows } from '../phase0/rows.ts';
 import { unitBranchPrefix } from '../pipeline/dispatch.ts';
-import { cpuCapacity, overCapacity } from '../resources/pool.ts';
+import { cpuCapacity,overCapacity } from '../resources/pool.ts';
 import {
-  type RepoConfig, type ResolvedRouting, planStack, parseRepoConfig, resolveRouting, selectProfile, unsupportedSeats,
+type RepoConfig,type ResolvedRouting,
+parseRepoConfig,
+planStack,
+resolveRouting,selectProfile,unsupportedSeats,
 } from '../routing/layers.ts';
-import type { ArcRoleSet, ProfileName } from '../routing/types.ts';
-import { type Ruling, loadRulings, parseRulings } from '../spec/rulings.ts';
-import { SpecFileError, evidenceScopeConflicts, parseSpec } from '../spec/spec.ts';
+import type { ArcRoleSet,ProfileName } from '../routing/types.ts';
+import { type Ruling,loadRulings,parseRulings } from '../spec/rulings.ts';
+import { SpecFileError,evidenceScopeConflicts,parseSpec } from '../spec/spec.ts';
 import { laneRows } from './lanerows.ts';
+import { type SmokePark,type SmokeReport,type SmokeRouting,backendEnv,smoke,smokeOutages,smokeRejections } from './smoke.ts';
+import type { StartupCheck,StartupContext,StartupRejection } from './startup.ts';
 import { walkToolsCheck } from './walktools.ts';
-import { type SmokePark, type SmokeReport, type SmokeRouting, backendEnv, smoke, smokeOutages, smokeRejections } from './smoke.ts';
-import type { StartupCheck, StartupContext, StartupRejection } from './startup.ts';
 
 type Rejection<K extends StartupRejection['kind']> = Extract<StartupRejection, { kind: K }>;
 

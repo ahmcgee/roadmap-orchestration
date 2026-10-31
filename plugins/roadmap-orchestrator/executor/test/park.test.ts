@@ -2,24 +2,24 @@
 // journal: every retryable row has targets, the backoff, escalation (non-blocking, probing goes on), the
 // repeat rule, the breaker and a multi-target park that outlives a restart.
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { describe,it } from 'node:test';
 import {
-  type Event, type Fact, type LogRecord, type OutcomeStage, type ProbeTarget, STAGE_OUTCOME_KINDS, prevHash, serializeEvent,
+type Event,type Fact,type LogRecord,type OutcomeStage,type ProbeTarget,STAGE_OUTCOME_KINDS,prevHash,serializeEvent,
 } from '../src/core/events.ts';
-import { type UnitId, arcId, commandId, poolInstance, resourceName, unitId } from '../src/core/ids.ts';
+import { type UnitId,arcId,commandId,poolInstance,resourceName,unitId } from '../src/core/ids.ts';
 import { openJournal } from '../src/core/log.ts';
 import { Fold } from '../src/core/state.ts';
-import { type AbsPath, type IsoTime, absPath, isoTime } from '../src/core/values.ts';
-import { openBlocking, readNeedsUser } from '../src/needsuser.ts';
-import { NO_PARK_FACTS, PARK_TARGETS, isRepeat, parkTargets, repeatNeedsUser, stageOutcomeFact, targetRule } from '../src/park/table.ts';
+import { type AbsPath,type IsoTime,absPath,isoTime } from '../src/core/values.ts';
+import { openBlocking,readNeedsUser } from '../src/needsuser.ts';
 import {
-  dueJobs, escalateAt, escalationsDue, nextProbeAt, raiseDue, retryableParks, trippedTargets, trips,
+dueJobs,escalateAt,escalationsDue,nextProbeAt,raiseDue,retryableParks,trippedTargets,trips,
 } from '../src/park/schedule.ts';
-import { type StageOutcome, TABLE } from '../src/pipeline/transitions.ts';
-import { PARK_ESCALATE_MS, PARK_REPEAT_MS } from '../src/schedule/types.ts';
-import { tmpDir } from './helpers/repo.ts';
-import { BUILD_CLEANUP_FAILED, LANES_BLOCKED, parkUnit, seedArc } from './fixtures/probe-common.ts';
+import { NO_PARK_FACTS,PARK_TARGETS,isRepeat,parkTargets,repeatNeedsUser,stageOutcomeFact,targetRule } from '../src/park/table.ts';
+import { type StageOutcome,TABLE } from '../src/pipeline/transitions.ts';
+import { PARK_ESCALATE_MS,PARK_REPEAT_MS } from '../src/schedule/types.ts';
 import { appliedFields } from './fixtures/log-records.ts';
+import { BUILD_CLEANUP_FAILED,LANES_BLOCKED,parkUnit,seedArc } from './fixtures/probe-common.ts';
+import { tmpDir } from './helpers/repo.ts';
 
 const U1 = unitId('u1');
 const U2 = unitId('u2');

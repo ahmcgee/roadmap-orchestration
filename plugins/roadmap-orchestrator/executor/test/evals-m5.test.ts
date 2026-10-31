@@ -8,32 +8,35 @@
 // evals-m5.stop-rule-run5, evals-m5.owner-code-answers, evals-m5.check-without-arc, evals-m5.check-arc-under-test.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync,mkdirSync,readFileSync,readdirSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, test } from 'node:test';
-import type { Event, Fact } from '../src/core/events.ts';
-import { arcId, jobId } from '../src/core/ids.ts';
+import { describe,test } from 'node:test';
+import {
+PLANT_ANCHOR,PLANT_WORDS,check,demoServingVerdict,
+designFirstVerdict,isPng,milestonesPlannedVerdict,nodeHeldVerdict,
+plantCaughtVerdict,plantRepairedVerdict,polishBoundedVerdict,repairLoopVerdict,
+sessionStoppedVerdict,
+walkScreenshotsVerdict,
+} from '../evals/m5/check.ts';
+import { SKILL_SATISFIED,SLICE_ANSWER,codeAnswer,initialPrompt } from '../evals/m5/driver.ts';
+import { CORPUS_ROOT,DESIGN_SKILL,PLANT,VISION_DOC } from '../evals/m5/layout.ts';
+import { type EvidencePlan,type M5Log,type Repairs,evidenceComplete,logOf } from '../evals/m5/log.ts';
+import type { Reflow } from '../evals/m5/reflow.ts';
+import { CLAUSES,setup } from '../evals/m5/setup.ts';
+import { planShape } from '../evals/m5/shape.ts';
+import type { Event,Fact } from '../src/core/events.ts';
+import { arcId,jobId } from '../src/core/ids.ts';
+import { sha256Hex } from '../src/core/json.ts';
 import { openJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
-import { gitCommonDir } from '../src/git/git.ts';
-import { runDir } from '../src/input/cli.ts';
-import { PLAN_INPUT, keepInput } from '../src/input/inforce.ts';
 import { parseGuideText } from '../src/corpus/guide.ts';
+import { gitCommonDir } from '../src/git/git.ts';
 import { parseVision } from '../src/holistic/types.ts';
-import { type Milestone, type PlanM1, parsePlan } from '../src/input/plan.ts';
+import { runDir } from '../src/input/cli.ts';
+import { PLAN_INPUT,keepInput } from '../src/input/inforce.ts';
+import { type Milestone,type PlanM1,parsePlan } from '../src/input/plan.ts';
 import { parseRepoConfig } from '../src/routing/layers.ts';
-import { sha256Hex } from '../src/core/json.ts';
-import {
-  PLANT_ANCHOR, PLANT_WORDS, check, demoServingVerdict, sessionStoppedVerdict, designFirstVerdict, isPng, milestonesPlannedVerdict, nodeHeldVerdict,
-  plantCaughtVerdict, plantRepairedVerdict, polishBoundedVerdict, repairLoopVerdict, walkScreenshotsVerdict,
-} from '../evals/m5/check.ts';
-import { type EvidencePlan, type M5Log, type Repairs, evidenceComplete, logOf } from '../evals/m5/log.ts';
-import { SKILL_SATISFIED, SLICE_ANSWER, codeAnswer, initialPrompt } from '../evals/m5/driver.ts';
-import { CORPUS_ROOT, DESIGN_SKILL, PLANT, VISION_DOC, layout } from '../evals/m5/layout.ts';
-import type { Reflow } from '../evals/m5/reflow.ts';
-import { CLAUSES, setup } from '../evals/m5/setup.ts';
-import { planShape } from '../evals/m5/shape.ts';
-import { git, tmpDir } from './helpers/repo.ts';
+import { git,tmpDir } from './helpers/repo.ts';
 
 const T = { timeout: 5 * 60_000 };
 

@@ -85,61 +85,62 @@
 //
 // OR-Q1: `designParkRoute` tells the scheduler what a design park waits for: the checkpoint (its park item is held
 // back), the owner (`respec-second`, raised here), or its own park item (the checkpoint decided nothing applicable).
-import { orderingOf } from '../park/ordering.ts';
 import { join } from 'node:path';
 import { freshJudgmentSession } from '../backends/argv.ts';
 import { crashPoint } from '../core/crash.ts';
-import { checkpointSkipTriggerOf } from '../core/projections.ts';
 import type { Parent } from '../core/events.ts';
-import { captureUnderFence } from '../core/fence.ts';
-import { canonicalJson } from '../core/json.ts';
-import { type FindingId, type InvocationId, type JobId, type LaneId, type Sha, type Sha256Hex, type UnitId, INTEGRATION_SLOT, invocationId, parseInvocationId, canonicalIds } from '../core/ids.ts';
-import { invocationDir, killWorkload } from '../pipeline/invoke.ts';
-import { runnerFiles } from '../runner/files.ts';
-import type { JournalView } from '../core/interfaces.ts';
 import { BACKEND_PARK_CLASSES } from '../core/events.ts';
-import { DEFAULT_BOUNDS, specWitnesses } from '../core/records.ts';
-import { type CheckpointState, openAttempt } from '../core/state.ts';
+import { captureUnderFence } from '../core/fence.ts';
+import { type FindingId,INTEGRATION_SLOT,type InvocationId,type JobId,type LaneId,type Sha,type Sha256Hex,type UnitId,canonicalIds,invocationId,parseInvocationId } from '../core/ids.ts';
+import type { JournalView } from '../core/interfaces.ts';
+import { canonicalJson } from '../core/json.ts';
+import { checkpointSkipTriggerOf } from '../core/projections.ts';
+import { DEFAULT_BOUNDS,specWitnesses } from '../core/records.ts';
+import { type CheckpointState,openAttempt } from '../core/state.ts';
 import { SchemaError } from '../core/validate.ts';
-import { type AbsPath, absPath } from '../core/values.ts';
-import { git, revParse } from '../git/git.ts';
+import { type AbsPath,absPath } from '../core/values.ts';
+import { revParse } from '../git/git.ts';
+import { jobEvidenceRoot } from '../git/snapshot.ts';
 import {
-  OBLIGATIONS_INPUT, PHASE0_INPUT, PLAN_INPUT, RULING_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, inForceFiles, inputPath, keptInput, payloadAtRev, requirePlanInForce,
-  revisionInForce,
+OBLIGATIONS_INPUT,PHASE0_INPUT,PLAN_INPUT,
+RULINGS_INPUT,SPEC_INPUT,VISION_INPUT,inForceFiles,inputPath,keptInput,payloadAtRev,requirePlanInForce,
+revisionInForce
 } from '../input/inforce.ts';
-import { DEFAULT_CHECKPOINT, DEFAULT_CONVERGENCE_K, type PlanM1, advancesOf, hasMilestones, milestonesOf, parsePlan } from '../input/plan.ts';
-import { raiseNeedsUser, raisedFor, readNeedsUser } from '../needsuser.ts';
+import { DEFAULT_CHECKPOINT,DEFAULT_CONVERGENCE_K,type PlanM1,advancesOf,hasMilestones,milestonesOf,parsePlan } from '../input/plan.ts';
+import { raiseNeedsUser,raisedFor,readNeedsUser } from '../needsuser.ts';
+import { orderingOf } from '../park/ordering.ts';
 import {
-  type BackendCallOutcome, type JobParent, arcSeat, callArcRole, minutesMs, recordedArcCall, repairTurnOf, runOp, verdictOf,
+type BackendCallOutcome,type JobParent,arcSeat,callArcRole,minutesMs,recordedArcCall,repairTurnOf,runOp,verdictOf,
 } from '../pipeline/dispatch.ts';
-import { arcJourneyLane, arcLaneKey, jobSeriesCheckout, laneEnvId, observations, observedViews, removeJobCheckouts, runJourneySeries } from '../pipeline/lanes.ts';
+import { lineageDiagnosis } from '../pipeline/handover.ts';
+import { invocationDir,killWorkload } from '../pipeline/invoke.ts';
+import { arcJourneyLane,arcLaneKey,jobSeriesCheckout,laneEnvId,observations,observedViews,removeJobCheckouts,runJourneySeries } from '../pipeline/lanes.ts';
+import { repairUnits } from '../pipeline/reproduce.ts';
+import { architecture,docAt,inMs,ledgerDir,ledgerPath,targetDirs } from '../pipeline/stages.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
 import { candidateRedCause } from '../pipeline/unit.ts';
-import { repairUnits } from '../pipeline/reproduce.ts';
-import { architecture, docAt, inMs, ledgerDir, ledgerPath, targetDirs } from '../pipeline/stages.ts';
-import { lineageDiagnosis } from '../pipeline/handover.ts';
 import { judgmentRepairDirective } from '../prompts/directives.ts';
-import { renderPrompt, promptFor } from '../prompts/index.ts';
-import { type CheckpointInputs, type CheckpointSpec, type FindingView, type ManifestEntry, type ManifestKind, type ParkDiagnosis, type TriggerView, visionInputOf } from '../prompts/inputs.ts';
-import { type CheckpointIds, type CheckpointOutput, checkpointSchemaFor, validateCheckpointOutput } from '../prompts/schemas.ts';
+import { promptFor,renderPrompt } from '../prompts/index.ts';
+import { type CheckpointInputs,type CheckpointSpec,type FindingView,type ManifestEntry,type ManifestKind,type ParkDiagnosis,type TriggerView,visionInputOf } from '../prompts/inputs.ts';
+import { type CheckpointIds,type CheckpointOutput,checkpointSchemaFor,validateCheckpointOutput } from '../prompts/schemas.ts';
 import { worktreeCreateOp } from '../recover/ops.ts';
-import { entryOf, isFree, resourceTable } from '../resources/reserve.ts';
+import { entryOf,isFree,resourceTable } from '../resources/reserve.ts';
+import { runnerFiles } from '../runner/files.ts';
 import { renderSpec } from '../spec/render.ts';
-import { nextRulingId, parseRulings } from '../spec/rulings.ts';
+import { nextRulingId,parseRulings } from '../spec/rulings.ts';
 import { parseSpec } from '../spec/spec.ts';
-import { removeCheckout, rewitnessP1s, withCpu } from './audit.ts';
-import { type Activation, type BundleDecision, type Captured, type CheckpointContext, INVALID_REQUEST_OPTIONS, type Refused, activate, effectiveOps, raiseOnce, recordedAdmits, settleDecided, tailWorldOf, vectorAt } from './bundle.ts';
-import { brakeOf } from './tail.ts';
+import { type WalkRecord,milestoneReached,unweighedWalkFindings,walksOf,walksPending } from '../walk/milestones.ts';
 import { opportunityClauses } from './admits.ts';
-import { cadence, integrationHeadNow, workRemains } from './cadence.ts';
+import { removeCheckout,rewitnessP1s,withCpu } from './audit.ts';
+import { type Activation,type BundleDecision,type Captured,type CheckpointContext,INVALID_REQUEST_OPTIONS,type Refused,activate,effectiveOps,raiseOnce,recordedAdmits,settleDecided,tailWorldOf,vectorAt } from './bundle.ts';
+import { cadence,integrationHeadNow,workRemains } from './cadence.ts';
 import type { AppliedBundle } from './convergence.ts';
 import { uncoveredDivergences } from './divergence.ts';
 import { isActive } from './findings.ts';
 import { reuse } from './observe.ts';
-import { type ArcLaneDef, type BusyAttempt, type CheckpointTrigger, type ObligationDef, type Obligations, type Vision, observationKeyText, parseObligations, parseRulingSidecar, parseVision } from './types.ts';
+import { brakeOf } from './tail.ts';
+import { type ArcLaneDef,type BusyAttempt,type CheckpointTrigger,type ObligationDef,type Obligations,type Vision,observationKeyText,parseObligations,parseVision } from './types.ts';
 import { visionCoverage } from './vision.ts';
-import { jobEvidenceRoot } from '../git/snapshot.ts';
-import { type WalkRecord, milestoneReached, unweighedWalkFindings, walksOf, walksPending } from '../walk/milestones.ts';
 
 export type { CheckpointContext } from './bundle.ts';
 
@@ -681,7 +682,6 @@ function manifestOf(ctx: CheckpointContext, s: Captured): readonly ManifestEntry
     entry('plan', 'plan', m.planSha256, PLAN_INPUT),
     ...Object.entries(m.specs).sort(([a], [b]) => (a < b ? -1 : 1)).map(([unit, sha]) => entry('spec', unit, sha, SPEC_INPUT)),
     entry('ledger', 'rulings', s.vector.ledgerSha256, RULINGS_INPUT),
-    ...Object.entries(m.rulings.sidecars).map(([id, sha]) => entry('sidecar', id, sha, RULING_INPUT)),
     ...(s.vector.obligationsSha256 === null ? [] : [entry('obligations', 'obligations', s.vector.obligationsSha256, OBLIGATIONS_INPUT)]),
     entry('vision', 'vision', s.visionSha256, VISION_INPUT),
     ...(m.phase0 === undefined ? [] : [entry('phase0', 'phase0', m.phase0, PHASE0_INPUT)]),
@@ -790,8 +790,7 @@ function refusedOf(ctx: CheckpointContext, s: Captured, prior: CheckpointInputs[
 
 function checkpointInputs(ctx: CheckpointContext, s: Captured, r: Recorded): CheckpointInputs {
   const rulings = parseRulings(r.ledgerText, ledgerPath(ctx));
-  const sidecars = Object.entries(payloadAt(ctx, r.planRev).manifest.rulings.sidecars)
-    .map(([, sha]) => parseRulingSidecar(JSON.parse(kept(ctx, sha, RULING_INPUT).toString('utf8'))));
+
   const prior = priorRejected(ctx, s);
   return {
     vision: visionInputOf(r.vision, advancesOf(r.plan)),
@@ -802,7 +801,7 @@ function checkpointInputs(ctx: CheckpointContext, s: Captured, r: Recorded): Che
     plan: renderPlan(ctx, s, r),
     findings: findingViews(ctx, s.findings),
     obligations: r.obligations === null ? [] : observedViews(ctx, r.obligations, r.obligations.obligations, s.headSha),
-    coverage: visionCoverage(r.vision, advancesOf(r.plan), r.obligations, sidecars.map((x) => ({ id: x.id, cites: x.cites })), opportunityClauses(recordedAdmits(ctx.journal.view))),
+    coverage: visionCoverage(r.vision, advancesOf(r.plan), r.obligations, [], opportunityClauses(recordedAdmits(ctx.journal.view))),
     divergences: uncoveredDivergences(ctx.journal.view).map((d) => ({ id: d.id, type: d.type, what: d.what })),
     contracts: r.plan.contracts.map((c) => docAt(ctx, s.headSha, c)),
     rulings: rulings.flatMap((x) => (x.status === 'active' ? [{ id: x.id, text: x.text }] : [])),

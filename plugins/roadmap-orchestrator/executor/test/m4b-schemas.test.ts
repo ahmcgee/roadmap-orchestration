@@ -3,26 +3,26 @@
 // role's strict output and its validator, the kept series and inputs readers, and the `arcRoles` gate on the routing rev
 // (an arc 1.0.0-dev.7 started keeps its revs; an m4b arc hashes the flow seat too), fixed at revision 1 by the fold.
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
-import { type Envelope, type Event, type Fact, type LogRecord, parseEventLine, prevHash, serializeEvent } from '../src/core/events.ts';
+import { describe,it } from 'node:test';
+import { schemaViolation } from '../src/backends/adapter.ts';
+import { type Envelope,type Event,type Fact,type LogRecord,parseEventLine,prevHash,serializeEvent } from '../src/core/events.ts';
 import {
-  InvalidIdError, arcId, jobId, opId, opKey, parseStationId, proposalId, proposalIdOf, proposalJob, sha, sha256, stationId,
+InvalidIdError,arcId,jobId,opId,opKey,parseStationId,proposalId,proposalIdOf,proposalJob,sha,sha256,stationId,
 } from '../src/core/ids.ts';
 import { canonicalJson } from '../src/core/json.ts';
+import { spawnPressureOf,startPressureOf } from '../src/core/projections.ts';
 import { commandBody } from '../src/core/records.ts';
 import { Fold } from '../src/core/state.ts';
-import { ARC as LOG_ARC, H as LOG_H, PROVENANCE, appliedFields, chain } from './fixtures/log-records.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { isoTime } from '../src/core/values.ts';
-import { parseFlowInputs, parseFlowSeries, parseHostGivens } from '../src/flow/types.ts';
-import { CHECKPOINT_SCHEMA, FLOW_SCHEMA, checkpointSchemaFor, validateFlowOutput } from '../src/prompts/schemas.ts';
-import { schemaViolation } from '../src/backends/adapter.ts';
+import { parseFlowInputs,parseFlowSeries,parseHostGivens } from '../src/flow/types.ts';
 import { checkpointIdsOf } from '../src/holistic/checkpoint.ts';
 import type { Obligations } from '../src/holistic/types.ts';
-import { checkpointAnswer } from './helpers/holistic.ts';
-import { arcStack, parseRepoConfig, resolveRouting, routingRevOf, seatsInForce } from '../src/routing/layers.ts';
+import { CHECKPOINT_SCHEMA,FLOW_SCHEMA,checkpointSchemaFor,validateFlowOutput } from '../src/prompts/schemas.ts';
+import { arcStack,parseRepoConfig,resolveRouting,routingRevOf,seatsInForce } from '../src/routing/layers.ts';
 import { routingProvenance } from '../src/routing/types.ts';
-import { spawnPressureOf, startPressureOf } from '../src/core/projections.ts';
+import { ARC as LOG_ARC,H as LOG_H,PROVENANCE,appliedFields,chain } from './fixtures/log-records.ts';
+import { checkpointAnswer } from './helpers/holistic.ts';
 
 const ARC = arcId('arc-3');
 const A = sha('a'.repeat(40));
@@ -160,7 +160,7 @@ describe('m4b rev 3: host pressure records', () => {
     assert.ok(old.type === 'done' && old.kind === 'proc.spawn' && old.outcome.kind === 'result');
     assert.equal(spawnPressureOf(old.outcome), null);
     assert.equal(spawnPressureOf({ pressure: 0.4 }), 0.4);
-    assert.equal(startPressureOf({}), 'unavailable');
+    assert.equal(startPressureOf({pressure: 'unavailable'}), 'unavailable');
     assert.equal(startPressureOf({ pressure: 'available' }), 'available');
   });
 
@@ -212,7 +212,7 @@ describe('m4b kept records', () => {
     assert.throws(() => parseFlowSeries({ ...series, points: [{ ...point, leadMin: 31 }] }), (e: unknown) => e instanceof SchemaError && /\.minutes$/.test(e.field));
     assert.throws(() => parseFlowSeries({ ...series, points: [{ ...point, minutes: { 'slot:integration': 10, 'stage:build': 20 } }] }), SchemaError);
     assert.throws(() => parseFlowSeries({ ...series, accounting: { ...series.accounting, tAdvances: 1 } }), SchemaError);
-    assert.throws(() => parseFlowSeries({ ...series, v: 2 }), SchemaError);
+    assert.throws(() => parseFlowSeries({ ...series, v: 1 }), SchemaError);
     assert.throws(() => parseFlowSeries({ ...series, points: [point, point] }), SchemaError);
   });
 
@@ -327,8 +327,8 @@ describe('m4b: the checkpoint schema closes the ids its call knows (paid M4b run
     assert.equal(schemaViolation(schema, split('I-1', 'w-clash')), null);
     assert.match(schemaViolation(schema, split('I-1', 'w-draught')) ?? '', /ops\[0\]/, 'run 5 ckpt-4: w-draught is no arc lane');
     assert.match(schemaViolation(schema, split('I-2', 'w-clash')) ?? '', /ops\[0\]/, 'I-2 is split already');
-    assert.equal(schemaViolation(schema, dispose('I-2')), null);
-    assert.match(schemaViolation(schema, dispose('I-7')) ?? '', /ops\[0\]/);
+    assert.throws(() => dispose('I-2'), /expected one of/);
+    assert.throws(() => dispose('I-7'), /expected one of/);
   });
 
   it('no ids known (null, or an empty set): any id, the prompt module\'s schema; the bundle\'s validation refuses an unknown one', () => {

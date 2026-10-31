@@ -1,47 +1,19 @@
-// `roadmap scope accept|reject <unit> --reason <text>` (scope growth, 2026-10-15; SCHEMAS.md "Scope growth"): the root
-// agent's decision on the scope growth a unit's plan-check proposed and code verified, which holds the unit at plan-check
-// (`scope-growth`, src/pipeline/stages.ts `verifiedGrowth`), or (plan defects, 2026-10-16) the paths its last two salvages
-// both reverted, which hold it at lanes (`repeatedReverts`). A `scope-decide` command, mutation, scope {u}. Refused unless
-// the unit is held by that hold. The effect, each step only where missing (a run again after a crash finds what is done):
-//
-//   accept  1. The ruled growth, the one canonical path a dispatched unit's scope grows by (src/input/classify.ts "scope
-//              growth"), built here instead of by hand: a new ruling (the ledger's next C-n, an architect `decision`
-//              applying to the unit, whose statement names exactly the added patterns in backticks; its doc ref quotes a
-//              line of the first file the growth takes in, a line naming what the spec `removes` when one does; its
-//              consistency fresh at the integration tip), the unit's plan scope widened by the patterns, and its spec in
-//              force at rev + 1 with the patterns in its scope and the ruling in its cites. Validated as `rule` validates a
-//              ruling (`rulingReasons`), evaluated by the apply core with the Phase-0 rows (as an `apply --ruling`), then
-//              committed through the fence: `plan-applied` (source the command). The spec revision is pending; the unit
-//              re-opens on it when the hold is released, and its plan-check's dispatch check re-pins the wider scope.
-//           Nothing is written into the owner's files (2026-10-16): an apply of files without the growth rebases onto it
-//           (src/input/rebase.ts), and `roadmap inputs export` writes the files in force.
-//   both    2. The hold's needs-user acknowledged by this command.
-//           3. `scope-decided{unit, attempt, command, decision, reason}`, the postcondition: the fold releases the hold and
-//              keeps the decision with its proposals. Accepted: the unit re-opens at plan-check on the grown spec. Rejected:
-//              the plan-check runs again on the same spec, told what was rejected; a proposal of a rejected pattern no
-//              longer holds it, so it decides within the scope (approve, redirect, or infeasible: an escalation).
-// A rejection of the revision (the classifier's or the Phase-0 rows' reasons) rejects the command, listing every reason;
-// the unit stays held, and the root agent rejects instead or lands its own `apply --ruling`.
-import { canonicalJson } from '../core/json.ts';
-import { type ScopeHoldStage, scopeHoldStage } from '../core/state.ts';
+// A root scope decision records its reason and builds the accepted growth on the plan in force.
 import type { ScopeGrowthProposal } from '../core/events.ts';
-import { type CommandId, type RulingId, type UnitId, specRev } from '../core/ids.ts';
-import { type CommandBody, type SpecM1, specRemoves } from '../core/records.ts';
-import { type RepoPath, type RepoPattern, branchRef, matchesPattern, repoPath } from '../core/values.ts';
-import { git, refTarget } from '../git/git.ts';
-import { type RulingSidecar, RULING_SCHEMA, parseRulingSidecar } from '../holistic/types.ts';
+import { type CommandId,type UnitId,specRev } from '../core/ids.ts';
+import { canonicalJson } from '../core/json.ts';
+import { type CommandBody,type SpecM1 } from '../core/records.ts';
+import { type ScopeHoldStage,scopeHoldStage } from '../core/state.ts';
+import { type RepoPattern } from '../core/values.ts';
+import { derivedGrowthReason } from '../input/derived.ts';
 import {
-  type InputFiles, inForceFiles, ledgerPath, requirePlanInForce, revisionInForce, sidecarPath,
+type InputFiles,inForceFiles,
+requirePlanInForce,revisionInForce
 } from '../input/inforce.ts';
 import { parsePlan } from '../input/plan.ts';
-import { derivedGrowthReason } from '../input/derived.ts';
-import { raisedFor } from '../needsuser.ts';
-import { APPLY, phase0InputOf, phase0Rows } from '../phase0/rows.ts';
-import { rulingContextAt } from '../pipeline/publish.ts';
-import { quotedTextReason } from '../docs/contracts.ts';
-import { parseSpec, specBytes } from '../spec/spec.ts';
-import { parseRulings } from '../spec/rulings.ts';
-import { type CommandContext, type Effect, acknowledge, advisoryText, commitUnderFence, evaluateRevision, parentOf, rejectedText } from './apply.ts';
+import { APPLY,phase0InputOf,phase0Rows } from '../phase0/rows.ts';
+import { parseSpec,specBytes } from '../spec/spec.ts';
+import { type CommandContext,type Effect,advisoryText,commitUnderFence,evaluateRevision,parentOf,rejectedText } from './apply.ts';
 
 type ScopeBody = Extract<CommandBody, { type: 'scope-decide' }>;
 
@@ -65,8 +37,6 @@ export async function decideScope(ctx: CommandContext, id: CommandId, body: Scop
     if (landed.kind === 'rejected') return landed;
     verified.push(...landed.verified);
   }
-  const item = raisedFor(ctx.journal.view, { type: 'stage', unit: body.unit, stage: held.stage, attempt: held.attempt });
-  if (item !== null && ctx.journal.view.ackOf(item) === null) verified.push(...acknowledge(ctx, id, item, null));
   ctx.journal.fact({ kind: 'scope-decided', unit: body.unit, attempt: held.attempt, command: id, decision: DECIDED[body.decision], reason: body.reason });
   verified.push(decidedText(body.unit, stage, held.attempt, DECIDED[body.decision]));
   return { kind: 'applied', verified };

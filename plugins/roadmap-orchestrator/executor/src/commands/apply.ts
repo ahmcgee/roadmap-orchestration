@@ -1,167 +1,72 @@
-// The `command.apply` op (plan "File mutations", R10; DESIGN §2.3): one op per command, done only when its
-// terminal receipt exists. `applied` names the op and the postconditions it verified; `accepted` (written
-// at pickup, queue.ts) is never done.
-//
-//   intent{command, commandSha256} → effect → receipt → done{applied{receiptSha256} | rejected{reason}}
-//
-// Every effect checks its postcondition before acting, so running it again (recovery after a crash
-// between the effect and the receipt) applies only what is missing:
-//
-//   pause    `paused{target}` fact: the durable marker the driver consults (it cancels the unit's live
-//            invocation; step 13b). Applied immediately (control).
-//   stop     `stop-requested` fact. Control.
-//   ack      `needs-user/<id>.ack.json` (write-once, naming this command), then a `needs-user-acked` fact
-//            the fold uses to tell open items from acknowledged ones. Rejected for an unknown id, an id
-//            another command already acknowledged, or a choice the item does not offer. Control.
-//   resume   unit | all: a `resumed` fact that clears the pause and the hold (the unit re-runs its stage
-//            as a new, uncharged attempt). backend: that backend's smoke alone through the prober
-//            (`resumeBackend`, one job per target), then `resumed{backend}`, which clears its park, whatever
-//            its class; a failed smoke is rejected (`smoke-failed: …`). Mutation (scope: all →
-//            the arc, a unit → that unit, a backend → none; src/input/classify.ts `commandScope`).
-//            `resume <unit>` of a parked unit, per the park's class (A7):
-//              retryable       probe now: the prober runs each outstanding target once, covering this park,
-//                              and its `probe` facts recover the unit when every target has passed (the fold
-//                              restores the parked stage); a target that fails keeps the park, rejected
-//                              with the target, and probing goes on on its schedule.
-//              operator env    re-run the parked stage: the park's open needs-user is acknowledged by this
-//                              command, then an `unparked` fact. A unit parked `routing-changed` (`reroute`)
-//                              first needs the routing in force to resolve its implementer seat to the pinned
-//                              seat's backend and model (or no build started): it is re-pinned under that routing
-//                              (a `dispatch` fact, when the rev differs); otherwise it is rejected.
-//              operator design re-open on an applied revision (`reopen`), only at a judgment stage (plan-check
-//                              or gate): an `apply` holds the unit's recorded spec rev + 1 pending (SCHEMAS.md
-//                              "Plan in force"); the park's needs-user is acknowledged, then a `reopened` fact
-//                              sends the unit back to plan-check as a new attempt. Without a revision, or at
-//                              any other stage, rejected: apply a revision, or re-enter the unit.
-//            A stopped or merged unit is rejected with the reason. A unit both paused and parked: one resume
-//            clears the pause and re-opens (or re-runs) it; when the park stays, the pause alone is cleared
-//            and the receipt says why it stays parked.
-//   sweep    re-drives resources an earlier sweep left reserved or cleaning, then, per undispositioned
-//            host residue (in recorded order): take the resource under the sweep holder (reserve when it is
-//            free here; reclaim when it is this arc's own cleanup-failed resource) → the recorded teardown →
-//            release and the residue's `cleaned` disposition. A failed teardown leaves the resource
-//            cleaning under the sweep and the residue undisposed (a sweep records no failure), and the
-//            receipt says so. A resource another holder has is left alone. Mutation.
-//   apply    the owner's files the manifest hashes (plan, specs, and since M3 the ledger with its sidecars, the
-//            obligations and the vision, G15), rebased onto the files in force, become the revision in force
-//            (`applyPlan`): the files are re-read and must still hash to the manifest, then three-way merged per file
-//            (src/input/rebase.ts) from the base (the command's `base`, an export's manifest, or the owner's files of
-//            their latest apply) onto the files in force, so an executor act since the base (a spec patch, a bundle, a
-//            flow proposal, a ruling) is kept and only a true conflict refuses, naming the file and JSON path; the apply
-//            core evaluates the merge (`evaluateRevision`: every change classified, src/input/classify.ts, the lane row and
-//            the corpus overlap rule over the units it changes, and its payload built), the startup rows re-run over the changed units, and a backend a new routing needs that the
-//            old did not passes its smoke; after those asynchronous parts, under the revision fence (A19), the proposal
-//            is rebased again onto the log as it is then and evaluated, synchronously, and must build the same payload
-//            (`commitRebased`; when the arc moved, the apply is evaluated again, up to `APPLY_ATTEMPTS`); then the bytes
-//            are kept (the owner's files too, the base of their next apply, named by the payload's `owner` when they
-//            differ) and the revision committed (src/recover/revision.ts: payload, `revision.commit`, docs publication,
-//            `plan-applied`), the postcondition. Nothing is written into the owner's files. All or nothing: a rejection
-//            lists every reason. `reenters`, `cut`, `route`,
-//            `limits`, the obligation edits and the vision are its edit classes (D3, LR-c); a vision edit (`--vision-edit`)
-//            of a corpus arc publishes its vision files onto the integration branch through the revision's docs
-//            publication (dev.16, `visionRenders`), the one way the arc branch takes a vision. M4a: so are a re-pin
-//            (`corpus`) and a Phase-0 record edit (`phase0`); the shared Phase-0 rows (src/phase0/rows.ts) run over
-//            every apply (`tree-uncommitted`, `vision-unconfirmed`, `corpus-invalid`, `phase0-invalid` are rejected
-//            receipt reasons, as are the classifier's `target-kind-changed` and `chain-immutable`), and the corpus
-//            files the re-derived pin read are kept before the commit. M4a rev 3 (I2): `apply --ruling <sidecar>`
-//            (the body's `rulings`, each hashed by the CLI) lands those rulings with the edits as ONE revision: each
-//            record numbered (a `C-?` takes the ledger's next C-n, and the receipt names it), validated as `rule`
-//            validates it (src/commands/rule.ts `rulingReasons`) against the revision being built, and landed by the one
-//            ruling path (src/input/classify.ts `withRulings`) on the ledger in force (an owner's ledger or sidecar edit
-//            is refused). A pack review keyed on the revision never sees the rulings without their dependent edits.
-//            dev.17 (arc feedback 2026-10-23): a spec edit of a unit running a stage attempt is not refused: it puts that
-//            unit in the apply's scope (classify `busy`), so the apply is queued behind its stage boundary (`apply-queued`,
-//            a `queued` receipt) and evaluated there, its stale set computed then; refused there, it raises `apply-dropped`.
-//            The receipt warns, never refusing, of a running checkpoint the revision makes stale and of a re-entry with no
-//            fix round left (`applyWarnings`). Mutation.
-//   reverse  (M3, H13) `reverse <D-n>`: a fresh compensating revision built from the divergence's preimage and
-//            committed like any revision (src/commands/reverse.ts). Mutation, scope the arc.
-//   resolve-edge, run-only: facts about the graph (src/commands/graph.ts). Mutations with an empty scope.
-//   steer    (M3, R11) src/commands/steer.ts: a parked or preparing unit's steer round, its `--class` a revision of
-//            its routing layer. Mutation, scope {u}.
-//   merge-in (M3) src/commands/mergein.ts: the integration tip merged into a unit's branch; a conflict is rejected with
-//            no act; the unit re-enters at its lanes. Mutation, scope {u}.
-//   rule     (M3, A4) `rule <record.json>`: a ruling sidecar validated (fresh consistency, G21), landed in the
-//            ledger and its sidecars through the apply core and the fence, with its docs publication
-//            (src/commands/rule.ts). Mutation, no scope.
-//   audit    (M3, B7) `audit [--lens]`: `audit-requested`, run by the scheduler's audit job (src/commands/audit.ts).
-//            Mutation, no scope.
-//   close-admissions (M3, B7): `admissions-closed`, the arc drains (src/commands/admissions.ts). Mutation, no scope.
-//   flow-decide, flow-request (M4b) `flow accept|reject <proposal>`: `flow-decided` once per proposal and its item
-//            acknowledged; `flow request`: `flow-requested` (src/commands/flow.ts). Mutations, no scope.
-//   scope-decide (scope growth, 2026-10-15) `scope accept|reject <u>`: the root agent's decision on a unit held by its
-//            plan-check's verified scope-growth proposal; an accept lands the ruled growth (src/commands/scope.ts). Mutation,
-//            scope {u}.
-//   demo     (dev.13) `demo up|down|hold|release`: the owner's act on the demo, `demo-acted{command, act}` (src/demo/promote.ts
-//            `actOnDemo`): hold freezes promotion, release resumes it and promotes the latest settled milestone when newer,
-//            up and down start and stop the host's instance (the supervisor's keeper). Mutation, no scope.
-//   `resume <unit>` while `pause --all` holds is rejected: only `resume` without a unit clears it.
-//
-// Control commands wait only for an open `integration.ff` (the publication critical section); mutations
-// wait for their scope to drain (the scheduler, A12; src/schedule/scheduler.ts). A stop cancels a mutation's
-// smoke: the run's stop signal ends the effect before its receipt, and the next start's recovery applies the
-// command from its open op (src/recover/command.ts).
+// Durable command effects, receipts and subject closure. Apply uses file CAS against an exported revision.
+// The frozen contract classifier and revision fence are shared with executor-built revisions.
 import { join } from 'node:path';
-import type { IntentOf, OpOutcome, Parent, PlanAppliedFact, PlanChange, RevisionPayload, RevisionSource, StageOutcomeFact } from '../core/events.ts';
 import { crashPoint } from '../core/crash.ts';
+import type { IntentOf,OpOutcome,Parent,PlanAppliedFact,PlanChange,RevisionPayload,RevisionSource,StageOutcomeFact } from '../core/events.ts';
+import { JUDGMENT_STAGES,probeTargetKey } from '../core/events.ts';
 import { holdFence } from '../core/fence.ts';
-import { canonicalJson } from '../core/json.ts';
 import { exclusivePublish } from '../core/fsx.ts';
-import { JUDGMENT_STAGES, probeTargetKey } from '../core/events.ts';
 import {
-  type CommandId, type NeedsUserId, type PlanRev, type ResourceInstance, type ResourceName, type RulingId, type UnitId, invocationId, opKey, parseResourceUnit,
-  planRev, resourceInstance, canonicalIds,
+type CommandId,type NeedsUserId,type PlanRev,type ResourceInstance,type ResourceName,
+type UnitId,
+canonicalIds,
+invocationId,opKey,parseResourceUnit,
+planRev,resourceInstance
 } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
-import type { CommandBody, CommandFile, HashedFile, NeedsUserContent, NeedsUserAck, ResidueKey, RevisionManifest, SpecM1, Stage } from '../core/records.ts';
-import { type PlanM1, type PlanUnit, boundsOf, visionFile } from '../input/plan.ts';
-import { gitRun } from '../git/git.ts';
+import { canonicalJson } from '../core/json.ts';
+import type { CommandBody,CommandFile,NeedsUserAck,NeedsUserContent,ResidueKey,RevisionManifest,SpecM1,Stage } from '../core/records.ts';
 import type { ParkState } from '../core/state.ts';
 import { SchemaError } from '../core/validate.ts';
-import { CONSTRAINTS_DOC, renderConstraints } from '../docs/constraints.ts';
-import { registryOf } from '../corpus/registry.ts';
-import type { RulesRegistry } from '../corpus/types.ts';
-import { INVARIANTS_DOC, renderInvariants } from '../docs/invariants.ts';
-import type { BusyAttempt, ContractOp, DivergenceDraft, Preimage } from '../holistic/types.ts';
-import { bytesSha256, parseSpec } from '../spec/spec.ts';
-import { staleSetOf } from '../holistic/staleset.ts';
-import { type AbsPath, type RepoPath, absPath, isoTimeOf, repoPath } from '../core/values.ts';
+import { type AbsPath,type RepoPath,absPath,isoTimeOf,repoPath } from '../core/values.ts';
 import { SCHEMA_VERSION } from '../core/version.ts';
-import { type ResidueEntry, readResidues, recordDisposition, undispositioned } from '../host/residues.ts';
-import { type ApplyProposal, type NextInputs, type Proposer, applyProposal, busyText, classify } from '../input/classify.ts';
+import { registryOf } from '../corpus/registry.ts';
+import type { SourceFile } from '../corpus/source.ts';
+import type { RulesRegistry } from '../corpus/types.ts';
+import { actOnDemo } from '../demo/promote.ts';
+import { CONSTRAINTS_DOC,renderConstraints } from '../docs/constraints.ts';
+import { INVARIANTS_DOC,renderInvariants } from '../docs/invariants.ts';
+import { gitRun } from '../git/git.ts';
+import { staleSetOf } from '../holistic/staleset.ts';
+import type { BusyAttempt,ContractOp,DivergenceDraft,Preimage } from '../holistic/types.ts';
+import { type ResidueEntry,readResidues,recordDisposition,undispositioned } from '../host/residues.ts';
+import { type ApplyProposal,type NextInputs,type Proposer,applyProposal,busyText,classify } from '../input/classify.ts';
 import {
-  type InForce, type InputFiles, RENDER_INPUT, type RevisionInForce, type RoutingBase, keepCorpusFiles, keepInput, keepRevisionFiles, planInForce, planRouting,
-  readInputFiles, requirePlanInForce, revisionInForce, inForceFiles, revisionManifestOf, routingProvenanceOf,
+type InForce,type InputFiles,RENDER_INPUT,type RevisionInForce,type RoutingBase,
+inForceFiles,
+keepCorpusFiles,keepInput,keepRevisionFiles,planInForce,planRouting,
+readInputFiles,requirePlanInForce,revisionInForce,
+revisionManifestOf,routingProvenanceOf,
 } from '../input/inforce.ts';
-import { needsUserAckPath, raiseNeedsUser, raisedFor, raisedWithReason, readNeedsUser, readNeedsUserAck, openNeedsUser } from '../needsuser.ts';
-import { dispatchOf, repin } from '../pipeline/dispatch.ts';
+import { type PlanM1,type PlanUnit,boundsOf,visionFile } from '../input/plan.ts';
+import { needsUserAckPath,openNeedsUser,raiseNeedsUser,raisedWithReason,readNeedsUser,readNeedsUserAck } from '../needsuser.ts';
+import type { ProberHandle } from '../park/probe.ts';
+import { APPLY,type Phase0Advisory,phase0InputOf,phase0Rows,planDefects,sameRepoCorpusSet,scopeOverlapProblems,underRoot } from '../phase0/rows.ts';
+import { dispatchOf,repin } from '../pipeline/dispatch.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
 import { applyRows } from '../preflight/checks.ts';
 import { laneRows } from '../preflight/lanerows.ts';
-import type { SourceFile } from '../corpus/source.ts';
-import { APPLY, planDefects, type Phase0Advisory, phase0InputOf, phase0Rows, sameRepoCorpusSet, scopeOverlapProblems, underRoot } from '../phase0/rows.ts';
-import { type SmokeRouting, backendsOf, smokeBackends, smokeRejections } from '../preflight/smoke.ts';
-import type { StartupContext, StartupRejection } from '../preflight/startup.ts';
+import { type SmokeRouting,backendsOf,smokeBackends,smokeRejections } from '../preflight/smoke.ts';
+import type { StartupContext,StartupRejection } from '../preflight/startup.ts';
 import type { ResidueRecipe } from '../recover/residue.ts';
-import { type DocsPublisher, commitRevision } from '../recover/revision.ts';
+import { type DocsPublisher,commitRevision } from '../recover/revision.ts';
 import {
-  type CleanupResult, type Reservation, type ResourceContext, type SweepHolder, cleanup, entryOf, finishCleanup, reclaimForSweep,
-  reserveForSweep, resourceTable,
+type CleanupResult,type Reservation,type ResourceContext,type SweepHolder,cleanup,entryOf,finishCleanup,reclaimForSweep,
+reserveForSweep,resourceTable,
 } from '../resources/reserve.ts';
 import type { ResolvedRouting } from '../routing/layers.ts';
 import type { Backend } from '../routing/types.ts';
-import type { ProberHandle } from '../park/probe.ts';
 import { parseRulings } from '../spec/rulings.ts';
+import { bytesSha256,parseSpec } from '../spec/spec.ts';
 import { closeAdmissions } from './admissions.ts';
-import { decideFlow, requestFlow } from './flow.ts';
 import { requestAudit } from './audit.ts';
-import { resolveEdge, runOnly } from './graph.ts';
-import { isControl, readCommand, readReceipt, receiptPath, receiptSha256, writeReceipt } from './queue.ts';
+import { decideFlow,requestFlow } from './flow.ts';
+import { resolveEdge,runOnly } from './graph.ts';
 import { mergeIn } from './mergein.ts';
+import { note } from './note.ts';
+import { isControl,readCommand,readReceipt,receiptPath,receiptSha256,writeReceipt } from './queue.ts';
 import { reverse } from './reverse.ts';
 import { decideScope } from './scope.ts';
-import { actOnDemo } from '../demo/promote.ts';
-import { note } from './note.ts';
 import { steer } from './steer.ts';
 
 /**
@@ -253,6 +158,7 @@ export async function finish(ctx: CommandContext, intent: IntentOf<'command.appl
     raiseDropped(ctx, id, effect.reason);
     return { kind: 'rejected', reason: effect.reason };
   }
+  const verified = [...effect.verified];
   if (command.body.type !== 'ack') {
     const b = command.body;
     const subjects: NeedsUserContent['subject'][] = 'unit' in b ? [{type: 'unit', unit: b.unit}]
@@ -261,9 +167,11 @@ export async function finish(ctx: CommandContext, intent: IntentOf<'command.appl
       const fact = ctx.journal.view.planAppliedBy(id);
       for (const change of fact?.changes ?? []) if ('unit' in change && change.unit !== null) subjects.push({type: 'unit', unit: change.unit});
     }
-    for (const subject of subjects) closeItemsFor(ctx, subject, id);
+    if ('target' in b && b.target.type === 'all') subjects.push(...ctx.plan().units.map((u) => ({type: 'unit' as const, unit: u.id})));
+    if (b.type === 'sweep' || (b.type === 'resume' && b.target.type === 'backend')) subjects.push({type: 'host'});
+    for (const subject of subjects) verified.push(...closeItemsFor(ctx, subject, id));
   }
-  const sha = writeReceipt(ctx.runDir, { v: SCHEMA_VERSION, command: id, state: 'applied', at, op: intent.op, verified: effect.verified });
+  const sha = writeReceipt(ctx.runDir, { v: SCHEMA_VERSION, command: id, state: 'applied', at, op: intent.op, verified });
   crashPoint('command.apply.after-receipt');
   return { kind: 'applied', receiptSha256: sha };
 }
@@ -383,11 +291,6 @@ function parkReason(f: StageOutcomeFact): string {
   return decided.kind === 'park' ? decided.reason : f.outcome;
 }
 
-/** The parked or held outcome's open needs-user, acknowledged by this command (unless another already did). */
-export function acknowledgePark(ctx: CommandContext, id: CommandId, unitId: UnitId, f: StageOutcomeFact): readonly string[] {
-  return closeItemsFor(ctx, {type: 'unit', unit: unitId}, id);
-}
-
 /**
  * `resume <unit>` of a design park: re-opened when it parked at a judgment stage and the architect has
  * applied a revision of its spec (pending in the fold); otherwise rejected, saying what would work.
@@ -414,7 +317,7 @@ function reopen(ctx: CommandContext, id: CommandId, unitId: UnitId, f: StageOutc
         + 'the revision takes your file\'s rev + 1; run `roadmap apply`, then resume',
     };
   }
-  const verified = [...acknowledgePark(ctx, id, unitId, f)];
+  const verified: string[] = [];
   ctx.journal.fact({ kind: 'reopened', unit: unitId, command: id, specRev: revision.rev, specSha256: revision.sha256 });
   verified.push(`unit ${unitId} re-opened at plan-check on spec rev ${revision.rev}`);
   return { kind: 'applied', verified };
@@ -441,7 +344,6 @@ function unpark(ctx: CommandContext, id: CommandId, unitId: UnitId, f: StageOutc
       verified.push(`unit ${unitId} re-pinned under routingRev ${routing.rev}`);
     }
   }
-  verified.push(...acknowledgePark(ctx, id, unitId, f));
   ctx.journal.fact({ kind: 'unparked', unit: unitId, command: id });
   verified.push(`unit ${unitId} re-entered at ${f.stage}`);
   return { kind: 'applied', verified };
@@ -478,10 +380,6 @@ async function resumeParked(ctx: CommandContext, id: CommandId, unitId: UnitId):
 
 async function resume(ctx: CommandContext, id: CommandId, target: Extract<CommandBody, { type: 'resume' }>['target']): Promise<Effect> {
   const view = ctx.journal.view;
-  const closeScopeHold = (unit: UnitId): readonly string[] => {
-    const u = view.unit(unit);
-    return u.status === 'held' && u.interrupted?.outcome === 'scope-growth' ? acknowledgePark(ctx, id, unit, u.interrupted) : [];
-  };
   switch (target.type) {
     case 'unit': {
       if (!ctx.plan().units.some((u) => u.id === target.unit)) return { kind: 'rejected', reason: `unknown unit ${target.unit}` };
@@ -510,13 +408,13 @@ async function resume(ctx: CommandContext, id: CommandId, target: Extract<Comman
       if (!paused && u.status === 'retired') return { kind: 'rejected', reason: `unit ${target.unit} is merged` };
       if (!paused && u.status === 'cut') return { kind: 'rejected', reason: `unit ${target.unit} is cut` };
       if (!paused && u.status === 'superseded') return { kind: 'rejected', reason: `unit ${target.unit} is superseded by ${u.supersededBy}; resume that unit` };
-      const verified = closeScopeHold(target.unit);
+      const verified: string[] = [];
       if (paused || u.status === 'held') ctx.journal.fact({ kind: 'resumed', command: id, target });
       return { kind: 'applied', verified: [...verified, `unit ${target.unit} neither paused nor held`] };
     }
     case 'all': {
       const c = view.control();
-      const verified = ctx.plan().units.flatMap((u) => closeScopeHold(u.id));
+      const verified: string[] = [];
       const done = !c.pausedAll && c.pausedUnits.length === 0 && ctx.plan().units.every((u) => view.unit(u.id).status !== 'held');
       if (!done) ctx.journal.fact({ kind: 'resumed', command: id, target });
       return { kind: 'applied', verified: [...verified, 'no unit paused or held'] };
@@ -664,8 +562,8 @@ function publicationOf(
   const renders: Render[] = [...vision.renders];
   const latched = view.holistic().latched.map((l) => l.obligation);
   if (inputs.changed.rulings) {
-    const before = renderConstraints(parseRulings(revision.ledger.bytes.toString('utf8'), 'the ledger in force'), [...revision.sidecars.values()].map((s) => s.sidecar), 'living');
-    const after = renderConstraints(inputs.ledger, inputs.sidecars, 'living');
+    const before = renderConstraints(parseRulings(revision.ledger.bytes.toString('utf8'), 'the ledger in force'), 'living');
+    const after = renderConstraints(inputs.ledger, 'living');
     if (after !== before) renders.push({ path: CONSTRAINTS_DOC, bytes: Buffer.from(after, 'utf8') });
   }
   // M4a (R3): a corpus arc's `invariants.md` carries the rules registry of its pin, so a re-pin re-renders it too.
@@ -674,8 +572,7 @@ function publicationOf(
     const after = renderInvariants(inputs.obligations, latched, nextRegistry(inputs));
     if (after !== before) renders.push({ path: INVARIANTS_DOC, bytes: Buffer.from(after, 'utf8') });
   }
-  const contractOps = inputs.sidecars.filter((s) => !revision.sidecars.has(s.id)).flatMap((s) => s.contractOps);
-  return { renders, contractOps };
+  return { renders, contractOps: [] };
 }
 
 /**
@@ -986,7 +883,7 @@ export async function commitUnderFence(
 }
 
 /** A rejected revision's receipt reason (an `apply`'s, a `reverse`'s): every reason, numbered. */
-export const rejectedText = (reasons: readonly string[], what: 'apply' | 'reverse' | 'rule' = 'apply'): string =>
+export const rejectedText = (reasons: readonly string[], what: 'apply' | 'reverse' = 'apply'): string =>
   `${what} rejected (${reasons.length} ${reasons.length === 1 ? 'reason' : 'reasons'}): ${reasons.map((r, i) => `(${i + 1}) ${r}`).join('; ')}`;
 
 /** A Phase-0 advisory as a receipt line (scope growth, 2026-10-15): never a refusal. */

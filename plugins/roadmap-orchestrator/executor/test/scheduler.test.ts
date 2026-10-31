@@ -1,3 +1,4 @@
+import { bytesSha256 } from '../src/spec/spec.ts';
 // The scheduler (src/schedule/scheduler.ts), in the test process over fake-backed arcs (real processes, real
 // git): units run in parallel, one task per unit, pause and stop at admission boundaries while chains finish,
 // restarts continue pending chains first (G2), jobs never apply a command twice, a limited backend holds only
@@ -7,34 +8,33 @@
 // sched.stop-during-smoke, sched.stop-during-teardown, sched.no-double-apply, sched.backend-limit-others-run,
 // probe.capacity-recovers-held-unit, reenter.clean-verify-to-retire, arc.state-predicates.
 import assert from 'node:assert/strict';
-import { cpSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync,readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { describe,it,test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { describe, it, test } from 'node:test';
 import { applyCommand } from '../src/commands/apply.ts';
-import { submitCommand, terminalReceipt } from '../src/commands/queue.ts';
-import { type Event, type Fact, type LogRecord, prevHash, serializeEvent } from '../src/core/events.ts';
-import { type UnitId, arcId, invocationId, opId, planRev, seatRev, specRev, unitId } from '../src/core/ids.ts';
+import { submitCommand,terminalReceipt } from '../src/commands/queue.ts';
+import { type Event,type Fact,type LogRecord,prevHash,serializeEvent } from '../src/core/events.ts';
+import { type UnitId,arcId,invocationId,opId,planRev,seatRev,specRev,unitId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import { Fold } from '../src/core/state.ts';
-import { absPath, isoTime, repoPattern } from '../src/core/values.ts';
+import { absPath,isoTime,repoPattern } from '../src/core/values.ts';
 import { raiseNeedsUser } from '../src/needsuser.ts';
-import { CONTINUE_DIRECTIVE } from '../src/prompts/directives.ts';
 import { recover } from '../src/recover/recover.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
+import { parseRepoConfig } from '../src/routing/layers.ts';
 import { unitSettled } from '../src/schedule/scheduler.ts';
-import { reached, release } from './helpers/barrier.ts';
+import { ARC,H,REV,appliedFields,chain } from './fixtures/log-records.ts';
+import { recoveryContext } from './fixtures/rec-common.ts';
+import { haltItem,receiptOf,startScheduler,submit } from './fixtures/sched-common.ts';
+import { SCENARIO_TIMEOUT_MS,planCheckStep } from './fixtures/stage-common.ts';
+import {
+type ArcDescriptor,type ArcRun,MUL,U1,codexStep,commandContextFor,contextFor,gateStep,mulBuild,outcomes,setupArc,stepUntil,
+} from './fixtures/unit-common.ts';
+import { reached,release } from './helpers/barrier.ts';
 import { fixture } from './helpers/proc.ts';
 import { tmpDir } from './helpers/repo.ts';
-import { type Step, capturedClaudeResult, readCalls } from './helpers/scenario.ts';
-import { ARC, H, REV, appliedFields, chain } from './fixtures/log-records.ts';
-import { recoveryContext } from './fixtures/rec-common.ts';
-import { parseRepoConfig } from '../src/routing/layers.ts';
-import { haltItem, receiptOf, startScheduler, submit } from './fixtures/sched-common.ts';
-import { SCENARIO_TIMEOUT_MS, planCheckStep } from './fixtures/stage-common.ts';
-import {
-  type ArcDescriptor, type ArcRun, MUL, U1, codexStep, commandContextFor, contextFor, gateStep, mulBuild, outcomes, setupArc, stepUntil,
-} from './fixtures/unit-common.ts';
+import { type Step,capturedClaudeResult,readCalls } from './helpers/scenario.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 const WAIT_MS = 60_000;
@@ -497,3 +497,27 @@ async function stopAfter(r: ArcRun, s: ReturnType<typeof startScheduler>) {
   submit(r, { type: 'stop' });
   return s.end;
 }
+
+test('steer running unit: cancels its workload, then starts one fresh steer round', T, async () => {
+  const brief = 'STEER-RUNNING-MARKER: finish the arithmetic unit';
+  const build = mulBuild();
+  const d = setupArc({steps: [planCheckStep({decision: 'approve'}), codexStep([{type: 'commit', message: 'mul before steer', files: MUL}, {type: 'barrier', name: 'running-build', timeoutMs: 120000}], {argv: ['exec', '-C']}),
+    {...build, acts: [], expect: {argv: ['exec', '-C'], argvLacks: ['resume'], stdinContains: [brief]}} as Step, gateStep({decision: 'approve'})]});
+  // The steered builder emits a valid report while retaining the first round's commit.
+  const scenario = JSON.parse(readFileSync(d.scenarioPath, 'utf8')) as {steps: {acts: unknown[]}[]};
+  scenario.steps[2]!.acts = [{type: 'emit', value: {summary: 'mul retained', changedPaths: ['src/mul.js'], blockers: [], experiments: [], docsOnlySince: null, final: true}}];
+  writeFileSync(d.scenarioPath, JSON.stringify(scenario));
+  const r = contextFor(d); const s = startScheduler(r);
+  try {
+    await reached(d.scenarioDir, 'running-build', WAIT_MS);
+    const path = join(d.scenarioDir, 'steer.md'); writeFileSync(path, brief);
+    const receipt = await receiptOf(r, submit(r, {type: 'steer', unit: U1, brief: {path: absPath(path), sha256: bytesSha256(Buffer.from(brief))}, budgetMin: 5, class: null, resume: true}));
+    assert.equal(receipt.state, 'applied', JSON.stringify(receipt));
+    assert.ok(outcomes(d).includes('build:interrupted'));
+    assert.equal((await s.end).kind, 'complete');
+    const calls = readCalls(d.scenarioPath);
+    assert.ok(calls.some((c) => c.stdin.includes(brief) && !c.argv.includes('resume')));
+    assert.ok(r.journal.view.opsOf('proc.kill').length > 0);
+    assert.equal(r.journal.view.holistic().steered.length, 1);
+  } finally {if (r.journal.view.unit(U1).status !== 'retired') {submit(r, {type: 'stop'}); await s.end;} r.journal.close();}
+});

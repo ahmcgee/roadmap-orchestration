@@ -25,11 +25,12 @@
 // refresh alone is not normative); a parent is never
 // changed; a proof judgment bound to another obligation revision, lane revision or witness definition is stale; in an arc with a vision every
 // non-exempt obligation serves a clause, and newly cited clauses are active.
-import type { LaneId, ObligationId, RulingId, UnitId, VisionClauseId } from '../core/ids.ts';
+import type { LaneId,ObligationId,UnitId,VisionClauseId } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
-import { type CorpusPin, activeRules } from '../corpus/types.ts';
+import { type CorpusPin,activeRules } from '../corpus/types.ts';
 import {
-  type Activation, type ObligationDef, type ObligationDisposition, type Obligations, type RulingSidecar, type Vision, isExempt, isMustHold, laneRevMatches, laneRevOf, obligationSource,
+type Activation,type ObligationDef,type ObligationDisposition,type Obligations,type Vision,isExempt,isMustHold,
+obligationSource
 } from './types.ts';
 import { citeReasons } from './vision.ts';
 
@@ -54,23 +55,23 @@ export type ObligationsVerdict = Readonly<{
 }>;
 
 /** A weakening from `prev` to `next` (undefined: removed) and the disposition a ruling must name for it. */
-export type Weakening = Readonly<{ disposition: ObligationDisposition; what: string; ruling: RulingId | null }>;
+export type Weakening = Readonly<{ disposition: ObligationDisposition; what: string }>;
 
 /** The weakenings between two versions of one obligation; `ruling` is a state change's own ruling. */
 export function weakeningsOf(prev: ObligationDef, next: ObligationDef | undefined): readonly Weakening[] {
-  if (next === undefined) return prev.state.type === 'retired' ? [] : [{ disposition: 'retired', what: 'removed', ruling: null }];
+  if (next === undefined) return prev.state.type === 'retired' ? [] : [{ disposition: 'retired', what: 'removed' }];
   const out: Weakening[] = [];
   const s = next.state;
   if ((s.type === 'waived' || s.type === 'deferred' || s.type === 'retired') && canonicalJson(s) !== canonicalJson(prev.state)) {
-    out.push({ disposition: s.type, what: `${s.type}: ${s.reason}`, ruling: null });
+    out.push({ disposition: s.type, what: `${s.type}: ${s.reason}` });
   }
-  if (next.statement !== prev.statement) out.push({ disposition: 'amended', what: 'statement changed', ruling: null });
-  if (reAnchored(prev, next)) out.push({ disposition: 'amended', what: obligationSource(next).kind === 'rule' ? 'rule changed' : 'docRef changed', ruling: null });
-  if (prev.activation === 'must-hold' && next.activation === 'future') out.push({ disposition: 'amended', what: 'must-hold → future', ruling: null });
+  if (next.statement !== prev.statement) out.push({ disposition: 'amended', what: 'statement changed' });
+  if (reAnchored(prev, next)) out.push({ disposition: 'amended', what: obligationSource(next).kind === 'rule' ? 'rule changed' : 'docRef changed' });
+  if (prev.activation === 'must-hold' && next.activation === 'future') out.push({ disposition: 'amended', what: 'must-hold → future' });
   if (prev.witness !== null && next.witness !== null) {
     const kept = new Set(next.witness.testIds);
     const lost = prev.witness.testIds.filter((t) => !kept.has(t));
-    if (lost.length > 0) out.push({ disposition: 'amended', what: `witness no longer names ${lost.map((t) => JSON.stringify(t)).join(', ')}`, ruling: null });
+    if (lost.length > 0) out.push({ disposition: 'amended', what: `witness no longer names ${lost.map((t) => JSON.stringify(t)).join(', ')}` });
   }
   return out;
 }

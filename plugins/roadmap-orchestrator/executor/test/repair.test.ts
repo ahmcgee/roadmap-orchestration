@@ -4,44 +4,44 @@
 // (R7 with B2's publishBatch), findings.plan-check-vision-conflict (R17), plancheck.reads-captured-spec, and the crash
 // cells of the matrix rows FF_ELIGIBILITY and MUTANT_APPLY (test/matrix.ts), recovered by the recovery engine.
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { describe,test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { describe, test } from 'node:test';
-import { managedEnv, startedCalls } from './fixtures/env-common.ts';
-import { idleEnvironments } from '../src/resources/environments.ts';
 import { applyCommand } from '../src/commands/apply.ts';
 import { submitCommand } from '../src/commands/queue.ts';
-import type { Fact, IntentOf } from '../src/core/events.ts';
-import { invocationId, findingId, jobId, resourceName, sha, unitId } from '../src/core/ids.ts';
+import type { Fact,IntentOf } from '../src/core/events.ts';
+import { findingId,invocationId,jobId,resourceName,sha,unitId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import { mutantOf } from '../src/core/projections.ts';
 import { absPath } from '../src/core/values.ts';
 import { verifySnapshot } from '../src/git/snapshot.ts';
-import { batchable, findingMetrics, openFinding, ruleFinding } from '../src/holistic/findings.ts';
-import { SPEC_INPUT, inputPath } from '../src/input/inforce.ts';
+import { batchable,findingMetrics,openFinding,ruleFinding } from '../src/holistic/findings.ts';
+import { SPEC_INPUT,inputPath } from '../src/input/inforce.ts';
 import { publishBatch } from '../src/pipeline/integrate.ts';
 import { invocationDir } from '../src/pipeline/invoke.ts';
-import { runnerFiles } from '../src/runner/files.ts';
 import { observations } from '../src/pipeline/lanes.ts';
-import { repairUnits, specFacts } from '../src/pipeline/reproduce.ts';
+import { repairUnits,specFacts } from '../src/pipeline/reproduce.ts';
 import { planCheck } from '../src/pipeline/stages.ts';
-import { runUnit, step } from '../src/pipeline/unit.ts';
+import { runUnit,step } from '../src/pipeline/unit.ts';
 import { recover } from '../src/recover/recover.ts';
+import { idleEnvironments } from '../src/resources/environments.ts';
+import { runnerFiles } from '../src/runner/files.ts';
 import { admitter } from '../src/schedule/ready.ts';
-import { assertFired, writeTrigger } from './helpers/crash.ts';
+import { holisticArc } from './fixtures/brake-common.ts';
+import { managedEnv,startedCalls } from './fixtures/env-common.ts';
+import { wire } from './fixtures/publish-common.ts';
+import {
+MAPPED,MUTANT_PATCH,STALE_PATCH,STRICT_TEST,buildOf,openBefore,tipOf,treeWith,vacuityArc,vacuityDraft as vacuityDraftOf,witnessDraft,
+} from './fixtures/repair-common.ts';
+import { SCENARIO_TIMEOUT_MS,admitAll,planCheckRepairStep,planCheckStep,started } from './fixtures/stage-common.ts';
+import { type ArcRun,U1,applyBody,codexStep,commandContextFor,contextFor,gateStep,mulBuild,outcomes,setupArc,stepUntil } from './fixtures/unit-common.ts';
+import { assertFired,writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
-import { git, tmpDir } from './helpers/repo.ts';
-import { FF_ELIGIBILITY, MUTANT_APPLY, crashCells } from './matrix.ts';
+import { git,tmpDir } from './helpers/repo.ts';
 import type { Step } from './helpers/scenario.ts';
 import { scriptTree } from './helpers/witness.ts';
-import { holisticArc } from './fixtures/brake-common.ts';
-import { wire } from './fixtures/publish-common.ts';
-import { SCENARIO_TIMEOUT_MS, admitAll, planCheckRepairStep, planCheckStep, started } from './fixtures/stage-common.ts';
-import {
-  MAPPED, MUTANT_PATCH, STALE_PATCH, STRICT_TEST, buildOf, openBefore, tipOf, treeWith, vacuityArc, vacuityDraft as vacuityDraftOf, witnessDraft,
-} from './fixtures/repair-common.ts';
-import { type ArcRun, U1, applyBody, codexStep, commandContextFor, contextFor, gateStep, mulBuild, outcomes, setupArc, stepUntil } from './fixtures/unit-common.ts';
+import { FF_ELIGIBILITY,MUTANT_APPLY,crashCells } from './matrix.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 const V1 = unitId('v1');

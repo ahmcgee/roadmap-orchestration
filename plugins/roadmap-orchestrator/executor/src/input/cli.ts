@@ -2,14 +2,14 @@
 // no git, no fs. Paths are returned as given; step 13 resolves them against the caller's cwd.
 import { posix } from 'node:path';
 import {
-  type ArcId, type BriefId, type DivergenceId, type EdgeId, type NeedsUserId, type PhaseQuestionId, type ProposalId, type ResourceName, type Sha,
-  type UnitId, arcId, briefId, divergenceId, edgeId, needsUserId, phaseQuestionId, proposalId, resourceName, sha, unitId,
+type ArcId,type BriefId,type DivergenceId,type EdgeId,type NeedsUserId,type PhaseQuestionId,type ProposalId,type ResourceName,type Sha,
+type UnitId,arcId,briefId,divergenceId,edgeId,needsUserId,phaseQuestionId,proposalId,resourceName,sha,unitId,
 } from '../core/ids.ts';
-import { FLOW_LEVERS, type FlowLever } from '../flow/types.ts';
-import { DEMO_ACTS, type DemoAct, LENS_KIND_NAMES, type LensKindName, type PauseTarget, type ResumeTarget } from '../core/records.ts';
+import { DEMO_ACTS,type DemoAct,LENS_KIND_NAMES,type LensKindName,type PauseTarget,type ResumeTarget } from '../core/records.ts';
 import { oneOf } from '../core/validate.ts';
-import { type AbsPath, absPath } from '../core/values.ts';
-import { type BuildClass, type ProfileName, backend, buildClass, profileName } from '../routing/types.ts';
+import { type AbsPath,absPath } from '../core/values.ts';
+import { FLOW_LEVERS,type FlowLever } from '../flow/types.ts';
+import { type BuildClass,type ProfileName,backend,buildClass,profileName } from '../routing/types.ts';
 
 export class CliError extends Error {
   constructor(message: string) {
@@ -21,8 +21,6 @@ export class CliError extends Error {
 /**
  * `profile: null` when `--profile` is absent, so `selectProfile` can let `.roadmap/config.json` choose.
  * `waitMs`: how long `start` waits for readiness (`--wait <ms>`), null for the default (START_WAIT_MS).
- * `base`: the `export.json` of the export the files' edit started from (`--base`, as `apply --base`; null: the owner's files
- * of their latest apply).
  */
 export type StartArgs = Readonly<{ repo: string; plan: string; profile: ProfileName | null; waitMs: number | null }>;
 
@@ -50,18 +48,13 @@ export type Command =
   | Readonly<{ command: 'resume'; target: ResumeTarget; run: RunLocator }>
   | Readonly<{ command: 'sweep'; resource: ResourceName | null; run: RunLocator }>
   /**
-   * Put the edited plan.json and specs in force, rebased onto the files in force; `dryRun` classifies them read-only and
-   * queues nothing. `base`: the `export.json` of the export the edit started from (`--base`; null: the owner's files of
-   * their latest apply). `rulings` (M4a rev 3, I2): ruling sidecar files (`--ruling`, repeatable, in the order given)
-   * landed with the edits as one revision. `visionEdit` (`--vision-edit`): the apply declares a vision edit
-   * (src/phase0/rows.ts `visionLeak`).
+   * Apply an edited export at rev with its reason. Dry-run validates without queueing.
    */
   | Readonly<{ command: 'apply'; from: string; rev: number; reason: string; dryRun: boolean; run: RunLocator }>
   /** A contingent edge's condition is met, on the architect's evidence (M2). */
   | Readonly<{ command: 'resolve-edge'; edge: EdgeId; evidence: string; run: RunLocator }>
   /** Admission limited to these units (ascending, unique), or unlimited again (`--clear`: null) (M2). */
   | Readonly<{ command: 'run-only'; units: readonly UnitId[] | null; run: RunLocator }>
-  /** M3: a ruling sidecar file (`roadmap/ruling-m3`), hashed and queued. */
   /** M3 (H13): the compensating revision of one divergence. */
   | Readonly<{ command: 'reverse'; divergence: DivergenceId; run: RunLocator }>
   /** M3: an alternate implementer entry for a parked or preparing unit; `class` null keeps its routing. */

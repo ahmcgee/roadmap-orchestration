@@ -34,16 +34,16 @@
 // suite lanes; the root agent requests one flow run right after the start (flow-1: a build-class step it rejects on its
 // item's wake), so its cooldown covers the arc. The flow calls are judgment steps keyed by job id (`flow-<n>`), each
 // answer checked by the frozen reader (FLOW_SCHEMA).
-import type { JsonValue } from '../../src/core/json.ts';
-import type { ProfileName } from '../../src/routing/types.ts';
-import { validateFlowOutput } from '../../src/prompts/schemas.ts';
-import { admitSpecWire, checkpointAnswer, checkpointStep, lensStep, noteLensStep, packReviewStep, packTargetOf } from '../../test/helpers/holistic.ts';
-import type { Step } from '../../test/helpers/scenario.ts';
-import { type M1Step, fakeSteps } from '../m1/scenario.ts';
-import { FILES, FITS_WITNESS, LANES, OBLIGATIONS, OPPORTUNITY, READOUTS, REPLAY_LANE, SHARD, SUITE_LANE, filesOf, specOf } from './golden.ts';
-import type { FakeScript } from './fake-root.ts';
-import { PLANT } from './layout.ts';
 import { join } from 'node:path';
+import type { JsonValue } from '../../src/core/json.ts';
+import { validateFlowOutput } from '../../src/prompts/schemas.ts';
+import type { ProfileName } from '../../src/routing/types.ts';
+import { admitSpecWire,checkpointAnswer,checkpointStep,lensStep,noteLensStep,packReviewStep,packTargetOf } from '../../test/helpers/holistic.ts';
+import type { Step } from '../../test/helpers/scenario.ts';
+import { type M1Step,fakeSteps } from '../m1/scenario.ts';
+import type { FakeScript } from './fake-root.ts';
+import { FILES,FITS_WITNESS,LANES,OBLIGATIONS,OPPORTUNITY,READOUTS,REPLAY_LANE,SHARD,SUITE_LANE,filesOf,specOf } from './golden.ts';
+import { PLANT } from './layout.ts';
 
 /** The barrier arc 2's audit-1 waits at until the root agent had the run's blocked wake (fake-root.ts releases it). */
 export const BLOCKED_SEEN_BARRIER = 'blocked-seen';

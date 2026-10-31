@@ -54,7 +54,6 @@
 //  12. vision leak (an apply only; owner ruling 2026-10-16) the vision of the apply's files rebased onto the files in force
 //                  (src/input/rebase.ts) differs from the vision in force, so the owner's vision file changed, and the
 //                  apply does not declare a vision edit (`apply --vision-edit`): `vision-leak{inForce, committed,
-//                  draft}` (`visionLeak`). The next arc's vision is drafted in `<inputs>/_next/vision.md` and reaches
 //                  `.roadmap/vision.json` only in the between-arc window, so a draft committed there mid-arc never rides
 //                  along with an unrelated apply. Not one of `phase0Rows`: it reads the revision in force, which only a
 //                  running arc has.
@@ -71,45 +70,45 @@
 // A record that names something absent (a debt disposition of no open item, a promote to a unit the plan does not
 // hold, a resolve by a ruling the ledger does not hold active, an amendment disposition of no amendment) is
 // `plan-invalid{schema}` naming it.
-import { existsSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { answerLog, latestAnswers, refQuestions, unappliedOf } from '../answers.ts';
-import { type ArcRef, amendmentsOf, chainBack, committedAcks, completedHeadOf, previousIncomplete, questionClosure, quotaOf } from '../chain.ts';
-import { type ArcId, type DebtId, type MilestoneId, type Sha256Hex, type UnitId, DOCS_SYSTEM, phaseQuestionSeq, sha, sha256 } from '../core/ids.ts';
-import { type SpecM1, specForces, specRemoves } from '../core/records.ts';
-import { unknownLaneSystems } from '../input/systems.ts';
-import { sameExecution } from '../input/laneexecution.ts';
-import { sha256Hex } from '../core/json.ts';
+import { existsSync,readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { answerLog,latestAnswers,refQuestions,unappliedOf } from '../answers.ts';
+import { type ArcRef,amendmentsOf,chainBack,committedAcks,completedHeadOf,previousIncomplete,questionClosure,quotaOf } from '../chain.ts';
+import { type ArcId,type DebtId,type MilestoneId,type UnitId,DOCS_SYSTEM,phaseQuestionSeq,sha } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
+import { sha256Hex } from '../core/json.ts';
+import { type SpecM1,specForces,specRemoves } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
-import { type AbsPath, type RepoPath, type RepoPattern, absPath, matchesPattern, repoPath, repoPattern } from '../core/values.ts';
+import { type AbsPath,type RepoPath,type RepoPattern,absPath,matchesPattern,repoPath,repoPattern } from '../core/values.ts';
 import { readGuideBytes } from '../corpus/guide.ts';
 import { rederivePin } from '../corpus/pin.ts';
-import { EMPTY_REGISTRY, registryAt } from '../corpus/registry.ts';
+import { EMPTY_REGISTRY,registryAt } from '../corpus/registry.ts';
 import type { OpenedSource } from '../corpus/source.ts';
-import { type CorpusGuide, type CorpusPin, parseCorpusPin } from '../corpus/types.ts';
-import { EMPTY_LEDGER, keptInEachOfLastTwoArcs, openItems } from '../debt/ledger.ts';
+import { type CorpusGuide,type CorpusPin,parseCorpusPin } from '../corpus/types.ts';
+import { EMPTY_LEDGER,keptInEachOfLastTwoArcs,openItems } from '../debt/ledger.ts';
 import type { DebtLedger } from '../debt/types.ts';
-import { DEBT_DOC, parseDebtBlock } from '../docs/debt.ts';
-import { git, gitCommonDir, gitRun } from '../git/git.ts';
-import { censusProblems, specCensusMismatches } from '../holistic/rederive.ts';
+import { DEBT_DOC,parseDebtBlock } from '../docs/debt.ts';
+import { git,gitCommonDir,gitRun } from '../git/git.ts';
+import { censusProblems,specCensusMismatches } from '../holistic/rederive.ts';
 import {
-  type Obligations, type PlanDefect, type Vision, isExempt, parseObligations, parseVision,
+type Obligations,type PlanDefect,type Vision,isExempt,parseObligations,parseVision,
 } from '../holistic/types.ts';
 import { laneMisses } from '../holistic/witnessfiles.ts';
+import { sameExecution } from '../input/laneexecution.ts';
+import { unknownLaneSystems } from '../input/systems.ts';
 
-import { derivedExclusions, derivedWidening } from '../input/derived.ts';
+import { type EffectiveScope,inScope } from '../core/records.ts';
 import { visionUnconfirmed } from '../holistic/vision.ts';
 import { mayOverlap } from '../input/classify.ts';
-import { type EffectiveScope, inScope } from '../core/records.ts';
+import { derivedExclusions,derivedWidening } from '../input/derived.ts';
+import type { InputFiles } from '../input/inforce.ts';
+import { type PlanM1,type PlanUnit,derivedOf,designUnitOf,milestonesNeedHolistic,milestonesOf } from '../input/plan.ts';
 import { isLive } from '../preflight/lanerows.ts';
-import { type PlanM1, type PlanUnit, derivedOf, designUnitOf, milestonesNeedHolistic, milestonesOf } from '../input/plan.ts';
 import type { StartupRejection } from '../preflight/startup.ts';
 import type { RepoConfig } from '../routing/layers.ts';
-import { type Ruling, type RulingCorpus, parseRulings } from '../spec/rulings.ts';
-import { SpecFileError, parseSpec } from '../spec/spec.ts';
-import type { CorpusInForce, InputFiles } from '../input/inforce.ts';
-import { type ChainProblem, type CorpusProblem, type Phase0Problem, type Phase0Record, type PhaseQuestion, parsePhase0Record, scopeOverlapFix } from './types.ts';
+import { type Ruling,parseRulings } from '../spec/rulings.ts';
+import { SpecFileError,parseSpec } from '../spec/spec.ts';
+import { type ChainProblem,type CorpusProblem,type Phase0Problem,type Phase0Record,type PhaseQuestion,parsePhase0Record,scopeOverlapFix } from './types.ts';
 
 type Row<K extends StartupRejection['kind']> = Extract<StartupRejection, { kind: K }>;
 
@@ -305,15 +304,6 @@ export function corpusFileSet(pin: CorpusPin, guide: CorpusGuide): CorpusFileSet
 /** Whether a product path is in the corpus file set: a pinned file, or a path an include pattern matches. */
 export const inCorpusSet = (set: CorpusFileSet, path: RepoPath): boolean =>
   set.files.includes(path) || set.patterns.some((p) => matchesPattern(path, p));
-
-/** What `validateRuling` reads of a corpus arc's pin in force: its active rules, and the same-repo corpus file set (R32). */
-export function rulingCorpusOf(c: CorpusInForce): RulingCorpus {
-  const set = sameRepoCorpusSet(c.pin.value, c.guide.bytes);
-  return {
-    rules: new Map(c.pin.value.rules.map((r) => [r.id, r.textSha256])),
-    inFileSet: (path) => set !== null && inCorpusSet(set, path),
-  };
-}
 
 /** The file set of a pin and the guide's bytes (the guide committed at the baseline) when the corpus is same-repo; else null. */
 export function sameRepoCorpusSet(pin: CorpusPin, guide: Buffer): CorpusFileSet | null {
@@ -734,5 +724,4 @@ export function visionAndObligations(input: Phase0Input): Readonly<{ vision: Vis
 // ---------------------------------------------------------------------------------------------------
 // 12. The vision leak (an apply only)
 
-/** Where the next arc's vision draft belongs: `_next/vision.md` in the inputs dir that holds the arc's plan dir. */
 

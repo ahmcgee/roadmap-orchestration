@@ -16,8 +16,8 @@ import { START_FILE } from '../executor.ts';
 import { readClaim } from '../host/lock.ts';
 import { CliError } from '../input/cli.ts';
 import { EXIT_HOST_BUSY } from '../preflight/startup.ts';
-import { ownerState, unitStates } from '../status.ts';
-import { START_WAIT_MS, launchSupervisor } from '../supervisor.ts';
+import { ownerState,unitStates } from '../status.ts';
+import { START_WAIT_MS,launchSupervisor } from '../supervisor.ts';
 
 export const RESUME_ARC_NOOPS = ['no-claim', 'other-repo', 'alive', 'refused', 'already-resumed'] as const;
 export type ResumeArcNoop = (typeof RESUME_ARC_NOOPS)[number];

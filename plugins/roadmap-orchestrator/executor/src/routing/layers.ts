@@ -61,21 +61,26 @@
 //   Claude-only profile. The profile is chosen by an explicit `start --profile`, else this file's
 //   `profile`, else `default`.
 import type { UnitId } from '../core/ids.ts';
-import { type RoutingRev, routingRev } from '../core/ids.ts';
-import { canonicalJson, sha256Hex } from '../core/json.ts';
-import { Fields, type Read, SchemaError, arrayOf, object, positive, str, stringMap } from '../core/validate.ts';
-import { type RepoGiven, repoGiven } from '../flow/types.ts';
-import { type SystemsMap, systemsMap } from '../input/systems.ts';
+import { type RoutingRev,routingRev } from '../core/ids.ts';
+import { canonicalJson,sha256Hex } from '../core/json.ts';
+import { Fields,type Read,SchemaError,arrayOf,object,positive,str,stringMap } from '../core/validate.ts';
+import { type RepoGiven,repoGiven } from '../flow/types.ts';
+import { type SystemsMap,systemsMap } from '../input/systems.ts';
 
-import { type PlanM1, type PlanTargetKind, hasMilestones } from '../input/plan.ts';
+import { type PlanM1,type PlanTargetKind,hasMilestones } from '../input/plan.ts';
 import type { StartupRejection } from '../preflight/startup.ts';
 import { support } from '../prompts/index.ts';
-import { CLASS_CATALOGUE, boundAt } from './classes.ts';
+import { boundAt } from './classes.ts';
 import { BUILTIN_SEATS } from './profiles.ts';
 import {
-  type ArcRole, type ArcRoleSet, WALK_ROLES, type ClassBindings, type ClassSource, type ClassTable, MODEL_CLASSES, type ModelClass, type ProfileName, type Role,
-  type RoutingLayer, type RoutingLayerName, type RoutingProvenance, type RoutingTable, SEAT_REFS, type SeatRef, type SeatTable, type Triple, UNIT_ROLES, type UnitRole, DEV17_ROLES, DEV17_UNIT_ROLES, atSeat,
-  classBindings, profileName, routingLayer, seatTable,
+type ArcRole,type ArcRoleSet,
+type ClassBindings,type ClassSource,type ClassTable,
+DEV17_ROLES,DEV17_UNIT_ROLES,
+MODEL_CLASSES,type ModelClass,type ProfileName,type Role,
+type RoutingLayer,type RoutingLayerName,type RoutingProvenance,type RoutingTable,SEAT_REFS,type SeatRef,type SeatTable,type Triple,UNIT_ROLES,type UnitRole,
+WALK_ROLES,
+atSeat,
+classBindings,profileName,routingLayer,seatTable,
 } from './types.ts';
 
 /**

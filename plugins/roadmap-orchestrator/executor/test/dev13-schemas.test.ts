@@ -3,24 +3,24 @@
 // rules, the walkthrough and polish-judge answers, the walk roles in force only under milestones (routing revs of an arc
 // without them unchanged), the repo config's walkthrough MCP servers and the acting-judge argv. Behaviour is not here.
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
-import { type Envelope, type Event, type Fact, type LogRecord, parseEventLine, prevHash, serializeEvent } from '../src/core/events.ts';
-import { InvalidIdError, arcId, canonicalIds, jobId, journeyId, milestoneId, polishId, sha, sha256, visionClauseId } from '../src/core/ids.ts';
+import { mkdirSync,writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { describe,it } from 'node:test';
+import { backendArgv,freshJudgmentSession,writeDenyRules } from '../src/backends/argv.ts';
+import { type Envelope,type Event,type Fact,type LogRecord,parseEventLine,prevHash,serializeEvent } from '../src/core/events.ts';
+import { InvalidIdError,arcId,canonicalIds,jobId,journeyId,milestoneId,polishId,sha,sha256,visionClauseId } from '../src/core/ids.ts';
 import { Fold } from '../src/core/state.ts';
 import { SchemaError } from '../src/core/validate.ts';
-import { absPath, isoTime } from '../src/core/values.ts';
-import { ARC as LOG_ARC, chain } from './fixtures/log-records.ts';
-import { DEFAULT_WALK_ROUNDS, type PlanM1, designUnitOf, hasMilestones, milestonesOf, parsePlan, walkRoundsOf } from '../src/input/plan.ts';
+import { absPath,isoTime } from '../src/core/values.ts';
 import { parseVision } from '../src/holistic/types.ts';
-import { backendArgv, freshJudgmentSession, writeDenyRules } from '../src/backends/argv.ts';
+import { DEFAULT_WALK_ROUNDS,type PlanM1,designUnitOf,hasMilestones,milestonesOf,parsePlan,walkRoundsOf } from '../src/input/plan.ts';
 import { actingWriteDenials } from '../src/pipeline/dispatch.ts';
-import { tmpDir } from './helpers/repo.ts';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { validatePolishJudgeOutput, validateWalkthroughOutput } from '../src/prompts/schemas.ts';
-import { arcRolesInForce, arcStack, parseRepoConfig, planStack, resolveRouting, seatsInForce, unsupportedSeats } from '../src/routing/layers.ts';
-import { ACTING_ROLES, FRESH_ROLES, ROLES } from '../src/routing/types.ts';
+import { validatePolishJudgeOutput,validateWalkthroughOutput } from '../src/prompts/schemas.ts';
+import { arcRolesInForce,arcStack,parseRepoConfig,planStack,resolveRouting,seatsInForce,unsupportedSeats } from '../src/routing/layers.ts';
+import { ACTING_ROLES,FRESH_ROLES,ROLES } from '../src/routing/types.ts';
 import { ORIGIN_RANK } from '../src/schedule/types.ts';
+import { ARC as LOG_ARC,chain } from './fixtures/log-records.ts';
+import { tmpDir } from './helpers/repo.ts';
 
 const A = sha('a'.repeat(40));
 const H = sha256('d'.repeat(64));

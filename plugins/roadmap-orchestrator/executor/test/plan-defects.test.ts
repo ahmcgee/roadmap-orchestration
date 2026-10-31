@@ -3,17 +3,17 @@
 // plan-defect.argv-forms, plan-defect.witness-reachable, plan-defect.undeclared, plan-defect.undeclared-per-witness,
 // plan-defect.derived, plan-defect.regenerate.
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, it } from 'node:test';
-import { obligationId, unitId } from '../src/core/ids.ts';
-import { repoPath, repoPattern } from '../src/core/values.ts';
-import { type ArcLaneDef, type PlanDefect, laneRevOf, parseObligations } from '../src/holistic/types.ts';
+import { describe,it } from 'node:test';
+import { obligationId,unitId } from '../src/core/ids.ts';
+import { repoPath,repoPattern } from '../src/core/values.ts';
+import { type ArcLaneDef,type PlanDefect,laneRevOf,parseObligations } from '../src/holistic/types.ts';
 import { laneMisses } from '../src/holistic/witnessfiles.ts';
-import { derivedExclusions, derivedWidening } from '../src/input/derived.ts';
-import { parsePlan, regenerateLaneId } from '../src/input/plan.ts';
-import { APPLY, RESTART, phase0InputOf, phase0Rows } from '../src/phase0/rows.ts';
-import { type CorpusArc, PIN_FILE, WITNESS_FILE, check, corpusArc, editJsonFile, editPlan, filesOf, kinds, rowOf } from './helpers/corpusarc.ts';
+import { derivedExclusions,derivedWidening } from '../src/input/derived.ts';
+import { parsePlan,regenerateLaneId } from '../src/input/plan.ts';
+import { APPLY,RESTART,phase0InputOf,phase0Rows } from '../src/phase0/rows.ts';
+import { type CorpusArc,PIN_FILE,WITNESS_FILE,check,corpusArc,editJsonFile,editPlan,filesOf,kinds,rowOf } from './helpers/corpusarc.ts';
 
 const T = { timeout: 120_000 };
 type Json = Record<string, unknown>;

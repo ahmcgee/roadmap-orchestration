@@ -23,15 +23,15 @@
 // an acknowledged digest and not bound by an open one; it is raised when none is open. Its acknowledgement covers exactly
 // those ids; later divergences raise the next digest (`raiseDigest`). The item is raised first and its fact second: a
 // crash between them leaves a raised digest item no fact names, whose ids its summary lists; the next call writes its fact.
-import type { DivergenceId, JobId, NeedsUserId, Sha, Sha256Hex, UnitId } from '../core/ids.ts';
-import { canonicalIds, divergenceId } from '../core/ids.ts';
-import type { Journal, JournalView } from '../core/interfaces.ts';
+import type { DivergenceId,JobId,NeedsUserId,Sha,Sha256Hex,UnitId } from '../core/ids.ts';
+import { canonicalIds,divergenceId } from '../core/ids.ts';
+import type { Journal,JournalView } from '../core/interfaces.ts';
 import type { HolisticFold } from '../core/state.ts';
-import type { AbsPath, RepoPath } from '../core/values.ts';
+import type { AbsPath,RepoPath } from '../core/values.ts';
 
-import { raiseNeedsUser, readNeedsUser } from '../needsuser.ts';
-import type { BundleOp, CheckpointOutput } from '../prompts/schemas.ts';
-import { type DivergenceDraft, type Preimage, type RevisionVector, type RulingSidecar, rulingRefSource } from './types.ts';
+import { raiseNeedsUser,readNeedsUser } from '../needsuser.ts';
+import type { BundleOp,CheckpointOutput } from '../prompts/schemas.ts';
+import { type DivergenceDraft,type Preimage,type RevisionVector } from './types.ts';
 
 /** What a bundle's ops are measured against: the captured vector and the revisions in force when it activates. */
 export type DivergenceBase = Readonly<{
@@ -65,7 +65,7 @@ const supersede = (id: string): DivergenceDraft['compensation'] => ({
  * `introduced`: the units an earlier op of the bundle admits or re-enters, which have no spec in `b`. Validation applies
  * the ops in order, so a patch of such a unit is valid; it departs from the plan rev, as the op introducing the unit does.
  */
-function ofOp(b: DivergenceBase, op: BundleOp, rulings: ReadonlyMap<string, RulingSidecar>, introduced: ReadonlySet<string>): readonly DivergenceDraft[] {
+function ofOp(b: DivergenceBase, op: BundleOp, introduced: ReadonlySet<string>): readonly DivergenceDraft[] {
   const common = { job: b.job, cites: canonicalIds(op.cites), evidence: op.evidence };
   const plan = (what: string): DivergenceDraft => ({
     ...common, type: 'plan-departed', from: `plan rev ${b.planRev}`, what, preimage: planPreimage(b), compensation: restore(`plan rev ${b.planRev}`),
@@ -101,11 +101,10 @@ function ofOp(b: DivergenceBase, op: BundleOp, rulings: ReadonlyMap<string, Ruli
 }
 
 /** The divergences a bundle's ops record, in op order (a landing ruling's under its `rule` op). */
-export function opDivergences(b: DivergenceBase, ops: readonly BundleOp[], rulings: readonly RulingSidecar[]): readonly DivergenceDraft[] {
-  const byId = new Map(rulings.map((s) => [s.id as string, s]));
+export function opDivergences(b: DivergenceBase, ops: readonly BundleOp[]): readonly DivergenceDraft[] {
   const introduced = new Set<string>();
   return ops.flatMap((op) => {
-    const drafts = ofOp(b, op, byId, introduced);
+    const drafts = ofOp(b, op, introduced);
     if (op.op === 'admit') introduced.add(op.unit.id);
     if (op.op === 'reenter') introduced.add(op.unit);
     return drafts;
@@ -186,7 +185,7 @@ export function raiseDigest(ctx: Readonly<{ journal: Journal; runDir: AbsPath }>
     reason: 'divergence-digest',
     summary: `The checkpoint departed from the target, an obligation or the plan, or read the vision where it is silent: ${ids.join(', ')}.\n${unbound.map((d) => `${d.id} (${d.type}, ${d.job}, cites ${d.cites.join(', ')}): ${d.what} [from ${d.from}]`).join('\n')}`,
     recommendation: 'Review each divergence (`roadmap status` lists them). To undo one that restores a revision, run `roadmap reverse <D-n>`; a product effect is repaired by a unit. Acknowledge this item to cover exactly these ids; later divergences raise the next digest.',
-    options: [],
+    options: [{id: 'acknowledge', label: 'Acknowledge'}],
     evidence: [],
   }, { type: 'arc' });
   ctx.journal.fact({ kind: 'divergence-digest', needsUser, ids });

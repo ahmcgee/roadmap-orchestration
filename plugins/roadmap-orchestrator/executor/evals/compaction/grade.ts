@@ -2,17 +2,17 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { repoPath } from '../../src/core/values.ts';
-import { parseRules } from '../../src/corpus/rules.ts';
 import { diffRegistry } from '../../src/corpus/registry.ts';
-import { parseInvariantsBlock, parseRulesRegistryBlock } from '../../src/docs/invariants.ts';
+import { parseRules } from '../../src/corpus/rules.ts';
+import { parseInvariantsBlock,parseRulesRegistryBlock } from '../../src/docs/invariants.ts';
 import { rederive } from '../../src/holistic/rederive.ts';
 import { parseObligations } from '../../src/holistic/types.ts';
-import { parsePhase0Record } from '../../src/phase0/types.ts';
 import { parsePlan } from '../../src/input/plan.ts';
+import { parsePhase0Record } from '../../src/phase0/types.ts';
 import { parseRulings } from '../../src/spec/rulings.ts';
-import { CORPUS_FILE, RULE_FILE, git, loadSidecars, phase0Cli, readJson, type Fixture } from './fixture.ts';
-import { itemIds, nothing, parseRecord, type Decision } from './record.ts';
-import type { Action, Key } from './spec.ts';
+import { CORPUS_FILE,RULE_FILE,git,loadSidecars,phase0Cli,readJson,type Fixture } from './fixture.ts';
+import { itemIds,nothing,parseRecord,type Decision } from './record.ts';
+import type { Action,Key } from './spec.ts';
 
 export type Criterion = Readonly<{ pass: boolean; detail: string }>;
 export type Grade = Readonly<{ pass: boolean; criteria: Readonly<Record<string, Criterion>>; recall?: number }>;
@@ -121,7 +121,7 @@ export function gradeB(f: Fixture): Grade {
     const plan = parsePlan(readJson(join(f.next, 'plan.json')));
     const specs = plan.units.map((u) => readJson(join(f.next, u.spec)) as { cites: { rulings: string[] }; obligations?: string[] });
     const phase0 = parsePhase0Record(readJson(join(f.next, 'phase0.json')));
-    const applied = parseRecord(readFileSync(join(f.l.inputs, '_next/compaction.md'), 'utf8'));
+    const applied = parseRecord(readFileSync(join(f.l.inputs, 'drafts/compaction.md'), 'utf8'));
     const golden = parseRecord(f.key.goldenRecord);
     const ids: string[] = diffRegistry(rules, registry).problems.map((p) => JSON.stringify(p));
     for (const r of rules) {

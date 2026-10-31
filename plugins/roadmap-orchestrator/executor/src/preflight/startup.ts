@@ -4,21 +4,24 @@
 // kind; no fs or git here. A refused start persists its rejections as `status.rejection.json` in the run
 // dir (`RejectionFile`, step 13b), which `status` reads back through `rejectionFile`.
 import {
-  type ArcId, type InvocationId, type LaneId, type MilestoneId, type ResourceName, type Sha, type Sha256Hex, type UnitId, CPU_POOL, arcId, invocationIdOf, laneId,
-  milestoneId, resourceName, sha, sha256, unitId,
+type ArcId,
+CPU_POOL,
+type InvocationId,type LaneId,type MilestoneId,type ResourceName,type Sha,type Sha256Hex,type UnitId,
+arcId,invocationIdOf,laneId,
+milestoneId,resourceName,sha,sha256,unitId,
 } from '../core/ids.ts';
-import { type ResidueKey, residueKey } from '../core/records.ts';
-import {
-  type ChainProblem, type CorpusProblem, type Phase0Problem, chainProblem, corpusProblem, phase0Problem,
-} from '../phase0/types.ts';
-import { Fields, type Read, SchemaError, arrayOf, literal, nat, nullable, object, oneOf, positive, sortedBy, str, tagged, version } from '../core/validate.ts';
-import { type AbsPath, type IsoTime, type PlanPath, type RefName, type RepoPath, absPath, isoTime, planPath, refName, repoPath } from '../core/values.ts';
+import { type ResidueKey,residueKey } from '../core/records.ts';
+import { Fields,type Read,SchemaError,arrayOf,literal,nat,nullable,object,oneOf,positive,sortedBy,str,tagged,version } from '../core/validate.ts';
+import { type AbsPath,type IsoTime,type PlanPath,type RefName,type RepoPath,absPath,isoTime,planPath,refName,repoPath } from '../core/values.ts';
 import type { SchemaVersion } from '../core/version.ts';
-import { type PlanDefect, planDefect } from '../holistic/types.ts';
-import type { PlanM1, PlanUnit } from '../input/plan.ts';
+import { type PlanDefect,planDefect } from '../holistic/types.ts';
+import type { PlanM1,PlanUnit } from '../input/plan.ts';
+import {
+type ChainProblem,type CorpusProblem,type Phase0Problem,chainProblem,corpusProblem,phase0Problem,
+} from '../phase0/types.ts';
 import type { OverCapacity } from '../resources/pool.ts';
 import {
-  type ArcRoleSet, type Backend, type ModelClass, type ProfileName, type RoutingLayerName, type SeatRef, backend, modelClass, profileName, seatFields,
+type ArcRoleSet,type Backend,type ModelClass,type ProfileName,type RoutingLayerName,type SeatRef,backend,modelClass,profileName,seatFields,
 } from '../routing/types.ts';
 
 /** EX_CONFIG: start refused; fixing the input or disposing the blocker is the user's move. */
@@ -95,7 +98,6 @@ export type StartupRejection =
   // reach of their deliverers, undeclared test paths or witness files, derived outputs on the corpus or another unit).
   | Readonly<{ kind: 'plan-defect'; defects: readonly PlanDefect[] }>
   // An apply's vision file differs from the vision in force and the apply declares no vision edit (`--vision-edit`;
-  // src/phase0/rows.ts `visionLeak`): a next-arc draft belongs in `draft` (`_next/vision.md`) until the between-arc window.
   // A start of an arc with a plan in force (a reopen) after arc `by` started on its head (src/chain.ts `successorOf`):
   // its PR's fixes are priority units of `by`, whose PR supersedes its own (`roadmap pr --supersede-previous`).
   | Readonly<{ kind: 'arc-superseded'; by: ArcId }>

@@ -8,25 +8,25 @@ import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { type CommandOutcome, applyCommand } from '../src/commands/apply.ts';
+import { type CommandOutcome,applyCommand } from '../src/commands/apply.ts';
 import { submitCommand } from '../src/commands/queue.ts';
-import { type UnitId, reviewFindingId, unitId } from '../src/core/ids.ts';
+import { type UnitId,reviewFindingId,unitId } from '../src/core/ids.ts';
 import type { CommandBody } from '../src/core/records.ts';
 import { raiseNeedsUser } from '../src/needsuser.ts';
 import { handoverOf } from '../src/pipeline/handover.ts';
 import { loadUnitSpec } from '../src/pipeline/stages.ts';
-import { type Gate, runUnit } from '../src/pipeline/unit.ts';
-import { NO_SESSION_NOTE, RESOLVE_DIRECTIVE, RESPEC_DIRECTIVE, RESPEC_FRESH_DIRECTIVE, resolveUnmetDirective } from '../src/prompts/directives.ts';
-import { type Handover, handoverText } from '../src/prompts/inputs.ts';
+import { type Gate,runUnit } from '../src/pipeline/unit.ts';
+import { NO_SESSION_NOTE,RESOLVE_DIRECTIVE,RESPEC_DIRECTIVE,RESPEC_FRESH_DIRECTIVE,resolveUnmetDirective } from '../src/prompts/directives.ts';
+import { type Handover,handoverText } from '../src/prompts/inputs.ts';
 import { parseRepoConfig } from '../src/routing/layers.ts';
-import { commitAll, git } from './helpers/repo.ts';
-import { type CallRecord, type ClaudeAct, type Step, readCalls } from './helpers/scenario.ts';
-import { BUILD_REPORT, SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
-import { editPlan, editSpec } from './fixtures/route-common.ts';
+import { editPlan,editSpec } from './fixtures/route-common.ts';
 import { addUnit } from './fixtures/sched-m3-common.ts';
+import { BUILD_REPORT,SCENARIO_TIMEOUT_MS,admitAll,planCheckStep } from './fixtures/stage-common.ts';
 import {
-  type ArcRun, MUL, U1, appendSteps, applyBody, codexStep, commandContextFor, contextFor, gateStep, mulBuild, outcomes, setupArc, stepUntil, workDirPattern,
+type ArcRun,MUL,U1,appendSteps,applyBody,codexStep,commandContextFor,contextFor,gateStep,mulBuild,outcomes,setupArc,stepUntil,workDirPattern,
 } from './fixtures/unit-common.ts';
+import { commitAll,git } from './helpers/repo.ts';
+import { type CallRecord,type ClaudeAct,type Step,readCalls } from './helpers/scenario.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 const live = (): Gate => admitAll;

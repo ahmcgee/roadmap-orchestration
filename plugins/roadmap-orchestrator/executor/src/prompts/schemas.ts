@@ -10,36 +10,56 @@
 //   gate:      approve → integration slot · revise → fix round with directives · escalate → route up
 //   build:     success → quiesce (the executor then salvages, runs lanes and gates; the report is evidence)
 import {
-  type ClauseId, type FailureModeId, type FindingId, type JourneyId, type LaneId, type ObligationId, type PocQuestionId, type ReviewFindingId, type RuleId, type RulingId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, clauseId,
-  failureModeId, pocQuestionId, answerIds, findingId, journeyId, laneId, obligationId, reviewFindingId, ruleId, rulingId, sha, unitId, visionClauseId,
+type ClauseId,type FailureModeId,type FindingId,type JourneyId,type LaneId,type ObligationId,type PocQuestionId,type ReviewFindingId,type RuleId,type RulingId,type Sha,type Sha256Hex,type UnitId,type VisionClauseId,
+answerIds,
+clauseId,
+failureModeId,
+findingId,journeyId,laneId,obligationId,
+pocQuestionId,
+reviewFindingId,ruleId,rulingId,sha,unitId,visionClauseId,
 } from '../core/ids.ts';
-import { type ReviewDispute, reviewDispute } from '../core/review.ts';
-import { FLOW_REPORTERS, type FlowOutput, flowOutput } from '../flow/types.ts';
-import { type JsonValue, canonicalJson } from '../core/json.ts';
-import { BOUND_FIELDS, type Bounds, type FailureRef, type NoteDef, SPEC_SCHEMA, SPEC_SECTIONS, type SpecM1, type SpecPatchOp, failureRef, specM1, specPatchOp } from '../core/records.ts';
+import { type JsonValue,canonicalJson } from '../core/json.ts';
+import { BOUND_FIELDS,type Bounds,type FailureRef,type NoteDef,SPEC_SCHEMA,SPEC_SECTIONS,type SpecPatchOp,failureRef,specM1,specPatchOp } from '../core/records.ts';
+import { type ReviewDispute,reviewDispute } from '../core/review.ts';
 import {
-  Fields, type Read, SchemaError, answerSet, arrayOf, assertUnique, bool, envName, int, literal, nullable, object, oneOf, positive, str, tagged, text,
+Fields,type Read,SchemaError,answerSet,arrayOf,assertUnique,bool,envName,int,literal,nullable,object,oneOf,positive,str,tagged,text,
 } from '../core/validate.ts';
-import { type RepoPath, type RepoPattern, matchesPattern, repoPath, repoPattern } from '../core/values.ts';
+import { type RepoPath,type RepoPattern,matchesPattern,repoPath,repoPattern } from '../core/values.ts';
+import { FLOW_REPORTERS,type FlowOutput,flowOutput } from '../flow/types.ts';
 import {
-  ACTIVATIONS, type Activation, DOC_RELATIONS, FINDING_DISPOSITIONS, FINDING_SEVERITIES as LENS_SEVERITIES, type FindingDisposition, type FindingSeverity, OBLIGATION_DISPOSITIONS,
-  OWNER_ONLY_CLASSES, PACK_DISPOSITIONS, PACK_SEVERITIES, type DocRef, type PackDisposition, type ObligationAnchor, type ObligationDisposition, type ObservationKey, type OwnerOnlyClass, type PackSeverity,
-  type PackTarget, RULE_RELATIONS, RULING_KINDS, RULING_LIFETIMES, RULING_SCHEMA, RULING_STATUSES, type WitnessRef, observationKey, packDisposition, packTarget,
+ACTIVATIONS,type Activation,
+type DocRef,
+FINDING_DISPOSITIONS,
+type FindingDisposition,type FindingSeverity,
+FINDING_SEVERITIES as LENS_SEVERITIES,
+OWNER_ONLY_CLASSES,
+type ObligationAnchor,
+type ObservationKey,type OwnerOnlyClass,
+PACK_DISPOSITIONS,PACK_SEVERITIES,
+type PackDisposition,
+type PackSeverity,
+type PackTarget,
+type WitnessRef,observationKey,packDisposition,packTarget
 } from '../holistic/types.ts';
-import { REENTRY_POINTS, type ReentryPoint } from '../input/plan.ts';
+import { REENTRY_POINTS,type ReentryPoint } from '../input/plan.ts';
 
-import { type OrderingWait, orderingWait } from '../core/ordering.ts';
+import { type OrderingWait,orderingWait } from '../core/ordering.ts';
 
+import {
+type ClauseLanes,type DesignChange,type DesignExperiment,type FailureModeProof,type NewSystem,
+UNIT_KINDS,
+type UnitKind,type Verification,
+clauseLanes,designChange,designExperiment,failureModeProof,
+newSystem,verification,
+} from '../core/design.ts';
+import { STALE_OUTCOMES,type StaleAnswer,staleAnswer } from '../core/stale.ts';
 import type { MutantEdit } from '../git/mutant.ts';
 import {
-  type ClauseLanes, type DesignChange, type DesignExperiment, type FailureModeProof, type NewSystem, type UnitKind, type Verification, UNIT_KINDS, clauseLanes, designChange, designExperiment, failureModeProof,
-  newSystem, verification,
-} from '../core/design.ts';
-import { STALE_OUTCOMES, type StaleAnswer, staleAnswer } from '../core/stale.ts';
-import { specBytes } from '../spec/spec.ts';
-import {
-  BUILD_CLASSES, JUDGMENT_SEATS, MODEL_CLASSES, type ModelClass, classAt, RISK_TIERS, ROLES, type RiskTier, type Role, SEATS, type Seat,
+BUILD_CLASSES,JUDGMENT_SEATS,MODEL_CLASSES,type ModelClass,
+RISK_TIERS,ROLES,type RiskTier,type Role,SEATS,type Seat,
+classAt,
 } from '../routing/types.ts';
+import { specBytes } from '../spec/spec.ts';
 
 // ---------------------------------------------------------------------------------------------------
 // JSON Schema builders (strict subset: object, array, string, integer, boolean, enum, anyOf, null)
@@ -515,9 +535,7 @@ const decision: Read<NoteDef> = object((f) => ({ id: f.get('id', (v, p): ClauseI
 
 const experiment: Read<Experiment> = object((g) => ({ name: g.get('name', str), argv: g.get('argv', arrayOf(text, { nonEmpty: true })), exit: g.get('exit', int(0, 255)) }));
 
-/** Old answers may carry lanesRun; it is accepted and ignored, never certification evidence. */
 export const buildOutput: Read<BuildOutput> = object((f) => {
-  f.optional('lanesRun', arrayOf(object((g) => ({ lane: g.get('lane', (v, p) => laneId(v, p)), exit: g.get('exit', int(0, 255)) }))));
   const experiments = f.get('experiments', arrayOf(experiment));
   const final = f.get('final', literal(true));
   const docsOnlySince = f.get('docsOnlySince', nullable((v, p): Sha => sha(v, p)));
@@ -872,7 +890,7 @@ export type BundleOpBody =
    * `fixes` (arc feedback 2026-10-16): the failure it fixes; null when the lineage recorded none; `unrecorded` (the key absent)
    * on an answer recorded before it (`reenterFixesDefault`), adopted as recorded.
    */
-  | Readonly<{ op: 'reenter'; unit: UnitId; reenters: UnitId; enterAt: ReentryPoint | null; reset: RulingId | null; fixes: FailureRef | null }>
+  | Readonly<{ op: 'reenter'; unit: UnitId; reenters: UnitId; enterAt: ReentryPoint | null; reset: string | null; fixes: FailureRef | null }>
   | Readonly<{ op: 'cut'; unit: UnitId; reason: string }>
   | Readonly<{ op: 'route'; unit: UnitId; seats: readonly Readonly<{ role: Role; tier: Seat; class: ModelClass }>[] }>
   | Readonly<{ op: 'limits'; unit: UnitId | null; limits: readonly Readonly<{ field: keyof Bounds | 'convergenceK'; value: number }>[] }>
@@ -1055,7 +1073,7 @@ function opBody(f: Fields, op: BundleOpKind): BundleOpBody {
     case 'reenter': {
       const fixes = f.get('fixes', nullable(failureRef));
       return {
-        op, unit: f.get('unit', unitR), reenters: f.get('reenters', unitR), enterAt: f.get('enterAt', nullable(oneOf(REENTRY_POINTS))), reset: f.get('reset', nullable(rulingR)),
+        op, unit: f.get('unit', unitR), reenters: f.get('reenters', unitR), enterAt: f.get('enterAt', nullable(oneOf(REENTRY_POINTS))), reset: f.get('reset', nullable(str)),
         fixes: fixes,
       };
     }

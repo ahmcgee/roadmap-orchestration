@@ -8,23 +8,26 @@ import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { sessionContainment } from '../src/contain/session.ts';
 import type { Holder } from '../src/core/events.ts';
-import { type ResourceName, type ResourceUnit, INTEGRATION_SLOT, commandId, invocationId, opId, unitId } from '../src/core/ids.ts';
+import { INTEGRATION_SLOT,type ResourceName,type ResourceUnit,commandId,invocationId,opId,unitId } from '../src/core/ids.ts';
 import { specM1 } from '../src/core/records.ts';
-import { invocationDir, invoke } from '../src/pipeline/invoke.ts';
+import { invocationDir,invoke } from '../src/pipeline/invoke.ts';
 import { requestOf } from '../src/resources/pool.ts';
 import { probe } from '../src/resources/probe.ts';
 import {
-  type Reservation, type ResourceContext, type StageHolder, type SweepHolder, cancel, cleanup, entryOf, buildLanes,
-  lockOrder, reserve, reserveForSweep, resourceTable, run, transition,
+type Reservation,type ResourceContext,type StageHolder,type SweepHolder,
+buildLanes,
+cancel,cleanup,entryOf,
+lockOrder,reserve,reserveForSweep,resourceTable,run,transition,
 } from '../src/resources/reserve.ts';
 import { stageRecipes } from '../src/resources/teardown.ts';
-import { renderSpec } from '../src/spec/render.ts';
 import { runnerFiles } from '../src/runner/files.ts';
-import { waitFor } from './helpers/invocation.ts';
-import { backend, dones, intents, scenario, specFor } from './fixtures/invoke-specs.ts';
+import { renderSpec } from '../src/spec/render.ts';
+import { backend,dones,intents,scenario,specFor } from './fixtures/invoke-specs.ts';
 import {
-  CACHE, DB, QUEUE, type ResRun, UNIT, calls, laneInvocation, newRun, openRun, stageHolder, stageParent, tableOf, transitions,
+CACHE,DB,QUEUE,
+UNIT,calls,laneInvocation,newRun,openRun,stageHolder,stageParent,tableOf,transitions
 } from './fixtures/res-plan.ts';
+import { waitFor } from './helpers/invocation.ts';
 
 const T = { timeout: 60_000 };
 

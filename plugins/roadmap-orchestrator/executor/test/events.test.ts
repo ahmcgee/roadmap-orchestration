@@ -1,17 +1,22 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { describe, it } from 'node:test';
+import { describe,it } from 'node:test';
 import {
-  type CommitInputs, type Envelope, type Event, type Fact, type IntentOf, type LogRecord, type OpKind, type OpOutcome,
-  OP_KINDS, parseChainLine, parseEventLine, prevHash, serializeChainLine, serializeEvent,
+type CommitInputs,type Envelope,type Event,type Fact,type IntentOf,type LogRecord,type OpKind,type OpOutcome,
+OP_KINDS,parseChainLine,parseEventLine,prevHash,serializeChainLine,serializeEvent,
 } from '../src/core/events.ts';
 import {
-  arcId, commandId, findingId, invocationId, jobId, laneId, needsUserId, opId, opKey, planRev, resourceName, routingRev, seatRev, sha, sha256, specRev,
-  unitId, INTEGRATION_SLOT, clauseId, rulingId,
+INTEGRATION_SLOT,
+arcId,
+clauseId,
+commandId,findingId,invocationId,jobId,laneId,needsUserId,opId,opKey,planRev,resourceName,routingRev,
+rulingId,
+seatRev,sha,sha256,specRev,
+unitId,
 } from '../src/core/ids.ts';
-import { type ResidueRecord, residueRecord } from '../src/core/records.ts';
+import { type ResidueRecord,residueRecord } from '../src/core/records.ts';
 import { SchemaError } from '../src/core/validate.ts';
-import { absPath, gitDate, isoTime, refName, repoPath, repoPattern } from '../src/core/values.ts';
+import { absPath,gitDate,isoTime,refName,repoPath,repoPattern } from '../src/core/values.ts';
 
 const arc = arcId('arc-1');
 const op = opId(arc, 7);
@@ -209,7 +214,7 @@ describe('events', () => {
       ['unknown field', canonical(JSON.stringify({ ...obj(), extra: 1 })), /^event\.extra: expected no such field/],
       ['missing envelope field', canonical(JSON.stringify({ ...obj(), prev: undefined })), /^event\.prev: .*field missing/],
       ['seq 1 with a prev', canonical(JSON.stringify({ ...obj(), seq: 1 })), /^event\.prev: expected null on seq 1/],
-      ['wrong version', canonical(JSON.stringify({ ...obj(), v: 2 })), /^event\.v: expected 1/],
+      ['wrong version', canonical(JSON.stringify({ ...obj(), v: 1 })), /^event\.v: expected 2/],
       ['unknown record type', canonical(JSON.stringify({ ...obj(), type: 'note' })), /^event\.type:/],
       ['unknown op kind', canonical(JSON.stringify({ ...obj(), kind: 'git.reset' })), /^event\.kind:/],
       ['op of another arc', canonical(JSON.stringify({ ...obj(), op: 'arc-2/7' })), /^event\.op: expected an op of arc arc-1/],

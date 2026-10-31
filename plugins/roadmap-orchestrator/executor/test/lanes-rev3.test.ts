@@ -7,40 +7,42 @@
 // rows LANE_REUSE, SERIES_CERTIFIED and RED_CLASS (labels lanes.after-reused, lanes.after-census-before-certified,
 // redlane.after-class).
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync,existsSync,readFileSync,rmSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, test } from 'node:test';
-import type { Fact, IntentOf } from '../src/core/events.ts';
+import { describe,test } from 'node:test';
+import type { Fact,IntentOf } from '../src/core/events.ts';
+import { type Sha,invocationId,jobId,opKey,resourceName,sha } from '../src/core/ids.ts';
 import type { JsonValue } from '../src/core/json.ts';
-import { type Sha, invocationId, jobId, opKey, resourceName, sha } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
-import { type LaneDef, RED_FILE, redFile } from '../src/core/records.ts';
-import { absPath, isoTimeOf, repoPattern } from '../src/core/values.ts';
-import type { HostSample } from '../src/host/sample.ts';
-import { holisticInForce, lanes, loadUnitSpec } from '../src/pipeline/stages.ts';
-import { type StageContext, type StageParent, pinDispatch, verificationWorktree } from '../src/pipeline/dispatch.ts';
-import { invocationDir, invoke } from '../src/pipeline/invoke.ts';
-import {
-  LANE_DEADLINE_MS, LANE_GRACE_MS, LANE_STALL_MS, type LaneRuntime, type Series, arcJourneyLane, latestSpecSeries, laneOrder, reserveNow, runJourneySeries, runLaneSeries,
-  seriesLedger, seriesOrder, seriesTree, specSeriesRoot,
-} from '../src/pipeline/lanes.ts';
-import { unitTip } from '../src/pipeline/gate.ts';
-import { runUnit } from '../src/pipeline/unit.ts';
-import { parsePlan } from '../src/input/plan.ts';
+import { type LaneDef,RED_FILE,redFile } from '../src/core/records.ts';
+import { absPath,isoTimeOf } from '../src/core/values.ts';
 import { parseObligations } from '../src/holistic/types.ts';
-import { worktreeCreateOp } from '../src/recover/ops.ts';
-import { runOp } from '../src/pipeline/dispatch.ts';
+import type { HostSample } from '../src/host/sample.ts';
+import { parsePlan } from '../src/input/plan.ts';
+import { type StageContext,type StageParent,pinDispatch,runOp,verificationWorktree } from '../src/pipeline/dispatch.ts';
+import { unitTip } from '../src/pipeline/gate.ts';
+import { invocationDir,invoke } from '../src/pipeline/invoke.ts';
+import {
+LANE_DEADLINE_MS,LANE_GRACE_MS,LANE_STALL_MS,type LaneRuntime,type Series,arcJourneyLane,
+laneOrder,
+latestSpecSeries,
+reserveNow,runJourneySeries,runLaneSeries,
+seriesLedger,seriesOrder,seriesTree,specSeriesRoot,
+} from '../src/pipeline/lanes.ts';
 import { readRedClass } from '../src/pipeline/redlane.ts';
+import { holisticInForce,lanes,loadUnitSpec } from '../src/pipeline/stages.ts';
+import { runUnit } from '../src/pipeline/unit.ts';
+import { worktreeCreateOp } from '../src/recover/ops.ts';
 import type { Acquire } from '../src/schedule/types.ts';
-import { assertFired, writeTrigger } from './helpers/crash.ts';
-import { runFixture } from './helpers/proc.ts';
-import { commitAll, git, tmpDir, writeFiles } from './helpers/repo.ts';
-import { readCalls } from './helpers/scenario.ts';
-import { LANE_PRIORITY, LANE_REUSE, RED_CLASS, SERIES_CERTIFIED, crashCells } from './matrix.ts';
 import { holisticArc } from './fixtures/brake-common.ts';
 import { wire } from './fixtures/publish-common.ts';
-import { DB, type LaneJson, SCENARIO_TIMEOUT_MS, type StageRun, U1, admitAll, keptSpec, planCheckStep, setupUnit, spawnIntents, started } from './fixtures/stage-common.ts';
-import { MUL, codexStep, contextFor, gateStep, mulBuild, outcomes, setupArc, stepUntil } from './fixtures/unit-common.ts';
+import { DB,type LaneJson,SCENARIO_TIMEOUT_MS,type StageRun,U1,admitAll,keptSpec,planCheckStep,setupUnit,spawnIntents,started } from './fixtures/stage-common.ts';
+import { MUL,codexStep,contextFor,gateStep,mulBuild,outcomes,setupArc,stepUntil } from './fixtures/unit-common.ts';
+import { assertFired,writeTrigger } from './helpers/crash.ts';
+import { runFixture } from './helpers/proc.ts';
+import { commitAll,git,tmpDir,writeFiles } from './helpers/repo.ts';
+import { readCalls } from './helpers/scenario.ts';
+import { LANE_PRIORITY,LANE_REUSE,RED_CLASS,SERIES_CERTIFIED,crashCells } from './matrix.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 

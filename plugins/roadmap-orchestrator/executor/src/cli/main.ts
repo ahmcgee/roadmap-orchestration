@@ -1,71 +1,37 @@
-// CLI entry: parses argv into the closed Command union (src/input/cli.ts) and runs it. Run commands find
-// their run dir through the RunLocator: the host lock claim's, or `--repo` + `--arc` explicitly. Commands
-// for the executor (`pause`, `stop`, `ack`, `resume`, `sweep`, `apply`, `resolve-edge`, `run-only`, and M3's
-// `rule`, `reverse`, `steer`, `merge-in`, `audit`, `close-admissions`) only write a file into its durable queue
-// and print the command id; the executor applies it and writes the receipts. `rule` and `steer` hash the file
-// they name into the command (its absolute path and sha256). `gc` is a host action under the host lock, not a
-// queued command (src/commands/gc.ts): it prints its report, or `{refused}` with exit 75 (host busy) or 78. `apply` first hashes the
-// plan file the arc started with (start.json), every unit's spec and (M3) the ledger with its sidecars, the obligations
-// and the vision into the command's manifest (`RevisionManifest`), and `--base <export.json>` the base the executor
-// rebases them from (an `inputs export`'s manifest; src/input/rebase.ts); `apply --dry-run` instead classifies the
-// rebased files against the plan in force, read-only, and prints the verdict (it runs no smoke: a backend the new
-// routing needs is listed under `smoke`). Output is agent-facing JSON.
-// `start` launches the supervisor detached (src/supervisor.ts), which claims the host and spawns the
-// executor (`--base <export.json>`: the base its files are rebased from, as an apply's; deflake scope, 2026-10-23), and waits for its own generation's readiness (the executor passed every startup check), at
-// most 240 s by default or `--wait <ms>`. It prints one JSON line: `ready` (exit 0; start returns while the
-// run goes on), the refused exit line (exit 78/75), or `failed` / `timeout` (exit 70). The run's own end is
-// in exit.reason.json and `status`. `status` prints the status object; a second `status` of a run while one runs
-// refuses (src/status.ts `statusSingleFlight`).
-//
-// M4a host acts (no host lock, not queued; each module's own header has its contract): `phase0 check` prints its rows
-// and slice candidates (exit 0 when no row, else 78); `corpus pin` writes the pin and prints it with its sha256, or the
-// refused row (78); `brief` prints the payload (`--json`) or its Markdown, and `--ack` prints the commands it enqueued, or
-// the stale ids (78); `pr` prints the pull request; `chain status` prints the chain. `answer` records the owner's answer (src/answers.ts) and prints
-// `{recorded}` or `{unchanged}` (a rerun with the text in force), or `{refused}` (78: no Phase-0 record, the question
-// unknown or not open in it). Step 0a placed every module at its final path; the landing steps replace them.
-// M4a rev 3 host acts: `witness-check` prints `{passed: true}` (exit 0) or `{missing, failed, malformed}` (78);
-// `resume-arc` prints `{resumed: false, reason}` or the relaunched supervisor's line; `inputs export` prints the export's
-// `export.json`. `apply --ruling` lands ruling sidecars with the edits (I2). Step N0 placed each module at its final path.
-// M4b: `flow accept|reject|request` queue the root agent's flow commands and `flow given` writes a host given
-// (src/commands/flow.ts); each prints the queued command or the given, or `{refused}` (78). Step 0a placed the module.
-// Scope growth (2026-10-15): `scope accept|reject <unit> --reason` queues the root agent's `scope-decide` (src/commands/scope.ts).
-// dev.13: `demo up|down|hold|release` queues the owner's act on the demo (src/demo/promote.ts).
-//
-// `runCli` takes the host directory, as every host function does: `main` passes HOST_DIR, tests a temp dir.
-import { existsSync, readFileSync } from 'node:fs';
-import { basename, join, resolve } from 'node:path';
+// Resolve CLI paths, export revisions and queue durable commands.
+import { existsSync,readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { submitCommand } from '../commands/queue.ts';
-import { evaluateApply } from '../commands/apply.ts';
-import { DEFAULT_KEEP, gc } from '../commands/gc.ts';
+import { basename,join,resolve } from 'node:path';
 import { recordAnswer } from '../answers.ts';
+import { evaluateApply } from '../commands/apply.ts';
 import { brief } from '../commands/brief.ts';
 import { chainStatus } from '../commands/chain.ts';
 import { corpusPin } from '../commands/corpus.ts';
+import { flowCommand } from '../commands/flow.ts';
+import { DEFAULT_KEEP,gc } from '../commands/gc.ts';
+import { exportInputs,readExport } from '../commands/inputs.ts';
 import { phase0Check } from '../commands/phase0.ts';
 import { openPr } from '../commands/pr.ts';
-import { readExport, exportInputs } from '../commands/inputs.ts';
-import { flowCommand } from '../commands/flow.ts';
-import { type Run, locate } from './locate.ts';
+import { submitCommand } from '../commands/queue.ts';
 import { resumeArc } from '../commands/resumearc.ts';
 import { witnessCheck } from '../commands/witnesscheck.ts';
 import { readJson } from '../core/fsx.ts';
+import { planRev,sha256 } from '../core/ids.ts';
+import { canonicalJson,sha256Hex } from '../core/json.ts';
 import { readJournal } from '../core/log.ts';
-import { canonicalJson, sha256Hex } from '../core/json.ts';
-import { planRev, sha256 } from '../core/ids.ts';
-import { type CommandBody, type HashedFile, type RevisionManifest, type RunStart, runStart } from '../core/records.ts';
-import { SchemaError } from '../core/validate.ts';
+import { type CommandBody,type RevisionManifest,type RunStart,runStart } from '../core/records.ts';
+import { type AbsPath,absPath } from '../core/values.ts';
 import { START_FILE } from '../executor.ts';
-import { arcRolesOf, readInputFiles, revisionManifestOf } from '../input/inforce.ts';
-import { type AbsPath, absPath } from '../core/values.ts';
 import { HOST_DIR } from '../host/hostdir.ts';
-import { CliError, type Command, type RunLocator, parseCommand } from '../input/cli.ts';
+import { CliError,type Command,type RunLocator,parseCommand } from '../input/cli.ts';
+import { arcRolesOf,readInputFiles,revisionManifestOf } from '../input/inforce.ts';
 import { readRepoConfig } from '../preflight/checks.ts';
-import { EXIT_HOST_BUSY, EXIT_REFUSED, type StartupRejection } from '../preflight/startup.ts';
-import { tui } from '../tui/main.ts';
+import { EXIT_HOST_BUSY,EXIT_REFUSED,type StartupRejection } from '../preflight/startup.ts';
 import { status } from '../status.ts';
-import { START_WAIT_MS, launchSupervisor } from '../supervisor.ts';
-import { HEARTBEAT_MIN, watch, watchActionable } from '../watch.ts';
+import { START_WAIT_MS,launchSupervisor } from '../supervisor.ts';
+import { tui } from '../tui/main.ts';
+import { HEARTBEAT_MIN,watch,watchActionable } from '../watch.ts';
+import { type Run,locate } from './locate.ts';
 
 const pkg = createRequire(import.meta.url)('../../package.json') as { version: string };
 

@@ -2,31 +2,52 @@
 // dispatch record, spec.json (M1) and SpecPatch, host files, commands and receipts, needs-user. Each has
 // a type and a validator from `unknown`. SCHEMAS.md is the prose twin of this module.
 import {
-  type ArcId, type ClauseId, type CommandId, type DivergenceId, type FindingId, type ImplementerSessionId, type InvocationId, type JobId,
-  type JudgmentSessionId, type EdgeId, type LaneId, type NeedsUserId, type ObligationId, type OpId, type ProposalId, type PlanRev, type ResourceInstance,
-  type ResourceName, type RoutingRev, type RulingId, type SeatRev, type Sha, type Sha256Hex, type SpecRev, type SystemName, type UnitId, type WitnessItemId, arcId, clauseId,
-  commandId, divergenceId, edgeId, findingId, implementerSessionId, invocationIdOf, jobIdOf, judgmentSessionId, laneId, needsUserId,
-  obligationId, opIdOf, parseInvocationId, planRev, resourceInstance, resourceName, routingRev, rulingId, seatRev, sha, sha256, specRev, unitId, idsAscending,
-  witnessItemId, proposalId, systemName,
+type ArcId,type ClauseId,type CommandId,type DivergenceId,
+type EdgeId,
+type FindingId,type ImplementerSessionId,type InvocationId,type JobId,
+type JudgmentSessionId,
+type LaneId,type NeedsUserId,type ObligationId,type OpId,
+type PlanRev,
+type ProposalId,
+type ResourceInstance,
+type ResourceName,type RoutingRev,type RulingId,type SeatRev,type Sha,type Sha256Hex,type SpecRev,type SystemName,type UnitId,type WitnessItemId,arcId,clauseId,
+commandId,divergenceId,edgeId,findingId,
+idsAscending,
+implementerSessionId,invocationIdOf,jobIdOf,judgmentSessionId,laneId,needsUserId,
+obligationId,opIdOf,parseInvocationId,planRev,
+proposalId,
+resourceInstance,resourceName,routingRev,rulingId,seatRev,sha,sha256,specRev,
+systemName,
+unitId,
+witnessItemId,
 } from './ids.ts';
 import type { JsonValue } from './json.ts';
 import {
-  type AbsPath, type BootId, type IsoTime, type Nonce, type RepoPath, type RepoPattern, absPath, bootId, isoTime, nonce,
-  repoPath, repoPattern, matchesPattern,
-} from './values.ts';
-import {
-  type Brand, type Read, Fields, SchemaError, arrayOf, assertUnique, bool, envName, int, literal, nat, nullable, object, oneOf,
-  positive, sortedBy, str, stringMap, tagged, text, version,
+type Brand,type Read,Fields,SchemaError,arrayOf,assertUnique,bool,envName,int,literal,nat,nullable,object,oneOf,
+positive,sortedBy,str,stringMap,tagged,text,version,
 } from './validate.ts';
+import {
+type AbsPath,type BootId,type IsoTime,type Nonce,type RepoPath,type RepoPattern,absPath,bootId,isoTime,
+matchesPattern,
+nonce,
+repoPath,repoPattern,
+} from './values.ts';
 import type { SchemaVersion } from './version.ts';
 
-import { type DesignRecord, type UnitKind, designRecord } from './design.ts';
-import { type ContractPin, type Pinned, type RequirementPin, type SpecPin, UNPINNED, pinTarget, specPin } from './pins.ts';
-import { type HostSignatureId, HOST_SIGNATURES } from '../host/signatures.ts';
+import { type HostSignatureId,HOST_SIGNATURES } from '../host/signatures.ts';
 import {
-  type Backend, type ImplementerRole, JUDGMENT_SESSION_ROLES, type JudgmentSessionRole, type ModelClass, type ProfileName, type RiskTier, type Role, ROLES, backend,
-  buildClass, type BuildClass, modelClass, profileName, riskTier, MODEL_CLASSES,
+type Backend,
+type BuildClass,
+type ImplementerRole,
+type JudgmentSessionRole,type ModelClass,type ProfileName,type RiskTier,type Role,
+JUDGMENT_SESSION_ROLES,
+MODEL_CLASSES,
+ROLES,backend,
+buildClass,
+modelClass,profileName,riskTier,
 } from '../routing/types.ts';
+import { type DesignRecord,type UnitKind,designRecord } from './design.ts';
+import { type ContractPin,type Pinned,type RequirementPin,type SpecPin,UNPINNED,pinTarget,specPin } from './pins.ts';
 
 // ---------------------------------------------------------------------------------------------------
 // Shared vocabulary
@@ -1484,7 +1505,7 @@ export const planManifest: Read<PlanManifest> = object((f) => ({
  * and ignored (`issuesIgnored`, src/core/upgrade.ts; scaffolding); never written.
  */
 export type RevisionInputs = Readonly<{
-  rulings: Readonly<{ ledgerSha256: Sha256Hex; sidecars: Readonly<Record<RulingId, Sha256Hex>> }>;
+  rulings: Readonly<{ ledgerSha256: Sha256Hex;  }>;
   obligations: Sha256Hex | null;
   vision: Sha256Hex | null;
   corpus?: Sha256Hex;
@@ -1518,7 +1539,7 @@ export const revisionInputs = (f: Fields): RevisionInputs => {
     corpus.phase0Issues = issues;
   }
   return {
-    rulings: f.get('rulings', object((g) => ({ ledgerSha256: g.get('ledgerSha256', (v, p) => sha256(v, p)), sidecars: g.get('sidecars', sidecarShas) }))),
+    rulings: f.get('rulings', object((g) => ({ ledgerSha256: g.get('ledgerSha256', (v, p) => sha256(v, p)),  }))),
     obligations: f.get('obligations', nullable((v, p) => sha256(v, p))),
     vision: f.get('vision', nullable((v, p) => sha256(v, p))),
     ...corpus,

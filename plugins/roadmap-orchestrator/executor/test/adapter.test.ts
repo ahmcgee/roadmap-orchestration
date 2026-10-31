@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, it } from 'node:test';
-import { adapt, backendSchemaViolation, schemaViolation, writeResult } from '../src/backends/adapter.ts';
-import { ResultConflictError, UnsupportedSchemaError } from '../src/backends/errors.ts';
-import type { BackendOutcomeKind, ExitFile, ResultFile } from '../src/core/records.ts';
+import { describe,it } from 'node:test';
+import { adapt,backendSchemaViolation,schemaViolation,writeResult } from '../src/backends/adapter.ts';
+import { ResultConflictError,UnsupportedSchemaError } from '../src/backends/errors.ts';
+import type { BackendOutcomeKind,ExitFile,ResultFile } from '../src/core/records.ts';
 import { tmpDir } from './helpers/repo.ts';
-import { CAPACITY_TEXT, editClaudeResult, fixtureInvocation, writeExit, writeLaunch } from './helpers/scenario.ts';
+import { CAPACITY_TEXT,editClaudeResult,fixtureInvocation,writeExit,writeLaunch } from './helpers/scenario.ts';
 
 const BIND = { v: 2, arc: 'arc-1', op: 'arc-1/7', inv: 'arc-1/7#1' } as const;
 const EXIT0: ExitFile['child'] = { type: 'exited', code: 0 };

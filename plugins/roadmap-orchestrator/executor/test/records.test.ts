@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { describe,it } from 'node:test';
 import {
-  type ExitFile, MIN_GRACE_MS, RUNNER_FILE_READERS, type RunnerFileName, approvalFingerprint, classifyCommand, classifyTerminal, commandFile,
-  handshakeFile, hostLockClaim, hostOwner, needsUserAck, needsUserRecord, readinessFile, receipt, recoveryLockClaim,
-  specM1, specPatch, supervisorState, laneDef,
+type ExitFile,MIN_GRACE_MS,RUNNER_FILE_READERS,type RunnerFileName,approvalFingerprint,classifyCommand,classifyTerminal,commandFile,
+handshakeFile,hostLockClaim,hostOwner,
+laneDef,
+needsUserAck,needsUserRecord,readinessFile,receipt,recoveryLockClaim,
+specM1,specPatch,supervisorState,
 } from '../src/core/records.ts';
 import { SchemaError } from '../src/core/validate.ts';
 

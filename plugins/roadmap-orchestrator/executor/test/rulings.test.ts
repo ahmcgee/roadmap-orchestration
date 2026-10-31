@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import {describe, it} from 'node:test';
-import {rulingId} from '../src/core/ids.ts';
-import {type RepoPath, repoPath} from '../src/core/values.ts';
-import {anchorSection, headingSlug, applyContractOps, citeRuling} from '../src/docs/contracts.ts';
-import {parseRulings} from '../src/spec/rulings.ts';
+import { describe,it } from 'node:test';
+import { rulingId } from '../src/core/ids.ts';
+import { type RepoPath,repoPath } from '../src/core/values.ts';
+import { anchorSection,applyContractOps,citeRuling,headingSlug } from '../src/docs/contracts.ts';
+import { parseRulings } from '../src/spec/rulings.ts';
 const MONEY = [
   '# Money',
   '',

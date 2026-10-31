@@ -3,16 +3,16 @@
 // meter.subagents-by-class (a call's subagent spend per usage class), meter.session-charge (a Claude session's cumulative
 // readings charged once).
 import assert from 'node:assert/strict';
-import { describe, it, test } from 'node:test';
-import type { Event, Fact } from '../src/core/events.ts';
-import { type RoutingRev, arcId, claudeSessionId, invocationId, jobIdOf, opId, routingRev, unitId } from '../src/core/ids.ts';
-import type { ClassUsage, TokenUsage } from '../src/core/records.ts';
-import { type SessionCharge, addCharged } from '../src/core/usage.ts';
-import { invoke, usageFact } from '../src/pipeline/invoke.ts';
-import { byClass, byModel, meterOf, ownShare } from '../src/meter.ts';
+import { describe,it,test } from 'node:test';
+import type { Event,Fact } from '../src/core/events.ts';
+import { type RoutingRev,arcId,claudeSessionId,invocationId,jobIdOf,opId,routingRev,unitId } from '../src/core/ids.ts';
+import type { ClassUsage,TokenUsage } from '../src/core/records.ts';
+import { type SessionCharge,addCharged } from '../src/core/usage.ts';
+import { byClass,byModel,meterOf,ownShare } from '../src/meter.ts';
+import { invoke,usageFact } from '../src/pipeline/invoke.ts';
 import { resolveRouting } from '../src/routing/layers.ts';
-import { type Seat, unitSeatRef } from '../src/routing/types.ts';
-import { backend, context, dones, events, open, run, scenario, specFor } from './fixtures/invoke-specs.ts';
+import { type Seat,unitSeatRef } from '../src/routing/types.ts';
+import { backend,context,dones,events,open,run,scenario,specFor } from './fixtures/invoke-specs.ts';
 
 const ARC = arcId('arc-1');
 const REV_A = routingRev('aaaaaaaaaaaaaaaa');

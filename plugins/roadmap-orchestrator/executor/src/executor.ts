@@ -42,48 +42,49 @@
 // parented by the stage attempt that decided it, so an item is raised once however often the arc is re-read
 // (`raisedFor`). Blocking items include the file-only ones outside the journal: the supervisor's
 // `sup-<gen>-<n>` and a refused claim's `host-<kind>-<n>` (`writeFileNeedsUser` here; read by needsuser.ts).
-import { existsSync, readdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync,readdirSync } from 'node:fs';
+import { dirname,join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { CommandContext } from './commands/apply.ts';
 import { applyCommand } from './commands/apply.ts';
-import { POLL_MS, isControl, pollCommands } from './commands/queue.ts';
-import { containmentFor, detectContainmentMode } from './contain/detect.ts';
-import { atomicJson, durableMkdir, durableUnlink, exclusivePublish } from './core/fsx.ts';
+import { POLL_MS,isControl,pollCommands } from './commands/queue.ts';
+import { containmentFor,detectContainmentMode } from './contain/detect.ts';
+import { atomicJson,durableMkdir,durableUnlink,exclusivePublish } from './core/fsx.ts';
+import { type ArcId,type NeedsUserId,type UnitId,hostNeedsUserId } from './core/ids.ts';
 import { canonicalJson } from './core/json.ts';
-import { type ArcId, type NeedsUserId, type UnitId, hostNeedsUserId } from './core/ids.ts';
 import type { OpenJournal } from './core/log.ts';
 import {
-  type ExecutorExitReason, type Heartbeat, type HostLockClaim, type NeedsUserContent, type NeedsUserRecord, type RevisionManifest, type RunStart,
+type ExecutorExitReason,type Heartbeat,type HostLockClaim,type NeedsUserContent,type NeedsUserRecord,
+type RunStart
 } from './core/records.ts';
-import { type Read, arrayOf, literal, object } from './core/validate.ts';
-import { type AbsPath, absPath, isoTimeOf, nonce } from './core/values.ts';
+import { type Read,arrayOf,literal,object } from './core/validate.ts';
+import { type AbsPath,absPath,isoTimeOf,nonce } from './core/values.ts';
 import { SCHEMA_VERSION } from './core/version.ts';
-import { hostPath, openHostDir } from './host/hostdir.ts';
-import { isAlive, selfIdentity } from './host/liveness.ts';
+import { hostPath,openHostDir } from './host/hostdir.ts';
+import { isAlive,selfIdentity } from './host/liveness.ts';
 import { readClaim } from './host/lock.ts';
-import { HandshakeAbandonedError, HandshakeMismatchError, HandshakeTimeoutError, OwnerMismatchError, awaitHandshake } from './host/owner.ts';
-import { readHostFingerprint, readHostSample } from './host/sample.ts';
+import { HandshakeAbandonedError,HandshakeMismatchError,HandshakeTimeoutError,OwnerMismatchError,awaitHandshake } from './host/owner.ts';
 import { pressureAvailability } from './host/pressure.ts';
-import { arcRolesOf, requirePlanInForce } from './input/inforce.ts';
-import { type PlanM1, hasMilestones } from './input/plan.ts';
-import { NEEDS_USER_DIR, needsUserPath, openBlockingItems } from './needsuser.ts';
-import { type ProberHandle, createProber } from './park/probe.ts';
+import { readHostFingerprint,readHostSample } from './host/sample.ts';
+import { arcRolesOf,requirePlanInForce } from './input/inforce.ts';
+import { type PlanM1,hasMilestones } from './input/plan.ts';
+import { NEEDS_USER_DIR,needsUserPath,openBlockingItems } from './needsuser.ts';
+import { type ProberHandle,createProber } from './park/probe.ts';
 import type { StageContext } from './pipeline/dispatch.ts';
 import { docsPublisher } from './pipeline/publish.ts';
 import { syncRepairs } from './pipeline/reproduce.ts';
-import { consume, holdAbandoned } from './pipeline/unit.ts';
-import { readRepoConfig, runChecks, smokeCheck } from './preflight/checks.ts';
+import { consume,holdAbandoned } from './pipeline/unit.ts';
+import { readRepoConfig,runChecks,smokeCheck } from './preflight/checks.ts';
 import { backendEnv } from './preflight/smoke.ts';
 import {
-  EXIT_HOST_BUSY, EXIT_REFUSED, type RejectionFile, type StartupContext, type StartupRejection, exitCodeFor, startupRejection,
+EXIT_HOST_BUSY,EXIT_REFUSED,type RejectionFile,type StartupContext,type StartupRejection,exitCodeFor,startupRejection,
 } from './preflight/startup.ts';
 import { recover } from './recover/recover.ts';
-import { type ResolvedRouting, arcScopeOf, provenanceStack, resolveRouting } from './routing/layers.ts';
-import { type ProfileName, profileName } from './routing/types.ts';
-import { type Arbiter, createArbiter } from './schedule/arbiter.ts';
+import { type ResolvedRouting,arcScopeOf,provenanceStack,resolveRouting } from './routing/layers.ts';
+import { type ProfileName,profileName } from './routing/types.ts';
+import { type Arbiter,createArbiter } from './schedule/arbiter.ts';
 import { rankOf } from './schedule/ready.ts';
-import { type SchedulerEnd, designRoute, holisticContexts, raiseResult, schedule } from './schedule/scheduler.ts';
+import { type SchedulerEnd,designRoute,holisticContexts,raiseResult,schedule } from './schedule/scheduler.ts';
 
 /** Run dir: the latest start's refusal, for `status` (removed by the next start that passes). */
 export const REJECTION_FILE = 'status.rejection.json';

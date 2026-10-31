@@ -2,16 +2,16 @@
 // re-derivation against the previous arc's published block (R2), the byte-stable invariants.md, and the vision
 // record's rules (coverage both directions, withdrawn cites, edits).
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
-import { type ObligationId, divergenceId, obligationId, rulingId, unitId, visionClauseId } from '../src/core/ids.ts';
+import { describe,it } from 'node:test';
+import { type ObligationId,divergenceId,obligationId,rulingId,unitId,visionClauseId } from '../src/core/ids.ts';
 import { canonicalJson } from '../src/core/json.ts';
 import { repoPath } from '../src/core/values.ts';
-import { parseInvariantsBlock, renderInvariants } from '../src/docs/invariants.ts';
-import { gateObligations, selectObligations } from '../src/holistic/impact.ts';
-import { type ClassifyContext, classifyObligations } from '../src/holistic/obligations.ts';
+import { parseInvariantsBlock,renderInvariants } from '../src/docs/invariants.ts';
+import { gateObligations,selectObligations } from '../src/holistic/impact.ts';
+import { type ClassifyContext,classifyObligations } from '../src/holistic/obligations.ts';
 import { rederive } from '../src/holistic/rederive.ts';
-import { type Obligations, type RulingSidecar, type Vision, laneRevOf, parseObligations, parseRulingSidecar, parseVision } from '../src/holistic/types.ts';
-import { advancesReasons, citeReasons, visionCoverage, visionEditReasons } from '../src/holistic/vision.ts';
+import { type Obligations,type Vision,laneRevOf,parseObligations,parseVision } from '../src/holistic/types.ts';
+import { advancesReasons,citeReasons,visionCoverage,visionEditReasons } from '../src/holistic/vision.ts';
 import { coverageText } from '../src/prompts/inputs.ts';
 
 const LANE = {
@@ -52,18 +52,10 @@ const VISION: Vision = parseVision({
   questions: [],
 });
 
-const ruling = (id: string, dispositions: readonly Readonly<{ id: string; disposition: string }>[]): RulingSidecar => parseRulingSidecar({
-  schema: 'roadmap/ruling-m3', id, statement: `ruling ${id}`, kind: 'disposition', ruledBy: { type: 'architect' }, trigger: 'phase 0', supersedes: [], condition: null,
-  docRefs: [{ path: 'docs/target.md', anchor: '#i-2', quotedText: 'I-2', relation: 'consistent' }], contractRefs: [], contractOps: [],
-  obligations: [...new Set(dispositions.map((d) => d.id))].sort(), obligationDispositions: dispositions, cites: [], evidence: [], appliesTo: { type: 'arc' },
-  lifetime: 'standing', status: 'active',
-  consistency: {
-    verdict: 'consistent', judgedRevs: { head: 'a'.repeat(40), ledgerSha256: '1'.repeat(64), obligationsSha256: null, visionSha256: null, contracts: [] }, by: { type: 'architect' },
-  },
-});
+const ruling = (id: string, dispositions: readonly unknown[]): {statement: string} => ({statement: `Reviewed ${id}`});
 
 const ARCHITECT: ClassifyContext = { vision: VISION, author: { type: 'architect' }, latched: new Set(), published: new Set() };
-const withRulings = (rulings: readonly RulingSidecar[]): ClassifyContext => ({ ...ARCHITECT, author: {type: 'architect', reason: rulings[0]?.statement ?? '', rev: 2} });
+const withRulings = (rulings: readonly {statement: string}[]): ClassifyContext => ({ ...ARCHITECT, author: {type: 'architect', reason: rulings[0]?.statement ?? '', rev: 2} });
 const replace = (id: string, over: Raw): Raw[] => BASE.map((o) => (o['id'] === id ? { ...o, ...over } : o));
 
 describe('obligation edits', () => {

@@ -6,34 +6,33 @@
 // (dev.17 design pass: a design record's revision keeps the delta), review.reentry-scope-carry and
 // review.reentry-scope-out (field report 2026-10-24: a scope-only re-entry carries the approval, unless the diff leaves its scope).
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { readFileSync,writeFileSync } from 'node:fs';
+import { dirname,join } from 'node:path';
 import { test } from 'node:test';
-import type { Fact, IntentOf } from '../src/core/events.ts';
+import { diffOf } from '../evals/roles/verifier/fixture.ts';
 import { applyCommand } from '../src/commands/apply.ts';
 import { submitCommand } from '../src/commands/queue.ts';
-import { clauseId, invocationIdOf, sha, unitId } from '../src/core/ids.ts';
+import type { Fact,IntentOf } from '../src/core/events.ts';
+import { clauseId,invocationIdOf,sha,unitId } from '../src/core/ids.ts';
 import type { JsonValue } from '../src/core/json.ts';
-import type { SpecM1, SpecPatch } from '../src/core/records.ts';
-import { diffOf } from '../evals/roles/verifier/fixture.ts';
-import { runOp } from '../src/pipeline/dispatch.ts';
-import { certifiedTree, readByCode } from '../src/pipeline/docsonly.ts';
-import { fingerprintAt, gateDebtNotes } from '../src/pipeline/gate.ts';
+import type { SpecM1,SpecPatch } from '../src/core/records.ts';
+import { runOp,unitBranch } from '../src/pipeline/dispatch.ts';
+import { certifiedTree,readByCode } from '../src/pipeline/docsonly.ts';
+import { fingerprintAt,gateDebtNotes } from '../src/pipeline/gate.ts';
 import { gateDelta } from '../src/pipeline/review.ts';
-import { unitBranch } from '../src/pipeline/dispatch.ts';
-import { at, keptSpecPath, loadUnitSpec, record, start } from '../src/pipeline/stages.ts';
-import { specPatchOp } from '../src/spec/patch.ts';
+import { at,keptSpecPath,loadUnitSpec,record,start } from '../src/pipeline/stages.ts';
 import { runUnit } from '../src/pipeline/unit.ts';
 import { validateGateOutput } from '../src/prompts/schemas.ts';
+import { specPatchOp } from '../src/spec/patch.ts';
 import { events } from './fixtures/invoke-specs.ts';
-import { BUILD_REPORT, SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
-import {
-  type ArcRun, MUL, SUITE_LANE, U1, appendSteps, applyBody, commandContextFor, contextFor, gateRepairStep, gateStep, isGateCall, mulBuild, outcomes, setupArc, stepUntil,
-  workDirPattern,
-} from './fixtures/unit-common.ts';
 import { editPlan } from './fixtures/route-common.ts';
+import { BUILD_REPORT,SCENARIO_TIMEOUT_MS,admitAll,planCheckStep } from './fixtures/stage-common.ts';
+import {
+type ArcRun,MUL,SUITE_LANE,U1,appendSteps,applyBody,commandContextFor,contextFor,gateRepairStep,gateStep,isGateCall,mulBuild,outcomes,setupArc,stepUntil,
+workDirPattern,
+} from './fixtures/unit-common.ts';
 import { git } from './helpers/repo.ts';
-import { type CallRecord, type Step, readCalls } from './helpers/scenario.ts';
+import { type CallRecord,type Step,readCalls } from './helpers/scenario.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 const live = () => admitAll;
