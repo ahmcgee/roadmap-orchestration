@@ -8,27 +8,27 @@
 // recovery`, arc feedback 2026-10-15), so nothing parks. The unit runs its lanes again on estate#2 and merges; the
 // residue is the prober's.
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { after, test } from 'node:test';
-import type { Fact, IntentOf } from '../src/core/events.ts';
-import { parseOpId, poolInstance, resourceName } from '../src/core/ids.ts';
+import { after,test } from 'node:test';
+import type { Fact,IntentOf } from '../src/core/events.ts';
+import { parseOpId,poolInstance,resourceName } from '../src/core/ids.ts';
 import { openJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
-import { readResidues, undispositioned } from '../src/host/residues.ts';
+import { readResidues,undispositioned } from '../src/host/residues.ts';
 import { readNeedsUser } from '../src/needsuser.ts';
-import { raiseDue, residueEscalationsDue } from '../src/park/schedule.ts';
+import { raiseDue,residueEscalationsDue } from '../src/park/schedule.ts';
 import { PARK_ESCALATE_MS } from '../src/schedule/types.ts';
-import { reached, release } from './helpers/barrier.ts';
+import {
+EXEC_TIMEOUT_MS,type ExecRun,SMOKE_DEFAULT,cli,executorPid,journalOf,reasonOf,setupExec,startExec,statusOf,until,
+} from './fixtures/exec-common.ts';
+import { planCheckStep } from './fixtures/stage-common.ts';
+import { MUL_LANE,U1,gateStep,mulBuild,outcomes } from './fixtures/unit-common.ts';
+import { reached,release } from './helpers/barrier.ts';
 import { fixture } from './helpers/proc.ts';
 import { assertNoSurvivors } from './helpers/reap.ts';
 import { tmpDir } from './helpers/repo.ts';
 import type { Step } from './helpers/scenario.ts';
-import {
-  EXEC_TIMEOUT_MS, type ExecRun, SMOKE_DEFAULT, cli, executorPid, journalOf, reasonOf, setupExec, startExec, statusOf, until,
-} from './fixtures/exec-common.ts';
-import { planCheckStep } from './fixtures/stage-common.ts';
-import { MUL_LANE, U1, gateStep, mulBuild, outcomes } from './fixtures/unit-common.ts';
 
 after(assertNoSurvivors);
 
@@ -51,7 +51,7 @@ type Laid = Readonly<{ r: ExecRun; estate: string; barriers: string }>;
 function layout(t: Parameters<typeof setupExec>[0]): Laid {
   const estate = tmpDir('residue-estate');
   const barriers = tmpDir('residue-barriers');
-  const lanes = [MUL_LANE, { id: 'estate', tier: 'estate' as const, resources: ['estate'], argv: [process.execPath, fixture('cm-pin.ts'), barriers, PIN, estate, 'estate'] }];
+  const lanes = [MUL_LANE, { id: 'estate', cadence: 'unit' as const, resources: ['estate'], argv: [process.execPath, fixture('cm-pin.ts'), barriers, PIN, estate, 'estate'] }];
   const r = setupExec(t, {
     units: [{ id: 'u1', lanes }],
     steps: [

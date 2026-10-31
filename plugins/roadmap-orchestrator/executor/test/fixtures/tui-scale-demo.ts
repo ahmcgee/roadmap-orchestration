@@ -1,25 +1,25 @@
 // Persistent scale example. Synthetic workload; real git, retained inputs, journal and runner schemas.
 // Run from executor/: node test/fixtures/tui-scale-demo.ts [new-directory]
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { chmodSync,mkdirSync,mkdtempSync,readFileSync,statSync,writeFileSync } from 'node:fs';
+import { dirname,join,resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
-import type { OutcomeStage, SpawnSubject } from '../../src/core/events.ts';
-import { type InvocationId, arcId, implementerSessionId, judgmentSessionId, laneId, milestoneId, opKey, sha, sha256, specRev, unitId } from '../../src/core/ids.ts';
+import { fileURLToPath } from 'node:url';
+import type { OutcomeStage,SpawnSubject } from '../../src/core/events.ts';
+import { type InvocationId,arcId,implementerSessionId,judgmentSessionId,laneId,milestoneId,opKey,sha,sha256,specRev,unitId } from '../../src/core/ids.ts';
 import { sha256Hex } from '../../src/core/json.ts';
-import type { LaunchFile, ResultFile } from '../../src/core/records.ts';
-import { absPath, isoTime, refName, repoPath } from '../../src/core/values.ts';
-import { inputPath, keepInput, specShaInForce } from '../../src/input/inforce.ts';
+import type { LaunchFile,ResultFile } from '../../src/core/records.ts';
+import { absPath,isoTime,refName,repoPath } from '../../src/core/values.ts';
+import { inputPath,keepInput,specShaInForce } from '../../src/input/inforce.ts';
 import { pinDispatch } from '../../src/pipeline/dispatch.ts';
 import { invocationDir } from '../../src/pipeline/invoke.ts';
-import { at, record, start } from '../../src/pipeline/stages.ts';
+import { at,record,start } from '../../src/pipeline/stages.ts';
 import { runnerFiles } from '../../src/runner/files.ts';
 import { launchSha256 } from '../../src/runner/launch.ts';
 import { Observer } from '../../src/tui/observer.ts';
 import { git } from '../helpers/repo.ts';
-import { VISION, ADVANCES } from './brake-common.ts';
-import { contextFor, setupArc } from './unit-common.ts';
+import { ADVANCES,VISION } from './brake-common.ts';
+import { contextFor,setupArc } from './unit-common.ts';
 
 const DEFAULT_UNITS = 205;
 const DEFAULT_INVOCATIONS = 3000;
@@ -130,7 +130,7 @@ function spawn(i: number, running: boolean): void {
   const durable = r.journal.begin({ kind: 'proc.spawn', key: opKey(`scale:${index}`), parent: job ? { type: 'job', job } : parent, deadlineAt,
     body: (op, inv) => {
       const dir = invocationDir(runDir, inv);
-      launch = { v: 1, arc, op, inv, argv: stage === 'lanes' && !walk ? ['node', '--test', 'test/mul.test.js']
+      launch = { v: 2, arc, op, inv, argv: stage === 'lanes' && !walk ? ['node', '--test', 'test/mul.test.js']
         : ['claude', '-p', '--output-format', 'stream-json', '--model', 'scripted-scale-fixture'],
       cwd: absPath(d.repo), env: {}, stdinPath: subject.purpose === 'lane' ? null : promptPaths[index % 10 === 0 ? 1 : 0]!,
       deadlineAt, stallMs: null, graceMs: 1000, containment: 'session', test: null,
@@ -153,7 +153,7 @@ function spawn(i: number, running: boolean): void {
   writeFileSync(join(dir, 'runner.log'), 'Synthetic runner records; no process was launched.\n');
   if (running) { runningInvocation ??= durable.inv; return; }
   if (large && (!largeInvocation || statSync(join(invocationDir(runDir, largeInvocation), 'stdout')).size < target)) largeInvocation = durable.inv;
-  const binding = { v: 1 as const, arc, op: durable.op, inv: durable.inv };
+  const binding = { v: 2 as const, arc, op: durable.op, inv: durable.inv };
   const now = isoTime(new Date().toISOString());
   files.write('exit.json', { ...binding, child: { type: 'exited', code: 0 }, cause: 'exited', endedAt: now, quiescedAt: now, cpu: null });
   const result: ResultFile = launch.terminal.type === 'command' ? { ...binding, type: 'command', purpose: 'lane', expectedExit: 0, exitCode: 0, verdict: 'pass' }
@@ -204,7 +204,7 @@ try {
   }
   for (let i = 0; i < runningCount; i++) spawn(mergedCount + i, true);
 } finally { r.journal.close(); }
-writeFileSync(join(d.runDir, 'start.json'), JSON.stringify({ v: 1, generation: 1, at: new Date().toISOString(), repo: d.repo, planFile: d.planPath, profile: 'default' }));
+writeFileSync(join(d.runDir, 'start.json'), JSON.stringify({ v: 2, generation: 1, at: new Date().toISOString(), repo: d.repo, planFile: d.planPath, profile: 'default' }));
 const reply = new Observer().observe({ locator: { type: 'host' }, hostDir: absPath(d.hostDir), pinned: { arc, runDir }, token: 1 });
 assert.equal(reply.error, null);
 assert.equal(reply.display!.status.units.length, unitCount);

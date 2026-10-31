@@ -60,48 +60,50 @@
 // evidence (`_dirty`) and refuses the certification, since the tree the lanes tested is not the commit that would publish.
 import { join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
-import type { IntentOf, Parent, PlanChange, RevisionPayload } from '../core/events.ts';
-import { type JobId, type ObligationId, type OpId, type Sha, type Sha256Hex, INTEGRATION_SLOT, compareIds, type RulingId } from '../core/ids.ts';
+import type { IntentOf,Parent,PlanChange,RevisionPayload } from '../core/events.ts';
+import { type JobId,type ObligationId,type OpId,type Sha,type Sha256Hex,INTEGRATION_SLOT,compareIds } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
-import { type AbsPath, type RepoPath, absPath, branchRef } from '../core/values.ts';
+import { cadenceAtOrBefore } from '../core/records.ts';
+import { type AbsPath,type RepoPath,absPath,branchRef } from '../core/values.ts';
 import { registryOf } from '../corpus/registry.ts';
-import { ledgerAfterArc, type UnitOfSource } from '../debt/render.ts';
+import { type UnitOfSource,ledgerAfterArc } from '../debt/render.ts';
 import type { DebtLedger } from '../debt/types.ts';
-import { CONSTRAINTS_DOC, renderConstraints } from '../docs/constraints.ts';
-import { DEBT_DOC, renderDebt } from '../docs/debt.ts';
+import { CONSTRAINTS_DOC,renderConstraints } from '../docs/constraints.ts';
 import { applyContractOps } from '../docs/contracts.ts';
-import { INVARIANTS_DOC, renderInvariants } from '../docs/invariants.ts';
-import { type DocsFile, changedPaths, docsWorktreeRequest, planDocs } from '../git/docs.ts';
+import { DEBT_DOC,renderDebt } from '../docs/debt.ts';
+import { INVARIANTS_DOC,renderInvariants } from '../docs/invariants.ts';
+import { type DocsFile,changedPaths,docsWorktreeRequest,planDocs } from '../git/docs.ts';
 import { capturedEvidence } from '../git/evidence.ts';
 import { planDocsFf } from '../git/ff.ts';
-import { gitRun, refTarget } from '../git/git.ts';
-import { jobEvidenceRoot, snapshotRequestOf } from '../git/snapshot.ts';
+import { gitRun,refTarget } from '../git/git.ts';
+import { jobEvidenceRoot,snapshotRequestOf } from '../git/snapshot.ts';
 import { docsTransientViolations } from '../git/transient.ts';
 import { standing } from '../git/worktree.ts';
 import { selectObligations } from '../holistic/impact.ts';
 import { verdictOf } from '../holistic/observe.ts';
-import { brakesOn, obligationEffects } from '../holistic/table.ts';
-import { type ArcLaneDef, type Conversion, type Obligations, type RulingSidecar, isExempt, parseObligations, parseRulingSidecar } from '../holistic/types.ts';
+import { brakesOn,obligationEffects } from '../holistic/table.ts';
+import { type ArcLaneDef,type Conversion,type Obligations,isExempt,parseObligations } from '../holistic/types.ts';
 import {
-  OBLIGATIONS_INPUT, PLAN_INPUT, RENDER_INPUT, RULING_INPUT, keptInput, keptPayload, requirePlanInForce, revisionInForce,
+OBLIGATIONS_INPUT,
+RENDER_INPUT,
+keptInput,keptPayload,requirePlanInForce,revisionInForce
 } from '../input/inforce.ts';
-import { type PlanM1, contractOpDocuments, parsePlan } from '../input/plan.ts';
-import {
-  type DocsHolder, type Reservation, type ResourceContext, cleanup, entryOf, finishCleanup, heldReservation, holderUnits, resourceTable, run,
-} from '../resources/reserve.ts';
-import { type DocsOutcome, type DocsPublisher } from '../recover/revision.ts';
-import { docsCommitOp, evidenceSnapshotOp, integrationFfOp, snapshotPublishOp, worktreeRemoveOp } from '../recover/ops.ts';
+import { type PlanM1 } from '../input/plan.ts';
+import { selectedLanes } from '../input/systems.ts';
+import { baselineDebtAt } from '../phase0/rows.ts';
+import { docsCommitOp,evidenceSnapshotOp,integrationFfOp,snapshotPublishOp,worktreeRemoveOp } from '../recover/ops.ts';
+import { type DocsOutcome,type DocsPublisher } from '../recover/revision.ts';
 import { spawnReconciler } from '../recover/spawn.ts';
+import {
+type DocsHolder,type Reservation,type ResourceContext,cleanup,entryOf,finishCleanup,heldReservation,holderUnits,resourceTable,run,
+} from '../resources/reserve.ts';
 import type { AcquireFirst } from '../schedule/arbiter.ts';
 import type { ResourceRequest } from '../schedule/types.ts';
-import { type RulingContext, ledgerAfter, parseRulings, validateRuling } from '../spec/rulings.ts';
-import { baselineDebtAt, rulingCorpusOf } from '../phase0/rows.ts';
+import { parseRulings } from '../spec/rulings.ts';
+import { runOp,runPrepared } from './dispatch.ts';
 import { preemptCandidate } from './integrate.ts';
-import { type JourneySeries, arcJourneyLane, mapInForce, runJourneySeries, seriesOrder, suiteJourneyLane } from './lanes.ts';
-import { selectedLanes } from '../input/systems.ts';
-import { cadenceAtOrBefore } from '../core/records.ts';
-import { runOp, runPrepared } from './dispatch.ts';
+import { type JourneySeries,arcJourneyLane,mapInForce,runJourneySeries,seriesOrder,suiteJourneyLane } from './lanes.ts';
 import { executorIdentity } from './stages.ts';
 
 /** What a docs publication needs: the reservation cycle's context, the lanes' environment, the plan file, the arbiter. */
@@ -193,22 +195,8 @@ type Reader = Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPa
  * in-force plan's units refused a ruling for a unit the same apply or bundle added, at the docs publication though its
  * dry run accepted it). The `rule` command validates a sidecar against it, and a docs publication again under the slot.
  */
-export function rulingContextAt(ctx: Reader, tip: Sha): Omit<RulingContext, 'units'> {
-  const inForce = requirePlanInForce(ctx.runDir, ctx.journal.view);
-  const revision = revisionInForce(ctx.runDir, inForce);
-  return {
-    ledger: parseRulings(revision.ledger.bytes.toString('utf8'), 'the rulings ledger in force'),
-    inForce: {
-      head: tip, ledgerSha256: revision.ledger.sha256, obligationsSha256: revision.obligations?.sha256 ?? null, visionSha256: revision.vision?.sha256 ?? null,
-      ...(revision.corpus === null ? {} : { corpusSha256: revision.corpus.pin.sha256 }),
-    },
-    docAt: (path) => textAt(ctx.repo, tip, path),
-    blobAt: (path) => blobAt(ctx.repo, tip, path),
-    documents: contractOpDocuments(inForce.plan),
-    obligations: revision.obligations?.value ?? null,
-    vision: revision.vision?.value ?? null,
-    corpus: revision.corpus === null ? null : rulingCorpusOf(revision.corpus),
-  };
+export function rulingContextAt(ctx: Reader, tip: Sha): {blobAt: (path: RepoPath) => Sha | null} {
+  return {blobAt: (path) => blobAt(ctx.repo, tip, path)};
 }
 
 const keptOr = (runDir: AbsPath, sha: Sha256Hex, ext: string): Buffer => {
@@ -216,15 +204,6 @@ const keptOr = (runDir: AbsPath, sha: Sha256Hex, ext: string): Buffer => {
   if (bytes === null) throw new Error(`the revision payload names ${ext} ${sha}, which is not kept`);
   return bytes;
 };
-
-/** The sidecars the payload lands: in its manifest and not in the revision in force (A2: the new ones), ascending by id. */
-function landedSidecars(ctx: Reader, payload: RevisionPayload): readonly RulingSidecar[] {
-  const inForce = revisionInForce(ctx.runDir, requirePlanInForce(ctx.runDir, ctx.journal.view)).manifest.rulings.sidecars;
-  return Object.entries(payload.manifest.rulings.sidecars)
-    .filter(([id]) => !Object.hasOwn(inForce, id))
-    .sort(([a], [b]) => compareIds(a as RulingId, b as RulingId))
-    .map(([, sha]) => parseRulingSidecar(JSON.parse(keptOr(ctx.runDir, sha, RULING_INPUT).toString('utf8'))));
-}
 
 // ---------------------------------------------------------------------------------------------------
 // Debt (M4a)
@@ -299,27 +278,10 @@ function docsFiles(ctx: Reader, payload: RevisionPayload, tip: Sha): Files {
   const renders: DocsFile[] = [
     ...publication.renders.map((r) => ({ path: r.path, bytes: keptOr(ctx.runDir, r.sha256, RENDER_INPUT) })), ...(debt === null ? [] : [debt]),
   ];
-  const landed = landedSidecars(ctx, payload);
-  const ops = landed.flatMap((s) => s.contractOps);
-  if (canonicalJson(ops) !== canonicalJson(publication.contractOps)) {
-    throw new Error(`revision ${payload.rev}: its publication's contract ops are not its new rulings' (${canonicalJson(publication.contractOps)} vs ${canonicalJson(ops)})`);
-  }
-  // The rulings land with the revision's own plan: its units are the ones a ruling may apply to.
-  const planBytes = keptOr(ctx.runDir, payload.manifest.planSha256, PLAN_INPUT);
-  const base = { ...rulingContextAt(ctx, tip), units: parsePlan(JSON.parse(planBytes.toString('utf8'))).units.map((u) => u.id) };
   const reasons: string[] = [];
-  let ledgerText = revisionInForce(ctx.runDir, requirePlanInForce(ctx.runDir, ctx.journal.view)).ledger.bytes.toString('utf8');
-  const edited = new Map<RepoPath, string>();
-  const docAt = (path: RepoPath): string | null => edited.get(path) ?? base.docAt(path);
-  for (const s of landed) {
-    const why = validateRuling(s, { ...base, ledger: parseRulings(ledgerText, 'the rulings ledger') });
-    reasons.push(...why);
-    if (why.length === 0) ledgerText = ledgerAfter(ledgerText, s); // an invalid ruling never folds in (bundle.ts proposalOf)
-    const applied = applyContractOps(s.contractOps, s.id, docAt);
-    if ('reasons' in applied) reasons.push(...applied.reasons.map((r) => `${s.id} ${r}`));
-    else for (const e of applied.edits) edited.set(e.path, e.text);
-  }
-  if (reasons.length > 0) return { kind: 'refused', reasons };
+  const applied = applyContractOps(publication.contractOps, `revision-${payload.rev}`, (path) => textAt(ctx.repo, tip, path));
+  if ('reasons' in applied) return {kind: 'refused', reasons: applied.reasons};
+  const edited = new Map(applied.edits.map((e) => [e.path, e.text]));
   const contractPaths = [...edited.keys()].sort();
   return { kind: 'files', files: [...renders, ...contractPaths.map((path) => ({ path, bytes: Buffer.from(edited.get(path)!, 'utf8') }))], contractPaths };
 }
@@ -465,7 +427,7 @@ export function closeOutFiles(ctx: Reader, commit: Sha): readonly DocsFile[] {
   const revision = revisionInForce(ctx.runDir, requirePlanInForce(ctx.runDir, view));
   const latched = view.holistic().latched.map((l) => l.obligation);
   const ledger = parseRulings(revision.ledger.bytes.toString('utf8'), 'the rulings ledger in force');
-  const renders: DocsFile[] = [{ path: CONSTRAINTS_DOC, bytes: Buffer.from(renderConstraints(ledger, [...revision.sidecars.values()].map((x) => x.sidecar), 'close-out'), 'utf8') }];
+  const renders: DocsFile[] = [{ path: CONSTRAINTS_DOC, bytes: Buffer.from(renderConstraints(ledger, 'close-out'), 'utf8') }];
   if (revision.obligations !== null) {
     const registry = revision.corpus === null ? undefined : registryOf(revision.corpus.pin.value);
     renders.push({ path: INVARIANTS_DOC, bytes: Buffer.from(renderInvariants(revision.obligations.value, latched, registry), 'utf8') });

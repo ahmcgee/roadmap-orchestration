@@ -3,17 +3,17 @@
 // plan-defect.argv-forms, plan-defect.witness-reachable, plan-defect.undeclared, plan-defect.undeclared-per-witness,
 // plan-defect.derived, plan-defect.regenerate.
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, it } from 'node:test';
-import { obligationId, unitId } from '../src/core/ids.ts';
-import { repoPath, repoPattern } from '../src/core/values.ts';
-import { type ArcLaneDef, type PlanDefect, laneRevOf, parseObligations } from '../src/holistic/types.ts';
+import { describe,it } from 'node:test';
+import { obligationId,unitId } from '../src/core/ids.ts';
+import { repoPath,repoPattern } from '../src/core/values.ts';
+import { type ArcLaneDef,type PlanDefect,laneRevOf,parseObligations } from '../src/holistic/types.ts';
 import { laneMisses } from '../src/holistic/witnessfiles.ts';
-import { derivedExclusions, derivedWidening } from '../src/input/derived.ts';
-import { parsePlan, regenerateLaneId } from '../src/input/plan.ts';
-import { APPLY, RESTART, phase0InputOf, phase0Rows } from '../src/phase0/rows.ts';
-import { type CorpusArc, PIN_FILE, WITNESS_FILE, check, corpusArc, editJsonFile, editPlan, filesOf, kinds, rowOf } from './helpers/corpusarc.ts';
+import { derivedExclusions,derivedWidening } from '../src/input/derived.ts';
+import { parsePlan,regenerateLaneId } from '../src/input/plan.ts';
+import { APPLY,RESTART,phase0InputOf,phase0Rows } from '../src/phase0/rows.ts';
+import { type CorpusArc,PIN_FILE,WITNESS_FILE,check,corpusArc,editJsonFile,editPlan,filesOf,kinds,rowOf } from './helpers/corpusarc.ts';
 
 const T = { timeout: 120_000 };
 type Json = Record<string, unknown>;
@@ -27,7 +27,7 @@ function editWitness(a: CorpusArc, edit: Readonly<{ lane?: (l: Json) => Json; wi
     const laneRev = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [lane], obligations: [], mapping: { paths: [] } }).lanes[0]!);
     const i1 = (o['obligations'] as Json[])[0]!;
     const witness = (edit.witness ?? ((w) => w))(i1['witness'] as Json);
-    return { ...o, lanes: [lane], obligations: [{ ...(edit.i1 ?? ((x) => x))(i1), witness, proofJudgment: { ...(i1['proofJudgment'] as Json), laneRev, witness } }] };
+    return { ...o, lanes: [lane], obligations: [{ ...(edit.i1 ?? ((x) => x))(i1), witness, proofJudgment: { ...(i1['proofJudgment'] as Json), witness: {testIds: (witness as Json)['testIds'], ...((witness as Json)['files'] === undefined ? {} : {files: (witness as Json)['files']})} } }] };
   });
 }
 
@@ -53,7 +53,7 @@ describe('witness files against their lane', () => {
   it('plan-defect.argv-forms: the forms an argv names its test files by', () => {
     const lane = (argv: readonly string[], cwd = '.', testPaths: readonly string[] | null = ['test']): ArcLaneDef => parseObligations({
       schema: 'roadmap/obligations-m3', cutLine: 'x', obligations: [], mapping: { paths: [] },
-      lanes: [{ id: 'journey', argv, cwd, env: { set: {}, pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], reporter: 'jsonl', ...(testPaths === null ? {} : { testPaths }) }],
+      lanes: [{ id: 'journey', argv, cwd, env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], reporter: 'jsonl', ...(testPaths === null ? {} : { testPaths }) }],
     }).lanes[0]!;
     const file = repoPath('test/unit/a.test.ts');
     // The runner selects (no test path named): testPaths alone decides.
@@ -118,7 +118,7 @@ describe('declared test paths and witness files', () => {
     const withI2 = (files: readonly string[]): void => editJsonFile(obligationsPath(a), (o) => {
       const i1 = (o['obligations'] as Json[])[0]!;
       const witness = { ...(i1['witness'] as Json), files };
-      const i2 = { ...i1, id: 'I-2', rule: { id: 'T-2', textSha256: t2['textSha256'] }, witness, proofJudgment: { ...(i1['proofJudgment'] as Json), witness } };
+      const i2 = { ...i1, id: 'I-2', rule: { id: 'T-2', textSha256: t2['textSha256'] }, witness, proofJudgment: { ...(i1['proofJudgment'] as Json), witness: {testIds: (witness as Json)['testIds'], ...((witness as Json)['files'] === undefined ? {} : {files: (witness as Json)['files']})} } };
       const census = (o['census'] as Json[]).map((e) => (e['rule'] === 'T-2' ? { rule: 'T-2', state: { type: 'obligation', id: 'I-2' } } : e));
       return { ...o, obligations: [i1, i2], census };
     });
@@ -183,7 +183,7 @@ describe('derived files', () => {
     const ids = (derived: readonly Json[]) => parsePlan({ ...base, derived }).derived!.map(regenerateLaneId);
     assert.deepEqual(ids([entry(GEN), other]), [...ids([other, entry(GEN)])].reverse());
     const suite = base['suite'] as { lanes: Json[] };
-    const taken = { ...(suite.lanes[0] ?? { argv: ['true'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [] }), id: ids([entry(GEN)])[0] };
+    const taken = { ...(suite.lanes[0] ?? { argv: ['true'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [] }), id: ids([entry(GEN)])[0] };
     assert.throws(() => parsePlan({ ...base, suite: { lanes: [...suite.lanes, taken] }, derived: [entry(GEN)] }), /plan\.suite\.lanes/);
   });
 });

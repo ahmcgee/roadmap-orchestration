@@ -12,7 +12,6 @@
 // is disjoint from every other (2026-10-15, arc feedback #3: two ops in one section are fine when their ranges are), so
 // their order cannot matter; they apply from the last range to the first. Every edited document's first line cites the
 // ruling: `<!-- revised by C-3, C-7 -->` (added, or extended).
-import type { RulingId } from '../core/ids.ts';
 import type { RepoPath } from '../core/values.ts';
 import type { ContractOp } from '../holistic/types.ts';
 
@@ -72,7 +71,7 @@ export function quotedTextReason(doc: string, anchor: string, quotedText: string
 const REVISED_BY = /^<!-- revised by (C-[0-9]+(?:, C-[0-9]+)*) -->\n/;
 
 /** The document with its first line citing `ruling` (the header added, or the ruling appended to it). */
-export function citeRuling(doc: string, ruling: RulingId): string {
+export function citeRuling(doc: string, ruling: string): string {
   const m = REVISED_BY.exec(doc);
   if (m === null) return `<!-- revised by ${ruling} -->\n${doc}`;
   const ids = m[1]!.split(', ');
@@ -87,7 +86,7 @@ export type ContractEdit = Readonly<{ path: RepoPath; text: string }>;
  * the edited documents ascending by path, or every reason the ops are refused (all or none).
  */
 export function applyContractOps(
-  ops: readonly ContractOp[], ruling: RulingId, docAt: (path: RepoPath) => string | null,
+  ops: readonly ContractOp[], ruling: string, docAt: (path: RepoPath) => string | null,
 ): Readonly<{ edits: readonly ContractEdit[] }> | Readonly<{ reasons: readonly string[] }> {
   const reasons: string[] = [];
   const edits: ContractEdit[] = [];

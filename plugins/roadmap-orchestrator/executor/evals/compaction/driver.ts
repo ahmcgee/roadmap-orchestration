@@ -1,10 +1,10 @@
 import { spawn } from 'node:child_process';
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync,existsSync,readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { launchEnv, stagePlugin } from '../m4a/driver.ts';
-import { fixture, json, write, type Fixture } from './fixture.ts';
-import { gradeA, gradeB, proposals, type Exchange, type Grade } from './grade.ts';
+import { launchEnv,stagePlugin } from '../m4a/driver.ts';
+import { fixture,json,write,type Fixture } from './fixture.ts';
+import { gradeA,gradeB,proposals,type Exchange,type Grade } from './grade.ts';
 import type { SetName } from './spec.ts';
 
 export type Stage = 'a' | 'b' | 'both';
@@ -81,7 +81,7 @@ export async function stageA(f: Fixture, budget: Budget): Promise<Grade> {
   const exchanges: Exchange[] = [];
   const deadline = Date.now() + LIMITS.sessionMs;
   let session: string | null = null;
-  let prompt = '/roadmap-orchestrator:estate-compaction\nReview the estate with me. The previous arc is complete; its final inputs are at ' + f.previous + '. Survey the current product, corpus, previous inputs, and docs/last-check-in.md. Propose numbered batches per the skill. Use top-level numbered action headings (for example, 1. retire T-n), Items, Replacement and Gives up fields, and unnumbered subpoints. Save approved decisions to ../roadmap-inputs/_next/compaction.md. End with a final text without numbered decisions once the review is complete.';
+  let prompt = '/roadmap-orchestrator:estate-compaction\nReview the estate with me. The previous arc is complete; its final inputs are at ' + f.previous + '. Survey the current product, corpus, previous inputs, and docs/last-check-in.md. Propose numbered batches per the skill. Use top-level numbered action headings (for example, 1. retire T-n), Items, Replacement and Gives up fields, and unnumbered subpoints. Save approved decisions to ../roadmap-inputs/drafts/compaction.md. End with a final text without numbered decisions once the review is complete.';
   let ended = false;
   for (let n = 1; n <= LIMITS.turns && Date.now() < deadline; n++) {
     const turn = await invoke(f, `architect-${n}`, prompt, session, false, budget, deadline);
@@ -95,13 +95,13 @@ export async function stageA(f: Fixture, budget: Budget): Promise<Grade> {
     prompt = owner.text;
   }
   if (!ended) throw new Error('review turn/session cap reached');
-  const path = join(f.l.inputs, '_next/compaction.md');
+  const path = join(f.l.inputs, 'drafts/compaction.md');
   return gradeA(existsSync(path) ? readFileSync(path, 'utf8') : '', exchanges, f.key);
 }
 export async function stageB(f: Fixture, budget: Budget): Promise<Grade> {
   stagePlugin(f.l);
-  write(join(f.l.inputs, '_next/compaction.md'), readFileSync(join(f.l.dir, 'golden-compaction.md'), 'utf8'));
-  await invoke(f, 'application', `/roadmap-orchestrator:orchestrate\nApply ../roadmap-inputs/_next/compaction.md per the orchestrate skill's Phase 0 Compaction paragraph and step 12, and estate-compaction's Applying the record, to the next arc inputs at ${f.next}. The checkout is on its between-arc branch; amend its single between-arc commit, repin and refresh the baseline and integration branch. Run phase0 check until exit 0. Do not start. For this pre-start application evaluation, mark each decision Applied: arc-next when applied, or Blocked: <the refusal row> if it cannot be applied as approved.`, null, false, budget, Date.now() + LIMITS.sessionMs);
+  write(join(f.l.inputs, 'drafts/compaction.md'), readFileSync(join(f.l.dir, 'golden-compaction.md'), 'utf8'));
+  await invoke(f, 'application', `/roadmap-orchestrator:orchestrate\nApply ../roadmap-inputs/drafts/compaction.md per the orchestrate skill's Phase 0 Compaction paragraph and step 12, and estate-compaction's Applying the record, to the next arc inputs at ${f.next}. The checkout is on its between-arc branch; amend its single between-arc commit, repin and refresh the baseline and integration branch. Run phase0 check until exit 0. Do not start. For this pre-start application evaluation, mark each decision Applied: arc-next when applied, or Blocked: <the refusal row> if it cannot be applied as approved.`, null, false, budget, Date.now() + LIMITS.sessionMs);
   return gradeB(f);
 }
 export async function trial(dir: string, set: SetName, stage: Stage, n: number, budget: Budget): Promise<Trial> {

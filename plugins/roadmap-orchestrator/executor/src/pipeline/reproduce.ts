@@ -23,40 +23,40 @@
 // (src/holistic/findings.ts `ownershipMoves`: owned, fixed-on-branch, resolved, open again) and code's dismissal of a
 // finding whose mutant a `reproduce` killed. It is re-runnable, so the driver calls it around every stage and a
 // restart writes only what is missing.
-import { specLaneIds } from './deflake.ts';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { existsSync,mkdirSync,readFileSync } from 'node:fs';
+import { basename,join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
-import type { MutantOf, OutcomeStage, WitnessFor } from '../core/events.ts';
-import { mutantSubjectDefault } from '../core/upgrade.ts';
-import { type FindingId, type LaneId, type OpId, type ResourceInstance, type ResourceName, type ResourceUnit, type Sha, type Sha256Hex, type UnitId, invocationId, opKey } from '../core/ids.ts';
+import type { MutantOf,OutcomeStage,WitnessFor } from '../core/events.ts';
+import { type FindingId,type LaneId,type OpId,type ResourceInstance,type ResourceName,type ResourceUnit,type Sha,type Sha256Hex,type UnitId,invocationId,opKey } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
-import { specShaInForce } from '../input/inforce.ts';
 import { canonicalJson } from '../core/json.ts';
-import { type NeedsUserContent, type SpecM1, STDERR_FILE, STDOUT_FILE, specRepairs } from '../core/records.ts';
-import type { FindingState, UnitState } from '../core/state.ts';
-import { type AbsPath, absPath, repoPattern } from '../core/values.ts';
+import { mutantOf } from '../core/projections.ts';
+import { type NeedsUserContent,type SpecM1,STDERR_FILE,STDOUT_FILE,specRepairs } from '../core/records.ts';
+import type { FindingState,UnitState } from '../core/state.ts';
+import { type AbsPath,absPath,repoPattern } from '../core/values.ts';
 import { capturedEvidence } from '../git/evidence.ts';
-import { mutantPatchPath, patchedTree } from '../git/mutant.ts';
+import { mutantPatchPath,patchedTree } from '../git/mutant.ts';
 import { mutantLaneDir } from '../git/snapshot.ts';
 import { removedSince } from '../git/worktree.ts';
-import { type RepairProgress, type RepairUnit, isActive, repairedObligations, ruleFinding, syncFindings } from '../holistic/findings.ts';
+import { type RepairProgress,type RepairUnit,isActive,repairedObligations,ruleFinding,syncFindings } from '../holistic/findings.ts';
 import { verdictOf } from '../holistic/observe.ts';
-import { type SpecLinks, specLinksOf } from '../holistic/staleset.ts';
-import { type ArcLaneDef, type MutantRef, type ObservationVerdict, type WitnessRecord, type WitnessRef, laneRevOf, witnessRecord } from '../holistic/types.ts';
-import { WITNESS_LINES, WITNESS_RECORD_FILE, collectWitness, witnessEnv, witnessRecordOf, writeWitnessRecord } from '../holistic/witness.ts';
-import { type PlanM1, type PlanUnit, environmentsOf } from '../input/plan.ts';
-import { releaseEnvironment, useEnvironment } from '../resources/environments.ts';
+import { type SpecLinks,specLinksOf } from '../holistic/staleset.ts';
+import { type ArcLaneDef,type MutantRef,type ObservationVerdict,type WitnessRecord,type WitnessRef,laneRevOf,witnessRecord } from '../holistic/types.ts';
+import { WITNESS_LINES,WITNESS_RECORD_FILE,collectWitness,witnessEnv,witnessRecordOf,writeWitnessRecord } from '../holistic/witness.ts';
+import { specShaInForce } from '../input/inforce.ts';
+import { type PlanM1,type PlanUnit,environmentsOf } from '../input/plan.ts';
 import type { FixRound } from '../prompts/inputs.ts';
-import { type Reservation, type StageHolder, cleanup } from '../resources/reserve.ts';
-import type { SpecFacts, SpecFactsOf } from '../schedule/ready.ts';
-import { type Cancelled, type StageContext, type StageParent, enter, evidenceRoot, isCancelled, pinDispatch, runOp } from './dispatch.ts';
-import { invocationDir, invoke } from './invoke.ts';
-import { laneCommand, laneEnv, laneEnvId, laneRequest } from './lanes.ts';
-import { type LaneCancel, laneAbortReason, laneCancelOf } from './redlane.ts';
-import { type Held, type StageDone, at, environmentFacts, failedFacts, holdEntry, holisticInForce, integrationTip, loadUnitSpec, record, stageHolder, start } from './stages.ts';
+import { evidenceSnapshotOp,mutantApplyOp,worktreeRemoveOp } from '../recover/ops.ts';
+import { releaseEnvironment,useEnvironment } from '../resources/environments.ts';
+import { type Reservation,type StageHolder,cleanup } from '../resources/reserve.ts';
+import type { SpecFacts,SpecFactsOf } from '../schedule/ready.ts';
+import { specLaneIds } from './deflake.ts';
+import { type Cancelled,type StageContext,type StageParent,enter,evidenceRoot,isCancelled,pinDispatch,runOp } from './dispatch.ts';
+import { invocationDir,invoke } from './invoke.ts';
+import { laneCommand,laneEnv,laneEnvId,laneRequest } from './lanes.ts';
+import { type LaneCancel,laneAbortReason,laneCancelOf } from './redlane.ts';
+import { type Held,type StageDone,at,environmentFacts,failedFacts,holdEntry,holisticInForce,integrationTip,loadUnitSpec,record,stageHolder,start } from './stages.ts';
 import { decidedBy } from './transitions.ts';
-import { evidenceSnapshotOp, mutantApplyOp, worktreeRemoveOp } from '../recover/ops.ts';
 
 type SpecReader = Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath; planDir: AbsPath }>;
 
@@ -495,7 +495,7 @@ function codeDismissals(ctx: StageContext): readonly FindingId[] {
     const killed = view.opsOf('proc.spawn').flatMap((i) => {
       const s = i.expect.subject;
       if (!(i.parent.type === 'stage' && i.parent.unit === unit.id && i.parent.stage === 'reproduce' && i.parent.attempt === d.attempt && s.purpose === 'mutant')) return [];
-      const of = mutantSubjectDefault(s);
+      const of = mutantOf(s);
       return of.type === 'finding' ? [of.finding] : [];
     }).at(-1);
     if (killed === undefined) throw new Error(`unit ${unit.id}: reproduce attempt ${d.attempt} decided not-reproduced without a mutant run`);

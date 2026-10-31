@@ -3,21 +3,21 @@
 // the host files the supervisor writes and helpers to find, freeze and kill its processes.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync } from 'node:fs';
+import { closeSync,existsSync,mkdirSync,openSync,readFileSync,readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { isAlive, statOf } from '../../src/contain/proc.ts';
+import { isAlive,statOf } from '../../src/contain/proc.ts';
 import type { Fact } from '../../src/core/events.ts';
-import type { HostLockClaim, HostOwner, ProcIdentity, SupervisorState } from '../../src/core/records.ts';
-import { hostLockClaim, hostOwner, supervisorState } from '../../src/core/records.ts';
+import type { HostLockClaim,HostOwner,ProcIdentity,SupervisorState } from '../../src/core/records.ts';
+import { hostLockClaim,hostOwner,supervisorState } from '../../src/core/records.ts';
 import { absPath } from '../../src/core/values.ts';
-import { SUPERVISOR_ENTRY, SUPERVISOR_STATE, supervisorArgv } from '../../src/supervisor.ts';
-import { type Exit, fixture, runUntilExit } from '../helpers/proc.ts';
-import type { Step } from '../helpers/scenario.ts';
+import { SUPERVISOR_ENTRY,SUPERVISOR_STATE,supervisorArgv } from '../../src/supervisor.ts';
+import { type Exit,fixture,runUntilExit } from '../helpers/proc.ts';
 import { tmpDir } from '../helpers/repo.ts';
-import { BUILD_REPORT, planCheckStep } from './stage-common.ts';
-import { type ExecRun, SMOKE_CLAUDE_ONLY, cli, execEnv, hostFile, journalOf, until } from './exec-common.ts';
-import { MUL, gateStep } from './unit-common.ts';
+import type { Step } from '../helpers/scenario.ts';
+import { type ExecRun,SMOKE_CLAUDE_ONLY,cli,execEnv,hostFile,journalOf,until } from './exec-common.ts';
+import { BUILD_REPORT,planCheckStep } from './stage-common.ts';
+import { MUL,gateStep } from './unit-common.ts';
 
 export const CLAUDE_ONLY = ['--profile', 'claude-only'] as const;
 /** One unit straight through under claude-only: plan-check, the Claude implementer's build, the gate. */
@@ -158,7 +158,7 @@ export function launchDirect(r: ExecRun, heartbeatStaleMs: number): ProcIdentity
   const out = openSync(join(dir, 'out'), 'a');
   const err = openSync(join(dir, 'err'), 'a');
   const argv = supervisorArgv({
-    hostDir: absPath(r.hostDir), repo: absPath(r.repo), planFile: absPath(r.planPath), profile: 'claude-only', heartbeatStaleMs, base: null,
+    hostDir: absPath(r.hostDir), repo: absPath(r.repo), planFile: absPath(r.planPath), profile: 'claude-only', heartbeatStaleMs,
   });
   const child = spawn(process.execPath, [SUPERVISOR_ENTRY, ...argv], {
     detached: true, stdio: ['ignore', out, err], env: { ...execEnv(r), ROADMAP_ROLE: 'supervisor' },

@@ -1,7 +1,7 @@
 // The supervisor (plan "Supervisor (R19)", "Host lock and ownership (R17-R18)"; DESIGN-1.0.md §2): it owns
 // the executor and nothing else.
 //
-//   node src/entry/supervisor.ts <hostDir> --repo <abs> --plan <abs> [--profile <p>] [--heartbeat-stale-ms <n>] [--base <abs>]
+//   node src/entry/supervisor.ts <hostDir> --repo <abs> --plan <abs> [--profile <p>] [--heartbeat-stale-ms <n>]
 //
 // `roadmap start` launches it (`launchSupervisor`) detached (setsid) with ROADMAP_ROLE=supervisor, stdout and
 // stderr to `supervisor.<token>.out|.err` in the host dir. Its stdout is agent-facing JSON lines: one
@@ -41,39 +41,39 @@
 // the needs-user on the third crash.
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { closeSync, existsSync, openSync, readFileSync, readdirSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { closeSync,existsSync,openSync,readFileSync,readdirSync } from 'node:fs';
+import { basename,dirname,join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
-import { identityOf, signal } from './contain/proc.ts';
+import { identityOf,signal } from './contain/proc.ts';
 import { crashPoint } from './core/crash.ts';
-import { atomicJson, canonicalJson as fileJson, durableUnlink, exclusivePublish, readJson } from './core/fsx.ts';
-import { LogCorruptError, readJournal } from './core/log.ts';
 import type { Parent } from './core/events.ts';
+import { atomicJson,durableUnlink,exclusivePublish,canonicalJson as fileJson,readJson } from './core/fsx.ts';
 import { supervisorNeedsUserId } from './core/ids.ts';
 import { canonicalJson } from './core/json.ts';
+import { LogCorruptError,readJournal } from './core/log.ts';
 import {
-  type ExecutorExitReason, type HostLockClaim, type NeedsUserContent, type ProcIdentity, type ReadinessFile, type SupervisorState, executorExitReason, heartbeat,
-  readinessFile, supervisorState,
+type ExecutorExitReason,type HostLockClaim,type NeedsUserContent,type ProcIdentity,type ReadinessFile,type SupervisorState,executorExitReason,heartbeat,
+readinessFile,supervisorState,
 } from './core/records.ts';
-import { type Read, literal, object, positive, tagged } from './core/validate.ts';
-import { type AbsPath, type IsoTime, absPath, isoTimeOf } from './core/values.ts';
+import { type Read,literal,object,positive,tagged } from './core/validate.ts';
+import { type AbsPath,type IsoTime,absPath,isoTimeOf } from './core/values.ts';
 import { SCHEMA_VERSION } from './core/version.ts';
-import {
-  EXIT_REASON_FILE, HEARTBEAT_FILE, type RefusedReason, executorArgv, exitLine, raiseClaimRefusal, refusedOf, refusedReason, writeFileNeedsUser,
-  writeRejection,
-} from './executor.ts';
 import { startDemoKeeper } from './demo/keeper.ts';
+import {
+EXIT_REASON_FILE,HEARTBEAT_FILE,type RefusedReason,executorArgv,exitLine,raiseClaimRefusal,refusedOf,refusedReason,writeFileNeedsUser,
+writeRejection,
+} from './executor.ts';
 import { compactResidues } from './host/compact.ts';
-import { hostPath, openHostDir } from './host/hostdir.ts';
+import { hostPath,openHostDir } from './host/hostdir.ts';
 import { selfIdentity } from './host/liveness.ts';
-import { claimHost, releaseHost, renewClaim } from './host/lock.ts';
-import { createHandshake, publishOwner } from './host/owner.ts';
+import { claimHost,releaseHost,renewClaim } from './host/lock.ts';
+import { createHandshake,publishOwner } from './host/owner.ts';
 import { runDir as runDirOf } from './input/cli.ts';
-import { gitCommonDir, legacyRoadmapDir, loadPlan } from './preflight/checks.ts';
+import { gitCommonDir,legacyRoadmapDir,loadPlan } from './preflight/checks.ts';
 import type { StartupRejection } from './preflight/startup.ts';
 import { reconcilePreviousArc } from './recover/recover.ts';
-import { type ProfileName, profileName } from './routing/types.ts';
+import { type ProfileName,profileName } from './routing/types.ts';
 
 export const SUPERVISOR_STATE = 'supervisor.state.json';
 export const SUPERVISOR_ENTRY = fileURLToPath(new URL('./entry/supervisor.ts', import.meta.url));
@@ -143,8 +143,6 @@ export type SupervisorArgs = Readonly<{
   profile: ProfileName | null;
   /** Only when `--heartbeat-stale-ms` is given; recorded in supervisor.state.json. */
   heartbeatStaleMs: number | null;
-  /** `start --base`: the export.json every executor of this supervisor rebases the files from (a respawn reads none). */
-  base: AbsPath | null;
 }>;
 
 /** A line on the supervisor's stdout. */
@@ -297,7 +295,7 @@ async function superviseOne(args: SupervisorArgs, claim: HostLockClaim, controlO
   const env = { ...process.env };
   delete env[ROLE_ENV];
   const argv = executorArgv({
-    hostDir: dir, generation: claim.generation, nonce: claim.nonce, repo: args.repo, planFile: args.planFile, profile: args.profile, controlOnly, respawn, base: args.base,
+    hostDir: dir, generation: claim.generation, nonce: claim.nonce, repo: args.repo, planFile: args.planFile, profile: args.profile, controlOnly, respawn,
   });
   const child = spawn(process.execPath, [EXECUTOR_ENTRY, ...argv], { stdio: ['ignore', out, err], env });
   closeSync(out);
@@ -366,8 +364,8 @@ function crashLimitContent(crashes: readonly IsoTime[], evidence: readonly AbsPa
     subject: { type: 'host' },
     reason: 'supervisor-crash-limit',
     summary: `The executor crashed ${crashes.length} times within an hour (${crashes.join(', ')}); the supervisor stopped restarting it. The last crash: ${detail}.`,
-    recommendation: 'Read the executor stderr logs in evidence and fix the cause, then `roadmap ack` this item and `roadmap start`: that start runs control-only, applying only pause/stop/ack until nothing blocking remains; queued rulings and other commands wait until recovery has finished, before dispatch.',
-    options: [],
+    recommendation: 'Read the executor stderr logs in evidence and fix the cause, then `roadmap ack` this item and `roadmap start`: that start runs control-only, applying only pause/stop/ack until nothing blocking remains; queued plan edits and other commands wait until recovery has finished, before dispatch.',
+    options: [{ id: 'resolved', label: 'The crash cause is resolved; allow recovery and restart.' }],
     evidence,
   };
 }
@@ -458,18 +456,18 @@ export async function supervise(args: SupervisorArgs): Promise<number> {
 export function supervisorArgv(a: SupervisorArgs): readonly string[] {
   return [
     a.hostDir, '--repo', a.repo, '--plan', a.planFile, ...(a.profile === null ? [] : ['--profile', a.profile]),
-    ...(a.heartbeatStaleMs === null ? [] : ['--heartbeat-stale-ms', String(a.heartbeatStaleMs)]), ...(a.base === null ? [] : ['--base', a.base]),
+    ...(a.heartbeatStaleMs === null ? [] : ['--heartbeat-stale-ms', String(a.heartbeatStaleMs)]),
   ];
 }
 
 function parseSupervisorArgv(argv: readonly string[]): SupervisorArgs {
   const [hostDir, ...rest] = argv;
-  if (hostDir === undefined) throw new Error('usage: supervisor <hostDir> --repo <abs> --plan <abs> [--profile <p>] [--heartbeat-stale-ms <n>] [--base <abs>]');
+  if (hostDir === undefined) throw new Error('usage: supervisor <hostDir> --repo <abs> --plan <abs> [--profile <p>] [--heartbeat-stale-ms <n>]');
   const values = new Map<string, string>();
   for (let i = 0; i < rest.length; i += 2) {
     const flag = rest[i] as string;
     const value = rest[i + 1];
-    if (!['--repo', '--plan', '--profile', '--heartbeat-stale-ms', '--base'].includes(flag) || value === undefined || values.has(flag)) {
+    if (!['--repo', '--plan', '--profile', '--heartbeat-stale-ms'].includes(flag) || value === undefined || values.has(flag)) {
       throw new Error(`supervisor: unexpected argument ${JSON.stringify(flag)} in ${JSON.stringify(argv)}`);
     }
     values.set(flag, value);
@@ -481,12 +479,10 @@ function parseSupervisorArgv(argv: readonly string[]): SupervisorArgs {
   };
   const profile = values.get('--profile');
   const stale = values.get('--heartbeat-stale-ms');
-  const base = values.get('--base');
   return {
     hostDir: absPath(hostDir), repo: absPath(need('--repo')), planFile: absPath(need('--plan')),
     profile: profile === undefined ? null : profileName(profile, '--profile'),
     heartbeatStaleMs: stale === undefined ? null : positive(Number(stale), '--heartbeat-stale-ms'),
-    base: base === undefined ? null : absPath(base),
   };
 }
 

@@ -5,38 +5,38 @@
 // brief.ack-stale-refused, brief.ack-nonblocking-only, brief.ack-crash-rerun, brief.ack-crash-start, brief.ack-ids-ordinal, chain.status-render,
 // chain.next-start (paid M4a run 12).
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { chmodSync,existsSync,mkdirSync,readFileSync,readdirSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { describe,it,test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { describe, it, test } from 'node:test';
 import { renderBrief } from '../src/brief.ts';
 import { acksDir } from '../src/chain.ts';
 import { brief } from '../src/commands/brief.ts';
 import { chainStatus } from '../src/commands/chain.ts';
-import { MAX_ACK_ITEMS, ackCommandId, enqueueCommand, incomingPath } from '../src/commands/queue.ts';
+import { MAX_ACK_ITEMS,ackCommandId,enqueueCommand,incomingPath } from '../src/commands/queue.ts';
 import type { Fact } from '../src/core/events.ts';
-import { type BriefId, type NeedsUserId, amendmentIdOf, arcId, commandId, debtId, divergenceIdOf, jobId, needsUserId, ruleId, sha256 } from '../src/core/ids.ts';
+import { type BriefId,type NeedsUserId,amendmentIdOf,arcId,commandId,debtId,divergenceIdOf,jobId,needsUserId,ruleId,sha256 } from '../src/core/ids.ts';
 import { canonicalJson } from '../src/core/json.ts';
-import { EVENTS_FILE, type OpenJournal, openJournal } from '../src/core/log.ts';
+import { EVENTS_FILE,type OpenJournal,openJournal } from '../src/core/log.ts';
 import type { NeedsUserReason } from '../src/core/records.ts';
-import { absPath, isoTime } from '../src/core/values.ts';
+import { absPath,isoTime } from '../src/core/values.ts';
 import { debtKey } from '../src/debt/ledger.ts';
 import { snapshotRequestOf } from '../src/git/snapshot.ts';
 import { PACK_REVIEW_INPUTS_SCHEMA } from '../src/holistic/types.ts';
-import { PACK_REVIEW_INPUT, keepInput } from '../src/input/inforce.ts';
 import { selfIdentity } from '../src/host/liveness.ts';
-import { claimHost, releaseHost } from '../src/host/lock.ts';
+import { claimHost,releaseHost } from '../src/host/lock.ts';
+import { PACK_REVIEW_INPUT,keepInput } from '../src/input/inforce.ts';
 import { raiseNeedsUser } from '../src/needsuser.ts';
-import { type BriefPayload, parseAckMarker, parseBriefPayload } from '../src/phase0/types.ts';
+import { type BriefPayload,parseAckMarker,parseBriefPayload } from '../src/phase0/types.ts';
 import { executorIdentity } from '../src/pipeline/stages.ts';
 import { runChecks } from '../src/preflight/checks.ts';
 import { snapshotPublishOp } from '../src/recover/ops.ts';
-import { assertFired, writeTrigger } from './helpers/crash.ts';
-import { type CorpusArc, betweenArc, corpusArc, editPhase0, inForce, newHostDir, nextArc, runDirOfArc, seal, withForge } from './helpers/corpusarc.ts';
-import { runUntilExit } from './helpers/proc.ts';
-import { git, tmpDir } from './helpers/repo.ts';
-import { BRIEF_ACK, crashCells } from './matrix.ts';
 import { runOp } from './fixtures/git-common.ts';
+import { type CorpusArc,betweenArc,corpusArc,editPhase0,inForce,newHostDir,nextArc,runDirOfArc,seal,withForge } from './helpers/corpusarc.ts';
+import { assertFired,writeTrigger } from './helpers/crash.ts';
+import { runUntilExit } from './helpers/proc.ts';
+import { git,tmpDir } from './helpers/repo.ts';
+import { BRIEF_ACK,crashCells } from './matrix.ts';
 
 const T = { timeout: 120_000 };
 const BIN = fileURLToPath(new URL('../bin/roadmap', import.meta.url));
@@ -334,7 +334,7 @@ describe('roadmap brief', () => {
       // `roadmap start` of arc 2 (its startup checks, as the executor runs them).
       const hostDir = newHostDir();
       const out = await withForge(a2.forge, () => runChecks({
-        repo: a2.repo, planFile: a2.planPath, profile: null, hostDir, env: process.env, respawn: null, base: null,
+        repo: a2.repo, planFile: a2.planPath, profile: null, hostDir, env: process.env, respawn: null,
         claim: (ctx) => claimHost(ctx.hostDir, { arc: ctx.plan.arc, runDir: ctx.runDir, repo: ctx.repo, supervisor: selfIdentity() }, async () => assert.fail('no previous arc')),
       }));
       out.journal?.close();
@@ -361,7 +361,7 @@ test('brief.ack-ids-ordinal: an ack command id is the marker\'s at (ms) and the 
   assert.ok(ackCommandId(isoTime('2026-10-03T12:00:00.001Z'), 0) > ackCommandId(at, MAX_ACK_ITEMS - 1), 'a later marker\'s acks sort after');
   const runDir = absPath(tmpDir('brief-enqueue'));
   mkdirSync(runDir, { recursive: true });
-  const file = { v: 1, id: ackCommandId(at, 0), arc: arcId('arc-2'), at, body: { type: 'ack', needsUser: needsUserId('nu-3'), choice: null } } as const;
+  const file = { v: 2, id: ackCommandId(at, 0), arc: arcId('arc-2'), at, body: { type: 'ack', needsUser: needsUserId('nu-3'), choice: null } } as const;
   assert.equal(enqueueCommand(runDir, file), true);
   assert.equal(enqueueCommand(runDir, file), false, 'the same bytes are already enqueued');
   assert.throws(() => enqueueCommand(runDir, { ...file, body: { ...file.body, needsUser: needsUserId('nu-4') } }), /exists with other bytes/);

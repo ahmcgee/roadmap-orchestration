@@ -8,11 +8,11 @@
 //   the files an agent loads at run time (each SKILL.md, reference.md) no display name or model family
 //   name either. RATIONALE-1.0.md is maintainer text that cites the models arc 1 ran on as evidence.
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { readFileSync,readdirSync } from 'node:fs';
+import { join,relative } from 'node:path';
+import { describe,it } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { describe, it } from 'node:test';
-import { type Command, parseCommand } from '../src/input/cli.ts';
+import { type Command,parseCommand } from '../src/input/cli.ts';
 import { MODELS } from '../src/routing/models.ts';
 
 const SKILLS = fileURLToPath(new URL('../../skills/', import.meta.url));
@@ -28,7 +28,7 @@ const PLACEHOLDERS: Readonly<Record<string, string>> = {
 /** Every command kind, so a kind added to `Command` fails typecheck here until reference.md documents it. */
 const KINDS: { readonly [K in Command['command']]: true } = {
   tui: true, version: true, start: true, status: true, watch: true, stop: true, pause: true, ack: true, resume: true, sweep: true, apply: true,
-  'resolve-edge': true, 'run-only': true, rule: true, reverse: true, steer: true, 'merge-in': true, audit: true, 'close-admissions': true,
+  'resolve-edge': true, 'run-only': true, reverse: true, steer: true, note: true, 'merge-in': true, audit: true, 'close-admissions': true,
   gc: true, 'phase0-check': true, 'corpus-pin': true, brief: true, pr: true, 'chain-status': true, answer: true,
   'witness-check': true, 'resume-arc': true, 'inputs-export': true, 'flow-decide': true, 'flow-request': true, 'flow-given': true, 'scope-decide': true, demo: true,
 };

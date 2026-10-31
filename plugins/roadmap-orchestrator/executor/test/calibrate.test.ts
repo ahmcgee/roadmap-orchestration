@@ -2,14 +2,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { routingRev } from '../src/core/ids.ts';
+import { reservationCpuBasisOf,spawnCpuKeyOf } from '../src/core/projections.ts';
 import { laneDef } from '../src/core/records.ts';
 import { laneRevOf } from '../src/holistic/types.ts';
-import { buildCpuKey, calibratedCpu, cpuDemand, laneCpuKey } from '../src/resources/calibrate.ts';
-import { reserve, cleanup } from '../src/resources/reserve.ts';
-import { reservationCpuBasisOf, spawnCpuKeyOf } from '../src/core/upgrade.ts';
-import { requestOf, buildCpu, laneCpu } from '../src/resources/pool.ts';
-import { build, buildEntry, evidence, planCheck, quiesce, salvage, teardown } from '../src/pipeline/stages.ts';
-import { BUILD_REPORT, planCheckStep, started, setupUnit } from './fixtures/stage-common.ts';
+import { build,buildEntry,evidence,planCheck,quiesce,salvage,teardown } from '../src/pipeline/stages.ts';
+import { buildCpuKey,calibratedCpu,cpuDemand,laneCpuKey } from '../src/resources/calibrate.ts';
+import { buildCpu,laneCpu,requestOf } from '../src/resources/pool.ts';
+import { cleanup,reserve } from '../src/resources/reserve.ts';
+import { BUILD_REPORT,planCheckStep,setupUnit,started } from './fixtures/stage-common.ts';
 
 const lane = () => laneDef({
   id: 'check', argv: ['node', '--test'], cwd: '.', env: { set: { A: 'a' }, pass: ['PATH', 'HOME'] },

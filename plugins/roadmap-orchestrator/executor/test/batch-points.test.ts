@@ -24,7 +24,7 @@ import { applyPlanEdit } from './fixtures/checkpoint-common.ts';
 import { intents } from './fixtures/invoke-specs.ts';
 import { wired } from './fixtures/sched-m3-common.ts';
 import { type LaneJson, SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
-import { type ArcRun, SUITE_LANE, codexStep, contextFor, gateStep } from './fixtures/unit-common.ts';
+import { type ArcRun, SUITE_LANE, codexStep, contextFor,syncInputs, gateStep } from './fixtures/unit-common.ts';
 import { BROKEN_WALK, GREETING, unitInForce, walkAnswer, walkArc, walkContext, walkStep } from './fixtures/walk-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS * 2 };
@@ -131,6 +131,7 @@ describe('the milestone batch point (dev.17)', () => {
       assert.deepEqual(batchSpawns(r).map(([job]) => job), ['walk-1']);
       assert.deepEqual(factsOf(r, 'finding-opened').map((f) => [f.id, f.lane ?? null]), [['F-1', null]], 'only the walkthrough\'s P1');
       // The repair (the scripted checkpoint's admit) changes only product/**: the batch lane's input is unchanged.
+      syncInputs(r);
       const planDir = join(d.planPath, '..');
       const spec = JSON.parse(readFileSync(join(planDir, 'u1.json'), 'utf8')) as Json;
       writeFileSync(join(planDir, 'r1.json'), JSON.stringify({ ...spec, unit: 'r1', rev: 1, repairs: ['F-1'], scope: ['product/**', 'src/**', 'test/**'] }));

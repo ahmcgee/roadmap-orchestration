@@ -41,7 +41,7 @@ import {
   PIPELINE_RUNNER_DEATH, PIPELINE_STRAIGHT, PIPELINE_SUPERVISOR_DEATH, SUPERVISOR_HOST, crashCells, killCells,
 } from '../matrix.ts';
 import { type Expected, type OracleRun, type Trace, UNCRASHED, type UnitEnd, assertOracle, oracleRun, outcomesOf, recoveryHoldsOf, withRecoveryHolds } from '../oracle.ts';
-import { LABEL_TRACE, NONE, R, appendTrace, inRevisionAt } from '../fixtures/pm-trace.ts';
+import { LABEL_TRACE, NONE, R, appendTrace, assertRevisionNoticeRecovery, inRevisionAt, traceAt } from '../fixtures/pm-trace.ts';
 import { type ExecRun, SMOKE_DEFAULT, hostFile, journalOf } from '../fixtures/exec-common.ts';
 import {
   HOLISTIC, HOLISTIC_OUTCOMES, type Sampled, capturesInsideRevisions, describeRecord, holisticProduct, holisticRecords, sampleHolistic,
@@ -135,7 +135,8 @@ function traceFor(ref: Reference, label: string, occurrence: number): Trace {
     if (e === undefined) throw new Error(`${ref.name}: no event at seq ${occurrence}`);
     return appendTrace(label, e, inRevisionAt(ref.events, e.seq));
   }
-  const t = LABEL_TRACE[label];
+  const notice = ref.events.filter((e) => e.type === 'intent' && e.kind === 'needsuser.raise')[occurrence - 1];
+  const t = traceAt(label, ref.events, notice?.seq ?? ref.events.length);
   if (t === undefined) throw new Error(`no recovery trace is declared for ${label}`);
   return t;
 }
@@ -209,6 +210,7 @@ async function holisticCell(t: Owner, ref: Reference, c: Sampled): Promise<void>
   assert.equal(crash.events.length, c.durable, `the log at the crash holds ${c.durable} records, as the recording did at ${c.label}#${c.occurrence}`);
   if (c.durable > 0) assert.equal(describeRecord(crash, crash.events.at(-1)!), describeRecord(refSnap, refSnap.events[c.durable - 1]!), 'the last record at the crash is the recording\'s');
   const end = journalOf(r);
+  assertRevisionNoticeRecovery(crash, end, c.label);
   assert.deepEqual(holisticRecords(end), holisticRecords(refSnap), 'the holistic layer\'s records as uncrashed');
   assert.deepEqual(capturesInsideRevisions(end.events), [], 'no input capture inside an open revision.commit (H2)');
 }
@@ -332,7 +334,7 @@ test('whole-pipeline crash matrix', { concurrency: FANOUT, timeout: 45 * 60_000 
     reference(t, 'malformed', MALFORMED, MALFORMED_OUTCOMES),
     reference(t, 'cancel', CANCEL, CANCEL_OUTCOMES),
     reference(t, 'stale', STALE_LANE, STALE_OUTCOMES),
-    reference(t, 'holistic', HOLISTIC, HOLISTIC_OUTCOMES, { keyed: true, needsUser: ['divergence-digest'] }),
+    reference(t, 'holistic', HOLISTIC, HOLISTIC_OUTCOMES, { keyed: true, needsUser: ['divergence-digest', 'revision-notice'] }),
   ]);
 
   // Enumeration: each scenario's executor reached exactly its row's labels; the only other process that

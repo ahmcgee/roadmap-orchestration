@@ -46,20 +46,26 @@
 // every metered call's cost.
 import type { Buffer } from 'node:buffer';
 import { submittedAtMs } from '../commands/queue.ts';
-import type { Event, IntentOf, OutcomeClass, PlanAppliedFact } from '../core/events.ts';
+import type { Event,IntentOf,OutcomeClass,PlanAppliedFact } from '../core/events.ts';
 import {
-  type ArcId, type FindingId, type LaneId, type ObligationId, type OpId, type Sha, type Sha256Hex, type StationId, type UnitId, FINDING_WAIT_STATION, FLOW_STAGES,
-  type FlowStage, HELD_STATION, SLOT_STATION, SLOT_WAIT_STATION, parseJobId, parseStationId, stationId,
+type ArcId,
+FINDING_WAIT_STATION,FLOW_STAGES,
+type FindingId,
+type FlowStage,HELD_STATION,
+type LaneId,type ObligationId,type OpId,
+SLOT_STATION,SLOT_WAIT_STATION,
+type Sha,type Sha256Hex,type StationId,type UnitId,
+parseJobId,parseStationId,stationId,
 } from '../core/ids.ts';
-import { isRed, obligationRevsOf, type Stage } from '../core/records.ts';
-import { spawnPressureOf } from '../core/upgrade.ts';
-import { type IsoTime, isoTime } from '../core/values.ts';
-import { type Obligations, parseObligations } from '../holistic/types.ts';
+import { spawnPressureOf } from '../core/projections.ts';
+import { type Stage,isRed,obligationRevsOf } from '../core/records.ts';
+import { type IsoTime,isoTime } from '../core/values.ts';
+import { type Obligations,parseObligations } from '../holistic/types.ts';
 import { drainsArc } from '../input/classify.ts';
-import { OBLIGATIONS_INPUT, PLAN_INPUT } from '../input/inforce.ts';
-import { type PlanM1, advancesOf, parsePlan } from '../input/plan.ts';
+import { OBLIGATIONS_INPUT,PLAN_INPUT } from '../input/inforce.ts';
+import { type PlanM1,advancesOf,parsePlan } from '../input/plan.ts';
 import { sameExecution } from '../pipeline/lanes.ts';
-import { FLOW_SERIES_V, type FlowAccounting, type FlowPoint, type FlowSeries, type HostFingerprint, type StationRow, type SuiteRun, type SuiteRunShape } from './types.ts';
+import { FLOW_SERIES_V,type FlowAccounting,type FlowPoint,type FlowSeries,type HostFingerprint,type StationRow,type SuiteRun,type SuiteRunShape } from './types.ts';
 
 /** What the series reads beyond the log: the plan and the obligations (null: none) a `plan-applied` put in force. */
 export type SeriesInputs = Readonly<{

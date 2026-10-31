@@ -7,43 +7,37 @@
 // packreview.no-review-between-rule-and-apply (M4a rev 3, I2), and the
 // crash cells of the matrix row PACK_REVIEW_JOB.
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { existsSync,readFileSync } from 'node:fs';
+import { basename,join } from 'node:path';
+import { describe,test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { describe, test } from 'node:test';
 import { applyCommand } from '../src/commands/apply.ts';
-import { submitCommand } from '../src/commands/queue.ts';
+import { terminalReceipt,submitCommand } from '../src/commands/queue.ts';
 import type { Fact } from '../src/core/events.ts';
-import { type NeedsUserId, jobId } from '../src/core/ids.ts';
+import { type NeedsUserId,jobId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
+import { packReviewKey,packReviewPending,packReviewStatus,requiredInputs,runPackReview } from '../src/holistic/packreview.ts';
+import { PACK_REVIEW_INPUTS_SCHEMA,parsePackReviewInputs } from '../src/holistic/types.ts';
 import { PACK_REVIEW_INPUT } from '../src/input/inforce.ts';
-import { PACK_REVIEW_INPUTS_SCHEMA, parsePackReviewInputs } from '../src/holistic/types.ts';
-import { packReviewKey, packReviewPending, packReviewStatus, requiredInputs, runPackReview } from '../src/holistic/packreview.ts';
-import { blockingItems, openBlocking, openNeedsUser, readNeedsUser, supersededItems } from '../src/needsuser.ts';
-import { status } from '../src/status.ts';
-import { ActionableFilter, HEARTBEAT_MIN, watch } from '../src/watch.ts';
+import { blockingItems,openBlocking,openNeedsUser,readNeedsUser,supersededItems } from '../src/needsuser.ts';
 import { recover } from '../src/recover/recover.ts';
-import { arcHolds, holisticContexts } from '../src/schedule/scheduler.ts';
-import { assertFired, writeTrigger } from './helpers/crash.ts';
-import { jobRepairStep, packReviewAnswer, packReviewStep, packTargetOf } from './helpers/holistic.ts';
-import { runFixture } from './helpers/proc.ts';
-import { git, tmpDir } from './helpers/repo.ts';
-import { type Step, readCalls } from './helpers/scenario.ts';
-import { PACK_REVIEW_JOB, crashCells } from './matrix.ts';
-import { applyPlanEdit, checkpointContext, factsOfKind } from './fixtures/checkpoint-common.ts';
-import { type CorpusHolisticArc, corpusHolisticArc, forgeEnv } from './fixtures/corpus-holistic.ts';
+import { arcHolds,holisticContexts } from '../src/schedule/scheduler.ts';
+import { status } from '../src/status.ts';
+import { ActionableFilter,HEARTBEAT_MIN,watch } from '../src/watch.ts';
+import { applyPlanEdit,checkpointContext,factsOfKind } from './fixtures/checkpoint-common.ts';
+import { type CorpusHolisticArc,corpusHolisticArc,forgeEnv } from './fixtures/corpus-holistic.ts';
 import { until } from './fixtures/exec-common.ts';
-import { followContext, stepTo } from './fixtures/route-common.ts';
+import { followContext,stepTo } from './fixtures/route-common.ts';
 import { startHolistic } from './fixtures/sched-m3-common.ts';
-import { SCENARIO_TIMEOUT_MS, planCheckStep } from './fixtures/stage-common.ts';
-import { type ArcRun, applyBody, contextFor } from './fixtures/unit-common.ts';
-import { sha256Hex } from '../src/core/json.ts';
-import { sha, sha256 } from '../src/core/ids.ts';
-import { absPath } from '../src/core/values.ts';
-import { parseRulingSidecar } from '../src/holistic/types.ts';
-import { keptPayload } from '../src/input/inforce.ts';
-import { rulingContextAt } from '../src/pipeline/publish.ts';
-import { consistencyRevs } from '../src/spec/rulings.ts';
+import { SCENARIO_TIMEOUT_MS,planCheckStep } from './fixtures/stage-common.ts';
+import { type ArcRun,contextFor } from './fixtures/unit-common.ts';
+import { assertFired,writeTrigger } from './helpers/crash.ts';
+import { jobRepairStep,packReviewAnswer,packReviewStep,packTargetOf } from './helpers/holistic.ts';
+import { runFixture } from './helpers/proc.ts';
+import { git,tmpDir } from './helpers/repo.ts';
+import { type Step,readCalls } from './helpers/scenario.ts';
+import { PACK_REVIEW_JOB,crashCells } from './matrix.ts';
+
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 const WAIT_MS = 120_000;
@@ -95,7 +89,9 @@ test('packreview.holds-admission: the review runs first, before the baseline; it
     const inputs = parsePackReviewInputs(JSON.parse(readFileSync(join(r.ctx.runDir, 'inputs', `${started!.inputsSha256}.${PACK_REVIEW_INPUT}`), 'utf8')));
     assert.equal(inputs.head, git(a.d.repo, 'rev-parse', 'main'));
     for (const tag of ['<vision>', '<plan>', '<specs>', '<obligations>', '<rules_index>', '<phase0>']) assert.ok(call.stdin.includes(tag), `the prompt holds ${tag}`);
-    submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'ack', needsUser: item!, choice: null });
+    const rejected = submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'ack', needsUser: item!, choice: null });
+    await until(() => terminalReceipt(r.ctx.runDir, rejected.id)?.state === 'rejected', WAIT_MS, 'optionless acknowledgement refused');
+    submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'resume', target: { type: 'all' } });
     await until(() => facts().some((f) => f.kind === 'stage-outcome' && f.unit === 'u1'), WAIT_MS, 'u1 admitted after the ack');
   } finally {
     submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'stop' });
@@ -118,7 +114,7 @@ describe('the hold before the first admission (K14, H9)', () => {
       assert.ok(x.holds().includes('pack-review'));
       await x.ack(out.needsUser);
       assert.deepEqual(packReviewStatus(x.ctx), { kind: 'clear', job: 'review-1' });
-      assert.ok(!x.holds().includes('pack-review'), 'the ack releases');
+      assert.ok(!x.holds().includes('pack-review'), 'the subject action releases');
       assert.equal(packReviewPending(x.ctx), false);
       assert.deepEqual(await runPackReview(x.ctx), { kind: 'none' });
       assert.deepEqual(reviewCalls(x.a), ['review-1']);
@@ -160,7 +156,7 @@ describe('the hold before the first admission (K14, H9)', () => {
       assert.deepEqual(second, { kind: 'ended', job: 'review-2', outcome: 'completed', needsUser: null });
       assert.deepEqual([...supersededItems(x.r.journal.view)], [first.needsUser], 'review-1\'s item is superseded');
       assert.deepEqual(openBlocking(x.r.journal.view), [], 'and no longer open');
-      assert.equal(x.r.journal.view.ackOf(first.needsUser), null, 'without an ack');
+      assert.ok(x.r.journal.view.ackOf(first.needsUser) !== null, 'the root apply closed the arc subject');
       assert.deepEqual(packReviewStatus(x.ctx), { kind: 'clear', job: 'review-2' });
       assert.ok(!x.holds().includes('pack-review'));
       // R-17 (paid M4a run 10): one predicate drops it wherever open items are listed: status, the brief, watch --actionable.
@@ -206,7 +202,7 @@ describe('the hold before the first admission (K14, H9)', () => {
     }
   });
 
-  test('packreview.abandoned: a review that gives no valid report, its repair turn included, ends abandoned with a blocking item saying why; its ack releases', T, async () => {
+  test('packreview.abandoned: a review that gives no valid report, its repair turn included, ends abandoned with a blocking item saying why; its subject action releases', T, async () => {
     const x = await arcWith([
       { as: 'claude', unit: 'review-1', expect: {}, acts: [{ type: 'emit', value: { findings: 'not a list' } }] },
       jobRepairStep('review-1', { findings: 'not a list' }, ['malformed report']),
@@ -237,43 +233,7 @@ describe('the hold before the first admission (K14, H9)', () => {
   });
 });
 
-test('packreview.no-review-between-rule-and-apply (I2): `apply --ruling` lands the ruling and its dependent edit as one revision, so the only key a review can bind is the whole pack\'s', T, async () => {
-  const x = await arcWith([packReviewStep('review-1')]);
-  try {
-    const r = x.r;
-    const tip = sha(git(r.d.repo, 'rev-parse', 'main'));
-    const draft = {
-      schema: 'roadmap/ruling-m3', id: 'C-2', statement: 'Berth booking comes before tide windows.', kind: 'decision', ruledBy: { type: 'architect' }, trigger: 'pack',
-      supersedes: [], condition: null, docRefs: [{ path: 'ARCHITECTURE.md', anchor: 'Architecture', quotedText: 'One module', relation: 'consistent' }],
-      contractRefs: [], contractOps: [], obligations: [], obligationDispositions: [], cites: [], evidence: [], appliesTo: { type: 'arc' }, lifetime: 'arc', status: 'active',
-      consistency: { verdict: 'consistent', judgedRevs: { head: tip, ledgerSha256: 'a'.repeat(64), obligationsSha256: null, visionSha256: null, contracts: [] }, by: { type: 'architect' } },
-    };
-    const fresh = consistencyRevs(parseRulingSidecar(draft), rulingContextAt({ journal: r.journal, runDir: r.ctx.runDir, planFile: absPath(r.d.planPath), repo: absPath(r.d.repo) }, tip));
-    if ('reasons' in fresh) throw new Error(fresh.reasons.join('; '));
-    const path = absPath(join(tmpDir('packreview-ruling'), 'C-2.json'));
-    writeFileSync(path, `${JSON.stringify({ ...draft, consistency: { ...draft.consistency, judgedRevs: fresh.revs } }, null, 2)}\n`);
-    // The dependent edit: the plan's direction now states what the ruling decides.
-    const plan = JSON.parse(readFileSync(r.d.planPath, 'utf8')) as Record<string, unknown>;
-    writeFileSync(r.d.planPath, JSON.stringify({ ...plan, direction: 'Berth booking first, per C-2.' }));
-    const out = await applyCommand(x.w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, {
-      ...applyBody(r.d), rulings: [{ path, sha256: sha256(sha256Hex(readFileSync(path))) }],
-    } as Parameters<typeof submitCommand>[2]));
-    assert.equal(out.kind, 'applied', JSON.stringify(out));
-    const revisions = factsOfKind(r, 'plan-applied');
-    assert.deepEqual(revisions.map((f) => f.rev), [1, 2], 'one revision for the ruling and its edit: none holds the ruling alone');
-    const manifest = keptPayload(r.ctx.runDir, revisions[1]!.payloadSha256).manifest;
-    assert.deepEqual(Object.keys(manifest.rulings.sidecars), ['C-2']);
-    assert.deepEqual(revisions[1]!.changes, [{ type: 'plan-field', field: 'direction' }]);
-    const review = await runPackReview(x.ctx);
-    assert.deepEqual(review, { kind: 'ended', job: 'review-1', outcome: 'completed', needsUser: null });
-    const started = factsOfKind(r, 'pack-review-started');
-    assert.deepEqual(started.map((f) => f.planRev), [2], 'the one review reads the revision holding both');
-    assert.match(stdinOf(x.a, 'review-1'), /Berth booking first, per C-2\./);
-    assert.deepEqual(packReviewStatus(x.ctx), { kind: 'clear', job: 'review-1' });
-  } finally {
-    x.r.journal.close();
-  }
-});
+
 
 test('packreview.delta-rereview-dispositions (H3): a re-review reads what changed and the unresolved earlier findings, dispositions each once; a blocking one kept still-open holds; a missing disposition is malformed; an abandoned review is skipped over', T, async () => {
   const x = await arcWith([
@@ -344,7 +304,9 @@ function reopen(a: CorpusHolisticArc) {
     holds: () => arcHolds(h, blockingItems(r.ctx.runDir, r.journal.view), false),
     ack: async (id: NeedsUserId) => {
       const out = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'ack', needsUser: id, choice: null }));
-      assert.equal(out.kind, 'applied', JSON.stringify(out));
+      assert.equal(out.kind, 'rejected', JSON.stringify(out));
+      const resumed = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'resume', target: { type: 'all' } }));
+      assert.equal(resumed.kind, 'applied', JSON.stringify(resumed));
     },
     editPack: (direction: string) => applyPlanEdit(r, w, (p) => {
       p['direction'] = direction;

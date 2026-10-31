@@ -2,15 +2,13 @@
 // only: the arbiter (`acquire`), readiness and admission (`admit`), the prober and `commandScope` are
 // implemented by later steps against these signatures. The records they read and write (facts, holders,
 // `ProbeTarget`) live in src/core/events.ts.
-import type { BackendParkClass, Holder, OutcomeStage, ProbeTarget } from '../core/events.ts';
-import type { CommandId, FindingId, InvocationId, KnownDefectId, LaneId, NeedsUserId, ObligationId, ResourceName, ResourceUnit, UnitId } from '../core/ids.ts';
-import type { PropagationTarget } from '../core/stale.ts';
-import type { RepoPath } from '../core/values.ts';
-import type { JournalView } from '../core/interfaces.ts';
-import type { CommandBody, LaneCadence, NeedsUserReason } from '../core/records.ts';
-import type { PlanM1, PlanUnit, UnitOrigin, UnitPriority } from '../input/plan.ts';
-import type { PressureNow } from '../host/pressure.ts';
 import type { CpuBasis } from '../core/cpu.ts';
+import type { BackendParkClass,Holder,OutcomeStage,ProbeTarget } from '../core/events.ts';
+import type { CommandId,FindingId,InvocationId,KnownDefectId,LaneId,NeedsUserId,ObligationId,ResourceName,ResourceUnit,UnitId } from '../core/ids.ts';
+import type { JournalView } from '../core/interfaces.ts';
+import type { CommandBody,LaneCadence,NeedsUserReason } from '../core/records.ts';
+import type { PressureNow } from '../host/pressure.ts';
+import type { PlanM1,PlanUnit,UnitOrigin,UnitPriority } from '../input/plan.ts';
 import type { Backend } from '../routing/types.ts';
 
 // ---------------------------------------------------------------------------------------------------
@@ -77,7 +75,7 @@ export type Acquire = (request: ResourceRequest, holder: Holder, rank: () => Ran
 // Priority and aging (F17)
 
 /** R6: repair units (and, dev.17, deflake and propagation units) first, then checkpoint-originated, then polish, then planned. */
-export const ORIGIN_RANK = { repair: 0, deflake: 0, propagation: 0, checkpoint: 1, polish: 2, planned: 3 } as const satisfies Readonly<Record<UnitOrigin, number>>;
+export const ORIGIN_RANK = { repair: 0, deflake: 0, checkpoint: 1, polish: 2, planned: 3 } as const satisfies Readonly<Record<UnitOrigin, number>>;
 /** A waiter is promoted once this many other units published inside its current waiting interval. */
 export const PROMOTION_BYPASS = 3;
 
@@ -160,7 +158,7 @@ export type AdmissionConstraint =
    * cut: its spec links the target, or its design record's breaks touch a file the propagation re-witnesses (`stale`, those
    * files). src/holistic/propagation.ts `propagationHolds`.
    */
-  | Readonly<{ type: 'propagation'; unit: UnitId; target: PropagationTarget; stale: readonly RepoPath[] }>;
+;
 
 export type Admission = Readonly<{ kind: 'admit' }> | Readonly<{ kind: 'wait'; constraints: readonly AdmissionConstraint[] }>;
 

@@ -32,12 +32,15 @@ import { join } from 'node:path';
 import type { JsonValue } from '../../src/core/json.ts';
 import type { ProfileName } from '../../src/routing/types.ts';
 import {
-  INVALID_OP, admitSpecWire, checkpointAnswer, jobRepairStep, checkpointStep, flowStep, lensStep, packReviewStep, twoOpBundleSecondInvalid,
+INVALID_OP,admitSpecWire,checkpointAnswer,
+checkpointStep,flowStep,
+jobRepairStep,
+lensStep,packReviewStep,twoOpBundleSecondInvalid,
 } from '../../test/helpers/holistic.ts';
 import type { Step } from '../../test/helpers/scenario.ts';
-import { type M1Step, fakeSteps } from '../m1/scenario.ts';
-import { FAKE_CKPT_HOLD, FAKE_FLOW_HOLD } from './layout.ts';
-import { FILES, REPAIR_UNIT, filesOf, repairSpecText } from './setup.ts';
+import { type M1Step,fakeSteps } from '../m1/scenario.ts';
+import { FAKE_CKPT_HOLD,FAKE_FLOW_HOLD } from './layout.ts';
+import { FILES,REPAIR_UNIT,filesOf,repairSpecText } from './setup.ts';
 
 /** How long a fake barrier waits for the driver (the driver's fake run timeout is shorter). */
 const HOLD_MS = 20 * 60_000;
@@ -47,7 +50,7 @@ const planCheck = (reason: string): M1Step => ({
   answer: { decision: 'approve', reasons: [reason], patch: null, risk: 'med', notes: '', premises: [], visionConflict: [], scopeGrowth: [], staleLinks: [] },
 });
 const build = (message: string, files: Readonly<Record<string, string>>): M1Step => ({ role: 'build', round: 'fresh', acts: [{ type: 'commit', message, files }] });
-const gate = (reason: string): M1Step => ({ role: 'gate', answer: { decision: 'approve', findings: [], directives: [], reasons: [reason], premises: [], unreviewed: [], clusters: null, rulings: [] } });
+const gate = (reason: string): M1Step => ({ role: 'gate', answer: {rulings: [],  decision: 'approve', findings: [], directives: [], reasons: [reason], premises: [], unreviewed: [], clusters: null,  } });
 
 /** The files of fake build `name` (evals/m3/files/units/<name>/), by repo path. */
 const unitFiles = (name: string): Readonly<Record<string, string>> => filesOf(join(FILES, 'units', name));
@@ -127,10 +130,11 @@ const PREVENT_BUNDLE = checkpointAnswer({ decision: 'bundle', ops: [ADMIT_REPAIR
 const JOB_STEPS_P: readonly Step[] = [
   PACK_REVIEW,
   checkpointStep('ckpt-1', PREVENT_BUNDLE, [{ type: 'barrier', name: FAKE_CKPT_HOLD, timeoutMs: HOLD_MS }]),
-  checkpointStep('ckpt-2', PREVENT_BUNDLE),
   lensStep('audit-1', 'vision'),
-  lensStep('audit-2', 'invariants'),
+  checkpointStep('ckpt-2', PREVENT_BUNDLE),
   lensStep('audit-2', 'vision'),
+  lensStep('audit-3', 'invariants'),
+  lensStep('audit-3', 'vision'),
   checkpointStep('ckpt-3', NO_OP),
 ];
 

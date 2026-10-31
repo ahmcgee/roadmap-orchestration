@@ -1,3 +1,6 @@
+import { applyCommand } from '../src/commands/apply.ts';
+import { submitCommand } from '../src/commands/queue.ts';
+import { applyBody,commandContextFor,syncInputs } from './fixtures/unit-common.ts';
 // Per-unit routing, bounds and the risk floor (M3 step A3): a plan unit's `routing` layer on the arc's stack
 // (src/routing/layers.ts `provenanceStack`), the routing provenance a revision records (H7), the unit's pinned
 // `bounds` (src/input/plan.ts `boundsOf`) and the windows and table rounds they set, and the Phase-0 risk floor of
@@ -5,22 +8,22 @@
 // through the command path under a context that follows the log as the executor's does (fixtures/route-common.ts).
 // Named tests: routing.unit-layer-rev, routing.provenance-recorded, limits.windows-and-bounds, route.risk-floor.
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync,readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import type { Event, IntentOf } from '../src/core/events.ts';
+import type { Event,IntentOf } from '../src/core/events.ts';
 import { unitId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
-import { readRepoConfig } from '../src/preflight/checks.ts';
-import { type RoutingBase, requirePlanInForce, unitRouting } from '../src/input/inforce.ts';
+import { type RoutingBase,requirePlanInForce,unitRouting } from '../src/input/inforce.ts';
 import { boundsOf } from '../src/input/plan.ts';
 import { step } from '../src/pipeline/unit.ts';
-import { provenanceStack, resolveRouting } from '../src/routing/layers.ts';
-import { type Step, readCalls } from './helpers/scenario.ts';
-import { BUILD_REPORT, SCENARIO_TIMEOUT_MS, planCheckStep } from './fixtures/stage-common.ts';
-import { MUL, U1, codexStep, contextFor, gateStep, isGateCall, mulBuild, outcomes, setupArc } from './fixtures/unit-common.ts';
-import { type Json, apply, editPlan, editSpec, editUnit, followContext, modelOf, planDirOf, recordFirst, stepTo, unitOf } from './fixtures/route-common.ts';
+import { readRepoConfig } from '../src/preflight/checks.ts';
+import { provenanceStack,resolveRouting } from '../src/routing/layers.ts';
+import { type Json,apply,editPlan,editSpec,editUnit,followContext,modelOf,planDirOf,recordFirst,stepTo,unitOf } from './fixtures/route-common.ts';
+import { BUILD_REPORT,SCENARIO_TIMEOUT_MS,planCheckStep } from './fixtures/stage-common.ts';
+import { MUL,U1,codexStep,contextFor,gateStep,isGateCall,mulBuild,outcomes,setupArc } from './fixtures/unit-common.ts';
+import { type Step,readCalls } from './helpers/scenario.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 const U2 = unitId('u2');
@@ -58,6 +61,7 @@ test('routing.unit-layer-rev: a unit routing layer gives that unit its own routi
     await stepTo(ctx, 'u1', (f) => f.stage === 'plan-check');
     assert.equal(r.journal.view.dispatchOf(U1)?.routingRev, arcRev);
 
+    syncInputs(r);
     editUnit(d, 'u1', (u) => void (u['routing'] = { gate: { med: 'summit' } }));
     appliedOk(await apply(r, ctx));
     const u1Rev = ctx.routing(U1).rev;
@@ -76,6 +80,7 @@ test('routing.unit-layer-rev: a unit routing layer gives that unit its own routi
     assert.equal(gates.length, 1);
     assert.equal(seatOf(gates[0]!.argv), SUMMIT, 'u1\'s gate ran on its layer\'s summit class');
 
+    syncInputs(r);
     // A layer that moves u1's implementer seat after its build started, and u2's before its build.
     editUnit(d, 'u1', (u) => void (u['routing'] = { gate: { med: 'summit' }, build: { med: 'frontier' } }));
     editUnit(d, 'u2', (u) => void (u['routing'] = { build: { med: 'frontier' } }));
@@ -208,6 +213,7 @@ test('limits.windows-and-bounds: the plan\'s and the unit\'s limits are pinned a
     for (const g of spawnsOf(r, 'gate')) about(windowOf(g), 3 * MIN, 'a gate');
 
     // A limits apply below what u1 spent is refused; one above it re-pins u1's next dispatch.
+    syncInputs(r);
     editUnit(d, 'u1', (x) => void (x['limits'] = { editAllowanceMin: 5, chargeable: 1 }));
     assert.match(rejection(await apply(r, ctx)), /unit u1: its chargeable bound 1 is below what it has spent \(2\)/);
     editUnit(d, 'u1', (x) => void (x['limits'] = { editAllowanceMin: 5, judgmentDeadlineMin: 4 }));
@@ -265,16 +271,18 @@ test('route.risk-floor: a risk below its Phase-0 floor is refused unless the uni
     await stepTo(ctx, 'u1', (f) => f.stage === 'lanes' && f.outcome === 'green');
     await stepTo(ctx, 'u2', (f) => f.stage === 'plan-check');
 
+    syncInputs(r);
     editUnit(d, 'u3', (u) => void (u['risk'] = 'med'));
     assert.match(
-      rejection(await apply(r, ctx)),
-      /unit u3: risk med is below its Phase-0 floor high; lowering it needs its spec to cite an active ruling for u3/,
+      rejection(await applyCommand(commandContextFor(r, ctx), submitCommand(r.ctx.runDir, r.ctx.plan().arc, {...applyBody(d), reason: ' '}))),
+      /unit u3: risk med is below its Phase-0 floor high; lowering it needs apply --reason/,
     );
     editUnit(d, 'u3', (u) => void (u['risk'] = 'high'));
     editUnit(d, 'u4', (u) => void (u['risk'] = 'low'));
     appliedOk(await apply(r, ctx));
     assert.deepEqual(r.journal.view.planApplied()?.changes, [{ type: 'unit-changed', unit: unitId('u4') }]);
 
+    syncInputs(r);
     // Raise the dispatched units: u1 built on build.med, u2 not yet built.
     editUnit(d, 'u1', (u) => void (u['risk'] = 'high'));
     editUnit(d, 'u2', (u) => void (u['risk'] = 'high'));

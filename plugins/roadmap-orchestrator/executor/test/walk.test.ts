@@ -3,29 +3,29 @@
 // placeholder (src/walk/bringup.ts) and the MCP config's substitutions (src/walk/walk.ts). Pure: plans and views are
 // built in place (only the fields each function reads).
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, test } from 'node:test';
+import { describe,test } from 'node:test';
 import type { WalkFact } from '../src/core/events.ts';
-import type { FindingId, JobId, MilestoneId, UnitId } from '../src/core/ids.ts';
+import type { FindingId,JobId,MilestoneId,UnitId } from '../src/core/ids.ts';
 import type { JournalView } from '../src/core/interfaces.ts';
+import { canonicalJson } from '../src/core/json.ts';
 import type { FindingState } from '../src/core/state.ts';
-import { type AbsPath, absPath } from '../src/core/values.ts';
+import { type AbsPath,absPath } from '../src/core/values.ts';
 import type { RepairUnit } from '../src/holistic/findings.ts';
 import type { Vision } from '../src/holistic/types.ts';
-import type { Milestone, PlanM1, PlanUnit } from '../src/input/plan.ts';
+import type { Milestone,PlanM1,PlanUnit } from '../src/input/plan.ts';
 import { validateWalkthroughOutput } from '../src/prompts/schemas.ts';
-import { substitutePorts } from '../src/walk/bringup.ts';
-import { milestoneProgress, milestoneState, walkItemsDue, walksPending } from '../src/walk/milestones.ts';
-import { milestoneEdges, milestoneWaits } from '../src/walk/node.ts';
-import { coversReference, evidencePath, walkDraft, walkRefusals } from '../src/walk/report.ts';
-import { walkSessionMcp } from '../src/walk/walk.ts';
-import { polishDue } from '../src/walk/polish.ts';
-import { COMPARE_ATTEMPTS, failedCompares, touchesReference } from '../src/walk/compare.ts';
 import { admitter } from '../src/schedule/ready.ts';
-import { canonicalJson } from '../src/core/json.ts';
+import { substitutePorts } from '../src/walk/bringup.ts';
+import { COMPARE_ATTEMPTS,failedCompares,touchesReference } from '../src/walk/compare.ts';
+import { milestoneProgress,milestoneState,walkItemsDue,walksPending } from '../src/walk/milestones.ts';
+import { milestoneEdges,milestoneWaits } from '../src/walk/node.ts';
+import { polishDue } from '../src/walk/polish.ts';
+import { coversReference,evidencePath,walkDraft,walkRefusals } from '../src/walk/report.ts';
+import { walkSessionMcp } from '../src/walk/walk.ts';
+import { J1_EVIDENCE,walkAnswer } from './fixtures/walk-common.ts';
 import { tmpDir } from './helpers/repo.ts';
-import { J1_EVIDENCE, walkAnswer } from './fixtures/walk-common.ts';
 
 type U = Readonly<{ id: string; after?: readonly string[]; origin?: string; reenters?: string; polish?: Readonly<{ milestone: string; proposal: string }> }>;
 
@@ -275,7 +275,7 @@ describe('a walk report held to its inputs (src/walk/report.ts)', () => {
   test('report.polish-refusals: a scope covering no reference, an id the plan holds, a spec for another unit', () => {
     const d = dir();
     const spec = (unit: string) => ({
-      schema: 'roadmap/spec-m1', unit, rev: 1, lanes: [{ id: 'l', argv: ['true'], cwd: '.', env: { set: [], pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], evidenceExcludes: [], state: 'active' }],
+      schema: 'roadmap/spec-m1', unit, rev: 1, lanes: [{ id: 'l', argv: ['true'], cwd: '.', env: { set: [], pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], evidenceExcludes: [], state: 'active' }],
       acceptance: [{ id: 'A1', clause: 'c', failLoudIfUndelivered: true, state: 'active' }], scope: ['design/**'], resources: [], decisions: [], facts: [],
       cites: { contracts: [], rulings: [] }, obligations: [], repairs: [],
     });

@@ -38,25 +38,26 @@
 // item's wake. The scripted root agent waits on the journal's frozen flow facts (`untilFact`).
 //
 // Every command's failure is loud (the process exits non-zero; the driver records the session failed).
-import { spawnSync } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
-import { spawn } from 'node:child_process';
-import { closeSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { spawn,spawnSync } from 'node:child_process';
+import { createHash,randomUUID } from 'node:crypto';
+import { closeSync,cpSync,existsSync,mkdirSync,openSync,readFileSync,rmSync,writeFileSync } from 'node:fs';
+import { join,resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { amendmentsOf, readArcRef } from '../../src/chain.ts';
+import { amendmentsOf,readArcRef } from '../../src/chain.ts';
 import type { Fact } from '../../src/core/events.ts';
 import { arcId } from '../../src/core/ids.ts';
 import { readJournal } from '../../src/core/log.ts';
 import { absPath } from '../../src/core/values.ts';
 import { parseDebtBlock } from '../../src/docs/debt.ts';
-import { laneRevOf, parseObligations } from '../../src/holistic/types.ts';
+import { laneRevOf,parseObligations } from '../../src/holistic/types.ts';
 import {
-  type ArcNo, ARC1_CURATION, ARC1_QUESTION, CENSUS_OTHERS, CORPUS_ROOT, DIRECTION, FILES, LANES, MAPPING, OBLIGATIONS, SLICES, SLOW_LANE, TEST_PATHS, UNITS, corpusFor,
-  PASS_PATH, specLane, specOf, suiteLanes, unitsOf,
+type ArcNo,ARC1_CURATION,ARC1_QUESTION,CENSUS_OTHERS,CORPUS_ROOT,DIRECTION,FILES,LANES,MAPPING,OBLIGATIONS,
+PASS_PATH,
+SLICES,SLOW_LANE,TEST_PATHS,UNITS,corpusFor,
+specLane,specOf,suiteLanes,unitsOf,
 } from './golden.ts';
-import { MAIN, layout } from './layout.ts';
-import { BLOCKED_SEEN_BARRIER, CHECKPOINT_AMENDMENT, DRIFT_CHECKPOINT, FLOW_1, FLOW_2 } from './scenario.ts';
+import { MAIN,layout } from './layout.ts';
+import { BLOCKED_SEEN_BARRIER,CHECKPOINT_AMENDMENT,DRIFT_CHECKPOINT,FLOW_1,FLOW_2 } from './scenario.ts';
 
 export const FAKE_SCRIPTS = ['story', 'vision-silent'] as const;
 export type FakeScript = (typeof FAKE_SCRIPTS)[number];
@@ -234,7 +235,7 @@ const writeFile = (path: string, text: string): void => {
 };
 
 function arcLane(id: string, journey: string) {
-  return { id, argv: ['node', '--test', journey], cwd: '.', env: PASS_PATH, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], reporter: 'node-test', testPaths: [...TEST_PATHS] };
+  return { id, argv: ['node', '--test', journey], cwd: '.', env: PASS_PATH, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], reporter: 'node-test', testPaths: [...TEST_PATHS] };
 }
 
 type Pin = Readonly<{ rules: readonly Readonly<{ id: string; textSha256: string }>[] }>;
@@ -260,7 +261,7 @@ function obligationsOf(n: ArcNo, pin: Pin) {
       const future = o.deliveredIn === n;
       return {
         id: o.id, rev: 1, statement: o.statement, rule: ref(o.rule), serves: o.serves, witness,
-        proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: revs.get(o.lane), witness },
+        proofJudgment: { verdict: 'proves', obligationRev: 1,  witness: {testIds: witness.testIds, ...(('files' in witness ? {files: witness.files} : {}))} },
         deliveredBy: future ? [...o.deliveredBy] : [], activation: future ? 'future' : 'must-hold', contracts: [], state: { type: 'active' },
       };
     }),
@@ -444,12 +445,13 @@ function onWake(c: Ctx, prompt: string): string {
   for (const w of lines) {
     if (w.event === 'needs-user' && w.reason === 'pack-review' && !c.state.packFixed) {
       // The finding is right: guard's spec gains the clause, and the changed pack is reviewed again.
-      const path = join(current.inputs, 'guard.json');
+      const exported = join(l.inputs, `${current.arc}.pack-fix`);
+      const base = JSON.parse(c.t.roadmap(['inputs', 'export', '--repo', l.product, '--arc', current.arc, '--out', exported])) as { planRev: number };
+      const path = join(exported, 'guard.json');
       const spec = JSON.parse(readFileSync(path, 'utf8')) as { rev: number; acceptance: { id: string; clause: string; failLoudIfUndelivered: boolean; state: string }[] };
-      spec.rev += 1;
       spec.acceptance.push({ id: `A${spec.acceptance.length + 1}`, clause: 'A refused booking writes nothing: the ledger file is unchanged.', failLoudIfUndelivered: true, state: 'active' });
       writeFile(path, json(spec));
-      c.t.roadmap(['apply', '--repo', l.product, '--arc', current.arc]);
+      c.t.roadmap(['apply', '--repo', l.product, '--arc', current.arc, '--from', exported, '--rev', String(base.planRev), '--reason', 'Address the blocking pack-review finding on guard.']);
       c.state.packFixed = true;
       return `The pack review's blocking finding on guard was right: guard's spec now says a refused booking writes nothing (rev 2), applied; the changed pack is reviewed again. ${RUNNING(current)}`;
     }
@@ -624,7 +626,7 @@ function logIntervention(c: Ctx, arc: string, lever: string, bullets: Readonly<{
  * (scenario.ts); its bundle departs from the plan, so a non-blocking `divergence-digest` item is raised. Once the drift
  * audit that bundle owes has its checkpoint (`DRIFT_CHECKPOINT`) decided, the run-only limit goes and notice runs. Its
  * `slow` lane hangs (golden.ts SLOW_LANE): the root agent pauses notice and ends the turn. The next wake therefore holds
- * exactly the digest and the run newly `held`, both open before the watch starts (`resumePaused` follows).
+ * the run newly `held`; clearing run-only closed the digest through the arc subject (`resumePaused` follows).
  */
 function superviseArc2(c: Ctx, a: ArcState): string {
   const l = layout(c.dir);

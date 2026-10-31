@@ -18,39 +18,41 @@
 // evals-m4a.flow-loop, evals-m4a.flow-criteria, evals-m4a.plant-lane.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, readFileSync, readdirSync } from 'node:fs';
+import { cpSync,existsSync,readFileSync,readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { after,before,describe,test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { after, before, describe, test } from 'node:test';
-import { type ArcRef, amendmentsOf } from '../../src/chain.ts';
-import type { Event, Fact, Parent } from '../../src/core/events.ts';
+import { stageTree,verdictProblems } from '../../evals/m4a/adjudicate.ts';
+import {
+CRITERIA,
+type CheckResult,
+type FlowArc,LEVERS,arcView,chainOf,flowArcOf,flowConstraintVerdict,flowLoopVerdict,flowShardVerdict,parseOperatorLog,
+rulerArgvs,rulerRecordProblems,triplesProblems,
+} from '../../evals/m4a/check.ts';
+import {
+MIN_ARC1_UNITS,type Report,SPEND_APPROVED,type Turn,codeAnswer,failFastText,firstPlanCheck,ghOnPath,launchEnv,numberedQuestions,openBriefQuestions,
+plantCheck,plantLaneOf,spendHold,stagePlugin,
+} from '../../evals/m4a/driver.ts';
+import { fakeArc,fakeHostDir } from '../../evals/m4a/fake-root.ts';
+import { FILES,FITS_WITNESS,LANES,READOUTS,REPLAY_LANE,SHARD,SLOW_LANE,SUITE_LANE,corpusFor,rawCorpus,unitsOf } from '../../evals/m4a/golden.ts';
+import { type ArcView,defectVerdicts,matches,readKey,spanPresent } from '../../evals/m4a/key.ts';
+import { PLANT,SEED_SUITE_ARGV,layout } from '../../evals/m4a/layout.ts';
+import { DRIFT_CHECKPOINT,FLOW_1,FLOW_2 } from '../../evals/m4a/scenario.ts';
+import { CLOCK_FILE,FAKE_TICK_MS,PAID_TICK } from '../../evals/m4a/setup.ts';
+import { ANSWER_KEY,needles,toolTraffic } from '../../evals/m4a/transcript.ts';
+import { type ArcRef,amendmentsOf } from '../../src/chain.ts';
+import type { Event,Fact,Parent } from '../../src/core/events.ts';
 import { arcId } from '../../src/core/ids.ts';
 import { readJournal } from '../../src/core/log.ts';
 import { absPath } from '../../src/core/values.ts';
 import { parseDebtBlock } from '../../src/docs/debt.ts';
-import { verdictProblems, stageTree } from '../../evals/m4a/adjudicate.ts';
-import {
-  type CheckResult, CRITERIA, type FlowArc, LEVERS, arcView, chainOf, flowArcOf, flowConstraintVerdict, flowLoopVerdict, flowShardVerdict, parseOperatorLog,
-  rulerArgvs, rulerRecordProblems, triplesProblems,
-} from '../../evals/m4a/check.ts';
-import {
-  MIN_ARC1_UNITS, type Report, SPEND_APPROVED, type Turn, codeAnswer, failFastText, firstPlanCheck, ghOnPath, launchEnv, numberedQuestions, openBriefQuestions,
-  plantCheck, plantLaneOf, spendHold, stagePlugin,
-} from '../../evals/m4a/driver.ts';
+import { parseObligations } from '../../src/holistic/types.ts';
+import { collectWitness,witnessEnv } from '../../src/holistic/witness.ts';
+import type { PlanM1 } from '../../src/input/plan.ts';
 import type { BriefPayload } from '../../src/phase0/types.ts';
 import { itemKey } from '../../src/watch.ts';
-import { fakeArc, fakeHostDir } from '../../evals/m4a/fake-root.ts';
-import { FILES, FITS_WITNESS, LANES, READOUTS, REPLAY_LANE, SHARD, SLOW_LANE, SUITE_LANE, corpusFor, rawCorpus, unitsOf } from '../../evals/m4a/golden.ts';
-import { DRIFT_CHECKPOINT, FLOW_1, FLOW_2 } from '../../evals/m4a/scenario.ts';
-import { CLOCK_FILE, FAKE_TICK_MS, PAID_TICK } from '../../evals/m4a/setup.ts';
-import { collectWitness, witnessEnv } from '../../src/holistic/witness.ts';
-import { parseObligations } from '../../src/holistic/types.ts';
-import type { PlanM1 } from '../../src/input/plan.ts';
-import { type ArcView, defectVerdicts, matches, readKey, spanPresent } from '../../evals/m4a/key.ts';
-import { PLANT, SEED_SUITE_ARGV, layout } from '../../evals/m4a/layout.ts';
-import { ANSWER_KEY, needles, toolTraffic } from '../../evals/m4a/transcript.ts';
-import { type Exit, runUntilExit } from '../helpers/proc.ts';
-import { type RunScope, assertNoSurvivors, teardown, track } from '../helpers/reap.ts';
+import { type Exit,runUntilExit } from '../helpers/proc.ts';
+import { type RunScope,assertNoSurvivors,teardown,track } from '../helpers/reap.ts';
 import { tmpDir } from '../helpers/repo.ts';
 
 after(assertNoSurvivors);
@@ -276,8 +278,16 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     )).sort());
     assert.deepEqual(wakes, [
       ['needs-user:pack-review'], ['units:blocked'], ['units:complete'],
-      ['units:blocked'], ['needs-user:divergence-digest', 'units:held'], ['units:complete'],
+      ['units:blocked'], ['units:held'], ['units:complete'],
     ]);
+    const digests = raisedOf(arc2, 'divergence-digest', story.dir, 2);
+    assert.equal(digests.length, 1, 'the bundle raised one divergence digest');
+    const digest = digests[0]!;
+    const released = factsOf(arc2, 'run-only').find((f) => f.units === null && f.seq > digest.seq);
+    assert.ok(released !== undefined, 'the root cleared run-only after the digest was raised');
+    const digestClosed = factsOf(arc2, 'needs-user-acked').filter((f) => f.id === digest.id);
+    assert.deepEqual(digestClosed.map((f) => [f.command, f.choice]), [[released.command, null]], 'the subject action closed exactly the original digest');
+    assert.ok(digestClosed[0]!.seq > released.seq, 'closure follows the successful subject action');
     // The chain boundaries (paid runs 12, 13): arc 1's check-in is one final message, no numbered question (P-1 stays in
     // the brief), a hold for the spend approval, then the action taken on resume (arc 2 starts under K = 1: the bootstrap
     // start counts as acked); arc 2's carries the stop.
@@ -315,7 +325,7 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     assertEveryStepPlayed(story.dir, [1, 2]);
   });
 
-  test('evals-m4a.pack-review-hold: review-1\'s blocking finding holds admission until the fixed pack\'s review-2 supersedes it', () => {
+  test('evals-m4a.pack-review-hold: the repair apply closes review-1\'s item, and admission waits for review-2', () => {
     const started = factsOf(arc1, 'pack-review-started');
     const ended = factsOf(arc1, 'pack-review-ended');
     assert.deepEqual(started.map((s) => s.job), ['review-1', 'review-2']);
@@ -327,7 +337,9 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     assert.ok(fix !== undefined && fix.seq > item.seq && fix.seq < started[1]!.seq, 'the root agent\'s apply came between the item and review-2');
     const dispatch = factsOf(arc1, 'dispatch');
     assert.ok(dispatch.length > 0 && dispatch.every((d) => d.seq > ended[1]!.seq), 'nothing was admitted before review-2 ended');
-    assert.deepEqual(factsOf(arc1, 'needs-user-acked').filter((a) => a.id === item.id), [], 'review-2 superseded the item: nobody acked it');
+    const closed = factsOf(arc1, 'needs-user-acked').filter((a) => a.id === item.id);
+    assert.deepEqual(closed.map((a) => [a.command, a.choice]), [[fix.command, null]], 'the repair apply closes exactly the original pack item');
+    assert.ok(closed[0]!.seq > fix.seq && closed[0]!.seq < started[1]!.seq, 'closure follows the repair and precedes review-2');
   });
 
   test('evals-m4a.amendments-debt: arc 1 banks a gate note and a deferred finding and derives two amendments; arc 2 dispositions all four', () => {
@@ -675,7 +687,7 @@ test('evals-m4a.wake-key (paid run 2): needs-user ids are arc-scoped, so an id r
 // ---------------------------------------------------------------------------------------------------
 // M4b: the flow criteria and the fail-fast on synthetic records (no run needed)
 
-const lane = (id: string, argv: readonly string[]) => ({ id, argv: [...argv], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [] });
+const lane = (id: string, argv: readonly string[]) => ({ id, argv: [...argv], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [] });
 const planOf = (argv: readonly string[], units = MIN_ARC1_UNITS): PlanM1 => ({
   suite: { lanes: [lane(SUITE_LANE, argv), lane(REPLAY_LANE.id, REPLAY_LANE.argv)] }, units: Array.from({ length: units }, (_, i) => ({ id: `u${i + 1}` })),
 }) as unknown as PlanM1;

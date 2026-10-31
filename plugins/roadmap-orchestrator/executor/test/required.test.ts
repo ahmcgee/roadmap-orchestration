@@ -2,13 +2,13 @@
 // leaves missing (`missingWitnesses`, the one comparator of the lanes stage and `witness-check`). Pure: the journal view is
 // a stub holding exactly what `requiredWitnesses` reads (published merges, latched obligations).
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
-import type { DoneRecord, IntentRecord } from '../src/core/events.ts';
-import { type ObligationId, type Sha, envId, invocationIdOf, laneId, laneRev, opId, sha, unitId } from '../src/core/ids.ts';
+import { describe,it } from 'node:test';
+import type { DoneRecord,IntentRecord } from '../src/core/events.ts';
+import { type ObligationId,type Sha,envId,invocationIdOf,laneId,laneRev,opId,sha,unitId } from '../src/core/ids.ts';
 import type { JournalView } from '../src/core/interfaces.ts';
-import { type SpecM1, specM1 } from '../src/core/records.ts';
-import { missingWitnesses, requiredWitnesses, smokeTargets } from '../src/holistic/required.ts';
-import { type Obligations, type WitnessRecord, parseObligations } from '../src/holistic/types.ts';
+import { type SpecM1,specM1 } from '../src/core/records.ts';
+import { missingWitnesses,requiredWitnesses,smokeTargets } from '../src/holistic/required.ts';
+import { type Obligations,type WitnessRecord,parseObligations } from '../src/holistic/types.ts';
 
 const ARC = 'arc-1';
 const C1 = sha('1'.repeat(40));
@@ -29,10 +29,10 @@ function view(published: Readonly<Record<string, Sha>>, latched: readonly string
   return stub as unknown as JournalView;
 }
 
-const LANE = { id: 'journey', argv: ['node', 'j.js'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], reporter: 'jsonl' };
+const LANE = { id: 'journey', argv: ['node', 'j.js'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], reporter: 'jsonl' };
 const obligation = (id: string, tests: readonly string[], over: object = {}) => ({
   id, rev: 1, statement: `s ${id}`, docRef: { path: 'docs/a.md', anchor: '#a', quotedText: 'q' }, serves: ['V-1'], witness: { lane: 'journey', testIds: tests },
-  proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: '0123456789abcdef', witness: { lane: 'journey', testIds: tests } }, deliveredBy: [], activation: 'must-hold',
+  proofJudgment: { verdict: 'proves', obligationRev: 1,  witness: {  testIds: tests } }, deliveredBy: [], activation: 'must-hold',
   contracts: [], state: { type: 'active' }, ...over,
 });
 const OBLIGATIONS: Obligations = parseObligations({
@@ -44,7 +44,7 @@ const OBLIGATIONS: Obligations = parseObligations({
     obligation('I-4', ['t-kept', 't-shared']),
     obligation('I-5', ['t-future-declared'], { activation: 'future', deliveredBy: ['u9'] }),
     obligation('I-6', ['t-latched'], { activation: 'future', deliveredBy: ['u0'] }),
-    obligation('I-7', ['t-waived'], { activation: 'future', deliveredBy: ['u1'], state: { type: 'waived', ruling: 'C-1' } }),
+    obligation('I-7', ['t-waived'], { activation: 'future', deliveredBy: ['u1'], state: { type: 'waived', reason: 'test disposition', rev: 2 } }),
   ],
 });
 const spec = (over: object = {}): SpecM1 => specM1({
@@ -109,7 +109,7 @@ describe('smoke-targets', () => {
 });
 
 const record = (tests: readonly [string, number, WitnessRecord['records'][number]['outcome']][], malformed = false): WitnessRecord => ({
-  v: 1, lane: laneId('journey'), laneRev: laneRev('0123456789abcdef'), envId: envId('fedcba9876543210'), treeSha: AT, inv: invocationIdOf('arc-1/3#1'),
+  v: 2, lane: laneId('journey'), laneRev: laneRev('0123456789abcdef'), envId: envId('fedcba9876543210'), treeSha: AT, inv: invocationIdOf('arc-1/3#1'),
   runner: 'jsonl', purpose: 'witness', malformed, records: malformed ? [] : tests.map(([testId, selected, outcome]) => ({ testId, selected, outcome })),
 });
 const ref = (testId: string, lane = 'journey') => ({ lane: laneId(lane), testId });

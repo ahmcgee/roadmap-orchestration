@@ -71,12 +71,12 @@ describe('report: the final report ends the build', { concurrency: true }, () =>
   });
 
   for (const as of ['claude', 'codex'] as const) {
-    it(`report.${as}-legacy-lingers: an old lanesRun report still ends the build after the grace`, T, async () => {
+    it(`report.${as}-legacy-lingers: a reported answer with removed lanesRun is refused by the current reader`, T, async () => {
       const legacy = { ...report('legacy', true), lanesRun: [{ lane: 'old', exit: 0 }] };
       const run = await build(as, [{ type: 'emit', value: legacy }, { type: 'hang', ms: LINGER_MS }]);
       assert.equal(run.exit.cause, 'reported');
       assert.deepEqual(run.result.outcome, { kind: 'success', value: legacy });
-      assert.deepEqual(buildOutput(legacy, 'build'), report('legacy', true));
+      assert.throws(() => buildOutput(legacy, 'build'), /lanesRun/);
       assert.ok(run.wallMs >= REPORT_GRACE_MS && run.wallMs < REPORT_GRACE_MS + 20_000);
     });
   }
@@ -123,11 +123,11 @@ describe('report: reading a reported build', () => {
     assert.equal(failed.type === 'backend' ? failed.outcome.kind : null, 'malformed');
   });
 
-  it('report.build-reader: an answer that is not final is not a report; one an earlier executor recorded reads as final', () => {
+  it('report.build-reader: an answer that is not final is not a report; one without final is refused', () => {
     assert.equal(buildOutput(report('s', true), 'build').final, true);
     assert.throws(() => buildOutput(report('s', false), 'build'), SchemaError);
     const { final: _, ...earlier } = report('s', true);
-    assert.equal(buildOutput(earlier, 'build').final, true);
+    assert.throws(() => buildOutput(earlier, 'build'), /final/);
     const schema = BUILD_SCHEMA as { required: string[]; properties: Record<string, { type: string }> };
     assert.equal(schema.properties['final']?.type, 'boolean');
     assert.ok(schema.required.includes('final'));

@@ -80,7 +80,7 @@ import { type Sampled, capturesInsideRevisions, describeRecord, holisticProduct,
 import { A, B, C, type Concurrent, type Peer, PEERS, layoutConcurrent } from '../fixtures/cm-common.ts';
 import { type ExecRun, journalOf } from '../fixtures/exec-common.ts';
 import { type Hook, type Laid, callsMatchSteps, finalReason, supervisedRun } from '../fixtures/pm-common.ts';
-import { BATCH_TRACE, LABEL_TRACE, appendTrace, inRevisionAt } from '../fixtures/pm-trace.ts';
+import { BATCH_TRACE, LABEL_TRACE, appendTrace, assertRevisionNoticeRecovery, inRevisionAt, traceAt } from '../fixtures/pm-trace.ts';
 import { startCli, startLine, startedGenerations, stateOf } from '../fixtures/sup-common.ts';
 
 after(assertNoSurvivors);
@@ -611,8 +611,8 @@ const JOB_ROW_NAMES: readonly JobRow[] = ['audit', 'bundle', 'batch', 'preempt']
 const JOB_PEER: Readonly<Record<JobRow, HolisticPeer>> = { audit: 'jobs', bundle: 'jobs', batch: 'batch', preempt: 'preempt' };
 /** The units whose build is live while the scenario's job steps. */
 const LIVE_BUILDS: Readonly<Record<HolisticPeer, readonly string[]>> = { jobs: [A, B], batch: [C], preempt: [] };
-/** The needs-user items every run of the scenario raises: the applied bundle's divergence digest. */
-const JOB_NEEDS_USER: Readonly<Record<HolisticPeer, readonly string[]>> = { jobs: ['divergence-digest'], batch: [], preempt: [] };
+/** The applied bundle raises its divergence digest and the schema 2 revision notice. */
+const JOB_NEEDS_USER: Readonly<Record<HolisticPeer, readonly string[]>> = { jobs: ['divergence-digest', 'revision-notice'], batch: [], preempt: [] };
 const jobRowLabels = (row: JobRow): readonly string[] => [...new Set(crashCells(JOB_ROWS[row]).map((c) => c.label))].sort();
 const jobBoundaryOf = (row: JobRow, label: string): Boundary => crashCells(JOB_ROWS[row]).find((c) => c.label === label)!.boundary;
 /** The scenario's units in plan order (the batch scenario admits its repair units after u3). */
@@ -665,6 +665,9 @@ async function jobReference(t: Owner, peer: HolisticPeer): Promise<JobReference>
     }
   } else {
     assert.equal(ref.outcomes[A]!.filter((o) => o === 'candidate:preempted').length, 1, 'u1\'s candidate was preempted');
+    assert.equal(ref.outcomes[A]!.filter((o) => o === 'gate:approve').length, 2, 'the cited ledger edit requires a fresh gate');
+    assert.equal(ref.outcomes[A]!.filter((o) => o === 'build:success').length, 1, 'a ledger edit does not repeat the build');
+    assert.equal(git(r.repo, 'show', 'main:contracts/api.md'), git(r.repo, 'show', `${baselineOf(r)}:contracts/api.md`), 'a plain ledger edit does not rewrite a frozen contract');
     assert.deepEqual([docsFfs(snap), commandsApplied(snap)], [1, 1], 'the rule applied once with one docs ff');
   }
   return ref;
@@ -760,6 +763,7 @@ async function jobCell(t: Owner, ref: JobReference, row: JobRow, c: Sampled): Pr
   const m = callsMatchSteps(r);
   assert.deepEqual(m, { steps: m.steps, calls: m.steps, unmatched: 0 }, 'every backend call matched its step once: no completed call made twice');
   const end = journalOf(r);
+  assertRevisionNoticeRecovery(crash, end, c.label);
   const run = oracleRun(absPath(r.repo), absPath(r.runDir), arcId(r.arc));
   for (const u of jobUnits(ref.peer)) assertWorkloadsDisjoint(r, end, u);
   const units = Object.fromEntries(jobUnits(ref.peer).map((u) => [u, 'merged' as const]));
@@ -778,7 +782,7 @@ async function jobCell(t: Owner, ref: JobReference, row: JobRow, c: Sampled): Pr
   }
   // The job's recovery is the label's (a log append's: the record's), the peers' the adoption of their live builds.
   const cut = ref.snap.events[c.seq - 1]!;
-  const label = c.label.startsWith('log.append.') ? appendTrace(c.label, cut, inRevisionAt(ref.snap.events, cut.seq)) : (row === 'batch' ? BATCH_TRACE[c.label] : undefined) ?? LABEL_TRACE[c.label];
+  const label = c.label.startsWith('log.append.') ? appendTrace(c.label, cut, inRevisionAt(ref.snap.events, cut.seq)) : (row === 'batch' ? BATCH_TRACE[c.label] : undefined) ?? traceAt(c.label, ref.snap.events, c.seq);
   if (label === undefined) throw new Error(`no recovery trace is declared for ${c.label}`);
   const by = recoveredByOwner(end);
   const jobBy = [...by].filter(([o]) => !o.startsWith('unit:')).flatMap(([, v]) => v.map((x) => x.split(':')[1]!));

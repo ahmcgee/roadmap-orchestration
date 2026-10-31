@@ -1,5 +1,7 @@
 // The recovery trace each executor crash point allows (test/oracle.ts `Trace`), shared by the whole-pipeline
 // matrix (test/serial/pipeline-matrix.test.ts) and the concurrent one (test/serial/concurrent-matrix.test.ts).
+import assert from 'node:assert/strict';
+import type { LogSnapshot } from '../../src/core/log.ts';
 import type { Event } from '../../src/core/events.ts';
 import { type Trace, UNCRASHED } from '../oracle.ts';
 
@@ -157,4 +159,24 @@ export function inRevisionAt(events: readonly Event[], seq: number): boolean {
     if ((e.type === 'done' || e.type === 'abort') && open.has(e.op)) open.delete(e.op);
   }
   return open.size > 0;
+}
+
+/** A notice inside a revision recovers its child raise and then reconciles its parent commit. */
+export function traceAt(label: string, events: readonly Event[], seq: number): Trace | undefined {
+  if (label === 'needsuser.raise.before-publish' && inRevisionAt(events, seq)) return R('redone', 'reconciled');
+  return LABEL_TRACE[label];
+}
+
+/** Require both sides of that dependency, rather than merely allowing their recovery kinds. */
+export function assertRevisionNoticeRecovery(crash: LogSnapshot, end: LogSnapshot, label: string): void {
+  if (label !== 'needsuser.raise.before-publish' && label !== 'needsuser.raise.after-publish') return;
+  const notice = crash.view.openIntents().find((i) => i.kind === 'needsuser.raise');
+  assert.ok(notice !== undefined, 'the notice raise is open at its publication boundary');
+  if (notice.parent.type !== 'op') return;
+  const parent = crash.view.latestIntent(notice.parent.op);
+  if (parent.kind !== 'revision.commit') return;
+  assert.equal(end.view.doneOf(notice.op)?.recoveredBy, label === 'needsuser.raise.before-publish' ? 'redone' : 'reconciled', 'the original notice raise recovers once');
+  assert.equal(end.view.doneOf(parent.op)?.recoveredBy, 'reconciled', 'the parent revision reconciles after its notice');
+  const notices = end.view.opsOf('needsuser.raise').filter((i) => i.parent.type === 'op' && i.parent.op === parent.op);
+  assert.deepEqual(notices.map((i) => i.op), [notice.op], 'recovery creates no duplicate notice intent');
 }

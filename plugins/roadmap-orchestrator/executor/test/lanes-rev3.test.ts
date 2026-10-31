@@ -7,40 +7,42 @@
 // rows LANE_REUSE, SERIES_CERTIFIED and RED_CLASS (labels lanes.after-reused, lanes.after-census-before-certified,
 // redlane.after-class).
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync,existsSync,readFileSync,rmSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, test } from 'node:test';
-import type { Fact, IntentOf } from '../src/core/events.ts';
+import { describe,test } from 'node:test';
+import type { Fact,IntentOf } from '../src/core/events.ts';
+import { type Sha,invocationId,jobId,opKey,resourceName,sha } from '../src/core/ids.ts';
 import type { JsonValue } from '../src/core/json.ts';
-import { type Sha, invocationId, jobId, opKey, resourceName, sha } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
-import { type LaneDef, RED_FILE, redFile } from '../src/core/records.ts';
-import { absPath, isoTimeOf, repoPattern } from '../src/core/values.ts';
-import type { HostSample } from '../src/host/sample.ts';
-import { holisticInForce, lanes, loadUnitSpec } from '../src/pipeline/stages.ts';
-import { type StageContext, type StageParent, pinDispatch, verificationWorktree } from '../src/pipeline/dispatch.ts';
-import { invocationDir, invoke } from '../src/pipeline/invoke.ts';
-import {
-  LANE_DEADLINE_MS, LANE_GRACE_MS, LANE_STALL_MS, type LaneRuntime, type Series, arcJourneyLane, latestSpecSeries, laneOrder, reserveNow, runJourneySeries, runLaneSeries,
-  seriesLedger, seriesOrder, seriesTree, specSeriesRoot,
-} from '../src/pipeline/lanes.ts';
-import { unitTip } from '../src/pipeline/gate.ts';
-import { runUnit } from '../src/pipeline/unit.ts';
-import { parsePlan } from '../src/input/plan.ts';
+import { type LaneDef,RED_FILE,redFile } from '../src/core/records.ts';
+import { absPath,isoTimeOf } from '../src/core/values.ts';
 import { parseObligations } from '../src/holistic/types.ts';
-import { worktreeCreateOp } from '../src/recover/ops.ts';
-import { runOp } from '../src/pipeline/dispatch.ts';
+import type { HostSample } from '../src/host/sample.ts';
+import { parsePlan } from '../src/input/plan.ts';
+import { type StageContext,type StageParent,pinDispatch,runOp,verificationWorktree } from '../src/pipeline/dispatch.ts';
+import { unitTip } from '../src/pipeline/gate.ts';
+import { invocationDir,invoke } from '../src/pipeline/invoke.ts';
+import {
+LANE_DEADLINE_MS,LANE_GRACE_MS,LANE_STALL_MS,type LaneRuntime,type Series,arcJourneyLane,
+laneOrder,
+latestSpecSeries,
+reserveNow,runJourneySeries,runLaneSeries,
+seriesLedger,seriesOrder,seriesTree,specSeriesRoot,
+} from '../src/pipeline/lanes.ts';
 import { readRedClass } from '../src/pipeline/redlane.ts';
+import { holisticInForce,lanes,loadUnitSpec } from '../src/pipeline/stages.ts';
+import { runUnit } from '../src/pipeline/unit.ts';
+import { worktreeCreateOp } from '../src/recover/ops.ts';
 import type { Acquire } from '../src/schedule/types.ts';
-import { assertFired, writeTrigger } from './helpers/crash.ts';
-import { runFixture } from './helpers/proc.ts';
-import { commitAll, git, tmpDir, writeFiles } from './helpers/repo.ts';
-import { readCalls } from './helpers/scenario.ts';
-import { LANE_PRIORITY, LANE_REUSE, RED_CLASS, SERIES_CERTIFIED, crashCells } from './matrix.ts';
 import { holisticArc } from './fixtures/brake-common.ts';
 import { wire } from './fixtures/publish-common.ts';
-import { DB, type LaneJson, SCENARIO_TIMEOUT_MS, type StageRun, U1, admitAll, keptSpec, planCheckStep, setupUnit, spawnIntents, started } from './fixtures/stage-common.ts';
-import { MUL, codexStep, contextFor, gateStep, mulBuild, outcomes, setupArc, stepUntil } from './fixtures/unit-common.ts';
+import { DB,type LaneJson,SCENARIO_TIMEOUT_MS,type StageRun,U1,admitAll,keptSpec,planCheckStep,setupUnit,spawnIntents,started } from './fixtures/stage-common.ts';
+import { MUL,codexStep,contextFor,gateStep,mulBuild,outcomes,setupArc,stepUntil } from './fixtures/unit-common.ts';
+import { assertFired,writeTrigger } from './helpers/crash.ts';
+import { runFixture } from './helpers/proc.ts';
+import { commitAll,git,tmpDir,writeFiles } from './helpers/repo.ts';
+import { readCalls } from './helpers/scenario.ts';
+import { LANE_PRIORITY,LANE_REUSE,RED_CLASS,SERIES_CERTIFIED,crashCells } from './matrix.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 
@@ -222,7 +224,7 @@ describe('series certificates and lane reuse (F1a)', () => {
   });
 
   test('lanes.inputs-refused-off-spec: a suite lane or an arc lane declaring inputs is refused (a spec lane\'s are dropped since dev.17)', () => {
-    const lane = { id: 'l', argv: ['true'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], inputs: ['src/**'] };
+    const lane = { id: 'l', argv: ['true'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], inputs: ['src/**'] };
     const plan = {
       schema: 'roadmap/plan-m1', arc: 'arc-1', integrationBranch: 'main', baseline: 'a'.repeat(40), worktreeRoot: '/tmp/wt', contracts: [], rulings: 'r.md',
       architectureDoc: 'A.md', direction: 'd', suite: { lanes: [lane] }, resources: [], units: [{ id: 'u1', spec: 'u1.json', risk: 'low', scope: ['src/**'], resources: [] }],
@@ -350,7 +352,7 @@ describe('the red class and the repeat skip (F2, F3)', () => {
     assert.throws(() => readBack(run, 1, run.base), /red class \(red\.json\) was never written/);
   });
 
-  test('redlane.unstamped-frozen-table: an unstamped (1.0.0-dev.6) run classifies with the frozen table, so a signature added since never re-reads it', T, async () => {
+  test('redlane.unstamped-refused: a pre-break rerun without required host evidence fails loudly', T, async () => {
     const run = unitRun([{ id: 'oom', argv: ['sh', '-c', 'echo "Out of memory: Killed process 42" >&2; exit 1'] }]);
     const [lane] = specLanes(run);
     const parent = parentOf(1);
@@ -364,10 +366,7 @@ describe('the red class and the repeat skip (F2, F3)', () => {
     });
     await once(lane!.argv);
     await once(['true']);
-    const [record] = readBack(run, 1, run.base);
-    assert.deepEqual([record!.signatures, record!.flaky, record!.diagnostic?.verdict, record!.hostSuspected], [[], true, 'pass', null], 'no signature in the dev.6 table: a diagnostic rerun, flaky');
-    assert.equal(readRedClass(record!.evidenceDir), null);
-    assert.equal(existsSync(invocationDir(run.runDir, record!.inv)), true);
+    assert.throws(() => readBack(run, 1, run.base), /rerun after a signature without host evidence/, 'a pre-break rerun receives no historical classification');
   });
 
   test('lanes.host-suspected: a red run whose output carries a host signature records it with the host evidence', T, async () => {

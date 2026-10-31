@@ -8,12 +8,12 @@
 // sched.no-verdict-escalation, sched.stop-kills-lens, draining, and the M3 command
 // and item rules (commands.audit, needsuser.m3-blocking).
 import assert from 'node:assert/strict';
+import { describe,test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { describe, test } from 'node:test';
 import { applyCommand } from '../src/commands/apply.ts';
-import { submitCommand, terminalReceipt } from '../src/commands/queue.ts';
+import { submitCommand,terminalReceipt } from '../src/commands/queue.ts';
 import type { Fact } from '../src/core/events.ts';
-import { type NeedsUserId, type Sha, envId, jobId, sha, unitId } from '../src/core/ids.ts';
+import { type NeedsUserId,type Sha,envId,jobId,sha,unitId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import type { CommandBody } from '../src/core/records.ts';
 import { absPath } from '../src/core/values.ts';
@@ -21,33 +21,33 @@ import { renderConstraints } from '../src/docs/constraints.ts';
 import { runAudit } from '../src/holistic/audit.ts';
 import { runCheckpoint } from '../src/holistic/checkpoint.ts';
 import { quiescentGenerations } from '../src/holistic/convergence.ts';
-import { requirePlanInForce, revisionInForce } from '../src/input/inforce.ts';
-import { m3Blocking, raiseNeedsUser, raisedFor, readNeedsUser } from '../src/needsuser.ts';
+import { requirePlanInForce,revisionInForce } from '../src/input/inforce.ts';
+import { m3Blocking,raiseNeedsUser,raisedFor,readNeedsUser } from '../src/needsuser.ts';
 import { runBaseline } from '../src/pipeline/baseline.ts';
-import { publishCloseOut } from '../src/pipeline/publish.ts';
-import { runUnit, step } from '../src/pipeline/unit.ts';
-import { recover } from '../src/recover/recover.ts';
-import { completionBlockers, escalateNoVerdict, noVerdictDelayMs, obligationsOn, recordedLaneEnv, settleBatch } from '../src/schedule/scheduler.ts';
-import { status } from '../src/status.ts';
 import { laneEnvId } from '../src/pipeline/lanes.ts';
+import { publishCloseOut } from '../src/pipeline/publish.ts';
 import { holisticInForce } from '../src/pipeline/stages.ts';
+import { runUnit,step } from '../src/pipeline/unit.ts';
+import { recover } from '../src/recover/recover.ts';
+import { completionBlockers,escalateNoVerdict,noVerdictDelayMs,obligationsOn,recordedLaneEnv,settleBatch } from '../src/schedule/scheduler.ts';
 import { parseRulings } from '../src/spec/rulings.ts';
-import { reached, release } from './helpers/barrier.ts';
-import { assertFired, writeTrigger } from './helpers/crash.ts';
-import { checkpointAnswer, checkpointStep, lensStep, noteLensStep, twoOpBundleSecondInvalid } from './helpers/holistic.ts';
-import { runFixture } from './helpers/proc.ts';
-import { git, tmpDir } from './helpers/repo.ts';
-import { type Step, readCalls } from './helpers/scenario.ts';
-import { moduleFiles, unitSteps } from './fixtures/audit-common.ts';
-import { TERMINAL_SNAPSHOT, crashCells } from './matrix.ts';
-import { F1, approveBoth, batchArc, publish } from './fixtures/batch-common.ts';
+import { status } from '../src/status.ts';
+import { moduleFiles,unitSteps } from './fixtures/audit-common.ts';
+import { F1,approveBoth,batchArc,publish } from './fixtures/batch-common.ts';
 import { holisticArc } from './fixtures/brake-common.ts';
-import { applyVision, checkpointArc } from './fixtures/checkpoint-common.ts';
+import { applyVision,checkpointArc } from './fixtures/checkpoint-common.ts';
 import { until } from './fixtures/exec-common.ts';
-import { openBefore, witnessDraft } from './fixtures/repair-common.ts';
-import { NOOP, addUnit, completingArc, contextsOf, startHolistic, wired } from './fixtures/sched-m3-common.ts';
-import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
-import { type ArcDescriptor, type ArcRun, appendSteps, applyBody, codexStep, commandContextFor, contextFor, setupArc } from './fixtures/unit-common.ts';
+import { openBefore,witnessDraft } from './fixtures/repair-common.ts';
+import { NOOP,addUnit,completingArc,contextsOf,startHolistic,wired } from './fixtures/sched-m3-common.ts';
+import { SCENARIO_TIMEOUT_MS,admitAll,planCheckStep } from './fixtures/stage-common.ts';
+import { type ArcDescriptor,type ArcRun,appendSteps,applyBody,codexStep,commandContextFor,contextFor,syncInputs,setupArc } from './fixtures/unit-common.ts';
+import { reached,release } from './helpers/barrier.ts';
+import { assertFired,writeTrigger } from './helpers/crash.ts';
+import { checkpointAnswer,checkpointStep,lensStep,noteLensStep,twoOpBundleSecondInvalid } from './helpers/holistic.ts';
+import { runFixture } from './helpers/proc.ts';
+import { git,tmpDir } from './helpers/repo.ts';
+import { type Step,readCalls } from './helpers/scenario.ts';
+import { TERMINAL_SNAPSHOT,crashCells } from './matrix.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 const WAIT_MS = 120_000;
@@ -97,7 +97,7 @@ describe('completion (§2.10, A8, A20, G8)', () => {
       assert.deepEqual([covered!.pub, covered!.from, covered!.to], ['docs-1', started!.integrationSha, head(d)], 'docs-only: it covers its own edge (A17)');
       // A8: the close-out renderings are in the tree (arc-lifetime and withdrawn rulings retired), with the obligations' block.
       const revision = revisionInForce(r.ctx.runDir, requirePlanInForce(r.ctx.runDir, r.journal.view));
-      const expected = renderConstraints(parseRulings(revision.ledger.bytes.toString('utf8'), 'ledger'), [...revision.sidecars.values()].map((s) => s.sidecar), 'close-out');
+      const expected = renderConstraints(parseRulings(revision.ledger.bytes.toString('utf8'), 'ledger'), 'close-out');
       assert.equal(`${git(d.repo, 'show', 'main:.roadmap/constraints.md')}\n`, expected);
       assert.match(git(d.repo, 'show', 'main:.roadmap/invariants.md'), /json roadmap-obligations/);
       // The fact after the close-out, then the terminal snapshot.
@@ -182,6 +182,7 @@ describe('completion (§2.10, A8, A20, G8)', () => {
     try {
       await runToComplete(r);
       const first = factsOf(r, 'arc-completed')[0]!;
+      syncInputs(r);
       addUnit(d, 'u2');
       appendSteps(d, [...unitSteps('u2', moduleFiles('div', '/')), lensStep('audit-2', 'vision'), checkpointStep('ckpt-2', NOOP)]);
       const out = await applyCommand(wired(r).commands, submitCommand(r.ctx.runDir, r.journal.view.arc, applyBody(d)));
@@ -362,7 +363,7 @@ describe('stop (B7 follow-up, lead ruling: control applies immediately)', () => 
 });
 
 describe('holistic jobs in the scheduler', () => {
-  test('sched.baseline-before-admission (A6): a must-hold obligation not held at the baseline raises a blocking obligation-baseline, and no unit is admitted until it is acknowledged', T, async () => {
+  test('sched.baseline-before-admission (A6): a must-hold obligation not held at the baseline raises a blocking obligation-baseline, and a refused optionless ack admits nothing; an arc resume closes the item', T, async () => {
     const d = checkpointArc(unitSteps('u1', moduleFiles('mul', '*')), { trees: { '*': { outcomes: { t1: 'fail' } } } });
     const r = contextFor(d);
     const s = startHolistic(r);
@@ -373,8 +374,12 @@ describe('holistic jobs in the scheduler', () => {
       await sleep(3_000);
       assert.deepEqual(factsOf(r, 'stage-outcome'), [], 'no unit stage while the baseline item is open');
       assert.equal(r.journal.view.opsOf('proc.spawn').some((i) => i.expect.subject.purpose === 'backend'), false);
-      submit(r, { type: 'ack', needsUser: item!, choice: null });
-      await until(() => factsOf(r, 'stage-outcome').some((f) => f.unit === 'u1'), WAIT_MS, 'u1 admitted after the ack');
+      const ack = submit(r, { type: 'ack', needsUser: item!, choice: null });
+      await until(() => terminalReceipt(r.ctx.runDir, ack) !== null, WAIT_MS, 'the optionless ack refusal');
+      assert.equal(terminalReceipt(r.ctx.runDir, ack)?.state, 'rejected');
+      assert.deepEqual(factsOf(r, 'stage-outcome'), [], 'the refused ack admits nothing');
+      submit(r, {type: 'resume', target: {type: 'all'}});
+      await until(() => factsOf(r, 'stage-outcome').some((f) => f.unit === 'u1'), WAIT_MS, 'u1 admitted after the arc resume');
       assert.ok(factsOf(r, 'needs-user-acked')[0]!.seq < factsOf(r, 'stage-outcome')[0]!.seq);
     } finally {
       await stopAndClose(r, s);
@@ -647,6 +652,7 @@ describe(`matrix row ${TERMINAL_SNAPSHOT}`, () => {
     const setup = contextFor(d);
     try {
       await runToComplete(setup);
+      syncInputs(setup);
       addUnit(d, 'u2');
       appendSteps(d, [...unitSteps('u2', moduleFiles('div', '/')), lensStep('audit-2', 'vision'), checkpointStep('ckpt-2', NOOP)]);
       const out = await applyCommand(wired(setup).commands, submitCommand(setup.ctx.runDir, setup.journal.view.arc, applyBody(d)));

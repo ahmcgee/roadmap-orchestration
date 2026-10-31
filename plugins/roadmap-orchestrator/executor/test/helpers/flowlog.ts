@@ -1,13 +1,13 @@
 // A synthetic arc log for the flow series' pure tests (src/flow/series.ts): records stamped on a minute clock, holding
 // exactly the fields the series reads (the chain hash is not the series' concern, so `prev` is a constant). Plans and
 // obligations are the few fields the series reads, behind a `SeriesInputs`.
-import type { Event, Fact } from '../../src/core/events.ts';
-import { type ArcId, type LaneId, type UnitId, arcId, commandId, laneId, opId, sha, sha256 } from '../../src/core/ids.ts';
-import type { LaneDef, Stage } from '../../src/core/records.ts';
-import { isoTime, type IsoTime } from '../../src/core/values.ts';
+import type { Event,Fact } from '../../src/core/events.ts';
+import { arcId,commandId,laneId,opId,sha,sha256,type ArcId,type LaneId,type UnitId } from '../../src/core/ids.ts';
+import type { LaneDef,Stage } from '../../src/core/records.ts';
+import { isoTime,type IsoTime } from '../../src/core/values.ts';
 import type { SeriesInputs } from '../../src/flow/series.ts';
 import type { HostFingerprint } from '../../src/flow/types.ts';
-import type { ArcLaneDef, Obligations } from '../../src/holistic/types.ts';
+import type { ArcLaneDef,Obligations } from '../../src/holistic/types.ts';
 import type { PlanM1 } from '../../src/input/plan.ts';
 
 export const ARC = arcId('arc-f');
@@ -32,7 +32,7 @@ export class FlowLog {
 
   #push(min: number, record: object): number {
     const seq = this.events.length + 1;
-    this.events.push({ v: 1, seq, prev: seq === 1 ? null : H, at: atMin(min), arc: this.arc, ...record } as unknown as Event);
+    this.events.push({ v: 2, seq, prev: seq === 1 ? null : H, at: atMin(min), arc: this.arc, ...record } as unknown as Event);
     return seq;
   }
 
@@ -122,7 +122,7 @@ export class FlowLog {
 export const stageOf = (unit: string, stage: Stage, attempt: number) => ({ type: 'stage', unit, stage, attempt }) as const;
 
 export const laneDef = (id: string, argv: readonly string[]): LaneDef =>
-  ({ id: laneId(id), argv, cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [] }) as unknown as LaneDef;
+  ({ id: laneId(id), argv, cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [] }) as unknown as LaneDef;
 export const arcLaneDef = (id: string, argv: readonly string[]): ArcLaneDef => ({ ...laneDef(id, argv), reporter: 'node-test' }) as ArcLaneDef;
 
 export type PlanSketch = Readonly<{

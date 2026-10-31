@@ -34,13 +34,19 @@
 // (`milestonesText`); a build with the browser drive gets the `<browser>` block (`buildBrowserText`).
 // dev.17 (field feedback 2026-10-23 item 1, contract input, no method): a session that does not continue its own gets the
 // `<handover>` block, the executor's records of the work before it; the fix round no longer claims the work is the session's own.
-import type { BuildInputs, PromptModule } from '../inputs.ts';
-import {
-  UNIT_POLICY, bullets, buildBrowserText, documentsXml, handoverText, milestoneDocuments, milestonesText, fastLanesText, referenceIndexText, systemNotesText, rulingsText, suiteLanesText,
-  witnessChecksText,
-} from '../inputs.ts';
 import { BUILD_DELEGATION } from '../delegation.ts';
-import { BUILD_SCHEMA, DECISIONS_FILE } from '../schemas.ts';
+import type { BuildInputs,PromptModule } from '../inputs.ts';
+import {
+UNIT_POLICY,
+buildBrowserText,
+bullets,
+documentsXml,
+fastLanesText,
+handoverText,milestoneDocuments,milestonesText,
+referenceIndexText,rulingsText,systemNotesText,suiteLanesText,
+witnessChecksText,
+} from '../inputs.ts';
+import { BUILD_SCHEMA,DECISIONS_FILE } from '../schemas.ts';
 
 const system = `You are the implementer for one unit of a roadmap build, working alone and unattended in a git worktree. Nobody is watching and nobody will answer a question. The run ends when you return your final structured report; after it, the executor keeps your in-scope changes, runs the spec's lanes in a clean checkout, and a separate reviewer gates the result against the spec.
 
@@ -131,8 +137,7 @@ export const PROMPT: PromptModule<'build'> = {
   system,
   schema: BUILD_SCHEMA,
   fields: [
-    'systemNotes',
-    'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks',
+    'systemNotes', 'notes', 'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks',
     'milestones', 'browser', 'certifiedAt', 'handover',
   ],
   render: (i) => `${documentsXml([
@@ -150,6 +155,7 @@ ${referenceIndexText(i.index)}
 </reference_index>${milestonesText(i.milestones)}${systemNotesText(i.systemNotes)}
 
 <plan_check_notes>
+${i.notes.length === 0 ? '' : `<notes>\n${JSON.stringify(i.notes)}\n</notes>\n`}
 ${i.planCheckNotes === '' ? '(none)' : i.planCheckNotes}
 </plan_check_notes>
 

@@ -13,8 +13,8 @@
 import type { ObligationId } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
 import { repoPath } from '../core/values.ts';
-import { RULES_REGISTRY_FENCE, type RulesRegistry, parseRulesRegistry } from '../corpus/types.ts';
-import { type ObligationDef, type Obligations, obligationSource, parseObligations } from '../holistic/types.ts';
+import { RULES_REGISTRY_FENCE,type RulesRegistry,parseRulesRegistry } from '../corpus/types.ts';
+import { type ObligationDef,type Obligations,obligationSource,parseObligations } from '../holistic/types.ts';
 
 export const OBLIGATIONS_BLOCK_INFO = 'json roadmap-obligations';
 
@@ -40,7 +40,7 @@ function stateText(o: ObligationDef): string {
     case 'waived':
     case 'deferred':
     case 'retired':
-      return `${s.type} by ${s.ruling}`;
+      return `${s.type} by ${s.reason}`;
   }
 }
 

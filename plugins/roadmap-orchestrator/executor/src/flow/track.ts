@@ -18,31 +18,31 @@
 // A verdict window's samples and close (src/flow/verdict.ts): opened at the proposal's `flow-applied`; idle time is the
 // ARC-scope drains (an applied command revision that `drainsArc`, from its submission to its `plan-applied`); the
 // obligation guard reads an obligation as no longer held when a P1 finding over it opened inside the window.
-import type { Event, PlanAppliedFact } from '../core/events.ts';
-import { crashPoint } from '../core/crash.ts';
-import { type CommandId, type JobId, type NeedsUserId, type ObligationId, type ProposalId, type Sha, proposalJob } from '../core/ids.ts';
-import { canonicalJson } from '../core/json.ts';
-import type { JournalView } from '../core/interfaces.ts';
-import { type IsoTime, isoTimeOf } from '../core/values.ts';
 import { submittedAtMs } from '../commands/queue.ts';
-import { dev7ArcRolesDefault } from '../core/upgrade.ts';
+import { crashPoint } from '../core/crash.ts';
+import type { Event,PlanAppliedFact } from '../core/events.ts';
+import { type CommandId,type JobId,type NeedsUserId,type ObligationId,type ProposalId,type Sha,proposalJob } from '../core/ids.ts';
+import type { JournalView } from '../core/interfaces.ts';
+import { canonicalJson } from '../core/json.ts';
+import { type IsoTime,isoTimeOf } from '../core/values.ts';
+
 import type { CheckpointContext } from '../holistic/bundle.ts';
 import { workRemains } from '../holistic/cadence.ts';
 import { drainsArc } from '../input/classify.ts';
-import { FLOW_SERIES_INPUT, arcRolesOf, keepInput } from '../input/inforce.ts';
-import { raiseNeedsUser, raisedWithReason } from '../needsuser.ts';
-import { applyPendingFlow, flowApplyHolds, proofDue } from './apply.ts';
-import { flowSkipped, proposalLine, runFlowJob } from './job.ts';
+import { FLOW_SERIES_INPUT,arcRolesOf,keepInput } from '../input/inforce.ts';
+import { raiseNeedsUser,raisedWithReason } from '../needsuser.ts';
+import { applyPendingFlow,flowApplyHolds,proofDue } from './apply.ts';
 import { codeConstraintOf } from './constraint.ts';
-import { type FlowNow, type FlowReader, flowNow, givensNow, pressureNow, windowNow } from './live.ts';
-import { metricOf, rulerChanges } from './levers.ts';
-import { closedVerdicts, proposalOf, proposalsOf, runningRun } from './log.ts';
+import { flowSkipped,proposalLine,runFlowJob } from './job.ts';
+import { metricOf,rulerChanges } from './levers.ts';
+import { type FlowNow,type FlowReader,flowNow,givensNow,pressureNow,windowNow } from './live.ts';
+import { closedVerdicts,proposalOf,proposalsOf,runningRun } from './log.ts';
 import { runProof } from './proof.ts';
 import type { SeriesInputs } from './series.ts';
 import { chartOf } from './spc.ts';
-import { cooldownOf, dueTriggers, pressureHoldTimes } from './trigger.ts';
-import type { ClosedVerdict, CodeConstraint, FlowAccounting, FlowChart, FlowPressureStatus, FlowProposal, FlowTrigger, FlowWindow, GivenInForce } from './types.ts';
-import { type IdleSpan, afterOf, beforeOf, closeWindow, guardBreaches, verdictOf, windowSamples } from './verdict.ts';
+import { cooldownOf,dueTriggers,pressureHoldTimes } from './trigger.ts';
+import type { ClosedVerdict,CodeConstraint,FlowAccounting,FlowChart,FlowPressureStatus,FlowProposal,FlowTrigger,FlowWindow,GivenInForce } from './types.ts';
+import { type IdleSpan,afterOf,beforeOf,closeWindow,guardBreaches,verdictOf,windowSamples } from './verdict.ts';
 
 export type FlowTrackContext = CheckpointContext;
 
@@ -54,7 +54,6 @@ const now = (): IsoTime => isoTimeOf(new Date());
  */
 export function flowOn(view: JournalView): boolean {
   if (arcRolesOf(view.planApplied()) !== null) return true;
-  dev7ArcRolesDefault();
   return false;
 }
 

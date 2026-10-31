@@ -2,38 +2,38 @@
 // test/fixtures/unit-repo (a small Node project whose `add` is deliberately wrong), a plan and spec whose
 // lanes are real commands, a resource `db` whose probe and teardown are res-tool.ts, and the fake backends
 // behind PATH shims. Also the scenario steps the fakes play and readers for what the run left behind.
-import { cpSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { cpSync,mkdirSync,readFileSync,readdirSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { CommandContext } from '../../src/commands/apply.ts';
 import { sessionContainment } from '../../src/contain/session.ts';
-import type { Event, Fact, IntentOf } from '../../src/core/events.ts';
-import { type Sha, type Sha256Hex, type UnitId, arcId, invocationId, sha, specRev, unitId } from '../../src/core/ids.ts';
+import type { Event,Fact,IntentOf } from '../../src/core/events.ts';
+import { atomicJson } from '../../src/core/fsx.ts';
+import { type Sha,type Sha256Hex,type UnitId,arcId,invocationId,sha,specRev,unitId } from '../../src/core/ids.ts';
 import type { Journal } from '../../src/core/interfaces.ts';
 import type { JsonValue } from '../../src/core/json.ts';
-import { type OpenJournal, openJournal } from '../../src/core/log.ts';
-import { atomicJson } from '../../src/core/fsx.ts';
-import { type LaunchFile, RUNNER_FILE_READERS, type RunStart } from '../../src/core/records.ts';
-import { type AbsPath, absPath, isoTimeOf } from '../../src/core/values.ts';
+import { type OpenJournal,openJournal } from '../../src/core/log.ts';
+import { type LaunchFile,RUNNER_FILE_READERS,type RunStart } from '../../src/core/records.ts';
+import { type AbsPath,absPath,isoTimeOf } from '../../src/core/values.ts';
 import { SCHEMA_VERSION } from '../../src/core/version.ts';
 import { START_FILE } from '../../src/executor.ts';
 import { openHostDir } from '../../src/host/hostdir.ts';
-import { keepCorpusFiles, readInputFiles, recordPlan } from '../../src/input/inforce.ts';
-import { APPLY, phase0InputOf, phase0Rows } from '../../src/phase0/rows.ts';
-import { type PlanM1, type PlanUnit, parsePlan } from '../../src/input/plan.ts';
-import { type Cancelled, type Pinned, type StageContext, isCancelled } from '../../src/pipeline/dispatch.ts';
+import { readHostSample } from '../../src/host/sample.ts';
+import { keepCorpusFiles,readInputFiles,recordPlan } from '../../src/input/inforce.ts';
+import { type PlanM1,type PlanUnit,parsePlan } from '../../src/input/plan.ts';
+import { createProber } from '../../src/park/probe.ts';
+import { APPLY,phase0InputOf,phase0Rows } from '../../src/phase0/rows.ts';
+import { type Cancelled,type Pinned,type StageContext,isCancelled } from '../../src/pipeline/dispatch.ts';
 import { invocationDir } from '../../src/pipeline/invoke.ts';
 import { reserveNow } from '../../src/pipeline/lanes.ts';
-import { rankOf } from '../../src/schedule/ready.ts';
-import { type RepoConfig, parseRepoConfig, resolveRouting } from '../../src/routing/layers.ts';
-import type { ArcRoleSet, ProfileName, RiskTier } from '../../src/routing/types.ts';
-import { fixture } from '../helpers/proc.ts';
-import { git, makeRepo, revParse, tmpDir } from '../helpers/repo.ts';
-import { type ClaudeAct, type Expect, type Scenario, type Step, writeScenario } from '../helpers/scenario.ts';
-import { arcFor, events } from './invoke-specs.ts';
-import type { CommandContext } from '../../src/commands/apply.ts';
-import { readHostSample } from '../../src/host/sample.ts';
-import { createProber } from '../../src/park/probe.ts';
 import type { Gate } from '../../src/pipeline/unit.ts';
+import { type RepoConfig,parseRepoConfig,resolveRouting } from '../../src/routing/layers.ts';
+import type { ArcRoleSet,ProfileName,RiskTier } from '../../src/routing/types.ts';
+import { rankOf } from '../../src/schedule/ready.ts';
+import { fixture } from '../helpers/proc.ts';
+import { git,makeRepo,revParse,tmpDir } from '../helpers/repo.ts';
+import { type ClaudeAct,type Expect,type Scenario,type Step,writeScenario } from '../helpers/scenario.ts';
+import { arcFor,events } from './invoke-specs.ts';
 
 export const U1: UnitId = unitId('u1');
 /** The unit's kept spec at rev 1, as its first start recorded it: what a test pins a dispatch at. */
@@ -127,7 +127,7 @@ export type StageRun = Readonly<{
 function laneJson(l: LaneJson): Record<string, unknown> {
   return {
     id: l.id, argv: l.argv, cwd: l.cwd ?? '.', env: { set: l.env?.set ?? {}, pass: l.env?.pass ?? ['PATH'] }, expectedExit: l.expectedExit ?? 0,
-    ...(l.cadence === undefined ? { tier: l.tier ?? 'fast' } : { cadence: l.cadence }), resources: l.resources ?? [], evidenceGlobs: l.evidenceGlobs ?? [],
+    ...(l.cadence === undefined ? { cadence: l.tier === 'estate' ? 'unit' : 'build' } : { cadence: l.cadence }), resources: l.resources ?? [], evidenceGlobs: l.evidenceGlobs ?? [],
     ...(l.evidenceExcludes === undefined ? {} : { evidenceExcludes: l.evidenceExcludes }), ...(l.inputs === undefined ? {} : { inputs: l.inputs }),
     ...(l.systems === undefined ? {} : { systems: l.systems }), ...(l.testArgv === undefined ? {} : { testArgv: l.testArgv }),
     ...(l.timeoutMin === undefined ? {} : { timeoutMin: l.timeoutMin }),
@@ -139,7 +139,7 @@ function laneJson(l: LaneJson): Record<string, unknown> {
 /** A suite lane as plan.json writes it: a spec lane's shape without its item state. */
 function suiteLaneJson(l: LaneJson): Record<string, unknown> {
   const { state: _state, ...lane } = laneJson(l);
-  return lane;
+  return {...lane, cadence: l.cadence ?? (l.tier === 'estate' ? 'candidate' : 'build')};
 }
 
 /**

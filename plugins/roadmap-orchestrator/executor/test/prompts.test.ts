@@ -2,32 +2,53 @@
 // their data is absent, the schema, tool-surface facts, invariants such as "the gate never receives the vision"), never
 // method prose: how a seat reads, reports or delegates is the model's, and its wording is free to change.
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { describe,it } from 'node:test';
 import {
-  clauseId, divergenceId, envId, findingId, jobId, laneId, laneRev, obligationId, questionId, ruleId, rulingId, sha, sha256, specRev, unitId,
-  type Sha, visionClauseId, invocationId, opIdOf, witnessItemId, arcId, givenId, proposalId, stationId, journeyId, milestoneId, polishId, serveName, pocQuestionId, resourceName,
-  systemName,
+type Sha,
+arcId,
+clauseId,divergenceId,envId,findingId,
+givenId,
+invocationId,
+jobId,
+journeyId,
+laneId,laneRev,
+milestoneId,
+obligationId,
+opIdOf,
+pocQuestionId,
+polishId,
+proposalId,
+questionId,
+resourceName,
+reviewFindingId,
+ruleId,rulingId,
+serveName,
+sha,sha256,specRev,
+stationId,
+systemName,
+unitId,
+visionClauseId,
+witnessItemId,
 } from '../src/core/ids.ts';
-import { isoTime } from '../src/core/values.ts';
-import { reviewFindingId } from '../src/core/ids.ts';
-import { failureRef } from '../src/core/records.ts';
-import {
-  DOC_RELATIONS, LENS_KINDS, OBLIGATION_DISPOSITIONS, type ObligationDef, RULE_RELATIONS, RULING_KINDS, RULING_LIFETIMES, RULING_SCHEMA,
-} from '../src/holistic/types.ts';
 import type { JsonValue } from '../src/core/json.ts';
+import { failureRef } from '../src/core/records.ts';
 import { SchemaError } from '../src/core/validate.ts';
-import { absPath, repoPath, repoPattern } from '../src/core/values.ts';
-import { headingSlug, quotedTextReason } from '../src/docs/contracts.ts';
-import { PROMPTS, SONNET_THINK_FIRST, UnsupportedPromptError, promptSize, renderPrompt, promptFor, support } from '../src/prompts/index.ts';
+import { absPath,isoTime,repoPath,repoPattern } from '../src/core/values.ts';
+import { headingSlug,quotedTextReason } from '../src/docs/contracts.ts';
 import type { BoundedDiff } from '../src/git/boundeddiff.ts';
-import { type RoleInputs, ROLE_INPUTS, UNIT_POLICY, laneCommand, obligationsText, pasted, pastedAs, targetDocument } from '../src/prompts/inputs.ts';
 import {
-  CHECKPOINT_SCHEMA, CLUSTER_REVIEWS, GATE_SCHEMA, PLAN_CHECK_SCHEMA, ROLE_SCHEMAS, ROLE_VALIDATORS, type RoleOutputs, BUILD_SCHEMA,
-  validateBuildOutput, validateCheckpointOutput, validateDecisionsFile, validateGateOutput, validatePackReviewOutput, validatePlanCheckOutput,
+DOC_RELATIONS,LENS_KINDS,OBLIGATION_DISPOSITIONS,type ObligationDef,RULE_RELATIONS,RULING_KINDS,RULING_LIFETIMES,RULING_SCHEMA,
+} from '../src/holistic/types.ts';
+import { RESOLVE_DIRECTIVE,RESPEC_DIRECTIVE,RESPEC_FRESH_DIRECTIVE,STEER_DIRECTIVE,repeatRedDirective,resolveUnmetDirective,smokeFixDirectives,witnessFixDirectives } from '../src/prompts/directives.ts';
+import { PROMPTS,SONNET_THINK_FIRST,UnsupportedPromptError,promptFor,promptSize,renderPrompt,support } from '../src/prompts/index.ts';
+import { ROLE_INPUTS,type RoleInputs,UNIT_POLICY,laneCommand,obligationsText,pasted,pastedAs,targetDocument } from '../src/prompts/inputs.ts';
+import {
+BUILD_SCHEMA,
+CHECKPOINT_SCHEMA,CLUSTER_REVIEWS,GATE_SCHEMA,PLAN_CHECK_SCHEMA,ROLE_SCHEMAS,ROLE_VALIDATORS,type RoleOutputs,
+validateBuildOutput,validateCheckpointOutput,validateDecisionsFile,validateGateOutput,validatePackReviewOutput,validatePlanCheckOutput,
 } from '../src/prompts/schemas.ts';
-import { RESOLVE_DIRECTIVE, RESPEC_DIRECTIVE, RESPEC_FRESH_DIRECTIVE, STEER_DIRECTIVE, resolveUnmetDirective, repeatRedDirective, smokeFixDirectives, witnessFixDirectives } from '../src/prompts/directives.ts';
-import { arcStack, resolveRouting, seatsInForce } from '../src/routing/layers.ts';
-import { FRESH_ROLES, MODEL_IDS, PROFILES, ROLES, type Role, WALK_ROLES, atSeat } from '../src/routing/types.ts';
+import { arcStack,resolveRouting,seatsInForce } from '../src/routing/layers.ts';
+import { FRESH_ROLES,MODEL_IDS,PROFILES,ROLES,type Role,WALK_ROLES,atSeat } from '../src/routing/types.ts';
 
 /**
  * The judging roles with a written Opus module and derived Sonnet and Haiku rows: the read-only ones (but the verifier, dev.17,
@@ -58,7 +79,7 @@ const vision = (rev: number, text: string) => ({
 });
 const obligation = (id: string, statement: string): ObligationDef => ({
   id: obligationId(id), rev: 1, statement, docRef: { path: repoPath('docs/target.md'), anchor: '#a', quotedText: statement }, serves: [visionClauseId('V-1')],
-  witness: { lane: laneId('journey'), testIds: ['t1'] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: laneRev('0123456789abcdef'), witness: { lane: laneId('journey'), testIds: ['t1'] } },
+  witness: { lane: laneId('journey'), testIds: ['t1'] }, proofJudgment: { verdict: 'proves', obligationRev: 1,  witness: {  testIds: ['t1'] } },
   deliveredBy: [], activation: 'must-hold', contracts: [], state: { type: 'active' },
 });
 const observed = (id: string, statement: string, tree: typeof SHA_A) => ({
@@ -252,12 +273,12 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
     },
   ],
   build: [
-    {
+    { notes: ['NOTE-A'],
       systemNotes: [], spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
       planCheckNotes: '', fastLanes: [lane('unit', ['npm', 'test'])], suiteLanes: [], evidenceDir: absPath('/run/ev/a'), worktree: absPath('/wt/a'),
       scope: { include: [repoPattern('src/a/**')], exclude: [] }, fixRound: null, witnessChecks: [], milestones: null, browser: null, certifiedAt: null, handover: null,
     },
-    {
+    { notes: ['NOTE-B'],
       systemNotes: [repoPath('docs/systems/SYSTEM-NOTES-B.md')], spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
       planCheckNotes: 'NOTES-B', fastLanes: [lane('lint', ['npx', 'tsc', '--noEmit'])], suiteLanes: [lane('eslint', ['npx', 'eslint', '.'])], evidenceDir: absPath('/run/ev/b'), worktree: absPath('/wt/b'),
       scope: { include: [repoPattern('src/b/**')], exclude: [] }, fixRound: { failingEvidenceDirs: [absPath('/run/inv/9-1')], directives: ['DIRECTIVE-B'] },
@@ -297,7 +318,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)], standingObligations: [observed('I-3', 'STANDING-B', SHA_A).obligation],
       diff: { bounded: partial(SHA_B, SHA_A, 'DIFF-B', true), claims: { acceptance: [clauseId('A1'), clauseId('A2')], witnesses: [witnessItemId('W-1')], obligations: [obligationId('I-2')] } },
       laneLedger: [{ lane: laneId('lint'), argv: ['npx', 'tsc'], expectedExit: 0, exitCode: 0, verdict: 'pass', evidenceDir: absPath('/run/inv/4-1'),
-        ignored: { v: 1, written: { files: 42, bytes: 3_250_000 }, captured: { files: 0, bytes: 0 }, uncaptured: [{ dir: '.local/demo/', files: 42, bytes: 3_250_000, reason: 'not-declared' }] },
+        ignored: { v: 2, written: { files: 42, bytes: 3_250_000 }, captured: { files: 0, bytes: 0 }, uncaptured: [{ dir: '.local/demo/', files: 42, bytes: 3_250_000, reason: 'not-declared' }] },
         reused: { at: SHA_A, inv: invocationId(opIdOf('arc-1/4'), 1) } }],
       evidence: [absPath('/run/ev/b')], scope: { excluded: [], patterns: [repoPattern('src/b/**')], growth: [repoPath('README.md')], rejected: [repoPath('test/b/REVERTED-B.test.ts')] },
       priorRound: {
@@ -437,13 +458,13 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
   build: {
     summary: 'Added the parser.', changedPaths: ['src/a/parse.ts'], blockers: [], experiments: [], docsOnlySince: null, final: true,
   },
-  gate: {
+  gate: {rulings: [],
     decision: 'revise', ordering: null, reasons: ['A2 untested'], directives: ['Add a test for A2.'],
     findings: [{
       severity: 'blocking', path: 'src/a/parse.ts', text: 'A2 has no test.', contractRef: null, experiments: [{ command: 'node -e "parse(\'\')"', output: 'TypeError' }], debt: null,
       defect: 'test-inadequate', reraises: null, hunk: null,
     }],
-    premises: [], unreviewed: [], clusters: null, rulings: [],
+    premises: [], unreviewed: [], clusters: null,
   },
   verifier: { hunks: [{ id: 'h1', kind: 'comment', executable: false, toolDirective: false, behaviourChange: false }] },
   lens: {
@@ -453,7 +474,7 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
   checkpoint: {
     decision: 'bundle', reasons: ['F-1 needs a repair'],
     ops: [{ op: 'cut', unit: 'u-one', reason: 'superseded by the repair', cites: ['V-1'], evidence: ['F-1'] }],
-    rulings: [], findingDispositions: [], interpretations: [], cites: { vision: ['V-1'], observations: [], findings: ['F-1'] }, premises: [],
+     findingDispositions: [], interpretations: [], cites: { vision: ['V-1'], observations: [], findings: ['F-1'] }, premises: [],
     corpusAmendments: [{ rules: ['T-1'], proposal: 'Allow three decimals for rates.', why: 'F-1 shows rates lose precision (V-1).' }],
   },
 };
@@ -720,29 +741,29 @@ describe('output validators', () => {
     validateGateOutput(ok.gate);
     assert.throws(() => validateGateOutput({ ...ok.gate, directives: [] }), SchemaError);
     assert.throws(() => validateGateOutput({ ...ok.gate, decision: 'approve' }), SchemaError);
-    const note = [{ severity: 'note', path: null, text: 'fine', contractRef: 'C-1' }];
-    assert.throws(() => validateGateOutput({ ...ok.gate, decision: 'approve', directives: [], findings: ok.gate['findings'] }), SchemaError);
-    validateGateOutput({ ...ok.gate, decision: 'approve', directives: [], findings: note });
-    validateGateOutput({ ...ok.gate, decision: 'escalate', directives: [], findings: ok.gate['findings'] });
+    const note = [{ severity: 'note', path: null, text: 'fine', contractRef: 'C-1', experiments: [], debt: null, defect: null, reraises: null, hunk: null }];
+    assert.throws(() => validateGateOutput({rulings: [],  ...ok.gate, decision: 'approve', directives: [], findings: ok.gate['findings'] }), SchemaError);
+    validateGateOutput({rulings: [],  ...ok.gate, decision: 'approve', directives: [], findings: note });
+    validateGateOutput({rulings: [],  ...ok.gate, decision: 'escalate', directives: [], findings: ok.gate['findings'] });
   });
 
-  it('gate (dev.12 round 2): a pre-existing finding never blocks an approve; unreviewed is recorded as given, and a dev.11 answer without it reads as unknown (null)', () => {
-    const pre = [{ severity: 'pre-existing', path: 'src/old.ts', text: 'Off by one since before the unit: the base has it.', contractRef: null }];
+  it('gate (dev.12 round 2): a pre-existing finding never blocks an approve; unreviewed is recorded as given, and a dev.11 answer without it is refused', () => {
+    const pre = [{ severity: 'pre-existing', path: 'src/old.ts', text: 'Off by one since before the unit: the base has it.', contractRef: null, experiments: [], debt: null, defect: null, reraises: null, hunk: null }];
     const unreviewed = [{ path: 'packages/*/golden/**', reason: 'regenerated goldens, judged through the generator' }];
-    const out = validateGateOutput({ ...ok.gate, decision: 'approve', directives: [], findings: pre, unreviewed });
-    assert.deepEqual(out.findings, pre.map((f) => ({ ...f, experiments: [], debt: 'unrecorded', defect: null, reraises: null, hunk: null })), 'a finding without experiments (a dev.12 answer) cites none; its debt is unrecorded; dev.17 fields read null');
+    const out = validateGateOutput({rulings: [],  ...ok.gate, decision: 'approve', directives: [], findings: pre, unreviewed });
+    assert.deepEqual(out.findings, pre);
     assert.deepEqual(out.unreviewed, unreviewed);
     const { unreviewed: _u, ...dev11 } = ok.gate;
-    assert.equal(validateGateOutput(dev11).unreviewed, null);
+    assert.throws(() => validateGateOutput(dev11), /unreviewed/);
     assert.throws(() => validateGateOutput({ ...ok.gate, unreviewed: [{ path: 'a' }] }), SchemaError);
     assert.throws(() => validateGateOutput({ ...ok.gate, findings: [{ ...pre[0], severity: 'minor' }] }), SchemaError);
     const schema = GATE_SCHEMA as { properties: Record<string, unknown>; required: readonly string[] };
     assert.ok(schema.required.includes('unreviewed'), 'a live gate answers it');
   });
 
-  it('gate (dev.13, the gate\'s shell): a finding cites the experiments it rests on, each a command and its output; a live answer gives the list, a dev.12 finding without it reads as none', () => {
+  it('gate (dev.13, the gate\'s shell): a finding cites the experiments it rests on, each a command and its output; a live answer gives the list, an omitted experiment list reads as none', () => {
     const experiments = [{ command: 'node probe.mjs', output: 'expected 9, got 2' }];
-    const finding = { severity: 'blocking', path: 'src/a/parse.ts', text: 'A2 fails on two-digit inputs.', contractRef: null, experiments };
+    const finding = { severity: 'blocking', path: 'src/a/parse.ts', text: 'A2 fails on two-digit inputs.', contractRef: null, experiments, debt: null, defect: null, reraises: null, hunk: null };
     assert.deepEqual(validateGateOutput({ ...ok.gate, findings: [finding] }).findings[0]!.experiments, experiments);
     for (const bad of [[{ command: 'node probe.mjs' }], [{ command: 1, output: '' }], 'node probe.mjs']) {
       assert.throws(() => validateGateOutput({ ...ok.gate, findings: [{ ...finding, experiments: bad }] }), SchemaError, JSON.stringify(bad));
@@ -753,23 +774,23 @@ describe('output validators', () => {
     assert.ok(item.required.includes('experiments'), 'a live gate answers it on every finding');
   });
 
-  it('gate (dev.13, the convergence tail): a finding says whether it is debt, {drag} or null; a live answer gives it on every finding, a dev.12 finding without it reads as unrecorded', () => {
-    const note = { severity: 'note', path: 'src/a/parse.ts', text: 'parse re-reads the file per call.', contractRef: null, experiments: [] };
+  it('gate (dev.13, the convergence tail): a finding says whether it is debt, {drag} or null; a live answer gives it on every finding, an omitted experiment list reads as none', () => {
+    const note = { severity: 'note', path: 'src/a/parse.ts', text: 'parse re-reads the file per call.', contractRef: null, experiments: [], defect: null, reraises: null, hunk: null };
     const debt = { drag: 'Every later reader of big inputs pays the re-read.' };
     assert.deepEqual(validateGateOutput({ ...ok.gate, findings: [{ ...note, debt }] }).findings[0]!.debt, debt);
     assert.equal(validateGateOutput({ ...ok.gate, findings: [{ ...note, debt: null }] }).findings[0]!.debt, null);
-    assert.equal(validateGateOutput({ ...ok.gate, findings: [note] }).findings[0]!.debt, 'unrecorded');
+    assert.throws(() => validateGateOutput({ ...ok.gate, findings: [note] }), /debt/);
     for (const bad of [{}, { drag: 1 }, 'slow']) assert.throws(() => validateGateOutput({ ...ok.gate, findings: [{ ...note, debt: bad }] }), SchemaError, JSON.stringify(bad));
     const item = ((GATE_SCHEMA as { properties: Record<string, { items: { required: readonly string[] } }> }).properties['findings']!).items;
     assert.ok(item.required.includes('debt'), 'a live gate answers it on every finding');
   });
 
-  it('gate (dev.12, the large-diff gate): a cluster map is ids, paths and a review depth; a dev.11 answer without clusters reads as none (null)', () => {
+  it('gate (dev.12, the large-diff gate): a cluster map is ids, paths and a review depth; a dev.11 answer without clusters is refused', () => {
     const clusters = [{ id: 'sweep', paths: ['packages/*/src/**'], review: 'description' }, { id: 'core', paths: ['packages/core/index.ts'], review: 'close' }];
     assert.deepEqual(validateGateOutput({ ...ok.gate, clusters }).clusters, clusters);
     assert.equal(validateGateOutput({ ...ok.gate, clusters: null }).clusters, null);
     const { clusters: _c, ...dev11 } = ok.gate;
-    assert.equal(validateGateOutput(dev11).clusters, null);
+    assert.throws(() => validateGateOutput(dev11), /clusters/);
     for (const bad of [
       [], [{ id: 'a', paths: [], review: 'routine' }], [{ id: 'a', paths: ['x'], review: 'opus' }], [{ id: 'a', paths: ['/abs'], review: 'routine' }],
       [{ id: 'a', paths: ['x'], review: 'routine' }, { id: 'a', paths: ['y'], review: 'close' }], [{ id: '', paths: ['x'], review: 'routine' }],
@@ -994,7 +1015,7 @@ describe('M3 prompts: the vision and the arc roles', () => {
     }
     // An answer a dev.9 executor launched has no scopeGrowth: read as none proposed (scaffolding, `planCheckScopeGrowthDefault`).
     const { scopeGrowth: _g, ...dev9 } = ok;
-    assert.deepEqual(validatePlanCheckOutput(dev9).scopeGrowth, []);
+    assert.throws(() => validatePlanCheckOutput(dev9), /scopeGrowth/);
   });
 
   it('prompts.stale-links (dev.17 propagation): the plan-check is given its stale links, each by its key, and answers them in a required staleLinks field', () => {
@@ -1009,7 +1030,7 @@ describe('M3 prompts: the vision and the arc roles', () => {
     }
     // An answer a dev.16 executor launched has no staleLinks: read as none answered (scaffolding, `planCheckStaleLinksDefault`).
     const { staleLinks: _s, ...dev16 } = ok;
-    assert.deepEqual(validatePlanCheckOutput(dev16).staleLinks, []);
+    assert.throws(() => validatePlanCheckOutput(dev16), /staleLinks/);
   });
 
   it('the gate renders standing obligations as compact lines in their own tag after direct obligations', () => {
@@ -1484,9 +1505,9 @@ it('prompts.derived-exclusion: plan-check, builders and gates render the exclude
 });
 
 it('non-active obligations render only their id and state', () => {
-  const waived = { ...observed('I-2', 'HIDDEN STATEMENT', SHA_A), obligation: { ...obligation('I-2', 'HIDDEN STATEMENT'), state: { type: 'waived' as const, ruling: rulingId('C-3') } } };
+  const waived = { ...observed('I-2', 'HIDDEN STATEMENT', SHA_A), obligation: { ...obligation('I-2', 'HIDDEN STATEMENT'), state: { type: 'waived' as const, reason: 'test disposition', rev: 2 } } };
   const text = obligationsText([waived], { serves: true });
-  assert.equal(text, '- I-2: waived by C-3');
+  assert.equal(text, '- I-2: waived by test disposition');
   assert.doesNotMatch(text, /Anchored at/);
 });
 

@@ -62,50 +62,57 @@
 // second. The ids opened, merged or corroborated and the suppressed count become `audit-ended{findings, suppressed}`.
 // A specs-only drift audit (every trigger `drift{specsOnly}`, H2) runs the vision lens alone with `LensInputs.specsOnly`.
 // `gateHadPassed`: a unit had published before the audit started (the defect passed some gate).
+import { basename,isAbsolute,join,relative } from 'node:path';
 import { freshJudgmentSession } from '../backends/argv.ts';
-import { basename, isAbsolute, join, relative } from 'node:path';
-import type { AuditInputs, LensRefusal, Parent } from '../core/events.ts';
-import { captureUnderFence } from '../core/fence.ts';
-import { canonicalJson } from '../core/json.ts';
 import { crashPoint } from '../core/crash.ts';
-import { auditDiffBudgetOf } from '../core/upgrade.ts';
-import { type FindingId, type JobId, type LaneId, type NeedsUserId, type ObligationId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, parseInvocationId, parseJobId, canonicalIds } from '../core/ids.ts';
-import type { AuditState, FindingState } from '../core/state.ts';
+import type { AuditInputs,LensRefusal,Parent } from '../core/events.ts';
+import { captureUnderFence } from '../core/fence.ts';
+import { type FindingId,type JobId,type LaneId,type NeedsUserId,type ObligationId,type Sha,type Sha256Hex,type UnitId,type VisionClauseId,canonicalIds,parseInvocationId,parseJobId } from '../core/ids.ts';
+import { canonicalJson } from '../core/json.ts';
+import { auditDiffBudgetOf } from '../core/projections.ts';
+import { DEFAULT_BOUNDS } from '../core/records.ts';
+import type { AuditState,FindingState } from '../core/state.ts';
 import { SchemaError } from '../core/validate.ts';
-import { type AbsPath, type RepoPattern, absPath } from '../core/values.ts';
+import { type AbsPath,type RepoPattern,absPath } from '../core/values.ts';
+import { boundedDiff } from '../git/boundeddiff.ts';
 import { capturedEvidence } from '../git/evidence.ts';
-import { catFileType, refTarget, revParse } from '../git/git.ts';
+import { catFileType,refTarget,revParse } from '../git/git.ts';
 import { jobEvidenceRoot } from '../git/snapshot.ts';
 import { diffBase } from '../git/transient.ts';
-import { PLAN_INPUT, RULINGS_INPUT, OBLIGATIONS_INPUT, SPEC_INPUT, VISION_INPUT, keptInput, keptPayload, payloadAtRev } from '../input/inforce.ts';
-import { advancesOf, derivedOf, hasMilestones, parsePlan } from '../input/plan.ts';
+import { OBLIGATIONS_INPUT,PLAN_INPUT,RULINGS_INPUT,SPEC_INPUT,VISION_INPUT,keptInput,keptPayload,payloadAtRev } from '../input/inforce.ts';
+import { advancesOf,derivedOf,hasMilestones,parsePlan } from '../input/plan.ts';
+import { raiseNeedsUser,raisedFor,readNeedsUser } from '../needsuser.ts';
 import { runBatchPoint } from '../pipeline/batchlanes.ts';
-import { DEFAULT_BOUNDS } from '../core/records.ts';
-import { raiseNeedsUser, raisedFor, readNeedsUser } from '../needsuser.ts';
 import {
-  type BackendCallOutcome, type JobParent, type RepairTurn, type StageContext, arcSeat, callArcRole, isRepairTurnOf, minutesMs, recordedArcCall, repairTurnOf, runOp, unitBranch, verdictOf,
+type BackendCallOutcome,type JobParent,type RepairTurn,type StageContext,arcSeat,callArcRole,isRepairTurnOf,minutesMs,recordedArcCall,repairTurnOf,runOp,unitBranch,verdictOf,
 } from '../pipeline/dispatch.ts';
-import { type JourneyEnd, arcJourneyLane, dirtySnapshot, jobSeriesCheckout, observedViews, removeJobCheckouts, runJourneySeries } from '../pipeline/lanes.ts';
-import { architecture, docAt, inMs, judgmentEntry, ledgerDir, ledgerPath, targetDirs } from '../pipeline/stages.ts';
+import { type JourneyEnd,arcJourneyLane,dirtySnapshot,jobSeriesCheckout,observedViews,removeJobCheckouts,runJourneySeries } from '../pipeline/lanes.ts';
+import { architecture,docAt,inMs,judgmentEntry,ledgerDir,ledgerPath,targetDirs } from '../pipeline/stages.ts';
 import { judgmentRepairDirective } from '../prompts/directives.ts';
-import { renderPrompt, promptFor } from '../prompts/index.ts';
-import { type FindingView, type LensInputs, type RenderedSpec, visionInputOf } from '../prompts/inputs.ts';
-import { renderSpec } from '../spec/render.ts';
-import { parseSpec } from '../spec/spec.ts';
-import { type LensFinding, type LensOutput, validateLensOutput } from '../prompts/schemas.ts';
-import { evidenceSnapshotOp, worktreeCreateOp, worktreeRemoveOp } from '../recover/ops.ts';
+import { promptFor,renderPrompt } from '../prompts/index.ts';
+import { type FindingView,type LensInputs,type RenderedSpec,visionInputOf } from '../prompts/inputs.ts';
+import { type LensFinding,type LensOutput,validateLensOutput } from '../prompts/schemas.ts';
+import { evidenceSnapshotOp,worktreeCreateOp,worktreeRemoveOp } from '../recover/ops.ts';
 import { probe } from '../resources/probe.ts';
-import { type JobHolder, type Reservation, cleanup, heldReservation, run } from '../resources/reserve.ts';
+import { type JobHolder,type Reservation,cleanup,heldReservation,run } from '../resources/reserve.ts';
 import type { AcquireFirst } from '../schedule/arbiter.ts';
+import { renderSpec } from '../spec/render.ts';
 import { parseRulings } from '../spec/rulings.ts';
-import { type Cadence, type Clock, cadence, integrationHeadNow, runOrder, specsOnlyOf } from './cadence.ts';
-import { coverageBase, lensCoverage, publishedHeads } from './coverage.ts';
-import { LENS_DIFF_BUDGET, chunkEnd } from './lensdiff.ts';
-import { boundedDiff } from '../git/boundeddiff.ts';
-import { type FindingDraft, admitMutant, corroborateFinding, crossKey, openFinding, witnessFindingDraft } from './findings.ts';
+import { parseSpec } from '../spec/spec.ts';
+import { type Cadence,type Clock,cadence,integrationHeadNow,runOrder,specsOnlyOf } from './cadence.ts';
+import { coverageBase,lensCoverage,publishedHeads } from './coverage.ts';
+import { type FindingDraft,admitMutant,corroborateFinding,crossKey,openFinding,witnessFindingDraft } from './findings.ts';
+import { LENS_DIFF_BUDGET,chunkEnd } from './lensdiff.ts';
 import { verdictOf as witnessVerdict } from './observe.ts';
 import {
-  FINDING_MOVES, LENS_KINDS, type MutantRef, type FindingEvidence, type FindingLens, type LensKind, type ObservationVerdict, type Obligations, type Vision, type WitnessRecord, isExempt, isMustHold, parseObligations, parseVision,
+FINDING_MOVES,
+type FindingEvidence,type FindingLens,
+LENS_KINDS,
+type LensKind,
+type MutantRef,
+type Obligations,
+type ObservationVerdict,
+type Vision,type WitnessRecord,isExempt,isMustHold,parseObligations,parseVision,
 } from './types.ts';
 
 /** What an audit needs: a stage context (processes, resources, routing), the arbiter's first-served waits, a clock. */

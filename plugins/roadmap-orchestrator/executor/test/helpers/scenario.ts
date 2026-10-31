@@ -7,15 +7,15 @@
 // (step 3a) that executes a launch.json's argv with stdout/stderr to files and writes exit.json;
 // `fixtureInvocation` lays out a captured real CLI run (test/fixtures/backend-output) as an invocation dir.
 import { spawnSync } from 'node:child_process';
-import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { closeSync,copyFileSync,existsSync,mkdirSync,openSync,readFileSync,writeFileSync } from 'node:fs';
+import { dirname,join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { implementerSessionId, judgmentSessionId, routingRev } from '../../src/core/ids.ts';
+import { implementerSessionId,judgmentSessionId,routingRev } from '../../src/core/ids.ts';
 import type { JsonValue } from '../../src/core/json.ts';
-import { type ExitFile, type LaunchFile, type LaunchTerminal, type LensKindName, RUNNER_FILE_READERS } from '../../src/core/records.ts';
+import { type ExitFile,type LaunchFile,type LaunchTerminal,type LensKindName,RUNNER_FILE_READERS } from '../../src/core/records.ts';
 import { absPath } from '../../src/core/values.ts';
 import { writeShims } from '../fakes/shim.ts';
-import { type FileSet, tmpDir } from './repo.ts';
+import { type FileSet,tmpDir } from './repo.ts';
 
 export type FakeName = 'codex' | 'claude';
 
@@ -216,7 +216,7 @@ export function readCalls(scenarioPath: string): readonly CallRecord[] {
 // ---------------------------------------------------------------------------------------------------
 // Runner stand-in for adapter-level tests.
 
-const BIND = { v: 1, arc: 'arc-1', op: 'arc-1/7', inv: 'arc-1/7#1' } as const;
+const BIND = { v: 2, arc: 'arc-1', op: 'arc-1/7', inv: 'arc-1/7#1' } as const;
 const DEADLINE = '2026-09-25T13:00:00.000Z';
 
 /** Write a valid launch.json into `invDir` (bound to arc-1/7#1) and return it as read back. */

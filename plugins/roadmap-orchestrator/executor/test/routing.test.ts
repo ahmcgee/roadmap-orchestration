@@ -2,21 +2,22 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { describe, it } from 'node:test';
-import { routingRev, unitId, visionClauseId } from '../src/core/ids.ts';
+import { describe,it } from 'node:test';
+import { routingRev,unitId,visionClauseId } from '../src/core/ids.ts';
 import { canonicalJson } from '../src/core/json.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { planPath } from '../src/core/values.ts';
 import { support } from '../src/prompts/index.ts';
-import { EARLIER_BUILTIN_SEATS, PRE_DEV10_BUILTIN_SEATS, PRE_DEV12_BUILTIN_SEATS, PRE_DEV17_BUILTIN_SEATS } from '../src/core/upgrade.ts';
-import { CLASS_CATALOGUE, boundAt } from '../src/routing/classes.ts';
+
+import { CLASS_CATALOGUE,boundAt } from '../src/routing/classes.ts';
 import {
-  type RoutingStack, arcStack, parseRepoConfig, planStack, resolveRouting, resolveRoutingUnder, routingRevOf, seatsInForce, selectProfile, unsupportedSeats,
+type RoutingStack,arcStack,parseRepoConfig,planStack,resolveRouting,
+routingRevOf,seatsInForce,selectProfile,unsupportedSeats
 } from '../src/routing/layers.ts';
 import { MODELS } from '../src/routing/models.ts';
 import { BUILTIN_SEATS } from '../src/routing/profiles.ts';
 import {
-  FRESH_ROLES, MODEL_IDS, PROFILES, type Role, type RoutingLayer, type RoutingTable, SEAT_REFS, type Seat, type Triple, atSeat, routingLayer,
+FRESH_ROLES,MODEL_IDS,PROFILES,type Role,type RoutingLayer,type RoutingTable,SEAT_REFS,type Seat,type Triple,atSeat,routingLayer,
 } from '../src/routing/types.ts';
 
 const EXECUTOR = new URL('..', import.meta.url).pathname;
@@ -70,11 +71,11 @@ describe('routing', () => {
     });
   });
 
-  it('historical summit effort: earlier xhigh revisions resolve through aliases to current high seats, without overriding a repo rebind', () => {
+  it('schema 2 has no pre-break routing aliases; current high seats and explicit repo rebindings remain intact', () => {
     const stack = { ...base, arcRoles: 'dev17' as const };
     const resolved = resolveRouting(stack);
     for (const rev of ['ec39c27ced3c46bf', '98bcf2744f049328', 'a5c3da09379b0035']) {
-      assert.ok(resolved.earlierBuiltinRevs.includes(routingRev(rev)), `adopt the recorded ${rev}`);
+      assert.equal(resolved.earlierBuiltinRevs.includes(routingRev(rev)), false, `schema 2 never aliases the pre-break ${rev}`);
     }
     assert.deepEqual(resolved.table.checkpoint.arc, OPUS_HIGH, 'historical aliases do not change current routing');
     const rebound = resolveRouting({ ...stack, classes: { summit: FABLE } });
@@ -164,29 +165,9 @@ describe('routing', () => {
     assert.deepEqual(efficientOnHaiku.map((x) => x.kind === 'unsupported-routing' ? [x.role, x.tier, x.why] : null), [['build', 'low', 'no-prompt'], ['build', 'med', 'no-prompt'], ['build', 'high', 'no-prompt']]);
   });
 
-  it('routing.gate-ladder-adopted: an arc started on 1.0.0-dev.10 or dev.11 hashed the seats PRE_DEV12_BUILTIN_SEATS keeps; HEAD binds them to the triples it hashed', () => {
-    for (const p of PROFILES) {
-      const stack = { ...arcStack(p, null, null), arcRoles: 'm4b' } as const;
-      const before = resolveRoutingUnder(PRE_DEV12_BUILTIN_SEATS, stack);
-      const dev16 = resolveRoutingUnder(PRE_DEV17_BUILTIN_SEATS, stack);
-      assert.deepEqual([before.table.gate.low, before.table.gate.med], [SONNET_HIGH, OPUS], `${p}: dev.11 gated low on Sonnet high, med on Opus medium`);
-      assert.notEqual(before.rev, dev16.rev, `${p}: the ladder moved the rev`);
-      const moved = SEAT_REFS.filter((s) => JSON.stringify(atSeat(before.table, s)) !== JSON.stringify(atSeat(dev16.table, s))).map((s) => `${s.role}.${s.tier}`);
-      assert.deepEqual(moved, ['gate.med'], `${p}: dev.12 moved only gate.med`);
-      assert.deepEqual(EARLIER_BUILTIN_SEATS, [PRE_DEV10_BUILTIN_SEATS, PRE_DEV12_BUILTIN_SEATS, PRE_DEV17_BUILTIN_SEATS]);
-    }
-  });
+  
 
-  it('routing.dev17-adopted: an arc started on 1.0.0-dev.12 to dev.16 hashed the seats PRE_DEV17_BUILTIN_SEATS keeps; dev.17 moved plan-check and the gate at low and med to frontier and build.high to efficient', () => {
-    for (const p of PROFILES) {
-      const stack = { ...arcStack(p, null, null), arcRoles: 'm4b' } as const;
-      const before = resolveRoutingUnder(PRE_DEV17_BUILTIN_SEATS, stack);
-      const now = resolveRouting(stack);
-      assert.notEqual(before.rev, now.rev, p);
-      const moved = SEAT_REFS.filter((s) => JSON.stringify(atSeat(before.table, s)) !== JSON.stringify(atSeat(now.table, s))).map((s) => `${s.role}.${s.tier}`);
-      assert.deepEqual(moved, ['planCheck.low', 'planCheck.med', 'build.high', 'gate.low', 'gate.med'], p);
-    }
-  });
+  
 
   it('routing.layers: each layer overrides the one below, per seat; sources name the layer that chose the class', () => {
     const config = parseRepoConfig(fixture('config-seats.json'));

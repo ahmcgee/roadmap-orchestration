@@ -6,29 +6,29 @@
 // files (`edit*`), commit between arcs (`betweenArc`), put the arc in force (`inForce`) or seal it with a terminal
 // snapshot (`seal`), and chain the next arc onto it (`nextArc`).
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync,readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { corpusPin } from '../../src/commands/corpus.ts';
 import { phase0Check } from '../../src/commands/phase0.ts';
-import { type ArcId, type Sha, arcId, sha } from '../../src/core/ids.ts';
+import { type ArcId,type Sha,arcId,sha } from '../../src/core/ids.ts';
 import { sha256Hex } from '../../src/core/json.ts';
-import { type OpenJournal, openJournal } from '../../src/core/log.ts';
-import { type AbsPath, absPath } from '../../src/core/values.ts';
+import { type OpenJournal,openJournal } from '../../src/core/log.ts';
+import { type AbsPath,absPath } from '../../src/core/values.ts';
 import type { CorpusPin } from '../../src/corpus/types.ts';
-import { laneRevOf, parseObligations } from '../../src/holistic/types.ts';
 import { gitCommonDir } from '../../src/git/git.ts';
 import { snapshotRequestOf } from '../../src/git/snapshot.ts';
+import { laneRevOf,parseObligations } from '../../src/holistic/types.ts';
 import { openHostDir } from '../../src/host/hostdir.ts';
 import { runDir as runDirOf } from '../../src/input/cli.ts';
-import { type InputFiles, keepCorpusFiles, readInputFiles, recordPlan } from '../../src/input/inforce.ts';
+import { type InputFiles,keepCorpusFiles,readInputFiles,recordPlan } from '../../src/input/inforce.ts';
+import { APPLY,phase0InputOf,phase0Rows } from '../../src/phase0/rows.ts';
 import { executorIdentity } from '../../src/pipeline/stages.ts';
-import { APPLY, phase0InputOf, phase0Rows } from '../../src/phase0/rows.ts';
 import type { StartupRejection } from '../../src/preflight/startup.ts';
 import { snapshotPublishOp } from '../../src/recover/ops.ts';
 import { runOp } from '../fixtures/git-common.ts';
-import { type BuiltCorpus, DEFAULT_CORPUS_ROOT, sampleCorpus } from './corpus.ts';
-import { type Forge, makeForge } from './forge.ts';
-import { commitAll, git, makeRepo, tmpDir, writeFiles } from './repo.ts';
+import { type BuiltCorpus,DEFAULT_CORPUS_ROOT,sampleCorpus } from './corpus.ts';
+import { type Forge,makeForge } from './forge.ts';
+import { commitAll,git,makeRepo,tmpDir,writeFiles } from './repo.ts';
 
 type Json = Record<string, unknown>;
 
@@ -49,7 +49,7 @@ export function visionRecord(visionText: string | null): Json {
   };
 }
 
-const lane = (id: string): Json => ({ id, argv: ['node', '-e', '0'], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [] });
+const lane = (id: string): Json => ({ id, argv: ['node', '-e', '0'], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [] });
 const arcLane = { ...lane('journey'), reporter: 'jsonl', testPaths: ['test'] };
 /** The witness test file I-1 declares (in the baseline). */
 export const WITNESS_FILE = 'test/berths.test.ts';
@@ -65,7 +65,7 @@ export function obligationsFile(pin: CorpusPin, opts: Readonly<{ activation?: 'm
     schema: 'roadmap/obligations-m3', cutLine: 'the berth booking ships', lanes: [arcLane],
     obligations: [{
       id: 'I-1', rev: 1, statement: 'A berth is never double-booked.', rule: { id: 'T-1', textSha256: t1.textSha256 }, serves: ['V-1'], witness,
-      proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: LANE_REV, witness }, deliveredBy: opts.activation === 'future' ? ['u1'] : [],
+      proofJudgment: { verdict: 'proves', obligationRev: 1,  witness: {testIds: witness.testIds, ...(('files' in witness ? {files: witness.files} : {}))} }, deliveredBy: opts.activation === 'future' ? ['u1'] : [],
       activation: opts.activation ?? 'must-hold', contracts: [], state: { type: 'active' },
     }],
     mapping: { paths: [] },

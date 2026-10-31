@@ -20,14 +20,14 @@
 // that evidence is gone.
 import { join } from 'node:path';
 import type { IntentOf } from '../core/events.ts';
-import { type LaneId, type UnitId, invocationId } from '../core/ids.ts';
+import { type LaneId,type UnitId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
-import { type CommandVerdict, type FailureRef, failureRefOf, isRed, parseFailureRef } from '../core/records.ts';
+import { type CommandVerdict,type FailureRef,failureRefOf,isRed,parseFailureRef } from '../core/records.ts';
 import type { FailedOutcome } from '../core/state.ts';
-import { type AbsPath, absPath } from '../core/values.ts';
+import { type AbsPath,absPath } from '../core/values.ts';
 import type { StageParent } from './dispatch.ts';
-import { type HostSuspected, dev6RedClass, specSeriesRoot } from './lanes.ts';
-import { type RedClass, readRedClass } from './redlane.ts';
+import { type HostSuspected,specSeriesRoot } from './lanes.ts';
+import { type RedClass,readRedClass } from './redlane.ts';
 
 export const FAILURE_CLASSES = ['red', 'flaky', 'repeat'] as const;
 export type FailureClass = (typeof FAILURE_CLASSES)[number];
@@ -67,8 +67,7 @@ function laneFailure(view: JournalView, runDir: AbsPath, parent: StageParent, la
   }
   const dir = absPath(join(specSeriesRoot(runDir, parent), lane));
   if (subject.redRev === undefined) {
-    const dev6 = dev6RedClass(runDir, invocationId(first.op, first.ordinal), dir);
-    return dev6 === null ? null : classified(parent, lane, dev6, rerunVerdict);
+    throw new Error(`lane red class is missing for ${first.op}`);
   }
   const cls = readRedClass(dir)?.class ?? null;
   if (rerun !== undefined && cls === null) throw new Error(`lane ${lane} was rerun after ${first.op}, whose red class (red.json) was never written`);

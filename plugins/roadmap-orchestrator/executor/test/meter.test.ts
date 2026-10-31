@@ -3,16 +3,16 @@
 // meter.subagents-by-class (a call's subagent spend per usage class), meter.session-charge (a Claude session's cumulative
 // readings charged once).
 import assert from 'node:assert/strict';
-import { describe, it, test } from 'node:test';
-import type { Event, Fact } from '../src/core/events.ts';
-import { type RoutingRev, arcId, claudeSessionId, invocationId, jobIdOf, opId, routingRev, unitId } from '../src/core/ids.ts';
-import type { ClassUsage, TokenUsage } from '../src/core/records.ts';
-import { type SessionCharge, addCharged } from '../src/core/usage.ts';
-import { invoke, usageFact } from '../src/pipeline/invoke.ts';
-import { byClass, byModel, meterOf, ownShare } from '../src/meter.ts';
+import { describe,it,test } from 'node:test';
+import type { Event,Fact } from '../src/core/events.ts';
+import { type RoutingRev,arcId,claudeSessionId,invocationId,jobIdOf,opId,routingRev,unitId } from '../src/core/ids.ts';
+import type { ClassUsage,TokenUsage } from '../src/core/records.ts';
+import { type SessionCharge,addCharged } from '../src/core/usage.ts';
+import { byClass,byModel,meterOf,ownShare } from '../src/meter.ts';
+import { invoke,usageFact } from '../src/pipeline/invoke.ts';
 import { resolveRouting } from '../src/routing/layers.ts';
-import { type Seat, unitSeatRef } from '../src/routing/types.ts';
-import { backend, context, dones, events, open, run, scenario, specFor } from './fixtures/invoke-specs.ts';
+import { type Seat,unitSeatRef } from '../src/routing/types.ts';
+import { backend,context,dones,events,open,run,scenario,specFor } from './fixtures/invoke-specs.ts';
 
 const ARC = arcId('arc-1');
 const REV_A = routingRev('aaaaaaaaaaaaaaaa');
@@ -22,7 +22,7 @@ const U2 = unitId('u2');
 let seq = 0;
 function factEvent(fact: Fact): Event {
   seq += 1;
-  return { v: 1, seq, prev: null, at: '2026-09-25T12:00:00.000Z', arc: ARC, type: 'fact', fact } as Event;
+  return { v: 2, seq, prev: null, at: '2026-09-25T12:00:00.000Z', arc: ARC, type: 'fact', fact } as Event;
 }
 const inv = (n: number) => invocationId(opId(ARC, n), 1);
 const tokens = (input: number, output: number, cacheRead: number | null = null, cacheWrite: number | null = null, turns: number | null = null, costUsd: number | null = null): TokenUsage =>

@@ -22,7 +22,7 @@ import { runFixture } from './helpers/proc.ts';
 import { tmpDir } from './helpers/repo.ts';
 import { recoveryContext } from './fixtures/rec-common.ts';
 import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
-import { type ArcDescriptor, type ArcRun, U1, applyBody, commandContextFor, contextFor, gateStep, mulBuild, outcomes, setupArc } from './fixtures/unit-common.ts';
+import { syncInputs, type ArcDescriptor, type ArcRun, U1, applyBody, commandContextFor, contextFor, gateStep, mulBuild, outcomes, setupArc } from './fixtures/unit-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 type Json = Record<string, unknown>;
@@ -105,11 +105,13 @@ describe('a crash-abandoned attempt is held at startup (arc feedback 2026-10-15)
     const r = await crashedInBuild(true);
     try {
       assertRecoveryHold(r, 'held');
+      syncInputs(r);
       const spec = JSON.parse(readFileSync(specPath(r.d, 'u1'), 'utf8')) as Json;
       const acceptance = [...(spec['acceptance'] as Json[]), { id: 'A2', clause: 'mul(0, 5) is 0', failLoudIfUndelivered: true, state: 'active' }];
       writeFileSync(specPath(r.d, 'u1'), JSON.stringify({ ...spec, rev: 2, acceptance }));
       await command(r, applyBody(r.d));
       assert.equal(r.journal.view.unit(U1).pendingRevision?.rev, 3, 'rebased onto rev 2 in force (dev.17: the approve landed its design record)');
+      syncInputs(r);
       writeFileSync(specPath(r.d, 'u2'), JSON.stringify({ ...spec, unit: 'u2', rev: 1 }));
       editPlan(r.d, (p) => void p.units.push({ ...p.units[0]!, id: 'u2', spec: 'u2.json', reenters: { unit: 'u1' } }));
       await command(r, applyBody(r.d));

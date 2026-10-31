@@ -10,33 +10,33 @@
 // evals-m3.rerun-refused, evals-m3.tamper-digest, evals-m3.tamper-stale, evals-m3.prevented, evals-m3.latent.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync,readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { after,before,describe,test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { after, before, describe, test } from 'node:test';
-import type { Event, Fact } from '../src/core/events.ts';
+import { fileURLToPath } from 'node:url';
+import { BRANCHES,CANNOT_SHOW,type CheckResult } from '../evals/m3/check.ts';
+import type { Report } from '../evals/m3/driver.ts';
+import { AUDIT_EVERY,CONVERGENCE_K,INTEGRATION,LENSES,MAIN,MONEY_LANE,UNITS,barrierFile,layout } from '../evals/m3/layout.ts';
+import { type StoryName,UNIT_STORY,storySteps } from '../evals/m3/scenario.ts';
+import { REPAIR_UNIT,forgePath,repairSpecText } from '../evals/m3/setup.ts';
+import { phase0Check } from '../src/commands/phase0.ts';
+import type { Event,Fact } from '../src/core/events.ts';
 import { arcId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
+import { parseCorpusPin } from '../src/corpus/types.ts';
 import { verdictOf } from '../src/holistic/observe.ts';
-import { type ObservationVerdict, parseObligations, parseVision } from '../src/holistic/types.ts';
+import { type ObservationVerdict,parseObligations,parseVision } from '../src/holistic/types.ts';
 import { advancesReasons } from '../src/holistic/vision.ts';
 import { witnessEnv } from '../src/holistic/witness.ts';
 import { parsePlan } from '../src/input/plan.ts';
-import { loadSpec, parseSpec } from '../src/spec/spec.ts';
-import { BRANCHES, CANNOT_SHOW, type CheckResult } from '../evals/m3/check.ts';
-import type { Report } from '../evals/m3/driver.ts';
-import { AUDIT_EVERY, CONVERGENCE_K, INTEGRATION, LENSES, MAIN, MONEY_LANE, UNITS, barrierFile, layout } from '../evals/m3/layout.ts';
-import { type StoryName, UNIT_STORY, storySteps } from '../evals/m3/scenario.ts';
-import { REPAIR_UNIT, forgePath, repairSpecText } from '../evals/m3/setup.ts';
-import { phase0Check } from '../src/commands/phase0.ts';
-import { parseCorpusPin } from '../src/corpus/types.ts';
-import { type Exit, fixture, runUntilExit } from './helpers/proc.ts';
-import { git, tmpDir } from './helpers/repo.ts';
-import { type ScenarioFile, readCalls } from './helpers/scenario.ts';
+import { loadSpec,parseSpec } from '../src/spec/spec.ts';
+import { type Exit,fixture,runUntilExit } from './helpers/proc.ts';
+import { type RunScope,assertNoSurvivors,teardown,track } from './helpers/reap.ts';
+import { git,tmpDir } from './helpers/repo.ts';
+import { type ScenarioFile,readCalls } from './helpers/scenario.ts';
 import { readWitnessFile } from './helpers/witness.ts';
-import { type RunScope, assertNoSurvivors, teardown, track } from './helpers/reap.ts';
 
 after(assertNoSurvivors);
 
@@ -98,7 +98,7 @@ function runArcLane(o: ObligationsFile, lane: string, cwd: string) {
 function verdictIn(o: ObligationsFile, id: string, file: string): ObservationVerdict {
   const witness = o.obligations.find((x) => x.id === id)!.witness!;
   const records = [...readWitnessFile(file)].sort((a, b) => (a.testId < b.testId ? -1 : 1));
-  return verdictOf({ v: 1, lane: witness.lane, laneRev: '0000000000000000', envId: '0000000000000000', treeSha: '0'.repeat(40), inv: 'x', runner: 'node-test', purpose: 'witness', records, malformed: false } as never, witness);
+  return verdictOf({ v: 2, lane: witness.lane, laneRev: '0000000000000000', envId: '0000000000000000', treeSha: '0'.repeat(40), inv: 'x', runner: 'node-test', purpose: 'witness', records, malformed: false } as never, witness);
 }
 
 const LANE_OF: Readonly<Record<string, string>> = { 'I-1': 'reconcile', 'I-2': MONEY_LANE, 'I-3': 'cli' };

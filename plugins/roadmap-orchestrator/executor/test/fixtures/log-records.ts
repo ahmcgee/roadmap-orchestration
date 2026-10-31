@@ -1,11 +1,11 @@
 // Record builders shared by the journal and fold tests: valid records of a few kinds, and `chain()` to
 // wrap records into a correctly chained event sequence (or raw lines) that tests can then break.
-import { type Event, type IntentRecord, type LogRecord, prevHash, serializeEvent } from '../../src/core/events.ts';
+import { type Event,type IntentRecord,type LogRecord,prevHash,serializeEvent } from '../../src/core/events.ts';
 import {
-  type ArcId, type InvocationId, type OpId, arcId, commandId, invocationId, needsUserId, opId, opKey, routingRev, sha, sha256, unitId,
+type ArcId,type InvocationId,type OpId,arcId,commandId,invocationId,needsUserId,opId,opKey,routingRev,sha,sha256,unitId,
 } from '../../src/core/ids.ts';
 import type { Stage } from '../../src/core/records.ts';
-import { type IsoTime, absPath, gitDate, isoTime, refName } from '../../src/core/values.ts';
+import { type IsoTime,absPath,gitDate,isoTime,refName } from '../../src/core/values.ts';
 import type { UnitRole } from '../../src/routing/types.ts';
 
 export const ARC = arcId('arc-1');
@@ -86,7 +86,7 @@ export function chain(records: readonly LogRecord[], arc: ArcId = ARC): Event[] 
   const out: Event[] = [];
   let prev: Event | null = null;
   for (const [i, record] of records.entries()) {
-    const event = { v: 1, seq: i + 1, prev: prev === null ? null : prevHash(Buffer.from(serializeEvent(prev))), at: AT, arc, ...record } as Event;
+    const event = { v: 2, seq: i + 1, prev: prev === null ? null : prevHash(Buffer.from(serializeEvent(prev))), at: AT, arc, ...record } as Event;
     out.push(event);
     prev = event;
   }

@@ -18,19 +18,16 @@
 //   edges         a unit's gate waits while a propagation unit is neither merged nor cut when the unit links its target
 //                 (a requirement or contract link) or its design record's breaks touch a file it re-witnesses
 //                 (`propagationHolds`). A propagation unit never waits on another.
-import { canonicalJson } from '../core/json.ts';
-import type { ObligationId, PlanRev, Sha, UnitId, VisionClauseId } from '../core/ids.ts';
+import type { ObligationId,PlanRev,Sha,UnitId,VisionClauseId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
-import { type ContractPin, type RequirementPin, type SpecPin, UNPINNED } from '../core/pins.ts';
-import { type SpecM1, specPinOf, specRequirementLinks } from '../core/records.ts';
+import { canonicalJson } from '../core/json.ts';
+import { type ContractPin,type RequirementPin,type SpecPin,UNPINNED } from '../core/pins.ts';
+import { type SpecM1,specPinOf,specRequirementLinks } from '../core/records.ts';
 import {
-  type PropagationTarget, type StaleAnswer, type StaleCause, type StaleLink, type StaleSet, type StaleTarget, type UnitStaleLink, causeKey, isUnitLink, staleLinkKey,
+type StaleAnswer,type StaleCause,type StaleLink,type StaleSet,type StaleTarget,type UnitStaleLink,causeKey,isUnitLink,staleLinkKey
 } from '../core/stale.ts';
 import type { RepoPath } from '../core/values.ts';
-import { lineageMembers } from '../input/envelope.ts';
-import type { PlanM1, PlanUnit } from '../input/plan.ts';
-import type { AdmissionConstraint } from '../schedule/types.ts';
-import type { Obligations, Vision } from './types.ts';
+import type { Obligations,Vision } from './types.ts';
 
 // ---------------------------------------------------------------------------------------------------
 // The stale set
@@ -218,43 +215,3 @@ export function specLinksOf(spec: SpecM1): SpecLinks {
   };
 }
 
-/** Whether a propagation unit's lineage is still to land: its head neither merged nor cut. */
-function pending(view: JournalView, unit: UnitId): boolean {
-  const status = view.unit(lineageMembers(view, unit).at(-1)!).status;
-  return status !== 'retired' && status !== 'cut';
-}
-
-/** The plan's propagation units still to land (`pending`), in plan order. */
-export const pendingPropagations = (view: JournalView, plan: PlanM1): readonly PlanUnit[] =>
-  plan.units.filter((u) => u.propagation !== undefined && pending(view, u.id));
-
-/**
- * The code edges holding `unit`'s gate (see the header): one per pending propagation unit whose target the unit links, or
- * whose re-witnessed files (its scope) the unit's design breaks touch. `links` is read only when one is pending.
- */
-export function propagationHolds(view: JournalView, plan: PlanM1, unit: PlanUnit, links: () => SpecLinks): readonly Extract<AdmissionConstraint, { type: 'propagation' }>[] {
-  if (unit.origin === 'propagation') return [];
-  const props = pendingPropagations(view, plan);
-  if (props.length === 0) return [];
-  const l = links();
-  return props.flatMap((p) => {
-    const target: PropagationTarget = p.propagation!.target;
-    const cites = target.type === 'requirement' ? l.requirements.has(target.id) : l.contracts.has(target.path);
-    const scope = new Set<string>(p.scope);
-    const stale = l.breaks.filter((b) => scope.has(b));
-    return cites || stale.length > 0 ? [{ type: 'propagation' as const, unit: p.id, target, stale }] : [];
-  });
-}
-
-/** The witness links of a stale set grouped by their cause (a requirement or a contract), in first-seen order. */
-export function witnessGroups(set: StaleSet): readonly Readonly<{ cause: Exclude<StaleCause, { type: 'vision-clause' }>; links: readonly Extract<StaleLink, { type: 'witness' }>[] }>[] {
-  const out = new Map<string, { cause: Exclude<StaleCause, { type: 'vision-clause' }>; links: Extract<StaleLink, { type: 'witness' }>[] }>();
-  for (const l of set.links) {
-    if (l.type !== 'witness') continue;
-    const k = causeKey(l.cause);
-    const g = out.get(k) ?? { cause: l.cause, links: [] };
-    g.links.push(l);
-    out.set(k, g);
-  }
-  return [...out.values()];
-}

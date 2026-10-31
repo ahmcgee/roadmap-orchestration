@@ -10,20 +10,19 @@
 // onto the revision, src/input/rebase.ts). A classifier refusal (a suite edit while a candidate is under way, a routing-changed risk) is
 // retried at the next tick, never stored; a `build-class` change waits while its tier has units whose build started.
 // Crash after the commit: the revision with source `flow{proposal}` is the postcondition, and `flow-applied` follows.
-import type { FlowFact, PlanAppliedFact } from '../core/events.ts';
-import { type JobId, type PlanRev, type ProposalId, type UnitId, proposalJob } from '../core/ids.ts';
+import { type FencedCommitContext,commitUnderFence,evaluateRevision } from '../commands/apply.ts';
+import type { FlowFact,PlanAppliedFact } from '../core/events.ts';
+import { type JobId,type PlanRev,type ProposalId,type UnitId,proposalJob } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import { readJournal } from '../core/log.ts';
 import type { AbsPath } from '../core/values.ts';
-import { type FencedCommitContext, commitUnderFence, evaluateRevision } from '../commands/apply.ts';
-import { PLAN_INPUT, inForceFiles, keptInput, requirePlanInForce, revisionInForce } from '../input/inforce.ts';
-import { type PlanM1, parsePlan } from '../input/plan.ts';
+import { PLAN_INPUT,inForceFiles,keptInput,requirePlanInForce,revisionInForce } from '../input/inforce.ts';
+import { type PlanM1,parsePlan } from '../input/plan.ts';
 import { buildStarted } from '../pipeline/dispatch.ts';
 import type { RiskTier } from '../routing/types.ts';
-import { flowRevision, preimageOf } from './levers.ts';
-import { rejectionKeyOf } from './levers.ts';
-import type { FlowAction, FlowProposal, Rejection } from './types.ts';
+import { flowRevision,preimageOf,rejectionKeyOf } from './levers.ts';
+import type { FlowAction,FlowProposal,Rejection } from './types.ts';
 
 /** What an apply touches: the commit context (log, run dir, plan file, routing base, docs publisher) and the repo. */
 export type FlowApplyContext = FencedCommitContext & Readonly<{ repo: AbsPath }>;
@@ -117,6 +116,7 @@ async function applyOne(ctx: FlowApplyContext, proposal: FlowProposal): Promise<
     return;
   }
   const out = await commitUnderFence(ctx, evaluated, { type: 'executor' }, { type: 'flow', proposal: proposal.id }, { type: 'job', job: proposalJob(proposal.id) });
+  if (out.kind === 'rejected' && out.reasons.some((r) => r.startsWith('stale:'))) return applyOne(ctx, proposal);
   if (out.kind === 'rejected') return;
   settle(ctx, proposal, out.fact);
 }

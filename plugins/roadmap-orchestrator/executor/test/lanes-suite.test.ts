@@ -8,17 +8,17 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import type { IntentOf } from '../src/core/events.ts';
-import { type Sha, sha } from '../src/core/ids.ts';
+import { type Sha,sha } from '../src/core/ids.ts';
 import { worktreeList } from '../src/git/git.ts';
 import { pinDispatch } from '../src/pipeline/dispatch.ts';
-import { type LanesDone, fastSuiteRoot, lanes, loadUnitSpec, planCheck } from '../src/pipeline/stages.ts';
-import { stageSuiteLanes, suiteStandIns } from '../src/pipeline/lanes.ts';
+import { stageSuiteLanes,suiteStandIns } from '../src/pipeline/lanes.ts';
+import { type LanesDone,fastSuiteRoot,lanes,loadUnitSpec,planCheck } from '../src/pipeline/stages.ts';
 import { step } from '../src/pipeline/unit.ts';
-import { git } from './helpers/repo.ts';
-import { type CodexAct, type Expect, type Step, readCalls } from './helpers/scenario.ts';
 import {
-  BUILD_REPORT, type LaneJson, SCENARIO_TIMEOUT_MS, type StageRun, U1, keptSpec, outcomeFacts, planCheckStep, setupUnit, spawnIntents, started,
+BUILD_REPORT,type LaneJson,SCENARIO_TIMEOUT_MS,type StageRun,U1,keptSpec,outcomeFacts,planCheckStep,setupUnit,spawnIntents,started,
 } from './fixtures/stage-common.ts';
+import { git } from './helpers/repo.ts';
+import { type CodexAct,type Expect,type Step,readCalls } from './helpers/scenario.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 const codexBuild = (acts: readonly CodexAct[], expect: Expect = {}): Step => ({ as: 'codex', expect, acts: [...acts, { type: 'emit', value: BUILD_REPORT }] });
@@ -28,7 +28,7 @@ const UNIT: LaneJson = { id: 'unit', argv: ['true'] };
 /** A suite lane identical to the spec's: its pass is the spec series', so it never runs at the lanes stage. */
 const SAME: LaneJson = { id: 'same', argv: ['true'] };
 /** An estate suite lane: the candidate's alone. */
-const E2E: LaneJson = { id: 'e2e', argv: ['false'], tier: 'estate' };
+const E2E: LaneJson = { id: 'e2e', argv: ['false'], cadence: 'candidate' };
 
 type LaneSubject = Readonly<{ lane: string; set: string; at: Sha; attempt: number }>;
 /** The lane spawns, in order: which lane, which set, at which commit, under which lanes attempt. */

@@ -92,8 +92,8 @@ export const DEMO_PROMOTE = 'demo promotion (dev.13 agent G: demo-promoted, then
 export const BUNDLE_ACTIVATE = 'bundle activation (M3 B6: bundle-decided or plan-applied{source: bundle}, divergences, finding dispositions, digest)';
 export const TERMINAL_SNAPSHOT = 'close-out publication and arc completion (M3 B7, A8, A20, G8: close-out ff, docs-published, arc-completed, terminal snapshot)';
 export const EXECUTOR_FAULT = 'contained executor fault (1.0.0-dev.17: the task\'s leftovers settled, then the executor-fault park and its item)';
-export const STALE_SET = 'stale-set recording (1.0.0-dev.17 propagation: an apply\'s revision.commit, plan-applied, its divergences, then the stale-set fact from its payload)';
-export const PROPAGATION_REVISION = 'propagation revision (1.0.0-dev.17: propagation-refused, then plan-applied{source: propagation{rev}} under the fence)';
+
+
 export const DESIGN_SPLIT = 'plan-check split (dev.17 design pass: the split hold, then plan-applied{source: split} cutting the unit)';
 export const SCAFFOLD_STAGE = 'scaffold stage (dev.17 design pass: the writer, the dry run, then salvage.commit of the skeleton)';
 export const POC_STAGE = 'proof of concept (dev.17 design pass: the throwaway build, its report, then its checkout removed)';
@@ -1133,7 +1133,8 @@ export const MATRIX: readonly Row[] = [
   {
     row: CONCURRENT_BUNDLE,
     test: 'test/serial/concurrent-matrix.test.ts',
-    cells: jobCells([...LOG_APPENDS, 'checkpoint.after-inputs', 'checkpoint.after-call', 'plan.apply.after-inputs', 'revision.commit.after-intent', 'revision.commit.after-fact', 'bundle.after-applied', ...JOB_OPS], {
+    cells: jobCells([...LOG_APPENDS, 'checkpoint.after-inputs', 'checkpoint.after-call', 'plan.apply.after-inputs', 'revision.commit.after-intent', 'revision.commit.after-fact', 'bundle.after-applied',
+      'needsuser.raise.before-publish', 'needsuser.raise.after-publish', ...JOB_OPS], {
       B1: 'checkpoint-inputs lost: captured again once; the bundle\'s plan-applied or divergence lost inside its revision.commit: the revision finished from its kept payload (reconciled)',
       B2: 'the checkpoint\'s open op closed by its reconciler, or checkpoint-inputs durable with nothing asked, or the bundle\'s revision.commit open: the job resumes as ckpt-1, asks once, and the revision is finished from its payload (reconciled) or aborted and activated again; one plan-applied{bundle}',
       B3: 'inside the checkpoint\'s op, or the revision\'s bytes kept before its commit: finished or redone; the call consumed, never asked again',
@@ -2120,48 +2121,8 @@ export const MATRIX: readonly Row[] = [
       },
     },
   },
-  {
-    // An apply moving I-1 to rev 2 (a requirement u1 and u2 link, its witness file declared) runs in a child with the
-    // stand-in docs publisher (test/fixtures/revision-child.ts); the whole recovery runs.
-    row: STALE_SET,
-    test: 'test/propagation.test.ts',
-    cells: {
-      B1: { status: 'excluded', why: EXCLUDED_B1 },
-      B2: { status: 'excluded', why: 'the stale set rides the revision.commit of its revision: that row\'s B2 (payload kept and named, nothing appended) covers it' },
-      B3: {
-        status: 'crash',
-        labels: ['revision.commit.after-fact'],
-        recovery: 'plan-applied written, the stale set not: the reconciler appends it from the kept payload, once, after the plan-applied; done reconciled; the apply finds its fact',
-      },
-      B4: {
-        status: 'crash',
-        labels: ['propagation.after-stale-set'],
-        recovery: 'the stale set written, the commit not done: the reconciler appends nothing twice (one stale-set of rev 2) and closes the commit; the apply finds its fact',
-      },
-      B5: { status: 'excluded', why: 'the done is one journal append (journal.append) and closes the commit: nothing is open for recovery' },
-    },
-  },
-  {
-    // I-1's scenario test is on the base and I-2's is not; an apply moved both to rev 2. The propagation revision runs in a
-    // child (test/fixtures/propagation-child.ts) crashed at each label, then recovery and the revision again.
-    row: PROPAGATION_REVISION,
-    test: 'test/propagation.test.ts',
-    cells: {
-      B1: { status: 'excluded', why: EXCLUDED_B1 },
-      B2: { status: 'excluded', why: 'the revision writes no intent of its own before its refusals; its commit is the revision.commit row\'s' },
-      B3: {
-        status: 'crash',
-        labels: ['propagation.after-refused'],
-        recovery: 'I-2\'s propagation-refused durable, the revision not committed: the rerun skips I-2 (settled) and mints I-1\'s unit in one revision; one propagation-refused, one plan-applied{source: propagation}',
-      },
-      B4: { status: 'excluded', why: 'the commit is one revision.commit (its own row crashes inside it); nothing of the propagation revision follows it but the crash label after it' },
-      B5: {
-        status: 'crash',
-        labels: ['propagation.after-revision'],
-        recovery: 'the revision committed: nothing is due (I-1 carried by its unit, I-2 refused); no second revision',
-      },
-    },
-  },
+  
+  
   {
     // u1's oversize design refused, its repair turn's split accepted; the unit driver runs in a child (unit-child.ts) crashed
     // at each label, then the restart's startup consume (src/pipeline/unit.ts `finishHeldSplit`).

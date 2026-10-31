@@ -1,65 +1,125 @@
 // The event log (`events.jsonl`) record types, their validators, canonical serialisation and the chain
 // hash rule. The journal (append, tail, fold) is step 2 and builds on these. SCHEMAS.md "Event log" is the
 // prose twin of this module.
-import { type CpuBasis, cpuBasis } from './cpu.ts';
 import type { Buffer } from 'node:buffer';
+import { type BankReason,type DebtSource,BANK_REASONS,debtSource } from '../debt/types.ts';
 import {
-  type AmendmentId, type ArcId, type CommandId, type DebtId, type DivergenceId, type EdgeId, type EnvId, type FindingId, type InvocationId,
-  type JobId, type KnownDefectId, type LaneId, type LaneRev, type NeedsUserId, type ObligationId, type OpId, type OpKey, type OpportunityId, type PlanRev,
-  knownDefectId, opportunityId,
-  type ResourceInstance, type ResourceName, type ResourceUnit, type RoutingRev, type RuleId, type RulingId, type Sha, type Sha256Hex, type SpecRev,
-  type ProposalId, type UnitId, type VisionClauseId, INTEGRATION_SLOT, proposalId, proposalJob, amendmentId, arcId, commandId, compareResourceUnits, debtId, divergenceId, edgeId, envId,
-  findingId, invocationIdOf, jobIdOf, jobIdOfKind, laneId, laneRev, needsUserId, obligationId, opIdOf, opKey, parseInvocationId, parseJobId, parseOpId,
-  parseResourceUnit, planRev, resourceInstance, resourceName, resourceUnit, routingRev, ruleId, rulingId, sha, sha256, specRev, unitId,
-  visionClauseId, idList, type ClaudeSessionId, claudeSessionId,
-  type JourneyId, type MilestoneId, type PolishId, type ServeName, journeyId, milestoneId, polishId, serveName,
-} from './ids.ts';
-import { type BankReason, type DebtSource, BANK_REASONS, debtSource } from '../debt/types.ts';
-import {
-  type FlowDropped, type FlowEndedConstraint, type FlowMetric, type FlowOutcome, type FlowPreimage, type FlowProposal, type FlowTrigger, type FlowVerdictKind,
-  type GuardBreach, type HostFingerprint, type ProofMinutes, type ProofOutcome, type VerdictAfter, type VerdictBefore, FLOW_OUTCOMES, FLOW_VERDICTS,
-  MIN_VERDICT_SAMPLES, PROOF_OUTCOMES, flowDropped, fraction, flowEndedConstraint, flowMetric, flowPreimage, flowProposal, flowTriggers, guardBreaches, hostFingerprint,
-  proofMinutes, verdictAfter, verdictBefore,
+type FlowDropped,type FlowEndedConstraint,type FlowMetric,type FlowOutcome,type FlowPreimage,type FlowProposal,type FlowTrigger,type FlowVerdictKind,
+type GuardBreach,type HostFingerprint,type ProofMinutes,type ProofOutcome,type VerdictAfter,type VerdictBefore,FLOW_OUTCOMES,FLOW_VERDICTS,
+MIN_VERDICT_SAMPLES,PROOF_OUTCOMES,flowDropped,
+flowEndedConstraint,flowMetric,flowPreimage,flowProposal,flowTriggers,
+fraction,
+guardBreaches,hostFingerprint,
+proofMinutes,verdictAfter,verdictBefore,
 } from '../flow/types.ts';
-import { type PressureAvailability, PRESSURE_AVAILABILITIES } from '../host/pressure.ts';
-import { canonicalJson, sha256Hex } from './json.ts';
+import { type PressureAvailability,PRESSURE_AVAILABILITIES } from '../host/pressure.ts';
+import { type CpuBasis,cpuBasis } from './cpu.ts';
 import {
-  COMMAND_VERDICTS, DEMO_ACTS, LENS_KIND_NAMES, type ApprovalFingerprint, type DemoAct, type BackendOutcomeKind, type CommandVerdict, type ContainmentMode,
-  type DispatchRecord, type KillReason, type KnownDefectMatch, type LensKindName, type PauseTarget, type PlanManifest, type RedRev, type ResidueRecord, type ResumeTarget,
-  type RevisionManifest, type SpecPatch, type Stage, type TokenUsage, type ClassUsage, type PromptSize, classUsages, type UsageUnavailableReason, approvalFingerprint, containmentMode,
-  dispatchRecord, killReason, knownDefectMatch, optionId, pauseTarget, manifestSpecs, resumeTarget, revisionInputs, specPatch, stage, tokenUsage,
-  usageUnavailableReason, type Stochastic, stochastic,
+type AmendmentId,type ArcId,
+type ClaudeSessionId,
+type CommandId,type DebtId,type DivergenceId,type EdgeId,type EnvId,type FindingId,type InvocationId,
+type JobId,
+type JourneyId,
+type KnownDefectId,type LaneId,type LaneRev,
+type MilestoneId,
+type NeedsUserId,type ObligationId,type OpId,type OpKey,type OpportunityId,type PlanRev,
+type PolishId,
+type ProposalId,
+type ResourceInstance,type ResourceName,type ResourceUnit,type RoutingRev,type RuleId,type RulingId,
+type ServeName,
+type Sha,type Sha256Hex,type SpecRev,
+type UnitId,type VisionClauseId,
+amendmentId,arcId,
+claudeSessionId,
+commandId,compareResourceUnits,debtId,divergenceId,edgeId,envId,
+findingId,
+idList,
+invocationIdOf,jobIdOf,jobIdOfKind,
+journeyId,
+knownDefectId,
+laneId,laneRev,
+milestoneId,
+needsUserId,obligationId,opIdOf,opKey,
+opportunityId,
+parseInvocationId,parseJobId,parseOpId,
+planRev,
+polishId,
+proposalId,proposalJob,
+resourceInstance,resourceName,resourceUnit,routingRev,ruleId,rulingId,
+serveName,
+sha,sha256,specRev,unitId,
+visionClauseId
+} from './ids.ts';
+import { canonicalJson,sha256Hex } from './json.ts';
+import { type OrderingWait,orderingWait } from './ordering.ts';
+import {
+type ApprovalFingerprint,
+type BackendOutcomeKind,
+type ClassUsage,
+type CommandVerdict,type ContainmentMode,
+type DemoAct,
+type DispatchRecord,type KillReason,type KnownDefectMatch,type LensKindName,type PauseTarget,type PlanManifest,
+type PromptSize,
+type RedRev,type ResidueRecord,type ResumeTarget,
+type RevisionManifest,type SpecPatch,type Stage,
+type Stochastic,
+type TokenUsage,
+type UsageUnavailableReason,
+COMMAND_VERDICTS,DEMO_ACTS,LENS_KIND_NAMES,
+approvalFingerprint,
+classUsages,
+containmentMode,
+dispatchRecord,killReason,knownDefectMatch,
+manifestSpecs,
+optionId,pauseTarget,
+resumeTarget,revisionInputs,specPatch,stage,
+stochastic,
+tokenUsage,
+usageUnavailableReason,
 } from './records.ts';
-import { type OrderingWait, orderingWait } from './ordering.ts';
-import { issuesIgnored, orderingDefault } from './upgrade.ts';
+
 import {
-  type BusyAttempt, type ClassifiedAdmit, type Conversion, type ConversionReason, BUNDLE_REJECTIONS, CONVERSION_REASONS, classifiedAdmit, conversion,
-  type AuditTrigger, type BundleOutcome, type CheckpointTrigger, type ContractOp, type DivergenceDraft, type FindingEvidence, type FindingLens,
-  type FindingSeverity, type FindingSource, type FindingTo, type MutantRef, type ObligationDisposition, type ObservationKey, type PackDisposition, type PackFinding,
-  type RevisionVector, type WitnessPurpose, FINDING_LENSES, FINDING_SEVERITIES, OBLIGATION_DISPOSITIONS, WITNESS_PURPOSES, auditTrigger,
-  checkpointTrigger, contractOp, divergenceDraft, divergenceDraftFields, findingEvidence, findingSource, findingTo, mutantRef, observationKey,
-  packDisposition, packFinding, revisionVector, type PlanDefect, planDefect,
+type AuditTrigger,type BundleOutcome,
+type BusyAttempt,
+type CheckpointTrigger,
+type ClassifiedAdmit,
+type ContractOp,
+type Conversion,type ConversionReason,
+type DivergenceDraft,type FindingEvidence,type FindingLens,
+type FindingSeverity,type FindingSource,type FindingTo,type MutantRef,type ObligationDisposition,type ObservationKey,type PackDisposition,type PackFinding,
+type PlanDefect,
+type RevisionVector,type WitnessPurpose,
+BUNDLE_REJECTIONS,CONVERSION_REASONS,
+FINDING_LENSES,FINDING_SEVERITIES,OBLIGATION_DISPOSITIONS,WITNESS_PURPOSES,auditTrigger,
+checkpointTrigger,
+classifiedAdmit,
+contractOp,
+conversion,
+divergenceDraft,divergenceDraftFields,findingEvidence,findingSource,findingTo,mutantRef,observationKey,
+packDisposition,packFinding,
+planDefect,
+revisionVector,
 } from '../holistic/types.ts';
+import { type SystemsMap,systemsMap } from '../input/systems.ts';
 import {
-  type Read, Fields, SchemaError, arrayOf, assertUnique, bool, int, literal, nat, nullable, object, oneOf, positive, sortedBy, str, tagged, text,
-  version,
+type ArcSeatRef,type Backend,type RiskTier,type RoutingProvenance,type SeatRef,type UnitSeatRef,arcSeatFields,backend,riskTier,
+routingProvenance,seatFields,unitSeatFields,
+} from '../routing/types.ts';
+import { type FlakyEvent,flakyEvent } from './flaky.ts';
+import { type ReviewFindingId,reviewFindingId } from './ids.ts';
+import {
+type ApprovalBlobs,type FindingsLedgerEntry,type GateReview,type LedgerOutcome,LEDGER_OUTCOMES,approvalBlobs,findingsLedgerEntry,gateReview,
+} from './review.ts';
+import { type StaleAnswer,type StaleSet,staleAnswer,staleSet,staleSetFields } from './stale.ts';
+import {
+type Read,Fields,SchemaError,arrayOf,assertUnique,bool,int,literal,nat,nullable,object,oneOf,positive,sortedBy,str,tagged,text,
+version,
 } from './validate.ts';
 import {
-  type AbsPath, type GitDate, type IsoTime, type RefName, type RepoPath, type RepoPattern, absPath, gitDate, isoTime,
-  refName, repoPath, repoPattern,
+type AbsPath,type GitDate,type IsoTime,type RefName,type RepoPath,type RepoPattern,absPath,gitDate,isoTime,
+refName,repoPath,repoPattern,
 } from './values.ts';
 import type { SchemaVersion } from './version.ts';
-import {
-  type ArcSeatRef, type Backend, type RiskTier, type RoutingProvenance, type SeatRef, type UnitSeatRef, arcSeatFields, backend, riskTier,
-  routingProvenance, seatFields, unitSeatFields,
-} from '../routing/types.ts';
-import { type SystemsMap, systemsMap } from '../input/systems.ts';
-import { type FlakyEvent, flakyEvent } from './flaky.ts';
-import { type PropagationTarget, type StaleAnswer, type StaleSet, propagationTarget, staleAnswer, staleSet, staleSetFields } from './stale.ts';
-import {
-  type ApprovalBlobs, type FindingsLedgerEntry, type GateReview, type LedgerOutcome, LEDGER_OUTCOMES, approvalBlobs, findingsLedgerEntry, gateReview,
-} from './review.ts';
-import { type ReviewFindingId, reviewFindingId } from './ids.ts';
 
 // ---------------------------------------------------------------------------------------------------
 // Op kinds and their payloads
@@ -352,7 +412,7 @@ export type RevisionSource =
   /** dev.17 (flaky ledger): the code-applied revision admitting deflake units for the flakes the ledger holds (src/pipeline/deflake.ts). */
   | Readonly<{ type: 'deflake' }>
   /** dev.17 (propagation): the code-applied revision minting the propagation units of the stale set plan rev `rev` recorded. */
-  | Readonly<{ type: 'propagation'; rev: PlanRev }>;
+;
 
 /** Expected postconditions beyond what the kind and `expect` already fix; `null` where they fix everything. */
 export type OpPost = {
@@ -1015,6 +1075,7 @@ export type HolisticFact =
   | (Readonly<{ kind: 'divergence'; id: DivergenceId; index: number }> & DivergenceDraft)
   /** H11: the digest item binds exactly these ids; its acknowledgement covers them. */
   | Readonly<{ kind: 'divergence-digest'; needsUser: NeedsUserId; ids: readonly DivergenceId[] }>
+  | Readonly<{ kind: 'noted'; unit: UnitId; command: CommandId; brief: Sha256Hex }>
   | Readonly<{ kind: 'steered'; unit: UnitId; command: CommandId; brief: Sha256Hex; budgetMin: number; resume: boolean }>
   | Readonly<{ kind: 'merged-in'; unit: UnitId; command: CommandId; integrationTip: Sha; head: Sha }>
   | Readonly<{ kind: 'audit-requested'; command: CommandId; lenses: readonly LensKindName[] | null }>
@@ -1245,7 +1306,7 @@ export type PropagationFact =
    * A propagation the code-applied revision did not mint (the arc draining, or the admit path or the classifier refusing its
    * unit): settled, never minted. Once per (`rev`, `target`).
    */
-  | Readonly<{ kind: 'propagation-refused'; rev: PlanRev; target: PropagationTarget; reasons: readonly string[] }>;
+;
 export type PropagationFactKind = PropagationFact['kind'];
 
 export type HolisticFactKind = HolisticFact['kind'];
@@ -1323,7 +1384,7 @@ export type PlanChange =
  * M4a rev 3 (F5): a re-entry leaving its lineage's scope envelope, accepted on an active ruling applying to the new unit
  * whose statement names exactly the added patterns (ascending, non-empty).
  */
-export type ReentryWidening = Readonly<{ patterns: readonly RepoPattern[]; ruling: RulingId }>;
+export type ReentryWidening = Readonly<{ patterns: readonly RepoPattern[]; reason: string }>;
 
 /**
  * `restored` (M3 step A2): an exempt obligation active again; `edited`: its serves, contracts, deliveredBy changed, or
@@ -1349,13 +1410,12 @@ export type RevisionPayload = Readonly<{
   rev: PlanRev;
   manifest: RevisionManifest;
   changes: readonly PlanChange[];
-  dispositions: readonly Readonly<{ obligation: ObligationId; disposition: ObligationDisposition; ruling: RulingId }>[];
+  dispositions: readonly Readonly<{ obligation: ObligationId; disposition: ObligationDisposition; reason: string; rev: number }>[];
   divergences: readonly DivergenceDraft[];
   publication: Readonly<{ renders: readonly Readonly<{ path: RepoPath; sha256: Sha256Hex }>[]; contractOps: readonly ContractOp[] }> | null;
   routingProvenance: RoutingProvenance;
   /** dev.17: the repo config's systems map (src/input/systems.ts; null: none); absent on a payload a dev.16 executor kept. */
   systemsMap?: SystemsMap | null;
-  owner?: RevisionManifest;
   /**
    * dev.17 (propagation): the revision's stale set (src/holistic/propagation.ts `staleSetOf`), present exactly when it changes
    * a target a link may name (a requirement's rev, a contract, a vision clause); its `stale-set` fact is appended from it.
@@ -1513,7 +1573,6 @@ const revisionSource: Read<RevisionSource> = tagged('type', {
   compare: object((f): RevisionSource => ({ type: f.get('type', literal('compare')), unit: f.get('unit', unitR) })),
   split: object((f): RevisionSource => ({ type: f.get('type', literal('split')), unit: f.get('unit', unitR), inv: f.get('inv', invR) })),
   deflake: object((f): RevisionSource => ({ type: f.get('type', literal('deflake')) })),
-  propagation: object((f): RevisionSource => ({ type: f.get('type', literal('propagation')), rev: f.get('rev', (v, p) => planRev(v, p)) })),
 });
 
 const resourceEdge: Read<ResourceEdge> = tagged('type', {
@@ -1916,7 +1975,7 @@ const planChange: Read<PlanChange> = tagged('type', {
     const out = { type: f.get('type', literal('unit-reentered')), unit: f.get('unit', unitR), reenters: f.get('reenters', unitR), reset: f.get('reset', bool) };
     if (out.reenters === out.unit) throw new SchemaError(`${f.path}.reenters`, 'a unit other than the re-entering one', out.reenters);
     const widened = f.optional('widened', object((g): ReentryWidening => ({
-      patterns: g.get('patterns', sortedBy((v, p) => repoPattern(v, p), (x) => x, { nonEmpty: true })), ruling: g.get('ruling', (v, p): RulingId => rulingId(v, p)),
+      patterns: g.get('patterns', sortedBy((v, p) => repoPattern(v, p), (x) => x, { nonEmpty: true })), reason: g.get('reason', str),
     })));
     return widened === undefined ? out : { ...out, widened };
   }),
@@ -1931,7 +1990,7 @@ const planChange: Read<PlanChange> = tagged('type', {
     const out = { type: f.get('type', literal('phase0')), sha256: f.get('sha256', sha256R) };
     const issuesSha256 = f.optional('issuesSha256', sha256R);
     if (issuesSha256 === undefined) return out;
-    issuesIgnored('plan-changed.phase0.issuesSha256');
+
     return { ...out, issuesSha256 };
   }),
   'unit-priority': object((f): PlanChange => ({ type: f.get('type', literal('unit-priority')), unit: f.get('unit', unitR) })),
@@ -1953,7 +2012,7 @@ export const revisionPayload: Read<RevisionPayload> = object((f) => {
     manifest: f.get('manifest', object((g) => ({ planSha256: g.get('planSha256', sha256R), specs: g.get('specs', manifestSpecs), ...revisionInputs(g) }))),
     changes: f.get('changes', arrayOf(planChange)),
     dispositions: f.get('dispositions', arrayOf(object((g) => ({
-      obligation: g.get('obligation', obligationR), disposition: g.get('disposition', oneOf(OBLIGATION_DISPOSITIONS)), ruling: g.get('ruling', (v, p): RulingId => rulingId(v, p)),
+      obligation: g.get('obligation', obligationR), disposition: g.get('disposition', oneOf(OBLIGATION_DISPOSITIONS)), reason: g.get('reason', str), rev: g.get('rev', positive),
     })))),
     divergences: f.get('divergences', arrayOf(divergenceDraft)),
     publication: f.get('publication', nullable(object((g) => ({
@@ -1963,10 +2022,9 @@ export const revisionPayload: Read<RevisionPayload> = object((f) => {
     routingProvenance: f.get('routingProvenance', routingProvenance),
   };
   const systems = f.optional('systemsMap', nullable(systemsMap));
-  const owner = f.optional('owner', object((g) => ({ planSha256: g.get('planSha256', sha256R), specs: g.get('specs', manifestSpecs), ...revisionInputs(g) })));
   const stale = f.optional('stale', staleSet);
   if (out.rev !== out.base + 1) throw new SchemaError(`${f.path}.rev`, String(out.base + 1), out.rev);
-  return { ...out, ...(systems === undefined ? {} : { systemsMap: systems }), ...(owner === undefined ? {} : { owner }), ...(stale === undefined ? {} : { stale }) };
+  return { ...out, ...(systems === undefined ? {} : { systemsMap: systems }), ...(stale === undefined ? {} : { stale }) };
 });
 
 export function parseRevisionPayload(value: unknown): RevisionPayload {
@@ -1988,7 +2046,7 @@ const parkRecord: Read<ParkRecord> = tagged('class', {
     const cls = f.get('class', literal('operator'));
     const kind = f.get('kind', oneOf(OPERATOR_PARK_KINDS));
     const ordering = f.optional('ordering', nullable(orderingWait));
-    if (ordering === undefined) orderingDefault();
+
     if (ordering != null && kind !== 'design') throw new SchemaError(`${f.path}.ordering`, 'ordering only on a design park', ordering);
     if (kind === 'env') return { class: cls, kind, ...(ordering === undefined ? {} : { ordering: null }) };
     return { class: cls, kind, ...(ordering === undefined ? {} : { ordering }) };
@@ -2083,7 +2141,7 @@ const ruleList: Read<readonly RuleId[]> = idList((v, p) => ruleId(v, p), { legac
 
 /** Scaffolding (`issuesIgnored`): JSON the removed issues integration wrote, `what` naming it; returned as written. */
 const issuesLegacy = <T>(what: string): Read<T> => (value) => {
-  issuesIgnored(what);
+
   return value as T;
 };
 
@@ -2091,7 +2149,7 @@ const amendmentSource: Read<AmendmentSource> = tagged('type', {
   checkpoint: object((f): AmendmentSource => ({ type: f.get('type', literal('checkpoint')), job: f.get('job', ckptJobR), index: f.get('index', nat) })),
   divergence: object((f): AmendmentSource => ({ type: f.get('type', literal('divergence')), divergence: f.get('divergence', (v, p) => divergenceId(v, p)) })),
   issue: object((f): AmendmentSource => {
-    issuesIgnored('corpus-amendment.source.issue');
+
     return { type: f.get('type', literal('issue')), job: f.get('job', ckptJobR), issue: f.get('issue', str) };
   }),
   admit: object((f): AmendmentSource => ({
@@ -2260,10 +2318,7 @@ const PROPAGATION_FACT_READERS: { readonly [K in PropagationFactKind]: Read<Fact
     assertUnique(out.answers, (a) => a.link, `${f.path}.answers`);
     return out;
   }),
-  'propagation-refused': object((f): Fact => ({
-    kind: f.get('kind', literal('propagation-refused')), rev: f.get('rev', (v, p) => planRev(v, p)), target: f.get('target', propagationTarget),
-    reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })),
-  })),
+
 };
 
 /** The readers of the dev.13 facts, spread into `fact`. */
@@ -2463,6 +2518,7 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
     kind: f.get('kind', literal('divergence-digest')), needsUser: f.get('needsUser', (v, p): NeedsUserId => needsUserId(v, p)),
     ids: f.get('ids', idList((v, p): DivergenceId => divergenceId(v, p), { nonEmpty: true, legacyStringOrder: true })),
   })),
+  noted: object((f): Fact => ({ kind: f.get('kind', literal('noted')), unit: f.get('unit', unitR), command: f.get('command', cmdR), brief: f.get('brief', sha256R) })),
   steered: object((f): Fact => ({
     kind: f.get('kind', literal('steered')), unit: f.get('unit', unitR), command: f.get('command', cmdR), brief: f.get('brief', sha256R),
     budgetMin: f.get('budgetMin', positive), resume: f.get('resume', bool),

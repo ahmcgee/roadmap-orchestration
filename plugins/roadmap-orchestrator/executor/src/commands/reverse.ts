@@ -191,6 +191,7 @@ export async function reverse(ctx: CommandContext, id: CommandId, divergence: Di
   if (evaluated.kind === 'rejected') return { kind: 'rejected', reason: rejectedText(evaluated.reasons, 'reverse') };
   if (evaluated.kind === 'unchanged') return { kind: 'applied', verified: [`${divergence}'s preimage is in force already (rev ${evaluated.rev})`] };
   const committed = await commitUnderFence(ctx, evaluated, { type: 'reverse' }, { type: 'command', command: id }, parentOf(id));
+  if (committed.kind === 'rejected' && committed.reasons.some((r) => r.startsWith('stale:'))) return reverse(ctx, id, divergence);
   if (committed.kind === 'rejected') return { kind: 'rejected', reason: rejectedText(committed.reasons, 'reverse') };
   return { kind: 'applied', verified: [`plan rev ${committed.fact.rev} in force: ${divergence} reversed`, ...committed.fact.changes.map((c) => canonicalJson(c))] };
 }

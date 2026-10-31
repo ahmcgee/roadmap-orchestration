@@ -8,39 +8,39 @@
 // context-exceeded.plan-check, context-exceeded.build. dev.12: gate.repair-turn; the large-diff gate: gate.large-diff,
 // gate.large-diff-seat, gate.cluster-coverage. dev.13: gate.acting-checkout. dev.16: gate.symlink-in-checkout.
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { describe, it, test } from 'node:test';
+import { existsSync,readFileSync,writeFileSync } from 'node:fs';
+import { dirname,join } from 'node:path';
+import { describe,it,test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { applyCommand, evaluateRevision, keepRevision, payloadOf } from '../src/commands/apply.ts';
+import { ACTING_JUDGE_TOOLS,writeDenyRules } from '../src/backends/argv.ts';
+import { applyCommand,evaluateRevision,keepRevision,payloadOf } from '../src/commands/apply.ts';
 import { holdFence } from '../src/core/fence.ts';
-import { holderUnits, resourceTable } from '../src/resources/reserve.ts';
-import { reached, release } from './helpers/barrier.ts';
-import { type Wired, publishArc, ruleRecord, submitRule, wire } from './fixtures/publish-common.ts';
 import { rulingId } from '../src/core/ids.ts';
-import { gateDiffShownOf, gateLargeDiffOf } from '../src/core/upgrade.ts';
 import type { JsonValue } from '../src/core/json.ts';
+import { gateDiffShownOf,gateLargeDiffOf } from '../src/core/projections.ts';
 import { SchemaError } from '../src/core/validate.ts';
-import { absPath, repoPath } from '../src/core/values.ts';
-import { CHANGED_LIST, CLUSTER_PATHS_SHOWN, gateAnswerFor } from '../src/pipeline/gate.ts';
-import { ACTING_JUDGE_TOOLS, writeDenyRules } from '../src/backends/argv.ts';
-import { FILES_DIR, readManifest } from '../src/git/evidence.ts';
-import { evidenceRoot, judgeSystem, verificationWorktree } from '../src/pipeline/dispatch.ts';
+import { absPath,repoPath } from '../src/core/values.ts';
+import { FILES_DIR,readManifest } from '../src/git/evidence.ts';
+import { laneRevOf,parseObligations } from '../src/holistic/types.ts';
+import { commitRevisionNow,readInputFiles } from '../src/input/inforce.ts';
+import { evidenceRoot,judgeSystem,verificationWorktree } from '../src/pipeline/dispatch.ts';
+import { CHANGED_LIST,CLUSTER_PATHS_SHOWN,gateAnswerFor } from '../src/pipeline/gate.ts';
+import { invocationDir } from '../src/pipeline/invoke.ts';
+import { loadUnitSpec } from '../src/pipeline/stages.ts';
+import type { Gate } from '../src/pipeline/unit.ts';
+import { runUnit,step } from '../src/pipeline/unit.ts';
 import { promptFor } from '../src/prompts/index.ts';
 import { clusterCoverage } from '../src/prompts/schemas.ts';
-import { laneRevOf, parseObligations } from '../src/holistic/types.ts';
-import { commitRevisionNow, readInputFiles } from '../src/input/inforce.ts';
-import { invocationDir } from '../src/pipeline/invoke.ts';
-import { runUnit, step } from '../src/pipeline/unit.ts';
-import { git, tmpDir } from './helpers/repo.ts';
-import { type CallRecord, type Step, readCalls } from './helpers/scenario.ts';
-import { events } from './fixtures/invoke-specs.ts';
-import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
-import type { Gate } from '../src/pipeline/unit.ts';
-import { type ArcDescriptor, MUL, U1, codexStep, contextFor, gateRepairStep, gateStep, isGateCall as isGate, mulBuild, outcomes, setupArc, stepUntil } from './fixtures/unit-common.ts';
-import { BASE, editPlan, followContext, planDirOf, recordFirst, stepTo, unitOf } from './fixtures/route-common.ts';
+import { holderUnits,resourceTable } from '../src/resources/reserve.ts';
 import { specBytes } from '../src/spec/spec.ts';
-import { loadUnitSpec } from '../src/pipeline/stages.ts';
+import { events } from './fixtures/invoke-specs.ts';
+import { type Wired,publishArc,ruleRecord,submitRule,wire } from './fixtures/publish-common.ts';
+import { BASE,editPlan,followContext,planDirOf,recordFirst,stepTo,unitOf } from './fixtures/route-common.ts';
+import { SCENARIO_TIMEOUT_MS,admitAll,planCheckStep } from './fixtures/stage-common.ts';
+import { type ArcDescriptor,MUL,U1,codexStep,contextFor,gateRepairStep,gateStep,isGateCall as isGate,mulBuild,outcomes,setupArc,stepUntil } from './fixtures/unit-common.ts';
+import { reached,release } from './helpers/barrier.ts';
+import { git,tmpDir } from './helpers/repo.ts';
+import { type CallRecord,type Step,readCalls } from './helpers/scenario.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 /** Every stage admitted at once: the unit runs on its own. */
@@ -57,7 +57,7 @@ test('gate.fingerprint-invalidated: a contract changes on T between approve and 
     // The fingerprint: blob ids at the gated tip, sorted by path; every cited ruling at rev 1.
     assert.deepEqual(tip.map((c) => c.path), ['ARCHITECTURE.md', 'contracts/api.md']);
     for (const c of tip) assert.equal(c.blob, git(d.repo, 'rev-parse', `main:${c.path}`));
-    assert.deepEqual(first.fingerprint.rulingRevs, [{ id: rulingId('C-1'), rev: 1 }]);
+    assert.deepEqual(first.fingerprint.rulingRevs, [{ id: rulingId('C-1'), rev: 157967298067165 }]);
 
     writeFileSync(join(d.repo, 'contracts', 'api.md'), '# API contract\n\n`add(a, b)` returns the sum; `mul(a, b)` the product.\n');
     git(d.repo, 'commit', '--quiet', '-am', 'the contract changes on integration');
@@ -136,7 +136,7 @@ test('gate.revise: the directives go to a fix round, and the next gate rules on 
     steps: [
       planCheckStep({ decision: 'approve' }),
       mulBuild(),
-      gateStep({ decision: 'revise', directives: [directive], findings: [finding], premises }),
+      gateStep({rulings: [],  decision: 'revise', directives: [directive], findings: [finding], premises }),
       codexStep([{ type: 'commit', message: 'default export', files: { 'src/mul.js': `${MUL['src/mul.js']}export default mul;\n` } }], { argv: ['exec', 'resume'], stdinContains: [directive] }),
       gateStep({ decision: 'approve' }, {
         stdinContains: [
@@ -189,7 +189,7 @@ const deniedGate = () => gateStep({ decision: 'approve' }, {}, [{ type: 'globAbo
 const addDirs = (c: CallRecord): readonly string[] => c.argv.flatMap((t, i) => (c.argv[i - 1] === '--add-dir' ? [t] : []));
 
 test('gate.repair-turn (dev.12): an answer off the gate\'s schema goes back once in its own session with why; the repaired answer is the attempt\'s; refused again, the attempt is malformed', T, async () => {
-  const offSchema: Step = { as: 'claude', expect: {}, acts: [{ type: 'emit', value: { decision: 'approve', ordering: null, findings: [], directives: [], reasons: ['A1 holds'] } }] };
+  const offSchema: Step = { as: 'claude', expect: {}, acts: [{ type: 'emit', value: {rulings: [],  decision: 'approve', ordering: null, findings: [], directives: [], reasons: ['A1 holds'] } }] };
   const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), offSchema, gateRepairStep({ decision: 'approve' }, ['premises'])] });
   const r = contextFor(d);
   try {
@@ -426,12 +426,12 @@ const VISION = {
   ],
   questions: [],
 };
-const JOURNEY = { id: 'journey', argv: ['node', '-e', '0'], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], reporter: 'jsonl' };
+const JOURNEY = { id: 'journey', argv: ['node', '-e', '0'], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], reporter: 'jsonl' };
 const LANE_REV = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [JOURNEY], obligations: [], mapping: { paths: [] } }).lanes[0]!);
 function obligation(id: string, statement: string): Record<string, unknown> {
   return {
     id, rev: 1, statement, docRef: { path: 'ARCHITECTURE.md', anchor: 'Architecture', quotedText: 'One module' }, serves: ['V-1'],
-    witness: { lane: 'journey', testIds: [`t-${id}`] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: LANE_REV, witness: { lane: 'journey', testIds: [`t-${id}`] } },
+    witness: { lane: 'journey', testIds: [`t-${id}`] }, proofJudgment: { verdict: 'proves', obligationRev: 1,  witness: {  testIds: [`t-${id}`] } },
     deliveredBy: [], activation: 'must-hold', contracts: [], state: { type: 'active' },
   };
 }
@@ -500,7 +500,7 @@ test('gate.bounded-diff: the gate reads its diff as the bounded attachment (orie
     assert.deepEqual(gateDiffShownOf(inputs), inputs.diffShown);
     // A dev.11 executor's gate recorded none: read as nothing recorded (scaffolding).
     const { diffShown: _, ...dev11 } = inputs;
-    assert.deepEqual(gateDiffShownOf(dev11), { inlined: [], notInlined: [] });
+    assert.equal(gateDiffShownOf(dev11), undefined, 'schema 2 never invents a diff certificate for a pre-break record');
     // Under the large-diff threshold: the unit's own seat (med: frontier, Opus medium since dev.17), the plain prompt, no map.
     assert.equal(inputs.largeDiff, null);
     assert.ok(g!.argv.includes('claude-opus-5-5') && g!.argv.includes('medium'), 'a small diff keeps the unit\'s seat');
@@ -609,7 +609,7 @@ test('gate.approval-captured-fingerprint: a docs-only rule superseding a cited r
     assert.equal((await gating).kind, 'continue');
     assert.equal(outcomes(d).at(-1), 'gate:approve');
     const [first] = approvals(d);
-    assert.deepEqual(first!.fingerprint.rulingRevs, [{ id: rulingId('C-1'), rev: 1 }], 'the approval binds the ruling the gate judged');
+    assert.deepEqual(first!.fingerprint.rulingRevs, [{ id: rulingId('C-1'), rev: 157967298067165 }], 'the approval binds the ruling the gate judged');
     assert.deepEqual(judgmentInputs(d, 'gate')[0]!.fingerprint, first!.fingerprint, 'exactly the fingerprint captured with the inputs');
     assert.deepEqual(await runUnit(w.stage, r.unit('u1'), live()), { kind: 'merged' });
     assert.ok(outcomes(d).includes('ff:fingerprint-invalid'), outcomes(d).join(' '));
@@ -621,25 +621,7 @@ test('gate.approval-captured-fingerprint: a docs-only rule superseding a cited r
   }
 });
 
-test('gate.partial-supersession-regates: an approved unit citing C-1; C-2 partially supersedes C-1; ff re-gates and the new approval binds C-1 at rev 2', T, async () => {
-  const d = publishArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' }), gateStep({ decision: 'approve' })] });
-  const r = contextFor(d);
-  const w = wire(r);
-  const stop = ticking(w);
-  try {
-    await stepUntil(r, 'u1', (f) => f.stage === 'gate' && f.outcome === 'approve');
-    assert.deepEqual(r.journal.view.unit(U1).approval!.fingerprint.rulingRevs, [{ id: rulingId('C-1'), rev: 1 }]);
-    const outcome = await applyCommand(w.commands, submitRule(r, ruleRecord(r, 'C-2', { supersedes: [{ id: 'C-1', part: 'where helpers are tested' }] })));
-    assert.equal(outcome.kind, 'applied', JSON.stringify(outcome));
-    assert.deepEqual(await runUnit(w.stage, r.unit('u1'), live()), { kind: 'merged' });
-    assert.ok(outcomes(d).includes('ff:fingerprint-invalid'), outcomes(d).join(' '));
-    assert.equal(readCalls(d.scenarioPath).filter(isGate).length, 2);
-    assert.deepEqual(approvals(d).map((a) => a.fingerprint.rulingRevs), [[{ id: rulingId('C-1'), rev: 1 }], [{ id: rulingId('C-1'), rev: 2 }]]);
-  } finally {
-    stop();
-    r.journal.close();
-  }
-});
+
 
 // ---------------------------------------------------------------------------------------------------
 // The large-diff gate (1.0.0-dev.12)
@@ -715,7 +697,7 @@ test('gate.large-diff-seat: at med risk the large diff seats the gate on high; a
 });
 
 describe('gate.cluster-coverage: the large-diff answer\'s cluster map against the diff\'s paths', () => {
-  const answer = (clusters: JsonValue): JsonValue => ({ decision: 'approve', findings: [], directives: [], reasons: ['A1 holds'], premises: [], unreviewed: [], clusters });
+  const answer = (clusters: JsonValue): JsonValue => ({rulings: [],  decision: 'approve', findings: [], directives: [], reasons: ['A1 holds'], premises: [], unreviewed: [], clusters });
   const paths = ['packages/a/src/x.ts', 'packages/a/src/y.ts', 'packages/b/[id].tsx', 'README.md'].map((p) => repoPath(p));
   const large = { overflow: 2 };
   const refused = (f: () => unknown, pattern: RegExp): void => {

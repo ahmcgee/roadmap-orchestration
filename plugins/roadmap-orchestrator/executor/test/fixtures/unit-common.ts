@@ -1,32 +1,33 @@
+import { requirePlanInForce,revisionInForce } from '../../src/input/inforce.ts';
 // Shared by the gate, integrate and unit driver tests (and the unit-child fixture): an arc over a real git
 // repo made from test/fixtures/unit-repo, whose integration tip is green by default (`add` fixed at T) so
 // the plan's suite (`node --test`, every test file) passes there. Each unit's job is to add `mul` with its
 // test, which its own spec lane runs. Everything a child executor needs to rebuild the same StageContext
 // is in an `ArcDescriptor` (plain JSON), and `contextFor` builds it, in the test process or the child.
-import { cpSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { cpSync,mkdirSync,readFileSync,writeFileSync } from 'node:fs';
+import { dirname,join,relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { CommandContext } from '../../src/commands/apply.ts';
 import { sessionContainment } from '../../src/contain/session.ts';
 import type { StageOutcomeFact } from '../../src/core/events.ts';
-import type { CommandContext } from '../../src/commands/apply.ts';
-import { type UnitId, arcId, unitId } from '../../src/core/ids.ts';
-import type { CommandBody, RevisionManifest } from '../../src/core/records.ts';
-import { backendEnv } from '../../src/preflight/smoke.ts';
+import { type UnitId,arcId,unitId } from '../../src/core/ids.ts';
 import type { JsonValue } from '../../src/core/json.ts';
-import { type OpenJournal, openJournal, readJournal } from '../../src/core/log.ts';
-import { type AbsPath, absPath } from '../../src/core/values.ts';
+import { type OpenJournal,openJournal,readJournal } from '../../src/core/log.ts';
+import type { CommandBody,RevisionManifest } from '../../src/core/records.ts';
+import { type AbsPath,absPath } from '../../src/core/values.ts';
 import { openHostDir } from '../../src/host/hostdir.ts';
-import { readInputFiles, revisionManifestOf } from '../../src/input/inforce.ts';
-import { type PlanUnit, parsePlan } from '../../src/input/plan.ts';
+import { inForceFiles,readInputFiles,revisionManifestOf } from '../../src/input/inforce.ts';
+import { type PlanUnit,parsePlan } from '../../src/input/plan.ts';
 import type { StageContext } from '../../src/pipeline/dispatch.ts';
 import { step } from '../../src/pipeline/unit.ts';
+import { backendEnv } from '../../src/preflight/smoke.ts';
 import { DOCS_NOT_YET } from '../../src/recover/revision.ts';
-import { type RepoConfig, arcStack, parseRepoConfig, resolveRouting } from '../../src/routing/layers.ts';
-import type { ArcRoleSet, RiskTier } from '../../src/routing/types.ts';
-import { makeRepo, revParse, tmpDir } from '../helpers/repo.ts';
-import { type CallRecord, type ClaudeAct, type CodexAct, type Expect, type Step, writeScenario } from '../helpers/scenario.ts';
+import { type RepoConfig,arcStack,parseRepoConfig,resolveRouting } from '../../src/routing/layers.ts';
+import type { ArcRoleSet,RiskTier } from '../../src/routing/types.ts';
+import { makeRepo,revParse,tmpDir } from '../helpers/repo.ts';
+import { type CallRecord,type ClaudeAct,type CodexAct,type Expect,type Step,writeScenario } from '../helpers/scenario.ts';
 import { arcFor } from './invoke-specs.ts';
-import { BUILD_REPORT, type LaneJson, recordFirstPlan, serialRuntime, testProbes } from './stage-common.ts';
+import { BUILD_REPORT,type LaneJson,recordFirstPlan,serialRuntime,testProbes } from './stage-common.ts';
 
 const REPO_FILES = fileURLToPath(new URL('./unit-repo/', import.meta.url));
 const RULINGS = fileURLToPath(new URL('./unit-rulings.md', import.meta.url));
@@ -80,7 +81,7 @@ export function laneJson(l: LaneJson): Record<string, unknown> {
   return {
     id: l.id, argv: l.argv, cwd: l.cwd ?? '.', env: { set: l.env?.set ?? {}, pass: l.env?.pass ?? ['PATH'] }, expectedExit: l.expectedExit ?? 0,
     ...(l.timeoutMin === undefined ? {} : { timeoutMin: l.timeoutMin }),
-    ...(l.cadence === undefined ? { tier: l.tier ?? 'fast' } : { cadence: l.cadence }), resources: l.resources ?? [], evidenceGlobs: l.evidenceGlobs ?? [],
+    ...(l.cadence === undefined ? { cadence: l.tier === 'estate' ? 'unit' : 'build' } : { cadence: l.cadence }), resources: l.resources ?? [], evidenceGlobs: l.evidenceGlobs ?? [],
     ...(l.inputs === undefined ? {} : { inputs: l.inputs }), ...(l.systems === undefined ? {} : { systems: l.systems }),
     ...(l.readsComments === undefined ? {} : { readsComments: l.readsComments }),
   };
@@ -169,15 +170,22 @@ export function commandContextFor(r: ArcRun, stage: StageContext = r.ctx): Comma
   };
 }
 
-/** An `apply` of the plan and specs as the files hold them now (what `roadmap apply [--base]` submits). */
+/** An apply fixture based on the revision in force unless an exported base is supplied. */
 export function applyBody(d: ArcDescriptor, base: RevisionManifest | null = null): Extract<CommandBody, { type: 'apply' }> {
-  const manifest = revisionManifestOf(readInputFiles(absPath(d.planPath), absPath(d.repo)));
+  const files = readInputFiles(absPath(d.planPath), absPath(d.repo));
+  if (files.vision?.bytes != null && files.vision.path.startsWith(d.repo + '/')) {
+    const dest = join(dirname(d.planPath), 'repo', relative(d.repo, files.vision.path));
+    mkdirSync(dirname(dest), {recursive: true}); writeFileSync(dest, files.vision.bytes);
+  }
+  const manifest = revisionManifestOf(files);
   if ('missing' in manifest) throw new Error(manifest.missing.join('; '));
-  return { type: 'apply', base, manifest, visionEdit: false };
+  const view = readJournal(absPath(d.runDir), arcId(d.arc)).view;
+  const force = requirePlanInForce(absPath(d.runDir), view);
+  return { type: 'apply', planFile: absPath(d.planPath), rev: force.rev, reason: 'Test revision reason', base: base ?? (() => { const m = revisionManifestOf(inForceFiles(absPath(d.runDir), view, force, revisionInForce(absPath(d.runDir), force), absPath(d.planPath), absPath(d.repo))); if ('missing' in m) throw new Error(m.missing.join('; ')); return m; })(), manifest };
 }
 
-/** An `apply` that declares a vision edit (`roadmap apply --vision-edit`): a changed vision file is otherwise `vision-leak`. */
-export const visionApplyBody = (d: ArcDescriptor): CommandBody => ({ ...applyBody(d), visionEdit: true });
+/** A revision that includes the edited vision. */
+export const visionApplyBody = (d: ArcDescriptor): CommandBody => applyBody(d);
 
 export const U1: UnitId = unitId('u1');
 export const unitWorktreePath = (r: ArcRun, unit: UnitId = U1): AbsPath => absPath(join(r.ctx.plan().worktreeRoot, r.ctx.plan().arc, unit));
@@ -225,8 +233,9 @@ const dev17Finding = (f: JsonValue): JsonValue => {
 };
 
 const gateAnswer = (a: GateAnswer): JsonValue => ({
+  rulings: [...(a.rulings ?? [])],
   decision: a.decision, ordering: a.ordering ?? null, findings: (a.findings ?? []).map(dev17Finding), directives: [...(a.directives ?? [])], reasons: ['A1 holds'], premises: [...(a.premises ?? [])],
-  unreviewed: [...(a.unreviewed ?? [])], clusters: a.clusters ?? null, rulings: [...(a.rulings ?? [])],
+  unreviewed: [...(a.unreviewed ?? [])], clusters: a.clusters ?? null, 
 }) as JsonValue;
 
 /**
@@ -298,4 +307,22 @@ export async function stepUntil(r: ArcRun, id: string, until: (f: StageOutcomeFa
  */
 export function outcomes(d: ArcDescriptor, unit = 'u1'): readonly string[] {
   return readJournal(absPath(d.runDir), arcId(d.arc)).events.flatMap((e) => (e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.unit === unit ? [`${e.fact.stage}:${e.fact.outcome}`] : []));
+}
+
+/** Refresh the fixture's editable files from the plan in force, as a new export does. */
+export function syncInputs(r: Readonly<{
+  ctx: Pick<StageContext, 'runDir'>;
+  journal: Pick<StageContext['journal'], 'view'>;
+  d: ArcDescriptor;
+}>): RevisionManifest {
+  const force = requirePlanInForce(r.ctx.runDir, r.journal.view);
+  const rev = revisionInForce(r.ctx.runDir, force);
+  const f = inForceFiles(r.ctx.runDir, r.journal.view, force, rev, absPath(r.d.planPath), absPath(r.d.repo));
+  writeFileSync(r.d.planPath, f.planBytes);
+  for (const file of [...f.specs.values(), f.ledger, f.obligations, f.vision]) if (file?.bytes != null) {
+    mkdirSync(dirname(file.path), {recursive: true}); writeFileSync(file.path, file.bytes);
+  }
+  const manifest = revisionManifestOf(f);
+  if ('missing' in manifest) throw new Error(manifest.missing.join('; '));
+  return manifest;
 }

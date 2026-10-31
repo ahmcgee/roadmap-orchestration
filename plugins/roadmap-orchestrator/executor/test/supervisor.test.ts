@@ -5,28 +5,28 @@
 // supervisor.crash-window-persisted, supervisor.ready-generation, supervisor.control-only-restart,
 // supervisor.heartbeat-stale.
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync,mkdirSync,readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { after,describe,test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { after, describe, test } from 'node:test';
-import { pendingCommandIds, readCommand, readReceipt, terminalReceipt } from '../src/commands/queue.ts';
+import { pendingCommandIds,readCommand,readReceipt,terminalReceipt } from '../src/commands/queue.ts';
 import { isAlive } from '../src/contain/proc.ts';
 import { needsUserRecord } from '../src/core/records.ts';
-import { EXIT_REASON_FILE } from '../src/executor.ts';
-import { type ExecutorEndRecord, HEARTBEAT_STALE_MS, executorLogs, failedPath, readyPath } from '../src/supervisor.ts';
 import { absPath } from '../src/core/values.ts';
-import { assertFired, writeTrigger } from './helpers/crash.ts';
-import { readCalls } from './helpers/scenario.ts';
-import { tmpDir } from './helpers/repo.ts';
-import { reached } from './helpers/barrier.ts';
-import { assertNoSurvivors } from './helpers/reap.ts';
-import { EXEC_TIMEOUT_MS, type ExecRun, cli, hostFile, hostLockHeld, journalOf, reasonOf, setupExec, startExec, until } from './fixtures/exec-common.ts';
+import { EXIT_REASON_FILE } from '../src/executor.ts';
+import { type ExecutorEndRecord,HEARTBEAT_STALE_MS,executorLogs,failedPath,readyPath } from '../src/supervisor.ts';
+import { EXEC_TIMEOUT_MS,type ExecRun,cli,hostFile,hostLockHeld,journalOf,reasonOf,setupExec,startExec,until } from './fixtures/exec-common.ts';
 import {
-  CLAUDE_ONLY, UNIT_CLAUDE_ONLY, WAIT_MS, blockedCheck, claimOf, cmdline, executorOf, executorsOf, gone, idle, kill, launchDirect, ownerOf, pausedFromTheStart, smokes,
-  startCli, startLine, startedGenerations, stateOf, supervisorOf, watchEnd,
+CLAUDE_ONLY,UNIT_CLAUDE_ONLY,WAIT_MS,blockedCheck,claimOf,cmdline,executorOf,executorsOf,gone,idle,kill,launchDirect,ownerOf,pausedFromTheStart,smokes,
+startCli,startLine,startedGenerations,stateOf,supervisorOf,watchEnd,
 } from './fixtures/sup-common.ts';
-import { SUPERVISOR_HOST, crashCells } from './matrix.ts';
 import { outcomes } from './fixtures/unit-common.ts';
+import { reached } from './helpers/barrier.ts';
+import { assertFired,writeTrigger } from './helpers/crash.ts';
+import { assertNoSurvivors } from './helpers/reap.ts';
+import { tmpDir } from './helpers/repo.ts';
+import { readCalls } from './helpers/scenario.ts';
+import { SUPERVISOR_HOST,crashCells } from './matrix.ts';
 
 // Every supervised run a test here started is stopped by its teardown; nothing of them outlives the file.
 after(assertNoSurvivors);
@@ -56,7 +56,7 @@ describe('supervisor.intentional-exit', () => {
     const executor = await executorOf(r, generation);
     const seen = await watchEnd(r, supervisor, executor);
     assert.ok(seen.executorGone <= seen.lockGone && seen.lockGone <= seen.supervisorGone, JSON.stringify(seen));
-    assert.deepEqual(exitReason(r), { v: 1, generation, reason: 'complete' });
+    assert.deepEqual(exitReason(r), { v: 2, generation, reason: 'complete' });
     const state = stateOf(r);
     assert.deepEqual(state.crashes, [], 'no crash counted');
     assert.equal(state.heartbeatStaleMs, HEARTBEAT_STALE_MS, 'the default threshold is recorded');
@@ -78,7 +78,7 @@ describe('supervisor.intentional-exit', () => {
     await cli(r, ['stop']);
     const seen = await watchEnd(r, supervisor, executor);
     assert.ok(seen.executorGone <= seen.lockGone, JSON.stringify(seen));
-    assert.deepEqual(exitReason(r), { v: 1, generation, reason: 'stop' });
+    assert.deepEqual(exitReason(r), { v: 2, generation, reason: 'stop' });
     assert.deepEqual(stateOf(r).crashes, []);
     assert.deepEqual(startedGenerations(r), [generation]);
   });
@@ -95,7 +95,7 @@ test('supervisor.stop-order: stop → the executor writes exit.reason{stop} and 
   await cli(r, ['stop']);
   const seen = await watchEnd(r, supervisor, executor);
   assert.ok(seen.executorGone > 0 && seen.executorGone <= seen.lockGone && seen.lockGone <= seen.supervisorGone, JSON.stringify(seen));
-  assert.deepEqual(exitReason(r), { v: 1, generation, reason: 'stop' });
+  assert.deepEqual(exitReason(r), { v: 2, generation, reason: 'stop' });
   assert.equal(outcomes(r).at(-1), 'plan-check:interrupted', 'the running stage was cancelled before the executor exited');
   assert.deepEqual(journalOf(r).view.openIntents(), [], 'nothing left open');
   assert.deepEqual(stateOf(r).crashes, []);
@@ -153,6 +153,7 @@ test('supervisor.crash-window-persisted: crash 1 under one supervisor, a supervi
   const id = `sup-${g4}-3`;
   const record = needsUserRecord(JSON.parse(readFileSync(join(r.runDir, 'needs-user', `${id}.json`), 'utf8')), id);
   assert.deepEqual([record.id, record.blocking, record.subject, record.reason], [id, true, { type: 'host' }, 'supervisor-crash-limit']);
+  assert.deepEqual(record.options.map((o) => o.id), ['resolved'], 'crash recovery offers an explicit acknowledgement');
   assert.ok(record.evidence.length === 2 && record.evidence.every((p) => existsSync(p)), 'the stderr logs of this supervisor\'s crashed generations');
   assert.ok(!hostLockHeld(r), 'the supervisor released the lock before it exited');
   assert.ok(!existsSync(hostFile(r, EXIT_REASON_FILE)), 'no executor ended on purpose');
@@ -165,7 +166,7 @@ test('supervisor.ready-generation: start waits for its own generation; older rea
   writeFileSync(join(r.repo, '.roadmap', 'state.json'), '{}\n');
   writeFileSync(hostFile(r, 'host.generation'), '5\n');
   for (let g = 1; g <= 5; g++) {
-    writeFileSync(hostFile(r, `supervisor.ready.${g}`), JSON.stringify({ v: 1, generation: g, state: 'ready', at: new Date().toISOString() }));
+    writeFileSync(hostFile(r, `supervisor.ready.${g}`), JSON.stringify({ v: 2, generation: g, state: 'ready', at: new Date().toISOString() }));
   }
   const exit = await startCli(r);
   assert.equal(exit.code, 78, exit.stdout + exit.stderr);
@@ -232,7 +233,7 @@ test('supervisor.heartbeat-stale: a frozen executor (SIGSTOP) is SIGKILLed once 
   assert.ok(isAlive(supervisor), 'the supervisor restarted the executor');
   await cli(r, ['stop']);
   await gone(supervisor);
-  assert.deepEqual(exitReason(r), { v: 1, generation: g1 + 1, reason: 'stop' });
+  assert.deepEqual(exitReason(r), { v: 2, generation: g1 + 1, reason: 'stop' });
 });
 
 describe(`crash matrix: ${SUPERVISOR_HOST}`, () => {
@@ -255,7 +256,7 @@ describe(`crash matrix: ${SUPERVISOR_HOST}`, () => {
       if (!handshaken && cell.label !== 'sup.after-claim') assert.match(readFileSync(logs.err, 'utf8'), /refused before any effect: the supervisor that spawned this executor died/);
       const effects = startedGenerations(r);
       assert.deepEqual(effects, handshaken ? [dead.generation] : [], 'only a handshaken executor acted');
-      if (handshaken) assert.deepEqual(exitReason(r), { v: 1, generation: dead.generation, reason: 'complete' });
+      if (handshaken) assert.deepEqual(exitReason(r), { v: 2, generation: dead.generation, reason: 'complete' });
       else assert.ok(!existsSync(r.runDir), 'the orphan wrote nothing, not even its run dir');
 
       const exit = await startExec(r, CLAUDE_ONLY).exit;

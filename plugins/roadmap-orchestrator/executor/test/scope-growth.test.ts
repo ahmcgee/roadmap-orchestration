@@ -23,29 +23,29 @@
 //   uncommitted ones) is refused at salvage by the candidate's transient check, before any lane: a chargeable fix round
 //   naming it, the build's resources released; once it is removed the unit goes on.
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, readdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { readFileSync,readdirSync,writeFileSync } from 'node:fs';
+import { dirname,join } from 'node:path';
 import { test } from 'node:test';
 import { applyCommand } from '../src/commands/apply.ts';
-import { readReceipt, submitCommand } from '../src/commands/queue.ts';
+import { readReceipt,submitCommand } from '../src/commands/queue.ts';
 import type { Fact } from '../src/core/events.ts';
-import { arcId, unitId, sha256 } from '../src/core/ids.ts';
+import { arcId,sha256,unitId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import type { CommandBody } from '../src/core/records.ts';
-import { absPath, branchName } from '../src/core/values.ts';
-import { inForceFiles, readInputFiles, requirePlanInForce, revisionInForce } from '../src/input/inforce.ts';
-import { APPLY, phase0InputOf, phase0Rows } from '../src/phase0/rows.ts';
+import { absPath,branchName } from '../src/core/values.ts';
 import { checkRejected } from '../src/git/salvage.ts';
-import { dispatchOf, pinDispatch, unitBranch } from '../src/pipeline/dispatch.ts';
+import { inForceFiles,readInputFiles,requirePlanInForce,revisionInForce } from '../src/input/inforce.ts';
+import { openBlocking,raisedFor } from '../src/needsuser.ts';
+import { APPLY,phase0InputOf,phase0Rows } from '../src/phase0/rows.ts';
+import { dispatchOf,pinDispatch,unitBranch } from '../src/pipeline/dispatch.ts';
 import { loadUnitSpec } from '../src/pipeline/stages.ts';
-import { type Gate, runUnit } from '../src/pipeline/unit.ts';
+import { type Gate,runUnit } from '../src/pipeline/unit.ts';
 import { raiseResult } from '../src/schedule/scheduler.ts';
-import { raisedFor, openBlocking } from '../src/needsuser.ts';
 import { fakeDocs } from './fixtures/docs-fake.ts';
-import { SCENARIO_TIMEOUT_MS, planCheckStep } from './fixtures/stage-common.ts';
-import { followingContext, unitInForce } from './fixtures/steer-common.ts';
 import { editPlan } from './fixtures/route-common.ts';
-import { type ArcDescriptor, type ArcRun, MUL, U1, applyBody, codexStep, commandContextFor, contextFor, gateStep, mulBuild, outcomes, setupArc } from './fixtures/unit-common.ts';
+import { SCENARIO_TIMEOUT_MS,planCheckStep } from './fixtures/stage-common.ts';
+import { followingContext,unitInForce } from './fixtures/steer-common.ts';
+import { syncInputs,type ArcDescriptor,type ArcRun,MUL,U1,applyBody,codexStep,commandContextFor,contextFor,gateStep,mulBuild,outcomes,setupArc } from './fixtures/unit-common.ts';
 import { git } from './helpers/repo.ts';
 import { readCalls } from './helpers/scenario.ts';
 
@@ -139,10 +139,10 @@ test('scope.accept: a verified proposal holds the unit; `scope accept` lands one
     assert.ok(applied !== null);
     assert.deepEqual(applied.changes.map((c) => `${c.type}:${'unit' in c ? c.unit : ''}${c.type === 'spec' ? `:${c.edit}` : ''}`).sort(), ['spec:u1:revision', 'unit-changed:u1']);
     const inForce = inForceNow(r);
-    assert.match(inForce.ledger.bytes!.toString('utf8'), /^C-2 — Unit u1's scope grows by `package\.json`: proposed by its plan-check \(it names the script the shell page used\), accepted by the root agent \(the test lives there\)\.$/m);
+    assert.equal(inForce.ledger.bytes!.toString('utf8'), owned[2]);
     assert.deepEqual(inForce.plan.units[0]!.scope, ['src/**', 'test/**', 'contracts/**', 'package.json'], 'the plan in force widened');
     const spec = JSON.parse(inForce.specs.get(U1)!.bytes!.toString('utf8')) as { rev: number; scope: string[]; cites: { rulings: string[] } };
-    assert.deepEqual([spec.rev, spec.scope.includes('package.json'), spec.cites.rulings], [2, true, ['C-1', 'C-2']], 'the spec in force grown');
+    assert.deepEqual([spec.rev, spec.scope.includes('package.json'), spec.cites.rulings], [2, true, ['C-1']], 'the spec in force grown');
     assert.deepEqual([d.planPath, specPath(d), join(dirname(d.planPath), 'rulings.md')].map((p) => readFileSync(p, 'utf8')), owned, 'the owner\'s files are never written');
     const after = r.journal.view.unit(U1);
     assert.deepEqual([after.status, after.pendingRevision?.rev, after.scopeDecisions.map((x) => x.decision)], ['active', 2, ['accepted']]);
@@ -151,9 +151,10 @@ test('scope.accept: a verified proposal holds the unit; `scope accept` lands one
     assert.equal(r.journal.view.ackOf(raised)?.command, accepted.id, 'the hold\'s item acknowledged by the command');
     assert.ok(facts(d).some((x) => x.kind === 'scope-decided' && x.command === accepted.id && x.decision === 'accepted'));
     const receipt = readReceipt(r.ctx.runDir, accepted.id, 'applied');
-    assert.ok(receipt?.state === 'applied' && receipt.verified.some((v) => /scope grows by package\.json, ruled by C-2/.test(v)), JSON.stringify(receipt));
+    assert.ok(receipt?.state === 'applied' && receipt.verified.some((v) => /scope grows by package\.json: the test lives there/.test(v)), JSON.stringify(receipt));
 
-    // A later apply of the owner's files as they are changes nothing: rebased onto the growth, which it keeps.
+    // Export the plan in force: applying it unchanged preserves the accepted growth.
+    syncInputs(r);
     const again = await command(r, applyBody(d));
     assert.equal(again.outcome.kind, 'applied', JSON.stringify(again.outcome));
     assert.equal(r.journal.view.planApplied()?.rev, applied.rev);

@@ -50,18 +50,18 @@
 // P1 by making formatDisplay round half to even): the fake story admits exactly it; a real checkpoint writes its own,
 // and the check accepts any repair that makes I-2 hold.
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join, relative, resolve } from 'node:path';
+import { existsSync,mkdirSync,readFileSync,readdirSync,writeFileSync } from 'node:fs';
+import { basename,dirname,join,relative,resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { corpusPin } from '../../src/commands/corpus.ts';
 import { sha } from '../../src/core/ids.ts';
 import { sha256Hex } from '../../src/core/json.ts';
 import { absPath } from '../../src/core/values.ts';
 import type { CorpusPin } from '../../src/corpus/types.ts';
-import { laneRevOf, parseObligations } from '../../src/holistic/types.ts';
-import { STORE_FILE, writeStore } from '../../test/fakes/gh-store.ts';
+import { laneRevOf,parseObligations } from '../../src/holistic/types.ts';
+import { STORE_FILE,writeStore } from '../../test/fakes/gh-store.ts';
 import { writeGhShim } from '../../test/fakes/shim.ts';
-import { AUDIT_EVERY, CONVERGENCE_K, INTEGRATION, LENSES, type Layout, MAIN, MONEY_LANE, UNITS, layout } from './layout.ts';
+import { AUDIT_EVERY,CONVERGENCE_K,INTEGRATION,LENSES,type Layout,MAIN,MONEY_LANE,UNITS,layout } from './layout.ts';
 
 export const BARRIER_SCRIPT = fileURLToPath(new URL('./barrier.ts', import.meta.url));
 /** The money lane waits at most this long for the driver (the driver's own run timeout is shorter). */
@@ -181,7 +181,7 @@ export function obligationsFile(l: Layout, pin: CorpusPin): unknown {
       const witness = { lane: o.lane, testIds: [WITNESS_TESTS[o.id]], files: [...lanes.find((x) => x.id === o.lane)!.testPaths] };
       return {
         id: o.id, rev: 1, statement: o.statement, rule: ruleRef(o.rule), serves: o.serves,
-        witness, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: revs.get(o.lane), witness },
+        witness, proofJudgment: { verdict: 'proves', obligationRev: 1,  witness: {testIds: witness.testIds, ...(('files' in witness ? {files: witness.files} : {}))} },
         deliveredBy: [...o.deliveredBy], activation: o.activation, contracts: [...o.contracts], state: { type: 'active' },
       };
     }),

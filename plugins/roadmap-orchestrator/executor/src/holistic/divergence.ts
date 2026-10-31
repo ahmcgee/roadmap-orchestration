@@ -23,15 +23,15 @@
 // an acknowledged digest and not bound by an open one; it is raised when none is open. Its acknowledgement covers exactly
 // those ids; later divergences raise the next digest (`raiseDigest`). The item is raised first and its fact second: a
 // crash between them leaves a raised digest item no fact names, whose ids its summary lists; the next call writes its fact.
-import type { DivergenceId, JobId, NeedsUserId, Sha, Sha256Hex, UnitId } from '../core/ids.ts';
-import { canonicalIds, divergenceId } from '../core/ids.ts';
-import type { Journal, JournalView } from '../core/interfaces.ts';
+import type { DivergenceId,JobId,NeedsUserId,Sha,Sha256Hex,UnitId } from '../core/ids.ts';
+import { canonicalIds,divergenceId } from '../core/ids.ts';
+import type { Journal,JournalView } from '../core/interfaces.ts';
 import type { HolisticFold } from '../core/state.ts';
-import type { AbsPath, RepoPath } from '../core/values.ts';
-import { FIXES_UNRECORDED } from '../core/upgrade.ts';
-import { raiseNeedsUser, readNeedsUser } from '../needsuser.ts';
-import type { BundleOp, CheckpointOutput } from '../prompts/schemas.ts';
-import { type DivergenceDraft, type Preimage, type RevisionVector, type RulingSidecar, rulingRefSource } from './types.ts';
+import type { AbsPath,RepoPath } from '../core/values.ts';
+
+import { raiseNeedsUser,readNeedsUser } from '../needsuser.ts';
+import type { BundleOp,CheckpointOutput } from '../prompts/schemas.ts';
+import { type DivergenceDraft,type Preimage,type RevisionVector } from './types.ts';
 
 /** What a bundle's ops are measured against: the captured vector and the revisions in force when it activates. */
 export type DivergenceBase = Readonly<{
@@ -65,7 +65,7 @@ const supersede = (id: string): DivergenceDraft['compensation'] => ({
  * `introduced`: the units an earlier op of the bundle admits or re-enters, which have no spec in `b`. Validation applies
  * the ops in order, so a patch of such a unit is valid; it departs from the plan rev, as the op introducing the unit does.
  */
-function ofOp(b: DivergenceBase, op: BundleOp, rulings: ReadonlyMap<string, RulingSidecar>, introduced: ReadonlySet<string>): readonly DivergenceDraft[] {
+function ofOp(b: DivergenceBase, op: BundleOp, introduced: ReadonlySet<string>): readonly DivergenceDraft[] {
   const common = { job: b.job, cites: canonicalIds(op.cites), evidence: op.evidence };
   const plan = (what: string): DivergenceDraft => ({
     ...common, type: 'plan-departed', from: `plan rev ${b.planRev}`, what, preimage: planPreimage(b), compensation: restore(`plan rev ${b.planRev}`),
@@ -74,7 +74,7 @@ function ofOp(b: DivergenceBase, op: BundleOp, rulings: ReadonlyMap<string, Ruli
     case 'admit':
       return [plan(`admits ${op.unit.id} (origin ${op.unit.origin}, risk ${op.unit.risk}, scope ${op.unit.scope.join(', ')}${op.unit.after.length === 0 ? '' : `, after ${op.unit.after.join(', ')}`})`)];
     case 'reenter':
-      return [plan(`${op.unit} re-enters ${op.reenters}${op.fixes === null || op.fixes === FIXES_UNRECORDED ? '' : ` to fix ${op.fixes}`}${op.enterAt === null ? '' : ` at ${op.enterAt}`}${op.reset === null ? '' : `, its chargeable failures reset under ${op.reset}`}`)];
+      return [plan(`${op.unit} re-enters ${op.reenters}${op.fixes === null ? '' : ` to fix ${op.fixes}`}${op.enterAt === null ? '' : ` at ${op.enterAt}`}${op.reset === null ? '' : `, its chargeable failures reset under ${op.reset}`}`)];
     case 'cut':
       return [plan(`cuts ${op.unit}: ${op.reason}`)];
     case 'route':
@@ -94,38 +94,6 @@ function ofOp(b: DivergenceBase, op: BundleOp, rulings: ReadonlyMap<string, Ruli
       }];
     }
     case 'obligation-split':
-    case 'obligation-dispose': {
-      const rev = b.obligationRevs.get(op.obligation);
-      const what = op.op === 'obligation-split'
-        ? `splits ${op.obligation} into ${op.children.map((c) => c.id).join(', ')}`
-        : `${op.disposition === 'amended' ? 'authorizes an amendment of' : op.disposition === 'waived' ? 'waives' : op.disposition === 'deferred' ? 'defers' : 'retires'} ${op.obligation} under ${op.ruling}`;
-      return [{
-        ...common, type: 'obligation-departed', from: `${op.obligation} rev ${rev ?? '?'}`, what,
-        preimage: { ...planPreimage(b), obligationsSha256: b.obligationsSha256 }, compensation: restore(`the obligations before ${op.obligation}'s ${op.op === 'obligation-split' ? 'split' : 'disposition'}`),
-      }];
-    }
-    case 'rule': {
-      const s = rulings.get(op.ruling);
-      if (s === undefined) throw new Error(`rule ${op.ruling}, which the bundle's rulings do not hold (validation refuses it)`);
-      const pre = (paths: readonly RepoPath[]): Preimage => ({
-        ...planPreimage(b), ledgerSha256: b.ledgerSha256,
-        contracts: [...new Set(paths)].sort().flatMap((path) => {
-          const blob = b.blobAt(path);
-          return blob === null ? [] : [{ path, blob }];
-        }),
-      });
-      // A rule ref is never `deviates` (K19), so only the doc arm departs here.
-      const deviations = s.docRefs.map(rulingRefSource).flatMap((d) => (d.kind === 'doc' && d.relation === 'deviates' ? [d] : [])).map((d): DivergenceDraft => ({
-        ...common, type: 'target-departed', from: `${d.path}${d.anchor}`, what: `${s.id} deviates from ${JSON.stringify(d.quotedText)}: ${s.statement}`,
-        preimage: pre([d.path]), compensation: supersede(s.id),
-      }));
-      const edits = [...new Set(s.contractOps.map((o) => o.path))].sort().map((path): DivergenceDraft => ({
-        ...common, type: 'contract-departed', from: `${path}${s.contractOps.find((o) => o.path === path)!.anchor}`,
-        what: `${s.id} edits ${path}: ${s.contractOps.filter((o) => o.path === path).map((o) => `${JSON.stringify(o.oldText)} → ${JSON.stringify(o.newText)}`).join('; ')}`,
-        preimage: pre([path]), compensation: supersede(s.id),
-      }));
-      return [...deviations, ...edits];
-    }
     case 'invalidate-approval':
     case 'request':
       return [];
@@ -133,11 +101,10 @@ function ofOp(b: DivergenceBase, op: BundleOp, rulings: ReadonlyMap<string, Ruli
 }
 
 /** The divergences a bundle's ops record, in op order (a landing ruling's under its `rule` op). */
-export function opDivergences(b: DivergenceBase, ops: readonly BundleOp[], rulings: readonly RulingSidecar[]): readonly DivergenceDraft[] {
-  const byId = new Map(rulings.map((s) => [s.id as string, s]));
+export function opDivergences(b: DivergenceBase, ops: readonly BundleOp[]): readonly DivergenceDraft[] {
   const introduced = new Set<string>();
   return ops.flatMap((op) => {
-    const drafts = ofOp(b, op, byId, introduced);
+    const drafts = ofOp(b, op, introduced);
     if (op.op === 'admit') introduced.add(op.unit.id);
     if (op.op === 'reenter') introduced.add(op.unit);
     return drafts;
@@ -218,7 +185,7 @@ export function raiseDigest(ctx: Readonly<{ journal: Journal; runDir: AbsPath }>
     reason: 'divergence-digest',
     summary: `The checkpoint departed from the target, an obligation or the plan, or read the vision where it is silent: ${ids.join(', ')}.\n${unbound.map((d) => `${d.id} (${d.type}, ${d.job}, cites ${d.cites.join(', ')}): ${d.what} [from ${d.from}]`).join('\n')}`,
     recommendation: 'Review each divergence (`roadmap status` lists them). To undo one that restores a revision, run `roadmap reverse <D-n>`; a product effect is repaired by a unit. Acknowledge this item to cover exactly these ids; later divergences raise the next digest.',
-    options: [],
+    options: [{id: 'acknowledge', label: 'Acknowledge'}],
     evidence: [],
   }, { type: 'arc' });
   ctx.journal.fact({ kind: 'divergence-digest', needsUser, ids });

@@ -19,38 +19,33 @@
 //            lanes, the batch ff, its snapshot), resolving F-1. u3's build is released once the batch ff is done, or when
 //            a crashed executor's successor has started. Then u3 merges, the final audit and checkpoint, the close-out.
 //   preempt  u1's candidate parks in a suite lane holding the publication slot before green (the `c-pin` lane, which
-//            parks on its first run only) when a `rule` lands C-2 with a contract op: its docs publication preempts the
-//            candidate (the kill of its lane, reason `preempt`), publishes, and u1 runs a fresh candidate onto the new
-//            tip, whose ff is fingerprint-invalid (the contract its approval bound changed); the contract op's stale set
-//            re-opens u1 at plan-check (dev.17 propagation), which answers it, a build resumes its session, it is gated
-//            again and merges. A crashed executor's successor
+//            parks on its first run only) when an exported ledger edit changes C-1: its docs publication preempts
+//            the candidate (the kill of its lane, reason `preempt`), publishes, and u1 runs a fresh candidate onto
+//            the new tip. Its ff is fingerprint-invalid because its cited ruling changed; a fresh gate approves
+//            the existing build and the unit merges. The contract is unchanged. A crashed executor's successor
 //            releases the parked run (its recovery adopts it by waiting for it): a crash before the preemption can then
 //            let the candidate go green first (safety, not the uncrashed order, is claimed).
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync,readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { sha } from '../../src/core/ids.ts';
 import type { LogSnapshot } from '../../src/core/log.ts';
 import { absPath } from '../../src/core/values.ts';
-import { parseRulingSidecar } from '../../src/holistic/types.ts';
-import { rulingContextAt } from '../../src/pipeline/publish.ts';
-import { consistencyRevs } from '../../src/spec/rulings.ts';
-import { bytesSha256 } from '../../src/spec/spec.ts';
+
 import { release } from '../helpers/barrier.ts';
-import { checkpointAnswer, checkpointStep, lensStep, packReviewStep } from '../helpers/holistic.ts';
+import { checkpointAnswer,checkpointStep,lensStep,packReviewStep } from '../helpers/holistic.ts';
 import { fixture } from '../helpers/proc.ts';
 import type { Owner } from '../helpers/reap.ts';
-import { git, tmpDir } from '../helpers/repo.ts';
+import { tmpDir } from '../helpers/repo.ts';
 import type { Step } from '../helpers/scenario.ts';
 import { writeWitnessControl } from '../helpers/witness.ts';
-import { ADVANCES, obligationsJson } from './brake-common.ts';
+import { ADVANCES,obligationsJson } from './brake-common.ts';
+import { restarted,submit } from './cm-common.ts';
 import { corpusTarget } from './corpus-target.ts';
-import { restarted, submit } from './cm-common.ts';
-import { type ExecRun, SMOKE_DEFAULT, journalOf, setupExec } from './exec-common.ts';
-import type { Hook, Laid } from './pm-common.ts';
-import { type Sampled, ownerOf, sampleBy } from './pm-holistic.ts';
-import { API_OP, barrierSuite } from './publish-common.ts';
+import { type ExecRun,SMOKE_DEFAULT,journalOf,setupExec } from './exec-common.ts';
+import type { Hook,Laid } from './pm-common.ts';
+import { type Sampled,ownerOf,sampleBy } from './pm-holistic.ts';
+import { barrierSuite } from './publish-common.ts';
 import { planCheckStep } from './stage-common.ts';
-import { MUL, MUL_LANE, SUITE_LANE, appendSteps, applyBody, codexStep, gateStep } from './unit-common.ts';
+import { MUL,MUL_LANE,SUITE_LANE,appendSteps,applyBody,codexStep,gateStep,syncInputs } from './unit-common.ts';
 
 type Json = Record<string, unknown>;
 
@@ -76,7 +71,7 @@ const keyed = (unit: string, steps: readonly Step[]): readonly Step[] => steps.m
 const build = (files: Readonly<Record<string, string>>, barrier?: string): Step =>
   codexStep([...(barrier === undefined ? [] : [{ type: 'barrier' as const, name: barrier, timeoutMs: PIN_TIMEOUT_MS, perUnit: true as const }]), { type: 'commit', message: 'add work', files }], { argv: ['exec', '-C'] });
 const pinLane = (barriers: string, name: string): Json =>
-  ({ id: name, argv: [process.execPath, CM_PIN, barriers, name], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], state: 'active' });
+  ({ id: name, argv: [process.execPath, CM_PIN, barriers, name], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], state: 'active' });
 
 /** The log's facts of `kind` so far (none before the log exists). */
 const factsNow = (r: ExecRun, kind: string): readonly Json[] =>
@@ -123,23 +118,9 @@ function pinSpecLane(r: ExecRun, u: string, barriers: string, name: string): voi
   writeFileSync(spec, JSON.stringify({ ...(JSON.parse(readFileSync(spec, 'utf8')) as Json), lanes: [pinLane(barriers, name)] }));
 }
 
-/** The `rule` record landing C-2 with a contract op on contracts/api.md, its consistency judged at the integration tip now. */
-function ruleC2(r: ExecRun): string {
-  const tip = sha(git(r.repo, 'rev-parse', 'main'));
-  const draft: Json = {
-    schema: 'roadmap/ruling-m3', id: 'C-2', statement: 'Helpers take finite numbers only.', kind: 'decision', ruledBy: { type: 'architect' }, trigger: 'review',
-    supersedes: [], condition: null,
-    docRefs: [{ path: 'contracts/api.md', anchor: '#api-contract', quotedText: 'returns the sum', relation: 'consistent' }],
-    ...API_OP, obligations: [], obligationDispositions: [], cites: [], evidence: [],
-    appliesTo: { type: 'arc' }, lifetime: 'arc', status: 'active',
-    consistency: { verdict: 'consistent', judgedRevs: { head: tip, ledgerSha256: 'a'.repeat(64), obligationsSha256: null, visionSha256: null, contracts: [] }, by: { type: 'architect' } },
-  };
-  const reader = { journal: journalOf(r), runDir: absPath(r.runDir), planFile: absPath(r.planPath), repo: absPath(r.repo) };
-  const fresh = consistencyRevs(parseRulingSidecar(draft), rulingContextAt(reader as never, tip));
-  if ('reasons' in fresh) throw new Error(fresh.reasons.join('; '));
-  const path = join(tmpDir('cm-rule'), 'C-2.json');
-  writeFileSync(path, `${JSON.stringify({ ...draft, consistency: { ...(draft['consistency'] as Json), judgedRevs: fresh.revs } }, null, 2)}\n`);
-  return path;
+/** Refresh editable files from the executor's current revision before making an owner edit. */
+function exportCurrentInputs(r: ExecRun): void {
+  syncInputs({ d: r, ctx: { runDir: absPath(r.runDir) }, journal: journalOf(r) });
 }
 
 /** An approving gate's note: the corpus arc banks it as debt after the approval (DEBT_BANK, `debt.after-approval`). */
@@ -204,6 +185,7 @@ export function layoutHolisticConcurrent(t: Owner, peer: HolisticPeer): Holistic
     const hooks: readonly Hook[] = [
       once('audit', () => existsSync(join(r.scenarioDir, 'u3.build.reached')), () => submit(r, { type: 'audit', lenses: null })),
       once('admit-repairs', () => factsNow(r, 'bundle-decided').some((f) => f['job'] === 'ckpt-1'), () => {
+        exportCurrentInputs(r);
         admitRepairs(r);
         submit(r, applyBody(r));
       }),
@@ -214,17 +196,17 @@ export function layoutHolisticConcurrent(t: Owner, peer: HolisticPeer): Holistic
   // The pin parks on its first run only (publish-common.ts `barrierSuite`): the preempting kill ends that run, and every
   // later run (the publication's own suite, u1's fresh candidate) passes at once.
   const r = setupExec(t, { steps: [], suite: [SUITE_LANE, { ...barrierSuite(barriers), id: 'c-pin' }] });
-  // The contract op changes a contract the approval bound: u1's green candidate onto the new tip is fingerprint-invalid,
-  // its stale link re-opens it at plan-check (dev.17 propagation), the build resumes, and a second gate approves.
+  // Editing the cited ledger changes the approval fingerprint. After the docs publication preempts the
+  // candidate, the unit is gated again; a plain ledger edit rewrites no contract and needs no new build.
   appendSteps(r, [...SMOKE_DEFAULT, ...keyed('u1', [
     planCheckStep({ decision: 'approve' }), build(MUL), gateStep({ decision: 'approve' }),
-    planCheckStep({ decision: 'approve', staleLinks: [{ link: 'contract:contracts/api.md', outcome: 'confirmed', reason: 'C-2 narrows the sum to finite numbers; mul holds' }] }),
-    codexStep([]), gateStep({ decision: 'approve' }),
+    gateStep({ decision: 'approve' }),
   ])]);
   const hooks: readonly Hook[] = [
     once('rule', () => existsSync(join(barriers, 'lane.reached')), () => {
-      const path = ruleC2(r);
-      submit(r, { type: 'rule', path: absPath(path), sha256: bytesSha256(readFileSync(path)) });
+      exportCurrentInputs(r);
+      writeFileSync(join(r.planPath, '..', 'rulings.md'), 'C-1 — Helpers take finite numbers.\n');
+      submit(r, applyBody(r));
     }),
     once('release', () => restarted(r), () => writeFileSync(join(barriers, 'lane.release'), '')),
   ];

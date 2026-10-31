@@ -16,8 +16,8 @@ import { START_FILE } from '../executor.ts';
 import { readClaim } from '../host/lock.ts';
 import { CliError } from '../input/cli.ts';
 import { EXIT_HOST_BUSY } from '../preflight/startup.ts';
-import { ownerState, unitStates } from '../status.ts';
-import { START_WAIT_MS, launchSupervisor } from '../supervisor.ts';
+import { ownerState,unitStates } from '../status.ts';
+import { START_WAIT_MS,launchSupervisor } from '../supervisor.ts';
 
 export const RESUME_ARC_NOOPS = ['no-claim', 'other-repo', 'alive', 'refused', 'already-resumed'] as const;
 export type ResumeArcNoop = (typeof RESUME_ARC_NOOPS)[number];
@@ -34,6 +34,6 @@ export async function resumeArc(args: ResumeArcArgs): Promise<ResumeArcOutcome> 
   const path = join(claim.runDir, START_FILE);
   if (!existsSync(path)) throw new CliError(`resume-arc: arc ${claim.arc} holds the host but never started (no ${path}); start it with roadmap start`);
   const start = runStart(readJson(path), path);
-  const outcome = await launchSupervisor({ hostDir: args.hostDir, repo: start.repo, planFile: start.planFile, profile: start.profile, heartbeatStaleMs: null, base: null }, process.env, START_WAIT_MS);
+  const outcome = await launchSupervisor({ hostDir: args.hostDir, repo: start.repo, planFile: start.planFile, profile: start.profile, heartbeatStaleMs: null }, process.env, START_WAIT_MS);
   return outcome.code === EXIT_HOST_BUSY ? { resumed: false, reason: 'already-resumed' } : { resumed: true, line: outcome.line, code: outcome.code };
 }

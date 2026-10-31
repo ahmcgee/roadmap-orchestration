@@ -5,32 +5,38 @@
 // The required input set per role (ROLE_INPUTS) comes from DESIGN-1.0.md §2.1 and §4 "Gate inputs"
 // and the M1 plan's gate inputs (R2). Every prompt module must interpolate exactly these fields; the
 // test `prompts.fields==required` holds each module to it.
-import type { EffectiveScope } from '../core/records.ts';
 import { createHash } from 'node:crypto';
-import type { OutcomeStage, TestRef } from '../core/events.ts';
+import type { OutcomeStage,TestRef } from '../core/events.ts';
 import type {
-  ClauseId, DivergenceId, FindingId, InvocationId, JobId, LaneId, MilestoneId, ObligationId, PolishId, ReviewFindingId, RulingId, ServeName, Sha, Sha256Hex, SpecRev, UnitId, VisionClauseId,
-  ResourceName, SystemName, WitnessItemId,
+ClauseId,DivergenceId,FindingId,InvocationId,JobId,LaneId,MilestoneId,ObligationId,PolishId,
+ResourceName,
+ReviewFindingId,RulingId,ServeName,Sha,Sha256Hex,SpecRev,
+SystemName,
+UnitId,VisionClauseId,
+WitnessItemId,
 } from '../core/ids.ts';
-import type { GateDelta, LedgerOutcome } from '../core/review.ts';
-import type { BringUp, Journey } from '../input/plan.ts';
-import type { RequiredWitness } from '../holistic/required.ts';
 import type { JsonValue } from '../core/json.ts';
-import type { CommandVerdict, FailureRef, IgnoredCensus, LaneCadence, LaneDef, NeedsUserReason, SpecPatchOp } from '../core/records.ts';
-import type { AbsPath, RepoPath, RepoPattern } from '../core/values.ts';
-import type { Argv0 } from '../preflight/argv0.ts';
-import type { RiskTier, Role } from '../routing/types.ts';
-import type {
-  BundleRejection, DivergenceKind, FindingSeverity, FindingStateName, FindingLens, LensKind, ObligationDef, Obligations, ObservationKey, ObservationVerdict, PackFinding,
-  Vision, VisionClause, VisionCoverage, VisionQuestion,
-} from '../holistic/types.ts';
-import { obligationSource } from '../holistic/types.ts';
+import type { CommandVerdict,EffectiveScope,FailureRef,IgnoredCensus,LaneCadence,LaneDef,NeedsUserReason,SpecPatchOp } from '../core/records.ts';
+import type { GateDelta,LedgerOutcome } from '../core/review.ts';
+import type { AbsPath,RepoPath,RepoPattern } from '../core/values.ts';
 import type { PinnedRule } from '../corpus/types.ts';
 import type { FlowPromptInputs } from '../flow/types.ts';
-import type { Phase0Record } from '../phase0/types.ts';
-import { type BoundedDiff, EXAMPLES } from '../git/boundeddiff.ts';
-import type { GateFinding, PocOutput, PocQuestion, Premise, ScaffoldDecision } from './schemas.ts';
+import { type BoundedDiff,EXAMPLES } from '../git/boundeddiff.ts';
+import type { RequiredWitness } from '../holistic/required.ts';
+import type {
+BundleRejection,DivergenceKind,
+FindingLens,
+FindingSeverity,FindingStateName,
+LensKind,ObligationDef,Obligations,ObservationKey,ObservationVerdict,PackFinding,
+Vision,VisionClause,VisionCoverage,VisionQuestion,
+} from '../holistic/types.ts';
+import { obligationSource } from '../holistic/types.ts';
+import type { BringUp,Journey } from '../input/plan.ts';
 import type { SystemsMap } from '../input/systems.ts';
+import type { Phase0Record } from '../phase0/types.ts';
+import type { Argv0 } from '../preflight/argv0.ts';
+import type { RiskTier,Role } from '../routing/types.ts';
+import type { GateFinding,PocOutput,PocQuestion,Premise,ScaffoldDecision } from './schemas.ts';
 
 /** The spec as the one text every role reads: the executor's Markdown rendering of spec.json at `rev`. */
 export type RenderedSpec = Readonly<{ unit: UnitId; rev: SpecRev; markdown: string }>;
@@ -256,6 +262,7 @@ export type PlanCheckScopeGrowth = Readonly<{
 export type BuildInputs = Readonly<{
   /** Existing per-system notes at this unit's checkout commit, relative to the product repo. */
   systemNotes: readonly RepoPath[];
+  notes: readonly string[];
   spec: RenderedSpec;
   contracts: readonly DocText[];
   rulings: readonly RulingText[];
@@ -756,8 +763,7 @@ export const ROLE_INPUTS = {
     'scopeGrowth', 'escalation', 'milestones', 'staleLinks', 'design', 'pocs',
   ],
   build: [
-    'systemNotes',
-    'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks',
+    'systemNotes', 'notes', 'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks',
     'milestones', 'browser', 'certifiedAt', 'handover',
   ],
   gate: [
@@ -1294,7 +1300,7 @@ function obligationState(o: ObligationDef): string {
     case 'waived':
     case 'deferred':
     case 'retired':
-      return `${s.type} by ${s.ruling}`;
+      return `${s.type} by ${s.reason}`;
   }
 }
 

@@ -14,28 +14,27 @@
 //      hold, the lanes re-run green, and u1 merges with nothing charged.
 // The burners are killed in `after` whatever happens. This file must run alone (the serial tier): it loads the host.
 import assert from 'node:assert/strict';
-import { type ChildProcess, spawn } from 'node:child_process';
+import { type ChildProcess,spawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { availableParallelism } from 'node:os';
-import { join } from 'node:path';
+import { after,describe,test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { after, describe, test } from 'node:test';
 import type { StageOutcomeFact } from '../../src/core/events.ts';
-import { arcId, invocationId, unitId } from '../../src/core/ids.ts';
+import { arcId,invocationId,unitId } from '../../src/core/ids.ts';
 import { readJournal } from '../../src/core/log.ts';
+import { spawnPressureOf } from '../../src/core/projections.ts';
 import { absPath } from '../../src/core/values.ts';
-import { HOST_WINDOW_MS, PRESSURE_SATURATED, PressureTicks, pressureAvailability, readHostCpu } from '../../src/host/pressure.ts';
-import { spawnPressureOf } from '../../src/core/upgrade.ts';
+import { HOST_WINDOW_MS,PRESSURE_SATURATED,PressureTicks,pressureAvailability,readHostCpu } from '../../src/host/pressure.ts';
 import { invocationDir } from '../../src/pipeline/invoke.ts';
 import { specFacts } from '../../src/pipeline/reproduce.ts';
-import { type Gate, runUnit } from '../../src/pipeline/unit.ts';
+import { type Gate,runUnit } from '../../src/pipeline/unit.ts';
 import { runnerFiles } from '../../src/runner/files.ts';
 import { admitter } from '../../src/schedule/ready.ts';
 import type { Admission } from '../../src/schedule/types.ts';
 import { intents } from '../fixtures/invoke-specs.ts';
 import { editUnit } from '../fixtures/route-common.ts';
 import { planCheckStep } from '../fixtures/stage-common.ts';
-import { type ArcDescriptor, type ArcRun, MUL_LANE, contextFor, gateStep, mulBuild, outcomes, setupArc } from '../fixtures/unit-common.ts';
+import { type ArcDescriptor,type ArcRun,MUL_LANE,contextFor,gateStep,mulBuild,outcomes,setupArc } from '../fixtures/unit-common.ts';
 import { tmpDir } from '../helpers/repo.ts';
 import type { Step } from '../helpers/scenario.ts';
 

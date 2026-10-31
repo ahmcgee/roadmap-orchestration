@@ -28,41 +28,41 @@
 //   7. Teardown of both instances and checkouts; then `tweak-judged{decision, judged}`, and a drop's cut (step 0).
 // Crash labels: `compare.after-started`, `compare.after-judged` (`tweak-judged` written, a drop's cut not yet),
 // `compare.after-cut`.
-import { existsSync, mkdirSync, statSync } from 'node:fs';
+import { existsSync,mkdirSync,statSync } from 'node:fs';
 import { join } from 'node:path';
 import { freshJudgmentSession } from '../backends/argv.ts';
 import { walkMcpConfig } from '../backends/mcp.ts';
+import { type FencedCommitContext,commitUnderFence,evaluateRevision } from '../commands/apply.ts';
 import { crashPoint } from '../core/crash.ts';
-import type { Parent, WalkFact } from '../core/events.ts';
+import type { Parent,WalkFact } from '../core/events.ts';
 import { captureUnderFence } from '../core/fence.ts';
-import { type JobId, type ServeName, type Sha, type UnitId, parseInvocationId } from '../core/ids.ts';
+import { type JobId,type ServeName,type Sha,type UnitId,parseInvocationId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { SchemaError } from '../core/validate.ts';
-import { type AbsPath, absPath } from '../core/values.ts';
-import { type FencedCommitContext, commitUnderFence, evaluateRevision } from '../commands/apply.ts';
+import { type AbsPath,absPath } from '../core/values.ts';
 import { boundedDiff } from '../git/boundeddiff.ts';
 import { jobEvidenceRoot } from '../git/snapshot.ts';
-import { diffBase, unitDiffPaths } from '../git/transient.ts';
+import { diffBase,unitDiffPaths } from '../git/transient.ts';
 import { removeCheckout } from '../holistic/audit.ts';
 import { integrationHeadNow } from '../holistic/cadence.ts';
 import { POLISH_DROPPED } from '../input/classify.ts';
-import { inForceFiles, requirePlanInForce, revisionInForce } from '../input/inforce.ts';
-import { type Milestone, type PlanM1, type PlanUnit, advancesOf, derivedOf, milestoneOf, parsePlan } from '../input/plan.ts';
-import { raiseNeedsUser, raisedFor } from '../needsuser.ts';
-import { type BackendCallOutcome, type RepairTurn, arcSeat, callActingJudge, recordedArcCall, repairTurnOf, runOp, verdictOf } from '../pipeline/dispatch.ts';
+import { inForceFiles,requirePlanInForce,revisionInForce } from '../input/inforce.ts';
+import { type Milestone,type PlanM1,type PlanUnit,advancesOf,derivedOf,milestoneOf,parsePlan } from '../input/plan.ts';
+import { raiseNeedsUser,raisedFor } from '../needsuser.ts';
+import { referenceFiles } from '../phase0/rows.ts';
+import { type BackendCallOutcome,type RepairTurn,arcSeat,callActingJudge,recordedArcCall,repairTurnOf,runOp,verdictOf } from '../pipeline/dispatch.ts';
 import { GATE_DIFF_BUDGET } from '../pipeline/gate.ts';
 import { removeJobCheckouts } from '../pipeline/lanes.ts';
-import { holisticInForce, inMs } from '../pipeline/stages.ts';
-import { referenceFiles } from '../phase0/rows.ts';
+import { holisticInForce,inMs } from '../pipeline/stages.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
 import { judgmentRepairDirective } from '../prompts/directives.ts';
-import { renderPrompt, promptFor } from '../prompts/index.ts';
-import { type PolishJudgeInputs, visionInputOf } from '../prompts/inputs.ts';
-import { type PolishJudgeOutput, validatePolishJudgeOutput } from '../prompts/schemas.ts';
+import { promptFor,renderPrompt } from '../prompts/index.ts';
+import { type PolishJudgeInputs,visionInputOf } from '../prompts/inputs.ts';
+import { type PolishJudgeOutput,validatePolishJudgeOutput } from '../prompts/schemas.ts';
 import { worktreeCreateOp } from '../recover/ops.ts';
-import { type Instance, allocatePorts, bringUp, substitutePorts, tearDown } from './bringup.ts';
+import { type Instance,allocatePorts,bringUp,substitutePorts,tearDown } from './bringup.ts';
 import { evidencePath } from './report.ts';
-import { type WalkContext, WALK_SESSION_MIN, reserveJob, releaseJob } from './walk.ts';
+import { type WalkContext,WALK_SESSION_MIN,releaseJob,reserveJob } from './walk.ts';
 
 /** What a compare needs: a walk's context (processes, resources, the arbiter's first-served waits) and the fenced commit's. */
 export type CompareContext = WalkContext & FencedCommitContext;
@@ -166,7 +166,8 @@ export async function cutDropped(ctx: CompareContext, unit: PlanUnit): Promise<C
   const evaluated = evaluateRevision(rctx, files, proposer);
   if (evaluated.kind !== 'accepted') throw new Error(`the cut of dropped tweak ${unit.id} was refused: ${evaluated.kind === 'rejected' ? evaluated.reasons.join('; ') : 'unchanged'}`);
   const out = await commitUnderFence(ctx, evaluated, proposer, proposer, { type: 'arc' });
-  if (out.kind === 'rejected') return { kind: 'cut', unit: unit.id, committed: false };
+  if (out.kind === 'rejected' && out.reasons.some((r) => r.startsWith('stale:'))) return cutDropped(ctx, unit);
+  if (out.kind === 'rejected') return {kind: 'cut', unit: unit.id, committed: false};
   crashPoint('compare.after-cut');
   return { kind: 'cut', unit: unit.id, committed: true };
 }

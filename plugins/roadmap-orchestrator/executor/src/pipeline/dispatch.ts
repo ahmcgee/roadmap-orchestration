@@ -44,43 +44,54 @@
 //   on the judgment profile at the role's one seat `arc` of the arc's routing, spawned as `arc-backend` under `job{job}`
 //   and metered to the job by role and routingRev. A resumed job reads a call it made back (`recordedArcCall`); its
 //   verdict is read as a unit judgment's (`verdictOf` takes a job parent: a usage limit parks the backend arc-wide).
-import type { PromptSize } from '../core/records.ts';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync,readFileSync,readdirSync,statSync } from 'node:fs';
 import { join } from 'node:path';
-import { type BackendCall, type ClaudeTriple, type CodexTriple, backendArgv, promptBytes, resumedJudgmentSession } from '../backends/argv.ts';
+import { type BackendCall,type ClaudeTriple,type CodexTriple,backendArgv,promptBytes,resumedJudgmentSession } from '../backends/argv.ts';
 import { usageLimitResets } from '../backends/errors.ts';
-import { JUDGE_SUBAGENTS } from '../prompts/delegation.ts';
 import {
-  BACKEND_PARK_CLASSES, type BackendParkClass, type GateLargeDiff, type HoldCause, type IntentOf, type JudgmentStage, type OpKind, type OpOutcome, type Parent,
+BACKEND_PARK_CLASSES,type BackendParkClass,type GateLargeDiff,type HoldCause,type IntentOf,type JudgmentStage,type OpKind,type OpOutcome,type Parent,
 } from '../core/events.ts';
-import { type ArcId, type InvocationId, type JobId, type RoutingRev, type SeatRev, type UnitId, invocationId, opKey, seatRev } from '../core/ids.ts';
-import type { IntentBody, Journal, JournalView } from '../core/interfaces.ts';
-import type { SpecState } from '../core/state.ts';
-import { type JsonValue, canonicalJson, sha256Hex } from '../core/json.ts';
+import { type ArcId,type InvocationId,type JobId,type RoutingRev,type SeatRev,type UnitId,invocationId,opKey,seatRev } from '../core/ids.ts';
+import type { IntentBody,Journal,JournalView } from '../core/interfaces.ts';
+import { type JsonValue,canonicalJson,sha256Hex } from '../core/json.ts';
+import type { PromptSize } from '../core/records.ts';
 import {
-  type BackendErrorClass, type BackendResult, type Bounds, type DispatchRecord, type ImplementerSession, type JudgmentSession, type LaunchTerminal, STDERR_FILE,
-  STDOUT_FILE, type NeedsUserContent, boundsOfRecord,
+type BackendErrorClass,type BackendResult,type Bounds,type DispatchRecord,type ImplementerSession,type JudgmentSession,type LaunchTerminal,
+type NeedsUserContent,
+STDERR_FILE,
+STDOUT_FILE,
+boundsOfRecord,
 } from '../core/records.ts';
-import { type AbsPath, type BranchName, type IsoTime, type RefName, type RepoPattern, absPath, branchName, isoTimeOf, refName } from '../core/values.ts';
-import { type RoutingBase, inputPath, keepInput } from '../input/inforce.ts';
-import { derivedExclusions, derivedWidening } from '../input/derived.ts';
-import { type PlanUnit, boundsOf } from '../input/plan.ts';
-import { backendEnv, CODEX_OUTPUT_FILE } from '../preflight/smoke.ts';
-import { buildCpuKey } from '../resources/calibrate.ts';
-import { type ResourceContext, type UnitAcquiringHolder } from '../resources/reserve.ts';
-import { OWNER_ENV, ownerLabel } from '../resources/teardown.ts';
-import type { ResolvedRouting } from '../routing/layers.ts';
+import type { SpecState } from '../core/state.ts';
+import { type AbsPath,type BranchName,type IsoTime,type RefName,type RepoPattern,absPath,branchName,isoTimeOf,refName } from '../core/values.ts';
+import { derivedExclusions,derivedWidening } from '../input/derived.ts';
+import { type RoutingBase,inputPath,keepInput } from '../input/inforce.ts';
+import { type PlanUnit,boundsOf } from '../input/plan.ts';
 import { routingChangedRecommendation } from '../needsuser.ts';
-import { implementerSeatKept } from '../core/upgrade.ts';
+import { CODEX_OUTPUT_FILE,backendEnv } from '../preflight/smoke.ts';
+import { JUDGE_SUBAGENTS } from '../prompts/delegation.ts';
+import { buildCpuKey } from '../resources/calibrate.ts';
+import { type ResourceContext,type UnitAcquiringHolder } from '../resources/reserve.ts';
+import { OWNER_ENV,ownerLabel } from '../resources/teardown.ts';
+import type { ResolvedRouting } from '../routing/layers.ts';
+
 import {
-  type ArcRole, type ArcSeatRef, type WalkRole, type Backend, CLAUDE_EFFORTS, CLAUDE_MODELS, CODEX_EFFORTS, CODEX_MODELS, RISK_TIERS, type Triple, type JudgmentRole, type JudgmentSeat, type RiskTier, type Role, type UnitSeatRef, seatRef, unitSeatRef,
+type ArcRole,type ArcSeatRef,
+type Backend,CLAUDE_EFFORTS,CLAUDE_MODELS,CODEX_EFFORTS,CODEX_MODELS,
+type JudgmentRole,type JudgmentSeat,
+RISK_TIERS,
+type RiskTier,type Role,
+type Triple,
+type UnitSeatRef,
+type WalkRole,
+seatRef,unitSeatRef,
 } from '../routing/types.ts';
 import { runnerFiles } from '../runner/files.ts';
-import type { Acquire, Rank, ResourceRequest } from '../schedule/types.ts';
+import type { Acquire,Rank,ResourceRequest } from '../schedule/types.ts';
+import { type LaunchSpec,type SpawnOrigin,invocationDir,invoke } from './invoke.ts';
 import { abortReason } from './redlane.ts';
-import { type LaunchSpec, type SpawnOrigin, invocationDir, invoke } from './invoke.ts';
-import { callRuling, pressureCause } from './starved.ts';
-import { judgmentSeat, largeDiffSeat } from './transitions.ts';
+import { callRuling,pressureCause } from './starved.ts';
+import { judgmentSeat,largeDiffSeat } from './transitions.ts';
 
 /**
  * Everything a unit's stages need: processes, resources, the resolved routing and the host environment. In the
@@ -207,9 +218,7 @@ export function repin(journal: Journal, routing: ResolvedRouting, record: Dispat
   const onFloor = (journal.view.unit(record.unit).buildTier ?? record.riskFloor) === record.riskFloor;
   const pinnedSeat = seatTripleOf(record.implementerSeatRev);
   if (onFloor && !sameSession(pinnedSeat, seat) && buildStarted(journal.view, record.unit)) {
-    if (record.routingRev !== routing.preDev17Rev || update.riskFloor !== undefined) return null;
-    implementerSeatKept(record.unit, `${pinnedSeat.backend} ${pinnedSeat.model}`);
-    return pin(journal, routing, record, update, record.implementerSeatRev);
+    return null;
   }
   return pin(journal, routing, record, update);
 }
@@ -294,7 +303,7 @@ export function pinDispatch(ctx: StageContext, unit: PlanUnit, spec: SpecState):
  * A unit's first dispatch record at risk floor `riskFloor`: its plan scope, its routing in force, its bounds (`boundsOf`
  * the plan in force) and the M3 transient rules (H15). prepare.ts pins a re-entry with it too.
  */
-export function firstPin(ctx: StageContext, unit: PlanUnit, spec: SpecState, riskFloor: RiskTier): DispatchRecord {
+export function firstPin(ctx: Pick<StageContext, 'plan' | 'routing'>, unit: PlanUnit, spec: SpecState, riskFloor: RiskTier): DispatchRecord {
   const routing = ctx.routing(unit.id);
   const scope = [...unit.scope].sort();
   return withDerived({

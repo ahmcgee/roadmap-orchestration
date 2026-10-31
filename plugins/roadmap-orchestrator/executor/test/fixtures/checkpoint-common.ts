@@ -15,7 +15,7 @@ import type { Clock } from '../../src/holistic/cadence.ts';
 import type { Step } from '../helpers/scenario.ts';
 import { admitSpecWire, lensStep, noteLensStep } from '../helpers/holistic.ts';
 import { type AuditArcOptions, auditArc, auditContext, factsOf } from './audit-common.ts';
-import { type ArcDescriptor, type ArcRun, applyBody, visionApplyBody } from './unit-common.ts';
+import { type ArcDescriptor, type ArcRun, applyBody, syncInputs,visionApplyBody } from './unit-common.ts';
 
 type Json = Record<string, unknown>;
 
@@ -57,6 +57,7 @@ export const noteLenses = (...jobs: readonly string[]): readonly Step[] => jobs.
 
 /** Edits plan.json in place and applies it (an architect's `roadmap apply`). */
 export async function applyPlanEdit(r: ArcRun, w: Wired, edit: (plan: Json) => void): Promise<void> {
+  syncInputs(r);
   const plan = JSON.parse(readFileSync(r.d.planPath, 'utf8')) as Json;
   edit(plan);
   writeFileSync(r.d.planPath, JSON.stringify(plan));
@@ -66,6 +67,7 @@ export async function applyPlanEdit(r: ArcRun, w: Wired, edit: (plan: Json) => v
 
 /** Rewrites the vision file with `clauses` added at the next rev and applies it (owner-only: an architect apply declaring the vision edit). */
 export async function applyVision(r: ArcRun, w: Wired, clauses: readonly Json[]): Promise<void> {
+  syncInputs(r);
   const file = join(r.d.planPath, '..', 'vision.json');
   const vision = JSON.parse(readFileSync(file, 'utf8')) as Json & { rev: number; clauses: Json[] };
   writeFileSync(file, JSON.stringify({ ...vision, rev: vision.rev + 1, clauses: [...vision.clauses, ...clauses] }));

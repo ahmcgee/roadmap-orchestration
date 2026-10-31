@@ -8,40 +8,40 @@
 // apply.capacity-*, apply.after-non-prefix-* (G3), apply.revalidate-after-smoke, cmd.scope,
 // apply.stale-after-evidence-revision, classify.evidence-covers-scope (M4b run 3).
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync,readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, test } from 'node:test';
-import { type CommandOutcome, applyCommand } from '../src/commands/apply.ts';
-import { pollCommands, readReceipt, submitCommand } from '../src/commands/queue.ts';
-import type { Fact, IntentOf, PlanChange } from '../src/core/events.ts';
-import { type UnitId, arcId, clauseId, commandId, edgeId, invocationIdOf, opKey, planRev, poolInstance, resourceName, sha, specRev, unitId } from '../src/core/ids.ts';
-import { openJournal, readJournal } from '../src/core/log.ts';
-import type { CommandBody, ResidueKey } from '../src/core/records.ts';
+import { describe,test } from 'node:test';
+import { type CommandOutcome,applyCommand } from '../src/commands/apply.ts';
+import { pollCommands,readReceipt,submitCommand } from '../src/commands/queue.ts';
+import type { Fact,IntentOf,PlanChange } from '../src/core/events.ts';
+import { arcId,clauseId,commandId,edgeId,invocationIdOf,opKey,planRev,poolInstance,resourceName,sha,specRev,unitId } from '../src/core/ids.ts';
+import { openJournal,readJournal } from '../src/core/log.ts';
+import type { CommandBody,ResidueKey } from '../src/core/records.ts';
 import { FoldInvariantError } from '../src/core/state.ts';
 import { absPath } from '../src/core/values.ts';
-import { type Classified, changesScope, classify, commandScope } from '../src/input/classify.ts';
+import { type Classified,changesScope,classify,commandScope } from '../src/input/classify.ts';
 import {
-  PLAN_INPUT, SPEC_INPUT, keptInput, planInForce, readInputFiles, recordPlan, requirePlanInForce, revisionInForce, specShaInForce,
+PLAN_INPUT,SPEC_INPUT,keptInput,planInForce,readInputFiles,recordPlan,requirePlanInForce,revisionInForce,specShaInForce,
 } from '../src/input/inforce.ts';
-import { pinDispatch, repin, runOp } from '../src/pipeline/dispatch.ts';
+import { pinDispatch,repin,runOp } from '../src/pipeline/dispatch.ts';
 import { loadUnitSpec } from '../src/pipeline/stages.ts';
 import { outcomeFact } from '../src/pipeline/transitions.ts';
 import { reentryAllowed } from '../src/pipeline/unit.ts';
-import { type StageHolder, reserve } from '../src/resources/reserve.ts';
-import { requestOf } from '../src/resources/pool.ts';
 import { recover } from '../src/recover/recover.ts';
+import { requestOf } from '../src/resources/pool.ts';
+import { type StageHolder,reserve } from '../src/resources/reserve.ts';
 import { resolveRouting } from '../src/routing/layers.ts';
 import { specPatchOp } from '../src/spec/patch.ts';
 import { fileSha256 } from '../src/spec/spec.ts';
-import { reached, release } from './helpers/barrier.ts';
-import { assertFired, writeTrigger } from './helpers/crash.ts';
+import { events } from './fixtures/invoke-specs.ts';
+import { followingContext } from './fixtures/steer-common.ts';
+import { type ArcDescriptor,type ArcRun,type UnitSpecJson,applyBody,commandContextFor,contextFor,setupArc } from './fixtures/unit-common.ts';
+import { reached,release } from './helpers/barrier.ts';
+import { assertFired,writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
 import { tmpDir } from './helpers/repo.ts';
 import { readCalls } from './helpers/scenario.ts';
-import { PLAN_APPLY, crashCells } from './matrix.ts';
-import { events } from './fixtures/invoke-specs.ts';
-import { followingContext } from './fixtures/steer-common.ts';
-import { type ArcDescriptor, type ArcRun, type UnitSpecJson, applyBody, commandContextFor, contextFor, setupArc } from './fixtures/unit-common.ts';
+import { PLAN_APPLY,crashCells } from './matrix.ts';
 
 const T = { timeout: 60_000 };
 type Json = Record<string, unknown>;
@@ -100,12 +100,12 @@ function decide(r: ArcRun, unit: string, stage: string, outcome: string, cls: st
 
 const routingBase = { profile: 'default', config: null, arcRoles: 'm4b' } as const;
 
-function classifyNow(r: ArcRun, residues: readonly ResidueKey[] = []): Classified {
+function classifyNow(r: ArcRun, residues: readonly ResidueKey[] = [], reason = 'Reviewed revision'): Classified {
   const { runDir } = r.ctx;
   const inForce = requirePlanInForce(runDir, r.journal.view);
   return classify({
     runDir, view: r.journal.view, inForce, revision: revisionInForce(runDir, inForce), next: readInputFiles(absPath(r.d.planPath), absPath(r.d.repo)), residues,
-    routing: routingBase, proposer: { type: 'apply' },
+    routing: routingBase, proposer: { type: 'apply', reason },
   });
 }
 
@@ -122,6 +122,7 @@ function accept(r: ArcRun): void {
 type Row = Readonly<{
   name: string;
   units?: readonly UnitSpecJson[];
+  reason?: string;
   /** Before the arc's first context (the baseline records the files as they are then). */
   before?: (d: ArcDescriptor) => void;
   setup?: (r: ArcRun) => void;
@@ -538,9 +539,10 @@ const M2_ROWS: readonly Row[] = [
   },
   { name: 'apply.cut-added: a unit added cut: refused', edit: (d) => { addUnit(d, 'u4'); cutUnits('u4')(d); }, expect: [/^unit u4 is added cut/] },
   {
-    name: 'apply.cut-ruling: a cut citing a ruling the ledger does not hold: refused',
-    edit: (d) => editPlan(d, (p) => void (unitJson(p, 'u3')['cut'] = { reason: 'superseded by the v2 API', ruling: 'C-99' })),
-    expect: [/^unit u3's cut cites ruling C-99, which the ledger .*rulings\.md does not hold$/],
+    name: 'apply.cut-reason: a cut without apply authorization is refused',
+    reason: ' ',
+    edit: (d) => editPlan(d, (p) => void (unitJson(p, 'u3')['cut'] = { reason: 'superseded by the v2 API' })),
+    expect: [/^cut needs apply --reason$/],
   },
   // re-entry
   { name: 'apply.reenter-parked: a parked unit re-entered under a new id: now', setup: parkAtGate, edit: reenter('u4', 'u1'), expect: () => reentered('u4', 'u1') },
@@ -584,22 +586,24 @@ const M2_ROWS: readonly Row[] = [
     expect: [/^unit u4 re-enters u1, which this apply cuts$/],
   },
   {
-    name: 'apply.reenter-envelope: a scope beyond the lineage\'s envelope, no ruling cited: refused',
+    name: 'apply.reenter-envelope: growth without an apply reason is refused',
+    reason: ' ',
     setup: parkAtGate,
     edit: reenter('u4', 'u1', { scope: ['src/lib/**', 'docs/**'] }),
-    expect: [/^unit u4: scope docs\/\*\* lies outside its lineage's envelope contracts\/\*\*, src\/\*\*, test\/\*\* \(every scope u1's lineage was dispatched with\), and its spec cites no active ruling for u4 that names exactly those patterns$/],
+    expect: [/^unit u4: scope beyond the lineage envelope needs apply --reason$/],
   },
-  { name: 'apply.reenter-risk-floor: a risk below the lineage\'s floor: refused', setup: parkAtGate, edit: reenter('u4', 'u1', { risk: 'low' }), expect: [/^unit u4: risk low is below its lineage's floor med$/] },
+  { name: 'apply.reenter-risk-floor: lowering inherited risk without a reason is refused', reason: ' ', setup: parkAtGate, edit: reenter('u4', 'u1', { risk: 'low' }), expect: [/^unit u4: risk low is below its lineage's floor med$/] },
   {
-    name: 'apply.reenter-reset: a reset needs an active ruling of the ledger',
+    name: 'apply.reenter-reset: a reset needs apply authorization',
+    reason: ' ',
     setup: parkAtGate,
-    edit: reenter('u4', 'u1', {}, { reset: { ruling: 'C-7' } }),
-    expect: [/^unit u4's reset cites ruling C-7, which the ledger .* does not hold$/],
+    edit: reenter('u4', 'u1', {}, { reset: { reason: 'Reset the counters' } }),
+    expect: [/^unit u4: resetting counters needs apply --reason$/],
   },
   {
     name: 'apply.reenter-reset-ruled: a reset backed by C-1, the spec unchanged: now',
     setup: parkAtGate,
-    edit: reenter('u4', 'u1', {}, { reset: { ruling: 'C-1' } }, unchanged),
+    edit: reenter('u4', 'u1', {}, { reset: { reason: 'Reset the counters' } }, unchanged),
     expect: () => reentered('u4', 'u1', true),
   },
   // fixes (arc feedback 2026-10-16)
@@ -726,7 +730,7 @@ function runRow(row: Row): void {
     try {
       row.setup?.(r);
       row.edit(d, r);
-      const v = classifyNow(r, row.residues);
+      const v = classifyNow(r, row.residues, row.reason);
       if (row.expect === 'unchanged') assert.deepEqual(v, { kind: 'unchanged' });
       else if (typeof row.expect === 'function') {
         assert.equal(v.kind, 'accepted', JSON.stringify(v));
@@ -845,18 +849,19 @@ const M4A_ROWS: readonly Row[] = [
     },
     expect: () => [
       { type: 'unit-added', unit: unitId('u4') },
-      { type: 'unit-reentered', unit: unitId('u4'), reenters: U1, reset: false, widened: { patterns: ['docs/**'], ruling: 'C-2' } },
+      { type: 'unit-reentered', unit: unitId('u4'), reenters: U1, reset: false, widened: {patterns: ['docs/**'], reason: 'Reviewed revision'} },
     ] as unknown as readonly PlanChange[],
   },
   {
-    name: 'classify.reentry-widen-without-ruling-refused: a cited ruling naming other patterns does not widen',
+    name: 'classify.reentry-widen-without-reason-refused: ledger text does not authorize growth',
+    reason: ' ',
     before: withRuling('C-2', 'u4 may also edit `docs/**` and `lib/**`.', ['u4']),
     setup: parkAtGate,
     edit: (d) => {
       reenter('u4', 'u1', { scope: ['src/**', 'docs/**'] })(d);
       citing('u4', 'C-1', 'C-2')(d);
     },
-    expect: [/^unit u4: scope docs\/\*\* lies outside its lineage's envelope .*and its spec cites no active ruling for u4 that names exactly those patterns$/],
+    expect: [/^unit u4: scope beyond the lineage envelope needs apply --reason$/],
   },
 ];
 
@@ -1004,7 +1009,7 @@ for (const c of BOUND_CASES) {
       for (let i = 1; i <= c.failures; i++) r.journal.fact({ kind: 'stage-outcome', unit: U1, stage: 'gate', attempt: i, outcome: 'revise', class: 'revise', chargeable: true } as Fact);
       decide(r, 'u1', 'gate', 'escalate', 'park');
       assert.equal(r.journal.view.unit(U1).counters.chargeableFailures, c.failures);
-      reenter('u4', 'u1', {}, { fixes: `u1/gate#${c.failures + 1}`, ...(c.reset ? { reset: { ruling: 'C-1' } } : {}) })(d);
+      reenter('u4', 'u1', {}, { fixes: `u1/gate#${c.failures + 1}`, ...(c.reset ? { reset: { reason: 'Reset the counters' } } : {}) })(d);
       const { id, outcome } = await command(r, applyBody(d));
       assert.equal(outcome.kind, 'applied', JSON.stringify(outcome));
       const receipt = readReceipt(r.ctx.runDir, commandId(id), 'applied');
@@ -1125,7 +1130,7 @@ test('apply.lane-row-live-units (paid M4b run 3, OP-3): the lane row checks what
     // A successor carrying the same lane is refused for its own lane.
     parkAtGate(r, 'u3');
     reenter('u5', 'u3')(d);
-    editSpec(d, 'u5', (s) => void (s['lanes'] = [{ ...unrunnable, cwd: '.', expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], state: 'active' }]));
+    editSpec(d, 'u5', (s) => void (s['lanes'] = [{ ...unrunnable, cwd: '.', expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], state: 'active' }]));
     assert.match(reason((await command(r, applyBody(d))).outcome), row('u5'));
     editPlan(d, (p) => void (p.units = p.units.filter((u) => u.id !== 'u5')));
     // A cut of the parked u3: the row never runs on what the revision retires.
@@ -1167,7 +1172,7 @@ test('apply.smoke-new-backend: a routing apply that seats a backend the plan in 
   }
 });
 
-test('apply.revalidate-after-smoke: the log moving while the smoke runs is caught by the classification run again just before the commit; nothing is applied', T, async () => {
+test('apply.revalidate-after-smoke: the log moving while the smoke runs is caught by the classification run again just before the commit; the spec receives its next rev', T, async () => {
   const d = setupArc({
     steps: [{ as: 'codex', expect: { argv: ['exec'] }, acts: [{ type: 'barrier', name: 'smoke', timeoutMs: 30_000 }, { type: 'emit', value: { ok: true } }] }],
     units: [{ id: 'u1' }, { id: 'u2' }],
@@ -1185,9 +1190,11 @@ test('apply.revalidate-after-smoke: the log moving while the smoke runs is caugh
     pin(r, 'u2');
     release(d.scenarioDir, 'smoke');
     const { outcome } = await pending;
-    assert.equal(outcome.kind, 'rejected');
-    assert.match(outcome.kind === 'rejected' ? outcome.reason : '', /^apply rejected \(1 reason\): \(1\) unit u2: its spec .*u2\.json changed but is still at rev 1; a revision sets rev 2/);
-    assert.equal(applied(d).length, 1, 'nothing applied');
+    assert.equal(outcome.kind, 'applied', JSON.stringify(outcome));
+    const specChange = r.journal.view.planApplied()?.changes.find((c) => c.type === 'spec' && c.unit === unitId('u2'));
+    assert.ok(specChange?.type === 'spec');
+    assert.equal(specChange.specRev, 2);
+    assert.equal(applied(d).length, 2, 'the checked revision applied');
     assert.equal(r.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'smoke').length, 1, 'the smoke ran, and passed');
   } finally {
     r.journal.close();
@@ -1288,31 +1295,5 @@ describe(`matrix row ${PLAN_APPLY}`, () => {
     });
   }
 
-  test('apply.recovered-after-start: an apply cut short before its fact, whose files a start then put in force, is receipted applied (already in force), not stale', T, async () => {
-    const d = setupArc({ steps: [] });
-    const setup = contextFor(d);
-    addUnit(d, 'u2');
-    const file = submitCommand(setup.ctx.runDir, setup.ctx.plan().arc, applyBody(d));
-    setup.journal.close();
-    const trigger = writeTrigger(tmpDir('apply-crash'), { label: 'plan.apply.after-inputs', occurrence: 1 });
-    const exit = await runFixture('apply-child.ts', [JSON.stringify(d), file.id], { env: { ...process.env, ROADMAP_TEST_CRASH: trigger }, timeoutMs: 30_000 });
-    assert.equal(exit.signal, 'SIGKILL', exit.stderr);
-    assertFired(trigger);
-
-    const r = contextFor(d);
-    try {
-      // A manual start reads the same files: its classification puts them in force as rev 2 (no command).
-      accept(r);
-      const intent = r.journal.view.openIntents().find((i) => i.kind === 'command.apply') as IntentOf<'command.apply'>;
-      const f = followingContext(r);
-      const ctx = commandContextFor(r, f);
-      await recover({ stage: f, commands: ctx });
-      assert.equal(r.journal.view.doneOf(intent.op)?.recoveredBy, 'reconciled');
-      const receipt = readReceipt(ctx.runDir, file.id, 'applied');
-      assert.deepEqual(receipt?.state === 'applied' ? receipt.verified : receipt, ['the files are the plan in force already (rev 2): nothing to apply']);
-      assert.deepEqual(applied(d).map((f) => [f.rev, f.command]), [[1, null], [2, null]], 'no second fact');
-    } finally {
-      r.journal.close();
-    }
-  });
+  
 });

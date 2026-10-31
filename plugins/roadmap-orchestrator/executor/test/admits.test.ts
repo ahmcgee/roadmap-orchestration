@@ -8,16 +8,16 @@
 // admits.opportunity-clause-without-lineage-spends, admits.follow-up-overrun-converts-with-debt,
 // admits.conversion-referenced-is-invalid, admits.dishonest-citation-invalid. The run-9 replay is test/admits-run9.test.ts.
 import assert from 'node:assert/strict';
-import { describe, test } from 'node:test';
-import type { FindingId, JobId, ObligationId, RuleId, UnitId, VisionClauseId } from '../src/core/ids.ts';
-import type { RepairRef, SpecM1 } from '../src/core/records.ts';
+import { describe,test } from 'node:test';
+import type { FindingId,JobId,ObligationId,RuleId,UnitId,VisionClauseId } from '../src/core/ids.ts';
+import type { RepairRef,SpecM1 } from '../src/core/records.ts';
 import { mintDebt } from '../src/debt/mint.ts';
 import { DEBT_SCHEMA } from '../src/debt/types.ts';
 import {
-  type AdmitFinding, type AdmitObligation, type AdmitOp, type AdmitWorld, type AuditRange, type RecordedAdmit, type UnitMerge, admitOpOf, classifyAdmits, conversionReasons,
-  findingAttribution, obligationAttribution, opportunityClauses,
+type AdmitFinding,type AdmitObligation,type AdmitOp,type AdmitWorld,type AuditRange,type RecordedAdmit,type UnitMerge,admitOpOf,classifyAdmits,conversionReasons,
+findingAttribution,obligationAttribution,opportunityClauses,
 } from '../src/holistic/admits.ts';
-import type { AdmitClass, ObligationDef, Obligations } from '../src/holistic/types.ts';
+import type { AdmitClass,ObligationDef,Obligations } from '../src/holistic/types.ts';
 import { validateCheckpointOutput } from '../src/prompts/schemas.ts';
 import { checkpointAnswer } from './helpers/holistic.ts';
 
@@ -109,7 +109,7 @@ describe('admit classes: the decision table (R45)', () => {
     assert.deepEqual(one(world(), admit('more', v(1, 3))).conversions, unwitnessed, 'no obligation of the bundle is delivered by it');
     assert.deepEqual(one(world({ obligationList: [witnessOf('more', v(1))] }), admit('more', v(1, 3))).conversions, unwitnessed, 'its obligation serves only the slice');
     assert.deepEqual(one(world({ obligationList: [witnessOf('other', v(3))] }), admit('more', v(1, 3))).conversions, unwitnessed, 'another unit delivers the one serving V-3');
-    const waived = ob(obligation('I-w', v(3), { deliveredBy: ['more'], activation: 'future', state: { type: 'waived', ruling: 'C-1' } as ObligationDef['state'] }), true);
+    const waived = ob(obligation('I-w', v(3), { deliveredBy: ['more'], activation: 'future', state: { type: 'waived', reason: 'test disposition', rev: 2 } as ObligationDef['state'] }), true);
     assert.deepEqual(one(world({ obligationList: [waived] }), admit('more', v(1, 3))).conversions, unwitnessed, 'an exempt obligation witnesses nothing');
   });
 
@@ -172,7 +172,7 @@ describe('admit classes: repair refs and touched clauses (R45, R47)', () => {
   });
 
   test('admits.ref-exempt-invalid: repairing a deferred obligation is invalid', () => {
-    const out = one(world({ obligationList: [ob(obligation('I-1', v(1), { state: { type: 'deferred', ruling: 'C-1' } as ObligationDef['state'] }))] }), admit('fix', v(1), ['I-1']));
+    const out = one(world({ obligationList: [ob(obligation('I-1', v(1), { state: { type: 'deferred', reason: 'test disposition', rev: 2 } as ObligationDef['state'] }))] }), admit('fix', v(1), ['I-1']));
     assert.match(out.reasons[0]!, /repair-ref-exempt: I-1 is deferred/);
   });
 
@@ -199,7 +199,7 @@ describe('admit classes: repair refs and touched clauses (R45, R47)', () => {
   });
 
   test('admits.exempt-delivered-not-touched: a waived obligation the admit delivers is no target', () => {
-    const w = world({ obligationList: [ob(obligation('I-2', v(3), { deliveredBy: ['gap'], activation: 'future', state: { type: 'waived', ruling: 'C-1' } as ObligationDef['state'], rule: 'T-2' }), true)] });
+    const w = world({ obligationList: [ob(obligation('I-2', v(3), { deliveredBy: ['gap'], activation: 'future', state: { type: 'waived', reason: 'test disposition', rev: 2 } as ObligationDef['state'], rule: 'T-2' }), true)] });
     assert.deepEqual(one(w, admit('gap', v(1))).classes[0]!.class, { type: 'oversight', clauses: ['V-1'] });
   });
 
@@ -287,12 +287,12 @@ describe('admit classes: conversions (R35, LR-k)', () => {
   });
 
   test('admits.conversion-referenced-is-invalid: another op naming a converted admit makes the bundle invalid', () => {
-    const spec = JSON.stringify({ unit: 'aside' });
+    const spec = { schema: 'roadmap/spec-m1', unit: 'aside', rev: 1, scope: ['src/**'], resources: [], lanes: [], acceptance: [{id: 'A1', clause: 'Converts the admit', state: 'active', failLoudIfUndelivered: true}], decisions: [], facts: [], cites: {contracts: [], rulings: []}, obligations: [], repairs: [] };
     const output = validateCheckpointOutput(checkpointAnswer({
       decision: 'bundle',
       ops: [
-        { op: 'admit', unit: { id: 'aside', risk: 'low', scope: ['src/**'], after: [], origin: 'checkpoint' }, spec, cites: ['V-2'], evidence: ['e'] },
-        { op: 'admit', unit: { id: 'next', risk: 'low', scope: ['src/**'], after: ['aside'], origin: 'checkpoint' }, spec, cites: ['V-1'], evidence: ['e'] },
+        { op: 'admit', unit: { id: 'aside', risk: 'low', scope: ['src/**'], after: [], origin: 'checkpoint' }, spec: {...spec, unit: 'aside'}, cites: ['V-2'], evidence: ['e'] },
+        { op: 'admit', unit: { id: 'next', risk: 'low', scope: ['src/**'], after: ['aside'], origin: 'checkpoint' }, spec: {...spec, unit: 'next'}, cites: ['V-1'], evidence: ['e'] },
         { op: 'limits', unit: 'aside', limits: [{ field: 'chargeable', value: 2 }], cites: ['V-1'], evidence: ['e'] },
       ],
     }));

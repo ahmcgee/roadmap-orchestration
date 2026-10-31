@@ -1,3 +1,5 @@
+import { branchRef } from '../core/values.ts';
+import { revParse } from '../git/git.ts';
 // The split revision (dev.17, design pass; DESIGN-1.0.md "Design pass"; SCHEMAS.md "dev.17: the design pass"). A plan-check
 // that finds its unit oversize (mixed concerns, or more than the gate reads inline) answers `split`: child units, the edges
 // among them and, for mixed concerns, the skeleton that lands first. Code builds and applies it:
@@ -19,26 +21,26 @@
 //              `split.after-hold`, `split.after-commit`. A crash between them is finished at the next start
 //              (`finishSplit`, from the recorded call); a commit the arc moved under is refused with a needs-user, and
 //              `resume <unit>` re-runs the plan-check.
-import { dirname, join, posix } from 'node:path';
+import { dirname,join,posix } from 'node:path';
+import { type FencedCommitContext,type RevisionVerdict,commitUnderFence,evaluateRevision } from '../commands/apply.ts';
 import { crashPoint } from '../core/crash.ts';
 import type { DesignRecord } from '../core/design.ts';
-import { type InvocationId, type LaneId, type Sha, type UnitId, specRev } from '../core/ids.ts';
-import { type NeedsUserContent, SPEC_SCHEMA, type SpecM1, effectiveScope, specForces, specWitnesses } from '../core/records.ts';
+import { type InvocationId,type LaneId,type Sha,type UnitId,specRev } from '../core/ids.ts';
+import { type NeedsUserContent,SPEC_SCHEMA,type SpecM1,effectiveScope,specForces,specWitnesses } from '../core/records.ts';
 import { maxTier } from '../core/state.ts';
 import { SchemaError } from '../core/validate.ts';
 import { absPath } from '../core/values.ts';
-import { type FencedCommitContext, type RevisionVerdict, commitUnderFence, evaluateRevision } from '../commands/apply.ts';
-import { type Proposer, splitCutReason } from '../input/classify.ts';
-import { type InputFile, type InputFiles, inForceFiles, requirePlanInForce, revisionInForce } from '../input/inforce.ts';
-import { type PlanM1, type PlanUnit, parsePlan } from '../input/plan.ts';
+import { type Proposer,splitCutReason } from '../input/classify.ts';
+import { type InputFile,type InputFiles,inForceFiles,requirePlanInForce,revisionInForce } from '../input/inforce.ts';
+import { type PlanM1,type PlanUnit,parsePlan } from '../input/plan.ts';
 import { dependentsClosure } from '../input/systems.ts';
-import type { SplitDecision, UnitSplitChild } from '../prompts/schemas.ts';
+import type { SplitDecision,UnitSplitChild } from '../prompts/schemas.ts';
 import { DOCS_NOT_YET } from '../recover/revision.ts';
 import { specBytes } from '../spec/spec.ts';
-import { type DesignFaults, splitFaults } from './design.ts';
-import { type StageContext, type StageParent, dispatchOf } from './dispatch.ts';
+import { type DesignFaults,splitFaults } from './design.ts';
+import { type StageContext,type StageParent,dispatchOf } from './dispatch.ts';
 import { mapInForce } from './lanes.ts';
-import { holisticInForce, loadUnitSpec } from './stages.ts';
+import { holisticInForce,loadUnitSpec } from './stages.ts';
 
 /** The lanes the skeleton's spanning lane adds to a child's forces: the lane, when it is a batch lane the child's design touches. */
 function skeletonForces(ctx: Pick<StageContext, 'plan' | 'journal' | 'runDir'>, split: SplitDecision, design: DesignRecord): readonly LaneId[] {
@@ -164,11 +166,11 @@ export function judgeSplit(ctx: StageContext, unit: PlanUnit, parent: SpecM1, sp
 }
 
 /** The needs-user of a split the arc moved under before it could commit. */
-function movedNeedsUser(unit: PlanUnit, reasons: readonly string[]): NeedsUserContent {
+function splitNotice(unit: PlanUnit, reasons: readonly string[]): NeedsUserContent {
   return {
-    blocking: true,
+    blocking: false,
     subject: { type: 'unit', unit: unit.id },
-    reason: 'plan-defect',
+    reason: 'revision-notice',
     summary: `Unit ${unit.id}: its plan-check split it, but the split revision no longer lands: ${reasons.join('; ')}. The unit is held at plan-check, uncharged.`,
     recommendation: `\`roadmap resume ${unit.id}\` runs its plan-check again on the plan as it is now.`,
     options: [],
@@ -186,7 +188,15 @@ export async function commitSplit(
   };
   const proposer = proposerOf(unit.id, split);
   const out = await commitUnderFence(fenced, evaluated, proposer, { type: 'split', unit: unit.id, inv }, parent);
-  if (out.kind === 'rejected') return movedNeedsUser(unit, out.reasons);
+  if (out.kind === 'rejected') {
+    if (out.reasons.some((r) => r.startsWith('stale:'))) {
+      const current = loadUnitSpec(ctx, unit).spec;
+      const next = judgeSplit(ctx, unit, current, split, revParse(ctx.repo, branchRef(ctx.plan().integrationBranch)));
+      if (next.kind === 'faults') return splitNotice(unit, [...next.faults.reasons, ...next.faults.defects]);
+      return commitSplit(ctx, unit, parent, inv, split, next.evaluated);
+    }
+    return splitNotice(unit, out.reasons);
+  }
   crashPoint('split.after-commit', unit.id);
   return null;
 }
@@ -201,6 +211,6 @@ export type HeldSplit = Readonly<{ split: SplitDecision; inv: InvocationId; tip:
  */
 export async function finishSplit(ctx: StageContext, unit: PlanUnit, held: HeldSplit, parent: StageParent): Promise<NeedsUserContent | null> {
   const verdict = judgeSplit(ctx, unit, loadUnitSpec(ctx, unit).spec, held.split, held.tip);
-  if (verdict.kind === 'faults') return movedNeedsUser(unit, [...verdict.faults.reasons, ...verdict.faults.defects]);
+  if (verdict.kind === 'faults') return splitNotice(unit, [...verdict.faults.reasons, ...verdict.faults.defects]);
   return commitSplit(ctx, unit, parent, held.inv, held.split, verdict.evaluated);
 }

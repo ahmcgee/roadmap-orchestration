@@ -1,15 +1,15 @@
 // Pure-module tests of the fold (src/core/state.ts): what it derives and every invariant it refuses.
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
-import { type Event, type IntentOf, type IntentRecord, type LogRecord, type Parent, type StageOutcomeFact, OP_KINDS, prevHash, serializeEvent } from '../src/core/events.ts';
-import { CounterRegressionError, canonicalJson } from '../src/core/fsx.ts';
-import { type UnitId, arcId, commandId, invocationId, jobId, journeyIdOf, laneId, milestoneIdOf, needsUserId, opId, opKey, planRev, polishIdOf, sha, seatRev, sha256, specRev, unitId } from '../src/core/ids.ts';
-import { DEFAULT_BOUNDS, type Stage } from '../src/core/records.ts';
-import { type CounterRefs, Fold, FoldInvariantError, type MeterTotal, fold, monotonicSince, newUnitState } from '../src/core/state.ts';
-import { absPath, isoTime, refName, repoPattern } from '../src/core/values.ts';
-import { DEV17_UNIT_ROLES, UNIT_ROLES, type RiskTier } from '../src/routing/types.ts';
+import { describe,it } from 'node:test';
+import { type Event,type IntentOf,type IntentRecord,type LogRecord,OP_KINDS,type Parent,type StageOutcomeFact,prevHash,serializeEvent } from '../src/core/events.ts';
+import { CounterRegressionError,canonicalJson } from '../src/core/fsx.ts';
+import { type UnitId,arcId,commandId,invocationId,jobId,journeyIdOf,laneId,milestoneIdOf,needsUserId,opId,opKey,planRev,polishIdOf,seatRev,sha,sha256,specRev,unitId } from '../src/core/ids.ts';
+import { DEFAULT_BOUNDS,type Stage } from '../src/core/records.ts';
+import { type CounterRefs,Fold,FoldInvariantError,type MeterTotal,fold,monotonicSince,newUnitState } from '../src/core/state.ts';
+import { absPath,isoTime,refName,repoPattern } from '../src/core/values.ts';
+import { DEV17_UNIT_ROLES,type RiskTier,UNIT_ROLES } from '../src/routing/types.ts';
 import {
-  ARC, AT, H, REV, U1, appliedFields, chain, commandIntent, inv1, meter, needsUserIntent, snapshotIntent, spawnIntent, spawnLost, spawnResult, stageParent,
+ARC,AT,H,REV,U1,appliedFields,chain,commandIntent,inv1,meter,needsUserIntent,snapshotIntent,spawnIntent,spawnLost,spawnResult,stageParent,
 } from './fixtures/log-records.ts';
 
 const op = (seq: number) => opId(ARC, seq);
@@ -122,7 +122,7 @@ describe('fold derives', () => {
 
   it('an empty log', () => {
     assert.deepEqual(fold(ARC, []), {
-      v: 1, arc: ARC, plan: null, lastSeq: 0, snapshotHighWater: 0, openIntents: [], units: [], meter: [], needsUser: [], needsUserBlocking: [], needsUserAcked: [],
+      v: 2, arc: ARC, plan: null, lastSeq: 0, snapshotHighWater: 0, openIntents: [], units: [], meter: [], needsUser: [], needsUserBlocking: [], needsUserAcked: [],
       control: { stop: null, pausedAll: false, pausedUnits: [] }, containmentMode: null, tailDiscarded: [], parkedBackends: [],
       backendParks: [], resources: [], runOnly: null, resolvedEdges: [],
       holistic: {

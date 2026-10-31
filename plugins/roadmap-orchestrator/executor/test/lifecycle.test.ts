@@ -102,32 +102,23 @@ test('reopen.plan-check-park: resume is rejected until a revision of the spec (t
 
     const noRevision = { kind: 'rejected', reason: `unit u1 is parked (escalation); revise its spec ${specPath} (in force at rev 1; \`roadmap inputs export\` shows it): the revision takes your file's rev + 1; run \`roadmap apply\`, then resume` };
     assert.deepEqual((await resume(r)).outcome, noRevision);
-    // Evidence plumbing may change at the same rev (applied at once); it is still not a revision resume can re-open on.
-    editSpec(r, (s) => void (s['lanes'] = (s['lanes'] as Record<string, unknown>[]).map((l) => ({ ...l, evidenceGlobs: ['out/**'], evidenceExcludes: ['out/secret/**'] }))));
-    assert.equal((await apply(r)).outcome.kind, 'applied');
-    assert.deepEqual((await resume(r)).outcome, noRevision);
-    editSpec(r, addClause);
-    assert.deepEqual((await apply(r)).outcome, {
-      kind: 'rejected',
-      reason: `apply rejected (1 reason): (1) unit u1: its spec ${specPath} changed but is still at rev 1; a revision sets rev 2 (lane evidenceGlobs and evidenceExcludes may change at the current rev)`,
+    // Schema 2 assigns the next spec revision automatically, including evidence edits.
+    editSpec(r, (s) => {
+      addClause(s);
+      s['rev'] = 77;
+      s['lanes'] = (s['lanes'] as Record<string, unknown>[]).map((l) => ({...l, evidenceGlobs: ['out/**'], evidenceExcludes: ['out/secret/**']}));
     });
-    editSpec(r, (s) => void (s['rev'] = 3));
-    assert.deepEqual((await apply(r)).outcome, {
-      kind: 'rejected', reason: `apply rejected (1 reason): (1) unit u1: its spec ${specPath} is at rev 3, but the unit's recorded rev is 1; a revision sets rev 2`,
-    });
-    assert.deepEqual((await resume(r)).outcome, noRevision);
-    assert.equal(r.journal.view.unit(U1).status, 'park-pending', 'a rejected apply or resume changes nothing');
-
-    editSpec(r, (s) => void (s['rev'] = 2));
-    assert.deepEqual((await resume(r)).outcome, noRevision, 'a revision edited but not applied re-opens nothing');
-    assert.equal(r.journal.view.unit(U1).status, 'park-pending', 'the unapplied edit is not read: the unit stays parked');
-    assert.equal((await apply(r)).outcome.kind, 'applied');
+    assert.deepEqual((await resume(r)).outcome, noRevision, 'an unapplied edit re-opens nothing');
+    assert.equal(r.journal.view.unit(U1).status, 'park-pending');
+    const applied = await apply(r);
+    assert.equal(applied.outcome.kind, 'applied');
+    assert.equal(r.journal.view.unit(U1).pendingRevision?.rev, 2, 'the submitted 77 becomes the next in-force revision');
     assert.equal(r.journal.view.unit(U1).status, 'park-pending', 'an applied revision of a parked unit waits for the resume');
     const reopened = await resume(r);
     assert.equal(reopened.outcome.kind, 'applied');
     const u = r.journal.view.unit(U1);
     assert.deepEqual([u.status, u.stage, u.decided, u.reopened?.specRev], ['active', 'plan-check', null, 2]);
-    assert.equal(r.journal.view.ackOf(item)?.command, reopened.id, 'the park\'s item is acknowledged by the resume');
+    assert.equal(r.journal.view.ackOf(item)?.command, applied.id, 'the apply closes the changed unit subject');
     assert.deepEqual(openBlocking(r.journal.view), []);
     assert.deepEqual(await resume(r).then((x) => x.outcome.kind), 'applied', 'a second resume of the running unit is a no-op');
 
@@ -153,7 +144,8 @@ test('reopen.paused-and-parked: one resume of a unit both paused and parked clea
     const pause = () => command(r, { type: 'pause', target: { type: 'unit', unit: U1 } });
     const specPath = join(r.ctx.planDir, 'u1.json');
 
-    assert.equal((await pause()).outcome.kind, 'applied');
+    const paused = await pause();
+    assert.equal(paused.outcome.kind, 'applied');
     const unpaused = await resume(r);
     assert.equal(unpaused.outcome.kind, 'applied');
     const receipt = readReceipt(r.ctx.runDir, commandId(unpaused.id), 'applied');
@@ -174,7 +166,7 @@ test('reopen.paused-and-parked: one resume of a unit both paused and parked clea
     assert.deepEqual(r.journal.view.control().pausedUnits, [], 'the pause is cleared');
     const u = r.journal.view.unit(U1);
     assert.deepEqual([u.status, u.stage, u.decided, u.reopened?.specRev, u.reopened?.command], ['active', 'plan-check', null, 2, both.id], 'and the unit re-opened');
-    assert.equal(r.journal.view.ackOf(item)?.command, both.id);
+    assert.equal(r.journal.view.ackOf(item)?.command, paused.id, 'the first successful subject action closes the park');
   } finally {
     r.journal.close();
   }

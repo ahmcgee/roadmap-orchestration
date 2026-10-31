@@ -2,19 +2,21 @@
 // RC-4, RC-8, RC-9), and at host:cpu (M4b rev 3, RC-12): the pressure metric, the subordinate step, the direction check.
 // Pure.
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
-import { givenId, laneId, proposalId, resourceName, sha256, stationId, unitId } from '../src/core/ids.ts';
-import { type PlanM1, parsePlan } from '../src/input/plan.ts';
-import {
-  type ProposalContext, LEVER_STEP, argvShapeProblem, stepOf, assertFenced, checkProposal, diffPaths, flowRevision, metricOf, preimageOf, rejectionKeyOf,
-  rejectionKeyText, rulerChanges,
-} from '../src/flow/levers.ts';
-import { type FlowAction, type FlowDropReason, type FlowProposal, FLOW_LEVERS } from '../src/flow/types.ts';
+import { describe,it } from 'node:test';
+import { givenId,laneId,proposalId,resourceName,sha256,stationId,unitId } from '../src/core/ids.ts';
 import { isoTime } from '../src/core/values.ts';
+import {
+type ProposalContext,LEVER_STEP,argvShapeProblem,
+assertFenced,checkProposal,diffPaths,flowRevision,metricOf,preimageOf,rejectionKeyOf,
+rejectionKeyText,rulerChanges,
+stepOf,
+} from '../src/flow/levers.ts';
+import { type FlowAction,type FlowDropReason,type FlowProposal,FLOW_LEVERS } from '../src/flow/types.ts';
+import { type PlanM1,parsePlan } from '../src/input/plan.ts';
 
 const tool = { argv: ['make', 'probe'], cwd: '.', env: { set: {}, pass: [] } };
 const SEED = ['node', '--test', '--test-concurrency=1', 'test/unit/*.test.js'];
-const lane = (id: string, argv: readonly string[]) => ({ id, argv, cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [] });
+const lane = (id: string, argv: readonly string[]) => ({ id, argv, cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [] });
 
 function rawPlan(): Record<string, unknown> {
   return {

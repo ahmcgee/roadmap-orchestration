@@ -5,31 +5,31 @@
 // and MUTATION_SMOKE (labels witnesscheck.after-lane-files, witnesscheck.after-witnessed, smoke.after-patch-kept,
 // smoke.after-apply, smoke.after-witnessed, smoke.after-ran-before-outcome).
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, test } from 'node:test';
-import type { Fact, IntentOf } from '../src/core/events.ts';
-import { arcId, resourceName, unitId } from '../src/core/ids.ts';
+import { describe,test } from 'node:test';
+import type { Fact,IntentOf } from '../src/core/events.ts';
+import { arcId,resourceName,unitId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
-import { managedEnv, startedCalls } from './fixtures/env-common.ts';
-import { idleEnvironments } from '../src/resources/environments.ts';
-import { ROADMAP_BIN } from '../src/pipeline/witnesscheck.ts';
-import { step } from '../src/pipeline/unit.ts';
-import { unitTip } from '../src/pipeline/gate.ts';
-import { verificationWorktree } from '../src/pipeline/dispatch.ts';
-import { removeVerificationTree, seriesTree } from '../src/pipeline/lanes.ts';
-import { assertFired, writeTrigger } from './helpers/crash.ts';
-import { fixture, runFixture } from './helpers/proc.ts';
-import { barrierDir, reached, release } from './helpers/barrier.ts';
-import { git, tmpDir } from './helpers/repo.ts';
-import { readCalls } from './helpers/scenario.ts';
-import { type TreePlan, scriptTree } from './helpers/witness.ts';
-import { treeWith } from './fixtures/repair-common.ts';
 import { patchedTree } from '../src/git/mutant.ts';
-import { type ChecksArc, type ChecksOptions, checksArc, outcomeFacts } from './fixtures/checks-common.ts';
-import { SCENARIO_TIMEOUT_MS, planCheckStep } from './fixtures/stage-common.ts';
-import { type ArcDescriptor, type ArcRun, MUL, codexStep, contextFor, gateStep, isGateCall, mulBuild, outcomes, stepUntil } from './fixtures/unit-common.ts';
+import { verificationWorktree } from '../src/pipeline/dispatch.ts';
+import { unitTip } from '../src/pipeline/gate.ts';
+import { removeVerificationTree,seriesTree } from '../src/pipeline/lanes.ts';
+import { step } from '../src/pipeline/unit.ts';
+import { ROADMAP_BIN } from '../src/pipeline/witnesscheck.ts';
+import { idleEnvironments } from '../src/resources/environments.ts';
+import { type ChecksArc,type ChecksOptions,checksArc,outcomeFacts } from './fixtures/checks-common.ts';
+import { managedEnv,startedCalls } from './fixtures/env-common.ts';
+import { treeWith } from './fixtures/repair-common.ts';
+import { SCENARIO_TIMEOUT_MS,planCheckStep } from './fixtures/stage-common.ts';
+import { type ArcDescriptor,type ArcRun,MUL,codexStep,contextFor,gateStep,isGateCall,mulBuild,outcomes,stepUntil } from './fixtures/unit-common.ts';
+import { barrierDir,reached,release } from './helpers/barrier.ts';
+import { assertFired,writeTrigger } from './helpers/crash.ts';
+import { fixture,runFixture } from './helpers/proc.ts';
+import { git,tmpDir } from './helpers/repo.ts';
+import { readCalls } from './helpers/scenario.ts';
+import { type TreePlan,scriptTree } from './helpers/witness.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 
@@ -354,7 +354,7 @@ describe('D2 mutation smoke', () => {
     // stage (no fast suite, stages.ts `fastSuite`, either).
     const estateSuite = (p: Record<string, unknown>): void => {
       const suite = p['suite'] as { lanes: Record<string, unknown>[] };
-      p['suite'] = { ...suite, lanes: suite.lanes.map((l) => ({ ...l, tier: 'estate' })) };
+      p['suite'] = { ...suite, lanes: suite.lanes.map((l) => ({ ...l, cadence: 'candidate' })) };
     };
     const { a, r } = await smoked([planCheckStep({ decision: 'approve' }), mulBuild(), NOOP_FIX, gateStep({ decision: 'approve' })], null, { noSpecLanes: true, plan: estateSuite });
     try {

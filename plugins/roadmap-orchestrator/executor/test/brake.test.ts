@@ -28,7 +28,7 @@ import { type HolisticArc, candidateTree, holisticArc, obligationsJson, tipTree 
 import { closedAs, wire } from './fixtures/publish-common.ts';
 import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
 import type { Step } from './helpers/scenario.ts';
-import { type ArcDescriptor, type ArcRun, U1, applyBody, codexStep, contextFor, gateStep, mulBuild, outcomes, stepUntil } from './fixtures/unit-common.ts';
+import { type ArcDescriptor, type ArcRun, U1, applyBody, codexStep, contextFor,syncInputs, gateStep, mulBuild, outcomes, stepUntil } from './fixtures/unit-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 
@@ -296,6 +296,7 @@ describe('impact mapping', () => {
     try {
       await stepUntil(r, 'u1', (f) => f.stage === 'gate' && f.outcome === 'approve');
       assert.deepEqual(r.journal.view.unit(U1).approval?.fingerprint.obligationRevs, [{ id: 'I-1', rev: 1 }]);
+      syncInputs(r);
       // The mapping no longer maps the unit's paths: they are unmapped now, selecting every must-hold obligation.
       const path = join(d.planPath, '..', 'obligations.json');
       const o = JSON.parse(readFileSync(path, 'utf8')) as { mapping: { paths: unknown[] } };
@@ -324,6 +325,7 @@ describe('impact mapping', () => {
     try {
       await stepUntil(r, 'u1', (f) => f.stage === 'gate' && f.outcome === 'approve');
       assert.deepEqual(r.journal.view.unit(U1).approval?.fingerprint.obligationRevs, [{ id: 'I-1', rev: 1 }]);
+      syncInputs(r);
       const path = join(d.planPath, '..', 'obligations.json');
       const next = obligationsJson({ obligations: [{ id: 'I-1', testIds: ['t1'] }], mapping: MAPPED }, control) as Readonly<{ obligations: readonly Readonly<{ proofJudgment: object }>[] }>;
       const i1 = next.obligations[0]!;

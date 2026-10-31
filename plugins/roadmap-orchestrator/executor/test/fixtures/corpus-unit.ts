@@ -5,21 +5,21 @@
 // candidate is green. Everything a child needs is the `ArcDescriptor`; `contextFor` records revision 1 with the corpus
 // files kept (stage-common `recordFirstPlan`).
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { corpusPin } from '../../src/commands/corpus.ts';
 import { sha } from '../../src/core/ids.ts';
 import { sha256Hex } from '../../src/core/json.ts';
 import { absPath } from '../../src/core/values.ts';
 import type { CorpusPin } from '../../src/corpus/types.ts';
-import { laneRevOf, parseObligations } from '../../src/holistic/types.ts';
-import { PHASE0_FILE, PIN_FILE, VISION_DOC, visionRecord, writePhase0 } from '../helpers/corpusarc.ts';
-import { type CorpusSpec, DEFAULT_CORPUS_ROOT, sampleCorpus } from '../helpers/corpus.ts';
-import { type FileSet, commitAll, writeFiles } from '../helpers/repo.ts';
+import { laneRevOf,parseObligations } from '../../src/holistic/types.ts';
+import { type CorpusSpec,DEFAULT_CORPUS_ROOT,sampleCorpus } from '../helpers/corpus.ts';
+import { PHASE0_FILE,PIN_FILE,VISION_DOC,visionRecord,writePhase0 } from '../helpers/corpusarc.ts';
+import { type FileSet,commitAll,writeFiles } from '../helpers/repo.ts';
 import type { Step } from '../helpers/scenario.ts';
-import { witnessLaneArgv, writeWitnessControl } from '../helpers/witness.ts';
-import { editPlan, planDirOf } from './route-common.ts';
-import { type ArcDescriptor, type UnitSpecJson, setupArc } from './unit-common.ts';
+import { witnessLaneArgv,writeWitnessControl } from '../helpers/witness.ts';
+import { editPlan,planDirOf } from './route-common.ts';
+import { type ArcDescriptor,type UnitSpecJson,setupArc } from './unit-common.ts';
 
 export type CorpusUnitArc = Readonly<{ d: ArcDescriptor; planDir: string; pin: CorpusPin; pinSha256: string; baseline: string }>;
 
@@ -51,7 +51,7 @@ export async function setupCorpusArc(steps: readonly Step[], opts: CorpusUnitOpt
   const control = join(planDir, 'witness-control.json');
   writeWitnessControl(control, { trees: { '*': { outcomes: { t1: 'pass' } } } });
   const journey = {
-    id: 'journey', argv: witnessLaneArgv('jsonl', planDir, control), cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, tier: 'fast',
+    id: 'journey', argv: witnessLaneArgv('jsonl', planDir, control), cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, cadence: 'build',
     resources: [], evidenceGlobs: [], reporter: 'jsonl',
   };
   const laneRev = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [journey], obligations: [], mapping: { paths: [] } }).lanes[0]!);
@@ -62,7 +62,7 @@ export async function setupCorpusArc(steps: readonly Step[], opts: CorpusUnitOpt
     schema: 'roadmap/obligations-m3', cutLine: 'mul ships', lanes: [journey],
     obligations: [{
       id: 'I-1', rev: 1, statement: 'A berth is never double-booked.', rule: { id: 'T-1', textSha256: t1.textSha256 }, serves: ['V-1'], witness,
-      proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev, witness }, deliveredBy: [], activation: 'must-hold', contracts: [], state: { type: 'active' },
+      proofJudgment: { verdict: 'proves', obligationRev: 1,  witness: {testIds: witness.testIds, ...(('files' in witness ? {files: witness.files} : {}))} }, deliveredBy: [], activation: 'must-hold', contracts: [], state: { type: 'active' },
     }],
     mapping: { paths: [] },
     census: pinned.pin.rules.map((r) => ({ rule: r.id, state: r.id === 'T-1' ? { type: 'obligation', id: 'I-1' } : { type: 'out-of-slice' } })),

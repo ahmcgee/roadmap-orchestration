@@ -5,6 +5,7 @@
 // `arc-superseded`. A reopening start that died before its revision (a host restart) leaves a claim on a completed arc,
 // which `roadmap resume-arc` relaunches. Named tests: reopen.fix-unit-and-pr-ff, reopen.resume-arc-relaunches,
 // reopen.refused-after-next-started.
+import { exportInputs } from '../src/commands/inputs.ts';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -32,7 +33,7 @@ import { BASE } from './fixtures/route-common.ts';
 import { planCheckStep } from './fixtures/stage-common.ts';
 import { gateStep, mulBuild, outcomes } from './fixtures/unit-common.ts';
 import {
-  EXEC_TIMEOUT_MS, type ExecRun, SMOKE_DEFAULT, execEnv, hostFile, hostLockHeld, reasonOf, setupExec, startExec, statusOf, until,
+  EXEC_TIMEOUT_MS, type ExecRun, SMOKE_DEFAULT, cli, execEnv, hostFile, hostLockHeld, reasonOf, setupExec, startExec, statusOf, until,
 } from './fixtures/exec-common.ts';
 
 after(assertNoSurvivors);
@@ -48,10 +49,14 @@ function editPlan(planPath: string, edit: (plan: Json & { units: Json[] }) => vo
 }
 
 /** Adds fix unit `id` (its spec a copy of u1's) at high priority, as a PR fix is added. */
-function addFixUnit(r: ExecRun, id: string): void {
+async function addFixUnit(r: ExecRun, id: string): Promise<void> {
+  const dir = absPath(join(tmpDir('reopen-export'), 'inputs'));
+  const exported = await exportInputs({repo: absPath(r.repo), arc: arcId(r.arc), out: dir});
+  cpSync(dir, join(r.planPath, '..'), {recursive: true});
   const spec = JSON.parse(readFileSync(join(r.planPath, '..', 'u1.json'), 'utf8')) as Json;
   writeFileSync(join(r.planPath, '..', `${id}.json`), JSON.stringify({ ...spec, unit: id, rev: 1 }));
   editPlan(r.planPath, (p) => void p.units.push({ ...p.units[0]!, id, spec: `${id}.json`, priority: 'high' }));
+  await cli(r, ['apply', '--from', join(r.planPath, '..'), '--rev', String(exported.planRev), '--reason', `Admit PR fix ${id}`]);
 }
 
 test('reopen.fix-unit-and-pr-ff, reopen.resume-arc-relaunches, reopen.refused-after-next-started: a completed arc reopened by a fix unit and a start merges it and completes again, roadmap pr fast-forwards the same PR; a dead reopening start\'s claim is relaunched by resume-arc; once the next arc started on its head the reopen is refused arc-superseded', { timeout: 2 * EXEC_TIMEOUT_MS }, async (t) => {
@@ -86,7 +91,7 @@ test('reopen.fix-unit-and-pr-ff, reopen.resume-arc-relaunches, reopen.refused-af
   assert.equal(originRef(origin, BRANCH), head1);
 
   // The PR's review asks for a fix: a fix unit in the arc's plan, and the same start again.
-  addFixUnit(r, 'u2');
+  await addFixUnit(r, 'u2');
   const second = await startExec(r).exit;
   assert.equal(second.code, 0, second.stderr);
   assert.deepEqual(reasonOf(second), { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }, { unit: 'u2', result: 'merged' }] });
@@ -102,7 +107,7 @@ test('reopen.fix-unit-and-pr-ff, reopen.resume-arc-relaunches, reopen.refused-af
 
   // A second fix's reopening start dies with its supervisor before its revision (a host restart): the claim names the
   // completed arc and a dead owner. resume-arc relaunches it, and the arc runs the fix.
-  addFixUnit(r, 'u3');
+  await addFixUnit(r, 'u3');
   const gone = spawn('sleep', ['300'], { stdio: 'ignore' });
   assert.ok(gone.pid !== undefined);
   const dead = { pid: gone.pid, start: identityOf(gone.pid).start };
@@ -113,7 +118,7 @@ test('reopen.fix-unit-and-pr-ff, reopen.resume-arc-relaunches, reopen.refused-af
   const claim = { ...claimRecord({ supervisor: dead, bootId: readBootId(), arc: arcId(r.arc), generation }), runDir: absPath(r.runDir), repo: absPath(r.repo) };
   atomicJson(hostPath(absPath(r.hostDir), HOST_LOCK), claim);
   publishOwner(absPath(r.hostDir), claim, dead);
-  assert.equal((await statusOf(r)).run.state, 'complete', 'the completion is still active: the dead start applied nothing');
+  assert.equal((await statusOf(r)).completion?.active, true, 'the dead start has not committed the queued fix');
   const resumed = await runFixture('exec-cli.ts', [r.hostDir, 'resume-arc', '--repo', r.repo], { env: execEnv(r), timeoutMs: 120_000 });
   assert.equal(resumed.code, 0, resumed.stderr);
   assert.equal((JSON.parse(resumed.stdout.trim()) as { kind?: string }).kind, 'ready', resumed.stdout);

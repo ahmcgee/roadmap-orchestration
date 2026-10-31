@@ -5,31 +5,34 @@
 // unit.reentrant, codex.resume-collision-retry, continue.claude-session,
 // continue.codex-thread-chain, continue.no-session-fresh.
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync,readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { after, before, describe, test } from 'node:test';
+import { after,before,describe,test } from 'node:test';
 import { invocationId } from '../src/core/ids.ts';
 import { EVENTS_FILE } from '../src/core/log.ts';
-import { snapshotRef, verifySnapshot } from '../src/git/snapshot.ts';
+import { snapshotRef,verifySnapshot } from '../src/git/snapshot.ts';
 import { unitBranch } from '../src/pipeline/dispatch.ts';
 import { latestCandidate } from '../src/pipeline/integrate.ts';
-import { loadUnitSpec } from '../src/pipeline/stages.ts';
 import { killWorkload } from '../src/pipeline/invoke.ts';
-import { CONTINUE_DIRECTIVE, CONTINUE_FRESH_DIRECTIVE, NO_SESSION_NOTE, RESOLVE_DIRECTIVE } from '../src/prompts/directives.ts';
-import { type Gate, type UnitResult, runUnit } from '../src/pipeline/unit.ts';
-import { MODEL_IDS } from '../src/routing/types.ts';
+import { loadUnitSpec } from '../src/pipeline/stages.ts';
+import { type Gate,type UnitResult,runUnit } from '../src/pipeline/unit.ts';
+import { CONTINUE_DIRECTIVE,CONTINUE_FRESH_DIRECTIVE,NO_SESSION_NOTE,RESOLVE_DIRECTIVE } from '../src/prompts/directives.ts';
 import { parseRepoConfig } from '../src/routing/layers.ts';
-import { reached, release } from './helpers/barrier.ts';
+import { MODEL_IDS } from '../src/routing/types.ts';
+import { events,intents } from './fixtures/invoke-specs.ts';
+import { BUILD_REPORT,SCENARIO_TIMEOUT_MS,admitAll,planCheckStep } from './fixtures/stage-common.ts';
+import {
+ADD_BROKEN,ADD_FIXED,type ArcRun,MUL,SUITE_LANE,U1,appendSteps,codexStep,
+contextFor,gateStep,
+isGateCall,isPlanCheckCall,
+literal,mulBuild,outcomes,setupArc,stepUntil,
+unitWorktreePath,workDirPattern,
+} from './fixtures/unit-common.ts';
+import { reached,release } from './helpers/barrier.ts';
 import { writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
-import { git, tmpDir } from './helpers/repo.ts';
-import { type Step, readCalls } from './helpers/scenario.ts';
-import { events, intents } from './fixtures/invoke-specs.ts';
-import { BUILD_REPORT, SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
-import {
-  ADD_BROKEN, ADD_FIXED, type ArcRun, MUL, SUITE_LANE, U1, appendSteps, codexStep, isGateCall, isPlanCheckCall, contextFor, gateStep, literal, mulBuild, outcomes, setupArc, stepUntil,
-  unitWorktreePath, workDirPattern,
-} from './fixtures/unit-common.ts';
+import { git,tmpDir } from './helpers/repo.ts';
+import { type Step,readCalls } from './helpers/scenario.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 /** Every stage admitted at once: the unit runs on its own. */
@@ -199,7 +202,7 @@ test('fixture conflict → merge-in → resolve: T moves under the approved unit
 
 test('fixture red candidate → fix → fresh gate → green: the suite is red on the candidate and green at T alone', T, async () => {
   // An estate suite lane: the lanes stage's fast suite (stages.ts `fastSuite`) would catch the broken add before the candidate.
-  const d = setupArc({ steps: [], suite: [{ ...SUITE_LANE, tier: 'estate' }] });
+  const d = setupArc({ steps: [], suite: [{ ...SUITE_LANE, cadence: 'candidate' }] });
   const suiteOutput = `(${literal(d.runDir)}\\/evidence\\/u1\\/[0-9]+-candidate\\/candidate\\/suite\\/output\\/files)`;
   appendSteps(d, [
     planCheckStep({ decision: 'approve' }),

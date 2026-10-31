@@ -5,34 +5,34 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statfsSync, symlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync,chmodSync,existsSync,mkdirSync,readFileSync,realpathSync,rmSync,statfsSync,symlinkSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, it } from 'node:test';
-import { identityOf, readBootId } from '../src/contain/proc.ts';
+import { describe,it } from 'node:test';
+import { evaluateRevision,keepRevision,payloadOf } from '../src/commands/apply.ts';
+import { identityOf,readBootId } from '../src/contain/proc.ts';
 import { atomicJson } from '../src/core/fsx.ts';
-import { arcId, invocationId, invocationIdOf, opId, opKey, resourceName, unitId } from '../src/core/ids.ts';
+import { arcId,invocationId,invocationIdOf,opId,opKey,resourceName,unitId } from '../src/core/ids.ts';
 import { openJournal } from '../src/core/log.ts';
-import type { ProcIdentity, RecoveryLockClaim } from '../src/core/records.ts';
-import { type AbsPath, absPath, branchName, isoTimeOf, nonce } from '../src/core/values.ts';
-import { evaluateRevision, keepRevision, payloadOf } from '../src/commands/apply.ts';
-import { readInputFiles } from '../src/input/inforce.ts';
-import { commitRevision } from '../src/recover/revision.ts';
-import { profileName } from '../src/routing/types.ts';
-import { fakeDocs } from './fixtures/docs-fake.ts';
+import type { ProcIdentity,RecoveryLockClaim } from '../src/core/records.ts';
+import { type AbsPath,absPath,branchName,isoTimeOf,nonce } from '../src/core/values.ts';
 import { SCHEMA_VERSION } from '../src/core/version.ts';
-import { HOST_LOCK, RECOVERY_LOCK, hostPath, openHostDir } from '../src/host/hostdir.ts';
+import { HOST_LOCK,RECOVERY_LOCK,hostPath,openHostDir } from '../src/host/hostdir.ts';
 import { selfIdentity } from '../src/host/liveness.ts';
-import { type PreviousArcVerdict, claimHost, releaseHost } from '../src/host/lock.ts';
+import { type PreviousArcVerdict,claimHost,releaseHost } from '../src/host/lock.ts';
 import { publishOwner } from '../src/host/owner.ts';
 import { recordResidue } from '../src/host/residues.ts';
 import { runDir } from '../src/input/cli.ts';
-import { type StartChecks, type StartInput, gitCommonDir, runChecks, smokeCheck } from '../src/preflight/checks.ts';
+import { readInputFiles } from '../src/input/inforce.ts';
 import { resolveArgv0 } from '../src/preflight/argv0.ts';
+import { type StartChecks,type StartInput,gitCommonDir,runChecks,smokeCheck } from '../src/preflight/checks.ts';
 import type { SmokeReport } from '../src/preflight/smoke.ts';
-import { type StartupRejection, type StartupRejectionKind, exitCodeFor, startupRejection } from '../src/preflight/startup.ts';
-import { commitAll, git, makeRepo, revParse, tmpDir } from './helpers/repo.ts';
-import { type Step, writeScenario } from './helpers/scenario.ts';
-import { FAILED, claimRecord, residueEntry } from './fixtures/host-records.ts';
+import { type StartupRejection,type StartupRejectionKind,exitCodeFor,startupRejection } from '../src/preflight/startup.ts';
+import { commitRevision } from '../src/recover/revision.ts';
+import { profileName } from '../src/routing/types.ts';
+import { fakeDocs } from './fixtures/docs-fake.ts';
+import { FAILED,claimRecord,residueEntry } from './fixtures/host-records.ts';
+import { commitAll,git,makeRepo,revParse,tmpDir } from './helpers/repo.ts';
+import { type Step,writeScenario } from './helpers/scenario.ts';
 
 const T = { timeout: 60_000 };
 const OK = { ok: true } as const;
@@ -47,7 +47,7 @@ type Raw = Record<string, unknown>;
 type Setup = Readonly<{ repo: AbsPath; planDir: string; planFile: AbsPath; hostDir: AbsPath; binDir: string; plan: Raw; spec: Raw; arc: string }>;
 
 const lane = (over: Raw = {}): Raw => ({
-  id: 'unit', argv: ['node', '-e', '0'], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], ...over,
+  id: 'unit', argv: ['node', '-e', '0'], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], ...over,
 });
 const tool = { argv: ['node', '-e', '0'], cwd: '.', env: { set: {}, pass: ['PATH'] } };
 
@@ -87,7 +87,6 @@ function input(s: Setup, reconcile: () => Promise<PreviousArcVerdict> = async ()
     repo: s.repo, planFile: s.planFile, profile: null, hostDir: s.hostDir,
     env: { ...process.env, PATH: `${s.binDir}:${process.env['PATH'] ?? ''}` },
     respawn: null,
-    base: null,
     claim: (ctx) => claimHost(ctx.hostDir, { arc: ctx.plan.arc, runDir: ctx.runDir, repo: ctx.repo, supervisor: selfIdentity() }, reconcile),
   };
 }
@@ -473,14 +472,14 @@ describe('startup.plan-in-force', () => {
     writeFileSync(s.planFile, JSON.stringify({ ...s.plan, units: [...(s.plan['units'] as Raw[]), { id: 'u2', spec: 'u2.json', risk: 'low', scope: ['src/**'], resources: ['db'] }] }));
   };
 
-  it('a first start puts the files in force as revision 1; a start whose files add a unit applies it (no command); a respawn runs the plan in force, ignoring an edit nobody applied', T, async () => {
+  it('a first start puts the files in force as revision 1; a later start ignores unapplied unit additions; a respawn runs the plan in force, ignoring an edit nobody applied', T, async () => {
     const s = setup();
     assert.equal((await start(input(s))).kind, 'passed');
     assert.deepEqual(appliedFacts(s), { rev: 1, command: null, changes: [], units: ['u1'] });
 
     addU2(s);
     assert.equal((await start(input(s))).kind, 'passed');
-    assert.deepEqual(appliedFacts(s), { rev: 2, command: null, changes: [{ type: 'unit-added', unit: 'u2' }], units: ['u1', 'u2'] });
+    assert.deepEqual(appliedFacts(s), { rev: 1, command: null, changes: [], units: ['u1'] });
 
     // An edit the respawn must not take: u3 added, nothing applied.
     writeFileSync(join(s.planDir, 'u3.json'), JSON.stringify({ ...s.spec, unit: 'u3' }));
@@ -488,8 +487,8 @@ describe('startup.plan-in-force', () => {
     writeFileSync(s.planFile, JSON.stringify({ ...plan, units: [...(plan['units'] as Raw[]), { id: 'u2', spec: 'u2.json', risk: 'low', scope: ['src/**'], resources: ['db'] }, { id: 'u3', spec: 'u3.json', risk: 'low', scope: ['src/**'], resources: ['db'] }] }));
     const respawn = await start({ ...input(s), respawn: { runDir: runDirOf(s), arc: arcId(s.arc) } });
     assert.ok(respawn.kind === 'passed', JSON.stringify(respawn));
-    assert.deepEqual(respawn.context.plan.units.map((u) => u.id), ['u1', 'u2'], 'the respawn checked the plan in force');
-    assert.equal(appliedFacts(s).rev, 2, 'and applied nothing');
+    assert.deepEqual(respawn.context.plan.units.map((u) => u.id), ['u1'], 'the respawn checked the plan in force');
+    assert.equal(appliedFacts(s).rev, 1, 'and applied nothing');
   });
 
   it('restart.in-force-ledger (dev.16): a start of an arc in flight checks the owner\'s files rebased onto the files in force, so a ruling an executor revision landed counts though the owner\'s ledger predates it', T, async () => {
@@ -505,7 +504,7 @@ describe('startup.plan-in-force', () => {
     const j = openJournal(runDirOf(s), arcId(s.arc));
     try {
       const rctx = { runDir: runDirOf(s), view: j.view, hostDir: s.hostDir, planFile: s.planFile, routingBase: { profile: profileName('default', 'p'), config: null, arcRoles: 'dev17' as const }, laneEnv: process.env };
-      const v = evaluateRevision(rctx, readInputFiles(s.planFile, s.repo), { type: 'rule' });
+      const v = evaluateRevision(rctx, readInputFiles(s.planFile, s.repo), { type: 'apply', reason: 'Revise the ledger' });
       assert.ok(v.kind === 'accepted', JSON.stringify(v));
       keepRevision(runDirOf(s), v);
       const source = { type: 'executor', inv: invocationIdOf(`${s.arc}/9#1`) } as const;
@@ -523,7 +522,7 @@ describe('startup.plan-in-force', () => {
     assert.equal(respawn.kind, 'passed', JSON.stringify(respawn));
   });
 
-  it('plan-change-refused: a fresh arc\'s unit with a reserved id (batch-<n>, jobs, mutants) is refused, and so is a start whose files add one', T, async () => {
+  it('plan-change-refused: a fresh arc\'s reserved ids are refused', T, async () => {
     const fresh = setup();
     writeFileSync(join(fresh.planDir, 'batch-1.json'), JSON.stringify({ ...fresh.spec, unit: 'batch-1' }));
     writeFileSync(fresh.planFile, JSON.stringify({ ...fresh.plan, units: [...(fresh.plan['units'] as Raw[]), { id: 'batch-1', spec: 'batch-1.json', risk: 'low', scope: ['src/**'], resources: ['db'] }] }));
@@ -534,13 +533,12 @@ describe('startup.plan-in-force', () => {
     assert.equal(appliedFacts(fresh).rev, null, 'no revision recorded');
 
     const added = setup();
-    assert.equal((await start(input(added))).kind, 'passed');
     writeFileSync(join(added.planDir, 'mutants.json'), JSON.stringify({ ...added.spec, unit: 'mutants' }));
     writeFileSync(added.planFile, JSON.stringify({ ...added.plan, units: [...(added.plan['units'] as Raw[]), { id: 'mutants', spec: 'mutants.json', risk: 'low', scope: ['src/**'], resources: ['db'] }] }));
     const later = await start(input(added));
     assert.ok(later.kind === 'refused' && later.rejections[0]?.kind === 'plan-change-refused', JSON.stringify(later));
     assert.match(later.rejections[0].reasons.join('\n'), /^unit id mutants is reserved/);
-    assert.equal(appliedFacts(added).rev, 1);
+    assert.equal(appliedFacts(added).rev, null);
   });
 
   it('plan-change-refused: a fresh arc whose lane evidenceGlobs cover a unit\'s own scope is refused, the lane and the entry named (M4b run 3)', T, async () => {
@@ -558,7 +556,7 @@ describe('startup.plan-in-force', () => {
     assert.equal((await start(input(s))).kind, 'passed', 'outputs outside the scope pass');
   });
 
-  it('plan-change-refused: a start whose files drop a started unit and move the worktree root is refused with every reason (78); the plan in force stays', T, async () => {
+  it('plan-change-refused: startup ignores edits dropping a started unit and moving its root; an explicit revision refuses every reason', T, async () => {
     const s = setup();
     assert.equal((await start(input(s))).kind, 'passed');
     addU2(s);
@@ -568,20 +566,22 @@ describe('startup.plan-in-force', () => {
     j.close();
     const moved = tmpDir('st-wt2');
     writeFileSync(s.planFile, JSON.stringify({ ...s.plan, worktreeRoot: moved, units: [{ id: 'u2', spec: 'u2.json', risk: 'low', scope: ['src/**'], resources: ['db'] }] }));
-    const result = await runChecks(input(s));
-    const rejections = refusedWith(result as Checked, 'plan-change-refused', 78);
-    assert.ok(result.kind === 'refused' && result.claim !== null);
-    releaseHost(s.hostDir, result.claim);
-    // A first start on M2 schedules a DAG, whose started units keep only their relative order (G3): no prefix reason.
-    assert.deepEqual(rejections, [{
-      kind: 'plan-change-refused',
-      reasons: [
+    const result = await start(input(s));
+    assert.equal(result.kind, 'passed', 'startup uses the plan in force');
+    const journal = openJournal(runDirOf(s), arcId(s.arc));
+    try {
+      const checked = evaluateRevision({runDir: runDirOf(s), view: journal.view, hostDir: s.hostDir, planFile: s.planFile,
+        routingBase: {profile: profileName('default', 'p'), config: null, arcRoles: 'dev17'}, laneEnv: process.env},
+        readInputFiles(s.planFile, s.repo), {type: 'apply', reason: 'Try the forbidden plan edit'});
+      assert.equal(checked.kind, 'rejected');
+      if (checked.kind !== 'rejected') assert.fail('the edit must be refused');
+      assert.equal(startupRejection({kind: 'plan-change-refused', reasons: checked.reasons}, 'r').kind, 'plan-change-refused', 'the row round-trips');
+      assert.deepEqual(checked.reasons, [
         `worktreeRoot may never change (in force: ${String(s.plan['worktreeRoot'])}; plan.json: ${moved})`,
         'unit u1 has started; it cannot be removed',
-      ],
-    }]);
-    assert.equal(startupRejection(JSON.parse(JSON.stringify(rejections[0])), 'r').kind, 'plan-change-refused', 'the row round-trips');
-    assert.equal(appliedFacts(s).rev, 2);
+      ]);
+    } finally { journal.close(); }
+    assert.deepEqual(appliedFacts(s), {rev: 1, command: null, changes: [], units: ['u1']});
   });
 });
 

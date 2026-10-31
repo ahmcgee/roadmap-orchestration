@@ -14,44 +14,44 @@
 // run.ts `--trial-cap`): the session's live spend at list price (transcript.ts `liveUsd`, every gate call of the trial)
 // over the cap kills it and voids the trial as `cap`. Brakes are the harness's, never the gate's: method choices are
 // reported, not failed.
-import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { cpSync,mkdirSync,readFileSync,writeFileSync } from 'node:fs';
+import { dirname,join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { DiffShown, JudgmentInputs, StageOutcomeFact } from '../../../src/core/events.ts';
-import { gateLargeDiffOf } from '../../../src/core/upgrade.ts';
-import { diffBase } from '../../../src/git/transient.ts';
-import { type RepoConfig, arcStack, resolveRouting } from '../../../src/routing/layers.ts';
-import type { RiskTier } from '../../../src/routing/types.ts';
-import { modelInfo } from '../../../src/routing/models.ts';
-import { type InvocationId, invocationId, sha } from '../../../src/core/ids.ts';
+import type { DiffShown,JudgmentInputs,StageOutcomeFact } from '../../../src/core/events.ts';
+import { type InvocationId,invocationId,sha } from '../../../src/core/ids.ts';
 import type { JsonValue } from '../../../src/core/json.ts';
+import { gateLargeDiffOf } from '../../../src/core/projections.ts';
 import { STDOUT_FILE } from '../../../src/core/records.ts';
-import { invocationDir } from '../../../src/pipeline/invoke.ts';
-import { judgmentOutput, judgmentSpawns } from '../../../src/pipeline/stages.ts';
-import { type GateOutput, validateGateOutput } from '../../../src/prompts/schemas.ts';
-import { promptFor } from '../../../src/prompts/index.ts';
-import { runnerFiles } from '../../../src/runner/files.ts';
-import { tmpDir } from '../../../test/helpers/repo.ts';
-import { type Step, readCalls, writeScenario } from '../../../test/helpers/scenario.ts';
-import { arcFor } from '../../../test/fixtures/invoke-specs.ts';
-import { BUILD_REPORT, planCheckAnswer } from '../../../test/fixtures/stage-common.ts';
-import { type ArcDescriptor, type ArcRun, U1, contextFor, isGateCall, laneJson, outcomes, stepUntil } from '../../../test/fixtures/unit-common.ts';
-import { repositoryPaths, scanTranscript } from '../../m4a/transcript.ts';
-import { TEST_ARGV } from '../gen/tsrepo.ts';
-import { type Transcript, type Usage, parseEvents, readTranscript, sumUsage, toolCounts, unavailableCalls, usageOf } from '../transcript.ts';
-import { isCorpusCell, type Cell } from './cells.ts';
-import { type AnswerKey, DERIVED, DERIVED_PATTERNS, type Fixture, buildFixture, materialise } from './fixture.ts';
-import { boundedDiff, diffPaths } from '../../../src/git/boundeddiff.ts';
-import { GATE_DIFF_BUDGET, largeDiffOf } from '../../../src/pipeline/gate.ts';
+import { absPath } from '../../../src/core/values.ts';
 import { guideAt } from '../../../src/corpus/guide.ts';
-import { derivePin, writePin } from '../../../src/corpus/pin.ts';
+import { derivePin,writePin } from '../../../src/corpus/pin.ts';
 import { EMPTY_REGISTRY } from '../../../src/corpus/registry.ts';
 import { openSource } from '../../../src/corpus/source.ts';
-import { PHASE0_FILE, PIN_FILE, writePhase0 } from '../../../test/helpers/corpusarc.ts';
-import { witnessLaneArgv, writeWitnessControl } from '../../../test/helpers/witness.ts';
-import { laneRevOf, parseObligations } from '../../../src/holistic/types.ts';
-import { absPath } from '../../../src/core/values.ts';
-import { type ClusterGrade, type Graded, grade, gradeClusters, touched } from './grade.ts';
+import { boundedDiff,diffPaths } from '../../../src/git/boundeddiff.ts';
+import { diffBase } from '../../../src/git/transient.ts';
+import { laneRevOf,parseObligations } from '../../../src/holistic/types.ts';
+import { GATE_DIFF_BUDGET,largeDiffOf } from '../../../src/pipeline/gate.ts';
+import { invocationDir } from '../../../src/pipeline/invoke.ts';
+import { judgmentOutput,judgmentSpawns } from '../../../src/pipeline/stages.ts';
+import { promptFor } from '../../../src/prompts/index.ts';
+import { type GateOutput,validateGateOutput } from '../../../src/prompts/schemas.ts';
+import { type RepoConfig,arcStack,resolveRouting } from '../../../src/routing/layers.ts';
+import { modelInfo } from '../../../src/routing/models.ts';
+import type { RiskTier } from '../../../src/routing/types.ts';
+import { runnerFiles } from '../../../src/runner/files.ts';
+import { arcFor } from '../../../test/fixtures/invoke-specs.ts';
+import { BUILD_REPORT,planCheckAnswer } from '../../../test/fixtures/stage-common.ts';
+import { type ArcDescriptor,type ArcRun,U1,contextFor,isGateCall,laneJson,outcomes,stepUntil } from '../../../test/fixtures/unit-common.ts';
+import { PHASE0_FILE,PIN_FILE,writePhase0 } from '../../../test/helpers/corpusarc.ts';
+import { tmpDir } from '../../../test/helpers/repo.ts';
+import { type Step,readCalls,writeScenario } from '../../../test/helpers/scenario.ts';
+import { witnessLaneArgv,writeWitnessControl } from '../../../test/helpers/witness.ts';
+import { repositoryPaths,scanTranscript } from '../../m4a/transcript.ts';
+import { TEST_ARGV } from '../gen/tsrepo.ts';
+import { type Transcript,type Usage,parseEvents,readTranscript,sumUsage,toolCounts,unavailableCalls,usageOf } from '../transcript.ts';
+import { type Cell,isCorpusCell } from './cells.ts';
+import { type AnswerKey,DERIVED,DERIVED_PATTERNS,type Fixture,buildFixture,materialise } from './fixture.ts';
+import { type ClusterGrade,type Graded,grade,gradeClusters,touched } from './grade.ts';
 import type { ReadOnlyArm } from './readonly.ts';
 
 /**
@@ -79,10 +79,10 @@ const finding = (path: string, text: string): JsonValue => ({ severity: 'blockin
 function fakeAnswer(kind: Exclude<FakeGate, 'overspend'>, key: AnswerKey, large: boolean): JsonValue {
   const decoy = key.changed.find((p) => p !== key.plant?.path) ?? 'ARCHITECTURE.md';
   const clusters: JsonValue = large ? [{ id: 'all', paths: ['**'], review: 'routine' }] : null;
-  const revise = (findings: JsonValue[]): JsonValue => ({ decision: 'revise', findings, directives: ['Fix the findings.'], reasons: ['A1 is not met'], premises: [], unreviewed: [], clusters, rulings: [], ordering: null });
+  const revise = (findings: JsonValue[]): JsonValue => ({ rulings: [], decision: 'revise', findings, directives: ['Fix the findings.'], reasons: ['A1 is not met'], premises: [], unreviewed: [], clusters,  ordering: null });
   switch (kind) {
     case 'approve-all':
-      return { decision: 'approve', findings: [], directives: [], reasons: ['A1 holds'], premises: [], unreviewed: [], clusters, rulings: [], ordering: null };
+      return {rulings: [],  decision: 'approve', findings: [], directives: [], reasons: ['A1 holds'], premises: [], unreviewed: [], clusters,  ordering: null };
     case 'revise-all':
       return revise([finding(decoy, 'This change is wrong.')]);
     case 'cite-every-path':
@@ -468,7 +468,7 @@ function writeCorpusInputs(repo: string, planDir: string, base: string): void {
   writeFileSync(join(planDir, 'obligations.json'), JSON.stringify({
     schema: 'roadmap/obligations-m3', cutLine: 'vessel export ships', lanes: [lane], mapping: { paths: [] },
     obligations: [{ id: 'I-1', rev: 1, statement: 'Vessel exports satisfy the export contract.', rule: { id: 'T-1', textSha256: pin.rules[0]!.textSha256 }, serves: ['V-1'], witness,
-      proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev, witness }, deliveredBy: [], activation: 'must-hold', contracts: [], state: { type: 'active' } }],
+      proofJudgment: { verdict: 'proves', obligationRev: 1,  witness: {testIds: witness.testIds, ...(('files' in witness ? {files: witness.files} : {}))} }, deliveredBy: [], activation: 'must-hold', contracts: [], state: { type: 'active' } }],
     census: pin.rules.map((r) => ({ rule: r.id, state: r.id === 'T-1' ? { type: 'obligation', id: 'I-1' } : { type: r.id === 'T-2' ? 'untestable' : 'out-of-slice' } })),
   }));
 }

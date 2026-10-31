@@ -5,30 +5,39 @@
 // The fold also enforces the log's invariants (SCHEMAS.md "Event log"): a violation throws
 // FoldInvariantError. At open the journal turns that into a refusal (`log-corrupt`); at append it means
 // the caller asked for an illegal record, and nothing is written.
+import { type BundleOutcome,type FindingStateName,type FindingTo,FINDING_MOVES } from '../holistic/types.ts';
+import { type Backend,type RiskTier,type Role,type UnitRole,RISK_TIERS } from '../routing/types.ts';
 import {
-  type AbortRecord, type AuditInputs, type BackendParkClass, type CoveredRange, type DoneRecord, type Event, type Fact, type HolisticFact, type Holder,
-  type IntentOf, type IntentRecord, type JudgmentInputs, type JudgmentStage, type OpKind, type Parent, type ParkRecord, type PlanAppliedFact, type ProbeTarget,
-  type ResourceEdge, type RetryStage, type ScopeGrowthProposal, type StageOutcomeFact, JUDGMENT_STAGES, RECLAIM_HOLDERS, RESIDUE_HOLDERS, RETRY_STAGES, RETRYABLE_BACKEND_PARKS,
-  prevHash, probeTargetKey, serializeEvent, certificationRed,
+type AbortRecord,type AuditInputs,type BackendParkClass,
+type DoneRecord,type Event,type Fact,
+type Holder,
+type HolisticFact,
+type IntentOf,type IntentRecord,type JudgmentInputs,type JudgmentStage,type OpKind,type Parent,type ParkRecord,type PlanAppliedFact,type ProbeTarget,
+type ResourceEdge,type RetryStage,type ScopeGrowthProposal,type StageOutcomeFact,JUDGMENT_STAGES,RECLAIM_HOLDERS,RESIDUE_HOLDERS,
+RETRYABLE_BACKEND_PARKS,
+RETRY_STAGES,
+certificationRed,
+prevHash,probeTargetKey,serializeEvent
 } from './events.ts';
-import { checkpointSkipTriggerOf, dev31UnchargedLanesRedsDefault } from './upgrade.ts';
 import { CounterRegressionError } from './fsx.ts';
 import {
-  type AmendmentId, type ArcId, type ClaudeSessionId, type CommandId, type DivergenceId, type EdgeId, type FindingId, type InvocationId, type JobId, type JobKind, type NeedsUserId, type ObligationId,
-  type MilestoneId, type OpId, type OpKey, type PlanRev, type PolishId, type ResourceInstance, type ResourceUnit, type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId,
-  JOB_KINDS, amendmentIdOf, compareResourceUnits, divergenceIdOf, findingIdOf, jobId, parseInvocationId, parseJobId, parseOpId, polishIdOf,
-  type ReviewFindingId, reviewFindingIdOf,
+type AmendmentId,type ArcId,type ClaudeSessionId,type CommandId,type DivergenceId,type EdgeId,type FindingId,type InvocationId,type JobId,type JobKind,
+type MilestoneId,
+type NeedsUserId,type ObligationId,
+type OpId,type OpKey,type PlanRev,type PolishId,type ResourceInstance,type ResourceUnit,
+type ReviewFindingId,
+type RoutingRev,type Sha,type Sha256Hex,type SpecRev,type UnitId,
+amendmentIdOf,compareResourceUnits,divergenceIdOf,findingIdOf,jobId,parseInvocationId,parseJobId,parseOpId,polishIdOf,
+reviewFindingIdOf
 } from './ids.ts';
-import type { ControlState, FlowFactAt, JournalView, NeedsUserAckState, NeedsUserState, PropagationFactAt, WalkFactAt, FlakeAt } from './interfaces.ts';
-import { causeKey } from './stale.ts';
-import type { ApprovalBlobs, FindingsLedgerEntry } from './review.ts';
+import type { ControlState,FlakeAt,FlowFactAt,JournalView,NeedsUserAckState,NeedsUserState,PropagationFactAt,WalkFactAt } from './interfaces.ts';
 import { canonicalJson } from './json.ts';
-import { type SessionCharge, addCharged } from './usage.ts';
-import { type ApprovalFingerprint, type Bounds, type ContainmentMode, type DispatchRecord, type ResidueKey, type Stage, DEFAULT_BOUNDS, boundsOfRecord } from './records.ts';
-import { type BundleOutcome, type FindingStateName, type FindingTo, FINDING_MOVES } from '../holistic/types.ts';
+import { checkpointSkipTriggerOf } from './projections.ts';
+import { type ApprovalFingerprint,type Bounds,type ContainmentMode,type DispatchRecord,type ResidueKey,type Stage,DEFAULT_BOUNDS,boundsOfRecord } from './records.ts';
+import type { ApprovalBlobs,FindingsLedgerEntry } from './review.ts';
+import { type SessionCharge,addCharged } from './usage.ts';
 import type { IsoTime } from './values.ts';
-import { SCHEMA_VERSION, type SchemaVersion } from './version.ts';
-import { type Backend, RISK_TIERS, type RiskTier, type Role, type UnitRole } from '../routing/types.ts';
+import { type SchemaVersion,SCHEMA_VERSION } from './version.ts';
 
 export class FoldInvariantError extends Error {
   readonly seq: number;
@@ -297,7 +306,7 @@ export function afterStageOutcome(u: UnitState, f: Pick<StageOutcomeFact, 'stage
       ...c,
       chargeableFailures: c.chargeableFailures + (f.chargeable ? 1 : 0),
       unchargedLanesReds: certificationRed(f.stage, f.outcome)
-        ? f.unchargedLanesReds ?? dev31UnchargedLanesRedsDefault() : f.chargeable ? 0 : c.unchargedLanesReds,
+        ? (f.unchargedLanesReds ?? 0) : f.chargeable ? 0 : c.unchargedLanesReds,
       redirects: c.redirects + add('redirect'),
       reviseRounds: c.reviseRounds + add('revise'),
       candidateReds: c.candidateReds + add('candidate-red'),
@@ -748,6 +757,7 @@ export class Fold implements JournalView {
   readonly #checkpointSkips: (Omit<FactOf<'checkpoint-skipped'>, 'kind'> & Seq)[] = [];
   readonly #divergences: (Omit<FactOf<'divergence'>, 'kind'> & Seq)[] = [];
   readonly #digests: (Omit<FactOf<'divergence-digest'>, 'kind'> & Seq)[] = [];
+  readonly #noted: Readonly<{unit: UnitId; command: CommandId; brief: Sha256Hex; seq: number}>[] = [];
   readonly #steered: (Omit<FactOf<'steered'>, 'kind'> & Seq)[] = [];
   readonly #mergedIn: (Omit<FactOf<'merged-in'>, 'kind'> & Seq)[] = [];
   readonly #debt: BankedDebt[] = [];
@@ -1453,12 +1463,6 @@ export class Fold implements JournalView {
         this.#propagationFacts.push({ seq: at.seq, at: at.at, fact: f });
         return;
       }
-      case 'propagation-refused':
-        if (this.#propagationFacts.some((x) => x.fact.kind === 'propagation-refused' && x.fact.rev === f.rev && causeKey(x.fact.target) === causeKey(f.target))) {
-          fail(`a second propagation-refused of ${causeKey(f.target)} (stale set of rev ${f.rev})`);
-        }
-        this.#propagationFacts.push({ seq: at.seq, at: at.at, fact: f });
-        return;
       case 'stale-reopened':
         this.#staleReopened(f, fail);
         this.#lastReopenSeq = at.seq;
@@ -1615,6 +1619,9 @@ export class Fold implements JournalView {
         this.#digests.push({ ...rest, seq });
         return;
       }
+      case 'noted':
+        this.#noted.push({ unit: f.unit, command: f.command, brief: f.brief, seq });
+        return;
       case 'steered': {
         const { kind: _k, ...rest } = f;
         this.#steered.push({ ...rest, seq });
@@ -1782,13 +1789,9 @@ export class Fold implements JournalView {
    * resumed restores the decision before that park).
    */
   #steer(f: Extract<Fact, { kind: 'steered' }>, seq: number, fail: (detail: string) => never): void {
-    const u = this.#units.get(f.unit);
-    if (u === undefined || this.dispatchOf(f.unit) === null) return fail(`steered unit ${f.unit}, which was never dispatched`);
+    const u = this.#units.get(f.unit) ?? this.#unit(f.unit, 'build');
     const s = u.state;
-    const preparing = s.status === 'active' && s.decided?.stage === 'prepare';
-    if (!(s.status === 'park-pending' || preparing) || s.open !== null || s.entry !== null) {
-      fail(`steered unit ${f.unit}, which is ${s.status}${s.open === null ? '' : ` with ${s.open.stage}#${s.open.attempt} open`}, not parked or preparing`);
-    }
+    if (['retired', 'cut', 'superseded', 'stop-pending'].includes(s.status) || s.open !== null) fail(`steered finished or running unit ${f.unit} (${s.status})`);
     this.#setUnitState(u, {
       ...s, status: 'active', park: null, interrupted: null, pressureHold: null, approval: null,
       entry: { kind: 'steer', seq, command: f.command, brief: f.brief, budgetMin: f.budgetMin, resume: f.resume }, steering: { seq, resume: f.resume },
@@ -2184,6 +2187,13 @@ export class Fold implements JournalView {
     return this.#flakes;
   }
 
+  notes(unit: UnitId): readonly Readonly<{command: CommandId; brief: Sha256Hex; seq: number}>[] { return this.#noted.filter((n) => n.unit === unit); }
+  buildNotes(unit: UnitId, attempt: number): readonly Sha256Hex[] {
+    const starts = this.#units.get(unit)?.starts ?? new Map<string, number>();
+    const current = starts.get(`build#${attempt}`) ?? this.#lastSeq + 1;
+    const previous = Math.max(0, ...[...starts].filter(([k, seq]) => k.startsWith('build#') && seq < current).map(([, seq]) => seq));
+    return this.notes(unit).filter((n) => n.seq > previous && n.seq < current).map((n) => n.brief);
+  }
   propagationFacts(): readonly PropagationFactAt[] {
     return this.#propagationFacts;
   }

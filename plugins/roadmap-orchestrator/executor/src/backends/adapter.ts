@@ -12,21 +12,23 @@
 //
 // A Claude call's Read/Grep/Glob calls, and those the CLI refused, are written beside result.json as reads.json
 // (`ReadsFile`), by the same write-once rule; Codex writes none.
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync,readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { durableWrite } from '../core/fsx.ts';
-import { earlierReaderResultDefault } from '../core/upgrade.ts';
-import { implementerSessionId, type ImplementerSessionId } from '../core/ids.ts';
+
+import { type ImplementerSessionId,implementerSessionId } from '../core/ids.ts';
 import type { AdapterInput } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import {
-  type BackendError, type BackendOutcome, type BackendResult, type BackendTerminal, type CancelFile, type ExitFile, type ReadsFile, type ToolRead,
-  type ResultFile, type Usage, RUNNER_FILE_READERS, STDERR_FILE, STDOUT_FILE, classifyCommand, classifyTerminal,
+type BackendError,type BackendOutcome,type BackendResult,type BackendTerminal,type CancelFile,type ExitFile,type ReadsFile,
+type ResultFile,
+type ToolRead,
+type Usage,RUNNER_FILE_READERS,STDERR_FILE,STDOUT_FILE,classifyCommand,classifyTerminal,
 } from '../core/records.ts';
-import { type AbsPath, absPath } from '../core/values.ts';
+import { type AbsPath,absPath } from '../core/values.ts';
 import { readClaude } from './claude.ts';
 import { readCodex } from './codex.ts';
-import { MalformedOutputError, ResultConflictError, UnsupportedSchemaError } from './errors.ts';
+import { MalformedOutputError,ResultConflictError,UnsupportedSchemaError } from './errors.ts';
 
 /** What one backend invocation reported, before schema validation and the precedence rule. */
 export type BackendReading = Readonly<{
@@ -289,10 +291,7 @@ export function writeResult(invDir: string): ResultFile {
   const path = join(invDir, 'result.json');
   const bytes = resultBytes(result);
   if (existsSync(path) && readFileSync(path, 'utf8') !== bytes) {
-    // Temporary scaffolding (upgrade.ts `earlierReaderResultDefault`): a dev.16 reader's result of these files.
-    const adopted = earlierReaderResultDefault(RUNNER_FILE_READERS['result.json'](JSON.parse(readFileSync(path, 'utf8')), path), result);
-    if (adopted === null) throw new ResultConflictError(path);
-    return adopted;
+    throw new ResultConflictError(path);
   }
   writeOnce(path, bytes);
   return result;

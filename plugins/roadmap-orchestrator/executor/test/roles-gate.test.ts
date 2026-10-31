@@ -6,25 +6,25 @@
 // and the large-diff gate's grading (1.0.0-dev.12): roles.cap, roles.trial-cap, roles.live-cost, roles.clusters.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync,readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import type { DiffShown } from '../src/core/events.ts';
-import { repoPath, repoPattern } from '../src/core/values.ts';
-import type { GateOutput } from '../src/prompts/schemas.ts';
-import { type GateKind, type TrialRow, gateArm } from '../evals/roles/gate/arc.ts';
+import { type GateKind,type TrialRow,gateArm } from '../evals/roles/gate/arc.ts';
 import type { AnswerKey } from '../evals/roles/gate/fixture.ts';
-import { grade, gradeClusters } from '../evals/roles/gate/grade.ts';
-import { type Summary, reportLines, summarise } from '../evals/roles/gate/summary.ts';
+import { grade,gradeClusters } from '../evals/roles/gate/grade.ts';
+import { type Summary,reportLines,summarise } from '../evals/roles/gate/summary.ts';
 import { runWorker } from '../evals/roles/pool.ts';
-import { rebindConfig, run } from '../evals/roles/run.ts';
-import { contextFor, setupArc } from './fixtures/unit-common.ts';
+import { rebindConfig,run } from '../evals/roles/run.ts';
 import { wilson } from '../evals/roles/stats.ts';
-import { PRICES, parseEvents, readTranscript, unavailableCalls, usageOf } from '../evals/roles/transcript.ts';
+import { PRICES,parseEvents,readTranscript,unavailableCalls,usageOf } from '../evals/roles/transcript.ts';
 import { triggeredRoles } from '../evals/roles/triggers.ts';
-import { git, makeRepo, tmpDir } from './helpers/repo.ts';
-import { readCalls, writeScenario } from './helpers/scenario.ts';
+import type { DiffShown } from '../src/core/events.ts';
+import { repoPath,repoPattern } from '../src/core/values.ts';
+import type { GateOutput } from '../src/prompts/schemas.ts';
+import { contextFor,setupArc } from './fixtures/unit-common.ts';
+import { git,makeRepo,tmpDir } from './helpers/repo.ts';
+import { readCalls,writeScenario } from './helpers/scenario.ts';
 
 const T = { timeout: 300_000 };
 const SUBAGENT_STREAM = fileURLToPath(new URL('./fixtures/roles/subagent-stream.jsonl', import.meta.url));
@@ -120,9 +120,9 @@ const KEY: AnswerKey = {
 };
 const PROMPT = 'diff --git a/packages/oak/src/rough-edge.ts b/packages/oak/src/rough-edge.ts\n+x\n<not_inlined>\npackages/fern/src/early-index.ts\npackages/fern/src/late-gate.ts\n</not_inlined>\n';
 const SHOWN: DiffShown = { inlined: [repoPath('packages/oak/src/rough-edge.ts')], notInlined: [repoPath('packages/fern/src/early-index.ts'), repoPath('packages/fern/src/late-gate.ts')] };
-const CITE: GateOutput = {
+const CITE: GateOutput = {rulings: [], 
   decision: 'revise', findings: [{ severity: 'blocking', path: KEY.plant!.path, text: 'operator flipped', contractRef: null, experiments: [], debt: null, defect: 'incorrect-behaviour', reraises: null, hunk: null }],
-  directives: ['Restore it.'], reasons: [], premises: [], unreviewed: [], clusters: null, rulings: [],
+  directives: ['Restore it.'], reasons: [], premises: [], unreviewed: [], clusters: null, 
 };
 
 const tool = (id: string, name: string, input: Record<string, unknown>, result: string, parent: string | null = null): readonly Record<string, unknown>[] => [

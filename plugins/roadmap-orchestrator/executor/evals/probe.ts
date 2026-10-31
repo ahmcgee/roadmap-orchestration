@@ -95,60 +95,62 @@
 // effort.codex.*) prints `NOT RUN (claude-only profile) <name>`: neither a pass nor a fail, ignored by the exit status and
 // listed in the summary. Under `default` nothing changes: Codex checks run and fail loudly if Codex is unavailable.
 // Exits non-zero on any FAIL. The run dir (journal, invocation dirs) is kept and printed for inspection.
-import { createHash, randomBytes } from 'node:crypto';
-import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync,spawnSync } from 'node:child_process';
+import { createHash,randomBytes } from 'node:crypto';
+import { existsSync,mkdirSync,mkdtempSync,readFileSync,rmSync,writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { freshClaudeImplementerSession, freshJudgmentSession } from '../src/backends/argv.ts';
-import { resolveRepo } from '../src/forge/gh.ts';
-import { canonicalJson } from '../src/core/json.ts';
-import { SCHEMA_VERSION } from '../src/core/version.ts';
-import { containmentFor, detectContainmentMode } from '../src/contain/detect.ts';
+import { freshClaudeImplementerSession,freshJudgmentSession } from '../src/backends/argv.ts';
+import { containmentFor,detectContainmentMode } from '../src/contain/detect.ts';
+import { scan } from '../src/contain/proc.ts';
 import {
-  type ImplementerSessionId, arcId, envId, invocationId, jobId, laneId, laneRev, obligationId, proposalId, questionId, ruleId, rulingId, sha, sha256, specRev, stationId, unitId, visionClauseId,
+type ImplementerSessionId,arcId,envId,invocationId,jobId,laneId,laneRev,obligationId,proposalId,questionId,ruleId,rulingId,sha,sha256,specRev,stationId,unitId,visionClauseId,
 } from '../src/core/ids.ts';
 import type { JsonValue } from '../src/core/json.ts';
+import { canonicalJson } from '../src/core/json.ts';
 import { openJournal } from '../src/core/log.ts';
-import { type BackendResult, DEFAULT_BOUNDS, STDOUT_FILE, type Usage } from '../src/core/records.ts';
-import { type AbsPath, absPath, repoPath, repoPattern } from '../src/core/values.ts';
-import { checkpointIdsOf } from '../src/holistic/checkpoint.ts';
-import { type ObligationDef, parseObligations } from '../src/holistic/types.ts';
-import { minutesMs } from '../src/pipeline/dispatch.ts';
-import { parsePhase0Record } from '../src/phase0/types.ts';
-import { promptFor } from '../src/prompts/index.ts';
-import type { ArchitectureInput, BuildInputs, CheckpointInputs, LensInputs, ObligationView, PackReviewPromptInputs, PlanCheckInputs, VisionInput } from '../src/prompts/inputs.ts';
-import {
-  checkpointSchemaFor, ROLE_VALIDATORS, type RoleOutputs, buildOutput, BUILD_SCHEMA,
-} from '../src/prompts/schemas.ts';
-import { ROADMAP_BIN } from '../src/pipeline/witnesscheck.ts';
-import {
-  type BackendInvocation, type InvocationContext, type Invoked, SMOKE_SCHEMA, backendEnv, invokeBackend, invokeCommand, smoke, smokeRejections,
-} from '../src/preflight/smoke.ts';
-import { invocationDir, killWorkload } from '../src/pipeline/invoke.ts';
-import { boundAt } from '../src/routing/classes.ts';
-import { arcStack, resolveRouting, type ResolvedRouting } from '../src/routing/layers.ts';
-import { type Backend, type Role, type JudgmentSeat, type SeatOf, type SeatRef, atSeat } from '../src/routing/types.ts';
-import { runnerFiles } from '../src/runner/files.ts';
+import { type BackendResult,DEFAULT_BOUNDS,STDOUT_FILE,type Usage } from '../src/core/records.ts';
+import { type AbsPath,absPath,repoPath,repoPattern } from '../src/core/values.ts';
+import { SCHEMA_VERSION } from '../src/core/version.ts';
 import { argvShapeProblem } from '../src/flow/levers.ts';
 import { runProof } from '../src/flow/proof.ts';
-import type { FlowAction, FlowPromptInputs, FlowProposal } from '../src/flow/types.ts';
-import { FLOW_INPUTS_INPUT, FLOW_PROOF_INPUT, keepInput, keptInput } from '../src/input/inforce.ts';
-import { commitAll, makeRepo, writeFiles } from '../test/helpers/repo.ts';
-import { wire } from '../test/fixtures/publish-common.ts';
-import { followingContext } from '../test/fixtures/steer-common.ts';
-import { appendSteps, contextFor, setupArc } from '../test/fixtures/unit-common.ts';
-import { moduleFiles, unitSteps } from '../test/fixtures/audit-common.ts';
-import { ACTING_ARGV, KEEP_FILES, milestoneJson, polishSteps, proposal, unitInForce, walkAnswer, walkArc, walkContext, walkStep } from '../test/fixtures/walk-common.ts';
+import type { FlowAction,FlowPromptInputs,FlowProposal } from '../src/flow/types.ts';
+import { resolveRepo } from '../src/forge/gh.ts';
+import { checkpointIdsOf } from '../src/holistic/checkpoint.ts';
+import { type ObligationDef,parseObligations } from '../src/holistic/types.ts';
+import { FLOW_INPUTS_INPUT,FLOW_PROOF_INPUT,keepInput,keptInput } from '../src/input/inforce.ts';
+import { parsePhase0Record } from '../src/phase0/types.ts';
+import { minutesMs } from '../src/pipeline/dispatch.ts';
+import { invocationDir,killWorkload } from '../src/pipeline/invoke.ts';
+import type { Gate } from '../src/pipeline/unit.ts';
+import { runUnit } from '../src/pipeline/unit.ts';
+import { ROADMAP_BIN } from '../src/pipeline/witnesscheck.ts';
+import {
+type BackendInvocation,type InvocationContext,type Invoked,SMOKE_SCHEMA,backendEnv,invokeBackend,invokeCommand,smoke,smokeRejections,
+} from '../src/preflight/smoke.ts';
+import { promptFor } from '../src/prompts/index.ts';
+import type { ArchitectureInput,BuildInputs,CheckpointInputs,LensInputs,ObligationView,PackReviewPromptInputs,PlanCheckInputs,VisionInput } from '../src/prompts/inputs.ts';
+import {
+BUILD_SCHEMA,
+ROLE_VALIDATORS,type RoleOutputs,buildOutput,
+checkpointSchemaFor,
+} from '../src/prompts/schemas.ts';
+import { boundAt } from '../src/routing/classes.ts';
+import { type ResolvedRouting,arcStack,resolveRouting } from '../src/routing/layers.ts';
+import { type Backend,type JudgmentSeat,type Role,type SeatOf,type SeatRef,atSeat } from '../src/routing/types.ts';
+import { runnerFiles } from '../src/runner/files.ts';
 import { holisticContexts } from '../src/schedule/scheduler.ts';
 import { runCompare } from '../src/walk/compare.ts';
 import { applyPolish } from '../src/walk/polish.ts';
-import type { Gate } from '../src/pipeline/unit.ts';
-import { runUnit } from '../src/pipeline/unit.ts';
 import { runWalk } from '../src/walk/walk.ts';
-import { scan } from '../src/contain/proc.ts';
+import { moduleFiles,unitSteps } from '../test/fixtures/audit-common.ts';
+import { wire } from '../test/fixtures/publish-common.ts';
+import { followingContext } from '../test/fixtures/steer-common.ts';
+import { appendSteps,contextFor,setupArc } from '../test/fixtures/unit-common.ts';
+import { ACTING_ARGV,KEEP_FILES,milestoneJson,polishSteps,proposal,unitInForce,walkAnswer,walkArc,walkContext,walkStep } from '../test/fixtures/walk-common.ts';
+import { commitAll,makeRepo,writeFiles } from '../test/helpers/repo.ts';
 import { runGateTrial } from './roles/gate/arc.ts';
-import { DEV_CELLS, isExecCell } from './roles/gate/cells.ts';
+import { DEV_CELLS,isExecCell } from './roles/gate/cells.ts';
 
 /** Claude Code 2.1.310 (2026-10-28) still lists these after disabling bundled skills and plugin-authoring (argv.ts). */
 const CLAUDE_RESIDUAL_SKILLS = ['design', 'doctor'] as const;
@@ -272,7 +274,7 @@ const MINI_VISION: VisionInput = {
 const MINI_OBLIGATION: ObligationDef = {
   id: obligationId('I-1'), rev: 1, statement: 'toFahrenheit(100) returns 212.',
   docRef: { path: repoPath('docs/target.md'), anchor: '#convert', quotedText: 'toFahrenheit(100) returns 212.' }, serves: [visionClauseId('V-1')],
-  witness: { lane: laneId('unit'), testIds: ['convert'] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: laneRev('0123456789abcdef'), witness: { lane: laneId('unit'), testIds: ['convert'] } },
+  witness: { lane: laneId('unit'), testIds: ['convert'] }, proofJudgment: { verdict: 'proves', obligationRev: 1,  witness: {  testIds: ['convert'] } },
   deliveredBy: [], activation: 'must-hold', contracts: [], state: { type: 'active' },
 };
 const MINI_OBLIGATIONS: readonly ObligationView[] = [{
@@ -623,9 +625,9 @@ async function main(): Promise<void> {
     .map((r) => ({ ...r, textSha256: createHash('sha256').update(r.text).digest('hex'), file: 'docs/target.md', section: 'Convert' }));
   const obligationsJson = {
     schema: 'roadmap/obligations-m3', cutLine: 'T-1 is tested; T-2 is out of this slice.',
-    lanes: [{ id: 'unit', argv: ['node', '--test'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], evidenceExcludes: [], reporter: 'node-test' }],
+    lanes: [{ id: 'unit', argv: ['node', '--test'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], evidenceExcludes: [], reporter: 'node-test' }],
     obligations: [{
-      id: 'I-1', rev: 1, statement: rules[0]?.text, rule: { id: 'T-1', textSha256: rules[0]?.textSha256 }, serves: ['V-1'], witness: { lane: 'unit', testIds: ['convert'] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: '0123456789abcdef', witness: { lane: 'unit', testIds: ['convert'] } },
+      id: 'I-1', rev: 1, statement: rules[0]?.text, rule: { id: 'T-1', textSha256: rules[0]?.textSha256 }, serves: ['V-1'], witness: { lane: 'unit', testIds: ['convert'] }, proofJudgment: { verdict: 'proves', obligationRev: 1,  witness: {  testIds: ['convert'] } },
       deliveredBy: ['u-convert'], activation: 'future', contracts: [], state: { type: 'active' },
     }],
     mapping: { paths: [{ pattern: 'convert.ts', obligations: ['I-1'] }] },
@@ -668,8 +670,7 @@ async function main(): Promise<void> {
   const UNIT = laneId('unit');
   const buildSpec = '# Unit u-hello\n\n## Acceptance\n- A1: the file hello.txt exists in the repository root and contains the word hello.\n\n## Lanes\n- unit (fast): `sh -c "grep -q hello hello.txt"`';
   const unitLane = { id: UNIT, argv: ['sh', '-c', 'grep -q hello hello.txt'], cwd: repoPath('.'), env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], evidenceExcludes: [] } as const;
-  const buildInputs = (worktree: AbsPath, evidenceDir: AbsPath): BuildInputs => ({
-    systemNotes: [],
+  const buildInputs = (worktree: AbsPath, evidenceDir: AbsPath): BuildInputs => ({ systemNotes: [], notes: [],
     spec: { unit: unitId('u-hello'), rev: specRev(1), markdown: buildSpec }, contracts: [], rulings: [], index: MINI_INDEX, planCheckNotes: '', fastLanes: [unitLane], suiteLanes: [],
     evidenceDir, worktree, scope: { include: [repoPattern('hello.txt')], exclude: [] }, fixRound: null, witnessChecks: [], milestones: null, browser: null, certifiedAt: null, handover: null,
   });

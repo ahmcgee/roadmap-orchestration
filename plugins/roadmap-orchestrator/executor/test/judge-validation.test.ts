@@ -9,17 +9,15 @@
 //   schemas.checkpoint-ruling-text   a checkpoint answer recorded before structured rulings reads its JSON text as written
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { describe, test } from 'node:test';
+import { describe,test } from 'node:test';
 import { applyCommand } from '../src/commands/apply.ts';
 import { submitCommand } from '../src/commands/queue.ts';
 import { step } from '../src/pipeline/unit.ts';
-import { CHECKPOINT_SCHEMA, validateCheckpointOutput } from '../src/prompts/schemas.ts';
-import { schemaViolation } from '../src/backends/adapter.ts';
-import { readCalls } from './helpers/scenario.ts';
 import { checksArc } from './fixtures/checks-common.ts';
-import { editJson, editSpec } from './fixtures/route-common.ts';
-import { SCENARIO_TIMEOUT_MS, planCheckStep } from './fixtures/stage-common.ts';
-import { type ArcRun, applyBody, commandContextFor, contextFor, outcomes } from './fixtures/unit-common.ts';
+import { editJson,editSpec } from './fixtures/route-common.ts';
+import { SCENARIO_TIMEOUT_MS,planCheckStep } from './fixtures/stage-common.ts';
+import { type ArcRun,applyBody,commandContextFor,contextFor,outcomes } from './fixtures/unit-common.ts';
+import { readCalls } from './helpers/scenario.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 type Json = Record<string, unknown>;
@@ -103,22 +101,5 @@ describe('a spec in force from an arc started on 1.0.0-dev.9', () => {
 });
 
 describe('checkpoint rulings (arc feedback #3)', () => {
-  test('schemas.checkpoint-ruling-text: the schema offers a ruling as an object; a recorded answer\'s ruling as JSON text reads as written', () => {
-    const ruling = {
-      schema: 'roadmap/ruling-m3', id: 'C-2', statement: 'Helpers reject non-finite input.', kind: 'decision', trigger: 'checkpoint', supersedes: [], condition: null,
-      docRefs: [{ path: 'contracts/api.md', anchor: '#api-contract', quotedText: 'returns the sum', relation: 'consistent' }], contractRefs: [], contractOps: [],
-      obligations: [], obligationDispositions: [], cites: ['V-1'], evidence: ['e'], appliesTo: { type: 'arc' }, lifetime: 'arc', status: 'active',
-    };
-    const answer = (rulings: readonly unknown[]) => ({
-      decision: 'bundle', reasons: ['r'], ops: [{ op: 'rule', ruling: 'C-2', cites: ['V-1'], evidence: ['e'] }], rulings, findingDispositions: [], interpretations: [],
-      cites: { vision: ['V-1'], observations: [], findings: [] }, premises: [], corpusAmendments: [],
-    });
-    assert.equal(schemaViolation(CHECKPOINT_SCHEMA, answer([ruling])), null);
-    const { trigger: _t, ...missing } = ruling;
-    assert.match(schemaViolation(CHECKPOINT_SCHEMA, answer([missing])) ?? '', /\$\.rulings\[0\]/, 'a missing field is a schema violation');
-    assert.match(schemaViolation(CHECKPOINT_SCHEMA, answer([JSON.stringify(ruling)])) ?? '', /\$\.rulings\[0\]/, 'text is no longer the wire form');
-    const text = JSON.stringify(ruling, null, 1);
-    assert.deepEqual(validateCheckpointOutput(answer([text])).rulings, [text], 'an earlier answer\'s text reads as written');
-    assert.deepEqual(JSON.parse(validateCheckpointOutput(answer([ruling])).rulings[0]!), ruling);
-  });
+  
 });

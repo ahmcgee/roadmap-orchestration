@@ -4,44 +4,44 @@
 // (R7 with B2's publishBatch), findings.plan-check-vision-conflict (R17), plancheck.reads-captured-spec, and the crash
 // cells of the matrix rows FF_ELIGIBILITY and MUTANT_APPLY (test/matrix.ts), recovered by the recovery engine.
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { describe,test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { describe, test } from 'node:test';
-import { managedEnv, startedCalls } from './fixtures/env-common.ts';
-import { idleEnvironments } from '../src/resources/environments.ts';
 import { applyCommand } from '../src/commands/apply.ts';
 import { submitCommand } from '../src/commands/queue.ts';
-import type { Fact, IntentOf } from '../src/core/events.ts';
-import { invocationId, findingId, jobId, resourceName, sha, unitId } from '../src/core/ids.ts';
+import type { Fact,IntentOf } from '../src/core/events.ts';
+import { findingId,invocationId,jobId,resourceName,sha,unitId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
-import { mutantSubjectDefault } from '../src/core/upgrade.ts';
+import { mutantOf } from '../src/core/projections.ts';
 import { absPath } from '../src/core/values.ts';
 import { verifySnapshot } from '../src/git/snapshot.ts';
-import { batchable, findingMetrics, openFinding, ruleFinding } from '../src/holistic/findings.ts';
-import { SPEC_INPUT, inputPath } from '../src/input/inforce.ts';
+import { batchable,findingMetrics,openFinding,ruleFinding } from '../src/holistic/findings.ts';
+import { SPEC_INPUT,inputPath } from '../src/input/inforce.ts';
 import { publishBatch } from '../src/pipeline/integrate.ts';
 import { invocationDir } from '../src/pipeline/invoke.ts';
-import { runnerFiles } from '../src/runner/files.ts';
 import { observations } from '../src/pipeline/lanes.ts';
-import { repairUnits, specFacts } from '../src/pipeline/reproduce.ts';
+import { repairUnits,specFacts } from '../src/pipeline/reproduce.ts';
 import { planCheck } from '../src/pipeline/stages.ts';
-import { runUnit, step } from '../src/pipeline/unit.ts';
+import { runUnit,step } from '../src/pipeline/unit.ts';
 import { recover } from '../src/recover/recover.ts';
+import { idleEnvironments } from '../src/resources/environments.ts';
+import { runnerFiles } from '../src/runner/files.ts';
 import { admitter } from '../src/schedule/ready.ts';
-import { assertFired, writeTrigger } from './helpers/crash.ts';
+import { holisticArc } from './fixtures/brake-common.ts';
+import { managedEnv,startedCalls } from './fixtures/env-common.ts';
+import { wire } from './fixtures/publish-common.ts';
+import {
+MAPPED,MUTANT_PATCH,STALE_PATCH,STRICT_TEST,buildOf,openBefore,tipOf,treeWith,vacuityArc,vacuityDraft as vacuityDraftOf,witnessDraft,
+} from './fixtures/repair-common.ts';
+import { SCENARIO_TIMEOUT_MS,admitAll,planCheckRepairStep,planCheckStep,started } from './fixtures/stage-common.ts';
+import { type ArcRun,U1,applyBody,codexStep,commandContextFor,contextFor,gateStep,mulBuild,outcomes,setupArc,stepUntil } from './fixtures/unit-common.ts';
+import { assertFired,writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
-import { git, tmpDir } from './helpers/repo.ts';
-import { FF_ELIGIBILITY, MUTANT_APPLY, crashCells } from './matrix.ts';
+import { git,tmpDir } from './helpers/repo.ts';
 import type { Step } from './helpers/scenario.ts';
 import { scriptTree } from './helpers/witness.ts';
-import { holisticArc } from './fixtures/brake-common.ts';
-import { wire } from './fixtures/publish-common.ts';
-import { SCENARIO_TIMEOUT_MS, admitAll, planCheckRepairStep, planCheckStep, started } from './fixtures/stage-common.ts';
-import {
-  MAPPED, MUTANT_PATCH, STALE_PATCH, STRICT_TEST, buildOf, openBefore, tipOf, treeWith, vacuityArc, vacuityDraft as vacuityDraftOf, witnessDraft,
-} from './fixtures/repair-common.ts';
-import { type ArcRun, U1, applyBody, codexStep, commandContextFor, contextFor, gateStep, mulBuild, outcomes, setupArc, stepUntil } from './fixtures/unit-common.ts';
+import { FF_ELIGIBILITY,MUTANT_APPLY,crashCells } from './matrix.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 const V1 = unitId('v1');
@@ -80,7 +80,7 @@ describe('vacuity repairs: reproduce and acceptance', () => {
       assert.deepEqual(spawn!.expect.subject, { purpose: 'mutant', of: { type: 'finding', finding: 'F-1' }, lane: 'journey', laneRev: w.laneRev, tree: patchedTip });
       assert.deepEqual(spawn!.parent, { type: 'stage', unit: 'v1', stage: 'reproduce', attempt: 1 });
       const apply = r.journal.view.opsOf('mutant.apply')[0]!;
-      assert.deepEqual([apply.expect.at, mutantSubjectDefault(apply.expect), r.journal.view.doneOf(apply.op)?.kind === 'mutant.apply' && r.journal.view.doneOf(apply.op)?.outcome], [tip, { type: 'finding', finding: 'F-1' }, { kind: 'applied', tree: patchedTip }]);
+      assert.deepEqual([apply.expect.at, mutantOf(apply.expect), r.journal.view.doneOf(apply.op)?.kind === 'mutant.apply' && r.journal.view.doneOf(apply.op)?.outcome], [tip, { type: 'finding', finding: 'F-1' }, { kind: 'applied', tree: patchedTip }]);
       assert.deepEqual(worktrees(r), [], 'the mutant worktree is removed');
       assert.equal([...observations(r.ctx).values()].some((o) => o.key.treeSha === patchedTip), false, 'a mutant run never certifies (G13)');
       assert.equal(specFacts(r.ctx)(r.unit('v1')).reproduces, true);
@@ -405,7 +405,7 @@ describe('plan-check and the findings store', () => {
     }
   });
 
-  test('plancheck.reads-captured-spec: an evidence-only edit landing between the capture and the @cpu grant keeps the captured rev; the redirect is read against it and patches the spec in force at that rev', T, async () => {
+  test('plancheck.reads-captured-spec: an exported evidence edit auto-bumps pending revision; the captured redirect patches its pinned spec without overwriting that pending edit', T, async () => {
     const patch = [{ op: 'add', section: 'decisions', item: { id: 'D1', text: 'mul multiplies.' } }];
     const d = setupArc({ steps: [planCheckStep({ decision: 'redirect', patch })] });
     const r = contextFor(d);
@@ -425,7 +425,10 @@ describe('plan-check and the findings store', () => {
       const applied = await applyCommand(commandContextFor(r), submitCommand(r.ctx.runDir, r.journal.view.arc, applyBody(d)));
       assert.equal(applied.kind, 'applied', JSON.stringify(applied));
       const edited = r.journal.view.unit(U1).spec!;
-      assert.deepEqual([edited.rev, edited.sha256 === captured.specSha256], [1, false], 'an evidence-only edit: the same rev, new bytes');
+      assert.deepEqual([edited.rev, edited.sha256 === captured.specSha256], [1, true], 'the dispatched spec stays pinned');
+      const pending = r.journal.view.unit(U1).pendingRevision!;
+      assert.equal(pending.rev, 2);
+      assert.notEqual(pending.sha256, captured.specSha256);
 
       open();
       const done = started(await checking);
@@ -434,7 +437,10 @@ describe('plan-check and the findings store', () => {
       const patched = r.journal.view.opsOf('spec.patch').at(-1)!;
       assert.deepEqual([patched.expect.expectRev, patched.expect.oldSha256], [1, edited.sha256], 'the patch applies to the spec in force at the captured rev');
       const after = JSON.parse(readFileSync(inputPath(r.ctx.runDir, r.journal.view.unit(U1).spec!.sha256, SPEC_INPUT), 'utf8')) as { rev: number; lanes: { evidenceGlobs: string[] }[]; decisions: { id: string }[] };
-      assert.deepEqual([after.rev, after.lanes[0]!.evidenceGlobs, after.decisions.map((x) => x.id)], [2, ['out/**'], ['D1']], 'the evidence edit is kept under the redirect');
+      assert.deepEqual([after.rev, after.lanes[0]!.evidenceGlobs, after.decisions.map((x) => x.id)], [2, [], ['D1']], 'the redirect applies only to the spec it judged');
+      assert.deepEqual(r.journal.view.unit(U1).pendingRevision, pending, 'the owner revision is not overwritten by the captured redirect');
+      const next = JSON.parse(readFileSync(inputPath(r.ctx.runDir, pending.sha256, SPEC_INPUT), 'utf8')) as {lanes: {evidenceGlobs: string[]}[]; decisions: unknown[]};
+      assert.deepEqual([next.lanes[0]!.evidenceGlobs, next.decisions], [['out/**'], []]);
     } finally {
       r.journal.close();
     }

@@ -1,18 +1,37 @@
 // Phase 0, chain and brief records (M4a, frozen in step 0a; SCHEMAS.md "M4a"): the Phase-0 record, the problems the
 // shared startup rows report (`phase0Rows`, C1's src/phase0/rows.ts, run by `start`, `apply` and `phase0 check`), the
 // brief ack marker and the brief payload (C4). Types and readers only.
-import { OUTCOME_STAGES, type OutcomeStage } from '../core/events.ts';
-import { issuesIgnored, scopeOverlapFixDefault } from '../core/upgrade.ts';
+import { OUTCOME_STAGES,type OutcomeStage } from '../core/events.ts';
+
 import {
-  type AmendmentRef, type ArcId, type ClauseId, type DebtId, type DivergenceId, type JobId, type NeedsUserId, type ObligationId, type PhaseQuestionId,
-  type RuleId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, amendmentRef, arcId, briefId, clauseId, debtId, divergenceId,
-  amendmentRefKey, compareIds, idList, jobIdOf, needsUserId, obligationId, phaseQuestionId, ruleId, sha, sha256, unitId, visionClauseId, type BriefId,
-  type FindingId, type OpportunityId, type WitnessItemId, findingId, opportunityId, witnessItemId, type MilestoneId, milestoneId,
+type AmendmentRef,type ArcId,
+type BriefId,
+type ClauseId,type DebtId,type DivergenceId,
+type FindingId,
+type JobId,
+type MilestoneId,
+type NeedsUserId,type ObligationId,
+type OpportunityId,
+type PhaseQuestionId,
+type RuleId,type Sha,type Sha256Hex,type UnitId,type VisionClauseId,
+type WitnessItemId,
+amendmentRef,
+amendmentRefKey,
+arcId,briefId,clauseId,
+compareIds,
+debtId,divergenceId,
+findingId,
+idList,jobIdOf,
+milestoneId,
+needsUserId,obligationId,
+opportunityId,
+phaseQuestionId,ruleId,sha,sha256,unitId,visionClauseId,
+witnessItemId,
 } from '../core/ids.ts';
-import { type Read, SchemaError, arrayOf, assertUnique, bool, literal, nat, nullable, object, oneOf, positive, sortedBy, str, tagged } from '../core/validate.ts';
-import { type IsoTime, type PlanPath, type RepoPath, isoTime, planPath, repoPath } from '../core/values.ts';
-import { type DebtDisposition, debtDisposition } from '../debt/types.ts';
-import { CENSUS_STATES, CONVERSION_REASONS, DIVERGENCE_KINDS, type ConversionReason, type DivergenceKind } from '../holistic/types.ts';
+import { type Read,SchemaError,arrayOf,assertUnique,bool,literal,nat,nullable,object,oneOf,positive,sortedBy,str,tagged } from '../core/validate.ts';
+import { type IsoTime,type RepoPath,isoTime,repoPath } from '../core/values.ts';
+import { type DebtDisposition,debtDisposition } from '../debt/types.ts';
+import { CENSUS_STATES,CONVERSION_REASONS,type ConversionReason,DIVERGENCE_KINDS,type DivergenceKind } from '../holistic/types.ts';
 
 /** A census state's name (`obligation`, `out-of-slice`, `untestable`, `prod-only`). */
 export type CensusStateName = (typeof CENSUS_STATES)[number];
@@ -117,7 +136,7 @@ export const phase0Record: Read<Phase0Record> = object((f) => {
   // A record written for an earlier executor names its issue capture and intake (the issues integration was removed in
   // 1.0.0-dev.21): read and ignored (`issuesIgnored`; scaffolding).
   for (const legacy of ['issueCapture', 'intake'] as const) {
-    if (f.optional(legacy, (v) => v) !== undefined) issuesIgnored(`phase0.${legacy}`);
+
   }
   return out;
 });
@@ -144,9 +163,8 @@ export type CorpusProblem =
 
 /** The fix a `scope-overlaps-corpus` problem names: the unit's scope narrowed off the corpus (or the unit cut) in an apply or start. */
 export const scopeOverlapFix = (unit: UnitId): string =>
-  `narrow ${unit}'s scope off the corpus file set, or cut ${unit}, in this apply or start; when the arc changed ${unit} since your base (a unit the `
-  + 'executor minted, such as a deflake unit), `roadmap inputs export` the arc, sync the export over your inputs, edit it there and pass '
-  + '`--base <export>/export.json` to the apply or start';
+  `narrow ${unit}'s scope off the corpus file set, or cut ${unit}; export the plan in force with `
+  + '`roadmap inputs export`, edit that export and apply with `--from <export> --rev N --reason "<line>"`';
 
 export const corpusProblem: Read<CorpusProblem> = tagged('type', {
   'pin-drift': object((f): CorpusProblem => ({ type: f.get('type', literal('pin-drift')) })),
@@ -159,7 +177,7 @@ export const corpusProblem: Read<CorpusProblem> = tagged('type', {
   'scope-overlaps-corpus': object((f): CorpusProblem => {
     const unit = f.get('unit', (v, p) => unitId(v, p));
     const fix = f.optional('fix', str);
-    if (fix === undefined) scopeOverlapFixDefault(unit);
+
     return { type: f.get('type', literal('scope-overlaps-corpus')), unit, fix: fix ?? scopeOverlapFix(unit) };
   }),
   'contract-overlaps-corpus': object((f): CorpusProblem => ({ type: f.get('type', literal('contract-overlaps-corpus')), path: f.get('path', pathR) })),

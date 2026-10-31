@@ -16,38 +16,37 @@
 // run 12), checkpoint.final-unchanged-skipped, checkpoint.resumed-equal-capture, checkpoint.skipped-nothing-new (arc feedback 2026-10-16), checkpoint.schema-closed-ids
 // (paid M4b run 5).
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, test } from 'node:test';
+import { describe,test } from 'node:test';
 import { applyCommand } from '../src/commands/apply.ts';
 import { submitCommand } from '../src/commands/queue.ts';
-import { type EnvId, type InvocationId, type LaneId, type LaneRev, type Sha, type Sha256Hex, arcId, unitId } from '../src/core/ids.ts';
-import { status } from '../src/status.ts';
+import { type EnvId,type InvocationId,type LaneId,type LaneRev,type Sha,type Sha256Hex,arcId,unitId } from '../src/core/ids.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import { sha256Hex } from '../src/core/json.ts';
-import { evidenceDiffers, integrationHistory, numericId, numericRulingIds } from '../src/holistic/bundle.ts';
-import { CAPTURE_WAIT_MAX_MIN, busyHolds, busyWaits, publishing, runCheckpoint } from '../src/holistic/checkpoint.ts';
+import { evidenceDiffers,integrationHistory } from '../src/holistic/bundle.ts';
+import { CAPTURE_WAIT_MAX_MIN,busyHolds,busyWaits,publishing,runCheckpoint } from '../src/holistic/checkpoint.ts';
 import { quiescentGenerations } from '../src/holistic/convergence.ts';
 import type { Observation } from '../src/holistic/observe.ts';
 import type { WitnessRecord } from '../src/holistic/types.ts';
-import { requirePlanInForce, revisionInForce } from '../src/input/inforce.ts';
-import { validateCheckpointOutput } from '../src/prompts/schemas.ts';
+import { requirePlanInForce,revisionInForce } from '../src/input/inforce.ts';
 import { runUnit } from '../src/pipeline/unit.ts';
 import { recover } from '../src/recover/recover.ts';
-import { reached, release } from './helpers/barrier.ts';
-import { assertFired, writeTrigger } from './helpers/crash.ts';
-import { withForge } from './helpers/corpusarc.ts';
-import { sampleCorpus } from './helpers/corpus.ts';
-import { VALID_OP, checkpointAnswer, jobRepairStep, checkpointStep, lensStep, noteLensStep } from './helpers/holistic.ts';
-import { runFixture } from './helpers/proc.ts';
-import { git, tmpDir } from './helpers/repo.ts';
-import { type Step, readCalls } from './helpers/scenario.ts';
-import { admitOp, applyPlanEdit, checkpointArc, checkpointContext, completedAudit, factsOfKind, visionLenses, witnessSplit } from './fixtures/checkpoint-common.ts';
-import { type CorpusHolisticArc, corpusHolisticArc, forgeEnv } from './fixtures/corpus-holistic.ts';
+import { status } from '../src/status.ts';
+import { admitOp,applyPlanEdit,checkpointArc,checkpointContext,completedAudit,factsOfKind,visionLenses,witnessSplit } from './fixtures/checkpoint-common.ts';
+import { type CorpusHolisticArc,corpusHolisticArc,forgeEnv } from './fixtures/corpus-holistic.ts';
 import { VISION_PATH } from './fixtures/corpus-unit.ts';
-import { followContext, stepTo, unitOf } from './fixtures/route-common.ts';
-import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
-import { type ArcRun, appendSteps, applyBody, contextFor, gateStep, mulBuild } from './fixtures/unit-common.ts';
+import { followContext,stepTo,unitOf } from './fixtures/route-common.ts';
+import { SCENARIO_TIMEOUT_MS,admitAll,planCheckStep } from './fixtures/stage-common.ts';
+import { type ArcRun,appendSteps,applyBody,contextFor,gateStep,mulBuild } from './fixtures/unit-common.ts';
+import { reached,release } from './helpers/barrier.ts';
+import { sampleCorpus } from './helpers/corpus.ts';
+import { withForge } from './helpers/corpusarc.ts';
+import { assertFired,writeTrigger } from './helpers/crash.ts';
+import { VALID_OP,checkpointAnswer,checkpointStep,jobRepairStep,lensStep,noteLensStep } from './helpers/holistic.ts';
+import { runFixture } from './helpers/proc.ts';
+import { git,tmpDir } from './helpers/repo.ts';
+import { type Step,readCalls } from './helpers/scenario.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 type Json = Record<string, unknown>;
@@ -295,7 +294,7 @@ function requireSpecSha(r: ArcRun, unit: string): string {
 const LANE = 'journey' as LaneId;
 function observation(records: WitnessRecord['records'], over: Partial<Pick<WitnessRecord, 'laneRev' | 'envId' | 'malformed' | 'inv' | 'treeSha'>> = {}): Observation {
   const record = {
-    v: 1, lane: LANE, laneRev: (over.laneRev ?? 'aaaaaaaaaaaaaaaa') as LaneRev, envId: (over.envId ?? 'eeeeeeeeeeeeeeee') as EnvId, treeSha: (over.treeSha ?? '1'.repeat(40)) as Sha,
+    v: 2, lane: LANE, laneRev: (over.laneRev ?? 'aaaaaaaaaaaaaaaa') as LaneRev, envId: (over.envId ?? 'eeeeeeeeeeeeeeee') as EnvId, treeSha: (over.treeSha ?? '1'.repeat(40)) as Sha,
     inv: (over.inv ?? 'arc/1-1') as InvocationId, runner: 'jsonl', purpose: 'witness', records, malformed: over.malformed ?? false,
   } as unknown as WitnessRecord;
   return {
@@ -360,37 +359,9 @@ const splitTo = (rule: string): JsonValue => ({
 const census = (r: ArcRun) => revisionInForce(r.ctx.runDir, requirePlanInForce(r.ctx.runDir, r.journal.view)).obligations!.value.census;
 
 describe('rulings and split census (C2–C4)', () => {
-  test('bundle.ruling-corpus-consistency-stamped: a checkpoint ruling in a corpus arc carries the pin it read and lands (it was invalid at 5ba750e)', T, async () => {
-    const x = await arc([]);
-    try {
-      appendSteps(x.a.d, [checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [ruleOp('C-2')], rulings: [ruling('C-2')] }))]);
-      const out = await run(x);
-      assert.ok(out.kind === 'decided' && out.decision.kind === 'applied', JSON.stringify(out));
-      const sidecar = revisionInForce(x.r.ctx.runDir, requirePlanInForce(x.r.ctx.runDir, x.r.journal.view)).sidecars.get('C-2' as never)!.sidecar;
-      assert.equal(sidecar.consistency.judgedRevs.corpusSha256, x.a.pinSha256);
-    } finally {
-      x.r.journal.close();
-    }
-  });
+  
 
-  test('bundle.ruling-id-leading-zero: a model\'s C-02 is read as C-2 in the ruling and its rule op; stored output is untouched', T, async () => {
-    assert.equal(numericId('C-01'), 'C-1');
-    assert.equal(numericId('C-10'), 'C-10');
-    const output = validateCheckpointOutput(checkpointAnswer({ decision: 'bundle', ops: [ruleOp('C-02')], rulings: [ruling('C-02')] }));
-    assert.deepEqual(numericRulingIds(output).ops.map((o) => (o.op === 'rule' ? o.ruling : null)), ['C-2']);
-    const x = await arc([]);
-    try {
-      appendSteps(x.a.d, [checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [ruleOp('C-02')], rulings: [ruling('C-02')] }))]);
-      const out = await run(x);
-      assert.ok(out.kind === 'decided' && out.decision.kind === 'applied', JSON.stringify(out));
-      const rev = revisionInForce(x.r.ctx.runDir, requirePlanInForce(x.r.ctx.runDir, x.r.journal.view));
-      assert.ok(rev.sidecars.has('C-2' as never), 'the ruling lands as C-2 (the corpus arc\'s ledger holds C-1)');
-      assert.ok(!rev.sidecars.has('C-02' as never));
-      assert.match(rev.ledger.bytes.toString('utf8'), /^C-2\b/m);
-    } finally {
-      x.r.journal.close();
-    }
-  });
+  
 
   test('bundle.split-census-out-of-slice-moved: a child anchored at an out-of-slice rule, serving the slice, moves that rule\'s census to the child', T, async () => {
     const x = await arc([]);
@@ -441,7 +412,7 @@ describe('rulings and split census (C2–C4)', () => {
       const lanes = revisionInForce(x.r.ctx.runDir, requirePlanInForce(x.r.ctx.runDir, x.r.journal.view)).obligations!.value.lanes.map((l) => l.id);
       assert.deepEqual(((child['witness'] as Json)['properties'] as Json)['lane'], { type: 'string', enum: lanes }, 'the witness lane: one of the arc lanes');
       assert.deepEqual(split['obligation'], { type: 'string', enum: ['I-1'] }, 'the split parent: an active obligation');
-      assert.deepEqual(variant('obligation-dispose')['obligation'], { type: 'string', enum: ['I-1'] });
+      assert.equal(ops.anyOf.some((v) => ((v['properties'] as Json)['op'] as {enum: string[]}).enum[0] === 'obligation-dispose'), false);
       assert.ok(out.kind === 'decided' && out.decision.kind === 'rejected' && out.decision.reason === 'invalid', JSON.stringify(out));
       assert.match(out.decision.detail, /^malformed: .*schema violation at \$\.ops\[0\]: matches no anyOf branch, got {"op":"obligation-split"/, 'the adapter refused the answer against the call\'s own schema');
       assert.equal(x.r.journal.view.planApplied()!.rev, 1);

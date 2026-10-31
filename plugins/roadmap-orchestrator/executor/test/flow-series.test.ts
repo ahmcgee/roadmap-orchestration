@@ -3,15 +3,16 @@
 // points but in T, the accounting, in-flight ages; the points' and the station table's pressure (M4b rev 3); and the
 // reader of other arcs' series (src/flow/history.ts).
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { describe,it } from 'node:test';
 import type { ArcRef } from '../src/chain.ts';
-import { arcId, sha256 } from '../src/core/ids.ts';
+import { arcId,sha256 } from '../src/core/ids.ts';
 import type { JournalView } from '../src/core/interfaces.ts';
-import { completedRefs, seriesOfRef } from '../src/flow/history.ts';
-import { flowSeries, inFlightAges, stationTable } from '../src/flow/series.ts';
-import { FLOW_SERIES_V, type FlowPoint, type FlowSeries, parseFlowSeries } from '../src/flow/types.ts';
+import { completedRefs,seriesOfRef } from '../src/flow/history.ts';
+import { flowSeries,inFlightAges,stationTable } from '../src/flow/series.ts';
+import { FLOW_SERIES_V,type FlowPoint,type FlowSeries,parseFlowSeries } from '../src/flow/types.ts';
 import {
-  ARC, CAND, FlowLog, HOST, TIP, arcLaneDef, atMin, commandAt, inputs, laneDef, obligationsOf, planOf, stageOf,
+ARC,CAND,FlowLog,HOST,TIP,arcLaneDef,atMin,commandAt,inputs,
+obligationsOf,planOf,stageOf
 } from './helpers/flowlog.ts';
 
 const PLAN = planOf({});
@@ -394,7 +395,7 @@ describe('flow history: other arcs\' series', () => {
   const PLAN_JSON = {
     schema: 'roadmap/plan-m1', arc: 'arc-a', integrationBranch: 'integration/arc-a', baseline: 'a'.repeat(40), worktreeRoot: '/var/tmp/roadmap-wt',
     contracts: [], rulings: 'rulings.jsonl', architectureDoc: 'docs/architecture.md', direction: 'Converge.',
-    suite: { lanes: [{ id: 'suite', argv: ['npm', 'test'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [] }] },
+    suite: { lanes: [{ id: 'suite', argv: ['npm', 'test'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [] }] },
     resources: [], units: [{ id: 'u1', spec: 'specs/u1.json', risk: 'med', scope: ['src/**'], resources: [] }],
   };
   /** The arc's ref; `completedAt`: the minute of its `arc-completed` (null: none). */

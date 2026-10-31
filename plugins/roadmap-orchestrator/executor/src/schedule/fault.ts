@@ -179,7 +179,7 @@ export async function faultJob(ctx: StageContext, key: string, error: unknown): 
     raiseNeedsUser(ctx.journal, ctx.runDir, {
       blocking: false, subject: { type: 'arc' }, reason: 'executor-fault',
       summary: `The executor threw in the ${track.name} job while it held only its own state; the job ended faulted and the arc went on without it. The executor threw: ${stackOf(error)}`,
-      recommendation: `Fix the cause (an executor defect, or what the job's lanes left), then acknowledge this item: the ${track.name} job is due again.`,
+      recommendation: `Fix the cause (an executor defect, or what the job's lanes left), then run \`roadmap resume\` on the arc to close this item: the ${track.name} job is due again.`,
       options: [], evidence: [],
     }, { type: 'arc' });
     return true;

@@ -51,41 +51,41 @@
 // Steady-state verification checks the complete path/object-id set and hashes delta blobs, relying on the
 // verified base's immutable Git objects. Standalone verification and crash recovery always read the full tree.
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync,mkdtempSync,readFileSync,rmSync,statSync,writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import {
-  type CommitInputs, type Event, type IntentOf, type IntentRecord, type OpOutcome, type RevisionPayload, type WitnessFor, parentUnit, parseEventLine,
-  parseRevisionPayload, prevHash, serializeEvent,
+type CommitInputs,type Event,type IntentOf,type IntentRecord,type OpOutcome,
+type WitnessFor,parentUnit,parseEventLine,
+parseRevisionPayload,prevHash,serializeEvent
 } from '../core/events.ts';
 import { canonicalJson as fileJson } from '../core/fsx.ts';
 import {
-  type ArcId, type FindingId, type InvocationId, type JobId, type LaneId, type NeedsUserId, type OpId, type Sha, type Sha256Hex, type UnitId, arcId, invocationDirName,
-  invocationId, parseOpId, sha, sha256,
+type ArcId,type FindingId,type InvocationId,type JobId,type LaneId,type NeedsUserId,type OpId,type Sha,type Sha256Hex,type UnitId,arcId,invocationDirName,
+invocationId,parseOpId,sha,sha256,
 } from '../core/ids.ts';
-import type { GitSteps, IntentBody, JournalView } from '../core/interfaces.ts';
-import { canonicalJson, canonicalRecordBytes, sha256Hex } from '../core/json.ts';
+import type { GitSteps,IntentBody,JournalView } from '../core/interfaces.ts';
+import { canonicalJson,canonicalRecordBytes,sha256Hex } from '../core/json.ts';
 import { EVENTS_FILE } from '../core/log.ts';
-import { isRed, runStart } from '../core/records.ts';
+import { RED_FILE,isRed,runStart } from '../core/records.ts';
 import { Fold } from '../core/state.ts';
-import { Fields, type Read, literal, nat, object, positive, sortedBy, tagged, version } from '../core/validate.ts';
-import { type AbsPath, type RefName, type RepoPath, absPath, refName, repoPath } from '../core/values.ts';
-import { SCHEMA_VERSION, type SchemaVersion } from '../core/version.ts';
-import { START_FILE } from '../executor.ts';
+import { Fields,type Read,literal,nat,object,positive,sortedBy,tagged,version } from '../core/validate.ts';
+import { type AbsPath,type RefName,type RepoPath,absPath,refName,repoPath } from '../core/values.ts';
+import { SCHEMA_VERSION,type SchemaVersion } from '../core/version.ts';
 import { parseCorpusPin } from '../corpus/types.ts';
+import { START_FILE } from '../executor.ts';
 import { WITNESS_RECORD_FILE } from '../holistic/witness.ts';
 import {
-  CORPUS_FILE_INPUT, CORPUS_GUIDE_INPUT, CORPUS_INPUT, FLOW_INPUTS_INPUT, FLOW_PROOF_INPUT, FLOW_SERIES_INPUT, OBLIGATIONS_INPUT, PACK_REVIEW_INPUT,
-  PHASE0_INPUT, PLAN_INPUT, RENDER_INPUT, REVISION_INPUT,
-  RULING_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, inputPath,
+CORPUS_FILE_INPUT,CORPUS_GUIDE_INPUT,CORPUS_INPUT,FLOW_INPUTS_INPUT,FLOW_PROOF_INPUT,FLOW_SERIES_INPUT,OBLIGATIONS_INPUT,PACK_REVIEW_INPUT,
+PHASE0_INPUT,PLAN_INPUT,RENDER_INPUT,REVISION_INPUT,
+RULINGS_INPUT,SPEC_INPUT,VISION_INPUT,inputPath
 } from '../input/inforce.ts';
-import { NEEDS_USER_DIR, needsUserAckPath } from '../needsuser.ts';
+import { NEEDS_USER_DIR,needsUserAckPath } from '../needsuser.ts';
 import { BRIEF_INPUT } from '../pipeline/rounds.ts';
 import { manifestPath } from './evidence.ts';
-import { RED_FILE } from '../core/records.ts';
+import { type Identity,catFileBlobs,catFileType,commitTree,git,lsTree,refTarget,updateRefCas,writeTreeFromIndex } from './git.ts';
 import { MUTANT_PATCH_INPUT } from './mutant.ts';
-import { type Identity, catFileBlobs, catFileType, commitTree, git, lsTree, refTarget, updateRefCas, writeTreeFromIndex } from './git.ts';
 
 export class SnapshotStateError extends Error {
   readonly ref: RefName;
@@ -221,7 +221,6 @@ function closureOf(events: readonly Event[], read: (sha: Sha256Hex, ext: string)
     input(m.planSha256, PLAN_INPUT, from);
     for (const s of Object.values(m.specs)) input(s, SPEC_INPUT, from);
     input(m.rulings.ledgerSha256, RULINGS_INPUT, from);
-    for (const s of Object.values(m.rulings.sidecars)) input(s, RULING_INPUT, from);
     if (m.obligations !== null) input(m.obligations, OBLIGATIONS_INPUT, from);
     if (m.vision !== null) input(m.vision, VISION_INPUT, from);
     // M4a: a corpus arc's pin and every corpus file it pins (named by the pin), guide and Phase-0 record (an earlier
@@ -309,6 +308,7 @@ function closureOf(events: readonly Event[], read: (sha: Sha256Hex, ext: string)
       case 'reopened':
         input(f.specSha256, SPEC_INPUT, by);
         break;
+      case 'noted':
       case 'steered':
         input(f.brief, BRIEF_INPUT, by);
         break;

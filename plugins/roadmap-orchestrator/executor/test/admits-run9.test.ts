@@ -1,5 +1,6 @@
 // M4a rev 3 step N2, `admits.run9-exact` (B, LR-m, free-tier gate 3): the exact records of paid M4a run 9 replayed through
 // `classifyAdmits` (test/helpers/run9.ts over test/fixtures/run9-admits.json, the synthetic Tidewater domain).
+// The fixture uses schema-2 wire forms; its recorded claims, test ids and admit order are preserved.
 //   - Exact: the recorded answers predate `targets` and classify on the structural floor (declared, delivered and
 //     repaired obligations' rules, all in-slice here): every admit is a repair, so (a) every in-slice repair stays a
 //     repair and (b) the V-5 cancellation chain has no opportunity. Its V-5 work is under-declared, which the brief's

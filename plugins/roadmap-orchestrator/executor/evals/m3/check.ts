@@ -188,9 +188,9 @@ function branchOf(run: Run): Readonly<{ branch: StoryBranch; detail: string }> |
     }
     return { branch: 'R', detail: `tidy published ${pub.new}, and I-2 is not shown held there` };
   }
-  for (const b of bundleRevisions(run)) {
+  for (const b of factsOf(run, 'plan-applied')) {
     const d = b.changes.find((x) => DISPOSALS.includes(x.type) && 'unit' in x && x.unit === 'tidy');
-    if (d !== undefined && b.source?.type === 'bundle') return { branch: 'P', detail: `${b.source.job}'s revision ${b.rev} made ${d.type} of tidy, which never published` };
+    if (d !== undefined) return { branch: 'P', detail: `revision ${b.rev} made ${d.type} of tidy, which never published` };
   }
   return null;
 }
@@ -330,10 +330,13 @@ function prevention(run: Run): Verdict {
   const b = branchOf(run);
   if (b?.branch !== 'P') return { pass: false, detail: `not branch P: ${b?.detail ?? 'no branch'}` };
   const problems: string[] = [];
-  const disposer = bundleRevisions(run).find((r) => r.changes.some((x) => DISPOSALS.includes(x.type) && 'unit' in x && x.unit === 'tidy'));
+  const disposer = factsOf(run, 'plan-applied').find((r) => r.changes.some((x) => DISPOSALS.includes(x.type) && 'unit' in x && x.unit === 'tidy'));
   const job = disposer?.source?.type === 'bundle' ? disposer.source.job : null;
   const ds = factsOf(run, 'divergence').filter((d) => d.job === job);
-  if (ds.length === 0) problems.push(`${job}'s disposal of tidy recorded no divergence`);
+  if (disposer?.source?.type === 'command') {
+    const body = readCommand(run.runDir, disposer.source.command, run.arc).file.body;
+    if (body.type !== 'apply' || !body.reason.trim()) problems.push('the root disposal has no apply reason');
+  } else if (ds.length === 0) problems.push(`${job}'s disposal of tidy recorded no divergence`);
   const upstream = factsOf(run, 'stage-outcome').filter((o) => o.unit === 'tidy').map((o) => `${o.stage}:${o.outcome}`);
   return verdict(problems, `${b.detail}; tidy's outcomes ${upstream.join(', ')}; divergences ${ds.map((d) => d.id).join(', ')}`);
 }
@@ -595,7 +598,7 @@ function runEnded(run: Run): Verdict {
 function unitsSettled(run: Run): Verdict {
   const plan = requirePlanInForce(run.runDir, run.view).plan;
   const problems: string[] = [];
-  const disposed = new Set(bundleRevisions(run).flatMap((b) => b.changes.flatMap((c) => (c.type === 'unit-cut' ? [c.unit as string] : []))));
+  const disposed = new Set(factsOf(run, 'plan-applied').flatMap((b) => b.changes.flatMap((c) => (c.type === 'unit-cut' ? [c.unit as string] : []))));
   const lines: string[] = [];
   for (const unit of plan.units) {
     const u = run.view.unit(unit.id);

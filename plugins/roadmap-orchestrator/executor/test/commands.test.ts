@@ -2,31 +2,31 @@
 // real journal, real invocations of res-tool.ts as the residue teardown, fake backends for the resume smoke,
 // and a child executor SIGKILLed at the op's crash points.
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync,readFileSync,readdirSync,rmSync,statSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, it, test } from 'node:test';
-import { type CommandContext, applyCommand, applyControl } from '../src/commands/apply.ts';
-import { incomingPath, isControl, pollCommands, readCommand, readReceipt, receiptPath, receiptSha256, submitCommand, terminalReceipt } from '../src/commands/queue.ts';
-import { type IntentOf, probeTargetKey } from '../src/core/events.ts';
-import { type ArcId, type CommandId, arcId, invocationId, needsUserId, opId, opKey, sha, specRev, unitId } from '../src/core/ids.ts';
-import { type OpenJournal, openJournal } from '../src/core/log.ts';
-import type { CommandBody, CommandFile } from '../src/core/records.ts';
-import { absPath, isoTimeOf, refName } from '../src/core/values.ts';
-import { readResidues, recordResidue, undispositioned } from '../src/host/residues.ts';
-import { needsUserAckPath, openBlocking, raiseNeedsUser, readNeedsUserAck } from '../src/needsuser.ts';
-import { recover } from '../src/recover/recover.ts';
-import { type SweepHolder, cleanup, reserve, resourceTable, run as runReservation } from '../src/resources/reserve.ts';
-import { requestOf } from '../src/resources/pool.ts';
-import { ownerLabel } from '../src/resources/teardown.ts';
+import { describe,it,test } from 'node:test';
+import { type CommandContext,applyCommand,applyControl } from '../src/commands/apply.ts';
+import { incomingPath,isControl,pollCommands,readCommand,readReceipt,receiptPath,receiptSha256,submitCommand,terminalReceipt } from '../src/commands/queue.ts';
+import { type IntentOf,probeTargetKey } from '../src/core/events.ts';
+import { type ArcId,type CommandId,arcId,invocationId,needsUserId,opId,opKey,sha,specRev,unitId } from '../src/core/ids.ts';
+import { type OpenJournal,openJournal } from '../src/core/log.ts';
+import type { CommandBody,CommandFile } from '../src/core/records.ts';
+import { absPath,isoTimeOf,refName } from '../src/core/values.ts';
+import { readResidues,recordResidue,undispositioned } from '../src/host/residues.ts';
+import { needsUserAckPath,openBlocking,raiseNeedsUser,readNeedsUserAck } from '../src/needsuser.ts';
 import type { ProberHandle } from '../src/park/probe.ts';
-import { assertFired, writeTrigger } from './helpers/crash.ts';
+import { recover } from '../src/recover/recover.ts';
+import { requestOf } from '../src/resources/pool.ts';
+import { type SweepHolder,cleanup,reserve,resourceTable,run as runReservation } from '../src/resources/reserve.ts';
+import { ownerLabel } from '../src/resources/teardown.ts';
+import { type CmdRun,openCommandRun } from './fixtures/cmd-common.ts';
+import { dones,events } from './fixtures/invoke-specs.ts';
+import { DB,QUEUE,UNIT,calls,newRun,stageHolder,stageParent } from './fixtures/res-plan.ts';
+import { assertFired,writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
 import { tmpDir } from './helpers/repo.ts';
 import { writeScenario } from './helpers/scenario.ts';
-import { type CmdRun, openCommandRun } from './fixtures/cmd-common.ts';
-import { dones, events } from './fixtures/invoke-specs.ts';
-import { DB, QUEUE, UNIT, calls, newRun, stageHolder, stageParent } from './fixtures/res-plan.ts';
-import { COMMAND_APPLY, crashCells } from './matrix.ts';
+import { COMMAND_APPLY,crashCells } from './matrix.ts';
 
 const T = { timeout: 60_000 };
 const OTHER_ARC = arcId('old-arc');
@@ -49,7 +49,7 @@ async function applyMutations(ctx: CommandContext) {
   return { kind: 'applied', outcomes } as const;
 }
 
-function raise(ctx: CommandContext, blocking = true, options: readonly { id: string; label: string }[] = []) {
+function raise(ctx: CommandContext, blocking = true, options: readonly { id: string; label: string }[] = [{id: 'ack', label: 'Acknowledge'}]) {
   return raiseNeedsUser(ctx.journal, ctx.runDir, {
     blocking, subject: { type: 'unit', unit: UNIT }, reason: 'lane-blocked', summary: 'lane blocked twice', recommendation: 'look at the lane', options, evidence: [],
   }, { type: 'arc' });
@@ -350,7 +350,8 @@ describe('resume.per-class: resume <unit> of a parked unit follows its park\'s c
     assert.deepEqual(journal.view.unit(UNIT).park?.park, { class: 'operator', kind: 'env' });
     const { cmd, receipt } = await resumeU1(ctx);
     assert.ok(receipt?.state === 'applied', JSON.stringify(receipt));
-    assert.deepEqual(receipt.verified.slice(-1), ['unit u1 re-entered at lanes']);
+    assert.ok(receipt.verified.includes('unit u1 re-entered at lanes'));
+    assert.ok(receipt.verified.includes(`needs-user ${item} acknowledged in the log`));
     const u = journal.view.unit(UNIT);
     assert.deepEqual([u.status, u.stage, u.park], ['active', 'lanes', null]);
     assert.equal(unitFacts(ctx, 'unparked').length, 1);
@@ -600,4 +601,29 @@ describe(`matrix row ${COMMAND_APPLY}`, () => {
       });
     }
   }
+});
+
+test('closure-by-subject: one command closes every item for its unit and preserves other subjects', async () => {
+  const {ctx, journal} = openCommandRun(newCmdRun());
+  try {
+    const first = raise(ctx, true, []), second = raise(ctx, false, []);
+    const other = raiseNeedsUser(journal, ctx.runDir, {blocking: false, subject: {type: 'arc'}, reason: 'lane-blocked', summary: 'arc item', recommendation: 'review', options: [], evidence: []}, {type: 'arc'});
+    const cmd = submit(ctx, {type: 'pause', target: {type: 'unit', unit: UNIT}});
+    assert.equal((await applyCommand(ctx, cmd)).kind, 'applied');
+    assert.equal(journal.view.ackOf(first)?.command, cmd.id);
+    assert.equal(journal.view.ackOf(second)?.command, cmd.id);
+    assert.equal(journal.view.ackOf(other), null);
+  } finally {journal.close();}
+});
+test('ack-with-options: items without choices require an action on their subject', async () => {
+  const {ctx, journal} = openCommandRun(newCmdRun());
+  try {
+    const noOptions = raise(ctx, true, []);
+    const refused = await applyCommand(ctx, submit(ctx, {type: 'ack', needsUser: noOptions, choice: null}));
+    assert.equal(refused.kind, 'rejected');
+    assert.equal(journal.view.ackOf(noOptions), null);
+    const offered = raise(ctx, true, [{id: 'keep', label: 'Keep'}]);
+    assert.equal((await applyCommand(ctx, submit(ctx, {type: 'ack', needsUser: offered, choice: 'keep'}))).kind, 'applied');
+    assert.equal(journal.view.ackOf(offered)?.choice, 'keep');
+  } finally {journal.close();}
 });

@@ -6,23 +6,33 @@
 // observations, the transition table in table.ts), B3 (findings), B5 (audits, coverage), B6 (checkpoint, bundles,
 // divergences).
 import {
-  type FindingId, type InvocationId, type JobId, type LaneId, type LaneRev, type ObligationId, type PlanRev, type QuestionId, type RoutingRev, type RuleId,
-  type RulingId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, envId, findingId, invocationIdOf, jobIdOf, jobIdOfKind, laneId, laneRev,
-  obligationId, planRev, questionId, routingRev, ruleId, rulingId, sha, sha256, unitId, visionClauseId, type EnvId, idList, idsAscending,
-  type OpportunityId, opportunityId, type MilestoneId, milestoneId,
+type EnvId,
+type FindingId,type InvocationId,type JobId,type LaneId,type LaneRev,
+type MilestoneId,
+type ObligationId,
+type OpportunityId,
+type PlanRev,type QuestionId,type RoutingRev,type RuleId,
+type RulingId,type Sha,type Sha256Hex,type UnitId,type VisionClauseId,envId,findingId,
+idList,idsAscending,
+invocationIdOf,jobIdOf,jobIdOfKind,laneId,laneRev,
+milestoneId,
+obligationId,
+opportunityId,
+planRev,questionId,routingRev,ruleId,rulingId,sha,sha256,unitId,visionClauseId,
 } from '../core/ids.ts';
-import { canonicalJson, sha256Hex } from '../core/json.ts';
+import { canonicalJson,sha256Hex } from '../core/json.ts';
 import {
-  LENS_KIND_NAMES, type LaneDef, type LensKindName, type RepairRef, type Stage, laneDef, laneDefOf, laneEnv, repairRef,
+LENS_KIND_NAMES,type LaneDef,type LensKindName,type RepairRef,type Stage,laneDef,laneDefOf,laneEnv,repairRef,
 } from '../core/records.ts';
-import { legacyTierOf, minimalLaneRev, tierLaneRev } from '../core/upgrade.ts';
+
 import {
-  type Read, Fields, SchemaError, arrayOf, assertUnique, bool, literal, nat, nullable, object, oneOf, positive, sortedBy, str, tagged,
-  text, version,
+Fields,
+type Read,
+SchemaError,arrayOf,assertUnique,bool,literal,nat,nullable,object,oneOf,positive,sortedBy,str,tagged,
+text,version,
 } from '../core/validate.ts';
-import { type IsoTime, type RepoPath, type RepoPattern, isoTime, repoPath, repoPattern } from '../core/values.ts';
+import { type IsoTime,type RepoPath,type RepoPattern,isoTime,repoPath,repoPattern } from '../core/values.ts';
 import type { SchemaVersion } from '../core/version.ts';
-import { FRESH_ROLES, type FreshRole } from '../routing/types.ts';
 
 const vid: Read<VisionClauseId> = (v, p) => visionClauseId(v, p);
 const oid: Read<ObligationId> = (v, p) => obligationId(v, p);
@@ -201,13 +211,13 @@ export type WitnessRef = Readonly<{ lane: LaneId; testIds: readonly string[]; fi
  * the witness lane's `laneRev`, and the complete witness definition (`witness`: the lane id and every test id, in
  * the obligation's order; Checkpoint A). A change of any makes it stale (the classifier asks a fresh one).
  */
-export type ProofJudgment = Readonly<{ verdict: 'proves' | 'insufficient'; obligationRev: number; laneRev: LaneRev; witness: WitnessRef }>;
+export type ProofJudgment = Readonly<{ verdict: 'proves' | 'insufficient'; obligationRev: number; witness: Readonly<{ testIds: readonly string[]; files?: readonly RepoPath[] }> }>;
 
 /** H14: a split parent's witness and proof are null; every other state keeps both. */
 export type ObligationState =
   | Readonly<{ type: 'active' }>
   | Readonly<{ type: 'split'; children: readonly ObligationId[] }>
-  | Readonly<{ type: 'waived' | 'deferred' | 'retired'; ruling: RulingId }>;
+  | Readonly<{ type: 'waived' | 'deferred' | 'retired'; reason: string; rev: number }>;
 
 export type ObligationDef = Readonly<{
   id: ObligationId;
@@ -270,9 +280,9 @@ export const arcLaneDef: Read<ArcLaneDef> = (value, path) => {
 const obligationState: Read<ObligationState> = tagged('type', {
   active: object((f): ObligationState => ({ type: f.get('type', literal('active')) })),
   split: object((f): ObligationState => ({ type: f.get('type', literal('split')), children: f.get('children', idList(oid, { nonEmpty: true, legacyStringOrder: true })) })),
-  waived: object((f): ObligationState => ({ type: f.get('type', literal('waived')), ruling: f.get('ruling', rid) })),
-  deferred: object((f): ObligationState => ({ type: f.get('type', literal('deferred')), ruling: f.get('ruling', rid) })),
-  retired: object((f): ObligationState => ({ type: f.get('type', literal('retired')), ruling: f.get('ruling', rid) })),
+  waived: object((f): ObligationState => ({ type: f.get('type', literal('waived')), reason: f.get('reason', str), rev: f.get('rev', positive) })),
+  deferred: object((f): ObligationState => ({ type: f.get('type', literal('deferred')), reason: f.get('reason', str), rev: f.get('rev', positive) })),
+  retired: object((f): ObligationState => ({ type: f.get('type', literal('retired')), reason: f.get('reason', str), rev: f.get('rev', positive) })),
 });
 
 export const docRef: Read<DocRef> = object(docRefFields);
@@ -355,8 +365,7 @@ export const planDefect: Read<PlanDefect> = tagged('type', {
 const proofJudgment: Read<ProofJudgment> = object((f) => ({
   verdict: f.get('verdict', oneOf(['proves', 'insufficient'] as const)),
   obligationRev: f.get('obligationRev', positive),
-  laneRev: f.get('laneRev', (v, p) => laneRev(v, p)),
-  witness: f.get('witness', witnessRef),
+  witness: f.get('witness', object((g) => ({ testIds: g.get('testIds', arrayOf(str, { nonEmpty: true })), ...(g.optional('files', sortedBy(pathR, (p) => p, {nonEmpty: true})) === undefined ? {} : {files: g.get('files', sortedBy(pathR, (p) => p, {nonEmpty: true}))}) }))),
 }));
 
 const obligationAnchor = (f: Fields): ObligationAnchor => {
@@ -494,16 +503,7 @@ function normalisedLane(lane: LaneDef | ArcLaneDef): LaneDef | ArcLaneDef {
  * with a lane goes here.
  */
 export function laneRevMatches(recorded: LaneRev, lane: LaneDef | ArcLaneDef): boolean {
-  if (recorded === laneRevOf(lane)) return true;
-  const revOf = (v: object): LaneRev => laneRev(sha256Hex(canonicalJson(v)).slice(0, 16));
-  const { evidenceExcludes, ...minimal } = normalisedLane(lane);
-  if (evidenceExcludes.length === 0 && recorded === revOf(minimal)) return minimalLaneRev(lane.id);
-  const { cadence, ...rest } = normalisedLane(lane);
-  const tier = legacyTierOf(cadence);
-  if (tier === null || rest.systems !== undefined || rest.testArgv !== undefined || rest.stochastic !== undefined || rest.readsComments !== undefined) return false;
-  const { evidenceExcludes: excludes, ...restMinimal } = rest;
-  const forms = [{ ...rest, tier }, ...(excludes.length === 0 ? [{ ...restMinimal, tier }] : [])];
-  return forms.some((f) => recorded === revOf(f)) && tierLaneRev(lane.id);
+  return recorded === laneRevOf(lane);
 }
 
 /** An obligation is exempt while waived, deferred or retired (only a disposition ruling exempts one). */
@@ -641,74 +641,7 @@ export type ObligationDisposition = (typeof OBLIGATION_DISPOSITIONS)[number];
 export const RULING_LIFETIMES = ['arc', 'standing'] as const;
 export const RULING_STATUSES = ['active', 'superseded', 'withdrawn'] as const;
 
-/** Who rules: the architect, or the checkpoint of a job (citing active clauses and evidence). */
-export type RuledBy = Readonly<{ type: 'architect' }> | Readonly<{ type: 'checkpoint'; job: JobId }>;
-/**
- * G21: the model judgment of semantic consistency, stored with the revisions it judged. A sidecar whose
- * `judgedRevs` differ from the revisions in force at its commit is stale and refused.
- */
-export type Consistency = Readonly<{
-  verdict: 'consistent' | 'inconsistent';
-  judgedRevs: Readonly<{
-    head: Sha;
-    ledgerSha256: Sha256Hex;
-    obligationsSha256: Sha256Hex | null;
-    visionSha256: Sha256Hex | null;
-    contracts: readonly Readonly<{ path: RepoPath; blob: Sha }>[];
-    /** M4a: the corpus pin in force (a corpus arc); absent: none (lasting). */
-    corpusSha256?: Sha256Hex;
-  }>;
-  /** A judgment role and the routing revision it ran under (never a model), or the architect. */
-  by: Readonly<{ type: 'judgment'; role: FreshRole; routingRev: string }> | Readonly<{ type: 'architect' }>;
-}>;
-
-export type RulingSidecar = Readonly<{
-  schema: typeof RULING_SCHEMA;
-  id: RulingId;
-  statement: string;
-  kind: RulingKind;
-  ruledBy: RuledBy;
-  trigger: string;
-  supersedes: readonly Readonly<{ id: RulingId; part: string | null }>[];
-  condition: string | null;
-  docRefs: readonly RulingRef[];
-  contractRefs: readonly RepoPath[];
-  contractOps: readonly ContractOp[];
-  obligations: readonly ObligationId[];
-  obligationDispositions: readonly Readonly<{ id: ObligationId; disposition: ObligationDisposition }>[];
-  /** Active vision clauses; non-empty for a checkpoint's ruling. */
-  cites: readonly VisionClauseId[];
-  evidence: readonly string[];
-  appliesTo: Readonly<{ type: 'arc' }> | Readonly<{ type: 'units'; units: readonly UnitId[] }>;
-  lifetime: (typeof RULING_LIFETIMES)[number];
-  status: (typeof RULING_STATUSES)[number];
-  consistency: Consistency;
-}>;
-
 const contractRevs = sortedBy(object((g) => ({ path: g.get('path', pathR), blob: g.get('blob', shaR) })), (e) => e.path);
-
-export const consistency: Read<Consistency> = object((f) => ({
-  verdict: f.get('verdict', oneOf(['consistent', 'inconsistent'] as const)),
-  judgedRevs: f.get('judgedRevs', object((g) => {
-    const corpusSha256 = g.optional('corpusSha256', sha256R);
-    return {
-      head: g.get('head', shaR),
-      ledgerSha256: g.get('ledgerSha256', sha256R),
-      obligationsSha256: g.get('obligationsSha256', nullable(sha256R)),
-      visionSha256: g.get('visionSha256', nullable(sha256R)),
-      contracts: g.get('contracts', contractRevs),
-      ...(corpusSha256 === undefined ? {} : { corpusSha256 }),
-    };
-  })),
-  by: f.get('by', tagged<'judgment' | 'architect', Consistency['by']>('type', {
-    judgment: object((g) => ({
-      type: g.get('type', literal('judgment')),
-      role: g.get('role', oneOf(FRESH_ROLES)),
-      routingRev: g.get('routingRev', (v, p) => { const s = str(v, p); if (!/^[0-9a-f]{16}$/.test(s)) throw new SchemaError(p, 'a routing revision (16 lowercase hex)', v); return s; }),
-    })),
-    architect: object((g) => ({ type: g.get('type', literal('architect')) })),
-  })),
-}));
 
 export const contractOp: Read<ContractOp> = object((f) => ({
   path: f.get('path', pathR), anchor: f.get('anchor', str), oldText: f.get('oldText', str), newText: f.get('newText', text),
@@ -719,45 +652,10 @@ const rulingRef: Read<RulingRef> = (value, path) => typeof value === 'object' &&
   ? object((g): RulingRef => ({ rule: g.get('rule', ruleR), textSha256: g.get('textSha256', sha256R), relation: g.get('relation', oneOf(RULE_RELATIONS)) }))(value, path)
   : object((g): RulingRef => ({ ...docRefFields(g), relation: g.get('relation', oneOf(DOC_RELATIONS)) }))(value, path);
 
-export const rulingSidecar: Read<RulingSidecar> = object((f) => {
-  const out: RulingSidecar = {
-    schema: f.get('schema', literal(RULING_SCHEMA)),
-    id: f.get('id', rid),
-    statement: f.get('statement', str),
-    kind: f.get('kind', oneOf(RULING_KINDS)),
-    ruledBy: f.get('ruledBy', tagged<'architect' | 'checkpoint', RuledBy>('type', {
-      architect: object((g) => ({ type: g.get('type', literal('architect')) })),
-      checkpoint: object((g) => ({ type: g.get('type', literal('checkpoint')), job: g.get('job', jobR) })),
-    })),
-    trigger: f.get('trigger', str),
-    supersedes: f.get('supersedes', arrayOf(object((g) => ({ id: g.get('id', rid), part: g.get('part', nullable(str)) })))),
-    condition: f.get('condition', nullable(str)),
-    docRefs: f.get('docRefs', arrayOf(rulingRef, { nonEmpty: true })),
-    contractRefs: f.get('contractRefs', sortedBy(pathR, (c) => c)),
-    contractOps: f.get('contractOps', arrayOf(contractOp)),
-    obligations: f.get('obligations', idList(oid, { legacyStringOrder: true })),
-    obligationDispositions: f.get('obligationDispositions', idsAscending(object((g) => ({ id: g.get('id', oid), disposition: g.get('disposition', oneOf(OBLIGATION_DISPOSITIONS)) })), (d) => d.id, { legacyStringOrder: true })),
-    cites: f.get('cites', idList(vid, { legacyStringOrder: true })),
-    evidence: f.get('evidence', arrayOf(str)),
-    appliesTo: f.get('appliesTo', tagged<'arc' | 'units', RulingSidecar['appliesTo']>('type', {
-      arc: object((g) => ({ type: g.get('type', literal('arc')) })),
-      units: object((g) => ({ type: g.get('type', literal('units')), units: g.get('units', sortedBy((v, p) => unitId(v, p), (u) => u, { nonEmpty: true })) })),
-    })),
-    lifetime: f.get('lifetime', oneOf(RULING_LIFETIMES)),
-    status: f.get('status', oneOf(RULING_STATUSES)),
-    consistency: f.get('consistency', consistency),
-  };
-  if (out.docRefs.some((d) => rulingRefSource(d).relation === 'deviates') && out.contractOps.length === 0) throw new SchemaError(`${f.path}.contractOps`, 'the contract ops of a deviating ruling', out.contractOps);
-  if (out.ruledBy.type === 'checkpoint' && (out.cites.length === 0 || out.evidence.length === 0)) {
-    throw new SchemaError(`${f.path}.cites`, 'active vision clauses and evidence for a checkpoint ruling', { cites: out.cites, evidence: out.evidence });
-  }
-  return out;
-});
 
 
-export function parseRulingSidecar(value: unknown): RulingSidecar {
-  return rulingSidecar(value, 'ruling');
-}
+
+
 
 // ---------------------------------------------------------------------------------------------------
 // Findings (§2.8; B3)

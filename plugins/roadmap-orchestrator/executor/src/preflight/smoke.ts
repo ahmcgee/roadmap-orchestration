@@ -15,31 +15,33 @@
 // supervisor respawn of an established arc, a failed smoke parks its backend instead of refusing (A18,
 // `smokeOutages`, src/preflight/checks.ts `smokeCheck`).
 import { join } from 'node:path';
-import { launchPressure } from '../host/pressure.ts';
-import { exitCpuOf } from '../core/upgrade.ts';
-import { resultBytes, writeResult } from '../backends/adapter.ts';
+import { resultBytes,writeResult } from '../backends/adapter.ts';
 import {
-  type Argv, type BackendCall, type ClaudeImplementerSession, type ClaudeTriple, type CodexSession, type CodexTriple,
-  backendArgv, freshClaudeImplementerSession, freshJudgmentSession, promptBytes,
+type Argv,type BackendCall,type ClaudeImplementerSession,type ClaudeTriple,type CodexSession,type CodexTriple,
+backendArgv,freshClaudeImplementerSession,freshJudgmentSession,promptBytes,
 } from '../backends/argv.ts';
 import { detectContainmentMode } from '../contain/detect.ts';
-import type { BackendParkClass, SpawnSubject } from '../core/events.ts';
-import { durableMkdir, durableWrite } from '../core/fsx.ts';
-import { type InvocationId, type RoutingRev, invocationDirName, opKey, sha256 } from '../core/ids.ts';
+import type { BackendParkClass,SpawnSubject } from '../core/events.ts';
+import { durableMkdir,durableWrite } from '../core/fsx.ts';
+import { type InvocationId,type RoutingRev,invocationDirName,opKey,sha256 } from '../core/ids.ts';
 import type { Journal } from '../core/interfaces.ts';
-import { type JsonValue, canonicalJson, sha256Hex } from '../core/json.ts';
+import { type JsonValue,canonicalJson,sha256Hex } from '../core/json.ts';
+import { exitCpuOf } from '../core/projections.ts';
 import {
-  type BackendErrorClass, type BackendOutcome, type BackendResult, type CommandPurpose, type CommandResult, type ExitFile,
-  type JudgmentSession, type LaunchFile, type LaunchTerminal, type ResultFile, type Usage, STDOUT_FILE,
+type BackendErrorClass,type BackendOutcome,type BackendResult,type CommandPurpose,type CommandResult,type ExitFile,
+type JudgmentSession,type LaunchFile,type LaunchTerminal,type ResultFile,
+STDOUT_FILE,
+type Usage,
 } from '../core/records.ts';
-import { type AbsPath, absPath, isoTimeOf } from '../core/values.ts';
+import { type AbsPath,absPath,isoTimeOf } from '../core/values.ts';
 import { SCHEMA_VERSION } from '../core/version.ts';
-import { type ResolvedRouting, seatsInForce } from '../routing/layers.ts';
+import { launchPressure } from '../host/pressure.ts';
+import { chargeOf,usageFact } from '../pipeline/invoke.ts';
+import { type ResolvedRouting,seatsInForce } from '../routing/layers.ts';
 import {
-  BACKENDS, type Backend, type FreshRole, type ProfileName, type Role, type Seat as SeatName, type SeatRef, atSeat, seatRef,
+BACKENDS,type Backend,type FreshRole,type ProfileName,type Role,type Seat as SeatName,type SeatRef,atSeat,seatRef,
 } from '../routing/types.ts';
-import { chargeOf, usageFact } from '../pipeline/invoke.ts';
-import { awaitRunner, launchSha256, prepareLaunch, startRunner } from '../runner/launch.ts';
+import { awaitRunner,launchSha256,prepareLaunch,startRunner } from '../runner/launch.ts';
 import type { StartupRejection } from './startup.ts';
 
 /** A smoke call is one trivial turn; a CLI that cannot answer within this is not healthy. The default of `run`; a probe's full judgment call sets its own (`BackendInvocation.deadlineMs`). */

@@ -6,6 +6,7 @@
 //   git         worktree.*, evidence.snapshot, salvage.commit, mergein.prepare, candidate.merge, docs.commit, mutant.apply,
 //               integration.ff, snapshot.publish: the reconciler reads the postcondition and returns a
 //               disposition this module applies (done, redo through the op's own act and verify, abort).
+//   notices     revision-owned needsuser.raise: settled before the parent can replay its notice.
 //   revisions   revision.commit (M3, G1): after the git ops, so its docs `ff` is closed; before the command ops, so
 //               an apply's re-run finds its revision in force or re-evaluates (src/recover/revision.ts). An abort
 //               raises nothing: its source re-evaluates.
@@ -322,6 +323,14 @@ async function pass(ctx: RecoveryContext): Promise<readonly Recovered[]> {
   for (const intent of openOf(s.journal, ['proc.spawn'])) await track(intent, async () => (await spawn(intent as IntentOf<'proc.spawn'>, s.journal.view)).kind);
 
   for (const kind of GIT_KINDS) for (const intent of openOf(s.journal, [kind])) await track(intent, () => step(ctx, intent));
+
+  // Automatic revision notices are child operations of the still-open commit. Settle the child
+  // first so appendRevision observes the original completed notice instead of raising it again.
+  for (const notice of openOf(s.journal, ['needsuser.raise'])) {
+    if (notice.parent.type === 'op' && s.journal.view.latestIntent(notice.parent.op).kind === 'revision.commit') {
+      await track(notice, () => step(ctx, notice));
+    }
+  }
 
   const revision = revisionReconciler(s.runDir, s.journal);
   for (const intent of openOf(s.journal, ['revision.commit'])) {

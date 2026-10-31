@@ -57,34 +57,34 @@
 // then SIGKILLs. The driver refuses a fixture dir that already holds a report or a run dir: a fixture is set up and
 // run once.
 import { spawnSync } from 'node:child_process';
-import { accessSync, constants, existsSync, mkdirSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { accessSync,constants,existsSync,mkdirSync,readFileSync,readdirSync,symlinkSync,writeFileSync } from 'node:fs';
+import { join,resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { fileURLToPath } from 'node:url';
 import { terminalReceipt } from '../../src/commands/queue.ts';
-import { isAlive, statOf } from '../../src/contain/proc.ts';
-import type { Event, Fact } from '../../src/core/events.ts';
+import { isAlive,statOf } from '../../src/contain/proc.ts';
+import type { Event,Fact } from '../../src/core/events.ts';
 import { readJson } from '../../src/core/fsx.ts';
-import { type NeedsUserId, arcId, commandId } from '../../src/core/ids.ts';
+import { type NeedsUserId,arcId,commandId } from '../../src/core/ids.ts';
 import { readJournal } from '../../src/core/log.ts';
-import { type ProcIdentity, executorExitReason } from '../../src/core/records.ts';
-import { type AbsPath, absPath } from '../../src/core/values.ts';
-import { EXIT_REASON_FILE, type ExitReason } from '../../src/executor.ts';
-import { HOST_DIR, hostPath } from '../../src/host/hostdir.ts';
-import { type ProfileName, profileName } from '../../src/routing/types.ts';
-import type { ArcState, Status } from '../../src/status.ts';
-import { executorLogs, lastLine } from '../../src/supervisor.ts';
-import type { BundleOutcome, CheckpointTrigger } from '../../src/holistic/types.ts';
-import { readNeedsUser } from '../../src/needsuser.ts';
+import { type ProcIdentity,executorExitReason } from '../../src/core/records.ts';
+import { type AbsPath,absPath } from '../../src/core/values.ts';
+import { EXIT_REASON_FILE,type ExitReason } from '../../src/executor.ts';
 import { revParse } from '../../src/git/git.ts';
 import { witnessDir } from '../../src/git/snapshot.ts';
 import { verdictOf } from '../../src/holistic/observe.ts';
-import { type ObservationVerdict, parseObligations, witnessRecord } from '../../src/holistic/types.ts';
+import type { BundleOutcome,CheckpointTrigger } from '../../src/holistic/types.ts';
+import { type ObservationVerdict,parseObligations,witnessRecord } from '../../src/holistic/types.ts';
 import { WITNESS_RECORD_FILE } from '../../src/holistic/witness.ts';
+import { HOST_DIR,hostPath } from '../../src/host/hostdir.ts';
+import { readNeedsUser } from '../../src/needsuser.ts';
+import { type ProfileName,profileName } from '../../src/routing/types.ts';
+import type { ArcState,Status } from '../../src/status.ts';
+import { executorLogs,lastLine } from '../../src/supervisor.ts';
 import { writeShims } from '../../test/fakes/shim.ts';
-import { FAKE_CKPT_HOLD, FAKE_FLOW_HOLD, FIRST, type Layout, MONEY_LANE, type StoryBranch, UNITS, barrierFile, layout } from './layout.ts';
-import { type StoryName, storyName, storySteps } from './scenario.ts';
-import { DIRECTION_EDITED, json } from './setup.ts';
+import { FAKE_CKPT_HOLD,FAKE_FLOW_HOLD,FIRST,type Layout,MONEY_LANE,type StoryBranch,UNITS,barrierFile,layout } from './layout.ts';
+import { type StoryName,storyName,storySteps } from './scenario.ts';
+import { DIRECTION_EDITED,json } from './setup.ts';
 
 const BIN_ROADMAP = fileURLToPath(new URL('../../bin/roadmap', import.meta.url));
 const EXEC_CLI = fileURLToPath(new URL('../../test/fixtures/exec-cli.ts', import.meta.url));
@@ -345,11 +345,19 @@ function branchOf(l: Layout, events: readonly Event[]): Readonly<{ branch: Story
       : { branch: 'R', why: `tidy published ${head}; I-2 is ${v} there (seq ${first.seq})` };
   }
   for (const b of factsOf(events, 'plan-applied')) {
-    if (b.source?.type !== 'bundle') continue;
     const disposal = b.changes.find((x) => DISPOSALS.includes(x.type) && 'unit' in x && x.unit === TIDY);
-    if (disposal !== undefined) return { branch: 'P', why: `${b.source.job}'s revision ${b.rev} made ${disposal.type} of tidy before it published` };
+    if (disposal !== undefined) return { branch: 'P', why: `revision ${b.rev} made ${disposal.type} of tidy before it published` };
   }
   return null;
+}
+
+/** Record subject closures caused by successful driver commands as well as explicit acks. */
+function recordClosures(l: Layout, d: Devices, events: readonly Event[]): void {
+  for (const f of factsOf(events, 'needs-user-acked')) {
+    if (d.acks.some((a) => a.needsUser === f.id)) continue;
+    const item = readNeedsUser(absPath(l.runDir), f.id);
+    if (item !== null && ACKED_REASONS.includes(item.reason)) d.acks.push({needsUser: f.id, reason: item.reason, choice: f.choice, ack: f.command});
+  }
 }
 
 /**
@@ -359,6 +367,7 @@ function branchOf(l: Layout, events: readonly Event[]): Readonly<{ branch: Story
  */
 function fire(p: Poll): string | null {
   const { l, c, run, d, s, events } = p;
+  recordClosures(l, d, events);
   for (const item of s.needsUser) {
     if (!ACKED_REASONS.includes(item.reason) || d.acks.some((a) => a.needsUser === item.id)) continue;
     const offered = readNeedsUser(absPath(l.runDir), item.id)?.options.some((o) => o.id === 'apply') ?? false;
@@ -391,13 +400,27 @@ function fire(p: Poll): string | null {
 
   const [first] = factsOf(events, 'checkpoint-inputs');
   if (d.staleApply === null && first !== undefined) {
-    editDirection(l);
-    d.staleApply = { command: submitted(cli(c, ['apply', ...run])), checkpoint: first.job, trigger: triggerText(first.trigger), seq: first.seq };
+    const out = join(l.fake, 'direction-export');
+    const exported = JSON.parse(cli(c, ['inputs', 'export', '--out', out, ...run])) as {planRev: number};
+    const file = join(out, 'plan.json');
+    const plan = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+    // The prevented branch needs a root-authorized cut under schema 2. Commit it with the stale-making edit.
+    const units = plan['units'] as {id: string; cut?: {reason: string}}[];
+    if (first.trigger.type === 'park' && first.trigger.unit === TIDY) {
+      const tidy = units.find((u) => u.id === TIDY)!;
+      tidy.cut = {reason: 'Its goal cannot be met within src/cli.js without breaking I-2.'};
+    }
+    writeFileSync(file, JSON.stringify({...plan, direction: DIRECTION_EDITED}));
+    d.staleApply = { command: submitted(cli(c, ['apply', '--from', out, '--rev', String(exported.planRev), '--reason', 'Refine the direction during checkpoint capture', ...run])), checkpoint: first.job, trigger: triggerText(first.trigger), seq: first.seq };
   }
   if (d.staleApply !== null && d.staleApplied === null) {
     const receipt = terminalReceipt(absPath(l.runDir), commandId(d.staleApply.command));
     if (receipt !== null) {
       if (receipt.state !== 'applied') return `the stale apply ${d.staleApply.command} was ${receipt.state}: ${JSON.stringify(receipt)}`;
+      if (first?.trigger.type === 'park' && first.trigger.unit === TIDY) {
+        // The root cut settled the park. An explicit audit weighs its still-open finding and admits the repair.
+        cli(c, ['audit', '--lens', 'vision', ...run]);
+      }
       if (p.fake) writeFileSync(join(l.fake, `${FAKE_CKPT_HOLD}.release`), '', { flag: 'wx' });
       d.staleApplied = { at: now() };
     }
@@ -480,6 +503,7 @@ export async function drive(args: Args): Promise<Report> {
     }
     ended = exitOf(c.hostDir, ready.generation);
   }
+  if (existsSync(join(l.runDir, 'events.jsonl'))) recordClosures(l, devices, readJournal(absPath(l.runDir), arcId(l.arc)).events);
   const report: Report = {
     schema: REPORT_SCHEMA,
     profile: args.profile,

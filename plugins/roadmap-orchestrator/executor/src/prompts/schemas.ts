@@ -10,41 +10,56 @@
 //   gate:      approve → integration slot · revise → fix round with directives · escalate → route up
 //   build:     success → quiesce (the executor then salvages, runs lanes and gates; the report is evidence)
 import {
-  type ClauseId, type FailureModeId, type FindingId, type JourneyId, type LaneId, type ObligationId, type PocQuestionId, type ReviewFindingId, type RuleId, type RulingId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, clauseId,
-  failureModeId, pocQuestionId, answerIds, findingId, journeyId, laneId, obligationId, reviewFindingId, ruleId, rulingId, sha, unitId, visionClauseId,
+type ClauseId,type FailureModeId,type FindingId,type JourneyId,type LaneId,type ObligationId,type PocQuestionId,type ReviewFindingId,type RuleId,type RulingId,type Sha,type Sha256Hex,type UnitId,type VisionClauseId,
+answerIds,
+clauseId,
+failureModeId,
+findingId,journeyId,laneId,obligationId,
+pocQuestionId,
+reviewFindingId,ruleId,rulingId,sha,unitId,visionClauseId,
 } from '../core/ids.ts';
-import { type ReviewDispute, reviewDispute } from '../core/review.ts';
-import { FLOW_REPORTERS, type FlowOutput, flowOutput } from '../flow/types.ts';
-import { type JsonValue, canonicalJson } from '../core/json.ts';
-import { BOUND_FIELDS, type Bounds, type FailureRef, type NoteDef, SPEC_SCHEMA, SPEC_SECTIONS, type SpecM1, type SpecPatchOp, failureRef, specM1, specPatchOp } from '../core/records.ts';
+import { type JsonValue,canonicalJson } from '../core/json.ts';
+import { BOUND_FIELDS,type Bounds,type FailureRef,type NoteDef,SPEC_SCHEMA,SPEC_SECTIONS,type SpecPatchOp,failureRef,specM1,specPatchOp } from '../core/records.ts';
+import { type ReviewDispute,reviewDispute } from '../core/review.ts';
 import {
-  Fields, type Read, SchemaError, answerSet, arrayOf, assertUnique, bool, envName, int, literal, nullable, object, oneOf, positive, str, tagged, text,
+Fields,type Read,SchemaError,answerSet,arrayOf,assertUnique,bool,envName,int,literal,nullable,object,oneOf,positive,str,tagged,text,
 } from '../core/validate.ts';
-import { type RepoPath, type RepoPattern, matchesPattern, repoPath, repoPattern } from '../core/values.ts';
+import { type RepoPath,type RepoPattern,matchesPattern,repoPath,repoPattern } from '../core/values.ts';
+import { FLOW_REPORTERS,type FlowOutput,flowOutput } from '../flow/types.ts';
 import {
-  ACTIVATIONS, type Activation, DOC_RELATIONS, FINDING_DISPOSITIONS, FINDING_SEVERITIES as LENS_SEVERITIES, type FindingDisposition, type FindingSeverity, OBLIGATION_DISPOSITIONS,
-  OWNER_ONLY_CLASSES, PACK_DISPOSITIONS, PACK_SEVERITIES, type DocRef, type PackDisposition, type ObligationAnchor, type ObligationDisposition, type ObservationKey, type OwnerOnlyClass, type PackSeverity,
-  type PackTarget, RULE_RELATIONS, RULING_KINDS, RULING_LIFETIMES, RULING_SCHEMA, RULING_STATUSES, type WitnessRef, observationKey, packDisposition, packTarget,
+ACTIVATIONS,type Activation,
+type DocRef,
+FINDING_DISPOSITIONS,
+type FindingDisposition,type FindingSeverity,
+FINDING_SEVERITIES as LENS_SEVERITIES,
+OWNER_ONLY_CLASSES,
+type ObligationAnchor,
+type ObservationKey,type OwnerOnlyClass,
+PACK_DISPOSITIONS,PACK_SEVERITIES,
+type PackDisposition,
+type PackSeverity,
+type PackTarget,
+type WitnessRef,observationKey,packDisposition,packTarget
 } from '../holistic/types.ts';
-import { REENTRY_POINTS, type ReentryPoint } from '../input/plan.ts';
+import { REENTRY_POINTS,type ReentryPoint } from '../input/plan.ts';
+
+import { type OrderingWait,orderingWait } from '../core/ordering.ts';
+
 import {
-  admitSpecTextDefault, admitTargetsDefault, buildDocsOnlySinceDefault, buildExperimentsDefault, buildFinalDefault, checkpointRulingTextDefault, GATE_DEBT_UNRECORDED, gateClustersDefault,
-  gateFindingReviewDefault, gateNoteDebtDefault, gateRulingsDefault, gateUnreviewedDefault, issuesIgnored, lensPatchMutantDefault, planCheckScopeGrowthDefault, planCheckStaleLinksDefault,
-  FIXES_UNRECORDED,
-  reenterFixesDefault, planCheckDesignDefault,
-} from '../core/upgrade.ts';
-import { type OrderingWait, orderingWait } from '../core/ordering.ts';
-import { orderingDefault } from '../core/upgrade.ts';
+type ClauseLanes,type DesignChange,type DesignExperiment,type FailureModeProof,type NewSystem,
+UNIT_KINDS,
+type UnitKind,type Verification,
+clauseLanes,designChange,designExperiment,failureModeProof,
+newSystem,verification,
+} from '../core/design.ts';
+import { STALE_OUTCOMES,type StaleAnswer,staleAnswer } from '../core/stale.ts';
 import type { MutantEdit } from '../git/mutant.ts';
 import {
-  type ClauseLanes, type DesignChange, type DesignExperiment, type FailureModeProof, type NewSystem, type UnitKind, type Verification, UNIT_KINDS, clauseLanes, designChange, designExperiment, failureModeProof,
-  newSystem, verification,
-} from '../core/design.ts';
-import { STALE_OUTCOMES, type StaleAnswer, staleAnswer } from '../core/stale.ts';
-import { specBytes } from '../spec/spec.ts';
-import {
-  BUILD_CLASSES, JUDGMENT_SEATS, MODEL_CLASSES, type ModelClass, classAt, RISK_TIERS, ROLES, type RiskTier, type Role, SEATS, type Seat,
+BUILD_CLASSES,JUDGMENT_SEATS,MODEL_CLASSES,type ModelClass,
+RISK_TIERS,ROLES,type RiskTier,type Role,SEATS,type Seat,
+classAt,
 } from '../routing/types.ts';
+import { specBytes } from '../spec/spec.ts';
 
 // ---------------------------------------------------------------------------------------------------
 // JSON Schema builders (strict subset: object, array, string, integer, boolean, enum, anyOf, null)
@@ -372,7 +387,7 @@ const none = (f: Fields, key: string): void => void f.optional(key, literal(null
 /** Read older answers without changing their shape; new answers may explicitly declare an ordering wait. */
 function answerOrdering(f: Fields, allowed: boolean): OrderingWait | null | undefined {
   const ordering = f.optional('ordering', nullable(orderingWait));
-  if (ordering === undefined) orderingDefault();
+
   if (ordering != null && !allowed) throw new SchemaError(`${f.path}.ordering`, 'null outside an ordering escalation or infeasible decision', ordering);
   return ordering;
 }
@@ -386,8 +401,8 @@ export const planCheckOutput: Read<PlanCheckOutput> = object((f): PlanCheckOutpu
     notes: f.get('notes', text),
     premises: f.get('premises', arrayOf(premise)),
     visionConflict: f.get('visionConflict', arrayOf(visionConflict)),
-    scopeGrowth: f.optional('scopeGrowth', arrayOf(scopeGrowthAnswer)) ?? planCheckScopeGrowthDefault(),
-    staleLinks: f.optional('staleLinks', arrayOf(staleAnswer)) ?? planCheckStaleLinksDefault(),
+    scopeGrowth: f.get('scopeGrowth', arrayOf(scopeGrowthAnswer)),
+    staleLinks: f.get('staleLinks', arrayOf(staleAnswer)),
   };
   const payloads = ['design', 'split', 'scaffold', 'poc'] as const;
   const nullExcept = (...keep: readonly (typeof payloads)[number][]): void => payloads.filter((k) => !keep.includes(k)).forEach((k) => none(f, k));
@@ -397,8 +412,8 @@ export const planCheckOutput: Read<PlanCheckOutput> = object((f): PlanCheckOutpu
       return { ...common, decision, patch: f.get('patch', arrayOf(wireOp, { nonEmpty: true })) };
     case 'approve': {
       nullExcept('design');
-      const design = f.optional('design', nullable(designAnswer));
-      return { ...common, decision, patch: f.get('patch', literal(null)), design: design === undefined ? planCheckDesignDefault() : design };
+      const design = f.get('design', nullable(designAnswer));
+      return { ...common, decision, patch: f.get('patch', literal(null)), design: design };
     }
     case 'scaffold':
       nullExcept('design', 'scaffold');
@@ -520,19 +535,17 @@ const decision: Read<NoteDef> = object((f) => ({ id: f.get('id', (v, p): ClauseI
 
 const experiment: Read<Experiment> = object((g) => ({ name: g.get('name', str), argv: g.get('argv', arrayOf(text, { nonEmpty: true })), exit: g.get('exit', int(0, 255)) }));
 
-/** Old answers may carry lanesRun; it is accepted and ignored, never certification evidence. */
 export const buildOutput: Read<BuildOutput> = object((f) => {
-  f.optional('lanesRun', arrayOf(object((g) => ({ lane: g.get('lane', (v, p) => laneId(v, p)), exit: g.get('exit', int(0, 255)) }))));
-  const experiments = f.optional('experiments', arrayOf(experiment));
-  const final = f.optional('final', literal(true));
-  const docsOnlySince = f.optional('docsOnlySince', nullable((v, p): Sha => sha(v, p)));
+  const experiments = f.get('experiments', arrayOf(experiment));
+  const final = f.get('final', literal(true));
+  const docsOnlySince = f.get('docsOnlySince', nullable((v, p): Sha => sha(v, p)));
   return {
     summary: f.get('summary', str),
     changedPaths: f.get('changedPaths', arrayOf(str)),
     blockers: f.get('blockers', arrayOf(str)),
-    experiments: experiments ?? buildExperimentsDefault(),
-    docsOnlySince: docsOnlySince === undefined ? buildDocsOnlySinceDefault() : docsOnlySince,
-    final: final ?? buildFinalDefault(),
+    experiments: experiments,
+    docsOnlySince: docsOnlySince,
+    final: final,
   };
 });
 
@@ -625,7 +638,7 @@ export type GateFinding = Readonly<{
    * blocking finding never). Required of a live answer; absent on a dev.12 answer, read as `unrecorded`
    * (`gateNoteDebtDefault`): banked as the dev.12 executor banked every note, so a re-read never changes what was banked.
    */
-  debt: GateDebt | null | typeof GATE_DEBT_UNRECORDED;
+  debt: GateDebt | null;
   /**
    * dev.17 (proportional review): what a blocking finding must name (`DEFECT_CATEGORIES`); null on any other class. A dev.17
    * gate's blocking finding without one is refused through the repair turn (src/pipeline/review.ts).
@@ -685,21 +698,21 @@ export const GATE_SCHEMA: Schema = sObj({
 });
 
 /** Absent (a dev.12 answer): `unrecorded`, with the upgrade warning; null: not debt. */
-const readDebt = (read: GateDebt | null | undefined): GateDebt | null | typeof GATE_DEBT_UNRECORDED => (read === undefined ? gateNoteDebtDefault() : read);
+const readDebt = (read: GateDebt | null): GateDebt | null => read;
 const gateExperiment: Read<GateExperiment> = object((f) => ({ command: f.get('command', str), output: f.get('output', str) }));
 const hunkRef: Read<HunkRef> = object((g) => ({ path: g.get('path', str), line: g.get('line', int(1, Number.MAX_SAFE_INTEGER)) }));
 /** Absent (a dev.16 answer): null, with the upgrade warning. */
-const dev17 = <T>(read: T | null | undefined): T | null => (read === undefined ? gateFindingReviewDefault() : read);
+const dev17 = <T>(read: T | null): T | null => read;
 const finding: Read<GateFinding> = object((f) => ({
   severity: f.get('severity', oneOf(FINDING_SEVERITIES_DEV17)),
   path: f.get('path', nullable(str)),
   text: f.get('text', str),
   contractRef: f.get('contractRef', nullable(str)),
   experiments: f.optional('experiments', arrayOf(gateExperiment)) ?? [],
-  debt: readDebt(f.optional('debt', nullable(object((g): GateDebt => ({ drag: g.get('drag', str) }))))),
-  defect: dev17(f.optional('defect', nullable(oneOf(DEFECT_CATEGORIES)))),
-  reraises: dev17(f.optional('reraises', nullable((v, p): ReviewFindingId => reviewFindingId(v, p)))),
-  hunk: dev17(f.optional('hunk', nullable(hunkRef))),
+  debt: readDebt(f.get('debt', nullable(object((g): GateDebt => ({ drag: g.get('drag', str) }))))),
+  defect: dev17(f.get('defect', nullable(oneOf(DEFECT_CATEGORIES)))),
+  reraises: dev17(f.get('reraises', nullable((v, p): ReviewFindingId => reviewFindingId(v, p)))),
+  hunk: dev17(f.get('hunk', nullable(hunkRef))),
 }));
 const disputeRuling: Read<DisputeRuling> = object((f) => ({
   finding: f.get('finding', (v, p): ReviewFindingId => reviewFindingId(v, p)), ruling: f.get('ruling', oneOf(DISPUTE_RULINGS)), reason: f.get('reason', str),
@@ -719,7 +732,7 @@ const clusterMap: Read<readonly GateCluster[]> = (value, path) => {
   return clusters;
 };
 /** Absent (a dev.11 answer): no map, with the upgrade warning; null: no map. */
-const readClusters = (read: readonly GateCluster[] | null | undefined): readonly GateCluster[] | null => (read === undefined ? gateClustersDefault() : read);
+const readClusters = (read: readonly GateCluster[] | null): readonly GateCluster[] | null => read;
 const emptyList: Read<readonly []> = (value, path) => {
   if (!Array.isArray(value) || value.length !== 0) throw new SchemaError(path, 'an empty array (directives only with revise)', value);
   return [];
@@ -730,9 +743,9 @@ export const gateOutput: Read<GateOutput> = object((f): GateOutput => {
   const ordering = answerOrdering(f, decision === 'escalate');
   const common = {
     findings: f.get('findings', arrayOf(finding)), reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })), premises: f.get('premises', arrayOf(premise)),
-    unreviewed: f.optional('unreviewed', arrayOf(unreviewedEntry)) ?? gateUnreviewedDefault(),
-    clusters: readClusters(f.optional('clusters', nullable(clusterMap))),
-    rulings: f.optional('rulings', rulingList) ?? gateRulingsDefault(),
+    unreviewed: f.get('unreviewed', arrayOf(unreviewedEntry)),
+    clusters: readClusters(f.get('clusters', nullable(clusterMap))),
+    rulings: f.get('rulings', rulingList),
   };
   if (decision === 'revise') return { ...common, decision, directives: f.get('directives', arrayOf(str, { nonEmpty: true })) };
   if (decision === 'approve') {
@@ -818,7 +831,7 @@ const lensMutant: Read<LensMutant> = object((h) => {
   const lane = h.get('lane', (v, p): LaneId => laneId(v, p));
   const edits = h.optional('edits', arrayOf(object((e): MutantEdit => ({ path: e.get('path', text), old: e.get('old', text), new: e.get('new', text) })), { nonEmpty: true }));
   if (edits !== undefined) return { kind: 'edits', lane, edits };
-  return { kind: 'patch', lane, patch: lensPatchMutantDefault(h.get('patch', str)) };
+  throw new SchemaError(`${h.path}.edits`, 'mutant edits', edits);
 });
 
 export const lensOutput: Read<LensOutput> = object((f) => ({
@@ -844,7 +857,7 @@ export function validateLensOutput(value: unknown): LensOutput {
 
 export const CHECKPOINT_DECISIONS = ['no-op', 'bundle'] as const;
 export const BUNDLE_OP_KINDS = [
-  'admit', 'patch-spec', 'reenter', 'cut', 'route', 'limits', 'obligation-split', 'obligation-dispose', 'invalidate-approval', 'rule', 'request',
+  'admit', 'patch-spec', 'reenter', 'cut', 'route', 'limits', 'obligation-split', 'invalidate-approval', 'request',
 ] as const;
 export type BundleOpKind = (typeof BUNDLE_OP_KINDS)[number];
 
@@ -877,14 +890,12 @@ export type BundleOpBody =
    * `fixes` (arc feedback 2026-10-16): the failure it fixes; null when the lineage recorded none; `unrecorded` (the key absent)
    * on an answer recorded before it (`reenterFixesDefault`), adopted as recorded.
    */
-  | Readonly<{ op: 'reenter'; unit: UnitId; reenters: UnitId; enterAt: ReentryPoint | null; reset: RulingId | null; fixes: FailureRef | null | typeof FIXES_UNRECORDED }>
+  | Readonly<{ op: 'reenter'; unit: UnitId; reenters: UnitId; enterAt: ReentryPoint | null; reset: string | null; fixes: FailureRef | null }>
   | Readonly<{ op: 'cut'; unit: UnitId; reason: string }>
   | Readonly<{ op: 'route'; unit: UnitId; seats: readonly Readonly<{ role: Role; tier: Seat; class: ModelClass }>[] }>
   | Readonly<{ op: 'limits'; unit: UnitId | null; limits: readonly Readonly<{ field: keyof Bounds | 'convergenceK'; value: number }>[] }>
   | Readonly<{ op: 'obligation-split'; obligation: ObligationId; children: readonly SplitChild[] }>
-  | Readonly<{ op: 'obligation-dispose'; obligation: ObligationId; disposition: ObligationDisposition; ruling: RulingId }>
   | Readonly<{ op: 'invalidate-approval'; unit: UnitId }>
-  | Readonly<{ op: 'rule'; ruling: RulingId }>
   | Readonly<{ op: 'request'; class: OwnerOnlyClass; summary: string }>;
 /** Every op cites active vision clauses (H16: never a withdrawn one) and its evidence, both non-empty. */
 export type BundleOp = BundleOpBody & Readonly<{ cites: readonly VisionClauseId[]; evidence: readonly string[] }>;
@@ -894,11 +905,6 @@ export type CheckpointOutput = Readonly<{
   reasons: readonly string[];
   /** Empty exactly on a `no-op`. */
   ops: readonly BundleOp[];
-  /**
-   * Ruling sidecars (`roadmap/ruling-m3`) as canonical JSON text (the model writes objects, `S_RULING`); empty on a
-   * `no-op`.
-   */
-  rulings: readonly string[];
   findingDispositions: readonly Readonly<{ finding: FindingId; disposition: FindingDisposition; reason: string }>[];
   /**
    * H12: readings of the vision where it does not anticipate a situation; each records a divergence, even on a `no-op`.
@@ -956,31 +962,6 @@ const S_ADMIT_SPEC = sObj({
  * names), never a refused bundle. `ruledBy` and `consistency` are not offered: the executor stamps both (lead ruling).
  * A doc ref is `{path, anchor, quotedText, relation}`, a rule ref `{rule, textSha256, relation}` (M4a).
  */
-const S_RULING = sObj({
-  schema: sEnum([RULING_SCHEMA]),
-  id: S_STR,
-  statement: S_STR,
-  kind: sEnum(RULING_KINDS),
-  trigger: S_STR,
-  supersedes: sArr(sObj({ id: S_STR, part: sNullable(S_STR) })),
-  condition: sNullable(S_STR),
-  docRefs: sArr({
-    anyOf: [
-      sObj({ path: S_STR, anchor: S_STR, quotedText: S_STR, relation: sEnum(DOC_RELATIONS) }),
-      sObj({ rule: S_STR, textSha256: S_STR, relation: sEnum(RULE_RELATIONS) }),
-    ],
-  }),
-  contractRefs: S_IDS,
-  contractOps: sArr(sObj({ path: S_STR, anchor: S_STR, oldText: S_STR, newText: S_STR })),
-  obligations: S_IDS,
-  obligationDispositions: sArr(sObj({ id: S_STR, disposition: sEnum(OBLIGATION_DISPOSITIONS) })),
-  cites: S_IDS,
-  evidence: sArr(S_STR),
-  appliesTo: { anyOf: [sObj({ type: sEnum(['arc']) }), sObj({ type: sEnum(['units']), units: S_IDS })] },
-  lifetime: sEnum(RULING_LIFETIMES),
-  status: sEnum(RULING_STATUSES),
-});
-
 /**
  * The closed id sets a checkpoint call knows when it is made (paid M4b run 5, ckpt-4: a split child named a witness lane
  * that is no arc lane, and the decision was refused only after the whole call): the arc lanes, the active obligations a
@@ -1009,13 +990,10 @@ export function checkpointSchemaFor(ids: CheckpointIds | null): Schema {
         opSchema('route', { unit: S_STR, seats: sArr(sObj({ role: sEnum(ROLES), tier: sEnum([...JUDGMENT_SEATS, 'arc']), class: sEnum(MODEL_CLASSES) })) }),
         opSchema('limits', { unit: sNullable(S_STR), limits: sArr(sObj({ field: sEnum(LIMIT_FIELDS), value: S_INT })) }),
         opSchema('obligation-split', { obligation: sIdOf(ids?.splittable), children: sArr(sSplitChild(sIdOf(ids?.arcLanes))) }),
-        opSchema('obligation-dispose', { obligation: sIdOf(ids?.obligations), disposition: sEnum(OBLIGATION_DISPOSITIONS), ruling: S_STR }),
         opSchema('invalidate-approval', { unit: S_STR }),
-        opSchema('rule', { ruling: S_STR }),
         opSchema('request', { class: sEnum(OWNER_ONLY_CLASSES), summary: S_STR }),
       ],
     }),
-    rulings: sArr(S_RULING),
     findingDispositions: sArr(sObj({ finding: S_STR, disposition: sEnum(FINDING_DISPOSITIONS), reason: S_STR })),
     interpretations: sArr(sObj({ clauses: S_IDS, situation: S_STR, reading: S_STR })),
     cites: sObj({ vision: S_IDS, observations: sArr(sObj({ treeSha: S_STR, lane: S_STR, laneRev: S_STR, envId: S_STR })), findings: S_IDS }),
@@ -1067,7 +1045,6 @@ const corpusAmendmentProposal: Read<CorpusAmendmentProposal> = object((g) => ({
  * (`admitSpecTextDefault`).
  */
 const admitSpec: Read<string> = (value, path) => {
-  if (typeof value === 'string') return admitSpecTextDefault(value);
   const f = new Fields(value, path);
   const lanes = f.get('lanes', arrayOf((v) => v));
   const v = value as Record<string, unknown>;
@@ -1089,15 +1066,15 @@ function opBody(f: Fields, op: BundleOpKind): BundleOpBody {
           after: g.get('after', uniqueIds(unitR)), origin: g.get('origin', oneOf(['checkpoint', 'repair'] as const)),
         }))),
         spec: f.get('spec', admitSpec),
-        targets: f.optional('targets', ruleList) ?? admitTargetsDefault(),
+        targets: f.get('targets', ruleList),
       };
     case 'patch-spec':
       return { op, unit: f.get('unit', unitR), patch: f.get('patch', arrayOf(wireOp, { nonEmpty: true })) };
     case 'reenter': {
-      const fixes = f.optional('fixes', nullable(failureRef));
+      const fixes = f.get('fixes', nullable(failureRef));
       return {
-        op, unit: f.get('unit', unitR), reenters: f.get('reenters', unitR), enterAt: f.get('enterAt', nullable(oneOf(REENTRY_POINTS))), reset: f.get('reset', nullable(rulingR)),
-        fixes: fixes === undefined ? reenterFixesDefault() : fixes,
+        op, unit: f.get('unit', unitR), reenters: f.get('reenters', unitR), enterAt: f.get('enterAt', nullable(oneOf(REENTRY_POINTS))), reset: f.get('reset', nullable(str)),
+        fixes: fixes,
       };
     }
     case 'cut':
@@ -1123,12 +1100,8 @@ function opBody(f: Fields, op: BundleOpKind): BundleOpBody {
       };
     case 'obligation-split':
       return { op, obligation: f.get('obligation', oid), children: f.get('children', arrayOf(splitChild, { nonEmpty: true })) };
-    case 'obligation-dispose':
-      return { op, obligation: f.get('obligation', oid), disposition: f.get('disposition', oneOf(OBLIGATION_DISPOSITIONS)), ruling: f.get('ruling', rulingR) };
     case 'invalidate-approval':
       return { op, unit: f.get('unit', unitR) };
-    case 'rule':
-      return { op, ruling: f.get('ruling', rulingR) };
     case 'request':
       return { op, class: f.get('class', oneOf(OWNER_ONLY_CLASSES)), summary: f.get('summary', str) };
   }
@@ -1147,7 +1120,6 @@ export const bundleOp: Read<BundleOp> = (value, path) => {
  * canonical JSON. A recorded answer from before 2026-10-15 holds the text itself (`checkpointRulingTextDefault`).
  */
 const rulingText: Read<string> = (value, path) => {
-  if (typeof value === 'string') return checkpointRulingTextDefault(value);
   if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new SchemaError(path, 'a ruling sidecar object', value);
   return canonicalJson(value as JsonValue);
 };
@@ -1157,7 +1129,6 @@ export const checkpointOutput: Read<CheckpointOutput> = object((f) => {
     decision: f.get('decision', oneOf(CHECKPOINT_DECISIONS)),
     reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })),
     ops: f.get('ops', arrayOf(bundleOp)),
-    rulings: f.get('rulings', arrayOf(rulingText)),
     findingDispositions: f.get('findingDispositions', arrayOf(object((g) => ({
       finding: g.get('finding', (v, p): FindingId => findingId(v, p)), disposition: g.get('disposition', oneOf(FINDING_DISPOSITIONS)), reason: g.get('reason', str),
     })))),
@@ -1173,9 +1144,8 @@ export const checkpointOutput: Read<CheckpointOutput> = object((f) => {
     corpusAmendments: f.get('corpusAmendments', arrayOf(corpusAmendmentProposal)),
   };
   // An answer to an earlier executor's prompt carries `issueIntake`: read and ignored (`issuesIgnored`; scaffolding).
-  if (f.optional('issueIntake', (v) => v) !== undefined) issuesIgnored('checkpoint.issueIntake');
+
   if ((out.decision === 'no-op') !== (out.ops.length === 0)) throw new SchemaError(`${f.path}.ops`, out.decision === 'no-op' ? 'no ops on a no-op' : 'at least one op in a bundle', out.ops);
-  if (out.decision === 'no-op' && out.rulings.length > 0) throw new SchemaError(`${f.path}.rulings`, 'no rulings on a no-op', out.rulings);
   return out;
 });
 

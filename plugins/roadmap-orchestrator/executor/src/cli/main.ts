@@ -1,71 +1,37 @@
-// CLI entry: parses argv into the closed Command union (src/input/cli.ts) and runs it. Run commands find
-// their run dir through the RunLocator: the host lock claim's, or `--repo` + `--arc` explicitly. Commands
-// for the executor (`pause`, `stop`, `ack`, `resume`, `sweep`, `apply`, `resolve-edge`, `run-only`, and M3's
-// `rule`, `reverse`, `steer`, `merge-in`, `audit`, `close-admissions`) only write a file into its durable queue
-// and print the command id; the executor applies it and writes the receipts. `rule` and `steer` hash the file
-// they name into the command (its absolute path and sha256). `gc` is a host action under the host lock, not a
-// queued command (src/commands/gc.ts): it prints its report, or `{refused}` with exit 75 (host busy) or 78. `apply` first hashes the
-// plan file the arc started with (start.json), every unit's spec and (M3) the ledger with its sidecars, the obligations
-// and the vision into the command's manifest (`RevisionManifest`), and `--base <export.json>` the base the executor
-// rebases them from (an `inputs export`'s manifest; src/input/rebase.ts); `apply --dry-run` instead classifies the
-// rebased files against the plan in force, read-only, and prints the verdict (it runs no smoke: a backend the new
-// routing needs is listed under `smoke`). Output is agent-facing JSON.
-// `start` launches the supervisor detached (src/supervisor.ts), which claims the host and spawns the
-// executor (`--base <export.json>`: the base its files are rebased from, as an apply's; deflake scope, 2026-10-23), and waits for its own generation's readiness (the executor passed every startup check), at
-// most 240 s by default or `--wait <ms>`. It prints one JSON line: `ready` (exit 0; start returns while the
-// run goes on), the refused exit line (exit 78/75), or `failed` / `timeout` (exit 70). The run's own end is
-// in exit.reason.json and `status`. `status` prints the status object; a second `status` of a run while one runs
-// refuses (src/status.ts `statusSingleFlight`).
-//
-// M4a host acts (no host lock, not queued; each module's own header has its contract): `phase0 check` prints its rows
-// and slice candidates (exit 0 when no row, else 78); `corpus pin` writes the pin and prints it with its sha256, or the
-// refused row (78); `brief` prints the payload (`--json`) or its Markdown, and `--ack` prints the commands it enqueued, or
-// the stale ids (78); `pr` prints the pull request; `chain status` prints the chain. `answer` records the owner's answer (src/answers.ts) and prints
-// `{recorded}` or `{unchanged}` (a rerun with the text in force), or `{refused}` (78: no Phase-0 record, the question
-// unknown or not open in it). Step 0a placed every module at its final path; the landing steps replace them.
-// M4a rev 3 host acts: `witness-check` prints `{passed: true}` (exit 0) or `{missing, failed, malformed}` (78);
-// `resume-arc` prints `{resumed: false, reason}` or the relaunched supervisor's line; `inputs export` prints the export's
-// `export.json`. `apply --ruling` lands ruling sidecars with the edits (I2). Step N0 placed each module at its final path.
-// M4b: `flow accept|reject|request` queue the root agent's flow commands and `flow given` writes a host given
-// (src/commands/flow.ts); each prints the queued command or the given, or `{refused}` (78). Step 0a placed the module.
-// Scope growth (2026-10-15): `scope accept|reject <unit> --reason` queues the root agent's `scope-decide` (src/commands/scope.ts).
-// dev.13: `demo up|down|hold|release` queues the owner's act on the demo (src/demo/promote.ts).
-//
-// `runCli` takes the host directory, as every host function does: `main` passes HOST_DIR, tests a temp dir.
-import { existsSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+// Resolve CLI paths, export revisions and queue durable commands.
+import { existsSync,readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { submitCommand } from '../commands/queue.ts';
-import { evaluateApply } from '../commands/apply.ts';
-import { DEFAULT_KEEP, gc } from '../commands/gc.ts';
+import { basename,join,resolve } from 'node:path';
 import { recordAnswer } from '../answers.ts';
+import { evaluateApply } from '../commands/apply.ts';
 import { brief } from '../commands/brief.ts';
 import { chainStatus } from '../commands/chain.ts';
 import { corpusPin } from '../commands/corpus.ts';
+import { flowCommand } from '../commands/flow.ts';
+import { DEFAULT_KEEP,gc } from '../commands/gc.ts';
+import { exportInputs,readExport } from '../commands/inputs.ts';
 import { phase0Check } from '../commands/phase0.ts';
 import { openPr } from '../commands/pr.ts';
-import { exportBase, exportInputs } from '../commands/inputs.ts';
-import { flowCommand } from '../commands/flow.ts';
-import { type Run, locate } from './locate.ts';
+import { submitCommand } from '../commands/queue.ts';
 import { resumeArc } from '../commands/resumearc.ts';
 import { witnessCheck } from '../commands/witnesscheck.ts';
 import { readJson } from '../core/fsx.ts';
+import { planRev,sha256 } from '../core/ids.ts';
+import { canonicalJson,sha256Hex } from '../core/json.ts';
 import { readJournal } from '../core/log.ts';
-import { canonicalJson, sha256Hex } from '../core/json.ts';
-import { sha256 } from '../core/ids.ts';
-import { type CommandBody, type HashedFile, type RevisionManifest, type RunStart, runStart } from '../core/records.ts';
-import { SchemaError } from '../core/validate.ts';
+import { type CommandBody,type RevisionManifest,type RunStart,runStart } from '../core/records.ts';
+import { type AbsPath,absPath } from '../core/values.ts';
 import { START_FILE } from '../executor.ts';
-import { arcRolesOf, readInputFiles, revisionManifestOf } from '../input/inforce.ts';
-import { type AbsPath, absPath } from '../core/values.ts';
 import { HOST_DIR } from '../host/hostdir.ts';
-import { CliError, type Command, type RunLocator, parseCommand } from '../input/cli.ts';
+import { CliError,type Command,type RunLocator,parseCommand } from '../input/cli.ts';
+import { arcRolesOf,readInputFiles,revisionManifestOf } from '../input/inforce.ts';
 import { readRepoConfig } from '../preflight/checks.ts';
-import { EXIT_HOST_BUSY, EXIT_REFUSED, type StartupRejection } from '../preflight/startup.ts';
+import { EXIT_HOST_BUSY,EXIT_REFUSED,type StartupRejection } from '../preflight/startup.ts';
+import { status } from '../status.ts';
+import { START_WAIT_MS,launchSupervisor } from '../supervisor.ts';
 import { tui } from '../tui/main.ts';
-import { status, statusSingleFlight } from '../status.ts';
-import { START_WAIT_MS, launchSupervisor } from '../supervisor.ts';
-import { HEARTBEAT_MIN, watch, watchActionable } from '../watch.ts';
+import { HEARTBEAT_MIN,watch,watchActionable } from '../watch.ts';
+import { type Run,locate } from './locate.ts';
 
 const pkg = createRequire(import.meta.url)('../../package.json') as { version: string };
 
@@ -100,24 +66,17 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
     case 'apply': {
       const run = locate(command.run, hostDir);
       const start = startOf(run);
-      // M4a rev 3 (I2): each `--ruling` sidecar hashed like a `rule` record, in the order given.
-      const rulings = command.rulings.map((f) => hashedFile('apply --ruling', f));
-      const base = command.base === null ? null : exportBase(absPath(resolve(command.base)), 'apply');
+      const from = absPath(resolve(command.from));
+      const exported = readExport(from, command.rev);
+      const planFile = absPath(join(from, basename(start.planFile)));
+      const base = exported.base;
       if (command.dryRun) {
-        process.stdout.write(`${canonicalJson(await dryRun(run, start, hostDir, base, rulings, command.visionEdit))}\n`);
+        process.stdout.write(`${canonicalJson(await dryRun(run, start, hostDir, planFile, base, command.rev, command.reason))}\n`);
         return;
       }
-      let manifest: ReturnType<typeof revisionManifestOf>;
-      try {
-        manifest = revisionManifestOf(readInputFiles(start.planFile, start.repo));
-      } catch (error) {
-        if (!(error instanceof SchemaError || error instanceof SyntaxError)) throw error;
-        throw new CliError(`apply: ${start.planFile} does not load: ${error.message}`);
-      }
+      const manifest = revisionManifestOf(readInputFiles(planFile, start.repo, true));
       if ('missing' in manifest) throw new CliError(`apply: ${manifest.missing.join('; ')}`);
-      return submit(command.run, hostDir, {
-        type: 'apply', base, manifest, ...(rulings.length === 0 ? {} : { rulings }), visionEdit: command.visionEdit,
-      });
+      return submit(command.run, hostDir, { type: 'apply', planFile, base, manifest, rev: planRev(command.rev), reason: command.reason });
     }
     case 'watch': {
       const run = locate(command.run, hostDir);
@@ -129,11 +88,8 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       return;
     }
     case 'start': {
-      const base = command.args.base === null ? null : absPath(resolve(command.args.base));
-      // Read here first, so a file that is no export's is a usage error, not a refused executor.
-      if (base !== null) exportBase(base, 'start');
       const outcome = await launchSupervisor({
-        hostDir, repo: absPath(resolve(command.args.repo)), planFile: absPath(resolve(command.args.plan)), profile: command.args.profile, heartbeatStaleMs: null, base,
+        hostDir, repo: absPath(resolve(command.args.repo)), planFile: absPath(resolve(command.args.plan)), profile: command.args.profile, heartbeatStaleMs: null,
       }, process.env, command.args.waitMs ?? START_WAIT_MS);
       process.stdout.write(`${outcome.line}\n`);
       process.exitCode = outcome.code;
@@ -144,13 +100,13 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       return;
     case 'status': {
       const run = locate(command.run, hostDir);
-      process.stdout.write(`${canonicalJson(statusSingleFlight(run.runDir, run.arc, () => status(run.runDir, run.arc, hostDir)))}\n`);
+      process.stdout.write(`${canonicalJson(status(run.runDir, run.arc, hostDir))}\n`);
       return;
     }
-    case 'rule':
-      return submit(command.run, hostDir, { type: 'rule', ...hashedFile('rule', command.record) });
     case 'reverse':
       return submit(command.run, hostDir, { type: 'reverse', divergence: command.divergence });
+    case 'note':
+      return submit(command.run, hostDir, { type: 'note', unit: command.unit, brief: hashedFile('note', command.brief) });
     case 'steer':
       return submit(command.run, hostDir, {
         type: 'steer', unit: command.unit, brief: hashedFile('steer', command.brief), budgetMin: command.budgetMin, class: command.class, resume: command.resume,
@@ -287,11 +243,11 @@ function startOf(run: Run): RunStart {
 }
 
 /** `apply --dry-run`: the executor's evaluation, read-only, over the log as `status` reads it. */
-async function dryRun(run: Run, start: RunStart, hostDir: AbsPath, base: RevisionManifest | null, rulings: readonly HashedFile[], visionEdit: boolean): Promise<unknown> {
+async function dryRun(run: Run, start: RunStart, hostDir: AbsPath, planFile: AbsPath, base: RevisionManifest, rev: number, reason: string): Promise<unknown> {
   const { view } = readJournal(run.runDir, run.arc);
   const verdict = await evaluateApply({
-    runDir: run.runDir, view, hostDir, repo: start.repo, planFile: start.planFile, routingBase: { profile: start.profile, config: readRepoConfig(start.repo), arcRoles: arcRolesOf(view.planApplied()) },
-    laneEnv: process.env, manifest: null, base, rulings, visionEdit,
+    runDir: run.runDir, view, hostDir, repo: start.repo, planFile, routingBase: { profile: start.profile, config: readRepoConfig(start.repo), arcRoles: arcRolesOf(view.planApplied()) },
+    laneEnv: process.env, manifest: null, base, rev, reason,
   });
   switch (verdict.kind) {
     case 'rejected':
@@ -304,7 +260,7 @@ async function dryRun(run: Run, start: RunStart, hostDir: AbsPath, base: Revisio
     case 'accepted':
       return {
         dryRun: true, kind: 'accepted', rev: verdict.rev, nextRev: verdict.evaluated.draft.rev, changes: verdict.evaluated.draft.changes, smoke: verdict.smoke,
-        advisories: verdict.advisories, numbered: verdict.numbered, warnings: verdict.warnings,
+        advisories: verdict.advisories, warnings: verdict.warnings,
       };
   }
 }

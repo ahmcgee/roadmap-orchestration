@@ -1,180 +1,57 @@
-// The classifier of a plan change (owner ruling 2026-09-29; SCHEMAS.md "Plan in force"): the files an apply
-// (or a start) would put in force, against the plan in force and what the log says each unit has done. Every
-// change is classified; any refused change refuses the whole apply, and the rejection lists every reason.
-// Pure but for reading kept spec bytes and the rulings ledger (never the live spec in place of a kept one): no
-// effect, so `apply --dry-run` runs it as is, and `apply` runs it again just before its commit (A12). The
-// per-edit rules:
-//
-//   add a unit                  now; its id was never planned before and is not reserved (`reservedUnitIdReason`);
-//                               never already cut
-//   remove a unit               only if it never started
-//   unit order                  the started units keep their relative order (G3)
-//   an undispatched unit        any plan field and its spec, now
-//   a dispatched unit's plan    scope, a lower risk, resources, spec path and a new `after`: refused (dropping an
-//                               `after` is allowed; M3: a higher risk is re-pinned at dispatch, step A3)
-//   risk floor (M3, A3)         an undispatched unit's risk below its Phase-0 floor (its risk in the first revision that
-//                               planned it): refused unless its spec cites an active ruling that applies to it
-//   a dispatched unit's spec    lane evidenceGlobs/evidenceExcludes at its rev: in force at once (`evidence`);
-//                               the next rev (`revision`), scope and resources unchanged: pending until the
-//                               unit re-opens on it (an in-flight unit at its next stage boundary that allows
-//                               it, a unit parked at a judgment stage by `resume <unit>`); taking a pending
-//                               revision back (`withdrawn`); anything else, and any edit of a merged,
-//                               approved, publishing, stopped or finally parked unit: refused
-//   lane evidence (run 3 of M4b) a unit added or whose entry or spec changes: no lane's `evidenceGlobs` entry covers
-//                               a pattern of its scope (a literal path it names, or the same pattern;
-//                               src/spec/spec.ts `evidenceScopeConflicts`, also run at a fresh start). A spec in force
-//                               is never refused for it: only the edit that touches the unit
-//   cut (M2)                    refused on a merged or superseded unit and on one in a task (active past its
-//                               first dispatch and not paused, or with an attempt a crash cut short); a cut is
-//                               final; every unit that runs `after` a cut unit is cut too or drops the edge
-//   re-entry (M2)               `reenters` only on a unit added now; the old unit parked or held (not merged,
-//                               cut or superseded: one successor per unit); the new scope within the lineage's
-//                               envelope (M4a rev 3, F5: every member's dispatched scopes, src/input/envelope.ts
-//                               `lineageEnvelope`), or beyond it on a ruling its spec cites that names exactly the
-//                               added patterns (`widened{patterns, ruling}`); its risk not below the lineage's
-//                               floor; `reset` cites an active ruling of the ledger; `fixes` (arc feedback 2026-10-16,
-//                               required once the lineage recorded a failure)
-//                               names a failure of the lineage (an outcome or a lane failure, src/pipeline/failures.ts:
-//                               `fixesReasons`); whether the retry differs is the proposer's method (dev.12)
-//   effective graph (F15)       acyclic with every superseded unit replaced by its lineage head, the edges that
-//                               activate only after preparation included
-//   routing                     re-resolved; the caller refuses unsupported seats and smokes new backends
-//   resources and pools         add: now; change (a pool's size included) or remove: refused while a unit of it
-//                               (the name, or any instance of the pool) is held or a residue names it. A
-//                               waiter is in a stage, so the arc-wide drain of a resource edit (A12) already
-//                               excludes one
-//   environments (dev.17)       as resources (a `resource` change under the environment's name): add now; change or remove
-//                               refused while its unit is held or it is not down (src/resources/environments.ts)
-//   capacity                    over capacity (an `@cpu` request above the pool's size): refused
-//   suite lanes                 now (the next candidate runs them); refused while a unit is at a candidate, or while a
-//                               lanes attempt runs its fast suite or its red (not-certified) outcome awaits its fix round
-//   arc, integrationBranch, baseline, worktreeRoot: always refused
-//
-// M4a (step C1):
-//   target kind                 the plan target (`architecture-doc` or `corpus`) never changes (`target-kind-changed`, R17)
-//   chain                       `plan.chain` is fixed at revision 1 (`chain-immutable`, H7)
-//   corpus                      a re-pin (the pin's or the guide's bytes changed): `corpus{pinSha256, guideSha256}`, an
-//                               architect `apply` only; what it may re-pin is the shared Phase-0 rows' (src/phase0/rows.ts:
-//                               re-derivation, census, rules resolved, the vision confirmed), which the apply runs
-//   phase0                      the Phase-0 record changed: `phase0{sha256}`, an architect `apply` only; a new
-//                               `promote` disposition while draining is refused
-//
-// M4a rev 3 (N3):
-//   priority (F1b)              a unit's `priority`: `unit-priority{unit}`, any status but merged (no drain)
-//   known defects (F4, R49)     `known-defects` (no drain). An entry new or edited by the apply names a `fixUnit` the
-//                               plan holds, whose lineage head is neither merged nor cut; cutting a member of the
-//                               lineage an unedited entry names is refused (`known-defect-fix-unit`); every entry's
-//                               lane is declared by an active lane of a spec in force (`known-defect-lane`); the
-//                               combined graph (the effective `after` edges, plus a hold edge from every unmerged
-//                               unit declaring an entry's lane, outside the fixer's lineage, to the fixer's head)
-//                               is acyclic (`known-defect-cycle`, the cycle named)
-//   plan-check shape (E)        `plan-check-shape` (no drain): dev.16 and earlier; removed in dev.17 (the plan reader drops
-//                               the field, warned), so no apply classifies it now
-//   derived files (2026-10-16)  `derived` (no drain; the dispatch check re-pins each unit's widening, src/input/derived.ts)
-//
-// dev.13 (SCHEMAS.md "dev.13"):
-//   milestones                  `milestones` (no drain), an architect `apply` only (`milestoneRows`): a walked milestone
-//                               (a `walk-started` names it) is never removed and keeps its units and design; one being
-//                               walked does not change until its walk ends; a milestone added or whose units change lists a
-//                               unit still to merge; on every revision no milestone lists a cut unit. Milestones without
-//                               the holistic layer are refused `milestones-need-holistic` before routing resolves; a first
-//                               milestone added (or the last removed) moves the walk seats into (out of) force, so the
-//                               revision's routing is checked and smoked (`routingRows`); a walked milestone whose bringUp
-//                               or journeys change is listed in the change's `rewalk` (its walk abandonment brake resets)
-//
-// dev.13, agent D (`polishRows`):
-//   polish units                a polish unit added (not a re-entry) only by the polish revision of the walk whose
-//                               proposal it carries (proposer `walk{job}`), the proposal of its milestone and the unit
-//                               the proposal names; that proposer changes nothing else
-//   a dropped tweak's cut       proposer `compare{unit}` cuts only `unit`, reason `polish-dropped`, judged `drop`; the
-//                               in-a-task refusal does not apply (the unit waits at its candidate admission, in no stage)
-//
-// dev.17 (propagation, `propagationRows`):
-//   propagation units           a propagation unit added (not a re-entry) only by the propagation revision of the stale
-//                               set it names (proposer `propagation{rev}`), which changes nothing else
-//
-// M3 (plan "Obligations as a revisioned input"; step A2). Who proposes the revision (`Proposer`) decides what
-// it may touch:
-//   rulings ledger + sidecars   executor-owned after start (A3): only `rule`, `apply --ruling` (M4a rev 3, I2: the
-//                               records `withRulings` lands, the live ledger as in force) and a checkpoint bundle
-//                               change them; a differing ledger or sidecar from a plain apply, a start or a reverse
-//                               is refused
-//   vision                      owner-only (A14): only an architect `apply` changes it (`visionEditReasons`)
-//   holistic                    may be added (`holistic`, with the vision), never removed; its audit settings and
-//                               its obligations file stay once in force; `holistic.advances` (owner-only: only an
-//                               `apply` changes it, `advances`) names active clauses of the revision's vision, one a
-//                               world clause (`advancesReasons`), checked on every revision
-//   obligations                 `classifyObligations` (src/holistic/obligations.ts): added, split, witness (also
-//                               every obligation witnessed by a changed arc lane), disposed by a ruling in force
-//                               (a split parent stays split: never disposed), restored, edited; `mapping`. A
-//                               checkpoint split's dropped text is returned for its `split-dropped` divergence
-//   route                       a unit's routing layer: any class at any seat (DESIGN §4 "Routing profiles"); the
-//                               unit's routing re-resolved (`routing{routingRev, unit}`) and its unsupported seats
-//                               refused; a moved implementer seat parks it `routing-changed` at dispatch (A3)
-//   limits                      the plan's (`limits{null}`) or a unit's (`limits{unit}`); a bound below what a unit
-//                               has spent is refused
-//   scope growth                a dispatched unit's plan and spec scope may grow when its spec cites an active
-//                               ruling that applies to the unit and names exactly the added patterns (in
-//                               backticks; src/input/envelope.ts `rulingNaming`); the unit is re-pinned (A3) and the
-//                               transient check allows them (A4)
-//   spec obligations, repairs   declared obligations exist and cover every non-exempt obligation a mapping pattern
-//                               that may overlap the unit's scope names (prefix-conservative); a `repair` unit
-//                               declares repairs, each an obligation or a finding of the arc
-//   witness items (2026-10-15)  every active witness item names an arc lane in force, checked on each unit the revision
-//                               touches and, when the obligations change, on every unit that can still run; one naming
-//                               an obligation restates a binding obligation's witness the unit delivers, exactly
-//                               (paid M4b run 6's plan-check rule, now every proposer's)
-//   plan-check (2026-10-15)     proposer `plan-check{unit}`: a redirect's patched spec of its own unit, validated and
-//                               never committed; the dispatched-spec rules do not apply to that spec
-//   specs ↔ census (run 10, C)  a corpus arc: every spec of the revision against its census (`spec-census-mismatch`,
-//                               src/holistic/rederive.ts `specCensusMismatches`, the Phase-0 rows' one predicate), for
-//                               every proposer: an apply's or a bundle's revision cannot break what the start held
-//
-// `commandScope` (A12) is the units a mutation must find idle or awaiting admission: an apply's follow from
-// its classification.
-import { existsSync, readFileSync } from 'node:fs';
-import type { IntentOf, PlanChange, ReentryWidening } from '../core/events.ts';
+// Classify a proposal against the plan in force. Every refused edit contributes its reason.
+// Root applies authorize weakenings with their reason; automatic revisions retain the frozen contract gate.
+import type { IntentOf,PlanChange,ReentryWidening } from '../core/events.ts';
 import { PLAN_FIELDS } from '../core/events.ts';
 import {
-  type JobId, type ObligationId, type PlanRev, type ResourceName, type ResourceUnit, type RulingId, type Sha256Hex, type UnitId, type VisionClauseId,
-  parseResourceUnit, compareIds, canonicalIds,
+type JobId,type ObligationId,
+type ResourceName,type ResourceUnit,type RulingId,type Sha256Hex,type UnitId,type VisionClauseId,
+canonicalIds,
+compareIds,
+parseResourceUnit
 } from '../core/ids.ts';
-import { type CorpusPin, parseCorpusPin } from '../corpus/types.ts';
-import type { Phase0Record } from '../phase0/types.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
+import { readJournal } from '../core/log.ts';
 import {
-  type Bounds, type HashedFile, type ResidueKey, type RevisionManifest, type SpecM1, BOUND_FIELDS, specObligations, specRepairs, specWitnesses,
+BOUND_FIELDS,
+type Bounds,
+type ResidueKey,type RevisionManifest,type SpecM1,
+specObligations,specRepairs,specWitnesses
 } from '../core/records.ts';
-import { type UnitState, maxTier, openAttempt } from '../core/state.ts';
+import { type UnitState,maxTier,openAttempt } from '../core/state.ts';
 import { SchemaError } from '../core/validate.ts';
-import type { AbsPath, RepoPattern } from '../core/values.ts';
-import { undispositioned } from '../host/residues.ts';
+import type { AbsPath,RepoPattern } from '../core/values.ts';
+import { type CorpusPin,parseCorpusPin } from '../corpus/types.ts';
 import { classifyObligations } from '../holistic/obligations.ts';
 import { specCensusMismatches } from '../holistic/rederive.ts';
-import { type BusyAttempt, type ClassifiedAdmit, type ObligationDisposition, type Obligations, type RulingSidecar, type Vision, isExempt, parseObligations, parseRulingSidecar, parseVision } from '../holistic/types.ts';
-import { advancesReasons, visionEditReasons } from '../holistic/vision.ts';
-import { citedFailure, laneFailures, outcomeRef } from '../pipeline/failures.ts';
+import { type BusyAttempt,type ClassifiedAdmit,type ObligationDisposition,type Obligations,type Vision,isExempt,parseObligations,parseVision } from '../holistic/types.ts';
+import { advancesReasons,visionEditReasons } from '../holistic/vision.ts';
+import { undispositioned } from '../host/residues.ts';
+import type { Phase0Record } from '../phase0/types.ts';
+import { citedFailure,laneFailures,outcomeRef } from '../pipeline/failures.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
-import { cpuCapacity, overCapacity } from '../resources/pool.ts';
 import { environmentState } from '../resources/environments.ts';
+import { cpuCapacity,overCapacity } from '../resources/pool.ts';
 import { resourceTable } from '../resources/reserve.ts';
-import { type ResolvedRouting, unsupportedSeats } from '../routing/layers.ts';
-import { RISK_TIERS, type RiskTier, UNIT_ROLES } from '../routing/types.ts';
-import { readJournal } from '../core/log.ts';
-import { effectiveGraph, findCycle } from '../schedule/graph.ts';
-import type { CommandScope, ScopeOf } from '../schedule/types.ts';
-import { type Ruling, ledgerAfter, nextRulingId, parseRulings, sidecarsAfter } from '../spec/rulings.ts';
-import { SpecFileError, bytesSha256, evidenceScopeConflicts, parseSpec } from '../spec/spec.ts';
+import { type ResolvedRouting,unsupportedSeats } from '../routing/layers.ts';
+import { RISK_TIERS,type RiskTier,UNIT_ROLES } from '../routing/types.ts';
+import { effectiveGraph,findCycle } from '../schedule/graph.ts';
+import type { CommandScope,ScopeOf } from '../schedule/types.ts';
+import { type Ruling,parseRulings } from '../spec/rulings.ts';
+import { SpecFileError,bytesSha256,evidenceScopeConflicts,parseSpec } from '../spec/spec.ts';
+import { baseFiles,compareAndSwap } from './cas.ts';
+import { lineageEnvelope,withinEnvelope } from './envelope.ts';
 import {
-  type InForce, type InputFile, type InputFiles, PLAN_INPUT, type RevisionInForce, type RoutingBase, SPEC_INPUT, inputPath, keptInput, phase0RecordOf, planInForce, planRouting,
-  inForceFiles, readInputFiles, revisionInForce, revisionManifestOf, sidecarPath, specShaInForce, unitRouting,
+type InForce,
+type InputFiles,PLAN_INPUT,type RevisionInForce,type RoutingBase,SPEC_INPUT,
+inForceFiles,
+inputPath,keptInput,phase0RecordOf,planInForce,planRouting,
+readInputFiles,revisionInForce,revisionManifestOf,
+specShaInForce,unitRouting
 } from './inforce.ts';
-import { baseFiles, ownerBase, rebaseInputs } from './rebase.ts';
-import { lineageEnvelope, rulingNaming, withinEnvelope } from './envelope.ts';
 import {
-  type KnownDefect, type PlanM1, type PlanUnit, boundsOf, derivedOf, environmentOf, environmentsOf, hasMilestones, knownDefectsOf, milestonesNeedHolistic, milestonesOf, parsePlan,
-  planFieldValue, priorityOf, reservedUnitIdReason,
+type KnownDefect,type PlanM1,type PlanUnit,boundsOf,derivedOf,environmentOf,environmentsOf,hasMilestones,knownDefectsOf,milestonesNeedHolistic,milestonesOf,parsePlan,
+planFieldValue,priorityOf,reservedUnitIdReason,
 } from './plan.ts';
 
 /**
@@ -188,8 +65,8 @@ import {
  * apply's `rulings` (M4a rev 3, I2): the ids its `--ruling` records land (absent: none), the only ledger change it may make.
  */
 export type Proposer =
-  | Readonly<{ type: 'apply'; rulings?: readonly RulingId[] }>
-  | Readonly<{ type: 'rule' | 'reverse' | 'start' | 'executor' }>
+  | Readonly<{ type: 'apply'; reason?: string }>
+  | Readonly<{ type: 'reverse' | 'start' | 'executor' }>
   /**
    * 2026-10-15 (arc feedback #3): a plan-check redirect's patch of its own unit's spec, validated (never committed: the
    * stage applies it as a machine `spec.patch`) by the same classifier every revision runs. Its unit is mid-attempt and
@@ -201,7 +78,7 @@ export type Proposer =
    * release's, `reenterFixesDefault`): adopted as recorded, the `fixes` rows do not bind them (`fixesReasons`).
    */
   | Readonly<{
-    type: 'bundle'; job: JobId; cites: readonly VisionClauseId[]; evidence: readonly string[]; admits: readonly ClassifiedAdmit[]; fixesUnrecorded: readonly UnitId[];
+    type: 'bundle'; job: JobId; cites: readonly VisionClauseId[]; evidence: readonly string[]; admits: readonly ClassifiedAdmit[]; 
   }>
   /** dev.13 (agent D): the code-applied polish revision of walk `job` (src/walk/polish.ts): it only admits that walk's proposals. */
   | Readonly<{ type: 'walk'; job: JobId }>
@@ -214,14 +91,14 @@ export type Proposer =
    */
   | Readonly<{ type: 'split'; unit: UnitId; children: readonly UnitId[] }>
   /** dev.17 (flaky ledger): the code-applied deflake revision (src/pipeline/deflake.ts): it only admits deflake units. */
-  | Readonly<{ type: 'deflake' }>
+  | Readonly<{ type: 'deflake' }>;
   /** dev.17: the code-applied propagation revision of the stale set plan rev `rev` recorded (src/holistic/propagation.ts): it only admits its propagation units. */
-  | Readonly<{ type: 'propagation'; rev: PlanRev }>;
 
 /** The revision's inputs beyond plan and specs, parsed (what renders and the payload are built from). */
 export type NextInputs = Readonly<{
+  reason?: string | undefined;
   ledger: readonly Ruling[];
-  sidecars: readonly RulingSidecar[];
+  
   obligations: Obligations | null;
   vision: Vision | null;
   /** M4a: a corpus arc's pin and Phase-0 record (null when absent or not loading: the rows refuse them). */
@@ -239,7 +116,7 @@ export type Classified =
    */
   | Readonly<{
     kind: 'accepted'; changes: readonly PlanChange[]; scoped: readonly UnitId[]; routings: readonly ResolvedRouting[];
-    dispositions: readonly Readonly<{ obligation: ObligationId; disposition: ObligationDisposition; ruling: RulingId }>[];
+    dispositions: readonly Readonly<{ obligation: ObligationId; disposition: ObligationDisposition; reason: string; rev: number }>[];
     dropped: readonly Readonly<{ obligation: ObligationId; sentences: readonly string[] }>[];
     inputs: NextInputs;
   }>
@@ -418,12 +295,7 @@ function phase0Risk(input: ClassifyInput, unit: UnitId): RiskTier | null {
 function riskFloorReason(input: ClassifyInput, unit: PlanUnit, spec: SpecM1 | null, inputs: NextInputs, ledger: Ledger): string | null {
   const floor = phase0Risk(input, unit.id);
   if (floor === null || !riskAbove(floor, unit.risk)) return null;
-  const ruled = (spec?.cites.rulings ?? []).some((id) => {
-    const s = inputs.sidecars.find((x) => x.id === id);
-    return rulingReason(ledger, id, `unit ${unit.id}'s risk`) === null && s !== undefined && s.status === 'active'
-      && s.appliesTo.type === 'units' && s.appliesTo.units.includes(unit.id);
-  });
-  return ruled ? null : `unit ${unit.id}: risk ${unit.risk} is below its Phase-0 floor ${floor}; lowering it needs its spec to cite an active ruling for ${unit.id}`;
+  return input.proposer.type === 'apply' && input.proposer.reason?.trim() ? null : `unit ${unit.id}: risk ${unit.risk} is below its Phase-0 floor ${floor}; lowering it needs apply --reason`;
 }
 
 /**
@@ -489,22 +361,18 @@ function reentryRow(
     reasons.push(`unit ${unit.id} re-enters ${re.unit}, whose lineage (root ${root}) was never dispatched, so it has no scope envelope`);
   } else {
     const outside = [...new Set(unit.scope.filter((p) => !withinEnvelope(p, envelope)))].sort();
-    const ruling = outside.length === 0 ? null : rulingNaming(unit.id, envelope, outside, spec?.cites.rulings ?? [], inputs.ledger, inputs.sidecars);
-    if (ruling !== null) widened = { patterns: outside, ruling };
-    else if (outside.length > 0) {
-      reasons.push(`unit ${unit.id}: scope ${outside.join(', ')} lies outside its lineage's envelope ${envelope.join(', ')} (every scope ${root}'s lineage was `
-        + `dispatched with), and its spec cites no active ruling for ${unit.id} that names exactly those patterns`);
+    if (outside.length > 0) {
+      if (!inputs.reason?.trim()) reasons.push(`unit ${unit.id}: scope beyond the lineage envelope needs apply --reason`);
+      else widened = {patterns: outside, reason: inputs.reason};
     }
+
   }
   if (old.risk !== null && maxTier(unit.risk, old.risk) !== unit.risk) reasons.push(`unit ${unit.id}: risk ${unit.risk} is below its lineage's floor ${old.risk}`);
-  if (re.reset !== undefined) {
-    const r = rulingReason(ledger, re.reset.ruling, `unit ${unit.id}'s reset`);
-    if (r !== null) reasons.push(r);
-  }
+  if (re.reset !== undefined && !(input.proposer.type === 'apply' && input.proposer.reason?.trim())) reasons.push(`unit ${unit.id}: resetting counters needs apply --reason`);
   reasons.push(...fixesReasons(input, unit));
   if (reasons.length > 0) return reasons;
   const change = { type: 'unit-reentered', unit: unit.id, reenters: re.unit, reset: re.reset !== undefined } as const;
-  return widened === null ? change : { ...change, widened };
+  return widened === null ? change : {...change, widened};
 }
 
 /** The re-entered unit `old`, then each unit its lineage re-entered before it, back to the root. */
@@ -523,7 +391,6 @@ function lineageOf(view: JournalView, old: UnitId): readonly UnitId[] {
  * release's checkpoint answer recorded before `fixes` (the bundle proposer's `fixesUnrecorded`).
  */
 function fixesReasons(input: ClassifyInput, unit: PlanUnit): readonly string[] {
-  if (input.proposer.type === 'bundle' && input.proposer.fixesUnrecorded.includes(unit.id)) return [];
   const re = unit.reenters!;
   const lineage = lineageOf(input.view, re.unit);
   if (re.fixes === undefined) {
@@ -571,30 +438,22 @@ function nextInputsOf(input: ClassifyInput, reasons: string[]): Readonly<{ ledge
       ledger = { path: next.ledger.path, error: error.message };
     }
   }
-  const sidecars: RulingSidecar[] = [];
-  for (const [id, file] of next.sidecars) {
-    const s = parsedInput('ruling sidecar', file.path, file.bytes, parseRulingSidecar, reasons);
-    if (s === null) continue;
-    if (s.id !== id) reasons.push(`the ruling sidecar ${file.path} holds ${s.id}`);
-    else if ('rulings' in ledger && !ledger.rulings.some((r) => r.id === id)) reasons.push(`the ruling sidecar ${file.path} names ${id}, which the ledger does not hold`);
-    else sidecars.push(s);
-  }
   const obligations = next.obligations === null ? null : parsedInput('obligations file', next.obligations.path, next.obligations.bytes, parseObligations, reasons);
   const vision = next.vision === null ? null : parsedInput('vision file', next.vision.path, next.vision.bytes, parseVision, reasons);
   const sha = (bytes: Buffer | null | undefined): string | null => (bytes === null || bytes === undefined ? null : bytesSha256(bytes));
-  const sidecarShas = Object.fromEntries([...next.sidecars].map(([id, f]) => [id, bytesSha256(f.bytes)]));
   const c = next.corpus;
   const m = revision.manifest;
   return {
     ledger,
     inputs: {
+      reason: input.proposer.type === 'apply' ? input.proposer.reason : undefined,
       ledger: 'rulings' in ledger ? ledger.rulings : [],
-      sidecars,
+      
       obligations,
       vision,
       corpus: c === null ? null : { pin: quietly(c.pin.bytes, parseCorpusPin), phase0: phase0RecordOf(c.phase0.bytes) },
       changed: {
-        rulings: sha(next.ledger.bytes) !== revision.ledger.sha256 || !same(sidecarShas, revision.manifest.rulings.sidecars),
+        rulings: sha(next.ledger.bytes) !== revision.ledger.sha256,
         obligations: sha(next.obligations?.bytes) !== (revision.obligations?.sha256 ?? null),
         vision: sha(next.vision?.bytes) !== (revision.vision?.sha256 ?? null),
         corpus: sha(c?.pin.bytes) !== (m.corpus ?? null) || sha(c?.guide.bytes) !== (m.corpusGuide ?? null),
@@ -648,10 +507,8 @@ function scopeGrowthReason(
   if (same([...was].sort(), [...now].sort())) return null;
   const added = now.filter((p) => !was.includes(p)).sort();
   if (was.some((p) => !now.includes(p))) return `unit ${unit} is dispatched: ${fixed} (a scope may only grow, backed by a ruling)`;
-  const backing = rulingNaming(unit, was, added, spec?.cites.rulings ?? [], inputs.ledger, inputs.sidecars);
-  return backing === null
-    ? `unit ${unit} is dispatched: its ${what} grows by ${added.join(', ')} without its spec citing an active ruling for ${unit} that names exactly those patterns`
-    : null;
+  if (inputs.reason?.trim()) return null;
+  return `unit ${unit}: growing ${what} needs apply --reason`;
 }
 
 /** Classifies the files against the plan in force. */
@@ -734,10 +591,10 @@ export function classify(input: ClassifyInput): Classified {
       cutNow.add(unit.id);
       const refusal = proposer.type === 'compare' && proposer.unit === unit.id ? droppedCutRefusal(view, unit)
         : proposer.type === 'split' && proposer.unit === unit.id ? splitCutRefusal(view, unit.id) : cutRefusal(view, unit.id);
-      const ruling = unit.cut.ruling === undefined ? null : rulingReason(ledger, unit.cut.ruling, `unit ${unit.id}'s cut`);
+      const authorization = (proposer.type === 'apply' && proposer.reason?.trim()) || proposer.type === 'split' || proposer.type === 'compare' ? null : 'cut needs apply --reason';
       if (refusal !== null) reasons.push(refusal);
-      if (ruling !== null) reasons.push(ruling);
-      if (refusal === null && ruling === null) {
+      if (authorization !== null) reasons.push(authorization);
+      if (refusal === null && authorization === null) {
         changes.push({ type: 'unit-cut', unit: unit.id });
         scoped.add(unit.id);
       }
@@ -937,9 +794,9 @@ export function classify(input: ClassifyInput): Classified {
   if (changes.some((c) => c.type === 'plan-field' && (c.field === 'contracts' || c.field === 'rulings'))) for (const u of plan.units) scoped.add(u.id);
 
   // M3: the rulings ledger and its sidecars (A3), holistic (A5), the vision (A14), the obligations.
-  const landsRulings = proposer.type === 'rule' || proposer.type === 'bundle' || (proposer.type === 'apply' && (proposer.rulings ?? []).length > 0);
+  const landsRulings = proposer.type === 'apply';
   if (inputs.changed.rulings && !landsRulings) {
-    reasons.push(`the rulings ledger ${next.ledger.path} or its sidecars differ from the ledger in force: it is executor-owned after start (A3); a ruling lands through \`roadmap rule\``);
+    reasons.push(`the rulings ledger ${next.ledger.path} changes only through apply`);
   }
   if (cur.holistic !== undefined && plan.holistic === undefined) reasons.push('holistic may be added, never removed (A5)');
   if (cur.holistic === undefined && plan.holistic !== undefined) changes.push({ type: 'holistic' });
@@ -973,7 +830,6 @@ export function classify(input: ClassifyInput): Classified {
   // dev.17: deflake units and their code proposer.
   deflakeRows(cur, plan, proposer, changes, reasons);
   // dev.17: propagation units and their code proposer.
-  propagationRows(cur, plan, proposer, changes, reasons);
 
   if (reasons.length > 0) return { kind: 'rejected', reasons: [...reasons, ...busy.map(busyText)] };
   if (busy.length > 0) return { kind: 'busy', busy, changes };
@@ -1253,24 +1109,6 @@ function deflakeRows(cur: PlanM1, plan: PlanM1, proposer: Proposer, changes: rea
   if (other.length > 0) reasons.push(`the deflake revision only admits deflake units; it also changes ${other.map((c) => canonicalJson(c)).join(', ')}`);
 }
 
-/**
- * dev.17 (propagation): a propagation unit added (not a re-entry) only by the propagation revision of the stale set it names
- * (proposer `propagation{rev}`), which only adds such units.
- */
-function propagationRows(cur: PlanM1, plan: PlanM1, proposer: Proposer, changes: readonly PlanChange[], reasons: string[]): void {
-  const curIds = new Set(cur.units.map((u) => u.id));
-  const added = plan.units.filter((u) => !curIds.has(u.id) && u.origin === 'propagation' && u.reenters === undefined);
-  for (const u of added) {
-    if (proposer.type !== 'propagation') reasons.push(`unit ${u.id} is a propagation unit: only the executor mints one, from a stale set, not a ${proposer.type}`);
-    else if (u.propagation!.rev !== proposer.rev) reasons.push(`unit ${u.id} names the stale set of rev ${u.propagation!.rev}; this revision mints rev ${proposer.rev}'s`);
-  }
-  if (proposer.type === 'propagation') {
-    const ids = new Set<string>(added.map((u) => u.id));
-    const other = changes.filter((c) => !(c.type === 'unit-added' && ids.has(c.unit)));
-    if (other.length > 0) reasons.push(`the propagation revision of rev ${proposer.rev} only mints its propagation units; it also changes ${other.map((c) => canonicalJson(c)).join(', ')}`);
-  }
-}
-
 type ObligationRows = Readonly<{
   changes: readonly PlanChange[];
   dispositions: Extract<Classified, { kind: 'accepted' }>['dispositions'];
@@ -1287,9 +1125,9 @@ function obligationRows(input: ClassifyInput, inputs: NextInputs, reasons: strin
     return none;
   }
   if (next === null || !inputs.changed.obligations) return none;
-  const author = input.proposer.type === 'bundle' ? { type: 'checkpoint' as const, cites: input.proposer.cites } : { type: 'architect' as const };
+  const author = input.proposer.type === 'bundle' ? { type: 'checkpoint' as const, cites: input.proposer.cites } : { type: 'architect' as const, reason: input.proposer.type === 'apply' ? input.proposer.reason : undefined, rev: input.inForce.rev + 1 };
   const v = classifyObligations(prev, next, {
-    vision: inputs.vision, rulings: inputs.sidecars, author,
+    vision: inputs.vision, author,
     latched: new Set(input.view.holistic().latched.map((l) => l.obligation)), published: new Set(input.view.publications().map((p) => p.unit)),
   });
   reasons.push(...v.reasons);
@@ -1304,7 +1142,7 @@ function obligationRows(input: ClassifyInput, inputs: NextInputs, reasons: strin
         reasons.push(`${c.id} is split into ${was.state.children.join(', ')} and stays split: disposition its children instead (H14)`);
         continue;
       }
-      dispositions.push({ obligation: c.id, disposition: c.disposition, ruling: c.ruling });
+      dispositions.push({ obligation: c.id, disposition: c.disposition, reason: c.reason, rev: c.rev });
     }
     if (c.type === 'split' && c.dropped.length > 0) dropped.push({ obligation: c.id, sentences: c.dropped });
     changes.push({ type: 'obligation', id: c.id, edit: c.type });
@@ -1564,136 +1402,16 @@ export function changesScope(changes: readonly PlanChange[], cur: PlanM1, next: 
 /** What an apply's proposal reads besides the owner's files: the log, the run dir and the revision in force. */
 export type ProposalContext = Readonly<{ runDir: AbsPath; view: JournalView; inForce: InForce; revision: RevisionInForce }>;
 
-/** An apply's proposal: the merged files with its rulings landed, the owner's files it was rebased from, and its numbered rulings. */
-export type ApplyProposal = Readonly<{ next: InputFiles; owner: InputFiles; records: readonly RulingRecord[] }>;
-
-/**
- * The proposal an `apply` makes (and a start whose files differ, with no manifest and no rulings): the owner's files, which
- * must still hash to its manifest (null: a dry run or a start, which read them now), rebased from `base` (null: the
- * default base, `ownerBase`) onto the files in force (src/input/rebase.ts), then its `--ruling` records numbered and landed
- * on the merged ledger (M4a rev 3, I2: `withRulings`), which must be the ledger in force. Otherwise why it does not hold:
- * files missing or changed since hashed, base bytes not kept, a conflict.
- */
-export function applyProposal(
-  ctx: ProposalContext, files: InputFiles, manifest: RevisionManifest | null, base: RevisionManifest | null, drafts: readonly RulingDraft[],
-): ApplyProposal | Readonly<{ reasons: readonly string[] }> {
+/** An edit of an exported revision, composed with untouched files in force. */
+export type ApplyProposal = Readonly<{ next: InputFiles }>;
+export function applyProposal(ctx: ProposalContext, files: InputFiles, manifest: RevisionManifest | null, base: RevisionManifest): ApplyProposal | Readonly<{ reasons: readonly string[] }> {
   const actual = revisionManifestOf(files);
   if ('missing' in actual) return { reasons: actual.missing };
-  if (manifest !== null) {
-    // An apply an earlier CLI queued hashed the issue capture too (`phase0Issues`): not compared (`issuesIgnored`; scaffolding).
-    const { phase0Issues: _issues, ...expected } = manifest;
-    if (!same(actual, expected)) return { reasons: [manifestMismatch(files, expected, actual)] };
-  }
-  const from = baseFiles(ctx.runDir, base ?? ownerBase(ctx.runDir, ctx.view, ctx.view.arc), files.planFile, files.repo);
+  if (manifest !== null && !same(actual, manifest)) return { reasons: [manifestMismatch(files, manifest, actual)] };
+  const from = baseFiles(ctx.runDir, base, files.planFile, files.repo);
   if ('reasons' in from) return from;
-  const theirs = inForceFiles(ctx.runDir, ctx.view, ctx.inForce, ctx.revision, files.planFile, files.repo);
-  const merged = rebaseInputs(from.files, files, theirs);
-  if ('reasons' in merged) return merged;
-  const next = merged.next;
-  if (drafts.length > 0) {
-    const sidecars = (f: InputFiles): string => canonicalJson([...f.sidecars].map(([id, x]) => [id, bytesSha256(x.bytes)]));
-    if (next.ledger.bytes === null || theirs.ledger.bytes === null || !next.ledger.bytes.equals(theirs.ledger.bytes) || sidecars(next) !== sidecars(theirs)) {
-      return { reasons: [`the rulings ledger ${files.ledger.path} or its sidecars change the ledger in force: \`apply --ruling\` lands its rulings on the ledger in force; leave the ledger and its sidecars as they are`] };
-    }
-  }
-  const records = numberRulings(drafts, next.ledger.bytes);
-  return { next: withRulings(next, records), owner: files, records };
-}
-
-/** The placeholder id an owner's ruling record may carry: the executor numbers it when it lands (the ledger's next C-n). */
-export const UNNUMBERED = 'C-?';
-
-/** A ruling record a `rule` or an `apply --ruling` lands, numbered (`numberRulings`): the bytes it lands, parsed as a sidecar. */
-export type RulingRecord = Readonly<{ path: AbsPath; bytes: Buffer; sidecar: RulingSidecar }>;
-/** A ruling record as the CLI hashed it: its JSON, and its id, or null for `C-?` (numbered when it lands). */
-export type RulingDraft = Readonly<{ path: AbsPath; bytes: Buffer; raw: Readonly<Record<string, unknown>>; id: RulingId | null }>;
-
-/**
- * The ruling record at `file.path`, which must still hash to `file.sha256` and parse as a ruling sidecar (its id a C-n, or
- * `C-?`); else why not.
- */
-export function readRulingRecord(file: HashedFile): RulingDraft | string {
-  if (!existsSync(file.path)) return `the ruling record ${file.path} does not exist`;
-  const bytes = readFileSync(file.path);
-  if (bytesSha256(bytes) !== file.sha256) return `the ruling record ${file.path} changed since the command hashed it`;
-  try {
-    const raw = JSON.parse(bytes.toString('utf8')) as unknown;
-    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw new SchemaError('ruling', 'a ruling sidecar object', raw);
-    const record = raw as Readonly<Record<string, unknown>>;
-    const unnumbered = record['id'] === UNNUMBERED;
-    const sidecar = parseRulingSidecar(unnumbered ? { ...record, id: 'C-1' } : record);
-    return { path: file.path, bytes, raw: record, id: unnumbered ? null : sidecar.id };
-  } catch (error) {
-    if (!(error instanceof SchemaError || error instanceof SyntaxError)) throw error;
-    return `the ruling record ${file.path} is not a ruling sidecar: ${error.message}`;
-  }
-}
-
-/**
- * The records numbered, in order, on `ledger`: a `C-?` record takes the ledger's next C-n after the records before it (its
- * bytes then its JSON with that id); a numbered one stays as written (validation refuses an id that is not next).
- */
-export function numberRulings(drafts: readonly RulingDraft[], ledger: Buffer | null): readonly RulingRecord[] {
-  let text = ledger?.toString('utf8') ?? '';
-  return drafts.map((d) => {
-    let record: RulingRecord;
-    if (d.id !== null) record = { path: d.path, bytes: d.bytes, sidecar: parseRulingSidecar(d.raw) };
-    else {
-      const id = nextRulingId(parseRulings(text, 'the rulings ledger'));
-      const raw = Object.fromEntries(Object.entries(d.raw).map(([k, v]) => [k, k === 'id' ? id : v]));
-      record = { path: d.path, bytes: Buffer.from(`${JSON.stringify(raw, null, 2)}\n`, 'utf8'), sidecar: parseRulingSidecar(raw) };
-    }
-    text = ledgerAfter(text, record.sidecar);
-    return record;
-  });
-}
-
-/** A sidecar's bytes as the executor writes one it changed (a superseded status): its record as JSON. */
-const sidecarBytes = (s: RulingSidecar): Buffer => Buffer.from(`${JSON.stringify(s, null, 2)}\n`, 'utf8');
-
-/** The dispositions that are an obligation state (`amended` is none: it authorizes an amendment, §2.8). */
-const TERMINAL: readonly string[] = ['waived', 'deferred', 'retired'];
-
-/**
- * The obligations file with `sidecar`'s terminal dispositions applied: each such obligation's `state` becomes
- * `{type: <disposition>, ruling}`, the file's JSON edited in place. The classifier then checks the change like any other.
- */
-function obligationsAfter(current: InputFile | null, sidecar: RulingSidecar): InputFile | null {
-  const terminal = sidecar.obligationDispositions.filter((d) => TERMINAL.includes(d.disposition));
-  if (terminal.length === 0) return current;
-  if (current === null || current.bytes === null) throw new Error(`${sidecar.id} dispositions ${terminal.map((d) => d.id).join(', ')}, but the revision holds no obligations (validation names only obligations it holds)`);
-  const raw = JSON.parse(current.bytes.toString('utf8')) as { obligations: { id: ObligationId; state: unknown }[] };
-  for (const d of terminal) {
-    const o = raw.obligations.find((x) => x.id === d.id);
-    if (o === undefined) throw new Error(`${sidecar.id} dispositions ${d.id}, which the revision's obligations do not hold (validation names only obligations it holds)`);
-    o.state = { type: d.disposition, ruling: sidecar.id };
-  }
-  return { path: current.path, bytes: Buffer.from(`${JSON.stringify(raw, null, 2)}\n`, 'utf8') };
-}
-
-/**
- * The one way a ruling lands in a revision (`rule`, `apply --ruling`; A3, I2): `files` with each record, in order, landed:
- * the ledger after it (`ledgerAfter`: its line appended, fully superseded rulings folded), the sidecars after it
- * (`sidecarsAfter`: its bytes as recorded, a sidecar it supersedes rewritten, every other one's bytes kept) and its
- * terminal obligation dispositions applied. Validation (`validateRuling`) is the caller's (src/commands/rule.ts).
- */
-export function withRulings(files: InputFiles, records: readonly RulingRecord[]): InputFiles {
-  let out = files;
-  for (const r of records) {
-    const ledger = out.ledger.bytes;
-    if (ledger === null) throw new Error(`ruling ${r.sidecar.id} lands on the ledger ${out.ledger.path}, which does not exist`);
-    const kept = new Map([...out.sidecars].map(([id, f]) => [id, { ...f, sidecar: parseRulingSidecar(JSON.parse(f.bytes.toString('utf8'))) }] as const));
-    const sidecars = new Map(sidecarsAfter([...kept.values()].map((k) => k.sidecar), r.sidecar).map((s) => {
-      const k = kept.get(s.id);
-      const bytes = s.id === r.sidecar.id ? r.bytes : k !== undefined && k.sidecar.status === s.status ? k.bytes : sidecarBytes(s);
-      return [s.id, { path: sidecarPath(out.ledger.path, s.id), bytes }] as const;
-    }));
-    out = {
-      ...out, ledger: { path: out.ledger.path, bytes: Buffer.from(ledgerAfter(ledger.toString('utf8'), r.sidecar), 'utf8') }, sidecars,
-      obligations: obligationsAfter(out.obligations, r.sidecar),
-    };
-  }
-  return out;
+  const current = inForceFiles(ctx.runDir, ctx.view, ctx.inForce, ctx.revision, files.planFile, files.repo);
+  return compareAndSwap(from.files, files, current);
 }
 
 /** Which files no longer hash to what the command's manifest recorded. */
@@ -1740,10 +1458,10 @@ export function commandScope(sc: ScopeContext): ScopeOf {
     switch (body.type) {
       case 'resume':
         return body.target.type === 'all' ? ARC : body.target.type === 'unit' ? unitsScope([body.target.unit]) : NONE;
+      case 'note':
       case 'sweep':
       case 'resolve-edge':
       case 'run-only':
-      case 'rule':
       case 'audit':
       case 'close-admissions':
       case 'flow-decide':
@@ -1762,19 +1480,17 @@ export function commandScope(sc: ScopeContext): ScopeOf {
         if (inForce === null) return NONE;
         let files: InputFiles;
         try {
-          files = readInputFiles(sc.planFile, sc.repo);
+          files = readInputFiles(body.planFile, sc.repo, true);
         } catch (error) {
           if (!(error instanceof SchemaError || error instanceof SyntaxError)) throw error;
           return NONE;
         }
-        const drafts = (body.rulings ?? []).map(readRulingRecord);
-        if (drafts.some((r) => typeof r === 'string')) return NONE;
         const revision = revisionInForce(sc.runDir, inForce);
-        const proposal = applyProposal({ runDir: sc.runDir, view, inForce, revision }, files, body.manifest, body.base, drafts as readonly RulingDraft[]);
+        const proposal = applyProposal({ runDir: sc.runDir, view, inForce, revision }, files, body.manifest, body.base);
         if ('reasons' in proposal) return ARC;
         const verdict = classify({
           runDir: sc.runDir, view, inForce, revision, next: proposal.next, residues: undispositioned(sc.hostDir), routing: sc.routingBase,
-          proposer: proposal.records.length === 0 ? { type: 'apply' } : { type: 'apply', rulings: proposal.records.map((r) => r.sidecar.id) },
+          proposer: { type: 'apply', reason: body.reason },
         });
         if (verdict.kind === 'busy') return unionScope(changesScope(verdict.changes, inForce.plan, proposal.next.plan), verdict.busy.map((b) => b.unit));
         return verdict.kind === 'accepted' ? changesScope(verdict.changes, inForce.plan, proposal.next.plan) : NONE;

@@ -76,56 +76,57 @@
 // the convergence bound when due (over the effective ops), the divergence digest when due. Each is idempotent, and
 // `settleDecided` rewrites what a crash lost.
 import { join } from 'node:path';
-import type { Parent } from '../core/events.ts';
+import { type RevisionContext,evaluateRevision,keepRevision,payloadOf } from '../commands/apply.ts';
 import { crashPoint } from '../core/crash.ts';
-import type { JournalView } from '../core/interfaces.ts';
+import type { Parent } from '../core/events.ts';
 import { holdFence } from '../core/fence.ts';
-import { type JsonValue, canonicalJson } from '../core/json.ts';
 import {
-  type FindingId, type InvocationId, type JobId, type LaneId, type NeedsUserId, type ObligationId, type PlanRev, type RoutingRev, type RuleId, type RulingId, type Sha,
-  type ResourceName, type Sha256Hex, type UnitId, type VisionClauseId, parseInvocationId, specRev, canonicalIds, type NumberedId, compareIds,
+type FindingId,type InvocationId,type JobId,type LaneId,type NeedsUserId,type ObligationId,type PlanRev,
+type ResourceName,
+type RoutingRev,type RuleId,
+type Sha,
+type Sha256Hex,type UnitId,type VisionClauseId,
+canonicalIds,
+parseInvocationId,specRev
 } from '../core/ids.ts';
-import { type LaneDef, type NeedsUserContent, type NeedsUserReason, type SpecM1, specObligations, specRepairs } from '../core/records.ts';
-import { type CheckpointState, openAttempt } from '../core/state.ts';
-import { FIXES_UNRECORDED, bundleClassesOf } from '../core/upgrade.ts';
+import type { JournalView } from '../core/interfaces.ts';
+import { canonicalJson } from '../core/json.ts';
+import { bundleClassesOf } from '../core/projections.ts';
+import { type LaneDef,type NeedsUserContent,type NeedsUserReason,type SpecM1,specObligations,specRepairs } from '../core/records.ts';
+import { type CheckpointState,openAttempt } from '../core/state.ts';
 import { SchemaError } from '../core/validate.ts';
-import { type AbsPath, type RepoPath, type RepoPattern, absPath, branchRef } from '../core/values.ts';
-import { git, revParse } from '../git/git.ts';
-import {
-  type InForce, type InputFile, type InputFiles, type RevisionInForce, type RoutingBase, inForceFiles, keptPayload, ledgerPath, requirePlanInForce, revisionInForce,
-  sidecarPath,
-} from '../input/inforce.ts';
-import { type DeflakeOrigin, type PlanM1, type PolishOrigin, type PropagationOrigin, advancesOf, contractOpDocuments, parsePlan } from '../input/plan.ts';
-import type { RiskTier } from '../routing/types.ts';
-import { type RevisionContext, evaluateRevision, keepRevision, payloadOf } from '../commands/apply.ts';
-import { mayOverlap } from '../input/classify.ts';
-import { openNeedsUser, raiseNeedsUser, readNeedsUser } from '../needsuser.ts';
-import { arcLaneKey, laneEnvId, mapInForce, observations, observedViews } from '../pipeline/lanes.ts';
-import { conversionsOf, rulingContextAt } from '../pipeline/publish.ts';
-import { loadUnitSpec } from '../pipeline/stages.ts';
-import { type BundleOp, type CheckpointOutput, splitChildAnchor } from '../prompts/schemas.ts';
-import { type DocsPublisher, commitRevision } from '../recover/revision.ts';
-import { SpecPatchOpError, SpecPatchStaleError, applySpecPatch } from '../spec/patch.ts';
-import { ledgerAfter, parseRulings, sidecarsAfter, validateRuling } from '../spec/rulings.ts';
-import { SpecFileError, parseSpec, specBytes } from '../spec/spec.ts';
+import { type AbsPath,type RepoPath,type RepoPattern,absPath,branchRef } from '../core/values.ts';
 import { mintDebt } from '../debt/mint.ts';
-import { baselineDebtAt } from '../phase0/rows.ts';
-import {
-  type AdmitClassification, type AdmitOp, type AdmitWorld, type AuditRange, type RecordedAdmit, type UnitMerge, admitOpOf, classifyAdmits, conversionReasons, namedUnits, opportunityClauses,
-} from './admits.ts';
-import { admitSummary, amendmentReasons, appendAmendment, checkpointAmendments, conversionAmendment, divergenceAmendments } from './amendments.ts';
-import type { AuditContext } from './audit.ts';
-import { type AppliedBundle, brakesOf, raiseBound, secondChanges } from './convergence.ts';
-import { publishedHeads } from './coverage.ts';
-import { type DivergenceBase, appendDivergences, interpretationDivergences, opDivergences, raiseDigest } from './divergence.ts';
-import { isActive, ruleFinding, rulingRefusal } from './findings.ts';
-import { type Brake, type TailWorld, brakeConversions, brakeOf, findingOriginRoots, indexedAdmits, settledPoint, tailRulings } from './tail.ts';
-import { type Observation, observedVerdict, reuse } from './observe.ts';
+import { git,revParse } from '../git/git.ts';
 import { inputShaOf } from '../git/reusekey.ts';
+import { mayOverlap } from '../input/classify.ts';
 import {
-  type BundleRejection, type BusyAttempt, type ClassifiedAdmit, type Conversion, type ObligationAnchor, isBrakeConversion, type ObligationDef, type Obligations, type OwnerOnlyClass, type RevisionVector,
-  type RulingSidecar, isExempt, isMustHold, laneRevOf, observationKeyText, parseObligations, parseRulingSidecar, planDefectText,
-} from './types.ts';
+type InForce,type InputFile,type InputFiles,type RevisionInForce,type RoutingBase,inForceFiles,keptPayload,
+requirePlanInForce,revisionInForce
+} from '../input/inforce.ts';
+import { type DeflakeOrigin,type PlanM1,type PolishOrigin,advancesOf,contractOpDocuments,parsePlan } from '../input/plan.ts';
+import { openNeedsUser,raiseNeedsUser,readNeedsUser } from '../needsuser.ts';
+import { baselineDebtAt } from '../phase0/rows.ts';
+import { arcLaneKey,laneEnvId,mapInForce,observations,observedViews } from '../pipeline/lanes.ts';
+import { conversionsOf,rulingContextAt } from '../pipeline/publish.ts';
+import { loadUnitSpec } from '../pipeline/stages.ts';
+import { type BundleOp,type CheckpointOutput,splitChildAnchor } from '../prompts/schemas.ts';
+import { type DocsPublisher,commitRevision } from '../recover/revision.ts';
+import type { RiskTier } from '../routing/types.ts';
+import { SpecPatchOpError,SpecPatchStaleError,applySpecPatch } from '../spec/patch.ts';
+import { SpecFileError,parseSpec,specBytes } from '../spec/spec.ts';
+import {
+type AdmitClassification,type AdmitOp,type AdmitWorld,type AuditRange,type RecordedAdmit,type UnitMerge,admitOpOf,classifyAdmits,conversionReasons,namedUnits,opportunityClauses,
+} from './admits.ts';
+import { admitSummary,amendmentReasons,appendAmendment,checkpointAmendments,conversionAmendment,divergenceAmendments } from './amendments.ts';
+import type { AuditContext } from './audit.ts';
+import { type AppliedBundle,brakesOf,raiseBound,secondChanges } from './convergence.ts';
+import { publishedHeads } from './coverage.ts';
+import { type DivergenceBase,appendDivergences,interpretationDivergences,opDivergences,raiseDigest } from './divergence.ts';
+import { isActive,ruleFinding,rulingRefusal } from './findings.ts';
+import { type Observation,observedVerdict,reuse } from './observe.ts';
+import { type Brake,type TailWorld,brakeConversions,brakeOf,findingOriginRoots,indexedAdmits,settledPoint,tailRulings } from './tail.ts';
+import { type BundleRejection,type BusyAttempt,type ClassifiedAdmit,type Conversion,type ObligationAnchor,type ObligationDef,type Obligations,type OwnerOnlyClass,type RevisionVector,isBrakeConversion,isExempt,isMustHold,laneRevOf,observationKeyText,parseObligations,planDefectText } from './types.ts';
 import { citeReasons } from './vision.ts';
 import { laneMisses } from './witnessfiles.ts';
 
@@ -283,19 +284,7 @@ const indexed = (ops: readonly BundleOp[]): readonly IndexedOp[] => ops.map((op,
  * landing a ruling twice appended it to the ledger twice); two `rule` ops of one ruling that differ are a reason.
  */
 function distinctRuleOps(ops: readonly IndexedOp[]): Readonly<{ ops: readonly IndexedOp[]; reasons: readonly string[] }> {
-  const first = new Map<string, IndexedOp>();
-  const reasons: string[] = [];
-  const kept = ops.filter((x) => {
-    if (x.op.op !== 'rule') return true;
-    const earlier = first.get(x.op.ruling);
-    if (earlier === undefined) {
-      first.set(x.op.ruling, x);
-      return true;
-    }
-    if (canonicalJson(earlier.op) !== canonicalJson(x.op)) reasons.push(`ops ${earlier.index + 1} and ${x.index + 1} both land ruling ${x.op.ruling}, differently: land it through one \`rule\` op`);
-    return false;
-  });
-  return { ops: kept, reasons };
+  return { ops, reasons: [] };
 }
 
 /**
@@ -308,12 +297,10 @@ type Proposal = Readonly<{
   files: InputFiles;
   /** The obligations with the ops applied (the obligations in force when they do not parse or nothing touched them). */
   obligations: Obligations | null;
-  landing: readonly RulingSidecar[];
   touched: Touched;
   /** The lanes the ops bring in (an admitted spec's, a patch's added or replaced lanes). */
   lanes: readonly LaneDef[];
   /** Contract ops of landing rulings on a path outside the plan's contracts and architecture doc (H10). */
-  outsidePaths: readonly RepoPath[];
   reasons: readonly string[];
 }>;
 
@@ -325,7 +312,6 @@ type RawObligations = Record<string, unknown> & { obligations: RawObligation[] }
 const TERMINAL = ['waived', 'deferred', 'retired'] as const;
 const isTerminal = (d: string): d is (typeof TERMINAL)[number] => (TERMINAL as readonly string[]).includes(d);
 const jsonBytes = (value: unknown): Buffer => Buffer.from(`${JSON.stringify(value, null, 2)}\n`, 'utf8');
-const judgedPaths = (s: RulingSidecar): readonly RepoPath[] => [...new Set([...s.contractRefs, ...s.contractOps.map((o) => o.path)])].sort();
 
 /** The routing rev the checkpoint call `inv` ran under (its spawn's subject). */
 function callRoutingRev(ctx: CheckpointContext, inv: InvocationId): RoutingRev {
@@ -345,11 +331,6 @@ export const numericId = <T extends string>(id: T): T => id.replace(/^([A-Z])-0+
 export function numericRulingIds(output: CheckpointOutput): CheckpointOutput {
   const ops = output.ops.map((op): BundleOp => {
     switch (op.op) {
-      case 'rule':
-      case 'obligation-dispose':
-        return { ...op, ruling: numericId(op.ruling) };
-      case 'reenter':
-        return op.reset === null ? op : { ...op, reset: numericId(op.reset) };
       case 'patch-spec':
         return { ...op, patch: op.patch.map((x) => (x.op === 'cite' ? { ...x, rulings: x.rulings.map(numericId) } : x)) };
       default:
@@ -360,75 +341,6 @@ export function numericRulingIds(output: CheckpointOutput): CheckpointOutput {
 }
 
 /**
- * A model-written ruling's ids in numeric form (`id`, `supersedes[].id`, C3) and its id lists (`obligations`, `cites`,
- * `obligationDispositions` by id) put in canonical order before the sidecar reader, which requires it: the model's order
- * never invalidates a ruling. Anything else is the reader's to refuse (a malformed id throws InvalidIdError, a
- * SchemaError: the ruling's reason).
- */
-function answerIdOrder(raw: Record<string, unknown>): Record<string, unknown> {
-  const out = { ...raw };
-  if (typeof out['id'] === 'string') out['id'] = numericId(out['id']);
-  const sup = out['supersedes'];
-  if (Array.isArray(sup)) out['supersedes'] = sup.map((x) => (typeof x === 'object' && x !== null && typeof (x as { id?: unknown }).id === 'string' ? { ...x, id: numericId((x as { id: string }).id) } : x));
-  for (const key of ['obligations', 'cites'] as const) {
-    const v = out[key];
-    if (Array.isArray(v) && v.every((x) => typeof x === 'string')) out[key] = [...(v as NumberedId[])].sort(compareIds);
-  }
-  const d = out['obligationDispositions'];
-  if (Array.isArray(d) && d.every((x) => typeof x === 'object' && x !== null && typeof (x as { id?: unknown }).id === 'string')) {
-    out['obligationDispositions'] = [...(d as { id: NumberedId }[])].sort((x, y) => compareIds(x.id, y.id));
-  }
-  return out;
-}
-
-/**
- * The rulings of the output, each parsed with what the executor stamps (lead ruling): `ruledBy: checkpoint{job}` and a
- * `consistency` judged by the checkpoint at the captured head and revisions (the model echoes none).
- */
-function stampedRulings(ctx: CheckpointContext, a: Activation, reasons: string[]): readonly RulingSidecar[] {
-  const at = rulingContextAt(readerOf(ctx), a.captured.headSha);
-  const routingRev = callRoutingRev(ctx, a.inv);
-  const ledgerSha256 = a.captured.vector.ledgerSha256;
-  if (ledgerSha256 === null) throw new Error(`${a.job}: a holistic revision keeps its ledger, but the capture names none`);
-  // 2026-10-15 (arc feedback #3): a ruling listed twice exactly is one ruling; two different rulings under one id are a reason.
-  const seen = new Map<string, Readonly<{ index: number; key: string }>>();
-  return a.output.rulings.flatMap((text, i) => {
-    try {
-      const raw = answerIdOrder(JSON.parse(text) as Record<string, unknown>);
-      const key = canonicalJson(raw as JsonValue);
-      const id = typeof raw['id'] === 'string' ? raw['id'] : null;
-      const earlier = id === null ? undefined : seen.get(id);
-      if (earlier !== undefined) {
-        if (earlier.key !== key) reasons.push(`rulings ${earlier.index + 1} and ${i + 1} are both ${id}, with different content: give each ruling once`);
-        return [];
-      }
-      if (id !== null) seen.set(id, { index: i, key });
-      const draft = parseRulingSidecar({
-        ...raw, ruledBy: { type: 'checkpoint', job: a.job },
-        consistency: {
-          verdict: 'consistent',
-          // M4a rev 3 (C2): the pin the checkpoint read, so a corpus arc's ruling is consistent with the corpus in force.
-          judgedRevs: {
-            head: a.captured.headSha, ledgerSha256, obligationsSha256: a.captured.vector.obligationsSha256, visionSha256: a.captured.visionSha256, contracts: [],
-            ...(a.captured.corpusSha256 === undefined ? {} : { corpusSha256: a.captured.corpusSha256 }),
-          },
-          by: { type: 'judgment', role: 'checkpoint', routingRev },
-        },
-      });
-      const contracts = judgedPaths(draft).flatMap((path) => {
-        const blob = at.blobAt(path);
-        return blob === null ? [] : [{ path, blob }];
-      });
-      return [{ ...draft, consistency: { ...draft.consistency, judgedRevs: { ...draft.consistency.judgedRevs, contracts } } }];
-    } catch (error) {
-      if (!(error instanceof SchemaError || error instanceof SyntaxError)) throw error;
-      reasons.push(`ruling ${i + 1} is not a ruling sidecar: ${error.message}`);
-      return [];
-    }
-  });
-}
-
-/**
  * A split child as the obligations file holds it, anchored at its doc ref or at its rule with the hash `anchor` resolved
  * in the pin in force; its proof is the checkpoint's own judgment of the witness it names.
  */
@@ -436,7 +348,7 @@ function childOf(parent: ObligationDef, op: Extract<BundleOp, { op: 'obligation-
   const serves = canonicalIds([...parent.serves, ...op.cites]);
   return {
     id: c.id, rev: 1, statement: c.statement, ...anchor, serves, witness: c.witness,
-    proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev, witness: c.witness },
+    proofJudgment: { verdict: 'proves', obligationRev: 1, witness: { testIds: c.witness.testIds, files: c.witness.files } },
     deliveredBy: c.deliveredBy, activation: c.activation, parent: parent.id, contracts: parent.contracts, state: { type: 'active' },
   };
 }
@@ -456,7 +368,7 @@ function mappedObligations(obligations: Obligations, scope: readonly string[], d
  */
 export type AdmitEntry = Readonly<{
   id: UnitId; risk: RiskTier; scope: readonly RepoPattern[]; after: readonly UnitId[]; resources: readonly ResourceName[];
-  origin: 'checkpoint' | 'repair' | 'polish' | 'deflake' | 'propagation'; polish?: PolishOrigin; deflake?: DeflakeOrigin; propagation?: PropagationOrigin;
+  origin: 'checkpoint' | 'repair' | 'polish' | 'deflake'; polish?: PolishOrigin; deflake?: DeflakeOrigin;
 }>;
 
 /**
@@ -479,7 +391,7 @@ export function admitUnit(plan: RawPlan, specs: Map<UnitId, InputFile>, entry: A
   plan.units.push({
     id: entry.id, spec: `${entry.id}.json`, risk: entry.risk, scope: entry.scope, resources: entry.resources, after: entry.after, origin: entry.origin,
     ...(entry.polish === undefined ? {} : { polish: entry.polish }), ...(entry.deflake === undefined ? {} : { deflake: entry.deflake }),
-    ...(entry.polish === undefined ? {} : { polish: entry.polish }), ...(entry.propagation === undefined ? {} : { propagation: entry.propagation }),
+    ...(entry.polish === undefined ? {} : { polish: entry.polish }),
   });
   specs.set(entry.id, { path: specPath, bytes: specBytes(spec) });
   return { spec };
@@ -523,25 +435,6 @@ function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, rev
   };
   const specPath = (id: UnitId): AbsPath => absPath(join(ctx.planFile, '..', `${id}.json`));
 
-  const landing = stampedRulings(ctx, a, reasons);
-  const byId = new Map(landing.map((s) => [s.id as string, s]));
-  const ruled = new Set(opts.ops.flatMap(({ op }) => (op.op === 'rule' ? [op.ruling as string] : [])));
-  for (const s of landing) if (!ruled.has(s.id)) reasons.push(`ruling ${s.id} lands through no \`rule\` op`);
-  const documents = new Set<RepoPath>(contractOpDocuments(inForce.plan));
-  const outsidePaths = [...new Set(landing.flatMap((s) => s.contractOps.map((o) => o.path).filter((p) => !documents.has(p))))].sort();
-
-  let ledgerText = revision.ledger.bytes.toString('utf8');
-  let sidecars = [...revision.sidecars.values()].map((s) => s.sidecar);
-  const dispose = (id: ObligationId, disposition: string, ruling: RulingId): void => {
-    if (!isTerminal(disposition)) return;
-    const o = obligationsRaw?.obligations.find((x) => x.id === id);
-    if (o === undefined) {
-      reasons.push(`${ruling} dispositions ${id}, which the obligations in force do not hold`);
-      return;
-    }
-    o.state = { type: disposition, ruling };
-    touched.obligations = true;
-  };
 
   opts.ops.forEach(({ op, index: i }) => {
     const at = `op ${i + 1} (${op.op})`;
@@ -590,8 +483,8 @@ function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, rev
         plan.units.push({
           ...rest, id: op.unit, spec: `${op.unit}.json`, contingent: [],
           reenters: {
-            unit: op.reenters, ...(op.enterAt === null ? {} : { enterAt: op.enterAt }), ...(op.reset === null ? {} : { reset: { ruling: op.reset } }),
-            ...(op.fixes === null || op.fixes === FIXES_UNRECORDED ? {} : { fixes: op.fixes }),
+            unit: op.reenters, ...(op.enterAt === null ? {} : { enterAt: op.enterAt }), ...(op.reset === null ? {} : { reset: { reason: op.reset } }),
+            ...(op.fixes === null ? {} : { fixes: op.fixes }),
           },
         });
         specs.set(op.unit, { path: specPath(op.unit), bytes: specBytes({ ...spec, unit: op.unit, rev: specRev(1) }) });
@@ -684,32 +577,6 @@ function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, rev
         touched.obligations = true;
         return;
       }
-      case 'obligation-dispose': {
-        const s = byId.get(op.ruling) ?? revision.sidecars.get(op.ruling)?.sidecar;
-        if (s === undefined || s.status !== 'active') {
-          reasons.push(`${at}: ruling ${op.ruling} is neither in the bundle nor active in force`);
-          return;
-        }
-        if (!s.obligationDispositions.some((d) => d.id === op.obligation && d.disposition === op.disposition)) {
-          reasons.push(`${at}: ${op.ruling} does not disposition ${op.obligation} ${op.disposition}`);
-          return;
-        }
-        dispose(op.obligation, op.disposition, op.ruling);
-        return;
-      }
-      case 'rule': {
-        const s = byId.get(op.ruling);
-        if (s === undefined) {
-          reasons.push(`${at}: ruling ${op.ruling} is not among the bundle's rulings`);
-          return;
-        }
-        ledgerText = ledgerAfter(ledgerText, s);
-        sidecars = [...sidecarsAfter(sidecars, s)];
-        for (const d of s.obligationDispositions) dispose(d.id, d.disposition, s.id);
-        touched.ledger = true;
-        for (const p of judgedPaths(s)) touched.contracts.add(p);
-        return;
-      }
       case 'invalidate-approval':
         reasons.push(`${at}: no record voids a gate approval in 1.0.0-dev.6; re-enter ${op.unit} (\`reenter\`) or patch its spec before its gate instead`);
         return;
@@ -733,21 +600,6 @@ function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, rev
     reasons.push(`the plan with the ops applied does not parse: ${error.message}`);
   }
 
-  // The rulings, each at the tip with the earlier valid ones landed (their contract ops outside the documents are H10's),
-  // applying to the units of the plan with the ops applied (OP-2: a ruling for a unit the bundle admits or re-enters).
-  // An invalid ruling is never folded in: its reasons reject the bundle, and the ledger the next one is checked against
-  // stays one the reader parses (paid M4a run 1: a proposed C-2 the ledger already held, folded, repeated the id and
-  // crashed the executor). A plan that does not parse rejects the bundle already.
-  if (parsed !== null) {
-    const tip = { ...rulingContextAt(readerOf(ctx), integrationHead(ctx)), units: parsed.units.map((u) => u.id) };
-    let ledger = revision.ledger.bytes.toString('utf8');
-    for (const s of landing) {
-      const inside = { ...s, contractOps: s.contractOps.filter((o) => documents.has(o.path)) };
-      const why = validateRuling(inside, { ...tip, ledger: parseRulings(ledger, 'the rulings ledger') });
-      reasons.push(...why);
-      if (why.length === 0) ledger = ledgerAfter(ledger, s);
-    }
-  }
   let obligations: InputFile | null = current.obligations;
   let obligationsAfter = obligationsNow;
   if (touched.obligations && current.obligations !== null && obligationsRaw !== null) {
@@ -760,26 +612,18 @@ function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, rev
       reasons.push(`the obligations with the ops applied do not parse: ${error.message}`);
     }
   }
-  if (parsed === null || reasons.length > 0) return { files: current, obligations: obligationsNow, landing, touched, lanes, outsidePaths, reasons };
+  if (parsed === null || reasons.length > 0) return { files: current, obligations: obligationsNow, touched, lanes, reasons };
 
   fillMappedObligations(obligationsAfter, parsed, specs, authored);
 
-  const ledgerFile = ledgerPath(ctx.planFile, parsed);
-  const sidecarFiles = new Map(sidecars.map((s) => {
-    const kept = revision.sidecars.get(s.id);
-    const bytes = kept !== undefined && kept.sidecar.status === s.status ? kept.bytes : jsonBytes(s);
-    return [s.id, { path: sidecarPath(ledgerFile, s.id), bytes }] as const;
-  }));
   const files: InputFiles = {
     ...current,
     plan: parsed,
     planBytes,
     specs: new Map(parsed.units.map((u) => [u.id, specs.get(u.id) ?? { path: specPath(u.id), bytes: null }] as const)),
-    ledger: touched.ledger ? { path: current.ledger.path, bytes: Buffer.from(ledgerText, 'utf8') } : current.ledger,
-    sidecars: touched.ledger ? sidecarFiles : current.sidecars,
     obligations,
   };
-  return { files, obligations: obligationsAfter, landing, touched, lanes, outsidePaths, reasons };
+  return { files, obligations: obligationsAfter, touched, lanes, reasons };
 }
 
 /**
@@ -855,7 +699,7 @@ function closedSince(ctx: CheckpointContext, a: Activation): readonly Readonly<{
 export function restsOn(output: CheckpointOutput, id: FindingId): boolean {
   if (output.cites.findings.includes(id)) return true;
   const token = new RegExp(`(^|[^A-Za-z0-9-])${id}(?![0-9])`);
-  return [...output.ops.map((op) => canonicalJson(op)), ...output.rulings].some((text) => token.test(text));
+  return [...output.ops.map((op) => canonicalJson(op))].some((text) => token.test(text));
 }
 
 /** Why the output's cites and finding dispositions are invalid, or empty (H16: active clauses only). */
@@ -923,7 +767,6 @@ function ownerOnly(ctx: CheckpointContext, a: Activation, p: Proposal, inForce: 
     if (!programs.has(l.argv[0])) out.push({ class: 'lane-program', summary: `lane ${l.id} runs ${JSON.stringify(l.argv[0])}, which no lane of the plan in force runs` });
     for (const name of l.env.pass.filter((n) => !passed.has(n))) out.push({ class: 'env-prerequisite', summary: `lane ${l.id} passes ${name}, which no lane of the plan in force needs` });
   }
-  for (const path of p.outsidePaths) out.push({ class: 'contract-path', summary: `a contract op edits ${path}, outside the plan's contracts and architecture doc` });
   return out;
 }
 
@@ -1148,7 +991,7 @@ function proposerOf(a: Activation, ops: readonly IndexedOp[], admits: readonly C
     type: 'bundle' as const, job: a.job, cites: canonicalIds(from.flatMap((op) => op.cites)),
     evidence: [...new Set(from.flatMap((op) => op.evidence))],
     admits,
-    fixesUnrecorded: ops.flatMap(({ op }) => (op.op === 'reenter' && op.fixes === FIXES_UNRECORDED ? [op.unit] : [])),
+    
   };
 }
 
@@ -1175,8 +1018,8 @@ function decided(ctx: CheckpointContext, job: JobId, decision: Exclude<BundleDec
 }
 
 const NO_PROPOSAL = (current: InputFiles, obligations: Obligations | null): Proposal => ({
-  files: current, obligations, landing: [], touched: { plan: false, specs: new Set<UnitId>(), obligations: false, ledger: false, contracts: new Set<RepoPath>() },
-  lanes: [], outsidePaths: [], reasons: [],
+  files: current, obligations, touched: { plan: false, specs: new Set<UnitId>(), obligations: false, ledger: false, contracts: new Set<RepoPath>() },
+  lanes: [], reasons: [],
 });
 
 /** A judged bundle code commits (step 10): the evaluated revision with its divergences, and its source. */
@@ -1342,7 +1185,7 @@ function judge(ctx: CheckpointContext, a: Activation): BundleDecision | Refused 
   };
   const draft = {
     ...evaluated.draft,
-    divergences: [...evaluated.draft.divergences, ...opDivergences(base, ops.map((x) => x.op), p.landing), ...interpretationDivergences(a.job, a.captured.vector, a.output)],
+    divergences: [...evaluated.draft.divergences, ...opDivergences(base, ops.map((x) => x.op)), ...interpretationDivergences(a.job, a.captured.vector, a.output)],
   };
 
   const source = classes !== null

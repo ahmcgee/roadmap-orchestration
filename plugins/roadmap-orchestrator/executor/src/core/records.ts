@@ -2,33 +2,52 @@
 // dispatch record, spec.json (M1) and SpecPatch, host files, commands and receipts, needs-user. Each has
 // a type and a validator from `unknown`. SCHEMAS.md is the prose twin of this module.
 import {
-  type ArcId, type ClauseId, type CommandId, type DivergenceId, type FindingId, type ImplementerSessionId, type InvocationId, type JobId,
-  type JudgmentSessionId, type EdgeId, type LaneId, type NeedsUserId, type ObligationId, type OpId, type ProposalId, type ResourceInstance,
-  type ResourceName, type RoutingRev, type RulingId, type SeatRev, type Sha, type Sha256Hex, type SpecRev, type SystemName, type UnitId, type WitnessItemId, arcId, clauseId,
-  commandId, divergenceId, edgeId, findingId, implementerSessionId, invocationIdOf, jobIdOf, judgmentSessionId, laneId, needsUserId,
-  obligationId, opIdOf, parseInvocationId, planRev, resourceInstance, resourceName, routingRev, rulingId, seatRev, sha, sha256, specRev, unitId, idsAscending,
-  witnessItemId, proposalId, systemName,
+type ArcId,type ClauseId,type CommandId,type DivergenceId,
+type EdgeId,
+type FindingId,type ImplementerSessionId,type InvocationId,type JobId,
+type JudgmentSessionId,
+type LaneId,type NeedsUserId,type ObligationId,type OpId,
+type PlanRev,
+type ProposalId,
+type ResourceInstance,
+type ResourceName,type RoutingRev,type RulingId,type SeatRev,type Sha,type Sha256Hex,type SpecRev,type SystemName,type UnitId,type WitnessItemId,arcId,clauseId,
+commandId,divergenceId,edgeId,findingId,
+idsAscending,
+implementerSessionId,invocationIdOf,jobIdOf,judgmentSessionId,laneId,needsUserId,
+obligationId,opIdOf,parseInvocationId,planRev,
+proposalId,
+resourceInstance,resourceName,routingRev,rulingId,seatRev,sha,sha256,specRev,
+systemName,
+unitId,
+witnessItemId,
 } from './ids.ts';
 import type { JsonValue } from './json.ts';
 import {
-  type AbsPath, type BootId, type IsoTime, type Nonce, type RepoPath, type RepoPattern, absPath, bootId, isoTime, nonce,
-  repoPath, repoPattern, matchesPattern,
-} from './values.ts';
-import {
-  type Brand, type Read, Fields, SchemaError, arrayOf, assertUnique, bool, envName, int, literal, nat, nullable, object, oneOf,
-  positive, sortedBy, str, stringMap, tagged, text, version,
+type Brand,type Read,Fields,SchemaError,arrayOf,assertUnique,bool,envName,int,literal,nat,nullable,object,oneOf,
+positive,sortedBy,str,stringMap,tagged,text,version,
 } from './validate.ts';
+import {
+type AbsPath,type BootId,type IsoTime,type Nonce,type RepoPath,type RepoPattern,absPath,bootId,isoTime,
+matchesPattern,
+nonce,
+repoPath,repoPattern,
+} from './values.ts';
 import type { SchemaVersion } from './version.ts';
+
+import { type HostSignatureId,HOST_SIGNATURES } from '../host/signatures.ts';
 import {
-  type LaneKind, applyExpectRevDefault, applyVisionEditDefault, designKindDefault, dev6SmokeBounds, dev31CertificationsDefault, issuesIgnored, laneCadenceDefault, laneInputsDropped,
-} from './upgrade.ts';
-import { type DesignRecord, type UnitKind, designRecord } from './design.ts';
-import { type ContractPin, type Pinned, type RequirementPin, type SpecPin, UNPINNED, pinTarget, specPin } from './pins.ts';
-import { type HostSignatureId, HOST_SIGNATURES } from '../host/signatures.ts';
-import {
-  type Backend, type ImplementerRole, JUDGMENT_SESSION_ROLES, type JudgmentSessionRole, type ModelClass, type ProfileName, type RiskTier, type Role, ROLES, backend,
-  buildClass, type BuildClass, modelClass, profileName, riskTier, MODEL_CLASSES,
+type Backend,
+type BuildClass,
+type ImplementerRole,
+type JudgmentSessionRole,type ModelClass,type ProfileName,type RiskTier,type Role,
+JUDGMENT_SESSION_ROLES,
+MODEL_CLASSES,
+ROLES,backend,
+buildClass,
+modelClass,profileName,riskTier,
 } from '../routing/types.ts';
+import { type DesignRecord,type UnitKind,designRecord } from './design.ts';
+import { type ContractPin,type Pinned,type RequirementPin,type SpecPin,UNPINNED,pinTarget,specPin } from './pins.ts';
 
 // ---------------------------------------------------------------------------------------------------
 // Shared vocabulary
@@ -788,26 +807,12 @@ export const BOUND_FIELDS = [
   'chargeable', 'redirects', 'reviseRounds', 'candidateReds', 'retries', 'judgmentDeadlineMin', 'freshBuildMin', 'editAllowanceMin', 'smokeRounds', 'smokeRuns', 'certifications',
 ] as const satisfies readonly (keyof Bounds)[];
 /** The bound fields a 1.0.0-dev.6 dispatch record carries; later fields read as the defaults. */
-export const DEV6_BOUND_FIELDS = BOUND_FIELDS.slice(0, 8) as readonly (keyof Bounds)[];
-/** The built-in bounds: M2's constants and M4a rev 3's smoke bounds (unmeasured defaults). */
 export const DEFAULT_BOUNDS: Bounds = {
   chargeable: 3, redirects: 2, reviseRounds: 2, candidateReds: 1, retries: 1, judgmentDeadlineMin: 45, freshBuildMin: 180, editAllowanceMin: 60,
   smokeRounds: 1, smokeRuns: 2, certifications: 4,
 };
-/**
- * Bounds as recorded, byte-preserving (G14): dev.6 lacks the smoke bounds, dev.31 lacks certifications.
- * `boundsOfRecord` fills those defaults with a logged upgrade warning (src/core/upgrade.ts).
- */
-export type BoundsRecord = Omit<Bounds, 'smokeRounds' | 'smokeRuns' | 'certifications'> & Partial<Pick<Bounds, 'smokeRounds' | 'smokeRuns' | 'certifications'>>;
-export const bounds: Read<BoundsRecord> = object((f) => {
-  const out: Record<string, number> = Object.fromEntries(DEV6_BOUND_FIELDS.map((k) => [k, f.get(k, positive)]));
-  const certifications = f.optional('certifications', positive);
-  if (certifications !== undefined) out['certifications'] = certifications;
-  const rounds = f.optional('smokeRounds', positive);
-  const runs = f.optional('smokeRuns', positive);
-  if ((rounds === undefined) !== (runs === undefined)) throw new SchemaError(`${f.path}.smokeRounds`, 'both smoke bounds or neither (a 1.0.0-dev.6 record)', { rounds, runs });
-  return (rounds === undefined ? out : { ...out, smokeRounds: rounds, smokeRuns: runs }) as BoundsRecord;
-});
+export type BoundsRecord = Bounds;
+export const bounds: Read<BoundsRecord> = object((f) => Object.fromEntries(BOUND_FIELDS.map((k) => [k, f.get(k, positive)])) as Bounds);
 
 /** H15: the transient-check rules a unit's lineage attempt runs under. */
 export const TRANSIENT_RULES = ['m3'] as const;
@@ -877,8 +882,7 @@ export const dispatchRecord: Read<DispatchRecord> = object((f) => {
 export function boundsOfRecord(record: DispatchRecord | null): Bounds {
   const b = record?.bounds;
   if (b === undefined) return DEFAULT_BOUNDS;
-  return { ...b, ...(b.smokeRounds === undefined || b.smokeRuns === undefined ? dev6SmokeBounds() : {}),
-    certifications: b.certifications ?? dev31CertificationsDefault() } as Bounds;
+  return b;
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -894,7 +898,7 @@ export type LaneEnv = Readonly<{ set: Readonly<Record<string, string>>; pass: re
  * `unit`; an arc lane `build` (the builder runs it as its witness check) or `candidate`; a suite lane any (`batch` only in
  * a holistic arc, the plan reader). `fast`/`estate` (`tier`) is the dev.16 form, read through `laneCadenceDefault`.
  */
-export type { LaneKind } from './upgrade.ts';
+export type LaneKind = 'spec' | 'suite' | 'arc';
 export const LANE_CADENCES = ['build', 'unit', 'candidate', 'batch'] as const;
 export type LaneCadence = (typeof LANE_CADENCES)[number];
 /** The cadences each kind of lane may declare. */
@@ -977,10 +981,7 @@ export const stochastic: Read<Stochastic> = object((f) => {
  */
 function laneFields(f: Fields, kind: LaneKind | null): LaneDef {
   const id = f.get('id', (v, p) => laneId(v, p));
-  const tier = kind === null ? undefined : f.optional('tier', oneOf(['fast', 'estate'] as const));
-  const declared = f.optional('cadence', oneOf(LANE_CADENCES));
-  if (tier !== undefined && declared !== undefined) throw new SchemaError(`${f.path}.tier`, 'absent beside cadence (tier is the dev.16 form)', tier);
-  const cadence = declared ?? (tier === undefined || kind === null ? f.get('cadence', oneOf(LANE_CADENCES)) : laneCadenceDefault(kind, tier));
+  const cadence = f.get('cadence', oneOf(LANE_CADENCES));
   if (kind !== null && !KIND_CADENCES[kind].includes(cadence)) throw new SchemaError(`${f.path}.cadence`, `${KIND_CADENCES[kind].join(' or ')} on ${kind === 'arc' ? 'an' : 'a'} ${kind} lane`, cadence);
   const out = {
     id,
@@ -995,7 +996,7 @@ function laneFields(f: Fields, kind: LaneKind | null): LaneDef {
   };
   const cpu = f.optional('cpu', positive);
   const timeout = f.optional('timeoutMin', timeoutMin);
-  if (kind === 'spec' && f.optional('inputs', arrayOf((v, p) => repoPattern(v, p), { nonEmpty: true })) !== undefined) laneInputsDropped(id);
+
   const systems = f.optional('systems', arrayOf((v, p) => systemName(v, p), { nonEmpty: true }));
   const testArgv = f.optional('testArgv', argv);
   const stoch = f.optional('stochastic', stochastic);
@@ -1120,7 +1121,7 @@ export const specRemoves = (spec: SpecM1): readonly string[] => spec.removes ?? 
 /** The suite lanes a spec forces at its lanes stage (dev.17); none when absent. */
 export const specForces = (spec: SpecM1): readonly LaneId[] => spec.forces ?? [];
 /** A spec's unit kind (dev.17): its design record's, or `module` with the upgrade warning when it has none. */
-export const specKindOf = (spec: SpecM1): UnitKind => spec.design?.kind ?? designKindDefault();
+export const specKindOf = (spec: SpecM1): UnitKind => spec.design?.kind ?? 'module';
 
 /** The requirements a spec links to: the obligations it declares, the obligations it repairs, those its witness items name. */
 export function specRequirementLinks(spec: SpecM1): readonly ObligationId[] {
@@ -1356,14 +1357,6 @@ export const recoveryLockClaim: Read<RecoveryLockClaim> = object((f) => ({
   at: f.get('at', time),
 }));
 
-/** `<runDir>/status.lock`: the run's one running `roadmap status` (src/status.ts `statusSingleFlight`). */
-export type StatusLock = Readonly<{ v: SchemaVersion; bootId: BootId; holder: ProcIdentity }>;
-export const statusLock: Read<StatusLock> = object((f) => ({
-  v: f.get('v', version),
-  bootId: f.get('bootId', bootR),
-  holder: f.get('holder', procIdentity),
-}));
-
 /** `handshake.<generation>`: the executor performs no effect until this exists and matches host.owner.json. */
 export type HandshakeFile = Readonly<{ v: SchemaVersion; nonce: Nonce; generation: number }>;
 export const handshakeFile: Read<HandshakeFile> = object((f) => ({
@@ -1512,7 +1505,7 @@ export const planManifest: Read<PlanManifest> = object((f) => ({
  * and ignored (`issuesIgnored`, src/core/upgrade.ts; scaffolding); never written.
  */
 export type RevisionInputs = Readonly<{
-  rulings: Readonly<{ ledgerSha256: Sha256Hex; sidecars: Readonly<Record<RulingId, Sha256Hex>> }>;
+  rulings: Readonly<{ ledgerSha256: Sha256Hex;  }>;
   obligations: Sha256Hex | null;
   vision: Sha256Hex | null;
   corpus?: Sha256Hex;
@@ -1542,11 +1535,11 @@ export const revisionInputs = (f: Fields): RevisionInputs => {
   const issues = f.optional('phase0Issues', (x, p) => sha256(x, p));
   if (issues !== undefined) {
     if (n === 0) throw new SchemaError(`${f.path}.phase0Issues`, 'absent outside a corpus arc', issues);
-    issuesIgnored('manifest.phase0Issues');
+
     corpus.phase0Issues = issues;
   }
   return {
-    rulings: f.get('rulings', object((g) => ({ ledgerSha256: g.get('ledgerSha256', (v, p) => sha256(v, p)), sidecars: g.get('sidecars', sidecarShas) }))),
+    rulings: f.get('rulings', object((g) => ({ ledgerSha256: g.get('ledgerSha256', (v, p) => sha256(v, p)),  }))),
     obligations: f.get('obligations', nullable((v, p) => sha256(v, p))),
     vision: f.get('vision', nullable((v, p) => sha256(v, p))),
     ...corpus,
@@ -1564,27 +1557,11 @@ export type CommandBody =
   | Readonly<{ type: 'ack'; needsUser: NeedsUserId; choice: string | null }>
   | Readonly<{ type: 'resume'; target: ResumeTarget }>
   | Readonly<{ type: 'sweep'; resource: ResourceName | null }>
-  /**
-   * `roadmap apply`: the owner's files the manifest hashes (the executor re-reads them and requires these hashes), rebased
-   * onto the files in force and put in force (src/input/rebase.ts). `base`: the files the edit started from, an export's
-   * (`--base <export.json>`), or null for the owner's files of the latest revision applied from them. A mutation. M4a rev 3
-   * (I2): `rulings`, the ruling sidecar files of `--ruling` (each hashed like a `rule` record, in the order given; absent:
-   * none, lasting), landed with the edits as one revision. A command queued before 2026-10-16 carries `expectRev` instead
-   * of `base`: read as base null (`applyExpectRevDefault`). `visionEdit` (`--vision-edit`, owner ruling 2026-10-16): whether
-   * the apply declares a vision edit, the one way a running arc's vision changes (false: a rebased vision that differs
-   * from the vision in force is refused as `vision-leak`). The CLI always writes it; a body without it was queued by an
-   * earlier CLI, which had no such flag, and reads as declared (`applyVisionEditDefault`).
-   */
-  | Readonly<{ type: 'apply'; base: RevisionManifest | null; manifest: RevisionManifest; rulings?: readonly HashedFile[]; visionEdit: boolean }>
+  | Readonly<{ type: 'apply'; planFile: AbsPath; rev: PlanRev; reason: string; base: RevisionManifest; manifest: RevisionManifest }>
   /** `roadmap resolve-edge` (M2): a contingent edge's condition is met, on the architect's evidence. Scope ∅. */
   | Readonly<{ type: 'resolve-edge'; edge: EdgeId; evidence: string }>
   /** `roadmap run-only <ids>` / `--clear` (M2): admission is limited to these units (sorted), or unlimited (null). Scope ∅. */
   | Readonly<{ type: 'run-only'; units: readonly UnitId[] | null }>
-  /**
-   * `roadmap rule <record.json>` (M3): a ruling sidecar, hashed by the CLI (`sha256` over the file's bytes at
-   * `path`), validated and published through the revision fence. Scope ∅.
-   */
-  | Readonly<{ type: 'rule'; path: AbsPath; sha256: Sha256Hex }>
   /** `roadmap reverse <D-n>` (M3, H13): the compensating revision built from the divergence's preimage. Scope: the arc. */
   | Readonly<{ type: 'reverse'; divergence: DivergenceId }>
   /**
@@ -1594,6 +1571,7 @@ export type CommandBody =
    */
   | Readonly<{ type: 'steer'; unit: UnitId; brief: Readonly<{ path: AbsPath; sha256: Sha256Hex }>; budgetMin: number; class: BuildClass | null; resume: boolean }>
   /** `roadmap merge-in <u>` (M3): the integration head into the unit branch. Scope {u}. */
+  | Readonly<{ type: 'note'; unit: UnitId; brief: HashedFile }>
   | Readonly<{ type: 'merge-in'; unit: UnitId }>
   /** `roadmap audit [--lens <k,…>]` (M3): an audit of those lenses (ascending), or of the arc's lens set L (null). Scope ∅. */
   | Readonly<{ type: 'audit'; lenses: readonly LensKindName[] | null }>
@@ -1623,7 +1601,7 @@ export type DemoAct = (typeof DEMO_ACTS)[number];
 export const LENS_KIND_NAMES = ['invariants', 'drift', 'vacuity', 'vision'] as const;
 export type LensKindName = (typeof LENS_KIND_NAMES)[number];
 /** Control commands apply immediately (waiting only for an integration.ff critical section); mutations at safe points. */
-export const CONTROL_COMMANDS = ['pause', 'stop', 'ack'] as const;
+export const CONTROL_COMMANDS = ['pause', 'stop', 'ack', 'note'] as const;
 
 export type CommandFile = Readonly<{ v: SchemaVersion; id: CommandId; arc: ArcId; at: IsoTime; body: CommandBody }>;
 
@@ -1651,25 +1629,18 @@ export const commandBody: Read<CommandBody> = tagged('type', {
   })),
   resume: object((f): CommandBody => ({ type: f.get('type', literal('resume')), target: f.get('target', resumeTarget) })),
   sweep: object((f): CommandBody => ({ type: f.get('type', literal('sweep')), resource: f.get('resource', nullable(resource)) })),
-  apply: object((f): CommandBody => {
-    const legacy = f.optional('expectRev', nullable((v, p) => planRev(v, p)));
-    const out = {
-      type: f.get('type', literal('apply')),
-      base: legacy !== undefined ? applyExpectRevDefault() : f.get('base', nullable(applyManifest)),
-      manifest: f.get('manifest', applyManifest),
-    };
-    const rulings = f.optional('rulings', arrayOf(hashedFile, { nonEmpty: true }));
-    const visionEdit = f.optional('visionEdit', bool) ?? applyVisionEditDefault();
-    return { ...out, ...(rulings === undefined ? {} : { rulings }), visionEdit };
-  }),
+  apply: object((f): CommandBody => ({
+    type: f.get('type', literal('apply')), planFile: f.get('planFile', abs), rev: f.get('rev', (v, p) => planRev(v, p)), reason: f.get('reason', str),
+    base: f.get('base', applyManifest), manifest: f.get('manifest', applyManifest),
+  })),
   'resolve-edge': object((f): CommandBody => ({
     type: f.get('type', literal('resolve-edge')), edge: f.get('edge', (v, p) => edgeId(v, p)), evidence: f.get('evidence', str),
   })),
   'run-only': object((f): CommandBody => ({
     type: f.get('type', literal('run-only')), units: f.get('units', nullable(sortedBy(unit, (u) => u, { nonEmpty: true }))),
   })),
-  rule: object((f): CommandBody => ({ type: f.get('type', literal('rule')), path: f.get('path', abs), sha256: f.get('sha256', (v, p) => sha256(v, p)) })),
   reverse: object((f): CommandBody => ({ type: f.get('type', literal('reverse')), divergence: f.get('divergence', (v, p) => divergenceId(v, p)) })),
+  note: object((f): CommandBody => ({ type: f.get('type', literal('note')), unit: f.get('unit', unit), brief: f.get('brief', hashedFile) })),
   steer: object((f): CommandBody => ({
     type: f.get('type', literal('steer')),
     unit: f.get('unit', unit),
@@ -1781,12 +1752,12 @@ export const NEEDS_USER_REASONS = [
   'apply-dropped',
   // Deflake scope (2026-10-23), non-blocking: a deflake unit was not minted, its scope reaching a same-repo corpus (no lane systems
   // and no system holding the flaky tests' files); the item names the lane, the keys and what to declare.
-  'deflake-unscoped',
+  'deflake-unscoped', 'revision-notice',
 ] as const;
 /** The reasons from M3 on raised non-blocking; every other one is raised blocking. */
 export const NON_BLOCKING_M3_REASONS = [
   'bundle-request', 'convergence-bound', 'convergence-identity', 'audit-owed', 'divergence-digest', 'flow-proposal', 'flow-host', 'flow-worse', 'flow-invalid',
-  'ruler-changed', 'executor-fault', 'deflake-parked', 'flake-recurring', 'apply-dropped', 'deflake-unscoped',
+  'ruler-changed', 'executor-fault', 'deflake-parked', 'flake-recurring', 'apply-dropped', 'deflake-unscoped', 'revision-notice',
 ] as const satisfies readonly NeedsUserReason[];
 export type NeedsUserReason = (typeof NEEDS_USER_REASONS)[number];
 

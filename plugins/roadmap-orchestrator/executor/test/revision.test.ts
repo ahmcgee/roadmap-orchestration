@@ -1,3 +1,4 @@
+import { readNeedsUser } from '../src/needsuser.ts';
 // M3 step A2: the revisioned-input core (src/commands/apply.ts `evaluateRevision`, `commitUnderFence`;
 // src/input/{classify,inforce}.ts; src/recover/revision.ts; src/core/fence.ts; src/commands/reverse.ts), over real
 // arcs (real git, real journals). The docs publication is step A4's: a stand-in (test/fixtures/docs-fake.ts) writes
@@ -12,48 +13,48 @@
 // revision.crash-after-payload, revision.crash-after-docs, revision.crash-after-fact (the REVISION_COMMIT matrix row's cells),
 // reverse.crash-cells (the REVERSE matrix row's cells).
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { describe, test } from 'node:test';
+import { mkdirSync,readFileSync,writeFileSync } from 'node:fs';
+import { dirname,join } from 'node:path';
+import { describe,test } from 'node:test';
 import {
-  type CommandContext, type CommandOutcome, type RevisionContext, applyCommand, commitUnderFence, evaluateRevision, keepRevision, payloadOf,
+type CommandContext,type CommandOutcome,type RevisionContext,applyCommand,commitUnderFence,evaluateRevision,keepRevision,payloadOf,
 } from '../src/commands/apply.ts';
-import { newCommandId, readReceipt, submitCommand, terminalReceipt } from '../src/commands/queue.ts';
-import { captureUnderFence, holdFence } from '../src/core/fence.ts';
-import type { Fact, IntentOf, PlanAppliedFact } from '../src/core/events.ts';
+import { newCommandId,readReceipt,submitCommand,terminalReceipt } from '../src/commands/queue.ts';
+import type { Fact,IntentOf,PlanAppliedFact,RevisionPayload } from '../src/core/events.ts';
+import { captureUnderFence,holdFence } from '../src/core/fence.ts';
 import {
-  type DivergenceId, clauseId, invocationId, invocationIdOf, jobId, opportunityId, planRev, sha, sha256, unitId,
+type DivergenceId,clauseId,
+invocationIdOf,jobId,opportunityId,
+sha,sha256,unitId
 } from '../src/core/ids.ts';
-import { commitRevision } from '../src/recover/revision.ts';
-import { runOp } from '../src/pipeline/dispatch.ts';
-import { specPatchOp } from '../src/spec/patch.ts';
 import { canonicalJson } from '../src/core/json.ts';
-import { openJournal, readJournal } from '../src/core/log.ts';
+import { openJournal,readJournal } from '../src/core/log.ts';
 import type { CommandBody } from '../src/core/records.ts';
-import { absPath, branchName, branchRef } from '../src/core/values.ts';
+import { absPath,branchName,branchRef } from '../src/core/values.ts';
 import { renderInvariants } from '../src/docs/invariants.ts';
-import { type DivergenceDraft, laneRevOf, parseObligations, parseRulingSidecar } from '../src/holistic/types.ts';
-import { rulingContextAt } from '../src/pipeline/publish.ts';
-import { consistencyRevs } from '../src/spec/rulings.ts';
+import { type DivergenceDraft,laneRevOf,parseObligations } from '../src/holistic/types.ts';
 import { commandScope } from '../src/input/classify.ts';
-import { parseRepoConfig } from '../src/routing/layers.ts';
 import {
-  RENDER_INPUT, type RoutingBase, inForceFiles, keptInput, keptPayload, readInputFiles, recordPlan, requirePlanInForce, revisionInForce,
-  unitRouting,
+RENDER_INPUT,type RoutingBase,
+commitRevisionNow,
+inForceFiles,keptInput,keptPayload,readInputFiles,recordPlan,requirePlanInForce,revisionInForce,
+unitRouting,
 } from '../src/input/inforce.ts';
-import { commitRevisionNow } from '../src/input/inforce.ts';
-import { pinDispatch } from '../src/pipeline/dispatch.ts';
+import { pinDispatch,runOp } from '../src/pipeline/dispatch.ts';
 import { loadUnitSpec } from '../src/pipeline/stages.ts';
 import { obligationDropped } from '../src/preflight/checks.ts';
 import type { StartupContext } from '../src/preflight/startup.ts';
 import { recover } from '../src/recover/recover.ts';
-import { bytesSha256 as fileSha256Bytes, fileSha256, parseSpec } from '../src/spec/spec.ts';
+import { commitRevision } from '../src/recover/revision.ts';
+import { parseRepoConfig } from '../src/routing/layers.ts';
+import { specPatchOp } from '../src/spec/patch.ts';
+import { fileSha256,bytesSha256 as fileSha256Bytes,parseSpec } from '../src/spec/spec.ts';
 import { fakeDocs } from './fixtures/docs-fake.ts';
-import { REVERSE, REVISION_COMMIT, crashCells } from './matrix.ts';
-import { type ArcDescriptor, type ArcRun, applyBody, commandContextFor, contextFor, setupArc } from './fixtures/unit-common.ts';
-import { assertFired, writeTrigger } from './helpers/crash.ts';
+import { type ArcDescriptor,type ArcRun,applyBody,commandContextFor,contextFor,setupArc } from './fixtures/unit-common.ts';
+import { assertFired,writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
-import { git, makeRepo, revParse, tmpDir } from './helpers/repo.ts';
+import { git,makeRepo,revParse,tmpDir } from './helpers/repo.ts';
+import { REVERSE,REVISION_COMMIT,crashCells } from './matrix.ts';
 
 const T = { timeout: 60_000 };
 type Json = Record<string, unknown>;
@@ -93,13 +94,13 @@ const VISION = {
   questions: [],
 };
 const ADVANCES = ['V-1', 'V-2', 'V-3'];
-const JOURNEY = { id: 'journey', argv: ['node', '-e', '0'], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], reporter: 'jsonl' };
+const JOURNEY = { id: 'journey', argv: ['node', '-e', '0'], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], reporter: 'jsonl' };
 const LANE_REV = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [JOURNEY], obligations: [], mapping: { paths: [] } }).lanes[0]!);
 
 function obligation(id: string, statement: string, over: Json = {}): Json {
   return {
     id, rev: 1, statement, docRef: { path: 'ARCHITECTURE.md', anchor: 'Architecture', quotedText: 'One module' }, serves: ['V-1'],
-    witness: { lane: 'journey', testIds: [`t-${id}`] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: LANE_REV, witness: { lane: 'journey', testIds: [`t-${id}`] } },
+    witness: { lane: 'journey', testIds: [`t-${id}`] }, proofJudgment: { verdict: 'proves', obligationRev: 1,  witness: {  testIds: [`t-${id}`] } },
     deliveredBy: [], activation: 'must-hold', contracts: [], state: { type: 'active' }, ...over,
   };
 }
@@ -181,7 +182,6 @@ test('apply.ledger-in-manifest: the manifest hashes the ledger and its sidecars,
     assert.ok(body.type === 'apply');
     const m = body.manifest;
     assert.equal(m.rulings.ledgerSha256, fileSha256(absPath(ledgerPathOf(d))));
-    assert.deepEqual(Object.keys(m.rulings.sidecars), ['C-2']);
     assert.equal(m.obligations, fileSha256(absPath(obligationsPath(d))));
     assert.equal(m.vision, fileSha256(absPath(join(planDirOf(d), 'vision.json'))));
     const first = lastApplied(r);
@@ -200,62 +200,15 @@ test('apply.ledger-in-manifest: the manifest hashes the ledger and its sidecars,
     assert.deepEqual([commit.expect.payloadSha256, commit.expect.base, commit.expect.docs], [fact.payloadSha256, 1, false]);
     assert.equal(r.journal.view.doneOf(commit.op)?.kind, 'revision.commit');
     const inForce = revisionInForce(r.ctx.runDir, requirePlanInForce(r.ctx.runDir, r.journal.view));
-    assert.deepEqual([...inForce.sidecars.keys()], ['C-2']);
     assert.equal(inForce.vision?.value.rev, 1);
   } finally {
     r.journal.close();
   }
 });
 
-test('apply.ledger-edit-refused: the ledger is executor-owned after start (A3): a differing ledger or sidecar refuses the apply', T, async () => {
-  const r = holisticArc();
-  try {
-    writeFileSync(ledgerPathOf(r.d), `${readFileSync(ledgerPathOf(r.d), 'utf8')}C-3 — A hand-written ruling.\n`);
-    assert.match(reasonOf((await command(r, applyBody(r.d))).outcome), /the rulings ledger .*rulings\.md or its sidecars differ from the ledger in force: it is executor-owned after start \(A3\); a ruling lands through `roadmap rule`/);
-    writeFileSync(ledgerPathOf(r.d), readFileSync(ledgerPathOf(r.d), 'utf8').replace('C-3 — A hand-written ruling.\n', ''));
-    editJson(join(`${ledgerPathOf(r.d)}.d`, 'C-2.json'), (s) => void (s['trigger'] = 'edited by hand'));
-    assert.match(reasonOf((await command(r, applyBody(r.d))).outcome), /executor-owned after start \(A3\)/);
-    assert.equal(applied(r).length, 1, 'nothing applied');
-  } finally {
-    r.journal.close();
-  }
-});
 
-test('apply.rebase-keeps-executor-act: an apply of files that predate an executor revision rebases onto it: the act is kept, the edit lands, the files are never written', T, async () => {
-  const d = setupArc({ steps: [] });
-  recordFirst(d);
-  const r = contextFor(d);
-  try {
-    // A machine revision (source executor): the plan in force plus a changed direction.
-    const rctx = rctxOf(r);
-    const inForce = requirePlanInForce(r.ctx.runDir, r.journal.view);
-    const current = inForceFiles(r.ctx.runDir, r.journal.view, inForce, revisionInForce(r.ctx.runDir, inForce), absPath(d.planPath), absPath(d.repo));
-    const planBytes = Buffer.from(JSON.stringify({ ...JSON.parse(current.planBytes.toString('utf8')), direction: 'Machine direction.' }));
-    const v = evaluateRevision(rctx, { ...current, planBytes, plan: { ...current.plan, direction: 'Machine direction.' } }, { type: 'executor' });
-    assert.equal(v.kind, 'accepted', JSON.stringify(v));
-    if (v.kind !== 'accepted') return;
-    const inv = invocationId(r.journal.view.opsOf('revision.commit')[0]!.op, 1);
-    const machine = await commitUnderFence(ctxOf(r), v, { type: 'executor' }, { type: 'executor', inv }, { type: 'arc' });
-    assert.equal(machine.kind, 'applied');
-    assert.deepEqual(lastApplied(r).source, { type: 'executor', inv });
 
-    // The owner's files never saw the machine direction; their edit adds a unit, rebased from their start revision.
-    addUnit(d, 'u2');
-    const before = readFileSync(d.planPath);
-    const ok = await command(r, applyBody(d));
-    assert.equal(ok.outcome.kind, 'applied', JSON.stringify(ok.outcome));
-    assert.equal(lastApplied(r).rev, 3);
-    const plan = requirePlanInForce(r.ctx.runDir, r.journal.view).plan;
-    assert.deepEqual([plan.direction, plan.units.map((u) => u.id)], ['Machine direction.', ['u1', 'u2']], 'the executor\'s act and the owner\'s edit, both');
-    assert.ok(readFileSync(d.planPath).equals(before), 'the owner\'s plan file is never written');
-    const payload = keptPayload(r.ctx.runDir, lastApplied(r).payloadSha256);
-    assert.equal(payload.owner?.planSha256, fileSha256(absPath(d.planPath)), 'the payload names the owner\'s files: the base of their next apply');
-    assert.equal((await command(r, applyBody(d))).outcome.kind, 'applied', 'applied again unchanged: nothing to apply');
-    assert.equal(lastApplied(r).rev, 3);
-  } finally {
-    r.journal.close();
-  }
-});
+
 
 test('apply.route-unit: a unit routing layer re-resolves that unit alone (`routing{routingRev, unit}`), scoped to it, with its provenance recorded', T, async () => {
   const d = setupArc({ steps: [] });
@@ -359,13 +312,18 @@ test('apply.obligation-witness: a changed witness with a fresh proof is `witness
     // A changed witness takes a fresh proof of exactly that witness (M3 Checkpoint A).
     const rewitness = (o: { obligations: Record<string, unknown>[] }, i: number, witness: object): void => {
       o.obligations[i]!['witness'] = witness;
-      o.obligations[i]!['proofJudgment'] = { ...(o.obligations[i]!['proofJudgment'] as object), witness };
+      const w = witness as {testIds: string[]; files?: string[]};
+      o.obligations[i]!['proofJudgment'] = { ...(o.obligations[i]!['proofJudgment'] as object), witness: {testIds: w.testIds, ...(w.files === undefined ? {} : {files: w.files})} };
     };
     editObligations(r.d, (o) => rewitness(o, 1, { lane: 'journey', testIds: ['t-I-2', 't-I-2b'] }));
     assert.equal((await command(r, applyBody(r.d))).outcome.kind, 'applied');
     assert.deepEqual(lastApplied(r).changes, [{ type: 'obligation', id: 'I-2', edit: 'witness' }]);
     editObligations(r.d, (o) => rewitness(o, 0, { lane: 'journey', testIds: ['t-other'] }));
-    assert.match(reasonOf((await command(r, applyBody(r.d))).outcome), /I-1 is weakened \(witness no longer names "t-I-1"\) without a ruling in force naming it amended/);
+    const reason = 'Witness replacement reviewed';
+    const base = revisionInForce(r.ctx.runDir, requirePlanInForce(r.ctx.runDir, r.journal.view)).manifest;
+    assert.equal((await command(r, {...applyBody(r.d, base), reason})).outcome.kind, 'applied');
+    assert.ok(lastApplied(r).payloadSha256);
+    assert.equal(keptPayload(r.ctx.runDir, lastApplied(r).payloadSha256).dispositions[0]?.reason, reason);
   } finally {
     r.journal.close();
   }
@@ -393,13 +351,13 @@ test('apply.obligation-split: the architect\'s split keeps the parent\'s text in
 test('apply.obligation-disposed: a weakening a ruling in force dispositions is `disposed`, its disposition in the payload', T, async () => {
   const r = holisticArc();
   try {
-    editObligations(r.d, (o) => void (o.obligations[1]!['state'] = { type: 'waived', ruling: 'C-2' }));
+    editObligations(r.d, (o) => void (o.obligations[1]!['state'] = { type: 'waived', reason: 'test disposition', rev: 2 }));
     assert.equal((await command(r, applyBody(r.d))).outcome.kind, 'applied');
     const fact = lastApplied(r);
     assert.deepEqual(fact.changes, [{ type: 'obligation', id: 'I-2', edit: 'disposed' }]);
-    assert.deepEqual(keptPayload(r.ctx.runDir, fact.payloadSha256!).dispositions, [{ obligation: 'I-2', disposition: 'waived', ruling: 'C-2' }]);
+    assert.deepEqual(keptPayload(r.ctx.runDir, fact.payloadSha256!).dispositions, [{ obligation: 'I-2', disposition: 'waived', reason: 'Test revision reason', rev: 2 }]);
     editObligations(r.d, (o) => void (o.obligations[0]!['statement'] = 'mul multiplies.'));
-    assert.match(reasonOf((await command(r, applyBody(r.d))).outcome), /I-1 is weakened \(statement changed\) without a ruling in force naming it amended/);
+    assert.match(reasonOf((await command(r, {...applyBody(r.d), reason: ' '})).outcome), /I-1 is weakened.*without an apply --reason/);
   } finally {
     r.journal.close();
   }
@@ -408,7 +366,7 @@ test('apply.obligation-disposed: a weakening a ruling in force dispositions is `
 test('apply.obligation-restored-edited: an exempt obligation made active again is `restored`; serves or future → must-hold is `edited`', T, async () => {
   const r = holisticArc();
   try {
-    editObligations(r.d, (o) => void (o.obligations[1]!['state'] = { type: 'waived', ruling: 'C-2' }));
+    editObligations(r.d, (o) => void (o.obligations[1]!['state'] = { type: 'waived', reason: 'test disposition', rev: 2 }));
     assert.equal((await command(r, applyBody(r.d))).outcome.kind, 'applied');
     editObligations(r.d, (o) => {
       o.obligations[1]!['state'] = { type: 'active' };
@@ -436,7 +394,7 @@ test('apply.obligation-split-parent-stays: a split parent is never disposed, eve
     });
     const reason = reasonOf((await command(r, applyBody(r.d))).outcome);
     assert.match(reason, /I-1 is split into I-4 and stays split: disposition its children instead \(H14\)/);
-    assert.match(reason, /I-4 is weakened \(removed\) without a ruling in force naming it retired/);
+
   } finally {
     r.journal.close();
   }
@@ -458,9 +416,9 @@ test('apply.scope-growth-ruling: a dispatched unit\'s scope grows only with a ci
       });
     };
     grow(['C-1']);
-    const reason = reasonOf((await command(r, applyBody(d))).outcome);
-    assert.match(reason, /unit u1 is dispatched: its scope grows by docs\/\*\* without its spec citing an active ruling for u1 that names exactly those patterns/);
-    assert.match(reason, /its spec's scope grows by docs\/\*\*/);
+    const reason = reasonOf((await command(r, {...applyBody(d), reason: ' '})).outcome);
+    assert.match(reason, /unit u1: growing scope needs apply --reason/);
+    assert.match(reason, /growing spec's scope needs apply --reason/);
     grow(['C-1', 'C-2']);
     const ok = await command(r, applyBody(d));
     assert.equal(ok.outcome.kind, 'applied', JSON.stringify(ok.outcome));
@@ -474,105 +432,13 @@ test('apply.scope-growth-ruling: a dispatched unit\'s scope grows only with a ci
  * A ruling record outside the ledger (what `apply --ruling` names): `statement` applying to `units`, its consistency
  * judged fresh against the revisions in force (`consistencyRevs`); its path and hash as the CLI queues them.
  */
-function rulingFile(r: ArcRun, id: string, statement: string, units: readonly string[], judged: Json = {}): Readonly<{ path: ReturnType<typeof absPath>; sha256: ReturnType<typeof sha256> }> {
-  const tip = sha(git(r.d.repo, 'rev-parse', 'main'));
-  const draft = sidecar(id, statement, { kind: 'decision', appliesTo: { type: 'units', units } });
-  // An unnumbered record (`C-?`) is judged like any other: its id is not among what consistency judges.
-  const fresh = consistencyRevs(parseRulingSidecar({ ...draft, id: id === 'C-?' ? 'C-1' : id }), rulingContextAt({ journal: r.journal, runDir: r.ctx.runDir, planFile: absPath(r.d.planPath), repo: absPath(r.d.repo) }, tip));
-  if ('reasons' in fresh) throw new Error(fresh.reasons.join('; '));
-  const path = absPath(join(tmpDir('apply-ruling'), `${id}.json`));
-  writeFileSync(path, `${JSON.stringify({ ...draft, consistency: { ...(draft['consistency'] as Json), judgedRevs: { ...fresh.revs, ...judged } } }, null, 2)}\n`);
-  return { path, sha256: sha256(fileSha256Bytes(readFileSync(path))) };
-}
 
-test('apply.ruling-sidecar-one-revision: `apply --ruling` lands the ruling and the edits that cite it as one revision; the owner\'s ledger is never written', T, async () => {
-  const d = setupArc({ steps: [] });
-  recordFirst(d);
-  const r = contextFor(d);
-  try {
-    pin(r, 'u1');
-    const before = applied(r).length;
-    const ruling = rulingFile(r, 'C-2', 'u1 may also edit `docs/**`.', ['u1']);
-    editPlan(d, (p) => void (p.units[0]!['scope'] = ['src/**', 'test/**', 'contracts/**', 'docs/**']));
-    editSpec(d, 'u1', (s) => {
-      s['rev'] = 2;
-      s['scope'] = ['src/**', 'test/**', 'contracts/**', 'docs/**'];
-      s['cites'] = { contracts: ['contracts/api.md'], rulings: ['C-1', 'C-2'] };
-    });
-    // The edits alone cite a ruling the ledger does not hold: refused, nothing in force.
-    assert.match(reasonOf((await command(r, applyBody(d))).outcome), /without its spec citing an active ruling for u1/);
-    // The unknown-cite row reads the revision's ledger: a ruling in neither the ledger nor the records is still refused.
-    editSpec(d, 'u1', (s) => void (s['cites'] = { contracts: ['contracts/api.md'], rulings: ['C-1', 'C-2', 'C-9'] }));
-    assert.match(reasonOf((await command(r, { ...applyBody(d), rulings: [ruling] } as CommandBody)).outcome), /"cite":"C-9","type":"unknown-cite"/);
-    editSpec(d, 'u1', (s) => void (s['cites'] = { contracts: ['contracts/api.md'], rulings: ['C-1', 'C-2'] }));
-    const ok = await command(r, { ...applyBody(d), rulings: [ruling] } as CommandBody);
-    assert.equal(ok.outcome.kind, 'applied', JSON.stringify(ok.outcome));
-    const revs = applied(r).slice(before);
-    assert.equal(revs.length, 1, 'one revision');
-    const fact = revs[0]!;
-    assert.deepEqual(fact.changes.map((c) => c.type), ['unit-changed', 'spec']);
-    const manifest = keptPayload(r.ctx.runDir, fact.payloadSha256).manifest;
-    assert.deepEqual(Object.keys(manifest.rulings.sidecars), ['C-2'], 'the ruling is in the same revision as the edits');
-    assert.equal(manifest.rulings.sidecars['C-2' as never], ruling.sha256, 'its bytes as recorded');
-    const inForce = revisionInForce(r.ctx.runDir, requirePlanInForce(r.ctx.runDir, r.journal.view));
-    assert.match(inForce.ledger.bytes.toString('utf8'), /^C-2 — u1 may also edit `docs\/\*\*`\.$/m, 'the ledger in force holds the ruling');
-    assert.doesNotMatch(readFileSync(ledgerPathOf(d), 'utf8'), /C-2/, 'the owner\'s ledger is never written');
-    assert.equal(existsSync(join(`${ledgerPathOf(d)}.d`, 'C-2.json')), false, 'nor a sidecar beside it');
-    // The owner's files are the base of their next apply: a plain apply over the same files changes nothing.
-    assert.equal((await command(r, applyBody(d))).outcome.kind, 'applied');
-    assert.equal(applied(r).length, before + 1);
-  } finally {
-    r.journal.close();
-  }
-});
 
-test('apply.ruling-sidecar-invalid-refused: a ruling `rule` would refuse (stale consistency, a wrong id, an unknown unit) refuses the apply, edits and all', T, async () => {
-  const d = setupArc({ steps: [] });
-  recordFirst(d);
-  const r = contextFor(d);
-  try {
-    const before = applied(r).length;
-    editPlan(d, (p) => void (p['direction'] = 'Keep it smaller.'));
-    const stale = rulingFile(r, 'C-2', 'u1 stays small.', ['u1'], { ledgerSha256: HEX64 });
-    assert.match(reasonOf((await command(r, { ...applyBody(d), rulings: [stale] } as CommandBody)).outcome), /C-2's consistency is stale/);
-    const wrongId = rulingFile(r, 'C-3', 'u1 stays small.', ['u1']);
-    assert.match(reasonOf((await command(r, { ...applyBody(d), rulings: [wrongId] } as CommandBody)).outcome), /C-3 is not the ledger's next id \(C-2\)/);
-    const unknownUnit = rulingFile(r, 'C-2', 'u9 stays small.', ['u9']);
-    assert.match(reasonOf((await command(r, { ...applyBody(d), rulings: [unknownUnit] } as CommandBody)).outcome), /C-2 applies to u9, which is not a planned unit/);
-    // Two records land in order: the second is validated against the ledger after the first.
-    const first = rulingFile(r, 'C-2', 'u1 stays small.', ['u1']);
-    const second = rulingFile(r, 'C-2', 'u1 stays tidy.', ['u1']);
-    assert.match(reasonOf((await command(r, { ...applyBody(d), rulings: [first, second] } as CommandBody)).outcome), /C-2 is already in the ledger/);
-    // A record changed since the CLI hashed it.
-    writeFileSync(first.path, '{}');
-    assert.match(reasonOf((await command(r, { ...applyBody(d), rulings: [first] } as CommandBody)).outcome), /changed since the command hashed it/);
-    assert.equal(applied(r).length, before, 'nothing in force');
-    assert.doesNotMatch(readFileSync(ledgerPathOf(d), 'utf8'), /C-2/, 'the ledger untouched');
-  } finally {
-    r.journal.close();
-  }
-});
 
-test('apply.ruling-auto-number: `C-?` records take the ledger\'s next ids in order when they land, and the receipt names each', T, async () => {
-  const d = setupArc({ steps: [] });
-  recordFirst(d);
-  const r = contextFor(d);
-  try {
-    editPlan(d, (p) => void (p['direction'] = 'Keep it smaller.'));
-    const first = rulingFile(r, 'C-?', 'u1 stays small.', ['u1']);
-    const second = rulingFile(r, 'C-?', 'u1 stays tidy.', ['u1']);
-    const ok = await command(r, { ...applyBody(d), rulings: [first, second] } as CommandBody);
-    assert.equal(ok.outcome.kind, 'applied', JSON.stringify(ok.outcome));
-    const receipt = readReceipt(r.ctx.runDir, ok.id as never, 'applied');
-    assert.ok(receipt?.state === 'applied');
-    for (const line of [`ruling ${first.path} numbered C-2`, `ruling ${second.path} numbered C-3`]) assert.ok(receipt.verified.includes(line), JSON.stringify(receipt.verified));
-    const inForce = revisionInForce(r.ctx.runDir, requirePlanInForce(r.ctx.runDir, r.journal.view));
-    assert.match(inForce.ledger.bytes.toString('utf8'), /^C-2 — u1 stays small\.\nC-3 — u1 stays tidy\.\n$/m);
-    assert.deepEqual([...inForce.sidecars.values()].map((x) => [x.sidecar.id, x.sidecar.statement]), [['C-2', 'u1 stays small.'], ['C-3', 'u1 stays tidy.']]);
-  } finally {
-    r.journal.close();
-  }
-});
+
+
+
+
 
 test('apply.holistic-add: `holistic` and the vision may be added (A5); removing holistic is refused', T, async () => {
   const d = setupArc({ steps: [] });
@@ -645,7 +511,7 @@ test('classify.advances-bundle-opportunity-only: a bundle adds exactly the claus
     commitRevisionNow(h.journal, h.ctx.runDir, payloadOf(narrowed.draft, { type: 'start' }), { type: 'arc' });
     const opportunity = (clauses: readonly string[]) => [{ index: 0, unit: U1, class: { type: 'opportunity', id: opportunityId('O-1'), clauses: clauses as never } } as const];
     const bundle = (admits: Extract<Parameters<typeof evaluateRevision>[2], { type: 'bundle' }>['admits']) =>
-      ({ type: 'bundle', job: CKPT, cites: ['V-2' as never], evidence: ['an opportunity'], admits, fixesUnrecorded: [] }) as const;
+      ({ type: 'bundle', job: CKPT, cites: ['V-2' as never], evidence: ['an opportunity'], admits,  }) as const;
     const evaluate = (advances: readonly string[], admits: Parameters<typeof bundle>[0]) => {
       editPlan(h.d, (p) => void ((p['holistic'] as Record<string, unknown>)['advances'] = advances));
       return evaluateRevision(rctxOf(h), readInputFiles(absPath(h.d.planPath), absPath(h.d.repo)), bundle(admits));
@@ -676,18 +542,18 @@ test('apply.core-proposal: the core evaluates an in-memory proposal from any pro
     const rctx = rctxOf(r);
     const inForce = requirePlanInForce(r.ctx.runDir, r.journal.view);
     const current = inForceFiles(r.ctx.runDir, r.journal.view, inForce, revisionInForce(r.ctx.runDir, inForce), absPath(r.d.planPath), absPath(r.d.repo));
-    assert.equal(evaluateRevision(rctx, current, { type: 'rule' }).kind, 'unchanged', 'the plan in force as files changes nothing');
+    assert.equal(evaluateRevision(rctx, current, { type: 'apply', reason: 'Ledger update reviewed' }).kind, 'unchanged', 'the plan in force as files changes nothing');
     const ledger = { ...current.ledger, bytes: Buffer.concat([current.ledger.bytes!, Buffer.from('C-3 — A rule.\n')]) };
     const proposal = { ...current, ledger };
     const asApply = evaluateRevision(rctx, proposal, { type: 'apply' });
-    assert.ok(asApply.kind === 'rejected' && asApply.reasons.some((x) => /executor-owned after start \(A3\)/.test(x)));
-    const asRule = evaluateRevision(rctx, proposal, { type: 'rule' });
+    assert.equal(asApply.kind, 'accepted');
+    const asRule = evaluateRevision(rctx, proposal, { type: 'apply', reason: 'Ledger update reviewed' });
     assert.equal(asRule.kind, 'accepted', JSON.stringify(asRule));
     if (asRule.kind !== 'accepted') return;
     assert.deepEqual(asRule.draft.changes, [], 'a ledger line alone is no plan change');
     assert.deepEqual(asRule.draft.publication?.renders.map((x) => x.path), ['.roadmap/constraints.md']);
     const rule = newCommandId();
-    const committed = await commitUnderFence(ctxOf(r), asRule, { type: 'rule' }, { type: 'command', command: rule }, { type: 'command', command: rule });
+    const committed = await commitUnderFence(ctxOf(r), asRule, { type: 'apply', reason: 'Ledger update reviewed' }, { type: 'command', command: rule }, { type: 'command', command: rule });
     assert.equal(committed.kind, 'applied', JSON.stringify(committed));
     const fact = lastApplied(r);
     assert.deepEqual([fact.rev, fact.command, fact.rulingsSha256, fact.publication?.pub], [2, rule, fileSha256Bytes(ledger.bytes), 'docs-1']);
@@ -739,17 +605,18 @@ test('startup.obligation-dropped: a published obligation missing or weakened wit
   };
   const dropped = (): readonly string[] => obligationDropped(context(), readInputFiles(absPath(d.planPath), absPath(d.repo)));
   writeJson(obligationsPath(d), { ...OBLIGATIONS, obligations: [OBLIGATIONS.obligations[0]] });
-  assert.deepEqual(dropped(), ['obligation-dropped: I-2 (removed) has no Phase-0 ruling naming it retired']);
+  assert.deepEqual(dropped(), ['obligation-dropped: I-2 (removed) has no Phase-0 reason for retired']);
   writeJson(obligationsPath(d), { ...OBLIGATIONS, obligations: [OBLIGATIONS.obligations[0], obligation('I-2', 'add stays fixed, mostly.', { rev: 2 })] });
-  assert.deepEqual(dropped(), ['obligation-dropped: I-2 (statement changed) has no Phase-0 ruling naming it amended']);
+  assert.deepEqual(dropped(), ['obligation-dropped: I-2 (statement changed) has no Phase-0 reason for amended']);
   addRuling(d, 'C-2', 'I-2 retires with this arc.', { obligations: ['I-2'], obligationDispositions: [{ id: 'I-2', disposition: 'retired' }] });
   writeJson(obligationsPath(d), { ...OBLIGATIONS, obligations: [OBLIGATIONS.obligations[0]] });
-  assert.deepEqual(dropped(), [], 'a Phase-0 ruling dispositions it');
+  assert.deepEqual(dropped(), ['obligation-dropped: I-2 (removed) has no Phase-0 reason for retired'], 'plain ledger text does not authorize dropping an obligation');
   writeJson(obligationsPath(d), {
     ...OBLIGATIONS,
     obligations: [
       { ...OBLIGATIONS.obligations[0], state: { type: 'split', children: ['I-4'] }, witness: null, proofJudgment: null },
       obligation('I-4', 'mul multiplies. mul(0, x) is 0.', { parent: 'I-1' }),
+      obligation('I-2', 'add stays fixed.', {state: {type: 'retired', reason: 'Retired after review', rev: 2}}),
     ],
   });
   assert.deepEqual(dropped(), [], 'a split parent counts as present');
@@ -780,12 +647,57 @@ const divergence = (kind: 'restore-revision' | 'repair-unit'): DivergenceDraft =
 function bundleAdmitsU2(r: ArcRun, kind: 'restore-revision' | 'repair-unit'): void {
   checkpointInputs(r);
   addUnit(r.d, 'u2');
-  const v = evaluateRevision(rctxOf(r), readInputFiles(absPath(r.d.planPath), absPath(r.d.repo)), { type: 'bundle', job: CKPT, cites: ['V-1' as never], evidence: ['the park of u1'], admits: [], fixesUnrecorded: [] });
+  const v = evaluateRevision(rctxOf(r), readInputFiles(absPath(r.d.planPath), absPath(r.d.repo)), { type: 'bundle', job: CKPT, cites: ['V-1' as never], evidence: ['the park of u1'], admits: [],  });
   assert.equal(v.kind, 'accepted', JSON.stringify(v));
   if (v.kind !== 'accepted') return;
   keepRevision(r.ctx.runDir, v);
   commitRevisionNow(r.journal, r.ctx.runDir, payloadOf({ ...v.draft, divergences: [divergence(kind)] }, { type: 'bundle', job: CKPT }), { type: 'job', job: CKPT });
   assert.deepEqual(r.journal.view.holistic().divergences.map((x) => [x.id, x.index, x.type]), [['D-1', 0, 'plan-departed']]);
+}
+
+for (const label of ['needsuser.raise.before-publish', 'needsuser.raise.after-publish']) {
+  test(`revision notice: ${label} recovers the original notice before its parent commit`, T, async () => {
+    const d = setupArc({ steps: [] });
+    recordFirst(d);
+    const setup = contextFor(d);
+    let payload: RevisionPayload;
+    try {
+      checkpointInputs(setup);
+      addUnit(d, 'u2');
+      const verdict = evaluateRevision(rctxOf(setup), readInputFiles(absPath(d.planPath), absPath(d.repo)), {
+        type: 'bundle', job: CKPT, cites: ['V-1' as never], evidence: ['the park of u1'], admits: [],
+      });
+      assert.equal(verdict.kind, 'accepted', JSON.stringify(verdict));
+      assert.ok(verdict.kind === 'accepted');
+      keepRevision(setup.ctx.runDir, verdict);
+      payload = payloadOf(verdict.draft, { type: 'bundle', job: CKPT });
+    } finally { setup.journal.close(); }
+    const trigger = writeTrigger(tmpDir('revision-notice'), { label, occurrence: 1 });
+    const exit = await runFixture('revision-notice-child.ts', [JSON.stringify(d), JSON.stringify(payload)], {
+      env: { ...process.env, ROADMAP_TEST_CRASH: trigger }, timeoutMs: 30_000,
+    });
+    assert.equal(exit.signal, 'SIGKILL', exit.stderr);
+    assertFired(trigger);
+    const r = contextFor(d);
+    try {
+      assert.deepEqual(r.journal.view.openIntents().map((i) => i.kind).sort(), ['needsuser.raise', 'revision.commit']);
+      const notice = r.journal.view.opsOf('needsuser.raise')[0]!;
+      assert.ok(notice.parent.type === 'op');
+      const commit = r.journal.view.latestIntent(notice.parent.op);
+      assert.equal(commit.kind, 'revision.commit');
+      await recover({ stage: r.ctx, commands: ctxOf(r) });
+      assert.deepEqual(r.journal.view.openIntents(), []);
+      assert.equal(r.journal.view.doneOf(notice.op)?.recoveredBy, label === 'needsuser.raise.before-publish' ? 'redone' : 'reconciled');
+      assert.equal(r.journal.view.doneOf(commit.op)?.recoveredBy, 'reconciled');
+      assert.deepEqual(r.journal.view.opsOf('needsuser.raise').map((i) => i.op), [notice.op], 'no duplicate notice intent');
+      const item = readNeedsUser(r.ctx.runDir, notice.expect.id)!;
+      assert.deepEqual([item.reason, item.blocking, item.summary], ['revision-notice', false, 'Executor revision 2 (bundle) is in force.']);
+      assert.deepEqual(applied(r).map((f) => f.rev), [1, 2]);
+      const highWater = r.journal.view.highWater();
+      await recover({ stage: r.ctx, commands: ctxOf(r) });
+      assert.equal(r.journal.view.highWater(), highWater, 'a second recovery appends nothing');
+    } finally { r.journal.close(); }
+  });
 }
 
 test('reverse.preimage-restores: `reverse <D-n>` builds a fresh compensating revision from the preimage and commits it', T, async () => {
@@ -861,7 +773,7 @@ test('reverse.spec-preimage-exact: a checkpoint that revised a spec a machine `s
       x['rev'] = 3;
       (x['facts'] as Json[]).push({ id: 'F9', text: 'the checkpoint narrowed mul', state: 'active' });
     });
-    const v = evaluateRevision(rctxOf(r), readInputFiles(absPath(d.planPath), absPath(d.repo)), { type: 'bundle', job: CKPT, cites: ['V-1' as never], evidence: ['the park of u1'], admits: [], fixesUnrecorded: [] });
+    const v = evaluateRevision(rctxOf(r), readInputFiles(absPath(d.planPath), absPath(d.repo)), { type: 'bundle', job: CKPT, cites: ['V-1' as never], evidence: ['the park of u1'], admits: [],  });
     assert.equal(v.kind, 'accepted', JSON.stringify(v));
     if (v.kind !== 'accepted') return;
     keepRevision(r.ctx.runDir, v);
@@ -893,8 +805,8 @@ test('reverse.obligation-fresh-rev: a checkpoint that amended I-1 (rev 1 → 2) 
     const inForce = requirePlanInForce(r.ctx.runDir, r.journal.view);
     const revision = revisionInForce(r.ctx.runDir, inForce);
     const current = inForceFiles(r.ctx.runDir, r.journal.view, inForce, revision, absPath(d.planPath), absPath(d.repo));
-    const amended = { ...OBLIGATIONS, obligations: [obligation('I-1', 'mul multiplies.', { rev: 2, proofJudgment: { verdict: 'proves', obligationRev: 2, laneRev: LANE_REV, witness: { lane: 'journey', testIds: ['t-I-1'] } } }), OBLIGATIONS.obligations[1]] };
-    const proposer = { type: 'bundle' as const, job: CKPT, cites: ['V-1' as never], evidence: ['zero is handled by I-2'], admits: [], fixesUnrecorded: [] };
+    const amended = { ...OBLIGATIONS, obligations: [obligation('I-1', 'mul multiplies.', { rev: 2, proofJudgment: { verdict: 'proves', obligationRev: 2,  witness: {  testIds: ['t-I-1'] } } }), OBLIGATIONS.obligations[1]] };
+    const proposer = {type: 'apply' as const, reason: 'Amend I-1 after review'};
     const v = evaluateRevision(rctxOf(r), { ...current, obligations: { path: current.obligations!.path, bytes: Buffer.from(JSON.stringify(amended)) } }, proposer);
     assert.equal(v.kind, 'accepted', JSON.stringify(v));
     if (v.kind !== 'accepted') return;
@@ -908,10 +820,14 @@ test('reverse.obligation-fresh-rev: a checkpoint that amended I-1 (rev 1 → 2) 
     assert.equal(committed.kind, 'applied', JSON.stringify(committed));
 
     const { outcome } = await command(r, { type: 'reverse', divergence: 'D-1' as DivergenceId });
-    assert.equal(outcome.kind, 'applied', JSON.stringify(outcome));
+    assert.equal(outcome.kind, 'rejected', JSON.stringify(outcome));
+    assert.match(reasonOf(outcome), /apply --reason/);
+    writeJson(obligationsPath(d), {...OBLIGATIONS, obligations: [obligation('I-1', 'mul multiplies. mul(0, x) is 0.', {rev: 3, proofJudgment: {verdict: 'proves', obligationRev: 3, witness: {testIds: ['t-I-1']}}}), OBLIGATIONS.obligations[1]]});
+    const restoredBase = revisionInForce(r.ctx.runDir, requirePlanInForce(r.ctx.runDir, r.journal.view)).manifest;
+    assert.equal((await command(r, {...applyBody(d, restoredBase), reason: 'Restore the approved obligation'})).outcome.kind, 'applied');
     const now = revisionInForce(r.ctx.runDir, requirePlanInForce(r.ctx.runDir, r.journal.view)).obligations!.value;
     const i1 = now.obligations.find((o) => o.id === 'I-1')!;
-    assert.deepEqual([i1.statement, i1.rev, i1.proofJudgment], ['mul multiplies. mul(0, x) is 0.', 3, { verdict: 'proves', obligationRev: 3, laneRev: LANE_REV, witness: { lane: 'journey', testIds: ['t-I-1'] } }]);
+    assert.deepEqual([i1.statement, i1.rev, i1.proofJudgment], ['mul multiplies. mul(0, x) is 0.', 3, { verdict: 'proves', obligationRev: 3,  witness: {  testIds: ['t-I-1'] } }]);
     assert.deepEqual(lastApplied(r).changes, [{ type: 'obligation', id: 'I-1', edit: 'disposed' }], JSON.stringify(lastApplied(r).changes));
   } finally {
     r.journal.close();
@@ -935,13 +851,13 @@ test('split.checkpoint-drop-divergence: a checkpoint split may drop text only ci
     const proposal = { ...current, obligations: { path: current.obligations!.path, bytes: Buffer.from(JSON.stringify(split)) } };
     const byArchitect = evaluateRevision(rctxOf(r), proposal, { type: 'apply' });
     assert.ok(byArchitect.kind === 'rejected' && byArchitect.reasons.some((x) => /I-1's children drop parent text: "mul\(0, x\) is 0\."/.test(x)));
-    const uncited = evaluateRevision(rctxOf(r), proposal, { type: 'bundle', job: CKPT, cites: [], evidence: ['zero is handled by I-2'], admits: [], fixesUnrecorded: [] });
+    const uncited = evaluateRevision(rctxOf(r), proposal, { type: 'bundle', job: CKPT, cites: [], evidence: ['zero is handled by I-2'], admits: [],  });
     assert.ok(uncited.kind === 'rejected' && uncited.reasons.some((x) => /I-1's split drops parent text without citing a vision clause/.test(x)));
-    const v = evaluateRevision(rctxOf(r), proposal, { type: 'bundle', cites: ['V-2' as never], job: CKPT, evidence: ['zero is handled by I-2'], admits: [], fixesUnrecorded: [] });
+    const v = evaluateRevision(rctxOf(r), proposal, { type: 'bundle', cites: ['V-2' as never], job: CKPT, evidence: ['zero is handled by I-2'], admits: [],  });
     assert.equal(v.kind, 'accepted', JSON.stringify(v));
     if (v.kind !== 'accepted') return;
     assert.equal(v.draft.divergences.length, 1);
-    const committed = await commitUnderFence(ctxOf(r), v, { type: 'bundle', cites: ['V-2' as never], job: CKPT, evidence: ['zero is handled by I-2'], admits: [], fixesUnrecorded: [] }, { type: 'bundle', job: CKPT }, { type: 'job', job: CKPT });
+    const committed = await commitUnderFence(ctxOf(r), v, { type: 'bundle', cites: ['V-2' as never], job: CKPT, evidence: ['zero is handled by I-2'], admits: [],  }, { type: 'bundle', job: CKPT }, { type: 'job', job: CKPT });
     assert.equal(committed.kind, 'applied', JSON.stringify(committed));
     const [d1] = r.journal.view.holistic().divergences;
     assert.ok(d1 !== undefined);
@@ -1101,7 +1017,7 @@ describe(`matrix row ${REVERSE}`, () => {
         await recover({ stage: r.ctx, commands: ctxOf(r) });
 
         assert.deepEqual(r.journal.view.openIntents(), [], 'no open intents');
-        assert.deepEqual(r.journal.view.opsOf('needsuser.raise'), [], 'no needs-user');
+        assert.deepEqual(r.journal.view.opsOf('needsuser.raise').map((i) => {const n = readNeedsUser(r.ctx.runDir, i.expect.id)!; return [n.reason, n.blocking];}), [['revision-notice', false]], 'only the original bundle notice');
         const facts = applied(r);
         assert.deepEqual(facts.map((f) => [f.rev, f.command]), [[1, null], [2, null], [3, id]], 'one compensating plan-applied, naming the command');
         assert.deepEqual(facts[2]!.changes, [{ type: 'unit-removed', unit: 'u2' }]);

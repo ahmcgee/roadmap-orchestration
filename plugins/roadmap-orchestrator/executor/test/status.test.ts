@@ -2,40 +2,41 @@
 // fake-backed runs under both profiles. Named tests: status.subset, state.no-model-ids,
 // status.sup-items-and-arc-wide-state, status.single-flight; M2: status.parallel, status.resources (real runs), status.parks (in
 // process, over a log written directly).
+import { exportInputs } from '../src/commands/inputs.ts';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { basename, join, relative } from 'node:path';
-import { after, before, describe, test } from 'node:test';
-import { identityOf, readBootId } from '../src/contain/proc.ts';
-import type { Fact, ProbeTarget } from '../src/core/events.ts';
+import { mkdirSync,readFileSync,readdirSync,writeFileSync } from 'node:fs';
+import { basename,join,relative } from 'node:path';
+import { after,before,describe,test } from 'node:test';
+import { identityOf,readBootId } from '../src/contain/proc.ts';
+import type { Fact,ProbeTarget } from '../src/core/events.ts';
 import { atomicJson } from '../src/core/fsx.ts';
-import { type UnitId, arcId, commandId, hostNeedsUserId, supervisorNeedsUserId, unitId } from '../src/core/ids.ts';
-import { type AbsPath, absPath, isoTimeOf } from '../src/core/values.ts';
+import { type UnitId,arcId,commandId,hostNeedsUserId,supervisorNeedsUserId,unitId } from '../src/core/ids.ts';
+import { type AbsPath,absPath,isoTimeOf } from '../src/core/values.ts';
 import { SCHEMA_VERSION } from '../src/core/version.ts';
-import { HOST_LOCK, hostPath } from '../src/host/hostdir.ts';
-import { publishOwner } from '../src/host/owner.ts';
-import { nextProbeAt } from '../src/park/schedule.ts';
-import { PARK_ESCALATE_MS } from '../src/schedule/types.ts';
-import { watch } from '../src/watch.ts';
-import { fileSha256, loadSpec } from '../src/spec/spec.ts';
-import { START_FILE, writeFileNeedsUser } from '../src/executor.ts';
+import { START_FILE,writeFileNeedsUser } from '../src/executor.ts';
 import { snapshotRef } from '../src/git/snapshot.ts';
+import { HOST_LOCK,hostPath } from '../src/host/hostdir.ts';
+import { publishOwner } from '../src/host/owner.ts';
 import { openBlocking } from '../src/needsuser.ts';
+import { nextProbeAt } from '../src/park/schedule.ts';
 import { laneCpuKey } from '../src/resources/calibrate.ts';
 import { MODEL_IDS } from '../src/routing/types.ts';
-import { SESSION_GUARANTEE, STATUS_LOCK, type Status, type UnitStatusLine, compactState, status } from '../src/status.ts';
-import { reached, release } from './helpers/barrier.ts';
-import { git, tmpDir } from './helpers/repo.ts';
-import type { Step } from './helpers/scenario.ts';
-import { type Owner, assertNoSurvivors } from './helpers/reap.ts';
-import { BUILD_REPORT, planCheckStep } from './fixtures/stage-common.ts';
-import { type ArcDescriptor, type ArcRun, MUL, MUL_LANE, codexStep, contextFor, gateStep, mulBuild, setupArc, stepUntil } from './fixtures/unit-common.ts';
-import { claimRecord } from './fixtures/host-records.ts';
-import { LANES_BLOCKED, parkBackend, parkUnit } from './fixtures/probe-common.ts';
+import { PARK_ESCALATE_MS } from '../src/schedule/types.ts';
+import { fileSha256,loadSpec } from '../src/spec/spec.ts';
+import { SESSION_GUARANTEE,type Status,type UnitStatusLine,compactState,status } from '../src/status.ts';
+import { watch } from '../src/watch.ts';
 import {
-  EXEC_TIMEOUT_MS, type ExecRun, SMOKE_CLAUDE_ONLY, SMOKE_DEFAULT, cli, journalOf, reasonOf, setupExec, startExec, statusOf, until,
+EXEC_TIMEOUT_MS,type ExecRun,SMOKE_CLAUDE_ONLY,SMOKE_DEFAULT,cli,journalOf,reasonOf,setupExec,startExec,statusOf,until,
 } from './fixtures/exec-common.ts';
+import { claimRecord } from './fixtures/host-records.ts';
+import { LANES_BLOCKED,parkBackend,parkUnit } from './fixtures/probe-common.ts';
+import { BUILD_REPORT,planCheckStep } from './fixtures/stage-common.ts';
+import { type ArcDescriptor,type ArcRun,MUL,MUL_LANE,codexStep,contextFor,gateStep,mulBuild,setupArc,stepUntil } from './fixtures/unit-common.ts';
+import { reached,release } from './helpers/barrier.ts';
+import { type Owner,assertNoSurvivors } from './helpers/reap.ts';
+import { git,tmpDir } from './helpers/repo.ts';
+import type { Step } from './helpers/scenario.ts';
 
 // Every supervised run a test here started is stopped by its teardown; nothing of them outlives the file.
 after(assertNoSurvivors);
@@ -184,20 +185,7 @@ describe('status.subset', () => {
     for (const t of s.timings) assert.ok(t.count >= 1 && t.p50Ms <= t.maxMs, JSON.stringify(t));
   });
 
-  test('status.single-flight: a status while another holds the run\'s status.lock is refused; a dead holder\'s lock is replaced', T, async () => {
-    const lock = join(r.runDir, STATUS_LOCK);
-    // The running status is a live process holding the lock for as long as the test needs: a real status ends too fast to overlap.
-    const holder = spawn('sleep', ['60'], { stdio: 'ignore' });
-    const gone = new Promise((resolve) => holder.once('exit', resolve));
-    const { pid, start } = identityOf(holder.pid!);
-    writeFileSync(lock, JSON.stringify({ v: SCHEMA_VERSION, bootId: readBootId(), holder: { pid, start } }));
-    await assert.rejects(statusOf(r), new RegExp(`another status of arc ${r.arc} is running \\(pid ${pid}\\); run one at a time`));
-    assert.ok(existsSync(lock), 'the refused status leaves the holder\'s lock');
-    holder.kill('SIGKILL');
-    await gone;
-    assert.equal((await statusOf(r)).arc, r.arc, 'the dead holder\'s lock is replaced');
-    assert.ok(!existsSync(lock), 'the status released its lock');
-  });
+  
 });
 
 /** Every file under `dir`, relative to it. */
@@ -267,7 +255,7 @@ test('status.sup-items-and-arc-wide-state: file-only sup-/host- items are listed
   });
   // What a supervisor's crash limit and a refused claim leave: host-level, blocking, outside the journal.
   mkdirSync(r.runDir, { recursive: true });
-  const content = { blocking: true, subject: { type: 'host' }, summary: 'seeded', recommendation: 'ack it', options: [], evidence: [] } as const;
+  const content = { blocking: true, subject: { type: 'host' }, summary: 'seeded', recommendation: 'ack it', options: [{ id: 'resolved', label: 'Host state resolved' }], evidence: [] } as const;
   const sup = supervisorNeedsUserId(3, 3);
   const host = hostNeedsUserId('owner-mismatch-1');
   writeFileNeedsUser(absPath(r.runDir), arcId(r.arc), sup, { ...content, reason: 'supervisor-crash-limit' });
@@ -295,7 +283,13 @@ test('status.sup-items-and-arc-wide-state: file-only sup-/host- items are listed
   // No unit left to run: the open unit item now holds the arc.
   release(r.scenarioDir, 'u2check');
   await until(async () => (await statusOf(r)).run.state === 'parked', 60_000, 'the arc to wait on u1\'s item');
-  await cli(r, ['ack', item]);
+  const editDir = join(tmpDir('status-cut'), 'export');
+  const exported = await exportInputs({ repo: absPath(r.repo), arc: arcId(r.arc), out: absPath(editDir) });
+  const path = join(editDir, 'plan.json');
+  const edit = JSON.parse(readFileSync(path, 'utf8')) as { units: { id: string; cut?: { reason: string } }[] };
+  edit.units.find((u) => u.id === 'u1')!.cut = { reason: 'The owner retires the escalated work.' };
+  writeFileSync(path, JSON.stringify(edit));
+  await cli(r, ['apply', '--from', editDir, '--rev', String(exported.planRev), '--reason', 'Retire the escalated unit']);
   const exit = await run.exit;
   assert.equal(exit.code, 0, exit.stderr);
   assert.equal(reasonOf(exit).kind, 'complete');

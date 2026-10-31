@@ -1,18 +1,18 @@
 // Read-only execution detail shared by JSON status and the observer worker.
 import type { CpuBasis } from './core/cpu.ts';
-import type { Event, Parent } from './core/events.ts';
-import { invocationId, parseResourceUnit, type InvocationId, type LaneId, type ResourceUnit } from './core/ids.ts';
-import type { CommandVerdict, ExitCause, LaunchCpu } from './core/records.ts';
-import { boundsOfRecord, isRed } from './core/records.ts';
-import { exitCpuOf, reservationCpuBasisOf, reservationTokenWaitOf } from './core/upgrade.ts';
+import type { Event,Parent } from './core/events.ts';
+import { invocationId,parseResourceUnit,type InvocationId,type LaneId,type ResourceUnit } from './core/ids.ts';
 import { canonicalJson } from './core/json.ts';
+import { exitCpuOf,reservationCpuBasisOf,reservationTokenWaitOf } from './core/projections.ts';
+import type { CommandVerdict,ExitCause,LaunchCpu } from './core/records.ts';
+import { boundsOfRecord,isRed } from './core/records.ts';
 import type { PlanUnit } from './input/plan.ts';
-import type { StageContext, StageParent } from './pipeline/dispatch.ts';
+import type { StageContext,StageParent } from './pipeline/dispatch.ts';
 import { verificationWorktree } from './pipeline/dispatch.ts';
 import { unitTip } from './pipeline/gate.ts';
 import { invocationDir } from './pipeline/invoke.ts';
-import { laneOrder, laneSummaryIn, seriesOrder, specSeriesRoot } from './pipeline/lanes.ts';
-import { fastSuiteLanes, fastSuiteRoot, loadUnitSpec, previousLaneReds } from './pipeline/stages.ts';
+import { laneOrder,laneSummaryIn,seriesOrder,specSeriesRoot } from './pipeline/lanes.ts';
+import { fastSuiteLanes,fastSuiteRoot,loadUnitSpec,previousLaneReds } from './pipeline/stages.ts';
 import { runnerFiles } from './runner/files.ts';
 
 export type WorkRun = Readonly<{

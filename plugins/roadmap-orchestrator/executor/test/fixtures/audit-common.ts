@@ -2,21 +2,21 @@
 // Shared by the audit tests (test/audit.test.ts) and their crash child (audit-child.ts): a holistic arc (brake-common's
 // vision and fake witness lanes) whose plan sets `holistic.audit` (the cadence N, the required lens set L), the audit
 // context over the run's one arbiter, the scenario steps that take a unit to its merge, and log readers.
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Fact } from '../../src/core/events.ts';
+import type { JsonValue } from '../../src/core/json.ts';
 import { readJournal } from '../../src/core/log.ts';
-import type { Clock } from '../../src/holistic/cadence.ts';
 import type { AuditContext } from '../../src/holistic/audit.ts';
+import type { Clock } from '../../src/holistic/cadence.ts';
+import { laneRevOf,parseObligations } from '../../src/holistic/types.ts';
 import { tmpDir } from '../helpers/repo.ts';
 import type { Step } from '../helpers/scenario.ts';
-import { type TreePlan, witnessLaneArgv, writeWitnessControl } from '../helpers/witness.ts';
-import { laneRevOf, parseObligations } from '../../src/holistic/types.ts';
-import { type HolisticArc, type HolisticOptions, ADVANCES, VISION, obligationsJson } from './brake-common.ts';
-import { publishArc, wire } from './publish-common.ts';
+import { type TreePlan,witnessLaneArgv,writeWitnessControl } from '../helpers/witness.ts';
+import { type HolisticArc,type HolisticOptions,ADVANCES,VISION,obligationsJson } from './brake-common.ts';
+import { publishArc,wire } from './publish-common.ts';
 import { planCheckStep } from './stage-common.ts';
-import { type ArcRun, codexStep, gateStep } from './unit-common.ts';
-import type { JsonValue } from '../../src/core/json.ts';
+import { type ArcRun,codexStep,gateStep } from './unit-common.ts';
 
 type Json = Record<string, unknown>;
 
@@ -38,7 +38,7 @@ function withOwnControls(file: Json, own: AuditArcOptions['ownControl']): Json {
   });
   const revs = new Map(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes, obligations: [], mapping: { paths: [] } }).lanes.map((l) => [l.id as string, laneRevOf(l)]));
   const obligations = (file['obligations'] as (Json & { proofJudgment: Json; witness: Json })[]).map((o) => ({
-    ...o, proofJudgment: { ...o.proofJudgment, laneRev: revs.get(String(o.witness['lane'])) },
+    ...o, proofJudgment: o.proofJudgment,
   }));
   return { ...file, lanes, obligations };
 }

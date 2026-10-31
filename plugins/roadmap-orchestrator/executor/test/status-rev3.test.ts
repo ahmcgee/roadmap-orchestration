@@ -5,6 +5,7 @@
 // (OR-A1) in status and in the brief, and the re-entry text (8a). Named tests: status.failures-host-suspected,
 // status.running-lane, status.drainfor-after-rejected-apply, status.known-defect-holds, status.checkpoint-busy-wait,
 // status.drift-indicator, brief.admits-and-opportunities, needsuser.reentry-text-prepare-creates-branch.
+import { exportInputs } from '../src/commands/inputs.ts';
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -160,9 +161,11 @@ describe('status of a live arc', () => {
     assert.equal(line.kind, 'ready', JSON.stringify(line));
     await idle(r, line.generation!);
     // The files moved on (a spec edit nobody applied), so the apply is evaluated, and its spec does not load.
-    const spec = join(r.planPath, '..', 'u1.json');
-    writeFileSync(spec, JSON.stringify({ ...(JSON.parse(readFileSync(spec, 'utf8')) as Json), rev: 'two' }));
-    const submitted = JSON.parse((await cli(r, ['apply'])).stdout) as { command: string };
+    const dir = join(tmpDir('status-edit'), 'export');
+    const record = await exportInputs({repo: absPath(r.repo), arc: arcId(r.arc), out: absPath(dir)});
+    const spec = join(dir, 'u1.json');
+    writeFileSync(spec, JSON.stringify({ ...(JSON.parse(readFileSync(spec, 'utf8')) as Json), acceptance: 'not a list' }));
+    const submitted = JSON.parse((await cli(r, ['apply', '--from', dir, '--rev', String(record.planRev), '--reason', 'Exercise rejected revision drain'])).stdout) as { command: string };
     let s = await statusOf(r);
     await until(async () => (s = await statusOf(r)).commands.receipts.some((x) => x.command === submitted.command), 60_000, 'the apply\'s receipt');
     assert.equal(s.commands.receipts.find((x) => x.command === submitted.command)?.state, 'rejected');

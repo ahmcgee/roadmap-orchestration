@@ -16,24 +16,33 @@
 // `limits.walkRounds` (absent: 3; `walkRoundsOf`), the unit origin `polish` with its `polish` field. The in-file milestone
 // refusals are here (`milestoneRefusals`); `milestones-need-holistic` is a Phase-0 row (src/phase0/rows.ts).
 import {
-  type ArcId, type EdgeId, type JourneyId, type KnownDefectId, type LaneId, type MilestoneId, type PlanRev, type PolishId, type ResourceName, type RulingId, type ServeName, type Sha, type SystemName,
-  type UnitId, type VisionClauseId, INTEGRATION_SLOT, arcId, edgeId, journeyId, knownDefectId, laneId, milestoneId, planRev, polishId, resourceName, rulingId, serveName, sha, systemName,
-  unitId, visionClauseId, idList,
+type ArcId,type EdgeId,
+INTEGRATION_SLOT,
+type JourneyId,type KnownDefectId,type LaneId,type MilestoneId,
+type PolishId,type ResourceName,type RulingId,type ServeName,type Sha,
+type SystemName,type UnitId,type VisionClauseId,
+arcId,edgeId,
+idList,
+journeyId,knownDefectId,laneId,milestoneId,
+polishId,resourceName,rulingId,serveName,sha,
+systemName,unitId,visionClauseId
 } from '../core/ids.ts';
-import { type PropagationTarget, propagationTarget } from '../core/stale.ts';
 import {
-  BOUND_FIELDS, type Bounds, DEFAULT_BOUNDS, type FailureRef, failureRef, type KnownDefectMatch, type LaneDef, type LaneEnv, knownDefectMatch, laneDefOf, laneEnv,
+BOUND_FIELDS,type Bounds,DEFAULT_BOUNDS,type FailureRef,
+type KnownDefectMatch,type LaneDef,type LaneEnv,
+failureRef,
+knownDefectMatch,laneDefOf,laneEnv,
 } from '../core/records.ts';
-import { planCheckShapeDefault, environmentResourcesDefault } from '../core/upgrade.ts';
-import { type FlakyKey, flakyKey, flakyKeyOf } from '../core/flaky.ts';
-import { canonicalJson, sha256Hex } from '../core/json.ts';
-import { Fields, type Read, SchemaError, arrayOf, assertUnique, literal, nullable, object, oneOf, positive, sortedBy, str, stringMap, tagged } from '../core/validate.ts';
-import { type LensKind, LENS_KINDS } from '../holistic/types.ts';
+
+import { type FlakyKey,flakyKey,flakyKeyOf } from '../core/flaky.ts';
+import { canonicalJson,sha256Hex } from '../core/json.ts';
+import { Fields,type Read,SchemaError,arrayOf,assertUnique,literal,nullable,object,oneOf,positive,sortedBy,str,stringMap } from '../core/validate.ts';
 import {
-  type AbsPath, type BranchName, type PlanPath, type RepoPath, type RepoPattern, absPath, branchName, planPath, repoPath,
-  repoPattern,
+type AbsPath,type BranchName,type PlanPath,type RepoPath,type RepoPattern,absPath,branchName,planPath,repoPath,
+repoPattern,
 } from '../core/values.ts';
-import { type RiskTier, type RoutingLayer, riskTier, routingLayer } from '../routing/types.ts';
+import { LENS_KINDS,type LensKind } from '../holistic/types.ts';
+import { type RiskTier,type RoutingLayer,riskTier,routingLayer } from '../routing/types.ts';
 
 export const PLAN_SCHEMA = 'roadmap/plan-m1';
 
@@ -73,7 +82,7 @@ export type EnvironmentDecl = Readonly<{ name: ResourceName; probe: ToolCommand;
  * requirement or contract change left stale (it carries `propagation`; src/holistic/propagation.ts), ranks with repairs.
  * Every origin but `planned` is milestone-exempt (src/walk/node.ts).
  */
-export const UNIT_ORIGINS = ['planned', 'checkpoint', 'repair', 'polish', 'deflake', 'propagation'] as const;
+export const UNIT_ORIGINS = ['planned', 'checkpoint', 'repair', 'polish', 'deflake'] as const;
 export type UnitOrigin = (typeof UNIT_ORIGINS)[number];
 
 /**
@@ -83,7 +92,6 @@ export type UnitOrigin = (typeof UNIT_ORIGINS)[number];
 export type DeflakeOrigin = Readonly<{ keys: readonly FlakyKey[] }>;
 
 /** dev.17: what a `propagation` unit came from: the plan rev whose stale set named the change, and the changed target. */
-export type PropagationOrigin = Readonly<{ rev: PlanRev; target: PropagationTarget }>;
 
 /** dev.13: what a `polish` unit came from: the milestone it polishes and the walkthrough's proposal (`polish-proposed`). */
 export type PolishOrigin = Readonly<{ milestone: MilestoneId; proposal: PolishId }>;
@@ -100,9 +108,9 @@ export type ReentryPoint = (typeof REENTRY_POINTS)[number];
  * re-entries applied before it carry none; the classifier requires it of every re-entry an apply adds whose lineage
  * recorded a failure.
  */
-export type Reentry = Readonly<{ unit: UnitId; enterAt?: ReentryPoint; reset?: Readonly<{ ruling: RulingId }>; fixes?: FailureRef }>;
+export type Reentry = Readonly<{ unit: UnitId; enterAt?: ReentryPoint; reset?: Readonly<{ reason: string }>; fixes?: FailureRef }>;
 /** `cut` (M2): the unit is out of scope; a ruling may back the reason. */
-export type Cut = Readonly<{ reason: string; ruling?: RulingId }>;
+export type Cut = Readonly<{ reason: string }>;
 
 /**
  * M3 (`limits`): overrides of the built-in bounds (`DEFAULT_BOUNDS`), all positive. A unit's override its own;
@@ -187,7 +195,6 @@ export type PlanUnit = Readonly<{
   /** dev.17: present exactly on a `deflake` unit. */
   deflake?: DeflakeOrigin;
   /** dev.17: present exactly on a `propagation` unit. */
-  propagation?: PropagationOrigin;
 }>;
 
 export const UNIT_PRIORITIES = ['normal', 'high'] as const;
@@ -533,7 +540,7 @@ export const environmentsOf = (plan: Pick<PlanM1, 'environments'>): readonly Env
 /** Resources powered by an environment; absent on an earlier declaration, read without rewriting its bytes. */
 export function environmentResources(environment: EnvironmentDecl): readonly ResourceName[] {
   if (environment.resources !== undefined) return environment.resources;
-  return environmentResourcesDefault();
+  return [];
 }
 
 /** Every environment used by these resource names, ascending and unique (explicit environments included). */
@@ -548,7 +555,7 @@ const rulingR: Read<RulingId> = (v, p) => rulingId(v, p);
 
 const reentry: Read<Reentry> = object((f) => {
   const enterAt = f.optional('enterAt', oneOf(REENTRY_POINTS));
-  const reset = f.optional('reset', object((g) => ({ ruling: g.get('ruling', rulingR) })));
+  const reset = f.optional('reset', object((g) => ({ reason: g.get('reason', str) })));
   const fixes = f.optional('fixes', failureRef);
   return {
     unit: f.get('unit', (v, p) => unitId(v, p)), ...(enterAt === undefined ? {} : { enterAt }), ...(reset === undefined ? {} : { reset }), ...(fixes === undefined ? {} : { fixes }),
@@ -556,8 +563,7 @@ const reentry: Read<Reentry> = object((f) => {
 });
 
 const cut: Read<Cut> = object((f) => {
-  const ruling = f.optional('ruling', rulingR);
-  return { reason: f.get('reason', str), ...(ruling === undefined ? {} : { ruling }) };
+  return { reason: f.get('reason', str) };
 });
 
 const planUnit: Read<PlanUnit> = object((f) => {
@@ -583,10 +589,6 @@ const planUnit: Read<PlanUnit> = object((f) => {
   if ((origin === 'polish') !== (polish !== undefined)) throw new SchemaError(`${f.path}.polish`, origin === 'polish' ? 'the milestone and proposal of a polish unit' : 'absent (only a polish unit carries it)', polish);
   const deflake = f.optional('deflake', deflakeOrigin);
   if ((origin === 'deflake') !== (deflake !== undefined)) throw new SchemaError(`${f.path}.deflake`, origin === 'deflake' ? 'the flaky keys of a deflake unit' : 'absent (only a deflake unit carries it)', deflake);
-  const propagation = f.optional('propagation', object((g): PropagationOrigin => ({ rev: g.get('rev', (v, p) => planRev(v, p)), target: g.get('target', propagationTarget) })));
-  if ((origin === 'propagation') !== (propagation !== undefined)) {
-    throw new SchemaError(`${f.path}.propagation`, origin === 'propagation' ? 'the stale set and target of a propagation unit' : 'absent (only a propagation unit carries it)', propagation);
-  }
   assertUnique(out.scope, (s) => s, `${f.path}.scope`);
   assertUnique(out.resources, (r) => r, `${f.path}.resources`);
   assertUnique(out.after, (u) => u, `${f.path}.after`);
@@ -595,7 +597,6 @@ const planUnit: Read<PlanUnit> = object((f) => {
     ...out, ...(systems === undefined ? {} : { systems }), ...(origin === undefined ? {} : { origin }), ...(cpu === undefined ? {} : { cpu }), ...(reenters === undefined ? {} : { reenters }),
     ...(cutField === undefined ? {} : { cut: cutField }), ...(routing === undefined ? {} : { routing }), ...(limits === undefined ? {} : { limits }),
     ...(priority === undefined ? {} : { priority }), ...(polish === undefined ? {} : { polish }), ...(deflake === undefined ? {} : { deflake }),
-    ...(propagation === undefined ? {} : { propagation }),
   };
 });
 
@@ -778,7 +779,7 @@ export function parsePlan(value: unknown): PlanM1 {
     const knownDefects = f.optional('knownDefects', arrayOf(knownDefect, { nonEmpty: true }));
     // dev.17: a dev.16 plan's `planCheck.shape` is read and dropped (every plan-check is uniform now), warned.
     const legacyPlanCheck = f.optional('planCheck', object((g) => ({ shape: g.get('shape', oneOf(LEGACY_PLAN_CHECK_SHAPES)) })));
-    if (legacyPlanCheck !== undefined) planCheckShapeDefault(legacyPlanCheck.shape);
+
     const derived = f.optional('derived', arrayOf(derivedFiles));
     const milestones = f.optional('milestones', arrayOf(milestone, { nonEmpty: true }));
     const environments = f.optional('environments', environmentsR);

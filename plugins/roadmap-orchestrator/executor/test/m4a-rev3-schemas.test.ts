@@ -4,35 +4,29 @@
 // plan and spec fields, the role schemas and the CLI forms. Run 10 (D): checkpoint.admit-spec-schema, checkpoint.admit-spec-read,
 // upgrade.admit-spec-text.
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
-import { type Envelope, type Event, type Fact, type LogRecord, parseEventLine, serializeEvent } from '../src/core/events.ts';
-import {
-  InvalidIdError, arcId, commandId, jobId, knownDefectId, laneId, opId, opKey, opportunityId, sha, sha256, unitId, witnessItemId,
-} from '../src/core/ids.ts';
-import { canonicalJson } from '../src/core/json.ts';
-import { DEFAULT_BOUNDS, boundsOfRecord, commandBody, dispatchRecord, laneDef, laneDefOf, redFile, specM1, specPatchOp } from '../src/core/records.ts';
-import { Fold, openAttempt } from '../src/core/state.ts';
-import {
-  HOST_SIGNATURES_DEV6, buildExperimentsDefault, bundleClassesOf, dev6SmokeBounds, mutantSubjectDefault,
-} from '../src/core/upgrade.ts';
-import { SchemaError } from '../src/core/validate.ts';
-import { absPath, isoTime } from '../src/core/values.ts';
-import { debtSource } from '../src/debt/types.ts';
-import { HOST_SIGNATURES } from '../src/host/signatures.ts';
-import { type ArcLaneDef, admitClass, conversion, laneRevMatches, laneRevOf, parseObligations, witnessLaneFile } from '../src/holistic/types.ts';
-import { CliError, parseCommand } from '../src/input/cli.ts';
-import { knownDefectsOf, parsePlan, priorityOf } from '../src/input/plan.ts';
-import { DETAILED_OUTCOMES, STAGE_OUTCOME_KINDS } from '../src/core/events.ts';
-import {
-  BUILD_SCHEMA, CHECKPOINT_SCHEMA, buildOutput, validateBuildOutput, validateCheckpointOutput,
-} from '../src/prompts/schemas.ts';
+import { describe,it } from 'node:test';
 import { schemaViolation } from '../src/backends/adapter.ts';
-import { parseSpec, specBytes } from '../src/spec/spec.ts';
+import { DETAILED_OUTCOMES,type Envelope,type Event,type Fact,type LogRecord,STAGE_OUTCOME_KINDS,parseEventLine,prevHash,serializeEvent } from '../src/core/events.ts';
+import {
+InvalidIdError,arcId,commandId,jobId,knownDefectId,
+opId,opKey,opportunityId,sha,sha256,unitId,witnessItemId
+} from '../src/core/ids.ts';
+import { canonicalJson,canonicalJson as cj,sha256Hex } from '../src/core/json.ts';
+import { DEFAULT_BOUNDS,boundsOfRecord,dispatchRecord,laneDef,laneDefOf,redFile,specM1,specPatchOp } from '../src/core/records.ts';
+import { Fold,openAttempt } from '../src/core/state.ts';
+import { SchemaError } from '../src/core/validate.ts';
+import { absPath,isoTime } from '../src/core/values.ts';
+import { debtSource } from '../src/debt/types.ts';
+import { type ArcLaneDef,admitClass,conversion,laneRevOf,parseObligations,witnessLaneFile } from '../src/holistic/types.ts';
+import { CliError,parseCommand } from '../src/input/cli.ts';
+import { knownDefectsOf,parsePlan,priorityOf } from '../src/input/plan.ts';
+import {
+BUILD_SCHEMA,CHECKPOINT_SCHEMA,buildOutput,
+validateCheckpointOutput
+} from '../src/prompts/schemas.ts';
 import { compareRank } from '../src/schedule/types.ts';
-import { canonicalJson as cj } from '../src/core/json.ts';
-import { sha256Hex } from '../src/core/json.ts';
-import { ARC as LOG_ARC, H as LOG_H, U1, chain, spawnIntent, spawnResult } from './fixtures/log-records.ts';
-import { prevHash } from '../src/core/events.ts';
+import { parseSpec,specBytes } from '../src/spec/spec.ts';
+import { ARC as LOG_ARC,H as LOG_H,U1,chain,spawnIntent,spawnResult } from './fixtures/log-records.ts';
 
 const ARC = arcId('arc-2');
 const A = sha('a'.repeat(40));
@@ -42,7 +36,7 @@ const AT = isoTime('2026-10-06T12:00:00.000Z');
 const CKPT = jobId('ckpt', 3);
 const INV = `arc-2/7#1`;
 
-const envelope = (seq: number): Envelope => ({ v: 1, seq, prev: seq === 1 ? null : H, at: AT, arc: ARC });
+const envelope = (seq: number): Envelope => ({ v: 2, seq, prev: seq === 1 ? null : H, at: AT, arc: ARC });
 function roundTrip(record: LogRecord): Event {
   const e = { ...envelope(2), ...record } as Event;
   const line = serializeEvent(e);
@@ -58,7 +52,7 @@ const intent = (kind: string, expect: object, post: object | null = null, parent
   ({ type: 'intent', op: opId(ARC, 2), kind, key: opKey(`k:${kind}`), parent, ordinal: 1, deadlineAt: null, expect, post }) as unknown as LogRecord;
 const same = (read: (v: unknown, p: string) => unknown, value: object): void => assert.equal(canonicalJson(read(JSON.parse(JSON.stringify(value)), 'x')), canonicalJson(value));
 
-const LANE = { id: 'unit', argv: ['npm', 'test'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], evidenceExcludes: [] };
+const LANE = { id: 'unit', argv: ['npm', 'test'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], evidenceExcludes: [] };
 const ARC_LANE = { ...LANE, id: 'journey', reporter: 'jsonl' };
 const obligationsWith = (lane: object) => ({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [lane], obligations: [], mapping: { paths: [] } });
 
@@ -100,10 +94,7 @@ describe('m4a-rev3 spawn subjects and mutant records', () => {
     refuses(intent('mutant.apply', apply), /\.of$/);
   });
 
-  it('mutant.subject-dev6-default: a dev.6 subject or intent reads as of: finding; a rev-3 one keeps its own', () => {
-    assert.deepEqual(mutantSubjectDefault({ finding: 'F-2' as never }), { type: 'finding', finding: 'F-2' });
-    assert.deepEqual(mutantSubjectDefault({ of: { type: 'smoke', unit: unitId('u1'), attempt: 2 } }), { type: 'smoke', unit: 'u1', attempt: 2 });
-  });
+  
 
   it('a smoke run is witnessed as a mutant and never certifies', () => {
     const w = { kind: 'witnessed', lane: 'journey', laneRev: '0123456789abcdef', envId: 'fedcba9876543210', treeSha: B, inv: INV, recordsSha256: H };
@@ -229,8 +220,8 @@ describe('m4a-rev3 facts and outcomes', () => {
       routingProvenance: { profile: 'default', repoConfig: { seats: null, classes: null }, planLayer: null, unitLayers: {} },
     });
     roundTrip(applied([{ type: 'unit-priority', unit: 'u1' }, { type: 'known-defects' }, { type: 'plan-check-shape' }]));
-    roundTrip(applied([{ type: 'unit-reentered', unit: 'u2', reenters: 'u1', reset: false, widened: { patterns: ['src/b/**', 'test/b/**'], ruling: 'C-4' } }]));
-    refuses(applied([{ type: 'unit-reentered', unit: 'u2', reenters: 'u1', reset: false, widened: { patterns: [], ruling: 'C-4' } }]), /patterns$/);
+    roundTrip(applied([{ type: 'unit-reentered', unit: 'u2', reenters: 'u1', reset: false, widened: { patterns: ['src/b/**', 'test/b/**'], reason: 'Reviewed the widening' } }]));
+    refuses(applied([{ type: 'unit-reentered', unit: 'u2', reenters: 'u1', reset: false, widened: { patterns: [], reason: 'Reviewed the widening' } }]), /patterns$/);
   });
 
   it('a dispatch record\'s bounds carry the smoke bounds; a dev.6 record\'s, without them, read as written', () => {
@@ -240,7 +231,7 @@ describe('m4a-rev3 facts and outcomes', () => {
     };
     const { smokeRounds: _r, smokeRuns: _n, ...dev6 } = DEFAULT_BOUNDS;
     roundTrip(fact({ kind: 'dispatch', record: { ...record, bounds: DEFAULT_BOUNDS } }));
-    roundTrip(fact({ kind: 'dispatch', record: { ...record, bounds: dev6 } }));
+    assert.throws(() => roundTrip(fact({ kind: 'dispatch', record: { ...record, bounds: dev6 } })), /smokeRounds/);
     refuses(fact({ kind: 'dispatch', record: { ...record, bounds: { ...dev6, smokeRuns: 2 } } }), /smokeRounds$/);
     assert.deepEqual(boundsOfRecord(dispatchRecord({ ...record, bounds: { ...DEFAULT_BOUNDS, smokeRounds: 3, smokeRuns: 5 } }, 'r')), { ...DEFAULT_BOUNDS, smokeRounds: 3, smokeRuns: 5 });
   });
@@ -248,16 +239,16 @@ describe('m4a-rev3 facts and outcomes', () => {
 
 describe('m4a-rev3 files', () => {
   it('red.json: a red run\'s class, written once before the rerun decision', () => {
-    same(redFile, { v: 1, class: { kind: 'repeat', attempt: 2, inv: INV }, failure: H, redRev: 2 });
-    same(redFile, { v: 1, class: { kind: 'host-signature', signatures: ['eagain', 'enospc'] }, failure: H, redRev: 2 });
-    same(redFile, { v: 1, class: { kind: 'diagnostic' }, failure: H, redRev: 1 });
-    assert.throws(() => redFile({ v: 1, class: { kind: 'host-signature', signatures: ['enospc', 'eagain'] }, failure: H, redRev: 2 }, 'r'), /table order/);
-    assert.throws(() => redFile({ v: 1, class: { kind: 'host-signature', signatures: [] }, failure: H, redRev: 2 }, 'r'), SchemaError);
+    same(redFile, { v: 2, class: { kind: 'repeat', attempt: 2, inv: INV }, failure: H, redRev: 2 });
+    same(redFile, { v: 2, class: { kind: 'host-signature', signatures: ['eagain', 'enospc'] }, failure: H, redRev: 2 });
+    same(redFile, { v: 2, class: { kind: 'diagnostic' }, failure: H, redRev: 1 });
+    assert.throws(() => redFile({ v: 2, class: { kind: 'host-signature', signatures: ['enospc', 'eagain'] }, failure: H, redRev: 2 }, 'r'), /table order/);
+    assert.throws(() => redFile({ v: 2, class: { kind: 'host-signature', signatures: [] }, failure: H, redRev: 2 }, 'r'), SchemaError);
   });
 
   it('a witness-check lane file: the lane to run and the ids it must make pass', () => {
-    same(witnessLaneFile, { v: 1, lane: 'journey', argv: ['node', '--test'], cwd: '.', env: { set: { TZ: 'UTC' }, pass: ['PATH'] }, reporter: 'node-test', required: ['a', 'b'] });
-    assert.throws(() => witnessLaneFile({ v: 1, lane: 'journey', argv: ['node'], cwd: '.', env: { set: {}, pass: [] }, reporter: 'jsonl', required: [] }, 'w'), SchemaError);
+    same(witnessLaneFile, { v: 2, lane: 'journey', argv: ['node', '--test'], cwd: '.', env: { set: { TZ: 'UTC' }, pass: ['PATH'] }, reporter: 'node-test', required: ['a', 'b'] });
+    assert.throws(() => witnessLaneFile({ v: 2, lane: 'journey', argv: ['node'], cwd: '.', env: { set: {}, pass: [] }, reporter: 'jsonl', required: [] }, 'w'), SchemaError);
   });
 });
 
@@ -287,7 +278,7 @@ describe('m4a-rev3 plan and spec', () => {
 
   it('spec.inputs-dropped (dev.17): a dev.16 spec lane\'s inputs read as dropped; a suite or arc lane declaring them is refused', () => {
     const withInputs = { ...LANE, inputs: ['src/**', 'package.json'] };
-    assert.equal('inputs' in laneDefOf('spec')(withInputs, 'l'), false);
+    assert.throws(() => laneDefOf('spec')(withInputs, 'l'), /inputs/);
     assert.throws(() => laneDef({ ...laneDefOf('spec')(LANE, 'l'), inputs: ['src/**'] }, 'l'), SchemaError);
     assert.throws(() => parsePlan({ ...plan, suite: { lanes: [withInputs] } }), SchemaError);
     assert.throws(() => parseObligations(obligationsWith({ ...ARC_LANE, inputs: ['src/**'] })), SchemaError);
@@ -311,32 +302,17 @@ describe('m4a-rev3 plan and spec', () => {
 });
 
 describe('m4a-rev3 apply body (I2, step N3)', () => {
-  it('apply.body-rulings: `rulings` round-trips in the order given; absent reads as none, byte-preserving; empty is refused; a queued `expectRev` reads as base null', () => {
-    const H = 'a'.repeat(64);
-    const plain = { type: 'apply', base: null, manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H, sidecars: {} }, obligations: null, vision: null }, visionEdit: false };
-    assert.deepEqual(commandBody(plain, 'b'), plain);
-    assert.equal(cj(commandBody(plain, 'b')), cj(plain), 'an apply without rulings reads back byte-identical');
-    const { base: _base, visionEdit: _visionEdit, ...queued } = plain;
-    assert.deepEqual(commandBody({ ...queued, expectRev: 4 }, 'b'), { ...plain, visionEdit: true }, 'an apply an earlier CLI queued (expectRev, no visionEdit) rebases from the default base');
-    const ruled = { ...plain, rulings: [{ path: '/r/C-3.json', sha256: H }, { path: '/r/C-2.json', sha256: 'b'.repeat(64) }] };
-    assert.deepEqual(commandBody(ruled, 'b'), ruled);
-    assert.throws(() => commandBody({ ...plain, rulings: [] }, 'b'), /rulings/);
-    assert.throws(() => commandBody({ ...plain, rulings: [{ path: 'relative.json', sha256: H }] }, 'b'), /path/);
-  });
+  
 
-  it('apply.body-vision-edit: `visionEdit` true and false round-trip; absent (a body a dev.10 CLI queued) reads as a declared vision edit; a non-boolean is refused', () => {
-    const H = 'a'.repeat(64);
-    const plain = { type: 'apply', base: null, manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H, sidecars: {} }, obligations: null, vision: H } };
-    for (const visionEdit of [true, false]) assert.deepEqual(commandBody({ ...plain, visionEdit }, 'b'), { ...plain, visionEdit });
-    assert.deepEqual(commandBody(plain, 'b'), { ...plain, visionEdit: true }, 'absent is not false: the previous release\'s command is adopted');
-    assert.throws(() => commandBody({ ...plain, visionEdit: 'yes' }, 'b'), /visionEdit/);
-  });
+  
 });
 
 describe('m4a-rev3 role schemas', () => {
   it('the build answer: targeted experiments, with old lanesRun accepted and ignored', () => {
-    const answer = { summary: 's', changedPaths: [], lanesRun: [{ lane: 'unit', exit: 0 }], blockers: [], experiments: [{ name: 'probe', argv: ['node', 'x.js'], exit: 1 }], final: true };
-    const out = buildOutput(answer, 'build');
+    const answer = { docsOnlySince: null, summary: 's', changedPaths: [], lanesRun: [{ lane: 'unit', exit: 0 }], blockers: [], experiments: [{ name: 'probe', argv: ['node', 'x.js'], exit: 1 }], final: true };
+    const {lanesRun: _legacy, ...fresh} = answer;
+    const out = buildOutput(fresh, 'build');
+    assert.throws(() => buildOutput(answer, 'build'), /lanesRun/);
     assert.deepEqual(out.experiments, answer.experiments);
     assert.ok(!('lanesRun' in out));
     const { lanesRun: _old, ...current } = answer;
@@ -371,52 +347,7 @@ describe('types.lane-rev-normalised', () => {
   });
 });
 
-describe('upgrade.defaults-rev3', () => {
-  it('upgrade.dev6-minimal-lane-rev-equal: a rev of the minimal form (defaults omitted) matches; any other rev does not', () => {
-    const parsed = parseObligations(obligationsWith(ARC_LANE)).lanes[0]!;
-    const { evidenceExcludes: _e, ...minimal } = parsed;
-    const minimalRev = sha256Hex(cj(minimal)).slice(0, 16) as never;
-    assert.notEqual(minimalRev, laneRevOf(parsed));
-    assert.equal(laneRevMatches(minimalRev, parsed), true);
-    assert.equal(laneRevMatches(laneRevOf(parsed), parsed), true);
-    assert.equal(laneRevMatches('0123456789abcdef' as never, parsed), false);
-    const excluded = parseObligations(obligationsWith({ ...ARC_LANE, evidenceExcludes: ['tmp/**'] })).lanes[0]!;
-    const { evidenceExcludes: _x, ...dropped } = excluded;
-    assert.equal(laneRevMatches(sha256Hex(cj(dropped)).slice(0, 16) as never, excluded), false, 'a non-default field is never dropped');
-  });
 
-  it('every dev.6 read-time default: smoke bounds, mutant subjects, build experiments, unclassified bundles, the frozen signature table', () => {
-    assert.deepEqual(dev6SmokeBounds(), { smokeRounds: 1, smokeRuns: 2 });
-    const { smokeRounds: _r, smokeRuns: _n, ...dev6 } = DEFAULT_BOUNDS;
-    const record = dispatchRecord({
-      unit: 'u1', specRev: 1, specSha256: H, scope: ['src/**'], riskFloor: 'med', routingRev: '0123456789abcdef', implementerSeatRev: '0123456789abcdef', at: AT,
-      transientRules: 'm3', bounds: { ...dev6, chargeable: 4 },
-    }, 'r');
-    assert.equal(record.bounds?.smokeRounds, undefined, 'read as written');
-    assert.deepEqual(boundsOfRecord(record), { ...DEFAULT_BOUNDS, chargeable: 4 });
-    assert.deepEqual(mutantSubjectDefault({ finding: 'F-9' as never }), { type: 'finding', finding: 'F-9' });
-    const dev6Answer = { summary: 's', changedPaths: [], lanesRun: [], blockers: [] };
-    assert.deepEqual(validateBuildOutput(dev6Answer).experiments, []);
-    assert.deepEqual(buildExperimentsDefault(), []);
-    assert.equal(bundleClassesOf({ type: 'bundle', job: CKPT }), 'unclassified');
-    assert.deepEqual(bundleClassesOf({ type: 'bundle', job: CKPT, admits: [], conversions: [] }), { admits: [], conversions: [] });
-    assert.deepEqual(HOST_SIGNATURES_DEV6.map((s) => [s.id, String(s.pattern)]), [
-      ['golangci-lint-lock', String(/parallel golangci-lint is running/i)],
-      ['kind-boot-timeout', String(/failed to create cluster:.*(timed out waiting for the condition|failed to init node with kubeadm)/i)],
-      ['eagain', String(/\bEAGAIN\b|Resource temporarily unavailable/)],
-      ['enospc', String(/\bENOSPC\b|No space left on device/)],
-    ], 'the 4 entries at 0a58349');
-    assert.ok(HOST_SIGNATURES_DEV6.every((s) => HOST_SIGNATURES.some((t) => t.id === s.id)));
-  });
-
-  it('a dev.6 log folds with no smoke rounds spent and no rev-3 facts', () => {
-    const f = new Fold(LOG_ARC);
-    for (const e of chain([spawnIntent(1)])) f.apply(e, prevHash(Buffer.from(serializeEvent(e))));
-    assert.equal(f.unit(U1).counters.smokeRounds, 0);
-    const h = f.holistic();
-    assert.deepEqual([h.laneReuses, h.certificates, h.smokeRuns, h.corroborations], [[], [], [], []]);
-  });
-});
 
 describe('state.open-attempt-live-vs-abandoned', () => {
   it('an attempt started after the latest executor start is live; one an executor restart found open is abandoned; closed is none', () => {
@@ -443,20 +374,16 @@ describe('state.open-attempt-live-vs-abandoned', () => {
 });
 
 describe('cli.m4a-rev3', () => {
-  it('parses witness-check, resume-arc, inputs export and apply --ruling (repeatable)', () => {
+  it('parses witness-check, resume-arc, inputs export and the removed ruling option is refused', () => {
     assert.deepEqual(parseCommand(['witness-check', '--lane-file', 'w.json']), { command: 'witness-check', laneFile: 'w.json' });
     assert.deepEqual(parseCommand(['resume-arc', '--repo', '.']), { command: 'resume-arc', repo: '.' });
     assert.deepEqual(parseCommand(['inputs', 'export', '--repo', '.', '--arc', 'arc-1', '--out', 'x']), { command: 'inputs-export', repo: '.', arc: 'arc-1', out: 'x' });
-    assert.deepEqual(parseCommand(['apply', '--ruling', 'a.json', '--ruling', 'b.json']), { command: 'apply', base: null, dryRun: false, rulings: ['a.json', 'b.json'], visionEdit: false, run: { type: 'host' } });
-    assert.deepEqual(parseCommand(['apply']), { command: 'apply', base: null, dryRun: false, rulings: [], visionEdit: false, run: { type: 'host' } });
-    assert.deepEqual(parseCommand(['apply', '--base', 'x/export.json']), { command: 'apply', base: 'x/export.json', dryRun: false, rulings: [], visionEdit: false, run: { type: 'host' } });
-    assert.deepEqual(parseCommand(['apply', '--vision-edit']), { command: 'apply', base: null, dryRun: false, rulings: [], visionEdit: true, run: { type: 'host' } });
     const refuses = (argv: readonly string[], message: RegExp): void => assert.throws(() => parseCommand(argv), (e: unknown) => e instanceof CliError && message.test(e.message), argv.join(' '));
     refuses(['witness-check'], /--lane-file <file> is required/);
     refuses(['resume-arc', '--repo', '.', 'x'], /unexpected argument/);
     refuses(['inputs', 'import'], /expected the subcommand export/);
     refuses(['inputs', 'export', '--repo', '.', '--arc', 'Bad Arc', '--out', 'x'], /ArcId/);
-    refuses(['apply', '--ruling', 'a.json', '--ruling', 'a.json'], /given twice/);
+    refuses(['apply', '--ruling', 'a.json'], /unknown option/);
     refuses(['apply', '--dry-run', '--dry-run'], /given twice/);
     void commandId;
   });
@@ -476,7 +403,7 @@ describe('run 10 (D): a checkpoint admit\'s spec is constrained by the schema', 
     op: 'admit', unit: { id: 'gap', risk: 'low', scope: ['src/**'], after: [], origin: 'repair' }, spec, targets: [], cites: ['V-1'], evidence: ['F-1'],
   });
   const answer = (spec: unknown) => ({
-    decision: 'bundle', reasons: ['r'], ops: [admit(spec)], rulings: [], findingDispositions: [], interpretations: [],
+    decision: 'bundle', reasons: ['r'], ops: [admit(spec)],  findingDispositions: [], interpretations: [],
     cites: { vision: ['V-1'], observations: [], findings: [] }, premises: [], corpusAmendments: [],
   });
 
@@ -504,9 +431,5 @@ describe('run 10 (D): a checkpoint admit\'s spec is constrained by the schema', 
     assert.throws(() => validateCheckpointOutput(answer({ ...wire, lanes: [{ ...wire.lanes[0], env: { set: [{ name: 'A', value: '1' }, { name: 'A', value: '2' }], pass: [] } }] })), SchemaError);
   });
 
-  it('upgrade.admit-spec-text: an answer recorded before run 10 holds the spec as JSON text, read as written', () => {
-    const text = JSON.stringify({ unit: 'anything' });
-    const op = validateCheckpointOutput(answer(text)).ops[0]!;
-    assert.ok(op.op === 'admit' && op.spec === text);
-  });
+  
 });
