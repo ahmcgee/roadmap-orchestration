@@ -677,7 +677,7 @@ function superviseArc2(c: Ctx, a: ArcState): string {
   c.t.roadmap(['pause', 'notice', ...at]);
   c.t.until(a.arc, 'notice held', (s) => unitOf(s, 'notice').state === 'held');
   return [
-    `cutoff merged; notice waited behind my run-only limit for the checkpoints. The root admitted fits with its witness using apply --reason and left the day view for a later slice; then I lifted the run-only limit.`,
+    `cutoff merged; notice waited behind my run-only limit for the campaign audit. The root admitted fits with its witness using apply --reason and left the day view for a later slice; then I lifted the run-only limit.`,
     `notice's ${SLOW_LANE.id} lane hung: I paused notice and resume it on the next wake. ${RUNNING(a)}`,
   ].join('\n');
 }
@@ -696,7 +696,7 @@ function resumePaused(c: Ctx, a: ArcState): string {
     change: 'a per-lane time budget from the lane\'s own history would end a lane that progresses forever without me',
   });
   c.state.paused = null;
-  return `Resumed ${paused.unit} after my pause (OP-1 in the operator log). The divergence digest (D-1, the opportunity) goes to the owner at the next check-in. ${RUNNING(a)}`;
+  return `Resumed ${paused.unit} after my pause (OP-1 in the operator log). The root-authored fits revision remains in force. ${RUNNING(a)}`;
 }
 
 function turn(c: Ctx, prompt: string): string {

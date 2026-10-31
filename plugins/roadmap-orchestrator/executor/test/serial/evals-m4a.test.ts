@@ -344,7 +344,7 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     assert.ok(closed[0]!.seq > fix.seq && closed[0]!.seq < started[1]!.seq, 'closure follows the repair and precedes review-2');
   });
 
-  test('evals-m4a.amendments-debt: arc 1 banks a gate note and a deferred finding and derives two amendments; arc 2 dispositions all four', () => {
+  test('evals-m4a.amendments-debt: arc 1 banks the gate note and audit finding; arc 2 dispositions both, with no checkpoint amendments', () => {
     assert.deepEqual(factsOf(arc1, 'corpus-amendment'), [], 'campaign audits leave corpus amendments to the root');
     assert.deepEqual(factsOf(arc1, 'debt-banked').map((d) => d.bankReason).sort(), ['finding-deferred', 'gate-note']);
     const { one, two } = chainOf(absPath(layout(story.dir).product));
@@ -368,7 +368,7 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     assert.equal(chainOf(absPath(layout(story.dir).product)).arcs.length, 2, 'no third arc started');
   });
 
-  test('evals-m4a.brief: the brief spans both arcs, K = 1 with arc 2 unacked, and carries the amendments, debt and P-1', () => {
+  test('evals-m4a.brief: the brief spans both arcs, K = 1 with arc 2 unacked, and carries debt and P-1 without checkpoint amendments', () => {
     const l = layout(story.dir);
     // check.ts restored the scrambled live files (K20) after its from-ref check; the brief reads the committed config.
     assert.equal(spawnSync('git', ['-C', l.product, 'status', '--porcelain', '--', ...story.report.scrambled], { encoding: 'utf8' }).stdout.trim(), '', 'check.ts restored every scrambled path');
@@ -546,7 +546,7 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     assert.deepEqual(confirm.find((o) => o.outcome === 'smoke-survived')!.detail, { kind: 'smoke-survived', obligations: [], testIds: [tides] });
   });
 
-  test('evals-m4a.opportunity: arc 2\'s checkpoint admits fits as the opportunity O-1 with its witness (V-7 joins advances) and converts the over-budget day view into an amendment, which arc 3 applies as T-25', () => {
+  test('evals-m4a.opportunity: root apply admits fits with its witness, V-7 joins advances, and the day view remains future work', () => {
     const authored = factsOf(arc2, 'plan-applied').find((p) => p.changes.some((c) => c.type === 'unit-added' && c.unit === 'fits'));
     assert.ok(authored?.source.type === 'command', 'the root authors the additional unit through apply');
     assert.deepEqual(factsOf(arc2, 'corpus-amendment'), []);
@@ -565,7 +565,7 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     );
     assert.deepEqual(obligations.census?.find((e) => e.rule === FITS_WITNESS.child.rule)?.state, { type: 'obligation', id: FITS_WITNESS.child.id });
     assert.ok(factsOf(arc2, 'obligation-latched').some((f) => f.obligation === FITS_WITNESS.child.id), 'fits\' publication latched its witness');
-    // The bundle's drift audit and its checkpoint ran before notice was admitted (the root agent waited on them).
+    // The requested campaign audit completed before notice was admitted.
     const audited = factsOf(arc2, 'audit-ended').find((f) => f.job === 'audit-1')!;
     assert.ok(factsOf(arc2, 'dispatch').filter((d) => d.record.unit === 'notice').every((d) => d.seq > audited.seq));
     const arc3 = JSON.parse(readFileSync(join(layout(story.dir).inputs, fakeArc(story.dir, 3), 'phase0.json'), 'utf8')) as {amendments: unknown[]};
