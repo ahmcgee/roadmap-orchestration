@@ -255,6 +255,31 @@ describe('m4b flow output (strict)', () => {
   });
 });
 
+describe('m4b routing: role-set provenance survives flow retirement', () => {
+  it('without a role set the rev stays stable; provenance stays additive and flow is never seated', () => {
+    const dev7 = resolveRouting(arcStack('default', null, null));
+    const m4b = resolveRouting({ ...arcStack('default', null, null), arcRoles: 'm4b' });
+    assert.equal(dev7.rev, routingRevOf(dev7.table, 'none', null, false));
+    assert.equal(m4b.rev, dev7.rev, 'the retired flow seat is not hashed');
+    assert.ok(!seatsInForce(dev7).some((s) => s.role === 'flow'));
+    assert.deepEqual(seatsInForce(m4b).filter((s) => s.role === 'flow'), []);
+    assert.deepEqual(m4b.classes.flow, { arc: 'efficient' }, 'the flow seat on efficient (owner ruling 2026-10-15)');
+    for (const scope of ['architecture-doc', 'corpus'] as const) {
+      assert.equal(routingRevOf(m4b.table, scope, 'm4b', false), routingRevOf(m4b.table, scope, null, false), scope);
+      assert.ok(!seatsInForce(resolveRouting({ ...arcStack('default', null, null), arcScope: scope, arcRoles: 'm4b' })).some((s) => s.role === 'flow'), scope);
+    }
+    // A retired flow-seat rebind moves no active revision.
+    const moved = { flow: { arc: 'summit' as const } };
+    assert.equal(resolveRouting(arcStack('default', null, moved)).rev, dev7.rev);
+    assert.equal(resolveRouting({ ...arcStack('default', null, moved), arcRoles: 'm4b' }).rev, m4b.rev);
+    // The provenance records the role set additively: absent reads as absent.
+    const p = { profile: 'default', repoConfig: { seats: null, classes: null }, planLayer: null, unitLayers: {} };
+    assert.equal(routingProvenance(p, 'p').arcRoles, undefined);
+    assert.equal(routingProvenance({ ...p, arcRoles: 'm4b' }, 'p').arcRoles, 'm4b');
+    assert.throws(() => routingProvenance({ ...p, arcRoles: 'm4a' }, 'p'), SchemaError);
+  });
+});
+
 describe('m4b fold: the role set is fixed at revision 1', () => {
   const applied = (rev: number, arcRoles: 'm4b' | null): LogRecord => fact({
     kind: 'plan-applied', rev, command: null, planSha256: LOG_H, specs: {}, changes: [], ...appliedFields(rev, null),
