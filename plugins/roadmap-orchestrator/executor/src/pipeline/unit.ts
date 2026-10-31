@@ -247,13 +247,16 @@ function candidateRed(ctx: StageContext, unit: PlanUnit, at: StageParent): Reado
   const batch = memberBatchCandidate(view, at);
   if (batch !== null) return { fix: batchMemberFix(ctx, unit, batch), suite: [] };
   // Red on the candidate, green on the tip alone: the suite's failing lanes are the evidence.
-  const suite = seriesLedger(ctx, at, ctx.plan().suite.lanes, 'suite', latestCandidate(ctx, unit.id).post.new, candidateSeriesRoot(ctx.runDir, at));
+  const root = candidateSeriesRoot(ctx.runDir, at);
+  const specRoot = absPath(join(root, '_spec'));
+  const head = latestCandidate(ctx, unit.id).post.new;
+  const suite = [...seriesLedger(ctx, at, loadUnitSpec(ctx, unit).spec.lanes, 'spec', head, specRoot), ...seriesLedger(ctx, at, ctx.plan().suite.lanes, 'suite', head, root)];
   // M3 (B3): a vacuity repair's candidate that did not kill its mutant (the suite and the brake green).
   const survived = mutantFix(ctx, at);
   if (survived !== null) return { fix: survived, suite };
   const failing = suite.filter((l) => l.verdict !== 'pass');
   // M3: a green suite with red held claims (the brake): the obligations and journey lanes left red.
-  if (failing.length === 0 && seriesDirty(view, candidateSeriesRoot(ctx.runDir, at)).length === 0) return { fix: candidateBrakeFix(ctx, unit, at), suite };
+  if (failing.length === 0 && [...seriesDirty(view, root), ...seriesDirty(view, specRoot)].length === 0) return { fix: candidateBrakeFix(ctx, unit, at), suite };
   return { fix: { failingEvidenceDirs: (failing.length > 0 ? failing : suite).flatMap(failingEvidenceDirs), directives: failingLaneDirectives(failing) }, suite };
 }
 
@@ -359,10 +362,8 @@ function lanesFixRound(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact, t
       return witnessCheckoutFixRound(snap === undefined ? [] : snap.expect.globs.map(patternPath), [...witnessEvidence(ctx, parent), ...(snap === undefined ? [] : [dest])], ledger, tip);
     }
     default: {
-      const round = laneFixRound(series, dirty, tip);
-      if (round.kind !== 'fix') return round;
       const compared = view.ciFacts().filter((c) => c.kind === 'lane-base-compared' && c.unit === unit.id && c.attempt === parent.attempt);
-      return { ...round, fix: { ...round.fix, directives: [...round.fix.directives, ...compared.map((c) => c.kind === 'lane-base-compared' ? `Lane ${c.lane} is red on the unit and ${c.result === 'pass' ? 'green' : 'red'} at diffBase ${c.base}. Base comparison evidence: ${c.evidence}.` : '')], failingEvidenceDirs: [...round.fix.failingEvidenceDirs, ...compared.flatMap((c) => c.kind === 'lane-base-compared' ? [c.evidence] : [])] } };
+      return laneFixRound(series, dirty, tip, compared);
     }
   }
 }
@@ -689,7 +690,10 @@ async function stepOnce(ctx: StageContext, unit: PlanUnit): Promise<Step> {
 export function haltResult(ctx: StageContext, unit: PlanUnit): Extract<UnitResult, Readonly<{ kind: 'parked' | 'stopped' }>> | null {
   const u = ctx.journal.view.unit(unit.id);
   const f = u.decided;
-  if (u.status === 'park-pending' && ctx.journal.view.ciFacts().some((f) => f.kind === 'attempt-capped' && f.unit === unit.id)) return { kind: 'parked', needsUser: { reason: 'attempt-cap', summary: `${unit.id} reached the total attempt cap`, blocking: true, options: [], subject: { type: 'unit', unit: unit.id }, recommendation: 'Revise, split or cut the unit from the root.', evidence: [] } };
+  if (u.status === 'park-pending' && ctx.journal.view.ciFacts().some((f) => f.kind === 'attempt-capped' && f.unit === unit.id)) {
+    const count = ctx.journal.view.attemptCounts(unit.id);
+    return { kind: 'parked', needsUser: { reason: 'attempt-cap', summary: `${unit.id}: ${count.builds} builds / ${count.judged} judged stages reached the total attempt cap; root intervention required`, blocking: true, options: [], subject: { type: 'unit', unit: unit.id }, recommendation: 'Revise, split, steer or cut the unit from the root.', evidence: [] } };
+  }
   // An entry a command set runs next, whatever the decision before it (M3).
   if (f === null || u.entry !== null) return null;
   const decided = decidedBy(f);
@@ -802,9 +806,7 @@ export async function runUnit(ctx: StageContext, unit: PlanUnit, gate: Gate): Pr
   for (;;) {
     const due = upcoming(ctx.journal.view.unit(unit.id), specFacts(ctx)(unit).reproduces);
     const count = attemptSignals(ctx.journal, unit.id, due?.kind === 'admission');
-    if (count.capped) {
-      return { kind: 'parked', needsUser: { reason: 'attempt-cap', summary: `${unit.id}: ${count.builds} builds / ${count.judged} judged stages reached the total attempt cap; root intervention required`, blocking: true, options: [], subject: { type: 'unit', unit: unit.id }, recommendation: 'Revise, split, steer or cut the unit from the root.', evidence: [] } };
-    }
+    if (count.capped) return haltResult(ctx, unit)!;
     const u = ctx.journal.view.unit(unit.id);
     const next = upcoming(u, specFacts(ctx)(unit).reproduces);
     if (unit.spike !== undefined && next?.stage === 'candidate') {

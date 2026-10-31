@@ -686,6 +686,14 @@ export function classify(input: ClassifyInput): Classified {
     checkLimits(unit);
   }
 
+  // A spike can use a declaration through its unit, spec, lane or forced suite. Only Phase 0's
+  // owner-reviewed start may introduce that declaration together with the experiment.
+  const spikeUses = (name: ResourceName): boolean => plan.units.some((u) => {
+    if (u.spike === undefined) return false;
+    const spec = ciSpecs.find((s) => s.unit === u.id);
+    const lanes = [...(spec?.lanes.filter((l) => l.state === 'active') ?? []), ...plan.suite.lanes.filter((l) => spec?.forces?.includes(l.id))];
+    return u.resources.includes(name) || (spec?.resources.includes(name) ?? false) || lanes.some((l) => l.resources.includes(name) || l.environment === name);
+  });
   // Resources and pools: a declaration's units are its name, or every instance of the pool.
   const table = resourceTable(view);
   const names = new Set<ResourceName>([...cur.resources, ...plan.resources].map((r) => r.name));
@@ -694,7 +702,7 @@ export function classify(input: ClassifyInput): Classified {
     const now = plan.resources.find((r) => r.name === name);
     if (was !== undefined && now !== undefined && same(was, now)) continue;
     if (was === undefined) {
-      if (proposer.type !== 'apply' && proposer.type !== 'start' && plan.units.some((u) => u.spike !== undefined && u.resources.includes(name))) reasons.push(`spike resource ${name} is new: escalate to the owner`);
+      if (proposer.type !== 'start' && spikeUses(name)) reasons.push(`spike resource ${name} is new: escalate to the owner`);
       changes.push({ type: 'resource', resource: name, edit: 'added' });
       continue;
     }
@@ -715,6 +723,7 @@ export function classify(input: ClassifyInput): Classified {
     const now = environmentOf(plan, name);
     if (was !== null && now !== null && same(was, now)) continue;
     if (was === null) {
+      if (proposer.type !== 'start' && spikeUses(name)) reasons.push(`spike resource ${name} is new: escalate to the owner`);
       changes.push({ type: 'resource', resource: name, edit: 'added' });
       continue;
     }

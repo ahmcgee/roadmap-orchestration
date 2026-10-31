@@ -9,7 +9,7 @@ import { type BundleOutcome,type FindingStateName,type FindingTo,FINDING_MOVES }
 import { type Backend,type RiskTier,type Role,type UnitRole,RISK_TIERS } from '../routing/types.ts';
 import {
 type AbortRecord,type AuditInputs,type BackendParkClass,
-type DoneRecord,type Event,type Fact,
+type CiFact,type DoneRecord,type Event,type Fact,
 type Holder,
 type HolisticFact,
 type IntentOf,type IntentRecord,type JudgmentInputs,type JudgmentStage,type OpKind,type Parent,type ParkRecord,type PlanAppliedFact,type ProbeTarget,
@@ -745,7 +745,7 @@ export class Fold implements JournalView {
   readonly #packReviews: { started: PackReviewState['started']; ended: PackReviewState['ended'] }[] = [];
   // M4b
   readonly #flowFacts: FlowFactAt[] = [];
-  readonly #ciFacts: import('./events.ts').CiFact[] = [];
+  readonly #ciFacts: CiFact[] = [];
   readonly #walkFacts: WalkFactAt[] = [];
   /** Open walks and their recorded proposals, in log order. */
   readonly #openWalks = new Map<JobId, PolishId[]>();
@@ -2158,7 +2158,7 @@ export class Fold implements JournalView {
     return this.#flowFacts;
   }
 
-  ciFacts(): readonly import('./events.ts').CiFact[] { return this.#ciFacts; }
+  ciFacts(): readonly CiFact[] { return this.#ciFacts; }
 
   attemptCounts(unit: UnitId): Readonly<{ builds: number; judged: number }> {
     const u = this.#units.get(unit);

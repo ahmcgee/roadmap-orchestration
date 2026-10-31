@@ -1880,9 +1880,8 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
   // A fix round reads the spec series and the fast suite at the salvage SHA (`lanesFixRound`, unit.ts, rebuilds the same).
   const ledger = [...series.ledger, ...(suite?.series?.ledger ?? [])];
   const dirty = [...series.dirty, ...(suite?.series?.dirty ?? [])];
-  let fix = kind === 'red' || kind === 'regression' || kind === 'flaky' || (kind === 'not-certified' && dirty.length > 0) ? laneFixRound(ledger, dirty, salvaged) : null;
   const compared = ctx.journal.view.ciFacts().filter((f) => f.kind === 'lane-base-compared' && f.unit === unit.id && f.attempt === parent.attempt);
-  if (fix?.kind === 'fix' && compared.length > 0) fix = { ...fix, fix: { ...fix.fix, failingEvidenceDirs: [...fix.fix.failingEvidenceDirs, ...compared.flatMap((f) => f.kind === 'lane-base-compared' ? [f.evidence] : [])], directives: [...fix.fix.directives, ...compared.map((f) => f.kind === 'lane-base-compared' ? `Lane ${f.lane}: red on unit, ${f.result === 'pass' ? 'green' : 'red'} at diffBase ${f.base}.` : '')] } };
+  const fix = kind === 'red' || kind === 'regression' || kind === 'flaky' || (kind === 'not-certified' && dirty.length > 0) ? laneFixRound(ledger, dirty, salvaged, compared) : null;
   const facts = verdict.environment === undefined ? failedFacts(verdict.failed ?? []) : environmentFacts(verdict.environment);
   return { ...record(ctx, parent, kind, verdict.needsUser ?? null, facts, verdict.cause, verdict.detail), at: salvaged, ledger: series.ledger, verification: keep, fix };
 }

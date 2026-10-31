@@ -816,7 +816,7 @@ export function parsePlan(value: unknown): PlanM1 {
     if (out.previousHead !== undefined && out.chain !== undefined) throw new SchemaError('plan.previousHead', 'a foreign predecessor only without plan.chain', out.previousHead);
     // dev.17: a batch lane runs at milestones, cadence audits and the close-out, which only the holistic layer has.
     out.suite.lanes.forEach((l, i) => {
-      if ((l.cadence === 'batch' || l.cadence === 'milestone') && out.holistic === undefined) throw new SchemaError(`plan.suite.lanes[${i}].cadence`, 'build, unit or candidate outside a holistic arc (a batch lane runs at milestones, audits and the close-out)', l.cadence);
+      if (l.cadence === 'batch' && out.holistic === undefined) throw new SchemaError(`plan.suite.lanes[${i}].cadence`, 'build, unit or candidate outside a holistic arc (a batch lane runs at milestones, audits and the close-out)', l.cadence);
     });
     assertUnique(knownDefectsOf(out), (k) => k.id, 'plan.knownDefects');
     assertUnique(out.contracts, (c) => c, 'plan.contracts');

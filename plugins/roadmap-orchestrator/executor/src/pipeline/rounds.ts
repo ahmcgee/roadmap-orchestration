@@ -82,7 +82,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { freshClaudeImplementerSession } from '../backends/argv.ts';
-import type { IntentOf, TestRef } from '../core/events.ts';
+import type { CiFact, IntentOf, TestRef } from '../core/events.ts';
 import type { RequiredWitness } from '../holistic/required.ts';
 import { type ImplementerSessionId, type InvocationId, type SeatRev, type Sha, type Sha256Hex, type UnitId, invocationId, parseInvocationId } from '../core/ids.ts';
 import { keptInput } from '../input/inforce.ts';
@@ -198,9 +198,10 @@ export function failingLaneDirectives(failing: readonly LaneRecord[]): readonly 
 export const failingEvidenceDirs = (l: LaneRecord): readonly AbsPath[] => (l.flaky && l.diagnostic !== null ? [...l.fixDirs, ...l.diagnostic.fixDirs] : l.fixDirs);
 
 /** The fix round after a red or not-certified series: the failing evidence, and for a dirty checkout, why. */
-export function laneFixRound(ledger: readonly LaneRecord[], dirty: readonly string[], salvage: Sha): DecidedRound {
+export function laneFixRound(ledger: readonly LaneRecord[], dirty: readonly string[], salvage: Sha, comparisons: readonly CiFact[] = []): DecidedRound {
+  const compared = comparisons.filter((c) => c.kind === 'lane-base-compared');
   const red = ledger.filter((l) => isRed(l.verdict));
-  if (red.length > 0) return { kind: 'fix', fix: { failingEvidenceDirs: red.flatMap(failingEvidenceDirs), directives: failingLaneDirectives(red) }, ledger, verification: null, salvage };
+  if (red.length > 0) return { kind: 'fix', fix: { failingEvidenceDirs: [...red.flatMap(failingEvidenceDirs), ...compared.map((c) => c.evidence)], directives: [...failingLaneDirectives(red), ...compared.map((c) => `Lane ${c.lane} is red on the unit and ${c.result === 'pass' ? 'green' : 'red'} at diffBase ${c.base}. Base comparison evidence: ${c.evidence}.`)] }, ledger, verification: null, salvage };
   if (dirty.length === 0) throw new Error('laneFixRound: the series was green and clean; there is nothing to fix');
   return {
     kind: 'fix',

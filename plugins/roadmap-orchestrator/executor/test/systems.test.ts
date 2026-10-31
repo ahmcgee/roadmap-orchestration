@@ -151,7 +151,8 @@ describe('lanes.cadence', () => {
     assert.throws(() => laneDefOf('spec')({...LANE, tier: 'fast'}, 'l'), /cadence/);
     const later = laneDefOf('spec')({...LANE, cadence: 'candidate'}, 'l');
     assert.equal(later.cadence, 'candidate');
-    assert.match(lanePlacementReasons(later, { id: 'u1' } as never).join(), /except in a spike/);
+    assert.deepEqual(lanePlacementReasons(later, { id: 'u1' } as never), [], 'local candidate lanes keep their delivering unit attribution');
+    assert.match(lanePlacementReasons({ ...later, placement: 'cross-system' }, { id: 'u1' } as never).join(), /except in a spike/);
     assert.deepEqual(lanePlacementReasons(later, { id: 'u1', spike: { question: 'Does it work?' } } as never), []);
     assert.throws(() => laneDefOf('arc')({...LANE, cadence: 'batch'}, 'l'), /cadence/);
     assert.equal(laneDefOf('suite')({...LANE, cadence: 'batch'}, 'l').cadence, 'batch');

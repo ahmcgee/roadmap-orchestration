@@ -4,7 +4,7 @@
 // Interfaces only; no behaviour here.
 import type { Backend,UnitRole } from '../routing/types.ts';
 import type {
-AbortCode,DoneRecord,Fact,
+AbortCode,CiFact,DoneRecord,Fact,StageOutcomeFact,
 FlakyFact,
 FlowFact,GitOpKind,IntentOf,IntentRecord,JudgmentInputs,JudgmentStage,OpExpect,OpKind,OpOutcome,OpPost,Parent,
 PlanAppliedFact,PropagationFact,RecoveredBy,WalkFact,
@@ -41,7 +41,7 @@ export interface JournalView {
   readonly arc: ArcId;
   /** Seq of the last durable line; 0 for an empty log. */
   highWater(): number;
-  ciFacts(): readonly import('./events.ts').CiFact[];
+  ciFacts(): readonly CiFact[];
   attemptCounts(unit: UnitId): Readonly<{ builds: number; judged: number }>;
 
   /** Intents with no matching done or abort, in log order. At most one per key. */
@@ -121,7 +121,7 @@ export interface JournalView {
   decidedSeq(unit: UnitId): number | null;
   /** Latest lanes attempt with a non-hold outcome; crash-abandoned attempts never supply red-first priority. */
   completedLanes(unit: UnitId): number | null;
-  completedLanesOutcome(unit: UnitId): import('./events.ts').StageOutcomeFact | null;
+  completedLanesOutcome(unit: UnitId): StageOutcomeFact | null;
   /** M2 (rank, F17): every published `integration.ff` of a unit's ff stage, the unit and its done record's seq, in log order. */
   publications(): readonly Readonly<{ unit: UnitId; seq: number }>[];
   /** M2 (rank, F17): the seq of the first `plan-applied` fact that named the unit, or null if none did. */

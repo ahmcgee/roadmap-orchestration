@@ -260,7 +260,7 @@ export function seriesOrder<L extends LaneDef>(lanes: readonly L[], red: Readonl
 
 /** The spec's series: struck and deferred lanes do not run. */
 export function laneOrder(spec: SpecM1): readonly SpecLane[] {
-  return seriesOrder(spec.lanes.filter((l) => l.state === 'active'));
+  return seriesOrder(spec.lanes.filter((l) => l.state === 'active' && cadenceAtOrBefore(l.cadence, 'unit')));
 }
 
 /**

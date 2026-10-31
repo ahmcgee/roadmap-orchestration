@@ -222,9 +222,15 @@ export function candidateLanes(ctx: StageContext, tip: Sha, candidate: Sha): rea
 async function suite(
   ctx: StageContext, parent: StageParent, lanes: readonly LaneDef[], checkout: WorktreeCreateRequest, root: AbsPath, standIns: ReadonlyMap<LaneId, ArcLaneDef>,
 ): Promise<Series> {
+  // Candidate-cadence spec lanes run on this candidate on the current tip, owned by the delivering unit.
+  // Their separate series preserves `set: spec`, evidence and red/fix attribution (including tip-alone diagnostics).
+  const spec = loadUnitSpec(ctx, ctx.plan().units.find((u) => u.id === parent.unit)!).spec.lanes.filter((l) => l.state === 'active' && l.cadence === 'candidate');
+  const own = spec.length === 0 ? null : await runLaneSeries(ctx, parent, spec, 'spec', checkout, absPath(join(root, '_spec')), laneRuntime(ctx, parent.unit), false);
+  if (own !== null && own.tree !== null) await removeVerificationTree(ctx, own.tree, parent);
+  if (own !== null && (own.end.kind !== 'green' || own.dirty.length > 0)) return { ...own, tree: null };
   const series = await runLaneSeries(ctx, parent, lanes, 'suite', checkout, root, laneRuntime(ctx, parent.unit), false, standIns);
   if (series.tree !== null) await removeVerificationTree(ctx, series.tree, parent);
-  return series;
+  return own === null ? series : { ...series, ledger: [...own.ledger, ...series.ledger] };
 }
 
 /** A suite that did not pass, or that changed its checkout (never certified under a SHA). */

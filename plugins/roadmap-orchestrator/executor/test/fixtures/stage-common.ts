@@ -60,11 +60,10 @@ export type LaneJson = Readonly<{
   tier?: 'fast' | 'estate';
   /** dev.17: written instead of `tier` when given. */
   cost?: 'cheap' | 'expensive';
-  estMin?: number;
   placement?: 'local' | 'shared-resource' | 'cross-system';
-  kind?: 'integration' | 'capture';
+  kind?: 'capture';
   capture?: { up: readonly string[]; script: readonly string[]; states: readonly string[]; port: string };
-  cadence?: 'build' | 'unit' | 'candidate' | 'batch' | 'milestone';
+  cadence?: 'build' | 'unit' | 'candidate' | 'batch';
   resources?: readonly string[];
   evidenceGlobs?: readonly string[];
   evidenceExcludes?: readonly string[];
@@ -140,8 +139,8 @@ function laneJson(l: LaneJson): Record<string, unknown> {
     ...(l.systems === undefined ? {} : { systems: l.systems }), ...(l.testArgv === undefined ? {} : { testArgv: l.testArgv }),
     ...(l.timeoutMin === undefined ? {} : { timeoutMin: l.timeoutMin }),
     ...(l.stochastic === undefined ? {} : { stochastic: l.stochastic }), ...(l.environment === undefined ? {} : { environment: l.environment }),
-    ...(l.cost === undefined ? {} : { cost: l.cost }), ...(l.estMin === undefined ? {} : { estMin: l.estMin }),
-    ...(l.placement === undefined ? (l.cadence === 'batch' || l.cadence === 'milestone' ? { placement: 'cross-system' } : {}) : { placement: l.placement }),
+    ...(l.cost === undefined ? {} : { cost: l.cost }),
+    ...(l.placement === undefined ? {} : { placement: l.placement }),
     ...(l.kind === undefined ? {} : { kind: l.kind }), ...(l.capture === undefined ? {} : { capture: l.capture }),
     state: 'active',
   };

@@ -26,7 +26,7 @@ import { intents } from './fixtures/invoke-specs.ts';
 import { wired } from './fixtures/sched-m3-common.ts';
 import { type LaneJson, SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
 import { type ArcRun, SUITE_LANE, codexStep, contextFor,syncInputs, gateStep } from './fixtures/unit-common.ts';
-import { BROKEN_WALK, GREETING, unitInForce, walkAnswer, walkArc, walkContext, walkStep } from './fixtures/walk-common.ts';
+import { BROKEN_WALK, GREETING, milestoneJson, unitInForce, walkAnswer, walkArc, walkContext, walkStep } from './fixtures/walk-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS * 2 };
 type Json = Record<string, unknown>;
@@ -76,6 +76,27 @@ async function walk(r: ArcRun) {
 }
 
 describe('the milestone batch point (dev.17)', () => {
+  test('batch.milestone-lane: selected shared lane runs at its node after its units retire, alongside plain batch suites', T, async () => {
+    const d = walkArc({
+      steps: [...unitSteps('u1', moduleFiles('mul', '*')), walkStep('walk-1', walkAnswer())],
+      milestone: milestoneJson({ lanes: ['shared'] }),
+      suite: [SUITE_LANE, batchLane(GREEN()), batchLane(GREEN(), { id: 'shared', placement: 'shared-resource' })],
+    });
+    const r = contextFor(d);
+    try {
+      assert.equal((await walk(r)).kind, 'none', 'no milestone lanes before its units retire');
+      await merge(r, 'u1');
+      assert.equal(r.journal.view.unit(unitInForce(r, 'u1').id).status, 'retired');
+      assert.equal(intents(d.runDir, 'proc.spawn').some((i) => i.kind === 'proc.spawn' && 'lane' in i.expect.subject && i.expect.subject.lane === 'shared'), false);
+      assert.deepEqual(await walk(r), { kind: 'ended', job: 'walk-1', outcome: 'reported', passed: true });
+      const start = factsOf(r, 'walk-started')[0]!;
+      const spawned = intents(d.runDir, 'proc.spawn').flatMap((i) => i.kind === 'proc.spawn' && i.expect.subject.purpose === 'journey' && ['batch', 'shared'].includes(i.expect.subject.lane) ? [i.expect.subject] : []);
+      assert.deepEqual(spawned.map((s) => [s.lane, s.at, s.owner]), [
+        ['batch', start.sha, { type: 'job', job: 'walk-1' }], ['shared', start.sha, { type: 'job', job: 'walk-1' }],
+      ]);
+    } finally { r.journal.close(); }
+  });
+
   test('batch.walk-red: a red batch lane opens code\'s walkthrough P1 naming it; the walk goes on, its findings include it, and the node is not passed', T, async () => {
     const d = walkArc({ steps: [...unitSteps('u1', moduleFiles('mul', '*')), walkStep('walk-1', walkAnswer())], suite: [SUITE_LANE, batchLane(RED())] });
     const r = contextFor(d);
