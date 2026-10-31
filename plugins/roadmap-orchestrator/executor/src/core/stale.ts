@@ -3,7 +3,8 @@
 // computes them at the revision (src/holistic/propagation.ts `staleSetOf`, no model) and journals them (`stale-set`); this
 // module is the records and their readers.
 import {
-  type FailureModeId, type ObligationId, type Sha, type UnitId, type VisionClauseId, failureModeId, obligationId, sha, unitId, visionClauseId } from './ids.ts';
+  type FailureModeId, type ObligationId, type Sha, type UnitId, type VisionClauseId, failureModeId, obligationId, sha, unitId, visionClauseId,
+} from './ids.ts';
 import { type Pinned, type SpecPin, UNPINNED, specPin } from './pins.ts';
 import { type RepoPath, repoPath } from './values.ts';
 import { type Read, Fields, SchemaError, arrayOf, assertUnique, literal, object, oneOf, positive, sortedBy, str, tagged } from './validate.ts';

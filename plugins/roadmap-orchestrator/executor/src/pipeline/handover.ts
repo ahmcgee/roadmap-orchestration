@@ -8,7 +8,7 @@
 // has an earlier build attempt (`handoverOf`; the build stage renders it on a fresh call only). Its parts, each list but `unmet`
 // (bounded by the spec) bounded to its most recent HANDOVER_ITEMS_MAX:
 //   lineage     the unit, then each unit it re-enters
-//   diagnosis   the lineage's failure outcomes, lane failures and reverted out-of-scope paths (`lineageDiagnosis`, the
+//   diagnosis   the lineage's failure outcomes, lane failures and reverted protected paths (`lineageDiagnosis`, the
 //               checkpoint's `ParkDiagnosis` of a park trigger)
 //   gate        the lineage's latest gate answer: its decision and directives
 //   findings    the lineage's unsettled blocking ledger findings (src/pipeline/review.ts), with their text
@@ -50,7 +50,7 @@ export function lineageOf(view: JournalView, unit: UnitId): readonly UnitId[] {
 /**
  * Arc feedback 2026-10-16 (ckpt re-entered u1e1 without finding why its 41 attempts failed): the lineage of `unit` as the
  * executor's records show it, the unit first, then each unit it re-entered: its failure outcomes and lane failures (with the
- * references a re-entry cites, src/pipeline/failures.ts), the out-of-scope paths salvage reverted, the required witness tests
+ * references a re-entry cites, src/pipeline/failures.ts), the protected paths salvage reverted, the required witness tests
  * found missing or failing, and the lineage's re-entries with the failures they cited. A checkpoint's park trigger reads it
  * whole; a handover, bounded.
  */

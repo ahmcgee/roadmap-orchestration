@@ -7,7 +7,8 @@
 // `pressure` metric and `status.flow.pressure`'s shape.
 import {
   type ArcId, type GivenId, type JobId, type LaneId, type ProposalId, type ResourceName, type StationId, type UnitId, type VisionClauseId, arcId, givenId,
-  idsAscending, jobIdOfKind, laneId, parseStationId, proposalId, resourceName, stationId, unitId, visionClauseId } from '../core/ids.ts';
+  idsAscending, jobIdOfKind, laneId, parseStationId, proposalId, resourceName, stationId, unitId, visionClauseId,
+} from '../core/ids.ts';
 import { type Read, SchemaError, arrayOf, assertUnique, bool, literal, nat, nullable, object, oneOf, positive, sortedBy, str, tagged } from '../core/validate.ts';
 import { type IsoTime, isoTime } from '../core/values.ts';
 import type { Reporter } from '../holistic/types.ts';

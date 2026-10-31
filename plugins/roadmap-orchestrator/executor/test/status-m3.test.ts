@@ -1,3 +1,5 @@
+import { inputShaOf } from '../src/git/reusekey.ts';
+import { systemsMapInForce } from '../src/input/systems.ts';
 // `roadmap status`'s M3 keys (src/status.ts; DESIGN-1.0.md §2.4, plan "`status` (additive)"), in process over holistic
 // arcs whose log is written directly (real repos, real run dirs, the real fold): the facts are the frozen M3 ones, so
 // what a later step writes renders the same. Named tests: status.target, status.findings-audit, status.coverage-per-lens,
@@ -73,7 +75,7 @@ function witness(r: ArcRun, lane: ArcLaneDef, tree: string, outcomes: Readonly<R
   mkdirSync(dir, { recursive: true });
   const tests = Object.entries(outcomes).sort(([a], [b]) => (a < b ? -1 : 1)).map(([testId, outcome]) => ({ testId, selected: 1, outcome }));
   const recordsSha256 = writeWitnessRecord(dir, witnessRecordOf({ lane, envId: base.envId, treeSha: base.treeSha, inv, purpose: 'witness' }, tests));
-  r.journal.fact({ kind: 'witnessed', ...base, recordsSha256 });
+  r.journal.fact({ kind: 'witnessed', ...base, recordsSha256, inputSha: tree !== 'e'.repeat(40) ? inputShaOf(absPath(r.d.repo), sha(tree), lane, systemsMapInForce(r.journal.view.planApplied())) : sha(tree) });
   return dir;
 }
 

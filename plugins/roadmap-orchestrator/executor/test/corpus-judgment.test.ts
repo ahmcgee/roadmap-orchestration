@@ -210,7 +210,7 @@ async function repin(a: CorpusUnitArc, r: ArcRun): Promise<CorpusPin> {
   const rows = phase0Rows(phase0InputOf(files, readRepoConfig(files.repo), null), APPLY);
   assert.deepEqual(rows.rows, []);
   keepCorpusFiles(r.ctx.runDir, rows.opened!.files);
-  recordPlan(r.journal, r.ctx.runDir, files, [], BASE);
+  recordPlan(r.journal, r.ctx.runDir, files, [], r.ctx.routingBase);
   return parseCorpusPin(JSON.parse(readFileSync(join(a.planDir, PIN_FILE), 'utf8')));
 }
 

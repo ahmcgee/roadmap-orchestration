@@ -3,7 +3,8 @@
 // (src/debt/{ledger,mint,render}.ts): `debtKey`, minting, dedupe, rendering.
 import {
   type ArcId, type DebtId, type FindingId, type JobId, type RulingId, type Sha256Hex, type UnitId, arcId, debtId, debtSeq, findingId, jobIdOfKind, rulingId, sha256, unitId,
-  compareIds } from '../core/ids.ts';
+  compareIds,
+} from '../core/ids.ts';
 import { type Read, SchemaError, arrayOf, literal, nat, nullable, object, oneOf, positive, str, tagged } from '../core/validate.ts';
 
 /**

@@ -1015,7 +1015,7 @@ test('apply.rejections: files changed since they were hashed, and a startup row 
     assert.equal(ok.outcome.kind, 'applied');
     const receipt = readReceipt(r.ctx.runDir, ok.id as never, 'applied');
     assert.ok(receipt?.state === 'applied');
-    assert.deepEqual(receipt.verified, ['plan rev 2 in force', '{"type":"unit-added","unit":"u2"}']);
+    assert.deepEqual(receipt.verified, ['plan rev 2 in force', '{"type":"unit-added","unit":"u2"}', 'advisory: {"kind":"system-overlap","systems":["app"],"units":["u1","u2"]}']);
     const facts = applied(d);
     assert.deepEqual(facts.map((f) => [f.rev, f.command]), [[1, null], [2, ok.id]]);
     assert.equal(requirePlanInForce(r.ctx.runDir, r.journal.view).plan.units.length, 2);

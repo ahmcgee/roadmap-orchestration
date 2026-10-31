@@ -28,7 +28,8 @@ import type { Holder, Parent } from '../core/events.ts';
 import { canonicalJson } from '../core/json.ts';
 import { envBlocked, overlaps } from '../resources/pool.ts';
 import {
-  type AcquiringHolder, type BatchHolder, type DocsHolder, type JobHolder, type ResourceContext, type UnitAcquiringHolder, reserve, resourceTable, sameHolder } from '../resources/reserve.ts';
+  type AcquiringHolder, type BatchHolder, type DocsHolder, type JobHolder, type ResourceContext, type UnitAcquiringHolder, reserve, resourceTable, sameHolder,
+} from '../resources/reserve.ts';
 import { type Acquire, type Grant, type Rank, type ResourceRequest, compareRank } from './types.ts';
 
 /** A units' waiter as `status` shows it, in the order the arbiter serves them. */

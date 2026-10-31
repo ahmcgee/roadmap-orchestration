@@ -12,7 +12,8 @@ import type { AbsPath } from '../core/values.ts';
 import type { CapturedEvidence } from './evidence.ts';
 import {
   catFileType, gitCommonDir, refTarget, revParse, statusPorcelainV2Z, symbolicHead, worktreeAdd, worktreeList,
-  worktreePrune, worktreeRemove } from './git.ts';
+  worktreePrune, worktreeRemove,
+} from './git.ts';
 
 export class WorktreeStateError extends Error {
   readonly path: AbsPath;

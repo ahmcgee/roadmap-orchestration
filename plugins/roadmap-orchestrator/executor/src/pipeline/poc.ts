@@ -37,10 +37,12 @@ import { worktreeCreateOp } from '../recover/ops.ts';
 import { renderSpec } from '../spec/render.ts';
 import {
   type BackendCallOutcome, type Cancelled, type StageContext, type StageParent, callBackend, enter, evidenceRoot, implementerDispatch, isCancelled, minutesMs, runOp, verdictOf,
-  workDir } from './dispatch.ts';
+  workDir,
+} from './dispatch.ts';
 import { freshSession } from './rounds.ts';
 import {
-  type StageDone, at, buildEntry, failedFacts, holdEntry, inMs, integrationTip, judgedAnswer, loadUnitSpec, planCheckAnswerOf, record, removeJudgmentCheckouts, stageHolder, start } from './stages.ts';
+  type StageDone, at, buildEntry, failedFacts, holdEntry, inMs, integrationTip, judgedAnswer, loadUnitSpec, planCheckAnswerOf, record, removeJudgmentCheckouts, stageHolder, start,
+} from './stages.ts';
 
 /** A PoC's window. */
 export const POC_MINUTES = 60;

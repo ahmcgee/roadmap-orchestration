@@ -137,7 +137,7 @@ describe('the milestone batch point (dev.17)', () => {
       const spec = JSON.parse(readFileSync(join(planDir, 'u1.json'), 'utf8')) as Json;
       writeFileSync(join(planDir, 'r1.json'), JSON.stringify({ ...spec, unit: 'r1', rev: 1, repairs: ['F-1'] }));
       await applyPlanEdit(r, walkContext(r).w as never, (plan) => {
-        (plan['units'] as Json[]).push({ id: 'r1', spec: 'r1.json', risk: 'med', systems: [systemName('app')], resources: [], origin: 'repair' });
+        (plan['units'] as Json[]).push({ id: 'r1', spec: 'r1.json', risk: 'med', systems: [systemName('product')], resources: [], origin: 'repair' });
       });
       await merge(r, 'r1');
       assert.deepEqual(await walk(r), { kind: 'ended', job: 'walk-2', outcome: 'reported', passed: true });

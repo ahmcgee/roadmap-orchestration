@@ -18,14 +18,12 @@
 // - Route up: a refusal or escalation at a judgment stage re-dispatches that stage on its role's
 //   `escalation` seat, a fresh session even when that seat binds the same model (independence is a clean
 //   context); at the escalation seat it parks with a needs-user. A routed-up role stays there for the unit.
-// - A risk trigger (contract path touched at salvage, scope growth at salvage or the candidate) puts the next judgment
+// - A risk trigger (contract path touched at salvage, protected-path refusal at salvage or the candidate) puts the next judgment
 //   dispatch, and only that one, on the escalation seat. The implementer keeps the unit's risk seat throughout.
 // - A routing change the unit cannot absorb (its implementer's seat moved after a build started;
 //   dispatch.ts) parks it at the stage that found it: `routing-changed`, uncharged.
 // - An interruption (a pause or stop cancel, or the stage's backend parked arc-wide on a usage limit) holds
-//   the unit at its stage: no counter moves, and a resume re-runs the stage as a new attempt (lead ruling). So does a
-//   plan-check's verified scope-growth proposal, or a lanes attempt's after salvage reverted one path twice running, until
-//   the root agent's `scope accept|reject` (or a resume) releases it.
+//   the unit at its stage: no counter moves, and a resume re-runs the stage as a new attempt (lead ruling).
 //   A held build's new attempt continues the interrupted session (the `continue` round, rounds.ts).
 // - `attempts` counts stage starts, which only the fold sees; `transition` passes it through unchanged.
 // - Every park row names its class (A7): `retryable` (the executor probes its targets, which the stage names,
@@ -44,7 +42,8 @@
 import type { OrderingWait } from '../core/ordering.ts';
 import {
   type GateLargeDiff, type HoldCause, type JudgmentStage, type OperatorParkKind, type OutcomeClass, type OutcomeStage, type ParkRecord, type ProbeTarget,
-  type RetryStage, type StageOutcomeFact, type StageOutcomeKind, JUDGMENT_STAGES, probeTargetKey, certificationRed } from '../core/events.ts';
+  type RetryStage, type StageOutcomeFact, type StageOutcomeKind, JUDGMENT_STAGES, probeTargetKey, certificationRed,
+} from '../core/events.ts';
 import { type Bounds, DEFAULT_BOUNDS, type NeedsUserReason } from '../core/records.ts';
 import { type UnitCounters, type UnitState, afterStageOutcome, redirectsSinceEdit } from '../core/state.ts';
 import type { JudgmentSeat, RiskTier } from '../routing/types.ts';
@@ -174,8 +173,9 @@ export const TABLE: Table = {
     redirect: { do: 'bounded', round: 'redirect', bound: 'redirects', to: at('plan-check'), chargeable: false, then: routeUp('escalation') },
     infeasible: routeUp('escalation'),
     escalate: routeUp('escalation'),
-    // R2: a redirect cannot lower the risk floor or widen the unit's envelope; refused → escalate.
+    // R2: a redirect cannot lower the risk floor or add undeclared resources; refused → escalate.
     'risk-lowered': routeUp('escalation'),
+    // Historical outcome name; this now guards only resource additions.
     'scope-widened': routeUp('escalation'),
     refusal: routeUp('refusal'),
     malformed: retry('malformed', 'design'),
@@ -188,8 +188,6 @@ export const TABLE: Table = {
     'in-session': go(at('plan-check')),
     // Paid M4b run 5: an approve from a session the CLI refused a read, as at the gate (scaffolding: a 1.0.0-dev.11 record).
     'read-denied': retry('read-denied', 'env'),
-    // Scope growth (2026-10-15): a proposal code verified holds the unit, uncharged, for the root agent's `scope accept|reject`
-    // (src/commands/scope.ts); its `scope-decided` releases the hold and the plan-check runs again.
     // 2026-10-16: the call's prompt or context outgrew the model's window. Not a process fault (the backend is well, so no
     // probe, no repeat rule, no backend park): uncharged, operator env, the needs-user naming the role, the call and the
     // prompt's size; `resume` re-runs the stage once its inputs fit (a smaller unit, or a seat with a larger window).

@@ -393,7 +393,7 @@ test('chain.status-render: the chain oldest first with previous arcs, acked star
 });
 
 test('chain.next-start (paid M4a run 12): chain status, status and the brief answer the start after the head with the start\'s own predicate; K is committed at the head\'s baseline, never the live file', T, async () => {
-  const unset = await corpusArc({ config: null });
+  const unset = await corpusArc({ config: { systemsMap: { systems: { app: { paths: ['src/**'] } } } } });
   await seal(unset);
   assert.deepEqual((await withForge(unset.forge, () => chainStatus({ repo: unset.repo }))).nextStart, { allowed: false, reason: 'k-unset' });
 

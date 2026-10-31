@@ -43,7 +43,7 @@ export type EvidenceSnapshotOp = Readonly<{
 
 export const evidenceSnapshotOp: EvidenceSnapshotOp = { ...evidenceSnapshotSteps, reconcile: reconcileEvidenceSnapshot };
 
-/** `rules` are the salvage rules the stage binds (pinned scope, excluded globs, rejected root); recovery rebuilds them. */
+/** `rules` are the salvage rules the stage binds (protected paths, evidence globs, rejected root); recovery rebuilds them. */
 export function salvageCommitOp(rules: SalvageRules): GitOp<'salvage.commit', SalvagePlan> {
   return { ...salvageCommitSteps(rules), reconcile: reconcileSalvageCommit(rules) };
 }

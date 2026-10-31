@@ -19,16 +19,19 @@ invocationIdOf,jobIdOf,jobIdOfKind,laneId,laneRev,
 milestoneId,
 obligationId,
 opportunityId,
-planRev,questionId,routingRev,ruleId,rulingId,sha,sha256,unitId,visionClauseId } from '../core/ids.ts';
+planRev,questionId,routingRev,ruleId,rulingId,sha,sha256,unitId,visionClauseId,
+} from '../core/ids.ts';
 import { canonicalJson,sha256Hex } from '../core/json.ts';
 import {
-LENS_KIND_NAMES,type LaneDef,type LensKindName,type RepairRef,type Stage,laneDef,laneDefOf,laneEnv,repairRef } from '../core/records.ts';
+LENS_KIND_NAMES,type LaneDef,type LensKindName,type RepairRef,type Stage,laneDef,laneDefOf,laneEnv,repairRef,
+} from '../core/records.ts';
 
 import {
 Fields,
 type Read,
 SchemaError,arrayOf,assertUnique,bool,literal,nat,nullable,object,oneOf,positive,sortedBy,str,tagged,
-text,version } from '../core/validate.ts';
+text,version,
+} from '../core/validate.ts';
 import { type IsoTime,type RepoPath,type RepoPattern,isoTime,repoPath,repoPattern } from '../core/values.ts';
 import type { SchemaVersion } from '../core/version.ts';
 

@@ -17,12 +17,14 @@ clauseId,
 failureModeId,
 findingId,journeyId,laneId,obligationId,
 pocQuestionId,
-reviewFindingId,ruleId,rulingId,sha,unitId,visionClauseId } from '../core/ids.ts';
+reviewFindingId,ruleId,rulingId,sha,unitId,visionClauseId,
+} from '../core/ids.ts';
 import { type JsonValue,canonicalJson } from '../core/json.ts';
 import { BOUND_FIELDS,type Bounds,type FailureRef,type NoteDef,SPEC_SCHEMA,SPEC_SECTIONS,type SpecPatchOp,failureRef,specM1,specPatchOp } from '../core/records.ts';
 import { type ReviewDispute,reviewDispute } from '../core/review.ts';
 import {
-Fields,type Read,SchemaError,answerSet,arrayOf,assertUnique,bool,envName,int,literal,nullable,object,oneOf,positive,str,tagged,text } from '../core/validate.ts';
+Fields,type Read,SchemaError,answerSet,arrayOf,assertUnique,bool,envName,int,literal,nullable,object,oneOf,positive,str,tagged,text,
+} from '../core/validate.ts';
 import { type RepoPath,type RepoPattern,matchesPattern,repoPath,repoPattern } from '../core/values.ts';
 import { FLOW_REPORTERS,type FlowOutput,flowOutput } from '../flow/types.ts';
 import {
@@ -49,13 +51,15 @@ type ClauseLanes,type DesignChange,type DesignExperiment,type FailureModeProof,t
 UNIT_KINDS,
 type UnitKind,type Verification,
 clauseLanes,designChange,designExperiment,failureModeProof,
-newSystem,verification } from '../core/design.ts';
+newSystem,verification,
+} from '../core/design.ts';
 import { STALE_OUTCOMES,type StaleAnswer,staleAnswer } from '../core/stale.ts';
 import type { MutantEdit } from '../git/mutant.ts';
 import {
 BUILD_CLASSES,JUDGMENT_SEATS,MODEL_CLASSES,type ModelClass,
 RISK_TIERS,ROLES,type RiskTier,type Role,SEATS,type Seat,
-classAt } from '../routing/types.ts';
+classAt,
+} from '../routing/types.ts';
 import { specBytes } from '../spec/spec.ts';
 
 // ---------------------------------------------------------------------------------------------------
@@ -117,12 +121,6 @@ type PlanCheckCommon = Readonly<{
    */
   visionConflict: readonly VisionConflict[];
   /**
-   * Scope growth (2026-10-15): paths outside the pinned scope the unit needs (the reference sweep: tests and callers of what
-   * it removes or renames), each proposal its patterns and why. Code verifies each pattern (src/pipeline/stages.ts
-   * `verifiedGrowth`); a verified proposal holds the unit for the root agent's `scope accept | reject`. An answer recorded
-   * before it has none (`planCheckScopeGrowthDefault`).
-   */
-  /**
    * dev.17 (propagation): one answer per stale link the input lists (by its key), `updated` (by this redirect's patch) or
    * `confirmed`, with a reason; empty when it lists none. An approve or a redirect leaving one unanswered is refused
    * (src/holistic/staleset.ts `staleAnswerReasons`). An answer recorded before dev.17 has none (`planCheckStaleLinksDefault`).
@@ -150,7 +148,7 @@ export type DesignAnswer = Readonly<{
   verification: Verification | null;
 }>;
 /**
- * One child of a `split`: its unit id (new to the plan), its scope (within the parent's effective scope), the parent's
+ * One child of a `split`: its unit id (new to the plan), its declared systems, the parent's
  * acceptance and witness item ids it takes (the children partition the parent's active items exactly), the obligations it
  * declares (a subset of the parent's) and its own sized design record. Code builds its spec from the parent's (src/pipeline/split.ts).
  */

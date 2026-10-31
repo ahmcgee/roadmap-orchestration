@@ -75,7 +75,8 @@ import type { FlakyEvent } from '../core/flaky.ts';
 import { exclusivePublish,canonicalJson as fileJson,readJson } from '../core/fsx.ts';
 import {
 type EnvId,type InvocationId,type JobId,type LaneId,type LaneRev,type OpId,type ResourceInstance,type ResourceName,type ResourceUnit,type Sha,type UnitId,
-invocationDirName,invocationId,laneRev,opKey,parseInvocationId,parseOpId,sha256 } from '../core/ids.ts';
+invocationDirName,invocationId,laneRev,opKey,parseInvocationId,parseOpId,sha256,
+} from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson,sha256Hex } from '../core/json.ts';
 import { spawnPressureOf } from '../core/projections.ts';
@@ -89,7 +90,8 @@ STDERR_FILE,STDOUT_FILE,
 type SpecM1,
 TEST_FILES_TOKEN,cadenceAtOrBefore,
 ignoredCensus,
-isRed } from '../core/records.ts';
+isRed,
+} from '../core/records.ts';
 import { type AbsPath,type IsoTime,type RepoPath,type RepoPattern,absPath,branchRef,isoTimeOf,repoPath,repoPattern } from '../core/values.ts';
 import { type EvidenceManifest,FILES_DIR,capturedEvidence,manifestPath,namedPathGlobs,patternPath,readManifest } from '../git/evidence.ts';
 import { isAncestor } from '../git/ff.ts';
@@ -115,7 +117,8 @@ import { releaseEnvironment,useEnvironment } from '../resources/environments.ts'
 import { instanceEnv,laneCpu,requestOf } from '../resources/pool.ts';
 import { probe } from '../resources/probe.ts';
 import {
-type JobHolder,type Reservation,type ResourceContext,type SpecLane,type StageHolder,cleanup,heldReservation,jobOwnerLabel,reserve,run } from '../resources/reserve.ts';
+type JobHolder,type Reservation,type ResourceContext,type SpecLane,type StageHolder,cleanup,heldReservation,jobOwnerLabel,reserve,run,
+} from '../resources/reserve.ts';
 import { OWNER_ENV,ownerLabel } from '../resources/teardown.ts';
 import { runnerFiles } from '../runner/files.ts';
 import type { AcquireFirst } from '../schedule/arbiter.ts';
@@ -126,7 +129,8 @@ import { type StageContext,type StageParent,evidenceRoot,runOp,verificationWorkt
 import { invocationDir,invoke } from './invoke.ts';
 import {
 type FailureSignature,type LaneCancel,type LaneHost,type RedClass,type RedEvidence,type RepeatOf,classifyRed,failureSignature,hostWasBusy,
-laneAbortReason,laneCancelOf,readRedClass,redLane,writeRedClass } from './redlane.ts';
+laneAbortReason,laneCancelOf,readRedClass,redLane,writeRedClass,
+} from './redlane.ts';
 
 /**
  * The tree a flake of a run at `at` was seen on (dev.21, src/core/events.ts `FlakeOn`): a unit's own (`unit`) when a unit

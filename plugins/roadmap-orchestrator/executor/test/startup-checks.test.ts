@@ -29,6 +29,7 @@ import { type StartChecks,type StartInput,gitCommonDir,runChecks,smokeCheck } fr
 import type { SmokeReport } from '../src/preflight/smoke.ts';
 import { type StartupRejection,type StartupRejectionKind,exitCodeFor,startupRejection } from '../src/preflight/startup.ts';
 import { commitRevision } from '../src/recover/revision.ts';
+import { readRepoConfig } from '../src/preflight/checks.ts';
 import { profileName } from '../src/routing/types.ts';
 import { fakeDocs } from './fixtures/docs-fake.ts';
 import { FAILED,claimRecord,residueEntry } from './fixtures/host-records.ts';
@@ -54,7 +55,7 @@ const tool = { argv: ['node', '-e', '0'], cwd: '.', env: { set: {}, pass: ['PATH
 
 /** A valid start: repo with a baseline on main, one unit with its spec, a writable worktree root, both fakes answering. */
 function setup(steps: readonly Step[] = SMOKE_OK): Setup {
-  const repo = absPath(makeRepo(tmpDir('st-repo'), { files: { 'README.md': 'hello\n', 'ARCHITECTURE.md': 'arch\n' } }));
+  const repo = absPath(makeRepo(tmpDir('st-repo'), { files: { 'README.md': 'hello\n', 'ARCHITECTURE.md': 'arch\n', '.roadmap/config.json': JSON.stringify({ systemsMap: { systems: { app: { paths: ['src/**'] } } } }) } }));
   const arc = `st-${randomBytes(5).toString('hex')}`;
   const planDir = tmpDir('st-plan');
   const spec: Raw = { intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
@@ -504,7 +505,7 @@ describe('startup.plan-in-force', () => {
     writeFileSync(s.planFile, JSON.stringify({ ...s.plan, units: [...(s.plan['units'] as Raw[]), { id: 'u2', spec: 'u2.json', risk: 'low', systems: [systemName('app')], resources: ['db'] }] }));
     const j = openJournal(runDirOf(s), arcId(s.arc));
     try {
-      const rctx = { runDir: runDirOf(s), view: j.view, hostDir: s.hostDir, planFile: s.planFile, routingBase: { profile: profileName('default', 'p'), config: null, arcRoles: 'dev17' as const }, laneEnv: process.env };
+      const rctx = { runDir: runDirOf(s), view: j.view, hostDir: s.hostDir, planFile: s.planFile, routingBase: { profile: profileName('default', 'p'), config: readRepoConfig(s.repo), arcRoles: 'dev17' as const }, laneEnv: process.env };
       const v = evaluateRevision(rctx, readInputFiles(s.planFile, s.repo), { type: 'apply', reason: 'Revise the ledger' });
       assert.ok(v.kind === 'accepted', JSON.stringify(v));
       keepRevision(runDirOf(s), v);
@@ -557,7 +558,7 @@ describe('startup.plan-in-force', () => {
     const journal = openJournal(runDirOf(s), arcId(s.arc));
     try {
       const checked = evaluateRevision({runDir: runDirOf(s), view: journal.view, hostDir: s.hostDir, planFile: s.planFile,
-        routingBase: {profile: profileName('default', 'p'), config: null, arcRoles: 'dev17'}, laneEnv: process.env},
+        routingBase: {profile: profileName('default', 'p'), config: readRepoConfig(s.repo), arcRoles: 'dev17'}, laneEnv: process.env},
         readInputFiles(s.planFile, s.repo), {type: 'apply', reason: 'Try the forbidden plan edit'});
       assert.equal(checked.kind, 'rejected');
       if (checked.kind !== 'rejected') assert.fail('the edit must be refused');

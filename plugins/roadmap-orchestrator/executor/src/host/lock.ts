@@ -22,7 +22,8 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { readBootId } from '../contain/proc.ts';
 import { crashPoint } from '../core/crash.ts';
 import {
-  AlreadyExistsError, canonicalJson, durableLink, durableRename, durableUnlink, durableWrite, exclusiveCreate, readJson } from '../core/fsx.ts';
+  AlreadyExistsError, canonicalJson, durableLink, durableRename, durableUnlink, durableWrite, exclusiveCreate, readJson,
+} from '../core/fsx.ts';
 import type { ArcId, InvocationId } from '../core/ids.ts';
 import { type HostLockClaim, type ProcIdentity, type RecoveryLockClaim, hostLockClaim, recoveryLockClaim } from '../core/records.ts';
 import { type AbsPath, type Nonce, isoTimeOf, nonce } from '../core/values.ts';

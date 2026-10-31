@@ -214,15 +214,14 @@ describe('m4a-rev3 facts and outcomes', () => {
     }
   });
 
-  it('plan changes: priority, known defects, plan-check shape; a re-entry widened by a ruling', () => {
+  it('plan changes: priority, known defects, plan-check shape; a re-entry', () => {
     const applied = (changes: readonly object[]) => fact({
       kind: 'plan-applied', rev: 2, command: 'cmd-0123456789abcdef', planSha256: H, specs: { u1: H }, changes,
       source: { type: 'command', command: 'cmd-0123456789abcdef' }, payloadSha256: H, rulingsSha256: H,
       routingProvenance: { profile: 'default', repoConfig: { seats: null, classes: null }, planLayer: null, unitLayers: {} },
     });
     roundTrip(applied([{ type: 'unit-priority', unit: 'u1' }, { type: 'known-defects' }, { type: 'plan-check-shape' }]));
-    roundTrip(applied([{ type: 'unit-reentered', unit: 'u2', reenters: 'u1', reset: false, widened: { patterns: ['src/b/**', 'test/b/**'], reason: 'Reviewed the widening' } }]));
-    refuses(applied([{ type: 'unit-reentered', unit: 'u2', reenters: 'u1', reset: false, widened: { patterns: [], reason: 'Reviewed the widening' } }]), /patterns$/);
+    roundTrip(applied([{ type: 'unit-reentered', unit: 'u2', reenters: 'u1', reset: false }]));
   });
 
   it('a dispatch record\'s bounds carry the smoke bounds; a dev.6 record\'s, without them, read as written', () => {

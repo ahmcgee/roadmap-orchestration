@@ -93,11 +93,13 @@ import { refTarget, revParse } from '../git/git.ts';
 import { type FixRound, ignoredText } from '../prompts/inputs.ts';
 import {
   CONTINUE_DIRECTIVE, CONTINUE_FRESH_DIRECTIVE, NO_SESSION_NOTE, RESOLVE_DIRECTIVE, RESPEC_DIRECTIVE, RESPEC_FRESH_DIRECTIVE, STEER_DIRECTIVE, dirtyLanesDirective,
-  flakyLaneDirective, movedHeadDirective, repeatRedDirective, resolveUnmetDirective, resumeDirectives, smokeFixDirectives, stalledLaneDirective, witnessFixDirectives } from '../prompts/directives.ts';
+  flakyLaneDirective, movedHeadDirective, repeatRedDirective, resolveUnmetDirective, resumeDirectives, smokeFixDirectives, stalledLaneDirective, witnessFixDirectives,
+} from '../prompts/directives.ts';
 import { runnerFiles } from '../runner/files.ts';
 import {
   type BackendCallOutcome, type BackendCallSpec, type ImplementerDispatch, type StageContext, type StageParent, callBackend, implementerSeatRev, minutesMs, runOp, sameSession, seatTripleOf, sessionNeverPersisted, unitBranch,
-  unitWorktree } from './dispatch.ts';
+  unitWorktree,
+} from './dispatch.ts';
 import { invocationDir } from './invoke.ts';
 import { LANE_STALL_MS, type LaneRecord, type VerificationTree, dirtyPaths, removeVerificationTree, seriesDurationMs } from './lanes.ts';
 import type { BuildRound } from './transitions.ts';

@@ -14,7 +14,7 @@ import { protectedPathsInForce } from '../input/protected.ts';
 //      (`<unit>.scaffold-<attempt>`, a journey series of this attempt); the lane must exit as declared and its reporter's
 //      record show the load test ran (a record of it, selected, not skipped).
 //   5. Passed: committed on the unit branch as the unit's first executor-authored commit (`salvage.commit`, the executor's
-//      identity, the effective scope and evidence globs as at salvage), `scaffolded`, on to the fresh build. Crash label
+//      identity, protected paths and evidence globs as at salvage), `scaffolded`, on to the fresh build. Crash label
 //      `scaffold.after-commit`.
 //   Refused: `refused{reasons, laneEvidence}` the first time since the decision (the next attempt tries again, its files kept
 //   in the worktree); the second time, `plan-defect{reasons}`: an uncharged park naming them.
@@ -40,11 +40,13 @@ import { renderSpec } from '../spec/render.ts';
 import { salvageCommitOp } from '../recover/ops.ts';
 import {
   type BackendCallOutcome, type Cancelled, type StageContext, type StageParent, callBackend, dispatchOf, enter, evidenceRoot, isCancelled, minutesMs, runPrepared,
-  scaffoldDispatch, unitBranch, verdictOf } from './dispatch.ts';
+  scaffoldDispatch, unitBranch, verdictOf,
+} from './dispatch.ts';
 import { arcJourneyLane, dirtyPaths, laneRuntime, runJourneySeries } from './lanes.ts';
 import { ensureWorktree } from './rounds.ts';
 import {
-  type StageDone, at, buildEntry, executorIdentity, failedFacts, holdEntry, holisticInForce, inMs, judgedAnswer, loadUnitSpec, planCheckAnswerOf, record, stageHolder, start } from './stages.ts';
+  type StageDone, at, buildEntry, executorIdentity, failedFacts, holdEntry, holisticInForce, inMs, judgedAnswer, loadUnitSpec, planCheckAnswerOf, record, stageHolder, start,
+} from './stages.ts';
 
 /** The scaffold writer's window: a skeleton is small. */
 export const SCAFFOLD_MINUTES = 30;

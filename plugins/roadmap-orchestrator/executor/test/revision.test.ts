@@ -130,7 +130,7 @@ function addRuling(d: ArcDescriptor, id: string, statement: string, over: Json =
 /** Records the files as revision 1, as an M3 first start does (payload, `revision.commit`, `plan-applied`). */
 function recordFirst(d: ArcDescriptor): void {
   const j = openJournal(absPath(d.runDir), d.arc as never);
-  recordPlan(j, absPath(d.runDir), readInputFiles(absPath(d.planPath), absPath(d.repo)), [], BASE);
+  recordPlan(j, absPath(d.runDir), readInputFiles(absPath(d.planPath), absPath(d.repo)), [], { ...BASE, config: d.config ?? null });
   j.close();
 }
 
@@ -189,6 +189,7 @@ test('apply.ledger-in-manifest: the manifest hashes the ledger and its sidecars,
     assert.deepEqual([first.rev, first.source, first.rulingsSha256, first.obligationsSha256, first.visionSha256], [1, { type: 'start' }, m.rulings.ledgerSha256, m.obligations, m.vision]);
 
     addUnit(d, 'u2');
+    editSpec(d, 'u2', (s) => { s['obligations'] = ['I-1']; });
     const { id, outcome } = await command(r, applyBody(d));
     assert.equal(outcome.kind, 'applied', JSON.stringify(outcome));
     const fact = lastApplied(r);

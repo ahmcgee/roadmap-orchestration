@@ -33,7 +33,8 @@ import type { ParkState, ProbeState, ResidueState, UnitState } from '../core/sta
 import { type AbsPath, type IsoTime, isoTimeOf } from '../core/values.ts';
 import { raiseNeedsUser, readNeedsUser } from '../needsuser.ts';
 import {
-  BREAKER_UNITS, BREAKER_WINDOW_MS, PARK_ESCALATE_MS, PROBE_BACKOFF_MIN, type ProbeJob } from '../schedule/types.ts';
+  BREAKER_UNITS, BREAKER_WINDOW_MS, PARK_ESCALATE_MS, PROBE_BACKOFF_MIN, type ProbeJob,
+} from '../schedule/types.ts';
 
 const MINUTE_MS = 60_000;
 const LAST_STEP = PROBE_BACKOFF_MIN.length - 1;

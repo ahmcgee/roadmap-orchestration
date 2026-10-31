@@ -32,7 +32,8 @@ import { isAbsolute } from 'node:path';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import type { Event, HolisticFact, Parent } from '../core/events.ts';
 import {
-  type FindingId, type JobId, type LaneId, type NeedsUserId, type ObligationId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, canonicalIds, sha256 } from '../core/ids.ts';
+  type FindingId, type JobId, type LaneId, type NeedsUserId, type ObligationId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, canonicalIds, sha256,
+} from '../core/ids.ts';
 import type { Journal, JournalView } from '../core/interfaces.ts';
 import type { NeedsUserContent, NeedsUserReason, RepairRef } from '../core/records.ts';
 import type { FindingState } from '../core/state.ts';
@@ -45,7 +46,8 @@ import { raiseNeedsUser, readNeedsUser } from '../needsuser.ts';
 import { PARK_ESCALATE_MS } from '../schedule/types.ts';
 import {
   type FindingDisposition, type FindingEvidence, type FindingLens, type FindingRuledBy, type FindingSeverity, type FindingSource, type FindingStateName,
-  type FindingTo, type LensKind, FINDING_MOVES, findingKey } from './types.ts';
+  type FindingTo, type LensKind, FINDING_MOVES, findingKey,
+} from './types.ts';
 
 // ---------------------------------------------------------------------------------------------------
 // Opening and dedupe

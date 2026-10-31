@@ -54,7 +54,8 @@ import { stationTable } from './series.ts';
 import { chartOf } from './spc.ts';
 import {
   FLOW_INPUTS_SCHEMA, type FlowAction, type FlowInputs, type FlowOutcome, type FlowOutput, type FlowProposal, type FlowPromptInputs, type FlowTrigger,
-  parseFlowInputs } from './types.ts';
+  parseFlowInputs,
+} from './types.ts';
 
 /** The flow job runs under the checkpoint's context: the stage's, the arbiter's first-served `@cpu`, the plan file. */
 export type FlowJobContext = CheckpointContext;

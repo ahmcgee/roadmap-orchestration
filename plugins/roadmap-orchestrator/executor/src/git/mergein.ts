@@ -18,7 +18,8 @@ import type { GitSteps, IntentBody } from '../core/interfaces.ts';
 import { type AbsPath, type RefName, type RepoPath, gitDate, repoPath } from '../core/values.ts';
 import {
   type Identity, commitTree, git, gitPath, gitRun, refTarget, revParse, statusPorcelainV2Z, symbolicHead, updateRefCas,
-  writeTreeFromIndex } from './git.ts';
+  writeTreeFromIndex,
+} from './git.ts';
 
 export class MergeinStateError extends Error {
   readonly worktree: AbsPath;

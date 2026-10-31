@@ -160,6 +160,7 @@ export function writeStart(runDir: AbsPath, repo: AbsPath, planPath: AbsPath, pr
 export function recordFirstPlan(
   journal: Journal, runDir: AbsPath, planPath: AbsPath, repo: AbsPath, profile: ProfileName = 'default', config: RepoConfig | null = null, arcRoles: ArcRoleSet = 'm4b',
 ): void {
+  config = { ...readRepoConfig(repo), ...config, ...((config?.systemsMap ?? readRepoConfig(repo)?.systemsMap) === undefined ? {} : { systemsMap: (config?.systemsMap ?? readRepoConfig(repo)?.systemsMap)! }) };
   writeStart(runDir, repo, planPath, profile);
   const files = readInputFiles(planPath, repo);
   if (files.corpus !== null) {
@@ -172,7 +173,7 @@ export function recordFirstPlan(
 
 /** Puts the run's input files as they are now in force as the next plan revision (an `apply` of, say, an edited ledger). */
 export function applyFilesNow(run: StageRun): void {
-  recordPlan(run.journal, run.runDir, readInputFiles(absPath(join(run.planDir, 'plan.json')), run.repo), [], { profile: 'default', config: null, arcRoles: 'm4b' });
+  recordPlan(run.journal, run.runDir, readInputFiles(absPath(join(run.planDir, 'plan.json')), run.repo), [], { profile: 'default', config: run.ctx.routingBase.config, arcRoles: 'm4b' });
 }
 
 /** A unit driver's gate that admits every stage at once: one unit driven on its own, without the scheduler. */

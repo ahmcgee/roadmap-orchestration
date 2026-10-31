@@ -23,8 +23,6 @@
 // Paid M4b run 5: a gate Globbed the parent of its evidence dirs, was refused, and approved on the ledger alone; the
 // readable dirs were named exactly and a refused read voided an approve. 2026-10-16: the read surface is the repository and
 // the run dir (dispatch.ts `judgmentReadDirs`), which hold every evidence dir, and a refused read voids nothing.
-// Scope growth (2026-10-15; same guides): the paths salvage reverted as out of scope reach the gate as <scope_reverted>, so
-// a build that needed one is escalated to the root agent rather than lost silently.
 // W3 (2026-10-16; re-reviewed 2026-10-17 against "Prompting best practices" and "Prompting Claude Opus 5.5" alone, the
 // 5.5-generation guides being the only binding ones): the "report only what affects correctness" filter is gone: report
 // every real defect, classified, and code filters (notes never block). Evidence: the paid gate role eval (2026-10-17,

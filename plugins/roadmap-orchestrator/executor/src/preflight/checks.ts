@@ -84,7 +84,8 @@ import {
 type RepoConfig,type ResolvedRouting,
 parseRepoConfig,
 planStack,
-resolveRouting,selectProfile,unsupportedSeats } from '../routing/layers.ts';
+resolveRouting,selectProfile,unsupportedSeats,
+} from '../routing/layers.ts';
 import type { ArcRoleSet,ProfileName } from '../routing/types.ts';
 import { type Ruling,loadRulings,parseRulings } from '../spec/rulings.ts';
 import { SpecFileError,parseSpec } from '../spec/spec.ts';

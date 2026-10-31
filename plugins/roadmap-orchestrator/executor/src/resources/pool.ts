@@ -20,7 +20,8 @@ import { availableParallelism } from 'node:os';
 import { RECLAIM_HOLDERS } from '../core/events.ts';
 import {
   type ResourceName, type ResourceUnit, type UnitId, CPU_POOL, INTEGRATION_SLOT, type LaneId, compareResourceUnits, cpuToken,
-  parseResourceUnit, poolInstance } from '../core/ids.ts';
+  parseResourceUnit, poolInstance,
+} from '../core/ids.ts';
 import type { LaneDef, SpecM1 } from '../core/records.ts';
 import { type ResourceEntry, FREE_RESOURCE } from '../core/state.ts';
 import { type PlanM1, type PlanUnit, type ResourceDecl, environmentOf, resourceEnvironments } from '../input/plan.ts';

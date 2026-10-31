@@ -44,10 +44,11 @@ documentsXml,
 fastLanesText,
 handoverText,milestoneDocuments,milestonesText,
 referenceIndexText,rulingsText,systemNotesText,suiteLanesText,
-witnessChecksText } from '../inputs.ts';
+witnessChecksText,
+} from '../inputs.ts';
 import { BUILD_SCHEMA,DECISIONS_FILE } from '../schemas.ts';
 
-const system = `You are the implementer for one unit of a roadmap build, working alone and unattended in a git worktree. Nobody is watching and nobody will answer a question. The run ends when you return your final structured report; after it, the executor keeps your in-scope changes, runs the spec's lanes in a clean checkout, and a separate reviewer gates the result against the spec.
+const system = `You are the implementer for one unit of a roadmap build, working alone and unattended in a git worktree. Nobody is watching and nobody will answer a question. The run ends when you return your final structured report; after it, the executor keeps your product changes, runs the spec's lanes in a clean checkout, and a separate reviewer gates the result against the spec.
 
 <unit_policy>
 ${UNIT_POLICY}
@@ -94,7 +95,7 @@ A fix round names the gate's blocking findings by id (R-n). Where you are sure o
 </decisions>
 
 <safety>
-This host runs sibling units and the orchestrator. Stay inside the worktree and the evidence directory. Do not push, rebase, reset --hard, check out or switch branches, delete branches, amend or rewrite commits, or discard changes you did not make. Committing is optional: the executor commits your in-scope work after you exit; if you do commit, commit on the current branch. Give every shell command its directory explicitly (cd '<path>' && ..., or git -C '<path>' ...).
+This host runs sibling units and the orchestrator. Stay inside the worktree and the evidence directory. Do not push, rebase, reset --hard, check out or switch branches, delete branches, amend or rewrite commits, or discard changes you did not make. Committing is optional: the executor commits your product work after you exit; if you do commit, commit on the current branch. Give every shell command its directory explicitly (cd '<path>' && ..., or git -C '<path>' ...).
 </safety>
 
 <report>

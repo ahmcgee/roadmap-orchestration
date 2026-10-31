@@ -55,7 +55,8 @@ type FlowStage,HELD_STATION,
 type LaneId,type ObligationId,type OpId,
 SLOT_STATION,SLOT_WAIT_STATION,
 type Sha,type Sha256Hex,type StationId,type UnitId,
-parseJobId,parseStationId,stationId } from '../core/ids.ts';
+parseJobId,parseStationId,stationId,
+} from '../core/ids.ts';
 import { spawnPressureOf } from '../core/projections.ts';
 import { type Stage,isRed,obligationRevsOf } from '../core/records.ts';
 import { type IsoTime,isoTime } from '../core/values.ts';

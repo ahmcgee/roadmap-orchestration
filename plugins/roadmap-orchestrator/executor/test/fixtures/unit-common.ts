@@ -1,3 +1,4 @@
+import { readRepoConfig } from '../../src/preflight/checks.ts';
 import { systemName } from '../../src/core/ids.ts';
 import { requirePlanInForce,revisionInForce } from '../../src/input/inforce.ts';
 // Shared by the gate, integrate and unit driver tests (and the unit-child fixture): an arc over a real git
@@ -123,7 +124,7 @@ export function setupArc(opts: ArcOptions): ArcDescriptor {
   return {
     arc, repo, planPath, runDir: tmpDir('unit-run'), hostDir: join(tmpDir('unit-host'), 'roadmap'),
     binDir: scenario.binDir, scenarioPath: scenario.path, scenarioDir,
-    config: parseRepoConfig({ systemsMap: opts.systemsMap ?? { systems: { app: { paths: ['src/**', 'test/**', 'contracts/**', 'ARCHITECTURE.md'] } } } }),
+    config: readRepoConfig(absPath(repo))!,
   };
 }
 
@@ -131,6 +132,7 @@ export type ArcRun = Readonly<{ ctx: StageContext; journal: OpenJournal; d: ArcD
 
 /** Opens the arc's journal and builds its StageContext (default profile), as the executor would. */
 export function contextFor(d: ArcDescriptor): ArcRun {
+  d = { ...d, config: { ...readRepoConfig(absPath(d.repo)), ...d.config, ...((d.config?.systemsMap ?? readRepoConfig(absPath(d.repo))?.systemsMap) === undefined ? {} : { systemsMap: (d.config?.systemsMap ?? readRepoConfig(absPath(d.repo))?.systemsMap)! }) } };
   const plan = parsePlan(JSON.parse(readFileSync(d.planPath, 'utf8')));
   const journal = openJournal(absPath(d.runDir), arcId(d.arc));
   // As a first start does: the files become the plan in force (rev 1), whose specs the stages load.

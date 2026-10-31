@@ -26,7 +26,8 @@ milestoneId,
 needsUserId,obligationId,
 opportunityId,
 phaseQuestionId,ruleId,sha,sha256,unitId,visionClauseId,
-witnessItemId } from '../core/ids.ts';
+witnessItemId,
+} from '../core/ids.ts';
 import { type Read,SchemaError,arrayOf,assertUnique,bool,literal,nat,nullable,object,oneOf,positive,sortedBy,str,tagged } from '../core/validate.ts';
 import { type IsoTime,type RepoPath,isoTime,repoPath } from '../core/values.ts';
 import { type DebtDisposition,debtDisposition } from '../debt/types.ts';

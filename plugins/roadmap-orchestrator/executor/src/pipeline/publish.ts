@@ -97,7 +97,8 @@ import { docsCommitOp,evidenceSnapshotOp,integrationFfOp,snapshotPublishOp,workt
 import { type DocsOutcome,type DocsPublisher } from '../recover/revision.ts';
 import { spawnReconciler } from '../recover/spawn.ts';
 import {
-type DocsHolder,type Reservation,type ResourceContext,cleanup,entryOf,finishCleanup,heldReservation,holderUnits,resourceTable,run } from '../resources/reserve.ts';
+type DocsHolder,type Reservation,type ResourceContext,cleanup,entryOf,finishCleanup,heldReservation,holderUnits,resourceTable,run,
+} from '../resources/reserve.ts';
 import type { AcquireFirst } from '../schedule/arbiter.ts';
 import type { ResourceRequest } from '../schedule/types.ts';
 import { parseRulings } from '../spec/rulings.ts';

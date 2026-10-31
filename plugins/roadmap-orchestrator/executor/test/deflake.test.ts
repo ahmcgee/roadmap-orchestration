@@ -116,7 +116,7 @@ const HELD_BY_DEFLAKE_1 = { kind: 'wait', constraints: [{ type: 'deflake', defla
  */
 function flakyArc(marker: string, flaky: readonly string[], others: readonly string[], steps: readonly Step[]): ArcDescriptor {
   return setupArc({
-    units: [...flaky.map((id) => ({ id, scope: FLAKY_SCOPE })), ...others.map((id) => ({ id }))],
+    units: [...flaky.map((id) => ({ id, systems: ['core', 'flaky'] })), ...others.map((id) => ({ id }))],
     suite: [SUITE_LANE, { ...flakyLane(marker), cadence: 'candidate', systems: ['flaky'] }], systemsMap: SYSTEMS, steps,
   });
 }
@@ -151,7 +151,7 @@ describe('the flaky ledger', () => {
       assert.deepEqual(deflake.deflake, { keys: [{ type: 'lane', lane: 'flaky' }] });
       assert.deepEqual(deflake.after, []);
       assert.deepEqual(milestonesOfUnit(plan, deflake.id), [], 'milestone-exempt');
-      assert.deepEqual(deflake.systems, ['flaky/**'], 'a suite lane\'s deflake takes its systems\' paths');
+      assert.deepEqual(deflake.systems, ['flaky'], 'a suite lane\'s deflake takes its systems');
       const applied = facts(r).filter((f) => f.kind === 'plan-applied').at(-1);
       assert.ok(applied?.kind === 'plan-applied' && applied.source.type === 'deflake');
       const { w } = deflakeContext(r);

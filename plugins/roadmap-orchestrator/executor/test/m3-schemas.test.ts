@@ -111,7 +111,7 @@ const OBLIGATIONS = {
       deliveredBy: [], activation: 'must-hold', parent: 'I-2', contracts: [], state: { type: 'active' },
     },
   ],
-  mapping: { systems: [{ system: systemName('app'), obligations: ['I-4'] }, { system: systemName('app'), obligations: ['I-1', 'I-4'] }] },
+  mapping: { systems: [{ system: systemName('app'), obligations: ['I-4'] }, { system: systemName('other'), obligations: ['I-1', 'I-4'] }] },
 };
 
 describe('M3 ids', () => {

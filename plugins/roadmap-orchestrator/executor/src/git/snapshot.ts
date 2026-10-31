@@ -62,7 +62,8 @@ parseRevisionPayload,prevHash,serializeEvent
 import { canonicalJson as fileJson } from '../core/fsx.ts';
 import {
 type ArcId,type FindingId,type InvocationId,type JobId,type LaneId,type NeedsUserId,type OpId,type Sha,type Sha256Hex,type UnitId,arcId,invocationDirName,
-invocationId,parseOpId,sha,sha256 } from '../core/ids.ts';
+invocationId,parseOpId,sha,sha256,
+} from '../core/ids.ts';
 import type { GitSteps,IntentBody,JournalView } from '../core/interfaces.ts';
 import { canonicalJson,canonicalRecordBytes,sha256Hex } from '../core/json.ts';
 import { EVENTS_FILE } from '../core/log.ts';

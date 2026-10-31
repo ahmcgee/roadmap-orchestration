@@ -34,7 +34,8 @@ import { SCHEMA_VERSION } from '../core/version.ts';
 import { RESIDUES, hostPath } from './hostdir.ts';
 import {
   type CompactedHead, type CompactedLine, type DispositionEntry, RESIDUE_ARCHIVE, bodyOf, readResidueIndex, residueArchiveName, residueKeyText,
-  verifyIndexBytes } from './residues.ts';
+  verifyIndexBytes,
+} from './residues.ts';
 
 /** How many droppable pairs a start waits for before it rewrites the index. */
 export const COMPACT_THRESHOLD = 64;

@@ -471,11 +471,11 @@ describe('vision edits publish (dev.16)', () => {
 describe('the tree and the forge at start', () => {
   it('phase0.tree-uncommitted-start-and-apply: an uncommitted .roadmap input refuses a start (corpus and doc arcs) and an apply', T, async () => {
     const a = await corpusArc();
-    writeFileSync(join(a.repo, '.roadmap/config.json'), `${JSON.stringify({ chain: { k: 2 } })}\n`);
+    writeFileSync(join(a.repo, '.roadmap/config.json'), `${JSON.stringify({ ...readRepoConfig(a.repo), chain: { k: 2 } })}\n`);
     assert.deepEqual(refusedRows(await start(a)), [{ kind: 'tree-uncommitted', paths: ['.roadmap/config.json'] }]);
 
     // A plain (non-holistic) architecture-doc arc: an uncommitted new vision.json.
-    const repo = absPath(makeRepo(tmpDir('c1-doc'), { files: { 'README.md': 'hello\n', 'ARCHITECTURE.md': 'arch\n' } }));
+    const repo = absPath(makeRepo(tmpDir('c1-doc'), { files: { 'README.md': 'hello\n', 'ARCHITECTURE.md': 'arch\n', '.roadmap/config.json': JSON.stringify({systemsMap: {systems: {app: {paths: ['src/**']}}}}) } }));
     const planDir = tmpDir('c1-doc-plan');
     const lane = { id: 'suite', argv: ['node', '-e', '0'], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [] };
     writeFileSync(join(planDir, 'u1.json'), JSON.stringify({ intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],

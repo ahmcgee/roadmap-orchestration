@@ -112,7 +112,7 @@ test('routing.provenance-recorded: plan-applied records the profile, the repo co
   const configPath = join(d.repo, '.roadmap', 'config.json');
   const sonnet = (effort: string): Json => ({ backend: 'claude', model: 'claude-sonnet-5-5', effort });
   mkdirSync(join(d.repo, '.roadmap'), { recursive: true });
-  writeFileSync(configPath, JSON.stringify({ routing: { seats: { gate: { high: 'summit' } }, classes: { efficient: sonnet('medium') } } }));
+  writeFileSync(configPath, JSON.stringify({ systemsMap: d.config!.systemsMap!, routing: { seats: { gate: { high: 'summit' } }, classes: { efficient: sonnet('medium') } } }));
   editPlan(d, (p) => void (p['routing'] = { planCheck: { low: 'summit' } }));
   editUnit(d, 'u1', (u) => void (u['routing'] = { gate: { med: 'summit' } }));
   // As a start does (src/preflight/checks.ts `settlePlan`): the routing base is the profile and the repo config read now.
@@ -143,7 +143,7 @@ test('routing.provenance-recorded: plan-applied records the profile, the repo co
     assert.notEqual(resolveRouting(provenanceStack(provenance!, 'none', U2, false)).rev, record.routingRev, 'u2 has no unit layer');
 
     // The architect edits the live config: a revision's routing never re-reads it (H7).
-    writeFileSync(configPath, JSON.stringify({ routing: { classes: { efficient: sonnet('high') } } }));
+    writeFileSync(configPath, JSON.stringify({ systemsMap: d.config!.systemsMap!, routing: { classes: { efficient: sonnet('high') } } }));
     const live = unitRouting({ profile: 'default', config: readRepoConfig(absPath(d.repo)), arcRoles: 'm4b' }, plan, unitOf(ctx, 'u1'));
     assert.notEqual(live.rev, record.routingRev, 'the live file would resolve another rev');
     assert.equal(ctx.routing(U1).rev, record.routingRev, 'the routing in force still resolves from the recorded provenance');

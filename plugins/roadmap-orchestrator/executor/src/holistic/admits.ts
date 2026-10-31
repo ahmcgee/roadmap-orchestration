@@ -46,13 +46,15 @@
 //   9 no refs, In ≠ ∅ → oversight{In}; 10 otherwise → convert unrelated.
 // Budgets count the arc's recorded admits plus the earlier ones of this bundle; ops classify in index order.
 import {
-  type FindingId, type JobId, type ObligationId, type OpportunityId, type RuleId, type UnitId, type VisionClauseId, canonicalIds, opportunityId } from '../core/ids.ts';
+  type FindingId, type JobId, type ObligationId, type OpportunityId, type RuleId, type UnitId, type VisionClauseId, canonicalIds, opportunityId,
+} from '../core/ids.ts';
 import { type LensKindName, type RepairRef, type SpecM1, specObligations, specRepairs } from '../core/records.ts';
 import { mayOverlap } from '../input/classify.ts';
 import type { BundleOp, CheckpointOutput } from '../prompts/schemas.ts';
 import {
   type AdmitClass, type CensusState, type ClassifiedAdmit, type Conversion, type FindingLens, type FindingSource, type ObligationDef, type Obligations, LENS_KINDS,
-  OPPORTUNITY_BUDGET, OPPORTUNITY_FOLLOW_UPS, isExempt } from './types.ts';
+  OPPORTUNITY_BUDGET, OPPORTUNITY_FOLLOW_UPS, isExempt,
+} from './types.ts';
 
 /** A finding as classification reads it. `paths`: its evidence paths as recorded; `visionClauses` are context, never scope (LR-m). */
 export type AdmitFinding = Readonly<{

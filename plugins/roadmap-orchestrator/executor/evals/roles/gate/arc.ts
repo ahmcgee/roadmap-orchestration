@@ -36,7 +36,7 @@ import { invocationDir } from '../../../src/pipeline/invoke.ts';
 import { judgmentOutput,judgmentSpawns } from '../../../src/pipeline/stages.ts';
 import { promptFor } from '../../../src/prompts/index.ts';
 import { type GateOutput,validateGateOutput } from '../../../src/prompts/schemas.ts';
-import { type RepoConfig,arcStack,resolveRouting } from '../../../src/routing/layers.ts';
+import { type RepoConfig,parseRepoConfig,arcStack,resolveRouting } from '../../../src/routing/layers.ts';
 import { modelInfo } from '../../../src/routing/models.ts';
 import type { RiskTier } from '../../../src/routing/types.ts';
 import { runnerFiles } from '../../../src/runner/files.ts';
@@ -138,6 +138,7 @@ function buildCall(risk: RiskTier, config: RepoConfig | null): Pick<Step, 'as' |
  * a real gate runs as the read-only comparison arm.
  */
 export function setupGateArc(f: Fixture, kind: GateKind, risk: RiskTier, config: RepoConfig | null = null, readOnly = false): ArcDescriptor {
+  config = { ...parseRepoConfig({ systemsMap: { systems: { app: { paths: [...SCOPE] } } } }), ...config, systemsMap: config?.systemsMap ?? parseRepoConfig({ systemsMap: { systems: { app: { paths: [...SCOPE] } } } }).systemsMap! };
   const repo = tmpDir('roles-repo');
   const { base, head } = materialise(f, repo);
   const planDir = tmpDir('roles-plan');

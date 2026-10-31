@@ -24,7 +24,8 @@ import {
   readFileSync,
   renameSync,
   unlinkSync,
-  writeSync } from 'node:fs';
+  writeSync,
+} from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
 

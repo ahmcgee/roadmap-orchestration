@@ -13,7 +13,8 @@ ResourceName,
 ReviewFindingId,RulingId,ServeName,Sha,Sha256Hex,SpecRev,
 SystemName,
 UnitId,VisionClauseId,
-WitnessItemId } from '../core/ids.ts';
+WitnessItemId,
+} from '../core/ids.ts';
 import type { JsonValue } from '../core/json.ts';
 import type { CommandVerdict,FailureRef,IgnoredCensus,LaneCadence,LaneDef,NeedsUserReason,SpecPatchOp } from '../core/records.ts';
 import type { GateDelta,LedgerOutcome } from '../core/review.ts';
@@ -27,7 +28,8 @@ BundleRejection,DivergenceKind,
 FindingLens,
 FindingSeverity,FindingStateName,
 LensKind,ObligationDef,Obligations,ObservationKey,ObservationVerdict,PackFinding,
-Vision,VisionClause,VisionCoverage,VisionQuestion } from '../holistic/types.ts';
+Vision,VisionClause,VisionCoverage,VisionQuestion,
+} from '../holistic/types.ts';
 import { obligationSource } from '../holistic/types.ts';
 import type { BringUp,Journey } from '../input/plan.ts';
 import type { SystemsMap } from '../input/systems.ts';
@@ -324,7 +326,7 @@ export function handoverText(h: Handover): string {
     const lines = [
       ...u.outcomes.map((o) => `- ${o.ref}: ${o.text}`),
       ...u.lanes.map((l) => `- ${l.ref}: lane failure, ${l.class}${l.hostSuspected === null ? '' : `, host-suspected (${l.hostSuspected.join(', ')})`}`),
-      ...(u.reverted.length === 0 ? [] : [`- Edits outside the pinned scope that salvage reverted: ${u.reverted.map((r) => `${r.path} (${r.salvages}×)`).join(', ')}`]),
+      ...(u.reverted.length === 0 ? [] : [`- Edits to protected paths that salvage reverted: ${u.reverted.map((r) => `${r.path} (${r.salvages}×)`).join(', ')}`]),
     ];
     return lines.length === 0 ? [] : [`Unit ${u.unit}:`, ...lines];
   });
@@ -404,8 +406,7 @@ export type GateInputs = Readonly<{
   /** Evidence directories the gate may read (lane output, the build's decisions.json). */
   evidence: readonly AbsPath[];
   /**
-   * The pinned envelope, the diff's paths outside it, and (scope growth, 2026-10-15) the out-of-scope paths the build edited
-   * that salvage reverted (in no diff), still outside the envelope.
+   * The unit's declared systems, diff paths outside them, and the systems' repository-defined traits.
    */
   systems: readonly SystemName[];
   reach: readonly RepoPath[];
@@ -538,7 +539,7 @@ export type TriggerView =
 /**
  * Arc feedback 2026-10-16 (a checkpoint re-entered a unit without finding why it failed): what the executor's records say
  * about a parked unit's lineage, the parked unit first, then each unit it re-entered. Each failure carries the reference a
- * re-entry cites in `fixes`. `reverted`: the paths salvage reverted as outside the pinned scope, with how many salvages
+ * re-entry cites in `fixes`. `reverted`: the protected paths salvage reverted, with how many salvages
  * did; `witnesses`: the required witness tests a lanes attempt found missing or failing, the latest attempt per test.
  */
 export type ParkDiagnosis = Readonly<{
@@ -560,7 +561,7 @@ export function diagnosisText(d: ParkDiagnosis | null): string {
     const lines = [
       ...u.outcomes.map((o) => `- ${o.ref}: ${o.text}`),
       ...u.lanes.map((l) => `- ${l.ref}: lane failure, ${l.class}${l.hostSuspected === null ? '' : `, host-suspected (${l.hostSuspected.join(', ')})`}`),
-      ...(u.reverted.length === 0 ? [] : [`- Edits outside the pinned scope that salvage reverted: ${u.reverted.map((r) => `${r.path} (${r.salvages}×)`).join(', ')}`]),
+      ...(u.reverted.length === 0 ? [] : [`- Edits to protected paths that salvage reverted: ${u.reverted.map((r) => `${r.path} (${r.salvages}×)`).join(', ')}`]),
       ...u.witnesses.map((w) => `- Required witness ${w.test.lane}/${w.test.testId} ${w.reason} at lanes attempt ${w.attempt}`),
     ];
     return [`Unit ${u.unit}:`, ...(lines.length === 0 ? ['- no failure recorded'] : lines)].join('\n');

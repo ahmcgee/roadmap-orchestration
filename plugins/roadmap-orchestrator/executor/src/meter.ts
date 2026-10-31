@@ -25,7 +25,8 @@ import type { Event, Fact } from './core/events.ts';
 import type { JobId, RoutingRev, UnitId } from './core/ids.ts';
 import type { ClassUsage } from './core/records.ts';
 import {
-  type Backend, type ClassTable, type ModelId, type Role, type RoutingTable, type SeatRef, type ModelClass, MODEL_CLASSES, atSeat, seatRef } from './routing/types.ts';
+  type Backend, type ClassTable, type ModelId, type Role, type RoutingTable, type SeatRef, type ModelClass, MODEL_CLASSES, atSeat, seatRef,
+} from './routing/types.ts';
 
 export type UsageTotals = Readonly<{
   /** Invocations with a usage fact: `known` ones plus `unavailable` ones. */

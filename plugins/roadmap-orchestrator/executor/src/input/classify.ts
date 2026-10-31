@@ -50,7 +50,8 @@ specShaInForce,unitRouting
 } from './inforce.ts';
 import {
 type KnownDefect,type PlanM1,type PlanUnit,boundsOf,derivedOf,environmentOf,environmentsOf,hasMilestones,knownDefectsOf,milestonesNeedHolistic,milestonesOf,parsePlan,
-planFieldValue,priorityOf,reservedUnitIdReason } from './plan.ts';
+planFieldValue,priorityOf,reservedUnitIdReason,
+} from './plan.ts';
 
 /**
  * Who proposes a revision (G1), as far as its rules differ: an architect's `apply`, `rule` or `reverse` command, a

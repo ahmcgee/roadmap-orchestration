@@ -405,7 +405,7 @@ describe('startup rows, brief and ack', () => {
       {
         kind: 'corpus-invalid', problems: [
           { type: 'pin-drift' }, { type: 'rule-reused', id: 'T-3' }, { type: 'rule-retired-reappears', id: 'T-1' }, { type: 'rules-in-vision' }, { type: 'guide-missing' },
-          { type: 'source-unreadable', detail: 'no such commit' }, { type: 'source-remote-mismatch' }, { type: 'scope-overlaps-corpus', unit: 'u1', fix: 'narrow it' },
+          { type: 'source-unreadable', detail: 'no such commit' }, { type: 'source-remote-mismatch' },
           { type: 'contract-overlaps-corpus', path: 'docs/corpus/0010_Overview.md' },
         ],
       },
@@ -428,7 +428,6 @@ describe('startup rows, brief and ack', () => {
     same((v) => rejectionFile(v, 'rejection'), file);
     for (const row of rejectionFile(file, 'rejection').rejections) assert.equal(exitCodeFor(row), 78, row.kind);
     assert.throws(() => rejectionFile({ ...file, rejections: [{ kind: 'corpus-invalid', problems: [] }] }, 'rejection'), /problems/);
-    // A dev.17 rejection file's scope-overlaps-corpus names no fix: read with the fix the row names now.
   });
 
   it('the ack marker round-trips with its coverage vector and items', () => {

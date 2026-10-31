@@ -1,3 +1,5 @@
+import { inputShaOf } from '../src/git/reusekey.ts';
+import { systemsMapInForce } from '../src/input/systems.ts';
 // M2 lanes (src/pipeline/lanes.ts, src/pipeline/redlane.ts), integrated over real processes and real git: the
 // red-lane protocol on real lanes, host samples, `@cpu` and pool-instance reservations with their binding, and
 // cancelled waits. Named tests: lanes.flake-red-green, lanes.flake-deflake-own (dev.17, the flaky ledger), lanes.flake-unit-own
@@ -98,14 +100,14 @@ test('lanes.flake-red-green: red then green on the diagnostic rerun at a commit 
   assert.equal(spawns.length, 2);
   assert.ok(spawns.every((s) => s.expect.subject.purpose === 'lane' && s.expect.subject.at === run.base && s.expect.subject.lane === 'flaky'));
 
-  // The flake, once: the lane's input (the whole tree, no systems map) and environment, the red run then the green.
+  // The flake, once: the lane's input (the paths selected by the systems map) and environment, the red run then the green.
   const flakes = run.journal.view.flakes().map((x) => x.fact);
   const subject = spawns[0]!.expect.subject;
   const identity = subject.purpose === 'lane' ? subject.identity : undefined;
   assert.ok(identity !== undefined);
   assert.deepEqual(flakes, [{
     kind: 'flake-observed', owner: { type: 'unit', unit: U1 }, lane: 'flaky', set: 'spec', on: 'tip', forgiven: true,
-    event: { tree: revParse(run.repo, `${run.base}^{tree}`), env: identity.envId, failing: [], red: record.voided.inv, green: record.inv },
+    event: { tree: inputShaOf(run.ctx.repo, revParse(run.repo, `${run.base}^{tree}`), loadUnitSpec(run.ctx, run.unit).spec.lanes.find((l) => l.id === 'flaky')!, systemsMapInForce(run.journal.view.planApplied())), env: identity.envId, failing: [], red: record.voided.inv, green: record.inv },
   }]);
 
   // Read back from the journal and the files: the same record.

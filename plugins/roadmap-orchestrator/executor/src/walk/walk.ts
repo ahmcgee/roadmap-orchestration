@@ -53,7 +53,8 @@ import type { Vision } from '../holistic/types.ts';
 import { type Milestone, type PlanM1, advancesOf, milestoneOf, milestonesOf, resourceEnvironments, walkRoundsOf } from '../input/plan.ts';
 import { raiseNeedsUser, raisedFor } from '../needsuser.ts';
 import {
-  type BackendCallOutcome, type RepairTurn, type StageContext, arcSeat, callActingJudge, recordedArcCall, repairTurnOf, runOp, verdictOf } from '../pipeline/dispatch.ts';
+  type BackendCallOutcome, type RepairTurn, type StageContext, arcSeat, callActingJudge, recordedArcCall, repairTurnOf, runOp, verdictOf,
+} from '../pipeline/dispatch.ts';
 import { removeJobCheckouts } from '../pipeline/lanes.ts';
 import { batchFindingsOf, runBatchPoint } from '../pipeline/batchlanes.ts';
 import { endDetail } from '../pipeline/publish.ts';

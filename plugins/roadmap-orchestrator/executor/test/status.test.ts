@@ -143,7 +143,7 @@ describe('status.subset', () => {
     assert.ok(s.run.heartbeatAt !== null, 'the executor wrote its heartbeat');
     assert.deepEqual(s.units.map(({ certification, work, ...u }) => u), [{
       unit: 'u1', stage: 'retire', status: 'retired', attempts: 12, chargeableFailures: 0, risk: 'med', seat: null,
-      state: 'merged', waitingFor: null, holds: [], priority: null, park: null, lineage: null, supersededBy: null, buildTier: 'med', derived: [], running: null, failures: [],
+      state: 'merged', waitingFor: null, holds: [], priority: null, park: null, lineage: null, supersededBy: null, buildTier: 'med', running: null, failures: [],
       gate: { attempt: 8, decision: 'approve', findings: [], unreviewed: [] },
     }]);
     assert.equal(s.units[0]!.certification?.allowance, 3);

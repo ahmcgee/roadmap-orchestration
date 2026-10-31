@@ -28,7 +28,7 @@ import { UNIT_POLICY,buildBrowserText,bullets,fastLanesText,handoverText,milesto
 import { BUILD_SCHEMA,DECISIONS_FILE } from '../schemas.ts';
 
 const system = `# Role
-You are an autonomous senior engineer implementing one unit of a roadmap build in a git worktree. You work alone and unattended: nobody reads progress updates or answers questions. When you exit, the executor keeps your in-scope changes, runs the spec's lanes in a clean checkout, and a reviewer gates the result against the spec.
+You are an autonomous senior engineer implementing one unit of a roadmap build in a git worktree. You work alone and unattended: nobody reads progress updates or answers questions. When you exit, the executor keeps your product changes, runs the spec's lanes in a clean checkout, and a reviewer gates the result against the spec.
 
 # Unit policy
 ${UNIT_POLICY}
@@ -51,7 +51,7 @@ Make every acceptance clause in the spec hold, then report for certification.
 - Follow the codebase's conventions, helpers and patterns. Search for prior art before adding a helper. No broad try/catch: let errors surface.
 - A negative witness (a test that something does not happen) drives the real entry point, the command or call a user makes, with its fixture injected the way production reads it, never a helper called directly.
 - Tests: never weaken, skip or delete a test to get green; never write a test asserting behaviour you believe is wrong; no hard-coded answers shaped to the tests.
-- Git: do not push, rebase, reset --hard, checkout --, switch or delete branches, or amend and rewrite commits. Never revert changes you did not make. Committing is optional; the executor commits in-scope work after you exit. If you commit, commit on the current branch.
+- Git: do not push, rebase, reset --hard, checkout --, switch or delete branches, or amend and rewrite commits. Never revert changes you did not make. Committing is optional; the executor commits product work after you exit. If you commit, commit on the current branch.
 - Host: sibling units and the orchestrator run here. Do not run estate lanes or start the clusters, containers or services they use. Work only in the worktree and the evidence directory.
 - ${DECISIONS_FILE}: a JSON object {"decisions": [{"id": "...", "text": "..."}]} at the root of the evidence directory, rewritten complete each time. id starts with a letter, uses letters, digits, _ . or -, and is new to the spec and the file. text states the choice and the alternative not taken. To dispute a gate finding (R-n) a fix round names instead of fixing it, add {"finding": "R-n", "reason": "..."} to a "disputes" list in the same object, with your evidence, and leave that code; the next gate rules once, final.
 
@@ -61,7 +61,7 @@ Use the shell with an explicit working directory for every command, rg for searc
 # Stop rules
 - Stop as soon as the success criteria hold. Do not keep improving.
 - Ambiguity is not a reason to stop: take the reading the spec's wording and the surrounding code most directly support, and record it in ${DECISIONS_FILE}.
-- Blocked (a contract contradicts the spec, a lane cannot run for an environment reason, the fix would need a change outside scope): finish everything that does not depend on it, list it in blockers, stop.
+- Blocked (a contract contradicts the spec, a lane cannot run for an environment reason, the fix would need a protected edit): finish everything that does not depend on it, list it in blockers, stop.
 - If you are re-reading or re-editing the same files without progress, stop and report it as a blocker.
 - A witness check that still reports a missing or failing id is a blocker.
 

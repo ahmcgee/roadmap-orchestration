@@ -11,7 +11,8 @@ MIN_VERDICT_SAMPLES,PROOF_OUTCOMES,flowDropped,
 flowEndedConstraint,flowMetric,flowPreimage,flowProposal,flowTriggers,
 fraction,
 guardBreaches,hostFingerprint,
-proofMinutes,verdictAfter,verdictBefore } from '../flow/types.ts';
+proofMinutes,verdictAfter,verdictBefore,
+} from '../flow/types.ts';
 import { type PressureAvailability,PRESSURE_AVAILABILITIES } from '../host/pressure.ts';
 import { type CpuBasis,cpuBasis } from './cpu.ts';
 import {
@@ -75,7 +76,8 @@ optionId,pauseTarget,
 resumeTarget,revisionInputs,specPatch,stage,
 stochastic,
 tokenUsage,
-usageUnavailableReason } from './records.ts';
+usageUnavailableReason,
+} from './records.ts';
 
 import {
 type AuditTrigger,type BundleOutcome,
@@ -97,22 +99,27 @@ conversion,
 divergenceDraft,divergenceDraftFields,findingEvidence,findingSource,findingTo,mutantRef,observationKey,
 packDisposition,packFinding,
 planDefect,
-revisionVector } from '../holistic/types.ts';
+revisionVector,
+} from '../holistic/types.ts';
 import { type SystemsMap,systemsMap } from '../input/systems.ts';
 import {
 type ArcSeatRef,type Backend,type RiskTier,type RoutingProvenance,type SeatRef,type UnitSeatRef,arcSeatFields,backend,riskTier,
-routingProvenance,seatFields,unitSeatFields } from '../routing/types.ts';
+routingProvenance,seatFields,unitSeatFields,
+} from '../routing/types.ts';
 import { type FlakyEvent,flakyEvent } from './flaky.ts';
 import { type ReviewFindingId,reviewFindingId } from './ids.ts';
 import {
-type ApprovalBlobs,type FindingsLedgerEntry,type GateReview,type LedgerOutcome,LEDGER_OUTCOMES,approvalBlobs,findingsLedgerEntry,gateReview } from './review.ts';
+type ApprovalBlobs,type FindingsLedgerEntry,type GateReview,type LedgerOutcome,LEDGER_OUTCOMES,approvalBlobs,findingsLedgerEntry,gateReview,
+} from './review.ts';
 import { type StaleAnswer,type StaleSet,staleAnswer,staleSet,staleSetFields } from './stale.ts';
 import {
 type Read,Fields,SchemaError,arrayOf,assertUnique,bool,int,literal,nat,nullable,object,oneOf,positive,sortedBy,str,tagged,text,
-version } from './validate.ts';
+version,
+} from './validate.ts';
 import {
 type AbsPath,type GitDate,type IsoTime,type RefName,type RepoPath,type RepoPattern,absPath,gitDate,isoTime,
-refName,repoPath,repoPattern } from './values.ts';
+refName,repoPath,repoPattern,
+} from './values.ts';
 import type { SchemaVersion } from './version.ts';
 
 // ---------------------------------------------------------------------------------------------------
@@ -2639,11 +2646,9 @@ export const fact: Read<Fact> = tagged('kind', {
     // The fold keys retries and route-ups by stage, so those classes only exist where the stage has them.
     if (out.class === 'retry' && !(RETRY_STAGES as readonly string[]).includes(s)) throw new SchemaError(`${f.path}.class`, `retry only at ${RETRY_STAGES.join(', ')}`, out.class);
     if (out.class === 'route-up' && !(JUDGMENT_STAGES as readonly string[]).includes(s)) throw new SchemaError(`${f.path}.class`, `route-up only at ${JUDGMENT_STAGES.join(', ')}`, out.class);
-    // An interruption holds the unit, and so does a scope-growth proposal (a plan-check's, or a lanes attempt's after two
-    // reverts of one path) and (dev.17) a plan-check's split until its revision cuts the unit; nothing else does; a hold
-    // never charges.
+    // An interruption or a plan-check split holds the unit, uncharged, until resumed or cut by its split revision.
     const holds = out.outcome === 'interrupted' || (s === 'plan-check' && out.outcome === 'split');
-    if (holds !== (out.class === 'hold')) throw new SchemaError(`${f.path}.class`, 'hold exactly for an interrupted outcome, a scope-growth or a split', out.class);
+    if (holds !== (out.class === 'hold')) throw new SchemaError(`${f.path}.class`, 'hold exactly for an interrupted outcome or a split', out.class);
     if (out.class === 'hold' && out.chargeable) throw new SchemaError(`${f.path}.chargeable`, 'false for a hold', out.chargeable);
     return { ...out, ...(unchargedLanesReds === undefined ? {} : { unchargedLanesReds }), ...(park === undefined ? {} : { park }), ...(cause === undefined ? {} : { cause }), ...(detail === undefined ? {} : { detail }) } as StageOutcomeFact;
   }),

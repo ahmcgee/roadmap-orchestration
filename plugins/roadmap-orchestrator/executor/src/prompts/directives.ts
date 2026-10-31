@@ -14,9 +14,7 @@
 //   witnessFixDirectives  D1: required witness test ids missing or failing after a green certified series, then every required id
 //   smokeFixDirectives    D2: target witness tests that still pass with the unit's production change reverted
 //   repeatRedDirective    F2: a red lane that repeated its previous red exactly, so the executor did not rerun it
-//   SCOPE_GROWTH_BLOCKER, revertedPathsDirective   scope growth (2026-10-15): how a builder reports an out-of-scope path it
-//                         needs (the build report's `blockers`), and the fix round after salvage reverted its out-of-scope edits
-//   restoredPathsDirective  plan defects (2026-10-16): the round after a scope accept took reverted paths in
+//   revertedPathsDirective  the fix round after salvage reverted edits to protected paths
 import type { TestRef } from '../core/events.ts';
 import type { LaneId } from '../core/ids.ts';
 import type { RequiredWitness } from '../holistic/required.ts';
@@ -41,10 +39,10 @@ export function resolveUnmetDirective(unmet: readonly Readonly<{ clause: string;
   return `The merge is committed, but the resolve round changed nothing beyond it while these acceptance clauses of the spec are still unmet: ${unmet.map((u) => `${u.clause} (${u.text})`).join('; ')}. Carry them out now, run targeted checks and return your report for executor certification.`;
 }
 /** A steer round's directive (R11): the architect's brief follows it verbatim. */
-export const STEER_DIRECTIVE = 'The architect is steering this unit: the brief below is their direction for this round, and it takes precedence over any earlier round\'s directives. The worktree holds the unit\'s work so far (committed, and possibly uncommitted changes); read it before you change anything. Follow the brief within the unit\'s scope, run targeted checks and return your report for executor certification. The brief:';
+export const STEER_DIRECTIVE = 'The architect is steering this unit: the brief below is their direction for this round, and it takes precedence over any earlier round\'s directives. The worktree holds the unit\'s work so far (committed, and possibly uncommitted changes); read it before you change anything. Follow the brief against the unit\'s intent and non-goals, run targeted checks and return your report for executor certification. The brief:';
 
 /**
- * The fix round after salvage reverted the build's edits outside the pinned scope (`paths`, still outside it), their content
+ * The fix round after salvage reverted the build's edits to protected `paths`, their content
  * kept under `kept` (the salvage's rejected dir, `files/<path>`).
  */
 export function revertedPathsDirective(paths: readonly string[], kept: string): string {

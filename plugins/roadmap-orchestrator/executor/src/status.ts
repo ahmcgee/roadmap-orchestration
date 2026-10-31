@@ -2,8 +2,7 @@ import { type Certification,type WorkRun,certification,workRuns } from './status
 // `roadmap status`: DESIGN-1.0.md §2.4, as one agent-facing JSON object (M2's view plus M3's holistic keys).
 //
 // Read only, from anywhere, while an executor runs or when none does: the log is folded without the host
-// lock (`readJournal`: no tail repair, no fact, no cache write), and the run dir's files are only read. The one
-// write is the CLI's `status.lock` (`statusSingleFlight`): one `roadmap status` per run at a time.
+// lock (`readJournal`: no tail repair, no fact, no cache write), and the run dir's files are only read.
 // Nothing here names a model except `spend.byModel`, which looks each seat's model up in its revision's
 // routing table at render time: each plan revision's table is resolved from the routing provenance it recorded
 // (H7), for the arc and for each unit, never from the live repo config; a meter row whose `routingRev` no revision
@@ -124,7 +123,8 @@ type AmendmentSource,type Event,
 type Holder,
 JUDGMENT_STAGES,type JudgmentStage,
 OUTCOME_STAGES,type OperatorParkKind,type OutcomeStage,type PlanAppliedFact,
-type ProbeTarget,type RevisionPayload,type WalkOutcome,holderUnit,parentUnit,probeTargetKey } from './core/events.ts';
+type ProbeTarget,type RevisionPayload,type WalkOutcome,holderUnit,parentUnit,probeTargetKey,
+} from './core/events.ts';
 import { readJson } from './core/fsx.ts';
 import {
 type AmendmentId,type ArcId,CPU_POOL,type CommandId,type DebtId,type DivergenceId,
@@ -147,7 +147,7 @@ sha
 import type { JournalView } from './core/interfaces.ts';
 import { EVENTS_FILE,type LogSnapshot,readJournal } from './core/log.ts';
 import { checkpointSkipTriggerOf,gateLargeDiffOf } from './core/projections.ts';
-import { type CommandBody,type ContainmentMode,type KnownDefectMatch,type NeedsUserReason,type Receipt,type RunStart,type Stage,heartbeat,runStart } from './core/records.ts';
+import { type CommandBody,type ContainmentMode,type KnownDefectMatch,type NeedsUserReason,type Receipt,type RunStart,type Stage,heartbeat,runStart,} from './core/records.ts';
 import type { HolisticFold,Lineage,ResourceEntry,UnitState } from './core/state.ts';
 import { type AbsPath,type IsoTime,type RepoPattern,absPath,branchRef,isoTimeOf } from './core/values.ts';
 import type { CorpusPin } from './corpus/types.ts';
@@ -188,16 +188,19 @@ import { judgmentSeat,largeDiffSeat } from './pipeline/transitions.ts';
 import { type RejectionFile,rejectionFile } from './preflight/startup.ts';
 import { cpuCapacity,isDirty,poolUnits } from './resources/pool.ts';
 import {
-type ResolvedRouting,type SeatSources,arcScopeOf,provenanceStack,resolveRouting } from './routing/layers.ts';
+type ResolvedRouting,type SeatSources,arcScopeOf,provenanceStack,resolveRouting,
+} from './routing/layers.ts';
 import {
 type Backend,type ClassSource,type ClassTable,type ModelClass,type ProfileName,type RiskTier,
 type RoutingTable,
-type SeatRef } from './routing/types.ts';
+type SeatRef,
+} from './routing/types.ts';
 import { effectiveDependency } from './schedule/graph.ts';
 import { type SpecFactsOf,admitter,nextStage,rankOf } from './schedule/ready.ts';
 import {
 type ArcHold,type CompletionBlocker,type HolisticContexts,type JobQueueEntry,type QueueEntry,SCHED_FILE,type SchedFile,arcHolds,arcSettled,completionBlockers,dischargingObservation,
-readOnlyContexts,recordedLaneEnv,schedFile,unitSettled } from './schedule/scheduler.ts';
+readOnlyContexts,recordedLaneEnv,schedFile,unitSettled,
+} from './schedule/scheduler.ts';
 import type { AdmissionConstraint,Rank,ResourceRequest } from './schedule/types.ts';
 import { type MilestoneState,milestoneProgress,milestoneState,walksOf } from './walk/milestones.ts';
 import { milestoneEdges,milestonePassed,milestoneWaits } from './walk/node.ts';

@@ -69,7 +69,7 @@ export type CandidatePlan = Readonly<{ request: CandidateRequest; tip: Sha; tree
 /** What validation decided. Only `merge` leads to an intent. */
 export type CandidateDecision =
   | Readonly<{ kind: 'merge'; plan: CandidatePlan }>
-  /** Stage table: transient-check violation → scope-growth fix round (chargeable). */
+  /** Stage table: transient-check violation → protected-path fix round (chargeable). */
   | Readonly<{ kind: 'transient-violation'; tip: Sha; violations: readonly TransientViolation[] }>
   /** Stage table: conflict → mergein.prepare + resume "resolve and commit" (uncharged). */
   | Readonly<{ kind: 'conflict'; tip: Sha; conflicts: readonly RepoPath[] }>

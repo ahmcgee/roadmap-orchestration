@@ -33,23 +33,20 @@ import { protectedPathsInForce } from '../input/protected.ts';
 //
 //   plan-check  fresh judgment session → approve | redirect (spec.patch, rev+1) |
 //               infeasible | escalate; a redirect may neither lower the risk floor nor widen the unit's
-//               envelope, and may cite only plan contracts and ledger rulings; a raised risk re-pins the
+//               declared resources, and may cite only plan contracts and ledger rulings; a raised risk re-pins the
 //               dispatch record. 2026-10-15: one validator (`judgePlanCheck`: the schema, the cites, the patch
 //               through `evaluateRevision`); an answer it refuses is sent back once to the same session with every
 //               reason (the repair turn, `--resume`), whose answer is the attempt's. The session reads detached checkouts of the integration tip (its cwd) and
 //               of the unit branch when one exists, created for the attempt and removed when it is read. The
 //               answer is read against the spec rev its `judgment-inputs` captured; each `visionConflict` opens
 //               a P3 `plan-check` finding for the checkpoint (R17, src/holistic/findings.ts), never a redirect.
-//               Scope growth (2026-10-15): a proposal code verifies (`verifiedGrowth`) holds the unit `scope-growth`;
-//               nothing else of that answer is applied, so its patch is not judged (no repair turn for it), and a
-//               pattern code cannot verify is dropped and named, never a reason to refuse the answer.
 //               dev.17 (propagation, src/holistic/staleset.ts): the check is given the unit's stale links up to the plan rev
 //               its capture read; an approve or redirect answers each (refused otherwise, `staleLinkReasons`) and, the
 //               decision taken, its answers are recorded (`stale-answered`); a redirect's patch pins every link of the
 //               patched spec at the revisions the check read (`pinnedPatch`).
 //   build       the implementer round (rounds.ts) under its entry reservation, held from reserve to
 //               teardown; the D4 escalation is decided before the seat (G1); prompt: fast lanes only (the spec's,
-//               and the plan's fast suite lanes, `fastSuiteLanes`), the worktree, the evidence dir, the pinned scope,
+//               and the plan's fast suite lanes, `fastSuiteLanes`), the worktree, the evidence dir, the declared systems,
 //               the approving plan-check's notes. A resumed session that never persisted re-runs once, fresh
 //               (`callRound`). A resolve round, or the continue of one, must leave the merge-in committed.
 //   quiesce     the build invocation's workload is empty (invoke already guarantees it; asserted).
@@ -57,7 +54,7 @@ import { protectedPathsInForce } from '../input/protected.ts';
 //               declared outputs in the worktree; then the implementer's decisions.json is appended to
 //               the spec's decisions (spec.patch by the executor). A decisions.json that does not validate makes
 //               a build that reported success malformed (dev.12): its resume round quotes why.
-//   salvage     `salvage.commit` under the pinned scope; a plan contract, the architecture doc or its
+//   salvage     `salvage.commit` with repository protection; a plan contract, the architecture doc or its
 //               digest in the unit's merge-base diff is a risk trigger; a merge left in progress parks. A
 //               failed salvage cleans the build's reservation, and the instances that cleanup failed join the
 //               park's targets (G6). Field report 2026-10-24: then the candidate's transient check over the salvage
@@ -74,11 +71,6 @@ import { protectedPathsInForce } from '../input/protected.ts';
 //
 // 2026-10-15: a spec in force from a 1.0.0-dev.9 arc whose active witness item names no arc lane parks the unit
 // `witness-lane-missing` at build or lanes (`witnessLanePark`): its lane file cannot be published nor its lane run.
-//
-// Plan defects (2026-10-16): a lanes attempt whose unit's last two salvages both reverted the same out-of-scope path holds
-// `scope-growth` before anything runs (`repeatedReverts`), the hold a plan-check's proposal raises, with those paths as
-// the one proposal: the builder keeps needing a path its scope lacks, so the root agent decides instead of another fix
-// round. Every bound of what a unit may change reads its dispatch record's `effectiveScope` (include: scope + derived; exclude: excluded).
 //
 // Every unit's plan-check is one fresh call (dev.17 removed `planCheck.shape: by-builder`, M4a rev 3's in-session
 // assessment and acceptance shape; a plan in force carrying the field reads as uniform, warned). Every build
@@ -104,7 +96,8 @@ type InvocationId,type JudgmentSessionId,type LaneId,
 type ObligationId,
 type ResourceInstance,type ResourceName,type RoutingRev,
 type RuleId,
-type Sha,type Sha256Hex,type SpecRev,type UnitId,invocationId } from '../core/ids.ts';
+type Sha,type Sha256Hex,type SpecRev,type UnitId,invocationId,
+} from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import { censusOf } from '../core/projections.ts';
@@ -122,7 +115,8 @@ specRemoves,specRepairs } from '../core/records.ts';
 import type { GateReview } from '../core/review.ts';
 import { SchemaError } from '../core/validate.ts';
 import {
-type AbsPath,type RefName,type RepoPath,type RepoPattern,absPath,branchRef,gitDate,isoTimeOf,matchesPattern,repoPath,repoPattern } from '../core/values.ts';
+type AbsPath,type RefName,type RepoPath,type RepoPattern,absPath,branchRef,gitDate,isoTimeOf,matchesPattern,repoPath,repoPattern,
+} from '../core/values.ts';
 import { type CorpusView,materialiseCorpus } from '../corpus/materialise.ts';
 import { FILES_DIR,capturedEvidence } from '../git/evidence.ts';
 import { GitError,type Identity,git,gitRun,refTarget,revParse } from '../git/git.ts';
@@ -144,7 +138,8 @@ RULINGS_INPUT,SPEC_INPUT,VISION_INPUT,inForceFiles,
 inputPath,keptInput,keptPayload,parseUnitSpec,requirePlanInForce,revisionInForce,specBytesOf,specShaInForce
 } from '../input/inforce.ts';
 import {
-type KnownDefect,type PlanUnit,advancesOf,designUnitOf,knownDefectsOf,milestonesOf,parsePlan,targetDocumentPaths,targetDocuments } from '../input/plan.ts';
+type KnownDefect,type PlanUnit,advancesOf,designUnitOf,knownDefectsOf,milestonesOf,parsePlan,targetDocumentPaths,targetDocuments,
+} from '../input/plan.ts';
 import { orderingReasons } from '../park/ordering.ts';
 import { NO_PARK_FACTS,type ParkFacts,repeatNeedsUser,stageOutcomeFact } from '../park/table.ts';
 import { type CorpusFileSet,referenceFiles,sameRepoCorpusSet,scopeOverlapsCorpus, } from '../phase0/rows.ts';
@@ -163,7 +158,8 @@ import { type Handover,visionInputOf } from '../prompts/inputs.ts';
 import {
 BUILD_SCHEMA,
 DECISIONS_FILE,type DecisionsFile,type PlanCheckOutput,type Premise,buildOutput,
-designOfAnswer,validateDecisionsFile,validatePlanCheckOutput } from '../prompts/schemas.ts';
+designOfAnswer,validateDecisionsFile,validatePlanCheckOutput,
+} from '../prompts/schemas.ts';
 import { evidenceSnapshotOp,salvageCommitOp,worktreeCreateOp,worktreeRemoveOp } from '../recover/ops.ts';
 import { buildCpuKey,cpuCost } from '../resources/calibrate.ts';
 import { environmentUnavailable } from '../resources/environments.ts';
@@ -185,7 +181,8 @@ type BackendCallOutcome,type BackendCallSpec,type BackendVerdict,type Cancelled,
 backendOf,callBackend,cancelledNow,dispatchOf,enter,evidenceRoot,
 fastSuiteWorktree,
 implementerDispatch,isCancelled,judgmentDeadlineMs,judgmentDispatch,nonEmpty,pinDispatch,
-raiseRisk,riskAbove,runOp,runPrepared,steerDispatch,unitBranch,unitWorktree,verdictOf,verificationWorktree,workDir } from './dispatch.ts';
+raiseRisk,riskAbove,runOp,runPrepared,steerDispatch,unitBranch,unitWorktree,verdictOf,verificationWorktree,workDir,
+} from './dispatch.ts';
 import { certifiedTree,docsOnlyCarry } from './docsonly.ts';
 import { handoverOf,lineageOf,unmetClauses } from './handover.ts';
 import { invocationDir,quiescent } from './invoke.ts';
@@ -204,7 +201,8 @@ import { pocLessons,pocReports } from './poc.ts';
 import {
 type DecidedRound,type PreparedRound,type RoundCall,type RoundInput,callRound,decidedRound,laneFixRound,prepareRound,
 resolveContinuation,
-steerBrief } from './rounds.ts';
+steerBrief,
+} from './rounds.ts';
 import { mutationSmoke,survivingObligations } from './smoke.ts';
 import { type SplitVerdict,commitSplit,judgeSplit } from './split.ts';
 import { pressureCause,seriesRuling } from './starved.ts';
@@ -1535,9 +1533,9 @@ export async function salvage(ctx: StageContext, unit: PlanUnit, run: BuildRun):
     ? revParse(run.worktree, 'HEAD')
     : (await runPrepared(ctx.journal, op, `salvage:${unit.id}`, parent, prepared)).post.new;
   // Field report 2026-10-24: the one transient check (src/git/transient.ts), which the candidate runs, at the salvage SHA
-  // too, so a path the builder committed outside the unit's pinned scope (salvage reverts only uncommitted ones) is
+  // too, so a path the builder committed under a protected repository path (salvage reverts only uncommitted ones) is
   // refused before the lanes and the gate spend on it. The chain ends here as at a salvage failure, the build's resources
-  // cleaned; the outcome is the candidate's refusal (a chargeable scope-growth fix round, a risk trigger), or, when that
+  // cleaned; the outcome is the candidate's refusal (a chargeable protected-path fix round, a risk trigger), or, when that
   // cleanup failed, a park on its instances.
   if (transientCheck(ctx.repo, unitTransientRules(protectedPathsInForce(ctx.runDir, ctx.journal.view), spec), integrationTip(ctx), next).length > 0) {
     const failed = await released();
@@ -1831,8 +1829,7 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
   // 2026-10-15: a required witness on no arc lane in force can never be checked; the unit parks before anything runs.
   const lanePark = witnessLanePark(ctx, unit, spec);
   if (lanePark !== null) return { ...record(ctx, parent, 'witness-lane-missing', lanePark), at: salvaged, ledger: [], verification: null, fix: null };
-  // Plan defects (2026-10-16): the same out-of-scope path reverted on two build rounds running holds the unit for the root agent.
-  // dev.17 (proportional review): a build's docs-only claim, verified before any lane runs (src/pipeline/docsonly.ts).
+    // dev.17 (proportional review): a build's docs-only claim, verified before any lane runs (src/pipeline/docsonly.ts).
   const carry = await docsOnlyCarry(ctx, unit, parent, salvaged, [...order, ...fastSuiteLanes(ctx, spec, salvaged)]);
   const entry = seriesEntry(ctx, order);
   const entered = await enter(ctx, stageHolder(parent), entry);

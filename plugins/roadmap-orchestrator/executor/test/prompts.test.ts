@@ -1293,7 +1293,7 @@ describe('M4a rev 3 prompts: executable checks, the checkpoint admits', () => {
     assert.match(text, /<input_manifest>\n- plan plan: \/run\/inputs\/MANIFEST-B\.plan\.json sha256:b{64}\n<\/input_manifest>/);
     assert.match(text, /<unit_specs>\n<documents>\n<document index="1">\n<source>spec of unit u-two, revision 3; item ids it holds: A1, W-1<\/source>\n<document_content>\nSPECS-B/);
     assert.match(text, /<next_ruling_id>C-9<\/next_ruling_id>/);
-    assert.match(text, /<\/trigger>\n\n<diagnosis>\n[^]*Unit u-two:\n- u-two\/candidate#9: DIAGNOSIS-OUTCOME-B\n- u-two\/lanes#8\/unit: lane failure, red\n- Edits outside the pinned scope that salvage reverted: gen\/DIAGNOSIS-REVERTED-B\.js \(3×\)\n- Required witness journey\/DIAGNOSIS-WITNESS-B missing at lanes attempt 8\n<\/diagnosis>/);
+    assert.match(text, /<\/trigger>\n\n<diagnosis>\n[^]*Unit u-two:\n- u-two\/candidate#9: DIAGNOSIS-OUTCOME-B\n- u-two\/lanes#8\/unit: lane failure, red\n- Edits to protected paths that salvage reverted: gen\/DIAGNOSIS-REVERTED-B\.js \(3×\)\n- Required witness journey\/DIAGNOSIS-WITNESS-B missing at lanes attempt 8\n<\/diagnosis>/);
     const first = mod.render(SAMPLES.checkpoint[0]);
     assert.doesNotMatch(first, /<diagnosis>/);
     assert.match(first, /<input_manifest>\n\(none\)\n<\/input_manifest>/);

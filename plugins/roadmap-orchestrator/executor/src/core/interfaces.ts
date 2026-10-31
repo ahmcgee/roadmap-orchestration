@@ -7,12 +7,15 @@ import type {
 AbortCode,DoneRecord,Fact,
 FlakyFact,
 FlowFact,GitOpKind,IntentOf,IntentRecord,JudgmentInputs,JudgmentStage,OpExpect,OpKind,OpOutcome,OpPost,Parent,
-PlanAppliedFact,PropagationFact,RecoveredBy,WalkFact } from './events.ts';
+PlanAppliedFact,PropagationFact,RecoveredBy,WalkFact,
+} from './events.ts';
 import type {
-AmendmentId,ArcId,ClaudeSessionId,CommandId,DivergenceId,EdgeId,FindingId,InvocationId,JobId,JobKind,MilestoneId,NeedsUserId,OpId,OpKey,PolishId,ResourceUnit,Sha,Sha256Hex,UnitId } from './ids.ts';
+AmendmentId,ArcId,ClaudeSessionId,CommandId,DivergenceId,EdgeId,FindingId,InvocationId,JobId,JobKind,MilestoneId,NeedsUserId,OpId,OpKey,PolishId,ResourceUnit,Sha,Sha256Hex,UnitId,
+} from './ids.ts';
 import type {
 CancelFile,ChildEnd,ContainmentMode,DispatchRecord,ExitFile,KillReason,LaunchFile,ProcIdentity,ResultFile,RunnerFileMap,
-RunnerFileName } from './records.ts';
+RunnerFileName,
+} from './records.ts';
 import type { ApplyQueued,BackendParkState,EdgeResolvedState,FindingState,HolisticFold,ProbeState,ResidueState,ResourceEntry,ReviewFold,UnitState } from './state.ts';
 import type { SessionCharge } from './usage.ts';
 import type { AbsPath,IsoTime } from './values.ts';
@@ -71,7 +74,7 @@ export interface JournalView {
    * facts; a unit the log has not named yet is fresh at plan-check. The only source of a unit's counters.
    */
   unit(unit: UnitId): UnitState;
-  /** The unit's latest `dispatch` fact (its pinned scope envelope and risk floor), or null before one. */
+  /** The unit's latest `dispatch` fact (its routing, spec and risk floor), or null before one. */
   dispatchOf(unit: UnitId): DispatchRecord | null;
   /** Every `dispatch` fact of the unit, in log order (the first pin, then each re-pin); empty before one. */
   dispatchesOf(unit: UnitId): readonly DispatchRecord[];

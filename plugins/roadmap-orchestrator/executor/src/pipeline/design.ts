@@ -284,7 +284,7 @@ function after(edges: readonly Readonly<{ from: UnitId; to: UnitId }>[], from: U
 }
 
 /**
- * The faults of a split of `parent` (its spec in force and effective scope): every one a plan defect, besides the pinning
+ * The faults of a split of `parent` (its spec in force and declared systems): every one a plan defect, besides the pinning
  * reasons of a child's design. `childSpec` builds a child's spec as code will land it (src/pipeline/split.ts), against which
  * the child's design is checked as its own plan-check would.
  */

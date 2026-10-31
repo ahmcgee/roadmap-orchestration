@@ -13,7 +13,8 @@ import { SCHEMA_VERSION, type SchemaVersion } from '../core/version.ts';
 import { copyIfChanged, fileSha256 } from './evidence.ts';
 import {
   type Identity, type TreeEntry, commitTree, git, gitPath, lsTree, readTree, refTarget, revParse, statusPorcelainV2Z,
-  symbolicHead, updateRefCas, writeTreeFromIndex } from './git.ts';
+  symbolicHead, updateRefCas, writeTreeFromIndex,
+} from './git.ts';
 
 /** The unit's pinned rules, from its dispatch record and spec. Recovery rebuilds the op from the same rules. */
 export type SalvageRules = Readonly<{

@@ -38,11 +38,10 @@ export async function setupScaffoldArc(c: ScaffoldCell, writer: readonly Step[],
   const d: ArcDescriptor = { ...a.d, arcRoles: 'dev17', ...(config === null ? {} : { config }) };
   editJson(specPathOf(d, 'u1'), (s) => {
     s['acceptance'] = c.acceptance.map((clause, i) => ({ id: `A${i + 1}`, clause, failLoudIfUndelivered: true, state: 'active' }));
-    s['scope'] = [...c.scope];
     s['lanes'] = [{ ...laneOf(c, 'unit'), state: 'active' }];
   });
   editPlan(d, (p) => {
-    p.units[0]!['scope'] = [...c.scope];
+    p.units[0]!['systems'] = ['app'];
   });
   editJson(join(a.planDir, 'obligations.json'), (o) => {
     (o['lanes'] as unknown[]).push({ ...laneOf(c, LOAD_LANE), reporter: 'node-test', testPaths: [...c.newSystem.tests] });

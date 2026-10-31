@@ -117,7 +117,8 @@ import type { RiskTier } from '../routing/types.ts';
 import { SpecPatchOpError,SpecPatchStaleError,applySpecPatch } from '../spec/patch.ts';
 import { SpecFileError,parseSpec,specBytes } from '../spec/spec.ts';
 import {
-type AdmitClassification,type AdmitOp,type AdmitWorld,type AuditRange,type RecordedAdmit,type UnitMerge,admitOpOf,classifyAdmits,conversionReasons,namedUnits,opportunityClauses } from './admits.ts';
+type AdmitClassification,type AdmitOp,type AdmitWorld,type AuditRange,type RecordedAdmit,type UnitMerge,admitOpOf,classifyAdmits,conversionReasons,namedUnits,opportunityClauses,
+} from './admits.ts';
 import { admitSummary,amendmentReasons,appendAmendment,checkpointAmendments,conversionAmendment,divergenceAmendments } from './amendments.ts';
 import type { AuditContext } from './audit.ts';
 import { type AppliedBundle,brakesOf,raiseBound,secondChanges } from './convergence.ts';

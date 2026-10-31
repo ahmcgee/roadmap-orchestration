@@ -18,7 +18,7 @@ import { protectedPathsInForce } from '../input/protected.ts';
 //              prefix guard) → `candidate.merge` onto the current tip T → the candidate checkout, detached
 //              (`candidateWorktreeRequest`) → the plan's suite lanes up to `candidate` the candidate's diff selects
 //              (dev.17, `candidateLanes`), serially and verbatim. Outcomes:
-//              - a transient violation or prefix collision: refused, a scope-growth fix round (C, trigger);
+//              - a transient violation or prefix collision: refused, a protected-path fix round (C, trigger);
 //              - a conflict: `mergein.prepare` in the unit worktree (MERGE_HEAD = T), then the resolve
 //                round; uncharged, and the diff base is recomputed (T), so the unit is gated again;
 //              - red (or a suite that dirtied the checkout): the suite runs again on T alone in its own
@@ -89,15 +89,18 @@ import { reentryRecommendation } from '../needsuser.ts';
 import { runnerFiles } from '../runner/files.ts';
 import { invocationDir, killWorkload } from './invoke.ts';
 import {
-  type BatchHolder, type PublicationHolder, type Reservation, type ResourceContext, cleanup, entryOf, finishCleanup, heldReservation, resourceTable, run, sameHolder } from '../resources/reserve.ts';
+  type BatchHolder, type PublicationHolder, type Reservation, type ResourceContext, cleanup, entryOf, finishCleanup, heldReservation, resourceTable, run, sameHolder,
+} from '../resources/reserve.ts';
 import type { AcquireFirst } from '../schedule/arbiter.ts';
 import type { ResourceRequest } from '../schedule/types.ts';
 import {
-  type Cancelled, type StageContext, type StageParent, dispatchOf, enter, evidenceRoot, isCancelled, runOp, runPrepared, unitBranch, unitWorktree } from './dispatch.ts';
+  type Cancelled, type StageContext, type StageParent, dispatchOf, enter, evidenceRoot, isCancelled, runOp, runPrepared, unitBranch, unitWorktree,
+} from './dispatch.ts';
 import { fingerprintHolds, fingerprintValid, selected, unitTip } from './gate.ts';
 import {
   type JourneyEnd, type JourneyRun, type JourneySeries, type Series, arcJourneyLane, arcLaneKey, intact, journeyRed, laneEnvId, laneRuntime, mapInForce, observations, removeJobCheckouts,
-  removeVerificationTree, runJourneySeries, runLaneSeries, seriesOrder, standInJourneyLane, suiteJourneyLane, suiteStandIns } from './lanes.ts';
+  removeVerificationTree, runJourneySeries, runLaneSeries, seriesOrder, standInJourneyLane, suiteJourneyLane, suiteStandIns,
+} from './lanes.ts';
 import { carriedLanes } from './docsonly.ts';
 import { type MutantEnd, mutantAcceptance, syncRepairs } from './reproduce.ts';
 import { pressureCause, seriesRuling } from './starved.ts';
@@ -809,8 +812,7 @@ export function latestCandidate(ctx: StageContext, unit: UnitId): IntentOf<'cand
 /**
  * The fix round's directives for a transient refusal. A path a lane's `evidenceGlobs` entry matches is named with the
  * lane and the entry: it may be the unit's own work under a spec that mislabels it as lane output (M4b run 3), which
- * the builder must keep and report, never delete. Every other path is removed, or (an out-of-scope path the work needs) named in
- * the report's blockers as a scope growth only the root agent grants (`SCOPE_GROWTH_BLOCKER`). `by`: the check that refused, the
+ * the builder must keep and report, never delete. Protected and transient paths are removed; a required protected edit is reported as a blocker. `by`: the check that refused, the
  * candidate's or (field report 2026-10-24) the salvage's of the round's commit.
  */
 export function transientDirectives(violations: readonly TransientViolation[], by: 'candidate' | 'salvage'): readonly string[] {

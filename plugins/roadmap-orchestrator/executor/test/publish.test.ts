@@ -220,7 +220,7 @@ test('docs.transient: a docs publication\'s diff is exactly its rendered files a
     // fix round restores the executor's rendering, then it merges.
     appendSteps(d, [
       codexStep([{ type: 'commit', message: 'restore the roadmap file', files: { '.roadmap/constraints.md': rawGit(absPath(d.repo), ['show', `${at}:.roadmap/constraints.md`]) } }], {
-        argv: ['exec', 'resume'], stdinContains: ["The executor refused your last round's commit:", '.roadmap/constraints.md (roadmap-dir)', 'Remove them from the branch;'],
+        argv: ['exec', 'resume'], stdinContains: ["The executor refused your last round's commit:", '.roadmap/constraints.md (protected-path)', 'Remove them from the branch;'],
       }),
       gateStep({ decision: 'approve' }),
     ]);
@@ -233,7 +233,7 @@ test('docs.transient: a docs publication\'s diff is exactly its rendered files a
     assert.equal(r.journal.view.unit(U1).counters.chargeableFailures, 1, 'a transient violation charges');
     const gates = readCalls(d.scenarioPath).filter(isGateCall);
     assert.equal(gates.length, 1, 'the refused salvage never reached a gate');
-    assert.ok(gates[0]!.argv.includes('claude-opus-5-5') && gates[0]!.argv.includes('high'), 'scope growth promoted the next judgment');
+    assert.ok(gates[0]!.argv.includes('claude-opus-5-5') && gates[0]!.argv.includes('high'), 'protected-path violation promoted the next judgment');
     assert.equal(show(d, 'main', '.roadmap/constraints.md'), show(d, at, '.roadmap/constraints.md'), 'only the executor wrote the in-tree .roadmap/');
     assert.ok(readCalls(d.scenarioPath).every((c) => c.step !== null));
   } finally {

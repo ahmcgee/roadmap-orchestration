@@ -129,7 +129,7 @@ export const WALK_MCP = {
 
 /** The trial arc's repo config: the walkthrough MCP servers, with `--rebind`'s class bindings. */
 export function walkRepoConfig(rebind: RepoConfig | null): RepoConfig {
-  return parseRepoConfig({ walkthrough: { mcp: WALK_MCP }, ...(rebind?.routing?.classes === undefined ? {} : { routing: { classes: rebind.routing.classes } }) } as never);
+  return parseRepoConfig({ systemsMap: { systems: { app: { paths: ['**'] } } }, walkthrough: { mcp: WALK_MCP }, ...(rebind?.routing?.classes === undefined ? {} : { routing: { classes: rebind.routing.classes } }) } as never);
 }
 
 /** The families of `cell`: its forms over the dev ones; a form of another id or expected class fails loud. */

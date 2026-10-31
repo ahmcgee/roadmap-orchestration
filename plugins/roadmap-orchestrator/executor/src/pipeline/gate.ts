@@ -11,8 +11,7 @@ import { bytesSha256 } from '../spec/spec.ts';
 // approving plan-check's notes, the merge-base diff `diffBase(T, head)..head` (recomputed on every call, so
 // after a merge-in the base is T; attached within `GATE_DIFF_BUDGET` by src/git/boundeddiff.ts, what it does not inline
 // written beside the attempt's evidence and readable, and what it inlined recorded on `judgment-inputs`), the lane ledger of the unit's latest spec series and its evidence dirs,
-// the build's evidence (decisions.json), the pinned scope envelope and the diff's paths outside it (and, scope growth
-// 2026-10-15, the out-of-scope paths the unit's salvages reverted, which no diff shows), and on
+// the build's evidence (decisions.json), the declared systems and the diff's reach outside them, and on
 // a later round the prior round's handoff: its directives, findings and premises, the paths the fix changed
 // and the premise files whose blobs changed since (items 25, 29). The session runs in its own throwaway detached checkout
 // of the unit's tip (the salvage SHA the green verification checkout holds; dev.13, owner 2026-10-18: `gateWorktree`), with a
@@ -53,7 +52,7 @@ import { bytesSha256 } from '../spec/spec.ts';
 // review's rules (`reviewRules`: a defect on every blocking finding, no blocking re-raise of a settled finding whose file is
 // unchanged, one ruling per dispute, demotion off the delta), and once read its findings enter the ledger (`review-ledger`).
 // An approval records its blobs (`ApprovalBlobs`); a later gate whose delta is empty records `delta-empty` and approves again
-// at the new fingerprint without a call, and so does a scope-only re-entry's first gate at the approved head (field report
+// at the new fingerprint without a call, and so does a systems-only re-entry's first gate at the approved head (field report
 // 2026-10-24, review.ts `carriedApproval`).
 //
 // M3: the gate grades against the obligations its diff selects (`selectObligations`, src/holistic/impact.ts: the
@@ -104,7 +103,8 @@ import { runnerFiles } from '../runner/files.ts';
 import { renderSpec } from '../spec/render.ts';
 import {
 type BackendCallOutcome,type Cancelled,type JudgmentDispatch,type StageContext,type StageParent,callBackend,cancelledNow,dispatchOf,evidenceRoot,isCancelled,judgmentDeadlineMs,
-judgmentDispatch,runOp,unitBranch,verdictOf,verificationWorktree } from './dispatch.ts';
+judgmentDispatch,runOp,unitBranch,verdictOf,verificationWorktree,
+} from './dispatch.ts';
 import { invocationDir } from './invoke.ts';
 import { laneRecordIn,latestSpecSeries,observedViews,seriesLedger,seriesTree,specSeriesRoot } from './lanes.ts';
 import { approvalBlobs,gateDelta,ledgerFact,openDisputes,reviewInput,reviewRules,unitLedger } from './review.ts';
@@ -492,7 +492,6 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
           obligations: chosen.selected.map((o) => o.id),
         },
       },
-      // Scope growth (2026-10-15): every out-of-scope path a salvage of the unit reverted (in no diff), still outside the scope.
       laneLedger, evidence, systems: unit.systems, reach, traits: systemTraits(map, unit.systems), reachTraits: systemTraits(map, paths.flatMap((p) => [...pathSystems(map, p)])),
       priorRound: prior,
       // M4a rev 3 (D1, D2): the executable checks of the series it judges (corpus arcs; null elsewhere).

@@ -1,3 +1,4 @@
+import { readRepoConfig } from '../../src/preflight/checks.ts';
 import { systemName } from '../../src/core/ids.ts';
 import { spawnSync } from 'node:child_process';
 import { existsSync,mkdirSync,readFileSync,readdirSync,writeFileSync } from 'node:fs';
@@ -99,14 +100,14 @@ function writeInputs(l: Layout, inputs: string, baseline: string, obligations: u
 /** Real verified completed-arc snapshot: Phase-0 chain checks read it exactly as they read a completed run. */
 async function completePrevious(l: Layout, previous: string, head: string): Promise<void> {
   const files = readInputFiles(absPath(join(previous, 'plan.json')), absPath(l.product));
-  const rows = phase0Rows(phase0InputOf(files, null, null), APPLY);
+  const rows = phase0Rows(phase0InputOf(files, readRepoConfig(files.repo), null), APPLY);
   if (rows.rows.length) throw new Error(`previous inputs: ${json(rows.rows)}`);
   const runDir = absPath(join(l.product, '.git', 'roadmap-runtime', 'arc-previous'));
   mkdirSync(runDir, { recursive: true });
   keepCorpusFiles(runDir, rows.opened?.files ?? []);
   const j = openJournal(runDir, arcId('arc-previous'));
   try {
-    recordPlan(j, runDir, files, [], { profile: 'default', config: null, arcRoles: 'm4b' });
+    recordPlan(j, runDir, files, [], { profile: 'default', config: readRepoConfig(files.repo), arcRoles: 'm4b' });
     j.fact({ kind: 'arc-completed', planRev: j.view.planApplied()!.rev, head: sha(head), highWater: j.view.highWater(), units: [] });
     await runOp(j, snapshotPublishOp(absPath(l.product)), 'snapshot:arc-previous', snapshotRequestOf({ view: j.view, runDir, identity: IDENTITY, message: 'Previous arc completed\n' }));
   } finally { j.close(); }
@@ -128,7 +129,7 @@ export async function fixture(dir: string, set: SetName): Promise<Fixture> {
   const vision = `# Vision\n\n## The operator's day\n\n{V-1} ${spec.world}\n\n## Integrity\n\n{V-2} The register never silently loses or duplicates an entry.\n`;
   write(join(l.product, 'docs/corpus/vision.md'), vision);
   write(join(l.product, '.roadmap/vision.json'), json(parseVision({ schema: 'roadmap/vision-m3', rev: 1, confirmation: { ref: `corpus:vision.md#sha256:${sha256Hex(vision)}`, at: '2026-10-01T00:00:00.000Z' }, clauses: [{ id: 'V-1', kind: 'world', text: spec.world, rank: null, state: 'active' }, { id: 'V-2', kind: 'non-negotiable', text: 'The register never silently loses or duplicates an entry.', rank: null, state: 'active' }], questions: [] })));
-  write(join(l.product, '.roadmap/config.json'), json({ chain: { k: 4 } }));
+  write(join(l.product, '.roadmap/config.json'), json({ chain: { k: 4 }, systemsMap: { systems: { app: { paths: ['src/**', 'test/**'] } } } }));
   const corpus = '# Register\n\n' + spec.context + '\n\n```rules\n' + Object.entries(spec.rules).sort(([a], [b]) => Number(a.slice(2)) - Number(b.slice(2))).map(([id, text]) => `${id}: ${text}`).join('\n') + '\n```\n';
   write(join(l.product, CORPUS_FILE), corpus);
   const parsedRules = parseRules(corpus, repoPath(RULE_FILE));

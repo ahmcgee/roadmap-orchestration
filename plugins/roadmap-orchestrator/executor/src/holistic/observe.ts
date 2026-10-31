@@ -22,7 +22,8 @@ import { type ReuseKey, reuseKeyText } from '../git/reusekey.ts';
 import type { HolisticFold } from '../core/state.ts';
 import { sha256Hex } from '../core/json.ts';
 import {
-  type ObservationKey, type ObservationVerdict, type VerdictOf, type WitnessRecord, type WitnessRef, observationKeyText, witnessRecord } from './types.ts';
+  type ObservationKey, type ObservationVerdict, type VerdictOf, type WitnessRecord, type WitnessRef, observationKeyText, witnessRecord,
+} from './types.ts';
 
 /** One obligation's verdict over its witness tests in one record (pure). */
 export const verdictOf: VerdictOf = (record, witness) => {

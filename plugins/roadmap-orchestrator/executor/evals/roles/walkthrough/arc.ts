@@ -242,7 +242,7 @@ export function setupMilestoneArc(f: Pick<WalkFixture, 'files' | 'milestone'>, c
   writeFileSync(join(planDir, `${MILESTONE_UNIT}.json`), JSON.stringify({ intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
     schema: 'roadmap/spec-m1', unit: MILESTONE_UNIT, rev: 1, lanes: [{ ...laneJson(lane), state: 'active' }],
     acceptance: UNIT_ACCEPTANCE.map((clause, i) => ({ id: `A${i + 1}`, clause, failLoudIfUndelivered: true, state: 'active' })),
-    scope, resources: [], decisions: [], facts: [], cites: { contracts: [`${REFERENCE}/api.md`], rulings: ['C-1'] },
+    resources: [], decisions: [], facts: [], cites: { contracts: [`${REFERENCE}/api.md`], rulings: ['C-1'] },
   }));
   writeFileSync(join(planDir, 'rulings.md'), RULINGS);
   writeFileSync(join(planDir, 'vision.json'), JSON.stringify(VISION_JSON));
@@ -255,7 +255,7 @@ export function setupMilestoneArc(f: Pick<WalkFixture, 'files' | 'milestone'>, c
     schema: 'roadmap/plan-m1', arc, integrationBranch: 'main', baseline: revParse(repo, 'main'), worktreeRoot: tmpDir('walk-wt'),
     contracts: [`${REFERENCE}/api.md`], rulings: 'rulings.md', architectureDoc: 'ARCHITECTURE.md', direction: 'Ship the milestone to its design reference.',
     suite: { lanes: [laneJson({ ...lane, id: 'suite' })] }, resources: [],
-    units: [{ id: MILESTONE_UNIT, spec: `${MILESTONE_UNIT}.json`, risk: 'med', scope, resources: [] }],
+    units: [{ id: MILESTONE_UNIT, spec: `${MILESTONE_UNIT}.json`, risk: 'med', systems: ['app'], resources: [] }],
     holistic: { vision: 'vision.json', advances: ADVANCES, obligations: 'obligations.json', audit: { lenses: ['vision'], every: 100 } },
     milestones: [JSON.parse(JSON.stringify(f.milestone)) as JsonValue],
   }));

@@ -161,7 +161,7 @@ test('flow.off-dev7: an arc whose revisions carry no role set (1.0.0-dev.7) runs
   const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })] });
   const journal = openJournal(absPath(d.runDir), arcId(d.arc));
   writeStart(absPath(d.runDir), absPath(d.repo), absPath(d.planPath), 'default');
-  recordPlan(journal, absPath(d.runDir), readInputFiles(absPath(d.planPath), absPath(d.repo)), [], { profile: 'default', config: null, arcRoles: null });
+  recordPlan(journal, absPath(d.runDir), readInputFiles(absPath(d.planPath), absPath(d.repo)), [], { profile: 'default', config: d.config ?? null, arcRoles: null });
   journal.close();
   const r = contextFor(d);
   try {

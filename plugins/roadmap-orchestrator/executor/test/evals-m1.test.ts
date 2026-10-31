@@ -222,7 +222,7 @@ describe('evals-m1: fake-backed fixture runs', () => {
     const tampered = await check(clean.dir);
     assert.equal(tampered.exit.code, 1);
     assert.ok(failing(tampered).includes('diff-product-only'), JSON.stringify(tampered.result.criteria));
-    assert.match(criterion(tampered, 'diff-product-only').detail, /\.roadmap\/state\.json \(roadmap-dir\)/);
+    assert.match(criterion(tampered, 'diff-product-only').detail, /\.roadmap\/state\.json \(protected-path\)/);
     git(repo, 'update-ref', `refs/heads/${INTEGRATION}`, before_);
     assert.deepEqual(failing(await check(clean.dir)), [], 'restoring the branch restores the pass');
   });

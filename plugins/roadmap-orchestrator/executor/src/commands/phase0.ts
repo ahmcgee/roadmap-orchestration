@@ -19,9 +19,11 @@ import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
 import { CliError, runDir, type Phase0Source } from '../input/cli.ts';
 import {
-  CORPUS_GUIDE_INPUT, CORPUS_INPUT, OBLIGATIONS_INPUT, PHASE0_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, arcRolesOf, readInputFiles } from '../input/inforce.ts';
+  CORPUS_GUIDE_INPUT, CORPUS_INPUT, OBLIGATIONS_INPUT, PHASE0_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, arcRolesOf, readInputFiles,
+} from '../input/inforce.ts';
 import {
-  holisticNeedsCorpus, FRESH_START, FROM_REF, type Phase0Input, type Phase0Advisory, phase0InputOf, phase0Rows, visionAndObligations } from '../phase0/rows.ts';
+  holisticNeedsCorpus, FRESH_START, FROM_REF, type Phase0Input, type Phase0Advisory, phase0InputOf, phase0Rows, visionAndObligations,
+} from '../phase0/rows.ts';
 import { milestonesNeedHolistic } from '../input/plan.ts';
 import { gitCommonDir, legacyRoadmapDir, loadPlan, planInvalidCheck, readRepoConfig, revisionInputRows, routingCheck, specLaneCheck } from '../preflight/checks.ts';
 import type { StartupContext, StartupRejection } from '../preflight/startup.ts';

@@ -64,11 +64,11 @@ export function conversionAmendment(job: JobId, c: Conversion, op: BundleOp): Am
   };
 }
 
-/** A converted admit's work in one line: its unit, origin, risk and scope, then its spec's acceptance clauses (the spec parsed when the bundle was decided). */
+/** A converted admit's work in one line: its unit, origin, risk and systems, then its spec's acceptance clauses (the spec parsed when the bundle was decided). */
 export function admitSummary(op: Extract<BundleOp, { op: 'admit' }>): string {
   const spec = JSON.parse(op.spec) as { acceptance?: { clause?: unknown }[] };
   const acceptance = (spec.acceptance ?? []).flatMap((x) => (typeof x.clause === 'string' ? [x.clause] : []));
-  const head = `Admit unit ${op.unit.id} (origin ${op.unit.origin}, risk ${op.unit.risk}, scope ${op.unit.systems.join(', ')})`;
+  const head = `Admit unit ${op.unit.id} (origin ${op.unit.origin}, risk ${op.unit.risk}, systems ${op.unit.systems.join(', ')})`;
   return acceptance.length === 0 ? `${head}.` : `${head}: ${acceptance.join(' ')}`;
 }
 

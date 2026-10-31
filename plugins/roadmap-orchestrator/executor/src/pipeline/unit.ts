@@ -50,8 +50,8 @@
 // witnesses (D1), smoke survivors (D2), or a witness check whose own checkout was left dirty. A resume round quotes why
 // the answer it follows was malformed (I3).
 //
-// Scope growth (2026-10-15): a fix round after a salvage that reverted the build's out-of-scope edits carries the executor's
-// directive naming them (`withReverted`). Field report 2026-10-24: one after a salvage the transient check refused names
+// A fix round after salvage reverted protected edits carries the executor's directive naming them (`withReverted`).
+// One after a salvage the transient check refused names
 // the committed paths it refuses (`salvageRefusalFix`).
 //
 // Needs-user content is produced here, never written: the scheduler writes it. A halt's item names its
@@ -85,11 +85,13 @@ import type { Role } from '../routing/types.ts';
 import { type NextStage,nextStage } from '../schedule/ready.ts';
 import { ADMISSION_STAGES } from '../schedule/types.ts';
 import {
-type Cancelled,type StageContext,type StageParent,dispatchOf,evidenceRoot,isCancelled,runOp,unitBranch,unitWorktree,verificationWorktree,witnessWorktree,workDir } from './dispatch.ts';
+type Cancelled,type StageContext,type StageParent,dispatchOf,evidenceRoot,isCancelled,runOp,unitBranch,unitWorktree,verificationWorktree,witnessWorktree,workDir,
+} from './dispatch.ts';
 import { failuresText,laneFailures } from './failures.ts';
 import { consumeJudgment,gate,gateDirectives,unitTip } from './gate.ts';
 import {
-batchMemberFix,candidate,candidateBrakeFix,candidateRefusalFix,candidateSeriesRoot,ff,latestCandidate,memberBatchCandidate,salvageRefusalFix,snapshot } from './integrate.ts';
+batchMemberFix,candidate,candidateBrakeFix,candidateRefusalFix,candidateSeriesRoot,ff,latestCandidate,memberBatchCandidate,salvageRefusalFix,snapshot,
+} from './integrate.ts';
 import { invocationDir } from './invoke.ts';
 import { type LaneRecord,latestSpecSeries,presentCheckouts,removeCheckout,seriesDirty,seriesLedger,seriesTree,specSeriesRoot } from './lanes.ts';
 import { poc } from './poc.ts';
@@ -98,7 +100,8 @@ import { mutantFix,reproduce,specFacts,syncRepairs } from './reproduce.ts';
 import { disputeDirective } from './review.ts';
 import {
 type DecidedRound,type RoundInput,candidateFixRound,failingEvidenceDirs,failingLaneDirectives,gateReviseRound,laneFixRound,smokeFixRound,steerBrief,
-witnessCheckoutFixRound,witnessFixRound } from './rounds.ts';
+witnessCheckoutFixRound,witnessFixRound,
+} from './rounds.ts';
 import { scaffold } from './scaffold.ts';
 import { finishSplit } from './split.ts';
 import {
@@ -411,10 +414,7 @@ function roundInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, { 
 }
 
 /**
- * Scope growth (2026-10-15, A): a fix round after a salvage that reverted out-of-scope edits tells the builder so (the paths
- * still outside the scope, and where their content is kept), so a needed path is reported, never silently lost. Plan
- * defects (2026-10-16): a fix round, or a reopen's fresh round, after a scope accept took some of those paths in tells the
- * builder to restore them from the kept content.
+ * A fix or fresh round names protected paths reverted by salvage and where their content is kept.
  */
 function withReverted(ctx: StageContext, unit: PlanUnit, round: DecidedRound): DecidedRound {
   if (round.kind !== 'fix' && round.kind !== 'fresh') return round;
@@ -700,7 +700,7 @@ export function haltResult(ctx: StageContext, unit: PlanUnit): Extract<UnitResul
  */
 export function reentryAllowed(u: UnitState): boolean {
   if (u.status !== 'active' || u.open !== null || u.entry !== null) return false;
-  // A held build continues its session; a held lanes attempt (a pause, a scope-growth hold) starts from a clean worktree.
+  // A held build continues its session; a held lanes attempt (a pause) starts from a clean worktree.
   if (u.interrupted !== null && !(JUDGMENT_STAGES as readonly Stage[]).includes(u.interrupted.stage) && u.interrupted.stage !== 'lanes') return false;
   if (u.decided === null) return true;
   const d = decidedBy(u.decided);

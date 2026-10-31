@@ -84,7 +84,8 @@ import { advancesOf,derivedOf,hasMilestones,parsePlan } from '../input/plan.ts';
 import { raiseNeedsUser,raisedFor,readNeedsUser } from '../needsuser.ts';
 import { runBatchPoint } from '../pipeline/batchlanes.ts';
 import {
-type BackendCallOutcome,type JobParent,type RepairTurn,type StageContext,arcSeat,callArcRole,isRepairTurnOf,minutesMs,recordedArcCall,repairTurnOf,runOp,unitBranch,verdictOf } from '../pipeline/dispatch.ts';
+type BackendCallOutcome,type JobParent,type RepairTurn,type StageContext,arcSeat,callArcRole,isRepairTurnOf,minutesMs,recordedArcCall,repairTurnOf,runOp,unitBranch,verdictOf,
+} from '../pipeline/dispatch.ts';
 import { type JourneyEnd,arcJourneyLane,dirtySnapshot,jobSeriesCheckout,observedViews,removeJobCheckouts,runJourneySeries } from '../pipeline/lanes.ts';
 import { architecture,docAt,inMs,judgmentEntry,ledgerDir,ledgerPath,targetDirs } from '../pipeline/stages.ts';
 import { judgmentRepairDirective } from '../prompts/directives.ts';
@@ -111,7 +112,8 @@ type LensKind,
 type MutantRef,
 type Obligations,
 type ObservationVerdict,
-type Vision,type WitnessRecord,isExempt,isMustHold,parseObligations,parseVision } from './types.ts';
+type Vision,type WitnessRecord,isExempt,isMustHold,parseObligations,parseVision,
+} from './types.ts';
 
 /** What an audit needs: a stage context (processes, resources, routing), the arbiter's first-served waits, a clock. */
 export type AuditContext = StageContext & Readonly<{ acquireFirst: AcquireFirst; clock: Clock }>;

@@ -19,16 +19,19 @@ proposalId,
 resourceInstance,resourceName,routingRev,rulingId,seatRev,sha,sha256,specRev,
 systemName,
 unitId,
-witnessItemId } from './ids.ts';
+witnessItemId,
+} from './ids.ts';
 import type { JsonValue } from './json.ts';
 import {
 type Brand,type Read,Fields,SchemaError,arrayOf,assertUnique,bool,envName,int,literal,nat,nullable,object,oneOf,
-positive,sortedBy,str,stringMap,tagged,text,version } from './validate.ts';
+positive,sortedBy,str,stringMap,tagged,text,version,
+} from './validate.ts';
 import {
 type AbsPath,type BootId,type IsoTime,type Nonce,type RepoPath,type RepoPattern,absPath,bootId,isoTime,
 matchesPattern,
 nonce,
-repoPath,repoPattern } from './values.ts';
+repoPath,repoPattern,
+} from './values.ts';
 import type { SchemaVersion } from './version.ts';
 
 import { type HostSignatureId,HOST_SIGNATURES } from '../host/signatures.ts';
@@ -41,7 +44,8 @@ JUDGMENT_SESSION_ROLES,
 MODEL_CLASSES,
 ROLES,backend,
 buildClass,
-modelClass,profileName,riskTier } from '../routing/types.ts';
+modelClass,profileName,riskTier,
+} from '../routing/types.ts';
 import { type DesignRecord,type UnitKind,designRecord } from './design.ts';
 import { type ContractPin,type Pinned,type RequirementPin,type SpecPin,UNPINNED,pinTarget,specPin } from './pins.ts';
 

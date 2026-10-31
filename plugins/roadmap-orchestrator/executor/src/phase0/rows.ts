@@ -92,7 +92,8 @@ import { DEBT_DOC,parseDebtBlock } from '../docs/debt.ts';
 import { git,gitCommonDir,gitRun } from '../git/git.ts';
 import { censusProblems,specCensusMismatches } from '../holistic/rederive.ts';
 import {
-type Obligations,type PlanDefect,type Vision,isExempt,parseObligations,parseVision } from '../holistic/types.ts';
+type Obligations,type PlanDefect,type Vision,isExempt,parseObligations,parseVision,
+} from '../holistic/types.ts';
 import { laneMisses } from '../holistic/witnessfiles.ts';
 import { sameExecution } from '../input/laneexecution.ts';
 import { unknownLaneSystems } from '../input/systems.ts';

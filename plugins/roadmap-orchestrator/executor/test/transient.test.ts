@@ -78,7 +78,7 @@ describe('transient check', () => {
     ]);
   });
 
-  it('m3 rules: the pinned scope passes, a path outside it and every .roadmap/ path are refused', () => {
+  it('repository protection: product paths pass and roadmap or corpus paths are refused', () => {
     const s = scene(base, 'clean');
     const rules: TransientRules = { evidenceGlobs: [{ lane: laneId('unit'), glob: repoPattern('out/lanes') }], protectedPaths: [repoPattern('.roadmap'), repoPattern('corpus')]};
     const inScope = commitOn(s.repo, s.m0, { 'src/d.ts': 'export const d = 4;\n', 'docs/guide/x.md': '# x\n' }, 'unit in scope\n');
@@ -94,7 +94,7 @@ describe('transient check', () => {
       { path: '.roadmap/notes.md', rule: 'protected-path' },
       { path: 'corpus/y.ts', rule: 'protected-path' },
     ]);
-    // The rules the scope never reached still hold inside it.
+    // Evidence and executor artifacts are refused in product paths too.
     assert.deepEqual(transientViolations(rules, [repoPath('src/inv/3-1/stdout'), repoPath('src/__preview/a.png')]), [
       { path: 'src/__preview/a.png', rule: 'run-state' },
       { path: 'src/inv/3-1/stdout', rule: 'executor-file' },

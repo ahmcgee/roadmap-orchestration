@@ -31,14 +31,16 @@ import {
 BOUND_FIELDS,type Bounds,DEFAULT_BOUNDS,type FailureRef,
 type KnownDefectMatch,type LaneDef,type LaneEnv,
 failureRef,
-knownDefectMatch,laneDefOf,laneEnv } from '../core/records.ts';
+knownDefectMatch,laneDefOf,laneEnv,
+} from '../core/records.ts';
 
 import { type FlakyKey,flakyKey,flakyKeyOf } from '../core/flaky.ts';
 import { canonicalJson,sha256Hex } from '../core/json.ts';
 import { Fields,type Read,SchemaError,arrayOf,assertUnique,literal,nullable,object,oneOf,positive,sortedBy,str,stringMap } from '../core/validate.ts';
 import {
 type AbsPath,type BranchName,type PlanPath,type RepoPath,type RepoPattern,absPath,branchName,planPath,repoPath,
-repoPattern } from '../core/values.ts';
+repoPattern,
+} from '../core/values.ts';
 import { LENS_KINDS,type LensKind } from '../holistic/types.ts';
 import { type RiskTier,type RoutingLayer,riskTier,routingLayer } from '../routing/types.ts';
 
@@ -213,9 +215,7 @@ export type KnownDefect = Readonly<{ id: KnownDefectId; match: KnownDefectMatch;
 const LEGACY_PLAN_CHECK_SHAPES = ['uniform', 'by-builder'] as const;
 
 /**
- * Plan defects (2026-10-16): files the build derives from others (a bundle from its sources). A unit whose scope covers a
- * source pattern takes the outputs into its effective scope (`derivedWidening`, src/input/derived.ts, pinned on its
- * dispatch record as `derived`), so salvage keeps, and the gate and candidate allow, a regenerated output.
+ * Files the build derives from others (a bundle from its sources), checked by regeneration.
  *
  * `regenerate` (dev.12): the generator, run from the repo root's `cwd` with no shell. A unit whose diff touches a source or
  * an output has it run at the lanes stage, in a clean checkout of its commit, and the outputs must come out byte-identical

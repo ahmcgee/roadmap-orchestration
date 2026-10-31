@@ -47,7 +47,8 @@ import { milestoneEdges,milestonePassedSeq,milestoneWaits } from '../walk/node.t
 import { effectiveDependency } from './graph.ts';
 import {
 ADMISSION_STAGES,type Admission,type AdmissionConstraint,type AdmissionStage,type Admit,type AdmitInput,type ChainStage,type CommandScope,
-PROMOTION_BYPASS,type Rank,compareRank } from './types.ts';
+PROMOTION_BYPASS,type Rank,compareRank,
+} from './types.ts';
 
 // ---------------------------------------------------------------------------------------------------
 // The unit's next stage

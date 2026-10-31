@@ -4,7 +4,7 @@ import { revParse } from '../git/git.ts';
 // that finds its unit oversize (mixed concerns, or more than the gate reads inline) answers `split`: child units, the edges
 // among them and, for mixed concerns, the skeleton that lands first. Code builds and applies it:
 //
-//   specs      each child's spec is the parent's in force with the child's unit id, rev 1, its own scope, the parent's active
+//   specs      each child's spec is the parent's in force with the child's unit id, rev 1, its own systems, the parent's active
 //              acceptance and witness items it takes (their text unchanged), the obligations it declares, its own pinned
 //              design record, and the parent's active lanes, decisions, facts, cites, resources, removes, repairs and
 //              forces; plus, when the skeleton's spanning lane is a batch lane, that lane forced on every child whose
@@ -13,7 +13,7 @@ import { revParse } from '../git/git.ts';
 //              pinned risk floor (or its plan risk when higher), with its resources, `cpu`, routing layer, limits,
 //              priority and origin, after the parent's own `after` and the children the edges put before it; every unit
 //              that ran after the parent runs after every child; every milestone listing the parent lists the children.
-//   checks     src/pipeline/design.ts `splitFaults` (scope, the items' partition, obligations, each child sized, acyclic,
+//   checks     src/pipeline/design.ts `splitFaults` (systems, the items' partition, obligations, each child sized, acyclic,
 //              the skeleton), then the apply core over the revision (`evaluateRevision`, proposer `split{unit, children}`,
 //              src/input/classify.ts `splitRows`). Every reason is a plan defect: the repair turn, then a park.
 //   apply      `plan-check split{children}` is recorded first (a hold: the unit leaves its task), then the revision

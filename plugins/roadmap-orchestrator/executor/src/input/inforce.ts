@@ -25,7 +25,8 @@ import { existsSync,readFileSync } from 'node:fs';
 import { dirname,join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import {
-type IntentOf,type Parent,type PlanAppliedFact,type PlanChange,REVISION_FENCE_KEY,type RevisionPayload,parseRevisionPayload } from '../core/events.ts';
+type IntentOf,type Parent,type PlanAppliedFact,type PlanChange,REVISION_FENCE_KEY,type RevisionPayload,parseRevisionPayload,
+} from '../core/events.ts';
 import { durableMkdir,durableWrite } from '../core/fsx.ts';
 import { type OpId,type PlanRev,type RulingId,type Sha256Hex,type UnitId,opKey,planRev } from '../core/ids.ts';
 import type { Journal,JournalView } from '../core/interfaces.ts';

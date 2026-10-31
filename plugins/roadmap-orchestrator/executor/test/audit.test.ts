@@ -806,7 +806,7 @@ function checkpointInputs(r: ArcRun, checkpoint: JobId = CKPT): void {
 /** Commits the plan files as they stand now as a revision of checkpoint `ckpt-1`'s bundle. */
 async function bundleRevision(r: ArcRun, checkpoint: JobId = CKPT): Promise<void> {
   checkpointInputs(r, checkpoint);
-  const rctx = { runDir: r.ctx.runDir, view: r.journal.view, hostDir: r.ctx.hostDir, planFile: absPath(r.d.planPath), routingBase: { profile: 'default', config: null, arcRoles: 'm4b' }, laneEnv: process.env } as const;
+  const rctx = { runDir: r.ctx.runDir, view: r.journal.view, hostDir: r.ctx.hostDir, planFile: absPath(r.d.planPath), routingBase: r.ctx.routingBase, laneEnv: process.env } as const;
   const v = evaluateRevision(rctx, readInputFiles(absPath(r.d.planPath), absPath(r.d.repo)), { type: 'bundle', job: checkpoint, cites: [visionClauseId('V-1')], evidence: ['the scripted bundle'], admits: [],  });
   assert.equal(v.kind, 'accepted', JSON.stringify(v));
   if (v.kind !== 'accepted') return;

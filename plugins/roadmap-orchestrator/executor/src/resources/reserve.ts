@@ -46,7 +46,8 @@ import type { CpuBasis } from '../core/cpu.ts';
 import { crashPoint } from '../core/crash.ts';
 import { type Holder, type Parent, type ResourceEdge, holderUnit } from '../core/events.ts';
 import {
-  type ArcId, type InvocationId, type JobId, type OpKey, type ResourceInstance, type ResourceUnit, compareResourceUnits, opKey } from '../core/ids.ts';
+  type ArcId, type InvocationId, type JobId, type OpKey, type ResourceInstance, type ResourceUnit, compareResourceUnits, opKey,
+} from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import { type HeldState, type ResourceEntry, FREE_RESOURCE, afterEdge, sameHolder } from '../core/state.ts';

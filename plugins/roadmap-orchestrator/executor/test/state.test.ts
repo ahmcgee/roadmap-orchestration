@@ -19,7 +19,7 @@ type OutcomeFields = Readonly<{ stage: Stage; attempt: number; outcome: string; 
 /** A stage-outcome fact record; `chain()` hands it to the fold without parsing, so the fields are as given. */
 const stageOutcome = (f: OutcomeFields): LogRecord =>
   ({ type: 'fact', fact: { kind: 'stage-outcome', unit: f.unit ?? U1, stage: f.stage, attempt: f.attempt, outcome: f.outcome, class: f.class, chargeable: f.chargeable ?? false } }) as LogRecord;
-const dispatch = (riskFloor: RiskTier, scope = 'src/**'): LogRecord =>
+const dispatch = (riskFloor: RiskTier): LogRecord =>
   ({ type: 'fact', fact: { kind: 'dispatch', record: { unit: U1, specRev: specRev(1), specSha256: H,  riskFloor, routingRev: REV, implementerSeatRev: seatRev('fedcba9876543210'), at: AT, transientRules: 'm3' } } });
 
 function refuses(events: readonly Event[], seq: number, detail: RegExp): void {
@@ -79,7 +79,7 @@ describe('fold derives', () => {
     assert.deepEqual(state.units, [{
       unit: U1, stage: 'lanes', risk: 'med', status: 'active', routedUp: ['plan-check'], promotion: true, approval: null, open: null, interrupted: null,
       pressureHold: null, pressureHolds: 0, spec: { rev: 1, sha256: H }, reopened: null, pendingRevision: null, staleRev: null, redirectBase: 0,
-      park: null, lastRecovery: null, buildTier: 'med', lineage: null, supersededBy: null, bounds: DEFAULT_BOUNDS, entry: null, steering: null, scopeDecisions: [], pocs: 0,
+      park: null, lastRecovery: null, buildTier: 'med', lineage: null, supersededBy: null, bounds: DEFAULT_BOUNDS, entry: null, steering: null, pocs: 0,
       // The charged lanes red is the unit's one failure outcome (arc feedback 2026-10-16: what a re-entry's `fixes` names).
       failures: [{
         seq: 11, fact: { kind: 'stage-outcome', unit: U1, stage: 'lanes', attempt: 1, outcome: 'red', class: 'advance', chargeable: true }, park: null,
@@ -213,10 +213,9 @@ describe('fold invariants', () => {
     fold(ARC, chain([charged(1, 'advance'), charged(2, 'advance'), charged(3, 'park')]));
   });
 
-  it('a dispatch re-pin keeps the scope and never lowers the risk floor', () => {
+  it('a dispatch re-pin never lowers the risk floor', () => {
     fold(ARC, chain([dispatch('low'), dispatch('high')]));
     refuses(chain([dispatch('med'), dispatch('low')]), 2, /dispatch of u1 lowers riskFloor med to low/);
-    refuses(chain([dispatch('med'), dispatch('med', 'lib/**')]), 2, /dispatch of u1 changes its pinned scope/);
   });
 
   it('monotonicSince: a replaced record whose counter fell, or a vanished one, is refused', () => {

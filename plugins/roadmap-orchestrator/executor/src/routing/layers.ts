@@ -81,7 +81,8 @@ MODEL_CLASSES,type ModelClass,type ProfileName,type Role,
 type RoutingLayer,type RoutingLayerName,type RoutingProvenance,type RoutingTable,SEAT_REFS,type SeatRef,type SeatTable,type Triple,UNIT_ROLES,type UnitRole,
 WALK_ROLES,
 atSeat,
-classBindings,profileName,routingLayer,seatTable } from './types.ts';
+classBindings,profileName,routingLayer,seatTable,
+} from './types.ts';
 
 /**
  * One MCP server a walk session gets (dev.13, `walkthrough.mcp.<name>`): the stdio command Claude Code spawns, with

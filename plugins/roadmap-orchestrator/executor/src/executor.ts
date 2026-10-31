@@ -77,7 +77,8 @@ import { consume,holdAbandoned } from './pipeline/unit.ts';
 import { readRepoConfig,runChecks,smokeCheck } from './preflight/checks.ts';
 import { backendEnv } from './preflight/smoke.ts';
 import {
-EXIT_HOST_BUSY,EXIT_REFUSED,type RejectionFile,type StartupContext,type StartupRejection,exitCodeFor,startupRejection } from './preflight/startup.ts';
+EXIT_HOST_BUSY,EXIT_REFUSED,type RejectionFile,type StartupContext,type StartupRejection,exitCodeFor,startupRejection,
+} from './preflight/startup.ts';
 import { recover } from './recover/recover.ts';
 import { type ResolvedRouting,arcScopeOf,provenanceStack,resolveRouting } from './routing/layers.ts';
 import { type ProfileName,profileName } from './routing/types.ts';

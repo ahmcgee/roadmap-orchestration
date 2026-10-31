@@ -1038,8 +1038,7 @@ export class Fold implements JournalView {
       case 'dispatch': {
         const { unit, riskFloor } = f.record;
         const prev = this.#dispatches.get(unit)?.at(-1);
-        // A re-pin (a plan-check raise) keeps the scope envelope and never lowers the risk floor (R2). M3: the scope
-        // grows only by a ruled scope-growth apply, a `unit-changed` revision of the unit since its previous pin.
+        // A re-pin (a plan-check raise) never lowers the risk floor (R2).
         if (prev !== undefined && RISK_TIERS.indexOf(riskFloor) < RISK_TIERS.indexOf(prev.riskFloor)) {
           fail(`dispatch of ${unit} lowers riskFloor ${prev.riskFloor} to ${riskFloor}`);
         }

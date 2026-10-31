@@ -50,7 +50,8 @@
 import type { CheckpointInputs, PromptModule } from '../inputs.ts';
 import {
   brakesText, checkpointSpecsText, coverageText, diagnosisText, divergencesText, documentsXml, findingViewsText, manifestText, obligationsText,
-  priorRejectedText, referenceIndexText, refusedText, rulingsText, targetDocument, triggerText, visionText } from '../inputs.ts';
+  priorRejectedText, referenceIndexText, refusedText, rulingsText, targetDocument, triggerText, visionText,
+} from '../inputs.ts';
 import { CHECKPOINT_SCHEMA } from '../schemas.ts';
 import { DOC_RELATIONS, OBLIGATION_DISPOSITIONS, RULE_RELATIONS, RULING_KINDS, RULING_LIFETIMES, RULING_SCHEMA } from '../../holistic/types.ts';
 

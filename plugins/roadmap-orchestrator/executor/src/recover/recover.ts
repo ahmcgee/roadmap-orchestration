@@ -55,7 +55,8 @@ import { recoverReservations } from './resource.ts';
 import { revisionReconciler } from './revision.ts';
 import { spawnReconciler } from './spawn.ts';
 import {
-  candidateMergeOp, docsCommitOp, evidenceSnapshotOp, integrationFfOp, mergeinOp, mutantApplyOp, salvageCommitOp, snapshotPublishOp, worktreeCreateOp, worktreeRemoveOp } from './ops.ts';
+  candidateMergeOp, docsCommitOp, evidenceSnapshotOp, integrationFfOp, mergeinOp, mutantApplyOp, salvageCommitOp, snapshotPublishOp, worktreeCreateOp, worktreeRemoveOp,
+} from './ops.ts';
 
 /** The stage context the git and resource reconcilers need, and the command context command.apply needs. */
 export type RecoveryContext = Readonly<{ stage: StageContext; commands: CommandContext }>;
@@ -95,7 +96,7 @@ function unitOf(ctx: StageContext, intent: IntentRecord): PlanUnit {
   return unit;
 }
 
-/** The salvage rules, rebuilt exactly as the salvage stage binds them: the effective scope, the spec's evidence globs. */
+/** The salvage rules, rebuilt exactly as the salvage stage binds them: repository protection and the spec's evidence globs. */
 function salvageRules(ctx: StageContext, unit: PlanUnit): SalvageRules {
   const { spec } = loadUnitSpec(ctx, unit);
   return {
