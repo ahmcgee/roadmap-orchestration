@@ -130,7 +130,7 @@ test('verify.dirty-tree: a lane that writes into the checkout is not certified, 
 });
 
 test('lanes.occupied-before-tree: unlabelled occupancy parks before any lane runs or any checkout exists', T, async () => {
-  const run = laneRun([{ id: 'needs-db', argv: ['true'], cadence: 'candidate', resources: [DB] }], [DB]);
+  const run = laneRun([{ id: 'needs-db', argv: ['true'], cadence: 'unit', resources: [DB] }], [DB]);
   writeFileSync(join(run.stateDir, `${DB}.occupant`), 'someone-else');
   const done = started(await lanes(run.ctx, run.unit, run.base));
   assert.equal(done.outcome.kind, 'occupied');

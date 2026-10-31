@@ -27,7 +27,7 @@ function editWitness(a: CorpusArc, edit: Readonly<{ lane?: (l: Json) => Json; wi
     const laneRev = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [lane], obligations: [], mapping: { paths: [] } }).lanes[0]!);
     const i1 = (o['obligations'] as Json[])[0]!;
     const witness = (edit.witness ?? ((w) => w))(i1['witness'] as Json);
-    return { ...o, lanes: [lane], obligations: [{ ...(edit.i1 ?? ((x) => x))(i1), witness, proofJudgment: { ...(i1['proofJudgment'] as Json), laneRev, witness } }] };
+    return { ...o, lanes: [lane], obligations: [{ ...(edit.i1 ?? ((x) => x))(i1), witness, proofJudgment: { ...(i1['proofJudgment'] as Json), witness: {testIds: (witness as Json)['testIds'], ...((witness as Json)['files'] === undefined ? {} : {files: (witness as Json)['files']})} } }] };
   });
 }
 
@@ -118,7 +118,7 @@ describe('declared test paths and witness files', () => {
     const withI2 = (files: readonly string[]): void => editJsonFile(obligationsPath(a), (o) => {
       const i1 = (o['obligations'] as Json[])[0]!;
       const witness = { ...(i1['witness'] as Json), files };
-      const i2 = { ...i1, id: 'I-2', rule: { id: 'T-2', textSha256: t2['textSha256'] }, witness, proofJudgment: { ...(i1['proofJudgment'] as Json), witness } };
+      const i2 = { ...i1, id: 'I-2', rule: { id: 'T-2', textSha256: t2['textSha256'] }, witness, proofJudgment: { ...(i1['proofJudgment'] as Json), witness: {testIds: (witness as Json)['testIds'], ...((witness as Json)['files'] === undefined ? {} : {files: (witness as Json)['files']})} } };
       const census = (o['census'] as Json[]).map((e) => (e['rule'] === 'T-2' ? { rule: 'T-2', state: { type: 'obligation', id: 'I-2' } } : e));
       return { ...o, obligations: [i1, i2], census };
     });

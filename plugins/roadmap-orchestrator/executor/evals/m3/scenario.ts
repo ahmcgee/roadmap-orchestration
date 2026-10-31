@@ -130,10 +130,11 @@ const PREVENT_BUNDLE = checkpointAnswer({ decision: 'bundle', ops: [ADMIT_REPAIR
 const JOB_STEPS_P: readonly Step[] = [
   PACK_REVIEW,
   checkpointStep('ckpt-1', PREVENT_BUNDLE, [{ type: 'barrier', name: FAKE_CKPT_HOLD, timeoutMs: HOLD_MS }]),
-  checkpointStep('ckpt-2', PREVENT_BUNDLE),
   lensStep('audit-1', 'vision'),
-  lensStep('audit-2', 'invariants'),
+  checkpointStep('ckpt-2', PREVENT_BUNDLE),
   lensStep('audit-2', 'vision'),
+  lensStep('audit-3', 'invariants'),
+  lensStep('audit-3', 'vision'),
   checkpointStep('ckpt-3', NO_OP),
 ];
 

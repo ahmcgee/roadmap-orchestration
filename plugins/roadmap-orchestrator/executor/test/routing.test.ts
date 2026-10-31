@@ -71,11 +71,11 @@ describe('routing', () => {
     });
   });
 
-  it('historical summit effort: earlier xhigh revisions resolve through aliases to current high seats, without overriding a repo rebind', () => {
+  it('schema 2 has no pre-break routing aliases; current high seats and explicit repo rebindings remain intact', () => {
     const stack = { ...base, arcRoles: 'dev17' as const };
     const resolved = resolveRouting(stack);
     for (const rev of ['ec39c27ced3c46bf', '98bcf2744f049328', 'a5c3da09379b0035']) {
-      assert.ok(resolved.earlierBuiltinRevs.includes(routingRev(rev)), `adopt the recorded ${rev}`);
+      assert.equal(resolved.earlierBuiltinRevs.includes(routingRev(rev)), false, `schema 2 never aliases the pre-break ${rev}`);
     }
     assert.deepEqual(resolved.table.checkpoint.arc, OPUS_HIGH, 'historical aliases do not change current routing');
     const rebound = resolveRouting({ ...stack, classes: { summit: FABLE } });

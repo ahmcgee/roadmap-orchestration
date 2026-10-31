@@ -181,16 +181,16 @@ describe('M2 plan fields', () => {
       ...base, capacity: { cpu: 12 }, resources: [{ name: 'estate', probe: tool, teardown: tool, pool: { size: 2 } }],
       units: [
         u('base', { origin: 'planned', cpu: 2 }),
-        u('top', { after: ['base'], contingent: [{ id: 'e-top', condition: 'the API is live' }], cut: { reason: 'descoped', ruling: 'C-4' } }),
-        u('base2', { reenters: { unit: 'base', enterAt: 'verify', reset: { ruling: 'C-5' } }, origin: 'checkpoint' }),
+        u('top', { after: ['base'], contingent: [{ id: 'e-top', condition: 'the API is live' }], cut: { reason: 'descoped' } }),
+        u('base2', { reenters: { unit: 'base', enterAt: 'verify', reset: { reason: 'Retry with the revised contract' } }, origin: 'checkpoint' }),
       ],
     });
     assert.deepEqual(plan.capacity, { cpu: 12 });
     assert.deepEqual(plan.resources[0]?.pool, { size: 2 });
     assert.deepEqual(plan.units.map((x) => [x.origin, x.cpu, x.contingent, x.reenters, x.cut]), [
       ['planned', 2, [], undefined, undefined],
-      [undefined, undefined, [{ id: 'e-top', condition: 'the API is live' }], undefined, { reason: 'descoped', ruling: 'C-4' }],
-      ['checkpoint', undefined, [], { unit: 'base', enterAt: 'verify', reset: { ruling: 'C-5' } }, undefined],
+      [undefined, undefined, [{ id: 'e-top', condition: 'the API is live' }], undefined, { reason: 'descoped' }],
+      ['checkpoint', undefined, [], { unit: 'base', enterAt: 'verify', reset: { reason: 'Retry with the revised contract' } }, undefined],
     ]);
     const plain = parsePlan({ ...base, units: [u('a')] });
     for (const k of ['capacity']) assert.equal(k in plain, false, k);
@@ -227,7 +227,7 @@ describe('ordering park records', () => {
     refusesLine(fact({ kind: 'stage-outcome', unit, stage: 'candidate', attempt: 2, outcome: 'base-red', class: 'park', chargeable: false,
       park: { class: 'operator', kind: 'env', ordering: { blockers: ['u2'] } } }), /ordering/);
   });
-  it('an older park reads byte-for-byte as no ordering wait and warns once in a real reader process', () => {
+  it('a park without optional ordering reads byte-for-byte with no wait or adoption warning', () => {
     const old = serializeEvent(event(fact({ kind: 'stage-outcome', unit, stage: 'plan-check', attempt: 2, outcome: 'infeasible', class: 'park', chargeable: false,
       park: { class: 'operator', kind: 'design' } })));
     const child = spawnSync(process.execPath, ['--input-type=module', '-e', `
@@ -241,6 +241,6 @@ describe('ordering park records', () => {
       }
     `, old], { encoding: 'utf8' });
     assert.equal(child.status, 0, child.stderr);
-    assert.equal((child.stderr.match(/upgrade default \(ordering\)/g) ?? []).length, 1);
+    assert.equal(child.stderr, '', 'optional ordering has no historical-adoption warning');
   });
 });

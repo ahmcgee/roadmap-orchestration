@@ -121,19 +121,18 @@ describe('ids.numbered-order', () => {
     assert.throws(() => idList((v, p) => ruleId(v, p), { nonEmpty: true })([], 'rules'), /non-empty/);
   });
 
-  it('idList with legacyStringOrder reads a string-ordered list as written, warning once; a list in neither order is refused', () => {
+  it('idList refuses historical string order even with the removed compatibility option', () => {
     const read = idList((v, p) => ruleId(v, p), { legacyStringOrder: true });
     const writes: string[] = [];
     const write = process.stderr.write.bind(process.stderr);
     process.stderr.write = ((chunk: string | Uint8Array): boolean => { writes.push(String(chunk)); return true; }) as typeof process.stderr.write;
     try {
-      assert.deepEqual(read(['T-10', 'T-9'], 'fact.rules'), ['T-10', 'T-9']);
-      assert.deepEqual(read(['T-100', 'T-20', 'T-3'], 'fact.rules'), ['T-100', 'T-20', 'T-3']);
+      assert.throws(() => read(['T-10', 'T-9'], 'fact.rules'), /strictly ascending/);
+      assert.throws(() => read(['T-100', 'T-20', 'T-3'], 'fact.rules'), /strictly ascending/);
     } finally {
       process.stderr.write = write;
     }
-    assert.equal(writes.length, 1, 'once per process');
-    assert.match(writes[0]!, /upgrade default \(ids\.string-order\): fact\.rules: a numbered-id list in string order/);
+    assert.deepEqual(writes, [], 'schema 2 has no adoption defaults');
     assert.deepEqual(read(['T-9', 'T-10'], 'fact.rules'), ['T-9', 'T-10'], 'canonical reads too');
     assert.throws(() => read(['T-9', 'T-10', 'T-2'], 'fact.rules'), /fact\.rules\[2\]/);
     assert.throws(() => read(['T-10', 'T-10'], 'fact.rules'), /fact\.rules\[1\]/);

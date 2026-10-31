@@ -2,6 +2,7 @@
 // fake-backed runs under both profiles. Named tests: status.subset, state.no-model-ids,
 // status.sup-items-and-arc-wide-state, status.single-flight; M2: status.parallel, status.resources (real runs), status.parks (in
 // process, over a log written directly).
+import { exportInputs } from '../src/commands/inputs.ts';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdirSync,readFileSync,readdirSync,writeFileSync } from 'node:fs';
@@ -254,7 +255,7 @@ test('status.sup-items-and-arc-wide-state: file-only sup-/host- items are listed
   });
   // What a supervisor's crash limit and a refused claim leave: host-level, blocking, outside the journal.
   mkdirSync(r.runDir, { recursive: true });
-  const content = { blocking: true, subject: { type: 'host' }, summary: 'seeded', recommendation: 'ack it', options: [], evidence: [] } as const;
+  const content = { blocking: true, subject: { type: 'host' }, summary: 'seeded', recommendation: 'ack it', options: [{ id: 'resolved', label: 'Host state resolved' }], evidence: [] } as const;
   const sup = supervisorNeedsUserId(3, 3);
   const host = hostNeedsUserId('owner-mismatch-1');
   writeFileNeedsUser(absPath(r.runDir), arcId(r.arc), sup, { ...content, reason: 'supervisor-crash-limit' });
@@ -282,7 +283,13 @@ test('status.sup-items-and-arc-wide-state: file-only sup-/host- items are listed
   // No unit left to run: the open unit item now holds the arc.
   release(r.scenarioDir, 'u2check');
   await until(async () => (await statusOf(r)).run.state === 'parked', 60_000, 'the arc to wait on u1\'s item');
-  await cli(r, ['ack', item]);
+  const editDir = join(tmpDir('status-cut'), 'export');
+  const exported = await exportInputs({ repo: absPath(r.repo), arc: arcId(r.arc), out: absPath(editDir) });
+  const path = join(editDir, 'plan.json');
+  const edit = JSON.parse(readFileSync(path, 'utf8')) as { units: { id: string; cut?: { reason: string } }[] };
+  edit.units.find((u) => u.id === 'u1')!.cut = { reason: 'The owner retires the escalated work.' };
+  writeFileSync(path, JSON.stringify(edit));
+  await cli(r, ['apply', '--from', editDir, '--rev', String(exported.planRev), '--reason', 'Retire the escalated unit']);
   const exit = await run.exit;
   assert.equal(exit.code, 0, exit.stderr);
   assert.equal(reasonOf(exit).kind, 'complete');

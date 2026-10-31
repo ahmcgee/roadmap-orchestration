@@ -45,7 +45,7 @@ import { fakeDocs } from './fixtures/docs-fake.ts';
 import { editPlan } from './fixtures/route-common.ts';
 import { SCENARIO_TIMEOUT_MS,planCheckStep } from './fixtures/stage-common.ts';
 import { followingContext,unitInForce } from './fixtures/steer-common.ts';
-import { type ArcDescriptor,type ArcRun,MUL,U1,applyBody,codexStep,commandContextFor,contextFor,gateStep,mulBuild,outcomes,setupArc } from './fixtures/unit-common.ts';
+import { syncInputs,type ArcDescriptor,type ArcRun,MUL,U1,applyBody,codexStep,commandContextFor,contextFor,gateStep,mulBuild,outcomes,setupArc } from './fixtures/unit-common.ts';
 import { git } from './helpers/repo.ts';
 import { readCalls } from './helpers/scenario.ts';
 
@@ -151,9 +151,10 @@ test('scope.accept: a verified proposal holds the unit; `scope accept` lands one
     assert.equal(r.journal.view.ackOf(raised)?.command, accepted.id, 'the hold\'s item acknowledged by the command');
     assert.ok(facts(d).some((x) => x.kind === 'scope-decided' && x.command === accepted.id && x.decision === 'accepted'));
     const receipt = readReceipt(r.ctx.runDir, accepted.id, 'applied');
-    assert.ok(receipt?.state === 'applied' && receipt.verified.some((v) => /scope grows by package\.json, ruled by C-2/.test(v)), JSON.stringify(receipt));
+    assert.ok(receipt?.state === 'applied' && receipt.verified.some((v) => /scope grows by package\.json: the test lives there/.test(v)), JSON.stringify(receipt));
 
-    // A later apply of the owner's files as they are changes nothing: rebased onto the growth, which it keeps.
+    // Export the plan in force: applying it unchanged preserves the accepted growth.
+    syncInputs(r);
     const again = await command(r, applyBody(d));
     assert.equal(again.outcome.kind, 'applied', JSON.stringify(again.outcome));
     assert.equal(r.journal.view.planApplied()?.rev, applied.rev);

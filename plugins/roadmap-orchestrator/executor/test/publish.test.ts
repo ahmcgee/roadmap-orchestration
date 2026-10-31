@@ -216,7 +216,7 @@ function addObligation(r: ArcRun, id: string): void {
   const path = join(r.d.planPath, '..', 'obligations.json');
   const o = JSON.parse(readFileSync(path, 'utf8')) as Json & { obligations: Json[] };
   const witness = { lane: 'journey', testIds: [`t-${id}`] };
-  o.obligations.push({ ...o.obligations[0]!, id, statement: `${id} holds.`, witness, proofJudgment: { ...(o.obligations[0]!['proofJudgment'] as Json), witness } });
+  o.obligations.push({ ...o.obligations[0]!, id, statement: `${id} holds.`, witness, proofJudgment: { ...(o.obligations[0]!['proofJudgment'] as Json), witness: {testIds: witness.testIds} } });
   writeFileSync(path, JSON.stringify(o));
 }
 
@@ -405,7 +405,7 @@ test('publish.checkout-integrity: a passing lane that changes the docs checkout,
 // ---------------------------------------------------------------------------------------------------
 // Crash: the docs publication (the matrix row DOCS_PUBLICATION) and a preemption (PREEMPT)
 
-type Crashed = Readonly<{ d: ArcDescriptor; id: string; tip: string; open: readonly IntentRecord[] }>;
+type Crashed = Readonly<{ d: ArcDescriptor; id: string; tip: string; ledger: string; open: readonly IntentRecord[] }>;
 
 async function crashChild(label: string, d: ArcDescriptor, id: string, barrier: string | null): Promise<void> {
   const trigger = writeTrigger(tmpDir('publish-crash'), { label, occurrence: 1 });
@@ -470,14 +470,15 @@ describe(`matrix row ${DOCS_PUBLICATION}`, () => {
     const r = contextFor(d);
     const tip = head(d);
     const file = submitRule(r, ruleRecord(r, 'C-2', API_OP));
+    const ledger = readFileSync(join(d.planPath, '..', 'rulings.md'), 'utf8');
     r.journal.close();
     await crashChild(label, d, file.id, null);
-    return { d, id: file.id, tip, open: openAfterCrash(d) };
+    return { d, id: file.id, tip, ledger, open: openAfterCrash(d) };
   }
 
   for (const cell of cells) {
     test(`docs publication crashed at ${cell.boundary} ${cell.label}: ${cell.recovery.slice(0, 80)}…`, T, async () => {
-      const { d, id, tip, open } = await crashAt(cell.label);
+      const { d, id, tip, ledger, open } = await crashAt(cell.label);
       const r = await recoverArc(d);
       try {
         const pub = PUB[cell.label];
@@ -486,9 +487,9 @@ describe(`matrix row ${DOCS_PUBLICATION}`, () => {
         assert.equal(applied(r).filter((f) => f.command === id).length, 1, 'one plan-applied');
         assertPublished(r, id, pub, tip);
         assert.equal(docsFfs(r).filter((i) => r.journal.view.doneOf(i.op)?.kind === 'integration.ff').length, 1, 'one docs ff');
-        assert.match(show(d, 'main', 'contracts/api.md'), /finite numbers/);
+        assert.equal(show(d, 'main', 'contracts/api.md'), show(d, tip, 'contracts/api.md'), 'plain ledger edits do not rewrite frozen contracts');
         assert.match(revisionInForce(r.ctx.runDir, requirePlanInForce(r.ctx.runDir, r.journal.view)).ledger.bytes.toString('utf8'), /^C-2 — /m, 'the ledger in force holds the ruling');
-        assert.doesNotMatch(readFileSync(join(d.planPath, '..', 'rulings.md'), 'utf8'), /C-2/, 'the owner\'s ledger is never written');
+        assert.equal(readFileSync(join(d.planPath, '..', 'rulings.md'), 'utf8'), ledger, 'the executor never writes the exported ledger');
         assert.equal(r.journal.view.opsOf('snapshot.publish').filter((i) => i.parent.type === 'job').length, 1, 'one docs snapshot');
         assert.deepEqual(r.journal.view.openIntents(), [], 'recovery leaves nothing open');
       } finally {

@@ -57,7 +57,7 @@ test('gate.fingerprint-invalidated: a contract changes on T between approve and 
     // The fingerprint: blob ids at the gated tip, sorted by path; every cited ruling at rev 1.
     assert.deepEqual(tip.map((c) => c.path), ['ARCHITECTURE.md', 'contracts/api.md']);
     for (const c of tip) assert.equal(c.blob, git(d.repo, 'rev-parse', `main:${c.path}`));
-    assert.deepEqual(first.fingerprint.rulingRevs, [{ id: rulingId('C-1'), rev: 1 }]);
+    assert.deepEqual(first.fingerprint.rulingRevs, [{ id: rulingId('C-1'), rev: 157967298067165 }]);
 
     writeFileSync(join(d.repo, 'contracts', 'api.md'), '# API contract\n\n`add(a, b)` returns the sum; `mul(a, b)` the product.\n');
     git(d.repo, 'commit', '--quiet', '-am', 'the contract changes on integration');
@@ -500,7 +500,7 @@ test('gate.bounded-diff: the gate reads its diff as the bounded attachment (orie
     assert.deepEqual(gateDiffShownOf(inputs), inputs.diffShown);
     // A dev.11 executor's gate recorded none: read as nothing recorded (scaffolding).
     const { diffShown: _, ...dev11 } = inputs;
-    assert.deepEqual(gateDiffShownOf(dev11), { inlined: [], notInlined: [] });
+    assert.equal(gateDiffShownOf(dev11), undefined, 'schema 2 never invents a diff certificate for a pre-break record');
     // Under the large-diff threshold: the unit's own seat (med: frontier, Opus medium since dev.17), the plain prompt, no map.
     assert.equal(inputs.largeDiff, null);
     assert.ok(g!.argv.includes('claude-opus-5-5') && g!.argv.includes('medium'), 'a small diff keeps the unit\'s seat');
@@ -609,7 +609,7 @@ test('gate.approval-captured-fingerprint: a docs-only rule superseding a cited r
     assert.equal((await gating).kind, 'continue');
     assert.equal(outcomes(d).at(-1), 'gate:approve');
     const [first] = approvals(d);
-    assert.deepEqual(first!.fingerprint.rulingRevs, [{ id: rulingId('C-1'), rev: 1 }], 'the approval binds the ruling the gate judged');
+    assert.deepEqual(first!.fingerprint.rulingRevs, [{ id: rulingId('C-1'), rev: 157967298067165 }], 'the approval binds the ruling the gate judged');
     assert.deepEqual(judgmentInputs(d, 'gate')[0]!.fingerprint, first!.fingerprint, 'exactly the fingerprint captured with the inputs');
     assert.deepEqual(await runUnit(w.stage, r.unit('u1'), live()), { kind: 'merged' });
     assert.ok(outcomes(d).includes('ff:fingerprint-invalid'), outcomes(d).join(' '));

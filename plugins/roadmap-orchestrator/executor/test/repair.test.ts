@@ -405,7 +405,7 @@ describe('plan-check and the findings store', () => {
     }
   });
 
-  test('plancheck.reads-captured-spec: an evidence-only edit landing between the capture and the @cpu grant keeps the captured rev; the redirect is read against it and patches the spec in force at that rev', T, async () => {
+  test('plancheck.reads-captured-spec: an exported evidence edit auto-bumps pending revision; the captured redirect patches its pinned spec without overwriting that pending edit', T, async () => {
     const patch = [{ op: 'add', section: 'decisions', item: { id: 'D1', text: 'mul multiplies.' } }];
     const d = setupArc({ steps: [planCheckStep({ decision: 'redirect', patch })] });
     const r = contextFor(d);
@@ -425,7 +425,10 @@ describe('plan-check and the findings store', () => {
       const applied = await applyCommand(commandContextFor(r), submitCommand(r.ctx.runDir, r.journal.view.arc, applyBody(d)));
       assert.equal(applied.kind, 'applied', JSON.stringify(applied));
       const edited = r.journal.view.unit(U1).spec!;
-      assert.deepEqual([edited.rev, edited.sha256 === captured.specSha256], [1, false], 'an evidence-only edit: the same rev, new bytes');
+      assert.deepEqual([edited.rev, edited.sha256 === captured.specSha256], [1, true], 'the dispatched spec stays pinned');
+      const pending = r.journal.view.unit(U1).pendingRevision!;
+      assert.equal(pending.rev, 2);
+      assert.notEqual(pending.sha256, captured.specSha256);
 
       open();
       const done = started(await checking);
@@ -434,7 +437,10 @@ describe('plan-check and the findings store', () => {
       const patched = r.journal.view.opsOf('spec.patch').at(-1)!;
       assert.deepEqual([patched.expect.expectRev, patched.expect.oldSha256], [1, edited.sha256], 'the patch applies to the spec in force at the captured rev');
       const after = JSON.parse(readFileSync(inputPath(r.ctx.runDir, r.journal.view.unit(U1).spec!.sha256, SPEC_INPUT), 'utf8')) as { rev: number; lanes: { evidenceGlobs: string[] }[]; decisions: { id: string }[] };
-      assert.deepEqual([after.rev, after.lanes[0]!.evidenceGlobs, after.decisions.map((x) => x.id)], [2, ['out/**'], ['D1']], 'the evidence edit is kept under the redirect');
+      assert.deepEqual([after.rev, after.lanes[0]!.evidenceGlobs, after.decisions.map((x) => x.id)], [2, [], ['D1']], 'the redirect applies only to the spec it judged');
+      assert.deepEqual(r.journal.view.unit(U1).pendingRevision, pending, 'the owner revision is not overwritten by the captured redirect');
+      const next = JSON.parse(readFileSync(inputPath(r.ctx.runDir, pending.sha256, SPEC_INPUT), 'utf8')) as {lanes: {evidenceGlobs: string[]}[]; decisions: unknown[]};
+      assert.deepEqual([next.lanes[0]!.evidenceGlobs, next.decisions], [['out/**'], []]);
     } finally {
       r.journal.close();
     }

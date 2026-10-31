@@ -246,7 +246,7 @@ test('lanes.signature-busy-rerun-pass: a host signature on a busy host waits for
 test('lanes.instance-env: a DAG arc\'s lanes reserve @cpu tokens and a pool instance, and the lane env binds the instance', T, async () => {
   const run = laneRun([
     { id: 'fast1', argv: ['sh', '-c', 'echo "instance=${RESOURCE_INSTANCE_ESTATE:-none}"'] },
-    { id: 'estate1', cadence: 'candidate', resources: ['estate'], argv: [process.execPath, ESTATE_FAKE, 'hold', 'STATE', 'estate'] },
+    { id: 'estate1', cadence: 'unit', resources: ['estate'], argv: [process.execPath, ESTATE_FAKE, 'hold', 'STATE', 'estate'] },
   ], []);
   // A DAG arc over the same repo: a fresh log whose rev-1 plan-applied has scheduling dag, and a plan with
   // capacity and an estate pool (test/fakes/estate.ts).

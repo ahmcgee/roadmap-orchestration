@@ -306,7 +306,7 @@ export function afterStageOutcome(u: UnitState, f: Pick<StageOutcomeFact, 'stage
       ...c,
       chargeableFailures: c.chargeableFailures + (f.chargeable ? 1 : 0),
       unchargedLanesReds: certificationRed(f.stage, f.outcome)
-        ? f.unchargedLanesReds! : f.chargeable ? 0 : c.unchargedLanesReds,
+        ? (f.unchargedLanesReds ?? 0) : f.chargeable ? 0 : c.unchargedLanesReds,
       redirects: c.redirects + add('redirect'),
       reviseRounds: c.reviseRounds + add('revise'),
       candidateReds: c.candidateReds + add('candidate-red'),

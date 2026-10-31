@@ -232,7 +232,8 @@ const dev17Finding = (f: JsonValue): JsonValue => {
   return { defect: o['severity'] === 'blocking' ? 'incorrect-behaviour' : null, reraises: null, hunk: null, ...o };
 };
 
-const gateAnswer = (a: GateAnswer): JsonValue => ({rulings: [], 
+const gateAnswer = (a: GateAnswer): JsonValue => ({
+  rulings: [...(a.rulings ?? [])],
   decision: a.decision, ordering: a.ordering ?? null, findings: (a.findings ?? []).map(dev17Finding), directives: [...(a.directives ?? [])], reasons: ['A1 holds'], premises: [...(a.premises ?? [])],
   unreviewed: [...(a.unreviewed ?? [])], clusters: a.clusters ?? null, 
 }) as JsonValue;

@@ -137,7 +137,7 @@ describe('status M3', () => {
         cutLine: 'the helpers ship', nextMilestone: { obligation: 'I-2', statement: 'I-2 holds.', unmerged: ['u1'] }, criticalPath: ['u2', 'u3'],
         obligations: { total: 5, nowTrue: 1, notYetTrue: 3, latched: 0, split: 0, waived: 1, deferred: 0, retired: 0 },
       });
-      assert.deepEqual([s.waived, s.deferred], [[{ obligation: 'I-5', ruling: 'C-1' }], []]);
+      assert.deepEqual([s.waived, s.deferred], [[{ obligation: 'I-5', reason: 'test disposition' }], []]);
       assert.deepEqual(s.vision, {
         rev: 1, confirmation: null, clauses: VISION.clauses, questions: [], advances: ['V-1', 'V-2'],
         coverage: { unservedAdvanced: ['V-2'], unservedOpportunity: [], horizon: [], obligationsServingNone: [], withdrawnCited: [] },
@@ -310,7 +310,6 @@ describe('status M3', () => {
       s = statusOf(r);
       const checkpoint = { type: 'checkpoint', job: 'ckpt-1' };
       assert.deepEqual(s.decisionsSince.map((x) => [x.kind, x.id, x.oneLine, x.ruledBy]), [
-        ['ruling', 'C-2', 'Keep helpers pure.', checkpoint],
         ['bundle', 'ckpt-1', 'plan rev 2: unit-cut u2, limits', checkpoint],
         ['cut', 'u2', 'u2 cut (plan rev 2)', checkpoint],
         ['divergence', 'D-1', 'interpretation: trust means tested', checkpoint],

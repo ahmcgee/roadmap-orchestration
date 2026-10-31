@@ -38,7 +38,7 @@ const verdicts = [...OBSERVATION_VERDICTS, null] as const;
 type Leaf = Readonly<{ name: string; over: Raw; latched: boolean; completing: boolean; verdict: ObservationVerdict | null; effect: ObligationEffect }>;
 function* leaves(): Generator<Leaf> {
   for (const state of ['waived', 'deferred', 'retired'] as const) {
-    yield { name: state, over: { state: { type: state, ruling: 'C-1' } }, latched: false, completing: false, verdict: 'held', effect: 'exempt' };
+    yield { name: state, over: { state: { type: state, reason: 'Explicit owner disposition', rev: 2 } }, latched: false, completing: false, verdict: 'held', effect: 'exempt' };
   }
   for (const verdict of verdicts) {
     const held = verdict === 'held';

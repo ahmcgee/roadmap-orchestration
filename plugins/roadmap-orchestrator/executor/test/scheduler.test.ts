@@ -218,7 +218,7 @@ test('sched.stop-during-teardown: a stop while a teardown runs (a 10-min fake) n
   const r = contextFor(d);
   try {
     const item = raiseNeedsUser(r.journal, r.ctx.runDir, {
-      blocking: false, subject: { type: 'arc' }, reason: 'env-blocked', summary: 'seeded', recommendation: 'ack it', options: [], evidence: [],
+      blocking: false, subject: { type: 'arc' }, reason: 'env-blocked', summary: 'seeded', recommendation: 'ack it', options: [{ id: 'resolved', label: 'Issue resolved' }], evidence: [],
     }, { type: 'arc' });
     const s = startScheduler(r);
     await reached(dir, 'teardown', WAIT_MS);
@@ -346,7 +346,7 @@ test('sched.backend-limit-others-run: with codex parked on a usage limit, u1 (bu
       ...of('u1', [planCheckStep({ decision: 'approve' }), mulBuild({ 'src/one.js': 'export const one = 1;\n' }), gateStep({ decision: 'approve' })]),
       ...of('u2', [
         planCheckStep({ decision: 'approve', risk: 'high' }),
-        { as: 'claude', expect: { argv: ['--permission-mode', 'bypassPermissions', '--session-id'] }, acts: [{ type: 'commit', message: 'add mul', files: MUL }, { type: 'emit', value: { summary: 'Did the work.', changedPaths: [], lanesRun: [], blockers: [], experiments: [], docsOnlySince: null, final: true } }] },
+        { as: 'claude', expect: { argv: ['--permission-mode', 'bypassPermissions', '--session-id'] }, acts: [{ type: 'commit', message: 'add mul', files: MUL }, { type: 'emit', value: { summary: 'Did the work.', changedPaths: [], blockers: [], experiments: [], docsOnlySince: null, final: true } }] },
         gateStep({ decision: 'approve' }),
       ]),
       { as: 'codex', expect: { argv: ['exec'] }, acts: [{ type: 'emit', value: OK }] },

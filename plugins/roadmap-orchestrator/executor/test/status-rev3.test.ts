@@ -164,7 +164,7 @@ describe('status of a live arc', () => {
     const dir = join(tmpDir('status-edit'), 'export');
     const record = await exportInputs({repo: absPath(r.repo), arc: arcId(r.arc), out: absPath(dir)});
     const spec = join(dir, 'u1.json');
-    writeFileSync(spec, JSON.stringify({ ...(JSON.parse(readFileSync(spec, 'utf8')) as Json), rev: 'two' }));
+    writeFileSync(spec, JSON.stringify({ ...(JSON.parse(readFileSync(spec, 'utf8')) as Json), acceptance: 'not a list' }));
     const submitted = JSON.parse((await cli(r, ['apply', '--from', dir, '--rev', String(record.planRev), '--reason', 'Exercise rejected revision drain'])).stdout) as { command: string };
     let s = await statusOf(r);
     await until(async () => (s = await statusOf(r)).commands.receipts.some((x) => x.command === submitted.command), 60_000, 'the apply\'s receipt');

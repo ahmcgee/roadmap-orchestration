@@ -203,7 +203,7 @@ export function raiseClaimRefusal(runDir: AbsPath, arc: ArcId, rejection: ClaimR
     reason: rejection.kind,
     summary: `roadmap start was refused at the host claim: ${detail}`,
     recommendation: 'Resolve the host state the rejection names (see `roadmap status`), then acknowledge this item and start again.',
-    options: [],
+    options: [{ id: 'resolved', label: 'The host state has been resolved; retry the claim.' }],
     evidence: [],
   });
   return id;

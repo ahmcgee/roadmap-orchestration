@@ -48,7 +48,7 @@ const editPlan = (d: ArcDescriptor, edit: (p: Json) => void): void => {
 const withMilestones = (...ms: Json[]) => (d: ArcDescriptor): void => editPlan(d, (p) => void (p['milestones'] = ms));
 const units = (p: Json): Json[] => p['units'] as Json[];
 
-function classifyNow(r: ArcRun, proposer: Proposer = { type: 'apply' }): Classified {
+function classifyNow(r: ArcRun, proposer: Proposer = { type: 'apply', reason: 'Revise the milestone membership' }): Classified {
   const { runDir } = r.ctx;
   const inForce = requirePlanInForce(runDir, r.journal.view);
   return classify({

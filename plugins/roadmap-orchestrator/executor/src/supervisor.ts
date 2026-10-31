@@ -364,8 +364,8 @@ function crashLimitContent(crashes: readonly IsoTime[], evidence: readonly AbsPa
     subject: { type: 'host' },
     reason: 'supervisor-crash-limit',
     summary: `The executor crashed ${crashes.length} times within an hour (${crashes.join(', ')}); the supervisor stopped restarting it. The last crash: ${detail}.`,
-    recommendation: 'Read the executor stderr logs in evidence and fix the cause, then `roadmap ack` this item and `roadmap start`: that start runs control-only, applying only pause/stop/ack until nothing blocking remains; queued rulings and other commands wait until recovery has finished, before dispatch.',
-    options: [],
+    recommendation: 'Read the executor stderr logs in evidence and fix the cause, then `roadmap ack` this item and `roadmap start`: that start runs control-only, applying only pause/stop/ack until nothing blocking remains; queued plan edits and other commands wait until recovery has finished, before dispatch.',
+    options: [{ id: 'resolved', label: 'The crash cause is resolved; allow recovery and restart.' }],
     evidence,
   };
 }

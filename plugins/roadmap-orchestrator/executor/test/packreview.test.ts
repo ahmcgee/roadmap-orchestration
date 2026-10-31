@@ -12,7 +12,7 @@ import { basename,join } from 'node:path';
 import { describe,test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { applyCommand } from '../src/commands/apply.ts';
-import { submitCommand } from '../src/commands/queue.ts';
+import { terminalReceipt,submitCommand } from '../src/commands/queue.ts';
 import type { Fact } from '../src/core/events.ts';
 import { type NeedsUserId,jobId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
@@ -89,7 +89,9 @@ test('packreview.holds-admission: the review runs first, before the baseline; it
     const inputs = parsePackReviewInputs(JSON.parse(readFileSync(join(r.ctx.runDir, 'inputs', `${started!.inputsSha256}.${PACK_REVIEW_INPUT}`), 'utf8')));
     assert.equal(inputs.head, git(a.d.repo, 'rev-parse', 'main'));
     for (const tag of ['<vision>', '<plan>', '<specs>', '<obligations>', '<rules_index>', '<phase0>']) assert.ok(call.stdin.includes(tag), `the prompt holds ${tag}`);
-    submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'ack', needsUser: item!, choice: null });
+    const rejected = submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'ack', needsUser: item!, choice: null });
+    await until(() => terminalReceipt(r.ctx.runDir, rejected.id)?.state === 'rejected', WAIT_MS, 'optionless acknowledgement refused');
+    submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'resume', target: { type: 'all' } });
     await until(() => facts().some((f) => f.kind === 'stage-outcome' && f.unit === 'u1'), WAIT_MS, 'u1 admitted after the ack');
   } finally {
     submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'stop' });
@@ -112,7 +114,7 @@ describe('the hold before the first admission (K14, H9)', () => {
       assert.ok(x.holds().includes('pack-review'));
       await x.ack(out.needsUser);
       assert.deepEqual(packReviewStatus(x.ctx), { kind: 'clear', job: 'review-1' });
-      assert.ok(!x.holds().includes('pack-review'), 'the ack releases');
+      assert.ok(!x.holds().includes('pack-review'), 'the subject action releases');
       assert.equal(packReviewPending(x.ctx), false);
       assert.deepEqual(await runPackReview(x.ctx), { kind: 'none' });
       assert.deepEqual(reviewCalls(x.a), ['review-1']);
@@ -154,7 +156,7 @@ describe('the hold before the first admission (K14, H9)', () => {
       assert.deepEqual(second, { kind: 'ended', job: 'review-2', outcome: 'completed', needsUser: null });
       assert.deepEqual([...supersededItems(x.r.journal.view)], [first.needsUser], 'review-1\'s item is superseded');
       assert.deepEqual(openBlocking(x.r.journal.view), [], 'and no longer open');
-      assert.equal(x.r.journal.view.ackOf(first.needsUser), null, 'without an ack');
+      assert.ok(x.r.journal.view.ackOf(first.needsUser) !== null, 'the root apply closed the arc subject');
       assert.deepEqual(packReviewStatus(x.ctx), { kind: 'clear', job: 'review-2' });
       assert.ok(!x.holds().includes('pack-review'));
       // R-17 (paid M4a run 10): one predicate drops it wherever open items are listed: status, the brief, watch --actionable.
@@ -200,7 +202,7 @@ describe('the hold before the first admission (K14, H9)', () => {
     }
   });
 
-  test('packreview.abandoned: a review that gives no valid report, its repair turn included, ends abandoned with a blocking item saying why; its ack releases', T, async () => {
+  test('packreview.abandoned: a review that gives no valid report, its repair turn included, ends abandoned with a blocking item saying why; its subject action releases', T, async () => {
     const x = await arcWith([
       { as: 'claude', unit: 'review-1', expect: {}, acts: [{ type: 'emit', value: { findings: 'not a list' } }] },
       jobRepairStep('review-1', { findings: 'not a list' }, ['malformed report']),
@@ -302,7 +304,9 @@ function reopen(a: CorpusHolisticArc) {
     holds: () => arcHolds(h, blockingItems(r.ctx.runDir, r.journal.view), false),
     ack: async (id: NeedsUserId) => {
       const out = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'ack', needsUser: id, choice: null }));
-      assert.equal(out.kind, 'applied', JSON.stringify(out));
+      assert.equal(out.kind, 'rejected', JSON.stringify(out));
+      const resumed = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'resume', target: { type: 'all' } }));
+      assert.equal(resumed.kind, 'applied', JSON.stringify(resumed));
     },
     editPack: (direction: string) => applyPlanEdit(r, w, (p) => {
       p['direction'] = direction;

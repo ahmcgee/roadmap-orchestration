@@ -273,12 +273,12 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
     },
   ],
   build: [
-    { notes: [], 
+    { notes: ['NOTE-A'],
       spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
       planCheckNotes: '', fastLanes: [lane('unit', ['npm', 'test'])], suiteLanes: [], evidenceDir: absPath('/run/ev/a'), worktree: absPath('/wt/a'),
       scope: { include: [repoPattern('src/a/**')], exclude: [] }, fixRound: null, witnessChecks: [], milestones: null, browser: null, certifiedAt: null, handover: null,
     },
-    { notes: [], 
+    { notes: ['NOTE-B'],
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
       planCheckNotes: 'NOTES-B', fastLanes: [lane('lint', ['npx', 'tsc', '--noEmit'])], suiteLanes: [lane('eslint', ['npx', 'eslint', '.'])], evidenceDir: absPath('/run/ev/b'), worktree: absPath('/wt/b'),
       scope: { include: [repoPattern('src/b/**')], exclude: [] }, fixRound: { failingEvidenceDirs: [absPath('/run/inv/9-1')], directives: ['DIRECTIVE-B'] },
@@ -741,29 +741,29 @@ describe('output validators', () => {
     validateGateOutput(ok.gate);
     assert.throws(() => validateGateOutput({ ...ok.gate, directives: [] }), SchemaError);
     assert.throws(() => validateGateOutput({ ...ok.gate, decision: 'approve' }), SchemaError);
-    const note = [{ severity: 'note', path: null, text: 'fine', contractRef: 'C-1' }];
+    const note = [{ severity: 'note', path: null, text: 'fine', contractRef: 'C-1', experiments: [], debt: null, defect: null, reraises: null, hunk: null }];
     assert.throws(() => validateGateOutput({rulings: [],  ...ok.gate, decision: 'approve', directives: [], findings: ok.gate['findings'] }), SchemaError);
     validateGateOutput({rulings: [],  ...ok.gate, decision: 'approve', directives: [], findings: note });
     validateGateOutput({rulings: [],  ...ok.gate, decision: 'escalate', directives: [], findings: ok.gate['findings'] });
   });
 
-  it('gate (dev.12 round 2): a pre-existing finding never blocks an approve; unreviewed is recorded as given, and a dev.11 answer without it reads as unknown (null)', () => {
-    const pre = [{ severity: 'pre-existing', path: 'src/old.ts', text: 'Off by one since before the unit: the base has it.', contractRef: null }];
+  it('gate (dev.12 round 2): a pre-existing finding never blocks an approve; unreviewed is recorded as given, and a dev.11 answer without it is refused', () => {
+    const pre = [{ severity: 'pre-existing', path: 'src/old.ts', text: 'Off by one since before the unit: the base has it.', contractRef: null, experiments: [], debt: null, defect: null, reraises: null, hunk: null }];
     const unreviewed = [{ path: 'packages/*/golden/**', reason: 'regenerated goldens, judged through the generator' }];
     const out = validateGateOutput({rulings: [],  ...ok.gate, decision: 'approve', directives: [], findings: pre, unreviewed });
-    assert.deepEqual(out.findings, pre.map((f) => ({ ...f, experiments: [], debt: 'unrecorded', defect: null, reraises: null, hunk: null })), 'a finding without experiments (a dev.12 answer) cites none; its debt is unrecorded; dev.17 fields read null');
+    assert.deepEqual(out.findings, pre);
     assert.deepEqual(out.unreviewed, unreviewed);
     const { unreviewed: _u, ...dev11 } = ok.gate;
-    assert.equal(validateGateOutput(dev11).unreviewed, null);
+    assert.throws(() => validateGateOutput(dev11), /unreviewed/);
     assert.throws(() => validateGateOutput({ ...ok.gate, unreviewed: [{ path: 'a' }] }), SchemaError);
     assert.throws(() => validateGateOutput({ ...ok.gate, findings: [{ ...pre[0], severity: 'minor' }] }), SchemaError);
     const schema = GATE_SCHEMA as { properties: Record<string, unknown>; required: readonly string[] };
     assert.ok(schema.required.includes('unreviewed'), 'a live gate answers it');
   });
 
-  it('gate (dev.13, the gate\'s shell): a finding cites the experiments it rests on, each a command and its output; a live answer gives the list, a dev.12 finding without it reads as none', () => {
+  it('gate (dev.13, the gate\'s shell): a finding cites the experiments it rests on, each a command and its output; a live answer gives the list, an omitted experiment list reads as none', () => {
     const experiments = [{ command: 'node probe.mjs', output: 'expected 9, got 2' }];
-    const finding = { severity: 'blocking', path: 'src/a/parse.ts', text: 'A2 fails on two-digit inputs.', contractRef: null, experiments };
+    const finding = { severity: 'blocking', path: 'src/a/parse.ts', text: 'A2 fails on two-digit inputs.', contractRef: null, experiments, debt: null, defect: null, reraises: null, hunk: null };
     assert.deepEqual(validateGateOutput({ ...ok.gate, findings: [finding] }).findings[0]!.experiments, experiments);
     for (const bad of [[{ command: 'node probe.mjs' }], [{ command: 1, output: '' }], 'node probe.mjs']) {
       assert.throws(() => validateGateOutput({ ...ok.gate, findings: [{ ...finding, experiments: bad }] }), SchemaError, JSON.stringify(bad));
@@ -774,23 +774,23 @@ describe('output validators', () => {
     assert.ok(item.required.includes('experiments'), 'a live gate answers it on every finding');
   });
 
-  it('gate (dev.13, the convergence tail): a finding says whether it is debt, {drag} or null; a live answer gives it on every finding, a dev.12 finding without it reads as unrecorded', () => {
-    const note = { severity: 'note', path: 'src/a/parse.ts', text: 'parse re-reads the file per call.', contractRef: null, experiments: [] };
+  it('gate (dev.13, the convergence tail): a finding says whether it is debt, {drag} or null; a live answer gives it on every finding, an omitted experiment list reads as none', () => {
+    const note = { severity: 'note', path: 'src/a/parse.ts', text: 'parse re-reads the file per call.', contractRef: null, experiments: [], defect: null, reraises: null, hunk: null };
     const debt = { drag: 'Every later reader of big inputs pays the re-read.' };
     assert.deepEqual(validateGateOutput({ ...ok.gate, findings: [{ ...note, debt }] }).findings[0]!.debt, debt);
     assert.equal(validateGateOutput({ ...ok.gate, findings: [{ ...note, debt: null }] }).findings[0]!.debt, null);
-    assert.equal(validateGateOutput({ ...ok.gate, findings: [note] }).findings[0]!.debt, 'unrecorded');
+    assert.throws(() => validateGateOutput({ ...ok.gate, findings: [note] }), /debt/);
     for (const bad of [{}, { drag: 1 }, 'slow']) assert.throws(() => validateGateOutput({ ...ok.gate, findings: [{ ...note, debt: bad }] }), SchemaError, JSON.stringify(bad));
     const item = ((GATE_SCHEMA as { properties: Record<string, { items: { required: readonly string[] } }> }).properties['findings']!).items;
     assert.ok(item.required.includes('debt'), 'a live gate answers it on every finding');
   });
 
-  it('gate (dev.12, the large-diff gate): a cluster map is ids, paths and a review depth; a dev.11 answer without clusters reads as none (null)', () => {
+  it('gate (dev.12, the large-diff gate): a cluster map is ids, paths and a review depth; a dev.11 answer without clusters is refused', () => {
     const clusters = [{ id: 'sweep', paths: ['packages/*/src/**'], review: 'description' }, { id: 'core', paths: ['packages/core/index.ts'], review: 'close' }];
     assert.deepEqual(validateGateOutput({ ...ok.gate, clusters }).clusters, clusters);
     assert.equal(validateGateOutput({ ...ok.gate, clusters: null }).clusters, null);
     const { clusters: _c, ...dev11 } = ok.gate;
-    assert.equal(validateGateOutput(dev11).clusters, null);
+    assert.throws(() => validateGateOutput(dev11), /clusters/);
     for (const bad of [
       [], [{ id: 'a', paths: [], review: 'routine' }], [{ id: 'a', paths: ['x'], review: 'opus' }], [{ id: 'a', paths: ['/abs'], review: 'routine' }],
       [{ id: 'a', paths: ['x'], review: 'routine' }, { id: 'a', paths: ['y'], review: 'close' }], [{ id: '', paths: ['x'], review: 'routine' }],
@@ -1015,7 +1015,7 @@ describe('M3 prompts: the vision and the arc roles', () => {
     }
     // An answer a dev.9 executor launched has no scopeGrowth: read as none proposed (scaffolding, `planCheckScopeGrowthDefault`).
     const { scopeGrowth: _g, ...dev9 } = ok;
-    assert.deepEqual(validatePlanCheckOutput(dev9).scopeGrowth, []);
+    assert.throws(() => validatePlanCheckOutput(dev9), /scopeGrowth/);
   });
 
   it('prompts.stale-links (dev.17 propagation): the plan-check is given its stale links, each by its key, and answers them in a required staleLinks field', () => {
@@ -1030,7 +1030,7 @@ describe('M3 prompts: the vision and the arc roles', () => {
     }
     // An answer a dev.16 executor launched has no staleLinks: read as none answered (scaffolding, `planCheckStaleLinksDefault`).
     const { staleLinks: _s, ...dev16 } = ok;
-    assert.deepEqual(validatePlanCheckOutput(dev16).staleLinks, []);
+    assert.throws(() => validatePlanCheckOutput(dev16), /staleLinks/);
   });
 
   it('the gate renders standing obligations as compact lines in their own tag after direct obligations', () => {

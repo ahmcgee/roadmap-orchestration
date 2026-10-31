@@ -213,6 +213,7 @@ test('limits.windows-and-bounds: the plan\'s and the unit\'s limits are pinned a
     for (const g of spawnsOf(r, 'gate')) about(windowOf(g), 3 * MIN, 'a gate');
 
     // A limits apply below what u1 spent is refused; one above it re-pins u1's next dispatch.
+    syncInputs(r);
     editUnit(d, 'u1', (x) => void (x['limits'] = { editAllowanceMin: 5, chargeable: 1 }));
     assert.match(rejection(await apply(r, ctx)), /unit u1: its chargeable bound 1 is below what it has spent \(2\)/);
     editUnit(d, 'u1', (x) => void (x['limits'] = { editAllowanceMin: 5, judgmentDeadlineMin: 4 }));

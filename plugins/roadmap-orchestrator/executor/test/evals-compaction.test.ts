@@ -67,7 +67,9 @@ test('compaction.fixture: both sets deterministic, readers accept rendered estat
     assert.equal(ledger.length, 40);
     assert.equal(loadSidecars(a.previous).length, 40);
     const constraints = readFileSync(join(a.l.product, '.roadmap/constraints.md'), 'utf8');
-    assert.match(constraints, /^## C-4 — .* archive is append-only; corrections add a new revision\.$/m);
+    for (const ruling of ledger.filter((r) => r.status === 'active')) {
+      assert.ok(constraints.includes(`## ${ruling.id} — ${ruling.text}\n\n- state: active`), `plain statement ${ruling.id} is published`);
+    }
     assert.equal((constraints.match(/^## C-/gm) ?? []).length, ledger.filter((r) => r.status === 'active').length);
     assert.doesNotMatch(constraints, /lifetime:|consistency:/, 'schema 2 publishes the plain ledger without sidecar metadata');
     assert.equal(git(a.l.product, 'status', '--porcelain'), '');

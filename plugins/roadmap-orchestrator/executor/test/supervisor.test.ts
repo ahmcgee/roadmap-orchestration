@@ -153,6 +153,7 @@ test('supervisor.crash-window-persisted: crash 1 under one supervisor, a supervi
   const id = `sup-${g4}-3`;
   const record = needsUserRecord(JSON.parse(readFileSync(join(r.runDir, 'needs-user', `${id}.json`), 'utf8')), id);
   assert.deepEqual([record.id, record.blocking, record.subject, record.reason], [id, true, { type: 'host' }, 'supervisor-crash-limit']);
+  assert.deepEqual(record.options.map((o) => o.id), ['resolved'], 'crash recovery offers an explicit acknowledgement');
   assert.ok(record.evidence.length === 2 && record.evidence.every((p) => existsSync(p)), 'the stderr logs of this supervisor\'s crashed generations');
   assert.ok(!hostLockHeld(r), 'the supervisor released the lock before it exited');
   assert.ok(!existsSync(hostFile(r, EXIT_REASON_FILE)), 'no executor ended on purpose');

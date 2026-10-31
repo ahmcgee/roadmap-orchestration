@@ -162,8 +162,7 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
 - `roadmap merge-in <unit>`: merge the integration tip into a unit's branch (clean merges only); it re-enters at lanes.
 - `roadmap scope accept|reject <unit> --reason <text> [--repo <path> --arc <arc>]`: queued (scope the unit). Your decision on
   the scope growth a unit's plan-check proposed, or the path salvage reverted on its last two rounds (its `scope-growth`
-  item). `accept` lands it as one ruled revision (a new
-  ruling naming the patterns, the unit's plan and spec scope widened, in force only) and the unit re-opens at
+  item). `accept` lands it as one revision recording your reason (the unit's plan and spec scope widened, in force only) and the unit re-opens at
   plan-check on it; a revision the classifier refuses is rejected with every reason, and the unit stays held. `reject`
   keeps the scope: the plan-check runs again, told what you rejected, and decides within the scope. Acknowledges the
   item. Rejected for a unit not held for a proposal.
@@ -340,7 +339,7 @@ T-13: A cancelled booking frees its berth at once.
   is the manifest of the exported files. The executor never writes your input files, so this is the one way to get the
   files in force: edit the export, then `roadmap apply --from <dir> --rev <n> --reason <text>`.
   Use the export's `planRev` for N. If any edited file became stale, export again and re-apply the edit there.
-  Export works with the executor down; restart on the plan in force before queuing an apply.
+  Export works with the executor down; queue the apply with `--repo <path> --arc <arc>`, then restart to process it.
 - **A unit in force that every apply refuses** (`corpus-invalid` `scope-overlaps-corpus`): export, narrow the unit's
   scope off the corpus (or cut it, if it never started a task), then apply the exported edit with its revision and reason.
   A dispatched unit's scope may not shrink: cut it instead, or tell the owner. Once the unit merges, the refusal lifts
@@ -589,16 +588,15 @@ Blocking unless noted. Read the item file before acting.
   test that does not run). The item names every reason; fix by `apply`, then `resume` (SKILL.md "The design pass").
 - Flow, non-blocking (SKILL.md "The flow loop"): `flow-proposal` and `flow-host` (`flow accept` or `flow reject`; the
   item's evidence is the run's inputs file), `flow-worse` (revert by `apply` to the `preimage` of the proposal's
-  `flow-verdict` fact in the run dir's `events.jsonl`, then `ack`), `ruler-changed` (confirm or revert, then `ack`),
-  `flow-invalid` (`ack`).
+  `flow-verdict` fact in the run dir's `events.jsonl`, whose apply closes the arc item), `ruler-changed` (confirm with an arc subject action or revert by `apply`),
+  `flow-invalid` (review it, then act on the arc subject).
 - At the close-out of a corpus arc, every open P2 or P3 finding that names no obligation is banked as
   `finding-deferred` debt and ruled deferred (`by: code{close-out}`): the next Phase 0 dispositions it. A finding over
   an obligation never banks.
 - Holistic, blocking: `obligation-baseline` (a must-hold obligation not held at the baseline: fix the obligation
   or the plan), `finding-p1-escalated`, `new-finding-draining`, `not-reproduced`, `owner-request` (an owner-only act:
   ask the owner).
-- Corpus arcs, blocking: `pack-review` (fix the pack with `apply`, or ack). An open `issue-policy-untrusted` item an
-  executor before 1.0.0-dev.21 raised holds nothing: ack it.
+- Corpus arcs, blocking: `pack-review` (fix the exported pack with `apply`; an arc subject action closes the item).
 
 ## Schemas
 

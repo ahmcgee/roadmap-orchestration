@@ -417,6 +417,10 @@ function fire(p: Poll): string | null {
     const receipt = terminalReceipt(absPath(l.runDir), commandId(d.staleApply.command));
     if (receipt !== null) {
       if (receipt.state !== 'applied') return `the stale apply ${d.staleApply.command} was ${receipt.state}: ${JSON.stringify(receipt)}`;
+      if (first?.trigger.type === 'park' && first.trigger.unit === TIDY) {
+        // The root cut settled the park. An explicit audit weighs its still-open finding and admits the repair.
+        cli(c, ['audit', '--lens', 'vision', ...run]);
+      }
       if (p.fake) writeFileSync(join(l.fake, `${FAKE_CKPT_HOLD}.release`), '', { flag: 'wx' });
       d.staleApplied = { at: now() };
     }

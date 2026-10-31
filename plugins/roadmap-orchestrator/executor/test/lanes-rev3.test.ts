@@ -352,7 +352,7 @@ describe('the red class and the repeat skip (F2, F3)', () => {
     assert.throws(() => readBack(run, 1, run.base), /red class \(red\.json\) was never written/);
   });
 
-  test('redlane.unstamped-frozen-table: an unstamped (1.0.0-dev.6) run classifies with the frozen table, so a signature added since never re-reads it', T, async () => {
+  test('redlane.unstamped-refused: a pre-break rerun without required host evidence fails loudly', T, async () => {
     const run = unitRun([{ id: 'oom', argv: ['sh', '-c', 'echo "Out of memory: Killed process 42" >&2; exit 1'] }]);
     const [lane] = specLanes(run);
     const parent = parentOf(1);
@@ -366,10 +366,7 @@ describe('the red class and the repeat skip (F2, F3)', () => {
     });
     await once(lane!.argv);
     await once(['true']);
-    const [record] = readBack(run, 1, run.base);
-    assert.deepEqual([record!.signatures, record!.flaky, record!.diagnostic?.verdict, record!.hostSuspected], [[], true, 'pass', null], 'no signature in the dev.6 table: a diagnostic rerun, flaky');
-    assert.equal(readRedClass(record!.evidenceDir), null);
-    assert.equal(existsSync(invocationDir(run.runDir, record!.inv)), true);
+    assert.throws(() => readBack(run, 1, run.base), /rerun after a signature without host evidence/, 'a pre-break rerun receives no historical classification');
   });
 
   test('lanes.host-suspected: a red run whose output carries a host signature records it with the host evidence', T, async () => {

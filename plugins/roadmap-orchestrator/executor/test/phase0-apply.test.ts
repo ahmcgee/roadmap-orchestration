@@ -242,9 +242,9 @@ describe('re-pin (the corpus edit class)', () => {
     }
   }
 
-  it('apply.owner-answer-unruled: an answer re-anchoring in-slice I-1 without a ruling naming it amended is refused', T, async () => {
-    const reasons = rejected(await ownerAnswer(false));
-    assert.ok(reasons.some((r) => r.includes('I-1 is weakened') && r.includes('amended')), JSON.stringify(reasons));
+  it('apply.owner-answer-reason: a root reason authorizes re-anchoring I-1 without a ruling sidecar', T, async () => {
+    const verdict = accepted(await ownerAnswer(false));
+    assert.ok(verdict.evaluated.draft.dispositions.some((d) => d.obligation === 'I-1' && d.disposition === 'amended' && d.reason.trim()));
   });
 
   it('apply.owner-answer-mid-arc: with C-2 in force, one apply re-pins, answers P-1 and amends I-1 (corpus + phase0 + obligation)', T, async () => {
@@ -568,7 +568,7 @@ describe('revision plan-defect delta', () => {
     editPlan(a, (p) => ({ ...p, units: [...p['units'] as Json[], { id: 'u2', spec: 'u2.json', risk: 'low', scope: ['src/**'], resources: [], after: ['u1'] }] }));
     editJsonFile(join(a.planDir, 'obligations.json'), (o) => ({ ...o, obligations: (o['obligations'] as Json[]).map((i) => {
       const witness = { ...i['witness'] as Json, files: ['test/new.test.ts'] };
-      return { ...i, deliveredBy: ['u2'], witness, proofJudgment: { ...i['proofJudgment'] as Json, witness } };
+      return { ...i, deliveredBy: ['u2'], witness, proofJudgment: { ...i['proofJudgment'] as Json, witness: {testIds: (i['witness'] as Json)['testIds'], files: witness.files} } };
     }) }));
     const j = inForce(a);
     try {

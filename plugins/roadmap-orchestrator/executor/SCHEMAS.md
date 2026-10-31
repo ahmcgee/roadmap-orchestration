@@ -873,7 +873,7 @@ backend and lane invocations (recorded `interrupted`, a hold); `pause --all` doe
 are not admitted. Stop (the `stop` command, or a unit whose outcome stops the arc) aborts every task, kills every
 live backend, lane and smoke invocation (a probe's too), lets teardowns, reclaims and chains finish, then
 `recoverReservations` and the run ends `stop`. Control commands keep applying meanwhile. Blocking items include
-the file-only `sup-<gen>-<n>` and `host-<kind>-<n>` (host-level; `ack` answers them like any other, the ack fact
+the file-only `sup-<gen>-<n>` and `host-<kind>-<n>` (host-level; both offer a `resolved` acknowledgement option; the ack fact
 taking any id form); a host item, `recovery-required`, `log-corrupt` and `supervisor-crash-limit` hold every
 admission, `base-red` holds candidates, and an item about a unit holds that unit only. The executor never
 releases the host: its supervisor does, after it exited.

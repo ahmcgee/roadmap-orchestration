@@ -28,7 +28,7 @@ import { events } from './fixtures/invoke-specs.ts';
 import { editPlan } from './fixtures/route-common.ts';
 import { BUILD_REPORT,SCENARIO_TIMEOUT_MS,admitAll,planCheckStep } from './fixtures/stage-common.ts';
 import {
-type ArcRun,MUL,SUITE_LANE,U1,appendSteps,applyBody,commandContextFor,contextFor,gateRepairStep,gateStep,isGateCall,mulBuild,outcomes,setupArc,stepUntil,
+syncInputs,type ArcRun,MUL,SUITE_LANE,U1,appendSteps,applyBody,commandContextFor,contextFor,gateRepairStep,gateStep,isGateCall,mulBuild,outcomes,setupArc,stepUntil,
 workDirPattern,
 } from './fixtures/unit-common.ts';
 import { git } from './helpers/repo.ts';
@@ -38,8 +38,8 @@ const T = { timeout: SCENARIO_TIMEOUT_MS };
 const live = () => admitAll;
 
 const blocking = (path: string, text: string, extra: Readonly<Record<string, JsonValue>> = {}): JsonValue =>
-  ({ severity: 'blocking', path, text, contractRef: null, experiments: [], debt: null, ...extra });
-const note = (path: string, text: string): JsonValue => ({ severity: 'note', path, text, contractRef: null, experiments: [], debt: null });
+  ({ severity: 'blocking', path, text, contractRef: null, experiments: [], defect: 'incorrect-behaviour', reraises: null, hunk: null, debt: null, ...extra });
+const note = (path: string, text: string): JsonValue => ({ severity: 'note', path, text, contractRef: null, experiments: [], defect: null, reraises: null, hunk: null, debt: null });
 /** A fix round: the build session resumed, committing `files` (none: no change), answering `docsOnlySince`. */
 const fixBuild = (files: Readonly<Record<string, string>> | null, docsOnlySince: string | null = null, before: readonly Step['acts'][number][] = []): Step => ({
   as: 'codex', expect: { argv: ['exec', 'resume'] },
@@ -94,7 +94,7 @@ test('review.defect-required: a blocking finding without a defect is refused thr
 });
 
 test('review.ride-along: comment and doc findings never block; each enters the ledger released (no banking outside a corpus arc), and only one naming its drag is debt', T, async () => {
-  const rideAlong = (path: string, text: string, debt: JsonValue): JsonValue => ({ severity: 'ride-along', path, text, contractRef: null, experiments: [], debt });
+  const rideAlong = (path: string, text: string, debt: JsonValue): JsonValue => ({ severity: 'ride-along', path, text, contractRef: null, experiments: [], defect: null, reraises: null, hunk: null, debt });
   const findings = [rideAlong('src/mul.js', 'The comment above mul is stale.', { drag: 'Every later caller reads the wrong contract from it.' }), rideAlong('test/mul.test.js', 'Typo in a test name.', null)];
   const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve', findings })] });
   const r = contextFor(d);
@@ -102,7 +102,7 @@ test('review.ride-along: comment and doc findings never block; each enters the l
     await stepUntil(r, 'u1', (f) => f.stage === 'gate');
     assert.equal(outcomes(d).at(-1), 'gate:approve');
     assert.deepEqual(ledgerOf(r), [['R-1', 'src/mul.js', 'released'], ['R-2', 'test/mul.test.js', 'released']]);
-    const read = validateGateOutput({ decision: 'approve', findings, directives: [], reasons: ['ok'], premises: [], unreviewed: [], clusters: null,  });
+    const read = validateGateOutput({ rulings: [], decision: 'approve', findings, directives: [], reasons: ['ok'], premises: [], unreviewed: [], clusters: null,  });
     assert.deepEqual(gateDebtNotes(read.findings).map((n) => n.index), [0], 'a ride-along finding is debt only with its drag');
     assert.ok(factsOf(d, 'approval').at(-1)!.blobs !== undefined, 'the approval records its blobs');
   } finally {
@@ -325,7 +325,7 @@ test('review.dispute-ruled-once: a builder\'s dispute goes to the next gate, whi
   appendSteps(d, [
     fixBuild(NEGATIVE_TEST, null, [{ type: 'writeToPrompt', pattern: workDirPattern(d), file: 'decisions.json', text: dispute }]),
     gateStep({ decision: 'approve' }, { stdinContains: ['<disputes>', 'R-1: mul is undocumented.', 'Dispute: The contract asks for exactly this.'] }),
-    gateRepairStep({ decision: 'approve',  }, ['rulings misses the disputes of R-1']),
+    gateRepairStep({ decision: 'approve', rulings: [{ finding: 'R-1', ruling: 'overruled', reason: 'The contract already covers it.' }] }, ['rulings misses the disputes of R-1']),
   ]);
   const r = contextFor(d);
   try {
@@ -465,6 +465,7 @@ async function scopeOnlyReentry(scope: readonly string[]): Promise<ArcRun> {
   record(r.ctx, at(start(r.ctx, U1, 'candidate'), 'candidate'), 'interrupted');
   assert.equal(r.journal.view.unit(U1).status, 'held');
   const inForce = JSON.parse(readFileSync(keptSpecPath(r.ctx, r.unit('u1')), 'utf8')) as Record<string, unknown>;
+  syncInputs(r);
   writeFileSync(join(dirname(d.planPath), 'u2.json'), JSON.stringify({ ...inForce, unit: 'u2', rev: 1, scope }));
   editPlan(d, (p) => void p.units.push({ ...p.units[0]!, id: 'u2', spec: 'u2.json', scope: [...scope], reenters: { unit: 'u1', enterAt: 'verify' } }));
   const applied = await applyCommand(commandContextFor(r), submitCommand(r.ctx.runDir, r.ctx.plan().arc, applyBody(d)));

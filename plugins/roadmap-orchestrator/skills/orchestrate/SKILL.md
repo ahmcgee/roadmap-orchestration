@@ -362,17 +362,17 @@ touches only that lever's plan fields, and judges it on the chart (`status.flow`
   declare a given.
 - **The ruler is never a lever.** Never edit a ruler path to make a number move: obligations and their witness
   lanes, arc lanes, `holistic.audit`, `holistic.advances`, the vision, judgment-seat routing, risk. An `apply` of
-  yours that touches one after the first admission raises `ruler-changed` (`status.flow`, the brief). Ack it only for
+  yours that touches one after the first admission raises `ruler-changed` (`status.flow`, the brief). Close it with an arc subject action only for
   a change convergence needed, and say why at the next check-in.
 - **`flow-worse`**: a verdict found an applied change worse. Revert it by `apply` (export, restore the values in the
-  `preimage` of that proposal's `flow-verdict` fact, `apply --from <export> --rev N --reason "<line>"`), then ack. No flow run proposes it again.
+  `preimage` of that proposal's `flow-verdict` fact, `apply --from <export> --rev N --reason "<line>"`), whose apply closes the arc item. No flow run proposes it again.
 - **`flow-host`** is advice for the owner (more cores, a faster disk), never applied: put it in your next check-in
   preface, then accept or reject it with a reason.
 - **Givens.** When a lever cannot be tuned on this host and that is self-evident, declare it yourself:
   `roadmap flow given`. When in doubt, ask the owner. Repo givens are the owner's (`flow.givens` in the config).
 - **`flow request`** only on a concrete observation (a unit far past its stage median, a lane at twice its usual
   time), never to chase a number. T, I and OE (`status.flow.accounting`) are diagnostic: report them, never steer to
-  them. `flow-invalid`: ack it; report it if it repeats.
+  them. `flow-invalid`: review it and act on the arc subject; report it if it repeats.
 
 ## Supervising the executor
 
@@ -645,14 +645,14 @@ second design park of one lineage (`respec-second`). `roadmap steer <unit>` is a
   item's summary carries the stack, and the arc went on without the unit. Read the throw site: an executor defect is the
   owner's to report (the run's feedback notes); something the unit left in its checkout (an unreadable file, an odd
   path) is fixed there or by a spec revision. Then `roadmap resume <unit>` re-enters the stage it parked at. An arc job's
-  `executor-fault` item (subject the arc) holds that job until you acknowledge it: `roadmap ack <id>` makes it due again.
+  `executor-fault` item (subject the arc) holds that job until an arc subject action closes it: `roadmap resume` makes it due again.
 - **Parked `routing-changed`** (the implementer seat's backend or model moved after its build started; an
   effort-only change re-pins by itself): restore the routing of the seat the item names, or re-enter the unit
   under a new id. Once the seat resolves to the same backend and model the unit was dispatched on,
   `roadmap resume <unit>` re-pins it and re-enters it where it parked.
 - **Parked anywhere else** (a lost build, a residue, a red candidate, a red base, a failed salvage): re-enter.
   Add a unit with a new id and `"reenters": {"unit": <old>, "fixes": <failure>}` (its fixed spec, the same scope),
-  ack the old item, `roadmap apply`. `fixes` names the failure the re-entry fixes, and `apply` refuses a re-entry
+  `apply --from <export> --rev N --reason "<line>"`; the apply closes the old unit's item. `fixes` names the failure the re-entry fixes, and `apply` refuses a re-entry
   without it: the park as `<unit>/<stage>#<attempt>` (the item's recommendation spells it), another failure outcome of
   the lineage, or a lane failure by its `ref` in `status.units[].failures` (`<unit>/lanes#<attempt>/<lane>`). Find
   the cause first: `apply` accepts a re-entry that changes nothing the failure ran under, but a design failure retried
@@ -709,7 +709,7 @@ classes, scope growth) and never writes into your files: the plan in force lives
   `planRev`. Every edited file must still match its exported bytes in force; untouched files take current bytes.
   Edited specs bump revision automatically.
 - **Stale files** reject the apply together. Export again and re-apply your edit to the current files.
-- `start` restarts on the plan in force. To amend it after downtime, restart first and then queue the exported apply.
+- `start` restarts on the plan in force. To amend it after downtime, queue the exported apply with an explicit repo and arc, then restart.
 
 The executor applies at the next stage boundary and kills nothing; the receipt says applied or every reason it was
 rejected. An edit you never apply has no effect, even after a restart.

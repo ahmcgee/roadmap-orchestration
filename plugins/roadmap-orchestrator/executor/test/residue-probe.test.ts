@@ -51,7 +51,7 @@ type Laid = Readonly<{ r: ExecRun; estate: string; barriers: string }>;
 function layout(t: Parameters<typeof setupExec>[0]): Laid {
   const estate = tmpDir('residue-estate');
   const barriers = tmpDir('residue-barriers');
-  const lanes = [MUL_LANE, { id: 'estate', cadence: 'candidate' as const, resources: ['estate'], argv: [process.execPath, fixture('cm-pin.ts'), barriers, PIN, estate, 'estate'] }];
+  const lanes = [MUL_LANE, { id: 'estate', cadence: 'unit' as const, resources: ['estate'], argv: [process.execPath, fixture('cm-pin.ts'), barriers, PIN, estate, 'estate'] }];
   const r = setupExec(t, {
     units: [{ id: 'u1', lanes }],
     steps: [

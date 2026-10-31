@@ -571,7 +571,13 @@ export function runSchemaRows(dir: AbsPath): readonly Rejection<'schema-version'
     if (!existsSync(path)) continue;
     const line = readFileSync(path, 'utf8').split('\n').find((l) => l.trim() !== '');
     if (line === undefined) continue;
-    const value = JSON.parse(name === 'start.json' ? readFileSync(path, 'utf8') : line) as { v?: number };
+    let value: {v?: number};
+    try { value = JSON.parse(name === 'start.json' ? readFileSync(path, 'utf8') : line) as {v?: number}; }
+    catch (error) {
+      // The journal reader reports malformed event bytes as log-corrupt after the claim.
+      if (name === 'events.jsonl' && error instanceof SyntaxError) continue;
+      throw error;
+    }
     if (typeof value.v === 'number' && value.v !== SCHEMA_VERSION) return [{ kind: 'schema-version', path, recorded: value.v, expected: SCHEMA_VERSION,
       detail: `Run directory uses schema ${value.v}; this executor requires schema ${SCHEMA_VERSION}. Finish the arc with its original executor, or start a new arc; previous schemas are not adopted.` }];
   }

@@ -162,7 +162,7 @@ test('fault.job: a throw inside the baseline job ends it faulted (a non-blocking
       const lane = o.lanes[0]!;
       o.lanes[0] = { ...lane, argv: ['sh', '-c', `${lockOnce(marker)}; exec "$@"`, 'sh', ...(lane['argv'] as string[])], evidenceGlobs: ['out/**'] };
       const rev = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: o.lanes, obligations: [], mapping: { paths: [] } }).lanes[0]!);
-      for (const ob of o.obligations) if (ob.proofJudgment !== null) ob.proofJudgment.laneRev = rev;
+      // A lane edit leaves the proof's test ids/files pin unchanged.
       writeFileSync(path, JSON.stringify(o));
     },
   });
