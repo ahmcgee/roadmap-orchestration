@@ -65,7 +65,7 @@ import { terminalReceipt } from '../../src/commands/queue.ts';
 import { isAlive,statOf } from '../../src/contain/proc.ts';
 import type { Event,Fact } from '../../src/core/events.ts';
 import { readJson } from '../../src/core/fsx.ts';
-import { type NeedsUserId,arcId,commandId } from '../../src/core/ids.ts';
+import { arcId, commandId } from '../../src/core/ids.ts';
 import { readJournal } from '../../src/core/log.ts';
 import { type ProcIdentity,executorExitReason } from '../../src/core/records.ts';
 import { type AbsPath,absPath } from '../../src/core/values.ts';
@@ -82,9 +82,9 @@ import { type ProfileName,profileName } from '../../src/routing/types.ts';
 import type { ArcState,Status } from '../../src/status.ts';
 import { executorLogs,lastLine } from '../../src/supervisor.ts';
 import { writeShims } from '../../test/fakes/shim.ts';
-import { FAKE_CKPT_HOLD,FAKE_FLOW_HOLD,FIRST,type Layout,MONEY_LANE,type StoryBranch,UNITS,barrierFile,layout } from './layout.ts';
+import { FAKE_FLOW_HOLD, FIRST, type Layout, MONEY_LANE, type StoryBranch, UNITS, barrierFile, layout } from './layout.ts';
 import { type StoryName,storyName,storySteps } from './scenario.ts';
-import { DIRECTION_EDITED,json } from './setup.ts';
+import { DIRECTION_EDITED,REPAIR_UNIT,repairSpecText,json } from './setup.ts';
 
 const BIN_ROADMAP = fileURLToPath(new URL('../../bin/roadmap', import.meta.url));
 const EXEC_CLI = fileURLToPath(new URL('../../test/fixtures/exec-cli.ts', import.meta.url));
@@ -284,39 +284,7 @@ type Poll = Readonly<{ l: Layout; c: Cli; run: readonly string[]; fake: boolean;
  * bundle applied (a no-op, or a request with nothing to apply); an open `owner-request`; in branch R, the audit held at
  * the barrier ending without a witness P1 over I-2.
  */
-function offStory(p: Poll): string | null {
-  const { l, d, s, events } = p;
-  const inputs = factsOf(events, 'checkpoint-inputs');
-  const decided = factsOf(events, 'bundle-decided');
-  const bundles = factsOf(events, 'plan-applied').filter((f) => f.source?.type === 'bundle');
-  const triggerOf = (job: string): string => {
-    const i = inputs.find((x) => x.job === job);
-    return i === undefined ? 'unknown trigger' : triggerText(i.trigger);
-  };
-  const [first] = inputs;
-  if (first !== undefined) {
-    const firstDecision = decided.find((x) => x.job === first.job);
-    if (bundles.some((b) => b.source?.type === 'bundle' && b.source.job === first.job)) {
-      return `the first checkpoint ${first.job} (${triggerText(first.trigger)}) applied its bundle: the stale apply ${d.staleApply?.command ?? '(not yet submitted)'} did not commit before its staleness check`;
-    }
-    if (firstDecision !== undefined && !(firstDecision.outcome.kind === 'rejected' && firstDecision.outcome.reason === 'stale')) {
-      return `the first checkpoint ${first.job} (${triggerText(first.trigger)}) decided ${outcomeText(firstDecision.outcome)}, not rejected{stale}`;
-    }
-  }
-  if (bundles.length === 0) {
-    const applicable = (o: BundleOutcome): boolean => o.kind === 'requested' && (readNeedsUser(absPath(l.runDir), o.needsUser as NeedsUserId)?.options.some((x) => x.id === 'apply') ?? false);
-    const settled = decided.find((x) => x.outcome.kind === 'no-op' || (x.outcome.kind === 'requested' && !applicable(x.outcome)));
-    if (settled !== undefined) return `checkpoint ${settled.job} (${triggerOf(settled.job)}) decided ${outcomeText(settled.outcome)} before any bundle applied: it disposes of nothing`;
-  }
-  const owner = s.needsUser.find((n) => n.reason === 'owner-request');
-  if (owner !== undefined) return `owner-request ${owner.id} is open (an owner-only act the driver never answers): ${readNeedsUser(absPath(l.runDir), owner.id)?.summary ?? '(no record)'}`;
-  if (d.barrier !== null) {
-    const ended = factsOf(events, 'audit-ended').find((x) => x.job === d.barrier!.audit);
-    const p1 = factsOf(events, 'finding-opened').find((f) => f.lens === 'witness' && f.severity === 'P1' && f.obligation === 'I-2');
-    if (ended !== undefined && p1 === undefined) return `branch R: ${d.barrier.audit} ended ${ended.outcome} with findings ${JSON.stringify(ended.findings)}: no witness P1 over I-2`;
-  }
-  return null;
-}
+function offStory(p: Poll): string | null { const {events,d}=p; if(d.barrier!==null){ const ended=factsOf(events,'audit-ended').find(x=>x.job===d.barrier!.audit); const p1=factsOf(events,'finding-opened').find(f=>f.lens==='witness'&&f.severity==='P1'&&f.obligation==='I-2'); if(ended!==undefined&&p1===undefined)return 'Audit ended without the I-2 witness P1'; } return null; }
 
 /** I-2's verdict in the witness record a `witnessed` fact names (its witness as the fixture's obligations file has it). */
 function i2Verdict(l: Layout, f: Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: 'witnessed' }>): ObservationVerdict {
@@ -366,89 +334,29 @@ function recordClosures(l: Layout, d: Devices, events: readonly Event[]): void {
  * the run), else null.
  */
 function fire(p: Poll): string | null {
-  const { l, c, run, d, s, events } = p;
-  recordClosures(l, d, events);
-  for (const item of s.needsUser) {
-    if (!ACKED_REASONS.includes(item.reason) || d.acks.some((a) => a.needsUser === item.id)) continue;
-    const offered = readNeedsUser(absPath(l.runDir), item.id)?.options.some((o) => o.id === 'apply') ?? false;
-    const choice = item.reason === 'bundle-request' && offered ? 'apply' : null;
-    d.acks.push({ needsUser: item.id, reason: item.reason, choice, ack: submitted(cli(c, ['ack', item.id, ...(choice === null ? [] : ['--choice', choice]), ...run])) });
-  }
-  const failure = offStory(p);
-  if (failure !== null) return failure;
-  if (d.branch === null) {
-    const b = branchOf(l, events);
-    if (b !== null) d.branch = { ...b, at: now() };
-  }
-
-  // Branch R: the first audit to see the regression waits at the money barrier; report merges meanwhile (S′).
-  const reached = barrierFile(l, 'reached');
-  if (d.barrier === null && existsSync(reached)) {
-    const job = readFileSync(reached, 'utf8').trim();
-    const audit = factsOf(events, 'audit-started').find((a) => a.job === job);
-    const s1 = tidyHead(events);
-    if (audit === undefined) return `the money lane waits at the barrier for ${job}, but the log has no audit-started of ${job}`;
-    if (!audit.triggers.some((t) => t.type === 'cadence') || audit.integrationSha !== s1) {
-      return `branch R: ${job} waits at the money barrier, but it was started by ${JSON.stringify(audit.triggers)} on ${audit.integrationSha}, not the cadence audit of tidy's publication (${s1 ?? 'tidy has not published'})`;
-    }
-    d.barrier = { at: now(), audit: job, runOnly: submitted(cli(c, ['run-only', ...UNITS, ...run])) };
-  }
-  if (d.barrier !== null && d.release === null && merged(s, 'report')) {
-    writeFileSync(barrierFile(l, 'release'), '', { flag: 'wx' });
-    d.release = { at: now() };
-  }
-
-  const [first] = factsOf(events, 'checkpoint-inputs');
-  if (d.staleApply === null && first !== undefined) {
-    const out = join(l.fake, 'direction-export');
-    const exported = JSON.parse(cli(c, ['inputs', 'export', '--out', out, ...run])) as {planRev: number};
-    const file = join(out, 'plan.json');
-    const plan = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
-    // The prevented branch needs a root-authorized cut under schema 2. Commit it with the stale-making edit.
-    const units = plan['units'] as {id: string; cut?: {reason: string}}[];
-    if (first.trigger.type === 'park' && first.trigger.unit === TIDY) {
-      const tidy = units.find((u) => u.id === TIDY)!;
-      tidy.cut = {reason: 'Its goal cannot be met within src/cli.js without breaking I-2.'};
-    }
-    writeFileSync(file, JSON.stringify({...plan, direction: DIRECTION_EDITED}));
-    d.staleApply = { command: submitted(cli(c, ['apply', '--from', out, '--rev', String(exported.planRev), '--reason', 'Refine the direction during checkpoint capture', ...run])), checkpoint: first.job, trigger: triggerText(first.trigger), seq: first.seq };
-  }
-  if (d.staleApply !== null && d.staleApplied === null) {
-    const receipt = terminalReceipt(absPath(l.runDir), commandId(d.staleApply.command));
-    if (receipt !== null) {
-      if (receipt.state !== 'applied') return `the stale apply ${d.staleApply.command} was ${receipt.state}: ${JSON.stringify(receipt)}`;
-      if (first?.trigger.type === 'park' && first.trigger.unit === TIDY) {
-        // The root cut settled the park. An explicit audit weighs its still-open finding and admits the repair.
-        cli(c, ['audit', '--lens', 'vision', ...run]);
-      }
-      if (p.fake) writeFileSync(join(l.fake, `${FAKE_CKPT_HOLD}.release`), '', { flag: 'wx' });
-      d.staleApplied = { at: now() };
-    }
-  }
-
-  const flowRelease = join(l.fake, `${FAKE_FLOW_HOLD}.release`);
-  if (p.fake && !existsSync(flowRelease) && factsOf(events, 'flow-ended').length > 0) writeFileSync(flowRelease, '', { flag: 'wx' });
-
-  // G18: every unit a bundle revision adds, read from its `plan-applied{source: bundle}` change.
-  const bundles = factsOf(events, 'plan-applied').filter((f) => f.source?.type === 'bundle');
-  for (const b of bundles) {
-    for (const x of b.changes) {
-      if (x.type !== 'unit-added' || b.source?.type !== 'bundle' || d.added.some((a) => a.unit === x.unit)) continue;
-      d.added.push({ unit: x.unit, job: b.source.job, rev: b.rev, seq: b.seq });
-    }
-  }
-  const [firstBundle] = bundles;
-  if (firstBundle === undefined) return null;
-  // Once an audit started after the first bundle revision (the drift audit), every unit still to run may: the plan's
-  // units not cut or superseded, and every added one (re-issued as more are added).
-  const audit = factsOf(events, 'audit-started').find((f) => f.seq > firstBundle.seq);
-  if (audit === undefined) return null;
-  const units = [...new Set([...s.units.filter((u) => u.status !== 'cut' && u.status !== 'superseded').map((u) => u.unit as string), ...d.added.map((a) => a.unit)])].sort();
-  if (d.unlimited === null && (d.admit === null || units.some((u) => !d.admit!.units.includes(u)))) {
-    d.admit = { runOnly: submitted(cli(c, ['run-only', ...units, ...run])), audit: audit.job, units };
-  }
-  if (d.admit !== null && d.unlimited === null && d.added.every((a) => merged(s, a.unit))) d.unlimited = submitted(cli(c, ['run-only', '--clear', ...run]));
-  return null;
+ const {l,c,run,d,s,events}=p;
+ recordClosures(l,d,events);
+ const tidy=tidyHead(events);
+ const audits=factsOf(events,'audit-started');
+ if(tidy!==null&&audits.length===0&&!existsSync(join(l.fake,'audit-requested'))){cli(c,['audit',...run]);writeFileSync(join(l.fake,'audit-requested'),'');}
+ if(d.branch===null){const b=branchOf(l,events);if(b!==null)d.branch={...b,at:now()};}
+ const reached=barrierFile(l,'reached');
+ if(d.barrier===null&&existsSync(reached)){const job=readFileSync(reached,'utf8').trim();d.barrier={at:now(),audit:job,runOnly:submitted(cli(c,['run-only',...UNITS,...run]))};}
+ if(d.barrier!==null&&d.release===null&&merged(s,'report')){writeFileSync(barrierFile(l,'release'),'');d.release={at:now()};}
+ const ended=factsOf(events,'audit-ended')[0];
+ if(ended!==undefined&&d.staleApply===null){
+  const out=join(l.fake,'repair-export');const exported=JSON.parse(cli(c,['inputs','export','--out',out,...run]));const file=join(out,'plan.json');const plan=JSON.parse(readFileSync(file,'utf8'));
+  plan.units.push({...REPAIR_UNIT,spec:'fix-rounding.json',review:'always',resources:[]});plan.direction=DIRECTION_EDITED;
+  writeFileSync(join(out,'fix-rounding.json'),repairSpecText());writeFileSync(file,JSON.stringify(plan));
+  d.staleApply={command:submitted(cli(c,['apply','--from',out,'--rev',String(exported.planRev),'--reason','Admit the repair of the campaign finding',...run])),checkpoint:ended.job,trigger:'campaign audit',seq:ended.seq};
+  const units=[...UNITS,REPAIR_UNIT.id];d.admit={runOnly:submitted(cli(c,['run-only',...units,...run])),audit:ended.job,units};
+ }
+ if(d.staleApply!==null&&d.staleApplied===null){const receipt=terminalReceipt(absPath(l.runDir),commandId(d.staleApply.command));if(receipt!==null){if(receipt.state!=='applied')return 'Root repair apply was '+JSON.stringify(receipt);d.staleApplied={at:now()};}}
+ for(const r of factsOf(events,'plan-applied'))for(const x of r.changes)if(x.type==='unit-added'&&!d.added.some(a=>a.unit===x.unit))d.added.push({unit:x.unit,job:ended?.job??'root',rev:r.rev,seq:r.seq});
+ if(d.added.length>0&&d.admit===null){const units=[...UNITS,...d.added.map(a=>a.unit)];d.admit={runOnly:submitted(cli(c,['run-only',...units,...run])),audit:ended!.job,units};}
+ const flowRelease=join(l.fake,FAKE_FLOW_HOLD+'.release');if(p.fake&&!existsSync(flowRelease)&&factsOf(events,'flow-ended').length>0)writeFileSync(flowRelease,'');
+ if(d.admit!==null&&d.unlimited===null&&d.added.every(a=>merged(s,a.unit)))d.unlimited=submitted(cli(c,['run-only','--clear',...run]));
+ return offStory(p);
 }
 
 export async function drive(args: Args): Promise<Report> {

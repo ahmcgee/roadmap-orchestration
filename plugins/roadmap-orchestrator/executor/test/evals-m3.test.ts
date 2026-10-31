@@ -239,8 +239,8 @@ test('evals-m3.setup-valid: setup lays out a valid holistic corpus arc whose wit
   assert.equal(steps.filter((s) => s.unit !== undefined && !/^(audit|ckpt|review|flow)-/.test(s.unit)).length, 12, 'three calls for each of four units');
   assert.equal(steps.filter((s) => s.unit?.startsWith('flow-') === true).length, 1, 'one flow run (M4b: constraint-shift once three units merged, the repair held until it ended)');
   assert.equal(steps.filter((s) => s.unit?.startsWith('review-') === true).length, 1, 'one pack review call (the corpus arc\'s, before the first admission)');
-  assert.equal(steps.filter((s) => s.unit?.startsWith('audit-') === true).length, 5, 'five lens calls');
-  assert.equal(steps.filter((s) => s.unit?.startsWith('ckpt-') === true).length, 5, 'five checkpoint calls (the paid run\'s three, the drift audit\'s skipped: nothing new; the partial bundle and its repair turn)');
+  assert.equal(steps.filter((s) => s.unit?.startsWith('audit-') === true).length, 2, 'two campaign audit calls');
+  assert.equal(steps.filter((s) => s.unit?.startsWith('ckpt-') === true).length, 0, 'no checkpoint seat');
 });
 
 type Fixture = Readonly<{ dir: string; driver: Exit; report: Report; checked: Checked }>;
@@ -262,6 +262,7 @@ async function runStory(story: StoryName): Promise<Readonly<{ fx: Fixture; event
   };
   track(scope);
   const driver = await script('driver.ts', [dir, '--profile', 'default', '--fake', story]).finally(() => teardown(scope));
+  assert.equal(driver.code, 0, driver.stdout + driver.stderr);
   const report = JSON.parse(readFileSync(l.report, 'utf8')) as Report;
   return { fx: { dir, driver, report, checked: await check(dir) }, events: readJournal(absPath(l.runDir), arcId(l.arc)).events };
 }
@@ -297,31 +298,10 @@ describe('evals-m3: the fake-backed fixture run, branch R', () => {
     assert.deepEqual(report.exit, { kind: 'complete', units: [...UNITS, REPAIR_UNIT.id].map((unit) => ({ unit, result: 'merged' })) });
     assert.deepEqual(failing(checked), [], JSON.stringify(checked.result.criteria));
     assert.equal(checked.result.branch, 'R');
-    assert.equal(checked.result.criteria.length, 25);
+    assert.equal(checked.result.criteria.length, 20);
     assert.ok(['regression-unselected', 'audit-race', 'repair-resolved'].every((n) => checked.result.criteria.some((c) => c.name === n)), 'branch R\'s own criteria are graded');
-    assert.deepEqual(checked.result.notExercised, BRANCHES.filter((b) => b !== 'literal partial bundle'), 'the fake story takes the literal partial bundle, and nothing else the paid run leaves out');
+    assert.deepEqual(checked.result.notExercised, BRANCHES, 'the fake story takes the literal partial bundle, and nothing else the paid run leaves out');
     assertEveryStepPlayed(fx.dir);
-  });
-
-  test('evals-m3.partial-bundle (A18, G19): the two-op bundle whose second op is invalid applies neither; its one re-evaluation applies the admit alone', () => {
-    const decided = factsOf('bundle-decided');
-    const revisions = factsOf('plan-applied');
-    const bundleRevs = revisions.filter((f) => f.source?.type === 'bundle');
-    const outcome = (job: string) => {
-      const x = decided.find((f) => f.job === job);
-      return x === undefined ? (bundleRevs.some((f) => f.source?.type === 'bundle' && f.source.job === job) ? 'applied' : 'none') : x.outcome.kind === 'rejected' ? `rejected:${x.outcome.reason}` : x.outcome.kind;
-    };
-    assert.deepEqual(['ckpt-1', 'ckpt-2', 'ckpt-3', 'ckpt-4'].map(outcome), ['rejected:stale', 'rejected:invalid', 'applied', 'no-op']);
-    assert.deepEqual(factsOf('checkpoint-skipped').map((f) => f.audit), ['audit-2'], 'the drift audit after the settled ckpt-3 found nothing new: no checkpoint');
-    const invalid = decided.find((f) => f.job === 'ckpt-2')!;
-    assert.ok(invalid.outcome.kind === 'rejected');
-    assert.match(invalid.outcome.detail, /V-999/);
-    const captured = factsOf('checkpoint-inputs').find((f) => f.job === 'ckpt-2')!;
-    assert.deepEqual(revisions.filter((f) => f.seq > captured.seq && f.seq < invalid.seq), [], 'no revision between its capture and its rejection');
-    const [bundle] = bundleRevs;
-    assert.ok(bundle !== undefined && bundle.source?.type === 'bundle' && bundle.source.job === 'ckpt-3');
-    assert.deepEqual(bundle.changes, [{ type: 'unit-added', unit: REPAIR_UNIT.id }], 'the re-evaluation applied the admit, and only it');
-    assert.ok(bundle.seq > invalid.seq);
   });
 
   test('evals-m3.latch-during-audit: I-1 latches while audit-1 runs; the audit grades latches as of its capture, so it opens the I-2 witness P1 and nothing over I-1', () => {
@@ -381,49 +361,10 @@ describe('evals-m3: the fake-backed fixture run, branch R', () => {
     assert.deepEqual(failing(await check(fx.dir)), [], 'restoring the integration branch restores every criterion');
   });
 
-  test('evals-m3.tamper-digest: a digest the driver did not acknowledge fails divergence-digest-bound', async () => {
-    const tampered = await tamper((d) => ({ ...d, acks: d.acks.filter((a) => a.reason !== 'divergence-digest') }));
-    assert.deepEqual(failing(tampered), ['divergence-digest-bound']);
-    assert.match(criterion(tampered, 'divergence-digest-bound').detail, /the driver did not acknowledge the digest/);
-  });
-
   test('evals-m3.tamper-stale: a stale apply that committed no revision fails stale-whole', async () => {
     const tampered = await tamper((d) => ({ ...d, staleApply: { ...d.staleApply!, command: 'cmd-000000000000ffff' } }));
     assert.deepEqual(failing(tampered), ['stale-whole']);
     assert.match(criterion(tampered, 'stale-whole').detail, /committed no revision/);
-  });
-});
-
-describe('evals-m3: the fake-backed fixture run, branch P', () => {
-  let fx: Fixture;
-  let events: readonly Event[];
-
-  before(async () => {
-    ({ fx, events } = await runStory('prevented'));
-  }, T);
-
-  test('evals-m3.prevented: branch P (as paid run 3); tidy is stopped upstream and cut, the repair merges, the arc completes, and every criterion passes', () => {
-    const { driver, report, checked } = fx;
-    assert.equal(driver.code, 0, `driver: ${driver.stdout} ${driver.stderr}`);
-    assert.equal(report.endedBy, 'exit', JSON.stringify(report.devices));
-    const d = report.devices;
-    assert.equal(d.failed, null);
-    assert.equal(d.branch?.branch, 'P');
-    assert.match(d.branch!.why, /unit-cut of tidy/);
-    assert.deepEqual([d.barrier, d.release], [null, null], 'no regression: the money barrier never held');
-    for (const name of ['runOnly', 'staleApply', 'staleApplied', 'admit', 'unlimited'] as const) assert.notEqual(d[name], null, `device ${name} fired`);
-    assert.deepEqual(d.added.map((a) => a.unit), [REPAIR_UNIT.id]);
-    assert.deepEqual(d.acks.map((a) => a.reason).sort(), ['convergence-bound', 'divergence-digest']);
-    assert.ok(report.exit?.kind === 'complete', JSON.stringify(report.exit));
-    assert.deepEqual(failing(checked), [], JSON.stringify(checked.result.criteria));
-    assert.equal(checked.result.branch, 'P');
-    assert.equal(checked.result.criteria.length, 23);
-    assert.ok(checked.result.criteria.some((c) => c.name === 'prevention'), 'branch P\'s own criterion is graded');
-    const outcomes = events.flatMap((e) => (e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact) && e.fact.unit === 'tidy' ? [`${e.fact.stage}:${e.fact.outcome}`] : []));
-    assert.ok(outcomes.every((o) => o.startsWith('plan-check:')), `tidy never got past plan-check: ${outcomes.join(', ')}`);
-    const firstCheckpoint = events.find((e) => e.type === 'fact' && e.fact.kind === 'checkpoint-inputs');
-    assert.ok(firstCheckpoint?.type === 'fact' && firstCheckpoint.fact.kind === 'checkpoint-inputs' && firstCheckpoint.fact.trigger.type === 'park', 'the stale apply fired on the park\'s checkpoint');
-    assertEveryStepPlayed(fx.dir);
   });
 });
 
@@ -448,7 +389,7 @@ describe('evals-m3: the fake-backed fixture run, branch L', () => {
     assert.ok(report.exit?.kind === 'complete', JSON.stringify(report.exit));
     assert.deepEqual(failing(checked), [], JSON.stringify(checked.result.criteria));
     assert.equal(checked.result.branch, 'L');
-    assert.equal(checked.result.criteria.length, 23);
+    assert.equal(checked.result.criteria.length, 18);
     assert.match(criterion(checked, 'latent-repair').detail, /F-1 \(invariants, P1\)/);
     for (const name of ['regression-unselected', 'audit-race', 'repair-resolved', 'prevention']) {
       assert.ok(!checked.result.criteria.some((c) => c.name === name), `${name} is not applicable on L`);

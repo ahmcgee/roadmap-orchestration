@@ -422,7 +422,7 @@ describe('resume --backend', () => {
     const failed = submit(ctx, { type: 'resume', target: { type: 'backend', backend: 'claude' } });
     await applyMutations(ctx);
     const rejected = readReceipt(ctx.runDir, failed.id, 'rejected');
-    assert.match(rejected?.state === 'rejected' ? rejected.reason : '', /^smoke-failed: failed: seat planCheck\.low/);
+    assert.match(rejected?.state === 'rejected' ? rejected.reason : '', /^smoke-failed: failed: seat build\.high/);
     assert.deepEqual(journal.view.parkedBackends(), ['claude']);
     assert.equal(journal.view.unit(UNIT).status, 'held');
 

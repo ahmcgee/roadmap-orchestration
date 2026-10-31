@@ -179,7 +179,7 @@ function snapshotVerifies(run: Run): Verdict {
   };
 }
 
-const JUDGMENT_ROLES: ReadonlySet<string> = new Set(['planCheck', 'gate']);
+const JUDGMENT_ROLES: ReadonlySet<string> = new Set(['verifier']);
 
 /** The role of a backend invocation (a unit's, an arc job's such as M4b's flow job, or a backend smoke), or null for commands. */
 function backendRole(i: IntentOf<'proc.spawn'>): string | null {

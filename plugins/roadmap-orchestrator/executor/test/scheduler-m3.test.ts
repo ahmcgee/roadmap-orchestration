@@ -497,11 +497,11 @@ describe('the M3 commands and items', () => {
     const r = contextFor(completingArc());
     try {
       const w = wired(r);
-      const bad = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'audit', lenses: ['invariants'] }));
-      assert.ok(bad.kind === 'rejected' && /outside the arc's required lens set \(vision\)/.test(bad.reason), JSON.stringify(bad));
+      const bad = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'audit', lenses: ['vision'] }));
+      assert.ok(bad.kind === 'rejected' && /outside the arc's required lens set \(invariants\)/.test(bad.reason), JSON.stringify(bad));
       const ok = submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'audit', lenses: ['invariants'] });
       assert.equal((await applyCommand(w.commands, ok)).kind, 'applied');
-      assert.deepEqual(factsOf(r, 'audit-requested').map((f) => [f.command, f.lenses]), [[ok.id, ['vision']]]);
+      assert.deepEqual(factsOf(r, 'audit-requested').map((f) => [f.command, f.lenses]), [[ok.id, ['invariants']]]);
     } finally {
       r.journal.close();
     }

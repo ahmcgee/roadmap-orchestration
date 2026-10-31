@@ -164,7 +164,7 @@ function specOf(l: Layout, unit: SpecUnit): unknown {
 export function reentrySpec(l: Layout): unknown {
   return specOf(l, REENTRY);
 }
-export const reentryUnit = { id: REENTRY, spec: `${REENTRY}.json`, risk: 'med', systems: [systemName('app')], resources: [], after: ['base'], reenters: { unit: 'right', enterAt: 'verify' } } as const;
+export const reentryUnit = { id: REENTRY, spec: `${REENTRY}.json`, review: 'always', risk: 'med', systems: [systemName('app')], resources: [], after: ['base'], reenters: { unit: 'right', enterAt: 'verify' } } as const;
 
 function poolDecl(l: Layout) {
   const tool = (cmd: string) => ({ argv: [process.execPath, ESTATE_SCRIPT, cmd, l.estate], cwd: '.', env: PASS_PATH });
@@ -231,7 +231,7 @@ export function setup(dir: string): void {
       }],
     },
     resources: [poolDecl(l)],
-    units: UNITS.map((id) => ({ id, spec: `${id}.json`, risk: 'med', systems: [systemName('app')], resources: [], ...PLAN_UNITS[id] })),
+    units: UNITS.map((id) => ({ id, spec: `${id}.json`, review: 'always', risk: 'med', systems: [systemName('app')], resources: [], ...PLAN_UNITS[id] })),
   }));
 }
 

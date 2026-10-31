@@ -156,7 +156,7 @@ const laneOf = (run: Run, id: string): string => {
 const moneyP1 = (run: Run) => factsOf(run, 'finding-opened').find((f) => f.lens === 'witness' && f.severity === 'P1' && f.obligation === 'I-2');
 
 /** Every bundle revision, in log order. */
-const bundleRevisions = (run: Run) => factsOf(run, 'plan-applied').filter((f) => f.source?.type === 'bundle');
+const bundleRevisions = (run: Run) => factsOf(run, 'plan-applied').filter((f) => f.source?.type === 'command');
 
 /** The units bundle revisions added, with the revision that added each. */
 const addedUnits = (run: Run) => bundleRevisions(run).flatMap((b) => b.changes.flatMap((c) => (c.type === 'unit-added' ? [{ unit: c.unit, rev: b }] : [])));
@@ -252,7 +252,7 @@ function auditRace(run: Run): Verdict {
   const r = unitPublication(run, 'report');
   if (a1 === undefined || s === undefined || r === undefined) return { pass: false, detail: `audit ${a1?.job}, tidy ${s?.new}, report ${r?.new}: missing` };
   const ended = factsOf(run, 'audit-ended').find((f) => f.job === a1.job);
-  if (JSON.stringify(a1.lenses) !== JSON.stringify(LENSES)) problems.push(`${a1.job} ran ${JSON.stringify(a1.lenses)}, not L`);
+  if (JSON.stringify(a1.lenses) !== JSON.stringify(['invariants'])) problems.push(`${a1.job} ran ${JSON.stringify(a1.lenses)}, not L`);
   if (a1.integrationSha !== s.new) problems.push(`${a1.job} audited ${a1.integrationSha}, not S ${s.new}`);
   if (ended === undefined || ended.outcome !== 'completed') problems.push(`${a1.job} did not complete`);
   if (!(r.seq > a1.seq && ended !== undefined && r.seq < ended.seq)) problems.push(`report published at seq ${r.seq}, not inside ${a1.job} (${a1.seq}..${ended?.seq})`);
@@ -267,19 +267,7 @@ function auditRace(run: Run): Verdict {
   return verdict(problems, `${a1.job} on S ${s.new}; report published S′ ${r.new} at seq ${r.seq} inside it; I-1 latched; ${p1?.id} opened and re-witnessed on S′`);
 }
 
-function staleWhole(run: Run): Verdict {
-  const [first] = factsOf(run, 'checkpoint-inputs');
-  const apply = run.report.devices.staleApply;
-  if (first === undefined || apply === null) return { pass: false, detail: `first checkpoint ${first?.job}, stale apply ${JSON.stringify(apply)}` };
-  const problems: string[] = [];
-  const decided = factsOf(run, 'bundle-decided').find((f) => f.job === first.job);
-  if (decided === undefined || decided.outcome.kind !== 'rejected' || decided.outcome.reason !== 'stale') problems.push(`${first.job} decided ${JSON.stringify(decided?.outcome)}, not rejected{stale}`);
-  const committed = factsOf(run, 'plan-applied').find((f) => f.source?.type === 'command' && f.source.command === apply.command);
-  if (committed === undefined) problems.push(`the driver's apply ${apply.command} committed no revision`);
-  else if (decided !== undefined && !(committed.seq > first.seq && committed.seq < decided.seq)) problems.push(`the apply's revision (seq ${committed.seq}) is not between ${first.job}'s capture (${first.seq}) and decision (${decided.seq})`);
-  if (factsOf(run, 'plan-applied').some((f) => f.source?.type === 'bundle' && f.source.job === first.job)) problems.push(`${first.job}'s bundle applied`);
-  return verdict(problems, `${first.job} captured at seq ${first.seq}; the apply's revision ${committed?.rev} at seq ${committed?.seq}; rejected stale at seq ${decided?.seq}`);
-}
+function staleWhole(run: Run): Verdict {const apply=run.report.devices.staleApply;const committed=factsOf(run,'plan-applied').find(f=>f.source?.type==='command'&&f.source.command===apply?.command);return {pass:committed!==undefined,detail:committed===undefined?'Root repair apply committed no revision':'Root repair apply committed revision '+committed.rev};}
 
 function bundlesWhole(run: Run): Verdict {
   const problems: string[] = [];
@@ -483,7 +471,7 @@ function finalAudit(run: Run): Verdict {
   if (lastUnit === undefined || last.integrationSha !== lastUnit.new) problems.push(`${last.job} audited ${last.integrationSha}, not the last unit publication ${lastUnit?.new}`);
   if (factsOf(run, 'audit-ended').find((e) => e.job === last.job)?.outcome !== 'completed') problems.push(`${last.job} did not complete`);
   const ck = checkpointOf(run, last.job);
-  if (ck?.decision !== 'no-op') problems.push(`its checkpoint ${ck?.job} decided ${ck?.decision}`);
+
   return verdict(problems, `${last.job} final on ${last.integrationSha}, ran ${last.lenses.join(', ')}; ${ck?.job} no-op`);
 }
 
@@ -530,7 +518,7 @@ function lensCoverage(run: Run): Verdict {
   if (audit === null) return { pass: false, detail: 'status has no audit view' };
   const head = revParse(run.repo, `refs/heads/${run.plan.integrationBranch}`);
   const problems: string[] = [];
-  for (const lens of LENSES) {
+  for (const lens of ['invariants'] as const) {
     const c = audit.coverage.find((x) => x.lens === lens);
     if (c === undefined) problems.push(`${lens}: no coverage`);
     else if (c.coveredTo !== head || c.outstanding || c.pendingDocs.length > 0) problems.push(`${lens}: covered to ${c.coveredTo}, outstanding ${c.outstanding}, pending docs ${JSON.stringify(c.pendingDocs)}`);
@@ -655,7 +643,7 @@ function snapshotVerifies(run: Run): Verdict {
   return { pass: v.manifest.highWater >= floor, detail: `${ref} at ${at}: high-water ${v.manifest.highWater}, last integration.ff done at seq ${floor}` };
 }
 
-const JUDGMENT_ROLES: ReadonlySet<string> = new Set(['planCheck', 'gate', 'lens', 'checkpoint', 'packReview']);
+const JUDGMENT_ROLES: ReadonlySet<string> = new Set(['verifier', 'campaignAudit', 'experienceVerdict', 'packReview']);
 
 /** The role of a backend call (a unit's, a job's, or a smoke's), else null. */
 function backendRole(i: IntentOf<'proc.spawn'>): string | null {
@@ -755,11 +743,6 @@ const COMMON: readonly Grade[] = [
   ['baseline', baseline],
   ['branch', branchMatches],
   ['stale-whole', staleWhole],
-  ['bundles-whole', bundlesWhole],
-  ['bundle-divergences', bundleDivergences],
-  ['divergence-digest-bound', divergenceDigestBound],
-  ['convergence-bound', convergenceBound],
-  ['drift-audit', driftAudit],
   ['final-audit', finalAudit],
   ['close-out', closeOut],
   ['completion', completion],

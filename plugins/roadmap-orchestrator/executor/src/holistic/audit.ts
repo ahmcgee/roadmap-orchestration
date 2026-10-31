@@ -326,7 +326,7 @@ function lensInputs(ctx: StageContext, s: Started, r: Recorded, lens: LensKind, 
   const attach = (from: Sha, to: Sha, bytes: number, dir: string) => boundedDiff(ctx.repo, from, to, { budget: bytes, derived: r.derived, removes: null, dir: absPath(join(diffDir, dir)) });
   return {
     vision: visionInputOf(r.vision, r.advances),
-    method: {traits: [...new Set(Object.values(mapInForce(ctx.journal.view)?.systems ?? {}).flatMap((x) => x.traits))], markers: [], unitKind: 'campaign', ui: hasMilestones(ctx.plan()), expensiveLanes: ctx.plan().suite.lanes.some((l) => (l as {cost?: string}).cost === 'expensive')},
+    method: {traits: [...new Set(Object.values(mapInForce(ctx.journal.view)?.systems ?? {}).flatMap((x) => x.traits))], markers: r.obligations?.obligations.some((o) => o.state.type === 'active' && o.deliveredBy.length > 0 && (o.witness === null || o.witness.testIds.length === 0 || r.obligations!.lanes.some((l) => l.id === o.witness!.lane && (l.environment !== undefined || !['build', 'unit'].includes(l.cadence))))) ? ['M2'] : [], unitKind: 'campaign', ui: hasMilestones(ctx.plan()), expensiveLanes: ctx.plan().suite.lanes.some((l) => (l as {cost?: string}).cost === 'expensive')},
     obligations: r.obligations === null ? [] : observedViews(ctx, r.obligations, r.obligations.obligations, sha),
     range: { audited: sha, diff: attach(chunk.from, chunk.to, budget, 'range') },
     owners: s.owners.map((o) => ({ unit: o.unit, head: o.head, diff: attach(diffBase(ctx.repo, sha, o.head), o.head, share, `owner-${o.unit}`) })),

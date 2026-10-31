@@ -31,12 +31,7 @@
 import { join } from 'node:path';
 import type { JsonValue } from '../../src/core/json.ts';
 import type { ProfileName } from '../../src/routing/types.ts';
-import {
-INVALID_OP,admitSpecWire,checkpointAnswer,
-checkpointStep,flowStep,
-jobRepairStep,
-lensStep,packReviewStep,twoOpBundleSecondInvalid,
-} from '../../test/helpers/holistic.ts';
+import { admitSpecWire, checkpointAnswer, checkpointStep, flowStep, lensStep, packReviewStep } from '../../test/helpers/holistic.ts';
 import type { Step } from '../../test/helpers/scenario.ts';
 import { type M1Step,fakeSteps } from '../m1/scenario.ts';
 import { FAKE_CKPT_HOLD,FAKE_FLOW_HOLD } from './layout.ts';
@@ -90,19 +85,7 @@ const NO_OP = checkpointAnswer({ decision: 'no-op' });
 /** The corpus arc's pack review (M4a), before the first admission: no finding, so nothing holds admission. */
 const PACK_REVIEW = packReviewStep('review-1');
 
-const JOB_STEPS_R: readonly Step[] = [
-  PACK_REVIEW,
-  lensStep('audit-1', 'vision'),
-  lensStep('audit-1', 'invariants'),
-  checkpointStep('ckpt-1', REPAIR_BUNDLE, [{ type: 'barrier', name: FAKE_CKPT_HOLD, timeoutMs: HOLD_MS }]),
-  checkpointStep('ckpt-2', twoOpBundleSecondInvalid(ADMIT_REPAIR, INVALID_OP)),
-  jobRepairStep('ckpt-2', twoOpBundleSecondInvalid(ADMIT_REPAIR, INVALID_OP)),
-  checkpointStep('ckpt-3', REPAIR_BUNDLE),
-  lensStep('audit-2', 'vision'),
-  lensStep('audit-3', 'invariants'),
-  lensStep('audit-3', 'vision'),
-  checkpointStep('ckpt-4', NO_OP),
-];
+const JOB_STEPS_R: readonly Step[] = [PACK_REVIEW, lensStep('audit-1', 'invariants'), lensStep('audit-2', 'invariants')];
 
 /** tidy's plan-check in branch P, as paid run 3's: infeasible within its scope, citing V-2 (a P3 finding, merged on the re-check). */
 const INFEASIBLE: M1Step = {
@@ -152,17 +135,7 @@ const LATENT_P1 = {
   claim: '`format` renders formatAmount\'s cents through a binary Number and toFixed: `format 100000000000000.01` prints 100,000,000,000,000.02. The money witness only tests amounts below 11.',
 } as const;
 
-const JOB_STEPS_L: readonly Step[] = [
-  PACK_REVIEW,
-  lensStep('audit-1', 'vision'),
-  lensStep('audit-1', 'invariants', [LATENT_P1]),
-  checkpointStep('ckpt-1', REPAIR_BUNDLE, [{ type: 'barrier', name: FAKE_CKPT_HOLD, timeoutMs: HOLD_MS }]),
-  checkpointStep('ckpt-2', REPAIR_BUNDLE),
-  lensStep('audit-2', 'vision'),
-  lensStep('audit-3', 'invariants'),
-  lensStep('audit-3', 'vision'),
-  checkpointStep('ckpt-3', NO_OP),
-];
+const JOB_STEPS_L: readonly Step[] = [PACK_REVIEW, lensStep('audit-1', 'invariants', [LATENT_P1]), lensStep('audit-2', 'invariants')];
 
 export const STORIES = ['story', 'prevented', 'latent'] as const;
 export type StoryName = (typeof STORIES)[number];

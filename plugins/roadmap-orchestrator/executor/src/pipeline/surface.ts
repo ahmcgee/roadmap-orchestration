@@ -1,3 +1,4 @@
+import { raiseNeedsUser, raisedWithReason } from '../needsuser.ts';
 import { worktreeCreateOp } from '../recover/ops.ts';
 import { ruleMentions } from '../holistic/rederive.ts';
 import { parseCorpusPin } from '../corpus/types.ts';
@@ -17,7 +18,7 @@ import { judgmentRepairDirective } from '../prompts/directives.ts';
 import type { MethodContext } from '../prompts/method/index.ts';
 import { validateGateOutput, validateBuildOutput } from '../prompts/schemas.ts';
 import { BRIEF_INPUT } from './rounds.ts';
-import { type StageContext, type StageParent, callBackend, judgmentDeadlineMs, dispatchOf, verifierDispatch, runOp, repairTurnOf } from './dispatch.ts';
+import { type StageContext, type StageParent, callBackend, judgmentDeadlineMs, dispatchOf, verifierDispatch, runOp, repairTurnOf, verdictOf } from './dispatch.ts';
 import { holisticInForce, integrationTip, library, visionInput, loadUnitSpec, judgedAnswer, judgmentOutput, inMs, recordedCall, unitMilestones, planCheckWorktree, removeJudgmentCheckouts, unitTarget, targetDirs } from './stages.ts';
 import { mapInForce } from './lanes.ts';
 import { renderSpec } from '../spec/render.ts';
@@ -98,10 +99,15 @@ export async function runReview(ctx: StageContext, unit: PlanUnit, parent: Stage
   const session = freshJudgmentSession();
   const call = (repair?: {reasons: readonly string[]; turn: NonNullable<ReturnType<typeof repairTurnOf>>}) => callBackend(ctx, {unit: unit.id, parent, request: {kind: 'judgment', dispatch, session: repair === undefined ? session : repair.turn.session, evidenceDirs: targetDirs(unitTarget(ctx, integrationTip(ctx), 'full', [], ruleMentions(renderSpec(spec))))}, system: prompt.system, rendered: repair === undefined ? measured.rendered : judgmentRepairDirective(repair.reasons), prompt: repair === undefined ? measured.prompt : null, schema: prompt.schema, cwd: checkout, deadlineAt: inMs(judgmentDeadlineMs(dispatchOf(view, unit.id)))});
   let called = recorded ?? await call();
-  let judged = judgedAnswer(called, validateGateOutput);
-  if (judged.kind === 'refused') { const turn = repairTurnOf(ctx.runDir, called.inv); if (turn !== null) { called = await call({reasons: judged.reasons, turn}); judged = judgedAnswer(called, validateGateOutput); } }
+  const judge = (answer: typeof called) => {
+    const verdict = verdictOf(ctx, parent, answer);
+    if (verdict.kind === 'interrupted' && verdict.needsUser !== null && raisedWithReason(view, ctx.runDir, parent, verdict.needsUser.reason) === null) raiseNeedsUser(ctx.journal, ctx.runDir, {...verdict.needsUser, summary: `The verifier's ${mode} call ${answer.inv} hit a usage limit. Its backend is parked; the review remains an annotation and available backends may continue.`}, parent);
+    return judgedAnswer(answer, validateGateOutput);
+  };
+  let judged = judge(called);
+  if (judged.kind === 'refused') { const turn = repairTurnOf(ctx.runDir, called.inv); if (turn !== null) { called = await call({reasons: judged.reasons, turn}); judged = judge(called); } }
   const items = judged.kind === 'answered' ? judged.out.findings.map((f, n) => ({id: `${called.inv}:${n}`, text: f.text, evidence: [...f.evidence, ...f.experiments.map((e) => `${e.command}: ${e.output}`), ...(f.path === null ? [] : [f.path])]})) : [];
-  const note = mode === 'diagnosis' ? keepInput(ctx.runDir, Buffer.from(judged.kind === 'answered' ? [...judged.out.reasons, ...items.map((f) => `${f.text} (${f.evidence.join('; ')})`)].join('\n') : 'Independent diagnosis returned no usable answer; inspect prior build and lane evidence.'), BRIEF_INPUT) : null;
+  const note = mode === 'diagnosis' || judged.kind !== 'answered' ? keepInput(ctx.runDir, Buffer.from(judged.kind === 'answered' ? [...judged.out.reasons, ...items.map((f) => `${f.text} (${f.evidence.join('; ')})`)].join('\n') : 'Independent review returned no usable answer; inspect prior build and lane evidence.'), BRIEF_INPUT) : null;
   await removeJudgmentCheckouts(ctx, unit.id, parent);
   ctx.journal.fact({kind: 'review-completed', unit: unit.id, mode, specRev: spec.rev, planRev: capturedPlanRev, inv: called.inv, items, note});
 }

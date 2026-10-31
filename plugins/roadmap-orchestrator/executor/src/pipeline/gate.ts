@@ -209,7 +209,7 @@ export function fingerprintValid(ctx: StageContext, unit: PlanUnit): (fingerprin
 const gateSpawns = (ctx: JudgmentReader, unit: UnitId) => judgmentSpawns(ctx, unit, 'gate');
 
 /** A unit's latest gate answer as status shows it (dev.12 round 2): its attempt, decision, findings and `unreviewed`. */
-export type GateAnswerView = Readonly<{ attempt: number; decision: GateOutput['decision']; findings: GateOutput['findings'] }>;
+export type GateAnswerView = Readonly<{ attempt: number; decision: GateOutput['decision']; findings: GateOutput['findings']; standing: GateOutput['standing'] }>;
 
 /** The unit's latest gate spawn that gave a valid answer, read back from its result; null before any. */
 export function latestGateAnswer(ctx: JudgmentReader, unit: UnitId): GateAnswerView | null {
@@ -219,7 +219,7 @@ export function latestGateAnswer(ctx: JudgmentReader, unit: UnitId): GateAnswerV
     const out = judgmentOutput(ctx, spawn, validateGateOutput);
     if (out === null) continue;
     if (spawn.parent.type !== 'stage') throw new Error(`${unit}: a gate spawn outside a stage attempt`);
-    return { attempt: spawn.parent.attempt, decision: out.decision, findings: out.findings };
+    return { attempt: spawn.parent.attempt, decision: out.decision, findings: out.findings, standing: out.standing };
   }
   return null;
 }

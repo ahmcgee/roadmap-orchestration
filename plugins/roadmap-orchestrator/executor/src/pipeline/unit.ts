@@ -1,3 +1,4 @@
+import { markers } from './surface.ts';
 // The unit driver: `runUnit(ctx, unit, gate)` loops stage → transition → next until the unit is merged,
 // parked, held or stopped. The scheduler (src/schedule/scheduler.ts) runs one per unit in flight, as that
 // unit's task.
@@ -667,6 +668,7 @@ async function stepOnce(ctx: StageContext, unit: PlanUnit): Promise<Step> {
   const decided = decidedBy(f);
   switch (decided.kind) {
     case 'stage':
+      if (decided.target.stage === 'gate' && markers(ctx, unit, loadUnitSpec(ctx, unit).spec).some(m => m.marker === 'M3')) return after(ctx, unit, await planCheck(ctx, unit));
       return after(ctx, unit, await runStage(ctx, unit, decided.target, f));
     case 'park':
     case 'stop':
@@ -717,10 +719,6 @@ export function reentryAllowed(u: UnitState): boolean {
 function reopenIfDue(ctx: StageContext, unit: UnitId): void {
   const u = ctx.journal.view.unit(unit);
   const p = u.pendingRevision;
-  if (staleReopenDue(u)) {
-    ctx.journal.fact({ kind: 'stale-reopened', unit, rev: u.staleRev! });
-    return;
-  }
   if (p === null || !reopenDue(u)) return;
   // The classifier refuses a revision while an attempt is open, and no executor patch runs while one is
   // pending, so a pending revision is always the next rev.
@@ -728,19 +726,8 @@ function reopenIfDue(ctx: StageContext, unit: UnitId): void {
   ctx.journal.fact({ kind: 'reopened', unit, command: p.command, specRev: p.rev, specSha256: p.sha256 });
 }
 
-/**
- * dev.17 (propagation): whether an in-flight unit re-opens at plan-check on stale links no plan-check of it has answered
- * (`staleRev`): past its plan-check (one still ahead answers them), with no pending revision (whose re-open answers them),
- * at a boundary that allows a re-entry.
- */
-function staleReopenDue(u: UnitState): boolean {
-  if (u.staleRev === null || u.pendingRevision !== null || u.decided === null || !reentryAllowed(u)) return false;
-  const d = decidedBy(u.decided);
-  return d.kind === 'stage' && d.target.stage !== 'plan-check';
-}
-
-/** Whether the unit re-opens at this boundary: on a pending revision, or (dev.17) on unanswered stale links. */
-const reopenDue = (u: UnitState): boolean => (u.pendingRevision !== null && reentryAllowed(u)) || staleReopenDue(u);
+/** A root revision re-enters at a clean boundary; meaning-change review only annotates. */
+const reopenDue = (u: UnitState): boolean => u.pendingRevision !== null && reentryAllowed(u);
 
 /**
  * The stage the unit starts next: its first stage when it re-opens at this boundary (plan-check, or `reproduce` for a

@@ -249,3 +249,17 @@ test('surface.milestone: one combined experience verdict and one campaign audit,
     assert.equal(r.journal.view.arcVerdicts().length, 2);
   } finally {clearInterval(tick); r.journal.close();}
 });
+
+test('surface.review-usage-limit: annotation never parks the unit and still parks the failed backend arc-wide', {timeout: 120_000}, async () => {
+  const first = planCheckStep({decision: 'approve'});
+  const d = setupArc({steps: [{...first, acts: [{type: 'usageLimit'}]}]});
+  const r = contextFor(d);
+  try {
+    const out = await planCheck(r.ctx, r.unit('u1'));
+    assert.equal('kind' in out ? out.kind : out.outcome.kind, 'approve');
+    assert.equal(r.journal.view.unit(unitId('u1')).status, 'active');
+    assert.deepEqual(r.journal.view.parkedBackends(), ['claude']);
+    assert.equal(r.journal.view.needsUser().map((n) => readNeedsUser(r.ctx.runDir, n.id)).filter((n) => n?.reason === 'usage-limit').length, 1);
+    assert.ok(r.journal.view.surfaceFacts().some((f) => f.kind === 'review-completed' && f.note !== null));
+  } finally {r.journal.close();}
+});

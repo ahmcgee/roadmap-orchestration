@@ -29,7 +29,7 @@ import { type HolisticArc, candidateTree, holisticArc, obligationsJson, tipTree 
 import { closedAs, wire } from './fixtures/publish-common.ts';
 import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
 import type { Step } from './helpers/scenario.ts';
-import { type ArcDescriptor, type ArcRun, U1, applyBody, codexStep, contextFor,syncInputs, gateStep, mulBuild, outcomes, stepUntil } from './fixtures/unit-common.ts';
+import { type ArcRun, U1, applyBody, codexStep, contextFor, syncInputs, gateStep, mulBuild, outcomes, stepUntil } from './fixtures/unit-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 
@@ -316,7 +316,7 @@ describe('impact mapping', () => {
   });
 
   test('fingerprint.judged-rev-change-regates: an obligation the gate judged changes revision (future → must-hold, rev 2) before ff: fingerprint-invalid; the unit, linking it, re-opens at plan-check to answer the stale link (dev.17 propagation), and the re-gate binds rev 2', T, async () => {
-    const answered = planCheckStep({ decision: 'approve', staleLinks: [{ link: 'requirement:I-1', outcome: 'confirmed', reason: 'mul holds I-1 as rev 2 states it' }] }, { stdinContains: ['<stale_links>', 'requirement:I-1'] });
+    const answered = planCheckStep({ decision: 'approve' });
     const { d, control } = holisticArc({
       steps: [...steps, answered, codexStep([], { argv: ['exec', 'resume'] }), gateStep({ decision: 'approve' })], units: [{ id: 'u1', obligations: ['I-1'] }, { id: 'u2' }],
       obligations: [{ id: 'I-1', activation: 'future', deliveredBy: ['u1', 'u2'], testIds: ['t1'] }], mapping: MAPPED, trees: { '*': { outcomes: { t1: 'pass' } } },
