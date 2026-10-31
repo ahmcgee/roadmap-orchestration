@@ -24,10 +24,6 @@
 //              repair (repairing F-1) and leaves the P1 undispositioned. Then audit-2 (drift: the vision lens), its
 //              checkpoint skipped (nothing new); report and the repair merge; audit-3 (final: both lenses) and ckpt-3 no-op.
 //
-// M4b (branches R and L): once three units merged with the repair still to flow, the flow loop's first run (`flow-1`,
-// constraint-shift) is called once and answers noAction. The fake repair build waits at `fake/flow.hold` (FAKE_FLOW_HOLD)
-// until the driver saw that run end, so the call happens whatever the host's timing; branch P never has three merges with
-// a unit left, so it has no flow call.
 import { join } from 'node:path';
 import type { JsonValue } from '../../src/core/json.ts';
 import type { ProfileName } from '../../src/routing/types.ts';

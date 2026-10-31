@@ -31,12 +31,7 @@ import { systemName } from '../../src/core/ids.ts';
 // second spec lane, `slow` (`SLOW_LANE`), that hangs on its first run so the scripted root agent can pause notice there
 // and see the resumed attempt reuse the first lane's pass.
 //
-// M4b (the flow loop): every plan's suite is the plant lane `suite` (SEED_SUITE_ARGV) and the witness-lane fake
-// `replay` (`REPLAY_LANE`, files/golden/journeys/replay.js), whose witness lines change under any concurrency but 1;
-// I-6 is witnessed by the soak run, a deliberately slow arc lane. Arc 1 has eight units, every one the corpus asks for in
-// the slice, so the paid root agent plans as many as the fake does: three suite runs before the flow revision (guard,
-// confirm, quay-list) and up to five after it, at least the three a conclusive verdict reads (MIN_VERDICT_SAMPLES on both
-// sides) even when two more integrate while the flow run is decided. The driver fails fast below six (driver.ts).
+// The fixture keeps the serial suite, replay witness and slow soak lane so the oracle can check their test sets.
 import { readFileSync,readdirSync } from 'node:fs';
 import { join,relative } from 'node:path';
 import { fileURLToPath } from 'node:url';

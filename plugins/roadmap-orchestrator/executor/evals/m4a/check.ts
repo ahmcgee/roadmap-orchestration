@@ -475,7 +475,6 @@ function witnessRun(product: AbsPath, head: string, lane: LaneDef, argv: readonl
 /** One ruler run's cap: a serial run of the plant takes about 6 minutes on the paid host. */
 const RULER_RUN_MS = 30 * 60_000;
 
-/** Every `ruler-changed` item the chain raised (listed in the report, never a failure by itself). */
 /** `ruler-intact` (see `rulerRecordProblems`, `triplesProblems`): at the chain's final completed head, run by the check itself. */
 function rulerIntact(run: Run): Verdict {
   const arcs = [need(run.one, 'arc 1'), ...(run.two === null ? [] : [run.two])].map(rulerArcOf);

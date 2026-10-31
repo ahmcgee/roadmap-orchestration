@@ -43,10 +43,6 @@
 //                drift audit's capture
 //   unlimited    once every added unit is merged: `run-only --clear`
 //
-// Under --fake only (not a device of the story, so not reported): once the log has a `flow-ended`, release
-// `fake/flow.hold`, where branches R's and L's fake repair build waits (evals/m3/scenario.ts), so the flow loop's one
-// run is called whatever the host's timing.
-//
 // The run is stopped as `device-failed` (the reason in `devices.failed`, naming the observed job, trigger, outcome or
 // item) only when it is off the story in any branch: the first checkpoint decides anything but `rejected{stale}`
 // or applies its bundle; a checkpoint disposes of nothing before any bundle applied (a no-op, or a request with
