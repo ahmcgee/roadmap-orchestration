@@ -657,9 +657,11 @@ function superviseArc2(c: Ctx, a: ArcState): string {
   const parent = obligations.obligations.find((o: {id: string}) => o.id === FITS_WITNESS.parent);
   const witness = {lane: FITS_WITNESS.child.lane, testIds: [FITS_WITNESS.child.test], files: ['journeys/berths.journey.js']};
   const pin = JSON.parse(readFileSync(join(exported, plan.corpus), 'utf8')) as Pin;
+  const draughtRule = pin.rules.find((r) => r.id === FITS_WITNESS.child.rule);
+  if (draughtRule === undefined) throw new Error('the exported corpus has no draught rule');
   obligations.obligations.push(
     {...parent, id: FITS_WITNESS.restated, parent: parent.id, rev: 1, serves: [...FITS_WITNESS.cites], activation: 'must-hold', deliveredBy: [], proofJudgment: {...parent.proofJudgment, obligationRev: 1}},
-    {...parent, id: FITS_WITNESS.child.id, parent: parent.id, rev: 1, serves: [...FITS_WITNESS.cites], statement: FITS_WITNESS.child.statement, rule: pin.rules.find((r) => r.id === FITS_WITNESS.child.rule), witness, activation: 'future', deliveredBy: ['fits'], proofJudgment: {verdict: 'proves', obligationRev: 1, witness: {testIds: witness.testIds, files: witness.files}}},
+    {...parent, id: FITS_WITNESS.child.id, parent: parent.id, rev: 1, serves: [...FITS_WITNESS.cites], statement: FITS_WITNESS.child.statement, rule: {id: draughtRule.id, textSha256: draughtRule.textSha256}, witness, activation: 'future', deliveredBy: ['fits'], proofJudgment: {verdict: 'proves', obligationRev: 1, witness: {testIds: witness.testIds, files: witness.files}}},
   );
   parent.rev += 1;
   parent.state = {type: 'split', children: [FITS_WITNESS.restated, FITS_WITNESS.child.id]};
