@@ -36,7 +36,7 @@ import { holderUnits,resourceTable } from '../src/resources/reserve.ts';
 import { specBytes } from '../src/spec/spec.ts';
 import { events } from './fixtures/invoke-specs.ts';
 import { type Wired,publishArc,ruleRecord,submitRule,wire } from './fixtures/publish-common.ts';
-import { BASE,editPlan,followContext,planDirOf,recordFirst,stepTo,unitOf } from './fixtures/route-common.ts';
+import { editPlan, followContext, planDirOf, recordFirst, stepTo, unitOf } from './fixtures/route-common.ts';
 import { SCENARIO_TIMEOUT_MS,admitAll,planCheckStep } from './fixtures/stage-common.ts';
 import { type ArcDescriptor,MUL,U1,codexStep,contextFor,gateRepairStep,gateStep,isGateCall as isGate,mulBuild,outcomes,setupArc,stepUntil } from './fixtures/unit-common.ts';
 import { reached,release } from './helpers/barrier.ts';
@@ -128,7 +128,7 @@ test('gate.risk-promotion: a contract path in the unit\'s diff promotes the gate
 
 test('gate.revise: the directives go to a fix round, and the next gate rules on its prior round with the delta since', T, async () => {
   const directive = 'Export mul as the default export too.';
-  const finding = { severity: 'blocking', path: 'src/mul.js', text: 'mul has no default export.', contractRef: 'contracts/api.md', experiments: [], debt: null };
+  const finding = {evidence: ["src/mul.js:1"],  severity: 'blocking', path: 'src/mul.js', text: 'mul has no default export.', contractRef: 'contracts/api.md', experiments: [], debt: null };
   const premises = [
     { claim: 'mul multiplies', evidence: [{ path: 'src/mul.js', line: 2 }] },
     { claim: 'add is untouched', evidence: [{ path: 'src/add.js', line: 1 }] },

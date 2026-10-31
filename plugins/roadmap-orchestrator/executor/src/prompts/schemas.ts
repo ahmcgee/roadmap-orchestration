@@ -14,9 +14,7 @@ import { type ClauseId, type FailureModeId, type FindingId, type JourneyId, type
 import { type JsonValue,canonicalJson } from '../core/json.ts';
 import { BOUND_FIELDS,type Bounds,type FailureRef,type NoteDef,SPEC_SCHEMA,SPEC_SECTIONS,type SpecPatchOp,failureRef,specM1,specPatchOp } from '../core/records.ts';
 import { type ReviewDispute,reviewDispute } from '../core/review.ts';
-import {
-Fields,type Read,SchemaError,answerSet,arrayOf,assertUnique,bool,envName,int,literal,nullable,object,oneOf,positive,str,tagged,text,
-} from '../core/validate.ts';
+import { Fields, type Read, SchemaError, answerSet, arrayOf, assertUnique, envName, int, literal, nullable, object, oneOf, positive, str, tagged, text } from '../core/validate.ts';
 import { type RepoPath,type RepoPattern,matchesPattern,repoPath,repoPattern } from '../core/values.ts';
 import { FLOW_REPORTERS,type FlowOutput,flowOutput } from '../flow/types.ts';
 import {
@@ -558,6 +556,7 @@ export type GateDebt = Readonly<{ drag: string }>;
 export type GateFinding = Readonly<{
   /** dev.17 adds `ride-along` (comments, docs): never a revise; debt when it names its drag, else released. */
   severity: FindingSeverityDev17;
+  evidence: readonly string[];
   path: string | null;
   text: string;
   /** A C-nn id, a contract path (with an optional #anchor) or a corpus rule T-n the finding rests on. */
@@ -622,7 +621,7 @@ export const GATE_SCHEMA: Schema = sObj({
   decision: sEnum(GATE_DECISIONS),
   ordering: { anyOf: [sObj({ blockers: sArr(S_STR) }), { type: 'null' }], description: 'Only escalate solely because other units must merge first: name those unit IDs in blockers. Otherwise null. Code wakes the parked gate after all blockers merge.' },
   findings: sArr(sObj({
-    severity: sEnum(FINDING_SEVERITIES_DEV17), path: sNullable(S_STR), text: S_STR, contractRef: sNullable(S_STR), experiments: sArr(sObj({ command: S_STR, output: S_STR })),
+    evidence: sArr(S_STR), severity: sEnum(FINDING_SEVERITIES_DEV17), path: sNullable(S_STR), text: S_STR, contractRef: sNullable(S_STR), experiments: sArr(sObj({ command: S_STR, output: S_STR })),
     debt: sNullable(sObj({ drag: S_STR })), defect: sNullable(sEnum(DEFECT_CATEGORIES)), reraises: sNullable(S_STR), hunk: sNullable(sObj({ path: S_STR, line: S_INT })),
   })),
   directives: sArr(S_STR),
@@ -639,7 +638,9 @@ const gateExperiment: Read<GateExperiment> = object((f) => ({ command: f.get('co
 const hunkRef: Read<HunkRef> = object((g) => ({ path: g.get('path', str), line: g.get('line', int(1, Number.MAX_SAFE_INTEGER)) }));
 /** Absent (a dev.16 answer): null, with the upgrade warning. */
 const dev17 = <T>(read: T | null): T | null => read;
-const finding: Read<GateFinding> = object((f) => ({
+const finding: Read<GateFinding> = object((f) => {
+ const out: GateFinding = {
+  evidence: f.get('evidence', arrayOf(text)),
   severity: f.get('severity', oneOf(FINDING_SEVERITIES_DEV17)),
   path: f.get('path', nullable(str)),
   text: f.get('text', str),
@@ -649,7 +650,10 @@ const finding: Read<GateFinding> = object((f) => ({
   defect: dev17(f.get('defect', nullable(oneOf(DEFECT_CATEGORIES)))),
   reraises: dev17(f.get('reraises', nullable((v, p): ReviewFindingId => reviewFindingId(v, p)))),
   hunk: dev17(f.get('hunk', nullable(hunkRef))),
-}));
+ };
+ if (out.experiments.length === 0 && !out.evidence.some((e) => /:\d+/.test(e))) throw new SchemaError(`${f.path}.evidence`, 'an experiment or path:line evidence', out.evidence);
+ return out;
+});
 const disputeRuling: Read<DisputeRuling> = object((f) => ({
   finding: f.get('finding', (v, p): ReviewFindingId => reviewFindingId(v, p)), ruling: f.get('ruling', oneOf(DISPUTE_RULINGS)), reason: f.get('reason', str),
 }));
@@ -1318,54 +1322,19 @@ export const experienceOutput: Read<ExperienceOutput> = tagged<'walkthrough' | '
 export function validateExperienceOutput(v: unknown): ExperienceOutput { return experienceOutput(v, 'experienceVerdict'); }
 export function experienceWalk(v: unknown): WalkthroughOutput { const out = validateExperienceOutput(v); if (out.mode !== 'walkthrough') throw new SchemaError('experience.mode', 'walkthrough', out.mode); return out.verdict; }
 export function experiencePolish(v: unknown): PolishJudgeOutput { const out = validateExperienceOutput(v); if (out.mode !== 'polish') throw new SchemaError('experience.mode', 'polish', out.mode); return out.verdict; }
-export type CampaignAuditOutput = LensOutput & Readonly<{requests: readonly Readonly<{summary: string; evidence: readonly string[]}>[]}>;
-export const CAMPAIGN_AUDIT_SCHEMA: Schema = {...LENS_SCHEMA as object, properties: {...(LENS_SCHEMA as {properties: object}).properties, requests: sArr(sObj({summary: S_STR, evidence: sArr(S_STR)}))}, required: [...(LENS_SCHEMA as {required: string[]}).required, 'requests']} as Schema;
+export type CampaignAuditOutput = LensOutput & Readonly<{requests: readonly Readonly<{op: 'request'; summary: string; evidence: readonly string[]; dismisses: FindingId | null; counterEvidence: string | null}>[]}>;
+export const CAMPAIGN_AUDIT_SCHEMA: Schema = {...LENS_SCHEMA as object, properties: {...(LENS_SCHEMA as {properties: object}).properties, requests: sArr(sObj({op: sEnum(['request']), summary: S_STR, evidence: sArr(S_STR), dismisses: sNullable(S_STR), counterEvidence: sNullable(S_STR)}))}, required: [...(LENS_SCHEMA as {required: string[]}).required, 'requests']} as Schema;
 export const campaignAuditOutput: Read<CampaignAuditOutput> = (value, path) => {
   const f = new Fields(value, path);
-  const requests = f.get('requests', arrayOf(object((g) => ({summary: g.get('summary', text), evidence: g.get('evidence', arrayOf(text, {nonEmpty: true}))}))));
+  const requests = f.get('requests', arrayOf(object((g) => {
+    const out = {op: g.get('op', literal('request')), summary: g.get('summary', text), evidence: g.get('evidence', arrayOf(text, {nonEmpty: true})), dismisses: g.get('dismisses', nullable((v, p) => findingId(v, p))), counterEvidence: g.get('counterEvidence', nullable(text))};
+    if (out.dismisses !== null && out.counterEvidence === null) throw new SchemaError(`${g.path}.counterEvidence`, 'counter-evidence for a requested finding dismissal', null);
+    return out;
+  })));
   const {requests: _r, ...rest} = value as Record<string, unknown>;
   return {...lensOutput(rest, path), requests};
 };
 export function validateCampaignAuditOutput(v: unknown): CampaignAuditOutput { return campaignAuditOutput(v, 'campaignAudit'); }
-
-// verifier (dev.17, proportional review: src/pipeline/docsonly.ts)
-
-/**
- * What a hunk of a docs-only claim is: a `comment`, a `docstring`, `documentation` (prose in a docs file), `code`, or `mixed`.
- * Code carries lane passes over only when every hunk is one of the first three and none is executable, a tool directive or a
- * behaviour change (`hunkClear`).
- */
-export const HUNK_KINDS = ['comment', 'docstring', 'documentation', 'code', 'mixed'] as const;
-export type HunkKind = (typeof HUNK_KINDS)[number];
-export type HunkVerdict = Readonly<{ id: string; kind: HunkKind; executable: boolean; toolDirective: boolean; behaviourChange: boolean }>;
-export type VerifierOutput = Readonly<{ hunks: readonly HunkVerdict[] }>;
-
-/** The verifier's schema; `ids` the hunk ids it was given, which `hunks[].id` then enumerates (null: any id). */
-export function verifierSchemaFor(ids: readonly string[] | null): Schema {
-  return sObj({
-    hunks: sArr(sObj({ id: ids === null || ids.length === 0 ? S_STR : sEnum(ids), kind: sEnum(HUNK_KINDS), executable: S_BOOL, toolDirective: S_BOOL, behaviourChange: S_BOOL })),
-  });
-}
-export const VERIFIER_SCHEMA: Schema = verifierSchemaFor(null);
-
-export const verifierOutput: Read<VerifierOutput> = object((f) => {
-  const hunks = f.get('hunks', arrayOf(object((g): HunkVerdict => ({
-    id: g.get('id', str), kind: g.get('kind', oneOf(HUNK_KINDS)), executable: g.get('executable', bool), toolDirective: g.get('toolDirective', bool),
-    behaviourChange: g.get('behaviourChange', bool),
-  }))));
-  assertUnique(hunks, (h) => h.id, `${f.path}.hunks`);
-  return { hunks };
-});
-
-export function validateVerifierOutput(value: unknown): VerifierOutput {
-  return verifierOutput(value, 'verifier');
-}
-
-/** A hunk the verifier cleared: comment, docstring or documentation, neither executable nor a tool directive, no behaviour change. */
-export const hunkClear = (h: HunkVerdict): boolean =>
-  (h.kind === 'comment' || h.kind === 'docstring' || h.kind === 'documentation') && !h.executable && !h.toolDirective && !h.behaviourChange;
-
-// ---------------------------------------------------------------------------------------------------
 
 export type RoleOutputs = {
   readonly experienceVerdict: ExperienceOutput;

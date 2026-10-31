@@ -34,7 +34,7 @@ import { invocationDir } from '../../../src/pipeline/invoke.ts';
 import { holisticInForce } from '../../../src/pipeline/stages.ts';
 import { runUnit } from '../../../src/pipeline/unit.ts';
 import { promptFor } from '../../../src/prompts/index.ts';
-import { type WalkthroughOutput, validateWalkthroughOutput } from '../../../src/prompts/schemas.ts';
+import { type WalkthroughOutput, experienceWalk } from '../../../src/prompts/schemas.ts';
 import { type RepoConfig, arcStack, resolveRouting } from '../../../src/routing/layers.ts';
 import { profileName } from '../../../src/routing/types.ts';
 import { runnerFiles } from '../../../src/runner/files.ts';
@@ -282,7 +282,7 @@ export type Brake = Readonly<{ rule: 'load' | 'cap' | 'deadline'; detail: string
 export type WatchedRole = 'walkthrough' | 'polishJudge';
 
 /** The `role` calls' spawn intents, in order. */
-export const roleSpawns = (r: ArcRun, role: WatchedRole) => r.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'arc-backend' && i.expect.subject.role === role);
+export const roleSpawns = (r: ArcRun, role: WatchedRole) => r.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'arc-backend' && i.expect.subject.role === 'experienceVerdict' && i.parent.type === 'job' && (role === 'walkthrough' ? String(i.parent.job).startsWith('walk-') : String(i.parent.job).startsWith('compare-')));
 const walkSpawns = (r: ArcRun) => roleSpawns(r, 'walkthrough');
 
 export function readStdout(r: ArcRun, inv: InvocationId): string {
@@ -347,7 +347,7 @@ export const filesUnder = (dir: string): readonly string[] =>
 function refusals(r: ArcRun, value: unknown): string {
   let output: WalkthroughOutput;
   try {
-    output = validateWalkthroughOutput(value);
+    output = experienceWalk(value);
   } catch (e) {
     if (e instanceof SchemaError) return `off its schema: ${e.message}`;
     throw e;
@@ -412,7 +412,7 @@ export async function runWalkTrial(o: Omit<WalkWorkerArgs, 'cell'> & Readonly<{ 
   const value = reading !== null && reading.output.kind === 'present' ? reading.output.value : null;
   if (value !== null) writeFileSync(join(o.out, 'answer.json'), `${JSON.stringify(value, null, 2)}\n`);
   const reported = ended?.kind === 'ended' && ended.outcome === 'reported';
-  const answer = reported && value !== null ? validateWalkthroughOutput(value) : null;
+  const answer = reported && value !== null ? experienceWalk(value) : null;
   const hits = scanTranscript(transcriptFile, [o.out, dirname(o.out), 'evals/roles', ...repositoryPaths()]);
   const brake = monitor.brake();
   const voided: WalkRow['void'] = brake !== null ? { reason: brake.rule === 'cap' ? 'cap' : 'runaway', detail: `${brake.rule}: ${brake.detail}` }

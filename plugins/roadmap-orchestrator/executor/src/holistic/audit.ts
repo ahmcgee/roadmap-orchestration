@@ -1,3 +1,5 @@
+import { recordArcVerdict } from '../core/verdict.ts';
+import { mapInForce } from '../pipeline/lanes.ts';
 import { validateCampaignAuditOutput } from '../prompts/schemas.ts';
 // The cadence audit job (M3 step B5; DESIGN-1.0.md §2.5; plan "Audits"): one durable job `audit-<n>` at a time, which
 // reads the integrated tree through the lenses and records what they found. The lenses report; the steering
@@ -88,22 +90,21 @@ import {
 type BackendCallOutcome,type JobParent,type RepairTurn,type StageContext,arcSeat,callArcRole,isRepairTurnOf,minutesMs,recordedArcCall,repairTurnOf,runOp,unitBranch,verdictOf,
 } from '../pipeline/dispatch.ts';
 import { type JourneyEnd,arcJourneyLane,dirtySnapshot,jobSeriesCheckout,observedViews,removeJobCheckouts,runJourneySeries } from '../pipeline/lanes.ts';
-import { architecture,docAt,inMs,judgmentEntry,ledgerDir,ledgerPath,targetDirs } from '../pipeline/stages.ts';
+import { architecture, docAt, inMs, judgmentEntry, ledgerDir, targetDirs } from '../pipeline/stages.ts';
 import { judgmentRepairDirective } from '../prompts/directives.ts';
 import { promptFor,renderPrompt } from '../prompts/index.ts';
-import { type FindingView,type LensInputs,type RenderedSpec,visionInputOf } from '../prompts/inputs.ts';
+import { type FindingView, type RenderedSpec, visionInputOf } from '../prompts/inputs.ts';
 import { type LensFinding, type LensOutput } from '../prompts/schemas.ts';
 import { evidenceSnapshotOp,worktreeCreateOp,worktreeRemoveOp } from '../recover/ops.ts';
 import { probe } from '../resources/probe.ts';
 import { type JobHolder,type Reservation,cleanup,heldReservation,run } from '../resources/reserve.ts';
 import type { AcquireFirst } from '../schedule/arbiter.ts';
 import { renderSpec } from '../spec/render.ts';
-import { parseRulings } from '../spec/rulings.ts';
 import { parseSpec } from '../spec/spec.ts';
 import { type Cadence,type Clock,cadence,integrationHeadNow,runOrder,specsOnlyOf } from './cadence.ts';
 import { coverageBase,lensCoverage,publishedHeads } from './coverage.ts';
 import { type FindingDraft,admitMutant,corroborateFinding,crossKey,openFinding,witnessFindingDraft } from './findings.ts';
-import { LENS_DIFF_BUDGET,chunkEnd } from './lensdiff.ts';
+import { LENS_DIFF_BUDGET } from './lensdiff.ts';
 import { verdictOf as witnessVerdict } from './observe.ts';
 import {
 FINDING_MOVES,
@@ -318,22 +319,19 @@ const lensDiffDir = (ctx: StageContext, job: JobId, attempt: number): AbsPath =>
  * this call covers and the owners' branch diffs, each attached within the budget (the owners sharing theirs), their
  * unshown files written under `diffDir`.
  */
-function lensInputs(ctx: StageContext, s: Started, r: Recorded, lens: LensKind, chunk: Chunk, checkout: AbsPath, diffDir: AbsPath): LensInputs {
+function lensInputs(ctx: StageContext, s: Started, r: Recorded, lens: LensKind, chunk: Chunk, checkout: AbsPath, diffDir: AbsPath): import('../prompts/inputs.ts').RoleInputs['campaignAudit'] {
   const sha = s.integrationSha;
-  const rulings = parseRulings(r.ledgerText, ledgerPath(ctx));
   const budget = budgetOf(s);
   const share = Math.floor(budget / Math.max(1, s.owners.length));
   const attach = (from: Sha, to: Sha, bytes: number, dir: string) => boundedDiff(ctx.repo, from, to, { budget: bytes, derived: r.derived, removes: null, dir: absPath(join(diffDir, dir)) });
   return {
     vision: visionInputOf(r.vision, r.advances),
-    lens,
+    method: {traits: [...new Set(Object.values(mapInForce(ctx.journal.view)?.systems ?? {}).flatMap((x) => x.traits))], markers: [], unitKind: 'campaign', ui: hasMilestones(ctx.plan()), expensiveLanes: ctx.plan().suite.lanes.some((l) => (l as {cost?: string}).cost === 'expensive')},
     obligations: r.obligations === null ? [] : observedViews(ctx, r.obligations, r.obligations.obligations, sha),
     range: { audited: sha, diff: attach(chunk.from, chunk.to, budget, 'range') },
     owners: s.owners.map((o) => ({ unit: o.unit, head: o.head, diff: attach(diffBase(ctx.repo, sha, o.head), o.head, share, `owner-${o.unit}`) })),
     priorFindings: findingViews(ctx.journal.view.holistic().findings, s.priorFindings),
     contracts: ctx.plan().contracts.map((c) => docAt(ctx, sha, c)),
-    rulings: rulings.flatMap((x) => (x.status === 'active' ? [{ id: x.id, text: x.text }] : [])),
-    index: { contracts: [], rulings: [], withdrawn: rulings.filter((x) => x.status === 'withdrawn').map((x) => x.id), ledger: ledgerPath(ctx) },
     target: architecture(ctx, sha),
     checkout,
     // M4a rev 3 (H2, R61): an audit every trigger of which is a specs-only drift reads those units' specs.
@@ -375,7 +373,7 @@ function lensDraft(ctx: StageContext, s: Started, r: Recorded, lens: LensKind, f
     return [b.path, b] as const;
   })).values()];
   let mutant: MutantRef | null = null;
-  if (lens === 'vacuity' && f.mutant !== null) {
+  if (f.mutant !== null) {
     if (!laneIds.has(f.mutant.lane)) return { refused: `its mutant's lane ${f.mutant.lane} is not an arc lane (${[...laneIds].join(', ') || 'none'})` };
     const m = f.mutant.kind === 'edits' ? { ...f.mutant, edits: f.mutant.edits.map((e) => ({ ...e, path: isAbsolute(e.path) ? relative(checkout, e.path) : e.path })) } : f.mutant;
     const admitted = admitMutant(ctx.repo, ctx.runDir, s.integrationSha, m);
@@ -383,7 +381,7 @@ function lensDraft(ctx: StageContext, s: Started, r: Recorded, lens: LensKind, f
     mutant = admitted.mutant;
   }
   return {
-    lens,
+    lens: f.mutant === null ? lens : 'vacuity',
     severity: lens === 'vision' && f.severity === 'P1' ? 'P2' : f.severity,
     obligation: f.obligation !== null && obligationIds.has(f.obligation) ? f.obligation : null,
     visionClauses: canonicalIds(f.visionClauses.filter((c): c is VisionClauseId => clauseIds.has(c))),
@@ -645,8 +643,8 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
     return to === undefined || to === from ? [] : [{ lens, from, to }];
   }).sort((a, b) => (a.lens < b.lens ? -1 : 1));
   const findings = canonicalIds(t.ids);
+  recordArcVerdict(ctx.journal, {job, stage: 'campaign-audit', verdict: outcome, findings: findings.length});
   ctx.journal.fact({ kind: 'audit-ended', job, covered: ranges, findings, suppressed: t.suppressed, outcome, refused: t.refused });
-  ctx.journal.fact({kind: 'stage-outcome', job, stage: 'campaign-audit', verdict: outcome, findings: findings.length});
   crashPoint('audit.after-ended');
   if (outcome === 'abandoned') {
     const c = cadence(ctx, ctx.clock);

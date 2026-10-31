@@ -1,4 +1,4 @@
-import { systemName } from '../src/core/ids.ts';
+
 // Proportional review (dev.17; src/pipeline/review.ts, src/pipeline/docsonly.ts) through the unit driver, fake-backed: real
 // processes, real git. Named tests: review.defect-required, review.ride-along, review.docs-only-code,
 // review.docs-only-verifier, review.docs-only-template-literal, review.docs-only-code-certain, review.docs-only-refused,
@@ -10,7 +10,6 @@ import assert from 'node:assert/strict';
 import { readFileSync,writeFileSync } from 'node:fs';
 import { dirname,join } from 'node:path';
 import { test } from 'node:test';
-import { diffOf } from '../evals/roles/verifier/fixture.ts';
 import { applyCommand } from '../src/commands/apply.ts';
 import { submitCommand } from '../src/commands/queue.ts';
 import type { Fact,IntentOf } from '../src/core/events.ts';
@@ -18,6 +17,8 @@ import { clauseId,invocationIdOf,sha,unitId } from '../src/core/ids.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import type { SpecM1,SpecPatch } from '../src/core/records.ts';
 import { runOp,unitBranch } from '../src/pipeline/dispatch.ts';
+import { repoPattern } from '../src/core/values.ts';
+import { pinDesign } from '../src/pipeline/design.ts';
 import { certifiedTree } from '../src/pipeline/docsonly.ts';
 import { fingerprintAt,gateDebtNotes } from '../src/pipeline/gate.ts';
 import { approvalBlobs,gateDelta } from '../src/pipeline/review.ts';
@@ -28,10 +29,7 @@ import { specPatchOp } from '../src/spec/patch.ts';
 import { events } from './fixtures/invoke-specs.ts';
 import { editPlan } from './fixtures/route-common.ts';
 import { BUILD_REPORT,SCENARIO_TIMEOUT_MS,admitAll,planCheckStep } from './fixtures/stage-common.ts';
-import {
-syncInputs,type ArcRun,MUL,SUITE_LANE,U1,appendSteps,applyBody,commandContextFor,contextFor,gateRepairStep,gateStep,isGateCall,mulBuild,outcomes,setupArc,stepUntil,
-workDirPattern,
-} from './fixtures/unit-common.ts';
+import { syncInputs, type ArcRun, MUL, U1, appendSteps, applyBody, commandContextFor, contextFor, gateRepairStep, gateStep, isGateCall, mulBuild, outcomes, setupArc, stepUntil, workDirPattern } from './fixtures/unit-common.ts';
 import { commitAll,git } from './helpers/repo.ts';
 import { type CallRecord,type Step,readCalls } from './helpers/scenario.ts';
 
@@ -39,8 +37,8 @@ const T = { timeout: SCENARIO_TIMEOUT_MS };
 const live = () => admitAll;
 
 const blocking = (path: string, text: string, extra: Readonly<Record<string, JsonValue>> = {}): JsonValue =>
-  ({ severity: 'blocking', path, text, contractRef: null, experiments: [], defect: 'incorrect-behaviour', reraises: null, hunk: null, debt: null, ...extra });
-const note = (path: string, text: string): JsonValue => ({ severity: 'note', path, text, contractRef: null, experiments: [], defect: null, reraises: null, hunk: null, debt: null });
+  ({evidence: ["fixture:1"],  severity: 'blocking', path, text, contractRef: null, experiments: [], defect: 'incorrect-behaviour', reraises: null, hunk: null, debt: null, ...extra });
+const note = (path: string, text: string): JsonValue => ({evidence: ["fixture:1"],  severity: 'note', path, text, contractRef: null, experiments: [], defect: null, reraises: null, hunk: null, debt: null });
 /** A fix round: the build session resumed, committing `files` (none: no change), answering `docsOnlySince`. */
 const fixBuild = (files: Readonly<Record<string, string>> | null, _retired: null = null, before: readonly Step['acts'][number][] = []): Step => ({
   as: 'codex', expect: { argv: ['exec', 'resume'] },
@@ -74,7 +72,7 @@ const MUL_DOC_COMMENT = { 'src/mul.js': `/** Multiplies two numbers. */\n${MUL['
 
 
 test('review.ride-along: comment and doc findings never block; each enters the ledger released (no banking outside a corpus arc), and only one naming its drag is debt', T, async () => {
-  const rideAlong = (path: string, text: string, debt: JsonValue): JsonValue => ({ severity: 'ride-along', path, text, contractRef: null, experiments: [], defect: null, reraises: null, hunk: null, debt });
+  const rideAlong = (path: string, text: string, debt: JsonValue): JsonValue => ({evidence: ["fixture:1"],  severity: 'ride-along', path, text, contractRef: null, experiments: [], defect: null, reraises: null, hunk: null, debt });
   const findings = [rideAlong('src/mul.js', 'The comment above mul is stale.', { drag: 'Every later caller reads the wrong contract from it.' }), rideAlong('test/mul.test.js', 'Typo in a test name.', null)];
   const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve', findings })] });
   const r = contextFor(d);
@@ -289,7 +287,7 @@ test('review.delta-design-revision: a design record a plan-check lands after an 
     };
     // A plan-check's approve again: its design record lands on the spec's next revision, the unit's own plan.
     const approved = loadUnitSpec(r.ctx, r.unit('u1')).spec;
-    const redesigned = await patchSpec([{ op: 'design', record: approved.design! }], 'plan-check');
+    const redesigned = await patchSpec([{ op: 'design', record: (() => {const result = pinDesign(r.ctx, {kind: 'module', changes: [{system: null, paths: [repoPattern('src/**')], lines: 1}], interfaces: [], failureModes: [], clauses: [], breaks: {tests: [], docs: []}, experiments: [], newSystem: null, verification: null}, tip); if (result.kind !== 'pinned') throw new Error(result.reasons.join('; ')); return result.record;})() }], 'plan-check');
     assert.equal(redesigned.rev, approved.rev + 1);
     assert.equal(gateDelta(r.ctx, U1, redesigned, tip, head, fingerprintAt(r.ctx, r.unit('u1'), tip)), 'empty');
     assert.deepEqual(r.journal.view.propagationFacts(), [], 'a design record mints no propagation');

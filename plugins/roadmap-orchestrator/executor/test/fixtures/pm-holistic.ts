@@ -22,8 +22,8 @@ import { systemName } from '../../src/core/ids.ts';
 import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Event, IntentRecord, Parent } from '../../src/core/events.ts';
-import { type InvocationId, type JobId, parseInvocationId } from '../../src/core/ids.ts';
+import type { Event, Parent } from '../../src/core/events.ts';
+import { type InvocationId, parseInvocationId } from '../../src/core/ids.ts';
 import type { JournalView } from '../../src/core/interfaces.ts';
 import { type JsonValue, canonicalJson } from '../../src/core/json.ts';
 import type { LogSnapshot } from '../../src/core/log.ts';
@@ -86,7 +86,7 @@ function treeWith(repo: string, rev: string, files: Readonly<Record<string, stri
 const keyed = (unit: string, steps: readonly Step[]): readonly Step[] => steps.map((s) => ({ ...s, unit }));
 
 /** The approving gate's note: a corpus arc banks it as debt after the approval (DEBT_BANK, `debt.after-approval`). */
-const GATE_NOTE = {
+const GATE_NOTE = {evidence: ["fixture:1"], 
   severity: 'note', path: null, text: 'The mul helper has no overflow test.', contractRef: null, experiments: [], debt: { drag: 'Every caller of mul must guard overflow itself until it has one.' },
 } as const;
 

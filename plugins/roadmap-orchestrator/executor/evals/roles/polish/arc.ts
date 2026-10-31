@@ -26,7 +26,7 @@ import { jobEvidenceRoot } from '../../../src/git/snapshot.ts';
 import { readClaude } from '../../../src/backends/claude.ts';
 import { runUnit, type Gate } from '../../../src/pipeline/unit.ts';
 import { promptFor } from '../../../src/prompts/index.ts';
-import { type PolishJudgeOutput, validatePolishJudgeOutput, validateWalkthroughOutput } from '../../../src/prompts/schemas.ts';
+import { type PolishJudgeOutput, validateWalkthroughOutput, experiencePolish } from '../../../src/prompts/schemas.ts';
 import { type RepoConfig, arcStack, resolveRouting } from '../../../src/routing/layers.ts';
 import { holisticContexts } from '../../../src/schedule/scheduler.ts';
 import { type CompareOutcome, judgeRefusals, runCompare, tweakOf } from '../../../src/walk/compare.ts';
@@ -45,7 +45,7 @@ import { OVERSPEND, escapeRe, filesUnder, readStdout, roleSpawns, setupMilestone
 import { MILESTONE_UNIT, walkRepoConfig } from '../walkthrough/fixture.ts';
 import type { PolishCell } from './cells.ts';
 import { expectedDecision } from './families.ts';
-import { COMPARE_JOB, POLISH_SCOPE, POLISH_UNIT, type PolishFixture, WALK_JOB, WALK_NOTE, buildPolishFixture, keyOf } from './fixture.ts';
+import { COMPARE_JOB, POLISH_UNIT, type PolishFixture, WALK_JOB, WALK_NOTE, buildPolishFixture, keyOf } from './fixture.ts';
 
 /**
  * Degenerate judges, each knowing the key (what a cheating judge would know): `oracle` keeps exactly the better
@@ -171,7 +171,7 @@ function judgeSteps(kind: JudgeKind, f: PolishFixture, evidenceDir: string): rea
 function refusals(value: unknown, dirs: readonly string[]): string {
   let output: PolishJudgeOutput;
   try {
-    output = validatePolishJudgeOutput(value);
+    output = experiencePolish(value);
   } catch (e) {
     if (e instanceof SchemaError) return `off its schema: ${e.message}`;
     throw e;
@@ -269,7 +269,7 @@ export async function runPolishTrial(o: Omit<PolishWorkerArgs, 'cell'> & Readonl
   const files = filesUnder(join(o.out, 'evidence'));
   const counts = toolCounts(t);
   const usage = sumUsage(perCall.flatMap((c) => (c.usage === null ? [] : [c.usage])));
-  const answer = decision !== null && value !== null ? validatePolishJudgeOutput(value) : null;
+  const answer = decision !== null && value !== null ? experiencePolish(value) : null;
   const row: PolishRow = {
     set: o.set, cell: o.cell.id, family: f.family.id, variant: o.cell.variant, trial: o.trial, judge: o.judge, void: voided,
     decision, correct: decision === null ? null : decision === expectedDecision(o.cell.variant), reasons: answer?.reasons ?? [],

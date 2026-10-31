@@ -203,7 +203,7 @@ describe('ruler-changed', () => {
     const lever = sha256('b'.repeat(64));
     const ruler = sha256('c'.repeat(64));
     const plans = new Map([
-      [PLAN_A, planOf({})], [ruler, { ...planOf({}), routing: { gate: { med: 'summit' } } }], [lever, { ...planOf({}), routing: { gate: { med: 'summit' } }, capacity: { cpu: 4 } }],
+      [PLAN_A, planOf({})], [ruler, { ...planOf({}), routing: { verifier: { med: 'summit' } } }], [lever, { ...planOf({}), routing: { verifier: { med: 'summit' } }, capacity: { cpu: 4 } }],
     ]);
     const log = new FlowLog();
     log.applied(0, 1);
@@ -221,7 +221,7 @@ describe('ruler-changed', () => {
     try {
       await stepUntil(r, 'u1', (f) => f.stage === 'plan-check');
       const plan = JSON.parse(readFileSync(d.planPath, 'utf8')) as Record<string, unknown>;
-      writeFileSync(d.planPath, JSON.stringify({ ...plan, routing: { gate: { med: 'summit' } } }));
+      writeFileSync(d.planPath, JSON.stringify({ ...plan, routing: { verifier: { med: 'summit' } } }));
       const command = submitCommand(r.ctx.runDir, r.journal.view.arc, applyBody(d));
       const out = await applyCommand(commandContextFor(r), command);
       assert.equal(out.kind, 'applied', JSON.stringify(out));

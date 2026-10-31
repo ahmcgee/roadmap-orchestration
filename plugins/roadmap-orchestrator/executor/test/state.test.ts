@@ -34,7 +34,7 @@ function refuses(events: readonly Event[], seq: number, detail: RegExp): void {
 describe('fold derives', () => {
   it('open intents, units, meter, needs-user, snapshot high-water, last seq', () => {
     const state = fold(ARC, chain([
-      spawnIntent(1, { stage: 'plan-check', role: 'planCheck' }), // 1
+      spawnIntent(1, { stage: 'plan-check', role: 'verifier' }), // 1
       meter(inv1(1), 'planCheck', 100, 10, 5), // 2
       spawnResult(op(1)), // 3
       spawnIntent(4), // 4 build attempt 1
@@ -57,7 +57,7 @@ describe('fold derives', () => {
     assert.deepEqual(state.needsUser, ['nu-9']);
     assert.deepEqual(state.meter, [
       { charge: { type: 'role', role: 'build' }, routingRev: REV, known: 1, unavailable: 1, inputTokens: 1000, outputTokens: 200, cacheReadTokens: 0, cacheWriteTokens: 0, turns: 0, costUsd: 0 },
-      { charge: { type: 'role', role: 'planCheck' }, routingRev: REV, known: 1, unavailable: 0, inputTokens: 100, outputTokens: 10, cacheReadTokens: 5, cacheWriteTokens: 0, turns: 0, costUsd: 0 },
+      { charge: { type: 'role', role: 'verifier' }, routingRev: REV, known: 1, unavailable: 0, inputTokens: 100, outputTokens: 10, cacheReadTokens: 5, cacheWriteTokens: 0, turns: 0, costUsd: 0 },
     ]);
     assert.deepEqual(state.tailDiscarded, []);
   });
@@ -65,7 +65,7 @@ describe('fold derives', () => {
   it('state.stage-outcome-derives-counters: counters, seats and status from stage-outcome facts', () => {
     const state = fold(ARC, chain([
       dispatch('low'), // 1
-      spawnIntent(2, { stage: 'plan-check', role: 'planCheck' }), // 2 plan-check#1 starts
+      spawnIntent(2, { stage: 'plan-check', role: 'verifier' }), // 2 plan-check#1 starts
       spawnResult(op(2)), // 3
       stageOutcome({ stage: 'plan-check', attempt: 1, outcome: 'redirect', class: 'redirect' }), // 4
       stageOutcome({ stage: 'plan-check', attempt: 2, outcome: 'refusal', class: 'route-up' }), // 5 a start with no intent
@@ -349,7 +349,7 @@ describe('fold indexes', () => {
       const base = spawnIntent(records.length + 1);
       assert.equal(base.kind, 'proc.spawn');
       const spawn: IntentOf<'proc.spawn'> = { ...base, parent: { type: 'job', job }, expect: { ...base.expect,
-        subject: { purpose: 'arc-backend', job, role: 'lens', tier: 'arc', routingRev: REV, attempt: 1 },
+        subject: { purpose: 'arc-backend', job, role: 'campaignAudit', tier: 'arc', routingRev: REV, attempt: 1 },
       } };
       records.push(spawn, spawnLost(spawn.op));
       retried.push(spawn);
@@ -369,14 +369,14 @@ describe('fold indexes', () => {
         parent: previous.parent.type === 'stage'
           ? { attempt: previous.parent.attempt, stage: previous.parent.stage, unit: previous.parent.unit, type: 'stage' }
           : previous.parent,
-        expect: { ...previous.expect, subject: { purpose: 'backend', unit: units[1]!, role: 'gate', tier: 'med', routingRev: REV, attempt: 1 } },
+        expect: { ...previous.expect, subject: { purpose: 'backend', unit: units[1]!, role: 'verifier', tier: 'med', routingRev: REV, attempt: 1 } },
       });
     }
     records.push({ ...kill, ordinal: 2, expect: { ...kill.expect, inv: invocationId(first.op, 2), reason: 'stop' } });
     // A backend-to-job retry also removes both the unit and the unit/role memberships.
     records.push(spawnLost(first.op));
     records.push({ ...first, ordinal: 3, expect: { ...first.expect,
-      subject: { purpose: 'arc-backend', job: jobs[1]!, role: 'lens', tier: 'arc', routingRev: REV, attempt: 1 },
+      subject: { purpose: 'arc-backend', job: jobs[1]!, role: 'campaignAudit', tier: 'arc', routingRev: REV, attempt: 1 },
     } });
 
     const latest = new Map<IntentRecord['op'], IntentRecord>();

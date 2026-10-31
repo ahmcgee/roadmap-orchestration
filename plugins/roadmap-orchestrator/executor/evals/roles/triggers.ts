@@ -23,21 +23,20 @@
 import { spawnSync } from 'node:child_process';
 import { matchesGlob } from 'node:path';
 
-export type EvalRole = 'gate' | 'walkthrough' | 'polishJudge' | 'verifier' | 'scaffold';
+export type EvalRole = 'gate' | 'walkthrough' | 'polishJudge' | 'verifier';
 
 const SHARED = ['src/prompts/inputs.ts', 'src/prompts/schemas.ts', 'src/routing/**', 'src/backends/argv.ts', 'src/backends/claude.ts', 'evals/roles/*.ts'] as const;
 /** The polish judge's modules under src/walk/: they trigger it alone. */
 const POLISH_MODULES = ['src/walk/compare.ts', 'src/walk/polish.ts'] as const;
 
 export const TRIGGERS: Readonly<Record<EvalRole, readonly string[]>> = {
-  gate: ['src/prompts/gate/**', 'src/git/boundeddiff.ts', 'src/pipeline/gate.ts', 'src/pipeline/dispatch.ts', ...SHARED, 'evals/roles/gate/**', 'evals/roles/gen/**'],
-  walkthrough: ['src/prompts/walkthrough/**', 'src/walk/**', 'src/backends/mcp.ts', ...SHARED, 'evals/roles/walkthrough/**'],
+  gate: ['src/prompts/verifier/**', 'src/prompts/method/**', 'src/pipeline/surface.ts', 'src/prompts/gate/**', 'src/git/boundeddiff.ts', 'src/pipeline/gate.ts', 'src/pipeline/dispatch.ts', ...SHARED, 'evals/roles/gate/**', 'evals/roles/gen/**'],
+  walkthrough: ['src/prompts/experienceVerdict/**', 'src/prompts/walkthrough/**', 'src/walk/**', 'src/backends/mcp.ts', ...SHARED, 'evals/roles/walkthrough/**'],
   polishJudge: [
-    'src/prompts/polishJudge/**', ...POLISH_MODULES, 'src/walk/bringup.ts', 'src/backends/mcp.ts', ...SHARED,
+    'src/prompts/experienceVerdict/**', 'src/prompts/polishJudge/**', ...POLISH_MODULES, 'src/walk/bringup.ts', 'src/backends/mcp.ts', ...SHARED,
     'evals/roles/polish/**', 'evals/roles/walkthrough/**',
   ],
-  verifier: ['src/prompts/verifier/**', 'src/pipeline/docsonly.ts', 'src/pipeline/comments.ts', ...SHARED, 'evals/roles/verifier/**'],
-  scaffold: ['src/prompts/scaffold/**', 'src/pipeline/scaffold.ts', ...SHARED, 'evals/roles/scaffold/**'],
+  verifier: [],
 };
 
 /** Paths a role's globs match that do not trigger it. */

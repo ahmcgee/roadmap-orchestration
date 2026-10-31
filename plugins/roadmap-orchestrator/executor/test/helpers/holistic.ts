@@ -112,7 +112,7 @@ const step = (key: { unit?: string; lens?: LensKindName }, acts: readonly Claude
  * text its prompt must hold.
  */
 export function lensStep(job: string | undefined, lens: LensKindName, findings: readonly LensFindingSpec[] = [], extra: readonly ClaudeAct[] = [], stdinContains: readonly string[] = []): Step {
-  return { ...step({ ...(job === undefined ? {} : { unit: job }), lens }, [...extra, { type: 'emit', value: lensAnswer(findings) }]), expect: { stdinContains } };
+  return { ...step({ ...(job === undefined ? {} : { unit: job }) }, [...extra, { type: 'emit', value: lensAnswer(findings) }]), expect: { stdinContains } };
 }
 
 /**

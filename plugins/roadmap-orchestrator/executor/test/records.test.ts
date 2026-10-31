@@ -36,7 +36,7 @@ const RUNNER_SAMPLES: { readonly [N in RunnerFileName]: Record<string, unknown> 
   'cancel.json': { ...bind, reason: 'pause', at: T0 },
   'exit.json': { ...bind, child: { type: 'exited', code: 0 }, cause: 'exited', endedAt: T0, quiescedAt: T1 },
   'result.json': {
-    ...bind, type: 'backend', role: 'gate', routingRev: '0123456789abcdef', session: UUID,
+    ...bind, type: 'backend', role: 'verifier', routingRev: '0123456789abcdef', session: UUID,
     outcome: { kind: 'success', value: { decision: 'approve' } }, usage: { kind: 'unavailable', reason: 'absent' }, backendErrors: [],
   },
   'reads.json': {
@@ -174,7 +174,7 @@ describe('records', () => {
     });
     it('launch.json: a judgment role takes only a Claude judgment session, fresh or (dev.12, every role) resumed for its repair turn', () => {
       const launch = RUNNER_SAMPLES['launch.json'];
-      const terminal = { ...(launch['terminal'] as Record<string, unknown>), role: 'gate' };
+      const terminal = { ...(launch['terminal'] as Record<string, unknown>), role: 'verifier' };
       for (const mode of ['fresh', 'resume'] as const) assert.ok(RUNNER_FILE_READERS['launch.json']({ ...launch, terminal: { ...terminal, session: { backend: 'claude', mode, id: UUID } } }, 'launch.json'));
       assert.throws(() => RUNNER_FILE_READERS['launch.json']({ ...launch, terminal: { ...terminal, session: { backend: 'claude', mode: 'continue', id: UUID } } }, 'launch.json'), /session\.mode/);
       assert.throws(() => RUNNER_FILE_READERS['launch.json']({ ...launch, terminal: { ...terminal, session: { backend: 'codex', mode: 'fresh' } } }, 'launch.json'), /session\.backend/);
@@ -218,7 +218,7 @@ describe('records', () => {
 
   it('SpecPatch reads each op form and refuses an empty patch', () => {
     const patch = {
-      expectRev: 1, by: { role: 'planCheck', routingRev: '0123456789abcdef', inv: 'arc-1/7#1' },
+      expectRev: 1, by: { role: 'executor', inv: 'arc-1/7#1' },
       ops: [{ op: 'add', section: 'facts', item: { id: 'F2', text: 't' } }, { op: 'strike', id: 'A1' }],
     };
     assert.deepEqual(specPatch(patch, 'patch'), patch);

@@ -15,42 +15,7 @@ proofMinutes,verdictAfter,verdictBefore,
 } from '../flow/types.ts';
 import { type PressureAvailability,PRESSURE_AVAILABILITIES } from '../host/pressure.ts';
 import { type CpuBasis,cpuBasis } from './cpu.ts';
-import {
-type AmendmentId,type ArcId,
-type ClaudeSessionId,
-type CommandId,type DebtId,type DivergenceId,type EdgeId,type EnvId,type FindingId,type InvocationId,
-type JobId,
-type JourneyId,
-type KnownDefectId,type LaneId,type LaneRev,
-type MilestoneId,
-type NeedsUserId,type ObligationId,type OpId,type OpKey,type OpportunityId,type PlanRev,
-type PolishId,
-type ProposalId,
-type ResourceInstance,type ResourceName,type ResourceUnit,type RoutingRev,type RuleId,type RulingId,
-type ServeName,
-type Sha,type Sha256Hex,type SpecRev,
-type UnitId,type VisionClauseId,
-amendmentId,arcId,
-claudeSessionId,
-commandId,compareResourceUnits,debtId,divergenceId,edgeId,envId,
-findingId,
-idList,
-invocationIdOf,jobIdOf,jobIdOfKind,
-journeyId,
-knownDefectId,
-laneId,laneRev,
-milestoneId,
-needsUserId,obligationId,opIdOf,opKey,
-opportunityId,
-parseInvocationId,parseJobId,parseOpId,
-planRev,
-polishId,
-proposalId,proposalJob,
-resourceInstance,resourceName,resourceUnit,routingRev,ruleId,rulingId,
-serveName,
-sha,sha256,specRev,unitId,
-visionClauseId
-} from './ids.ts';
+import { type AmendmentId, type ArcId, type ClaudeSessionId, type CommandId, type DebtId, type DivergenceId, type EdgeId, type EnvId, type FindingId, type InvocationId, type JobId, type JourneyId, type KnownDefectId, type LaneId, type LaneRev, type MilestoneId, type NeedsUserId, type ObligationId, type OpId, type OpKey, type OpportunityId, type PlanRev, type PolishId, type ProposalId, type ResourceInstance, type ResourceName, type ResourceUnit, type RoutingRev, type RuleId, type ServeName, type Sha, type Sha256Hex, type SpecRev, type UnitId, type VisionClauseId, amendmentId, arcId, claudeSessionId, commandId, compareResourceUnits, debtId, divergenceId, edgeId, envId, findingId, idList, invocationIdOf, jobIdOf, jobIdOfKind, journeyId, knownDefectId, laneId, laneRev, milestoneId, needsUserId, obligationId, opIdOf, opKey, opportunityId, parseInvocationId, parseJobId, parseOpId, planRev, polishId, proposalId, proposalJob, resourceInstance, resourceName, resourceUnit, routingRev, ruleId, serveName, sha, sha256, specRev, unitId, visionClauseId } from './ids.ts';
 import { canonicalJson,sha256Hex } from './json.ts';
 import { type OrderingWait,orderingWait } from './ordering.ts';
 import {
@@ -815,7 +780,7 @@ export type GateLargeDiff = Readonly<{ overflow: number }>;
 export type ReviewItem = Readonly<{ id: string; text: string; evidence: readonly string[] }>;
 export type SurfaceFact =
   | Readonly<{ kind: 'review-triggered'; unit: UnitId; marker: 'M1' | 'M2' | 'M3' | 'M4' | 'always'; source: string; specRev: SpecRev }>
-  | Readonly<{ kind: 'review-completed'; unit: UnitId; mode: 'pre-build' | 'diagnosis'; specRev: SpecRev; inv: InvocationId; items: readonly ReviewItem[]; note: Sha256Hex | null }>;
+  | Readonly<{ kind: 'review-completed'; unit: UnitId; mode: 'pre-build' | 'diagnosis'; specRev: SpecRev; planRev: PlanRev; inv: InvocationId; items: readonly ReviewItem[]; note: Sha256Hex | null }>;
 export type ArcStageVerdict = Readonly<{kind: 'stage-outcome'; job: JobId; stage: 'experience-verdict' | 'campaign-audit'; verdict: string; findings: number}>;
 export type Fact =
   | ArcStageVerdict
@@ -2459,7 +2424,7 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
     ids: f.get('ids', idList((v, p): DivergenceId => divergenceId(v, p), { nonEmpty: true })),
   })),
   'review-triggered': object((f): Fact => ({ kind: f.get('kind', literal('review-triggered')), unit: f.get('unit', unitR), marker: f.get('marker', oneOf(['M1', 'M2', 'M3', 'M4', 'always'] as const)), source: f.get('source', str), specRev: f.get('specRev', (v, p) => specRev(v, p)) })),
-  'review-completed': object((f): Fact => ({ kind: f.get('kind', literal('review-completed')), unit: f.get('unit', unitR), mode: f.get('mode', oneOf(['pre-build', 'diagnosis'] as const)), specRev: f.get('specRev', (v, p) => specRev(v, p)), inv: f.get('inv', invR), items: f.get('items', arrayOf(object((g) => ({ id: g.get('id', str), text: g.get('text', str), evidence: g.get('evidence', arrayOf(str)) })))), note: f.get('note', nullable(sha256R)) })),
+  'review-completed': object((f): Fact => ({ kind: f.get('kind', literal('review-completed')), unit: f.get('unit', unitR), mode: f.get('mode', oneOf(['pre-build', 'diagnosis'] as const)), specRev: f.get('specRev', (v, p) => specRev(v, p)), planRev: f.get('planRev', (v, p) => planRev(v, p)), inv: f.get('inv', invR), items: f.get('items', arrayOf(object((g) => ({ id: g.get('id', str), text: g.get('text', str), evidence: g.get('evidence', arrayOf(str)) })))), note: f.get('note', nullable(sha256R)) })),
   noted: object((f): Fact => ({ kind: f.get('kind', literal('noted')), unit: f.get('unit', unitR), command: f.get('command', cmdR), brief: f.get('brief', sha256R) })),
   steered: object((f): Fact => ({
     kind: f.get('kind', literal('steered')), unit: f.get('unit', unitR), command: f.get('command', cmdR), brief: f.get('brief', sha256R),

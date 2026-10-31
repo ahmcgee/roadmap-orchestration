@@ -64,8 +64,7 @@ import { methodModules } from '../method/index.ts';
 // a settled finding is raised again only once its file changed, each dispute is ruled once, and on a delta a blocking
 // finding on an unchanged file rests on a changed hunk or a moved target, else code records it as a note.
 import type { GateInputs, PromptModule } from '../inputs.ts';
-import {
-  boundedDiffText, bullets, milestoneDocuments, milestonesText, documentsXml, escalationText, findingsText, laneLedgerText, obligationsText, standingObligationsText, premisesText, referenceIndexText, systemNotesText, rulingsText, targetDocument, gateChecksText} from '../inputs.ts';
+import { boundedDiffText, bullets, milestoneDocuments, milestonesText, documentsXml, escalationText, findingsText, laneLedgerText, obligationsText, standingObligationsText, premisesText, systemNotesText, targetDocument, gateChecksText } from '../inputs.ts';
 import { GATE_SCHEMA } from '../schemas.ts';
 
 /**
@@ -106,22 +105,7 @@ ${bullets(i.undeclaredContracts, '(none)')}
 
 function largeDiff(i: GateInputs): string {
   const l = i.largeDiff;
-  if (l === null) return '';
-  return `
-
-<large_diff>
-This change is too large to review in one context: ${l.overflow} of its files did not fit in <diff>, and it changes ${l.changed} paths in all, listed one per line in ${l.list}. A change this size is high risk whatever its tier, so this gate runs on the high-risk seat at least, and your verdict still covers every file. Cover it by delegating, as follows.
-
-First group the change into coherent clusters: files that change together for one reason, such as one mechanical substitution across a package, one feature's source and its tests, or one area of configuration. <orientation> gives you the substitutions the executor detected and how the change spreads across packages.
-
-Then have each cluster's changed logic described by subagents on Claude Haiku 5.5 (the Agent tool with model "haiku"). Name the model on every subagent call: a subagent you start without one runs on your own model, at its cost. A describer reports the cluster's changed signatures and exports; removed or weakened checks, guards and error handling; changed literals, defaults and configuration; behaviour a caller would see change; and anything touching authentication, data, external calls or concurrency. For a mechanical cluster, give the describer the substitutions from <orientation> that explain it, and ask it to state the transformation once, then list verbatim, with file and line, every hunk that departs from it. A defect inside a sweep is shaped like the sweep, so a departing hunk must reach you as written, never folded into a summary.
-
-Combine the descriptions with the executor's own signals (<orientation>, the executable checks, the lane ledger) and decide each cluster's review. A description suffices only for a purely mechanical cluster that its substitutions fully explain and in which the describer found no departure. Ordinary logic gets routine review by subagents on Claude Sonnet 5.5 (model "sonnet"). Anything risky or unclear gets close review, by you or by subagents on Claude Opus 5.5 (model "opus"). Reviewers read the cluster's raw hunks (its .diff files and the repository), not only its description, and you ask them to report anything suspicious back to you rather than settle it themselves. No cluster goes unreviewed.
-
-Next, list the changed contracts that cross cluster boundaries, such as an export renamed in one cluster and called in another, or a default changed in one and read in another, and read the raw hunks yourself wherever a description is ambiguous. Then check those changed contracts against their callers across clusters in one pass of your own. Finally, check each finding against the actual code, drop anything you cannot substantiate, merge duplicates, and rank what remains by severity. A subagent's report is a lead; your findings rest on code you or a reviewer read.
-
-Your answer carries the cluster map in clusters: each cluster's id, the paths it covers (exact repository paths, directories or globs) and its review: description, routine or close. The executor checks the map against the list above: every path must fall in exactly one cluster, so write patterns that do not overlap, and an answer whose map misses or repeats a path is refused. 
-</large_diff>`;
+  return l === null ? '' : `\n<large_diff>\n${l.overflow} files overflow the inline diff; ${l.changed} changed paths are listed in ${l.list}. Read the attachments and return clusters covering every changed path exactly once. Each cluster has an id, paths and review depth: description, routine or close. The verdict covers all clusters and their interactions.\n</large_diff>`;
 }
 
 function review(i: GateInputs): string {
@@ -181,7 +165,7 @@ export const PROMPT: PromptModule<'gate'> = {
   system,
   schema: GATE_SCHEMA,
   fields: [
-    'systemNotes', 'standing', 'method',
+    'systemNotes', 'touches', 'standing', 'method',
     'spec', 'intent', 'nonGoals', 'contracts', 'index', 'target', 'direction', 'obligations', 'standingObligations', 'diff', 'laneLedger', 'evidence', 'systems', 'reach', 'traits', 'reachTraits', 'priorRound',
     'checks', 'escalation', 'largeDiff', 'milestones', 'review', 'undeclaredContracts',
   ],
@@ -219,6 +203,7 @@ ${bullets(i.evidence, '(none)')}
 </evidence_dirs>
 
 <unit_systems>${bullets(i.systems, '(none)')}</unit_systems>
+<builder_touches>${bullets(i.touches, '(none)')}</builder_touches>
 <reach>${bullets(i.reach, '(none)')}</reach>
 <system_traits>${bullets(i.traits, '(none)')}</system_traits>
 <reach_traits>${bullets(i.reachTraits, '(none)')}</reach_traits>

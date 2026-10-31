@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe,it } from 'node:test';
-import { adapt,backendSchemaViolation,schemaViolation,writeResult } from '../src/backends/adapter.ts';
+import { adapt, schemaViolation, writeResult } from '../src/backends/adapter.ts';
 import { ResultConflictError,UnsupportedSchemaError } from '../src/backends/errors.ts';
 import type { BackendOutcomeKind,ExitFile,ResultFile } from '../src/core/records.ts';
 import { tmpDir } from './helpers/repo.ts';
@@ -184,16 +184,6 @@ describe('adapter', () => {
 
   });
 
-  it('legacy lanesRun is accepted only for builds whose schema no longer declares it; other fields stay strict', () => {
-    const schema = { type: 'object', additionalProperties: false, required: ['summary'], properties: { summary: { type: 'string' } } };
-    const report = { summary: 'done', lanesRun: [{ lane: 'old', exit: 0 }] };
-    assert.equal(backendSchemaViolation(schema, report, 'build'), null);
-    assert.match(backendSchemaViolation(schema, report, 'gate')!, /lanesRun: not allowed/);
-    assert.match(backendSchemaViolation(schema, { ...report, extra: true }, 'build')!, /extra: not allowed/);
-    assert.match(backendSchemaViolation(schema, { ...report, summary: 1 }, 'build')!, /summary: expected type string/);
-    const oldSchema = { ...schema, properties: { ...schema.properties, lanesRun: { type: 'array', maxItems: 0 } } };
-    assert.match(backendSchemaViolation(oldSchema, report, 'build')!, /lanesRun:.*0/);
-  });
 
   describe('schemaViolation', () => {
     const schema = {

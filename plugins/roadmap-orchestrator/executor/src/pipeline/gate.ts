@@ -1,5 +1,5 @@
-import { methodContext, reviewItems, runReview } from './surface.ts';
-import { systemReach, systemTraits, pathSystems } from '../input/systems.ts';
+import { methodContext, reviewItems, runReview, builderTouches, reachBackstop } from './surface.ts';
+import { systemReach, systemTraits } from '../input/systems.ts';
 import { mapInForce } from './lanes.ts';
 import { bytesSha256 } from '../spec/spec.ts';
 // The gate stage (plan "Pipeline", gate row; Authority and Gate inputs, R2; DESIGN-1.0.md §4 Independence).
@@ -110,7 +110,7 @@ import { invocationDir } from './invoke.ts';
 import { laneRecordIn,latestSpecSeries,observedViews,seriesLedger,seriesTree,specSeriesRoot } from './lanes.ts';
 import { approvalBlobs,gateDelta,ledgerFact,openDisputes,reviewInput,reviewRules,unitLedger } from './review.ts';
 import { gateSmokeChecks } from './smoke.ts';
-import { type JudgmentReader, type PlanCheckDone, type StageDone, at, changedPremiseFiles, corpusInForce, enterJudgment, escalationOf, fastSuiteRoot, holisticInForce, inMs, integrationTip, judgedAnswer, judgmentOutput, judgmentSpawns, ledger, ledgerDir, library, loadUnitSpec, planCheckNotes, record, releaseJudgment, removeJudgmentCheckouts, start, targetDirs, unitImpactInput, unitMilestones, unitTarget, verdictKind, writeJudgmentInputs } from './stages.ts';
+import { type JudgmentReader, type PlanCheckDone, type StageDone, at, changedPremiseFiles, corpusInForce, enterJudgment, escalationOf, fastSuiteRoot, holisticInForce, inMs, integrationTip, judgedAnswer, judgmentOutput, judgmentSpawns, ledger, ledgerDir, library, loadUnitSpec, record, releaseJudgment, removeJudgmentCheckouts, start, targetDirs, unitImpactInput, unitMilestones, unitTarget, verdictKind, writeJudgmentInputs } from './stages.ts';
 import { gateWitnessChecks } from './witnesscheck.ts';
 
 /** The unit's approved-or-not commit: its branch tip, which every build round and merge-in moves. */
@@ -453,6 +453,8 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
     const map = mapInForce(ctx.journal.view);
     if (map === null) throw new Error('gate requires a systems map');
     const reach = systemReach(map, unit.systems, paths);
+    const touches = builderTouches(ctx, unit.id);
+    const reachTraits = reachBackstop(ctx, unit, spec, paths, touches);
     const seat = seated.dispatch;
     const prompt = promptFor('verifier', seat.triple.model);
     const chosen = selectedForGate(ctx, unit, tip, head);
@@ -463,7 +465,7 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
     const list = absPath(join(diffDir, CHANGED_LIST));
     if (largeDiff !== null) writeFileSync(list, covered.map((p) => `${p}\n`).join(''));
     const measured = renderPrompt(prompt, {mode: 'gate', brief: {
-      standing: reviewItems(ctx.journal.view, unit.id), method: methodContext(ctx, unit, spec, paths),
+      touches, standing: reviewItems(ctx.journal.view, unit.id), method: methodContext(ctx, unit, spec, paths),
       spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec) }, intent: spec.intent, nonGoals: spec.nonGoals, ...library(ctx, spec, tip), target,
       systemNotes: systemNotes(ctx.repo, head, unit.systems, ctx.routingBase.config),
       direction: ctx.plan().direction,
@@ -477,7 +479,7 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
           obligations: chosen.selected.map((o) => o.id),
         },
       },
-      laneLedger, evidence, systems: unit.systems, reach, traits: systemTraits(map, unit.systems), reachTraits: systemTraits(map, paths.flatMap((p) => [...pathSystems(map, p)])),
+      laneLedger, evidence, systems: unit.systems, reach, traits: systemTraits(map, unit.systems), reachTraits,
       priorRound: prior,
       // M4a rev 3 (D1, D2): the executable checks of the series it judges (corpus arcs; null elsewhere).
       checks: gateChecks(ctx, unit, series, head, paths),
@@ -663,4 +665,10 @@ export function standingRules(items: readonly import('../core/events.ts').Review
     if (out.decision === 'approve' && items.some((f) => !answered.has(f.id))) throw new SchemaError('gate.standing', 'every pre-build finding addressed or rebutted with evidence before approval', out.standing);
     return next(out);
   };
+}
+
+export function gateFindingEvidence(ctx: StageContext, parent: StageParent): readonly string[] {
+  const spawn = gateSpawns(ctx, parent.unit).filter((i) => canonicalJson(i.parent) === canonicalJson(parent)).at(-1);
+  const out = spawn === undefined ? null : judgmentOutput(ctx, spawn, validateGateOutput);
+  return out?.findings.map((f) => `${f.severity}: ${f.text}\nEvidence: ${[...f.evidence, ...f.experiments.map((e) => `${e.command}: ${e.output}`)].join('; ')}`) ?? [];
 }

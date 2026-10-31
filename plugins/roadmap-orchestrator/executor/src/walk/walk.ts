@@ -1,3 +1,4 @@
+import { recordArcVerdict } from '../core/verdict.ts';
 import { experienceWalk } from '../prompts/schemas.ts';
 import { systemsMapInForce } from '../input/systems.ts';
 // The milestone walk job (dev.13, plan §2; SCHEMAS.md "dev.13"; DESIGN-1.0.md §2.12): one durable job `walk-<n>` at a
@@ -291,8 +292,8 @@ function end(
   crashPoint('walk.before-ended');
   // dev.17: the walk's findings include its batch point's (src/pipeline/batchlanes.ts).
   const all = canonicalIds([...new Set([...findings, ...batchFindingsOf(ctx, w.job)])]);
+  recordArcVerdict(ctx.journal, {job: w.job, stage: 'experience-verdict', verdict: outcome, findings: all.length});
   ctx.journal.fact({ kind: 'walk-ended', job: w.job, outcome, findings: all, proposals, dropped: last ? proposals : [], ...(interrupted ? { interrupted: true } : {}) });
-  ctx.journal.fact({kind: 'stage-outcome', job: w.job, stage: 'experience-verdict', verdict: outcome, findings: all.length});
   crashPoint('walk.after-ended');
   const passes = outcome === 'reported' && !milestonePassed(ctx.journal.view, m.id) && activeWalkP1s(ctx.journal.view, m.id).length === 0;
   if (passes) {

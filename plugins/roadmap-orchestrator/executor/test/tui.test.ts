@@ -232,7 +232,7 @@ test('log scrolling freezes viewport, counts new bytes, resumes following; detai
 test('estate relationships and filters use recorded references, with reverse navigation', () => {
   const entries = connect([entry('V-1', { id: 'V-1' }), entry('I-1', { serves: ['V-1'], deliveredBy: ['unit'] }), entry('unit', { obligations: ['I-1'] }), entry('inactive', {}, 'withdrawn')]);
   assert.deepEqual(entries[0]!.links, ['I-1']); assert.ok(entries[2]!.links.includes('I-1'));
-  assert.ok(matches({ ...entries[2]!, role: 'gate', unit: 'unit' } as Entry, 'unit:unit role:gate status:active'));
+  assert.ok(matches({ ...entries[2]!, role: 'verifier', unit: 'unit' } as Entry, 'unit:unit role:gate status:active'));
   const ui = new ViewState(); ui.accept({ ...observed(), estate: entries }); ui.view = 2;
   assert.equal(ui.rows().length, 3); ui.key('', 'w', 10); assert.equal(ui.rows().length, 4);
   ui.selected.set('2:0', 'V-1'); ui.open(); ui.key('tab', '', 10); ui.open(); assert.equal(ui.detail!.id, 'I-1');
@@ -599,7 +599,7 @@ test('Markdown estate keeps raw source, searchable text and navigation at both s
 
 test('unit navigation names status, specification, plan and input destinations, and restores the complete return location', () => {
   const d = observed();
-  const planner: Invocation = { ...entry('planner', {}), label: 'root / planCheck', unit: 'root', role: 'planCheck', attempt: 2, session: 'session', startedAt: '2026-01-01T00:00:00Z', endedAt: '2026-01-01T00:01:00Z', quietMs: null, latest: '' };
+  const planner: Invocation = { ...entry('planner', {}), label: 'root / planCheck', unit: 'root', role: 'verifier', attempt: 2, session: 'session', startedAt: '2026-01-01T00:00:00Z', endedAt: '2026-01-01T00:01:00Z', quietMs: null, latest: '' };
   d.invocations = [planner];
   const ui = new ViewState(); ui.accept(d); ui.query = 'root'; ui.open();
   assert.equal(ui.detail!.kind, 'unit-status'); assert.equal(ui.query, '');
@@ -658,7 +658,7 @@ test('filters, help and source tabs act locally and preserve the underlying navi
 
 test('repair input is distinguished from the original prompt and linked only through a recorded session', () => {
   const d = observed();
-  const initial: Invocation = { ...entry('initial', {}), label: 'root / planCheck', unit: 'root', role: 'planCheck', attempt: 1, inputKind: 'initial', session: 'recorded-session', startedAt: '2026-01-01T00:00:00Z', endedAt: '2026-01-01T00:01:00Z', quietMs: null, latest: '' };
+  const initial: Invocation = { ...entry('initial', {}), label: 'root / planCheck', unit: 'root', role: 'verifier', attempt: 1, inputKind: 'initial', session: 'recorded-session', startedAt: '2026-01-01T00:00:00Z', endedAt: '2026-01-01T00:01:00Z', quietMs: null, latest: '' };
   const repair: Invocation = { ...initial, id: 'repair', label: 'root / planCheck / repair', inputKind: 'repair', startedAt: '2026-01-01T00:02:00Z' };
   const unrelated: Invocation = { ...initial, id: 'other-session', session: 'different', startedAt: '2025-01-01T00:00:00Z' };
   d.invocations = [repair, unrelated, initial];
@@ -800,7 +800,7 @@ test('dependency navigation selects nodes, preserves typed edges, and labels off
 
 test('Overview prioritizes all retained activity for the map selection and preserves independent Activity navigation', () => {
   const d = observed(); const ui = new ViewState(); ui.accept(d); ui.expandedGraph = true;
-  const inv = (id: string, unit: string, running = false): Invocation => ({ ...entry(id, {}, running ? 'running' : 'failed'), unit, role: 'planCheck', attempt: 1, session: id,
+  const inv = (id: string, unit: string, running = false): Invocation => ({ ...entry(id, {}, running ? 'running' : 'failed'), unit, role: 'verifier', attempt: 1, session: id,
     startedAt: d.at, endedAt: running ? null : d.at, quietMs: 0, latest: 'Recorded activity' });
   const recent = Array.from({ length: 20 }, (_, i) => inv(`recent-${i}`, 'right'));
   d.invocations = [inv('live-other', 'right', true), ...recent, inv('old-root', 'root'), inv('old-left', 'left')];
@@ -843,7 +843,7 @@ test('map activity uses recorded unit, milestone and condition membership withou
 
 test('Activity communicates map context in colour and monochrome at both terminal sizes, including no matches', () => {
   const d = observed(); const ui = new ViewState(); ui.accept(d); ui.expandedGraph = true;
-  d.invocations = ['left', 'root'].map((unit) => ({ ...entry(`inv-${unit}`, {}, 'failed'), unit, role: 'planCheck', attempt: 1, session: '', startedAt: d.at, endedAt: d.at, quietMs: 0, latest: 'Test failure' }));
+  d.invocations = ['left', 'root'].map((unit) => ({ ...entry(`inv-${unit}`, {}, 'failed'), unit, role: 'verifier', attempt: 1, session: '', startedAt: d.at, endedAt: d.at, quietMs: 0, latest: 'Test failure' }));
   for (const ascii of [false, true]) for (const [w, h] of [[120, 35], [80, 24]] as const) {
     const frame = ui.renderFrame(w, h, ascii); const text = frame.map(plain).join('\n');
     assert.match(text, /Activity.*root/); assert.match(text, /\* 1 linked to map/); assert.match(text, /\* Run\s+root/);
@@ -1219,14 +1219,14 @@ test('walkthrough and bring-up activities show recorded milestone scope rather t
   const d = observed(); const relations = new InvocationRelations();
   const events = [
     { type:'fact',fact:{ kind:'walk-started',job:'walk-1',milestone:'MS-1' } },
-    { type:'intent',kind:'proc.spawn',op:'arc/10',ordinal:1,parent:{type:'job',job:'walk-1'},expect:{subject:{purpose:'arc-backend',job:'walk-1',role:'walkthrough'}} },
+    { type:'intent',kind:'proc.spawn',op:'arc/10',ordinal:1,parent:{type:'job',job:'walk-1'},expect:{subject:{purpose:'arc-backend',job:'walk-1',role:'experienceVerdict'}} },
     { type:'intent',kind:'proc.spawn',op:'arc/11',ordinal:1,parent:{type:'arc'},expect:{subject:{purpose:'bring-up',milestone:'MS-2',step:'setup'}} },
     { type:'intent',kind:'proc.spawn',op:'arc/12',ordinal:1,parent:{type:'job',job:'flow-1'},expect:{subject:{purpose:'arc-backend',job:'flow-1',role:'flow'}} },
   ] as never;
   const mapped = relations.read(d.run.runDir,events);
   assert.equal(mapped.get('arc/10#1')!.milestone,'MS-1'); assert.equal(mapped.get('arc/11#1')!.milestone,'MS-2');
   assert.equal(mapped.get('arc/12#1')?.milestone,undefined,'unrelated arc jobs do not acquire milestone scope');
-  d.invocations = [{ ...entry('arc/10#1',{},'success'), ...mapped.get('arc/10#1'), label:'walk-1 / walkthrough', unit:'walk-1',role:'walkthrough',execution:'agent',scope:'arc',model:'example-model',attempt:1,session:'',startedAt:d.at,endedAt:d.at,quietMs:0,latest:'' }];
+  d.invocations = [{ ...entry('arc/10#1',{},'success'), ...mapped.get('arc/10#1'), label:'walk-1 / walkthrough', unit:'walk-1',role:'experienceVerdict',execution:'agent',scope:'arc',model:'example-model',attempt:1,session:'',startedAt:d.at,endedAt:d.at,quietMs:0,latest:'' }];
   const ui = new ViewState();ui.accept(d);ui.key('','2',18);
   for (const [w,h] of [[120,35],[80,24]]) {
     const frame = ui.render(w!,h!,false).join('\n');assert.match(frame,/Milestone MS-1/);assert.doesNotMatch(frame,/Arc-wide/);

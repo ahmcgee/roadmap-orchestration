@@ -55,7 +55,7 @@ export function readOnlyArgs(args: readonly string[], arm: ReadOnlyArm): readonl
   if (!same(surface.evidenceDirs, addDirs)) throw new Error(`read-only arm: the call's add-dirs ${addDirs.join(' ')} are not a judgment's read surface over ${arm.repo} and ${arm.runDir}`);
   // `role` is not in a judgment's argv; the call stays the gate's in every record (its launch.json is production's).
   return backendArgv({
-    kind: 'claude-judgment', role: 'planCheck', triple: { backend: 'claude', model: model as ClaudeModelId, effort: effort as ClaudeEffort }, session,
+    kind: 'claude-judgment', role: 'verifier', triple: { backend: 'claude', model: model as ClaudeModelId, effort: effort as ClaudeEffort }, session,
     schemaText: value(args, '--json-schema'), system: surface.system, evidenceDirs: surface.evidenceDirs,
   }).slice(1);
 }

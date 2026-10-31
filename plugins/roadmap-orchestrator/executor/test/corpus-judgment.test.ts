@@ -32,7 +32,7 @@ import { runFixture } from './helpers/proc.ts';
 import { commitAll, git, tmpDir } from './helpers/repo.ts';
 import { type CallRecord, readCalls } from './helpers/scenario.ts';
 import { type CorpusUnitArc, VISION_PATH, setupCorpusArc } from './fixtures/corpus-unit.ts';
-import { BASE, followContext, stepTo, unitOf } from './fixtures/route-common.ts';
+import { followContext, stepTo, unitOf } from './fixtures/route-common.ts';
 import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
 import { type ArcRun, contextFor, gateStep, isGateCall, mulBuild, outcomes, setupArc } from './fixtures/unit-common.ts';
 import { DEBT_BANK, crashCells } from './matrix.ts';
@@ -40,7 +40,7 @@ import { DEBT_BANK, crashCells } from './matrix.ts';
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 const U1 = unitId('u1');
 
-const note = (text: string, drag: string | null) => ({ severity: 'note', path: null, text, contractRef: null, experiments: [], debt: drag === null ? null : { drag } });
+const note = (text: string, drag: string | null) => ({evidence: ["fixture:1"],  severity: 'note', path: null, text, contractRef: null, experiments: [], debt: drag === null ? null : { drag } });
 const NOTE = 'Rename mul to multiply once the API settles.';
 const DRAG = 'Every later caller is written against the old name and must be renamed with it.';
 /** What the note banks (dev.13): its text, then its drag. */

@@ -217,7 +217,7 @@ test('apply.route-unit: a unit routing layer re-resolves that unit alone (`routi
   recordFirst(d);
   const r = contextFor(d);
   try {
-    editPlan(d, (p) => void (p.units[0]!['routing'] = { gate: { med: 'summit' } }));
+    editPlan(d, (p) => void (p.units[0]!['routing'] = { verifier: { med: 'summit' } }));
     const scope = commandScope({ runDir: r.ctx.runDir, repo: absPath(d.repo), hostDir: r.ctx.hostDir, planFile: absPath(d.planPath), routingBase: r.ctx.routingBase });
     assert.deepEqual(scope(applyBody(d) as Parameters<typeof scope>[0], r.journal.view, r.ctx.plan()), { type: 'units', units: ['u1'] });
     const { outcome } = await command(r, applyBody(d));
@@ -226,7 +226,7 @@ test('apply.route-unit: a unit routing layer re-resolves that unit alone (`routi
     const expected = unitRouting(BASE, plan, plan.units[0]!).rev;
     const fact = lastApplied(r);
     assert.deepEqual(fact.changes, [{ type: 'routing', routingRev: expected, unit: U1 }]);
-    assert.deepEqual(fact.routingProvenance?.unitLayers, { u1: { gate: { med: 'summit' } } });
+    assert.deepEqual(fact.routingProvenance?.unitLayers, { u1: { verifier: { med: 'summit' } } });
     assert.notEqual(expected, r.ctx.routing(null).rev, 'the unit routing differs from the arc routing');
   } finally {
     r.journal.close();
@@ -238,12 +238,12 @@ test('apply.route-unsupported: a unit layer seating an unsupported triple (a Cod
   recordFirst(d);
   const r = contextFor(d);
   try {
-    editPlan(d, (p) => void (p.units[0]!['routing'] = { planCheck: { med: 'efficient' } }));
+    editPlan(d, (p) => void (p.units[0]!['routing'] = { verifier: { med: 'efficient' } }));
     // The catalogue judges every class on Claude: a Codex judgment needs a repo that rebinds the efficient class to Codex
     // (its built-in judgment seats moved to frontier), so a layer naming efficient at a judgment seat seats Codex there.
     const config = parseRepoConfig({
       routing: {
-        seats: { planCheck: { low: 'frontier', med: 'frontier' }, gate: { low: 'frontier' } },
+        seats: { verifier: { low: 'frontier', med: 'frontier' } },
         classes: { efficient: { backend: 'codex', model: 'gpt-5.6-luna', effort: 'medium' } },
       },
     });

@@ -912,7 +912,7 @@ test('apply.fold: the plan in force is the latest plan-applied fact (none before
     const evidenceSha = fileSha256(absPath(specPath(d, 'u1')));
     assert.deepEqual(view.unit(U1).spec, { rev: 1, sha256: evidenceSha });
     assert.equal(loadUnitSpec(r.ctx, r.unit('u1')).spec.lanes[0]!.evidenceGlobs[0], 'out/**');
-    const moved = resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: { gate: { med: 'summit' } } as never, unit: null });
+    const moved = resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: { verifier: { med: 'summit' } } as never, unit: null });
     assert.ok(repin(r.journal, moved, view.dispatchOf(U1)!) !== null);
     assert.deepEqual(view.unit(U1).spec, { rev: 1, sha256: evidenceSha }, 'a re-pin keeps the spec in force');
 

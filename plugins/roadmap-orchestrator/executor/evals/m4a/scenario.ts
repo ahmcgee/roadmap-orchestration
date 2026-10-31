@@ -107,7 +107,7 @@ const CONFIRM: Readonly<Record<string, readonly M1Step[]>> = {
     { role: 'planCheck', answer: { decision: 'approve', reasons: ['confirm.js sends the template; book calls it after the write.'], patch: null, risk: 'high', notes: '', premises: [], visionConflict: [],  staleLinks: [] } },
     build('confirm: text the skipper when a booking is made', 'confirm'),
     { role: 'build', round: 'resume', stdinContains: [`Survived: test "${TIDES_TEST}" on lane tides`], acts: [] },
-    gate('A1, A2 and A3 hold; W-1 survives smoke because the tide table predates the unit.', [{ severity: 'note', path: 'src/confirm.js', text: GATE_NOTE, contractRef: null, experiments: [], debt: { drag: GATE_NOTE_DRAG } }]),
+    gate('A1, A2 and A3 hold; W-1 survives smoke because the tide table predates the unit.', [{evidence: ["src/confirm.js:1"],  severity: 'note', path: 'src/confirm.js', text: GATE_NOTE, contractRef: null, experiments: [], debt: { drag: GATE_NOTE_DRAG } }]),
   ],
 };
 

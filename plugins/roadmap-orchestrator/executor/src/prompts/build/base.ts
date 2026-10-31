@@ -1,5 +1,5 @@
 import type { BuildInputs, PromptModule } from '../inputs.ts';
-import { UNIT_POLICY, buildBrowserText, bullets, documentsXml, fastLanesText, handoverText, milestoneDocuments, milestonesText, systemNotesText, suiteLanesText, witnessChecksText } from '../inputs.ts';
+import { UNIT_POLICY, buildBrowserText, bullets, documentsXml, fastLanesText, handoverText, milestoneDocuments, milestonesText, systemNotesText, suiteLanesText, witnessChecksText, targetDocument } from '../inputs.ts';
 import { methodModules } from '../method/index.ts';
 import { BUILD_SCHEMA } from '../schemas.ts';
 
@@ -40,10 +40,10 @@ Return summary, grounding, tooBig, experiments, blockers, notes and final. Notes
 
 export const PROMPT: PromptModule<'build'> = {
   system, schema: BUILD_SCHEMA,
-  fields: ['systemNotes', 'notes', 'spec', 'intent', 'nonGoals', 'contracts', 'index', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'systems', 'fixRound', 'witnessChecks', 'milestones', 'browser', 'handover', 'method'],
+  fields: ['systemNotes', 'notes', 'target', 'spec', 'intent', 'nonGoals', 'contracts', 'index', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'systems', 'fixRound', 'witnessChecks', 'milestones', 'browser', 'handover', 'method'],
   render: (i: BuildInputs) => `${documentsXml([
     { source: `spec.json ${i.spec.unit} rev ${i.spec.rev}`, content: i.spec.markdown },
-    ...i.contracts.map((c) => ({ source: c.path, content: c.text })), ...milestoneDocuments(i.milestones),
+    ...i.contracts.map((c) => ({ source: c.path, content: c.text })), ...milestoneDocuments(i.milestones), targetDocument(i.target),
   ])}
 <contracts_index>${JSON.stringify(i.index.contracts)}</contracts_index>
 <intent>${i.intent}</intent>

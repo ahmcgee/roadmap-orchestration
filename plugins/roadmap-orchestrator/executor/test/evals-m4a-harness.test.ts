@@ -330,7 +330,7 @@ test('evals-m4a.cost-deltas-and-unknowns: per-invocation rows keep unknowns expl
     spawn(30, 'a1/30', 'implementer'), fact(32, 'usage-unavailable', { inv: 'a1/30#1', routingRev: 1, subject: { type: 'seat', role: 'implementer', tier: 'frontier', unit: 'u1', attempt: 1 }, reason: 'no-result' }),
     spawn(40, 'a1/40', 'gate'),
     spawn(50, 'a1/50', 'implementer'), meter(52, 'a1/50#1', 'implementer', 2),
-    meter(36, 'a1/36#1', 'lens', 0.25, { type: 'job', role: 'lens', tier: 'frontier', job: 'J-1', attempt: 1 }),
+    meter(36, 'a1/36#1', 'lens', 0.25, { type: 'job', role: 'campaignAudit', tier: 'frontier', job: 'J-1', attempt: 1 }),
     // Not a backend call: never an invocation row.
     { type: 'intent' as const, seq: 60, op: 'a1/60', kind: 'proc.spawn', ordinal: 1, expect: { subject: { purpose: 'lane', unit: 'u1', lane: 'l', set: 'spec', at: 'x' }, launchSha256: 'x' } },
   ] as unknown as readonly Event[];

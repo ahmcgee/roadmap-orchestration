@@ -306,9 +306,21 @@ function perform(act: Act, call: Call, step: Step, index: number, scenarioDir: s
   switch (act.type) {
     case 'emit':
     case 'noUsage': {
-      const text = JSON.stringify(act.value);
+      let value = act.value;
+      const wireSchema = flagValue(call.argv, '--json-schema');
+      if (wireSchema !== undefined && typeof value === 'object' && value !== null && !Array.isArray(value)) {
+        const schema = JSON.parse(wireSchema) as Record<string, unknown>;
+        const data = value as Record<string, JsonValue>;
+        if (Array.isArray(schema['anyOf']) && wireSchema.includes('"mode"') && wireSchema.includes('"walkthrough"') && data['mode'] === undefined) {
+          if (data['journeys'] !== undefined) value = {final: true, mode: 'walkthrough', verdict: value};
+          else if (data['decision'] === 'keep' || data['decision'] === 'drop') value = {final: true, mode: 'polish', verdict: value};
+        }
+        const props = schema['properties'] as Record<string, unknown> | undefined;
+        if (props?.['requests'] !== undefined && props?.['findings'] !== undefined && data['requests'] === undefined && data['findings'] !== undefined) value = {...data, requests: []};
+      }
+      const text = JSON.stringify(value);
       if (codex) codexEmit(call.argv, thread(), text, [], act.type === 'emit');
-      else claudeResult(session(), { result: text, structured_output: act.value }, act.type === 'noUsage' ? ['modelUsage'] : []);
+      else claudeResult(session(), { result: text, structured_output: value }, act.type === 'noUsage' ? ['modelUsage'] : []);
       return;
     }
     case 'capacityText': {

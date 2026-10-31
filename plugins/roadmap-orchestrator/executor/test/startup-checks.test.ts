@@ -395,9 +395,9 @@ describe('startup.rejections', () => {
     mkdirSync(join(s.repo, '.roadmap'), { recursive: true });
     writeFileSync(join(s.repo, '.roadmap', 'config.json'), JSON.stringify({ ...readRepoConfig(s.repo), routing: { classes: { summit: { backend: 'codex', model: 'gpt-5.6-sol', effort: 'high' } } } }));
     commitAll(s.repo, 'rebind summit');
-    write({ ...s, plan: { ...s.plan, baseline: revParse(s.repo, 'HEAD'), routing: { planCheck: { low: 'summit' } } } });
+    write({ ...s, plan: { ...s.plan, baseline: revParse(s.repo, 'HEAD'), routing: { verifier: { low: 'summit' } } } });
     const [r] = refusedWith(await allChecks(input(s)), 'unsupported-routing', 78);
-    assert.deepEqual(r, { kind: 'unsupported-routing', role: 'planCheck', tier: 'low', layer: 'plan', class: 'summit', unit: null, why: 'codex-judgment' });
+    assert.deepEqual(r, { kind: 'unsupported-routing', role: 'verifier', tier: 'low', layer: 'plan', class: 'summit', unit: null, why: 'codex-judgment' });
   });
 
   it('undispositioned-residue (78)', T, async () => {

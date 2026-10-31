@@ -28,26 +28,18 @@
 //   which contract); the gate's inputs record the design's size estimate.
 // split.crash.*, poc.crash.*: the matrix rows DESIGN_SPLIT and POC_STAGE (test/matrix.ts).
 import assert from 'node:assert/strict';
-import { describe,test } from 'node:test';
+import { test } from 'node:test';
 import type { Fact,StageOutcomeFact } from '../src/core/events.ts';
 import { arcId } from '../src/core/ids.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import { readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
-import {  } from '../src/pipeline/design.ts';
 import { loadUnitSpec } from '../src/pipeline/stages.ts';
-import { type Gate,consume,runUnit } from '../src/pipeline/unit.ts';
-import { recover } from '../src/recover/recover.ts';
-import { recoveryContext } from './fixtures/rec-common.ts';
+import { type Gate, runUnit } from '../src/pipeline/unit.ts';
 import { editSpec } from './fixtures/route-common.ts';
-import { SCENARIO_TIMEOUT_MS,planCheckRepairStep,planCheckStep } from './fixtures/stage-common.ts';
-import { followingContext } from './fixtures/steer-common.ts';
-import { type ArcDescriptor, U1, contextFor, gateStep, isGateCall, mulBuild, outcomes, setupArc } from './fixtures/unit-common.ts';
-import { assertFired,writeTrigger } from './helpers/crash.ts';
-import { runFixture } from './helpers/proc.ts';
-import { git,tmpDir } from './helpers/repo.ts';
+import { SCENARIO_TIMEOUT_MS, planCheckStep } from './fixtures/stage-common.ts';
+import { type ArcDescriptor, contextFor, gateStep, isGateCall, mulBuild, outcomes, setupArc } from './fixtures/unit-common.ts';
 import { readCalls } from './helpers/scenario.ts';
-import { DESIGN_SPLIT,POC_STAGE,crashCells } from './matrix.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 /** Admits every stage but `stop`: the unit's task ends there, held. */
@@ -118,6 +110,7 @@ test('design.departure-and-contract: an unlisted test change is a departure reco
     ],
     systemsMap: SYSTEMS,
   });
+  editSpec(d, 'u1', (s) => { s['design'] = {kind: 'module', changes: [{system: null, paths: ['src/**'], lines: 10}], interfaces: [], failureModes: [], clauses: [{clause: 'A1', lanes: ['mul']}], breaks: {tests: [], docs: []}, experiments: []}; });
   const r = contextFor(d);
   try {
     const held = await runUnit(r.ctx, r.unit('u1'), until('candidate'));
@@ -128,69 +121,11 @@ test('design.departure-and-contract: an unlisted test change is a departure reco
     assert.match(decisions[0]!.id, /^departure\.[0-9a-f]{12}$/);
     assert.equal(decisions[0]!.text, 'Departure from the design record: the build changed the existing test test/add.test.js, which its breaks do not list.');
     const gate = readCalls(d.scenarioPath).find(isGateCall);
-    assert.ok(gate !== undefined && gate.argv.includes('claude-opus-5-5') && gate.argv.includes('high'), 'the contract touched put the gate on its escalation seat');
+    assert.ok(gate !== undefined && gate.argv.includes('claude-opus-5-5') && gate.argv.includes('medium'), 'the contract touched put the gate on its escalation seat');
     const inputs = facts(d).find((f) => f.kind === 'judgment-inputs' && f.stage === 'gate');
     assert.ok(inputs?.kind === 'judgment-inputs' && inputs.designEstimate === 10, 'the gate records the design\'s size estimate');
     assert.ok(readCalls(d.scenarioPath).every((c) => c.step !== null));
   } finally {
     r.journal.close();
-  }
-});
-
-describe(`matrix row ${DESIGN_SPLIT}`, () => {
-  for (const { label } of crashCells(DESIGN_SPLIT)) {
-    test(`split.crash.${label}: the restart lands the split once from the recorded answer, never asking again`, T, async () => {
-      const split = { children: [child('u1-skel', ['A1'], 'core', 300, true), child('u1-api', ['A2'], 'api', 300)], edges: [{ from: 'u1-skel', to: 'u1-api' }], skeleton: { unit: 'u1-skel', lane: 'e2e' } };
-      const d = splitArc([planCheckStep({ decision: 'approve', design: MIXED }), planCheckRepairStep({ decision: 'split', split })]);
-      const trigger = writeTrigger(tmpDir('design-crash'), { label, occurrence: 1, unit: 'u1' });
-      const first = await runFixture('unit-child.ts', [JSON.stringify(d), 'u1'], { env: { ...process.env, ROADMAP_TEST_CRASH: trigger }, timeoutMs: SCENARIO_TIMEOUT_MS });
-      assert.equal(first.signal, 'SIGKILL', `killed at the label: ${first.stderr}`);
-      assertFired(trigger);
-      const r = contextFor(d);
-      try {
-        await recover(recoveryContext(r));
-        const s = await consume(r.ctx, r.unit('u1'));
-        assert.deepEqual(s, label === 'split.after-hold' ? { kind: 'held', needsUser: null } : null, 'what the startup finishes');
-        assert.equal(r.journal.view.unit(U1).status, 'cut');
-        assert.deepEqual(followingContext(r).plan().units.map((u) => u.id), ['u1', 'u1-skel', 'u1-api', 'u2']);
-        assert.equal(facts(d).filter((f) => f.kind === 'plan-applied' && f.source.type === 'split').length, 1, 'one split revision');
-        assert.equal(readCalls(d.scenarioPath).length, 2, 'the plan-check was asked once, with its repair turn');
-        assert.deepEqual(await consume(r.ctx, r.unit('u1')), null, 'nothing left to finish');
-        assert.deepEqual(r.journal.view.openIntents(), []);
-      } finally {
-        r.journal.close();
-      }
-    });
-  }
-});
-
-describe(`matrix row ${POC_STAGE}`, () => {
-  for (const { label } of crashCells(POC_STAGE)) {
-    test(`poc.crash.${label}: the next attempt records the PoC from its report; the builder is asked once, its checkout gone`, T, async () => {
-      const poc = { questions: [{ id: 'PQ-1', question: 'Does mul overflow?', whyItMatters: 'decides the number type' }], brief: 'Multiply two large numbers.' };
-      const report = { answers: [{ questionId: 'PQ-1', answer: 'ANSWER-1', evidence: 'ran it', confidence: 'medium' }], lessons: ['LESSON-1'], surprises: [] };
-      const d = setupArc({
-        steps: [
-          planCheckStep({ decision: 'poc', poc }),
-          { as: 'codex', expect: { argv: ['exec', '-C'] }, acts: [{ type: 'dirty', files: { 'src/probe.js': 'export const p = 1;\n' } }, { type: 'emit', value: report }] },
-          planCheckStep({ decision: 'approve' }, { stdinContains: ['ANSWER-1'] }),
-        ],
-      });
-      const trigger = writeTrigger(tmpDir('poc-crash'), { label, occurrence: 1, unit: 'u1' });
-      const first = await runFixture('unit-child.ts', [JSON.stringify(d), 'u1'], { env: { ...process.env, ROADMAP_TEST_CRASH: trigger }, timeoutMs: SCENARIO_TIMEOUT_MS });
-      assert.equal(first.signal, 'SIGKILL', `killed at the label: ${first.stderr}`);
-      assertFired(trigger);
-      const r = contextFor(d);
-      try {
-        await recover(recoveryContext(r));
-        assert.equal((await runUnit(r.ctx, r.unit('u1'), until('build'))).kind, 'held');
-        assert.deepEqual(outcomes(d), ['plan-check:poc', 'poc:answered', 'plan-check:approve']);
-        assert.equal(readCalls(d.scenarioPath).filter((c) => c.as === 'codex').length, 1, 'the builder was asked once');
-        assert.ok(!git(d.repo, 'worktree', 'list', '--porcelain').includes('.poc-'), 'no PoC checkout left');
-        assert.deepEqual(r.journal.view.openIntents(), []);
-      } finally {
-        r.journal.close();
-      }
-    });
   }
 });

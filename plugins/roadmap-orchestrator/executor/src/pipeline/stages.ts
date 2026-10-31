@@ -85,13 +85,12 @@ import { systemNotes } from './systemnotes.ts';
 import { memoryMessage, salvageSummary } from './memory.ts';
 import { existsSync,readFileSync } from 'node:fs';
 import { basename,dirname,isAbsolute,join,normalize,relative } from 'node:path';
-import { freshJudgmentSession,resumedJudgmentSession } from '../backends/argv.ts';
 import { walkMcpConfig } from '../backends/mcp.ts';
 import { evaluateRevision } from '../commands/apply.ts';
 import type { DesignRecord,Verification } from '../core/design.ts';
 import {
 BACKEND_PARK_CLASSES,type DiffShown,type GateLargeDiff,type HoldCause,type IntentOf,type JudgmentStage,type OpKind,type OutcomeStage,type StageOutcomeDetail,type StageOutcomeKind } from '../core/events.ts';
-import { captureUnderFence,holdFence } from '../core/fence.ts';
+import { holdFence } from '../core/fence.ts';
 import { durableMkdir } from '../core/fsx.ts';
 import {
 type InvocationId,type JudgmentSessionId,type LaneId,
@@ -103,22 +102,10 @@ type Sha,type Sha256Hex,type SpecRev,type UnitId,invocationId,
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import { censusOf } from '../core/projections.ts';
-import {
-type ApprovalFingerprint,
-
-type JudgmentSession,type LaneDef,
-type NeedsUserContent,STDERR_FILE,STDOUT_FILE,
-type SpecM1,type SpecPatchOp,
-
-isRed,
-specForces,
-specObligations,
-specRemoves,specRepairs } from '../core/records.ts';
+import { type ApprovalFingerprint, type LaneDef, type NeedsUserContent, STDERR_FILE, STDOUT_FILE, type SpecM1, type SpecPatchOp, isRed, specForces, specObligations, specRepairs } from '../core/records.ts';
 import type { GateReview } from '../core/review.ts';
 import { SchemaError } from '../core/validate.ts';
-import {
-type AbsPath,type RefName,type RepoPath,type RepoPattern,absPath,branchRef,gitDate,isoTimeOf,matchesPattern,repoPath,repoPattern,
-} from '../core/values.ts';
+import { type AbsPath, type RefName, type RepoPath, type RepoPattern, absPath, branchRef, gitDate, isoTimeOf, repoPath, repoPattern } from '../core/values.ts';
 import { type CorpusView,materialiseCorpus } from '../corpus/materialise.ts';
 import { FILES_DIR,capturedEvidence } from '../git/evidence.ts';
 import { GitError,type Identity,git,gitRun,refTarget,revParse } from '../git/git.ts';
@@ -145,8 +132,6 @@ type KnownDefect,type PlanUnit,advancesOf,designUnitOf,knownDefectsOf,milestones
 import { orderingReasons } from '../park/ordering.ts';
 import { NO_PARK_FACTS,type ParkFacts,repeatNeedsUser,stageOutcomeFact } from '../park/table.ts';
 import { referenceFiles } from '../phase0/rows.ts';
-import { resolveArgv0 } from '../preflight/argv0.ts';
-import { judgmentRepairDirective } from '../prompts/directives.ts';
 import { promptFor,renderPrompt } from '../prompts/index.ts';
 import type {
 ArchitectureInput,BuildBrowser,
@@ -178,13 +163,7 @@ import { type Ruling,parseRulings } from '../spec/rulings.ts';
 import { specBytes } from '../spec/spec.ts';
 import { verificationReasons,verifyRunsOf } from './deflake.ts';
 import { POC_LIMIT,SUBSTANTIAL_SYSTEM_LINES,departures,designFaults,gateInlineLines,pinDesign,pocReasons,scaffoldInForce,scaffoldReasons } from './design.ts';
-import {
-type BackendCallOutcome,type BackendCallSpec,type BackendVerdict,type Cancelled,type ImplementerDispatch,type Pinned,type StageContext,type StageParent,
-backendOf,callBackend,cancelledNow,dispatchOf,enter,evidenceRoot,
-fastSuiteWorktree,
-implementerDispatch,isCancelled,judgmentDeadlineMs,judgmentDispatch,nonEmpty,pinDispatch,
-raiseRisk,riskAbove,runOp,runPrepared,steerDispatch,unitBranch,unitWorktree,verdictOf,verificationWorktree,workDir,
-} from './dispatch.ts';
+import { type BackendCallOutcome, type BackendCallSpec, type BackendVerdict, type Cancelled, type ImplementerDispatch, type Pinned, type StageContext, type StageParent, backendOf, cancelledNow, dispatchOf, enter, evidenceRoot, fastSuiteWorktree, implementerDispatch, isCancelled, nonEmpty, pinDispatch, raiseRisk, riskAbove, runOp, runPrepared, steerDispatch, unitBranch, unitWorktree, verdictOf, verificationWorktree, workDir } from './dispatch.ts';
 
 import { handoverOf,lineageOf,unmetClauses } from './handover.ts';
 import { invocationDir,quiescent } from './invoke.ts';
@@ -199,7 +178,7 @@ removeVerificationTree,runLaneSeries,seriesEntry,
 seriesOrder,
 specSeriesRoot,stageSuiteLanes
 } from './lanes.ts';
-import { pocLessons,pocReports } from './poc.ts';
+import { pocLessons } from './poc.ts';
 import {
 type DecidedRound,type PreparedRound,type RoundCall,type RoundInput,callRound,decidedRound,laneFixRound,prepareRound,
 resolveContinuation,
@@ -213,7 +192,7 @@ import { checksApply,publishWitnessLaneFiles,requiredAt,witnessPresence } from '
 // dev.17 (propagation)
 import { type PlanRev,parseInvocationId } from '../core/ids.ts';
 import type { SpecPatch } from '../core/records.ts';
-import { pinsOf,staleAnswerReasons,staleLinkText,unitStaleLinks } from '../holistic/staleset.ts';
+import { pinsOf, staleAnswerReasons, unitStaleLinks } from '../holistic/staleset.ts';
 import { obligationsAtRev } from '../input/inforce.ts';
 
 /** One stage attempt, recorded. `needsUser`: content beyond the table's own, for the caller to write. */
@@ -1232,6 +1211,10 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
   durableMkdir(work);
   const prompt = promptFor('build', dispatch.triple.model);
   const tip = integrationTip(ctx);
+  const impact = holisticInForce(ctx).obligations === null ? null : unitImpactInput(ctx, unit, spec, []);
+  const anchors = impact === null ? [] : selectObligations(impact).map((id) => impact.obligations.obligations.find((o) => o.id === id)!);
+  const target = unitTarget(ctx, tip, 'without-vision', anchors, ruleMentions(renderSpec(spec)));
+
   const lib = library(ctx, spec, tip);
   const milestones = unitMilestones(ctx, unit.id, tip);
   // dev.13: a build in a milestone with a browser journey gets the walkthrough MCP servers, its screenshots in `work`.
@@ -1244,9 +1227,9 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
   const state = ctx.journal.view.unit(unit.id);
   const allowance = Math.max(0, state.bounds.certifications - 1 - state.counters.unchargedLanesReds);
   const render = (call: RoundCall) => renderPrompt(prompt, {
-    spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec, { buildLanesOnly: true }) }, intent: spec.intent, nonGoals: spec.nonGoals, ...lib,
+    target, spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec, { buildLanesOnly: true }) }, intent: spec.intent, nonGoals: spec.nonGoals, ...lib,
     systemNotes: systemNotes(ctx.repo, revParse(round.worktree, 'HEAD'), unit.systems, ctx.routingBase.config),
-    notes: [...ctx.journal.view.buildNotes(unit.id, parent.attempt).map((sha) => steerBrief(ctx.runDir, sha)), ...ctx.journal.view.surfaceFacts().flatMap((f) => f.kind === 'review-completed' && f.unit === unit.id && f.note !== null ? [steerBrief(ctx.runDir, f.note)] : []), ...ctx.journal.view.surfaceFacts().flatMap((f) => f.kind === 'review-completed' && f.unit === unit.id && f.mode === 'pre-build' ? f.items.map((x) => `${x.id}: ${x.text} (${x.evidence.join('; ')})`) : [])],
+    notes: [...ctx.journal.view.spawnsOfUnit(unit.id, 'build').slice(-1).flatMap((i) => judgmentOutput(ctx, i, (v) => buildOutput(v, 'build'))?.notes ?? []), ...ctx.journal.view.buildNotes(unit.id, parent.attempt).map((sha) => steerBrief(ctx.runDir, sha)), ...ctx.journal.view.surfaceFacts().flatMap((f) => f.kind === 'review-completed' && f.unit === unit.id && f.note !== null ? [steerBrief(ctx.runDir, f.note)] : []), ...ctx.journal.view.surfaceFacts().flatMap((f) => f.kind === 'review-completed' && f.unit === unit.id && f.mode === 'pre-build' ? f.items.map((x) => `${x.id}: ${x.text} (${x.evidence.join('; ')})`) : [])],
     method: methodContext(ctx, unit, spec),
     fastLanes: activeBuildLanes(spec), suiteLanes: builderSuiteLanes(ctx.plan().suite.lanes, spec), evidenceDir: work, worktree: round.worktree, systems: unit.systems,
     fixRound: call.fixRound === null ? null : { ...call.fixRound, directives: [...call.fixRound.directives,
@@ -1255,7 +1238,7 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
   const callFor = (prepared: PreparedRound) => (call: RoundCall): BackendCallSpec => ({
     unit: unit.id, parent,
     request: {
-      kind: 'implementer', dispatch, session: call.session, evidenceDirs: [...new Set([work, ...call.evidenceDirs, ...(handed(call)?.evidence ?? []), ledgerDir(ctx)])],
+      kind: 'implementer', dispatch, session: call.session, evidenceDirs: [...new Set([...targetDirs(target), work, ...call.evidenceDirs, ...(handed(call)?.evidence ?? []), ledgerDir(ctx)])],
       mcpConfig: browser?.mcpConfig ?? null,
     },
     system: prompt.system, ...render(call), schema: BUILD_SCHEMA, cwd: prepared.worktree, deadlineAt: prepared.deadlineAt,

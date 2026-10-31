@@ -62,7 +62,7 @@ test('routing.unit-layer-rev: a unit routing layer gives that unit its own routi
     assert.equal(r.journal.view.dispatchOf(U1)?.routingRev, arcRev);
 
     syncInputs(r);
-    editUnit(d, 'u1', (u) => void (u['routing'] = { gate: { med: 'summit' } }));
+    editUnit(d, 'u1', (u) => void (u['routing'] = { verifier: { med: 'summit' } }));
     appliedOk(await apply(r, ctx));
     const u1Rev = ctx.routing(U1).rev;
     assert.notEqual(u1Rev, arcRev, 'the unit layer gives u1 its own rev');
@@ -82,7 +82,7 @@ test('routing.unit-layer-rev: a unit routing layer gives that unit its own routi
 
     syncInputs(r);
     // A layer that moves u1's implementer seat after its build started, and u2's before its build.
-    editUnit(d, 'u1', (u) => void (u['routing'] = { gate: { med: 'summit' }, build: { med: 'frontier' } }));
+    editUnit(d, 'u1', (u) => void (u['routing'] = { verifier: { med: 'summit' }, build: { med: 'frontier' } }));
     editUnit(d, 'u2', (u) => void (u['routing'] = { build: { med: 'frontier' } }));
     appliedOk(await apply(r, ctx));
     const [u1Moved, u2Moved] = [ctx.routing(U1).rev, ctx.routing(U2).rev];
@@ -112,9 +112,9 @@ test('routing.provenance-recorded: plan-applied records the profile, the repo co
   const configPath = join(d.repo, '.roadmap', 'config.json');
   const sonnet = (effort: string): Json => ({ backend: 'claude', model: 'claude-sonnet-5-5', effort });
   mkdirSync(join(d.repo, '.roadmap'), { recursive: true });
-  writeFileSync(configPath, JSON.stringify({ systemsMap: d.config!.systemsMap!, routing: { seats: { gate: { high: 'summit' } }, classes: { efficient: sonnet('medium') } } }));
-  editPlan(d, (p) => void (p['routing'] = { planCheck: { low: 'summit' } }));
-  editUnit(d, 'u1', (u) => void (u['routing'] = { gate: { med: 'summit' } }));
+  writeFileSync(configPath, JSON.stringify({ systemsMap: d.config!.systemsMap!, routing: { seats: { verifier: { high: 'summit' } }, classes: { efficient: sonnet('medium') } } }));
+  editPlan(d, (p) => void (p['routing'] = { verifier: { low: 'summit' } }));
+  editUnit(d, 'u1', (u) => void (u['routing'] = { verifier: { med: 'summit' } }));
   // As a start does (src/preflight/checks.ts `settlePlan`): the routing base is the profile and the repo config read now.
   const base: RoutingBase = { profile: 'default', config: readRepoConfig(absPath(d.repo)), arcRoles: 'm4b' };
   recordFirst(d, base);
@@ -124,9 +124,9 @@ test('routing.provenance-recorded: plan-applied records the profile, the repo co
     const provenance = r.journal.view.planApplied()?.routingProvenance;
     assert.deepEqual(provenance, {
       profile: 'default',
-      repoConfig: { seats: { gate: { high: 'summit' } }, classes: { efficient: sonnet('medium') } },
-      planLayer: { planCheck: { low: 'summit' } },
-      unitLayers: { u1: { gate: { med: 'summit' } } },
+      repoConfig: { seats: { verifier: { high: 'summit' } }, classes: { efficient: sonnet('medium') } },
+      planLayer: { verifier: { low: 'summit' } },
+      unitLayers: { u1: { verifier: { med: 'summit' } } },
       arcRoles: 'm4b',
     });
     await stepTo(ctx, 'u1', (f) => f.stage === 'plan-check');

@@ -154,7 +154,7 @@ test('memory: salvage keeps the build report and decisions; candidate concatenat
       { type: 'writeToPrompt', pattern: workDirPattern(d), file: 'decisions.json', text: JSON.stringify({ decisions: [{ id: 'D1', text: decision }] }) },
       { type: 'emit', value: { ...BUILD_REPORT, summary: first } },
     ] },
-    gateStep({ decision: 'revise', findings: [{ severity: 'blocking', path: 'src/mul.js', text: 'Clarify operand names.', contractRef: null, experiments: [], debt: null }], directives: ['Clarify operand names.'] }),
+    gateStep({ decision: 'revise', findings: [{evidence: ["src/mul.js:1"],  severity: 'blocking', path: 'src/mul.js', text: 'Clarify operand names.', contractRef: null, experiments: [], debt: null }], directives: ['Clarify operand names.'] }),
     { as: 'codex', expect: {}, acts: [
       { type: 'dirty', files: { 'src/mul.js': 'export function mul(left, right) { return left * right; }\n' } },
       { type: 'emit', value: { ...BUILD_REPORT, summary: second } },

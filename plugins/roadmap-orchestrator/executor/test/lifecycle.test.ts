@@ -270,7 +270,7 @@ test('reroute.routing-changed-park: resume is rejected while the implementer sea
     assert.equal(r.journal.view.unit(U1).status, 'park-pending', 'a rejected resume changes nothing');
 
     // The architect restores build.med; another seat keeps its new class, so the rev still differs.
-    const restored = rerouted(r, { gate: { med: 'summit' } });
+    const restored = rerouted(r, { verifier: { med: 'summit' } });
     assert.notEqual(restored.routing(null).rev, pinned.routingRev);
     const resumed = await resume(r, U1, restored);
     assert.equal(resumed.outcome.kind, 'applied');

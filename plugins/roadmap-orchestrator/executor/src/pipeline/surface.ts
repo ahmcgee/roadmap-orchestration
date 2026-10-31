@@ -1,14 +1,13 @@
-import { existsSync } from 'node:fs';
 import { worktreeCreateOp } from '../recover/ops.ts';
+import { ruleMentions } from '../holistic/rederive.ts';
 import { parseCorpusPin } from '../corpus/types.ts';
 import { CORPUS_INPUT, keptInput } from '../input/inforce.ts';
 // Mechanical review markers and the independent verifier's annotation/diagnosis calls.
-import { freshJudgmentSession, resumedJudgmentSession } from '../backends/argv.ts';
+import { freshJudgmentSession } from '../backends/argv.ts';
 import type { ReviewItem, SurfaceFact } from '../core/events.ts';
 import type { UnitId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import type { SpecM1 } from '../core/records.ts';
-import { absPath } from '../core/values.ts';
 import { appliedRevisions } from '../holistic/coverage.ts';
 import { type PlanUnit, environmentOf } from '../input/plan.ts';
 import { pathSystems, systemTraits } from '../input/systems.ts';
@@ -16,10 +15,10 @@ import { keepInput } from '../input/inforce.ts';
 import { promptFor, renderPrompt } from '../prompts/index.ts';
 import { judgmentRepairDirective } from '../prompts/directives.ts';
 import type { MethodContext } from '../prompts/method/index.ts';
-import { validateGateOutput } from '../prompts/schemas.ts';
+import { validateGateOutput, validateBuildOutput } from '../prompts/schemas.ts';
 import { BRIEF_INPUT } from './rounds.ts';
-import { type StageContext, type StageParent, callBackend, judgmentDeadlineMs, dispatchOf, verifierDispatch, runOp } from './dispatch.ts';
-import { holisticInForce, integrationTip, library, loadUnitSpec, judgedAnswer, inMs, recordedCall, unitMilestones, planCheckWorktree, removeJudgmentCheckouts, unitTarget, targetDirs } from './stages.ts';
+import { type StageContext, type StageParent, callBackend, judgmentDeadlineMs, dispatchOf, verifierDispatch, runOp, repairTurnOf } from './dispatch.ts';
+import { holisticInForce, integrationTip, library, visionInput, loadUnitSpec, judgedAnswer, judgmentOutput, inMs, recordedCall, unitMilestones, planCheckWorktree, removeJudgmentCheckouts, unitTarget, targetDirs } from './stages.ts';
 import { mapInForce } from './lanes.ts';
 import { renderSpec } from '../spec/render.ts';
 
@@ -46,7 +45,9 @@ export function markers(ctx: StageContext, unit: PlanUnit, spec: SpecM1): readon
   if ((mapInForce(ctx.journal.view) === null ? [] : systemTraits(mapInForce(ctx.journal.view)!, unit.systems)).length > 0) out.push({marker: 'M1', source: 'dispatch:system-traits'});
   if (proofNotLocal(ctx, unit)) out.push({marker: 'M2', source: 'dispatch:witnesses'});
   const revisions = appliedRevisions(ctx);
+  const reviewedAt = ctx.journal.view.surfaceFacts().filter((f) => f.kind === 'review-completed' && f.unit === unit.id && f.mode === 'pre-build').at(-1);
   for (const [i, r] of revisions.entries()) {
+    if (reviewedAt?.kind === 'review-completed' && r.payload.rev <= reviewedAt.planRev) continue;
     const changes = r.payload.changes;
     if (changes.some((c) => c.type === 'obligation' && ['edited', 'disposed', 'split'].includes(c.edit) && (spec.obligations ?? []).includes(c.id))) out.push({marker: 'M3', source: `apply:${r.payload.rev}:obligations`});
     if (!changes.some((c) => c.type === 'corpus') || i === 0) continue;
@@ -63,7 +64,7 @@ export function markers(ctx: StageContext, unit: PlanUnit, spec: SpecM1): readon
 }
 export function methodContext(ctx: StageContext, unit: PlanUnit, spec: SpecM1, touched: readonly string[] = []): MethodContext {
   const map = mapInForce(ctx.journal.view);
-  const systems = [...unit.systems, ...touched.flatMap((p) => map === null ? [] : [...pathSystems(map, p as import('../core/values.ts').RepoPath)])];
+  const systems = [...unit.systems, ...touched.filter((t) => map !== null && Object.hasOwn(map.systems, t)) as import('../core/ids.ts').SystemName[], ...touched.flatMap((p) => map === null ? [] : [...pathSystems(map, p as import('../core/values.ts').RepoPath)])];
   const milestones = unitMilestones(ctx, unit.id, integrationTip(ctx));
   return { traits: map === null ? [] : systemTraits(map, systems), markers: markers(ctx, unit, spec).map((m) => m.marker), unitKind: milestones?.of.some((m) => m.as === 'design') ? 'design' : spec.design?.kind ?? 'module', expensiveLanes: [...spec.lanes, ...ctx.plan().suite.lanes].some((l) => (l as {cost?: string}).cost === 'expensive'), ui: milestones?.of.some((m) => m.dirs.length > 0) ?? false };
 }
@@ -76,6 +77,7 @@ export const diagnosed = (view: JournalView, unit: UnitId): boolean => view.surf
 export async function runReview(ctx: StageContext, unit: PlanUnit, parent: StageParent, mode: 'pre-build' | 'diagnosis'): Promise<void> {
   const { spec } = loadUnitSpec(ctx, unit);
   const view = ctx.journal.view;
+  const capturedPlanRev = view.planApplied()!.rev;
   if (unit.review === 'never') return;
   if (view.surfaceFacts().some((f) => f.kind === 'review-completed' && f.unit === unit.id && f.mode === mode && (mode === 'diagnosis' || f.specRev === spec.rev))) return;
   const triggers = mode === 'diagnosis' ? diagnosisDue(view, unit.id) ? [{marker: 'M4' as const, source: 'attempts:8-builds-or-20-judged'}] : [] : markers(ctx, unit, spec);
@@ -91,14 +93,27 @@ export async function runReview(ctx: StageContext, unit: PlanUnit, parent: Stage
     await removeJudgmentCheckouts(ctx, unit.id, parent);
     await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${unit.id}:review`, parent, {path: checkout, checkout: {type: 'detached', at: integrationTip(ctx)}});
   }
-  const measured = renderPrompt(prompt, { mode, brief: { spec: {unit: unit.id, rev: spec.rev, markdown: renderSpec(spec)}, intent: spec.intent, nonGoals: spec.nonGoals, contracts: library(ctx, spec, integrationTip(ctx)).contracts, systems: unit.systems, method: methodContext(ctx, unit, spec), history: mode === 'diagnosis' ? view.unit(unit.id).failures.map((f) => `${f.fact.stage}: ${f.fact.outcome}`) : [], standing: reviewItems(view, unit.id) } });
+  const measured = renderPrompt(prompt, { mode, brief: {target: unitTarget(ctx, integrationTip(ctx), 'full', holisticInForce(ctx).obligations?.obligations.filter((o) => (spec.obligations ?? []).includes(o.id) || o.deliveredBy.includes(unit.id)) ?? [], ruleMentions(renderSpec(spec))), vision: visionInput(ctx), spec: {unit: unit.id, rev: spec.rev, markdown: renderSpec(spec)}, intent: spec.intent, nonGoals: spec.nonGoals, contracts: library(ctx, spec, integrationTip(ctx)).contracts, systems: unit.systems, method: methodContext(ctx, unit, spec), history: mode === 'diagnosis' ? view.unit(unit.id).failures.map((f) => `${f.fact.stage}: ${f.fact.outcome}`) : [], standing: reviewItems(view, unit.id) } });
   const session = freshJudgmentSession();
-  const call = (repair?: readonly string[]) => callBackend(ctx, {unit: unit.id, parent, request: {kind: 'judgment', dispatch, session: repair === undefined ? session : resumedJudgmentSession(session.id), evidenceDirs: []}, system: prompt.system, rendered: repair === undefined ? measured.rendered : judgmentRepairDirective(repair), prompt: repair === undefined ? measured.prompt : null, schema: prompt.schema, cwd: checkout, deadlineAt: inMs(judgmentDeadlineMs(dispatchOf(view, unit.id)))});
+  const call = (repair?: {reasons: readonly string[]; turn: NonNullable<ReturnType<typeof repairTurnOf>>}) => callBackend(ctx, {unit: unit.id, parent, request: {kind: 'judgment', dispatch, session: repair === undefined ? session : repair.turn.session, evidenceDirs: targetDirs(unitTarget(ctx, integrationTip(ctx), 'full', [], ruleMentions(renderSpec(spec))))}, system: prompt.system, rendered: repair === undefined ? measured.rendered : judgmentRepairDirective(repair.reasons), prompt: repair === undefined ? measured.prompt : null, schema: prompt.schema, cwd: checkout, deadlineAt: inMs(judgmentDeadlineMs(dispatchOf(view, unit.id)))});
   let called = recorded ?? await call();
   let judged = judgedAnswer(called, validateGateOutput);
-  if (judged.kind === 'refused') { called = await call(judged.reasons); judged = judgedAnswer(called, validateGateOutput); }
-  const items = judged.kind === 'answered' ? judged.out.findings.map((f, n) => ({id: `${called.inv}:${n}`, text: f.text, evidence: [...f.experiments.map((e) => `${e.command}: ${e.output}`), ...(f.path === null ? [] : [f.path])]})) : [];
+  if (judged.kind === 'refused') { const turn = repairTurnOf(ctx.runDir, called.inv); if (turn !== null) { called = await call({reasons: judged.reasons, turn}); judged = judgedAnswer(called, validateGateOutput); } }
+  const items = judged.kind === 'answered' ? judged.out.findings.map((f, n) => ({id: `${called.inv}:${n}`, text: f.text, evidence: [...f.evidence, ...f.experiments.map((e) => `${e.command}: ${e.output}`), ...(f.path === null ? [] : [f.path])]})) : [];
   const note = mode === 'diagnosis' ? keepInput(ctx.runDir, Buffer.from(judged.kind === 'answered' ? [...judged.out.reasons, ...items.map((f) => `${f.text} (${f.evidence.join('; ')})`)].join('\n') : 'Independent diagnosis returned no usable answer; inspect prior build and lane evidence.'), BRIEF_INPUT) : null;
   await removeJudgmentCheckouts(ctx, unit.id, parent);
-  ctx.journal.fact({kind: 'review-completed', unit: unit.id, mode, specRev: spec.rev, inv: called.inv, items, note});
+  ctx.journal.fact({kind: 'review-completed', unit: unit.id, mode, specRev: spec.rev, planRev: capturedPlanRev, inv: called.inv, items, note});
+}
+
+export function builderTouches(ctx: StageContext, unit: UnitId): readonly string[] {
+  const spawn = ctx.journal.view.spawnsOfUnit(unit, 'build').at(-1);
+  return spawn === undefined ? [] : judgmentOutput(ctx, spawn, validateBuildOutput)?.grounding.touches ?? [];
+}
+export function reachBackstop(ctx: StageContext, unit: PlanUnit, spec: SpecM1, paths: readonly string[], touches: readonly string[]): readonly import('../input/systems.ts').SystemTrait[] {
+  const map = mapInForce(ctx.journal.view);
+  if (map === null) return [];
+  const named = touches.filter((t) => Object.hasOwn(map.systems, t)) as import('../core/ids.ts').SystemName[];
+  const traits = systemTraits(map, [...named, ...[...paths, ...touches].flatMap((p) => [...pathSystems(map, p as import('../core/values.ts').RepoPath)])]);
+  if (traits.length > 0 && !ctx.journal.view.surfaceFacts().some((f) => f.kind === 'review-triggered' && f.unit === unit.id && f.marker === 'M1' && f.specRev === spec.rev)) ctx.journal.fact({kind: 'review-triggered', unit: unit.id, marker: 'M1', source: 'gate:reachTraits/touches', specRev: spec.rev});
+  return traits;
 }

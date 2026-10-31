@@ -121,7 +121,7 @@ const KEY: AnswerKey = {
 const PROMPT = 'diff --git a/packages/oak/src/rough-edge.ts b/packages/oak/src/rough-edge.ts\n+x\n<not_inlined>\npackages/fern/src/early-index.ts\npackages/fern/src/late-gate.ts\n</not_inlined>\n';
 const SHOWN: DiffShown = { inlined: [repoPath('packages/oak/src/rough-edge.ts')], notInlined: [repoPath('packages/fern/src/early-index.ts'), repoPath('packages/fern/src/late-gate.ts')] };
 const CITE: GateOutput = {rulings: [], 
-  decision: 'revise', findings: [{ severity: 'blocking', path: KEY.plant!.path, text: 'operator flipped', contractRef: null, experiments: [], debt: null, defect: 'incorrect-behaviour', reraises: null, hunk: null }],
+  decision: 'revise', findings: [{evidence: ["fixture:1"],  severity: 'blocking', path: KEY.plant!.path, text: 'operator flipped', contractRef: null, experiments: [], debt: null, defect: 'incorrect-behaviour', reraises: null, hunk: null }],
   directives: ['Restore it.'], reasons: [], premises: [], standing: [], clusters: null, 
 };
 
@@ -204,7 +204,7 @@ test('roles.arm: --risk picks the built-in gate seat (Opus at every tier since d
   assert.throws(() => rebindConfig(['cheap=claude-opus-5-5:high']), /cheap/);
   assert.throws(() => rebindConfig(['economy=claude-haiku-5-5:huge']), /effort/);
   assert.throws(() => rebindConfig(['economy=claude-opus-5-5:high', 'economy=claude-haiku-5-5:low']), /rebound twice/);
-  assert.throws(() => gateArm('low', rebindConfig(['frontier=gpt-5.6-luna:low'])), /no prompt for gate on gpt-5.6-luna/);
+  assert.throws(() => gateArm('low', rebindConfig(['frontier=gpt-5.6-luna:low'])), /no prompt for verifier on gpt-5.6-luna/);
   // The trial arc (test/fixtures/unit-common.ts contextFor) resolves its routing under the descriptor's config.
   const d = setupArc({ steps: [] });
   const r = contextFor({ ...d, config: config! });
@@ -324,7 +324,7 @@ test('roles.checkout-tree-act: checkoutTree commits exactly the given commit\'s 
 test('roles.triggers: gate paths trigger the gate eval; shared paths (routing) the walkthrough, polish-judge and verifier evals too; unrelated paths none', () => {
   assert.deepEqual(triggeredRoles(['src/prompts/gate/claude-opus-5-5.ts']), ['gate']);
   assert.deepEqual(triggeredRoles(['src/git/boundeddiff.ts', 'README.md']), ['gate']);
-  assert.deepEqual(triggeredRoles(['src/routing/classes.ts']), ['gate', 'walkthrough', 'polishJudge', 'verifier', 'scaffold']);
+  assert.deepEqual(triggeredRoles(['src/routing/classes.ts']), ['gate', 'walkthrough', 'polishJudge']);
   assert.deepEqual(triggeredRoles(['src/holistic/audit.ts', 'test/gate.test.ts']), []);
   assert.deepEqual(triggeredRoles(['evals/roles/triggers.ts']), []);
 });

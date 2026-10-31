@@ -255,6 +255,7 @@ export type BuildInputs = Readonly<{
   /** Existing per-system notes at this unit's checkout commit, relative to the product repo. */
   systemNotes: readonly RepoPath[];
   notes: readonly string[];
+  target: GateTargetInput;
   method: import('./method/index.ts').MethodContext;
   spec: RenderedSpec;
   intent: string;
@@ -382,6 +383,7 @@ export type RegeneratedCheck =
 export type GateInputs = Readonly<{
   /** Existing per-system notes at the gated commit, relative to the product repo. */
   systemNotes: readonly RepoPath[];
+  touches: readonly string[];
   standing: readonly import('../core/events.ts').ReviewItem[];
   method: import('./method/index.ts').MethodContext;
   spec: RenderedSpec;
@@ -705,9 +707,8 @@ export type PolishJudgeInputs = Readonly<{
  * dev.17 (proportional review): one hunk of a docs-only claim the verifier classifies: its id, its file, the file's language
  * as code infers it from the name (null: none known), and the hunk as `git diff -U0` prints it, header included.
  */
-export type VerifierHunk = Readonly<{ id: string; path: RepoPath; language: string | null; text: string }>;
 /** The verifier's inputs: the unit, the certified tree `since` and the salvage SHA `at` the hunks lie between, and the hunks. */
-export type ReviewBrief = Readonly<{ spec: RenderedSpec; intent: string; nonGoals: readonly string[]; contracts: readonly DocText[]; systems: readonly SystemName[]; method: import('./method/index.ts').MethodContext; history: readonly string[]; standing: readonly import('../core/events.ts').ReviewItem[] }>;
+export type ReviewBrief = Readonly<{ target: UnitTargetInput; vision: VisionInput | null;  spec: RenderedSpec; intent: string; nonGoals: readonly string[]; contracts: readonly DocText[]; systems: readonly SystemName[]; method: import('./method/index.ts').MethodContext; history: readonly string[]; standing: readonly import('../core/events.ts').ReviewItem[] }>;
 export type VerifierInputs = Readonly<{mode: 'gate'; brief: GateInputs}> | Readonly<{mode: 'pre-build' | 'diagnosis'; brief: ReviewBrief}>;
 
 /**
@@ -746,7 +747,7 @@ export type PocInputs = Readonly<{
 export type ExperienceInputs = Readonly<{mode: 'walkthrough'; brief: WalkthroughInputs}> | Readonly<{mode: 'polish'; brief: PolishJudgeInputs}>;
 export type RoleInputs = {
   readonly experienceVerdict: ExperienceInputs;
-  readonly campaignAudit: Omit<LensInputs, 'lens' | 'rulings' | 'index'>;
+  readonly campaignAudit: Omit<LensInputs, 'lens' | 'rulings' | 'index'> & Readonly<{method: import('./method/index.ts').MethodContext}>;
   readonly planCheck: PlanCheckInputs;
   readonly build: BuildInputs;
   readonly gate: GateInputs;
@@ -763,14 +764,14 @@ export type RoleInputs = {
 
 export const ROLE_INPUTS = {
   experienceVerdict: ['mode', 'brief'],
-  campaignAudit: ['vision', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'target', 'checkout', 'specsOnly'],
+  campaignAudit: ['method', 'vision', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'target', 'checkout', 'specsOnly'],
   planCheck: [
     'spec', 'intent', 'nonGoals', 'contracts', 'rulings', 'index', 'target', 'direction', 'systems', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision', 'priorInvalid',
     'escalation', 'milestones', 'staleLinks', 'design', 'pocs',
   ],
-  build: ['systemNotes', 'notes', 'spec', 'intent', 'nonGoals', 'contracts', 'index', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'systems', 'fixRound', 'witnessChecks', 'milestones', 'browser', 'handover', 'method'],
+  build: ['systemNotes', 'notes', 'target', 'spec', 'intent', 'nonGoals', 'contracts', 'index', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'systems', 'fixRound', 'witnessChecks', 'milestones', 'browser', 'handover', 'method'],
   gate: [
-    'systemNotes', 'standing', 'method',
+    'systemNotes', 'touches', 'standing', 'method',
     'spec', 'intent', 'nonGoals', 'contracts', 'index', 'target', 'direction', 'obligations', 'standingObligations', 'diff', 'laneLedger', 'evidence', 'systems', 'reach', 'traits', 'reachTraits', 'priorRound',
     'checks', 'escalation', 'largeDiff', 'milestones', 'review', 'undeclaredContracts',
   ],

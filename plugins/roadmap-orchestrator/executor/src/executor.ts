@@ -342,7 +342,7 @@ function contexts(args: ExecutorArgs, context: StartupContext, profile: ProfileN
     routingBase,
     docs: docsPublisher({ ...resources, hostEnv: args.env, planFile: context.planFile, arbiter }),
     plan: () => inForce().plan,
-    routing: (unit) => ({ profile, resolved: routing(unit) }),
+    routing: (unit) => ({ profile: inForce().plan.routing?.profile ?? profile, resolved: routing(unit) }),
     probes: { prober, signal: stop.signal },
   };
   return { stage, commands, journal, arbiter, prober, stop };

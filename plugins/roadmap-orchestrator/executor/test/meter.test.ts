@@ -43,18 +43,18 @@ describe('meter', () => {
     const zero = { turns: 0, costUsd: 0 };
     assert.deepEqual(m.byRole, [
       { role: 'build', routingRev: REV_A, calls: 3, input: 300, output: 30, cacheRead: 50, cacheWrite: 5, ...zero, unavailable: 1 },
-      { role: 'gate', routingRev: REV_A, calls: 2, input: 8, output: 4, cacheRead: 1, cacheWrite: 0, turns: 15, costUsd: 0.75, unavailable: 0 },
+      { role: 'verifier', routingRev: REV_A, calls: 2, input: 8, output: 4, cacheRead: 1, cacheWrite: 0, turns: 15, costUsd: 0.75, unavailable: 0 },
     ]);
     assert.deepEqual(m.bySeat, [
       { role: 'build', tier: 'high', routingRev: REV_A, calls: 1, input: 200, output: 20, cacheRead: 0, cacheWrite: 0, ...zero, unavailable: 0 },
       { role: 'build', tier: 'med', routingRev: REV_A, calls: 2, input: 100, output: 10, cacheRead: 50, cacheWrite: 5, ...zero, unavailable: 1 },
-      { role: 'gate', tier: 'med', routingRev: REV_A, calls: 2, input: 8, output: 4, cacheRead: 1, cacheWrite: 0, turns: 15, costUsd: 0.75, unavailable: 0 },
+      { role: 'verifier', tier: 'med', routingRev: REV_A, calls: 2, input: 8, output: 4, cacheRead: 1, cacheWrite: 0, turns: 15, costUsd: 0.75, unavailable: 0 },
     ]);
     assert.deepEqual(m.byUnit, [
       { unit: U1, role: 'build', routingRev: REV_A, calls: 2, input: 100, output: 10, cacheRead: 50, cacheWrite: 5, ...zero, unavailable: 1 },
-      { unit: U1, role: 'gate', routingRev: REV_A, calls: 1, input: 7, output: 3, cacheRead: 1, cacheWrite: 0, turns: 12, costUsd: 0.5, unavailable: 0 },
+      { unit: U1, role: 'verifier', routingRev: REV_A, calls: 1, input: 7, output: 3, cacheRead: 1, cacheWrite: 0, turns: 12, costUsd: 0.5, unavailable: 0 },
       { unit: U2, role: 'build', routingRev: REV_A, calls: 1, input: 200, output: 20, cacheRead: 0, cacheWrite: 0, ...zero, unavailable: 0 },
-      { unit: U2, role: 'gate', routingRev: REV_A, calls: 1, input: 1, output: 1, cacheRead: 0, cacheWrite: 0, turns: 3, costUsd: 0.25, unavailable: 0 },
+      { unit: U2, role: 'verifier', routingRev: REV_A, calls: 1, input: 1, output: 1, cacheRead: 0, cacheWrite: 0, turns: 3, costUsd: 0.25, unavailable: 0 },
     ]);
     assert.deepEqual(m.bySmoke, []);
     assert.doesNotMatch(JSON.stringify(m), /claude-|gpt-/);
@@ -76,7 +76,7 @@ describe('meter', () => {
   });
 
   it('meter.streamed (dev.17): a checkpoint call without a result adds the tokens and turns its stream showed, still counted unavailable, its cost unknown', () => {
-    const job = { type: 'job', job: jobIdOf('ckpt-1'), attempt: 1, role: 'checkpoint', tier: 'arc' } as const;
+    const job = { type: 'job', job: jobIdOf('ckpt-1'), attempt: 1, role: 'campaignAudit', tier: 'arc' } as const;
     const holistic = resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: null, unit: null, arcScope: 'architecture-doc' });
     const log = [
       factEvent({ kind: 'usage-unavailable', inv: inv(1), routingRev: holistic.rev, subject: job, reason: 'no-result', streamed: tokens(8, 64, 11950, 6868, 3) }),
@@ -84,7 +84,7 @@ describe('meter', () => {
       factEvent({ kind: 'meter', inv: inv(3), routingRev: holistic.rev, subject: { ...job, attempt: 3 }, usage: tokens(10, 5, 0, 0, 1, 0.5) }),
     ];
     assert.deepEqual(meterOf(log).byJob, [
-      { job: 'ckpt-1', role: 'checkpoint', routingRev: holistic.rev, calls: 3, input: 18, output: 69, cacheRead: 11950, cacheWrite: 6868, turns: 4, costUsd: 0.5, unavailable: 2 },
+      { job: 'ckpt-1', role: 'campaignAudit', routingRev: holistic.rev, calls: 3, input: 18, output: 69, cacheRead: 11950, cacheWrite: 6868, turns: 4, costUsd: 0.5, unavailable: 2 },
     ]);
     // The fact carries what result.json's usage streamed.
     const streamed = tokens(8, 64, 11950, 6868, 3);
@@ -108,8 +108,8 @@ describe('meter', () => {
     assert.deepEqual(m.byRole.map((t) => [t.role, t.calls, t.input, t.unavailable]), [['checkpoint', 2, 30, 1], ['gate', 1, 1, 0], ['lens', 2, 150, 0]]);
     assert.deepEqual(m.bySeat.map((t) => [t.role, t.tier, t.calls]), [['checkpoint', 'arc', 2], ['gate', 'med', 1], ['lens', 'arc', 2]]);
     assert.deepEqual(m.byJob, [
-      { job: 'audit-1', role: 'lens', routingRev: rev, calls: 2, input: 150, output: 15, ...zero, cacheRead: 7, unavailable: 0 },
-      { job: 'ckpt-1', role: 'checkpoint', routingRev: rev, calls: 2, input: 30, output: 3, ...zero, unavailable: 1 },
+      { job: 'audit-1', role: 'campaignAudit', routingRev: rev, calls: 2, input: 150, output: 15, ...zero, cacheRead: 7, unavailable: 0 },
+      { job: 'ckpt-1', role: 'campaignAudit', routingRev: rev, calls: 2, input: 30, output: 3, ...zero, unavailable: 1 },
     ]);
     assert.deepEqual(m.byUnit.map((t) => [t.unit, t.role]), [[U1, 'gate']], 'a job\'s call is in no unit total');
     // The render-time model view resolves the arc seats of a holistic revision's table.
@@ -145,7 +145,7 @@ describe('meter', () => {
   it('meter.subagents-by-class: a call\'s totals include its subagents\'; byClass puts each seat\'s own share on its class and the delegated share on its own', () => {
     // A repo seats gate.low on economy (Haiku 5.5; no built-in seat names it since the 2026-10-17 gate eval) and gate.med on
     // efficient (Sonnet 5.5; the built-in gate is frontier at every tier since dev.17).
-    const def = resolveRouting({ profile: 'default', classes: null, repoConfig: { gate: { low: 'economy', med: 'efficient' } }, plan: null, unit: null });
+    const def = resolveRouting({ profile: 'default', classes: null, repoConfig: { verifier: { low: 'economy', med: 'efficient' } }, plan: null, unit: null });
     const rev = def.rev;
     const S1 = claudeSessionId('11111111-1111-4111-8111-111111111111');
     const S2 = claudeSessionId('22222222-2222-4222-8222-222222222222');

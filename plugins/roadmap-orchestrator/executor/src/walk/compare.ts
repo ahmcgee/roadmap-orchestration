@@ -1,3 +1,4 @@
+import { recordArcVerdict } from '../core/verdict.ts';
 import { experiencePolish } from '../prompts/schemas.ts';
 // A polish unit's compare (dev.13, plan §4 "Polish units", R2; SCHEMAS.md "dev.13"): after its gate approved it and
 // before its candidate is admitted, a polish unit's tweak is judged against the product as it is. A polish unit's
@@ -146,9 +147,9 @@ export const compareEvidenceDir = (ctx: Pick<CompareContext, 'runDir'>, job: Job
 
 /** Writes `tweak-judged` (step 7, or step 2's / 5's code drop). */
 function judge(ctx: CompareContext, unit: UnitId, decision: 'keep' | 'drop', reason: Extract<WalkFact, { kind: 'tweak-judged' }>['reason']): CompareOutcome {
-  ctx.journal.fact({ kind: 'tweak-judged', unit, decision, reason });
   const source = ctx.journal.view.walkFacts().map((f) => f.fact).filter((f) => f.kind === 'compare-started' && f.unit === unit).at(-1);
-  if (source?.kind === 'compare-started') ctx.journal.fact({kind: 'stage-outcome', job: source.job, stage: 'experience-verdict', verdict: decision, findings: 0});
+  if (source?.kind === 'compare-started') recordArcVerdict(ctx.journal, {job: source.job, stage: 'experience-verdict', verdict: decision, findings: 0});
+  ctx.journal.fact({ kind: 'tweak-judged', unit, decision, reason });
   crashPoint('compare.after-judged');
   return { kind: 'judged', unit, decision, reason };
 }

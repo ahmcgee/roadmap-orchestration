@@ -121,7 +121,7 @@ function spawn(i: number, running: boolean): void {
   if (job) r.journal.fact({ kind: 'walk-started', job, milestone: milestoneId(`MS-${1 + Math.floor(i * plan.milestones.length / unitCount)}`), round: 1, sha: sha(plan.baseline), ports: {} });
   const unitRole = stage === 'plan-check' ? 'planCheck' : stage === 'gate' ? 'gate' : 'build';
   const role = walk ? 'walkthrough' : unitRole;
-  const subject: SpawnSubject = job ? { purpose: 'arc-backend', role: 'walkthrough', tier: 'arc', job, attempt: 1, routingRev }
+  const subject: SpawnSubject = job ? { purpose: 'arc-backend', role: 'experienceVerdict', tier: 'arc', job, attempt: 1, routingRev }
     : stage === 'lanes' ? { purpose: 'lane', unit, lane: laneId('mul'), set: 'spec', at: sha(plan.baseline) }
     : { purpose: 'backend', role: unitRole, tier: 'med', unit, attempt: parent.attempt, routingRev };
   const sessionText = `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`;

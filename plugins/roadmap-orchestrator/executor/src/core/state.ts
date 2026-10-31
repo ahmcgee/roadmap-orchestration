@@ -737,6 +737,7 @@ export class Fold implements JournalView {
   readonly #checkpointSkips: (Omit<FactOf<'checkpoint-skipped'>, 'kind'> & Seq)[] = [];
   readonly #divergences: (Omit<FactOf<'divergence'>, 'kind'> & Seq)[] = [];
   readonly #digests: (Omit<FactOf<'divergence-digest'>, 'kind'> & Seq)[] = [];
+  readonly #arcVerdicts: import('./events.ts').ArcStageVerdict[] = [];
   readonly #surfaceFacts: import('./events.ts').SurfaceFact[] = [];
   readonly #noted: Readonly<{unit: UnitId; command: CommandId; brief: Sha256Hex; seq: number}>[] = [];
   readonly #steered: (Omit<FactOf<'steered'>, 'kind'> & Seq)[] = [];
@@ -1060,7 +1061,11 @@ export class Fold implements JournalView {
         return;
       }
       case 'stage-outcome': {
-        if ('job' in f) return;
+        if ('job' in f) {
+          if (this.#arcVerdicts.some((v) => v.job === f.job && v.stage === f.stage)) fail(`second arc verdict for ${f.job}`);
+          this.#arcVerdicts.push(f);
+          return;
+        }
         const key = `${f.stage}#${f.attempt}`;
         const existing = this.#units.get(f.unit);
         if (existing?.outcomes.has(key) === true) fail(`second stage-outcome for ${f.unit} ${key}`);
@@ -2144,6 +2149,7 @@ export class Fold implements JournalView {
     const starts = [...(this.#units.get(unit)?.starts.keys() ?? [])];
     return {builds: starts.filter((k) => k.startsWith('build#')).length, stages: starts.filter((k) => /^(plan-check|build|lanes|gate)#/.test(k)).length};
   }
+  arcVerdicts(): readonly import('./events.ts').ArcStageVerdict[] { return this.#arcVerdicts; }
   surfaceFacts(): readonly import('./events.ts').SurfaceFact[] { return this.#surfaceFacts; }
   notes(unit: UnitId): readonly Readonly<{command: CommandId; brief: Sha256Hex; seq: number}>[] { return this.#noted.filter((n) => n.unit === unit); }
   buildNotes(unit: UnitId, attempt: number): readonly Sha256Hex[] {

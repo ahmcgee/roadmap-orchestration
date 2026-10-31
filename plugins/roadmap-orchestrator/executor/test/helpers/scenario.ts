@@ -152,7 +152,7 @@ export type Act = CodexAct | ClaudeAct;
  * job's call of that lens whose job owns no keyed step. Selection takes the first non-empty tier of
  * unit+lens, unit, lens, neither.
  */
-export type StepBase = Readonly<{ unit?: string; lens?: LensKindName }>;
+export type StepBase = Readonly<{ review?: true; unit?: string; lens?: LensKindName }>;
 export type Step =
   | (StepBase & Readonly<{ as: 'codex'; expect: Expect; acts: readonly CodexAct[]; /** fresh thread id; default derived from the step index */ threadId?: string }>)
   | (StepBase & Readonly<{ as: 'claude'; expect: Expect; acts: readonly ClaudeAct[] }>);
@@ -288,7 +288,7 @@ export function terminalFor(argv: readonly string[], invDir: string, schemaPath:
   const outputPath = absPath(join(invDir, 'stdout'));
   const fresh = after(argv, '--session-id');
   const resume = after(argv, '--resume');
-  if (argv.includes('--tools')) return { ...base, outputPath, role: 'gate', session: { backend: 'claude', mode: 'fresh', id: judgmentSessionId(fresh) } };
+  if (argv.includes('--tools')) return { ...base, outputPath, role: 'verifier', session: { backend: 'claude', mode: 'fresh', id: judgmentSessionId(fresh) } };
   const session = resume === undefined
     ? { backend: 'claude', mode: 'fresh', id: implementerSessionId(fresh) } as const
     : { backend: 'claude', mode: 'resume', id: implementerSessionId(resume) } as const;

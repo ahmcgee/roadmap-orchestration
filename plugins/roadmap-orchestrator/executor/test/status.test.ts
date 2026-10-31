@@ -176,7 +176,7 @@ describe('status.subset', () => {
     assert.equal(s.holistic, false);
     assert.deepEqual([s.target, s.vision, s.audit, s.convergence, s.nowTrue, s.notYetTrue, s.divergences], [null, null, null, null, [], [], []]);
     // dev.17: the one decision since is the approving plan-check's design record, landed as the spec's rev 2.
-    assert.deepEqual(s.decisionsSince.map(({ seq: _, ...d }) => d), [{ id: 'u1', kind: 'patch', oneLine: 'u1 spec rev 2 (1 ops)', ruledBy: { role: 'planCheck', type: 'judgment' } }]);
+    assert.deepEqual(s.decisionsSince.map(({ seq: _, ...d }) => d), [{ id: 'u1', kind: 'patch', oneLine: 'u1 spec rev 2 (1 ops)', ruledBy: { role: 'verifier', type: 'judgment' } }]);
     assert.deepEqual(s.completion, { planRev: 1, head: git(r.repo, 'rev-parse', 'main'), active: true, sealed: true, notSealed: null, unmet: [] });
     assert.ok(s.host.log.bytes > 0 && s.host.log.events > 0 && !s.host.log.compactionDue, JSON.stringify(s.host.log));
     // M4a: an arc outside the corpus layer has vacuous corpus keys; its timings are its stages' (LR-c).

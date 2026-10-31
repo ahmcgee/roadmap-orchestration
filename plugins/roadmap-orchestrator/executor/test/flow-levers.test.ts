@@ -27,7 +27,7 @@ function rawPlan(): Record<string, unknown> {
     resources: [{ name: 'db', probe: tool, teardown: tool, pool: { size: 2 } }, { name: 'cache', probe: tool, teardown: tool }],
     units: [
       { id: 'u1', spec: 'specs/u1.json', risk: 'low', systems: [systemName('app')], resources: [] },
-      { id: 'u2', spec: 'specs/u2.json', risk: 'high', systems: [systemName('app')], resources: [], routing: { gate: { high: 'summit' } } },
+      { id: 'u2', spec: 'specs/u2.json', risk: 'high', systems: [systemName('app')], resources: [], routing: { verifier: { high: 'summit' } } },
       { id: 'u3', spec: 'specs/u3.json', risk: 'med', systems: [systemName('app')], resources: [], cut: { reason: 'out of scope' } },
     ],
   };
@@ -81,7 +81,7 @@ describe('the fence', () => {
     // The template's other instance: a suite-lane action on `unit` may not touch lane `lint`.
     assert.throws(() => assertFenced(PLAN, forged, shard()), /touched capacity\.cpu, suite\.lanes\[lint\]\.argv/);
     // A ruler path under a build-class action.
-    const judged: PlanM1 = { ...PLAN, routing: { build: { med: 'frontier' }, gate: { low: 'efficient' } } };
+    const judged: PlanM1 = { ...PLAN, routing: { build: { med: 'frontier' }, verifier: { low: 'efficient' } } };
     assert.throws(() => assertFenced(PLAN, judged, { lever: 'build-class', tier: 'med', class: 'frontier' }), /routing\.gate\.low/);
     assert.doesNotThrow(() => assertFenced(PLAN, flowRevision(PLAN, shard()), shard()));
   });
@@ -268,9 +268,9 @@ describe('the ruler', () => {
     assert.deepEqual(rulerChanges(view(PLAN), view(PLAN, sha256('3'.repeat(64)))), ['holistic.obligations']);
     assert.deepEqual(rulerChanges(view(PLAN), view(PLAN, undefined, sha256('4'.repeat(64)))), ['vision']);
     const edited = planWith({
-      routing: { gate: { low: 'efficient' } },
-      units: (rawPlan()['units'] as Record<string, unknown>[]).map((u) => (u['id'] === 'u1' ? { ...u, risk: 'med' } : u['id'] === 'u2' ? { ...u, routing: { gate: { high: 'frontier' } } } : u))
-        .concat([{ id: 'u4', spec: 'specs/u4.json', risk: 'low', systems: [systemName('app')], resources: [], routing: { planCheck: { low: 'efficient' } } }]),
+      routing: { verifier: { low: 'efficient' } },
+      units: (rawPlan()['units'] as Record<string, unknown>[]).map((u) => (u['id'] === 'u1' ? { ...u, risk: 'med' } : u['id'] === 'u2' ? { ...u, routing: { verifier: { high: 'frontier' } } } : u))
+        .concat([{ id: 'u4', spec: 'specs/u4.json', risk: 'low', systems: [systemName('app')], resources: [], routing: { verifier: { low: 'efficient' } } }]),
     });
     assert.deepEqual(rulerChanges(view(PLAN), view(edited)), ['routing.gate', 'units[u1].risk', 'units[u2].routing.gate'], 'a new unit sets a floor, it moves none');
   });

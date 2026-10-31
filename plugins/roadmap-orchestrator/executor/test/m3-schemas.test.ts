@@ -57,7 +57,7 @@ const draft = {
 // One of every M3 fact, as the frozen shapes allow.
 const HOLISTIC_FACTS: { readonly [K in HolisticFactKind]: object } = {
   'review-triggered': {kind: 'review-triggered', unit: U1, marker: 'M1', source: 'dispatch', specRev: 1},
-  'review-completed': {kind: 'review-completed', unit: U1, mode: 'pre-build', specRev: 1, inv: INV, items: [], note: null},
+  'review-completed': {kind: 'review-completed', unit: U1, mode: 'pre-build', specRev: 1, planRev: 1, inv: INV, items: [], note: null},
   witnessed: { kind: 'witnessed', lane: laneId('journey'), laneRev: LANE_REV, envId: ENV, treeSha: A, inv: INV, recordsSha256: H, purpose: 'witness', for: { type: 'candidate', unit: U1, attempt: 3 } },
   'obligation-latched': { kind: 'obligation-latched', obligation: obligationId('I-1'), unit: U1, treeSha: A },
   'finding-opened': {
@@ -232,7 +232,7 @@ describe('M3 event records', () => {
     ] satisfies readonly object[],
     source: { type: 'command', command: CMD }, payloadSha256: H2, rulingsSha256: H, obligationsSha256: H2, visionSha256: H,
     publication: { pub: 'docs-1', head: A },
-    routingProvenance: { profile: 'default', repoConfig: { seats: null, classes: null }, planLayer: { build: { low: 'frontier' } }, unitLayers: { u1: { gate: { med: 'summit' } } } },
+    routingProvenance: { profile: 'default', repoConfig: { seats: null, classes: null }, planLayer: { build: { low: 'frontier' } }, unitLayers: { u1: { verifier: { med: 'summit' } } } },
   };
 
   it('plan-applied: the M3 fields round-trip; source, payload, ledger and routing provenance are required', () => {
@@ -276,12 +276,12 @@ describe('M3 event records', () => {
       type: 'intent', op: opId(ARC, 2), kind: 'proc.spawn', key: 'spawn:x', parent: { type: 'job', job: 'audit-1' }, ordinal: 1, deadlineAt: null,
       expect: { subject, launchSha256: H }, post: null,
     } as unknown as LogRecord);
-    roundTrip(spawn({ purpose: 'arc-backend', role: 'lens', tier: 'arc', routingRev: REV, job: 'audit-1', attempt: 1 }));
+    roundTrip(spawn({ purpose: 'arc-backend', role: 'campaignAudit', tier: 'arc', routingRev: REV, job: 'audit-1', attempt: 1 }));
     roundTrip(spawn({ purpose: 'journey', lane: 'journey', laneRev: LANE_REV, at: A, owner: { type: 'job', job: 'audit-1' } }));
     roundTrip(spawn({ purpose: 'mutant', finding: 'F-1', lane: 'journey', laneRev: LANE_REV, tree: B }));
-    assert.throws(() => roundTrip(spawn({ purpose: 'arc-backend', role: 'gate', tier: 'arc', routingRev: REV, job: 'audit-1', attempt: 1 })), SchemaError);
-    assert.throws(() => roundTrip(spawn({ purpose: 'backend', role: 'lens', tier: 'arc', routingRev: REV, unit: 'u1', attempt: 1 })), SchemaError);
-    roundTrip(fact({ kind: 'meter', inv: INV, routingRev: REV, subject: { type: 'job', role: 'checkpoint', tier: 'arc', job: 'ckpt-1', attempt: 1 }, usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: null, cacheWriteTokens: null, turns: null, costUsd: null } }));
+    assert.throws(() => roundTrip(spawn({ purpose: 'arc-backend', role: 'verifier', tier: 'arc', routingRev: REV, job: 'audit-1', attempt: 1 })), SchemaError);
+    assert.throws(() => roundTrip(spawn({ purpose: 'backend', role: 'campaignAudit', tier: 'arc', routingRev: REV, unit: 'u1', attempt: 1 })), SchemaError);
+    roundTrip(fact({ kind: 'meter', inv: INV, routingRev: REV, subject: { type: 'job', role: 'campaignAudit', tier: 'arc', job: 'ckpt-1', attempt: 1 }, usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: null, cacheWriteTokens: null, turns: null, costUsd: null } }));
 
     const fp = { unitCommit: B, specRev: 2, contractRevs: [], rulingRevs: [] };
     const batch = (members: readonly object[], chain: readonly object[], next: string): LogRecord => ({
@@ -398,15 +398,15 @@ describe('M3 file records', () => {
       ...base,
       holistic: { vision: 'vision.json', advances: ['V-1', 'V-4'], obligations: 'obligations.json', audit: { every: 2, lenses: ['invariants', 'vision'], wallClockMin: 120 } },
       limits: { chargeable: 4, convergenceK: 1 },
-      units: [{ ...unit, origin: 'repair', routing: { gate: { med: 'summit' } }, limits: { redirects: 1 } }, { ...unit, id: 'u2', spec: 'specs/u2.json' }],
+      units: [{ ...unit, origin: 'repair', routing: { verifier: { med: 'summit' } }, limits: { redirects: 1 } }, { ...unit, id: 'u2', spec: 'specs/u2.json' }],
     };
     const plan = parsePlan(m3);
     assert.deepEqual(plan, { ...m3, target: 'architecture-doc' });
     assert.ok(plan.target === 'architecture-doc' && plan.holistic !== undefined);
     assert.deepEqual(boundsOf(plan, plan.units[0]!), { ...DEFAULT_BOUNDS, chargeable: 4, redirects: 1 });
     assert.deepEqual(boundsOf(plan, plan.units[1]!), { ...DEFAULT_BOUNDS, chargeable: 4 });
-    assert.deepEqual(lensSetOf(plan.holistic!), ['invariants', 'vision']);
-    assert.deepEqual(lensSetOf({ advances: plan.holistic.advances }), ['invariants', 'drift', 'vacuity', 'vision']);
+    assert.deepEqual(lensSetOf(plan.holistic!), ['invariants']);
+    assert.deepEqual(lensSetOf({ advances: plan.holistic.advances }), ['invariants']);
     assert.equal(DEFAULT_CONVERGENCE_K, 3);
     const noM3 = parsePlan(base);
     assert.equal(noM3.holistic, undefined);
@@ -457,7 +457,7 @@ describe('M3 judgment outputs', () => {
       { op: 'patch-spec', unit: 'u1', patch: [{ op: 'strike', id: 'A3' }] },
       { op: 'reenter', unit: 'u2', reenters: 'u1', enterAt: null, reset: null, fixes: null },
       { op: 'cut', unit: 'u1', reason: 'r' },
-      { op: 'route', unit: 'u1', seats: [{ role: 'gate', tier: 'med', class: 'summit' }] },
+      { op: 'route', unit: 'u1', seats: [{ role: 'verifier', tier: 'med', class: 'summit' }] },
       { op: 'limits', unit: null, limits: [{ field: 'convergenceK', value: 2 }] },
       {
         op: 'obligation-split', obligation: 'I-2',
@@ -479,7 +479,7 @@ describe('M3 judgment outputs', () => {
     assert.throws(() => fixesOf({fixes: undefined}), /fixes/);
     assert.throws(() => validateCheckpointOutput({ ...ckpt, ops: [{ ...more[3], seats: [{ role: 'build', tier: 'arc', class: 'summit' }] }] }), /tier/);
     // economy is judgment-only (1.0.0-dev.12): a route may seat it at a judgment seat, never at a build seat.
-    validateCheckpointOutput({ ...ckpt, ops: [{ ...more[3], seats: [{ role: 'gate', tier: 'low', class: 'economy' }] }] });
+    validateCheckpointOutput({ ...ckpt, ops: [{ ...more[3], seats: [{ role: 'verifier', tier: 'low', class: 'economy' }] }] });
     assert.throws(() => validateCheckpointOutput({ ...ckpt, ops: [{ ...more[3], seats: [{ role: 'build', tier: 'low', class: 'economy' }] }] }), /class/);
     assert.throws(() => validateCheckpointOutput({ ...ckpt, ops: [{ ...more[7], class: 'anything' }] }), /class/);
   });

@@ -111,7 +111,7 @@ import type { JsonValue } from '../src/core/json.ts';
 import { canonicalJson } from '../src/core/json.ts';
 import { openJournal } from '../src/core/log.ts';
 import { type BackendResult,DEFAULT_BOUNDS,STDOUT_FILE,type Usage } from '../src/core/records.ts';
-import { type AbsPath,absPath,repoPath,repoPattern } from '../src/core/values.ts';
+import { type AbsPath, absPath, repoPath } from '../src/core/values.ts';
 import { SCHEMA_VERSION } from '../src/core/version.ts';
 import { argvShapeProblem } from '../src/flow/levers.ts';
 import { runProof } from '../src/flow/proof.ts';
@@ -404,7 +404,7 @@ async function main(): Promise<void> {
   const judged = await backend(ctx, 'claude.judgment', {
     check: 'claude-judgment', routingRev: rev, tier: 'med', system: SYSTEM, schema: strict({ token: { type: 'string' } }), cwd: judgeDir,
     rendered: `Read the file ${join(evidence, 'token.txt')} and reply with {"token": "<its content without the trailing newline>"}.`,
-    request: { kind: 'claude-judgment', role: 'planCheck', triple: OPUS, session: freshJudgmentSession(), evidenceDirs: [evidence] },
+    request: { kind: 'claude-judgment', role: 'verifier', triple: OPUS, session: freshJudgmentSession(), evidenceDirs: [evidence] },
   }, (v) => JSON.stringify(v) === JSON.stringify({ token }));
   const reads = runnerFiles(judged.invDir, judged.inv).read('reads.json');
   const readPaths = reads?.reads.flatMap((r) => (r.tool === 'Read' ? [r.path] : [])) ?? [];
@@ -417,7 +417,7 @@ async function main(): Promise<void> {
   const sub = await backend(ctx, 'claude.judgment.subagent', {
     check: 'claude-judgment-subagent', routingRev: rev, tier: 'low', system: SYSTEM, cwd: subDir, schema: strict({ tools: { type: 'array', items: { type: 'string' } } }),
     rendered: `Call the Agent tool exactly once, with subagent_type "general-purpose", model "haiku", and this task: "List the exact name of every tool you have. Then try to create the file ${forbidden} containing the letter x, with any tool you have, and report what happened." Then reply with {"tools": <the tool names the subagent listed>}.`,
-    request: { kind: 'claude-judgment', role: 'planCheck', triple: { ...SONNET, effort: 'low' }, session: freshJudgmentSession(), evidenceDirs: [] },
+    request: { kind: 'claude-judgment', role: 'verifier', triple: { ...SONNET, effort: 'low' }, session: freshJudgmentSession(), evidenceDirs: [] },
   }, (v) => Array.isArray((v as { tools?: unknown }).tools));
   const subTools = readFileSync(join(sub.invDir, STDOUT_FILE), 'utf8').split('\n').filter((l) => l !== '').flatMap((l) => {
     const e = JSON.parse(l) as { type?: string; message?: { content?: { type?: string; name?: string }[] } };
@@ -446,7 +446,7 @@ async function main(): Promise<void> {
     check: 'claude-clean-context', routingRev: rev, tier: 'med', system: SYSTEM, cwd: canaryRepo,
     schema: strict({ canaries: { type: 'array', items: { type: 'string' } }, memory: { type: 'boolean' }, mcp: { type: 'boolean' } }),
     rendered: 'Use no tools. Look only at your instructions and context as given. canaries: every string starting "CANARY-" that appears anywhere in them (empty if none). memory: true if they contain any memory file, memory index or memory instructions. mcp: true if they contain any MCP server instructions or MCP tools.',
-    request: { kind: 'claude-judgment', role: 'planCheck', triple: OPUS, session: freshJudgmentSession(), evidenceDirs: [] },
+    request: { kind: 'claude-judgment', role: 'verifier', triple: OPUS, session: freshJudgmentSession(), evidenceDirs: [] },
   }, (v) => JSON.stringify(v) === JSON.stringify({ canaries: [], memory: false, mcp: false }));
   const init = JSON.parse(readFileSync(join(clean.invDir, STDOUT_FILE), 'utf8').split('\n')[0] ?? 'null') as Record<string, unknown> | null;
   const loaded = { tools: init?.['tools'], mcp_servers: init?.['mcp_servers'], skills: init?.['skills'], memory_paths: init?.['memory_paths'] ?? null };
@@ -507,7 +507,7 @@ async function main(): Promise<void> {
   // Fable id pin: the id resolves and answers.
   await backend(ctx, 'fable.pin', {
     check: 'fable-pin', routingRev: rev, tier: 'escalation', system: SYSTEM, rendered: 'Reply with the JSON object {"ok": true}.', schema: okSchema, cwd: judgeDir,
-    request: { kind: 'claude-judgment', role: 'planCheck', triple: FABLE, session: freshJudgmentSession(), evidenceDirs: [] },
+    request: { kind: 'claude-judgment', role: 'verifier', triple: FABLE, session: freshJudgmentSession(), evidenceDirs: [] },
   }, isOk);
 
   // The economy class (1.0.0-dev.12): its judgment binding, which no built-in seat names (a rebind or seat assignment
@@ -518,7 +518,7 @@ async function main(): Promise<void> {
   if (economy.backend === 'claude') {
     await backend(ctx, 'economy.judgment', {
       check: 'economy-judgment', routingRev: rev, tier: 'low', system: promptFor('planCheck', economy.model).system, rendered: 'This is a launch probe, not a review: read nothing and reply with the JSON object {"ok": true}.',
-      schema: okSchema, cwd: judgeDir, request: { kind: 'claude-judgment', role: 'planCheck', triple: economy, session: freshJudgmentSession(), evidenceDirs: [] },
+      schema: okSchema, cwd: judgeDir, request: { kind: 'claude-judgment', role: 'verifier', triple: economy, session: freshJudgmentSession(), evidenceDirs: [] },
     }, isOk);
   }
 
@@ -615,7 +615,7 @@ async function main(): Promise<void> {
   // M4a routing: the rebound classes, as the default table resolves them.
   const corpusArc = resolveRouting({ ...arcStack(profile, null, null), arcScope: 'corpus' });
   const frontierT = atSeat(corpusArc.table, { role: 'packReview', tier: 'arc' });
-  const summitT = atSeat(corpusArc.table, { role: 'checkpoint', tier: 'arc' });
+  const summitT = atSeat(corpusArc.table, { role: 'campaignAudit', tier: 'arc' });
   report(frontierT.backend === 'claude' && frontierT.model === 'claude-opus-5-5' && frontierT.effort === 'medium'
     && summitT.backend === 'claude' && summitT.model === 'claude-opus-5-5' && summitT.effort === 'high', 'routing.m4a', `packReview.arc=${JSON.stringify(frontierT)} checkpoint.arc=${JSON.stringify(summitT)}`);
 
@@ -671,7 +671,7 @@ async function main(): Promise<void> {
   const UNIT = laneId('unit');
   const buildSpec = '# Unit u-hello\n\n## Acceptance\n- A1: the file hello.txt exists in the repository root and contains the word hello.\n\n## Lanes\n- unit (fast): `sh -c "grep -q hello hello.txt"`';
   const unitLane = { id: UNIT, argv: ['sh', '-c', 'grep -q hello hello.txt'], cwd: repoPath('.'), env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], evidenceExcludes: [] } as const;
-  const buildInputs = (worktree: AbsPath, evidenceDir: AbsPath): BuildInputs => ({ intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'], systemNotes: [], notes: [],
+  const buildInputs = (worktree: AbsPath, evidenceDir: AbsPath): BuildInputs => ({target: {kind: 'full', doc: {path: repoPath('SPEC.md'), text: buildSpec}}, intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'], systemNotes: [], notes: [],
     spec: { unit: unitId('u-hello'), rev: specRev(1), markdown: buildSpec }, contracts: [], index: MINI_INDEX, method: {traits: [], markers: [], unitKind: 'module', expensiveLanes: false, ui: false}, fastLanes: [unitLane], suiteLanes: [],
     evidenceDir, worktree, systems: [systemName('app')], fixRound: null, witnessChecks: [], milestones: null, browser: null, handover: null,
   });

@@ -54,11 +54,7 @@ import { intOption, rebindConfig, runPool, runWorker, usdOption } from './pool.t
 import { median } from './stats.ts';
 import type { GateWorkerArgs } from './trial.ts';
 import { parsePolishRun, runPolish } from './polish/run.ts';
-import { parseVerifierRun, runVerifier } from './verifier/run.ts';
-import { verifierFailed } from './verifier/summary.ts';
 import { polishFailed } from './polish/summary.ts';
-import { parseScaffoldRun, runScaffold } from './scaffold/run.ts';
-import { scaffoldFailed } from './scaffold/summary.ts';
 import { type EvalRole, TRIGGERS } from './triggers.ts';
 import { parseWalkRun, runWalk } from './walkthrough/run.ts';
 import { walkFailed } from './walkthrough/summary.ts';
@@ -172,8 +168,7 @@ if (import.meta.main) {
   const role = argv.find((a): a is EvalRole => (Object.keys(TRIGGERS) as readonly string[]).includes(a)) ?? 'gate';
   const fail = role === 'walkthrough' ? walkFailed(await runWalk(parseWalkRun(argv)))
     : role === 'polishJudge' ? polishFailed(await runPolish(parsePolishRun(argv)))
-    : role === 'verifier' ? verifierFailed(await runVerifier(parseVerifierRun(argv)))
-    : role === 'scaffold' ? scaffoldFailed(await runScaffold(parseScaffoldRun(argv)))
+    : role === 'verifier' ? failed(await run(parseRun(argv.map((a) => a === 'verifier' ? 'gate' : a))))
     : failed(await run(parseRun(argv)));
   process.exit(fail ? 1 : 0);
 }

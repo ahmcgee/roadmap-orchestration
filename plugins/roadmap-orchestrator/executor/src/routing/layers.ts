@@ -186,6 +186,7 @@ export const ARC_ROLES_IN_FORCE: { readonly [S in ArcScope]: readonly ArcRole[] 
  * plan with milestones is holistic (Phase-0 `milestones-need-holistic`), so `none` never takes them.
  */
 export function arcRolesInForce(scope: ArcScope, arcRoles: ArcRoleSet | null, milestones: boolean): readonly ArcRole[] {
+  if (milestones && scope === 'none') throw new Error('milestones outside a holistic arc');
   return [...(scope === 'none' ? [] : ['campaignAudit' as const]), ...(scope === 'corpus' ? ['packReview' as const] : []), ...(arcRoles === null ? [] : ['flow' as const]), ...(milestones ? ['experienceVerdict' as const] : [])];
 }
 

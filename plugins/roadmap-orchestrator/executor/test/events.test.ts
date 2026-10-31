@@ -114,7 +114,7 @@ const OUTCOMES: { readonly [K in OpKind]: readonly OpOutcome[K][] } = {
 const FACTS: readonly Fact[] = [
   { kind: 'tail-discarded', offset: 1024, length: 17, sha256: H },
   { kind: 'containment-mode', mode: 'session' },
-  { kind: 'meter', prompt: { bytes: 431, inputs: { target: 211, spec: 45 } }, inv, routingRev: rev, subject: { type: 'seat', role: 'gate', tier: 'escalation', unit, attempt: 1 }, usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: null, turns: 7, costUsd: 0.25 } },
+  { kind: 'meter', prompt: { bytes: 431, inputs: { target: 211, spec: 45 } }, inv, routingRev: rev, subject: { type: 'seat', role: 'verifier', tier: 'escalation', unit, attempt: 1 }, usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: null, turns: 7, costUsd: 0.25 } },
   { kind: 'usage-unavailable', inv, routingRev: rev, subject: { type: 'smoke', backend: 'codex' }, reason: 'no-result' },
   { kind: 'dispatch', record: { unit, specRev: specRev(1), specSha256: H,  riskFloor: 'med', routingRev: rev, implementerSeatRev: seatRev('fedcba9876543210'), at, transientRules: 'm3' } },
   { kind: 'stage-outcome', unit, stage: 'gate', attempt: 2, outcome: 'revise', class: 'revise', chargeable: true },
@@ -165,7 +165,7 @@ describe('events', () => {
       { ...INTENTS['worktree.create'], parent: { type: 'arc' }, deadlineAt: null, expect: { path: wt, checkout: { type: 'detached', at: B } } },
       { ...INTENTS['proc.spawn'], ordinal: 2, parent: { type: 'command', command: commandId('cmd-0123456789abcdef') }, expect: { subject: { purpose: 'lane', unit, lane: laneId('L1'), set: 'suite', at: A }, launchSha256: H } },
       { ...INTENTS['proc.spawn'], parent: { type: 'op', op: opId(arc, 3) }, expect: { subject: { purpose: 'teardown', unit: null, resource: resourceName('db') }, launchSha256: H } },
-      { ...INTENTS['proc.spawn'], expect: { subject: { purpose: 'smoke', check: 'judgment', target: { type: 'backend', backend: 'claude', role: 'gate', tier: 'low', routingRev: rev } }, launchSha256: H } },
+      { ...INTENTS['proc.spawn'], expect: { subject: { purpose: 'smoke', check: 'judgment', target: { type: 'backend', backend: 'claude', role: 'verifier', tier: 'low', routingRev: rev } }, launchSha256: H } },
       { ...INTENTS['proc.spawn'], expect: { subject: { purpose: 'smoke', check: 'shell', target: { type: 'command' } }, launchSha256: H } },
       { ...INTENTS['mergein.prepare'], expect: { ...INTENTS['mergein.prepare'].expect, merge: { type: 'conflicted', conflicts: [repoPath('src/a.ts')] } }, post: { type: 'conflicted' } },
       { ...INTENTS['snapshot.publish'], expect: { ...INTENTS['snapshot.publish'].expect, old: null, commit: commit([] as const) } },

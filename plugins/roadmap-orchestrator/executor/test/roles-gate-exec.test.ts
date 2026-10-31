@@ -124,10 +124,10 @@ test('roles.read-only-argv: the arm rewrites an acting gate call into the dev.12
   const triple = { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'high' } as const;
   const system = promptFor('gate', triple.model).system;
   for (const session of [freshJudgmentSession(), resumedJudgmentSession(freshJudgmentSession().id)]) {
-    const acting = backendArgv({ kind: 'claude-acting-judge', role: 'gate', triple, session, schemaText: '{"type":"object"}', system, mcpConfig: null, evidenceDirs, denyWrites: [ctx.repo, ctx.runDir] });
+    const acting = backendArgv({ kind: 'claude-acting-judge', role: 'verifier', triple, session, schemaText: '{"type":"object"}', system, mcpConfig: null, evidenceDirs, denyWrites: [ctx.repo, ctx.runDir] });
     const args = readOnlyArgs(acting.slice(1), ctx);
     const surface = judgmentSurface(ctx, readOnlySystem(system), evidenceDirs);
-    assert.deepEqual(args, backendArgv({ kind: 'claude-judgment', role: 'planCheck', triple, session, schemaText: '{"type":"object"}', system: surface.system, evidenceDirs }).slice(1));
+    assert.deepEqual(args, backendArgv({ kind: 'claude-judgment', role: 'verifier', triple, session, schemaText: '{"type":"object"}', system: surface.system, evidenceDirs }).slice(1));
     assert.equal(args[args.indexOf('--tools') + 1], JUDGMENT_TOOLS);
     assert.ok(!args.includes('--permission-mode') && !args.includes('--append-system-prompt') && args.includes('--disable-slash-commands'));
     const text = args[args.indexOf('--system-prompt') + 1]!;
@@ -149,7 +149,7 @@ test('roles.read-only-act: a real act with readOnly runs the next claude on PATH
   const triple = { backend: 'claude', model: 'claude-opus-5-5', effort: 'medium' } as const;
   const session = freshJudgmentSession();
   const system = promptFor('gate', triple.model).system;
-  const acting = backendArgv({ kind: 'claude-acting-judge', role: 'gate', triple, session, schemaText: '{}', system, mcpConfig: null, evidenceDirs: judgmentReadDirs(ctx, []), denyWrites: [ctx.repo, ctx.runDir] });
+  const acting = backendArgv({ kind: 'claude-acting-judge', role: 'verifier', triple, session, schemaText: '{}', system, mcpConfig: null, evidenceDirs: judgmentReadDirs(ctx, []), denyWrites: [ctx.repo, ctx.runDir] });
   const cwd = tmpDir('roles-cwd');
   const r = spawnSync(join(scenario.binDir, 'claude'), acting.slice(1), { cwd, input: 'the prompt\n', encoding: 'utf8', env: { ...process.env, PATH: `${scenario.binDir}:${stub}:${process.env['PATH']}` } });
   assert.equal(r.status, 0, r.stderr);

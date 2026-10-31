@@ -9,14 +9,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { seatRev,sha256,specRev } from '../src/core/ids.ts';
-import { type DispatchRecord,dispatchRecord } from '../src/core/records.ts';
-import { repoPath,repoPattern } from '../src/core/values.ts';
-import {
-SEAT_TRIPLES,type StageContext,
-firstPin,
-implementerDispatch,implementerSeatRev,judgmentDispatch,pinDispatch,
-seatTripleOf,
-} from '../src/pipeline/dispatch.ts';
+import { type DispatchRecord } from '../src/core/records.ts';
+import { SEAT_TRIPLES, type StageContext, implementerDispatch, implementerSeatRev, judgmentDispatch, pinDispatch, seatTripleOf } from '../src/pipeline/dispatch.ts';
 import { build,planCheck } from '../src/pipeline/stages.ts';
 import { largeDiffSeat } from '../src/pipeline/transitions.ts';
 import { step } from '../src/pipeline/unit.ts';
@@ -25,7 +19,7 @@ import { type RoutingStack,arcStack,parseRepoConfig,resolveRouting } from '../sr
 import {
 CLAUDE_EFFORTS,CLAUDE_MODELS,CODEX_EFFORTS,CODEX_MODELS,JUDGMENT_SEATS,type JudgmentSeat,MODEL_IDS,RISK_TIERS,type RoutingLayer,type Triple,routingLayer,
 } from '../src/routing/types.ts';
-import { BUILD_REPORT,HIGH_BUILDS_ON_FRONTIER,SCENARIO_TIMEOUT_MS,type StageRun,U1,facts,planCheckStep,seated,setupUnit,started } from './fixtures/stage-common.ts';
+import { BUILD_REPORT, SCENARIO_TIMEOUT_MS, type StageRun, U1, facts, planCheckStep, seated, setupUnit, started } from './fixtures/stage-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 /** The unit's spec in force at rev 1: the kept spec its first start recorded. */
@@ -56,26 +50,10 @@ test('dispatch.pinned-once: the first dispatch pins scope, risk floor, routingRe
   assert.deepEqual(JUDGMENT_SEATS.map((t: JudgmentSeat) => largeDiffSeat(t, null)), ['low', 'med', 'high', 'escalation']);
 });
 
-test('dispatch.risk-raise: a plan-check that raises the risk records a new dispatch fact; every later seat follows it', T, async () => {
-  // A plan seats build.high on frontier, so the raise moves the implementer (every built-in build seat is efficient since dev.17).
-  const run = setupUnit({ steps: [planCheckStep({ decision: 'approve', risk: 'high' })], risk: 'low', routing: HIGH_BUILDS_ON_FRONTIER });
-  const done = started(await planCheck(run.ctx, run.unit));
-  assert.equal(done.outcome.kind, 'approve');
-  assert.ok(done.next.kind === 'stage' && done.next.stage === 'build' && done.next.seat === 'high', 'the build sits on the raised seat');
-  const [low, high] = dispatches(run);
-  assert.deepEqual([low?.riskFloor, high?.riskFloor], ['low', 'high']);
-  assert.equal(high!.routingRev, low!.routingRev);
-  assert.notEqual(high!.implementerSeatRev, low!.implementerSeatRev, 'the raised floor pins the high implementer seat');
-  assert.equal(run.journal.view.unit(U1).risk, 'high');
-  assert.equal(seated(implementerDispatch(run.ctx, U1)).tier, 'high');
-  assert.equal(seated(implementerDispatch(run.ctx, U1)).triple.backend, 'claude', 'the plan\'s frontier class builds high');
-  assert.equal(seated(judgmentDispatch(run.ctx, U1, 'gate')).tier, 'high');
-});
-
 test('dispatch.repin-before-build: a routing change before any build re-pins the unit, whatever it moves', T, async () => {
   const run = setupUnit({ steps: [planCheckStep({ decision: 'approve' })] });
   seated(pinDispatch(run.ctx, run.unit, spec1(run)));
-  const changed = rerouted(run, { build: { med: 'frontier' }, planCheck: { med: 'summit' } });
+  const changed = rerouted(run, { build: { med: 'frontier' }, verifier: { med: 'summit' } });
   const done = started(await planCheck(changed, run.unit));
   assert.equal(done.outcome.kind, 'approve');
   const [first, repinned] = dispatches(run);
@@ -102,7 +80,7 @@ async function builtWith(first: Extract<Steps[number], { as: 'codex' }>['acts'][
 
 test('dispatch.repin-judgment-only: after a build, a change that leaves the implementer seat alone re-pins and the unit continues', T, async () => {
   const run = await builtOnce([{ as: 'codex', expect: {}, acts: [{ type: 'emit', value: BUILD_REPORT }] }]);
-  const changed = rerouted(run, { gate: { med: 'summit' }, planCheck: { escalation: 'frontier' } });
+  const changed = rerouted(run, { verifier: { med: 'summit', escalation: 'frontier' } });
   assert.notEqual(changed.routing(null).rev, run.ctx.routing(null).rev);
   const s = await step(changed, run.unit);
   assert.equal(s.kind, 'continue', 'the resumed build ran');

@@ -88,7 +88,7 @@ import {
 type Cancelled,type StageContext,type StageParent,dispatchOf,evidenceRoot,isCancelled,runOp,unitBranch,unitWorktree,verificationWorktree,witnessWorktree,workDir,
 } from './dispatch.ts';
 import { failuresText,laneFailures } from './failures.ts';
-import { consumeJudgment,gate,gateDirectives,unitTip } from './gate.ts';
+import { consumeJudgment,gate,gateDirectives,gateFindingEvidence,unitTip } from './gate.ts';
 import {
 batchMemberFix,candidate,candidateBrakeFix,candidateRefusalFix,candidateSeriesRoot,ff,latestCandidate,memberBatchCandidate,salvageRefusalFix,snapshot,
 } from './integrate.ts';
@@ -388,7 +388,7 @@ function decidedInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, 
       const parent = specSeries();
       // dev.17: the gate's open ledger findings by id, and how to dispute one (src/pipeline/review.ts).
       const dispute = disputeDirective(ctx, unit.id, f.attempt);
-      const directives = [...gateDirectives(ctx, stageParent(f)), ...(dispute === null ? [] : [dispute])];
+      const directives = [...gateDirectives(ctx, stageParent(f)), ...gateFindingEvidence(ctx, stageParent(f)), ...(dispute === null ? [] : [dispute])];
       return gateReviseRound(directives, seriesLedger(ctx, parent, spec.lanes, 'spec', tip, specSeriesRoot(ctx.runDir, parent)), verificationOf(parent), tip);
     }
     case 'candidate': {
