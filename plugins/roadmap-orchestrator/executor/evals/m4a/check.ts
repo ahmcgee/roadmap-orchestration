@@ -22,7 +22,7 @@
 //   stacked-prs       PR 1 is arc 1's branch → main, PR 2 arc 2's branch → arc 1's; both bodies carry the merge-commit
 //                     line and PR 1's lists arc 1's amendments; origin's arc branches are at the completed heads and its
 //                     main at the seed commit
-//   config            `.roadmap/config.json` is exactly {chain: {k: 1}} at both completed heads
+//   config            `.roadmap/config.json` has exactly K = 1 and a valid systems map covering the units at both completed heads
 //   brief-acked-once  the bootstrap arc is the only acked start: no committed brief ack (the owner simulator
 //                     acknowledged no brief), and the chain's unacked starts are exactly arc 2
 //   no-model-ids      no model id in either run dir (launch inputs and captured backend output aside) or ref
@@ -59,6 +59,7 @@
 // sources, a mid-arc re-pin, debt promote, rewording a T-n,
 // the vision-silent stop. A mid-arc re-pin stays listed: the owner's P-1 answer is released at arc 1's completion and
 // lands mid-arc only when the root agent started arc 2 before the answer came (paid run 5), else in arc 2's Phase 0.
+import { parseRepoConfig } from '../../src/routing/layers.ts';
 import { spawnSync } from 'node:child_process';
 import { existsSync,mkdirSync,mkdtempSync,readFileSync,readdirSync,rmSync,statSync,writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -279,9 +280,16 @@ function config(run: Run): Verdict {
       continue;
     }
     const text = git(run.product, ['show', `${head}:.roadmap/config.json`]);
-    if (JSON.stringify(JSON.parse(text)) !== JSON.stringify({ chain: { k: 1 } })) problems.push(`${ref.arc}'s config.json is ${text.trim()}`);
+    const value = JSON.parse(text) as Record<string, unknown>;
+    const parsed = parseRepoConfig(value);
+    const { systemsMap: _map, ...settings } = value;
+    if (JSON.stringify(settings) !== JSON.stringify({ chain: { k: 1 } }) || parsed.systemsMap === undefined) {
+      problems.push(`${ref.arc}'s config.json requires K = 1 and its systemsMap, with no other settings: ${text.trim()}`);
+      continue;
+    }
+    for (const unit of ref.plan.units) for (const system of unit.systems) if (!Object.hasOwn(parsed.systemsMap.systems, system)) problems.push(`${ref.arc}'s config.json does not declare unit ${unit.id}'s system ${system}`);
   }
-  return verdict(problems, '{"chain":{"k":1}} at both completed heads');
+  return verdict(problems, 'K = 1 and a valid systems map covering each unit at both completed heads; no other settings');
 }
 
 function briefAckedOnce(run: Run): Verdict {
