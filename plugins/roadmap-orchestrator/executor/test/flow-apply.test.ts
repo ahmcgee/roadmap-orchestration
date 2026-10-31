@@ -66,7 +66,7 @@ function flowArc(files: Readonly<Record<string, string>>, env?: LaneJson['env'],
 }
 
 const facts = (r: ArcRun): readonly Fact[] => readJournal(r.ctx.runDir, r.journal.view.arc).events.flatMap((e) => (e.type === 'fact' ? [e.fact] : []));
-const ofKind = <K extends Fact['kind']>(r: ArcRun, kind: K) => facts(r).filter((f): f is Extract<Fact, { kind: K }> => f.kind === kind);
+const ofKind = <K extends Fact['kind']>(r: ArcRun, kind: K) => facts(r).filter((f): f is Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: K }> => f.kind === kind);
 const phaseOf = (r: ArcRun, id: ProposalId) => acceptedProposals(r.journal.view).find((a) => a.proposal.id === id)?.phase;
 const proofCtx = (r: ArcRun) => ({ ...followingContext(r), acquireFirst: wire(r).arbiter.acquireFirst });
 const applyCtx = (r: ArcRun) => ({ ...commandContextFor(r, followingContext(r)), repo: r.ctx.repo });

@@ -397,7 +397,7 @@ export function flowArcOf(ref: ArcRef): FlowArc {
   return { arc: ref.arc, facts, revisions };
 }
 
-type FactOf<K extends Fact['kind']> = Extract<Fact, { kind: K }>;
+type FactOf<K extends Fact['kind']> = Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: K }>;
 const factsOfKind = <K extends Fact['kind']>(a: FlowArc, kind: K): readonly (FactOf<K> & { seq: number })[] =>
   a.facts.flatMap(({ seq, fact }) => (fact.kind === kind ? [{ ...(fact as FactOf<K>), seq }] : []));
 

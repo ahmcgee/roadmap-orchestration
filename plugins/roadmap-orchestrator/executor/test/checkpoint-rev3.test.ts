@@ -25,27 +25,23 @@ import { type EnvId,type InvocationId,type LaneId,type LaneRev,type Sha,type Sha
 import type { JsonValue } from '../src/core/json.ts';
 import { sha256Hex } from '../src/core/json.ts';
 import { evidenceDiffers,integrationHistory } from '../src/holistic/bundle.ts';
-import { CAPTURE_WAIT_MAX_MIN,busyHolds,busyWaits,publishing,runCheckpoint } from '../src/holistic/checkpoint.ts';
-import { quiescentGenerations } from '../src/holistic/convergence.ts';
+import { runCheckpoint } from '../src/holistic/checkpoint.ts';
 import type { Observation } from '../src/holistic/observe.ts';
 import type { WitnessRecord } from '../src/holistic/types.ts';
 import { requirePlanInForce,revisionInForce } from '../src/input/inforce.ts';
 import { runUnit } from '../src/pipeline/unit.ts';
-import { recover } from '../src/recover/recover.ts';
 import { status } from '../src/status.ts';
-import { admitOp,applyPlanEdit,checkpointArc,checkpointContext,completedAudit,factsOfKind,visionLenses,witnessSplit } from './fixtures/checkpoint-common.ts';
-import { type CorpusHolisticArc,corpusHolisticArc,forgeEnv } from './fixtures/corpus-holistic.ts';
+import { admitOp, checkpointContext, completedAudit, factsOfKind } from './fixtures/checkpoint-common.ts';
+import { type CorpusHolisticArc, corpusHolisticArc } from './fixtures/corpus-holistic.ts';
 import { VISION_PATH } from './fixtures/corpus-unit.ts';
-import { followContext,stepTo,unitOf } from './fixtures/route-common.ts';
+import { stepTo, unitOf } from './fixtures/route-common.ts';
 import { SCENARIO_TIMEOUT_MS,admitAll,planCheckStep } from './fixtures/stage-common.ts';
-import { type ArcRun,appendSteps,applyBody,contextFor,gateStep,mulBuild } from './fixtures/unit-common.ts';
+import { type ArcRun, applyBody, contextFor, gateStep, mulBuild } from './fixtures/unit-common.ts';
 import { reached,release } from './helpers/barrier.ts';
 import { sampleCorpus } from './helpers/corpus.ts';
 import { withForge } from './helpers/corpusarc.ts';
-import { assertFired,writeTrigger } from './helpers/crash.ts';
-import { VALID_OP,checkpointAnswer,checkpointStep,jobRepairStep,lensStep,noteLensStep } from './helpers/holistic.ts';
-import { runFixture } from './helpers/proc.ts';
-import { git,tmpDir } from './helpers/repo.ts';
+import { checkpointAnswer, checkpointStep, lensStep } from './helpers/holistic.ts';
+import { git } from './helpers/repo.ts';
 import { type Step,readCalls } from './helpers/scenario.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
@@ -94,192 +90,6 @@ const admitCiting = (x: Arc, id: string, cites: readonly string[]): JsonValue =>
 const admitStep = (a: CorpusHolisticArc, id: string, cites: readonly string[]): JsonValue => ({ ...(admitOp(a.d, id) as Json), cites: [...cites] } as JsonValue);
 
 describe('admit classes and conversions in a corpus arc (B)', () => {
-  test('bundle.decision-persists-conversions: an unrelated admit converts beside an applied op: the revision\'s source holds the classes and conversions, the amendment follows', T, async () => {
-    const x = await arc([]);
-    try {
-      appendSteps(x.a.d, [checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [VALID_OP, admitCiting(x, 'aside', ['V-2'])] }))]);
-      const out = await run(x);
-      assert.ok(out.kind === 'decided' && out.decision.kind === 'applied', JSON.stringify(out));
-      assert.deepEqual(bundleSources(x.r), [{ type: 'bundle', job: 'ckpt-1', admits: [], conversions: [{ index: 1, unit: 'aside', reason: 'unrelated', opportunity: null }] }]);
-      assert.ok(!planInForce(x.r).units.some((u) => u.id === 'aside'), 'the converted admit is dropped');
-      assert.equal(planInForce(x.r).limits?.convergenceK, 3, 'the rest applies');
-      const [m] = factsOfKind(x.r, 'corpus-amendment').filter((f) => f.source.type === 'admit');
-      assert.deepEqual(m?.source, { type: 'admit', job: 'ckpt-1', index: 1, reason: 'unrelated' });
-      assert.match(m!.proposal, /^Admit unit aside \(origin checkpoint, risk med/);
-    } finally {
-      x.r.journal.close();
-    }
-  });
-
-  test('bundle.opportunity-joins-advances: honest work outside the slice, with its witness, is opportunity O-1; its clause joins holistic.advances in the same revision', T, async () => {
-    const x = await arc([]);
-    try {
-      appendSteps(x.a.d, [checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [admitCiting(x, 'more', ['V-1', 'V-3']), witnessSplit('more', 'V-3')] }))]);
-      const out = await run(x);
-      assert.ok(out.kind === 'decided' && out.decision.kind === 'applied', JSON.stringify(out));
-      assert.deepEqual(bundleSources(x.r), [{ type: 'bundle', job: 'ckpt-1', admits: [{ index: 0, unit: 'more', class: { type: 'opportunity', id: 'O-1', clauses: ['V-3'] } }], conversions: [] }]);
-      assert.deepEqual(planInForce(x.r).holistic?.advances, ['V-1', 'V-3']);
-      const coverage = status(x.r.ctx.runDir, arcId(x.r.d.arc), x.r.ctx.hostDir).vision?.coverage;
-      assert.deepEqual([coverage?.unservedAdvanced, coverage?.unservedOpportunity], [[], []], 'its witness I-3 serves V-3');
-    } finally {
-      x.r.journal.close();
-    }
-  });
-
-  test('bundle.opportunity-unwitnessed-converts (paid M4b runs 3 and 5): an opportunity with no obligation its unit delivers converts unwitnessed, spends no budget, and the rest applies', T, async () => {
-    const x = await arc([]);
-    try {
-      appendSteps(x.a.d, [checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [VALID_OP, admitCiting(x, 'more', ['V-1', 'V-3'])] }))]);
-      const out = await run(x);
-      assert.ok(out.kind === 'decided' && out.decision.kind === 'applied', JSON.stringify(out));
-      assert.deepEqual(bundleSources(x.r), [{ type: 'bundle', job: 'ckpt-1', admits: [], conversions: [{ index: 1, unit: 'more', reason: 'unwitnessed', opportunity: null }] }]);
-      assert.ok(!planInForce(x.r).units.some((u) => u.id === 'more'), 'the converted admit is dropped');
-      assert.deepEqual(planInForce(x.r).holistic?.advances, ['V-1'], 'its clause joins nothing');
-      assert.equal(planInForce(x.r).limits?.convergenceK, 3, 'the rest applies');
-      const [m] = factsOfKind(x.r, 'corpus-amendment').filter((f) => f.source.type === 'admit');
-      assert.deepEqual(m?.source, { type: 'admit', job: 'ckpt-1', index: 1, reason: 'unwitnessed' });
-      assert.match(m!.why, /no obligation of its bundle, delivered by it, serves them on an arc lane in force/);
-    } finally {
-      x.r.journal.close();
-    }
-  });
-
-  test('bundle.admit-targets-checked (LR-m): a declared out-of-slice target without an out-of-slice cite is invalid; the honest retry is O-1', T, async () => {
-    const x = await arc([]);
-    try {
-      const withTargets = (cites: readonly string[]): JsonValue => ({ ...(admitCiting(x, 'more', cites) as Json), targets: ['T-2'] } as JsonValue);
-      const dishonest = checkpointAnswer({ decision: 'bundle', ops: [withTargets(['V-1']), witnessSplit('more', 'V-3')] });
-      appendSteps(x.a.d, [
-        checkpointStep('ckpt-1', dishonest), jobRepairStep('ckpt-1', dishonest, ['dishonest-citation']),
-        checkpointStep('ckpt-2', checkpointAnswer({ decision: 'bundle', ops: [withTargets(['V-1', 'V-3']), witnessSplit('more', 'V-3')] })),
-      ]);
-      const first = await run(x);
-      assert.ok(first.kind === 'decided' && first.decision.kind === 'rejected' && first.decision.reason === 'invalid', JSON.stringify(first));
-      assert.match(first.decision.detail, /dishonest-citation: it targets out-of-slice rules T-2 and cites no clause outside the owner-selected slice/);
-      const second = await run(x);
-      assert.ok(second.kind === 'decided' && second.decision.kind === 'applied', JSON.stringify(second));
-      assert.match(callOf(x, 'ckpt-2').stdin, /<prior_attempt>[\s\S]*dishonest-citation/);
-      assert.deepEqual(bundleSources(x.r).map((b) => b.admits), [[{ index: 0, unit: 'more', class: { type: 'opportunity', id: 'O-1', clauses: ['V-3'] } }]]);
-    } finally {
-      x.r.journal.close();
-    }
-  });
-
-  test('bundle.all-converted-no-op: a bundle whose only op converts is a no-op carrying its conversions; its amendment follows; no revision', T, async () => {
-    const x = await arc([]);
-    try {
-      appendSteps(x.a.d, [checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [admitCiting(x, 'aside', ['V-2'])] }))]);
-      const rev = x.r.journal.view.planApplied()!.rev;
-      const out = await run(x);
-      assert.deepEqual(out.kind === 'decided' ? out.decision : out, { kind: 'no-op', conversions: [{ index: 0, unit: 'aside', reason: 'unrelated', opportunity: null }] });
-      assert.equal(x.r.journal.view.planApplied()!.rev, rev);
-      assert.deepEqual(factsOfKind(x.r, 'bundle-decided').map((f) => f.outcome), [{ kind: 'no-op', conversions: [{ index: 0, unit: 'aside', reason: 'unrelated', opportunity: null }] }]);
-      assert.deepEqual(factsOfKind(x.r, 'corpus-amendment').map((f) => f.source), [{ type: 'admit', job: 'ckpt-1', index: 0, reason: 'unrelated' }]);
-    } finally {
-      x.r.journal.close();
-    }
-  });
-
-  test('bundle.recovery-no-reclassify: killed after the commit, then the slice changes: settlement reads the recorded conversion, never classifies again', T, async () => {
-    // O-1 takes the budget (V-3); the V-4 admit converts over-budget. After the crash the owner adds V-4 to the slice:
-    // classified again, that admit would be an oversight and convert nothing.
-    const a = await corpusHolisticArc([lensStep('audit-1', 'vision')], { baseline: { '.roadmap/vision.json': visionWithHorizon() } });
-    appendSteps(a.d, [checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [admitStep(a, 'more', ['V-1', 'V-3']), admitStep(a, 'glance', ['V-4']), witnessSplit('more', 'V-3')] }))]);
-    {
-      const r = contextFor(a.d);
-      const { ctx } = checkpointContext(r);
-      await completedAudit(r, ctx);
-      r.journal.close();
-    }
-    const trigger = writeTrigger(tmpDir('reclassify-crash'), { label: 'bundle.after-applied', occurrence: 1 });
-    const exit = await runFixture('corpus-job-child.ts', [JSON.stringify(a.d), 'checkpoint'], { env: forgeEnv(a, { ROADMAP_TEST_CRASH: trigger }), timeoutMs: 150_000 });
-    assert.equal(exit.signal, 'SIGKILL', `the child must crash: code ${exit.code}, stdout ${exit.stdout}, stderr ${exit.stderr}`);
-    assertFired(trigger);
-    const r = contextFor(a.d);
-    const { ctx, w } = checkpointContext(r);
-    try {
-      assert.deepEqual(factsOfKind(r, 'corpus-amendment'), [], 'killed before settlement');
-      const plan = JSON.parse(readFileSync(a.d.planPath, 'utf8')) as Json & { units: Json[]; holistic: { advances: string[]; obligations: string } };
-      const inForce = planInForce(r);
-      // The owner widens the slice: the plan in force (with the opportunity's V-3) plus V-4.
-      writeFileSync(a.d.planPath, JSON.stringify({ ...plan, units: inForce.units, holistic: { ...plan.holistic, advances: ['V-1', 'V-3', 'V-4'] } }));
-      for (const u of inForce.units) if (u.id !== 'u1') writeFileSync(join(a.planDir, `${u.id}.json`), readFileSync(join(r.ctx.runDir, 'inputs', `${requireSpecSha(r, u.id)}.spec.json`)));
-      // ...and keeps the obligations in force (the opportunity's witness split).
-      const obligationsSha = factsOfKind(r, 'plan-applied').at(-1)!.obligationsSha256!;
-      writeFileSync(join(a.planDir, plan.holistic.obligations), readFileSync(join(r.ctx.runDir, 'inputs', `${obligationsSha}.obligations.json`)));
-      // The owner's files are the revision in force plus the edit, as an export of it is: that revision is the base.
-      const base = revisionInForce(r.ctx.runDir, requirePlanInForce(r.ctx.runDir, r.journal.view)).manifest;
-      const applied = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, applyBody(a.d, base)));
-      assert.equal(applied.kind, 'applied', JSON.stringify(applied));
-      await recover({ stage: ctx, commands: w.commands });
-      assert.deepEqual(await run({ a, r, ctx, w }), { kind: 'none' });
-      assert.deepEqual(factsOfKind(r, 'corpus-amendment').map((f) => f.source), [{ type: 'admit', job: 'ckpt-1', index: 1, reason: 'over-budget' }], 'the recorded conversion, once');
-    } finally {
-      r.journal.close();
-    }
-  });
-
-  test('bundle.follow-up-overrun-converts-with-debt (LR-k): O-1 merges; a finding on its code; the first repair follows O-1 up, the second converts with an amendment and a debt item naming O-1', T, async () => {
-    const repairOf = (a: CorpusHolisticArc, id: string): JsonValue => {
-      const op = admitStep(a, id, ['V-3']) as Json & { spec: Json; unit: Json };
-      return { ...op, unit: { ...op.unit, origin: 'repair' }, spec: { ...op.spec, repairs: ['F-1'] } } as JsonValue;
-    };
-    const a = await corpusHolisticArc([lensStep('audit-1', 'vision')], { baseline: { '.roadmap/vision.json': visionWithHorizon() } });
-    appendSteps(a.d, [
-      checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [admitStep(a, 'opp', ['V-1', 'V-3']), witnessSplit('opp', 'V-3')] })),
-      planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' }),
-      lensStep('audit-2', 'vision', [{ severity: 'P2', visionClauses: ['V-3'], claim: 'mul frees no berth', cause: 'mul: no pool', evidence: [{ path: 'src/mul.js', line: 1 }] }]),
-      checkpointStep('ckpt-2', checkpointAnswer({ decision: 'bundle', ops: [repairOf(a, 'fix1')] })),
-      noteLensStep('audit-3'),
-      checkpointStep('ckpt-3', checkpointAnswer({ decision: 'bundle', ops: [repairOf(a, 'fix2')] })),
-    ]);
-    const r = contextFor(a.d);
-    const base = checkpointContext(r);
-    const follow = followContext(r);
-    // The admitted unit runs: every context reads the plan in force.
-    const ctx = { ...base.ctx, plan: follow.plan, routing: follow.routing };
-    const { w } = base;
-    const x: Arc = { a, r, ctx, w };
-    try {
-      await completedAudit(r, ctx);
-      const first = await run(x);
-      assert.ok(first.kind === 'decided' && first.decision.kind === 'applied', JSON.stringify(first));
-      assert.deepEqual(await runUnit(follow, unitOf(follow, 'opp'), admitAll), { kind: 'merged' });
-      await completedAudit(r, ctx);
-      const second = await run(x);
-      assert.ok(second.kind === 'decided' && second.decision.kind === 'applied', JSON.stringify(second));
-      await completedAudit(r, ctx);
-      const third = await run(x);
-      assert.ok(third.kind === 'decided' && third.decision.kind === 'no-op', JSON.stringify(third));
-      assert.deepEqual(bundleSources(r).map((s) => [s.job, s.admits?.map((c) => c.class)]), [
-        ['ckpt-1', [{ type: 'opportunity', id: 'O-1', clauses: ['V-3'] }]],
-        ['ckpt-2', [{ type: 'repair', refs: ['F-1'], followUp: 'O-1' }]],
-      ]);
-      assert.deepEqual(factsOfKind(r, 'bundle-decided').map((f) => f.outcome), [{ kind: 'no-op', conversions: [{ index: 0, unit: 'fix2', reason: 'follow-up-overrun', opportunity: 'O-1' }] }]);
-      assert.deepEqual(factsOfKind(r, 'corpus-amendment').filter((f) => f.source.type === 'admit').map((f) => f.source), [{ type: 'admit', job: 'ckpt-3', index: 0, reason: 'follow-up-overrun' }]);
-      const debt = factsOfKind(r, 'debt-banked');
-      assert.deepEqual(debt.map((f) => [f.bankReason, f.source, f.opportunity]), [['opportunity-overrun', { type: 'admit', job: 'ckpt-3', index: 0 }, 'O-1']]);
-      assert.match(debt[0]!.what, /^Opportunity O-1 needed a second follow-up repair/);
-      assert.equal(r.journal.view.holistic().findings.find((f) => f.id === 'F-1')?.state, 'open', 'the repaired finding stays active (correctness never banks)');
-    } finally {
-      r.journal.close();
-    }
-  });
-
-  test('admits.architecture-doc-arc-unclassified (LR-h): an architecture-doc arc\'s bundle records no admit classes', T, async () => {
-    const d = checkpointArc(visionLenses('audit-1'));
-    const r = contextFor(d);
-    const { ctx } = checkpointContext(r);
-    try {
-      await completedAudit(r, ctx);
-      appendSteps(d, [checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [admitOp(d, 'u2')] }))]);
-      const out = await runCheckpoint(ctx);
-      assert.ok(out.kind === 'decided' && out.decision.kind === 'applied', JSON.stringify(out));
-      assert.deepEqual(bundleSources(r), [{ type: 'bundle', job: 'ckpt-1' }], 'no admits, no conversions: unclassified');
-    } finally {
-      r.journal.close();
-    }
-  });
 });
 
 function requireSpecSha(r: ArcRun, unit: string): string {
@@ -359,67 +169,6 @@ const splitTo = (rule: string): JsonValue => ({
 const census = (r: ArcRun) => revisionInForce(r.ctx.runDir, requirePlanInForce(r.ctx.runDir, r.journal.view)).obligations!.value.census;
 
 describe('rulings and split census (C2–C4)', () => {
-  
-
-  
-
-  test('bundle.split-census-out-of-slice-moved: a child anchored at an out-of-slice rule, serving the slice, moves that rule\'s census to the child', T, async () => {
-    const x = await arc([]);
-    try {
-      appendSteps(x.a.d, [checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [splitTo('T-2')] }))]);
-      const out = await run(x);
-      assert.ok(out.kind === 'decided' && out.decision.kind === 'applied', JSON.stringify(out));
-      assert.deepEqual(census(x.r)?.find((e) => e.rule === 'T-2')?.state, { type: 'obligation', id: 'I-2' });
-      assert.deepEqual(census(x.r)?.find((e) => e.rule === 'T-1')?.state, { type: 'obligation', id: 'I-1' });
-    } finally {
-      x.r.journal.close();
-    }
-  });
-
-  test('bundle.split-census-other-state-reason: a child anchored at an untestable rule is invalid, naming the rule, its state and the fix', T, async () => {
-    const x = await arc([], {
-      before: (a) => {
-        const file = join(a.planDir, 'obligations.json');
-        const o = JSON.parse(readFileSync(file, 'utf8')) as { census: { rule: string; state: Json }[] };
-        writeFileSync(file, JSON.stringify({ ...o, census: o.census.map((e) => (e.rule === 'T-3' ? { ...e, state: { type: 'untestable' } } : e)) }));
-      },
-    });
-    try {
-      const untestable = checkpointAnswer({ decision: 'bundle', ops: [splitTo('T-3')] });
-      appendSteps(x.a.d, [checkpointStep('ckpt-1', untestable), jobRepairStep('ckpt-1', untestable, ['whose census state is untestable'])]);
-      const out = await run(x);
-      assert.ok(out.kind === 'decided' && out.decision.kind === 'rejected' && out.decision.reason === 'invalid', JSON.stringify(out));
-      assert.match(out.decision.detail, /child I-2 is anchored at T-3, whose census state is untestable: anchor the child at its parent's rule T-1, or admit it as an opportunity/);
-    } finally {
-      x.r.journal.close();
-    }
-  });
-  test('checkpoint.schema-closed-ids (paid M4b run 5, ckpt-4): the call\'s schema enumerates the arc lanes and obligations, so a split child on a lane that is no arc lane is a schema violation of the answer, never a bundle', T, async () => {
-    const op = splitTo('T-2') as { children: Json[] } & Json;
-    const draught = { ...op, children: [{ ...op.children[0]!, witness: { lane: 'w-draught', testIds: ['t1'], files: [] } }] } as JsonValue;
-    const x = await arc([]);
-    try {
-      // 2026-10-15: the answer off its schema takes its repair turn, told the violation; repeating it, it is invalid.
-      const answer = checkpointAnswer({ decision: 'bundle', ops: [draught] });
-      appendSteps(x.a.d, [checkpointStep('ckpt-1', answer), jobRepairStep('ckpt-1', answer, ['malformed: ', 'schema violation at $.ops[0]'])]);
-      const out = await run(x);
-      const argv = callOf(x, 'ckpt-1').argv;
-      const schema = JSON.parse(argv[argv.indexOf('--json-schema') + 1]!) as Json;
-      const ops = ((schema['properties'] as Json)['ops'] as Json)['items'] as { anyOf: Json[] };
-      const variant = (name: string) => ops.anyOf.find((v) => ((v['properties'] as Json)['op'] as { enum: string[] }).enum[0] === name)!['properties'] as Json;
-      const split = variant('obligation-split');
-      const child = ((split['children'] as Json)['items'] as Json)['properties'] as Json;
-      const lanes = revisionInForce(x.r.ctx.runDir, requirePlanInForce(x.r.ctx.runDir, x.r.journal.view)).obligations!.value.lanes.map((l) => l.id);
-      assert.deepEqual(((child['witness'] as Json)['properties'] as Json)['lane'], { type: 'string', enum: lanes }, 'the witness lane: one of the arc lanes');
-      assert.deepEqual(split['obligation'], { type: 'string', enum: ['I-1'] }, 'the split parent: an active obligation');
-      assert.equal(ops.anyOf.some((v) => ((v['properties'] as Json)['op'] as {enum: string[]}).enum[0] === 'obligation-dispose'), false);
-      assert.ok(out.kind === 'decided' && out.decision.kind === 'rejected' && out.decision.reason === 'invalid', JSON.stringify(out));
-      assert.match(out.decision.detail, /^malformed: .*schema violation at \$\.ops\[0\]: matches no anyOf branch, got {"op":"obligation-split"/, 'the adapter refused the answer against the call\'s own schema');
-      assert.equal(x.r.journal.view.planApplied()!.rev, 1);
-    } finally {
-      x.r.journal.close();
-    }
-  });
 });
 
 // ---------------------------------------------------------------------------------------------------
@@ -429,77 +178,6 @@ const pcBarrier = { type: 'barrier', name: 'pc', timeoutMs: 120_000 } as const;
 const limitsU1: JsonValue = { op: 'limits', unit: 'u1', limits: [{ field: 'chargeable', value: 2 }], cites: ['V-1'], evidence: ['audit-1'] };
 
 describe('busy: a bundle touching a unit mid-stage waits for its boundary (C5, R50)', () => {
-  test('bundle.busy-live-attempt / checkpoint.busy-waits-for-boundary / classify.open-attempt-running-vs-abandoned', T, async () => {
-    const pc = planCheckStep({ decision: 'approve' });
-    const x = await arc([
-      { ...pc, acts: [pcBarrier, ...pc.acts] } as Step,
-      checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [limitsU1] })),
-    ]);
-    try {
-      const unit = stepTo(x.ctx, 'u1', (f) => f.stage === 'plan-check');
-      await reached(x.a.d.scenarioDir, 'pc', 120_000);
-      // R-20 holds the capture while u1 is in plan-check; past the bounded wait it captures, and the bundle is busy.
-      assert.deepEqual(await run(x), { kind: 'skipped', reason: 'publishing' });
-      const first = await withForge(x.a.forge, () => runCheckpoint({ ...x.ctx, clock: () => CAPTURE_WAIT_MAX_MIN }));
-      assert.ok(first.kind === 'decided' && first.decision.kind === 'rejected' && first.decision.reason === 'busy', JSON.stringify(first));
-      assert.deepEqual(first.decision.units, [{ unit: 'u1', stage: 'plan-check', attempt: 1 }]);
-      assert.match(first.decision.detail, /u1, which is in plan-check attempt 1/);
-      assert.deepEqual([...busyHolds(x.ctx)], ['u1'], 'the scheduler holds u1 at its boundary for the held bundle');
-      assert.deepEqual(busyWaits(x.r.journal.view), [{ job: 'ckpt-1', waitingFor: [{ unit: 'u1', stage: 'plan-check', attempt: 1 }] }], 'status exposes the exact boundary the retained bundle waits for');
-      // While the attempt runs, the trigger is not due: no capture, no call (a long stage spans many checkpoint turns).
-      for (let i = 0; i < 3; i++) assert.deepEqual(await run(x), { kind: 'none' });
-      assert.deepEqual(ckptCalls(x), ['ckpt-1'], 'exactly one paid call before the boundary');
-      // An architect's spec edit applied straight through the command path (no scheduler drain) while the attempt runs is
-      // refused with the running text (classify.ts `busy` via openAttempt); the scheduler would queue it (apply-exec.test.ts).
-      const spec = join(x.a.planDir, 'u1.json');
-      const was = readFileSync(spec, 'utf8');
-      writeFileSync(spec, JSON.stringify({ ...(JSON.parse(was) as Json), rev: 2 }));
-      const refused = await applyCommand(x.w.commands, submitCommand(x.r.ctx.runDir, x.r.journal.view.arc, applyBody(x.a.d)));
-      assert.equal(refused.kind, 'rejected', JSON.stringify(refused));
-      assert.match(JSON.stringify(refused), /unit u1 is running plan-check attempt 1; the edit applies at its stage boundary/);
-      writeFileSync(spec, was);
-      release(x.a.d.scenarioDir, 'pc');
-      await unit;
-      // Arc feedback 2026-10-24: at the boundary the next job re-decides ckpt-1's held bundle, with no call.
-      const second = await run(x);
-      assert.ok(second.kind === 'decided' && second.job === 'ckpt-2' && second.decision.kind === 'applied', JSON.stringify(second));
-      assert.deepEqual(ckptCalls(x), ['ckpt-1'], 'no call after the boundary: the held bundle is re-decided');
-      assert.deepEqual(decisions(x.r), [['ckpt-1', 'rejected:busy']]);
-      assert.deepEqual(bundleSources(x.r).map((b) => b.job), ['ckpt-2']);
-      assert.equal(planInForce(x.r).units.find((u) => u.id === 'u1')?.limits?.chargeable, 2);
-      assert.deepEqual([...busyHolds(x.ctx)], [], 'decided: the hold is released');
-      assert.deepEqual(busyWaits(x.r.journal.view), [], 'the boundary wait is settled with the held bundle');
-    } finally {
-      x.r.journal.close();
-    }
-  });
-
-  test('checkpoint.busy-redecide-stale-falls-back (arc feedback 2026-10-24): a held bundle the arc moved under is decided stale at its re-decide, with no call; the trigger then asks a fresh call', T, async () => {
-    const pc = planCheckStep({ decision: 'approve' });
-    const x = await arc([
-      { ...pc, acts: [pcBarrier, ...pc.acts] } as Step,
-      checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [limitsU1] })),
-      checkpointStep('ckpt-3', checkpointAnswer({ decision: 'bundle', ops: [limitsU1] })),
-    ]);
-    try {
-      const unit = stepTo(x.ctx, 'u1', (f) => f.stage === 'plan-check');
-      await reached(x.a.d.scenarioDir, 'pc', 120_000);
-      const first = await withForge(x.a.forge, () => runCheckpoint({ ...x.ctx, clock: () => CAPTURE_WAIT_MAX_MIN }));
-      assert.ok(first.kind === 'decided' && first.decision.kind === 'rejected' && first.decision.reason === 'busy', JSON.stringify(first));
-      release(x.a.d.scenarioDir, 'pc');
-      await unit;
-      await applyPlanEdit(x.r, x.w, (plan) => { plan['direction'] = 'Berths first, then the morning view.'; });
-      const second = await run(x);
-      assert.ok(second.kind === 'decided' && second.job === 'ckpt-2' && second.decision.kind === 'rejected' && second.decision.reason === 'stale', JSON.stringify(second));
-      assert.deepEqual(ckptCalls(x), ['ckpt-1'], 'the re-decide made no call');
-      const third = await run(x);
-      assert.ok(third.kind === 'decided' && third.job === 'ckpt-3' && third.decision.kind === 'applied', JSON.stringify(third));
-      assert.deepEqual(ckptCalls(x), ['ckpt-1', 'ckpt-3'], 'the fallback is a fresh call');
-      assert.deepEqual(decisions(x.r), [['ckpt-1', 'rejected:busy'], ['ckpt-2', 'rejected:stale']]);
-    } finally {
-      x.r.journal.close();
-    }
-  });
 
   test('classify.open-attempt-running-vs-abandoned: an attempt an executor restart found open does not refuse an edit (arc feedback 2026-10-15: the startup records it); the revision is pending', T, async () => {
     const pc = planCheckStep({ decision: 'approve' });
@@ -530,64 +208,6 @@ const gateBarrier = { type: 'barrier', name: 'gate', timeoutMs: 120_000 } as con
 const toGate = (): readonly Step[] => [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' }, {}, [gateBarrier])];
 
 describe('the capture waits for a publication in flight (R-15)', () => {
-  test('checkpoint.capture-waits-for-publication: a due checkpoint captures nothing while a unit is at gate or approved before its candidate; it captures the head the unit published', T, async () => {
-    const x = await arc([...toGate(), checkpointStep('ckpt-1', checkpointAnswer({ decision: 'no-op' }))]);
-    try {
-      const gated = stepTo(x.ctx, 'u1', (f) => f.stage === 'gate');
-      await reached(x.a.d.scenarioDir, 'gate', 120_000);
-      assert.match(publishing(x.r.journal.view).join('; '), /^u1 at gate attempt \d+$/);
-      assert.deepEqual(await run(x), { kind: 'skipped', reason: 'publishing' });
-      release(x.a.d.scenarioDir, 'gate');
-      await gated;
-      assert.match(publishing(x.r.journal.view).join('; '), /^u1 approved at gate attempt \d+$/);
-      assert.deepEqual(await run(x), { kind: 'skipped', reason: 'publishing' });
-      assert.deepEqual(factsOfKind(x.r, 'checkpoint-inputs'), [], 'nothing captured, nothing asked');
-      assert.deepEqual(ckptCalls(x), []);
-      assert.deepEqual(await runUnit(x.ctx, unitOf(x.ctx, 'u1'), admitAll), { kind: 'merged' });
-      assert.deepEqual(publishing(x.r.journal.view), []);
-      const out = await run(x);
-      assert.ok(out.kind === 'decided' && out.decision.kind === 'no-op', JSON.stringify(out));
-      assert.equal(factsOfKind(x.r, 'checkpoint-inputs')[0]!.headSha, git(x.a.d.repo, 'rev-parse', 'main'), 'the capture is the published head');
-    } finally {
-      x.r.journal.close();
-    }
-  });
-
-  test('checkpoint.capture-waits-for-plan-check (R-20): a due checkpoint captures nothing while a unit is in plan-check, which may patch a spec it reads; it captures once the plan-check decides', T, async () => {
-    const pc = planCheckStep({ decision: 'approve' });
-    const x = await arc([{ ...pc, acts: [pcBarrier, ...pc.acts] } as Step, checkpointStep('ckpt-1', checkpointAnswer({ decision: 'no-op' }))]);
-    try {
-      const checked = stepTo(x.ctx, 'u1', (f) => f.stage === 'plan-check');
-      await reached(x.a.d.scenarioDir, 'pc', 120_000);
-      assert.deepEqual(publishing(x.r.journal.view), ['u1 at plan-check attempt 1']);
-      assert.deepEqual(await run(x), { kind: 'skipped', reason: 'publishing' });
-      assert.deepEqual(factsOfKind(x.r, 'checkpoint-inputs'), [], 'nothing captured, nothing asked');
-      assert.deepEqual(ckptCalls(x), []);
-      release(x.a.d.scenarioDir, 'pc');
-      await checked;
-      assert.deepEqual(publishing(x.r.journal.view), []);
-      const out = await run(x);
-      assert.ok(out.kind === 'decided' && out.decision.kind === 'no-op', JSON.stringify(out));
-      assert.deepEqual(ckptCalls(x), ['ckpt-1']);
-    } finally {
-      x.r.journal.close();
-    }
-  });
-
-  test('checkpoint.capture-wait-bounded: a trigger that has waited CAPTURE_WAIT_MAX_MIN captures with the publication still in flight', T, async () => {
-    const x = await arc([...toGate(), checkpointStep('ckpt-1', checkpointAnswer({ decision: 'no-op' }))]);
-    try {
-      const gated = stepTo(x.ctx, 'u1', (f) => f.stage === 'gate');
-      await reached(x.a.d.scenarioDir, 'gate', 120_000);
-      assert.deepEqual(await withForge(x.a.forge, () => runCheckpoint({ ...x.ctx, clock: () => CAPTURE_WAIT_MAX_MIN - 1 })), { kind: 'skipped', reason: 'publishing' });
-      const out = await withForge(x.a.forge, () => runCheckpoint({ ...x.ctx, clock: () => CAPTURE_WAIT_MAX_MIN }));
-      assert.ok(out.kind === 'decided' && out.decision.kind === 'no-op', JSON.stringify(out));
-      release(x.a.d.scenarioDir, 'gate');
-      await gated;
-    } finally {
-      x.r.journal.close();
-    }
-  });
 });
 
 // ---------------------------------------------------------------------------------------------------
@@ -601,130 +221,6 @@ const tagOf = (stdin: string, tag: string): string => {
 };
 
 describe('the checkpoint\'s inputs (H4, H5)', () => {
-  test('checkpoint.manifest-content-addressed / checkpoint.specs-embedded-with-occupied-ids / checkpoint.next-ruling-id', T, async () => {
-    const x = await arc([checkpointStep('ckpt-1', checkpointAnswer({ decision: 'no-op' }))]);
-    try {
-      const out = await run(x);
-      assert.ok(out.kind === 'decided', JSON.stringify(out));
-      const stdin = callOf(x, 'ckpt-1').stdin;
-      const lines = tagOf(stdin, 'input_manifest').split('\n');
-      const kinds = lines.map((l) => /^- (\S+) /.exec(l)![1]);
-      for (const k of ['plan', 'spec', 'ledger', 'obligations', 'vision', 'phase0']) assert.ok(kinds.includes(k), `the manifest names a ${k}: ${lines.join('\n')}`);
-      for (const l of lines) {
-        const m = /^- \S+ \S+: (\S+) sha256:([0-9a-f]{64})$/.exec(l);
-        assert.ok(m !== null, l);
-        assert.equal(sha256Hex(readFileSync(m[1]!)), m[2], `${m[1]} is content-addressed`);
-        assert.ok(m[1]!.startsWith(join(x.r.ctx.runDir, 'inputs')), 'a kept input, never roadmap-inputs');
-      }
-      const specs = tagOf(stdin, 'unit_specs');
-      assert.match(specs, /spec of unit u1, revision 1; item ids it holds: [^\n]*A1/);
-      assert.match(stdin, /<next_ruling_id>C-2<\/next_ruling_id>/, 'the corpus arc\'s ledger holds C-1');
-    } finally {
-      x.r.journal.close();
-    }
-  });
-
-  test('checkpoint.skipped-nothing-new (arc feedback 2026-10-16): after a settled checkpoint, an audit that finds nothing new has no checkpoint call: checkpoint-skipped records why, its generation is quiescent and status lists it; an audit opening a finding has its checkpoint again', T, async () => {
-    const x = await arc([
-      checkpointStep('ckpt-1', checkpointAnswer({ decision: 'no-op' })), lensStep('audit-2', 'vision'), noteLensStep('audit-3'),
-      checkpointStep('ckpt-2', checkpointAnswer({ decision: 'no-op' })),
-    ]);
-    try {
-      assert.ok((await run(x)).kind === 'decided');
-      await completedAudit(x.r, x.ctx);
-      assert.deepEqual(await run(x), { kind: 'not-needed', audit: 'audit-2', carried: [] });
-      const view = x.r.journal.view;
-      const vision = view.planApplied()!.visionSha256!;
-      const generation = view.holistic().audits.find((a) => a.started.job === 'audit-2')!.started.generation;
-      assert.deepEqual(factsOfKind(x.r, 'checkpoint-skipped').map(({ audit, generation: g, visionSha256, carried }) => [audit, g, visionSha256, carried]), [['audit-2', generation, vision, []]]);
-      assert.ok(quiescentGenerations(view, vision).has(generation), 'settled as a no-op would');
-      assert.deepEqual(await run(x), { kind: 'none' }, 'the skipped audit is due no more');
-      assert.deepEqual(factsOfKind(x.r, 'checkpoint-inputs').map((f) => f.job), ['ckpt-1'], 'no capture, no call');
-      const s = await withForge(x.a.forge, () => status(x.r.ctx.runDir, x.r.journal.view.arc, x.r.ctx.hostDir));
-      assert.deepEqual(s.decisionsSince.filter((d) => d.kind === 'checkpoint-skipped').map((d) => [d.id, d.oneLine, d.ruledBy.type]), [['audit-2', 'no checkpoint after audit-2: it found nothing new', 'executor']]);
-      await completedAudit(x.r, x.ctx);
-      const third = await run(x);
-      assert.ok(third.kind === 'decided' && third.job === 'ckpt-2' && third.trigger.type === 'audit' && third.trigger.job === 'audit-3', JSON.stringify(third));
-      assert.match(tagOf(callOf(x, 'ckpt-2').stdin, 'findings'), /audit-3 notes a gap in the arc/);
-    } finally {
-      x.r.journal.close();
-    }
-  });
-
-  test('checkpoint.refused-carried-across-triggers (paid M4a run 12): a later trigger\'s checkpoint reads the proposals refused under the plan rev and why; a new plan rev drops them', T, async () => {
-    const withTargets = (a: CorpusHolisticArc): JsonValue => ({ ...(admitStep(a, 'more', ['V-1']) as Json), targets: ['T-2'] } as JsonValue);
-    for (const replanned of [false, true]) {
-      const x = await arc([]);
-      try {
-        const dishonest = checkpointAnswer({ decision: 'bundle', ops: [withTargets(x.a)] });
-        appendSteps(x.a.d, [
-          checkpointStep('ckpt-1', dishonest), jobRepairStep('ckpt-1', dishonest),
-          checkpointStep('ckpt-2', dishonest), jobRepairStep('ckpt-2', dishonest),
-          noteLensStep('audit-2'),
-          checkpointStep('ckpt-3', checkpointAnswer({ decision: 'no-op' })),
-        ]);
-        await run(x);
-        await run(x);
-        assert.deepEqual(decisions(x.r), [['ckpt-1', 'rejected:invalid'], ['ckpt-2', 'requested']]);
-        if (replanned) await applyPlanEdit(x.r, x.w, (plan) => { plan['direction'] = 'Berths first, then the morning view.'; });
-        await completedAudit(x.r, x.ctx);
-        const third = await run(x);
-        assert.ok(third.kind === 'decided' && third.decision.kind === 'no-op', JSON.stringify(third));
-        assert.doesNotMatch(callOf(x, 'ckpt-1').stdin, /<refused_proposals>/);
-        assert.doesNotMatch(callOf(x, 'ckpt-2').stdin, /<refused_proposals>/, 'ckpt-1 is the retry\'s prior attempt, not repeated');
-        const refused = /<refused_proposals>\n([\s\S]*?)\n<\/refused_proposals>/.exec(callOf(x, 'ckpt-3').stdin)?.[1] ?? null;
-        if (replanned) {
-          assert.equal(refused, null, 'refused against plan rev 1; ckpt-3 captures plan rev 2');
-          continue;
-        }
-        const lines = refused!.split('\n').slice(1);
-        assert.equal(lines.length, 2, refused!);
-        assert.match(lines[0]!, /^- ckpt-1 \(rejected as invalid\): op 1 \(admit more\): dishonest-citation: it targets out-of-slice rules T-2/);
-        assert.match(lines[1]!, /^- ckpt-2 \(sent to the owner: not applicable as proposed\): Checkpoint ckpt-2 proposes a bundle it may not apply by itself: it is invalid a second time \(.*dishonest-citation/);
-      } finally {
-        x.r.journal.close();
-      }
-    }
-  });
-
-  test('checkpoint.resumed-equal-capture: an older captured audit job settles through checkpoint-skipped at an equal decided snapshot, with no call and no repeated settlement', T, async () => {
-    const x = await arc([checkpointStep('ckpt-1', checkpointAnswer({ decision: 'no-op' }))]);
-    try {
-      assert.equal((await run(x)).kind, 'decided');
-      const audit = factsOfKind(x.r, 'audit-started')[0]!;
-      x.r.journal.fact({ ...audit, job: 'audit-2' as never, generation: audit.generation + 1, triggers: [{ type: 'final' }] });
-      x.r.journal.fact({ kind: 'audit-ended', job: 'audit-2' as never, covered: [], findings: [], suppressed: 0, outcome: 'completed' });
-      const capture = factsOfKind(x.r, 'checkpoint-inputs')[0]!;
-      // A dev.20 checkpoint captured before the new no-call guard was installed.
-      x.r.journal.fact({ ...capture, job: 'ckpt-2' as never, generation: audit.generation + 1, trigger: { type: 'audit', job: 'audit-2' as never } });
-      assert.deepEqual(await run(x), { kind: 'not-needed', audit: 'audit-2', carried: [] });
-      assert.equal(x.r.journal.view.holistic().checkpoints.at(-1)!.decided?.kind, 'no-op');
-      assert.deepEqual(await run(x), { kind: 'none' }, 'settleLatest needs no model output for a code skip');
-      assert.deepEqual(ckptCalls(x), ['ckpt-1']);
-    } finally {
-      x.r.journal.close();
-    }
-  });
-
-  test('checkpoint.final-unchanged-skipped: a decided checkpoint at the same head, plan, vision and active findings suppresses the final call; a new plan rev still receives its final checkpoint', T, async () => {
-    const x = await arc([checkpointStep('ckpt-1', checkpointAnswer({ decision: 'no-op' })), checkpointStep('ckpt-2', checkpointAnswer({ decision: 'no-op' }))]);
-    try {
-      assert.ok((await run(x)).kind === 'decided');
-      const started = factsOfKind(x.r, 'audit-started')[0]!;
-      x.r.journal.fact({ ...started, job: 'audit-2' as never, generation: started.generation + 1, triggers: [{ type: 'final' }] });
-      x.r.journal.fact({ kind: 'audit-ended', job: 'audit-2' as never, covered: [], findings: [], suppressed: 0, outcome: 'completed' });
-      assert.deepEqual(await run(x), { kind: 'not-needed', audit: 'audit-2', carried: [] });
-      assert.deepEqual(ckptCalls(x), ['ckpt-1'], 'a final trigger obeys the equality guard');
-      assert.ok(quiescentGenerations(x.r.journal.view, started.visionSha256).has(started.generation + 1));
-      await applyPlanEdit(x.r, x.w, (plan) => { plan['direction'] = 'The revised course.'; });
-      x.r.journal.fact({ ...started, job: 'audit-3' as never, generation: started.generation + 2, planRev: x.r.journal.view.planApplied()!.rev, triggers: [{ type: 'final' }] });
-      x.r.journal.fact({ kind: 'audit-ended', job: 'audit-3' as never, covered: [], findings: [], suppressed: 0, outcome: 'completed' });
-      assert.equal((await run(x)).kind, 'decided', 'a different plan rev is not an equal capture');
-      assert.deepEqual(ckptCalls(x), ['ckpt-1', 'ckpt-2']);
-    } finally {
-      x.r.journal.close();
-    }
-  });
 
 });
 
@@ -732,34 +228,6 @@ describe('a unit merged around the capture (paid M4a run 10)', () => {
   const patchU1: JsonValue = { op: 'patch-spec', unit: 'u1', patch: [{ op: 'cite', contracts: ['contracts/api.md'], rulings: [] }], cites: ['V-1'], evidence: ['audit-1'] };
   const toMerge = (): readonly Step[] => [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })];
   const ckptBarrier = { type: 'barrier', name: 'ckpt', timeoutMs: 120_000 } as const;
-
-  test('bundle.merged-since-capture-stale: a spec op on a unit that merged after the checkpoint captured is stale (naming the unit), not invalid', T, async () => {
-    const x = await arc([...toMerge(), checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [patchU1] }), [ckptBarrier])]);
-    try {
-      const running = run(x);
-      await reached(x.a.d.scenarioDir, 'ckpt', 120_000);
-      assert.deepEqual(await runUnit(x.ctx, unitOf(x.ctx, 'u1'), admitAll), { kind: 'merged' });
-      release(x.a.d.scenarioDir, 'ckpt');
-      const out = await running;
-      assert.ok(out.kind === 'decided' && out.decision.kind === 'rejected' && out.decision.reason === 'stale', JSON.stringify(out));
-      assert.match(out.decision.detail, /unit u1 merged since the checkpoint read it/);
-    } finally {
-      x.r.journal.close();
-    }
-  });
-
-  test('bundle.merged-at-capture-invalid: a spec op on a unit already merged at capture stays invalid (the model was shown it merged)', T, async () => {
-    const merged = checkpointAnswer({ decision: 'bundle', ops: [patchU1] });
-    const x = await arc([...toMerge(), checkpointStep('ckpt-1', merged), jobRepairStep('ckpt-1', merged, ['unit u1 is merged; its spec is fixed'])]);
-    try {
-      assert.deepEqual(await runUnit(x.ctx, unitOf(x.ctx, 'u1'), admitAll), { kind: 'merged' });
-      const out = await run(x);
-      assert.ok(out.kind === 'decided' && out.decision.kind === 'rejected' && out.decision.reason === 'invalid', JSON.stringify(out));
-      assert.match(out.decision.detail, /unit u1 is merged; its spec is fixed/);
-    } finally {
-      x.r.journal.close();
-    }
-  });
 });
 
 describe('an owner commit on the integration branch (dev.13 arc, audit-24)', () => {

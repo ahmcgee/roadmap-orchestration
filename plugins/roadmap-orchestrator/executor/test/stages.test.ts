@@ -99,7 +99,7 @@ test('stages.redirect-then-approve: a redirect patches the spec (rev+1), a fresh
   assert.notEqual(first.session, second.session, 'two fresh judgment sessions');
   assert.match(calls[1]!.stdin, /revision 2/);
   assert.match(calls[1]!.stdin, /D1/);
-  assert.deepEqual(outcomeFacts(run).map((f) => f.kind === 'stage-outcome' && [f.stage, f.outcome, f.class, f.chargeable]), [
+  assert.deepEqual(outcomeFacts(run).map((f) => (f.kind === 'stage-outcome' && 'unit' in f) && [f.stage, f.outcome, f.class, f.chargeable]), [
     ['plan-check', 'redirect', 'redirect', false], ['plan-check', 'approve', 'advance', false],
   ]);
   assert.equal(run.journal.view.unit(U1).counters.redirects, 1);
@@ -131,7 +131,7 @@ test('session.plan-check-repair: a refused answer goes back once, in the same se
     return t.session.mode;
   });
   assert.deepEqual(modes, ['fresh', 'resume', 'fresh', 'resume', 'fresh']);
-  assert.deepEqual(outcomeFacts(run).map((f) => f.kind === 'stage-outcome' && `${f.outcome}#${f.attempt}`), ['approve#1', 'malformed#2', 'approve#3']);
+  assert.deepEqual(outcomeFacts(run).map((f) => (f.kind === 'stage-outcome' && 'unit' in f) && `${f.outcome}#${f.attempt}`), ['approve#1', 'malformed#2', 'approve#3']);
 });
 
 test('redirect.no-widen: a redirect that widens the envelope or lowers the risk is refused and routes up', T, async () => {
@@ -386,7 +386,7 @@ test('backend.usage-limit: a usage-limit error parks the backend arc-wide and ho
   assert.equal(after.counters.chargeableFailures, before.chargeableFailures);
   assert.deepEqual(after.counters.retries, before.retries);
   const fact = outcomeFacts(run).at(-1)!;
-  assert.ok(fact.kind === 'stage-outcome' && fact.class === 'hold' && !fact.chargeable);
+  assert.ok((fact.kind === 'stage-outcome' && 'unit' in fact) && fact.class === 'hold' && !fact.chargeable);
 });
 
 test('stages.interrupted-holds: a pause mid-build holds the unit, moves no counter and releases the build\'s resources', T, async () => {
@@ -437,7 +437,7 @@ test('stages.contract-touched-promotes: a contract path in the round\'s commits 
   assert.equal(seated(judgmentDispatch(run.ctx, U1, 'gate')).tier, 'escalation', 'the next judgment dispatch sits on the escalation seat');
   assert.equal(seated(implementerDispatch(run.ctx, U1)).tier, 'med', 'the implementer keeps its seat');
   const fact = outcomeFacts(run).at(-1)!;
-  assert.ok(fact.kind === 'stage-outcome' && fact.class === 'trigger' && !fact.chargeable);
+  assert.ok((fact.kind === 'stage-outcome' && 'unit' in fact) && fact.class === 'trigger' && !fact.chargeable);
 });
 
 test('stages.counters-from-fold: attempts and counters are the log\'s, identical after a reopen', T, async () => {
@@ -451,7 +451,7 @@ test('stages.counters-from-fold: attempts and counters are the log\'s, identical
   const live = run.journal.view.unit(U1);
   assert.equal(live.counters.attempts, 3);
   assert.equal(live.counters.retries['plan-check'], 1);
-  assert.deepEqual(outcomeFacts(run).map((f) => f.kind === 'stage-outcome' && `${f.stage}#${f.attempt}`), ['plan-check#1', 'plan-check#2', 'build#3']);
+  assert.deepEqual(outcomeFacts(run).map((f) => (f.kind === 'stage-outcome' && 'unit' in f) && `${f.stage}#${f.attempt}`), ['plan-check#1', 'plan-check#2', 'build#3']);
   run.journal.close();
   const reopened = openJournal(run.runDir, run.ctx.plan().arc);
   try {

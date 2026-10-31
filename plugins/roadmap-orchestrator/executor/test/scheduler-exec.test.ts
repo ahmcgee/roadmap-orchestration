@@ -75,5 +75,5 @@ test('gate.recovered-recorded-tip (scheduler, two units): u1\'s gate is in fligh
   const gates = journalOf(r).view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'backend' && i.expect.subject.unit === U1 && i.expect.subject.role === 'gate');
   assert.equal(gates.length, 2, 'the crashed gate call was consumed, never re-dispatched');
   assert.deepEqual(outcomes(r, 'u2').at(-1), 'snapshot:published');
-  assert.ok(facts(r).some((f) => f.kind === 'stage-outcome' && f.unit === U2 && f.stage === 'ff' && f.outcome === 'published'));
+  assert.ok(facts(r).some((f) => (f.kind === 'stage-outcome' && 'unit' in f) && f.unit === U2 && f.stage === 'ff' && f.outcome === 'published'));
 });

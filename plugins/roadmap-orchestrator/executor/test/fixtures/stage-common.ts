@@ -339,7 +339,7 @@ export function facts(run: StageRun): readonly Fact[] {
   return events(run.runDir).flatMap((e) => (e.type === 'fact' ? [e.fact] : []));
 }
 
-export const outcomeFacts = (run: StageRun) => facts(run).filter((f) => f.kind === 'stage-outcome');
+export const outcomeFacts = (run: StageRun) => facts(run).filter((f) => (f.kind === 'stage-outcome' && 'unit' in f));
 
 export function spawnIntents(run: StageRun): readonly (Event & IntentOf<'proc.spawn'>)[] {
   return events(run.runDir).filter((e): e is Event & IntentOf<'proc.spawn'> => e.type === 'intent' && e.kind === 'proc.spawn');

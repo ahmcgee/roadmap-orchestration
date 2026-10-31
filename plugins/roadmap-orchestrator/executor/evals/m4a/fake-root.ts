@@ -488,7 +488,7 @@ function flowLoop(c: Ctx, a: ArcState): string {
     c.t.roadmap(['flow', 'request', '--reason', f.request, ...at]);
     const proposal = endedProposal(c, a, f.job);
     c.t.roadmap(['flow', f.decision, proposal, '--reason', f.reason, ...at]);
-    const proof = c.t.untilFact(a.arc, `${proposal}'s proof`, (facts) => facts.find((x): x is Extract<Fact, { kind: 'flow-proof' }> => x.kind === 'flow-proof' && x.proposal === proposal));
+    const proof = c.t.untilFact(a.arc, `${proposal}'s proof`, (facts) => facts.find((x): x is Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: 'flow-proof' }> => x.kind === 'flow-proof' && x.proposal === proposal));
     if (proof.outcome !== f.proof) throw new Error(`story: ${proposal}'s proof should be ${f.proof}: ${JSON.stringify(proof)}`);
     if (f.proof === 'preserved') c.t.untilFact(a.arc, `${proposal} applied`, (facts) => facts.find((x) => x.kind === 'flow-applied' && x.proposal === proposal));
     done.push(`${proposal} accepted, proof ${proof.outcome}${f.proof === 'preserved' ? ', applied' : ', refused'}`);
@@ -517,7 +517,7 @@ function assertHeldAfterQuay(c: Ctx, a: ArcState): void {
  */
 function flowNoAction(c: Ctx, a: ArcState): string {
   assertHeldAfterQuay(c, a);
-  const ended = c.t.untilFact(a.arc, 'flow-1 ended', (facts) => facts.find((x): x is Extract<Fact, { kind: 'flow-ended' }> => x.kind === 'flow-ended' && x.job === 'flow-1'));
+  const ended = c.t.untilFact(a.arc, 'flow-1 ended', (facts) => facts.find((x): x is Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: 'flow-ended' }> => x.kind === 'flow-ended' && x.job === 'flow-1'));
   if (ended.outcome !== 'done' || ended.proposal !== null) throw new Error(`vision-silent: flow-1 should end done with no proposal: ${JSON.stringify(ended)}`);
   c.t.roadmap(['run-only', '--clear', '--repo', layout(c.dir).product, '--arc', a.arc]);
   c.state.flowDone = true;
@@ -526,7 +526,7 @@ function flowNoAction(c: Ctx, a: ArcState): string {
 
 /** The proposal flow run `job` of arc `a` ended with (waiting on the journal); fails loud on any other end. */
 function endedProposal(c: Ctx, a: ArcState, job: string): string {
-  const ended = c.t.untilFact(a.arc, `${job} ended`, (facts) => facts.find((x): x is Extract<Fact, { kind: 'flow-ended' }> => x.kind === 'flow-ended' && x.job === job));
+  const ended = c.t.untilFact(a.arc, `${job} ended`, (facts) => facts.find((x): x is Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: 'flow-ended' }> => x.kind === 'flow-ended' && x.job === job));
   if (ended.outcome !== 'done' || ended.proposal === null) throw new Error(`story: ${job} should end done with a proposal: ${JSON.stringify(ended)}`);
   return ended.proposal.id;
 }
@@ -559,7 +559,7 @@ function arcComplete(c: Ctx, a: ArcState): string {
   if (a.n === 1) {
     // M4b: the plant lane change's verdict, its window closed by the completion.
     const shard = `${FLOW_1.shard.job}.0`;
-    const verdict = c.t.untilFact(a.arc, `${shard}'s verdict`, (facts) => facts.find((x): x is Extract<Fact, { kind: 'flow-verdict' }> => x.kind === 'flow-verdict' && x.proposal === shard));
+    const verdict = c.t.untilFact(a.arc, `${shard}'s verdict`, (facts) => facts.find((x): x is Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: 'flow-verdict' }> => x.kind === 'flow-verdict' && x.proposal === shard));
     if (verdict.verdict !== 'improved') throw new Error(`story: ${shard}'s verdict should be improved: ${JSON.stringify(verdict)}`);
     // K = 1 and the bootstrap start counts as acked: arc 2 is allowed (paid run 12's root agent stopped here instead).
     if (chain.nextStart.reason !== 'within-k') throw new Error(`story: after arc 1 the next start should be allowed: ${JSON.stringify(chain)}`);

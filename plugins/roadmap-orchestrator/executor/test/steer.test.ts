@@ -248,9 +248,9 @@ describe('steer.resume-vs-park', () => {
       assert.deepEqual([decided?.class, decided?.chargeable], ['park', false]);
       assert.deepEqual(charged(r), before);
       const log = readJournal(absPath(d.runDir), arcId(d.arc)).events;
-      const index = log.findLastIndex((e) => e.type === 'fact' && e.fact.kind === 'stage-outcome');
+      const index = log.findLastIndex((e) => e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact));
       const last = log[index]!;
-      assert.ok(last.type === 'fact' && last.fact.kind === 'stage-outcome' && last.fact.stage === 'lanes' && last.fact.outcome === 'red');
+      assert.ok(last.type === 'fact' && (last.fact.kind === 'stage-outcome' && 'unit' in last.fact) && last.fact.stage === 'lanes' && last.fact.outcome === 'red');
       const legacy = last.fact;
       for (const outcome of ['red', 'not-certified'] as const) {
         const adopted = fold(arcId(d.arc), [...log.slice(0, index), { ...last, fact: { ...legacy, outcome } }]);

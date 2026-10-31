@@ -117,7 +117,7 @@ function recordExecutorEnd(dir: AbsPath, claim: HostLockClaim, how: Exited): voi
     const { view, events } = readJournal(claim.runDir, claim.arc);
     const held = events.flatMap((e): readonly HeldStage[] => {
       if (e.type === 'intent' && e.parent.type === 'stage') return [e.parent];
-      if (e.type === 'fact' && e.fact.kind === 'stage-outcome') return [{ type: 'stage', unit: e.fact.unit, stage: e.fact.stage, attempt: e.fact.attempt }];
+      if (e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact)) return [{ type: 'stage', unit: e.fact.unit, stage: e.fact.stage, attempt: e.fact.attempt }];
       return [];
     });
     stages = { kind: 'known', last: held.at(-1) ?? null, open: view.plannedUnits().flatMap((unit) => {

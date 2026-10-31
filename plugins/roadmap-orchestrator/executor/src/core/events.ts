@@ -797,6 +797,7 @@ export type JudgmentInputs = Readonly<{
    * is read without them (`gateReviewOf`).
    */
   review?: GateReview;
+  standingReview?: readonly ReviewItem[];
   /**
    * dev.17 (design pass): the changed lines the unit's design record estimated (src/core/design.ts `designSize`), null when
    * its spec has none. Only on a gate's; absent on one an earlier executor recorded. A `largeDiff` beside an estimate within
@@ -815,7 +816,9 @@ export type ReviewItem = Readonly<{ id: string; text: string; evidence: readonly
 export type SurfaceFact =
   | Readonly<{ kind: 'review-triggered'; unit: UnitId; marker: 'M1' | 'M2' | 'M3' | 'M4' | 'always'; source: string; specRev: SpecRev }>
   | Readonly<{ kind: 'review-completed'; unit: UnitId; mode: 'pre-build' | 'diagnosis'; specRev: SpecRev; inv: InvocationId; items: readonly ReviewItem[]; note: Sha256Hex | null }>;
+export type ArcStageVerdict = Readonly<{kind: 'stage-outcome'; job: JobId; stage: 'experience-verdict' | 'campaign-audit'; verdict: string; findings: number}>;
 export type Fact =
+  | ArcStageVerdict
   | Readonly<{ kind: 'tail-discarded'; offset: number; length: number; sha256: Sha256Hex }>
   | Readonly<{ kind: 'containment-mode'; mode: ContainmentMode }>
   /** One usage fact per invocation, charged to `subject`. */
@@ -2547,12 +2550,13 @@ export const fact: Read<Fact> = tagged('kind', {
     const largeDiff = f.optional('largeDiff', nullable(object((g): GateLargeDiff => ({ overflow: g.get('overflow', positive) }))));
     if (largeDiff !== undefined && out.stage !== 'gate') throw new SchemaError(`${f.path}.largeDiff`, 'absent on a plan-check', largeDiff);
     const review = f.optional('review', gateReview);
+    const standingReview = f.optional('standingReview', arrayOf(object((g) => ({id: g.get('id', str), text: g.get('text', str), evidence: g.get('evidence', arrayOf(str))}))));
     if (review !== undefined && out.stage !== 'gate') throw new SchemaError(`${f.path}.review`, 'absent on a plan-check', review);
     const designEstimate = f.optional('designEstimate', nullable(nat));
     if (designEstimate !== undefined && out.stage !== 'gate') throw new SchemaError(`${f.path}.designEstimate`, 'absent on a plan-check', designEstimate);
     if (fingerprint === undefined) return out;
     if (fingerprint.unitCommit !== out.head) throw new SchemaError(`${f.path}.fingerprint.unitCommit`, `the head the gate read (${out.head})`, fingerprint.unitCommit);
-    return {
+    return { ...(standingReview === undefined ? {} : {standingReview}),
       ...out, fingerprint, ...(diffShown === undefined ? {} : { diffShown }), ...(largeDiff === undefined ? {} : { largeDiff }), ...(review === undefined ? {} : { review }),
       ...(designEstimate === undefined ? {} : { designEstimate }),
     };
@@ -2627,6 +2631,9 @@ export const fact: Read<Fact> = tagged('kind', {
   ...PROPAGATION_FACT_READERS,
   ...REVIEW_FACT_READERS,
   'stage-outcome': object((f): Fact => {
+    const job = f.optional('job', jobR);
+    if (job !== undefined) return {kind: f.get('kind', literal('stage-outcome')), job, stage: f.get('stage', oneOf(['experience-verdict', 'campaign-audit'] as const)), verdict: f.get('verdict', str), findings: f.get('findings', nat)};
+
     const s = f.get('stage', oneOf(OUTCOME_STAGES));
     const out = {
       kind: f.get('kind', literal('stage-outcome')),

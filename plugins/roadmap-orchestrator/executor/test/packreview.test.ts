@@ -81,7 +81,7 @@ test('packreview.holds-admission: the review runs first, before the baseline; it
     const seqOf = (p: (f: Fact) => boolean): number => facts().find(p)!.seq;
     assert.ok(seqOf((f) => f.kind === 'pack-review-ended') < seqOf((f) => f.kind === 'witnessed' && f.for.type === 'job' && f.for.job === 'baseline-1'), 'the review before the baseline');
     await sleep(3_000);
-    assert.deepEqual(facts().filter((f) => f.kind === 'stage-outcome'), [], 'no unit stage while the item is open');
+    assert.deepEqual(facts().filter((f) => (f.kind === 'stage-outcome' && 'unit' in f)), [], 'no unit stage while the item is open');
     // The call read the pack read-only in a checkout of the head the inputs bind.
     const call = readCalls(a.d.scenarioPath).find((c) => c.unit === 'review-1')!;
     assert.equal(basename(call.cwd), 'review-1.review');
@@ -92,7 +92,7 @@ test('packreview.holds-admission: the review runs first, before the baseline; it
     const rejected = submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'ack', needsUser: item!, choice: null });
     await until(() => terminalReceipt(r.ctx.runDir, rejected.id)?.state === 'rejected', WAIT_MS, 'optionless acknowledgement refused');
     submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'resume', target: { type: 'all' } });
-    await until(() => facts().some((f) => f.kind === 'stage-outcome' && f.unit === 'u1'), WAIT_MS, 'u1 admitted after the ack');
+    await until(() => facts().some((f) => (f.kind === 'stage-outcome' && 'unit' in f) && f.unit === 'u1'), WAIT_MS, 'u1 admitted after the ack');
   } finally {
     submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'stop' });
     await s.end;

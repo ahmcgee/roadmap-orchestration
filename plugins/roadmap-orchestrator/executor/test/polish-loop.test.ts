@@ -42,7 +42,7 @@ const T = { timeout: SCENARIO_TIMEOUT_MS * 3 };
 
 type Json = Record<string, unknown>;
 const facts = (r: ArcRun): readonly Fact[] => readJournal(r.ctx.runDir, r.journal.view.arc).events.flatMap((e) => (e.type === 'fact' ? [e.fact] : []));
-const factsOf = <K extends Fact['kind']>(r: ArcRun, kind: K) => facts(r).filter((f): f is Extract<Fact, { kind: K }> => f.kind === kind);
+const factsOf = <K extends Fact['kind']>(r: ArcRun, kind: K) => facts(r).filter((f): f is Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: K }> => f.kind === kind);
 const planOf = (r: ArcRun) => requirePlanInForce(r.ctx.runDir, r.journal.view).plan;
 
 /** The polish and compare context (the checkpoint's: a walk's plus the fenced commit's) over the run's one arbiter. */

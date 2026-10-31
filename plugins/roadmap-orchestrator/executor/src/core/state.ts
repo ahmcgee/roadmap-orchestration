@@ -1060,6 +1060,7 @@ export class Fold implements JournalView {
         return;
       }
       case 'stage-outcome': {
+        if ('job' in f) return;
         const key = `${f.stage}#${f.attempt}`;
         const existing = this.#units.get(f.unit);
         if (existing?.outcomes.has(key) === true) fail(`second stage-outcome for ${f.unit} ${key}`);
@@ -2139,6 +2140,10 @@ export class Fold implements JournalView {
     return this.#flakes;
   }
 
+  judgedAttempts(unit: UnitId): Readonly<{builds: number; stages: number}> {
+    const starts = [...(this.#units.get(unit)?.starts.keys() ?? [])];
+    return {builds: starts.filter((k) => k.startsWith('build#')).length, stages: starts.filter((k) => /^(plan-check|build|lanes|gate)#/.test(k)).length};
+  }
   surfaceFacts(): readonly import('./events.ts').SurfaceFact[] { return this.#surfaceFacts; }
   notes(unit: UnitId): readonly Readonly<{command: CommandId; brief: Sha256Hex; seq: number}>[] { return this.#noted.filter((n) => n.unit === unit); }
   buildNotes(unit: UnitId, attempt: number): readonly Sha256Hex[] {

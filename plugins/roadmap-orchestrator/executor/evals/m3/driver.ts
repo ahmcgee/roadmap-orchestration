@@ -246,8 +246,8 @@ function exitOf(hostDir: AbsPath, readyGeneration: number): Ended {
 // The forcing devices
 
 type Seq<F> = F & { seq: number };
-const factsOf = <K extends Fact['kind']>(events: readonly Event[], kind: K): readonly Seq<Extract<Fact, { kind: K }>>[] =>
-  events.flatMap((e) => (e.type === 'fact' && e.fact.kind === kind ? [{ ...(e.fact as Extract<Fact, { kind: K }>), seq: e.seq }] : []));
+const factsOf = <K extends Fact['kind']>(events: readonly Event[], kind: K): readonly Seq<Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: K }>>[] =>
+  events.flatMap((e) => (e.type === 'fact' && e.fact.kind === kind ? [{ ...(e.fact as Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: K }>), seq: e.seq }] : []));
 
 const merged = (s: Status, unit: string): boolean => s.units.find((u) => u.unit === unit)?.status === 'retired';
 const now = (): string => new Date().toISOString();
@@ -319,7 +319,7 @@ function offStory(p: Poll): string | null {
 }
 
 /** I-2's verdict in the witness record a `witnessed` fact names (its witness as the fixture's obligations file has it). */
-function i2Verdict(l: Layout, f: Extract<Fact, { kind: 'witnessed' }>): ObservationVerdict {
+function i2Verdict(l: Layout, f: Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: 'witnessed' }>): ObservationVerdict {
   const witness = parseObligations(JSON.parse(readFileSync(l.obligations, 'utf8'))).obligations.find((o) => o.id === 'I-2')?.witness ?? null;
   if (witness === null) throw new Error('the fixture\'s I-2 has no witness');
   const path = join(witnessDir(absPath(l.runDir), f), WITNESS_RECORD_FILE);

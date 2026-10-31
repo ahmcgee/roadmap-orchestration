@@ -109,7 +109,7 @@ export function completedHeadOf(ref: ArcRef): CompletedHead | null {
 }
 
 /** The `corpus-amendment` facts of the arc, as cited across arcs (`<arc>/M-n`). */
-export function amendmentsOf(ref: ArcRef): readonly Readonly<{ id: AmendmentRef; fact: Extract<Fact, { kind: 'corpus-amendment' }> }>[] {
+export function amendmentsOf(ref: ArcRef): readonly Readonly<{ id: AmendmentRef; fact: Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: 'corpus-amendment' }> }>[] {
   return factsOf(ref).flatMap((f) => (f.fact.kind === 'corpus-amendment' ? [{ id: amendmentRefOf(ref.arc, f.fact.id), fact: f.fact }] : []));
 }
 

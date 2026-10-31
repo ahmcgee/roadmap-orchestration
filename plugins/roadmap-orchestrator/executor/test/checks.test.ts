@@ -275,7 +275,7 @@ describe('the build\'s witness checks (R56)', () => {
 const SMOKED: Omit<ChecksOptions, 'steps'> = { activation: 'future', deliveredBy: ['u1'], testPaths: ['test/**'] };
 /** The tree mutation smoke makes of a salvaged commit adding MUL: the tip with only mul's test (src/mul.js reverted). */
 const mutantTreeOf = (a: ChecksArc, files: Readonly<Record<string, string>> = { 'test/mul.test.js': MUL['test/mul.test.js'] }): string => treeWith(a.d.repo, 'main', files, null);
-const smokeRan = (d: ArcDescriptor) => facts(d).filter((f): f is Extract<Fact, { kind: 'smoke-ran' }> => f.kind === 'smoke-ran');
+const smokeRan = (d: ArcDescriptor) => facts(d).filter((f): f is Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: 'smoke-ran' }> => f.kind === 'smoke-ran');
 const smokeApplies = (d: ArcDescriptor) => readJournal(absPath(d.runDir), arcId(d.arc)).events.filter((e) => e.type === 'intent' && e.kind === 'mutant.apply');
 
 /** Lays out a smoked arc, scripts the mutant tree (`mutant`) over every other tree passing t1, and runs u1 to its lanes. */

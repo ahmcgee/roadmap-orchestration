@@ -19,7 +19,6 @@
 import { type FindingId,type JobId,type NeedsUserId,type ObligationId,type Sha256Hex,type UnitId,canonicalIds } from '../core/ids.ts';
 import type { Journal,JournalView } from '../core/interfaces.ts';
 import type { NeedsUserReason } from '../core/records.ts';
-import type { HolisticFold } from '../core/state.ts';
 import type { AbsPath } from '../core/values.ts';
 import { DEFAULT_CONVERGENCE_K,type PlanM1 } from '../input/plan.ts';
 import { raiseNeedsUser,readNeedsUser } from '../needsuser.ts';
@@ -157,16 +156,5 @@ export function raiseBound(ctx: Readonly<{ journal: Journal; runDir: AbsPath }>,
  * A vision revision since reopens them all (H3).
  */
 export function quiescentGenerations(view: JournalView, visionSha256: Sha256Hex): ReadonlySet<number> {
-  const settled = (d: HolisticFold['checkpoints'][number]['decided']): boolean => {
-    if (d?.kind === 'no-op') return true;
-    if (d?.kind !== 'requested') return false;
-    const ack = view.ackOf(d.needsUser as NeedsUserId);
-    return ack !== null && ack.choice !== 'apply';
-  };
-  const fold = view.holistic();
-  return new Set([
-    ...fold.checkpoints.filter((c) => c.inputs.visionSha256 === visionSha256 && settled(c.decided)).map((c) => c.inputs.generation),
-    // A checkpoint suppressed by either guard settles its generation as a no-op would, with no call.
-    ...fold.checkpointSkips.filter((s) => s.visionSha256 === visionSha256).map((s) => s.generation),
-  ]);
+  return new Set(view.holistic().audits.filter((a) => a.started.visionSha256 === visionSha256 && a.ended?.outcome === 'completed').map((a) => a.started.generation));
 }

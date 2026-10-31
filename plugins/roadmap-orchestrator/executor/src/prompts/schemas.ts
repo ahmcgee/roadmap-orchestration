@@ -10,15 +10,7 @@ import { type SystemName, systemName } from '../core/ids.ts';
 // Both judgments also return their premises (claim + file:line evidence, possibly none): the next round's handoff.
 //   gate:      approve → integration slot · revise → fix round with directives · escalate → route up
 //   build:     success → quiesce (the executor then salvages, runs lanes and gates; the report is evidence)
-import {
-type ClauseId,type FailureModeId,type FindingId,type JourneyId,type LaneId,type ObligationId,type PocQuestionId,type ReviewFindingId,type RuleId,type RulingId,type Sha,type Sha256Hex,type UnitId,type VisionClauseId,
-answerIds,
-clauseId,
-failureModeId,
-findingId,journeyId,laneId,obligationId,
-pocQuestionId,
-reviewFindingId,ruleId,rulingId,sha,unitId,visionClauseId,
-} from '../core/ids.ts';
+import { type ClauseId, type FailureModeId, type FindingId, type JourneyId, type LaneId, type ObligationId, type PocQuestionId, type ReviewFindingId, type RuleId, type RulingId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, answerIds, clauseId, failureModeId, findingId, journeyId, laneId, obligationId, pocQuestionId, reviewFindingId, ruleId, rulingId, unitId, visionClauseId } from '../core/ids.ts';
 import { type JsonValue,canonicalJson } from '../core/json.ts';
 import { BOUND_FIELDS,type Bounds,type FailureRef,type NoteDef,SPEC_SCHEMA,SPEC_SECTIONS,type SpecPatchOp,failureRef,specM1,specPatchOp } from '../core/records.ts';
 import { type ReviewDispute,reviewDispute } from '../core/review.ts';
@@ -1316,6 +1308,26 @@ export function validatePolishJudgeOutput(value: unknown): PolishJudgeOutput {
 }
 
 // ---------------------------------------------------------------------------------------------------
+// One milestone experience verdict, with a mode-specific payload.
+export type ExperienceOutput = Readonly<{final: true; mode: 'walkthrough'; verdict: WalkthroughOutput}> | Readonly<{final: true; mode: 'polish'; verdict: PolishJudgeOutput}>;
+export const EXPERIENCE_SCHEMA: Schema = {anyOf: [sObj({final: S_FINAL, mode: sEnum(['walkthrough']), verdict: WALKTHROUGH_SCHEMA}), sObj({final: S_FINAL, mode: sEnum(['polish']), verdict: POLISH_JUDGE_SCHEMA})]};
+export const experienceOutput: Read<ExperienceOutput> = tagged<'walkthrough' | 'polish', ExperienceOutput>('mode', {
+  walkthrough: object((f) => ({final: f.get('final', literal(true)), mode: f.get('mode', literal('walkthrough')), verdict: f.get('verdict', walkthroughOutput)})),
+  polish: object((f) => ({final: f.get('final', literal(true)), mode: f.get('mode', literal('polish')), verdict: f.get('verdict', polishJudgeOutput)})),
+});
+export function validateExperienceOutput(v: unknown): ExperienceOutput { return experienceOutput(v, 'experienceVerdict'); }
+export function experienceWalk(v: unknown): WalkthroughOutput { const out = validateExperienceOutput(v); if (out.mode !== 'walkthrough') throw new SchemaError('experience.mode', 'walkthrough', out.mode); return out.verdict; }
+export function experiencePolish(v: unknown): PolishJudgeOutput { const out = validateExperienceOutput(v); if (out.mode !== 'polish') throw new SchemaError('experience.mode', 'polish', out.mode); return out.verdict; }
+export type CampaignAuditOutput = LensOutput & Readonly<{requests: readonly Readonly<{summary: string; evidence: readonly string[]}>[]}>;
+export const CAMPAIGN_AUDIT_SCHEMA: Schema = {...LENS_SCHEMA as object, properties: {...(LENS_SCHEMA as {properties: object}).properties, requests: sArr(sObj({summary: S_STR, evidence: sArr(S_STR)}))}, required: [...(LENS_SCHEMA as {required: string[]}).required, 'requests']} as Schema;
+export const campaignAuditOutput: Read<CampaignAuditOutput> = (value, path) => {
+  const f = new Fields(value, path);
+  const requests = f.get('requests', arrayOf(object((g) => ({summary: g.get('summary', text), evidence: g.get('evidence', arrayOf(text, {nonEmpty: true}))}))));
+  const {requests: _r, ...rest} = value as Record<string, unknown>;
+  return {...lensOutput(rest, path), requests};
+};
+export function validateCampaignAuditOutput(v: unknown): CampaignAuditOutput { return campaignAuditOutput(v, 'campaignAudit'); }
+
 // verifier (dev.17, proportional review: src/pipeline/docsonly.ts)
 
 /**
@@ -1356,6 +1368,8 @@ export const hunkClear = (h: HunkVerdict): boolean =>
 // ---------------------------------------------------------------------------------------------------
 
 export type RoleOutputs = {
+  readonly experienceVerdict: ExperienceOutput;
+  readonly campaignAudit: CampaignAuditOutput;
   readonly planCheck: PlanCheckOutput;
   readonly build: BuildOutput;
   readonly gate: GateOutput;
@@ -1369,10 +1383,12 @@ export type RoleOutputs = {
   readonly scaffold: ScaffoldOutput;
 };
 export const ROLE_SCHEMAS: { readonly [R in Role]: Schema } = {
+  experienceVerdict: EXPERIENCE_SCHEMA, campaignAudit: CAMPAIGN_AUDIT_SCHEMA,
   planCheck: PLAN_CHECK_SCHEMA, build: BUILD_SCHEMA, gate: GATE_SCHEMA, lens: LENS_SCHEMA, checkpoint: CHECKPOINT_SCHEMA, packReview: PACK_REVIEW_SCHEMA, flow: FLOW_SCHEMA,
   walkthrough: WALKTHROUGH_SCHEMA, polishJudge: POLISH_JUDGE_SCHEMA, verifier: GATE_SCHEMA, scaffold: SCAFFOLD_SCHEMA,
 };
 export const ROLE_VALIDATORS: { readonly [R in Role]: (value: unknown) => RoleOutputs[R] } = {
+  experienceVerdict: validateExperienceOutput, campaignAudit: validateCampaignAuditOutput,
   planCheck: validatePlanCheckOutput,
   build: validateBuildOutput,
   gate: validateGateOutput,

@@ -319,7 +319,7 @@ function soleCall(d: ArcDescriptor, role: 'planCheck' | 'build' | 'gate') {
   const spawn = spawns[0]!;
   const parent = spawn.parent;
   assert.ok(parent.type === 'stage');
-  const outcomesAt = events.flatMap((e) => (e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.stage === parent.stage && e.fact.attempt === parent.attempt ? [e.fact.outcome] : []));
+  const outcomesAt = events.flatMap((e) => (e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact) && e.fact.stage === parent.stage && e.fact.attempt === parent.attempt ? [e.fact.outcome] : []));
   return { spawn, done: view.doneOf(spawn.op), outcomesAt, view, events };
 }
 

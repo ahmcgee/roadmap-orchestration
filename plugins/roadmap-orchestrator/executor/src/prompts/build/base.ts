@@ -1,4 +1,3 @@
-import { BUILD_DELEGATION } from '../delegation.ts';
 import type { BuildInputs, PromptModule } from '../inputs.ts';
 import { UNIT_POLICY, buildBrowserText, bullets, documentsXml, fastLanesText, handoverText, milestoneDocuments, milestonesText, systemNotesText, suiteLanesText, witnessChecksText } from '../inputs.ts';
 import { methodModules } from '../method/index.ts';
@@ -37,8 +36,7 @@ Stay inside the worktree and evidence directory. Never push, rebase, reset --har
 <report>
 Return summary, grounding, tooBig, experiments, blockers, notes and final. Notes are useful observations for later rounds. Stop when the clauses hold and request certification. A fix round includes findings and their evidence, failing lanes, base comparisons, notes and remaining allowance; address the cause and check the repair, or rebut it with evidence.
 </report>
-
-${BUILD_DELEGATION}`;
+`;
 
 export const PROMPT: PromptModule<'build'> = {
   system, schema: BUILD_SCHEMA,

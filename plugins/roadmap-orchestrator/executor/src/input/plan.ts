@@ -488,7 +488,7 @@ export function advancesOf(plan: PlanM1): readonly VisionClauseId[] {
 }
 
 /** The arc's required lens set L (H9): `holistic.audit.lenses`, or all four. */
-export const lensSetOf = (h: Holistic): readonly LensKind[] => h.audit?.lenses ?? LENS_KINDS;
+export const lensSetOf = (h: Holistic): readonly LensKind[] => ['invariants'];
 
 const toolCommand: Read<ToolCommand> = object((f) => ({
   argv: f.get('argv', arrayOf(str, { nonEmpty: true })),

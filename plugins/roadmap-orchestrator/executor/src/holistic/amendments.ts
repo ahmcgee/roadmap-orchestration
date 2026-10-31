@@ -21,7 +21,7 @@ import type { BundleOp, CheckpointOutput } from '../prompts/schemas.ts';
 import { type BRAKE_CONVERSIONS, type Conversion, isBrakeConversion } from './types.ts';
 
 /** A `corpus-amendment` fact before its id. */
-export type AmendmentDraft = Omit<Extract<Fact, { kind: 'corpus-amendment' }>, 'kind' | 'id'>;
+export type AmendmentDraft = Omit<Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: 'corpus-amendment' }>, 'kind' | 'id'>;
 
 /** Records `draft` once per source: the amendment of its source when one exists, else a new `M-n`. */
 export function appendAmendment(journal: Journal, draft: AmendmentDraft): AmendmentId {

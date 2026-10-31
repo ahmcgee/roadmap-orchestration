@@ -84,7 +84,7 @@ const factSeq = (d: ArcDescriptor, match: (f: Fact) => boolean): number => {
   return e.seq;
 };
 const outcomeSeq = (d: ArcDescriptor, unit: string, stage: string): number =>
-  factSeq(d, (f) => f.kind === 'stage-outcome' && f.unit === unit && f.stage === stage);
+  factSeq(d, (f) => (f.kind === 'stage-outcome' && 'unit' in f) && f.unit === unit && f.stage === stage);
 const allFree = (r: ArcRun): boolean => [...resourceTable(r.journal.view).values()].every((e) => e.status.state === 'free');
 const heldBy = (r: ArcRun, unit: UnitId): readonly string[] =>
   [...resourceTable(r.journal.view)].flatMap(([name, e]) => (e.status.state !== 'free' && 'holder' in e.status && 'unit' in e.status.holder && e.status.holder.unit === unit ? [name] : []));
@@ -134,7 +134,7 @@ test('sched.parallel, sched.one-task-per-unit: two independent units build at on
         open.set(e.parent.unit, set);
         assert.ok(set.size <= 1, `unit ${e.parent.unit} has attempts ${[...set].join(', ')} open at seq ${e.seq}`);
       }
-      if (e.type === 'fact' && e.fact.kind === 'stage-outcome') {
+      if (e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact)) {
         open.get(e.fact.unit)?.delete(e.fact.attempt);
         closed.add(`${e.fact.unit}#${e.fact.attempt}`);
       }
@@ -388,8 +388,8 @@ test('probe.capacity-recovers-held-unit: end to end, a capacity error at plan-ch
     const events = eventsOf(d);
     const park = events.find((e) => e.type === 'fact' && e.fact.kind === 'backend-park');
     assert.ok(park?.type === 'fact' && park.fact.kind === 'backend-park' && park.fact.class === 'capacity');
-    const hold = events.find((e) => e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.class === 'hold');
-    assert.ok(hold?.type === 'fact' && hold.fact.kind === 'stage-outcome');
+    const hold = events.find((e) => e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact) && e.fact.class === 'hold');
+    assert.ok(hold?.type === 'fact' && (hold.fact.kind === 'stage-outcome' && 'unit' in hold.fact));
     assert.deepEqual(hold.fact.cause, { type: 'backend', backend: 'claude', parkSeq: park.seq }, 'the hold names the park epoch');
     const probe = events.find((e) => e.type === 'fact' && e.fact.kind === 'probe');
     assert.ok(probe?.type === 'fact' && probe.fact.kind === 'probe');

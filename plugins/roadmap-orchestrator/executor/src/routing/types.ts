@@ -35,7 +35,7 @@ export type Triple =
  * arc roles: roles that run for the arc, not for a unit, on the one seat `arc`. They come last, so every earlier role keeps
  * its place in seat order.
  */
-export const ROLES = ['planCheck', 'build', 'gate', 'lens', 'checkpoint', 'packReview', 'flow', 'walkthrough', 'polishJudge', 'verifier', 'scaffold'] as const;
+export const ROLES = ['planCheck', 'build', 'gate', 'lens', 'checkpoint', 'packReview', 'flow', 'walkthrough', 'polishJudge', 'verifier', 'scaffold', 'experienceVerdict', 'campaignAudit'] as const;
 export type Role = (typeof ROLES)[number];
 /**
  * The unit pipeline's roles (M1), every arc hashes, and (dev.17, proportional review) `verifier`: the economy role that
@@ -56,7 +56,7 @@ export const DEV17_ROLES = ['verifier', 'scaffold'] as const satisfies readonly 
 export const DEV17_UNIT_ROLES = ['scaffold'] as const satisfies readonly Role[];
 /** Every role a unit's call may sit on. */
 export type UnitRole = (typeof UNIT_ROLES)[number] | (typeof DEV17_UNIT_ROLES)[number];
-export const ARC_ROLES = ['lens', 'checkpoint', 'packReview', 'flow', 'walkthrough', 'polishJudge'] as const satisfies readonly Role[];
+export const ARC_ROLES = ['lens', 'checkpoint', 'packReview', 'flow', 'walkthrough', 'polishJudge', 'experienceVerdict', 'campaignAudit'] as const satisfies readonly Role[];
 export type ArcRole = (typeof ARC_ROLES)[number];
 /** The judgment roles of a unit's pipeline. */
 export type JudgmentRole = 'planCheck' | 'gate' | 'verifier';
@@ -66,13 +66,13 @@ export type ImplementerRole = 'build';
  * arc roles and (dev.17) the docs-only verifier. An explicit list (dev.13): the gate and the walk roles judge by acting, and
  * (dev.17) so does plan-check.
  */
-export const FRESH_ROLES = ['lens', 'checkpoint', 'packReview', 'flow', 'verifier'] as const satisfies readonly Role[];
+export const FRESH_ROLES = ['lens', 'checkpoint', 'packReview', 'flow', 'verifier', 'campaignAudit'] as const satisfies readonly Role[];
 export type FreshRole = (typeof FRESH_ROLES)[number];
 /**
  * dev.13: the arc roles that use the product (`claude-acting-judge` with the walkthrough MCP servers, cwd a detached
  * checkout of the product), in force only when the plan has milestones (src/routing/layers.ts `arcRolesInForce`).
  */
-export const WALK_ROLES = ['walkthrough', 'polishJudge'] as const satisfies readonly ArcRole[];
+export const WALK_ROLES = ['walkthrough', 'polishJudge', 'experienceVerdict'] as const satisfies readonly ArcRole[];
 export type WalkRole = (typeof WALK_ROLES)[number];
 /**
  * dev.13: the roles that may run as an acting judge (`claude-acting-judge`, src/backends/argv.ts): the gate (owner
@@ -111,7 +111,7 @@ export type Seat = JudgmentSeat | ArcSeat;
 export type SeatOf<R extends Role> = R extends ArcRole ? ArcSeat : R extends JudgmentRole ? JudgmentSeat : RiskTier;
 export const SEATS: { readonly [R in Role]: readonly SeatOf<R>[] } = {
   planCheck: JUDGMENT_SEATS, build: RISK_TIERS, gate: JUDGMENT_SEATS, lens: ARC_SEATS, checkpoint: ARC_SEATS, packReview: ARC_SEATS, flow: ARC_SEATS,
-  walkthrough: ARC_SEATS, polishJudge: ARC_SEATS, verifier: JUDGMENT_SEATS, scaffold: RISK_TIERS,
+  experienceVerdict: ARC_SEATS, campaignAudit: ARC_SEATS, walkthrough: ARC_SEATS, polishJudge: ARC_SEATS, verifier: JUDGMENT_SEATS, scaffold: RISK_TIERS,
 };
 /** One seat of the table, `role.tier`: `build.escalation` is unrepresentable. */
 export type SeatRef = { [R in Role]: Readonly<{ role: R; tier: SeatOf<R> }> }[Role];

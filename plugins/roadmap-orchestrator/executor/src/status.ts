@@ -1571,7 +1571,7 @@ export function stageTimings(events: readonly Event[], after = 0): readonly Stag
   const starts = attemptStarts(events);
   const by = new Map<OutcomeStage, number[]>();
   for (const e of events) {
-    if (e.type !== 'fact' || e.fact.kind !== 'stage-outcome' || e.seq <= after) continue;
+    if (e.type !== 'fact' || (e.fact.kind !== 'stage-outcome' || !('unit' in e.fact)) || e.seq <= after) continue;
     const f = e.fact;
     const start = starts.get(`${f.unit}/${f.stage}#${f.attempt}`);
     if (start === undefined) continue;

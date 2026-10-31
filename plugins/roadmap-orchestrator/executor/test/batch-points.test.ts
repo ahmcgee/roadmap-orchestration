@@ -32,7 +32,7 @@ const T = { timeout: SCENARIO_TIMEOUT_MS * 2 };
 type Json = Record<string, unknown>;
 
 const facts = (r: ArcRun): readonly Fact[] => readJournal(r.ctx.runDir, r.journal.view.arc).events.flatMap((e) => (e.type === 'fact' ? [e.fact] : []));
-const factsOf = <K extends Fact['kind']>(r: ArcRun, kind: K) => facts(r).filter((f): f is Extract<Fact, { kind: K }> => f.kind === kind);
+const factsOf = <K extends Fact['kind']>(r: ArcRun, kind: K) => facts(r).filter((f): f is Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: K }> => f.kind === kind);
 
 /** A batch lane: green while `marker` is absent, red (exit 1) while it exists. */
 const batchLane = (marker: string, extra: Partial<LaneJson> = {}): LaneJson => ({

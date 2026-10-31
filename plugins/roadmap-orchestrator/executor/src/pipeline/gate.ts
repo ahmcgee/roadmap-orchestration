@@ -1,4 +1,4 @@
-import { methodContext, reviewItems } from './surface.ts';
+import { methodContext, reviewItems, runReview } from './surface.ts';
 import { systemReach, systemTraits, pathSystems } from '../input/systems.ts';
 import { mapInForce } from './lanes.ts';
 import { bytesSha256 } from '../spec/spec.ts';
@@ -110,23 +110,7 @@ import { invocationDir } from './invoke.ts';
 import { laneRecordIn,latestSpecSeries,observedViews,seriesLedger,seriesTree,specSeriesRoot } from './lanes.ts';
 import { approvalBlobs,gateDelta,ledgerFact,openDisputes,reviewInput,reviewRules,unitLedger } from './review.ts';
 import { gateSmokeChecks } from './smoke.ts';
-import {
-type JudgmentReader,
-type PlanCheckDone,type StageDone,at,changedPremiseFiles,corpusInForce,enterJudgment,
-escalationOf,fastSuiteRoot,
-holisticInForce,inMs,integrationTip,
-judgedAnswer,
-judgmentOutput,
-judgmentSpawns,ledger,ledgerDir,library,loadUnitSpec,planCheckNotes,planCheckRead,record,releaseJudgment,
-removeJudgmentCheckouts,
-start,
-
-targetDirs,
-unitImpactInput,
-unitMilestones,
-unitTarget,
-verdictKind,
-writeJudgmentInputs } from './stages.ts';
+import { type JudgmentReader, type PlanCheckDone, type StageDone, at, changedPremiseFiles, corpusInForce, enterJudgment, escalationOf, fastSuiteRoot, holisticInForce, inMs, integrationTip, judgedAnswer, judgmentOutput, judgmentSpawns, ledger, ledgerDir, library, loadUnitSpec, planCheckNotes, record, releaseJudgment, removeJudgmentCheckouts, start, targetDirs, unitImpactInput, unitMilestones, unitTarget, verdictKind, writeJudgmentInputs } from './stages.ts';
 import { gateWitnessChecks } from './witnesscheck.ts';
 
 /** The unit's approved-or-not commit: its branch tip, which every build round and merge-in moves. */
@@ -351,7 +335,7 @@ function gateAnswerAt(ctx: StageContext, unit: UnitId, attempt: number): (value:
   if (inputs === null || inputs.head === null) throw new Error(`gate ${unit}#${attempt}: a gate answer without its judgment-inputs`);
   const largeDiff = gateLargeDiffOf(inputs);
   const review = gateReviewOf(inputs);
-  const rules = standingRules(reviewItems(ctx.journal.view, unit), review === null ? (x) => x : reviewRules(ctx.repo, inputs.head, review));
+  const rules = standingRules(inputs.standingReview ?? [], review === null ? (x) => x : reviewRules(ctx.repo, inputs.head, review));
   return gateAnswerFor(largeDiff, largeDiff === null ? [] : diffPaths(ctx.repo, diffBase(ctx.repo, inputs.tip, inputs.head), inputs.head), rules);
 }
 
@@ -482,7 +466,7 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
       standing: reviewItems(ctx.journal.view, unit.id), method: methodContext(ctx, unit, spec, paths),
       spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec) }, intent: spec.intent, nonGoals: spec.nonGoals, ...library(ctx, spec, tip), target,
       systemNotes: systemNotes(ctx.repo, head, unit.systems, ctx.routingBase.config),
-      direction: ctx.plan().direction, planCheckNotes: planCheckNotes(ctx, unit.id),
+      direction: ctx.plan().direction,
       obligations: observedViews(ctx, holisticInForce(ctx).obligations, chosen.direct, tip),
       standingObligations: chosen.standing,
       diff: {
@@ -508,7 +492,7 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
     }});
     writeJudgmentInputs(ctx, parent, {
       tip, head, specRev: spec.rev, specSha256: sha256, routingRev: seat.routingRev, fingerprint,
-      diffShown: { inlined: bounded.inlined.map((f) => f.path).sort(), notInlined: bounded.notInlined }, largeDiff, review,
+      diffShown: { inlined: bounded.inlined.map((f) => f.path).sort(), notInlined: bounded.notInlined }, largeDiff, review, standingReview: reviewItems(ctx.journal.view, unit.id),
       designEstimate: spec.design === undefined ? null : designSize(spec.design),
     });
     return {
@@ -650,8 +634,11 @@ export async function consumeJudgment(
   const { result } = called;
   if (result.role === 'build') throw new Error(`${called.inv}: an implementer result at ${parent.stage}`);
   switch (parent.stage) {
-    case 'plan-check':
-      return planCheckRead(ctx, unit, at(parent, 'plan-check'), called, result.session);
+    case 'plan-check': {
+      await runReview(ctx, unit, parent, 'pre-build');
+      await releaseJudgment(ctx, parent);
+      return {...record(ctx, at(parent, 'plan-check'), 'approve'), session: null, specRev: loadUnitSpec(ctx, unit).spec.rev};
+    }
     case 'gate': {
       const inputs = ctx.journal.view.judgmentInputs(unit.id, 'gate', parent.attempt);
       if (inputs === null) throw new Error(`gate ${unit.id}#${parent.attempt}: a judgment call without judgment-inputs`);

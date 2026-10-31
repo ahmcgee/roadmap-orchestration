@@ -73,16 +73,7 @@ import type { StartupRejection } from '../preflight/startup.ts';
 import { support } from '../prompts/index.ts';
 import { boundAt } from './classes.ts';
 import { BUILTIN_SEATS } from './profiles.ts';
-import {
-type ArcRole,type ArcRoleSet,
-type ClassBindings,type ClassSource,type ClassTable,
-DEV17_ROLES,DEV17_UNIT_ROLES,
-MODEL_CLASSES,type ModelClass,type ProfileName,type Role,
-type RoutingLayer,type RoutingLayerName,type RoutingProvenance,type RoutingTable,SEAT_REFS,type SeatRef,type SeatTable,type Triple,UNIT_ROLES,type UnitRole,
-WALK_ROLES,
-atSeat,
-classBindings,profileName,routingLayer,seatTable,
-} from './types.ts';
+import { type ArcRole, type ArcRoleSet, type ClassBindings, type ClassSource, type ClassTable, DEV17_ROLES, MODEL_CLASSES, type ModelClass, type ProfileName, type Role, type RoutingLayer, type RoutingLayerName, type RoutingProvenance, type RoutingTable, SEAT_REFS, type SeatRef, type SeatTable, type Triple, type UnitRole, atSeat, classBindings, profileName, routingLayer, seatTable } from './types.ts';
 
 /**
  * One MCP server a walk session gets (dev.13, `walkthrough.mcp.<name>`): the stdio command Claude Code spawns, with
@@ -194,20 +185,15 @@ export const ARC_ROLES_IN_FORCE: { readonly [S in ArcScope]: readonly ArcRole[] 
  * absence handling once no dev.7 arc is in flight), and (dev.13) the walk roles exactly when the plan has milestones. A
  * plan with milestones is holistic (Phase-0 `milestones-need-holistic`), so `none` never takes them.
  */
-export function arcRolesInForce(arcScope: ArcScope, arcRoles: ArcRoleSet | null, milestones: boolean): readonly ArcRole[] {
-  const roles = ARC_ROLES_IN_FORCE[arcScope];
-  const scoped = arcRoles !== null ? roles : roles.filter((r) => r !== 'flow');
-  if (milestones && arcScope === 'none') throw new Error('the walk roles in force outside a holistic arc (milestones need the holistic layer)');
-  return milestones ? [...scoped, ...WALK_ROLES] : scoped;
+export function arcRolesInForce(scope: ArcScope, arcRoles: ArcRoleSet | null, milestones: boolean): readonly ArcRole[] {
+  return [...(scope === 'none' ? [] : ['campaignAudit' as const]), ...(scope === 'corpus' ? ['packReview' as const] : []), ...(arcRoles === null ? [] : ['flow' as const]), ...(milestones ? ['experienceVerdict' as const] : [])];
 }
 
 /**
  * The unit roles in force (dev.17): the M1 unit roles, and the dev.17 unit roles (`scaffold`) in an arc of the `dev17` role
  * set only, so an adopted arc of an earlier release hashes and runs exactly the roles it did.
  */
-export function unitRolesInForce(arcRoles: ArcRoleSet | null): readonly UnitRole[] {
-  return arcRoles === 'dev17' ? [...UNIT_ROLES, ...DEV17_UNIT_ROLES] : UNIT_ROLES;
-}
+export function unitRolesInForce(_arcRoles: ArcRoleSet | null): readonly UnitRole[] { return ['build', 'verifier']; }
 
 /** A plan's arc scope: `none` without `holistic`, else its target kind. */
 export function arcScopeOf(plan: Pick<PlanM1, 'target' | 'holistic'>): ArcScope {

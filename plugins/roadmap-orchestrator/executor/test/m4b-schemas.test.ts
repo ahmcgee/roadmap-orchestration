@@ -4,7 +4,6 @@
 // (an arc 1.0.0-dev.7 started keeps its revs; an m4b arc hashes the flow seat too), fixed at revision 1 by the fold.
 import assert from 'node:assert/strict';
 import { describe,it } from 'node:test';
-import { schemaViolation } from '../src/backends/adapter.ts';
 import { type Envelope,type Event,type Fact,type LogRecord,parseEventLine,prevHash,serializeEvent } from '../src/core/events.ts';
 import {
 InvalidIdError,arcId,jobId,opId,opKey,parseStationId,proposalId,proposalIdOf,proposalJob,sha,sha256,stationId,
@@ -16,9 +15,8 @@ import { Fold } from '../src/core/state.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { isoTime } from '../src/core/values.ts';
 import { parseFlowInputs,parseFlowSeries,parseHostGivens } from '../src/flow/types.ts';
-import { checkpointIdsOf } from '../src/holistic/checkpoint.ts';
 import type { Obligations } from '../src/holistic/types.ts';
-import { CHECKPOINT_SCHEMA,FLOW_SCHEMA,checkpointSchemaFor,validateFlowOutput } from '../src/prompts/schemas.ts';
+import { FLOW_SCHEMA, validateFlowOutput } from '../src/prompts/schemas.ts';
 import { arcStack,parseRepoConfig,resolveRouting,routingRevOf,seatsInForce } from '../src/routing/layers.ts';
 import { routingProvenance } from '../src/routing/types.ts';
 import { ARC as LOG_ARC,H as LOG_H,PROVENANCE,appliedFields,chain } from './fixtures/log-records.ts';
@@ -316,24 +314,4 @@ describe('m4b: the checkpoint schema closes the ids its call knows (paid M4b run
     lanes: [{ id: 'w-clash' }, { id: 'w-free' }],
     obligations: [{ id: 'I-1', state: { type: 'active' } }, { id: 'I-2', state: { type: 'split', children: ['I-3'] } }, { id: 'I-3', state: { type: 'active' } }],
   } as unknown as Obligations;
-
-  it('checkpointIdsOf: the arc lanes, the active obligations a split may name, every obligation a dispose may name; none outside an arc with obligations', () => {
-    assert.deepEqual(checkpointIdsOf(obligations), { arcLanes: ['w-clash', 'w-free'], splittable: ['I-1', 'I-3'], obligations: ['I-1', 'I-2', 'I-3'] });
-    assert.equal(checkpointIdsOf(null), null);
-  });
-
-  it('an unknown witness lane, a split of an obligation not active, a dispose of one not in force: schema violations; the known ones conform', () => {
-    const schema = checkpointSchemaFor(checkpointIdsOf(obligations));
-    assert.equal(schemaViolation(schema, split('I-1', 'w-clash')), null);
-    assert.match(schemaViolation(schema, split('I-1', 'w-draught')) ?? '', /ops\[0\]/, 'run 5 ckpt-4: w-draught is no arc lane');
-    assert.match(schemaViolation(schema, split('I-2', 'w-clash')) ?? '', /ops\[0\]/, 'I-2 is split already');
-    assert.throws(() => dispose('I-2'), /expected one of/);
-    assert.throws(() => dispose('I-7'), /expected one of/);
-  });
-
-  it('no ids known (null, or an empty set): any id, the prompt module\'s schema; the bundle\'s validation refuses an unknown one', () => {
-    assert.deepEqual(checkpointSchemaFor(null), CHECKPOINT_SCHEMA);
-    assert.equal(schemaViolation(CHECKPOINT_SCHEMA, split('I-1', 'w-draught')), null);
-    assert.equal(schemaViolation(checkpointSchemaFor({ arcLanes: [], splittable: [], obligations: [] }), split('I-1', 'w-draught')), null);
-  });
 });

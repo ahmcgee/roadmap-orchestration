@@ -72,7 +72,7 @@ export type Meter = Readonly<{
   delegatedBySeat: readonly DelegatedTotal[];
 }>;
 
-type UsageFact = Extract<Fact, { kind: 'meter' | 'usage-unavailable' }>;
+type UsageFact = Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: 'meter' | 'usage-unavailable' }>;
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 
 const ZERO: UsageTotals = { calls: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, turns: 0, costUsd: 0, unavailable: 0 };

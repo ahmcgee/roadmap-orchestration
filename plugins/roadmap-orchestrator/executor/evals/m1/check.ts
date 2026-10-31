@@ -277,7 +277,7 @@ const FIX_TRIGGERS: ReadonlySet<string> = new Set(['lanes:red', 'lanes:not-certi
 
 export function exercised(events: readonly Event[]): ReadonlySet<Branch> {
   const out = new Set<Branch>();
-  const outcomes = events.flatMap((e) => (e.type === 'fact' && e.fact.kind === 'stage-outcome' ? [e.fact] : []));
+  const outcomes = events.flatMap((e) => (e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact) ? [e.fact] : []));
   const seen = new Set(outcomes.map((f) => `${f.stage}:${f.outcome}`));
   const mark = (branch: Branch, ...keys: string[]): void => {
     if (keys.some((k) => seen.has(k))) out.add(branch);

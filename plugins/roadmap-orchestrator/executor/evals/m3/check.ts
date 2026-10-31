@@ -106,8 +106,8 @@ type Run = Readonly<{
 
 type Seq<F> = F & { seq: number };
 const facts = (run: Run): readonly Fact[] => run.events.flatMap((e) => (e.type === 'fact' ? [e.fact] : []));
-const factsOf = <K extends Fact['kind']>(run: Run, kind: K): readonly Seq<Extract<Fact, { kind: K }>>[] =>
-  run.events.flatMap((e) => (e.type === 'fact' && e.fact.kind === kind ? [{ ...(e.fact as Extract<Fact, { kind: K }>), seq: e.seq }] : []));
+const factsOf = <K extends Fact['kind']>(run: Run, kind: K): readonly Seq<Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: K }>>[] =>
+  run.events.flatMap((e) => (e.type === 'fact' && e.fact.kind === kind ? [{ ...(e.fact as Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: K }>), seq: e.seq }] : []));
 const spawnIntents = (run: Run): readonly IntentOf<'proc.spawn'>[] => run.events.flatMap((e) => (e.type === 'intent' && e.kind === 'proc.spawn' ? [e] : []));
 const ffIntents = (run: Run): readonly IntentOf<'integration.ff'>[] => run.events.flatMap((e) => (e.type === 'intent' && e.kind === 'integration.ff' ? [e] : []));
 const itemReason = (run: Run, id: NeedsUserId): string => readNeedsUser(run.runDir, id)?.reason ?? '(no record)';
@@ -139,7 +139,7 @@ function publications(run: Run): readonly Publication[] {
 const unitPublication = (run: Run, unit: string): Publication | undefined => publications(run).find((p) => p.unit === unit);
 
 /** The verdict of `id`'s witness in the record a `witnessed` fact names. */
-function witnessVerdict(run: Run, f: Extract<Fact, { kind: 'witnessed' }>, id: string): ObservationVerdict {
+function witnessVerdict(run: Run, f: Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: 'witnessed' }>, id: string): ObservationVerdict {
   const witness = obligation(run, id).witness;
   if (witness === null) throw new Error(`${id} has no witness`);
   const path = join(witnessDir(run.runDir, f), WITNESS_RECORD_FILE);
@@ -172,7 +172,7 @@ function specOf(run: Run, unit: UnitId) {
 const DISPOSALS: readonly string[] = ['unit-cut', 'unit-changed', 'spec', 'unit-reentered', 'unit-removed'];
 
 /** The witness runs of I-2's lane on tidy's published tree S (none before an audit of S ran it). */
-function moneyOnS(run: Run, s: Publication): readonly Seq<Extract<Fact, { kind: 'witnessed' }>>[] {
+function moneyOnS(run: Run, s: Publication): readonly Seq<Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: 'witnessed' }>>[] {
   const tree = treeOf(run, s.new);
   return factsOf(run, 'witnessed').filter((f) => f.lane === MONEY_LANE && f.treeSha === tree && f.purpose === 'witness');
 }
@@ -444,7 +444,7 @@ function latentRepair(run: Run): Verdict {
  * lens); cadence, unwitnessed and wall-clock all of L; a request its lenses ∩ L. `final` adds the lenses still
  * outstanding, which the log does not record: with it, the required set is a floor and L the ceiling.
  */
-function requiredLenses(run: Run, triggers: Extract<Fact, { kind: 'audit-started' }>['triggers']): Readonly<{ floor: readonly string[]; exact: boolean }> {
+function requiredLenses(run: Run, triggers: Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: 'audit-started' }>['triggers']): Readonly<{ floor: readonly string[]; exact: boolean }> {
   const out = new Set<string>();
   for (const t of triggers) {
     if (t.type === 'drift') out.add('vision');

@@ -344,7 +344,7 @@ describe('merge-in command', () => {
       });
       assert.ok(laneRuns.length > 0);
       assert.deepEqual([...new Set(laneRuns)], [head], 'the lanes ran at the merged head');
-      const gates = events(r.d.runDir).flatMap((e) => (e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.stage === 'gate' ? [e.fact] : []));
+      const gates = events(r.d.runDir).flatMap((e) => (e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact) && e.fact.stage === 'gate' ? [e.fact] : []));
       assert.deepEqual(gates.map((g) => g.outcome), ['escalate', 'escalate', 'approve']);
       const inputs = r.journal.view.judgmentInputs(U1, 'gate', gates[2]!.attempt);
       assert.ok(inputs !== null, 'the gate after the merge-in recorded its inputs');

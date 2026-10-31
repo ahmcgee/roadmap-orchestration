@@ -93,7 +93,7 @@ Pre-build findings are standing items. In gate mode, return one standing respons
 
 The corpus remains normative. System notes are non-normative build memory (gotchas, seams, rigs), not claims. Contracts change through unit diffs, reviewed here; ask the root to amend the plan via apply --reason. Do not read a rulings ledger.
 
-Work unattended to one structured answer. If your last paragraph promises more investigation, do it before answering. For a large diff, report clusters covering every changed path exactly once; read the attached files where the inline diff overflows. Final decision: approve, revise with directives, or escalate with reasons. Never invent coverage or weaken a test to justify approval.`;
+Work unattended to one structured answer. If your last paragraph promises more investigation, do it before answering. For a large diff, report clusters covering every changed path exactly once; read the attached files where the inline diff overflows. clusters is null unless the message includes <large_diff>. Final decision: approve, revise with directives, or escalate with reasons. Never invent coverage or weaken a test to justify approval.`;
 
 function undeclaredContractsText(i: GateInputs): string {
   return i.undeclaredContracts.length === 0 ? '' : `
@@ -182,7 +182,7 @@ export const PROMPT: PromptModule<'gate'> = {
   schema: GATE_SCHEMA,
   fields: [
     'systemNotes', 'standing', 'method',
-    'spec', 'intent', 'nonGoals', 'contracts', 'rulings', 'index', 'target', 'direction', 'planCheckNotes', 'obligations', 'standingObligations', 'diff', 'laneLedger', 'evidence', 'systems', 'reach', 'traits', 'reachTraits', 'priorRound',
+    'spec', 'intent', 'nonGoals', 'contracts', 'index', 'target', 'direction', 'obligations', 'standingObligations', 'diff', 'laneLedger', 'evidence', 'systems', 'reach', 'traits', 'reachTraits', 'priorRound',
     'checks', 'escalation', 'largeDiff', 'milestones', 'review', 'undeclaredContracts',
   ],
   render: (i) => `${documentsXml([

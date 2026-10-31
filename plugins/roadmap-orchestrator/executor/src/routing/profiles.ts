@@ -23,6 +23,7 @@ const GATE: { readonly [S in JudgmentSeat]: ModelClass } = { low: 'frontier', me
  * the polish judge on frontier (Opus 5.5 medium), in force only in an arc whose plan has milestones.
  */
 export const BUILTIN_SEATS: ClassTable = {
+  experienceVerdict: {arc: 'frontier'}, campaignAudit: {arc: 'summit'},
   planCheck: PLAN_CHECK,
   build: { low: 'efficient', med: 'efficient', high: 'frontier' },
   gate: GATE,

@@ -771,6 +771,7 @@ export const findingTo: Read<FindingTo> = tagged('state', {
 
 /** Why an audit runs (coalesced into one `audit-started`). */
 export type AuditTrigger =
+  | Readonly<{type: 'milestone'; milestone: MilestoneId}>
   /** Every N publications (D3, N = `holistic.audit.every`, default 5). */
   | Readonly<{ type: 'cadence' }>
   /** R8: a publication left a selected active future (not latched) obligation unwitnessed; never an exempt one. */
@@ -787,6 +788,7 @@ export type AuditTrigger =
   | Readonly<{ type: 'final' }>;
 
 export const auditTrigger: Read<AuditTrigger> = tagged('type', {
+  milestone: object((f): AuditTrigger => ({type: f.get('type', literal('milestone')), milestone: f.get('milestone', (v, p) => milestoneId(v, p))})),
   cadence: object((f): AuditTrigger => ({ type: f.get('type', literal('cadence')) })),
   unwitnessed: object((f): AuditTrigger => ({ type: f.get('type', literal('unwitnessed')), obligation: f.get('obligation', oid) })),
   drift: object((f): AuditTrigger => {

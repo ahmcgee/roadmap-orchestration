@@ -127,7 +127,7 @@ test('rounds.session-unrecoverable: a resumed fix session that dies before print
     return t.type === 'backend' && t.purpose === 'backend' && 'session' in t ? t.session.mode : null;
   });
   assert.deepEqual(sessions, ['resume', 'fresh']);
-  assert.deepEqual(outcomeFacts(run).filter((f) => f.kind === 'stage-outcome' && f.attempt === parent.attempt).map((f) => f.kind === 'stage-outcome' && f.outcome), ['success']);
+  assert.deepEqual(outcomeFacts(run).filter((f) => (f.kind === 'stage-outcome' && 'unit' in f) && f.attempt === parent.attempt).map((f) => (f.kind === 'stage-outcome' && 'unit' in f) && f.outcome), ['success']);
   assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, charged);
   const calls = readCalls(run.scenario.path);
   assert.equal(calls.length, 4);

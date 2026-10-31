@@ -1,3 +1,7 @@
+import { existsSync } from 'node:fs';
+import { worktreeCreateOp } from '../recover/ops.ts';
+import { parseCorpusPin } from '../corpus/types.ts';
+import { CORPUS_INPUT, keptInput } from '../input/inforce.ts';
 // Mechanical review markers and the independent verifier's annotation/diagnosis calls.
 import { freshJudgmentSession, resumedJudgmentSession } from '../backends/argv.ts';
 import type { ReviewItem, SurfaceFact } from '../core/events.ts';
@@ -14,23 +18,16 @@ import { judgmentRepairDirective } from '../prompts/directives.ts';
 import type { MethodContext } from '../prompts/method/index.ts';
 import { validateGateOutput } from '../prompts/schemas.ts';
 import { BRIEF_INPUT } from './rounds.ts';
-import { type StageContext, type StageParent, callBackend, judgmentDeadlineMs, dispatchOf, verifierDispatch } from './dispatch.ts';
-import { holisticInForce, integrationTip, library, loadUnitSpec, judgedAnswer, inMs, recordedCall, unitMilestones } from './stages.ts';
+import { type StageContext, type StageParent, callBackend, judgmentDeadlineMs, dispatchOf, verifierDispatch, runOp } from './dispatch.ts';
+import { holisticInForce, integrationTip, library, loadUnitSpec, judgedAnswer, inMs, recordedCall, unitMilestones, planCheckWorktree, removeJudgmentCheckouts, unitTarget, targetDirs } from './stages.ts';
 import { mapInForce } from './lanes.ts';
 import { renderSpec } from '../spec/render.ts';
 
 export type Marker = Extract<SurfaceFact, {kind: 'review-triggered'}>['marker'];
 /** P3b replaces this source with its calibrated attempt signal; all attempts count. */
 export function diagnosisDue(view: JournalView, unit: UnitId): boolean {
-  const u = view.unit(unit);
-  const starts = view.opsOf('proc.spawn').filter((i) => i.parent.type === 'stage' && i.parent.unit === unit && i.expect.subject.purpose === 'backend');
-  const builds = new Set(starts.filter((i) => i.parent.type === 'stage' && i.parent.stage === 'build').map((i) => i.parent.type === 'stage' ? i.parent.attempt : 0)).size;
-  const judged = u.counters.attempts;
-  const stages = typeof judged === 'number' ? judged : 0;
-  // Count only judged stages, not quiesce/evidence/salvage/teardown bookkeeping.
-  const attempts = new Set(view.opsOf('proc.spawn').filter((i) => i.parent.type === 'stage' && i.parent.unit === unit && ['plan-check', 'build', 'lanes', 'gate'].includes(i.parent.stage)).map((i) => i.parent.type === 'stage' ? `${i.parent.stage}:${i.parent.attempt}` : '')).size;
-  void stages;
-  return builds >= 8 || attempts >= 20;
+  const counts = view.judgedAttempts(unit);
+  return counts.builds >= 8 || counts.stages >= 20;
 }
 export function proofNotLocal(ctx: StageContext, unit: PlanUnit): boolean {
   const obligations = holisticInForce(ctx).obligations;
@@ -48,11 +45,18 @@ export function markers(ctx: StageContext, unit: PlanUnit, spec: SpecM1): readon
   const out: {marker: Marker; source: string}[] = [];
   if ((mapInForce(ctx.journal.view) === null ? [] : systemTraits(mapInForce(ctx.journal.view)!, unit.systems)).length > 0) out.push({marker: 'M1', source: 'dispatch:system-traits'});
   if (proofNotLocal(ctx, unit)) out.push({marker: 'M2', source: 'dispatch:witnesses'});
-  for (const r of appliedRevisions(ctx)) {
+  const revisions = appliedRevisions(ctx);
+  for (const [i, r] of revisions.entries()) {
     const changes = r.payload.changes;
     if (changes.some((c) => c.type === 'obligation' && ['edited', 'disposed', 'split'].includes(c.edit) && (spec.obligations ?? []).includes(c.id))) out.push({marker: 'M3', source: `apply:${r.payload.rev}:obligations`});
-    // Corpus changes are narrowed to the unit's cited rules below by comparing kept pins.
-    if (changes.some((c) => c.type === 'corpus') && /\bT-\d+\b/.test(renderSpec(spec))) out.push({marker: 'M3', source: `apply:${r.payload.rev}:corpus`});
+    if (!changes.some((c) => c.type === 'corpus') || i === 0) continue;
+    const before = revisions[i - 1]!.payload.manifest.corpus;
+    const after = r.payload.manifest.corpus;
+    if (before === undefined || after === undefined) continue;
+    const pin = (sha: typeof before) => { const bytes = keptInput(ctx.runDir, sha, CORPUS_INPUT); if (bytes === null) throw new Error('missing kept corpus pin'); return parseCorpusPin(JSON.parse(bytes.toString('utf8'))); };
+    const old = pin(before), next = new Map(pin(after).rules.map((x) => [x.id, x.textSha256]));
+    const mentions = new Set(renderSpec(spec).match(/\bT-\d+\b/g) ?? []);
+    if (old.rules.some((rule) => mentions.has(rule.id) && next.get(rule.id) !== rule.textSha256)) out.push({marker: 'M3', source: `apply:${r.payload.rev}:corpus`});
   }
   if (unit.review === 'always') out.push({marker: 'always', source: 'override'});
   return out;
@@ -81,13 +85,20 @@ export async function runReview(ctx: StageContext, unit: PlanUnit, parent: Stage
   if (seated.kind !== 'pinned') throw new Error('review routing could not re-pin');
   const dispatch = seated.dispatch;
   const prompt = promptFor('verifier', dispatch.triple.model);
+  const checkout = planCheckWorktree(ctx, parent, 'tip');
+  const recorded = recordedCall(ctx, parent);
+  if (recorded === null) {
+    await removeJudgmentCheckouts(ctx, unit.id, parent);
+    await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${unit.id}:review`, parent, {path: checkout, checkout: {type: 'detached', at: integrationTip(ctx)}});
+  }
   const measured = renderPrompt(prompt, { mode, brief: { spec: {unit: unit.id, rev: spec.rev, markdown: renderSpec(spec)}, intent: spec.intent, nonGoals: spec.nonGoals, contracts: library(ctx, spec, integrationTip(ctx)).contracts, systems: unit.systems, method: methodContext(ctx, unit, spec), history: mode === 'diagnosis' ? view.unit(unit.id).failures.map((f) => `${f.fact.stage}: ${f.fact.outcome}`) : [], standing: reviewItems(view, unit.id) } });
   const session = freshJudgmentSession();
-  const call = (repair?: readonly string[]) => callBackend(ctx, {unit: unit.id, parent, request: {kind: 'judgment', dispatch, session: repair === undefined ? session : resumedJudgmentSession(session.id), evidenceDirs: []}, system: prompt.system, rendered: repair === undefined ? measured.rendered : judgmentRepairDirective(repair), prompt: repair === undefined ? measured.prompt : null, schema: prompt.schema, cwd: ctx.repo, deadlineAt: inMs(judgmentDeadlineMs(dispatchOf(view, unit.id)))});
-  let called = recordedCall(ctx, parent) ?? await call();
+  const call = (repair?: readonly string[]) => callBackend(ctx, {unit: unit.id, parent, request: {kind: 'judgment', dispatch, session: repair === undefined ? session : resumedJudgmentSession(session.id), evidenceDirs: []}, system: prompt.system, rendered: repair === undefined ? measured.rendered : judgmentRepairDirective(repair), prompt: repair === undefined ? measured.prompt : null, schema: prompt.schema, cwd: checkout, deadlineAt: inMs(judgmentDeadlineMs(dispatchOf(view, unit.id)))});
+  let called = recorded ?? await call();
   let judged = judgedAnswer(called, validateGateOutput);
   if (judged.kind === 'refused') { called = await call(judged.reasons); judged = judgedAnswer(called, validateGateOutput); }
   const items = judged.kind === 'answered' ? judged.out.findings.map((f, n) => ({id: `${called.inv}:${n}`, text: f.text, evidence: [...f.experiments.map((e) => `${e.command}: ${e.output}`), ...(f.path === null ? [] : [f.path])]})) : [];
   const note = mode === 'diagnosis' ? keepInput(ctx.runDir, Buffer.from(judged.kind === 'answered' ? [...judged.out.reasons, ...items.map((f) => `${f.text} (${f.evidence.join('; ')})`)].join('\n') : 'Independent diagnosis returned no usable answer; inspect prior build and lane evidence.'), BRIEF_INPUT) : null;
+  await removeJudgmentCheckouts(ctx, unit.id, parent);
   ctx.journal.fact({kind: 'review-completed', unit: unit.id, mode, specRev: spec.rev, inv: called.inv, items, note});
 }

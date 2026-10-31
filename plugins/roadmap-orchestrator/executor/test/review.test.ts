@@ -52,8 +52,8 @@ const verifierStep = (hunks: readonly JsonValue[], stdinContains: readonly strin
 });
 const clear = (id: string): JsonValue => ({ id, kind: 'comment', executable: false, toolDirective: false, behaviourChange: false });
 
-const factsOf = <K extends Fact['kind']>(d: Readonly<{ runDir: string }>, kind: K): readonly Extract<Fact, { kind: K }>[] =>
-  events(d.runDir).flatMap((e) => (e.type === 'fact' && e.fact.kind === kind ? [e.fact as Extract<Fact, { kind: K }>] : []));
+const factsOf = <K extends Fact['kind']>(d: Readonly<{ runDir: string }>, kind: K): readonly Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: K }>[] =>
+  events(d.runDir).flatMap((e) => (e.type === 'fact' && e.fact.kind === kind ? [e.fact as Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: K }>] : []));
 const ledgerOf = (r: ArcRun): readonly (readonly [string, string, string | null])[] => r.journal.view.review().ledger.map((e) => [e.id, e.path, e.outcome] as const);
 const gateCalls = (d: Readonly<{ scenarioPath: string }>): readonly CallRecord[] => readCalls(d.scenarioPath).filter(isGateCall);
 /** The lane spawns of the unit's lanes attempt `attempt`, by lane id. */

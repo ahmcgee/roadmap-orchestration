@@ -861,7 +861,7 @@ describe('M4a rev 3 edits that drain nothing', () => {
 // The fold
 
 const factsOf = (d: ArcDescriptor): readonly Fact[] => readJournal(absPath(d.runDir), arcId(d.arc)).events.flatMap((e) => (e.type === 'fact' ? [e.fact] : []));
-const applied = (d: ArcDescriptor) => factsOf(d).filter((f): f is Extract<Fact, { kind: 'plan-applied' }> => f.kind === 'plan-applied');
+const applied = (d: ArcDescriptor) => factsOf(d).filter((f): f is Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: 'plan-applied' }> => f.kind === 'plan-applied');
 
 test('apply.fold: the plan in force is the latest plan-applied fact (none before one); its spec edits move the unit\'s spec in force, and the fold refuses what the rules refuse', T, () => {
   const d = setupArc({ steps: [], units: [{ id: 'u1' }, { id: 'u2' }] });

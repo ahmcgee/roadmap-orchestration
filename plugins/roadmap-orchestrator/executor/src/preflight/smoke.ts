@@ -322,7 +322,7 @@ function smokeRequest(resolved: ResolvedRouting, backend: Backend): Readonly<{ s
     if (seat.role === 'build') return { seat, request: { kind: 'claude-build', triple, session: freshClaudeImplementerSession(), evidenceDirs: [] } };
     // The first Claude seat is always plan-check's: it comes first in seat order and resolves to Claude (startup refuses a
     // Codex judgment seat), ahead of the gate (an acting judge since dev.13) and the arc seats.
-    if (seat.role !== 'planCheck') throw new Error(`seat ${seatName(seat)}: only a plan-check seat is a Claude backend's first seat`);
+    if (seat.role !== 'verifier') throw new Error(`seat ${seatName(seat)}: only a plan-check seat is a Claude backend's first seat`);
     return { seat, request: { kind: 'claude-judgment', role: seat.role, triple, session: freshJudgmentSession(), evidenceDirs: [] } };
   }
   if (seat.role !== 'build') throw new Error(`seat ${seatName(seat)} resolves to Codex judgment, which the unsupported-routing row refuses before the smoke`);

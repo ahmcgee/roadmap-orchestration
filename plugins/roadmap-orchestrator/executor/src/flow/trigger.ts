@@ -48,7 +48,7 @@ const labelOf = (c: CodeConstraint | null): string | null => (c === null ? null 
 
 /** The times of the log's host-pressure holds: each stage outcome whose cause is `host-pressure`. */
 export function pressureHoldTimes(events: readonly Event[]): readonly IsoTime[] {
-  return events.flatMap((e) => (e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.cause?.type === 'host-pressure' ? [e.at] : []));
+  return events.flatMap((e) => (e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact) && e.fact.cause?.type === 'host-pressure' ? [e.at] : []));
 }
 
 /** Whether run `i` of the log started inside its predecessor's cooldown (a `requested` bypass). */

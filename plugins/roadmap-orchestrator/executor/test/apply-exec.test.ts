@@ -85,7 +85,7 @@ const seqOf = (r: ExecRun, match: (f: Fact) => boolean): number => {
   return e.seq;
 };
 const outcomeSeq = (r: ExecRun, unit: string, stage: string, n = 1): number => {
-  const all = events(r).filter((e) => e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.unit === unit && e.fact.stage === stage);
+  const all = events(r).filter((e) => e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact) && e.fact.unit === unit && e.fact.stage === stage);
   const e = all[n - 1];
   if (e === undefined) throw new Error(`no ${stage} outcome #${n} of ${unit}`);
   return e.seq;
@@ -183,8 +183,8 @@ const addA2 = (spec: Json): void => {
   spec['rev'] = 2;
 };
 const queuedReceipt = (r: ExecRun, id: CommandId) => readReceipt(absPath(r.runDir), id, 'queued');
-const factsOf = <K extends Fact['kind']>(r: ExecRun, kind: K): readonly Extract<Fact, { kind: K }>[] =>
-  events(r).flatMap((e) => (e.type === 'fact' && e.fact.kind === kind ? [e.fact as Extract<Fact, { kind: K }>] : []));
+const factsOf = <K extends Fact['kind']>(r: ExecRun, kind: K): readonly Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: K }>[] =>
+  events(r).flatMap((e) => (e.type === 'fact' && e.fact.kind === kind ? [e.fact as Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: K }>] : []));
 
 test('apply.exec-queued-at-boundary: rev + 1 of a unit\'s spec applied while its build runs is queued (an apply-queued fact, a queued receipt, status naming the unit), lands at the build\'s stage boundary with nothing killed, and the unit re-opens at plan-check on it', T, async (t) => {
   const thread = '00000000-0000-4000-8000-0000000a9921';

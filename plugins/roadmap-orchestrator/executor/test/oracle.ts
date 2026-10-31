@@ -218,7 +218,7 @@ export function unitStates(run: OracleRun, expected: Readonly<Record<string, Uni
 
 /** Every stage-outcome of each unit, as `stage:outcome`, in log order. */
 export function outcomesOf(run: OracleRun, unit: string): readonly string[] {
-  return facts(run).flatMap((f) => (f.kind === 'stage-outcome' && f.unit === unit ? [`${f.stage}:${f.outcome}`] : []));
+  return facts(run).flatMap((f) => ((f.kind === 'stage-outcome' && 'unit' in f) && f.unit === unit ? [`${f.stage}:${f.outcome}`] : []));
 }
 
 /** The units' stage-outcome sequences are exactly `expected`: no stage decided twice, none missing. */
@@ -232,7 +232,7 @@ export function stageOutcomes(run: OracleRun, expected: Readonly<Record<string, 
 
 /** The run's recovery holds (src/pipeline/unit.ts `holdAbandoned`), as `<unit> <stage>#<attempt>` in log order. */
 export function recoveryHoldsOf(run: OracleRun): readonly string[] {
-  return facts(run).flatMap((f) => (f.kind === 'stage-outcome' && f.cause?.type === 'recovery' ? [`${f.unit} ${f.stage}#${f.attempt}`] : []));
+  return facts(run).flatMap((f) => ((f.kind === 'stage-outcome' && 'unit' in f) && f.cause?.type === 'recovery' ? [`${f.unit} ${f.stage}#${f.attempt}`] : []));
 }
 
 /**
@@ -255,7 +255,7 @@ export function withRecoveryHolds(
   /** Each unit's stage outcomes at the crash. */
   const decided = new Map<string, number>();
   for (const [i, e] of events.slice(0, starts.at(-1)).entries()) {
-    if (e.type === 'fact' && e.fact.kind === 'stage-outcome') decided.set(e.fact.unit, (decided.get(e.fact.unit) ?? 0) + 1);
+    if (e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact)) decided.set(e.fact.unit, (decided.get(e.fact.unit) ?? 0) + 1);
     fold.apply(e, prevHash(Buffer.from(`${lines[i]!}\n`, 'utf8')));
   }
   const out: Record<string, readonly string[]> = { ...outcomes };

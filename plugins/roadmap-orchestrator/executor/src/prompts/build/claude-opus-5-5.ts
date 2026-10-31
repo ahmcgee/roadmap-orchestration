@@ -1,2 +1,3 @@
-// Shared Claude 5.5 base brief; method modules depend only on recorded inputs.
-export { PROMPT } from './base.ts';
+import { PROMPT as BASE } from './base.ts';
+import { BUILD_DELEGATION } from '../delegation.ts';
+export const PROMPT = {...BASE, system: `${BASE.system}\n${BUILD_DELEGATION}`};

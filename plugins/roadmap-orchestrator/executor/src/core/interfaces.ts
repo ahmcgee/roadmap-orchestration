@@ -159,6 +159,7 @@ export interface JournalView {
   flakes(): readonly FlakeAt[];
   /** dev.17: every propagation fact (stale sets, stale re-opens, refused propagations), in log order, with its seq and time. */
   notes(unit: UnitId): readonly Readonly<{ command: CommandId; brief: Sha256Hex; seq: number }>[];
+  judgedAttempts(unit: UnitId): Readonly<{builds: number; stages: number}>;
   surfaceFacts(): readonly import('./events.ts').SurfaceFact[];
   buildNotes(unit: UnitId, attempt: number): readonly Sha256Hex[];
   propagationFacts(): readonly PropagationFactAt[];

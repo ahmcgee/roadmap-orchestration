@@ -233,6 +233,24 @@ function scaffoldSample(k: string, retry: RoleInputs['scaffold']['retry']): Role
 }
 
 const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] } = {
+  campaignAudit: [
+    {
+      vision: vision(1, 'VISION-A'),  obligations: [observed('I-1', 'OBLIGATION-A', SHA_A)], range: { audited: SHA_B, diff: shown(SHA_A, SHA_B, 'RANGE-A') },
+      owners: [], priorFindings: [], contracts: [doc('docs/api.md', 'CONTRACT-A')],  
+      target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, checkout: absPath('/wt/audit-1'), specsOnly: null,
+    },
+    {
+      vision: vision(2, 'VISION-B'),  obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)], range: {
+        audited: SHA_A,
+        diff: partial(SHA_B, SHA_A, 'RANGE-B', false),
+      },
+      owners: [{ unit: unitId('u-two'), head: SHA_B, diff: shown(SHA_A, SHA_B, 'OWNER-B') }], priorFindings: [findingView('F-1', 'FINDING-B')], contracts: [doc('docs/b.md', 'CONTRACT-B')],
+       
+      target: { kind: 'digest', digest: doc('docs/digest.md', 'DIGEST-B'), doc: repoPath('docs/arch2.md') }, checkout: absPath('/wt/audit-2'),
+      specsOnly: [{ unit: unitId('u-two'), rev: specRev(4), markdown: 'SPECS-ONLY-B' }],
+    },
+  ],
+  experienceVerdict: [{mode: 'walkthrough', brief: walkSample('A')}, {mode: 'polish', brief: polishSample('B')}],
   planCheck: [
     {
       intent: 'INTENT-A', nonGoals: ['NON-GOAL-A'], spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
@@ -277,7 +295,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
     },
     { notes: ['NOTE-B'],
       systemNotes: [repoPath('docs/systems/SYSTEM-NOTES-B.md')], intent: 'INTENT-B', nonGoals: ['NON-GOAL-B'], spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
-      method: {traits: [], markers: [], unitKind: 'module', expensiveLanes: false, ui: false}, fastLanes: [lane('lint', ['npx', 'tsc', '--noEmit'])], suiteLanes: [lane('eslint', ['npx', 'eslint', '.'])], evidenceDir: absPath('/run/ev/b'), worktree: absPath('/wt/b'),
+      method: {traits: ['persistent'], markers: ['M2'], unitKind: 'design', expensiveLanes: true, ui: true}, fastLanes: [lane('lint', ['npx', 'tsc', '--noEmit'])], suiteLanes: [lane('eslint', ['npx', 'eslint', '.'])], evidenceDir: absPath('/run/ev/b'), worktree: absPath('/wt/b'),
       systems: [systemName('app-b')], fixRound: { failingEvidenceDirs: [absPath('/run/inv/9-1')], directives: ['DIRECTIVE-B'] },
       witnessChecks: [{ lane: laneId('journey'), command: 'roadmap witness-check --lane-file /run/ev/b/witness/journey.json' }],
       milestones: milestonesSample(), browser: browserSample(),
@@ -302,16 +320,16 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
   ],
   gate: [
     {
-      standing: [], method: {traits: [], markers: [], unitKind: 'module', expensiveLanes: false, ui: false}, systemNotes: [], intent: 'INTENT-A', nonGoals: ['NON-GOAL-A'], spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
-      target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A', planCheckNotes: '', obligations: [], standingObligations: [],
+      standing: [], method: {traits: [], markers: [], unitKind: 'module', expensiveLanes: false, ui: false}, systemNotes: [], intent: 'INTENT-A', nonGoals: ['NON-GOAL-A'], spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')],  index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
+      target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A',  obligations: [], standingObligations: [],
       diff: { bounded: shown(SHA_A, SHA_B, 'DIFF-A'), claims: { acceptance: [clauseId('A1')], witnesses: [], obligations: [] } },
       laneLedger: [{ lane: laneId('unit'), argv: ['npm', 'test'], expectedExit: 0, exitCode: 0, verdict: 'pass', evidenceDir: absPath('/run/inv/3-1'), ignored: null, reused: null }],
       reach: [], traits: [], reachTraits: [], evidence: [absPath('/run/ev/a')], systems: [systemName('app-a')], priorRound: null, checks: { witnesses: null, smoke: null, regenerated: [] },
       escalation: null, largeDiff: null, milestones: null, review: { ledger: [], disputes: [], delta: null }, undeclaredContracts: [],
     },
     {
-      standing: [], method: {traits: [], markers: [], unitKind: 'module', expensiveLanes: false, ui: false}, systemNotes: [repoPath('docs/systems/SYSTEM-NOTES-B.md')], intent: 'INTENT-B', nonGoals: ['NON-GOAL-B'], spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
-      target: { kind: 'digest', digest: doc('docs/digest.md', 'DIGEST-B'), doc: repoPath('docs/arch2.md') }, direction: 'DIR-B', planCheckNotes: 'NOTES-B',
+      standing: [], method: {traits: ['persistent'], markers: ['M2'], unitKind: 'design', expensiveLanes: true, ui: true}, systemNotes: [repoPath('docs/systems/SYSTEM-NOTES-B.md')], intent: 'INTENT-B', nonGoals: ['NON-GOAL-B'], spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')],  index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
+      target: { kind: 'digest', digest: doc('docs/digest.md', 'DIGEST-B'), doc: repoPath('docs/arch2.md') }, direction: 'DIR-B', 
       obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)], standingObligations: [observed('I-3', 'STANDING-B', SHA_A).obligation],
       diff: { bounded: partial(SHA_B, SHA_A, 'DIFF-B', true), claims: { acceptance: [clauseId('A1'), clauseId('A2')], witnesses: [witnessItemId('W-1')], obligations: [obligationId('I-2')] } },
       laneLedger: [{ lane: laneId('lint'), argv: ['npx', 'tsc'], expectedExit: 0, exitCode: 0, verdict: 'pass', evidenceDir: absPath('/run/inv/4-1'),
@@ -414,6 +432,20 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
 };
 
 const OUTPUTS: { readonly [R in Role]: unknown } = {
+  campaignAudit: {...{
+    findings: [{ severity: 'P1', obligation: 'I-1', visionClauses: ['V-1'], claim: 'I-1 is not held.', cause: 'rounding', evidence: [{ path: 'src/a.ts', line: 3 }], mutant: null }],
+    reasons: ['I-1 fails on the audited tree'], premises: [],
+  }, requests: []},
+  experienceVerdict: {final: true, mode: 'walkthrough', verdict: {
+    final: true,
+    journeys: [{ journey: 'J-1', outcome: 'blocked', evidence: ['j1-submit.png'], note: 'the submit posts to a 404' }],
+    findings: [{
+      class: 'breaks', journey: 'J-1', evidence: ['j1-submit.png'], claim: 'Submitting the form leads to a 404.', cause: 'form action', against: { type: 'journey' },
+      paths: ['src/form.html'],
+    }],
+    polish: [],
+    premises: [], reasons: ['J-1 cannot be completed'],
+  }},
   walkthrough: {
     final: true,
     journeys: [{ journey: 'J-1', outcome: 'blocked', evidence: ['j1-submit.png'], note: 'the submit posts to a 404' }],
@@ -463,7 +495,7 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
     }],
     premises: [], standing: [], clusters: null,
   },
-  verifier: { hunks: [{ id: 'h1', kind: 'comment', executable: false, toolDirective: false, behaviourChange: false }] },
+  verifier: {decision: 'approve', ordering: null, findings: [], directives: [], reasons: ['ok'], premises: [], standing: [], clusters: null, rulings: []},
   lens: {
     findings: [{ severity: 'P1', obligation: 'I-1', visionClauses: ['V-1'], claim: 'I-1 is not held.', cause: 'rounding', evidence: [{ path: 'src/a.ts', line: 3 }], mutant: null }],
     reasons: ['I-1 fails on the audited tree'], premises: [],

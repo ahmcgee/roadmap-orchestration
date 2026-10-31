@@ -11,7 +11,7 @@ import { normalizeText } from '../corpus/rules.ts';
 import { debtKey, nextDebtId } from './ledger.ts';
 import type { BankReason, DebtLedger, DebtSource } from './types.ts';
 
-export type DebtBanked = Extract<Fact, { kind: 'debt-banked' }>;
+export type DebtBanked = Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: 'debt-banked' }>;
 
 /** What a bank request names. */
 export type DebtCandidate =

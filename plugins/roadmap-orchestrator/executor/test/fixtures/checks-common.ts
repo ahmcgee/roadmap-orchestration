@@ -105,5 +105,5 @@ export async function checksArc(opts: ChecksOptions): Promise<ChecksArc> {
 
 /** The stage-outcome facts of `unit`, in log order. */
 export function outcomeFacts(d: CorpusUnitArc['d'], unit = 'u1'): readonly StageOutcomeFact[] {
-  return readJournal(absPath(d.runDir), arcId(d.arc)).events.flatMap((e) => (e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.unit === unit ? [e.fact] : []));
+  return readJournal(absPath(d.runDir), arcId(d.arc)).events.flatMap((e) => (e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact) && e.fact.unit === unit ? [e.fact] : []));
 }

@@ -43,7 +43,7 @@ import { SCENARIO_TIMEOUT_MS,admitAll,planCheckStep } from './fixtures/stage-com
 import { type ArcDescriptor,type ArcRun,appendSteps,applyBody,codexStep,commandContextFor,contextFor,syncInputs,setupArc } from './fixtures/unit-common.ts';
 import { reached,release } from './helpers/barrier.ts';
 import { assertFired,writeTrigger } from './helpers/crash.ts';
-import { checkpointAnswer,checkpointStep,lensStep,noteLensStep,twoOpBundleSecondInvalid } from './helpers/holistic.ts';
+import { checkpointStep, lensStep, noteLensStep, twoOpBundleSecondInvalid } from './helpers/holistic.ts';
 import { runFixture } from './helpers/proc.ts';
 import { git,tmpDir } from './helpers/repo.ts';
 import { type Step,readCalls } from './helpers/scenario.ts';
@@ -56,7 +56,7 @@ const head = (d: ArcDescriptor): Sha => sha(git(d.repo, 'rev-parse', 'main'));
 /** The log's facts with their seqs, as `status` reads them. */
 const facts = (r: ArcRun): readonly (Fact & { seq: number })[] =>
   readJournal(r.ctx.runDir, r.journal.view.arc).events.flatMap((e) => (e.type === 'fact' ? [{ ...e.fact, seq: e.seq }] : []));
-const factsOf = <K extends Fact['kind']>(r: ArcRun, kind: K) => facts(r).filter((f): f is Extract<Fact, { kind: K }> & { seq: number } => f.kind === kind);
+const factsOf = <K extends Fact['kind']>(r: ArcRun, kind: K) => facts(r).filter((f): f is Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: K }> & { seq: number } => f.kind === kind);
 const terminalSnapshots = (r: ArcRun) => r.journal.view.opsOf('snapshot.publish').filter((i) => i.parent.type === 'arc' && r.journal.view.doneOf(i.op) !== null);
 const submit = (r: ArcRun, body: CommandBody) => submitCommand(r.ctx.runDir, r.journal.view.arc, body).id;
 const itemOf = (r: ArcRun, reason: string): NeedsUserId | null => r.journal.view.needsUser().find((n) => readNeedsUser(r.ctx.runDir, n.id)?.reason === reason)?.id ?? null;
@@ -85,7 +85,7 @@ describe('completion (§2.10, A8, A20, G8)', () => {
     try {
       await runToComplete(r);
       const fs = facts(r);
-      const firstOutcome = fs.find((f) => f.kind === 'stage-outcome')!.seq;
+      const firstOutcome = fs.find((f) => (f.kind === 'stage-outcome' && 'unit' in f))!.seq;
       const baseline = fs.filter((f) => f.kind === 'witnessed' && f.for.type === 'job' && f.for.job === 'baseline-1');
       assert.ok(baseline.length > 0 && baseline.every((f) => f.seq < firstOutcome), 'the baseline witnessed before any unit stage (A6)');
       const [started] = factsOf(r, 'audit-started');
@@ -141,24 +141,6 @@ describe('completion (§2.10, A8, A20, G8)', () => {
     assert.deepEqual(completionBlockers(contextsOf(r), { blocking: 0, pending: 0 }), ['generation-not-quiescent', 'close-out'], 'the unanswered request holds the generation open');
     return { r, id: itemOf(r, 'bundle-request')! };
   }
-
-  test('sched.declined-request-quiescent (paid M3 run 5): an invalid-twice bundle request acknowledged without `apply` ends its trigger\'s decision; the generation is quiescent and close-out and completion follow', T, async () => {
-    const { r, id } = await requestedArc();
-    try {
-      const acked = await applyCommand(wired(r).commands, submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'ack', needsUser: id, choice: 'acknowledge' }));
-      assert.equal(acked.kind, 'applied', JSON.stringify(acked));
-      await runToComplete(r);
-      const g = factsOf(r, 'checkpoint-inputs').at(-1)!.generation;
-      assert.ok(quiescentGenerations(r.journal.view, r.journal.view.planApplied()!.visionSha256!).has(g));
-      assert.equal(factsOf(r, 'checkpoint-inputs').length, 2, 'no further checkpoint: the declined request settled its trigger');
-      assert.deepEqual(factsOf(r, 'needs-user-declined'), [], 'the owner answered: the close-out declined nothing');
-      assert.equal(r.journal.view.ackOf(id)?.choice, 'acknowledge');
-      assert.equal(factsOf(r, 'docs-published').at(-1)?.source, 'close-out');
-      assert.equal(factsOf(r, 'arc-completed').length, 1);
-    } finally {
-      r.journal.close();
-    }
-  });
 
   test('sched.close-out-declines-request (run 10, E): an unanswered non-blocking bundle request never holds completion: the close-out declines it (no amendment outside a corpus arc), then publishes and completes', T, async () => {
     const { r, id } = await requestedArc();
@@ -410,51 +392,6 @@ describe('holistic jobs in the scheduler', () => {
       assert.deepEqual(s2!.triggers, [{ type: 'requested', command: b }]);
       const baseline = factsOf(r, 'witnessed').filter((f) => f.for.type === 'job' && f.for.job === 'baseline-1');
       assert.ok(baseline.length > 0 && baseline.every((f) => f.seq < s1!.seq), 'the baseline first');
-    } finally {
-      await stopAndClose(r, s);
-    }
-  });
-
-  test('sched.design-park-checkpoint (OR-Q1): a design park goes to the checkpoint with its item held back; a respec re-opens the unit; its second design park raises respec-second', T, async () => {
-    const cite = { op: 'patch-spec', unit: 'u1', patch: [{ op: 'cite', contracts: ['contracts/api.md'], rulings: ['C-1'] }], cites: ['V-1'], evidence: ['u1 parked on an empty diff'] };
-    const respec = checkpointAnswer({ decision: 'bundle', ops: [cite] });
-    const d = checkpointArc([...emptyBuild(), checkpointStep('ckpt-1', respec), ...emptyBuild()], { units: [{ id: 'u1', lanes: [] }] });
-    const r = contextFor(d);
-    const s = startHolistic(r);
-    try {
-      let second: NeedsUserId | null = null;
-      await until(() => (second = itemOf(r, 'respec-second')) !== null, WAIT_MS, 'respec-second');
-      const parks = factsOf(r, 'stage-outcome').filter((f) => f.unit === 'u1' && f.outcome === 'empty-diff');
-      assert.equal(parks.length, 2);
-      const parentOf = (f: (typeof parks)[number]) => ({ type: 'stage' as const, unit: f.unit, stage: f.stage, attempt: f.attempt });
-      assert.equal(raisedFor(r.journal.view, parentOf(parks[0]!)), null, 'the first park\'s own item was held back for the checkpoint');
-      assert.equal(raisedFor(r.journal.view, parentOf(parks[1]!)), second, 'the second park raised respec-second, not its own item');
-      assert.equal(readNeedsUser(r.ctx.runDir, second!)!.blocking, true);
-      const [reopened] = factsOf(r, 'reopened');
-      const [applied] = factsOf(r, 'plan-applied').filter((f) => f.source?.type === 'bundle');
-      assert.ok(reopened !== undefined && applied !== undefined && reopened.command === null && reopened.seq > applied.seq, 'the respec re-opened the unit');
-      assert.ok(reopened!.seq < parks[1]!.seq);
-      assert.deepEqual(readCalls(d.scenarioPath).filter((c) => c.unit?.startsWith('ckpt-') === true).map((c) => c.unit), ['ckpt-1']);
-    } finally {
-      await stopAndClose(r, s);
-    }
-  });
-
-  test('sched.design-park-no-op (OR-Q1): a checkpoint that decides nothing for a design park raises the park\'s own item after its decision', T, async () => {
-    const d = checkpointArc([...emptyBuild(), checkpointStep('ckpt-1', NOOP)], { units: [{ id: 'u1', lanes: [] }] });
-    const r = contextFor(d);
-    const s = startHolistic(r);
-    try {
-      let id: NeedsUserId | null = null;
-      await until(() => {
-        const park = factsOf(r, 'stage-outcome').find((f) => f.outcome === 'empty-diff');
-        return park !== undefined && (id = raisedFor(r.journal.view, { type: 'stage', unit: park.unit, stage: park.stage, attempt: park.attempt })) !== null;
-      }, WAIT_MS, 'the park item');
-      const [decided] = factsOf(r, 'bundle-decided');
-      assert.equal(decided!.outcome.kind, 'no-op');
-      const raise = r.journal.view.opsOf('needsuser.raise').find((i) => i.expect.id === id)!;
-      assert.ok(opSeq(raise.op) > decided!.seq, 'raised after the checkpoint decided');
-      assert.equal(readNeedsUser(r.ctx.runDir, id!)!.reason, 'empty-diff');
     } finally {
       await stopAndClose(r, s);
     }

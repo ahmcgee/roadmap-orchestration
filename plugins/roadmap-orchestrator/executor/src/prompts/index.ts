@@ -1,3 +1,5 @@
+import { PROMPT as EXPERIENCE } from './experienceVerdict/claude-opus-5-5.ts';
+import { PROMPT as CAMPAIGN } from './campaignAudit/claude-opus-5-5.ts';
 // The prompt table: one decision per (role, model). PromptTable is a mapped type over the closed ModelId
 // union, so adding a model fails compilation here until every role names a prompt module, a reviewed
 // `inherits`, or `unsupported` (DESIGN-1.0.md §4, Prompt–model coupling; test parse.new-model-fails).
@@ -87,6 +89,8 @@ const fableJudgment = (module: string) => ({
 }) as const;
 
 export const PROMPTS: PromptTable<PromptModules> = {
+  experienceVerdict: { 'claude-opus-5-5': {type: 'prompt', prompt: EXPERIENCE}, 'claude-sonnet-5-5': {type: 'unsupported', reason: WALK_OPUS_ONLY}, 'claude-haiku-5-5': {type: 'unsupported', reason: WALK_OPUS_ONLY}, 'claude-fable-5-1': {type: 'unsupported', reason: WALK_OPUS_ONLY}, 'gpt-5.6-luna': {type: 'unsupported', reason: CODEX_JUDGMENT}, 'gpt-5.6-sol': {type: 'unsupported', reason: CODEX_JUDGMENT}},
+  campaignAudit: { 'claude-opus-5-5': {type: 'prompt', prompt: CAMPAIGN}, 'claude-sonnet-5-5': sonnet(CAMPAIGN), 'claude-haiku-5-5': haiku(CAMPAIGN), 'claude-fable-5-1': fableJudgment('campaign audit'), 'gpt-5.6-luna': {type: 'unsupported', reason: CODEX_JUDGMENT}, 'gpt-5.6-sol': {type: 'unsupported', reason: CODEX_JUDGMENT}},
   planCheck: {
     'claude-opus-5-5': { type: 'prompt', prompt: PLAN_CHECK_OPUS },
     'claude-fable-5-1': fableJudgment('Opus 5.5 plan-check prompt (both shapes, scope growth, the escalation preface)'),

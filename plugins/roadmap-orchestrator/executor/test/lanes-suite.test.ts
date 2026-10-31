@@ -116,7 +116,7 @@ test('lanes.fast-suite-base-red: a fast suite lane red on the unit\'s base alone
   assert.ok(first.verification !== null, 'the gate\'s checkout is kept');
   assert.deepEqual(first.ledger.map((l) => [l.lane, l.verdict]), [['unit', 'pass']], 'the gate\'s ledger is the spec series');
   const fact = outcomeFacts(run).at(-1)!;
-  assert.ok(fact.kind === 'stage-outcome' && fact.outcome === 'base-red');
+  assert.ok((fact.kind === 'stage-outcome' && 'unit' in fact) && fact.outcome === 'base-red');
   assert.equal(fact.chargeable, false);
   assert.deepEqual(fact.detail, { kind: 'base-red', base: run.base, lanes: ['lint'], changedCheckout: false });
   assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, 0);

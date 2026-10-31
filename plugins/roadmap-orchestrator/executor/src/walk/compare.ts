@@ -1,3 +1,4 @@
+import { experiencePolish } from '../prompts/schemas.ts';
 // A polish unit's compare (dev.13, plan §4 "Polish units", R2; SCHEMAS.md "dev.13"): after its gate approved it and
 // before its candidate is admitted, a polish unit's tweak is judged against the product as it is. A polish unit's
 // candidate admission waits until its `tweak-judged` is a `keep` (src/schedule/ready.ts, constraint `compare`); a `drop`
@@ -58,7 +59,7 @@ import { decidedBy } from '../pipeline/transitions.ts';
 import { judgmentRepairDirective } from '../prompts/directives.ts';
 import { promptFor,renderPrompt } from '../prompts/index.ts';
 import { type PolishJudgeInputs,visionInputOf } from '../prompts/inputs.ts';
-import { type PolishJudgeOutput,validatePolishJudgeOutput } from '../prompts/schemas.ts';
+import { type PolishJudgeOutput } from '../prompts/schemas.ts';
 import { worktreeCreateOp } from '../recover/ops.ts';
 import { type Instance,allocatePorts,bringUp,substitutePorts,tearDown } from './bringup.ts';
 import { evidencePath } from './report.ts';
@@ -146,6 +147,8 @@ export const compareEvidenceDir = (ctx: Pick<CompareContext, 'runDir'>, job: Job
 /** Writes `tweak-judged` (step 7, or step 2's / 5's code drop). */
 function judge(ctx: CompareContext, unit: UnitId, decision: 'keep' | 'drop', reason: Extract<WalkFact, { kind: 'tweak-judged' }>['reason']): CompareOutcome {
   ctx.journal.fact({ kind: 'tweak-judged', unit, decision, reason });
+  const source = ctx.journal.view.walkFacts().map((f) => f.fact).filter((f) => f.kind === 'compare-started' && f.unit === unit).at(-1);
+  if (source?.kind === 'compare-started') ctx.journal.fact({kind: 'stage-outcome', job: source.job, stage: 'experience-verdict', verdict: decision, findings: 0});
   crashPoint('compare.after-judged');
   return { kind: 'judged', unit, decision, reason };
 }
@@ -177,7 +180,7 @@ function skipReason(ctx: CompareContext): 'backend-parked' | 'paused' | null {
   const view = ctx.journal.view;
   const control = view.control();
   if (control.stop !== null || control.pausedAll) return 'paused';
-  return view.parkedBackends().includes(arcSeat(ctx, 'polishJudge').triple.backend) ? 'backend-parked' : null;
+  return view.parkedBackends().includes(arcSeat(ctx, 'experienceVerdict').triple.backend) ? 'backend-parked' : null;
 }
 
 /** Runs the cut, or the compare, due or running now (see the header). */
@@ -243,7 +246,7 @@ function readJudge(ctx: CompareContext, job: JobId, called: BackendCallOutcome, 
     case 'success': {
       let output: PolishJudgeOutput;
       try {
-        output = validatePolishJudgeOutput(v.value);
+        output = experiencePolish(v.value);
       } catch (error) {
         if (error instanceof SchemaError) return { kind: 'failed', reasons: [`the answer is off its schema: ${error.message}`], refused: true, interrupted: false };
         throw error;
@@ -280,7 +283,7 @@ async function compareOnce(ctx: CompareContext, c: CompareRecord, m: Milestone, 
   const servers = ctx.routingBase.config?.walkthrough?.mcp;
   if (journey.via === 'browser' && servers === undefined) throw new Error(`${job}: ${journey.id} is a browser journey and the repo config names no walkthrough.mcp servers (Phase 0 refuses this)`);
   const mcpConfig = journey.via === 'browser' ? walkMcpConfig(servers!, evidenceDir) : null;
-  const prompt = promptFor('polishJudge', arcSeat(ctx, 'polishJudge').triple.model);
+  const prompt = promptFor('experienceVerdict', arcSeat(ctx, 'experienceVerdict').triple.model);
   const deadlineAt = inMs(WALK_SESSION_MIN * 60_000);
   const instances: Partial<Record<Side, Instance>> = {};
   const made = new Set<Side>();
@@ -349,16 +352,16 @@ async function compareOnce(ctx: CompareContext, c: CompareRecord, m: Milestone, 
   };
   /** Call `attempt`: the recorded one consumed, else asked (fresh, or as the repair turn) with both instances up. */
   const ask = async (attempt: number, repair: Readonly<{ turn: RepairTurn; reasons: readonly string[] }> | null): Promise<Readonly<{ read: Read; called: BackendCallOutcome }> | CompareOutcome> => {
-    let called = recordedArcCall(ctx, job, 'polishJudge', attempt);
+    let called = recordedArcCall(ctx, job, 'experienceVerdict', attempt);
     if (called === null || called.kind === 'lost') {
       const ended = await ensureUp();
       if (ended !== null) return ended;
       const cwd = checkoutOf(ctx, job, 'after');
       if (repair !== null && repair.turn.cwd !== cwd) throw new Error(`${job}: a refused polish judge call ran in ${repair.turn.cwd}, not ${cwd}`);
       called = await callActingJudge(ctx, {
-        job, role: 'polishJudge', attempt, system: prompt.system, cwd, evidenceDirs: dirs, mcpConfig, deadlineAt,
+        job, role: 'experienceVerdict', attempt, system: prompt.system, cwd, evidenceDirs: dirs, mcpConfig, deadlineAt,
         ...(repair === null
-          ? { ...renderPrompt(prompt, inputsOf()), schema: prompt.schema, session: freshJudgmentSession() }
+          ? { ...renderPrompt(prompt, {mode: 'polish', brief: inputsOf()}), schema: prompt.schema, session: freshJudgmentSession() }
           : { prompt: null, rendered: judgmentRepairDirective(repair.reasons), schema: repair.turn.schema, session: repair.turn.session }),
       });
     }
@@ -370,7 +373,7 @@ async function compareOnce(ctx: CompareContext, c: CompareRecord, m: Milestone, 
     if ('kind' in first) return first;
     let read = first.read;
     if (read.kind === 'failed' && read.refused) {
-      const recordedAgain = recordedArcCall(ctx, job, 'polishJudge', 2);
+      const recordedAgain = recordedArcCall(ctx, job, 'experienceVerdict', 2);
       const turn = recordedAgain?.kind === 'result' ? null : repairTurnOf(ctx.runDir, first.called.inv);
       if (recordedAgain?.kind === 'result' || turn !== null) {
         const again = await ask(2, turn === null ? null : { turn, reasons: read.reasons });

@@ -1,3 +1,4 @@
+import { experienceWalk } from '../prompts/schemas.ts';
 import { systemsMapInForce } from '../input/systems.ts';
 // The milestone walk job (dev.13, plan §2; SCHEMAS.md "dev.13"; DESIGN-1.0.md §2.12): one durable job `walk-<n>` at a
 // time, arc-wide, modelled on the audit's lifecycle (src/holistic/audit.ts). A walk brings the milestone's product up
@@ -65,7 +66,7 @@ import { repairUnits } from '../pipeline/reproduce.ts';
 import { judgmentRepairDirective } from '../prompts/directives.ts';
 import { renderPrompt, promptFor } from '../prompts/index.ts';
 import { type KeptTweak, type WalkFindingView, type WalkthroughInputs, visionInputOf } from '../prompts/inputs.ts';
-import { type WalkthroughOutput, validateWalkthroughOutput } from '../prompts/schemas.ts';
+import { type WalkthroughOutput } from '../prompts/schemas.ts';
 import { worktreeCreateOp } from '../recover/ops.ts';
 import { probe } from '../resources/probe.ts';
 import { requestOf } from '../resources/pool.ts';
@@ -108,7 +109,7 @@ function skipReason(ctx: StageContext): 'backend-parked' | 'paused' | null {
   const view = ctx.journal.view;
   const control = view.control();
   if (control.stop !== null || control.pausedAll) return 'paused';
-  return view.parkedBackends().includes(arcSeat(ctx, 'walkthrough').triple.backend) ? 'backend-parked' : null;
+  return view.parkedBackends().includes(arcSeat(ctx, 'experienceVerdict').triple.backend) ? 'backend-parked' : null;
 }
 
 /**
@@ -183,7 +184,7 @@ function readWalk(ctx: StageContext, job: JobId, called: BackendCallOutcome, che
     case 'success': {
       let output: WalkthroughOutput;
       try {
-        output = validateWalkthroughOutput(v.value);
+        output = experienceWalk(v.value);
       } catch (error) {
         if (error instanceof SchemaError) return { kind: 'failed', reasons: [`the report is off its schema: ${error.message}`], refused: true, interrupted: false };
         throw error;
@@ -291,6 +292,7 @@ function end(
   // dev.17: the walk's findings include its batch point's (src/pipeline/batchlanes.ts).
   const all = canonicalIds([...new Set([...findings, ...batchFindingsOf(ctx, w.job)])]);
   ctx.journal.fact({ kind: 'walk-ended', job: w.job, outcome, findings: all, proposals, dropped: last ? proposals : [], ...(interrupted ? { interrupted: true } : {}) });
+  ctx.journal.fact({kind: 'stage-outcome', job: w.job, stage: 'experience-verdict', verdict: outcome, findings: all.length});
   crashPoint('walk.after-ended');
   const passes = outcome === 'reported' && !milestonePassed(ctx.journal.view, m.id) && activeWalkP1s(ctx.journal.view, m.id).length === 0;
   if (passes) {
@@ -341,7 +343,7 @@ async function walkOnce(ctx: WalkContext, w: WalkRecord): Promise<WalkRunOutcome
   const { vision, input: visionInput } = visionInForce(ctx);
   const check = { milestone: m, plan, vision, evidenceDir, systemsMap: systemsMapInForce(ctx.journal.view.planApplied()) };
   const deadlineAt = inMs(WALK_SESSION_MIN * 60_000);
-  const prompt = promptFor('walkthrough', arcSeat(ctx, 'walkthrough').triple.model);
+  const prompt = promptFor('experienceVerdict', arcSeat(ctx, 'experienceVerdict').triple.model);
   const mcpConfig = walkSessionMcp(ctx.routingBase.config?.walkthrough?.mcp, m, evidenceDir);
 
   let made = false;
@@ -376,16 +378,16 @@ async function walkOnce(ctx: WalkContext, w: WalkRecord): Promise<WalkRunOutcome
   };
   /** Call `attempt`: the recorded one consumed, else asked fresh (or as the repair turn `repair`) with the product up. */
   const ask = async (attempt: number, repair: Readonly<{ turn: RepairTurn; reasons: readonly string[] }> | null): Promise<Readonly<{ read: Read; called: BackendCallOutcome }> | WalkRunOutcome> => {
-    let called = recordedArcCall(ctx, job, 'walkthrough', attempt);
+    let called = recordedArcCall(ctx, job, 'experienceVerdict', attempt);
     if (called === null || called.kind === 'lost') {
       const ended = await ensureUp();
       if (ended !== null) return ended;
       if (repair !== null && repair.turn.cwd !== checkout) throw new Error(`${job}: a refused walkthrough call ran in ${repair.turn.cwd}, not the walk's checkout ${checkout}`);
       const inputs = inputsOf(ctx, w, m, instance!.product, evidenceDir, visionInput);
       called = await callActingJudge(ctx, {
-        job, role: 'walkthrough', attempt, system: prompt.system, cwd: checkout, evidenceDirs: [evidenceDir], mcpConfig, deadlineAt,
+        job, role: 'experienceVerdict', attempt, system: prompt.system, cwd: checkout, evidenceDirs: [evidenceDir], mcpConfig, deadlineAt,
         ...(repair === null
-          ? { ...renderPrompt(prompt, inputs), schema: prompt.schema, session: freshJudgmentSession() }
+          ? { ...renderPrompt(prompt, {mode: 'walkthrough', brief: inputs}), schema: prompt.schema, session: freshJudgmentSession() }
           : { prompt: null, rendered: judgmentRepairDirective(repair.reasons), schema: repair.turn.schema, session: repair.turn.session }),
       });
     }
@@ -397,7 +399,7 @@ async function walkOnce(ctx: WalkContext, w: WalkRecord): Promise<WalkRunOutcome
     if ('kind' in first) return first;
     let read = first.read;
     if (read.kind === 'failed' && read.refused) {
-      const recordedAgain = recordedArcCall(ctx, job, 'walkthrough', 2);
+      const recordedAgain = recordedArcCall(ctx, job, 'experienceVerdict', 2);
       const turn = recordedAgain?.kind === 'result' ? null : repairTurnOf(ctx.runDir, first.called.inv);
       if (recordedAgain?.kind === 'result' || turn !== null) {
         const again = await ask(2, turn === null ? null : { turn, reasons: read.reasons });

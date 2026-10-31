@@ -330,7 +330,7 @@ export function writeJudgmentInputs(
   ctx: StageContext, parent: StageParent & Readonly<{ stage: 'plan-check' | 'gate' }>,
   inputs: Readonly<{
     tip: Sha; head: Sha | null; specRev: SpecRev; specSha256: Sha256Hex; routingRev: RoutingRev; fingerprint?: ApprovalFingerprint; diffShown?: DiffShown; largeDiff?: GateLargeDiff | null;
-    review?: GateReview; designEstimate?: number | null;
+    review?: GateReview; standingReview?: readonly import('../core/events.ts').ReviewItem[]; designEstimate?: number | null;
   }>,
 ): void {
   const applied = ctx.journal.view.planApplied();

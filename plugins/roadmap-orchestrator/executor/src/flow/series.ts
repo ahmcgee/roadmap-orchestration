@@ -209,6 +209,7 @@ class LogIndex {
           if (!this.admitted.has(f.record.unit)) this.admitted.set(f.record.unit, { seq: e.seq, at });
           break;
         case 'stage-outcome':
+          if (!('unit' in f)) break;
           this.push(this.outcomes, f.unit, { seq: e.seq, at, stage: f.stage, attempt: f.attempt, cls: f.class });
           break;
         case 'plan-applied':

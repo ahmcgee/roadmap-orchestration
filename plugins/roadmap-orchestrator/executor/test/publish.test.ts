@@ -619,7 +619,7 @@ describe(`matrix row ${PREEMPT}`, () => {
           'the apply reconciled, its revision (waiting for the slot) aborted and re-evaluated');
         const events = readJournal(r.ctx.runDir, r.journal.view.arc).events;
         const seqOf = (p: (f: Fact) => boolean): number => events.find((e) => e.type === 'fact' && p(e.fact))?.seq ?? Infinity;
-        assert.ok(seqOf((f) => f.kind === 'plan-applied' && f.command === file.id) < seqOf((f) => f.kind === 'stage-outcome' && f.unit === 'u1' && f.stage === 'candidate' && f.outcome === 'green'),
+        assert.ok(seqOf((f) => f.kind === 'plan-applied' && f.command === file.id) < seqOf((f) => (f.kind === 'stage-outcome' && 'unit' in f) && f.unit === 'u1' && f.stage === 'candidate' && f.outcome === 'green'),
           'the candidate never recorded green before the publication');
         assert.deepEqual(await runUnit(w.stage, r.unit('u1'), admitAll), { kind: 'merged' });
         const unitFf = r.journal.view.opsOf('integration.ff').find((i) => i.expect.subject === undefined)!;

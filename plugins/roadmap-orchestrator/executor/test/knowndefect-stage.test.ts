@@ -70,7 +70,7 @@ const admitted = (r: ArcRun, unit: string): Gate => (next) => Promise.resolve(ne
 }).kind === 'admit');
 
 const outcomeFacts = (d: ArcDescriptor, unit: string): readonly StageOutcomeFact[] =>
-  readJournal(absPath(d.runDir), arcId(d.arc)).events.flatMap((e) => (e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.unit === unit ? [e.fact] : []));
+  readJournal(absPath(d.runDir), arcId(d.arc)).events.flatMap((e) => (e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact) && e.fact.unit === unit ? [e.fact] : []));
 const lanesFacts = (d: ArcDescriptor, unit: string) => outcomeFacts(d, unit).filter((f) => f.stage === 'lanes');
 /** The lane spawns of `unit`'s lanes attempt `attempt`. */
 const laneSpawns = (d: ArcDescriptor, unit: string, attempt: number) => intents(d.runDir, 'proc.spawn')

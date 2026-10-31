@@ -111,7 +111,7 @@ test('lanes.regenerate-hand-edit: an output edited by hand beside its regenerate
   const done = started(await lanes(run.ctx, run.unit, salvaged));
   assert.equal(done.outcome.kind, 'red', 'a red lane in a certified checkout (the check put the tree back)');
   const fact = outcomeFacts(run).at(-1)!;
-  assert.ok(fact.kind === 'stage-outcome');
+  assert.ok((fact.kind === 'stage-outcome' && 'unit' in fact));
   assert.equal(fact.chargeable, false, 'the first certification red uses the allowance');
   assert.equal(run.journal.view.unit(U1).counters.unchargedLanesReds, 1);
   assert.ok(done.fix !== null, 'the hand edit returns to a fix round with evidence');

@@ -106,8 +106,8 @@ async function runFixture(name: 'story' | 'vision-silent'): Promise<Fixture> {
 
 const journal = (dir: string, n: number): readonly Event[] => readJournal(absPath(join(layout(dir).product, '.git', 'roadmap-runtime', fakeArc(dir, n))), arcId(fakeArc(dir, n))).events;
 type Seq<F> = F & { seq: number };
-const factsOf = <K extends Fact['kind']>(events: readonly Event[], kind: K): readonly Seq<Extract<Fact, { kind: K }>>[] =>
-  events.flatMap((e) => (e.type === 'fact' && e.fact.kind === kind ? [{ ...(e.fact as Extract<Fact, { kind: K }>), seq: e.seq }] : []));
+const factsOf = <K extends Fact['kind']>(events: readonly Event[], kind: K): readonly Seq<Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: K }>>[] =>
+  events.flatMap((e) => (e.type === 'fact' && e.fact.kind === kind ? [{ ...(e.fact as Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: K }>), seq: e.seq }] : []));
 const raisedOf = (events: readonly Event[], reason: string, dir: string, n: number): readonly Readonly<{ id: string; seq: number }>[] =>
   events.flatMap((e) => {
     if (e.type !== 'intent' || e.kind !== 'needsuser.raise') return [];
@@ -116,7 +116,7 @@ const raisedOf = (events: readonly Event[], reason: string, dir: string, n: numb
   });
 
 /** A unit's stage outcomes, `<stage>:<outcome>` in log order, and the facts themselves. */
-const outcomesOf = (events: readonly Event[], unit: string): readonly Seq<Extract<Fact, { kind: 'stage-outcome' }>>[] => factsOf(events, 'stage-outcome').filter((f) => f.unit === unit);
+const outcomesOf = (events: readonly Event[], unit: string): readonly Seq<Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: 'stage-outcome' }>>[] => factsOf(events, 'stage-outcome').filter((f) => f.unit === unit);
 const named = (o: readonly Readonly<{ stage: string; outcome: string }>[]): readonly string[] => o.map((f) => `${f.stage}:${f.outcome}`);
 /** The `lane` spawns of `unit`'s lane `lane` (spec, suite or journey runs alike). */
 const laneSpawns = (events: readonly Event[], unit: string, lane: string): readonly Event[] =>
@@ -601,7 +601,7 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     assert.deepEqual(plantCheck(product), { kind: 'in-play', arc: fakeArc(story.dir, 1), lane: SUITE_LANE, units: unitsOf(1).length }, 'the fail-fast found plant S in play');
     const { one, two } = chainOf(product);
     const a1 = flowArcOf(one!);
-    const facts = <K extends Fact['kind']>(a: FlowArc, kind: K) => a.facts.flatMap((x) => (x.fact.kind === kind ? [x.fact as Extract<Fact, { kind: K }>] : []));
+    const facts = <K extends Fact['kind']>(a: FlowArc, kind: K) => a.facts.flatMap((x) => (x.fact.kind === kind ? [x.fact as Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: K }>] : []));
     // flow-1 is the request's or, when the third merge's first constraint label got there first, constraint-shift's (the
     // request then goes to flow-2); flow-2 is always the cooldown's one requested bypass.
     const started = facts(a1, 'flow-started');

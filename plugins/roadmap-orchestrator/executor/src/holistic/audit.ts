@@ -1,3 +1,4 @@
+import { validateCampaignAuditOutput } from '../prompts/schemas.ts';
 // The cadence audit job (M3 step B5; DESIGN-1.0.md §2.5; plan "Audits"): one durable job `audit-<n>` at a time, which
 // reads the integrated tree through the lenses and records what they found. The lenses report; the steering
 // checkpoint weighs them at milestone boundaries, with immediate P1 and final-audit triggers (B6; checkpoint.ts).
@@ -81,7 +82,7 @@ import { jobEvidenceRoot } from '../git/snapshot.ts';
 import { diffBase } from '../git/transient.ts';
 import { OBLIGATIONS_INPUT,PLAN_INPUT,RULINGS_INPUT,SPEC_INPUT,VISION_INPUT,keptInput,keptPayload,payloadAtRev } from '../input/inforce.ts';
 import { advancesOf,derivedOf,hasMilestones,parsePlan } from '../input/plan.ts';
-import { raiseNeedsUser,raisedFor,readNeedsUser } from '../needsuser.ts';
+import { readNeedsUser, raiseNeedsUser,raisedFor } from '../needsuser.ts';
 import { runBatchPoint } from '../pipeline/batchlanes.ts';
 import {
 type BackendCallOutcome,type JobParent,type RepairTurn,type StageContext,arcSeat,callArcRole,isRepairTurnOf,minutesMs,recordedArcCall,repairTurnOf,runOp,unitBranch,verdictOf,
@@ -91,7 +92,7 @@ import { architecture,docAt,inMs,judgmentEntry,ledgerDir,ledgerPath,targetDirs }
 import { judgmentRepairDirective } from '../prompts/directives.ts';
 import { promptFor,renderPrompt } from '../prompts/index.ts';
 import { type FindingView,type LensInputs,type RenderedSpec,visionInputOf } from '../prompts/inputs.ts';
-import { type LensFinding,type LensOutput,validateLensOutput } from '../prompts/schemas.ts';
+import { type LensFinding, type LensOutput } from '../prompts/schemas.ts';
 import { evidenceSnapshotOp,worktreeCreateOp,worktreeRemoveOp } from '../recover/ops.ts';
 import { probe } from '../resources/probe.ts';
 import { type JobHolder,type Reservation,cleanup,heldReservation,run } from '../resources/reserve.ts';
@@ -159,10 +160,7 @@ const budgetOf = (s: Started): number => auditDiffBudgetOf(s) ?? LENS_DIFF_BUDGE
  * published heads); an audit started before the lens-range fix reviews the whole rest in one call, as its recorded
  * calls did.
  */
-function nextChunk(ctx: StageContext, s: Started, r: Recorded, from: Sha, heads: ReadonlySet<Sha>): Chunk {
-  const budget = auditDiffBudgetOf(s);
-  return { from, to: budget === null ? s.integrationSha : chunkEnd(ctx.repo, from, s.integrationSha, budget, r.derived, heads) };
-}
+function nextChunk(_ctx: StageContext, s: Started, _r: Recorded, from: Sha, _heads: ReadonlySet<Sha>): Chunk { return {from, to: s.integrationSha}; }
 
 // ---------------------------------------------------------------------------------------------------
 // Findings
@@ -273,7 +271,7 @@ export function skipReason(ctx: StageContext): 'backend-parked' | 'paused' | nul
   const view = ctx.journal.view;
   const control = view.control();
   if (control.stop !== null || control.pausedAll) return 'paused';
-  return view.parkedBackends().includes(arcSeat(ctx, 'lens').triple.backend) ? 'backend-parked' : null;
+  return view.parkedBackends().includes(arcSeat(ctx, 'campaignAudit').triple.backend) ? 'backend-parked' : null;
 }
 
 /**
@@ -411,7 +409,7 @@ function readLens(ctx: StageContext, job: JobId, called: BackendCallOutcome): Le
   switch (v.kind) {
     case 'success':
       try {
-        return { kind: 'reported', output: validateLensOutput(v.value) };
+        return { kind: 'reported', output: validateCampaignAuditOutput(v.value) };
       } catch (error) {
         if (error instanceof SchemaError) return { kind: 'failed', detail: `malformed report: ${error.message}`, refused: true };
         throw error;
@@ -526,8 +524,8 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
   const base = coverageBase(ctx, s.integrationSha, s.seq);
   if (base === null) throw new Error(`${job}: no vision revision before its start`);
   const checkout = lensesCheckout(ctx, job);
-  const { triple } = arcSeat(ctx, 'lens');
-  const prompt = promptFor('lens', triple.model);
+  const { triple } = arcSeat(ctx, 'campaignAudit');
+  const prompt = promptFor('campaignAudit', triple.model);
   let made = false;
   const covered: LensKind[] = [];
   let outcome: 'completed' | 'abandoned' = 'completed';
@@ -537,11 +535,11 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
    * or the repair turn `repair` (its refused call's session resumed, told every reason).
    */
   const ask = async (lens: LensKind, attempt: number, chunk: Chunk, repair: Readonly<{ turn: RepairTurn; reasons: readonly string[] }> | null): Promise<Readonly<{ read: LensRead; called: BackendCallOutcome }>> => {
-    let called = recordedArcCall(ctx, job, 'lens', attempt);
+    let called = recordedArcCall(ctx, job, 'campaignAudit', attempt);
     // A restart reissues a lost logical call as a new operation; count those operations across every restart.
     const operations = ctx.journal.view.opsOf('proc.spawn').filter((i) => {
       const subject = i.expect.subject;
-      return subject.purpose === 'arc-backend' && subject.job === job && subject.role === 'lens' && subject.attempt === attempt;
+      return subject.purpose === 'arc-backend' && subject.job === job && subject.role === 'campaignAudit' && subject.attempt === attempt;
     }).length;
     if (called === null || (called.kind === 'lost' && operations <= LOST_CALL_REISSUES)) {
       if (!made) {
@@ -552,7 +550,7 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
       const diffDir = lensDiffDir(ctx, job, attempt);
       const inputs = lensInputs(ctx, s, r, lens, chunk, checkout, diffDir);
       called = await withCpu(ctx, job, () => callArcRole(ctx, {
-        job, role: 'lens', attempt, system: prompt.system, cwd: checkout, evidenceDirs: [ledgerDir(ctx), diffDir, ...targetDirs(inputs.target)],
+        job, role: 'campaignAudit', attempt, system: prompt.system, cwd: checkout, evidenceDirs: [ledgerDir(ctx), diffDir, ...targetDirs(inputs.target)],
         deadlineAt: inMs(minutesMs(ctx.plan().limits?.judgmentDeadlineMin ?? DEFAULT_BOUNDS.judgmentDeadlineMin)),
         ...(repair === null
           ? { ...renderPrompt(prompt, inputs), schema: prompt.schema, session: freshJudgmentSession() }
@@ -563,6 +561,9 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
   };
   /** Admits a report's drafts (each finding opened at once); returns the refused ones, recorded in the tally. */
   const admitReport = (lens: LensKind, attempt: number, output: LensOutput): readonly LensRefusal[] => {
+    if ('requests' in output) for (const request of (output as import('../prompts/schemas.ts').CampaignAuditOutput).requests) {
+      if (!ctx.journal.view.opsOf('needsuser.raise').some((i) => i.parent.type === 'job' && i.parent.job === job && readNeedsUser(ctx.runDir, i.expect.id)?.summary === request.summary)) raiseNeedsUser(ctx.journal, ctx.runDir, {blocking: true, subject: {type: 'arc'}, reason: 'owner-request', summary: request.summary, recommendation: 'The root reviews the evidence and amends through apply --reason.', evidence: [jobEvidenceRoot(ctx.runDir, job)], options: []}, parent);
+    }
     const refused: LensRefusal[] = [];
     for (const f of output.findings) {
       const d = lensDraft(ctx, s, r, lens, f, checkout, gateHadPassed);
@@ -606,7 +607,7 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
       }
       if (reasons.length > 0) {
         const again = order.length + further + 1;
-        const recordedAgain = recordedArcCall(ctx, job, 'lens', again);
+        const recordedAgain = recordedArcCall(ctx, job, 'campaignAudit', again);
         // An earlier release's fresh retry of a refused draft is this repair turn's answer; after a malformed report it
         // asked nothing, so a call recorded at the next number is another's (adoption).
         const drafts = first.read.kind === 'reported';
@@ -645,6 +646,7 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
   }).sort((a, b) => (a.lens < b.lens ? -1 : 1));
   const findings = canonicalIds(t.ids);
   ctx.journal.fact({ kind: 'audit-ended', job, covered: ranges, findings, suppressed: t.suppressed, outcome, refused: t.refused });
+  ctx.journal.fact({kind: 'stage-outcome', job, stage: 'campaign-audit', verdict: outcome, findings: findings.length});
   crashPoint('audit.after-ended');
   if (outcome === 'abandoned') {
     const c = cadence(ctx, ctx.clock);

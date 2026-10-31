@@ -388,11 +388,9 @@ export type GateInputs = Readonly<{
   intent: string;
   nonGoals: readonly string[];
   contracts: readonly DocText[];
-  rulings: readonly RulingText[];
   index: ReferenceIndex;
   target: GateTargetInput;
   direction: string;
-  planCheckNotes: string;
   /** Directly selected obligations, with their observations (never their vision clauses: R17). */
   obligations: readonly ObligationView[];
   /** Selected only by the unmapped-path fallback, exempt ones left out: rendered as id and statement, without observations. */
@@ -745,7 +743,10 @@ export type PocInputs = Readonly<{
   lessons: readonly string[];
 }>;
 
+export type ExperienceInputs = Readonly<{mode: 'walkthrough'; brief: WalkthroughInputs}> | Readonly<{mode: 'polish'; brief: PolishJudgeInputs}>;
 export type RoleInputs = {
+  readonly experienceVerdict: ExperienceInputs;
+  readonly campaignAudit: Omit<LensInputs, 'lens' | 'rulings' | 'index'>;
   readonly planCheck: PlanCheckInputs;
   readonly build: BuildInputs;
   readonly gate: GateInputs;
@@ -761,6 +762,8 @@ export type RoleInputs = {
 };
 
 export const ROLE_INPUTS = {
+  experienceVerdict: ['mode', 'brief'],
+  campaignAudit: ['vision', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'target', 'checkout', 'specsOnly'],
   planCheck: [
     'spec', 'intent', 'nonGoals', 'contracts', 'rulings', 'index', 'target', 'direction', 'systems', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision', 'priorInvalid',
     'escalation', 'milestones', 'staleLinks', 'design', 'pocs',
@@ -768,7 +771,7 @@ export const ROLE_INPUTS = {
   build: ['systemNotes', 'notes', 'spec', 'intent', 'nonGoals', 'contracts', 'index', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'systems', 'fixRound', 'witnessChecks', 'milestones', 'browser', 'handover', 'method'],
   gate: [
     'systemNotes', 'standing', 'method',
-    'spec', 'intent', 'nonGoals', 'contracts', 'rulings', 'index', 'target', 'direction', 'planCheckNotes', 'obligations', 'standingObligations', 'diff', 'laneLedger', 'evidence', 'systems', 'reach', 'traits', 'reachTraits', 'priorRound',
+    'spec', 'intent', 'nonGoals', 'contracts', 'index', 'target', 'direction', 'obligations', 'standingObligations', 'diff', 'laneLedger', 'evidence', 'systems', 'reach', 'traits', 'reachTraits', 'priorRound',
     'checks', 'escalation', 'largeDiff', 'milestones', 'review', 'undeclaredContracts',
   ],
   lens: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'target', 'checkout', 'specsOnly'],
@@ -787,6 +790,7 @@ export const ROLE_INPUTS = {
 // Compile-time half of `prompts.fields==required`: ROLE_INPUTS names every key of each role's inputs.
 type Missing<R extends Role> = Exclude<keyof RoleInputs[R], (typeof ROLE_INPUTS)[R][number]>;
 const ROLE_INPUTS_COMPLETE: { readonly [R in Role]: [Missing<R>] extends [never] ? true : Missing<R> } = {
+  experienceVerdict: true, campaignAudit: true,
   planCheck: true,
   build: true,
   gate: true,

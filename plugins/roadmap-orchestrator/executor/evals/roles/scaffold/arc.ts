@@ -193,7 +193,7 @@ type Outcome = Readonly<{ stage: string; outcome: string; reasons: readonly stri
 /** u1's stage outcomes in log order, each with its refusal or defect reasons. */
 function outcomesOf(r: ArcRun): readonly Outcome[] {
   return readJournal(r.ctx.runDir, arcId(r.d.arc)).events.flatMap((e) => {
-    if (e.type !== 'fact' || e.fact.kind !== 'stage-outcome' || e.fact.unit !== 'u1') return [];
+    if (e.type !== 'fact' || (e.fact.kind !== 'stage-outcome' || !('unit' in e.fact)) || e.fact.unit !== 'u1') return [];
     const d = e.fact.detail;
     return [{ stage: e.fact.stage, outcome: e.fact.outcome, reasons: d?.kind === 'scaffold-refused' || d?.kind === 'design-defect' ? d.reasons : null }];
   });
