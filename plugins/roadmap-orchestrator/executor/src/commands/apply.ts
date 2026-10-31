@@ -169,7 +169,10 @@ export async function finish(ctx: CommandContext, intent: IntentOf<'command.appl
       : 'target' in b && b.target.type === 'unit' ? [{type: 'unit', unit: b.target.unit}] : [{type: 'arc'}];
     if (b.type === 'apply') {
       const fact = ctx.journal.view.planAppliedBy(id);
-      for (const change of fact?.changes ?? []) if ('unit' in change && change.unit !== null) subjects.push({type: 'unit', unit: change.unit});
+      for (const change of fact?.changes ?? []) {
+        if ('unit' in change && change.unit !== null) subjects.push({type: 'unit', unit: change.unit});
+        if (change.type === 'unit-reentered') subjects.push({type: 'unit', unit: change.reenters});
+      }
     }
     if ('target' in b && b.target.type === 'all') subjects.push(...ctx.plan().units.map((u) => ({type: 'unit' as const, unit: u.id})));
     if (b.type === 'sweep' || (b.type === 'resume' && b.target.type === 'backend')) subjects.push({type: 'host'});

@@ -41,7 +41,7 @@ keeps the brief, changes no stage, and supplies it through the next build round'
 during a round belong to the following round.
 
 Successful commands close open items for their subjects through `closeItemsFor(subject, command)` before their
-terminal receipts. Apply also closes subjects of the units it changes; all-unit controls close unit subjects too.
+terminal receipts. Apply also closes subjects of the units it changes and the lineages it re-enters; all-unit controls close unit subjects too.
 `ack` refuses an item without options. Digest/convergence items explicitly offer acknowledgement.
 Status is read-only without a single-flight lock.
 

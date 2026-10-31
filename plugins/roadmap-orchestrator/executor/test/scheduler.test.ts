@@ -8,7 +8,7 @@ import { bytesSha256 } from '../src/spec/spec.ts';
 // sched.stop-during-smoke, sched.stop-during-teardown, sched.no-double-apply, sched.backend-limit-others-run,
 // probe.capacity-recovers-held-unit, reenter.clean-verify-to-retire, arc.state-predicates.
 import assert from 'node:assert/strict';
-import { cpSync,readFileSync,writeFileSync } from 'node:fs';
+import { cpSync,existsSync,readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe,it,test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -26,7 +26,7 @@ import { parseRepoConfig } from '../src/routing/layers.ts';
 import { unitSettled } from '../src/schedule/scheduler.ts';
 import { ARC,H,REV,appliedFields,chain } from './fixtures/log-records.ts';
 import { recoveryContext } from './fixtures/rec-common.ts';
-import { haltItem,receiptOf,startScheduler,submit } from './fixtures/sched-common.ts';
+import { haltItem,receiptOf,startScheduler,stopScheduler,submit } from './fixtures/sched-common.ts';
 import { SCENARIO_TIMEOUT_MS,planCheckStep } from './fixtures/stage-common.ts';
 import {
 type ArcDescriptor,type ArcRun,MUL,U1,codexStep,commandContextFor,contextFor,gateStep,mulBuild,outcomes,setupArc,stepUntil,
@@ -216,15 +216,16 @@ test('sched.stop-during-teardown: a stop while a teardown runs (a 10-min fake) n
   const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild()] });
   slowTeardown(d, dir, tmpDir('res-state'));
   const r = contextFor(d);
+  const item = raiseNeedsUser(r.journal, r.ctx.runDir, {
+    blocking: false, subject: { type: 'host' }, reason: 'env-blocked', summary: 'seeded', recommendation: 'ack it', options: [{ id: 'resolved', label: 'Issue resolved' }], evidence: [],
+  }, { type: 'arc' });
+  const s = startScheduler(r);
   try {
-    const item = raiseNeedsUser(r.journal, r.ctx.runDir, {
-      blocking: false, subject: { type: 'arc' }, reason: 'env-blocked', summary: 'seeded', recommendation: 'ack it', options: [{ id: 'resolved', label: 'Issue resolved' }], evidence: [],
-    }, { type: 'arc' });
-    const s = startScheduler(r);
     await reached(dir, 'teardown', WAIT_MS);
     assert.ok(heldBy(r, U1).includes('db'), 'the lane still holds db while teardown runs');
     const stop = submit(r, { type: 'stop' });
     assert.equal((await receiptOf(r, stop)).state, 'applied');
+    assert.equal(r.journal.view.ackOf(item), null, 'an arc stop does not close the host subject');
     // Stopping, the scheduler still applies control commands.
     assert.equal((await receiptOf(r, submit(r, { type: 'ack', needsUser: item, choice: null }))).state, 'applied');
     assert.notEqual(r.journal.view.ackOf(item), null);
@@ -240,6 +241,8 @@ test('sched.stop-during-teardown: a stop while a teardown runs (a 10-min fake) n
     assert.deepEqual(r.journal.view.opsOf('proc.kill'), [], 'the teardown was not killed');
     assert.ok(allFree(r));
   } finally {
+    if (!existsSync(join(dir, 'teardown.release'))) release(dir, 'teardown');
+    await stopScheduler(r, s);
     r.journal.close();
   }
 });
@@ -415,6 +418,8 @@ test('reenter.clean-verify-to-retire: a unit parked at its gate is re-entered (`
     assert.deepEqual(outcomes(d), [...STRAIGHT.slice(0, 7), 'gate:escalate', 'gate:escalate']);
     // The architect re-enters u1 as u1b, at verify: its branch already holds the work. It names the gate's park it fixes
     // and records the decision the escalation asked for.
+    const { syncInputs } = await import('./fixtures/unit-common.ts');
+    syncInputs(r);
     cpSync(join(d.planPath, '..', 'u1.json'), join(d.planPath, '..', 'u1b.json'));
     const spec = JSON.parse(readFileSync(join(d.planPath, '..', 'u1b.json'), 'utf8')) as Json & { decisions: Json[] };
     const decision = { id: 'D1', text: 'mul keeps its integer signature', state: 'active' };
@@ -427,7 +432,7 @@ test('reenter.clean-verify-to-retire: a unit parked at its gate is re-entered (`
     const { applyBody } = await import('./fixtures/unit-common.ts');
     const applied = await receiptOf(r, submit(r, applyBody(d)));
     assert.equal(applied.state, 'applied', JSON.stringify(applied));
-    await receiptOf(r, submit(r, { type: 'ack', needsUser: item, choice: null }));
+    assert.equal(r.journal.view.ackOf(item)?.command, applied.command, 'the re-entry apply closes its lineage subject');
     const end = await s.end;
     assert.deepEqual(end, { kind: 'complete', units: [{ unit: 'u1', result: 'superseded', by: 'u1b' }, { unit: 'u1b', result: 'merged' }] });
     assert.deepEqual(outcomes(d, 'u1b'), ['prepare:clean-verify', ...STRAIGHT.slice(6)]);
