@@ -270,6 +270,8 @@ export function sampleHolistic(record: string, snap: LogSnapshot): readonly Samp
     if (label.startsWith('log.append.')) {
       return e.type === 'fact' && M3_FACTS.includes(e.fact.kind) && !(e.fact.kind === 'plan-applied' && e.fact.source?.type === 'start') ? `fact ${e.fact.kind}` : null;
     }
+    // The checkpoint digest is gone; sample the builder's root split request at the same durable item boundaries.
+    if (label.startsWith('needsuser.raise.')) return 'root-request';
     const ctx = contextOf(snap.view, e);
     return ctx === 'unit' || (ctx === 'arc' && e.seq < firstJob) ? null : ctx;
   });

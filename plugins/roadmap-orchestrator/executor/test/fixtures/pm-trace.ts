@@ -21,6 +21,9 @@ export const FROM_B2: Readonly<Record<string, Trace['recoveredBy']>> = {
 
 /** Every executor label but the journal's: what recovery does to the op it cut short. */
 export const LABEL_TRACE: Readonly<Record<string, Trace>> = {
+  'command.apply.before-effect': R('reconciled'),
+  'command.apply.after-effect': R('reconciled'),
+  'command.apply.after-receipt': R('reconciled'),
   'spawn.after-intent': R('reconciled'),
   'launch.after-launch-json': R('reconciled'),
   // The runner lives on: adopted, or once it has exited its exit.json is adapted again.

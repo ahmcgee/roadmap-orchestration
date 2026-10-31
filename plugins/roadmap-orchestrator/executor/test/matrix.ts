@@ -206,7 +206,7 @@ const MERGEIN_LABELS: Readonly<Partial<Record<Boundary, readonly string[]>>> = {
 const HOLISTIC_LABELS: Readonly<Record<Boundary, readonly string[]>> = {
   B1: ['log.append.before-write', 'log.append.after-partial-write'],
   B2: [
-    'log.append.after-fsync', 'spawn.after-intent', 'resource.after-intent', 'worktree.create.act-start', 'worktree.remove.act-start', 'evidence.act-start',
+    'command.apply.before-effect', 'log.append.after-fsync', 'spawn.after-intent', 'resource.after-intent', 'worktree.create.act-start', 'worktree.remove.act-start', 'evidence.act-start',
     'ff.act-start', 'snapshot.act-start', 'revision.commit.after-intent', 'needsuser.raise.before-publish', 'audit.after-started', 'checkpoint.after-inputs',
     'docs.act-start', 'packreview.after-started', 'witnesscheck.after-lane-files', 'smoke.after-patch-kept', 'mutant.act-start',
   ],
@@ -215,7 +215,7 @@ const HOLISTIC_LABELS: Readonly<Record<Boundary, readonly string[]>> = {
     'plan.apply.after-inputs', 'audit.after-lens', 'docs.after-commit-tree', 'closeout.after-ff', 'mutant.after-worktree',
   ],
   B4: [
-    'spawn.after-runner-exit', 'spawn.after-result', 'spawn.after-usage', 'evidence.act-end', 'ff.act-end', 'snapshot.act-end', 'revision.commit.after-fact',
+    'command.apply.after-effect', 'command.apply.after-receipt', 'spawn.after-runner-exit', 'spawn.after-result', 'spawn.after-usage', 'evidence.act-end', 'ff.act-end', 'snapshot.act-end', 'revision.commit.after-fact',
     'needsuser.raise.after-publish', 'audit.before-ended', 'checkpoint.after-call', 'bundle.after-applied', 'bundle.after-decided', 'docs.act-end',
     'closeout.before-published', 'packreview.after-call', 'packreview.after-ended', 'amendment.after-decided', 'debt.after-approval',
     'smoke.after-witnessed', 'mutant.act-end', 'bundle.after-conversion-amendment',

@@ -124,6 +124,8 @@ async function reference(t: Owner, name: string, s: Scenario, outcomes: Readonly
 // The recovery trace each crash point allows
 
 function traceFor(ref: Reference, label: string, occurrence: number): Trace {
+  // The start owns no command; later plan input captures belong to the root's open apply command.
+  if (label === 'plan.apply.after-inputs' && occurrence > 1) return R('reconciled');
   if (label.startsWith('log.append.')) {
     const e = ref.events.find((x) => x.seq === occurrence);
     if (e === undefined) throw new Error(`${ref.name}: no event at seq ${occurrence}`);
