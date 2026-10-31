@@ -744,6 +744,7 @@ export class Fold implements JournalView {
   readonly #amendments: AmendmentState[] = [];
   readonly #packReviews: { started: PackReviewState['started']; ended: PackReviewState['ended'] }[] = [];
   // M4b
+  readonly #stageJobOutcomes: import('./events.ts').JobStageOutcomeFact[] = [];
   readonly #flowFacts: FlowFactAt[] = [];
   readonly #walkFacts: WalkFactAt[] = [];
   /** Open walks and their recorded proposals, in log order. */
@@ -1059,6 +1060,7 @@ export class Fold implements JournalView {
         return;
       }
       case 'stage-outcome': {
+        if (!('unit' in f)) { this.#stageJobOutcomes.push(f); break; }
         const key = `${f.stage}#${f.attempt}`;
         const existing = this.#units.get(f.unit);
         if (existing?.outcomes.has(key) === true) fail(`second stage-outcome for ${f.unit} ${key}`);
@@ -2121,6 +2123,8 @@ export class Fold implements JournalView {
   lastExecutorStarted(): number {
     return this.#executorStarted;
   }
+
+  stageJobOutcomes(): readonly import('./events.ts').JobStageOutcomeFact[] { return this.#stageJobOutcomes; }
 
   flowFacts(): readonly FlowFactAt[] {
     return this.#flowFacts;

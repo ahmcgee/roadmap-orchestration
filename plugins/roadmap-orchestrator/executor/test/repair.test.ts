@@ -163,8 +163,8 @@ describe('vacuity repairs: reproduce and acceptance', () => {
       assert.deepEqual(await runUnit(r.ctx, r.unit('v1'), admitAll), { kind: 'merged' }, outcomes(d, 'v1').join(' '));
       const o = outcomes(d, 'v1');
       assert.deepEqual(o.filter((x) => x.startsWith('candidate:')), ['candidate:red', 'candidate:green']);
-      const red = facts(r).find((f) => f.kind === 'stage-outcome' && f.stage === 'candidate' && f.outcome === 'red');
-      assert.equal(red?.kind === 'stage-outcome' && red.chargeable, true, 'a survivor is charged');
+      const red = facts(r).find((f) => (f.kind === 'stage-outcome' && 'unit' in f) && f.stage === 'candidate' && f.outcome === 'red');
+      assert.equal(red?.kind === 'stage-outcome' && 'unit' in red && red.chargeable, true, 'a survivor is charged');
       const kills = mutantWitnessed(r);
       assert.equal(kills.length, 3, 'reproduce, the red candidate, the green one');
       assert.deepEqual(moves(r), ['F-1:owned{v1}', 'F-1:fixed-on-branch{v1}', 'F-1:owned{v1}', 'F-1:fixed-on-branch{v1}', 'F-1:resolved'],

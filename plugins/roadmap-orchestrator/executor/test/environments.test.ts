@@ -136,8 +136,8 @@ test('env.probe-fails-parks: a failed probe parks the lanes stage on the environ
   const done = started(await lanes(run.ctx, run.unit, run.base));
   assert.equal(done.outcome.kind, 'env-unavailable');
   const fact = outcomeFacts(run).at(-1)!;
-  assert.ok(fact.kind === 'stage-outcome' && fact.outcome === 'env-unavailable' && !fact.chargeable);
-  assert.deepEqual(fact.kind === 'stage-outcome' ? fact.park : null, { class: 'retryable', targets: [{ type: 'environment', environment: 'stack' }] });
+  assert.ok((fact.kind === 'stage-outcome' && 'unit' in fact) && fact.outcome === 'env-unavailable' && !fact.chargeable);
+  assert.deepEqual((fact.kind === 'stage-outcome' && 'unit' in fact) ? fact.park : null, { class: 'retryable', targets: [{ type: 'environment', environment: 'stack' }] });
   assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, 0);
   assert.equal(laneSpawns(run).length, 0, 'the lane never ran');
   assert.deepEqual(startedCalls(state), ['up stack', 'probe stack', 'down stack'], 'brought down after its failed probe');

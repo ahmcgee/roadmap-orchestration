@@ -1,0 +1,44 @@
+{
+  "arc": "golden",
+  "state": "no-owner",
+  "planRev": 1,
+  "progress": {
+    "total": 1,
+    "merged": 0,
+    "states": {
+      "ready": 1
+    },
+    "held": 0,
+    "remaining": 0
+  },
+  "spend": {
+    "costUsd": 12,
+    "expectedUsd": 10,
+    "differenceUsd": 2,
+    "estimatedCalls": 0,
+    "unavailableCalls": 0
+  },
+  "milestones": [],
+  "caught": {
+    "total": 1,
+    "laneReds": 0,
+    "gateRevisions": 1,
+    "uniqueFindings": 0,
+    "byLens": {}
+  },
+  "verdicts": [],
+  "captures": [],
+  "needsUser": [],
+  "waste": [],
+  "demo": null,
+  "completion": {
+    "planRev": null,
+    "head": null,
+    "active": false,
+    "sealed": false,
+    "notSealed": "not completed",
+    "unmet": [
+      "units-open"
+    ]
+  }
+}

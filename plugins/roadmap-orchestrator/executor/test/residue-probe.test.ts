@@ -94,7 +94,7 @@ function recoveryFail(r: ExecRun): IntentOf<'resource.transition'> {
   assert.ok(holder.type === 'stage' && holder.unit === U1 && holder.stage === 'lanes', JSON.stringify(holder));
   assert.ok(edge.type === 'fail' && edge.residues.length === 1 && edge.residues[0]!.resource === ESTATE1, JSON.stringify(edge));
   assert.deepEqual(fail.parent, { type: 'arc' }, 'recovery\'s cleanup of the dead holder');
-  const recorded = facts(r).filter((f) => f.kind === 'stage-outcome' && f.unit === U1 && f.stage === 'lanes' && f.attempt === holder.attempt);
+  const recorded = facts(r).filter((f) => (f.kind === 'stage-outcome' && 'unit' in f) && f.unit === U1 && f.stage === 'lanes' && f.attempt === holder.attempt);
   assert.deepEqual(recorded, [{ kind: 'stage-outcome', unit: U1, stage: 'lanes', attempt: holder.attempt, outcome: 'interrupted', class: 'hold', chargeable: false, cause: { type: 'recovery' } }],
     'the killed lanes attempt has only its recovery hold: nothing parked');
   return fail;

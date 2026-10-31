@@ -1,3 +1,4 @@
+import { killEvidence, readOomKills } from './host/diagnostics.ts';
 // The supervisor (plan "Supervisor (R19)", "Host lock and ownership (R17-R18)"; DESIGN-1.0.md §2): it owns
 // the executor and nothing else.
 //
@@ -107,17 +108,18 @@ type HeldStage = Extract<Parent, { type: 'stage' }>;
 export type ExecutorEndRecord = Readonly<{
   v: typeof SCHEMA_VERSION; generation: number; at: IsoTime;
   child: Readonly<{ type: 'exited'; code: number }> | Readonly<{ type: 'signalled'; signal: NodeJS.Signals }>;
+  killEvidence?: ReturnType<typeof killEvidence>;
   stages: Readonly<{ kind: 'known'; last: HeldStage | null; open: readonly HeldStage[] }> | Readonly<{ kind: 'unreadable'; detail: string }>;
 }>;
 
 /** Supervisor-owned evidence: survives an executor crash and is written before any restart or claim release. */
-function recordExecutorEnd(dir: AbsPath, claim: HostLockClaim, how: Exited): void {
+function recordExecutorEnd(dir: AbsPath, claim: HostLockClaim, how: Exited, pid: number, oomBefore: number | null, watchdog: boolean): void {
   let stages: ExecutorEndRecord['stages'];
   try {
     const { view, events } = readJournal(claim.runDir, claim.arc);
     const held = events.flatMap((e): readonly HeldStage[] => {
       if (e.type === 'intent' && e.parent.type === 'stage') return [e.parent];
-      if (e.type === 'fact' && e.fact.kind === 'stage-outcome') return [{ type: 'stage', unit: e.fact.unit, stage: e.fact.stage, attempt: e.fact.attempt }];
+      if (e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact)) return [{ type: 'stage', unit: e.fact.unit, stage: e.fact.stage, attempt: e.fact.attempt }];
       return [];
     });
     stages = { kind: 'known', last: held.at(-1) ?? null, open: view.plannedUnits().flatMap((unit) => {
@@ -132,6 +134,7 @@ function recordExecutorEnd(dir: AbsPath, claim: HostLockClaim, how: Exited): voi
   const record: ExecutorEndRecord = {
     v: SCHEMA_VERSION, generation: claim.generation, at: isoTimeOf(new Date()),
     child: how.code !== null ? { type: 'exited', code: how.code } : { type: 'signalled', signal: how.signal! }, stages,
+    ...(how.signal === 'SIGKILL' ? { killEvidence: killEvidence(pid, oomBefore, watchdog) } : {}),
   };
   exclusivePublish(hostPath(dir, `executor.${claim.generation}.exit.json`), fileJson(record));
 }
@@ -300,6 +303,7 @@ async function superviseOne(args: SupervisorArgs, claim: HostLockClaim, controlO
   const child = spawn(process.execPath, [EXECUTOR_ENTRY, ...argv], { stdio: ['ignore', out, err], env });
   closeSync(out);
   closeSync(err);
+  const oomBefore = readOomKills();
   let exited: Exited | null = null;
   const ended = new Promise<void>((resolve) => child.once('exit', (code, sig) => {
     exited = { code, signal: sig };
@@ -337,7 +341,7 @@ async function superviseOne(args: SupervisorArgs, claim: HostLockClaim, controlO
     }
   }
   const how: Exited = exited;
-  recordExecutorEnd(dir, claim, how);
+  recordExecutorEnd(dir, claim, how, child.pid!, oomBefore, stale !== null);
 
   const owed = (failure: Owed): Owed => (ready ? { kind: 'none' } : failure);
   const reason = exitReasonOf(dir, claim.generation);

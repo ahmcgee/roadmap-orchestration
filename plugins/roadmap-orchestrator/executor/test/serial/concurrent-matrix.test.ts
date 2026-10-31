@@ -178,7 +178,7 @@ function assertOneAttemptPerUnit(snap: LogSnapshot): void {
       open.set(e.parent.unit, set);
       assert.ok(set.size <= 1, `unit ${e.parent.unit} has attempts ${[...set].join(', ')} open at seq ${e.seq}`);
     }
-    if (e.type === 'fact' && e.fact.kind === 'stage-outcome') {
+    if (e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact)) {
       open.get(e.fact.unit)?.delete(e.fact.attempt);
       closed.add(`${e.fact.unit}#${e.fact.attempt}`);
     }
@@ -345,7 +345,7 @@ function peerAtCrash(peer: Peer, crash: AtCrash): IntentOf<'proc.spawn'> | null 
 
 /** Whether `unit`'s gate had approved in `snap` (the publication pin is released then). */
 const approvedIn = (snap: LogSnapshot, unit: string): boolean =>
-  snap.events.some((e) => e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.unit === unit && e.fact.stage === 'gate' && e.fact.outcome === 'approve');
+  snap.events.some((e) => e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact) && e.fact.unit === unit && e.fact.stage === 'gate' && e.fact.outcome === 'approve');
 
 function peerEnd(peer: Peer, r: ExecRun, crash: AtCrash, pinnedInv: IntentOf<'proc.spawn'> | null, end: LogSnapshot): void {
   const crashSeq = crash.snap.events.at(-1)!.seq;
@@ -716,7 +716,7 @@ function assertKillRace(rec: LogSnapshot, crash: LogSnapshot, c: Sampled, owned:
   assert.deepEqual(describe(crash, rest), describe(rec, recRest.slice(0, rest.length)), 'u1\'s other records at the crash are the recording\'s, in order');
   const killAt = recorded.findIndex((e) => isKill(rec, e));
   assert.ok(rest.length >= recorded.slice(0, killAt).filter((e) => !isKill(rec, e)).length, 'u1\'s records up to the kill\'s intent are all at the crash');
-  const outcome = recRest.findIndex((e) => e.seq > recorded[killAt]!.seq && e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.stage === 'candidate');
+  const outcome = recRest.findIndex((e) => e.seq > recorded[killAt]!.seq && e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact) && e.fact.stage === 'candidate');
   assert.ok(outcome >= 0 && rest.length <= outcome, `u1's candidate outcome is not at the crash: its close awaits the kill (${rest.length} of u1's other records, the outcome is the ${outcome + 1}th)`);
 }
 

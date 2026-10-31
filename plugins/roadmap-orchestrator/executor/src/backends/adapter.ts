@@ -28,6 +28,7 @@ type Usage,RUNNER_FILE_READERS,STDERR_FILE,STDOUT_FILE,classifyCommand,classifyT
 import { type AbsPath,absPath } from '../core/values.ts';
 import { readClaude } from './claude.ts';
 import { readCodex } from './codex.ts';
+import { pricedCodexUsage } from './pricing.ts';
 import { MalformedOutputError,ResultConflictError,UnsupportedSchemaError } from './errors.ts';
 
 /** What one backend invocation reported, before schema validation and the precedence rule. */
@@ -195,7 +196,7 @@ function implementerSession(terminal: Extract<BackendTerminal, { role: 'build' }
  * the streamed share too would count it twice. A judgment's session is never resumed after a call without a result.
  */
 function implementerUsage(terminal: BackendTerminal, usage: Usage): Usage {
-  if (terminal.role !== 'build' || usage.kind !== 'unavailable' || usage.streamed === undefined) return usage;
+  if (terminal.session.backend !== 'claude' || terminal.role !== 'build' || usage.kind !== 'unavailable' || usage.streamed === undefined) return usage;
   return { kind: 'unavailable', reason: usage.reason };
 }
 
@@ -203,7 +204,10 @@ type Adapted = Readonly<{ result: ResultFile; reads: ReadsFile | null }>;
 
 function backendAdapted(input: AdapterInput, terminal: BackendTerminal): Adapted {
   const { launch, exit } = input;
-  const reading = read(terminal, input.stdoutPath);
+  const raw = read(terminal, input.stdoutPath);
+  const modelFlag = launch.argv.findIndex((a) => a === '--model' || a === '-m');
+  const reading = terminal.session.backend === 'codex'
+    ? { ...raw, usage: pricedCodexUsage(raw.usage, modelFlag < 0 ? '' : launch.argv[modelFlag + 1]!) } : raw;
   const bound = { v: launch.v, arc: launch.arc, op: launch.op, inv: launch.inv };
   const base = {
     ...bound, type: 'backend' as const,

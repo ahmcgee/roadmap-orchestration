@@ -154,7 +154,6 @@ import type { CorpusPin } from './corpus/types.ts';
 import type { BankReason,DebtItem,DebtLedger } from './debt/types.ts';
 import { type DemoStatus,demoStatus } from './demo/promote.ts';
 import { HEARTBEAT_FILE,REJECTION_FILE,START_FILE } from './executor.ts';
-import { type FlowStatus,flowStatus } from './flow/track.ts';
 import { git,revParse } from './git/git.ts';
 import { witnessDir } from './git/snapshot.ts';
 import { findingAttribution,opportunityClauses } from './holistic/admits.ts';
@@ -600,12 +599,6 @@ export type Status = Readonly<{
   opportunities: readonly OpportunityLine[];
   /** The drift indicator (see the header): one line per merged checkpoint unit not classed opportunity. */
   drift: readonly DriftLine[];
-  /**
-   * M4b (plan "Surfaces"): the flow loop (src/flow/track.ts `flowStatus`): `off-dev7` for an arc 1.0.0-dev.7 started; else
-   * the constraint, the chart, the accounting (diagnostic only), the open window, the verdicts, the proposals pending,
-   * the givens, the ruler changes and the next trigger and cooldown. Null before a start.
-   */
-  flow: FlowStatus | null;
   /**
    * dev.13 (src/demo/promote.ts `demoStatus`): the demo the owner picks up, or null before the arc's first promotion (and on
    * an arc without milestones): where it is, its milestone and SHA, held and up, what changed since the promotion before
@@ -1571,7 +1564,7 @@ export function stageTimings(events: readonly Event[], after = 0): readonly Stag
   const starts = attemptStarts(events);
   const by = new Map<OutcomeStage, number[]>();
   for (const e of events) {
-    if (e.type !== 'fact' || e.fact.kind !== 'stage-outcome' || e.seq <= after) continue;
+    if (e.type !== 'fact' || (e.fact.kind !== 'stage-outcome' || !('unit' in e.fact)) || e.seq <= after) continue;
     const f = e.fact;
     const start = starts.get(`${f.unit}/${f.stage}#${f.attempt}`);
     if (start === undefined) continue;
@@ -1815,8 +1808,6 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?:
     checkpointWaits: checkpointWaitsOf(view),
     ...admitted,
     demo: plan === null || start === null ? null : demoStatus({ view, plan, repairs }, hostDir),
-    flow: start === null || plan === null ? null
-      : flowStatus({ runDir, repo: start.record.repo, journal: { view } }, revParse(start.record.repo, branchRef(plan.integrationBranch)), isoTimeOf(new Date(now))),
     milestones: start === null || plan === null || !hasMilestones(plan) ? [] : milestoneViews(view, plan, repairs),
   };
 }

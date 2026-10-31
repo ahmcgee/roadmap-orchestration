@@ -167,6 +167,7 @@ describe('fix units and the polish loop (dev.13 agent D)', () => {
 
       // compare-1 keeps tw-keep: both instances up on their own ports, the judge walked both.
       assert.deepEqual(await ticking(r, runCompare), { kind: 'judged', unit: 'tw-keep', decision: 'keep', reason: 'judged' });
+      assert.equal(r.journal.view.stageJobOutcomes().find((f) => f.stage === 'experience-verdict' && f.job.startsWith('compare-'))?.verdict, 'keep');
       const [c1] = factsOf(r, 'compare-started');
       assert.deepEqual([c1!.job, c1!.unit, c1!.before, c1!.after], ['compare-1', 'tw-keep', git(d.repo, 'rev-parse', 'main'), r.journal.view.unit('tw-keep' as UnitId).approval!.fingerprint.unitCommit]);
       assert.notEqual(c1!.ports.before['web' as never], c1!.ports.after['web' as never]);

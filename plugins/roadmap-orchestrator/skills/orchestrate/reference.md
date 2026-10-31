@@ -40,7 +40,7 @@ optional human viewers in another terminal; the architect keeps its actionable w
 ### Run commands
 
 Each finds the run through the host lock (the one live arc on this host). Add `--repo <path> --arc <arc>` to any
-of them to reach a run with no live owner, e.g. `roadmap status --repo <path> --arc <arc>`. Except `start`,
+of them to reach a run with no live owner, e.g. `roadmap status [--summary] --repo <path> --arc <arc>`. Except `start`,
 `status`, `watch`, `tui` and `apply --dry-run`, they only queue a file and print `{command, arc, type}`. Queued is not
 done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly one of `.applied.json` or
 `.rejected.json` (with every reason). An `apply` waiting for a unit's stage boundary first gets `.queued.json`
@@ -227,13 +227,10 @@ Not queued, no host lock, no run needed. Run them any time, a running arc includ
   that died, and is relaunched. "Recovery" has the boot hook.
 - `roadmap inputs export --repo <path> --arc <arc> --out <dir>`: read-only; writes the arc's current inputs into a
   new directory and prints `export.json` `{planRev, specRevs, base}` ("Recovery").
-- `roadmap flow accept|reject <proposal> --reason <text> [--repo <path> --arc <arc>]`: queued (scope none). Your
   decision on flow proposal `flow-<n>.0` with a one-line reason; acknowledges its `flow-proposal` or `flow-host` item.
   Idempotent by proposal; refused (78) for a proposal no run made, one code's checks dropped (the reason is printed), or
   one already decided the other way. A reject remembers its `(station, lever, target)`: no run proposes it again.
-- `roadmap flow request --reason <text> [--repo <path> --arc <arc>]`: queued (scope none). A flow run once the judgment track
   is free; it bypasses the 120-minute cooldown once per cooldown window (`status.flow.next.bypass`).
-- `roadmap flow given --repo <path> --lever <lever> --note <text>`: a host act, not queued. Declares that `<lever>`
   (`concurrency`, `resource-pool`, `suite-lane`, `sequence`, `build-class`, `host`) cannot be tuned on this host;
   write-once in `$(git rev-parse --git-common-dir)/roadmap/givens.json` under this host's fingerprint (`stale`, and not
   enforced, on another host). Prints `{given: {id: G-n, lever, note, fingerprint, at}}`; the same lever and note print

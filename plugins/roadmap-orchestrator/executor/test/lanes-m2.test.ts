@@ -124,7 +124,7 @@ test('lanes.flake-deflake-own: a deflake unit\'s own flake is not forgiven: flak
   assert.equal(done.outcome.kind, 'flaky');
   assert.equal(done.next.kind === 'stage' && done.next.stage, 'build');
   const fact = outcomeFacts(run).at(-1)!;
-  assert.ok(fact.kind === 'stage-outcome' && fact.outcome === 'flaky' && !fact.chargeable, 'a same-commit flake is recorded without a lanes-red charge');
+  assert.ok((fact.kind === 'stage-outcome' && 'unit' in fact) && fact.outcome === 'flaky' && !fact.chargeable, 'a same-commit flake is recorded without a lanes-red charge');
   assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, 0);
   assert.equal(run.journal.view.unit(U1).counters.unchargedLanesReds, 0, 'a flake does not consume the certification allowance');
   assert.deepEqual(run.journal.view.flakes().map((x) => [x.fact.lane, x.fact.forgiven]), [['flaky', false]], 'the flake is in the ledger all the same');
@@ -204,7 +204,7 @@ test('lanes.vanished-program-host-fault (paid M4b run 3, OP-3): a lane whose pro
   const done = started(await lanes(run.ctx, run.unit, run.base));
   assert.equal(done.outcome.kind, 'blocked');
   const fact = outcomeFacts(run).at(-1)!;
-  assert.ok(fact.kind === 'stage-outcome' && fact.outcome === 'blocked' && !fact.chargeable, JSON.stringify(fact));
+  assert.ok((fact.kind === 'stage-outcome' && 'unit' in fact) && fact.outcome === 'blocked' && !fact.chargeable, JSON.stringify(fact));
   assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, 0);
 });
 

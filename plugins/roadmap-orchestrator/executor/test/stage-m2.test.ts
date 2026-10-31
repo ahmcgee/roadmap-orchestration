@@ -53,7 +53,7 @@ const eventsOf = (d: ArcDescriptor): readonly Event[] => readJournal(absPath(d.r
 const runEvents = (run: StageRun): readonly Event[] => readJournal(run.runDir, run.journal.view.arc).events;
 const ofAttempt = (p: Parent, f: Readonly<{ unit: string; stage: string; attempt: number }>): boolean =>
   p.type === 'stage' && p.unit === f.unit && p.stage === f.stage && p.attempt === f.attempt;
-const outcomeOf = (e: Event): StageOutcomeFact | null => (e.type === 'fact' && e.fact.kind === 'stage-outcome' ? e.fact : null);
+const outcomeOf = (e: Event): StageOutcomeFact | null => (e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact) ? e.fact : null);
 const transitions = (events: readonly Event[]): readonly (Event & IntentOf<'resource.transition'>)[] =>
   events.filter((e): e is Event & IntentOf<'resource.transition'> => e.type === 'intent' && e.kind === 'resource.transition');
 const slotStatus = (ctx: StageContext) => resourceTable(ctx.journal.view).get(INTEGRATION_SLOT)?.status ?? { state: 'free' };

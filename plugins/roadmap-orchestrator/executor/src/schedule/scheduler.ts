@@ -1,3 +1,4 @@
+import { raiseWasteFindings } from '../flow/waste.ts';
 // The scheduler (M2 "Scheduler model"; A12, A17, F5, F13, F19, G2; M3 B7): runs every unit of the arc that may run,
 // each in its own task, and the holistic layer's jobs, from one non-reentrant loop that never awaits long work.
 //
@@ -77,60 +78,7 @@
 // The flaky ledger (dev.17, src/pipeline/deflakemint.ts; every arc): the deflake job (`applyDeflake`) while the ledger has a
 // deflake unit or a `flake-recurring` item due, and each iteration a `deflake-parked` item per park of a deflake unit.
 //
-// The flow track (M4b, src/flow/track.ts; every arc whose revisions carry the `m4b` role set, holistic or not): each
-// run raises the ruler changes, applies an accepted proposal pending its apply and proves one pending its proof, writes
-// the verdicts due, then runs the flow job when triggers are due. One judgment job at a time: the flow job waits while a
-// holistic job runs, and no holistic job starts while it runs. While a proposal is pending its apply, new candidates
-// wait (`flowApply`). Right before `arc-completed`, the verdicts the completion closes and the compact flow series.
-// dev.13, the demo (src/demo/promote.ts): each iteration of an arc with milestones journals the demo failures the host
-// record lists, promotes the latest settled milestone (unless held) and rewrites the keeper's desired file; right before
-// `arc-completed`, the final tip is promoted (`promoteFinal`).
-// M4b rev 3: each loop iteration reads the host's schedstat cpu totals into an in-memory tick history (`PressureTicks`,
-// a restart starts it fresh), which admission reads to release a host-pressure hold (`AdmitInput.pressure`,
-// src/schedule/ready.ts) and a flow run's inputs bind as the host's cpu wait now (`FlowTrackInput.hostPressure`).
-//
-// The scheduler's holds (on top of admission's, src/schedule/ready.ts):
-//   - arc-wide (`arcHolds`): no unit is admitted to any stage (chains run on) while
-//       - baseline (A6): the baseline is owed or running, or its blocking `obligation-baseline` is open;
-//       - pack-review (M4a K14, H9): before the first admission, a pack review is running or due, or the latest ended
-//         review with the current key has an open blocking `pack-review` item (src/holistic/packreview.ts).
-//   - held bundle (arc feedback 2026-10-24, `busyHolds`): a unit a checkpoint's bundle touched mid-stage (rejected `busy`)
-//     is not admitted to its next stage until the trigger's next job has re-decided the held bundle (no call) at the
-//     boundary (src/holistic/checkpoint.ts).
-//   - batch (R7, B2): the candidate of an approved unit repairing a finding directly waits while another active
-//     unit repairs that finding directly and is not approved yet; once every such unit (at least two) waits at its
-//     candidate they publish as one batch. A red batch records `red` for each member its own selection attributes
-//     (a fix round each, `batchMemberFix`); a red nothing attributes, a conflict, a base red, an occupied lane or a
-//     foreign move raises one blocking item and the members wait for its acknowledgement; members whose approval no
-//     longer holds at the tip leave the batch (each takes its own candidate, whose ff re-gates it). A batch's members
-//     are eligible against what the whole batch repairs (`batchRepairs`): its candidate carries every member's fix.
-//     Arc feedback 2026-10-15: approved repairs waiting at their candidates, each held by an active P1 that another of
-//     them owns (fixed on its branch), form a cycle (`holdCycle`) that no single candidate can break; the findings along
-//     it publish as one batch (keyed by the lowest), every unit repairing one of them directly a member, under the same
-//     rules (all of them waiting, none suspended, none still held against the batch's repairs). Single-finding batches
-//     are planned first.
-//
-// Design parks (OR-Q1, `designParkRoute`): in a holistic arc a design park goes to the checkpoint first, and its
-// own item waits; a checkpoint that respecified the unit re-opens it on its pending revision (`reopened`), one that
-// decided nothing for it (or a respec the unit cannot re-open on) raises the park's item, and a second design park
-// on a respecified lineage raises `respec-second` from the checkpoint instead.
-//
-// Ends. Every arc ends by the completion predicate (§2.10, `completionBlockers`). An arc without the holistic layer
-// completes as in M2 (nothing runs, every unit merged, cut, superseded or parked for the architect, no own-arc residue,
-// no blocking needs-user, no pending command; no close-out). A holistic arc ends
-// `complete` when every unit is merged, cut or
-// superseded; no blocking item; no pending command; no own-arc residue; no baseline owed; no audit running or due,
-// no lens of L with an outstanding range, no owed trigger; no checkpoint due or running; the latest generation
-// quiescent under the vision in force; the close-out publication done (the head is its commit) or nothing to
-// change; every non-exempt obligation held on the head. With only quiescence, the close-out and the obligations left,
-// the close-out settlement runs first (run 10, src/holistic/closeout.ts `settleCloseOut`: unanswered bundle requests
-// declined, a corpus arc's open P2/P3 findings with no obligation banked). The close-out (A8, `publishCloseOut`) runs once all but
-// itself and the obligations hold (its lanes witness every arc lane on the head it publishes, or on the head alone
-// when nothing changes). Then, for every arc, `arc-completed{planRev, head, highWater, units}` (once while active) and
-// the terminal snapshot (parent `arc`, G8), so `gc` can seal it, and the run ends `complete`. The completion stays active while the plan rev and the
-// head are those it recorded (A20); an admitting apply or a reopen invalidates it, and the arc runs again.
-import { cpuBasis } from '../core/cpu.ts';
-import { orderingOf,wakeOrdering } from '../park/ordering.ts';
+
 
 import { dirname,join } from 'node:path';
 import type { CommandContext } from '../commands/apply.ts';
@@ -149,7 +97,6 @@ import { type Read,arrayOf,bool,literal,nat,object,oneOf,positive,tagged,version
 import { type AbsPath,absPath,isoTimeOf } from '../core/values.ts';
 import { SCHEMA_VERSION,type SchemaVersion } from '../core/version.ts';
 import { demoTicker,promoteFinal,writeDesired } from '../demo/promote.ts';
-import { beforeCompletion,flowApplyHeld,flowOn,runFlowTrack } from '../flow/track.ts';
 import { revParse } from '../git/git.ts';
 import { jobEvidenceRoot,snapshotRequestOf } from '../git/snapshot.ts';
 import { type AuditContext,auditPending,raiseAuditOwed,runAudit } from '../holistic/audit.ts';
@@ -162,7 +109,7 @@ import { isActive,raiseFindingItems } from '../holistic/findings.ts';
 import { type Observation,type ObservationStore,reuse,verdictOf as witnessVerdict } from '../holistic/observe.ts';
 import { packReviewHolds,packReviewPending,runPackReview,settlePackReviews } from '../holistic/packreview.ts';
 import { type ArcLaneDef,isExempt,laneRevOf } from '../holistic/types.ts';
-import { PressureTicks,hostPressure,readHostCpu } from '../host/pressure.ts';
+import { PressureTicks,readHostCpu } from '../host/pressure.ts';
 import { commandScope } from '../input/classify.ts';
 import type { RoutingBase } from '../input/inforce.ts';
 import { type PlanM1,type PlanUnit,hasMilestones,lensSetOf } from '../input/plan.ts';
@@ -781,8 +728,6 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   const unbatched = new Map<UnitId, string>();
   /** Members a published batch retired: their retire runs in a task of their own. */
   const retiring = new Set<UnitId>();
-  /** While the flow job (the flow track's judgment) runs: no holistic job starts (one judgment job at a time). */
-  let flowJudging = false;
   let lastTick = 0;
   const pressure = arbiter.pressure;
 
@@ -895,9 +840,9 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
    * `flowApply` (M4b): an accepted flow proposal waits for its revision, so no new candidate starts. `bundle` (arc feedback
    * 2026-10-24): the units a busy-rejected checkpoint's held bundle waits for (`busyHolds`), held at every admission.
    */
-  type Holds = Readonly<{ arc: boolean; batch: ReadonlySet<UnitId>; flowApply: boolean; bundle: ReadonlySet<UnitId> }>;
+  type Holds = Readonly<{ arc: boolean; batch: ReadonlySet<UnitId>; bundle: ReadonlySet<UnitId> }>;
   const heldBack = (holds: Holds, unit: UnitId, stage: AdmissionStage): boolean =>
-    holds.arc || holds.bundle.has(unit) || (stage === 'candidate' && (holds.batch.has(unit) || holds.flowApply));
+    holds.arc || holds.bundle.has(unit) || (stage === 'candidate' && holds.batch.has(unit));
 
   const approvalKey = (unit: UnitId): string => canonicalJson(view().unit(unit).approval);
 
@@ -1163,7 +1108,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   const startHolistic = (holds: Holds, batch: BatchPlan): void => {
     if (!holistic()) return;
     // 1.0.0-dev.17: an arc job that faulted waits for its item's acknowledgement (src/schedule/fault.ts `jobFaultOpen`).
-    if (due('holistic') && !flowJudging && !jobFaultOpen(view(), runDir)) {
+    if (due('holistic') && !jobFaultOpen(view(), runDir)) {
       const job = baselineOwed(x.stage);
       if (packReviewPending(h.checkpoint)) {
         trackRetrying('holistic:packreview', 'holistic', async () => ((await runPackReview(h.checkpoint)).kind === 'ended' ? PROGRESS : WAIT));
@@ -1206,21 +1151,6 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
         return settled.progress ? PROGRESS : WAIT;
       });
     }
-  };
-
-  /**
-   * M4b: the flow track (src/flow/track.ts) on every arc with the loop on, outside the holistic guard: the ruler check,
-   * an accepted proposal's apply and proof, the verdicts due, then the flow job, which waits while a holistic job runs.
-   */
-  const startFlow = (): void => {
-    if (!flowOn(view()) || !due('flow')) return;
-    trackRetrying('flow', 'flow', async () => ((await runFlowTrack(h.checkpoint, {
-      holisticRunning: () => [...jobs.keys()].some((k) => k.startsWith('holistic:')),
-      judging: (on) => {
-        flowJudging = on;
-      },
-      hostPressure: () => hostPressure(pressure.ticks(), 0),
-    })) === 'progress' ? PROGRESS : WAIT));
   };
 
   /**
@@ -1285,9 +1215,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
     const settling = view().holistic().on && blockers.every((b) => (CLOSE_OUT_BLOCKERS as readonly string[]).includes(b));
     if (settling && obligationsOn(x.stage, integrationHeadNow(x.stage), h.laneEnv) !== 'not-held' && settleCloseOut(h.checkpoint)) return null;
     if (blockers.length === 0) {
-      // M4b: the verdicts the completion closes and the compact flow series, right before `arc-completed`.
       if (view().holistic().completion?.active !== true) {
-        beforeCompletion(h.checkpoint);
         promoteFinal(x.stage, integrationHeadNow(x.stage));
         writeDesired(x.stage);
       }
@@ -1374,6 +1302,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
     if (stopping !== null) {
       // Stopping: nothing new starts; the halted units' items are raised (a unit's stop names its own), and the
       // run ends once every task and job has settled, every environment down.
+      raiseWasteFindings(x.stage);
       raiseHalted();
       for (const task of tasks.values()) endTask(task);
       if (tasks.size === 0 && jobs.size === 0) {
@@ -1392,14 +1321,14 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       // 3. Due probes.
       startProbes();
       // 4. A halted unit's, the schedule's and the holistic layer's needs-user; the holistic jobs; the end.
+      raiseWasteFindings(x.stage);
       raiseHalted();
       raiseHolistic();
       demo.tick();
       const blocking = blockingItems(runDir, view());
       const batch = batchPlan();
-      const holds: Holds = { arc: arcHeld(blocking), batch: batch.held, flowApply: flowApplyHeld(view()), bundle: holistic() ? busyHolds(h.checkpoint) : new Set() };
+      const holds: Holds = { arc: arcHeld(blocking), batch: batch.held, bundle: holistic() ? busyHolds(h.checkpoint) : new Set() };
       startHolistic(holds, batch);
-      startFlow();
       startDeflake();
       if (tasks.size === 0 && jobs.size === 0 && mutations.length === 0) {
         const end = await ended(blocking);

@@ -348,6 +348,7 @@ type PlanBase = Readonly<{
   routing?: RoutingLayer;
   /** M2: the size of the built-in `@cpu` pool; absent: `availableParallelism()`. */
   capacity?: Readonly<{ cpu?: number }>;
+  expectations?: Readonly<{ arcUsd?: number; perMilestoneUsd?: number }>;
   suite: Readonly<{ lanes: readonly LaneDef[] }>;
   resources: readonly ResourceDecl[];
   units: readonly PlanUnit[];
@@ -392,7 +393,7 @@ export function contractOpDocuments(plan: PlanM1): readonly RepoPath[] {
 }
 
 /** The plan fields an apply's `plan-field` change compares (PLAN_FIELDS, src/core/events.ts); the target's read through its arm. */
-export type PlanFieldName = 'contracts' | 'rulings' | 'architectureDoc' | 'architectureDigest' | 'direction' | 'capacity';
+export type PlanFieldName = 'contracts' | 'rulings' | 'architectureDoc' | 'architectureDigest' | 'direction' | 'capacity' | 'expectations';
 export function planFieldValue(plan: PlanM1, field: PlanFieldName): unknown {
   switch (field) {
     case 'architectureDoc':
@@ -770,6 +771,11 @@ export function parsePlan(value: unknown): PlanM1 {
       const cpu = g.optional('cpu', positive);
       return cpu === undefined ? {} : { cpu };
     }));
+    const expectations = f.optional('expectations', object((g) => {
+      const amount: Read<number> = (v, p) => { if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) throw new SchemaError(p, 'finite non-negative USD', v); return v; };
+      const arcUsd = g.optional('arcUsd', amount); const perMilestoneUsd = g.optional('perMilestoneUsd', amount);
+      return { ...(arcUsd === undefined ? {} : { arcUsd }), ...(perMilestoneUsd === undefined ? {} : { perMilestoneUsd }) };
+    }));
     const target = planTarget(f);
     const limits = f.optional('limits', arcLimits);
     const previousHead = f.optional('previousHead', (v, p) => sha(v, p));
@@ -792,6 +798,7 @@ export function parsePlan(value: unknown): PlanM1 {
       direction: f.get('direction', str),
       ...(routing === undefined ? {} : { routing }),
       ...(capacity === undefined ? {} : { capacity }),
+      ...(expectations === undefined ? {} : { expectations }),
       suite: f.get('suite', object((g) => ({ lanes: g.get('lanes', arrayOf(laneDefOf('suite'))) }))),
       resources: f.get('resources', arrayOf(resourceDecl)),
       units: f.get('units', arrayOf(planUnit, { nonEmpty: true })),

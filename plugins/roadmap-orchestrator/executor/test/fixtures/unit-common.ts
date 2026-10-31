@@ -309,7 +309,7 @@ export async function stepUntil(r: ArcRun, id: string, until: (f: StageOutcomeFa
  * (`readJournal`), because executor tests poll this while the executor is appending.
  */
 export function outcomes(d: ArcDescriptor, unit = 'u1'): readonly string[] {
-  return readJournal(absPath(d.runDir), arcId(d.arc)).events.flatMap((e) => (e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.unit === unit ? [`${e.fact.stage}:${e.fact.outcome}`] : []));
+  return readJournal(absPath(d.runDir), arcId(d.arc)).events.flatMap((e) => (e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact) && e.fact.unit === unit ? [`${e.fact.stage}:${e.fact.outcome}`] : []));
 }
 
 /** Refresh the fixture's editable files from the plan in force, as a new export does. */

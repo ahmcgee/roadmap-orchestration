@@ -262,7 +262,6 @@ export function arcSteps(n: 1 | 2, profile: ProfileName, script: FakeScript): re
   const m1 = (units: Readonly<Record<string, readonly M1Step[]>>): readonly Step[] =>
     Object.entries(units).flatMap(([unit, steps]) => fakeSteps({ steps }, profile).slice(smoke.length).map((s): Step => ({ ...s, unit })));
   const story = script === 'story';
-  if (n === 2) return [...smoke, ...m1(UNITS_2), ...JOBS_2, ...(story ? [flowStep(FLOW_2.buildClass.job, FLOW_2.buildClass.answer)] : [])];
-  const flow = story ? Object.values(FLOW_1).map((f) => flowStep(f.job, f.answer)) : [flowStep('flow-1', VISION_SILENT_FLOW)];
-  return [...smoke, ...m1(M1_UNITS_1), ...m1(M1_READOUTS), ...m1(CONFIRM), ...JOBS_1, ...flow];
+  if (n === 2) return [...smoke, ...m1(UNITS_2), ...JOBS_2];
+  return [...smoke, ...m1(M1_UNITS_1), ...m1(M1_READOUTS), ...m1(CONFIRM), ...JOBS_1];
 }

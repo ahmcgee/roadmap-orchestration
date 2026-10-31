@@ -275,7 +275,7 @@ describe('routing', () => {
     // Every seat is hashed where it is in force: all of them in a corpus arc of the dev17 role set with milestones (the arc
     // seats only in their scope, G20; the walk seats only under milestones, dev.13; the scaffold seats only under dev17).
     const seen = new Set([routingRevOf(t, 'corpus', 'dev17', true)]);
-    for (const s of SEAT_REFS) {
+    for (const s of SEAT_REFS.filter((s) => s.role !== 'flow')) {
       // A JSON round trip, not structuredClone: the table shares triple objects between seats.
       const changed = JSON.parse(JSON.stringify(t)) as Record<string, Record<Seat, Triple>>;
       changed[s.role]![s.tier] = atSeat(t, s).model === SOL_HIGH.model ? LUNA : SOL_HIGH;

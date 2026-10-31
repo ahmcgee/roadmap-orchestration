@@ -88,8 +88,8 @@ type Run = Readonly<{
 }>;
 
 const facts = (run: Run): readonly Fact[] => run.events.flatMap((e) => (e.type === 'fact' ? [e.fact] : []));
-const factsOf = <K extends Fact['kind']>(run: Run, kind: K): readonly (Extract<Fact, { kind: K }> & { seq: number })[] =>
-  run.events.flatMap((e) => (e.type === 'fact' && e.fact.kind === kind ? [{ ...(e.fact as Extract<Fact, { kind: K }>), seq: e.seq }] : []));
+const factsOf = <K extends Fact['kind']>(run: Run, kind: K): readonly (Extract<Exclude<Fact, { stage: 'experience-verdict' | 'campaign-audit' }>, { kind: K }> & { seq: number })[] =>
+  run.events.flatMap((e) => (e.type === 'fact' && e.fact.kind === kind && (kind !== 'stage-outcome' || 'unit' in e.fact) ? [{ ...(e.fact as Extract<Exclude<Fact, { stage: 'experience-verdict' | 'campaign-audit' }>, { kind: K }>), seq: e.seq }] : []));
 const transitions = (run: Run) => run.events.flatMap((e) => (e.type === 'intent' && e.kind === 'resource.transition' ? [e] : []));
 const spawnIntents = (run: Run) => run.events.flatMap((e) => (e.type === 'intent' && e.kind === 'proc.spawn' ? [e] : []));
 const outcomes = (run: Run) => factsOf(run, 'stage-outcome');

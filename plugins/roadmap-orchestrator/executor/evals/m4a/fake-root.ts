@@ -58,7 +58,7 @@ SLICES,SLOW_LANE,TEST_PATHS,UNITS,corpusFor,
 specLane,specOf,suiteLanes,unitsOf,
 } from './golden.ts';
 import { MAIN,layout } from './layout.ts';
-import { BLOCKED_SEEN_BARRIER,CHECKPOINT_AMENDMENT,DRIFT_CHECKPOINT,FLOW_1,FLOW_2 } from './scenario.ts';
+import { BLOCKED_SEEN_BARRIER,CHECKPOINT_AMENDMENT,DRIFT_CHECKPOINT } from './scenario.ts';
 
 export const FAKE_SCRIPTS = ['story', 'vision-silent'] as const;
 export type FakeScript = (typeof FAKE_SCRIPTS)[number];
@@ -434,15 +434,6 @@ function onWake(c: Ctx, prompt: string): string {
   const lines = watchLines(prompt);
   const current = c.state.arcs.at(-1)!;
   const l = layout(c.dir);
-  // M4b, story arc 2: the requested run's proposal item comes whenever the run could start (after the holistic jobs); its
-  // decision goes first, and the wake's other events are read after it.
-  const flowItem = current.n === 2 && c.state.script === 'story' && !c.state.flowRejected && lines.some((w) => w.event === 'needs-user' && w.reason === 'flow-proposal');
-  const rejected = flowItem ? `${rejectArc2Proposal(c, current)} ` : '';
-  if (rejected !== '') {
-    const rest = lines.filter((w) => !(w.event === 'needs-user' && w.reason === 'flow-proposal'));
-    if (rest.length === 0) return `${rejected}${RUNNING(current)}`;
-    return `${rejected}${onWake(c, rest.map((w) => JSON.stringify(w)).join('\n'))}`;
-  }
   for (const w of lines) {
     if (w.event === 'needs-user' && w.reason === 'pack-review' && !c.state.packFixed) {
       // The finding is right: guard's spec gains the clause, and the changed pack is reviewed again.
@@ -456,7 +447,7 @@ function onWake(c: Ctx, prompt: string): string {
       c.state.packFixed = true;
       return `The pack review's blocking finding on guard was right: guard's spec now says a refused booking writes nothing (rev 2), applied; the changed pack is reviewed again. ${RUNNING(current)}`;
     }
-    if (w.event === 'units' && w.run === 'blocked' && current.n === 1 && !c.state.flowDone) return c.state.script === 'story' ? flowLoop(c, current) : flowNoAction(c, current);
+    if (w.event === 'units' && w.run === 'blocked' && current.n === 1 && !c.state.flowDone) return releaseReadouts(c, current);
     if (w.event === 'units' && w.run === 'blocked' && current.n === 2 && !c.state.blockedSeen) {
       // cutoff merged and notice waits behind the run-only limit, as intended. The fixture's audit of cutoff waits for
       // this wake (scenario.ts BLOCKED_SEEN_BARRIER), so its checkpoints run while this turn supervises (`superviseArc2`).
@@ -473,72 +464,17 @@ function onWake(c: Ctx, prompt: string): string {
   return `Nothing for me in this wake-up. ${RUNNING(current)}`;
 }
 
-/**
- * M4b, story arc 1's blocked wake: guard, confirm and quay-list merged and run-only holds the rest. Two flow runs on request (the second the
- * cooldown's one bypass, RC-5), each proposal accepted as `FLOW_1` scripts it, each step waiting on the journal's flow
- * facts: the bait's proof is `changed` (refused), the plant lane's `preserved` (applied). Then the limit goes, so the
- * other five read-outs are admitted after the revision.
- */
-function flowLoop(c: Ctx, a: ArcState): string {
-  const l = layout(c.dir);
-  const at = ['--repo', l.product, '--arc', a.arc];
+function releaseReadouts(c: Ctx, a: ArcState): string {
   assertHeldAfterQuay(c, a);
-  const done: string[] = [];
-  for (const f of [FLOW_1.bait, FLOW_1.shard]) {
-    c.t.roadmap(['flow', 'request', '--reason', f.request, ...at]);
-    const proposal = endedProposal(c, a, f.job);
-    c.t.roadmap(['flow', f.decision, proposal, '--reason', f.reason, ...at]);
-    const proof = c.t.untilFact(a.arc, `${proposal}'s proof`, (facts) => facts.find((x): x is Extract<Fact, { kind: 'flow-proof' }> => x.kind === 'flow-proof' && x.proposal === proposal));
-    if (proof.outcome !== f.proof) throw new Error(`story: ${proposal}'s proof should be ${f.proof}: ${JSON.stringify(proof)}`);
-    if (f.proof === 'preserved') c.t.untilFact(a.arc, `${proposal} applied`, (facts) => facts.find((x) => x.kind === 'flow-applied' && x.proposal === proposal));
-    done.push(`${proposal} accepted, proof ${proof.outcome}${f.proof === 'preserved' ? ', applied' : ', refused'}`);
-  }
-  const status = JSON.parse(c.t.roadmap(['status', ...at])) as Status;
-  const notices = status.needsUser.filter((n) => n.reason === 'revision-notice');
-  if (notices.length !== 1 || notices[0]!.blocking) throw new Error(`story: the applied flow revision should leave one non-blocking revision notice: ${JSON.stringify(notices)}`);
-  const notice = notices[0]!;
-  c.t.roadmap(['run-only', '--clear', ...at]);
-  // P1 closes optionless arc items when this command lands. The CLI only queued it: wait for that closure before
-  // ending the turn, or the next watch can observe the notice while the clear command is still applying.
-  c.t.untilFact(a.arc, 'run-only clear to close the flow revision notice', (facts) => facts.find((f) => f.kind === 'needs-user-acked' && f.id === notice.id));
+  c.t.roadmap(['run-only', '--clear', '--repo', layout(c.dir).product, '--arc', a.arc]);
   c.state.flowDone = true;
-  return `guard, confirm and quay-list merged; the flow loop decided while the rest waited: ${done.join('; ')}. I lifted the run-only limit. ${RUNNING(a)}`;
+  return `guard, confirm and quay-list merged. I lifted the run-only limit. ${RUNNING(a)}`;
 }
 
 /** The blocked wake's premise: quay-list merged, the next read-out behind run-only. */
 function assertHeldAfterQuay(c: Ctx, a: ArcState): void {
   const s = JSON.parse(c.t.roadmap(['status', '--repo', layout(c.dir).product, '--arc', a.arc])) as Status;
   if (unitOf(s, 'quay-list').state !== 'merged' || unitOf(s, 'free-berths').state !== 'awaiting-admission') throw new Error(`blocked, but not with quay-list merged and free-berths behind run-only: ${JSON.stringify(s.units)}`);
-}
-
-/**
- * M4b, vision-silent arc 1's blocked wake: the third merge's constraint-shift run (flow-1) starts once no holistic job
- * runs, whatever the timing (the held units keep work remaining); it answers noAction, and the root agent lifts the limit.
- */
-function flowNoAction(c: Ctx, a: ArcState): string {
-  assertHeldAfterQuay(c, a);
-  const ended = c.t.untilFact(a.arc, 'flow-1 ended', (facts) => facts.find((x): x is Extract<Fact, { kind: 'flow-ended' }> => x.kind === 'flow-ended' && x.job === 'flow-1'));
-  if (ended.outcome !== 'done' || ended.proposal !== null) throw new Error(`vision-silent: flow-1 should end done with no proposal: ${JSON.stringify(ended)}`);
-  c.t.roadmap(['run-only', '--clear', '--repo', layout(c.dir).product, '--arc', a.arc]);
-  c.state.flowDone = true;
-  return `guard, confirm and quay-list merged; the flow run found nothing to change yet. I lifted the run-only limit. ${RUNNING(a)}`;
-}
-
-/** The proposal flow run `job` of arc `a` ended with (waiting on the journal); fails loud on any other end. */
-function endedProposal(c: Ctx, a: ArcState, job: string): string {
-  const ended = c.t.untilFact(a.arc, `${job} ended`, (facts) => facts.find((x): x is Extract<Fact, { kind: 'flow-ended' }> => x.kind === 'flow-ended' && x.job === job));
-  if (ended.outcome !== 'done' || ended.proposal === null) throw new Error(`story: ${job} should end done with a proposal: ${JSON.stringify(ended)}`);
-  return ended.proposal.id;
-}
-
-/** M4b, story arc 2: the wake that carries the requested run's `flow-proposal` item; the root agent rejects it. */
-function rejectArc2Proposal(c: Ctx, a: ArcState): string {
-  const f = FLOW_2.buildClass;
-  const proposal = endedProposal(c, a, f.job);
-  c.t.roadmap(['flow', f.decision, proposal, '--reason', f.reason, '--repo', layout(c.dir).product, '--arc', a.arc]);
-  c.t.untilFact(a.arc, `${proposal} decided`, (facts) => facts.find((x) => x.kind === 'flow-decided' && x.proposal === proposal));
-  c.state.flowRejected = true;
-  return `Rejected ${proposal} (${f.answer.proposal.action.lever}): ${f.reason}`;
 }
 
 function arcComplete(c: Ctx, a: ArcState): string {
@@ -557,10 +493,6 @@ function arcComplete(c: Ctx, a: ArcState): string {
     return `Arc ${a.arc} completed; its PR is open against main. phase0 check offers no slice candidate: every world clause of the vision is served and held.\nPlease merge the PR into main with a merge commit.\nROADMAP-SESSION: stopped vision-silent`;
   }
   if (a.n === 1) {
-    // M4b: the plant lane change's verdict, its window closed by the completion.
-    const shard = `${FLOW_1.shard.job}.0`;
-    const verdict = c.t.untilFact(a.arc, `${shard}'s verdict`, (facts) => facts.find((x): x is Extract<Fact, { kind: 'flow-verdict' }> => x.kind === 'flow-verdict' && x.proposal === shard));
-    if (verdict.verdict !== 'improved') throw new Error(`story: ${shard}'s verdict should be improved: ${JSON.stringify(verdict)}`);
     // K = 1 and the bootstrap start counts as acked: arc 2 is allowed (paid run 12's root agent stopped here instead).
     if (chain.nextStart.reason !== 'within-k') throw new Error(`story: after arc 1 the next start should be allowed: ${JSON.stringify(chain)}`);
     // The owner reads P-1 in the brief and answers it through `roadmap answer` while this turn runs (paid run 14: the
@@ -581,7 +513,6 @@ function arcComplete(c: Ctx, a: ArcState): string {
       'On resume I start arc 2\'s Phase 0 with your answers, or the working assumptions where you have none.',
     ].join('\n');
   }
-  if (!c.state.flowRejected) throw new Error('story: arc 2 completed before its flow proposal\'s item woke the root agent');
   if (chain.nextStart.reason !== 'limit') throw new Error(`story: after arc 2 the next start should be refused at K: ${JSON.stringify(chain)}`);
   // K is reached. The fixture shows the executor's own refusal too: arc 3's inputs, refused at check and at start.
   const baseline = betweenArc(c, 3, head);
@@ -610,7 +541,6 @@ function arc2(c: Ctx, reply: string): string {
   c.t.roadmap(['run-only', 'cutoff', '--repo', l.product, '--arc', a.arc]);
   start(c, a);
   // M4b: one flow run now, so its cooldown covers the arc (no constraint-shift run is left to the merges' timing).
-  c.t.roadmap(['flow', 'request', '--reason', FLOW_2.buildClass.request, '--repo', l.product, '--arc', a.arc]);
   const after = (JSON.parse(c.t.roadmap(['chain', 'status', '--repo', l.product])) as { answers: readonly unknown[] }).answers;
   if (after.length !== 0) throw new Error(`story: arc 2 applies P-1, so chain status should list no answer: ${JSON.stringify(after)}`);
   c.state.phase = 'running';

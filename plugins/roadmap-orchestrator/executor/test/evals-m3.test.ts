@@ -419,7 +419,7 @@ describe('evals-m3: the fake-backed fixture run, branch P', () => {
     assert.equal(checked.result.branch, 'P');
     assert.equal(checked.result.criteria.length, 23);
     assert.ok(checked.result.criteria.some((c) => c.name === 'prevention'), 'branch P\'s own criterion is graded');
-    const outcomes = events.flatMap((e) => (e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.unit === 'tidy' ? [`${e.fact.stage}:${e.fact.outcome}`] : []));
+    const outcomes = events.flatMap((e) => (e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact) && e.fact.unit === 'tidy' ? [`${e.fact.stage}:${e.fact.outcome}`] : []));
     assert.ok(outcomes.every((o) => o.startsWith('plan-check:')), `tidy never got past plan-check: ${outcomes.join(', ')}`);
     const firstCheckpoint = events.find((e) => e.type === 'fact' && e.fact.kind === 'checkpoint-inputs');
     assert.ok(firstCheckpoint?.type === 'fact' && firstCheckpoint.fact.kind === 'checkpoint-inputs' && firstCheckpoint.fact.trigger.type === 'park', 'the stale apply fired on the park\'s checkpoint');

@@ -71,7 +71,7 @@ const admitted = (r: ArcRun): Gate => (next) => Promise.resolve(next.kind === 'c
 const admitAll: Gate = () => Promise.resolve(true);
 
 const outcomeFacts = (d: ArcDescriptor): readonly StageOutcomeFact[] =>
-  readJournal(absPath(d.runDir), arcId(d.arc)).events.flatMap((e) => (e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.unit === 'u1' ? [e.fact] : []));
+  readJournal(absPath(d.runDir), arcId(d.arc)).events.flatMap((e) => (e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact) && e.fact.unit === 'u1' ? [e.fact] : []));
 
 /** The pressure and exit cause of spawn `inv`, from its done record and exit.json. */
 function spawnEnd(r: ArcRun, inv: string): Readonly<{ pressure: number | null; cause: string | undefined }> {

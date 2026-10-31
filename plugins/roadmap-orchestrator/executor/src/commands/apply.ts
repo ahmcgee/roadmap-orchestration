@@ -60,7 +60,6 @@ import { parseRulings } from '../spec/rulings.ts';
 import { bytesSha256,parseSpec } from '../spec/spec.ts';
 import { closeAdmissions } from './admissions.ts';
 import { requestAudit } from './audit.ts';
-import { decideFlow,requestFlow } from './flow.ts';
 import { resolveEdge,runOnly } from './graph.ts';
 import { mergeIn } from './mergein.ts';
 import { note } from './note.ts';
@@ -233,10 +232,6 @@ async function effectOf(ctx: CommandContext, command: CommandFile): Promise<Effe
       return requestAudit(ctx, command.id, body.lenses);
     case 'close-admissions':
       return closeAdmissions(ctx, command.id);
-    case 'flow-decide':
-      return decideFlow(ctx, command.id, body);
-    case 'flow-request':
-      return requestFlow(ctx, command.id, body.reason);
     case 'demo':
       return actOnDemo(ctx, command.id, body.act);
   }

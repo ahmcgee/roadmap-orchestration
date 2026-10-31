@@ -277,7 +277,7 @@ describe(`matrix row ${DEBT_BANK}`, () => {
         const events = readJournal(absPath(a.d.runDir), arcId(a.d.arc)).events.flatMap((e) => (e.type === 'fact' ? [e.fact] : []));
         return {
           approvals: events.flatMap((f) => (f.kind === 'approval' ? [f.attempt] : [])), debt: events.filter((f) => f.kind === 'debt-banked'),
-          gates: events.filter((f) => f.kind === 'stage-outcome' && f.stage === 'gate').length,
+          gates: events.filter((f) => (f.kind === 'stage-outcome' && 'unit' in f) && f.stage === 'gate').length,
         };
       };
       const killed = log();

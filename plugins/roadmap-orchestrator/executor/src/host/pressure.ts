@@ -23,6 +23,7 @@
 // PSI `/proc/pressure/cpu` is not read: its `some` (the share of wall time during which at least one task waited) is high
 // on a many-cpu host whenever anything waits, and it did not separate a healthy busy host from a starving one.
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { readHostSample } from './sample.ts';
 import { statOf } from '../contain/proc.ts';
 import type { InvocationId } from '../core/ids.ts';
 import type { LaunchCpu, ProcIdentity } from '../core/records.ts';
@@ -154,7 +155,7 @@ export type Starved = Readonly<{ kind: 'starved'; inv: InvocationId; pressure: n
 // The host's cpu wait, per scheduler tick
 
 /** One reading of `/proc/schedstat`: the wall time (ms since the epoch) and the ns run and waited, summed over cpus. */
-export type PressureTick = Readonly<{ atMs: number; runNs: number; waitNs: number }>;
+export type PressureTick = Readonly<{ atMs: number; runNs: number; waitNs: number; memory?: number }>;
 
 /** `/proc/schedstat`'s totals over its `cpu<N>` lines (version 15 or later: fields 7 and 8); throws on anything else. */
 export function parseHostSchedstat(text: string): Readonly<{ runNs: number; waitNs: number }> {
@@ -188,7 +189,21 @@ export function readHostCpuAt(path: string, atMs: number): PressureTick | 'unava
   return { atMs, ...parseHostSchedstat(text) };
 }
 
-export const readHostCpu = (): PressureTick | 'unavailable' => readHostCpuAt(HOST_SCHEDSTAT, Date.now());
+/** Memory PSI full is time all non-idle tasks stall; low available RAM is a backstop without PSI. */
+export function memoryPressure(availableFraction: number, psi: string | null): number {
+  const full = psi === null ? null : /^full avg10=([0-9.]+)/m.exec(psi);
+  if (psi !== null && full === null) throw new Error('/proc/pressure/memory: missing full avg10');
+  const stalled = full === null ? 0 : Number(full[1]) / 100;
+  return Math.max(stalled, availableFraction < 0.05 ? PRESSURE_SATURATED : 0);
+}
+
+export function readHostCpu(): PressureTick | 'unavailable' {
+  const cpu = readHostCpuAt(HOST_SCHEDSTAT, Date.now());
+  if (cpu === 'unavailable') return cpu;
+  const sample = readHostSample();
+  const path = '/proc/pressure/memory';
+  return { ...cpu, memory: memoryPressure(sample.memAvailableKb / sample.memTotalKb, existsSync(path) ? readFileSync(path, 'utf8') : null) };
+}
 
 /** How long the ticks are kept: the longest span a pressure rule reads (the starved hold's 30-min bound, RC-11). */
 export const PRESSURE_TICKS_MS = 30 * 60_000;
@@ -222,10 +237,10 @@ export function hostPressure(ticks: readonly PressureTick[], sinceMs: number): n
   const newest = ticks.at(-1);
   if (newest === undefined) return null;
   const start = ticks.findLast((t) => t.atMs >= sinceMs && t.atMs <= newest.atMs - HOST_WINDOW_MS);
-  if (start === undefined) return null;
+  if (start === undefined) return (newest.memory ?? 0) >= PRESSURE_SATURATED ? newest.memory! : null;
   const run = newest.runNs - start.runNs;
   const wait = newest.waitNs - start.waitNs;
-  return run + wait === 0 ? 0 : wait / (run + wait);
+  return Math.max(newest.memory ?? 0, run + wait === 0 ? 0 : wait / (run + wait));
 }
 
 // ---------------------------------------------------------------------------------------------------

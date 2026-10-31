@@ -8,7 +8,6 @@ type UnitId,arcId,briefId,divergenceId,edgeId,needsUserId,phaseQuestionId,propos
 import { DEMO_ACTS,type DemoAct,LENS_KIND_NAMES,type LensKindName,type PauseTarget,type ResumeTarget } from '../core/records.ts';
 import { oneOf } from '../core/validate.ts';
 import { type AbsPath,absPath } from '../core/values.ts';
-import { FLOW_LEVERS,type FlowLever } from '../flow/types.ts';
 import { type BuildClass,type ProfileName,backend,buildClass,profileName } from '../routing/types.ts';
 
 export class CliError extends Error {
@@ -34,7 +33,7 @@ export type RunLocator = Readonly<{ type: 'host' }> | Readonly<{ type: 'explicit
 export type Command =
   | Readonly<{ command: 'version' }>
   | Readonly<{ command: 'start'; args: StartArgs }>
-  | Readonly<{ command: 'status'; run: RunLocator }>
+  | Readonly<{ command: 'status'; run: RunLocator; summary?: boolean }>
   | Readonly<{ command: 'tui'; run: RunLocator }>
   /**
    * `actionable` (`--actionable`): only what the architect acts on (src/watch.ts `ActionableFilter`), null for every
@@ -91,9 +90,6 @@ export type Command =
   | Readonly<{ command: 'inputs-export'; repo: string; arc: ArcId; out: string }>
   // M4b (src/commands/flow.ts): `flow accept|reject <proposal> --reason`, `flow request --reason` (the root agent's, for the
   // live arc) and `flow given --repo --lever --note` (a host given).
-  | Readonly<{ command: 'flow-decide'; proposal: ProposalId; decision: 'accept' | 'reject'; reason: string; run: RunLocator }>
-  | Readonly<{ command: 'flow-request'; reason: string; run: RunLocator }>
-  | Readonly<{ command: 'flow-given'; repo: string; lever: FlowLever; note: string }>
   /** dev.13: `demo up|down|hold|release`, the owner's act on the demo (src/demo/promote.ts). */
   | Readonly<{ command: 'demo'; act: DemoAct; run: RunLocator }>;
 
@@ -223,8 +219,12 @@ export function parseCommand(argv: readonly string[]): Command {
         : null;
       return { command, actionable, run: locator(p, command) };
     }
+    case 'status': {
+      const p = parseRest(rest, { ...LOCATOR, summary: 'switch' }, command);
+      positionals(p, command, 0);
+      return { command, run: locator(p, command), ...(p.flags.has('summary') ? { summary: true } : {}) };
+    }
     case 'tui':
-    case 'status':
     case 'stop': {
       const p = parseRest(rest, LOCATOR, command);
       positionals(p, command, 0);
@@ -403,34 +403,6 @@ export function parseCommand(argv: readonly string[]): Command {
         out: required(p, 'inputs export', 'out', '<dir>'),
       };
     }
-    case 'flow': {
-      const [sub, ...args] = rest;
-      switch (sub) {
-        case 'accept':
-        case 'reject': {
-          const name = `flow ${sub}`;
-          const p = parseRest(args, { ...LOCATOR, reason: 'value' }, name);
-          const proposal = arg(name, '<proposal>', proposalId, onePositional(p, name, '<proposal>'));
-          return { command: 'flow-decide', proposal, decision: sub, reason: nonBlank(name, 'reason', required(p, name, 'reason', '<text>')), run: locator(p, name) };
-        }
-        case 'request': {
-          const p = parseRest(args, { ...LOCATOR, reason: 'value' }, 'flow request');
-          positionals(p, 'flow request', 0);
-          return { command: 'flow-request', reason: nonBlank('flow request', 'reason', required(p, 'flow request', 'reason', '<text>')), run: locator(p, 'flow request') };
-        }
-        case 'given': {
-          const p = parseRest(args, { repo: 'value', lever: 'value', note: 'value' }, 'flow given');
-          positionals(p, 'flow given', 0);
-          return {
-            command: 'flow-given', repo: required(p, 'flow given', 'repo', '<path>'),
-            lever: arg('flow given', '--lever', (v, path) => oneOf(FLOW_LEVERS)(v, path ?? '--lever'), required(p, 'flow given', 'lever', '<lever class>')),
-            note: nonBlank('flow given', 'note', required(p, 'flow given', 'note', '<text>')),
-          };
-        }
-        default:
-          throw new CliError(`flow: expected the subcommand accept, reject, request or given, got ${JSON.stringify(sub ?? '')}`);
-      }
-    }
     case 'demo': {
       const [act, ...args] = rest;
       if (!(DEMO_ACTS as readonly (string | undefined)[]).includes(act)) throw new CliError(`demo: expected the act up, down, hold or release, got ${JSON.stringify(act ?? '')}`);
@@ -440,7 +412,7 @@ export function parseCommand(argv: readonly string[]): Command {
     }
     default:
       throw new CliError(
-        `unknown command ${JSON.stringify(command ?? '')}; expected one of --version, start, status, watch, stop, pause, ack, resume, sweep, apply, resolve-edge, run-only, reverse, steer, note, merge-in, audit, close-admissions, gc, phase0 check, corpus pin, brief, pr, chain status, answer, witness-check, resume-arc, inputs export, flow accept, flow reject, flow request, flow given, demo up, demo down, demo hold, demo release`,
+        `unknown command ${JSON.stringify(command ?? '')}; expected one of --version, start, status, watch, stop, pause, ack, resume, sweep, apply, resolve-edge, run-only, reverse, steer, note, merge-in, audit, close-admissions, gc, phase0 check, corpus pin, brief, pr, chain status, answer, witness-check, resume-arc, inputs export, demo up, demo down, demo hold, demo release`,
       );
   }
 }

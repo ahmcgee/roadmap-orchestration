@@ -65,7 +65,7 @@ const until = (stop: string): Gate => async (next) => next.stage !== stop;
 
 const facts = (d: ArcDescriptor): readonly Fact[] => readJournal(absPath(d.runDir), arcId(d.arc)).events.flatMap((e) => (e.type === 'fact' ? [e.fact] : []));
 const outcomeOf = (d: ArcDescriptor, stage: string): StageOutcomeFact => {
-  const f = facts(d).filter((x): x is StageOutcomeFact => x.kind === 'stage-outcome' && x.stage === stage).at(-1);
+  const f = facts(d).filter((x): x is StageOutcomeFact => (x.kind === 'stage-outcome' && 'unit' in x) && x.stage === stage).at(-1);
   if (f === undefined) throw new Error(`no ${stage} outcome`);
   return f;
 };

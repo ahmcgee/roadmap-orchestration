@@ -109,7 +109,7 @@ test('verify.dirty-tree: a lane that writes into the checkout is not certified, 
   assert.equal(done.outcome.kind, 'not-certified');
   assert.ok(done.next.kind === 'stage' && done.next.stage === 'build' && done.next.round === 'fix');
   const fact = outcomeFacts(run).at(-1)!;
-  assert.ok(fact.kind === 'stage-outcome' && fact.outcome === 'not-certified' && !fact.chargeable && fact.unchargedLanesReds === 1, 'not-certified consumes one uncharged certification red');
+  assert.ok((fact.kind === 'stage-outcome' && 'unit' in fact) && fact.outcome === 'not-certified' && !fact.chargeable && fact.unchargedLanesReds === 1, 'not-certified consumes one uncharged certification red');
   assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, 0);
   assert.equal(run.journal.view.unit(U1).counters.unchargedLanesReds, 1);
   // The dirty checkout is never kept; what the lane wrote is snapshotted first (ignored output is not dirt).

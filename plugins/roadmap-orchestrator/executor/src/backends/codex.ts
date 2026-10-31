@@ -22,6 +22,8 @@ function turnUsage(u: unknown): TokenUsage | null {
   if (!count(r['input_tokens']) || !count(r['output_tokens'])) return null;
   if (read !== undefined && !count(read)) return null;
   if (write !== undefined && !count(write)) return null;
+  const cost = r['cost_usd'] ?? r['total_cost_usd'];
+  if (cost !== undefined && (typeof cost !== 'number' || !Number.isFinite(cost) || cost < 0)) return null;
   return {
     inputTokens: r['input_tokens'],
     outputTokens: r['output_tokens'],
@@ -29,7 +31,7 @@ function turnUsage(u: unknown): TokenUsage | null {
     cacheWriteTokens: write === undefined ? null : write,
     // Codex reports neither a turn count nor a cost.
     turns: null,
-    costUsd: null,
+    costUsd: cost === undefined ? null : cost as number,
   };
 }
 
@@ -41,7 +43,7 @@ function sum(a: TokenUsage, b: TokenUsage): TokenUsage {
     cacheReadTokens: add(a.cacheReadTokens, b.cacheReadTokens),
     cacheWriteTokens: add(a.cacheWriteTokens, b.cacheWriteTokens),
     turns: null,
-    costUsd: null,
+    costUsd: add(a.costUsd, b.costUsd),
   };
 }
 
@@ -116,7 +118,7 @@ export function readCodex(stdout: string, lastMessage: string | null): BackendRe
   const usageOut: Usage = completed === 0
     ? { kind: 'unavailable', reason: 'no-result' }
     : usageProblem !== null || usage === null
-      ? { kind: 'unavailable', reason: usageProblem ?? 'absent' }
+      ? { kind: 'unavailable', reason: usageProblem ?? 'absent', ...(usage === null ? {} : { streamed: usage }) }
       : { kind: 'known', tokens: usage };
   return { sessionId, output, usage: usageOut, backendErrors: errors, stopReason: null, access: null };
 }

@@ -53,13 +53,6 @@ import { NEEDS_USER_DIR, openNeedsUser } from './needsuser.ts';
 import { type AckItem, BRIEF_SCHEMA, type BriefArc, type BriefFlow, type BriefPayload, type BriefPr, type CoverageEntry, type NextStart, parseBriefPayload, parsePhase0Record } from './phase0/types.ts';
 import { meterOf } from './meter.ts';
 import { type Decision, admitViews, censusCounts, decisionsAfter, heldPct, obligationLeaves, stageTimings } from './status.ts';
-import { codeConstraintOf, windowPressure } from './flow/constraint.ts';
-import { seriesOfRef } from './flow/history.ts';
-import { proposalLine } from './flow/job.ts';
-import { flowLog, proposalOf } from './flow/log.ts';
-import { seriesInputs } from './flow/series.ts';
-import { rulerChangesOf } from './flow/track.ts';
-import type { FlowAction } from './flow/types.ts';
 import { arcRolesOf } from './input/inforce.ts';
 import type { PlanM1 } from './input/plan.ts';
 import { demoView } from './demo/promote.ts';
@@ -133,45 +126,6 @@ function censusAt(repo: AbsPath, ref: ArcRef): BriefArc['census'] {
   });
 }
 
-/** Whether `plan` still carries what `action` applied (a sequence is the previous arc's own unit: never carried over). */
-function carries(plan: PlanM1, action: FlowAction): boolean {
-  switch (action.lever) {
-    case 'concurrency': return plan.capacity?.cpu === action.cpu;
-    case 'resource-pool': return plan.resources.find((r) => r.name === action.resource)?.pool?.size === action.size;
-    case 'suite-lane': {
-      const lane = plan.suite.lanes.find((l) => l.id === action.lane);
-      return lane !== undefined && (action.argv === undefined || canonicalJson(lane.argv) === canonicalJson(action.argv)) && (action.cpu === undefined || lane.cpu === action.cpu);
-    }
-    case 'sequence': return true;
-    case 'build-class': return plan.routing?.build?.[action.tier] === action.class;
-    case 'host': return true;
-  }
-}
-
-/** M4b: an arc's flow (see `BriefFlow`); `previous`: the arc before it in the chain, or null. Null with the loop off. */
-function briefFlow(ref: ArcRef, from: number, previous: ArcRef | null): BriefFlow | null {
-  if (arcRolesOf(ref.view.planApplied()) === null) return null;
-  const series = seriesOfRef(ref);
-  const c = codeConstraintOf(series.points);
-  const a = series.accounting;
-  const log = flowLog(ref.view, ref.events);
-  const prevLog = previous === null || arcRolesOf(previous.view.planApplied()) === null ? null : flowLog(previous.view, previous.events);
-  return {
-    constraint: c === null ? null : c.station === HOST_CPU_STATION
-      ? `${c.station}, the host's cpu saturated: mean pressure ${windowPressure(series.points)!.toFixed(2)} over the last merges (threshold ${PRESSURE_SATURATED})`
-      : `${c.station}${c.component === null ? '' : ` (${c.component})`}${c.internal ? ', the largest wait in front of it' : ', the largest service'}`,
-    accounting: `diagnostic only: ${a.tAdvances === null ? '' : `obligations first held ${a.tAdvances.toFixed(2)}/h advancing, ${(a.tOther ?? 0).toFixed(2)}/h other; `}units merged ${a.tUnits.toFixed(2)}/h; inventory ${a.wip}; spend $${a.oeUsdPerHour.toFixed(2)}/h`,
-    verdicts: [...log.verdicts.values()].filter((v) => v.seq > from).map((v) => `${proposalLine(proposalOf(log, v.proposal))}: ${v.verdict}${v.guards.length === 0 ? '' : ` (${v.guards.map((g) => `${g.guard}: ${g.detail}`).join('; ')})`}`),
-    rulerChanges: rulerChangesOf(ref.events, seriesInputs(ref.input)).filter((r) => r.seq > from).map((r) => `rev ${r.rev} (${r.command}): ${r.paths.join(', ')}`),
-    hostAdvice: log.runs.flatMap((r) => (r.ended !== null && r.ended.seq > from && r.ended.proposal?.action.lever === 'host'
-      ? [`${r.ended.proposal.id}: ${r.ended.proposal.action.note}`] : [])),
-    dropped: prevLog === null ? [] : [...prevLog.applied.keys()].flatMap((id) => {
-      const p = proposalOf(prevLog, id);
-      return prevLog.verdicts.get(id)?.verdict === 'worse' || carries(ref.plan, p.action) ? [] : [`${proposalLine(p)} in ${previous!.arc}`];
-    }),
-  };
-}
-
 function briefArc(repo: AbsPath, ref: ArcRef, from: number, pr: BriefPr, previous: ArcRef | null): BriefArc {
   const facts = factsAfter(ref, from);
   const now = ref.manifest.phase0;
@@ -209,7 +163,7 @@ function briefArc(repo: AbsPath, ref: ArcRef, from: number, pr: BriefPr, previou
     admits: admitted.admits.filter((x) => x.seq > from).map((x) => ({ job: x.job, index: x.index, unit: x.unit, class: x.class, clauses: x.clauses, followUp: x.followUp })),
     opportunities: admitted.opportunities,
     drift: admitted.drift.filter((x) => x.findings.length > 0).map((x) => ({ unit: x.unit, job: x.job, findings: x.findings.map((f) => ({ id: f.id, clauses: f.clauses })) })),
-    flow: briefFlow(ref, from, previous),
+    flow: null,
     demo: demoView({ view: ref.view, plan: ref.plan, repairs: refRepairs(repo, ref) }),
   };
 }

@@ -387,6 +387,8 @@ export type TokenUsage = Readonly<{
   turns: number | null;
   /** The CLI's own list-price cost estimate in USD (Claude `total_cost_usd`); null when not reported (Codex). */
   costUsd: number | null;
+  /** Derived from the pinned price table when the CLI supplies no cost. */
+  costEstimated?: true;
 }>;
 /** One usage class's tokens and list-price cost (Claude `modelUsage`, per model, summed per class). */
 export type ClassUsage = Readonly<{
@@ -431,6 +433,7 @@ export const tokenUsage: Read<TokenUsage> = object((f) => ({
   cacheWriteTokens: f.get('cacheWriteTokens', nullable(nat)),
   turns: f.get('turns', nullable(nat)),
   costUsd: f.get('costUsd', nullable(usd)),
+  ...(() => { const estimated = f.optional('costEstimated', literal(true)); return estimated === undefined ? {} : { costEstimated: estimated }; })(),
 }));
 export const classUsage: Read<ClassUsage> = object((f) => ({
   class: f.get('class', modelClass),
@@ -1550,9 +1553,7 @@ export type CommandBody =
   /** `roadmap close-admissions` (M3): latch `draining`. Scope ∅. */
   | Readonly<{ type: 'close-admissions' }>
   /** `roadmap flow accept|reject <proposal> --reason <text>` (M4b): the root agent's decision, idempotent by proposal. Scope ∅. */
-  | Readonly<{ type: 'flow-decide'; proposal: ProposalId; decision: 'accept' | 'reject'; reason: string }>
   /** `roadmap flow request --reason <text>` (M4b, RC-5): a flow run past the cooldown, once per cooldown window. Scope ∅. */
-  | Readonly<{ type: 'flow-request'; reason: string }>
 
   /**
    * `roadmap demo up|down|hold|release` (dev.13): the owner's act on the demo (src/demo/promote.ts). `hold` freezes promotion,
@@ -1622,11 +1623,6 @@ export const commandBody: Read<CommandBody> = tagged('type', {
     type: f.get('type', literal('audit')), lenses: f.get('lenses', nullable(sortedBy(oneOf(LENS_KIND_NAMES), (l) => l, { nonEmpty: true }))),
   })),
   'close-admissions': object((f): CommandBody => ({ type: f.get('type', literal('close-admissions')) })),
-  'flow-decide': object((f): CommandBody => ({
-    type: f.get('type', literal('flow-decide')), proposal: f.get('proposal', (v, p) => proposalId(v, p)), decision: f.get('decision', oneOf(['accept', 'reject'] as const)),
-    reason: f.get('reason', str),
-  })),
-  'flow-request': object((f): CommandBody => ({ type: f.get('type', literal('flow-request')), reason: f.get('reason', str) })),
   demo: object((f): CommandBody => ({ type: f.get('type', literal('demo')), act: f.get('act', oneOf(DEMO_ACTS)) })),
 });
 
@@ -1711,12 +1707,12 @@ export const NEEDS_USER_REASONS = [
   'apply-dropped',
   // Deflake scope (2026-10-23), non-blocking: a deflake unit was not minted, its scope reaching a same-repo corpus (no lane systems
   // and no system holding the flaky tests' files); the item names the lane, the keys and what to declare.
-  'revision-notice',
+  'revision-notice', 'waste-finding',
 ] as const;
 /** The reasons from M3 on raised non-blocking; every other one is raised blocking. */
 export const NON_BLOCKING_M3_REASONS = [
   'bundle-request', 'convergence-bound', 'convergence-identity', 'audit-owed', 'divergence-digest', 'flow-proposal', 'flow-host', 'flow-worse', 'flow-invalid',
-  'ruler-changed', 'executor-fault', 'deflake-parked', 'flake-recurring', 'apply-dropped',  'revision-notice',
+  'ruler-changed', 'executor-fault', 'deflake-parked', 'flake-recurring', 'apply-dropped',  'revision-notice', 'waste-finding', 'waste-finding',
 ] as const satisfies readonly NeedsUserReason[];
 export type NeedsUserReason = (typeof NEEDS_USER_REASONS)[number];
 

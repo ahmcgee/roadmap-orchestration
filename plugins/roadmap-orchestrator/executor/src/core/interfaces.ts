@@ -145,6 +145,7 @@ export interface JournalView {
   /** dev.17 proportional review: the findings ledger, approvals with their blobs, docs-only checks. */
   review(): ReviewFold;
   /** M4b: every flow fact, in log order, with its seq and time (src/flow/apply.ts derives the decisions' phases from them). */
+  stageJobOutcomes(): readonly import('./events.ts').JobStageOutcomeFact[];
   flowFacts(): readonly FlowFactAt[];
   /** dev.13: every walk fact (walks, polish, tweaks, milestone passes, the demo), in log order, with its seq and time. */
   walkFacts(): readonly WalkFactAt[];

@@ -32,7 +32,7 @@ const command = async (r: ArcRun, body: CommandBody): Promise<void> => {
   assert.equal(out.kind, 'applied', JSON.stringify(out));
 };
 const stageOutcomes = (r: ArcRun) => readJournal(r.ctx.runDir, r.journal.view.arc).events.flatMap((e) =>
-  (e.type === 'fact' && e.fact.kind === 'stage-outcome' ? [e.fact] : [] as Extract<Fact, { kind: 'stage-outcome' }>[]));
+  (e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact) ? [e.fact] : [] as Extract<Fact, { kind: 'stage-outcome' }>[]));
 const specPath = (d: ArcDescriptor, unit: string): string => join(d.planPath, '..', `${unit}.json`);
 const editPlan = (d: ArcDescriptor, edit: (plan: Json & { units: Json[] }) => void): void => {
   const plan = JSON.parse(readFileSync(d.planPath, 'utf8')) as Json & { units: Json[] };

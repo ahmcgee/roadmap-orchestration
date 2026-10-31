@@ -89,7 +89,7 @@ export const merged = (r: ExecRun, unit: string): boolean => existsSync(join(r.r
 export const restarted = (r: ExecRun): boolean => existsSync(join(r.runDir, 'events.jsonl')) && startedGenerations(r).length >= 2;
 /** Whether `unit`'s gate has approved: its next stage is the candidate (or later). */
 export const approved = (r: ExecRun, unit: string): boolean =>
-  existsSync(join(r.runDir, 'events.jsonl')) && journalOf(r).events.some((e) => e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.unit === unit && e.fact.stage === 'gate' && e.fact.outcome === 'approve');
+  existsSync(join(r.runDir, 'events.jsonl')) && journalOf(r).events.some((e) => e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact) && e.fact.unit === unit && e.fact.stage === 'gate' && e.fact.outcome === 'approve');
 /** B is parked on estate#1 and the first probe of it failed: the next is a minute away. */
 export const residueParked = (r: ExecRun): boolean =>
   existsSync(join(r.runDir, 'events.jsonl')) && journalOf(r).events.some((e) => e.type === 'fact' && e.fact.kind === 'probe' && e.fact.target.type === 'resource' && e.fact.result === 'fail');

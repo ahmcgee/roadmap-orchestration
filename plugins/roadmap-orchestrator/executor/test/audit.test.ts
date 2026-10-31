@@ -113,6 +113,7 @@ describe('cadence', () => {
       assert.deepEqual(owed(cadence(ctx, ctx.clock)), ['cadence', 'drift:2', 'requested'], 'a docs-only rule drifts and is no publication');
       const out = await runAudit(ctx);
       assert.ok(out.kind === 'ended' && out.outcome === 'completed', JSON.stringify(out));
+      assert.deepEqual(r.journal.view.stageJobOutcomes(), [{ kind: 'stage-outcome', stage: 'campaign-audit', job: 'audit-1', milestone: null, verdict: 'pass', findings: { P1: 0, P2: 0, P3: 0, total: 0 } }]);
       const [s] = started(r);
       assert.deepEqual(s!.triggers, [{ type: 'cadence' }, { type: 'drift', planRev: 2 }, { type: 'requested', command: asked }], 'coalesced into one audit');
       assert.deepEqual([s!.lenses, s!.generation], [['invariants', 'vision'], 1]);

@@ -753,6 +753,14 @@ export type StageOutcomeFact = { [S in OutcomeStage]: Readonly<{
   detail?: StageOutcomeDetail;
 }> }[OutcomeStage];
 
+/** Arc jobs share the efficacy feed without participating in the unit state machine. */
+export type JobStageOutcomeFact = Readonly<{
+  kind: 'stage-outcome'; stage: 'experience-verdict' | 'campaign-audit';
+  job: JobId; milestone: MilestoneId | null;
+  verdict: 'pass' | 'revise' | 'keep' | 'drop' | 'abandoned' | 'bring-up-failed';
+  findings: Readonly<{ P1: number; P2: number; P3: number; total: number }>;
+}>;
+
 /** The lanes outcomes covered by the uncharged certification allowance. */
 export const certificationRed = (stage: string, outcome: string): boolean =>
   stage === 'lanes' && (outcome === 'red' || outcome === 'not-certified' || outcome === 'witnesses-missing');
@@ -822,7 +830,7 @@ export type Fact =
    * Both absent: a Codex call's, or one an executor before 1.0.0-dev.12 wrote (nothing delegated).
    */
   | Readonly<{
-    kind: 'meter'; prompt?: PromptSize; inv: InvocationId; routingRev: RoutingRev; subject: MeterSubject; usage: TokenUsage; session?: ClaudeSessionId; delegated?: readonly ClassUsage[];
+    kind: 'meter'; prompt?: PromptSize; inv: InvocationId; routingRev: RoutingRev; subject: MeterSubject; usage: TokenUsage; incomplete?: UsageUnavailableReason; session?: ClaudeSessionId; delegated?: readonly ClassUsage[];
   }>
   /** `streamed` (dev.17): what a judgment's stream without a result showed (records.ts `Usage`); the meter counts its tokens. */
   | Readonly<{ kind: 'usage-unavailable'; inv: InvocationId; routingRev: RoutingRev; subject: MeterSubject; reason: UsageUnavailableReason; streamed?: TokenUsage }>
@@ -911,6 +919,7 @@ export type Fact =
    */
   | Readonly<{ kind: 'approval'; unit: UnitId; attempt: number; fingerprint: ApprovalFingerprint; blobs?: ApprovalBlobs }>
   | StageOutcomeFact
+  | JobStageOutcomeFact
   | HolisticFact
   | M4aFact
   | FlowFact
@@ -1284,7 +1293,7 @@ export type HolisticFactKind = HolisticFact['kind'];
 export type PlanAppliedFact = Extract<Fact, { kind: 'plan-applied' }>;
 
 /** The plan fields besides units, suite, resources and routing that an apply may change. `capacity` since M2. */
-export const PLAN_FIELDS = ['contracts', 'rulings', 'architectureDoc', 'architectureDigest', 'direction', 'capacity'] as const;
+export const PLAN_FIELDS = ['contracts', 'rulings', 'architectureDoc', 'architectureDigest', 'direction', 'capacity', 'expectations'] as const;
 export type PlanField = (typeof PLAN_FIELDS)[number];
 
 /**
@@ -2476,7 +2485,7 @@ export const fact: Read<Fact> = tagged('kind', {
     if ((session === undefined) !== (delegated === undefined)) throw new SchemaError(f.path, 'session and delegated together, or neither', { session, delegated });
     return {
       kind: f.get('kind', literal('meter')), ...promptField(f), inv: f.get('inv', invR), routingRev: f.get('routingRev', revR), subject: f.get('subject', meterSubject),
-      usage: f.get('usage', tokenUsage), ...(session === undefined || delegated === undefined ? {} : { session, delegated }),
+      usage: f.get('usage', tokenUsage), ...(() => { const incomplete = f.optional('incomplete', usageUnavailableReason); return incomplete === undefined ? {} : { incomplete }; })(), ...(session === undefined || delegated === undefined ? {} : { session, delegated }),
     };
   }),
   'usage-unavailable': object((f): Fact => {
@@ -2620,7 +2629,14 @@ export const fact: Read<Fact> = tagged('kind', {
   ...PROPAGATION_FACT_READERS,
   ...REVIEW_FACT_READERS,
   'stage-outcome': object((f): Fact => {
-    const s = f.get('stage', oneOf(OUTCOME_STAGES));
+    const stage = f.get('stage', oneOf([...OUTCOME_STAGES, 'experience-verdict', 'campaign-audit'] as const));
+    if (stage === 'experience-verdict' || stage === 'campaign-audit') {
+      const findings = f.get('findings', object((g) => ({ P1: g.get('P1', nat), P2: g.get('P2', nat), P3: g.get('P3', nat), total: g.get('total', nat) })));
+      if (findings.total !== findings.P1 + findings.P2 + findings.P3) throw new SchemaError(`${f.path}.findings.total`, 'the severity counts summed', findings.total);
+      return { kind: f.get('kind', literal('stage-outcome')), stage, job: f.get('job', jobIdOf), milestone: f.get('milestone', nullable(milestoneId)),
+        verdict: f.get('verdict', oneOf(['pass', 'revise', 'keep', 'drop', 'abandoned', 'bring-up-failed'] as const)), findings };
+    }
+    const s = stage;
     const out = {
       kind: f.get('kind', literal('stage-outcome')),
       unit: f.get('unit', unitR),

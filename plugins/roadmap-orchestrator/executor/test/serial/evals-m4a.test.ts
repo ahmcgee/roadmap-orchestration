@@ -106,8 +106,8 @@ async function runFixture(name: 'story' | 'vision-silent'): Promise<Fixture> {
 
 const journal = (dir: string, n: number): readonly Event[] => readJournal(absPath(join(layout(dir).product, '.git', 'roadmap-runtime', fakeArc(dir, n))), arcId(fakeArc(dir, n))).events;
 type Seq<F> = F & { seq: number };
-const factsOf = <K extends Fact['kind']>(events: readonly Event[], kind: K): readonly Seq<Extract<Fact, { kind: K }>>[] =>
-  events.flatMap((e) => (e.type === 'fact' && e.fact.kind === kind ? [{ ...(e.fact as Extract<Fact, { kind: K }>), seq: e.seq }] : []));
+const factsOf = <K extends Fact['kind']>(events: readonly Event[], kind: K): readonly Seq<Extract<Exclude<Fact, { stage: 'experience-verdict' | 'campaign-audit' }>, { kind: K }>>[] =>
+  events.flatMap((e) => (e.type === 'fact' && e.fact.kind === kind && (kind !== 'stage-outcome' || 'unit' in e.fact) ? [{ ...(e.fact as Extract<Exclude<Fact, { stage: 'experience-verdict' | 'campaign-audit' }>, { kind: K }>), seq: e.seq }] : []));
 const raisedOf = (events: readonly Event[], reason: string, dir: string, n: number): readonly Readonly<{ id: string; seq: number }>[] =>
   events.flatMap((e) => {
     if (e.type !== 'intent' || e.kind !== 'needsuser.raise') return [];
@@ -116,7 +116,7 @@ const raisedOf = (events: readonly Event[], reason: string, dir: string, n: numb
   });
 
 /** A unit's stage outcomes, `<stage>:<outcome>` in log order, and the facts themselves. */
-const outcomesOf = (events: readonly Event[], unit: string): readonly Seq<Extract<Fact, { kind: 'stage-outcome' }>>[] => factsOf(events, 'stage-outcome').filter((f) => f.unit === unit);
+const outcomesOf = (events: readonly Event[], unit: string): readonly Seq<import('../../src/core/events.ts').StageOutcomeFact>[] => factsOf(events, 'stage-outcome').filter((f) => f.unit === unit);
 const named = (o: readonly Readonly<{ stage: string; outcome: string }>[]): readonly string[] => o.map((f) => `${f.stage}:${f.outcome}`);
 /** The `lane` spawns of `unit`'s lane `lane` (spec, suite or journey runs alike). */
 const laneSpawns = (events: readonly Event[], unit: string, lane: string): readonly Event[] =>
@@ -258,17 +258,12 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     // no holistic job runs, and the root agent rejects it on whichever wake carries it, once.
     type WakeLine = { event: string; reason?: string; run?: string; units?: Record<string, string> };
     const linesOf = (t: Turn): WakeLine[] => t.prompt.split('\n').slice(1).map((x) => JSON.parse(x) as WakeLine);
-    const flowItem = (e: WakeLine): boolean => e.event === 'needs-user' && e.reason === 'flow-proposal';
-    const merging = (e: WakeLine): boolean => (e.event === 'units' && e.run === 'running') || flowItem(e);
+    const merging = (e: WakeLine): boolean => e.event === 'units' && e.run === 'running';
     const mergeOnly = (t: Turn): boolean => t.kind === 'wake' && linesOf(t).every(merging);
     for (const t of report.turns.filter(mergeOnly)) {
-      if (linesOf(t).some(flowItem)) assert.match(t.result ?? '', /^Rejected flow-1\.0 \(build-class\)/);
-      else {
-        assert.ok(linesOf(t).some((e) => Object.values(e.units ?? {}).includes('merged')), t.prompt);
-        assert.match(t.result ?? '', /^Nothing for me in this wake-up\./);
-      }
+      assert.ok(linesOf(t).some((e) => Object.values(e.units ?? {}).includes('merged')), t.prompt);
+      assert.match(t.result ?? '', /^Nothing for me in this wake-up\./);
     }
-    assert.equal(report.turns.filter((t) => /^Rejected flow-1\.0/.test(t.result ?? '')).length, 1, 'arc 2\'s proposal was rejected on one wake');
     const storyTurns = report.turns.filter((t) => !mergeOnly(t));
     assert.deepEqual(storyTurns.map((t) => t.kind), ['start', 'owner', 'wake', 'wake', 'wake', 'owner', 'wake', 'wake', 'wake']);
     // Each wake carries exactly the events the story synchronises on (paid run 10 batch: two events 3.7 s apart against
@@ -280,12 +275,6 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
       ['needs-user:pack-review'], ['units:blocked'], ['units:complete'],
       ['units:blocked'], ['units:held'], ['units:complete'],
     ]);
-    const revisions = raisedOf(arc1, 'revision-notice', story.dir, 1);
-    assert.equal(revisions.length, 1, 'the applied flow revision has its P1 notice');
-    const appliedFlow = factsOf(arc1, 'flow-applied')[0]!;
-    const clearedFlow = factsOf(arc1, 'run-only').find((f) => f.units === null && f.seq > appliedFlow.seq)!;
-    const closedRevision = factsOf(arc1, 'needs-user-acked').find((f) => f.id === revisions[0]!.id)!;
-    assert.ok(revisions[0]!.seq < clearedFlow.seq && clearedFlow.seq < closedRevision.seq, 'run-only clear closes the flow notice before the scripted root ends its turn');
     const digests = raisedOf(arc2, 'divergence-digest', story.dir, 2);
     assert.equal(digests.length, 1, 'the bundle raised one divergence digest');
     const digest = digests[0]!;
@@ -506,15 +495,12 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     assert.deepEqual([report.endedBy, report.stopReason], ['stopped', 'vision-silent']);
     assertEveryStepPlayed(silent.dir, [1]);
     const silentArc1 = journal(silent.dir, 1);
-    assert.deepEqual(factsOf(silentArc1, 'flow-ended').map((f) => [f.job, f.outcome, f.proposal]), [['flow-1', 'done', null]], 'one flow run, the third merge\'s, with no proposal');
-    const held = factsOf(silentArc1, 'dispatch').filter((d) => d.record.unit === 'free-berths');
-    assert.ok(held.length > 0 && held.every((d) => d.seq > factsOf(silentArc1, 'flow-ended')[0]!.seq), 'the read-outs after quay-list waited for it');
     const chain = chainOf(absPath(layout(silent.dir).product));
     assert.equal(chain.arcs.length, 1);
     const pass = checked.result.criteria.filter((c) => c.pass).map((c) => c.name);
     // M4b: arc 1's constraint-shift run (noAction) names the slot and its suite component, so flow-constraint holds; the
     // loop and the shard need a decided proposal and a verdict. M4b rev 3: its lane runs carry pressure (pressure-recorded).
-    assert.deepEqual(pass, ['isolation', 'arc1-complete', 'brief-acked-once', 'no-model-ids', 'host-released', 'profile', 'flow-constraint', 'ruler-intact', 'pressure-recorded'], 'the paid run\'s criteria that need a second arc, the k-limit stop or a decided flow proposal fail here');
+    assert.deepEqual(pass, ['isolation', 'arc1-complete', 'brief-acked-once', 'no-model-ids', 'host-released', 'profile', 'ruler-intact', 'pressure-recorded'], 'the paid run\'s criteria that need a second arc, the k-limit stop or a decided flow proposal fail here');
     assert.match(checked.result.criteria.find((c) => c.name === 'stopped-at-k')!.detail, /vision-silent/);
   });
 
@@ -596,38 +582,7 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     assert.deepEqual(log, { n: 1, byLever: { pause: 1 }, malformed: [] });
   });
 
-  test('evals-m4a.flow-loop: arc 1 proves a bait changed and applies the plant lane at six files a time with an improved verdict; arc 2 carries it and rejects a build-class step', () => {
-    const product = absPath(layout(story.dir).product);
-    assert.deepEqual(plantCheck(product), { kind: 'in-play', arc: fakeArc(story.dir, 1), lane: SUITE_LANE, units: unitsOf(1).length }, 'the fail-fast found plant S in play');
-    const { one, two } = chainOf(product);
-    const a1 = flowArcOf(one!);
-    const facts = <K extends Fact['kind']>(a: FlowArc, kind: K) => a.facts.flatMap((x) => (x.fact.kind === kind ? [x.fact as Extract<Fact, { kind: K }>] : []));
-    // flow-1 is the request's or, when the third merge's first constraint label got there first, constraint-shift's (the
-    // request then goes to flow-2); flow-2 is always the cooldown's one requested bypass.
-    const started = facts(a1, 'flow-started');
-    assert.deepEqual(started.map((f) => f.job), ['flow-1', 'flow-2']);
-    assert.ok(started[0]!.triggers.every((x) => x === 'requested' || x === 'constraint-shift'), JSON.stringify(started[0]!.triggers));
-    assert.ok(started[1]!.triggers.includes('requested'), JSON.stringify(started[1]!.triggers));
-    assert.deepEqual(facts(a1, 'flow-ended').map((f) => [f.proposal?.id, f.proposal?.action.lever, f.proposal?.target]), [
-      ['flow-1.0', 'suite-lane', `suite:${REPLAY_LANE.id}`], ['flow-2.0', 'suite-lane', `suite:${SUITE_LANE}`],
-    ]);
-    assert.deepEqual(facts(a1, 'flow-decided').map((d) => [d.proposal, d.decision, d.reason]), [['flow-1.0', 'accepted', FLOW_1.bait.reason], ['flow-2.0', 'accepted', FLOW_1.shard.reason]]);
-    assert.deepEqual(facts(a1, 'flow-proof').map((p) => [p.proposal, p.outcome]), [['flow-1.0', 'changed'], ['flow-2.0', 'preserved']]);
-    const [applied, ...more] = facts(a1, 'flow-applied');
-    assert.ok(applied !== undefined && more.length === 0 && applied.proposal === 'flow-2.0', 'only the preserved change was applied');
-    const revision = a1.revisions.find((r) => r.rev === (applied.revision as number))!;
-    assert.deepEqual(revision.plan.suite.lanes.find((x) => x.id === SUITE_LANE)?.argv, SHARD.argv);
-    assert.deepEqual(factsOf(arc1, 'plan-applied').find((p) => p.rev === applied.revision)?.source, { type: 'flow', proposal: 'flow-2.0' });
-    const [v] = facts(a1, 'flow-verdict');
-    assert.deepEqual([v?.proposal, v?.metric, v?.verdict], ['flow-2.0', { type: 'suite-run', lane: SUITE_LANE }, 'improved']);
-    assert.ok((v?.after.samples.length ?? 0) >= 3, 'the read-outs after quay-list ran the suite after the change');
-    // Arc 2 carries the change; its one requested run's build-class step is rejected with a reason.
-    assert.deepEqual(two!.plan.suite.lanes.find((x) => x.id === SUITE_LANE)?.argv, SHARD.argv);
-    const a2 = flowArcOf(two!);
-    assert.deepEqual(facts(a2, 'flow-ended').map((f) => [f.job, f.outcome, f.proposal?.action.lever]), [['flow-1', 'done', 'build-class']]);
-    assert.deepEqual(facts(a2, 'flow-decided').map((d) => [d.proposal, d.decision, d.reason]), [['flow-1.0', 'rejected', FLOW_2.buildClass.reason]]);
-    for (const name of ['flow-constraint', 'flow-loop', 'flow-shard', 'ruler-intact']) assert.ok(story.checked.result.criteria.find((c) => c.name === name)?.pass, name);
-  });
+
 });
 
 test('skill.operator-log-format: reference.md\'s operator-log example parses with check.ts\'s parser, every lever in the closed list', () => {

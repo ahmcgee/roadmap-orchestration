@@ -185,7 +185,7 @@ export type RoutingStack = Readonly<{
  */
 export type ArcScope = 'none' | PlanTargetKind;
 export const ARC_ROLES_IN_FORCE: { readonly [S in ArcScope]: readonly ArcRole[] } = {
-  none: ['flow'], 'architecture-doc': ['lens', 'checkpoint', 'flow'], corpus: ['lens', 'checkpoint', 'packReview', 'flow'],
+  none: [], 'architecture-doc': ['lens', 'checkpoint'], corpus: ['lens', 'checkpoint', 'packReview'],
 };
 
 /**

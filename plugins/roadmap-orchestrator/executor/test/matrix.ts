@@ -190,10 +190,10 @@ const PIPELINE_LABELS: Readonly<Record<Boundary, readonly string[]>> = {
  * The straight run completes; dev.17: its candidate reuses the suite lane the lanes stage passed on the same tree (the one
  * reuse key), so it reaches `lanes.after-reused` too.
  */
-const COMPLETE_LABELS: Readonly<Partial<Record<Boundary, readonly string[]>>> = { B4: ['flow.series-before-completed'], B5: ['complete.after-fact', 'lanes.after-reused'] };
+const COMPLETE_LABELS: Readonly<Partial<Record<Boundary, readonly string[]>>> = { B5: ['complete.after-fact', 'lanes.after-reused'] };
 /** The bumpy run adds the merge-in's conflicted path and the red lane's persisted class (M4a rev 3 N1: red.json written, the rerun not begun). */
 const MERGEIN_LABELS: Readonly<Partial<Record<Boundary, readonly string[]>>> = {
-  B2: ['mergein.act-start'], B3: ['mergein.after-merge'], B4: ['mergein.act-end', 'flow.series-before-completed'], B5: ['complete.after-fact', 'redlane.after-class'],
+  B2: ['mergein.act-start'], B3: ['mergein.after-merge'], B4: ['mergein.act-end'], B5: ['complete.after-fact', 'redlane.after-class'],
 };
 
 /**
@@ -219,7 +219,6 @@ const HOLISTIC_LABELS: Readonly<Record<Boundary, readonly string[]>> = {
     'needsuser.raise.after-publish', 'audit.before-ended', 'checkpoint.after-call', 'bundle.after-applied', 'bundle.after-decided', 'docs.act-end',
     'closeout.before-published', 'packreview.after-call', 'packreview.after-ended', 'amendment.after-decided', 'debt.after-approval',
     'smoke.after-witnessed', 'mutant.act-end', 'bundle.after-conversion-amendment',
-    'flow.series-before-completed',
   ],
   B5: [
     'spawn.after-done', 'resource.after-done', 'latch.after-fact', 'audit.after-ended', 'docs.after-snapshot', 'complete.after-fact',
@@ -1818,43 +1817,6 @@ export const MATRIX: readonly Row[] = [
         recovery: 'the call recorded, nothing ended: the restart consumes it (never asked again) and ends the job once; ended, its blocking item not raised: the restart raises it once (settlePackReviews); one review, one item',
       },
       B5: { status: 'excluded', why: 'the item is the job\'s last record; the hold is a pure function of the facts, the items and the current key' },
-    },
-  },
-  {
-    // The flow job (src/flow/job.ts `runFlowJob`) driven in a child (test/fixtures/flow-job-child.ts) a restart in process
-    // recovers and resumes.
-    row: FLOW_JOB,
-    test: 'test/flow-job.test.ts',
-    cells: {
-      B1: { status: 'excluded', why: EXCLUDED_B1 },
-      B2: {
-        status: 'crash',
-        labels: ['flow.after-started'],
-        recovery: 'the inputs kept and flow-started written, nothing asked: the job resumes from its kept inputs alone and asks once',
-      },
-      B3: { status: 'excluded', why: 'the call is a proc.spawn: its runner-exit cells (spawn.*) cover a crash inside it; the job consumes the recorded call on resume' },
-      B4: {
-        status: 'crash',
-        labels: ['flow.after-call', 'flow.after-ended'],
-        recovery: 'the call recorded, nothing ended: the restart consumes it (never asked again) and ends the job once; ended, its item not raised: the restart raises it once (settleFlowItems); one run, one item',
-      },
-      B5: { status: 'excluded', why: 'the item is the job\'s last record; the triggers and the window are pure functions of the facts' },
-    },
-  },
-  {
-    // The series at completion (src/flow/track.ts `beforeCompletion`), driven in the same child.
-    row: FLOW_SERIES,
-    test: 'test/flow-job.test.ts',
-    cells: {
-      B1: { status: 'excluded', why: EXCLUDED_B1 },
-      B2: { status: 'excluded', why: 'the series is kept content-addressed before its fact: a crash before the fact keeps it again with the same bytes' },
-      B3: { status: 'excluded', why: 'keeping the series is one atomic write' },
-      B4: {
-        status: 'crash',
-        labels: ['flow.series-before-completed'],
-        recovery: 'flow-series written, arc-completed missing: the restart keeps no second series (the latest is the last work) and completes',
-      },
-      B5: { status: 'excluded', why: 'arc-completed is the completion\'s own record (complete.after-fact)' },
     },
   },
   {

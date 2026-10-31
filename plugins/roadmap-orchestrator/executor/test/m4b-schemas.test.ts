@@ -139,9 +139,6 @@ describe('m4b facts', () => {
     });
     roundTrip(applied({ type: 'flow', proposal: 'flow-2.0' }, null));
     refuses(applied({ type: 'flow', proposal: 'flow-2.0' }, CMD), /\.source$/);
-    assert.deepEqual(commandBody({ type: 'flow-decide', proposal: 'flow-2.0', decision: 'reject', reason: 'r' }, 'b'), { type: 'flow-decide', proposal: 'flow-2.0', decision: 'reject', reason: 'r' });
-    assert.throws(() => commandBody({ type: 'flow-decide', proposal: 'flow-2.0', decision: 'accepted', reason: 'r' }, 'b'), SchemaError);
-    assert.throws(() => commandBody({ type: 'flow-request', reason: '' }, 'b'), SchemaError);
   });
 });
 
@@ -255,31 +252,6 @@ describe('m4b flow output (strict)', () => {
       { proposal: { ...ok.proposal, action: { lever: 'sequence', unit: 'u1', priority: 'normal' } } }, { proposal: { ...ok.proposal, action: { lever: 'rope', wip: 3 } } },
     ]) assert.throws(() => validateFlowOutput({ ...ok, ...bad }), SchemaError, JSON.stringify(bad));
     assert.ok(JSON.stringify(FLOW_SCHEMA).includes('"go-test-json"'));
-  });
-});
-
-describe('m4b routing: arcRoles gates the flow seat', () => {
-  it('without a role set (an arc 1.0.0-dev.7 started) the rev and seats are dev.7\'s; m4b puts flow in force in every scope', () => {
-    const dev7 = resolveRouting(arcStack('default', null, null));
-    const m4b = resolveRouting({ ...arcStack('default', null, null), arcRoles: 'm4b' });
-    assert.equal(dev7.rev, routingRevOf(dev7.table, 'none', null, false));
-    assert.notEqual(m4b.rev, dev7.rev, 'the flow seat is hashed');
-    assert.ok(!seatsInForce(dev7).some((s) => s.role === 'flow'));
-    assert.deepEqual(seatsInForce(m4b).filter((s) => s.role === 'flow'), [{ role: 'flow', tier: 'arc' }]);
-    assert.deepEqual(m4b.classes.flow, { arc: 'efficient' }, 'the flow seat on efficient (owner ruling 2026-10-15)');
-    for (const scope of ['architecture-doc', 'corpus'] as const) {
-      assert.notEqual(routingRevOf(m4b.table, scope, 'm4b', false), routingRevOf(m4b.table, scope, null, false), scope);
-      assert.ok(seatsInForce(resolveRouting({ ...arcStack('default', null, null), arcScope: scope, arcRoles: 'm4b' })).some((s) => s.role === 'flow'), scope);
-    }
-    // A flow-seat rebind moves only an m4b arc's rev.
-    const moved = { flow: { arc: 'summit' as const } };
-    assert.equal(resolveRouting(arcStack('default', null, moved)).rev, dev7.rev);
-    assert.notEqual(resolveRouting({ ...arcStack('default', null, moved), arcRoles: 'm4b' }).rev, m4b.rev);
-    // The provenance records the role set additively: absent reads as absent.
-    const p = { profile: 'default', repoConfig: { seats: null, classes: null }, planLayer: null, unitLayers: {} };
-    assert.equal(routingProvenance(p, 'p').arcRoles, undefined);
-    assert.equal(routingProvenance({ ...p, arcRoles: 'm4b' }, 'p').arcRoles, 'm4b');
-    assert.throws(() => routingProvenance({ ...p, arcRoles: 'm4a' }, 'p'), SchemaError);
   });
 });
 

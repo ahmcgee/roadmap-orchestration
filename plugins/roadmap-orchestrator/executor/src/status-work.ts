@@ -71,7 +71,7 @@ export function certification(ctx: StageContext, unit: PlanUnit, events: readonl
   if (!checkout && queuedAttempt === undefined && state.open?.stage !== 'lanes') return { ...empty, attempt };
   const at = checkout?.expect.checkout.type === 'detached' ? checkout.expect.checkout.at : unitTip(ctx, unit.id);
   const { spec } = loadUnitSpec(ctx, unit);
-  const previous = events.flatMap((e) => e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.unit === unit.id
+  const previous = events.flatMap((e) => e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact) && e.fact.unit === unit.id
     && e.fact.stage === 'lanes' && e.fact.class !== 'hold' && e.fact.attempt < attempt ? [e.fact.attempt] : []).at(-1) ?? null;
   const reds = previousLaneReds(ctx, unit, spec, previous);
   const groups = [

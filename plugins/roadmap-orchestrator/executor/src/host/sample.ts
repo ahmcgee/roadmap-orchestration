@@ -54,4 +54,4 @@ export function readHostFingerprint(): HostFingerprint {
 
 export const isBusy = (s: HostSample): boolean => s.load1 / s.cpus >= BUSY_LOAD_PER_CPU || s.memAvailableKb < s.memTotalKb * BUSY_MEM_AVAILABLE_FRACTION;
 
-export const isClear = (s: HostSample): boolean => s.load1 / s.cpus < CLEAR_LOAD_PER_CPU;
+export const isClear = (s: HostSample): boolean => s.load1 / s.cpus < CLEAR_LOAD_PER_CPU && s.memAvailableKb >= s.memTotalKb * BUSY_MEM_AVAILABLE_FRACTION;

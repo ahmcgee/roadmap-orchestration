@@ -720,9 +720,6 @@ export const CRITERIA: readonly Grade[] = [
   ['snapshot-closure', snapshotClosure],
   ['host-released', hostReleased],
   ['profile', profile],
-  ['flow-constraint', flowConstraint],
-  ['flow-loop', flowLoop],
-  ['flow-shard', flowShard],
   ['ruler-intact', rulerIntact],
   ['pressure-recorded', pressureRecorded],
 ];

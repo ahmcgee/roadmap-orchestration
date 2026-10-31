@@ -160,7 +160,7 @@ test('executor.pause-holds-then-resume: a pause mid-build interrupts it (held, u
   assert.equal(exit.code, 0, exit.stderr);
   assert.deepEqual(reasonOf(exit), { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }] });
   assert.deepEqual(outcomes(r), ['plan-check:approve', 'build:interrupted', ...AFTER_BUILD]);
-  const builds = journalOf(r).events.flatMap((e) => (e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.stage === 'build' ? [e.fact.attempt] : []));
+  const builds = journalOf(r).events.flatMap((e) => (e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact) && e.fact.stage === 'build' ? [e.fact.attempt] : []));
   assert.equal(builds.length, 2);
   assert.notEqual(builds[0], builds[1], 'the resumed build is a new attempt');
   assert.equal(journalOf(r).view.unit(U1).counters.chargeableFailures, 0, 'the interruption charged nothing');
@@ -281,7 +281,7 @@ test('executor.crash-restart-continues: SIGKILL of the executor mid-build; the s
   assert.deepEqual(outcomes(r), STRAIGHT, 'the crashed attempt\'s outcome was recorded from its result; every stage once');
   const parent = builds[0]!.parent;
   assert.ok(parent.type === 'stage');
-  const buildOutcome = facts(r).find((f) => f.kind === 'stage-outcome' && f.stage === 'build');
+  const buildOutcome = facts(r).find((f) => (f.kind === 'stage-outcome' && 'unit' in f) && f.stage === 'build');
   assert.ok(buildOutcome?.kind === 'stage-outcome' && buildOutcome.attempt === parent.attempt, 'recorded at the crashed attempt');
   const u = view.unit(U1);
   assert.equal(u.counters.chargeableFailures, 0);

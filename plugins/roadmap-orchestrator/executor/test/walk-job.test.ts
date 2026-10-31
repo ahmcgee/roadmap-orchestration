@@ -361,6 +361,7 @@ describe('the milestone walk (dev.13)', () => {
 
       const w1 = await walk(r);
       assert.deepEqual(w1, { kind: 'ended', job: 'walk-1', outcome: 'reported', passed: false });
+      assert.deepEqual(r.journal.view.stageJobOutcomes().filter((f) => f.job === 'walk-1'), [{ kind: 'stage-outcome', stage: 'experience-verdict', job: 'walk-1', milestone: 'MS-1', verdict: 'revise', findings: { P1: 1, P2: 0, P3: 0, total: 1 } }]);
       const [started] = factsOf(r, 'walk-started');
       assert.equal(started!.sha, git(d.repo, 'rev-parse', 'main'), 'walked on the integration head captured under the fence');
       assert.deepEqual(Object.keys(started!.ports), ['web']);

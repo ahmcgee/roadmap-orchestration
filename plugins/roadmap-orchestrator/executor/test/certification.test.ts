@@ -23,7 +23,7 @@ test('certification: three reds free, fourth charged, allowance resets, twelfth 
     r = contextFor(d);
     assert.equal(r.journal.view.unit(U1).counters.unchargedLanesReds, 3, 'restart retains the spent uncharged allowance');
     assert.equal((await runUnit(r.ctx, r.unit('u1'), admitAll)).kind, 'parked');
-    const reds = events(d.runDir).flatMap((e) => e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.stage === 'lanes' ? [e.fact] : []);
+    const reds = events(d.runDir).flatMap((e) => e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact) && e.fact.stage === 'lanes' ? [e.fact] : []);
     assert.deepEqual(reds.map((f) => f.chargeable), [false, false, false, true, false, false, false, true, false, false, false, true]);
     assert.deepEqual(reds.map((f) => f.unchargedLanesReds), [1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0]);
     assert.deepEqual(reds.map((f) => f.class), [...Array(11).fill('advance'), 'park']);

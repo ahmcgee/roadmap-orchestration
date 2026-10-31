@@ -307,7 +307,7 @@ test('gate.read-surface: the gate reads the repository and the run dir; an appro
 
 // 2026-10-16: a call whose prompt or context outgrew the model's window parks its unit, uncharged, operator env, with no
 // probe target and no backend park; the item names the role, the call and the prompt's size.
-const stageOutcome = (d: ArcDescriptor, stage: string) => events(d.runDir).flatMap((e) => (e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.stage === stage ? [e.fact] : [])).at(-1)!;
+const stageOutcome = (d: ArcDescriptor, stage: string) => events(d.runDir).flatMap((e) => (e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact) && e.fact.stage === stage ? [e.fact] : [])).at(-1)!;
 const backendParks = (d: ArcDescriptor) => events(d.runDir).filter((e) => e.type === 'fact' && e.fact.kind === 'backend-park');
 
 function assertContextPark(d: ArcDescriptor, r: ReturnType<typeof contextFor>, result: Awaited<ReturnType<typeof runUnit>>, stage: string, role: string): void {

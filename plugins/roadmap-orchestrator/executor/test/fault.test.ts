@@ -60,7 +60,7 @@ const heldBy = (r: ArcRun, unit: string): readonly string[] =>
   [...resourceTable(r.journal.view)].flatMap(([name, e]) => (e.status.state !== 'free' && 'unit' in e.status.holder && e.status.holder.unit === unit ? [name] : []));
 const allFree = (r: ArcRun): boolean => [...resourceTable(r.journal.view).values()].every((e) => e.status.state === 'free');
 const faultOf = (facts: readonly Fact[], unit: string): StageOutcomeFact | undefined =>
-  facts.find((f): f is StageOutcomeFact => f.kind === 'stage-outcome' && f.unit === unit && f.outcome === 'executor-fault');
+  facts.find((f): f is StageOutcomeFact => (f.kind === 'stage-outcome' && 'unit' in f) && f.unit === unit && f.outcome === 'executor-fault');
 function journalFacts(r: ArcRun): readonly Fact[] {
   return readFileSync(join(r.ctx.runDir, 'events.jsonl'), 'utf8').trim().split('\n').flatMap((l) => {
     const e = JSON.parse(l) as { type: string; fact?: Fact };

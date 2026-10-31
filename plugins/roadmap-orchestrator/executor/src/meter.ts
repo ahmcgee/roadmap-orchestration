@@ -83,7 +83,7 @@ function add(t: UsageTotals, f: UsageFact): UsageTotals {
   return {
     ...t,
     calls: t.calls + 1,
-    unavailable: t.unavailable + (f.kind === 'usage-unavailable' ? 1 : 0),
+    unavailable: t.unavailable + (f.kind === 'usage-unavailable' || f.incomplete !== undefined ? 1 : 0),
     input: t.input + u.inputTokens,
     output: t.output + u.outputTokens,
     // A backend that reports no cache figure contributes nothing to it.

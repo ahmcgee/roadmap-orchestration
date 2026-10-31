@@ -1,3 +1,4 @@
+import { jobStageOutcome } from '../stageoutcome.ts';
 import { systemsMapInForce } from '../input/systems.ts';
 // The milestone walk job (dev.13, plan §2; SCHEMAS.md "dev.13"; DESIGN-1.0.md §2.12): one durable job `walk-<n>` at a
 // time, arc-wide, modelled on the audit's lifecycle (src/holistic/audit.ts). A walk brings the milestone's product up
@@ -290,6 +291,7 @@ function end(
   crashPoint('walk.before-ended');
   // dev.17: the walk's findings include its batch point's (src/pipeline/batchlanes.ts).
   const all = canonicalIds([...new Set([...findings, ...batchFindingsOf(ctx, w.job)])]);
+  jobStageOutcome(ctx.journal, w.job, 'experience-verdict', m.id, outcome === 'reported' ? (activeWalkP1s(ctx.journal.view, m.id).length === 0 ? 'pass' : 'revise') : outcome, all);
   ctx.journal.fact({ kind: 'walk-ended', job: w.job, outcome, findings: all, proposals, dropped: last ? proposals : [], ...(interrupted ? { interrupted: true } : {}) });
   crashPoint('walk.after-ended');
   const passes = outcome === 'reported' && !milestonePassed(ctx.journal.view, m.id) && activeWalkP1s(ctx.journal.view, m.id).length === 0;

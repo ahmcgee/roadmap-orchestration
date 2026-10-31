@@ -106,8 +106,8 @@ type Run = Readonly<{
 
 type Seq<F> = F & { seq: number };
 const facts = (run: Run): readonly Fact[] => run.events.flatMap((e) => (e.type === 'fact' ? [e.fact] : []));
-const factsOf = <K extends Fact['kind']>(run: Run, kind: K): readonly Seq<Extract<Fact, { kind: K }>>[] =>
-  run.events.flatMap((e) => (e.type === 'fact' && e.fact.kind === kind ? [{ ...(e.fact as Extract<Fact, { kind: K }>), seq: e.seq }] : []));
+const factsOf = <K extends Fact['kind']>(run: Run, kind: K): readonly Seq<Extract<Exclude<Fact, { stage: 'experience-verdict' | 'campaign-audit' }>, { kind: K }>>[] =>
+  run.events.flatMap((e) => (e.type === 'fact' && e.fact.kind === kind && (kind !== 'stage-outcome' || 'unit' in e.fact) ? [{ ...(e.fact as Extract<Exclude<Fact, { stage: 'experience-verdict' | 'campaign-audit' }>, { kind: K }>), seq: e.seq }] : []));
 const spawnIntents = (run: Run): readonly IntentOf<'proc.spawn'>[] => run.events.flatMap((e) => (e.type === 'intent' && e.kind === 'proc.spawn' ? [e] : []));
 const ffIntents = (run: Run): readonly IntentOf<'integration.ff'>[] => run.events.flatMap((e) => (e.type === 'intent' && e.kind === 'integration.ff' ? [e] : []));
 const itemReason = (run: Run, id: NeedsUserId): string => readNeedsUser(run.runDir, id)?.reason ?? '(no record)';

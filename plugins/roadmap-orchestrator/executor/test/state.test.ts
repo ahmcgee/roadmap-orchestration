@@ -261,7 +261,7 @@ describe('fold invariants', () => {
     const view = new Fold(ARC);
     for (const event of chain(records)) {
       const start = event.type === 'intent' && event.parent.type === 'stage' ? event.parent
-        : event.type === 'fact' && event.fact.kind === 'stage-outcome' ? event.fact : null;
+        : event.type === 'fact' && (event.fact.kind === 'stage-outcome' && 'unit' in event.fact) ? event.fact : null;
       if (start !== null) {
         const key = `${start.stage}#${start.attempt}`;
         if (!starts.has(key)) starts.set(key, { stage: start.stage, attempt: start.attempt, seq: event.seq });

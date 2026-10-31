@@ -1,3 +1,4 @@
+import { jobStageOutcome } from '../stageoutcome.ts';
 // The cadence audit job (M3 step B5; DESIGN-1.0.md §2.5; plan "Audits"): one durable job `audit-<n>` at a time, which
 // reads the integrated tree through the lenses and records what they found. The lenses report; the steering
 // checkpoint weighs them at milestone boundaries, with immediate P1 and final-audit triggers (B6; checkpoint.ts).
@@ -644,6 +645,7 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
     return to === undefined || to === from ? [] : [{ lens, from, to }];
   }).sort((a, b) => (a.lens < b.lens ? -1 : 1));
   const findings = canonicalIds(t.ids);
+  jobStageOutcome(ctx.journal, job, 'campaign-audit', null, outcome === 'abandoned' ? 'abandoned' : (findings.length === 0 ? 'pass' : 'revise'), findings);
   ctx.journal.fact({ kind: 'audit-ended', job, covered: ranges, findings, suppressed: t.suppressed, outcome, refused: t.refused });
   crashPoint('audit.after-ended');
   if (outcome === 'abandoned') {

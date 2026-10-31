@@ -56,7 +56,7 @@ const head = (d: ArcDescriptor): Sha => sha(git(d.repo, 'rev-parse', 'main'));
 /** The log's facts with their seqs, as `status` reads them. */
 const facts = (r: ArcRun): readonly (Fact & { seq: number })[] =>
   readJournal(r.ctx.runDir, r.journal.view.arc).events.flatMap((e) => (e.type === 'fact' ? [{ ...e.fact, seq: e.seq }] : []));
-const factsOf = <K extends Fact['kind']>(r: ArcRun, kind: K) => facts(r).filter((f): f is Extract<Fact, { kind: K }> & { seq: number } => f.kind === kind);
+const factsOf = <K extends Fact['kind']>(r: ArcRun, kind: K) => facts(r).filter((f): f is Extract<Exclude<Fact, { stage: 'experience-verdict' | 'campaign-audit' }>, { kind: K }> & { seq: number } => f.kind === kind && (kind !== 'stage-outcome' || 'unit' in f));
 const terminalSnapshots = (r: ArcRun) => r.journal.view.opsOf('snapshot.publish').filter((i) => i.parent.type === 'arc' && r.journal.view.doneOf(i.op) !== null);
 const submit = (r: ArcRun, body: CommandBody) => submitCommand(r.ctx.runDir, r.journal.view.arc, body).id;
 const itemOf = (r: ArcRun, reason: string): NeedsUserId | null => r.journal.view.needsUser().find((n) => readNeedsUser(r.ctx.runDir, n.id)?.reason === reason)?.id ?? null;
@@ -85,7 +85,7 @@ describe('completion (§2.10, A8, A20, G8)', () => {
     try {
       await runToComplete(r);
       const fs = facts(r);
-      const firstOutcome = fs.find((f) => f.kind === 'stage-outcome')!.seq;
+      const firstOutcome = fs.find((f) => (f.kind === 'stage-outcome' && 'unit' in f))!.seq;
       const baseline = fs.filter((f) => f.kind === 'witnessed' && f.for.type === 'job' && f.for.job === 'baseline-1');
       assert.ok(baseline.length > 0 && baseline.every((f) => f.seq < firstOutcome), 'the baseline witnessed before any unit stage (A6)');
       const [started] = factsOf(r, 'audit-started');

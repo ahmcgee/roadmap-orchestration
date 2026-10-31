@@ -7,7 +7,6 @@ import { evaluateApply } from '../commands/apply.ts';
 import { brief } from '../commands/brief.ts';
 import { chainStatus } from '../commands/chain.ts';
 import { corpusPin } from '../commands/corpus.ts';
-import { flowCommand } from '../commands/flow.ts';
 import { DEFAULT_KEEP,gc } from '../commands/gc.ts';
 import { exportInputs,readExport } from '../commands/inputs.ts';
 import { phase0Check } from '../commands/phase0.ts';
@@ -28,6 +27,7 @@ import { arcRolesOf,readInputFiles,revisionManifestOf } from '../input/inforce.t
 import { readRepoConfig } from '../preflight/checks.ts';
 import { EXIT_HOST_BUSY,EXIT_REFUSED,type StartupRejection } from '../preflight/startup.ts';
 import { status } from '../status.ts';
+import { statusSummary } from '../status/summary.ts';
 import { START_WAIT_MS,launchSupervisor } from '../supervisor.ts';
 import { tui } from '../tui/main.ts';
 import { HEARTBEAT_MIN,watch,watchActionable } from '../watch.ts';
@@ -100,7 +100,7 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       return;
     case 'status': {
       const run = locate(command.run, hostDir);
-      process.stdout.write(`${canonicalJson(status(run.runDir, run.arc, hostDir))}\n`);
+      process.stdout.write(`${canonicalJson(command.summary ? statusSummary(run.runDir, run.arc, hostDir) : status(run.runDir, run.arc, hostDir))}\n`);
       return;
     }
     case 'reverse':
@@ -192,29 +192,6 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
     case 'inputs-export':
       process.stdout.write(`${canonicalJson(await exportInputs({ repo: repoOf(command.repo), arc: command.arc, out: absPath(resolve(command.out)) }))}\n`);
       return;
-    case 'flow-decide':
-    case 'flow-request':
-    case 'flow-given': {
-      const args = command.command === 'flow-decide'
-        ? { type: 'decide' as const, proposal: command.proposal, decision: command.decision, reason: command.reason, run: command.run }
-        : command.command === 'flow-request'
-          ? { type: 'request' as const, reason: command.reason, run: command.run }
-          : { type: 'given' as const, repo: repoOf(command.repo), lever: command.lever, note: command.note };
-      const outcome = await flowCommand(args, hostDir);
-      switch (outcome.kind) {
-        case 'submitted':
-          process.stdout.write(`${canonicalJson({ command: outcome.command, arc: outcome.arc })}\n`);
-          return;
-        case 'given':
-          process.stdout.write(`${canonicalJson({ given: outcome.given })}\n`);
-          return;
-        case 'refused':
-          process.stdout.write(`${canonicalJson({ refused: outcome.reason })}\n`);
-          process.exitCode = EXIT_REFUSED;
-          return;
-      }
-      return;
-    }
   }
 }
 

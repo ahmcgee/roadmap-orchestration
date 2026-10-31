@@ -85,7 +85,7 @@ const seqOf = (r: ExecRun, match: (f: Fact) => boolean): number => {
   return e.seq;
 };
 const outcomeSeq = (r: ExecRun, unit: string, stage: string, n = 1): number => {
-  const all = events(r).filter((e) => e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.unit === unit && e.fact.stage === stage);
+  const all = events(r).filter((e) => e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact) && e.fact.unit === unit && e.fact.stage === stage);
   const e = all[n - 1];
   if (e === undefined) throw new Error(`no ${stage} outcome #${n} of ${unit}`);
   return e.seq;
