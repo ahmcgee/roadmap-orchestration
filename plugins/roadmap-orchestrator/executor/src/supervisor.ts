@@ -113,7 +113,7 @@ export type ExecutorEndRecord = Readonly<{
 }>;
 
 /** Supervisor-owned evidence: survives an executor crash and is written before any restart or claim release. */
-function recordExecutorEnd(dir: AbsPath, claim: HostLockClaim, how: Exited, pid: number, oomBefore: number | null, watchdog: boolean): void {
+function recordExecutorEnd(dir: AbsPath, claim: HostLockClaim, how: Exited, pid: number, oomBefore: number | null, watchdog: boolean, sinceMs: number): void {
   let stages: ExecutorEndRecord['stages'];
   try {
     const { view, events } = readJournal(claim.runDir, claim.arc);
@@ -134,7 +134,7 @@ function recordExecutorEnd(dir: AbsPath, claim: HostLockClaim, how: Exited, pid:
   const record: ExecutorEndRecord = {
     v: SCHEMA_VERSION, generation: claim.generation, at: isoTimeOf(new Date()),
     child: how.code !== null ? { type: 'exited', code: how.code } : { type: 'signalled', signal: how.signal! }, stages,
-    ...(how.signal === 'SIGKILL' ? { killEvidence: killEvidence(pid, oomBefore, watchdog) } : {}),
+    ...(how.signal === 'SIGKILL' ? { killEvidence: killEvidence(pid, oomBefore, watchdog, sinceMs) } : {}),
   };
   exclusivePublish(hostPath(dir, `executor.${claim.generation}.exit.json`), fileJson(record));
 }
@@ -300,10 +300,11 @@ async function superviseOne(args: SupervisorArgs, claim: HostLockClaim, controlO
   const argv = executorArgv({
     hostDir: dir, generation: claim.generation, nonce: claim.nonce, repo: args.repo, planFile: args.planFile, profile: args.profile, controlOnly, respawn,
   });
+  const oomBefore = readOomKills();
+  const processStartedAt = Date.now();
   const child = spawn(process.execPath, [EXECUTOR_ENTRY, ...argv], { stdio: ['ignore', out, err], env });
   closeSync(out);
   closeSync(err);
-  const oomBefore = readOomKills();
   let exited: Exited | null = null;
   const ended = new Promise<void>((resolve) => child.once('exit', (code, sig) => {
     exited = { code, signal: sig };
@@ -341,7 +342,7 @@ async function superviseOne(args: SupervisorArgs, claim: HostLockClaim, controlO
     }
   }
   const how: Exited = exited;
-  recordExecutorEnd(dir, claim, how, child.pid!, oomBefore, stale !== null);
+  recordExecutorEnd(dir, claim, how, child.pid!, oomBefore, stale !== null, processStartedAt);
 
   const owed = (failure: Owed): Owed => (ready ? { kind: 'none' } : failure);
   const reason = exitReasonOf(dir, claim.generation);

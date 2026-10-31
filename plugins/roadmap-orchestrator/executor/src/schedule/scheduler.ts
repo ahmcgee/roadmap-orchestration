@@ -78,7 +78,55 @@ import { raiseWasteFindings } from '../flow/waste.ts';
 // The flaky ledger (dev.17, src/pipeline/deflakemint.ts; every arc): the deflake job (`applyDeflake`) while the ledger has a
 // deflake unit or a `flake-recurring` item due, and each iteration a `deflake-parked` item per park of a deflake unit.
 //
-
+// dev.13, the demo (src/demo/promote.ts): each iteration of an arc with milestones journals the demo failures the host
+// record lists, promotes the latest settled milestone (unless held) and rewrites the keeper's desired file; right before
+// `arc-completed`, the final tip is promoted (`promoteFinal`).
+// M4b rev 3: each loop iteration reads the host's schedstat cpu totals into an in-memory tick history (`PressureTicks`,
+// a restart starts it fresh), which admission reads to release a host-pressure hold (`AdmitInput.pressure`,
+// src/schedule/ready.ts) and the arbiter reads for admission back-off.
+//
+// The scheduler's holds (on top of admission's, src/schedule/ready.ts):
+//   - arc-wide (`arcHolds`): no unit is admitted to any stage (chains run on) while
+//       - baseline (A6): the baseline is owed or running, or its blocking `obligation-baseline` is open;
+//       - pack-review (M4a K14, H9): before the first admission, a pack review is running or due, or the latest ended
+//         review with the current key has an open blocking `pack-review` item (src/holistic/packreview.ts).
+//   - held bundle (arc feedback 2026-10-24, `busyHolds`): a unit a checkpoint's bundle touched mid-stage (rejected `busy`)
+//     is not admitted to its next stage until the trigger's next job has re-decided the held bundle (no call) at the
+//     boundary (src/holistic/checkpoint.ts).
+//   - batch (R7, B2): the candidate of an approved unit repairing a finding directly waits while another active
+//     unit repairs that finding directly and is not approved yet; once every such unit (at least two) waits at its
+//     candidate they publish as one batch. A red batch records `red` for each member its own selection attributes
+//     (a fix round each, `batchMemberFix`); a red nothing attributes, a conflict, a base red, an occupied lane or a
+//     foreign move raises one blocking item and the members wait for its acknowledgement; members whose approval no
+//     longer holds at the tip leave the batch (each takes its own candidate, whose ff re-gates it). A batch's members
+//     are eligible against what the whole batch repairs (`batchRepairs`): its candidate carries every member's fix.
+//     Arc feedback 2026-10-15: approved repairs waiting at their candidates, each held by an active P1 that another of
+//     them owns (fixed on its branch), form a cycle (`holdCycle`) that no single candidate can break; the findings along
+//     it publish as one batch (keyed by the lowest), every unit repairing one of them directly a member, under the same
+//     rules (all of them waiting, none suspended, none still held against the batch's repairs). Single-finding batches
+//     are planned first.
+//
+// Design parks (OR-Q1, `designParkRoute`): in a holistic arc a design park goes to the checkpoint first, and its
+// own item waits; a checkpoint that respecified the unit re-opens it on its pending revision (`reopened`), one that
+// decided nothing for it (or a respec the unit cannot re-open on) raises the park's item, and a second design park
+// on a respecified lineage raises `respec-second` from the checkpoint instead.
+//
+// Ends. Every arc ends by the completion predicate (§2.10, `completionBlockers`). An arc without the holistic layer
+// completes as in M2 (nothing runs, every unit merged, cut, superseded or parked for the architect, no own-arc residue,
+// no blocking needs-user, no pending command; no close-out). A holistic arc ends
+// `complete` when every unit is merged, cut or
+// superseded; no blocking item; no pending command; no own-arc residue; no baseline owed; no audit running or due,
+// no lens of L with an outstanding range, no owed trigger; no checkpoint due or running; the latest generation
+// quiescent under the vision in force; the close-out publication done (the head is its commit) or nothing to
+// change; every non-exempt obligation held on the head. With only quiescence, the close-out and the obligations left,
+// the close-out settlement runs first (run 10, src/holistic/closeout.ts `settleCloseOut`: unanswered bundle requests
+// declined, a corpus arc's open P2/P3 findings with no obligation banked). The close-out (A8, `publishCloseOut`) runs once all but
+// itself and the obligations hold (its lanes witness every arc lane on the head it publishes, or on the head alone
+// when nothing changes). Then, for every arc, `arc-completed{planRev, head, highWater, units}` (once while active) and
+// the terminal snapshot (parent `arc`, G8), so `gc` can seal it, and the run ends `complete`. The completion stays active while the plan rev and the
+// head are those it recorded (A20); an admitting apply or a reopen invalidates it, and the arc runs again.
+import { cpuBasis } from '../core/cpu.ts';
+import { orderingOf,wakeOrdering } from '../park/ordering.ts';
 
 import { dirname,join } from 'node:path';
 import type { CommandContext } from '../commands/apply.ts';
@@ -837,7 +885,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   // The scheduler's holds: arc-wide (the baseline, the pack review) and repair batches (R7)
 
   /**
-   * `flowApply` (M4b): an accepted flow proposal waits for its revision, so no new candidate starts. `bundle` (arc feedback
+   * `bundle` (arc feedback
    * 2026-10-24): the units a busy-rejected checkpoint's held bundle waits for (`busyHolds`), held at every admission.
    */
   type Holds = Readonly<{ arc: boolean; batch: ReadonlySet<UnitId>; bundle: ReadonlySet<UnitId> }>;

@@ -35,3 +35,10 @@ test('a Codex call without any reported tokens remains explicitly unavailable', 
   assert.deepEqual(pricedCodexUsage(readCodex('', null).usage, 'gpt-5.6-luna'), { kind: 'unavailable', reason: 'no-result' });
   assert.throws(() => pricedCodexUsage({ kind: 'unavailable', reason: 'absent' }, 'unpriced-model'), /no price/);
 });
+
+test('partial Codex native cost retains tokens in the meter without an estimation flag', () => {
+  const usage = pricedCodexUsage(readCodex(stream({ input_tokens: 100, output_tokens: 5, cost_usd: 0.01 }) + JSON.stringify({ type: 'turn.completed' }) + '\n', '{}').usage, 'gpt-5.6-luna');
+  const f = usageFact({ sessionCharge: () => null }, { routingRev: routingRev('0123456789abcdef'), subject: { type: 'smoke', backend: 'codex' } }, invocationIdOf('arc/1#1'), usage, null);
+  assert.equal(f.kind, 'meter'); if (f.kind !== 'meter') return;
+  assert.equal(f.usage.inputTokens, 100); assert.equal(f.usage.costUsd, 0.01); assert.equal(f.usage.costEstimated, undefined); assert.equal(f.incomplete, 'absent');
+});

@@ -218,7 +218,7 @@ export function chargeOf(subject: SpawnSubject): Charge | null {
  * session, so a resumed session is never charged twice for its earlier processes.
  */
 export function usageFact(view: Pick<JournalView, 'sessionCharge'>, charge: Charge, inv: InvocationId, usage: Usage, session: string | null): Fact {
-  if (usage.kind === 'unavailable' && usage.streamed?.costEstimated === true) {
+  if (usage.kind === 'unavailable' && usage.streamed !== undefined && usage.streamed.costUsd !== null) {
     return { kind: 'meter', inv, ...charge, usage: usage.streamed, incomplete: usage.reason };
   }
   if (usage.kind === 'unavailable') {

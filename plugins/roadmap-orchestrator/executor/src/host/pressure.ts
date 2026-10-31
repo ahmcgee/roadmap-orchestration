@@ -194,6 +194,7 @@ export function memoryPressure(availableFraction: number, psi: string | null): n
   const full = psi === null ? null : /^full avg10=([0-9.]+)/m.exec(psi);
   if (psi !== null && full === null) throw new Error('/proc/pressure/memory: missing full avg10');
   const stalled = full === null ? 0 : Number(full[1]) / 100;
+  if (!Number.isFinite(stalled) || stalled < 0 || stalled > 1) throw new Error('/proc/pressure/memory: invalid full avg10');
   return Math.max(stalled, availableFraction < 0.05 ? PRESSURE_SATURATED : 0);
 }
 
