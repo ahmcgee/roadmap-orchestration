@@ -73,7 +73,7 @@ describe('a corpus arc\'s checkpoint records its amendments once each', T, () =>
     const [inputs] = factsOfKind(r, 'checkpoint-inputs');
     assert.ok(inputs !== undefined);
     assert.equal(inputs.corpusSha256, a.pinSha256, 'the pin in force');
-    assert.equal(inputs.issues, undefined, 'no issue capture');
+    assert.equal('issues' in inputs, false, 'no issue capture');
     const call = callOf(a, 'ckpt-1');
     assert.ok(readable(addDirs(call), join(r.ctx.runDir, 'corpus', a.pinSha256.slice(0, 8))), 'the checkpoint reads the materialised pin');
     const lens = callOf(a, 'audit-1');

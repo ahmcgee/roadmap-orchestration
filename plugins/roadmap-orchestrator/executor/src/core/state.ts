@@ -1287,11 +1287,6 @@ export class Fold implements JournalView {
         this.#amendments.push({ ...rest, seq: at.seq });
         return;
       }
-      // An earlier executor's issue facts (the issues integration was removed in 1.0.0-dev.21): read and ignored
-      // (`issuesIgnored`, src/core/upgrade.ts; scaffolding).
-      case 'issue-intake':
-      case 'issues-captured':
-        return;
       case 'pack-review-started': {
         const running = this.#packReviews.find((r) => r.ended === null);
         if (running !== undefined) fail(`pack review ${f.job} started while ${running.started.job} is running (one at a time)`);

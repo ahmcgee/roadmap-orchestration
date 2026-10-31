@@ -118,11 +118,10 @@ export function arrayOf<T>(item: Read<T>, opts: { readonly nonEmpty?: boolean } 
 
 /**
  * An array whose elements are strictly ascending by `key` (sorted and unique), so equal sets serialise equally; `order`
- * says what the order is in the error. `legacyKey` (scaffolding, numbered-id lists only: `idsAscending` in ids.ts): a
- * list strictly ascending by it instead reads as written, with a warning (`legacyIdOrder`).
+ * says what the order is in the error.
  */
 export function sortedBy<T>(
-  item: Read<T>, key: (t: T) => string, opts: Readonly<{ nonEmpty?: boolean; order?: string; legacyKey?: (t: T) => string }> = {},
+  item: Read<T>, key: (t: T) => string, opts: Readonly<{ nonEmpty?: boolean; order?: string }> = {},
 ): Read<readonly T[]> {
   const read = arrayOf(item, opts.nonEmpty === true ? { nonEmpty: true } : {});
   return (value, path) => {

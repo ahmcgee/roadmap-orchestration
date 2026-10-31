@@ -121,8 +121,8 @@ describe('ids.numbered-order', () => {
     assert.throws(() => idList((v, p) => ruleId(v, p), { nonEmpty: true })([], 'rules'), /non-empty/);
   });
 
-  it('idList refuses historical string order even with the removed compatibility option', () => {
-    const read = idList((v, p) => ruleId(v, p), { legacyStringOrder: true });
+  it('idList refuses historical string order without adoption defaults', () => {
+    const read = idList((v, p) => ruleId(v, p));
     const writes: string[] = [];
     const write = process.stderr.write.bind(process.stderr);
     process.stderr.write = ((chunk: string | Uint8Array): boolean => { writes.push(String(chunk)); return true; }) as typeof process.stderr.write;

@@ -284,6 +284,15 @@ describe('facts, plan changes, manifests and fingerprints', () => {
     roundTrip(fact({ ...M4A_FACTS['corpus-amendment'], source: { type: 'divergence', divergence: 'D-3' } }));
   });
 
+  it('schema 2 refuses removed issue records and amendment sources', () => {
+    for (const kind of ['issue-intake', 'issues-captured']) refusesFact({ kind, job: 'ckpt-1' }, /kind/);
+    refusesFact({ ...M4A_FACTS['corpus-amendment'], source: { type: 'issue', job: 'ckpt-1', issue: 'issue-3' } }, /source.type/);
+    const read = (v: unknown) => { const f = new Fields(v, 'manifest'); const out = revisionInputs(f); f.end(); return out; };
+    assert.throws(() => read({ rulings: { ledgerSha256: H }, obligations: H2, vision: null, corpus: H, corpusGuide: H, phase0: H, phase0Issues: H2 }), /phase0Issues/);
+    assert.throws(() => parsePhase0Record({ ...phase0, issueCapture: { file: 'issues.json', sha256: H } }), /issueCapture/);
+    assert.throws(() => parsePhase0Record({ ...phase0, intake: [] }), /intake/);
+  });
+
   it('the M4a facts refuse their illegal shapes', () => {
     refusesFact({ ...M4A_FACTS['pack-review-started'], job: 'audit-1' }, /job/);
     refusesFact({ ...M4A_FACTS['pack-review-ended'], findings: [{ ...(M4A_FACTS['pack-review-ended'] as { findings: object[] }).findings[0], index: 1 }] }, /findings\[0\]\.index/);
@@ -291,14 +300,6 @@ describe('facts, plan changes, manifests and fingerprints', () => {
     refusesFact({ ...M4A_FACTS['debt-banked'], bankReason: 'overflow' }, /bankReason/);
   });
 
-  it('a finding an earlier executor\'s issue intake opened (lens issue) is P2 or P3', () => {
-    const opened = {
-      kind: 'finding-opened', id: 'F-1', key: H, lens: 'issue', severity: 'P2', obligation: null, visionClauses: [], claim: 'c', evidence: [], mutant: null,
-      source: { type: 'job', job: 'ckpt-1' }, gateHadPassed: false,
-    };
-    roundTrip(fact(opened));
-    refusesFact({ ...opened, severity: 'P1' }, /severity/);
-  });
 
   it('PlanChange arms corpus and phase0 round-trip in plan-applied', () => {
     roundTrip(fact({
@@ -313,7 +314,7 @@ describe('facts, plan changes, manifests and fingerprints', () => {
       vector: { plan: 4, specs: { u1: 2 }, obligationsSha256: H2, ledgerSha256: H, visionSha256: H, contracts: [] }, headSha: A, visionSha256: H, findings: [], observations: [],
     };
     const dev6 = roundTrip(fact(inputs));
-    assert.ok(dev6.type === 'fact' && dev6.fact.kind === 'checkpoint-inputs' && dev6.fact.issues === undefined && dev6.fact.corpusSha256 === undefined);
+    assert.ok(dev6.type === 'fact' && dev6.fact.kind === 'checkpoint-inputs' && dev6.fact.corpusSha256 === undefined);
     roundTrip(fact({ ...inputs, corpusSha256: H2 }));
   });
 
@@ -349,8 +350,8 @@ describe('facts, plan changes, manifests and fingerprints', () => {
     same((v) => approvalFingerprint(v, 'fp'), { ...dev6, corpus: H });
   });
 
-  it('needs-user: pack-review is blocking, and so is an earlier executor\'s issue-policy-untrusted item (it still reads)', () => {
-    for (const reason of ['pack-review', 'issue-policy-untrusted'] as const) {
+  it('needs-user: pack-review is blocking', () => {
+    for (const reason of ['pack-review'] as const) {
       assert.ok(NEEDS_USER_REASONS.includes(reason));
       assert.equal(m3Blocking(reason), true, reason);
       needsUserRecord({
@@ -369,6 +370,29 @@ describe('facts, plan changes, manifests and fingerprints', () => {
     assert.deepEqual(parseRepoConfig({}), {});
     assert.throws(() => parseRepoConfig({ chain: { k: 0 } }), /chain\.k/);
     assert.throws(() => parseRepoConfig({ issues: { confirmed: true } }), /issues/);
+  });
+});
+
+describe('checkpoint child schemas', () => {
+  it('a checkpoint answer requires corpusAmendments and exactly one anchor on every split child', () => {
+    const child = { id: 'I-5', statement: 's', docRef: { path: 'docs/arch.md', anchor: '#a', quotedText: 'q' }, rule: null, witness, activation: 'must-hold', deliveredBy: [] };
+    const answer = {
+      decision: 'bundle', reasons: ['r'], ops: [{ op: 'obligation-split', obligation: 'I-1', children: [child], cites: ['V-1'], evidence: ['F-1'] }],
+      findingDispositions: [], interpretations: [], cites: { vision: ['V-1'], observations: [], findings: [] }, premises: [],
+      corpusAmendments: [],
+    };
+    const op = validateCheckpointOutput(answer).ops[0]!;
+    assert.ok(op.op === 'obligation-split' && op.children[0]!.rule === null);
+    const { corpusAmendments: _c, ...noAmendments } = answer;
+    const { rule: _r, ...noRule } = child;
+    for (const invalid of [noAmendments, { ...answer, ops: [{ ...answer.ops[0], children: [noRule] }] }]) assert.throws(() => validateCheckpointOutput(invalid), SchemaError);
+    // M4a's own: a rule-anchored child and amendments.
+    const m4 = validateCheckpointOutput({
+      ...answer, ops: [{ ...answer.ops[0], children: [{ ...child, docRef: null, rule: 'T-2' }] }],
+      corpusAmendments: [{ rules: ['T-2'], proposal: 'p', why: 'w' }],
+    });
+    assert.equal(m4.corpusAmendments.length, 1);
+    assert.throws(() => validateCheckpointOutput({ ...answer, ops: [{ ...answer.ops[0], children: [{ ...child, rule: 'T-2' }] }] }), /exactly one of docRef and rule/);
   });
 });
 
@@ -454,14 +478,10 @@ describe('startup rows, brief and ack', () => {
 
 
 
-// The issues integration was removed in 1.0.0-dev.21; what an earlier executor or plan wrote for it reads as written and is
-// ignored (src/core/projections.ts `issuesIgnored`; scaffolding, deleted with it).
-
-
-// Before 1.0.0-dev.7 every numbered-id list was validated and written in string order (`T-10` before `T-9`): a dev.6
-// record, or an arc started on this branch before the fix, may hold one. Each reads as written (byte-identical, so a hash
-// or chain over it holds); what is written now is canonical (T-9 before T-10), and a list in neither order is refused.
-describe('upgrade.legacy-id-order', () => {
+describe('numbered-id order', () => {
+  it('facts refuse a list in neither canonical nor historical order', () => {
+    refusesFact({ kind: 'corpus-amendment', id: 'M-1', source: { type: 'divergence', divergence: 'D-3' }, rules: ['T-9', 'T-10', 'T-2'], proposal: 'p', why: 'w', evidence: [] }, /^event\.fact\.rules\[2\]$/);
+  });
   
 
   

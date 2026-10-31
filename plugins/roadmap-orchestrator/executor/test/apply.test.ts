@@ -1172,7 +1172,7 @@ test('apply.smoke-new-backend: a routing apply that seats a backend the plan in 
   }
 });
 
-test('apply.revalidate-after-smoke: the log moving while the smoke runs is caught by the classification run again just before the commit; the spec receives its next rev', T, async () => {
+test('apply.revalidate-after-smoke: a unit approved during smoke is caught by classification again before commit; its spec stays in force', T, async () => {
   const d = setupArc({
     steps: [{ as: 'codex', expect: { argv: ['exec'] }, acts: [{ type: 'barrier', name: 'smoke', timeoutMs: 30_000 }, { type: 'emit', value: { ok: true } }] }],
     units: [{ id: 'u1' }, { id: 'u2' }],
@@ -1186,15 +1186,16 @@ test('apply.revalidate-after-smoke: the log moving while the smoke runs is caugh
     editSpec(d, 'u2', addClause);
     const pending = command(r, applyBody(d));
     await reached(d.scenarioDir, 'smoke', 30_000);
-    // Meanwhile u2 is dispatched on its spec in force: the same edit is now a same-rev edit of a dispatched spec.
+    // Meanwhile u2 is dispatched and approved on its spec in force: that spec is now fixed.
     pin(r, 'u2');
+    decide(r, 'u2', 'gate', 'approve', 'advance');
     release(d.scenarioDir, 'smoke');
     const { outcome } = await pending;
-    assert.equal(outcome.kind, 'applied', JSON.stringify(outcome));
-    const specChange = r.journal.view.planApplied()?.changes.find((c) => c.type === 'spec' && c.unit === unitId('u2'));
-    assert.ok(specChange?.type === 'spec');
-    assert.equal(specChange.specRev, 2);
-    assert.equal(applied(d).length, 2, 'the checked revision applied');
+    assert.equal(outcome.kind, 'rejected', JSON.stringify(outcome));
+    assert.ok(outcome.kind === 'rejected');
+    assert.match(outcome.reason, /unit u2 is approved and publishing; its spec is fixed/);
+    assert.equal(applied(d).length, 1, 'the refused edit never committed a revision');
+    assert.equal(r.journal.view.unit(unitId('u2')).spec?.rev, 1, 'the approved spec stayed in force');
     assert.equal(r.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'smoke').length, 1, 'the smoke ran, and passed');
   } finally {
     r.journal.close();

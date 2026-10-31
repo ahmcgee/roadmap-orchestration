@@ -547,17 +547,13 @@ export function answerIds<T extends NumberedId>(item: Read<T>, opts: { readonly 
 
 const ID_ORDER = 'in id order (T-9 before T-10)';
 
-/**
- * A list strictly ascending in canonical id order by `id` (sorted, unique). `legacyStringOrder` (TEMPORARY SCAFFOLDING,
- * SCHEMAS.md "Record evolution"): the list was read in plain string order before 1.0.0-dev.7, so a list strictly
- * ascending in that order (`["T-10","T-9"]`) still reads, as written, with a warning (`legacyIdOrder`).
- */
-export function idsAscending<T>(item: Read<T>, id: (t: T) => NumberedId, opts: Readonly<{ nonEmpty?: boolean; legacyStringOrder?: true }> = {}): Read<readonly T[]> {
-  return sortedBy(item, (t) => idKey(id(t)), { nonEmpty: opts.nonEmpty === true, order: ID_ORDER, ...(opts.legacyStringOrder === true ? { legacyKey: id } : {}) });
+/** A list strictly ascending in canonical id order by `id` (sorted, unique). */
+export function idsAscending<T>(item: Read<T>, id: (t: T) => NumberedId, opts: Readonly<{ nonEmpty?: boolean }> = {}): Read<readonly T[]> {
+  return sortedBy(item, (t) => idKey(id(t)), { nonEmpty: opts.nonEmpty === true, order: ID_ORDER });
 }
 
 /** A list of numbered ids strictly ascending in canonical order (see `idsAscending`). */
-export function idList<T extends NumberedId>(item: Read<T>, opts: Readonly<{ nonEmpty?: boolean; legacyStringOrder?: true }> = {}): Read<readonly T[]> {
+export function idList<T extends NumberedId>(item: Read<T>, opts: Readonly<{ nonEmpty?: boolean }> = {}): Read<readonly T[]> {
   return idsAscending(item, (t) => t, opts);
 }
 

@@ -17,7 +17,7 @@ DEFAULT_BOUNDS,approvalFingerprint,commandBody,dispatchRecord,obligationRevsOf,r
 import { SchemaError } from '../src/core/validate.ts';
 import { isoTime } from '../src/core/values.ts';
 import { type ObligationCase,type ObligationEffect,OBLIGATION_EFFECTS,obligationEffect } from '../src/holistic/table.ts';
-import { OBSERVATION_VERDICTS } from '../src/holistic/types.ts';
+import { type Obligations, findingKey, laneRevOf, parseObligations, parseVision, witnessRecord, OBSERVATION_VERDICTS } from '../src/holistic/types.ts';
 import { DEFAULT_CONVERGENCE_K,boundsOf,lensSetOf,parsePlan } from '../src/input/plan.ts';
 import { validateCheckpointOutput,validateLensOutput } from '../src/prompts/schemas.ts';
 import { ORIGIN_RANK } from '../src/schedule/types.ts';
@@ -130,6 +130,72 @@ describe('M3 ids', () => {
 });
 
 
+
+describe('M3 inputs: vision and obligations', () => {
+  const clauses = [
+    { id: 'V-1', kind: 'purpose', text: 'bookkeepers reconcile a month in one command', rank: null, state: 'active' },
+    { id: 'V-2', kind: 'non-negotiable', text: 'money is never silently mis-rounded', rank: null, state: 'active' },
+    { id: 'V-3', kind: 'tradeoff', text: 'clear errors over permissive input', rank: 1, state: 'withdrawn' },
+    { id: 'V-4', kind: 'world', text: 'a bookkeeper closes the month by running one command and trusting every total', rank: null, state: 'active' },
+  ];
+  const question = { id: 'Q-1', text: 'do bookkeepers reconcile more than one currency?', bears: ['V-1', 'V-2'], assumption: 'one currency per ledger', state: 'open' };
+  const v = { schema: 'roadmap/vision-m3', rev: 1, confirmation: { ref: 'vision.md#sha256:ab12', at: AT }, clauses, questions: [question] };
+
+  it('the vision: a tradeoff is ranked and nothing else is; ids unique; an active world clause at least', () => {
+    assert.deepEqual(parseVision(v), v);
+    assert.throws(() => parseVision({ ...v, clauses: [{ ...clauses[2], rank: null }] }), /rank/);
+    assert.throws(() => parseVision({ ...v, clauses: [{ ...clauses[0], rank: 2 }] }), /rank/);
+    assert.throws(() => parseVision({ ...v, clauses: [clauses[0], clauses[0]] }), /clauses/);
+    assert.throws(() => parseVision({ ...v, clauses: clauses.slice(0, 3), questions: [] }), /at least one active world clause/);
+    assert.throws(() => parseVision({ ...v, clauses: [...clauses.slice(0, 3), { ...clauses[3], state: 'withdrawn' }], questions: [] }), /at least one active world clause/);
+    assert.throws(() => parseVision({ ...v, questions: undefined }), /questions/);
+  });
+
+  it('vision questions: ids unique, an open one bears on active clauses, a working assumption always', () => {
+    assert.deepEqual(parseVision({ ...v, questions: [] }).questions, []);
+    assert.throws(() => parseVision({ ...v, questions: [question, { ...question, text: 'again' }] }), /questions\[1\]: expected a unique id/);
+    assert.throws(() => parseVision({ ...v, questions: [{ ...question, bears: ['V-3'] }] }), /questions\[0\]\.bears: expected active clauses of this vision, got "V-3"/);
+    assert.throws(() => parseVision({ ...v, questions: [{ ...question, bears: ['V-9'] }] }), /questions\[0\]\.bears: expected active clauses/);
+    assert.throws(() => parseVision({ ...v, questions: [{ ...question, bears: [] }] }), /bears/);
+    assert.throws(() => parseVision({ ...v, questions: [{ ...question, assumption: '' }] }), /assumption/);
+    assert.throws(() => parseVision({ ...v, questions: [{ ...question, id: 'V-5' }] }), /questions\[0\]\.id/);
+    // A closed question stays as it was: its clauses need only be in the file.
+    assert.deepEqual(parseVision({ ...v, questions: [{ ...question, bears: ['V-3'], state: 'closed' }] }).questions[0]?.state, 'closed');
+    assert.throws(() => parseVision({ ...v, questions: [{ ...question, bears: ['V-9'], state: 'closed' }] }), /expected clauses of this vision/);
+  });
+
+  it('obligations: split parents carry no witness (H14), children name their parent, the mapping names known ids', () => {
+    const o: Obligations = parseObligations(OBLIGATIONS);
+    assert.equal(canonicalJson(o), canonicalJson(OBLIGATIONS));
+    assert.match(laneRevOf(o.lanes[0]!), /^[0-9a-f]{16}$/);
+    const [i1, i2, i4] = OBLIGATIONS.obligations as readonly Record<string, unknown>[];
+    const with2 = (x: Record<string, unknown>) => ({ ...OBLIGATIONS, obligations: [i1, x, i4] });
+    assert.throws(() => parseObligations(with2({ ...i2, witness: { lane: 'journey', testIds: ['t'] } })), /witness/);
+    assert.throws(() => parseObligations({ ...OBLIGATIONS, obligations: [{ ...i1, witness: null }, i2, i4] }), /witness/);
+    assert.throws(() => parseObligations({ ...OBLIGATIONS, obligations: [{ ...i1, deliveredBy: [] }, i2, i4] }), /deliveredBy/);
+    assert.throws(() => parseObligations({ ...OBLIGATIONS, obligations: [i1, i2, { ...i4, parent: 'I-1' }] }), /parent/);
+    assert.throws(() => parseObligations({ ...OBLIGATIONS, mapping: { paths: [{ pattern: 'src/**', obligations: ['I-9'] }] } }), /mapping/);
+    assert.throws(() => parseObligations({ ...OBLIGATIONS, lanes: [{ ...OBLIGATIONS.lanes[0], env: { set: { NODE_OPTIONS: '-r x' }, pass: [] } }] }), /env/);
+    assert.throws(() => parseObligations({ ...OBLIGATIONS, obligations: [{ ...i1, witness: { lane: 'nope', testIds: ['t'] } }, i2, i4] }), /witness\.lane/);
+  });
+
+  it('a witness record: a malformed run records no tests', () => {
+    const w = {
+      v: 2, lane: 'journey', laneRev: LANE_REV, envId: ENV, treeSha: A, inv: INV, runner: 'node-test', purpose: 'witness',
+      records: [{ testId: 'a', selected: 1, outcome: 'pass' }, { testId: 'b', selected: 0, outcome: 'zero-selected' }], malformed: false,
+    };
+    assert.deepEqual(witnessRecord(w, 'w'), w);
+    assert.throws(() => witnessRecord({ ...w, malformed: true }, 'w'), /records/);
+    assert.throws(() => witnessRecord({ ...w, records: [...w.records].reverse() }, 'w'), /records/);
+  });
+
+  it('finding keys hash (lens, obligation, cause) only', () => {
+    assert.equal(findingKey('invariants', obligationId('I-2'), 'rounding'), findingKey('invariants', obligationId('I-2'), 'rounding'));
+    assert.notEqual(findingKey('invariants', obligationId('I-2'), 'rounding'), findingKey('drift', obligationId('I-2'), 'rounding'));
+    assert.notEqual(findingKey('invariants', obligationId('I-2'), 'rounding'), findingKey('invariants', obligationId('I-2'), 'parsing'));
+    assert.notEqual(findingKey('invariants', null, 'rounding'), findingKey('invariants', obligationId('I-2'), 'rounding'));
+  });
+});
 
 describe('M3 event records', () => {
   it('every holistic fact round-trips byte-identically', () => {

@@ -27,7 +27,7 @@ import { CliError,type Command,type RunLocator,parseCommand } from '../input/cli
 import { arcRolesOf,readInputFiles,revisionManifestOf } from '../input/inforce.ts';
 import { readRepoConfig } from '../preflight/checks.ts';
 import { EXIT_HOST_BUSY,EXIT_REFUSED,type StartupRejection } from '../preflight/startup.ts';
-import { status } from '../status.ts';
+import { status, statusSingleFlight } from '../status.ts';
 import { START_WAIT_MS,launchSupervisor } from '../supervisor.ts';
 import { tui } from '../tui/main.ts';
 import { HEARTBEAT_MIN,watch,watchActionable } from '../watch.ts';
@@ -100,7 +100,7 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       return;
     case 'status': {
       const run = locate(command.run, hostDir);
-      process.stdout.write(`${canonicalJson(status(run.runDir, run.arc, hostDir))}\n`);
+      process.stdout.write(`${canonicalJson(statusSingleFlight(run.runDir, run.arc, () => status(run.runDir, run.arc, hostDir)))}\n`);
       return;
     }
     case 'reverse':

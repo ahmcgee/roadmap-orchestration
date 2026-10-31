@@ -40,7 +40,7 @@ const pathR: Read<RepoPath> = (v, p) => repoPath(v, p);
 const sha256R: Read<Sha256Hex> = (v, p) => sha256(v, p);
 const ruleR: Read<RuleId> = (v, p) => ruleId(v, p);
 const vidR: Read<VisionClauseId> = (v, p) => visionClauseId(v, p);
-const rules: Read<readonly RuleId[]> = idList(ruleR, { legacyStringOrder: true });
+const rules: Read<readonly RuleId[]> = idList(ruleR);
 const files: Read<readonly RepoPath[]> = sortedBy(pathR, (p) => p, { nonEmpty: true });
 
 // ---------------------------------------------------------------------------------------------------
@@ -91,7 +91,7 @@ const corpusDivergence: Read<CorpusDivergence> = object((f) => ({
     pinSha256: g.get('pinSha256', sha256R),
     files: g.get('files', sortedBy(object((h) => ({ path: h.get('path', pathR), sha256: h.get('sha256', sha256R) })), (x) => x.path, { nonEmpty: true })),
   }))),
-  cites: f.get('cites', idList(vidR, { nonEmpty: true, legacyStringOrder: true })),
+  cites: f.get('cites', idList(vidR, { nonEmpty: true })),
   rules: f.get('rules', rules),
 }));
 const questionState: Read<QuestionState> = tagged('type', {
@@ -106,7 +106,7 @@ const phaseQuestion: Read<PhaseQuestion> = object((f) => ({
   rank: f.get('rank', positive),
   text: f.get('text', str),
   files: f.get('files', files),
-  bears: f.get('bears', idList(bearsOn, { nonEmpty: true, legacyStringOrder: true })),
+  bears: f.get('bears', idList(bearsOn, { nonEmpty: true })),
   assumption: f.get('assumption', str),
   state: f.get('state', questionState),
 }));
@@ -123,8 +123,8 @@ export const phase0Record: Read<Phase0Record> = object((f) => {
     corpusDivergences: f.get('corpusDivergences', arrayOf(corpusDivergence)),
     questions: f.get('questions', arrayOf(phaseQuestion)),
     debt: f.get('debt', arrayOf(object((g) => ({ id: g.get('id', (v, p) => debtId(v, p)), disposition: g.get('disposition', debtDisposition) })))),
-    amendments: f.get('amendments', sortedBy(object((g) => ({ id: g.get('id', (v, p) => amendmentRef(v, p)), disposition: g.get('disposition', amendmentDisposition) })), (a) => amendmentRefKey(a.id), { order: 'by arc, then id', legacyKey: (a) => a.id })),
-    slice: f.get('slice', object((g) => ({ advances: g.get('advances', idList(vidR, { nonEmpty: true, legacyStringOrder: true })), why: g.get('why', str) }))),
+    amendments: f.get('amendments', sortedBy(object((g) => ({ id: g.get('id', (v, p) => amendmentRef(v, p)), disposition: g.get('disposition', amendmentDisposition) })), (a) => amendmentRefKey(a.id), { order: 'by arc, then id' })),
+    slice: f.get('slice', object((g) => ({ advances: g.get('advances', idList(vidR, { nonEmpty: true })), why: g.get('why', str) }))),
   };
   out.questions.forEach((q, i) => {
     if (i > 0 && !(compareIds(out.questions[i - 1]!.id, q.id) < 0)) throw new SchemaError(`${f.path}.questions[${i}]`, 'questions strictly ascending by number', q.id);
@@ -133,11 +133,6 @@ export const phase0Record: Read<Phase0Record> = object((f) => {
   out.debt.forEach((d, i) => {
     if (i > 0 && !(compareIds(out.debt[i - 1]!.id, d.id) < 0)) throw new SchemaError(`${f.path}.debt[${i}]`, 'one disposition per item, ascending by number', d.id);
   });
-  // A record written for an earlier executor names its issue capture and intake (the issues integration was removed in
-  // 1.0.0-dev.21): read and ignored (`issuesIgnored`; scaffolding).
-  for (const legacy of ['issueCapture', 'intake'] as const) {
-
-  }
   return out;
 });
 
@@ -426,7 +421,7 @@ const nonNegative: Read<number> = (v, p) => {
 };
 const briefArc: Read<BriefArc> = object((f) => ({
   arc: f.get('arc', (v, p) => arcId(v, p)),
-  slice: f.get('slice', nullable(object((g) => ({ advances: g.get('advances', idList(vidR, { nonEmpty: true, legacyStringOrder: true })), why: g.get('why', str) })))),
+  slice: f.get('slice', nullable(object((g) => ({ advances: g.get('advances', idList(vidR, { nonEmpty: true })), why: g.get('why', str) })))),
   divergences: f.get('divergences', arrayOf(object((g) => ({ id: g.get('id', divR), type: g.get('type', oneOf(DIVERGENCE_KINDS)), what: g.get('what', str) })))),
   digests: f.get('digests', arrayOf(object((g) => ({ needsUser: g.get('needsUser', (v, p) => needsUserId(v, p)), ids: g.get('ids', arrayOf(divR, { nonEmpty: true })) })))),
   decisions: f.get('decisions', arrayOf(str)),
