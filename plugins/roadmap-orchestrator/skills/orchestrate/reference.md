@@ -133,7 +133,7 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
   resumes the implementer session; one that cannot, on a moved seat, starts fresh with the executor's handover of the
   unit's history), or one parked `routing-changed` once its seat is restored. `--backend` clears a usage-limit park after a passing smoke.
 - `roadmap ack <needs-user-id> [--choice <option-id>]`: answer an item that offers `options`; items without options refuse acknowledgement.
-  `--choice` names an option; it may be omitted only when the item offers a single option.
+  `--choice` names one of those options.
 - `roadmap sweep [--resource <name>]`: run the recorded teardown of undispositioned residues.
 - `roadmap apply --from <dir> --rev <n> --reason <text> [--dry-run]`: apply edits made in an `inputs export`
   directory at its recorded revision N. The reason must be one non-empty line; it authorizes weakenings, cuts,
@@ -609,7 +609,7 @@ Blocking unless noted. Read the item file before acting.
 - "Plan in force": what `apply` accepts per edit.
 - "Routing types": seats, classes, routing layers.
 - "M2: scheduling, resources, parks": `after`, contingent edges, pools.
-- "M3: the holistic layer": `holistic`, obligations, witnesses, the vision record, ruling sidecars, lenses, the
+- "M3: the holistic layer": `holistic`, obligations, witnesses, the vision record, plain rulings ledger, lenses, the
   checkpoint.
 - "M4a: corpus, debt, forge, brief, chaining": the corpus guide, the pin, rules registry, obligations with census,
   the Phase-0 record, debt, the brief and the ack log.

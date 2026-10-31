@@ -312,22 +312,6 @@
       "situation": "`cancel` deletes the booking from the ledger, but the future morning view must show anything cancelled overnight."
      }
     ],
-    "issueIntake": [
-     {
-      "issue": "issue-1",
-      "outcome": {
-       "reason": "The double booking is already owned by berth-clash, which Phase 0 took it into and which delivers I-4 and I-10; that unit has not yet published.",
-       "type": "none"
-      }
-     },
-     {
-      "issue": "issue-2",
-      "outcome": {
-       "reason": "Phase 0 already took this request into the corpus as T-24, which serves the horizon clause V-7, and data/tides.json holds no heights yet for any unit to show.",
-       "type": "none"
-      }
-     }
-    ],
     "ops": [
      {
       "cites": [
@@ -344,7 +328,154 @@
        "docs/corpus/0020_Berths.md:77"
       ],
       "op": "admit",
-      "spec": "{\"schema\":\"roadmap/spec-m1\",\"unit\":\"draught-refusal\",\"rev\":1,\"repairs\":[\"F-1\"],\"lanes\":[{\"id\":\"unit-tests\",\"argv\":[\"node\",\"--test\",\"test/unit/*.test.js\"],\"cwd\":\".\",\"env\":{\"set\":{},\"pass\":[\"PATH\"]},\"expectedExit\":0,\"tier\":\"fast\",\"resources\":[],\"evidenceGlobs\":[],\"evidenceExcludes\":[],\"state\":\"active\"}],\"acceptance\":[{\"id\":\"A1\",\"clause\":\"`tidewater book` refuses a booking whose vessel's registered draught is greater than the berth's maximum draught on the berth register (T-14). The refusal is exactly one line `tidewater: <why>` on stderr, with nothing on stdout, and exits with code 2 (T-28, T-62, T-128). The line names the vessel and its draught, names the berth and its maximum draught, and tells the skipper what to do next (T-90, T-131), e.g. `tidewater: Razorbill draws 2.6 m and B1 takes at most 1.5 m; pick a berth that takes 2.6 m or more (see tidewater berths)`. A draught refusal leaves the ledger file byte-for-byte unchanged, creates no ledger file when there was none, leaves no lock or temporary file behind and writes no outbox file (T-29, T-45). The test runs src/cli.js as a child process with TIDEWATER_DATA and TIDEWATER_OUTBOX pointed at temporary paths, uses the `book` arguments in force after berth-clash, and covers Razorbill (2.6 m) into B1 (1.5 m) and Kittiwake (1.6 m) into B1. Witness test: `a booking whose vessel draws more than the berth's maximum draught is refused`.\",\"failLoudIfUndelivered\":true,\"state\":\"active\"},{\"id\":\"A2\",\"clause\":\"A vessel with no draught on the vessel register cannot book (T-13). When the vessel record has no draught, or a draught that is not a positive number, the check refuses in one line telling the skipper to give the office the vessel's draught before booking; it never guesses one (T-141). Every vessel in data/vessels.json has a draught, so the test calls the same check that `tidewater book` uses, with a vessel record that has no draught and a berth record from the register, and expects a TidewaterError whose message is one line. Do not add a vessel to data/vessels.json. Witness test: `a vessel with no draught on the register cannot book`.\",\"failLoudIfUndelivered\":true,\"state\":\"active\"},{\"id\":\"A3\",\"clause\":\"A vessel whose draught is not greater than the berth's maximum draught books as before. From the command line, Puffin (1.2 m) into B1 (1.5 m) and Guillemot (2.1 m) into B3 (2.2 m) both succeed with exit code 0, and the check accepts a vessel record whose draught equals the berth's maximum draught. Witness test: `a vessel that draws no more than the berth's maximum draught may book`.\",\"failLoudIfUndelivered\":true,\"state\":\"active\"},{\"id\":\"A4\",\"clause\":\"Every existing test keeps its name and passes, including the witness tests of berth-clash and booking-texts. Where an existing test books a vessel into a berth too shallow for it, change the vessel or the berth to one that fits, keeping the test's name and what it proves. For example, a concurrency test that repeats vessels across berths keeps the same number of processes, rounds and expected outcome.\",\"failLoudIfUndelivered\":true,\"state\":\"active\"}],\"scope\":[\"src/registers.js\",\"src/cli.js\",\"test/unit/**\",\"README.md\"],\"resources\":[],\"decisions\":[{\"id\":\"D1\",\"text\":\"The check is one small exported function in src/registers.js. It takes the vessel record and the berth record and throws a TidewaterError, so the no-draught case can be tested without a fake register entry. `tidewater book` calls it right after it finds the vessel and the berth on the registers, before it takes the ledger lock or reads the ledger. The check depends only on the registers, which Tidewater never writes (T-61), so it needs no lock.\",\"state\":\"active\"},{\"id\":\"D2\",\"text\":\"Only a draught greater than the berth's maximum is refused; a draught equal to the maximum is allowed (T-14 says 'draws more than'). Compare the two figures in whole tenths of a metre, so that equal register values always compare equal.\",\"state\":\"active\"},{\"id\":\"D3\",\"text\":\"The refusal names no particular berth and does not choose one for the skipper (T-9). It points at `tidewater berths`, which lists each berth's maximum draught, so it never steers a boat into B6 (T-94).\",\"state\":\"active\"},{\"id\":\"D4\",\"text\":\"No new dependencies. Keep the style of the existing modules: small functions, and a one-line comment per module and per exported function. README.md says in one sentence that a booking is refused when the vessel draws more than the berth takes (T-5).\",\"state\":\"active\"}],\"facts\":[{\"id\":\"F1\",\"text\":\"Finding F-1: today `tidewater book` checks only that the vessel, the berth and the window exist (src/cli.js). Razorbill (draught 2.6 m) can therefore be booked into B1 (maximum 1.5 m), and once booking-texts lands she is sent a confirmation text for it. The harbour master checks the next day's list each evening (T-78, T-139), and that check does not see a booking made later the same day.\",\"state\":\"active\"},{\"id\":\"F2\",\"text\":\"data/berths.json: B1 1.5, B2 1.8, B3 2.2, B4 2.2, B5 2.8, B6 3.5 m. data/vessels.json: Kittiwake 1.6, Puffin 1.2, Guillemot 2.1, Razorbill 2.6 m. Every vessel on the register has a draught and a phone number.\",\"state\":\"active\"},{\"id\":\"F3\",\"text\":\"This unit lands after berth-clash and booking-texts. By then `book` takes an arriving and a leaving window, does its read-check-write under the ledger lock (berth-clash D1, D2), and writes the confirmation text only after the ledger write has succeeded (booking-texts D5).\",\"state\":\"active\"},{\"id\":\"F4\",\"text\":\"The lanes run `node --test test/unit/*.test.js`, which is not recursive, so put every test file directly in test/unit/ with a `.test.js` suffix. Node's test ids are the test names, so keep the witness names verbatim. Tests point TIDEWATER_DATA and TIDEWATER_OUTBOX at temporary paths and never touch the real ledger or outbox (T-71).\",\"state\":\"active\"}],\"cites\":{\"contracts\":[],\"rulings\":[]},\"obligations\":[\"I-1\",\"I-2\",\"I-3\",\"I-4\",\"I-5\",\"I-6\",\"I-7\",\"I-8\",\"I-9\",\"I-10\",\"I-11\",\"I-12\",\"I-13\",\"I-14\",\"I-15\",\"I-16\",\"I-17\",\"I-18\",\"I-19\",\"I-20\",\"I-21\",\"I-22\",\"I-23\",\"I-24\",\"I-25\",\"I-26\",\"I-27\",\"I-28\",\"I-29\",\"I-30\",\"I-31\",\"I-32\",\"I-33\",\"I-34\"]}",
+      "spec": {
+       "schema": "roadmap/spec-m1",
+       "unit": "draught-refusal",
+       "rev": 1,
+       "repairs": [
+        "F-1"
+       ],
+       "lanes": [
+        {
+         "id": "unit-tests",
+         "argv": [
+          "node",
+          "--test",
+          "test/unit/*.test.js"
+         ],
+         "cwd": ".",
+         "env": {
+          "set": [],
+          "pass": [
+           "PATH"
+          ]
+         },
+         "expectedExit": 0,
+         "resources": [],
+         "evidenceGlobs": [],
+         "evidenceExcludes": [],
+         "state": "active",
+         "cadence": "build"
+        }
+       ],
+       "acceptance": [
+        {
+         "id": "A1",
+         "clause": "`tidewater book` refuses a booking whose vessel's registered draught is greater than the berth's maximum draught on the berth register (T-14). The refusal is exactly one line `tidewater: <why>` on stderr, with nothing on stdout, and exits with code 2 (T-28, T-62, T-128). The line names the vessel and its draught, names the berth and its maximum draught, and tells the skipper what to do next (T-90, T-131), e.g. `tidewater: Razorbill draws 2.6 m and B1 takes at most 1.5 m; pick a berth that takes 2.6 m or more (see tidewater berths)`. A draught refusal leaves the ledger file byte-for-byte unchanged, creates no ledger file when there was none, leaves no lock or temporary file behind and writes no outbox file (T-29, T-45). The test runs src/cli.js as a child process with TIDEWATER_DATA and TIDEWATER_OUTBOX pointed at temporary paths, uses the `book` arguments in force after berth-clash, and covers Razorbill (2.6 m) into B1 (1.5 m) and Kittiwake (1.6 m) into B1. Witness test: `a booking whose vessel draws more than the berth's maximum draught is refused`.",
+         "failLoudIfUndelivered": true,
+         "state": "active"
+        },
+        {
+         "id": "A2",
+         "clause": "A vessel with no draught on the vessel register cannot book (T-13). When the vessel record has no draught, or a draught that is not a positive number, the check refuses in one line telling the skipper to give the office the vessel's draught before booking; it never guesses one (T-141). Every vessel in data/vessels.json has a draught, so the test calls the same check that `tidewater book` uses, with a vessel record that has no draught and a berth record from the register, and expects a TidewaterError whose message is one line. Do not add a vessel to data/vessels.json. Witness test: `a vessel with no draught on the register cannot book`.",
+         "failLoudIfUndelivered": true,
+         "state": "active"
+        },
+        {
+         "id": "A3",
+         "clause": "A vessel whose draught is not greater than the berth's maximum draught books as before. From the command line, Puffin (1.2 m) into B1 (1.5 m) and Guillemot (2.1 m) into B3 (2.2 m) both succeed with exit code 0, and the check accepts a vessel record whose draught equals the berth's maximum draught. Witness test: `a vessel that draws no more than the berth's maximum draught may book`.",
+         "failLoudIfUndelivered": true,
+         "state": "active"
+        },
+        {
+         "id": "A4",
+         "clause": "Every existing test keeps its name and passes, including the witness tests of berth-clash and booking-texts. Where an existing test books a vessel into a berth too shallow for it, change the vessel or the berth to one that fits, keeping the test's name and what it proves. For example, a concurrency test that repeats vessels across berths keeps the same number of processes, rounds and expected outcome.",
+         "failLoudIfUndelivered": true,
+         "state": "active"
+        }
+       ],
+       "scope": [
+        "src/registers.js",
+        "src/cli.js",
+        "test/unit/**",
+        "README.md"
+       ],
+       "resources": [],
+       "decisions": [
+        {
+         "id": "D1",
+         "text": "The check is one small exported function in src/registers.js. It takes the vessel record and the berth record and throws a TidewaterError, so the no-draught case can be tested without a fake register entry. `tidewater book` calls it right after it finds the vessel and the berth on the registers, before it takes the ledger lock or reads the ledger. The check depends only on the registers, which Tidewater never writes (T-61), so it needs no lock.",
+         "state": "active"
+        },
+        {
+         "id": "D2",
+         "text": "Only a draught greater than the berth's maximum is refused; a draught equal to the maximum is allowed (T-14 says 'draws more than'). Compare the two figures in whole tenths of a metre, so that equal register values always compare equal.",
+         "state": "active"
+        },
+        {
+         "id": "D3",
+         "text": "The refusal names no particular berth and does not choose one for the skipper (T-9). It points at `tidewater berths`, which lists each berth's maximum draught, so it never steers a boat into B6 (T-94).",
+         "state": "active"
+        },
+        {
+         "id": "D4",
+         "text": "No new dependencies. Keep the style of the existing modules: small functions, and a one-line comment per module and per exported function. README.md says in one sentence that a booking is refused when the vessel draws more than the berth takes (T-5).",
+         "state": "active"
+        }
+       ],
+       "facts": [
+        {
+         "id": "F1",
+         "text": "Finding F-1: today `tidewater book` checks only that the vessel, the berth and the window exist (src/cli.js). Razorbill (draught 2.6 m) can therefore be booked into B1 (maximum 1.5 m), and once booking-texts lands she is sent a confirmation text for it. The harbour master checks the next day's list each evening (T-78, T-139), and that check does not see a booking made later the same day.",
+         "state": "active"
+        },
+        {
+         "id": "F2",
+         "text": "data/berths.json: B1 1.5, B2 1.8, B3 2.2, B4 2.2, B5 2.8, B6 3.5 m. data/vessels.json: Kittiwake 1.6, Puffin 1.2, Guillemot 2.1, Razorbill 2.6 m. Every vessel on the register has a draught and a phone number.",
+         "state": "active"
+        },
+        {
+         "id": "F3",
+         "text": "This unit lands after berth-clash and booking-texts. By then `book` takes an arriving and a leaving window, does its read-check-write under the ledger lock (berth-clash D1, D2), and writes the confirmation text only after the ledger write has succeeded (booking-texts D5).",
+         "state": "active"
+        },
+        {
+         "id": "F4",
+         "text": "The lanes run `node --test test/unit/*.test.js`, which is not recursive, so put every test file directly in test/unit/ with a `.test.js` suffix. Node's test ids are the test names, so keep the witness names verbatim. Tests point TIDEWATER_DATA and TIDEWATER_OUTBOX at temporary paths and never touch the real ledger or outbox (T-71).",
+         "state": "active"
+        }
+       ],
+       "cites": {
+        "contracts": [],
+        "rulings": []
+       },
+       "obligations": [
+        "I-1",
+        "I-2",
+        "I-3",
+        "I-4",
+        "I-5",
+        "I-6",
+        "I-7",
+        "I-8",
+        "I-9",
+        "I-10",
+        "I-11",
+        "I-12",
+        "I-13",
+        "I-14",
+        "I-15",
+        "I-16",
+        "I-17",
+        "I-18",
+        "I-19",
+        "I-20",
+        "I-21",
+        "I-22",
+        "I-23",
+        "I-24",
+        "I-25",
+        "I-26",
+        "I-27",
+        "I-28",
+        "I-29",
+        "I-30",
+        "I-31",
+        "I-32",
+        "I-33",
+        "I-34"
+       ]
+      },
       "unit": {
        "after": [
         "berth-clash",
@@ -359,7 +490,8 @@
         "test/unit/**",
         "README.md"
        ]
-      }
+      },
+      "targets": []
      }
     ],
     "premises": [
@@ -490,8 +622,7 @@
      "F-3 is deferred. The remedy changes the exact 'Booking confirmed' template, which only the harbour master may agree to (T-58). The arc keeps the template as I-15 fixes it, proposes the change in corpusAmendments, and records the reading of V-4 in interpretations.",
      "Obligations need no change. I-1 and I-3 hold. I-2 is partial and the other obligations are unwitnessed, but all of them are future obligations delivered by berth-clash or booking-texts, and neither unit has published yet.",
      "issue-1 is already owned by berth-clash (I-4, I-10). issue-2 is already in the corpus as T-24, which serves the horizon clause V-7. There are no divergences and no coverage gaps."
-    ],
-    "rulings": []
+    ]
    },
    "planRev": 4,
    "seq": 222
@@ -607,22 +738,6 @@
       "situation": "Bookings now span several windows, while the office and harbour master still place boats by hand using the printed day list (T-76, T-78, T-82, T-111)."
      }
     ],
-    "issueIntake": [
-     {
-      "issue": "issue-1",
-      "outcome": {
-       "reason": "Already fixed: since berth-clash published, Tidewater refuses the second booking of B3 for the 20:31 high water on 2026-10-04 and names Kittiwake, and test/unit/booking.test.js:62-71 repeats that exact case.",
-       "type": "none"
-      }
-     },
-     {
-      "issue": "issue-2",
-      "outcome": {
-       "reason": "Phase 0 already turned it into rule T-24, which serves the horizon clause V-7 beyond this arc, and the tide table holds no heights yet.",
-       "type": "none"
-      }
-     }
-    ],
     "ops": [
      {
       "cites": [
@@ -649,7 +764,178 @@
        "test/unit/concurrency.test.js:24"
       ],
       "op": "admit",
-      "spec": "{\"schema\":\"roadmap/spec-m1\",\"unit\":\"stay-overlap\",\"rev\":1,\"repairs\":[\"F-5\",\"F-8\",\"F-9\",\"F-10\"],\"lanes\":[{\"id\":\"unit-tests\",\"argv\":[\"node\",\"--test\",\"test/unit/*.test.js\"],\"cwd\":\".\",\"env\":{\"set\":{},\"pass\":[\"PATH\"]},\"expectedExit\":0,\"tier\":\"fast\",\"resources\":[],\"evidenceGlobs\":[],\"evidenceExcludes\":[],\"state\":\"active\"}],\"acceptance\":[{\"id\":\"A1\",\"clause\":\"A booking holds its berth in time, from the moment its arrival window opens to the moment its leaving window closes, each window worked out from its date and high water in local harbour time (T-16, T-20, T-21). `tidewater book` refuses a booking whose held time overlaps the held time of another booking of the same berth, two spans overlapping when each starts before the other ends (T-30, T-148). The refusal is the existing single line naming the vessel that holds the berth and the high water it leaves on (T-31), and the check runs inside the locked read-check-write of src/ledger.js `book`. Where no two windows of the tide table overlap, this refuses exactly the bookings the tide-table-order check refuses today. On the table as typed, the 23:47 window of 2026-10-07 (22:17-01:17) and the 00:21 window of 2026-10-08 (22:51-01:51) overlap: with B3 held by one vessel through the 23:47 high water of 2026-10-07, another vessel's booking of B3 arriving on the 00:21 high water of 2026-10-08 is refused; with B3 held from the 00:21 high water of 2026-10-08, another vessel's booking of B3 leaving on the 23:47 high water of 2026-10-07 is refused. Witness tests, names unchanged: `a berth already booked for a tide window is refused` adds both of these cases, each checking that the refusal line names the holder and that the ledger is byte-for-byte unchanged; `a berth is free again after the window its booking leaves on` asserts that a booking arriving on the 00:21 high water of 2026-10-08 after a stay leaving on the 23:47 high water of 2026-10-07 is refused naming the holder, and that a booking of B3 arriving on the 12:49 high water of 2026-10-08 succeeds.\",\"failLoudIfUndelivered\":true,\"state\":\"active\"},{\"id\":\"A2\",\"clause\":\"`tidewater list <date>` lists every booking that holds its berth on any window of that date: every booking whose arrival window's date is on or before the date and whose leaving window's date is on or after it, in booking order, each line in today's format (T-76, T-78, T-148). A booking with no leaving window in the ledger leaves on the window it arrives on, as berth-clash decided, so it is listed on its arrival date only. `tidewater list` with no date still lists every booking. Witness test: `the list for a date shows every booking that holds a berth on that date`, run through src/cli.js as a child process: a booking arriving on 2026-10-04 and leaving on 2026-10-06 is listed for 2026-10-04, 2026-10-05 and 2026-10-06 and not for 2026-10-03 or 2026-10-07, and a single-window booking on 2026-10-05 is listed for 2026-10-05 only. `bookings get ascending ids and are listed in booking order` keeps its name and passes.\",\"failLoudIfUndelivered\":true,\"state\":\"active\"},{\"id\":\"A3\",\"clause\":\"The witness test `a window that opens before midnight belongs to the date of its high water` also asserts that the 00:21 high water of 2026-10-08, whose window opens at 22:51 on 2026-10-07, does not belong to 2026-10-07 (T-21): `windowOf('2026-10-07', '00:21')` throws a TidewaterError matching /no 00:21 high water on 2026-10-07/, `windowsFor('2026-10-07')` does not contain it, and `tidewater book Puffin B1 2026-10-07 00:21 2026-10-07 00:21` run through src/cli.js against a temporary ledger is refused with exactly one stderr line, exit code 2 and no ledger file created (T-152, T-29).\",\"failLoudIfUndelivered\":true,\"state\":\"active\"},{\"id\":\"A4\",\"clause\":\"Every other test keeps its name and passes. The concurrency tests keep at least 16 processes and at least 5 rounds; where `bookings made at the same moment are all kept` would book one berth on two windows that overlap in time (the first 16 windows of the table include the 23:47 high water of 2026-10-07 and the 00:21 high water of 2026-10-08), it chooses windows or berths whose stays do not overlap, so every process still succeeds. Every vessel and berth pair that a new or changed test books successfully fits the berth's maximum draught. README.md says that `list <date>` shows the bookings that hold a berth on that date and that two bookings of a berth whose windows are open at the same time clash.\",\"failLoudIfUndelivered\":true,\"state\":\"active\"}],\"scope\":[\"src/ledger.js\",\"src/tides.js\",\"src/cli.js\",\"test/unit/**\",\"README.md\"],\"resources\":[],\"decisions\":[{\"id\":\"D1\",\"text\":\"Work out a window's opening and closing as minutes on one clock from its date and high water, plus or minus WINDOW_MINUTES from src/tides.js, treating every time as local harbour time (T-20) without reading the machine's time zone or daylight saving. A small exported helper in src/tides.js is fine.\",\"state\":\"active\"},{\"id\":\"D2\",\"text\":\"Do not correct, reorder or extend data/tides.json: Tidewater never writes the tide table (T-61), the office corrects it (T-106), and the owner's question P-8 about the 23:47 and 00:21 high waters is open. The check must hold whatever the table says, and must refuse nothing new where windows do not overlap.\",\"state\":\"active\"},{\"id\":\"D3\",\"text\":\"The refusal of a booking that leaves before it arrives (T-151) keeps comparing the two windows in tide-table order, by date then high water.\",\"state\":\"active\"},{\"id\":\"D4\",\"text\":\"The confirmation text, its template and the outbox stay as they are (T-55, T-58). The ledger file format stays as it is: no migration.\",\"state\":\"active\"},{\"id\":\"D5\",\"text\":\"No new dependencies. Keep the style of the existing modules: small functions, a one-line comment per module and exported function.\",\"state\":\"active\"}],\"facts\":[{\"id\":\"F1\",\"text\":\"data/tides.json lists high waters at 23:47 on 2026-10-07 and 00:21 on 2026-10-08, 34 minutes apart; their windows 22:17-01:17 and 22:51-01:51 overlap. Today src/ledger.js orders windows as the text `date hw` (line 63) and compares those keys (line 79), so it lets one vessel leave B3 on the first while another arrives on the second (finding F-8).\",\"state\":\"active\"},{\"id\":\"F2\",\"text\":\"test/unit/booking.test.js line 115 asserts that Guillemot can book B3 for the 00:21 high water of 2026-10-08 after Puffin's stay leaving on the 23:47 high water of 2026-10-07; under this unit that booking is refused, so the test body changes and its name stays.\",\"state\":\"active\"},{\"id\":\"F3\",\"text\":\"src/ledger.js `list` (line 107) keeps only the bookings that arrive on the given date, so a boat staying through a later date is missing from that date's list, which the office prints each morning (T-76) and the harbour master checks each evening (T-78) (findings F-5 and F-9).\",\"state\":\"active\"},{\"id\":\"F4\",\"text\":\"The I-2 witness in test/unit/tides.test.js (lines 22-26) checks that the 23:47 high water is refused under 2026-10-08 but never asks for the 00:21 high water under 2026-10-07 (finding F-10).\",\"state\":\"active\"},{\"id\":\"F5\",\"text\":\"test/unit/concurrency.test.js line 24 books B1 on the first 16 windows of the tide table, which include both overlapping windows.\",\"state\":\"active\"},{\"id\":\"F6\",\"text\":\"draught-refusal lands before this unit and refuses a booking whose vessel draws more than the berth's maximum draught (T-14). data/vessels.json gives Kittiwake 1.6 m, Puffin 1.2 m, Guillemot 2.1 m and Razorbill 2.6 m; data/berths.json gives B1 1.5 m, B2 1.8 m, B3 and B4 2.2 m, B5 2.8 m and B6 3.5 m.\",\"state\":\"active\"},{\"id\":\"F7\",\"text\":\"Node's test ids are the test names and the witness lane matches them exactly, so keep names verbatim. The lanes run `node --test test/unit/*.test.js`, which is not recursive: put every test file directly in test/unit/ with a `.test.js` suffix. Tests point TIDEWATER_DATA and TIDEWATER_OUTBOX at temporary paths (T-71); test/unit/run.js does this for child processes.\",\"state\":\"active\"}],\"cites\":{\"contracts\":[],\"rulings\":[]},\"obligations\":[\"I-1\",\"I-2\",\"I-3\",\"I-4\",\"I-5\",\"I-6\",\"I-7\",\"I-8\",\"I-9\",\"I-10\",\"I-11\",\"I-12\",\"I-13\",\"I-14\",\"I-15\",\"I-16\",\"I-17\",\"I-18\",\"I-19\",\"I-20\",\"I-21\",\"I-22\",\"I-23\",\"I-24\",\"I-25\",\"I-26\",\"I-27\",\"I-28\",\"I-29\",\"I-30\",\"I-31\",\"I-32\",\"I-33\",\"I-34\"]}",
+      "spec": {
+       "schema": "roadmap/spec-m1",
+       "unit": "stay-overlap",
+       "rev": 1,
+       "repairs": [
+        "F-5",
+        "F-8",
+        "F-9",
+        "F-10"
+       ],
+       "lanes": [
+        {
+         "id": "unit-tests",
+         "argv": [
+          "node",
+          "--test",
+          "test/unit/*.test.js"
+         ],
+         "cwd": ".",
+         "env": {
+          "set": [],
+          "pass": [
+           "PATH"
+          ]
+         },
+         "expectedExit": 0,
+         "resources": [],
+         "evidenceGlobs": [],
+         "evidenceExcludes": [],
+         "state": "active",
+         "cadence": "build"
+        }
+       ],
+       "acceptance": [
+        {
+         "id": "A1",
+         "clause": "A booking holds its berth in time, from the moment its arrival window opens to the moment its leaving window closes, each window worked out from its date and high water in local harbour time (T-16, T-20, T-21). `tidewater book` refuses a booking whose held time overlaps the held time of another booking of the same berth, two spans overlapping when each starts before the other ends (T-30, T-148). The refusal is the existing single line naming the vessel that holds the berth and the high water it leaves on (T-31), and the check runs inside the locked read-check-write of src/ledger.js `book`. Where no two windows of the tide table overlap, this refuses exactly the bookings the tide-table-order check refuses today. On the table as typed, the 23:47 window of 2026-10-07 (22:17-01:17) and the 00:21 window of 2026-10-08 (22:51-01:51) overlap: with B3 held by one vessel through the 23:47 high water of 2026-10-07, another vessel's booking of B3 arriving on the 00:21 high water of 2026-10-08 is refused; with B3 held from the 00:21 high water of 2026-10-08, another vessel's booking of B3 leaving on the 23:47 high water of 2026-10-07 is refused. Witness tests, names unchanged: `a berth already booked for a tide window is refused` adds both of these cases, each checking that the refusal line names the holder and that the ledger is byte-for-byte unchanged; `a berth is free again after the window its booking leaves on` asserts that a booking arriving on the 00:21 high water of 2026-10-08 after a stay leaving on the 23:47 high water of 2026-10-07 is refused naming the holder, and that a booking of B3 arriving on the 12:49 high water of 2026-10-08 succeeds.",
+         "failLoudIfUndelivered": true,
+         "state": "active"
+        },
+        {
+         "id": "A2",
+         "clause": "`tidewater list <date>` lists every booking that holds its berth on any window of that date: every booking whose arrival window's date is on or before the date and whose leaving window's date is on or after it, in booking order, each line in today's format (T-76, T-78, T-148). A booking with no leaving window in the ledger leaves on the window it arrives on, as berth-clash decided, so it is listed on its arrival date only. `tidewater list` with no date still lists every booking. Witness test: `the list for a date shows every booking that holds a berth on that date`, run through src/cli.js as a child process: a booking arriving on 2026-10-04 and leaving on 2026-10-06 is listed for 2026-10-04, 2026-10-05 and 2026-10-06 and not for 2026-10-03 or 2026-10-07, and a single-window booking on 2026-10-05 is listed for 2026-10-05 only. `bookings get ascending ids and are listed in booking order` keeps its name and passes.",
+         "failLoudIfUndelivered": true,
+         "state": "active"
+        },
+        {
+         "id": "A3",
+         "clause": "The witness test `a window that opens before midnight belongs to the date of its high water` also asserts that the 00:21 high water of 2026-10-08, whose window opens at 22:51 on 2026-10-07, does not belong to 2026-10-07 (T-21): `windowOf('2026-10-07', '00:21')` throws a TidewaterError matching /no 00:21 high water on 2026-10-07/, `windowsFor('2026-10-07')` does not contain it, and `tidewater book Puffin B1 2026-10-07 00:21 2026-10-07 00:21` run through src/cli.js against a temporary ledger is refused with exactly one stderr line, exit code 2 and no ledger file created (T-152, T-29).",
+         "failLoudIfUndelivered": true,
+         "state": "active"
+        },
+        {
+         "id": "A4",
+         "clause": "Every other test keeps its name and passes. The concurrency tests keep at least 16 processes and at least 5 rounds; where `bookings made at the same moment are all kept` would book one berth on two windows that overlap in time (the first 16 windows of the table include the 23:47 high water of 2026-10-07 and the 00:21 high water of 2026-10-08), it chooses windows or berths whose stays do not overlap, so every process still succeeds. Every vessel and berth pair that a new or changed test books successfully fits the berth's maximum draught. README.md says that `list <date>` shows the bookings that hold a berth on that date and that two bookings of a berth whose windows are open at the same time clash.",
+         "failLoudIfUndelivered": true,
+         "state": "active"
+        }
+       ],
+       "scope": [
+        "src/ledger.js",
+        "src/tides.js",
+        "src/cli.js",
+        "test/unit/**",
+        "README.md"
+       ],
+       "resources": [],
+       "decisions": [
+        {
+         "id": "D1",
+         "text": "Work out a window's opening and closing as minutes on one clock from its date and high water, plus or minus WINDOW_MINUTES from src/tides.js, treating every time as local harbour time (T-20) without reading the machine's time zone or daylight saving. A small exported helper in src/tides.js is fine.",
+         "state": "active"
+        },
+        {
+         "id": "D2",
+         "text": "Do not correct, reorder or extend data/tides.json: Tidewater never writes the tide table (T-61), the office corrects it (T-106), and the owner's question P-8 about the 23:47 and 00:21 high waters is open. The check must hold whatever the table says, and must refuse nothing new where windows do not overlap.",
+         "state": "active"
+        },
+        {
+         "id": "D3",
+         "text": "The refusal of a booking that leaves before it arrives (T-151) keeps comparing the two windows in tide-table order, by date then high water.",
+         "state": "active"
+        },
+        {
+         "id": "D4",
+         "text": "The confirmation text, its template and the outbox stay as they are (T-55, T-58). The ledger file format stays as it is: no migration.",
+         "state": "active"
+        },
+        {
+         "id": "D5",
+         "text": "No new dependencies. Keep the style of the existing modules: small functions, a one-line comment per module and exported function.",
+         "state": "active"
+        }
+       ],
+       "facts": [
+        {
+         "id": "F1",
+         "text": "data/tides.json lists high waters at 23:47 on 2026-10-07 and 00:21 on 2026-10-08, 34 minutes apart; their windows 22:17-01:17 and 22:51-01:51 overlap. Today src/ledger.js orders windows as the text `date hw` (line 63) and compares those keys (line 79), so it lets one vessel leave B3 on the first while another arrives on the second (finding F-8).",
+         "state": "active"
+        },
+        {
+         "id": "F2",
+         "text": "test/unit/booking.test.js line 115 asserts that Guillemot can book B3 for the 00:21 high water of 2026-10-08 after Puffin's stay leaving on the 23:47 high water of 2026-10-07; under this unit that booking is refused, so the test body changes and its name stays.",
+         "state": "active"
+        },
+        {
+         "id": "F3",
+         "text": "src/ledger.js `list` (line 107) keeps only the bookings that arrive on the given date, so a boat staying through a later date is missing from that date's list, which the office prints each morning (T-76) and the harbour master checks each evening (T-78) (findings F-5 and F-9).",
+         "state": "active"
+        },
+        {
+         "id": "F4",
+         "text": "The I-2 witness in test/unit/tides.test.js (lines 22-26) checks that the 23:47 high water is refused under 2026-10-08 but never asks for the 00:21 high water under 2026-10-07 (finding F-10).",
+         "state": "active"
+        },
+        {
+         "id": "F5",
+         "text": "test/unit/concurrency.test.js line 24 books B1 on the first 16 windows of the tide table, which include both overlapping windows.",
+         "state": "active"
+        },
+        {
+         "id": "F6",
+         "text": "draught-refusal lands before this unit and refuses a booking whose vessel draws more than the berth's maximum draught (T-14). data/vessels.json gives Kittiwake 1.6 m, Puffin 1.2 m, Guillemot 2.1 m and Razorbill 2.6 m; data/berths.json gives B1 1.5 m, B2 1.8 m, B3 and B4 2.2 m, B5 2.8 m and B6 3.5 m.",
+         "state": "active"
+        },
+        {
+         "id": "F7",
+         "text": "Node's test ids are the test names and the witness lane matches them exactly, so keep names verbatim. The lanes run `node --test test/unit/*.test.js`, which is not recursive: put every test file directly in test/unit/ with a `.test.js` suffix. Tests point TIDEWATER_DATA and TIDEWATER_OUTBOX at temporary paths (T-71); test/unit/run.js does this for child processes.",
+         "state": "active"
+        }
+       ],
+       "cites": {
+        "contracts": [],
+        "rulings": []
+       },
+       "obligations": [
+        "I-1",
+        "I-2",
+        "I-3",
+        "I-4",
+        "I-5",
+        "I-6",
+        "I-7",
+        "I-8",
+        "I-9",
+        "I-10",
+        "I-11",
+        "I-12",
+        "I-13",
+        "I-14",
+        "I-15",
+        "I-16",
+        "I-17",
+        "I-18",
+        "I-19",
+        "I-20",
+        "I-21",
+        "I-22",
+        "I-23",
+        "I-24",
+        "I-25",
+        "I-26",
+        "I-27",
+        "I-28",
+        "I-29",
+        "I-30",
+        "I-31",
+        "I-32",
+        "I-33",
+        "I-34"
+       ]
+      },
       "unit": {
        "after": [
         "draught-refusal"
@@ -664,7 +950,8 @@
         "test/unit/**",
         "README.md"
        ]
-      }
+      },
+      "targets": []
      }
     ],
     "premises": [
@@ -814,8 +1101,7 @@
      "F-6 (P3) is deferred. berth-clash D2 deliberately never breaks a ledger lock, because the kiosk and the office share a folder. The refusal already names the lock file and when it was taken (src/ledger.js:32). What is missing is an office routine, which belongs in the corpus, so it is proposed as a corpus amendment serving V-1.",
      "F-7 (P3) is deferred. In this arc nothing edits the corpus. The stale command line in docs/corpus/0010_Overview.md:37 is proposed as a corpus amendment under T-5.",
      "issue-1 is already fixed: berth-clash refuses that double booking, and booking.test.js:62-71 repeats the exact Kittiwake/Puffin B3 20:31 case. issue-2 was turned into T-24 at Phase 0; T-24 serves V-7, which is beyond this arc."
-    ],
-    "rulings": []
+    ]
    },
    "planRev": 5,
    "seq": 761
@@ -878,22 +1164,6 @@
       "situation": "The confirmation text can fail to reach the outbox (an unwritable folder or a full shared disk) after the booking is saved, and the vision does not say whether the booking should then stand."
      }
     ],
-    "issueIntake": [
-     {
-      "issue": "issue-1",
-      "outcome": {
-       "reason": "Already fixed: the clash check now runs inside the locked read-check-write in src/ledger.js, and I-4 holds with the test `a berth already booked for a tide window is refused`.",
-       "type": "none"
-      }
-     },
-     {
-      "issue": "issue-2",
-      "outcome": {
-       "reason": "High-water heights serve V-7, a horizon clause beyond this arc, and data/tides.json holds only high-water times, so the office would first have to type the heights into the tide table; corpus rule T-24 already records the requirement for the arc that advances V-7.",
-       "type": "none"
-      }
-     }
-    ],
     "ops": [
      {
       "cites": [
@@ -910,7 +1180,135 @@
        "src/ledger.js:55"
       ],
       "op": "admit",
-      "spec": "{\"schema\":\"roadmap/spec-m1\",\"unit\":\"booked-line-first\",\"rev\":1,\"repairs\":[\"F-11\"],\"lanes\":[{\"id\":\"unit-tests\",\"argv\":[\"node\",\"--test\",\"test/unit/*.test.js\"],\"cwd\":\".\",\"env\":{\"set\":{},\"pass\":[\"PATH\"]},\"expectedExit\":0,\"tier\":\"fast\",\"resources\":[],\"evidenceGlobs\":[],\"evidenceExcludes\":[],\"state\":\"active\"}],\"acceptance\":[{\"id\":\"A1\",\"clause\":\"When the confirmation text cannot be written to the outbox (for example the outbox path is an ordinary file, so the folder cannot be made), `tidewater book` for a vessel with a phone number still keeps its booking. The ledger holds the booking, and stdout carries its `booked bk-<n>: <vessel> in <berth> from the <hw> high water on <date> to the <leave-hw> high water on <leave-date>` line, printed before the text is attempted, so the skipper sees her booking id, berth and windows. The failed write is not a refusal: the command then crashes with a stack trace on stderr and an exit code other than 0 and 2 (T-69), so the office notices. No ledger lock file is left behind. The test runs src/cli.js as a child process with its outbox path made an ordinary file in a temporary directory. Witness test: `a booking whose text cannot be written still shows its booking id`.\",\"failLoudIfUndelivered\":true,\"state\":\"active\"},{\"id\":\"A2\",\"clause\":\"When the outbox can be written, nothing changes for the skipper: the text is still written as the booking is made (T-43), and the command exits 0 with the same `booked` line. Every existing test keeps its name and passes, among them `a booking writes its confirmation text to the outbox`, `a refused booking writes no text`, `every outbox text is about a booking in the ledger`, `every refusal is one line on stderr` and `an error that is not a refusal crashes with a stack trace`.\",\"failLoudIfUndelivered\":true,\"state\":\"active\"}],\"scope\":[\"src/cli.js\",\"test/unit/**\"],\"resources\":[],\"decisions\":[{\"id\":\"D1\",\"text\":\"The change is in src/cli.js `book` only: print the `booked` line, then call sendBookingConfirmation. Do not catch the outbox error and do not turn it into a TidewaterError. A refusal exits 2 and tells the skipper nothing was booked, which is false once the booking is saved (T-28, T-69).\",\"state\":\"active\"},{\"id\":\"D2\",\"text\":\"Do not write the text before the ledger is saved. The booking id comes from the ledger, and a text for a booking that then failed to save would be a text about no booking (T-45).\",\"state\":\"active\"},{\"id\":\"D3\",\"text\":\"No new dependencies. Keep the code in the style of the existing modules: small functions, a one-line comment per module and exported function.\",\"state\":\"active\"}],\"facts\":[{\"id\":\"F1\",\"text\":\"F-11: at head 4b42992 src/cli.js `book` calls ledger.book (line 45), then sendBookingConfirmation (line 46), then prints the `booked` line (line 47). src/outbox.js writeText uses mkdirSync, writeFileSync and renameSync, whose errors are not TidewaterErrors, so src/cli.js line 66 rethrows them and the `booked` line is never printed although the booking is saved.\",\"state\":\"active\"},{\"id\":\"F2\",\"text\":\"ledger.book releases the ledger lock in a finally block before it returns (src/ledger.js lines 55-60), so the text is written after the lock is gone.\",\"state\":\"active\"},{\"id\":\"F3\",\"text\":\"test/unit/run.js `run` and `start` set TIDEWATER_OUTBOX to the `outbox` path that `scratch()` returns (a sibling of the scratch directory in the temporary folder). Creating an ordinary file at that path before booking makes the outbox write fail. Every vessel on data/vessels.json has a phone number.\",\"state\":\"active\"},{\"id\":\"F4\",\"text\":\"Node's test ids are the test names, and the witness lane matches them exactly. Test files go directly in test/unit/ with a .test.js suffix, because the lane's glob is not recursive. Tests point TIDEWATER_DATA at a temporary file (T-71).\",\"state\":\"active\"}],\"cites\":{\"contracts\":[],\"rulings\":[]},\"obligations\":[\"I-1\",\"I-2\",\"I-3\",\"I-4\",\"I-5\",\"I-6\",\"I-7\",\"I-8\",\"I-9\",\"I-10\",\"I-11\",\"I-12\",\"I-13\",\"I-14\",\"I-15\",\"I-16\",\"I-17\",\"I-18\",\"I-19\",\"I-20\",\"I-21\",\"I-22\",\"I-23\",\"I-24\",\"I-25\",\"I-26\",\"I-27\",\"I-28\",\"I-29\",\"I-30\",\"I-31\",\"I-32\",\"I-33\",\"I-34\"]}",
+      "spec": {
+       "schema": "roadmap/spec-m1",
+       "unit": "booked-line-first",
+       "rev": 1,
+       "repairs": [
+        "F-11"
+       ],
+       "lanes": [
+        {
+         "id": "unit-tests",
+         "argv": [
+          "node",
+          "--test",
+          "test/unit/*.test.js"
+         ],
+         "cwd": ".",
+         "env": {
+          "set": [],
+          "pass": [
+           "PATH"
+          ]
+         },
+         "expectedExit": 0,
+         "resources": [],
+         "evidenceGlobs": [],
+         "evidenceExcludes": [],
+         "state": "active",
+         "cadence": "build"
+        }
+       ],
+       "acceptance": [
+        {
+         "id": "A1",
+         "clause": "When the confirmation text cannot be written to the outbox (for example the outbox path is an ordinary file, so the folder cannot be made), `tidewater book` for a vessel with a phone number still keeps its booking. The ledger holds the booking, and stdout carries its `booked bk-<n>: <vessel> in <berth> from the <hw> high water on <date> to the <leave-hw> high water on <leave-date>` line, printed before the text is attempted, so the skipper sees her booking id, berth and windows. The failed write is not a refusal: the command then crashes with a stack trace on stderr and an exit code other than 0 and 2 (T-69), so the office notices. No ledger lock file is left behind. The test runs src/cli.js as a child process with its outbox path made an ordinary file in a temporary directory. Witness test: `a booking whose text cannot be written still shows its booking id`.",
+         "failLoudIfUndelivered": true,
+         "state": "active"
+        },
+        {
+         "id": "A2",
+         "clause": "When the outbox can be written, nothing changes for the skipper: the text is still written as the booking is made (T-43), and the command exits 0 with the same `booked` line. Every existing test keeps its name and passes, among them `a booking writes its confirmation text to the outbox`, `a refused booking writes no text`, `every outbox text is about a booking in the ledger`, `every refusal is one line on stderr` and `an error that is not a refusal crashes with a stack trace`.",
+         "failLoudIfUndelivered": true,
+         "state": "active"
+        }
+       ],
+       "scope": [
+        "src/cli.js",
+        "test/unit/**"
+       ],
+       "resources": [],
+       "decisions": [
+        {
+         "id": "D1",
+         "text": "The change is in src/cli.js `book` only: print the `booked` line, then call sendBookingConfirmation. Do not catch the outbox error and do not turn it into a TidewaterError. A refusal exits 2 and tells the skipper nothing was booked, which is false once the booking is saved (T-28, T-69).",
+         "state": "active"
+        },
+        {
+         "id": "D2",
+         "text": "Do not write the text before the ledger is saved. The booking id comes from the ledger, and a text for a booking that then failed to save would be a text about no booking (T-45).",
+         "state": "active"
+        },
+        {
+         "id": "D3",
+         "text": "No new dependencies. Keep the code in the style of the existing modules: small functions, a one-line comment per module and exported function.",
+         "state": "active"
+        }
+       ],
+       "facts": [
+        {
+         "id": "F1",
+         "text": "F-11: at head 4b42992 src/cli.js `book` calls ledger.book (line 45), then sendBookingConfirmation (line 46), then prints the `booked` line (line 47). src/outbox.js writeText uses mkdirSync, writeFileSync and renameSync, whose errors are not TidewaterErrors, so src/cli.js line 66 rethrows them and the `booked` line is never printed although the booking is saved.",
+         "state": "active"
+        },
+        {
+         "id": "F2",
+         "text": "ledger.book releases the ledger lock in a finally block before it returns (src/ledger.js lines 55-60), so the text is written after the lock is gone.",
+         "state": "active"
+        },
+        {
+         "id": "F3",
+         "text": "test/unit/run.js `run` and `start` set TIDEWATER_OUTBOX to the `outbox` path that `scratch()` returns (a sibling of the scratch directory in the temporary folder). Creating an ordinary file at that path before booking makes the outbox write fail. Every vessel on data/vessels.json has a phone number.",
+         "state": "active"
+        },
+        {
+         "id": "F4",
+         "text": "Node's test ids are the test names, and the witness lane matches them exactly. Test files go directly in test/unit/ with a .test.js suffix, because the lane's glob is not recursive. Tests point TIDEWATER_DATA at a temporary file (T-71).",
+         "state": "active"
+        }
+       ],
+       "cites": {
+        "contracts": [],
+        "rulings": []
+       },
+       "obligations": [
+        "I-1",
+        "I-2",
+        "I-3",
+        "I-4",
+        "I-5",
+        "I-6",
+        "I-7",
+        "I-8",
+        "I-9",
+        "I-10",
+        "I-11",
+        "I-12",
+        "I-13",
+        "I-14",
+        "I-15",
+        "I-16",
+        "I-17",
+        "I-18",
+        "I-19",
+        "I-20",
+        "I-21",
+        "I-22",
+        "I-23",
+        "I-24",
+        "I-25",
+        "I-26",
+        "I-27",
+        "I-28",
+        "I-29",
+        "I-30",
+        "I-31",
+        "I-32",
+        "I-33",
+        "I-34"
+       ]
+      },
       "unit": {
        "after": [
         "stay-overlap"
@@ -922,7 +1320,8 @@
         "src/cli.js",
         "test/unit/**"
        ]
-      }
+      },
+      "targets": []
      }
     ],
     "premises": [
@@ -1066,8 +1465,7 @@
      "issue-1 needs no action: the clash check runs inside the locked read-check-write (src/ledger.js:78-95), and I-4 holds with the test `a berth already booked for a tide window is refused`.",
      "issue-2 needs no action in this arc: high-water heights serve V-7, a horizon clause, and data/tides.json holds only high-water times. Corpus rule T-24 already records the requirement for the arc that advances V-7.",
      "Divergences D-1 to D-7 are recorded for the owner to acknowledge. None of them conflicts with V-1 to V-4 or forecloses V-5, V-6 or V-7, so none calls for an op."
-    ],
-    "rulings": []
+    ]
    },
    "planRev": 6,
    "seq": 1154
@@ -1144,22 +1542,6 @@
       "situation": "Under T-21 a window that opens before midnight belongs to the next date, so a boat booked on it can come in on the evening of the earlier date, when the harbour master is placing boats from that earlier date's printed list."
      }
     ],
-    "issueIntake": [
-     {
-      "issue": "issue-1",
-      "outcome": {
-       "reason": "This double booking is already fixed: berth-clash put the clash check inside the locked read-check-write in src/ledger.js, and I-4, I-10 and I-32 hold at tree 75df8665.",
-       "type": "none"
-      }
-     },
-     {
-      "issue": "issue-2",
-      "outcome": {
-       "reason": "High-water heights serve horizon clause V-7, which is beyond this arc, and data/tides.json holds no heights to show, so this arc takes no action and does not foreclose a later arc that adds them.",
-       "type": "none"
-      }
-     }
-    ],
     "ops": [
      {
       "cites": [
@@ -1180,7 +1562,157 @@
        "test/unit/booking.test.js:160"
       ],
       "op": "admit",
-      "spec": "{\"schema\": \"roadmap/spec-m1\", \"unit\": \"overlap-clarity\", \"rev\": 1, \"repairs\": [\"F-13\", \"F-14\", \"F-16\"], \"lanes\": [{\"id\": \"unit-tests\", \"argv\": [\"node\", \"--test\", \"test/unit/*.test.js\"], \"cwd\": \".\", \"env\": {\"set\": {}, \"pass\": [\"PATH\"]}, \"expectedExit\": 0, \"tier\": \"fast\", \"resources\": [], \"evidenceGlobs\": [], \"evidenceExcludes\": [], \"state\": \"active\"}], \"acceptance\": [{\"id\": \"A1\", \"clause\": \"`tidewater list <date>` shows every booking that holds its berth at any time on that calendar date, in local harbour time. A booking is listed when the span it holds its berth overlaps 00:00 to 24:00 of that date. The span runs from the moment its arrival window opens to the moment its leaving window closes, the same span the clash check in src/ledger.js uses. A span that ends exactly at 00:00 is not listed for the date that starts then. Examples: a booking on the 00:21 high water of 2026-10-08 (window 22:51 on 2026-10-07 to 01:51 on 2026-10-08) is listed for 2026-10-07 and 2026-10-08 and for no other date. A booking on the 23:47 high water of 2026-10-07 (window 22:17 on 2026-10-07 to 01:17 on 2026-10-08) is listed for 2026-10-07 and 2026-10-08. A booking on the 11:12 high water of 2026-10-07 is listed only for 2026-10-07. Each line keeps its present format and names each window by the date of its high water (T-21). The list keeps booking order, and `list` with no date still shows every booking. Witness test: `the list for a date shows a boat whose window crosses midnight on both dates`. The test `the list for a date shows every booking that holds a berth on that date` keeps its name and passes; its 2026-10-07 case now lists bk-1, whose leaving window on the 22:36 high water of 2026-10-06 closes at 00:06 on 2026-10-07. `bookings get ascending ids and are listed in booking order` passes unchanged.\", \"failLoudIfUndelivered\": true, \"state\": \"active\"}, {\"id\": \"A2\", \"clause\": \"The refusal for a taken berth names the vessel that holds it (T-31). It also gives that vessel's whole stay and the clock times it holds the berth, so it never names a time that contradicts the stay the skipper asked for. It reads exactly `tidewater: <berth> is booked to <vessel> <stay> (<from> to <to>), which overlaps the stay you asked for; pick another berth or another window`. <stay> is `for the <hw> high water on <date>` when the holding booking arrives and leaves on one window, and `from the <hw> high water on <date> to the <leave-hw> high water on <leave-date>` otherwise. <from> and <to> are written `HH:MM on YYYY-MM-DD`: <from> is the moment the holder's arrival window opens and <to> the moment its leaving window closes. Example 1: Puffin holds B3 for the 23:47 high water on 2026-10-07 and the skipper asks for the 00:21 high water on 2026-10-08. The line is `tidewater: B3 is booked to Puffin for the 23:47 high water on 2026-10-07 (22:17 on 2026-10-07 to 01:17 on 2026-10-08), which overlaps the stay you asked for; pick another berth or another window`. Example 2: Kittiwake holds B3 from the 00:21 to the 12:49 high water on 2026-10-08 and the skipper asks for the 11:12 to the 23:47 high water on 2026-10-07. The line is `tidewater: B3 is booked to Kittiwake from the 00:21 high water on 2026-10-08 to the 12:49 high water on 2026-10-08 (22:51 on 2026-10-07 to 14:19 on 2026-10-08), which overlaps the stay you asked for; pick another berth or another window`. When several bookings overlap, the line names the earliest one made, as it does now. A ledger entry without a leaving window (berth-clash D5) counts as a one-window stay. Witness test: `a taken-berth refusal states the holder's stay and when it holds the berth`. It covers both examples and a one-window holder on the 20:31 high water of 2026-10-04 (19:01 on 2026-10-04 to 22:01 on 2026-10-04). These existing tests check this refusal; they keep their names and change only the expected text: `a berth already booked for a tide window is refused`, `a booking refused for a taken berth names the vessel that holds it`, `the first booking of a berth keeps it`, `a booking holds its berth from its arrival window through its leaving window`, `a berth is free again after the window its booking leaves on`, `a booking without a leaving window in the ledger holds only the window it arrives on` and `two bookings racing for one berth and window never both succeed`. The refusal is still one line on stderr, exits with code 2 and writes nothing.\", \"failLoudIfUndelivered\": true, \"state\": \"active\"}, {\"id\": \"A3\", \"clause\": \"A vessel's registered draught is rounded up to the next tenth of a metre (T-12) before it is compared with the berth's maximum draught. A booking is refused when that rounded figure is more than the maximum (T-14), and the refusal names the rounded figure. Example: a register entry of 1.54 m against B1 (maximum 1.5 m) gives `Deep draws 1.6 m and B1 takes at most 1.5 m; pick a berth that takes 1.6 m or more (see tidewater berths)`. A draught already in tenths must compare as itself in spite of floating point (2.2 * 10 is 22.000000000000004 in JavaScript). Test it this way: for every n from 1 to 35, a draught of n/10 m is accepted by a berth whose maximum is n/10 m and refused by a berth whose maximum is (n-1)/10 m. Witness test: `a draught between tenths is rounded up before it is compared`. It calls checkDraught directly with vessel and berth records, because data/vessels.json holds only tenths. The existing draught tests keep their names and pass unchanged.\", \"failLoudIfUndelivered\": true, \"state\": \"active\"}, {\"id\": \"A4\", \"clause\": \"README.md says two things (T-5). First, `list <date>` shows every booking that holds a berth at any time on that date, including a boat whose window opens before midnight for the next date's high water. Second, the refusal for a taken berth names the vessel that holds it and when it holds the berth. Nothing under docs/corpus/ is edited.\", \"failLoudIfUndelivered\": true, \"state\": \"active\"}], \"scope\": [\"src/ledger.js\", \"src/tides.js\", \"src/registers.js\", \"test/unit/**\", \"README.md\"], \"resources\": [], \"decisions\": [{\"id\": \"OC-held-span\", \"text\": \"The list filter and the refusal's clock times reuse the held span the clash check already computes (`held` in src/ledger.js, built on `minutesOf` in src/tides.js), so the list, the refusal and the clash check always agree about when a booking holds its berth. A date's span runs from 00:00 of that date to 00:00 of the next date, on the same minute clock as minutesOf. Small helpers for that span, and for writing a minute back as `HH:MM on YYYY-MM-DD`, go in src/tides.js beside minutesOf.\", \"state\": \"active\"}, {\"id\": \"OC-formats-kept\", \"text\": \"The booked line, the cancelled line, the list line and the confirmation text keep their formats. Windows are still named by their high water's date (T-21), and the confirmation template changes only with the harbour master's agreement (T-58).\", \"state\": \"active\"}, {\"id\": \"OC-corpus-untouched\", \"text\": \"Do not edit docs/corpus/: the corpus is this arc's target and only the owner changes it. The stale draught prose at docs/corpus/0020_Berths.md:73-74 (F-15) goes to the owner as a corpus amendment.\", \"state\": \"active\"}, {\"id\": \"OC-style\", \"text\": \"Add no new dependencies. Keep the code in the style of the existing modules: small functions, and a one-line comment for each module and each exported function.\", \"state\": \"active\"}], \"facts\": [{\"id\": \"OC-tides\", \"text\": \"Window times from data/tides.json: the 23:47 high water of 2026-10-07 runs from 22:17 on 2026-10-07 to 01:17 on 2026-10-08. The 00:21 high water of 2026-10-08 runs from 22:51 on 2026-10-07 to 01:51 on 2026-10-08. The 22:36 high water of 2026-10-06 closes at 00:06 on 2026-10-07, and the 12:49 high water of 2026-10-08 closes at 14:19. The table covers 2026-10-01 to 2026-10-14.\", \"state\": \"active\"}, {\"id\": \"OC-today\", \"text\": \"In the current code, `list <date>` compares tide-table date strings (src/ledger.js:112), while the clash check compares clock minutes (src/ledger.js:66 and 84). The taken refusal says the berth is booked `until` the holder's leaving window (src/ledger.js:88). checkDraught compares draughts rounded to the nearest tenth (src/registers.js:26).\", \"state\": \"active\"}, {\"id\": \"OC-tests\", \"text\": \"The exact taken-refusal text is asserted in test/unit/booking.test.js, through the `taken` helper at line 7 and the literal line at line 71, and in test/unit/concurrency.test.js at line 68. Node's test ids are the test names, and the witness lane matches them exactly. `node --test test/unit/*.test.js` is not recursive, so test files go directly in test/unit/ with a .test.js suffix. Tests point TIDEWATER_DATA and TIDEWATER_OUTBOX at temporary paths (T-71).\", \"state\": \"active\"}, {\"id\": \"OC-registers\", \"text\": \"data/berths.json gives these maximum draughts: B1 1.5 m, B2 1.8 m, B3 2.2 m, B4 2.2 m, B5 2.8 m, B6 3.5 m. data/vessels.json gives these draughts, all in tenths: Kittiwake 1.6 m, Puffin 1.2 m, Guillemot 2.1 m, Razorbill 2.6 m.\", \"state\": \"active\"}], \"cites\": {\"contracts\": [], \"rulings\": []}, \"obligations\": [\"I-1\", \"I-2\", \"I-3\", \"I-4\", \"I-5\", \"I-6\", \"I-7\", \"I-8\", \"I-9\", \"I-10\", \"I-11\", \"I-12\", \"I-13\", \"I-14\", \"I-15\", \"I-16\", \"I-17\", \"I-18\", \"I-19\", \"I-20\", \"I-21\", \"I-22\", \"I-23\", \"I-24\", \"I-25\", \"I-26\", \"I-27\", \"I-28\", \"I-29\", \"I-30\", \"I-31\", \"I-32\", \"I-33\", \"I-34\"]}",
+      "spec": {
+       "schema": "roadmap/spec-m1",
+       "unit": "overlap-clarity",
+       "rev": 1,
+       "repairs": [
+        "F-13",
+        "F-14",
+        "F-16"
+       ],
+       "lanes": [
+        {
+         "id": "unit-tests",
+         "argv": [
+          "node",
+          "--test",
+          "test/unit/*.test.js"
+         ],
+         "cwd": ".",
+         "env": {
+          "set": [],
+          "pass": [
+           "PATH"
+          ]
+         },
+         "expectedExit": 0,
+         "resources": [],
+         "evidenceGlobs": [],
+         "evidenceExcludes": [],
+         "state": "active",
+         "cadence": "build"
+        }
+       ],
+       "acceptance": [
+        {
+         "id": "A1",
+         "clause": "`tidewater list <date>` shows every booking that holds its berth at any time on that calendar date, in local harbour time. A booking is listed when the span it holds its berth overlaps 00:00 to 24:00 of that date. The span runs from the moment its arrival window opens to the moment its leaving window closes, the same span the clash check in src/ledger.js uses. A span that ends exactly at 00:00 is not listed for the date that starts then. Examples: a booking on the 00:21 high water of 2026-10-08 (window 22:51 on 2026-10-07 to 01:51 on 2026-10-08) is listed for 2026-10-07 and 2026-10-08 and for no other date. A booking on the 23:47 high water of 2026-10-07 (window 22:17 on 2026-10-07 to 01:17 on 2026-10-08) is listed for 2026-10-07 and 2026-10-08. A booking on the 11:12 high water of 2026-10-07 is listed only for 2026-10-07. Each line keeps its present format and names each window by the date of its high water (T-21). The list keeps booking order, and `list` with no date still shows every booking. Witness test: `the list for a date shows a boat whose window crosses midnight on both dates`. The test `the list for a date shows every booking that holds a berth on that date` keeps its name and passes; its 2026-10-07 case now lists bk-1, whose leaving window on the 22:36 high water of 2026-10-06 closes at 00:06 on 2026-10-07. `bookings get ascending ids and are listed in booking order` passes unchanged.",
+         "failLoudIfUndelivered": true,
+         "state": "active"
+        },
+        {
+         "id": "A2",
+         "clause": "The refusal for a taken berth names the vessel that holds it (T-31). It also gives that vessel's whole stay and the clock times it holds the berth, so it never names a time that contradicts the stay the skipper asked for. It reads exactly `tidewater: <berth> is booked to <vessel> <stay> (<from> to <to>), which overlaps the stay you asked for; pick another berth or another window`. <stay> is `for the <hw> high water on <date>` when the holding booking arrives and leaves on one window, and `from the <hw> high water on <date> to the <leave-hw> high water on <leave-date>` otherwise. <from> and <to> are written `HH:MM on YYYY-MM-DD`: <from> is the moment the holder's arrival window opens and <to> the moment its leaving window closes. Example 1: Puffin holds B3 for the 23:47 high water on 2026-10-07 and the skipper asks for the 00:21 high water on 2026-10-08. The line is `tidewater: B3 is booked to Puffin for the 23:47 high water on 2026-10-07 (22:17 on 2026-10-07 to 01:17 on 2026-10-08), which overlaps the stay you asked for; pick another berth or another window`. Example 2: Kittiwake holds B3 from the 00:21 to the 12:49 high water on 2026-10-08 and the skipper asks for the 11:12 to the 23:47 high water on 2026-10-07. The line is `tidewater: B3 is booked to Kittiwake from the 00:21 high water on 2026-10-08 to the 12:49 high water on 2026-10-08 (22:51 on 2026-10-07 to 14:19 on 2026-10-08), which overlaps the stay you asked for; pick another berth or another window`. When several bookings overlap, the line names the earliest one made, as it does now. A ledger entry without a leaving window (berth-clash D5) counts as a one-window stay. Witness test: `a taken-berth refusal states the holder's stay and when it holds the berth`. It covers both examples and a one-window holder on the 20:31 high water of 2026-10-04 (19:01 on 2026-10-04 to 22:01 on 2026-10-04). These existing tests check this refusal; they keep their names and change only the expected text: `a berth already booked for a tide window is refused`, `a booking refused for a taken berth names the vessel that holds it`, `the first booking of a berth keeps it`, `a booking holds its berth from its arrival window through its leaving window`, `a berth is free again after the window its booking leaves on`, `a booking without a leaving window in the ledger holds only the window it arrives on` and `two bookings racing for one berth and window never both succeed`. The refusal is still one line on stderr, exits with code 2 and writes nothing.",
+         "failLoudIfUndelivered": true,
+         "state": "active"
+        },
+        {
+         "id": "A3",
+         "clause": "A vessel's registered draught is rounded up to the next tenth of a metre (T-12) before it is compared with the berth's maximum draught. A booking is refused when that rounded figure is more than the maximum (T-14), and the refusal names the rounded figure. Example: a register entry of 1.54 m against B1 (maximum 1.5 m) gives `Deep draws 1.6 m and B1 takes at most 1.5 m; pick a berth that takes 1.6 m or more (see tidewater berths)`. A draught already in tenths must compare as itself in spite of floating point (2.2 * 10 is 22.000000000000004 in JavaScript). Test it this way: for every n from 1 to 35, a draught of n/10 m is accepted by a berth whose maximum is n/10 m and refused by a berth whose maximum is (n-1)/10 m. Witness test: `a draught between tenths is rounded up before it is compared`. It calls checkDraught directly with vessel and berth records, because data/vessels.json holds only tenths. The existing draught tests keep their names and pass unchanged.",
+         "failLoudIfUndelivered": true,
+         "state": "active"
+        },
+        {
+         "id": "A4",
+         "clause": "README.md says two things (T-5). First, `list <date>` shows every booking that holds a berth at any time on that date, including a boat whose window opens before midnight for the next date's high water. Second, the refusal for a taken berth names the vessel that holds it and when it holds the berth. Nothing under docs/corpus/ is edited.",
+         "failLoudIfUndelivered": true,
+         "state": "active"
+        }
+       ],
+       "scope": [
+        "src/ledger.js",
+        "src/tides.js",
+        "src/registers.js",
+        "test/unit/**",
+        "README.md"
+       ],
+       "resources": [],
+       "decisions": [
+        {
+         "id": "OC-held-span",
+         "text": "The list filter and the refusal's clock times reuse the held span the clash check already computes (`held` in src/ledger.js, built on `minutesOf` in src/tides.js), so the list, the refusal and the clash check always agree about when a booking holds its berth. A date's span runs from 00:00 of that date to 00:00 of the next date, on the same minute clock as minutesOf. Small helpers for that span, and for writing a minute back as `HH:MM on YYYY-MM-DD`, go in src/tides.js beside minutesOf.",
+         "state": "active"
+        },
+        {
+         "id": "OC-formats-kept",
+         "text": "The booked line, the cancelled line, the list line and the confirmation text keep their formats. Windows are still named by their high water's date (T-21), and the confirmation template changes only with the harbour master's agreement (T-58).",
+         "state": "active"
+        },
+        {
+         "id": "OC-corpus-untouched",
+         "text": "Do not edit docs/corpus/: the corpus is this arc's target and only the owner changes it. The stale draught prose at docs/corpus/0020_Berths.md:73-74 (F-15) goes to the owner as a corpus amendment.",
+         "state": "active"
+        },
+        {
+         "id": "OC-style",
+         "text": "Add no new dependencies. Keep the code in the style of the existing modules: small functions, and a one-line comment for each module and each exported function.",
+         "state": "active"
+        }
+       ],
+       "facts": [
+        {
+         "id": "OC-tides",
+         "text": "Window times from data/tides.json: the 23:47 high water of 2026-10-07 runs from 22:17 on 2026-10-07 to 01:17 on 2026-10-08. The 00:21 high water of 2026-10-08 runs from 22:51 on 2026-10-07 to 01:51 on 2026-10-08. The 22:36 high water of 2026-10-06 closes at 00:06 on 2026-10-07, and the 12:49 high water of 2026-10-08 closes at 14:19. The table covers 2026-10-01 to 2026-10-14.",
+         "state": "active"
+        },
+        {
+         "id": "OC-today",
+         "text": "In the current code, `list <date>` compares tide-table date strings (src/ledger.js:112), while the clash check compares clock minutes (src/ledger.js:66 and 84). The taken refusal says the berth is booked `until` the holder's leaving window (src/ledger.js:88). checkDraught compares draughts rounded to the nearest tenth (src/registers.js:26).",
+         "state": "active"
+        },
+        {
+         "id": "OC-tests",
+         "text": "The exact taken-refusal text is asserted in test/unit/booking.test.js, through the `taken` helper at line 7 and the literal line at line 71, and in test/unit/concurrency.test.js at line 68. Node's test ids are the test names, and the witness lane matches them exactly. `node --test test/unit/*.test.js` is not recursive, so test files go directly in test/unit/ with a .test.js suffix. Tests point TIDEWATER_DATA and TIDEWATER_OUTBOX at temporary paths (T-71).",
+         "state": "active"
+        },
+        {
+         "id": "OC-registers",
+         "text": "data/berths.json gives these maximum draughts: B1 1.5 m, B2 1.8 m, B3 2.2 m, B4 2.2 m, B5 2.8 m, B6 3.5 m. data/vessels.json gives these draughts, all in tenths: Kittiwake 1.6 m, Puffin 1.2 m, Guillemot 2.1 m, Razorbill 2.6 m.",
+         "state": "active"
+        }
+       ],
+       "cites": {
+        "contracts": [],
+        "rulings": []
+       },
+       "obligations": [
+        "I-1",
+        "I-2",
+        "I-3",
+        "I-4",
+        "I-5",
+        "I-6",
+        "I-7",
+        "I-8",
+        "I-9",
+        "I-10",
+        "I-11",
+        "I-12",
+        "I-13",
+        "I-14",
+        "I-15",
+        "I-16",
+        "I-17",
+        "I-18",
+        "I-19",
+        "I-20",
+        "I-21",
+        "I-22",
+        "I-23",
+        "I-24",
+        "I-25",
+        "I-26",
+        "I-27",
+        "I-28",
+        "I-29",
+        "I-30",
+        "I-31",
+        "I-32",
+        "I-33",
+        "I-34"
+       ]
+      },
       "unit": {
        "after": [
         "booked-line-first"
@@ -1195,7 +1727,8 @@
         "test/unit/**",
         "README.md"
        ]
-      }
+      },
+      "targets": []
      }
     ],
     "premises": [
@@ -1340,8 +1873,7 @@
      "The admitted repair unit overlap-clarity (risk med, after booked-line-first) fixes F-13, F-14 and F-16 together. It keeps every existing witness test name and changes only the expected refusal text. It does not touch the confirmation template (T-58) or how windows are named (T-21).",
      "F-15 is stale prose in docs/corpus/0020_Berths.md:73-74. The corpus is this arc's target and no unit may edit it, so the finding is deferred and the change is proposed to the owner as a corpus amendment.",
      "issue-1 describes the double booking that berth-clash fixed: I-4, I-10 and I-32 hold. issue-2 asks for high-water heights. Those serve horizon clause V-7 and need heights that data/tides.json does not hold, so this arc takes no action and does not foreclose V-7."
-    ],
-    "rulings": []
+    ]
    },
    "planRev": 7,
    "seq": 1365
@@ -1379,22 +1911,6 @@
      }
     ],
     "interpretations": [],
-    "issueIntake": [
-     {
-      "issue": "issue-1",
-      "outcome": {
-       "reason": "Already fixed by berth-clash: src/ledger.js:81-93 refuses a booking whose stay overlaps another booking of the same berth, and test/unit/booking.test.js:94-96 refuses Puffin for B3 at the 20:31 high water on 2026-10-04 while Kittiwake holds it (I-4 holds).",
-       "type": "none"
-      }
-     },
-     {
-      "issue": "issue-2",
-      "outcome": {
-       "reason": "It asks for the high-water heights of T-24, which serve horizon clause V-7 that this arc does not advance, and data/tides.json holds no heights yet; nothing in this arc rules it out later.",
-       "type": "none"
-      }
-     }
-    ],
     "ops": [
      {
       "cites": [
@@ -1411,7 +1927,134 @@
        "data/vessels.json:2-5"
       ],
       "op": "admit",
-      "spec": "{\"schema\":\"roadmap/spec-m1\",\"unit\":\"no-phone-witness\",\"rev\":1,\"repairs\":[\"F-18\"],\"lanes\":[{\"id\":\"unit-tests\",\"argv\":[\"node\",\"--test\",\"test/unit/*.test.js\"],\"cwd\":\".\",\"env\":{\"set\":{},\"pass\":[\"PATH\"]},\"expectedExit\":0,\"tier\":\"fast\",\"resources\":[],\"evidenceGlobs\":[],\"evidenceExcludes\":[],\"state\":\"active\"}],\"acceptance\":[{\"id\":\"A1\",\"clause\":\"The test `a vessel with no phone number gets no text` (name kept verbatim) runs the real command. It runs `tidewater book` as a child process for a vessel that is on the vessel register, has a draught that fits the berth, and has no phone number (T-47). It checks that the booking succeeds with exit code 0 and its `booked` line on stdout, that the ledger holds the booking, and that no outbox file is written for it. data/vessels.json must not gain a fake vessel, and Tidewater reads its registers from the data/ folder beside src/ (T-127). So the test copies package.json, src/ and data/ into a temporary directory, adds to the copy's data/vessels.json a vessel drawing 1.2 m with no `phone` field, and runs the copy's src/cli.js with TIDEWATER_DATA and TIDEWATER_OUTBOX set to temporary paths, e.g. booking that vessel into B1 for the 20:31 high water on 2026-10-04. In the same copied tree the test also books a vessel that has a phone and checks that exactly one outbox file exists, addressed to that vessel's registered number. This way the no-text check cannot pass just because the copy's outbox is misconfigured. The test must fail when the phone check in `sendBookingConfirmation` in src/texts.js is removed: check this once while building, then restore the check. The existing direct call of sendBookingConfirmation may stay as an extra check, but it does not replace the command run. The repository's data/vessels.json is unchanged.\",\"failLoudIfUndelivered\":true,\"state\":\"active\"},{\"id\":\"A2\",\"clause\":\"Every other test in test/unit/ keeps its name and passes. No file outside test/unit/ changes. The temporary copy and its ledger and outbox live under the system temporary directory. No test writes the repository's own ledger, outbox or registers (T-71).\",\"failLoudIfUndelivered\":true,\"state\":\"active\"}],\"scope\":[\"test/unit/**\"],\"resources\":[],\"decisions\":[{\"id\":\"D1\",\"text\":\"The test reaches a registered vessel with no phone through a temporary copy of package.json, src/ and data/. It does not add a way to point Tidewater at another vessel register, such as an environment variable or argument in src/registers.js, because T-127 fixes the vessel register at data/vessels.json and booking-texts A3 forbids a fake vessel in the repository's register.\",\"state\":\"active\"},{\"id\":\"D2\",\"text\":\"No new dependencies: use Node built-ins only (fs.cpSync, child_process.spawnSync). Keep the test in test/unit/texts.test.js, in the style of the existing tests.\",\"state\":\"active\"}],\"facts\":[{\"id\":\"F1\",\"text\":\"F-18: the current test (test/unit/texts.test.js:34-48) calls sendBookingConfirmation directly with the record {name:'NoPhone'}. That record has no draught, so checkDraught (src/registers.js:23) would refuse it before src/cli.js:47 sends a text. Every vessel in data/vessels.json has a phone.\",\"state\":\"active\"},{\"id\":\"F2\",\"text\":\"src/registers.js and src/tides.js read data/*.json relative to their own file (new URL('../data/...', import.meta.url)), so a copied src/ reads the copied data/. package.json sets `type` to `module`, which the copied src/*.js files need in order to load as ES modules.\",\"state\":\"active\"},{\"id\":\"F3\",\"text\":\"test/unit/run.js `run` spawns the repository's src/cli.js and derives the outbox path from the ledger path. The new test instead spawns the copy's src/cli.js itself, with spawnSync(process.execPath, ...) and its own TIDEWATER_DATA and TIDEWATER_OUTBOX.\",\"state\":\"active\"},{\"id\":\"F4\",\"text\":\"The lanes run `node --test test/unit/*.test.js`, which is not recursive. Keep every test file directly in test/unit/ with a `.test.js` suffix, and copy src/ to a directory outside test/unit/.\",\"state\":\"active\"},{\"id\":\"F5\",\"text\":\"B1 takes at most 1.5 m (data/berths.json), so a vessel drawing 1.2 m may book it. The tide table (data/tides.json) has the 20:31 high water on 2026-10-04.\",\"state\":\"active\"}],\"cites\":{\"contracts\":[],\"rulings\":[]},\"obligations\":[\"I-1\",\"I-2\",\"I-3\",\"I-4\",\"I-5\",\"I-6\",\"I-7\",\"I-8\",\"I-9\",\"I-10\",\"I-11\",\"I-12\",\"I-13\",\"I-14\",\"I-15\",\"I-16\",\"I-17\",\"I-18\",\"I-19\",\"I-20\",\"I-21\",\"I-22\",\"I-23\",\"I-24\",\"I-25\",\"I-26\",\"I-27\",\"I-28\",\"I-29\",\"I-30\",\"I-31\",\"I-32\",\"I-33\",\"I-34\"]}",
+      "spec": {
+       "schema": "roadmap/spec-m1",
+       "unit": "no-phone-witness",
+       "rev": 1,
+       "repairs": [
+        "F-18"
+       ],
+       "lanes": [
+        {
+         "id": "unit-tests",
+         "argv": [
+          "node",
+          "--test",
+          "test/unit/*.test.js"
+         ],
+         "cwd": ".",
+         "env": {
+          "set": [],
+          "pass": [
+           "PATH"
+          ]
+         },
+         "expectedExit": 0,
+         "resources": [],
+         "evidenceGlobs": [],
+         "evidenceExcludes": [],
+         "state": "active",
+         "cadence": "build"
+        }
+       ],
+       "acceptance": [
+        {
+         "id": "A1",
+         "clause": "The test `a vessel with no phone number gets no text` (name kept verbatim) runs the real command. It runs `tidewater book` as a child process for a vessel that is on the vessel register, has a draught that fits the berth, and has no phone number (T-47). It checks that the booking succeeds with exit code 0 and its `booked` line on stdout, that the ledger holds the booking, and that no outbox file is written for it. data/vessels.json must not gain a fake vessel, and Tidewater reads its registers from the data/ folder beside src/ (T-127). So the test copies package.json, src/ and data/ into a temporary directory, adds to the copy's data/vessels.json a vessel drawing 1.2 m with no `phone` field, and runs the copy's src/cli.js with TIDEWATER_DATA and TIDEWATER_OUTBOX set to temporary paths, e.g. booking that vessel into B1 for the 20:31 high water on 2026-10-04. In the same copied tree the test also books a vessel that has a phone and checks that exactly one outbox file exists, addressed to that vessel's registered number. This way the no-text check cannot pass just because the copy's outbox is misconfigured. The test must fail when the phone check in `sendBookingConfirmation` in src/texts.js is removed: check this once while building, then restore the check. The existing direct call of sendBookingConfirmation may stay as an extra check, but it does not replace the command run. The repository's data/vessels.json is unchanged.",
+         "failLoudIfUndelivered": true,
+         "state": "active"
+        },
+        {
+         "id": "A2",
+         "clause": "Every other test in test/unit/ keeps its name and passes. No file outside test/unit/ changes. The temporary copy and its ledger and outbox live under the system temporary directory. No test writes the repository's own ledger, outbox or registers (T-71).",
+         "failLoudIfUndelivered": true,
+         "state": "active"
+        }
+       ],
+       "scope": [
+        "test/unit/**"
+       ],
+       "resources": [],
+       "decisions": [
+        {
+         "id": "D1",
+         "text": "The test reaches a registered vessel with no phone through a temporary copy of package.json, src/ and data/. It does not add a way to point Tidewater at another vessel register, such as an environment variable or argument in src/registers.js, because T-127 fixes the vessel register at data/vessels.json and booking-texts A3 forbids a fake vessel in the repository's register.",
+         "state": "active"
+        },
+        {
+         "id": "D2",
+         "text": "No new dependencies: use Node built-ins only (fs.cpSync, child_process.spawnSync). Keep the test in test/unit/texts.test.js, in the style of the existing tests.",
+         "state": "active"
+        }
+       ],
+       "facts": [
+        {
+         "id": "F1",
+         "text": "F-18: the current test (test/unit/texts.test.js:34-48) calls sendBookingConfirmation directly with the record {name:'NoPhone'}. That record has no draught, so checkDraught (src/registers.js:23) would refuse it before src/cli.js:47 sends a text. Every vessel in data/vessels.json has a phone.",
+         "state": "active"
+        },
+        {
+         "id": "F2",
+         "text": "src/registers.js and src/tides.js read data/*.json relative to their own file (new URL('../data/...', import.meta.url)), so a copied src/ reads the copied data/. package.json sets `type` to `module`, which the copied src/*.js files need in order to load as ES modules.",
+         "state": "active"
+        },
+        {
+         "id": "F3",
+         "text": "test/unit/run.js `run` spawns the repository's src/cli.js and derives the outbox path from the ledger path. The new test instead spawns the copy's src/cli.js itself, with spawnSync(process.execPath, ...) and its own TIDEWATER_DATA and TIDEWATER_OUTBOX.",
+         "state": "active"
+        },
+        {
+         "id": "F4",
+         "text": "The lanes run `node --test test/unit/*.test.js`, which is not recursive. Keep every test file directly in test/unit/ with a `.test.js` suffix, and copy src/ to a directory outside test/unit/.",
+         "state": "active"
+        },
+        {
+         "id": "F5",
+         "text": "B1 takes at most 1.5 m (data/berths.json), so a vessel drawing 1.2 m may book it. The tide table (data/tides.json) has the 20:31 high water on 2026-10-04.",
+         "state": "active"
+        }
+       ],
+       "cites": {
+        "contracts": [],
+        "rulings": []
+       },
+       "obligations": [
+        "I-1",
+        "I-2",
+        "I-3",
+        "I-4",
+        "I-5",
+        "I-6",
+        "I-7",
+        "I-8",
+        "I-9",
+        "I-10",
+        "I-11",
+        "I-12",
+        "I-13",
+        "I-14",
+        "I-15",
+        "I-16",
+        "I-17",
+        "I-18",
+        "I-19",
+        "I-20",
+        "I-21",
+        "I-22",
+        "I-23",
+        "I-24",
+        "I-25",
+        "I-26",
+        "I-27",
+        "I-28",
+        "I-29",
+        "I-30",
+        "I-31",
+        "I-32",
+        "I-33",
+        "I-34"
+       ]
+      },
       "unit": {
        "after": [
         "overlap-clarity"
@@ -1422,7 +2065,8 @@
        "scope": [
         "test/unit/**"
        ]
-      }
+      },
+      "targets": []
      }
     ],
     "premises": [
@@ -1554,8 +2198,7 @@
      "issue-1 (two boats booked into B3 at the 20:31 high water on 2026-10-04) was already fixed by berth-clash. I-4 holds, and test/unit/booking.test.js:94-96 refuses exactly that second booking.",
      "issue-2 (show high-water heights) asks for T-24, which serves horizon clause V-7, beyond this arc. data/tides.json holds no heights yet. Nothing in this arc rules it out later.",
      "Divergences D-1 to D-11 are recorded departures waiting for the owner's review. None of them conflicts with V-1, V-2, V-3 or V-4 at this head, so none needs a plan change now."
-    ],
-    "rulings": []
+    ]
    },
    "planRev": 8,
    "seq": 1685
@@ -1613,22 +2256,6 @@
       "situation": "`cancel` removes whichever booking matches the sequential id it is given, so a mistyped id frees another skipper's berth while she still holds a confirmation text promising it to her."
      }
     ],
-    "issueIntake": [
-     {
-      "issue": "issue-1",
-      "outcome": {
-       "reason": "The published berth-clash unit already fixed this double booking: I-4, I-5 and I-32 hold at tree 21ebc46e, so a second booking of a berth for an overlapping window is refused and names the vessel that holds it.",
-       "type": "none"
-      }
-     },
-     {
-      "issue": "issue-2",
-      "outcome": {
-       "reason": "Phase 0 already acted on this request by adding rule T-24, which serves the horizon clause V-7 outside this arc, and data/tides.json does not yet hold the heights it needs.",
-       "type": "none"
-      }
-     }
-    ],
     "ops": [
      {
       "cites": [
@@ -1643,7 +2270,160 @@
        "src/ledger.js:94"
       ],
       "op": "admit",
-      "spec": "{\"schema\":\"roadmap/spec-m1\",\"unit\":\"cancel-own-booking\",\"rev\":1,\"repairs\":[\"F-19\"],\"lanes\":[{\"id\":\"unit-tests\",\"argv\":[\"node\",\"--test\",\"test/unit/*.test.js\"],\"cwd\":\".\",\"env\":{\"set\":{},\"pass\":[\"PATH\"]},\"expectedExit\":0,\"tier\":\"fast\",\"resources\":[],\"evidenceGlobs\":[],\"evidenceExcludes\":[],\"state\":\"active\"}],\"acceptance\":[{\"id\":\"A1\",\"clause\":\"`tidewater cancel <booking> <vessel>` cancels the booking only when <vessel> is exactly the vessel the booking is for, as registered. Cancelling still takes the booking id (T-38). Witness test: `a booking is cancelled by its id and its vessel`. In the test, Kittiwake books B3 for the 20:31 high water on 2026-10-04, and `cancel bk-1 Kittiwake` exits 0. The ledger then no longer holds bk-1, and Puffin can then book B3 for that window.\",\"failLoudIfUndelivered\":true,\"state\":\"active\"},{\"id\":\"A2\",\"clause\":\"A cancellation that names a vessel other than the booking's own is refused. The refusal is one line `tidewater: <why>` on stderr with nothing on stdout, and it exits with code 2 (T-28, T-62, T-128). The ledger file stays byte-for-byte unchanged, and the command leaves no lock or temporary file of its own behind. The line names the booking id and the vessel given, and does not name the booking's own vessel. It tells the skipper to check the id on her confirmation text or to ask the office to look it up (T-112, T-131). The check runs inside the locked read-check-write of src/ledger.js `cancel`. Witness test: `a cancellation naming another vessel is refused and changes nothing`. In the test, Kittiwake holds bk-1 in B3, and `cancel bk-1 Puffin` is refused as above. bk-1 is still in the ledger, and a later booking of B3 for the same window by another vessel is still refused naming Kittiwake.\",\"failLoudIfUndelivered\":true,\"state\":\"active\"},{\"id\":\"A3\",\"clause\":\"The one-argument form `tidewater cancel <booking>` is refused as a usage error that names the new form `cancel <booking> <vessel>`. Add `cancel usage, old form` (`cancel bk-1`) and `cancel for another vessel` (`cancel bk-1 Puffin` against the ledger in which Kittiwake holds bk-1) to the command-line refusals that `every refusal is one line on stderr` and `every refusal exits with code 2` run over. Change the existing cancel cases (`unknown booking id`, `busy ledger on cancel`) to the two-argument form, so that each is still refused for its own reason.\",\"failLoudIfUndelivered\":true,\"state\":\"active\"},{\"id\":\"A4\",\"clause\":\"Every existing test keeps its name and passes, with its cancel calls changed to name the booking's vessel. This includes `bookings and cancellations made at the same moment are all kept`: each cancel names the vessel of the booking it cancels, every process still succeeds, and the ledger ends with exactly the expected set. It also includes `a stale ledger lock is refused in one line and never broken` (the cancel case is still refused because the ledger is busy), `an error that is not a refusal crashes with a stack trace` (the cancel case still reaches the invalid ledger and crashes), `every refusal is one line on stderr` and `every refusal exits with code 2`. Once during the build, check that the concurrency test still fails when the lock is taken out.\",\"failLoudIfUndelivered\":true,\"state\":\"active\"},{\"id\":\"A5\",\"clause\":\"README.md shows the cancel command with its vessel, e.g. `node src/cli.js cancel bk-1 Kittiwake`. It says in one sentence that a cancellation is refused unless it names the booking's vessel (T-5). The usage comment at the top of src/cli.js shows the new form.\",\"failLoudIfUndelivered\":true,\"state\":\"active\"}],\"scope\":[\"src/ledger.js\",\"src/cli.js\",\"test/unit/**\",\"README.md\"],\"resources\":[],\"decisions\":[{\"id\":\"D1\",\"text\":\"The vessel check guards against a mistyped or misread booking id. It is not access control: Tidewater has no accounts or logins (T-74), and this unit adds none.\",\"state\":\"active\"},{\"id\":\"D2\",\"text\":\"src/ledger.js `cancel(id, vessel)` takes the vessel as a required argument, with no default. Inside `locked`, after the unknown-id check and before the booking is removed, it compares the vessel to the stored booking's vessel by exact string match. The CLI passes the vessel straight to ledger.cancel and does not look it up in the vessel register, so every mismatch gets the same line.\",\"state\":\"active\"},{\"id\":\"D3\",\"text\":\"This unit does not write a cancellation text (T-44, T-56). It does not add a cancellation cut-off (T-35, which waits on open question P-1). It does not keep cancelled bookings in the ledger. Those belong to the slice that advances V-5. Do not change the booking path, the lock, the outbox or the confirmation text.\",\"state\":\"active\"},{\"id\":\"D4\",\"text\":\"Add no new dependencies. Keep the style of the existing modules: small functions, and a one-line comment for each module and each exported function.\",\"state\":\"active\"}],\"facts\":[{\"id\":\"F1\",\"text\":\"F-19: src/cli.js:53-56 and src/ledger.js:103-111 remove whichever booking matches the id given, without checking the vessel. Booking ids are sequential (bk-<n>, T-26), so a mistyped id usually names another skipper's live booking. Cancelling it frees her berth for rebooking while she still holds a confirmation text for it.\",\"state\":\"active\"},{\"id\":\"F2\",\"text\":\"These existing tests run cancel: `a cancelled booking is gone; an unknown one is refused` in test/unit/ledger.test.js; the REFUSALS list, `a stale ledger lock is refused in one line and never broken` and `an error that is not a refusal crashes with a stack trace` in test/unit/booking.test.js; and `bookings and cancellations made at the same moment are all kept` in test/unit/concurrency.test.js. bookedLedger() in test/unit/booking.test.js holds Kittiwake as bk-1 in B3.\",\"state\":\"active\"},{\"id\":\"F3\",\"text\":\"Node's test ids are the test names, and the witness lane matches the names in the acceptance clauses exactly, so keep them verbatim. The lane runs `node --test test/unit/*.test.js`, which is not recursive: put every test file directly in test/unit/ with a `.test.js` suffix.\",\"state\":\"active\"},{\"id\":\"F4\",\"text\":\"Vessel names are matched exactly as registered in data/vessels.json (src/registers.js `vessel`), and a booking stores its vessel's registered name.\",\"state\":\"active\"}],\"cites\":{\"contracts\":[],\"rulings\":[]},\"obligations\":[\"I-1\",\"I-2\",\"I-3\",\"I-4\",\"I-5\",\"I-6\",\"I-7\",\"I-8\",\"I-9\",\"I-10\",\"I-11\",\"I-12\",\"I-13\",\"I-14\",\"I-15\",\"I-16\",\"I-17\",\"I-18\",\"I-19\",\"I-20\",\"I-21\",\"I-22\",\"I-23\",\"I-24\",\"I-25\",\"I-26\",\"I-27\",\"I-28\",\"I-29\",\"I-30\",\"I-31\",\"I-32\",\"I-33\",\"I-34\"]}",
+      "spec": {
+       "schema": "roadmap/spec-m1",
+       "unit": "cancel-own-booking",
+       "rev": 1,
+       "repairs": [
+        "F-19"
+       ],
+       "lanes": [
+        {
+         "id": "unit-tests",
+         "argv": [
+          "node",
+          "--test",
+          "test/unit/*.test.js"
+         ],
+         "cwd": ".",
+         "env": {
+          "set": [],
+          "pass": [
+           "PATH"
+          ]
+         },
+         "expectedExit": 0,
+         "resources": [],
+         "evidenceGlobs": [],
+         "evidenceExcludes": [],
+         "state": "active",
+         "cadence": "build"
+        }
+       ],
+       "acceptance": [
+        {
+         "id": "A1",
+         "clause": "`tidewater cancel <booking> <vessel>` cancels the booking only when <vessel> is exactly the vessel the booking is for, as registered. Cancelling still takes the booking id (T-38). Witness test: `a booking is cancelled by its id and its vessel`. In the test, Kittiwake books B3 for the 20:31 high water on 2026-10-04, and `cancel bk-1 Kittiwake` exits 0. The ledger then no longer holds bk-1, and Puffin can then book B3 for that window.",
+         "failLoudIfUndelivered": true,
+         "state": "active"
+        },
+        {
+         "id": "A2",
+         "clause": "A cancellation that names a vessel other than the booking's own is refused. The refusal is one line `tidewater: <why>` on stderr with nothing on stdout, and it exits with code 2 (T-28, T-62, T-128). The ledger file stays byte-for-byte unchanged, and the command leaves no lock or temporary file of its own behind. The line names the booking id and the vessel given, and does not name the booking's own vessel. It tells the skipper to check the id on her confirmation text or to ask the office to look it up (T-112, T-131). The check runs inside the locked read-check-write of src/ledger.js `cancel`. Witness test: `a cancellation naming another vessel is refused and changes nothing`. In the test, Kittiwake holds bk-1 in B3, and `cancel bk-1 Puffin` is refused as above. bk-1 is still in the ledger, and a later booking of B3 for the same window by another vessel is still refused naming Kittiwake.",
+         "failLoudIfUndelivered": true,
+         "state": "active"
+        },
+        {
+         "id": "A3",
+         "clause": "The one-argument form `tidewater cancel <booking>` is refused as a usage error that names the new form `cancel <booking> <vessel>`. Add `cancel usage, old form` (`cancel bk-1`) and `cancel for another vessel` (`cancel bk-1 Puffin` against the ledger in which Kittiwake holds bk-1) to the command-line refusals that `every refusal is one line on stderr` and `every refusal exits with code 2` run over. Change the existing cancel cases (`unknown booking id`, `busy ledger on cancel`) to the two-argument form, so that each is still refused for its own reason.",
+         "failLoudIfUndelivered": true,
+         "state": "active"
+        },
+        {
+         "id": "A4",
+         "clause": "Every existing test keeps its name and passes, with its cancel calls changed to name the booking's vessel. This includes `bookings and cancellations made at the same moment are all kept`: each cancel names the vessel of the booking it cancels, every process still succeeds, and the ledger ends with exactly the expected set. It also includes `a stale ledger lock is refused in one line and never broken` (the cancel case is still refused because the ledger is busy), `an error that is not a refusal crashes with a stack trace` (the cancel case still reaches the invalid ledger and crashes), `every refusal is one line on stderr` and `every refusal exits with code 2`. Once during the build, check that the concurrency test still fails when the lock is taken out.",
+         "failLoudIfUndelivered": true,
+         "state": "active"
+        },
+        {
+         "id": "A5",
+         "clause": "README.md shows the cancel command with its vessel, e.g. `node src/cli.js cancel bk-1 Kittiwake`. It says in one sentence that a cancellation is refused unless it names the booking's vessel (T-5). The usage comment at the top of src/cli.js shows the new form.",
+         "failLoudIfUndelivered": true,
+         "state": "active"
+        }
+       ],
+       "scope": [
+        "src/ledger.js",
+        "src/cli.js",
+        "test/unit/**",
+        "README.md"
+       ],
+       "resources": [],
+       "decisions": [
+        {
+         "id": "D1",
+         "text": "The vessel check guards against a mistyped or misread booking id. It is not access control: Tidewater has no accounts or logins (T-74), and this unit adds none.",
+         "state": "active"
+        },
+        {
+         "id": "D2",
+         "text": "src/ledger.js `cancel(id, vessel)` takes the vessel as a required argument, with no default. Inside `locked`, after the unknown-id check and before the booking is removed, it compares the vessel to the stored booking's vessel by exact string match. The CLI passes the vessel straight to ledger.cancel and does not look it up in the vessel register, so every mismatch gets the same line.",
+         "state": "active"
+        },
+        {
+         "id": "D3",
+         "text": "This unit does not write a cancellation text (T-44, T-56). It does not add a cancellation cut-off (T-35, which waits on open question P-1). It does not keep cancelled bookings in the ledger. Those belong to the slice that advances V-5. Do not change the booking path, the lock, the outbox or the confirmation text.",
+         "state": "active"
+        },
+        {
+         "id": "D4",
+         "text": "Add no new dependencies. Keep the style of the existing modules: small functions, and a one-line comment for each module and each exported function.",
+         "state": "active"
+        }
+       ],
+       "facts": [
+        {
+         "id": "F1",
+         "text": "F-19: src/cli.js:53-56 and src/ledger.js:103-111 remove whichever booking matches the id given, without checking the vessel. Booking ids are sequential (bk-<n>, T-26), so a mistyped id usually names another skipper's live booking. Cancelling it frees her berth for rebooking while she still holds a confirmation text for it.",
+         "state": "active"
+        },
+        {
+         "id": "F2",
+         "text": "These existing tests run cancel: `a cancelled booking is gone; an unknown one is refused` in test/unit/ledger.test.js; the REFUSALS list, `a stale ledger lock is refused in one line and never broken` and `an error that is not a refusal crashes with a stack trace` in test/unit/booking.test.js; and `bookings and cancellations made at the same moment are all kept` in test/unit/concurrency.test.js. bookedLedger() in test/unit/booking.test.js holds Kittiwake as bk-1 in B3.",
+         "state": "active"
+        },
+        {
+         "id": "F3",
+         "text": "Node's test ids are the test names, and the witness lane matches the names in the acceptance clauses exactly, so keep them verbatim. The lane runs `node --test test/unit/*.test.js`, which is not recursive: put every test file directly in test/unit/ with a `.test.js` suffix.",
+         "state": "active"
+        },
+        {
+         "id": "F4",
+         "text": "Vessel names are matched exactly as registered in data/vessels.json (src/registers.js `vessel`), and a booking stores its vessel's registered name.",
+         "state": "active"
+        }
+       ],
+       "cites": {
+        "contracts": [],
+        "rulings": []
+       },
+       "obligations": [
+        "I-1",
+        "I-2",
+        "I-3",
+        "I-4",
+        "I-5",
+        "I-6",
+        "I-7",
+        "I-8",
+        "I-9",
+        "I-10",
+        "I-11",
+        "I-12",
+        "I-13",
+        "I-14",
+        "I-15",
+        "I-16",
+        "I-17",
+        "I-18",
+        "I-19",
+        "I-20",
+        "I-21",
+        "I-22",
+        "I-23",
+        "I-24",
+        "I-25",
+        "I-26",
+        "I-27",
+        "I-28",
+        "I-29",
+        "I-30",
+        "I-31",
+        "I-32",
+        "I-33",
+        "I-34"
+       ]
+      },
       "unit": {
        "after": [
         "no-phone-witness"
@@ -1657,7 +2437,8 @@
         "test/unit/**",
         "README.md"
        ]
-      }
+      },
+      "targets": []
      }
     ],
     "premises": [
@@ -1797,8 +2578,7 @@
      "All 34 obligations I-1 to I-34 hold at tree 21ebc46e on lane unit-tests, and the coverage report shows no gaps. Divergences D-1 to D-12 are recorded for the owner and need no further op.",
      "issue-1 (the double booking of B3) is fixed by the published berth-clash unit: I-4, I-5 and I-32 hold. issue-2 (high-water heights) was already acted on in Phase 0 as T-24, which serves the horizon clause V-7, and data/tides.json holds no heights yet.",
      "The unit changes the cancel command that the corpus describes as `cancel <booking>` (0010_Overview.md:40). A corpus amendment to T-38 is proposed so the corpus describes the new form, as T-5 asks."
-    ],
-    "rulings": []
+    ]
    },
    "planRev": 9,
    "seq": 1889
@@ -1872,22 +2652,6 @@
       "situation": "`tidewater list` prints both the booking id and the vessel name, so the vessel check on `cancel` cannot stop someone at the kiosk from cancelling another skipper's booking, and Tidewater has no logins (T-74) to do more."
      }
     ],
-    "issueIntake": [
-     {
-      "issue": "issue-1",
-      "outcome": {
-       "reason": "Already fixed: berth-clash refuses a booking that overlaps another booking of the same berth and names the holder (src/ledger.js:81-93), and I-4 and I-5 hold at the latest unit-tests observation.",
-       "type": "none"
-      }
-     },
-     {
-      "issue": "issue-2",
-      "outcome": {
-       "reason": "High-water heights serve V-7, a horizon clause beyond this arc, which T-24 already covers. data/tides.json holds no heights, so the office must type them in from the printed tables before any arc can show them.",
-       "type": "none"
-      }
-     }
-    ],
     "ops": [
      {
       "cites": [
@@ -1905,7 +2669,165 @@
        "docs/corpus/0040_Notifications/message-templates.md:17"
       ],
       "op": "admit",
-      "spec": "{\"schema\":\"roadmap/spec-m1\",\"unit\":\"cancel-texts\",\"rev\":1,\"repairs\":[\"F-20\"],\"lanes\":[{\"id\":\"unit-tests\",\"argv\":[\"node\",\"--test\",\"test/unit/*.test.js\"],\"cwd\":\".\",\"env\":{\"set\":{},\"pass\":[\"PATH\"]},\"expectedExit\":0,\"tier\":\"fast\",\"resources\":[],\"evidenceGlobs\":[],\"evidenceExcludes\":[],\"state\":\"active\"}],\"acceptance\":[{\"id\":\"A1\",\"clause\":\"Every cancellation that goes through (`tidewater cancel <booking> <vessel>` exits 0), for a vessel with a phone number on the vessel register, writes one cancellation text to the outbox after the ledger write succeeded, outside the ledger lock (T-44). It goes to the phone number the vessel register holds for the booking's vessel, character for character (T-46), as its own file in the same outbox format as the booking confirmation: the phone number on the first line, the message on the second (T-50, T-119, T-120). Witness test: `a cancellation writes its cancellation text to the outbox` (book Kittiwake in B3, cancel bk-1 as Kittiwake: the outbox holds the confirmation and exactly one more file, whose first line is Kittiwake's registered number).\",\"failLoudIfUndelivered\":true,\"state\":\"active\"},{\"id\":\"A2\",\"clause\":\"The cancellation message reads exactly `Tidewater: booking {id} for {vessel} in berth {berth} on {date} is cancelled. The berth is free again.` (T-56), with the booking id (T-57), the vessel name as registered (T-121), and {date} the date of the window the booking arrives on, written YYYY-MM-DD (T-122). For bk-1, Kittiwake in B3 arriving on the 20:31 high water of 2026-10-04: `Tidewater: booking bk-1 for Kittiwake in berth B3 on 2026-10-04 is cancelled. The berth is free again.` For every vessel and berth on the registers and every date of the tide table it fits in a single text message of at most 160 characters of the GSM 7-bit alphabet (T-53) and carries no link: no `://`, no `www.` and no domain-like token such as `name.tld` (T-54). Witness tests: `the cancellation text reads exactly the template` and `a cancellation text fits in a single text message and carries no link`.\",\"failLoudIfUndelivered\":true,\"state\":\"active\"},{\"id\":\"A3\",\"clause\":\"A cancellation that does not go through writes no text (T-45): an unknown booking id, a booking of another vessel, a busy ledger and a usage error each leave the outbox with no new file. Witness test: `a refused cancellation writes no text`. A vessel with no phone number on the vessel register gets no cancellation text, and its cancellation still goes through (T-47); the test works in a copy of the tree in a temporary folder, as `a vessel with no phone number gets no text` does, and never changes the repository's data/vessels.json. Witness test: `a vessel with no phone number gets no cancellation text`.\",\"failLoudIfUndelivered\":true,\"state\":\"active\"},{\"id\":\"A4\",\"clause\":\"The command prints its `cancelled <id>: ...` line on stdout before it writes the text. When the outbox cannot be written, the cancellation stands, the line is on stdout, no lock file is left, and the command then crashes with a stack trace and an exit code other than 0 and 2 (T-69), as a booking does when its confirmation cannot be written. Looking up the vessel's phone number never turns a cancellation that went through into a refusal. Witness test: `a cancellation whose text cannot be written still shows it went through` (the outbox path is an ordinary file: stdout carries the cancelled line, the ledger no longer holds the booking, and no lock file is left).\",\"failLoudIfUndelivered\":true,\"state\":\"active\"},{\"id\":\"A5\",\"clause\":\"The existing tests keep their names and pass, among them `a booking is cancelled by its id and its vessel`, `a cancellation naming another vessel is refused and changes nothing`, `bookings and cancellations made at the same moment are all kept`, `every refusal is one line on stderr`, `every refusal exits with code 2` and `every outbox text is about a booking in the ledger` (which books only and stays as it is). Every test that cancels through src/cli.js points TIDEWATER_OUTBOX at a temporary folder, as test/unit/run.js already does; no test writes to the repository's own outbox. README.md says that a cancellation that goes through is texted to the booking's vessel.\",\"failLoudIfUndelivered\":true,\"state\":\"active\"}],\"scope\":[\"src/texts.js\",\"src/cli.js\",\"test/unit/**\",\"README.md\"],\"resources\":[],\"decisions\":[{\"id\":\"D1\",\"text\":\"The cancellation message is built by a pure function in src/texts.js beside bookingConfirmation (for example `bookingCancellation(booking, vesselRecord)`) and written with the existing writeText of src/outbox.js, so the outbox file format stays in one place (booking-texts D2).\",\"state\":\"active\"},{\"id\":\"D2\",\"text\":\"The ledger is written before the outbox, as for bookings (booking-texts D5): the CLI prints the cancelled line and sends the cancellation text only after ledger.cancel has returned.\",\"state\":\"active\"},{\"id\":\"D3\",\"text\":\"The vessel record for the text is looked up in the vessel register by the cancelled booking's vessel name without throwing: a vessel no longer on the register, or one without a phone number, gets no text and its cancellation still stands.\",\"state\":\"active\"},{\"id\":\"D4\",\"text\":\"Use the corpus template as written. A template changes only when the harbour master agrees (T-58), so nothing (no leaving window, no other field) is added to it. No new dependencies; match the existing module style, with a one-line comment per module and exported function.\",\"state\":\"active\"},{\"id\":\"D5\",\"text\":\"This unit does not change who may cancel: the vessel check that cancel-own-booking added stays as it is. What it adds is that the holder is told by text, so a cancellation she did not make reaches her before she sails (F-20).\",\"state\":\"active\"}],\"facts\":[{\"id\":\"F1\",\"text\":\"F-20: `cancel` is guarded only by the booking's vessel name (src/ledger.js:108), and `list` prints every booking id next to its vessel (src/cli.js:51), so anyone at the kiosk can cancel another skipper's booking. Today a cancellation writes no text (src/cli.js:56), so the holder is not told.\",\"state\":\"active\"},{\"id\":\"F2\",\"text\":\"The corpus already requires the cancellation text: T-44 in docs/corpus/0040_Notifications.md and the 'Booking cancelled' template with T-56 in docs/corpus/0040_Notifications/message-templates.md.\",\"state\":\"active\"},{\"id\":\"F3\",\"text\":\"Every vessel in data/vessels.json has a phone number written with its country code, e.g. `+44 7700 900101`. ledger.cancel returns the removed booking with its id, vessel, berth, date and window.\",\"state\":\"active\"},{\"id\":\"F4\",\"text\":\"The lanes run `node --test test/unit/*.test.js`, which is not recursive: put every test file directly in test/unit/ with a `.test.js` suffix. Node's test ids are the test names, so keep the witness test names verbatim.\",\"state\":\"active\"}],\"cites\":{\"contracts\":[],\"rulings\":[]},\"obligations\":[\"I-1\",\"I-2\",\"I-3\",\"I-4\",\"I-5\",\"I-6\",\"I-7\",\"I-8\",\"I-9\",\"I-10\",\"I-11\",\"I-12\",\"I-13\",\"I-14\",\"I-15\",\"I-16\",\"I-17\",\"I-18\",\"I-19\",\"I-20\",\"I-21\",\"I-22\",\"I-23\",\"I-24\",\"I-25\",\"I-26\",\"I-27\",\"I-28\",\"I-29\",\"I-30\",\"I-31\",\"I-32\",\"I-33\",\"I-34\"]}",
+      "spec": {
+       "schema": "roadmap/spec-m1",
+       "unit": "cancel-texts",
+       "rev": 1,
+       "repairs": [
+        "F-20"
+       ],
+       "lanes": [
+        {
+         "id": "unit-tests",
+         "argv": [
+          "node",
+          "--test",
+          "test/unit/*.test.js"
+         ],
+         "cwd": ".",
+         "env": {
+          "set": [],
+          "pass": [
+           "PATH"
+          ]
+         },
+         "expectedExit": 0,
+         "resources": [],
+         "evidenceGlobs": [],
+         "evidenceExcludes": [],
+         "state": "active",
+         "cadence": "build"
+        }
+       ],
+       "acceptance": [
+        {
+         "id": "A1",
+         "clause": "Every cancellation that goes through (`tidewater cancel <booking> <vessel>` exits 0), for a vessel with a phone number on the vessel register, writes one cancellation text to the outbox after the ledger write succeeded, outside the ledger lock (T-44). It goes to the phone number the vessel register holds for the booking's vessel, character for character (T-46), as its own file in the same outbox format as the booking confirmation: the phone number on the first line, the message on the second (T-50, T-119, T-120). Witness test: `a cancellation writes its cancellation text to the outbox` (book Kittiwake in B3, cancel bk-1 as Kittiwake: the outbox holds the confirmation and exactly one more file, whose first line is Kittiwake's registered number).",
+         "failLoudIfUndelivered": true,
+         "state": "active"
+        },
+        {
+         "id": "A2",
+         "clause": "The cancellation message reads exactly `Tidewater: booking {id} for {vessel} in berth {berth} on {date} is cancelled. The berth is free again.` (T-56), with the booking id (T-57), the vessel name as registered (T-121), and {date} the date of the window the booking arrives on, written YYYY-MM-DD (T-122). For bk-1, Kittiwake in B3 arriving on the 20:31 high water of 2026-10-04: `Tidewater: booking bk-1 for Kittiwake in berth B3 on 2026-10-04 is cancelled. The berth is free again.` For every vessel and berth on the registers and every date of the tide table it fits in a single text message of at most 160 characters of the GSM 7-bit alphabet (T-53) and carries no link: no `://`, no `www.` and no domain-like token such as `name.tld` (T-54). Witness tests: `the cancellation text reads exactly the template` and `a cancellation text fits in a single text message and carries no link`.",
+         "failLoudIfUndelivered": true,
+         "state": "active"
+        },
+        {
+         "id": "A3",
+         "clause": "A cancellation that does not go through writes no text (T-45): an unknown booking id, a booking of another vessel, a busy ledger and a usage error each leave the outbox with no new file. Witness test: `a refused cancellation writes no text`. A vessel with no phone number on the vessel register gets no cancellation text, and its cancellation still goes through (T-47); the test works in a copy of the tree in a temporary folder, as `a vessel with no phone number gets no text` does, and never changes the repository's data/vessels.json. Witness test: `a vessel with no phone number gets no cancellation text`.",
+         "failLoudIfUndelivered": true,
+         "state": "active"
+        },
+        {
+         "id": "A4",
+         "clause": "The command prints its `cancelled <id>: ...` line on stdout before it writes the text. When the outbox cannot be written, the cancellation stands, the line is on stdout, no lock file is left, and the command then crashes with a stack trace and an exit code other than 0 and 2 (T-69), as a booking does when its confirmation cannot be written. Looking up the vessel's phone number never turns a cancellation that went through into a refusal. Witness test: `a cancellation whose text cannot be written still shows it went through` (the outbox path is an ordinary file: stdout carries the cancelled line, the ledger no longer holds the booking, and no lock file is left).",
+         "failLoudIfUndelivered": true,
+         "state": "active"
+        },
+        {
+         "id": "A5",
+         "clause": "The existing tests keep their names and pass, among them `a booking is cancelled by its id and its vessel`, `a cancellation naming another vessel is refused and changes nothing`, `bookings and cancellations made at the same moment are all kept`, `every refusal is one line on stderr`, `every refusal exits with code 2` and `every outbox text is about a booking in the ledger` (which books only and stays as it is). Every test that cancels through src/cli.js points TIDEWATER_OUTBOX at a temporary folder, as test/unit/run.js already does; no test writes to the repository's own outbox. README.md says that a cancellation that goes through is texted to the booking's vessel.",
+         "failLoudIfUndelivered": true,
+         "state": "active"
+        }
+       ],
+       "scope": [
+        "src/texts.js",
+        "src/cli.js",
+        "test/unit/**",
+        "README.md"
+       ],
+       "resources": [],
+       "decisions": [
+        {
+         "id": "D1",
+         "text": "The cancellation message is built by a pure function in src/texts.js beside bookingConfirmation (for example `bookingCancellation(booking, vesselRecord)`) and written with the existing writeText of src/outbox.js, so the outbox file format stays in one place (booking-texts D2).",
+         "state": "active"
+        },
+        {
+         "id": "D2",
+         "text": "The ledger is written before the outbox, as for bookings (booking-texts D5): the CLI prints the cancelled line and sends the cancellation text only after ledger.cancel has returned.",
+         "state": "active"
+        },
+        {
+         "id": "D3",
+         "text": "The vessel record for the text is looked up in the vessel register by the cancelled booking's vessel name without throwing: a vessel no longer on the register, or one without a phone number, gets no text and its cancellation still stands.",
+         "state": "active"
+        },
+        {
+         "id": "D4",
+         "text": "Use the corpus template as written. A template changes only when the harbour master agrees (T-58), so nothing (no leaving window, no other field) is added to it. No new dependencies; match the existing module style, with a one-line comment per module and exported function.",
+         "state": "active"
+        },
+        {
+         "id": "D5",
+         "text": "This unit does not change who may cancel: the vessel check that cancel-own-booking added stays as it is. What it adds is that the holder is told by text, so a cancellation she did not make reaches her before she sails (F-20).",
+         "state": "active"
+        }
+       ],
+       "facts": [
+        {
+         "id": "F1",
+         "text": "F-20: `cancel` is guarded only by the booking's vessel name (src/ledger.js:108), and `list` prints every booking id next to its vessel (src/cli.js:51), so anyone at the kiosk can cancel another skipper's booking. Today a cancellation writes no text (src/cli.js:56), so the holder is not told.",
+         "state": "active"
+        },
+        {
+         "id": "F2",
+         "text": "The corpus already requires the cancellation text: T-44 in docs/corpus/0040_Notifications.md and the 'Booking cancelled' template with T-56 in docs/corpus/0040_Notifications/message-templates.md.",
+         "state": "active"
+        },
+        {
+         "id": "F3",
+         "text": "Every vessel in data/vessels.json has a phone number written with its country code, e.g. `+44 7700 900101`. ledger.cancel returns the removed booking with its id, vessel, berth, date and window.",
+         "state": "active"
+        },
+        {
+         "id": "F4",
+         "text": "The lanes run `node --test test/unit/*.test.js`, which is not recursive: put every test file directly in test/unit/ with a `.test.js` suffix. Node's test ids are the test names, so keep the witness test names verbatim.",
+         "state": "active"
+        }
+       ],
+       "cites": {
+        "contracts": [],
+        "rulings": []
+       },
+       "obligations": [
+        "I-1",
+        "I-2",
+        "I-3",
+        "I-4",
+        "I-5",
+        "I-6",
+        "I-7",
+        "I-8",
+        "I-9",
+        "I-10",
+        "I-11",
+        "I-12",
+        "I-13",
+        "I-14",
+        "I-15",
+        "I-16",
+        "I-17",
+        "I-18",
+        "I-19",
+        "I-20",
+        "I-21",
+        "I-22",
+        "I-23",
+        "I-24",
+        "I-25",
+        "I-26",
+        "I-27",
+        "I-28",
+        "I-29",
+        "I-30",
+        "I-31",
+        "I-32",
+        "I-33",
+        "I-34"
+       ]
+      },
       "unit": {
        "after": [
         "cancel-own-booking"
@@ -1919,7 +2841,8 @@
         "test/unit/**",
         "README.md"
        ]
-      }
+      },
+      "targets": []
      }
     ],
     "premises": [
@@ -2039,8 +2962,7 @@
      "Stopping a deliberate cancellation by someone else would need a credential the corpus does not have: T-74 rules out logins, and a code in the confirmation text would change a template, which T-58 reserves to the harbour master. That is proposed to the owner as a corpus amendment rather than built in this arc.",
      "F-21 is real drift, but the fix is an edit to the corpus, and nothing in this arc edits the corpus. It is deferred, and the changes to T-38, a new refusal rule and the Overview command list are proposed as corpus amendments.",
      "issue-1 is the double booking that berth-clash fixed: I-4 and I-5 hold. issue-2 asks for high-water heights. Heights serve horizon clause V-7, and the tide table holds no heights, so this arc does not act on it."
-    ],
-    "rulings": []
+    ]
    },
    "planRev": 10,
    "seq": 2152
@@ -2102,22 +3024,6 @@
       "situation": "After a cancellation passes its checks, its text to the booking's vessel can fail to reach the outbox, and the vision does not say whether the cancellation should then go through."
      }
     ],
-    "issueIntake": [
-     {
-      "issue": "issue-1",
-      "outcome": {
-       "reason": "The published berth-clash unit fixed the double booking it reports, and I-4 and I-32 hold at the observed tree.",
-       "type": "none"
-      }
-     },
-     {
-      "issue": "issue-2",
-      "outcome": {
-       "reason": "Phase 0 already took it into the corpus as T-24 for the V-7 slice, which is horizon and beyond this arc.",
-       "type": "none"
-      }
-     }
-    ],
     "ops": [
      {
       "cites": [
@@ -2135,7 +3041,161 @@
        "test/unit/texts.test.js:212-222"
       ],
       "op": "admit",
-      "spec": "{\"schema\":\"roadmap/spec-m1\",\"unit\":\"cancel-text-first\",\"rev\":1,\"repairs\":[\"F-25\",\"F-26\"],\"lanes\":[{\"id\":\"unit-tests\",\"argv\":[\"node\",\"--test\",\"test/unit/*.test.js\"],\"cwd\":\".\",\"env\":{\"set\":{},\"pass\":[\"PATH\"]},\"expectedExit\":0,\"tier\":\"fast\",\"resources\":[],\"evidenceGlobs\":[],\"evidenceExcludes\":[],\"state\":\"active\"}],\"acceptance\":[{\"id\":\"A1\",\"clause\":\"A cancellation that passes its checks (the booking exists and belongs to the vessel given) and whose vessel has a phone number goes through only once its cancellation text is in the outbox (T-44). When the text cannot be written (the test makes TIDEWATER_OUTBOX an ordinary file), `tidewater cancel` crashes with a stack trace and an exit code other than 0 and 2 (T-69). It prints nothing on stdout. It leaves the ledger file byte-for-byte unchanged, with the booking still in it. It leaves no lock or temporary file of its own beside the ledger. The berth stays booked: a later `book` of the same berth and window by another vessel is refused, naming the vessel that holds it. This replaces the test `a cancellation whose text cannot be written still shows it went through` (test/unit/booking.test.js:171-182), which is deleted. Witness test: `a cancellation whose text cannot be written leaves the booking in place`.\",\"failLoudIfUndelivered\":true,\"state\":\"active\"},{\"id\":\"A2\",\"clause\":\"Every other cancellation behaves as before. A cancellation that goes through prints `cancelled bk-<n>: ...` on stdout and removes the booking from the ledger. It writes exactly one cancellation text, reading exactly the template, for a vessel with a phone number, and none for a vessel without one (T-47). A refused cancellation (an unknown id, another vessel, a busy ledger, a usage error) writes no text and leaves the ledger unchanged. The existing tests keep their names and pass, among them `a booking is cancelled by its id and its vessel`, `a cancellation writes its cancellation text to the outbox`, `the cancellation text reads exactly the template`, `a refused cancellation writes no text`, `a vessel with no phone number gets no cancellation text`, `bookings and cancellations made at the same moment are all kept`, `every refusal is one line on stderr`, `every refusal exits with code 2`, `an error that is not a refusal crashes with a stack trace` and `a booking whose text cannot be written still shows its booking id`. A booking still stands when its confirmation text cannot be written.\",\"failLoudIfUndelivered\":true,\"state\":\"active\"},{\"id\":\"A3\",\"clause\":\"The test `every outbox text is about a booking in the ledger` keeps its name, because it is I-26's witness, and now reaches the cancel path (T-45). After its bookings settle, it starts these at the same moment: a cancellation of one successful booking by its own vessel, a cancellation of the other successful booking naming a vessel that does not hold it, a cancellation of an id that was never issued, and a booking of a free berth. It then checks three things. First, every outbox file, confirmation or cancellation, names in its message the id of a booking that a successful `book` in the test wrote to the ledger, read from that command's `booked bk-<n>:` line. Second, each successful cancellation left exactly one cancellation text with its booking's id. Third, the refused commands left no text. The test reads the id with a pattern that both templates match, such as `bk-` followed by digits anywhere on the message line, because the cancellation template has no `Ref bk-<n>.` ending. It fails with an assertion, not a TypeError, on a file it cannot read an id from.\",\"failLoudIfUndelivered\":true,\"state\":\"active\"},{\"id\":\"A4\",\"clause\":\"README.md says that a cancellation for a vessel with a phone number goes through only when its cancellation text can be written to the outbox, and that otherwise the booking stands and the command fails (T-5).\",\"failLoudIfUndelivered\":true,\"state\":\"active\"}],\"scope\":[\"src/ledger.js\",\"src/cli.js\",\"src/texts.js\",\"test/unit/**\",\"README.md\"],\"resources\":[],\"decisions\":[{\"id\":\"D1\",\"text\":\"Write the cancellation text inside the locked read-check-write of ledger.cancel, after the id and vessel checks pass and before the ledger is saved. One way is to pass cancel a callback from the CLI that writes the text. When the callback throws, cancel does not save, the existing finally block releases the lock, and the error propagates to a crash with a stack trace (T-69). The CLI prints the `cancelled` line only after cancel returns.\",\"state\":\"active\"},{\"id\":\"D2\",\"text\":\"A booking keeps its order: the ledger first, then the text (booking-texts D5, divergence D-9), because the person booking is the holder and is shown her booking id on screen. A cancellation may be made by someone who is not the holder (divergence D-16), so the cancellation text is the holder's only notice. A cancellation that went through without its text would let another boat book the berth while the holder still believes it is hers.\",\"state\":\"active\"},{\"id\":\"D3\",\"text\":\"If the ledger save fails after the text was written, a cancellation text exists for a booking that still stands. The berth then stays empty and held for its holder, which is the lesser surprise. Do not add a two-phase outbox write for this case.\",\"state\":\"active\"},{\"id\":\"D4\",\"text\":\"Leave src/outbox.js and the outbox file names unchanged. The order in which waiting texts reach the gateway (finding F-24) waits on the gateway question P-5.\",\"state\":\"active\"},{\"id\":\"D5\",\"text\":\"No new dependencies. Keep the style of the existing modules: small functions, and a one-line comment per module and per exported function.\",\"state\":\"active\"}],\"facts\":[{\"id\":\"F1\",\"text\":\"src/cli.js:55-57 calls cancel(), which saves the ledger, then prints the `cancelled` line, and only then calls sendBookingCancellation. test/unit/booking.test.js:171-182 pins that order (finding F-25), against T-44: every cancellation that goes through, for a vessel with a phone number, writes a cancellation text to the outbox.\",\"state\":\"active\"},{\"id\":\"F2\",\"text\":\"In src/ledger.js, cancel checks the id and the vessel under the lock (lines 104-110), splices the booking out (line 111) and saves (line 112). locked() releases the lock in a finally block (lines 55-60). sendBookingCancellation in src/texts.js:21-23 does nothing for a vessel with no phone or one no longer on the register.\",\"state\":\"active\"},{\"id\":\"F3\",\"text\":\"The cancellation template in docs/corpus/0040_Notifications/message-templates.md:17 is `Tidewater: booking {id} for {vessel} in berth {berth} on {date} is cancelled. The berth is free again.`; the id sits inside the text and there is no `Ref` ending. test/unit/texts.test.js:221 reads ids only from a `Ref bk-<n>.` ending, and the test at lines 212-222 runs only `book` (finding F-26).\",\"state\":\"active\"},{\"id\":\"F4\",\"text\":\"test/unit/run.js gives each scratch ledger its own temporary TIDEWATER_OUTBOX. The lanes run `node --test test/unit/*.test.js`, which is not recursive, so test files go directly in test/unit/ with a `.test.js` suffix. Node's test ids are the test names, so keep witness names verbatim.\",\"state\":\"active\"}],\"cites\":{\"contracts\":[],\"rulings\":[]},\"obligations\":[\"I-1\",\"I-2\",\"I-3\",\"I-4\",\"I-5\",\"I-6\",\"I-7\",\"I-8\",\"I-9\",\"I-10\",\"I-11\",\"I-12\",\"I-13\",\"I-14\",\"I-15\",\"I-16\",\"I-17\",\"I-18\",\"I-19\",\"I-20\",\"I-21\",\"I-22\",\"I-23\",\"I-24\",\"I-25\",\"I-26\",\"I-27\",\"I-28\",\"I-29\",\"I-30\",\"I-31\",\"I-32\",\"I-33\",\"I-34\"]}",
+      "spec": {
+       "schema": "roadmap/spec-m1",
+       "unit": "cancel-text-first",
+       "rev": 1,
+       "repairs": [
+        "F-25",
+        "F-26"
+       ],
+       "lanes": [
+        {
+         "id": "unit-tests",
+         "argv": [
+          "node",
+          "--test",
+          "test/unit/*.test.js"
+         ],
+         "cwd": ".",
+         "env": {
+          "set": [],
+          "pass": [
+           "PATH"
+          ]
+         },
+         "expectedExit": 0,
+         "resources": [],
+         "evidenceGlobs": [],
+         "evidenceExcludes": [],
+         "state": "active",
+         "cadence": "build"
+        }
+       ],
+       "acceptance": [
+        {
+         "id": "A1",
+         "clause": "A cancellation that passes its checks (the booking exists and belongs to the vessel given) and whose vessel has a phone number goes through only once its cancellation text is in the outbox (T-44). When the text cannot be written (the test makes TIDEWATER_OUTBOX an ordinary file), `tidewater cancel` crashes with a stack trace and an exit code other than 0 and 2 (T-69). It prints nothing on stdout. It leaves the ledger file byte-for-byte unchanged, with the booking still in it. It leaves no lock or temporary file of its own beside the ledger. The berth stays booked: a later `book` of the same berth and window by another vessel is refused, naming the vessel that holds it. This replaces the test `a cancellation whose text cannot be written still shows it went through` (test/unit/booking.test.js:171-182), which is deleted. Witness test: `a cancellation whose text cannot be written leaves the booking in place`.",
+         "failLoudIfUndelivered": true,
+         "state": "active"
+        },
+        {
+         "id": "A2",
+         "clause": "Every other cancellation behaves as before. A cancellation that goes through prints `cancelled bk-<n>: ...` on stdout and removes the booking from the ledger. It writes exactly one cancellation text, reading exactly the template, for a vessel with a phone number, and none for a vessel without one (T-47). A refused cancellation (an unknown id, another vessel, a busy ledger, a usage error) writes no text and leaves the ledger unchanged. The existing tests keep their names and pass, among them `a booking is cancelled by its id and its vessel`, `a cancellation writes its cancellation text to the outbox`, `the cancellation text reads exactly the template`, `a refused cancellation writes no text`, `a vessel with no phone number gets no cancellation text`, `bookings and cancellations made at the same moment are all kept`, `every refusal is one line on stderr`, `every refusal exits with code 2`, `an error that is not a refusal crashes with a stack trace` and `a booking whose text cannot be written still shows its booking id`. A booking still stands when its confirmation text cannot be written.",
+         "failLoudIfUndelivered": true,
+         "state": "active"
+        },
+        {
+         "id": "A3",
+         "clause": "The test `every outbox text is about a booking in the ledger` keeps its name, because it is I-26's witness, and now reaches the cancel path (T-45). After its bookings settle, it starts these at the same moment: a cancellation of one successful booking by its own vessel, a cancellation of the other successful booking naming a vessel that does not hold it, a cancellation of an id that was never issued, and a booking of a free berth. It then checks three things. First, every outbox file, confirmation or cancellation, names in its message the id of a booking that a successful `book` in the test wrote to the ledger, read from that command's `booked bk-<n>:` line. Second, each successful cancellation left exactly one cancellation text with its booking's id. Third, the refused commands left no text. The test reads the id with a pattern that both templates match, such as `bk-` followed by digits anywhere on the message line, because the cancellation template has no `Ref bk-<n>.` ending. It fails with an assertion, not a TypeError, on a file it cannot read an id from.",
+         "failLoudIfUndelivered": true,
+         "state": "active"
+        },
+        {
+         "id": "A4",
+         "clause": "README.md says that a cancellation for a vessel with a phone number goes through only when its cancellation text can be written to the outbox, and that otherwise the booking stands and the command fails (T-5).",
+         "failLoudIfUndelivered": true,
+         "state": "active"
+        }
+       ],
+       "scope": [
+        "src/ledger.js",
+        "src/cli.js",
+        "src/texts.js",
+        "test/unit/**",
+        "README.md"
+       ],
+       "resources": [],
+       "decisions": [
+        {
+         "id": "D1",
+         "text": "Write the cancellation text inside the locked read-check-write of ledger.cancel, after the id and vessel checks pass and before the ledger is saved. One way is to pass cancel a callback from the CLI that writes the text. When the callback throws, cancel does not save, the existing finally block releases the lock, and the error propagates to a crash with a stack trace (T-69). The CLI prints the `cancelled` line only after cancel returns.",
+         "state": "active"
+        },
+        {
+         "id": "D2",
+         "text": "A booking keeps its order: the ledger first, then the text (booking-texts D5, divergence D-9), because the person booking is the holder and is shown her booking id on screen. A cancellation may be made by someone who is not the holder (divergence D-16), so the cancellation text is the holder's only notice. A cancellation that went through without its text would let another boat book the berth while the holder still believes it is hers.",
+         "state": "active"
+        },
+        {
+         "id": "D3",
+         "text": "If the ledger save fails after the text was written, a cancellation text exists for a booking that still stands. The berth then stays empty and held for its holder, which is the lesser surprise. Do not add a two-phase outbox write for this case.",
+         "state": "active"
+        },
+        {
+         "id": "D4",
+         "text": "Leave src/outbox.js and the outbox file names unchanged. The order in which waiting texts reach the gateway (finding F-24) waits on the gateway question P-5.",
+         "state": "active"
+        },
+        {
+         "id": "D5",
+         "text": "No new dependencies. Keep the style of the existing modules: small functions, and a one-line comment per module and per exported function.",
+         "state": "active"
+        }
+       ],
+       "facts": [
+        {
+         "id": "F1",
+         "text": "src/cli.js:55-57 calls cancel(), which saves the ledger, then prints the `cancelled` line, and only then calls sendBookingCancellation. test/unit/booking.test.js:171-182 pins that order (finding F-25), against T-44: every cancellation that goes through, for a vessel with a phone number, writes a cancellation text to the outbox.",
+         "state": "active"
+        },
+        {
+         "id": "F2",
+         "text": "In src/ledger.js, cancel checks the id and the vessel under the lock (lines 104-110), splices the booking out (line 111) and saves (line 112). locked() releases the lock in a finally block (lines 55-60). sendBookingCancellation in src/texts.js:21-23 does nothing for a vessel with no phone or one no longer on the register.",
+         "state": "active"
+        },
+        {
+         "id": "F3",
+         "text": "The cancellation template in docs/corpus/0040_Notifications/message-templates.md:17 is `Tidewater: booking {id} for {vessel} in berth {berth} on {date} is cancelled. The berth is free again.`; the id sits inside the text and there is no `Ref` ending. test/unit/texts.test.js:221 reads ids only from a `Ref bk-<n>.` ending, and the test at lines 212-222 runs only `book` (finding F-26).",
+         "state": "active"
+        },
+        {
+         "id": "F4",
+         "text": "test/unit/run.js gives each scratch ledger its own temporary TIDEWATER_OUTBOX. The lanes run `node --test test/unit/*.test.js`, which is not recursive, so test files go directly in test/unit/ with a `.test.js` suffix. Node's test ids are the test names, so keep witness names verbatim.",
+         "state": "active"
+        }
+       ],
+       "cites": {
+        "contracts": [],
+        "rulings": []
+       },
+       "obligations": [
+        "I-1",
+        "I-2",
+        "I-3",
+        "I-4",
+        "I-5",
+        "I-6",
+        "I-7",
+        "I-8",
+        "I-9",
+        "I-10",
+        "I-11",
+        "I-12",
+        "I-13",
+        "I-14",
+        "I-15",
+        "I-16",
+        "I-17",
+        "I-18",
+        "I-19",
+        "I-20",
+        "I-21",
+        "I-22",
+        "I-23",
+        "I-24",
+        "I-25",
+        "I-26",
+        "I-27",
+        "I-28",
+        "I-29",
+        "I-30",
+        "I-31",
+        "I-32",
+        "I-33",
+        "I-34"
+       ]
+      },
       "unit": {
        "after": [
         "cancel-texts"
@@ -2150,7 +3210,8 @@
         "test/unit/**",
         "README.md"
        ]
-      }
+      },
+      "targets": []
      }
     ],
     "premises": [
@@ -2294,8 +3355,7 @@
      "All 34 obligations hold at the observed tree. The vision coverage shows no gaps, so no obligation is split, amended or disposed.",
      "No ruling is needed: the new unit carries out T-44 as the corpus states it and follows the reading already recorded in divergence D-16.",
      "issue-1 was fixed by the published berth-clash unit (I-4 and I-32 hold). Phase 0 already took issue-2 into the corpus as T-24 for the V-7 slice, which is horizon, so this arc does nothing on it."
-    ],
-    "rulings": []
+    ]
    },
    "planRev": 11,
    "seq": 2481
@@ -2349,22 +3409,6 @@
      }
     ],
     "interpretations": [],
-    "issueIntake": [
-     {
-      "issue": "issue-1",
-      "outcome": {
-       "reason": "The published berth-clash unit already fixed the double booking: book checks for a clash inside a locked read-check-write, and I-4, I-10 and I-32 hold at the latest observation.",
-       "type": "none"
-      }
-     },
-     {
-      "issue": "issue-2",
-      "outcome": {
-       "reason": "Phase 0 already recorded this request as rule T-24, which serves the horizon clause V-7 and needs high-water heights that data/tides.json does not yet hold, so it is outside this arc.",
-       "type": "none"
-      }
-     }
-    ],
     "ops": [
      {
       "cites": [
@@ -2382,7 +3426,152 @@
        "README.md:23"
       ],
       "op": "admit",
-      "spec": "{\"schema\":\"roadmap/spec-m1\",\"unit\":\"cancel-text-staged\",\"rev\":1,\"repairs\":[\"F-27\",\"F-28\",\"F-29\"],\"lanes\":[{\"id\":\"unit-tests\",\"argv\":[\"node\",\"--test\",\"test/unit/*.test.js\"],\"cwd\":\".\",\"env\":{\"set\":{},\"pass\":[\"PATH\"]},\"expectedExit\":0,\"tier\":\"fast\",\"resources\":[],\"evidenceGlobs\":[],\"evidenceExcludes\":[],\"state\":\"active\"}],\"acceptance\":[{\"id\":\"A1\",\"clause\":\"A cancellation's text is published to the outbox only after the ledger write that removes its booking has succeeded (T-44, T-114). Inside the ledger lock, after the id and vessel checks, `cancel` writes the text under the hidden temporary name the gateway skips (the `.<id>-<suffix>.tmp` form `writeText` already uses), then saves the ledger, then renames the text to its published `.txt` name. If the ledger write fails, the staged text is removed before the error goes on: the outbox gains no file, published or temporary; the ledger is byte-for-byte unchanged; the lock file is gone; and the error is the write's own, not a TidewaterError, so the command crashes with a stack trace (T-69). Witness test: `a cancellation whose ledger cannot be written sends no text`. The test makes the ledger write fail while the outbox stays writable, without relying on file permissions, because the lane may run as root. For example, it points TIDEWATER_DATA and TIDEWATER_OUTBOX at temporary paths, books a vessel that has a phone number, creates a directory at the ledger's temporary path `<ledger>.<process.pid>.tmp`, and calls `ledger.cancel` in-process with the same staging function src/cli.js uses. The test must fail against the code this unit starts from (check this once while building).\",\"failLoudIfUndelivered\":true,\"state\":\"active\"},{\"id\":\"A2\",\"clause\":\"The rest of the cancellation path keeps its behaviour. A cancellation whose text cannot be written (an unwritable outbox) leaves the booking in place, writes nothing and crashes (D-19). A cancellation that goes through for a vessel with a phone number leaves exactly one published cancellation text and no dot-prefixed temporary file in the outbox. A vessel without a phone number cancels with no text and no outbox folder. A refused cancellation writes no text. `a cancellation writes its cancellation text to the outbox` additionally checks that no dot-prefixed file remains in the outbox afterwards. Every existing test keeps its name and passes, among them `a cancellation whose text cannot be written leaves the booking in place`, `a cancellation writes its cancellation text to the outbox`, `the cancellation text reads exactly the template`, `a refused cancellation writes no text`, `a vessel with no phone number gets no cancellation text`, `every outbox text is about a booking in the ledger`, `a cancelled booking is gone; an unknown one is refused` and `bookings and cancellations made at the same moment are all kept`.\",\"failLoudIfUndelivered\":true,\"state\":\"active\"},{\"id\":\"A3\",\"clause\":\"`book` and the confirmation text keep their order: the ledger is written first and the confirmation published after it (booking-texts D5); this unit does not change them. Next to the existing cancellation lines, README.md says that a cancellation for a vessel with a phone number goes through only when its text can be written and the ledger saved, and that when either fails the booking stands, no text is sent and the command fails (T-5).\",\"failLoudIfUndelivered\":true,\"state\":\"active\"}],\"scope\":[\"src/ledger.js\",\"src/outbox.js\",\"src/texts.js\",\"src/cli.js\",\"test/unit/**\",\"README.md\"],\"resources\":[],\"decisions\":[{\"id\":\"D1\",\"text\":\"src/outbox.js gains a staging step and a publishing step. Staging writes the hidden `.tmp` file and returns what publishing and discarding need; publishing renames it to the `.txt` name; discarding unlinks it. `writeText` stays as stage then publish, so the booking confirmation path is unchanged.\",\"state\":\"active\"},{\"id\":\"D2\",\"text\":\"`ledger.cancel(id, vessel, stage)` calls `stage(result)` after the checks and before `save`, then saves, then publishes what `stage` returned; if `save` throws, it discards the staged text and rethrows. `stage` defaults to staging nothing, so existing in-process callers keep working, and a vessel with no phone number stages nothing. src/texts.js provides the staging form of the cancellation text, which src/cli.js passes.\",\"state\":\"active\"},{\"id\":\"D3\",\"text\":\"Publishing renames a file that is already fully written, inside the outbox folder, so it needs no new disk space. If that rename still fails after the ledger was saved, the error is not caught: the command crashes loudly (T-69) and the office notices, as with a failed booking confirmation.\",\"state\":\"active\"},{\"id\":\"D4\",\"text\":\"No new dependencies. Keep the style of the existing modules: small functions, a one-line comment per module and exported function.\",\"state\":\"active\"}],\"facts\":[{\"id\":\"F1\",\"text\":\"At the start of this unit, src/ledger.js:111-114 removes the booking and calls `beforeSave` (src/cli.js:55 passes `sendBookingCancellation`). That call publishes the text by renaming it into the outbox (src/outbox.js:14), and only then does `cancel` call `save(ledger)`. A failed save therefore leaves the booking in the ledger and a published text saying it is cancelled (F-27, F-28, F-29).\",\"state\":\"active\"},{\"id\":\"F2\",\"text\":\"`save` (src/ledger.js:19-24) writes `<ledger>.<pid>.tmp` and renames it over the ledger, so a directory at that temporary path makes the write fail without touching the outbox or the ledger.\",\"state\":\"active\"},{\"id\":\"F3\",\"text\":\"The tests ignore dot-prefixed names in the outbox (test/unit/texts.test.js:15); writeText's hidden temporary name is the one the gateway skips (src/outbox.js:6).\",\"state\":\"active\"},{\"id\":\"F4\",\"text\":\"The lanes run `node --test test/unit/*.test.js`, which is not recursive: put every test file directly in test/unit/ with a `.test.js` suffix. Node's test ids are the test names; keep the names in the acceptance clauses verbatim.\",\"state\":\"active\"}],\"cites\":{\"contracts\":[],\"rulings\":[]},\"obligations\":[\"I-1\",\"I-2\",\"I-3\",\"I-4\",\"I-5\",\"I-6\",\"I-7\",\"I-8\",\"I-9\",\"I-10\",\"I-11\",\"I-12\",\"I-13\",\"I-14\",\"I-15\",\"I-16\",\"I-17\",\"I-18\",\"I-19\",\"I-20\",\"I-21\",\"I-22\",\"I-23\",\"I-24\",\"I-25\",\"I-26\",\"I-27\",\"I-28\",\"I-29\",\"I-30\",\"I-31\",\"I-32\",\"I-33\",\"I-34\"]}",
+      "spec": {
+       "schema": "roadmap/spec-m1",
+       "unit": "cancel-text-staged",
+       "rev": 1,
+       "repairs": [
+        "F-27",
+        "F-28",
+        "F-29"
+       ],
+       "lanes": [
+        {
+         "id": "unit-tests",
+         "argv": [
+          "node",
+          "--test",
+          "test/unit/*.test.js"
+         ],
+         "cwd": ".",
+         "env": {
+          "set": [],
+          "pass": [
+           "PATH"
+          ]
+         },
+         "expectedExit": 0,
+         "resources": [],
+         "evidenceGlobs": [],
+         "evidenceExcludes": [],
+         "state": "active",
+         "cadence": "build"
+        }
+       ],
+       "acceptance": [
+        {
+         "id": "A1",
+         "clause": "A cancellation's text is published to the outbox only after the ledger write that removes its booking has succeeded (T-44, T-114). Inside the ledger lock, after the id and vessel checks, `cancel` writes the text under the hidden temporary name the gateway skips (the `.<id>-<suffix>.tmp` form `writeText` already uses), then saves the ledger, then renames the text to its published `.txt` name. If the ledger write fails, the staged text is removed before the error goes on: the outbox gains no file, published or temporary; the ledger is byte-for-byte unchanged; the lock file is gone; and the error is the write's own, not a TidewaterError, so the command crashes with a stack trace (T-69). Witness test: `a cancellation whose ledger cannot be written sends no text`. The test makes the ledger write fail while the outbox stays writable, without relying on file permissions, because the lane may run as root. For example, it points TIDEWATER_DATA and TIDEWATER_OUTBOX at temporary paths, books a vessel that has a phone number, creates a directory at the ledger's temporary path `<ledger>.<process.pid>.tmp`, and calls `ledger.cancel` in-process with the same staging function src/cli.js uses. The test must fail against the code this unit starts from (check this once while building).",
+         "failLoudIfUndelivered": true,
+         "state": "active"
+        },
+        {
+         "id": "A2",
+         "clause": "The rest of the cancellation path keeps its behaviour. A cancellation whose text cannot be written (an unwritable outbox) leaves the booking in place, writes nothing and crashes (D-19). A cancellation that goes through for a vessel with a phone number leaves exactly one published cancellation text and no dot-prefixed temporary file in the outbox. A vessel without a phone number cancels with no text and no outbox folder. A refused cancellation writes no text. `a cancellation writes its cancellation text to the outbox` additionally checks that no dot-prefixed file remains in the outbox afterwards. Every existing test keeps its name and passes, among them `a cancellation whose text cannot be written leaves the booking in place`, `a cancellation writes its cancellation text to the outbox`, `the cancellation text reads exactly the template`, `a refused cancellation writes no text`, `a vessel with no phone number gets no cancellation text`, `every outbox text is about a booking in the ledger`, `a cancelled booking is gone; an unknown one is refused` and `bookings and cancellations made at the same moment are all kept`.",
+         "failLoudIfUndelivered": true,
+         "state": "active"
+        },
+        {
+         "id": "A3",
+         "clause": "`book` and the confirmation text keep their order: the ledger is written first and the confirmation published after it (booking-texts D5); this unit does not change them. Next to the existing cancellation lines, README.md says that a cancellation for a vessel with a phone number goes through only when its text can be written and the ledger saved, and that when either fails the booking stands, no text is sent and the command fails (T-5).",
+         "failLoudIfUndelivered": true,
+         "state": "active"
+        }
+       ],
+       "scope": [
+        "src/ledger.js",
+        "src/outbox.js",
+        "src/texts.js",
+        "src/cli.js",
+        "test/unit/**",
+        "README.md"
+       ],
+       "resources": [],
+       "decisions": [
+        {
+         "id": "D1",
+         "text": "src/outbox.js gains a staging step and a publishing step. Staging writes the hidden `.tmp` file and returns what publishing and discarding need; publishing renames it to the `.txt` name; discarding unlinks it. `writeText` stays as stage then publish, so the booking confirmation path is unchanged.",
+         "state": "active"
+        },
+        {
+         "id": "D2",
+         "text": "`ledger.cancel(id, vessel, stage)` calls `stage(result)` after the checks and before `save`, then saves, then publishes what `stage` returned; if `save` throws, it discards the staged text and rethrows. `stage` defaults to staging nothing, so existing in-process callers keep working, and a vessel with no phone number stages nothing. src/texts.js provides the staging form of the cancellation text, which src/cli.js passes.",
+         "state": "active"
+        },
+        {
+         "id": "D3",
+         "text": "Publishing renames a file that is already fully written, inside the outbox folder, so it needs no new disk space. If that rename still fails after the ledger was saved, the error is not caught: the command crashes loudly (T-69) and the office notices, as with a failed booking confirmation.",
+         "state": "active"
+        },
+        {
+         "id": "D4",
+         "text": "No new dependencies. Keep the style of the existing modules: small functions, a one-line comment per module and exported function.",
+         "state": "active"
+        }
+       ],
+       "facts": [
+        {
+         "id": "F1",
+         "text": "At the start of this unit, src/ledger.js:111-114 removes the booking and calls `beforeSave` (src/cli.js:55 passes `sendBookingCancellation`). That call publishes the text by renaming it into the outbox (src/outbox.js:14), and only then does `cancel` call `save(ledger)`. A failed save therefore leaves the booking in the ledger and a published text saying it is cancelled (F-27, F-28, F-29).",
+         "state": "active"
+        },
+        {
+         "id": "F2",
+         "text": "`save` (src/ledger.js:19-24) writes `<ledger>.<pid>.tmp` and renames it over the ledger, so a directory at that temporary path makes the write fail without touching the outbox or the ledger.",
+         "state": "active"
+        },
+        {
+         "id": "F3",
+         "text": "The tests ignore dot-prefixed names in the outbox (test/unit/texts.test.js:15); writeText's hidden temporary name is the one the gateway skips (src/outbox.js:6).",
+         "state": "active"
+        },
+        {
+         "id": "F4",
+         "text": "The lanes run `node --test test/unit/*.test.js`, which is not recursive: put every test file directly in test/unit/ with a `.test.js` suffix. Node's test ids are the test names; keep the names in the acceptance clauses verbatim.",
+         "state": "active"
+        }
+       ],
+       "cites": {
+        "contracts": [],
+        "rulings": []
+       },
+       "obligations": [
+        "I-1",
+        "I-2",
+        "I-3",
+        "I-4",
+        "I-5",
+        "I-6",
+        "I-7",
+        "I-8",
+        "I-9",
+        "I-10",
+        "I-11",
+        "I-12",
+        "I-13",
+        "I-14",
+        "I-15",
+        "I-16",
+        "I-17",
+        "I-18",
+        "I-19",
+        "I-20",
+        "I-21",
+        "I-22",
+        "I-23",
+        "I-24",
+        "I-25",
+        "I-26",
+        "I-27",
+        "I-28",
+        "I-29",
+        "I-30",
+        "I-31",
+        "I-32",
+        "I-33",
+        "I-34"
+       ]
+      },
       "unit": {
        "after": [
         "cancel-text-first"
@@ -2398,7 +3587,8 @@
         "test/unit/**",
         "README.md"
        ]
-      }
+      },
+      "targets": []
      }
     ],
     "premises": [
@@ -2531,8 +3721,7 @@
      "No ruling or interpretation is needed. T-44 and T-114 in the corpus already decide what happens when a cancellation's ledger write fails, so the vision has no gap here.",
      "Nothing else needs to change. All 34 obligations are held at the latest observation, no advanced clause is uncovered, and no limits or routing change is called for.",
      "issue-1 is already fixed by berth-clash (I-4, I-10 and I-32 are held). Phase 0 turned issue-2 into T-24, which serves the horizon clause V-7 and needs high-water heights that data/tides.json does not hold, so this arc does not build it."
-    ],
-    "rulings": []
+    ]
    },
    "planRev": 12,
    "seq": 2746
@@ -2603,7 +3792,7 @@
    ]
   },
   {
-   "claim": "I-2 dates a window by its high water, and the exact confirmation template prints only {date} and the window times. A booking for the 2026-10-08 00:21 high water would therefore read 'on 2026-10-08 \u2026 (window 22:51-01:51)', but that window opens at 22:51 on 2026-10-07. A skipper reading the text in a hurry could arrive a day late, which is the surprise on the quay V-3 rules out. The vision does not foresee this case, and changing the template needs the harbour master's agreement (T-58).",
+   "claim": "I-2 dates a window by its high water, and the exact confirmation template prints only {date} and the window times. A booking for the 2026-10-08 00:21 high water would therefore read 'on 2026-10-08 … (window 22:51-01:51)', but that window opens at 22:51 on 2026-10-07. A skipper reading the text in a hurry could arrive a day late, which is the surprise on the quay V-3 rules out. The vision does not foresee this case, and changing the template needs the harbour master's agreement (T-58).",
    "evidence": [
     {
      "blob": "fcdda87c5352c1caef7b7e31a9f4f14da22ea751",
@@ -2760,7 +3949,7 @@
    ]
   },
   {
-   "claim": "The clash check in src/ledger.js treats each tide window as a separate slot ordered by `date hw`. On the audited tide table, though, the 23:47 window on 2026-10-07 (22:17\u201301:17) and the 00:21 window on 2026-10-08 (22:51\u201301:51) overlap in real time. B3 can therefore be booked to one vessel leaving on the first and another arriving on the second, and the I-6 witness 'a berth is free again after the window its booking leaves on' asserts that this pair of bookings succeeds.",
+   "claim": "The clash check in src/ledger.js treats each tide window as a separate slot ordered by `date hw`. On the audited tide table, though, the 23:47 window on 2026-10-07 (22:17–01:17) and the 00:21 window on 2026-10-08 (22:51–01:51) overlap in real time. B3 can therefore be booked to one vessel leaving on the first and another arriving on the second, and the I-6 witness 'a berth is free again after the window its booking leaves on' asserts that this pair of bookings succeeds.",
    "evidence": [
     {
      "blob": "fd14d44ef4f395c5b2aba78712f451add31e5f0c",
@@ -3421,7 +4610,7 @@
    ]
   },
   {
-   "claim": "src/ledger.js:111-114 now publishes the cancellation text to the outbox (beforeSave \u2192 writeText, which renames into the outbox at src/outbox.js:14) before save(ledger). If the ledger write then fails (for example a full or unwritable shared disk), the booking stays in the ledger while the gateway sends 'booking bk-n \u2026 is cancelled. The berth is free again.' (src/texts.js:10). That contradicts T-44 (0040_Notifications.md:22), which ties the text to 'Every cancellation that goes through', and the new README:23 line, which says the cancellation goes through only with its text and that 'otherwise the booking stands'.",
+   "claim": "src/ledger.js:111-114 now publishes the cancellation text to the outbox (beforeSave → writeText, which renames into the outbox at src/outbox.js:14) before save(ledger). If the ledger write then fails (for example a full or unwritable shared disk), the booking stays in the ledger while the gateway sends 'booking bk-n … is cancelled. The berth is free again.' (src/texts.js:10). That contradicts T-44 (0040_Notifications.md:22), which ties the text to 'Every cancellation that goes through', and the new README:23 line, which says the cancellation goes through only with its text and that 'otherwise the booking stands'.",
    "evidence": [
     {
      "blob": "d1a959c315d55268a3585d504b5755f87870ee5f",
@@ -3462,7 +4651,7 @@
    ]
   },
   {
-   "claim": "`cancel` in src/ledger.js:113-114 now publishes the cancellation text to the outbox (beforeSave \u2192 writeText's renameSync at src/outbox.js:14) before it calls save(ledger). If the ledger write then fails, for example a full or unwritable shared disk, the command crashes and the booking stays in the ledger, but a text telling the skipper 'is cancelled. The berth is free again.' (src/texts.js:10) is already waiting for the gateway.",
+   "claim": "`cancel` in src/ledger.js:113-114 now publishes the cancellation text to the outbox (beforeSave → writeText's renameSync at src/outbox.js:14) before it calls save(ledger). If the ledger write then fails, for example a full or unwritable shared disk, the command crashes and the booking stays in the ledger, but a text telling the skipper 'is cancelled. The berth is free again.' (src/texts.js:10) is already waiting for the gateway.",
    "evidence": [
     {
      "blob": "d1a959c315d55268a3585d504b5755f87870ee5f",
@@ -4444,7 +5633,7 @@
     "id": "unit-tests",
     "reporter": "node-test",
     "resources": [],
-    "tier": "fast"
+    "cadence": "build"
    }
   ],
   "mapping": {
@@ -4575,11 +5764,9 @@
     "deliveredBy": [],
     "id": "I-1",
     "proofJudgment": {
-     "laneRev": "42900e67ddb3e494",
      "obligationRev": 1,
      "verdict": "proves",
      "witness": {
-      "lane": "unit-tests",
       "testIds": [
        "a window opens 90 minutes before high water and closes 90 minutes after"
       ]
@@ -4613,11 +5800,9 @@
     ],
     "id": "I-2",
     "proofJudgment": {
-     "laneRev": "42900e67ddb3e494",
      "obligationRev": 1,
      "verdict": "proves",
      "witness": {
-      "lane": "unit-tests",
       "testIds": [
        "windows wrap around midnight",
        "a window that opens before midnight belongs to the date of its high water"
@@ -4650,11 +5835,9 @@
     "deliveredBy": [],
     "id": "I-3",
     "proofJudgment": {
-     "laneRev": "42900e67ddb3e494",
      "obligationRev": 1,
      "verdict": "proves",
      "witness": {
-      "lane": "unit-tests",
       "testIds": [
        "bookings get ascending ids and are listed in booking order"
       ]
@@ -4688,11 +5871,9 @@
     ],
     "id": "I-4",
     "proofJudgment": {
-     "laneRev": "42900e67ddb3e494",
      "obligationRev": 1,
      "verdict": "proves",
      "witness": {
-      "lane": "unit-tests",
       "testIds": [
        "a berth already booked for a tide window is refused",
        "two bookings racing for one berth and window never both succeed"
@@ -4728,11 +5909,9 @@
     ],
     "id": "I-5",
     "proofJudgment": {
-     "laneRev": "42900e67ddb3e494",
      "obligationRev": 1,
      "verdict": "proves",
      "witness": {
-      "lane": "unit-tests",
       "testIds": [
        "a booking refused for a taken berth names the vessel that holds it"
       ]
@@ -4765,11 +5944,9 @@
     ],
     "id": "I-6",
     "proofJudgment": {
-     "laneRev": "42900e67ddb3e494",
      "obligationRev": 1,
      "verdict": "proves",
      "witness": {
-      "lane": "unit-tests",
       "testIds": [
        "a booking holds its berth from its arrival window through its leaving window",
        "a berth is free again after the window its booking leaves on"
@@ -4805,11 +5982,9 @@
     ],
     "id": "I-7",
     "proofJudgment": {
-     "laneRev": "42900e67ddb3e494",
      "obligationRev": 1,
      "verdict": "proves",
      "witness": {
-      "lane": "unit-tests",
       "testIds": [
        "a refused booking leaves the ledger unchanged"
       ]
@@ -4842,11 +6017,9 @@
     ],
     "id": "I-8",
     "proofJudgment": {
-     "laneRev": "42900e67ddb3e494",
      "obligationRev": 1,
      "verdict": "proves",
      "witness": {
-      "lane": "unit-tests",
       "testIds": [
        "every refusal is one line on stderr"
       ]
@@ -4879,11 +6052,9 @@
     ],
     "id": "I-9",
     "proofJudgment": {
-     "laneRev": "42900e67ddb3e494",
      "obligationRev": 1,
      "verdict": "proves",
      "witness": {
-      "lane": "unit-tests",
       "testIds": [
        "every refusal is one line on stderr"
       ]
@@ -4916,11 +6087,9 @@
     ],
     "id": "I-10",
     "proofJudgment": {
-     "laneRev": "42900e67ddb3e494",
      "obligationRev": 1,
      "verdict": "proves",
      "witness": {
-      "lane": "unit-tests",
       "testIds": [
        "bookings made at the same moment are all kept",
        "bookings and cancellations made at the same moment are all kept"
@@ -4957,11 +6126,9 @@
     ],
     "id": "I-11",
     "proofJudgment": {
-     "laneRev": "42900e67ddb3e494",
      "obligationRev": 1,
      "verdict": "proves",
      "witness": {
-      "lane": "unit-tests",
       "testIds": [
        "a booking writes its confirmation text to the outbox"
       ]
@@ -4994,11 +6161,9 @@
     ],
     "id": "I-12",
     "proofJudgment": {
-     "laneRev": "42900e67ddb3e494",
      "obligationRev": 1,
      "verdict": "proves",
      "witness": {
-      "lane": "unit-tests",
       "testIds": [
        "a confirmation text goes to the vessel's registered phone number"
       ]
@@ -5031,11 +6196,9 @@
     ],
     "id": "I-13",
     "proofJudgment": {
-     "laneRev": "42900e67ddb3e494",
      "obligationRev": 1,
      "verdict": "proves",
      "witness": {
-      "lane": "unit-tests",
       "testIds": [
        "a vessel with no phone number gets no text"
       ]
@@ -5068,11 +6231,9 @@
     ],
     "id": "I-14",
     "proofJudgment": {
-     "laneRev": "42900e67ddb3e494",
      "obligationRev": 1,
      "verdict": "proves",
      "witness": {
-      "lane": "unit-tests",
       "testIds": [
        "each text is its own file in the outbox"
       ]
@@ -5105,11 +6266,9 @@
     ],
     "id": "I-15",
     "proofJudgment": {
-     "laneRev": "42900e67ddb3e494",
      "obligationRev": 1,
      "verdict": "proves",
      "witness": {
-      "lane": "unit-tests",
       "testIds": [
        "the booking confirmation reads exactly the template"
       ]
@@ -5142,11 +6301,9 @@
     ],
     "id": "I-16",
     "proofJudgment": {
-     "laneRev": "42900e67ddb3e494",
      "obligationRev": 1,
      "verdict": "proves",
      "witness": {
-      "lane": "unit-tests",
       "testIds": [
        "the booking confirmation reads exactly the template"
       ]
@@ -5179,11 +6336,9 @@
     ],
     "id": "I-17",
     "proofJudgment": {
-     "laneRev": "42900e67ddb3e494",
      "obligationRev": 1,
      "verdict": "proves",
      "witness": {
-      "lane": "unit-tests",
       "testIds": [
        "a confirmation text fits in a single text message"
       ]
@@ -5216,11 +6371,9 @@
     ],
     "id": "I-18",
     "proofJudgment": {
-     "laneRev": "42900e67ddb3e494",
      "obligationRev": 1,
      "verdict": "proves",
      "witness": {
-      "lane": "unit-tests",
       "testIds": [
        "a confirmation text carries no link"
       ]
@@ -5253,11 +6406,9 @@
     ],
     "id": "I-19",
     "proofJudgment": {
-     "laneRev": "42900e67ddb3e494",
      "obligationRev": 1,
      "verdict": "proves",
      "witness": {
-      "lane": "unit-tests",
       "testIds": [
        "a command that cannot lock the ledger refuses and changes nothing",
        "a stale ledger lock is refused in one line and never broken"
@@ -5293,11 +6444,9 @@
     ],
     "id": "I-20",
     "proofJudgment": {
-     "laneRev": "42900e67ddb3e494",
      "obligationRev": 1,
      "verdict": "proves",
      "witness": {
-      "lane": "unit-tests",
       "testIds": [
        "every refusal exits with code 2"
       ]
@@ -5330,11 +6479,9 @@
     ],
     "id": "I-21",
     "proofJudgment": {
-     "laneRev": "42900e67ddb3e494",
      "obligationRev": 1,
      "verdict": "proves",
      "witness": {
-      "lane": "unit-tests",
       "testIds": [
        "the outbox folder is TIDEWATER_OUTBOX, by default outbox in the current directory"
       ]
@@ -5367,11 +6514,9 @@
     ],
     "id": "I-22",
     "proofJudgment": {
-     "laneRev": "42900e67ddb3e494",
      "obligationRev": 1,
      "verdict": "proves",
      "witness": {
-      "lane": "unit-tests",
       "testIds": [
        "an outbox text is one file: the phone number, then the message"
       ]
@@ -5404,11 +6549,9 @@
     ],
     "id": "I-23",
     "proofJudgment": {
-     "laneRev": "42900e67ddb3e494",
      "obligationRev": 1,
      "verdict": "proves",
      "witness": {
-      "lane": "unit-tests",
       "testIds": [
        "the booking confirmation reads exactly the template"
       ]
@@ -5441,11 +6584,9 @@
     ],
     "id": "I-24",
     "proofJudgment": {
-     "laneRev": "42900e67ddb3e494",
      "obligationRev": 1,
      "verdict": "proves",
      "witness": {
-      "lane": "unit-tests",
       "testIds": [
        "the booking confirmation reads exactly the template"
       ]
@@ -5478,11 +6619,9 @@
     ],
     "id": "I-25",
     "proofJudgment": {
-     "laneRev": "42900e67ddb3e494",
      "obligationRev": 1,
      "verdict": "proves",
      "witness": {
-      "lane": "unit-tests",
       "testIds": [
        "the booking confirmation reads exactly the template"
       ]
@@ -5515,11 +6654,9 @@
     ],
     "id": "I-26",
     "proofJudgment": {
-     "laneRev": "42900e67ddb3e494",
      "obligationRev": 1,
      "verdict": "proves",
      "witness": {
-      "lane": "unit-tests",
       "testIds": [
        "a refused booking writes no text",
        "every outbox text is about a booking in the ledger"
@@ -5554,11 +6691,9 @@
     ],
     "id": "I-27",
     "proofJudgment": {
-     "laneRev": "42900e67ddb3e494",
      "obligationRev": 1,
      "verdict": "proves",
      "witness": {
-      "lane": "unit-tests",
       "testIds": [
        "a booking for a vessel not on the register is refused"
       ]
@@ -5591,11 +6726,9 @@
     ],
     "id": "I-28",
     "proofJudgment": {
-     "laneRev": "42900e67ddb3e494",
      "obligationRev": 1,
      "verdict": "proves",
      "witness": {
-      "lane": "unit-tests",
       "testIds": [
        "a booking for a berth not on the register is refused"
       ]
@@ -5628,11 +6761,9 @@
     ],
     "id": "I-29",
     "proofJudgment": {
-     "laneRev": "42900e67ddb3e494",
      "obligationRev": 1,
      "verdict": "proves",
      "witness": {
-      "lane": "unit-tests",
       "testIds": [
        "a booking for a window the tide table lacks is refused"
       ]
@@ -5665,11 +6796,9 @@
     ],
     "id": "I-30",
     "proofJudgment": {
-     "laneRev": "42900e67ddb3e494",
      "obligationRev": 1,
      "verdict": "proves",
      "witness": {
-      "lane": "unit-tests",
       "testIds": [
        "a booking records the window it arrives on and the window it leaves on"
       ]
@@ -5703,11 +6832,9 @@
     ],
     "id": "I-31",
     "proofJudgment": {
-     "laneRev": "42900e67ddb3e494",
      "obligationRev": 1,
      "verdict": "proves",
      "witness": {
-      "lane": "unit-tests",
       "testIds": [
        "a booking that leaves before it arrives is refused"
       ]
@@ -5740,11 +6867,9 @@
     ],
     "id": "I-32",
     "proofJudgment": {
-     "laneRev": "42900e67ddb3e494",
      "obligationRev": 1,
      "verdict": "proves",
      "witness": {
-      "lane": "unit-tests",
       "testIds": [
        "the first booking of a berth keeps it"
       ]
@@ -5778,11 +6903,9 @@
     ],
     "id": "I-33",
     "proofJudgment": {
-     "laneRev": "42900e67ddb3e494",
      "obligationRev": 1,
      "verdict": "proves",
      "witness": {
-      "lane": "unit-tests",
       "testIds": [
        "every refusal exits with code 2"
       ]
@@ -5815,11 +6938,9 @@
     ],
     "id": "I-34",
     "proofJudgment": {
-     "laneRev": "42900e67ddb3e494",
      "obligationRev": 1,
      "verdict": "proves",
      "witness": {
-      "lane": "unit-tests",
       "testIds": [
        "an error that is not a refusal crashes with a stack trace"
       ]

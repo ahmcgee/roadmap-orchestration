@@ -159,6 +159,10 @@ export async function finish(ctx: CommandContext, intent: IntentOf<'command.appl
     return { kind: 'rejected', reason: effect.reason };
   }
   const verified = [...effect.verified];
+  if (command.body.type === 'apply') {
+    const queued = ctx.journal.view.applyQueued(id);
+    if (queued !== null) verified.push(`queued behind the stage boundary of ${queued.waitsFor.join(', ')} (seq ${queued.seq}); applied there`);
+  }
   if (command.body.type !== 'ack') {
     const b = command.body;
     const subjects: NeedsUserContent['subject'][] = 'unit' in b ? [{type: 'unit', unit: b.unit}]

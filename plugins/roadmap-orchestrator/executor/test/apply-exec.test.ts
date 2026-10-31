@@ -6,9 +6,11 @@
 // change the plan". dev.17: apply.exec-queued-at-boundary, apply.exec-queued-dropped and the crash cells of the row
 // QUEUED_APPLY (apply.exec-queued-crash).
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { cpSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { after, test } from 'node:test';
+import { exportInputs } from '../src/commands/inputs.ts';
+import { arcId } from '../src/core/ids.ts';
 import type { Event, Fact } from '../src/core/events.ts';
 import { type CommandId, commandId, unitId } from '../src/core/ids.ts';
 import { readReceipt, terminalReceipt } from '../src/commands/queue.ts';
@@ -39,6 +41,16 @@ const STRAIGHT = ['plan-check:approve', 'build:success', 'quiesce:empty', 'evide
 type Json = Record<string, unknown>;
 const specPath = (r: ExecRun, unit: string): string => join(r.planPath, '..', `${unit}.json`);
 
+/** Start each editable fixture from a real export of the plan in force. */
+const exported = new WeakMap<ExecRun, number>();
+async function exportForEdit(r: ExecRun): Promise<void> {
+  if (exported.has(r)) return;
+  const out = absPath(join(tmpDir('apply-edit'), 'export'));
+  const record = await exportInputs({repo: absPath(r.repo), arc: arcId(r.arc), out});
+  cpSync(out, dirname(r.planPath), {recursive: true});
+  exported.set(r, record.planRev);
+}
+
 function editPlan(r: ExecRun, edit: (plan: Json & { units: Json[] }) => void): void {
   const plan = JSON.parse(readFileSync(r.planPath, 'utf8')) as Json & { units: Json[] };
   edit(plan);
@@ -60,7 +72,7 @@ function addUnit(r: ExecRun, id: string, after: readonly string[] = []): void {
 
 /** `roadmap apply`: the id of the command it queued. */
 async function apply(r: ExecRun): Promise<CommandId> {
-  const line = JSON.parse((await cli(r, ['apply'])).stdout) as { command: string; type: string };
+  const line = JSON.parse((await cli(r, ['apply', '--from', dirname(r.planPath), '--rev', String(exported.get(r)), '--reason', 'Revise the running arc'])).stdout) as { command: string; type: string };
   assert.equal(line.type, 'apply');
   return commandId(line.command);
 }
@@ -96,6 +108,7 @@ test('apply.exec-add-unit-mid-build: a unit added while a build runs is applied 
   });
   const run = startExec(r);
   await reached(r.scenarioDir, 'build1', WAIT_MS);
+  await exportForEdit(r);
   addUnit(r, 'u2', ['u1']);
   const id = await apply(r);
   await until(() => receiptOf(r, id) !== null, WAIT_MS, 'the apply to apply while u1 still builds');
@@ -132,6 +145,7 @@ test('apply.exec-revision-in-flight: rev + 1 of a held unit\'s spec (paused mid-
   ]);
   const run = startExec(r);
   await reached(r.scenarioDir, 'build1', WAIT_MS);
+  await exportForEdit(r);
   editSpec(r, 'u1', (s) => {
     s['acceptance'] = [...(s['acceptance'] as Json[]), { id: 'A2', clause: 'mul(0, 5) is 0', failLoudIfUndelivered: true, state: 'active' }];
     s['rev'] = 2;
@@ -184,6 +198,7 @@ test('apply.exec-queued-at-boundary: rev + 1 of a unit\'s spec applied while its
   });
   const run = startExec(r);
   await reached(r.scenarioDir, 'build1', WAIT_MS);
+  await exportForEdit(r);
   editSpec(r, 'u1', addA2);
   const id = await apply(r);
   await until(() => queuedReceipt(r, id) !== null, WAIT_MS, 'the queued receipt');
@@ -222,6 +237,7 @@ test('apply.exec-queued-dropped: a spec edit queued behind a running gate that a
   });
   const run = startExec(r);
   await reached(r.scenarioDir, 'gate1', WAIT_MS);
+  await exportForEdit(r);
   editSpec(r, 'u1', addA2);
   const id = await apply(r);
   await until(() => queuedReceipt(r, id) !== null, WAIT_MS, 'the queued receipt');
@@ -267,6 +283,7 @@ for (const cell of crashCells(QUEUED_APPLY)) {
     });
     const run = startExec(r, [], { ROADMAP_TEST_CRASH: trigger });
     await reached(r.scenarioDir, 'held', WAIT_MS);
+    await exportForEdit(r);
     editSpec(r, 'u1', addA2);
     const id = await apply(r);
     if (!dropped) await until(() => events(r).filter((e) => e.type === 'fact' && e.fact.kind === 'executor-started').length === 2, WAIT_MS, 'the respawn');
@@ -302,6 +319,7 @@ test('apply.exec-routing-parks: a routing apply that moves the building unit\'s 
   const r = setupExec(t, { steps: [...SMOKE_DEFAULT, planCheckStep({ decision: 'approve' }), blockedBuild('build1')] });
   const run = startExec(r);
   await reached(r.scenarioDir, 'build1', WAIT_MS);
+  await exportForEdit(r);
   editPlan(r, (p) => void (p['routing'] = { build: { med: 'frontier' } }));
   const id = await apply(r);
   release(r.scenarioDir, 'build1');
@@ -341,13 +359,14 @@ test('apply.exec-resume-at-boundary: a pause and a resume of an idle unit (u2, a
   assert.deepEqual(kills(r), [], 'the pause of u2 killed nothing of u1');
 });
 
-test('apply.exec-respawn-ignores-unapplied-edit: after an executor crash the respawn runs the plan in force, not a plan.json edited meanwhile (dropping the building unit); a start of that edit is refused', T, async (t) => {
+test('apply.exec-respawn-ignores-unapplied-edit: after an executor crash the respawn runs the plan in force, not a plan.json edited meanwhile (dropping the building unit); a later start also uses the plan in force', T, async (t) => {
   const r = setupExec(t, {
     steps: [...SMOKE_DEFAULT, planCheckStep({ decision: 'approve' }), blockedBuild('build1'), ...SMOKE_DEFAULT, gateStep({ decision: 'approve' })],
   });
   const run = startExec(r);
   await reached(r.scenarioDir, 'build1', WAIT_MS);
   // The edit a crash-restart used to load: u1 (open intents, mid-build) gone, u9 in its place.
+  await exportForEdit(r);
   addUnit(r, 'u9');
   editPlan(r, (p) => void p.units.shift());
   process.kill(executorPid(r), 'SIGKILL');
@@ -361,14 +380,10 @@ test('apply.exec-respawn-ignores-unapplied-edit: after an executor crash the res
   assert.deepEqual(outcomes(r, 'u9'), []);
 
   const again = await startExec(r).exit;
-  assert.equal(again.code, 78, again.stderr);
-  const reason = reasonOf(again);
-  assert.ok(reason.kind === 'refused');
-  assert.deepEqual(reason.rejections, [{
-    kind: 'plan-change-refused',
-    // An M2 arc (a DAG) keeps only the started units' relative order (G3), which dropping u1 leaves intact.
-    reasons: ['unit u1 has started; it cannot be removed'],
-  }]);
+  assert.equal(again.code, 0, again.stderr);
+  assert.deepEqual(reasonOf(again), {kind: 'complete', units: [{unit: 'u1', result: 'merged'}]});
+  assert.deepEqual(journalOf(r).view.plannedUnits(), ['u1'], 'restart never applies local edits');
+  assert.deepEqual(outcomes(r, 'u9'), []);
 });
 
 for (const cell of crashCells(PLAN_START)) {
@@ -380,19 +395,16 @@ for (const cell of crashCells(PLAN_START)) {
     };
     const laid = layout(t, straight);
     const { r } = laid;
-    await supervisedRun(laid);
-    assert.deepEqual(finalReason(r), { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }] });
-
-    // Stopped (complete), edited, started again: the start's first executor dies before its revision's fact.
-    addUnit(r, 'u2');
+    // Crash while committing the fresh plan. Later starts no longer adopt local edits.
+    addUnit(r, 'u2', ['u1']);
     appendSteps(r, [planCheckStep({ decision: 'approve' }), mulBuild({ 'src/extra.js': 'export const extra = 1;\n' }), gateStep({ decision: 'approve' })]);
     const trigger = writeTrigger(tmpDir('start-crash'), { label: cell.label, occurrence: 1 });
     await supervisedRun(laid, { trigger });
     assertFired(trigger);
     assert.equal(stateOf(r).crashes.length, 1, 'one executor crash, which the supervisor restarted');
-    assert.deepEqual(finalReason(r), { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }, { unit: 'u2', result: 'merged' }] }, 'the edit was not dropped');
+    assert.deepEqual(finalReason(r), { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }, { unit: 'u2', result: 'merged' }] }, 'the fresh plan was recovered');
     const revisions = events(r).flatMap((e) => (e.type === 'fact' && e.fact.kind === 'plan-applied' ? [[e.fact.rev, e.fact.command, e.fact.changes]] : []));
-    assert.deepEqual(revisions, [[1, null, []], [2, null, [{ type: 'unit-added', unit: 'u2' }]]], 'the revision recorded once');
+    assert.deepEqual(revisions, [[1, null, []]], 'the revision recorded once');
     assert.deepEqual(outcomes(r, 'u2'), STRAIGHT);
   });
 }
