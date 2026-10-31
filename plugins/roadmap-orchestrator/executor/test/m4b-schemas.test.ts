@@ -1,7 +1,4 @@
-// M4b step 0a: the records frozen before their behaviour lands (SCHEMAS.md "M4b: the flow loop"). Round trips of every
-// new fact and arm (byte-identical through the canonical reader), the refusals that keep illegal states out, the flow
-// role's strict output and its validator, the kept series and inputs readers, and the `arcRoles` gate on the routing rev
-// (an arc 1.0.0-dev.7 started keeps its revs; an m4b arc hashes the flow seat too), fixed at revision 1 by the fold.
+// Retained host telemetry, routing provenance and checkpoint contracts from M4b; schema 2 has no flow loop.
 import assert from 'node:assert/strict';
 import { describe,it } from 'node:test';
 import { schemaViolation } from '../src/backends/adapter.ts';
@@ -71,6 +68,15 @@ describe('m4b rev 3: host pressure records', () => {
 });
 
 describe('m4b routing: role-set provenance survives flow retirement', () => {
+  it('schema 2 refuses retired flow facts, job kinds, routing seats and givens', () => {
+    for (const kind of ['flow-series', 'flow-started', 'flow-ended', 'flow-requested', 'flow-decided', 'flow-proof', 'flow-applied', 'flow-verdict']) {
+      refuses(fact({ kind }), /\.kind$/);
+    }
+    for (const kind of ['flow', 'proof']) assert.throws(() => jobId(kind as never, 1), /JobId/);
+    assert.throws(() => parseRepoConfig({ routing: { seats: { flow: { arc: 'efficient' } } } }), /\.flow/);
+    assert.throws(() => parseRepoConfig({ flow: { givens: [] } }), /\.flow/);
+  });
+
   it('without a role set the rev stays stable; provenance stays additive and flow is never seated', () => {
     const dev7 = resolveRouting(arcStack('default', null, null));
     const m4b = resolveRouting({ ...arcStack('default', null, null), arcRoles: 'm4b' });
