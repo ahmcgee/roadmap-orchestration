@@ -414,7 +414,7 @@ describe('certified-only journey reuse (R51)', () => {
 const STABLE: LaneJson = { id: 'stable', argv: ['node', '--test', 'test/add.test.js'], systems: ['add'] };
 /** The fix commit touches only `mul`'s system, so the stable lane (system `add`) reads the same input across it. */
 const CRASH_MAP: JsonValue = { systems: { add: { paths: ['src/add.js', 'test/add.test.js'] }, mul: { paths: ['src/mul.js', 'test/mul.test.js'] } } };
-const MUL_LANE: LaneJson = { id: 'mul', argv: ['node', '--test', 'test/mul.test.js'] };
+const MUL_LANE: LaneJson = { id: 'mul', argv: ['node', '--test', 'test/mul.test.js'], systems: ['mul'] };
 const MUL_BROKEN = { ...MUL, 'src/mul.js': 'export function mul(a, b) {\n  return a + b;\n}\n' };
 
 /** The one label a crash row's cell crashes (test/matrix.ts). */
