@@ -493,7 +493,14 @@ function flowLoop(c: Ctx, a: ArcState): string {
     if (f.proof === 'preserved') c.t.untilFact(a.arc, `${proposal} applied`, (facts) => facts.find((x) => x.kind === 'flow-applied' && x.proposal === proposal));
     done.push(`${proposal} accepted, proof ${proof.outcome}${f.proof === 'preserved' ? ', applied' : ', refused'}`);
   }
+  const status = JSON.parse(c.t.roadmap(['status', ...at])) as Status;
+  const notices = status.needsUser.filter((n) => n.reason === 'revision-notice');
+  if (notices.length !== 1 || notices[0]!.blocking) throw new Error(`story: the applied flow revision should leave one non-blocking revision notice: ${JSON.stringify(notices)}`);
+  const notice = notices[0]!;
   c.t.roadmap(['run-only', '--clear', ...at]);
+  // P1 closes optionless arc items when this command lands. The CLI only queued it: wait for that closure before
+  // ending the turn, or the next watch can observe the notice while the clear command is still applying.
+  c.t.untilFact(a.arc, 'run-only clear to close the flow revision notice', (facts) => facts.find((f) => f.kind === 'needs-user-acked' && f.id === notice.id));
   c.state.flowDone = true;
   return `guard, confirm and quay-list merged; the flow loop decided while the rest waited: ${done.join('; ')}. I lifted the run-only limit. ${RUNNING(a)}`;
 }

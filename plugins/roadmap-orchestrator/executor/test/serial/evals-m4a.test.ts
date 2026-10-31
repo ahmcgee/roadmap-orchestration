@@ -280,6 +280,12 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
       ['needs-user:pack-review'], ['units:blocked'], ['units:complete'],
       ['units:blocked'], ['units:held'], ['units:complete'],
     ]);
+    const revisions = raisedOf(arc1, 'revision-notice', story.dir, 1);
+    assert.equal(revisions.length, 1, 'the applied flow revision has its P1 notice');
+    const appliedFlow = factsOf(arc1, 'flow-applied')[0]!;
+    const clearedFlow = factsOf(arc1, 'run-only').find((f) => f.units === null && f.seq > appliedFlow.seq)!;
+    const closedRevision = factsOf(arc1, 'needs-user-acked').find((f) => f.id === revisions[0]!.id)!;
+    assert.ok(revisions[0]!.seq < clearedFlow.seq && clearedFlow.seq < closedRevision.seq, 'run-only clear closes the flow notice before the scripted root ends its turn');
     const digests = raisedOf(arc2, 'divergence-digest', story.dir, 2);
     assert.equal(digests.length, 1, 'the bundle raised one divergence digest');
     const digest = digests[0]!;
