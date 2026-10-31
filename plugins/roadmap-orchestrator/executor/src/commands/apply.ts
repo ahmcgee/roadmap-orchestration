@@ -36,12 +36,11 @@ type InForce,type InputFiles,RENDER_INPUT,type RevisionInForce,type RoutingBase,
 inForceFiles,
 keepCorpusFiles,keepInput,keepRevisionFiles,planInForce,planRouting,
 readInputFiles,requirePlanInForce,revisionInForce,
-revisionManifestOf,routingProvenanceOf,
-} from '../input/inforce.ts';
+revisionManifestOf,routingProvenanceOf } from '../input/inforce.ts';
 import { type PlanM1,type PlanUnit,boundsOf,visionFile } from '../input/plan.ts';
 import { needsUserAckPath,openNeedsUser,raiseNeedsUser,raisedWithReason,readNeedsUser,readNeedsUserAck } from '../needsuser.ts';
 import type { ProberHandle } from '../park/probe.ts';
-import { APPLY,type Phase0Advisory,phase0InputOf,phase0Rows,planDefects,sameRepoCorpusSet,scopeOverlapProblems,underRoot } from '../phase0/rows.ts';
+import { APPLY,type Phase0Advisory,phase0InputOf,phase0Rows,planDefects,underRoot } from '../phase0/rows.ts';
 import { dispatchOf,repin } from '../pipeline/dispatch.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
 import { applyRows } from '../preflight/checks.ts';
@@ -52,8 +51,7 @@ import type { ResidueRecipe } from '../recover/residue.ts';
 import { type DocsPublisher,commitRevision } from '../recover/revision.ts';
 import {
 type CleanupResult,type Reservation,type ResourceContext,type SweepHolder,cleanup,entryOf,finishCleanup,reclaimForSweep,
-reserveForSweep,resourceTable,
-} from '../resources/reserve.ts';
+reserveForSweep,resourceTable } from '../resources/reserve.ts';
 import type { ResolvedRouting } from '../routing/layers.ts';
 import type { Backend } from '../routing/types.ts';
 import { parseRulings } from '../spec/rulings.ts';
@@ -66,7 +64,6 @@ import { mergeIn } from './mergein.ts';
 import { note } from './note.ts';
 import { isControl,readCommand,readReceipt,receiptPath,receiptSha256,writeReceipt } from './queue.ts';
 import { reverse } from './reverse.ts';
-import { decideScope } from './scope.ts';
 import { steer } from './steer.ts';
 
 /**
@@ -238,8 +235,6 @@ async function effectOf(ctx: CommandContext, command: CommandFile): Promise<Effe
       return decideFlow(ctx, command.id, body);
     case 'flow-request':
       return requestFlow(ctx, command.id, body.reason);
-    case 'scope-decide':
-      return decideScope(ctx, command.id, body);
     case 'demo':
       return actOnDemo(ctx, command.id, body.act);
   }
@@ -654,11 +649,6 @@ export function evaluateRevision(
   // The corpus overlap rule (R32) over the units the revision changes, on every path a revision takes: what an apply's
   // Phase-0 rows would refuse is never committed by the executor's own revisions (a pin or guide that does not load or is
   // absent: those rows refuse it).
-  const pin = verdict.inputs.corpus?.pin ?? null;
-  const guide = proposal.corpus?.guide.bytes ?? null;
-  const set = pin === null || guide === null ? null : sameRepoCorpusSet(pin, guide);
-  const overlaps = set === null ? [] : scopeOverlapProblems(set, proposal.plan.units.filter((u) => verdict.scoped.includes(u.id)));
-  if (overlaps.length > 0) return { kind: 'rejected', reasons: [rowText({ kind: 'corpus-invalid', problems: overlaps })] };
   // Every revision refuses only the plan defects it adds (2026-10-27; 1.0.0-dev.26), including executor revisions.
   const before = inForceFiles(ctx.runDir, ctx.view, inForce, revision, ctx.planFile, proposal.repo);
   const known = new Set(planDefects(phase0InputOf(before, ctx.routingBase.config, ctx.view), APPLY).map(canonicalJson));

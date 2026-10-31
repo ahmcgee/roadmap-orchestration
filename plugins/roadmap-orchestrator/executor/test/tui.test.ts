@@ -493,7 +493,7 @@ test('friendly estate projection prioritises intent and criteria, preserves unkn
   assert.ok(text.indexOf('Record details') > text.indexOf('Units'));
   assert.match(text, /Baseline commit: abc123/);
   assert.equal(summary(JSON.stringify(plan)), 'Ship a useful search tool.');
-  const spec = { schema: 'roadmap/spec-m1', unit: 'search', acceptance: [{ id: 'A1', clause: 'Find matching pages.', state: 'active', failLoudIfUndelivered: true }],
+  const spec = { intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'], schema: 'roadmap/spec-m1', unit: 'search', acceptance: [{ id: 'A1', clause: 'Find matching pages.', state: 'active', failLoudIfUndelivered: true }],
     lanes: [{ id: 'tests', argv: ['node', '--test', 'test files/search.js'], expectedExit: 0 }], unknownFlag: false, futureField: { nestedValue: 'retained' }, absent: null };
   const detail = document(JSON.stringify(spec)).map((r) => r.text).join('\n');
   assert.match(detail, /Acceptance criteria \(1\)/);

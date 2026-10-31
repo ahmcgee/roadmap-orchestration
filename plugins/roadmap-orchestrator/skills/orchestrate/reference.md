@@ -160,12 +160,6 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
 - `roadmap note <unit> --brief <file>`: record a fact for an unfinished unit without reopening it. The next build
   round receives the note in `notes[]`; a note arriving during a round reaches the following round.
 - `roadmap merge-in <unit>`: merge the integration tip into a unit's branch (clean merges only); it re-enters at lanes.
-- `roadmap scope accept|reject <unit> --reason <text> [--repo <path> --arc <arc>]`: queued (scope the unit). Your decision on
-  the scope growth a unit's plan-check proposed, or the path salvage reverted on its last two rounds (its `scope-growth`
-  item). `accept` lands it as one revision recording your reason (the unit's plan and spec scope widened, in force only) and the unit re-opens at
-  plan-check on it; a revision the classifier refuses is rejected with every reason, and the unit stays held. `reject`
-  keeps the scope: the plan-check runs again, told what you rejected, and decides within the scope. Acknowledges the
-  item. Rejected for a unit not held for a proposal.
 - `roadmap audit [--lens <lenses>]`: request an audit (holistic arcs; lenses comma-separated, within the arc's set:
   `invariants`, `drift`, `vacuity`, `vision`). An audit reviews each lens's whole outstanding range: one too large
   for a single lens call is reviewed in chunks by publication within that audit, so no range needs a smaller audit.

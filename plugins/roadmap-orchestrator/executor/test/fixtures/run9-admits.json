@@ -384,12 +384,6 @@
          "state": "active"
         }
        ],
-       "scope": [
-        "src/registers.js",
-        "src/cli.js",
-        "test/unit/**",
-        "README.md"
-       ],
        "resources": [],
        "decisions": [
         {
@@ -474,6 +468,10 @@
         "I-32",
         "I-33",
         "I-34"
+       ],
+       "intent": "Implement the stated acceptance.",
+       "nonGoals": [
+        "No unrelated changes."
        ]
       },
       "unit": {
@@ -484,11 +482,8 @@
        "id": "draught-refusal",
        "origin": "repair",
        "risk": "low",
-       "scope": [
-        "src/registers.js",
-        "src/cli.js",
-        "test/unit/**",
-        "README.md"
+       "systems": [
+        "app"
        ]
       },
       "targets": []
@@ -823,13 +818,6 @@
          "state": "active"
         }
        ],
-       "scope": [
-        "src/ledger.js",
-        "src/tides.js",
-        "src/cli.js",
-        "test/unit/**",
-        "README.md"
-       ],
        "resources": [],
        "decisions": [
         {
@@ -934,6 +922,10 @@
         "I-32",
         "I-33",
         "I-34"
+       ],
+       "intent": "Implement the stated acceptance.",
+       "nonGoals": [
+        "No unrelated changes."
        ]
       },
       "unit": {
@@ -943,12 +935,8 @@
        "id": "stay-overlap",
        "origin": "repair",
        "risk": "high",
-       "scope": [
-        "src/ledger.js",
-        "src/tides.js",
-        "src/cli.js",
-        "test/unit/**",
-        "README.md"
+       "systems": [
+        "app"
        ]
       },
       "targets": []
@@ -1224,10 +1212,6 @@
          "state": "active"
         }
        ],
-       "scope": [
-        "src/cli.js",
-        "test/unit/**"
-       ],
        "resources": [],
        "decisions": [
         {
@@ -1307,6 +1291,10 @@
         "I-32",
         "I-33",
         "I-34"
+       ],
+       "intent": "Implement the stated acceptance.",
+       "nonGoals": [
+        "No unrelated changes."
        ]
       },
       "unit": {
@@ -1316,9 +1304,8 @@
        "id": "booked-line-first",
        "origin": "repair",
        "risk": "low",
-       "scope": [
-        "src/cli.js",
-        "test/unit/**"
+       "systems": [
+        "app"
        ]
       },
       "targets": []
@@ -1620,13 +1607,6 @@
          "state": "active"
         }
        ],
-       "scope": [
-        "src/ledger.js",
-        "src/tides.js",
-        "src/registers.js",
-        "test/unit/**",
-        "README.md"
-       ],
        "resources": [],
        "decisions": [
         {
@@ -1711,6 +1691,10 @@
         "I-32",
         "I-33",
         "I-34"
+       ],
+       "intent": "Implement the stated acceptance.",
+       "nonGoals": [
+        "No unrelated changes."
        ]
       },
       "unit": {
@@ -1720,12 +1704,8 @@
        "id": "overlap-clarity",
        "origin": "repair",
        "risk": "med",
-       "scope": [
-        "src/ledger.js",
-        "src/tides.js",
-        "src/registers.js",
-        "test/unit/**",
-        "README.md"
+       "systems": [
+        "app"
        ]
       },
       "targets": []
@@ -1971,9 +1951,6 @@
          "state": "active"
         }
        ],
-       "scope": [
-        "test/unit/**"
-       ],
        "resources": [],
        "decisions": [
         {
@@ -2053,6 +2030,10 @@
         "I-32",
         "I-33",
         "I-34"
+       ],
+       "intent": "Implement the stated acceptance.",
+       "nonGoals": [
+        "No unrelated changes."
        ]
       },
       "unit": {
@@ -2062,8 +2043,8 @@
        "id": "no-phone-witness",
        "origin": "repair",
        "risk": "low",
-       "scope": [
-        "test/unit/**"
+       "systems": [
+        "app"
        ]
       },
       "targets": []
@@ -2332,12 +2313,6 @@
          "state": "active"
         }
        ],
-       "scope": [
-        "src/ledger.js",
-        "src/cli.js",
-        "test/unit/**",
-        "README.md"
-       ],
        "resources": [],
        "decisions": [
         {
@@ -2422,6 +2397,10 @@
         "I-32",
         "I-33",
         "I-34"
+       ],
+       "intent": "Implement the stated acceptance.",
+       "nonGoals": [
+        "No unrelated changes."
        ]
       },
       "unit": {
@@ -2431,11 +2410,8 @@
        "id": "cancel-own-booking",
        "origin": "repair",
        "risk": "low",
-       "scope": [
-        "src/ledger.js",
-        "src/cli.js",
-        "test/unit/**",
-        "README.md"
+       "systems": [
+        "app"
        ]
       },
       "targets": []
@@ -2731,12 +2707,6 @@
          "state": "active"
         }
        ],
-       "scope": [
-        "src/texts.js",
-        "src/cli.js",
-        "test/unit/**",
-        "README.md"
-       ],
        "resources": [],
        "decisions": [
         {
@@ -2826,6 +2796,10 @@
         "I-32",
         "I-33",
         "I-34"
+       ],
+       "intent": "Implement the stated acceptance.",
+       "nonGoals": [
+        "No unrelated changes."
        ]
       },
       "unit": {
@@ -2835,11 +2809,8 @@
        "id": "cancel-texts",
        "origin": "repair",
        "risk": "low",
-       "scope": [
-        "src/texts.js",
-        "src/cli.js",
-        "test/unit/**",
-        "README.md"
+       "systems": [
+        "app"
        ]
       },
       "targets": []
@@ -3098,13 +3069,6 @@
          "state": "active"
         }
        ],
-       "scope": [
-        "src/ledger.js",
-        "src/cli.js",
-        "src/texts.js",
-        "test/unit/**",
-        "README.md"
-       ],
        "resources": [],
        "decisions": [
         {
@@ -3194,6 +3158,10 @@
         "I-32",
         "I-33",
         "I-34"
+       ],
+       "intent": "Implement the stated acceptance.",
+       "nonGoals": [
+        "No unrelated changes."
        ]
       },
       "unit": {
@@ -3203,12 +3171,8 @@
        "id": "cancel-text-first",
        "origin": "repair",
        "risk": "low",
-       "scope": [
-        "src/ledger.js",
-        "src/cli.js",
-        "src/texts.js",
-        "test/unit/**",
-        "README.md"
+       "systems": [
+        "app"
        ]
       },
       "targets": []
@@ -3478,14 +3442,6 @@
          "state": "active"
         }
        ],
-       "scope": [
-        "src/ledger.js",
-        "src/outbox.js",
-        "src/texts.js",
-        "src/cli.js",
-        "test/unit/**",
-        "README.md"
-       ],
        "resources": [],
        "decisions": [
         {
@@ -3570,6 +3526,10 @@
         "I-32",
         "I-33",
         "I-34"
+       ],
+       "intent": "Implement the stated acceptance.",
+       "nonGoals": [
+        "No unrelated changes."
        ]
       },
       "unit": {
@@ -3579,13 +3539,8 @@
        "id": "cancel-text-staged",
        "origin": "repair",
        "risk": "med",
-       "scope": [
-        "src/ledger.js",
-        "src/outbox.js",
-        "src/texts.js",
-        "src/cli.js",
-        "test/unit/**",
-        "README.md"
+       "systems": [
+        "app"
        ]
       },
       "targets": []
@@ -5637,8 +5592,9 @@
    }
   ],
   "mapping": {
-   "paths": [
+   "systems": [
     {
+     "system": "app",
      "obligations": [
       "I-1",
       "I-2",
@@ -5674,86 +5630,7 @@
       "I-32",
       "I-33",
       "I-34"
-     ],
-     "pattern": "src"
-    },
-    {
-     "obligations": [
-      "I-1",
-      "I-2",
-      "I-3",
-      "I-4",
-      "I-5",
-      "I-6",
-      "I-7",
-      "I-8",
-      "I-9",
-      "I-10",
-      "I-11",
-      "I-12",
-      "I-13",
-      "I-14",
-      "I-15",
-      "I-16",
-      "I-17",
-      "I-18",
-      "I-19",
-      "I-20",
-      "I-21",
-      "I-22",
-      "I-23",
-      "I-24",
-      "I-25",
-      "I-26",
-      "I-27",
-      "I-28",
-      "I-29",
-      "I-30",
-      "I-31",
-      "I-32",
-      "I-33",
-      "I-34"
-     ],
-     "pattern": "test"
-    },
-    {
-     "obligations": [
-      "I-1",
-      "I-2",
-      "I-3",
-      "I-4",
-      "I-5",
-      "I-6",
-      "I-7",
-      "I-8",
-      "I-9",
-      "I-10",
-      "I-11",
-      "I-12",
-      "I-13",
-      "I-14",
-      "I-15",
-      "I-16",
-      "I-17",
-      "I-18",
-      "I-19",
-      "I-20",
-      "I-21",
-      "I-22",
-      "I-23",
-      "I-24",
-      "I-25",
-      "I-26",
-      "I-27",
-      "I-28",
-      "I-29",
-      "I-30",
-      "I-31",
-      "I-32",
-      "I-33",
-      "I-34"
-     ],
-     "pattern": "data"
+     ]
     }
    ]
   },

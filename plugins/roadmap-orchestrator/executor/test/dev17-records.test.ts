@@ -1,3 +1,4 @@
+import { systemName } from '../src/core/ids.ts';
 // dev.17 record types (SCHEMAS.md "dev.17 records"): the spec's design record and revision pins with their read-time
 // defaults, the plan-check design decisions' payloads, the findings ledger and approval blobs, the flaky ledger. Readers
 // only: behaviour is tested where it is wired.
@@ -17,9 +18,9 @@ const A = 'a'.repeat(40);
 const B = 'b'.repeat(40);
 
 function spec(unit: string, extra: object = {}): Record<string, unknown> {
-  return {
+  return { intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
     schema: 'roadmap/spec-m1', unit, rev: 1, lanes: [], acceptance: [{ id: 'a1', clause: 'It works.', failLoudIfUndelivered: true, state: 'active' }],
-    scope: ['src/**'], resources: [], decisions: [], facts: [], cites: { contracts: ['docs/api.md'], rulings: [] }, obligations: ['I-1'],
+     resources: [], decisions: [], facts: [], cites: { contracts: ['docs/api.md'], rulings: [] }, obligations: ['I-1'],
     witnesses: [{ id: 'W-1', lane: 'unit', testId: 't1', clause: 'a1', skeleton: 'asserts it works', state: 'active' }],
     ...extra,
   };
@@ -79,7 +80,7 @@ describe('spec design record and pins', () => {
 describe('plan-check design decisions', () => {
   // dev.17 (design pass): a child is the parent's items it takes and its own design, the spec built by code (src/pipeline/split.ts).
   const child = (unit: string): Record<string, unknown> => ({
-    unit, scope: ['src/**'], items: ['a1'], obligations: [],
+    unit, systems: [systemName('app')], items: ['a1'], obligations: [],
     design: {
       kind: 'module', changes: [{ system: null, paths: ['src/**'], lines: 10 }], interfaces: [], failureModes: [], clauses: [], breaks: { tests: [], docs: [] }, experiments: [],
       newSystem: null, verification: null,

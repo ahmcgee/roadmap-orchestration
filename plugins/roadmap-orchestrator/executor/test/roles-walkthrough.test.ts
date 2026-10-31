@@ -1,3 +1,4 @@
+import { systemName } from '../src/core/ids.ts';
 // The walkthrough role eval's generator, plants, graders, summary and harness (evals/roles/walkthrough/), free: real
 // products brought up and driven over HTTP and the CLI, degenerate fake walkers through run.ts. Named tests:
 // roles.walk-gen-deterministic, roles.walk-cells, roles.walk-slots, roles.walk-plants (each slot's predicted effect,
@@ -465,7 +466,7 @@ function answer(findings: readonly Finding[], polish = 0): WalkthroughOutput {
   return {
     final: true, journeys: [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => ({ journey: journeyId(`J-${n}`), outcome: 'completed' as const, evidence: ['a.png'], note: '' })),
     findings, premises: [], reasons: [],
-    polish: Array.from({ length: polish }, (_, i) => ({ journey: journeyId('J-1'), evidence: ['a.png'], text: 'tighter spacing', unit: { id: `x${i}` as never, scope: [], spec: '' } })),
+    polish: Array.from({ length: polish }, (_, i) => ({ journey: journeyId('J-1'), evidence: ['a.png'], text: 'tighter spacing', unit: { id: `x${i}` as never, systems: [systemName('app')], spec: '' } })),
   };
 }
 /** A transcript whose session visited `urls` in the browser and ran `commands` in a shell (and Read `reads`). */

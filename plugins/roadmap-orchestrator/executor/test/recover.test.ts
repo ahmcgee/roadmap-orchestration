@@ -143,7 +143,7 @@ test('recover.park-raises-needs-user: a patch whose old spec is gone (not kept, 
     const opened = await openSpecPatch(r);
     op = opened.op;
     const spec = JSON.parse(readFileSync(opened.path, 'utf8')) as Record<string, unknown>;
-    writeFileSync(opened.path, JSON.stringify({ ...spec, scope: [repoPattern('elsewhere/**')] }));
+    writeFileSync(opened.path, JSON.stringify({ ...spec, intent: 'A different valid intent.' }));
     loseKeptOldSpec(r.journal.view.latestIntent(opened.op as never), d);
   } finally {
     r.journal.close();
@@ -262,7 +262,7 @@ const CAUSES = {
   // A spec patch whose old spec is gone (not kept, the file changed by someone else): park (the op stays open).
   park: { kind: 'spec.patch', disturb: (d: ArcDescriptor, i: IntentRecord) => {
     if (i.kind !== 'spec.patch') throw new Error('not a spec.patch');
-    writeFileSync(i.expect.path, JSON.stringify({ ...JSON.parse(readFileSync(i.expect.path, 'utf8')) as object, scope: ['elsewhere/**'] }));
+    writeFileSync(i.expect.path, JSON.stringify({ ...JSON.parse(readFileSync(i.expect.path, 'utf8')) as object, intent: 'A different valid intent.' }));
     loseKeptOldSpec(i, d);
   }, closure: 'open' },
   // The executor-owned candidate ref moved by someone else: abort.

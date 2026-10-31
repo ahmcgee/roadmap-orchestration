@@ -1,3 +1,4 @@
+import { systemName } from '../src/core/ids.ts';
 // M3 records frozen in step 0a (SCHEMAS.md "M3: the holistic layer"): ids, the vision, obligations, witness
 // records, ruling sidecars, revision payloads, every new fact and plan-applied field, command bodies, plan and spec
 // fields, the lens and checkpoint outputs, and the obligation transition table (`table.total`).
@@ -110,7 +111,7 @@ const OBLIGATIONS = {
       deliveredBy: [], activation: 'must-hold', parent: 'I-2', contracts: [], state: { type: 'active' },
     },
   ],
-  mapping: { paths: [{ pattern: 'src/format.js', obligations: ['I-4'] }, { pattern: 'src/**', obligations: ['I-1', 'I-4'] }] },
+  mapping: { systems: [{ system: systemName('app'), obligations: ['I-4'] }, { system: systemName('app'), obligations: ['I-1', 'I-4'] }] },
 };
 
 describe('M3 ids', () => {
@@ -174,7 +175,7 @@ describe('M3 inputs: vision and obligations', () => {
     assert.throws(() => parseObligations({ ...OBLIGATIONS, obligations: [{ ...i1, witness: null }, i2, i4] }), /witness/);
     assert.throws(() => parseObligations({ ...OBLIGATIONS, obligations: [{ ...i1, deliveredBy: [] }, i2, i4] }), /deliveredBy/);
     assert.throws(() => parseObligations({ ...OBLIGATIONS, obligations: [i1, i2, { ...i4, parent: 'I-1' }] }), /parent/);
-    assert.throws(() => parseObligations({ ...OBLIGATIONS, mapping: { paths: [{ pattern: 'src/**', obligations: ['I-9'] }] } }), /mapping/);
+    assert.throws(() => parseObligations({ ...OBLIGATIONS, mapping: { systems: [{ system: systemName('app'), obligations: ['I-9'] }] } }), /mapping/);
     assert.throws(() => parseObligations({ ...OBLIGATIONS, lanes: [{ ...OBLIGATIONS.lanes[0], env: { set: { NODE_OPTIONS: '-r x' }, pass: [] } }] }), /env/);
     assert.throws(() => parseObligations({ ...OBLIGATIONS, obligations: [{ ...i1, witness: { lane: 'nope', testIds: ['t'] } }, i2, i4] }), /witness\.lane/);
   });
@@ -332,7 +333,7 @@ describe('M3 file records', () => {
   });
 
   it('the dispatch record: transientRules required, bounds optional, kept as written', () => {
-    const d = { unit: 'u1', specRev: 1, specSha256: H, scope: ['src/**'], riskFloor: 'med', routingRev: REV, implementerSeatRev: 'fedcba9876543210', at: AT, transientRules: 'm3' };
+    const d = { unit: 'u1', specRev: 1, specSha256: H,  riskFloor: 'med', routingRev: REV, implementerSeatRev: 'fedcba9876543210', at: AT, transientRules: 'm3' };
     assert.deepEqual(dispatchRecord(d, 'd'), d);
     const { transientRules: _, ...without } = d;
     assert.throws(() => dispatchRecord(without, 'd'), /transientRules/);
@@ -352,7 +353,7 @@ describe('M3 file records', () => {
 
   it('command bodies: the M3 commands, and an apply manifest with its revision inputs (G15)', () => {
     const bodies = [
-      
+
       { type: 'reverse', divergence: 'D-3' },
       { type: 'steer', unit: 'u1', brief: { path: '/r/brief.md', sha256: H }, budgetMin: 45, class: 'frontier', resume: true },
       { type: 'steer', unit: 'u1', brief: { path: '/r/brief.md', sha256: H }, budgetMin: 45, class: null, resume: false },
@@ -372,8 +373,8 @@ describe('M3 file records', () => {
   });
 
   it('spec: obligations and repairs, absent when none', () => {
-    const spec = {
-      schema: 'roadmap/spec-m1', unit: 'u1', rev: 1, lanes: [], acceptance: [{ id: 'A1', clause: 'x', failLoudIfUndelivered: true, state: 'active' }], scope: ['src/**'],
+    const spec = { intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
+      schema: 'roadmap/spec-m1', unit: 'u1', rev: 1, lanes: [], acceptance: [{ id: 'A1', clause: 'x', failLoudIfUndelivered: true, state: 'active' }],
       resources: [], decisions: [], facts: [], cites: { contracts: [], rulings: [] },
     };
     assert.deepEqual(specM1(spec, 's'), spec);
@@ -386,7 +387,7 @@ describe('M3 file records', () => {
   });
 
   it('plan: holistic, limits, a unit routing layer and limits, the repair origin; bounds resolve unit over plan over built-in', () => {
-    const unit = { id: 'u1', spec: 'specs/u1.json', risk: 'med', scope: ['src/**'], resources: [], after: [], contingent: [] };
+    const unit = { id: 'u1', spec: 'specs/u1.json', risk: 'med', systems: [systemName('app')], resources: [], after: [], contingent: [] };
     const base = {
       schema: 'roadmap/plan-m1', arc: 'arc-1', integrationBranch: 'main', baseline: A, worktreeRoot: '/var/tmp/wt', contracts: [], rulings: 'rulings.md',
       architectureDoc: 'docs/arch.md', direction: 'd', suite: { lanes: [] }, resources: [], units: [unit],
@@ -424,7 +425,7 @@ describe('M3 judgment outputs', () => {
     findings: [{ severity: 'P2', obligation: null, visionClauses: ['V-1'], claim: 'c', cause: 'k', evidence: [{ path: 'src/a.js', line: 2 }], mutant: { lane: 'journey', edits: [{ path: 'src/a.js', old: 'a', new: '' }] } }],
     reasons: ['r'], premises: [],
   };
-  const op = { op: 'admit', unit: { id: 'r1', risk: 'med', scope: ['src/format.js'], after: [], origin: 'repair' }, spec: {schema: 'roadmap/spec-m1', unit: 'r1', rev: 1, scope: ['src/format.js'], resources: [], lanes: [], acceptance: [{id: 'A1', clause: 'Fix the report', state: 'active', failLoudIfUndelivered: true}], decisions: [], facts: [], cites: {contracts: [], rulings: []}, obligations: [], repairs: []}, targets: [], cites: ['V-2'], evidence: ['F-1'] };
+  const op = { op: 'admit', unit: { id: 'r1', risk: 'med', systems: [systemName('app')], after: [], origin: 'repair' }, spec: { intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],schema: 'roadmap/spec-m1', unit: 'r1', rev: 1,  resources: [], lanes: [], acceptance: [{id: 'A1', clause: 'Fix the report', state: 'active', failLoudIfUndelivered: true}], decisions: [], facts: [], cites: {contracts: [], rulings: []}, obligations: [], repairs: []}, targets: [], cites: ['V-2'], evidence: ['F-1'] };
   const ckpt = {
     decision: 'bundle', reasons: ['F-1'], ops: [op],  findingDispositions: [{ finding: 'F-1', disposition: 'accepted', reason: 'r' }],
     interpretations: [{ clauses: ['V-1'], situation: 's', reading: 'r' }], cites: { vision: ['V-2'], observations: [{ treeSha: A, lane: 'journey', laneRev: LANE_REV, envId: ENV }], findings: ['F-1'] },
@@ -460,9 +461,9 @@ describe('M3 judgment outputs', () => {
         op: 'obligation-split', obligation: 'I-2',
         children: [{ id: 'I-5', statement: 's', docRef: { path: 'docs/t.md', anchor: '#a', quotedText: 'q' }, rule: null, witness: { lane: 'journey', testIds: ['t'], files: [] }, activation: 'must-hold', deliveredBy: [] }],
       },
-      
+
       { op: 'invalidate-approval', unit: 'u1' },
-      
+
       { op: 'request', class: 'cost', summary: 'a paid estate' },
     ].map((o) => ({ ...o, cites: ['V-1'], evidence: ['e'] }));
     const out = validateCheckpointOutput({ ...ckpt, ops: more });

@@ -1,3 +1,4 @@
+import { systemName } from '../src/core/ids.ts';
 // The gate stage (src/pipeline/gate.ts) through the unit driver, fake-backed: real processes, real git.
 // Named tests: gate.fingerprint-invalidated, gate.risk-promotion; also the approval fingerprint's content,
 // a revise round's directives and their re-check with the round handoff, the fingerprint's cited-only set, and
@@ -427,7 +428,7 @@ const VISION = {
   questions: [],
 };
 const JOURNEY = { id: 'journey', argv: ['node', '-e', '0'], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], reporter: 'jsonl' };
-const LANE_REV = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [JOURNEY], obligations: [], mapping: { paths: [] } }).lanes[0]!);
+const LANE_REV = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [JOURNEY], obligations: [], mapping: { systems: [] } }).lanes[0]!);
 function obligation(id: string, statement: string): Record<string, unknown> {
   return {
     id, rev: 1, statement, docRef: { path: 'ARCHITECTURE.md', anchor: 'Architecture', quotedText: 'One module' }, serves: ['V-1'],
@@ -438,7 +439,7 @@ function obligation(id: string, statement: string): Record<string, unknown> {
 const OBLIGATIONS = {
   schema: 'roadmap/obligations-m3', cutLine: 'the arc ends when mul ships', lanes: [JOURNEY],
   obligations: [obligation('I-1', 'mul multiplies.'), obligation('I-2', 'add stays fixed.')],
-  mapping: { paths: [{ pattern: 'docs/**', obligations: ['I-1'] }] },
+  mapping: { systems: [{ system: systemName('app'), obligations: ['I-1'] }] },
 };
 
 /** A holistic arc over u1: its vision and obligations in force from revision 1, as an M3 first start records them. */

@@ -141,8 +141,7 @@ import { type IntentOf,JUDGMENT_STAGES,type Parent,probeTargetKey } from '../cor
 import { atomicJson,canonicalJson } from '../core/fsx.ts';
 import {
 type ArcId,type CommandId,type EnvId,type FindingId,type InvocationId,type JobId,type LaneId,type NeedsUserId,type OpId,type ResourceName,type Sha,type UnitId,arcId,commandId,findingId,
-invocationId,jobIdOf,jobIdOfKind,parseJobId,resourceName,unitId,
-} from '../core/ids.ts';
+invocationId,jobIdOf,jobIdOfKind,parseJobId,resourceName,unitId } from '../core/ids.ts';
 import type { Containment,Journal,JournalView } from '../core/interfaces.ts';
 import { type CommandFile,type NeedsUserContent,STAGES,type Stage } from '../core/records.ts';
 import { type Read,arrayOf,bool,literal,nat,object,oneOf,positive,tagged,version } from '../core/validate.ts';

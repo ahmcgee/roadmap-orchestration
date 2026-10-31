@@ -124,8 +124,7 @@ type AmendmentSource,type Event,
 type Holder,
 JUDGMENT_STAGES,type JudgmentStage,
 OUTCOME_STAGES,type OperatorParkKind,type OutcomeStage,type PlanAppliedFact,
-type ProbeTarget,type RevisionPayload,type WalkOutcome,holderUnit,parentUnit,probeTargetKey,
-} from './core/events.ts';
+type ProbeTarget,type RevisionPayload,type WalkOutcome,holderUnit,parentUnit,probeTargetKey } from './core/events.ts';
 import { readJson } from './core/fsx.ts';
 import {
 type AmendmentId,type ArcId,CPU_POOL,type CommandId,type DebtId,type DivergenceId,
@@ -148,7 +147,7 @@ sha
 import type { JournalView } from './core/interfaces.ts';
 import { EVENTS_FILE,type LogSnapshot,readJournal } from './core/log.ts';
 import { checkpointSkipTriggerOf,gateLargeDiffOf } from './core/projections.ts';
-import { type CommandBody,type ContainmentMode,type KnownDefectMatch,type NeedsUserReason,type Receipt,type RunStart,type Stage,heartbeat,runStart,} from './core/records.ts';
+import { type CommandBody,type ContainmentMode,type KnownDefectMatch,type NeedsUserReason,type Receipt,type RunStart,type Stage,heartbeat,runStart } from './core/records.ts';
 import type { HolisticFold,Lineage,ResourceEntry,UnitState } from './core/state.ts';
 import { type AbsPath,type IsoTime,type RepoPattern,absPath,branchRef,isoTimeOf } from './core/values.ts';
 import type { CorpusPin } from './corpus/types.ts';
@@ -189,19 +188,16 @@ import { judgmentSeat,largeDiffSeat } from './pipeline/transitions.ts';
 import { type RejectionFile,rejectionFile } from './preflight/startup.ts';
 import { cpuCapacity,isDirty,poolUnits } from './resources/pool.ts';
 import {
-type ResolvedRouting,type SeatSources,arcScopeOf,provenanceStack,resolveRouting,
-} from './routing/layers.ts';
+type ResolvedRouting,type SeatSources,arcScopeOf,provenanceStack,resolveRouting } from './routing/layers.ts';
 import {
 type Backend,type ClassSource,type ClassTable,type ModelClass,type ProfileName,type RiskTier,
 type RoutingTable,
-type SeatRef,
-} from './routing/types.ts';
+type SeatRef } from './routing/types.ts';
 import { effectiveDependency } from './schedule/graph.ts';
 import { type SpecFactsOf,admitter,nextStage,rankOf } from './schedule/ready.ts';
 import {
 type ArcHold,type CompletionBlocker,type HolisticContexts,type JobQueueEntry,type QueueEntry,SCHED_FILE,type SchedFile,arcHolds,arcSettled,completionBlockers,dischargingObservation,
-readOnlyContexts,recordedLaneEnv,schedFile,unitSettled,
-} from './schedule/scheduler.ts';
+readOnlyContexts,recordedLaneEnv,schedFile,unitSettled } from './schedule/scheduler.ts';
 import type { AdmissionConstraint,Rank,ResourceRequest } from './schedule/types.ts';
 import { type MilestoneState,milestoneProgress,milestoneState,walksOf } from './walk/milestones.ts';
 import { milestoneEdges,milestonePassed,milestoneWaits } from './walk/node.ts';
@@ -312,8 +308,6 @@ export type UnitStatusLine = Readonly<{
   supersededBy: UnitId | null;
   /** The implementer's seat tier (A11), a tier, never a model; null before the first dispatch. */
   buildTier: RiskTier | null;
-  /** Plan defects (2026-10-16): the derived outputs its dispatch record adds to its scope, ascending; empty before a dispatch. */
-  derived: readonly RepoPattern[];
   running: UnitRunning | null;
   /** M4a rev 3 (F3): its lanes attempts' red, flaky and repeat lanes, host-suspected ones marked (src/pipeline/failures.ts). */
   failures: readonly LaneFailure[];
@@ -928,7 +922,6 @@ function unitLine(x: Inputs, unit: PlanUnit, times: Readonly<{ starts: ReadonlyM
     lineage: u.lineage,
     supersededBy: u.supersededBy,
     buildTier: u.buildTier,
-    derived: view.dispatchOf(unit.id)?.derived ?? [],
     running: state === 'running' || state === 'preparing' ? runningOf(view, u, times, holds, now) : null,
   };
 }

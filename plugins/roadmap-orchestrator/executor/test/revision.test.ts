@@ -1,3 +1,4 @@
+import { systemName } from '../src/core/ids.ts';
 import { readNeedsUser } from '../src/needsuser.ts';
 // M3 step A2: the revisioned-input core (src/commands/apply.ts `evaluateRevision`, `commitUnderFence`;
 // src/input/{classify,inforce}.ts; src/recover/revision.ts; src/core/fence.ts; src/commands/reverse.ts), over real
@@ -95,7 +96,7 @@ const VISION = {
 };
 const ADVANCES = ['V-1', 'V-2', 'V-3'];
 const JOURNEY = { id: 'journey', argv: ['node', '-e', '0'], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], reporter: 'jsonl' };
-const LANE_REV = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [JOURNEY], obligations: [], mapping: { paths: [] } }).lanes[0]!);
+const LANE_REV = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [JOURNEY], obligations: [], mapping: { systems: [] } }).lanes[0]!);
 
 function obligation(id: string, statement: string, over: Json = {}): Json {
   return {
@@ -107,7 +108,7 @@ function obligation(id: string, statement: string, over: Json = {}): Json {
 const OBLIGATIONS = {
   schema: 'roadmap/obligations-m3', cutLine: 'the arc ends when mul ships', lanes: [JOURNEY],
   obligations: [obligation('I-1', 'mul multiplies. mul(0, x) is 0.'), obligation('I-2', 'add stays fixed.')],
-  mapping: { paths: [{ pattern: 'docs/**', obligations: ['I-1'] }] },
+  mapping: { systems: [{ system: systemName('app'), obligations: ['I-1'] }] },
 };
 
 /** A ruling sidecar of the architect's (its `consistency` is only parsed here: the revisions judged are A1's to check at `rule`). */
@@ -150,7 +151,7 @@ function holisticArc(): ArcRun {
 // Commands
 
 const ctxOf = (r: ArcRun): CommandContext => ({ ...commandContextFor(r), docs: fakeDocs(r.journal, absPath(r.d.repo), branchName('main')) });
-const rctxOf = (r: ArcRun): RevisionContext => ({ runDir: r.ctx.runDir, view: r.journal.view, hostDir: r.ctx.hostDir, planFile: absPath(r.d.planPath), routingBase: BASE, laneEnv: process.env });
+const rctxOf = (r: ArcRun): RevisionContext => ({ runDir: r.ctx.runDir, view: r.journal.view, hostDir: r.ctx.hostDir, planFile: absPath(r.d.planPath), routingBase: r.ctx.routingBase, laneEnv: process.env });
 
 async function command(r: ArcRun, body: CommandBody): Promise<Readonly<{ id: string; outcome: CommandOutcome }>> {
   const file = submitCommand(r.ctx.runDir, r.ctx.plan().arc, body);
@@ -216,7 +217,7 @@ test('apply.route-unit: a unit routing layer re-resolves that unit alone (`routi
   const r = contextFor(d);
   try {
     editPlan(d, (p) => void (p.units[0]!['routing'] = { gate: { med: 'summit' } }));
-    const scope = commandScope({ runDir: r.ctx.runDir, repo: absPath(d.repo), hostDir: r.ctx.hostDir, planFile: absPath(d.planPath), routingBase: BASE });
+    const scope = commandScope({ runDir: r.ctx.runDir, repo: absPath(d.repo), hostDir: r.ctx.hostDir, planFile: absPath(d.planPath), routingBase: r.ctx.routingBase });
     assert.deepEqual(scope(applyBody(d) as Parameters<typeof scope>[0], r.journal.view, r.ctx.plan()), { type: 'units', units: ['u1'] });
     const { outcome } = await command(r, applyBody(d));
     assert.equal(outcome.kind, 'applied', JSON.stringify(outcome));
@@ -390,7 +391,7 @@ test('apply.obligation-split-parent-stays: a split parent stays split (H14), and
     // Removing the parent even with an apply reason: a split parent is never disposed; its family leaves with its children.
     editObligations(r.d, (o) => {
       o.obligations = o.obligations.filter((x) => x['id'] !== 'I-1' && x['id'] !== 'I-4');
-      o['mapping'] = { paths: [{ pattern: 'docs/**', obligations: ['I-2'] }] };
+      o['mapping'] = { systems: [{ system: 'documentation', obligations: ['I-2'] }] };
     });
     const reason = reasonOf((await command(r, applyBody(r.d))).outcome);
     assert.match(reason, /I-1 is split into I-4 and stays split: disposition its children instead \(H14\)/);
@@ -398,34 +399,6 @@ test('apply.obligation-split-parent-stays: a split parent stays split (H14), and
     assert.match(unreasoned, /I-4 is weakened \(removed\) without an apply --reason/);
     assert.equal(lastApplied(r).rev, 2, 'neither refused edit became the plan in force');
 
-  } finally {
-    r.journal.close();
-  }
-});
-
-test('apply.scope-growth-ruling: a dispatched unit\'s scope grows only with a cited ruling for it naming exactly the added patterns', T, async () => {
-  const d = setupArc({ steps: [] });
-  addRuling(d, 'C-2', 'u1 may also edit `docs/**`.', { kind: 'decision', appliesTo: { type: 'units', units: ['u1'] } });
-  recordFirst(d);
-  const r = contextFor(d);
-  try {
-    pin(r, 'u1');
-    const grow = (cites: readonly string[]): void => {
-      editPlan(d, (p) => void (p.units[0]!['scope'] = ['src/**', 'test/**', 'contracts/**', 'docs/**']));
-      editSpec(d, 'u1', (s) => {
-        s['rev'] = 2;
-        s['scope'] = ['src/**', 'test/**', 'contracts/**', 'docs/**'];
-        s['cites'] = { contracts: ['contracts/api.md'], rulings: cites };
-      });
-    };
-    grow(['C-1']);
-    const reason = reasonOf((await command(r, {...applyBody(d), reason: ' '})).outcome);
-    assert.match(reason, /unit u1: growing scope needs apply --reason/);
-    assert.match(reason, /growing spec's scope needs apply --reason/);
-    grow(['C-1', 'C-2']);
-    const ok = await command(r, applyBody(d));
-    assert.equal(ok.outcome.kind, 'applied', JSON.stringify(ok.outcome));
-    assert.deepEqual(lastApplied(r).changes.map((c) => c.type), ['unit-changed', 'spec']);
   } finally {
     r.journal.close();
   }
@@ -1044,4 +1017,3 @@ describe(`matrix row ${REVERSE}`, () => {
     });
   }
 });
-

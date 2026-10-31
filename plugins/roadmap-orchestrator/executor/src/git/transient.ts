@@ -1,19 +1,5 @@
-// The unit diff and the two candidate validations that run on it in code (DESIGN §3 "Merge"):
-//
-// - `diffBase(T, branch)` is the one diff base everyone uses: `merge-base(T, branch)`. It is recomputed on
-//   every call, so after a merge-in (whose commit has T as a parent) it is T itself.
-// - The transient check refuses a unit diff that touches run state or evidence, files only the executor
-//   writes, or in-tree `.roadmap/` (H15): any `.roadmap/` path and any path outside the unit's pinned scope.
-//   Nothing transient may reach a candidate, so the tested head is the published head and the
-//   PR diff stays product-only. A violation is a scope-growth finding for a normal fix round, never a
-//   silent drop. The same check runs at salvage over the salvage SHA (field report 2026-10-24), and gates a
-//   scope-only re-entry's carried approval (src/pipeline/review.ts).
-// - The docs check (G17) confines a docs publication's diff to the `.roadmap/` files it renders and its
-//   contract ops' paths.
-// - The prefix-collision guard refuses a candidate whose new paths would collide on a case-insensitive
-//   filesystem. Collisions already present at T are grandfathered.
 import type { LaneId, Sha } from '../core/ids.ts';
-import { type DispatchRecord, type SpecM1, effectiveScope, inScope, type EffectiveScope } from '../core/records.ts';
+import { type SpecM1 } from '../core/records.ts';
 import { type AbsPath, type RepoPath, type RepoPattern, matchesPattern, repoPath } from '../core/values.ts';
 import { git, lsTree, mergeBase } from './git.ts';
 
@@ -43,9 +29,8 @@ export function unitDiffPaths(repo: AbsPath, tip: Sha, branch: Sha): readonly Re
 
 export type TransientRule =
   /** Under `.roadmap/`. */
-  | 'roadmap-dir'
-  /** A path no pattern of the unit's pinned scope matches. */
-  | 'out-of-scope'
+
+  | 'protected-path'
   /** The docs check: a path that is neither a rendered `.roadmap/` file nor a contract op's path. */
   | 'not-docs'
   /** A run dir (`roadmap-runtime/`, `.roadmap-runtime/`) or a scratch dir (`__preview/`, `__codex/`). */
@@ -64,19 +49,16 @@ export type TransientViolation =
 /** One `evidenceGlobs` entry of a spec lane. */
 export type LaneEvidenceGlob = Readonly<{ lane: LaneId; glob: RepoPattern }>;
 
-/**
- * H15: no `.roadmap/` path, and every path inside `scope`, the dispatch record's effective scope (its pinned scope,
- * re-pinned on a ruled growth, and its derived outputs). `evidenceGlobs`: the spec's declared lane `evidenceGlobs` (every lane's, active or not), in spec order.
- */
-export type TransientRules = Readonly<{ evidenceGlobs: readonly LaneEvidenceGlob[]; scope: EffectiveScope }>;
+
+export type TransientRules = Readonly<{ evidenceGlobs: readonly LaneEvidenceGlob[]; protectedPaths: readonly RepoPattern[] }>;
 
 /** Every `evidenceGlobs` entry of a spec's lanes, active or not, in spec order. */
 export const laneEvidenceGlobs = (spec: SpecM1): readonly LaneEvidenceGlob[] =>
   spec.lanes.flatMap((l) => l.evidenceGlobs.map((glob) => ({ lane: l.id, glob })));
 
 /** The rules of a unit's candidate from its latest dispatch record and its spec in force. */
-export function unitTransientRules(dispatch: DispatchRecord, spec: SpecM1): TransientRules {
-  return { evidenceGlobs: laneEvidenceGlobs(spec), scope: effectiveScope(dispatch) };
+export function unitTransientRules(protectedPaths: readonly RepoPattern[], spec: SpecM1): TransientRules {
+  return { evidenceGlobs: laneEvidenceGlobs(spec), protectedPaths };
 }
 
 const RUN_STATE_SEGMENTS: ReadonlySet<string> = new Set(['roadmap-runtime', '.roadmap-runtime', '__preview', '__codex']);
@@ -86,7 +68,7 @@ const INVOCATION_DIR = /^[1-9][0-9]*-[1-9][0-9]*$/;
 
 function violationOf(rules: TransientRules, path: RepoPath): TransientViolation | null {
   const segments = path.split('/');
-  if (segments[0] === '.roadmap') return { path, rule: 'roadmap-dir' };
+  if (rules.protectedPaths.some((p) => matchesPattern(path, p))) return { path, rule: 'protected-path' };
   if (segments.some((s) => RUN_STATE_SEGMENTS.has(s))) return { path, rule: 'run-state' };
   if (segments[0] === 'evidence') return { path, rule: 'evidence' };
   const declared = rules.evidenceGlobs.find((g) => matchesPattern(path, g.glob));
@@ -95,7 +77,6 @@ function violationOf(rules: TransientRules, path: RepoPath): TransientViolation 
   if (name === 'events.jsonl' || name.startsWith('events.torn.')) return { path, rule: 'executor-file' };
   const parent = segments[segments.length - 2];
   if (parent !== undefined && INVOCATION_DIR.test(parent) && RUNNER_FILES.has(name)) return { path, rule: 'executor-file' };
-  if (!inScope(rules.scope, path)) return { path, rule: 'out-of-scope' };
   return null;
 }
 
@@ -176,4 +157,3 @@ export function prefixCollisions(repo: AbsPath, tip: Sha, candidateTree: Sha): r
   }
   return out;
 }
-

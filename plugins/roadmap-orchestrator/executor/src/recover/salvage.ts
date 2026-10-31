@@ -12,8 +12,7 @@ import type { Disposition, JournalView, Reconciler } from '../core/interfaces.ts
 import { refTarget } from '../git/git.ts';
 import {
   type SalvageRules, SalvageUnmergedError, checkRejected, finishIndexReconcile, rederiveInputs, rejectedDir,
-  salvagePostcondition,
-} from '../git/salvage.ts';
+  salvagePostcondition } from '../git/salvage.ts';
 
 export function reconcileSalvageCommit(rules: SalvageRules): Reconciler<'salvage.commit'> {
   return async function reconcile(

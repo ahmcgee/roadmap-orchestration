@@ -1,3 +1,5 @@
+import { readRepoConfig } from '../../src/preflight/checks.ts';
+import { systemName } from '../../src/core/ids.ts';
 // Shared by the stage, lane and dispatch tests: one unit `u1` of a fresh arc over a real git repo made from
 // test/fixtures/unit-repo (a small Node project whose `add` is deliberately wrong), a plan and spec whose
 // lanes are real commands, a resource `db` whose probe and teardown are res-tool.ts, and the fake backends
@@ -161,11 +163,11 @@ export function recordFirstPlan(
   writeStart(runDir, repo, planPath, profile);
   const files = readInputFiles(planPath, repo);
   if (files.corpus !== null) {
-    const rows = phase0Rows(phase0InputOf(files, null, null), APPLY);
+    const rows = phase0Rows(phase0InputOf(files, config ?? readRepoConfig(repo), null), APPLY);
     if (rows.rows.length > 0 || rows.opened === null) throw new Error(`the corpus arc's files are refused: ${JSON.stringify(rows.rows)}`);
     keepCorpusFiles(runDir, rows.opened.files);
   }
-  recordPlan(journal, runDir, files, [], { profile, config, arcRoles });
+  recordPlan(journal, runDir, files, [], { profile, config: config ?? readRepoConfig(repo), arcRoles });
 }
 
 /** Puts the run's input files as they are now in force as the next plan revision (an `apply` of, say, an edited ledger). */
@@ -210,11 +212,11 @@ export function setupUnit(opts: SetupOptions): StageRun {
 
   const planDir = tmpDir('stage-plan');
   const specPath = join(planDir, 'u1.json');
-  writeFileSync(specPath, JSON.stringify({
+  writeFileSync(specPath, JSON.stringify({ intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
     schema: 'roadmap/spec-m1', unit: U1, rev: 1,
     lanes: (opts.lanes ?? [UNIT_LANE]).map(laneJson),
     acceptance: [{ id: 'A1', clause: 'add(1, 2) is 3', failLoudIfUndelivered: true, state: 'active' }],
-    scope: ['src/**', 'test/**'], resources: opts.resources ?? [], decisions: [], facts: [],
+     resources: opts.resources ?? [], decisions: [], facts: [],
     cites: { contracts: ['contracts/api.md'], rulings: ['C-1'] }, ...(opts.forces === undefined ? {} : { forces: opts.forces }),
   }));
   cpSync(RULINGS, join(planDir, 'rulings.md'));
@@ -227,7 +229,7 @@ export function setupUnit(opts: SetupOptions): StageRun {
     schema: 'roadmap/plan-m1', arc, integrationBranch: 'main', baseline: base, worktreeRoot: tmpDir('stage-wt'),
     contracts: ['contracts/api.md'], rulings: 'rulings.md', architectureDoc: 'ARCHITECTURE.md', direction: 'Keep it small.',
     suite: { lanes: (opts.suite ?? []).map(suiteLaneJson) }, resources: [{ name: DB, probe: tool('probe'), teardown: tool('teardown') }],
-    units: [{ id: U1, spec: 'u1.json', risk: opts.risk ?? 'med', scope: ['src/**', 'test/**'], resources: opts.resources ?? [], ...opts.unit }],
+    units: [{ id: U1, spec: 'u1.json', risk: opts.risk ?? 'med', systems: Object.keys((opts.systemsMap as { systems: object } | undefined)?.systems ?? { app: true }).slice(0, 1).map((s) => systemName(s)), resources: opts.resources ?? [], ...opts.unit }],
     ...(opts.derived === undefined ? {} : { derived: opts.derived }),
     ...(opts.environments === undefined ? {} : { environments: opts.environments }),
     ...(opts.routing === undefined ? {} : { routing: opts.routing }),
@@ -238,7 +240,7 @@ export function setupUnit(opts: SetupOptions): StageRun {
   const runDir = tmpDir('stage-run');
   const journal = openJournal(absPath(runDir), arcId(arc));
   // As a first start does: the files become the plan in force (rev 1), whose spec the stages load.
-  const config = opts.systemsMap === undefined ? null : parseRepoConfig({ systemsMap: opts.systemsMap });
+  const config = parseRepoConfig({ systemsMap: opts.systemsMap ?? { systems: { app: { paths: ['src/**', 'test/**', 'contracts/**', 'ARCHITECTURE.md'] }, lib: { paths: ['lib/**'] }, mul: { paths: ['src/mul.js'] }, div: { paths: ['src/div.js'] }, documentation: { paths: ['docs/**'] } } } });
   recordFirstPlan(journal, absPath(runDir), planPath, absPath(repo), opts.profile, config);
   const scenario = writeScenario(tmpDir('stage-scenario'), opts.steps);
   const routing = resolveRouting({ profile: opts.profile ?? 'default', classes: null, repoConfig: null, plan: plan.routing ?? null, unit: null });
@@ -303,7 +305,7 @@ export function planCheckStep(a: PlanCheckAnswer, expect: Expect = {}, before: r
 export const planCheckAnswer = (a: PlanCheckAnswer): JsonValue =>
   ({
     decision: a.decision, ordering: a.ordering ?? null, reasons: ['C-1 holds'], patch: a.patch ?? null, risk: a.risk ?? 'med', notes: a.notes ?? '', premises: [...(a.premises ?? [])], visionConflict: [...(a.visionConflict ?? [])],
-    scopeGrowth: (a.scopeGrowth ?? []).map((g) => ({ patterns: [...g.patterns], reason: g.reason })), staleLinks: (a.staleLinks ?? []).map((l) => ({ ...l })),
+     staleLinks: (a.staleLinks ?? []).map((l) => ({ ...l })),
     // dev.17: an approve's design record defaults by the `planCheck` act (a module change of the scope's first pattern).
     ...(a.design === undefined ? {} : { design: a.design }), split: a.split ?? null, scaffold: a.scaffold ?? null, poc: a.poc ?? null,
   }) as JsonValue;

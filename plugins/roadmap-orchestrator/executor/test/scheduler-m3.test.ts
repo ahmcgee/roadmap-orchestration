@@ -470,7 +470,7 @@ describe('repair batches in the scheduler (R7)', () => {
         { id: 'u2', origin: 'repair', obligations: ['I-1'], repairs: ['F-1'], lanes: [{ id: 'div', argv: ['node', '--test', 'test/div.test.js'] }] },
       ],
       obligations: [{ id: 'I-1', testIds: ['t1'] }, { id: 'I-2', testIds: ['t2'] }],
-      mapping: [{ pattern: 'src/**', obligations: ['I-1'] }, { pattern: 'test/**', obligations: ['I-1'] }, { pattern: 'contracts/**', obligations: ['I-1'] }, { pattern: 'lib/**', obligations: ['I-2'] }],
+      mapping: [{ system: 'app', obligations: ['I-1'] }, { system: 'app', obligations: ['I-1'] }, { system: 'app', obligations: ['I-1'] }, { system: 'lib', obligations: ['I-2'] }],
       trees: { '*': { outcomes: { t1: 'pass', t2: 'pass' } } },
       beforeStart: openBefore(witnessDraft('I-2')),
     });
@@ -502,8 +502,8 @@ describe('repair batches in the scheduler (R7)', () => {
       ],
       obligations: [{ id: 'I-1', testIds: ['t1'] }, { id: 'I-2', testIds: ['t2'] }, { id: 'I-3', testIds: ['t3'] }],
       mapping: [
-        { pattern: 'src/**', obligations: ['I-1'] }, { pattern: 'src/mul.js', obligations: ['I-3'] }, { pattern: 'src/div.js', obligations: ['I-2'] },
-        { pattern: 'test/**', obligations: ['I-1'] }, { pattern: 'contracts/**', obligations: ['I-1'] },
+        { system: 'app', obligations: ['I-1'] }, { system: 'mul', obligations: ['I-3'] }, { system: 'div', obligations: ['I-2'] },
+        { system: 'app', obligations: ['I-1'] }, { system: 'app', obligations: ['I-1'] },
       ],
       trees: { '*': { outcomes: { t1: 'pass', t2: 'pass', t3: 'pass' } } },
       beforeStart: openBefore(witnessDraft('I-2'), witnessDraft('I-3')),

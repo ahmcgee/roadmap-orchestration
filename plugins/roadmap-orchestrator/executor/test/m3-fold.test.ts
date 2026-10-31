@@ -49,7 +49,7 @@ const divergence = (n: number, job: string, index: number): LogRecord => fact({
 const digest = (seq: number, ids: readonly string[]): LogRecord => fact({ kind: 'divergence-digest', needsUser: `nu-${seq}`, ids });
 const dispatch = (unit: UnitId, bounds?: object): LogRecord => fact({
   kind: 'dispatch', record: {
-    unit, specRev: specRev(1), specSha256: H, scope: [repoPattern('src/**')], riskFloor: 'med', routingRev: REV, implementerSeatRev: seatRev('fedcba9876543210'), at: AT, transientRules: 'm3',
+    unit, specRev: specRev(1), specSha256: H,  riskFloor: 'med', routingRev: REV, implementerSeatRev: seatRev('fedcba9876543210'), at: AT, transientRules: 'm3',
     ...(bounds === undefined ? {} : { bounds }),
   },
 });

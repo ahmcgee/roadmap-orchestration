@@ -73,7 +73,7 @@ function reenteredArc(s: Setup): Arc {
   const plan = JSON.parse(readFileSync(d.planPath, 'utf8')) as { units: Record<string, unknown>[] };
   const [first] = plan.units;
   plan.units.push({
-    ...first, id: 'u2', spec: 'u2.json', risk: 'med', ...(s.scope === undefined ? {} : { scope: s.scope }),
+    ...first, id: 'u2', spec: 'u2.json', risk: 'med', 
     reenters: { unit: 'u1', ...(s.enterAt === undefined ? {} : { enterAt: s.enterAt }) },
   });
   writeFileSync(d.planPath, JSON.stringify(plan));
@@ -119,7 +119,6 @@ const outcomeTests = (): unknown => describe('prepare: outcomes', { concurrency:
       assert.deepEqual(outcomes(arc.d, 'u2'), ['prepare:clean-plan-check']);
       const pins = r.journal.view.dispatchesOf(U2);
       assert.equal(pins.length, 1);
-      assert.deepEqual(pins[0]!.scope, [...r.unit('u2').scope].sort());
     } finally {
       r.journal.close();
     }
@@ -189,45 +188,6 @@ const outcomeTests = (): unknown => describe('prepare: outcomes', { concurrency:
       assert.equal(done.head, arc.oldTip);
       assert.equal(r.journal.view.opsOf('mergein.prepare').length, 0);
       assert.equal(capturedEvidence(r.journal.view, done.evidence).manifest.files.length, 0, 'a clean preparation snapshots zero files');
-    } finally {
-      r.journal.close();
-    }
-  });
-
-  test('prepare.envelope: a scope outside the lineage\'s original envelope fails loud before the pin', T, async () => {
-    const arc = reenteredArc({ tip: 'clean', scope: ['src/**', 'lib/**'] });
-    const r = contextFor(arc.d);
-    try {
-      await assert.rejects(prepare(r.ctx, r.unit('u2')), /scope lib\/\*\* lies outside its lineage's envelope/);
-      assert.equal(r.journal.view.dispatchOf(U2), null);
-    } finally {
-      r.journal.close();
-    }
-  });
-
-  test('prepare.reentry-widened-envelope: a scope beyond the envelope is pinned when its re-entry widened it by exactly those patterns', T, async () => {
-    const { r, done } = await prepared({ tip: 'clean', scope: ['src/**', 'lib/**'], widened: ['lib/**'] });
-    try {
-      assert.equal(done.outcome.kind, 'clean-plan-check');
-      assert.deepEqual(dispatchOf(r.journal.view, U2).scope, ['lib/**', 'src/**']);
-    } finally {
-      r.journal.close();
-    }
-    const arc = reenteredArc({ tip: 'clean', scope: ['src/**', 'lib/**', 'docs/**'], widened: ['lib/**'] });
-    const r2 = contextFor(arc.d);
-    try {
-      await assert.rejects(prepare(r2.ctx, r2.unit('u2')), /scope docs\/\*\* lies outside its lineage's envelope/, 'only the widened patterns');
-      assert.equal(r2.journal.view.dispatchOf(U2), null);
-    } finally {
-      r2.journal.close();
-    }
-  });
-
-  test('prepare.envelope-narrower: a scope narrower than the envelope is pinned', T, async () => {
-    const { r, done } = await prepared({ tip: 'clean', scope: ['src/lib/**', 'test/*.js'] });
-    try {
-      assert.equal(done.outcome.kind, 'clean-plan-check');
-      assert.deepEqual(dispatchOf(r.journal.view, U2).scope, ['src/lib/**', 'test/*.js']);
     } finally {
       r.journal.close();
     }
@@ -421,4 +381,3 @@ if (process.env['PREPARE_CHILD'] !== undefined) {
     }
   });
 }
-

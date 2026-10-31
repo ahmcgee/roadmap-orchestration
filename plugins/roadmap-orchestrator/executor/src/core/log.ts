@@ -12,15 +12,13 @@
 // A saved fragment without its fact (a crash between truncate and fact) gets the fact at the next open.
 // Any invalid complete line is corruption: LogCorruptError, which startup reports as `log-corrupt`.
 import {
-  closeSync, existsSync, fstatSync, fsyncSync, ftruncateSync, openSync, readFileSync, readSync, readdirSync,
-} from 'node:fs';
+  closeSync, existsSync, fstatSync, fsyncSync, ftruncateSync, openSync, readFileSync, readSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { TextDecoder } from 'node:util';
 import { crashPoint } from './crash.ts';
 import {
   type AbortCode, type Event, type Fact, type IntentOf, type IntentRecord, type LogRecord, type OpKind, type OpOutcome,
-  type RecoveredBy, parseEventLine, prevHash, recordUnit, serializeEvent,
-} from './events.ts';
+  type RecoveredBy, parseEventLine, prevHash, recordUnit, serializeEvent } from './events.ts';
 import { CounterRegressionError, appendSync, durableWrite, exclusiveCreate } from './fsx.ts';
 import { type ArcId, type InvocationId, type OpId, type Sha256Hex, invocationId, opId, sha256 } from './ids.ts';
 import type { Durable, IntentBody, Journal, JournalView, NewIntent } from './interfaces.ts';

@@ -36,7 +36,7 @@ function withOwnControls(file: Json, own: AuditArcOptions['ownControl']): Json {
     writeWitnessControl(control, { trees });
     return { ...l, argv: witnessLaneArgv('jsonl', tmpDir(`witness-lane-${String(l['id'])}`), control) };
   });
-  const revs = new Map(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes, obligations: [], mapping: { paths: [] } }).lanes.map((l) => [l.id as string, laneRevOf(l)]));
+  const revs = new Map(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes, obligations: [], mapping: { systems: [] } }).lanes.map((l) => [l.id as string, laneRevOf(l)]));
   const obligations = (file['obligations'] as (Json & { proofJudgment: Json; witness: Json })[]).map((o) => ({
     ...o, proofJudgment: o.proofJudgment,
   }));
@@ -84,7 +84,7 @@ export function unitSteps(unit: string, files: Readonly<Record<string, string>>,
 }
 
 /** Every path a unit may touch maps to `obligations` (a unit then declares them). */
-export const mapped = (obligations: readonly string[]) => ['src/**', 'test/**', 'contracts/**'].map((pattern) => ({ pattern, obligations }));
+export const mapped = (obligations: readonly string[]) => ['app'].map((system) => ({ system, obligations }));
 
 /** The log's facts, read as `status` reads them. */
 export const factsOf = (r: ArcRun): readonly Fact[] => readJournal(r.ctx.runDir, r.journal.view.arc).events.flatMap((e) => (e.type === 'fact' ? [e.fact] : []));

@@ -1,3 +1,4 @@
+import { inUnitSystems } from '../input/systems.ts';
 // The shared Phase-0 startup rows (M4a "`roadmap phase0 check`", step C1): one rule, run by `start` (src/preflight/
 // checks.ts), `apply` (src/commands/apply.ts) and `roadmap phase0 check` (src/commands/phase0.ts, both modes).
 // Synchronous: git runs as spawnSync reads.
@@ -91,16 +92,13 @@ import { DEBT_DOC,parseDebtBlock } from '../docs/debt.ts';
 import { git,gitCommonDir,gitRun } from '../git/git.ts';
 import { censusProblems,specCensusMismatches } from '../holistic/rederive.ts';
 import {
-type Obligations,type PlanDefect,type Vision,isExempt,parseObligations,parseVision,
-} from '../holistic/types.ts';
+type Obligations,type PlanDefect,type Vision,isExempt,parseObligations,parseVision } from '../holistic/types.ts';
 import { laneMisses } from '../holistic/witnessfiles.ts';
 import { sameExecution } from '../input/laneexecution.ts';
 import { unknownLaneSystems } from '../input/systems.ts';
 
-import { type EffectiveScope,inScope } from '../core/records.ts';
 import { visionUnconfirmed } from '../holistic/vision.ts';
 import { mayOverlap } from '../input/classify.ts';
-import { derivedExclusions,derivedWidening } from '../input/derived.ts';
 import type { InputFiles } from '../input/inforce.ts';
 import { type PlanM1,type PlanUnit,derivedOf,designUnitOf,milestonesNeedHolistic,milestonesOf } from '../input/plan.ts';
 import { isLive } from '../preflight/lanerows.ts';
@@ -108,7 +106,7 @@ import type { StartupRejection } from '../preflight/startup.ts';
 import type { RepoConfig } from '../routing/layers.ts';
 import { type Ruling,parseRulings } from '../spec/rulings.ts';
 import { SpecFileError,parseSpec } from '../spec/spec.ts';
-import { type ChainProblem,type CorpusProblem,type Phase0Problem,type Phase0Record,type PhaseQuestion,parsePhase0Record,scopeOverlapFix } from './types.ts';
+import { type ChainProblem,type CorpusProblem,type Phase0Problem,type Phase0Record,type PhaseQuestion,parsePhase0Record } from './types.ts';
 
 type Row<K extends StartupRejection['kind']> = Extract<StartupRejection, { kind: K }>;
 
@@ -151,26 +149,13 @@ export type Phase0Input = Readonly<{
 }>;
 
 /**
- * Row 10 (scope growth, 2026-10-15), advisory: files outside a unit's scope that still name something its spec `removes`.
- * `referrers` ascending, non-empty: the patterns the unit's scope would need to keep them working.
- */
-export type ScopeReference = Readonly<{ kind: 'scope-references-outside'; unit: UnitId; removed: string; referrers: readonly RepoPath[] }>;
-
-/**
- * Row 13 (dev.12), advisory: a derived entry declaring no `regenerate` whose outputs are in the effective scope of `units`
- * (ascending, live ones): nothing checks that those outputs are what their generator writes, so a hand edit in them is
- * caught only by a reader.
- */
-export type DerivedUnregenerated = Readonly<{ kind: 'derived-unregenerated'; outputs: readonly RepoPattern[]; units: readonly UnitId[] }>;
-
-/**
  * dev.13, advisory: a unit of milestone `milestone` that does not descend (through `after`, transitively) from the
  * milestone's design unit `design`, so it may build before the design it builds to exists.
  */
 export type MilestoneUnitBeforeDesign = Readonly<{ kind: 'milestone-unit-before-design'; milestone: MilestoneId; unit: UnitId; design: UnitId }>;
 
 /** A Phase-0 advisory: never a refusal (rows 10, 13, 14; dev.26: existing plan defects in APPLY). */
-export type Phase0Advisory = ScopeReference | DerivedUnregenerated | MilestoneUnitBeforeDesign | Row<'plan-defect'> | Readonly<{ kind: 'lanes-differ-only-env-set'; lanes: readonly [string, string] }>;
+export type Phase0Advisory = Readonly<{kind: 'system-overlap'; units: readonly [UnitId, UnitId]; systems: readonly import('../core/ids.ts').SystemName[]}> | MilestoneUnitBeforeDesign | Row<'plan-defect'> | Readonly<{ kind: 'lanes-differ-only-env-set'; lanes: readonly [string, string] }>;
 
 /**
  * The rows found, and on a clean re-derivation the source the pin read (its files are what a start or apply keeps).
@@ -219,7 +204,7 @@ export function phase0Rows(input: Phase0Input, mode: Phase0Mode): Phase0Outcome 
   const { plan } = input;
   rows.push(...milestonesNeedHolisticRows(plan));
   rows.push(...laneTopologyRows(input));
-  const advisories: Phase0Advisory[] = [...referenceRows(input), ...derivedUnregenerated(plan), ...milestoneUnitsBeforeDesign(plan), ...nearDuplicateLanes(input)];
+  const advisories: Phase0Advisory[] = [...systemOverlap(input), ...milestoneUnitsBeforeDesign(plan), ...nearDuplicateLanes(input)];
   const defects = planDefects(input, mode);
   if (!mode.defects && defects.length > 0) advisories.push({ kind: 'plan-defect', defects });
   if (plan.target !== 'corpus') {
@@ -247,6 +232,9 @@ export function phase0Rows(input: Phase0Input, mode: Phase0Mode): Phase0Outcome 
     if (guide !== null && guide.source.kind === 'same-repo') {
       const set = corpusFileSet(pin, guide);
       corpus.push(...overlapProblems(plan, set, input.settled));
+      const changed = git(input.repo, ['diff', '--name-only', '--no-renames', '-z', plan.baseline, referenceCommit(input.repo, plan)]).split('\0').filter((p) => p !== '').map((p) => repoPath(p));
+      const drift = changed.filter((p) => inCorpusSet(set, p));
+      if (mode.fresh && drift.length > 0) corpus.push({ type: 'corpus-drift', paths: drift.sort() });
     }
   }
   // 2-3. The census.
@@ -315,37 +303,9 @@ export function sameRepoCorpusSet(pin: CorpusPin, guide: Buffer): CorpusFileSet 
 export const scopeOverlapsCorpus = (set: CorpusFileSet, s: RepoPattern): boolean =>
   set.files.some((f) => matchesPattern(f, s)) || set.patterns.some((p) => mayOverlap(s, p));
 
-/**
- * The one unit-overlap rule (R32): a `scope-overlaps-corpus` per unit of `units` whose scope may reach the corpus file set,
- * a cut unit excepted (it builds nothing). The Phase-0 rows run it over every unit of the plan the arc has not settled,
- * every revision over the units it changes (src/commands/apply.ts `evaluateRevision`), and the deflake job over a unit
- * before it mints it.
- */
-export function scopeOverlapProblems(set: CorpusFileSet, units: readonly Pick<PlanUnit, 'id' | 'scope' | 'cut'>[]): readonly CorpusProblem[] {
-  return units.filter((u) => u.cut === undefined && u.scope.some((s) => scopeOverlapsCorpus(set, s)))
-    .map((u) => ({ type: 'scope-overlaps-corpus', unit: u.id, fix: scopeOverlapFix(u.id) }));
-}
-
 function overlapProblems(plan: PlanM1, set: CorpusFileSet, settled: ReadonlySet<UnitId>): readonly CorpusProblem[] {
   const contracts = plan.contracts.filter((c) => inCorpusSet(set, c)).map((path): CorpusProblem => ({ type: 'contract-overlaps-corpus', path }));
-  return [...scopeOverlapProblems(set, plan.units.filter((u) => !settled.has(u.id))), ...contracts];
-}
-
-// ---------------------------------------------------------------------------------------------------
-// 10. References outside a unit's scope (scope growth, 2026-10-15)
-
-/**
- * The files at `at` outside `scope` (and outside `.roadmap/`) that still name each of `removes`, searched for literally
- * (`git grep -l -F`); one entry per removed string with referrers. The plan-check of the unit reads the same scan.
- */
-export function scopeReferences(repo: AbsPath, at: string, unit: UnitId, scope: EffectiveScope, removes: readonly string[]): readonly ScopeReference[] {
-  return removes.flatMap((removed) => {
-    const r = gitRun(repo, ['grep', '-l', '-z', '-F', '-e', removed, at, '--'], { okCodes: [0, 1] });
-    const referrers = [...new Set(r.stdout.split('\0').filter((x) => x !== '').map((hit) => repoPath(hit.slice(at.length + 1))))]
-      .filter((p) => !p.startsWith('.roadmap/') && !inScope(scope, p))
-      .sort();
-    return referrers.length === 0 ? [] : [{ kind: 'scope-references-outside' as const, unit, removed, referrers }];
-  });
+  return [...contracts];
 }
 
 /** The commit row 10 searches: the integration tip, or the baseline before the integration branch exists. */
@@ -353,24 +313,6 @@ export function referenceCommit(repo: AbsPath, plan: PlanM1): string {
   const tip = gitRun(repo, ['rev-parse', '--verify', '-q', `refs/heads/${plan.integrationBranch}^{commit}`], { okCodes: [0, 1] });
   return tip.code === 0 ? tip.stdout.trim() : plan.baseline;
 }
-
-/** Row 10 over the plan's units whose spec loads and declares `removes`. */
-function referenceRows(input: Phase0Input): readonly ScopeReference[] {
-  const specs = parsedSpecs(input).filter((s) => specRemoves(s).length > 0);
-  if (specs.length === 0) return [];
-  const at = referenceCommit(input.repo, input.plan);
-  return specs.flatMap((spec) => {
-    const unit = input.plan.units.find((u) => u.id === spec.unit);
-    if (unit === undefined) throw new Error(`a parsed spec of ${spec.unit}, which the plan does not hold`);
-    return scopeReferences(input.repo, at, unit.id, { include: [...unitEffectiveScope(input.plan, unit).include, ...spec.scope], exclude: derivedExclusions(input.plan, unit.scope) }, specRemoves(spec));
-  });
-}
-
-// ---------------------------------------------------------------------------------------------------
-// 11. Plan defects (2026-10-16)
-
-/** A unit's effective scope as its dispatch would pin it: its plan scope and the derived outputs it takes in. */
-const unitEffectiveScope = (plan: PlanM1, u: PlanUnit): EffectiveScope => ({ include: [...u.scope, ...derivedWidening(plan, u.scope)], exclude: derivedExclusions(plan, u.scope) });
 
 /**
  * The one plan-defect computation (derived exclusion, 2026-10-27; 1.0.0-dev.26): startup reports all; revisions
@@ -387,18 +329,6 @@ export function planDefects(input: Phase0Input, mode: Phase0Mode): readonly Plan
   const obligations = input.plan.holistic.obligations === undefined ? null : load(rows, 'plan.holistic.obligations', input.where, input.obligations, parseObligations);
   if (obligations !== null) defects.push(...witnessDefects(input, obligations, mode.fresh));
   return defects;
-}
-
-/** Row 13: each derived entry without `regenerate` whose outputs a live unit's effective scope may reach. */
-function derivedUnregenerated(plan: PlanM1): readonly DerivedUnregenerated[] {
-  return derivedOf(plan).filter((d) => d.regenerate === undefined).flatMap((d) => {
-    const units = plan.units.filter((u) => {
-      if (!isLive(plan, u)) return false;
-      const scope = unitEffectiveScope(plan, u);
-      return d.outputs.some((o) => !scope.exclude.includes(o) && scope.include.some((s) => mayOverlap(s, o)));
-    }).map((u) => u.id).sort();
-    return units.length === 0 ? [] : [{ kind: 'derived-unregenerated' as const, outputs: d.outputs, units }];
-  });
 }
 
 /**
@@ -495,16 +425,16 @@ function witnessDefects(input: Phase0Input, obligations: Obligations, fresh: boo
     const w = o.witness!;
     if (w.files === undefined) {
       if (fresh) out.push({ type: 'witness-files-undeclared', obligation: o.id });
-      
+
       continue;
     }
     // A witness on no arc lane is the classifier's refusal (every revision), not this row's.
     const lane = obligations.lanes.find((l) => l.id === w.lane);
-    const reach = withDependencies(plan, o.deliveredBy).map((u) => unitEffectiveScope(plan, u));
+    const reach = withDependencies(plan, o.deliveredBy);
     for (const file of w.files) {
       const missing = lane === undefined ? null : laneMisses(lane, file);
       if (missing !== null) out.push({ type: 'witness-not-in-lane', obligation: o.id, lane: w.lane, file, missing });
-      if (!atTip(file) && !reach.some((scope) => inScope(scope, file))) {
+      if (!atTip(file) && !reach.some((u) => input.config?.systemsMap !== undefined && inUnitSystems(input.config?.systemsMap, u.systems, file))) {
         out.push({ type: 'witness-file-unreachable', obligation: o.id, file, units: o.deliveredBy });
       }
     }
@@ -611,7 +541,11 @@ function answerProblems(repo: AbsPath, record: Phase0Record, chain: readonly Arc
  */
 function chainRow(input: Phase0Input, guide: CorpusGuide | null, arcs: readonly ArcRef[], missing: ArcId | null): ChainProblem | null {
   const chain = input.plan.chain;
-  if (chain === undefined) return null;
+  if (chain === undefined) {
+    if (input.plan.previousHead === undefined) return null;
+    const baseline = baselineProblem(input, input.plan.previousHead, input.plan.previousHead, guide);
+    return baseline === null ? null : { type: 'baseline', baseline };
+  }
   const previous = missing === chain.previousArc ? null : arcs.at(-1) ?? null;
   const incomplete = previousIncomplete(chain.previousArc, previous);
   if (incomplete !== null) return incomplete;
@@ -681,6 +615,7 @@ export function milestonesNeedHolisticRows(plan: PlanM1): readonly Row<'mileston
 export function laneTopologyRows(input: Phase0Input): readonly Row<'plan-invalid'>[] {
   const map = input.config?.systemsMap ?? null;
   const specs = parsedSpecs(input);
+
   const arc = visionAndObligations(input).obligations?.lanes ?? [];
   const lanes = [
     ...input.plan.suite.lanes.map((l) => ({ lane: l, at: 'plan.suite.lanes' })),
@@ -689,6 +624,11 @@ export function laneTopologyRows(input: Phase0Input): readonly Row<'plan-invalid
   ];
   const rows = lanes.flatMap(({ lane, at }) => unknownLaneSystems(map, [lane]).map((u) =>
     schemaRow(`${at}.${u.lane}.systems`, map === null ? `${u.system}: the repo config has no systemsMap` : `${u.system}: a system of the repo config's systemsMap${u.system === DOCS_SYSTEM ? ' (docs: its docs class)' : ''}`)));
+  for (const unit of input.plan.units) for (const system of unit.systems) {
+    if (map === null || !Object.hasOwn(map.systems, system)) rows.push(schemaRow(`plan.units.${unit.id}.systems`, `${system}: a declared system in the repo systemsMap is required`));
+  }
+  const obligations = visionAndObligations(input).obligations;
+  for (const entry of obligations?.mapping.systems ?? []) if (map === null || !Object.hasOwn(map.systems, entry.system)) rows.push(schemaRow('obligations.mapping.systems', `${entry.system}: a declared system in the repo systemsMap is required`));
   const suite = new Set<string>(input.plan.suite.lanes.map((l) => l.id));
   for (const s of specs) for (const f of specForces(s)) if (!suite.has(f)) rows.push(schemaRow(`spec ${s.unit}.forces`, `${f}: a suite lane of the plan`));
   return rows;
@@ -725,3 +665,12 @@ export function visionAndObligations(input: Phase0Input): Readonly<{ vision: Vis
 // 12. The vision leak (an apply only)
 
 
+
+function systemOverlap(input: Phase0Input): readonly Phase0Advisory[] {
+  const units = input.plan.units.filter((u) => u.cut === undefined);
+  return units.flatMap((u, i) => units.slice(i + 1).flatMap((v) => {
+    const systems = u.systems.filter((s) => v.systems.includes(s));
+    return systems.length === 0 ? [] : [{ kind: 'system-overlap' as const, units: [u.id, v.id] as const, systems }];
+  }));
+
+}

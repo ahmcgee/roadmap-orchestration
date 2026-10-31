@@ -44,8 +44,7 @@ documentsXml,
 fastLanesText,
 handoverText,milestoneDocuments,milestonesText,
 referenceIndexText,rulingsText,systemNotesText,suiteLanesText,
-witnessChecksText,
-} from '../inputs.ts';
+witnessChecksText } from '../inputs.ts';
 import { BUILD_SCHEMA,DECISIONS_FILE } from '../schemas.ts';
 
 const system = `You are the implementer for one unit of a roadmap build, working alone and unattended in a git worktree. Nobody is watching and nobody will answer a question. The run ends when you return your final structured report; after it, the executor keeps your in-scope changes, runs the spec's lanes in a clean checkout, and a separate reviewer gates the result against the spec.
@@ -65,7 +64,7 @@ Waiting for something slow you started (a cluster reconciling, a long test run) 
 </how_your_turn_ends>
 
 <scope>
-The scope patterns in the message are pinned. When you finish, the executor keeps only changes to paths matching them; everything else, and anything under .roadmap/ (the orchestrator's directory), is discarded. Do not create or modify anything under .roadmap/.
+The unit names systems from the repository map. Do not create or modify protected .roadmap/ or pinned corpus files.
 
 Make only the changes the spec asks for or clearly needs. Keep the solution simple:
 - Do not add features, refactor, rename, reformat, or improve code beyond what the spec asks. Fixing one thing does not need the surrounding code cleaned up.
@@ -137,7 +136,7 @@ export const PROMPT: PromptModule<'build'> = {
   system,
   schema: BUILD_SCHEMA,
   fields: [
-    'systemNotes', 'notes', 'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks',
+    'systemNotes', 'notes', 'spec', 'intent', 'nonGoals', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'systems', 'fixRound', 'witnessChecks',
     'milestones', 'browser', 'certifiedAt', 'handover',
   ],
   render: (i) => `${documentsXml([
@@ -165,13 +164,11 @@ ${i.planCheckNotes === '' ? '(none)' : i.planCheckNotes}
 
 <certified_tree>${i.certifiedAt ?? '(none yet: docsOnlySince is null)'}</certified_tree>
 
-<scope_patterns>
-${bullets(i.scope.include, '(empty)')}
-</scope_patterns>
-<scope_exclusions>
-Generated outputs: never edit these paths.
-${bullets(i.scope.exclude, '(none)')}
-</scope_exclusions>
+<unit_systems>
+${bullets(i.systems, '(empty)')}
+</unit_systems>
+<intent>${i.intent}</intent>
+<non_goals>${bullets(i.nonGoals, '(none)')}</non_goals>
 
 <fast_lanes>
 ${fastLanesText(i.worktree, i.fastLanes)}

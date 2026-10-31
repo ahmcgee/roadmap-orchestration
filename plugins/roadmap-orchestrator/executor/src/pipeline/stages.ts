@@ -1,3 +1,5 @@
+import { systemsMapInForce } from '../input/systems.ts';
+import { protectedPathsInForce } from '../input/protected.ts';
 // The unit stages from plan-check through lanes (plan "Pipeline for one serial unit", R3), one function
 // per stage. Each starts a new attempt, does its work through journaled ops, records exactly one
 // `stage-outcome` fact (`outcomeFact`) and returns the `Next` that `transition` decides from the unit state
@@ -94,8 +96,7 @@ import { walkMcpConfig } from '../backends/mcp.ts';
 import { evaluateRevision } from '../commands/apply.ts';
 import type { DesignRecord,Verification } from '../core/design.ts';
 import {
-BACKEND_PARK_CLASSES,type DiffShown,type GateLargeDiff,type HoldCause,type IntentOf,type JudgmentStage,type OpKind,type OutcomeStage,type ScopeGrowthProposal,type StageOutcomeDetail,type StageOutcomeKind,
-} from '../core/events.ts';
+BACKEND_PARK_CLASSES,type DiffShown,type GateLargeDiff,type HoldCause,type IntentOf,type JudgmentStage,type OpKind,type OutcomeStage,type StageOutcomeDetail,type StageOutcomeKind } from '../core/events.ts';
 import { captureUnderFence,holdFence } from '../core/fence.ts';
 import { durableMkdir } from '../core/fsx.ts';
 import {
@@ -103,28 +104,25 @@ type InvocationId,type JudgmentSessionId,type LaneId,
 type ObligationId,
 type ResourceInstance,type ResourceName,type RoutingRev,
 type RuleId,
-type Sha,type Sha256Hex,type SpecRev,type UnitId,invocationId,
-} from '../core/ids.ts';
+type Sha,type Sha256Hex,type SpecRev,type UnitId,invocationId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import { censusOf } from '../core/projections.ts';
 import {
 type ApprovalFingerprint,
-type EffectiveScope,
+
 type JudgmentSession,type LaneDef,
 type NeedsUserContent,STDERR_FILE,STDOUT_FILE,
 type SpecM1,type SpecPatchOp,
-effectiveScope,inScope,
+
 isRed,
 specForces,
 specObligations,
-specRemoves,specRepairs,
-} from '../core/records.ts';
+specRemoves,specRepairs } from '../core/records.ts';
 import type { GateReview } from '../core/review.ts';
 import { SchemaError } from '../core/validate.ts';
 import {
-type AbsPath,type RefName,type RepoPath,type RepoPattern,absPath,branchRef,gitDate,isoTimeOf,matchesPattern,repoPath,repoPattern,
-} from '../core/values.ts';
+type AbsPath,type RefName,type RepoPath,type RepoPattern,absPath,branchRef,gitDate,isoTimeOf,matchesPattern,repoPath,repoPattern } from '../core/values.ts';
 import { type CorpusView,materialiseCorpus } from '../corpus/materialise.ts';
 import { FILES_DIR,capturedEvidence } from '../git/evidence.ts';
 import { GitError,type Identity,git,gitRun,refTarget,revParse } from '../git/git.ts';
@@ -136,8 +134,8 @@ import { selectObligations,unitRules } from '../holistic/impact.ts';
 import { ruleMentions } from '../holistic/rederive.ts';
 import { type ImpactInput,type ObligationDef,type Obligations,type Vision,parseObligations,parseVision } from '../holistic/types.ts';
 import { witnessLaneReasons } from '../input/classify.ts';
-import { derivedGrowthReason,regenerateLanes,unitRegenerateLanes } from '../input/derived.ts';
-import { patternInScope } from '../input/envelope.ts';
+import { regenerateLanes,unitRegenerateLanes } from '../input/derived.ts';
+
 import {
 CORPUS_FILE_INPUT,
 type CorpusInForce,type InputFiles,type LoadedSpec,
@@ -146,11 +144,10 @@ RULINGS_INPUT,SPEC_INPUT,VISION_INPUT,inForceFiles,
 inputPath,keptInput,keptPayload,parseUnitSpec,requirePlanInForce,revisionInForce,specBytesOf,specShaInForce
 } from '../input/inforce.ts';
 import {
-type KnownDefect,type PlanUnit,advancesOf,designUnitOf,knownDefectsOf,milestonesOf,parsePlan,targetDocumentPaths,targetDocuments,
-} from '../input/plan.ts';
+type KnownDefect,type PlanUnit,advancesOf,designUnitOf,knownDefectsOf,milestonesOf,parsePlan,targetDocumentPaths,targetDocuments } from '../input/plan.ts';
 import { orderingReasons } from '../park/ordering.ts';
 import { NO_PARK_FACTS,type ParkFacts,repeatNeedsUser,stageOutcomeFact } from '../park/table.ts';
-import { type CorpusFileSet,referenceFiles,sameRepoCorpusSet,scopeOverlapsCorpus,scopeReferences } from '../phase0/rows.ts';
+import { type CorpusFileSet,referenceFiles,sameRepoCorpusSet,scopeOverlapsCorpus, } from '../phase0/rows.ts';
 import { resolveArgv0 } from '../preflight/argv0.ts';
 import { judgmentRepairDirective } from '../prompts/directives.ts';
 import { promptFor,renderPrompt } from '../prompts/index.ts';
@@ -159,16 +156,14 @@ ArchitectureInput,BuildBrowser,
 BuildLane,
 Checkout,CorpusInput,DocText,EscalationInput,
 GateTargetInput,MilestonesInput,
-PlanCheckCheckouts,PlanCheckDesignInput,PlanCheckPriorRound,PlanCheckScopeGrowth,ReferenceIndex,RulingText,TargetInput,UnitMilestone,
+PlanCheckCheckouts,PlanCheckDesignInput,PlanCheckPriorRound,ReferenceIndex,RulingText,TargetInput,UnitMilestone,
 UnitTargetInput,
-VisionInput,
-} from '../prompts/inputs.ts';
+VisionInput } from '../prompts/inputs.ts';
 import { type Handover,visionInputOf } from '../prompts/inputs.ts';
 import {
 BUILD_SCHEMA,
 DECISIONS_FILE,type DecisionsFile,type PlanCheckOutput,type Premise,buildOutput,
-designOfAnswer,validateDecisionsFile,validatePlanCheckOutput,
-} from '../prompts/schemas.ts';
+designOfAnswer,validateDecisionsFile,validatePlanCheckOutput } from '../prompts/schemas.ts';
 import { evidenceSnapshotOp,salvageCommitOp,worktreeCreateOp,worktreeRemoveOp } from '../recover/ops.ts';
 import { buildCpuKey,cpuCost } from '../resources/calibrate.ts';
 import { environmentUnavailable } from '../resources/environments.ts';
@@ -182,16 +177,15 @@ import { CPU_COST,type ResourceRequest } from '../schedule/types.ts';
 import { SpecPatchOpError,SpecPatchStaleError,applySpecPatch,specPatchOp } from '../spec/patch.ts';
 import { renderSpec } from '../spec/render.ts';
 import { type Ruling,parseRulings } from '../spec/rulings.ts';
-import { evidenceScopeConflicts,specBytes } from '../spec/spec.ts';
+import { specBytes } from '../spec/spec.ts';
 import { verificationReasons,verifyRunsOf } from './deflake.ts';
-import { POC_LIMIT,SUBSTANTIAL_SYSTEM_LINES,departures,designFaults,designUnscoped,gateInlineLines,pinDesign,pocReasons,scaffoldInForce,scaffoldReasons } from './design.ts';
+import { POC_LIMIT,SUBSTANTIAL_SYSTEM_LINES,departures,designFaults,gateInlineLines,pinDesign,pocReasons,scaffoldInForce,scaffoldReasons } from './design.ts';
 import {
 type BackendCallOutcome,type BackendCallSpec,type BackendVerdict,type Cancelled,type ImplementerDispatch,type Pinned,type StageContext,type StageParent,
 backendOf,callBackend,cancelledNow,dispatchOf,enter,evidenceRoot,
 fastSuiteWorktree,
 implementerDispatch,isCancelled,judgmentDeadlineMs,judgmentDispatch,nonEmpty,pinDispatch,
-raiseRisk,riskAbove,runOp,runPrepared,steerDispatch,unitBranch,unitWorktree,verdictOf,verificationWorktree,workDir,
-} from './dispatch.ts';
+raiseRisk,riskAbove,runOp,runPrepared,steerDispatch,unitBranch,unitWorktree,verdictOf,verificationWorktree,workDir } from './dispatch.ts';
 import { certifiedTree,docsOnlyCarry } from './docsonly.ts';
 import { handoverOf,lineageOf,unmetClauses } from './handover.ts';
 import { invocationDir,quiescent } from './invoke.ts';
@@ -210,8 +204,7 @@ import { pocLessons,pocReports } from './poc.ts';
 import {
 type DecidedRound,type PreparedRound,type RoundCall,type RoundInput,callRound,decidedRound,laneFixRound,prepareRound,
 resolveContinuation,
-steerBrief,
-} from './rounds.ts';
+steerBrief } from './rounds.ts';
 import { mutationSmoke,survivingObligations } from './smoke.ts';
 import { type SplitVerdict,commitSplit,judgeSplit } from './split.ts';
 import { pressureCause,seriesRuling } from './starved.ts';
@@ -582,7 +575,7 @@ export function unitImpactInput(ctx: StageContext, unit: PlanUnit, spec: SpecM1,
     return o === null ? [] : [o];
   });
   return {
-    obligations,
+    obligations, systemsMap: systemsMapInForce(ctx.journal.view.planApplied()),
     units: [{ unit: unit.id, declared: specObligations(spec), repairs }],
     closure: dependencyClosure(ctx, unit).flatMap((u) => specObligations(loadUnitSpec(ctx, u).spec)),
     changedPaths,
@@ -839,15 +832,14 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
     const anchoredBy = impact === null ? [] : selectObligations(impact).map((id) => impact.obligations.obligations.find((o) => o.id === id)!);
     const target = unitTarget(ctx, checkouts.tip.at, 'full', anchoredBy, ruleMentions(renderSpec(now.spec)));
     const measured = renderPrompt(prompt, {
-      spec: { unit: unit.id, rev: now.spec.rev, markdown: renderSpec(now.spec) }, ...library(ctx, now.spec, checkouts.tip.at), target,
-      direction: ctx.plan().direction, scope: effectiveScope(pinned), risk: pinned.riskFloor, checkouts,
+      spec: { unit: unit.id, rev: now.spec.rev, markdown: renderSpec(now.spec) }, intent: now.spec.intent, nonGoals: now.spec.nonGoals, ...library(ctx, now.spec, checkouts.tip.at), target,
+      direction: ctx.plan().direction, systems: unit.systems, risk: pinned.riskFloor, checkouts,
       lanePrograms: laneOrder(now.spec).map((l) => ({ lane: l.id, argv0: l.argv[0]!, resolved: resolveArgv0(l, ctx.hostEnv) })),
       priorRound: planCheckPriorRound(ctx, unit.id, checkouts),
       // R17: the vision in force, read-only context (the module marks it non-directive).
       vision: visionInput(ctx),
       priorInvalid: planCheckPriorInvalid(ctx, unit, now.spec),
-      scopeGrowth: planCheckScopeGrowth(ctx, unit.id, effectiveScope(pinned), now.spec, checkouts.tip.at),
-      escalation: escalationOf(ctx, unit.id, 'plan-check', seat.tier, validatePlanCheckOutput),
+        escalation: escalationOf(ctx, unit.id, 'plan-check', seat.tier, validatePlanCheckOutput),
       milestones: unitMilestones(ctx, unit.id, checkouts.tip.at),
       // dev.17 (propagation): the unit's stale links up to the plan rev this capture reads.
       staleLinks: unitStaleLinks(ctx.journal.view, unit.id, planRevInForce(ctx), parent.attempt).map(staleLinkText),
@@ -915,16 +907,6 @@ export function judgedAnswer<T>(called: BackendCallOutcome, validate: (value: un
 }
 
 /**
- * The scope growth an answer proposes: its own proposals, and (dev.17) its design records' change paths outside the unit's
- * effective scope, as one proposal (verified like any other: src/pipeline/design.ts `designUnscoped`).
- */
-function growthAnswers(out: PlanCheckOutput, scope: EffectiveScope): PlanCheckOutput['scopeGrowth'] {
-  const designs = out.decision === 'split' ? out.split.children.map((c) => c.design) : [designOfAnswer(out)].flatMap((d) => (d === null ? [] : [d]));
-  const unscoped = designUnscoped(designs.flatMap((d) => d.changes), scope);
-  return unscoped.length === 0 ? out.scopeGrowth : [...out.scopeGrowth, { patterns: unscoped, reason: 'the design record changes it' }];
-}
-
-/**
  * Judges plan-check call `called` of `unit`. `judged`: the spec it judged and the tip it read, for its patch and its design;
  * null when this attempt already applied a patch (a redirect's, or dev.17 an approve's design record: a crash after it),
  * which is then not judged again. Scope growth: an answer proposing growth code verifies is a hold, nothing else of it
@@ -938,16 +920,14 @@ function judgePlanCheck(ctx: StageContext, unit: PlanUnit, called: BackendCallOu
   const reasons = [...visionCiteReasons(ctx, out), ...orderingReasons(ctx, unit.id, 'ordering' in out ? out.ordering ?? null : null)];
   const defects: string[] = [];
   const pinned = dispatchOf(ctx.journal.view, unit.id);
-  const scope = effectiveScope(pinned);
-  const holds = judged !== null && verifiedGrowth(ctx, unit, judged.spec, scope, judged.tip, growthAnswers(out, scope)).proposals.length > 0;
-  if (!holds) reasons.push(...unknownCiteReasons(ctx, out.patch), ...staleLinkReasons(ctx, unit.id, called, out));
-  if (out.patch !== null && judged !== null && !holds) {
+  reasons.push(...unknownCiteReasons(ctx, out.patch), ...staleLinkReasons(ctx, unit.id, called, out));
+  if (out.patch !== null && judged !== null) {
     const by = { role: 'planCheck', routingRev: pinned.routingRev, inv: called.inv } as const;
     reasons.push(...patchReasons(ctx, unit, judged.spec, { expectRev: judged.spec.rev, by, ops: out.patch }));
   }
   let record: DesignRecord | null = null;
   let split: Extract<SplitVerdict, { kind: 'accepted' }> | null = null;
-  if (judged !== null && !holds) {
+  if (judged !== null) {
     // dev.17 (design pass): the design record and the decisions code binds (src/pipeline/design.ts).
     const design = designOfAnswer(out);
     if ((out.decision === 'approve' || out.decision === 'scaffold') && design === null) reasons.push(`an ${out.decision} carries its design record`);
@@ -1102,11 +1082,6 @@ export async function planCheckRead(
   if (riskAbove(pinned.riskFloor, out.risk)) return done(record(ctx, parent, 'risk-lowered'));
   // Scope growth (2026-10-15): a proposal code verifies holds the unit for the root agent, whatever the decision; nothing
   // else of the answer is applied (the plan-check runs again once the root agent has ruled).
-  const growth = verifiedGrowth(ctx, unit, spec, effectiveScope(pinned), captured.tip, growthAnswers(out, effectiveScope(pinned)));
-  if (growth.proposals.length > 0) {
-    const detail = { kind: 'scope-growth', proposals: growth.proposals } as const;
-    return done(record(ctx, parent, 'scope-growth', scopeGrowthNeedsUser(ctx, unit, called, growth), NO_PARK_FACTS, undefined, detail));
-  }
   if (widenedResources(unit, out.patch).length > 0) return done(record(ctx, parent, 'scope-widened'));
   const patch = out.patch === null ? null : { expectRev: specRev, by: { role: 'planCheck', routingRev: pinned.routingRev, inv: called.inv }, ops: out.patch } as const;
   if (riskAbove(out.risk, pinned.riskFloor)) raiseRisk(ctx, pinned, out.risk, { rev: specRev, sha256: seenSha256 });
@@ -1212,162 +1187,11 @@ function pinnedPatch(ctx: StageContext, spec: SpecM1, patch: SpecPatch, captured
   return { ...patch, pins: pinsOf(after, obligations, (path) => blobAt(ctx, captured.tip, path) as Sha | null) };
 }
 
-// ---------------------------------------------------------------------------------------------------
-// Scope growth (2026-10-15)
-
-/**
- * What a plan-check reads for its proposals: Phase-0 row 10's scan of the spec's `removes` at the tip it checks (outside the
- * envelope `scope` and the spec's own scope), and the proposals the root agent rejected for the unit.
- */
-function planCheckScopeGrowth(ctx: StageContext, unit: UnitId, scope: EffectiveScope, spec: SpecM1, tip: Sha): PlanCheckScopeGrowth {
-  const references = scopeReferences(ctx.repo, tip, unit, { include: [...scope.include, ...spec.scope], exclude: scope.exclude }, specRemoves(spec)).map((r) => ({ removed: r.removed, referrers: r.referrers }));
-  const rejected = ctx.journal.view.unit(unit).scopeDecisions.filter((d) => d.decision === 'rejected')
-    .flatMap((d) => d.proposals.map((p) => ({ patterns: p.patterns, reason: p.reason, rejection: d.reason })));
-  return { references, rejected };
-}
-
-/** A plan-check's proposals as code verified them: the patterns kept, per proposal, and why each other one was dropped. */
-export type VerifiedGrowth = Readonly<{ proposals: readonly ScopeGrowthProposal[]; dropped: readonly string[] }>;
-
-/**
- * Verifies each proposed pattern by the rules a ruled scope growth must pass, so the root agent is asked only what could
- * land: a repository pattern outside `.roadmap/`, outside the pinned envelope `scope` (`withinEnvelope`, the classifier's
- * re-entry rule), matching a file at the tip the plan-check read, covered by no lane's `evidenceGlobs` entry
- * (`evidenceScopeConflicts`, the classifier's), in a same-repo corpus arc clear of the corpus file set
- * (`scopeOverlapsCorpus`, the Phase-0 row's), and never one the root agent rejected for the unit. A proposal keeps the
- * patterns that pass; one left with none is dropped. Derived outputs must be writable after the verified growth covers
- * their sources. (`scope accept` checks this too, then runs the whole classifier on the revision.)
- */
-function verifiedGrowth(ctx: StageContext, unit: PlanUnit, spec: SpecM1, scope: EffectiveScope, tip: Sha, answers: PlanCheckOutput['scopeGrowth']): VerifiedGrowth {
-  if (answers.length === 0) return { proposals: [], dropped: [] };
-  const files = git(ctx.repo, ['ls-tree', '-r', '-z', '--name-only', tip]).split('\0').filter((f) => f !== '').map((f) => repoPath(f));
-  const rejected = new Set(ctx.journal.view.unit(unit.id).scopeDecisions.filter((d) => d.decision === 'rejected').flatMap((d) => d.proposals.flatMap((p) => p.patterns)));
-  const corpus = ctx.plan().target === 'corpus' ? corpusSet(ctx) : null;
-  const dropped: string[] = [];
-  const why = (raw: string): string | null => {
-    let p: RepoPattern;
-    try {
-      p = repoPattern(raw, 'scopeGrowth.patterns');
-    } catch (error) {
-      if (error instanceof SchemaError) return 'not a repository pattern';
-      throw error;
-    }
-    if (p === '.roadmap' || p.startsWith('.roadmap/')) return 'under .roadmap/, which no unit owns';
-    if (patternInScope(scope, p)) return 'already inside the scope envelope';
-    if (rejected.has(p)) return 'the root agent rejected it for this unit';
-    if (!files.some((f) => matchesPattern(f, p))) return `matches no file at the integration tip ${tip}`;
-    if (evidenceScopeConflicts(unit.id, [p], spec).length > 0) return 'a lane\'s evidenceGlobs entry covers it, so its content could never be committed';
-    if (corpus !== null && scopeOverlapsCorpus(corpus, p)) return 'it may overlap the corpus file set';
-    return null;
-  };
-  const candidates = answers.flatMap((a) => {
-    const kept = [...new Set(a.patterns.filter((raw) => {
-      const reason = why(raw);
-      if (reason !== null) dropped.push(`\`${raw}\`: ${reason}`);
-      return reason === null;
-    }) as RepoPattern[])].sort();
-    return kept.length === 0 ? [] : [{ patterns: kept, reason: a.reason }];
-  });
-  const grownScope = [...unit.scope, ...candidates.flatMap((a) => a.patterns)];
-  const proposals = candidates.flatMap((a) => {
-    const patterns = a.patterns.filter((p) => {
-      const reason = derivedGrowthReason(ctx.plan(), grownScope, p);
-      if (reason !== null) dropped.push(`\`${p}\`: ${reason}`);
-      return reason === null;
-    });
-    return patterns.length === 0 ? [] : [{ ...a, patterns }];
-  });
-  return { proposals, dropped };
-}
-
 /** A same-repo corpus arc's corpus file set in force; null for a corpus kept in another repository. */
 function corpusSet(ctx: StageContext): CorpusFileSet | null {
   const c = corpusInForce(ctx);
   return sameRepoCorpusSet(c.pin.value, c.guide.bytes);
 }
-
-/** The blocking item a scope-growth hold raises (the scheduler writes it, parented by the held attempt). */
-function scopeGrowthNeedsUser(ctx: StageContext, unit: PlanUnit, called: BackendCallOutcome, growth: VerifiedGrowth): NeedsUserContent {
-  const { path, spec } = loadUnitSpec(ctx, unit);
-  const proposed = growth.proposals.map((p) => `${p.patterns.map((x) => `\`${x}\``).join(', ')} (${p.reason})`).join('; ');
-  return {
-    blocking: true,
-    subject: { type: 'unit', unit: unit.id },
-    reason: 'scope-growth',
-    summary: `Unit ${unit.id}: its plan-check proposes growing its scope by ${proposed} (spec ${path} at rev ${spec.rev}).`
-      + (growth.dropped.length === 0 ? '' : ` Code dropped: ${growth.dropped.join('; ')}.`),
-    recommendation: `\`roadmap scope accept ${unit.id} --reason <text>\` lands the growth as one ruled revision (a new ruling naming the patterns, the unit's plan and spec scope widened) and re-runs the plan-check on it; `
-      + `\`roadmap scope reject ${unit.id} --reason <text>\` keeps the scope, and the plan-check runs again told so (it decides within the scope, infeasible when the spec cannot be met).`,
-    options: [],
-    evidence: called.kind === 'result' ? [absPath(join(called.invDir, 'result.json'))] : [],
-  };
-}
-
-/**
- * Scope growth (A): what each of the unit's done salvages reverted as outside the pinned scope, in log order, with the dir
- * keeping its content (`<run>/rejected/<unit>/<manifest sha256>/`, src/git/salvage.ts).
- */
-export function salvageRejections(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath }>, unit: UnitId): readonly Readonly<{ paths: readonly RepoPath[]; dir: AbsPath }>[] {
-  const view = ctx.journal.view;
-  const root = absPath(join(ctx.runDir, 'rejected', unit));
-  return view.opsOf('salvage.commit').filter((i) => i.parent.type === 'stage' && i.parent.unit === unit && view.doneOf(i.op) !== null).map((i) => {
-    const dir = absPath(join(root, i.expect.rejectedManifestSha256));
-    const checked = checkRejected(dir, i.expect.rejectedManifestSha256);
-    if (checked.kind !== 'complete') throw new Error(`unit ${unit}: the rejected content of salvage ${i.op} at ${dir} is incomplete: ${checked.detail}`);
-    return { paths: checked.manifest.entries.filter((e) => e.reason === 'out-of-scope').map((e) => e.path), dir };
-  });
-}
-
-/**
- * Plan defects (2026-10-16): the paths both of the unit's last two salvages reverted as out of scope (still outside the
- * effective scope, never rejected by the root agent, covered by no lane's `evidenceGlobs`, clear of a same-repo corpus),
- * as one proposal with its blocking item; null when there are none. Excluded outputs name the sources to grow (dev.26).
- */
-function repeatedReverts(ctx: StageContext, unit: PlanUnit, spec: SpecM1): Readonly<{ proposal: ScopeGrowthProposal; needsUser: NeedsUserContent }> | null {
-  const salvages = salvageRejections(ctx, unit.id);
-  if (salvages.length < 2) return null;
-  const [previous, latest] = salvages.slice(-2) as [(typeof salvages)[number], (typeof salvages)[number]];
-  const rejected = new Set<string>(ctx.journal.view.unit(unit.id).scopeDecisions.filter((d) => d.decision === 'rejected').flatMap((d) => d.proposals.flatMap((p) => p.patterns)));
-  const corpus = ctx.plan().target === 'corpus' ? corpusSet(ctx) : null;
-  const paths = stillOutside(ctx, unit.id, latest.paths).filter((p) => previous.paths.includes(p) && !rejected.has(p)
-    && evidenceScopeConflicts(unit.id, [repoPattern(p)], spec).length === 0 && (corpus === null || !scopeOverlapsCorpus(corpus, repoPattern(p))));
-  if (paths.length === 0) return null;
-  const derived = paths.flatMap((p) => {
-    const pattern = repoPattern(p);
-    const reason = derivedGrowthReason(ctx.plan(), [...unit.scope, pattern], pattern);
-    return reason === null ? [] : [`${p}: ${reason}`];
-  });
-  const reason = `salvage reverted the unit's edits to ${paths.join(', ')} on its last two build rounds (outside its scope)`
-    + (derived.length === 0 ? '' : `; ${derived.join('; ')}`);
-  const { path } = loadUnitSpec(ctx, unit);
-  return {
-    proposal: { patterns: paths.map((p) => repoPattern(p)), reason },
-    needsUser: {
-      blocking: true,
-      subject: { type: 'unit', unit: unit.id },
-      reason: 'scope-growth',
-      summary: `Unit ${unit.id}: ${reason}, so its build needs ${paths.length === 1 ? 'that path' : 'those paths'} (spec ${path} at rev ${spec.rev}; the reverted versions are kept under ${latest.dir}/files).`,
-      recommendation: (derived.length === 0
-        ? `\`roadmap scope accept ${unit.id} --reason <text>\` lands the growth as one ruled revision and re-opens the unit at plan-check on it (its builder is told to restore the reverted versions); `
-        : 'Apply a ruled scope revision covering the named sources; accepting growth of the outputs alone is refused. ')
-        + `\`roadmap scope reject ${unit.id} --reason <text>\` keeps the scope: the lanes run, and the build is told again that the paths are outside it.`,
-      options: [],
-      evidence: [latest.dir],
-    },
-  };
-}
-
-/** The paths of `paths` now inside the unit's effective scope (a scope accept took them in since), ascending. */
-export const nowInside = (ctx: StageContext, unit: UnitId, paths: readonly RepoPath[]): readonly RepoPath[] => {
-  const scope = effectiveScope(dispatchOf(ctx.journal.view, unit));
-  return [...new Set(paths.filter((p) => inScope(scope, p)))].sort();
-};
-
-/** The paths of `paths` still outside the unit's effective scope (a scope accept since may have taken some in), ascending. */
-export const stillOutside = (ctx: StageContext, unit: UnitId, paths: readonly RepoPath[]): readonly RepoPath[] => {
-  const scope = effectiveScope(dispatchOf(ctx.journal.view, unit));
-  return [...new Set(paths.filter((p) => !inScope(scope, p)))].sort();
-};
 
 /**
  * An executor's spec patch (a plan-check redirect, the implementer's decisions): a machine revision of the unit's spec,
@@ -1471,11 +1295,11 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
   const state = ctx.journal.view.unit(unit.id);
   const allowance = Math.max(0, state.bounds.certifications - 1 - state.counters.unchargedLanesReds);
   const render = (call: RoundCall) => renderPrompt(prompt, {
-    spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec, { buildLanesOnly: true }) }, ...lib,
+    spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec, { buildLanesOnly: true }) }, intent: spec.intent, nonGoals: spec.nonGoals, ...lib,
     systemNotes: systemNotes(ctx.repo, revParse(round.worktree, 'HEAD'), unit.systems ?? [], ctx.routingBase.config),
     notes: ctx.journal.view.buildNotes(unit.id, parent.attempt).map((sha) => steerBrief(ctx.runDir, sha)),
     planCheckNotes: planCheckNotes(ctx, unit.id),
-    fastLanes: activeBuildLanes(spec), suiteLanes: builderSuiteLanes(ctx.plan().suite.lanes, spec), evidenceDir: work, worktree: round.worktree, scope: effectiveScope(pinned),
+    fastLanes: activeBuildLanes(spec), suiteLanes: builderSuiteLanes(ctx.plan().suite.lanes, spec), evidenceDir: work, worktree: round.worktree, systems: unit.systems,
     fixRound: call.fixRound === null ? null : { ...call.fixRound, directives: [...call.fixRound.directives,
       `Certification allowance: ${allowance} uncharged red certifications remaining before the next charge.`] }, witnessChecks, milestones, browser: browser?.input ?? null, certifiedAt: certifiedTree(ctx, unit.id), handover: handed(call),
   }, dispatch.triple.backend);
@@ -1678,7 +1502,7 @@ export async function salvage(ctx: StageContext, unit: PlanUnit, run: BuildRun):
   const pinned = dispatchOf(ctx.journal.view, unit.id);
   const parent = at(start(ctx, unit.id, 'salvage'), 'salvage');
   const rules: SalvageRules = {
-    scope: effectiveScope(pinned),
+    protectedPaths: protectedPathsInForce(ctx.runDir, ctx.journal.view),
     excluded: unique(spec.lanes.flatMap((l) => l.evidenceGlobs)),
     rejectedRoot: absPath(join(ctx.runDir, 'rejected', unit.id)),
   };
@@ -1715,7 +1539,7 @@ export async function salvage(ctx: StageContext, unit: PlanUnit, run: BuildRun):
   // refused before the lanes and the gate spend on it. The chain ends here as at a salvage failure, the build's resources
   // cleaned; the outcome is the candidate's refusal (a chargeable scope-growth fix round, a risk trigger), or, when that
   // cleanup failed, a park on its instances.
-  if (transientCheck(ctx.repo, unitTransientRules(pinned, spec), integrationTip(ctx), next).length > 0) {
+  if (transientCheck(ctx.repo, unitTransientRules(protectedPathsInForce(ctx.runDir, ctx.journal.view), spec), integrationTip(ctx), next).length > 0) {
     const failed = await released();
     return { ...record(ctx, parent, failed.length > 0 ? 'cleanup-failed' : 'transient-violation', null, failedFacts(failed)), sha: next };
   }
@@ -2008,10 +1832,6 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
   const lanePark = witnessLanePark(ctx, unit, spec);
   if (lanePark !== null) return { ...record(ctx, parent, 'witness-lane-missing', lanePark), at: salvaged, ledger: [], verification: null, fix: null };
   // Plan defects (2026-10-16): the same out-of-scope path reverted on two build rounds running holds the unit for the root agent.
-  const reverted = repeatedReverts(ctx, unit, spec);
-  if (reverted !== null) {
-    return { ...record(ctx, parent, 'scope-growth', reverted.needsUser, NO_PARK_FACTS, undefined, { kind: 'scope-growth', proposals: [reverted.proposal] }), at: salvaged, ledger: [], verification: null, fix: null };
-  }
   // dev.17 (proportional review): a build's docs-only claim, verified before any lane runs (src/pipeline/docsonly.ts).
   const carry = await docsOnlyCarry(ctx, unit, parent, salvaged, [...order, ...fastSuiteLanes(ctx, spec, salvaged)]);
   const entry = seriesEntry(ctx, order);
@@ -2060,4 +1880,15 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
   const fix = kind === 'red' || kind === 'flaky' || (kind === 'not-certified' && dirty.length > 0) ? laneFixRound(ledger, dirty, salvaged) : null;
   const facts = verdict.environment === undefined ? failedFacts(verdict.failed ?? []) : environmentFacts(verdict.environment);
   return { ...record(ctx, parent, kind, verdict.needsUser ?? null, facts, verdict.cause, verdict.detail), at: salvaged, ledger: series.ledger, verification: keep, fix };
+}
+
+export function salvageRejections(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath }>, unit: UnitId): readonly Readonly<{ paths: readonly RepoPath[]; dir: AbsPath }>[] {
+  const view = ctx.journal.view;
+  const root = absPath(join(ctx.runDir, 'rejected', unit));
+  return view.opsOf('salvage.commit').filter((i) => i.parent.type === 'stage' && i.parent.unit === unit && view.doneOf(i.op) !== null).map((i) => {
+    const dir = absPath(join(root, i.expect.rejectedManifestSha256));
+    const checked = checkRejected(dir, i.expect.rejectedManifestSha256);
+    if (checked.kind !== 'complete') throw new Error(`unit ${unit}: the rejected content of salvage ${i.op} at ${dir} is incomplete: ${checked.detail}`);
+    return { paths: checked.manifest.entries.filter((e) => e.reason === 'protected-path').map((e) => e.path), dir };
+  });
 }

@@ -1,3 +1,4 @@
+import { systemName } from '../src/core/ids.ts';
 // The targeted probe (`npm run probe`): the production argv builder, runner and adapter against the real,
 // authenticated CLIs, through src/preflight/smoke.ts. Pennies per run. Checks:
 //
@@ -591,11 +592,11 @@ async function main(): Promise<void> {
   await backend(ctx, 'm4a.checkpoint-summit', seatCall(holistic, 'checkpoint', 'arc', { role: 'planCheck', tier: 'escalation' }, 'm3-checkpoint', m3Dir, checkpointInputs),
     validates('m4a.checkpoint-summit', 'checkpoint', () => true));
 
-  const planCheckInputs: PlanCheckInputs = {
+  const planCheckInputs: PlanCheckInputs = { intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
     spec: { unit: unitId('u-convert'), rev: specRev(1), markdown: '# Unit u-convert\n\n## Acceptance\n- A1: convert.ts exports toFahrenheit and toCelsius.\n- A2: toFahrenheit rounds its result to the nearest integer.\n\n## Lanes\n(none)' },
     contracts: [], rulings: [], index: MINI_INDEX, target: MINI_ARCH, direction: 'Ship the smallest thing that serves the vision.',
-    scope: { include: [repoPattern('convert.ts')], exclude: [] }, risk: 'low', checkouts: { tip: { path: m3Dir, at: TREE }, branch: null }, lanePrograms: [], priorRound: null, vision: MINI_VISION, priorInvalid: null,
-    scopeGrowth: { references: [], rejected: [] }, escalation: null, milestones: null, staleLinks: [],
+    systems: [systemName('app')], risk: 'low', checkouts: { tip: { path: m3Dir, at: TREE }, branch: null }, lanePrograms: [], priorRound: null, vision: MINI_VISION, priorInvalid: null,
+     escalation: null, milestones: null, staleLinks: [],
     design: { systems: null, lanes: [], forces: [], substantialLines: 200, gateInlineLines: 1310, pocsLeft: 2, scaffold: false }, pocs: [],
   };
   const planCheck = seatCall(holistic, 'planCheck', 'med', { role: 'planCheck', tier: 'med' }, 'm3-plan-check', m3Dir, planCheckInputs);
@@ -630,7 +631,7 @@ async function main(): Promise<void> {
       id: 'I-1', rev: 1, statement: rules[0]?.text, rule: { id: 'T-1', textSha256: rules[0]?.textSha256 }, serves: ['V-1'], witness: { lane: 'unit', testIds: ['convert'] }, proofJudgment: { verdict: 'proves', obligationRev: 1,  witness: {  testIds: ['convert'] } },
       deliveredBy: ['u-convert'], activation: 'future', contracts: [], state: { type: 'active' },
     }],
-    mapping: { paths: [{ pattern: 'convert.ts', obligations: ['I-1'] }] },
+    mapping: { systems: [{ system: systemName('app'), obligations: ['I-1'] }] },
     census: [{ rule: 'T-1', state: { type: 'obligation', id: 'I-1' } }, { rule: 'T-2', state: { type: 'out-of-slice' } }],
   };
   const phase0Json = {
@@ -670,9 +671,9 @@ async function main(): Promise<void> {
   const UNIT = laneId('unit');
   const buildSpec = '# Unit u-hello\n\n## Acceptance\n- A1: the file hello.txt exists in the repository root and contains the word hello.\n\n## Lanes\n- unit (fast): `sh -c "grep -q hello hello.txt"`';
   const unitLane = { id: UNIT, argv: ['sh', '-c', 'grep -q hello hello.txt'], cwd: repoPath('.'), env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], evidenceExcludes: [] } as const;
-  const buildInputs = (worktree: AbsPath, evidenceDir: AbsPath): BuildInputs => ({ systemNotes: [], notes: [],
+  const buildInputs = (worktree: AbsPath, evidenceDir: AbsPath): BuildInputs => ({ intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'], systemNotes: [], notes: [],
     spec: { unit: unitId('u-hello'), rev: specRev(1), markdown: buildSpec }, contracts: [], rulings: [], index: MINI_INDEX, planCheckNotes: '', fastLanes: [unitLane], suiteLanes: [],
-    evidenceDir, worktree, scope: { include: [repoPattern('hello.txt')], exclude: [] }, fixRound: null, witnessChecks: [], milestones: null, browser: null, certifiedAt: null, handover: null,
+    evidenceDir, worktree, systems: [systemName('app')], fixRound: null, witnessChecks: [], milestones: null, browser: null, certifiedAt: null, handover: null,
   });
 
   // (3) A checkpoint answer under the new schema: an admit with `targets`.

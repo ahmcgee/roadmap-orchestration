@@ -70,7 +70,7 @@ export async function checksArc(opts: ChecksOptions): Promise<ChecksArc> {
     const lanes = o['lanes'] as Json[];
     const lane: Json = { ...lanes[0]!, ...(opts.resources === undefined ? {} : { resources: opts.resources }), argv: opts.argv?.(wrapper) ?? lanes[0]!['argv'], ...(opts.testPaths === undefined ? {} : { testPaths: opts.testPaths }) };
     o['lanes'] = [lane];
-    const laneRev = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [lane], obligations: [], mapping: { paths: [] } }).lanes[0]!);
+    const laneRev = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [lane], obligations: [], mapping: { systems: [] } }).lanes[0]!);
     const [i1] = o['obligations'] as Json[];
     const witness = { lane: 'journey', testIds: [...testIds].sort(), ...(opts.files === undefined ? {} : { files: [...opts.files].sort() }) };
     o['obligations'] = [{

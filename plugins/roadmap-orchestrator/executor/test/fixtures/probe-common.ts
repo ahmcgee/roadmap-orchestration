@@ -70,7 +70,7 @@ export function seedArc(journal: Journal, units: readonly UnitId[]): void {
     journal.fact({
       kind: 'dispatch',
       record: {
-        unit, specRev: specRev(1), specSha256: H, scope: [repoPattern('src/**')], riskFloor: 'med', routingRev: routingRev('0123456789abcdef'),
+        unit, specRev: specRev(1), specSha256: H,  riskFloor: 'med', routingRev: routingRev('0123456789abcdef'),
         implementerSeatRev: seatRev('fedcba9876543210'), at: isoTimeOf(new Date()), transientRules: 'm3',
       },
     });

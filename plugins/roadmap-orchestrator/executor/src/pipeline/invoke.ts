@@ -22,19 +22,16 @@ import { ENV_INV,ENV_ROLE } from '../contain/session.ts';
 import { crashPoint } from '../core/crash.ts';
 import {
 type Fact,type IntentOf,type MeterSubject,type OpExpect,type OpOutcome,type Parent,type RecoveredBy,type ResultSummary,type SpawnSubject,
-parentUnit,
-} from '../core/events.ts';
+parentUnit } from '../core/events.ts';
 import {
 type InvocationId,type OpId,type OpKey,type RoutingRev,type Sha256Hex,claudeSessionId,invocationDirName,invocationId,opKey,
-parseInvocationId,parseOpId,sha256,
-} from '../core/ids.ts';
+parseInvocationId,parseOpId,sha256 } from '../core/ids.ts';
 import type { Containment,IntentBody,Journal,JournalView,RunnerFiles,WorkloadRef } from '../core/interfaces.ts';
 import { sha256Hex } from '../core/json.ts';
 import { exitCpuOf } from '../core/projections.ts';
 import type { PromptSize } from '../core/records.ts';
 import {
-type CancelReason,type LaunchFile,type LaunchTerminal,type ProcIdentity,type ResultFile,type Usage,STDOUT_FILE,
-} from '../core/records.ts';
+type CancelReason,type LaunchFile,type LaunchTerminal,type ProcIdentity,type ResultFile,type Usage,STDOUT_FILE } from '../core/records.ts';
 import { chargedUsage } from '../core/usage.ts';
 import { type AbsPath,type IsoTime,absPath } from '../core/values.ts';
 import { SCHEMA_VERSION } from '../core/version.ts';

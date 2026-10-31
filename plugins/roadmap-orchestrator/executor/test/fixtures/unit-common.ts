@@ -1,3 +1,4 @@
+import { systemName } from '../../src/core/ids.ts';
 import { requirePlanInForce,revisionInForce } from '../../src/input/inforce.ts';
 // Shared by the gate, integrate and unit driver tests (and the unit-child fixture): an arc over a real git
 // repo made from test/fixtures/unit-repo, whose integration tip is green by default (`add` fixed at T) so
@@ -45,7 +46,7 @@ export const MUL_LANE: LaneJson = { id: 'mul', argv: ['node', '--test', 'test/mu
 export const SUITE_LANE: LaneJson = { id: 'suite', argv: ['node', '--test'] };
 
 /** `scope`: the unit's (spec and plan) scope; default `UNIT_SCOPE`. */
-export type UnitSpecJson = Readonly<{ id: string; risk?: RiskTier; lanes?: readonly LaneJson[]; after?: readonly string[]; scope?: readonly string[] }>;
+export type UnitSpecJson = Readonly<{ id: string; risk?: RiskTier; lanes?: readonly LaneJson[]; after?: readonly string[]; systems?: readonly string[]; scope?: readonly string[] }>;
 
 /** A unit's default scope. */
 export const UNIT_SCOPE: readonly string[] = ['src/**', 'test/**', 'contracts/**'];
@@ -93,16 +94,16 @@ export function setupArc(opts: ArcOptions): ArcDescriptor {
   cpSync(REPO_FILES, repo, { recursive: true });
   writeFileSync(join(repo, '.gitignore'), 'out/\n');
   writeFileSync(join(repo, 'src', 'add.js'), opts.base === 'red' ? ADD_BROKEN : ADD_FIXED);
-  makeRepo(repo, { files: {} });
+  makeRepo(repo, { files: { '.roadmap/config.json': JSON.stringify({ systemsMap: opts.systemsMap ?? { systems: { app: { paths: ['src/**', 'test/**', 'contracts/**', 'ARCHITECTURE.md'] }, lib: { paths: ['lib/**'] }, mul: { paths: ['src/mul.js'] }, div: { paths: ['src/div.js'] }, documentation: { paths: ['docs/**'] } } } }) } });
 
   const planDir = tmpDir('unit-plan');
   const units = opts.units ?? [{ id: 'u1' }];
   for (const u of units) {
-    writeFileSync(join(planDir, `${u.id}.json`), JSON.stringify({
+    writeFileSync(join(planDir, `${u.id}.json`), JSON.stringify({ intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
       schema: 'roadmap/spec-m1', unit: u.id, rev: 1,
       lanes: (u.lanes ?? [MUL_LANE]).map((l) => ({ ...laneJson(l), state: 'active' })),
       acceptance: [{ id: 'A1', clause: 'mul(2, 3) is 6', failLoudIfUndelivered: true, state: 'active' }],
-      scope: u.scope ?? UNIT_SCOPE, resources: [], decisions: [], facts: [],
+       resources: [], decisions: [], facts: [],
       cites: { contracts: ['contracts/api.md'], rulings: ['C-1'] },
     }));
   }
@@ -114,7 +115,7 @@ export function setupArc(opts: ArcOptions): ArcDescriptor {
     worktreeRoot: tmpDir('unit-wt'), contracts: ['contracts/api.md'], rulings: 'rulings.md', architectureDoc: 'ARCHITECTURE.md',
     direction: 'Keep it small.', suite: { lanes: (opts.suite ?? [SUITE_LANE]).map(laneJson) }, resources: [],
     units: units.map((u) => ({
-      id: u.id, spec: `${u.id}.json`, risk: u.risk ?? 'med', scope: u.scope ?? UNIT_SCOPE, resources: [], ...(u.after === undefined ? {} : { after: u.after }),
+      id: u.id, spec: `${u.id}.json`, risk: u.risk ?? 'med', systems: (u.systems ?? Object.keys((opts.systemsMap as { systems: object } | undefined)?.systems ?? { app: true }).slice(0, 1)).map((s) => systemName(s)), resources: [], ...(u.after === undefined ? {} : { after: u.after }),
     })),
   }));
   const scenarioDir = tmpDir('unit-scenario');
@@ -122,7 +123,7 @@ export function setupArc(opts: ArcOptions): ArcDescriptor {
   return {
     arc, repo, planPath, runDir: tmpDir('unit-run'), hostDir: join(tmpDir('unit-host'), 'roadmap'),
     binDir: scenario.binDir, scenarioPath: scenario.path, scenarioDir,
-    ...(opts.systemsMap === undefined ? {} : { config: parseRepoConfig({ systemsMap: opts.systemsMap }) }),
+    config: parseRepoConfig({ systemsMap: opts.systemsMap ?? { systems: { app: { paths: ['src/**', 'test/**', 'contracts/**', 'ARCHITECTURE.md'] } } } }),
   };
 }
 
@@ -235,7 +236,7 @@ const dev17Finding = (f: JsonValue): JsonValue => {
 const gateAnswer = (a: GateAnswer): JsonValue => ({
   rulings: [...(a.rulings ?? [])],
   decision: a.decision, ordering: a.ordering ?? null, findings: (a.findings ?? []).map(dev17Finding), directives: [...(a.directives ?? [])], reasons: ['A1 holds'], premises: [...(a.premises ?? [])],
-  unreviewed: [...(a.unreviewed ?? [])], clusters: a.clusters ?? null, 
+  unreviewed: [...(a.unreviewed ?? [])], clusters: a.clusters ?? null,
 }) as JsonValue;
 
 /**

@@ -10,8 +10,7 @@
 import { join } from 'node:path';
 import type { Parent } from '../core/events.ts';
 import {
-  type ArcId, type InvocationId, type ResourceInstance, type ResourceUnit, type UnitId, INTEGRATION_SLOT, opKey, parseResourceUnit,
-} from '../core/ids.ts';
+  type ArcId, type InvocationId, type ResourceInstance, type ResourceUnit, type UnitId, INTEGRATION_SLOT, opKey, parseResourceUnit } from '../core/ids.ts';
 import type { CommandVerdict, TeardownRecipe } from '../core/records.ts';
 import { type AbsPath, absPath, isoTimeOf } from '../core/values.ts';
 import { type PlanM1, type ResourceDecl, type ToolCommand, environmentOf } from '../input/plan.ts';

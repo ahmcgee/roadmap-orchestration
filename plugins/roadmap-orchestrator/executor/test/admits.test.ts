@@ -1,3 +1,4 @@
+import { systemName } from '../src/core/ids.ts';
 // M4a rev 3 step N2 (B "Checkpoint admits", OR-A1, LR-k, LR-m, R44–R46, R48): the admit classifier
 // (src/holistic/admits.ts) over hand-built worlds, pure. Census: T-1 obligation (in slice), T-2 out-of-slice, T-3 untestable. Named tests: admits.table-row-1..10, admits.table-total, admits.ref-holds-invalid,
 // admits.ref-exempt-invalid, admits.ref-resolved-invalid, admits.impact-mapped-not-touched,
@@ -182,9 +183,9 @@ describe('admit classes: repair refs and touched clauses (R45, R47)', () => {
   });
 
   test('admits.impact-mapped-not-touched: an obligation the impact mapping selects for the scope is no declared target (admitOpOf)', () => {
-    const obligations = { mapping: { paths: [{ pattern: 'src/**', obligations: ['I-2', 'I-1'] }] } } as unknown as Obligations;
+    const obligations = { mapping: { systems: [{ system: systemName('app'), obligations: ['I-2', 'I-1'] }] } } as unknown as Obligations;
     const spec = { scope: ['src/**'], obligations: ['I-1', 'I-2', 'I-3'], repairs: [] } as unknown as SpecM1;
-    const op = { op: 'admit', unit: { id: 'gap', risk: 'low', scope: ['src/**'], after: [], origin: 'checkpoint' }, spec: '{}', targets: ['T-1'], cites: ['V-1'], evidence: ['e'] } as never;
+    const op = { op: 'admit', unit: { id: 'gap', risk: 'low', systems: [systemName('app')], after: [], origin: 'checkpoint' }, spec: '{}', targets: ['T-1'], cites: ['V-1'], evidence: ['e'] } as never;
     assert.deepEqual(admitOpOf(3, op, spec, obligations), { index: 3, unit: 'gap', cites: ['V-1'], repairs: [], targets: ['T-1'], declared: ['I-3'] });
     // Mapped I-2 (at out-of-slice T-2) is no target: an oversight; declared beyond the mapping, it is opportunity work.
     const w = world({ obligationList: [ob(obligation('I-2', v(3), { rule: 'T-2' }), true)] });
@@ -283,12 +284,12 @@ describe('admit classes: conversions (R35, LR-k)', () => {
   });
 
   test('admits.conversion-referenced-is-invalid: another op naming a converted admit makes the bundle invalid', () => {
-    const spec = { schema: 'roadmap/spec-m1', unit: 'aside', rev: 1, scope: ['src/**'], resources: [], lanes: [], acceptance: [{id: 'A1', clause: 'Converts the admit', state: 'active', failLoudIfUndelivered: true}], decisions: [], facts: [], cites: {contracts: [], rulings: []}, obligations: [], repairs: [] };
+    const spec = { intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'], schema: 'roadmap/spec-m1', unit: 'aside', rev: 1,  resources: [], lanes: [], acceptance: [{id: 'A1', clause: 'Converts the admit', state: 'active', failLoudIfUndelivered: true}], decisions: [], facts: [], cites: {contracts: [], rulings: []}, obligations: [], repairs: [] };
     const output = validateCheckpointOutput(checkpointAnswer({
       decision: 'bundle',
       ops: [
-        { op: 'admit', unit: { id: 'aside', risk: 'low', scope: ['src/**'], after: [], origin: 'checkpoint' }, spec: {...spec, unit: 'aside'}, cites: ['V-2'], evidence: ['e'] },
-        { op: 'admit', unit: { id: 'next', risk: 'low', scope: ['src/**'], after: ['aside'], origin: 'checkpoint' }, spec: {...spec, unit: 'next'}, cites: ['V-1'], evidence: ['e'] },
+        { op: 'admit', unit: { id: 'aside', risk: 'low', systems: [systemName('app')], after: [], origin: 'checkpoint' }, spec: {...spec, unit: 'aside'}, cites: ['V-2'], evidence: ['e'] },
+        { op: 'admit', unit: { id: 'next', risk: 'low', systems: [systemName('app')], after: ['aside'], origin: 'checkpoint' }, spec: {...spec, unit: 'next'}, cites: ['V-1'], evidence: ['e'] },
         { op: 'limits', unit: 'aside', limits: [{ field: 'chargeable', value: 2 }], cites: ['V-1'], evidence: ['e'] },
       ],
     }));

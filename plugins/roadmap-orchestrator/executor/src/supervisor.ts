@@ -54,16 +54,14 @@ import { canonicalJson } from './core/json.ts';
 import { LogCorruptError,readJournal } from './core/log.ts';
 import {
 type ExecutorExitReason,type HostLockClaim,type NeedsUserContent,type ProcIdentity,type ReadinessFile,type SupervisorState,executorExitReason,heartbeat,
-readinessFile,supervisorState,
-} from './core/records.ts';
+readinessFile,supervisorState } from './core/records.ts';
 import { type Read,literal,object,positive,tagged } from './core/validate.ts';
 import { type AbsPath,type IsoTime,absPath,isoTimeOf } from './core/values.ts';
 import { SCHEMA_VERSION } from './core/version.ts';
 import { startDemoKeeper } from './demo/keeper.ts';
 import {
 EXIT_REASON_FILE,HEARTBEAT_FILE,type RefusedReason,executorArgv,exitLine,raiseClaimRefusal,refusedOf,refusedReason,writeFileNeedsUser,
-writeRejection,
-} from './executor.ts';
+writeRejection } from './executor.ts';
 import { compactResidues } from './host/compact.ts';
 import { hostPath,openHostDir } from './host/hostdir.ts';
 import { selfIdentity } from './host/liveness.ts';

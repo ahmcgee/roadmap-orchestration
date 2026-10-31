@@ -87,7 +87,7 @@ const observed = (id: string, statement: string, tree: typeof SHA_A) => ({
   observation: { key: { treeSha: tree, lane: laneId('journey'), laneRev: laneRev('0123456789abcdef'), envId: envId('fedcba9876543210') }, verdict: 'held' as const },
 });
 const packObligations = (cutLine: string) => ({
-  schema: 'roadmap/obligations-m3' as const, cutLine, lanes: [], obligations: [], mapping: { paths: [] },
+  schema: 'roadmap/obligations-m3' as const, cutLine, lanes: [], obligations: [], mapping: { systems: [] },
   census: [{ rule: ruleId('T-1'), state: { type: 'untestable' as const } }],
 });
 const pinnedRule = (id: string, text: string) => ({ id: ruleId(id), textSha256: sha256('c'.repeat(64)), text, file: repoPath('docs/0010.md'), section: 'Overview' });
@@ -220,7 +220,7 @@ const partial = (from: Sha, to: Sha, text: string, labelled: boolean): BoundedDi
 /** dev.17: a scaffold writer's inputs, every field marked by `k`; `retry` its one retry's reasons, or null. */
 function scaffoldSample(k: string, retry: RoleInputs['scaffold']['retry']): RoleInputs['scaffold'] {
   return {
-    spec: spec(k === 'A' ? 1 : 2, `SPEC-${k}`),
+    intent: `INTENT-${k}`, nonGoals: [`NON-GOAL-${k}`], spec: spec(k === 'A' ? 1 : 2, `SPEC-${k}`),
     scaffold: {
       newSystem: { name: systemName(`sys${k.toLowerCase()}`), paths: [repoPattern(`packages/${k}/**`)], tests: [repoPattern(`packages/${k}/test/**`)] },
       entryPoints: [repoPath(`packages/${k}/index.js`)], exports: [`EXPORT-${k}`], loadTest: { lane: laneId(`load${k}`), testId: `LOAD-TEST-${k}` },
@@ -235,17 +235,17 @@ function scaffoldSample(k: string, retry: RoleInputs['scaffold']['retry']): Role
 const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] } = {
   planCheck: [
     {
-      spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
-      target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A', scope: { include: [repoPattern('src/a/**')], exclude: [] }, risk: 'low',
+      intent: 'INTENT-A', nonGoals: ['NON-GOAL-A'], spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
+      target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A', systems: [systemName('app-a')], risk: 'low',
       checkouts: { tip: { path: absPath('/wt/u.plan-check-1'), at: SHA_A }, branch: null },
       lanePrograms: [{ lane: laneId('unit'), argv0: 'npm', resolved: { kind: 'program', realpath: absPath('/usr/lib/node/npm') } }],
-      priorRound: null, vision: null, priorInvalid: null, scopeGrowth: { references: [], rejected: [] }, escalation: null, milestones: null, staleLinks: [],
+      priorRound: null, vision: null, priorInvalid: null,  escalation: null, milestones: null, staleLinks: [],
       design: { systems: null, lanes: [], forces: [], substantialLines: 200, gateInlineLines: 1310, pocsLeft: 2, scaffold: false }, pocs: [],
     },
     {
-      spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
+      intent: 'INTENT-B', nonGoals: ['NON-GOAL-B'], spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
       target: { kind: 'digest', digest: doc('docs/digest.md', 'DIGEST-B'), doc: repoPath('docs/arch2.md') }, direction: 'DIR-B',
-      scope: { include: [repoPattern('src/b/**')], exclude: [] }, risk: 'high',
+      systems: [systemName('app-b')], risk: 'high',
       checkouts: { tip: { path: absPath('/wt/u.plan-check-2'), at: SHA_B }, branch: { path: absPath('/wt/u.plan-check-2-branch'), at: SHA_A } },
       lanePrograms: [{ lane: laneId('lint'), argv0: 'rg', resolved: { kind: 'not-found' } }],
       priorRound: {
@@ -254,14 +254,11 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       },
       vision: vision(2, 'VISION-B'),
       priorInvalid: 'PRIOR-INVALID-B',
-      scopeGrowth: {
-        references: [{ removed: 'REMOVED-B', referrers: [repoPath('test/b/old.test.ts')] }],
-        rejected: [{ patterns: [repoPattern('docs/b/**')], reason: 'GROWTH-REASON-B', rejection: 'REJECTION-B' }],
-      },
+
       escalation: { kind: 'route-up', first: { decision: 'escalate', reasons: ['ESCALATE-REASON-B'] } }, milestones: milestonesSample(),
       staleLinks: ['requirement:I-2: STALE-LINK-B'],
       design: {
-        systems: { systems: { [systemName('api')]: { paths: [repoPattern('src/api/**')], tests: [repoPattern('test/api/**')], dependsOn: [] } }, shared: [], contracts: {}, docs: [] },
+        systems: { systems: { [systemName('api')]: { paths: [repoPattern('src/api/**')], tests: [repoPattern('test/api/**')], dependsOn: [], traits: [] } }, shared: [], contracts: {}, docs: [] },
         lanes: [{ id: laneId('journey'), kind: 'arc', cadence: 'candidate', systems: [systemName('api')], environment: { name: resourceName('env-b'), unavailable: 'ENV-UNAVAILABLE-B' } }], forces: [laneId('SYSTEMS-B')], substantialLines: 150, gateInlineLines: 900,
         pocsLeft: 1, scaffold: true,
       },
@@ -274,14 +271,14 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
   ],
   build: [
     { notes: ['NOTE-A'],
-      systemNotes: [], spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
+      systemNotes: [], intent: 'INTENT-A', nonGoals: ['NON-GOAL-A'], spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
       planCheckNotes: '', fastLanes: [lane('unit', ['npm', 'test'])], suiteLanes: [], evidenceDir: absPath('/run/ev/a'), worktree: absPath('/wt/a'),
-      scope: { include: [repoPattern('src/a/**')], exclude: [] }, fixRound: null, witnessChecks: [], milestones: null, browser: null, certifiedAt: null, handover: null,
+      systems: [systemName('app-a')], fixRound: null, witnessChecks: [], milestones: null, browser: null, certifiedAt: null, handover: null,
     },
     { notes: ['NOTE-B'],
-      systemNotes: [repoPath('docs/systems/SYSTEM-NOTES-B.md')], spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
+      systemNotes: [repoPath('docs/systems/SYSTEM-NOTES-B.md')], intent: 'INTENT-B', nonGoals: ['NON-GOAL-B'], spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
       planCheckNotes: 'NOTES-B', fastLanes: [lane('lint', ['npx', 'tsc', '--noEmit'])], suiteLanes: [lane('eslint', ['npx', 'eslint', '.'])], evidenceDir: absPath('/run/ev/b'), worktree: absPath('/wt/b'),
-      scope: { include: [repoPattern('src/b/**')], exclude: [] }, fixRound: { failingEvidenceDirs: [absPath('/run/inv/9-1')], directives: ['DIRECTIVE-B'] },
+      systems: [systemName('app-b')], fixRound: { failingEvidenceDirs: [absPath('/run/inv/9-1')], directives: ['DIRECTIVE-B'] },
       witnessChecks: [{ lane: laneId('journey'), command: 'roadmap witness-check --lane-file /run/ev/b/witness/journey.json' }],
       milestones: milestonesSample(), browser: browserSample(), certifiedAt: SHA_B,
       handover: {
@@ -305,22 +302,22 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
   ],
   gate: [
     {
-      systemNotes: [], spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
+      systemNotes: [], intent: 'INTENT-A', nonGoals: ['NON-GOAL-A'], spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
       target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A', planCheckNotes: '', obligations: [], standingObligations: [],
       diff: { bounded: shown(SHA_A, SHA_B, 'DIFF-A'), claims: { acceptance: [clauseId('A1')], witnesses: [], obligations: [] } },
       laneLedger: [{ lane: laneId('unit'), argv: ['npm', 'test'], expectedExit: 0, exitCode: 0, verdict: 'pass', evidenceDir: absPath('/run/inv/3-1'), ignored: null, reused: null }],
-      evidence: [absPath('/run/ev/a')], scope: { excluded: [], patterns: [repoPattern('src/a/**')], growth: [], rejected: [] }, priorRound: null, checks: { witnesses: null, smoke: null, regenerated: [] },
+      reach: [], traits: [], reachTraits: [], evidence: [absPath('/run/ev/a')], systems: [systemName('app-a')], priorRound: null, checks: { witnesses: null, smoke: null, regenerated: [] },
       escalation: null, largeDiff: null, milestones: null, review: { ledger: [], disputes: [], delta: null }, undeclaredContracts: [],
     },
     {
-      systemNotes: [repoPath('docs/systems/SYSTEM-NOTES-B.md')], spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
+      systemNotes: [repoPath('docs/systems/SYSTEM-NOTES-B.md')], intent: 'INTENT-B', nonGoals: ['NON-GOAL-B'], spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
       target: { kind: 'digest', digest: doc('docs/digest.md', 'DIGEST-B'), doc: repoPath('docs/arch2.md') }, direction: 'DIR-B', planCheckNotes: 'NOTES-B',
       obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)], standingObligations: [observed('I-3', 'STANDING-B', SHA_A).obligation],
       diff: { bounded: partial(SHA_B, SHA_A, 'DIFF-B', true), claims: { acceptance: [clauseId('A1'), clauseId('A2')], witnesses: [witnessItemId('W-1')], obligations: [obligationId('I-2')] } },
       laneLedger: [{ lane: laneId('lint'), argv: ['npx', 'tsc'], expectedExit: 0, exitCode: 0, verdict: 'pass', evidenceDir: absPath('/run/inv/4-1'),
         ignored: { v: 2, written: { files: 42, bytes: 3_250_000 }, captured: { files: 0, bytes: 0 }, uncaptured: [{ dir: '.local/demo/', files: 42, bytes: 3_250_000, reason: 'not-declared' }] },
         reused: { at: SHA_A, inv: invocationId(opIdOf('arc-1/4'), 1) } }],
-      evidence: [absPath('/run/ev/b')], scope: { excluded: [], patterns: [repoPattern('src/b/**')], growth: [repoPath('README.md')], rejected: [repoPath('test/b/REVERTED-B.test.ts')] },
+      reach: [repoPath('REACH-B')], traits: ['persistent'], reachTraits: ['redacts'], evidence: [absPath('/run/ev/b')], systems: [systemName('app')],
       priorRound: {
         directives: ['DIRECTIVE-B'], findings: [{
           severity: 'blocking', path: 'src/b/x.ts', text: 'FINDING-B', contractRef: null, experiments: [{ command: 'node EXPERIMENT-B.mjs', output: 'OUTPUT-B' }], debt: null,
@@ -446,7 +443,7 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
     decision: 'redirect', ordering: null, reasons: ['A1 contradicts C-1'], risk: 'med', notes: '', premises: [{ claim: 'parse.ts exists', evidence: [{ path: 'src/a/parse.ts', line: 1 }] }],
     design: null, split: null, scaffold: null, poc: null,
     visionConflict: [{ clauses: ['V-1'], note: 'A2 makes rounding permissive, against V-1.' }],
-    scopeGrowth: [{ patterns: ['test/legacy/shell.test.ts'], reason: 'it tests the shell page A1 removes' }],
+
     staleLinks: [{ link: 'requirement:I-2', outcome: 'updated', reason: 'A1 now states I-2 at rev 2' }],
     patch: [
       { op: 'replace', section: 'lanes', item: { id: 'unit', argv: ['npm', 'test'], cwd: '.', env: { set: [{ name: 'CI', value: '1' }], pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], evidenceExcludes: [] } },
@@ -990,34 +987,6 @@ describe('M3 prompts: the vision and the arc roles', () => {
     assert.throws(() => validatePlanCheckOutput(without), SchemaError);
   });
 
-  it('prompts.scope-growth: plan-check sweeps for references and proposes scopeGrowth from <scope_references>, never a rejected proposal; the gate reads the reverted paths', () => {
-    for (const model of ['claude-opus-5-5', 'claude-fable-5-1'] as const) {
-      const mod = promptFor('planCheck', model);
-      assert.match(mod.system, /sweep for references/, model);
-      assert.match(mod.system, /scopeGrowth/, model);
-      assert.match(mod.system, /<rejected_scope_growth>/, model);
-      const a = mod.render(SAMPLES.planCheck[0]);
-      assert.match(a, /<scope_references>\n\(none: the spec declares no removes, or nothing outside the envelope names them\)\n<\/scope_references>/, model);
-      assert.doesNotMatch(a, /<rejected_scope_growth>/, `${model}: no rejected block without a rejection`);
-      const b = mod.render(SAMPLES.planCheck[1]);
-      assert.match(b, /- `REMOVED-B` is still named by: test\/b\/old\.test\.ts/, model);
-      assert.match(b, /<rejected_scope_growth>\n- `docs\/b\/\*\*`: proposed because GROWTH-REASON-B; rejected because REJECTION-B\n<\/rejected_scope_growth>/, model);
-      const gate = promptFor('gate', model);
-      assert.match(gate.system, /A path listed as reverted/, model);
-      assert.match(gate.render(SAMPLES.gate[1]), /<scope_reverted>\n- test\/b\/REVERTED-B\.test\.ts\n<\/scope_reverted>/, model);
-      assert.match(gate.render(SAMPLES.gate[0]), /<scope_reverted>\n\(none: the build edited nothing outside the envelope\)\n<\/scope_reverted>/, model);
-    }
-    assert.ok((PLAN_CHECK_SCHEMA as { required: string[] }).required.includes('scopeGrowth'));
-    const ok = OUTPUTS.planCheck as Record<string, unknown>;
-    assert.deepEqual(validatePlanCheckOutput(ok).scopeGrowth, [{ patterns: ['test/legacy/shell.test.ts'], reason: 'it tests the shell page A1 removes' }]);
-    for (const bad of [[{ patterns: [], reason: 'r' }], [{ patterns: ['a'] }], [{ patterns: [''], reason: 'r' }]]) {
-      assert.throws(() => validatePlanCheckOutput({ ...ok, scopeGrowth: bad }), SchemaError, JSON.stringify(bad));
-    }
-    // An answer a dev.9 executor launched has no scopeGrowth: read as none proposed (scaffolding, `planCheckScopeGrowthDefault`).
-    const { scopeGrowth: _g, ...dev9 } = ok;
-    assert.throws(() => validatePlanCheckOutput(dev9), /scopeGrowth/);
-  });
-
   it('prompts.stale-links (dev.17 propagation): the plan-check is given its stale links, each by its key, and answers them in a required staleLinks field', () => {
     const mod = promptFor('planCheck', 'claude-opus-5-5');
     assert.ok(mod.fields.includes('staleLinks'));
@@ -1488,20 +1457,6 @@ describe('dev.13 prompts: the polish judge', () => {
       }
     }
   });
-});
-
-
-it('prompts.derived-exclusion: plan-check, builders and gates render the excluded output data', () => {
-  const output = repoPattern('test/generated-routes.json');
-  for (const role of ['planCheck', 'build', 'gate'] as const) {
-    for (const model of MODEL_IDS) {
-      if (PROMPTS[role][model].type === 'unsupported') continue;
-      const mod = promptFor(role, model);
-      const sample = SAMPLES[role][0];
-      const scope = role === 'gate' ? { ...SAMPLES.gate[0].scope, excluded: [output] } : { ...SAMPLES.build[0].scope, exclude: [output] };
-      assert.ok((mod.render as (i: unknown) => string)({ ...sample, scope }).includes(output), `${role} ${model}: excluded output rendered`);
-    }
-  }
 });
 
 it('non-active obligations render only their id and state', () => {

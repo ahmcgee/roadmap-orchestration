@@ -33,12 +33,10 @@ import { type AbsPath, type BootId, absPath, isoTimeOf } from '../core/values.ts
 import { GitError, worktreeAdd, worktreeList, worktreePrune, worktreeRemove } from '../git/git.ts';
 import type { BringUp } from '../input/plan.ts';
 import {
-  BringUpAborted, allocatePorts, awaitDetachedReady, bringUpEnv, commandEnv, detachedAlive, logLine, runDetachedStep, startDetachedServe, stopSession,
-} from '../walk/bringup.ts';
+  BringUpAborted, allocatePorts, awaitDetachedReady, bringUpEnv, commandEnv, detachedAlive, logLine, runDetachedStep, startDetachedServe, stopSession } from '../walk/bringup.ts';
 import {
   type DemoDesired, type DemoInstance, type DemoProcess, type DemoRecord, type DemoServing, EMPTY_RECORD, currentLink, demoRoot, readDemoRecord,
-  readDesired, writeDemoRecord,
-} from './records.ts';
+  readDesired, writeDemoRecord } from './records.ts';
 
 export const KEEPER_TICK_MS = 1_000;
 /** How long a supervisor whose arc completed waits for the keeper's last reconcile (the final promotion). */

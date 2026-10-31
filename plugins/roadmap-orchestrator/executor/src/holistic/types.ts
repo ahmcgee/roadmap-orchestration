@@ -1,3 +1,4 @@
+import { type SystemName, systemName } from '../core/ids.ts';
 // The holistic layer's records (M3, frozen in step 0a; SCHEMAS.md "M3: the holistic layer"): the vision, the
 // obligations file, witness records, ruling sidecars, findings and divergences, and the frozen signatures the
 // later steps implement (impact selection, observations). Types, readers and pure helpers only: no I/O.
@@ -18,19 +19,16 @@ invocationIdOf,jobIdOf,jobIdOfKind,laneId,laneRev,
 milestoneId,
 obligationId,
 opportunityId,
-planRev,questionId,routingRev,ruleId,rulingId,sha,sha256,unitId,visionClauseId,
-} from '../core/ids.ts';
+planRev,questionId,routingRev,ruleId,rulingId,sha,sha256,unitId,visionClauseId } from '../core/ids.ts';
 import { canonicalJson,sha256Hex } from '../core/json.ts';
 import {
-LENS_KIND_NAMES,type LaneDef,type LensKindName,type RepairRef,type Stage,laneDef,laneDefOf,laneEnv,repairRef,
-} from '../core/records.ts';
+LENS_KIND_NAMES,type LaneDef,type LensKindName,type RepairRef,type Stage,laneDef,laneDefOf,laneEnv,repairRef } from '../core/records.ts';
 
 import {
 Fields,
 type Read,
 SchemaError,arrayOf,assertUnique,bool,literal,nat,nullable,object,oneOf,positive,sortedBy,str,tagged,
-text,version,
-} from '../core/validate.ts';
+text,version } from '../core/validate.ts';
 import { type IsoTime,type RepoPath,type RepoPattern,isoTime,repoPath,repoPattern } from '../core/values.ts';
 import type { SchemaVersion } from '../core/version.ts';
 
@@ -247,7 +245,7 @@ export type CensusState =
 export const CENSUS_STATES = ['obligation', 'out-of-slice', 'untestable', 'prod-only'] as const;
 export type CensusEntry = Readonly<{ rule: RuleId; state: CensusState }>;
 
-export type MappingEntry = Readonly<{ pattern: RepoPattern; obligations: readonly ObligationId[] }>;
+export type MappingEntry = Readonly<{ system: SystemName; obligations: readonly ObligationId[] }>;
 
 export type Obligations = Readonly<{
   schema: typeof OBLIGATIONS_SCHEMA;
@@ -255,7 +253,7 @@ export type Obligations = Readonly<{
   lanes: readonly ArcLaneDef[];
   obligations: readonly ObligationDef[];
   /** The one authoritative impact mapping (§2.8), revisioned with the obligations. */
-  mapping: Readonly<{ paths: readonly MappingEntry[] }>;
+  mapping: Readonly<{ systems: readonly MappingEntry[] }>;
   /**
    * M4a: present exactly when the obligations are rule-anchored (a corpus arc), ascending by rule number. Absent on a
    * dev.6 file (`censusOf`: none, census checks vacuous).
@@ -416,8 +414,8 @@ export const obligations: Read<Obligations> = object((f) => {
     lanes: f.get('lanes', arrayOf(arcLaneDef)),
     obligations: f.get('obligations', arrayOf(obligationDef)),
     mapping: f.get('mapping', object((g) => ({
-      paths: g.get('paths', arrayOf(object((h) => ({
-        pattern: h.get('pattern', (v, p) => repoPattern(v, p)),
+      systems: g.get('systems', arrayOf(object((h) => ({
+        system: h.get('system', (v, p) => systemName(v, p)),
         obligations: h.get('obligations', idList(oid, { nonEmpty: true })),
       })))),
     }))),
@@ -425,7 +423,7 @@ export const obligations: Read<Obligations> = object((f) => {
   };
   assertUnique(out.lanes, byId, `${f.path}.lanes`);
   assertUnique(out.obligations, byId, `${f.path}.obligations`);
-  assertUnique(out.mapping.paths, (e) => e.pattern, `${f.path}.mapping.paths`);
+  assertUnique(out.mapping.systems, (e) => e.system, `${f.path}.mapping.systems`);
   const ids = new Map(out.obligations.map((o) => [o.id, o]));
   const lanes = new Set(out.lanes.map((l) => l.id));
   out.obligations.forEach((o, i) => {
@@ -439,8 +437,8 @@ export const obligations: Read<Obligations> = object((f) => {
       for (const c of o.state.children) if (ids.get(c)?.parent !== o.id) throw new SchemaError(`${at}.state.children`, `children naming ${o.id} as their parent`, c);
     }
   });
-  out.mapping.paths.forEach((e, i) => e.obligations.forEach((o) => {
-    if (!ids.has(o)) throw new SchemaError(`${f.path}.mapping.paths[${i}].obligations`, 'obligations of this file', o);
+  out.mapping.systems.forEach((e, i) => e.obligations.forEach((o) => {
+    if (!ids.has(o)) throw new SchemaError(`${f.path}.mapping.systems[${i}].obligations`, 'obligations of this file', o);
   }));
   // M4a: one anchor kind per file, and a census exactly with rule anchors (a corpus arc's file).
   const ruled = out.obligations.filter((o) => obligationSource(o).kind === 'rule');
@@ -600,6 +598,7 @@ export type ImpactInput = Readonly<{
   /** The declared obligations of the units' dependency closure. */
   closure: readonly ObligationId[];
   changedPaths: readonly RepoPath[];
+  systemsMap: import('../input/systems.ts').SystemsMap | null;
   /** A revision publication's obligations added, split or re-witnessed (G12); empty for a unit candidate. */
   revised: readonly ObligationId[];
   /** The future obligations latched so far (the fold's `obligation-latched`): must-hold, so an unmapped path selects them. */

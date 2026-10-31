@@ -37,12 +37,10 @@ import { worktreeCreateOp } from '../recover/ops.ts';
 import { renderSpec } from '../spec/render.ts';
 import {
   type BackendCallOutcome, type Cancelled, type StageContext, type StageParent, callBackend, enter, evidenceRoot, implementerDispatch, isCancelled, minutesMs, runOp, verdictOf,
-  workDir,
-} from './dispatch.ts';
+  workDir } from './dispatch.ts';
 import { freshSession } from './rounds.ts';
 import {
-  type StageDone, at, buildEntry, failedFacts, holdEntry, inMs, integrationTip, judgedAnswer, loadUnitSpec, planCheckAnswerOf, record, removeJudgmentCheckouts, stageHolder, start,
-} from './stages.ts';
+  type StageDone, at, buildEntry, failedFacts, holdEntry, inMs, integrationTip, judgedAnswer, loadUnitSpec, planCheckAnswerOf, record, removeJudgmentCheckouts, stageHolder, start } from './stages.ts';
 
 /** A PoC's window. */
 export const POC_MINUTES = 60;
@@ -141,7 +139,7 @@ export async function poc(ctx: StageContext, unit: PlanUnit): Promise<StageDone<
     request: { kind: 'implementer', dispatch: seated.dispatch, session: freshSession(seated.dispatch), evidenceDirs: [work], mcpConfig: null },
     system: prompt.system,
     ...renderPrompt(prompt, {
-      spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec) }, brief: decision.brief, questions: decision.questions, worktree, tip, evidenceDir: work,
+      spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec) }, intent: spec.intent, nonGoals: spec.nonGoals, brief: decision.brief, questions: decision.questions, worktree, tip, evidenceDir: work,
       lessons: pocLessons(ctx, unit.id),
     }, seated.dispatch.triple.backend),
     schema: prompt.schema, cwd: worktree, deadlineAt: inMs(minutesMs(POC_MINUTES)),

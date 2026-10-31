@@ -26,7 +26,7 @@ const splitRaw = (id: string, children: readonly string[], over: Raw = {}): Raw 
 
 function file(obligations: readonly Raw[]): readonly ObligationDef[] {
   return parseObligations({
-    schema: 'roadmap/obligations-m3', cutLine: 'cut', mapping: { paths: [] }, obligations,
+    schema: 'roadmap/obligations-m3', cutLine: 'cut', mapping: { systems: [] }, obligations,
     lanes: [{ id: 'journey', argv: ['node', '--test'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], evidenceExcludes: [], reporter: 'node-test' }],
   }).obligations;
 }
@@ -142,7 +142,7 @@ describe('gradeTree: measured lanes', () => {
   const witnessed = (id: string, lid: string): Raw => ({ witness: { lane: lid, testIds: [id] }, proofJudgment: { verdict: 'proves', obligationRev: 1,  witness: {  testIds: [id] } } });
   // I-1 must-hold on `journey`; I-2 future on `clash`, delivered by a sibling unit not yet published (paid M4b run 5).
   const obligations = parseObligations({
-    schema: 'roadmap/obligations-m3', cutLine: 'cut', mapping: { paths: [] }, lanes: [lane('journey'), lane('clash')],
+    schema: 'roadmap/obligations-m3', cutLine: 'cut', mapping: { systems: [] }, lanes: [lane('journey'), lane('clash')],
     obligations: [raw('I-1', witnessed('I-1', 'journey')), raw('I-2', { ...witnessed('I-2', 'clash'), activation: 'future', deliveredBy: ['clash-refusal'] })],
   });
   const record = (lid: string, malformed: boolean, testId: string): ReturnType<typeof witnessRecord> => witnessRecord({

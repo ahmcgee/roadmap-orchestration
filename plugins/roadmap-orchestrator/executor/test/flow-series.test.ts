@@ -1,3 +1,4 @@
+import { systemName } from '../src/core/ids.ts';
 // M4b A1: the flow series (src/flow/series.ts) over synthetic arc logs: the disjoint station partition summing to the lead
 // time, held time out of the waits, the four suite-run shapes (the T-alone rerun as rework), batch merges out of the
 // points but in T, the accounting, in-flight ages; the points' and the station table's pressure (M4b rev 3); and the
@@ -396,7 +397,7 @@ describe('flow history: other arcs\' series', () => {
     schema: 'roadmap/plan-m1', arc: 'arc-a', integrationBranch: 'integration/arc-a', baseline: 'a'.repeat(40), worktreeRoot: '/var/tmp/roadmap-wt',
     contracts: [], rulings: 'rulings.jsonl', architectureDoc: 'docs/architecture.md', direction: 'Converge.',
     suite: { lanes: [{ id: 'suite', argv: ['npm', 'test'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [] }] },
-    resources: [], units: [{ id: 'u1', spec: 'specs/u1.json', risk: 'med', scope: ['src/**'], resources: [] }],
+    resources: [], units: [{ id: 'u1', spec: 'specs/u1.json', risk: 'med', systems: [systemName('app')], resources: [] }],
   };
   /** The arc's ref; `completedAt`: the minute of its `arc-completed` (null: none). */
   const ref = (log: FlowLog, kept: Readonly<Record<string, unknown>> | null, completedAt: number | null): ArcRef => {

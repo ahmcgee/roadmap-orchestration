@@ -1,3 +1,4 @@
+import { systemName } from '../../src/core/ids.ts';
 // Shared by the milestone walk tests (test/walk-job.test.ts) and their crash child (walk-child.ts): a holistic arc with one
 // milestone MS-1 over u1 (u2 descends from it, u3 is unrelated), a tiny fake product committed in the base repo (a node
 // http server and a CLI, its design reference under design/), the walk context over the run's one arbiter, and the
@@ -126,7 +127,7 @@ export const unitInForce = (r: ArcRun, id: string): PlanUnit => {
 export type WalkAnswerSpec = Readonly<{
   journeys?: readonly Readonly<{ journey: string; outcome: 'completed' | 'blocked'; evidence?: readonly string[] }>[];
   findings?: readonly Readonly<{ class: 'breaks' | 'deviates'; journey: string; claim: string; cause: string; against: JsonValue; paths?: readonly string[]; evidence?: readonly string[] }>[];
-  polish?: readonly Readonly<{ journey: string; text: string; unit: Readonly<{ id: string; scope: readonly string[]; spec: JsonValue }> }>[];
+  polish?: readonly Readonly<{ journey: string; text: string; unit: Readonly<{ id: string; systems: readonly string[]; spec: JsonValue }> }>[];
 }>;
 
 /** The file a fake walk keeps its fetch of J-1's entry in (relative to the evidence dir). */
@@ -141,7 +142,7 @@ export function walkAnswer(spec: WalkAnswerSpec = {}): JsonValue {
     findings: (spec.findings ?? []).map((f) => ({
       class: f.class, journey: f.journey, evidence: [...(f.evidence ?? [J1_EVIDENCE])], claim: f.claim, cause: f.cause, against: f.against, paths: [...(f.paths ?? [])],
     })),
-    polish: (spec.polish ?? []).map((p) => ({ journey: p.journey, evidence: [J1_EVIDENCE], text: p.text, unit: { id: p.unit.id, scope: [...p.unit.scope], spec: p.unit.spec } })),
+    polish: (spec.polish ?? []).map((p) => ({ journey: p.journey, evidence: [J1_EVIDENCE], text: p.text, unit: { id: p.unit.id, systems: [systemName('app')], spec: p.unit.spec } })),
     premises: [],
     reasons: ['scripted walk'],
   } as unknown as JsonValue;
@@ -178,7 +179,7 @@ export const SCOPE = ['design/**', 'product/**'];
 /** A polish proposal on J-1 whose unit is u1's spec renamed (its lanes), scope the reference and the product. */
 export function proposal(d: Readonly<{ planPath: string }>, id: string, text: string, extra: Json = {}) {
   const u1 = JSON.parse(readFileSync(join(d.planPath, '..', 'u1.json'), 'utf8')) as Json;
-  return { journey: 'J-1', text, unit: { id, scope: SCOPE, spec: admitSpecWire({ ...u1, unit: id, rev: 1, scope: SCOPE, ...extra }) } };
+  return { journey: 'J-1', text, unit: { id, systems: [systemName('app')], spec: admitSpecWire({ ...u1, unit: id, rev: 1, ...extra }) } };
 }
 
 /** The build of polish unit `unit` (risk high: the efficient class since dev.17, Codex under the default profile): it commits `files`. */

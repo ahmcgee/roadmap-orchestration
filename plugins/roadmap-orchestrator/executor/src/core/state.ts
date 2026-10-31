@@ -13,7 +13,7 @@ type DoneRecord,type Event,type Fact,
 type Holder,
 type HolisticFact,
 type IntentOf,type IntentRecord,type JudgmentInputs,type JudgmentStage,type OpKind,type Parent,type ParkRecord,type PlanAppliedFact,type ProbeTarget,
-type ResourceEdge,type RetryStage,type ScopeGrowthProposal,type StageOutcomeFact,JUDGMENT_STAGES,RECLAIM_HOLDERS,RESIDUE_HOLDERS,
+type ResourceEdge,type RetryStage,type StageOutcomeFact,JUDGMENT_STAGES,RECLAIM_HOLDERS,RESIDUE_HOLDERS,
 RETRYABLE_BACKEND_PARKS,
 RETRY_STAGES,
 certificationRed,
@@ -201,12 +201,7 @@ export type UnitState = Readonly<{
    * gate outcome that advances it. Null otherwise.
    */
   steering: Readonly<{ seq: number; resume: boolean }> | null;
-  /**
-   * Scope growth (2026-10-15): the root agent's decisions on the unit's held scope-growth proposals (`scope-decided`), in log
-   * order, each with the proposals its plan-check attempt held. A later plan-check reads the rejected ones (it is told not
-   * to propose them again, and a proposal of a rejected pattern no longer holds it).
-   */
-  scopeDecisions: readonly ScopeDecision[];
+
   /**
    * Arc feedback 2026-10-16: the unit's failure outcomes in log order, each a `stage-outcome` that parked or stopped it or
    * was charged. A re-entry's `fixes` names one of these (or a lane failure, src/pipeline/failures.ts), which the
@@ -248,26 +243,13 @@ export type FailedOutcome = Readonly<{
   park: ParkRecord | null;
 }>;
 
-/** One `scope-decided` fact with the proposals of the plan-check attempt it decided. */
-export type ScopeDecision = Readonly<{
-  /** The stage whose `scope-growth` hold it decided (plan defects, 2026-10-16: a lanes attempt's too). */
-  stage: ScopeHoldStage;
-  attempt: number; command: CommandId; decision: 'accepted' | 'rejected'; proposals: readonly ScopeGrowthProposal[]; reason: string;
-}>;
-
-/** The stages a `scope-growth` hold is recorded at: a plan-check's proposal, and a lanes attempt's repeated reverts. */
-export const SCOPE_HOLD_STAGES = ['plan-check', 'lanes'] as const;
-export type ScopeHoldStage = (typeof SCOPE_HOLD_STAGES)[number];
-/** `stage` as a scope-hold stage, or null. */
-export const scopeHoldStage = (stage: Stage): ScopeHoldStage | null => (SCOPE_HOLD_STAGES as readonly Stage[]).includes(stage) ? stage as ScopeHoldStage : null;
-
 export function newUnitState(unit: UnitId, stage: Stage, risk: RiskTier | null, spec: SpecState | null = null, bounds: Bounds = DEFAULT_BOUNDS): UnitState {
   const retries = Object.fromEntries(RETRY_STAGES.map((s) => [s, 0])) as Record<RetryStage, number>;
   return {
     unit, stage, risk, status: 'active', routedUp: [], promotion: false, decided: null, interrupted: null, pressureHold: null, pressureHolds: 0,
     approval: null, open: null, counters: { attempts: 0, chargeableFailures: 0, unchargedLanesReds: 0, redirects: 0, reviseRounds: 0, candidateReds: 0, smokeRounds: 0, retries },
     spec, reopened: null, pendingRevision: null, staleRev: null, redirectBase: 0,
-    park: null, lastRecovery: null, buildTier: risk, lineage: null, supersededBy: null, bounds, entry: null, steering: null, scopeDecisions: [], failures: [],
+    park: null, lastRecovery: null, buildTier: risk, lineage: null, supersededBy: null, bounds, entry: null, steering: null, failures: [],
     pocs: 0,
   };
 }
@@ -702,8 +684,6 @@ export class Fold implements JournalView {
   /** Every `dispatch` fact per unit, in log order: the latest is the record in force. */
   readonly #dispatches = new Map<UnitId, DispatchRecord[]>();
   /** M3: the seq of each unit's latest dispatch fact, and of the latest `plan-applied` recording it `unit-changed`. */
-  readonly #pinSeq = new Map<UnitId, number>();
-  readonly #unitChangedSeq = new Map<UnitId, number>();
   /** The spec the unit's dispatch facts name: its first pin's (a re-pin keeps it; see the `dispatch` case). */
   readonly #pinnedSpec = new Map<UnitId, SpecState>();
   readonly #meter = new Map<string, MeterTotal>();
@@ -1056,15 +1036,10 @@ export class Fold implements JournalView {
         return;
       }
       case 'dispatch': {
-        const { unit, scope, riskFloor } = f.record;
+        const { unit, riskFloor } = f.record;
         const prev = this.#dispatches.get(unit)?.at(-1);
         // A re-pin (a plan-check raise) keeps the scope envelope and never lowers the risk floor (R2). M3: the scope
         // grows only by a ruled scope-growth apply, a `unit-changed` revision of the unit since its previous pin.
-        if (prev !== undefined && canonicalJson(prev.scope) !== canonicalJson(scope)) {
-          const grown = prev.scope.every((p) => scope.includes(p));
-          if (!grown || (this.#unitChangedSeq.get(unit) ?? -1) < (this.#pinSeq.get(unit) ?? -1)) fail(`dispatch of ${unit} changes its pinned scope`);
-        }
-        this.#pinSeq.set(unit, at.seq);
         if (prev !== undefined && RISK_TIERS.indexOf(riskFloor) < RISK_TIERS.indexOf(prev.riskFloor)) {
           fail(`dispatch of ${unit} lowers riskFloor ${prev.riskFloor} to ${riskFloor}`);
         }
@@ -1256,9 +1231,6 @@ export class Fold implements JournalView {
       case 'resumed':
         this.#resumed(f.target, fail);
         return;
-      case 'scope-decided':
-        this.#scopeDecided(f, fail);
-        return;
       case 'reopened':
         this.#reopened(f, fail);
         this.#lastReopenSeq = at.seq;
@@ -1266,7 +1238,6 @@ export class Fold implements JournalView {
       case 'plan-applied':
         this.#planAppliedFact(f, at.seq, fail);
         for (const c of f.changes) {
-          if (c.type === 'unit-changed') this.#unitChangedSeq.set(c.unit, at.seq);
           if (c.type === 'milestones') for (const m of c.rewalk ?? []) this.#rewalkSeqs.set(m, at.seq);
         }
         return;
@@ -1924,24 +1895,6 @@ export class Fold implements JournalView {
       ...u.state, stage: 'plan-check', decided: null, interrupted: null, pressureHold: null, park: null,
       reopened: { command: null, specRev: spec.rev }, redirectBase: u.state.counters.redirects,
     });
-  }
-
-  /**
-   * The root agent's decision on a held scope-growth proposal (src/commands/scope.ts): only of the unit held by that
-   * plan-check (or, plan defects 2026-10-16, lanes) attempt's `scope-growth` hold. It releases the hold (the stage re-runs
-   * as a new, uncharged attempt, or an accepted growth re-opens the unit at plan-check) and is kept with the proposals it
-   * decided.
-   */
-  #scopeDecided(f: Extract<Fact, { kind: 'scope-decided' }>, fail: (detail: string) => never): void {
-    const u = this.#units.get(f.unit);
-    if (u === undefined) return fail(`scope-decided of unit ${f.unit}, which never started`);
-    const held = u.state.interrupted;
-    const stage = held === null ? null : scopeHoldStage(held.stage);
-    if (u.state.status !== 'held' || held === null || stage === null || held.outcome !== 'scope-growth' || held.attempt !== f.attempt || held.detail?.kind !== 'scope-growth') {
-      return fail(`scope-decided of unit ${f.unit} attempt ${f.attempt}, which is not the unit's scope-growth hold (status ${u.state.status}, held ${held === null ? 'none' : `${held.stage}#${held.attempt} ${held.outcome}`})`);
-    }
-    const decision: ScopeDecision = { stage, attempt: f.attempt, command: f.command, decision: f.decision, proposals: held.detail.proposals, reason: f.reason };
-    this.#setUnitState(u, { ...u.state, status: 'active', scopeDecisions: [...u.state.scopeDecisions, decision] });
   }
 
   /**

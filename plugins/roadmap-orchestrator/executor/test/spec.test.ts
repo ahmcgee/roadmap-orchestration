@@ -37,7 +37,7 @@ const ESTATE_LANE = {
 };
 
 /** The authored form: a unit spec as Phase 0 writes it, keys in authoring order. */
-const RAW_SPEC = {
+const RAW_SPEC = { intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
   schema: 'roadmap/spec-m1',
   unit: 'u1',
   rev: 1,
@@ -46,7 +46,7 @@ const RAW_SPEC = {
     { id: 'A1', clause: 'The widget renders.\nIt renders twice.', failLoudIfUndelivered: true, state: 'active' },
     { id: 'A2', clause: 'The widget is blue.', failLoudIfUndelivered: false, state: 'active' },
   ],
-  scope: ['src/widget/**', 'docs/widget.md'],
+
   resources: ['shared-cache', 'estate-db'],
   decisions: [{ id: 'D1', text: 'Use the canvas API.', state: 'active' }],
   facts: [{ id: 'F1', text: 'The canvas is 800 wide.', state: 'active' }],
@@ -87,7 +87,7 @@ describe('spec load and write', () => {
     assert.equal(pretty.rev, 1);
     assert.ok(specBytes(pretty).equals(specBytes(compact)));
     // A semantic change is a different canonical form (and so a different content hash).
-    const changed = specM1({ ...RAW_SPEC, scope: ['src/widget/**'] }, 'spec');
+    const changed = specM1({ ...RAW_SPEC, intent: 'Implement the widget.' }, 'spec');
     assert.notEqual(bytesSha256(specBytes(changed)), bytesSha256(specBytes(pretty)));
     // The revision is the file's; a patch moves it by exactly one.
     assert.equal(applySpecPatch(pretty, REDIRECT).rev, 2);
@@ -113,19 +113,19 @@ describe('spec rendering', () => {
     // Sets render sorted, so a permutation of any of them renders identically.
     const permuted = specM1({
       ...RAW_SPEC,
-      scope: [...RAW_SPEC.scope].reverse(),
+      nonGoals: [...RAW_SPEC.nonGoals].reverse(),
       resources: [...RAW_SPEC.resources].reverse(),
       lanes: [{ ...FAST_LANE, env: { set: { ALPHA: 'a b', ZED: '1' }, pass: ['HOME', 'PATH'] }, evidenceGlobs: ['out/a.log', 'out/b.log'] }, ESTATE_LANE],
     }, 'spec');
     assert.equal(renderSpec(permuted), first);
     const at = (s: string): number => first.indexOf(s);
-    assert.ok(at('`docs/widget.md`') < at('`src/widget/**`'), 'scope sorted');
+    assert.match(first, /## Intent/);
     assert.ok(at('- `estate-db`') < at('- `shared-cache`'), 'resources sorted');
     assert.ok(at('ALPHA="a b"') < at('ZED="1"') && at('HOME (from the host)') < at('PATH (from the host)'), 'env sorted');
     assert.ok(at('`out/a.log`') < at('`out/b.log`'), 'evidence sorted');
     // Items keep their authored order; every section is present.
     assert.ok(at('`A1`') < at('`A2`'));
-    for (const heading of ['# Spec for unit `u1`, rev 1', '## Acceptance', '## Scope', '## Lanes', '## Resources', '## Decisions', '## Facts', '## Cites']) {
+    for (const heading of ['# Spec for unit `u1`, rev 1', '## Acceptance', '## Intent', '## Non-goals', '## Lanes', '## Resources', '## Decisions', '## Facts', '## Cites']) {
       assert.ok(first.includes(heading), heading);
     }
     assert.ok(first.includes('- `A1` [active] (fail loud if undelivered): The widget renders.\n  It renders twice.'), 'multi-line clause indented');
@@ -188,7 +188,7 @@ describe('spec patch', () => {
     assert.deepEqual(next.acceptance[0], { ...SPEC.acceptance[0], state: 'struck' }, 'strike keeps the item');
     assert.deepEqual(next.decisions[0], { ...SPEC.decisions[0], state: 'deferred' }, 'defer keeps the item');
     assert.equal(next.acceptance[1]!.clause, 'The widget is green.');
-    assert.deepEqual(next.scope, SPEC.scope);
+    assert.deepEqual(next.nonGoals, SPEC.nonGoals);
     assert.deepEqual(next.resources, SPEC.resources);
     // The result is a valid spec.
     assert.deepEqual(specM1(JSON.parse(specBytes(next).toString('utf8')), 'spec'), next);
@@ -360,7 +360,7 @@ describe('spec.patch op and reconciler', () => {
     await runChild(s, writeTrigger(tmpDir('spec-trigger'), { label: 'spec.patch.before-write', occurrence: 1 }));
     const intent = openSpecIntent(s.runDir);
     const j = openJournal(absPath(s.runDir), ARC);
-    writeFileSync(s.path, JSON.stringify({ ...RAW_SPEC, scope: ['elsewhere/**'] }));
+    writeFileSync(s.path, JSON.stringify({ ...RAW_SPEC, intent: 'A different valid intent.' }));
     const changed = await reconcileSpecPatch(absPath(s.runDir))(intent, j.view);
     assert.equal(changed.kind, 'park');
     rmSync(s.path);

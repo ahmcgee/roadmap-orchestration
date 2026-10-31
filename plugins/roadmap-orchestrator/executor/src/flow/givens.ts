@@ -12,8 +12,7 @@ import { givenIdOf } from '../core/ids.ts';
 import { type AbsPath, type IsoTime, absPath } from '../core/values.ts';
 import type { RepoConfig } from '../routing/layers.ts';
 import {
-  type FlowLever, type GivenInForce, type HostFingerprint, type HostGiven, type HostGivens, type RepoGiven, HOST_GIVENS_SCHEMA, parseHostGivens, sameHost,
-} from './types.ts';
+  type FlowLever, type GivenInForce, type HostFingerprint, type HostGiven, type HostGivens, type RepoGiven, HOST_GIVENS_SCHEMA, parseHostGivens, sameHost } from './types.ts';
 
 /** The host givens file of the repo whose git common dir is `commonDir`. */
 export function givensPath(commonDir: AbsPath): AbsPath {

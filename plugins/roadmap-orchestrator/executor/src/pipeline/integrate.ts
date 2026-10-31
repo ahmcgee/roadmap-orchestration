@@ -1,3 +1,4 @@
+import { protectedPathsInForce } from '../input/protected.ts';
 // The integration slot (plan "Pipeline", candidate, ff and snapshot rows; DESIGN-1.0.md §3 "Merge"):
 // candidate → suite lanes → ff-only publication → snapshot, so the tested head is the published head.
 //
@@ -88,24 +89,20 @@ import { reentryRecommendation } from '../needsuser.ts';
 import { runnerFiles } from '../runner/files.ts';
 import { invocationDir, killWorkload } from './invoke.ts';
 import {
-  type BatchHolder, type PublicationHolder, type Reservation, type ResourceContext, cleanup, entryOf, finishCleanup, heldReservation, resourceTable, run, sameHolder,
-} from '../resources/reserve.ts';
+  type BatchHolder, type PublicationHolder, type Reservation, type ResourceContext, cleanup, entryOf, finishCleanup, heldReservation, resourceTable, run, sameHolder } from '../resources/reserve.ts';
 import type { AcquireFirst } from '../schedule/arbiter.ts';
 import type { ResourceRequest } from '../schedule/types.ts';
 import {
-  type Cancelled, type StageContext, type StageParent, dispatchOf, enter, evidenceRoot, isCancelled, runOp, runPrepared, unitBranch, unitWorktree,
-} from './dispatch.ts';
+  type Cancelled, type StageContext, type StageParent, dispatchOf, enter, evidenceRoot, isCancelled, runOp, runPrepared, unitBranch, unitWorktree } from './dispatch.ts';
 import { fingerprintHolds, fingerprintValid, selected, unitTip } from './gate.ts';
 import {
   type JourneyEnd, type JourneyRun, type JourneySeries, type Series, arcJourneyLane, arcLaneKey, intact, journeyRed, laneEnvId, laneRuntime, mapInForce, observations, removeJobCheckouts,
-  removeVerificationTree, runJourneySeries, runLaneSeries, seriesOrder, standInJourneyLane, suiteJourneyLane, suiteStandIns,
-} from './lanes.ts';
+  removeVerificationTree, runJourneySeries, runLaneSeries, seriesOrder, standInJourneyLane, suiteJourneyLane, suiteStandIns } from './lanes.ts';
 import { carriedLanes } from './docsonly.ts';
 import { type MutantEnd, mutantAcceptance, syncRepairs } from './reproduce.ts';
 import { pressureCause, seriesRuling } from './starved.ts';
 import { type StageDone, at, environmentFacts, executorIdentity, failedFacts, holisticInForce, integrationTip, latestMergein, loadUnitSpec, record, start } from './stages.ts';
 import { candidateMergeOp, integrationFfOp, mergeinOp, snapshotPublishOp } from '../recover/ops.ts';
-import { SCOPE_GROWTH_BLOCKER } from '../prompts/directives.ts';
 
 export const candidateWorktree = (root: AbsPath, arc: string, unit: UnitId, attempt: number): AbsPath =>
   absPath(join(root, arc, `${unit}.candidate-${attempt}`));
@@ -165,7 +162,7 @@ function candidateRequest(ctx: StageContext, unit: PlanUnit, attempt: number): C
   return {
     arc: ctx.plan().arc, unit: unit.id, integration: branchRef(ctx.plan().integrationBranch), unitCommit: unitTip(ctx, unit.id),
     worktree: candidateWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, attempt),
-    rules: unitTransientRules(dispatchOf(ctx.journal.view, unit.id), spec),
+    rules: unitTransientRules(protectedPathsInForce(ctx.runDir, ctx.journal.view), spec),
     identity: executorIdentity(),
     message: memoryMessage(`roadmap ${ctx.plan().arc}: candidate of unit ${unit.id}`, salvageSummaries(ctx, unit.id)),
   };
@@ -821,7 +818,7 @@ export function transientDirectives(violations: readonly TransientViolation[], b
   const declared = violations.flatMap((v) => (v.rule === 'lane-evidence' ? [v] : []));
   const other = violations.filter((v) => v.rule !== 'lane-evidence');
   return [
-    ...(other.length === 0 ? [] : [`${refused}: these paths must not reach integration (run state, evidence, executor files, in-tree .roadmap/ paths, or paths outside the unit's pinned scope): ${other.map((v) => `${v.path} (${v.rule})`).join(', ')}. Remove them from the branch; if the work needs an out-of-scope path, ${SCOPE_GROWTH_BLOCKER} instead of keeping it.`]),
+    ...(other.length === 0 ? [] : [`${refused}: these paths must not reach integration (run state, evidence, executor files, protected repository paths): ${other.map((v) => `${v.path} (${v.rule})`).join(', ')}. Remove them from the branch; report a blocker if the spec requires changing a protected path.`]),
     ...(declared.length === 0 ? [] : [`${refused}: these paths match a lane's declared evidenceGlobs, which name the files that lane's run writes (its outputs) and never reach integration: ${declared.map((v) => `${v.path} (lane ${v.lane}, entry \`${v.glob}\`)`).join(', ')}. Remove from the branch only a path that is lane output. A path that is the unit's own work (its source or tests) is not: keep it, change nothing for it, and say in your report that lane ${[...new Set(declared.map((v) => v.lane))].join(', ')}'s evidenceGlobs cover the unit's work, so the spec's entry needs correcting by the architect.`]),
   ];
 }

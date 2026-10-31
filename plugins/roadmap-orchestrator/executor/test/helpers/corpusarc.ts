@@ -1,3 +1,5 @@
+import { readRepoConfig } from '../../src/preflight/checks.ts';
+import { systemName } from '../../src/core/ids.ts';
 // A corpus arc for tests (M4a step C1): a product repo whose baseline commit holds the sample corpus (test/helpers/
 // corpus.ts) under `docs/corpus`, its guide, `.roadmap/vision.json` (confirmed against the vision doc) and
 // `.roadmap/config.json`; and a plan dir beside it with plan.json (target corpus), a spec, the ledger, rule-anchored
@@ -54,7 +56,7 @@ const arcLane = { ...lane('journey'), reporter: 'jsonl', testPaths: ['test'] };
 /** The witness test file I-1 declares (in the baseline). */
 export const WITNESS_FILE = 'test/berths.test.ts';
 /** The journey lane's revision as the reader computes it (over the lane with its defaults filled in). */
-const LANE_REV = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [arcLane], obligations: [], mapping: { paths: [] } }).lanes[0]!);
+const LANE_REV = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [arcLane], obligations: [], mapping: { systems: [] } }).lanes[0]!);
 
 /** The obligations file: I-1 anchored at T-1 (`activation`), and a census over T-1..T-3 (T-2 out of slice, T-3 untestable). */
 export function obligationsFile(pin: CorpusPin, opts: Readonly<{ activation?: 'must-hold' | 'future'; census?: readonly Json[] }> = {}): Json {
@@ -68,7 +70,7 @@ export function obligationsFile(pin: CorpusPin, opts: Readonly<{ activation?: 'm
       proofJudgment: { verdict: 'proves', obligationRev: 1,  witness: {testIds: witness.testIds, ...(('files' in witness ? {files: witness.files} : {}))} }, deliveredBy: opts.activation === 'future' ? ['u1'] : [],
       activation: opts.activation ?? 'must-hold', contracts: [], state: { type: 'active' },
     }],
-    mapping: { paths: [] },
+    mapping: { systems: [] },
     census: opts.census ?? [
       { rule: 'T-1', state: { type: 'obligation', id: 'I-1' } }, { rule: 'T-2', state: { type: 'out-of-slice' } }, { rule: 'T-3', state: { type: 'untestable' } },
     ],
@@ -116,7 +118,7 @@ export async function corpusArc(opts: CorpusArcOptions = {}): Promise<CorpusArc>
   const visionText = corpus.files[`${DEFAULT_CORPUS_ROOT}/${VISION_DOC}`]!;
   const roadmap = {
     '.roadmap/vision.json': `${JSON.stringify(visionRecord(visionText), null, 2)}\n`,
-    ...(opts.config === null ? {} : { '.roadmap/config.json': `${JSON.stringify(opts.config ?? { chain: { k: 1 } })}\n` }),
+    ...(opts.config === null ? {} : { '.roadmap/config.json': `${JSON.stringify({ chain: { k: 1 }, systemsMap: { systems: { app: { paths: ['src/**'] }, tests: { paths: ['test/**'] } } }, ...opts.config })}\n` }),
   };
   let repo: AbsPath;
   if (opts.repo === undefined) {
@@ -130,10 +132,10 @@ export async function corpusArc(opts: CorpusArcOptions = {}): Promise<CorpusArc>
   const pinned = await corpusPin({ repo, commit: baseline, baseline: sha(baseline), out });
   assert.equal(pinned.kind, 'pinned', JSON.stringify(pinned));
   if (pinned.kind !== 'pinned') throw new Error('unreachable');
-  writeFileSync(join(planDir, 'u1.json'), JSON.stringify({
+  writeFileSync(join(planDir, 'u1.json'), JSON.stringify({ intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
     schema: 'roadmap/spec-m1', unit: 'u1', rev: 1, lanes: [{ ...lane('unit'), state: 'active' }],
     acceptance: [{ id: 'A1', clause: 'It works.', failLoudIfUndelivered: true, state: 'active' }],
-    scope: opts.scope ?? ['src/**'], resources: [], decisions: [], facts: [], cites: { contracts: [], rulings: [] }, obligations: ['I-1'],
+     resources: [], decisions: [], facts: [], cites: { contracts: [], rulings: [] }, obligations: ['I-1'],
   }));
   writeFileSync(join(planDir, 'rulings.md'), '# Rulings\n\nC-1 — Helpers live in src/.\n');
   writeFileSync(join(planDir, 'obligations.json'), JSON.stringify(obligationsFile(pinned.pin, { activation: opts.activation ?? 'must-hold' })));
@@ -142,7 +144,7 @@ export async function corpusArc(opts: CorpusArcOptions = {}): Promise<CorpusArc>
   writeFileSync(planPath, JSON.stringify({
     schema: 'roadmap/plan-m1', arc, integrationBranch: 'main', baseline, worktreeRoot: tmpDir('c1-wt'), contracts: [], rulings: 'rulings.md',
     direction: 'berth booking', suite: { lanes: [lane('suite')] }, resources: [],
-    units: [{ id: 'u1', spec: 'u1.json', risk: 'low', scope: opts.scope ?? ['src/**'], resources: [] }],
+    units: [{ id: 'u1', spec: 'u1.json', risk: 'low', systems: Object.keys(readRepoConfig(repo)?.systemsMap?.systems ?? { app: true }).slice(0, 1).map((s) => systemName(s)), resources: [] }],
     corpus: PIN_FILE, phase0: PHASE0_FILE, holistic: { advances: ['V-1'], obligations: 'obligations.json' },
     ...opts.plan,
   }));
@@ -185,13 +187,13 @@ export const filesOf = (a: CorpusArc): InputFiles => readInputFiles(a.planPath, 
 /** Puts the arc's files in force as revision 1, as a fresh start does (the corpus files kept first). Returns the open journal. */
 export function inForce(a: CorpusArc): OpenJournal {
   const files = filesOf(a);
-  const rows = phase0Rows(phase0InputOf(files, null, null), APPLY);
+  const rows = phase0Rows(phase0InputOf(files, readRepoConfig(a.repo), null), APPLY);
   assert.deepEqual(rows.rows, []);
   const runDir = runDirOfArc(a);
   mkdirSync(runDir, { recursive: true });
   keepCorpusFiles(runDir, rows.opened?.files ?? []);
   const j = openJournal(runDir, a.arc);
-  recordPlan(j, runDir, files, [], { profile: 'default', config: null, arcRoles: 'm4b' });
+  recordPlan(j, runDir, files, [], { profile: 'default', config: readRepoConfig(a.repo), arcRoles: 'm4b' });
   return j;
 }
 
@@ -221,7 +223,7 @@ export async function seal(a: CorpusArc, opts: Readonly<{ complete?: boolean; be
  */
 export function betweenArc(repo: AbsPath, head: Sha, files: Readonly<Record<string, string | null>> = {}): Sha {
   git(repo, 'checkout', '--quiet', '--detach', head);
-  writeFiles(repo, Object.keys(files).length === 0 ? { '.roadmap/config.json': `${JSON.stringify({ chain: { k: 1 } }, null, 2)}\n` } : files);
+  writeFiles(repo, Object.keys(files).length === 0 ? { '.roadmap/config.json': `${JSON.stringify({ chain: { k: 1 }, systemsMap: { systems: { app: { paths: ['src/**'] }, tests: { paths: ['test/**'] } } } }, null, 2)}\n` } : files);
   git(repo, 'add', '--all');
   git(repo, 'commit', '--quiet', '--allow-empty', '-m', 'between arcs');
   return sha(git(repo, 'rev-parse', 'HEAD'));

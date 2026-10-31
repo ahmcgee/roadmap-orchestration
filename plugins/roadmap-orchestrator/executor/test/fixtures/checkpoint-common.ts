@@ -1,3 +1,4 @@
+import { systemName } from '../../src/core/ids.ts';
 // adopted-arc coverage (LR-D0b): migrate to corpus arcs when holistic architecture-doc scaffolding is deleted (BACKLOG)
 // Shared by the checkpoint tests (test/checkpoint.test.ts) and their crash child (checkpoint-child.ts): an audit-common
 // arc whose required lens set is the vision lens alone (one lens call per audit), the checkpoint context over the run's
@@ -96,7 +97,7 @@ export const witnessSplit = (unit: string, clause: string): JsonValue => ({
 export function admitOp(d: ArcDescriptor, id: string, lanes?: readonly Json[]): JsonValue {
   const spec = JSON.parse(readFileSync(join(d.planPath, '..', 'u1.json'), 'utf8')) as Json;
   return {
-    op: 'admit', unit: { id, risk: 'med', scope: ['contracts/**', 'src/**', 'test/**'], after: [], origin: 'checkpoint' },
+    op: 'admit', unit: { id, risk: 'med', systems: [systemName('app')], after: [], origin: 'checkpoint' },
     spec: admitSpecWire({ ...spec, unit: id, rev: 1, ...(lanes === undefined ? {} : { lanes }) }), targets: [],
     cites: ['V-1'], evidence: ['scripted evidence'],
   };

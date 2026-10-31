@@ -85,7 +85,8 @@ export function renderSpec(spec: SpecM1, options: RenderOptions = {}): string {
   const sections = [
     `# Spec for unit ${code(spec.unit)}, rev ${spec.rev}`,
     `## Acceptance\n\n${acceptance.join('\n')}`,
-    `## Scope\n\n${sorted(spec.scope).map((s) => `- ${code(s)}`).join('\n')}`,
+    `## Intent\n\n${spec.intent}`,
+    `## Non-goals\n\n${spec.nonGoals.map((g) => `- ${g}`).join('\n')}`,
     ...(spec.removes === undefined ? [] : [`## Removes\n\n${sorted(spec.removes).map((r) => `- ${code(r)}`).join('\n')}`]),
     `## Lanes\n\n${lanes.length === 0 ? '(none)' : lanes.map(lane).join('\n')}`,
     `## Resources\n\n${spec.resources.length === 0 ? '(none)' : sorted(spec.resources).map((r) => `- ${code(r)}`).join('\n')}`,

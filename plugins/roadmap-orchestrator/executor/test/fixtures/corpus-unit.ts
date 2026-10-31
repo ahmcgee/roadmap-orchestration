@@ -54,7 +54,7 @@ export async function setupCorpusArc(steps: readonly Step[], opts: CorpusUnitOpt
     id: 'journey', argv: witnessLaneArgv('jsonl', planDir, control), cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, cadence: 'build',
     resources: [], evidenceGlobs: [], reporter: 'jsonl',
   };
-  const laneRev = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [journey], obligations: [], mapping: { paths: [] } }).lanes[0]!);
+  const laneRev = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [journey], obligations: [], mapping: { systems: [] } }).lanes[0]!);
   const t1 = pinned.pin.rules.find((r) => r.id === 'T-1');
   assert.ok(t1 !== undefined);
   const witness = { lane: 'journey', testIds: ['t1'] };
@@ -64,7 +64,7 @@ export async function setupCorpusArc(steps: readonly Step[], opts: CorpusUnitOpt
       id: 'I-1', rev: 1, statement: 'A berth is never double-booked.', rule: { id: 'T-1', textSha256: t1.textSha256 }, serves: ['V-1'], witness,
       proofJudgment: { verdict: 'proves', obligationRev: 1,  witness: {testIds: witness.testIds, ...(('files' in witness ? {files: witness.files} : {}))} }, deliveredBy: [], activation: 'must-hold', contracts: [], state: { type: 'active' },
     }],
-    mapping: { paths: [] },
+    mapping: { systems: [] },
     census: pinned.pin.rules.map((r) => ({ rule: r.id, state: r.id === 'T-1' ? { type: 'obligation', id: 'I-1' } : { type: 'out-of-slice' } })),
   }));
   writePhase0(planDir, { ...opts.phase0 });

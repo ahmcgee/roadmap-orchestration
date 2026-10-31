@@ -1,3 +1,5 @@
+import { systemReach, systemTraits, pathSystems } from '../input/systems.ts';
+import { mapInForce } from './lanes.ts';
 import { bytesSha256 } from '../spec/spec.ts';
 // The gate stage (plan "Pipeline", gate row; Authority and Gate inputs, R2; DESIGN-1.0.md §4 Independence).
 //
@@ -77,7 +79,7 @@ import type { JsonValue } from '../core/json.ts';
 import { canonicalJson } from '../core/json.ts';
 import { gateLargeDiffOf,gateReviewOf } from '../core/projections.ts';
 import type { NeedsUserContent,PromptSize } from '../core/records.ts';
-import { type ApprovalFingerprint,type JudgmentSession,type ObligationRev,type SpecM1,effectiveScope,inScope,obligationRevsOf,specRemoves,specWitnesses } from '../core/records.ts';
+import { type ApprovalFingerprint,type JudgmentSession,type ObligationRev,type SpecM1,obligationRevsOf,specRemoves,specWitnesses } from '../core/records.ts';
 import type { ApprovalBlobs,GateReview } from '../core/review.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath,type RepoPath,absPath,matchesPattern,repoPath } from '../core/values.ts';
@@ -102,8 +104,7 @@ import { runnerFiles } from '../runner/files.ts';
 import { renderSpec } from '../spec/render.ts';
 import {
 type BackendCallOutcome,type Cancelled,type JudgmentDispatch,type StageContext,type StageParent,callBackend,cancelledNow,dispatchOf,evidenceRoot,isCancelled,judgmentDeadlineMs,
-judgmentDispatch,runOp,unitBranch,verdictOf,verificationWorktree,
-} from './dispatch.ts';
+judgmentDispatch,runOp,unitBranch,verdictOf,verificationWorktree } from './dispatch.ts';
 import { invocationDir } from './invoke.ts';
 import { laneRecordIn,latestSpecSeries,observedViews,seriesLedger,seriesTree,specSeriesRoot } from './lanes.ts';
 import { approvalBlobs,gateDelta,ledgerFact,openDisputes,reviewInput,reviewRules,unitLedger } from './review.ts';
@@ -116,16 +117,15 @@ holisticInForce,inMs,integrationTip,
 judgedAnswer,
 judgmentOutput,
 judgmentSpawns,ledger,ledgerDir,library,loadUnitSpec,planCheckNotes,planCheckRead,record,releaseJudgment,
-removeJudgmentCheckouts,salvageRejections,
+removeJudgmentCheckouts,
 start,
-stillOutside,
+
 targetDirs,
 unitImpactInput,
 unitMilestones,
 unitTarget,
 verdictKind,
-writeJudgmentInputs,
-} from './stages.ts';
+writeJudgmentInputs } from './stages.ts';
 import { gateWitnessChecks } from './witnesscheck.ts';
 
 /** The unit's approved-or-not commit: its branch tip, which every build round and merge-in moves. */
@@ -466,8 +466,9 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
     const laneLedger = seriesLedger(ctx, series, spec.lanes, 'spec', head, specSeriesRoot(ctx.runDir, series));
     // The attached diff's files (what it does not inline) are listed and readable as evidence.
     const evidence = [...laneLedger.map((l) => l.evidenceDir), ...buildEvidence(ctx, unit.id), diffDir];
-    const scope = effectiveScope(pinned);
-    const growth = paths.filter((p) => !inScope(scope, p));
+      const map = mapInForce(ctx.journal.view);
+    if (map === null) throw new Error('gate requires a systems map');
+    const reach = systemReach(map, unit.systems, paths);
     const seat = seated.dispatch;
     const prompt = promptFor('gate', seat.triple.model);
     const chosen = selectedForGate(ctx, unit, tip, head);
@@ -478,7 +479,7 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
     const list = absPath(join(diffDir, CHANGED_LIST));
     if (largeDiff !== null) writeFileSync(list, covered.map((p) => `${p}\n`).join(''));
     const measured = renderPrompt(prompt, {
-      spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec) }, ...library(ctx, spec, tip), target,
+      spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec) }, intent: spec.intent, nonGoals: spec.nonGoals, ...library(ctx, spec, tip), target,
       systemNotes: systemNotes(ctx.repo, head, unit.systems ?? [], ctx.routingBase.config),
       direction: ctx.plan().direction, planCheckNotes: planCheckNotes(ctx, unit.id),
       obligations: observedViews(ctx, holisticInForce(ctx).obligations, chosen.direct, tip),
@@ -492,7 +493,7 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
         },
       },
       // Scope growth (2026-10-15): every out-of-scope path a salvage of the unit reverted (in no diff), still outside the scope.
-      laneLedger, evidence, scope: { patterns: scope.include, excluded: scope.exclude, growth, rejected: stillOutside(ctx, unit.id, salvageRejections(ctx, unit.id).flatMap((r) => r.paths)) },
+      laneLedger, evidence, systems: unit.systems, reach, traits: systemTraits(map, unit.systems), reachTraits: systemTraits(map, paths.flatMap((p) => [...pathSystems(map, p)])),
       priorRound: prior,
       // M4a rev 3 (D1, D2): the executable checks of the series it judges (corpus arcs; null elsewhere).
       checks: gateChecks(ctx, unit, series, head, paths),

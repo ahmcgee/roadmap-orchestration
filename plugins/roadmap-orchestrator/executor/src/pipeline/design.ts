@@ -1,40 +1,3 @@
-// The design pass's code checks (dev.17; DESIGN-1.0.md "Design pass"; SCHEMAS.md "dev.17: the design pass"). A plan-check
-// writes a design record (src/core/design.ts) with its approve, scaffold or split; code binds it only as far as code can check,
-// and refuses an answer through the judgment repair turn, every reason together, before anything of it is applied:
-//
-//   pinning          `pinDesign`: the record's interfaces and broken files at their blobs and its requirements at their revs,
-//                    at the tip the check read. A path that names no file there, a contract interface that is no plan
-//                    contract, a requirement that is no obligation in force, or a change naming a system the map does not
-//                    declare: a reason.
-//   failure modes    every failure mode is proven by a test item the unit has (an active witness item of its spec, or a test
-//                    of a spec, suite or arc lane in force) or is `untested` with a reason; an unmapped one blocks the approve.
-//   reachability     every test item (failure-mode proofs and the spec's active witness items, W-n) sits in a lane that runs
-//                    at or before the unit's proof point, the candidate merge: a batch lane only when the spec forces it, a
-//                    lane listing systems only when the design's systems select it (src/holistic/witnessfiles.ts
-//                    `laneUnreachable`), and whose environment is not unavailable to the arc. A plan defect.
-//   clauses          (item 10) every active acceptance clause is exercised by a lane that can run in the arc before the
-//                    candidate merge: the lanes of its witness items and of the record's `clauses` entry, at least one
-//                    reachable as above and its environment, if any, not unavailable (src/resources/environments.ts
-//                    `environmentUnavailable`: its last up or probe failed). A plan defect (`clauseFaults`): the fix is a
-//                    static harness witness in a lane that runs, a split giving the clause its own unit, or its deferral.
-//   kind            an `integration` unit changes two or more systems and is proven by a spanning lane: a test of a
-//                    candidate or batch lane listing two or more of its systems, or none (the whole tree); forced when
-//                    batch. A plan defect.
-//   size             oversize is a plan defect: mixed concerns (two or more systems each over `SUBSTANTIAL_SYSTEM_LINES`) or
-//                    an estimate over the gate's inline diff budget (`gateInlineLines`). The fix is a `split`.
-//   scope            the record's change paths outside the unit's effective scope join its scope-growth proposals (the
-//                    existing verified growth, src/pipeline/stages.ts `verifiedGrowth`), never a refusal by themselves.
-//   split            `splitReasons`: children within the parent's effective scope, the parent's active acceptance and
-//                    witness items partitioned exactly, obligations a subset of the parent's, each child sized (its own design
-//                    record passing the checks above against its own items), edges acyclic; a mixed-concerns split has a
-//                    skeleton every other child runs after, whose design proves a failure mode in the skeleton's spanning
-//                    lane. A plan defect.
-//   scaffold         only where the `scaffold` role is in force (an arc of the `dev17` role set); its new system's paths and
-//                    the record's agree; its load test's lane is an arc lane in force (whose reporter shows the test ran).
-//   poc              at most `POC_LIMIT` proofs of concept per unit (a plain refusal past it).
-//
-// Plan defects take the repair turn like any refusal; an answer refused again for one parks the unit `plan-defect`, uncharged
-// (src/pipeline/stages.ts `planCheckRead`). The thresholds are first guesses to re-derive from a measured arc (BACKLOG).
 import { type DesignChange, type DesignRecord, type FailureMode, type TestItemRef, designSize } from '../core/design.ts';
 import { type ClauseId, type LaneId, type ObligationId, type Sha, type SystemName, type UnitId, clauseId, sha } from '../core/ids.ts';
 import { sha256Hex } from '../core/json.ts';
@@ -45,8 +8,6 @@ import { type RepoPath, type RepoPattern, matchesPattern } from '../core/values.
 import { gitRun } from '../git/git.ts';
 import { laneUnreachable } from '../holistic/witnessfiles.ts';
 import { environmentUnavailable } from '../resources/environments.ts';
-import type { EffectiveScope } from '../core/records.ts';
-import { patternInScope, withinEnvelope } from '../input/envelope.ts';
 import { arcRolesOf } from '../input/inforce.ts';
 import { type SystemsMap, dependentsClosure } from '../input/systems.ts';
 import type { DesignAnswer, ScaffoldDecision, SplitDecision } from '../prompts/schemas.ts';
@@ -259,10 +220,6 @@ export function clauseFaults(
   return { reasons, defects };
 }
 
-/** The record's change paths outside `scope` (the effective scope), ascending: what joins the answer's scope growth. */
-export const designUnscoped = (changes: readonly DesignChange[], scope: EffectiveScope): readonly RepoPattern[] =>
-  [...new Set(changes.flatMap((c) => c.paths).filter((p) => !patternInScope(scope, p)))].sort();
-
 /**
  * The builder's departures from a design record (dev.17): of `changed` (existing files the build modified or deleted), the
  * tests (a system's `tests` glob) and docs (the map's docs class) the record's `breaks` does not list, each as a decision the
@@ -332,7 +289,7 @@ function after(edges: readonly Readonly<{ from: UnitId; to: UnitId }>[], from: U
  * the child's design is checked as its own plan-check would.
  */
 export function splitFaults(
-  ctx: Pick<StageContext, 'plan' | 'journal' | 'runDir' | 'repo'>, parent: SpecM1, scope: readonly RepoPattern[], split: SplitDecision, tip: Sha,
+  ctx: Pick<StageContext, 'plan' | 'journal' | 'runDir' | 'repo'>, parent: SpecM1, systems: readonly SystemName[], split: SplitDecision, tip: Sha,
   childSpec: (child: SplitDecision['children'][number], design: DesignRecord) => SpecM1,
 ): DesignFaults {
   const defects: string[] = [];
@@ -341,8 +298,9 @@ export function splitFaults(
   const ids = split.children.map((c) => c.unit);
   for (const c of split.children) {
     if (planned.has(c.unit)) defects.push(`child ${c.unit} is a unit id the plan used before; a split names new ids`);
-    const outside = c.scope.filter((p) => !withinEnvelope(p, scope));
-    if (outside.length > 0) defects.push(`child ${c.unit}'s scope ${outside.join(', ')} lies outside the parent's effective scope`);
+    const map = mapInForce(ctx.journal.view);
+    const unknown = c.systems.filter((s) => map === null || !Object.hasOwn(map.systems, s));
+    if (unknown.length > 0) defects.push(`child ${c.unit} names undeclared systems ${unknown.join(', ')}`);
     const stray = c.obligations.filter((o) => !(parent.obligations ?? []).includes(o));
     if (stray.length > 0) defects.push(`child ${c.unit} declares ${stray.join(', ')}, which the parent does not`);
   }

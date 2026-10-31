@@ -160,10 +160,10 @@ test('res.estate-excluded-from-implementer', () => {
   const lane = (id: string, tier: 'fast' | 'estate', resources: readonly string[], state = 'active') => ({
     id, argv: ['npm', 'test'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: tier === 'fast' ? 'build' : 'unit', resources, evidenceGlobs: [], state,
   });
-  const spec = (lanes: readonly unknown[]) => specM1({
+  const spec = (lanes: readonly unknown[]) => specM1({ intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
     schema: 'roadmap/spec-m1', unit: 'u1', rev: 1, lanes,
     acceptance: [{ id: 'A1', clause: 'It works.', failLoudIfUndelivered: true, state: 'active' }],
-    scope: ['src/**'], resources: ['db', 'queue'], decisions: [], facts: [], cites: { contracts: [], rulings: [] },
+     resources: ['db', 'queue'], decisions: [], facts: [], cites: { contracts: [], rulings: [] },
   }, 'spec');
   const r = newRun();
   const { journal } = openRun(r);

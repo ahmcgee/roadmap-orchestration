@@ -1,3 +1,4 @@
+import { type SystemName, systemName } from '../core/ids.ts';
 // Structured results of the roles (M3 adds the arc roles `lens` and `checkpoint`, M4a `packReview`, M4b `flow`), as strict JSON Schemas (every key required, no additional
 // properties: what `codex exec --output-schema` demands and `claude -p --json-schema` accepts) plus the
 // hand-written validators the adapter runs on the backend's terminal output. The schema is the model's
@@ -16,14 +17,12 @@ clauseId,
 failureModeId,
 findingId,journeyId,laneId,obligationId,
 pocQuestionId,
-reviewFindingId,ruleId,rulingId,sha,unitId,visionClauseId,
-} from '../core/ids.ts';
+reviewFindingId,ruleId,rulingId,sha,unitId,visionClauseId } from '../core/ids.ts';
 import { type JsonValue,canonicalJson } from '../core/json.ts';
 import { BOUND_FIELDS,type Bounds,type FailureRef,type NoteDef,SPEC_SCHEMA,SPEC_SECTIONS,type SpecPatchOp,failureRef,specM1,specPatchOp } from '../core/records.ts';
 import { type ReviewDispute,reviewDispute } from '../core/review.ts';
 import {
-Fields,type Read,SchemaError,answerSet,arrayOf,assertUnique,bool,envName,int,literal,nullable,object,oneOf,positive,str,tagged,text,
-} from '../core/validate.ts';
+Fields,type Read,SchemaError,answerSet,arrayOf,assertUnique,bool,envName,int,literal,nullable,object,oneOf,positive,str,tagged,text } from '../core/validate.ts';
 import { type RepoPath,type RepoPattern,matchesPattern,repoPath,repoPattern } from '../core/values.ts';
 import { FLOW_REPORTERS,type FlowOutput,flowOutput } from '../flow/types.ts';
 import {
@@ -50,15 +49,13 @@ type ClauseLanes,type DesignChange,type DesignExperiment,type FailureModeProof,t
 UNIT_KINDS,
 type UnitKind,type Verification,
 clauseLanes,designChange,designExperiment,failureModeProof,
-newSystem,verification,
-} from '../core/design.ts';
+newSystem,verification } from '../core/design.ts';
 import { STALE_OUTCOMES,type StaleAnswer,staleAnswer } from '../core/stale.ts';
 import type { MutantEdit } from '../git/mutant.ts';
 import {
 BUILD_CLASSES,JUDGMENT_SEATS,MODEL_CLASSES,type ModelClass,
 RISK_TIERS,ROLES,type RiskTier,type Role,SEATS,type Seat,
-classAt,
-} from '../routing/types.ts';
+classAt } from '../routing/types.ts';
 import { specBytes } from '../spec/spec.ts';
 
 // ---------------------------------------------------------------------------------------------------
@@ -125,7 +122,6 @@ type PlanCheckCommon = Readonly<{
    * `verifiedGrowth`); a verified proposal holds the unit for the root agent's `scope accept | reject`. An answer recorded
    * before it has none (`planCheckScopeGrowthDefault`).
    */
-  scopeGrowth: readonly ScopeGrowthAnswer[];
   /**
    * dev.17 (propagation): one answer per stale link the input lists (by its key), `updated` (by this redirect's patch) or
    * `confirmed`, with a reason; empty when it lists none. An approve or a redirect leaving one unanswered is refused
@@ -134,9 +130,6 @@ type PlanCheckCommon = Readonly<{
   staleLinks: readonly StaleAnswer[];
 }>;
 export type VisionConflict = Readonly<{ clauses: readonly VisionClauseId[]; note: string }>;
-/** One proposed growth as the plan-check writes it: its patterns are text until code verifies them. */
-export type ScopeGrowthAnswer = Readonly<{ patterns: readonly string[]; reason: string }>;
-const S_SCOPE_GROWTH = sArr(sObj({ patterns: sArr(S_STR), reason: S_STR }));
 const S_STALE_LINKS = sArr(sObj({ link: S_STR, outcome: sEnum(STALE_OUTCOMES), reason: S_STR }));
 
 /**
@@ -161,7 +154,7 @@ export type DesignAnswer = Readonly<{
  * acceptance and witness item ids it takes (the children partition the parent's active items exactly), the obligations it
  * declares (a subset of the parent's) and its own sized design record. Code builds its spec from the parent's (src/pipeline/split.ts).
  */
-export type UnitSplitChild = Readonly<{ unit: UnitId; scope: readonly RepoPattern[]; items: readonly string[]; obligations: readonly ObligationId[]; design: DesignAnswer }>;
+export type UnitSplitChild = Readonly<{ unit: UnitId; systems: readonly SystemName[]; items: readonly string[]; obligations: readonly ObligationId[]; design: DesignAnswer }>;
 /**
  * `split` (dev.17): two or more children, the edges among them (`from` before `to`), and for a mixed-concerns split the
  * skeleton: the child that lands the contracts, the wiring and the spanning test first, and the candidate or batch lane
@@ -260,7 +253,7 @@ const S_DESIGN = sObj({
   }),
 });
 const S_SPLIT = sObj({
-  children: sArr(sObj({ unit: S_STR, scope: sArr(S_STR), items: sArr(S_STR), obligations: sArr(S_STR), design: S_DESIGN })),
+  children: sArr(sObj({ unit: S_STR, systems: sArr(S_STR), items: sArr(S_STR), obligations: sArr(S_STR), design: S_DESIGN })),
   edges: sArr(sObj({ from: S_STR, to: S_STR })),
   skeleton: sNullable(sObj({ unit: S_STR, lane: S_STR })),
 });
@@ -279,7 +272,6 @@ export const PLAN_CHECK_SCHEMA: Schema = sObj({
   notes: S_STR,
   premises: S_PREMISES,
   visionConflict: sArr(sObj({ clauses: sArr(S_STR), note: S_STR })),
-  scopeGrowth: S_SCOPE_GROWTH,
   staleLinks: S_STALE_LINKS,
   design: sNullable(S_DESIGN),
   split: sNullable(S_SPLIT),
@@ -318,7 +310,6 @@ const wireOp: Read<SpecPatchOp> = (value, path) => {
 
 // Reads at validation time, after the M3 helpers below are initialised.
 const visionConflict: Read<VisionConflict> = object((g) => ({ clauses: g.get('clauses', answerIds(vid, { nonEmpty: true })), note: g.get('note', str) }));
-const scopeGrowthAnswer: Read<ScopeGrowthAnswer> = object((g) => ({ patterns: g.get('patterns', arrayOf(str, { nonEmpty: true })), reason: g.get('reason', str) }));
 
 const repoPathR: Read<RepoPath> = (v, p) => repoPath(v, p);
 const designAnswer: Read<DesignAnswer> = object((f) => {
@@ -344,10 +335,10 @@ const designAnswer: Read<DesignAnswer> = object((f) => {
 export const splitDecision: Read<SplitDecision> = object((f) => {
   const children = f.get('children', arrayOf(object((g): UnitSplitChild => {
     const child = {
-      unit: g.get('unit', unitR), scope: g.get('scope', arrayOf((v, p) => repoPattern(v, p), { nonEmpty: true })), items: g.get('items', arrayOf(str, { nonEmpty: true })),
+      unit: g.get('unit', unitR), systems: g.get('systems', arrayOf((v, p) => systemName(v, p), { nonEmpty: true })), items: g.get('items', arrayOf(str, { nonEmpty: true })),
       obligations: g.get('obligations', answerIds(oid)), design: g.get('design', designAnswer),
     };
-    assertUnique(child.scope, (s) => s, `${g.path}.scope`);
+    assertUnique(child.systems, (s) => s, `${g.path}.systems`);
     assertUnique(child.items, (i) => i, `${g.path}.items`);
     return child;
   }), { nonEmpty: true }));
@@ -401,8 +392,7 @@ export const planCheckOutput: Read<PlanCheckOutput> = object((f): PlanCheckOutpu
     notes: f.get('notes', text),
     premises: f.get('premises', arrayOf(premise)),
     visionConflict: f.get('visionConflict', arrayOf(visionConflict)),
-    scopeGrowth: f.get('scopeGrowth', arrayOf(scopeGrowthAnswer)),
-    staleLinks: f.get('staleLinks', arrayOf(staleAnswer)),
+      staleLinks: f.get('staleLinks', arrayOf(staleAnswer)),
   };
   const payloads = ['design', 'split', 'scaffold', 'poc'] as const;
   const nullExcept = (...keep: readonly (typeof payloads)[number][]): void => payloads.filter((k) => !keep.includes(k)).forEach((k) => none(f, k));
@@ -882,7 +872,7 @@ export type BundleOpBody =
    * witness or doc work); an answer recorded before it reads as none (`admitTargetsDefault`).
    */
   | Readonly<{
-    op: 'admit'; unit: Readonly<{ id: UnitId; risk: RiskTier; scope: readonly RepoPattern[]; after: readonly UnitId[]; origin: 'checkpoint' | 'repair' }>; spec: string;
+    op: 'admit'; unit: Readonly<{ id: UnitId; risk: RiskTier; systems: readonly SystemName[]; after: readonly UnitId[]; origin: 'checkpoint' | 'repair' }>; spec: string;
     targets: readonly RuleId[];
   }>
   | Readonly<{ op: 'patch-spec'; unit: UnitId; patch: readonly SpecPatchOp[] }>
@@ -947,7 +937,8 @@ const S_ADMIT_SPEC = sObj({
   rev: S_INT,
   lanes: sArr(sStated(LANE_ITEM_FIELDS)),
   acceptance: sArr(sStated(ACCEPTANCE_ITEM_FIELDS)),
-  scope: S_IDS,
+  intent: S_STR,
+  nonGoals: S_IDS,
   resources: S_IDS,
   decisions: sArr(sStated(NOTE_ITEM_FIELDS)),
   facts: sArr(sStated(NOTE_ITEM_FIELDS)),
@@ -983,7 +974,7 @@ export function checkpointSchemaFor(ids: CheckpointIds | null): Schema {
     reasons: sArr(S_STR),
     ops: sArr({
       anyOf: [
-        opSchema('admit', { unit: sObj({ id: S_STR, risk: sEnum(RISK_TIERS), scope: S_IDS, after: S_IDS, origin: sEnum(['checkpoint', 'repair']) }), spec: S_ADMIT_SPEC, targets: S_IDS }),
+        opSchema('admit', { unit: sObj({ id: S_STR, risk: sEnum(RISK_TIERS), systems: S_IDS, after: S_IDS, origin: sEnum(['checkpoint', 'repair']) }), spec: S_ADMIT_SPEC, targets: S_IDS }),
         opSchema('patch-spec', { unit: S_STR, patch: sArr(S_PATCH_OP) }),
         opSchema('reenter', { unit: S_STR, reenters: S_STR, enterAt: sNullable(sEnum(REENTRY_POINTS)), reset: sNullable(S_STR), fixes: sNullable(S_STR) }),
         opSchema('cut', { unit: S_STR, reason: S_STR }),
@@ -1062,7 +1053,7 @@ function opBody(f: Fields, op: BundleOpKind): BundleOpBody {
       return {
         op,
         unit: f.get('unit', object((g) => ({
-          id: g.get('id', unitR), risk: g.get('risk', oneOf(RISK_TIERS)), scope: g.get('scope', uniqueIds((v, p) => repoPattern(v, p), { nonEmpty: true })),
+          id: g.get('id', unitR), risk: g.get('risk', oneOf(RISK_TIERS)), systems: g.get('systems', uniqueIds((v, p) => systemName(v, p), { nonEmpty: true })),
           after: g.get('after', uniqueIds(unitR)), origin: g.get('origin', oneOf(['checkpoint', 'repair'] as const)),
         }))),
         spec: f.get('spec', admitSpec),
@@ -1266,7 +1257,7 @@ export type WalkFinding = Readonly<{
  * the spec as an admit's (`S_ADMIT_SPEC`), read into spec.json's canonical text. Code admits it with origin `polish`.
  */
 export type WalkPolish = Readonly<{
-  journey: JourneyId; evidence: readonly string[]; text: string; unit: Readonly<{ id: UnitId; scope: readonly RepoPattern[]; spec: string }>;
+  journey: JourneyId; evidence: readonly string[]; text: string; unit: Readonly<{ id: UnitId; systems: readonly SystemName[]; spec: string }>;
 }>;
 export type WalkthroughOutput = Readonly<{
   final: true;
@@ -1294,7 +1285,7 @@ export const WALKTHROUGH_SCHEMA: Schema = sObj({
     },
     paths: S_IDS,
   })),
-  polish: sArr(sObj({ journey: S_STR, evidence: S_EVIDENCE, text: S_STR, unit: sObj({ id: S_STR, scope: S_IDS, spec: S_ADMIT_SPEC }) })),
+  polish: sArr(sObj({ journey: S_STR, evidence: S_EVIDENCE, text: S_STR, unit: sObj({ id: S_STR, systems: S_IDS, spec: S_ADMIT_SPEC }) })),
   premises: S_PREMISES,
   reasons: sArr(S_STR),
 });
@@ -1326,7 +1317,7 @@ export const walkthroughOutput: Read<WalkthroughOutput> = object((f) => {
     })))),
     polish: f.get('polish', arrayOf(object((g): WalkPolish => ({
       journey: g.get('journey', journeyR), evidence: g.get('evidence', arrayOf(str, { nonEmpty: true })), text: g.get('text', str),
-      unit: g.get('unit', object((h) => ({ id: h.get('id', unitR), scope: h.get('scope', uniqueIds((v, p) => repoPattern(v, p), { nonEmpty: true })), spec: h.get('spec', admitSpec) }))),
+      unit: g.get('unit', object((h) => ({ id: h.get('id', unitR), systems: h.get('systems', uniqueIds((v, p) => systemName(v, p), { nonEmpty: true })), spec: h.get('spec', admitSpec) }))),
     })))),
     premises: f.get('premises', arrayOf(premise)),
     reasons: f.get('reasons', arrayOf(str)),

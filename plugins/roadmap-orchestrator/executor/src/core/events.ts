@@ -1,3 +1,4 @@
+import { type SystemName, systemName } from '../core/ids.ts';
 // The event log (`events.jsonl`) record types, their validators, canonical serialisation and the chain
 // hash rule. The journal (append, tail, fold) is step 2 and builds on these. SCHEMAS.md "Event log" is the
 // prose twin of this module.
@@ -10,8 +11,7 @@ MIN_VERDICT_SAMPLES,PROOF_OUTCOMES,flowDropped,
 flowEndedConstraint,flowMetric,flowPreimage,flowProposal,flowTriggers,
 fraction,
 guardBreaches,hostFingerprint,
-proofMinutes,verdictAfter,verdictBefore,
-} from '../flow/types.ts';
+proofMinutes,verdictAfter,verdictBefore } from '../flow/types.ts';
 import { type PressureAvailability,PRESSURE_AVAILABILITIES } from '../host/pressure.ts';
 import { type CpuBasis,cpuBasis } from './cpu.ts';
 import {
@@ -75,8 +75,7 @@ optionId,pauseTarget,
 resumeTarget,revisionInputs,specPatch,stage,
 stochastic,
 tokenUsage,
-usageUnavailableReason,
-} from './records.ts';
+usageUnavailableReason } from './records.ts';
 
 import {
 type AuditTrigger,type BundleOutcome,
@@ -98,27 +97,22 @@ conversion,
 divergenceDraft,divergenceDraftFields,findingEvidence,findingSource,findingTo,mutantRef,observationKey,
 packDisposition,packFinding,
 planDefect,
-revisionVector,
-} from '../holistic/types.ts';
+revisionVector } from '../holistic/types.ts';
 import { type SystemsMap,systemsMap } from '../input/systems.ts';
 import {
 type ArcSeatRef,type Backend,type RiskTier,type RoutingProvenance,type SeatRef,type UnitSeatRef,arcSeatFields,backend,riskTier,
-routingProvenance,seatFields,unitSeatFields,
-} from '../routing/types.ts';
+routingProvenance,seatFields,unitSeatFields } from '../routing/types.ts';
 import { type FlakyEvent,flakyEvent } from './flaky.ts';
 import { type ReviewFindingId,reviewFindingId } from './ids.ts';
 import {
-type ApprovalBlobs,type FindingsLedgerEntry,type GateReview,type LedgerOutcome,LEDGER_OUTCOMES,approvalBlobs,findingsLedgerEntry,gateReview,
-} from './review.ts';
+type ApprovalBlobs,type FindingsLedgerEntry,type GateReview,type LedgerOutcome,LEDGER_OUTCOMES,approvalBlobs,findingsLedgerEntry,gateReview } from './review.ts';
 import { type StaleAnswer,type StaleSet,staleAnswer,staleSet,staleSetFields } from './stale.ts';
 import {
 type Read,Fields,SchemaError,arrayOf,assertUnique,bool,int,literal,nat,nullable,object,oneOf,positive,sortedBy,str,tagged,text,
-version,
-} from './validate.ts';
+version } from './validate.ts';
 import {
 type AbsPath,type GitDate,type IsoTime,type RefName,type RepoPath,type RepoPattern,absPath,gitDate,isoTime,
-refName,repoPath,repoPattern,
-} from './values.ts';
+refName,repoPath,repoPattern } from './values.ts';
 import type { SchemaVersion } from './version.ts';
 
 // ---------------------------------------------------------------------------------------------------
@@ -542,15 +536,9 @@ export const STAGE_OUTCOME_KINDS = {
   // M4a rev 3 (E) to dev.16: `in-session` (a frontier or summit builder under `planCheck.shape: by-builder`: no plan-check
   // call, the build assessed in session). dev.17 records none; read from an older log.
   // Paid M4b run 5: `read-denied`, as at the gate (no longer recorded since 2026-10-16; read from a 1.0.0-dev.11 log).
-  // Scope growth (2026-10-15): `scope-growth` (the answer proposed scope growth code verified: a hold until the root agent's
-  // `scope accept|reject <unit>`, src/commands/scope.ts).
-  // 2026-10-16: `context-exceeded` (the call's prompt or context outgrew the model's window: an uncharged env park), at
-  // plan-check, build and gate.
-  // dev.17 (design pass): `split` (the split revision lands, cutting the unit: a hold no resume releases), `scaffold` and `poc`
-  // (on to those stages), `plan-defect` (an answer refused twice for a plan defect: an uncharged park naming why).
   'plan-check': [
     'approve', 'redirect', 'infeasible', 'escalate', 'risk-lowered', 'scope-widened', 'refusal', 'malformed', 'process-fault', 'interrupted', 'routing-changed',
-    'in-session', 'read-denied', 'scope-growth', 'context-exceeded', 'executor-fault', 'split', 'scaffold', 'poc', 'plan-defect',
+    'in-session', 'read-denied', 'context-exceeded', 'executor-fault', 'split', 'scaffold', 'poc', 'plan-defect',
   ],
   // M4a rev 3 (E, R55) to dev.16: the in-session assessment found the spec `infeasible`, or raised the risk floor onto
   // another implementer seat (`risk-raised`). dev.17 records neither; read from an older log.
@@ -577,7 +565,7 @@ export const STAGE_OUTCOME_KINDS = {
   // environment, never a red lane), here and at the candidate.
   lanes: [
     'green', 'red', 'flaky', 'not-certified', 'blocked', 'interrupted', 'occupied', 'cleanup-failed', 'witnesses-missing', 'smoke-survived', 'known-defect', 'base-red',
-    'witness-lane-missing', 'plan-defect', 'scope-growth', 'executor-fault', 'env-unavailable',
+    'witness-lane-missing', 'plan-defect', 'executor-fault', 'env-unavailable',
   ],
   // M4a rev 3 (paid run 11): `unverified` (no green verification checkout of the head: the lanes run again, uncharged).
   // Paid M4b run 5: `read-denied` (an approve from a session the CLI refused a read: not an approval; one uncharged retry).
@@ -708,7 +696,6 @@ export type StageOutcomeDetail =
    * Scope growth (2026-10-15): the plan-check's proposals code verified (`ScopeGrowthProposal`), in answer order; at lanes
    * (plan defects, 2026-10-16) one proposal of the paths salvage reverted twice running.
    */
-  | Readonly<{ kind: 'scope-growth'; proposals: readonly ScopeGrowthProposal[] }>
   /** Plan defects (2026-10-16): lanes `plan-defect`, the defects code found behind the missing witnesses (non-empty). */
   | Readonly<{ kind: 'plan-defect'; defects: readonly PlanDefect[] }>
   /**
@@ -727,17 +714,11 @@ export type StageOutcomeDetail =
    * test's lane, that run's evidence dir: what the retry is told.
    */
   | Readonly<{ kind: 'scaffold-refused'; reasons: readonly string[]; laneEvidence: AbsPath | null }>;
-/**
- * One verified scope-growth proposal of a plan-check (src/pipeline/stages.ts `verifiedGrowth`): repository patterns outside
- * the unit's pinned scope, each matching a file at the integration tip the plan-check read (ascending, non-empty), and the
- * plan-check's reason.
- */
-export type ScopeGrowthProposal = Readonly<{ patterns: readonly RepoPattern[]; reason: string }>;
 /** The (stage, outcome) pairs that carry a detail, keyed `<stage>/<outcome>`, with the detail's kind. */
 export const DETAILED_OUTCOMES = {
   'lanes/witnesses-missing': 'witnesses-missing', 'lanes/smoke-survived': 'smoke-survived', 'lanes/known-defect': 'known-defect', 'build/infeasible': 'infeasible',
   'lanes/base-red': 'base-red',
-  'plan-check/scope-growth': 'scope-growth', 'lanes/scope-growth': 'scope-growth', 'lanes/plan-defect': 'plan-defect',
+  'lanes/plan-defect': 'plan-defect',
   'plan-check/context-exceeded': 'context-exceeded', 'build/context-exceeded': 'context-exceeded', 'gate/context-exceeded': 'context-exceeded',
   'prepare/executor-fault': 'executor-fault', 'reproduce/executor-fault': 'executor-fault', 'plan-check/executor-fault': 'executor-fault',
   'build/executor-fault': 'executor-fault', 'quiesce/executor-fault': 'executor-fault', 'evidence/executor-fault': 'executor-fault',
@@ -858,12 +839,7 @@ export type Fact =
   | Readonly<{ kind: 'paused'; command: CommandId; target: PauseTarget }>
   | Readonly<{ kind: 'stop-requested'; command: CommandId }>
   | Readonly<{ kind: 'resumed'; command: CommandId; target: ResumeTarget }>
-  /**
-   * Scope growth (2026-10-15): the root agent's `scope accept|reject <unit>` on the proposals of the unit's plan-check
-   * attempt `attempt`, held `scope-growth`. Releases that hold (the unit re-runs plan-check); an accept writes it after the
-   * ruled-growth revision it committed (src/commands/scope.ts).
-   */
-  | Readonly<{ kind: 'scope-decided'; unit: UnitId; attempt: number; command: CommandId; decision: 'accepted' | 'rejected'; reason: string }>
+
   /**
    * dev.17 (arc feedback 2026-10-23, item 7): the scheduler held `apply` `command` because its scope holds units in a stage
    * (`waitsFor`, sorted): it lands at their stage boundary (A12), evaluated then. Once per command, before its `queued`
@@ -1194,7 +1170,7 @@ export type TweakDecision = (typeof TWEAK_DECISIONS)[number];
 export const TWEAK_REASONS = ['judged', 'reference-untouched', 'bring-up-failed', 'abandoned'] as const;
 export type TweakReason = (typeof TWEAK_REASONS)[number];
 /** A polish proposal's unit as the walkthrough authored it: `spec` is spec.json's canonical text (an admit's). */
-export type PolishUnitDraft = Readonly<{ id: UnitId; scope: readonly RepoPattern[]; spec: string }>;
+export type PolishUnitDraft = Readonly<{ id: UnitId; systems: readonly SystemName[]; spec: string }>;
 
 /**
  * The dev.13 facts (SCHEMAS.md "dev.13: milestone walkthroughs and design units"); their behaviour is agents C, D and G's.
@@ -1332,7 +1308,7 @@ export type PlanChange =
    * M2: `unit` (added in the same change set) re-enters `reenters`, which is superseded: the new unit inherits its
    * counters (`chargeableFailures` reset only with a ruling: `reset`), risk floor and lineage.
    */
-  | Readonly<{ type: 'unit-reentered'; unit: UnitId; reenters: UnitId; reset: boolean; widened?: ReentryWidening }>
+  | Readonly<{ type: 'unit-reentered'; unit: UnitId; reenters: UnitId; reset: boolean; }>
   /** M3: an obligation added, split (H14), re-witnessed, or disposed by a ruling in force (weakening). */
   | Readonly<{ type: 'obligation'; id: ObligationId; edit: ObligationEdit }>
   | Readonly<{ type: 'mapping' }>
@@ -1368,12 +1344,6 @@ export type PlanChange =
    * brake (src/walk/milestones.ts); absent: none (lasting).
    */
   | Readonly<{ type: 'milestones'; rewalk?: readonly MilestoneId[] }>;
-
-/**
- * M4a rev 3 (F5): a re-entry leaving its lineage's scope envelope, accepted on an active ruling applying to the new unit
- * whose statement names exactly the added patterns (ascending, non-empty).
- */
-export type ReentryWidening = Readonly<{ patterns: readonly RepoPattern[]; reason: string }>;
 
 /**
  * `restored` (M3 step A2): an exempt obligation active again; `edited`: its serves, contracts, deliveredBy changed, or
@@ -1963,10 +1933,7 @@ const planChange: Read<PlanChange> = tagged('type', {
   'unit-reentered': object((f): PlanChange => {
     const out = { type: f.get('type', literal('unit-reentered')), unit: f.get('unit', unitR), reenters: f.get('reenters', unitR), reset: f.get('reset', bool) };
     if (out.reenters === out.unit) throw new SchemaError(`${f.path}.reenters`, 'a unit other than the re-entering one', out.reenters);
-    const widened = f.optional('widened', object((g): ReentryWidening => ({
-      patterns: g.get('patterns', sortedBy((v, p) => repoPattern(v, p), (x) => x, { nonEmpty: true })), reason: g.get('reason', str),
-    })));
-    return widened === undefined ? out : { ...out, widened };
+    return out;
   }),
   obligation: object((f): PlanChange => ({ type: f.get('type', literal('obligation')), id: f.get('id', obligationR), edit: f.get('edit', oneOf(OBLIGATION_EDITS)) })),
   mapping: object((f): PlanChange => ({ type: f.get('type', literal('mapping')) })),
@@ -2036,10 +2003,6 @@ const parkRecord: Read<ParkRecord> = tagged('class', {
   }),
 });
 
-const scopeGrowthProposal: Read<ScopeGrowthProposal> = object((g) => ({
-  patterns: g.get('patterns', sortedBy((v, p) => repoPattern(v, p), (x) => x, { nonEmpty: true })), reason: g.get('reason', str),
-}));
-
 const stageOutcomeDetail: Read<StageOutcomeDetail> = tagged('kind', {
   'witnesses-missing': object((f): StageOutcomeDetail => {
     const out = { kind: f.get('kind', literal('witnesses-missing')), missing: f.get('missing', testRefs()), failed: f.get('failed', testRefs()) };
@@ -2060,7 +2023,6 @@ const stageOutcomeDetail: Read<StageOutcomeDetail> = tagged('kind', {
     if (out.lanes.length === 0 && !out.changedCheckout) throw new SchemaError(f.path, 'a red lane or a changed checkout', out);
     return out;
   }),
-  'scope-growth': object((f): StageOutcomeDetail => ({ kind: f.get('kind', literal('scope-growth')), proposals: f.get('proposals', arrayOf(scopeGrowthProposal, { nonEmpty: true })) })),
   'plan-defect': object((f): StageOutcomeDetail => ({ kind: f.get('kind', literal('plan-defect')), defects: f.get('defects', arrayOf(planDefect, { nonEmpty: true })) })),
   'context-exceeded': object((f): StageOutcomeDetail => ({
     kind: f.get('kind', literal('context-exceeded')), inv: f.get('inv', invR), promptBytes: f.get('promptBytes', nat),
@@ -2315,7 +2277,7 @@ const WALK_FACT_READERS: { readonly [K in WalkFactKind]: Read<Fact> } = {
     kind: f.get('kind', literal('polish-proposed')), id: f.get('id', (v, p): PolishId => polishId(v, p)), job: f.get('job', walkJobR), milestone: f.get('milestone', milestoneR),
     journey: f.get('journey', (v, p): JourneyId => journeyId(v, p)), evidence: f.get('evidence', arrayOf(str, { nonEmpty: true })), text: f.get('text', str),
     unit: f.get('unit', object((g): PolishUnitDraft => ({
-      id: g.get('id', unitR), scope: g.get('scope', sortedBy((v, p): RepoPattern => repoPattern(v, p), (x) => x, { nonEmpty: true })), spec: g.get('spec', str),
+      id: g.get('id', unitR), systems: g.get('systems', sortedBy((v, p): SystemName => systemName(v, p), (x) => x, { nonEmpty: true })), spec: g.get('spec', str),
     }))),
   })),
   'tweak-judged': object((f): Fact => {
@@ -2536,10 +2498,6 @@ export const fact: Read<Fact> = tagged('kind', {
   paused: object((f): Fact => ({ kind: f.get('kind', literal('paused')), command: f.get('command', cmdR), target: f.get('target', pauseTarget) })),
   'stop-requested': object((f): Fact => ({ kind: f.get('kind', literal('stop-requested')), command: f.get('command', cmdR) })),
   resumed: object((f): Fact => ({ kind: f.get('kind', literal('resumed')), command: f.get('command', cmdR), target: f.get('target', resumeTarget) })),
-  'scope-decided': object((f): Fact => ({
-    kind: f.get('kind', literal('scope-decided')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), command: f.get('command', cmdR),
-    decision: f.get('decision', oneOf(['accepted', 'rejected'] as const)), reason: f.get('reason', str),
-  })),
   'apply-queued': object((f): Fact => {
     const out = { kind: f.get('kind', literal('apply-queued')), command: f.get('command', cmdR), waitsFor: f.get('waitsFor', arrayOf(unitR, { nonEmpty: true })) };
     assertUnique(out.waitsFor, (u) => u, `${f.path}.waitsFor`);
@@ -2684,7 +2642,7 @@ export const fact: Read<Fact> = tagged('kind', {
     // An interruption holds the unit, and so does a scope-growth proposal (a plan-check's, or a lanes attempt's after two
     // reverts of one path) and (dev.17) a plan-check's split until its revision cuts the unit; nothing else does; a hold
     // never charges.
-    const holds = out.outcome === 'interrupted' || ((s === 'plan-check' || s === 'lanes') && out.outcome === 'scope-growth') || (s === 'plan-check' && out.outcome === 'split');
+    const holds = out.outcome === 'interrupted' || (s === 'plan-check' && out.outcome === 'split');
     if (holds !== (out.class === 'hold')) throw new SchemaError(`${f.path}.class`, 'hold exactly for an interrupted outcome, a scope-growth or a split', out.class);
     if (out.class === 'hold' && out.chargeable) throw new SchemaError(`${f.path}.chargeable`, 'false for a hold', out.chargeable);
     return { ...out, ...(unchargedLanesReds === undefined ? {} : { unchargedLanesReds }), ...(park === undefined ? {} : { park }), ...(cause === undefined ? {} : { cause }), ...(detail === undefined ? {} : { detail }) } as StageOutcomeFact;

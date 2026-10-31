@@ -1,3 +1,4 @@
+import { systemName } from '../src/core/ids.ts';
 // The M5 fixture (evals/m5/), tested without paying: M5 has no scripted root agent (evals/README.md "The M5 fixture"),
 // so its free tier is the fixture's validity (setup lays out a product whose tests pass, whose plant is in play, whose
 // vision, corpus guide and walkthrough config parse, and which vendors the design skill), the plan shape, and each check
@@ -453,7 +454,7 @@ describe('the log and the files (evals/m5/log.ts, check.ts)', () => {
       launch: { envKeys: [], gh: join(l.forgeBin, 'gh'), ghConfigDir: l.ghConfig, xdgConfigHome: l.xdgConfig, gitConfigGlobal: l.gitConfig },
       demo: { seen: [], final: null }, released: [], leftovers: [],
     }));
-    const unit = (id: string, after: readonly string[] = []) => ({ id, spec: `specs/${id}.json`, risk: 'med', scope: [`src/${id}/**`], resources: [], after, contingent: [] });
+    const unit = (id: string, after: readonly string[] = []) => ({ id, spec: `specs/${id}.json`, risk: 'med', systems: [systemName('app')], resources: [], after, contingent: [] });
     const ms = (id: string, units: readonly string[], design: string, via: 'browser' | 'shell') => ({
       id, text: `${id} text`, units, design: { unit: design }, references: ['docs/design'], bringUp: { setup: [], serve: [], env: {}, seed: [] },
       journeys: [journey(`J-${id.slice(3)}`, via)], resources: [],

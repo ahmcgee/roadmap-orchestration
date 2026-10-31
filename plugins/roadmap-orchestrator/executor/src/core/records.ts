@@ -19,19 +19,16 @@ proposalId,
 resourceInstance,resourceName,routingRev,rulingId,seatRev,sha,sha256,specRev,
 systemName,
 unitId,
-witnessItemId,
-} from './ids.ts';
+witnessItemId } from './ids.ts';
 import type { JsonValue } from './json.ts';
 import {
 type Brand,type Read,Fields,SchemaError,arrayOf,assertUnique,bool,envName,int,literal,nat,nullable,object,oneOf,
-positive,sortedBy,str,stringMap,tagged,text,version,
-} from './validate.ts';
+positive,sortedBy,str,stringMap,tagged,text,version } from './validate.ts';
 import {
 type AbsPath,type BootId,type IsoTime,type Nonce,type RepoPath,type RepoPattern,absPath,bootId,isoTime,
 matchesPattern,
 nonce,
-repoPath,repoPattern,
-} from './values.ts';
+repoPath,repoPattern } from './values.ts';
 import type { SchemaVersion } from './version.ts';
 
 import { type HostSignatureId,HOST_SIGNATURES } from '../host/signatures.ts';
@@ -44,8 +41,7 @@ JUDGMENT_SESSION_ROLES,
 MODEL_CLASSES,
 ROLES,backend,
 buildClass,
-modelClass,profileName,riskTier,
-} from '../routing/types.ts';
+modelClass,profileName,riskTier } from '../routing/types.ts';
 import { type DesignRecord,type UnitKind,designRecord } from './design.ts';
 import { type ContractPin,type Pinned,type RequirementPin,type SpecPin,UNPINNED,pinTarget,specPin } from './pins.ts';
 
@@ -819,7 +815,7 @@ export const TRANSIENT_RULES = ['m3'] as const;
 export type TransientRules = (typeof TRANSIENT_RULES)[number];
 
 /**
- * Pinned once when a unit is dispatched; a redirect can neither widen `scope` nor lower `riskFloor`.
+ * Pinned once when a unit is dispatched; a redirect cannot lower `riskFloor`.
  * `specRev` and `specSha256` are the spec revision the dispatching plan-check read and its file's hash.
  * `implementerSeatRev` hashes the triple of the implementer's seat (`build.<riskFloor>`) under `routingRev`,
  * so a routing change can be judged by whether it moves the implementer without naming a model.
@@ -828,53 +824,32 @@ export type DispatchRecord = Readonly<{
   unit: UnitId;
   specRev: SpecRev;
   specSha256: Sha256Hex;
-  scope: readonly RepoPattern[];
   riskFloor: RiskTier;
   routingRev: RoutingRev;
   implementerSeatRev: SeatRev;
   at: IsoTime;
   /**
-   * M3 (H15): `m3` on every dispatch: the unit's candidate may touch only its pinned scope and ruling-added paths,
-   * and no in-tree `.roadmap/` path. A re-pin copies it.
+   * M3 (H15): `m3` on every dispatch: candidate validation refuses protected paths and transient artifacts.
    */
   transientRules: TransientRules;
   /** M3 (`limits`): the unit's bounds in force since this pin; absent: `DEFAULT_BOUNDS` (`boundsOfRecord`). */
   bounds?: BoundsRecord;
-  /**
-   * Plan defects (2026-10-16): the derived outputs the plan's `derived` entries add to `scope` (src/input/derived.ts
-   * `derivedWidening`), ascending, non-empty when present; absent: none (a plan without `derived`, lasting). Read only
-   * through `effectiveScope`.
-   */
-  derived?: readonly RepoPattern[];
+
   /** Derived exclusion (2026-10-27; 1.0.0-dev.26): ascending, non-empty; absent: none (lasting, old pins keep their write set). */
-  excluded?: readonly RepoPattern[];
 }>;
-
-/** What a unit may change: its pinned scope and derived outputs, minus its excluded outputs. Salvage, the gate, the candidate and recovery read it. */
-export type EffectiveScope = Readonly<{ include: readonly RepoPattern[]; exclude: readonly RepoPattern[] }>;
-export const effectiveScope = (record: DispatchRecord): EffectiveScope => ({ include: [...record.scope, ...(record.derived ?? [])], exclude: record.excluded ?? [] });
-
-/** The one path judgement of an effective scope (derived exclusion, 2026-10-27; 1.0.0-dev.26). */
-export const inScope = (scope: EffectiveScope, path: RepoPath): boolean =>
-  scope.include.some((p) => matchesPattern(path, p)) && !scope.exclude.some((p) => matchesPattern(path, p));
 
 export const dispatchRecord: Read<DispatchRecord> = object((f) => {
   const b = f.optional('bounds', bounds);
-  const excluded = f.optional('excluded', sortedBy((v, p) => repoPattern(v, p), (s) => s, { nonEmpty: true }));
-  const derived = f.optional('derived', sortedBy((v, p) => repoPattern(v, p), (s) => s, { nonEmpty: true }));
   return {
     unit: f.get('unit', unit),
     specRev: f.get('specRev', (v, p) => specRev(v, p)),
     specSha256: f.get('specSha256', (v, p) => sha256(v, p)),
-    scope: f.get('scope', sortedBy((v, p) => repoPattern(v, p), (s) => s, { nonEmpty: true })),
     riskFloor: f.get('riskFloor', riskTier),
     routingRev: f.get('routingRev', rev),
     implementerSeatRev: f.get('implementerSeatRev', (v, p) => seatRev(v, p)),
     at: f.get('at', time),
     transientRules: f.get('transientRules', oneOf(TRANSIENT_RULES)),
     ...(b === undefined ? {} : { bounds: b }),
-    ...(derived === undefined ? {} : { derived }),
-    ...(excluded === undefined ? {} : { excluded }),
   };
 });
 
@@ -1053,14 +1028,15 @@ export type SpecM1 = Readonly<{
   rev: SpecRev;
   lanes: readonly Stated<LaneDef>[];
   acceptance: readonly Stated<AcceptanceDef>[];
-  scope: readonly RepoPattern[];
   resources: readonly ResourceName[];
   decisions: readonly Stated<NoteDef>[];
   facts: readonly Stated<NoteDef>[];
   cites: SpecCites;
+  intent: string;
+  nonGoals: readonly string[];
   /**
    * M3 (A13): the obligations the unit declares it serves (non-empty when present; absent: none). The
-   * classifier checks them against the impact mapping (prefix-conservative over its scope).
+   * classifier checks them against the impact mapping for its unit systems.
    */
   obligations?: readonly ObligationId[];
   /** M3 (A13): what a repair unit repairs, findings or obligations (non-empty when present; required with `origin: repair`). */
@@ -1185,11 +1161,12 @@ export const specM1: Read<SpecM1> = object((f) => {
   const pins = f.optional('pins', arrayOf(specPin));
   const out: SpecM1 = {
     schema: f.get('schema', literal(SPEC_SCHEMA)),
+    intent: f.get('intent', str),
+    nonGoals: f.get('nonGoals', arrayOf(str, { nonEmpty: true })),
     unit: f.get('unit', unit),
     rev: f.get('rev', (v, p) => specRev(v, p)),
     lanes: f.get('lanes', arrayOf(stated((g) => laneFields(g, 'spec')))),
     acceptance: f.get('acceptance', arrayOf(stated(acceptanceFields), { nonEmpty: true })),
-    scope: f.get('scope', arrayOf((v, p) => repoPattern(v, p), { nonEmpty: true })),
     resources: f.get('resources', arrayOf(resource)),
     decisions: f.get('decisions', arrayOf(stated(noteFields))),
     facts: f.get('facts', arrayOf(stated(noteFields))),
@@ -1213,7 +1190,6 @@ export const specM1: Read<SpecM1> = object((f) => {
   assertUnique([...out.lanes, ...out.acceptance, ...out.decisions, ...out.facts, ...specWitnesses(out)], (i) => i.id, `${f.path}.<item ids>`);
   assertUnique(specObligations(out), (o) => o, `${f.path}.obligations`);
   assertUnique(specRepairs(out), (r) => r, `${f.path}.repairs`);
-  assertUnique(out.scope, (s) => s, `${f.path}.scope`);
   assertUnique(out.resources, (r) => r, `${f.path}.resources`);
   return out;
 });
@@ -1224,7 +1200,7 @@ export type SpecSection = (typeof SPEC_SECTIONS)[number];
 type SectionItem = { lanes: LaneDef; acceptance: AcceptanceDef; decisions: NoteDef; facts: NoteDef; witnesses: WitnessItemDef };
 
 /**
- * Scope and resources are pinned at dispatch and are not patchable in M1. `cite` adds contracts and rulings
+ * Resources are fixed at dispatch and are not patchable. `cite` adds contracts and rulings
  * to the spec's cites (at least one); there is no op that removes one.
  */
 export type SpecPatchOp =
@@ -1573,11 +1549,7 @@ export type CommandBody =
   | Readonly<{ type: 'flow-decide'; proposal: ProposalId; decision: 'accept' | 'reject'; reason: string }>
   /** `roadmap flow request --reason <text>` (M4b, RC-5): a flow run past the cooldown, once per cooldown window. Scope ∅. */
   | Readonly<{ type: 'flow-request'; reason: string }>
-  /**
-   * `roadmap scope accept|reject <u> --reason <text>` (scope growth, 2026-10-15): the root agent's decision on the unit's held
-   * scope-growth proposals; an accept lands them as one ruled-growth revision (src/commands/scope.ts). Scope {u}.
-   */
-  | Readonly<{ type: 'scope-decide'; unit: UnitId; decision: 'accept' | 'reject'; reason: string }>
+
   /**
    * `roadmap demo up|down|hold|release` (dev.13): the owner's act on the demo (src/demo/promote.ts). `hold` freezes promotion,
    * `release` resumes it (and promotes the latest settled milestone when it is newer); `up` and `down` start and stop the
@@ -1651,9 +1623,6 @@ export const commandBody: Read<CommandBody> = tagged('type', {
     reason: f.get('reason', str),
   })),
   'flow-request': object((f): CommandBody => ({ type: f.get('type', literal('flow-request')), reason: f.get('reason', str) })),
-  'scope-decide': object((f): CommandBody => ({
-    type: f.get('type', literal('scope-decide')), unit: f.get('unit', unit), decision: f.get('decision', oneOf(['accept', 'reject'] as const)), reason: f.get('reason', str),
-  })),
   demo: object((f): CommandBody => ({ type: f.get('type', literal('demo')), act: f.get('act', oneOf(DEMO_ACTS)) })),
 });
 
@@ -1719,10 +1688,6 @@ export const NEEDS_USER_REASONS = [
   // Paid M4b run 5, blocking: a gate's or plan-check's approve after the CLI refused one of its reads, again after its retry.
   // No longer raised since 2026-10-16 (a refused read voids nothing); kept so a 1.0.0-dev.11 item still reads (scaffolding).
   'read-denied',
-  // Scope growth (2026-10-15), blocking: a plan-check proposed scope growth code verified; the unit is held until the root
-  // agent's `scope accept | reject <unit>`.
-  'scope-growth',
-  // 2026-10-15 (arc feedback #3), blocking: a unit's required witness item names no arc lane in force (build or lanes).
   'witness-lane-missing',
   // Plan defects (2026-10-16), blocking: a unit's missing witness is a plan defect code diagnosed (lanes `plan-defect`).
   'plan-defect',
@@ -1742,12 +1707,12 @@ export const NEEDS_USER_REASONS = [
   'apply-dropped',
   // Deflake scope (2026-10-23), non-blocking: a deflake unit was not minted, its scope reaching a same-repo corpus (no lane systems
   // and no system holding the flaky tests' files); the item names the lane, the keys and what to declare.
-  'deflake-unscoped', 'revision-notice',
+  'revision-notice',
 ] as const;
 /** The reasons from M3 on raised non-blocking; every other one is raised blocking. */
 export const NON_BLOCKING_M3_REASONS = [
   'bundle-request', 'convergence-bound', 'convergence-identity', 'audit-owed', 'divergence-digest', 'flow-proposal', 'flow-host', 'flow-worse', 'flow-invalid',
-  'ruler-changed', 'executor-fault', 'deflake-parked', 'flake-recurring', 'apply-dropped', 'deflake-unscoped', 'revision-notice',
+  'ruler-changed', 'executor-fault', 'deflake-parked', 'flake-recurring', 'apply-dropped',  'revision-notice',
 ] as const satisfies readonly NeedsUserReason[];
 export type NeedsUserReason = (typeof NEEDS_USER_REASONS)[number];
 

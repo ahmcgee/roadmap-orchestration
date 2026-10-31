@@ -277,8 +277,8 @@ function planCheckValue(call: Call, value: JsonValue, scenarioDir: string): Json
   };
   const design = (): JsonValue => {
     const text = prompt();
-    const first = /<scope_envelope>\n- (\S+)\n/.exec(text)?.[1];
-    if (first === undefined) throw new Error('fake claude: a planCheck act needs a scope envelope in the prompt');
+    const first = /<unit_systems>/.test(text) ? 'src/**' : undefined;
+    if (first === undefined) throw new Error('fake claude: a planCheck act needs unit systems in the prompt');
     const acceptance = /## Acceptance\n\n([\s\S]*?)\n\n## /.exec(text)?.[1] ?? '';
     const clauses = [...acceptance.matchAll(/^- `([^`]+)` \[active\]/gm)].map((m) => m[1]!);
     const lanes = [...(/<test_lanes>\n([\s\S]*?)<\/test_lanes>/.exec(text)?.[1] ?? '').matchAll(/^- (\S+) \((spec|suite|arc), cadence (\w+)([^\n]*)\)$/gm)]

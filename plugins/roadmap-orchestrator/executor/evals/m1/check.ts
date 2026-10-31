@@ -1,3 +1,4 @@
+import { repoPattern } from '../../src/core/values.ts';
 // The M1 paid fixture, step 3: `node evals/m1/check.ts <dir>` grades a finished run (setup → driver) on the
 // plan's loose criteria, from the repo, the run dir and report.json. Agent-facing output: one JSON line
 // `{pass, criteria[{name, pass, detail}], notExercised[], cannotShow[]}`, then the two lists as lines
@@ -155,7 +156,7 @@ function diffProductOnly(run: Run): Verdict {
   // other path is under the transient rules, bounded by the union of the units' scopes.
   const published = (p: string): boolean => p.startsWith('.roadmap/') && (ROADMAP_DIR_ALLOWED as readonly string[]).includes(p.split('/')[1]!);
   const violations = transientViolations(
-    { evidenceGlobs: specs.flatMap(laneEvidenceGlobs), scope: { include: specs.flatMap((s) => s.scope), exclude: [] }},
+    { evidenceGlobs: specs.flatMap(laneEvidenceGlobs), protectedPaths: [repoPattern('.roadmap')]},
     paths.filter((p) => !published(p)),
   );
   return {

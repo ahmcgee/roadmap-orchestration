@@ -1,3 +1,4 @@
+import { protectedPathsInForce } from '../input/protected.ts';
 // The first recovery pass (plan "Recovery on `roadmap start`"): every intent a dead executor left open is
 // closed by its kind's reconciler before anything is dispatched. Order:
 //
@@ -34,7 +35,7 @@ import type { IntentOf, IntentRecord, OpKind, OpOutcome, Parent } from '../core/
 import { type InvocationId, type OpId, invocationId } from '../core/ids.ts';
 import type { Disposition, DispositionKind, Journal, JournalView } from '../core/interfaces.ts';
 import { LogCorruptError, type LogSnapshot, openJournal, readJournal } from '../core/log.ts';
-import { type HostLockClaim, type NeedsUserContent, effectiveScope } from '../core/records.ts';
+import { type HostLockClaim, type NeedsUserContent } from '../core/records.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
 import { refTarget } from '../git/git.ts';
 import type { SalvageRules } from '../git/salvage.ts';
@@ -54,8 +55,7 @@ import { recoverReservations } from './resource.ts';
 import { revisionReconciler } from './revision.ts';
 import { spawnReconciler } from './spawn.ts';
 import {
-  candidateMergeOp, docsCommitOp, evidenceSnapshotOp, integrationFfOp, mergeinOp, mutantApplyOp, salvageCommitOp, snapshotPublishOp, worktreeCreateOp, worktreeRemoveOp,
-} from './ops.ts';
+  candidateMergeOp, docsCommitOp, evidenceSnapshotOp, integrationFfOp, mergeinOp, mutantApplyOp, salvageCommitOp, snapshotPublishOp, worktreeCreateOp, worktreeRemoveOp } from './ops.ts';
 
 /** The stage context the git and resource reconcilers need, and the command context command.apply needs. */
 export type RecoveryContext = Readonly<{ stage: StageContext; commands: CommandContext }>;
@@ -99,7 +99,7 @@ function unitOf(ctx: StageContext, intent: IntentRecord): PlanUnit {
 function salvageRules(ctx: StageContext, unit: PlanUnit): SalvageRules {
   const { spec } = loadUnitSpec(ctx, unit);
   return {
-    scope: effectiveScope(dispatchOf(ctx.journal.view, unit.id)),
+    protectedPaths: protectedPathsInForce(ctx.runDir, ctx.journal.view),
     excluded: [...new Set(spec.lanes.flatMap((l) => l.evidenceGlobs))].sort(),
     rejectedRoot: absPath(join(ctx.runDir, 'rejected', unit.id)),
   };

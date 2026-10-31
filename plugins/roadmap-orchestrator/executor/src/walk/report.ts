@@ -39,20 +39,6 @@ export function evidencePath(evidenceDir: AbsPath, cited: string): string | null
 /** Whether `path` lies at or under one of `references`. */
 const inside = (references: readonly RepoPath[], path: string): boolean => references.some((r) => path === r || path.startsWith(`${r}/`));
 
-/** A scope pattern's literal directory part: everything before its first glob character, without a trailing slash. */
-const literalPart = (p: RepoPattern): string => {
-  const i = p.search(/[*?[{]/);
-  return (i === -1 ? p : p.slice(0, i)).replace(/\/+$/, '');
-};
-
-/** Whether `scope` covers one of `references`: a pattern inside a reference dir, or one whose literal part holds one. */
-export function coversReference(references: readonly RepoPath[], scope: readonly RepoPattern[]): boolean {
-  return scope.some((p) => {
-    const base = literalPart(p);
-    return references.some((r) => base === r || base.startsWith(`${r}/`) || (base === '' || r.startsWith(`${base}/`)));
-  });
-}
-
 /** Every reason the report cannot be minted as given (see the header); empty when it can. */
 export function walkRefusals(c: WalkCheck, out: WalkthroughOutput): readonly string[] {
   const reasons: string[] = [];
@@ -97,7 +83,6 @@ export function walkRefusals(c: WalkCheck, out: WalkthroughOutput): readonly str
   out.polish.forEach((x, i) => {
     const where = `polish proposal ${i + 1} (unit ${x.unit.id})`;
     cite(where, x.evidence);
-    if (!coversReference(m.references, x.unit.scope)) reasons.push(`${where}: its scope (${x.unit.scope.join(', ')}) covers none of ${m.id}'s references (${m.references.join(', ')})`);
     if (planned.has(x.unit.id)) reasons.push(`${where}: ${x.unit.id} is already a unit of the plan; name a new unit`);
     const spec = specM1(JSON.parse(x.unit.spec), `${where}.spec`);
     if (spec.unit !== x.unit.id || spec.rev !== 1) reasons.push(`${where}: its spec is unit ${spec.unit} rev ${spec.rev}; a proposal's spec is its own unit's, rev 1`);
@@ -165,7 +150,7 @@ export function mintWalk(
     journal.fact({
       kind: 'polish-proposed', id: journal.view.nextPolishId(), job: x.job, milestone: x.milestone.id, journey: p.journey,
       evidence: p.evidence.map((e) => evidencePath(x.evidenceDir, e)!), text: p.text,
-      unit: { id: p.unit.id, scope: [...p.unit.scope].sort(), spec: p.unit.spec },
+      unit: { id: p.unit.id, systems: [...p.unit.systems].sort(), spec: p.unit.spec },
     });
   }
   return { findings: canonicalIds(ids), proposals: recorded().map((p) => p.id) };

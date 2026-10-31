@@ -28,8 +28,7 @@ import type { AbsPath } from '../core/values.ts';
 import { type ObligationDef, obligationSource, parseObligations } from '../holistic/types.ts';
 import {
   type InputFile, type InputFiles, OBLIGATIONS_INPUT, PLAN_INPUT, SPEC_INPUT, inForceFiles, keptInput, keptPayload, requirePlanInForce, revisionInForce,
-  specBytesOf, specFilePath,
-} from '../input/inforce.ts';
+  specBytesOf, specFilePath } from '../input/inforce.ts';
 import { parsePlan } from '../input/plan.ts';
 import { bytesSha256, parseSpec, specBytes } from '../spec/spec.ts';
 import { type CommandContext, type Effect, commitUnderFence, evaluateRevision, parentOf, rejectedText } from './apply.ts';

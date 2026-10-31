@@ -1,3 +1,4 @@
+import { systemName } from '../src/core/ids.ts';
 // dev.13 (plan §2–§4, §7 "Integrated"): the milestone walk job over a real arc (real git, real processes, the fake claude
 // and codex answering by unit and job, a tiny fake product: a node http server and a CLI). Named tests:
 // walk.loop (milestone reached → walk → a P1 keeps the node unpassed while an unrelated unit runs → a repair lands → round
@@ -87,10 +88,10 @@ async function walk(r: ArcRun) {
 async function admitRepair(r: ArcRun): Promise<void> {
   const planDir = join(r.d.planPath, '..');
   const spec = JSON.parse(readFileSync(join(planDir, 'u1.json'), 'utf8')) as Json;
-  writeFileSync(join(planDir, 'r1.json'), JSON.stringify({ ...spec, unit: 'r1', rev: 1, repairs: ['F-1'], scope: ['product/**', 'src/**', 'test/**'] }));
+  writeFileSync(join(planDir, 'r1.json'), JSON.stringify({ ...spec, unit: 'r1', rev: 1, repairs: ['F-1'] }));
   const { w } = walkContext(r);
   await applyPlanEdit(r, w as never, (plan) => {
-    (plan['units'] as Json[]).push({ id: 'r1', spec: 'r1.json', risk: 'med', scope: ['product/**', 'src/**', 'test/**'], resources: [], origin: 'repair' });
+    (plan['units'] as Json[]).push({ id: 'r1', spec: 'r1.json', risk: 'med', systems: [systemName('app')], resources: [], origin: 'repair' });
   });
 }
 
@@ -523,7 +524,7 @@ describe('the milestone walk (dev.13)', () => {
       findings: [{ class: 'breaks', journey: 'J-1', claim: 'GET / answers 500', cause: 'GET /: server error', against: { type: 'journey' } }],
       polish: [{
         journey: 'J-2', text: 'The CLI error could name the fix.',
-        unit: { id: 'x-cli-error', scope: ['design/**', 'product/**'], spec: admitSpecWire({ ...u1Spec, unit: 'x-cli-error', rev: 1, scope: ['design/**', 'product/**'] }) },
+        unit: { id: 'x-cli-error', systems: [systemName('app')], spec: admitSpecWire({ ...u1Spec, unit: 'x-cli-error', rev: 1 }) },
       }],
     });
     appendSteps(d, [walkStep('walk-1', broken)]);

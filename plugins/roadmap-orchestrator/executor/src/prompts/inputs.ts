@@ -13,10 +13,9 @@ ResourceName,
 ReviewFindingId,RulingId,ServeName,Sha,Sha256Hex,SpecRev,
 SystemName,
 UnitId,VisionClauseId,
-WitnessItemId,
-} from '../core/ids.ts';
+WitnessItemId } from '../core/ids.ts';
 import type { JsonValue } from '../core/json.ts';
-import type { CommandVerdict,EffectiveScope,FailureRef,IgnoredCensus,LaneCadence,LaneDef,NeedsUserReason,SpecPatchOp } from '../core/records.ts';
+import type { CommandVerdict,FailureRef,IgnoredCensus,LaneCadence,LaneDef,NeedsUserReason,SpecPatchOp } from '../core/records.ts';
 import type { GateDelta,LedgerOutcome } from '../core/review.ts';
 import type { AbsPath,RepoPath,RepoPattern } from '../core/values.ts';
 import type { PinnedRule } from '../corpus/types.ts';
@@ -28,8 +27,7 @@ BundleRejection,DivergenceKind,
 FindingLens,
 FindingSeverity,FindingStateName,
 LensKind,ObligationDef,Obligations,ObservationKey,ObservationVerdict,PackFinding,
-Vision,VisionClause,VisionCoverage,VisionQuestion,
-} from '../holistic/types.ts';
+Vision,VisionClause,VisionCoverage,VisionQuestion } from '../holistic/types.ts';
 import { obligationSource } from '../holistic/types.ts';
 import type { BringUp,Journey } from '../input/plan.ts';
 import type { SystemsMap } from '../input/systems.ts';
@@ -83,8 +81,7 @@ export type UnitTargetInput = ArchitectureInput | UnitCorpusInput;
 /** The gate's target: never the vision doc (M3 R17), so a corpus target carries none. */
 export type GateTargetInput = ArchitectureInput | (UnitCorpusInput & Readonly<{ visionDoc: null }>);
 
-/** A fix round resumes the build session with what failed. `directives` are the gate's (or, for a
- * conflict or scope-growth round, the executor's) instructions; either list may be empty, not both. */
+
 export type FixRound = Readonly<{ failingEvidenceDirs: readonly AbsPath[]; directives: readonly string[] }>;
 
 /** One executor-run lane at the diff head: the ledger the gate reads. */
@@ -172,6 +169,8 @@ export type BuildBrowser = Readonly<{ servers: readonly string[]; bringUps: read
 
 export type PlanCheckInputs = Readonly<{
   spec: RenderedSpec;
+  intent: string;
+  nonGoals: readonly string[];
   /** The cited contracts and active rulings, in full; the rest in `index`. */
   contracts: readonly DocText[];
   rulings: readonly RulingText[];
@@ -179,7 +178,7 @@ export type PlanCheckInputs = Readonly<{
   target: UnitTargetInput;
   direction: string;
   /** The scope envelope pinned for the unit. */
-  scope: EffectiveScope;
+  systems: readonly SystemName[];
   /** The Phase-0 risk floor. */
   risk: RiskTier;
   checkouts: PlanCheckCheckouts;
@@ -198,7 +197,6 @@ export type PlanCheckInputs = Readonly<{
    * Scope growth (2026-10-15): the reference sweep's start (Phase-0 row 10 over the spec's `removes` at the tip the check
    * reads) and the unit's earlier proposals the root agent rejected (never proposed again).
    */
-  scopeGrowth: PlanCheckScopeGrowth;
   /** W3: why this check runs at the escalation seat; null below it. */
   escalation: EscalationInput | null;
   /** dev.13: the milestones the unit takes part in and their design references; null when it is in none. */
@@ -251,19 +249,13 @@ export type PocReport = Readonly<{
   diff: AbsPath;
 }>;
 
-/** What a plan-check reads for its scope-growth proposals. */
-export type PlanCheckScopeGrowth = Readonly<{
-  /** Per `removes` entry with referrers: the files outside the scope envelope that still name it. */
-  references: readonly Readonly<{ removed: string; referrers: readonly RepoPath[] }>[];
-  /** Each rejected proposal: its patterns and reason, and the root agent's reason for rejecting it. */
-  rejected: readonly Readonly<{ patterns: readonly RepoPattern[]; reason: string; rejection: string }>[];
-}>;
-
 export type BuildInputs = Readonly<{
   /** Existing per-system notes at this unit's checkout commit, relative to the product repo. */
   systemNotes: readonly RepoPath[];
   notes: readonly string[];
   spec: RenderedSpec;
+  intent: string;
+  nonGoals: readonly string[];
   contracts: readonly DocText[];
   rulings: readonly RulingText[];
   index: ReferenceIndex;
@@ -278,7 +270,7 @@ export type BuildInputs = Readonly<{
   /** Where the implementer writes decisions.json; outside the worktree, snapshotted by the executor. */
   evidenceDir: AbsPath;
   worktree: AbsPath;
-  scope: EffectiveScope;
+  systems: readonly SystemName[];
   fixRound: FixRound | null;
   /**
    * M4a rev 3 (D1, R56): per fast required witness lane, the exact `roadmap witness-check --lane-file <file>` command the
@@ -391,6 +383,8 @@ export type GateInputs = Readonly<{
   /** Existing per-system notes at the gated commit, relative to the product repo. */
   systemNotes: readonly RepoPath[];
   spec: RenderedSpec;
+  intent: string;
+  nonGoals: readonly string[];
   contracts: readonly DocText[];
   rulings: readonly RulingText[];
   index: ReferenceIndex;
@@ -413,7 +407,10 @@ export type GateInputs = Readonly<{
    * The pinned envelope, the diff's paths outside it, and (scope growth, 2026-10-15) the out-of-scope paths the build edited
    * that salvage reverted (in no diff), still outside the envelope.
    */
-  scope: Readonly<{ patterns: readonly RepoPattern[]; excluded: readonly RepoPattern[]; growth: readonly RepoPath[]; rejected: readonly RepoPath[] }>;
+  systems: readonly SystemName[];
+  reach: readonly RepoPath[];
+  traits: readonly import('../input/systems.ts').SystemTrait[];
+  reachTraits: readonly import('../input/systems.ts').SystemTrait[];
   /** Later gate rounds rule on their own prior round (§3, sf16); null on the first round. */
   priorRound: GatePriorRound | null;
   /** M4a rev 3: the executable checks' results (`GateChecks`). */
@@ -721,6 +718,8 @@ export type VerifierInputs = Readonly<{ unit: UnitId; since: Sha; at: Sha; hunks
  */
 export type ScaffoldInputs = Readonly<{
   spec: RenderedSpec;
+  intent: string;
+  nonGoals: readonly string[];
   scaffold: ScaffoldDecision;
   loadLane: Readonly<{ id: LaneId; argv: readonly string[]; cwd: RepoPath; testPaths: readonly RepoPattern[] }>;
   worktree: AbsPath;
@@ -734,6 +733,8 @@ export type ScaffoldInputs = Readonly<{
  */
 export type PocInputs = Readonly<{
   spec: RenderedSpec;
+  intent: string;
+  nonGoals: readonly string[];
   brief: string;
   questions: readonly PocQuestion[];
   worktree: AbsPath;
@@ -759,16 +760,16 @@ export type RoleInputs = {
 
 export const ROLE_INPUTS = {
   planCheck: [
-    'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision', 'priorInvalid',
-    'scopeGrowth', 'escalation', 'milestones', 'staleLinks', 'design', 'pocs',
+    'spec', 'intent', 'nonGoals', 'contracts', 'rulings', 'index', 'target', 'direction', 'systems', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision', 'priorInvalid',
+    'escalation', 'milestones', 'staleLinks', 'design', 'pocs',
   ],
   build: [
-    'systemNotes', 'notes', 'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks',
+    'systemNotes', 'notes', 'spec', 'intent', 'nonGoals', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'systems', 'fixRound', 'witnessChecks',
     'milestones', 'browser', 'certifiedAt', 'handover',
   ],
   gate: [
     'systemNotes',
-    'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'planCheckNotes', 'obligations', 'standingObligations', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
+    'spec', 'intent', 'nonGoals', 'contracts', 'rulings', 'index', 'target', 'direction', 'planCheckNotes', 'obligations', 'standingObligations', 'diff', 'laneLedger', 'evidence', 'systems', 'reach', 'traits', 'reachTraits', 'priorRound',
     'checks', 'escalation', 'largeDiff', 'milestones', 'review', 'undeclaredContracts',
   ],
   lens: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'target', 'checkout', 'specsOnly'],
@@ -781,7 +782,7 @@ export const ROLE_INPUTS = {
   walkthrough: ['vision', 'milestone', 'round', 'journeys', 'references', 'tweaks', 'findings', 'product', 'units', 'evidenceDir'],
   polishJudge: ['vision', 'milestone', 'journey', 'proposal', 'references', 'referenceDiff', 'walkEvidenceDir', 'before', 'after', 'evidenceDir'],
   verifier: ['unit', 'since', 'at', 'hunks'],
-  scaffold: ['spec', 'scaffold', 'loadLane', 'worktree', 'retry'],
+  scaffold: ['spec', 'intent', 'nonGoals', 'scaffold', 'loadLane', 'worktree', 'retry'],
 } as const satisfies { readonly [R in Role]: readonly (keyof RoleInputs[R])[] };
 
 // Compile-time half of `prompts.fields==required`: ROLE_INPUTS names every key of each role's inputs.
@@ -1027,23 +1028,6 @@ export function escalationText(e: EscalationInput | null, role: 'plan-check' | '
 This ${role} is an escalation: a judgment at the seat below could not settle the unit, so it is yours, with more effort behind it. ${why}
 Weigh the earlier reasons as another reviewer's claims, not as facts, and decide on the evidence yourself. There is no seat above this one: escalating again parks the unit until its spec is revised, so do it only when the unit cannot go on without that.
 </escalation>`;
-}
-
-/**
- * Scope growth (2026-10-15): the reference sweep's start, and the rejected proposals (only when there are any).
- */
-export function scopeGrowthText(g: PlanCheckScopeGrowth): string {
-  const refs = g.references.map((r) => `- \`${r.removed}\` is still named by: ${r.referrers.join(', ')}`);
-  const rejected = g.rejected.map((r) => `- ${r.patterns.map((p) => `\`${p}\``).join(', ')}: proposed because ${r.reason}; rejected because ${r.rejection}`);
-  return `
-
-<scope_references>
-${refs.length === 0 ? '(none: the spec declares no removes, or nothing outside the envelope names them)' : refs.join('\n')}
-</scope_references>${rejected.length === 0 ? '' : `
-
-<rejected_scope_growth>
-${rejected.join('\n')}
-</rejected_scope_growth>`}`;
 }
 
 /** dev.17 (propagation): the unit's stale links, each to answer by its key; nothing when it has none. */

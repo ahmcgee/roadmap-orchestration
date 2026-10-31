@@ -32,8 +32,7 @@ import { SCHEMA_VERSION } from '../core/version.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
 import {
   type ArcLaneDef, type Reporter, type WitnessOutcome, type WitnessPurpose, type WitnessRecord, type WitnessTest, WITNESS_OUTCOMES, laneRevOf,
-  witnessRecord,
-} from './types.ts';
+  witnessRecord } from './types.ts';
 
 /** The variable naming the file a `node-test` or `jsonl` lane's reporter appends witness lines to. */
 export const WITNESS_FILE_ENV = 'ROADMAP_WITNESS_FILE';

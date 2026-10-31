@@ -150,13 +150,13 @@ test('evals-m3.setup-valid: setup lays out a valid holistic corpus arc whose wit
   assert.deepEqual(o.obligations.map((x) => [x.id, x.rule?.id, x.rule?.textSha256]), pin.rules.map((r, i) => [`I-${i + 1}`, r.id, r.textSha256]), 'I-n is anchored at T-n');
   assert.deepEqual(o.census, pin.rules.map((r, i) => ({ rule: r.id, state: { type: 'obligation', id: `I-${i + 1}` } })));
   assert.deepEqual(o.lanes.map((x) => x.reporter), ['node-test', 'node-test', 'node-test']);
-  const mapped = new Map(o.mapping.paths.map((m) => [m.pattern as string, m.obligations]));
+  const mapped = new Map(o.mapping.systems.map((m) => [m.system as string, m.obligations]));
   for (const u of plan.units) {
     const spec = loadSpec(absPath(join(l.input, u.spec)));
     assert.equal(spec.unit, u.id);
-    for (const p of spec.scope) assert.ok(mapped.has(p), `${u.id}'s scoped path ${p} is mapped`);
+    for (const p of spec.nonGoals) assert.ok(mapped.has(p), `${u.id}'s scoped path ${p} is mapped`);
   }
-  assert.deepEqual(plan.units.find((u) => u.id === 'tidy')!.scope, ['src/cli.js']);
+  assert.deepEqual(plan.units.find((u) => u.id === 'tidy')!.systems, ['app']);
   assert.deepEqual(mapped.get('src/cli.js'), ['I-3'], 'tidy\'s one path maps to I-3 only');
   // tidy's spec, the contract it cites and ARCHITECTURE.md say nothing about rounding, and its story diff holds no
   // rounding code: the regression is formatDisplay's existing toFixed, reached by a routing change. (In the corpus arc

@@ -199,7 +199,7 @@ test('compaction.stage-b: golden script passes both domains; absent applications
     await applyGolden(f);
     assert.equal(gradeB(f).pass, true, json(gradeB(f)));
     const obs = join(f.next, 'obligations.json');
-    await mutation(f, obs, (s) => { const o = JSON.parse(s); o.obligations = o.obligations.filter((x: { id: string }) => x.id !== 'I-1'); o.mapping.paths = o.mapping.paths.map((m: { obligations: string[] }) => ({ ...m, obligations: m.obligations.filter((id) => id !== 'I-1') })); o.census = o.census.map((e: { state: { id?: string } }) => e.state.id === 'I-1' ? { ...e, state: { type: 'prod-only' } } : e); return json(o); }, 'rederive');
+    await mutation(f, obs, (s) => { const o = JSON.parse(s); o.obligations = o.obligations.filter((x: { id: string }) => x.id !== 'I-1'); o.mapping.systems = o.mapping.systems.map((m: { obligations: string[] }) => ({ ...m, obligations: m.obligations.filter((id) => id !== 'I-1') })); o.census = o.census.map((e: { state: { id?: string } }) => e.state.id === 'I-1' ? { ...e, state: { type: 'prod-only' } } : e); return json(o); }, 'rederive');
     await mutation(f, join(f.l.product, CORPUS_FILE), (s) => s.replace(/\n```\n/, '\nT-81: A retired identity reused.\n```\n'), 'ids');
     await mutation(f, obs, (s) => s.replaceAll('I-61', 'I-54'), 'ids');
     await mutation(f, join(f.next, 'rulings.md'), (s) => s.replace(/C-40 — .+/, 'C-40 — Repurposed identity.'), 'ids');

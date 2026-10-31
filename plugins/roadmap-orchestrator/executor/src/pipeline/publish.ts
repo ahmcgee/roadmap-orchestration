@@ -1,3 +1,4 @@
+import { systemsMapInForce } from '../input/systems.ts';
 // The docs publication (M3 step A4; DESIGN-1.0.md §2.9, §9; plan "Commands", Docs publication; A7, A17, G12): a
 // revision's rendered `.roadmap/` documents, the vision files it changes (dev.16) and its contract ops, published through
 // the integration slot like a unit, so the tested head is the published head. It runs inside its revision's commit
@@ -96,8 +97,7 @@ import { docsCommitOp,evidenceSnapshotOp,integrationFfOp,snapshotPublishOp,workt
 import { type DocsOutcome,type DocsPublisher } from '../recover/revision.ts';
 import { spawnReconciler } from '../recover/spawn.ts';
 import {
-type DocsHolder,type Reservation,type ResourceContext,cleanup,entryOf,finishCleanup,heldReservation,holderUnits,resourceTable,run,
-} from '../resources/reserve.ts';
+type DocsHolder,type Reservation,type ResourceContext,cleanup,entryOf,finishCleanup,heldReservation,holderUnits,resourceTable,run } from '../resources/reserve.ts';
 import type { AcquireFirst } from '../schedule/arbiter.ts';
 import type { ResourceRequest } from '../schedule/types.ts';
 import { parseRulings } from '../spec/rulings.ts';
@@ -301,9 +301,9 @@ export const revisedObligations = (changes: readonly PlanChange[]): readonly Obl
 
 /** The docs candidate's selection: its contract ops' paths (never the renders) and the revised obligations. */
 export function docsSelection(
-  obligations: Obligations, contractPaths: readonly RepoPath[], changes: readonly PlanChange[], latched: ReadonlySet<ObligationId>,
+  obligations: Obligations, contractPaths: readonly RepoPath[], changes: readonly PlanChange[], latched: ReadonlySet<ObligationId>, systemsMap: import('../input/systems.ts').SystemsMap | null = null,
 ): readonly ObligationId[] {
-  return selectObligations({ obligations, units: [], closure: [], changedPaths: contractPaths, revised: revisedObligations(changes), latched });
+  return selectObligations({ obligations, systemsMap, units: [], closure: [], changedPaths: contractPaths, revised: revisedObligations(changes), latched });
 }
 
 /** The arc lanes that witness the selected, non-exempt obligations, in the file's lane order. */
@@ -350,7 +350,7 @@ async function publishDocs(ctx: DocsContext, payload: RevisionPayload): Promise<
   if (violations.length > 0) return refuse(`its commit touches paths it does not publish: ${violations.map((v) => `${v.path} (${v.rule})`).join(', ')}`);
 
   const obligations = revisionObligations(ctx.runDir, payload);
-  const selected = new Set(obligations === null ? [] : docsSelection(obligations, files.contractPaths, payload.changes, new Set(ctx.journal.view.holistic().latched.map((l) => l.obligation))));
+  const selected = new Set(obligations === null ? [] : docsSelection(obligations, files.contractPaths, payload.changes, new Set(ctx.journal.view.holistic().latched.map((l) => l.obligation)), systemsMapInForce(ctx.journal.view.planApplied())));
   // dev.17: the suite lanes up to `candidate` the commit's diff selects (a docs-only diff selects none but a lane listing
   // `docs`); a batch lane never runs in the merge path.
   const suiteLanes = seriesOrder(selectedLanes(mapInForce(ctx.journal.view), plan.suite.lanes.filter((l) => cadenceAtOrBefore(l.cadence, 'candidate')), changedPaths(ctx.repo, tip, next)));

@@ -44,7 +44,7 @@ Make every acceptance clause in the spec hold, then report for certification.
 - The change does what the spec asks and nothing more.
 
 # Constraints
-- Scope: the executor keeps only changes to paths matching the scope patterns. Changes elsewhere, and anything under .roadmap/, are discarded; do not touch .roadmap/.
+- Systems: the unit names its systems. Do not change protected .roadmap/ or pinned corpus files.
 - Implement exactly and only what the spec asks: no extra features, adjacent refactors, renames, reformatting or cleanup. A pre-existing bug outside the task is left alone and mentioned in the summary.
 - The spec is authoritative; contracts and rulings (C-nn) bind as written. Cited ones are in the message; the rest are indexed there, and you read one (a contract from the repository, a ruling from the ledger file named in the index) when your change touches it. If one contradicts what the spec requires, do not work around it: it is a blocker.
 - Plan-check notes are facts a reviewer found about the code before your build; confirm one before relying on it.
@@ -127,7 +127,7 @@ export const PROMPT: PromptModule<'build'> = {
   system,
   schema: BUILD_SCHEMA,
   fields: [
-    'systemNotes', 'notes', 'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks',
+    'systemNotes', 'notes', 'spec', 'intent', 'nonGoals', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'systems', 'fixRound', 'witnessChecks',
     'milestones', 'browser', 'certifiedAt', 'handover',
   ],
   render: (i) => `# Spec (unit ${i.spec.unit}, revision ${i.spec.rev})
@@ -150,11 +150,13 @@ ${i.planCheckNotes === '' ? '(none)' : i.planCheckNotes}
 - Worktree: ${i.worktree}
 - Evidence directory: ${i.evidenceDir}
 - Certified tree: ${i.certifiedAt ?? '(none yet: docsOnlySince is null)'}
-- Scope patterns:
-${bullets(i.scope.include, '(empty)')}
+- Systems: ${bullets(i.systems, '(none)')}
 
-# Excluded generated outputs (never edit)
-${bullets(i.scope.exclude, '(none)')}
+# Intent
+${i.intent}
+
+# Non-goals
+${bullets(i.nonGoals, '(none)')}
 
 # Fast lanes
 ${fastLanesText(i.worktree, i.fastLanes)}${suiteLanes(i)}${witnessChecks(i)}${buildBrowserText(i.browser)}${handover(i)}${fixRound(i)}

@@ -1,3 +1,4 @@
+import { systemName } from '../src/core/ids.ts';
 // M2 records (SCHEMAS.md "M2"): round-trips of every new or changed record and the validators' refusals.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -174,7 +175,7 @@ describe('M2 plan fields', () => {
     schema: 'roadmap/plan-m1', arc: 'arc-1', integrationBranch: 'integration', baseline: A, worktreeRoot: '/var/tmp/wt', contracts: [], rulings: 'rulings.md',
     architectureDoc: 'docs/arch.md', direction: 'Ship it.', suite: { lanes: [] }, resources: [],
   };
-  const u = (id: string, extra: object = {}) => ({ id, spec: `specs/${id}.json`, risk: 'med', scope: ['src/**'], resources: [], ...extra });
+  const u = (id: string, extra: object = {}) => ({ id, spec: `specs/${id}.json`, risk: 'med', systems: [systemName('app')], resources: [], ...extra });
 
   it('capacity, pools, origin, cpu, contingent edges, re-entry and cut parse; absent fields stay absent', () => {
     const plan = parsePlan({

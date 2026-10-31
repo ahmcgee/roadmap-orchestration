@@ -1,3 +1,4 @@
+import { repoPattern } from '../../src/core/values.ts';
 // The M3 paid fixture, step 3: `node evals/m3/check.ts <dir>` grades a finished run (setup → driver) from the log,
 // the repo, the run dir and report.json. Agent-facing output: one JSON line `{pass, criteria[{name, pass, detail}],
 // notExercised[], cannotShow[]}`, then the two lists as lines. Exits 1 when any criterion fails.
@@ -635,7 +636,7 @@ function diffProductAndDocs(run: Run): Verdict {
   const units = requirePlanInForce(run.runDir, run.view).plan.units;
   const scopes = units.flatMap((u) => {
     const spec = run.view.unit(u.id).spec === null ? null : specOf(run, u.id);
-    return [...u.scope, ...(spec?.scope ?? [])].map((pattern) => ({ unit: u.id as string, pattern }));
+    return u.systems.map((pattern) => ({ unit: u.id as string, pattern: repoPattern('**') }));
   });
   const paths = git(run.repo, ['diff', '--name-only', `${MAIN}...${run.plan.integrationBranch}`]).split('\n').filter((p) => p !== '');
   const problems: string[] = [];

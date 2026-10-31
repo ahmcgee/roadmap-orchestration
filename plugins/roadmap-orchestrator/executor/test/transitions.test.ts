@@ -118,7 +118,6 @@ const ROWS: readonly Row[] = [
   // assessment: a unit an older log left there runs its plan-check before it builds.
   ['plan-check', 'in-session', {}, 'plan-check@med', 'advance', {}],
   // Scope growth (2026-10-15): a verified proposal holds the unit for the root agent, uncharged.
-  ['plan-check', 'scope-growth', {}, 'hold', 'hold', {}],
   // 2026-10-16: the prompt or context outgrew the model's window: an uncharged env park, never the retryable process-fault
   // row (no probe, no repeat rule), whatever the counters.
   ['plan-check', 'context-exceeded', {}, 'park:context-exceeded', 'park', {}],
@@ -193,7 +192,6 @@ const ROWS: readonly Row[] = [
   // repeated reverts hold the unit for the root agent.
   ['lanes', 'plan-defect', {}, 'park:plan-defect', 'park', {}],
   ['lanes', 'plan-defect', { counters: { chargeableFailures: 2 } }, 'park:plan-defect', 'park', {}],
-  ['lanes', 'scope-growth', {}, 'hold', 'hold', {}],
   // gate (fresh judgment)
   ['gate', 'approve', {}, 'candidate', 'advance', {}],
   ['gate', 'revise', {}, 'build/fix@med', 'revise', { reviseRounds: 1, chargeableFailures: 1 }],
@@ -524,7 +522,7 @@ type Driven = Readonly<{ nexts: readonly Next[]; facts: readonly ReturnType<type
  */
 function drive(outcomes: readonly StageOutcome[]): Driven {
   const records: LogRecord[] = [{
-    type: 'fact', fact: { kind: 'dispatch', record: { unit: U1, specRev: specRev(1), specSha256: H, scope: [repoPattern('src/**')], riskFloor: 'med', routingRev: REV, implementerSeatRev: seatRev('fedcba9876543210'), at: AT, transientRules: 'm3' } },
+    type: 'fact', fact: { kind: 'dispatch', record: { unit: U1, specRev: specRev(1), specSha256: H,  riskFloor: 'med', routingRev: REV, implementerSeatRev: seatRev('fedcba9876543210'), at: AT, transientRules: 'm3' } },
   }];
   const attempts = new Map<OutcomeStage, number>();
   const nexts: Next[] = [];

@@ -13,8 +13,7 @@
 // load (`concurrency` cpu down, a pool's size down, a suite lane's cpu or `--test-concurrency` down) or `host` advice is
 // kept, anything else is dropped `direction`.
 import {
-  type Sha256Hex, type StationId, type UnitId, HOST_CPU_STATION, SLOT_STATION, SLOT_WAIT_STATION, parseStationId, stationId,
-} from '../core/ids.ts';
+  type Sha256Hex, type StationId, type UnitId, HOST_CPU_STATION, SLOT_STATION, SLOT_WAIT_STATION, parseStationId, stationId } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
 import { type PlanM1, visionFile } from '../input/plan.ts';
 import { laneCpu } from '../resources/pool.ts';
@@ -23,8 +22,7 @@ import { BUILD_CLASSES, ROLES, type RiskTier } from '../routing/types.ts';
 import {
   type FlowAction, type FlowDropReason, type FlowDropped, type FlowLever, type FlowMetric, type FlowPreimage,
   type FlowProposal, type FlowWindow, type GivenInForce, type HostFingerprint, type LeverState, type Rejection, type RejectionKey,
-  type TocStep, leverTargetOf,
-} from './types.ts';
+  type TocStep, leverTargetOf } from './types.ts';
 
 /** What an applied action may change (the fence: `diffPaths(plan, flowRevision(plan, action)) ⊆ LEVER_PATHS[lever]`, else a bug). */
 export const LEVER_PATHS: { readonly [L in FlowLever]: readonly string[] } = {

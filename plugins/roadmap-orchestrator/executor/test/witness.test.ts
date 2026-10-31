@@ -27,7 +27,7 @@ const ENV = envId('fedcba9876543210');
 
 function lane(reporter: ArcLaneDef['reporter'], pass: readonly string[] = []): ArcLaneDef {
   const [l] = parseObligations({
-    schema: 'roadmap/obligations-m3', cutLine: 'cut', obligations: [], mapping: { paths: [] },
+    schema: 'roadmap/obligations-m3', cutLine: 'cut', obligations: [], mapping: { systems: [] },
     lanes: [{ id: 'journey', argv: ['node', '--test'], cwd: '.', env: { set: {}, pass }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], evidenceExcludes: [], reporter }],
   }).lanes;
   return l as ArcLaneDef;

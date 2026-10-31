@@ -117,9 +117,9 @@ describe('salvage', () => {
     assert.equal(copied.kind, 'complete');
     if (copied.kind !== 'complete') return;
     assert.deepEqual(copied.manifest.entries.map((e) => [e.path, e.reason, e.tracked]), [
-      ['.roadmap/notes.md', 'roadmap-dir', false],
-      ['docs/readme.md', 'out-of-scope', true],
-      ['docs/staged-out.md', 'out-of-scope', false],
+      ['.roadmap/notes.md', 'protected-path', false],
+      ['docs/readme.md', 'protected-path', true],
+      ['docs/staged-out.md', 'protected-path', false],
       ['src/evidence/out.txt', 'excluded', false],
     ]);
     assert.equal(readFileSync(join(dir, 'files/.roadmap/notes.md'), 'utf8'), 'notes\n');

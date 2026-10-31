@@ -1,3 +1,4 @@
+import { systemName } from '../../src/core/ids.ts';
 // The golden Phase-0 outputs the scripted root agent (fake-root.ts) replays: what a faithful root agent's Phase 0
 // would produce over the synthetic corpus, written so that every postcondition of the answer key holds (check.ts
 // `defects`). Fake runs only: the paid run's root agent writes its own.
@@ -295,8 +296,18 @@ export const CENSUS_OTHERS: Readonly<Record<string, 'out-of-slice' | 'untestable
 /** A spec witness item (M4a rev 3): test `testId` of arc lane `lane` witnesses the spec's acceptance clause `clause`. */
 export type WitnessSeed = Readonly<{ id: string; lane: string; testId: string; clause: string }>;
 
+
+const SYSTEM_PATHS: Record<string, { paths: string[] }> = {};
+export const FIXTURE_SYSTEMS = { systems: SYSTEM_PATHS };
+function systemForPath(path: string) {
+  const name = systemName(path.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-$/, ''));
+  SYSTEM_PATHS[name] = { paths: [path] };
+  return name;
+}
+const systemsForPaths = (paths: readonly string[]) => paths.map(systemForPath);
+
 export type UnitSeed = Readonly<{
-  id: string; arc: ArcNo; risk: 'low' | 'high'; scope: readonly string[]; after: readonly string[]; obligations: readonly string[];
+  id: string; arc: ArcNo; risk: 'low' | 'high'; systems: readonly string[]; after: readonly string[]; obligations: readonly string[];
   unitLane: Readonly<{ id: string; file: string }>; acceptance: readonly string[]; witnesses?: readonly WitnessSeed[];
 }>;
 
@@ -319,7 +330,7 @@ export const SLOW_LANE = {
 
 export const UNITS: readonly UnitSeed[] = [
   {
-    id: 'guard', arc: 1, risk: 'low', scope: ['src/ledger.js', 'test/unit/ledger.test.js'], after: [], obligations: ['I-1'],
+    id: 'guard', arc: 1, risk: 'low', systems: systemsForPaths(['src/ledger.js', 'test/unit/ledger.test.js']), after: [], obligations: ['I-1'],
     unitLane: { id: 'ledger', file: 'test/unit/ledger.test.js' },
     acceptance: [
       '`book` in src/ledger.js refuses a berth already booked for the same date and high water with a TidewaterError naming the vessel that holds it (T-7); nothing is written for a refused booking.',
@@ -327,7 +338,7 @@ export const UNITS: readonly UnitSeed[] = [
     ],
   },
   {
-    id: 'confirm', arc: 1, risk: 'high', scope: ['src/cli.js', 'src/confirm.js', 'test/unit/confirm.test.js'], after: ['guard'], obligations: ['I-2'],
+    id: 'confirm', arc: 1, risk: 'high', systems: systemsForPaths(['src/cli.js', 'src/confirm.js', 'test/unit/confirm.test.js']), after: ['guard'], obligations: ['I-2'],
     unitLane: { id: 'confirm-unit', file: 'test/unit/confirm.test.js' },
     acceptance: [
       'src/confirm.js `sendConfirmation(booking)` appends one line `<phone>\\t<text>` to the outbox (TIDEWATER_OUTBOX, default tidewater-outbox.txt), the text being the "Booking confirmed" template of 0040_Notifications/message-templates.md (T-11).',
@@ -338,7 +349,7 @@ export const UNITS: readonly UnitSeed[] = [
     witnesses: [{ id: 'W-1', lane: 'tides', testId: 'tide windows come from the harbour tide table', clause: 'A2' }],
   },
   {
-    id: 'cutoff', arc: 2, risk: 'low', scope: ['src/cli.js', 'src/ledger.js', 'test/unit/ledger.test.js'], after: [], obligations: ['I-4'],
+    id: 'cutoff', arc: 2, risk: 'low', systems: systemsForPaths(['src/cli.js', 'src/ledger.js', 'test/unit/ledger.test.js']), after: [], obligations: ['I-4'],
     unitLane: { id: 'ledger', file: 'test/unit/ledger.test.js' },
     acceptance: [
       '`cancel(id, now)` in src/ledger.js refuses a cancellation later than 48 hours before the booking\'s window opens, saying so (T-23).',
@@ -347,7 +358,7 @@ export const UNITS: readonly UnitSeed[] = [
     ],
   },
   {
-    id: 'notice', arc: 2, risk: 'low', scope: ['src/cli.js', 'src/confirm.js', 'test/unit/confirm.test.js'], after: ['cutoff'], obligations: ['I-5'],
+    id: 'notice', arc: 2, risk: 'low', systems: systemsForPaths(['src/cli.js', 'src/confirm.js', 'test/unit/confirm.test.js']), after: ['cutoff'], obligations: ['I-5'],
     unitLane: { id: 'confirm-unit', file: 'test/unit/confirm.test.js' },
     acceptance: [
       'src/confirm.js `sendCancellation(booking)` appends the "Booking cancelled" template to the outbox (T-24).',
@@ -356,7 +367,7 @@ export const UNITS: readonly UnitSeed[] = [
     ],
   },
   {
-    id: 'dayview', arc: 3, risk: 'low', scope: ['src/cli.js', 'src/dayview.js', 'test/unit/dayview.test.js'], after: [], obligations: [],
+    id: 'dayview', arc: 3, risk: 'low', systems: systemsForPaths(['src/cli.js', 'src/dayview.js', 'test/unit/dayview.test.js']), after: [], obligations: [],
     unitLane: { id: 'dayview-unit', file: 'test/unit/dayview.test.js' },
     // No rule id in the clause: the story's arc-3 census leaves T-25 out of slice (no obligation is drafted for it), and an
     // acceptance clause naming an out-of-slice rule is a `spec-census-mismatch` row (M4a rev 3, H3) that arc 3 must not hit.
@@ -365,7 +376,7 @@ export const UNITS: readonly UnitSeed[] = [
   // The read-outs, one after another after confirm: quay-list before arc 1's flow revision (the before-window's third
   // suite run), the other five after it (the verdict window's samples).
   ...READOUTS.map((r, i): UnitSeed => ({
-    id: r.unit, arc: 1, risk: 'low', scope: [r.module, r.unitTest], after: [i === 0 ? 'confirm' : READOUTS[i - 1]!.unit], obligations: [r.obligation],
+    id: r.unit, arc: 1, risk: 'low', systems: systemsForPaths([r.module, r.unitTest]), after: [i === 0 ? 'confirm' : READOUTS[i - 1]!.unit], obligations: [r.obligation],
     unitLane: { id: `${r.lane}-unit`, file: r.unitTest }, acceptance: [r.acceptance],
   })),
 ];
@@ -374,7 +385,7 @@ export const UNITS: readonly UnitSeed[] = [
 export const unitsOf = (n: ArcNo): readonly UnitSeed[] => UNITS.filter((u) => u.arc === n);
 
 /** A unit's spec as the golden Phase 0 (or arc 2's checkpoint) writes it; `extraLanes` follow the unit lane. */
-export type SpecSeed = Pick<UnitSeed, 'scope' | 'unitLane' | 'acceptance' | 'witnesses'> & Readonly<{ id: string; obligations?: readonly string[] }>;
+export type SpecSeed = Pick<UnitSeed, 'systems' | 'unitLane' | 'acceptance' | 'witnesses'> & Readonly<{ id: string; obligations?: readonly string[] }>;
 export const PASS_PATH = { set: {}, pass: ['PATH'] } as const;
 
 export function specLane(id: string, argv: readonly string[], env: Readonly<{ set: Readonly<Record<string, string>>; pass: readonly string[] }> = PASS_PATH) {
@@ -383,8 +394,8 @@ export function specLane(id: string, argv: readonly string[], env: Readonly<{ se
 
 export function specOf(u: SpecSeed, extraLanes: readonly ReturnType<typeof specLane>[] = []) {
   const obligations = u.obligations ?? [];
-  return {
-    schema: 'roadmap/spec-m1', unit: u.id, rev: 1, scope: [...u.scope], resources: [], decisions: [],
+  return { intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
+    schema: 'roadmap/spec-m1', unit: u.id, rev: 1,  resources: [], decisions: [],
     lanes: [specLane(u.unitLane.id, ['node', '--test', u.unitLane.file]), ...extraLanes],
     acceptance: u.acceptance.map((clause, i) => ({ id: `A${i + 1}`, clause, failLoudIfUndelivered: true, state: 'active' })),
     facts: [], cites: { contracts: [], rulings: ['C-1'] }, ...(obligations.length === 0 ? {} : { obligations: [...obligations] }),
@@ -414,25 +425,25 @@ export function suiteLanes(sharded: boolean) {
 }
 
 /** The path → obligations mapping: every scoped path and journey. */
-export const MAPPING: readonly Readonly<{ pattern: string; obligations: readonly string[] }>[] = [
-  { pattern: 'journeys/berths.journey.js', obligations: ['I-1'] },
-  { pattern: 'journeys/confirm.journey.js', obligations: ['I-2'] },
-  { pattern: 'journeys/cutoff.journey.js', obligations: ['I-4'] },
-  { pattern: 'journeys/notice.journey.js', obligations: ['I-5'] },
-  { pattern: 'journeys/tides.journey.js', obligations: ['I-3'] },
-  { pattern: 'src/cli.js', obligations: ['I-2', 'I-4', 'I-5'] },
-  { pattern: 'src/confirm.js', obligations: ['I-2', 'I-5'] },
-  { pattern: 'src/dayview.js', obligations: [] },
-  { pattern: 'src/ledger.js', obligations: ['I-1', 'I-4'] },
-  { pattern: 'src/tides.js', obligations: ['I-3'] },
-  { pattern: 'test/unit/confirm.test.js', obligations: ['I-2', 'I-5'] },
-  { pattern: 'test/unit/dayview.test.js', obligations: [] },
-  { pattern: 'test/unit/ledger.test.js', obligations: ['I-1', 'I-4'] },
-  { pattern: 'test/unit/soak.test.js', obligations: ['I-6'] },
+export const MAPPING: readonly Readonly<{ system: string; obligations: readonly string[] }>[] = [
+  { system: systemForPath('journeys/berths.journey.js'), obligations: ['I-1'] },
+  { system: systemForPath('journeys/confirm.journey.js'), obligations: ['I-2'] },
+  { system: systemForPath('journeys/cutoff.journey.js'), obligations: ['I-4'] },
+  { system: systemForPath('journeys/notice.journey.js'), obligations: ['I-5'] },
+  { system: systemForPath('journeys/tides.journey.js'), obligations: ['I-3'] },
+  { system: systemForPath('src/cli.js'), obligations: ['I-2', 'I-4', 'I-5'] },
+  { system: systemForPath('src/confirm.js'), obligations: ['I-2', 'I-5'] },
+  { system: systemForPath('src/dayview.js'), obligations: [] },
+  { system: systemForPath('src/ledger.js'), obligations: ['I-1', 'I-4'] },
+  { system: systemForPath('src/tides.js'), obligations: ['I-3'] },
+  { system: systemForPath('test/unit/confirm.test.js'), obligations: ['I-2', 'I-5'] },
+  { system: systemForPath('test/unit/dayview.test.js'), obligations: [] },
+  { system: systemForPath('test/unit/ledger.test.js'), obligations: ['I-1', 'I-4'] },
+  { system: systemForPath('test/unit/soak.test.js'), obligations: ['I-6'] },
   ...READOUTS.flatMap((r) => [
-    { pattern: `journeys/${r.lane}.journey.js`, obligations: [r.obligation] },
-    { pattern: r.module, obligations: [r.obligation] },
-    { pattern: r.unitTest, obligations: [r.obligation] },
+    { system: systemForPath(`journeys/${r.lane}.journey.js`), obligations: [r.obligation] },
+    { system: systemForPath(r.module), obligations: [r.obligation] },
+    { system: systemForPath(r.unitTest), obligations: [r.obligation] },
   ]),
 ];
 
@@ -454,7 +465,7 @@ export const DIRECTION = 'Grow tidewater toward the harbour the vision describes
  */
 export const OPPORTUNITY = {
   fits: {
-    unit: { id: 'fits', risk: 'low', scope: ['src/registers.js', 'test/unit/registers.test.js', 'journeys/berths.journey.js'], after: ['notice'], origin: 'checkpoint' },
+    unit: { id: 'fits', risk: 'low', systems: systemsForPaths(['src/registers.js', 'test/unit/registers.test.js', 'journeys/berths.journey.js']), after: ['notice'], origin: 'checkpoint' },
     unitLane: { id: 'registers-unit', file: 'test/unit/registers.test.js' },
     acceptance: [
       'src/registers.js `berthsFor(draught)` lists the berths whose maximum draught takes a vessel of that draught, shallowest first; a draught that is not a positive number is refused.',
@@ -465,7 +476,7 @@ export const OPPORTUNITY = {
     why: 'A visiting yacht finds the berths its draught allows (V-7): one function over the berth register, in reach while cancellations are built.',
   },
   dayview: {
-    unit: { id: 'dayview', risk: 'low', scope: ['src/cli.js', 'src/dayview.js', 'test/unit/dayview.test.js'], after: [], origin: 'checkpoint' },
+    unit: { id: 'dayview', risk: 'low', systems: systemsForPaths(['src/cli.js', 'src/dayview.js', 'test/unit/dayview.test.js']), after: [], origin: 'checkpoint' },
     unitLane: { id: 'dayview-unit', file: 'test/unit/dayview.test.js' },
     acceptance: ['`tidewater day <date>` prints the day\'s windows with each berth\'s booking.'],
     targets: [],

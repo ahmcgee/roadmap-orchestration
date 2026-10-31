@@ -1,3 +1,4 @@
+import type { SystemName } from '../core/ids.ts';
 // A checkpoint's bundle and its activation (M3 step B6; DESIGN-1.0.md §2.8; plan "Checkpoint and bundles", OR-V, A9,
 // A10, A16, A19, H3, H10, H12, H13, H16). The checkpoint writes nothing itself: its output is one decision, and this
 // module activates it all or nothing through A2's apply core (`evaluateRevision`, then the commit under the revision
@@ -116,8 +117,7 @@ import type { RiskTier } from '../routing/types.ts';
 import { SpecPatchOpError,SpecPatchStaleError,applySpecPatch } from '../spec/patch.ts';
 import { SpecFileError,parseSpec,specBytes } from '../spec/spec.ts';
 import {
-type AdmitClassification,type AdmitOp,type AdmitWorld,type AuditRange,type RecordedAdmit,type UnitMerge,admitOpOf,classifyAdmits,conversionReasons,namedUnits,opportunityClauses,
-} from './admits.ts';
+type AdmitClassification,type AdmitOp,type AdmitWorld,type AuditRange,type RecordedAdmit,type UnitMerge,admitOpOf,classifyAdmits,conversionReasons,namedUnits,opportunityClauses } from './admits.ts';
 import { admitSummary,amendmentReasons,appendAmendment,checkpointAmendments,conversionAmendment,divergenceAmendments } from './amendments.ts';
 import type { AuditContext } from './audit.ts';
 import { type AppliedBundle,brakesOf,raiseBound,secondChanges } from './convergence.ts';
@@ -354,9 +354,9 @@ function childOf(parent: ObligationDef, op: Extract<BundleOp, { op: 'obligation-
 }
 
 /** `declared` ∪ every non-exempt obligation a mapping pattern that may overlap `scope` names (prefix-conservative), ascending. */
-function mappedObligations(obligations: Obligations, scope: readonly string[], declared: readonly ObligationId[]): readonly ObligationId[] {
+function mappedObligations(obligations: Obligations, systems: readonly SystemName[], declared: readonly ObligationId[]): readonly ObligationId[] {
   const live = new Set(obligations.obligations.filter((o) => !isExempt(o)).map((o) => o.id));
-  const mapped = obligations.mapping.paths.filter((m) => scope.some((p) => mayOverlap(p, m.pattern))).flatMap((m) => m.obligations).filter((id) => live.has(id));
+  const mapped = obligations.mapping.systems.filter((m) => systems.includes(m.system)).flatMap((m) => m.obligations).filter((id) => live.has(id));
   return canonicalIds([...declared, ...mapped]);
 }
 
@@ -367,7 +367,7 @@ function mappedObligations(obligations: Obligations, scope: readonly string[], d
  * (src/holistic/propagation.ts) with origin `propagation` and its `propagation` origin.
  */
 export type AdmitEntry = Readonly<{
-  id: UnitId; risk: RiskTier; scope: readonly RepoPattern[]; after: readonly UnitId[]; resources: readonly ResourceName[];
+  id: UnitId; risk: RiskTier; systems: readonly SystemName[]; after: readonly UnitId[]; resources: readonly ResourceName[];
   origin: 'checkpoint' | 'repair' | 'polish' | 'deflake'; polish?: PolishOrigin; deflake?: DeflakeOrigin;
 }>;
 
@@ -389,7 +389,7 @@ export function admitUnit(plan: RawPlan, specs: Map<UnitId, InputFile>, entry: A
   }
   if (spec.unit !== entry.id || spec.rev !== 1) return { reasons: [`${at}: its spec names unit ${spec.unit} rev ${spec.rev}, not ${entry.id} rev 1`] };
   plan.units.push({
-    id: entry.id, spec: `${entry.id}.json`, risk: entry.risk, scope: entry.scope, resources: entry.resources, after: entry.after, origin: entry.origin,
+    id: entry.id, spec: `${entry.id}.json`, risk: entry.risk, systems: entry.systems, resources: entry.resources, after: entry.after, origin: entry.origin,
     ...(entry.polish === undefined ? {} : { polish: entry.polish }), ...(entry.deflake === undefined ? {} : { deflake: entry.deflake }),
     ...(entry.polish === undefined ? {} : { polish: entry.polish }),
   });
@@ -410,7 +410,7 @@ export function fillMappedObligations(obligations: Obligations | null, plan: Pla
     const f = specs.get(id);
     if (u === undefined || f?.bytes == null) continue;
     const spec = parseSpec(f.bytes, f.path);
-    const widened = mappedObligations(obligations, [...u.scope, ...spec.scope], specObligations(spec));
+    const widened = mappedObligations(obligations, u.systems, specObligations(spec));
     if (widened.length > 0 && canonicalJson(widened) !== canonicalJson(specObligations(spec))) specs.set(id, { path: f.path, bytes: specBytes({ ...spec, obligations: widened }) });
   }
 }
@@ -991,7 +991,7 @@ function proposerOf(a: Activation, ops: readonly IndexedOp[], admits: readonly C
     type: 'bundle' as const, job: a.job, cites: canonicalIds(from.flatMap((op) => op.cites)),
     evidence: [...new Set(from.flatMap((op) => op.evidence))],
     admits,
-    
+
   };
 }
 

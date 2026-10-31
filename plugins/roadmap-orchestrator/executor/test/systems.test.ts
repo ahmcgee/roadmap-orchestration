@@ -1,3 +1,4 @@
+import { systemName } from '../src/core/ids.ts';
 // Lane topology (dev.17; src/input/systems.ts, src/git/reusekey.ts, the dev.17 lane reader in src/core/records.ts): the
 // systems map's reader, a path's class, candidate selection, a lane's input and its reuse key over real git trees, leaf
 // test files, cadence and its dev.16 defaults, the dev.16 lane rev, and Phase-0 row 16.
@@ -164,18 +165,18 @@ describe('lanes.cadence', () => {
     assert.throws(() => laneDefOf('suite')({ ...LANE, cadence: 'unit', stochastic: { runs: 2, minPasses: 3 } }, 'l'), /at most runs/);
     assert.throws(() => laneDefOf('suite')({ ...LANE, cadence: 'unit', systems: [] }, 'l'), SchemaError);
     assert.throws(() => parseObligations({
-      schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [{ ...LANE, cadence: 'candidate', reporter: 'jsonl', stochastic: { runs: 2, minPasses: 1 } }], obligations: [], mapping: { paths: [] },
+      schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [{ ...LANE, cadence: 'candidate', reporter: 'jsonl', stochastic: { runs: 2, minPasses: 1 } }], obligations: [], mapping: { systems: [] },
     }), /arc lane/);
   });
 
   it('a batch suite lane needs the holistic layer; a spec\'s forces are unique lane ids', () => {
     const plan = {
       schema: 'roadmap/plan-m1', arc: 'arc-1', integrationBranch: 'main', baseline: 'a'.repeat(40), worktreeRoot: '/tmp/wt', contracts: [], rulings: 'r.md',
-      architectureDoc: 'A.md', direction: 'd', suite: { lanes: [{ ...LANE, cadence: 'batch' }] }, resources: [], units: [{ id: 'u1', spec: 'u1.json', risk: 'low', scope: ['src/**'], resources: [] }],
+      architectureDoc: 'A.md', direction: 'd', suite: { lanes: [{ ...LANE, cadence: 'batch' }] }, resources: [], units: [{ id: 'u1', spec: 'u1.json', risk: 'low', systems: [systemName('app')], resources: [] }],
     };
     assert.throws(() => parsePlan(plan), /holistic/);
-    const spec = {
-      schema: 'roadmap/spec-m1', unit: 'u1', rev: 1, lanes: [], acceptance: [{ id: 'A1', clause: 'c', failLoudIfUndelivered: false, state: 'active' }], scope: ['src/**'],
+    const spec = { intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
+      schema: 'roadmap/spec-m1', unit: 'u1', rev: 1, lanes: [], acceptance: [{ id: 'A1', clause: 'c', failLoudIfUndelivered: false, state: 'active' }],
       resources: [], decisions: [], facts: [], cites: { contracts: [], rulings: [] },
     };
     assert.deepEqual(specM1({ ...spec, forces: ['e2e'] }, 's').forces, ['e2e']);

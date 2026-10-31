@@ -1,3 +1,4 @@
+import { systemName } from '../src/core/ids.ts';
 // Integrated tests of snapshot.publish (src/git/snapshot.ts, src/recover/snapshot.ts): a real run dir
 // holding raw evidence, an evidence snapshot, a needs-user and a spec, published to refs/roadmap/<arc>.
 // The plan's snapshot.allowlist, snapshot.manifest-mismatch-detected, and the snapshot.* cells of the
@@ -193,7 +194,7 @@ const PLAN = {
   schema: 'roadmap/plan-m1', arc: ARC, integrationBranch: 'main', baseline: 'a'.repeat(40), worktreeRoot: '/var/tmp/roadmap-wt', contracts: [],
   rulings: 'rulings.md', architectureDoc: 'docs/architecture.md', direction: 'Converge on the documented target state.',
   suite: { lanes: [{ id: 'suite', argv: ['npm', 'test'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [] }] },
-  resources: [], units: [{ id: UNIT, spec: 'unit-a.spec.json', risk: 'med', scope: ['src/**'], resources: [] }],
+  resources: [], units: [{ id: UNIT, spec: 'unit-a.spec.json', risk: 'med', systems: [systemName('app')], resources: [] }],
 };
 
 type Holistic = Run & Readonly<{ planSha: string; specSha: string; payloadSha: string; witnessInv: string; witnessFile: string }>;
@@ -223,7 +224,7 @@ async function holisticRun(witnessFor: 'job' | 'candidate' = 'job'): Promise<Hol
   journal.fact({
     kind: 'dispatch',
     record: {
-      unit: unitId(UNIT), specRev: specRev(1), specSha256: specSha, scope: [repoPattern('src/**')], riskFloor: 'med',
+      unit: unitId(UNIT), specRev: specRev(1), specSha256: specSha,  riskFloor: 'med',
       routingRev: resolveRouting(provenanceStack(provenance, 'none', null, false)).rev, implementerSeatRev: seatRev('fedcba9876543210'), at: isoTimeOf(new Date()), transientRules: 'm3',
     },
   });

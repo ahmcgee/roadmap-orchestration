@@ -19,7 +19,6 @@ import { renderDebt } from '../src/docs/debt.ts';
 import { ruleAnchorResolves } from '../src/holistic/obligations.ts';
 import { specCensusMismatches } from '../src/holistic/rederive.ts';
 import { parseObligations } from '../src/holistic/types.ts';
-import { scopeOverlapFix } from '../src/phase0/types.ts';
 import {
 type CorpusArc,PIN_FILE,betweenArc,check,corpusArc,editJsonFile,editPhase0,editPlan,
 kinds,nextArc,phase0Of,rowOf,
@@ -91,7 +90,7 @@ describe('phase0 check', () => {
     commitAll(a.repo, 'confirm again');
     await green(a);
     // tree-uncommitted: the working tree's config is not HEAD's.
-    writeFiles(a.repo, { '.roadmap/config.json': '{"chain":{"k":2}}\n' });
+    writeFiles(a.repo, { '.roadmap/config.json': JSON.stringify({ chain: {k: 2}, systemsMap: {systems: {app: {paths: ['src/**']}, tests: {paths: ['test/**']}}} }) + '\n' });
     assert.deepEqual((await check(a)).rows, [{ kind: 'tree-uncommitted', paths: ['.roadmap/config.json'] }]);
     git(a.repo, 'checkout', '--', '.roadmap/config.json');
     // plan-invalid: a corpus arc names its obligations file (LR-0a-2).
@@ -104,14 +103,6 @@ describe('phase0 check', () => {
     assert.deepEqual(await check(a), { rows: [], sliceCandidates: ['V-1'], advisories: [] });
   });
 
-  it('phase0.scope-overlaps-corpus: a unit scope that may write the same-repo corpus file set', T, async () => {
-    for (const scope of [['docs/**'], ['docs/corpus/0010_Overview.md'], ['src/**', 'docs/corpus/new/**']]) {
-      const a = await corpusArc({ scope });
-      assert.deepEqual(await corpusProblems(a), [{ type: 'scope-overlaps-corpus', unit: 'u1', fix: scopeOverlapFix(unitId('u1')) }], scope.join(','));
-    }
-    await green(await corpusArc({ scope: ['src/**', 'docs/api/**'] }));
-  });
-
   it('phase0.contract-overlaps-corpus-direct: a plan contract that is a pinned corpus file', T, async () => {
     const a = await corpusArc({ plan: { contracts: ['docs/corpus/0010_Overview.md'] } });
     assert.deepEqual(await corpusProblems(a), [{ type: 'contract-overlaps-corpus', path: 'docs/corpus/0010_Overview.md' }]);
@@ -122,7 +113,7 @@ describe('phase0 check', () => {
     assert.deepEqual(await corpusProblems(a), [{ type: 'contract-overlaps-corpus', path: 'docs/corpus/sub/0099_New.md' }]);
   });
 
-  
+
 });
 
 describe('the pack\'s specs against the census (M4a rev 3, H3)', () => {
@@ -149,8 +140,8 @@ describe('the pack\'s specs against the census (M4a rev 3, H3)', () => {
 
 describe('the one spec-census predicate (run 10, C)', () => {
   it('phase0.spec-census-witness-items: an active witness item naming an out-of-slice rule in its test id or skeleton is a mismatch; a struck one, an in-slice rule and an acceptance clause on another rule are not', () => {
-    const spec = specM1({
-      schema: 'roadmap/spec-m1', unit: 'u1', rev: 2, lanes: [], scope: ['src/**'], resources: [], decisions: [], facts: [], cites: { contracts: [], rulings: [] },
+    const spec = specM1({ intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
+      schema: 'roadmap/spec-m1', unit: 'u1', rev: 2, lanes: [],  resources: [], decisions: [], facts: [], cites: { contracts: [], rulings: [] },
       acceptance: [{ id: 'A1', clause: 'A booking names one berth (T-1).', failLoudIfUndelivered: false, state: 'active' }],
       witnesses: [
         { id: 'W-1', lane: 'journey', testId: 'refusal names T-2', clause: 'A1', skeleton: 'book twice', state: 'active' },
@@ -313,7 +304,7 @@ describe('the chain (src/chain.ts)', () => {
     const a1 = await corpusArc();
     const h1 = await seal(a1);
     git(a1.repo, 'checkout', '--quiet', '-b', 'side', h1);
-    writeFiles(a1.repo, { '.roadmap/config.json': '{"chain":{"k":2}}\n' });
+    writeFiles(a1.repo, { '.roadmap/config.json': JSON.stringify({ chain: {k: 2}, systemsMap: {systems: {app: {paths: ['src/**']}, tests: {paths: ['test/**']}}} }) + '\n' });
     commitAll(a1.repo, 'side');
     git(a1.repo, 'checkout', '--quiet', '--detach', h1);
     git(a1.repo, 'merge', '--quiet', '--no-ff', '-m', 'merge side', 'side');
@@ -325,7 +316,7 @@ describe('the chain (src/chain.ts)', () => {
     const a1 = await corpusArc();
     const h1 = await seal(a1);
     const first = betweenArc(a1.repo, h1);
-    betweenArc(a1.repo, first, { '.roadmap/config.json': '{"chain":{"k":1}}\n' });
+    betweenArc(a1.repo, first, { '.roadmap/config.json': JSON.stringify({ chain: {k: 1}, systemsMap: {systems: {app: {paths: ['src/**']}, tests: {paths: ['test/**']}}} }) + '\n' });
     const a2 = await nextArc(a1, h1, 'arc-2');
     assert.deepEqual(await chainProblem(a2), { type: 'baseline', baseline: { type: 'parent-mismatch' } });
   });
@@ -333,11 +324,11 @@ describe('the chain (src/chain.ts)', () => {
   it('phase0.chain-baseline-paths: the between-arc commit touches only .roadmap/{vision.json, corpus.md, config.json} and same-repo corpus paths', T, async () => {
     const a1 = await corpusArc();
     const h1 = await seal(a1);
-    betweenArc(a1.repo, h1, { 'src/extra.ts': 'export {};\n', 'README.md': 'changed\n', '.roadmap/config.json': '{"chain":{"k":1}}\n' });
+    betweenArc(a1.repo, h1, { 'src/extra.ts': 'export {};\n', 'README.md': 'changed\n', '.roadmap/config.json': JSON.stringify({ chain: {k: 1}, systemsMap: {systems: {app: {paths: ['src/**']}, tests: {paths: ['test/**']}}} }) + '\n' });
     const bad = await nextArc(a1, h1, 'arc-2');
     assert.deepEqual(await chainProblem(bad), { type: 'baseline', baseline: { type: 'paths', paths: ['README.md', 'src/extra.ts'] } });
     const overview = join(a1.repo, 'docs/corpus/0010_Overview.md');
-    betweenArc(a1.repo, h1, { 'docs/corpus/0010_Overview.md': `${readFileSync(overview, 'utf8')}\nMore rationale.\n`, '.roadmap/config.json': '{"chain":{"k":1}}\n' });
+    betweenArc(a1.repo, h1, { 'docs/corpus/0010_Overview.md': `${readFileSync(overview, 'utf8')}\nMore rationale.\n`, '.roadmap/config.json': JSON.stringify({ chain: {k: 1}, systemsMap: {systems: {app: {paths: ['src/**']}, tests: {paths: ['test/**']}}} }) + '\n' });
     await green(await nextArc(a1, h1, 'arc-3'));
   });
 
@@ -364,7 +355,7 @@ describe('the chain (src/chain.ts)', () => {
     writeFileSync(join(acksDir(a1.repo), '0123456789abcdef.json'), canonicalJson(marker));
     assert.equal(await chainProblem(a3), null);
     // Without K, a chained start is refused (K is asked at bootstrap and never written by the agent).
-    betweenArc(a1.repo, h2, { '.roadmap/config.json': '{}\n' });
+    betweenArc(a1.repo, h2, { '.roadmap/config.json': JSON.stringify({ systemsMap: {systems: {app: {paths: ['src/**']}, tests: {paths: ['test/**']}}} }) + '\n' });
     const noK = await nextArc(a2, h2, 'arc-4');
     assert.deepEqual(await chainProblem(noK), { type: 'k-unset' });
   });

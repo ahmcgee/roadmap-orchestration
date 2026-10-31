@@ -1,3 +1,4 @@
+import { systemName } from '../../src/core/ids.ts';
 import { spawnSync } from 'node:child_process';
 import { existsSync,mkdirSync,readFileSync,readdirSync,writeFileSync } from 'node:fs';
 import { dirname,join,resolve } from 'node:path';
@@ -55,7 +56,7 @@ function validatedPlan(value: unknown): string { parsePlan(value); return json(v
 export type Fixture = Readonly<{ l: Layout; key: Key; previous: string; next: string; previousHead: string }>;
 export const lane = (id: string) => ({ id, argv: ['node', '--test', 'test/register.test.js'], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [] });
 const arcLane = { ...lane('register'), reporter: 'node-test', testPaths: ['test/register.test.js'] };
-const laneRev = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'register', lanes: [arcLane], obligations: [], mapping: { paths: [] } }).lanes[0]!);
+const laneRev = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'register', lanes: [arcLane], obligations: [], mapping: { systems: [] } }).lanes[0]!);
 
 export async function pin(l: Layout, inputs: string): Promise<CorpusPin> {
   const head = git(l.product, 'rev-parse', 'HEAD');
@@ -90,9 +91,9 @@ function writeInputs(l: Layout, inputs: string, baseline: string, obligations: u
   for (const s of sidecars) write(join(inputs, 'rulings.md.d', `${s.id}.json`), json(s));
   write(join(inputs, 'phase0.json'), json(parsePhase0Record({ schema: 'roadmap/phase0-m4', curation: [], corpusDivergences: [], questions: [{ id: 'P-1', rank: 1, text: 'What is the dispatch cutoff?', files: ['register.md'], bears: [estateId(set, 'T-33')], assumption: set === 'dev' ? '72 hours' : 'seven days', state: { type: 'answered', answer: set === 'dev' ? '48 hours before the tide' : 'three days before the loan', at: '2026-10-01T00:00:00.000Z' } }],
     debt: Array.from({ length: 15 }, (_, i) => ({ id: `B-${i + 1}`, disposition: { type: 'keep', reason: 'Index work follows the current slip slice.' } })), amendments: [], slice: { advances: ['V-1'], why: 'Complete reliable slips for the next operator.' } })));
-  write(join(inputs, 'slips.json'), json({ schema: 'roadmap/spec-m1', unit: 'slips', rev: 1, lanes: [{ ...lane('unit'), state: 'active' }], acceptance: [{ id: 'A1', clause: `Print the recipient and return date on the slip (${estateId(set, 'T-21')}).`, failLoudIfUndelivered: true, state: 'active' }], scope: ['src/**', 'test/**'], resources: [], decisions: [], facts: [], cites: { contracts: [], rulings: [estateId(set, 'C-12'), 'C-38'] }, obligations: ['I-21'] }));
+  write(join(inputs, 'slips.json'), json({ intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'], schema: 'roadmap/spec-m1', unit: 'slips', rev: 1, lanes: [{ ...lane('unit'), state: 'active' }], acceptance: [{ id: 'A1', clause: `Print the recipient and return date on the slip (${estateId(set, 'T-21')}).`, failLoudIfUndelivered: true, state: 'active' }],  resources: [], decisions: [], facts: [], cites: { contracts: [], rulings: [estateId(set, 'C-12'), 'C-38'] }, obligations: ['I-21'] }));
   write(join(inputs, 'plan.json'), validatedPlan({ schema: 'roadmap/plan-m1', arc: chain ? 'arc-next' : 'arc-previous', integrationBranch: chain ? 'arc/next' : 'arc/previous', baseline,
-    worktreeRoot: l.worktrees, contracts: [], rulings: 'rulings.md', direction: 'Complete accurate recipient slips.', suite: { lanes: [lane('suite')] }, resources: [], units: [{ id: 'slips', spec: 'slips.json', risk: 'low', scope: ['src/**', 'test/**'], resources: [] }], corpus: 'corpus.json', phase0: 'phase0.json', holistic: { advances: ['V-1'], obligations: 'obligations.json' }, ...(chain ? { chain } : {}) }));
+    worktreeRoot: l.worktrees, contracts: [], rulings: 'rulings.md', direction: 'Complete accurate recipient slips.', suite: { lanes: [lane('suite')] }, resources: [], units: [{ id: 'slips', spec: 'slips.json', risk: 'low', systems: [systemName('app')], resources: [] }], corpus: 'corpus.json', phase0: 'phase0.json', holistic: { advances: ['V-1'], obligations: 'obligations.json' }, ...(chain ? { chain } : {}) }));
 }
 
 /** Real verified completed-arc snapshot: Phase-0 chain checks read it exactly as they read a completed run. */
@@ -142,7 +143,7 @@ export async function fixture(dir: string, set: SetName): Promise<Fixture> {
   obs.push(parent);
   for (const n of [59, 60]) obs.push({ ...(obligation(`I-${n}`, 'T-58', spec.rules['T-58']!) as Record<string, unknown>), parent: 'I-58' });
   const obligations = parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'The previous release is complete; the next slice completes slips.', lanes: [arcLane], obligations: obs,
-    mapping: { paths: [{ pattern: 'src/**', obligations: obs.map((o) => o['id']) }] }, census: parsedRules.map((r) => { const ob = obs.find((o) => (o['rule'] as { id: string }).id === r.id); return { rule: r.id, state: ob ? { type: 'obligation', id: ob['id'] } : { type: 'prod-only' } }; }) });
+    mapping: { systems: [{ system: systemName('app'), obligations: obs.map((o) => o['id']) }] }, census: parsedRules.map((r) => { const ob = obs.find((o) => (o['rule'] as { id: string }).id === r.id); return { rule: r.id, state: ob ? { type: 'obligation', id: ob['id'] } : { type: 'prod-only' } }; }) });
   const registry = parseRulesRegistry({ highWater: 85, active: parsedRules.map((r) => ({ id: r.id, textSha256: r.textSha256 })), retired: Array.from({ length: 5 }, (_, i) => ({ id: `T-${81 + i}`, textSha256: sha256Hex(`retired policy ${i}`) })) });
   write(join(l.product, '.roadmap/invariants.md'), renderInvariants(obligations, [], registry));
   const debt = parseDebtLedger({ schema: 'roadmap/debt-m4', items: spec.debt.map((what, i) => ({ id: `B-${i + 1}`, originArc: 'arc-previous', bankReason: 'gate-note', what, unit: null, key: debtKey({ unit: null, bankReason: 'gate-note', what }), history: [], state: 'open' })) });
@@ -182,7 +183,7 @@ export async function fixture(dir: string, set: SetName): Promise<Fixture> {
   const next = join(l.inputs, 'arc-next');
   // Step 5 drops the already retired obligation; step 12 keeps C-38 (spec cite), drops C-39.
   const carried = parseObligations({ ...obligations, obligations: obligations.obligations.filter((o) => o.id !== 'I-54'),
-    mapping: { paths: obligations.mapping.paths.map((p) => ({ ...p, obligations: p.obligations.filter((id) => id !== 'I-54') })) },
+    mapping: { systems: obligations.mapping.systems.map((p) => ({ ...p, obligations: p.obligations.filter((id) => id !== 'I-54') })) },
     census: obligations.census!.map((e) => e.rule === 'T-54' ? { rule: e.rule, state: { type: 'prod-only' } } : e) });
   const carriedSidecars = sidecars.filter((s) => s.id !== 'C-39');
   writeInputs(l, next, baseline, carried, ledgerText(carriedSidecars), carriedSidecars, set, { previousArc: 'arc-previous', previousHead });

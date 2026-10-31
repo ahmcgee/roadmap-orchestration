@@ -239,7 +239,7 @@ export function setupMilestoneArc(f: Pick<WalkFixture, 'files' | 'milestone'>, c
   const planDir = tmpDir('walk-plan');
   const lane = { id: 'unit', argv: ['node', '--test', 'test/*.test.js'] };
   const scope = ['CHANGELOG.md'];
-  writeFileSync(join(planDir, `${MILESTONE_UNIT}.json`), JSON.stringify({
+  writeFileSync(join(planDir, `${MILESTONE_UNIT}.json`), JSON.stringify({ intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
     schema: 'roadmap/spec-m1', unit: MILESTONE_UNIT, rev: 1, lanes: [{ ...laneJson(lane), state: 'active' }],
     acceptance: UNIT_ACCEPTANCE.map((clause, i) => ({ id: `A${i + 1}`, clause, failLoudIfUndelivered: true, state: 'active' })),
     scope, resources: [], decisions: [], facts: [], cites: { contracts: [`${REFERENCE}/api.md`], rulings: ['C-1'] },
@@ -439,4 +439,3 @@ export async function runWalkTrial(o: Omit<WalkWorkerArgs, 'cell'> & Readonly<{ 
   writeFileSync(join(o.out, 'row.json'), `${JSON.stringify(row, null, 2)}\n`);
   return row;
 }
-

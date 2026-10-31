@@ -145,6 +145,12 @@ const revise = (d: ArcDescriptor): void => editSpec(d, 'u1', (s) => {
 });
 
 const ROWS: readonly Row[] = [
+  {
+    name: 'a dispatched unit has a risk floor; its systems can change',
+    setup: (r) => pin(r, 'u1'),
+    edit: (d) => editPlan(d, (p) => { p.units[0]!['risk'] = 'low'; p.units[0]!['systems'] = ['lib']; }),
+    expect: [/unit u1 is dispatched: its risk may not change/],
+  },
   { name: 'add a unit: now', edit: (d) => addUnit(d, 'u4'), expect: () => [{ type: 'unit-added', unit: unitId('u4') }] },
   {
     name: 'a removed unit id is never planned again',
@@ -180,15 +186,6 @@ const ROWS: readonly Row[] = [
   { name: 'an undispatched unit\'s plan entry: now', edit: (d) => editPlan(d, (p) => void (p.units[1]!['risk'] = 'high')), expect: () => [{ type: 'unit-changed', unit: unitId('u2') }] },
   { name: 'an undispatched unit\'s spec: now', edit: (d) => editSpec(d, 'u2', addClause), expect: (r) => [specChange(r.d, 'u2', 'undispatched', 1)] },
   {
-    name: 'a dispatched unit\'s lower risk and its scope: refused (M3: its risk may rise)',
-    setup: (r) => pin(r, 'u1'),
-    edit: (d) => editPlan(d, (p) => {
-      p.units[0]!['risk'] = 'low';
-      p.units[0]!['scope'] = ['src/**'];
-    }),
-    expect: [/unit u1 is dispatched: its risk may not change/, /unit u1 is dispatched: its scope may not change/],
-  },
-  {
     name: 'a new `after` on a dispatched unit: refused',
     setup: (r) => {
       pin(r, 'u1');
@@ -208,54 +205,9 @@ const ROWS: readonly Row[] = [
     expect: () => [{ type: 'unit-changed', unit: unitId('u2') }],
   },
   { name: 'an evidence-only edit of an in-flight unit: in force at once', setup: inFlight, edit: (d) => editSpec(d, 'u1', evidenceGlobs), expect: (r) => [specChange(r.d, 'u1', 'evidence', 1)] },
-  {
-    name: 'classify.evidence-covers-scope: evidenceGlobs naming the unit\'s own paths are refused, the lane, entry and scope pattern named',
-    edit: (d) => {
-      editPlan(d, (p) => void (p.units[1]!['scope'] = ['src/cli.js', 'test/unit/u2.test.js']));
-      editSpec(d, 'u2', (s) => {
-        s['scope'] = ['src/cli.js', 'test/unit/u2.test.js'];
-        s['lanes'] = (s['lanes'] as Json[]).map((l) => ({ ...l, evidenceGlobs: ['src/**/*.js', 'test/unit/u2.test.js', 'coverage/**'] }));
-      });
-      editSpec(d, 'u3', (s) => void (s['lanes'] = (s['lanes'] as Json[]).map((l) => ({ ...l, evidenceGlobs: ['test/**'] }))));
-    },
-    expect: [
-      /^unit u2 lane mul: evidenceGlobs entry `src\/\*\*\/\*\.js` covers `src\/cli\.js` of the unit's scope\. evidenceGlobs declare the files the lane's run writes \(its outputs\)/,
-      /^unit u2 lane mul: evidenceGlobs entry `test\/unit\/u2\.test\.js` covers `test\/unit\/u2\.test\.js` of the unit's scope/,
-      /^unit u3 lane mul: evidenceGlobs entry `test\/\*\*` covers `test\/\*\*` of the unit's scope/,
-    ],
-  },
-  {
-    name: 'classify.evidence-covers-scope: a spec in force that breaks the rule (an older release\'s arc) stays readable; an edit not touching its unit applies',
-    before: (d) => editSpec(d, 'u1', (s) => void (s['lanes'] = (s['lanes'] as Json[]).map((l) => ({ ...l, evidenceGlobs: ['src/**'] })))),
-    setup: inFlight,
-    edit: (d) => editSpec(d, 'u2', addClause),
-    expect: (r) => [specChange(r.d, 'u2', 'undispatched', 1)],
-  },
-  {
-    name: 'classify.evidence-covers-scope: that in-flight unit\'s evidence edit applies once it fixes the entry, and is refused while it keeps it',
-    before: (d) => editSpec(d, 'u1', (s) => void (s['lanes'] = (s['lanes'] as Json[]).map((l) => ({ ...l, evidenceGlobs: ['src/**'] })))),
-    setup: inFlight,
-    edit: (d, r) => {
-      editSpec(d, 'u1', (s) => void (s['lanes'] = (s['lanes'] as Json[]).map((l) => ({ ...l, evidenceGlobs: ['src/**', 'out/**'] }))));
-      const kept = classifyNow(r);
-      assert.equal(kept.kind, 'rejected', JSON.stringify(kept));
-      if (kept.kind === 'rejected') assert.deepEqual(kept.reasons.map((x) => x.split('.')[0]), ['unit u1 lane mul: evidenceGlobs entry `src/**` covers `src/**` of the unit\'s scope']);
-      editSpec(d, 'u1', evidenceGlobs);
-    },
-    expect: (r) => [specChange(r.d, 'u1', 'evidence', 1)],
-  },
   { name: 'any other edit at the same rev: refused', setup: inFlight, edit: (d) => editSpec(d, 'u1', addClause), expect: [/changed but is still at rev 1; a revision sets rev 2/] },
   { name: 'rev + 1 of an in-flight unit: pending', setup: inFlight, edit: revise, expect: (r) => [specChange(r.d, 'u1', 'revision', 2)] },
   { name: 'rev + 2: refused', setup: inFlight, edit: (d) => editSpec(d, 'u1', (s) => void (s['rev'] = 3)), expect: [/is at rev 3, but the unit's recorded rev is 1; a revision sets rev 2/] },
-  {
-    name: 'rev + 1 changing the spec\'s scope: refused',
-    setup: inFlight,
-    edit: (d) => editSpec(d, 'u1', (s) => {
-      s['rev'] = 2;
-      s['scope'] = ['src/**'];
-    }),
-    expect: [/its spec's scope and resources may not change/],
-  },
   {
     name: 'rev + 1 of an approved unit: refused',
     setup: (r) => {
@@ -553,7 +505,7 @@ const M2_ROWS: readonly Row[] = [
       decide(r, 'u1', 'build', 'interrupted', 'hold');
     },
     // A pause records no failure: the held lineage has none to name.
-    edit: reenter('u4', 'u1', { scope: ['src/**'] }, { fixes: undefined }),
+    edit: reenter('u4', 'u1', { systems: ['app'] }, { fixes: undefined }),
     expect: () => reentered('u4', 'u1'),
   },
   { name: 'apply.reenter-active: a unit neither parked nor held: refused', setup: inFlight, edit: reenter('u4', 'u1'), expect: [/^unit u4 re-enters u1, which is active; only a parked or held unit is re-entered$/] },
@@ -584,13 +536,6 @@ const M2_ROWS: readonly Row[] = [
       cutUnits('u1')(d);
     },
     expect: [/^unit u4 re-enters u1, which this apply cuts$/],
-  },
-  {
-    name: 'apply.reenter-envelope: growth without an apply reason is refused',
-    reason: ' ',
-    setup: parkAtGate,
-    edit: reenter('u4', 'u1', { scope: ['src/lib/**', 'docs/**'] }),
-    expect: [/^unit u4: scope beyond the lineage envelope needs apply --reason$/],
   },
   { name: 'apply.reenter-risk-floor: lowering inherited risk without a reason is refused', reason: ' ', setup: parkAtGate, edit: reenter('u4', 'u1', { risk: 'low' }), expect: [/^unit u4: risk low is below its lineage's floor med$/] },
   {
@@ -838,30 +783,6 @@ const M4A_ROWS: readonly Row[] = [
     setup: merge('u1'),
     edit: (d) => editPlan(d, (p) => void (unitJson(p, 'u1')['priority'] = 'high')),
     expect: [/^unit u1 is merged; its priority is fixed$/],
-  },
-  {
-    name: 'classify.reentry-widen-with-ruling: a scope beyond the envelope on a cited ruling naming exactly the added patterns',
-    before: withRuling('C-2', 'u4 may also edit `docs/**`.', ['u4']),
-    setup: parkAtGate,
-    edit: (d) => {
-      reenter('u4', 'u1', { scope: ['src/**', 'docs/**'] })(d);
-      citing('u4', 'C-1', 'C-2')(d);
-    },
-    expect: () => [
-      { type: 'unit-added', unit: unitId('u4') },
-      { type: 'unit-reentered', unit: unitId('u4'), reenters: U1, reset: false, widened: {patterns: ['docs/**'], reason: 'Reviewed revision'} },
-    ] as unknown as readonly PlanChange[],
-  },
-  {
-    name: 'classify.reentry-widen-without-reason-refused: ledger text does not authorize growth',
-    reason: ' ',
-    before: withRuling('C-2', 'u4 may also edit `docs/**` and `lib/**`.', ['u4']),
-    setup: parkAtGate,
-    edit: (d) => {
-      reenter('u4', 'u1', { scope: ['src/**', 'docs/**'] })(d);
-      citing('u4', 'C-1', 'C-2')(d);
-    },
-    expect: [/^unit u4: scope beyond the lineage envelope needs apply --reason$/],
   },
 ];
 
@@ -1296,5 +1217,5 @@ describe(`matrix row ${PLAN_APPLY}`, () => {
     });
   }
 
-  
+
 });

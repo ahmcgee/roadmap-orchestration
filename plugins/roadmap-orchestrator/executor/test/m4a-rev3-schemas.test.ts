@@ -1,3 +1,4 @@
+import { systemName } from '../src/core/ids.ts';
 // M4a rev 3 step N0: the records frozen before their behaviour lands (SCHEMAS.md "M4a rev 3"). Round trips of every new
 // record and arm (byte-identical through the canonical reader), the refusals that keep illegal states out, the dev.6
 // read-time defaults (`upgrade.defaults-rev3`), the lane-rev normalisation (F7), the open-attempt reading (R50), the new
@@ -54,7 +55,7 @@ const same = (read: (v: unknown, p: string) => unknown, value: object): void => 
 
 const LANE = { id: 'unit', argv: ['npm', 'test'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], evidenceExcludes: [] };
 const ARC_LANE = { ...LANE, id: 'journey', reporter: 'jsonl' };
-const obligationsWith = (lane: object) => ({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [lane], obligations: [], mapping: { paths: [] } });
+const obligationsWith = (lane: object) => ({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [lane], obligations: [], mapping: { systems: [] } });
 
 // ---------------------------------------------------------------------------------------------------
 
@@ -94,7 +95,7 @@ describe('m4a-rev3 spawn subjects and mutant records', () => {
     refuses(intent('mutant.apply', apply), /\.of$/);
   });
 
-  
+
 
   it('a smoke run is witnessed as a mutant and never certifies', () => {
     const w = { kind: 'witnessed', lane: 'journey', laneRev: '0123456789abcdef', envId: 'fedcba9876543210', treeSha: B, inv: INV, recordsSha256: H };
@@ -226,7 +227,7 @@ describe('m4a-rev3 facts and outcomes', () => {
 
   it('a dispatch record\'s bounds carry the smoke bounds; a dev.6 record\'s, without them, read as written', () => {
     const record = {
-      unit: 'u1', specRev: 1, specSha256: H, scope: ['src/**'], riskFloor: 'med', routingRev: '0123456789abcdef', implementerSeatRev: '0123456789abcdef', at: AT,
+      unit: 'u1', specRev: 1, specSha256: H,  riskFloor: 'med', routingRev: '0123456789abcdef', implementerSeatRev: '0123456789abcdef', at: AT,
       transientRules: 'm3',
     };
     const { smokeRounds: _r, smokeRuns: _n, ...dev6 } = DEFAULT_BOUNDS;
@@ -253,7 +254,7 @@ describe('m4a-rev3 files', () => {
 });
 
 describe('m4a-rev3 plan and spec', () => {
-  const unit = { id: 'u1', spec: 'specs/u1.json', risk: 'med', scope: ['src/**'], resources: [] };
+  const unit = { id: 'u1', spec: 'specs/u1.json', risk: 'med', systems: [systemName('app')], resources: [] };
   const plan = {
     schema: 'roadmap/plan-m1', arc: 'arc-2', integrationBranch: 'main', baseline: A, worktreeRoot: '/var/tmp/wt', contracts: [], rulings: 'rulings.md',
     direction: 'd', suite: { lanes: [] }, resources: [], units: [unit, { ...unit, id: 'u2', spec: 'specs/u2.json' }], architectureDoc: 'docs/arch.md',
@@ -288,8 +289,8 @@ describe('m4a-rev3 plan and spec', () => {
   });
 
   it('a spec\'s witness items: unique among its item ids, absent reads as none', () => {
-    const spec = {
-      schema: 'roadmap/spec-m1', unit: 'u1', rev: 2, lanes: [], acceptance: [{ id: 'A1', clause: 'c', failLoudIfUndelivered: false, state: 'active' }], scope: ['src/**'],
+    const spec = { intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
+      schema: 'roadmap/spec-m1', unit: 'u1', rev: 2, lanes: [], acceptance: [{ id: 'A1', clause: 'c', failLoudIfUndelivered: false, state: 'active' }],
       resources: [], decisions: [], facts: [], cites: { contracts: [], rulings: [] },
     };
     const witness = { id: 'W-1', lane: 'journey', testId: 'cancel refunds', clause: 'A1', skeleton: 'cancel then assert the refund', state: 'active' };
@@ -302,9 +303,9 @@ describe('m4a-rev3 plan and spec', () => {
 });
 
 describe('m4a-rev3 apply body (I2, step N3)', () => {
-  
 
-  
+
+
 });
 
 describe('m4a-rev3 role schemas', () => {
@@ -390,8 +391,8 @@ describe('cli.m4a-rev3', () => {
 });
 
 describe('run 10 (D): a checkpoint admit\'s spec is constrained by the schema', () => {
-  const wire = {
-    schema: 'roadmap/spec-m1', unit: 'gap', rev: 1, scope: ['src/**'], resources: [], decisions: [], facts: [], cites: { contracts: [], rulings: [] },
+  const wire = { intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
+    schema: 'roadmap/spec-m1', unit: 'gap', rev: 1,  resources: [], decisions: [], facts: [], cites: { contracts: [], rulings: [] },
     lanes: [{
       id: 'unit', argv: ['node', '--test'], cwd: '.', env: { set: [{ name: 'TZ', value: 'UTC' }], pass: [] }, expectedExit: 0, cadence: 'build', resources: [],
       evidenceGlobs: [], evidenceExcludes: [], state: 'active',
@@ -400,7 +401,7 @@ describe('run 10 (D): a checkpoint admit\'s spec is constrained by the schema', 
     obligations: [], repairs: ['F-1'],
   };
   const admit = (spec: unknown) => ({
-    op: 'admit', unit: { id: 'gap', risk: 'low', scope: ['src/**'], after: [], origin: 'repair' }, spec, targets: [], cites: ['V-1'], evidence: ['F-1'],
+    op: 'admit', unit: { id: 'gap', risk: 'low', systems: [systemName('app')], after: [], origin: 'repair' }, spec, targets: [], cites: ['V-1'], evidence: ['F-1'],
   });
   const answer = (spec: unknown) => ({
     decision: 'bundle', reasons: ['r'], ops: [admit(spec)],  findingDispositions: [], interpretations: [],
@@ -431,7 +432,7 @@ describe('run 10 (D): a checkpoint admit\'s spec is constrained by the schema', 
     assert.throws(() => validateCheckpointOutput(answer({ ...wire, lanes: [{ ...wire.lanes[0], env: { set: [{ name: 'A', value: '1' }, { name: 'A', value: '2' }], pass: [] } }] })), SchemaError);
   });
 
-  
+
 });
 
 describe('schema 2 command forms', () => {

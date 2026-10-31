@@ -124,12 +124,12 @@ export function polishSeat(config: RepoConfig | null): Readonly<{ arm: string }>
 /** walk-1's report: every journey completed, nothing found, the cell's one proposal (its unit u2 at rev 1). */
 function walkAnswer(f: PolishFixture, planDir: string): JsonValue {
   const u1 = JSON.parse(readFileSync(join(planDir, `${MILESTONE_UNIT}.json`), 'utf8')) as Record<string, unknown>;
-  const spec = admitSpecWire({ ...u1, unit: POLISH_UNIT, rev: 1, scope: [...POLISH_SCOPE] });
+  const spec = admitSpecWire({ ...u1, unit: POLISH_UNIT, rev: 1 });
   const value = {
     final: true,
     journeys: f.walk.milestone.journeys.map((j) => ({ journey: j.id, outcome: 'completed', evidence: [WALK_NOTE], note: 'walked' })),
     findings: [],
-    polish: [{ journey: f.family.journey, evidence: [WALK_NOTE], text: f.cell.proposal, unit: { id: POLISH_UNIT, scope: [...POLISH_SCOPE], spec } }],
+    polish: [{ journey: f.family.journey, evidence: [WALK_NOTE], text: f.cell.proposal, unit: { id: POLISH_UNIT, spec } }],
     premises: [],
     reasons: ['walked every journey'],
   } as unknown as JsonValue;

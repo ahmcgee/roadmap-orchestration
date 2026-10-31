@@ -151,7 +151,7 @@ describe('the flaky ledger', () => {
       assert.deepEqual(deflake.deflake, { keys: [{ type: 'lane', lane: 'flaky' }] });
       assert.deepEqual(deflake.after, []);
       assert.deepEqual(milestonesOfUnit(plan, deflake.id), [], 'milestone-exempt');
-      assert.deepEqual(deflake.scope, ['flaky/**'], 'a suite lane\'s deflake takes its systems\' paths');
+      assert.deepEqual(deflake.systems, ['flaky/**'], 'a suite lane\'s deflake takes its systems\' paths');
       const applied = facts(r).filter((f) => f.kind === 'plan-applied').at(-1);
       assert.ok(applied?.kind === 'plan-applied' && applied.source.type === 'deflake');
       const { w } = deflakeContext(r);

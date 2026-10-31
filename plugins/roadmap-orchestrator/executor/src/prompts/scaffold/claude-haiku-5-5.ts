@@ -37,8 +37,10 @@ The load test lane's output from that attempt is under ${i.retry.laneEvidence}.`
 export const PROMPT: PromptModule<'scaffold'> = {
   system,
   schema: SCAFFOLD_SCHEMA,
-  fields: ['spec', 'scaffold', 'loadLane', 'worktree', 'retry'],
-  render: (i) => `<spec unit="${i.spec.unit}" rev="${i.spec.rev}">
+  fields: ['spec', 'intent', 'nonGoals', 'scaffold', 'loadLane', 'worktree', 'retry'],
+  render: (i) => `<intent>${i.intent}</intent>
+<non_goals>${i.nonGoals.join("; ")}</non_goals>
+<spec unit="${i.spec.unit}" rev="${i.spec.rev}">
 ${i.spec.markdown}
 </spec>
 

@@ -1,3 +1,4 @@
+import { systemsMap } from '../src/input/systems.ts';
 // M3 step A1: obligation edits and split semantics (H14), impact selection (split closure, unmapped paths),
 // re-derivation against the previous arc's published block (R2), the byte-stable invariants.md, and the vision
 // record's rules (coverage both directions, withdrawn cites, edits).
@@ -18,7 +19,7 @@ const LANE = {
   id: 'journey', argv: ['node', '--test', 'journey.test.js'], cwd: 'test', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [],
   evidenceGlobs: [], evidenceExcludes: [], reporter: 'node-test',
 };
-const LANE_REV = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [LANE], obligations: [], mapping: { paths: [] } }).lanes[0]!);
+const LANE_REV = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [LANE], obligations: [], mapping: { systems: [] } }).lanes[0]!);
 const proof = (id: string, rev = 1, testIds: readonly string[] = [id]): object => ({ verdict: 'proves', obligationRev: rev,  witness: {  testIds } });
 
 type Raw = Record<string, unknown>;
@@ -34,11 +35,11 @@ const BASE: Raw[] = [
   ob('I-2', { statement: 'Money is never mis-rounded. Totals round half-even.', contracts: ['docs/money.md'] }),
   ob('I-3', { statement: 'Unknown commands exit 2.', serves: ['V-2'] }),
 ];
-const file = (obligations: Raw[], mapping: Raw[] = [{ pattern: 'src/format.js', obligations: ['I-3'] }, { pattern: 'src/report/**', obligations: ['I-1'] }]): Obligations =>
-  parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'the ledger CLI', lanes: [LANE], obligations, mapping: { paths: mapping } });
+const file = (obligations: Raw[], mapping: Raw[] = [{ system: 'format', obligations: ['I-3'] }, { system: 'report', obligations: ['I-1'] }]): Obligations =>
+  parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'the ledger CLI', lanes: [LANE], obligations, mapping: { systems: mapping } });
 const PREV = file(BASE);
 /** The obligations without I-3 (and its mapping entry). */
-const WITHOUT_I3 = (): Obligations => file(BASE.filter((o) => o['id'] !== 'I-3'), [{ pattern: 'src/report/**', obligations: ['I-1'] }]);
+const WITHOUT_I3 = (): Obligations => file(BASE.filter((o) => o['id'] !== 'I-3'), [{ system: 'report', obligations: ['I-1'] }]);
 
 const VISION: Vision = parseVision({
   schema: 'roadmap/vision-m3', rev: 1, confirmation: null,
@@ -122,7 +123,7 @@ describe('obligation edits', () => {
     assert.deepEqual(rederive(renderInvariants(movedObligations, []), parseObligations(editedLane), {}), []);
     const unproven = classifyObligations(PREV, file(replace('I-2', { witness: { lane: 'journey', testIds: ['I-2', 'x'] }, proofJudgment: { ...proof('I-2', 1, ['I-2', 'x']), verdict: 'insufficient' } })), ARCHITECT);
     assert.deepEqual(unproven.reasons, ["I-2's witness is judged insufficient (a new witness must prove it)"]);
-    const moved = classifyObligations(PREV, file(BASE, [{ pattern: 'src/**', obligations: ['I-3'] }]), ARCHITECT);
+    const moved = classifyObligations(PREV, file(BASE, [{ system: 'src', obligations: ['I-3'] }]), ARCHITECT);
     assert.equal(moved.mapping, true);
   });
 
@@ -184,13 +185,15 @@ describe('obligation edits', () => {
   });
 });
 
+const IMPACT_MAP = systemsMap({ systems: { format: { paths: ['src/format.js'] }, report: { paths: ['src/report', 'src/report/**'] }, src: { paths: ['src/**'] } } }, 'map');
+
 describe('impact selection', () => {
   const O = file([
     ...BASE,
     ob('I-4', { statement: 'Parse errors name the line.', docRef: { path: 'docs/parse.md', anchor: '#errors', quotedText: 'line' }, witness: { lane: 'journey', testIds: ['parse'] } }),
-  ], [{ pattern: 'src/format.js', obligations: ['I-3'] }, { pattern: 'src/report', obligations: ['I-1'] }, { pattern: 'src/**', obligations: ['I-4'] }]);
+  ], [{ system: 'format', obligations: ['I-3'] }, { system: 'report', obligations: ['I-1'] }, { system: 'src', obligations: ['I-4'] }]);
   const select = (over: Partial<Parameters<typeof selectObligations>[0]> = {}): readonly ObligationId[] => selectObligations({
-    obligations: O, units: [{ unit: unitId('tidy'), declared: [], repairs: [] }], closure: [], changedPaths: [], revised: [], latched: new Set(), ...over,
+    systemsMap: IMPACT_MAP, obligations: O, units: [{ unit: unitId('tidy'), declared: [], repairs: [] }], closure: [], changedPaths: [], revised: [], latched: new Set(), ...over,
   });
   const ids = (...xs: string[]): ObligationId[] => xs.map((x) => obligationId(x));
 
@@ -220,7 +223,7 @@ describe('impact selection', () => {
 
   it('impact.gate-standing: only fallback selections are standing, including latched future obligations', () => {
     const input = {
-      obligations: O, units: [{ unit: unitId('tidy'), declared: ids('I-3'), repairs: [] }],
+      systemsMap: IMPACT_MAP, obligations: O, units: [{ unit: unitId('tidy'), declared: ids('I-3'), repairs: [] }],
       closure: [], changedPaths: [repoPath('README.md')], revised: [], latched: new Set(ids('I-1')),
     };
     assert.deepEqual(gateObligations(input), { selected: selectObligations(input), direct: ids('I-3'), standing: ids('I-1', 'I-2', 'I-4') });
@@ -231,7 +234,7 @@ describe('impact selection', () => {
   });
 
   it('impact.gate-mapped: a mapped path has no standing obligations', () => {
-    const input = { obligations: O, units: [], closure: [], changedPaths: [repoPath('src/format.js')], revised: [], latched: new Set<ObligationId>() };
+    const input = { systemsMap: IMPACT_MAP, obligations: O, units: [], closure: [], changedPaths: [repoPath('src/format.js')], revised: [], latched: new Set<ObligationId>() };
     assert.deepEqual(gateObligations(input), { selected: selectObligations(input), direct: ids('I-3', 'I-4'), standing: [] });
   });
 
@@ -247,15 +250,15 @@ describe('impact selection', () => {
       ob('I-3', { parent: 'I-1', witness: null, proofJudgment: null, state: { type: 'split', children: ['I-4'] } }),
       ob('I-4', { parent: 'I-3' }),
       ob('I-5'),
-    ], [{ pattern: 'src/a.js', obligations: ['I-4'] }, { pattern: 'src/b.js', obligations: ['I-5'] }]);
+    ], [{ system: 'a', obligations: ['I-4'] }, { system: 'b', obligations: ['I-5'] }]);
     const pick = (over: Partial<Parameters<typeof selectObligations>[0]>): readonly ObligationId[] => selectObligations({
-      obligations: S, units: [], closure: [], changedPaths: [], revised: [], latched: new Set(), ...over,
+      systemsMap: systemsMap({ systems: { a: { paths: ['src/a.js'] }, b: { paths: ['src/b.js'] } } }, 'map'), obligations: S, units: [], closure: [], changedPaths: [], revised: [], latched: new Set(), ...over,
     });
     assert.deepEqual(pick({ changedPaths: [repoPath('src/a.js')] }), ids('I-1', 'I-2', 'I-3', 'I-4'));
     assert.deepEqual(pick({ revised: ids('I-1') }), ids('I-1', 'I-2', 'I-3', 'I-4'));
     assert.deepEqual(pick({ changedPaths: [repoPath('src/b.js')] }), ids('I-5'));
     const partition = gateObligations({
-      obligations: S, units: [], closure: [], changedPaths: [repoPath('src/a.js'), repoPath('README.md')], revised: [], latched: new Set(),
+      systemsMap: systemsMap({ systems: { a: { paths: ['src/a.js'] }, b: { paths: ['src/b.js'] } } }, 'map'), obligations: S, units: [], closure: [], changedPaths: [repoPath('src/a.js'), repoPath('README.md')], revised: [], latched: new Set(),
     });
     assert.deepEqual(partition.direct, ids('I-1', 'I-2', 'I-3', 'I-4'));
     assert.deepEqual(partition.standing, ids('I-5'));

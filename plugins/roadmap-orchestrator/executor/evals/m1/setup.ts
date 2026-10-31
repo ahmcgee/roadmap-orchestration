@@ -1,3 +1,4 @@
+import { systemName } from '../../src/core/ids.ts';
 // The M1 paid fixture, step 1: `node evals/m1/setup.ts <dir>` lays out a fresh fixture in `<dir>` (absent or
 // empty). Everything is hand-authored against SCHEMAS.md ("Input contract", "spec.json M1 subset"):
 //
@@ -73,7 +74,7 @@ const PRODUCT: Readonly<Record<string, string>> = {
   '.roadmap/contracts/one.md': CONTRACT,
   '.roadmap/constraints.md': RULINGS,
   '.roadmap/invariants.md': INVARIANTS,
-  '.roadmap/config.json': `${JSON.stringify({ routing: {} }, null, 2)}\n`,
+  '.roadmap/config.json': `${JSON.stringify({ routing: {}, systemsMap: { systems: { app: { paths: ['**'] } } } }, null, 2)}\n`,
 };
 
 const CONTRACT_PATH = '.roadmap/contracts/one.md';
@@ -87,7 +88,7 @@ const fastLane = (id: string, file: string) => ({
 const clause = (id: string, text: string) => ({ id, clause: text, failLoudIfUndelivered: true, state: 'active' });
 
 const SPECS: Readonly<Record<(typeof UNITS)[number], unknown>> = {
-  slug: {
+  slug: { intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
     schema: 'roadmap/spec-m1', unit: 'slug', rev: 1,
     lanes: [fastLane('slug', 'test/slug.test.js')],
     acceptance: [
@@ -95,12 +96,12 @@ const SPECS: Readonly<Record<(typeof UNITS)[number], unknown>> = {
       clause('A2', `slugify never returns a leading or trailing '-': slugify('  Hello, World!  ') is 'hello-world' (${CONTRACT_PATH}, slugify rule 3).`),
       clause('A3', 'test/slug.test.js covers A1 and A2 and passes under the slug lane (C-2).'),
     ],
-    scope: SCOPE, resources: [RESOURCE],
+     resources: [RESOURCE],
     decisions: [],
     facts: [{ id: 'F1', text: 'package.json declares "type": "module", so src/*.js are ES modules.', state: 'active' }],
     cites: { contracts: [CONTRACT_PATH], rulings: ['C-1', 'C-2'] },
   },
-  'page-id': {
+  'page-id': { intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
     schema: 'roadmap/spec-m1', unit: 'page-id', rev: 1,
     lanes: [fastLane('page-id', 'test/page-id.test.js')],
     acceptance: [
@@ -109,7 +110,7 @@ const SPECS: Readonly<Record<(typeof UNITS)[number], unknown>> = {
       clause('B3', `A non-integer or non-positive n throws a RangeError (${CONTRACT_PATH}, pageId).`),
       clause('B4', 'test/page-id.test.js covers B1, B2 and B3 and passes under the page-id lane (C-2).'),
     ],
-    scope: SCOPE, resources: [RESOURCE],
+     resources: [RESOURCE],
     decisions: [],
     facts: [{ id: 'F1', text: 'slugify is exported by src/slug.js once unit slug has merged.', state: 'active' }],
     cites: { contracts: [CONTRACT_PATH], rulings: ['C-1', 'C-2'] },
@@ -185,7 +186,7 @@ export function setup(dir: string): void {
     },
     resources: [resourceDecl(l.resource)],
     // `page-id` builds on `slug` (it imports slugify): an explicit edge, since an M2 arc schedules a DAG.
-    units: UNITS.map((id) => ({ id, spec: `${id}.json`, risk: 'med', scope: SCOPE, resources: [RESOURCE], ...(id === 'page-id' ? { after: ['slug'] } : {}) })),
+    units: UNITS.map((id) => ({ id, spec: `${id}.json`, risk: 'med', systems: [systemName('app')], resources: [RESOURCE], ...(id === 'page-id' ? { after: ['slug'] } : {}) })),
   }));
 }
 

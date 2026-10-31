@@ -32,8 +32,7 @@ import type { Journal, JournalView, NeedsUserState, Reconciler } from './core/in
 import { canonicalJson, canonicalRecordBytes, sha256Hex } from './core/json.ts';
 import {
   NEEDS_USER_REASONS, NON_BLOCKING_M3_REASONS, type NeedsUserAck, type NeedsUserReason, type NeedsUserRecord, type Stage, needsUserAck, needsUserRecord,
-  type NeedsUserContent, failureRefOf,
-} from './core/records.ts';
+  type NeedsUserContent, failureRefOf } from './core/records.ts';
 import { type AbsPath, absPath, isoTimeOf } from './core/values.ts';
 import { SCHEMA_VERSION } from './core/version.ts';
 import type { RiskTier } from './routing/types.ts';

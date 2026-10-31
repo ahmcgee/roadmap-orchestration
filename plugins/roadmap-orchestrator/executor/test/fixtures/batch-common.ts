@@ -35,7 +35,7 @@ export function batchArc(opts: Readonly<{ estate?: true; t2?: 'pass' | 'fail'; b
     steps: [...unitSteps('u1', moduleFiles('mul', '*')), ...unitSteps('u2', moduleFiles('div', '/'))],
     units: [{ id: 'u1', obligations: ['I-1'], repairs: ['I-2'] }, { id: 'u2', obligations: ['I-1'], repairs: ['I-2'], lanes: [{ id: 'div', argv: ['node', '--test', 'test/div.test.js'] }] }],
     obligations: [{ id: 'I-1', testIds: ['t1'] }, { id: 'I-2', testIds: ['t2'] }],
-    mapping: [{ pattern: 'src/**', obligations: ['I-1'] }, { pattern: 'test/**', obligations: ['I-1'] }, { pattern: 'contracts/**', obligations: ['I-1'] }, { pattern: 'lib/**', obligations: ['I-2'] }],
+    mapping: [{ system: 'app', obligations: ['I-1'] }, { system: 'app', obligations: ['I-1'] }, { system: 'app', obligations: ['I-1'] }, { system: 'lib', obligations: ['I-2'] }],
     trees: { '*': { outcomes: { t1: 'pass', t2: opts.t2 ?? 'pass' } } },
     ...(opts.estate === undefined ? {} : {
       laneExtra: { journey: { resources: ['estate'] } },

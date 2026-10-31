@@ -47,7 +47,7 @@ const HOLD_MS = 20 * 60_000;
 
 const planCheck = (reason: string): M1Step => ({
   role: 'planCheck',
-  answer: { decision: 'approve', reasons: [reason], patch: null, risk: 'med', notes: '', premises: [], visionConflict: [], scopeGrowth: [], staleLinks: [] },
+  answer: { decision: 'approve', reasons: [reason], patch: null, risk: 'med', notes: '', premises: [], visionConflict: [],  staleLinks: [] },
 });
 const build = (message: string, files: Readonly<Record<string, string>>): M1Step => ({ role: 'build', round: 'fresh', acts: [{ type: 'commit', message, files }] });
 const gate = (reason: string): M1Step => ({ role: 'gate', answer: {rulings: [],  decision: 'approve', findings: [], directives: [], reasons: [reason], premises: [], unreviewed: [], clusters: null,  } });
@@ -81,7 +81,7 @@ export const UNIT_STORY: Readonly<Record<string, readonly M1Step[]>> = {
 
 /** The checkpoint's repair admit: origin repair, citing V-2, evidence naming the witness P1 (F-1, the first finding). */
 const ADMIT_REPAIR: JsonValue = {
-  op: 'admit', unit: { ...REPAIR_UNIT, scope: [...REPAIR_UNIT.scope], after: [...REPAIR_UNIT.after] }, spec: admitSpecWire(JSON.parse(repairSpecText()) as Record<string, unknown>), targets: [],
+  op: 'admit', unit: { ...REPAIR_UNIT, systems: [...REPAIR_UNIT.systems], after: [...REPAIR_UNIT.after] }, spec: admitSpecWire(JSON.parse(repairSpecText()) as Record<string, unknown>), targets: [],
   cites: ['V-2'], evidence: ['F-1: I-2 not held on the integration head since tidy routed `format` through formatDisplay, whose toFixed prints 0.125 as 0.13'],
 };
 const REPAIR_BUNDLE = checkpointAnswer({ decision: 'bundle', ops: [ADMIT_REPAIR] });
@@ -111,7 +111,7 @@ const INFEASIBLE: M1Step = {
     decision: 'infeasible', reasons: ['Routing `format` through formatDisplay breaks I-2: its toFixed prints 0.125 as 0.13; nothing within src/cli.js reconciles A1 with I-2.'],
     patch: null, risk: 'med', notes: 'Drop the unit, or re-scope a unit to src/display.js so formatDisplay rounds half to even.', premises: [],
     visionConflict: [{ clauses: ['V-2'], note: 'format through formatDisplay silently mis-rounds money (0.125 prints 0.13)' }],
-    scopeGrowth: [], staleLinks: [],
+     staleLinks: [],
   },
 };
 

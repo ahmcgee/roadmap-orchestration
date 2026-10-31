@@ -200,10 +200,10 @@ describe('records', () => {
 
   it('spec.json M1 subset parses and rejects duplicate item ids', () => {
     const lane = { id: 'L1', argv: ['npm', 'test'], cwd: '.', env: { set: { CI: '1' }, pass: ['HOME'] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: ['coverage/**'], state: 'active' };
-    const spec = {
+    const spec = { intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
       schema: 'roadmap/spec-m1', unit: 'u1', rev: 1, lanes: [lane],
       acceptance: [{ id: 'A1', clause: 'x works', failLoudIfUndelivered: true, state: 'active' }],
-      scope: ['src/**'], resources: [], decisions: [{ id: 'R1', text: 'use y', state: 'active' }], facts: [], cites: { contracts: [], rulings: [] },
+       resources: [], decisions: [{ id: 'R1', text: 'use y', state: 'active' }], facts: [], cites: { contracts: [], rulings: [] },
     };
     // evidenceExcludes is optional input: absent reads as [], present is kept, malformed is refused.
     assert.deepEqual(specM1(spec, 'spec'), { ...spec, lanes: [{ ...lane, evidenceExcludes: [] }] });

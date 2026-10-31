@@ -1,3 +1,4 @@
+import { systemName } from '../src/core/ids.ts';
 // M4b step A2: levers, the fence, code's checks after the schema and the ruler (plan "Levers, proposals and the fence",
 // RC-4, RC-8, RC-9), and at host:cpu (M4b rev 3, RC-12): the pressure metric, the subordinate step, the direction check.
 // Pure.
@@ -25,9 +26,9 @@ function rawPlan(): Record<string, unknown> {
     suite: { lanes: [lane('unit', SEED), lane('lint', ['npm', 'run', 'lint'])] },
     resources: [{ name: 'db', probe: tool, teardown: tool, pool: { size: 2 } }, { name: 'cache', probe: tool, teardown: tool }],
     units: [
-      { id: 'u1', spec: 'specs/u1.json', risk: 'low', scope: ['src/a/**'], resources: [] },
-      { id: 'u2', spec: 'specs/u2.json', risk: 'high', scope: ['src/b/**'], resources: [], routing: { gate: { high: 'summit' } } },
-      { id: 'u3', spec: 'specs/u3.json', risk: 'med', scope: ['src/c/**'], resources: [], cut: { reason: 'out of scope' } },
+      { id: 'u1', spec: 'specs/u1.json', risk: 'low', systems: [systemName('app')], resources: [] },
+      { id: 'u2', spec: 'specs/u2.json', risk: 'high', systems: [systemName('app')], resources: [], routing: { gate: { high: 'summit' } } },
+      { id: 'u3', spec: 'specs/u3.json', risk: 'med', systems: [systemName('app')], resources: [], cut: { reason: 'out of scope' } },
     ],
   };
 }
@@ -269,7 +270,7 @@ describe('the ruler', () => {
     const edited = planWith({
       routing: { gate: { low: 'efficient' } },
       units: (rawPlan()['units'] as Record<string, unknown>[]).map((u) => (u['id'] === 'u1' ? { ...u, risk: 'med' } : u['id'] === 'u2' ? { ...u, routing: { gate: { high: 'frontier' } } } : u))
-        .concat([{ id: 'u4', spec: 'specs/u4.json', risk: 'low', scope: ['src/d/**'], resources: [], routing: { planCheck: { low: 'efficient' } } }]),
+        .concat([{ id: 'u4', spec: 'specs/u4.json', risk: 'low', systems: [systemName('app')], resources: [], routing: { planCheck: { low: 'efficient' } } }]),
     });
     assert.deepEqual(rulerChanges(view(PLAN), view(edited)), ['routing.gate', 'units[u1].risk', 'units[u2].routing.gate'], 'a new unit sets a floor, it moves none');
   });

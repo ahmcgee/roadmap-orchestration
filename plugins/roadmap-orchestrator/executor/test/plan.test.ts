@@ -1,3 +1,4 @@
+import { systemName } from '../src/core/ids.ts';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { parsePlan, targetDocuments } from '../src/input/plan.ts';
@@ -18,7 +19,7 @@ function validPlan(): Record<string, unknown> {
     direction: 'Converge on the documented target state.',
     suite: { lanes: [{ id: 'suite', argv: ['npm', 'test'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'candidate', resources: ['db'], evidenceGlobs: [] }] },
     resources: [{ name: 'db', probe: tool, teardown: { ...tool, argv: ['make', 'down-db'] } }],
-    units: [{ id: 'u1', spec: 'specs/u1.json', risk: 'med', scope: ['src/auth/**'], resources: ['db'] }],
+    units: [{ id: 'u1', spec: 'specs/u1.json', risk: 'med', systems: [systemName('app')], resources: ['db'] }],
   };
 }
 
@@ -61,7 +62,7 @@ describe('plan.json (M1)', () => {
   });
 
   it('plan.after: a unit may run after units earlier in plan order; a later, unknown, own or repeated id is refused, naming it', () => {
-    const u = (id: string, after?: readonly string[]) => ({ id, spec: `specs/${id}.json`, risk: 'med', scope: ['src/**'], resources: [], ...(after === undefined ? {} : { after }) });
+    const u = (id: string, after?: readonly string[]) => ({ id, spec: `specs/${id}.json`, risk: 'med', systems: [systemName('app')], resources: [], ...(after === undefined ? {} : { after }) });
     const plan = (...units: object[]) => ({ ...validPlan(), units });
     assert.deepEqual(parsePlan(plan(u('a'), u('b', ['a']), u('c', ['a', 'b']))).units.map((x) => x.after), [[], ['a'], ['a', 'b']]);
     rejects(plan(u('a', ['b']), u('b')), 'plan.units[0].after[0]');
@@ -118,8 +119,8 @@ describe('plan.json (M1)', () => {
     const plan = validPlan();
     const units = plan['units'] as Record<string, unknown>[];
     rejects({ ...plan, units: [{ ...units[0], risk: 'critical' }] }, 'plan.units[0].risk');
-    const { scope: _s, ...noScope } = units[0] as Record<string, unknown>;
-    rejects({ ...plan, units: [noScope] }, 'plan.units[0].scope');
+    const { systems: _s, ...noScope } = units[0] as Record<string, unknown>;
+    rejects({ ...plan, units: [noScope] }, 'plan.units[0].systems');
   });
 
   it('reads a reserved unit id (batch-<n>, jobs, mutants): an adopted arc keeps its units; only units entering are refused', () => {

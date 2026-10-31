@@ -45,6 +45,35 @@ terminal receipts. Apply also closes subjects of the units it changes and the li
 `ack` refuses an item without options. Digest/convergence items explicitly offer acknowledgement.
 Status is read-only without a single-flight lock.
 
+## System scope (schema 2, P2)
+
+`PlanUnit.systems: SystemName[]` is required, non-empty and unique. Every name resolves in the repository's
+revisioned `systemsMap`. File scope is removed from plans, specs and dispatch records. Dispatch retains risk,
+routing, bounds and spec identity; there is no scope-growth command, hold, decision, lineage envelope or derived
+write-set widening/exclusion. Re-entry retains its lineage risk floor and failure provenance.
+
+Every unit spec requires `intent: string` and `nonGoals: string[]` (non-empty strings and list). Build and gate
+receive both, plus the unit's systems. `SystemDef.traits` is `('persistent' | 'redacts')[]`, absent means empty.
+Gate inputs include `reach: RepoPath[]`: sorted unique changed paths outside the unit's direct systems (shared
+areas and contract consumers count). Gate also receives `traits` and actual-diff `reachTraits`. Reach never
+blocks salvage or publication. Phase 0 emits advisory `system-overlap{units:[UnitId,UnitId],systems}` for
+intersecting live unit systems; the row never holds admission.
+
+`protectedPaths(corpus)` is the single write-boundary definition: `.roadmap/` and the same-repository pinned
+corpus file set. Salvage and transient validation use it, including recovery, with `protected-path` violations.
+Declared evidence and transient artifact checks remain. External corpus files are outside the product repository.
+Derived entries retain only their code-owned regenerate lanes; outputs are ordinary diff paths.
+
+Obligation mapping is `mapping.systems:[{system:SystemName,obligations:ObligationId[]}]`. Declaration checks use
+unit systems; actual diff impact uses the recorded systems map and retains the unmapped-path must-hold fallback.
+Split, checkpoint admit and polish children name systems. Witness file reachability uses deliverer systems and
+their dependency units. Deflake selection uses lane systems, test membership, owner systems, then all mapped systems.
+
+A foreign-baseline first arc supplies `plan.baseline` and `plan.previousHead` (the equivalent start input).
+`previousHead` is immutable after revision 1 and mutually exclusive with `chain`. The chain row checks the one
+between-arc commit and allowed paths without requiring an older-schema arc snapshot. Corpus drift compares the
+integration tree against the supplied baseline and refuses changed same-repository corpus paths.
+
 ## Owner rulings on model ids (DESIGN-1.0.md §4, Routing profiles)
 
 1. `launch.json` is the only executor-written file allowed to contain a model id, and only inside `argv`.
@@ -3399,63 +3428,6 @@ fast lanes. Now the lanes stage runs the plan's fast suite lanes in code, and th
 **Upgrade.** See "Record evolution", 1.0.0-dev.7 → 1.0.0-dev.8: every change is additive and none needs a default.
 
 
-## Scope growth (2026-10-15; 1.0.0-dev.10)
-
-Units started with scopes too narrow (a unit replacing a shell page needed test files outside its package), and every
-fix cost a build, a park and a re-entry. Three parts; one canonical way a dispatched unit's scope grows stays the ruled
-growth ("Plan in force", `scope growth`), which `scope accept` now builds.
-
-**A. The silent loss made visible.** Salvage still reverts every uncommitted edit outside the pinned scope and keeps its
-content under `<run>/rejected/<unit>/<rejected manifest sha256>/files/` (src/git/salvage.ts, unchanged). Read back from
-the done `salvage.commit` ops and their manifests (`salvageRejections`, src/pipeline/stages.ts; reason `out-of-scope`,
-still outside the pinned scope: `stillOutside`): the gate's `scope.rejected` (prompt `<scope_reverted>`, every salvage of
-the unit; the gate escalates when the spec needs one) and the next fix round's directive (`revertedPathsDirective`, the
-latest salvage's, with the kept dir; src/pipeline/unit.ts `withReverted`). A builder reports a needed out-of-scope path in
-its report's `blockers` as `scope growth: <path>: <why>` (`SCOPE_GROWTH_BLOCKER`; the candidate's transient directive
-says the same): the build report gains no field.
-
-**B. Plan-check proposes; the root agent rules.** `PlanCheckOutput + scopeGrowth: [{patterns: string[], reason}]` (both
-plan-check schemas). Its inputs gain `scopeGrowth: {references, rejected}`: row 10's scan of the spec's `removes` at the
-tip it reads, outside the envelope and the spec's scope, and the proposals the root agent rejected for the unit. Code
-verifies each proposed pattern (`verifiedGrowth`): a repository pattern, not under `.roadmap/`, outside the pinned
-envelope (`withinEnvelope`), matching a file at the tip the check read, covered by no lane `evidenceGlobs` entry
-(`evidenceScopeConflicts`), clear of a same-repo corpus file set (`scopeOverlapsCorpus`, Phase-0's R32 predicate), and
-never a pattern rejected for the unit; a proposal keeps its passing patterns, one with none is dropped. A verified
-proposal records plan-check `scope-growth` (class `hold`, uncharged, `detail: scope-growth{proposals}`), whatever the
-decision, after the vision conflicts' findings and the risk-lowered check and before any patch or risk raise (nothing else
-of the answer applies: the one validator, `judgePlanCheck`, then judges neither its patch nor the patch's cites, so no
-repair turn is spent on a patch never applied; a pattern code drops is named, never a reason to refuse the answer), with a blocking `scope-growth` item naming the proposals, what code dropped, and the two commands.
-
-`roadmap scope accept|reject <unit> --reason <text>` queues `scope-decide{unit, decision, reason}` (mutation, scope {u};
-src/commands/scope.ts). Refused unless the unit is held by its plan-check's `scope-growth`. Accept, each step only where
-missing: (1) the ruled growth as one revision: the ledger's next ruling (`kind: decision`, `ruledBy: architect`,
-`appliesTo: units[u]`, `lifetime: arc`, its statement naming exactly the added patterns in backticks with the plan-check's
-and the root agent's reasons, its docRef a line of the first file the growth takes in that its anchor quotes (one naming a
-`removes` entry first), its consistency fresh at the integration tip), the plan's unit scope widened, and the unit's spec
-in force at rev + 1 with the patterns in its scope and the ruling in its cites (`grownSpec`); validated by `rulingReasons`,
-evaluated by the apply core (proposer `apply{rulings}`) and the Phase-0 rows (`APPLY`), committed under the fence
-(`plan-applied`, source the command); nothing is written into the owner's files (2026-10-16, "Apply rebase"). A refusal
-at (1) rejects the command with every reason and leaves the unit held. Both: (2) the hold's item acknowledged; (3)
-`scope-decided`, the postcondition.
-
-The fold: `scope-decided` only of the unit held by that attempt's `scope-growth` hold (else it fails loud); the hold is
-released (`active`) and the decision kept in `UnitState.scopeDecisions` with the proposals it decided. Accepted: the spec
-revision is pending, so the unit re-opens at plan-check on it (`reopenIfDue`), whose dispatch check re-pins the plan's
-wider scope (`pinUpdate`; a unit that has not built re-pins whatever its seat). Rejected: the plan-check re-runs on the
-same spec with `<rejected_scope_growth>`, and a proposal of a rejected pattern is dropped, so it decides within the scope
-(approve, redirect, or infeasible: an escalation). A `resume` (of the unit, or all) also releases the hold: the plan-check
-runs again and may propose again.
-
-**C. Phase-0 row 10, `scope-references-outside`** (src/phase0/rows.ts `scopeReferences`). `SpecM1 + removes?: string[]`.
-For each unit whose spec declares it, each entry is searched literally (`git grep -l -F`) at the integration tip (the
-baseline before the branch exists); the hits inside the unit's scope (plan and spec) or under `.roadmap/` are dropped:
-`ScopeReference{kind: scope-references-outside, unit, removed, referrers: RepoPath[] (ascending, non-empty)}`. An advisory:
-`Phase0Outcome.advisories`, never a row, in every mode; `phase0 check` prints it (`advisories`), `apply --dry-run` and an
-applied `apply` receipt list it, a start writes it to the executor's stderr. The plan-check reads the same scan.
-
-**Upgrade.** See "Record evolution" (the rows marked scope growth): additive; one scaffolding default
-(`planCheckScopeGrowthDefault`). An arc started on 1.0.0-dev.9 is adopted.
-
 ## Plan defects (2026-10-16; 1.0.0-dev.11)
 
 A plan defect code can check is refused at Phase 0; one that surfaces at run time parks uncharged with a code-produced
@@ -4611,66 +4583,6 @@ evidence dirs, so there is no read-time default and no upgrade cell.
    `NO_SESSION_NOTE` and the handover when it has none) with `resolveUnmetDirective`, under `freshBuildMin`. `buildRead`
    reads that call. Recovery after a crash between the two reads the attempt's latest call.
 
-## Deflake scope (2026-10-23; field 2026-10-23, the Atlas arc)
-
-An arc lane's flake minted `deflake-1` scoped `**` in a same-repo corpus arc; the deflake revision passed `evaluateRevision`
-but not the Phase-0 overlap row, so every later apply and start was refused, and `start` had no `--base` to edit it.
-
-| Record | Change | Read-time default |
-|---|---|---|
-| `NEEDS_USER_REASONS` | `+ deflake-unscoped`, non-blocking (`NON_BLOCKING_M3_REASONS`) | — |
-| `scope-overlaps-corpus` problem | `+ fix: string` (`scopeOverlapFix(unit)`: narrow the unit's scope off the corpus or cut it, in this apply or start; `inputs export`, sync, and `--base` when the arc changed the unit since your base) | a dev.17 rejection file's problem without it: `scopeOverlapFix(unit)` |
-| `StartArgs`, supervisor and executor argv, `StartInput` | `+ base`: `start --base <export.json>`; the CLI reads it (`exportBase`, a usage error when it is no export's), the supervisor passes `--base <abs>` to every executor, the executor reads the manifest into `StartInput.base` | absent: null |
-
-1. **Scope** (`deflakeScope`, src/pipeline/deflakemint.ts), the first that holds: (a) the `systems` of the group's suite or
-   arc lane (an arc lane's from the obligations in force); (b) the systems the flaky tests' files belong to under the
-   systems map in force: a test id's file is its first ` > ` segment when that is a repo path (`testFileOf`,
-   src/core/flaky.ts), its systems those whose `paths` or `tests` match it, the dependents of a shared area and the
-   consumers of a contract it is (`pathSystems`, `pathClass` before its dependents closure); for (a) and (b) the systems
-   closed over their dependencies (`dependenciesClosure`), each one's `paths` and `tests`, ascending and unique; (c) a spec
-   lane's group: the scope of the unit whose lane it is; (d) `**`.
-2. **Unscoped** (`applyDeflake`): a group whose scope has a pattern that may reach the same-repo corpus file set in force
-   (`scopeOverlapsCorpus`, R32) is not minted. One `deflake-unscoped` item: subject the arc, evidence the red run of the
-   group's first flake, the summary naming the keys, the scope and the patterns that reach the corpus, the recommendation
-   the lane's `systems` or a systems map by `apply`. While an item names that red run and the scope still reaches the
-   corpus, the group is not due (`deflakeJobPending` false); once an apply changes either, it is minted. No crash label: a
-   rerun after the item finds it and mints the rest.
-3. **One overlap rule** (`scopeOverlapProblems`, src/phase0/rows.ts): a `scope-overlaps-corpus` per unit whose plan scope
-   may reach the corpus file set, a cut unit excepted (it builds nothing). `evaluateRevision` runs it over the units the
-   revision changes (`scoped`, as the lane row), for every proposer (start, apply, bundle, deflake, propagation, split,
-   walk repairs, plan-check); the Phase-0 rows run it over every unit the arc has not settled (dev.19: `Phase0Input.settled`,
-   the units merged, superseded or cut in the journal; empty with no arc log and for `phase0 check --from-ref`), so a unit
-   in force that reaches the corpus still refuses every apply and start until an edit narrows or cuts it, or it merges.
-4. **`start --base`** (src/preflight/checks.ts `startSource`, `settlePlan`): the owner's files rebased from the export's
-   manifest onto the files in force, by the one rebase (`applyProposal`, src/input/rebase.ts) an apply takes; without it,
-   from the owner's files of their latest apply. An arc with no plan in force refuses it (`plan-change-refused`).
-   `inputs export` reads the run dir only, so the export, its edit and `start --base` all work with the executor down.
-
-## Scope-only re-entry and scope at salvage (2026-10-24; field report, live arc unit u1f-r4)
-
-No record changes: both are derived from facts already in the log, and two outcome kinds are added.
-
-| Record | Change | Read-time default |
-|---|---|---|
-| `STAGE_OUTCOME_KINDS.salvage` | `+ transient-violation` (C, trigger → `build fix`), `+ cleanup-failed` (retryable park `residue`, one `resource{i}` per failed instance) | — (an older log has neither) |
-
-1. **Scope-only re-entry** (`carriedApproval`, src/pipeline/review.ts): `gateDelta` of a unit with no approval of its own
-   measures from the re-entered unit's (`UnitState.lineage.reenters`) latest approval when (a) its `fingerprint.unitCommit`
-   is the head the gate judges, so no commit came after it (no build, no merge-in at `prepare`); (b) no `gate`
-   stage-outcome of the re-entered unit is among its `failures` after the approval's seq; (c) the re-entered unit's spec in
-   force is at the approval's `blobs.specRev`, or later by design records alone (`designRevisionsOnly`), and the gated spec
-   equals it in canonical JSON but for `unit`, `rev` and `scope`; (d) `transientCheck` passes over `diffBase(T, head)..head`
-   under the gated unit's own `unitTransientRules`, so a narrowed scope that leaves an approved path outside carries
-   nothing. Then only an empty delta counts: the gate records `approval{blobs}` for the gated unit at its fingerprint and
-   `stage-outcome gate delta-empty`, no call; anything else is a full review (`delta` null).
-2. **Scope at salvage** (`salvage`, src/pipeline/stages.ts): after the commit (or no change), `transientCheck(repo,
-   unitTransientRules(dispatch, spec), T, salvage SHA)`, the candidate's check. A violation ends the build chain there as a
-   salvage failure does: the build's reservation is cleaned (teardown never runs). Cleaned, `salvage transient-violation`
-   (the candidate's row: a chargeable fix round with a risk trigger); a cleanup that failed, `salvage cleanup-failed` with
-   its instances as park targets. The fix round (`decidedInput`, src/pipeline/unit.ts) is `salvageRefusalFix`
-   (src/pipeline/integrate.ts): the violations re-derived from git at the current tip, as `transientDirectives(…,
-   'salvage')`, over an empty ledger (the window is the edit allowance; no lane ran).
-
 ## Milestone checkpoint cadence (owner ruling 2026-10-24)
 
 - `Holistic.checkpoint?: {everyMilestones?: positive integer}` (`src/input/plan.ts`): optional in both plan targets;
@@ -4915,14 +4827,6 @@ an unconfigured six-hour `deadline`, which retains its no-verdict/process-fault 
 The stall watchdog still applies independently. A timeout enters the ordinary red-lane
 protocol and supplies failing-lane evidence to the fix round. Historical start times
 are reconstructed from the retained launch limit, never the current lane definition.
-
-## Resuming a scope-growth hold
-
-`resume <unit>` and arc-wide `resume` acknowledge the blocking needs-user item parented
-by each scope-growth hold they clear, before writing `resumed`. This does not accept
-its proposed scope: the stage retries within the scope in force. The ordinary durable
-ack file and `needs-user-acked` fact make interruption between acknowledgment and
-resume replayable. Other holds' items and unrelated blocking items remain untouched.
 
 ## Same-commit lane flakes
 

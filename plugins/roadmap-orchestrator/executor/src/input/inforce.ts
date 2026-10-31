@@ -25,8 +25,7 @@ import { existsSync,readFileSync } from 'node:fs';
 import { dirname,join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import {
-type IntentOf,type Parent,type PlanAppliedFact,type PlanChange,REVISION_FENCE_KEY,type RevisionPayload,parseRevisionPayload,
-} from '../core/events.ts';
+type IntentOf,type Parent,type PlanAppliedFact,type PlanChange,REVISION_FENCE_KEY,type RevisionPayload,parseRevisionPayload } from '../core/events.ts';
 import { durableMkdir,durableWrite } from '../core/fsx.ts';
 import { type OpId,type PlanRev,type RulingId,type Sha256Hex,type UnitId,opKey,planRev } from '../core/ids.ts';
 import type { Journal,JournalView } from '../core/interfaces.ts';
@@ -125,7 +124,7 @@ export type InputFiles = Readonly<{
   /** M3: the ledger `plan.rulings` names. */
   ledger: InputFile;
   /** M3: the ruling sidecars beside it (`<ledger>.d/C-<n>.json`), ascending by id. */
-  
+
   /** M3 (A5): the obligations and vision files `plan.holistic` names; null when it names none. */
   obligations: InputFile | null;
   vision: InputFile | null;
@@ -179,7 +178,7 @@ export function readInputFiles(planFile: AbsPath, repo: AbsPath, exported = fals
   let corpus: CorpusInputFiles | null = null;
   if (plan.target === 'corpus') corpus = { pin: beside(plan.corpus), guide: guideFileAt(repo, plan.baseline), phase0: beside(plan.phase0) };
   return {
-    repo, planFile, plan, planBytes, specs, ledger: inputFile(ledger), 
+    repo, planFile, plan, planBytes, specs, ledger: inputFile(ledger),
     obligations: plan.holistic?.obligations === undefined ? null : beside(plan.holistic.obligations),
     vision: visionInput(plan, exported ? absPath(join(dirname(planFile), 'repo')) : repo, inputFile, planFile),
     corpus,
@@ -257,7 +256,7 @@ export function keepRevisionFiles(runDir: AbsPath, files: InputFiles): RevisionM
     ...keepInputFiles(runDir, files),
     rulings: {
       ledgerSha256: keepInput(runDir, bytes(files.ledger), RULINGS_INPUT),
-      
+
     },
     obligations: files.obligations === null ? null : keepInput(runDir, bytes(files.obligations), OBLIGATIONS_INPUT),
     vision: files.vision === null ? null : keepInput(runDir, bytes(files.vision), VISION_INPUT),
@@ -488,7 +487,7 @@ export type RevisionInForce = Readonly<{
   /** The ledger's kept bytes. */
   ledger: Readonly<{ sha256: Sha256Hex; bytes: Buffer }>;
   /** Ascending by id. */
-  
+
   obligations: Readonly<{ sha256: Sha256Hex; bytes: Buffer; value: Obligations }> | null;
   vision: Readonly<{ sha256: Sha256Hex; bytes: Buffer; value: Vision }> | null;
   /** M4a: a corpus arc's pin, guide bytes and Phase-0 record in force; null for an `architecture-doc` arc. */
@@ -522,7 +521,7 @@ export function revisionInForce(runDir: AbsPath, inForce: InForce): RevisionInFo
   const { corpus: pinSha, corpusGuide, phase0 } = manifest;
   return {
     ledger: { sha256: manifest.rulings.ledgerSha256, bytes: kept(runDir, manifest.rulings.ledgerSha256, RULINGS_INPUT) },
-    
+
     obligations: parsed(manifest.obligations, OBLIGATIONS_INPUT, parseObligations),
     vision: parsed(manifest.vision, VISION_INPUT, parseVision),
     corpus: pinSha === undefined || corpusGuide === undefined || phase0 === undefined ? null : {
@@ -556,7 +555,7 @@ export function inForceFiles(runDir: AbsPath, view: JournalView, inForce: InForc
   return {
     repo, planFile, plan, planBytes, specs,
     ledger: { path: ledger, bytes: revision.ledger.bytes },
-    
+
     obligations: revision.obligations === null || plan.holistic?.obligations === undefined ? null : beside(plan.holistic.obligations, revision.obligations.bytes),
     vision: revision.vision === null ? null : visionInput(plan, repo, (path) => ({ path, bytes: revision.vision!.bytes }), planFile),
     corpus: c === null || plan.target !== 'corpus' ? null : {

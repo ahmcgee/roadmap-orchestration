@@ -192,7 +192,7 @@ export function gradeB(f: Fixture): Grade {
       // Removed rule families must leave obligations, impact mappings and carried specs too.
       if (d.action === 'retire' || (d.action === 'merge' && p.ids[0]!.startsWith('T-'))) {
         const removed = before.obligations.filter((o) => p.ids.includes(o.id) || p.ids.includes(o.rule?.id ?? '')).map((o) => o.id);
-        if (removed.some((id) => next.obligations.some((o) => o.id === id) || next.mapping.paths.some((m) => m.obligations.includes(id)) || specs.some((spec) => spec.obligations?.includes(id)))) effects.push(`${d.id}: original obligation family remains`);
+        if (removed.some((id) => next.obligations.some((o) => o.id === id) || next.mapping.systems.some((m) => m.obligations.includes(id)) || specs.some((spec) => spec.obligations?.includes(id)))) effects.push(`${d.id}: original obligation family remains`);
       }
       if (d.action === 'merge' && p.ids[0]!.startsWith('T-')) {
         const entry = next.census!.find((e) => e.rule === replacementId);

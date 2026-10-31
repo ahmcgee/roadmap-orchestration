@@ -1,3 +1,4 @@
+import { systemName } from '../src/core/ids.ts';
 // Pure-module tests of the fold (src/core/state.ts): what it derives and every invariant it refuses.
 import assert from 'node:assert/strict';
 import { describe,it } from 'node:test';
@@ -19,7 +20,7 @@ type OutcomeFields = Readonly<{ stage: Stage; attempt: number; outcome: string; 
 const stageOutcome = (f: OutcomeFields): LogRecord =>
   ({ type: 'fact', fact: { kind: 'stage-outcome', unit: f.unit ?? U1, stage: f.stage, attempt: f.attempt, outcome: f.outcome, class: f.class, chargeable: f.chargeable ?? false } }) as LogRecord;
 const dispatch = (riskFloor: RiskTier, scope = 'src/**'): LogRecord =>
-  ({ type: 'fact', fact: { kind: 'dispatch', record: { unit: U1, specRev: specRev(1), specSha256: H, scope: [repoPattern(scope)], riskFloor, routingRev: REV, implementerSeatRev: seatRev('fedcba9876543210'), at: AT, transientRules: 'm3' } } });
+  ({ type: 'fact', fact: { kind: 'dispatch', record: { unit: U1, specRev: specRev(1), specSha256: H,  riskFloor, routingRev: REV, implementerSeatRev: seatRev('fedcba9876543210'), at: AT, transientRules: 'm3' } } });
 
 function refuses(events: readonly Event[], seq: number, detail: RegExp): void {
   assert.throws(() => fold(ARC, events), (err: unknown) => {
@@ -283,7 +284,7 @@ describe('fold invariants', () => {
     } });
     const proposal = { type: 'fact', fact: {
       kind: 'polish-proposed', id: polishIdOf(1), job: jobId('walk', 1), milestone: milestoneIdOf(1), journey: journeyIdOf(1),
-      evidence: [], text: 'Polish', unit: { id: unitId('polish-1'), scope: [repoPattern('src/**')], spec: '{}' },
+      evidence: [], text: 'Polish', unit: { id: unitId('polish-1'), systems: [systemName('app')], spec: '{}' },
     } } as const satisfies LogRecord;
     fold(ARC, chain([start(1), start(2), end(1), end(2)]));
     refuses(chain([end(1)]), 1, /walk-ended of walk-1, which is not a started, unended walk/);
@@ -491,7 +492,7 @@ describe('fold: command effects (step 13)', () => {
     const H2 = sha256('e'.repeat(64));
     const OTHER = '0123456789abcdee';
     const pin = (rev: number, sha = H, routing: string = REV): LogRecord =>
-      ({ type: 'fact', fact: { kind: 'dispatch', record: { unit: U1, specRev: specRev(rev), specSha256: sha, scope: [repoPattern('src/**')], riskFloor: 'med', routingRev: routing as never, implementerSeatRev: seatRev('fedcba9876543210'), at: AT, transientRules: 'm3' } } }) as LogRecord;
+      ({ type: 'fact', fact: { kind: 'dispatch', record: { unit: U1, specRev: specRev(rev), specSha256: sha,  riskFloor: 'med', routingRev: routing as never, implementerSeatRev: seatRev('fedcba9876543210'), at: AT, transientRules: 'm3' } } }) as LogRecord;
     const gatePark = (attempt: number) => stageOutcome({ stage: 'gate', attempt, outcome: 'escalate', class: 'park' });
     const reopen = (rev: number): LogRecord => fact({ kind: 'reopened', unit: U1, command: C, specRev: specRev(rev), specSha256: H2 });
     // The first pin names the spec, before the unit has any stage state and after.

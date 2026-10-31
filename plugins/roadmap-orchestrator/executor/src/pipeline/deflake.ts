@@ -49,7 +49,7 @@ import { type LaneDef,type SpecM1,cadenceAtOrBefore,specForces } from '../core/r
 
 import type { AbsPath,RepoPattern } from '../core/values.ts';
 import { mayOverlap } from '../input/classify.ts';
-import { lineageMembers } from '../input/envelope.ts';
+import { lineageMembers } from '../input/lineage.ts';
 import { BATCH_VERIFICATION_RUNS,DEFAULT_VERIFICATION_LANE_MINUTES,type PlanM1,type PlanUnit } from '../input/plan.ts';
 import { type SystemDef,type SystemsMap,dependentsClosure } from '../input/systems.ts';
 import { runnerFiles } from '../runner/files.ts';
@@ -264,24 +264,6 @@ export function specLaneIds(spec: SpecM1): ReadonlySet<LaneId> {
 }
 
 /**
- * Whether the plan's suite lane `lane` may run for a unit of `scope` (cadence up to `candidate`; a batch lane is off the
- * merge path): with no map or no systems, always; else when a scope pattern may overlap a path or test glob of a system the
- * lane names or depends on, or of no system at all (unmapped: every lane, fail-safe).
- */
-function suiteMaySelect(map: SystemsMap | null, lane: LaneDef, scope: readonly RepoPattern[]): boolean {
-  if (!cadenceAtOrBefore(lane.cadence, 'candidate')) return false;
-  if (map === null || lane.systems === undefined) return true;
-  const touched = new Set<SystemName>();
-  for (const s of scope) {
-    const hit = (Object.entries(map.systems) as [SystemName, SystemDef][]).filter(([, d]) => [...d.paths, ...d.tests].some((p) => mayOverlap(s, p))).map(([n]) => n);
-    if (hit.length === 0 && !map.docs.some((d) => mayOverlap(s, d))) return true;
-    for (const n of hit) touched.add(n);
-  }
-  const closure = dependentsClosure(map, touched);
-  return lane.systems.some((s) => closure.has(s));
-}
-
-/**
  * The code edge holding `unit` now (see the header), or null: it has not been dispatched, is no deflake unit, and an open
  * deflake's lane is among its lanes (`specLanes`, read only when an open deflake exists).
  */
@@ -295,7 +277,7 @@ export function deflakeHold(
   for (const d of open) {
     const lane = d.deflake!.keys[0]!.lane;
     const suite = plan.suite.lanes.find((l) => l.id === lane);
-    if (lanes.has(lane) || (suite !== undefined && suiteMaySelect(map, suite, unit.scope))) return { type: 'deflake', deflake: d.id, lane };
+    if (lanes.has(lane) || (suite !== undefined && cadenceAtOrBefore(suite.cadence, 'candidate') && (map === null || suite.systems === undefined || suite.systems.some((s) => dependentsClosure(map, unit.systems).has(s))))) return { type: 'deflake', deflake: d.id, lane };
   }
   return null;
 }

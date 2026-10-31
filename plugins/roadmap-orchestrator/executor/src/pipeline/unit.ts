@@ -76,7 +76,7 @@ import { regenerateLanes } from '../input/derived.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import { reentryRecommendation,reopenRecommendation,routingChangedRecommendation } from '../needsuser.ts';
 import { NO_PARK_FACTS } from '../park/table.ts';
-import { restoredPathsDirective,revertedPathsDirective } from '../prompts/directives.ts';
+import { revertedPathsDirective } from '../prompts/directives.ts';
 import type { FixRound } from '../prompts/inputs.ts';
 import { DECISIONS_FILE,buildOutput } from '../prompts/schemas.ts';
 import { worktreeRemoveOp } from '../recover/ops.ts';
@@ -85,13 +85,11 @@ import type { Role } from '../routing/types.ts';
 import { type NextStage,nextStage } from '../schedule/ready.ts';
 import { ADMISSION_STAGES } from '../schedule/types.ts';
 import {
-type Cancelled,type StageContext,type StageParent,dispatchOf,evidenceRoot,isCancelled,runOp,unitBranch,unitWorktree,verificationWorktree,witnessWorktree,workDir,
-} from './dispatch.ts';
+type Cancelled,type StageContext,type StageParent,dispatchOf,evidenceRoot,isCancelled,runOp,unitBranch,unitWorktree,verificationWorktree,witnessWorktree,workDir } from './dispatch.ts';
 import { failuresText,laneFailures } from './failures.ts';
 import { consumeJudgment,gate,gateDirectives,unitTip } from './gate.ts';
 import {
-batchMemberFix,candidate,candidateBrakeFix,candidateRefusalFix,candidateSeriesRoot,ff,latestCandidate,memberBatchCandidate,salvageRefusalFix,snapshot,
-} from './integrate.ts';
+batchMemberFix,candidate,candidateBrakeFix,candidateRefusalFix,candidateSeriesRoot,ff,latestCandidate,memberBatchCandidate,salvageRefusalFix,snapshot } from './integrate.ts';
 import { invocationDir } from './invoke.ts';
 import { type LaneRecord,latestSpecSeries,presentCheckouts,removeCheckout,seriesDirty,seriesLedger,seriesTree,specSeriesRoot } from './lanes.ts';
 import { poc } from './poc.ts';
@@ -100,14 +98,12 @@ import { mutantFix,reproduce,specFacts,syncRepairs } from './reproduce.ts';
 import { disputeDirective } from './review.ts';
 import {
 type DecidedRound,type RoundInput,candidateFixRound,failingEvidenceDirs,failingLaneDirectives,gateReviseRound,laneFixRound,smokeFixRound,steerBrief,
-witnessCheckoutFixRound,witnessFixRound,
-} from './rounds.ts';
+witnessCheckoutFixRound,witnessFixRound } from './rounds.ts';
 import { scaffold } from './scaffold.ts';
 import { finishSplit } from './split.ts';
 import {
 type BuildRun,type StageDone,at,build,buildRead,evidence,failedFacts,fastSuiteRoot,keptSpecPath,laneGlobs,lanes,loadUnitSpec,
-nowInside,planCheck,planCheckAnswerOf,quiesce,readDecisions,record,recordedCall,salvage,salvageRejections,stillOutside,teardown,
-} from './stages.ts';
+planCheck,planCheckAnswerOf,quiesce,readDecisions,record,recordedCall,salvage,salvageRejections,teardown } from './stages.ts';
 import { type Next,type Target,decidedBy } from './transitions.ts';
 import { requiredAt } from './witnesscheck.ts';
 
@@ -424,9 +420,8 @@ function withReverted(ctx: StageContext, unit: PlanUnit, round: DecidedRound): D
   if (round.kind !== 'fix' && round.kind !== 'fresh') return round;
   const latest = salvageRejections(ctx, unit.id).at(-1);
   if (latest === undefined) return round;
-  const outside = round.kind === 'fix' ? stillOutside(ctx, unit.id, latest.paths) : [];
-  const inside = nowInside(ctx, unit.id, latest.paths);
-  const added = [...(outside.length === 0 ? [] : [revertedPathsDirective(outside, latest.dir)]), ...(inside.length === 0 ? [] : [restoredPathsDirective(inside, latest.dir)])];
+  const outside = latest.paths;
+  const added = [...(outside.length === 0 ? [] : [revertedPathsDirective(outside, latest.dir)])];
   if (added.length === 0) return round;
   return round.kind === 'fix'
     ? { ...round, fix: { ...round.fix, directives: [...round.fix.directives, ...added] } }

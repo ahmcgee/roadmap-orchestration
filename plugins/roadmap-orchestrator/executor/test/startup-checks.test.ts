@@ -1,3 +1,4 @@
+import { systemName } from '../src/core/ids.ts';
 // startup.rejections: every row of the startup rejection table through `runChecks` and then `smokeCheck`
 // (src/preflight/checks.ts; the executor runs recovery between the two),
 // over a real repo, real host files, a real journal and fake backends for the smoke. One case per kind, each
@@ -56,17 +57,17 @@ function setup(steps: readonly Step[] = SMOKE_OK): Setup {
   const repo = absPath(makeRepo(tmpDir('st-repo'), { files: { 'README.md': 'hello\n', 'ARCHITECTURE.md': 'arch\n' } }));
   const arc = `st-${randomBytes(5).toString('hex')}`;
   const planDir = tmpDir('st-plan');
-  const spec: Raw = {
+  const spec: Raw = { intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
     schema: 'roadmap/spec-m1', unit: 'u1', rev: 1, lanes: [{ ...lane(), state: 'active' }],
     acceptance: [{ id: 'A1', clause: 'It works.', failLoudIfUndelivered: true, state: 'active' }],
-    scope: ['src/**'], resources: ['db'], decisions: [], facts: [], cites: { contracts: [], rulings: [] },
+     resources: ['db'], decisions: [], facts: [], cites: { contracts: [], rulings: [] },
   };
   const plan: Raw = {
     schema: 'roadmap/plan-m1', arc, integrationBranch: 'main', baseline: revParse(repo, 'HEAD'), worktreeRoot: tmpDir('st-wt'),
     contracts: [], rulings: 'rulings.md', architectureDoc: 'ARCHITECTURE.md', direction: 'test the startup table',
     suite: { lanes: [lane({ id: 'suite' })] },
     resources: [{ name: 'db', probe: tool, teardown: tool }],
-    units: [{ id: 'u1', spec: 'u1.json', risk: 'low', scope: ['src/**'], resources: ['db'] }],
+    units: [{ id: 'u1', spec: 'u1.json', risk: 'low', systems: [systemName('app')], resources: ['db'] }],
   };
   const s = writeScenario(tmpDir('st-scenario'), steps);
   const hostDir = openHostDir(absPath(join(tmpDir('st-host'), 'roadmap')));
@@ -197,7 +198,7 @@ describe('startup.rejections', () => {
 
   it('plan-invalid: schema (78)', T, async () => {
     const s = setup();
-    write({ ...s, plan: { ...s.plan, units: [{ id: 'u1', spec: 'u1.json', risk: 'extreme', scope: ['src/**'], resources: [] }] } });
+    write({ ...s, plan: { ...s.plan, units: [{ id: 'u1', spec: 'u1.json', risk: 'extreme', systems: [systemName('app')], resources: [] }] } });
     const [r] = refusedWith(await allChecks(input(s)), 'plan-invalid', 78);
     assert.deepEqual(r?.kind === 'plan-invalid' && r.problem.type === 'schema' ? r.problem.field : null, 'plan.units[0].risk');
   });
@@ -210,8 +211,8 @@ describe('startup.rejections', () => {
         ...s.plan,
         baseline: 'f'.repeat(40),
         units: [
-          { id: 'u1', spec: 'u1.json', risk: 'low', scope: ['src/**'], resources: ['db', 'nope'] },
-          { id: 'u2', spec: 'missing.json', risk: 'low', scope: ['src/**'], resources: [] },
+          { id: 'u1', spec: 'u1.json', risk: 'low', systems: [systemName('app')], resources: ['db', 'nope'] },
+          { id: 'u2', spec: 'missing.json', risk: 'low', systems: [systemName('app')], resources: [] },
         ],
       },
     });
@@ -469,7 +470,7 @@ describe('startup.plan-in-force', () => {
   };
   const addU2 = (s: Setup): void => {
     writeFileSync(join(s.planDir, 'u2.json'), JSON.stringify({ ...s.spec, unit: 'u2' }));
-    writeFileSync(s.planFile, JSON.stringify({ ...s.plan, units: [...(s.plan['units'] as Raw[]), { id: 'u2', spec: 'u2.json', risk: 'low', scope: ['src/**'], resources: ['db'] }] }));
+    writeFileSync(s.planFile, JSON.stringify({ ...s.plan, units: [...(s.plan['units'] as Raw[]), { id: 'u2', spec: 'u2.json', risk: 'low', systems: [systemName('app')], resources: ['db'] }] }));
   };
 
   it('a first start puts the files in force as revision 1; a later start ignores unapplied unit additions; a respawn runs the plan in force, ignoring an edit nobody applied', T, async () => {
@@ -484,7 +485,7 @@ describe('startup.plan-in-force', () => {
     // An edit the respawn must not take: u3 added, nothing applied.
     writeFileSync(join(s.planDir, 'u3.json'), JSON.stringify({ ...s.spec, unit: 'u3' }));
     const plan = JSON.parse(JSON.stringify(s.plan)) as Raw;
-    writeFileSync(s.planFile, JSON.stringify({ ...plan, units: [...(plan['units'] as Raw[]), { id: 'u2', spec: 'u2.json', risk: 'low', scope: ['src/**'], resources: ['db'] }, { id: 'u3', spec: 'u3.json', risk: 'low', scope: ['src/**'], resources: ['db'] }] }));
+    writeFileSync(s.planFile, JSON.stringify({ ...plan, units: [...(plan['units'] as Raw[]), { id: 'u2', spec: 'u2.json', risk: 'low', systems: [systemName('app')], resources: ['db'] }, { id: 'u3', spec: 'u3.json', risk: 'low', systems: [systemName('app')], resources: ['db'] }] }));
     const respawn = await start({ ...input(s), respawn: { runDir: runDirOf(s), arc: arcId(s.arc) } });
     assert.ok(respawn.kind === 'passed', JSON.stringify(respawn));
     assert.deepEqual(respawn.context.plan.units.map((u) => u.id), ['u1'], 'the respawn checked the plan in force');
@@ -500,7 +501,7 @@ describe('startup.plan-in-force', () => {
     const stale = readFileSync(ledger, 'utf8');
     writeFileSync(ledger, `${stale}C-3 — Probes live beside the code they probe.\n`);
     writeFileSync(join(s.planDir, 'u2.json'), JSON.stringify({ ...s.spec, unit: 'u2', cites: { contracts: [], rulings: ['C-3'] } }));
-    writeFileSync(s.planFile, JSON.stringify({ ...s.plan, units: [...(s.plan['units'] as Raw[]), { id: 'u2', spec: 'u2.json', risk: 'low', scope: ['src/**'], resources: ['db'] }] }));
+    writeFileSync(s.planFile, JSON.stringify({ ...s.plan, units: [...(s.plan['units'] as Raw[]), { id: 'u2', spec: 'u2.json', risk: 'low', systems: [systemName('app')], resources: ['db'] }] }));
     const j = openJournal(runDirOf(s), arcId(s.arc));
     try {
       const rctx = { runDir: runDirOf(s), view: j.view, hostDir: s.hostDir, planFile: s.planFile, routingBase: { profile: profileName('default', 'p'), config: null, arcRoles: 'dev17' as const }, laneEnv: process.env };
@@ -525,7 +526,7 @@ describe('startup.plan-in-force', () => {
   it('plan-change-refused: a fresh arc\'s reserved ids are refused', T, async () => {
     const fresh = setup();
     writeFileSync(join(fresh.planDir, 'batch-1.json'), JSON.stringify({ ...fresh.spec, unit: 'batch-1' }));
-    writeFileSync(fresh.planFile, JSON.stringify({ ...fresh.plan, units: [...(fresh.plan['units'] as Raw[]), { id: 'batch-1', spec: 'batch-1.json', risk: 'low', scope: ['src/**'], resources: ['db'] }] }));
+    writeFileSync(fresh.planFile, JSON.stringify({ ...fresh.plan, units: [...(fresh.plan['units'] as Raw[]), { id: 'batch-1', spec: 'batch-1.json', risk: 'low', systems: [systemName('app')], resources: ['db'] }] }));
     const refused = await start(input(fresh));
     assert.ok(refused.kind === 'refused' && refused.rejections.length === 1 && refused.rejections[0]?.kind === 'plan-change-refused', JSON.stringify(refused));
     assert.equal(refused.rejections[0].reasons.length, 1);
@@ -534,26 +535,11 @@ describe('startup.plan-in-force', () => {
 
     const added = setup();
     writeFileSync(join(added.planDir, 'mutants.json'), JSON.stringify({ ...added.spec, unit: 'mutants' }));
-    writeFileSync(added.planFile, JSON.stringify({ ...added.plan, units: [...(added.plan['units'] as Raw[]), { id: 'mutants', spec: 'mutants.json', risk: 'low', scope: ['src/**'], resources: ['db'] }] }));
+    writeFileSync(added.planFile, JSON.stringify({ ...added.plan, units: [...(added.plan['units'] as Raw[]), { id: 'mutants', spec: 'mutants.json', risk: 'low', systems: [systemName('app')], resources: ['db'] }] }));
     const later = await start(input(added));
     assert.ok(later.kind === 'refused' && later.rejections[0]?.kind === 'plan-change-refused', JSON.stringify(later));
     assert.match(later.rejections[0].reasons.join('\n'), /^unit id mutants is reserved/);
     assert.equal(appliedFacts(added).rev, null);
-  });
-
-  it('plan-change-refused: a fresh arc whose lane evidenceGlobs cover a unit\'s own scope is refused, the lane and the entry named (M4b run 3)', T, async () => {
-    const s = setup();
-    const plan = { ...s.plan, units: [{ ...(s.plan['units'] as Raw[])[0]!, scope: ['src/cli.js'] }] };
-    const spec = { ...s.spec, scope: ['src/cli.js'] };
-    write({ ...s, plan, spec: { ...spec, lanes: [{ ...lane(), evidenceGlobs: ['src/**/*.js', 'out/**'], state: 'active' }] } });
-    const refused = await start(input(s));
-    assert.ok(refused.kind === 'refused' && refused.rejections.length === 1 && refused.rejections[0]?.kind === 'plan-change-refused', JSON.stringify(refused));
-    assert.equal(refused.rejections[0].reasons.length, 1);
-    assert.match(refused.rejections[0].reasons[0]!, /^unit u1 lane unit: evidenceGlobs entry `src\/\*\*\/\*\.js` covers `src\/cli\.js` of the unit's scope\./);
-    assert.equal(appliedFacts(s).rev, null, 'no revision recorded');
-
-    write({ ...s, plan, spec: { ...spec, lanes: [{ ...lane(), evidenceGlobs: ['out/**'], state: 'active' }] } });
-    assert.equal((await start(input(s))).kind, 'passed', 'outputs outside the scope pass');
   });
 
   it('plan-change-refused: startup ignores edits dropping a started unit and moving its root; an explicit revision refuses every reason', T, async () => {
@@ -565,7 +551,7 @@ describe('startup.plan-in-force', () => {
     j.fact({ kind: 'stage-outcome', unit: 'u1' as never, stage: 'plan-check', attempt: 1, outcome: 'approve', class: 'advance', chargeable: false });
     j.close();
     const moved = tmpDir('st-wt2');
-    writeFileSync(s.planFile, JSON.stringify({ ...s.plan, worktreeRoot: moved, units: [{ id: 'u2', spec: 'u2.json', risk: 'low', scope: ['src/**'], resources: ['db'] }] }));
+    writeFileSync(s.planFile, JSON.stringify({ ...s.plan, worktreeRoot: moved, units: [{ id: 'u2', spec: 'u2.json', risk: 'low', systems: [systemName('app')], resources: ['db'] }] }));
     const result = await start(input(s));
     assert.equal(result.kind, 'passed', 'startup uses the plan in force');
     const journal = openJournal(runDirOf(s), arcId(s.arc));
@@ -663,4 +649,3 @@ describe('startup.m2: over capacity, own-arc residues, the respawn smoke', () =>
     assert.deepEqual(start.smoked?.kind === 'refused' ? start.smoked.rejections.map((r) => r.kind) : null, ['backend-smoke']);
   });
 });
-

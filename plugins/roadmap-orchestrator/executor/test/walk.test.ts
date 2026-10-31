@@ -1,3 +1,4 @@
+import { systemName } from '../src/core/ids.ts';
 // dev.13 unit tests (plan §7 "Unit tests"): the milestone node over DAG shapes (src/walk/node.ts), the rounds brake and
 // the milestone states (src/walk/milestones.ts), a walk report's validation and minting (src/walk/report.ts), the port
 // placeholder (src/walk/bringup.ts) and the MCP config's substitutions (src/walk/walk.ts). Pure: plans and views are
@@ -22,7 +23,7 @@ import { COMPARE_ATTEMPTS,failedCompares,touchesReference } from '../src/walk/co
 import { milestoneProgress,milestoneState,walkItemsDue,walksPending } from '../src/walk/milestones.ts';
 import { milestoneEdges,milestoneWaits } from '../src/walk/node.ts';
 import { polishDue } from '../src/walk/polish.ts';
-import { coversReference,evidencePath,walkDraft,walkRefusals } from '../src/walk/report.ts';
+import { evidencePath,walkDraft,walkRefusals } from '../src/walk/report.ts';
 import { walkSessionMcp } from '../src/walk/walk.ts';
 import { J1_EVIDENCE,walkAnswer } from './fixtures/walk-common.ts';
 import { tmpDir } from './helpers/repo.ts';
@@ -274,32 +275,27 @@ describe('a walk report held to its inputs (src/walk/report.ts)', () => {
 
   test('report.polish-refusals: a scope covering no reference, an id the plan holds, a spec for another unit', () => {
     const d = dir();
-    const spec = (unit: string) => ({
+    const spec = (unit: string) => ({ intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
       schema: 'roadmap/spec-m1', unit, rev: 1, lanes: [{ id: 'l', argv: ['true'], cwd: '.', env: { set: [], pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], evidenceExcludes: [], state: 'active' }],
-      acceptance: [{ id: 'A1', clause: 'c', failLoudIfUndelivered: true, state: 'active' }], scope: ['design/**'], resources: [], decisions: [], facts: [],
+      acceptance: [{ id: 'A1', clause: 'c', failLoudIfUndelivered: true, state: 'active' }],  resources: [], decisions: [], facts: [],
       cites: { contracts: [], rulings: [] }, obligations: [], repairs: [],
     });
     const out = answer({
       polish: [
-        { journey: 'J-1', text: 'p1', unit: { id: 'x-ok', scope: ['design/tokens.css'], spec: spec('x-ok') } },
-        { journey: 'J-1', text: 'p2', unit: { id: 'x-src', scope: ['src/**'], spec: spec('x-src') } },
-        { journey: 'J-1', text: 'p3', unit: { id: 'a', scope: ['design/**'], spec: spec('a') } },
-        { journey: 'J-1', text: 'p4', unit: { id: 'x-other', scope: ['docs/**'], spec: spec('x-ok') } },
+        { journey: 'J-1', text: 'p1', unit: { id: 'x-ok', systems: [systemName('app')], spec: spec('x-ok') } },
+        { journey: 'J-1', text: 'p2', unit: { id: 'x-src', systems: [systemName('app')], spec: spec('x-src') } },
+        { journey: 'J-1', text: 'p3', unit: { id: 'a', systems: [systemName('app')], spec: spec('a') } },
+        { journey: 'J-1', text: 'p4', unit: { id: 'x-other', systems: [systemName('app')], spec: spec('x-ok') } },
       ],
     });
     const reasons = walkRefusals(check(d), out).filter((r) => r.startsWith('polish'));
-    assert.equal(reasons.length, 3, reasons.join('\n'));
-    assert.match(reasons[0]!, /x-src.*covers none of MS-1's references/);
-    assert.match(reasons[1]!, /a is already a unit of the plan/);
-    assert.match(reasons[2]!, /its spec is unit x-ok rev 1/);
+    assert.equal(reasons.length, 2, reasons.join('\n'));
+    assert.match(reasons[0]!, /a is already a unit of the plan/);
+    assert.match(reasons[1]!, /its spec is unit x-ok rev 1/);
   });
 
   test('report.covers-and-paths: scope coverage and evidence paths', () => {
     const refs = ['design', 'docs/api'] as never[];
-    assert.equal(coversReference(refs, ['design/**' as never]), true);
-    assert.equal(coversReference(refs, ['docs/**' as never]), true, 'a pattern above a reference holds it');
-    assert.equal(coversReference(refs, ['docs/api/errors.md' as never]), true, 'a file inside a reference');
-    assert.equal(coversReference(refs, ['designer/**' as never, 'docs/apis/**' as never]), false);
     const d = absPath('/run/evidence/jobs/walk-1');
     assert.equal(evidencePath(d, 'J-1/a.png'), '/run/evidence/jobs/walk-1/J-1/a.png');
     assert.equal(evidencePath(d, '/run/evidence/jobs/walk-1/x'), '/run/evidence/jobs/walk-1/x');
@@ -350,7 +346,7 @@ describe('polish and compare (src/walk/polish.ts, src/walk/compare.ts)', () => {
   const plan = (units: readonly U[] = [{ id: 'a' }], rounds?: number) => planOf(units, [m], rounds);
   const proposed = (n: number, job: number, unit: string): WalkFact => ({
     kind: 'polish-proposed', id: `X-${n}` as never, job: W(job), milestone: 'MS-1' as MilestoneId, journey: 'J-1' as never, evidence: ['/e/shot.png'], text: `tweak ${n}`,
-    unit: { id: unit as UnitId, scope: ['design/**' as never], spec: '{}' },
+    unit: { id: unit as UnitId, systems: [systemName('app')], spec: '{}' },
   });
   const refused = (n: number): WalkFact => ({ kind: 'polish-refused', proposal: `X-${n}` as never, reasons: ['its scope covers none of the references'] });
 

@@ -1,3 +1,4 @@
+import { systemName } from '../src/core/ids.ts';
 // dev.17 lane topology: the batch points (src/pipeline/batchlanes.ts `runBatchPoint`), where a holistic plan's `batch` suite
 // lanes run, over real arcs (real git, real processes, the fake claude answering walk and lens calls by job). Named tests:
 // batch.walk-red (code's walkthrough P1 naming the lane, in the walk's findings, the node held), batch.walk-green,
@@ -134,9 +135,9 @@ describe('the milestone batch point (dev.17)', () => {
       syncInputs(r);
       const planDir = join(d.planPath, '..');
       const spec = JSON.parse(readFileSync(join(planDir, 'u1.json'), 'utf8')) as Json;
-      writeFileSync(join(planDir, 'r1.json'), JSON.stringify({ ...spec, unit: 'r1', rev: 1, repairs: ['F-1'], scope: ['product/**', 'src/**', 'test/**'] }));
+      writeFileSync(join(planDir, 'r1.json'), JSON.stringify({ ...spec, unit: 'r1', rev: 1, repairs: ['F-1'] }));
       await applyPlanEdit(r, walkContext(r).w as never, (plan) => {
-        (plan['units'] as Json[]).push({ id: 'r1', spec: 'r1.json', risk: 'med', scope: ['product/**', 'src/**', 'test/**'], resources: [], origin: 'repair' });
+        (plan['units'] as Json[]).push({ id: 'r1', spec: 'r1.json', risk: 'med', systems: [systemName('app')], resources: [], origin: 'repair' });
       });
       await merge(r, 'r1');
       assert.deepEqual(await walk(r), { kind: 'ended', job: 'walk-2', outcome: 'reported', passed: true });

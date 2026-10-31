@@ -86,7 +86,7 @@ const once = (name: string, when: () => boolean, act: () => Promise<unknown> | v
 function makeHolistic(r: ExecRun, units: readonly string[], i2 = false): void {
   const control = join(tmpDir('cm-witness-control'), 'control.json');
   writeWitnessControl(control, { trees: { '*': { outcomes: { t1: 'pass', t2: 'pass' } } } });
-  const mapping = [...['src/**', 'test/**', 'contracts/**'].map((pattern) => ({ pattern, obligations: ['I-1'] })), ...(i2 ? [{ pattern: 'lib/**', obligations: ['I-2'] }] : [])];
+  const mapping = [...['app'].map((system) => ({ system, obligations: ['I-1'] })), ...(i2 ? [{ system: 'lib', obligations: ['I-2'] }] : [])];
   // The journey lane's test paths and each witness's file in the baseline (a fresh start requires both, plan defects 2026-10-16).
   const obligations = [{ id: 'I-1', testIds: ['t1'], files: ['test/add.test.js'] }, ...(i2 ? [{ id: 'I-2', testIds: ['t2'], files: ['test/add.test.js'] }] : [])];
   corpusTarget(r, { obligations: obligationsJson({ obligations, mapping, laneExtra: { journey: { testPaths: ['test/**'] } } }, control), advances: ADVANCES, audit: { lenses: ['vision'] }, planExtra: { capacity: { cpu: 16 } } });

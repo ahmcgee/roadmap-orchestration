@@ -1,3 +1,4 @@
+import { systemName } from '../src/core/ids.ts';
 // Pools, `@cpu` tokens and the M2 holders (src/resources/{pool,reserve}.ts): all-or-none requests in lock order,
 // the instance binding persisted into residue recipes and replayed by a retry's reclaim, the over-capacity rows
 // and the legacy reading of a declared `cpu`, the publication holder.
@@ -158,8 +159,8 @@ describe('res.over-capacity', () => {
     const r = newRun();
     const plan = poolPlanFor(r, {
       units: [
-        { id: 'u1', spec: 'u1.json', risk: 'low', scope: ['src/**'], resources: [DB, ESTATE], cpu: 6 },
-        { id: 'u2', spec: 'u2.json', risk: 'low', scope: ['src/**'], resources: [] },
+        { id: 'u1', spec: 'u1.json', risk: 'low', systems: [systemName('app')], resources: [DB, ESTATE], cpu: 6 },
+        { id: 'u2', spec: 'u2.json', risk: 'low', systems: [systemName('app')], resources: [] },
       ],
       suite: { lanes: [{ id: 'suite', argv: ['true'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'candidate', resources: [], evidenceGlobs: [] }] },
     });

@@ -18,8 +18,7 @@ import { join } from 'node:path';
 import { resultBytes,writeResult } from '../backends/adapter.ts';
 import {
 type Argv,type BackendCall,type ClaudeImplementerSession,type ClaudeTriple,type CodexSession,type CodexTriple,
-backendArgv,freshClaudeImplementerSession,freshJudgmentSession,promptBytes,
-} from '../backends/argv.ts';
+backendArgv,freshClaudeImplementerSession,freshJudgmentSession,promptBytes } from '../backends/argv.ts';
 import { detectContainmentMode } from '../contain/detect.ts';
 import type { BackendParkClass,SpawnSubject } from '../core/events.ts';
 import { durableMkdir,durableWrite } from '../core/fsx.ts';
@@ -31,16 +30,14 @@ import {
 type BackendErrorClass,type BackendOutcome,type BackendResult,type CommandPurpose,type CommandResult,type ExitFile,
 type JudgmentSession,type LaunchFile,type LaunchTerminal,type ResultFile,
 STDOUT_FILE,
-type Usage,
-} from '../core/records.ts';
+type Usage } from '../core/records.ts';
 import { type AbsPath,absPath,isoTimeOf } from '../core/values.ts';
 import { SCHEMA_VERSION } from '../core/version.ts';
 import { launchPressure } from '../host/pressure.ts';
 import { chargeOf,usageFact } from '../pipeline/invoke.ts';
 import { type ResolvedRouting,seatsInForce } from '../routing/layers.ts';
 import {
-BACKENDS,type Backend,type FreshRole,type ProfileName,type Role,type Seat as SeatName,type SeatRef,atSeat,seatRef,
-} from '../routing/types.ts';
+BACKENDS,type Backend,type FreshRole,type ProfileName,type Role,type Seat as SeatName,type SeatRef,atSeat,seatRef } from '../routing/types.ts';
 import { awaitRunner,launchSha256,prepareLaunch,startRunner } from '../runner/launch.ts';
 import type { StartupRejection } from './startup.ts';
 

@@ -9,7 +9,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { seatRev,sha256,specRev } from '../src/core/ids.ts';
-import { type DispatchRecord,dispatchRecord,effectiveScope,inScope } from '../src/core/records.ts';
+import { type DispatchRecord,dispatchRecord } from '../src/core/records.ts';
 import { repoPath,repoPattern } from '../src/core/values.ts';
 import {
 SEAT_TRIPLES,type StageContext,
@@ -41,7 +41,6 @@ const dispatches = (run: StageRun): readonly DispatchRecord[] => facts(run).flat
 test('dispatch.pinned-once: the first dispatch pins scope, risk floor, routingRev and the implementer seat', () => {
   const run = setupUnit({ steps: [], risk: 'low' });
   const first = seated(pinDispatch(run.ctx, run.unit, spec1(run)));
-  assert.deepEqual(first.scope, ['src/**', 'test/**']);
   assert.equal(first.riskFloor, 'low');
   assert.equal(first.routingRev, run.ctx.routing(null).rev);
   assert.match(first.implementerSeatRev, /^[0-9a-f]{16}$/);
@@ -65,7 +64,6 @@ test('dispatch.risk-raise: a plan-check that raises the risk records a new dispa
   assert.ok(done.next.kind === 'stage' && done.next.stage === 'build' && done.next.seat === 'high', 'the build sits on the raised seat');
   const [low, high] = dispatches(run);
   assert.deepEqual([low?.riskFloor, high?.riskFloor], ['low', 'high']);
-  assert.deepEqual(high!.scope, low!.scope, 'the scope envelope is kept');
   assert.equal(high!.routingRev, low!.routingRev);
   assert.notEqual(high!.implementerSeatRev, low!.implementerSeatRev, 'the raised floor pins the high implementer seat');
   assert.equal(run.journal.view.unit(U1).risk, 'high');
@@ -83,7 +81,6 @@ test('dispatch.repin-before-build: a routing change before any build re-pins the
   const [first, repinned] = dispatches(run);
   assert.equal(repinned?.routingRev, changed.routing(null).rev);
   assert.notEqual(repinned?.implementerSeatRev, first?.implementerSeatRev);
-  assert.deepEqual([repinned?.scope, repinned?.riskFloor], [first?.scope, first?.riskFloor], 'scope and floor are unchanged');
   assert.equal(seated(implementerDispatch(changed, U1)).triple.backend, 'claude', 'the build will sit on the new binding');
 });
 
@@ -256,32 +253,3 @@ test('dispatch.dev6-decoder: a dev.6-shaped record reads back its triple; fronti
 
 const OPUS_MEDIUM: Triple = { backend: 'claude', model: 'claude-opus-5-5', effort: 'medium' };
 const SONNET_MEDIUM: Triple = { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'medium' };
-
-
-
-
-
-// Derived exclusion (2026-10-27; 1.0.0-dev.26): the pin, the read-time default and growth all bound the same write set.
-test('dispatch.derived-exclusion: outputs without a source are excluded; source growth and inclusion across entries win', () => {
-  const run = setupUnit({ steps: [] });
-  const entry = { sources: [repoPattern('lib/**')], outputs: [repoPattern('test/generated.json')] };
-  const plan = { ...run.ctx.plan(), derived: [entry] };
-  const ctx = { ...run.ctx, plan: () => plan };
-  const first = seated(pinDispatch(ctx, run.unit, spec1(run)));
-  assert.deepEqual(first.excluded, ['test/generated.json']);
-  assert.equal(inScope(effectiveScope(first), repoPath('test/generated.json')), false);
-  assert.equal(inScope(effectiveScope(first), repoPath('test/sibling.json')), true);
-  const { excluded: _excluded, ...old } = first;
-  const read = dispatchRecord(JSON.parse(JSON.stringify(old)), 'old dispatch');
-  assert.deepEqual(effectiveScope(read).exclude, []);
-  assert.equal(inScope(effectiveScope(read), repoPath('test/generated.json')), true);
-
-  const source = { ...entry, sources: [repoPattern('src/**')] };
-  const shared = { ...plan, derived: [entry, source] };
-  const included = seated(pinDispatch({ ...ctx, plan: () => shared }, run.unit, spec1(run)));
-  assert.equal(included.excluded, undefined, 'an included output is removed from exclusions, including one already inside scope');
-  const grown = { ...run.unit, scope: [...run.unit.scope, repoPattern('lib/**')] };
-  const grownPin = firstPin({ ...ctx, plan: () => ({ ...plan, units: [grown] }) }, grown, spec1(run), grown.risk);
-  assert.equal(grownPin.excluded, undefined);
-  assert.equal(inScope(effectiveScope(grownPin), repoPath('test/generated.json')), true);
-});

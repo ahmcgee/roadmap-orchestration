@@ -3,8 +3,7 @@
 import { posix } from 'node:path';
 import {
 type ArcId,type BriefId,type DivergenceId,type EdgeId,type NeedsUserId,type PhaseQuestionId,type ProposalId,type ResourceName,type Sha,
-type UnitId,arcId,briefId,divergenceId,edgeId,needsUserId,phaseQuestionId,proposalId,resourceName,sha,unitId,
-} from '../core/ids.ts';
+type UnitId,arcId,briefId,divergenceId,edgeId,needsUserId,phaseQuestionId,proposalId,resourceName,sha,unitId } from '../core/ids.ts';
 import { DEMO_ACTS,type DemoAct,LENS_KIND_NAMES,type LensKindName,type PauseTarget,type ResumeTarget } from '../core/records.ts';
 import { oneOf } from '../core/validate.ts';
 import { type AbsPath,absPath } from '../core/values.ts';
@@ -95,7 +94,6 @@ export type Command =
   | Readonly<{ command: 'flow-request'; reason: string; run: RunLocator }>
   | Readonly<{ command: 'flow-given'; repo: string; lever: FlowLever; note: string }>
   /** Scope growth (2026-10-15): `scope accept|reject <unit> --reason <text>`, the root agent's decision on a held proposal. */
-  | Readonly<{ command: 'scope-decide'; unit: UnitId; decision: 'accept' | 'reject'; reason: string; run: RunLocator }>
   /** dev.13: `demo up|down|hold|release`, the owner's act on the demo (src/demo/promote.ts). */
   | Readonly<{ command: 'demo'; act: DemoAct; run: RunLocator }>;
 
@@ -433,14 +431,6 @@ export function parseCommand(argv: readonly string[]): Command {
           throw new CliError(`flow: expected the subcommand accept, reject, request or given, got ${JSON.stringify(sub ?? '')}`);
       }
     }
-    case 'scope': {
-      const [sub, ...args] = rest;
-      if (sub !== 'accept' && sub !== 'reject') throw new CliError(`scope: expected the subcommand accept or reject, got ${JSON.stringify(sub ?? '')}`);
-      const name = `scope ${sub}`;
-      const p = parseRest(args, { ...LOCATOR, reason: 'value' }, name);
-      const unit = arg(name, '<unit>', unitId, onePositional(p, name, '<unit>'));
-      return { command: 'scope-decide', unit, decision: sub, reason: nonBlank(name, 'reason', required(p, name, 'reason', '<text>')), run: locator(p, name) };
-    }
     case 'demo': {
       const [act, ...args] = rest;
       if (!(DEMO_ACTS as readonly (string | undefined)[]).includes(act)) throw new CliError(`demo: expected the act up, down, hold or release, got ${JSON.stringify(act ?? '')}`);
@@ -450,7 +440,7 @@ export function parseCommand(argv: readonly string[]): Command {
     }
     default:
       throw new CliError(
-        `unknown command ${JSON.stringify(command ?? '')}; expected one of --version, start, status, watch, stop, pause, ack, resume, sweep, apply, resolve-edge, run-only, reverse, steer, note, merge-in, audit, close-admissions, gc, phase0 check, corpus pin, brief, pr, chain status, answer, witness-check, resume-arc, inputs export, flow accept, flow reject, flow request, flow given, scope accept, scope reject, demo up, demo down, demo hold, demo release`,
+        `unknown command ${JSON.stringify(command ?? '')}; expected one of --version, start, status, watch, stop, pause, ack, resume, sweep, apply, resolve-edge, run-only, reverse, steer, note, merge-in, audit, close-admissions, gc, phase0 check, corpus pin, brief, pr, chain status, answer, witness-check, resume-arc, inputs export, flow accept, flow reject, flow request, flow given, demo up, demo down, demo hold, demo release`,
       );
   }
 }

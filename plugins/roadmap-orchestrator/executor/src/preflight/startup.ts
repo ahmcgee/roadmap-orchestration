@@ -8,8 +8,7 @@ type ArcId,
 CPU_POOL,
 type InvocationId,type LaneId,type MilestoneId,type ResourceName,type Sha,type Sha256Hex,type UnitId,
 arcId,invocationIdOf,laneId,
-milestoneId,resourceName,sha,sha256,unitId,
-} from '../core/ids.ts';
+milestoneId,resourceName,sha,sha256,unitId } from '../core/ids.ts';
 import { type ResidueKey,residueKey } from '../core/records.ts';
 import { Fields,type Read,SchemaError,arrayOf,literal,nat,nullable,object,oneOf,positive,sortedBy,str,tagged,version } from '../core/validate.ts';
 import { type AbsPath,type IsoTime,type PlanPath,type RefName,type RepoPath,absPath,isoTime,planPath,refName,repoPath } from '../core/values.ts';
@@ -17,12 +16,10 @@ import type { SchemaVersion } from '../core/version.ts';
 import { type PlanDefect,planDefect } from '../holistic/types.ts';
 import type { PlanM1,PlanUnit } from '../input/plan.ts';
 import {
-type ChainProblem,type CorpusProblem,type Phase0Problem,chainProblem,corpusProblem,phase0Problem,
-} from '../phase0/types.ts';
+type ChainProblem,type CorpusProblem,type Phase0Problem,chainProblem,corpusProblem,phase0Problem } from '../phase0/types.ts';
 import type { OverCapacity } from '../resources/pool.ts';
 import {
-type ArcRoleSet,type Backend,type ModelClass,type ProfileName,type RoutingLayerName,type SeatRef,backend,modelClass,profileName,seatFields,
-} from '../routing/types.ts';
+type ArcRoleSet,type Backend,type ModelClass,type ProfileName,type RoutingLayerName,type SeatRef,backend,modelClass,profileName,seatFields } from '../routing/types.ts';
 
 /** EX_CONFIG: start refused; fixing the input or disposing the blocker is the user's move. */
 export const EXIT_REFUSED = 78;

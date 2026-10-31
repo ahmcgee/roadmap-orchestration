@@ -114,7 +114,7 @@ Report every real defect you find, each with evidence you can state in one sente
 
 A finding is blocking when the merge cannot carry it, and every blocking finding names its defect, one of:
 - incorrect-behaviour: the code does the wrong thing for an input or a state the spec covers.
-- contract-violation: the change breaks the spec, a cited contract, a ruling, a corpus rule, or the pinned scope envelope.
+- contract-violation: the change breaks the spec, a cited contract, a ruling, a corpus rule.
 - security: the change opens a way to read, change or run what the caller should not.
 - requirement-unmet: an acceptance clause, obligation or requirement this unit owns is not delivered.
 - test-inadequate: a test cited as proof of a requirement, an acceptance item or a failure mode does not verify it. It was weakened, it is vacuous (it asserts nothing, is tautological, mocks the very thing it tests, or passes without the change), or it is missing.
@@ -137,9 +137,6 @@ Classify by what the merge cannot carry, not by how sure you are: a defect you c
 In a corpus arc the executor runs two checks before you, and the executable checks block gives their results; you do not re-run them. Witness presence looked up every required witness test by its exact id on the arc lanes: a required test still missing or failing is a blocking finding that names it. Mutation smoke reverted the unit's production change, kept its test files, and ran the target witness tests again. A killed test failed without the change, so it shows the change. A survived test passed without it, so it does not show what the change does: that is a blocking finding (an acceptance clause left untested) unless the behaviour it checks existed before this unit, which you confirm in the code and record as a note. An inconclusive result proves nothing either way: read that test yourself. When smoke did not run, the block says why, and you judge the tests by reading them. A lane the ledger marks reused passed at an earlier commit whose declared inputs this change leaves untouched; its record stands as evidence for this head.
 </executable_checks>
 
-<scope>
-The scope envelope was pinned at dispatch. Rule on each path listed as scope growth with its own finding: a note when the path was necessary to satisfy the spec (say why), a blocking contract-violation with a directive to revert it when it is creep. Growth is a signal to you, never a licence to review those files as if they were in scope. A path listed as reverted was edited by the build outside the envelope and reverted by the executor, so it is in no diff: when the spec cannot be satisfied without it, escalate (only the root agent grows a unit's scope); otherwise record a note that the unit needed no such change.
-</scope>
 
 <direction>
 The Direction breaks ties only where the spec, contracts and rulings are silent; it never overrides them and never widens scope. When it decides a finding, say which preference decided it.
@@ -249,7 +246,7 @@ export const PROMPT: PromptModule<'gate'> = {
   schema: GATE_SCHEMA,
   fields: [
     'systemNotes',
-    'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'planCheckNotes', 'obligations', 'standingObligations', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
+    'spec', 'intent', 'nonGoals', 'contracts', 'rulings', 'index', 'target', 'direction', 'planCheckNotes', 'obligations', 'standingObligations', 'diff', 'laneLedger', 'evidence', 'systems', 'reach', 'traits', 'reachTraits', 'priorRound',
     'checks', 'escalation', 'largeDiff', 'milestones', 'review', 'undeclaredContracts',
   ],
   render: (i) => `${documentsXml([
@@ -293,19 +290,12 @@ ${laneLedgerText(i.laneLedger)}
 ${bullets(i.evidence, '(none)')}
 </evidence_dirs>
 
-<scope_envelope>
-${bullets(i.scope.patterns, '(empty)')}
-Excluded generated outputs (never edit):
-${bullets(i.scope.excluded, '(none)')}
-</scope_envelope>
-
-<scope_growth>
-${bullets(i.scope.growth, '(none: every changed path is inside the envelope)')}
-</scope_growth>
-
-<scope_reverted>
-${bullets(i.scope.rejected, '(none: the build edited nothing outside the envelope)')}
-</scope_reverted>${undeclaredContractsText(i)}${gateChecksText(i.checks)}${priorRound(i)}${review(i)}${escalationText(i.escalation, 'gate')}${largeDiff(i)}
+<unit_systems>${bullets(i.systems, '(none)')}</unit_systems>
+<reach>${bullets(i.reach, '(none)')}</reach>
+<system_traits>${bullets(i.traits, '(none)')}</system_traits>
+<reach_traits>${bullets(i.reachTraits, '(none)')}</reach_traits>
+<intent>${i.intent}</intent>
+<non_goals>${bullets(i.nonGoals, '(none)')}</non_goals>${undeclaredContractsText(i)}${gateChecksText(i.checks)}${priorRound(i)}${review(i)}${escalationText(i.escalation, 'gate')}${largeDiff(i)}
 
 Gate unit ${i.spec.unit} at head ${i.diff.bounded.to}, spec revision ${i.spec.rev}. Grade each acceptance clause, then return your decision.`,
 };

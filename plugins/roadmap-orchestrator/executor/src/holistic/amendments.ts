@@ -68,7 +68,7 @@ export function conversionAmendment(job: JobId, c: Conversion, op: BundleOp): Am
 export function admitSummary(op: Extract<BundleOp, { op: 'admit' }>): string {
   const spec = JSON.parse(op.spec) as { acceptance?: { clause?: unknown }[] };
   const acceptance = (spec.acceptance ?? []).flatMap((x) => (typeof x.clause === 'string' ? [x.clause] : []));
-  const head = `Admit unit ${op.unit.id} (origin ${op.unit.origin}, risk ${op.unit.risk}, scope ${op.unit.scope.join(', ')})`;
+  const head = `Admit unit ${op.unit.id} (origin ${op.unit.origin}, risk ${op.unit.risk}, scope ${op.unit.systems.join(', ')})`;
   return acceptance.length === 0 ? `${head}.` : `${head}: ${acceptance.join(' ')}`;
 }
 

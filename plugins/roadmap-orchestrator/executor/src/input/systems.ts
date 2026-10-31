@@ -24,11 +24,13 @@
 // there keeps the lane's key.
 import { type LaneId,type SystemName,DOCS_SYSTEM,systemName } from '../core/ids.ts';
 import type { LaneDef } from '../core/records.ts';
-import { type Read,Fields,SchemaError,arrayOf,assertUnique,object } from '../core/validate.ts';
+import { type Read,Fields,SchemaError,arrayOf,assertUnique,object,oneOf } from '../core/validate.ts';
 import { type RepoPath,type RepoPattern,matchesPattern,repoPath,repoPattern } from '../core/values.ts';
 
 
-export type SystemDef = Readonly<{ paths: readonly RepoPattern[]; tests: readonly RepoPattern[]; dependsOn: readonly SystemName[] }>;
+export const SYSTEM_TRAITS = ['persistent', 'redacts'] as const;
+export type SystemTrait = (typeof SYSTEM_TRAITS)[number];
+export type SystemDef = Readonly<{ traits: readonly SystemTrait[]; paths: readonly RepoPattern[]; tests: readonly RepoPattern[]; dependsOn: readonly SystemName[] }>;
 export type SharedArea = Readonly<{ paths: readonly RepoPattern[]; dependents: readonly SystemName[] }>;
 export type SystemsMap = Readonly<{
   systems: Readonly<Record<SystemName, SystemDef>>;
@@ -44,6 +46,7 @@ const somePatterns = arrayOf((v, p) => repoPattern(v, p));
 const someNames = arrayOf((v, p) => systemName(v, p));
 
 const systemDef = object((f): SystemDef => ({
+  traits: f.optional('traits', arrayOf(oneOf(SYSTEM_TRAITS))) ?? [],
   paths: f.get('paths', patterns), tests: f.optional('tests', somePatterns) ?? [], dependsOn: f.optional('dependsOn', someNames) ?? [],
 }));
 
@@ -75,6 +78,7 @@ export const systemsMap: Read<SystemsMap> = object((f) => {
     if (!Object.hasOwn(systems, name)) throw new SchemaError(at, 'a system the map declares', name);
   };
   for (const [name, def] of Object.entries(systems) as [SystemName, SystemDef][]) {
+    assertUnique(def.traits, (t) => t, `${f.path}.systems.${name}.traits`);
     assertUnique(def.dependsOn, (d) => d, `${f.path}.systems.${name}.dependsOn`);
     def.dependsOn.forEach((d, i) => known(d, `${f.path}.systems.${name}.dependsOn[${i}]`));
   }
@@ -200,3 +204,12 @@ export function unknownLaneSystems(map: SystemsMap | null, lanes: readonly Pick<
   return lanes.flatMap((l) => (l.systems ?? []).filter((s) => map === null || (s === DOCS_SYSTEM ? map.docs.length === 0 : !Object.hasOwn(map.systems, s)))
     .map((system) => ({ lane: l.id, system })));
 }
+
+/** Direct membership of a path in declared unit systems; shared paths and contract consumers participate. */
+export const inUnitSystems = (map: SystemsMap, systems: readonly SystemName[], path: RepoPath): boolean =>
+  [...pathSystems(map, path)].some((s) => systems.includes(s));
+/** Paths beyond the declared systems are gate data, never a write restriction. */
+export const systemReach = (map: SystemsMap, systems: readonly SystemName[], paths: readonly RepoPath[]): readonly RepoPath[] =>
+  [...new Set(paths.filter((p) => !inUnitSystems(map, systems, p)))].sort();
+export const systemTraits = (map: SystemsMap, systems: Iterable<SystemName>): readonly SystemTrait[] =>
+  [...new Set([...systems].flatMap((s) => map.systems[s]?.traits ?? []))].sort();

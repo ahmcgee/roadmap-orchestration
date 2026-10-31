@@ -47,24 +47,3 @@ export function bytesSha256(bytes: Buffer): Sha256Hex {
 export function fileSha256(path: AbsPath): Sha256Hex {
   return bytesSha256(readFileSync(path));
 }
-
-/** A glob character: a scope pattern without one names exactly one path (a file, or a directory and what it holds). */
-const GLOB_CHAR = /[*?[{]/;
-
-/**
- * Why a unit's lanes may not declare their `evidenceGlobs` (authoring time only: the classifier's spec rows, so every
- * apply, start, flow apply and checkpoint bundle; a fresh start (`settlePlan`); a plan-check redirect's patch
- * (src/pipeline/stages.ts `evidenceRefusal`); never a read of a spec already in force). Declared evidence is what a lane's run writes: salvage never
- * commits it and the transient check refuses it at the candidate. So an entry covering a pattern of the unit's
- * scope, a literal path the scope names (its own source or tests) or the very same pattern, leaves the unit's work
- * there unmergeable. One reason per lane, entry and scope pattern, over every lane, active or not (the transient
- * check reads them all). `scope`: the plan entry's and the spec's.
- */
-export function evidenceScopeConflicts(unit: UnitId, scope: readonly RepoPattern[], spec: SpecM1): readonly string[] {
-  const patterns = [...new Set(scope)].sort();
-  return spec.lanes.flatMap((lane) => lane.evidenceGlobs.flatMap((glob) => patterns
-    .filter((s) => s === glob || (!GLOB_CHAR.test(s) && matchesPattern(repoPath(s.replace(/\/+$/, '')), glob)))
-    .map((s) => `unit ${unit} lane ${lane.id}: evidenceGlobs entry \`${glob}\` covers \`${s}\` of the unit's scope. evidenceGlobs declare `
-      + `the files the lane's run writes (its outputs), which are never committed or merged, so the unit's own work there could never `
-      + `reach integration: drop the entry, or narrow it to the lane's outputs (never source or tests)`)));
-}

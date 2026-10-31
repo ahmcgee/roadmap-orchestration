@@ -1,3 +1,4 @@
+import { protectedPathsInForce } from '../input/protected.ts';
 // Proportional review at the gate (dev.17; DESIGN-1.0.md §4 "Proportional review", SCHEMAS.md "Proportional review").
 //
 // Code owns the invariants that keep review proportional; the gate seat owns its method.
@@ -32,8 +33,7 @@ import { canonicalJson } from '../core/json.ts';
 import { approvalBlobsOf } from '../core/projections.ts';
 import type { ApprovalFingerprint,SpecM1 } from '../core/records.ts';
 import {
-type ApprovalBlobs,type FindingsLedgerEntry,type GateDelta,type GateReview,type LedgerOutcome,type ReviewDispute,isSettled,movedTargets,
-} from '../core/review.ts';
+type ApprovalBlobs,type FindingsLedgerEntry,type GateDelta,type GateReview,type LedgerOutcome,type ReviewDispute,isSettled,movedTargets } from '../core/review.ts';
 import { isUnitLink } from '../core/stale.ts';
 import type { ReviewApproval } from '../core/state.ts';
 import { SchemaError } from '../core/validate.ts';
@@ -164,13 +164,13 @@ function carriedApproval(ctx: StageContext, unit: UnitId, spec: SpecM1, tip: Sha
   if (planned === undefined) throw new Error(`unit ${unit} re-enters ${from}, which is not in the plan in force`);
   const approved = loadUnitSpec(ctx, planned).spec;
   if (!designRevisionsOnly(view, from, blobs.specRev, approved.rev) || !sameButScope(approved, spec)) return null;
-  if (transientCheck(ctx.repo, unitTransientRules(dispatchOf(view, unit), spec), tip, head).length > 0) return null;
+  if (transientCheck(ctx.repo, unitTransientRules(protectedPathsInForce(ctx.runDir, ctx.journal.view), spec), tip, head).length > 0) return null;
   return { approval, blobs };
 }
 
 /** Whether two specs differ in nothing but their unit, revision and scope. */
 function sameButScope(a: SpecM1, b: SpecM1): boolean {
-  const rest = ({ unit: _unit, rev: _rev, scope: _scope, ...other }: SpecM1): unknown => other;
+  const rest = ({ unit: _unit, rev: _rev, ...other }: SpecM1): unknown => other;
   return canonicalJson(rest(a)) === canonicalJson(rest(b));
 }
 

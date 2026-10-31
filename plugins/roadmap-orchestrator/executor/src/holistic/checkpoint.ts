@@ -110,8 +110,7 @@ import { DEFAULT_CHECKPOINT,DEFAULT_CONVERGENCE_K,type PlanM1,advancesOf,hasMile
 import { raiseNeedsUser,raisedFor,readNeedsUser } from '../needsuser.ts';
 import { orderingOf } from '../park/ordering.ts';
 import {
-type BackendCallOutcome,type JobParent,arcSeat,callArcRole,minutesMs,recordedArcCall,repairTurnOf,runOp,verdictOf,
-} from '../pipeline/dispatch.ts';
+type BackendCallOutcome,type JobParent,arcSeat,callArcRole,minutesMs,recordedArcCall,repairTurnOf,runOp,verdictOf } from '../pipeline/dispatch.ts';
 import { lineageDiagnosis } from '../pipeline/handover.ts';
 import { invocationDir,killWorkload } from '../pipeline/invoke.ts';
 import { arcJourneyLane,arcLaneKey,jobSeriesCheckout,laneEnvId,observations,observedViews,removeJobCheckouts,runJourneySeries } from '../pipeline/lanes.ts';
@@ -654,7 +653,7 @@ function renderPlan(ctx: CheckpointContext, s: Captured, r: Recorded): string {
     const st = view.unit(u.id);
     const parts = [
       `risk ${u.risk}`, `origin ${u.origin ?? 'planned'}`, `status ${st.status}${st.decided === null ? '' : ` (last ${st.decided.stage} ${st.decided.outcome})`}`,
-      `spec rev ${s.vector.specs[u.id] ?? '?'}`, `scope ${u.scope.join(', ')}`,
+      `spec rev ${s.vector.specs[u.id] ?? '?'}`, `systems ${u.systems.join(', ')}`,
       ...(u.after.length === 0 ? [] : [`after ${u.after.join(', ')}`]),
       ...(u.reenters === undefined ? [] : [`re-enters ${u.reenters.unit}`]),
       ...(u.cut === undefined ? [] : [`cut: ${u.cut.reason}`]),

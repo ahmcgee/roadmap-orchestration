@@ -84,11 +84,10 @@ import {
 type RepoConfig,type ResolvedRouting,
 parseRepoConfig,
 planStack,
-resolveRouting,selectProfile,unsupportedSeats,
-} from '../routing/layers.ts';
+resolveRouting,selectProfile,unsupportedSeats } from '../routing/layers.ts';
 import type { ArcRoleSet,ProfileName } from '../routing/types.ts';
 import { type Ruling,loadRulings,parseRulings } from '../spec/rulings.ts';
-import { SpecFileError,evidenceScopeConflicts,parseSpec } from '../spec/spec.ts';
+import { SpecFileError,parseSpec } from '../spec/spec.ts';
 import { laneRows } from './lanerows.ts';
 import { type SmokePark,type SmokeReport,type SmokeRouting,backendEnv,smoke,smokeOutages,smokeRejections } from './smoke.ts';
 import type { StartupCheck,StartupContext,StartupRejection } from './startup.ts';
@@ -527,13 +526,6 @@ export function settlePlan(
     const reserved = files.plan.units.map((u) => reservedUnitIdReason(u.id)).filter((r) => r !== null);
     if (reserved.length > 0) return [{ kind: 'plan-change-refused', reasons: reserved }];
     // The classifier's lane-evidence row, over every unit (group 1 already refused a spec that does not load).
-    const evidence = files.plan.units.flatMap((u) => {
-      const file = files.specs.get(u.id);
-      if (file === undefined || file.bytes === null) throw new Error(`settlePlan: unit ${u.id}'s spec is absent, which plan-invalid refuses first`);
-      const spec = parseSpec(file.bytes, file.path);
-      return evidenceScopeConflicts(u.id, [...u.scope, ...spec.scope], spec);
-    });
-    if (evidence.length > 0) return [{ kind: 'plan-change-refused', reasons: evidence }];
     const dropped = obligationDropped(context, files);
     if (dropped.length > 0) return [{ kind: 'plan-change-refused', reasons: dropped }];
     keepCorpusFiles(context.runDir, corpusFiles);

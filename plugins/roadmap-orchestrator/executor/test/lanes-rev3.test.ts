@@ -1,3 +1,4 @@
+import { systemName } from '../src/core/ids.ts';
 // M4a rev 3 step N1 (src/pipeline/lanes.ts, src/pipeline/redlane.ts, src/host/signatures.ts), integrated over real
 // processes and real git: series certificates, spec lane reuse (F1a), the repeat-signature rerun skip and the
 // persisted red class (F2), host-suspected failures (F3), the series' own checkout (Q3) and certified-only journey
@@ -227,10 +228,10 @@ describe('series certificates and lane reuse (F1a)', () => {
     const lane = { id: 'l', argv: ['true'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], inputs: ['src/**'] };
     const plan = {
       schema: 'roadmap/plan-m1', arc: 'arc-1', integrationBranch: 'main', baseline: 'a'.repeat(40), worktreeRoot: '/tmp/wt', contracts: [], rulings: 'r.md',
-      architectureDoc: 'A.md', direction: 'd', suite: { lanes: [lane] }, resources: [], units: [{ id: 'u1', spec: 'u1.json', risk: 'low', scope: ['src/**'], resources: [] }],
+      architectureDoc: 'A.md', direction: 'd', suite: { lanes: [lane] }, resources: [], units: [{ id: 'u1', spec: 'u1.json', risk: 'low', systems: [systemName('app')], resources: [] }],
     };
     assert.throws(() => parsePlan(plan), /plan\.suite\.lanes\[0\]\.inputs/);
-    assert.throws(() => parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [{ ...lane, reporter: 'jsonl' }], obligations: [], mapping: { paths: [] } }), /inputs/);
+    assert.throws(() => parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [{ ...lane, reporter: 'jsonl' }], obligations: [], mapping: { systems: [] } }), /inputs/);
   });
 
   test('lanes.full-reuse-creates-checkout / lanes.series-tree-own-path: a series reusing every lane still makes, censuses and certifies its checkout; seriesTree finds the series\' own checkout among others its attempt made', T, async () => {

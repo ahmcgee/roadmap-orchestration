@@ -1,3 +1,4 @@
+import { systemName } from '../../src/core/ids.ts';
 // The M3 paid fixture, step 1: `node evals/m3/setup.ts <dir>` lays out a fresh fixture in `<dir>` (absent or
 // empty; anything else is refused, so a previous run is never half-reused). Hand-authored against SCHEMAS.md
 // ("Input contract", "spec.json M1 subset", "M3: the holistic layer"):
@@ -148,20 +149,30 @@ const OBLIGATIONS: readonly ObligationSeed[] = [
 ];
 
 /** Every path a unit may touch (and each journey and doc), mapped. tidy's one path, `src/cli.js`, maps to I-3 only. */
+
+const SYSTEM_PATHS: Record<string, { paths: string[] }> = {};
+export const FIXTURE_SYSTEMS = { systems: SYSTEM_PATHS };
+function systemForPath(path: string) {
+  const name = systemName(path.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-$/, ''));
+  SYSTEM_PATHS[name] = { paths: [path] };
+  return name;
+}
+const systemsForPaths = (paths: readonly string[]) => paths.map(systemForPath);
+
 const MAPPING = [
-  { pattern: 'docs/money.md', obligations: ['I-2'] },
-  { pattern: 'journeys/cli.journey.js', obligations: ['I-3'] },
-  { pattern: 'journeys/money.journey.js', obligations: ['I-2'] },
-  { pattern: 'journeys/reconcile.journey.js', obligations: ['I-1'] },
-  { pattern: 'src/cli.js', obligations: ['I-3'] },
-  { pattern: 'src/display.js', obligations: ['I-2'] },
-  { pattern: 'src/format.js', obligations: ['I-2'] },
-  { pattern: 'src/parse.js', obligations: ['I-1'] },
-  { pattern: 'src/report.js', obligations: ['I-1'] },
-  { pattern: 'test/unit/display.test.js', obligations: ['I-2'] },
-  { pattern: 'test/unit/format.test.js', obligations: ['I-2'] },
-  { pattern: 'test/unit/parse.test.js', obligations: ['I-1'] },
-  { pattern: 'test/unit/report.test.js', obligations: ['I-1'] },
+  { system: systemForPath('docs/money.md'), obligations: ['I-2'] },
+  { system: systemForPath('journeys/cli.journey.js'), obligations: ['I-3'] },
+  { system: systemForPath('journeys/money.journey.js'), obligations: ['I-2'] },
+  { system: systemForPath('journeys/reconcile.journey.js'), obligations: ['I-1'] },
+  { system: systemForPath('src/cli.js'), obligations: ['I-3'] },
+  { system: systemForPath('src/display.js'), obligations: ['I-2'] },
+  { system: systemForPath('src/format.js'), obligations: ['I-2'] },
+  { system: systemForPath('src/parse.js'), obligations: ['I-1'] },
+  { system: systemForPath('src/report.js'), obligations: ['I-1'] },
+  { system: systemForPath('test/unit/display.test.js'), obligations: ['I-2'] },
+  { system: systemForPath('test/unit/format.test.js'), obligations: ['I-2'] },
+  { system: systemForPath('test/unit/parse.test.js'), obligations: ['I-1'] },
+  { system: systemForPath('test/unit/report.test.js'), obligations: ['I-1'] },
 ];
 
 /** The obligations file over `pin`: each obligation anchored at its rule with the pinned text hash, and the census. */
@@ -172,7 +183,7 @@ export function obligationsFile(l: Layout, pin: CorpusPin): unknown {
     return { id, textSha256: r.textSha256 };
   };
   const lanes = [arcLane(l, 'cli', 'journeys/cli.journey.js'), arcLane(l, MONEY_LANE, 'journeys/money.journey.js'), arcLane(l, 'reconcile', 'journeys/reconcile.journey.js')];
-  const revs = new Map(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes, obligations: [], mapping: { paths: [] } }).lanes.map((x) => [x.id as string, laneRevOf(x)]));
+  const revs = new Map(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes, obligations: [], mapping: { systems: [] } }).lanes.map((x) => [x.id as string, laneRevOf(x)]));
   return {
     schema: 'roadmap/obligations-m3',
     cutLine: 'a bookkeeper reconciles a month in one command, and every amount is rendered exactly',
@@ -185,7 +196,7 @@ export function obligationsFile(l: Layout, pin: CorpusPin): unknown {
         deliveredBy: [...o.deliveredBy], activation: o.activation, contracts: [...o.contracts], state: { type: 'active' },
       };
     }),
-    mapping: { paths: MAPPING },
+    mapping: { systems: MAPPING },
     census: OBLIGATIONS.map((o) => ({ rule: o.rule, state: { type: 'obligation', id: o.id } })),
   };
 }
@@ -207,7 +218,7 @@ const SCOPES: Readonly<Record<Unit, readonly string[]>> = {
 };
 
 function specOf(unit: Unit): unknown {
-  const common = { schema: 'roadmap/spec-m1', unit, rev: 1, scope: SCOPES[unit], resources: [], decisions: [], cites: { contracts: [CONTRACT_PATH], rulings: ['C-1', 'C-2', 'C-3', 'C-4'] } };
+  const common = { intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'], schema: 'roadmap/spec-m1', unit, rev: 1,  resources: [], decisions: [], cites: { contracts: [CONTRACT_PATH], rulings: ['C-1', 'C-2', 'C-3', 'C-4'] } };
   switch (unit) {
     case 'parse':
       return {
@@ -255,7 +266,7 @@ function specOf(unit: Unit): unknown {
 }
 
 /** The repair the checkpoint is expected to admit: its plan unit and its spec's text (the fake story's admit op). */
-export const REPAIR_UNIT = { id: 'fix-rounding', risk: 'med', scope: SCOPES['fix-rounding'], after: [], origin: 'repair' } as const;
+export const REPAIR_UNIT = { id: 'fix-rounding', risk: 'med', systems: systemsForPaths(SCOPES['fix-rounding']), after: [], origin: 'repair' } as const;
 export const repairSpecText = (): string => json(specOf('fix-rounding'));
 
 // Isolated from the user's global and system git config, as in evals/m1/setup.ts.
@@ -303,6 +314,7 @@ export async function setup(dir: string): Promise<void> {
   git(l.repo, 'config', 'user.email', 'm3-fixture@example.invalid');
   git(l.repo, 'config', 'commit.gpgsign', 'false');
   for (const [path, text] of Object.entries(filesOf(join(FILES, 'base')))) write(join(l.repo, path), text);
+  write(join(l.repo, '.roadmap/config.json'), json({ systemsMap: FIXTURE_SYSTEMS }));
   write(l.vision, json(visionRecord(readFileSync(join(l.repo, CORPUS_ROOT, VISION_DOC), 'utf8'))));
   git(l.repo, 'add', '--all');
   git(l.repo, 'commit', '--quiet', '--message', 'm3 fixture: the ledger CLI');
@@ -340,7 +352,7 @@ export async function setup(dir: string): Promise<void> {
     resources: [],
     holistic: { advances: ADVANCES, obligations: 'obligations.json', audit: { every: AUDIT_EVERY, lenses: [...LENSES] } },
     limits: { convergenceK: CONVERGENCE_K },
-    units: UNITS.map((id) => ({ id, spec: `${id}.json`, risk: 'med', scope: SCOPES[id], resources: [], after: after[id] })),
+    units: UNITS.map((id) => ({ id, spec: `${id}.json`, risk: 'med', systems: systemsForPaths(SCOPES[id]), resources: [], after: after[id] })),
   }));
 }
 

@@ -11,8 +11,7 @@
 import type { ObligationId } from '../core/ids.ts';
 import type { IsoTime } from '../core/values.ts';
 import {
-  type FlowMetric, type FlowPoint, type FlowSeries, type FlowVerdictKind, type GuardBreach, type VerdictAfter, type VerdictBefore, MIN_VERDICT_SAMPLES,
-} from './types.ts';
+  type FlowMetric, type FlowPoint, type FlowSeries, type FlowVerdictKind, type GuardBreach, type VerdictAfter, type VerdictBefore, MIN_VERDICT_SAMPLES } from './types.ts';
 
 export const WINDOW_SAMPLES = 5;
 export const WINDOW_MAX_MIN = 360;

@@ -43,7 +43,7 @@ import type { JsonValue } from '../src/core/json.ts';
 import { readJournal } from '../src/core/log.ts';
 import { absPath,repoPattern } from '../src/core/values.ts';
 import { splitCutReason } from '../src/input/classify.ts';
-import { designUnscoped } from '../src/pipeline/design.ts';
+import {  } from '../src/pipeline/design.ts';
 import { loadUnitSpec } from '../src/pipeline/stages.ts';
 import { type Gate,consume,runUnit } from '../src/pipeline/unit.ts';
 import { recover } from '../src/recover/recover.ts';
@@ -227,7 +227,7 @@ const MIXED = design({
 });
 /** A child of u1's split taking `items`, changing `system` by `lines`. */
 const child = (unit: string, items: readonly string[], system: 'core' | 'api', lines: number, proven = false): JsonValue => ({
-  unit, scope: [system === 'core' ? 'src/**' : 'contracts/**'], items, obligations: [],
+  unit, systems: [system], items, obligations: [],
   design: design({
     changes: [{ system, paths: [system === 'core' ? 'src/**' : 'contracts/**'], lines }], clauses: items.map((clause) => ({ clause, lanes: ['mul'] })),
     failureModes: proven ? [{ id: 'FM-1', mode: 'the seam breaks', proof: { type: 'test', test: { type: 'test', lane: 'e2e', testId: 'seam' } }, requirements: [] }] : [],
@@ -256,7 +256,7 @@ test('design.oversize-split: an oversize design is refused; the split of mixed c
     const api = loadUnitSpec(f, unitInForce(f, 'u1-api')).spec;
     assert.deepEqual([skel.rev, skel.acceptance.map((a) => a.id), api.acceptance.map((a) => a.id)], [1, ['A1'], ['A2']], 'the parent\'s items partitioned');
     assert.equal(api.acceptance[0]!.clause, 'the contract names mul', 'an item\'s text unchanged');
-    assert.deepEqual([skel.scope, api.scope], [['src/**'], ['contracts/**']]);
+    assert.deepEqual(plan.units.filter((u) => ['u1-skel', 'u1-api'].includes(u.id)).map((u) => u.systems), [['core'], ['api']]);
     assert.deepEqual(skel.design?.failureModes.map((m) => m.id), ['FM-1'], 'each child carries its own pinned design');
     assert.equal(skel.forces, undefined, 'a candidate spanning lane needs no force');
   } finally {
@@ -275,19 +275,6 @@ test('design.split-defect: a split whose children do not partition the parent\'s
     assert.match(parked.needsUser.summary, /no child takes the parent's A2/);
     assert.deepEqual(outcomes(d), ['plan-check:plan-defect']);
     assert.deepEqual(followingContext(r).plan().units.map((u) => u.id), ['u1', 'u2'], 'no revision');
-  } finally {
-    r.journal.close();
-  }
-});
-
-test('design.unscoped-growth: a design change outside the scope envelope is a verified scope-growth proposal, holding the unit', T, async () => {
-  const d = setupArc({ steps: [planCheckStep({ decision: 'approve', design: design({ changes: [{ system: null, paths: ['ARCHITECTURE.md'], lines: 5 }] }) })] });
-  const r = contextFor(d);
-  try {
-    const held = await runUnit(r.ctx, r.unit('u1'), until('build'));
-    assert.ok(held.kind === 'held' && held.needsUser?.reason === 'scope-growth', JSON.stringify(held));
-    assert.deepEqual(r.journal.view.unit(U1).interrupted?.detail, { kind: 'scope-growth', proposals: [{ patterns: ['ARCHITECTURE.md'], reason: 'the design record changes it' }] });
-    assert.equal(loadUnitSpec(r.ctx, r.unit('u1')).spec.rev, 1, 'nothing of a growth answer lands');
   } finally {
     r.journal.close();
   }
@@ -436,19 +423,6 @@ describe(`matrix row ${POC_STAGE}`, () => {
       }
     });
   }
-});
-
-
-// Derived exclusion (2026-10-27; 1.0.0-dev.26): a broad design keeps the envelope's holes; a named output needs growth.
-test('design.derived-exclusion: broad change patterns inherit exclusions, explicit generated paths stay outside', () => {
-  const scope = { include: [repoPattern('apps/web/**')], exclude: [repoPattern('apps/web/test/fixtures/core-routes.json')] };
-  const paths = [repoPattern('apps/web/**'), repoPattern('apps/web/test/fixtures/core-routes.json'), repoPattern('apps/core/src/routes.ts')];
-  assert.deepEqual(designUnscoped([{ system: null, paths, lines: 10 }], scope), ['apps/core/src/routes.ts', 'apps/web/test/fixtures/core-routes.json']);
-  assert.deepEqual(designUnscoped([{ system: null, paths, lines: 10 }], { ...scope, exclude: [repoPattern('apps/web/test/fixtures')] }), ['apps/core/src/routes.ts', 'apps/web/test/fixtures/core-routes.json'], 'a proposed pattern under a directory exclusion stays outside');
-  const subtree = [{ system: null, paths: [repoPattern('apps/web/test/fixtures/**')], lines: 10 }];
-  assert.deepEqual(designUnscoped(subtree, scope), [], 'a broader proposed pattern retains the individual output hole');
-  assert.deepEqual(designUnscoped(subtree, { ...scope, exclude: [repoPattern('apps/web/test/fixtures/')] }), ['apps/web/test/fixtures/**'], 'a pattern beneath a directory output stays excluded');
-  assert.deepEqual(designUnscoped([{ system: null, paths, lines: 10 }], { ...scope, exclude: [repoPattern('apps/web/test/fixtures/**')] }), ['apps/core/src/routes.ts', 'apps/web/test/fixtures/core-routes.json'], 'an output glob excludes a proposed file pattern');
 });
 
 

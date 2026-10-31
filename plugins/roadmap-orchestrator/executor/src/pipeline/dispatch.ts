@@ -1,56 +1,9 @@
-// Dispatch: who acts for a unit, on which seat, under which pinned authority, and the backend call that
-// puts them to work (plan "Authority", R2; DESIGN-1.0.md §4 Independence, Actors are roles).
-//
-// - The dispatch record (a `dispatch` fact) pins the unit's scope envelope and risk floor once, with the
-//   unit's routingRev in force and the hash of the implementer seat's triple (`implementerSeatRev`). A plan-check
-//   that raises the risk re-pins it with a new fact (same scope, higher floor); nothing lowers it. The scope grows
-//   only by a ruled scope-growth apply (src/input/classify.ts), which the next dispatch check re-pins; the fold
-//   refuses any other change of it. Plan defects (2026-10-16): the record also pins `derived`, the outputs of the plan's
-//   `derived` entries whose sources the scope covers (src/input/derived.ts), re-pinned whenever the plan changes them;
-//   everything that bounds what the unit may change reads `effectiveScope` (include: scope + derived; exclude: excluded).
-// - M3: the routing is the unit's (`StageContext.routing(unit)`: the arc's stack with the unit's `route` or
-//   `steer --class` layer on top, src/routing/layers.ts). Every record since 1.0.0-dev.6 pins the unit's bounds
-//   (`bounds`: `boundsOf` its plan `limits`, the transition table's counters and the backend windows) and the
-//   transient rules its candidate runs under (`transientRules: 'm3'`, H15). A `limits` or scope-growth revision
-//   re-pins at the next dispatch check, as a routing change does; a re-pin copies `transientRules`.
-// - A routing change mid-unit (a new routingRev at a later dispatch; lead ruling, arc-1 feedback item 7):
-//   every judgment is a fresh session (its repair turn resumes only its own), so a judgment seat may change harmlessly; the implementer's session
-//   resumes, so its session key (`implementerSessionKey`: backend and model, R4) may not change. The unit is re-pinned
-//   under the new rev (a new dispatch fact, scope and floor unchanged) when no build has started for it or its
-//   implementer seat keeps its key under both revs (an effort-only change re-pins, and the session resumes with the new
-//   `--effort`; OR-L3), or the pinned rev is the same stack under dev.16's built-in seats (`preDev17Rev`, a release upgrade:
-//   the re-pin keeps the started implementer's pinned seat through to its merge; scaffolding, `implementerSeatKept`);
-//   otherwise (an owner routing edit) the stage parks it (`routing-changed`) with a needs-user naming the seat, never a
-//   model. The pinned seat's triple is read back from its `implementerSeatRev` (`seatTripleOf`), and the implementer builds on it.
-//   A steer round (R11) starts a fresh implementer session, so it re-pins whatever the seat (`steerDispatch`):
-//   `steer --class` moves the implementer seat on purpose.
-// - Seats: the implementer sits on the unit's risk tier for the whole unit (it keeps its model); a
-//   judgment stage sits on `judgmentSeat` (transitions.ts): the role's `escalation` seat once it routed up
-//   (for the rest of the unit) or while a risk trigger is pending (the next judgment dispatch only). A gate whose diff is
-//   over the large-diff threshold sits at least at `high` (`largeDiffSeat`, 1.0.0-dev.12), recorded on its judgment-inputs.
-// - The backend call: prompt text and schema are content-addressed input files written before the spawn
-//   intent; the launch names the role and routingRev, never the model, except in argv (launch.json is the
-//   one executor-written file allowed a model id). The workload env is `backendEnv(host)`; the implementer's
-//   adds the unit's owner label and the pool instances its build holds (F7), so whatever it starts carries them.
-// - The verdict: a cancel for pause or stop is an interruption, not a fault; a failed call whose backend
-//   reported a usage limit or capacity error parks that backend arc-wide (`backend-park`, its seq the park's
-//   epoch) and holds the stage with that park as the hold's cause (G5; lead ruling: outcome != success AND
-//   class in {usage-limit, capacity}); platform or backend error entries on a success are informational. M4b rev 3
-//   (RC-11): a unit's call that its deadline or stall watchdog ended under host pressure is starved, a hold with cause
-//   `host-pressure` (starved.ts), not a process fault.
-// - An implementer call that resumes a session and ends `process-fault` with no complete JSON line on stdout
-//   never had its session persisted (`sessionNeverPersisted`; rounds.ts `callRound` re-runs it fresh).
-// - M3 (LR-d): the arc roles' call (`callArcRole`): a lens of an audit or a checkpoint, a job's fresh read-only session
-//   on the judgment profile at the role's one seat `arc` of the arc's routing, spawned as `arc-backend` under `job{job}`
-//   and metered to the job by role and routingRev. A resumed job reads a call it made back (`recordedArcCall`); its
-//   verdict is read as a unit judgment's (`verdictOf` takes a job parent: a usage limit parks the backend arc-wide).
 import { existsSync,readFileSync,readdirSync,statSync } from 'node:fs';
 import { join } from 'node:path';
 import { type BackendCall,type ClaudeTriple,type CodexTriple,backendArgv,promptBytes,resumedJudgmentSession } from '../backends/argv.ts';
 import { usageLimitResets } from '../backends/errors.ts';
 import {
-BACKEND_PARK_CLASSES,type BackendParkClass,type GateLargeDiff,type HoldCause,type IntentOf,type JudgmentStage,type OpKind,type OpOutcome,type Parent,
-} from '../core/events.ts';
+BACKEND_PARK_CLASSES,type BackendParkClass,type GateLargeDiff,type HoldCause,type IntentOf,type JudgmentStage,type OpKind,type OpOutcome,type Parent } from '../core/events.ts';
 import { type ArcId,type InvocationId,type JobId,type RoutingRev,type SeatRev,type UnitId,invocationId,opKey,seatRev } from '../core/ids.ts';
 import type { IntentBody,Journal,JournalView } from '../core/interfaces.ts';
 import { type JsonValue,canonicalJson,sha256Hex } from '../core/json.ts';
@@ -60,11 +13,9 @@ type BackendErrorClass,type BackendResult,type Bounds,type DispatchRecord,type I
 type NeedsUserContent,
 STDERR_FILE,
 STDOUT_FILE,
-boundsOfRecord,
-} from '../core/records.ts';
+boundsOfRecord } from '../core/records.ts';
 import type { SpecState } from '../core/state.ts';
 import { type AbsPath,type BranchName,type IsoTime,type RefName,type RepoPattern,absPath,branchName,isoTimeOf,refName } from '../core/values.ts';
-import { derivedExclusions,derivedWidening } from '../input/derived.ts';
 import { type RoutingBase,inputPath,keepInput } from '../input/inforce.ts';
 import { type PlanUnit,boundsOf } from '../input/plan.ts';
 import { routingChangedRecommendation } from '../needsuser.ts';
@@ -84,8 +35,7 @@ type RiskTier,type Role,
 type Triple,
 type UnitSeatRef,
 type WalkRole,
-seatRef,unitSeatRef,
-} from '../routing/types.ts';
+seatRef,unitSeatRef } from '../routing/types.ts';
 import { runnerFiles } from '../runner/files.ts';
 import type { Acquire,Rank,ResourceRequest } from '../schedule/types.ts';
 import { type LaunchSpec,type SpawnOrigin,invocationDir,invoke } from './invoke.ts';
@@ -227,13 +177,7 @@ export function repin(journal: Journal, routing: ResolvedRouting, record: Dispat
  * What a re-pin changes besides the routing: the bounds a `limits` revision set, a ruled scope growth, a risk the plan
  * raised above the floor (`route`: risk may rise).
  */
-export type PinUpdate = Readonly<{ bounds?: Bounds; scope?: readonly RepoPattern[]; riskFloor?: RiskTier; derived?: readonly RepoPattern[]; excluded?: readonly RepoPattern[] }>;
-
-/** `derived` and `excluded` as a dispatch record holds them: absent when empty (derived exclusion, 2026-10-27; 1.0.0-dev.26). */
-const withDerived = (record: DispatchRecord, derived: readonly RepoPattern[], excluded: readonly RepoPattern[]): DispatchRecord => {
-  const { derived: _was, excluded: _excluded, ...rest } = record;
-  return { ...rest, ...(derived.length === 0 ? {} : { derived }), ...(excluded.length === 0 ? {} : { excluded }) };
-};
+export type PinUpdate = Readonly<{ bounds?: Bounds; riskFloor?: RiskTier }>;
 
 /**
  * Records `record` re-pinned under `routing` with `update` (a new dispatch fact), whatever its implementer seat: the floor's
@@ -241,41 +185,26 @@ const withDerived = (record: DispatchRecord, derived: readonly RepoPattern[], ex
  */
 function pin(journal: Journal, routing: ResolvedRouting, record: DispatchRecord, update: PinUpdate, kept: SeatRev | null = null): DispatchRecord {
   const riskFloor = update.riskFloor ?? record.riskFloor;
-  const { derived, excluded, ...rest } = update;
-  const next: DispatchRecord = withDerived({
-    ...record, ...rest, routingRev: routing.rev, implementerSeatRev: kept ?? implementerSeatRev(routing, riskFloor), at: now(),
-  }, derived ?? record.derived ?? [], excluded ?? record.excluded ?? []);
+  const next: DispatchRecord = { ...record, ...update, routingRev: routing.rev, implementerSeatRev: kept ?? implementerSeatRev(routing, riskFloor), at: now() };
   journal.fact({ kind: 'dispatch', record: next });
   return next;
 }
 
 const same = (a: unknown, b: unknown): boolean => canonicalJson(a) === canonicalJson(b);
 
-/**
- * What the plan in force changes of `record` besides its routing: the unit's bounds (a `limits` revision), and its
- * scope once a ruled scope-growth apply grew it (the classifier refuses any other scope change of a dispatched unit,
- * so a plan scope that does not contain the pinned one is a bug).
- */
+
 function pinUpdate(ctx: StageContext, record: DispatchRecord): PinUpdate {
   const unit = ctx.plan().units.find((u) => u.id === record.unit);
   if (unit === undefined) throw new Error(`unit ${record.unit} is dispatched but not in the plan in force`);
   const bounds = boundsOf(ctx.plan(), unit);
-  const scope = [...unit.scope].sort();
-  if (record.scope.some((p) => !scope.includes(p))) {
-    throw new Error(`unit ${record.unit}: the plan in force scopes it ${scope.join(', ')}, which drops part of its pinned scope ${record.scope.join(', ')}`);
-  }
-  const derived = derivedWidening(ctx.plan(), scope);
-  const excluded = derivedExclusions(ctx.plan(), scope);
   return {
-    ...(same(bounds, boundsOfRecord(record)) ? {} : { bounds }), ...(same(scope, record.scope) ? {} : { scope }),
+    ...(same(bounds, boundsOfRecord(record)) ? {} : { bounds }),
     ...(riskAbove(unit.risk, record.riskFloor) ? { riskFloor: unit.risk } : {}),
-    ...(same(derived, record.derived ?? []) ? {} : { derived }),
-    ...(same(excluded, record.excluded ?? []) ? {} : { excluded }),
   };
 }
 
 const unchanged = (update: PinUpdate): boolean =>
-  update.bounds === undefined && update.scope === undefined && update.riskFloor === undefined && update.derived === undefined && update.excluded === undefined;
+  update.bounds === undefined && update.riskFloor === undefined;
 
 /** `record` under the plan and routing in force: itself when neither changed it; else re-pinned, or the park. */
 function inForce(ctx: StageContext, record: DispatchRecord): Pinned<DispatchRecord> {
@@ -286,11 +215,7 @@ function inForce(ctx: StageContext, record: DispatchRecord): Pinned<DispatchReco
   return next === null ? routingChanged(record) : { kind: 'pinned', dispatch: next };
 }
 
-/**
- * The unit's dispatch record under the plan and routing in force: the latest `dispatch` fact (re-pinned if the
- * routing, the bounds or the scope changed and the unit can absorb it), or the first one, recorded now
- * (`firstPin`) from the plan (scope envelope and Phase-0 risk floor) and the spec revision being dispatched.
- */
+
 export function pinDispatch(ctx: StageContext, unit: PlanUnit, spec: SpecState): Pinned<DispatchRecord> {
   const current = ctx.journal.view.dispatchOf(unit.id);
   if (current !== null) return inForce(ctx, current);
@@ -305,11 +230,10 @@ export function pinDispatch(ctx: StageContext, unit: PlanUnit, spec: SpecState):
  */
 export function firstPin(ctx: Pick<StageContext, 'plan' | 'routing'>, unit: PlanUnit, spec: SpecState, riskFloor: RiskTier): DispatchRecord {
   const routing = ctx.routing(unit.id);
-  const scope = [...unit.scope].sort();
-  return withDerived({
-    unit: unit.id, specRev: spec.rev, specSha256: spec.sha256, scope, riskFloor, routingRev: routing.rev,
+  return {
+    unit: unit.id, specRev: spec.rev, specSha256: spec.sha256, riskFloor, routingRev: routing.rev,
     implementerSeatRev: implementerSeatRev(routing, riskFloor), at: now(), transientRules: 'm3', bounds: boundsOf(ctx.plan(), unit),
-  }, derivedWidening(ctx.plan(), scope), derivedExclusions(ctx.plan(), scope));
+  };
 }
 
 /** The pinned record, which every stage after plan-check requires. */

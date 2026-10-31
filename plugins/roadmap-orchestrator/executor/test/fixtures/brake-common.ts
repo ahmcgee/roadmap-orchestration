@@ -49,7 +49,7 @@ export type HolisticOptions = Readonly<{
   units?: readonly (UnitSpecJson & Readonly<{ obligations?: readonly string[]; repairs?: readonly string[]; origin?: 'repair' }>)[];
   suite?: readonly LaneJson[];
   obligations: readonly ObligationJson[];
-  mapping: readonly Readonly<{ pattern: string; obligations: readonly string[] }>[];
+  mapping: readonly Readonly<{ system: string; obligations: readonly string[] }>[];
   /** Arc lane ids (all jsonl fake witness lanes over the one control file); default `['journey']`. */
   lanes?: readonly string[];
   /** Arc lanes' extra fields by id (resources, tier). */
@@ -75,10 +75,10 @@ function arcLane(id: string, control: string, extra: Json = {}): Json {
 /** The obligations file of `opts` over `control` (JSON). */
 export function obligationsJson(opts: Pick<HolisticOptions, 'obligations' | 'mapping' | 'lanes' | 'laneExtra'>, control: string): Json {
   const lanes = (opts.lanes ?? ['journey']).map((id) => arcLane(id, control, opts.laneExtra?.[id]));
-  const revs = new Map(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes, obligations: [], mapping: { paths: [] } }).lanes.map((l) => [l.id, laneRevOf(l)]));
+  const revs = new Map(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes, obligations: [], mapping: { systems: [] } }).lanes.map((l) => [l.id, laneRevOf(l)]));
   return {
     schema: 'roadmap/obligations-m3', cutLine: 'the helpers ship', lanes,
-    mapping: { paths: opts.mapping.map((m) => ({ pattern: m.pattern, obligations: [...m.obligations].sort() })) },
+    mapping: { systems: [...new Map(opts.mapping.map((m) => [m.system, m])).values()].map((m) => ({ system: m.system, obligations: [...m.obligations].sort() })) },
     obligations: opts.obligations.map((o) => {
       const lane = o.lane ?? 'journey';
       const activation = o.activation ?? 'must-hold';

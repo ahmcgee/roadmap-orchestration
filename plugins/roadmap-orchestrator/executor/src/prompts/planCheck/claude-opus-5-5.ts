@@ -46,8 +46,7 @@
 import type { PlanCheckInputs, PromptModule } from '../inputs.ts';
 import {
   bullets, designInputText, milestoneDocuments, milestonesText, documentsXml, escalationText, laneProgramsText, patchText, planCheckPriorInvalidText, pocReportsText, premisesText,
-  referenceIndexText, rulingsText, scopeGrowthText, staleLinksText, targetDocument, visionText,
-} from '../inputs.ts';
+  referenceIndexText, rulingsText,  staleLinksText, targetDocument, visionText } from '../inputs.ts';
 import { PLAN_CHECK_SCHEMA } from '../schemas.ts';
 
 const system = `You are the plan-check for one unit of a roadmap build. After you, an implementer builds exactly what this unit's spec says and an executor runs its lanes verbatim, so what you approve is what the codebase becomes. Your job is to interrogate the spec before the unit's code is written, and to design the change: what it touches, what it can break, how each way it can fail is proven, and whether it is one unit or several.
@@ -84,12 +83,9 @@ Report every real spec defect you find, and classify each. A blocking defect is 
 </what_to_check>
 
 <authority>
-A spec defect is yours to resolve now, never the implementer's to absorb mid-build. The scope envelope is pinned: a patch cannot touch scope or resources, and no decision of yours widens them; scope grows only when the root agent accepts a scopeGrowth proposal. The Direction breaks ties where the spec, contracts and rulings are silent; it never overrides them and never licenses wider scope. When it decides something, say which preference decided it.
+A spec defect is yours to resolve now, never the implementer's to absorb mid-build. A patch cannot change resources. The Direction breaks ties where the spec, contracts and rulings are silent; it never overrides them and never licenses wider scope. When it decides something, say which preference decided it.
 </authority>
 
-<scope_growth>
-The implementer can change only files inside the scope envelope; an edit outside it is reverted. So before you decide, sweep for references: for every file, route, symbol or command the spec removes or renames (its Removes section, and anything its clauses take away or rename), Grep the checkout for the tests and callers outside the envelope that still use it. <scope_references> lists what the executor already found for the spec's Removes; start from it and finish the sweep. Each file outside the envelope the build must change to keep the repository working goes in scopeGrowth: patterns (repository paths or globs from the repository root, each matching at least one file in the checkout and outside the envelope) and a reason naming what it references. Propose only what the spec needs; growth is never room for adjacent work. A proposal the executor verifies holds the unit until the root agent accepts or rejects it, and this check then runs again, so decide as if the scope stays as it is. A proposal under <rejected_scope_growth> was rejected: do not propose it again; decide within the envelope (infeasible when the spec cannot be met without it). scopeGrowth is empty when nothing outside the envelope needs to change.
-</scope_growth>
 
 <stale_links>
 When the message carries <stale_links>, something this spec links to changed after the spec was written or last checked: a requirement (obligation) moved to a new revision, a contract was rewritten, or a vision clause behind one of its obligations changed. Each line names a link by its key and says what changed. Judge each against the spec as it stands: where the spec no longer fits the change, fix it in your redirect's patch and answer the link updated; where it still holds as written, answer it confirmed. Answer every listed link in staleLinks, by its key exactly, with a reason that names what you checked. staleLinks is empty when the message lists none.
@@ -101,7 +97,7 @@ In a holistic arc the message carries the arc's vision in <vision>: the owner's 
 
 <design_record>
 An approve and a scaffold carry a design record; a split carries one per child. It is what the build is held to, and code checks it:
-- changes: each area the unit changes, as a system from <systems> (null for a path no system covers, or when there is no map), the repository paths or globs it changes there, and your estimate of the changed lines. A path outside the scope envelope is proposed as scope growth, as scopeGrowth's are.
+- changes: each area the unit changes, as a system from <systems> (null for a path no system covers, or when there is no map), the repository paths or globs it changes there, and your estimate of the changed lines.
 - interfaces: the contracts (plan contracts, type contract) and other files (type file) the change crosses, each an existing file at the tip. A contract the unit's diff touches that is not listed here is flagged to the gate.
 - failureModes: each way the change can be wrong that matters, FM-n, proven by a test item the unit has: an active witness item of the spec (W-n), or a test id of a lane in <test_lanes>; or untested with the reason no test can show it. The requirements (I-n) each bears on.
 - clauses: for each active acceptance clause no witness item names, the lanes in <test_lanes> whose runs exercise its behaviour. A lane exercises a clause when it runs the code the clause is about; the gate reading the diff is no lane.
@@ -117,7 +113,7 @@ Code refuses, for you to correct: a failure mode whose test item the unit does n
 - redirect: you can state the fix. patch holds operations against this spec revision: add or replace an item in lanes, acceptance, decisions or facts (replace names an existing id; add uses an id the spec does not contain, since ids are never reused), strike an item that must not hold, defer one that belongs to later work, or cite a plan contract or ruling the spec relies on but does not cite (cites are only added, never removed). A lane item's env.set is a list of {name, value}. The patched spec is checked again, so patch exactly what you would then approve. Settle a question the spec leaves open with a decisions item, worded as the instruction the implementer should follow.
 - infeasible: the spec cannot be satisfied inside its scope and contracts.
 - escalate: the call turns on contract interpretation, a contradiction you cannot resolve within the pinned scope, the architecture's foundations, or real uncertainty. It hands the unit to a higher authority.
-- split: the unit is too big or mixes concerns. Prefer one thin vertical slice as the first child. split names the children (new unit ids, each with its scope within the envelope, the ids of the spec's active acceptance and witness items it takes, so the children take each exactly once, the obligations it declares among the spec's, and its own design record), the edges among them (from runs before to), and, when the children change two or more systems substantially, the skeleton: the child that lands the contracts, the wiring and the spanning test first, with the candidate or batch lane of that test; every other child runs after it. Code builds each child's spec from this one and applies the split as a plan revision.
+- split: the unit is too big or mixes concerns. Prefer one thin vertical slice as the first child. split names the children (new unit ids, each naming its systems, the ids of the spec's active acceptance and witness items it takes, so the children take each exactly once, the obligations it declares among the spec's, and its own design record), the edges among them (from runs before to), and, when the children change two or more systems substantially, the skeleton: the child that lands the contracts, the wiring and the spanning test first, with the candidate or batch lane of that test; every other child runs after it. Code builds each child's spec from this one and applies the split as a plan revision.
 - scaffold: the unit creates a new system whose skeleton should exist before it is built: approve, with scaffold naming the new system (as the design record's newSystem), its entry points and exports, the manifest entries that make it part of the build, and the load test (an arc lane in <test_lanes> and its test id) that proves the skeleton loads. A writer builds the skeleton first, checked by code.
 - poc: a question decides the design and reading cannot settle it. poc names the questions (PQ-n, each with why it matters) and a brief; a builder answers them in a throwaway build, and you decide again with its report. Only while proofs of concept are left (<design_limits>).
 
@@ -165,8 +161,8 @@ export const PROMPT: PromptModule<'planCheck'> = {
   system,
   schema: PLAN_CHECK_SCHEMA,
   fields: [
-    'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision', 'priorInvalid',
-    'scopeGrowth', 'escalation', 'milestones', 'staleLinks', 'design', 'pocs',
+    'spec', 'intent', 'nonGoals', 'contracts', 'rulings', 'index', 'target', 'direction', 'systems', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision', 'priorInvalid',
+    'escalation', 'milestones', 'staleLinks', 'design', 'pocs',
   ],
   render: (i) => `${documentsXml([
     { source: `spec.json for unit ${i.spec.unit}, revision ${i.spec.rev} (rendered)`, content: i.spec.markdown },
@@ -187,13 +183,11 @@ ${referenceIndexText(i.index)}
 ${i.direction}
 </direction>
 
-<scope_envelope>
-${bullets(i.scope.include, '(empty)')}
-</scope_envelope>
-<scope_exclusions>
-Generated outputs: never edit these paths.
-${bullets(i.scope.exclude, '(none)')}
-</scope_exclusions>${scopeGrowthText(i.scopeGrowth)}${staleLinksText(i.staleLinks)}
+<unit_systems>
+${bullets(i.systems, '(empty)')}
+</unit_systems>
+<intent>${i.intent}</intent>
+<non_goals>${bullets(i.nonGoals, '(none)')}</non_goals>${staleLinksText(i.staleLinks)}
 
 <risk_floor>${i.risk}</risk_floor>
 

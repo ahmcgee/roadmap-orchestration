@@ -19,8 +19,7 @@ import { AlreadyExistsError, durableMkdir, exclusivePublish } from '../core/fsx.
 import { type ArcId, type CommandId, type Sha256Hex, commandId, sha256 } from '../core/ids.ts';
 import { canonicalJson, canonicalRecordBytes, sha256Hex } from '../core/json.ts';
 import {
-  CONTROL_COMMANDS, type CommandBody, type CommandFile, type Receipt, commandFile, receipt,
-} from '../core/records.ts';
+  CONTROL_COMMANDS, type CommandBody, type CommandFile, type Receipt, commandFile, receipt } from '../core/records.ts';
 import { type AbsPath, type IsoTime, absPath, isoTimeOf } from '../core/values.ts';
 import { SCHEMA_VERSION } from '../core/version.ts';
 

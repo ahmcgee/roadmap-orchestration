@@ -1,3 +1,4 @@
+import { systemName } from '../../src/core/ids.ts';
 // The scripted root agent of fake M4a runs (`driver --fake <script>`): it stands in for the headless `claude -p` session,
 // one process per turn, speaking the same stream-json the driver reads (an init event, a Bash `tool_use` and its
 // `tool_result` per command, the final text, a `result`), and keeps its state in `fake/root-state.json`. It follows
@@ -51,7 +52,7 @@ import { absPath } from '../../src/core/values.ts';
 import { parseDebtBlock } from '../../src/docs/debt.ts';
 import { laneRevOf,parseObligations } from '../../src/holistic/types.ts';
 import {
-type ArcNo,ARC1_CURATION,ARC1_QUESTION,CENSUS_OTHERS,CORPUS_ROOT,DIRECTION,FILES,LANES,MAPPING,OBLIGATIONS,
+type ArcNo,ARC1_CURATION,ARC1_QUESTION,CENSUS_OTHERS,CORPUS_ROOT,DIRECTION,FILES,LANES,MAPPING,FIXTURE_SYSTEMS,OBLIGATIONS,
 PASS_PATH,
 SLICES,SLOW_LANE,TEST_PATHS,UNITS,corpusFor,
 specLane,specOf,suiteLanes,unitsOf,
@@ -244,7 +245,7 @@ type Pin = Readonly<{ rules: readonly Readonly<{ id: string; textSha256: string 
 function obligationsOf(n: ArcNo, pin: Pin) {
   const inForce = OBLIGATIONS.filter((o) => o.deliveredIn === null || o.deliveredIn <= n);
   const lanes = LANES.filter((x) => inForce.some((o) => o.lane === x.id)).map((x) => arcLane(x.id, x.journey));
-  const revs = new Map(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes, obligations: [], mapping: { paths: [] } }).lanes.map((x) => [x.id as string, laneRevOf(x)]));
+  const revs = new Map(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes, obligations: [], mapping: { systems: [] } }).lanes.map((x) => [x.id as string, laneRevOf(x)]));
   const ref = (id: string) => {
     const r = pin.rules.find((x) => x.id === id);
     if (r === undefined) throw new Error(`arc ${n}'s pin holds no ${id}`);
@@ -265,7 +266,7 @@ function obligationsOf(n: ArcNo, pin: Pin) {
         deliveredBy: future ? [...o.deliveredBy] : [], activation: future ? 'future' : 'must-hold', contracts: [], state: { type: 'active' },
       };
     }),
-    mapping: { paths: MAPPING.map((m) => ({ pattern: m.pattern, obligations: m.obligations.filter((x) => ids.has(x)) })).filter((m) => m.obligations.length > 0) },
+    mapping: { systems: MAPPING.map((m) => ({ system: m.system, obligations: m.obligations.filter((x) => ids.has(x)) })).filter((m) => m.obligations.length > 0) },
     census: pin.rules.map((r) => {
       const o = inForce.find((x) => x.rule === r.id);
       return { rule: r.id, state: o !== undefined ? { type: 'obligation', id: o.id } : { type: CENSUS_OTHERS[r.id] ?? 'out-of-slice' } };
@@ -352,7 +353,7 @@ function composeArc(c: Ctx, n: ArcNo, baseline: string, opts: Readonly<{ answer?
     // Arc 2 audits every publication: cutoff's audit is the one whose checkpoint admits the opportunity.
     holistic: { advances: slice.advances, obligations: 'obligations.json', audit: { every: n === 2 ? 1 : 2, lenses: ['vision'] } },
     limits: { convergenceK: 3 },
-    units: units.map((u) => ({ id: u.id, spec: `${u.id}.json`, risk: u.risk, scope: u.scope, resources: [], after: u.after.filter((a) => units.some((x) => x.id === a)) })),
+    units: units.map((u) => ({ id: u.id, spec: `${u.id}.json`, risk: u.risk, systems: u.systems, resources: [], after: u.after.filter((a) => units.some((x) => x.id === a)) })),
     ...(opts.previous === undefined ? {} : { chain: { previousArc: opts.previous.arc, previousHead: opts.previous.head } }),
   }));
   c.t.git('branch', `arc/${arc}`, baseline);
@@ -402,7 +403,7 @@ const RUNNING = (a: ArcState) => `Arc ${a.arc} is running. No Monitor here: endi
 function bootstrapArc1(c: Ctx, k: string): ArcState {
   const l = layout(c.dir);
   c.t.git('switch', '--quiet', '-c', 'roadmap-work', MAIN);
-  writeFile(join(l.product, '.roadmap', 'config.json'), json({ chain: { k: Number(k) } }));
+  writeFile(join(l.product, '.roadmap', 'config.json'), json({ chain: { k: Number(k) }, systemsMap: FIXTURE_SYSTEMS }));
   writeCorpus(c, 1);
   cpSync(join(FILES, 'golden', 'journeys'), join(l.product, 'journeys'), { recursive: true });
   c.t.git('add', '--all');

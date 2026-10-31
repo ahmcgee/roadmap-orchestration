@@ -45,7 +45,7 @@ import type { FindingId, JobId, UnitId, VisionClauseId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { specRepairs } from '../core/records.ts';
 import type { FindingState } from '../core/state.ts';
-import { lineageMembers } from '../input/envelope.ts';
+import { lineageMembers } from '../input/lineage.ts';
 import { type PlanM1, milestonesOf } from '../input/plan.ts';
 import { milestonePassed } from '../walk/node.ts';
 import type { BundleOp } from '../prompts/schemas.ts';

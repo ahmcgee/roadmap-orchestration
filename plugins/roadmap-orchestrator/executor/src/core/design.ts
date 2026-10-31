@@ -3,8 +3,7 @@
 // its paths against the pinned scope, its interfaces against the risk trigger, its failure modes against the test items,
 // its breaks against the builder's departures, its clauses against the lanes that can run in the arc. This module is the record and its reader; the checks live with the stages.
 import {
-  type ClauseId, type FailureModeId, type LaneId, type SystemName, type WitnessItemId, clauseId, failureModeId, laneId, systemName, witnessItemId,
-} from './ids.ts';
+  type ClauseId, type FailureModeId, type LaneId, type SystemName, type WitnessItemId, clauseId, failureModeId, laneId, systemName, witnessItemId } from './ids.ts';
 import { type ContractPin, type FilePin, type RequirementPin, contractPin, filePin, requirementPin } from './pins.ts';
 import { type RepoPattern, repoPattern } from './values.ts';
 import { type Read, arrayOf, assertUnique, literal, nat, nullable, object, oneOf, positive, str, tagged } from './validate.ts';

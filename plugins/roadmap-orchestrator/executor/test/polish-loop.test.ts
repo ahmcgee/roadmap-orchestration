@@ -1,3 +1,4 @@
+import { systemName } from '../src/core/ids.ts';
 // dev.13 agent D (plan §4, §7 "Integrated"): fix units and the polish loop over a real arc (real git, real processes, the
 // fake claude and codex answering by unit and job, the tiny fake product of test/fixtures/walk-common.ts). Named tests:
 // polish.loop (a walk proposes four tweaks → code applies three as one revision and refuses one → each builds and is
@@ -133,7 +134,7 @@ describe('fix units and the polish loop (dev.13 agent D)', () => {
       assert.deepEqual(revisions.map((f) => f.source), [{ type: 'walk', job: 'walk-1' }]);
       for (const [id, x] of [['tw-keep', 'X-1'], ['tw-drop', 'X-2'], ['tw-noref', 'X-3']] as const) {
         const u = unitInForce(r, id);
-        assert.deepEqual([u.origin, u.polish, u.risk, u.after, [...u.scope]], ['polish', { milestone: 'MS-1', proposal: x }, 'high', [], SCOPE], id);
+        assert.deepEqual([u.origin, u.polish, u.risk, u.after, [...u.systems]], ['polish', { milestone: 'MS-1', proposal: x }, 'high', [], SCOPE], id);
       }
       assert.deepEqual(await ticking(r, applyPolish), { kind: 'none' }, 'nothing left to settle');
 
@@ -205,7 +206,7 @@ describe('fix units and the polish loop (dev.13 agent D)', () => {
         const plan = parsePlan(JSON.parse(planBytes.toString('utf8')));
         return { ...current, plan, planBytes, specs: new Map([...current.specs, ['tw-a' as UnitId, { path: specPath, bytes: Buffer.from(x1!.unit.spec) }]]) };
       };
-      const entry = (polish: Json): Json => ({ id: 'tw-a', spec: 'tw-a.json', risk: 'high', scope: SCOPE, resources: [], after: [], origin: 'polish', polish });
+      const entry = (polish: Json): Json => ({ id: 'tw-a', spec: 'tw-a.json', risk: 'high', systems: [systemName('app')], resources: [], after: [], origin: 'polish', polish });
       const rctx = { runDir: r.ctx.runDir, view, hostDir: r.ctx.hostDir, planFile: w.commands.planFile, routingBase: w.commands.routingBase, laneEnv: w.commands.laneEnv };
       const reasons = (files: ReturnType<typeof filesWith>, proposer: Parameters<typeof evaluateRevision>[2]): string => {
         const v = evaluateRevision(rctx, files, proposer);
@@ -215,7 +216,7 @@ describe('fix units and the polish loop (dev.13 agent D)', () => {
       assert.equal(reasons(good, { type: 'walk', job: 'walk-1' as never }), 'accepted');
       assert.match(reasons(good, { type: 'apply' }), /tw-a is a polish unit: only the executor admits one, from a walkthrough's proposal, not a apply/);
       assert.match(reasons(good, { type: 'walk', job: 'walk-2' as never }), /carries proposal X-1, which is no proposal of walk-2/);
-      assert.match(reasons(filesWith((p) => p.units.push({ ...entry({ milestone: 'MS-1', proposal: 'X-1' }), scope: ['design/**'] })), { type: 'walk', job: 'walk-1' as never }), /is not the unit proposal X-1 names/);
+      assert.match(reasons(filesWith((p) => p.units.push({ ...entry({ milestone: 'MS-1', proposal: 'X-1' }), systems: ['other'] })), { type: 'walk', job: 'walk-1' as never }), /is not the unit proposal X-1 names/);
       const more = filesWith((p) => {
         p.units.push(entry({ milestone: 'MS-1', proposal: 'X-1' }));
         (p.units.find((u) => u['id'] === 'u3') as Json)['priority'] = 'high';
@@ -426,4 +427,3 @@ describe(`matrix row ${COMPARE_JOB}`, () => {
     });
   }
 });
-

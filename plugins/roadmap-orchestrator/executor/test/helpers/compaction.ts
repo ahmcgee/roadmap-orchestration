@@ -55,7 +55,7 @@ export async function applyGolden(f: Fixture, replacementsFirst = false): Promis
       if (d.action === 'merge') {
         if (!p.ids.includes(p.replacement!.id)) corpus = corpus.replace('\n```\n', `\n${p.replacement!.id}: ${p.replacement!.text}\n\`\`\`\n`);
         const id = `I-${nextI++}`;
-        obligations.push(parseObligations({ ...previous, obligations: [obligation(id, p.replacement!.id, p.replacement!.text)], mapping: { paths: [] }, census: [{ rule: p.replacement!.id, state: { type: 'obligation', id } }] }).obligations[0]!);
+        obligations.push(parseObligations({ ...previous, obligations: [obligation(id, p.replacement!.id, p.replacement!.text)], mapping: { systems: [] }, census: [{ rule: p.replacement!.id, state: { type: 'obligation', id } }] }).obligations[0]!);
         census.push({ rule: p.replacement!.id as typeof census[number]['rule'], state: { type: 'obligation', id: id as typeof obligations[number]['id'] } });
       }
       curation.push({ tier: p.name === 'removed module' || p.name === 'answered assumption' ? 'fact-currency' : 'structural', what: `compaction ${d.id}: ${p.name}${p.trivia ? '; owner retires a claim still true' : ''}`, files: ['register.md'], rules: p.replacement ? [p.replacement.id] : p.ids });
@@ -96,7 +96,7 @@ export async function applyGolden(f: Fixture, replacementsFirst = false): Promis
   }
   census.sort((a, b) => Number(a.rule.slice(2)) - Number(b.rule.slice(2)));
   const remaining = new Set(obligations.map((o) => o.id));
-  const next = parseObligations({ ...previous, obligations, census, mapping: { paths: previous.mapping.paths.map((p) => ({ ...p, obligations: p.obligations.filter((id) => remaining.has(id)) })).filter((p) => p.obligations.length) } });
+  const next = parseObligations({ ...previous, obligations, census, mapping: { systems: previous.mapping.systems.map((p) => ({ ...p, obligations: p.obligations.filter((id) => remaining.has(id)) })).filter((p) => p.obligations.length) } });
   write(join(f.next, 'obligations.json'), json(next));
   for (const specFile of ['slips.json']) {
     const spec = readJson(join(f.next, specFile)) as Obj;

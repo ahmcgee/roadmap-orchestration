@@ -1,3 +1,4 @@
+import { systemName } from '../src/core/ids.ts';
 // dev.13 prompt inputs (agent F): a milestone's design references reach the plan-check, build and gate of every unit it
 // lists, and of its design unit, as documents; a unit in no milestone gets none. A build in a milestone with a `browser`
 // journey gets the walkthrough MCP servers (`--mcp-config`, `{evidence}` its evidence dir); no other build does.
@@ -11,7 +12,7 @@ import { buildBrowser, unitMilestones } from '../src/pipeline/stages.ts';
 import { parseRepoConfig } from '../src/routing/layers.ts';
 import { makeRepo, revParse, tmpDir } from './helpers/repo.ts';
 
-const unit = (id: string, after: string[] = []) => ({ id, spec: `specs/${id}.json`, risk: 'med', scope: [`src/${id}/**`], resources: [], after, contingent: [] });
+const unit = (id: string, after: string[] = []) => ({ id, spec: `specs/${id}.json`, risk: 'med', systems: [systemName('app')], resources: [], after, contingent: [] });
 const bringUp = {
   setup: [['npm', 'ci']], serve: [{ name: 'web', argv: ['node', 'server.js', '--port', '{port:web}'], ready: { http: 'http://127.0.0.1:{port:web}/health' } }],
   env: { API_URL: 'http://127.0.0.1:{port:web}' }, seed: [],

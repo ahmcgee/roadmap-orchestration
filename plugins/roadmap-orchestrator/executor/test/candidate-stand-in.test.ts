@@ -21,7 +21,7 @@ const T = { timeout: SCENARIO_TIMEOUT_MS };
 type Json = Record<string, unknown>;
 
 /** Every in-scope path maps to I-1, so the candidate selects it and its arc lane `journey` runs. */
-const MAPPED = [{ pattern: 'src/**', obligations: ['I-1'] }, { pattern: 'test/**', obligations: ['I-1'] }, { pattern: 'contracts/**', obligations: ['I-1'] }] as const;
+const MAPPED = [{ system: 'app', obligations: ['I-1'] }, { system: 'app', obligations: ['I-1'] }, { system: 'app', obligations: ['I-1'] }] as const;
 
 /**
  * Makes the plan's suite the arc lane `journey` itself (as a suite lane), with `envSet` set on the copy. An estate lane, so

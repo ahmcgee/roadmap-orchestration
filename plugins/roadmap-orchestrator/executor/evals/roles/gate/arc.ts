@@ -1,3 +1,4 @@
+import { systemName } from '../../../src/core/ids.ts';
 // One gate trial end to end, through the production unit driver: the arc harness of the gate tests
 // (test/fixtures/unit-common.ts contextFor, stepUntil) over the fixture's repo. Plan-check and build are fake steps (the
 // build lays down the generated unit commit: the `checkoutTree` act), the lanes run for real and must be green (or red on
@@ -140,10 +141,10 @@ export function setupGateArc(f: Fixture, kind: GateKind, risk: RiskTier, config:
   const repo = tmpDir('roles-repo');
   const { base, head } = materialise(f, repo);
   const planDir = tmpDir('roles-plan');
-  writeFileSync(join(planDir, 'u1.json'), JSON.stringify({
+  writeFileSync(join(planDir, 'u1.json'), JSON.stringify({ intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
     schema: 'roadmap/spec-m1', unit: 'u1', rev: 1, lanes: [{ ...laneJson(LANE), state: 'active' }],
     acceptance: f.acceptance.map((c) => ({ id: c.id, clause: c.clause, failLoudIfUndelivered: true, state: 'active' })),
-    scope: SCOPE, resources: [], decisions: [], facts: [], cites: { contracts: ['contracts/api.md'], rulings: ['C-1'] },
+     resources: [], decisions: [], facts: [], cites: { contracts: ['contracts/api.md'], rulings: ['C-1'] },
     ...(isCorpusCell(f.cell) ? { obligations: ['I-1'] } : {}),
     ...(f.removes.length === 0 ? {} : { removes: f.removes }),
   }));
@@ -154,7 +155,7 @@ export function setupGateArc(f: Fixture, kind: GateKind, risk: RiskTier, config:
     schema: 'roadmap/plan-m1', arc, integrationBranch: 'main', baseline: base,
     worktreeRoot: tmpDir('roles-wt'), contracts: ['contracts/api.md'], rulings: 'rulings.md', ...(isCorpusCell(f.cell) ? { corpus: PIN_FILE, phase0: PHASE0_FILE, holistic: { advances: ['V-1'], obligations: 'obligations.json' } } : { architectureDoc: 'ARCHITECTURE.md' }),
     direction: 'Keep every sweep mechanical: behaviour never changes unless the spec says so.', suite: { lanes: [laneJson({ ...LANE, id: 'suite' })] }, resources: [],
-    derived: DERIVED, units: [{ id: 'u1', spec: 'u1.json', risk, scope: SCOPE, resources: [] }],
+    derived: DERIVED, units: [{ id: 'u1', spec: 'u1.json', risk, systems: [systemName('app')], resources: [] }],
   }));
   if (isCorpusCell(f.cell)) writeCorpusInputs(repo, planDir, base);
   const scenarioDir = tmpDir('roles-scenario');
@@ -463,10 +464,10 @@ function writeCorpusInputs(repo: string, planDir: string, base: string): void {
   const control = join(planDir, 'witness-control.json');
   writeWitnessControl(control, { trees: { '*': { outcomes: { export: 'pass' } } } });
   const lane = { ...laneJson({ id: 'journey', argv: witnessLaneArgv('jsonl', planDir, control) }), reporter: 'jsonl' };
-  const laneRev = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'export', lanes: [lane], obligations: [], mapping: { paths: [] } }).lanes[0]!);
+  const laneRev = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'export', lanes: [lane], obligations: [], mapping: { systems: [] } }).lanes[0]!);
   const witness = { lane: 'journey', testIds: ['export'] };
   writeFileSync(join(planDir, 'obligations.json'), JSON.stringify({
-    schema: 'roadmap/obligations-m3', cutLine: 'vessel export ships', lanes: [lane], mapping: { paths: [] },
+    schema: 'roadmap/obligations-m3', cutLine: 'vessel export ships', lanes: [lane], mapping: { systems: [] },
     obligations: [{ id: 'I-1', rev: 1, statement: 'Vessel exports satisfy the export contract.', rule: { id: 'T-1', textSha256: pin.rules[0]!.textSha256 }, serves: ['V-1'], witness,
       proofJudgment: { verdict: 'proves', obligationRev: 1,  witness: {testIds: witness.testIds, ...(('files' in witness ? {files: witness.files} : {}))} }, deliveredBy: [], activation: 'must-hold', contracts: [], state: { type: 'active' } }],
     census: pin.rules.map((r) => ({ rule: r.id, state: r.id === 'T-1' ? { type: 'obligation', id: 'I-1' } : { type: r.id === 'T-2' ? 'untestable' : 'out-of-slice' } })),

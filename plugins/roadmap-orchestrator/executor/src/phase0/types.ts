@@ -26,8 +26,7 @@ milestoneId,
 needsUserId,obligationId,
 opportunityId,
 phaseQuestionId,ruleId,sha,sha256,unitId,visionClauseId,
-witnessItemId,
-} from '../core/ids.ts';
+witnessItemId } from '../core/ids.ts';
 import { type Read,SchemaError,arrayOf,assertUnique,bool,literal,nat,nullable,object,oneOf,positive,sortedBy,str,tagged } from '../core/validate.ts';
 import { type IsoTime,type RepoPath,isoTime,repoPath } from '../core/values.ts';
 import { type DebtDisposition,debtDisposition } from '../debt/types.ts';
@@ -146,6 +145,7 @@ export function parsePhase0Record(value: unknown): Phase0Record {
 
 export type CorpusProblem =
   | Readonly<{ type: 'pin-drift' }>
+  | Readonly<{ type: 'corpus-drift'; paths: readonly RepoPath[] }>
   | Readonly<{ type: 'rule-reused'; id: RuleId }>
   | Readonly<{ type: 'rule-retired-reappears'; id: RuleId }>
   | Readonly<{ type: 'rules-in-vision' }>
@@ -153,15 +153,10 @@ export type CorpusProblem =
   | Readonly<{ type: 'source-unreadable'; detail: string }>
   | Readonly<{ type: 'source-remote-mismatch' }>
   /** `fix`: what the owner does about it (`scopeOverlapFix`); read as that, warned, when a dev.17 rejection lacks it (`scopeOverlapFixDefault`). */
-  | Readonly<{ type: 'scope-overlaps-corpus'; unit: UnitId; fix: string }>
   | Readonly<{ type: 'contract-overlaps-corpus'; path: RepoPath }>;
 
-/** The fix a `scope-overlaps-corpus` problem names: the unit's scope narrowed off the corpus (or the unit cut) in an apply or start. */
-export const scopeOverlapFix = (unit: UnitId): string =>
-  `narrow ${unit}'s scope off the corpus file set, or cut ${unit}; export the plan in force with `
-  + '`roadmap inputs export`, edit that export and apply with `--from <export> --rev N --reason "<line>"`';
-
 export const corpusProblem: Read<CorpusProblem> = tagged('type', {
+  'corpus-drift': object((f): CorpusProblem => ({ type: f.get('type', literal('corpus-drift')), paths: f.get('paths', arrayOf(pathR, { nonEmpty: true })) })),
   'pin-drift': object((f): CorpusProblem => ({ type: f.get('type', literal('pin-drift')) })),
   'rule-reused': object((f): CorpusProblem => ({ type: f.get('type', literal('rule-reused')), id: f.get('id', ruleR) })),
   'rule-retired-reappears': object((f): CorpusProblem => ({ type: f.get('type', literal('rule-retired-reappears')), id: f.get('id', ruleR) })),
@@ -169,12 +164,6 @@ export const corpusProblem: Read<CorpusProblem> = tagged('type', {
   'guide-missing': object((f): CorpusProblem => ({ type: f.get('type', literal('guide-missing')) })),
   'source-unreadable': object((f): CorpusProblem => ({ type: f.get('type', literal('source-unreadable')), detail: f.get('detail', str) })),
   'source-remote-mismatch': object((f): CorpusProblem => ({ type: f.get('type', literal('source-remote-mismatch')) })),
-  'scope-overlaps-corpus': object((f): CorpusProblem => {
-    const unit = f.get('unit', (v, p) => unitId(v, p));
-    const fix = f.optional('fix', str);
-
-    return { type: f.get('type', literal('scope-overlaps-corpus')), unit, fix: fix ?? scopeOverlapFix(unit) };
-  }),
   'contract-overlaps-corpus': object((f): CorpusProblem => ({ type: f.get('type', literal('contract-overlaps-corpus')), path: f.get('path', pathR) })),
 });
 

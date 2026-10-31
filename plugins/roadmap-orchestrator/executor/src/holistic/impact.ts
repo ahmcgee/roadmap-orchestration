@@ -1,3 +1,4 @@
+import { pathClass } from '../input/systems.ts';
 // Impact selection (DESIGN-1.0.md §2.8 "Impact mapping"; the frozen `SelectObligations` of src/holistic/types.ts;
 // M3 step A1). Pure. A candidate selects:
 //   - its units' declared obligations and their repairs, and the declared obligations of their dependency closure;
@@ -29,7 +30,7 @@ const anchoredAt = (o: ObligationDef, path: RepoPath): boolean => {
 function select(input: ImpactInput, unmappedFallback: boolean): readonly ObligationId[] {
   const all = new Map<ObligationId, ObligationDef>(input.obligations.obligations.map((o) => [o.id, o]));
   const lanes = new Map(input.obligations.lanes.map((l) => [l.id, l]));
-  const mapping = input.obligations.mapping.paths;
+  const mapping = input.obligations.mapping.systems;
   const units = input.units.map((u) => u.unit);
   const picked = new Set<ObligationId>([
     ...input.units.flatMap((u) => [...u.declared, ...u.repairs]),
@@ -39,7 +40,8 @@ function select(input: ImpactInput, unmappedFallback: boolean): readonly Obligat
   for (const id of picked) if (!all.has(id)) throw new Error(`impact: ${id} is not an obligation in force`);
 
   for (const path of input.changedPaths) {
-    const mapped = mapping.filter((e) => matchesPattern(path, e.pattern));
+    const cls = input.systemsMap === null ? null : pathClass(input.systemsMap, path);
+    const mapped = mapping.filter((e) => cls?.kind === 'systems' && cls.systems.has(e.system));
     mapped.forEach((e) => e.obligations.forEach((id) => picked.add(id)));
     for (const o of all.values()) {
       const lane = o.witness === null ? undefined : lanes.get(o.witness.lane);

@@ -1,3 +1,4 @@
+import { systemName } from '../../src/core/ids.ts';
 // The holistic whole-pipeline scenario (M3 B8; test/serial/pipeline-matrix.test.ts): an exec-common arc made holistic on a
 // corpus target (M4a D0, corpus-target.ts: a fresh holistic start targets a corpus; obligations witnessed on a fake
 // `journey` arc lane, the required lens set L = {vision}) and run by the real supervised `roadmap start` through the
@@ -40,7 +41,7 @@ import { MUL, gateStep } from './unit-common.ts';
 
 type Json = Record<string, unknown>;
 
-const MAPPED = ['src/**', 'test/**', 'contracts/**'].map((pattern) => ({ pattern, obligations: ['I-1', 'I-2'] }));
+const MAPPED = ['app'].map((system) => ({ system, obligations: ['I-1', 'I-2'] }));
 // Each witness declares its test file (a fresh start requires them, plan defects 2026-10-16): I-1's is in the baseline,
 // I-2's is the one u1 delivers inside its scope.
 const OBLIGATIONS = [
@@ -105,7 +106,7 @@ const IMPLEMENT: Step = {
 function asideAdmit(r: ExecRun): JsonValue {
   const spec = JSON.parse(readFileSync(join(r.planPath, '..', 'u1.json'), 'utf8')) as Json;
   return {
-    op: 'admit', unit: { id: 'aside', risk: 'med', scope: ['contracts/**', 'src/**', 'test/**'], after: [], origin: 'checkpoint' },
+    op: 'admit', unit: { id: 'aside', risk: 'med', systems: [systemName('app')], after: [], origin: 'checkpoint' },
     spec: admitSpecWire({ ...spec, unit: 'aside', rev: 1, obligations: ['I-1'] }), targets: [], cites: ['V-1'], evidence: ['scripted evidence'],
   };
 }

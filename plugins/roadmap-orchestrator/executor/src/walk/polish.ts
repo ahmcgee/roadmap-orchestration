@@ -29,7 +29,6 @@ import { type RawPlan,admitUnit,fillMappedObligations } from '../holistic/bundle
 import { type InputFile,type InputFiles,inForceFiles,requirePlanInForce,revisionInForce } from '../input/inforce.ts';
 import { type Milestone,type PlanM1,milestoneOf,parsePlan } from '../input/plan.ts';
 import { type WalkRecord,refusedProposals,walksOf } from './milestones.ts';
-import { coversReference } from './report.ts';
 
 type Proposed = Extract<WalkFact, { kind: 'polish-proposed' }>;
 
@@ -62,7 +61,7 @@ function proposalFiles(ctx: PolishContext, current: InputFiles, m: Milestone, pr
   const reasons: string[] = [];
   for (const p of proposals) {
     const admitted = admitUnit(raw, specs, {
-      id: p.unit.id, risk: 'high', scope: p.unit.scope, after: [], resources: m.resources, origin: 'polish', polish: { milestone: m.id, proposal: p.id },
+      id: p.unit.id, risk: 'high', systems: p.unit.systems, after: [], resources: m.resources, origin: 'polish', polish: { milestone: m.id, proposal: p.id },
     }, p.unit.spec, specPath(p.unit.id), `proposal ${p.id} (unit ${p.unit.id})`);
     if ('reasons' in admitted) reasons.push(...admitted.reasons);
   }
@@ -97,7 +96,6 @@ function preReasons(view: JournalView, w: WalkRecord, m: Milestone, p: Proposed)
   if (draining !== null) reasons.push(`the arc is draining (admissions closed by ${draining.command}): no polish unit is admitted`);
   const latest = walksOf(view, m.id).filter((x) => x.ended !== null && x.ended.outcome !== 'abandoned').at(-1);
   if (latest !== undefined && latest.job !== w.job) reasons.push(`it is from ${w.job} (round ${w.round}); ${m.id}'s latest round is ${latest.job} (round ${latest.round})`);
-  if (!coversReference(m.references, p.unit.scope)) reasons.push(`its scope (${p.unit.scope.join(', ')}) covers none of ${m.id}'s references (${m.references.join(', ')})`);
   return reasons;
 }
 

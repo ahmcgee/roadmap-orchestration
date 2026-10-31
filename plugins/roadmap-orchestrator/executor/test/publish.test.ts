@@ -264,10 +264,10 @@ function holisticArc(steps: ArcOptions['steps'], scripted: Readonly<Record<strin
     const control = join(tmpDir('witness-control'), 'control.json');
     writeWitnessControl(control, { trees: { '*': { outcomes: scripted } } });
     const journey = { id: 'journey', argv: witnessLaneArgv('jsonl', tmpDir('witness-lane'), control), cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], reporter: 'jsonl' };
-    const laneRev = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [journey], obligations: [], mapping: { paths: [] } }).lanes[0]!);
+    const laneRev = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [journey], obligations: [], mapping: { systems: [] } }).lanes[0]!);
     writeFileSync(join(planDir, 'vision.json'), JSON.stringify(VISION));
     writeFileSync(join(planDir, 'obligations.json'), JSON.stringify({
-      schema: 'roadmap/obligations-m3', cutLine: 'mul ships', lanes: [journey], mapping: { paths: [] },
+      schema: 'roadmap/obligations-m3', cutLine: 'mul ships', lanes: [journey], mapping: { systems: [] },
       obligations: [{
         id: 'I-1', rev: 1, statement: 'add adds.', docRef: { path: 'ARCHITECTURE.md', anchor: 'Architecture', quotedText: 'One module' }, serves: ['V-1'],
         witness: { lane: 'journey', testIds: ['t-I-1'] }, proofJudgment: { verdict: 'proves', obligationRev: 1,  witness: {  testIds: ['t-I-1'] } }, deliveredBy: [], activation: 'must-hold',

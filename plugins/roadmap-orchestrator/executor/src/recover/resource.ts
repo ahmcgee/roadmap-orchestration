@@ -46,8 +46,7 @@ import { decidedBy } from '../pipeline/transitions.ts';
 import { instanceEnv } from '../resources/pool.ts';
 import {
   type HeldState, type JobHolder, type PublicationHolder, type ReclaimHolder, type Reservation, type ResourceContext, type StageHolder,
-  finishCleanup, holderRecipes, holderUnits, resourceTable, retryReclaim, sameHolder, transition,
-} from '../resources/reserve.ts';
+  finishCleanup, holderRecipes, holderUnits, resourceTable, retryReclaim, sameHolder, transition } from '../resources/reserve.ts';
 import { PUBLICATION_CHAIN } from '../schedule/types.ts';
 import { reconcileFailedCleanup } from './residue.ts';
 import { spawnReconciler } from './spawn.ts';

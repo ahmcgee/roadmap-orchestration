@@ -40,7 +40,7 @@ test('system notes: build and gate receive paths only, and an edit lands as an o
   const plan = JSON.parse(readFileSync(original.planPath, 'utf8'));
   plan.units[0].systems = ['api'];
   writeFileSync(original.planPath, JSON.stringify(plan));
-  const d = { ...original, config: parseRepoConfig({ systemNotesDir: 'memory' }) };
+  const d = { ...original, config: parseRepoConfig({ systemNotesDir: 'memory', systemsMap: { systems: { api: { paths: ['src/**', 'test/**', 'memory/api.md'] } } } }) };
   const expected = ['<system_notes>\nmemory/api.md\n</system_notes>'];
   const build = mulBuild({ 'memory/api.md': 'Record the seam discovered while building mul.\n' });
   appendSteps(d, [planCheckStep({ decision: 'approve' }), { ...build, expect: { ...build.expect, stdinContains: expected } }, gateStep({ decision: 'approve' }, { stdinContains: expected })]);

@@ -691,7 +691,7 @@ const lane = (id: string, argv: readonly string[]) => ({ id, argv: [...argv], cw
 const planOf = (argv: readonly string[], units = MIN_ARC1_UNITS): PlanM1 => ({
   suite: { lanes: [lane(SUITE_LANE, argv), lane(REPLAY_LANE.id, REPLAY_LANE.argv)] }, units: Array.from({ length: units }, (_, i) => ({ id: `u${i + 1}` })),
 }) as unknown as PlanM1;
-const obligationsOf = (soakArgv: readonly string[]) => parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [{ ...lane('soak', soakArgv), reporter: 'node-test' }], obligations: [], mapping: { paths: [] } });
+const obligationsOf = (soakArgv: readonly string[]) => parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [{ ...lane('soak', soakArgv), reporter: 'node-test' }], obligations: [], mapping: { systems: [] } });
 const SHA = 'a'.repeat(64);
 const SHARD_PROPOSAL = { id: 'flow-2.0', target: `suite:${SUITE_LANE}`, action: { lever: 'suite-lane', lane: SUITE_LANE, argv: [...SHARD.argv], reporter: 'node-test', cpu: SHARD.cpu }, rationale: 'r', risks: 'r' };
 const PREIMAGE = { lever: 'suite-lane', lane: SUITE_LANE, argv: [...SEED_SUITE_ARGV], cpu: null };

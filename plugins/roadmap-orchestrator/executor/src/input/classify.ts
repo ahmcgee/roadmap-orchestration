@@ -1,6 +1,6 @@
 // Classify a proposal against the plan in force. Every refused edit contributes its reason.
 // Root applies authorize weakenings with their reason; automatic revisions retain the frozen contract gate.
-import type { IntentOf,PlanChange,ReentryWidening } from '../core/events.ts';
+import type { IntentOf,PlanChange } from '../core/events.ts';
 import { PLAN_FIELDS } from '../core/events.ts';
 import {
 type JobId,type ObligationId,
@@ -38,9 +38,8 @@ import { RISK_TIERS,type RiskTier,UNIT_ROLES } from '../routing/types.ts';
 import { effectiveGraph,findCycle } from '../schedule/graph.ts';
 import type { CommandScope,ScopeOf } from '../schedule/types.ts';
 import { type Ruling,parseRulings } from '../spec/rulings.ts';
-import { SpecFileError,bytesSha256,evidenceScopeConflicts,parseSpec } from '../spec/spec.ts';
+import { SpecFileError,bytesSha256,parseSpec } from '../spec/spec.ts';
 import { baseFiles,compareAndSwap } from './cas.ts';
-import { lineageEnvelope,withinEnvelope } from './envelope.ts';
 import {
 type InForce,
 type InputFiles,PLAN_INPUT,type RevisionInForce,type RoutingBase,SPEC_INPUT,
@@ -51,8 +50,7 @@ specShaInForce,unitRouting
 } from './inforce.ts';
 import {
 type KnownDefect,type PlanM1,type PlanUnit,boundsOf,derivedOf,environmentOf,environmentsOf,hasMilestones,knownDefectsOf,milestonesNeedHolistic,milestonesOf,parsePlan,
-planFieldValue,priorityOf,reservedUnitIdReason,
-} from './plan.ts';
+planFieldValue,priorityOf,reservedUnitIdReason } from './plan.ts';
 
 /**
  * Who proposes a revision (G1), as far as its rules differ: an architect's `apply`, `rule` or `reverse` command, a
@@ -78,7 +76,7 @@ export type Proposer =
    * release's, `reenterFixesDefault`): adopted as recorded, the `fixes` rows do not bind them (`fixesReasons`).
    */
   | Readonly<{
-    type: 'bundle'; job: JobId; cites: readonly VisionClauseId[]; evidence: readonly string[]; admits: readonly ClassifiedAdmit[]; 
+    type: 'bundle'; job: JobId; cites: readonly VisionClauseId[]; evidence: readonly string[]; admits: readonly ClassifiedAdmit[];
   }>
   /** dev.13 (agent D): the code-applied polish revision of walk `job` (src/walk/polish.ts): it only admits that walk's proposals. */
   | Readonly<{ type: 'walk'; job: JobId }>
@@ -98,7 +96,7 @@ export type Proposer =
 export type NextInputs = Readonly<{
   reason?: string | undefined;
   ledger: readonly Ruling[];
-  
+
   obligations: Obligations | null;
   vision: Vision | null;
   /** M4a: a corpus arc's pin and Phase-0 record (null when absent or not loading: the rows refuse them). */
@@ -219,9 +217,7 @@ function dispatchedSpec(
   const kept = keptInput(input.runDir, recorded.sha256, SPEC_INPUT);
   if (kept === null) throw new Error(`unit ${unit.id}: the spec it was dispatched at (${recorded.sha256}) is not kept in the run dir`);
   const was = parseSpec(kept, path);
-  if (!same(was.resources, spec.resources)) return `unit ${unit.id} is dispatched: its spec's scope and resources may not change`;
-  const growth = scopeGrowthReason(unit.id, 'spec\'s scope', 'its spec\'s scope and resources may not change', was.scope, spec.scope, spec, inputs);
-  if (growth !== null) return growth;
+  if (!same(was.resources, spec.resources)) return `unit ${unit.id} is dispatched: its spec's resources may not change`;
   const machine = spec.rev <= recorded.rev && !(spec.rev === recorded.rev && sameBesidesEvidence(was, spec)) ? machineRevision(input.view, unit.id, recorded) : null;
   if (machine !== null) return staleAfterMachineRevision(input.runDir, unit.id, path, spec.rev, machine);
   if (spec.rev === recorded.rev) {
@@ -355,24 +351,12 @@ function reentryRow(
   }
   const reasons: string[] = [];
   const root = old.lineage?.root ?? re.unit;
-  const envelope = lineageEnvelope(view, root);
-  let widened: ReentryWidening | null = null;
-  if (envelope.length === 0) {
-    reasons.push(`unit ${unit.id} re-enters ${re.unit}, whose lineage (root ${root}) was never dispatched, so it has no scope envelope`);
-  } else {
-    const outside = [...new Set(unit.scope.filter((p) => !withinEnvelope(p, envelope)))].sort();
-    if (outside.length > 0) {
-      if (!inputs.reason?.trim()) reasons.push(`unit ${unit.id}: scope beyond the lineage envelope needs apply --reason`);
-      else widened = {patterns: outside, reason: inputs.reason};
-    }
-
-  }
   if (old.risk !== null && maxTier(unit.risk, old.risk) !== unit.risk) reasons.push(`unit ${unit.id}: risk ${unit.risk} is below its lineage's floor ${old.risk}`);
   if (re.reset !== undefined && !(input.proposer.type === 'apply' && input.proposer.reason?.trim())) reasons.push(`unit ${unit.id}: resetting counters needs apply --reason`);
   reasons.push(...fixesReasons(input, unit));
   if (reasons.length > 0) return reasons;
   const change = { type: 'unit-reentered', unit: unit.id, reenters: re.unit, reset: re.reset !== undefined } as const;
-  return widened === null ? change : {...change, widened};
+  return change;
 }
 
 /** The re-entered unit `old`, then each unit its lineage re-entered before it, back to the root. */
@@ -448,7 +432,7 @@ function nextInputsOf(input: ClassifyInput, reasons: string[]): Readonly<{ ledge
     inputs: {
       reason: input.proposer.type === 'apply' ? input.proposer.reason : undefined,
       ledger: 'rulings' in ledger ? ledger.rulings : [],
-      
+
       obligations,
       vision,
       corpus: c === null ? null : { pin: quietly(c.pin.bytes, parseCorpusPin), phase0: phase0RecordOf(c.phase0.bytes) },
@@ -497,20 +481,6 @@ function spentOf(u: UnitState): Readonly<Partial<Record<keyof Bounds, number>>> 
   };
 }
 
-/**
- * Why a dispatched unit's scope may not become `now` (was `was`): it may only grow, and only when its spec in the
- * revision cites an active ruling applying to the unit whose statement names exactly the added patterns. Null when allowed.
- */
-function scopeGrowthReason(
-  unit: UnitId, what: string, fixed: string, was: readonly RepoPattern[], now: readonly RepoPattern[], spec: SpecM1 | null, inputs: NextInputs,
-): string | null {
-  if (same([...was].sort(), [...now].sort())) return null;
-  const added = now.filter((p) => !was.includes(p)).sort();
-  if (was.some((p) => !now.includes(p))) return `unit ${unit} is dispatched: ${fixed} (a scope may only grow, backed by a ruling)`;
-  if (inputs.reason?.trim()) return null;
-  return `unit ${unit}: growing ${what} needs apply --reason`;
-}
-
 /** Classifies the files against the plan in force. */
 export function classify(input: ClassifyInput): Classified {
   const { view, inForce, next, proposer } = input;
@@ -518,6 +488,7 @@ export function classify(input: ClassifyInput): Classified {
   const plan = next.plan;
   const reasons: string[] = [];
   const changes: PlanChange[] = [];
+  if (!same(cur.previousHead, plan.previousHead)) reasons.push('previousHead is immutable after revision 1');
   const scoped = new Set<UnitId>();
   const busy: BusyAttempt[] = [];
   const { ledger, inputs } = nextInputsOf(input, reasons);
@@ -620,11 +591,9 @@ export function classify(input: ClassifyInput): Classified {
       } else {
         const fixed = (['spec', 'risk', 'resources'] as const).filter((k) => !same(was[k], unit[k]) && !(k === 'risk' && riskAbove(unit.risk, was.risk)));
         const added = unit.after.filter((a) => !was.after.includes(a));
-        const growth = same(was.scope, unit.scope) ? null : scopeGrowthReason(unit.id, 'scope', 'its scope may not change', was.scope, unit.scope, spec, inputs);
         for (const k of fixed) reasons.push(`unit ${unit.id} is dispatched: its ${k} may not change`);
-        if (growth !== null) reasons.push(growth);
         if (added.length > 0) reasons.push(`unit ${unit.id} is dispatched: it may not run after ${added.join(', ')} as well`);
-        if (fixed.length === 0 && added.length === 0 && growth === null) {
+        if (fixed.length === 0 && added.length === 0) {
           changes.push({ type: 'unit-changed', unit: unit.id });
           scoped.add(unit.id);
         }
@@ -1038,7 +1007,7 @@ function polishRows(view: JournalView, cur: PlanM1, plan: PlanM1, proposer: Prop
     const p = proposals.get(origin.proposal);
     if (p === undefined || p.job !== proposer.job) reasons.push(`unit ${u.id} carries proposal ${origin.proposal}, which is no proposal of ${proposer.job}`);
     else if (p.milestone !== origin.milestone) reasons.push(`unit ${u.id} names milestone ${origin.milestone}; its proposal ${p.id} is of ${p.milestone}`);
-    else if (p.unit.id !== u.id || !same([...u.scope].sort(), p.unit.scope)) reasons.push(`unit ${u.id} is not the unit proposal ${p.id} names (${p.unit.id}, scope ${p.unit.scope.join(', ')})`);
+    else if (p.unit.id !== u.id || !same([...u.systems].sort(), p.unit.systems)) reasons.push(`unit ${u.id} is not the unit proposal ${p.id} names (${p.unit.id}, scope ${p.unit.systems.join(', ')})`);
   }
   if (proposer.type === 'walk') {
     const added = new Set(plan.units.filter((u) => !curIds.has(u.id) && u.origin === 'polish').map((u) => u.id as string));
@@ -1183,16 +1152,15 @@ function specRows(input: ClassifyInput, inputs: NextInputs, specs: ReadonlyMap<U
     if (touched.has(unit.id) || (inputs.changed.obligations && live(unit))) reasons.push(...witnessLaneReasons(unit.id, spec, obligations));
     if (!touched.has(unit.id)) continue;
     reasons.push(...witnessReuseReasons(unit.id, spec, obligations));
-    reasons.push(...evidenceScopeConflicts(unit.id, [...unit.scope, ...spec.scope], spec));
     const declared = specObligations(spec);
     const byId = new Map((obligations?.obligations ?? []).map((o) => [o.id, o]));
     const unknown = declared.filter((id) => !byId.has(id));
     if (unknown.length > 0) reasons.push(`unit ${unit.id} declares obligations ${unknown.join(', ')}, which are not in force`);
     if (obligations !== null) {
-      const scope = [...new Set([...unit.scope, ...spec.scope])];
-      const owed = [...new Set(obligations.mapping.paths.filter((m) => scope.some((p) => mayOverlap(p, m.pattern))).flatMap((m) => m.obligations))]
+
+      const owed = [...new Set(obligations.mapping.systems.filter((m) => unit.systems.includes(m.system)).flatMap((m) => m.obligations))]
         .filter((id) => !isExempt(byId.get(id)!) && !declared.includes(id)).sort(compareIds);
-      if (owed.length > 0) reasons.push(`unit ${unit.id}'s scope may touch paths mapped to ${owed.join(', ')}; its spec declares them in \`obligations\``);
+      if (owed.length > 0) reasons.push(`unit ${unit.id}'s systems map to ${owed.join(', ')}; its spec declares them in \`obligations\``);
     }
     const repairs = specRepairs(spec);
     if (unit.origin === 'repair' && repairs.length === 0) reasons.push(`unit ${unit.id} is a repair unit: its spec names what it repairs in \`repairs\``);
@@ -1473,7 +1441,6 @@ export function commandScope(sc: ScopeContext): ScopeOf {
         return ARC;
       case 'steer':
       case 'merge-in':
-      case 'scope-decide':
         return unitsScope([body.unit]);
       case 'apply': {
         const inForce = planInForce(sc.runDir, view);

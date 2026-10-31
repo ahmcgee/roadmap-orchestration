@@ -31,16 +31,14 @@ import {
 BOUND_FIELDS,type Bounds,DEFAULT_BOUNDS,type FailureRef,
 type KnownDefectMatch,type LaneDef,type LaneEnv,
 failureRef,
-knownDefectMatch,laneDefOf,laneEnv,
-} from '../core/records.ts';
+knownDefectMatch,laneDefOf,laneEnv } from '../core/records.ts';
 
 import { type FlakyKey,flakyKey,flakyKeyOf } from '../core/flaky.ts';
 import { canonicalJson,sha256Hex } from '../core/json.ts';
 import { Fields,type Read,SchemaError,arrayOf,assertUnique,literal,nullable,object,oneOf,positive,sortedBy,str,stringMap } from '../core/validate.ts';
 import {
 type AbsPath,type BranchName,type PlanPath,type RepoPath,type RepoPattern,absPath,branchName,planPath,repoPath,
-repoPattern,
-} from '../core/values.ts';
+repoPattern } from '../core/values.ts';
 import { LENS_KINDS,type LensKind } from '../holistic/types.ts';
 import { type RiskTier,type RoutingLayer,riskTier,routingLayer } from '../routing/types.ts';
 
@@ -167,9 +165,8 @@ export type PlanUnit = Readonly<{
   id: UnitId;
   spec: PlanPath;
   risk: RiskTier;
-  scope: readonly RepoPattern[];
   /** The unit systems whose build memory is available to its roles. Required by the P2 cutover. */
-  systems?: readonly SystemName[];
+  systems: readonly SystemName[];
   resources: readonly ResourceName[];
   /**
    * Units this one runs after (`after`, optional in the file, [] when absent): it is not dispatched while
@@ -358,6 +355,8 @@ type PlanBase = Readonly<{
   limits?: ArcLimits;
   /** M4a: a chained start's previous arc (absent: not chained). */
   chain?: PlanChain;
+  /** First arc after a release cut: the predecessor's product head without a snapshot of this schema. */
+  previousHead?: Sha;
   /** M4a rev 3 (F4): known defects, ids unique (absent: none, lasting; `knownDefectsOf`). */
   knownDefects?: readonly KnownDefect[];
   /** Plan defects (2026-10-16): derived files (absent: none, lasting; `derivedOf`). */
@@ -567,13 +566,12 @@ const cut: Read<Cut> = object((f) => {
 });
 
 const planUnit: Read<PlanUnit> = object((f) => {
-  const systems = f.optional('systems', arrayOf((v, p) => systemName(v, p), { nonEmpty: true }));
+  const systems = f.get('systems', arrayOf((v, p) => systemName(v, p), { nonEmpty: true }));
   if (systems !== undefined) assertUnique(systems, (s) => s, `${f.path}.systems`);
   const out = {
     id: f.get('id', (v, p) => unitId(v, p)),
     spec: f.get('spec', (v, p) => planPath(v, p)),
     risk: f.get('risk', riskTier),
-    scope: f.get('scope', arrayOf((v, p) => repoPattern(v, p), { nonEmpty: true })),
     resources: f.get('resources', arrayOf((v, p) => resourceName(v, p))),
     after: f.optional('after', arrayOf((v, p) => unitId(v, p))) ?? [],
     contingent: f.optional('contingent', arrayOf(object((g) => ({ id: g.get('id', (v, p) => edgeId(v, p)), condition: g.get('condition', str) })))) ?? [],
@@ -589,12 +587,11 @@ const planUnit: Read<PlanUnit> = object((f) => {
   if ((origin === 'polish') !== (polish !== undefined)) throw new SchemaError(`${f.path}.polish`, origin === 'polish' ? 'the milestone and proposal of a polish unit' : 'absent (only a polish unit carries it)', polish);
   const deflake = f.optional('deflake', deflakeOrigin);
   if ((origin === 'deflake') !== (deflake !== undefined)) throw new SchemaError(`${f.path}.deflake`, origin === 'deflake' ? 'the flaky keys of a deflake unit' : 'absent (only a deflake unit carries it)', deflake);
-  assertUnique(out.scope, (s) => s, `${f.path}.scope`);
   assertUnique(out.resources, (r) => r, `${f.path}.resources`);
   assertUnique(out.after, (u) => u, `${f.path}.after`);
   if (reenters?.unit === out.id) throw new SchemaError(`${f.path}.reenters.unit`, 'a unit other than itself', reenters.unit);
   return {
-    ...out, ...(systems === undefined ? {} : { systems }), ...(origin === undefined ? {} : { origin }), ...(cpu === undefined ? {} : { cpu }), ...(reenters === undefined ? {} : { reenters }),
+    ...out, systems, ...(origin === undefined ? {} : { origin }), ...(cpu === undefined ? {} : { cpu }), ...(reenters === undefined ? {} : { reenters }),
     ...(cutField === undefined ? {} : { cut: cutField }), ...(routing === undefined ? {} : { routing }), ...(limits === undefined ? {} : { limits }),
     ...(priority === undefined ? {} : { priority }), ...(polish === undefined ? {} : { polish }), ...(deflake === undefined ? {} : { deflake }),
   };
@@ -775,6 +772,7 @@ export function parsePlan(value: unknown): PlanM1 {
     }));
     const target = planTarget(f);
     const limits = f.optional('limits', arcLimits);
+    const previousHead = f.optional('previousHead', (v, p) => sha(v, p));
     const chain = f.optional('chain', object((g): PlanChain => ({ previousArc: g.get('previousArc', (v, p) => arcId(v, p)), previousHead: g.get('previousHead', (v, p) => sha(v, p)) })));
     const knownDefects = f.optional('knownDefects', arrayOf(knownDefect, { nonEmpty: true }));
     // dev.17: a dev.16 plan's `planCheck.shape` is read and dropped (every plan-check is uniform now), warned.
@@ -799,12 +797,14 @@ export function parsePlan(value: unknown): PlanM1 {
       units: f.get('units', arrayOf(planUnit, { nonEmpty: true })),
       ...(limits === undefined ? {} : { limits }),
       ...(chain === undefined ? {} : { chain }),
+      ...(previousHead === undefined ? {} : { previousHead }),
       ...(knownDefects === undefined ? {} : { knownDefects }),
       ...(derived === undefined ? {} : { derived }),
       ...(milestones === undefined ? {} : { milestones }),
       ...(environments === undefined ? {} : { environments }),
       ...target,
     };
+    if (out.previousHead !== undefined && out.chain !== undefined) throw new SchemaError('plan.previousHead', 'a foreign predecessor only without plan.chain', out.previousHead);
     // dev.17: a batch lane runs at milestones, cadence audits and the close-out, which only the holistic layer has.
     out.suite.lanes.forEach((l, i) => {
       if (l.cadence === 'batch' && out.holistic === undefined) throw new SchemaError(`plan.suite.lanes[${i}].cadence`, 'build, unit or candidate outside a holistic arc (a batch lane runs at milestones, audits and the close-out)', l.cadence);

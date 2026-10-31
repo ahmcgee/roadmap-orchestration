@@ -1,3 +1,4 @@
+import { systemName } from '../src/core/ids.ts';
 // dev.17 plan environments (src/resources/environments.ts), integrated over real processes and real git: env-tool.ts
 // stands in for an environment's up, down and probe, logging every call. Named tests: env.lazy-up-reuse,
 // env.idle-teardown, env.start-waits-for-stop, env.probe-fails-parks, env.up-fails-parks, env.job-suite-lane, env.plain-no-lifecycle,
@@ -302,7 +303,7 @@ test('env.pause-brings-down: under `pause --all` the scheduler brings an up envi
 describe('env.schema', () => {
   const base = (extra: Record<string, unknown>) => ({
     schema: 'roadmap/plan-m1', arc: 'a1', integrationBranch: 'main', baseline: 'a'.repeat(40), worktreeRoot: '/tmp/wt', contracts: [], rulings: 'r.md',
-    architectureDoc: 'ARCHITECTURE.md', direction: 'd', suite: { lanes: [] }, resources: [], units: [{ id: 'u1', spec: 'u1.json', risk: 'med', scope: ['src/**'], resources: [] }],
+    architectureDoc: 'ARCHITECTURE.md', direction: 'd', suite: { lanes: [] }, resources: [], units: [{ id: 'u1', spec: 'u1.json', risk: 'med', systems: [systemName('app')], resources: [] }],
     ...extra,
   });
   const cmd = { argv: ['true'], cwd: '.', env: { set: {}, pass: [] } };

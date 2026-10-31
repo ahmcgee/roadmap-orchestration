@@ -1,3 +1,4 @@
+import { systemName } from '../src/core/ids.ts';
 // M4a records frozen in step 0a (SCHEMAS.md "M4a: corpus, debt, forge, brief, chaining"): ids, the plan target union
 // (`plan.target-union`), the corpus guide, pin and registry, obligations with rule anchors and the census, ruling rule
 // refs (`sidecar.rule-arm-no-deviates`), the Phase-0 record, the debt ledger, pack-review inputs and key, every new fact
@@ -28,7 +29,7 @@ import { obligationSource,parseConfirmationRef,parseObligations,parsePackReviewI
 import { CliError,parseCommand } from '../src/input/cli.ts';
 import { contractOpDocuments,parsePlan,targetDocumentPaths,targetDocuments,visionFile } from '../src/input/plan.ts';
 import { m3Blocking } from '../src/needsuser.ts';
-import { parseAckMarker,parseBriefPayload,parsePhase0Record,scopeOverlapFix } from '../src/phase0/types.ts';
+import { parseAckMarker,parseBriefPayload,parsePhase0Record } from '../src/phase0/types.ts';
 import { exitCodeFor,rejectionFile } from '../src/preflight/startup.ts';
 import { validateCheckpointOutput,validatePackReviewOutput } from '../src/prompts/schemas.ts';
 import { parseRepoConfig } from '../src/routing/layers.ts';
@@ -62,7 +63,7 @@ const same = (read: (v: unknown) => unknown, value: object): void => assert.equa
 // ---------------------------------------------------------------------------------------------------
 // Fixtures
 
-const unit = { id: 'u1', spec: 'specs/u1.json', risk: 'med', scope: ['src/**'], resources: [] };
+const unit = { id: 'u1', spec: 'specs/u1.json', risk: 'med', systems: [systemName('app')], resources: [] };
 const base = {
   schema: 'roadmap/plan-m1', arc: 'arc-2', integrationBranch: 'main', baseline: A, worktreeRoot: '/var/tmp/wt', contracts: ['docs/api.md'],
   rulings: 'rulings.md', direction: 'd', suite: { lanes: [] }, resources: [], units: [unit],
@@ -95,7 +96,7 @@ const ruleObligation = (id: string, rule: string) => ({
 const obligationsFile = (obligations: readonly object[], census?: readonly object[]) => ({
   schema: 'roadmap/obligations-m3', cutLine: 'cut',
   lanes: [{ id: 'journey', argv: ['node', 'j.js'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], evidenceExcludes: [], reporter: 'jsonl' }],
-  obligations, mapping: { paths: [] }, ...(census === undefined ? {} : { census }),
+  obligations, mapping: { systems: [] }, ...(census === undefined ? {} : { census }),
 });
 
 const sidecar = (docRefs: readonly object[]) => ({
@@ -229,7 +230,7 @@ describe('obligations, census and ruling refs', () => {
     assert.throws(() => parseObligations(obligationsFile([], [{ rule: 'T-3', state: { type: 'untestable' } }, { rule: 'T-2', state: { type: 'untestable' } }])), /census\[1\]/);
   });
 
-  
+
 
   it('a vision confirmation ref: the corpus form and the M3 form', () => {
     assert.deepEqual(parseConfirmationRef(`corpus:0005_Vision.md#sha256:${H}`), { form: 'corpus', path: '0005_Vision.md', sha256: H });
@@ -428,8 +429,6 @@ describe('startup rows, brief and ack', () => {
     for (const row of rejectionFile(file, 'rejection').rejections) assert.equal(exitCodeFor(row), 78, row.kind);
     assert.throws(() => rejectionFile({ ...file, rejections: [{ kind: 'corpus-invalid', problems: [] }] }, 'rejection'), /problems/);
     // A dev.17 rejection file's scope-overlaps-corpus names no fix: read with the fix the row names now.
-    const dev17 = rejectionFile({ ...file, rejections: [{ kind: 'corpus-invalid', problems: [{ type: 'scope-overlaps-corpus', unit: 'u1' }] }] }, 'rejection');
-    assert.deepEqual(dev17.rejections[0], { kind: 'corpus-invalid', problems: [{ type: 'scope-overlaps-corpus', unit: 'u1', fix: scopeOverlapFix(unitId('u1')) }] });
   });
 
   it('the ack marker round-trips with its coverage vector and items', () => {
@@ -482,9 +481,9 @@ describe('numbered-id order', () => {
   it('facts refuse a list in neither canonical nor historical order', () => {
     refusesFact({ kind: 'corpus-amendment', id: 'M-1', source: { type: 'divergence', divergence: 'D-3' }, rules: ['T-9', 'T-10', 'T-2'], proposal: 'p', why: 'w', evidence: [] }, /^event\.fact\.rules\[2\]$/);
   });
-  
 
-  
+
+
 
   it('a checkpoint answer\'s lists come in any order and read canonical, so no fact built from them is refused for order', () => {
     const child = { id: 'I-12', statement: 's', docRef: null, rule: 'T-2', witness, activation: 'must-hold', deliveredBy: ['u2', 'u1'] };
@@ -607,4 +606,3 @@ describe('target.no-direct-access', () => {
     }
   });
 });
-

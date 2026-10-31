@@ -36,7 +36,7 @@ const obligation = (id: string, tests: readonly string[], over: object = {}) => 
   contracts: [], state: { type: 'active' }, ...over,
 });
 const OBLIGATIONS: Obligations = parseObligations({
-  schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [LANE], mapping: { paths: [] },
+  schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [LANE], mapping: { systems: [] },
   obligations: [
     obligation('I-1', ['t-delivered'], { activation: 'future', deliveredBy: ['u1'] }),
     obligation('I-2', ['t-shared'], { activation: 'future', deliveredBy: ['u1', 'u2'] }),
@@ -47,8 +47,8 @@ const OBLIGATIONS: Obligations = parseObligations({
     obligation('I-7', ['t-waived'], { activation: 'future', deliveredBy: ['u1'], state: { type: 'waived', reason: 'test disposition', rev: 2 } }),
   ],
 });
-const spec = (over: object = {}): SpecM1 => specM1({
-  schema: 'roadmap/spec-m1', unit: 'u1', rev: 1, lanes: [], acceptance: [{ id: 'A1', clause: 'c', failLoudIfUndelivered: false, state: 'active' }], scope: ['src/**'],
+const spec = (over: object = {}): SpecM1 => specM1({ intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
+  schema: 'roadmap/spec-m1', unit: 'u1', rev: 1, lanes: [], acceptance: [{ id: 'A1', clause: 'c', failLoudIfUndelivered: false, state: 'active' }],
   resources: [], decisions: [], facts: [], cites: { contracts: [], rulings: [] }, ...over,
 }, 'spec');
 const tree = (ancestors: readonly Sha[]) => ({ sha: AT, isAncestor: (c: Sha) => ancestors.includes(c) });

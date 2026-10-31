@@ -1,3 +1,4 @@
+import { systemName } from '../src/core/ids.ts';
 // Proportional review (dev.17; src/pipeline/review.ts, src/pipeline/docsonly.ts) through the unit driver, fake-backed: real
 // processes, real git. Named tests: review.defect-required, review.ride-along, review.docs-only-code,
 // review.docs-only-verifier, review.docs-only-template-literal, review.docs-only-code-certain, review.docs-only-refused,
@@ -269,7 +270,7 @@ test('review.docs-only-refused: the verifier finds a behaviour change; the claim
 /** gate 1 revises: a blocking finding on the test (R-1) and a note on src/mul.js (R-2, settled released at once). */
 const reraiseSteps = (): readonly Step[] => [
   planCheckStep({ decision: 'approve' }), mulBuild(),
-  gateStep({rulings: [], 
+  gateStep({rulings: [],
     decision: 'revise', directives: ['Test negatives.'],
     findings: [blocking('test/mul.test.js', 'No negative case.', { defect: 'test-inadequate' }), note('src/mul.js', 'mul could name its parameters.')],
   }),
@@ -457,7 +458,7 @@ test('review.delta-design-revision: a design record a plan-check lands after an 
  * never moves, so the preparation merges nothing in and u2's head is the approved one. Returns the arc reopened on the applied
  * plan, u2 prepared and through its lanes; `r` is closed.
  */
-async function scopeOnlyReentry(scope: readonly string[]): Promise<ArcRun> {
+async function systemOnlyReentry(systems: readonly string[]): Promise<ArcRun> {
   const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })] });
   let r = contextFor(d);
   await stepUntil(r, 'u1', (f) => f.stage === 'gate');
@@ -466,8 +467,8 @@ async function scopeOnlyReentry(scope: readonly string[]): Promise<ArcRun> {
   assert.equal(r.journal.view.unit(U1).status, 'held');
   const inForce = JSON.parse(readFileSync(keptSpecPath(r.ctx, r.unit('u1')), 'utf8')) as Record<string, unknown>;
   syncInputs(r);
-  writeFileSync(join(dirname(d.planPath), 'u2.json'), JSON.stringify({ ...inForce, unit: 'u2', rev: 1, scope }));
-  editPlan(d, (p) => void p.units.push({ ...p.units[0]!, id: 'u2', spec: 'u2.json', scope: [...scope], reenters: { unit: 'u1', enterAt: 'verify' } }));
+  writeFileSync(join(dirname(d.planPath), 'u2.json'), JSON.stringify({ ...inForce, unit: 'u2', rev: 1 }));
+  editPlan(d, (p) => void p.units.push({ ...p.units[0]!, id: 'u2', spec: 'u2.json', systems, reenters: { unit: 'u1', enterAt: 'verify' } }));
   const applied = await applyCommand(commandContextFor(r), submitCommand(r.ctx.runDir, r.ctx.plan().arc, applyBody(d)));
   assert.equal(applied.kind, 'applied', JSON.stringify(applied));
   r.journal.close();
@@ -480,7 +481,7 @@ async function scopeOnlyReentry(scope: readonly string[]): Promise<ArcRun> {
 const U2 = unitId('u2');
 
 test('review.reentry-scope-carry: a re-entry that changes only the scope, at the approved head, carries the approval: its gate approves by code, no call; any other spec change, or any new commit, does not', T, async () => {
-  const r = await scopeOnlyReentry(['src/**', 'test/**']);
+  const r = await systemOnlyReentry(['app']);
   try {
     const tip = sha(git(r.d.repo, 'rev-parse', 'main'));
     const head = sha(git(r.d.repo, 'rev-parse', unitBranch(r.ctx.plan().arc, U2)));
@@ -497,18 +498,6 @@ test('review.reentry-scope-carry: a re-entry that changes only the scope, at the
     assert.deepEqual(outcomes(r.d, 'u2').slice(2, 4), ['gate:delta-empty', 'candidate:green']);
     assert.equal(gateCalls(r.d).length, 1, 'only u1\'s gate called a judge');
     assert.deepEqual(factsOf(r.d, 'approval').map((a) => [a.unit, a.fingerprint.unitCommit]), [[U1, head], [U2, head]]);
-  } finally {
-    r.journal.close();
-  }
-});
-
-test('review.reentry-scope-out: a scope-only re-entry whose narrowed scope leaves a path of the approved diff outside it carries nothing', T, async () => {
-  const r = await scopeOnlyReentry(['src/**']);
-  try {
-    const tip = sha(git(r.d.repo, 'rev-parse', 'main'));
-    const head = sha(git(r.d.repo, 'rev-parse', unitBranch(r.ctx.plan().arc, U2)));
-    assert.equal(head, r.journal.view.review().approval(U1)!.fingerprint.unitCommit);
-    assert.equal(gateDelta(r.ctx, U2, loadUnitSpec(r.ctx, r.unit('u2')).spec, tip, head, fingerprintAt(r.ctx, r.unit('u2'), tip)), null, 'test/mul.test.js is outside src/**');
   } finally {
     r.journal.close();
   }

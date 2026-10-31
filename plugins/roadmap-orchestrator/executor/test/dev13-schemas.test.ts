@@ -1,3 +1,4 @@
+import { systemName } from '../src/core/ids.ts';
 // dev.13 contracts (SCHEMAS.md "dev.13: milestone walkthroughs and design units"): the ids, the plan's milestones with
 // their defaults and refusals, the polish origin, the vision's experience kind, the walk facts and their reader and fold
 // rules, the walkthrough and polish-judge answers, the walk roles in force only under milestones (routing revs of an arc
@@ -38,7 +39,7 @@ const fact = (f: object): LogRecord => ({ type: 'fact', fact: f as Fact });
 const refuses = (record: LogRecord, field: RegExp): void =>
   assert.throws(() => roundTrip(record), (err: unknown) => err instanceof SchemaError && field.test(err.field), JSON.stringify(record));
 
-const unit = (id: string, after: string[] = []) => ({ id, spec: `specs/${id}.json`, risk: 'med', scope: [`src/${id}/**`], resources: [], after, contingent: [] });
+const unit = (id: string, after: string[] = []) => ({ id, spec: `specs/${id}.json`, risk: 'med', systems: [systemName('app')], resources: [], after, contingent: [] });
 const MILESTONE = {
   id: 'MS-1', text: 'A visitor signs up and sees their dashboard.', units: ['u1', 'u2'], design: { unit: 'd1' }, references: ['design/web'],
   bringUp: {
@@ -145,7 +146,7 @@ describe('dev.13 facts', () => {
     roundTrip(fact({ kind: 'walk-ended', job: 'walk-2', outcome: 'bring-up-failed', findings: ['F-3'], proposals: [], dropped: [] }));
     roundTrip(fact({
       kind: 'polish-proposed', id: 'X-1', job: 'walk-1', milestone: 'MS-1', journey: 'J-1', evidence: ['j1.png'], text: 'Tighten the card gutter to the token.',
-      unit: { id: 'tweak-gutter', scope: ['design/web/**', 'src/web/card.css'], spec: '{}' },
+      unit: { id: 'tweak-gutter', systems: [systemName('app')], spec: '{}' },
     }));
     roundTrip(fact({ kind: 'tweak-judged', unit: 'tweak-gutter', decision: 'keep', reason: 'judged' }));
     roundTrip(fact({ kind: 'milestone-passed', milestone: 'MS-1', job: 'walk-2' }));
@@ -167,7 +168,7 @@ describe('dev.13 facts', () => {
     };
     const started = { kind: 'walk-started', job: 'walk-1', milestone: 'MS-1', round: 1, sha: A, ports: {} };
     const proposed = (id: string, job = 'walk-1') => ({
-      kind: 'polish-proposed', id, job, milestone: 'MS-1', journey: 'J-1', evidence: ['e.png'], text: 't', unit: { id: `t-${id.toLowerCase()}`, scope: ['design/**'], spec: '{}' },
+      kind: 'polish-proposed', id, job, milestone: 'MS-1', journey: 'J-1', evidence: ['e.png'], text: 't', unit: { id: `t-${id.toLowerCase()}`, systems: [systemName('app')], spec: '{}' },
     });
     const ended = (proposals: string[]) => ({ kind: 'walk-ended', job: 'walk-1', outcome: 'reported', findings: [], proposals, dropped: [] });
     const passed = { kind: 'milestone-passed', milestone: 'MS-1', job: 'walk-1' };
@@ -220,11 +221,11 @@ describe('dev.13 answers: walkthrough and polish judge', () => {
     refusedReport({ journeys: [{ journey: 'J-1', outcome: 'blocked', evidence: [], note: 'n' }] }, /\.journeys\[0\]\.outcome$/);
     refusedReport({ journeys: [report().journeys[0], report().journeys[0]] }, /\.journeys\[1\]$/);
     refusedReport({ final: false }, /\.final$/);
-    const spec = {
-      schema: 'roadmap/spec-m1', unit: 'tweak-gutter', rev: 1, lanes: [], acceptance: [{ id: 'A1', clause: 'The card gutter uses space.3.', failLoudIfUndelivered: false, state: 'active' }], scope: ['src/web/**'],
+    const spec = { intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
+      schema: 'roadmap/spec-m1', unit: 'tweak-gutter', rev: 1, lanes: [], acceptance: [{ id: 'A1', clause: 'The card gutter uses space.3.', failLoudIfUndelivered: false, state: 'active' }],
       resources: [], decisions: [], facts: [], cites: { contracts: [], rulings: [] }, obligations: [], repairs: [],
     };
-    const polish = { journey: 'J-1', evidence: ['j1.png'], text: 'Use space.3 for the card gutter.', unit: { id: 'tweak-gutter', scope: ['design/web/**', 'src/web/**'], spec } };
+    const polish = { journey: 'J-1', evidence: ['j1.png'], text: 'Use space.3 for the card gutter.', unit: { id: 'tweak-gutter', systems: ['app'], spec } };
     const read = validateWalkthroughOutput(report({ polish: [polish] }));
     assert.equal(typeof read.polish[0]?.unit.spec, 'string', 'the spec is read into spec.json text');
     refusedReport({ polish: [{ ...polish, unit: { ...polish.unit, spec: { ...spec, schema: 'nope' } } }] }, /\.spec/);

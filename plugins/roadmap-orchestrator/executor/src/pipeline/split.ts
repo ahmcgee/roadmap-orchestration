@@ -26,7 +26,7 @@ import { type FencedCommitContext,type RevisionVerdict,commitUnderFence,evaluate
 import { crashPoint } from '../core/crash.ts';
 import type { DesignRecord } from '../core/design.ts';
 import { type InvocationId,type LaneId,type Sha,type UnitId,specRev } from '../core/ids.ts';
-import { type NeedsUserContent,SPEC_SCHEMA,type SpecM1,effectiveScope,specForces,specWitnesses } from '../core/records.ts';
+import { type NeedsUserContent,SPEC_SCHEMA,type SpecM1,specForces,specWitnesses } from '../core/records.ts';
 import { maxTier } from '../core/state.ts';
 import { SchemaError } from '../core/validate.ts';
 import { absPath } from '../core/values.ts';
@@ -66,7 +66,8 @@ export function childSpec(parent: SpecM1, child: UnitSplitChild, design: DesignR
     rev: specRev(1),
     lanes: active(parent.lanes),
     acceptance: active(parent.acceptance).filter((a) => takes.has(a.id)),
-    scope: child.scope,
+    intent: parent.intent,
+    nonGoals: parent.nonGoals,
     resources: parent.resources,
     decisions: active(parent.decisions),
     facts: active(parent.facts),
@@ -113,7 +114,7 @@ function splitFiles(
   const specPath = (id: string): string => (specDir === '.' ? `${id}.json` : `${specDir}/${id}.json`);
   const keep = ['resources', 'origin', 'cpu', 'routing', 'limits', 'priority'] as const;
   const rawChildren = children.map((c): RawUnit => ({
-    id: c.unit, spec: specPath(c.unit), risk, scope: [...c.scope],
+    id: c.unit, spec: specPath(c.unit), risk, systems: [...c.systems],
     ...Object.fromEntries(keep.flatMap((k) => (entry[k] === undefined ? [] : [[k, entry[k]]]))),
     after: [...(entry.after ?? []), ...split.edges.filter((e) => e.to === c.unit).map((e) => e.from)],
   }));
@@ -149,9 +150,8 @@ export type SplitVerdict = Readonly<{ kind: 'faults'; faults: DesignFaults }> | 
 
 /** Judges `split` of `unit` (its spec in force `parent`, the tip the plan-check read): code's checks, then the apply core's. */
 export function judgeSplit(ctx: StageContext, unit: PlanUnit, parent: SpecM1, split: SplitDecision, tip: Sha): SplitVerdict {
-  const scope = effectiveScope(dispatchOf(ctx.journal.view, unit.id));
   const designs = new Map<UnitId, DesignRecord>();
-  const faults = splitFaults(ctx, parent, scope.include, split, tip, (c, d) => {
+  const faults = splitFaults(ctx, parent, unit.systems, split, tip, (c, d) => {
     designs.set(c.unit, d);
     return childSpec(parent, c, d, skeletonForces(ctx, split, d));
   });

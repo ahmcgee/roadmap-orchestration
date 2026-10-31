@@ -1,3 +1,4 @@
+import { protectedPathsInForce } from '../input/protected.ts';
 // The scaffold stage (dev.17, design pass; DESIGN-1.0.md "Design pass"; SCHEMAS.md "dev.17: the design pass"). A plan-check's
 // `scaffold` decision specifies a new system's skeleton (its paths and test paths, entry points, exports, manifest entries and
 // one load test); the economy role `scaffold` writes it in the unit worktree before the first build, and code checks it:
@@ -26,7 +27,7 @@ import { freshJudgmentSession } from '../backends/argv.ts';
 import { crashPoint } from '../core/crash.ts';
 import type { StageOutcomeFact } from '../core/events.ts';
 import type { ResourceInstance, Sha, UnitId } from '../core/ids.ts';
-import { type NeedsUserContent, effectiveScope } from '../core/records.ts';
+import { type NeedsUserContent } from '../core/records.ts';
 import { type AbsPath, type RepoPath, absPath, matchesPattern } from '../core/values.ts';
 import { git, revParse } from '../git/git.ts';
 import { type SalvageRules, planSalvage } from '../git/salvage.ts';
@@ -39,13 +40,11 @@ import { renderSpec } from '../spec/render.ts';
 import { salvageCommitOp } from '../recover/ops.ts';
 import {
   type BackendCallOutcome, type Cancelled, type StageContext, type StageParent, callBackend, dispatchOf, enter, evidenceRoot, isCancelled, minutesMs, runPrepared,
-  scaffoldDispatch, unitBranch, verdictOf,
-} from './dispatch.ts';
+  scaffoldDispatch, unitBranch, verdictOf } from './dispatch.ts';
 import { arcJourneyLane, dirtyPaths, laneRuntime, runJourneySeries } from './lanes.ts';
 import { ensureWorktree } from './rounds.ts';
 import {
-  type StageDone, at, buildEntry, executorIdentity, failedFacts, holdEntry, holisticInForce, inMs, judgedAnswer, loadUnitSpec, planCheckAnswerOf, record, stageHolder, start,
-} from './stages.ts';
+  type StageDone, at, buildEntry, executorIdentity, failedFacts, holdEntry, holisticInForce, inMs, judgedAnswer, loadUnitSpec, planCheckAnswerOf, record, stageHolder, start } from './stages.ts';
 
 /** The scaffold writer's window: a skeleton is small. */
 export const SCAFFOLD_MINUTES = 30;
@@ -188,7 +187,7 @@ export async function scaffold(ctx: StageContext, unit: PlanUnit): Promise<Stage
   const { spec } = loadUnitSpec(ctx, unit);
   const prompt = promptFor('scaffold', seated.dispatch.triple.model);
   const measured = renderPrompt(prompt, {
-    spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec) }, scaffold: decision, worktree,
+    spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec) }, intent: spec.intent, nonGoals: spec.nonGoals, scaffold: decision, worktree,
     loadLane: { id: lane.id, argv: lane.argv, cwd: lane.cwd, testPaths: lane.testPaths ?? [] },
     retry: prior?.kind === 'scaffold-refused' ? { reasons: prior.reasons, laneEvidence: prior.laneEvidence } : null,
   });
@@ -225,7 +224,7 @@ export async function scaffold(ctx: StageContext, unit: PlanUnit): Promise<Stage
 
   // Step 5: the unit's first executor-authored commit.
   const pinned = dispatchOf(ctx.journal.view, unit.id);
-  const rules: SalvageRules = { scope: effectiveScope(pinned), excluded: [...new Set(spec.lanes.flatMap((l) => l.evidenceGlobs))].sort(), rejectedRoot: absPath(join(ctx.runDir, 'rejected', unit.id)) };
+  const rules: SalvageRules = { protectedPaths: protectedPathsInForce(ctx.runDir, ctx.journal.view), excluded: [...new Set(spec.lanes.flatMap((l) => l.evidenceGlobs))].sort(), rejectedRoot: absPath(join(ctx.runDir, 'rejected', unit.id)) };
   const op = salvageCommitOp(rules);
   const decided = planSalvage(rules, {
     worktree, branch: unitBranch(ctx.plan().arc, unit.id), identity: executorIdentity(),

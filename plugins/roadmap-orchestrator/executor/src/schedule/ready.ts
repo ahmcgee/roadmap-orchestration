@@ -37,7 +37,7 @@ import { ENTRY_STAGE,type UnitState } from '../core/state.ts';
 import { p1Blocking } from '../holistic/findings.ts';
 import { type SpecLinks } from '../holistic/staleset.ts';
 import { pressureHoldWaits } from '../host/pressure.ts';
-import { lineageMembers } from '../input/envelope.ts';
+import { lineageMembers } from '../input/lineage.ts';
 import { type KnownDefect,type PlanM1,type PlanUnit,knownDefectsOf,priorityOf } from '../input/plan.ts';
 import { systemsMapInForce } from '../input/systems.ts';
 import { deflakeHold } from '../pipeline/deflake.ts';
@@ -47,8 +47,7 @@ import { milestoneEdges,milestonePassedSeq,milestoneWaits } from '../walk/node.t
 import { effectiveDependency } from './graph.ts';
 import {
 ADMISSION_STAGES,type Admission,type AdmissionConstraint,type AdmissionStage,type Admit,type AdmitInput,type ChainStage,type CommandScope,
-PROMOTION_BYPASS,type Rank,compareRank,
-} from './types.ts';
+PROMOTION_BYPASS,type Rank,compareRank } from './types.ts';
 
 // ---------------------------------------------------------------------------------------------------
 // The unit's next stage

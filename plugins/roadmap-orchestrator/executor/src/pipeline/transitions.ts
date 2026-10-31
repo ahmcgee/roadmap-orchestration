@@ -44,8 +44,7 @@
 import type { OrderingWait } from '../core/ordering.ts';
 import {
   type GateLargeDiff, type HoldCause, type JudgmentStage, type OperatorParkKind, type OutcomeClass, type OutcomeStage, type ParkRecord, type ProbeTarget,
-  type RetryStage, type StageOutcomeFact, type StageOutcomeKind, JUDGMENT_STAGES, probeTargetKey, certificationRed,
-} from '../core/events.ts';
+  type RetryStage, type StageOutcomeFact, type StageOutcomeKind, JUDGMENT_STAGES, probeTargetKey, certificationRed } from '../core/events.ts';
 import { type Bounds, DEFAULT_BOUNDS, type NeedsUserReason } from '../core/records.ts';
 import { type UnitCounters, type UnitState, afterStageOutcome, redirectsSinceEdit } from '../core/state.ts';
 import type { JudgmentSeat, RiskTier } from '../routing/types.ts';
@@ -191,7 +190,6 @@ export const TABLE: Table = {
     'read-denied': retry('read-denied', 'env'),
     // Scope growth (2026-10-15): a proposal code verified holds the unit, uncharged, for the root agent's `scope accept|reject`
     // (src/commands/scope.ts); its `scope-decided` releases the hold and the plan-check runs again.
-    'scope-growth': hold,
     // 2026-10-16: the call's prompt or context outgrew the model's window. Not a process fault (the backend is well, so no
     // probe, no repeat rule, no backend park): uncharged, operator env, the needs-user naming the role, the call and the
     // prompt's size; `resume` re-runs the stage once its inputs fit (a smaller unit, or a seat with a larger window).
@@ -280,9 +278,6 @@ export const TABLE: Table = {
     // Plan defects (2026-10-16): a missing witness the lane never ran or no build of the unit could create. Uncharged; the
     // needs-user names the defects, and `resume` re-runs the lanes once an `apply` fixes the plan (or a re-entry, the spec).
     'plan-defect': park('plan-defect', 'env'),
-    // Plan defects (2026-10-16): salvage reverted the same out-of-scope path on two build rounds running: the scope-growth
-    // hold, uncharged, until the root agent's `scope accept|reject`.
-    'scope-growth': hold,
     'executor-fault': fault,
     // dev.17: a lane's environment did not come up or failed its probe: no verdict on the tree, uncharged; the executor
     // probes the environment (up, then its probe) and re-runs the lanes once it passes.

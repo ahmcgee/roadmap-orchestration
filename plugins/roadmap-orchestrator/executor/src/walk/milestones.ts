@@ -30,7 +30,7 @@ import type { WalkOutcome } from '../core/events.ts';
 import type { NeedsUserContent } from '../core/records.ts';
 import type { IsoTime } from '../core/values.ts';
 import { type RepairUnit, isActive } from '../holistic/findings.ts';
-import { lineageMembers } from '../input/envelope.ts';
+import { lineageMembers } from '../input/lineage.ts';
 import { type Milestone, type PlanM1, milestonesOf, walkRoundsOf } from '../input/plan.ts';
 import { PARK_ESCALATE_MS } from '../schedule/types.ts';
 

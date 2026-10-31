@@ -1,3 +1,4 @@
+import { systemName } from '../src/core/ids.ts';
 // Deflake scope (2026-10-23; src/pipeline/deflakemint.ts `deflakeScope`, src/commands/apply.ts `evaluateRevision`,
 // src/preflight/checks.ts `start --base`), over a same-repo corpus arc (test/helpers/corpusarc.ts: real repos, real pins,
 // the fake forge). The flakes are `flake-observed` facts over journaled journey runs, as a series writes them; the deflake
@@ -27,7 +28,6 @@ type InputFile,type InputFiles,commitRevisionNow,inForceFiles,keepCorpusFiles,re
 import { parsePlan } from '../src/input/plan.ts';
 import { readNeedsUser } from '../src/needsuser.ts';
 import { APPLY,phase0InputOf,phase0Rows } from '../src/phase0/rows.ts';
-import { scopeOverlapFix } from '../src/phase0/types.ts';
 import { type DeflakeContext,applyDeflake,deflakeJobPending } from '../src/pipeline/deflakemint.ts';
 import { type StartInput,readRepoConfig,runChecks } from '../src/preflight/checks.ts';
 import { DOCS_NOT_YET } from '../src/recover/revision.ts';
@@ -93,12 +93,12 @@ function withDeflakeUnit(a: CorpusArc, j: OpenJournal, id: UnitId, scope: readon
   const current = inForceFiles(runDir, j.view, inForce, revisionInForce(runDir, inForce), a.planPath, a.repo);
   const raw = JSON.parse(current.planBytes.toString('utf8')) as RawPlan;
   const specs = new Map<UnitId, InputFile>(current.specs);
-  const spec = {
+  const spec = { intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
     schema: SPEC_SCHEMA, unit: id, rev: 1, lanes: [], scope, resources: [], decisions: [], facts: [], cites: { contracts: [], rulings: [] },
     acceptance: [{ id: 'A-1', state: 'active', failLoudIfUndelivered: true, clause: 'The journey lane passes on every run.' }],
   };
   const path = absPath(join(a.planDir, `${id}.json`));
-  const admitted = admitUnit(raw, specs, { id, risk: 'med', scope: scope as never, after: [], resources: [], origin: 'deflake', deflake: { keys: [{ type: 'lane', lane: laneId('journey') }] } },
+  const admitted = admitUnit(raw, specs, { id, risk: 'med', systems: [systemName('app')], after: [], resources: [], origin: 'deflake', deflake: { keys: [{ type: 'lane', lane: laneId('journey') }] } },
     JSON.stringify(spec), path, `deflake unit ${id}`);
   assert.ok(!('reasons' in admitted), JSON.stringify(admitted));
   const planBytes = Buffer.from(`${JSON.stringify(raw, null, 2)}\n`, 'utf8');
@@ -162,85 +162,28 @@ async function start(a: CorpusArc, base: RevisionManifest | null) {
 }
 
 describe('deflake scope', () => {
-  it('deflake-scope.systems: an arc lane\'s flake mints a unit scoped to its test file\'s system and dependencies; an unmappable suite lane raises deflake-unscoped; an unrelated apply lands', T, async () => {
+  it('deflake-scope.systems: an arc lane\'s flake mints a unit scoped to its test file\'s system and dependencies; an unmappable suite lane names all systems; an unrelated apply lands', T, async () => {
     const { a, j } = await arcInForce({ chain: { k: 1 }, systemsMap: SYSTEMS });
     try {
       flake(a, j, 'journey', 'arc', [BERTHS_TEST]);
       flake(a, j, 'suite', 'suite', []);
       const ctx = deflakeContext(a, j);
       assert.equal(deflakeJobPending(ctx), true);
-      assert.deepEqual(await applyDeflake(ctx), { kind: 'applied', admitted: ['deflake-1'], recurring: 0, unscoped: 1 });
+      assert.deepEqual(await applyDeflake(ctx), { kind: 'applied', admitted: ['deflake-1', 'deflake-2'], recurring: 0 });
       const minted = unitsInForce(a, j).find((u) => u.id === 'deflake-1')!;
-      assert.deepEqual(minted.scope, ['lib/**', 'src/**', 'test/**'], 'harbour and quay, which it depends on; not signage');
+      assert.deepEqual(minted.systems, ['harbour', 'quay'], 'harbour and quay, which it depends on; not signage');
       assert.deepEqual(minted.deflake, { keys: [{ type: 'test', lane: 'journey', testId: BERTHS_TEST }] });
-      const [item, ...more] = items(a, j);
-      assert.deepEqual(more.map(({reason, blocking, subject, summary, options}) => ({reason, blocking, subject, summary, options})),
+      const second = unitsInForce(a, j).find((u) => u.id === 'deflake-2')!;
+      assert.deepEqual(second.systems, ['harbour', 'quay', 'signage']);
+      assert.deepEqual(items(a, j).map(({reason, blocking, subject, summary, options}) => ({reason, blocking, subject, summary, options})),
         [{reason: 'revision-notice', blocking: false, subject: {type: 'arc'}, summary: 'Executor revision 2 (deflake) is in force.', options: []}]);
-      assert.deepEqual([item!.reason, item!.blocking, item!.subject], ['deflake-unscoped', false, { type: 'arc' }]);
-      assert.match(item!.summary, /for lane suite: its scope \*\* would reach the corpus file set/);
-      assert.match(item!.recommendation, /systems/);
-      assert.equal(deflakeJobPending(ctx), false, 'the unscoped group waits on its item');
+      assert.equal(deflakeJobPending(ctx), false, 'both due groups are admitted');
 
       syncOwnerInputs(a, j);
       // The owner's unrelated edit lands with the deflake unit in force.
       editPlan(a, (p) => ({ ...p, units: (p['units'] as Json[]).map((u) => ({ ...u, risk: 'med' })) }));
       const verdict = await ownerApply(a, j);
       assert.equal(verdict.kind, 'accepted', JSON.stringify(verdict));
-    } finally {
-      j.close();
-    }
-  });
-
-  it('deflake-scope.unmapped: with no systems map and no lane systems no `**` unit is minted; one deflake-unscoped item, raised once; the job keeps running', T, async () => {
-    const { a, j } = await arcInForce({ chain: { k: 1 } });
-    try {
-      flake(a, j, 'journey', 'arc', [BERTHS_TEST]);
-      const ctx = deflakeContext(a, j);
-      assert.deepEqual(await applyDeflake(ctx), { kind: 'applied', admitted: [], recurring: 0, unscoped: 1 });
-      assert.deepEqual(unitsInForce(a, j).map((u) => u.id), ['u1']);
-      assert.equal(j.view.planApplied()!.rev, 1, 'no revision');
-      const [item] = items(a, j);
-      assert.equal(item!.reason, 'deflake-unscoped');
-      assert.match(item!.summary, new RegExp(`${BERTHS_TEST}.*scope \\*\\*.*\\(\\*\\*\\)`));
-      // The key flakes again: still one item, nothing due.
-      flake(a, j, 'journey', 'arc', [BERTHS_TEST]);
-      assert.equal(deflakeJobPending(ctx), false);
-      assert.deepEqual(await applyDeflake(ctx), { kind: 'none' });
-      assert.equal(items(a, j).length, 1);
-    } finally {
-      j.close();
-    }
-  });
-
-  it('deflake-scope.gate: an executor revision (the deflake revision) cannot commit a unit whose scope reaches the corpus', T, async () => {
-    const { a, j } = await arcInForce({ chain: { k: 1 } });
-    try {
-      const rctx = { runDir: runDirOfArc(a), view: j.view, hostDir: newHostDir(), planFile: a.planPath, routingBase: routingOf(a), laneEnv: process.env };
-      const over = evaluateRevision(rctx, withDeflakeUnit(a, j, unitId('deflake-1'), ['**']), { type: 'deflake' });
-      assert.deepEqual(over, {
-        kind: 'rejected',
-        reasons: [`${JSON.stringify({ kind: 'corpus-invalid', problems: [{ fix: scopeOverlapFix(unitId('deflake-1')), type: 'scope-overlaps-corpus', unit: 'deflake-1' }] })}`],
-      });
-      assert.equal(evaluateRevision(rctx, withDeflakeUnit(a, j, unitId('deflake-1'), ['src/**']), { type: 'deflake' }).kind, 'accepted');
-    } finally {
-      j.close();
-    }
-  });
-
-  
-  it('deflake-scope.settled: a dev.17 `**` deflake unit refuses an unrelated apply while it builds, and no longer once it merged', T, async () => {
-    const { a, j } = await arcInForce({ chain: { k: 1 } });
-    try {
-      commitDev17Unit(a, j);
-      syncOwnerInputs(a, j);
-      editPlan(a, (p) => ({ ...p, units: (p['units'] as Json[]).map((u) => ({ ...u, risk: 'med' })) }));
-      const building = await ownerApply(a, j);
-      assert.equal(building.kind, 'rejected');
-      assert.match(JSON.stringify(building), /scope-overlaps-corpus.*deflake-1/);
-      j.fact({ kind: 'stage-outcome', unit: unitId('deflake-1'), stage: 'snapshot', attempt: 1, outcome: 'published', class: 'retire', chargeable: false } as Fact);
-      assert.equal(j.view.unit(unitId('deflake-1')).status, 'retired');
-      const merged = await ownerApply(a, j);
-      assert.equal(merged.kind, 'accepted', JSON.stringify(merged));
     } finally {
       j.close();
     }

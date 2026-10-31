@@ -254,7 +254,7 @@ describe('P1 blocking and repair (G10, R6, R7)', () => {
         { id: 'u2', origin: 'repair', repairs: ['F-1'], obligations: ['I-1'], lanes: [DIV_LANE] },
       ],
       obligations: [{ id: 'I-1', testIds: ['t1'] }, { id: 'I-2', testIds: ['t2'] }],
-      mapping: [...MAPPED, { pattern: 'lib/**', obligations: ['I-2'] }], trees: { '*': { outcomes: { t1: 'pass', t2: 'pass' } } },
+      mapping: [...MAPPED, { system: 'lib', obligations: ['I-2'] }], trees: { '*': { outcomes: { t1: 'pass', t2: 'pass' } } },
       beforeStart: openBefore(witnessDraft('I-2')),
     });
     const r = contextFor(d);

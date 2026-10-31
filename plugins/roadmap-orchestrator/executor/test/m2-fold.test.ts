@@ -19,7 +19,7 @@ const fact = (f: object): LogRecord => ({ type: 'fact', fact: f as Fact });
 const outcome = (unit: UnitId, stage: string, attempt: number, out: string, cls: string, extra: object = {}): LogRecord =>
   fact({ kind: 'stage-outcome', unit, stage, attempt, outcome: out, class: cls, chargeable: false, ...extra });
 const dispatch = (unit: UnitId, riskFloor: RiskTier = 'med'): LogRecord => fact({
-  kind: 'dispatch', record: { unit, specRev: specRev(1), specSha256: H, scope: [repoPattern('src/**')], riskFloor, routingRev: REV, implementerSeatRev: seatRev('fedcba9876543210'), at: LATER, transientRules: 'm3' },
+  kind: 'dispatch', record: { unit, specRev: specRev(1), specSha256: H,  riskFloor, routingRev: REV, implementerSeatRev: seatRev('fedcba9876543210'), at: LATER, transientRules: 'm3' },
 });
 const planApplied = (rev: number, units: readonly UnitId[], changes: readonly object[] = []): LogRecord => {
   const command = rev === 1 ? null : commandId(`cmd-${String(rev).padStart(16, '0')}`);
