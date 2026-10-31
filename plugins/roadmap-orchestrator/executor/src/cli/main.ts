@@ -49,6 +49,12 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
     case 'version':
       process.stdout.write(`${pkg.version}\n`);
       return;
+    case 'witness': {
+      const url = /^https?:\/\//.test(command.evidence);
+      const path = absPath(resolve(command.evidence));
+      const evidenceFile = url ? null : { path, sha256: sha256(sha256Hex(readFileSync(path))) };
+      return submit(command.run, hostDir, { type: 'witness', obligation: command.obligation, result: command.result, evidence: url ? new URL(command.evidence).href : path, evidenceFile });
+    }
     case 'pause':
       return submit(command.run, hostDir, { type: 'pause', target: command.target });
     case 'stop':

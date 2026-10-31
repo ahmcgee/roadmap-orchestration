@@ -32,7 +32,7 @@ export type TaskState = 'idle' | 'awaiting-admission' | 'in-stage' | 'in-chain';
 // Capacity (A3): fallback token costs; build and lane reservations calibrate at scheduling time
 
 /** `@cpu` tokens per holder kind. Probes and teardowns take none. */
-export const CPU_COST = { judgment: 1, build: 4, lane: { build: 2, unit: 4, candidate: 4, batch: 4 } } as const satisfies Readonly<{
+export const CPU_COST = { judgment: 1, build: 4, lane: { build: 2, unit: 4, candidate: 4, batch: 4, milestone: 4 } } as const satisfies Readonly<{
   judgment: number; build: number; lane: Readonly<Record<LaneCadence, number>>;
 }>;
 

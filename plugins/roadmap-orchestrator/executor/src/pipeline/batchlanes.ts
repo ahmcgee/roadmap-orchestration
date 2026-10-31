@@ -57,7 +57,8 @@ export type BatchOutcome = Readonly<{ kind: 'ran' }> | Readonly<{ kind: 'no-verd
 export async function runBatchPoint(
   ctx: StageContext & Readonly<{ acquireFirst: AcquireFirst }>, job: JobId, at: Sha, milestone: Milestone | null, open: (draft: FindingDraft) => void,
 ): Promise<BatchOutcome> {
-  const lanes = batchLanesDue(ctx, job, at);
+  const declared = new Set(milestone?.lanes ?? []);
+  const lanes = milestone === null ? batchLanesDue(ctx, job, at) : ctx.plan().suite.lanes.filter((l) => declared.has(l.id) && !passedOnInput(ctx, l, laneNow(ctx, l, at)) && !batchFindingsOf(ctx, job).some((id) => ctx.journal.view.holistic().findings.some((f) => f.id === id && f.lane === l.id)));
   if (lanes.length === 0) return { kind: 'ran' };
   const series = await runJourneySeries(ctx, { type: 'job', job, acquireFirst: ctx.acquireFirst }, lanes.map(suiteJourneyLane), {
     path: jobSeriesCheckout(ctx, job, 'batch'), checkout: { type: 'detached', at },

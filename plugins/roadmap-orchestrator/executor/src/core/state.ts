@@ -745,6 +745,7 @@ export class Fold implements JournalView {
   readonly #packReviews: { started: PackReviewState['started']; ended: PackReviewState['ended'] }[] = [];
   // M4b
   readonly #flowFacts: FlowFactAt[] = [];
+  readonly #ciFacts: import('./events.ts').CiFact[] = [];
   readonly #walkFacts: WalkFactAt[] = [];
   /** Open walks and their recorded proposals, in log order. */
   readonly #openWalks = new Map<JobId, PolishId[]>();
@@ -1000,6 +1001,35 @@ export class Fold implements JournalView {
 
   #fact(f: Fact, fail: (detail: string) => never, at: Readonly<{ seq: number; at: IsoTime }>): void {
     switch (f.kind) {
+      case 'external-witness':
+        this.#ciFacts.push(f);
+        return;
+      case 'external-reopened': {
+        this.#ciFacts.push(f);
+        const u = this.#units.get(f.unit);
+        if (u === undefined) return fail(`external witness reopens unknown unit ${f.unit}`);
+        this.#setUnitState(u, { ...u.state, status: 'active', stage: 'plan-check', decided: null, approval: null, open: null, park: null, entry: null });
+        this.#completion = null;
+        return;
+      }
+      case 'spike-completed': {
+        this.#ciFacts.push(f);
+        const u = this.#units.get(f.unit);
+        if (u === undefined || u.state.approval === null) return fail(`spike ${f.unit} completed before its report passed the gate`);
+        this.#setUnitState(u, { ...u.state, status: 'retired', entry: null });
+        return;
+      }
+      case 'attempt-marker':
+      case 'lane-base-compared':
+        this.#ciFacts.push(f);
+        return;
+      case 'attempt-capped': {
+        this.#ciFacts.push(f);
+        const u = this.#units.get(f.unit);
+        if (u === undefined) return fail(`attempt cap for unknown unit ${f.unit}`);
+        this.#setUnitState(u, { ...u.state, status: 'park-pending', entry: null, park: { seq: at.seq, at: at.at, park: { class: 'operator', kind: 'env' }, passed: [] } });
+        return;
+      }
       case 'tail-discarded':
         this.#tail.push(f);
         return;
@@ -2124,6 +2154,17 @@ export class Fold implements JournalView {
 
   flowFacts(): readonly FlowFactAt[] {
     return this.#flowFacts;
+  }
+
+  ciFacts(): readonly import('./events.ts').CiFact[] { return this.#ciFacts; }
+
+  attemptCounts(unit: UnitId): Readonly<{ builds: number; judged: number }> {
+    const u = this.#units.get(unit);
+    if (u === undefined) return { builds: 0, judged: 0 };
+    const own = [...u.starts.keys()].map((s) => s.slice(0, s.lastIndexOf('#')));
+    const previous = u.state.lineage === null ? { builds: 0, judged: 0 } : this.attemptCounts(u.state.lineage.reenters);
+    return { builds: previous.builds + own.filter((s) => s === 'build').length,
+      judged: previous.judged + own.filter((s) => ['build', 'lanes', 'gate'].includes(s)).length };
   }
 
   walkFacts(): readonly WalkFactAt[] {

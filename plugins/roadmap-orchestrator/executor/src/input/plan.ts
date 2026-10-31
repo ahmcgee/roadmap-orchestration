@@ -165,6 +165,7 @@ export const DEFAULT_CHECKPOINT = { everyMilestones: 2 } as const;
 
 export type PlanUnit = Readonly<{
   id: UnitId;
+  spike?: Readonly<{ question: string }>;
   spec: PlanPath;
   risk: RiskTier;
   /** The unit systems whose build memory is available to its roles. Required by the P2 cutover. */
@@ -275,6 +276,7 @@ export type Milestone = Readonly<{
   text: string;
   units: readonly UnitId[];
   design: MilestoneDesign;
+  lanes?: readonly LaneId[];
   references: readonly RepoPath[];
   bringUp: BringUp;
   journeys: readonly Journey[];
@@ -572,6 +574,7 @@ const planUnit: Read<PlanUnit> = object((f) => {
     id: f.get('id', (v, p) => unitId(v, p)),
     spec: f.get('spec', (v, p) => planPath(v, p)),
     risk: f.get('risk', riskTier),
+    ...(f.optional('spike', object((g) => ({ question: g.get('question', str) }))) === undefined ? {} : { spike: f.get('spike', object((g) => ({ question: g.get('question', str) }))) }),
     resources: f.get('resources', arrayOf((v, p) => resourceName(v, p))),
     after: f.optional('after', arrayOf((v, p) => unitId(v, p))) ?? [],
     contingent: f.optional('contingent', arrayOf(object((g) => ({ id: g.get('id', (v, p) => edgeId(v, p)), condition: g.get('condition', str) })))) ?? [],
@@ -660,12 +663,14 @@ const milestone: Read<Milestone> = object((f) => {
     text: f.get('text', str),
     units: f.get('units', arrayOf((v, p) => unitId(v, p), { nonEmpty: true })),
     design: f.get('design', milestoneDesign),
+    lanes: f.optional('lanes', arrayOf((v, p) => laneId(v, p))) ?? [],
     references: f.get('references', arrayOf((v, p) => repoPath(v, p))),
     bringUp: f.get('bringUp', bringUpR),
     journeys: f.get('journeys', arrayOf(journey)),
     resources: f.get('resources', arrayOf((v, p) => resourceName(v, p))),
   };
   assertUnique(out.units, (u) => u, `${f.path}.units`);
+  assertUnique(out.lanes ?? [], (l) => l, `${f.path}.lanes`);
   assertUnique(out.references, (r) => r, `${f.path}.references`);
   assertUnique(out.resources, (r) => r, `${f.path}.resources`);
   return out;

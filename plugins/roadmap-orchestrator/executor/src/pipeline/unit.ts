@@ -357,8 +357,12 @@ function lanesFixRound(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact, t
       const snap = view.opsOf('evidence.snapshot').find((i) => i.expect.dest === dest);
       return witnessCheckoutFixRound(snap === undefined ? [] : snap.expect.globs.map(patternPath), [...witnessEvidence(ctx, parent), ...(snap === undefined ? [] : [dest])], ledger, tip);
     }
-    default:
-      return laneFixRound(series, dirty, tip);
+    default: {
+      const round = laneFixRound(series, dirty, tip);
+      if (round.kind !== 'fix') return round;
+      const compared = view.ciFacts().filter((c) => c.kind === 'lane-base-compared' && c.unit === unit.id && c.attempt === parent.attempt);
+      return { ...round, fix: { ...round.fix, directives: [...round.fix.directives, ...compared.map((c) => c.kind === 'lane-base-compared' ? `Lane ${c.lane} is red on the unit and ${c.result === 'pass' ? 'green' : 'red'} at diffBase ${c.base}. Base comparison evidence: ${fastSuiteRoot(ctx.runDir, parent, 'base')}.` : '')], failingEvidenceDirs: [...round.fix.failingEvidenceDirs, ...(compared.length === 0 ? [] : [fastSuiteRoot(ctx.runDir, parent, 'base')])] } };
+    }
   }
 }
 
@@ -650,7 +654,7 @@ async function stepOnce(ctx: StageContext, unit: PlanUnit): Promise<Step> {
   const u = ctx.journal.view.unit(unit.id);
   // M3 (B7): a repair batch's ff retired the unit with its gate's approval still its decision: only its retire is left.
   if (u.status === 'retired') {
-    await retire(ctx, unit);
+    if (unit.spike === undefined) await retire(ctx, unit);
     return { kind: 'merged' };
   }
   if (u.entry !== null) return after(ctx, unit, await runEntry(ctx, unit, u.entry));
@@ -684,6 +688,7 @@ async function stepOnce(ctx: StageContext, unit: PlanUnit): Promise<Step> {
 export function haltResult(ctx: StageContext, unit: PlanUnit): Extract<UnitResult, Readonly<{ kind: 'parked' | 'stopped' }>> | null {
   const u = ctx.journal.view.unit(unit.id);
   const f = u.decided;
+  if (u.status === 'park-pending' && ctx.journal.view.ciFacts().some((f) => f.kind === 'attempt-capped' && f.unit === unit.id)) return { kind: 'parked', needsUser: { reason: 'attempt-cap', summary: `${unit.id} reached the total attempt cap`, blocking: true, options: [], subject: { type: 'unit', unit: unit.id }, recommendation: 'Revise, split or cut the unit from the root.', evidence: [] } };
   // An entry a command set runs next, whatever the decision before it (M3).
   if (f === null || u.entry !== null) return null;
   const decided = decidedBy(f);
@@ -794,8 +799,21 @@ function assertQuiescent(ctx: StageContext, unit: UnitId): void {
  */
 export async function runUnit(ctx: StageContext, unit: PlanUnit, gate: Gate): Promise<UnitResult> {
   for (;;) {
+    const count = ctx.journal.view.attemptCounts(unit.id);
+    if ((count.builds >= 8 || count.judged >= 20) && !ctx.journal.view.ciFacts().some((f) => f.kind === 'attempt-marker' && f.unit === unit.id)) {
+      ctx.journal.fact({ kind: 'attempt-marker', unit: unit.id, marker: 'M4', ...count });
+    }
+    const due = upcoming(ctx.journal.view.unit(unit.id), specFacts(ctx)(unit).reproduces);
+    if (due?.kind === 'admission' && (count.builds >= 16 || count.judged >= 40)) {
+      if (!ctx.journal.view.ciFacts().some((f) => f.kind === 'attempt-capped' && f.unit === unit.id)) ctx.journal.fact({ kind: 'attempt-capped', unit: unit.id, ...count });
+      return { kind: 'parked', needsUser: { reason: 'attempt-cap', summary: `${unit.id}: ${count.builds} builds / ${count.judged} judged stages reached the total attempt cap; root intervention required`, blocking: true, options: [], subject: { type: 'unit', unit: unit.id }, recommendation: 'Revise, split, steer or cut the unit from the root.', evidence: [] } };
+    }
     const u = ctx.journal.view.unit(unit.id);
     const next = upcoming(u, specFacts(ctx)(unit).reproduces);
+    if (unit.spike !== undefined && next?.stage === 'candidate') {
+      ctx.journal.fact({ kind: 'spike-completed', unit: unit.id });
+      return { kind: 'merged' };
+    }
     if (next !== null) {
       assertQuiescent(ctx, unit.id);
       if (!(await gate(next))) {

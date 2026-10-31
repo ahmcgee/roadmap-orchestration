@@ -63,6 +63,7 @@ import { requestAudit } from './audit.ts';
 import { decideFlow,requestFlow } from './flow.ts';
 import { resolveEdge,runOnly } from './graph.ts';
 import { mergeIn } from './mergein.ts';
+import { witness } from './witness.ts';
 import { note } from './note.ts';
 import { isControl,readCommand,readReceipt,receiptPath,receiptSha256,writeReceipt } from './queue.ts';
 import { reverse } from './reverse.ts';
@@ -175,6 +176,7 @@ export async function finish(ctx: CommandContext, intent: IntentOf<'command.appl
     }
     if ('target' in b && b.target.type === 'all') subjects.push(...ctx.plan().units.map((u) => ({type: 'unit' as const, unit: u.id})));
     if (b.type === 'sweep' || (b.type === 'resume' && b.target.type === 'backend')) subjects.push({type: 'host'});
+    if (b.type === 'witness') subjects.splice(0, subjects.length);
     for (const subject of subjects) verified.push(...closeItemsFor(ctx, subject, id));
   }
   const sha = writeReceipt(ctx.runDir, { v: SCHEMA_VERSION, command: id, state: 'applied', at, op: intent.op, verified });
@@ -223,6 +225,8 @@ async function effectOf(ctx: CommandContext, command: CommandFile): Promise<Effe
       return applyPlan(ctx, command.id, body);
     case 'reverse':
       return reverse(ctx, command.id, body.divergence);
+    case 'witness':
+      return witness(ctx, command.id, body);
     case 'note':
       return note(ctx, command.id, body);
     case 'steer':

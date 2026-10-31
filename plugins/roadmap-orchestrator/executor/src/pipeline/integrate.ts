@@ -420,7 +420,12 @@ export function gradeTree(
   claims: Claims, runs: readonly JourneyRun[], completing: ReadonlySet<ObligationId>, repairs: ReadonlySet<ObligationId>, p1: ReadonlySet<ObligationId>,
 ): TreeGrade {
   const records = new Map(runs.flatMap((r) => (r.record === null ? [] : [[r.lane, r.record] as const])));
+  const external = new Set(claims.obligations.lanes.filter((l) => l.witnessClass === 'external').map((l) => l.id));
   const defs = claims.obligations.obligations;
+  const externalIds = new Set(defs.filter((o) => external.has(o.witness?.lane!)).map((o) => o.id));
+  claims = { ...claims, selected: new Set([...claims.selected].filter((id) => !externalIds.has(id))) };
+  completing = new Set([...completing].filter((id) => !externalIds.has(id)));
+  repairs = new Set([...repairs].filter((id) => !externalIds.has(id)));
   const verdict = (_o: ObligationDef, w: WitnessRef): ObservationVerdict | null => {
     const rec = records.get(w.lane);
     return rec === undefined ? null : verdictOf(rec, w);

@@ -569,7 +569,7 @@ export const STAGE_OUTCOME_KINDS = {
   // dev.17: `env-unavailable` (a lane's environment did not come up or failed its probe: a retryable park on the
   // environment, never a red lane), here and at the candidate.
   lanes: [
-    'green', 'red', 'flaky', 'not-certified', 'blocked', 'interrupted', 'occupied', 'cleanup-failed', 'witnesses-missing', 'smoke-survived', 'known-defect', 'base-red',
+    'green', 'red', 'regression', 'flaky', 'not-certified', 'blocked', 'interrupted', 'occupied', 'cleanup-failed', 'witnesses-missing', 'smoke-survived', 'known-defect', 'base-red',
     'witness-lane-missing', 'plan-defect', 'executor-fault', 'env-unavailable',
   ],
   // M4a rev 3 (paid run 11): `unverified` (no green verification checkout of the head: the lanes run again, uncharged).
@@ -811,7 +811,16 @@ export type DiffShown = Readonly<{ inlined: readonly RepoPath[]; notInlined: rea
 /** A gate's diff over the large-diff threshold (`JudgmentInputs.largeDiff`): the files its attachment left out for size. */
 export type GateLargeDiff = Readonly<{ overflow: number }>;
 
+export type CiFact =
+  | Readonly<{ kind: 'external-witness'; command: CommandId; obligation: ObligationId; obligationRev: number; laneRev: LaneRev; inputSha: Sha; head: Sha; result: 'pass' | 'fail'; evidence: string; evidenceSha256: Sha256Hex | null }>
+  | Readonly<{ kind: 'external-reopened'; command: CommandId; unit: UnitId }>
+  | Readonly<{ kind: 'spike-completed'; unit: UnitId }>
+  | Readonly<{ kind: 'attempt-marker'; unit: UnitId; marker: 'M4'; builds: number; judged: number }>
+  | Readonly<{ kind: 'attempt-capped'; unit: UnitId; builds: number; judged: number }>
+  | Readonly<{ kind: 'lane-base-compared'; unit: UnitId; attempt: number; lane: LaneId; base: Sha; result: 'pass' | 'fail' }>;
+
 export type Fact =
+  | CiFact
   | Readonly<{ kind: 'tail-discarded'; offset: number; length: number; sha256: Sha256Hex }>
   | Readonly<{ kind: 'containment-mode'; mode: ContainmentMode }>
   /** One usage fact per invocation, charged to `subject`. */
@@ -2113,7 +2122,7 @@ const smokeVerdict: Read<SmokeVerdict> = object((f) => {
 
 export type M4aFactKind = M4aFact['kind'];
 /** The readers of the M4a facts, spread into `fact`. */
-const M4A_FACT_READERS: { readonly [K in M4aFactKind]: Read<Fact> } = {
+const M4A_FACT_READERS: { readonly [K in M4aFactKind | CiFact['kind']]: Read<Fact> } = {
   'debt-banked': object((f): Fact => {
     const out = {
       kind: f.get('kind', literal('debt-banked')), id: f.get('id', (v, p) => debtId(v, p)), bankReason: f.get('bankReason', oneOf(BANK_REASONS)), what: f.get('what', str),
@@ -2126,6 +2135,12 @@ const M4A_FACT_READERS: { readonly [K in M4aFactKind]: Read<Fact> } = {
     if ((out.bankReason === 'opportunity-overrun') !== (out.source.type === 'admit')) throw new SchemaError(`${f.path}.source`, out.bankReason === 'opportunity-overrun' ? 'the admit that overran' : 'a gate or finding source', out.source);
     return opportunity === undefined ? out : { ...out, opportunity };
   }),
+  'external-witness': object((f): Fact => ({ kind: f.get('kind', literal('external-witness')), command: f.get('command', cmdR), obligation: f.get('obligation', obligationR), obligationRev: f.get('obligationRev', positive), laneRev: f.get('laneRev', laneRevR), inputSha: f.get('inputSha', shaR), head: f.get('head', shaR), result: f.get('result', oneOf(['pass', 'fail'] as const)), evidence: f.get('evidence', str), evidenceSha256: f.get('evidenceSha256', nullable(sha256R)) })),
+  'external-reopened': object((f): Fact => ({ kind: f.get('kind', literal('external-reopened')), command: f.get('command', cmdR), unit: f.get('unit', unitR) })),
+  'spike-completed': object((f): Fact => ({ kind: f.get('kind', literal('spike-completed')), unit: f.get('unit', unitR) })),
+  'attempt-marker': object((f): Fact => ({ kind: f.get('kind', literal('attempt-marker')), unit: f.get('unit', unitR), marker: f.get('marker', literal('M4')), builds: f.get('builds', nat), judged: f.get('judged', nat) })),
+  'attempt-capped': object((f): Fact => ({ kind: f.get('kind', literal('attempt-capped')), unit: f.get('unit', unitR), builds: f.get('builds', nat), judged: f.get('judged', nat) })),
+  'lane-base-compared': object((f): Fact => ({ kind: f.get('kind', literal('lane-base-compared')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), lane: f.get('lane', laneR), base: f.get('base', shaR), result: f.get('result', oneOf(['pass', 'fail'] as const)) })),
   'lane-reused': object((f): Fact => {
     const set = f.optional('set', oneOf(['spec', 'suite'] as const));
     const at = f.optional('at', shaR);

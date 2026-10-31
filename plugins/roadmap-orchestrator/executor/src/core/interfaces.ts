@@ -41,6 +41,9 @@ export interface JournalView {
   readonly arc: ArcId;
   /** Seq of the last durable line; 0 for an empty log. */
   highWater(): number;
+  ciFacts(): readonly import('./events.ts').CiFact[];
+  attemptCounts(unit: UnitId): Readonly<{ builds: number; judged: number }>;
+
   /** Intents with no matching done or abort, in log order. At most one per key. */
   openIntents(): readonly IntentRecord[];
   /** The latest intent (highest ordinal) of an op. Throws for an unknown op. */

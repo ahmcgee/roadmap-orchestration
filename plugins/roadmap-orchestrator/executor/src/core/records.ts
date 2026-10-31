@@ -878,10 +878,10 @@ export type LaneEnv = Readonly<{ set: Readonly<Record<string, string>>; pass: re
  * a holistic arc, the plan reader). `fast`/`estate` (`tier`) is the dev.16 form, read through `laneCadenceDefault`.
  */
 export type LaneKind = 'spec' | 'suite' | 'arc';
-export const LANE_CADENCES = ['build', 'unit', 'candidate', 'batch'] as const;
+export const LANE_CADENCES = ['build', 'unit', 'candidate', 'batch', 'milestone'] as const;
 export type LaneCadence = (typeof LANE_CADENCES)[number];
 /** The cadences each kind of lane may declare. */
-export const KIND_CADENCES: { readonly [K in LaneKind]: readonly LaneCadence[] } = { spec: ['build', 'unit'], suite: LANE_CADENCES, arc: ['build', 'candidate'] };
+export const KIND_CADENCES: { readonly [K in LaneKind]: readonly LaneCadence[] } = { spec: ['build', 'unit', 'candidate', 'batch', 'milestone'], suite: LANE_CADENCES, arc: ['build', 'candidate'] };
 /** Whether a lane of cadence `c` runs at or before the point of cadence `at` (the ladder). */
 export const cadenceAtOrBefore = (c: LaneCadence, at: LaneCadence): boolean => LANE_CADENCES.indexOf(c) <= LANE_CADENCES.indexOf(at);
 
@@ -900,6 +900,13 @@ export type LaneDef = Readonly<{
   env: LaneEnv;
   expectedExit: number;
   cadence: LaneCadence;
+  inputs?: readonly RepoPattern[];
+  cost?: 'cheap' | 'expensive';
+  estMin?: number;
+  placement?: 'local' | 'shared-resource' | 'cross-system';
+  kind?: 'integration' | 'capture';
+  capture?: Readonly<{ up: readonly string[]; script: readonly string[]; states: readonly string[]; port: ResourceName }>;
+
   resources: readonly ResourceName[];
   evidenceGlobs: readonly RepoPattern[];
   /**
@@ -973,6 +980,16 @@ function laneFields(f: Fields, kind: LaneKind | null): LaneDef {
     evidenceGlobs: f.get('evidenceGlobs', arrayOf((v, p) => repoPattern(v, p))),
     evidenceExcludes: f.optional('evidenceExcludes', arrayOf((v, p) => repoPattern(v, p))) ?? [],
   };
+  const inputs = f.optional('inputs', arrayOf((v, p) => repoPattern(v, p), { nonEmpty: true }));
+  if (inputs !== undefined) assertUnique(inputs, (x) => x, `${f.path}.inputs`);
+  const cost = f.optional('cost', oneOf(['cheap', 'expensive'] as const));
+  const estMin = f.optional('estMin', timeoutMin);
+  const placement = f.optional('placement', oneOf(['local', 'shared-resource', 'cross-system'] as const));
+  const laneKind = f.optional('kind', oneOf(['integration', 'capture'] as const));
+  const capture = f.optional('capture', object((g) => ({ up: g.get('up', argv), script: g.get('script', argv), states: g.get('states', arrayOf(str, { nonEmpty: true })), port: g.get('port', resource) })));
+  if ((laneKind === 'capture') !== (capture !== undefined)) throw new SchemaError(`${f.path}.capture`, 'present exactly for a capture lane', capture);
+  if (capture !== undefined && capture.states.some((s) => !/^[a-zA-Z0-9_-]+$/.test(s))) throw new SchemaError(`${f.path}.capture.states`, 'safe file names', capture.states);
+  if (capture !== undefined && !out.resources.includes(capture.port)) throw new SchemaError(`${f.path}.capture.port`, 'a leased resource of this lane', capture.port);
   const cpu = f.optional('cpu', positive);
   const timeout = f.optional('timeoutMin', timeoutMin);
 
@@ -994,7 +1011,10 @@ function laneFields(f: Fields, kind: LaneKind | null): LaneDef {
     throw new SchemaError(`${f.path}.environment`, 'absent on an arc lane (environments are a spec or suite lane\'s)', environment);
   }
   return {
-    ...out, ...(cpu === undefined ? {} : { cpu }), ...(timeout === undefined ? {} : { timeoutMin: timeout }), ...(systems === undefined ? {} : { systems }), ...(testArgv === undefined ? {} : { testArgv }),
+    ...out,
+    ...(inputs === undefined ? {} : { inputs }), ...(cost === undefined ? {} : { cost }), ...(estMin === undefined ? {} : { estMin }),
+    ...(placement === undefined ? {} : { placement }), ...(laneKind === undefined ? {} : { kind: laneKind }), ...(capture === undefined ? {} : { capture }),
+    ...(cpu === undefined ? {} : { cpu }), ...(timeout === undefined ? {} : { timeoutMin: timeout }), ...(systems === undefined ? {} : { systems }), ...(testArgv === undefined ? {} : { testArgv }),
     ...(stoch === undefined ? {} : { stochastic: stoch }), ...(environment === undefined ? {} : { environment }),
     ...(readsComments === undefined ? {} : { readsComments }),
   };
@@ -1543,6 +1563,7 @@ export type CommandBody =
    */
   | Readonly<{ type: 'steer'; unit: UnitId; brief: Readonly<{ path: AbsPath; sha256: Sha256Hex }>; budgetMin: number; class: BuildClass | null; resume: boolean }>
   /** `roadmap merge-in <u>` (M3): the integration head into the unit branch. Scope {u}. */
+  | Readonly<{ type: 'witness'; obligation: ObligationId; result: 'pass' | 'fail'; evidence: string; evidenceFile: HashedFile | null }>
   | Readonly<{ type: 'note'; unit: UnitId; brief: HashedFile }>
   | Readonly<{ type: 'merge-in'; unit: UnitId }>
   /** `roadmap audit [--lens <k,…>]` (M3): an audit of those lenses (ascending), or of the arc's lens set L (null). Scope ∅. */
@@ -1608,6 +1629,7 @@ export const commandBody: Read<CommandBody> = tagged('type', {
     type: f.get('type', literal('run-only')), units: f.get('units', nullable(sortedBy(unit, (u) => u, { nonEmpty: true }))),
   })),
   reverse: object((f): CommandBody => ({ type: f.get('type', literal('reverse')), divergence: f.get('divergence', (v, p) => divergenceId(v, p)) })),
+  witness: object((f): CommandBody => ({ type: f.get('type', literal('witness')), obligation: f.get('obligation', (v, p) => obligationId(v, p)), result: f.get('result', oneOf(['pass', 'fail'] as const)), evidence: f.get('evidence', str), evidenceFile: f.get('evidenceFile', nullable(hashedFile)) })),
   note: object((f): CommandBody => ({ type: f.get('type', literal('note')), unit: f.get('unit', unit), brief: f.get('brief', hashedFile) })),
   steer: object((f): CommandBody => ({
     type: f.get('type', literal('steer')),
@@ -1668,7 +1690,7 @@ export const receipt: Read<Receipt> = tagged('state', {
 // needs-user: `needs-user/<id>.json` (write-once) and `needs-user/<id>.ack.json`
 
 export const NEEDS_USER_REASONS = [
-  'chargeable-bound', 'escalation', 'refusal', 'process-fault', 'malformed', 'salvage-failed', 'empty-diff',
+  'attempt-cap', 'chargeable-bound', 'escalation', 'refusal', 'process-fault', 'malformed', 'salvage-failed', 'empty-diff',
   'occupancy-unlabelled', 'lane-blocked', 'base-red', 'candidate-red', 'foreign-ref-move', 'recovery-required',
   'reconcile-park', 'residue', 'usage-limit', 'supervisor-crash-limit', 'log-corrupt', 'owner-mismatch',
   'recovery-holder-dead', 'previous-arc-unreconciled', 'build-lost', 'routing-changed',

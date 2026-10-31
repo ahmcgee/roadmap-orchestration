@@ -404,6 +404,7 @@ function verdictReason(
   if (red !== undefined) return `suite lane ${red.lane} is ${red.verdict} on the docs candidate (evidence ${red.dir})`;
   if (obligations === null || selected.size === 0) return null;
   const records = new Map(series.runs.flatMap((r) => (r.record === null ? [] : [[r.lane, r.record] as const])));
+  selected = new Set([...selected].filter((id) => !obligations.lanes.some((l) => l.witnessClass === 'external' && obligations.obligations.some((o) => o.id === id && o.witness?.lane === l.id))));
   const effects = obligationEffects({
     obligations: obligations.obligations, selected, latched, completing: new Set(),
     verdict: (_o, witness) => {
