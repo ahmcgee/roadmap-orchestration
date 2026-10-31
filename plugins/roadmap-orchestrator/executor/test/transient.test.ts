@@ -24,7 +24,7 @@ describe('transient check', () => {
   it('merge.transient-refusal: .roadmap/state.json and evidence paths refuse the candidate; a product path passes', () => {
     const s = scene(base, 'clean');
     const refused = [
-      ['.roadmap/state.json', 'roadmap-dir'],
+      ['.roadmap/state.json', 'protected-path'],
       ['evidence/lane-1/stdout.txt', 'evidence'],
     ] as const;
     for (const [path, rule] of refused) {

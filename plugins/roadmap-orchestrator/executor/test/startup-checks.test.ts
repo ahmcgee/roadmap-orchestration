@@ -370,7 +370,7 @@ describe('startup.rejections', () => {
     // Every class judges on Claude in the catalogue: only a repo rebind to Codex puts Codex at a judgment seat.
     // Committed, as Phase-0 row 9 requires; the baseline moves to the commit.
     mkdirSync(join(s.repo, '.roadmap'), { recursive: true });
-    writeFileSync(join(s.repo, '.roadmap', 'config.json'), JSON.stringify({ routing: { classes: { summit: { backend: 'codex', model: 'gpt-5.6-sol', effort: 'high' } } } }));
+    writeFileSync(join(s.repo, '.roadmap', 'config.json'), JSON.stringify({ ...readRepoConfig(s.repo), routing: { classes: { summit: { backend: 'codex', model: 'gpt-5.6-sol', effort: 'high' } } } }));
     commitAll(s.repo, 'rebind summit');
     write({ ...s, plan: { ...s.plan, baseline: revParse(s.repo, 'HEAD'), routing: { planCheck: { low: 'summit' } } } });
     const [r] = refusedWith(await allChecks(input(s)), 'unsupported-routing', 78);

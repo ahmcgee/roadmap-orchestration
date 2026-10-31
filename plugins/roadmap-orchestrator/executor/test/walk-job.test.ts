@@ -416,10 +416,9 @@ describe('the milestone walk (dev.13)', () => {
     const deviation = walkAnswer({ findings: [{ class: 'deviates', journey: 'J-1', claim: 'The error omits its remedy', cause: 'error text', against: { type: 'design', path: 'design/README.md', anchor: '#errors' }, paths: ['product/server.js'] }] });
     const d = walkArc({ steps: [...unitSteps('u1', moduleFiles('mul', '*')), ...r1Steps(), walkStep('walk-1', deviation), walkStep('walk-2', walkAnswer())] });
     const spec = JSON.parse(readFileSync(join(d.planPath, '..', 'u1.json'), 'utf8')) as Json;
-    const scope = ['product/**', 'src/**', 'test/**'];
     appendSteps(d, [checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [{
-      op: 'admit', unit: { id: 'r1', risk: 'med', scope, after: [], origin: 'checkpoint' },
-      spec: admitSpecWire({ ...spec, unit: 'r1', rev: 1, repairs: ['F-1'], scope }), targets: [],
+      op: 'admit', unit: { id: 'r1', risk: 'med', systems: ['app'], after: [], origin: 'checkpoint' },
+      spec: admitSpecWire({ ...spec, unit: 'r1', rev: 1, repairs: ['F-1'] }), targets: [],
       cites: ['V-1'], evidence: ['F-1'],
     }] }))]);
     const r = contextFor(d);
