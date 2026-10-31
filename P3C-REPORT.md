@@ -1,10 +1,29 @@
 P3(c) implements grounded builders, conditional Opus verifier modes, merged milestone experience verdicts, and fresh whole-range campaign audits. Checkpoint amendment execution is removed; audits report findings and root requests. Gate standing items require evidence-backed dispositions, and settled-finding re-raise refusal remains.
 
-M1–M4 are mechanical annotations. M4 uses the isolated 8-build/20-judged-stage signal and moves subsequent default-profile builds to Claude. Diagnosis carries attempt details and evidence locations into kept build notes. `review: always|never` controls review seats. M2 and design units stay on Claude; M1 and capture-only units remain Codex-eligible. Effective builder fallbacks have distinct routing revisions, so historical role usage resolves correctly. A real mid-arc claude-only → default switch is covered.
+M1–M4 are mechanical annotations. M4 uses the isolated 8-build/20-judged-stage signal and moves subsequent default-profile builds to Claude. Diagnosis carries attempt details and evidence locations into kept build notes; `diagnosisDue()` is the P3b attempt-source adapter. `review: always|never` controls review seats. M2 and design units stay on Claude; M1 and capture-only units remain Codex-eligible. Effective builder fallbacks have distinct routing revisions, so historical role usage resolves correctly. A real mid-arc claude-only → default switch is covered.
 
 Both builder prompts share a base and six mechanically selected method modules, each ≤3 KB. Static Claude system text: builder 4,769 B; verifier 3,610 B; experience 1,754 B; audit 1,043 B. Contract documents remain unit changes; system notes are explicitly non-normative memory. Role-eval inputs and fake fixtures use the new shapes; no paid eval ran.
 
-Verification: IN PROGRESS. `npm run typecheck` passes. The 197-file non-serial batch recorded 2,767 passes, 2 failures and 1 NOT RUN; corrected gate/routing whole-file batches passed 49/49 and 41/41. Additional method/audit checks passed 36/36; harness 24/24; catalog 9/9. Locked reruns passed recovery 108/108, timing 54/54, and fixtures/status 28/28. Concurrent matrix: 457/457. Pipeline: 304 passes/11 failures from a fixture queued-record race, now synchronized; full rerun queued. M4a: 10 passes/13 failures from malformed fixture wires, now corrected; full rerun queued. Other completed serial files: calibration 1/1, default-size 1/1, browser 3/3, reflow 1/1. Upgrade, pool/probe/resource recovery and pressure remain queued. `contain.cgroup-real`: NOT RUN, never counted as a pass. No paid eval ran.
+Verification: `npm run typecheck` passed in the executor package. A root-directory attempt found no package and ran no checks. The 197 affected non-serial files have **2,769 distinct passing cases and 1 NOT RUN**. The bulk run initially had 2,767 passes/2 failures/1 NOT RUN; corrected whole-file batches passed 49/49 and 41/41. Other final batches: methods/audit 36/36, harness 24/24, catalog 9/9. Locked timing reruns: recovery 108/108, timing 54/54, fixtures/status 28/28.
+
+All 12 serial files passed individually under the shared lock: **921 tests**.
+
+| Serial file | Passed |
+| --- | ---: |
+| `pipeline-matrix.test.ts` | 318 |
+| `concurrent-matrix.test.ts` | 457 |
+| `evals-m4a.test.ts` | 23 |
+| `calibrate.test.ts` | 1 |
+| `evals-m5-reflow.test.ts` | 1 |
+| `walk-browser.test.ts` | 3 |
+| `upgrade.test.ts` | 1 |
+| `pool-crash.test.ts` | 37 |
+| `probe-crash.test.ts` | 16 |
+| `resource-recover.test.ts` | 62 |
+| `pressure.test.ts` | 1 |
+| `roles-default-size.test.ts` | 1 |
+
+Earlier runs: migration batch 2,639 passes/106 failures/9 cancellations/1 NOT RUN; concurrent 283 passes/174 failures; pipeline two enumeration failures, then 304 passes/11 failures from the queued-record race; M4a 10 passes/13 failures, then 20 passes/3 failures. The listed final reruns are green. `contain.cgroup-real` is **NOT RUN**, never a pass. No paid eval ran.
 
 Added 16 focused agent-surface cases. The removal inventory below contains 176 individually enumerated named cases (including expanded parameters), plus 34 retired matrix label groups. Generic revision, item-publication, recovery and lane assertions remain; fixture stories now use root CAS apply and current roles. Context-overflow annotation and gate schema cases were migrated. Method-wording checks became input/schema invariants per the task prompt rules. No push, version bump, paid eval, or P4 prose changes.
 
@@ -327,3 +346,5 @@ ADMIT_CONVERSIONS
 - [C] B4 bundle.after-overrun-debt
 
 The holistic pipeline also drops samples whose context is `job:ckpt`, and log samples of retired checkpoint/divergence/corpus-amendment facts. Its remaining generic `plan.apply`, `revision.commit`, and `needsuser.raise` labels are restored with root CAS apply and a nonblocking builder split proposal. Audit whole-range call recovery remains covered; only the second-lens and second-chunk instances disappeared.
+
+Surviving `evals-m4a.fake`, `.brief`, and `.opportunity` cases now check root apply confirmation and empty checkpoint artifacts. Their checkpoint-only digest/amendment subassertions were replaced under [C]; debt, chain, witness, pause/reuse, and root-apply ordering assertions remain.
