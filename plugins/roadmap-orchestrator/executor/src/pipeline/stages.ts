@@ -85,6 +85,8 @@
 //
 // Needs-user content the table does not carry (occupancy detail, a backend park) is returned as
 // `needsUser` for the caller to write (step 13 owns the writer). Nothing written here names a model.
+import { systemNotes } from './systemnotes.ts';
+import { memoryMessage, salvageSummary } from './memory.ts';
 import { orderingReasons } from '../park/ordering.ts';
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, normalize, relative } from 'node:path';
@@ -1442,6 +1444,7 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
   const allowance = Math.max(0, state.bounds.certifications - 1 - state.counters.unchargedLanesReds);
   const render = (call: RoundCall) => renderPrompt(prompt, {
     spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec, { buildLanesOnly: true }) }, ...lib,
+    systemNotes: systemNotes(ctx.repo, revParse(round.worktree, 'HEAD'), unit.systems ?? [], ctx.routingBase.config),
     planCheckNotes: planCheckNotes(ctx, unit.id),
     fastLanes: activeBuildLanes(spec), suiteLanes: builderSuiteLanes(ctx.plan().suite.lanes, spec), evidenceDir: work, worktree: round.worktree, scope: effectiveScope(pinned),
     fixRound: call.fixRound === null ? null : { ...call.fixRound, directives: [...call.fixRound.directives,
@@ -1561,7 +1564,7 @@ export async function evidence(ctx: StageContext, unit: PlanUnit, run: BuildRun)
   const work = relative(ctx.runDir, run.workDir);
   const dirs: AbsPath[] = [absPath(join(root, 'build'))];
   await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${unit.id}`, parent, {
-    source: ctx.runDir, globs: [`${inv}/stdout`, `${inv}/stderr`, `${work}/**`].map((g) => repoPattern(g)), dest: dirs[0]!,
+    source: ctx.runDir, globs: [`${inv}/stdout`, `${inv}/stderr`, `${inv}/result.json`, `${work}/**`].map((g) => repoPattern(g)), dest: dirs[0]!,
   });
   // Keep declared build outputs, including resource-bearing lanes an adopted dev.31 build could run.
   const globs = unique(spec.lanes.filter((l) => l.state === 'active' && l.cadence === 'build').flatMap((l) => l.evidenceGlobs));
@@ -1653,7 +1656,7 @@ export async function salvage(ctx: StageContext, unit: PlanUnit, run: BuildRun):
   const request = {
     worktree: run.worktree, branch: run.branch,
     identity: executorIdentity(),
-    message: `roadmap ${ctx.plan().arc}: salvage of unit ${unit.id} (build ${run.inv})\n`,
+    message: memoryMessage(`roadmap ${ctx.plan().arc}: salvage of unit ${unit.id} (build ${run.inv})`, [salvageSummary(ctx, unit.id, run)]),
   };
   const op = salvageCommitOp(rules);
   // A salvage that ends the build chain here never reaches teardown: the build's resources are cleaned now (a failure

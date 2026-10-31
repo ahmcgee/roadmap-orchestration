@@ -36,7 +36,7 @@
 // `<handover>` block, the executor's records of the work before it; the fix round no longer claims the work is the session's own.
 import type { BuildInputs, PromptModule } from '../inputs.ts';
 import {
-  UNIT_POLICY, bullets, buildBrowserText, documentsXml, handoverText, milestoneDocuments, milestonesText, fastLanesText, referenceIndexText, rulingsText, suiteLanesText,
+  UNIT_POLICY, bullets, buildBrowserText, documentsXml, handoverText, milestoneDocuments, milestonesText, fastLanesText, referenceIndexText, systemNotesText, rulingsText, suiteLanesText,
   witnessChecksText,
 } from '../inputs.ts';
 import { BUILD_DELEGATION } from '../delegation.ts';
@@ -131,6 +131,7 @@ export const PROMPT: PromptModule<'build'> = {
   system,
   schema: BUILD_SCHEMA,
   fields: [
+    'systemNotes',
     'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks',
     'milestones', 'browser', 'certifiedAt', 'handover',
   ],
@@ -146,7 +147,7 @@ ${rulingsText(i.rulings)}
 
 <reference_index>
 ${referenceIndexText(i.index)}
-</reference_index>${milestonesText(i.milestones)}
+</reference_index>${milestonesText(i.milestones)}${systemNotesText(i.systemNotes)}
 
 <plan_check_notes>
 ${i.planCheckNotes === '' ? '(none)' : i.planCheckNotes}

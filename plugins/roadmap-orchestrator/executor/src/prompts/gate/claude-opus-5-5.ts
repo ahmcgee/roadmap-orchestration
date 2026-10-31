@@ -66,7 +66,7 @@
 // finding on an unchanged file rests on a changed hunk or a moved target, else code records it as a note.
 import type { GateInputs, PromptModule } from '../inputs.ts';
 import {
-  boundedDiffText, bullets, milestoneDocuments, milestonesText, documentsXml, escalationText, findingsText, laneLedgerText, obligationsText, standingObligationsText, premisesText, referenceIndexText, rulingsText, targetDocument, gateChecksText} from '../inputs.ts';
+  boundedDiffText, bullets, milestoneDocuments, milestonesText, documentsXml, escalationText, findingsText, laneLedgerText, obligationsText, standingObligationsText, premisesText, referenceIndexText, systemNotesText, rulingsText, targetDocument, gateChecksText} from '../inputs.ts';
 import { GATE_SCHEMA } from '../schemas.ts';
 
 /**
@@ -248,6 +248,7 @@ export const PROMPT: PromptModule<'gate'> = {
   system,
   schema: GATE_SCHEMA,
   fields: [
+    'systemNotes',
     'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'planCheckNotes', 'obligations', 'standingObligations', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
     'checks', 'escalation', 'largeDiff', 'milestones', 'review', 'undeclaredContracts',
   ],
@@ -264,7 +265,7 @@ ${rulingsText(i.rulings)}
 
 <reference_index>
 ${referenceIndexText(i.index)}
-</reference_index>${milestonesText(i.milestones)}
+</reference_index>${milestonesText(i.milestones)}${systemNotesText(i.systemNotes)}
 
 <direction_text>
 ${i.direction}

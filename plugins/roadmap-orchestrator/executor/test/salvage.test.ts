@@ -15,7 +15,7 @@ import { SALVAGE, crashCells } from './matrix.ts';
 import { salvageCommitOp } from '../src/recover/ops.ts';
 
 const BRANCH = refName('refs/heads/unit-a');
-const MESSAGE = 'unit-a: salvage\n';
+const MESSAGE = 'unit-a: salvage\n\nKeep the approved changes.\n\nDecisions:\nD1: Use a temporary index because pre-staged content must not ride along.\n';
 
 type Checkout = Readonly<{ repo: AbsPath; wt: AbsPath; runDir: string }>;
 
@@ -75,6 +75,7 @@ const treeFiles = (repo: string, rev: string): string[] => git(repo, 'ls-tree', 
 function assertSalvaged(c: Checkout, intent: IntentOf<'salvage.commit'>, expectedSha: Sha): void {
   const next = intent.post.new;
   assert.equal(next, expectedSha, 'the same salvage SHA');
+  assert.equal(git(c.repo, 'show', '-s', '--format=%B', next), MESSAGE.trimEnd(), 'the recorded summary and decision survive replay');
   assert.equal(salvagePostcondition(intent), null, 'branch = HEAD = new, index tree = new, status clean');
   assert.equal(git(c.repo, 'rev-list', '--count', `${intent.expect.old}..${next}`), '1', 'exactly one commit');
   assert.equal(git(c.repo, 'rev-parse', `${next}^`), intent.expect.old);

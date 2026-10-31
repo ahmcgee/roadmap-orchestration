@@ -24,7 +24,7 @@
 // seat (Codex gets no MCP config), rendered by the shared helper all the same.
 // dev.17 (field feedback 2026-10-23 item 1): a session that does not continue its own gets the shared handover text.
 import type { BuildInputs, PromptModule } from '../inputs.ts';
-import { UNIT_POLICY, bullets, buildBrowserText, fastLanesText, handoverText, milestonesText, referenceIndexText, rulingsText } from '../inputs.ts';
+import { UNIT_POLICY, bullets, buildBrowserText, fastLanesText, handoverText, milestonesText, referenceIndexText, systemNotesText, rulingsText } from '../inputs.ts';
 import { BUILD_SCHEMA, DECISIONS_FILE } from '../schemas.ts';
 
 const system = `# Role
@@ -127,6 +127,7 @@ export const PROMPT: PromptModule<'build'> = {
   system,
   schema: BUILD_SCHEMA,
   fields: [
+    'systemNotes',
     'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks',
     'milestones', 'browser', 'certifiedAt', 'handover',
   ],
@@ -140,7 +141,7 @@ ${i.contracts.length === 0 ? '(none cited)' : i.contracts.map((c) => `<contract 
 ${rulingsText(i.rulings)}
 
 # Reference index
-${referenceIndexText(i.index)}${designReferences(i)}${milestonesText(i.milestones)}
+${referenceIndexText(i.index)}${designReferences(i)}${milestonesText(i.milestones)}${systemNotesText(i.systemNotes)}
 
 # Plan-check notes
 ${i.planCheckNotes === '' ? '(none)' : i.planCheckNotes}

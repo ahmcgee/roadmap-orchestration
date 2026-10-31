@@ -63,6 +63,7 @@
 // after a crash is consumed against those inputs (`consumeJudgment`): its approval records the captured fingerprint;
 // ff then finds a contract another unit's publication changed, or a ruling a docs publication superseded
 // (`fingerprint-invalid`, a re-gate).
+import { systemNotes } from './systemnotes.ts';
 import { orderingReasons } from '../park/ordering.ts';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -467,6 +468,7 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
     if (largeDiff !== null) writeFileSync(list, covered.map((p) => `${p}\n`).join(''));
     const measured = renderPrompt(prompt, {
       spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec) }, ...library(ctx, spec, tip), target,
+      systemNotes: systemNotes(ctx.repo, head, unit.systems ?? [], ctx.routingBase.config),
       direction: ctx.plan().direction, planCheckNotes: planCheckNotes(ctx, unit.id),
       obligations: observedViews(ctx, holisticInForce(ctx).obligations, chosen.direct, tip),
       standingObligations: chosen.standing,

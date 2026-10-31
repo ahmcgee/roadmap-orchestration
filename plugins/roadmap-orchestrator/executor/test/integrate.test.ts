@@ -2,18 +2,23 @@
 // real git. Named tests: merge.base-red, merge.stale-tip-fresh-candidate; also the transient refusal as a
 // scope-growth fix round and a foreign move of integration stopping publication.
 import assert from 'node:assert/strict';
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { resourceName } from '../src/core/ids.ts';
+import { invocationId, resourceName } from '../src/core/ids.ts';
+import { invocationDir } from '../src/pipeline/invoke.ts';
+import { salvageSummaries } from '../src/pipeline/memory.ts';
 import { runUnit } from '../src/pipeline/unit.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
-import { git } from './helpers/repo.ts';
+import { git, tmpDir } from './helpers/repo.ts';
 import { readCalls } from './helpers/scenario.ts';
 import { intents } from './fixtures/invoke-specs.ts';
-import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
+import { BUILD_REPORT, SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
 import type { Gate } from '../src/pipeline/unit.ts';
-import { U1, codexStep, contextFor, gateStep, isGateCall as isGate, mulBuild, outcomes, setupArc, stepUntil } from './fixtures/unit-common.ts';
+import { MUL, U1, appendSteps, codexStep, contextFor, gateStep, isGateCall as isGate, mulBuild, outcomes, setupArc, stepUntil, workDirPattern } from './fixtures/unit-common.ts';
+
+import { writeTrigger } from './helpers/crash.ts';
+import { runFixture } from './helpers/proc.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 /** Every stage admitted at once: the unit runs on its own. */
@@ -75,7 +80,10 @@ test('merge.stale-tip-fresh-candidate: T advances between the green candidate an
     const head = git(d.repo, 'rev-parse', 'main');
     const unitCommit = r.journal.view.unit(U1).approval!.fingerprint.unitCommit;
     assert.deepEqual(parentsOf(d.repo, head), [tip, unitCommit], 'the fresh candidate merged the approved commit onto the new tip');
-    assert.equal(intents(d.runDir, 'candidate.merge').length, 2);
+    const candidates = r.journal.view.opsOf('candidate.merge');
+    assert.equal(candidates.length, 2);
+    assert.equal(r.journal.view.opsOf('salvage.commit').length, 0, 'the builder committed everything itself');
+    for (const i of candidates) assert.equal(i.expect.commit.message, `roadmap ${d.arc}: candidate of unit u1\n\nDid the work.\n`, 'both candidates retain the build summary even without a salvage commit');
   } finally {
     r.journal.close();
   }
@@ -132,3 +140,82 @@ test('ff.foreign-move: integration rewritten under a green candidate stops publi
     r.journal.close();
   }
 });
+
+
+test('memory: salvage keeps the build report and decisions; candidate concatenates every round in order', T, async () => {
+  const d = setupArc({ steps: [] });
+  const first = 'Added multiplication. Use the native operator to keep numeric semantics.';
+  const second = 'Clarified operand names after review.';
+  const decision = 'Use * because it preserves JavaScript number semantics.';
+  appendSteps(d, [
+    planCheckStep({ decision: 'approve' }),
+    { as: 'codex', expect: {}, acts: [
+      { type: 'dirty', files: MUL },
+      { type: 'writeToPrompt', pattern: workDirPattern(d), file: 'decisions.json', text: JSON.stringify({ decisions: [{ id: 'D1', text: decision }] }) },
+      { type: 'emit', value: { ...BUILD_REPORT, summary: first } },
+    ] },
+    gateStep({ decision: 'revise', findings: [{ severity: 'blocking', path: 'src/mul.js', text: 'Clarify operand names.', contractRef: null, experiments: [], debt: null }], directives: ['Clarify operand names.'] }),
+    { as: 'codex', expect: {}, acts: [
+      { type: 'dirty', files: { 'src/mul.js': 'export function mul(left, right) { return left * right; }\n' } },
+      { type: 'emit', value: { ...BUILD_REPORT, summary: second } },
+    ] },
+    gateStep({ decision: 'approve' }),
+  ]);
+  const r = contextFor(d);
+  try {
+    await stepUntil(r, 'u1', (f) => f.stage === 'evidence' && f.outcome === 'captured');
+    // The live evidence can change; both messages must still read the completed snapshot.
+    const build = r.journal.view.opsOf('proc.spawn').find((i) => i.expect.subject.purpose === 'backend' && i.expect.subject.role === 'build')!;
+    const liveResult = join(invocationDir(r.ctx.runDir, invocationId(build.op, build.ordinal)), 'result.json');
+    const resultBytes = readFileSync(liveResult);
+    const result = JSON.parse(resultBytes.toString('utf8'));
+    result.outcome.value.summary = 'LIVE SUMMARY MUST NOT LEAK';
+    writeFileSync(liveResult, JSON.stringify(result));
+    const work = r.journal.view.opsOf('evidence.snapshot').find((i) => i.parent.type === 'stage' && i.parent.stage === 'evidence')!.expect.globs.find((g) => g.endsWith('/**'))!.slice(0, -3);
+    writeFileSync(join(d.runDir, work, 'decisions.json'), JSON.stringify({ decisions: [{ id: 'D1', text: 'LIVE DECISION MUST NOT LEAK' }] }));
+    await stepUntil(r, 'u1', (f) => f.stage === 'candidate' && f.outcome === 'green');
+    writeFileSync(liveResult, resultBytes); // Restore the runner record before publication verifies its independent hash.
+    assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), live()), { kind: 'merged' });
+    const bodies = [first + '\n\nDecisions:\nD1: ' + decision, second];
+    assert.deepEqual(salvageSummaries(r.ctx, U1), bodies);
+    const salvages = r.journal.view.opsOf('salvage.commit');
+    assert.equal(salvages.length, 2);
+    for (const [n, i] of salvages.entries()) {
+      assert.equal(i.expect.commit.message.split('\n').slice(2).join('\n'), bodies[n] + '\n');
+      assert.equal(git(d.repo, 'show', '-s', '--format=%B', i.post.new), i.expect.commit.message.trimEnd());
+    }
+    const candidate = r.journal.view.opsOf('candidate.merge').at(-1)!;
+    assert.equal(candidate.expect.commit.message, `roadmap ${d.arc}: candidate of unit u1\n\n${bodies.join('\n\n')}\n`);
+    assert.equal(git(d.repo, 'show', '-s', '--format=%B', 'main'), candidate.expect.commit.message.trimEnd());
+  } finally { r.journal.close(); }
+});
+
+for (const label of ['salvage.after-commit-tree', 'candidate.after-commit-tree']) {
+  test(`memory: ${label} recovery preserves the recorded message and exact commit object`, T, async () => {
+    const d = setupArc({ steps: [] });
+    appendSteps(d, [planCheckStep({ decision: 'approve' }), codexStep([
+      { type: 'dirty', files: MUL },
+      { type: 'writeToPrompt', pattern: workDirPattern(d), file: 'decisions.json', text: JSON.stringify({ decisions: [{ id: 'D1', text: 'Use * because it preserves numeric semantics.' }] }) },
+    ]), gateStep({ decision: 'approve' })]);
+    const trigger = writeTrigger(tmpDir('memory-crash'), { label, occurrence: 1 });
+    const env = { ...process.env, ROADMAP_TEST_CRASH: trigger };
+    const crashed = await runFixture('unit-child.ts', [JSON.stringify(d), 'u1'], { env, timeoutMs: SCENARIO_TIMEOUT_MS });
+    assert.equal(crashed.signal, 'SIGKILL', crashed.stderr);
+    const kind = label.startsWith('salvage') ? 'salvage.commit' : 'candidate.merge';
+    const pending = intents(d.runDir, kind).at(-1)!;
+    assert.ok(pending.kind === 'salvage.commit' || pending.kind === 'candidate.merge');
+    const recorded = pending.expect.commit;
+    assert.match(recorded.message, /Did the work\./);
+    assert.match(recorded.message, /D1: Use \* because it preserves numeric semantics\./);
+    // The act already made the expected object, but has not moved its ref. Force redo to recreate it.
+    const objectPath = git(d.repo, 'rev-parse', '--git-common-dir');
+    unlinkSync(join(d.repo, objectPath, 'objects', pending.post.new.slice(0, 2), pending.post.new.slice(2)));
+    const resumed = await runFixture('stage-child.ts', [JSON.stringify(d), 'u1'], { env, timeoutMs: SCENARIO_TIMEOUT_MS });
+    assert.equal(resumed.code, 0, resumed.stderr);
+    assert.deepEqual(JSON.parse(resumed.stdout), { kind: 'merged' });
+    const after = intents(d.runDir, kind).find((i) => i.op === pending.op)!;
+    assert.deepEqual(after.expect, pending.expect, 'recovery uses the original recorded commit inputs');
+    assert.equal(git(d.repo, 'show', '-s', '--format=%B', pending.post.new), recorded.message.trimEnd());
+    assert.equal(readCalls(d.scenarioPath).length, 3, 'recovery never reruns the builder or gate');
+  });
+}

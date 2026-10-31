@@ -16,8 +16,8 @@
 // `limits.walkRounds` (absent: 3; `walkRoundsOf`), the unit origin `polish` with its `polish` field. The in-file milestone
 // refusals are here (`milestoneRefusals`); `milestones-need-holistic` is a Phase-0 row (src/phase0/rows.ts).
 import {
-  type ArcId, type EdgeId, type JourneyId, type KnownDefectId, type LaneId, type MilestoneId, type PlanRev, type PolishId, type ResourceName, type RulingId, type ServeName, type Sha,
-  type UnitId, type VisionClauseId, INTEGRATION_SLOT, arcId, edgeId, journeyId, knownDefectId, laneId, milestoneId, planRev, polishId, resourceName, rulingId, serveName, sha,
+  type ArcId, type EdgeId, type JourneyId, type KnownDefectId, type LaneId, type MilestoneId, type PlanRev, type PolishId, type ResourceName, type RulingId, type ServeName, type Sha, type SystemName,
+  type UnitId, type VisionClauseId, INTEGRATION_SLOT, arcId, edgeId, journeyId, knownDefectId, laneId, milestoneId, planRev, polishId, resourceName, rulingId, serveName, sha, systemName,
   unitId, visionClauseId, idList,
 } from '../core/ids.ts';
 import { type PropagationTarget, propagationTarget } from '../core/stale.ts';
@@ -160,6 +160,8 @@ export type PlanUnit = Readonly<{
   spec: PlanPath;
   risk: RiskTier;
   scope: readonly RepoPattern[];
+  /** The unit systems whose build memory is available to its roles. Required by the P2 cutover. */
+  systems?: readonly SystemName[];
   resources: readonly ResourceName[];
   /**
    * Units this one runs after (`after`, optional in the file, [] when absent): it is not dispatched while
@@ -559,6 +561,8 @@ const cut: Read<Cut> = object((f) => {
 });
 
 const planUnit: Read<PlanUnit> = object((f) => {
+  const systems = f.optional('systems', arrayOf((v, p) => systemName(v, p), { nonEmpty: true }));
+  if (systems !== undefined) assertUnique(systems, (s) => s, `${f.path}.systems`);
   const out = {
     id: f.get('id', (v, p) => unitId(v, p)),
     spec: f.get('spec', (v, p) => planPath(v, p)),
@@ -588,7 +592,7 @@ const planUnit: Read<PlanUnit> = object((f) => {
   assertUnique(out.after, (u) => u, `${f.path}.after`);
   if (reenters?.unit === out.id) throw new SchemaError(`${f.path}.reenters.unit`, 'a unit other than itself', reenters.unit);
   return {
-    ...out, ...(origin === undefined ? {} : { origin }), ...(cpu === undefined ? {} : { cpu }), ...(reenters === undefined ? {} : { reenters }),
+    ...out, ...(systems === undefined ? {} : { systems }), ...(origin === undefined ? {} : { origin }), ...(cpu === undefined ? {} : { cpu }), ...(reenters === undefined ? {} : { reenters }),
     ...(cutField === undefined ? {} : { cut: cutField }), ...(routing === undefined ? {} : { routing }), ...(limits === undefined ? {} : { limits }),
     ...(priority === undefined ? {} : { priority }), ...(polish === undefined ? {} : { polish }), ...(deflake === undefined ? {} : { deflake }),
     ...(propagation === undefined ? {} : { propagation }),

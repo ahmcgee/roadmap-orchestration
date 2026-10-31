@@ -669,6 +669,7 @@ async function main(): Promise<void> {
   const buildSpec = '# Unit u-hello\n\n## Acceptance\n- A1: the file hello.txt exists in the repository root and contains the word hello.\n\n## Lanes\n- unit (fast): `sh -c "grep -q hello hello.txt"`';
   const unitLane = { id: UNIT, argv: ['sh', '-c', 'grep -q hello hello.txt'], cwd: repoPath('.'), env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], evidenceExcludes: [] } as const;
   const buildInputs = (worktree: AbsPath, evidenceDir: AbsPath): BuildInputs => ({
+    systemNotes: [],
     spec: { unit: unitId('u-hello'), rev: specRev(1), markdown: buildSpec }, contracts: [], rulings: [], index: MINI_INDEX, planCheckNotes: '', fastLanes: [unitLane], suiteLanes: [],
     evidenceDir, worktree, scope: { include: [repoPattern('hello.txt')], exclude: [] }, fixRound: null, witnessChecks: [], milestones: null, browser: null, certifiedAt: null, handover: null,
   });

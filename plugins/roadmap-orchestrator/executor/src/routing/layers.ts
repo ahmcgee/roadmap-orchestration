@@ -60,6 +60,7 @@
 //   keys are refused. `{"routing": {"profile": "claude-only"}}` is the one config line that selects the
 //   Claude-only profile. The profile is chosen by an explicit `start --profile`, else this file's
 //   `profile`, else `default`.
+import { type RepoPath, repoPath } from '../core/values.ts';
 import type { UnitId } from '../core/ids.ts';
 import { type RoutingRev, routingRev } from '../core/ids.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
@@ -101,6 +102,8 @@ export type RepoConfig = Readonly<{
   walkthrough?: Readonly<{ mcp: Readonly<Record<string, WalkMcpServer>> }>;
   /** dev.17: the repo's systems map (src/input/systems.ts); absent: none (every lane selected everywhere, the whole tree its input). */
   systemsMap?: SystemsMap;
+  /** Product-repo directory for non-normative per-system build memory; default docs/systems. */
+  systemNotesDir?: RepoPath;
 }>;
 
 const walkMcpServer = object((f): WalkMcpServer => ({
@@ -127,6 +130,7 @@ export const repoConfig = object((f): RepoConfig => {
   const flow = f.optional('flow', object((g) => ({ givens: g.get('givens', arrayOf(repoGiven)) })));
   const walkthrough = f.optional('walkthrough', object((g) => ({ mcp: g.get('mcp', walkMcp) })));
   const systems = f.optional('systemsMap', systemsMap);
+  const systemNotesDir = f.optional('systemNotesDir', (v, p) => repoPath(v, p));
   const routing = f.optional('routing', object((g) => {
     const out: { profile?: ProfileName; seats?: RoutingLayer; classes?: ClassBindings } = {};
     const profile = g.optional('profile', profileName);
@@ -139,6 +143,7 @@ export const repoConfig = object((f): RepoConfig => {
   }));
   return {
     ...(routing === undefined ? {} : { routing }), ...(chain === undefined ? {} : { chain }), ...(flow === undefined ? {} : { flow }),
+    ...(systemNotesDir === undefined ? {} : { systemNotesDir }),
     ...(walkthrough === undefined ? {} : { walkthrough }), ...(systems === undefined ? {} : { systemsMap: systems }),
   };
 });

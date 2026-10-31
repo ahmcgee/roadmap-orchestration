@@ -59,6 +59,7 @@
 // Re-entry: a stage attempt a restart cut short runs again as a new attempt. A merge-in it already
 // prepared (MERGE_HEAD = T in the unit worktree) and a publication op it already closed are read back
 // from the journal rather than repeated.
+import { memoryMessage, salvageSummaries } from './memory.ts';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
@@ -166,7 +167,7 @@ function candidateRequest(ctx: StageContext, unit: PlanUnit, attempt: number): C
     worktree: candidateWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, attempt),
     rules: unitTransientRules(dispatchOf(ctx.journal.view, unit.id), spec),
     identity: executorIdentity(),
-    message: `roadmap ${ctx.plan().arc}: candidate of unit ${unit.id}\n`,
+    message: memoryMessage(`roadmap ${ctx.plan().arc}: candidate of unit ${unit.id}`, salvageSummaries(ctx, unit.id)),
   };
 }
 
@@ -1114,7 +1115,7 @@ export async function publishBatch(ctx: BatchContext, findings: readonly Finding
   const approvals = new Map(sorted.map((u) => [u.id, approvalOf(ctx, u.id)] as const));
   const decision = planBatchCandidate(ctx.repo, {
     arc: plan.arc, job, integration, worktree: batchCheckout(plan.worktreeRoot, plan.arc, job, 'candidate', attempt), identity: executorIdentity(),
-    message: `roadmap ${plan.arc}: batch ${job} repairing ${findings.join(', ')} (${sorted.map((u) => u.id).join(', ')})\n`,
+    message: memoryMessage(`roadmap ${plan.arc}: batch ${job} repairing ${findings.join(', ')} (${sorted.map((u) => u.id).join(', ')})`, sorted.flatMap((u) => salvageSummaries(ctx, u.id))),
     members: sorted.map((u) => {
       const fingerprint = approvals.get(u.id)!;
       const head = unitTip(ctx, u.id);

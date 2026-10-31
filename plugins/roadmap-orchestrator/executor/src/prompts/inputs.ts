@@ -254,6 +254,8 @@ export type PlanCheckScopeGrowth = Readonly<{
 }>;
 
 export type BuildInputs = Readonly<{
+  /** Existing per-system notes at this unit's checkout commit, relative to the product repo. */
+  systemNotes: readonly RepoPath[];
   spec: RenderedSpec;
   contracts: readonly DocText[];
   rulings: readonly RulingText[];
@@ -379,6 +381,8 @@ export type RegeneratedCheck =
   | Readonly<{ state: 'no-generator'; outputs: readonly RepoPattern[] }>;
 
 export type GateInputs = Readonly<{
+  /** Existing per-system notes at the gated commit, relative to the product repo. */
+  systemNotes: readonly RepoPath[];
   spec: RenderedSpec;
   contracts: readonly DocText[];
   rulings: readonly RulingText[];
@@ -752,10 +756,12 @@ export const ROLE_INPUTS = {
     'scopeGrowth', 'escalation', 'milestones', 'staleLinks', 'design', 'pocs',
   ],
   build: [
+    'systemNotes',
     'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks',
     'milestones', 'browser', 'certifiedAt', 'handover',
   ],
   gate: [
+    'systemNotes',
     'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'planCheckNotes', 'obligations', 'standingObligations', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
     'checks', 'escalation', 'largeDiff', 'milestones', 'review', 'undeclaredContracts',
   ],
@@ -1392,3 +1398,5 @@ export function triggerText(t: TriggerView): string {
   return [`unit ${t.unit} parked (log seq ${t.seq}) on an executor-side cause, not a design question: ${ended} and the executor parked it (${c.reason}).`, ...c.detail].join(' ');
 }
 
+/** Neutral path-only slot; the role's wording is defined separately from memory selection. */
+export const systemNotesText = (paths: readonly RepoPath[]): string => paths.length === 0 ? '' : `\n\n<system_notes>\n${paths.join('\n')}\n</system_notes>`;
