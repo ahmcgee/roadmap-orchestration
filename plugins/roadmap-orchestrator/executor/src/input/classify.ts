@@ -32,6 +32,9 @@ import { advancesReasons,visionEditReasons } from '../holistic/vision.ts';
 import { undispositioned } from '../host/residues.ts';
 import type { Phase0Record } from '../phase0/types.ts';
 import { citedFailure,laneFailures,outcomeRef } from '../pipeline/failures.ts';
+import { designFaults, pinDesign } from '../pipeline/design.ts';
+import { verificationReasons } from '../pipeline/deflake.ts';
+import { revParse } from '../git/git.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
 import { environmentState } from '../resources/environments.ts';
 import { cpuCapacity,overCapacity } from '../resources/pool.ts';
@@ -70,12 +73,6 @@ export type Proposer =
   | Readonly<{ type: 'apply'; reason?: string }>
   | Readonly<{ type: 'reverse' | 'start' | 'executor' }>
   /**
-   * 2026-10-15 (arc feedback #3): a pre-build redirect's patch of its own unit's spec, validated (never committed: the
-   * stage applies it as a machine `spec.patch`) by the same classifier every revision runs. Its unit is mid-attempt and
-   * its patch takes the next rev, so the dispatched-spec rules do not apply to that unit's spec.
-   */
-  | Readonly<{ type: 'pre-build'; unit: UnitId }>
-  /**
    * `fixesUnrecorded`: the units the bundle's `reenter` ops introduce from an answer recorded before `fixes` (a previous
    * release's, `reenterFixesDefault`): adopted as recorded, the `fixes` rows do not bind them (`fixesReasons`).
    */
@@ -86,12 +83,6 @@ export type Proposer =
   | Readonly<{ type: 'walk'; job: JobId }>
   /** dev.13 (agent D): the cut of polish unit `unit` its compare judged `drop` (src/walk/compare.ts): it only cuts that unit. */
   | Readonly<{ type: 'compare'; unit: UnitId }>
-  /**
-   * dev.17 (design pass): the split revision of `unit`'s pre-build (src/pipeline/split.ts): it cuts `unit` (reason
-   * `splitCutReason`), adds `children`, moves every unit waiting on `unit` onto all of them and every milestone listing `unit`
-   * onto them (`splitRows`).
-   */
-  | Readonly<{ type: 'split'; unit: UnitId; children: readonly UnitId[] }>
   /** dev.17 (flaky ledger): the code-applied deflake revision (src/pipeline/deflake.ts): it only admits deflake units. */
   | Readonly<{ type: 'deflake' }>;
   /** dev.17: the code-applied propagation revision of the stale set plan rev `rev` recorded (src/holistic/propagation.ts): it only admits its propagation units. */
@@ -322,16 +313,6 @@ function cutRefusal(view: JournalView, unit: UnitId): string | null {
 }
 
 /**
- * Why the split revision of `unit` may not cut it (dev.17), or null: its pre-build judges the split while the unit is in its
- * task and records the hold before the commit, so the in-a-task refusal does not apply; a merged or superseded unit is not
- * split.
- */
-function splitCutRefusal(view: JournalView, unit: UnitId): string | null {
-  const u = view.unit(unit);
-  return u.status === 'retired' || u.status === 'superseded' || u.status === 'cut' ? `unit ${unit} is ${u.status}; it cannot be split` : null;
-}
-
-/**
  * The re-entry rows of `unit` (added now, `reenters` set): the old unit parked or held, the scope within the
  * lineage's envelope or widened beyond it on a ruling its spec cites (F5), the risk at least its floor, a `reset`
  * backed by an active ruling. Its change, or reasons.
@@ -548,14 +529,25 @@ export function classify(input: ClassifyInput): Classified {
       }
     }
     if (spec !== null) specs.set(unit.id, spec);
+    if (spec !== null && spec.design !== undefined && unit.cut === undefined && file.bytes !== null && bytesSha256(file.bytes) !== inForce.manifest.specs[unit.id]) {
+      const ctx = {repo: next.repo, runDir: input.runDir, journal: {view}, plan: () => plan, obligations: inputs.obligations};
+      const dr = spec.design;
+      const pinned = pinDesign(ctx, {...dr, interfaces: dr.interfaces.map((i) => ({type: i.type, path: i.path})), breaks: {tests: dr.breaks.tests.map((p) => p.path), docs: dr.breaks.docs.map((p) => p.path)}, failureModes: dr.failureModes.map((m) => ({...m, requirements: m.requirements.map((p) => p.id)})), newSystem: dr.newSystem ?? null, verification: dr.verification ?? null}, revParse(next.repo, `refs/heads/${plan.integrationBranch}`));
+      if (pinned.kind === 'refused') reasons.push(...pinned.reasons.map((why) => `unit ${unit.id}: ${why}`));
+      else {
+        const faults = designFaults(ctx, spec, dr);
+        reasons.push(...[...faults.reasons, ...faults.defects, ...verificationReasons(ctx, plan, unit, spec, dr, boundsOf(plan, unit).judgmentDeadlineMin * 60_000)].map((why) => `unit ${unit.id}: ${why}`));
+      }
+    }
+
     if (was === undefined) continue;
     if (!same(was.reenters, unit.reenters)) reasons.push(`unit ${unit.id}: \`reenters\` is set when a unit is added, never after`);
     if (was.cut !== undefined && unit.cut === undefined) reasons.push(`unit ${unit.id} is cut; a cut is final`);
     if (was.cut === undefined && unit.cut !== undefined) {
       cutNow.add(unit.id);
       const refusal = proposer.type === 'compare' && proposer.unit === unit.id ? droppedCutRefusal(view, unit)
-        : proposer.type === 'split' && proposer.unit === unit.id ? splitCutRefusal(view, unit.id) : cutRefusal(view, unit.id);
-      const authorization = (proposer.type === 'apply' && proposer.reason?.trim()) || proposer.type === 'split' || proposer.type === 'compare' ? null : 'cut needs apply --reason';
+        : cutRefusal(view, unit.id);
+      const authorization = (proposer.type === 'apply' && proposer.reason?.trim()) || proposer.type === 'compare' ? null : 'cut needs apply --reason';
       if (refusal !== null) reasons.push(refusal);
       if (authorization !== null) reasons.push(authorization);
       if (refusal === null && authorization === null) {
@@ -596,13 +588,6 @@ export function classify(input: ClassifyInput): Classified {
     if (!pinned) {
       if (bytesSha256(file.bytes) !== inForce.manifest.specs[unit.id]) {
         changes.push({ type: 'spec', unit: unit.id, edit: 'undispatched', specRev: spec.rev, specSha256: bytesSha256(file.bytes) });
-        scoped.add(unit.id);
-      }
-      continue;
-    }
-    if (proposer.type === 'pre-build' && proposer.unit === unit.id) {
-      if (bytesSha256(file.bytes) !== specShaInForce(view, unit.id)) {
-        changes.push({ type: 'spec', unit: unit.id, edit: 'revision', specRev: spec.rev, specSha256: bytesSha256(file.bytes) });
         scoped.add(unit.id);
       }
       continue;
@@ -920,11 +905,6 @@ function milestoneRows(view: JournalView, cur: PlanM1, plan: PlanM1, proposer: P
   const was = milestonesOf(cur);
   const now = milestonesOf(plan);
   if (same(was, now)) return;
-  // dev.17: a split moves the milestones listing its unit onto the children, and changes nothing else of them (`splitRows`).
-  if (proposer.type === 'split' && same(was.map((m) => splitMembership(m, proposer)), now)) {
-    changes.push({ type: 'milestones' });
-    return;
-  }
   if (proposer.type !== 'apply') {
     reasons.push(`the milestones change only through an architect \`apply\`, not a ${proposer.type}`);
     return;
@@ -1014,49 +994,40 @@ function polishRows(view: JournalView, cur: PlanM1, plan: PlanM1, proposer: Prop
 }
 
 /** The cut reason of a unit its pre-build split (dev.17, src/pipeline/split.ts): it names the children. */
-export const splitCutReason = (children: readonly UnitId[]): string => `split by its pre-build into ${children.join(', ')}`;
+export const splitCutReason = (children: readonly UnitId[]): string => `split into ${children.join(', ')}`;
 
-/** Milestone `m` with a split's unit replaced by its children in its units (unchanged when it does not list the unit). */
-function splitMembership<M extends Readonly<{ units: readonly UnitId[] }>>(m: M, proposer: Extract<Proposer, { type: 'split' }>): M {
-  if (!m.units.includes(proposer.unit)) return m;
-  return { ...m, units: m.units.flatMap((u) => (u === proposer.unit ? [...proposer.children] : [u])) };
-}
-
-/**
- * dev.17 (design pass): the split revision (`split{unit, children}`) changes exactly this: `unit` cut with
- * `splitCutReason(children)`, the children added after it (none a re-entry, each of its origin), each unit that ran after
- * `unit` now after every child instead (and nothing else of it), and the milestones listing `unit` listing the children
- * (`milestoneRows`). The pre-build that split is held (the cut's `cutRefusal` passes). No other proposer adds a unit cut
- * with that reason, so a split is only ever the executor's.
- */
+/** A root apply that cuts a parent with `splitCutReason` preserves its systems, dependencies and milestone membership. */
 function splitRows(cur: PlanM1, plan: PlanM1, proposer: Proposer, changes: readonly PlanChange[], reasons: string[]): void {
-  if (proposer.type !== 'split') return;
-  const parent = plan.units.find((u) => u.id === proposer.unit);
-  if (parent?.cut?.reason !== splitCutReason(proposer.children)) reasons.push(`the split of ${proposer.unit} cuts it with the reason "${splitCutReason(proposer.children)}"`);
-  const children = new Set<string>(proposer.children);
-  const curIds = new Set(cur.units.map((u) => u.id));
-  for (const id of proposer.children) {
-    const u = plan.units.find((x) => x.id === id);
-    if (u === undefined || curIds.has(id)) reasons.push(`the split of ${proposer.unit} adds ${id}, a new unit`);
-    else if (u.reenters !== undefined || u.origin !== parent?.origin) reasons.push(`child ${id} of ${proposer.unit} is no re-entry and takes its parent's origin`);
-  }
-  const parentSystems = cur.units.find((u) => u.id === proposer.unit)?.systems ?? [];
-  for (const u of plan.units.filter((u) => children.has(u.id))) {
-    const outside = u.systems.filter((s) => !parentSystems.includes(s));
-    if (outside.length > 0) reasons.push(`child ${u.id} names systems outside parent ${proposer.unit}: ${outside.join(', ')}`);
-  }
-  for (const u of plan.units) {
-    const was = cur.units.find((x) => x.id === u.id);
-    if (was === undefined || u.id === proposer.unit) continue;
-    const expected = was.after.includes(proposer.unit) ? [...was.after.filter((a) => a !== proposer.unit), ...proposer.children] : was.after;
-    if (!same([...expected].sort(), [...u.after].sort()) || !same({ ...entryOf(was), after: [] }, { ...entryOf(u), after: [] })) {
-      reasons.push(`the split of ${proposer.unit} moves ${u.id} onto its children only where ${u.id} ran after it, and changes nothing else of it`);
+  if (proposer.type !== 'apply') return;
+  for (const was of cur.units) {
+    const parent = plan.units.find((u) => u.id === was.id);
+    if (was.cut !== undefined || parent?.cut === undefined || !parent.cut.reason.startsWith('split into ')) continue;
+    const split = {unit: was.id, children: parent.cut.reason.slice('split into '.length).split(', ') as UnitId[]};
+    const children = new Set<string>(split.children);
+    const curIds = new Set(cur.units.map((u) => u.id));
+    for (const id of split.children) {
+      const u = plan.units.find((x) => x.id === id);
+      if (u === undefined || curIds.has(id)) reasons.push(`the split of ${split.unit} adds ${id}, a new unit`);
+      else if (u.reenters !== undefined || u.origin !== parent?.origin) reasons.push(`child ${id} of ${split.unit} is no re-entry and takes its parent's origin`);
     }
+    const parentSystems = cur.units.find((u) => u.id === split.unit)?.systems ?? [];
+    for (const u of plan.units.filter((u) => children.has(u.id))) {
+      const outside = u.systems.filter((s) => !parentSystems.includes(s));
+      if (outside.length > 0) reasons.push(`child ${u.id} names systems outside parent ${split.unit}: ${outside.join(', ')}`);
+    }
+    for (const u of plan.units) {
+      const was = cur.units.find((x) => x.id === u.id);
+      if (was === undefined || u.id === split.unit) continue;
+      const expected = was.after.includes(split.unit) ? [...was.after.filter((a) => a !== split.unit), ...split.children] : was.after;
+      if (!same([...expected].sort(), [...u.after].sort()) || !same({ ...entryOf(was), after: [] }, { ...entryOf(u), after: [] })) {
+        reasons.push(`the split of ${split.unit} moves ${u.id} onto its children only where ${u.id} ran after it, and changes nothing else of it`);
+      }
+    }
+    const allowed = (c: PlanChange): boolean => (c.type === 'unit-cut' && c.unit === split.unit) || (c.type === 'unit-added' && children.has(c.unit))
+      || (c.type === 'unit-changed') || c.type === 'order' || c.type === 'milestones' || (c.type === 'spec' && children.has(c.unit));
+    const other = changes.filter((c) => !allowed(c));
+    if (other.length > 0) reasons.push(`the split of ${split.unit} only cuts it and adds its children; it also changes ${other.map((c) => canonicalJson(c)).join(', ')}`);
   }
-  const allowed = (c: PlanChange): boolean => (c.type === 'unit-cut' && c.unit === proposer.unit) || (c.type === 'unit-added' && children.has(c.unit))
-    || (c.type === 'unit-changed') || c.type === 'order' || c.type === 'milestones' || (c.type === 'spec' && children.has(c.unit));
-  const other = changes.filter((c) => !allowed(c));
-  if (other.length > 0) reasons.push(`the split of ${proposer.unit} only cuts it and adds its children; it also changes ${other.map((c) => canonicalJson(c)).join(', ')}`);
 }
 
 /**
@@ -1213,13 +1184,6 @@ function censusRows(input: ClassifyInput, inputs: NextInputs, specs: ReadonlyMap
   const problems = specCensusMismatches(input.next.plan.units.flatMap((u) => specs.get(u.id) ?? []), inputs.obligations, census);
   if (problems.length === 0) return;
   const row = canonicalJson({ kind: 'phase0-invalid', problems });
-  if (input.proposer.type === 'pre-build') {
-    // Run 10 (C): a pre-build redirect is told how to fix its own patch.
-    reasons.push(`${row}: ${problems.map((p) => (p.item.startsWith('I-')
-      ? `unit ${p.unit} declares ${p.item}, on ${p.rule}, whose census state is ${p.state}`
-      : `unit ${p.unit}'s ${p.item.startsWith('W-') ? 'witness item' : 'acceptance clause'} ${p.item} names ${p.rule}, which the census puts out of slice: cite only in-slice rules in an acceptance clause or witness item, or leave ${p.rule} as a note (a facts item, or notes)`)).join('; ')}`);
-    return;
-  }
   if (input.proposer.type !== 'bundle') {
     reasons.push(row);
     return;
@@ -1333,11 +1297,10 @@ export function changesScope(changes: readonly PlanChange[], cur: PlanM1, next: 
       case 'corpus':
         break;
       // A Phase-0 record edit changes only the required-review key: nothing running is touched. M4a rev 3: a priority,
-      // known-defect or (dev.16 and earlier) pre-build-shape edit drains nothing either (admission and rank read the plan in force).
+      // known-defect edit drains nothing either (admission and rank read the plan in force).
       case 'phase0':
       case 'unit-priority':
       case 'known-defects':
-      case 'pre-build-shape':
       case 'derived':
       // dev.13: a milestones edit drains nothing (the node gates readiness; a walk reads the plan in force when it starts).
       case 'milestones':

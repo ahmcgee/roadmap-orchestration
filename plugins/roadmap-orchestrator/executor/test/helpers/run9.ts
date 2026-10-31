@@ -96,7 +96,7 @@ export function replayRun9(f: Fixture = loadRun9(), declare: Declared = {}): rea
   const recorded: RecordedAdmit[] = [];
   const out: Replayed[] = [];
   for (const c of f.checkpoints) {
-    const output = c.output as unknown as import('../../src/prompts/schemas.ts').CheckpointOutput;
+    const output = c.output as unknown as Readonly<{ops: readonly import('../../src/prompts/schemas.ts').BundleOp[]}>;
     const obligations = parseObligations(f.obligations);
     const ops: AdmitOp[] = output.ops.flatMap((op, index) => (op.op === 'admit'
       ? [admitOpOf(index, op, parseSpec(fixtureSpec(op.spec), absPath(`/run9/${op.unit.id}.json`)), obligations)]

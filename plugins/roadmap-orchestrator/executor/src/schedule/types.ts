@@ -14,7 +14,7 @@ import type { Backend } from '../routing/types.ts';
 // ---------------------------------------------------------------------------------------------------
 // Stages: admission boundaries and chains (F5)
 
-/** The stages a unit enters only through admission: pause, drain and A17 are re-checked before each. `reproduce` since M3; `scaffold` and `poc` since dev.17. */
+/** The stages a unit enters only through admission: pause, drain and A17 are re-checked before each. `reproduce` runs a vacuity repair's mutant first. */
 export const ADMISSION_STAGES = ['prepare', 'reproduce', 'pre-build', 'build', 'lanes', 'gate', 'candidate'] as const satisfies readonly OutcomeStage[];
 export type AdmissionStage = (typeof ADMISSION_STAGES)[number];
 /**

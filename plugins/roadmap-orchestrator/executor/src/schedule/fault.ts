@@ -61,7 +61,6 @@ const FAULT_STAGES: readonly FaultStage[] = ['prepare', 'reproduce', 'pre-build'
 export const JOB_FAULT_TRACKS: Readonly<Record<string, Readonly<{ name: string; kinds: readonly JobKind[] }>>> = {
   'holistic:audit': { name: 'audit', kinds: ['audit'] },
   'holistic:walk': { name: 'milestone walk', kinds: ['walk'] },
-  'holistic:checkpoint': { name: 'checkpoint', kinds: ['ckpt'] },
   'holistic:baseline': { name: 'baseline', kinds: ['baseline'] },
 };
 

@@ -1,33 +1,10 @@
 
-// The design pass (dev.17; DESIGN-1.0.md "Design pass"): the pre-build's design record and its code-checked binding,
-// integrated and fake-backed over a unit-common arc (real git, real lanes, the fake claude and codex behind PATH shims).
-//
-// design.record-lands: an approve's design record lands on the spec's next revision, its interfaces and broken files pinned
-//   at their blobs at the tip the check read, written by the pre-build's own spec patch; the build reads it in the spec.
-// design.unmapped-repair: a failure mode proven by a lane the unit does not have is refused through the repair turn, which
-//   names it; the corrected answer approves.
-// design.reachability-defect: a test item in a lane whose systems the design never selects is a plan defect: the repair turn,
-//   then an uncharged plan-defect park naming it.
-// design.clause-unexercised (item 10): an acceptance clause whose only lane lists systems the design never selects (it
-//   cannot run before the unit merges) is a plan defect naming the three fixes: the repair turn, then an uncharged park.
-//   (A batch lane's and an unavailable environment's halves: environments.test.ts env.unavailable-to-arc and the shared
-//   `cannotRun`.)
-// design.clause-unnamed (item 10): a clause no witness item and no clauses entry names is refused through the repair turn;
-//   the answer naming a runnable lane for it approves, the lanes landing in the record.
-// design.oversize-split: an oversize design (two systems each substantial) is refused; the repair turn's split of mixed
-//   concerns lands as one revision: the unit cut, its skeleton and module children added after it with their specs built
-//   from its own (items partitioned, designs pinned), its dependent moved onto both children.
-// design.split-defect: a split whose children do not partition the parent's items is refused twice: a plan-defect park.
-// design.unscoped-growth: a design change outside the scope envelope is a verified scope-growth proposal: the hold.
-// design.scaffold-not-in-force: a scaffold decision in an arc of an earlier role set is refused.
-// design.poc: a PoC builds on the unit's builder seat in a throwaway checkout of the tip; its diff is kept as evidence, the
-//   checkout removed and nothing merged; the next pre-build reads its report; past the unit's two a PoC is refused through
-//   the repair turn; the build is told the lessons, never the code.
-// design.departure-and-contract: the build changes an existing test the design does not list (a departure recorded among
-//   the spec's decisions, never refused) and a contract it does not declare (the salvage's risk trigger, and the gate told
-//   which contract); the gate's inputs record the design's size estimate.
-// split.crash.*, poc.crash.*: the matrix rows DESIGN_SPLIT and POC_STAGE (test/matrix.ts).
+// Retained design validation over root-authored revisions, and design evidence consumed by the gate.
 import assert from 'node:assert/strict';
+import {readFileSync, writeFileSync} from 'node:fs';
+import {join} from 'node:path';
+import {unitId} from '../src/core/ids.ts';
+import {splitCutReason} from '../src/input/classify.ts';
 import { test } from 'node:test';
 import type { Fact,StageOutcomeFact } from '../src/core/events.ts';
 import { arcId } from '../src/core/ids.ts';
@@ -46,11 +23,6 @@ const T = { timeout: SCENARIO_TIMEOUT_MS };
 const until = (stop: string): Gate => async (next) => next.stage !== stop;
 
 const facts = (d: ArcDescriptor): readonly Fact[] => readJournal(absPath(d.runDir), arcId(d.arc)).events.flatMap((e) => (e.type === 'fact' ? [e.fact] : []));
-const outcomeOf = (d: ArcDescriptor, stage: string): StageOutcomeFact => {
-  const f = facts(d).filter((x): x is StageOutcomeFact => (x.kind === 'stage-outcome' && 'unit' in x) && x.stage === stage).at(-1);
-  if (f === undefined) throw new Error(`no ${stage} outcome`);
-  return f;
-};
 
 /** A design record as the pre-build writes it, `over` its defaults (one small module change of src/**). */
 const design = (over: Readonly<Record<string, JsonValue>> = {}): JsonValue => ({
@@ -87,19 +59,6 @@ function splitArc(steps: Parameters<typeof setupArc>[0]['steps']): ArcDescriptor
   });
   return d;
 }
-
-const MIXED = design({
-  changes: [{ system: 'core', paths: ['src/**'], lines: 300 }, { system: 'api', paths: ['contracts/**'], lines: 300 }],
-  clauses: [{ clause: 'A1', lanes: ['mul'] }, { clause: 'A2', lanes: ['mul'] }],
-});
-/** A child of u1's split taking `items`, changing `system` by `lines`. */
-const child = (unit: string, items: readonly string[], system: 'core' | 'api', lines: number, proven = false): JsonValue => ({
-  unit, systems: [system], items, obligations: [],
-  design: design({
-    changes: [{ system, paths: [system === 'core' ? 'src/**' : 'contracts/**'], lines }], clauses: items.map((clause) => ({ clause, lanes: ['mul'] })),
-    failureModes: proven ? [{ id: 'FM-1', mode: 'the seam breaks', proof: { type: 'test', test: { type: 'test', lane: 'e2e', testId: 'seam' } }, requirements: [] }] : [],
-  }),
-});
 
 test('design.departure-and-contract: an unlisted test change is a departure recorded among the decisions; an undeclared contract change triggers and is named to the gate', T, async () => {
   const d = setupArc({
@@ -205,4 +164,45 @@ test('design.split-sizing: substantial mixed concerns and oversized records rema
   assert.match(oversize({changes})!, /mixed concerns: split it/);
   assert.match(oversize({changes: [{...changes[0]!, lines: 100_000}]})!, /over the .*gate reads inline/);
   assert.equal(oversize({changes: [{...changes[0]!, lines: 10}]}), null);
+});
+
+test('design.unmapped-repair: an unknown proof lane remains a design validation reason', () => {
+  const d = setupArc({steps: [], systemsMap: SYSTEMS}), r = contextFor(d);
+  try {
+    const record = pinnedDesign(r, {failureModes: [{id: 'FM-1', mode: 'the seam breaks', requirements: [], proof: {type: 'test', test: {type: 'test', lane: 'missing', testId: 'seam'}}}]});
+    assert.match(designFaults(r.ctx, loadUnitSpec(r.ctx, r.unit('u1')).spec, record).reasons.join('; '), /failure mode FM-1 is unmapped.*no spec, suite or arc lane/);
+  } finally {r.journal.close();}
+});
+
+test('design.oversize-split: a root apply cuts the mixed parent, partitions its items, pins children and rewires dependents', T, async () => {
+  const d = splitArc([]), r = contextFor(d);
+  try {
+    const children = [unitId('u1-core'), unitId('u1-api')];
+    const source = JSON.parse(readFileSync(join(d.planPath, '..', 'u1.json'), 'utf8')) as Record<string, unknown>;
+    source['acceptance'] = [...source['acceptance'] as {id: string}[]];
+    for (const [index, id] of children.entries()) {
+      const clause = index === 0 ? 'A1' : 'A2';
+      const record = pinnedDesign(r, {changes: [{system: index === 0 ? 'core' : 'api', paths: [index === 0 ? 'src/**' : 'contracts/**'], lines: 40}], clauses: [{clause, lanes: ['mul']}], interfaces: index === 0 ? [] : [{type: 'contract', path: 'contracts/api.md'}]});
+      writeFileSync(join(d.planPath, '..', `${id}.json`), JSON.stringify({...source, unit: id, rev: 1, acceptance: (source['acceptance'] as {id: string}[]).filter((a) => a.id === clause), design: record}));
+    }
+    const plan = JSON.parse(readFileSync(d.planPath, 'utf8')) as {units: Record<string, unknown>[]};
+    plan.units = [
+      {...plan.units[0], cut: {reason: splitCutReason(children)}},
+      {id: children[0], spec: `${children[0]}.json`, risk: 'med', systems: ['core'], resources: [], after: []},
+      {id: children[1], spec: `${children[1]}.json`, risk: 'med', systems: ['api'], resources: [], after: [children[0]]},
+      {...plan.units[1], after: children},
+    ];
+    writeFileSync(d.planPath, JSON.stringify(plan));
+    const result = await command(r, r.ctx, applyBody(d));
+    assert.equal(result.kind, 'applied', JSON.stringify(result));
+    const ctx = followContext(r), units = ctx.plan().units;
+    assert.equal(r.journal.view.unit(unitId('u1')).status, 'cut');
+    assert.deepEqual(units.find((u) => u.id === unitId('u2'))!.after, children);
+    assert.deepEqual(units.find((u) => u.id === children[1])!.after, [children[0]]);
+    const specs = children.map((id) => loadUnitSpec(ctx, units.find((u) => u.id === id)!).spec);
+    assert.deepEqual(specs.map((s) => s.acceptance.map((a) => a.id)), [['A1'], ['A2']]);
+    assert.equal(specs[1]!.design?.interfaces[0]?.type, 'contract');
+    assert.ok(specs[1]!.design?.interfaces[0]?.blob.length === 40);
+    assert.deepEqual(readCalls(d.scenarioPath), [], 'root decisions need no retired seat call');
+  } finally {r.journal.close();}
 });

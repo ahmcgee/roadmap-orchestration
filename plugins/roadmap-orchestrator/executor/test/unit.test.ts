@@ -289,6 +289,22 @@ test('unit.reentrant: a driver killed between two stages is restarted on the sam
   assert.ok(calls.every((c) => c.step !== null));
 });
 
+for (const label of ['spawn.after-result', 'spawn.after-done']) {
+  test(`unit.no-review-recovery ${label}: the first build's recorded result is consumed without an annotation or another build`, T, async () => {
+    const d = setupArc({steps: [mulBuild(), gateStep({decision: 'approve'})]});
+    const trigger = writeTrigger(tmpDir('unit-crash'), {label, occurrence: 1});
+    const env = {...process.env, ROADMAP_TEST_CRASH: trigger};
+    const first = await runFixture('unit-child.ts', [JSON.stringify(d), 'u1'], {env, timeoutMs: SCENARIO_TIMEOUT_MS});
+    assert.equal(first.signal, 'SIGKILL', first.stderr);
+    assert.deepEqual(outcomes(d), []);
+    const second = await runFixture('stage-child.ts', [JSON.stringify(d), 'u1'], {env, timeoutMs: SCENARIO_TIMEOUT_MS});
+    assert.equal(second.code, 0, second.stderr);
+    assert.deepEqual(JSON.parse(second.stdout), {kind: 'merged'});
+    assert.deepEqual(outcomes(d), STRAIGHT.slice(1));
+    assert.equal(readCalls(d.scenarioPath).length, 2, 'one build and one gate, no repeated invocation');
+  });
+}
+
 test('unit.reentrant-mid-stage: a driver killed inside ff once the publication acted; recovery closes it, and the restart reads it back and publishes once', T, async () => {
   const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })] });
   // The publication moved integration; the executor dies before its done (M2: nothing of the slot is journaled

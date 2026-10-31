@@ -50,7 +50,7 @@ import {
 } from '../core/ids.ts';
 import { type LensKindName, type RepairRef, type SpecM1, specObligations, specRepairs } from '../core/records.ts';
 import { mayOverlap } from '../input/classify.ts';
-import type { BundleOp, CheckpointOutput } from '../prompts/schemas.ts';
+import type { BundleOp } from '../prompts/schemas.ts';
 import {
   type AdmitClass, type CensusState, type ClassifiedAdmit, type Conversion, type FindingLens, type FindingSource, type ObligationDef, type Obligations, LENS_KINDS,
   OPPORTUNITY_BUDGET, OPPORTUNITY_FOLLOW_UPS, isExempt,
@@ -278,7 +278,7 @@ export function namedUnits(op: BundleOp): readonly UnitId[] {
 }
 
 /** R35: a conversion another op names makes the bundle invalid instead of dropping the op. */
-export function conversionReasons(output: CheckpointOutput, conversions: readonly Conversion[]): readonly string[] {
+export function conversionReasons(output: Readonly<{ops: readonly BundleOp[]}>, conversions: readonly Conversion[]): readonly string[] {
   const byUnit = new Map(conversions.map((c) => [c.unit as string, c]));
   const dropped = new Set(conversions.map((c) => c.index));
   const out: string[] = [];

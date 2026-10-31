@@ -1,5 +1,5 @@
 // Projections shared by live runtime readers. Schema-2 has no historical record adoption.
-import type { CensusEntry,CheckpointTrigger,ClassifiedAdmit,Conversion,Obligations } from '../holistic/types.ts';
+import type { CensusEntry,ClassifiedAdmit,Conversion,Obligations } from '../holistic/types.ts';
 import type { PressureAvailability } from '../host/pressure.ts';
 import type { CpuBasis } from './cpu.ts';
 import type { DiffShown,GateLargeDiff,JudgmentInputs,MutantOf,RevisionSource } from './events.ts';

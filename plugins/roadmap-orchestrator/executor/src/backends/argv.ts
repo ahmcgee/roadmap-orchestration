@@ -113,16 +113,6 @@ export const JUDGMENT_TOOLS = 'Read,Grep,Glob,Agent';
  */
 export const ACTING_JUDGE_TOOLS = 'Read,Grep,Glob,Bash,Write,Edit,Agent';
 
-/**
- * dev.17 (design pass): the pre-build's tools, an acting judge's with web search and fetch, so it can check a library, an
- * API or a standard the spec relies on and cite it. What it fetches is untrusted data, never instructions (its prompt says
- * so); a shell is for observing existing code (tests, build- and unit-cadence lanes, tools) in its own checkouts.
- */
-export const VERIFIER_TOOLS = `${ACTING_JUDGE_TOOLS},WebSearch,WebFetch`;
-
-/** An acting judge's `--tools` value: pre-build's with the web tools, every other acting judge's `ACTING_JUDGE_TOOLS`. */
-export const actingJudgeTools = (role: ActingJudgeRole): string => ACTING_JUDGE_TOOLS;
-
 /** The file-writing tools an acting judge's `--disallowedTools` rules name for each denied path (`writeDenyRules`). */
 export const WRITE_TOOLS = ['Write', 'Edit', 'NotebookEdit'] as const;
 
@@ -140,11 +130,7 @@ export const writeDenyRules = (paths: readonly AbsPath[]): readonly string[] =>
 export type BackendCall =
   | Readonly<{
     kind: 'claude-judgment';
-    /**
-     * A judging arc role (a lens, the checkpoint; M3): a read-only session, fresh or a repair turn. The gate (dev.13) and
-     * pre-build (dev.17) act; `planCheck` here is only the preflight smoke's read-only probe of the pre-build seat
-     * (src/preflight/smoke.ts) and the probe's (evals/probe.ts), never a unit's pre-build.
-     */
+    /** A read-only arc judgment, or a verifier health probe; fresh or a repair turn. */
     role: FreshRole | 'verifier';
     triple: ClaudeTriple;
     session: JudgmentSession;
@@ -244,7 +230,7 @@ export function backendArgv(call: BackendCall): Argv {
       return [
         'claude', '-p', ...CLAUDE_COMMON, ...mcpConfigArgs(call.mcpConfig),
         '--setting-sources', 'project', '--json-schema', call.schemaText, '--model', call.triple.model, '--effort', call.triple.effort,
-        '--tools', actingJudgeTools(call.role), ...(call.denyWrites.length === 0 ? [] : ['--disallowedTools', ...writeDenyRules(call.denyWrites)]),
+        '--tools', ACTING_JUDGE_TOOLS, ...(call.denyWrites.length === 0 ? [] : ['--disallowedTools', ...writeDenyRules(call.denyWrites)]),
         '--permission-mode', 'bypassPermissions', ...session, '--append-system-prompt', call.system,
         ...call.evidenceDirs.flatMap((dir) => ['--add-dir', dir]),
       ];

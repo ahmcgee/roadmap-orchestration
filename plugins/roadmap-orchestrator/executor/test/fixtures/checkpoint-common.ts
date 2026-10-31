@@ -11,7 +11,7 @@ import { submitCommand } from '../../src/commands/queue.ts';
 import { type CommandId, commandId } from '../../src/core/ids.ts';
 import type { JsonValue } from '../../src/core/json.ts';
 import { runAudit } from '../../src/holistic/audit.ts';
-import type { CheckpointContext } from '../../src/holistic/bundle.ts';
+import type { RevisionContext } from '../../src/holistic/bundle.ts';
 import type { Clock } from '../../src/holistic/cadence.ts';
 import type { Step } from '../helpers/scenario.ts';
 import { admitSpecWire, lensStep, noteLensStep } from '../helpers/holistic.ts';
@@ -31,7 +31,7 @@ export function checkpointArc(steps: readonly Step[], extra: Partial<AuditArcOpt
 export type Wired = ReturnType<typeof auditContext>['w'];
 
 /** The checkpoint context: the audit context plus the command context's plan file, routing base and docs publisher. */
-export function checkpointContext(r: ArcRun, clock: Clock = () => 0): Readonly<{ ctx: CheckpointContext; w: Wired }> {
+export function checkpointContext(r: ArcRun, clock: Clock = () => 0): Readonly<{ ctx: RevisionContext; w: Wired }> {
   const { ctx, w } = auditContext(r, clock);
   return { ctx: { ...ctx, planFile: w.commands.planFile, routingBase: w.commands.routingBase, docs: w.commands.docs, laneEnv: ctx.hostEnv }, w };
 }
@@ -45,7 +45,7 @@ export function requestAudit(r: ArcRun): CommandId {
 }
 
 /** Requests an audit and runs it to a completed end (its vision lens answered by `lensStep(job, 'vision')`). */
-export async function completedAudit(r: ArcRun, ctx: CheckpointContext): Promise<void> {
+export async function completedAudit(r: ArcRun, ctx: RevisionContext): Promise<void> {
   requestAudit(r);
   const out = await runAudit(ctx);
   assert.ok(out.kind === 'ended' && out.outcome === 'completed', JSON.stringify(out));

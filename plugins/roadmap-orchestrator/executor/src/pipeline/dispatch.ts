@@ -198,11 +198,8 @@ export function buildStarted(view: JournalView, unit: UnitId): boolean {
  * `record` re-pinned under `routing` (a new dispatch fact, same scope and floor) when the unit can absorb the
  * change: no build has started for it, or the seat it builds on (`build.<buildTier>`) keeps its session key (R4: an
  * effort-only change is absorbed, and the session resumes with the new effort); null when it cannot. On the floor the
- * seat is the pinned `implementerSeatRev` (`seatTripleOf`). TEMPORARY SCAFFOLDING (dev.17 routing, src/core/upgrade.ts):
- * when the pinned rev is the routing in force's stack under dev.16's built-in seats (`preDev17Rev`: a release upgrade,
- * not an owner edit) and the floor is unchanged, the unit is re-pinned keeping its pinned seat, which
- * it builds on through to its merge (`implementerSeatKept`). Delete once no dev.16 arc is in flight. An escalated unit (A11) no longer
- * builds on its floor, so a change there is absorbed; its `build.high` seat is not pinned, and its session
+ * seat is the pinned `implementerSeatRev` (`seatTripleOf`). An escalated unit no longer builds on its floor, so a change
+ * there is absorbed; its session
  * resumes only under the routing it ran on (rounds.ts `spawnSeatRev`), else a fresh one is told the worktree
  * holds the work. The stages call it when the rev in force differs from the pinned one, and so does
  * `resume <unit>` of a unit parked `routing-changed` (commands/apply.ts).
@@ -256,8 +253,9 @@ function inForce(ctx: StageContext, record: DispatchRecord): Pinned<DispatchReco
     const previous = (history.findLast(({base}) => base.rev === record.routingRev) ?? history.findLast(({base}) => [claudeBuilderRouting(base).rev, claudeBuilderRouting(base, ['high']).rev].includes(record.routingRev)))?.payload.routingProvenance;
     const current = ctx.journal.view.planApplied()?.routingProvenance;
     const profileChanged = previous !== undefined && current !== undefined && (previous.planLayer?.profile ?? previous.profile) !== (current.planLayer?.profile ?? current.profile);
+    const rootReentry = ctx.journal.view.unit(record.unit).reopened !== null && update.riskFloor !== undefined;
     const eligibilityChanged = routing.rev !== ctx.routing(record.unit).rev;
-    if (buildStarted(ctx.journal.view, record.unit) && !sameSession(seatTripleOf(record.implementerSeatRev), triple) && !profileChanged && !eligibilityChanged) return routingChanged(record);
+    if (buildStarted(ctx.journal.view, record.unit) && !sameSession(seatTripleOf(record.implementerSeatRev), triple) && !profileChanged && !eligibilityChanged && !rootReentry) return routingChanged(record);
     return {kind: 'pinned', dispatch: pin(ctx.journal, routing, record, update, tripleSeatRev(triple))};
   }
   const next = repin(ctx.journal, routing, record, update);
@@ -392,7 +390,6 @@ function seated(ctx: StageContext, record: DispatchRecord): ImplementerDispatch 
 
 export type BackendRequest =
   | Readonly<{ kind: 'judgment'; dispatch: JudgmentDispatch; session: JudgmentSession; evidenceDirs: readonly AbsPath[] }>
-  /** dev.17 (design pass): the scaffold writer in the unit worktree, a fresh session. */
   /**
    * `mcpConfig` (dev.13): the `--mcp-config` text of a Claude build in a milestone with a `browser` journey
    * (src/backends/mcp.ts `walkMcpConfig`), kept under the run dir's inputs like an acting judge's; null for none.

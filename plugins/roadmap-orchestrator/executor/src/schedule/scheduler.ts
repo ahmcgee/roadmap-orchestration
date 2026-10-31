@@ -37,8 +37,7 @@
 // item is acknowledged (`jobFaultOpen`). Holding shared state (the integration slot, an open shared op), any other job's,
 // or the loop's own throw crashes the run.
 //
-// Start and restart (G2): before the loop's first iteration a checkpoint's decision and a pack review's end a crash cut
-// short are settled (`settleLatest`, `settlePackReviews`), a published repair batch a crash cut short is finished
+// Start and restart (G2): settle interrupted pack reviews and milestone walks, finish a published repair batch
 // (`finishBatch`: recovery leaves its slot held), a terminal snapshot the ref lacks is published (G8), and a task is
 // started for every unit whose decided next stage is a chain stage (recovery kept a green publication's slot; a
 // build's chain has its reservation cleaned), whatever pause or readiness says, and for every merged unit (its
@@ -60,10 +59,8 @@
 //
 // The holistic layer (M3; only while the plan in force names a vision, A5). One holistic job runs at a time, in
 // this order of preference: in a corpus arc before its first admission, the pack review (`runPackReview`, M4a OR-Q16,
-// R16) while one is running or due; the baseline witness (`runBaseline`, A6) while one is owed; the checkpoint
-// (`runCheckpoint`, B6) while one is due or running; (dev.13) the milestone walk (`runWalk`, src/walk/walk.ts) while one is
-// due or running; (dev.17) the code-applied propagation revision (`applyPropagation`, src/holistic/propagation.ts) while a
-// stale set's propagations are unsettled; (dev.13, agent D) the code-applied polish revision (`applyPolish`, src/walk/polish.ts) while a walk's
+// R16) while one is running or due; the baseline witness (`runBaseline`, A6) while one is owed; the milestone experience verdict (`runWalk`, src/walk/walk.ts) while one is
+// due or running; the code-applied polish revision (`applyPolish`, src/walk/polish.ts) while a walk's
 // applied proposals are unsettled, and a polish unit's compare or a dropped tweak's cut (`runCompare`, src/walk/compare.ts)
 // while one is due or running; the cadence audit (`runAudit`, B5) while one is due or running (one audit at a time, its clock
 // `processClock`). A job that waits on a condition a command changes (skipped for a
@@ -94,9 +91,6 @@
 //       - baseline (A6): the baseline is owed or running, or its blocking `obligation-baseline` is open;
 //       - pack-review (M4a K14, H9): before the first admission, a pack review is running or due, or the latest ended
 //         review with the current key has an open blocking `pack-review` item (src/holistic/packreview.ts).
-//   - held bundle (arc feedback 2026-10-24, `busyHolds`): a unit a checkpoint's bundle touched mid-stage (rejected `busy`)
-//     is not admitted to its next stage until the trigger's next job has re-decided the held bundle (no call) at the
-//     boundary (src/holistic/checkpoint.ts).
 //   - batch (R7, B2): the candidate of an approved unit repairing a finding directly waits while another active
 //     unit repairs that finding directly and is not approved yet; once every such unit (at least two) waits at its
 //     candidate they publish as one batch. A red batch records `red` for each member its own selection attributes
@@ -110,17 +104,12 @@
 //     rules (all of them waiting, none suspended, none still held against the batch's repairs). Single-finding batches
 //     are planned first.
 //
-// Design parks (OR-Q1, `designParkRoute`): in a holistic arc a design park goes to the checkpoint first, and its
-// own item waits; a checkpoint that respecified the unit re-opens it on its pending revision (`reopened`), one that
-// decided nothing for it (or a respec the unit cannot re-open on) raises the park's item, and a second design park
-// on a respecified lineage raises `respec-second` from the checkpoint instead.
-//
 // Ends. Every arc ends by the completion predicate (§2.10, `completionBlockers`). An arc without the holistic layer
 // completes as in M2 (nothing runs, every unit merged, cut, superseded or parked for the architect, no own-arc residue,
 // no blocking needs-user, no pending command; no close-out). A holistic arc ends
 // `complete` when every unit is merged, cut or
 // superseded; no blocking item; no pending command; no own-arc residue; no baseline owed; no audit running or due,
-// no lens of L with an outstanding range, no owed trigger; no checkpoint due or running; the latest generation
+// no outstanding audit range or owed trigger; the latest generation
 // quiescent under the vision in force; the close-out publication done (the head is its commit) or nothing to
 // change; every non-exempt obligation held on the head. With only quiescence, the close-out and the obligations left,
 // the close-out settlement runs first (run 10, src/holistic/closeout.ts `settleCloseOut`: unanswered bundle requests
@@ -154,7 +143,7 @@ import { revParse } from '../git/git.ts';
 import { jobEvidenceRoot,snapshotRequestOf } from '../git/snapshot.ts';
 import { type AuditContext,auditPending,raiseAuditOwed,runAudit } from '../holistic/audit.ts';
 import { cadence,integrationHeadNow,processClock } from '../holistic/cadence.ts';
-import type { CheckpointContext } from '../holistic/bundle.ts';
+import type { RevisionContext } from '../holistic/bundle.ts';
 import { settleCloseOut } from '../holistic/closeout.ts';
 import { quiescentGenerations } from '../holistic/convergence.ts';
 import { coverageOf } from '../holistic/coverage.ts';
@@ -299,7 +288,7 @@ type Task = {
 
 /** Invocation purposes a pause kills among a paused unit's spawns (and, under `pause --all`, a flow proof's runs: M4b). */
 const PAUSE_KILLS: readonly string[] = ['backend', 'lane', 'journey', 'mutant'];
-/** Invocation purposes a stop kills (lens, checkpoint and flow calls and flow proofs included; never a docs publication's lanes). */
+/** Invocation purposes a stop kills, including arc judgments and proofs; never a docs publication's lanes. */
 const STOP_KILLS: readonly string[] = ['backend', 'lane', 'smoke', 'journey', 'mutant', 'arc-backend', 'proof', 'bring-up'];
 
 /** A holistic job that made no progress is asked again only this long after. */
@@ -350,9 +339,9 @@ export function arcSettled(view: JournalView, units: readonly Readonly<{ id: Uni
 // ---------------------------------------------------------------------------------------------------
 // The holistic layer's contexts
 
-/** The contexts the holistic jobs run under: the audit's (a clock, the arbiter's first-served waits), the checkpoint's, the docs'. */
+/** Contexts for campaign audits, root-authored revisions and docs publications. */
 export type HolisticContexts = Readonly<{
-  audit: AuditContext; checkpoint: CheckpointContext; docs: DocsContext;
+  audit: AuditContext; revision: RevisionContext; docs: DocsContext;
   /**
    * The executor's environment identity of an arc lane (§2.8: an observation counts only on its tree, lane revision and
    * environment): the running executor's own (`laneEnvId`); a reader outside it (`status`), the one the executor
@@ -368,7 +357,7 @@ export function holisticContexts(
   const audit: AuditContext = { ...x.stage, acquireFirst: x.arbiter.acquireFirst, clock };
   return {
     audit,
-    checkpoint: { ...audit, planFile: x.commands.planFile, routingBase: x.commands.routingBase, docs: x.commands.docs, laneEnv: x.stage.hostEnv },
+    revision: { ...audit, planFile: x.commands.planFile, routingBase: x.commands.routingBase, docs: x.commands.docs, laneEnv: x.stage.hostEnv },
     docs: { ...x.stage, planFile: x.commands.planFile, arbiter: x.arbiter },
     laneEnv: (lane) => laneEnvId(x.stage, lane),
   };
@@ -435,7 +424,7 @@ export type ArcHold = (typeof ARC_HOLDS)[number];
 export function arcHolds(h: HolisticContexts, blocking: readonly BlockingItem[], baselineRunning: boolean): readonly ArcHold[] {
   const out = new Set<ArcHold>();
   if (baselineRunning || baselineOwed(h.audit) !== null || blocking.some((b) => b.reason === 'obligation-baseline')) out.add('baseline');
-  if (packReviewHolds(h.checkpoint)) out.add('pack-review');
+  if (packReviewHolds(h.revision)) out.add('pack-review');
   return ARC_HOLDS.filter((x) => out.has(x));
 }
 
@@ -509,7 +498,7 @@ export function closeOutState(h: HolisticContexts, head: Sha): 'done' | 'nothing
  * §2.10's `complete`: the conditions that fail now (none: complete). `blocking`: the open blocking items; `pending`: the
  * pending mutations. Every arc: `units-open` (holistic: a unit neither merged, cut nor superseded; without the layer, one
  * not settled as M2 settles it, an operator park settling), `blocking-items`, `pending-commands`, `residues`. A holistic
- * arc adds the baseline, audit, checkpoint, quiescence, close-out and obligation clauses (vacuous without the layer: an
+ * arc adds the baseline, audit, quiescence, close-out and obligation clauses (vacuous without the layer: an
  * arc without it has no close-out, its in-tree documents being none of the executor's renderings).
  */
 export function completionBlockers(h: HolisticContexts, input: Readonly<{ blocking: number; pending: number }>): readonly CompletionBlocker[] {
@@ -720,10 +709,8 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   const h = holisticContexts(x);
   const holistic = (): boolean => view().holistic().on;
   const demo = demoTicker(x.stage);
-  // A crash right after a checkpoint's decision leaves no checkpoint due, so `runCheckpoint` (which settles too) would
-  // not run: the decision's aftermath a crash cut short (a no-op's divergences, dispositions, the digest) is settled here.
   if (holistic()) {
-    settlePackReviews(h.checkpoint);
+    settlePackReviews(h.revision);
     settleWalks(x.stage);
   }
 
@@ -852,10 +839,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   // -------------------------------------------------------------------------------------------------
   // The scheduler's holds: arc-wide (the baseline, the pack review) and repair batches (R7)
 
-  /**
-   * `flowApply` (M4b): an accepted flow proposal waits for its revision, so no new candidate starts. `bundle` (arc feedback
-   * 2026-10-24): the units a busy-rejected checkpoint's held bundle waits for (`busyHolds`), held at every admission.
-   */
+  /** An accepted flow proposal holds new candidates until its revision commits. */
   type Holds = Readonly<{ arc: boolean; batch: ReadonlySet<UnitId>; flowApply: boolean }>;
   const heldBack = (holds: Holds, unit: UnitId, stage: AdmissionStage): boolean =>
     holds.arc || (stage === 'candidate' && (holds.batch.has(unit) || holds.flowApply));
@@ -1116,14 +1100,14 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   /** Whether every admission is held (`arcHolds`; the baseline job running counts as owed). */
   const arcHeld = (blocking: readonly BlockingItem[]): boolean => holistic() && arcHolds(h, blocking, jobs.has('holistic:baseline')).length > 0;
 
-  /** The one holistic job (baseline, checkpoint, audit), the batch and the close-out, each started when due. */
+  /** The holistic jobs (baseline, review, experience verdict, audit), the batch and the close-out, each started when due. */
   const startHolistic = (holds: Holds, batch: BatchPlan): void => {
     if (!holistic()) return;
     // 1.0.0-dev.17: an arc job that faulted waits for its item's acknowledgement (src/schedule/fault.ts `jobFaultOpen`).
     if (due('holistic') && !flowJudging && !jobFaultOpen(view(), runDir)) {
       const job = baselineOwed(x.stage);
-      if (packReviewPending(h.checkpoint)) {
-        trackRetrying('holistic:packreview', 'holistic', async () => ((await runPackReview(h.checkpoint)).kind === 'ended' ? PROGRESS : WAIT));
+      if (packReviewPending(h.revision)) {
+        trackRetrying('holistic:packreview', 'holistic', async () => ((await runPackReview(h.revision)).kind === 'ended' ? PROGRESS : WAIT));
       } else if (job !== null) {
         trackRetrying('holistic:baseline', 'holistic', async () => {
           const out = await runBaseline(h.audit);
@@ -1137,10 +1121,10 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
         });
 
       } else if (polishDue(view(), plan()) !== null) {
-        trackRetrying('holistic:polish', 'holistic', async () => ((await applyPolish(h.checkpoint)).kind === 'applied' ? PROGRESS : WAIT));
+        trackRetrying('holistic:polish', 'holistic', async () => ((await applyPolish(h.revision)).kind === 'applied' ? PROGRESS : WAIT));
       } else if (runningCompare(view()) !== null || cutDue(view(), plan()) !== null || compareDue(view(), plan()) !== null) {
         trackRetrying('holistic:compare', 'holistic', async () => {
-          const out = await runCompare(h.checkpoint);
+          const out = await runCompare(h.revision);
           return out.kind === 'judged' || (out.kind === 'cut' && out.committed) ? PROGRESS : WAIT;
         });
       } else if (auditPending(h.audit)) {
@@ -1170,7 +1154,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
    */
   const startFlow = (): void => {
     if (!flowOn(view()) || !due('flow')) return;
-    trackRetrying('flow', 'flow', async () => ((await runFlowTrack(h.checkpoint, {
+    trackRetrying('flow', 'flow', async () => ((await runFlowTrack(h.revision, {
       holisticRunning: () => [...jobs.keys()].some((k) => k.startsWith('holistic:')),
       judging: (on) => {
         flowJudging = on;
@@ -1186,7 +1170,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   const startDeflake = (): void => {
     raiseDeflakeParked(x.stage);
     if (!due('deflake') || !deflakeJobPending(x.stage)) return;
-    trackRetrying('deflake', 'deflake', async () => ((await applyDeflake(h.checkpoint)).kind === 'applied' ? PROGRESS : WAIT));
+    trackRetrying('deflake', 'deflake', async () => ((await applyDeflake(h.revision)).kind === 'applied' ? PROGRESS : WAIT));
   };
 
   /** A8: the close-out publication (or, with nothing to change, every arc lane on the head), as a job. */
@@ -1239,11 +1223,11 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
     // Run 10 (E, F): nothing but the close-out left, the close-out settlement first (unanswered requests declined, open
     // P2/P3 findings with no obligation banked); what it wrote is read again next time round.
     const settling = view().holistic().on && blockers.every((b) => (CLOSE_OUT_BLOCKERS as readonly string[]).includes(b));
-    if (settling && obligationsOn(x.stage, integrationHeadNow(x.stage), h.laneEnv) !== 'not-held' && settleCloseOut(h.checkpoint)) return null;
+    if (settling && obligationsOn(x.stage, integrationHeadNow(x.stage), h.laneEnv) !== 'not-held' && settleCloseOut(h.revision)) return null;
     if (blockers.length === 0) {
       // M4b: the verdicts the completion closes and the compact flow series, right before `arc-completed`.
       if (view().holistic().completion?.active !== true) {
-        beforeCompletion(h.checkpoint);
+        beforeCompletion(h.revision);
         promoteFinal(x.stage, integrationHeadNow(x.stage));
         writeDesired(x.stage);
       }

@@ -6,9 +6,9 @@ import { type LaneDef, type SpecM1, specForces, specWitnesses } from '../core/re
 import type { ContractPin, FilePin, RequirementPin } from '../core/pins.ts';
 import { type RepoPath, type RepoPattern, matchesPattern } from '../core/values.ts';
 import { gitRun } from '../git/git.ts';
+import type { Obligations } from '../holistic/types.ts';
 import { laneUnreachable } from '../holistic/witnessfiles.ts';
 import { environmentUnavailable } from '../resources/environments.ts';
-import { arcRolesOf } from '../input/inforce.ts';
 import { type SystemsMap, dependentsClosure } from '../input/systems.ts';
 import type { DesignAnswer } from '../prompts/schemas.ts';
 import { GATE_DIFF_BUDGET } from './gate.ts';
@@ -16,19 +16,20 @@ import { mapInForce } from './lanes.ts';
 import type { StageContext } from './dispatch.ts';
 import { holisticInForce } from './stages.ts';
 
+type DesignContext = Pick<StageContext, 'plan' | 'runDir'> & Readonly<{journal: Readonly<{view: JournalView}>; obligations?: Obligations | null}>;
+
+const designObligations = (ctx: DesignContext): Obligations | null => ctx.obligations === undefined ? holisticInForce(ctx).obligations : ctx.obligations;
+
 /** The changed lines in one system above which its change is substantial, not seam-sized. A first guess (BACKLOG). */
 export const SUBSTANTIAL_SYSTEM_LINES = 200;
 /** The bytes one changed line takes in the gate's attached diff, context included: what turns its byte budget into lines. */
 export const DIFF_BYTES_PER_LINE = 100;
 /** The design estimate above which the unit's diff would overflow the gate's inline budget (`GATE_DIFF_BUDGET`); a function, as gate.ts imports this module's importers. */
 export const gateInlineLines = (): number => Math.floor(GATE_DIFF_BUDGET / DIFF_BYTES_PER_LINE);
-/** Proofs of concept per unit, uncharged. */
 
 
 /** Why code refuses a design: plain reasons (a repair turn, then malformed) and plan defects (a repair turn, then a park). */
 export type DesignFaults = Readonly<{ reasons: readonly string[]; defects: readonly string[] }>;
-const NO_FAULTS: DesignFaults = { reasons: [], defects: [] };
-const join = (a: DesignFaults, b: DesignFaults): DesignFaults => ({ reasons: [...a.reasons, ...b.reasons], defects: [...a.defects, ...b.defects] });
 
 /** The blob id of `path` at `tip`, or null when the tip has no such file. */
 function blobAt(ctx: Pick<StageContext, 'repo'>, tip: Sha, path: RepoPath): Sha | null {
@@ -38,7 +39,7 @@ function blobAt(ctx: Pick<StageContext, 'repo'>, tip: Sha, path: RepoPath): Sha 
 
 /** The record `answer` pins at `tip` (see the header), or why it cannot be pinned. */
 export function pinDesign(
-  ctx: Pick<StageContext, 'repo' | 'plan' | 'journal' | 'runDir'>, answer: DesignAnswer, tip: Sha,
+  ctx: DesignContext & Pick<StageContext, 'repo'>, answer: DesignAnswer, tip: Sha,
 ): Readonly<{ kind: 'pinned'; record: DesignRecord }> | Readonly<{ kind: 'refused'; reasons: readonly string[] }> {
   const reasons: string[] = [];
   const file = (path: RepoPath, what: string): FilePin | null => {
@@ -56,7 +57,7 @@ export function pinDesign(
     return pinned === null ? [] : [i.type === 'contract' ? { type: 'contract', path: pinned.path, blob: pinned.blob } : pinned];
   });
   const breaks = { tests: answer.breaks.tests.flatMap((p) => file(p, 'broken test') ?? []), docs: answer.breaks.docs.flatMap((p) => file(p, 'broken doc') ?? []) };
-  const obligations = holisticInForce(ctx).obligations?.obligations ?? [];
+  const obligations = designObligations(ctx)?.obligations ?? [];
   const requirement = (id: ObligationId): RequirementPin | null => {
     const o = obligations.find((x) => x.id === id);
     if (o === undefined) reasons.push(`a failure mode names requirement ${id}, which is no obligation in force`);
@@ -94,15 +95,15 @@ export const mixedConcerns = (changes: readonly DesignChange[]): boolean => subs
 /** Why a record is oversize (a plan defect, fixed by a split), or null. */
 export function oversize(record: Pick<DesignRecord, 'changes'>): string | null {
   const mixed = substantialSystems(record.changes);
-  if (mixed.length >= 2) return `oversize: the design changes ${mixed.join(' and ')} substantially (each over ${SUBSTANTIAL_SYSTEM_LINES} lines), mixed concerns: split it, the skeleton (contracts, wiring, the spanning test) first`;
+  if (mixedConcerns(record.changes)) return `oversize: the design changes ${mixed.join(' and ')} substantially (each over ${SUBSTANTIAL_SYSTEM_LINES} lines), mixed concerns: split it, the skeleton (contracts, wiring, the spanning test) first`;
   const size = designSize(record as DesignRecord);
   if (size > gateInlineLines()) return `oversize: the design estimates ${size} changed lines, over the ${gateInlineLines()} the gate reads inline: split it`;
   return null;
 }
 
 /** A lane a test item may name: the spec's active lanes, the plan's suite lanes and the arc lanes in force, by id. */
-function lanesInForce(ctx: Pick<StageContext, 'plan' | 'journal' | 'runDir'>, spec: SpecM1): ReadonlyMap<LaneId, LaneDef> {
-  const arc = holisticInForce(ctx).obligations?.lanes ?? [];
+function lanesInForce(ctx: DesignContext, spec: SpecM1): ReadonlyMap<LaneId, LaneDef> {
+  const arc = designObligations(ctx)?.lanes ?? [];
   return new Map<LaneId, LaneDef>([...arc, ...ctx.plan().suite.lanes, ...spec.lanes.filter((l) => l.state === 'active')].map((l) => [l.id, l]));
 }
 
@@ -123,7 +124,7 @@ const itemText = (t: TestItemRef): string => (t.type === 'witness' ? `witness it
  * name and every one of which must be reachable.
  */
 export function designFaults(
-  ctx: Pick<StageContext, 'plan' | 'journal' | 'runDir'>, spec: SpecM1, record: DesignRecord,
+  ctx: DesignContext, spec: SpecM1, record: DesignRecord,
 ): DesignFaults {
   const reasons: string[] = [];
   const defects: string[] = [];

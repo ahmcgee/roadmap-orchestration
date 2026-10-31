@@ -418,7 +418,7 @@ export function resolveContinuation(
   return { worktree: round.worktree, branch: round.branch, ...resumed(dispatch, invocationSession(ctx, called.inv), fix, []), deadlineAt };
 }
 
-/** The unit worktree on the unit branch; created at the integration tip for the unit's first build (or, dev.17, its scaffold). */
+/** The unit worktree on the unit branch; created at the integration tip for the unit's first build. */
 export async function ensureWorktree(ctx: StageContext, unit: UnitId, parent: StageParent): Promise<Readonly<{ worktree: AbsPath; branch: RefName }>> {
   const worktree = unitWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit);
   const branch = unitBranch(ctx.plan().arc, unit);

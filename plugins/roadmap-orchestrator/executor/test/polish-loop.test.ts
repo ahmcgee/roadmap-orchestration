@@ -46,7 +46,7 @@ const planOf = (r: ArcRun) => requirePlanInForce(r.ctx.runDir, r.journal.view).p
 /** The polish and compare context (the checkpoint's: a walk's plus the fenced commit's) over the run's one arbiter. */
 function polishContext(r: ArcRun) {
   const { w } = walkContext(r);
-  return { h: holisticContexts(w).checkpoint, w };
+  return { h: holisticContexts(w).revision, w };
 }
 
 async function ticking<T>(r: ArcRun, f: (h: ReturnType<typeof polishContext>['h']) => Promise<T>): Promise<T> {

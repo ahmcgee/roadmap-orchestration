@@ -179,7 +179,7 @@ describe('the flaky ledger', () => {
 
       // The deflake merges (its lane green now); the edge is released and u2 runs.
       assert.deepEqual(await run(r, 'deflake-1'), { kind: 'merged' });
-      assert.deepEqual(outcomes(d, 'deflake-1'), STRAIGHT);
+      assert.deepEqual(outcomes(d, 'deflake-1'), STRAIGHT.slice(1));
       assert.equal(deflakeState(r.journal.view, deflake.id), 'merged');
       assert.deepEqual(admission(r, 'u2', 'pre-build'), { kind: 'admit' });
       assert.deepEqual(await run(r, 'u2'), { kind: 'merged' });
@@ -326,15 +326,15 @@ describe('the flaky ledger', () => {
   });
 });
 
-describe('the verification budget through the pre-build', () => {
-  test('deflake.verification-budget-repair: a deflake unit\'s approve over the budget is refused through the repair turn naming the cost; the repaired runs verify the lane', T, async () => {
+describe('root-authored verification', () => {
+  test('deflake.verification-budget-repair: a root-authored design supplies the verification runs exercised by the lane', T, async () => {
  const marker=freshMarker();const d=flakyArc(marker,['u1'],[],straight('u1',{}));const r=contextFor(d);
  try {
  assert.deepEqual(await run(r,'u1'),{kind:'merged'});assert.deepEqual(await mint(r),{kind:'applied',admitted:['deflake-1'],recurring:0});
  const unit=unitInForce(r,'deflake-1');const median=medianLaneMinutes(r.ctx.runDir,r.journal.view,planOf(r),unit.deflake!.keys,LANE_DEADLINE_MS);assert.ok(median!==null&&median>0);
  const {w}=deflakeContext(r);await applyPlanEdit(r,w,()=>{const path=join(d.planPath,'..','deflake-1.json');const spec=JSON.parse(readFileSync(path,'utf8'));writeFileSync(path,JSON.stringify({...spec,design:DEFLAKE_DESIGN}));});
  appendSteps(d,of('deflake-1',[deflakeBuild({'flaky/note.txt':'deterministic now\n'}),gateStep({decision:'approve'})]));
- assert.deepEqual(await run(r,'deflake-1'),{kind:'merged'});assert.deepEqual(outcomes(d,'deflake-1'),STRAIGHT);
+ assert.deepEqual(await run(r,'deflake-1'),{kind:'merged'});assert.deepEqual(outcomes(d,'deflake-1'),STRAIGHT.slice(1));
  const verify=r.journal.view.opsOf('proc.spawn').flatMap(i=>{const sub=i.expect.subject;return sub.purpose==='lane'&&sub.unit==='deflake-1'&&sub.lane==='flaky'&&i.parent.type==='stage'&&i.parent.stage==='lanes'?[sub.verify]:[]});assert.deepEqual(verify,[2,2],'the root-authored verification runs twice');
  }finally{r.journal.close();}
 });

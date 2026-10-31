@@ -270,7 +270,7 @@ describe('facts, plan changes, manifests and fingerprints', () => {
   const M4A_FACTS: Readonly<Record<string, object>> = {
     'debt-banked': { kind: 'debt-banked', id: 'B-3', bankReason: 'gate-note', what: 'tidy x', key: H, source: { type: 'gate', unit: 'u1', attempt: 2, index: 0 } },
     'corpus-amendment': {
-      kind: 'corpus-amendment', id: 'M-1', source: { type: 'checkpoint', job: 'ckpt-2', index: 0 }, rules: ['T-2'], proposal: 'p', why: 'w', evidence: [],
+      kind: 'corpus-amendment', id: 'M-1', source: {type: 'root', command: CMD}, rules: ['T-2'], proposal: 'p', why: 'w', evidence: [],
     },
     'pack-review-started': { kind: 'pack-review-started', job: 'review-1', planRev: 1, inputsSha256: H, key: H2 },
     'pack-review-ended': {

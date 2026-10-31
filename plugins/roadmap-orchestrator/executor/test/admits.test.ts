@@ -19,7 +19,6 @@ type AdmitFinding,type AdmitObligation,type AdmitOp,type AdmitWorld,type AuditRa
 findingAttribution,obligationAttribution,opportunityClauses,
 } from '../src/holistic/admits.ts';
 import type { AdmitClass,ObligationDef,Obligations } from '../src/holistic/types.ts';
-import type { CheckpointOutput } from '../src/prompts/schemas.ts';
 import { checkpointAnswer } from './helpers/holistic.ts';
 
 const v = (...n: number[]) => n.map((x) => `V-${x}` as VisionClauseId);
@@ -292,7 +291,7 @@ describe('admit classes: conversions (R35, LR-k)', () => {
         { op: 'admit', unit: { id: 'next', risk: 'low', systems: [systemName('app')], after: ['aside'], origin: 'checkpoint' }, spec: {...spec, unit: 'next'}, cites: ['V-1'], evidence: ['e'] },
         { op: 'limits', unit: 'aside', limits: [{ field: 'chargeable', value: 2 }], cites: ['V-1'], evidence: ['e'] },
       ],
-    }) as unknown as CheckpointOutput);
+    }) as unknown as Parameters<typeof conversionReasons>[0]);
     const reasons = conversionReasons(output, [{ index: 0, unit: u('aside'), reason: 'unrelated', opportunity: null }]);
     assert.equal(reasons.length, 2, JSON.stringify(reasons));
     assert.match(reasons[0]!, /^op 2 \(admit\) names aside/);

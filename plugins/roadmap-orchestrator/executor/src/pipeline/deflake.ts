@@ -6,7 +6,7 @@
 // before the lane's record is read. The event's `tree` is the lane's input on the commit (its reuse key's `inputSha`), `env`
 // its environment id, `failing` the test ids the red run's reporter named (an arc lane's; a spec or suite lane names none).
 // `on` (dev.21, src/pipeline/lanes.ts `flakeOn`) is the tree it was seen on: `unit`, a unit's own run on a commit the
-// integration tip does not contain (the unit's unmerged work: its lanes stage, its scaffold dry run); `tip`, any other (a
+// integration tip does not contain (the unit's unmerged work: its lanes stage); `tip`, any other (a
 // job's, a candidate's, a unit's run on a commit the tip contains). A fact an earlier release wrote reads `on` from its red
 // run's stage (`flakeOnOf`). A stochastic lane (k-of-n) never takes the red-lane protocol, so it is never flaky and never
 // deflaked.

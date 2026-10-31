@@ -47,7 +47,6 @@ usageUnavailableReason,
 import {
 type AuditTrigger,type BundleOutcome,
 type BusyAttempt,
-type CheckpointTrigger,
 type ClassifiedAdmit,
 type ContractOp,
 type Conversion,type ConversionReason,
@@ -57,7 +56,6 @@ type PlanDefect,
 type RevisionVector,type WitnessPurpose,
 BUNDLE_REJECTIONS,CONVERSION_REASONS,
 FINDING_LENSES,FINDING_SEVERITIES,OBLIGATION_DISPOSITIONS,WITNESS_PURPOSES,auditTrigger,
-checkpointTrigger,
 classifiedAdmit,
 contractOp,
 conversion,
@@ -562,7 +560,7 @@ export const OUTCOME_STAGES = Object.keys(STAGE_OUTCOME_KINDS) as readonly Outco
 export const JUDGMENT_STAGES = ['pre-build', 'gate'] as const satisfies readonly OutcomeStage[];
 export type JudgmentStage = (typeof JUDGMENT_STAGES)[number];
 /** Stages with an uncharged retry (malformed report, blocked lane). */
-export const RETRY_STAGES = ['pre-build', 'build', 'lanes', 'gate'] as const satisfies readonly OutcomeStage[];
+export const RETRY_STAGES = ['build', 'lanes', 'gate'] as const satisfies readonly OutcomeStage[];
 export type RetryStage = (typeof RETRY_STAGES)[number];
 
 /**
@@ -661,28 +659,17 @@ export type StageOutcomeDetail =
    */
   | Readonly<{ kind: 'context-exceeded'; inv: InvocationId; promptBytes: number }>
   /** 1.0.0-dev.17: `executor-fault` at any stage that has it, the thrown error's stack (its message when it has none). */
-  | Readonly<{ kind: 'executor-fault'; stack: string }>
-  /** dev.17 (design pass): pre-build `split`, the children the split revision adds (two or more, in answer order). */
-  | Readonly<{ kind: 'split'; children: readonly UnitId[] }>
-  /** dev.17 (design pass): pre-build or scaffold `plan-defect`, every reason code refused the design for (non-empty). */
-  | Readonly<{ kind: 'design-defect'; reasons: readonly string[] }>
-  /**
-   * dev.17 (design pass): scaffold `refused`, why code refused the skeleton (non-empty) and, when its dry run ran the load
-   * test's lane, that run's evidence dir: what the retry is told.
-   */
-  | Readonly<{ kind: 'scaffold-refused'; reasons: readonly string[]; laneEvidence: AbsPath | null }>;
+  | Readonly<{ kind: 'executor-fault'; stack: string }>;
 /** The (stage, outcome) pairs that carry a detail, keyed `<stage>/<outcome>`, with the detail's kind. */
 export const DETAILED_OUTCOMES = {
   'lanes/witnesses-missing': 'witnesses-missing', 'lanes/smoke-survived': 'smoke-survived', 'lanes/known-defect': 'known-defect', 'build/infeasible': 'infeasible',
   'lanes/base-red': 'base-red',
   'lanes/plan-defect': 'plan-defect',
-  'pre-build/context-exceeded': 'context-exceeded', 'build/context-exceeded': 'context-exceeded', 'gate/context-exceeded': 'context-exceeded',
+  'build/context-exceeded': 'context-exceeded', 'gate/context-exceeded': 'context-exceeded',
   'prepare/executor-fault': 'executor-fault', 'reproduce/executor-fault': 'executor-fault', 'pre-build/executor-fault': 'executor-fault',
   'build/executor-fault': 'executor-fault', 'quiesce/executor-fault': 'executor-fault', 'evidence/executor-fault': 'executor-fault',
   'salvage/executor-fault': 'executor-fault', 'teardown/executor-fault': 'executor-fault', 'lanes/executor-fault': 'executor-fault',
   'gate/executor-fault': 'executor-fault', 'candidate/executor-fault': 'executor-fault',
-  'pre-build/split': 'split', 'pre-build/plan-defect': 'design-defect', 'scaffold/plan-defect': 'design-defect', 'scaffold/refused': 'scaffold-refused', 'scaffold/context-exceeded': 'context-exceeded',
-  'poc/context-exceeded': 'context-exceeded', 'scaffold/executor-fault': 'executor-fault', 'poc/executor-fault': 'executor-fault',
 } as const satisfies Readonly<Record<string, StageOutcomeDetail['kind']>>;
 
 /**
@@ -1281,7 +1268,6 @@ export type PlanChange =
   /** M4a rev 3 (F4): the plan's `knownDefects` changed. */
   | Readonly<{ type: 'known-defects' }>
   /** M4a rev 3 (E) to dev.16: the plan's `planCheck.shape` changed (no drain). Read from older logs; dev.17 writes none. */
-  | Readonly<{ type: 'pre-build-shape' }>
   /** Plan defects (2026-10-16): the plan's `derived` entries changed (no drain; each unit re-pins its widening at its next dispatch check). */
   | Readonly<{ type: 'derived' }>
   /**
@@ -1891,7 +1877,6 @@ const planChange: Read<PlanChange> = tagged('type', {
   phase0: object((f): PlanChange => ({ type: f.get('type', literal('phase0')), sha256: f.get('sha256', sha256R) })),
   'unit-priority': object((f): PlanChange => ({ type: f.get('type', literal('unit-priority')), unit: f.get('unit', unitR) })),
   'known-defects': object((f): PlanChange => ({ type: f.get('type', literal('known-defects')) })),
-  'pre-build-shape': object((f): PlanChange => ({ type: f.get('type', literal('pre-build-shape')) })),
   derived: object((f): PlanChange => ({ type: f.get('type', literal('derived')) })),
   milestones: object((f): PlanChange => {
     const rewalk = f.optional('rewalk', arrayOf(milestoneR, { nonEmpty: true }));
@@ -1974,15 +1959,7 @@ const stageOutcomeDetail: Read<StageOutcomeDetail> = tagged('kind', {
     kind: f.get('kind', literal('context-exceeded')), inv: f.get('inv', invR), promptBytes: f.get('promptBytes', nat),
   })),
   'executor-fault': object((f): StageOutcomeDetail => ({ kind: f.get('kind', literal('executor-fault')), stack: f.get('stack', str) })),
-  split: object((f): StageOutcomeDetail => {
-    const out = { kind: f.get('kind', literal('split')), children: f.get('children', arrayOf((v, p) => unitId(v, p), { nonEmpty: true })) };
-    if (out.children.length < 2) throw new SchemaError(`${f.path}.children`, 'two or more children', out.children);
-    return out;
-  }),
-  'design-defect': object((f): StageOutcomeDetail => ({ kind: f.get('kind', literal('design-defect')), reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })) })),
-  'scaffold-refused': object((f): StageOutcomeDetail => ({
-    kind: f.get('kind', literal('scaffold-refused')), reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })), laneEvidence: f.get('laneEvidence', nullable((v, p) => absPath(v, p))),
-  })),
+
 });
 
 const holdCause: Read<HoldCause> = tagged('type', {

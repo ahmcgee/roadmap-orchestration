@@ -1,16 +1,8 @@
 import { type SystemName, systemName } from '../core/ids.ts';
-// Structured results of the roles (M3 adds the arc roles `lens` and `checkpoint`, M4a `packReview`, M4b `flow`), as strict JSON Schemas (every key required, no additional
-// properties: what `codex exec --output-schema` demands and `claude -p --json-schema` accepts) plus the
-// hand-written validators the adapter runs on the backend's terminal output. The schema is the model's
-// contract; the validator is the executor's, and also enforces the cross-field rules a schema cannot
-// state (a patch only with redirect, directives only with revise, no blocking finding on an approve).
-//
-// Derived from the M1 transition table (plan "Pipeline for one serial unit"):
-//   planCheck: approve → build · redirect → spec.patch, re-check · infeasible → escalate · escalate → route up
-// Both judgments also return their premises (claim + file:line evidence, possibly none): the next round's handoff.
-//   gate:      approve → integration slot · revise → fix round with directives · escalate → route up
-//   build:     success → quiesce (the executor then salvages, runs lanes and gates; the report is evidence)
-import { type ClauseId, type FailureModeId, type FindingId, type JourneyId, type LaneId, type ObligationId, type PocQuestionId, type ReviewFindingId, type RuleId, type RulingId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, answerIds, clauseId, failureModeId, findingId, journeyId, laneId, obligationId, pocQuestionId, reviewFindingId, ruleId, rulingId, unitId, visionClauseId } from '../core/ids.ts';
+// Strict role-result schemas and validators. Verifier pre-build and diagnosis modes annotate;
+// gate mode approves, requests a fix or escalates. Builders report grounding and experiments;
+// campaign audits report findings and root requests. Cross-field checks supplement JSON Schema.
+import { type ClauseId, type FailureModeId, type FindingId, type JourneyId, type LaneId, type ObligationId, type ReviewFindingId, type RuleId, type RulingId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, answerIds, clauseId, failureModeId, findingId, journeyId, laneId, obligationId,  reviewFindingId, ruleId, rulingId, unitId, visionClauseId } from '../core/ids.ts';
 import { type JsonValue,canonicalJson } from '../core/json.ts';
 import { BOUND_FIELDS,type Bounds,type FailureRef,type NoteDef,SPEC_SCHEMA,SPEC_SECTIONS,type SpecPatchOp,failureRef,specM1,specPatchOp } from '../core/records.ts';
 import { type ReviewDispute,reviewDispute } from '../core/review.ts';
@@ -107,7 +99,7 @@ function laneFromWire(value: unknown, path: string): unknown {
   const v = value as { readonly env: object };
   return { ...v, env: { ...v.env, set: Object.fromEntries(pairs.map((p) => [p.name, p.value])) } };
 }
-const S_ADMIT_SPEC = sObj({
+const S_FULL_SPEC = sObj({
   schema: sEnum([SPEC_SCHEMA]),
   unit: S_STR,
   rev: S_INT,
@@ -122,7 +114,7 @@ const S_ADMIT_SPEC = sObj({
   obligations: S_IDS,
   repairs: S_IDS,
 });
-const admitSpec: Read<string> = (value, path) => {
+const fullSpec: Read<string> = (value, path) => {
   const f = new Fields(value, path);
   const lanes = f.get('lanes', arrayOf((v) => v));
   const v = value as Record<string, unknown>;
@@ -511,23 +503,6 @@ export type BundleOpBody =
   | Readonly<{ op: 'invalidate-approval'; unit: UnitId }>
   | Readonly<{ op: 'request'; class: OwnerOnlyClass; summary: string }>;
 export type BundleOp = BundleOpBody & Readonly<{ cites: readonly VisionClauseId[]; evidence: readonly string[] }>;
-export type CheckpointOutput = Readonly<{
-  decision: 'apply' | 'no-op' | 'request';
-  reasons: readonly string[];
-  /** Empty exactly on a `no-op`. */
-  ops: readonly BundleOp[];
-  findingDispositions: readonly Readonly<{ finding: FindingId; disposition: FindingDisposition; reason: string }>[];
-  /**
-   * H12: readings of the vision where it does not anticipate a situation; each records a divergence, even on a `no-op`.
-   * Method, not invariant (W4, 2026-10-16): the key is present (strict schema), the list may be empty; one given cites
-   * at least one active clause (its divergence's cites), resolved as every cite is.
-   */
-  interpretations: readonly Readonly<{ clauses: readonly VisionClauseId[]; situation: string; reading: string }>[];
-  cites: Readonly<{ vision: readonly VisionClauseId[]; observations: readonly ObservationKey[]; findings: readonly FindingId[] }>;
-  premises: readonly Premise[];
-  /** M4a: corpus amendments the checkpoint proposes (`corpus-amendment{source: checkpoint{job, index}}`). */
-  corpusAmendments: readonly CorpusAmendmentProposal[];
-}>;
 export type CorpusAmendmentProposal = Readonly<{ rules: readonly RuleId[]; proposal: string; why: string }>;
 export type CheckpointIds = Readonly<{ arcLanes: readonly LaneId[]; splittable: readonly ObligationId[]; obligations: readonly ObligationId[] }>;
 // ---------------------------------------------------------------------------------------------------
@@ -642,7 +617,7 @@ export type WalkFinding = Readonly<{
 }>;
 /**
  * A polish proposal, authored as a full unit (R3): its id, scope (covering one of the milestone's references) and spec,
- * the spec as an admit's (`S_ADMIT_SPEC`), read into spec.json's canonical text. Code admits it with origin `polish`.
+ * the strict full-spec wire object (`S_FULL_SPEC`), read into spec.json's canonical text. Code admits it with origin `polish`.
  */
 export type WalkPolish = Readonly<{
   journey: JourneyId; evidence: readonly string[]; text: string; unit: Readonly<{ id: UnitId; systems: readonly SystemName[]; spec: string }>;
@@ -673,7 +648,7 @@ export const WALKTHROUGH_SCHEMA: Schema = sObj({
     },
     paths: S_IDS,
   })),
-  polish: sArr(sObj({ journey: S_STR, evidence: S_EVIDENCE, text: S_STR, unit: sObj({ id: S_STR, systems: S_IDS, spec: S_ADMIT_SPEC }) })),
+  polish: sArr(sObj({ journey: S_STR, evidence: S_EVIDENCE, text: S_STR, unit: sObj({ id: S_STR, systems: S_IDS, spec: S_FULL_SPEC }) })),
   premises: S_PREMISES,
   reasons: sArr(S_STR),
 });
@@ -705,7 +680,7 @@ export const walkthroughOutput: Read<WalkthroughOutput> = object((f) => {
     })))),
     polish: f.get('polish', arrayOf(object((g): WalkPolish => ({
       journey: g.get('journey', journeyR), evidence: g.get('evidence', arrayOf(str, { nonEmpty: true })), text: g.get('text', str),
-      unit: g.get('unit', object((h) => ({ id: h.get('id', unitR), systems: h.get('systems', uniqueIds((v, p) => systemName(v, p), { nonEmpty: true })), spec: h.get('spec', admitSpec) }))),
+      unit: g.get('unit', object((h) => ({ id: h.get('id', unitR), systems: h.get('systems', uniqueIds((v, p) => systemName(v, p), { nonEmpty: true })), spec: h.get('spec', fullSpec) }))),
     })))),
     premises: f.get('premises', arrayOf(premise)),
     reasons: f.get('reasons', arrayOf(str)),

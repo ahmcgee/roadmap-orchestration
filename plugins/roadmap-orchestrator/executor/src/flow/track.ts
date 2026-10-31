@@ -26,7 +26,7 @@ import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import { type IsoTime,isoTimeOf } from '../core/values.ts';
 
-import type { CheckpointContext } from '../holistic/bundle.ts';
+import type { RevisionContext } from '../holistic/bundle.ts';
 import { workRemains } from '../holistic/cadence.ts';
 import { drainsArc } from '../input/classify.ts';
 import { FLOW_SERIES_INPUT,arcRolesOf,keepInput } from '../input/inforce.ts';
@@ -44,7 +44,7 @@ import { cooldownOf,dueTriggers,pressureHoldTimes } from './trigger.ts';
 import type { ClosedVerdict,CodeConstraint,FlowAccounting,FlowChart,FlowPressureStatus,FlowProposal,FlowTrigger,FlowWindow,GivenInForce } from './types.ts';
 import { type IdleSpan,afterOf,beforeOf,closeWindow,guardBreaches,verdictOf,windowSamples } from './verdict.ts';
 
-export type FlowTrackContext = CheckpointContext;
+export type FlowTrackContext = RevisionContext;
 
 const now = (): IsoTime => isoTimeOf(new Date());
 

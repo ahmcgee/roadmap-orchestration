@@ -348,8 +348,7 @@ test('whole-pipeline crash matrix', { concurrency: FANOUT, timeout: 45 * 60_000 
     counts: {
       'obligation-latched': 1, 'audit-started': 1, 'audit-ended': 1, 'plan-applied': 2, 'docs-covered': 1, 'docs-published': 1, 'arc-completed': 1, 'debt-banked': 1,
     },
-    audits: ['audit-1'], ended: [['audit-1', 'completed']], checkpoints: [],
-    smoke: { keys: 1, verdicts: [canonicalJson({ unit: 'u1', verdict: { killed: [{ lane: 'journey', testId: 't2' }], survived: [], inconclusive: [] } })] },
+    audits: ['audit-1'], ended: [['audit-1', 'completed']],     smoke: { keys: 1, verdicts: [canonicalJson({ unit: 'u1', verdict: { killed: [{ lane: 'journey', testId: 't2' }], survived: [], inconclusive: [] } })] },
     divergences: [], terminal: 1, completion: true,
   }, 'holistic: baseline, u1, audit-1, ckpt-1 applied, audit-2, ckpt-2 a no-op converting its admit, the close-out, arc-completed, the terminal snapshot');
   // u1's rev 3 corpus-arc path, and ckpt-2's conversion (B), as the story says.

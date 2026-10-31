@@ -120,32 +120,6 @@ export function brakesOf(
 const withObligations = (known: ReadonlySet<string>, ops: readonly BundleOp[]): ReadonlySet<string> =>
   new Set([...known, ...ops.flatMap((op) => (op.op === 'obligation-split' ? [op.obligation] : []))]);
 
-/** The identities of `ops` another applied bundle already changed: a non-empty list is the identity bound hit. */
-export function secondChanges(brakes: Brakes, ops: readonly BundleOp[], known: ReadonlySet<string>, rootOf: (unit: UnitId) => UnitId): readonly string[] {
-  return [...new Set(ops.flatMap((op) => identitiesOf(op, withObligations(known, ops), rootOf).map(identityText)))].filter((t) => brakes.changed.has(t)).sort();
-}
-
-/**
- * At K: one durable non-blocking `convergence-bound`, raised once per counter episode (none raised since the counter's
- * start), parented by the job of the bundle that reached K. Null when not due.
- */
-export function raiseBound(ctx: Readonly<{ journal: Journal; runDir: AbsPath }>, brakes: Brakes, applied: readonly AppliedBundle[]): NeedsUserId | null {
-  if (brakes.count < brakes.k) return null;
-  const raised = itemsOf(ctx.journal.view, ctx.runDir, 'convergence-bound').filter((b) => b.seq > brakes.since);
-  if (raised.length > 0) return null;
-  const counted = applied.filter((a) => a.seq > brakes.since);
-  const at = counted[brakes.k - 1]!;
-  return raiseNeedsUser(ctx.journal, ctx.runDir, {
-    blocking: false,
-    subject: { type: 'arc' },
-    reason: 'convergence-bound',
-    summary: `The checkpoint applied ${brakes.count} bundles (${counted.map((a) => a.job).join(', ')}) with no unit published and no obligation newly held since: the convergence bound K = ${brakes.k} is reached. Units keep running; the checkpoint's next bundles wait for the owner as bundle requests.`,
-    recommendation: 'Review what the checkpoint changed (`roadmap status`: plan revisions and divergences). Acknowledge this item to let the checkpoint apply bundles again; raise `limits.convergenceK` by `roadmap apply` to allow more.',
-    options: [{id: 'acknowledge', label: 'Acknowledge'}],
-    evidence: [],
-  }, { type: 'job', job: at.job });
-}
-
 /**
  * The generations quiescent under the vision in force (`visionSha256`): each with a checkpoint, captured under that
  * vision, that decided `no-op`, or whose request (`bundle-request` or `owner-request`) the owner answered without

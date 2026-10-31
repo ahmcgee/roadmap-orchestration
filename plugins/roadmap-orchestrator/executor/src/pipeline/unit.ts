@@ -557,7 +557,8 @@ async function consumeRecorded(ctx: StageContext, unit: PlanUnit, f: StageOutcom
   const entry = ctx.journal.view.unit(unit.id).entry;
   const decided = entry !== null || f === null ? null : decidedBy(f);
   if (decided !== null && decided.kind !== 'stage') throw new Error(`unit ${unit.id}: ${open.stage} attempt ${open.attempt} is open after ${f?.stage} ${f?.outcome} ended the unit`);
-  const target: Target = entry !== null ? entryTarget(entry) : decided === null ? { stage: 'pre-build' } : decided.target;
+  const initial: Target = open.stage === 'build' ? {stage: 'build', round: 'fresh'} : {stage: 'pre-build'};
+  const target: Target = entry !== null ? entryTarget(entry) : decided === null ? initial : decided.target;
   if (target.stage !== open.stage) throw new Error(`unit ${unit.id}: the open attempt ${open.attempt} is at ${open.stage}, but the unit's next stage is ${target.stage}`);
   switch (target.stage) {
     case 'pre-build':

@@ -14,7 +14,7 @@
 // RoutingRev that records carry instead of model ids, so a rebind changes the rev exactly as a seat edit does. Status
 // aliases historical builtin seat and summit-effort hashes to today's bindings, without changing current routing.
 //
-// Seats: build has `low | med | high`; planCheck and gate also have `escalation`, where route-ups and risk
+// Seats: build has `low | med | high`; verifier also has `escalation`, where route-ups and risk
 // triggers go (transitions.ts). A unit's risk is never `escalation`. The arc roles `lens`, `checkpoint` (M3),
 // `packReview` (M4a) and `flow` (M4b) have the one seat `arc`. An arc role is in force (checked, smoked and hashed) only
 // where it can run, the arc's `ArcScope` and arc-role set: `lens` and `checkpoint` in a holistic arc, `packReview` in a
@@ -22,8 +22,7 @@
 // revision of an arc it started (`RoutingProvenance.arcRoles`). An arc 1.0.0-dev.7 started records none and keeps the
 // dev.7 role set (no `flow`), so its routing revs are the ones dev.7 hashed (scaffolding: `arcRolesInForce`). So the flow
 // seat is checked on a non-holistic arc too: an unsupported binding of its class refuses any start (DESIGN §10 M4b).
-// dev.17: the `dev17` role set is `m4b` plus the unit role `scaffold` (`unitRolesInForce`), written on every revision of an arc
-// dev.17 started; an adopted earlier arc keeps `m4b`, so its revs hash no scaffold seat.
+
 // dev.13: the walk roles `walkthrough` and `polishJudge` are in force exactly while the plan revision has milestones
 // (`RoutingStack.milestones`, `hasMilestones`), which only a holistic arc may have; an arc without milestones hashes,
 // checks and smokes neither, so its routing revs are unchanged.
@@ -32,7 +31,7 @@
 //
 //   { "routing": {
 //       "profile": "default" | "claude-only",                      optional; the base profile
-//       "seats": { "<planCheck|gate>": { "<low|med|high|escalation>": "<class>" },
+//       "seats": { "verifier": { "<low|med|high|escalation>": "<class>" },
 //                  "build": { "<low|med|high>": "<build class>" } },  optional; any subset of seats
 //       "classes": { "<efficient|frontier|summit|economy>":            optional; rebinds for this repo
 //                      { "backend", "model", "effort" } } },
@@ -191,8 +190,7 @@ export function arcRolesInForce(scope: ArcScope, arcRoles: ArcRoleSet | null, mi
 }
 
 /**
- * The unit roles in force (dev.17): the M1 unit roles, and the dev.17 unit roles (`scaffold`) in an arc of the `dev17` role
- * set only, so an adopted arc of an earlier release hashes and runs exactly the roles it did.
+ * The closed live unit roles in force.
  */
 export function unitRolesInForce(_arcRoles: ArcRoleSet | null): readonly UnitRole[] { return ['build', 'verifier']; }
 

@@ -157,29 +157,6 @@ export function staleLinkText(s: StaleLinkAt): string {
   return `${staleLinkKey(l)}: ${what}; ${change} at plan rev ${s.rev}`;
 }
 
-/**
- * Why a pre-build's stale-link answers do not settle `links`: an approve, a scaffold or a redirect answers each link once, by its key,
- * and only a redirect (whose patch changes the spec) answers `updated`. Empty when they settle them (or the decision is
- * neither, which settles nothing).
- */
-export function staleAnswerReasons(links: readonly StaleLinkAt[], answers: readonly StaleAnswer[], decision: string): readonly string[] {
-  // A scaffold (dev.17, the design pass) goes on to its build as an approve does, so it answers them too; a split's children
-  // and a poc's next pre-build answer them instead.
-  if (decision !== 'approve' && decision !== 'scaffold' && decision !== 'redirect') return [];
-  const keys = new Set(links.map((s) => staleLinkKey(s.link)));
-  const reasons: string[] = [];
-  const seen = new Set<string>();
-  for (const a of answers) {
-    if (!keys.has(a.link)) reasons.push(`staleLinks answers ${a.link}, which is no stale link of this unit (they are: ${[...keys].join(', ') || 'none'})`);
-    else if (seen.has(a.link)) reasons.push(`staleLinks answers ${a.link} twice`);
-    else if (a.outcome === 'updated' && decision !== 'redirect') reasons.push(`staleLinks answers ${a.link} updated, but the decision is ${decision}: only a redirect's patch updates the spec`);
-    seen.add(a.link);
-  }
-  const missing = [...keys].filter((k) => !seen.has(k));
-  if (missing.length > 0) reasons.push(`staleLinks leaves ${missing.join(', ')} unanswered: answer each stale link, updated or confirmed, with a reason`);
-  return reasons;
-}
-
 // ---------------------------------------------------------------------------------------------------
 // Pins
 

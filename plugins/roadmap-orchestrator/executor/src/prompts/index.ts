@@ -126,9 +126,7 @@ export const PROMPTS: PromptTable<PromptModules> = {
     'gpt-5.6-luna': { type: 'unsupported', reason: CODEX_JUDGMENT },
     'gpt-5.6-sol': { type: 'unsupported', reason: CODEX_JUDGMENT },
   },
-  // dev.13: the walk roles, on frontier (Opus 5.5). Only Opus modules are written (plan §6): the Sonnet and Haiku guides
-  // carry no design guidance. A role's Fable row becomes a dated `inherits` once its Opus module is written and
-  // reviewed against the Fable guide. Codex has no walkthrough prompt, so `unsupportedSeats` refuses a Codex rebind.
+  // Verifier's gate and pre-build modes share one model-specific judgment module.
   verifier: {
     'claude-opus-5-5': {type: 'prompt', prompt: VERIFIER_OPUS},
     'claude-sonnet-5-5': sonnet(VERIFIER_OPUS),
@@ -137,7 +135,6 @@ export const PROMPTS: PromptTable<PromptModules> = {
     'gpt-5.6-luna': {type: 'unsupported', reason: CODEX_JUDGMENT},
     'gpt-5.6-sol': {type: 'unsupported', reason: CODEX_JUDGMENT},
   },
-  // written; a rebind of its seat to another model is refused at startup until that model's module is written and reviewed.
 };
 
 export class UnsupportedPromptError extends Error {

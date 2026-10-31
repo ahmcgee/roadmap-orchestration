@@ -168,16 +168,6 @@ export function witnessFindingDraft(input: Readonly<{
   };
 }
 
-/** Plan-check's vision conflict (R17): a P3 for the checkpoint, never a redirect by itself. */
-export function visionConflictDraft(input: Readonly<{
-  unit: UnitId; attempt: number; clauses: readonly VisionClauseId[]; note: string;
-}>): FindingDraft {
-  return {
-    lens: 'pre-build', severity: 'P3', obligation: null, visionClauses: input.clauses, claim: input.note, cause: `${input.unit}: ${input.note}`,
-    evidence: [], mutant: null, source: { type: 'stage', unit: input.unit, stage: 'pre-build', attempt: input.attempt }, gateHadPassed: false,
-  };
-}
-
 
 // ---------------------------------------------------------------------------------------------------
 // Ruling

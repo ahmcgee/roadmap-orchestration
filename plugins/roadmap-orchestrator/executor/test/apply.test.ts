@@ -846,12 +846,6 @@ describe('M4a rev 3 edits that drain nothing', () => {
     });
   });
 
-  test('classify.pre-build-shape-dropped (dev.17): the removed `planCheck.shape` is read and dropped, so adding it changes nothing', T, () => {
-    for (const shape of ['by-builder', 'uniform']) {
-      assert.deepEqual(scopeOf((d) => editPlan(d, (p) => void (p['planCheck'] = { shape }))), { changes: [], scope: { type: 'none' } }, shape);
-    }
-  });
-
   test('classify.knowndefect-refusals: a valid known-defects edit drains nothing', T, () => {
     assert.deepEqual(scopeOf(withKnownDefects(KD('K-1', 'u3')), inFlight), { changes: [{ type: 'known-defects' }], scope: { type: 'none' } });
   });
@@ -1265,7 +1259,7 @@ test('classify.split-systems: the revision classifier also refuses a child outsi
     const inForce = requirePlanInForce(r.ctx.runDir, r.journal.view);
     const v = classify({ runDir: r.ctx.runDir, view: r.journal.view, inForce, revision: revisionInForce(r.ctx.runDir, inForce),
       next: readInputFiles(absPath(d.planPath), absPath(d.repo)), residues: [], routing: r.ctx.routingBase,
-      proposer: { type: 'split', unit: U1, children: [unitId('u1a')] } });
+      proposer: { type: 'apply', reason: 'Split the parent into focused children' } });
     assert.equal(v.kind, 'rejected', JSON.stringify(v));
     if (v.kind === 'rejected') assert.ok(v.reasons.includes('child u1a names systems outside parent u1: lib'), JSON.stringify(v));
   } finally { r.journal.close(); }

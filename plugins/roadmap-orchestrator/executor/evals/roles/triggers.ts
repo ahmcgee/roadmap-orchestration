@@ -11,7 +11,7 @@ const SHARED = ['src/prompts/inputs.ts', 'src/prompts/schemas.ts', 'src/routing/
 const POLISH_MODULES = ['src/walk/compare.ts', 'src/walk/polish.ts'] as const;
 
 export const TRIGGERS: Readonly<Record<EvalRole, readonly string[]>> = {
-  gate: ['evals/roles/gate/**'],
+  gate: [],
   verifier: ['src/prompts/verifier/**', 'src/prompts/method/**', 'src/pipeline/surface.ts', 'src/git/boundeddiff.ts', 'src/pipeline/gate.ts', 'src/pipeline/dispatch.ts', ...SHARED, 'evals/roles/gate/**', 'evals/roles/gen/**'],
   walkthrough: ['src/prompts/experienceVerdict/**', 'src/walk/**', 'src/backends/mcp.ts', ...SHARED, 'evals/roles/walkthrough/**'],
   polishJudge: [

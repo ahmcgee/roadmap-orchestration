@@ -328,7 +328,7 @@ test('context-exceeded.gate: a gate prompt over the model\'s window parks the un
   const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' }, {}, [{ type: 'contextExceeded' }])] });
   const r = contextFor(d);
   try {
-    assertContextPark(d, r, await runUnit(r.ctx, r.unit('u1'), live()), 'gate', 'gate');
+    assertContextPark(d, r, await runUnit(r.ctx, r.unit('u1'), live()), 'gate', 'verifier');
     assert.equal(r.journal.view.unit(U1).approval, null);
   } finally {
     r.journal.close();
@@ -364,7 +364,7 @@ test('pre-build.read-surface: the pre-build reads the repository and the run dir
     assert.deepEqual(outcomes(d).filter((o) => o.startsWith('pre-build:')), ['pre-build:approve']);
     const check = readCalls(d.scenarioPath).find((c) => c.as === 'claude' && !isGate(c))!;
     assert.deepEqual(addDirs(check).slice(0, 2), [d.repo, d.runDir]);
-    assert.equal(r.journal.view.unit(U1).counters.retries['pre-build'], 0);
+    assert.deepEqual(r.journal.view.unit(U1).counters.retries, {build: 0, lanes: 0, gate: 0});
   } finally {
     r.journal.close();
   }

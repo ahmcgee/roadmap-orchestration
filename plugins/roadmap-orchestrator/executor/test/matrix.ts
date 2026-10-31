@@ -83,20 +83,13 @@ export const LATCH = 'obligation-latched after a unit ff{published}, before its 
 export const BATCH_PUBLICATION = 'repair batch publication (M3 B2, G5, H4: slot under batch{finding, attempt}, chained candidate, job lanes, batch ff, finish)';
 export const MUTANT_APPLY = 'mutant.apply: a vacuity repair\'s reproduce (M3 B3: detached worktree, patch applied, mutant lane, worktree removed)';
 export const AUDIT_JOB = 'cadence audit job (M3 B5: audit-started under the fence, job lanes, lens calls, audit-ended)';
-export const CHECKPOINT_JOB = 'checkpoint job (M3 B6: checkpoint-inputs under the fence, the checkpoint call)';
 export const WALK_JOB = 'milestone walk job (dev.13: walk-started under the fence, the bring-up, the walkthrough call, minting, walk-ended, milestone-passed)';
 export const POLISH_REVISION = 'polish revision (dev.13 agent D: polish-refused, then plan-applied{source: walk{job}} under the fence)';
 export const DEFLAKE_REVISION = 'deflake revision (dev.17 flaky ledger: flake-recurring items, then plan-applied{source: deflake} under the fence)';
 export const COMPARE_JOB = 'polish compare job (dev.13 agent D: compare-started under the fence, two bring-ups, the polish judge, tweak-judged, the polish-dropped cut)';
 export const DEMO_PROMOTE = 'demo promotion (dev.13 agent G: demo-promoted, then refs/roadmap/demo moved to it; the ref follows the facts)';
-export const BUNDLE_ACTIVATE = 'bundle activation (M3 B6: bundle-decided or plan-applied{source: bundle}, divergences, finding dispositions, digest)';
 export const TERMINAL_SNAPSHOT = 'close-out publication and arc completion (M3 B7, A8, A20, G8: close-out ff, docs-published, arc-completed, terminal snapshot)';
 export const EXECUTOR_FAULT = 'contained executor fault (1.0.0-dev.17: the task\'s leftovers settled, then the executor-fault park and its item)';
-
-
-export const DESIGN_SPLIT = 'pre-build split (dev.17 design pass: the split hold, then plan-applied{source: split} cutting the unit)';
-export const SCAFFOLD_STAGE = 'scaffold stage (dev.17 design pass: the writer, the dry run, then salvage.commit of the skeleton)';
-export const POC_STAGE = 'proof of concept (dev.17 design pass: the throwaway build, its report, then its checkout removed)';
 export const SUPERVISOR_HOST = 'supervisor/host';
 export const RECOVERY_CRASH = 'crash during recovery';
 export const ADVERSARIAL_LIVE_RUNNER = 'adversarial: crash during recovery with a live runner';
@@ -125,7 +118,6 @@ export const CONCURRENT_BATCH = 'concurrent job: a repair batch publishing (batc
 export const CONCURRENT_PREEMPT = 'concurrent job: a rule\'s docs publication preempting u1\'s candidate before green (the preempt kill, docs commit, lanes, docs ff, revision, snapshot)';
 export const CONCURRENT_DEBT = 'concurrent job: a corpus arc\'s gate approval banking its note (u1\'s, u2\'s) while the audit and checkpoint jobs step';
 export const INPUT_CAPTURE_FENCE = 'input capture under the fence (M3 H2: judgment-inputs, audit-started, checkpoint-inputs never inside an open revision.commit)';
-export const NOOP_DIVERGENCE = 'no-op divergences (M3 H12: bundle-decided{no-op}, then its interpretation divergences keyed (job, i))';
 export const REVERSE = 'reverse <D-n> (M3 H13: a compensating revision, committed as revision.commit)';
 export const FF_ELIGIBILITY = 'ff eligibility (M3 B2/B3: a unit ff redone only while its fingerprint and finding eligibility hold)';
 export const JOB_RESIDUE = 'job-owned residue (M3 G4, H4: a job lane\'s failed cleanup, reclaimed under the job)';
@@ -133,7 +125,6 @@ export const DEBT_BANK = 'debt bank (M4a DEBT_BANK: a corpus arc\'s approval, th
 export const PACK_REVIEW_JOB = 'pack review job (M4a PACK_REVIEW_JOB: PackReviewInputs kept, pack-review-started, the call, pack-review-ended, the blocking item)';
 export const FLOW_JOB = 'flow job (M4b: FlowInputs kept, flow-started, the call, flow-ended, the flow-proposal item)';
 export const FLOW_SERIES = 'flow series at completion (M4b: the compact series kept, flow-series, then arc-completed)';
-export const CORPUS_AMENDMENT = 'corpus amendments (M4a CORPUS_AMENDMENT: after the decision, corpus-amendment facts keyed by source)';
 export const BRIEF_ACK = 'brief ack (M4a CLI brief --ack: the pending marker, the ack commands under deterministic ids, the committed marker)';
 export const ANSWER_RECORD = 'owner answer (M4a CLI roadmap answer: the answer published write-once by link, latest k in force)';
 export const LANE_REUSE = 'lane reuse (M4a rev 3 N1 LANE_REUSE: a spec lane reused from a certified series, lane-reused keyed (parent, lane), then the remaining lanes)';
@@ -145,8 +136,6 @@ export const WITNESS_CHECK = 'witness presence (M4a rev 3 N3 WITNESS_CHECK: a gr
 export const MUTATION_SMOKE = 'mutation smoke (M4a rev 3 N3 MUTATION_SMOKE: allowance, the reverse patch kept, mutant.apply{of: smoke}, the target lanes on the mutant, witnessed, worktree removed, smoke-ran, then the outcome)';
 export const PREPARE_KNOWN_DEFECT = 'prepare known-defect (M4a rev 3 N3: a unit released from its known-defect hold merges the tip in, attempt-scoped, snapshots, then the outcome)';
 export const CLOSE_OUT_SETTLEMENT = 'close-out settlement (run 10 E, F: an unanswered bundle request\'s corpus amendment, then its decline; an open P2/P3 finding with no obligation banked, then deferred)';
-export const ADMIT_CONVERSIONS = 'admit conversions (M4a rev 3 N2: a decision record holding conversions, then settlement: each conversion\'s corpus amendment, a follow-up overrun\'s debt item naming the opportunity)';
-export const FIXTURE_REDIRECT = 'fixture: redirect then approve';
 export const FIXTURE_RED_LANE = 'fixture: red lane → fix round reading the evidence dir';
 export const FIXTURE_CONFLICT = 'fixture: conflict → merge-in → resolve';
 export const FIXTURE_RED_CANDIDATE = 'fixture: red candidate → fix → fresh gate → green';
@@ -154,8 +143,6 @@ export const FIXTURE_RED_CANDIDATE = 'fixture: red candidate → fix → fresh g
 export const FIXTURE_WITNESSES_MISSING = 'fixture: lanes witnesses-missing → fix round naming the missing ids, no gate call';
 export const FIXTURE_SMOKE_SURVIVED = 'fixture: lanes smoke-survived → one charged fix round → the gate with the survivor (allowance reused by key)';
 export const FIXTURE_KNOWN_DEFECT = 'fixture: lanes known-defect (uncharged) → prepare held under known-defect{id, fixUnit} → released by the fixer\'s merge → merges';
-export const FIXTURE_CHECKPOINT_BUSY = 'fixture: checkpoint rejected busy → waits for the unit\'s stage boundary, then captures again';
-export const FIXTURE_CONVERTED_NO_OP = 'fixture: a bundle whose only admit converts → no-op carrying its conversion → its amendment';
 
 /**
  * The executor's crash points a supervised one-unit run passes through, by boundary (the whole-pipeline

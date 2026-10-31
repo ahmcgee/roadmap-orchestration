@@ -97,15 +97,6 @@ function publish(r: ArcRun, unit: string, files: Readonly<Record<string, string>
 /** The vision sha in force (what a checkpoint's inputs record). */
 const visionSha = (r: ArcRun) => r.journal.view.planApplied()!.visionSha256!;
 
-function checkpointInputs(r: ArcRun, n: number, generation: number): void {
-  const v = visionSha(r);
-  r.journal.fact({
-    kind: 'checkpoint-inputs', job: jobId('ckpt', n), trigger: { type: 'audit', job: jobId('audit', 1) }, generation,
-    vector: { plan: planRev(r.journal.view.planApplied()!.rev), specs: {}, obligationsSha256: null, ledgerSha256: null, visionSha256: v, contracts: [] },
-    headSha: sha(git(r.d.repo, 'rev-parse', 'main')), visionSha256: v, findings: [], observations: [],
-  } as unknown as Fact);
-}
-
 const item = (r: ArcRun, reason: NeedsUserReason, blocking: boolean) => raiseNeedsUser(r.journal, r.ctx.runDir, {
   blocking, subject: { type: 'arc' }, reason, summary: reason, recommendation: 'look', options: [], evidence: [],
 }, { type: 'arc' });
@@ -285,8 +276,6 @@ describe('status M3', () => {
       let s = statusOf(r);
       assert.deepEqual([s.decisionsSince, s.divergences], [[], []], 'the arc\'s first revision decides nothing');
       assert.deepEqual(s.convergence, { k: 3, counter: 0, since: 0, open: [] });
-
-      checkpointInputs(r, 1, 1);
       const record = ruleRecord(r, 'C-2', { ruledBy: { type: 'code', reason: 'close-out' }, cites: ['V-1'], evidence: ['scripted evidence'], statement: 'Keep helpers pure.' });
       const rulingSha = keepInput(r.ctx.runDir, Buffer.from(`${JSON.stringify(record)}\n`), RULING_INPUT);
       const prev = keptPayload(r.ctx.runDir, r.journal.view.planApplied()!.payloadSha256!);
@@ -305,7 +294,7 @@ describe('status M3', () => {
       } as unknown as RevisionPayload, { type: 'job', job: jobId('ckpt', 1) });
 
       s = statusOf(r);
-      const checkpoint = { type: 'code', reason: 'close-out' };
+      const checkpoint = { type: 'checkpoint', job: 'ckpt-1' };
       assert.deepEqual(s.decisionsSince.map((x) => [x.kind, x.id, x.oneLine, x.ruledBy]), [
         ['bundle', 'ckpt-1', 'plan rev 2: unit-cut u2, limits', checkpoint],
         ['cut', 'u2', 'u2 cut (plan rev 2)', checkpoint],
@@ -330,12 +319,9 @@ describe('status M3', () => {
       assert.deepEqual([s.divergences, s.decisionsSince], [[], []], 'the acknowledged digest covers them, and nothing was decided since');
       assert.deepEqual([s.convergence?.counter, s.convergence?.open], [0, []], 'acknowledging the bound resets the counter');
       assert.ok((s.convergence?.since ?? 0) > 0);
-
-      checkpointInputs(r, 2, 2);
-      r.journal.fact({ kind: 'bundle-decided', job: jobId('ckpt', 2), outcome: { kind: 'no-op' } } as unknown as Fact);
       r.journal.fact({ kind: 'divergence', id: 'D-3', index: 0, ...draft('a later reading'), job: jobId('ckpt', 2) } as unknown as Fact);
       s = statusOf(r);
-      assert.deepEqual(s.decisionsSince.map((x) => [x.kind, x.id, x.ruledBy]), [['divergence', 'D-3', { type: 'code', reason: 'close-out' }]]);
+      assert.deepEqual(s.decisionsSince.map((x) => [x.kind, x.id, x.ruledBy]), [['divergence', 'D-3', {type: 'checkpoint', job: 'ckpt-2'}]]);
       assert.deepEqual(s.divergences.map((x) => [x.id, x.digest]), [['D-3', null]]);
       noModelIds(s);
     } finally {

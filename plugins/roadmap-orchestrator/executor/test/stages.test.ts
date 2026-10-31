@@ -359,7 +359,7 @@ test('stages.counters-from-fold: attempts and counters are the log\'s, identical
   assert.deepEqual([a.attempt, b.attempt, c.attempt], [1, 2, 3], 'each stage start is the next attempt of the unit');
   const live = run.journal.view.unit(U1);
   assert.equal(live.counters.attempts, 3);
-  assert.equal(live.counters.retries['pre-build'], 0);
+  assert.deepEqual(live.counters.retries, {build: 0, lanes: 0, gate: 0});
   assert.deepEqual(outcomeFacts(run).map((f) => (f.kind === 'stage-outcome' && 'unit' in f) && `${f.stage}#${f.attempt}`), ['pre-build#1', 'pre-build#2', 'build#3']);
   run.journal.close();
   const reopened = openJournal(run.runDir, run.ctx.plan().arc);

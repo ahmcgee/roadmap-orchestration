@@ -37,11 +37,6 @@ const auditStarted = (n: number, lenses: readonly string[] = ['invariants', 'vis
 const auditEnded = (n: number, covered: readonly object[] = [{ lens: 'invariants', from: B, to: A }], findings: readonly string[] = []): LogRecord => fact({
   kind: 'audit-ended', job: `audit-${n}`, covered, findings, suppressed: 0, outcome: 'completed',
 });
-const ckptInputs = (n: number): LogRecord => fact({
-  kind: 'checkpoint-inputs', job: `ckpt-${n}`, trigger: { type: 'audit', job: 'audit-1' }, generation: 1,
-  vector: { plan: 1, specs: {}, obligationsSha256: null, ledgerSha256: null, visionSha256: V, contracts: [] }, headSha: A, visionSha256: V, findings: [], observations: [],
-});
-const decided = (n: number): LogRecord => fact({ kind: 'bundle-decided', job: `ckpt-${n}`, outcome: { kind: 'no-op' } });
 const divergence = (n: number, job: string, index: number): LogRecord => fact({
   kind: 'divergence', id: `D-${n}`, index, job, type: 'interpretation', from: 'V-1', what: 'w', cites: ['V-1'], evidence: ['e'],
   preimage: { planRev: 1, specs: {}, obligationsSha256: null, ledgerSha256: null, contracts: [] }, compensation: { hint: 'h', kind: 'none' },
@@ -109,15 +104,14 @@ describe('fold: audits and checkpoints', () => {
 });
 
 describe('fold: divergences and digests (H11, H12)', () => {
-  it('divergences number in order, belong to a checkpoint job, once per (job, index); a digest binds recorded ids no earlier digest bound', () => {
-    const f = folded([holisticPlan(1), ckptInputs(1), divergence(1, 'ckpt-1', 0), divergence(2, 'ckpt-1', 1), digest(5, ['D-1']), divergence(3, 'ckpt-1', 2), digest(7, ['D-2', 'D-3'])]);
+  it('divergences number in order, once per (source job, index); a digest binds recorded ids no earlier digest bound', () => {
+    const f = folded([holisticPlan(1), divergence(1, 'ckpt-1', 0), divergence(2, 'ckpt-1', 1), digest(4, ['D-1']), divergence(3, 'ckpt-1', 2), digest(6, ['D-2', 'D-3'])]);
     assert.deepEqual(f.holistic().digests.map((d) => d.ids), [['D-1'], ['D-2', 'D-3']]);
     assert.equal(f.nextDivergenceId(), 'D-4');
-    refuses([holisticPlan(1), ckptInputs(1), divergence(2, 'ckpt-1', 0)], 3, /the next divergence is D-1/);
-    refuses([holisticPlan(1), divergence(1, 'ckpt-1', 0)], 2, /no checkpoint job/);
-    refuses([holisticPlan(1), ckptInputs(1), divergence(1, 'ckpt-1', 0), divergence(2, 'ckpt-1', 0)], 4, /second divergence ckpt-1#0/);
-    refuses([holisticPlan(1), ckptInputs(1), divergence(1, 'ckpt-1', 0), digest(4, ['D-2'])], 4, /D-2, which was never recorded/);
-    refuses([holisticPlan(1), ckptInputs(1), divergence(1, 'ckpt-1', 0), digest(4, ['D-1']), digest(5, ['D-1'])], 5, /an earlier digest binds/);
+    refuses([holisticPlan(1), divergence(2, 'ckpt-1', 0)], 2, /the next divergence is D-1/);
+    refuses([holisticPlan(1), divergence(1, 'ckpt-1', 0), divergence(2, 'ckpt-1', 0)], 3, /second divergence ckpt-1#0/);
+    refuses([holisticPlan(1), divergence(1, 'ckpt-1', 0), digest(3, ['D-2'])], 3, /D-2, which was never recorded/);
+    refuses([holisticPlan(1), divergence(1, 'ckpt-1', 0), digest(3, ['D-1']), digest(4, ['D-1'])], 4, /an earlier digest binds/);
   });
 });
 

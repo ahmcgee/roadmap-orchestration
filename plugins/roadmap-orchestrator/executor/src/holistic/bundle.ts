@@ -20,15 +20,15 @@ import { type Observation } from './observe.ts';
 import { type Obligations, type RevisionVector, isExempt } from './types.ts';
 
 
-export type CheckpointContext = AuditContext & Readonly<{ planFile: AbsPath; routingBase: RoutingBase; docs: DocsPublisher; laneEnv: Readonly<Record<string, string | undefined>> }>;
+export type RevisionContext = AuditContext & Readonly<{ planFile: AbsPath; routingBase: RoutingBase; docs: DocsPublisher; laneEnv: Readonly<Record<string, string | undefined>> }>;
 type RawUnit = Record<string, unknown> & {id: string};
 export type RawPlan = Record<string, unknown> & {units: RawUnit[]; limits?: Record<string, number>};
-const readerOf = (ctx: CheckpointContext) => ({journal: ctx.journal, runDir: ctx.runDir, planFile: ctx.planFile, repo: ctx.repo});
+const readerOf = (ctx: RevisionContext) => ({journal: ctx.journal, runDir: ctx.runDir, planFile: ctx.planFile, repo: ctx.repo});
 export type AdmitEntry = Readonly<{
   id: UnitId; risk: RiskTier; systems: readonly SystemName[]; after: readonly UnitId[]; resources: readonly ResourceName[];
   origin: 'checkpoint' | 'repair' | 'polish' | 'deflake'; polish?: PolishOrigin; deflake?: DeflakeOrigin;
 }>;
-export function vectorAt(ctx: CheckpointContext, inForce: InForce, revision: RevisionInForce, files: InputFiles, head: ReturnType<typeof revParse>): RevisionVector {
+export function vectorAt(ctx: RevisionContext, inForce: InForce, revision: RevisionInForce, files: InputFiles, head: ReturnType<typeof revParse>): RevisionVector {
   if (revision.vision === null) throw new Error('a checkpoint outside a holistic revision in force');
   const specs: Record<UnitId, number> = {};
   for (const u of [...inForce.plan.units].sort((a, b) => (a.id < b.id ? -1 : 1))) {

@@ -39,7 +39,7 @@ import { GitError,type Identity,git,gitRun,refTarget,revParse } from '../git/git
 import { mergeHead,resolvedHead } from '../git/mergein.ts';
 import { type SalvageRules,SalvageStateError,SalvageUnmergedError,checkRejected,planSalvage } from '../git/salvage.ts';
 import { diffBase,transientCheck,unitDiffPaths,unitTransientRules } from '../git/transient.ts';
-import { openFinding,visionConflictDraft } from '../holistic/findings.ts';
+import { openFinding } from '../holistic/findings.ts';
 import { selectObligations,unitRules } from '../holistic/impact.ts';
 import { ruleMentions } from '../holistic/rederive.ts';
 import { type ImpactInput,type ObligationDef,type Obligations,type Vision,parseObligations,parseVision } from '../holistic/types.ts';
@@ -88,7 +88,7 @@ import { SpecPatchOpError,SpecPatchStaleError,applySpecPatch,specPatchOp } from 
 import { renderSpec } from '../spec/render.ts';
 import { type Ruling,parseRulings } from '../spec/rulings.ts';
 import { specBytes } from '../spec/spec.ts';
-import { verificationReasons,verifyRunsOf } from './deflake.ts';
+import { verifyRunsOf } from './deflake.ts';
 import { departures } from './design.ts';
 import { type BackendCallOutcome, type BackendCallSpec, type BackendVerdict, type Cancelled, type ImplementerDispatch, type Pinned, type StageContext, type StageParent, backendOf, cancelledNow, dispatchOf, enter, evidenceRoot, fastSuiteWorktree, implementerDispatch, isCancelled, nonEmpty, pinDispatch, raiseRisk, riskAbove, runOp, runPrepared, steerDispatch, unitBranch, unitWorktree, verdictOf, verificationWorktree, workDir } from './dispatch.ts';
 
@@ -119,7 +119,7 @@ import { checksApply,publishWitnessLaneFiles,requiredAt,witnessPresence } from '
 // dev.17 (propagation)
 import { type PlanRev,parseInvocationId } from '../core/ids.ts';
 import type { SpecPatch } from '../core/records.ts';
-import { pinsOf, staleAnswerReasons, unitStaleLinks } from '../holistic/staleset.ts';
+import { pinsOf, unitStaleLinks } from '../holistic/staleset.ts';
 import { obligationsAtRev } from '../input/inforce.ts';
 
 /** One stage attempt, recorded. `needsUser`: content beyond the table's own, for the caller to write. */

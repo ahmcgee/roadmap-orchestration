@@ -582,7 +582,7 @@ describe('revision plan-defect delta', () => {
         { id: 'u1-child', spec: 'u1-child.json', risk: 'low', systems: [systemName('app')], resources: [] },
         { ...(p['units'] as Json[])[1], after: ['u1-child'] },
       ] }));
-      const v = evaluateRevision({ runDir: runDirOfArc(a), view: j.view, hostDir: newHostDir(), planFile: a.planPath, routingBase: { ...BASE, config: readRepoConfig(a.repo) }, laneEnv: process.env }, filesOf(a), { type: 'split', unit: unitId('u1'), children });
+      const v = evaluateRevision({ runDir: runDirOfArc(a), view: j.view, hostDir: newHostDir(), planFile: a.planPath, routingBase: { ...BASE, config: readRepoConfig(a.repo) }, laneEnv: process.env }, filesOf(a), { type: 'apply', reason: 'Split the parent into focused children' });
       assert.equal(v.kind, 'rejected', JSON.stringify(v));
       assert.ok(v.kind === 'rejected');
       assert.deepEqual(v.reasons.map((s) => JSON.parse(s)), [{ kind: 'plan-defect', defects: [{ type: 'witness-file-unreachable', obligation: 'I-1', file: 'test/new.test.ts', units: ['u2'] }] }]);

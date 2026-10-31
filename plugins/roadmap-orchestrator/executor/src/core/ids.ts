@@ -600,12 +600,6 @@ const FM = numbered('FailureModeId', 'FM');
 export const failureModeId: IdReader<FailureModeId> = FM.read;
 export const failureModeIdOf = FM.of;
 
-/** A question of a pre-build `poc` decision: `PQ-<n>`, unique in its decision. */
-export type PocQuestionId = Brand<string, 'PocQuestionId'>;
-const PQ = numbered('PocQuestionId', 'PQ');
-export const pocQuestionId: IdReader<PocQuestionId> = PQ.read;
-export const pocQuestionIdOf = PQ.of;
-
 /** A gate finding in the arc's findings ledger: `R-<n>`, numbered arc-wide in ledger order, never reused. */
 export type ReviewFindingId = Brand<string, 'ReviewFindingId'>;
 const R = numbered('ReviewFindingId', 'R');

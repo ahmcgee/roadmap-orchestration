@@ -16,14 +16,14 @@
 import { crashPoint } from '../core/crash.ts';
 import { mintDebt } from '../debt/mint.ts';
 import { baselineDebtAt } from '../phase0/rows.ts';
-import type { CheckpointContext } from './bundle.ts';
+import type { RevisionContext } from './bundle.ts';
 import { isActive, ruleFinding } from './findings.ts';
 
 /** The option an unanswered request is declined with: its `reject` or `decline`, null when it offers neither. */
 const DECLINING = ['reject', 'decline'] as const;
 
 /** Settles the close-out (see the header); whether it wrote anything (the caller re-reads the completion predicate). */
-export function settleCloseOut(ctx: CheckpointContext): boolean {
+export function settleCloseOut(ctx: RevisionContext): boolean {
   const corpus = ctx.plan().target === 'corpus';
   let wrote = false;
   if (!corpus) return wrote;

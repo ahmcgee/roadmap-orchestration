@@ -117,7 +117,7 @@ describe('host pressure (RC-11)', () => {
       assert.ok(call.pressure !== null && call.pressure >= PRESSURE_SATURATED, `the call's pressure ${call.pressure} is saturated`);
       assert.deepEqual([starved.chargeable, starved.park], [false, undefined], 'the review annotates without a charge or park');
       const u = r.journal.view.unit(U1);
-      assert.deepEqual([u.status, u.counters.chargeableFailures, u.counters.retries['pre-build'], u.pressureHolds], ['active', 0, 0, 0], 'no retry or pressure hold spent on an annotation');
+      assert.deepEqual([u.status, u.counters.chargeableFailures, u.counters.retries, u.pressureHolds], ['active', 0, {build: 0, lanes: 0, gate: 0}, 0], 'no retry or pressure hold spent on an annotation');
 
       // 2. On under pressure: the red lane is held for its one rerun, uncharged, no fix round.
       assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), admitAll), { kind: 'held', needsUser: null });

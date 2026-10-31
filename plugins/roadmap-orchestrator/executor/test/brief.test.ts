@@ -68,14 +68,6 @@ const item = (j: OpenJournal, a: CorpusArc, reason: NeedsUserReason, blocking: b
   blocking, subject: { type: 'arc' }, reason, summary: reason, recommendation: 'look', options: [], evidence: [],
 }, { type: 'arc' });
 
-function checkpointInputs(j: OpenJournal, n: number): void {
-  const v = j.view.planApplied()!.visionSha256!;
-  j.fact({
-    kind: 'checkpoint-inputs', job: jobId('ckpt', n), trigger: { type: 'audit', job: jobId('audit', 1) }, generation: 1,
-    vector: { plan: 1, specs: {}, obligationsSha256: null, ledgerSha256: null, visionSha256: v, contracts: [] }, headSha: '1'.repeat(40), visionSha256: v, findings: [], observations: [],
-  } as unknown as Fact);
-}
-
 function divergence(j: OpenJournal, n: number, job: number, index: number, what: string): void {
   j.fact({
     kind: 'divergence', id: divergenceIdOf(n), index, job: jobId('ckpt', job), type: 'interpretation', from: 'V-1', what, cites: ['V-1'], evidence: ['e'],
@@ -112,7 +104,6 @@ async function chained(): Promise<Chained> {
   let arc1Digest: NeedsUserId | null = null;
   const h1 = await seal(a1, {
     before: (j) => {
-      checkpointInputs(j, 1);
       divergence(j, 1, 1, 0, 'trust means tested');
       j.fact({
         kind: 'corpus-amendment', id: amendmentIdOf(1), source: {type: 'root', command: commandId('cmd-0000000000000001')}, rules: [ruleId('T-2')], proposal: 'Name the tide window in every booking.', why: 'D-1', evidence: [],
@@ -131,7 +122,6 @@ async function chained(): Promise<Chained> {
   }));
   const ids: Partial<Record<keyof Chained['items'], NeedsUserId>> = { arc1Digest: arc1Digest! };
   await write(a2, (j) => {
-    checkpointInputs(j, 1);
     divergence(j, 1, 1, 0, 'a berth is a slot');
     ids.digest = item(j, a2, 'divergence-digest', false);
     j.fact({ kind: 'divergence-digest', needsUser: ids.digest, ids: [divergenceIdOf(1)] } as Fact);

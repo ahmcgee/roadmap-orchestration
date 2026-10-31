@@ -209,6 +209,19 @@ describe('M3 event records', () => {
     routingProvenance: { profile: 'default', repoConfig: { seats: null, classes: null }, planLayer: { build: { low: 'frontier' } }, unitLayers: { u1: { verifier: { med: 'summit' } } } },
   };
 
+  it('fact rules: mutant runs never certify (G13), witness findings are P1', () => {
+    refusesFact({ ...HOLISTIC_FACTS.witnessed, purpose: 'mutant' }, /\.for$/);
+    refusesFact({ ...HOLISTIC_FACTS.witnessed, for: { type: 'mutant', finding: 'F-1', of: A } }, /\.for$/);
+    roundTrip(fact({ ...HOLISTIC_FACTS.witnessed, purpose: 'mutant', for: { type: 'mutant', finding: 'F-1', of: A } }));
+    const opened = HOLISTIC_FACTS['finding-opened'];
+    refusesFact({ ...opened, lens: 'invariants' }, /mutant/);
+    refusesFact({ ...opened, lens: 'witness', mutant: null, severity: 'P2' }, /severity/);
+    refusesFact({ ...opened, lens: 'vision', mutant: null, severity: 'P1' }, /severity/);
+    refusesFact({ ...HOLISTIC_FACTS['audit-started'], job: 'ckpt-1' }, /job/);
+    refusesFact({ ...HOLISTIC_FACTS['divergence-digest'], ids: [] }, /ids/);
+    refusesFact({ ...HOLISTIC_FACTS.divergence, cites: [] }, /cites/);
+  });
+
   it('plan-applied: the M3 fields round-trip; source, payload, ledger and routing provenance are required', () => {
     roundTrip(fact(planApplied));
     for (const key of ['source', 'payloadSha256', 'rulingsSha256', 'routingProvenance'] as const) {

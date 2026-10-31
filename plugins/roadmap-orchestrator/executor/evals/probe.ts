@@ -306,14 +306,9 @@ function validates<R extends Role>(name: string, role: R, check: (out: RoleOutpu
   };
 }
 
-/**
- * One judgment call through the real prompt module for `role`, on the triple of that role's own seat, with production's judgment
- * deadline (`judgmentDeadlineMin`; a summit checkpoint takes minutes) where the smoke checks keep SMOKE_DEADLINE_MS. The smoke
- * harness (smoke.ts CallRequest) labels judgment calls with a unit judgment role and seat only, and the judgment
- * argv does not vary by role, so an arc role's call is filed under `stand`, the unit seat nearest its tier.
- */
+/** One cheap judgment call through its production prompt, schema, actual role and routed seat. */
 function seatCall<R extends 'campaignAudit' | 'verifier' | 'packReview' | 'flow'>(
-  resolved: ResolvedRouting, role: R, seat: SeatOf<R>, stand: Readonly<{ role: 'verifier'; tier: JudgmentSeat }>, check: string, cwd: AbsPath,
+  resolved: ResolvedRouting, role: R, seat: SeatOf<R>, check: string, cwd: AbsPath,
   inputs: Parameters<ReturnType<typeof promptFor<R>>['render']>[0],
 ): BackendInvocation {
   const triple = atSeat(resolved.table, { role, tier: seat } as SeatRef);
@@ -321,9 +316,9 @@ function seatCall<R extends 'campaignAudit' | 'verifier' | 'packReview' | 'flow'
   const prompt = promptFor(role, triple.model);
   const schema = prompt.schema;
   return {
-    check, routingRev: resolved.rev, tier: stand.tier, system: prompt.system, rendered: prompt.render(inputs), schema, cwd,
+    check, routingRev: resolved.rev, tier: seat, system: prompt.system, rendered: prompt.render(inputs), schema, cwd,
     deadlineMs: minutesMs(DEFAULT_BOUNDS.judgmentDeadlineMin),
-    request: { kind: 'claude-judgment', role: stand.role, triple, session: freshJudgmentSession(), evidenceDirs: [] },
+    request: { kind: 'claude-judgment', role, triple, session: freshJudgmentSession(), evidenceDirs: [] },
   };
 }
 
@@ -575,7 +570,7 @@ async function main(): Promise<void> {
     } }, owners: [], priorFindings: [],
     contracts: [], target: MINI_ARCH, checkout: m3Dir, specsOnly: null,
   };
-  await backend(ctx, 'm3.campaign-audit', seatCall(holistic, 'campaignAudit', 'arc', { role: 'verifier', tier: 'high' }, 'm3-lens', m3Dir, lensInputs),
+  await backend(ctx, 'm3.campaign-audit', seatCall(holistic, 'campaignAudit', 'arc', 'm3-campaign-audit', m3Dir, lensInputs),
     validates("m3.campaign-audit", "campaignAudit", () => true));
 
   const preBuildInputs: VerifierInputs = {mode: 'pre-build', brief: {
@@ -584,7 +579,7 @@ async function main(): Promise<void> {
     intent: 'Implement both temperature conversions.', nonGoals: ['No unrelated changes.'], contracts: [], systems: [systemName('app')],
     method: {traits: [], markers: [], unitKind: 'module', expensiveLanes: false, ui: false}, history: [], standing: [],
   }};
-  await backend(ctx, 'm3.pre-build', seatCall(holistic, 'verifier', 'med', {role: 'verifier', tier: 'med'}, 'm3-pre-build', m3Dir, preBuildInputs), validates('m3.pre-build', 'verifier', () => true));
+  await backend(ctx, 'm3.pre-build', seatCall(holistic, 'verifier', 'med', 'm3-pre-build', m3Dir, preBuildInputs), validates('m3.pre-build', 'verifier', () => true));
 
   // M4a forge: the executor's own gh functions against the real repository, read-only (no write is ever issued).
   const repoDir = absPath(join(import.meta.dirname, '..', '..', '..', '..'));
@@ -600,7 +595,7 @@ async function main(): Promise<void> {
   const frontierT = atSeat(corpusArc.table, { role: 'packReview', tier: 'arc' });
   const summitT = atSeat(corpusArc.table, { role: 'campaignAudit', tier: 'arc' });
   report(frontierT.backend === 'claude' && frontierT.model === 'claude-opus-5-5' && frontierT.effort === 'medium'
-    && summitT.backend === 'claude' && summitT.model === 'claude-opus-5-5' && summitT.effort === 'high', 'routing.m4a', `packReview.arc=${JSON.stringify(frontierT)} checkpoint.arc=${JSON.stringify(summitT)}`);
+    && summitT.backend === 'claude' && summitT.model === 'claude-opus-5-5' && summitT.effort === 'high', 'routing.m4a', `packReview.arc=${JSON.stringify(frontierT)} campaignAudit.arc=${JSON.stringify(summitT)}`);
 
   // packReview on a tiny corpus pack, frontier seat, corpus arc scope.
   const m4Dir = dir(join(root, 'm4a'));
@@ -630,7 +625,7 @@ async function main(): Promise<void> {
       delta: null,
       phase0: parsePhase0Record(phase0Json),
     };
-    const pack = seatCall(corpusArc, 'packReview', 'arc', { role: 'verifier', tier: 'high' }, 'm4a-pack-review', m4Dir, packInputs);
+    const pack = seatCall(corpusArc, 'packReview', 'arc', 'm4a-pack-review', m4Dir, packInputs);
     await backend(ctx, 'm4a.pack-review', pack, validates('m4a.pack-review', 'packReview', (out) => Array.isArray(out.findings) && out.reasons.length > 0));
   } catch (e) {
     report(false, 'm4a.pack-review.build', e instanceof Error ? e.message : String(e));
@@ -767,7 +762,7 @@ async function main(): Promise<void> {
       // M4b rev 3: the role sees a pressure reading below saturation (the slot stays the constraint).
       pressure: { now: 0.09, threshold: 0.5, available: true, window: 0.05, cpuInUse: 3, hostCpus: 8 },
     };
-    const call = seatCall(flowRouting, 'flow', 'arc', { role: 'verifier', tier: 'high' }, 'm4b-flow', flowDir, flowInputs);
+    const call = seatCall(flowRouting, 'flow', 'arc', 'm4b-flow', flowDir, flowInputs);
     await backend(ctx, 'm4b.flow', call, validates('m4b.flow', 'flow', (out) => {
       const p = out.proposal;
       const shape = p !== null && p.action.lever === 'suite-lane' && p.action.argv !== undefined ? argvShapeProblem(serial, p.action.argv) ?? 'argv shape ok' : 'no argv';
@@ -887,7 +882,7 @@ async function main(): Promise<void> {
     const r = contextFor(d);
     try {
       const { ctx, w } = walkContext(r);
-      const h = holisticContexts(w).checkpoint;
+      const h = holisticContexts(w).revision;
       const tick = setInterval(() => w.arbiter.wake(), 50);
       try {
         const merged = await runUnit(w.stage, unitInForce(r, 'u1'), () => Promise.resolve(true));

@@ -99,8 +99,7 @@ export const containmentMode: Read<ContainmentMode> = oneOf(CONTAINMENT_MODES);
  * Pipeline stages of one unit (the transition table is step 11). Fix rounds are `build` attempts. `prepare`
  * (M2) is a re-entered unit's first stage: its worktree, pin, merge-in of the integration tip and snapshot.
  * `reproduce` (M3) is a vacuity repair's first stage: the finding's mutant applied in a detached worktree and
- * its lane run under `purpose: mutant`. dev.17 (design pass, appended): `scaffold` writes a new system's skeleton a pre-build's
- * `scaffold` decision specifies before the first build; `poc` builds a pre-build's proof of concept in a throwaway worktree.
+ * its lane run under `purpose: mutant`. Pre-build is a conditional verifier annotation before the first build.
  */
 export const STAGES = ['prepare', 'reproduce', 'pre-build', 'build', 'quiesce', 'evidence', 'salvage', 'teardown', 'lanes', 'gate', 'candidate', 'ff', 'snapshot', 'retire'] as const;
 export type Stage = (typeof STAGES)[number];
@@ -1213,7 +1212,7 @@ export type SpecPatchOp =
   | Readonly<{ op: 'strike' | 'defer'; id: LaneId | ClauseId }>
   | Readonly<{ op: 'cite' } & SpecCites>
   /**
-   * dev.17 (design pass): the design record a pre-build's approve or scaffold settled, pinned by code at the tip it read,
+   * dev.17 (design pass): the root-authored design record, pinned by code at the tip it read,
    * replacing any the spec held. Executor-written only: no model's patch schema offers it (`wireOp`, S_PATCH_OP).
    */
   | Readonly<{ op: 'design'; record: DesignRecord }>;

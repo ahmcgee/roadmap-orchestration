@@ -200,7 +200,7 @@ export async function runPolishTrial(o: Omit<PolishWorkerArgs, 'cell'> & Readonl
   writeFileSync(join(o.out, 'key.json'), `${JSON.stringify(keyOf(f, o.trial, revParse(d.repo, 'main')), null, 2)}\n`);
   const r = contextFor(d);
   const { ctx, w } = walkContext(r);
-  const h = holisticContexts(w).checkpoint;
+  const h = holisticContexts(w).revision;
   const tick = setInterval(() => w.arbiter.wake(), 50);
   const unit = POLISH_UNIT as UnitId;
   // Admission as the scheduler gives a polish unit: everything but a candidate its compare has not kept.

@@ -772,7 +772,6 @@ export function parsePlan(value: unknown): PlanM1 {
     const previousHead = f.optional('previousHead', (v, p) => sha(v, p));
     const chain = f.optional('chain', object((g): PlanChain => ({ previousArc: g.get('previousArc', (v, p) => arcId(v, p)), previousHead: g.get('previousHead', (v, p) => sha(v, p)) })));
     const knownDefects = f.optional('knownDefects', arrayOf(knownDefect, { nonEmpty: true }));
-    // dev.17: a dev.16 plan's `planCheck.shape` is read and dropped (every pre-build is uniform now), warned.
 
     const derived = f.optional('derived', arrayOf(derivedFiles));
     const milestones = f.optional('milestones', arrayOf(milestone, { nonEmpty: true }));

@@ -72,7 +72,7 @@ export const SEATS: { readonly [R in Role]: readonly SeatOf<R>[] } = {
 export type SeatRef = { [R in Role]: Readonly<{ role: R; tier: SeatOf<R> }> }[Role];
 /** A seat of a unit role: what a unit's backend call and its usage name. */
 export type UnitSeatRef = Extract<SeatRef, Readonly<{ role: UnitRole }>>;
-/** An arc role's seat (`lens.arc`, `checkpoint.arc`, `packReview.arc`, `flow.arc`, dev.13's `walkthrough.arc` and `polishJudge.arc`): what a job's backend call and its usage name (M3). */
+/** An arc role's seat: pack review, flow, experience verdict or campaign audit. */
 export type ArcSeatRef = Extract<SeatRef, Readonly<{ role: ArcRole }>>;
 /** Every seat, role by role in `ROLES` order, each role's tiers in seat order. */
 export const SEAT_REFS: readonly SeatRef[] = ROLES.flatMap((r) => SEATS[r].map((tier) => ({ role: r, tier }) as SeatRef));
@@ -239,13 +239,7 @@ export const classBindings: Read<ClassBindings> = object((f) => {
   return out;
 });
 
-/**
- * The arc-role set an arc runs under (M4b, R5): `m4b` puts `flow` in force in every arc scope. Written by 1.0.0-dev.8 on
- * every revision of an arc it started (carried from revision 1, which fixes it: the fold refuses a change), absent on
- * an arc 1.0.0-dev.7 started, which keeps the dev.7 role set (src/routing/layers.ts `arcRolesInForce`; scaffolding).
- * dev.17: `dev17` is `m4b` and the dev.17 unit roles (`DEV17_UNIT_ROLES`), written on every revision of an arc dev.17
- * started; an adopted dev.8-to-dev.16 arc keeps `m4b`, so it hashes no scaffold seat and takes no `scaffold` decision.
- */
+/** The recorded arc-role configuration identifier. Every current arc resolves the closed live role set. */
 export const ARC_ROLE_SETS = ['m4b', 'dev17'] as const;
 export type ArcRoleSet = (typeof ARC_ROLE_SETS)[number];
 

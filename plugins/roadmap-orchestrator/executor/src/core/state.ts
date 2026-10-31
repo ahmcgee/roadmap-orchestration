@@ -207,10 +207,6 @@ export type UnitState = Readonly<{
    * classifier resolves (src/input/classify.ts `reentryRow`). Derived from the log alone.
    */
   failures: readonly FailedOutcome[];
-  /**
-   * dev.17 (design pass): the proofs of concept the unit has run (its `poc` stage outcomes that went back to pre-build), which
-   * code bounds per unit (src/pipeline/design.ts `POC_LIMIT`). Derived from the log alone; a reopen keeps it.
-   */
 }>;
 
 /**

@@ -54,7 +54,7 @@ export type DesignBreaks = Readonly<{ tests: readonly FilePin[]; docs: readonly 
 /** An experiment the pre-build ran in its checkout, as run, and what it printed. */
 export type DesignExperiment = Readonly<{ command: string; output: string }>;
 
-/** A system the unit creates (a `scaffold` decision writes it first): its name, paths and test-file glob. */
+/** A system the unit creates: its name, paths and test-file glob. */
 export type NewSystem = Readonly<{ name: SystemName; paths: readonly RepoPattern[]; tests: readonly RepoPattern[] }>;
 
 /**

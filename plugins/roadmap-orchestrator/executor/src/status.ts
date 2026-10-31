@@ -160,7 +160,7 @@ import { git,revParse } from './git/git.ts';
 import { witnessDir } from './git/snapshot.ts';
 import { findingAttribution,opportunityClauses } from './holistic/admits.ts';
 import { obligationBlockingUnits,unmergedOf } from './holistic/blocking.ts';
-import type { CheckpointContext } from './holistic/bundle.ts';
+import type { RevisionContext } from './holistic/bundle.ts';
 import { integrationHistory,recordedAdmits } from './holistic/bundle.ts';
 import { type AppliedBundle,brakesOf } from './holistic/convergence.ts';
 import { coverageBase,coverageOf } from './holistic/coverage.ts';
@@ -661,7 +661,6 @@ function seatOf(view: JournalView, unit: UnitId): UnitStatusLine['seat'] {
     const inputs = u.open?.stage === 'gate' ? view.judgmentInputs(unit, 'gate', u.open.attempt) : null;
     return { role: 'verifier', tier: largeDiffSeat(judgmentSeat(u, stage), inputs === null ? null : gateLargeDiffOf(inputs)) };
   }
-  // dev.17 (design pass): a PoC builds on the build seat; the scaffold writer sits on its own seat at the unit's risk.
   if (u.stage === 'build') return { role: 'build', tier: u.risk };
   return null;
 }
@@ -1557,7 +1556,7 @@ export function stageTimings(events: readonly Event[], after = 0): readonly Stag
   });
 }
 
-function packReviewOf(ctx: CheckpointContext): PackReviewView {
+function packReviewOf(ctx: RevisionContext): PackReviewView {
   const view = ctx.journal.view;
   const superseded = supersededItems(view);
   return {
@@ -1771,7 +1770,7 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?:
     owed: { audits: owed },
     completion: completionOf(runDir, d, { d, hostDir, pending: commands.pending.length }),
     holds: h === null ? [] : arcHolds(h, d.blocking, false),
-    packReview: h === null || corpus === null ? null : packReviewOf(h.checkpoint),
+    packReview: h === null || corpus === null ? null : packReviewOf(h.revision),
     corpus: corpus === null ? null : corpusOf(corpus),
     census: corpus === null || obligations === null ? null : censusOf(obligations, t),
     amendments: fold.amendments.map((a) => ({ id: a.id, source: a.source, rules: a.rules, proposal: a.proposal, why: a.why })),
@@ -1811,5 +1810,5 @@ function holisticReader(runDir: AbsPath, hostDir: AbsPath, d: Derived, inForce: 
     routingBase: routingBaseOf(inForce.fact.routingProvenance),
   });
   const routing = routingInForce(inForce).of;
-  return { ...h, audit: { ...h.audit, routing }, checkpoint: { ...h.checkpoint, routing } };
+  return { ...h, audit: { ...h.audit, routing }, revision: { ...h.revision, routing } };
 }

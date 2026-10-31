@@ -6,7 +6,7 @@ import { describe, it } from 'node:test';
 import type { JsonValue } from '../src/core/json.ts';
 import {  validateLensOutput } from '../src/prompts/schemas.ts';
 import {
-  INVALID_OP, VALID_OP, checkpointAnswer, checkpointStep, interpretationOnlyNoop, lensAnswer, lensStep, twoOpBundleSecondInvalid,
+  lensAnswer, lensStep,
 } from './helpers/holistic.ts';
 import { git, makeRepo, tmpDir, worktreeTree, writeFiles } from './helpers/repo.ts';
 import { type Step, readCalls, writeScenario } from './helpers/scenario.ts';
@@ -24,6 +24,7 @@ function claude(binDir: string, job: string, stdin: string): { code: number | nu
 
 describe('fakes.lens', () => {
   it('answers per job and lens kind, each in its own order, with output the frozen reader accepts', () => {
+    assert.throws(() => lensAnswer([{severity: 'P0' as 'P1'}]));
     const steps: Step[] = [
       lensStep('audit-1', 'vision', [{ severity: 'P2', claim: 'vision gap' }]),
       lensStep('audit-1', 'drift', []),
@@ -43,21 +44,6 @@ describe('fakes.lens', () => {
     assert.deepEqual(readCalls(s.path).map((c) => [c.unit, c.lens, c.step]), [
       ['audit-2', 'vision', 3], ['audit-1', 'drift', 0], ['audit-1', 'vision', 1], ['audit-1', 'vision', 2], ['audit-9', 'vacuity', 4], ['audit-1', 'vision', null],
     ]);
-  });
-});
-
-describe('fakes.checkpoint', () => {
-  const ops = (answer: JsonValue): readonly unknown[] => (answer as { ops: unknown[] }).ops;
-
-  it('a checkpoint answer the reader refuses is never built', () => {
-    assert.throws(() => checkpointAnswer({ decision: 'no-op', ops: [VALID_OP] }));
-    assert.throws(() => checkpointAnswer({ decision: 'bundle' }));
-    assert.throws(() => lensAnswer([{ severity: 'P0' as 'P1' }]));
-  });
-
-  it('a checkpoint prompt that lists findings (which name lenses) still takes its own job\'s step', () => {
-    const s = writeScenario(tmpDir('scenario'), [checkpointStep('ckpt-1', interpretationOnlyNoop())]);
-    assert.equal(claude(s.binDir, 'ckpt-1', '{"findings": [{"lens": "drift"}]}').code, 0);
   });
 });
 

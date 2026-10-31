@@ -15,7 +15,7 @@ import { absPath, isoTime } from '../src/core/values.ts';
 import { MUTANT_PATCH_INPUT, patchedTree } from '../src/git/mutant.ts';
 import {
   type FindingDraft, type RepairUnit, admitMutant, batchable, crossKey, keepMutantPatch, findingItemsDue, findingMetrics, openFinding, ownershipMoves, repairedObligations, ruleFinding, rulingRefusal,
-  visionConflictDraft, witnessFindingDraft,
+  witnessFindingDraft,
 } from '../src/holistic/findings.ts';
 import { inputPath } from '../src/input/inforce.ts';
 import { PARK_ESCALATE_MS } from '../src/schedule/types.ts';
@@ -95,13 +95,12 @@ describe('opening and dedupe', () => {
     }
   });
 
-  it('findings.drafts: code\'s witness P1 has one stable cause per obligation; a pre-build vision conflict is a P3 from its attempt', () => {
+  it('findings.drafts: code\'s witness P1 has one stable cause per obligation', () => {
     const w1 = witnessFindingDraft({ obligation: I1, serves: [], job: jobId('audit', 1), claim: 'I-1 not held at a', evidence: [], gateHadPassed: true });
     const w2 = witnessFindingDraft({ obligation: I1, serves: [], job: jobId('audit', 2), claim: 'I-1 not held at b', evidence: [], gateHadPassed: false });
     assert.equal(w1.cause, w2.cause);
     assert.deepEqual([w1.lens, w1.severity, w1.obligation], ['witness', 'P1', 'I-1']);
-    const c = visionConflictDraft({ unit: U1, attempt: 2, clauses: ['V-2' as never, 'V-1' as never], note: 'A2 accepts any input' });
-    assert.deepEqual([c.lens, c.severity, c.obligation, c.source], ['pre-build', 'P3', null, { type: 'stage', unit: U1, stage: 'pre-build', attempt: 2 }]);
+
   });
 });
 

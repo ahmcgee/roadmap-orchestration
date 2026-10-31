@@ -311,21 +311,24 @@ for (const cell of crashCells(QUEUED_APPLY)) {
 }
 
 test('apply.exec-routing-parks: a routing apply that moves the building unit\'s implementer seat parks it routing-changed at its next dispatch', T, async (t) => {
-  const r = setupExec(t, {steps: [...SMOKE_DEFAULT, planCheckStep({decision: 'approve'}), blockedBuild('build1'), gateStep({decision: 'approve'})]});
+  const r = setupExec(t, { steps: [...SMOKE_DEFAULT, planCheckStep({ decision: 'approve' }), blockedBuild('build1')] });
   const run = startExec(r);
   await reached(r.scenarioDir, 'build1', WAIT_MS);
   await exportForEdit(r);
-  editPlan(r, (p) => void (p['routing'] = {build: {med: 'frontier'}}));
+  editPlan(r, (p) => void (p['routing'] = { build: { med: 'frontier' } }));
   const id = await apply(r);
   release(r.scenarioDir, 'build1');
+  await until(() => journalOf(r).view.unit(U1).status === 'park-pending', WAIT_MS, 'u1 to park');
+  assert.equal(receiptOf(r, id)?.state, 'applied');
+  const u = journalOf(r).view.unit(U1);
+  assert.deepEqual([u.decided?.stage, u.decided?.outcome], ['gate', 'routing-changed']);
+  assert.deepEqual(outcomes(r).slice(0, 7), STRAIGHT.slice(0, 7), 'the build\'s chain and lanes ran; the gate dispatch parked');
+  await until(async () => (await statusOf(r)).needsUser.some((n) => n.reason === 'routing-changed'), WAIT_MS, 'the routing-changed needs-user');
+  assert.deepEqual(kills(r), []);
+  await cli(r, ['stop']);
   const exit = await run.exit;
   assert.equal(exit.code, 0, exit.stderr);
-  assert.equal(receiptOf(r, id)?.state, 'applied');
-  assert.equal(journalOf(r).view.unit(U1).status, 'retired');
-  assert.deepEqual(outcomes(r), STRAIGHT, 'the routing revision continues through the independent gate');
-  assert.deepEqual((await statusOf(r)).needsUser.filter((n) => n.reason === 'routing-changed'), []);
-  assert.deepEqual(kills(r), []);
-  assert.equal(reasonOf(exit).kind, 'complete');
+  assert.equal(reasonOf(exit).kind, 'stop');
 });
 
 test('apply.exec-resume-at-boundary: a pause and a resume of an idle unit (u2, after u1) apply while another unit builds: their scope is u2 alone (A12), not a boundary of u1', T, async (t) => {
