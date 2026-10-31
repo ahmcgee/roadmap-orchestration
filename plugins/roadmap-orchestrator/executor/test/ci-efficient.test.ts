@@ -21,8 +21,8 @@ import { captureLaunch } from '../src/pipeline/capture.ts';
 import { unitSteps, moduleFiles } from './fixtures/audit-common.ts';
 import { checkpointContext } from './fixtures/checkpoint-common.ts';
 import { holisticArc } from './fixtures/brake-common.ts';
-import { contextFor } from './fixtures/unit-common.ts';
-import { DB, admitAll, keptSpec, setupUnit, started, U1, SCENARIO_TIMEOUT_MS } from './fixtures/stage-common.ts';
+import { contextFor, codexStep, gateStep } from './fixtures/unit-common.ts';
+import { DB, admitAll, planCheckStep, keptSpec, setupUnit, started, U1, SCENARIO_TIMEOUT_MS } from './fixtures/stage-common.ts';
 import { git } from './helpers/repo.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS * 2 };
@@ -147,7 +147,8 @@ test('ci capture requires a leased slot and preserves stack/script/state declara
 
 
 test('ci spike delivers the gated report and retires without a candidate or integration merge', T, async () => {
-  const run = setupUnit({ steps: unitSteps(U1, { ...moduleFiles('mul', '*'), 'src/add.js': 'export function add(a,b){ return a+b; }' }), resources: [DB], unit: { spike: { question: 'Can multiplication use this stack?' } } });
+  for (const changed of [true, false]) {
+  const run = setupUnit({ steps: changed ? unitSteps(U1, { ...moduleFiles('mul', '*'), 'src/add.js': 'export function add(a,b){ return a+b; }' }) : [planCheckStep({ decision: 'approve' }), codexStep([]), gateStep({ decision: 'approve' })], ...(changed ? {} : { lanes: [{ id: 'experiment', argv: ['true'], kind: 'integration', resources: [DB] }] }), resources: [DB], unit: { spike: { question: 'Can multiplication use this stack?' } } });
   const base = git(run.repo, 'rev-parse', 'main');
   assert.deepEqual(await runUnit(run.ctx, run.unit, admitAll), { kind: 'merged' });
   assert.equal(run.journal.view.unit(U1).status, 'retired');
@@ -159,6 +160,7 @@ test('ci spike delivers the gated report and retires without a candidate or inte
   assert.equal(run.journal.view.opsOf('integration.ff').length, 0);
   assert.equal(run.journal.view.ciFacts().filter((f) => f.kind === 'spike-completed').length, 1);
   assert.ok(run.journal.view.opsOf('evidence.snapshot').length > 0);
+  }
 });
 
 for (const where of ['spec', 'suite'] as const) test(`ci capture (${where}) boots the stack on its leased port, executes the repo script and keeps screenshots for the gate`, T, async () => {

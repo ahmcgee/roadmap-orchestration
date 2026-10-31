@@ -441,7 +441,7 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
     const head = unitTip(ctx, unit.id);
     const paths = unitDiffPaths(ctx.repo, tip, head);
     // An approved empty diff is refused at the gate (DESIGN §3 "Merge"); with nothing to judge, no call is made.
-    if (paths.length === 0) return { kind: 'empty-diff' };
+    if (paths.length === 0 && unit.spike === undefined) return { kind: 'empty-diff' };
     // The latest spec series' own checkout (Q3). Gone, or of another commit: nothing to judge in, so the lanes run again,
     // uncharged (paid M4a run 11: an older executor made none for a spec declaring no lanes).
     const series = latestSpecSeries(ctx, unit.id);
