@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { commandId, laneId, obligationId, sha, sha256 } from '../src/core/ids.ts';
@@ -91,6 +91,13 @@ for (const baseGreen of [true, false]) test(`ci repeated red compares diffBase (
   if (baseGreen) { assert.ok(second.fix?.kind === 'fix'); assert.match(second.fix.fix.directives.join(), /green.*diffBase/); }
   assert.equal(second.outcome.kind, baseGreen ? 'regression' : 'base-red');
   assert.equal(run.journal.view.unit(U1).decided?.chargeable, baseGreen);
+  if (baseGreen) {
+    assert.equal(started(await lanes(run.ctx, run.unit, at)).outcome.kind, 'regression');
+    const comparisons = run.journal.view.ciFacts().filter((f) => f.kind === 'lane-base-compared');
+    assert.equal(comparisons.length, 2);
+    assert.ok(comparisons.every((f) => f.kind === 'lane-base-compared' && existsSync(f.evidence)));
+    assert.equal(comparisons[0]!.kind === 'lane-base-compared' && comparisons[0]!.evidence, comparisons[1]!.kind === 'lane-base-compared' && comparisons[1]!.evidence, 'a cached comparison keeps the original evidence directory');
+  }
   assert.ok(run.journal.view.ciFacts().some((f) => f.kind === 'lane-base-compared' && f.result === (baseGreen ? 'pass' : 'fail')));
 });
 

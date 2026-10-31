@@ -362,7 +362,7 @@ function lanesFixRound(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact, t
       const round = laneFixRound(series, dirty, tip);
       if (round.kind !== 'fix') return round;
       const compared = view.ciFacts().filter((c) => c.kind === 'lane-base-compared' && c.unit === unit.id && c.attempt === parent.attempt);
-      return { ...round, fix: { ...round.fix, directives: [...round.fix.directives, ...compared.map((c) => c.kind === 'lane-base-compared' ? `Lane ${c.lane} is red on the unit and ${c.result === 'pass' ? 'green' : 'red'} at diffBase ${c.base}. Base comparison evidence: ${fastSuiteRoot(ctx.runDir, parent, 'base')}.` : '')], failingEvidenceDirs: [...round.fix.failingEvidenceDirs, ...(compared.length === 0 ? [] : [fastSuiteRoot(ctx.runDir, parent, 'base')])] } };
+      return { ...round, fix: { ...round.fix, directives: [...round.fix.directives, ...compared.map((c) => c.kind === 'lane-base-compared' ? `Lane ${c.lane} is red on the unit and ${c.result === 'pass' ? 'green' : 'red'} at diffBase ${c.base}. Base comparison evidence: ${c.evidence}.` : '')], failingEvidenceDirs: [...round.fix.failingEvidenceDirs, ...compared.flatMap((c) => c.kind === 'lane-base-compared' ? [c.evidence] : [])] } };
     }
   }
 }

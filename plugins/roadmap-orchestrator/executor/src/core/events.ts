@@ -817,7 +817,7 @@ export type CiFact =
   | Readonly<{ kind: 'spike-completed'; unit: UnitId }>
   | Readonly<{ kind: 'attempt-marker'; unit: UnitId; marker: 'M4'; builds: number; judged: number }>
   | Readonly<{ kind: 'attempt-capped'; unit: UnitId; builds: number; judged: number }>
-  | Readonly<{ kind: 'lane-base-compared'; unit: UnitId; attempt: number; lane: LaneId; base: Sha; result: 'pass' | 'fail' }>;
+  | Readonly<{ kind: 'lane-base-compared'; unit: UnitId; attempt: number; lane: LaneId; base: Sha; evidence: AbsPath; result: 'pass' | 'fail' }>;
 
 export type Fact =
   | CiFact
@@ -2140,7 +2140,7 @@ const M4A_FACT_READERS: { readonly [K in M4aFactKind | CiFact['kind']]: Read<Fac
   'spike-completed': object((f): Fact => ({ kind: f.get('kind', literal('spike-completed')), unit: f.get('unit', unitR) })),
   'attempt-marker': object((f): Fact => ({ kind: f.get('kind', literal('attempt-marker')), unit: f.get('unit', unitR), marker: f.get('marker', literal('M4')), builds: f.get('builds', nat), judged: f.get('judged', nat) })),
   'attempt-capped': object((f): Fact => ({ kind: f.get('kind', literal('attempt-capped')), unit: f.get('unit', unitR), builds: f.get('builds', nat), judged: f.get('judged', nat) })),
-  'lane-base-compared': object((f): Fact => ({ kind: f.get('kind', literal('lane-base-compared')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), lane: f.get('lane', laneR), base: f.get('base', shaR), result: f.get('result', oneOf(['pass', 'fail'] as const)) })),
+  'lane-base-compared': object((f): Fact => ({ kind: f.get('kind', literal('lane-base-compared')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), lane: f.get('lane', laneR), base: f.get('base', shaR), evidence: f.get('evidence', absR), result: f.get('result', oneOf(['pass', 'fail'] as const)) })),
   'lane-reused': object((f): Fact => {
     const set = f.optional('set', oneOf(['spec', 'suite'] as const));
     const at = f.optional('at', shaR);
