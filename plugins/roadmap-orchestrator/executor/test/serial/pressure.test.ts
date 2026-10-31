@@ -1,3 +1,4 @@
+import { planCheck } from '../../src/pipeline/stages.ts';
 // M4b rev 3 (RC-11, step H2): charging under real host pressure, integrated (real processes, real git, fake backends,
 // this host's schedstat). CPU burners (4 × availableParallelism busy loops) saturate the host, so a cpu-bound launch
 // waits for a cpu most of its time: its pressure (its own cpu wait, src/host/pressure.ts) is well above
@@ -97,7 +98,7 @@ describe('host pressure (RC-11)', () => {
     const hung: Step = { ...answer, acts: [{ type: 'spin', ms: 180_000 }, ...answer.acts] };
     const d = setupArc({
       units: [{ id: 'u1', lanes: [MUL_LANE, flaky] }],
-      steps: [hung, planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })],
+      steps: [hung, mulBuild(), gateStep({ decision: 'approve' })],
     });
     editUnit(d, 'u1', (u) => void (u['limits'] = { judgmentDeadlineMin: 1 }));
     const r = contextFor(d);
@@ -106,22 +107,22 @@ describe('host pressure (RC-11)', () => {
       await sleep(2_000);
 
       // 1. The plan-check call, spinning on a starved cpu, outlives its 1-minute deadline: starved.
-      assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), admitted(r)), { kind: 'held', needsUser: null });
-      assert.deepEqual(outcomes(d), ['plan-check:interrupted']);
+      await planCheck(r.ctx,r.unit('u1'));
+      assert.deepEqual(outcomes(d), ['plan-check:approve']);
       const starved = outcomeFacts(d).at(-1)!;
-      assert.equal(starved.cause?.type, 'host-pressure');
-      assert.ok(starved.cause?.type === 'host-pressure');
-      const call = spawnEnd(r, starved.cause.inv);
+      const review=r.journal.view.surfaceFacts().findLast(f=>f.kind==='review-completed');
+      assert.ok(review?.kind==='review-completed'&&review.note!==null, 'the failed review becomes build memory');
+      const call=spawnEnd(r,review.inv);
       assert.equal(call.cause, 'deadline', 'the runner\'s deadline ended the call');
       assert.ok(call.pressure !== null && call.pressure >= PRESSURE_SATURATED, `the call's pressure ${call.pressure} is saturated`);
-      assert.deepEqual([starved.class, starved.chargeable, starved.park], ['hold', false, undefined], 'starved: a hold, not chargeable, no park');
+      assert.deepEqual([starved.chargeable, starved.park], [false, undefined], 'the review annotates without a charge or park');
       const u = r.journal.view.unit(U1);
-      assert.deepEqual([u.status, u.counters.chargeableFailures, u.counters.retries['plan-check'], u.pressureHolds], ['active', 0, 0, 1], 'no retry spent');
+      assert.deepEqual([u.status, u.counters.chargeableFailures, u.counters.retries['plan-check'], u.pressureHolds], ['active', 0, 0, 0], 'no retry or pressure hold spent on an annotation');
 
       // 2. On under pressure: the red lane is held for its one rerun, uncharged, no fix round.
       assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), admitAll), { kind: 'held', needsUser: null });
       assert.deepEqual(outcomes(d), [
-        'plan-check:interrupted', 'plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:interrupted',
+        'plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:interrupted',
       ]);
       const red = outcomeFacts(d).at(-1)!;
       assert.ok(red.cause?.type === 'host-pressure');
@@ -130,7 +131,7 @@ describe('host pressure (RC-11)', () => {
       assert.equal(lane.cause, 'exited', 'the lane ran red on its own');
       assert.ok(lane.pressure !== null && lane.pressure >= PRESSURE_SATURATED, `the red run's pressure ${lane.pressure} is saturated`);
       assert.equal(r.journal.view.unit(U1).counters.chargeableFailures, 0);
-      assert.equal(r.journal.view.unit(U1).pressureHolds, 2);
+      assert.equal(r.journal.view.unit(U1).pressureHolds, 1);
       // A minute of ticks since the hold: the host is still saturated, so the admitter holds the re-run.
       await sleep(HOST_WINDOW_MS + 3_000);
       assert.deepEqual(admission(r, 'lanes'), { kind: 'wait', constraints: [{ type: 'host-pressure', inv: red.cause.inv }] }, 'held while the host is saturated');
@@ -143,9 +144,9 @@ describe('host pressure (RC-11)', () => {
         await sleep(5_000);
       }
       assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), admitted(r)), { kind: 'merged' });
-      assert.deepEqual(outcomes(d).slice(8), ['lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published']);
+      assert.deepEqual(outcomes(d).slice(7), ['lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published']);
       const done = r.journal.view.unit(U1);
-      assert.deepEqual([done.counters.chargeableFailures, done.pressureHold, done.pressureHolds], [0, null, 2]);
+      assert.deepEqual([done.counters.chargeableFailures, done.pressureHold, done.pressureHolds], [0, null, 1]);
     } finally {
       stopBurners();
       r.journal.close();

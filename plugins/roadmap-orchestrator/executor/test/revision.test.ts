@@ -249,7 +249,7 @@ test('apply.route-unsupported: a unit layer seating an unsupported triple (a Cod
     });
     const file = submitCommand(r.ctx.runDir, r.ctx.plan().arc, applyBody(d));
     const reason = reasonOf(await applyCommand({ ...ctxOf(r), routingBase: { ...BASE, config } }, file));
-    assert.match(reason, /"kind":"unsupported-routing".*"role":"planCheck".*"tier":"med".*"unit":"u1".*"why":"codex-judgment"/);
+    assert.match(reason, /"kind":"unsupported-routing".*"role":"verifier".*"tier":"med".*"unit":"u1".*"why":"codex-judgment"/);
     assert.doesNotMatch(reason, /"tier":"(low|high|escalation)"/, 'only the unit layer\'s seat');
   } finally {
     r.journal.close();

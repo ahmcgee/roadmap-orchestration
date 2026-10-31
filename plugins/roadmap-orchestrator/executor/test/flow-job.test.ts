@@ -213,7 +213,7 @@ describe('ruler-changed', () => {
     log.applied(4, 4, { command: commandAt(4), plan: PLAN_A }); // the judgment seat reseated back: the ruler moved
     log.applied(5, 5, { command: commandAt(5), plan: ruler, vision: true }); // the vision record changed too: the owner's apply
     const read = { ...inputs(planOf({})), planOf: (f: { planSha256: string }) => plans.get(f.planSha256 as never)! };
-    assert.deepEqual(rulerChangesOf(log.events, read).map((c) => [c.rev, c.command, c.paths]), [[4, commandAt(4), ['routing.gate']]]);
+    assert.deepEqual(rulerChangesOf(log.events, read).map((c) => [c.rev, c.command, c.paths]), [[4, commandAt(4), ['routing.verifier']]]);
   });
 
   test('flow.ruler-changed: an apply after the first admission reseating a judgment raises one non-blocking ruler-changed item, listed in status', T, async () => {
@@ -232,12 +232,12 @@ describe('ruler-changed', () => {
       assert.equal(items.length, 1, 'raised once');
       const record = readNeedsUser(r.ctx.runDir, items[0]!)!;
       assert.equal(record.blocking, false);
-      assert.match(record.summary, /changed the ruler: routing\.gate/);
+      assert.match(record.summary, /changed the ruler: routing\.verifier/);
       const raise = r.journal.view.opsOf('needsuser.raise').find((i) => i.expect.id === items[0]);
       assert.deepEqual(raise?.parent, { type: 'command', command: command.id });
       const s = status(r.ctx.runDir, r.journal.view.arc, absPath(d.hostDir)).flow;
       assert.ok(s !== null && s.state === 'on');
-      assert.deepEqual(s.rulerChanged.map((c) => [c.command, c.paths, c.needsUser]), [[command.id, ['routing.gate'], items[0]]]);
+      assert.deepEqual(s.rulerChanged.map((c) => [c.command, c.paths, c.needsUser]), [[command.id, ['routing.verifier'], items[0]]]);
     } finally {
       r.journal.close();
     }

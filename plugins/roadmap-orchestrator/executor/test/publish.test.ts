@@ -233,7 +233,7 @@ test('docs.transient: a docs publication\'s diff is exactly its rendered files a
     assert.equal(r.journal.view.unit(U1).counters.chargeableFailures, 1, 'a transient violation charges');
     const gates = readCalls(d.scenarioPath).filter(isGateCall);
     assert.equal(gates.length, 1, 'the refused salvage never reached a gate');
-    assert.ok(gates[0]!.argv.includes('claude-opus-5-5') && gates[0]!.argv.includes('high'), 'protected-path violation promoted the next judgment');
+    assert.ok(gates[0]!.argv.includes('claude-opus-5-5') && gates[0]!.argv.includes('medium'), 'the promoted verifier keeps Opus medium');
     assert.equal(show(d, 'main', '.roadmap/constraints.md'), show(d, at, '.roadmap/constraints.md'), 'only the executor wrote the in-tree .roadmap/');
     assert.ok(readCalls(d.scenarioPath).every((c) => c.step !== null));
   } finally {

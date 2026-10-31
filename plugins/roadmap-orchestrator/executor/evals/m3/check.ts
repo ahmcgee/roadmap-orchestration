@@ -691,7 +691,7 @@ function judgmentFresh(run: Run): Verdict {
     if (other !== undefined) problems.push(`${inv} reuses session ${t.session.id} of ${other}`);
     seen.set(t.session.id, inv);
   }
-  for (const r of JUDGMENT_ROLES) if (!roles.has(r)) problems.push(`no ${r} call`);
+  for (const r of ['verifier','campaignAudit','packReview']) if (!roles.has(r)) problems.push(`no ${r} call`);
   return verdict(problems, `${seen.size} judgment invocations (${[...roles].sort().join(', ')}), ${seen.size} distinct fresh sessions`);
 }
 

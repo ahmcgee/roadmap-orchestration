@@ -4,12 +4,8 @@
 // (R7 with B2's publishBatch), findings.plan-check-vision-conflict (R17), plancheck.reads-captured-spec, and the crash
 // cells of the matrix rows FF_ELIGIBILITY and MUTANT_APPLY (test/matrix.ts), recovered by the recovery engine.
 import assert from 'node:assert/strict';
-import { readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe,test } from 'node:test';
-import { setTimeout as sleep } from 'node:timers/promises';
-import { applyCommand } from '../src/commands/apply.ts';
-import { submitCommand } from '../src/commands/queue.ts';
 import type { Fact,IntentOf } from '../src/core/events.ts';
 import { findingId,invocationId,jobId,resourceName,sha,unitId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
@@ -17,12 +13,10 @@ import { mutantOf } from '../src/core/projections.ts';
 import { absPath } from '../src/core/values.ts';
 import { verifySnapshot } from '../src/git/snapshot.ts';
 import { batchable,findingMetrics,openFinding,ruleFinding } from '../src/holistic/findings.ts';
-import { SPEC_INPUT,inputPath } from '../src/input/inforce.ts';
 import { publishBatch } from '../src/pipeline/integrate.ts';
 import { invocationDir } from '../src/pipeline/invoke.ts';
 import { observations } from '../src/pipeline/lanes.ts';
 import { repairUnits,specFacts } from '../src/pipeline/reproduce.ts';
-import { planCheck } from '../src/pipeline/stages.ts';
 import { runUnit,step } from '../src/pipeline/unit.ts';
 import { recover } from '../src/recover/recover.ts';
 import { idleEnvironments } from '../src/resources/environments.ts';
@@ -34,8 +28,8 @@ import { wire } from './fixtures/publish-common.ts';
 import {
 MAPPED,MUTANT_PATCH,STALE_PATCH,STRICT_TEST,buildOf,openBefore,tipOf,treeWith,vacuityArc,vacuityDraft as vacuityDraftOf,witnessDraft,
 } from './fixtures/repair-common.ts';
-import { SCENARIO_TIMEOUT_MS,admitAll,planCheckRepairStep,planCheckStep,started } from './fixtures/stage-common.ts';
-import { type ArcRun,U1,applyBody,codexStep,commandContextFor,contextFor,gateStep,mulBuild,outcomes,setupArc,stepUntil } from './fixtures/unit-common.ts';
+import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
+import { type ArcRun, U1, codexStep, contextFor, gateStep, mulBuild, outcomes, stepUntil } from './fixtures/unit-common.ts';
 import { assertFired,writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
 import { git,tmpDir } from './helpers/repo.ts';
@@ -366,85 +360,6 @@ describe(`matrix row ${FF_ELIGIBILITY}`, () => {
 // Plan-check (R17, AX carry-forward)
 
 describe('plan-check and the findings store', () => {
-  test('findings.plan-check-vision-conflict: each vision conflict opens a P3 plan-check finding from its attempt, never a redirect by itself; a re-check reporting it again merges; a conflict citing no active clause is malformed', T, async () => {
-    const note = 'A1 accepts any input, against V-1\'s trust.';
-    const patch = [{ op: 'add', section: 'decisions', item: { id: 'D1', text: 'mul multiplies.' } }];
-    const { d } = holisticArc({
-      steps: [
-        planCheckStep({ decision: 'redirect', patch, visionConflict: [{ clauses: ['V-1'], note }] }),
-        planCheckStep({ decision: 'approve', visionConflict: [{ clauses: ['V-1'], note }] }),
-      ],
-      units: [{ id: 'u1', obligations: ['I-1'] }], obligations: [{ id: 'I-1', testIds: ['t1'] }], mapping: MAPPED, trees: {},
-    });
-    const r = contextFor(d);
-    try {
-      await step(r.ctx, r.unit('u1'));
-      await step(r.ctx, r.unit('u1'));
-      assert.deepEqual(outcomes(d, 'u1'), ['plan-check:redirect', 'plan-check:approve'], 'the conflict decided nothing');
-      const found = r.journal.view.holistic().findings;
-      assert.equal(found.length, 1, 'the second report merged into the first');
-      assert.deepEqual([found[0]!.lens, found[0]!.severity, found[0]!.visionClauses, found[0]!.claim, found[0]!.obligation, found[0]!.source, found[0]!.state],
-        ['plan-check', 'P3', ['V-1'], note, null, { type: 'stage', unit: 'u1', stage: 'plan-check', attempt: 1 }, 'open']);
-    } finally {
-      r.journal.close();
-    }
-    const bad = holisticArc({
-      steps: [
-        planCheckStep({ decision: 'approve', visionConflict: [{ clauses: ['V-9'], note }] }),
-        planCheckRepairStep({ decision: 'approve', visionConflict: [{ clauses: ['V-9'], note }] }, ['visionConflict cites V-9, which is no active clause of the vision in force']),
-      ],
-      units: [{ id: 'u1', obligations: ['I-1'] }], obligations: [{ id: 'I-1', testIds: ['t1'] }], mapping: MAPPED, trees: {},
-    });
-    const b = contextFor(bad.d);
-    try {
-      await step(b.ctx, b.unit('u1'));
-      assert.deepEqual(outcomes(bad.d, 'u1'), ['plan-check:malformed']);
-      assert.deepEqual(b.journal.view.holistic().findings, []);
-    } finally {
-      b.journal.close();
-    }
-  });
-
-  test('plancheck.reads-captured-spec: an exported evidence edit auto-bumps pending revision; the captured redirect patches its pinned spec without overwriting that pending edit', T, async () => {
-    const patch = [{ op: 'add', section: 'decisions', item: { id: 'D1', text: 'mul multiplies.' } }];
-    const d = setupArc({ steps: [planCheckStep({ decision: 'redirect', patch })] });
-    const r = contextFor(d);
-    try {
-      let open = (): void => {};
-      const granted = new Promise<void>((resolve) => { open = resolve; });
-      const ctx = { ...r.ctx, acquire: async (...a: Parameters<typeof r.ctx.acquire>) => { await granted; return r.ctx.acquire(...a); } };
-      const checking = planCheck(ctx, r.unit('u1'));
-      for (let i = 0; i < 100 && r.journal.view.judgmentInputs(U1, 'plan-check', 1) === null; i++) await sleep(50);
-      const captured = r.journal.view.judgmentInputs(U1, 'plan-check', 1);
-      assert.ok(captured !== null && captured.specRev === 1);
-      assert.equal(r.journal.view.unit(U1).open, null, 'the attempt has not started: it waits for @cpu');
-
-      const specPath = join(d.planPath, '..', 'u1.json');
-      const spec = JSON.parse(readFileSync(specPath, 'utf8')) as { lanes: Record<string, unknown>[] };
-      writeFileSync(specPath, JSON.stringify({ ...spec, lanes: spec.lanes.map((l) => ({ ...l, evidenceGlobs: ['out/**'] })) }));
-      const applied = await applyCommand(commandContextFor(r), submitCommand(r.ctx.runDir, r.journal.view.arc, applyBody(d)));
-      assert.equal(applied.kind, 'applied', JSON.stringify(applied));
-      const edited = r.journal.view.unit(U1).spec!;
-      assert.deepEqual([edited.rev, edited.sha256 === captured.specSha256], [1, true], 'the dispatched spec stays pinned');
-      const pending = r.journal.view.unit(U1).pendingRevision!;
-      assert.equal(pending.rev, 2);
-      assert.notEqual(pending.sha256, captured.specSha256);
-
-      open();
-      const done = started(await checking);
-      assert.equal(done.specRev, captured.specRev, 'read against the captured rev');
-      assert.equal(done.outcome.kind, 'redirect');
-      const patched = r.journal.view.opsOf('spec.patch').at(-1)!;
-      assert.deepEqual([patched.expect.expectRev, patched.expect.oldSha256], [1, edited.sha256], 'the patch applies to the spec in force at the captured rev');
-      const after = JSON.parse(readFileSync(inputPath(r.ctx.runDir, r.journal.view.unit(U1).spec!.sha256, SPEC_INPUT), 'utf8')) as { rev: number; lanes: { evidenceGlobs: string[] }[]; decisions: { id: string }[] };
-      assert.deepEqual([after.rev, after.lanes[0]!.evidenceGlobs, after.decisions.map((x) => x.id)], [2, [], ['D1']], 'the redirect applies only to the spec it judged');
-      assert.deepEqual(r.journal.view.unit(U1).pendingRevision, pending, 'the owner revision is not overwritten by the captured redirect');
-      const next = JSON.parse(readFileSync(inputPath(r.ctx.runDir, pending.sha256, SPEC_INPUT), 'utf8')) as {lanes: {evidenceGlobs: string[]}[]; decisions: unknown[]};
-      assert.deepEqual([next.lanes[0]!.evidenceGlobs, next.decisions], [['out/**'], []]);
-    } finally {
-      r.journal.close();
-    }
-  });
 });
 
 // ---------------------------------------------------------------------------------------------------

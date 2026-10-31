@@ -359,7 +359,7 @@ test('stages.counters-from-fold: attempts and counters are the log\'s, identical
   assert.deepEqual([a.attempt, b.attempt, c.attempt], [1, 2, 3], 'each stage start is the next attempt of the unit');
   const live = run.journal.view.unit(U1);
   assert.equal(live.counters.attempts, 3);
-  assert.equal(live.counters.retries['plan-check'], 1);
+  assert.equal(live.counters.retries['plan-check'], 0);
   assert.deepEqual(outcomeFacts(run).map((f) => (f.kind === 'stage-outcome' && 'unit' in f) && `${f.stage}#${f.attempt}`), ['plan-check#1', 'plan-check#2', 'build#3']);
   run.journal.close();
   const reopened = openJournal(run.runDir, run.ctx.plan().arc);
@@ -373,7 +373,7 @@ test('stages.counters-from-fold: attempts and counters are the log\'s, identical
 test('stages.no-model-ids: events, the derived state, dispatch facts and needs-user content never name a model; launch.json argv does', T, async () => {
   // claude-only: the build is Claude's (Sonnet, the efficient class at every risk since dev.17).
   const run = setupUnit({
-    profile: 'claude-only',
+    profile: 'claude-only', unit: {risk:'high'},
     resources: [DB],
     steps: [
       planCheckStep({ decision: 'approve', risk: 'high' }),
@@ -431,7 +431,7 @@ test('gate prompt telemetry records every role input and the exact stdin file by
     if (spawn.expect.subject.purpose !== 'backend') throw new Error('expected a backend spawn');
     const prompt = spawn.expect.subject.prompt;
     assert.ok(prompt !== undefined);
-    assert.deepEqual(Object.keys(prompt.inputs).sort(), [...promptFor('gate', 'claude-opus-5-5').fields].sort());
+    assert.deepEqual(Object.keys(prompt.inputs).sort(), [...promptFor('verifier', 'claude-opus-5-5').fields].sort());
     const inv = invocationId(spawn.op, spawn.ordinal);
     const path = runnerFiles(invocationDir(r.ctx.runDir, inv), inv).read('launch.json')!.stdinPath!;
     assert.equal(prompt.bytes, readFileSync(path).byteLength);

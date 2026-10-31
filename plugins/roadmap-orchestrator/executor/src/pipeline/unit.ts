@@ -668,7 +668,10 @@ async function stepOnce(ctx: StageContext, unit: PlanUnit): Promise<Step> {
   const decided = decidedBy(f);
   switch (decided.kind) {
     case 'stage':
-      if (decided.target.stage === 'gate' && markers(ctx, unit, loadUnitSpec(ctx, unit).spec).some(m => m.marker === 'M3')) return after(ctx, unit, await planCheck(ctx, unit));
+      if (decided.target.stage === 'gate' && markers(ctx, unit, loadUnitSpec(ctx, unit).spec).some(m => m.marker === 'M3')) {
+        if (u.staleRev !== null) ctx.journal.fact({kind:'stale-reopened',unit:unit.id,rev:u.staleRev});
+        return after(ctx, unit, await planCheck(ctx, unit));
+      }
       return after(ctx, unit, await runStage(ctx, unit, decided.target, f));
     case 'park':
     case 'stop':

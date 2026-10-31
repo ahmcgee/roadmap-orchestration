@@ -324,7 +324,7 @@ describe('claude', () => {
       launch.terminal.session.mode = 'continue';
       assert.throws(() => RUNNER_FILE_READERS['launch.json'](launch, 'launch.json'), SchemaError);
       launch.terminal.session.mode = 'resume';
-      for (const role of ['planCheck', 'gate', 'lens', 'checkpoint', 'packReview', 'flow']) {
+      for (const role of ['verifier', 'campaignAudit', 'experienceVerdict', 'packReview', 'flow']) {
         launch.terminal.role = role;
         const read = RUNNER_FILE_READERS['launch.json'](launch, 'launch.json');
         assert.ok(read.terminal.type === 'backend' && read.terminal.session.backend === 'claude' && read.terminal.session.mode === 'resume');

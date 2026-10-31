@@ -107,18 +107,17 @@ describe('unit: one unit merged first time', () => {
     assert.equal((JSON.parse(readFileSync(join(r.ctx.planDir, 'u1.json'), 'utf8')) as { rev: number }).rev, 1, 'the owner\'s spec file is never written');
     const { spec } = loadUnitSpec(r.ctx, r.unit('u1'));
     // dev.17: the approving plan-check's design record is rev 2, the build's decisions rev 3.
-    assert.equal(spec.rev, 3, 'the patched spec is in force');
+    assert.equal(spec.rev, 2, 'the patched spec is in force');
     assert.deepEqual(spec.decisions, [{ id: 'D1', text: 'mul multiplies with the * operator.', state: 'active' }]);
-    assert.equal(spec.design?.kind, 'module', 'the design record the plan-check settled');
+    assert.equal(spec.design, undefined, 'design remains a root decision');
     const patches = intents(r.d.runDir, 'spec.patch');
-    assert.equal(patches.length, 2);
-    const [design, p] = patches as [(typeof patches)[number], (typeof patches)[number]];
-    assert.ok(design.kind === 'spec.patch' && design.parent.type === 'stage' && design.parent.stage === 'plan-check' && design.expect.patch.ops[0]?.op === 'design');
+    assert.equal(patches.length, 1);
+    const [p] = patches as [(typeof patches)[number]];
     assert.ok(p.kind === 'spec.patch' && p.parent.type === 'stage' && p.parent.stage === 'evidence');
     const build = intents(r.d.runDir, 'proc.spawn').find((i) => i.kind === 'proc.spawn' && i.expect.subject.purpose === 'backend' && i.expect.subject.role === 'build');
     assert.ok(build !== undefined);
     assert.deepEqual(p.expect.patch.by, { role: 'executor', inv: invocationId(build.op, 1) });
-    assert.equal(r.journal.view.unit(U1).approval?.fingerprint.specRev, 3, 'a decision recorded before the gate is what the gate saw');
+    assert.equal(r.journal.view.unit(U1).approval?.fingerprint.specRev, 2, 'a decision recorded before the gate is what the gate saw');
   });
 
   test('retire: every worktree of the unit is removed, citing its evidence; the branch and candidate ref stay', () => {
@@ -363,6 +362,7 @@ const mulMerged = (r: ArcRun): void => {
 
 test('continue.claude-session: a pause mid fresh build holds it; resume continues the same Claude session, told only to continue, in the worktree with its uncommitted edits', T, async () => {
   const d = setupArc({
+    units:[{id:'u1',risk:'high'}],
     steps: [
       planCheckStep({ decision: 'approve', risk: 'high' }),
       { as: 'claude', expect: { argv: ['--permission-mode', 'bypassPermissions', '--session-id'] }, acts: [{ type: 'dirty', files: MUL }, barrier('b1')] },

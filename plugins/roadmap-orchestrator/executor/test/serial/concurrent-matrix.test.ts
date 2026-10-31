@@ -311,7 +311,7 @@ function peerAtCrash(peer: Peer, crash: AtCrash): IntentOf<'proc.spawn'> | null 
     case 'build':
       return one('its build', (i) => s(i).purpose === 'backend' && (s(i) as { role: string }).role === 'build');
     case 'judgment': {
-      const gate = one('its gate', (i) => s(i).purpose === 'backend' && (s(i) as { role: string }).role === 'gate');
+      const gate = one('its gate', (i) => s(i).purpose === 'backend' && (s(i) as { role: string }).role === 'verifier');
       assert.ok(gate.parent.type === 'stage' && snap.view.judgmentInputs(unitId(B), 'gate', gate.parent.attempt) !== null, 'the gate\'s judgment-inputs are durable');
       return gate;
     }

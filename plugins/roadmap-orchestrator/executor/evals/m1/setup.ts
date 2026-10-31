@@ -97,7 +97,7 @@ const SPECS: Readonly<Record<(typeof UNITS)[number], unknown>> = {
       clause('A3', 'test/slug.test.js covers A1 and A2 and passes under the slug lane (C-2).'),
     ],
      resources: [RESOURCE],
-    decisions: [],
+    decisions: [{id:'D1',text:'slugify has no special case for an empty result; pageId owns the empty slug (contract one).',state:'active'}],
     facts: [{ id: 'F1', text: 'package.json declares "type": "module", so src/*.js are ES modules.', state: 'active' }],
     cites: { contracts: [CONTRACT_PATH], rulings: ['C-1', 'C-2'] },
   },

@@ -35,13 +35,13 @@ describe('fakes.lens', () => {
     const claims = (job: string, lens: string): string[] =>
       (claude(s.binDir, job, `{"lens": "${lens}"}`).out as { findings: { claim: string }[] }).findings.map((f) => f.claim);
     assert.deepEqual(claims('audit-2', 'vision'), ['other job']);
-    assert.deepEqual(claims('audit-1', 'drift'), []);
-    assert.deepEqual(claims('audit-1', 'vision'), ['vision gap']);
+    assert.deepEqual(claims('audit-1', 'drift'), ['vision gap']);
+    assert.deepEqual(claims('audit-1', 'vision'), []);
     assert.deepEqual(claims('audit-1', 'vision'), ['second vision call']);
     assert.equal(validateLensOutput(claude(s.binDir, 'audit-9', 'lens: vacuity').out).findings[0]?.mutant?.lane, 'unit');
     assert.equal(claude(s.binDir, 'audit-1', '{"lens": "vision"}').code, 99, 'no vision step left for audit-1');
     assert.deepEqual(readCalls(s.path).map((c) => [c.unit, c.lens, c.step]), [
-      ['audit-2', 'vision', 3], ['audit-1', 'drift', 1], ['audit-1', 'vision', 0], ['audit-1', 'vision', 2], ['audit-9', 'vacuity', 4], ['audit-1', 'vision', null],
+      ['audit-2', 'vision', 3], ['audit-1', 'drift', 0], ['audit-1', 'vision', 1], ['audit-1', 'vision', 2], ['audit-9', 'vacuity', 4], ['audit-1', 'vision', null],
     ]);
   });
 });

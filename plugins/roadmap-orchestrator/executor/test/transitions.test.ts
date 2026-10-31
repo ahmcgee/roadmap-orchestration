@@ -9,7 +9,6 @@ import {
 } from '../src/core/events.ts';
 import { seatRev, specRev } from '../src/core/ids.ts';
 import { type UnitCounters, type UnitState, afterStageOutcome, fold, newUnitState } from '../src/core/state.ts';
-import { repoPattern } from '../src/core/values.ts';
 import { type Next, type ParkClass, type StageOutcome, TABLE, decidedBy, outcomeFact, parkClassOf, transition } from '../src/pipeline/transitions.ts';
 import { resourceInstance } from '../src/core/ids.ts';
 import { ARC, AT, H, REV, U1, chain } from './fixtures/log-records.ts';
@@ -127,6 +126,7 @@ const ROWS: readonly Row[] = [
   ['build', 'refusal', {}, 'park:refusal', 'park', {}],
   ['build', 'malformed', {}, 'build/resume@med', 'retry', { 'retries.build': 1 }],
   ['build', 'malformed', { counters: { 'retries.build': 1 } }, 'park:malformed', 'park', {}],
+  ['build', 'spec-wrong', {}, 'park:spec-wrong', 'park', {}],
   ['build', 'process-fault', {}, 'park:process-fault', 'park', {}],
   ['build', 'routing-changed', { counters: { chargeableFailures: 2 } }, 'park:routing-changed', 'park', {}],
   // transitions.lost-build: a lost implementer call never charges. Without tree effects it was already
@@ -305,7 +305,7 @@ describe('transitions', () => {
     const CLASS: Readonly<Record<string, ParkClass>> = {
       'plan-check redirect': 'design', 'plan-check infeasible': 'design', 'plan-check scope-widened': 'design', 'plan-check refusal': 'design',
       'plan-check malformed': 'design', 'plan-check process-fault': 'retryable', 'plan-check routing-changed': 'env', 'plan-check read-denied': 'env',
-      'build refusal': 'design', 'build malformed': 'design', 'build process-fault': 'retryable', 'build routing-changed': 'env', 'build lost': 'retryable',
+      'build spec-wrong':'design', 'build refusal': 'design', 'build malformed': 'design', 'build process-fault': 'retryable', 'build routing-changed': 'env', 'build lost': 'retryable',
       'build occupied': 'env', 'build cleanup-failed': 'retryable', 'build witness-lane-missing': 'env', 'lanes witness-lane-missing': 'env', 'lanes plan-defect': 'env',
       'salvage unmerged': 'env', 'salvage commit-failed': 'retryable', 'salvage cleanup-failed': 'retryable', 'teardown cleanup-failed': 'retryable',
       'lanes red': 'design', 'lanes witnesses-missing': 'design', 'build infeasible': 'design', 'lanes blocked': 'retryable', 'lanes cleanup-failed': 'retryable', 'lanes occupied': 'env',

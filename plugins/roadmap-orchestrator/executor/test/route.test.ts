@@ -50,6 +50,7 @@ test('routing.unit-layer-rev: a unit routing layer gives that unit its own routi
       planCheckStep({ decision: 'approve' }), // u2
       mulBuild(), // u1, on efficient (Codex)
       gateStep({ decision: 'revise', directives: ['Export mul as the default export too.'] }), // u1, on its layer's summit
+      {...claudeBuild(),acts:[{type:'emit',value:BUILD_REPORT}]}, // u1 rerouted
       claudeBuild(), // u2, on its layer's frontier build seat
     ],
   });
@@ -88,10 +89,9 @@ test('routing.unit-layer-rev: a unit routing layer gives that unit its own routi
     const [u1Moved, u2Moved] = [ctx.routing(U1).rev, ctx.routing(U2).rev];
     assert.deepEqual(r.journal.view.planApplied()?.changes, [{ type: 'routing', routingRev: u1Moved, unit: U1 }, { type: 'routing', routingRev: u2Moved, unit: U2 }]);
 
-    const parked = await step(ctx, unitOf(ctx, 'u1'));
-    assert.ok(parked.kind === 'parked' && parked.needsUser.reason === 'routing-changed', JSON.stringify(parked));
-    assert.equal(outcomes(d, 'u1').at(-1), 'build:routing-changed');
-    assert.equal(r.journal.view.dispatchesOf(U1).length, 2, 'a park re-pins nothing');
+    await step(ctx,unitOf(ctx,'u1'));
+    assert.equal(outcomes(d,'u1').at(-1),'build:success');
+    assert.equal(r.journal.view.dispatchesOf(U1).length,3,'the moved builder re-pins without a park');
 
     await stepTo(ctx, 'u2', (f) => f.stage === 'build');
     assert.equal(outcomes(d, 'u2').at(-1), 'build:success');
@@ -99,9 +99,9 @@ test('routing.unit-layer-rev: a unit routing layer gives that unit its own routi
     assert.deepEqual(u2Records.map((x) => x.routingRev), [arcRev, u2Moved], 'u2 re-pinned under its new unit rev, not parked');
     assert.notEqual(u2Records[1]?.implementerSeatRev, u2Records[0]?.implementerSeatRev);
     const calls = readCalls(d.scenarioPath);
-    assert.equal(calls.length, 5);
+    assert.equal(calls.length, 6);
     assert.ok(calls.every((c) => c.step !== null), 'every call matched its step');
-    assert.deepEqual([calls[4]!.as, seatOf(calls[4]!.argv)], ['claude', FRONTIER], 'u2 built on its layer\'s frontier seat');
+    assert.deepEqual([calls[5]!.as, seatOf(calls[5]!.argv)], ['claude', FRONTIER], 'u2 built on its layer\'s frontier seat');
   } finally {
     r.journal.close();
   }
@@ -136,7 +136,7 @@ test('routing.provenance-recorded: plan-applied records the profile, the repo co
     const plan = requirePlanInForce(r.ctx.runDir, r.journal.view).plan;
     assert.equal(reproduced.rev, unitRouting(base, plan, unitOf(ctx, 'u1')).rev, 'the same routing the start resolved');
     assert.deepEqual(
-      [reproduced.bindings.efficient, reproduced.sources.gate.med, reproduced.sources.gate.high, reproduced.sources.planCheck.low],
+      [reproduced.bindings.efficient, reproduced.sources.verifier.med, reproduced.sources.verifier.high, reproduced.sources.verifier.low],
       ['repo-config', 'unit', 'repo-config', 'plan'],
     );
     assert.equal(reproduced.table.build.med.model, 'claude-sonnet-5-5', 'the repo config rebinds the efficient class');
@@ -202,7 +202,7 @@ test('limits.windows-and-bounds: the plan\'s and the unit\'s limits are pinned a
     const u = r.journal.view.unit(U1);
     assert.deepEqual([u.counters.reviseRounds, u.counters.chargeableFailures, u.routedUp], [1, 2, ['gate']], 'the second revise routed up, uncharged');
 
-    about(windowOf(spawnsOf(r, 'planCheck')[0]!), 3 * MIN, 'plan-check');
+    about(windowOf(spawnsOf(r, 'verifier').filter(i=>i.parent.type==='stage'&&i.parent.stage==='plan-check')[0]!), 3 * MIN, 'plan-check');
     const builds = spawnsOf(r, 'build');
     assert.equal(builds.length, 3);
     about(windowOf(builds[0]!), 2 * MIN, 'the fresh build');
@@ -210,7 +210,7 @@ test('limits.windows-and-bounds: the plan\'s and the unit\'s limits are pinned a
       const w = windowOf(fix);
       assert.ok(w > 5 * MIN - 5_000 && w < 6 * MIN, `a fix round: the edit allowance plus the measured lane series, got ${w} ms`);
     }
-    for (const g of spawnsOf(r, 'gate')) about(windowOf(g), 3 * MIN, 'a gate');
+    for (const g of spawnsOf(r, 'verifier').filter(i=>i.parent.type==='stage'&&i.parent.stage==='gate')) about(windowOf(g), 3 * MIN, 'a gate');
 
     // A limits apply below what u1 spent is refused; one above it re-pins u1's next dispatch.
     syncInputs(r);
@@ -227,11 +227,11 @@ test('limits.windows-and-bounds: the plan\'s and the unit\'s limits are pinned a
     assert.equal(records.length, 2);
     assert.deepEqual(records[1]!.bounds, { ...first.bounds, judgmentDeadlineMin: 4 }, 're-pinned with the new bounds at the next dispatch');
     assert.deepEqual([records[1]!.routingRev, records[1]!.riskFloor, records[1]!.transientRules], [first.routingRev, first.riskFloor, 'm3']);
-    const gates = spawnsOf(r, 'gate');
+    const gates = spawnsOf(r, 'verifier').filter(i=>i.parent.type==='stage'&&i.parent.stage==='gate');
     about(windowOf(gates.at(-1)!), 4 * MIN, 'the gate after the re-pin');
     const calls = readCalls(d.scenarioPath);
     assert.ok(calls.every((c) => c.step !== null));
-    assert.equal(seatOf(calls.filter(isGateCall).at(-1)!.argv), SUMMIT, 'the routed-up gate sits on the escalation seat');
+    assert.equal(seatOf(calls.filter(isGateCall).at(-1)!.argv), FRONTIER, 'the routed-up verifier stays on Opus medium');
   } finally {
     r.journal.close();
   }
@@ -255,7 +255,7 @@ function addRuling(d: ReturnType<typeof setupArc>, id: string, statement: string
 test('route.risk-floor: a risk below its Phase-0 floor is refused unless the unit\'s spec cites an active ruling for it; a dispatched unit\'s risk may rise, re-pinned at its next stage (parked routing-changed once its build started on a seat the raise moves)', T, async () => {
   const d = setupArc({
     units: [{ id: 'u1' }, { id: 'u2' }, { id: 'u3', risk: 'high' }, { id: 'u4', risk: 'high' }],
-    steps: [planCheckStep({ decision: 'approve' }), mulBuild(), planCheckStep({ decision: 'approve' }), claudeBuild()],
+    steps: [planCheckStep({decision:'approve'}),mulBuild(),planCheckStep({decision:'approve'}),gateStep({decision:'approve'}),claudeBuild()],
   });
   addRuling(d, 'C-2', 'u4 is low risk after all.', { appliesTo: { type: 'units', units: ['u4'] } });
   // The plan seats build.high on frontier, so a raise to high moves the implementer (every built-in build seat is efficient since dev.17).
@@ -290,10 +290,9 @@ test('route.risk-floor: a risk below its Phase-0 floor is refused unless the uni
     assert.deepEqual(r.journal.view.planApplied()?.changes, [{ type: 'unit-changed', unit: U1 }, { type: 'unit-changed', unit: U2 }]);
     assert.deepEqual([r.journal.view.dispatchesOf(U1).length, r.journal.view.dispatchesOf(U2).length], [1, 1], 'an apply re-pins nothing by itself');
 
-    const parked = await step(ctx, unitOf(ctx, 'u1'));
-    assert.ok(parked.kind === 'parked' && parked.needsUser.reason === 'routing-changed', JSON.stringify(parked));
-    assert.equal(outcomes(d, 'u1').at(-1), 'gate:routing-changed');
-    assert.deepEqual(r.journal.view.dispatchesOf(U1).map((x) => x.riskFloor), ['med'], 'the park re-pins nothing');
+    await step(ctx,unitOf(ctx,'u1'));
+    assert.equal(outcomes(d,'u1').at(-1),'gate:approve');
+    assert.deepEqual(r.journal.view.dispatchesOf(U1).map(x=>x.riskFloor),['med','high'],'the risk raise re-pins without a park');
 
     await stepTo(ctx, 'u2', (f) => f.stage === 'build');
     assert.equal(outcomes(d, 'u2').at(-1), 'build:success');
@@ -303,9 +302,9 @@ test('route.risk-floor: a risk below its Phase-0 floor is refused unless the uni
     assert.notEqual(u2[1]!.implementerSeatRev, u2[0]!.implementerSeatRev);
     assert.equal(r.journal.view.unit(U2).buildTier, 'high');
     const calls = readCalls(d.scenarioPath);
-    assert.equal(calls.length, 4);
+    assert.equal(calls.length, 5);
     assert.ok(calls.every((c) => c.step !== null));
-    assert.deepEqual([calls[3]!.as, seatOf(calls[3]!.argv)], ['claude', FRONTIER], 'u2 built on build.high');
+    assert.deepEqual([calls[4]!.as, seatOf(calls[4]!.argv)], ['claude', FRONTIER], 'u2 built on build.high');
   } finally {
     r.journal.close();
   }

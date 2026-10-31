@@ -61,8 +61,8 @@ const FLAKY_SCOPE = [...UNIT_SCOPE, 'flaky/**'];
 const deflakeBuild = (files: Readonly<Record<string, string>>): Step => codexStep([{ type: 'commit', message: 'deflake', files }], { argv: ['exec', '-C'] });
 /** A deflake unit's approving design record (dev.17 design pass): its verification, two runs of the flaky lane. */
 const DEFLAKE_DESIGN: JsonValue = {
-  kind: 'module', changes: [{ system: null, paths: ['flaky/**'], lines: 5 }], interfaces: [], failureModes: [], clauses: [{ clause: 'A-1', lanes: ['flaky'] }], breaks: { tests: [], docs: [] }, experiments: [],
-  newSystem: null, verification: { type: 'reproduce-then-fix', condition: 'the marker absent: the lane red', runs: 2 },
+  kind: 'module', changes: [{system:'flaky',paths:['flaky/**'],lines:5}], interfaces: [], failureModes: [], clauses: [{ clause: 'A-1', lanes: ['flaky'] }], breaks: { tests: [], docs: [] }, experiments: [],
+  verification: { type: 'reproduce-then-fix', condition: 'the marker absent: the lane red', runs: 2 },
 };
 /**
  * A unit straight through: approved plan-check (a deflake unit's with its verification), a build committing `files` (a
@@ -331,7 +331,7 @@ describe('the verification budget through the plan-check', () => {
  const marker=freshMarker();const d=flakyArc(marker,['u1'],[],straight('u1',{}));const r=contextFor(d);
  try {
  assert.deepEqual(await run(r,'u1'),{kind:'merged'});assert.deepEqual(await mint(r),{kind:'applied',admitted:['deflake-1'],recurring:0});
- const unit=unitInForce(r,'deflake-1');const median=medianLaneMinutes(r.ctx.runDir,r.journal.view,planOf(r),unit.deflake.keys,LANE_DEADLINE_MS);assert.ok(median!==null&&median>0);
+ const unit=unitInForce(r,'deflake-1');const median=medianLaneMinutes(r.ctx.runDir,r.journal.view,planOf(r),unit.deflake!.keys,LANE_DEADLINE_MS);assert.ok(median!==null&&median>0);
  const {w}=deflakeContext(r);await applyPlanEdit(r,w,()=>{const path=join(d.planPath,'..','deflake-1.json');const spec=JSON.parse(readFileSync(path,'utf8'));writeFileSync(path,JSON.stringify({...spec,design:DEFLAKE_DESIGN}));});
  appendSteps(d,of('deflake-1',[deflakeBuild({'flaky/note.txt':'deterministic now\n'}),gateStep({decision:'approve'})]));
  assert.deepEqual(await run(r,'deflake-1'),{kind:'merged'});assert.deepEqual(outcomes(d,'deflake-1'),STRAIGHT);

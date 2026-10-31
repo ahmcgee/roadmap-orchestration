@@ -1,3 +1,4 @@
+import { claudeBuilderRouting } from './routing/eligibility.ts';
 import { type Certification,type WorkRun,certification,workRuns } from './status-work.ts';
 // `roadmap status`: DESIGN-1.0.md §2.4, as one agent-facing JSON object (M2's view plus M3's holistic keys).
 //
@@ -149,7 +150,7 @@ import { EVENTS_FILE,type LogSnapshot,readJournal } from './core/log.ts';
 import { checkpointSkipTriggerOf,gateLargeDiffOf } from './core/projections.ts';
 import { type CommandBody,type ContainmentMode,type KnownDefectMatch,type NeedsUserReason,type Receipt,type RunStart,type Stage,heartbeat,runStart,} from './core/records.ts';
 import type { HolisticFold,Lineage,ResourceEntry,UnitState } from './core/state.ts';
-import { type AbsPath,type IsoTime,type RepoPattern,absPath,branchRef,isoTimeOf } from './core/values.ts';
+import { type AbsPath, type IsoTime, absPath, branchRef, isoTimeOf } from './core/values.ts';
 import type { CorpusPin } from './corpus/types.ts';
 import type { BankReason,DebtItem,DebtLedger } from './debt/types.ts';
 import { type DemoStatus,demoStatus } from './demo/promote.ts';
@@ -191,7 +192,7 @@ import {
 type ResolvedRouting,type SeatSources,arcScopeOf,provenanceStack,resolveRouting,
 } from './routing/layers.ts';
 import {
-type Backend,type ClassSource,type ClassTable,type ModelClass,type ProfileName,type RiskTier,
+ROLES,type Backend,type ClassSource,type ClassTable,type ModelClass,type ProfileName,type RiskTier,
 type RoutingTable,
 type SeatRef,
 } from './routing/types.ts';
@@ -328,8 +329,8 @@ type UnitCore = Omit<UnitStatusLine, 'failures' | 'gate' | 'certification' | 'wo
 export type RoutingView = Readonly<{
   profile: ProfileName;
   rev: RoutingRev;
-  seats: ClassTable;
-  sources: SeatSources;
+  seats: Pick<ClassTable,(typeof ROLES)[number]>;
+  sources: Pick<SeatSources,(typeof ROLES)[number]>;
   bindings: { readonly [C in ModelClass]: ClassSource };
 }>;
 
@@ -718,6 +719,10 @@ function routingTables(runDir: AbsPath, events: readonly Event[]): ReadonlyMap<R
       const stack = provenanceStack(provenance, scope, unit, hasMilestones(kept));
       const r = resolveRouting(stack);
       out.set(r.rev, r);
+      const fallback = claudeBuilderRouting(r);
+      out.set(fallback.rev, fallback);
+      const high = claudeBuilderRouting(r, ['high']);
+      out.set(high.rev, high);
       for (const rev of r.earlierBuiltinRevs) aliases.set(rev, r);
     }
   }
@@ -726,7 +731,7 @@ function routingTables(runDir: AbsPath, events: readonly Event[]): ReadonlyMap<R
 }
 
 function routingView(profile: ProfileName, r: ResolvedRouting): RoutingView {
-  return { profile, rev: r.rev, seats: r.classes, sources: r.sources, bindings: r.bindings };
+  return {profile,rev:r.rev,seats:Object.fromEntries(ROLES.map(role=>[role,r.classes[role]])) as RoutingView['seats'],sources:Object.fromEntries(ROLES.map(role=>[role,r.sources[role]])) as RoutingView['sources'],bindings:r.bindings};
 }
 
 // ---------------------------------------------------------------------------------------------------

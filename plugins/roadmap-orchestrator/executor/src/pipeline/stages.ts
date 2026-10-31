@@ -1,3 +1,4 @@
+import { captureUnderFence } from '../core/fence.ts';
 import { raiseNeedsUser, raisedWithReason } from '../needsuser.ts';
 import { methodContext, runReview, diagnosisDue, diagnosed } from './surface.ts';
 import { systemsMapInForce } from '../input/systems.ts';
@@ -784,11 +785,12 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
   const parent = at(start(ctx, unit.id, 'plan-check'), 'plan-check');
   const pin = pinDispatch(ctx, unit, {rev: spec.rev, sha256});
   if (pin.kind !== 'pinned') throw new Error('dispatch failed to re-pin');
+  await captureUnderFence(ctx.journal, () => writeJudgmentInputs(ctx,parent,{tip:integrationTip(ctx),head:null,specRev:spec.rev,specSha256:sha256,routingRev:pin.dispatch.routingRev}));
   const entered = await enterJudgment(ctx, parent);
   if (isCancelled(entered)) return entered;
   await runReview(ctx, unit, parent, 'pre-build');
   await releaseJudgment(ctx, parent);
-  return {...record(ctx, parent, 'approve'), session: null, specRev: spec.rev};
+  return {...record(ctx, parent, cancelledNow(ctx) === null ? 'approve' : 'interrupted'), session: null, specRev: spec.rev};
 }
 
 /**
@@ -1179,6 +1181,8 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
     if (isCancelled(entered)) return entered;
     await runReview(ctx, unit, reviewParent, 'diagnosis');
     await releaseJudgment(ctx, reviewParent);
+    const cancelled = cancelledNow(ctx);
+    if (cancelled !== null) { record(ctx, reviewParent, 'interrupted'); return cancelled; }
     record(ctx, reviewParent, 'approve');
   }
   const parent = at(start(ctx, unit.id, 'build'), 'build');

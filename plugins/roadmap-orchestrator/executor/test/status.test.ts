@@ -153,7 +153,7 @@ describe('status.subset', () => {
     assert.deepEqual(s.host.pools['@cpu']?.used, 0, 'every token released');
     assert.deepEqual(s.needsUser, []);
     assert.deepEqual(s.commands, { pending: [], receipts: [] });
-    assert.deepEqual(s.spend.byRole.map((t) => [t.role, t.calls]), [['build', 1], ['gate', 1], ['planCheck', 1]], 'the unit\'s own calls only');
+    assert.deepEqual(s.spend.byRole.map((t) => [t.role, t.calls]), [['build', 1], ['verifier', 2]], 'the unit\'s own calls only');
     assert.deepEqual(s.spend.bySmoke.map((t) => [t.backend, t.calls]), [['claude', 1], ['codex', 1]], 'each start-up smoke apart, by backend');
     assert.deepEqual(s.spend.byModel.unresolvedRevs, []);
     // The one permitted derivation: models named by looking seats up in the routing table at render time.
@@ -165,10 +165,10 @@ describe('status.subset', () => {
     assert.equal(s.rejection, null);
     // The routing view: classes per seat, the layer that chose each and where each class is bound; no model.
     assert.equal(s.routing?.profile, 'default');
-    assert.deepEqual(s.routing?.seats.gate, { low: 'frontier', med: 'frontier', high: 'frontier', escalation: 'summit' });
-    assert.deepEqual(s.routing?.seats.planCheck, { low: 'frontier', med: 'frontier', high: 'frontier', escalation: 'summit' });
-    assert.deepEqual(s.routing?.seats.build, { low: 'efficient', med: 'efficient', high: 'efficient' });
-    assert.equal(s.routing?.sources.planCheck.escalation, 'builtin');
+    assert.deepEqual(s.routing?.seats.verifier,{low:'frontier',med:'frontier',high:'frontier',escalation:'frontier'});
+    assert.ok(s.routing!==null&&!Object.hasOwn(s.routing.seats,'planCheck'),'the retired seat is absent');
+    assert.deepEqual(s.routing?.seats.build, {low:'efficient',med:'efficient',high:'frontier'});
+    assert.equal(s.routing?.sources.verifier.escalation, 'builtin');
     assert.deepEqual(s.routing?.bindings, { efficient: 'builtin', frontier: 'builtin', summit: 'builtin', economy: 'builtin' });
     for (const m of MODEL_IDS) assert.doesNotMatch(JSON.stringify(s.routing), new RegExp(m.replace('.', '\\.')));
     // M3: an arc without the holistic layer has vacuous holistic keys and completes as in M2; like every arc it records
@@ -250,7 +250,7 @@ test('status.sup-items-and-arc-wide-state: file-only sup-/host- items are listed
   const r = setupExec(t, {
     units: [{ id: 'u1' }, { id: 'u2' }],
     steps: [
-      ...SMOKE_DEFAULT, ...of('u1', [planCheckStep({ decision: 'escalate' }), planCheckStep({ decision: 'escalate' })]),
+      ...SMOKE_DEFAULT, ...of('u1', [planCheckStep({decision:'approve'}),mulBuild(),gateStep({decision:'escalate'}),gateStep({decision:'escalate'})]),
       ...of('u2', [{ ...check, acts: [{ type: 'barrier', name: 'u2check', timeoutMs: 120_000 }, ...check.acts] } as Step, mulBuild(), gateStep({ decision: 'approve' })]),
     ],
   });

@@ -199,7 +199,7 @@ describe('fix units and the polish loop (dev.13 agent D)', () => {
       assert.deepEqual(r.journal.view.openIntents(), []);
       assert.equal(/compare-[0-9]+\./.test(git(d.repo, 'worktree', 'list', '--porcelain')), false, 'no compare checkout left');
       assert.deepEqual(readCalls(d.scenarioPath).filter((c) => c.step === null), [], 'every backend call matched its step');
-      assert.equal(readCalls(d.scenarioPath).filter((c) => c.unit === 'tw-noref' && c.step !== null).length, 3, 'tw-noref: plan-check, build, gate; no judge');
+      assert.equal(readCalls(d.scenarioPath).filter((c) => c.unit === 'tw-noref' && c.step !== null).length, 2, 'tw-noref: build and gate; no compare judge');
     } finally {
       r.journal.close();
     }

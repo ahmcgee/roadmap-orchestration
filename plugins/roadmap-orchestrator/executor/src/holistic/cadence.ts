@@ -1,3 +1,4 @@
+import { isActive } from './findings.ts';
 import { lensCoverage } from './coverage.ts';
 import { milestoneReached } from '../walk/milestones.ts';
 // Audit cadence (M3 step B5; DESIGN-1.0.md §2.5 "Triggers", "Owed"; D3, R8, R15, H3, H9, OR-Q2): which triggers are
@@ -263,7 +264,7 @@ export function cadence(ctx: StageContext, _clock: Clock): Cadence | null {
   const milestone = (ctx.plan().milestones ?? []).find((m) => milestoneReached(view, m) && !audited.has(m.id));
   const latest = fold.audits.at(-1);
   const requested = fold.auditRequests.find((q) => q.seq > (lastCompleted(fold.audits)?.started.seq ?? 0));
-  const final = !workRemains(ctx) && (!fold.audits.some((a) => a.ended?.outcome === 'completed' && a.started.visionSha256 === base.visionSha256) || lensCoverage(fold, base, 'invariants').watermark !== head);
+  const final = !workRemains(ctx) && !fold.findings.some(f => f.severity === 'P1' && isActive(f)) && (!fold.audits.some((a) => a.ended?.outcome === 'completed' && a.started.visionSha256 === base.visionSha256) || lensCoverage(fold, base, 'invariants').watermark !== head);
   const owed: AuditTrigger[] = milestone !== undefined ? [{type: 'milestone', milestone: milestone.id}] : requested !== undefined ? [{type: 'requested', command: requested.command}] : final ? [{type: 'final'}] : [];
   const retryReady = latest?.ended?.outcome !== 'abandoned' || (requested?.seq ?? 0) > latest.started.seq || _clock(latest.started.seq) >= 360;
   const due = owed.length > 0 && retryReady && !fold.audits.some((a) => a.ended === null);

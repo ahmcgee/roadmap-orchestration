@@ -40,7 +40,7 @@ import { type ArcRun, applyBody, contextFor, gateStep, mulBuild } from './fixtur
 import { reached,release } from './helpers/barrier.ts';
 import { sampleCorpus } from './helpers/corpus.ts';
 import { withForge } from './helpers/corpusarc.ts';
-import { checkpointAnswer, checkpointStep, lensStep } from './helpers/holistic.ts';
+import { lensStep } from './helpers/holistic.ts';
 import { git } from './helpers/repo.ts';
 import { type Step,readCalls } from './helpers/scenario.ts';
 
@@ -232,7 +232,7 @@ describe('a unit merged around the capture (paid M4a run 10)', () => {
 
 describe('an owner commit on the integration branch (dev.13 arc, audit-24)', () => {
   test('history.unpublished-head-resolves: an audit ending on a commit the owner put on the branch places it at its nearest published ancestor', T, async () => {
-    const x = await arc([planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' }), lensStep('audit-2', 'vision'), checkpointStep('ckpt-1', checkpointAnswer({ decision: 'no-op' }))]);
+    const x = await arc([planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' }), lensStep('audit-2', 'invariants')]);
     try {
       assert.deepEqual(await runUnit(x.ctx, unitOf(x.ctx, 'u1'), admitAll), { kind: 'merged' });
       const ref = `refs/heads/${x.ctx.plan().integrationBranch}`;
@@ -242,8 +242,6 @@ describe('an owner commit on the integration branch (dev.13 arc, audit-24)', () 
       await completedAudit(x.r, x.ctx);
       const ended = factsOfKind(x.r, 'audit-ended').find((f) => f.job === 'audit-2');
       assert.ok(ended?.covered.some((c) => c.to === owner), 'audit-2 ends on the owner commit');
-      const out = await run(x);
-      assert.ok(out.kind === 'decided' && out.decision.kind === 'no-op', JSON.stringify(out));
       const history = integrationHistory(x.r.journal.view, x.ctx.repo, owner as Sha);
       assert.equal(history.positions.get(published as Sha), 1, 'u1 is the first published head');
       assert.deepEqual(history.audits.get('audit-2' as never)?.map((r) => r.to), [1], 'the owner commit sits at u1\'s position');

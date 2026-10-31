@@ -72,7 +72,7 @@ test('lanes.fast-suite-own-red: a fast suite lane red on the unit\'s commit and 
   const fresh = readCalls(run.scenario.path)[1];
   assert.ok(fresh !== undefined);
   // The builder is shown the resource-free suite lane it may use for targeted checks, as its exact command; never the identical or the estate one.
-  assert.match(fresh.stdin, /# Suite lanes[\s\S]*- lint \(expects exit 0[^)]*\):\n {2}cd \S+ && sh -c /);
+  assert.match(fresh.stdin, /<suite_lanes>[\s\S]*- lint \(expects exit 0[^)]*\):\n {2}cd \S+ && sh -c /);
   assert.doesNotMatch(fresh.stdin, /- same \(|- e2e \(/);
 
   const red = run.journal.view.unit(U1).decided;

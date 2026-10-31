@@ -164,7 +164,7 @@ export function lensCoverage(fold: HolisticFold, base: CoverageBase, lens: LensK
   let watermark = base.head;
   let reachedAt = base.seq;
   for (;;) {
-    const i = edges.findIndex((e, k) => !used.has(k) && e.from === watermark);
+    const i = edges.findIndex((e, k) => !used.has(k) && (e.from === watermark || e.by === 'audit' && e.from === base.head && e.at > reachedAt));
     if (i === -1) break;
     used.add(i);
     const e = edges[i]!;

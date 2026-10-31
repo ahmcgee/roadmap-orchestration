@@ -17,7 +17,7 @@ import type { IntentRecord } from '../src/core/events.ts';
 import { INTEGRATION_SLOT, arcId, invocationId, opKey, sha, sha256, specRev } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import { needsUserRecord } from '../src/core/records.ts';
-import { absPath, isoTimeOf, repoPattern } from '../src/core/values.ts';
+import { absPath, isoTimeOf } from '../src/core/values.ts';
 import { readNeedsUser } from '../src/needsuser.ts';
 import { invocationDir } from '../src/pipeline/invoke.ts';
 import { type RecoveryReport, recover } from '../src/recover/recover.ts';
@@ -312,9 +312,9 @@ async function adoptThenDrive(d: ArcDescriptor): Promise<void> {
 }
 
 /** The one backend spawn of `role`, its done and its stage attempt's outcome. */
-function soleCall(d: ArcDescriptor, role: 'planCheck' | 'build' | 'gate') {
+function soleCall(d: ArcDescriptor, role: 'build' | 'verifier', stage?: CallStage) {
   const { view, events } = readJournal(absPath(d.runDir), d.arc as never);
-  const spawns = view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'backend' && i.expect.subject.role === role);
+  const spawns = view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'backend' && i.expect.subject.role === role && (stage === undefined || i.parent.type === 'stage' && i.parent.stage === stage));
   assert.equal(spawns.length, 1, `one ${role} invocation`);
   const spawn = spawns[0]!;
   const parent = spawn.parent;
@@ -336,11 +336,11 @@ test('recover.adopted-build-consumed: a build whose executor died mid-call is ad
 });
 
 describe('recover.adopted-judgment-consumed: a judgment whose executor died mid-call is adopted and consumed, never asked again', { concurrency: 2 }, () => {
-  for (const [stage, role] of [['plan-check', 'planCheck'], ['gate', 'gate']] as const) {
+  for (const [stage, role] of [['plan-check', 'verifier'], ['gate', 'verifier']] as const) {
     test(stage, T, async () => {
       const d = await strandedCall(stage as CallStage);
       await adoptThenDrive(d);
-      const { done, outcomesAt, view } = soleCall(d, role);
+      const { done, outcomesAt, view } = soleCall(d, role, stage);
       assert.ok(done?.kind === 'proc.spawn' && done.recoveredBy === 'adopted', JSON.stringify(done));
       assert.deepEqual(outcomesAt, ['approve'], 'the stranded attempt recorded the adopted approval');
       assert.deepEqual(outcomes(d), STRAIGHT);

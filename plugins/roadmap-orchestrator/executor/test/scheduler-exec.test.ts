@@ -72,7 +72,7 @@ test('gate.recovered-recorded-tip (scheduler, two units): u1\'s gate is in fligh
   const u1 = outcomes(r, 'u1');
   const invalid = u1.indexOf('ff:fingerprint-invalid');
   assert.ok(invalid > 0 && u1.slice(invalid + 1).includes('gate:approve') && u1.at(-2) === 'ff:published', u1.join(' '));
-  const gates = journalOf(r).view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'backend' && i.expect.subject.unit === U1 && i.expect.subject.role === 'gate');
+  const gates = journalOf(r).view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'backend' && i.expect.subject.unit === U1 && i.expect.subject.role === 'verifier' && i.parent.type==='stage' && i.parent.stage==='gate');
   assert.equal(gates.length, 2, 'the crashed gate call was consumed, never re-dispatched');
   assert.deepEqual(outcomes(r, 'u2').at(-1), 'snapshot:published');
   assert.ok(facts(r).some((f) => (f.kind === 'stage-outcome' && 'unit' in f) && f.unit === U2 && f.stage === 'ff' && f.outcome === 'published'));

@@ -106,6 +106,7 @@ export async function runReview(ctx: StageContext, unit: PlanUnit, parent: Stage
   };
   let judged = judge(called);
   if (judged.kind === 'refused') { const turn = repairTurnOf(ctx.runDir, called.inv); if (turn !== null) { called = await call({reasons: judged.reasons, turn}); judged = judge(called); } }
+  if (ctx.signal.aborted) { await removeJudgmentCheckouts(ctx, unit.id, parent); return; }
   const items = judged.kind === 'answered' ? judged.out.findings.map((f, n) => ({id: `${called.inv}:${n}`, text: f.text, evidence: [...f.evidence, ...f.experiments.map((e) => `${e.command}: ${e.output}`), ...(f.path === null ? [] : [f.path])]})) : [];
   const note = mode === 'diagnosis' || judged.kind !== 'answered' ? keepInput(ctx.runDir, Buffer.from(judged.kind === 'answered' ? [...judged.out.reasons, ...items.map((f) => `${f.text} (${f.evidence.join('; ')})`)].join('\n') : 'Independent review returned no usable answer; inspect prior build and lane evidence.'), BRIEF_INPUT) : null;
   await removeJudgmentCheckouts(ctx, unit.id, parent);

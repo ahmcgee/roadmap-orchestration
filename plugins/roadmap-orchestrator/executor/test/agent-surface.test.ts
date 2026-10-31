@@ -1,3 +1,6 @@
+import { lensCoverage } from '../src/holistic/coverage.ts';
+import { sha, sha256 } from '../src/core/ids.ts';
+import { claudeBuilderRouting } from '../src/routing/eligibility.ts';
 import { runAudit } from '../src/holistic/audit.ts';
 import { cadence } from '../src/holistic/cadence.ts';
 import { runWalk } from '../src/walk/walk.ts';
@@ -155,6 +158,8 @@ test('surface.M2: a delivered candidate witness triggers review and Claude; revi
     assert.equal(buildTriple(r.ctx, unitId('u1'), 'med').backend, 'claude');
     await planCheck(r.ctx, r.unit('u1'));
     assert.ok(r.journal.view.surfaceFacts().some((f) => f.kind === 'review-triggered' && f.marker === 'M2'));
+    assert.equal(r.journal.view.dispatchOf(unitId('u1'))!.routingRev, claudeBuilderRouting(r.ctx.routing(unitId('u1'))).rev);
+    assert.notEqual(r.journal.view.dispatchOf(unitId('u1'))!.routingRev, r.ctx.routing(unitId('u1')).rev, 'the fallback records its actual routing table');
     const never = {...r.unit('u1'), review: 'never' as const};
     assert.deepEqual(markers(r.ctx, never, loadUnitSpec(r.ctx, never).spec), []);
     assert.equal(proofNotLocal(r.ctx, never), true, 'the builder exclusion remains mechanical');
@@ -262,4 +267,12 @@ test('surface.review-usage-limit: annotation never parks the unit and still park
     assert.equal(r.journal.view.needsUser().map((n) => readNeedsUser(r.ctx.runDir, n.id)).filter((n) => n?.reason === 'usage-limit').length, 1);
     assert.ok(r.journal.view.surfaceFacts().some((f) => f.kind === 'review-completed' && f.note !== null));
   } finally {r.journal.close();}
+});
+
+test('surface.whole-range: later campaign coverage advances from the same baseline without repeating final audits', () => {
+  const base={seq:1,head:sha('a'.repeat(40)),visionSha256:sha256('d'.repeat(64))};
+  const audit=(n:number,to:string)=>({started:{job:`audit-${n}`,seq:n*10,visionSha256:base.visionSha256},ended:{seq:n*10+5,covered:[{lens:'invariants',from:base.head,to:sha(to.repeat(40))}]}});
+  const fold={audits:[audit(1,'b'),audit(2,'c')],docsCovered:[]} as unknown as import('../src/core/state.ts').HolisticFold;
+  assert.equal(lensCoverage(fold,base,'invariants').watermark,sha('c'.repeat(40)));
+  assert.equal(lensCoverage(fold,base,'invariants',20).watermark,sha('b'.repeat(40)));
 });

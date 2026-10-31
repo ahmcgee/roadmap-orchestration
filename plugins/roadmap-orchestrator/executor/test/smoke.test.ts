@@ -41,7 +41,7 @@ function smokeIntents(events: readonly Event[]): readonly Event[] {
 
 const claudeStep = (acts: Extract<Step, { as: 'claude' }>['acts']): Step => ({
   as: 'claude',
-  expect: { argv: ['-p', '--json-schema', '--system-prompt'], argvLacks: ['--resume'], stdinContains: ['{"ok": true}'] },
+  expect: { argv: ['-p', '--json-schema', '--append-system-prompt'], argvLacks: ['--resume'], stdinContains: ['{"ok": true}'] },
   acts,
 });
 
@@ -60,7 +60,7 @@ describe('smoke', () => {
     const intents = smokeIntents(events);
     assert.equal(intents.length, 2);
     const targets = intents.map((e) => (e.type === 'intent' && e.kind === 'proc.spawn' && e.expect.subject.purpose === 'smoke' ? e.expect.subject.target : null));
-    assert.deepEqual(targets.map((t) => t !== null && t.type === 'backend' ? [t.backend, t.role] : null), [['claude', 'planCheck'], ['codex', 'build']]);
+    assert.deepEqual(targets.map((t) => t !== null && t.type === 'backend' ? [t.backend, t.role] : null), [['claude', 'build'], ['codex', 'build']]);
     const done = events.filter((e) => e.type === 'done' && e.kind === 'proc.spawn');
     assert.deepEqual(done.map((e) => e.type === 'done' && e.outcome.kind === 'result' ? e.outcome.summary : null), [
       { type: 'backend', outcome: 'success' }, { type: 'backend', outcome: 'success' },

@@ -232,7 +232,7 @@ test('log scrolling freezes viewport, counts new bytes, resumes following; detai
 test('estate relationships and filters use recorded references, with reverse navigation', () => {
   const entries = connect([entry('V-1', { id: 'V-1' }), entry('I-1', { serves: ['V-1'], deliveredBy: ['unit'] }), entry('unit', { obligations: ['I-1'] }), entry('inactive', {}, 'withdrawn')]);
   assert.deepEqual(entries[0]!.links, ['I-1']); assert.ok(entries[2]!.links.includes('I-1'));
-  assert.ok(matches({ ...entries[2]!, role: 'verifier', unit: 'unit' } as Entry, 'unit:unit role:gate status:active'));
+  assert.ok(matches({ ...entries[2]!, role: 'verifier', unit: 'unit' } as Entry, 'unit:unit role:verifier status:active'));
   const ui = new ViewState(); ui.accept({ ...observed(), estate: entries }); ui.view = 2;
   assert.equal(ui.rows().length, 3); ui.key('', 'w', 10); assert.equal(ui.rows().length, 4);
   ui.selected.set('2:0', 'V-1'); ui.open(); ui.key('tab', '', 10); ui.open(); assert.equal(ui.detail!.id, 'I-1');
@@ -613,7 +613,7 @@ test('unit navigation names status, specification, plan and input destinations, 
   const related = ui.related();
   assert.deepEqual(related.slice(0, 4).map((row) => row.label), ['Unit specification: root', 'Implementation plan: root (unavailable)', 'Arc execution plan', 'Recorded arc intent']);
   assert.ok(related.some((row) => row.label.startsWith('Contract:')));
-  assert.ok(related.some((row) => row.label === 'Plan-check input · attempt 2'));
+  assert.ok(related.some((row) => row.label === 'Verifier input · attempt 2'));
   assert.match(ui.render(80, 24, false).join('\n'), /Open: Unit specification: root/);
   ui.open(); assert.equal(ui.detail!.kind, 'specification'); assert.equal(ui.pane, 0);
   ui.key('escape', '', 7); assert.equal(ui.detail!.kind, 'unit-status'); assert.equal(ui.pane, 1); assert.equal(ui.linkIndex, 0);
@@ -666,7 +666,7 @@ test('repair input is distinguished from the original prompt and linked only thr
   assert.equal(originalInput({ ...repair, session: '' }, d), null);
   assert.equal(originalInput(repair, { ...d, invocations: [repair, unrelated] }), null);
   const ui = new ViewState(); ui.accept(d); ui.open(); ui.key('right', '', 7);
-  assert.equal(ui.related().find((r) => r.label === 'Plan-check input · attempt 1')!.id, 'input:initial');
+  assert.equal(ui.related().find((r) => r.label === 'Verifier input · attempt 1')!.id, 'input:initial');
   assert.match(ui.related().find((r) => r.id === 'input:repair')!.label, /repair prompt/);
   ui.linkIndex = ui.related().findIndex((r) => r.id === 'input:repair'); ui.open();
   ui.acceptLog({ key: 'repair', start: 0, end: 30, size: 30, lines: ['Your answer was refused: return a corrected answer.'], error: null }, 7);

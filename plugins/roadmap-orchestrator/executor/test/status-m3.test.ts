@@ -249,33 +249,29 @@ describe('status M3', () => {
       r.journal.fact({ kind: 'docs-covered', pub: jobId('docs', 1), from: t1, to: t2 } as unknown as Fact);
 
       s = statusOf(r);
-      assert.deepEqual(s.audit?.lenses, ['invariants', 'vision']);
+      assert.deepEqual(s.audit?.lenses, ['invariants']);
       assert.deepEqual(s.audit?.coverage, [
         { lens: 'invariants', coveredTo: t2, outstanding: false, pendingDocs: [] },
-        { lens: 'vision', coveredTo: t0, outstanding: true, pendingDocs: [{ pub: 'docs-1', from: t1, to: t2 }] },
       ]);
-      assert.deepEqual(s.audit?.uncovered, [{ lens: 'vision', from: t0, to: t2 }]);
+      assert.deepEqual(s.audit?.uncovered, []);
       assert.deepEqual([s.audit?.generation, s.audit?.running, s.audit?.checkpointLaneMinutes], [1, null, 0]);
       assert.deepEqual(s.findings.active, [{ id: 'F-1', lens: 'invariants', severity: 'P1', state: 'open', owner: null, obligation: 'I-1', claim: 'I-1 is broken' }]);
       assert.deepEqual(s.findings.metrics, [{ id: 'F-1', lens: 'invariants', severity: 'P1', gateHadPassed: true, disposition: null, merged: false, timeToResolveMs: null }]);
 
       // A checkpoint of generation 1 runs a lane; an audit-owed item is raised: the completion predicate (the scheduler's
       // `completionBlockers`) names every gap, the running checkpoint among them.
-      checkpointInputs(r, 1, 1);
-      journeySpawn(r, 'ckpt-1', lanesOf(r).get('journey')!, t2);
       const owed = item(r, 'audit-owed', false);
       await sleep(30);
       s = statusOf(r);
-      assert.ok((s.audit?.checkpointLaneMinutes ?? 0) > 0, 'a running checkpoint lane counts to now');
+      assert.equal(s.audit?.checkpointLaneMinutes,0,'the campaign audit has no checkpoint lane');
       assert.deepEqual(s.owed, { audits: [owed] });
       assert.deepEqual(s.completion.unmet, [
-        'units-open', 'baseline-owed', 'coverage-outstanding', 'checkpoint-pending', 'generation-not-quiescent', 'close-out', 'obligations-not-discharged',
+        'units-open', 'baseline-owed', 'close-out', 'obligations-not-discharged',
       ]);
-      r.journal.fact({ kind: 'bundle-decided', job: jobId('ckpt', 1), outcome: { kind: 'no-op' } } as unknown as Fact);
       ack(r, owed);
       s = statusOf(r);
       assert.deepEqual(s.owed, { audits: [] });
-      assert.deepEqual(s.completion.unmet, ['units-open', 'baseline-owed', 'coverage-outstanding', 'close-out', 'obligations-not-discharged'], 'a no-op checkpoint makes generation 1 quiescent');
+      assert.deepEqual(s.completion.unmet, ['units-open', 'baseline-owed', 'close-out', 'obligations-not-discharged'], 'a no-op checkpoint makes generation 1 quiescent');
       assert.equal(s.run.state, 'no-owner', 'a holistic arc is complete only through arc-completed');
       noModelIds(s);
     } finally {

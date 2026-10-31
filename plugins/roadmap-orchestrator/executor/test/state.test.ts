@@ -35,7 +35,7 @@ describe('fold derives', () => {
   it('open intents, units, meter, needs-user, snapshot high-water, last seq', () => {
     const state = fold(ARC, chain([
       spawnIntent(1, { stage: 'plan-check', role: 'verifier' }), // 1
-      meter(inv1(1), 'planCheck', 100, 10, 5), // 2
+      meter(inv1(1), 'verifier', 100, 10, 5), // 2
       spawnResult(op(1)), // 3
       spawnIntent(4), // 4 build attempt 1
       { type: 'fact', fact: { kind: 'usage-unavailable', inv: inv1(4), routingRev: REV, subject: { type: 'seat', role: 'build', tier: 'med', unit: U1, attempt: 1 }, reason: 'no-result' } }, // 5

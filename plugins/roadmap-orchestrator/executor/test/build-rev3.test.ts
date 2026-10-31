@@ -133,7 +133,7 @@ describe('I3: the build answer schema', () => {
       const schema = schemaOf(build!) as unknown as JsonSchema;
       assert.equal(Object.hasOwn(schema.properties, 'lanesRun'), false);
       assert.equal(schema.required?.includes('lanesRun'), false);
-      assert.deepEqual(Object.keys(schema.properties).sort(), ['blockers', 'changedPaths', 'docsOnlySince', 'experiments', 'final', 'summary']);
+      assert.deepEqual(Object.keys(schema.properties).sort(), ['blockers', 'experiments', 'final', 'grounding', 'notes', 'summary', 'tooBig']);
       const experiments = schema.properties['experiments']!;
       assert.deepEqual(Object.keys(experiments.items.properties).sort(), ['argv', 'exit', 'name']);
       assert.ok(schema.required?.includes('experiments'), 'experiments is required');
