@@ -150,7 +150,7 @@ test('fault.slot-crashes: a throw while the unit\'s publication holds the integr
   }
 });
 
-test('fault.job: a throw inside the baseline job ends it faulted (a non-blocking item, its own state settled, the executor still running); it is due again only once the item is acknowledged', T, async () => {
+test('fault.job: a throw inside the baseline job ends it faulted (a non-blocking item, its own state settled, the executor still running); it is due again only once a subject action closes the item', T, async () => {
   const marker = armedMarker();
   const { d } = holisticArc({
     steps: of('u1', [{ ...planCheckStep({ decision: 'approve' }), acts: [{ type: 'barrier', name: 'u1check', timeoutMs: 120_000 }] } as Step]),
@@ -168,8 +168,8 @@ test('fault.job: a throw inside the baseline job ends it faulted (a non-blocking
   });
   const r = contextFor(d);
   const journeys = (): number => r.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'journey').length;
+  const s = startHolistic(r);
   try {
-    const s = startHolistic(r);
     await until(() => jobFaultOpen(r.journal.view, r.ctx.runDir), WAIT_MS, 'the baseline job to fault');
     assert.equal(existsSync(marker), false, 'the journey lane fired');
     const raise = r.journal.view.opsOf('needsuser.raise').find((i) => i.parent.type === 'arc')!;
@@ -183,12 +183,16 @@ test('fault.job: a throw inside the baseline job ends it faulted (a non-blocking
     assert.equal(journeys(), 1, 'the faulted job is not asked again while its item is open');
     assert.notEqual(baselineOwed(s.stage), null, 'the baseline is still owed');
 
-    await receiptOf(r, submit(r, { type: 'ack', needsUser: raise.expect.id, choice: null }));
+    assert.equal((await receiptOf(r, submit(r, { type: 'ack', needsUser: raise.expect.id, choice: null }))).state, 'rejected');
+    assert.equal(jobFaultOpen(r.journal.view, r.ctx.runDir), true, 'a rejected ack releases nothing');
+    assert.equal((await receiptOf(r, submit(r, { type: 'resume', target: {type: 'all'} }))).state, 'applied');
+    assert.equal(r.journal.view.ackOf(raise.expect.id) !== null, true, 'the arc subject action closes the fault item');
     await until(() => baselineOwed(s.stage) === null, WAIT_MS, 'the baseline to run again and hold');
     assert.equal(journeys(), 2);
     await reached(d.scenarioDir, 'u1check', WAIT_MS);
     assert.equal((await stopScheduler(r, s)).kind, 'stop', 'the executor ran on through the fault');
   } finally {
+    await stopScheduler(r, s);
     r.journal.close();
   }
 });
