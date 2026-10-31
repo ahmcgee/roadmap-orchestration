@@ -1,4 +1,4 @@
-import { documentsXml, targetDocument, visionText, obligationsText, boundedDiffText, findingViewsText, specsOnlyText } from '../inputs.ts';
+import { documentsXml, targetDocument, visionText, obligationsText, boundedDiffText, findingViewsText } from '../inputs.ts';
 import type { PromptModule } from '../inputs.ts';
 import { CAMPAIGN_AUDIT_SCHEMA } from '../schemas.ts';
 import { methodModules } from '../method/index.ts';
@@ -16,7 +16,7 @@ Each finding names cause, the root cause as "<affected operation>: <failure cond
 <orientation> is a map of the whole range; it is not a verdict on any file. Every omitted file has the absolute path of a readable .diff file; when a list is abbreviated, it names the file that lists them all. The audit covers the whole campaign range shown or read.
 `,
   schema: CAMPAIGN_AUDIT_SCHEMA,
-  fields: ['method', 'vision', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'target', 'checkout', 'specsOnly'],
+  fields: ['method', 'vision', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'target', 'checkout'],
   render: (i) => `<vision>
 ${visionText(i.vision)}
 </vision>
@@ -33,7 +33,7 @@ ${i.owners.length === 0 ? '(none)' : i.owners.map((o) => `Unit ${o.unit} at ${o.
 <prior_findings>
 ${findingViewsText(i.priorFindings)}
 </prior_findings>
-<checkout>${i.checkout}</checkout>${specsOnlyText(i.specsOnly)}
+<checkout>${i.checkout}</checkout>
 ${methodModules('audit', i.method)}
 Audit the whole campaign range and return findings and root requests.`,
 };

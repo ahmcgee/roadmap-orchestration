@@ -24,7 +24,7 @@ export function surfaceInput(role: SurfaceRole, cell: (typeof DEV)[number], dir:
   const from = sha('a'.repeat(40)), to = sha('b'.repeat(40));
   return {target, vision: {rev: 1, clauses: [], questions: [], advances: []}, obligations: [], method, range: {audited: to, diff: {
     from, to, dir: absPath(dir), orientation: {stat: {text: 'fixture', full: true}, moves: {shown: [], more: 0}, deletions: {shown: [], more: 0, labelled: false}, packages: {shown: [], more: 0}, substitutions: [], explained: 0}, inlined: [], text: `src/unit.js:\n${cell.code}\ntest/unit.test.js:\n${cell.tests}`, omitted: {shown: [], more: 0}, notInlined: [], overflow: 0,
-  }}, owners: [], priorFindings: [], contracts: [], checkout: absPath(dir), specsOnly: null};
+  }}, owners: [], priorFindings: [], contracts: [], checkout: absPath(dir)};
 }
 export function referenceAnswer(role: SurfaceRole, defect: boolean): unknown {
   if (role === 'campaignAudit') return {...lensAnswer(defect ? [{severity: 'P3', claim: 'The implementation violates CONTRACT.md', evidence: [{path: 'src/unit.js', line: 1}]}] : []) as object, requests: []};

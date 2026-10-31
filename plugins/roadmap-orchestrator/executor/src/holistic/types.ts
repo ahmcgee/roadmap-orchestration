@@ -771,10 +771,8 @@ export type AuditTrigger =
   | Readonly<{ type: 'unwitnessed'; obligation: ObligationId }>
   /**
    * A revision from a rule, a bundle, `reverse`, or an architect spec, obligation or vision edit: `L ∩ {drift, vision}`.
-   * `specsOnly` (M4a rev 3, H2, R61): a bundle revision changing only these units and their specs, which runs the vision
-   * lens alone over the spec deltas (non-empty, ascending); absent: a full drift (lasting).
    */
-  | Readonly<{ type: 'drift'; planRev: number; specsOnly?: readonly UnitId[] }>
+  | Readonly<{ type: 'drift'; planRev: number }>
   | Readonly<{ type: 'wall-clock' }>
   | Readonly<{ type: 'requested'; command: string }>
   /** H9: at the final head, every lens in L with an outstanding range. */
@@ -784,10 +782,7 @@ export const auditTrigger: Read<AuditTrigger> = tagged('type', {
   milestone: object((f): AuditTrigger => ({type: f.get('type', literal('milestone')), milestone: f.get('milestone', (v, p) => milestoneId(v, p))})),
   cadence: object((f): AuditTrigger => ({ type: f.get('type', literal('cadence')) })),
   unwitnessed: object((f): AuditTrigger => ({ type: f.get('type', literal('unwitnessed')), obligation: f.get('obligation', oid) })),
-  drift: object((f): AuditTrigger => {
-    const specsOnly = f.optional('specsOnly', sortedBy((v, p) => unitId(v, p), (u) => u, { nonEmpty: true }));
-    return { type: f.get('type', literal('drift')), planRev: f.get('planRev', positive), ...(specsOnly === undefined ? {} : { specsOnly }) };
-  }),
+  drift: object((f): AuditTrigger => ({type: f.get('type', literal('drift')), planRev: f.get('planRev', positive)})),
   'wall-clock': object((f): AuditTrigger => ({ type: f.get('type', literal('wall-clock')) })),
   requested: object((f): AuditTrigger => ({ type: f.get('type', literal('requested')), command: f.get('command', (v, p) => { const s = str(v, p); if (!/^cmd-[0-9a-f]{16}$/.test(s)) throw new SchemaError(p, 'a command id', v); return s; }) })),
   final: object((f): AuditTrigger => ({ type: f.get('type', literal('final')) })),

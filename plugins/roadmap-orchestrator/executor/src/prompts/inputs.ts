@@ -390,11 +390,7 @@ export type LensInputs = Readonly<{
   target: TargetInput;
   /** The audit's detached worktree at the audited SHA, the lens's cwd. */
   checkout: AbsPath;
-  /**
-   * M4a rev 3 (H2, R61): a specs-only drift's changed specs, each rendered in full at the audited plan rev (the lens
-   * judges these against the vision; the code range is not its subject); null: a full audit.
-   */
-  specsOnly: readonly RenderedSpec[] | null;
+
 }>;
 
 /**
@@ -554,7 +550,7 @@ export type RoleInputs = {
 
 export const ROLE_INPUTS = {
   experienceVerdict: ['mode', 'brief'],
-  campaignAudit: ['method', 'vision', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'target', 'checkout', 'specsOnly'],
+  campaignAudit: ['method', 'vision', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'target', 'checkout'],
   build: ['systemNotes', 'notes', 'target', 'spec', 'intent', 'nonGoals', 'contracts', 'index', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'systems', 'fixRound', 'witnessChecks', 'milestones', 'browser', 'handover', 'method'],
   packReview: ['vision', 'plan', 'specs', 'obligations', 'rulesIndex', 'phase0', 'delta'],
   flow: ['triggers', 'chart', 'stations', 'constraint', 'accounting', 'levers', 'givens', 'window', 'verdicts', 'rejections', 'advances', 'pressure'],
@@ -796,12 +792,6 @@ export function packReviewDeltaText(delta: PackReviewDelta | null): string {
   const target = (t: PackFinding['target']): string => (t.type === 'plan' ? 'plan' : t.type === 'census' ? `census ${t.rule}` : `${t.type} ${t.id}`);
   const previous = delta.previous.map((p) => `- ${p.job}#${p.finding.index} [${p.finding.severity}] ${target(p.finding.target)}: ${p.finding.claim}`);
   return `\n\n<delta since="${delta.since}">\n<changed>\n${delta.changed.join('\n')}\n</changed>\n<previous_findings>\n${previous.join('\n')}\n</previous_findings>\n</delta>`;
-}
-
-/** A specs-only drift (H2, R61): the changed specs, embedded, with what to judge; nothing for a full audit. */
-export function specsOnlyText(specsOnly: readonly RenderedSpec[] | null): string {
-  if (specsOnly === null) return '';
-  return `\n\n<specs_only>\nThis audit runs because a plan revision changed only these units' specs; the product code is unchanged since the code lenses last read it, and only the vision lens runs. Judge what these specs now ask for against the vision. Do not audit the code again.\n${documentsXml(specsOnly.map((s) => ({ source: `spec of unit ${s.unit}, revision ${s.rev} (changed by the revision this audit follows)`, content: s.markdown })))}\n</specs_only>`;
 }
 
 const KIND_TEXT: { readonly [K in BoundedDiff['inlined'][number]['kind']]: string } = {

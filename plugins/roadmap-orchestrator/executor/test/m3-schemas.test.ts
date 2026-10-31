@@ -234,7 +234,8 @@ describe('M3 event records', () => {
     refusesFact({ ...planApplied, source: { type: 'start' } }, /source/);
     refusesFact({ ...planApplied, source: { type: 'bundle', job: 'audit-1' } }, /source/);
     refusesFact({ ...planApplied, command: null, source: { type: 'command', command: CMD } }, /source/);
-    roundTrip(fact({ ...planApplied, command: null, source: { type: 'bundle', job: 'ckpt-1' } }));
+    roundTrip(fact({ ...planApplied, command: null, source: { type: 'walk', job: 'walk-1' } }));
+    refusesFact({ ...planApplied, command: null, source: { type: 'bundle', job: 'ckpt-1' } }, /source.type/);
     roundTrip(fact({ ...planApplied, command: null, source: { type: 'executor', inv: INV } }));
     const { visionSha256: _vision, ...noVision } = planApplied;
     refusesFact(noVision, /obligationsSha256/);
@@ -242,7 +243,7 @@ describe('M3 event records', () => {
 
   it('the revision payload (G1) holds the manifest, changes, dispositions, divergences, publication plan and provenance', () => {
     const p = {
-      v: 2, source: { type: 'bundle', job: 'ckpt-1' }, base: 4, rev: 5,
+      v: 2, source: { type: 'walk', job: 'walk-1' }, base: 4, rev: 5,
       manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H,  }, obligations: H2, vision: H },
       changes: planApplied.changes as readonly PlanChange[], dispositions: [{ obligation: 'I-2', disposition: 'amended', reason: 'Approved revision', rev: 5 }], divergences: [draft],
       publication: { renders: [{ path: '.roadmap/invariants.md', sha256: H }], contractOps: [] }, routingProvenance: planApplied.routingProvenance,
@@ -385,12 +386,12 @@ describe('M3 file records', () => {
       ...base,
       holistic: { vision: 'vision.json', advances: ['V-1', 'V-4'], obligations: 'obligations.json', audit: { every: 2, lenses: ['invariants', 'vision'], wallClockMin: 120 } },
       limits: { chargeable: 4, convergenceK: 1 },
-      units: [{ ...unit, origin: 'repair', routing: { verifier: { med: 'summit' } }, limits: { redirects: 1 } }, { ...unit, id: 'u2', spec: 'specs/u2.json' }],
+      units: [{ ...unit, origin: 'repair', routing: { verifier: { med: 'summit' } }, limits: { reviseRounds: 1 } }, { ...unit, id: 'u2', spec: 'specs/u2.json' }],
     };
     const plan = parsePlan(m3);
     assert.deepEqual(plan, { ...m3, target: 'architecture-doc' });
     assert.ok(plan.target === 'architecture-doc' && plan.holistic !== undefined);
-    assert.deepEqual(boundsOf(plan, plan.units[0]!), { ...DEFAULT_BOUNDS, chargeable: 4, redirects: 1 });
+    assert.deepEqual(boundsOf(plan, plan.units[0]!), { ...DEFAULT_BOUNDS, chargeable: 4, reviseRounds: 1 });
     assert.deepEqual(boundsOf(plan, plan.units[1]!), { ...DEFAULT_BOUNDS, chargeable: 4 });
     assert.deepEqual(lensSetOf(plan.holistic!), ['invariants']);
     assert.deepEqual(lensSetOf({ advances: plan.holistic.advances }), ['invariants']);
@@ -404,6 +405,7 @@ describe('M3 file records', () => {
     assert.throws(() => parsePlan({ ...base, holistic: { vision: 'v.json', advances: [] } }), /holistic\.advances: expected a non-empty array/);
     assert.throws(() => parsePlan({ ...base, holistic: { vision: 'v.json', advances: ['V-2', 'V-1'] } }), /holistic\.advances\[1\]/);
     assert.throws(() => parsePlan({ ...base, limits: { chargeable: 0 } }), /limits\.chargeable/);
+    assert.throws(() => parsePlan({...base, units: [{...unit, limits: {redirects: 1}}]}), /limits\.redirects/);
     assert.throws(() => parsePlan({ ...base, units: [{ ...unit, limits: { convergenceK: 2 } }] }), /convergenceK/);
     assert.deepEqual(ORIGIN_RANK, { repair: 0, deflake: 0, checkpoint: 1, polish: 2, planned: 3 });
   });

@@ -556,7 +556,7 @@ async function main(): Promise<void> {
       },
       inlined: [{ path: repoPath('convert.ts'), kind: 'new-source', representation: 'line', full: null }], text: MINI_DIFF, omitted: { shown: [], more: 0 }, notInlined: [], overflow: 0,
     } }, owners: [], priorFindings: [],
-    contracts: [], target: MINI_ARCH, checkout: m3Dir, specsOnly: null,
+    contracts: [], target: MINI_ARCH, checkout: m3Dir,
   };
   await backend(ctx, 'm3.campaign-audit', seatCall(holistic, 'campaignAudit', 'arc', 'm3-campaign-audit', m3Dir, lensInputs),
     validates("m3.campaign-audit", "campaignAudit", () => true));

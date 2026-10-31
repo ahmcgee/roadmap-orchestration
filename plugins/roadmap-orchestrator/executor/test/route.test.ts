@@ -188,7 +188,7 @@ test('limits.windows-and-bounds: the plan\'s and the unit\'s limits are pinned a
     const first = r.journal.view.dispatchOf(U1)!;
     assert.deepEqual(first.bounds, boundsOf(ctx.plan(), unitOf(ctx, 'u1')));
     assert.deepEqual(first.bounds, {
-      chargeable: 3, redirects: 2, reviseRounds: 1, candidateReds: 1, retries: 1, judgmentDeadlineMin: 3, freshBuildMin: 2, editAllowanceMin: 5, smokeRounds: 1, smokeRuns: 2, certifications: 1,
+      chargeable: 3, reviseRounds: 1, candidateReds: 1, retries: 1, judgmentDeadlineMin: 3, freshBuildMin: 2, editAllowanceMin: 5, smokeRounds: 1, smokeRuns: 2, certifications: 1,
     }, 'the built-in bounds, the plan\'s limits, then the unit\'s own');
     assert.equal(first.transientRules, 'm3');
 

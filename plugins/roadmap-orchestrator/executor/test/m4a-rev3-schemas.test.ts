@@ -134,16 +134,6 @@ describe('m4a-rev3 checkpoint records', () => {
       source: { type: 'stage', unit: 'u1', stage: 'build', attempt: 1 }, gateHadPassed: false,
     }));
   });
-
-  it('a specs-only drift names its units; absent is a full drift', () => {
-    const started = {
-      kind: 'audit-started', job: 'audit-2', generation: 1, lenses: ['vision'], integrationSha: A, planRev: 3, ledgerSha256: null, obligationsSha256: null,
-      visionSha256: H, owners: [], priorFindings: [], highWater: 9,
-    };
-    roundTrip(fact({ ...started, triggers: [{ type: 'drift', planRev: 3, specsOnly: ['u1', 'u2'] }] }));
-    roundTrip(fact({ ...started, triggers: [{ type: 'drift', planRev: 3 }] }));
-    refuses(fact({ ...started, triggers: [{ type: 'drift', planRev: 3, specsOnly: [] }] }), /specsOnly$/);
-  });
 });
 
 describe('m4a-rev3 facts and outcomes', () => {
@@ -437,4 +427,8 @@ describe('experience verdict: proposed unit specs use the strict full-spec wire 
     assert.throws(() => validateWalkthroughOutput(answer({ ...wire, lanes: [{ ...wire.lanes[0], env: { set: [{ name: 'A', value: '1' }, { name: 'A', value: '2' }], pass: [] } }] })), SchemaError);
   });
 
+});
+
+it('schema 2 refuses the retired specs-only drift payload', () => {
+  refuses(fact({kind: 'audit-started', job: 'audit-2', generation: 1, lenses: ['invariants'], integrationSha: A, planRev: 3, ledgerSha256: null, obligationsSha256: null, visionSha256: H, owners: [], priorFindings: [], highWater: 9, triggers: [{type: 'drift', planRev: 3, specsOnly: ['u1']}]}), /specsOnly$/);
 });

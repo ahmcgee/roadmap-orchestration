@@ -184,7 +184,7 @@ describe('completion (§2.10, A8, A20, G8)', () => {
       assert.deepEqual(await runBaseline(h.audit), { kind: 'held' });
       assert.deepEqual(blockers(), ['units-open', 'close-out'], 'the baseline witnessed every obligation on the head');
       assert.deepEqual(await runUnit(w.stage, r.unit('u1'), admitAll), { kind: 'merged' });
-      assert.deepEqual(blockers(), ['audit-pending', 'coverage-outstanding', 'revision-notice', 'close-out'], 'merged: the final audit is owed');
+      assert.deepEqual(blockers(), ['audit-pending', 'coverage-outstanding', 'audit-owed', 'close-out'], 'merged: the final audit is owed');
       const audited = await runAudit(h.audit);
       assert.ok(audited.kind === 'ended' && audited.outcome === 'completed', JSON.stringify(audited));
       assert.deepEqual(blockers(), ['close-out']);

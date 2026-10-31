@@ -693,7 +693,6 @@ test('audit.range-chunked: a range over the budget is reviewed chunk by chunk in
       const S1 = head(d.repo);
       assert.deepEqual(await runUnit(ctx, r.unit('u2'), admitAll), { kind: 'merged' });
       const S2 = head(d.repo);
-      requestAudit(r);
       const first = await runAudit(ctx);
       assert.ok(first.kind === 'ended' && first.outcome === 'abandoned', JSON.stringify(first));
       assert.equal(started(r)[0]!.diffBudget, LENS_DIFF_BUDGET, 'the budget is a recorded input');

@@ -199,7 +199,7 @@ const SAMPLES: { readonly [R in keyof TestInputs]: readonly [TestInputs[R], Test
     {method: {traits: [], markers: [], unitKind: 'module', expensiveLanes: false, ui: false},
       vision: vision(1, 'VISION-A'),  obligations: [observed('I-1', 'OBLIGATION-A', SHA_A)], range: { audited: SHA_B, diff: shown(SHA_A, SHA_B, 'RANGE-A') },
       owners: [], priorFindings: [], contracts: [doc('docs/api.md', 'CONTRACT-A')],
-      target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, checkout: absPath('/wt/audit-1'), specsOnly: null,
+      target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, checkout: absPath('/wt/audit-1'),
     },
     {method: {traits: ['persistent'], markers: ['M2'], unitKind: 'campaign', expensiveLanes: true, ui: true},
       vision: vision(2, 'VISION-B'),  obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)], range: {
@@ -209,7 +209,6 @@ const SAMPLES: { readonly [R in keyof TestInputs]: readonly [TestInputs[R], Test
       owners: [{ unit: unitId('u-two'), head: SHA_B, diff: shown(SHA_A, SHA_B, 'OWNER-B') }], priorFindings: [findingView('F-1', 'FINDING-B')], contracts: [doc('docs/b.md', 'CONTRACT-B')],
 
       target: { kind: 'digest', digest: doc('docs/digest.md', 'DIGEST-B'), doc: repoPath('docs/arch2.md') }, checkout: absPath('/wt/audit-2'),
-      specsOnly: [{ unit: unitId('u-two'), rev: specRev(4), markdown: 'SPECS-ONLY-B' }],
     },
   ],
   experienceVerdict: [{mode: 'walkthrough', brief: walkSample('A')}, {mode: 'polish', brief: polishSample('B')}],
@@ -291,7 +290,7 @@ const SAMPLES: { readonly [R in keyof TestInputs]: readonly [TestInputs[R], Test
     {
       vision: vision(1, 'VISION-A'), lens: 'invariants', obligations: [observed('I-1', 'OBLIGATION-A', SHA_A)], range: { audited: SHA_B, diff: shown(SHA_A, SHA_B, 'RANGE-A') },
       owners: [], priorFindings: [], contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
-      target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, checkout: absPath('/wt/audit-1'), specsOnly: null,
+      target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, checkout: absPath('/wt/audit-1'),
     },
     {
       vision: vision(2, 'VISION-B'), lens: 'vision', obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)], range: {
@@ -301,7 +300,6 @@ const SAMPLES: { readonly [R in keyof TestInputs]: readonly [TestInputs[R], Test
       owners: [{ unit: unitId('u-two'), head: SHA_B, diff: shown(SHA_A, SHA_B, 'OWNER-B') }], priorFindings: [findingView('F-1', 'FINDING-B')], contracts: [doc('docs/b.md', 'CONTRACT-B')],
       rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
       target: { kind: 'digest', digest: doc('docs/digest.md', 'DIGEST-B'), doc: repoPath('docs/arch2.md') }, checkout: absPath('/wt/audit-2'),
-      specsOnly: [{ unit: unitId('u-two'), rev: specRev(4), markdown: 'SPECS-ONLY-B' }],
     },
   ],
   packReview: [
@@ -961,13 +959,10 @@ describe('M4a rev 3 prompts: executable checks, the checkpoint admits', () => {
     }
   });
 
-  it('prompts.lens-cause-shape: cause as "<affected operation>: <failure condition>", lens-agnostic; a specs-only drift judges the changed specs against the vision', () => {
-    const mod = promptFor('lens', 'claude-opus-5-5');
+  it('prompts.lens-cause-shape: cause as "<affected operation>: <failure condition>", a stable identity for one whole-campaign audit', () => {
+    const mod = promptFor('campaignAudit', 'claude-opus-5-5');
     assert.match(mod.system, /cause, the root cause as "<affected operation>: <failure condition>" in lowercase words/);
-    assert.match(mod.system, /not your lens's angle on it, so that any lens finding this same defect would write the same text/);
-    assert.match(mod.system, /merges findings of one audit that share their evidence paths, obligation and cause/);
-    assert.doesNotMatch(mod.render(SAMPLES.lens[0]), /specs_only/);
-    assert.match(mod.render(SAMPLES.lens[1]), /<specs_only>\nThis audit runs because a plan revision changed only these units' specs[^]*Judge what these specs now ask for against the vision\. Do not audit the code again\.\n<documents>[^]*spec of unit u-two, revision \d+ \(changed by the revision this audit follows\)[^]*<\/specs_only>/);
+    for (const sample of SAMPLES.campaignAudit) assert.doesNotMatch(mod.render(sample), /specs_only/);
   });
 
   it('pack review: spec to rule to census cross-check; deterministic time fixtures, existing tests included; negative witnesses on the real entry point (F07, F12, F19, F20)', () => {

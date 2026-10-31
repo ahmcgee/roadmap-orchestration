@@ -232,7 +232,7 @@ function lensInputs(ctx: StageContext, s: Started, r: Recorded, lens: LensKind, 
     target: architecture(ctx, sha),
     checkout,
     // M4a rev 3 (H2, R61): an audit every trigger of which is a specs-only drift reads those units' specs.
-    specsOnly: null,
+
   };
 }
 
