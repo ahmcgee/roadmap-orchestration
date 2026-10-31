@@ -286,14 +286,10 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     const clearedFlow = factsOf(arc1, 'run-only').find((f) => f.units === null && f.seq > appliedFlow.seq)!;
     const closedRevision = factsOf(arc1, 'needs-user-acked').find((f) => f.id === revisions[0]!.id)!;
     assert.ok(revisions[0]!.seq < clearedFlow.seq && clearedFlow.seq < closedRevision.seq, 'run-only clear closes the flow notice before the scripted root ends its turn');
-    const digests = raisedOf(arc2, 'divergence-digest', story.dir, 2);
-    assert.equal(digests.length, 1, 'the bundle raised one divergence digest');
-    const digest = digests[0]!;
-    const released = factsOf(arc2, 'run-only').find((f) => f.units === null && f.seq > digest.seq);
-    assert.ok(released !== undefined, 'the root cleared run-only after the digest was raised');
-    const digestClosed = factsOf(arc2, 'needs-user-acked').filter((f) => f.id === digest.id);
-    assert.deepEqual(digestClosed.map((f) => [f.command, f.choice]), [[released.command, null]], 'the subject action closed exactly the original digest');
-    assert.ok(digestClosed[0]!.seq > released.seq, 'closure follows the successful subject action');
+    assert.deepEqual(raisedOf(arc2, 'divergence-digest', story.dir, 2), [], 'campaign audits cannot create checkpoint divergence digests');
+    const rootRevision = factsOf(arc2, 'plan-applied').find((f) => f.changes.some((change) => change.type === 'unit-added' && change.unit === 'fits'));
+    assert.ok(rootRevision !== undefined, 'the root admitted fits through apply');
+    assert.ok(factsOf(arc2, 'run-only').some((f) => f.units === null && f.seq > rootRevision.seq), 'the root cleared run-only after its revision applied');
     // The chain boundaries (paid runs 12, 13): arc 1's check-in is one final message, no numbered question (P-1 stays in
     // the brief), a hold for the spend approval, then the action taken on resume (arc 2 starts under K = 1: the bootstrap
     // start counts as acked); arc 2's carries the stop.
@@ -383,7 +379,7 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     assert.deepEqual(payload.chain.k, 1);
     assert.deepEqual(payload.chain.unackedStarts, [fakeArc(story.dir, 2)]);
     const [one, two] = payload.arcs;
-    assert.equal(one!.amendments.length, 2);
+    assert.deepEqual(payload.arcs.map((arc) => arc.amendments), [[], []], 'campaign audits create no checkpoint amendments');
     assert.equal(one!.debt.banked.length, 2);
     assert.equal(two!.debt.dispositioned.length, 2);
     assert.deepEqual(two!.questions.map((q) => [q.id, q.state.type]), [['P-1', 'answered']]);

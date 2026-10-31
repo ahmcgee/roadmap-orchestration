@@ -650,7 +650,7 @@ function superviseArc2(c: Ctx, a: ArcState): string {
   const plan = JSON.parse(readFileSync(join(exported, 'plan.json'), 'utf8'));
   const obligations = JSON.parse(readFileSync(join(exported, 'obligations.json'), 'utf8'));
   const fit = OPPORTUNITY.fits;
-  const spec = {...specOf({id: fit.unit.id, systems: fit.unit.systems, unitLane: fit.unitLane, acceptance: fit.acceptance}), obligations: [FITS_WITNESS.parent, FITS_WITNESS.child.id]};
+  const spec = {...specOf({id: fit.unit.id, systems: fit.unit.systems, unitLane: fit.unitLane, acceptance: fit.acceptance}), obligations: ['I-1', FITS_WITNESS.parent, FITS_WITNESS.child.id]};
   writeFile(join(exported, 'fits.json'), json(spec));
   plan.units.push({...fit.unit, origin: 'planned', review: 'always', spec: 'fits.json', resources: []});
   plan.holistic.advances = [...FITS_WITNESS.cites];
@@ -663,7 +663,6 @@ function superviseArc2(c: Ctx, a: ArcState): string {
     {...parent, id: FITS_WITNESS.restated, parent: parent.id, rev: 1, serves: [...FITS_WITNESS.cites], activation: 'must-hold', deliveredBy: [], proofJudgment: {...parent.proofJudgment, obligationRev: 1}},
     {...parent, id: FITS_WITNESS.child.id, parent: parent.id, rev: 1, serves: [...FITS_WITNESS.cites], statement: FITS_WITNESS.child.statement, rule: {id: draughtRule.id, textSha256: draughtRule.textSha256}, witness, activation: 'future', deliveredBy: ['fits'], proofJudgment: {verdict: 'proves', obligationRev: 1, witness: {testIds: witness.testIds, files: witness.files}}},
   );
-  parent.rev += 1;
   parent.state = {type: 'split', children: [FITS_WITNESS.restated, FITS_WITNESS.child.id]};
   parent.witness = null;
   parent.proofJudgment = null;
@@ -671,6 +670,7 @@ function superviseArc2(c: Ctx, a: ArcState): string {
   writeFile(join(exported, 'plan.json'), json(plan));
   writeFile(join(exported, 'obligations.json'), json(obligations));
   c.t.roadmap(['apply', ...at, '--from', exported, '--rev', String(base.planRev), '--reason', 'The root adds fits with its draught witness and keeps the parent obligation as a split restatement.']);
+  c.t.untilFact(a.arc, 'the root fits revision applied', (facts) => facts.find((f) => f.kind === 'plan-applied' && f.changes.some((change) => change.type === 'unit-added' && change.unit === 'fits')));
   c.t.roadmap(['run-only', '--clear', ...at]);
   const hung = c.t.until(a.arc, `notice running its ${SLOW_LANE.id} lane`, (s) => unitOf(s, 'notice').running?.lane?.id === SLOW_LANE.id);
   c.state.paused = { unit: 'notice', lane: JSON.stringify(unitOf(hung, 'notice').running!.lane) };
