@@ -330,7 +330,7 @@ test('whole-pipeline crash matrix', { concurrency: FANOUT, timeout: 45 * 60_000 
   const started = Date.now();
   const [straight, bumpy, malformed, cancel, staleLane, holistic] = await Promise.all([
     reference(t, 'straight', STRAIGHT, STRAIGHT_OUTCOMES),
-    reference(t, 'bumpy', BUMPY, BUMPY_OUTCOMES),
+    reference(t, 'bumpy', BUMPY, BUMPY_OUTCOMES, { needsUser: ['waste-finding'] }),
     reference(t, 'malformed', MALFORMED, MALFORMED_OUTCOMES),
     reference(t, 'cancel', CANCEL, CANCEL_OUTCOMES),
     reference(t, 'stale', STALE_LANE, STALE_OUTCOMES),

@@ -158,6 +158,8 @@ export function ownerOf(view: JournalView, e: Event): string {
         return ofParent(view.latestIntent(p.op).parent);
       case 'arc':
         return 'arc';
+      case 'waste':
+        return `waste:${p.key}`;
     }
   };
   switch (e.type) {

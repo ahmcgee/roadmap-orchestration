@@ -481,6 +481,7 @@ export type Parent =
   | Readonly<{ type: 'command'; command: CommandId }>
   | Readonly<{ type: 'op'; op: OpId }>
   | Readonly<{ type: 'arc' }>
+  | Readonly<{ type: 'waste'; key: string }>
   /** M3: an op of a durable job (an audit's worktree, a docs publication's commit, a batch's merges). */
   | Readonly<{ type: 'job'; job: JobId }>;
 
@@ -1914,6 +1915,7 @@ const parent: Read<Parent> = tagged('type', {
   command: object((f): Parent => ({ type: f.get('type', literal('command')), command: f.get('command', cmdR) })),
   op: object((f): Parent => ({ type: f.get('type', literal('op')), op: f.get('op', opR) })),
   arc: object((f): Parent => ({ type: f.get('type', literal('arc')) })),
+  waste: object((f): Parent => ({ type: f.get('type', literal('waste')), key: f.get('key', str) })),
   job: object((f): Parent => ({ type: f.get('type', literal('job')), job: f.get('job', jobR) })),
 });
 

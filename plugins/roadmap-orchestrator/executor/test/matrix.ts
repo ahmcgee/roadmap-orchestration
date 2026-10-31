@@ -193,7 +193,7 @@ const PIPELINE_LABELS: Readonly<Record<Boundary, readonly string[]>> = {
 const COMPLETE_LABELS: Readonly<Partial<Record<Boundary, readonly string[]>>> = { B5: ['complete.after-fact', 'lanes.after-reused'] };
 /** The bumpy run adds the merge-in's conflicted path and the red lane's persisted class (M4a rev 3 N1: red.json written, the rerun not begun). */
 const MERGEIN_LABELS: Readonly<Partial<Record<Boundary, readonly string[]>>> = {
-  B2: ['mergein.act-start'], B3: ['mergein.after-merge'], B4: ['mergein.act-end'], B5: ['complete.after-fact', 'redlane.after-class'],
+  B2: ['mergein.act-start', 'needsuser.raise.before-publish'], B3: ['mergein.after-merge'], B4: ['mergein.act-end', 'needsuser.raise.after-publish'], B5: ['complete.after-fact', 'redlane.after-class'],
 };
 
 /**

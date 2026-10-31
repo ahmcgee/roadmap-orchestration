@@ -6,7 +6,7 @@ import { canonicalJson } from '../core/json.ts';
 import type { AbsPath } from '../core/values.ts';
 import { eventsPrefix } from '../git/snapshot.ts';
 import type { PlanM1 } from '../input/plan.ts';
-import { raiseNeedsUser, readNeedsUser } from '../needsuser.ts';
+import { raiseNeedsUser } from '../needsuser.ts';
 
 export type WasteFinding = Readonly<{ key: string; detector: 'grinding' | 'red-on-unit-green-on-base' | 'low-unique-catch' | 'repeated-expensive-suite'; unit: UnitId | null; summary: string }>;
 export type LaneRun = Readonly<{ lane: LaneId; unit: UnitId | null; series: string; at: string; set: 'spec' | 'suite'; minutes: number; verdict: string }>;
@@ -84,12 +84,10 @@ const scanned = new WeakMap<Journal, number>();
 
 export function raiseWasteFindings(ctx: Readonly<{ journal: Journal; runDir: AbsPath; plan: () => PlanM1 }>): void {
   if (scanned.get(ctx.journal) === ctx.journal.view.highWater()) return;
-  const seen = new Set(ctx.journal.view.needsUser().flatMap((n) => {
-    const r = readNeedsUser(ctx.runDir, n.id); return r?.reason === 'waste-finding' ? [r.summary.split(']')[0]!.slice(1)] : [];
-  }));
+  const seen = new Set(ctx.journal.view.opsOf('needsuser.raise').flatMap((i) => i.parent.type === 'waste' && ctx.journal.view.doneOf(i.op) !== null ? [i.parent.key] : []));
   for (const finding of wasteFindings(eventsPrefix(ctx.runDir, ctx.journal.view.highWater()).events, ctx.plan())) {
     if (seen.has(finding.key)) continue;
-    const parent: Parent = { type: 'arc' };
+    const parent: Parent = { type: 'waste', key: finding.key };
     raiseNeedsUser(ctx.journal, ctx.runDir, { reason: 'waste-finding', blocking: false,
       subject: finding.unit === null ? { type: 'arc' } : { type: 'unit', unit: finding.unit }, summary: `[${finding.key}] ${finding.summary}`,
       recommendation: 'Inspect the evidence and adjust the plan if useful. This observation never holds work.', options: [], evidence: [] }, parent);

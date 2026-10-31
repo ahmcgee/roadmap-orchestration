@@ -37,12 +37,13 @@ test('waste repeated expensive suites excludes reuse and cheap spec lanes', () =
   assert.deepEqual(repeatedExpensiveSuites([run({ set: 'spec' }), run({ set: 'spec' }), run({ set: 'spec' })], new Set([laneId('suite')])), []);
 });
 test('waste items are non-blocking and persist only once per detector subject across replay', () => {
-  const d = setupArc({ steps: [] }); const r = contextFor(d);
+  const d = setupArc({ steps: [], units: [{ id: 'u1' }, { id: 'u2' }] }); const r = contextFor(d);
   try {
-    for (let i = 1; i <= 8; i++) r.journal.fact({ kind: 'stage-outcome', unit: unitId('u1'), stage: 'build', attempt: i, outcome: 'success', class: 'advance', chargeable: false });
+    for (const unit of ['u1', 'u2']) for (let i = 1; i <= 8; i++) r.journal.fact({ kind: 'stage-outcome', unit: unitId(unit), stage: 'build', attempt: i, outcome: 'success', class: 'advance', chargeable: false });
     const ctx = { journal: r.journal, runDir: absPath(d.runDir), plan: () => parsePlan(JSON.parse(readFileSync(d.planPath, 'utf8'))) };
     raiseWasteFindings(ctx); raiseWasteFindings(ctx);
     const items = r.journal.view.needsUser().map((n) => readNeedsUser(ctx.runDir, n.id)).filter((n) => n?.reason === 'waste-finding');
-    assert.equal(items.length, 1); assert.equal(items[0]?.blocking, false); assert.equal(r.journal.view.unit(unitId('u1')).status, 'active');
+    assert.equal(items.length, 2);
+    assert.deepEqual(r.journal.view.opsOf('needsuser.raise').map((i) => i.parent), [{ type: 'waste', key: 'grinding:u1' }, { type: 'waste', key: 'grinding:u2' }]); assert.equal(items[0]?.blocking, false); assert.equal(r.journal.view.unit(unitId('u1')).status, 'active');
   } finally { r.journal.close(); }
 });
