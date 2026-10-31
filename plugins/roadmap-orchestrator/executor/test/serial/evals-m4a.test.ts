@@ -254,9 +254,9 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     assert.deepEqual(report.leftovers, [], 'nothing of the fixture outlived the session and the stop of its arc');
     // A unit merging wakes the root agent too (owner ruling 2026-10-07), on a `units` line of a running run; when it lands
     // apart from the story's events is timing, so those wakes and lines are set aside: each such wake shows a merged
-    // unit and the scripted root agent does nothing on it. So is arc 2's flow-proposal item (M4b): its run starts whenever
-    // no holistic job runs, and the root agent rejects it on whichever wake carries it, once.
-    type WakeLine = { event: string; reason?: string; run?: string; units?: Record<string, string> };
+    // unit and the scripted root agent does nothing on it. Non-blocking waste advisories can also land on their own
+    // or alongside any story event; assert their delivery and handling before checking the original story sequence.
+    type WakeLine = { event: string; reason?: string; run?: string; units?: Record<string, string>; id?: string; blocking?: boolean };
     const linesOf = (t: Turn): WakeLine[] => t.prompt.split('\n').slice(1).map((x) => JSON.parse(x) as WakeLine);
     const merging = (e: WakeLine): boolean => e.event === 'units' && e.run === 'running';
     const mergeOnly = (t: Turn): boolean => t.kind === 'wake' && linesOf(t).every(merging);
@@ -264,11 +264,32 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
       assert.ok(linesOf(t).some((e) => Object.values(e.units ?? {}).includes('merged')), t.prompt);
       assert.match(t.result ?? '', /^Nothing for me in this wake-up\./);
     }
-    const storyTurns = report.turns.filter((t) => !mergeOnly(t));
+    const advisory = (e: WakeLine): boolean => e.event === 'needs-user' && e.reason === 'waste-finding';
+    const incidental = (e: WakeLine): boolean => merging(e) || advisory(e);
+    const incidentalOnly = (t: Turn): boolean => t.kind === 'wake' && linesOf(t).every(incidental);
+    const surfaced: string[] = [];
+    for (const t of report.turns.filter((t) => t.kind === 'wake')) {
+      const notices = linesOf(t).filter(advisory);
+      if (notices.length === 0) continue;
+      const arc = /^roadmap watch \(arc ([^)]+)\):/.exec(t.prompt)?.[1];
+      assert.ok(arc !== undefined, t.prompt);
+      for (const notice of notices) {
+        assert.equal(notice.blocking, false, t.prompt);
+        surfaced.push(`${arc}/${notice.id}`);
+      }
+      if (incidentalOnly(t)) {
+        if (linesOf(t).some(merging)) assert.ok(linesOf(t).some((e) => Object.values(e.units ?? {}).includes('merged')), t.prompt);
+        assert.match(t.result ?? '', /^Nothing for me in this wake-up\./);
+      }
+    }
+    const raisedWaste = ([1, 2] as const).flatMap((n) => raisedOf(n === 1 ? arc1 : arc2, 'waste-finding', story.dir, n).map((x) => `${fakeArc(story.dir, n)}/${x.id}`));
+    assert.ok(raisedWaste.length > 0, 'the repeated witness lanes produce waste advisories');
+    assert.deepEqual(surfaced.sort(), raisedWaste.sort(), 'each advisory wakes the root once, including notices coalesced with story events');
+    const storyTurns = report.turns.filter((t) => !incidentalOnly(t));
     assert.deepEqual(storyTurns.map((t) => t.kind), ['start', 'owner', 'wake', 'wake', 'wake', 'owner', 'wake', 'wake', 'wake']);
     // Each wake carries exactly the events the story synchronises on (paid run 10 batch: two events 3.7 s apart against
     // the 3 s debounce once made an extra wake); the same lines every run, whatever the timing.
-    const wakes = storyTurns.filter((t) => t.kind === 'wake').map((t) => linesOf(t).filter((e) => !merging(e)).map((e) => (
+    const wakes = storyTurns.filter((t) => t.kind === 'wake').map((t) => linesOf(t).filter((e) => !incidental(e)).map((e) => (
       e.event === 'needs-user' ? `needs-user:${e.reason}` : `${e.event}:${e.run}`
     )).sort());
     assert.deepEqual(wakes, [
