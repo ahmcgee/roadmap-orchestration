@@ -1,4 +1,4 @@
-import { ciReasons } from './ci.ts';
+import { ciReasons, lanePlacementReasons } from './ci.ts';
 import { mayOverlap } from '../core/values.ts';
 import { protectedPaths } from './protected.ts';
 import { referenceCommit } from '../phase0/rows.ts';
@@ -488,7 +488,7 @@ export function classify(input: ClassifyInput): Classified {
   const { ledger, inputs } = nextInputsOf(input, reasons);
   for (const unit of plan.units) { const was = cur.units.find((u) => u.id === unit.id); if (was !== undefined && !same(was.spike, unit.spike) && started(view, unit.id)) reasons.push(`unit ${unit.id}: spike question/kind is fixed once started`); }
   const ciSpecs = [...next.specs.values()].flatMap((f) => { if (f.bytes === null) return []; try { return [parseSpec(f.bytes, f.path)]; } catch { return []; } });
-  reasons.push(...ciReasons(plan, ciSpecs));
+  reasons.push(...ciReasons(plan, ciSpecs), ...(inputs.obligations?.lanes ?? []).flatMap((l) => lanePlacementReasons(l)));
 
   for (const field of FIXED) {
     if (!same(cur[field], plan[field])) reasons.push(`${field} may never change (in force: ${String(cur[field])}; plan.json: ${String(plan[field])})`);

@@ -6,7 +6,7 @@ export function lanePlacementReasons(lane: LaneDef, unit?: PlanUnit): readonly s
   const out: string[] = [];
   const local = lane.cadence === 'build' || lane.cadence === 'unit';
   const whole = lane.inputs?.some((p) => p === '**' || p === '**/*' || p === '*') ?? false;
-  if (local && (lane.cost === 'expensive' || whole)) out.push(`lane ${lane.id}: expensive or whole-repo lanes must move to candidate`);
+  if (local && (lane.cost === 'expensive' || whole || (unit?.spike === undefined && (lane.placement === 'shared-resource' || lane.placement === 'cross-system')))) out.push(`lane ${lane.id}: expensive or whole-repo lanes must move to candidate`);
   if ((lane.cadence === 'batch' || lane.cadence === 'milestone') && lane.placement !== 'shared-resource' && lane.placement !== 'cross-system') out.push(`lane ${lane.id}: milestone lanes must declare shared-resource or cross-system placement; expensive local lanes move to candidate`);
   if (unit !== undefined && unit.spike === undefined && (lane.kind === 'integration' || lane.placement === 'shared-resource' || lane.placement === 'cross-system' || !local)) out.push(`unit ${unit.id}: integration lane ${lane.id} belongs on a candidate or milestone, except in a spike`);
   return out;
