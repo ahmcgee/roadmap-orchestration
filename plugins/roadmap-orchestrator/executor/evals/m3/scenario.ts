@@ -33,13 +33,13 @@ import type { JsonValue } from '../../src/core/json.ts';
 import type { ProfileName } from '../../src/routing/types.ts';
 import {
 INVALID_OP,admitSpecWire,checkpointAnswer,
-checkpointStep,flowStep,
+checkpointStep,
 jobRepairStep,
 lensStep,packReviewStep,twoOpBundleSecondInvalid,
 } from '../../test/helpers/holistic.ts';
 import type { Step } from '../../test/helpers/scenario.ts';
 import { type M1Step,fakeSteps } from '../m1/scenario.ts';
-import { FAKE_CKPT_HOLD,FAKE_FLOW_HOLD } from './layout.ts';
+import { FAKE_CKPT_HOLD } from './layout.ts';
 import { FILES,REPAIR_UNIT,filesOf,repairSpecText } from './setup.ts';
 
 /** How long a fake barrier waits for the driver (the driver's fake run timeout is shorter). */
@@ -173,21 +173,12 @@ export function storyName(value: string): StoryName {
   return found;
 }
 
-/** `story`'s unit calls with the repair's build held at the flow barrier until the flow run ended (branches R and L). */
-function flowHeld(story: Readonly<Record<string, readonly M1Step[]>>): Readonly<Record<string, readonly M1Step[]>> {
-  const repair = story[REPAIR_UNIT.id]!.map((s): M1Step => (s.role === 'build' ? { ...s, acts: [{ type: 'barrier', name: FAKE_FLOW_HOLD, timeoutMs: HOLD_MS }, ...s.acts] } : s));
-  return { ...story, [REPAIR_UNIT.id]: repair };
-}
-
-/** The flow loop's one run in branches R and L: no action. */
-const FLOW_RUN = flowStep('flow-1');
-
 /** The fake backend steps that play `story` under `profile`. */
 export function storySteps(story: StoryName, profile: ProfileName): readonly Step[] {
   const smoke = fakeSteps({ steps: [] }, profile);
   const [unitStory, jobs] = story === 'story'
-    ? [flowHeld(UNIT_STORY), [...JOB_STEPS_R, FLOW_RUN]]
-    : story === 'prevented' ? [UNIT_STORY_P, JOB_STEPS_P] : [flowHeld(UNIT_STORY_L), [...JOB_STEPS_L, FLOW_RUN]];
+    ? [UNIT_STORY, JOB_STEPS_R]
+    : story === 'prevented' ? [UNIT_STORY_P, JOB_STEPS_P] : [UNIT_STORY_L, JOB_STEPS_L];
   const units = Object.entries(unitStory).flatMap(([unit, steps]) => fakeSteps({ steps }, profile).slice(smoke.length).map((s): Step => ({ ...s, unit })));
   return [...smoke, ...units, ...jobs];
 }

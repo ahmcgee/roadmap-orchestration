@@ -82,7 +82,7 @@ import { type ProfileName,profileName } from '../../src/routing/types.ts';
 import type { ArcState,Status } from '../../src/status.ts';
 import { executorLogs,lastLine } from '../../src/supervisor.ts';
 import { writeShims } from '../../test/fakes/shim.ts';
-import { FAKE_CKPT_HOLD,FAKE_FLOW_HOLD,FIRST,type Layout,MONEY_LANE,type StoryBranch,UNITS,barrierFile,layout } from './layout.ts';
+import { FAKE_CKPT_HOLD,FIRST,type Layout,MONEY_LANE,type StoryBranch,UNITS,barrierFile,layout } from './layout.ts';
 import { type StoryName,storyName,storySteps } from './scenario.ts';
 import { DIRECTION_EDITED,json } from './setup.ts';
 
@@ -425,9 +425,6 @@ function fire(p: Poll): string | null {
       d.staleApplied = { at: now() };
     }
   }
-
-  const flowRelease = join(l.fake, `${FAKE_FLOW_HOLD}.release`);
-  if (p.fake && !existsSync(flowRelease) && factsOf(events, 'flow-ended').length > 0) writeFileSync(flowRelease, '', { flag: 'wx' });
 
   // G18: every unit a bundle revision adds, read from its `plan-applied{source: bundle}` change.
   const bundles = factsOf(events, 'plan-applied').filter((f) => f.source?.type === 'bundle');
