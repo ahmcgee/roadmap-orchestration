@@ -371,9 +371,9 @@ test('sched.backend-limit-others-run: with codex parked on a usage limit, u1 (bu
   }
 });
 
-test('probe.capacity-recovers-held-unit: end to end, a capacity error at plan-check parks claude with an epoch and holds the unit; the scheduler\'s probe job passes and releases the hold, and the unit runs to merge', T, async () => {
+test('probe.capacity-recovers-held-unit: end to end, a capacity error at gate parks claude with an epoch and holds the unit; the scheduler\'s probe job passes and releases the hold, and the unit runs to merge', T, async () => {
   const d = setupArc({
-    steps: [{ as: 'claude', expect: { argv: ['-p'] }, acts: [{ type: 'emit', value: OK }] }, mulBuild(), gateStep({ decision: 'approve' })],
+    steps: [mulBuild(), { as: 'claude', expect: { argv: ['-p'] }, acts: [{ type: 'emit', value: OK }] }, gateStep({ decision: 'approve' })],
   });
   // A `claude` whose first call answers with the CLI's capacity error (HTTP 529); every later call is the fake's.
   const bin = tmpDir('capacity-bin');
@@ -394,7 +394,7 @@ test('probe.capacity-recovers-held-unit: end to end, a capacity error at plan-ch
     const probe = events.find((e) => e.type === 'fact' && e.fact.kind === 'probe');
     assert.ok(probe?.type === 'fact' && probe.fact.kind === 'probe');
     assert.deepEqual([probe.fact.result, probe.fact.covers], ['pass', [park.seq]]);
-    assert.deepEqual(outcomes(d), [...STRAIGHT.slice(0,7),'gate:interrupted',...STRAIGHT.slice(7)], 'the held plan-check ran again once the probe passed');
+    assert.deepEqual(outcomes(d), [...STRAIGHT.slice(0,7),'gate:interrupted',...STRAIGHT.slice(7)], 'the held gate ran again once the probe passed');
     assert.equal(r.journal.view.unit(U1).counters.chargeableFailures, 0);
   } finally {
     r.journal.close();

@@ -344,7 +344,7 @@ test('whole-pipeline crash matrix', { concurrency: FANOUT, timeout: 45 * 60_000 
   assert.deepEqual([...holistic.recorded.others.keys()], ['supervisor.ts'], 'holistic: only the executor and the supervisor reach crash points');
   assert.deepEqual(holisticRecords(holistic.snap), {
     counts: {
-      'obligation-latched': 1, 'audit-started': 1, 'audit-ended': 1, 'plan-applied': 1, 'docs-covered': 1, 'docs-published': 1, 'arc-completed': 1, 'debt-banked': 1,
+      'obligation-latched': 1, 'audit-started': 1, 'audit-ended': 1, 'plan-applied': 2, 'docs-covered': 1, 'docs-published': 1, 'arc-completed': 1, 'debt-banked': 1,
     },
     audits: ['audit-1'], ended: [['audit-1', 'completed']], checkpoints: [],
     smoke: { keys: 1, verdicts: [canonicalJson({ unit: 'u1', verdict: { killed: [{ lane: 'journey', testId: 't2' }], survived: [], inconclusive: [] } })] },

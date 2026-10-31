@@ -1,3 +1,7 @@
+import { absPath } from '../../src/core/values.ts';
+import { release } from '../helpers/barrier.ts';
+import { submit } from './cm-common.ts';
+import { journalOf } from './exec-common.ts';
 import { systemName } from '../../src/core/ids.ts';
 // The holistic whole-pipeline scenario (M3 B8; test/serial/pipeline-matrix.test.ts): an exec-common arc made holistic on a
 // corpus target (M4a D0, corpus-target.ts: a fresh holistic start targets a corpus; obligations witnessed on a fake
@@ -20,7 +24,7 @@ import { systemName } from '../../src/core/ids.ts';
 // salvage SHA, after the lane files for the build) and the mutation smoke (D2: the journey lane declares `testPaths`, so
 // the reverted production diff runs it on the mutant tree, scripted to fail t2: killed, green).
 import { spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Event, Parent } from '../../src/core/events.ts';
 import { type InvocationId, parseInvocationId } from '../../src/core/ids.ts';
@@ -37,7 +41,7 @@ import { inRevisionAt } from './pm-trace.ts';
 import type { ExecRun } from './exec-common.ts';
 import type { Scenario } from './pm-common.ts';
 import { BUILD_REPORT, planCheckStep } from './stage-common.ts';
-import { MUL, gateStep, workDirPattern } from './unit-common.ts';
+import { MUL, applyBody, syncInputs, gateStep, workDirPattern } from './unit-common.ts';
 
 type Json = Record<string, unknown>;
 
@@ -94,6 +98,7 @@ const GATE_NOTE = {evidence: ["fixture:1"],
 const IMPLEMENT: Step = {
   as: 'claude', expect: {argv: ['--model', 'claude-opus-5-5']},
   acts: [
+    {type: 'barrier', name: 'root-apply', timeoutMs: 120_000},
     { type: 'commit', message: 'add mul', files: MUL },
     { type: 'emit', value: { ...BUILD_REPORT, experiments: [{ name: 'mul by hand', argv: ['node', '-e', 'import("./src/mul.js")'], exit: 0 }] } },
   ],
@@ -120,7 +125,19 @@ export const HOLISTIC: Scenario = {
     lensStep('audit-1', 'vision'),
 
   ],
-  hooks: () => [],
+  hooks: (r) => [{
+    name: 'root-revision', when: () => existsSync(join(r.scenarioDir, 'root-apply.reached')),
+    act: async () => {
+      syncInputs({d: r, ctx: {runDir: absPath(r.runDir)}, journal: journalOf(r)});
+      const plan = JSON.parse(readFileSync(r.planPath, 'utf8'));
+      writeFileSync(r.planPath, JSON.stringify({...plan, limits: {...plan.limits, retries: 4}}));
+      submit(r, applyBody(r));
+      // The watcher keeps polling while the executor applies the root's revision.
+    },
+  }, {
+    name: 'release-root-revision', when: () => journalOf(r).events.filter((e) => e.type === 'fact' && e.fact.kind === 'plan-applied').length === 2,
+    act: async () => release(r.scenarioDir, 'root-apply'),
+  }],
 };
 
 export const HOLISTIC_OUTCOMES = {
