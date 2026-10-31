@@ -8,14 +8,13 @@ type FindingId,type ImplementerSessionId,type InvocationId,type JobId,
 type JudgmentSessionId,
 type LaneId,type NeedsUserId,type ObligationId,type OpId,
 type PlanRev,
-type ProposalId,
 type ResourceInstance,
 type ResourceName,type RoutingRev,type RulingId,type SeatRev,type Sha,type Sha256Hex,type SpecRev,type SystemName,type UnitId,type WitnessItemId,arcId,clauseId,
 commandId,divergenceId,edgeId,findingId,
 idsAscending,
 implementerSessionId,invocationIdOf,jobIdOf,judgmentSessionId,laneId,needsUserId,
 obligationId,opIdOf,parseInvocationId,planRev,
-proposalId,
+
 resourceInstance,resourceName,routingRev,rulingId,seatRev,sha,sha256,specRev,
 systemName,
 unitId,
@@ -1552,9 +1551,6 @@ export type CommandBody =
   | Readonly<{ type: 'audit'; lenses: readonly LensKindName[] | null }>
   /** `roadmap close-admissions` (M3): latch `draining`. Scope ∅. */
   | Readonly<{ type: 'close-admissions' }>
-  /** `roadmap flow accept|reject <proposal> --reason <text>` (M4b): the root agent's decision, idempotent by proposal. Scope ∅. */
-  /** `roadmap flow request --reason <text>` (M4b, RC-5): a flow run past the cooldown, once per cooldown window. Scope ∅. */
-
   /**
    * `roadmap demo up|down|hold|release` (dev.13): the owner's act on the demo (src/demo/promote.ts). `hold` freezes promotion,
    * `release` resumes it (and promotes the latest settled milestone when it is newer); `up` and `down` start and stop the
@@ -1681,10 +1677,6 @@ export const NEEDS_USER_REASONS = [
   // M4a, blocking (fixed by `m3Blocking`, as the M3 reasons): a pack review's blocking finding, holding admission before
   // the first (K14, H9).
   'pack-review',
-  // M4b, non-blocking: a flow proposal for the root agent (`flow accept | reject`); host advice for the owner; an applied
-  // proposal's `worse` verdict (with its preimage, RC-6); a flow run without a valid answer after its retry; a ruler path
-  // changed by the root agent's `apply` after the first admission (G11).
-  'flow-proposal', 'flow-host', 'flow-worse', 'flow-invalid', 'ruler-changed',
   // Paid M4b run 5, blocking: a gate's or plan-check's approve after the CLI refused one of its reads, again after its retry.
   // No longer raised since 2026-10-16 (a refused read voids nothing); kept so a 1.0.0-dev.11 item still reads (scaffolding).
   'read-denied',
@@ -1711,8 +1703,7 @@ export const NEEDS_USER_REASONS = [
 ] as const;
 /** The reasons from M3 on raised non-blocking; every other one is raised blocking. */
 export const NON_BLOCKING_M3_REASONS = [
-  'bundle-request', 'convergence-bound', 'convergence-identity', 'audit-owed', 'divergence-digest', 'flow-proposal', 'flow-host', 'flow-worse', 'flow-invalid',
-  'ruler-changed', 'executor-fault', 'deflake-parked', 'flake-recurring', 'apply-dropped',  'revision-notice', 'waste-finding', 'waste-finding',
+  'bundle-request', 'convergence-bound', 'convergence-identity', 'audit-owed', 'divergence-digest', 'executor-fault', 'deflake-parked', 'flake-recurring', 'apply-dropped',  'revision-notice', 'waste-finding',
 ] as const satisfies readonly NeedsUserReason[];
 export type NeedsUserReason = (typeof NEEDS_USER_REASONS)[number];
 

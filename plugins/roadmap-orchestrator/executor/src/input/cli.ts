@@ -2,8 +2,8 @@
 // no git, no fs. Paths are returned as given; step 13 resolves them against the caller's cwd.
 import { posix } from 'node:path';
 import {
-type ArcId,type BriefId,type DivergenceId,type EdgeId,type NeedsUserId,type PhaseQuestionId,type ProposalId,type ResourceName,type Sha,
-type UnitId,arcId,briefId,divergenceId,edgeId,needsUserId,phaseQuestionId,proposalId,resourceName,sha,unitId,
+type ArcId,type BriefId,type DivergenceId,type EdgeId,type NeedsUserId,type PhaseQuestionId,type ResourceName,type Sha,
+type UnitId,arcId,briefId,divergenceId,edgeId,needsUserId,phaseQuestionId,resourceName,sha,unitId,
 } from '../core/ids.ts';
 import { DEMO_ACTS,type DemoAct,LENS_KIND_NAMES,type LensKindName,type PauseTarget,type ResumeTarget } from '../core/records.ts';
 import { oneOf } from '../core/validate.ts';
@@ -88,9 +88,6 @@ export type Command =
   | Readonly<{ command: 'resume-arc'; repo: string }>
   /** `inputs export --repo <repo> --arc <arc> --out <dir>` (I1, F17): the arc's current input view, read-only, into a new dir. */
   | Readonly<{ command: 'inputs-export'; repo: string; arc: ArcId; out: string }>
-  // M4b (src/commands/flow.ts): `flow accept|reject <proposal> --reason`, `flow request --reason` (the root agent's, for the
-  // live arc) and `flow given --repo --lever --note` (a host given).
-  /** dev.13: `demo up|down|hold|release`, the owner's act on the demo (src/demo/promote.ts). */
   | Readonly<{ command: 'demo'; act: DemoAct; run: RunLocator }>;
 
 /** What `phase0 check` reads: a plan file in the working tree, or every input by the digests `refs/roadmap/<arc>` recorded (K20). */

@@ -17,13 +17,11 @@
 // |                                        | `judgment-inputs` or `reopened` fact (spec), a `steered` fact (brief), |
 // |                                        | a vacuity `finding-opened` (its mutant `.patch`),                  |
 // |                                        | a `pack-review-started` fact (its                                  |
-// |                                        | kept `PackReviewInputs`); M4b: a `flow-started` fact (its kept      |
-// |                                        | `FlowInputs`), a `flow-series` fact (the compact series), a        |
-// |                                        | `flow-proof` fact (each side's kept witness records, when present) |
+// |                                        | kept `PackReviewInputs`)                                           |
 // | `start.json`                           | the latest `executor-started` fact (its generation)                |
 // | `inv/<seq>-<ordinal>/result.json`,     | a backend `proc.spawn` done `result` (reads.json: a Claude call's)  |
 // | `reads.json`                           |                                                                    |
-// | `inv/<seq>-<ordinal>/exit.json`       | a done lane/build/journey/proof/mutant spawn: CPU telemetry         |
+// | `inv/<seq>-<ordinal>/exit.json`       | a done lane/build/journey/mutant spawn: CPU telemetry         |
 // | `witness/<seq>-<ordinal>.json`         | a `witnessed` fact (a job's, a candidate's or a mutant's run): its `witness.json` |
 // | `needs-user/<id>.json`, `<id>.ack.json`| a done `needsuser.raise` intent; a `needs-user-acked` fact          |
 // | `evidence-manifests/<seq>.json`        | a done `evidence.snapshot` (the manifest only, never raw evidence) |
@@ -76,7 +74,7 @@ import { parseCorpusPin } from '../corpus/types.ts';
 import { START_FILE } from '../executor.ts';
 import { WITNESS_RECORD_FILE } from '../holistic/witness.ts';
 import {
-CORPUS_FILE_INPUT,CORPUS_GUIDE_INPUT,CORPUS_INPUT,FLOW_INPUTS_INPUT,FLOW_PROOF_INPUT,FLOW_SERIES_INPUT,OBLIGATIONS_INPUT,PACK_REVIEW_INPUT,
+CORPUS_FILE_INPUT,CORPUS_GUIDE_INPUT,CORPUS_INPUT,OBLIGATIONS_INPUT,PACK_REVIEW_INPUT,
 PHASE0_INPUT,PLAN_INPUT,RENDER_INPUT,REVISION_INPUT,
 RULINGS_INPUT,SPEC_INPUT,VISION_INPUT,inputPath
 } from '../input/inforce.ts';
@@ -261,7 +259,7 @@ function closureOf(events: readonly Event[], read: (sha: Sha256Hex, ext: string)
         // Work telemetry reads exits. Launch environments remain local, outside the snapshot.
         // Optional for snapshots from earlier releases, whose closure did not retain these records.
         const subject = intent.expect.subject;
-        const work = subject.purpose === 'lane' || subject.purpose === 'journey' || subject.purpose === 'proof' || subject.purpose === 'mutant'
+        const work = subject.purpose === 'lane' || subject.purpose === 'journey' || subject.purpose === 'mutant'
           || (subject.purpose === 'backend' && subject.role === 'build');
         if (work) {
           const inv = invocationId(intent.op, intent.ordinal);
@@ -306,16 +304,6 @@ function closureOf(events: readonly Event[], read: (sha: Sha256Hex, ext: string)
         break;
       case 'pack-review-started':
         input(f.inputsSha256, PACK_REVIEW_INPUT, by);
-        break;
-      case 'flow-started':
-        input(f.inputsSha256, FLOW_INPUTS_INPUT, by);
-        break;
-      case 'flow-series':
-        input(f.sha256, FLOW_SERIES_INPUT, by);
-        break;
-      case 'flow-proof':
-        if (f.oldSha256 !== null) input(f.oldSha256, FLOW_PROOF_INPUT, by);
-        if (f.newSha256 !== null) input(f.newSha256, FLOW_PROOF_INPUT, by);
         break;
       case 'witnessed':
         // A job's, a candidate's and a mutant's lane run alike (a mutant's record never certifies, G13).

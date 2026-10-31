@@ -1284,8 +1284,7 @@ const unionScope = (scope: CommandScope, units: readonly UnitId[]): CommandScope
 
 /**
  * Whether a change drains the whole arc (A12): plan-wide routing or limits, a resource or pool, capacity and the other
- * plan-wide fields, the suite, and the holistic layer (obligations, mapping, vision, advances, the corpus pin). The flow
- * series (src/flow/series.ts) reads an applied command revision's drain from it.
+ * plan-wide fields, the suite, and the holistic layer (obligations, mapping, vision, advances, the corpus pin).
  */
 export function drainsArc(c: PlanChange): boolean {
   switch (c.type) {
@@ -1416,7 +1415,7 @@ export type ScopeContext = Readonly<{
 
 /**
  * A12's `ScopeOf`, bound to what an apply's classification reads: `resume` (all) → the arc; `resume <u>` →
- * {u}; `resume --backend`, `sweep`, `resolve-edge`, `run-only` and (M4b) `flow-decide` and `flow-request` → none; `steer`, `merge-in` and
+ * {u}; `resume --backend`, `sweep`, `resolve-edge`, `run-only` → none; `steer`, `merge-in` and
  * `note` → their unit; `apply` → its changes' scope
  * (`changesScope`) over its proposal (the files rebased onto the files in force, its `--ruling` records landed); none when it would be rejected (a ruling
  * record that no longer reads included) or change nothing (it then

@@ -6,7 +6,6 @@ import type { ModelId, PromptSupport, PromptTable, Role } from '../routing/types
 import { PROMPT as BUILD_LUNA } from './build/gpt-5.6-luna.ts';
 import { PROMPT as BUILD_OPUS } from './build/claude-opus-5-5.ts';
 import { PROMPT as CHECKPOINT_OPUS } from './checkpoint/claude-opus-5-5.ts';
-import { PROMPT as FLOW_OPUS } from './flow/claude-opus-5-5.ts';
 import { PROMPT as GATE_OPUS } from './gate/claude-opus-5-5.ts';
 import type { PromptModule, PromptModules } from './inputs.ts';
 import { PROMPT as LENS_OPUS } from './lens/claude-opus-5-5.ts';
@@ -167,21 +166,6 @@ export const PROMPTS: PromptTable<PromptModules> = {
     },
     'claude-sonnet-5-5': sonnet(PACK_REVIEW_OPUS),
     'claude-haiku-5-5': haiku(PACK_REVIEW_OPUS),
-    'gpt-5.6-luna': { type: 'unsupported', reason: CODEX_JUDGMENT },
-    'gpt-5.6-sol': { type: 'unsupported', reason: CODEX_JUDGMENT },
-  },
-  // M4b: the flow role (on efficient, Sonnet, since 2026-10-15), its rows mirroring packReview's. Fable reads the Opus flow prompt unchanged, as
-  // it reads the pack review's: its rules (the whole method in order, plain literal sentences, the ruler and the lever
-  // shapes as the only scope, change nothing, one report) are what the Fable guide asks of a judgment.
-  flow: {
-    'claude-opus-5-5': { type: 'prompt', prompt: FLOW_OPUS },
-    'claude-fable-5-1': {
-      type: 'inherits',
-      from: 'claude-opus-5-5',
-      reviewed: '2026-10-08: Prompting Claude Fable 5.1 (Anthropic) checked against the Opus 5.5 flow prompt (the five focusing steps, no tampering, the ruler out of reach, the lever catalogue with code\'s checks); no Fable-specific change needed',
-    },
-    'claude-sonnet-5-5': sonnet(FLOW_OPUS),
-    'claude-haiku-5-5': haiku(FLOW_OPUS),
     'gpt-5.6-luna': { type: 'unsupported', reason: CODEX_JUDGMENT },
     'gpt-5.6-sol': { type: 'unsupported', reason: CODEX_JUDGMENT },
   },

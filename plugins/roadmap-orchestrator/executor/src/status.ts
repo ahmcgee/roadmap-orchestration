@@ -135,7 +135,7 @@ type KnownDefectId,type LaneId,
 type MilestoneId,
 type NeedsUserId,type ObligationId,
 type OpportunityId,
-type PlanRev,type ProposalId,
+type PlanRev,
 type ResourceUnit,type RoutingRev,
 type RuleId,
 type Sha,type Sha256Hex,type UnitId,type VisionClauseId,
@@ -439,9 +439,7 @@ export type RuledBy =
   | Readonly<{ type: 'architect'; command: CommandId | null }>
   | Readonly<{ type: 'checkpoint'; job: JobId }>
   | Readonly<{ type: 'judgment'; role: 'planCheck' }>
-  | Readonly<{ type: 'executor' }>
-  /** M4b: an accepted flow proposal's revision. */
-  | Readonly<{ type: 'flow'; proposal: ProposalId }>;
+  | Readonly<{ type: 'executor' }>;
 /** One decision: its log seq, what it is, the id it names (C-n, ckpt-n, a unit, D-n), one line, and who ruled. */
 export type Decision = Readonly<{ seq: number; kind: DecisionKind; id: string; oneLine: string; ruledBy: RuledBy }>;
 
@@ -1309,8 +1307,6 @@ function rulerOf(f: PlanAppliedFact): RuledBy {
       return { type: 'checkpoint', job: source.job };
     case 'executor':
       return { type: 'executor' };
-    case 'flow':
-      return { type: 'flow', proposal: source.proposal };
     // dev.13 (agent D): the code-applied polish revision and a dropped tweak's cut are the executor's own.
     case 'walk':
     case 'compare':

@@ -63,7 +63,6 @@ describe('routing', () => {
       lens: { arc: 'efficient' },
       checkpoint: { arc: 'summit' },
       packReview: { arc: 'frontier' },
-      flow: { arc: 'efficient' },
       walkthrough: { arc: 'frontier' },
       polishJudge: { arc: 'frontier' },
       verifier: { low: 'economy', med: 'economy', high: 'economy' },
@@ -91,7 +90,7 @@ describe('routing', () => {
     for (const t of [d, c]) {
       assert.deepEqual(t.planCheck, { low: OPUS, med: OPUS, high: OPUS, escalation: OPUS_HIGH });
       assert.deepEqual(t.gate, { low: OPUS, med: OPUS, high: OPUS, escalation: OPUS_HIGH });
-      assert.deepEqual([t.lens.arc, t.checkpoint.arc, t.packReview.arc, t.flow.arc], [SONNET_HIGH, OPUS_HIGH, OPUS, SONNET_HIGH]);
+      assert.deepEqual([t.lens.arc, t.checkpoint.arc, t.packReview.arc], [SONNET_HIGH, OPUS_HIGH, OPUS]);
     }
     for (const p of PROFILES) {
       assert.deepEqual(unsupportedSeats(resolveRouting({ ...arcStack(p, null, null), arcScope: 'corpus', arcRoles: 'm4b' }), null), [], p);
@@ -102,7 +101,7 @@ describe('routing', () => {
     const everyJudgment = layer({
       planCheck: { low: 'efficient', med: 'efficient', high: 'efficient', escalation: 'efficient' },
       gate: { low: 'efficient', med: 'efficient', high: 'efficient', escalation: 'efficient' },
-      lens: { arc: 'efficient' }, checkpoint: { arc: 'efficient' }, packReview: { arc: 'efficient' }, flow: { arc: 'efficient' },
+      lens: { arc: 'efficient' }, checkpoint: { arc: 'efficient' }, packReview: { arc: 'efficient' },
       verifier: { low: 'efficient', med: 'efficient', high: 'efficient' },
     });
     for (const p of PROFILES) {
@@ -120,7 +119,7 @@ describe('routing', () => {
     const everyJudgment = layer({
       planCheck: { low: 'economy', med: 'economy', high: 'economy', escalation: 'economy' },
       gate: { low: 'economy', med: 'economy', high: 'economy', escalation: 'economy' },
-      lens: { arc: 'economy' }, checkpoint: { arc: 'economy' }, packReview: { arc: 'economy' }, flow: { arc: 'economy' },
+      lens: { arc: 'economy' }, checkpoint: { arc: 'economy' }, packReview: { arc: 'economy' },
       verifier: { low: 'economy', med: 'economy', high: 'economy' },
     });
     for (const p of PROFILES) {
@@ -275,7 +274,7 @@ describe('routing', () => {
     // Every seat is hashed where it is in force: all of them in a corpus arc of the dev17 role set with milestones (the arc
     // seats only in their scope, G20; the walk seats only under milestones, dev.13; the scaffold seats only under dev17).
     const seen = new Set([routingRevOf(t, 'corpus', 'dev17', true)]);
-    for (const s of SEAT_REFS.filter((s) => s.role !== 'flow')) {
+    for (const s of SEAT_REFS) {
       // A JSON round trip, not structuredClone: the table shares triple objects between seats.
       const changed = JSON.parse(JSON.stringify(t)) as Record<string, Record<Seat, Triple>>;
       changed[s.role]![s.tier] = atSeat(t, s).model === SOL_HIGH.model ? LUNA : SOL_HIGH;
@@ -310,7 +309,7 @@ describe('routing: the arc seats (M3)', () => {
     for (const p of PROFILES) {
       const r = resolveRouting(arcStack(p, null, null));
       assert.equal(r.arcScope, 'none');
-      assert.deepEqual(seatsInForce(r).map((s) => s.role).filter((role) => role === 'lens' || role === 'checkpoint' || role === 'packReview' || role === 'flow'), []);
+      assert.deepEqual(seatsInForce(r).map((s) => s.role).filter((role) => role === 'lens' || role === 'checkpoint' || role === 'packReview'), []);
       assert.deepEqual(unsupportedSeats(r, null), [], p);
       // dev.17: the unit roles include the docs-only verifier.
       const m2Table = { planCheck: r.table.planCheck, build: r.table.build, gate: r.table.gate, verifier: r.table.verifier };
@@ -329,7 +328,7 @@ describe('routing: the arc seats (M3)', () => {
     const h = resolveRouting(planStack('default', null, plan, null));
     assert.equal(h.arcScope, 'architecture-doc');
     // Not in force: the pack review's, the flow's, the two walk seats and (no dev17 role set) the three scaffold seats.
-    assert.equal(seatsInForce(h).length, SEAT_REFS.length - 7);
+    assert.equal(seatsInForce(h).length, SEAT_REFS.length - 6);
     assert.notEqual(h.rev, base.rev);
     assert.deepEqual(unsupportedSeats(h, null), []);
     // Every Claude model has a module for every arc role (Sonnet since 2026-10-15): a plan may seat the checkpoint on efficient.
@@ -373,9 +372,9 @@ describe('routing: M4a (OR-Q17, OR-L3, LR-0a-1)', () => {
     assert.deepEqual(corpus.table.packReview.arc, OPUS);
     assert.ok(seatsInForce(corpus).some((s) => s.role === 'packReview'));
     assert.ok(!seatsInForce(doc).some((s) => s.role === 'packReview'));
-    const { packReview: _p, flow: _f, walkthrough: _w, polishJudge: _j, scaffold: _s, ...dev6Roles } = doc.table;
+    const { packReview: _p, walkthrough: _w, polishJudge: _j, scaffold: _s, ...dev6Roles } = doc.table;
     assert.equal(doc.rev, hashOf(dev6Roles), 'architecture-doc: unit roles, lens and checkpoint');
-    const { flow: _cf, walkthrough: _cw, polishJudge: _cj, scaffold: _cs, ...dev7Roles } = corpus.table;
+    const { walkthrough: _cw, polishJudge: _cj, scaffold: _cs, ...dev7Roles } = corpus.table;
     assert.equal(corpus.rev, hashOf(dev7Roles), 'corpus: every dev.7 role');
     // A plan layer that moves the packReview seat changes a corpus arc's rev only.
     const moved = layer({ packReview: { arc: 'summit' } });

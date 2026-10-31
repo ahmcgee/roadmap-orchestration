@@ -301,7 +301,7 @@ describe('claude', () => {
     });
     it('every read-only judgment role (dev.12; the gate acts since dev.13) persists its fresh session and resumes it with --resume for its repair turn', () => {
       const id = judgmentSessionId('18b3bbf3-98ce-4ced-87c2-639d61b25ef1');
-      for (const role of ['planCheck', 'lens', 'checkpoint', 'packReview', 'flow'] as const) {
+      for (const role of ['planCheck', 'lens', 'checkpoint', 'packReview'] as const) {
         const fresh = backendArgv({ kind: 'claude-judgment', role, triple: TRIPLE, session: { backend: 'claude', mode: 'fresh', id }, schemaText: '{}', system: 'S', evidenceDirs: [] });
         assert.equal(fresh[fresh.indexOf('--session-id') + 1], id);
         assert.equal(fresh.includes('--no-session-persistence'), false, `${role}: its session persists for the repair turn`);
@@ -324,7 +324,7 @@ describe('claude', () => {
       launch.terminal.session.mode = 'continue';
       assert.throws(() => RUNNER_FILE_READERS['launch.json'](launch, 'launch.json'), SchemaError);
       launch.terminal.session.mode = 'resume';
-      for (const role of ['planCheck', 'gate', 'lens', 'checkpoint', 'packReview', 'flow']) {
+      for (const role of ['planCheck', 'gate', 'lens', 'checkpoint', 'packReview']) {
         launch.terminal.role = role;
         const read = RUNNER_FILE_READERS['launch.json'](launch, 'launch.json');
         assert.ok(read.terminal.type === 'backend' && read.terminal.session.backend === 'claude' && read.terminal.session.mode === 'resume');

@@ -5,7 +5,6 @@ import type { Journal } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import type { AbsPath } from '../core/values.ts';
 import { eventsPrefix } from '../git/snapshot.ts';
-import type { PlanM1 } from '../input/plan.ts';
 import { raiseNeedsUser } from '../needsuser.ts';
 
 export type WasteFinding = Readonly<{ key: string; detector: 'grinding' | 'red-on-unit-green-on-base' | 'low-unique-catch' | 'repeated-expensive-suite'; unit: UnitId | null; summary: string }>;
@@ -74,18 +73,17 @@ export function repeatedExpensiveSuites(runs: readonly LaneRun[], expensive: Rea
     summary: `${lane}: ${rs.length} expensive suite executions (${rs.reduce((n, r) => n + r.minutes, 0).toFixed(1)} min); review reuse and cadence.` }] : []);
 }
 
-export function wasteFindings(events: readonly Event[], plan: PlanM1): readonly WasteFinding[] {
+export function wasteFindings(events: readonly Event[]): readonly WasteFinding[] {
   const runs = laneRuns(events);
-  const expensive = new Set(plan.suite.lanes.filter((l) => 'cost' in l && l.cost === 'expensive').map((l) => l.id));
-  return [...grinding(events), ...redOnUnitGreenOnBase(runs), ...lowUniqueCatch(runs), ...repeatedExpensiveSuites(runs, expensive)];
+  return [...grinding(events), ...redOnUnitGreenOnBase(runs), ...lowUniqueCatch(runs), ...repeatedExpensiveSuites(runs, new Set())];
 }
 
 const scanned = new WeakMap<Journal, number>();
 
-export function raiseWasteFindings(ctx: Readonly<{ journal: Journal; runDir: AbsPath; plan: () => PlanM1 }>): void {
+export function raiseWasteFindings(ctx: Readonly<{ journal: Journal; runDir: AbsPath }>): void {
   if (scanned.get(ctx.journal) === ctx.journal.view.highWater()) return;
   const seen = new Set(ctx.journal.view.opsOf('needsuser.raise').flatMap((i) => i.parent.type === 'waste' && ctx.journal.view.doneOf(i.op) !== null ? [i.parent.key] : []));
-  for (const finding of wasteFindings(eventsPrefix(ctx.runDir, ctx.journal.view.highWater()).events, ctx.plan())) {
+  for (const finding of wasteFindings(eventsPrefix(ctx.runDir, ctx.journal.view.highWater()).events)) {
     if (seen.has(finding.key)) continue;
     const parent: Parent = { type: 'waste', key: finding.key };
     raiseNeedsUser(ctx.journal, ctx.runDir, { reason: 'waste-finding', blocking: false,

@@ -16,12 +16,6 @@
 //
 // Seats: build has `low | med | high`; planCheck and gate also have `escalation`, where route-ups and risk
 // triggers go (transitions.ts). A unit's risk is never `escalation`. The arc roles `lens`, `checkpoint` (M3),
-// `packReview` (M4a) and `flow` (M4b) have the one seat `arc`. An arc role is in force (checked, smoked and hashed) only
-// where it can run, the arc's `ArcScope` and arc-role set: `lens` and `checkpoint` in a holistic arc, `packReview` in a
-// corpus arc only (lead ruling LR-0a-1), `flow` in every arc of the `m4b` role set, which 1.0.0-dev.8 records on every
-// revision of an arc it started (`RoutingProvenance.arcRoles`). An arc 1.0.0-dev.7 started records none and keeps the
-// dev.7 role set (no `flow`), so its routing revs are the ones dev.7 hashed (scaffolding: `arcRolesInForce`). So the flow
-// seat is checked on a non-holistic arc too: an unsupported binding of its class refuses any start (DESIGN §10 M4b).
 // dev.17: the `dev17` role set is `m4b` plus the unit role `scaffold` (`unitRolesInForce`), written on every revision of an arc
 // dev.17 started; an adopted earlier arc keeps `m4b`, so its revs hash no scaffold seat.
 // dev.13: the walk roles `walkthrough` and `polishJudge` are in force exactly while the plan revision has milestones
@@ -37,16 +31,12 @@
 //       "classes": { "<efficient|frontier|summit|economy>":            optional; rebinds for this repo
 //                      { "backend", "model", "effort" } } },
 //     "chain": { "k": <positive> },                                  optional (M4a): unacked chained starts allowed
-//     "flow": { "givens": [{ "lever": "<lever class>", "note" }] },   optional (M4b): repo givens, owner-committed
 //     "walkthrough": { "mcp": { "<server>": {                        optional (dev.13): the walk sessions' MCP servers
 //         "command", "args"?: [...], "env"?: { ... } } } },
 //     "systemsMap": { "systems", "shared"?, "contracts"?, "docs"? } } optional (dev.17): src/input/systems.ts
 //
 //   `chain.k` (M4a, OR-Q19, K10) is asked once at bootstrap and committed by the owner; the root agent never writes it.
 //   Absent: K unset (a chained start is refused `chain-invalid{k-unset}`).
-//   `flow.givens` (M4b): what cannot be tuned in this repo, each a closed lever class (src/flow/types.ts `FLOW_LEVERS`)
-//   and a note; code drops a flow proposal using a given's lever. The owner commits them; host givens live in the git
-//   common dir (src/flow/givens.ts).
 //   `walkthrough.mcp` (dev.13, D1): the MCP servers a walk session (and a build in a milestone with a `browser` journey)
 //   gets, passed as `--mcp-config` with `--strict-mcp-config`, so it gets exactly these. `{evidence}` and `{viewport}` in
 //   `args` and `env` values are substituted by code (`WALK_SUBSTITUTIONS`). Absent: no browser drive, so a `browser`
@@ -65,7 +55,6 @@ import type { UnitId } from '../core/ids.ts';
 import { type RoutingRev,routingRev } from '../core/ids.ts';
 import { canonicalJson,sha256Hex } from '../core/json.ts';
 import { Fields,type Read,SchemaError,arrayOf,object,positive,str,stringMap } from '../core/validate.ts';
-import { type RepoGiven,repoGiven } from '../flow/types.ts';
 import { type SystemsMap,systemsMap } from '../input/systems.ts';
 
 import { type PlanM1,type PlanTargetKind,hasMilestones } from '../input/plan.ts';
@@ -102,7 +91,6 @@ const MCP_SERVER_NAME = /^[A-Za-z0-9_-]{1,64}$/;
 export type RepoConfig = Readonly<{
   routing?: Readonly<{ profile?: ProfileName; seats?: RoutingLayer; classes?: ClassBindings }>;
   chain?: Readonly<{ k: number }>;
-  flow?: Readonly<{ givens: readonly RepoGiven[] }>;
   /** dev.13: the walk sessions' MCP servers, by name (non-empty); absent: no browser drive. */
   walkthrough?: Readonly<{ mcp: Readonly<Record<string, WalkMcpServer>> }>;
   /** dev.17: the repo's systems map (src/input/systems.ts); absent: none (every lane selected everywhere, the whole tree its input). */
@@ -132,7 +120,6 @@ const walkMcp: Read<Readonly<Record<string, WalkMcpServer>>> = (value, path) => 
 
 export const repoConfig = object((f): RepoConfig => {
   const chain = f.optional('chain', object((g) => ({ k: g.get('k', positive) })));
-  const flow = f.optional('flow', object((g) => ({ givens: g.get('givens', arrayOf(repoGiven)) })));
   const walkthrough = f.optional('walkthrough', object((g) => ({ mcp: g.get('mcp', walkMcp) })));
   const systems = f.optional('systemsMap', systemsMap);
   const systemNotesDir = f.optional('systemNotesDir', (v, p) => repoPath(v, p));
@@ -147,7 +134,7 @@ export const repoConfig = object((f): RepoConfig => {
     return out;
   }));
   return {
-    ...(routing === undefined ? {} : { routing }), ...(chain === undefined ? {} : { chain }), ...(flow === undefined ? {} : { flow }),
+    ...(routing === undefined ? {} : { routing }), ...(chain === undefined ? {} : { chain }),
     ...(systemNotesDir === undefined ? {} : { systemNotesDir }),
     ...(walkthrough === undefined ? {} : { walkthrough }), ...(systems === undefined ? {} : { systemsMap: systems }),
   };
@@ -172,7 +159,7 @@ export type RoutingStack = Readonly<{
   unit: RoutingLayer | null;
   /** A holistic arc's scope: which arc roles are in force (`ARC_ROLES_IN_FORCE`); absent outside a holistic arc (`none`). */
   arcScope?: PlanTargetKind;
-  /** The arc's role set (M4b): `m4b` puts `flow` in force; absent: the dev.7 role set (an adopted dev.7 arc, or a bare stack). */
+  /** The recorded role set controls which unit roles are in force. */
   arcRoles?: ArcRoleSet;
   /** dev.13: the plan revision has milestones, so the walk roles are in force; absent: none (every arc before dev.13). */
   milestones?: true;
@@ -180,25 +167,17 @@ export type RoutingStack = Readonly<{
 
 /**
  * Where the arc roles can run (G20, LR-0a-1): `none` outside a holistic arc, else the plan's target kind. A holistic
- * `architecture-doc` arc runs the M3 roles; a corpus arc (always holistic) runs every arc role; `flow` (M4b) runs in every
- * arc of the `m4b` role set (`arcRolesInForce`).
+ * `architecture-doc` runs the M3 roles; a corpus arc also runs pack review.
  */
 export type ArcScope = 'none' | PlanTargetKind;
 export const ARC_ROLES_IN_FORCE: { readonly [S in ArcScope]: readonly ArcRole[] } = {
   none: [], 'architecture-doc': ['lens', 'checkpoint'], corpus: ['lens', 'checkpoint', 'packReview'],
 };
 
-/**
- * The arc roles in force for a scope, role set and milestones: `ARC_ROLES_IN_FORCE`, without `flow` when the arc records no
- * role set (TEMPORARY SCAFFOLDING, SCHEMAS.md "M4b": the 1.0.0-dev.7 role set of an adopted dev.7 arc; delete with its
- * absence handling once no dev.7 arc is in flight), and (dev.13) the walk roles exactly when the plan has milestones. A
- * plan with milestones is holistic (Phase-0 `milestones-need-holistic`), so `none` never takes them.
- */
-export function arcRolesInForce(arcScope: ArcScope, arcRoles: ArcRoleSet | null, milestones: boolean): readonly ArcRole[] {
+export function arcRolesInForce(arcScope: ArcScope, _arcRoles: ArcRoleSet | null, milestones: boolean): readonly ArcRole[] {
   const roles = ARC_ROLES_IN_FORCE[arcScope];
-  const scoped = arcRoles !== null ? roles : roles.filter((r) => r !== 'flow');
   if (milestones && arcScope === 'none') throw new Error('the walk roles in force outside a holistic arc (milestones need the holistic layer)');
-  return milestones ? [...scoped, ...WALK_ROLES] : scoped;
+  return milestones ? [...roles, ...WALK_ROLES] : roles;
 }
 
 /**
@@ -319,7 +298,7 @@ export function resolveRoutingUnder(builtin: ClassTable, stack: RoutingStack): R
  * First 16 hex of sha256 over the canonical JSON of the resolved table's roles in force: the unit roles and the arc
  * roles of `arcScope` and `arcRoles` (`arcRolesInForce`). Without a role set (an adopted 1.0.0-dev.7 arc) a
  * non-holistic arc hashes the M2 table and a holistic `architecture-doc` arc the 1.0.0-dev.6 role set (no
- * `packReview`), so dev.7's revs are unchanged; an `m4b` arc's revs include `flow`, and (dev.13) only a plan with
+ * `packReview`), and (dev.13) only a plan with
  * milestones hashes the walk roles, so an arc without them keeps its revs. `head` false (an earlier release's built-in seats,
  * which only `status` resolves under to alias recorded revs): without the roles that release never had (`DEV17_ROLES`).
  */

@@ -34,6 +34,7 @@ export type Expect = Readonly<{
  * `usageLimit` the CLI's usage-limit error (and exit 1); `exitZeroNoop` exit 0 having printed nothing.
  */
 export type OutputAct =
+  | Readonly<{ type: 'stream'; events: readonly JsonValue[] }>
   | Readonly<{ type: 'emit'; value: JsonValue }>
   | Readonly<{ type: 'capacityText'; value: JsonValue }>
   | Readonly<{ type: 'noUsage'; value: JsonValue }>
@@ -110,7 +111,6 @@ export type ClaudeOnlyAct =
    * claude-build-advisor advisor spend (its cost added to `total_cost_usd`), as the real CLI reports it.
    */
   | Readonly<{ type: 'advised'; value: JsonValue }> | Readonly<{ type: 'globAboveAddDir' }> | Readonly<{ type: 'real'; readOnly?: Readonly<{ repo: string; runDir: string }> }>
-  | Readonly<{ type: 'stream'; events: readonly JsonValue[] }>
   /**
    * dev.17 (design pass): `emit` a plan-check answer. An approve or scaffold without a `design` key carries
    * `defaultDesign(<the first pattern of the call's scope envelope>, <the spec's active acceptance clauses>, <the first spec

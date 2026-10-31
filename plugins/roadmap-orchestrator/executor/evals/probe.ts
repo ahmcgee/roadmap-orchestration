@@ -64,12 +64,6 @@ import { systemName } from '../src/core/ids.ts';
 //                       told to start a 20 s command with Monitor and end its turn to wait: stdout must hold an interim
 //                       `final: false` result, then the final `final: true` one; the answer must validate with ready.txt and
 //                       hello.txt written, and the invocation end as `exited` or `reported`
-//   m4b.flow            (M4b) flow.arc (efficient: Sonnet high, the default table with the m4b role set): the real flow prompt module over a
-//                       small synthetic FlowInputs (the integration slot the constraint, its suite lane serial); the answer
-//                       must validate (ROLE_VALIDATORS.flow); the detail names the proposal and code's argv-shape verdict on it
-//   m4b.proof           (M4b) the production suite-lane proof (runProof) on a tiny product of two 2 s timer test files: suite
-//                       argv `node --test --test-concurrency=1 'test/unit/*.test.js'` to `=2`, the node-test reporter, real
-//                       node in clean checkouts: the outcome must be `preserved` with equal kept records, the new side faster
 //   gate.bounded        (dev.12) one real gate through the production gate stage, as the gate role eval drives it
 //                       (evals/roles/: fake plan-check and build, real lanes, the real claude behind the fake's `real` act)
 //                       on a tiny generated repo (G0's small rename at size 100, no plant) whose regenerated golden, a
@@ -105,7 +99,7 @@ import { freshClaudeImplementerSession,freshJudgmentSession } from '../src/backe
 import { containmentFor,detectContainmentMode } from '../src/contain/detect.ts';
 import { scan } from '../src/contain/proc.ts';
 import {
-type ImplementerSessionId,arcId,envId,invocationId,jobId,laneId,laneRev,obligationId,proposalId,questionId,ruleId,rulingId,sha,sha256,specRev,stationId,unitId,visionClauseId,
+type ImplementerSessionId,arcId,envId,invocationId,jobId,laneId,laneRev,obligationId,questionId,ruleId,rulingId,sha,sha256,specRev,unitId,visionClauseId,
 } from '../src/core/ids.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import { canonicalJson } from '../src/core/json.ts';
@@ -113,11 +107,10 @@ import { openJournal } from '../src/core/log.ts';
 import { type BackendResult,DEFAULT_BOUNDS,STDOUT_FILE,type Usage } from '../src/core/records.ts';
 import { type AbsPath,absPath,repoPath,repoPattern } from '../src/core/values.ts';
 import { SCHEMA_VERSION } from '../src/core/version.ts';
-import type { FlowAction,FlowPromptInputs,FlowProposal } from '../src/flow/types.ts';
 import { resolveRepo } from '../src/forge/gh.ts';
 import { checkpointIdsOf } from '../src/holistic/checkpoint.ts';
 import { type ObligationDef,parseObligations } from '../src/holistic/types.ts';
-import { FLOW_INPUTS_INPUT,FLOW_PROOF_INPUT,keepInput,keptInput } from '../src/input/inforce.ts';
+import { keepInput,keptInput } from '../src/input/inforce.ts';
 import { parsePhase0Record } from '../src/phase0/types.ts';
 import { minutesMs } from '../src/pipeline/dispatch.ts';
 import { invocationDir,killWorkload } from '../src/pipeline/invoke.ts';
@@ -311,7 +304,7 @@ function validates<R extends Role>(name: string, role: R, check: (out: RoleOutpu
  * harness (smoke.ts CallRequest) labels judgment calls with a unit judgment role and seat only, and the judgment
  * argv does not vary by role, so an arc role's call is filed under `stand`, the unit seat nearest its tier.
  */
-function seatCall<R extends 'lens' | 'checkpoint' | 'planCheck' | 'packReview' | 'flow'>(
+function seatCall<R extends 'lens' | 'checkpoint' | 'planCheck' | 'packReview'>(
   resolved: ResolvedRouting, role: R, seat: SeatOf<R>, stand: Readonly<{ role: 'planCheck'; tier: JudgmentSeat }>, check: string, cwd: AbsPath,
   inputs: Parameters<ReturnType<typeof promptFor<R>>['render']>[0],
 ): BackendInvocation {

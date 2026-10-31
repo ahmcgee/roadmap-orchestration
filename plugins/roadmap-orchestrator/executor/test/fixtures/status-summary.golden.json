@@ -20,16 +20,26 @@
   },
   "milestones": [],
   "caught": {
-    "total": 1,
-    "laneReds": 0,
+    "total": 4,
+    "laneReds": 1,
     "gateRevisions": 1,
-    "uniqueFindings": 0,
-    "byLens": {}
+    "uniqueFindings": 2,
+    "byLens": {
+      "invariants": 1,
+      "vacuity": 1
+    }
   },
   "verdicts": [],
   "captures": [],
   "needsUser": [],
-  "waste": [],
+  "waste": [
+    {
+      "key": "grinding:u1",
+      "detector": "grinding",
+      "unit": "u1",
+      "summary": "u1: 8 builds, 9 judged stages; inspect the repeated work."
+    }
+  ],
   "demo": null,
   "completion": {
     "planRev": null,

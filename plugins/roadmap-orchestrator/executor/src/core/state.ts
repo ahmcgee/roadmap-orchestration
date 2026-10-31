@@ -30,7 +30,7 @@ type RoutingRev,type Sha,type Sha256Hex,type SpecRev,type UnitId,
 amendmentIdOf,compareResourceUnits,divergenceIdOf,findingIdOf,jobId,parseInvocationId,parseJobId,parseOpId,polishIdOf,
 reviewFindingIdOf
 } from './ids.ts';
-import type { ControlState,FlakeAt,FlowFactAt,JournalView,NeedsUserAckState,NeedsUserState,PropagationFactAt,WalkFactAt } from './interfaces.ts';
+import type { ControlState,FlakeAt,JournalView,NeedsUserAckState,NeedsUserState,PropagationFactAt,WalkFactAt } from './interfaces.ts';
 import { canonicalJson } from './json.ts';
 import { checkpointSkipTriggerOf } from './projections.ts';
 import { type ApprovalFingerprint,type Bounds,type ContainmentMode,type DispatchRecord,type ResidueKey,type Stage,DEFAULT_BOUNDS,boundsOfRecord } from './records.ts';
@@ -743,9 +743,8 @@ export class Fold implements JournalView {
   readonly #debt: BankedDebt[] = [];
   readonly #amendments: AmendmentState[] = [];
   readonly #packReviews: { started: PackReviewState['started']; ended: PackReviewState['ended'] }[] = [];
-  // M4b
+  // Milestone job outcomes
   readonly #stageJobOutcomes: import('./events.ts').JobStageOutcomeFact[] = [];
-  readonly #flowFacts: FlowFactAt[] = [];
   readonly #walkFacts: WalkFactAt[] = [];
   /** Open walks and their recorded proposals, in log order. */
   readonly #openWalks = new Map<JobId, PolishId[]>();
@@ -1311,36 +1310,6 @@ export class Fold implements JournalView {
         this.#corroborations.push({ ...rest, seq: at.seq });
         return;
       }
-      // M4b (SCHEMAS.md "M4b"): the fold sees the jobs the flow facts name and keeps every flow fact (`flowFacts`); a
-      // decision names a surviving proposal once, and only an accepted one is applied, once.
-      case 'flow-started':
-        this.#openJob(f.job, fail);
-        this.#flowFacts.push({ seq: at.seq, at: at.at, fact: f });
-        return;
-      case 'flow-ended':
-      case 'flow-proof':
-        this.#seeJob(f.job);
-        this.#flowFacts.push({ seq: at.seq, at: at.at, fact: f });
-        return;
-      case 'flow-decided': {
-        const proposed = this.#flowFacts.some((x) => x.fact.kind === 'flow-ended' && x.fact.proposal?.id === f.proposal);
-        if (!proposed) fail(`flow-decided of ${f.proposal}, which no flow-ended proposed`);
-        if (this.#flowFacts.some((x) => x.fact.kind === 'flow-decided' && x.fact.proposal === f.proposal)) fail(`a second flow-decided of ${f.proposal}`);
-        this.#flowFacts.push({ seq: at.seq, at: at.at, fact: f });
-        return;
-      }
-      case 'flow-applied': {
-        const accepted = this.#flowFacts.some((x) => x.fact.kind === 'flow-decided' && x.fact.proposal === f.proposal && x.fact.decision === 'accepted');
-        if (!accepted) fail(`flow-applied of ${f.proposal}, which was never accepted`);
-        if (this.#flowFacts.some((x) => x.fact.kind === 'flow-applied' && x.fact.proposal === f.proposal)) fail(`a second flow-applied of ${f.proposal}`);
-        this.#flowFacts.push({ seq: at.seq, at: at.at, fact: f });
-        return;
-      }
-      case 'flow-series':
-      case 'flow-requested':
-      case 'flow-verdict':
-        this.#flowFacts.push({ seq: at.seq, at: at.at, fact: f });
-        return;
       // dev.13 (SCHEMAS.md "dev.13"): the fold sees the walk jobs and keeps every walk fact (`walkFacts`), holding a walk to
       // one start and one end, its proposals to id order and to its open walk, and a milestone pass and a tweak judgment to
       // once each. What they mean for units and milestones is read from `walkFacts` (agents C, D and G).
@@ -2125,10 +2094,6 @@ export class Fold implements JournalView {
   }
 
   stageJobOutcomes(): readonly import('./events.ts').JobStageOutcomeFact[] { return this.#stageJobOutcomes; }
-
-  flowFacts(): readonly FlowFactAt[] {
-    return this.#flowFacts;
-  }
 
   walkFacts(): readonly WalkFactAt[] {
     return this.#walkFacts;

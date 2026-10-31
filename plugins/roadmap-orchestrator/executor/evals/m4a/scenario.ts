@@ -23,20 +23,8 @@
 //           still holds every unit; then notice builds (the root agent pauses it in its hung `slow` lane and resumes
 //           it), audit-3 (nothing new: no checkpoint), fits builds after notice, audit-4 (cadence and final) and ckpt-3.
 //
-// M4b (the flow loop): arc 1, in both scripts,
-// has the six read-outs after confirm (golden.ts `READOUTS`, one unit each), and run-only holds every unit after
-// quay-list until the flow loop has run (three suite runs before the change, confirm's smoke fix round among them,
-// outside the rework guard's window). `story`: two flow runs the root agent requests (the second the cooldown's one
-// bypass, RC-5): flow-1 proposes the bait, the witness-lane fake `replay` at `--test-concurrency=6` (accepted; its proof
-// is `changed`); flow-2 the plant lane `suite` at six files a time (accepted; proof `preserved`, applied, then the other
-// five read-outs are its verdict window's suite runs). `vision-silent`: the third merge's constraint-shift run, flow-1,
-// answers noAction. Arc 1's eight publications owe audit-1..audit-5; ckpt-1 and the final ckpt-2 run. Arc 2 carries arc 1's
-// suite lanes; the root agent requests one flow run right after the start (flow-1: a build-class step it rejects on its
-// item's wake), so its cooldown covers the arc. The flow calls are judgment steps keyed by job id (`flow-<n>`), each
-// answer checked by the frozen reader (FLOW_SCHEMA).
 import { join } from 'node:path';
 import type { JsonValue } from '../../src/core/json.ts';
-import { validateFlowOutput } from '../../src/prompts/schemas.ts';
 import type { ProfileName } from '../../src/routing/types.ts';
 import { admitSpecWire,checkpointAnswer,checkpointStep,lensStep,noteLensStep,packReviewStep,packTargetOf } from '../../test/helpers/holistic.ts';
 import type { Step } from '../../test/helpers/scenario.ts';
@@ -185,76 +173,6 @@ const JOBS_2: readonly Step[] = [
   lensStep('audit-4', 'vision'),
   checkpointStep('ckpt-3', NO_OP),
 ];
-
-// ---------------------------------------------------------------------------------------------------
-// The flow runs (M4b)
-
-/** A flow call of job `job` (a `flow-n`) answers `answer`, checked by the frozen reader so the fake never emits what the executor could not be given. */
-function flowStep(job: string, answer: JsonValue): Step {
-  validateFlowOutput(answer);
-  return { as: 'claude', unit: job, expect: {}, acts: [{ type: 'emit', value: answer }] };
-}
-
-const SLOT = 'slot:integration';
-const suiteAction = (lane: string, argv: readonly string[], cpu: number): JsonValue => ({ lever: 'suite-lane', lane, argv: [...argv], reporter: 'node-test', cpu });
-
-/** Arc 1's flow runs in order, each a proposal the root agent decides (fake-root.ts `flowLoop`). */
-export const FLOW_1 = {
-  bait: {
-    job: 'flow-1', decision: 'accept', proof: 'changed',
-    request: 'guard, confirm and quay-list merged after most of their lead in the integration slot, the suite one file at a time; please look at the slot before the next unit is admitted.',
-    reason: 'An in-place --test-concurrency edit of the replay lane, no selector touched: accepted, the proof decides whether its tests survive it.',
-    answer: {
-      constraint: { station: SLOT, agree: false, reason: 'guard held the integration slot longest; I read the replay lane as the piece to shorten' },
-      diagnosis: 'guard\'s lead was mostly the integration slot, its suite lanes run one file at a time.',
-      proposal: {
-        target: `suite:${REPLAY_LANE.id}`, action: suiteAction(REPLAY_LANE.id, REPLAY_LANE.argv.map((a) => (a === PLANT.serial ? '--test-concurrency=6' : a)), 6),
-        rationale: 'Run the replay lane six files at a time.', risks: 'A replay check that depends on order may not survive.',
-      },
-      noAction: null,
-    },
-  },
-  shard: {
-    job: 'flow-2', decision: 'accept', proof: 'preserved',
-    request: `The replay lane change was refused by its proof (changed); the serial suite:${SUITE_LANE} is still what held guard in the slot.`,
-    reason: 'The serial flag is stale: every test file makes its own temp dir (0050_Architecture.md, Testing), so the shared-ledger reason is gone; the proof shows the same tests either way.',
-    answer: {
-      constraint: { station: SLOT, agree: true, reason: `the slot is the constraint and suite:${SUITE_LANE}, the serial suite gate, is most of it` },
-      diagnosis: `suite:${SUITE_LANE} runs six replay files of about a minute one at a time; each makes its own temp dir, so they can run side by side.`,
-      proposal: {
-        target: `suite:${SUITE_LANE}`, action: suiteAction(SUITE_LANE, SHARD.argv, SHARD.cpu),
-        rationale: 'Six files at a time in place of one: the same tests, about a sixth of the wall time.', risks: 'Tests that shared state would race; none do since the temp-dir change.',
-      },
-      noAction: null,
-    },
-  },
-} as const;
-
-/**
- * Arc 2's one flow run, requested right after the start (its cooldown covers the arc, so no constraint-shift run is left
- * to the merges' timing): a build-class step, which the root agent rejects on the item's wake (fake-root.ts).
- */
-export const FLOW_2 = {
-  buildClass: {
-    job: 'flow-1', decision: 'reject', proof: null,
-    request: `Arc 1's change to suite:${SUITE_LANE} is carried into this plan; please look at the slot before the first merge.`,
-    reason: 'Arc 1\'s lead went to the serial suite in the slot, not to builds, and the suite is sharded now: a dearer builder buys nothing here.',
-    answer: {
-      constraint: { station: SLOT, agree: false, reason: 'nothing merged yet; red candidates held arc 1\'s slot, fewer of them shortens it' },
-      diagnosis: 'guard took two builds in arc 1 before its lanes went green.',
-      proposal: { target: SLOT, action: { lever: 'build-class', tier: 'low', class: 'frontier' }, rationale: 'One class up for low-risk builds.', risks: 'Cost per merge rises.' },
-      noAction: null,
-    },
-  },
-} as const;
-
-/** `vision-silent`'s one flow run (arc 1's third merge, constraint-shift): nothing to change. */
-export const VISION_SILENT_FLOW: JsonValue = {
-  constraint: { station: SLOT, agree: true, reason: 'the integration slot is the largest station' },
-  diagnosis: 'three merges are too few to tell the slot\'s suite time from noise.',
-  proposal: null,
-  noAction: 'Three merges so far: wait for more before changing the suite gate.',
-};
 
 /** The fake backend steps of arc `n` (1 or 2) under `profile` for `script`: the start's smoke, the units' calls, the jobs'. */
 export function arcSteps(n: 1 | 2, profile: ProfileName, script: FakeScript): readonly Step[] {

@@ -17,7 +17,7 @@
 // (OR-Q1), and M4a's `pack-review` (K14).
 // Non-blocking (`NON_BLOCKING_M3_REASONS`):
 // `bundle-request`, the convergence brakes (OR-Q2/3: they act on the checkpoint, never halt units), `audit-owed`,
-// `divergence-digest`, and M4b's `flow-proposal`, `flow-host`, `flow-worse`, `flow-invalid` and `ruler-changed`. Blocking means the arc is not `complete` while the item is open (§2.10); what an open item holds
+// `divergence-digest`, `revision-notice` and `waste-finding`. Blocking means the arc is not `complete` while the item is open (§2.10); what an open item holds
 // back from admission is admission's (src/schedule/ready.ts) and, for `obligation-baseline` and `pack-review` (every
 // admission until it is answered), the scheduler's. A `pack-review` item a later pack
 // review's end superseded (K14), or the escalation of an abandoned walk whose milestone's bring-up or journeys an apply
@@ -129,7 +129,7 @@ export function raisedFor(view: JournalView, parent: Parent): NeedsUserId | null
   return raise === undefined ? null : raise.expect.id;
 }
 
-/** The item of `reason` raised for `parent` (several reasons may share a parent: a flow run's proposal and its verdict), or null. */
+/** The item of `reason` raised for `parent` (several reasons may share a parent), or null. */
 export function raisedWithReason(view: JournalView, runDir: AbsPath, parent: Parent, reason: NeedsUserReason): NeedsUserId | null {
   const key = canonicalJson(parent);
   const raise = view.opsOf('needsuser.raise').find((i) => canonicalJson(i.parent) === key && view.doneOf(i.op) !== null && readNeedsUser(runDir, i.expect.id)?.reason === reason);

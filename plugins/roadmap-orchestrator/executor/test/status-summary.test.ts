@@ -19,8 +19,18 @@ test('status summary golden: progress, expectations, caught and notices with no 
   contextFor(d).journal.close();
   const s = status(absPath(d.runDir), arcId(d.arc), absPath(d.hostDir));
   const events = [event({ kind: 'stage-outcome', unit: unitId('u1'), stage: 'gate', attempt: 1, outcome: 'revise', class: 'revise', chargeable: true })];
+  events.push(...[
+    { type: 'intent', kind: 'proc.spawn', op: 'golden/1', at: '2026-10-31T00:00:00.000Z', parent: { type: 'stage', unit: 'u1', stage: 'lanes', attempt: 1 },
+      expect: { subject: { purpose: 'lane', unit: 'u1', lane: 'unit', set: 'spec', at: 'a'.repeat(40) } } },
+    { type: 'done', kind: 'proc.spawn', op: 'golden/1', at: '2026-10-31T00:01:00.000Z', outcome: { kind: 'result', summary: { type: 'command', verdict: 'fail' } } },
+    { type: 'fact', fact: { kind: 'finding-opened', key: 'first', lens: 'invariants' } },
+    { type: 'fact', fact: { kind: 'finding-opened', key: 'second', lens: 'vacuity' } },
+    { type: 'fact', fact: { kind: 'finding-opened', key: 'first', lens: 'invariants' } },
+  ] as unknown as Event[]);
+  for (let attempt = 1; attempt <= 8; attempt++) events.push(event({ kind: 'stage-outcome', unit: unitId('u1'), stage: 'build', attempt, outcome: 'success', class: 'advance', chargeable: false }));
   const summary = summarize({ ...s, arc: arcId('golden'), spend: { ...s.spend, byRole: [{ role: 'build', routingRev: '0123456789abcdef' as never, calls: 1, input: 100, output: 20, cacheRead: 0, cacheWrite: 0, turns: 1, costUsd: 12, unavailable: 0 }] } }, events, plan);
   assert.deepEqual(summary, JSON.parse(readFileSync(new URL('./fixtures/status-summary.golden.json', import.meta.url), 'utf8')));
+  assert.deepEqual(summary.waste.map((f) => f.detector), ['grinding']);
   assert.deepEqual(parseCommand(['status', '--summary']), { command: 'status', run: { type: 'host' }, summary: true });
 });
 

@@ -17,9 +17,9 @@ const GATE: { readonly [S in JudgmentSeat]: ModelClass } = { low: 'frontier', me
 /**
  * dev.17: the efficient class builds at every risk tier (Sonnet 5.5 medium under `claude-only`), and a Claude build consults
  * an Opus advisor at its own decision points (`BUILD_ADVISOR`, classes.ts; backends/argv.ts). The arc roles: the lenses (M3)
- * and the flow role (M4b) on efficient (owner ruling 2026-10-15), the pack review (M4a, OR-Q16) on frontier, the checkpoint
+ * the pack review (M4a, OR-Q16) on frontier, the checkpoint
  * (M3) on summit; each is in force only in the arcs its `ArcScope` names (layers.ts: lens and checkpoint in a holistic arc,
- * the pack review in a corpus arc only, LR-0a-1; flow in every arc of the `m4b` role set). dev.13 (R4): the walkthrough and
+ * the pack review in a corpus arc only, LR-0a-1). dev.13 (R4): the walkthrough and
  * the polish judge on frontier (Opus 5.5 medium), in force only in an arc whose plan has milestones.
  */
 export const BUILTIN_SEATS: ClassTable = {
@@ -29,7 +29,6 @@ export const BUILTIN_SEATS: ClassTable = {
   lens: { arc: 'efficient' },
   checkpoint: { arc: 'summit' },
   packReview: { arc: 'frontier' },
-  flow: { arc: 'efficient' },
   walkthrough: { arc: 'frontier' },
   polishJudge: { arc: 'frontier' },
   // dev.17 (proportional review): the docs-only verifier on economy (Haiku 5.5 high) at every risk tier: a closed per-hunk

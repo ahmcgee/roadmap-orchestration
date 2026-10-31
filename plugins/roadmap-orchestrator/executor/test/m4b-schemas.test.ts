@@ -7,7 +7,7 @@ import { describe,it } from 'node:test';
 import { schemaViolation } from '../src/backends/adapter.ts';
 import { type Envelope,type Event,type Fact,type LogRecord,parseEventLine,prevHash,serializeEvent } from '../src/core/events.ts';
 import {
-InvalidIdError,arcId,jobId,opId,opKey,parseStationId,proposalId,proposalIdOf,proposalJob,sha,sha256,stationId,
+arcId,jobId,opId,opKey,sha,sha256,
 } from '../src/core/ids.ts';
 import { canonicalJson } from '../src/core/json.ts';
 import { spawnPressureOf,startPressureOf } from '../src/core/projections.ts';
@@ -15,10 +15,9 @@ import { commandBody } from '../src/core/records.ts';
 import { Fold } from '../src/core/state.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { isoTime } from '../src/core/values.ts';
-import { parseFlowInputs,parseFlowSeries,parseHostGivens } from '../src/flow/types.ts';
 import { checkpointIdsOf } from '../src/holistic/checkpoint.ts';
 import type { Obligations } from '../src/holistic/types.ts';
-import { CHECKPOINT_SCHEMA,FLOW_SCHEMA,checkpointSchemaFor,validateFlowOutput } from '../src/prompts/schemas.ts';
+import { CHECKPOINT_SCHEMA,checkpointSchemaFor } from '../src/prompts/schemas.ts';
 import { arcStack,parseRepoConfig,resolveRouting,routingRevOf,seatsInForce } from '../src/routing/layers.ts';
 import { routingProvenance } from '../src/routing/types.ts';
 import { ARC as LOG_ARC,H as LOG_H,PROVENANCE,appliedFields,chain } from './fixtures/log-records.ts';
@@ -43,113 +42,15 @@ const fact = (f: object): LogRecord => ({ type: 'fact', fact: f as Fact });
 const refuses = (record: LogRecord, field: RegExp): void =>
   assert.throws(() => roundTrip(record), (err: unknown) => err instanceof SchemaError && field.test(err.field), JSON.stringify(record));
 
-const SUITE_ACTION = { lever: 'suite-lane', lane: 'unit', argv: ['node', '--test', '--test-concurrency=6', 'test/*.test.js'], reporter: 'node-test' };
-const PROPOSAL = { id: 'flow-2.0', target: 'suite:unit', action: SUITE_ACTION, rationale: 'six isolated files run serially', risks: 'shared state' };
-const SLOT = { station: 'slot:integration', internal: true, component: 'suite:unit' };
-const JUDGED = { station: 'slot:integration', agree: true, reason: 'the slot queues' };
-const PREIMAGE = { lever: 'suite-lane', lane: 'unit', argv: ['node', '--test', '--test-concurrency=1', 'test/*.test.js'], cpu: null };
-
-describe('m4b ids', () => {
-  it('proposals are `<flow job>.<k>`; stations are the closed grammar; jobs flow-n and proof-n', () => {
-    assert.equal(proposalIdOf(jobId('flow', 4), 0), 'flow-4.0');
-    assert.equal(proposalJob(proposalId('flow-4.0')), 'flow-4');
-    assert.throws(() => proposalIdOf(jobId('ckpt', 4), 0), InvalidIdError);
-    for (const bad of ['flow-0.0', 'flow-1', 'ckpt-1.0', 'flow-1.01']) assert.throws(() => proposalId(bad), InvalidIdError, bad);
-    for (const ok of ['stage:build', 'wait:gate', 'slot:integration', 'wait:slot:integration', 'suite:unit', 'arc-lanes', 'candidate-rest', 'ff', 'snapshot', 'held', 'wait:finding']) {
-      assert.equal(stationId(ok), ok);
-    }
-    assert.deepEqual(parseStationId('wait:plan-check'), { type: 'wait', stage: 'plan-check' });
-    assert.deepEqual(parseStationId('wait:finding'), { type: 'finding-wait' });
-    for (const bad of ['stage:candidate', 'wait:ff', 'stage:retire', 'suite:9x', 'slot', 'idle']) assert.throws(() => stationId(bad), InvalidIdError, bad);
-    assert.equal(jobId('proof', 1), 'proof-1');
-  });
-});
-
-describe('m4b facts', () => {
-  it('each flow fact round-trips byte for byte', () => {
-    roundTrip(fact({ kind: 'flow-series', sha256: H, highWater: 812 }));
-    roundTrip(fact({ kind: 'flow-started', job: 'flow-2', triggers: ['constraint-shift', 'floor'], inputsSha256: H }));
-    roundTrip(fact({ kind: 'flow-ended', job: 'flow-2', outcome: 'done', proposal: PROPOSAL, dropped: null, constraint: { code: SLOT, judged: JUDGED } }));
-    roundTrip(fact({
-      kind: 'flow-ended', job: 'flow-2', outcome: 'done', proposal: null, dropped: { proposal: PROPOSAL, reason: 'rejected-before', detail: 'suite-lane on unit' },
-      constraint: { code: SLOT, judged: JUDGED },
-    }));
-    // A 1.0.0-dev.11 drop reason dev.12 no longer writes reads as recorded (scaffolding: RECORDED_DROP_REASONS).
-    roundTrip(fact({
-      kind: 'flow-ended', job: 'flow-2', outcome: 'done', proposal: null, dropped: { proposal: PROPOSAL, reason: 'elevate-early', detail: 'no exploit or subordinate verdict closed on slot:integration this arc' },
-      constraint: { code: SLOT, judged: JUDGED },
-    }));
-    roundTrip(fact({ kind: 'flow-ended', job: 'flow-3', outcome: 'invalid', proposal: null, dropped: null, constraint: { code: null, judged: null } }));
-    roundTrip(fact({ kind: 'flow-requested', command: CMD, reason: 'the suite lane ran 6 min on a 1-file change' }));
-    roundTrip(fact({ kind: 'flow-decided', proposal: 'flow-2.0', command: CMD, decision: 'accepted', reason: 'test-set-preserving by proof' }));
-    roundTrip(fact({
-      kind: 'flow-proof', proposal: 'flow-2.0', job: 'proof-1', treeSha: A, oldSha256: H, newSha256: H, outcome: 'preserved', minutes: { old: 6.1, new: 2.1 }, breaksStandIn: false,
-    }));
-    roundTrip(fact({ kind: 'flow-proof', proposal: 'flow-2.0', job: 'proof-1', treeSha: A, oldSha256: null, newSha256: null, outcome: 'unprovable', minutes: null, breaksStandIn: false }));
-    roundTrip(fact({ kind: 'flow-applied', proposal: 'flow-2.0', revision: 4, preimage: PREIMAGE }));
-    roundTrip(fact({
-      kind: 'flow-verdict', proposal: 'flow-2.0', metric: { type: 'suite-run', lane: 'unit' }, before: { samples: [6.1, 6.3, 5.9, 6.0, 6.2], centre: 6.1, mrBar: 0.2 },
-      after: { samples: [2.1, 2.2, 2.0] }, guards: [], verdict: 'improved', preimage: PREIMAGE,
-    }));
-    roundTrip(fact({ kind: 'executor-started', generation: 3, host: { platform: 'linux', arch: 'x64', cpus: 8, memGiB: 31 } }));
-    roundTrip(fact({ kind: 'executor-started', generation: 3 }));
-  });
-
-  it('refuses illegal flow states', () => {
-    const ended = { kind: 'flow-ended', job: 'flow-2', outcome: 'done', proposal: PROPOSAL, dropped: null, constraint: { code: SLOT, judged: JUDGED } };
-    refuses(fact({ ...ended, outcome: 'failed' }), /\.proposal$/);
-    refuses(fact({ ...ended, constraint: { code: SLOT, judged: null } }), /\.constraint\.judged$/);
-    refuses(fact({ ...ended, dropped: { proposal: PROPOSAL, reason: 'given', detail: 'd' } }), /\.dropped$/);
-    refuses(fact({ ...ended, proposal: { ...PROPOSAL, id: 'flow-1.0' } }), /\.proposal\.id$/);
-    refuses(fact({ ...ended, constraint: { code: { ...SLOT, component: null }, judged: JUDGED } }), /\.component$/);
-    refuses(fact({ ...ended, constraint: { code: { station: 'stage:build', internal: false, component: 'ff' }, judged: JUDGED } }), /\.component$/);
-    refuses(fact({ ...ended, constraint: { code: { station: 'held', internal: true, component: null }, judged: JUDGED } }), /\.station$/);
-    refuses(fact({ ...ended, proposal: { ...PROPOSAL, action: { lever: 'suite-lane', lane: 'unit' } } }), /\.action$/);
-    refuses(fact({ kind: 'flow-started', job: 'ckpt-2', triggers: ['floor'], inputsSha256: H }), /\.job$/);
-    refuses(fact({ kind: 'flow-started', job: 'flow-2', triggers: ['floor', 'buffer-red'], inputsSha256: H }), /\.triggers\[1\]$/);
-    refuses(fact({ kind: 'flow-started', job: 'flow-2', triggers: [], inputsSha256: H }), /\.triggers$/);
-    refuses(fact({ kind: 'flow-proof', proposal: 'flow-2.0', job: 'proof-1', treeSha: A, oldSha256: H, newSha256: null, outcome: 'changed', minutes: null, breaksStandIn: true }), /\.minutes$/);
-    const verdict = {
-      kind: 'flow-verdict', proposal: 'flow-2.0', metric: { type: 'lead' }, before: { samples: [40, 42, 38], centre: 3.7, mrBar: 0.2 }, after: { samples: [30, 31, 29] },
-      guards: [], verdict: 'improved', preimage: { lever: 'concurrency', cpu: null },
-    };
-    refuses(fact({ ...verdict, guards: [{ guard: 'rework', detail: '+1 in 3 merges' }] }), /\.verdict$/);
-    refuses(fact({ ...verdict, verdict: 'inconclusive' }), /\.verdict$/);
-    refuses(fact({ ...verdict, after: { samples: [30] } }), /\.verdict$/);
-    refuses(fact({ ...verdict, before: { samples: [40], centre: 3.7, mrBar: 0 } }), /\.verdict$/);
-    roundTrip(fact({ ...verdict, before: { samples: [], centre: 0, mrBar: 0 }, verdict: 'inconclusive' }));
-    refuses(fact({ ...verdict, guards: [{ guard: 'cost', detail: 'c' }, { guard: 'lead', detail: 'l' }], verdict: 'worse' }), /\.guards\[1\]$/);
-  });
-
-  it('the revision source, hold cause and proof spawn arms; the flow commands', () => {
-    const stageOutcome = { kind: 'stage-outcome', unit: 'u1', stage: 'candidate', attempt: 1, outcome: 'interrupted', class: 'hold', chargeable: false, cause: { type: 'flow-apply', proposal: 'flow-2.0' } };
-    roundTrip(fact(stageOutcome));
-    refuses(fact({ ...stageOutcome, cause: { type: 'flow-apply', proposal: 'flow-2' } }), /\.cause\.proposal$/);
-    const spawn = (subject: object): LogRecord => ({
-      type: 'intent', op: opId(ARC, 2), kind: 'proc.spawn', key: opKey('k:proof'), parent: { type: 'job', job: 'proof-1' }, ordinal: 1, deadlineAt: null,
-      expect: { subject, launchSha256: H }, post: null,
-    }) as unknown as LogRecord;
-    const subject = { purpose: 'proof', job: 'proof-1', proposal: 'flow-2.0', lane: 'unit', side: 'new', at: A };
-    roundTrip(spawn(subject));
-    refuses(spawn({ ...subject, job: 'flow-1' }), /\.subject\.job$/);
-    refuses(spawn({ ...subject, side: 'both' }), /\.subject\.side$/);
-    const applied = (source: object, command: string | null) => fact({
-      kind: 'plan-applied', rev: 4, command, planSha256: H, specs: { u1: H }, changes: [{ type: 'suite' }], source, payloadSha256: H, rulingsSha256: H,
-      routingProvenance: { profile: 'default', repoConfig: { seats: null, classes: null }, planLayer: null, unitLayers: {}, arcRoles: 'm4b' },
-    });
-    roundTrip(applied({ type: 'flow', proposal: 'flow-2.0' }, null));
-    refuses(applied({ type: 'flow', proposal: 'flow-2.0' }, CMD), /\.source$/);
-  });
-});
-
 describe('m4b rev 3: host pressure records', () => {
   const result = { kind: 'result', resultSha256: H, summary: { type: 'command', verdict: 'stall' } };
   const done = (outcome: object): LogRecord => ({ type: 'done', op: opId(ARC, 2), kind: 'proc.spawn', outcome, recoveredBy: null }) as unknown as LogRecord;
-  const ended = (code: object) => fact({ kind: 'flow-ended', job: 'flow-2', outcome: 'done', proposal: null, dropped: null, constraint: { code, judged: JUDGED } });
 
   it('a start records schedstat availability and a spawn result its pressure; both absent on an earlier executor\'s, read with defaults', () => {
     roundTrip(fact({ kind: 'executor-started', generation: 3, host: { platform: 'linux', arch: 'x64', cpus: 8, memGiB: 31 }, pressure: 'available' }));
     roundTrip(fact({ kind: 'executor-started', generation: 3, pressure: 'unavailable' }));
+    roundTrip(fact({ kind: 'executor-started', generation: 3, host: { platform: 'linux', arch: 'x64', cpus: 8, memGiB: 31 } }));
+    roundTrip(fact({ kind: 'executor-started', generation: 3 }));
     refuses(fact({ kind: 'executor-started', generation: 3, pressure: 'none' }), /\.pressure$/);
     for (const pressure of [0, 0.37, 1, null]) roundTrip(done({ ...result, pressure }));
     for (const pressure of [1.01, -0.1, '0.3']) refuses(done({ ...result, pressure }), /\.pressure$/);
@@ -161,98 +62,12 @@ describe('m4b rev 3: host pressure records', () => {
     assert.equal(startPressureOf({ pressure: 'available' }), 'available');
   });
 
-  it('host:cpu is an internal station, never a share of lead; the trigger, drop reason, metric and hold cause arms', () => {
-    assert.deepEqual(parseStationId('host:cpu'), { type: 'host-cpu' });
-    assert.equal(stationId('host:cpu'), 'host:cpu');
-    assert.throws(() => stationId('host:mem'), InvalidIdError);
-    roundTrip(ended({ station: 'host:cpu', internal: true, component: null }));
-    refuses(ended({ station: 'host:cpu', internal: false, component: null }), /\.internal$/);
-    refuses(ended({ station: 'host:cpu', internal: true, component: 'ff' }), /\.component$/);
-    roundTrip(fact({ kind: 'flow-started', job: 'flow-2', triggers: ['yellow-worsening', 'host-pressure', 'constraint-shift'], inputsSha256: H }));
-    refuses(fact({ kind: 'flow-started', job: 'flow-2', triggers: ['constraint-shift', 'host-pressure'], inputsSha256: H }), /\.triggers\[1\]$/);
-    const proposal = { ...PROPOSAL, target: 'host:cpu', action: { lever: 'concurrency', cpu: 12 } };
-    roundTrip(fact({ kind: 'flow-ended', job: 'flow-2', outcome: 'done', proposal: null, dropped: { proposal, reason: 'direction', detail: 'an increase at host:cpu' }, constraint: { code: null, judged: JUDGED } }));
-    roundTrip(fact({
-      kind: 'flow-verdict', proposal: 'flow-2.0', metric: { type: 'pressure' }, before: { samples: [0.4, 0.5, 0.45], centre: 0.45, mrBar: 0.07 },
-      after: { samples: [0.1, 0.12, 0.09] }, guards: [], verdict: 'improved', preimage: { lever: 'concurrency', cpu: null },
-    }));
+  it('host-pressure hold cause names the invocation', () => {
     const held = { kind: 'stage-outcome', unit: 'u1', stage: 'lanes', attempt: 1, outcome: 'interrupted', class: 'hold', chargeable: false, cause: { type: 'host-pressure', inv: 'arc-3/7#1' } };
     roundTrip(fact(held));
     refuses(fact({ ...held, cause: { type: 'host-pressure', inv: 'u1' } }), /\.cause\.inv$/);
   });
 
-  it('a series point and a suite run carry pressure (series v2), a point per station too; host:cpu is no minutes or station-pressure key', () => {
-    const point = { unit: 'u1', admittedAt: AT, mergedAt: AT, leadMin: 5, minutes: { 'stage:build': 5 }, costUsd: null, rework: 0, firstRunReds: 0, pressure: null, stationPressure: { 'stage:build': null } };
-    const series = { v: 2, arc: 'arc-3', host: null, points: [point], suiteRuns: [], accounting: { tAdvances: null, tOther: null, tUnits: 0, wip: 0, oeUsdPerHour: 0 } };
-    assert.equal(parseFlowSeries(series).points[0]?.pressure, null);
-    assert.throws(() => parseFlowSeries({ ...series, points: [{ ...point, minutes: { 'stage:build': 4, 'host:cpu': 1 } }] }), SchemaError);
-    assert.throws(() => parseFlowSeries({ ...series, points: [{ ...point, pressure: 2 }] }), SchemaError);
-    const { pressure: _, ...withoutPressure } = point;
-    assert.throws(() => parseFlowSeries({ ...series, points: [withoutPressure] }), SchemaError);
-    assert.equal(parseFlowSeries({ ...series, points: [{ ...point, stationPressure: { 'stage:build': 0.3, 'suite:unit': 0.5 } }] }).points[0]?.stationPressure[stationId('stage:build')], 0.3);
-    for (const stationPressure of [{ 'host:cpu': 0.3 }, { 'slot:integration': 0.3 }, { 'stage:build': 1.5 }]) {
-      assert.throws(() => parseFlowSeries({ ...series, points: [{ ...point, stationPressure }] }), SchemaError, JSON.stringify(stationPressure));
-    }
-  });
-});
-
-describe('m4b kept records', () => {
-  const point = { unit: 'u1', admittedAt: AT, mergedAt: '2026-10-08T12:30:00.000Z', leadMin: 30, minutes: { 'stage:build': 20, 'wait:slot:integration': 4, 'suite:unit': 6 }, costUsd: 1.5, rework: 0, firstRunReds: 0, pressure: 0.12,
-    stationPressure: { 'stage:build': 0.1, 'suite:unit': 0.18 } };
-  const series = {
-    v: 2, arc: 'arc-3', host: null, points: [point], suiteRuns: [{ lane: 'unit', at: AT, minutes: 6, shape: 'stand-in', red: false, pressure: null }],
-    accounting: { tAdvances: null, tOther: null, tUnits: 2, wip: 1, oeUsdPerHour: 3 },
-  };
-
-  it('a flow series reads; its points partition lead time over leaf stations', () => {
-    assert.equal(canonicalJson(parseFlowSeries(JSON.parse(JSON.stringify(series)))), canonicalJson(series));
-    assert.throws(() => parseFlowSeries({ ...series, points: [{ ...point, leadMin: 31 }] }), (e: unknown) => e instanceof SchemaError && /\.minutes$/.test(e.field));
-    assert.throws(() => parseFlowSeries({ ...series, points: [{ ...point, minutes: { 'slot:integration': 10, 'stage:build': 20 } }] }), SchemaError);
-    assert.throws(() => parseFlowSeries({ ...series, accounting: { ...series.accounting, tAdvances: 1 } }), SchemaError);
-    assert.throws(() => parseFlowSeries({ ...series, v: 1 }), SchemaError);
-    assert.throws(() => parseFlowSeries({ ...series, points: [point, point] }), SchemaError);
-  });
-
-  it('flow inputs and host givens read; givens ascend by id', () => {
-    const inputs = {
-      schema: 'roadmap/flow-inputs-m4b', job: 'flow-1', triggers: ['floor'], chart: null, stations: [{ station: 'stage:build', meanMin: 20, share: 0.66, pressure: 0.12 }], constraint: null,
-      accounting: series.accounting, levers: [{ lever: 'concurrency', cpu: 8, set: false, hostCpus: 8 }], givens: [{ scope: 'repo', lever: 'host', note: 'a fixed host' }],
-      window: null, verdicts: [], rejections: [], advances: [],
-      pressure: { threshold: 0.5, available: true, now: 0.3, window: 0.31, cpuInUse: 6, hostCpus: 8 },
-    };
-    assert.equal(canonicalJson(parseFlowInputs(JSON.parse(JSON.stringify(inputs)))), canonicalJson(inputs));
-    assert.throws(() => parseFlowInputs({ ...inputs, job: 'review-1' }), SchemaError);
-    const unavailable = { threshold: 0.5, available: false, now: null, window: null, cpuInUse: 0, hostCpus: 8 };
-    assert.equal(parseFlowInputs({ ...inputs, pressure: unavailable }).pressure.now, null);
-    assert.equal(parseFlowInputs({ ...inputs, pressure: { ...unavailable, available: true } }).pressure.now, null, 'available, under a minute of ticks');
-    assert.throws(() => parseFlowInputs({ ...inputs, pressure: { ...unavailable, now: 0.2 } }), SchemaError, 'a reading on a host without schedstat');
-    const { pressure: _p, ...noPressure } = inputs;
-    assert.throws(() => parseFlowInputs(noPressure), SchemaError);
-    const given = (id: string) => ({ id, lever: 'concurrency', note: 'n', fingerprint: { platform: 'linux', arch: 'x64', cpus: 4, memGiB: 16 }, at: AT });
-    assert.equal(parseHostGivens({ schema: 'roadmap/flow-givens-m4b', givens: [given('G-2'), given('G-10')] }).givens.length, 2);
-    assert.throws(() => parseHostGivens({ schema: 'roadmap/flow-givens-m4b', givens: [given('G-10'), given('G-2')] }), SchemaError);
-    assert.deepEqual(parseRepoConfig({ flow: { givens: [{ lever: 'concurrency', note: 'one runner' }] } }).flow, { givens: [{ lever: 'concurrency', note: 'one runner' }] });
-    assert.throws(() => parseRepoConfig({ flow: { givens: [{ lever: 'rope', note: 'n' }] } }), SchemaError);
-  });
-});
-
-describe('m4b flow output (strict)', () => {
-  const ok = {
-    constraint: JUDGED, diagnosis: 'the suite lane is most of the slot',
-    proposal: { target: 'suite:unit', action: { ...SUITE_ACTION, cpu: null }, rationale: 'r', risks: 'k' }, noAction: null,
-  };
-
-  it('exactly one of proposal and noAction; a suite lane\'s unused fields null and read as absent', () => {
-    const out = validateFlowOutput(ok);
-    assert.deepEqual(out.proposal?.action, SUITE_ACTION);
-    assert.deepEqual(validateFlowOutput({ ...ok, proposal: null, noAction: 'common cause only' }).proposal, null);
-    for (const bad of [
-      { proposal: null }, { noAction: 'both' }, { proposal: { ...ok.proposal, action: { lever: 'suite-lane', lane: 'unit', argv: null, reporter: null, cpu: null } } },
-      { proposal: { ...ok.proposal, id: 'flow-1.0' } }, { proposal: { ...ok.proposal, target: 'idle' } },
-      { proposal: { ...ok.proposal, action: { lever: 'sequence', unit: 'u1', priority: 'normal' } } }, { proposal: { ...ok.proposal, action: { lever: 'rope', wip: 3 } } },
-    ]) assert.throws(() => validateFlowOutput({ ...ok, ...bad }), SchemaError, JSON.stringify(bad));
-    assert.ok(JSON.stringify(FLOW_SCHEMA).includes('"go-test-json"'));
-  });
 });
 
 describe('m4b routing: role-set provenance survives flow retirement', () => {
@@ -261,17 +76,12 @@ describe('m4b routing: role-set provenance survives flow retirement', () => {
     const m4b = resolveRouting({ ...arcStack('default', null, null), arcRoles: 'm4b' });
     assert.equal(dev7.rev, routingRevOf(dev7.table, 'none', null, false));
     assert.equal(m4b.rev, dev7.rev, 'the retired flow seat is not hashed');
-    assert.ok(!seatsInForce(dev7).some((s) => s.role === 'flow'));
-    assert.deepEqual(seatsInForce(m4b).filter((s) => s.role === 'flow'), []);
-    assert.deepEqual(m4b.classes.flow, { arc: 'efficient' }, 'the flow seat on efficient (owner ruling 2026-10-15)');
+    assert.ok(!seatsInForce(dev7).some((s) => String(s.role) === 'flow'));
+    assert.deepEqual(seatsInForce(m4b).filter((s) => String(s.role) === 'flow'), []);
     for (const scope of ['architecture-doc', 'corpus'] as const) {
       assert.equal(routingRevOf(m4b.table, scope, 'm4b', false), routingRevOf(m4b.table, scope, null, false), scope);
-      assert.ok(!seatsInForce(resolveRouting({ ...arcStack('default', null, null), arcScope: scope, arcRoles: 'm4b' })).some((s) => s.role === 'flow'), scope);
+      assert.ok(!seatsInForce(resolveRouting({ ...arcStack('default', null, null), arcScope: scope, arcRoles: 'm4b' })).some((s) => String(s.role) === 'flow'), scope);
     }
-    // A retired flow-seat rebind moves no active revision.
-    const moved = { flow: { arc: 'summit' as const } };
-    assert.equal(resolveRouting(arcStack('default', null, moved)).rev, dev7.rev);
-    assert.equal(resolveRouting({ ...arcStack('default', null, moved), arcRoles: 'm4b' }).rev, m4b.rev);
     // The provenance records the role set additively: absent reads as absent.
     const p = { profile: 'default', repoConfig: { seats: null, classes: null }, planLayer: null, unitLayers: {} };
     assert.equal(routingProvenance(p, 'p').arcRoles, undefined);

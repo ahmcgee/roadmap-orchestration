@@ -82,7 +82,7 @@ function expectedClosure(r: ExecRun, events: readonly Event[]): ReadonlyMap<stri
     if (e.kind === 'proc.spawn' && e.outcome.kind === 'result' && intent.kind === 'proc.spawn') {
       const s = intent.expect.subject;
       const dir = `inv/${invocationDirName(invocationId(intent.op, intent.ordinal))}`;
-      if (s.purpose === 'lane' || s.purpose === 'journey' || s.purpose === 'proof' || s.purpose === 'mutant' || (s.purpose === 'backend' && s.role === 'build')) {
+      if (s.purpose === 'lane' || s.purpose === 'journey' || s.purpose === 'mutant' || (s.purpose === 'backend' && s.role === 'build')) {
         out.set(`${dir}/exit.json`, null);
       }
     }

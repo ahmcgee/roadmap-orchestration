@@ -8,14 +8,13 @@
 // a hung lane and the lane reuse after it, arc 3 refused at K, stop k-limit) and `vision-silent` (arc 1, then no slice
 // candidate, stop vision-silent). The story synchronises on events, never on time, so its turns are the same every run.
 // M4b's plants (S: the stale serial run of the suite gate; G: the soak run that stays in it) are in the product
-// and the golden outputs; the story works the flow loop (arc 1: a `changed` bait proof, a `preserved` shard and its
-// verdict; arc 2: a reject).
+// and the golden outputs; their test sets remain checked across the chain.
 // Named tests: evals-m4a.setup-valid, evals-m4a.fake, evals-m4a.pack-review-hold,
 // evals-m4a.amendments-debt, evals-m4a.k-limit, evals-m4a.brief, evals-m4a.check-oracle,
 // evals-m4a.adjudication-tree, evals-m4a.rerun-refused, evals-m4a.vision-silent, evals-m4a.witness-missing,
 // evals-m4a.smoke-survivor, evals-m4a.opportunity, evals-m4a.lane-reuse-after-pause,
 // evals-m4a.owner-questions, evals-m4a.owner-code-answers, evals-m4a.owner-reads-brief, evals-m4a.wake-key, skill.operator-log-format,
-// evals-m4a.flow-loop, evals-m4a.flow-criteria, evals-m4a.plant-lane.
+// evals-m4a.ruler-criteria, evals-m4a.plant-lane.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { cpSync,existsSync,readFileSync,readdirSync } from 'node:fs';
@@ -26,7 +25,7 @@ import { stageTree,verdictProblems } from '../../evals/m4a/adjudicate.ts';
 import {
 CRITERIA,
 type CheckResult,
-type FlowArc,LEVERS,arcView,chainOf,flowArcOf,flowConstraintVerdict,flowLoopVerdict,flowShardVerdict,parseOperatorLog,
+type RulerArc,LEVERS,arcView,chainOf,parseOperatorLog,
 rulerArgvs,rulerRecordProblems,triplesProblems,
 } from '../../evals/m4a/check.ts';
 import {
@@ -37,7 +36,7 @@ import { fakeArc,fakeHostDir } from '../../evals/m4a/fake-root.ts';
 import { FILES,FITS_WITNESS,LANES,READOUTS,REPLAY_LANE,SHARD,SLOW_LANE,SUITE_LANE,corpusFor,rawCorpus,unitsOf } from '../../evals/m4a/golden.ts';
 import { type ArcView,defectVerdicts,matches,readKey,spanPresent } from '../../evals/m4a/key.ts';
 import { PLANT,SEED_SUITE_ARGV,layout } from '../../evals/m4a/layout.ts';
-import { DRIFT_CHECKPOINT,FLOW_1,FLOW_2 } from '../../evals/m4a/scenario.ts';
+import { DRIFT_CHECKPOINT } from '../../evals/m4a/scenario.ts';
 import { CLOCK_FILE,FAKE_TICK_MS,PAID_TICK } from '../../evals/m4a/setup.ts';
 import { ANSWER_KEY,needles,toolTraffic } from '../../evals/m4a/transcript.ts';
 import { type ArcRef,amendmentsOf } from '../../src/chain.ts';
@@ -521,7 +520,7 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     const pass = checked.result.criteria.filter((c) => c.pass).map((c) => c.name);
     // M4b: arc 1's constraint-shift run (noAction) names the slot and its suite component, so flow-constraint holds; the
     // loop and the shard need a decided proposal and a verdict. M4b rev 3: its lane runs carry pressure (pressure-recorded).
-    assert.deepEqual(pass, ['isolation', 'arc1-complete', 'brief-acked-once', 'no-model-ids', 'host-released', 'profile', 'ruler-intact', 'pressure-recorded'], 'the paid run\'s criteria that need a second arc, the k-limit stop or a decided flow proposal fail here');
+    assert.deepEqual(pass, ['isolation', 'arc1-complete', 'brief-acked-once', 'no-model-ids', 'host-released', 'profile', 'ruler-intact', 'pressure-recorded'], 'the paid run\'s criteria that need a second arc, the k-limit stop fail here');
     assert.match(checked.result.criteria.find((c) => c.name === 'stopped-at-k')!.detail, /vision-silent/);
   });
 
@@ -667,32 +666,20 @@ test('evals-m4a.wake-key (paid run 2): needs-user ids are arc-scoped, so an id r
 });
 
 // ---------------------------------------------------------------------------------------------------
-// M4b: the flow criteria and the fail-fast on synthetic records (no run needed)
+// Fixture lane integrity and fail-fast on synthetic records (no run needed)
 
 const lane = (id: string, argv: readonly string[]) => ({ id, argv: [...argv], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [] });
 const planOf = (argv: readonly string[], units = MIN_ARC1_UNITS): PlanM1 => ({
   suite: { lanes: [lane(SUITE_LANE, argv), lane(REPLAY_LANE.id, REPLAY_LANE.argv)] }, units: Array.from({ length: units }, (_, i) => ({ id: `u${i + 1}` })),
 }) as unknown as PlanM1;
 const obligationsOf = (soakArgv: readonly string[]) => parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [{ ...lane('soak', soakArgv), reporter: 'node-test' }], obligations: [], mapping: { systems: [] } });
-const SHA = 'a'.repeat(64);
-const SHARD_PROPOSAL = { id: 'flow-2.0', target: `suite:${SUITE_LANE}`, action: { lever: 'suite-lane', lane: SUITE_LANE, argv: [...SHARD.argv], reporter: 'node-test', cpu: SHARD.cpu }, rationale: 'r', risks: 'r' };
-const PREIMAGE = { lever: 'suite-lane', lane: SUITE_LANE, argv: [...SEED_SUITE_ARGV], cpu: null };
-type Synthetic = Readonly<{ component?: string; reason?: string; proof?: string; verdict?: string; soakArgv?: readonly string[]; finalArgv?: readonly string[] }>;
+type Synthetic = Readonly<{ soakArgv?: readonly string[]; finalArgv?: readonly string[] }>;
 
-/** One arc whose flow-2 changes the plant lane (`SHARD`) as the story's does; each option mutates one record. */
-function syntheticArc(o: Synthetic = {}): FlowArc {
-  const facts: unknown[] = [
-    { kind: 'flow-started', job: 'flow-2', triggers: ['requested'], inputsSha256: SHA },
-    { kind: 'flow-ended', job: 'flow-2', outcome: 'done', proposal: SHARD_PROPOSAL, dropped: null, constraint: { code: { station: 'slot:integration', internal: false, component: o.component ?? `suite:${SUITE_LANE}` }, judged: { station: 'slot:integration', agree: true, reason: 'r' } } },
-    { kind: 'flow-decided', proposal: 'flow-2.0', command: 'cmd-1', decision: 'accepted', reason: o.reason ?? 'the serial flag is stale' },
-    { kind: 'flow-proof', proposal: 'flow-2.0', job: 'proof-1', treeSha: '0'.repeat(40), oldSha256: SHA, newSha256: SHA, outcome: o.proof ?? 'preserved', minutes: { old: 6, new: 1 }, breaksStandIn: false },
-    { kind: 'flow-applied', proposal: 'flow-2.0', revision: 2, preimage: PREIMAGE },
-    { kind: 'flow-verdict', proposal: 'flow-2.0', metric: { type: 'suite-run', lane: SUITE_LANE }, before: { samples: [6], centre: 6, mrBar: 0 }, after: { samples: [1, 1, 1] }, guards: [], verdict: o.verdict ?? 'improved', preimage: PREIMAGE },
-  ];
+/** One arc with original and revised fixture lanes; each option mutates one record. */
+function syntheticArc(o: Synthetic = {}): RulerArc {
   const soak = ['node', '--test', PLANT.soakFile];
   return {
     arc: 'm4a-synthetic-1',
-    facts: facts.map((fact, i) => ({ seq: i + 10, fact: fact as Fact })),
     revisions: [
       { rev: 1, plan: planOf(SEED_SUITE_ARGV), obligations: obligationsOf(soak) },
       { rev: 2, plan: planOf(o.finalArgv ?? SHARD.argv), obligations: obligationsOf(o.soakArgv ?? soak) },
@@ -700,23 +687,9 @@ function syntheticArc(o: Synthetic = {}): FlowArc {
   };
 }
 
-test('evals-m4a.flow-criteria: flow-constraint, flow-loop, flow-shard and ruler-intact pass on the story\'s records and fail on each one mutated', () => {
+test('evals-m4a.ruler-criteria: lane integrity passes on the story\'s records and fails on each one mutated', () => {
   const good = syntheticArc();
-  assert.equal(flowConstraintVerdict(good).pass, true);
-  assert.equal(flowLoopVerdict([good]).pass, true);
-  assert.equal(flowShardVerdict([good]).pass, true, flowShardVerdict([good]).detail);
   assert.deepEqual(rulerRecordProblems([good]), []);
-  assert.deepEqual(flowLoopVerdict([]).pass, false, 'no run at all');
-
-  assert.match(flowConstraintVerdict(syntheticArc({ component: 'ff' })).detail, /no run named the slot with a suite component/);
-  assert.match(flowLoopVerdict([syntheticArc({ reason: '  ' })]).detail, /no proposal decided with a reason/);
-  const inconclusive = syntheticArc({ verdict: 'inconclusive' });
-  assert.match(flowLoopVerdict([inconclusive]).detail, /no conclusive verdict/);
-  assert.equal(flowShardVerdict([inconclusive]).pass, false);
-  assert.equal(flowShardVerdict([syntheticArc({ verdict: 'no-effect' })]).pass, false, 'conclusive but not improved');
-  const changed = syntheticArc({ proof: 'changed' });
-  assert.equal(flowShardVerdict([changed]).pass, false);
-  assert.deepEqual(rulerRecordProblems([changed]), ['m4a-synthetic-1: flow-2.0 changed suite\'s argv without a preserved proof']);
   const slowerSoak = rulerRecordProblems([syntheticArc({ soakArgv: ['node', '--test', '--test-concurrency=2', PLANT.soakFile] })]);
   assert.equal(slowerSoak.length, 1);
   assert.match(slowerSoak[0]!, /rev 2: the soak lane soak has laneRev/);
@@ -748,7 +721,7 @@ test('evals-m4a.plant-lane: the fail-fast finds plant S only in a suite lane who
 });
 
 test('evals-m4a.unit-floor: the fail-fast stops an arc 1 whose first plan has fewer units than a conclusive verdict needs', () => {
-  assert.equal(MIN_ARC1_UNITS, 6, 'three suite runs before the flow change and three after it, one per integration');
+  assert.equal(MIN_ARC1_UNITS, 6, 'six independent units exercise suite runs across integrations');
   assert.deepEqual(firstPlanCheck('a', planOf(SEED_SUITE_ARGV)), { kind: 'in-play', arc: 'a', lane: SUITE_LANE, units: MIN_ARC1_UNITS });
   const small = firstPlanCheck('a', planOf(SEED_SUITE_ARGV, MIN_ARC1_UNITS - 1));
   assert.deepEqual(small, { kind: 'too-few-units', arc: 'a', units: ['u1', 'u2', 'u3', 'u4', 'u5'] });

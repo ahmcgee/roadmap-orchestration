@@ -81,7 +81,7 @@ import { raiseWasteFindings } from '../flow/waste.ts';
 // dev.13, the demo (src/demo/promote.ts): each iteration of an arc with milestones journals the demo failures the host
 // record lists, promotes the latest settled milestone (unless held) and rewrites the keeper's desired file; right before
 // `arc-completed`, the final tip is promoted (`promoteFinal`).
-// M4b rev 3: each loop iteration reads the host's schedstat cpu totals into an in-memory tick history (`PressureTicks`,
+// Host pressure: each loop iteration reads the host's schedstat cpu totals into an in-memory tick history (`PressureTicks`,
 // a restart starts it fresh), which admission reads to release a host-pressure hold (`AdmitInput.pressure`,
 // src/schedule/ready.ts) and the arbiter reads for admission back-off.
 //
@@ -292,9 +292,9 @@ type Task = {
   waiting: Waiting | null;
 };
 
-/** Invocation purposes a pause kills among a paused unit's spawns (and, under `pause --all`, a flow proof's runs: M4b). */
+/** Invocation purposes a pause kills among a paused unit's spawns. */
 const PAUSE_KILLS: readonly string[] = ['backend', 'lane', 'journey', 'mutant'];
-/** Invocation purposes a stop kills (lens, checkpoint and flow calls and flow proofs included; never a docs publication's lanes). */
+/** Invocation purposes a stop kills (lens and checkpoint calls included; never a docs publication's lanes). */
 const STOP_KILLS: readonly string[] = ['backend', 'lane', 'smoke', 'journey', 'mutant', 'arc-backend', 'proof', 'bring-up'];
 
 /** A holistic job that made no progress is asked again only this long after. */
@@ -1040,8 +1040,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
     const steering = new Set(pollCommands(runDir, view().arc).flatMap((c) => c.body.type === 'steer' ? [c.body.unit] : []));
     const paused = (unit: UnitId): boolean => c.pausedAll || c.pausedUnits.includes(unit) || steering.has(unit);
     for (const task of tasks.values()) if (paused(task.unit) && !task.abort.signal.aborted) task.abort.abort('pause');
-    killLive('pause', (intent) => (intent.parent.type === 'stage' && PAUSE_KILLS.includes(intent.expect.subject.purpose) && paused(intent.parent.unit))
-      || (c.pausedAll && intent.expect.subject.purpose === 'proof'));
+    killLive('pause', (intent) => intent.parent.type === 'stage' && PAUSE_KILLS.includes(intent.expect.subject.purpose) && paused(intent.parent.unit));
   };
 
   /** The probe targets a mutation probes or smokes through the prober (`resume <u>` of a retryable park, `resume --backend`). */

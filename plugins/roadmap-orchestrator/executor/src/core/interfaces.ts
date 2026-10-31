@@ -6,7 +6,7 @@ import type { Backend,UnitRole } from '../routing/types.ts';
 import type {
 AbortCode,DoneRecord,Fact,
 FlakyFact,
-FlowFact,GitOpKind,IntentOf,IntentRecord,JudgmentInputs,JudgmentStage,OpExpect,OpKind,OpOutcome,OpPost,Parent,
+GitOpKind,IntentOf,IntentRecord,JudgmentInputs,JudgmentStage,OpExpect,OpKind,OpOutcome,OpPost,Parent,
 PlanAppliedFact,PropagationFact,RecoveredBy,WalkFact,
 } from './events.ts';
 import type {
@@ -144,9 +144,8 @@ export interface JournalView {
   findingsAt(seq: number): readonly FindingState[];
   /** dev.17 proportional review: the findings ledger, approvals with their blobs, docs-only checks. */
   review(): ReviewFold;
-  /** M4b: every flow fact, in log order, with its seq and time (src/flow/apply.ts derives the decisions' phases from them). */
+  /** Milestone experience and campaign audit outcomes for the efficacy feed. */
   stageJobOutcomes(): readonly import('./events.ts').JobStageOutcomeFact[];
-  flowFacts(): readonly FlowFactAt[];
   /** dev.13: every walk fact (walks, polish, tweaks, milestone passes, the demo), in log order, with its seq and time. */
   walkFacts(): readonly WalkFactAt[];
   /** dev.13: the id the next `polish-proposed` must carry (`X-<proposals + 1>`, arc-scoped). */
@@ -165,7 +164,6 @@ export interface JournalView {
 }
 
 export type FlakeAt = Readonly<{ seq: number; at: IsoTime; fact: FlakyFact }>;
-export type FlowFactAt = Readonly<{ seq: number; at: IsoTime; fact: FlowFact }>;
 export type WalkFactAt = Readonly<{ seq: number; at: IsoTime; fact: WalkFact }>;
 export type PropagationFactAt = Readonly<{ seq: number; at: IsoTime; fact: PropagationFact }>;
 

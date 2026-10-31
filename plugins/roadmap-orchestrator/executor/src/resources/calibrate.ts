@@ -49,7 +49,7 @@ export function cpuCost(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>
     const inv = invocationId(spawn.op, spawn.ordinal);
     if (history.seen.has(inv) || view.doneOf(spawn.op) === null) continue;
     const subject = spawn.expect.subject;
-    if (subject.purpose !== 'lane' && subject.purpose !== 'journey' && subject.purpose !== 'proof' && !(subject.purpose === 'backend' && subject.role === 'build')) continue;
+    if (subject.purpose !== 'lane' && subject.purpose !== 'journey' && !(subject.purpose === 'backend' && subject.role === 'build')) continue;
     // A file-targeted retry has different argv and cannot teach the full lane's cost (including older spawns).
     if (subject.purpose === 'lane' && subject.files !== undefined) continue;
     const basis = spawnCpuKeyOf(spawn.expect);

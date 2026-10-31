@@ -26,9 +26,6 @@
 // - **Answers** (src/answers.ts): the owner's recorded answers (`roadmap answer`) no Phase-0 record applies yet, read
 //   from the answer log and the newest arcs' records in force (a live arc's run dir before its ref): rendered first, as
 //   the act the root agent owes now.
-// - **Flow** (M4b, `briefFlow`; arcs with the loop on): code's constraint and the T/I/OE accounting (diagnostic only) at
-//   the ref; the verdicts, the ruler changes (command revisions after the first admission) and the host advice in the
-//   delta; and each lever the previous arc of the chain applied (no verdict worse) that this arc's plan dropped.
 // - **Demo** (dev.13, src/demo/promote.ts `demoView`; arcs with a promotion): the demo at the ref (the promoted milestone
 //   and SHA, held, up, what changed since the promotion before it, the open walkthrough P2s as rough edges). Where it runs
 //   is status's alone: the brief reads refs only.
@@ -37,7 +34,7 @@ import { existsSync } from 'node:fs';
 import { answerLine, unappliedAnswers } from './answers.ts';
 import { type ArcRef, committedAcks, completedHeadOf } from './chain.ts';
 import { type ChainLink, chainHead, chainQuota, chainTo, linkOf, prsOf } from './commands/chain.ts';
-import { type ArcId, type BriefId, type Sha, HOST_CPU_STATION, amendmentRefOf, briefId, invocationDirName } from './core/ids.ts';
+import { type ArcId, type BriefId, type Sha,  amendmentRefOf, briefId, invocationDirName } from './core/ids.ts';
 import { PRESSURE_SATURATED } from './host/pressure.ts';
 import { canonicalJson, sha256Hex } from './core/json.ts';
 import { type CommandBody, needsUserRecord } from './core/records.ts';
@@ -50,7 +47,7 @@ import { parseObligations } from './holistic/types.ts';
 import { OBLIGATIONS_INPUT, PHASE0_INPUT, REVISION_INPUT, RULING_INPUT } from './input/inforce.ts';
 import { CliError, runDir } from './input/cli.ts';
 import { NEEDS_USER_DIR, openNeedsUser } from './needsuser.ts';
-import { type AckItem, BRIEF_SCHEMA, type BriefArc, type BriefFlow, type BriefPayload, type BriefPr, type CoverageEntry, type NextStart, parseBriefPayload, parsePhase0Record } from './phase0/types.ts';
+import { type AckItem, BRIEF_SCHEMA, type BriefArc,  type BriefPayload, type BriefPr, type CoverageEntry, type NextStart, parseBriefPayload, parsePhase0Record } from './phase0/types.ts';
 import { meterOf } from './meter.ts';
 import { type Decision, admitViews, censusCounts, decisionsAfter, heldPct, obligationLeaves, stageTimings } from './status.ts';
 import { arcRolesOf } from './input/inforce.ts';
@@ -163,7 +160,6 @@ function briefArc(repo: AbsPath, ref: ArcRef, from: number, pr: BriefPr, previou
     admits: admitted.admits.filter((x) => x.seq > from).map((x) => ({ job: x.job, index: x.index, unit: x.unit, class: x.class, clauses: x.clauses, followUp: x.followUp })),
     opportunities: admitted.opportunities,
     drift: admitted.drift.filter((x) => x.findings.length > 0).map((x) => ({ unit: x.unit, job: x.job, findings: x.findings.map((f) => ({ id: f.id, clauses: f.clauses })) })),
-    flow: null,
     demo: demoView({ view: ref.view, plan: ref.plan, repairs: refRepairs(repo, ref) }),
   };
 }
@@ -249,14 +245,6 @@ function arcMarkdown(a: BriefArc): string {
     section('Opportunities', a.opportunities.map((o) => `${o.id} advances ${o.clauses.join(', ')}: units ${o.units.join(', ')}; ${o.followUps} follow-up${o.followUps === 1 ? '' : 's'}; $${o.spentUsd}${o.overrun.length === 0 ? '' : `; overrun by ${o.overrun.map((x) => `${x.job}#${x.index}`).join(', ')}`}`)),
     section('Drift (findings outside the slice on checkpoint units\' merges)', a.drift.map((d) => `${d.unit} (${d.job}): ${d.findings.length} — ${d.findings.map((f) => `${f.id} ${f.clauses.join(', ')}`).join('; ')}`)),
     section('Pack review notes', a.packReviewNotes.map((n) => `${n.job}#${n.index}: ${n.claim}`)),
-    ...(a.flow === null ? [] : [section('Flow', [
-      `constraint: ${a.flow.constraint ?? 'none yet (no merged unit)'}`,
-      `T/I/OE: ${a.flow.accounting}`,
-      ...a.flow.verdicts.map((v) => `verdict ${v}`),
-      ...a.flow.rulerChanges.map((r) => `RULER CHANGED by a command revision: ${r}`),
-      ...a.flow.hostAdvice.map((h) => `host advice ${h}`),
-      ...a.flow.dropped.map((d) => `dropped: the previous arc applied ${d}; this plan no longer carries it`),
-    ])]),
     ...(a.demo === null ? [] : [section('Demo', [
       `${a.demo.milestone} at ${a.demo.sha}${a.demo.held ? ' (promotion held)' : ''}${a.demo.up ? '' : ' (down)'}; where it runs: \`roadmap status\` (demo.where)`,
       ...(a.demo.since.milestones.length === 0 ? [] : [`settled since the last promotion: ${a.demo.since.milestones.join(', ')}`]),

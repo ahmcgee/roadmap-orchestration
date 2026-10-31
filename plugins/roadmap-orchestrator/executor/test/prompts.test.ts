@@ -7,7 +7,6 @@ import {
 type Sha,
 arcId,
 clauseId,divergenceId,envId,findingId,
-givenId,
 invocationId,
 jobId,
 journeyId,
@@ -17,14 +16,12 @@ obligationId,
 opIdOf,
 pocQuestionId,
 polishId,
-proposalId,
 questionId,
 resourceName,
 reviewFindingId,
 ruleId,rulingId,
 serveName,
 sha,sha256,specRev,
-stationId,
 systemName,
 unitId,
 visionClauseId,
@@ -154,33 +151,7 @@ const browserSample = (): RoleInputs['build']['browser'] => ({
   }],
 });
 
-const flowSample = (k: 'A' | 'B'): RoleInputs['flow'] => {
-  const n = k === 'A' ? 1 : 2;
-  const lane = laneId(k === 'A' ? 'unit' : 'all');
-  return {
-    triggers: k === 'A' ? ['floor'] : ['buffer-red', 'requested'],
-    chart: k === 'A' ? null : {
-      centre: 3.2, ucl: 4.1, mrBar: 0.33, seed: { type: 'previous', arcs: [arcId('arc-one')], points: 12 },
-      recent: [{ unit: unitId('u-two'), leadMin: 41, zone: 'yellow' }], inFlight: [{ unit: unitId('u-three'), ageMin: 90, zone: 'red' }],
-    },
-    stations: [{ station: stationId(k === 'A' ? 'stage:build' : 'suite:all'), meanMin: 10 * n, share: 0.2 * n, pressure: k === 'A' ? null : 0.31 }],
-    constraint: k === 'A' ? { station: stationId('stage:build'), internal: false, component: null }
-      : { station: stationId('slot:integration'), internal: true, component: stationId('suite:all') },
-    accounting: { tAdvances: k === 'A' ? null : 0.5, tOther: k === 'A' ? null : 0.25, tUnits: n, wip: n + 1, oeUsdPerHour: 3 * n },
-    levers: [{ lever: 'suite-lane', lane, argv: ['node', '--test', `--test-concurrency=${n}`], cpu: k === 'A' ? null : 4 }],
-    givens: k === 'A' ? [] : [{ scope: 'host', id: givenId('G-1'), lever: 'concurrency', note: 'GIVEN-B', state: 'enforced' }],
-    window: k === 'A' ? null : {
-      proposal: proposalId('flow-1.0'), lever: 'suite-lane', target: stationId('suite:all'), metric: { type: 'suite-run', lane }, openedAt: isoTime('2026-10-08T00:00:00.000Z'), samples: 2,
-    },
-    verdicts: k === 'A' ? [] : [{ proposal: proposalId('flow-1.0'), lever: 'suite-lane', target: stationId('suite:all'), verdict: 'improved' }],
-    rejections: k === 'A' ? [] : [{ key: { station: stationId('stage:build'), lever: 'build-class', target: { type: 'tier', tier: 'low' } }, proposal: proposalId('flow-2.0'), cause: 'rejected' }],
-    advances: [{ id: visionClauseId(`V-${n}`), text: `ADVANCES-${k}` }],
-    pressure: k === 'A' ? { now: null, threshold: 0.5, available: false, window: null, cpuInUse: 1, hostCpus: 4 }
-      : { now: 0.41, threshold: 0.5, available: true, window: 0.33, cpuInUse: 7, hostCpus: 8 },
-  };
-};
 
-/** A bounded diff shown whole: its stat, one file inlined as `text`, nothing else. */
 const shown = (from: Sha, to: Sha, text: string): BoundedDiff => ({
   from, to, dir: absPath(`/run/diff-${text}`),
   orientation: {
@@ -403,7 +374,6 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       },
     },
   ],
-  flow: [flowSample('A'), flowSample('B')],
   walkthrough: [walkSample('A'), walkSample('B')],
   polishJudge: [polishSample('A'), polishSample('B')],
   verifier: [
@@ -425,15 +395,6 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
     premises: [], reasons: ['J-1 cannot be completed'],
   },
   polishJudge: { final: true, decision: 'keep', evidence: ['before.png', 'after.png'], reasons: ['the after page reads as the reference asks'], premises: [] },
-  flow: {
-    constraint: { station: 'slot:integration', agree: true, reason: 'the suite lane holds the slot' },
-    diagnosis: 'Units wait for the integration slot; the unit suite lane is most of its service.',
-    proposal: {
-      target: 'suite:unit', action: { lever: 'suite-lane', lane: 'unit', argv: ['node', '--test', '--test-concurrency=6', 'test/*.test.js'], reporter: 'node-test', cpu: null },
-      rationale: 'six isolated files run one at a time', risks: 'shared state between files',
-    },
-    noAction: null,
-  },
   packReview: {
     findings: [{ severity: 'blocking', target: { type: 'census', rule: 'T-1' }, claim: 'T-1 has no census entry', evidence: [{ path: 'obligations.json', line: 1 }] }],
     dispositions: [{ job: 'review-1', index: 0, disposition: 'still-open' }], reasons: ['the census misses T-1'], premises: [],
@@ -556,8 +517,8 @@ describe('prompts', () => {
   it('prompts.every-supported-seat-renders: deterministic, and the schema accepts a sample output', () => {
     const seats = builtinSeats();
     assert.ok(seats.length >= 7);
-    for (const role of ROLES.filter((r) => r !== 'flow')) assert.ok(seats.some(([r]) => r === role), `${role}: seated by a built-in profile`);
-    assert.ok(!seats.some(([r]) => r === 'flow'), 'the retired flow role is never seated');
+    for (const role of ROLES) assert.ok(seats.some(([r]) => r === role), `${role}: seated by a built-in profile`);
+    assert.ok(!seats.some(([r]) => String(r) === 'flow'), 'the retired flow role is never seated');
     for (const [role, model] of seats) {
       const mod = promptFor(role, model) as { system: string; schema: JsonValue; render: (i: unknown) => string };
       for (const input of SAMPLES[role]) {
@@ -1124,28 +1085,6 @@ describe('M4a prompts: the corpus target, checkpoint intake, the pack review, un
     assert.match(text, /"why":"WHY-B"/);
     const out = validatePackReviewOutput(OUTPUTS.packReview);
     assert.deepEqual(out.findings[0]?.target, { type: 'census', rule: 'T-1' });
-  });
-
-  it('the flow prompt: the ruler out of reach, one proposal, the lever shapes', () => {
-    const fable = PROMPTS.flow['claude-fable-5-1'];
-    assert.ok(fable.type === 'inherits' && /^\d{4}-\d{2}-\d{2}: /.test(fable.reviewed) && !/placeholder/.test(fable.reviewed));
-    const mod = promptFor('flow', 'claude-opus-5-5');
-    for (const needle of [
-      /You change nothing/, /Nobody will answer a question/, /propose at most one change to one lever/,
-      /The ruler is out of reach/, /you must not argue around them/,
-      /may change only the value of one --test-concurrency=<n> element, in place/, /The lane's cpu must cover its concurrency/,
-      /whose target is held or wait:finding/, /Exactly one of proposal and noAction/,
-    ]) assert.match(mod.system, needle);
-    const a = mod.render(SAMPLES.flow[0]);
-    assert.match(a, /No chart yet/);
-    assert.match(a, /Code's constraint: stage:build \(the largest service\)/);
-    assert.match(a, /suite-lane unit: argv \["node","--test","--test-concurrency=1"\], cpu null \(its cadence's default\)/);
-    const b = mod.render(SAMPLES.flow[1]);
-    assert.match(b, /Code's constraint: slot:integration, its largest service component suite:all \(the largest wait in front of it\)/);
-    assert.match(b, /Open: flow-1\.0 \(suite-lane at suite:all\), 2 of 5 samples\. Only host advice or noAction while it is open\./);
-    assert.match(b, /stage:build \/ build-class \/ build tier low: rejected \(flow-2\.0\)/);
-    assert.match(b, /host given G-1 on concurrency: GIVEN-B/);
-    assert.match(b, /Diagnostic only, never a goal\. Obligations first held per hour: 0\.50 serving the advanced clauses/);
   });
 
   it('build/Opus states the unattended setting: nobody answers mid-task; decisions go to decisions.json', () => {

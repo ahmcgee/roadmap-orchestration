@@ -57,7 +57,7 @@ export function summarize(s: Status, events: readonly Event[], plan: PlanM1 | nu
       const subject = e.expect.subject;
       return plan?.suite.lanes.some((l) => l.id === subject.lane && 'kind' in l && l.kind === 'capture') ? [{ lane: subject.lane, op: e.op }] : [];
     }),
-    needsUser: s.needsUser, waste: plan === null ? [] : wasteFindings(events, plan),
+    needsUser: s.needsUser, waste: plan === null ? [] : wasteFindings(events),
     demo: s.demo, completion: s.completion,
   };
 }

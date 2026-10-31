@@ -1,13 +1,47 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { test } from 'node:test';
+import { adapt } from '../src/backends/adapter.ts';
 import { readCodex } from '../src/backends/codex.ts';
 import { CODEX_PRICES, pricedCodexUsage } from '../src/backends/pricing.ts';
 import { tokenUsage } from '../src/core/records.ts';
 import { usageFact } from '../src/pipeline/invoke.ts';
 import { invocationIdOf, routingRev } from '../src/core/ids.ts';
 import { CODEX_MODELS } from '../src/routing/types.ts';
+import { tmpDir } from './helpers/repo.ts';
+import { fixtureInvocation, writeScenario, type CodexAct } from './helpers/scenario.ts';
 
 const stream = (u: object) => JSON.stringify({ type: 'turn.completed', usage: u }) + '\n';
+
+for (const nativeFirst of [true, false]) {
+  test(`Codex adapter prices mixed native and unpriced turns through the fake backend (native first: ${nativeFirst})`, () => {
+    const invDir = fixtureInvocation('codex-fresh', { type: 'exited', code: 0 });
+    const native: CodexAct = { type: 'stream', events: [{ type: 'turn.completed', usage: { input_tokens: 100, output_tokens: 5, cost_usd: 0.04 } }] };
+    const estimated: CodexAct = { type: 'emit', value: { ok: true } };
+    const fake = writeScenario(tmpDir('mixed-codex-meter'), [{ as: 'codex', expect: {}, acts: nativeFirst ? [native, estimated] : [estimated, native] }]);
+    const launchPath = join(invDir, 'launch.json');
+    const launch = JSON.parse(readFileSync(launchPath, 'utf8'));
+    launch.argv[launch.argv.indexOf('-o') + 1] = join(invDir, 'last.json');
+    const modelAt = launch.argv.indexOf('-m');
+    assert.ok(modelAt > 0, 'fresh and resumed Codex launches explicitly choose their routed model');
+    const model = launch.argv[modelAt + 1] as keyof typeof CODEX_PRICES;
+    // Both model-flag spellings accepted by the adapter reach the same price table.
+    if (!nativeFirst) launch.argv[modelAt] = '--model';
+    writeFileSync(launchPath, JSON.stringify(launch));
+    const child = spawnSync(launch.argv[0], launch.argv.slice(1), { cwd: invDir, env: { ...process.env, PATH: `${fake.binDir}:${process.env['PATH']}` }, input: '', encoding: 'utf8', timeout: 20_000 });
+    assert.equal(child.status, 0, child.stderr);
+    writeFileSync(join(invDir, 'stdout'), child.stdout);
+    const result = adapt(invDir);
+    assert.ok(result.type === 'backend' && result.usage.kind === 'known');
+    assert.equal(result.outcome.kind, 'success');
+    assert.equal(result.usage.tokens.inputTokens, 14624);
+    assert.equal(result.usage.tokens.outputTokens, 20);
+    assert.equal(result.usage.tokens.costUsd, 0.04 + (14524 * CODEX_PRICES[model].input + 15 * CODEX_PRICES[model].output) / 1e6);
+    assert.equal(result.usage.tokens.costEstimated, true, 'one estimated turn makes the aggregate estimated while retaining the native amount');
+  });
+}
 test('Codex prices cover the routed models and subtract cached input exactly once', () => {
   assert.deepEqual(Object.keys(CODEX_PRICES), [...CODEX_MODELS]);
   for (const model of CODEX_MODELS) {

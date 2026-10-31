@@ -28,7 +28,6 @@ type Usage,RUNNER_FILE_READERS,STDERR_FILE,STDOUT_FILE,classifyCommand,classifyT
 import { type AbsPath,absPath } from '../core/values.ts';
 import { readClaude } from './claude.ts';
 import { readCodex } from './codex.ts';
-import { pricedCodexUsage } from './pricing.ts';
 import { MalformedOutputError,ResultConflictError,UnsupportedSchemaError } from './errors.ts';
 
 /** What one backend invocation reported, before schema validation and the precedence rule. */
@@ -149,10 +148,10 @@ export function backendSchemaViolation(schema: unknown, value: unknown, role: Ba
   return schemaViolation(schema, value);
 }
 
-function read(terminal: BackendTerminal, stdoutPath: AbsPath): BackendReading {
+function read(terminal: BackendTerminal, stdoutPath: AbsPath, model: string): BackendReading {
   const backend = terminal.session.backend;
   try {
-    if (backend === 'codex') return readCodex(readText(stdoutPath) ?? '', readText(terminal.outputPath));
+    if (backend === 'codex') return readCodex(readText(stdoutPath) ?? '', readText(terminal.outputPath), model);
     // Claude's output file is its stdout (launch.json.terminal.outputPath names it).
     return readClaude(readText(terminal.outputPath) ?? '');
   } catch (error) {
@@ -204,10 +203,8 @@ type Adapted = Readonly<{ result: ResultFile; reads: ReadsFile | null }>;
 
 function backendAdapted(input: AdapterInput, terminal: BackendTerminal): Adapted {
   const { launch, exit } = input;
-  const raw = read(terminal, input.stdoutPath);
   const modelFlag = launch.argv.findIndex((a) => a === '--model' || a === '-m');
-  const reading = terminal.session.backend === 'codex'
-    ? { ...raw, usage: pricedCodexUsage(raw.usage, modelFlag < 0 ? '' : launch.argv[modelFlag + 1]!) } : raw;
+  const reading = read(terminal, input.stdoutPath, modelFlag < 0 ? '' : launch.argv[modelFlag + 1]!);
   const bound = { v: launch.v, arc: launch.arc, op: launch.op, inv: launch.inv };
   const base = {
     ...bound, type: 'backend' as const,

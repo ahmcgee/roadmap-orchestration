@@ -20,7 +20,6 @@ import type { CommandVerdict,FailureRef,IgnoredCensus,LaneCadence,LaneDef,NeedsU
 import type { GateDelta,LedgerOutcome } from '../core/review.ts';
 import type { AbsPath,RepoPath,RepoPattern } from '../core/values.ts';
 import type { PinnedRule } from '../corpus/types.ts';
-import type { FlowPromptInputs } from '../flow/types.ts';
 import { type BoundedDiff,EXAMPLES } from '../git/boundeddiff.ts';
 import type { RequiredWitness } from '../holistic/required.ts';
 import type {
@@ -751,8 +750,6 @@ export type RoleInputs = {
   readonly lens: LensInputs;
   readonly checkpoint: CheckpointInputs;
   readonly packReview: PackReviewPromptInputs;
-  /** M4b: a flow run's kept inputs (src/flow/types.ts `FlowInputs`) without their envelope. */
-  readonly flow: FlowPromptInputs;
   readonly walkthrough: WalkthroughInputs;
   readonly polishJudge: PolishJudgeInputs;
   readonly verifier: VerifierInputs;
@@ -779,7 +776,6 @@ export const ROLE_INPUTS = {
     'target', 'direction', 'manifest', 'specs', 'nextRulingId', 'diagnosis', 'brakes',
   ],
   packReview: ['vision', 'plan', 'specs', 'obligations', 'rulesIndex', 'phase0', 'delta'],
-  flow: ['triggers', 'chart', 'stations', 'constraint', 'accounting', 'levers', 'givens', 'window', 'verdicts', 'rejections', 'advances', 'pressure'],
   walkthrough: ['vision', 'milestone', 'round', 'journeys', 'references', 'tweaks', 'findings', 'product', 'units', 'evidenceDir'],
   polishJudge: ['vision', 'milestone', 'journey', 'proposal', 'references', 'referenceDiff', 'walkEvidenceDir', 'before', 'after', 'evidenceDir'],
   verifier: ['unit', 'since', 'at', 'hunks'],
@@ -795,7 +791,6 @@ const ROLE_INPUTS_COMPLETE: { readonly [R in Role]: [Missing<R>] extends [never]
   lens: true,
   checkpoint: true,
   packReview: true,
-  flow: true,
   walkthrough: true,
   polishJudge: true,
   verifier: true,

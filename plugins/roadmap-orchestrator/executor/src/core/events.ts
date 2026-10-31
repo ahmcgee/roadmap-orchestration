@@ -4,15 +4,8 @@ import { type SystemName, systemName } from '../core/ids.ts';
 // prose twin of this module.
 import type { Buffer } from 'node:buffer';
 import { type BankReason,type DebtSource,BANK_REASONS,debtSource } from '../debt/types.ts';
-import {
-type FlowDropped,type FlowEndedConstraint,type FlowMetric,type FlowOutcome,type FlowPreimage,type FlowProposal,type FlowTrigger,type FlowVerdictKind,
-type GuardBreach,type HostFingerprint,type ProofMinutes,type ProofOutcome,type VerdictAfter,type VerdictBefore,FLOW_OUTCOMES,FLOW_VERDICTS,
-MIN_VERDICT_SAMPLES,PROOF_OUTCOMES,flowDropped,
-flowEndedConstraint,flowMetric,flowPreimage,flowProposal,flowTriggers,
-fraction,
-guardBreaches,hostFingerprint,
-proofMinutes,verdictAfter,verdictBefore,
-} from '../flow/types.ts';
+import { type HostFingerprint, hostFingerprint } from '../host/sample.ts';
+import { fraction } from './validate.ts';
 import { type PressureAvailability,PRESSURE_AVAILABILITIES } from '../host/pressure.ts';
 import { type CpuBasis,cpuBasis } from './cpu.ts';
 import {
@@ -25,7 +18,6 @@ type KnownDefectId,type LaneId,type LaneRev,
 type MilestoneId,
 type NeedsUserId,type ObligationId,type OpId,type OpKey,type OpportunityId,type PlanRev,
 type PolishId,
-type ProposalId,
 type ResourceInstance,type ResourceName,type ResourceUnit,type RoutingRev,type RuleId,type RulingId,
 type ServeName,
 type Sha,type Sha256Hex,type SpecRev,
@@ -45,7 +37,6 @@ opportunityId,
 parseInvocationId,parseJobId,parseOpId,
 planRev,
 polishId,
-proposalId,proposalJob,
 resourceInstance,resourceName,resourceUnit,routingRev,ruleId,rulingId,
 serveName,
 sha,sha256,specRev,unitId,
@@ -262,12 +253,6 @@ export type SpawnSubject =
   }>
   | Readonly<{ purpose: 'teardown' | 'probe'; unit: UnitId | null; resource: ResourceInstance }>
   /**
-   * M4b: one side of a suite-lane proof (RC-4): proof job `job` runs lane `lane` with its `old` or `new` argv at the
-   * integration head `at`, in a clean checkout. It journals no `witnessed`; its records are kept and named only by
-   * `flow-proof`.
-   */
-  | Readonly<{ purpose: 'proof'; job: JobId; proposal: ProposalId; lane: LaneId; side: 'old' | 'new'; at: Sha }>
-  /**
    * dev.13: one command of milestone `milestone`'s bring-up (src/walk/bringup.ts), its owner the spawn's parent (a walk
    * job). `step` names it as the `walk-tools-missing` row does: `setup[i]`, `serve.<name>`, `seed[i]`. A `serve` process
    * runs until its owner stops it (`proc.kill{teardown}`); recovery cancels a live one (its owner brings the product up
@@ -391,8 +376,7 @@ export type IntegrationFfExpect = Readonly<{ ref: RefName; old: Sha; new: Sha }>
 export type RevisionBase = PlanRev | 0;
 
 /**
- * Where a revision came from (G1): the arc's start, an architect command, a checkpoint bundle, the executor's own patch, or
- * (M4b) an accepted flow proposal, committed under the fence.
+ * Where a revision came from (G1): the arc's start, an architect command, a checkpoint bundle, or an executor revision.
  * A bundle's `admits` and `conversions` (M4a rev 3, OR-A1, Q4): code's classification of its `admit` ops, persisted in
  * the decision record before any settlement and never recomputed; both present (in a corpus arc) or both absent (an
  * `architecture-doc` arc, or 1.0.0-dev.6: unclassified, never counted against a budget or a follow-up; `bundleClassesOf`).
@@ -403,7 +387,6 @@ export type RevisionSource =
   | Readonly<{ type: 'command'; command: CommandId }>
   | Readonly<{ type: 'bundle'; job: JobId; admits?: readonly ClassifiedAdmit[]; conversions?: readonly Conversion[] }>
   | Readonly<{ type: 'executor'; inv: InvocationId }>
-  | Readonly<{ type: 'flow'; proposal: ProposalId }>
   /** dev.13: the code-applied polish revision of walk `job`: its applied proposals admitted as polish units (src/walk/polish.ts). */
   | Readonly<{ type: 'walk'; job: JobId }>
   /** dev.13: the cut of polish unit `unit`, which its compare judged `drop` (`polish-dropped`, src/walk/compare.ts). */
@@ -667,8 +650,7 @@ export type ParkRecord =
 
 /**
  * Why a stage was interrupted, when not an operator pause or stop (G5): its backend parked, at the park fact's
- * seq. A covering passing probe or `resume --backend` releases exactly such holds; operator pauses stay. M4b: an
- * accepted flow proposal `pending-apply` holds new candidate starts until its revision is committed (`flow-apply`).
+ * seq. A covering passing probe or `resume --backend` releases exactly such holds; operator pauses stay.
  * M4b rev 3 (RC-11, step H2): a unit whose run `inv` was starved, or red under pressure with its rerun pending, is held
  * until a minute of scheduler ticks since the hold shows the host's cpu wait below `PRESSURE_SATURATED` or 30 min pass (`host-pressure`).
  * Arc feedback 2026-10-15: `recovery` closes an admission-stage attempt a crash cut short that no recorded backend call
@@ -677,7 +659,6 @@ export type ParkRecord =
  */
 export type HoldCause =
   | Readonly<{ type: 'backend'; backend: Backend; parkSeq: number }>
-  | Readonly<{ type: 'flow-apply'; proposal: ProposalId }>
   | Readonly<{ type: 'host-pressure'; inv: InvocationId }>
   | Readonly<{ type: 'recovery' }>;
 
@@ -923,7 +904,6 @@ export type Fact =
   | JobStageOutcomeFact
   | HolisticFact
   | M4aFact
-  | FlowFact
   | WalkFact
   | FlakyFact
   | PropagationFact
@@ -1134,42 +1114,6 @@ export type M4aFact =
    * full review (the first, or after an abandoned one) and on an abandoned one.
    */
   | Readonly<{ kind: 'pack-review-ended'; job: JobId; outcome: 'completed' | 'abandoned'; findings: readonly PackFinding[]; dispositions?: readonly PackDisposition[] }>;
-
-/**
- * The M4b facts (SCHEMAS.md "M4b"); their behaviour is the later steps' (B1: series, runs; B2: decisions, proofs,
- * applies; A2: verdicts). The fold sees the jobs they name and nothing else yet.
- */
-export type FlowFact =
-  /** The arc's compact flow series kept as `inputs/<sha256>.flow-series.json`, right before an `arc-completed`; covers events up to `highWater`. */
-  | Readonly<{ kind: 'flow-series'; sha256: Sha256Hex; highWater: number }>
-  /** A flow run's kept inputs (`inputs/<inputsSha256>.flow-inputs.json`), written under the fence before its call. */
-  | Readonly<{ kind: 'flow-started'; job: JobId; triggers: readonly FlowTrigger[]; inputsSha256: Sha256Hex }>
-  /**
-   * A flow run's end: `done` with the surviving proposal or none (`dropped`: the proposal code's checks dropped, with the
-   * reason), or `invalid` (no valid answer after one retry) or `failed`, with neither. `proposal.id` is `<job>.0`.
-   */
-  | Readonly<{ kind: 'flow-ended'; job: JobId; outcome: FlowOutcome; proposal: FlowProposal | null; dropped: FlowDropped | null; constraint: FlowEndedConstraint }>
-  /** `roadmap flow request --reason` (RC-5): bypasses the cooldown, at most once per cooldown window. */
-  | Readonly<{ kind: 'flow-requested'; command: CommandId; reason: string }>
-  /** `roadmap flow accept|reject <proposal> --reason`: once per proposal. A rejection adds its RC-9 key. */
-  | Readonly<{ kind: 'flow-decided'; proposal: ProposalId; command: CommandId; decision: 'accepted' | 'rejected'; reason: string }>
-  /**
-   * A suite-lane proof of an accepted proposal (RC-4), proof job `job` at the integration head's tree `treeSha`: the old and
-   * new argv's kept witness records (`inputs/<sha>.flow-proof.json`) and minutes, present for `preserved` and `changed`;
-   * `breaksStandIn`: the new argv would break the lane's F6 stand-in.
-   */
-  | Readonly<{
-    kind: 'flow-proof'; proposal: ProposalId; job: JobId; treeSha: Sha; oldSha256: Sha256Hex | null; newSha256: Sha256Hex | null; outcome: ProofOutcome;
-    minutes: ProofMinutes | null; breaksStandIn: boolean;
-  }>
-  /** An accepted proposal in force: plan revision `revision` (source `flow{proposal}`), and what it replaced. */
-  | Readonly<{ kind: 'flow-applied'; proposal: ProposalId; revision: PlanRev; preimage: FlowPreimage }>
-  /** An applied proposal's verdict window closed (fires `verdict-closed`); `worse` raises `flow-worse` and adds the RC-9 key. */
-  | Readonly<{
-    kind: 'flow-verdict'; proposal: ProposalId; metric: FlowMetric; before: VerdictBefore; after: VerdictAfter; guards: readonly GuardBreach[];
-    verdict: FlowVerdictKind; preimage: FlowPreimage;
-  }>;
-export type FlowFactKind = FlowFact['kind'];
 
 /** How a milestone walk ended: its report read (`reported`), its product never came up (`bring-up-failed`), or neither. */
 export const WALK_OUTCOMES = ['reported', 'bring-up-failed', 'abandoned'] as const;
@@ -1496,7 +1440,6 @@ const lockOrder: Read<readonly ResourceUnit[]> = (value, path) => {
 };
 
 const jobR: Read<JobId> = (v, p) => jobIdOf(v, p);
-const proposalR: Read<ProposalId> = (v, p) => proposalId(v, p);
 const docsJobR: Read<JobId> = (v, p) => jobIdOfKind('docs')(v, p);
 const batchJobR: Read<JobId> = (v, p) => jobIdOfKind('batch')(v, p);
 const findingR: Read<FindingId> = (v, p) => findingId(v, p);
@@ -1542,7 +1485,6 @@ const revisionSource: Read<RevisionSource> = tagged('type', {
     return { ...out, admits, conversions };
   }),
   executor: object((f): RevisionSource => ({ type: f.get('type', literal('executor')), inv: f.get('inv', invR) })),
-  flow: object((f): RevisionSource => ({ type: f.get('type', literal('flow')), proposal: f.get('proposal', proposalR) })),
   walk: object((f): RevisionSource => ({ type: f.get('type', literal('walk')), job: f.get('job', (v, p) => jobIdOfKind('walk')(v, p)) })),
   compare: object((f): RevisionSource => ({ type: f.get('type', literal('compare')), unit: f.get('unit', unitR) })),
   split: object((f): RevisionSource => ({ type: f.get('type', literal('split')), unit: f.get('unit', unitR), inv: f.get('inv', invR) })),
@@ -1612,10 +1554,6 @@ const spawnSubject: Read<SpawnSubject> = tagged('purpose', {
   }),
   teardown: object((f): SpawnSubject => ({ purpose: f.get('purpose', literal('teardown')), unit: f.get('unit', nullable(unitR)), resource: f.get('resource', instR) })),
   probe: object((f): SpawnSubject => ({ purpose: f.get('purpose', literal('probe')), unit: f.get('unit', nullable(unitR)), resource: f.get('resource', instR) })),
-  proof: object((f): SpawnSubject => ({
-    purpose: f.get('purpose', literal('proof')), job: f.get('job', (v, p) => jobIdOfKind('proof')(v, p)), proposal: f.get('proposal', proposalR), lane: f.get('lane', laneR),
-    side: f.get('side', oneOf(['old', 'new'] as const)), at: f.get('at', shaR),
-  })),
   'bring-up': object((f): SpawnSubject => ({
     purpose: f.get('purpose', literal('bring-up')), milestone: f.get('milestone', (v, p): MilestoneId => milestoneId(v, p)), step: f.get('step', str),
   })),
@@ -2057,7 +1995,6 @@ const stageOutcomeDetail: Read<StageOutcomeDetail> = tagged('kind', {
 
 const holdCause: Read<HoldCause> = tagged('type', {
   backend: object((f): HoldCause => ({ type: f.get('type', literal('backend')), backend: f.get('backend', backend), parkSeq: f.get('parkSeq', positive) })),
-  'flow-apply': object((f): HoldCause => ({ type: f.get('type', literal('flow-apply')), proposal: f.get('proposal', proposalR) })),
   'host-pressure': object((f): HoldCause => ({ type: f.get('type', literal('host-pressure')), inv: f.get('inv', invR) })),
   recovery: object((f): HoldCause => ({ type: f.get('type', literal('recovery')) })),
 });
@@ -2177,66 +2114,6 @@ const M4A_FACT_READERS: { readonly [K in M4aFactKind]: Read<Fact> } = {
     if (out.outcome === 'abandoned') throw new SchemaError(`${f.path}.dispositions`, 'none for an abandoned review', dispositions);
     assertUnique(dispositions, (d) => `${d.job}#${d.index}`, `${f.path}.dispositions`);
     return { ...out, dispositions };
-  }),
-};
-
-const flowJobR: Read<JobId> = (v, p) => jobIdOfKind('flow')(v, p);
-const proofJobR: Read<JobId> = (v, p) => jobIdOfKind('proof')(v, p);
-
-/** The readers of the M4b facts, spread into `fact`. */
-const FLOW_FACT_READERS: { readonly [K in FlowFactKind]: Read<Fact> } = {
-  'flow-series': object((f): Fact => ({ kind: f.get('kind', literal('flow-series')), sha256: f.get('sha256', sha256R), highWater: f.get('highWater', positive) })),
-  'flow-started': object((f): Fact => ({
-    kind: f.get('kind', literal('flow-started')), job: f.get('job', flowJobR), triggers: f.get('triggers', flowTriggers), inputsSha256: f.get('inputsSha256', sha256R),
-  })),
-  'flow-ended': object((f): Fact => {
-    const out = {
-      kind: f.get('kind', literal('flow-ended')), job: f.get('job', flowJobR), outcome: f.get('outcome', oneOf(FLOW_OUTCOMES)),
-      proposal: f.get('proposal', nullable(flowProposal)), dropped: f.get('dropped', nullable(flowDropped)), constraint: f.get('constraint', flowEndedConstraint),
-    };
-    const done = out.outcome === 'done';
-    if (!done && (out.proposal !== null || out.dropped !== null)) throw new SchemaError(`${f.path}.proposal`, `none (nor a dropped one) for a run ${out.outcome}`, out.proposal ?? out.dropped);
-    if (done !== (out.constraint.judged !== null)) throw new SchemaError(`${f.path}.constraint.judged`, done ? 'the role\'s reading of the constraint' : `null for a run ${out.outcome}`, out.constraint.judged);
-    if (out.proposal !== null && out.dropped !== null) throw new SchemaError(`${f.path}.dropped`, 'null beside a surviving proposal', out.dropped);
-    const id = out.proposal?.id ?? out.dropped?.proposal.id;
-    if (id !== undefined && (proposalJob(id) !== out.job || id !== `${out.job}.0`)) throw new SchemaError(`${f.path}.proposal.id`, `${out.job}.0`, id);
-    return out;
-  }),
-  'flow-requested': object((f): Fact => ({ kind: f.get('kind', literal('flow-requested')), command: f.get('command', cmdR), reason: f.get('reason', str) })),
-  'flow-decided': object((f): Fact => ({
-    kind: f.get('kind', literal('flow-decided')), proposal: f.get('proposal', proposalR), command: f.get('command', cmdR),
-    decision: f.get('decision', oneOf(['accepted', 'rejected'] as const)), reason: f.get('reason', str),
-  })),
-  'flow-proof': object((f): Fact => {
-    const out = {
-      kind: f.get('kind', literal('flow-proof')), proposal: f.get('proposal', proposalR), job: f.get('job', proofJobR), treeSha: f.get('treeSha', shaR),
-      oldSha256: f.get('oldSha256', nullable(sha256R)), newSha256: f.get('newSha256', nullable(sha256R)), outcome: f.get('outcome', oneOf(PROOF_OUTCOMES)),
-      minutes: f.get('minutes', nullable(proofMinutes)), breaksStandIn: f.get('breaksStandIn', bool),
-    };
-    const compared = out.outcome === 'preserved' || out.outcome === 'changed';
-    if (compared && (out.oldSha256 === null || out.newSha256 === null || out.minutes === null)) {
-      throw new SchemaError(`${f.path}.minutes`, `both runs' records and minutes for a ${out.outcome} proof`, { oldSha256: out.oldSha256, newSha256: out.newSha256, minutes: out.minutes });
-    }
-    return out;
-  }),
-  'flow-applied': object((f): Fact => ({
-    kind: f.get('kind', literal('flow-applied')), proposal: f.get('proposal', proposalR), revision: f.get('revision', planRevR), preimage: f.get('preimage', flowPreimage),
-  })),
-  'flow-verdict': object((f): Fact => {
-    const out = {
-      kind: f.get('kind', literal('flow-verdict')), proposal: f.get('proposal', proposalR), metric: f.get('metric', flowMetric), before: f.get('before', verdictBefore),
-      after: f.get('after', verdictAfter), guards: f.get('guards', guardBreaches), verdict: f.get('verdict', oneOf(FLOW_VERDICTS)), preimage: f.get('preimage', flowPreimage),
-    };
-    if (out.guards.length > 0 && out.verdict !== 'worse') throw new SchemaError(`${f.path}.verdict`, 'worse (a guard was breached)', out.verdict);
-    // Too few samples on either side (M4b B1 amendment: the before-window's too) is inconclusive, a breach aside.
-    const few = Math.min(out.after.samples.length, out.before.samples.length) < MIN_VERDICT_SAMPLES;
-    if (out.verdict === 'inconclusive' && !few) {
-      throw new SchemaError(`${f.path}.verdict`, `conclusive with ${out.before.samples.length} samples before and ${out.after.samples.length} after (inconclusive below ${MIN_VERDICT_SAMPLES})`, out.verdict);
-    }
-    if (out.verdict !== 'inconclusive' && out.verdict !== 'worse' && few) {
-      throw new SchemaError(`${f.path}.verdict`, `inconclusive with ${out.before.samples.length} samples before and ${out.after.samples.length} after`, out.verdict);
-    }
-    return out;
   }),
 };
 
@@ -2617,7 +2494,6 @@ export const fact: Read<Fact> = tagged('kind', {
   }),
   ...HOLISTIC_FACT_READERS,
   ...M4A_FACT_READERS,
-  ...FLOW_FACT_READERS,
   ...WALK_FACT_READERS,
   'flake-observed': object((f): Fact => {
     const out = {

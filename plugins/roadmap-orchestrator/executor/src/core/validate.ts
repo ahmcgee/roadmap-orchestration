@@ -199,3 +199,9 @@ export function tagged<const K extends string, T>(field: string, readers: { read
     return readers[tag](value, path);
   };
 }
+
+/** A finite fraction in [0, 1], used by pressure telemetry. */
+export const fraction: Read<number> = (value, path) => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) throw new SchemaError(path, 'a fraction in [0, 1]', value);
+  return value;
+};

@@ -65,8 +65,7 @@
 //
 // Fail-fast (M4b, plan "Fixture … the two plants"): plant S is in play only when arc 1's first plan in force has a suite
 // lane whose argv carries `--test-concurrency=1` and `test/unit/*.test.js` as elements (`plantLaneOf`; an `npm test` or a
-// `sh -c` lane cannot be edited in place, RC-4), and that plan has at least MIN_ARC1_UNITS units (a conclusive verdict
-// reads MIN_VERDICT_SAMPLES suite runs before the flow change and as many after it, one per integration). The driver
+// `sh -c` lane hides its test selection), and that plan has at least MIN_ARC1_UNITS independent units. The driver
 // checks it from the live run dirs every owner poll and after every turn; once arc 1 has a plan in force failing either,
 // it kills the turn and ends the run `fail-fast` (the run would cost hours and grade nothing of M4b). The owner simulator declines dropping the soak test (plant G) from the key.
 //
@@ -89,7 +88,6 @@ import { readJournal } from '../../src/core/log.ts';
 import type { LaneDef } from '../../src/core/records.ts';
 import { PLAN_INPUT, keptInput } from '../../src/input/inforce.ts';
 import { type PlanM1, parsePlan } from '../../src/input/plan.ts';
-import { MIN_VERDICT_SAMPLES } from '../../src/flow/types.ts';
 import { ActionableFilter, HEARTBEAT_MIN } from '../../src/watch.ts';
 import { absPath, type AbsPath } from '../../src/core/values.ts';
 import { gitCommonDir } from '../../src/git/git.ts';
@@ -681,14 +679,14 @@ export function prepareFake(l: Layout, script: FakeScript): void {
 
 /**
  * Plant S's suite lane of `plan`: the first suite lane whose argv holds `--test-concurrency=1` and `test/unit/*.test.js`
- * as elements of their own (the shape a flow lever edits in place, RC-4); null when there is none.
+ * as elements of their own; null when there is none.
  */
 export function plantLaneOf(plan: PlanM1): LaneDef | null {
   return plan.suite.lanes.find((x) => x.argv.includes(PLANT.serial) && x.argv.includes(PLANT.selector)) ?? null;
 }
 
-/** The fewest units arc 1's first plan may have: a verdict's suite runs before the flow change and after it, one per integration. */
-export const MIN_ARC1_UNITS = 2 * MIN_VERDICT_SAMPLES;
+/** The fixture keeps six independent units to exercise suite executions across integrations. */
+export const MIN_ARC1_UNITS = 6;
 
 /**
  * The plant's state: arc 1 has no plan in force yet; its first plan carries the plant lane and enough units; or it lacks
@@ -730,7 +728,7 @@ export function failFastText(c: PlantFailure): string {
   if (c.kind === 'absent') {
     return `fail-fast: arc ${c.arc}'s first plan in force has no suite lane whose argv carries ${PLANT.serial} over ${PLANT.selector} (suite lanes ${JSON.stringify(c.lanes)}): plant S is not in play`;
   }
-  return `fail-fast: arc ${c.arc}'s first plan in force has ${c.units.length} units (${c.units.join(', ')}), fewer than ${MIN_ARC1_UNITS}: too few suite runs for a conclusive flow verdict (${MIN_VERDICT_SAMPLES} before the change and ${MIN_VERDICT_SAMPLES} after)`;
+  return `fail-fast: arc ${c.arc}'s first plan in force has ${c.units.length} units (${c.units.join(', ')}), fewer than ${MIN_ARC1_UNITS}: too few independent units to exercise the fixture suite`;
 }
 
 // ---------------------------------------------------------------------------------------------------

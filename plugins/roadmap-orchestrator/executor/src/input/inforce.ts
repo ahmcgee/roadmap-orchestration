@@ -61,13 +61,6 @@ export const PHASE0_INPUT = 'phase0.json';
 /** M4a (K8): a pack review's `PackReviewInputs`, kept before its spawn and named by its `pack-review-started`. */
 export const PACK_REVIEW_INPUT = 'pack-review.json';
 /**
- * M4b: a flow run's `FlowInputs` (named by its `flow-started`), the arc's compact flow series (named by `flow-series`),
- * and a suite-lane proof's witness records, one per side (named by `flow-proof`).
- */
-export const FLOW_INPUTS_INPUT = 'flow-inputs.json';
-export const FLOW_SERIES_INPUT = 'flow-series.json';
-export const FLOW_PROOF_INPUT = 'flow-proof.json';
-/**
  * A file a revision's docs publication commits (`RevisionPayload.publication.renders`): an executor-rendered `.roadmap/`
  * document, or (dev.16) a vision file the revision publishes (src/commands/apply.ts `visionRenders`).
  */

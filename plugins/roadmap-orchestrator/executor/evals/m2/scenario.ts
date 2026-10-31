@@ -9,7 +9,6 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ProfileName } from '../../src/routing/types.ts';
 import type { Step } from '../../test/helpers/scenario.ts';
-import { flowStep } from '../../test/helpers/holistic.ts';
 import { fakeSteps, readScenario } from '../m1/scenario.ts';
 import { type FixtureUnit, REENTRY, UNITS } from './layout.ts';
 
@@ -25,5 +24,5 @@ export function storySteps(dir: string, profile: ProfileName): readonly Step[] {
     if (!existsSync(file)) throw new Error(`story ${dir} has no ${unit}.json`);
     return fakeSteps(readScenario(file), profile).slice(smoke.length).map((s): Step => ({ ...s, unit }));
   });
-  return [...Array.from({ length: SMOKES }, () => smoke).flat(), ...units, flowStep('flow-1')];
+  return [...Array.from({ length: SMOKES }, () => smoke).flat(), ...units];
 }

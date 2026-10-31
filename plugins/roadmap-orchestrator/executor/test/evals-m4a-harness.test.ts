@@ -21,7 +21,6 @@ import { costTotals,exportCosts,invocationCosts,rootCosts } from '../evals/m4a/t
 import type { Event } from '../src/core/events.ts';
 import { arcId } from '../src/core/ids.ts';
 import { absPath } from '../src/core/values.ts';
-import type { FlowInputs } from '../src/flow/types.ts';
 import { selfIdentity } from '../src/host/liveness.ts';
 import { claimHost,readClaim,releaseHost } from '../src/host/lock.ts';
 import { ActionableFilter,HEARTBEAT_MIN } from '../src/watch.ts';
@@ -135,22 +134,17 @@ test('evals-m4a.profile-criterion: every arc\'s first plan-applied is under the 
   assert.ok(!names.includes('interventions'), 'interventions is a metric, never a criterion');
 });
 
-/** An arc log for `pressure-recorded` from its records (cast, never parsed); its flow runs kept inputs at window pressure `window`. */
-function pressureArc(records: readonly object[], window: number | null = 0.6): PressureArc {
+/** An arc log for `pressure-recorded` from its records (cast, never parsed); its recorded lane executions. */
+function pressureArc(records: readonly object[]): PressureArc {
   // A minute between records: every lane run is long enough to carry a pressure, unless a record gives its own `at`.
   const events = records.map((r, i) => ({ v: 2, seq: i + 1, prev: null, at: new Date(Date.parse('2026-10-09T10:00:00.000Z') + i * 60_000).toISOString(), arc: 'arc-p', ...r })) as unknown as Event[];
-  return { arc: 'arc-p', events, flowInputs: () => ({ pressure: { now: null, threshold: 0.5, available: true, window, cpuInUse: 2, hostCpus: 8 } }) as unknown as FlowInputs };
+  return { arc: 'arc-p', events };
 }
 const startRec = (pressure: 'available' | 'unavailable') => ({ type: 'fact', fact: { kind: 'executor-started', generation: 1, pressure } });
 const laneIntent = (op: string, purpose = 'lane') => ({ type: 'intent', kind: 'proc.spawn', op, parent: { type: 'stage' }, expect: { subject: { purpose } } });
 const laneDone = (op: string, pressure: number | null) => ({ type: 'done', kind: 'proc.spawn', op, outcome: { kind: 'result', summary: { type: 'command', verdict: 'pass' }, pressure } });
-const flowRun = (station: string) => [
-  { type: 'fact', fact: { kind: 'flow-started', job: 'flow-1', triggers: ['host-pressure'], inputsSha256: 'a'.repeat(64) } },
-  { type: 'fact', fact: { kind: 'flow-ended', job: 'flow-1', outcome: 'done', proposal: null, dropped: null, constraint: { code: { station, internal: true, component: null }, judged: null } } },
-];
-
-test('evals-m4a.pressure-criterion: long lane runs under a schedstat start carry pressure; host:cpu only at a saturated window; graded', () => {
-  const good = pressureArc([startRec('available'), laneIntent('o1'), laneDone('o1', 0.04), laneIntent('o2', 'journey'), laneDone('o2', 0.3), ...flowRun('host:cpu')]);
+test('evals-m4a.pressure-criterion: long lane runs under a schedstat start carry pressure; graded', () => {
+  const good = pressureArc([startRec('available'), laneIntent('o1'), laneDone('o1', 0.04), laneIntent('o2', 'journey'), laneDone('o2', 0.3)]);
   assert.equal(pressureRecordedVerdict([good]).pass, true, pressureRecordedVerdict([good]).detail);
   // A run whose intent was under an earlier start, a run under a start without schedstat, and a short run record null legitimately.
   const adopted = pressureArc([
@@ -161,9 +155,6 @@ test('evals-m4a.pressure-criterion: long lane runs under a schedstat start carry
   const missing = pressureRecordedVerdict([pressureArc([startRec('available'), laneIntent('o1'), laneDone('o1', null)])]);
   assert.equal(missing.pass, false);
   assert.match(missing.detail, /o1's lane run has no pressure/);
-  const calm = pressureRecordedVerdict([pressureArc([startRec('available'), ...flowRun('host:cpu')], 0.4)]);
-  assert.match(calm.detail, /flow-1 named host:cpu at window pressure 0.4/);
-  assert.equal(pressureRecordedVerdict([pressureArc([startRec('available'), ...flowRun('slot:integration')], null)]).pass, true, 'no host:cpu: no window read');
   assert.match(pressureRecordedVerdict([pressureArc([startRec('unavailable')])]).detail, /no executor start recorded schedstat available/);
   assert.ok(CRITERIA.map(([name]) => name).includes('pressure-recorded'));
 });

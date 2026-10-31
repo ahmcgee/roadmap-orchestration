@@ -632,6 +632,30 @@ function bundleAdmitsU2(r: ArcRun, kind: 'restore-revision' | 'repair-unit'): vo
   assert.deepEqual(r.journal.view.holistic().divergences.map((x) => [x.id, x.index, x.type]), [['D-1', 0, 'plan-departed']]);
 }
 
+test('revision notice: run-only clear closes a non-flow revision notice before the root ends its turn', T, async () => {
+  const d = setupArc({ steps: [] });
+  recordFirst(d);
+  const r = contextFor(d);
+  try {
+    await command(r, { type: 'run-only', units: [U1] });
+    bundleAdmitsU2(r, 'restore-revision');
+    const notices = r.journal.view.opsOf('needsuser.raise').filter((i) => readNeedsUser(r.ctx.runDir, i.expect.id)?.reason === 'revision-notice');
+    assert.equal(notices.length, 1, 'the applied bundle has its revision notice');
+    const notice = notices[0]!;
+    assert.equal(r.journal.view.needsUser().find((n) => n.id === notice.expect.id)?.ack, null);
+    const cleared = await command(r, { type: 'run-only', units: null });
+    assert.equal(cleared.outcome.kind, 'applied');
+    const events = readJournal(r.ctx.runDir, r.journal.view.arc).events;
+    const clear = events.find((e) => e.type === 'fact' && e.fact.kind === 'run-only' && e.fact.command === cleared.id)!;
+    const closed = events.filter((e) => e.type === 'fact' && e.fact.kind === 'needs-user-acked' && e.fact.id === notice.expect.id);
+    assert.equal(closed.length, 1, 'the subject action closes exactly the original notice');
+    const raised = events.find((e) => e.type === 'intent' && e.op === notice.op)!;
+    assert.ok(raised.seq < clear.seq && clear.seq < closed[0]!.seq, 'notice, run-only clear, then closure within the command');
+    assert.deepEqual(closed.map((e) => e.type === 'fact' && e.fact.kind === 'needs-user-acked' ? [e.fact.command, e.fact.choice] : null), [[cleared.id, null]]);
+    assert.ok(r.journal.view.needsUser().find((n) => n.id === notice.expect.id)?.ack !== null);
+  } finally { r.journal.close(); }
+});
+
 for (const label of ['needsuser.raise.before-publish', 'needsuser.raise.after-publish']) {
   test(`revision notice: ${label} recovers the original notice before its parent commit`, T, async () => {
     const d = setupArc({ steps: [] });

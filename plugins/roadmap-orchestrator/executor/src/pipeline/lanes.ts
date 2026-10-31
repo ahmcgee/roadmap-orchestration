@@ -153,7 +153,7 @@ const laneDeadlineMs = (lane: Pick<LaneDef, 'timeoutMin'>): number => {
 };
 export const LANE_GRACE_MS = 5_000;
 
-/** One deadline and retained terminal for every lane consumer, including mutant and flow proof runs. */
+/** One deadline and retained terminal for every lane consumer, including mutant runs. */
 export function laneCommand(lane: LaneDef) {
   return {
     deadlineAt: isoTimeOf(new Date(Date.now() + laneDeadlineMs(lane))),

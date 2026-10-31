@@ -1,5 +1,5 @@
 import { type SystemName, systemName } from '../core/ids.ts';
-// Structured results of the roles (M3 adds the arc roles `lens` and `checkpoint`, M4a `packReview`, M4b `flow`), as strict JSON Schemas (every key required, no additional
+// Structured results of the roles (M3 adds the arc roles `lens` and `checkpoint`, M4a `packReview`), as strict JSON Schemas (every key required, no additional
 // properties: what `codex exec --output-schema` demands and `claude -p --json-schema` accepts) plus the
 // hand-written validators the adapter runs on the backend's terminal output. The schema is the model's
 // contract; the validator is the executor's, and also enforces the cross-field rules a schema cannot
@@ -26,7 +26,6 @@ import {
 Fields,type Read,SchemaError,answerSet,arrayOf,assertUnique,bool,envName,int,literal,nullable,object,oneOf,positive,str,tagged,text,
 } from '../core/validate.ts';
 import { type RepoPath,type RepoPattern,matchesPattern,repoPath,repoPattern } from '../core/values.ts';
-import { FLOW_REPORTERS,type FlowOutput,flowOutput } from '../flow/types.ts';
 import {
 ACTIVATIONS,type Activation,
 type DocRef,
@@ -1185,36 +1184,6 @@ export function validatePackReviewOutput(value: unknown): PackReviewOutput {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// flow (M4b): the constraint as the role reads it (it may dispute code's), a diagnosis, and exactly one of a proposal and
-// why no action. The model writes no proposal id (code assigns `<job>.0`); a suite lane's unused `argv`, `reporter` or
-// `cpu` is null. The reader is src/flow/types.ts `flowOutput`; code's checks after it are src/flow/levers.ts's.
-
-export const FLOW_SCHEMA: Schema = sObj({
-  constraint: sObj({ station: S_STR, agree: S_BOOL, reason: S_STR }),
-  diagnosis: S_STR,
-  proposal: sNullable(sObj({
-    target: S_STR,
-    action: {
-      anyOf: [
-        sObj({ lever: sEnum(['concurrency']), cpu: S_INT }),
-        sObj({ lever: sEnum(['resource-pool']), resource: S_STR, size: S_INT }),
-        sObj({ lever: sEnum(['suite-lane']), lane: S_STR, argv: sNullable(sArr(S_STR)), reporter: sNullable(sEnum(FLOW_REPORTERS)), cpu: sNullable(S_INT) }),
-        sObj({ lever: sEnum(['sequence']), unit: S_STR, priority: sEnum(['high']) }),
-        sObj({ lever: sEnum(['build-class']), tier: sEnum(RISK_TIERS), class: sEnum(BUILD_CLASSES) }),
-        sObj({ lever: sEnum(['host']), note: S_STR }),
-      ],
-    },
-    rationale: S_STR,
-    risks: S_STR,
-  })),
-  noAction: sNullable(S_STR),
-});
-
-export function validateFlowOutput(value: unknown): FlowOutput {
-  return flowOutput(value, 'flow');
-}
-
-// ---------------------------------------------------------------------------------------------------
 // walkthrough and polishJudge (dev.13): acting judges with a final report (`final`, as the build's: the runner ends the
 // session 30 s after `final: true`, reaping the browser). The readers hold each answer to its shape and the rules inside
 // it; what needs the walk's inputs (every journey reported, cited evidence present under the evidence dir, a design or
@@ -1405,14 +1374,13 @@ export type RoleOutputs = {
   readonly lens: LensOutput;
   readonly checkpoint: CheckpointOutput;
   readonly packReview: PackReviewOutput;
-  readonly flow: FlowOutput;
   readonly walkthrough: WalkthroughOutput;
   readonly polishJudge: PolishJudgeOutput;
   readonly verifier: VerifierOutput;
   readonly scaffold: ScaffoldOutput;
 };
 export const ROLE_SCHEMAS: { readonly [R in Role]: Schema } = {
-  planCheck: PLAN_CHECK_SCHEMA, build: BUILD_SCHEMA, gate: GATE_SCHEMA, lens: LENS_SCHEMA, checkpoint: CHECKPOINT_SCHEMA, packReview: PACK_REVIEW_SCHEMA, flow: FLOW_SCHEMA,
+  planCheck: PLAN_CHECK_SCHEMA, build: BUILD_SCHEMA, gate: GATE_SCHEMA, lens: LENS_SCHEMA, checkpoint: CHECKPOINT_SCHEMA, packReview: PACK_REVIEW_SCHEMA,
   walkthrough: WALKTHROUGH_SCHEMA, polishJudge: POLISH_JUDGE_SCHEMA, verifier: VERIFIER_SCHEMA, scaffold: SCAFFOLD_SCHEMA,
 };
 export const ROLE_VALIDATORS: { readonly [R in Role]: (value: unknown) => RoleOutputs[R] } = {
@@ -1422,7 +1390,6 @@ export const ROLE_VALIDATORS: { readonly [R in Role]: (value: unknown) => RoleOu
   lens: validateLensOutput,
   checkpoint: validateCheckpointOutput,
   packReview: validatePackReviewOutput,
-  flow: validateFlowOutput,
   walkthrough: validateWalkthroughOutput,
   polishJudge: validatePolishJudgeOutput,
   verifier: validateVerifierOutput,

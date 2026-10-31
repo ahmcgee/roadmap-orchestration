@@ -265,10 +265,10 @@ export const divergenceSeq = D.n;
 
 /**
  * A durable job the arc runs outside any unit: an audit, a checkpoint, a docs publication, a repair batch, the
- * baseline witness, (M4a) a pack review, (M4b) a flow run and a suite-lane proof, or (dev.13) a milestone walkthrough.
+ * baseline witness, (M4a) a pack review, (dev.13) a milestone walkthrough.
  * `<kind>-<n>`, numbered per kind.
  */
-export const JOB_KINDS = ['audit', 'ckpt', 'docs', 'batch', 'baseline', 'review', 'flow', 'proof', 'walk', 'compare'] as const;
+export const JOB_KINDS = ['audit', 'ckpt', 'docs', 'batch', 'baseline', 'review', 'walk', 'compare'] as const;
 export type JobKind = (typeof JOB_KINDS)[number];
 export type JobId = Brand<string, 'JobId'>;
 const JOB = new RegExp(`^(${JOB_KINDS.join('|')})-(${POS})$`);
@@ -374,110 +374,6 @@ export const witnessItemSeq = W.n;
 // ---------------------------------------------------------------------------------------------------
 // M4b ids (SCHEMAS.md "M4b").
 
-/**
- * A flow proposal: `<flow job>.<k>`, the k-th proposal of flow run `flow-<n>` (a run proposes at most one, so k is 0).
- * Code assigns it after the call; the model never writes one.
- */
-export type ProposalId = Brand<string, 'ProposalId'>;
-const PROPOSAL = new RegExp(`^(flow-${POS})\\.(0|${POS})$`);
-export const proposalId: IdReader<ProposalId> = textual('ProposalId', PROPOSAL, 'flow-<n>.<k>');
-export function proposalIdOf(job: JobId, k: number): ProposalId {
-  if (parseJobId(job).kind !== 'flow') throw new InvalidIdError('ProposalId', 'ProposalId', 'flow-<n>.<k>', `${job}.${k}`);
-  return proposalId(`${job}.${k}`);
-}
-/** The flow run that made a proposal. */
-export function proposalJob(id: ProposalId): JobId {
-  return jobIdOf(PROPOSAL.exec(id)?.[1]);
-}
-
-/**
- * The stages a unit's lead time is cut into as `stage:<s>` (service) and `wait:<s>` (the gap before it). The candidate,
- * ff and snapshot stages run inside the integration slot's hold, so they are the slot's components instead.
- */
-export const FLOW_STAGES = ['prepare', 'reproduce', 'plan-check', 'build', 'quiesce', 'evidence', 'salvage', 'teardown', 'lanes', 'gate', 'scaffold', 'poc'] as const satisfies readonly Stage[];
-export type FlowStage = (typeof FLOW_STAGES)[number];
-/** The integration slot's service components; with `suite:<lane>` (one per suite lane) they partition its service. */
-export const SLOT_COMPONENTS = ['arc-lanes', 'candidate-rest', 'ff', 'snapshot'] as const;
-export type SlotComponent = (typeof SLOT_COMPONENTS)[number];
-export const SLOT_STATION = 'slot:integration';
-export const SLOT_WAIT_STATION = 'wait:slot:integration';
-export const HELD_STATION = 'held';
-/**
- * The part of a unit's wait in front of candidate admission while an open P1 finding on an obligation it selects holds it
- * (`finding-blocked`): diagnostic, a constraint code may name, never a lever's target.
- */
-export const FINDING_WAIT_STATION = 'wait:finding';
-/**
- * M4b rev 3 (RC-10): the host's cpu, the constraint when the window's mean pressure is saturated (a contended
- * cpu inflates every station's service). Internal; never a key of a point's minutes (it is no share of lead time).
- */
-export const HOST_CPU_STATION = 'host:cpu';
-
-/**
- * A flow station (G3): one disjoint share of a unit's lead time, or (`slot:integration`) the slot's service as a whole,
- * which is the sum of its components and never a key of a point's minutes.
- */
-export type StationId = Brand<string, 'StationId'>;
-export type StationParts =
-  | Readonly<{ type: 'stage'; stage: FlowStage }>
-  | Readonly<{ type: 'wait'; stage: FlowStage }>
-  | Readonly<{ type: 'slot' }>
-  | Readonly<{ type: 'slot-wait' }>
-  | Readonly<{ type: 'finding-wait' }>
-  | Readonly<{ type: 'suite'; lane: LaneId }>
-  | Readonly<{ type: 'component'; component: SlotComponent }>
-  | Readonly<{ type: 'held' }>
-  | Readonly<{ type: 'host-cpu' }>;
-const STATION_FORM = 'stage:<s> | wait:<s> | slot:integration | wait:slot:integration | wait:finding | suite:<lane> | arc-lanes | candidate-rest | ff | snapshot | held | host:cpu';
-export function parseStationId(value: unknown, path = 'StationId'): StationParts {
-  const bad = (): never => {
-    throw new InvalidIdError('StationId', path, STATION_FORM, value);
-  };
-  if (typeof value !== 'string') return bad();
-  if (value === SLOT_STATION) return { type: 'slot' };
-  if (value === SLOT_WAIT_STATION) return { type: 'slot-wait' };
-  if (value === FINDING_WAIT_STATION) return { type: 'finding-wait' };
-  if (value === HELD_STATION) return { type: 'held' };
-  if (value === HOST_CPU_STATION) return { type: 'host-cpu' };
-  if ((SLOT_COMPONENTS as readonly string[]).includes(value)) return { type: 'component', component: value as SlotComponent };
-  const m = /^(stage|wait|suite):(.+)$/.exec(value);
-  if (m === null) return bad();
-  const rest = m[2] as string;
-  if (m[1] === 'suite') {
-    try {
-      return { type: 'suite', lane: laneId(rest) };
-    } catch {
-      return bad();
-    }
-  }
-  if (!(FLOW_STAGES as readonly string[]).includes(rest)) return bad();
-  return { type: m[1] as 'stage' | 'wait', stage: rest as FlowStage };
-}
-export const stationId: IdReader<StationId> = (value, path = 'StationId') => {
-  parseStationId(value, path);
-  return value as StationId;
-};
-export function stationOf(parts: StationParts): StationId {
-  switch (parts.type) {
-    case 'stage': return stationId(`stage:${parts.stage}`);
-    case 'wait': return stationId(`wait:${parts.stage}`);
-    case 'slot': return stationId(SLOT_STATION);
-    case 'slot-wait': return stationId(SLOT_WAIT_STATION);
-    case 'finding-wait': return stationId(FINDING_WAIT_STATION);
-    case 'suite': return stationId(`suite:${parts.lane}`);
-    case 'component': return stationId(parts.component);
-    case 'held': return stationId(HELD_STATION);
-    case 'host-cpu': return stationId(HOST_CPU_STATION);
-  }
-}
-
-/** A host given (`givens.json`): `G-<n>`, numbered within the host's givens file, write-once, never reused. */
-export type GivenId = Brand<string, 'GivenId'>;
-const G = numbered('GivenId', 'G');
-export const givenId: IdReader<GivenId> = G.read;
-export const givenIdOf = G.of;
-export const givenSeq = G.n;
-
 // ---------------------------------------------------------------------------------------------------
 // dev.13 ids (SCHEMAS.md "dev.13: milestone walkthroughs and design units").
 
@@ -516,7 +412,7 @@ export const serveName: IdReader<ServeName> = textual('ServeName', new RegExp(`^
 
 export type NumberedId =
   | VisionClauseId | QuestionId | ObligationId | FindingId | DivergenceId | RuleId | DebtId | AmendmentId | PhaseQuestionId | RulingId | KnownDefectId
-  | OpportunityId | WitnessItemId | GivenId | MilestoneId | JourneyId | PolishId;
+  | OpportunityId | WitnessItemId | MilestoneId | JourneyId | PolishId;
 
 const NUMBERED_ID = /^([A-Z]{1,2})-([0-9]+)$/;
 

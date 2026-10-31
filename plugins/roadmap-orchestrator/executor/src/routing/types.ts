@@ -31,11 +31,11 @@ export type Triple =
   | { readonly backend: 'codex'; readonly model: CodexModelId; readonly effort: CodexEffort };
 
 /**
- * `lens` and `checkpoint` (M3), `packReview` (M4a, OR-Q16), `flow` (M4b), `walkthrough` and `polishJudge` (dev.13) are the
+ * `lens` and `checkpoint` (M3), `packReview` (M4a, OR-Q16), `walkthrough` and `polishJudge` (dev.13) are the
  * arc roles: roles that run for the arc, not for a unit, on the one seat `arc`. They come last, so every earlier role keeps
  * its place in seat order.
  */
-export const ROLES = ['planCheck', 'build', 'gate', 'lens', 'checkpoint', 'packReview', 'flow', 'walkthrough', 'polishJudge', 'verifier', 'scaffold'] as const;
+export const ROLES = ['planCheck', 'build', 'gate', 'lens', 'checkpoint', 'packReview', 'walkthrough', 'polishJudge', 'verifier', 'scaffold'] as const;
 export type Role = (typeof ROLES)[number];
 /**
  * The unit pipeline's roles (M1), every arc hashes, and (dev.17, proportional review) `verifier`: the economy role that
@@ -56,7 +56,7 @@ export const DEV17_ROLES = ['verifier', 'scaffold'] as const satisfies readonly 
 export const DEV17_UNIT_ROLES = ['scaffold'] as const satisfies readonly Role[];
 /** Every role a unit's call may sit on. */
 export type UnitRole = (typeof UNIT_ROLES)[number] | (typeof DEV17_UNIT_ROLES)[number];
-export const ARC_ROLES = ['lens', 'checkpoint', 'packReview', 'flow', 'walkthrough', 'polishJudge'] as const satisfies readonly Role[];
+export const ARC_ROLES = ['lens', 'checkpoint', 'packReview', 'walkthrough', 'polishJudge'] as const satisfies readonly Role[];
 export type ArcRole = (typeof ARC_ROLES)[number];
 /** The judgment roles of a unit's pipeline. */
 export type JudgmentRole = 'planCheck' | 'gate';
@@ -66,7 +66,7 @@ export type ImplementerRole = 'build';
  * arc roles and (dev.17) the docs-only verifier. An explicit list (dev.13): the gate and the walk roles judge by acting, and
  * (dev.17) so does plan-check.
  */
-export const FRESH_ROLES = ['lens', 'checkpoint', 'packReview', 'flow', 'verifier'] as const satisfies readonly Role[];
+export const FRESH_ROLES = ['lens', 'checkpoint', 'packReview', 'verifier'] as const satisfies readonly Role[];
 export type FreshRole = (typeof FRESH_ROLES)[number];
 /**
  * dev.13: the arc roles that use the product (`claude-acting-judge` with the walkthrough MCP servers, cwd a detached
@@ -110,14 +110,14 @@ export type Seat = JudgmentSeat | ArcSeat;
 /** Build and (dev.17) the verifier and scaffold have the three risk seats; each unit judgment role has four; each arc role has `arc`. */
 export type SeatOf<R extends Role> = R extends ArcRole ? ArcSeat : R extends JudgmentRole ? JudgmentSeat : RiskTier;
 export const SEATS: { readonly [R in Role]: readonly SeatOf<R>[] } = {
-  planCheck: JUDGMENT_SEATS, build: RISK_TIERS, gate: JUDGMENT_SEATS, lens: ARC_SEATS, checkpoint: ARC_SEATS, packReview: ARC_SEATS, flow: ARC_SEATS,
+  planCheck: JUDGMENT_SEATS, build: RISK_TIERS, gate: JUDGMENT_SEATS, lens: ARC_SEATS, checkpoint: ARC_SEATS, packReview: ARC_SEATS,
   walkthrough: ARC_SEATS, polishJudge: ARC_SEATS, verifier: RISK_TIERS, scaffold: RISK_TIERS,
 };
 /** One seat of the table, `role.tier`: `build.escalation` is unrepresentable. */
 export type SeatRef = { [R in Role]: Readonly<{ role: R; tier: SeatOf<R> }> }[Role];
 /** A seat of a unit role: what a unit's backend call and its usage name. */
 export type UnitSeatRef = Extract<SeatRef, Readonly<{ role: UnitRole }>>;
-/** An arc role's seat (`lens.arc`, `checkpoint.arc`, `packReview.arc`, `flow.arc`, dev.13's `walkthrough.arc` and `polishJudge.arc`): what a job's backend call and its usage name (M3). */
+/** An arc role's seat (`lens.arc`, `checkpoint.arc`, `packReview.arc`, dev.13's `walkthrough.arc` and `polishJudge.arc`): what a job's backend call and its usage name (M3). */
 export type ArcSeatRef = Extract<SeatRef, Readonly<{ role: ArcRole }>>;
 /** Every seat, role by role in `ROLES` order, each role's tiers in seat order. */
 export const SEAT_REFS: readonly SeatRef[] = ROLES.flatMap((r) => SEATS[r].map((tier) => ({ role: r, tier }) as SeatRef));
@@ -284,7 +284,7 @@ export const classBindings: Read<ClassBindings> = object((f) => {
 });
 
 /**
- * The arc-role set an arc runs under (M4b, R5): `m4b` puts `flow` in force in every arc scope. Written by 1.0.0-dev.8 on
+ * The recorded role set an arc runs under. Written by 1.0.0-dev.8 on
  * every revision of an arc it started (carried from revision 1, which fixes it: the fold refuses a change), absent on
  * an arc 1.0.0-dev.7 started, which keeps the dev.7 role set (src/routing/layers.ts `arcRolesInForce`; scaffolding).
  * dev.17: `dev17` is `m4b` and the dev.17 unit roles (`DEV17_UNIT_ROLES`), written on every revision of an arc dev.17

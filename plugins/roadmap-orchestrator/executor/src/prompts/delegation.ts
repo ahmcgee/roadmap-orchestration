@@ -9,7 +9,7 @@
 // applies at xhigh and max effort, where no build seat runs. Edits stay in the main session so one agent knows the
 // worktree's state when it runs the lanes and reports (our own invariant: the report is the session's).
 //
-// Judgment sessions (gate, plan-check, lens, checkpoint, pack review, flow) carry no delegation text (owner ruling
+// Judgment sessions (gate, plan-check, lens, checkpoint, pack review) carry no delegation text (owner ruling
 // 2026-10-17, after the paid gate role eval: one trial fanned out to 25 readers for $32, against ~$2.7 for a typical
 // trial). Nothing tells the judge to delegate or not to. A judge keeps the Agent tool with read-only subagents
 // (argv.ts `JUDGMENT_TOOLS`, metered as before) and arrives at its own method; the prompt does not steer it. One exception

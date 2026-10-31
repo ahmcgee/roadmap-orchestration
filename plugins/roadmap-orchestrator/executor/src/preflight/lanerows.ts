@@ -1,7 +1,7 @@
 // The one lane validator: the row `spec-lane-unrunnable` (SCHEMAS.md "Startup rejection table"). Every path a spec
 // enters runs it: a start (`specLaneCheck`, src/preflight/checks.ts, over every live unit) and the apply core
 // (src/commands/apply.ts `evaluateRevision`, over the units a revision changes), which every revision passes through:
-// an `apply` and its dry run, a checkpoint bundle, a flow proposal, `steer`, `rule` and `reverse` (paid M4b run 3,
+// an `apply` and its dry run, a checkpoint bundle, `steer`, `rule` and `reverse` (paid M4b run 3,
 // OP-3: a checkpoint bundle admitted a lane whose env did not pass PATH, so its argv[0] never resolved).
 //
 // It validates what the plan makes live, never what it retires: a cut unit and a unit another unit of the plan
