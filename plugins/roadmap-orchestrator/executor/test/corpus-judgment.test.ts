@@ -78,7 +78,7 @@ const viewDir = (a: CorpusUnitArc, pinSha: string, view: 'full' | 'without-visio
 
 /** The arc with a published debt ledger at its baseline and B-1 kept, its gate approving with `FINDINGS`. */
 async function debtArc(extraGates: number = 0): Promise<CorpusUnitArc> {
-  const gates = Array.from({ length: 1 + extraGates }, () => gateStep({ decision: 'approve', findings: FINDINGS, unreviewed: UNREVIEWED }));
+  const gates = Array.from({ length: 1 + extraGates }, () => gateStep({ decision: 'approve', findings: FINDINGS, standing: []}));
   const arc = await setupCorpusArc([planCheckStep({ decision: 'approve' }), mulBuild(), ...gates], {
     baseline: { [DEBT_DOC]: renderDebt(BASELINE_DEBT) },
     phase0: { debt: [{ id: 'B-1', disposition: { type: 'keep', reason: 'not this arc' } }] },
@@ -176,7 +176,7 @@ describe('a corpus arc\'s unit through its gate', T, () => {
     const line = status(absPath(a.d.runDir), arcId(a.d.arc), absPath(a.d.hostDir)).units.find((u) => u.unit === U1);
     // dev.17: the live answer carries each finding's defect, reraises and hunk (null on these notes).
     const findings = FINDINGS.map((f) => ({ defect: null, reraises: null, hunk: null, ...f }));
-    assert.deepEqual(line?.gate, { attempt: r.journal.view.unit(U1).approval!.attempt, decision: 'approve', findings, unreviewed: UNREVIEWED });
+    assert.deepEqual(line?.gate, { attempt: r.journal.view.unit(U1).approval!.attempt, decision: 'approve', findings, standing: []});
   });
 
   it('publish.debt-render: the close-out renders debt.md from the baseline ledger, the Phase-0 dispositions and the banked items, and invariants.md with the pin\'s registry', () => {

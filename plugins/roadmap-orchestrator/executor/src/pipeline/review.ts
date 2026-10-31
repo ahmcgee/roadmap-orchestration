@@ -240,7 +240,7 @@ export function reviewRules(repo: AbsPath, head: Sha, review: GateReview): (out:
     const faults: string[] = [];
     const ledger = new Map(review.ledger.map((e) => [e.id as string, e]));
     out.findings.forEach((f, i) => {
-      if (f.severity === 'blocking' && f.defect === null) faults.push(`findings[${i}] is blocking and names no defect (one of ${DEFECT_CATEGORIES.join(', ')})`);
+
       if (f.reraises === null) return;
       const e = ledger.get(f.reraises);
       if (e === undefined) faults.push(`findings[${i}].reraises names ${f.reraises}, which is no finding of this unit's ledger`);

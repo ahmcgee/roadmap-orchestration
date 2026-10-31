@@ -122,7 +122,7 @@ const PROMPT = 'diff --git a/packages/oak/src/rough-edge.ts b/packages/oak/src/r
 const SHOWN: DiffShown = { inlined: [repoPath('packages/oak/src/rough-edge.ts')], notInlined: [repoPath('packages/fern/src/early-index.ts'), repoPath('packages/fern/src/late-gate.ts')] };
 const CITE: GateOutput = {rulings: [], 
   decision: 'revise', findings: [{ severity: 'blocking', path: KEY.plant!.path, text: 'operator flipped', contractRef: null, experiments: [], debt: null, defect: 'incorrect-behaviour', reraises: null, hunk: null }],
-  directives: ['Restore it.'], reasons: [], premises: [], unreviewed: [], clusters: null, 
+  directives: ['Restore it.'], reasons: [], premises: [], standing: [], clusters: null, 
 };
 
 const tool = (id: string, name: string, input: Record<string, unknown>, result: string, parent: string | null = null): readonly Record<string, unknown>[] => [
@@ -164,16 +164,7 @@ test('roles.lucky: citing a not-inlined plant without reading it is lucky; a Rea
   assert.equal(s.detection.k, 1, 'a lucky catch is not a detection');
 });
 
-test('roles.unreviewed: the gate\'s claimed unreviewed parts beside what it really looked at; silent = not-inlined files neither read nor declared', () => {
-  const none = readTranscript([]);
-  assert.deepEqual(grade(KEY, SHOWN, PROMPT, none, CITE).unreviewed, { claimed: 0, declared: 0, silent: 2 }, 'claimed full coverage, read nothing');
-  const declared = grade(KEY, SHOWN, PROMPT, none, { ...CITE, unreviewed: [{ path: 'packages/fern/src/late-*.ts', reason: 'mechanical rename' }] });
-  assert.deepEqual(declared.unreviewed, { claimed: 1, declared: 1, silent: 1 });
-  const byDir = grade(KEY, SHOWN, PROMPT, none, { ...CITE, unreviewed: [{ path: 'packages/fern/', reason: 'not read' }] });
-  assert.deepEqual(byDir.unreviewed, { claimed: 1, declared: 2, silent: 0 });
-  const read = readTranscript(tool('r1', 'Read', { file_path: `/run/attach/files/${KEY.plant!.path}.diff` }, 'x'));
-  assert.deepEqual(grade(KEY, SHOWN, PROMPT, read, { ...CITE, unreviewed: null }).unreviewed, { claimed: null, declared: 0, silent: 1 }, 'a dev.11 answer: unknown claim');
-});
+
 
 test('roles.transcript-cost: a captured subagent run: subagent calls by parent_tool_use_id, per-model cost from modelUsage summing to total_cost_usd', () => {
   const events = parseEvents(readFileSync(SUBAGENT_STREAM, 'utf8'));

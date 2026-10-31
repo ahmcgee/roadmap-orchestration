@@ -737,6 +737,7 @@ export class Fold implements JournalView {
   readonly #checkpointSkips: (Omit<FactOf<'checkpoint-skipped'>, 'kind'> & Seq)[] = [];
   readonly #divergences: (Omit<FactOf<'divergence'>, 'kind'> & Seq)[] = [];
   readonly #digests: (Omit<FactOf<'divergence-digest'>, 'kind'> & Seq)[] = [];
+  readonly #surfaceFacts: import('./events.ts').SurfaceFact[] = [];
   readonly #noted: Readonly<{unit: UnitId; command: CommandId; brief: Sha256Hex; seq: number}>[] = [];
   readonly #steered: (Omit<FactOf<'steered'>, 'kind'> & Seq)[] = [];
   readonly #mergedIn: (Omit<FactOf<'merged-in'>, 'kind'> & Seq)[] = [];
@@ -1584,6 +1585,10 @@ export class Fold implements JournalView {
         this.#digests.push({ ...rest, seq });
         return;
       }
+      case 'review-triggered':
+      case 'review-completed':
+        this.#surfaceFacts.push(f);
+        return;
       case 'noted':
         this.#noted.push({ unit: f.unit, command: f.command, brief: f.brief, seq });
         return;
@@ -2134,6 +2139,7 @@ export class Fold implements JournalView {
     return this.#flakes;
   }
 
+  surfaceFacts(): readonly import('./events.ts').SurfaceFact[] { return this.#surfaceFacts; }
   notes(unit: UnitId): readonly Readonly<{command: CommandId; brief: Sha256Hex; seq: number}>[] { return this.#noted.filter((n) => n.unit === unit); }
   buildNotes(unit: UnitId, attempt: number): readonly Sha256Hex[] {
     const starts = this.#units.get(unit)?.starts ?? new Map<string, number>();

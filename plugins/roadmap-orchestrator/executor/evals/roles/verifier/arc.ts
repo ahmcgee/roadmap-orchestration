@@ -165,7 +165,7 @@ export function setupVerifierArc(f: VerifierFixture, config: RepoConfig | null):
 /** The fix round, once the certified tree is known: the cell's file after, claimed docs-only since that tree; then the verifier. */
 function fixRound(d: ArcDescriptor, f: VerifierFixture, kind: VerifierKind, config: RepoConfig | null, certified: string): void {
   appendSteps(d, [
-    { ...buildCalls(config).fix, acts: [{ type: 'commit', message: 'reword', files: { [f.cell.path]: f.cell.after } }, { type: 'emit', value: { ...BUILD_REPORT, docsOnlySince: certified } }] },
+    { ...buildCalls(config).fix, acts: [{ type: 'commit', message: 'reword', files: { [f.cell.path]: f.cell.after } }, { type: 'emit', value: { ...BUILD_REPORT, } }] },
     ...verifierSteps(kind, f),
   ]);
 }

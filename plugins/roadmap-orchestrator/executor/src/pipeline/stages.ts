@@ -1,3 +1,5 @@
+import { raiseNeedsUser, raisedWithReason } from '../needsuser.ts';
+import { methodContext, runReview, diagnosisDue, diagnosed } from './surface.ts';
 import { systemsMapInForce } from '../input/systems.ts';
 import { protectedPathsInForce } from '../input/protected.ts';
 // The unit stages from plan-check through lanes (plan "Pipeline for one serial unit", R3), one function
@@ -183,7 +185,7 @@ fastSuiteWorktree,
 implementerDispatch,isCancelled,judgmentDeadlineMs,judgmentDispatch,nonEmpty,pinDispatch,
 raiseRisk,riskAbove,runOp,runPrepared,steerDispatch,unitBranch,unitWorktree,verdictOf,verificationWorktree,workDir,
 } from './dispatch.ts';
-import { certifiedTree,docsOnlyCarry } from './docsonly.ts';
+
 import { handoverOf,lineageOf,unmetClauses } from './handover.ts';
 import { invocationDir,quiescent } from './invoke.ts';
 import {
@@ -441,17 +443,9 @@ export type Library = Readonly<{ contracts: readonly DocText[]; rulings: readonl
  * Startup refuses a cite the plan or ledger does not hold (the plan-invalid `unknown-cite` row).
  */
 export function library(ctx: StageContext, spec: SpecM1, tip: Sha): Library {
-  const rulings = ledger(ctx);
-  const cited = (r: Ruling): boolean => r.status === 'active' && spec.cites.rulings.includes(r.id);
   return {
-    contracts: spec.cites.contracts.map((c) => docAt(ctx, tip, c)),
-    rulings: rulings.flatMap((r) => (r.status === 'active' && cited(r) ? [{ id: r.id, text: r.text }] : [])),
-    index: {
-      contracts: ctx.plan().contracts.filter((c) => !spec.cites.contracts.includes(c)).map((path) => ({ path, heading: firstHeading(docAt(ctx, tip, path).text) })),
-      rulings: rulings.flatMap((r) => r.status === 'active' && !cited(r) ? [{ id: r.id, line: firstSentence(r.text) }] : []),
-      withdrawn: rulings.filter((r) => r.status === 'withdrawn').map((r) => r.id),
-      ledger: ledgerPath(ctx),
-    },
+    contracts: spec.cites.contracts.map((c) => docAt(ctx, tip, c)), rulings: [],
+    index: {contracts: ctx.plan().contracts.filter((c) => !spec.cites.contracts.includes(c)).map((path) => ({path, heading: firstHeading(docAt(ctx, tip, path).text)})), rulings: [], withdrawn: [], ledger: ledgerPath(ctx)},
   };
 }
 
@@ -706,7 +700,8 @@ export type JudgmentReader = Readonly<{ journal: Readonly<{ view: JournalView }>
 
 /** A unit's backend spawns of one judgment role, in log order. */
 export const judgmentSpawns = (ctx: JudgmentReader, unit: UnitId, role: JudgmentRole): readonly IntentOf<'proc.spawn'>[] =>
-  ctx.journal.view.spawnsOfUnit(unit, role);
+  ctx.journal.view.spawnsOfUnit(unit, role === 'gate' || role === 'planCheck' ? 'verifier' : role).filter((i) => role !== 'gate' && role !== 'planCheck' || i.parent.type === 'stage' && i.parent.stage === (role === 'gate' ? 'gate' : 'plan-check'));
+
 
 /** The validated output of a judgment spawn, or null when it has none (a fault, a refusal, a malformed answer). */
 export function judgmentOutput<T>(ctx: JudgmentReader, intent: IntentOf<'proc.spawn'>, validate: (value: unknown) => T): T | null {
@@ -808,60 +803,13 @@ function witnessLanePark(ctx: StageContext, unit: PlanUnit, spec: SpecM1): Needs
 export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<PlanCheckDone | Cancelled> {
   const { spec, sha256 } = loadUnitSpec(ctx, unit);
   const parent = at(start(ctx, unit.id, 'plan-check'), 'plan-check');
-  // A cancelled task captures nothing (its `@cpu` wait, after the capture, would be cancelled at once).
-  const cancelled = cancelledNow(ctx);
-  if (cancelled !== null) return cancelled;
-  const pin = pinDispatch(ctx, unit, { rev: spec.rev, sha256 });
-  const judged = pin.kind === 'pinned' ? judgmentDispatch(ctx, unit.id, 'plan-check') : pin;
-  if (pin.kind !== 'pinned' || judged.kind !== 'pinned') {
-    return { ...record(ctx, parent, 'routing-changed', judged.kind === 'pinned' ? null : judged.needsUser), session: null, specRev: spec.rev };
-  }
-  const pinned = pin.dispatch;
-  const seat = judged.dispatch;
-  const prompt = promptFor('planCheck', seat.triple.model);
-  const session = freshJudgmentSession();
-  // H2: the tip, the inputs in force and the prompt rendered from them, captured with `judgment-inputs` under the
-  // fence before the `@cpu` entry (never held while waiting for the fence); the checkouts are then made at the
-  // captured commits.
-  const captured = await captureUnderFence(ctx.journal, () => {
-    const now = loadUnitSpec(ctx, unit);
-    const checkouts = planCheckCheckoutsAt(ctx, unit.id, parent, integrationTip(ctx));
-    const impact = holisticInForce(ctx).obligations === null ? null : unitImpactInput(ctx, unit, now.spec, []);
-    const anchoredBy = impact === null ? [] : selectObligations(impact).map((id) => impact.obligations.obligations.find((o) => o.id === id)!);
-    const target = unitTarget(ctx, checkouts.tip.at, 'full', anchoredBy, ruleMentions(renderSpec(now.spec)));
-    const measured = renderPrompt(prompt, {
-      spec: { unit: unit.id, rev: now.spec.rev, markdown: renderSpec(now.spec) }, intent: now.spec.intent, nonGoals: now.spec.nonGoals, ...library(ctx, now.spec, checkouts.tip.at), target,
-      direction: ctx.plan().direction, systems: unit.systems, risk: pinned.riskFloor, checkouts,
-      lanePrograms: laneOrder(now.spec).map((l) => ({ lane: l.id, argv0: l.argv[0]!, resolved: resolveArgv0(l, ctx.hostEnv) })),
-      priorRound: planCheckPriorRound(ctx, unit.id, checkouts),
-      // R17: the vision in force, read-only context (the module marks it non-directive).
-      vision: visionInput(ctx),
-      priorInvalid: planCheckPriorInvalid(ctx, unit, now.spec),
-        escalation: escalationOf(ctx, unit.id, 'plan-check', seat.tier, validatePlanCheckOutput),
-      milestones: unitMilestones(ctx, unit.id, checkouts.tip.at),
-      // dev.17 (propagation): the unit's stale links up to the plan rev this capture reads.
-      staleLinks: unitStaleLinks(ctx.journal.view, unit.id, planRevInForce(ctx), parent.attempt).map(staleLinkText),
-      design: planCheckDesignInput(ctx, unit.id, now.spec),
-      pocs: pocReports(ctx, unit.id),
-    });
-    writeJudgmentInputs(ctx, parent, { tip: checkouts.tip.at, head: null, specRev: now.spec.rev, specSha256: now.sha256, routingRev: seat.routingRev });
-    return { checkouts, measured, target };
-  });
-  const { checkouts, measured, target } = captured;
+  const pin = pinDispatch(ctx, unit, {rev: spec.rev, sha256});
+  if (pin.kind !== 'pinned') throw new Error('dispatch failed to re-pin');
   const entered = await enterJudgment(ctx, parent);
   if (isCancelled(entered)) return entered;
-  // Checkouts an earlier attempt left (a crash cut its stage short) go first: this attempt makes its own.
-  await removeJudgmentCheckouts(ctx, unit.id, parent);
-  await createPlanCheckCheckouts(ctx, unit.id, parent, checkouts);
-  const dirs = [...(checkouts.branch === null ? [] : [checkouts.branch.path]), ledgerDir(ctx), ...targetDirs(target)];
-  const schema = prompt.schema;
-  const call = (s: JudgmentSession, text: string): Promise<BackendCallOutcome> => callBackend(ctx, {
-    unit: unit.id, parent, request: { kind: 'judgment', dispatch: seat, session: s, evidenceDirs: dirs },
-    system: prompt.system, rendered: text, prompt: s.mode === 'fresh' ? measured.prompt : null, schema, cwd: checkouts.tip.path, deadlineAt: inMs(judgmentDeadlineMs(pinned)),
-  });
-  const called = await call(session, measured.rendered);
-  // A refused answer goes back once, in the same session, with every reason (the repair turn), before anything is recorded.
-  return planCheckRead(ctx, unit, parent, called, session.id, (reasons) => call(resumedJudgmentSession(session.id), judgmentRepairDirective(reasons)));
+  await runReview(ctx, unit, parent, 'pre-build');
+  await releaseJudgment(ctx, parent);
+  return {...record(ctx, parent, 'approve'), session: null, specRev: spec.rev};
 }
 
 /**
@@ -1245,6 +1193,15 @@ const activeBuildLanes = (spec: SpecM1): readonly BuildLane[] =>
   buildLanes(spec).filter((l): l is SpecM1['lanes'][number] & BuildLane => l.state === 'active' && l.cadence === 'build');
 
 export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput): Promise<BuildDone | Cancelled> {
+  // A diagnosis is an annotation, delivered as build memory and a Claude fallback.
+  if (diagnosisDue(ctx.journal.view, unit.id) && !diagnosed(ctx.journal.view, unit.id) && unit.review !== 'never') {
+    const reviewParent = at(start(ctx, unit.id, 'plan-check'), 'plan-check');
+    const entered = await enterJudgment(ctx, reviewParent);
+    if (isCancelled(entered)) return entered;
+    await runReview(ctx, unit, reviewParent, 'diagnosis');
+    await releaseJudgment(ctx, reviewParent);
+    record(ctx, reviewParent, 'approve');
+  }
   const parent = at(start(ctx, unit.id, 'build'), 'build');
   const entered = await enter(ctx, stageHolder(parent), buildEntry(ctx, unit));
   if (isCancelled(entered)) return entered;
@@ -1289,11 +1246,11 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
   const render = (call: RoundCall) => renderPrompt(prompt, {
     spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec, { buildLanesOnly: true }) }, intent: spec.intent, nonGoals: spec.nonGoals, ...lib,
     systemNotes: systemNotes(ctx.repo, revParse(round.worktree, 'HEAD'), unit.systems, ctx.routingBase.config),
-    notes: ctx.journal.view.buildNotes(unit.id, parent.attempt).map((sha) => steerBrief(ctx.runDir, sha)),
-    planCheckNotes: planCheckNotes(ctx, unit.id),
+    notes: [...ctx.journal.view.buildNotes(unit.id, parent.attempt).map((sha) => steerBrief(ctx.runDir, sha)), ...ctx.journal.view.surfaceFacts().flatMap((f) => f.kind === 'review-completed' && f.unit === unit.id && f.note !== null ? [steerBrief(ctx.runDir, f.note)] : []), ...ctx.journal.view.surfaceFacts().flatMap((f) => f.kind === 'review-completed' && f.unit === unit.id && f.mode === 'pre-build' ? f.items.map((x) => `${x.id}: ${x.text} (${x.evidence.join('; ')})`) : [])],
+    method: methodContext(ctx, unit, spec),
     fastLanes: activeBuildLanes(spec), suiteLanes: builderSuiteLanes(ctx.plan().suite.lanes, spec), evidenceDir: work, worktree: round.worktree, systems: unit.systems,
     fixRound: call.fixRound === null ? null : { ...call.fixRound, directives: [...call.fixRound.directives,
-      `Certification allowance: ${allowance} uncharged red certifications remaining before the next charge.`] }, witnessChecks, milestones, browser: browser?.input ?? null, certifiedAt: certifiedTree(ctx, unit.id), handover: handed(call),
+      `Certification allowance: ${allowance} uncharged red certifications remaining before the next charge.`] }, witnessChecks, milestones, browser: browser?.input ?? null, handover: handed(call),
   }, dispatch.triple.backend);
   const callFor = (prepared: PreparedRound) => (call: RoundCall): BackendCallSpec => ({
     unit: unit.id, parent,
@@ -1347,6 +1304,16 @@ export async function buildRead(
   // A resolve round must end with the merge committed: HEAD with parents [old, T] (mergeinCompleted). A
   // report of success without it does not describe the tree, so it is read as a malformed report.
   if (v.kind === 'success' && !malformed && round === 'resolve') malformed = !mergeinResolved(ctx, unit.id);
+  if (v.kind === 'success' && !malformed) {
+    const report = buildOutput(v.value, 'build');
+    const content = (reason: 'spec-wrong' | 'split-proposal', summary: string): NeedsUserContent => ({blocking: reason === 'spec-wrong', subject: {type: 'unit', unit: unit.id}, reason, summary, recommendation: 'The root reviews the evidence and amends the plan with apply --reason.', options: [], evidence: [called.invDir]});
+    if (report.tooBig !== null && raisedWithReason(ctx.journal.view, ctx.runDir, parent, 'split-proposal') === null) raiseNeedsUser(ctx.journal, ctx.runDir, content('split-proposal', `Unit ${unit.id}: ${report.tooBig.estimate}; suggested children: ${report.tooBig.suggestedChildren.join('; ')}`), parent);
+    if (report.grounding.specWrong !== null) {
+      const cleaned = held === null ? null : await cleanup(ctx, held, parent);
+      if (cleaned?.kind === 'cleanup-failed') return failed(record(ctx, parent, 'cleanup-failed', null, failedFacts(cleaned.failed)));
+      return failed(record(ctx, parent, 'spec-wrong', content('spec-wrong', report.grounding.specWrong)));
+    }
+  }
   if (v.kind === 'success' && !malformed && called.kind === 'result') {
     const run: BuildRun = { inv: called.inv, invDir: called.invDir, worktree, branch, workDir: workDir(ctx.runDir, parent), reservation: held };
     return { ...record(ctx, parent, 'success'), run };
@@ -1722,7 +1689,7 @@ async function fastSuiteSeries(
 ): Promise<Series> {
   const { worktreeRoot, arc } = ctx.plan();
   const checkout = { path: fastSuiteWorktree(worktreeRoot, arc, parent.unit, parent.attempt, which), checkout: { type: 'detached', at } } as const;
-  const series = await runLaneSeries(ctx, parent, lanes, 'suite', checkout, fastSuiteRoot(ctx.runDir, parent, which), rt, false, new Map(), verify, carry);
+  const series = await runLaneSeries(ctx, parent, lanes, 'suite', checkout, fastSuiteRoot(ctx.runDir, parent, which), rt, false, new Map(), verify);
   if (series.tree !== null) await removeVerificationTree(ctx, series.tree, parent);
   return series;
 }
@@ -1791,7 +1758,7 @@ async function fastSuite(
 ): Promise<Readonly<{ verdict: LanesVerdict; series: Series | null }>> {
   const lanes = seriesOrder(fastSuiteLanes(ctx, spec, salvaged), red);
   if (lanes.length === 0) return { verdict: { kind: 'green' }, series: null };
-  const series = await fastSuiteSeries(ctx, parent, lanes, salvaged, 'suite', rt, verifyRunsOf(unit, approvedVerification(ctx, unit)), carry);
+  const series = await fastSuiteSeries(ctx, parent, lanes, salvaged, 'suite', rt, verifyRunsOf(unit, approvedVerification(ctx, unit)));
   const fault = suiteFault(ctx, unit.id, series);
   if (fault !== null) return { verdict: fault, series };
   const { end, dirty } = series;
@@ -1824,7 +1791,7 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
   const lanePark = witnessLanePark(ctx, unit, spec);
   if (lanePark !== null) return { ...record(ctx, parent, 'witness-lane-missing', lanePark), at: salvaged, ledger: [], verification: null, fix: null };
     // dev.17 (proportional review): a build's docs-only claim, verified before any lane runs (src/pipeline/docsonly.ts).
-  const carry = await docsOnlyCarry(ctx, unit, parent, salvaged, [...order, ...fastSuiteLanes(ctx, spec, salvaged)]);
+
   const entry = seriesEntry(ctx, order);
   const entered = await enter(ctx, stageHolder(parent), entry);
   if (isCancelled(entered)) return entered;
@@ -1832,7 +1799,7 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
   for (const created of presentCheckouts(ctx.journal.view, unit.id)) await removeCheckout(ctx, created, parent, laneGlobs(ctx, spec));
   const checkout = { path: verificationWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, parent.attempt), checkout: { type: 'detached', at: salvaged } } as const;
   const rt = laneRuntime(ctx, unit.id);
-  const series = await runLaneSeries(ctx, parent, order, 'spec', checkout, specSeriesRoot(ctx.runDir, parent), rt, entry !== null, new Map(), verifyRunsOf(unit, approvedVerification(ctx, unit)), carry);
+  const series = await runLaneSeries(ctx, parent, order, 'spec', checkout, specSeriesRoot(ctx.runDir, parent), rt, entry !== null, new Map(), verifyRunsOf(unit, approvedVerification(ctx, unit)));
   const { end } = series;
   let verdict: LanesVerdict = end.kind === 'green' ? { kind: series.dirty.length > 0 ? 'not-certified' : 'green' }
     : end.kind === 'occupied' ? { kind: 'occupied', needsUser: end.needsUser }
@@ -1849,7 +1816,7 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
     if (hit !== null) verdict = { kind: 'known-defect', detail: { kind: 'known-defect', id: hit.id, match: hit.match } };
   }
   // The fast suite lanes (the 2026-10-15 batch): only after a green certified spec series.
-  const suite = verdict.kind === 'green' ? await fastSuite(ctx, unit, spec, parent, salvaged, rt, carry, red.suite) : null;
+  const suite = verdict.kind === 'green' ? await fastSuite(ctx, unit, spec, parent, salvaged, rt, new Map(), red.suite) : null;
   if (suite !== null) verdict = suite.verdict;
   if (verdict.kind === 'red') {
     const red = [...series.ledger, ...(suite?.series?.ledger ?? [])].filter((l) => isRed(l.verdict));

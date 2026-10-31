@@ -550,7 +550,7 @@ export const STAGE_OUTCOME_KINDS = {
   // M4a rev 3 (E, R55) to dev.16: the in-session assessment found the spec `infeasible`, or raised the risk floor onto
   // another implementer seat (`risk-raised`). dev.17 records neither; read from an older log.
   // 2026-10-15 (arc feedback #3): `witness-lane-missing` (a required witness item names no arc lane in force), at build and lanes.
-  build: [
+  build: ['spec-wrong',
     'success', 'refusal', 'malformed', 'process-fault', 'lost', 'lost-tree-effects', 'occupied', 'cleanup-failed', 'interrupted', 'routing-changed', 'infeasible',
     'risk-raised', 'witness-lane-missing', 'context-exceeded', 'executor-fault',
   ],
@@ -811,6 +811,10 @@ export type DiffShown = Readonly<{ inlined: readonly RepoPath[]; notInlined: rea
 /** A gate's diff over the large-diff threshold (`JudgmentInputs.largeDiff`): the files its attachment left out for size. */
 export type GateLargeDiff = Readonly<{ overflow: number }>;
 
+export type ReviewItem = Readonly<{ id: string; text: string; evidence: readonly string[] }>;
+export type SurfaceFact =
+  | Readonly<{ kind: 'review-triggered'; unit: UnitId; marker: 'M1' | 'M2' | 'M3' | 'M4' | 'always'; source: string; specRev: SpecRev }>
+  | Readonly<{ kind: 'review-completed'; unit: UnitId; mode: 'pre-build' | 'diagnosis'; specRev: SpecRev; inv: InvocationId; items: readonly ReviewItem[]; note: Sha256Hex | null }>;
 export type Fact =
   | Readonly<{ kind: 'tail-discarded'; offset: number; length: number; sha256: Sha256Hex }>
   | Readonly<{ kind: 'containment-mode'; mode: ContainmentMode }>
@@ -1007,6 +1011,7 @@ export type LensRefusal = Readonly<{ lens: LensKindName; attempt: number; claim:
 
 /** The M3 facts (SCHEMAS.md "M3: the holistic layer"). */
 export type HolisticFact =
+  | SurfaceFact
   /** A witness run's records (`witness.json`, hashed): the observation key and whom it ran for. */
   /** dev.17: `inputSha`, the lane's input on the tree (src/git/reusekey.ts); absent before dev.17: `treeSha`. */
   | Readonly<{
@@ -1922,7 +1927,7 @@ const planChange: Read<PlanChange> = tagged('type', {
   'unit-changed': object((f): PlanChange => ({ type: f.get('type', literal('unit-changed')), unit: f.get('unit', unitR) })),
   order: object((f): PlanChange => ({ type: f.get('type', literal('order')) })),
   spec: object((f): PlanChange => ({
-    type: f.get('type', literal('spec')), unit: f.get('unit', unitR), edit: f.get('edit', oneOf(SPEC_EDITS)), specRev: f.get('specRev', specRevR),
+    type: f.get('type', literal('spec')), unit: f.get('unit', unitR), edit: f.get('edit', oneOf(SPEC_EDITS)), specRev: f.get('specRev', (v, p) => specRev(v, p)),
     specSha256: f.get('specSha256', sha256R),
   })),
   routing: object((f): PlanChange => {
@@ -2450,6 +2455,8 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
     kind: f.get('kind', literal('divergence-digest')), needsUser: f.get('needsUser', (v, p): NeedsUserId => needsUserId(v, p)),
     ids: f.get('ids', idList((v, p): DivergenceId => divergenceId(v, p), { nonEmpty: true })),
   })),
+  'review-triggered': object((f): Fact => ({ kind: f.get('kind', literal('review-triggered')), unit: f.get('unit', unitR), marker: f.get('marker', oneOf(['M1', 'M2', 'M3', 'M4', 'always'] as const)), source: f.get('source', str), specRev: f.get('specRev', (v, p) => specRev(v, p)) })),
+  'review-completed': object((f): Fact => ({ kind: f.get('kind', literal('review-completed')), unit: f.get('unit', unitR), mode: f.get('mode', oneOf(['pre-build', 'diagnosis'] as const)), specRev: f.get('specRev', (v, p) => specRev(v, p)), inv: f.get('inv', invR), items: f.get('items', arrayOf(object((g) => ({ id: g.get('id', str), text: g.get('text', str), evidence: g.get('evidence', arrayOf(str)) })))), note: f.get('note', nullable(sha256R)) })),
   noted: object((f): Fact => ({ kind: f.get('kind', literal('noted')), unit: f.get('unit', unitR), command: f.get('command', cmdR), brief: f.get('brief', sha256R) })),
   steered: object((f): Fact => ({
     kind: f.get('kind', literal('steered')), unit: f.get('unit', unitR), command: f.get('command', cmdR), brief: f.get('brief', sha256R),
@@ -2509,7 +2516,7 @@ export const fact: Read<Fact> = tagged('kind', {
     return out;
   }),
   reopened: object((f): Fact => ({
-    kind: f.get('kind', literal('reopened')), unit: f.get('unit', unitR), command: f.get('command', nullable(cmdR)), specRev: f.get('specRev', specRevR),
+    kind: f.get('kind', literal('reopened')), unit: f.get('unit', unitR), command: f.get('command', nullable(cmdR)), specRev: f.get('specRev', (v, p) => specRev(v, p)),
     specSha256: f.get('specSha256', sha256R),
   })),
   unparked: object((f): Fact => {
@@ -2528,7 +2535,7 @@ export const fact: Read<Fact> = tagged('kind', {
   'judgment-inputs': object((f): Fact => {
     const out = {
       kind: f.get('kind', literal('judgment-inputs')), unit: f.get('unit', unitR), stage: f.get('stage', oneOf(JUDGMENT_STAGES)), attempt: f.get('attempt', positive),
-      tip: f.get('tip', shaR), head: f.get('head', nullable(shaR)), specRev: f.get('specRev', specRevR), specSha256: f.get('specSha256', sha256R),
+      tip: f.get('tip', shaR), head: f.get('head', nullable(shaR)), specRev: f.get('specRev', (v, p) => specRev(v, p)), specSha256: f.get('specSha256', sha256R),
       planRev: f.get('planRev', (v, p) => planRev(v, p)), routingRev: f.get('routingRev', revR),
     };
     if ((out.stage === 'gate') !== (out.head !== null)) throw new SchemaError(`${f.path}.head`, out.stage === 'gate' ? 'the unit commit the gate read' : 'null for a plan-check', out.head);

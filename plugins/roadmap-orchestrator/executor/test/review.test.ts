@@ -18,7 +18,7 @@ import { clauseId,invocationIdOf,sha,unitId } from '../src/core/ids.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import type { SpecM1,SpecPatch } from '../src/core/records.ts';
 import { runOp,unitBranch } from '../src/pipeline/dispatch.ts';
-import { certifiedTree,readByCode } from '../src/pipeline/docsonly.ts';
+import { certifiedTree } from '../src/pipeline/docsonly.ts';
 import { fingerprintAt,gateDebtNotes } from '../src/pipeline/gate.ts';
 import { approvalBlobs,gateDelta } from '../src/pipeline/review.ts';
 import { at,keptSpecPath,loadUnitSpec,record,start } from '../src/pipeline/stages.ts';
@@ -42,9 +42,9 @@ const blocking = (path: string, text: string, extra: Readonly<Record<string, Jso
   ({ severity: 'blocking', path, text, contractRef: null, experiments: [], defect: 'incorrect-behaviour', reraises: null, hunk: null, debt: null, ...extra });
 const note = (path: string, text: string): JsonValue => ({ severity: 'note', path, text, contractRef: null, experiments: [], defect: null, reraises: null, hunk: null, debt: null });
 /** A fix round: the build session resumed, committing `files` (none: no change), answering `docsOnlySince`. */
-const fixBuild = (files: Readonly<Record<string, string>> | null, docsOnlySince: string | null = null, before: readonly Step['acts'][number][] = []): Step => ({
+const fixBuild = (files: Readonly<Record<string, string>> | null, _retired: null = null, before: readonly Step['acts'][number][] = []): Step => ({
   as: 'codex', expect: { argv: ['exec', 'resume'] },
-  acts: [...before, ...(files === null ? [] : [{ type: 'commit', message: 'fix round', files } as const]), { type: 'emit', value: { ...BUILD_REPORT, docsOnlySince } }],
+  acts: [...before, ...(files === null ? [] : [{ type: 'commit', message: 'fix round', files } as const]), { type: 'emit', value: BUILD_REPORT }],
 } as Step);
 /** The verifier's call (a fresh read-only judgment on Haiku 5.5) answering `hunks`. */
 const verifierStep = (hunks: readonly JsonValue[], stdinContains: readonly string[] = []): Step => ({
@@ -71,28 +71,7 @@ const MUL_LINE_COMMENT = { 'src/mul.js': `// mul multiplies two numbers.\n${MUL[
 /** A doc-comment change code cannot clear alone (a block comment): the verifier is asked. */
 const MUL_DOC_COMMENT = { 'src/mul.js': `/** Multiplies two numbers. */\n${MUL['src/mul.js']}` };
 
-test('review.defect-required: a blocking finding without a defect is refused through the repair turn; the repaired one enters the ledger open', T, async () => {
-  const d = setupArc({
-    steps: [
-      planCheckStep({ decision: 'approve' }), mulBuild(),
-      gateStep({rulings: [],  decision: 'revise', directives: ['Handle negatives.'], findings: [blocking('src/mul.js', 'mul is wrong for negatives.', { defect: null })] }),
-      gateRepairStep({rulings: [],  decision: 'revise', directives: ['Handle negatives.'], findings: [blocking('src/mul.js', 'mul is wrong for negatives.', { defect: 'incorrect-behaviour' })] }, ['names no defect']),
-    ],
-  });
-  const r = contextFor(d);
-  try {
-    await stepUntil(r, 'u1', (f) => f.stage === 'gate');
-    assert.equal(outcomes(d).at(-1), 'gate:revise');
-    assert.equal(gateCalls(d).length, 2, 'the first answer took the repair turn');
-    assert.deepEqual(ledgerOf(r), [['R-1', 'src/mul.js', null]], 'the blocking finding is open in the ledger');
-    const [entry] = r.journal.view.review().ledger;
-    assert.equal(entry!.anchor, git(d.repo, 'rev-parse', `roadmap/${r.ctx.plan().arc}/u1:src/mul.js`), 'anchored at the blob the gate judged');
-    const inputs = r.journal.view.judgmentInputs(U1, 'gate', r.journal.view.unit(U1).decided!.attempt)!;
-    assert.deepEqual(inputs.review, { ledger: [], disputes: [], delta: null }, 'the first gate was given an empty ledger and a full review');
-  } finally {
-    r.journal.close();
-  }
-});
+
 
 test('review.ride-along: comment and doc findings never block; each enters the ledger released (no banking outside a corpus arc), and only one naming its drag is debt', T, async () => {
   const rideAlong = (path: string, text: string, debt: JsonValue): JsonValue => ({ severity: 'ride-along', path, text, contractRef: null, experiments: [], defect: null, reraises: null, hunk: null, debt });
@@ -103,7 +82,7 @@ test('review.ride-along: comment and doc findings never block; each enters the l
     await stepUntil(r, 'u1', (f) => f.stage === 'gate');
     assert.equal(outcomes(d).at(-1), 'gate:approve');
     assert.deepEqual(ledgerOf(r), [['R-1', 'src/mul.js', 'released'], ['R-2', 'test/mul.test.js', 'released']]);
-    const read = validateGateOutput({ rulings: [], decision: 'approve', findings, directives: [], reasons: ['ok'], premises: [], unreviewed: [], clusters: null,  });
+    const read = validateGateOutput({ rulings: [], decision: 'approve', findings, directives: [], reasons: ['ok'], premises: [], standing: [], clusters: null,  });
     assert.deepEqual(gateDebtNotes(read.findings).map((n) => n.index), [0], 'a ride-along finding is debt only with its drag');
     assert.ok(factsOf(d, 'approval').at(-1)!.blobs !== undefined, 'the approval records its blobs');
   } finally {
@@ -124,148 +103,19 @@ const reviseSteps = (): readonly Step[] => [
   planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({rulings: [],  decision: 'revise', directives: ['Document mul.'], findings: [blocking('src/mul.js', 'mul is undocumented.', { defect: 'requirement-unmet' })] }),
 ];
 
-test('review.docs-only-code: a fix that adds only whole-line comments, claimed docs-only since the certified tree, carries the lane passes over by code alone; a lane reading comments runs again', T, async () => {
-  const d = setupArc({ steps: reviseSteps(), suite: [{ ...SUITE_LANE, readsComments: true }] });
-  const r = contextFor(d);
-  try {
-    const certified = await toRevise(r);
-    appendSteps(d, [fixBuild(MUL_LINE_COMMENT, certified), gateStep({ decision: 'approve' })]);
-    await stepUntil(r, 'u1', (f) => f.stage === 'gate');
-    assert.equal(outcomes(d).at(-1), 'gate:approve');
-    const [check] = factsOf(d, 'docs-only');
-    assert.ok(check !== undefined);
-    assert.deepEqual([check.verdict, check.since, check.reason, check.carried], ['code', certified, null, ['mul']]);
-    assert.deepEqual(laneSpawns(r, lastLanesAttempt(d)), ['suite'], 'the spec lane was carried over; the lane reading comments ran');
-    const reused = factsOf(d, 'lane-reused').filter((f) => f.parent.type === 'stage' && f.parent.attempt === check.attempt);
-    assert.deepEqual(reused.map((f) => [f.lane, f.from.at]), [['mul', certified]]);
-    assert.ok(!r.journal.view.opsOf('proc.spawn').some((i) => i.expect.subject.purpose === 'backend' && i.expect.subject.role === 'verifier'), 'no verifier call');
-    assert.deepEqual(ledgerOf(r), [['R-1', 'src/mul.js', 'fixed']], 'the approval settles the finding whose file changed as fixed');
-  } finally {
-    r.journal.close();
-  }
-});
 
-test('review.docs-only-verifier: a doc comment code cannot clear goes to the verifier (role verifier, Haiku), which clears it; the passes carry over', T, async () => {
-  const d = setupArc({ steps: reviseSteps() });
-  const r = contextFor(d);
-  try {
-    const certified = await toRevise(r);
-    appendSteps(d, [fixBuild(MUL_DOC_COMMENT, certified), verifierStep([clear('h1')], ['/** Multiplies two numbers. */', 'src/mul.js']), gateStep({ decision: 'approve' })]);
-    await stepUntil(r, 'u1', (f) => f.stage === 'gate');
-    assert.equal(outcomes(d).at(-1), 'gate:approve');
-    const [check] = factsOf(d, 'docs-only');
-    assert.deepEqual([check!.verdict, check!.carried], ['verifier', ['mul', 'suite']]);
-    assert.deepEqual(laneSpawns(r, lastLanesAttempt(d)), [], 'every lane carried over');
-    const verifier = r.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'backend' && i.expect.subject.role === 'verifier');
-    assert.equal(verifier.length, 1);
-    const s = verifier[0]!.expect.subject;
-    assert.ok(s.purpose === 'backend' && s.tier === 'med', 'on the unit\'s risk tier');
-    assert.ok(readCalls(d.scenarioPath).every((c) => c.step !== null));
-  } finally {
-    r.journal.close();
-  }
-});
+
+
 
 /** src/mul.js with a multi-line template literal, and a fix adding a line inside it that looks like a `//` comment. */
 const MUL_TEMPLATE = { 'src/mul.js': `${MUL['src/mul.js']}export const usage = \`\nmul(a, b)\n\`;\n` };
 const MUL_TEMPLATE_COMMENT = { 'src/mul.js': `${MUL['src/mul.js']}export const usage = \`\nmul(a, b)\n// multiplies a by b\n\`;\n` };
 
-test('review.docs-only-template-literal: a comment-looking line added inside a multi-line template literal is no comment; code leaves it to the verifier', T, async () => {
-  const d = setupArc({
-    steps: [
-      planCheckStep({ decision: 'approve' }), mulBuild(MUL_TEMPLATE),
-      gateStep({rulings: [],  decision: 'revise', directives: ['Document mul.'], findings: [blocking('src/mul.js', 'mul is undocumented.', { defect: 'requirement-unmet' })] }),
-    ],
-  });
-  const r = contextFor(d);
-  try {
-    const certified = await toRevise(r);
-    const changed = { id: 'h1', kind: 'code', executable: true, toolDirective: false, behaviourChange: true };
-    appendSteps(d, [fixBuild(MUL_TEMPLATE_COMMENT, certified), verifierStep([changed], ['// multiplies a by b']), gateStep({ decision: 'approve' })]);
-    await stepUntil(r, 'u1', (f) => f.stage === 'gate');
-    const [check] = factsOf(d, 'docs-only');
-    assert.equal(check!.verdict, 'refused', 'the verifier, not code, read the hunk');
-    assert.match(check!.reason!, /did not clear h1 \(src\/mul\.js\)/);
-    assert.equal(r.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'backend' && i.expect.subject.role === 'verifier').length, 1);
-    assert.deepEqual(laneSpawns(r, lastLanesAttempt(d)), ['mul', 'suite'], 'every lane ran');
-  } finally {
-    r.journal.close();
-  }
-});
 
-test('review.docs-only-code-certain: code clears a comment hunk only on a lexer pass it is certain of; strings spanning lines, heredocs, configuration comments and Go example output go to the verifier', () => {
-  /** The number of hunks code leaves to the verifier for `path` changed from `before` to `after` (a directive fails). */
-  const left = (path: string, before: string, after: string): number => {
-    const read = readByCode(path, before, after, diffOf(before, after));
-    assert.equal(read.kind, 'read', `${path}: not refused`);
-    return read.kind === 'read' ? read.left.length : -1;
-  };
-  // Controls: a whole-line comment in plain code is cleared by code.
-  assert.equal(left('src/a.ts', 'const a = 1;\n', '// a is one\nconst a = 1;\n'), 0, 'a TypeScript comment');
-  assert.equal(left('src/a.ts', 'const s = `x ${a * 2}`;\nconst b = 2;\n', 'const s = `x ${a * 2}`;\n// b\nconst b = 2;\n'), 0, 'after a template expression');
-  assert.equal(left('src/a.ts', 'const a = 1;\n// old\n', 'const a = 1;\n// new\n'), 0, 'a comment reworded');
-  assert.equal(left('a.py', 'x = """doc"""\ny = 1\n', 'x = """doc"""\n# y is one\ny = 1\n'), 0, 'a Python comment');
-  assert.equal(left('a.go', 'package a\n\nvar s = `x`\n', 'package a\n\n// s is x\nvar s = `x`\n'), 0, 'a Go comment');
-  // Lines inside strings that span lines: template literals, triple-quoted and raw strings, escaped newlines.
-  assert.equal(left('src/a.ts', 'const s = `\nhello\n`;\n', 'const s = `\nhello\n// not a comment\n`;\n'), 1, 'inside a template literal');
-  assert.equal(left('src/a.ts', 'const s = `\nhello\n// was\n`;\n', 'const s = `\nhello\n`;\n'), 1, 'removed from inside a template literal');
-  assert.equal(left('src/a.ts', 'const s = `${f(`\n`)}\nhello\n`;\n', 'const s = `${f(`\n`)}\nhello\n// not a comment\n`;\n'), 1, 'inside a template literal after a nested one');
-  assert.equal(left('src/a.js', "const s = 'a\\\nb';\n", "const s = 'a\\\n// b';\n"), 1, 'after an escaped newline in a quoted string');
-  assert.equal(left('a.py', 'x = """\nhello\n"""\n', 'x = """\nhello\n# not a comment\n"""\n'), 1, 'inside a triple-quoted string');
-  assert.equal(left('a.py', "x = f'''{y}\nhello\n'''\n", "x = f'''{y}\nhello\n# not a comment\n'''\n"), 1, 'inside a triple-quoted f-string');
-  assert.equal(left('a.go', 'package a\n\nvar s = `\nhello\n`\n', 'package a\n\nvar s = `\nhello\n// not a comment\n`\n'), 1, 'inside a Go raw string');
-  // What a lexer cannot be certain of: the whole file is unknown.
-  assert.equal(left('src/a.js', 'const r = /"/;\nconst a = 1;\n', 'const r = /"/;\n// a is one\nconst a = 1;\n'), 1, 'a slash then a quote: a regular expression or division');
-  assert.equal(left('a.py', 'x = f"{d[\'k\']}"\ny = 1\n', 'x = f"{d[\'k\']}"\n# y is one\ny = 1\n'), 1, 'an f-string field holding a quote');
-  assert.equal(left('src/a.js', 'const e = <p>\nhi\n</p>;\n', 'const e = <p>\n// hi\n</p>;\n'), 1, 'JSX text in a JavaScript file');
-  assert.equal(left('src/a.tsx', 'const a = 1;\n', '// a is one\nconst a = 1;\n'), 1, 'a TSX file');
-  assert.equal(left('a.go', 'package a\n\n// #include <stdio.h>\nimport "C"\n', 'package a\n\n// #include <stdio.h>\n// #include <stdlib.h>\nimport "C"\n'), 1, 'cgo\'s C preamble');
-  // Heredocs and configuration files (their tools may read comments): no lexer, never cleared by code.
-  assert.equal(left('run.sh', 'cat <<EOF\nhello\nEOF\n', 'cat <<EOF\nhello\n# not a comment\nEOF\n'), 1, 'inside a shell heredoc');
-  for (const path of ['ci.yaml', 'ci.yml', 'Cargo.toml', 'setup.cfg', 'tox.ini', 'conf.json5', 'a.rb', 'a.rs']) {
-    assert.equal(left(path, 'a = 1\n', '# a is one\na = 1\n'), 1, path);
-  }
-  // Refused by code outright: a JSON line opening with a quote (a `"//"` key is a value) and a line inside a `/*!` block (kept by bundlers).
-  const refused = (path: string, before: string, after: string): string => {
-    const read = readByCode(path, before, after, diffOf(before, after));
-    return read.kind === 'refused' ? read.reason : 'not refused';
-  };
-  assert.match(refused('package.json', '{\n  "//": "a",\n  "x": 1\n}\n', '{\n  "//": "b",\n  "x": 1\n}\n'), /changes a JSON key or value/);
-  assert.equal(left('tsconfig.json', '{\n  // a\n  "x": 1\n}\n', '{\n  // b\n  "x": 1\n}\n'), 1, 'a JSONC comment goes to the verifier');
-  const legal = (year: string) => `/*!\n * widgets\n * (c) ${year} Labs\n */\nexport const a = 1;\n`;
-  assert.match(refused('src/w.ts', legal('2024'), legal('2025')), /preserved \/\*! comment/, 'inside a /*! block');
-  assert.match(refused('src/w.ts', legal('2024'), legal('2024').replace('/*!', '/*! v2')), /preserved \/\*! comment/, 'its opening line');
-  assert.equal(left('src/w.ts', '/*! kept */\n// a\nconst a = 1;\n', '/*! kept */\n// b\nconst a = 1;\n'), 0, 'a comment after a closed /*! line');
-  // A Go example's output block: the Output line and every comment line under it.
-  const example = (out: readonly string[]): string =>
-    `package a\n\nimport "fmt"\n\nfunc ExampleMul() {\n\tfmt.Println(6)\n\t// Output:\n${out.map((l) => `\t// ${l}\n`).join('')}}\n`;
-  assert.equal(left('a_test.go', example(['6']), example(['7'])), 1, 'a line under Output changed');
-  assert.equal(left('a_test.go', example(['6']), example(['6', '7'])), 1, 'a line added under Output');
-  assert.equal(left('a_test.go', example(['6']), example(['6']).replace('// Output:', '// Unordered output:')), 1, 'the Output line itself');
-  assert.equal(left('a_test.go', example(['6']), example(['6']).replace('\t// 6\n', '\t// 6\n\n\t// later\n')), 1, 'a comment group after the output');
-  assert.equal(left('a_test.go', example(['6']), example(['6']).replace('\t// Output:\n', '\t// Output:\n\n')), 1, 'a blank line splitting the output');
-  assert.equal(left('a_test.go', example(['6']), example(['6']).replace('func ExampleMul', '// ExampleMul prints 6.\nfunc ExampleMul')), 0, 'a doc comment above the example is a comment');
-});
 
-test('review.docs-only-refused: the verifier finds a behaviour change; the claim is refused and the lanes run as normal, uncharged', T, async () => {
-  const d = setupArc({ steps: reviseSteps() });
-  const r = contextFor(d);
-  try {
-    const certified = await toRevise(r);
-    const charged = r.journal.view.unit(U1).counters.chargeableFailures;
-    appendSteps(d, [fixBuild(MUL_DOC_COMMENT, certified), verifierStep([{ id: 'h1', kind: 'mixed', executable: true, toolDirective: false, behaviourChange: true }]), gateStep({ decision: 'approve' })]);
-    await stepUntil(r, 'u1', (f) => f.stage === 'gate');
-    assert.equal(outcomes(d).at(-1), 'gate:approve');
-    const [check] = factsOf(d, 'docs-only');
-    assert.equal(check!.verdict, 'refused');
-    assert.match(check!.reason!, /did not clear h1 \(src\/mul\.js\): mixed, executable, a behaviour change/);
-    assert.deepEqual(check!.carried, []);
-    assert.deepEqual(laneSpawns(r, lastLanesAttempt(d)), ['mul', 'suite'], 'every lane ran');
-    assert.equal(r.journal.view.unit(U1).counters.chargeableFailures, charged, 'the refusal charged nothing');
-  } finally {
-    r.journal.close();
-  }
-});
+
+
+
 
 /** gate 1 revises: a blocking finding on the test (R-1) and a note on src/mul.js (R-2, settled released at once). */
 const reraiseSteps = (): readonly Step[] => [

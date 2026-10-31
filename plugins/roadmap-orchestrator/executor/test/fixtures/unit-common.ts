@@ -211,7 +211,7 @@ export type GateAnswer = Readonly<{
   directives?: readonly string[];
   findings?: readonly JsonValue[];
   premises?: readonly JsonValue[];
-  unreviewed?: readonly JsonValue[];
+  standing?: readonly JsonValue[];
   clusters?: readonly JsonValue[] | null;
   /** dev.17: the rulings on the disputes the gate was given; default none. */
   rulings?: readonly JsonValue[];
@@ -238,7 +238,7 @@ const dev17Finding = (f: JsonValue): JsonValue => {
 const gateAnswer = (a: GateAnswer): JsonValue => ({
   rulings: [...(a.rulings ?? [])],
   decision: a.decision, ordering: a.ordering ?? null, findings: (a.findings ?? []).map(dev17Finding), directives: [...(a.directives ?? [])], reasons: ['A1 holds'], premises: [...(a.premises ?? [])],
-  unreviewed: [...(a.unreviewed ?? [])], clusters: a.clusters ?? null,
+  standing: [], clusters: a.clusters ?? null,
 }) as JsonValue;
 
 /**

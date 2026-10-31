@@ -24,7 +24,7 @@ const GATE: { readonly [S in JudgmentSeat]: ModelClass } = { low: 'frontier', me
  */
 export const BUILTIN_SEATS: ClassTable = {
   planCheck: PLAN_CHECK,
-  build: { low: 'efficient', med: 'efficient', high: 'efficient' },
+  build: { low: 'efficient', med: 'efficient', high: 'frontier' },
   gate: GATE,
   lens: { arc: 'efficient' },
   checkpoint: { arc: 'summit' },
@@ -34,7 +34,7 @@ export const BUILTIN_SEATS: ClassTable = {
   polishJudge: { arc: 'frontier' },
   // dev.17 (proportional review): the docs-only verifier on economy (Haiku 5.5 high) at every risk tier: a closed per-hunk
   // classification, and code accepts only when every hunk is clear (src/pipeline/docsonly.ts).
-  verifier: { low: 'economy', med: 'economy', high: 'economy' },
+  verifier: { low: 'frontier', med: 'frontier', high: 'frontier', escalation: 'frontier' },
   // dev.17 (design pass): the scaffold writer on economy (Haiku 5.5 high) at every tier, in force only in a `dev17` arc.
   scaffold: { low: 'economy', med: 'economy', high: 'economy' },
 };

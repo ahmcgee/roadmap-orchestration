@@ -204,6 +204,7 @@ export const TABLE: Table = {
     'plan-defect': park('plan-defect', 'env'),
   },
   build: {
+    'spec-wrong': park('spec-wrong', 'design'),
     success: go(at('quiesce')),
     refusal: park('refusal', 'design'),
     malformed: retry('malformed', 'design'),

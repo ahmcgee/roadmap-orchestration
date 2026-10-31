@@ -1668,6 +1668,7 @@ export const receipt: Read<Receipt> = tagged('state', {
 // needs-user: `needs-user/<id>.json` (write-once) and `needs-user/<id>.ack.json`
 
 export const NEEDS_USER_REASONS = [
+  'spec-wrong', 'split-proposal',
   'chargeable-bound', 'escalation', 'refusal', 'process-fault', 'malformed', 'salvage-failed', 'empty-diff',
   'occupancy-unlabelled', 'lane-blocked', 'base-red', 'candidate-red', 'foreign-ref-move', 'recovery-required',
   'reconcile-park', 'residue', 'usage-limit', 'supervisor-crash-limit', 'log-corrupt', 'owner-mismatch',

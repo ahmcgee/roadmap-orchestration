@@ -59,7 +59,7 @@ export type UnitRole = (typeof UNIT_ROLES)[number] | (typeof DEV17_UNIT_ROLES)[n
 export const ARC_ROLES = ['lens', 'checkpoint', 'packReview', 'flow', 'walkthrough', 'polishJudge'] as const satisfies readonly Role[];
 export type ArcRole = (typeof ARC_ROLES)[number];
 /** The judgment roles of a unit's pipeline. */
-export type JudgmentRole = 'planCheck' | 'gate';
+export type JudgmentRole = 'planCheck' | 'gate' | 'verifier';
 export type ImplementerRole = 'build';
 /**
  * Every role that runs a fresh read-only session on the judgment profile (`claude-judgment`, `JUDGMENT_TOOLS`): the judging
@@ -80,7 +80,7 @@ export type WalkRole = (typeof WALK_ROLES)[number];
  * dev.17 (design pass): plan-check, in its throwaway checkouts of the tip and the unit branch, with web search and fetch
  * besides (`PLAN_CHECK_TOOLS`).
  */
-export const ACTING_JUDGE_ROLES = ['gate', ...WALK_ROLES, 'planCheck'] as const satisfies readonly Role[];
+export const ACTING_JUDGE_ROLES = ['gate', ...WALK_ROLES, 'planCheck', 'verifier'] as const satisfies readonly Role[];
 export type ActingJudgeRole = (typeof ACTING_JUDGE_ROLES)[number];
 /**
  * The roles whose session may change things: the implementer, the acting judges (dev.13) and (dev.17) the scaffold writer.
@@ -111,7 +111,7 @@ export type Seat = JudgmentSeat | ArcSeat;
 export type SeatOf<R extends Role> = R extends ArcRole ? ArcSeat : R extends JudgmentRole ? JudgmentSeat : RiskTier;
 export const SEATS: { readonly [R in Role]: readonly SeatOf<R>[] } = {
   planCheck: JUDGMENT_SEATS, build: RISK_TIERS, gate: JUDGMENT_SEATS, lens: ARC_SEATS, checkpoint: ARC_SEATS, packReview: ARC_SEATS, flow: ARC_SEATS,
-  walkthrough: ARC_SEATS, polishJudge: ARC_SEATS, verifier: RISK_TIERS, scaffold: RISK_TIERS,
+  walkthrough: ARC_SEATS, polishJudge: ARC_SEATS, verifier: JUDGMENT_SEATS, scaffold: RISK_TIERS,
 };
 /** One seat of the table, `role.tier`: `build.escalation` is unrepresentable. */
 export type SeatRef = { [R in Role]: Readonly<{ role: R; tier: SeatOf<R> }> }[Role];
@@ -153,7 +153,7 @@ export type RoutingTable = SeatTable<Triple>;
 /** The built-in seats, or a resolved stack before binding: the class at every seat, a build class at a build seat. */
 export type ClassTable = { readonly [R in Role]: { readonly [S in SeatOf<R>]: ClassOf<R> } };
 /** One layer of the routing stack: a class at any subset of seats, a build class at a build seat. */
-export type RoutingLayer = { readonly [R in Role]?: { readonly [S in SeatOf<R>]?: ClassOf<R> } };
+export type RoutingLayer = { readonly [R in Role]?: { readonly [S in SeatOf<R>]?: ClassOf<R> } } & Readonly<{ profile?: ProfileName }>;
 /** A repo's class rebinds: any subset of classes, each bound to a triple. */
 export type ClassBindings = { readonly [C in ModelClass]?: Triple };
 /** Where a seat's class came from, lowest to highest precedence. */
@@ -263,7 +263,8 @@ export const routingLayer: Read<RoutingLayer> = object((f) => {
       out[r] = seats;
     }
   }
-  return out as RoutingLayer;
+  const profile = f.optional('profile', profileName);
+  return { ...out, ...(profile === undefined ? {} : { profile }) } as RoutingLayer;
 });
 
 /** A class rebind: a triple whose effort the model catalogue lists for its model. */

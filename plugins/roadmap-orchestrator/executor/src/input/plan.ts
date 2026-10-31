@@ -169,6 +169,7 @@ export type PlanUnit = Readonly<{
   risk: RiskTier;
   /** The unit systems whose build memory is available to its roles. Required by the P2 cutover. */
   systems: readonly SystemName[];
+  review?: 'always' | 'never';
   resources: readonly ResourceName[];
   /**
    * Units this one runs after (`after`, optional in the file, [] when absent): it is not dispatched while
@@ -568,10 +569,12 @@ const cut: Read<Cut> = object((f) => {
 const planUnit: Read<PlanUnit> = object((f) => {
   const systems = f.get('systems', arrayOf((v, p) => systemName(v, p), { nonEmpty: true }));
   if (systems !== undefined) assertUnique(systems, (s) => s, `${f.path}.systems`);
+  const review = f.optional('review', oneOf(['always', 'never'] as const));
   const out = {
     id: f.get('id', (v, p) => unitId(v, p)),
     spec: f.get('spec', (v, p) => planPath(v, p)),
     risk: f.get('risk', riskTier),
+    ...(review === undefined ? {} : { review }),
     resources: f.get('resources', arrayOf((v, p) => resourceName(v, p))),
     after: f.optional('after', arrayOf((v, p) => unitId(v, p))) ?? [],
     contingent: f.optional('contingent', arrayOf(object((g) => ({ id: g.get('id', (v, p) => edgeId(v, p)), condition: g.get('condition', str) })))) ?? [],

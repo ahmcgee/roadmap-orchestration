@@ -698,7 +698,7 @@ test('gate.large-diff-seat: at med risk the large diff seats the gate on high; a
 });
 
 describe('gate.cluster-coverage: the large-diff answer\'s cluster map against the diff\'s paths', () => {
-  const answer = (clusters: JsonValue): JsonValue => ({rulings: [],  decision: 'approve', findings: [], directives: [], reasons: ['A1 holds'], premises: [], unreviewed: [], clusters });
+  const answer = (clusters: JsonValue): JsonValue => ({rulings: [],  decision: 'approve', findings: [], directives: [], reasons: ['A1 holds'], premises: [], standing: [], clusters });
   const paths = ['packages/a/src/x.ts', 'packages/a/src/y.ts', 'packages/b/[id].tsx', 'README.md'].map((p) => repoPath(p));
   const large = { overflow: 2 };
   const refused = (f: () => unknown, pattern: RegExp): void => {

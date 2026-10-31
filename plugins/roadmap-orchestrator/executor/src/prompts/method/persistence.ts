@@ -1,0 +1,1 @@
+export const METHOD = "Check the durable boundary: restart and recovery, partial writes, ordering, retries and concurrency. Evidence should distinguish a persisted fact from an in-memory value and show that a retry neither loses nor duplicates an effect.";

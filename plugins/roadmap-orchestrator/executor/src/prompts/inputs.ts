@@ -255,14 +255,13 @@ export type BuildInputs = Readonly<{
   /** Existing per-system notes at this unit's checkout commit, relative to the product repo. */
   systemNotes: readonly RepoPath[];
   notes: readonly string[];
+  method: import('./method/index.ts').MethodContext;
   spec: RenderedSpec;
   intent: string;
   nonGoals: readonly string[];
   contracts: readonly DocText[];
-  rulings: readonly RulingText[];
   index: ReferenceIndex;
   /** The approving plan-check's notes: facts it found about existing code (item 26); empty when none. */
-  planCheckNotes: string;
   fastLanes: readonly BuildLane[];
   /**
    * The 2026-10-15 batch: the plan's fast suite lanes the lanes stage runs after the spec's (`fastSuiteLanes`,
@@ -287,7 +286,6 @@ export type BuildInputs = Readonly<{
    * dev.17 (proportional review): the salvage SHA of the unit's last lanes attempt that ended green, the tree a build's
    * `docsOnlySince` names; null before one.
    */
-  certifiedAt: Sha | null;
   /**
    * dev.17 (field feedback 2026-10-23 item 1): what the executor's records show of the unit's work before this round, for a
    * session that does not continue its own (src/pipeline/handover.ts); null on a resumed session and on the lineage's first build.
@@ -384,6 +382,8 @@ export type RegeneratedCheck =
 export type GateInputs = Readonly<{
   /** Existing per-system notes at the gated commit, relative to the product repo. */
   systemNotes: readonly RepoPath[];
+  standing: readonly import('../core/events.ts').ReviewItem[];
+  method: import('./method/index.ts').MethodContext;
   spec: RenderedSpec;
   intent: string;
   nonGoals: readonly string[];
@@ -709,7 +709,8 @@ export type PolishJudgeInputs = Readonly<{
  */
 export type VerifierHunk = Readonly<{ id: string; path: RepoPath; language: string | null; text: string }>;
 /** The verifier's inputs: the unit, the certified tree `since` and the salvage SHA `at` the hunks lie between, and the hunks. */
-export type VerifierInputs = Readonly<{ unit: UnitId; since: Sha; at: Sha; hunks: readonly VerifierHunk[] }>;
+export type ReviewBrief = Readonly<{ spec: RenderedSpec; intent: string; nonGoals: readonly string[]; contracts: readonly DocText[]; systems: readonly SystemName[]; method: import('./method/index.ts').MethodContext; history: readonly string[]; standing: readonly import('../core/events.ts').ReviewItem[] }>;
+export type VerifierInputs = Readonly<{mode: 'gate'; brief: GateInputs}> | Readonly<{mode: 'pre-build' | 'diagnosis'; brief: ReviewBrief}>;
 
 /**
  * dev.17 (design pass): what the scaffold writer reads (src/pipeline/scaffold.ts): the unit's spec, the plan-check's
@@ -764,12 +765,9 @@ export const ROLE_INPUTS = {
     'spec', 'intent', 'nonGoals', 'contracts', 'rulings', 'index', 'target', 'direction', 'systems', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision', 'priorInvalid',
     'escalation', 'milestones', 'staleLinks', 'design', 'pocs',
   ],
-  build: [
-    'systemNotes', 'notes', 'spec', 'intent', 'nonGoals', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'systems', 'fixRound', 'witnessChecks',
-    'milestones', 'browser', 'certifiedAt', 'handover',
-  ],
+  build: ['systemNotes', 'notes', 'spec', 'intent', 'nonGoals', 'contracts', 'index', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'systems', 'fixRound', 'witnessChecks', 'milestones', 'browser', 'handover', 'method'],
   gate: [
-    'systemNotes',
+    'systemNotes', 'standing', 'method',
     'spec', 'intent', 'nonGoals', 'contracts', 'rulings', 'index', 'target', 'direction', 'planCheckNotes', 'obligations', 'standingObligations', 'diff', 'laneLedger', 'evidence', 'systems', 'reach', 'traits', 'reachTraits', 'priorRound',
     'checks', 'escalation', 'largeDiff', 'milestones', 'review', 'undeclaredContracts',
   ],
@@ -782,7 +780,7 @@ export const ROLE_INPUTS = {
   flow: ['triggers', 'chart', 'stations', 'constraint', 'accounting', 'levers', 'givens', 'window', 'verdicts', 'rejections', 'advances', 'pressure'],
   walkthrough: ['vision', 'milestone', 'round', 'journeys', 'references', 'tweaks', 'findings', 'product', 'units', 'evidenceDir'],
   polishJudge: ['vision', 'milestone', 'journey', 'proposal', 'references', 'referenceDiff', 'walkEvidenceDir', 'before', 'after', 'evidenceDir'],
-  verifier: ['unit', 'since', 'at', 'hunks'],
+  verifier: ['mode', 'brief'],
   scaffold: ['spec', 'intent', 'nonGoals', 'scaffold', 'loadLane', 'worktree', 'retry'],
 } as const satisfies { readonly [R in Role]: readonly (keyof RoleInputs[R])[] };
 
@@ -1390,4 +1388,4 @@ export function triggerText(t: TriggerView): string {
 }
 
 /** Neutral path-only slot; the role's wording is defined separately from memory selection. */
-export const systemNotesText = (paths: readonly RepoPath[]): string => paths.length === 0 ? '' : `\n\n<system_notes>\n${paths.join('\n')}\n</system_notes>`;
+export const systemNotesText = (paths: readonly RepoPath[]): string => paths.length === 0 ? '' : `\n\n<system_notes>\nNon-normative build memory (gotchas, seams, rigs); corpus remains normative.\n${paths.join('\n')}\n</system_notes>`;

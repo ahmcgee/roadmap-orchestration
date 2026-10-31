@@ -56,6 +56,8 @@ const draft = {
 
 // One of every M3 fact, as the frozen shapes allow.
 const HOLISTIC_FACTS: { readonly [K in HolisticFactKind]: object } = {
+  'review-triggered': {kind: 'review-triggered', unit: U1, marker: 'M1', source: 'dispatch', specRev: 1},
+  'review-completed': {kind: 'review-completed', unit: U1, mode: 'pre-build', specRev: 1, inv: INV, items: [], note: null},
   witnessed: { kind: 'witnessed', lane: laneId('journey'), laneRev: LANE_REV, envId: ENV, treeSha: A, inv: INV, recordsSha256: H, purpose: 'witness', for: { type: 'candidate', unit: U1, attempt: 3 } },
   'obligation-latched': { kind: 'obligation-latched', obligation: obligationId('I-1'), unit: U1, treeSha: A },
   'finding-opened': {

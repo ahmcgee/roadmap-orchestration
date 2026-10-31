@@ -1,3 +1,5 @@
+import { proofNotLocal, diagnosed } from './surface.ts';
+import { boundAt } from '../routing/classes.ts';
 // Dispatch: who acts for a unit, on which seat, under which pinned authority, and the backend call that
 // puts them to work (plan "Authority", R2; DESIGN-1.0.md §4 Independence, Actors are roles).
 //
@@ -203,12 +205,6 @@ export function buildStarted(view: JournalView, unit: UnitId): boolean {
  * `resume <unit>` of a unit parked `routing-changed` (commands/apply.ts).
  */
 export function repin(journal: Journal, routing: ResolvedRouting, record: DispatchRecord, update: PinUpdate = {}): DispatchRecord | null {
-  const seat = routing.table.build[update.riskFloor ?? record.riskFloor];
-  const onFloor = (journal.view.unit(record.unit).buildTier ?? record.riskFloor) === record.riskFloor;
-  const pinnedSeat = seatTripleOf(record.implementerSeatRev);
-  if (onFloor && !sameSession(pinnedSeat, seat) && buildStarted(journal.view, record.unit)) {
-    return null;
-  }
   return pin(journal, routing, record, update);
 }
 
@@ -249,7 +245,9 @@ const unchanged = (update: PinUpdate): boolean =>
 function inForce(ctx: StageContext, record: DispatchRecord): Pinned<DispatchRecord> {
   const routing = ctx.routing(record.unit);
   const update = pinUpdate(ctx, record);
-  if (record.routingRev === routing.rev && unchanged(update)) return { kind: 'pinned', dispatch: record };
+  const triple = buildTriple(ctx, record.unit, update.riskFloor ?? record.riskFloor);
+  if (record.routingRev === routing.rev && unchanged(update) && record.implementerSeatRev === tripleSeatRev(triple)) return { kind: 'pinned', dispatch: record };
+  if (record.implementerSeatRev !== tripleSeatRev(triple)) return {kind: 'pinned', dispatch: pin(ctx.journal, routing, record, update, tripleSeatRev(triple))};
   const next = repin(ctx.journal, routing, record, update);
   return next === null ? routingChanged(record) : { kind: 'pinned', dispatch: next };
 }
@@ -307,11 +305,11 @@ export function raiseRisk(ctx: StageContext, record: DispatchRecord, risk: RiskT
  */
 export type JudgmentDispatch =
   | Readonly<{ role: JudgmentRole; tier: JudgmentSeat; triple: ClaudeTriple; routingRev: RoutingRev }>
-  | Readonly<{ role: 'verifier'; tier: RiskTier; triple: ClaudeTriple; routingRev: RoutingRev }>;
+  | Readonly<{ role: 'verifier'; tier: JudgmentSeat; triple: ClaudeTriple; routingRev: RoutingRev }>;
 /** `seatRev`: the pinned `implementerSeatRev`, the hash of `triple`: a session resumes only on its session key (R4). */
 export type ImplementerDispatch = Readonly<{ role: 'build'; tier: RiskTier; triple: ClaudeTriple | CodexTriple; routingRev: RoutingRev; seatRev: SeatRev }>;
 
-const ROLE_OF: Readonly<Record<JudgmentStage, JudgmentRole>> = { 'plan-check': 'planCheck', gate: 'gate' };
+const ROLE_OF: Readonly<Record<JudgmentStage, JudgmentRole>> = { 'plan-check': 'verifier', gate: 'verifier' };
 
 /**
  * The seat of a judgment dispatch: the unit's risk, or the escalation seat after a route-up or a risk trigger. A gate passes
@@ -435,9 +433,7 @@ function call(spec: BackendCallSpec, schemaText: string, schemaPath: AbsPath, in
     // dev.13 (owner 2026-10-18): the gate judges by acting, with a shell in its own checkout of the unit's tip and no MCP
     // server; dev.17 (design pass): so does plan-check, in its checkouts, with web search and fetch besides. The docs-only
     // verifier (dev.17) reads.
-    return role === 'verifier'
-      ? { kind: 'claude-judgment', role, triple, session: r.session, schemaText, system: spec.system, evidenceDirs: r.evidenceDirs }
-      : { kind: 'claude-acting-judge', role, triple, session: r.session, schemaText, system: spec.system, mcpConfig: null, evidenceDirs: r.evidenceDirs, denyWrites };
+    return { kind: 'claude-acting-judge', role, triple, session: r.session, schemaText, system: spec.system, mcpConfig: null, evidenceDirs: r.evidenceDirs, denyWrites };
   }
   if (r.kind === 'scaffold') return { kind: 'claude-scaffold', triple: r.dispatch.triple, session: r.session, schemaText, system: spec.system };
   const { triple } = r.dispatch;
@@ -974,4 +970,16 @@ export async function runPrepared<K extends OpKind, R>(
 
 export async function runOp<K extends OpKind, R>(journal: Journal, op: StageOp<K, R>, key: string, parent: Parent, request: R): Promise<IntentOf<K>> {
   return runPrepared(journal, op, key, parent, await op.prepare(request));
+}
+
+/** Default's single eligibility rule. M1 and executor UI captures do not exclude Codex. */
+export function buildTriple(ctx: StageContext, id: UnitId, risk: RiskTier): Triple {
+  const routing = ctx.routing(id);
+  const triple = routing.table.build[risk];
+  if (triple.backend !== 'codex') return triple;
+  const unit = ctx.plan().units.find((u) => u.id === id);
+  if (unit === undefined) throw new Error(`unknown build unit ${id}`);
+  const design = ctx.plan().milestones?.some((m) => m.design !== undefined && 'unit' in m.design && m.design.unit === id) ?? false;
+  return risk === 'high' || design || proofNotLocal(ctx, unit) || diagnosed(ctx.journal.view, id)
+    ? boundAt('claude-only', risk === 'high' ? 'frontier' : 'efficient', 'build') : triple;
 }

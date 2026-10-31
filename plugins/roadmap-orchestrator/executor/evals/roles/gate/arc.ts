@@ -80,10 +80,10 @@ const finding = (path: string, text: string): JsonValue => ({ severity: 'blockin
 function fakeAnswer(kind: Exclude<FakeGate, 'overspend'>, key: AnswerKey, large: boolean): JsonValue {
   const decoy = key.changed.find((p) => p !== key.plant?.path) ?? 'ARCHITECTURE.md';
   const clusters: JsonValue = large ? [{ id: 'all', paths: ['**'], review: 'routine' }] : null;
-  const revise = (findings: JsonValue[]): JsonValue => ({ rulings: [], decision: 'revise', findings, directives: ['Fix the findings.'], reasons: ['A1 is not met'], premises: [], unreviewed: [], clusters,  ordering: null });
+  const revise = (findings: JsonValue[]): JsonValue => ({ rulings: [], decision: 'revise', findings, directives: ['Fix the findings.'], reasons: ['A1 is not met'], premises: [], standing: [], clusters,  ordering: null });
   switch (kind) {
     case 'approve-all':
-      return {rulings: [],  decision: 'approve', findings: [], directives: [], reasons: ['A1 holds'], premises: [], unreviewed: [], clusters,  ordering: null };
+      return {rulings: [],  decision: 'approve', findings: [], directives: [], reasons: ['A1 holds'], premises: [], standing: [], clusters,  ordering: null };
     case 'revise-all':
       return revise([finding(decoy, 'This change is wrong.')]);
     case 'cite-every-path':

@@ -216,7 +216,7 @@ export function arcScopeOf(plan: Pick<PlanM1, 'target' | 'holistic'>): ArcScope 
 
 /** The stack of a repo config and a plan layer, without a unit layer and without the arc seats (no scope, no role set). */
 export function arcStack(profile: ProfileName, config: RepoConfig | null, plan: RoutingLayer | null): RoutingStack {
-  return { profile, classes: config?.routing?.classes ?? null, repoConfig: config?.routing?.seats ?? null, plan, unit: null };
+  return { profile: plan?.profile ?? profile, classes: config?.routing?.classes ?? null, repoConfig: config?.routing?.seats ?? null, plan, unit: null };
 }
 
 /** `stack` with the arc seats of `arcScope`, `arcRoles` and (dev.13) the plan's milestones in force. */

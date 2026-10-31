@@ -271,16 +271,16 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
   ],
   build: [
     { notes: ['NOTE-A'],
-      systemNotes: [], intent: 'INTENT-A', nonGoals: ['NON-GOAL-A'], spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
-      planCheckNotes: '', fastLanes: [lane('unit', ['npm', 'test'])], suiteLanes: [], evidenceDir: absPath('/run/ev/a'), worktree: absPath('/wt/a'),
-      systems: [systemName('app-a')], fixRound: null, witnessChecks: [], milestones: null, browser: null, certifiedAt: null, handover: null,
+      systemNotes: [], intent: 'INTENT-A', nonGoals: ['NON-GOAL-A'], spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
+      method: {traits: [], markers: [], unitKind: 'module', expensiveLanes: false, ui: false}, fastLanes: [lane('unit', ['npm', 'test'])], suiteLanes: [], evidenceDir: absPath('/run/ev/a'), worktree: absPath('/wt/a'),
+      systems: [systemName('app-a')], fixRound: null, witnessChecks: [], milestones: null, browser: null, handover: null,
     },
     { notes: ['NOTE-B'],
-      systemNotes: [repoPath('docs/systems/SYSTEM-NOTES-B.md')], intent: 'INTENT-B', nonGoals: ['NON-GOAL-B'], spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
-      planCheckNotes: 'NOTES-B', fastLanes: [lane('lint', ['npx', 'tsc', '--noEmit'])], suiteLanes: [lane('eslint', ['npx', 'eslint', '.'])], evidenceDir: absPath('/run/ev/b'), worktree: absPath('/wt/b'),
+      systemNotes: [repoPath('docs/systems/SYSTEM-NOTES-B.md')], intent: 'INTENT-B', nonGoals: ['NON-GOAL-B'], spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
+      method: {traits: [], markers: [], unitKind: 'module', expensiveLanes: false, ui: false}, fastLanes: [lane('lint', ['npx', 'tsc', '--noEmit'])], suiteLanes: [lane('eslint', ['npx', 'eslint', '.'])], evidenceDir: absPath('/run/ev/b'), worktree: absPath('/wt/b'),
       systems: [systemName('app-b')], fixRound: { failingEvidenceDirs: [absPath('/run/inv/9-1')], directives: ['DIRECTIVE-B'] },
       witnessChecks: [{ lane: laneId('journey'), command: 'roadmap witness-check --lane-file /run/ev/b/witness/journey.json' }],
-      milestones: milestonesSample(), browser: browserSample(), certifiedAt: SHA_B,
+      milestones: milestonesSample(), browser: browserSample(),
       handover: {
         lineage: [unitId('u-one'), unitId('u-zero')],
         diagnosis: {
@@ -302,7 +302,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
   ],
   gate: [
     {
-      systemNotes: [], intent: 'INTENT-A', nonGoals: ['NON-GOAL-A'], spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
+      standing: [], method: {traits: [], markers: [], unitKind: 'module', expensiveLanes: false, ui: false}, systemNotes: [], intent: 'INTENT-A', nonGoals: ['NON-GOAL-A'], spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
       target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A', planCheckNotes: '', obligations: [], standingObligations: [],
       diff: { bounded: shown(SHA_A, SHA_B, 'DIFF-A'), claims: { acceptance: [clauseId('A1')], witnesses: [], obligations: [] } },
       laneLedger: [{ lane: laneId('unit'), argv: ['npm', 'test'], expectedExit: 0, exitCode: 0, verdict: 'pass', evidenceDir: absPath('/run/inv/3-1'), ignored: null, reused: null }],
@@ -310,7 +310,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       escalation: null, largeDiff: null, milestones: null, review: { ledger: [], disputes: [], delta: null }, undeclaredContracts: [],
     },
     {
-      systemNotes: [repoPath('docs/systems/SYSTEM-NOTES-B.md')], intent: 'INTENT-B', nonGoals: ['NON-GOAL-B'], spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
+      standing: [], method: {traits: [], markers: [], unitKind: 'module', expensiveLanes: false, ui: false}, systemNotes: [repoPath('docs/systems/SYSTEM-NOTES-B.md')], intent: 'INTENT-B', nonGoals: ['NON-GOAL-B'], spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
       target: { kind: 'digest', digest: doc('docs/digest.md', 'DIGEST-B'), doc: repoPath('docs/arch2.md') }, direction: 'DIR-B', planCheckNotes: 'NOTES-B',
       obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)], standingObligations: [observed('I-3', 'STANDING-B', SHA_A).obligation],
       diff: { bounded: partial(SHA_B, SHA_A, 'DIFF-B', true), claims: { acceptance: [clauseId('A1'), clauseId('A2')], witnesses: [witnessItemId('W-1')], obligations: [obligationId('I-2')] } },
@@ -407,8 +407,8 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
   walkthrough: [walkSample('A'), walkSample('B')],
   polishJudge: [polishSample('A'), polishSample('B')],
   verifier: [
-    { unit: unitId('u-one'), since: SHA_A, at: SHA_B, hunks: [{ id: 'h1', path: repoPath('src/a.ts'), language: 'TypeScript', text: '@@ -1 +1 @@\n-/** HUNK-A */\n+/** HUNK-A2 */' }] },
-    { unit: unitId('u-two'), since: SHA_B, at: SHA_A, hunks: [{ id: 'h2', path: repoPath('lib/b.py'), language: null, text: '@@ -3 +3 @@\n-# HUNK-B\n+# HUNK-B2' }] },
+    {mode: 'pre-build', brief: {spec: spec(1, 'SPEC-A'), intent: 'INTENT-A', nonGoals: ['NON-GOAL-A'], contracts: [], systems: [systemName('app-a')], method: {traits: [], markers: [], unitKind: 'module', expensiveLanes: false, ui: false}, history: [], standing: []}},
+    {mode: 'diagnosis', brief: {spec: spec(2, 'SPEC-B'), intent: 'INTENT-B', nonGoals: ['NON-GOAL-B'], contracts: [], systems: [systemName('app-b')], method: {traits: ['persistent'], markers: ['M2'], unitKind: 'design', expensiveLanes: true, ui: true}, history: ['failed build'], standing: []}},
   ],
   scaffold: [scaffoldSample('A', null), scaffoldSample('B', { reasons: ['RETRY-REASON-B'], laneEvidence: absPath('/run/ev/u/9-scaffold/LANE-B') })],
 };
@@ -453,7 +453,7 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
     ],
   },
   build: {
-    summary: 'Added the parser.', changedPaths: ['src/a/parse.ts'], blockers: [], experiments: [], docsOnlySince: null, final: true,
+    summary: 'Added the parser.', grounding: {specWrong: null, touches: []}, tooBig: null, notes: [], blockers: [], experiments: [],  final: true,
   },
   gate: {rulings: [],
     decision: 'revise', ordering: null, reasons: ['A2 untested'], directives: ['Add a test for A2.'],
@@ -461,7 +461,7 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
       severity: 'blocking', path: 'src/a/parse.ts', text: 'A2 has no test.', contractRef: null, experiments: [{ command: 'node -e "parse(\'\')"', output: 'TypeError' }], debt: null,
       defect: 'test-inadequate', reraises: null, hunk: null,
     }],
-    premises: [], unreviewed: [], clusters: null,
+    premises: [], standing: [], clusters: null,
   },
   verifier: { hunks: [{ id: 'h1', kind: 'comment', executable: false, toolDirective: false, behaviourChange: false }] },
   lens: {
@@ -754,18 +754,14 @@ describe('output validators', () => {
     validateGateOutput({rulings: [],  ...ok.gate, decision: 'escalate', directives: [], findings: ok.gate['findings'] });
   });
 
-  it('gate (dev.12 round 2): a pre-existing finding never blocks an approve; unreviewed is recorded as given, and a dev.11 answer without it is refused', () => {
-    const pre = [{ severity: 'pre-existing', path: 'src/old.ts', text: 'Off by one since before the unit: the base has it.', contractRef: null, experiments: [], debt: null, defect: null, reraises: null, hunk: null }];
-    const unreviewed = [{ path: 'packages/*/golden/**', reason: 'regenerated goldens, judged through the generator' }];
-    const out = validateGateOutput({rulings: [],  ...ok.gate, decision: 'approve', directives: [], findings: pre, unreviewed });
+  it('gate: pre-existing findings do not block approval and retired coverage claims are refused', () => {
+    const pre = [{severity: 'pre-existing', path: 'src/old.ts:1', text: 'Existing defect', contractRef: null, experiments: [], debt: null, defect: null, reraises: null, hunk: null}];
+    const out = validateGateOutput({...ok.gate, decision: 'approve', directives: [], findings: pre});
     assert.deepEqual(out.findings, pre);
-    assert.deepEqual(out.unreviewed, unreviewed);
-    const { unreviewed: _u, ...dev11 } = ok.gate;
-    assert.throws(() => validateGateOutput(dev11), /unreviewed/);
-    assert.throws(() => validateGateOutput({ ...ok.gate, unreviewed: [{ path: 'a' }] }), SchemaError);
-    assert.throws(() => validateGateOutput({ ...ok.gate, findings: [{ ...pre[0], severity: 'minor' }] }), SchemaError);
-    const schema = GATE_SCHEMA as { properties: Record<string, unknown>; required: readonly string[] };
-    assert.ok(schema.required.includes('unreviewed'), 'a live gate answers it');
+    assert.throws(() => validateGateOutput({...ok.gate, unreviewed: []}), SchemaError);
+    assert.throws(() => validateGateOutput({...ok.gate, findings: [{...pre[0], severity: 'minor'}]}), SchemaError);
+    const schema = GATE_SCHEMA as {properties: Record<string, unknown>; required: readonly string[]};
+    assert.ok(!schema.required.includes('unreviewed'));
   });
 
   it('gate (dev.13, the gate\'s shell): a finding cites the experiments it rests on, each a command and its output; a live answer gives the list, an omitted experiment list reads as none', () => {

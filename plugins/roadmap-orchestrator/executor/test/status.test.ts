@@ -144,7 +144,7 @@ describe('status.subset', () => {
     assert.deepEqual(s.units.map(({ certification, work, ...u }) => u), [{
       unit: 'u1', stage: 'retire', status: 'retired', attempts: 12, chargeableFailures: 0, risk: 'med', seat: null,
       state: 'merged', waitingFor: null, holds: [], priority: null, park: null, lineage: null, supersededBy: null, buildTier: 'med', running: null, failures: [],
-      gate: { attempt: 8, decision: 'approve', findings: [], unreviewed: [] },
+      gate: { attempt: 8, decision: 'approve', findings: [], standing: []},
     }]);
     assert.equal(s.units[0]!.certification?.allowance, 3);
     assert.deepEqual(s.units[0]!.certification?.lanes.map((l) => [l.id, l.state]), [['mul', 'green'], ['suite', 'green']], 'the completed certification retains both spec and suite lanes');

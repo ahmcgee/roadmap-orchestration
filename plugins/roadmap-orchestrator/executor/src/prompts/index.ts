@@ -14,7 +14,7 @@ import { PROMPT as PACK_REVIEW_OPUS } from './packReview/claude-opus-5-5.ts';
 import { PROMPT as PLAN_CHECK_OPUS } from './planCheck/claude-opus-5-5.ts';
 import { PROMPT as POLISH_JUDGE_OPUS } from './polishJudge/claude-opus-5-5.ts';
 import { PROMPT as WALKTHROUGH_OPUS } from './walkthrough/claude-opus-5-5.ts';
-import { PROMPT as VERIFIER_HAIKU } from './verifier/claude-haiku-5-5.ts';
+import { PROMPT as VERIFIER_HAIKU } from './verifier/claude-opus-5-5.ts';
 import { PROMPT as SCAFFOLD_HAIKU } from './scaffold/claude-haiku-5-5.ts';
 import { POC_PROMPT } from './poc/claude-opus-5-5.ts';
 import type { PocInputs } from './inputs.ts';

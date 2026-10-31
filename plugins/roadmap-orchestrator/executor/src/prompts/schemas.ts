@@ -473,73 +473,27 @@ export function validateScaffoldOutput(value: unknown): ScaffoldOutput {
 
 /** M4a rev 3 (I3, F25): a development check the implementer ran, named, with its argv and exit. */
 export type Experiment = Readonly<{ name: string; argv: readonly string[]; exit: number }>;
+export type Grounding = Readonly<{ specWrong: string | null; touches: readonly string[] }>;
+export type TooBig = Readonly<{ estimate: string; suggestedChildren: readonly string[] }>;
 export type BuildOutput = Readonly<{
-  /** Two or three sentences: what changed and why. */
-  summary: string;
-  /** The implementer's claim; the executor reads the truth from git at salvage. */
-  changedPaths: readonly string[];
-  /** What kept the unit from being complete; empty when it is. Decisions go to decisions.json, never here. */
-  blockers: readonly string[];
-  /** M4a rev 3 (I3): every command it ran to check its work; a 1.0.0-dev.6 answer has none (`buildExperimentsDefault`). */
-  experiments: readonly Experiment[];
-  /**
-   * dev.17 (proportional review): the tested SHA since which the build says it changed only comments and documentation, or
-   * null. Code verifies the claim against the diff from the unit's last certified tree (src/pipeline/docsonly.ts); the claim
-   * alone carries no lane pass over. Absent on an answer a dev.16 executor recorded (`buildDocsOnlySinceDefault`): null.
-   */
-  docsOnlySince: DocsOnlySince;
-  /**
-   * The report is the final one. A Claude session that ends a turn to wait (a wake-up, a monitor) must still answer the
-   * schema, and answers `final: false`; its runner ends the session a grace after the final report (src/runner/report.ts).
-   * The reader admits `true` only: a session that ended on an interim answer has not reported. Absent on an answer an
-   * earlier executor recorded (`buildFinalDefault`).
-   */
-  final: true;
+  summary: string; blockers: readonly string[]; experiments: readonly Experiment[];
+  grounding: Grounding; tooBig: TooBig | null; notes: readonly string[]; final: true;
 }>;
-
-/** The build answer's `final` (src/runner/report.ts): described in the schema, which the model reads at a forced turn end. */
-const S_FINAL: Schema = {
-  type: 'boolean',
-  description: 'true in your final report. false only when you end a turn to wait for something you started (a wake-up, a monitor, a background command) and will report again when it completes.',
-};
-
-/** The build answer's `docsOnlySince` (dev.17): described in the schema, beside the prompt's account of it. */
-const S_DOCS_ONLY_SINCE: Schema = {
-  anyOf: [{ type: 'string' }, { type: 'null' }],
-  description: 'The full SHA of the last tree the executor certified for this unit, when everything you changed since it is comments or documentation only; otherwise null.',
-};
-
-/** The final build report requests certification by the executor's lanes stage. */
+const S_FINAL: Schema = { type: 'boolean', description: 'true for the final report; false only while waiting for something you started.' };
 export const BUILD_SCHEMA: Schema = sObj({
-  summary: S_STR,
-  changedPaths: sArr(S_STR),
-  blockers: sArr(S_STR),
-  experiments: sArr(sObj({ name: S_STR, argv: sArr(S_STR), exit: S_INT })),
-  docsOnlySince: S_DOCS_ONLY_SINCE,
-  final: S_FINAL,
+  summary: S_STR, blockers: sArr(S_STR), experiments: sArr(sObj({ name: S_STR, argv: sArr(S_STR), exit: S_INT })),
+  grounding: sObj({ specWrong: sNullable(S_STR), touches: sArr(S_STR) }),
+  tooBig: sNullable(sObj({ estimate: S_STR, suggestedChildren: sArr(S_STR) })), notes: sArr(S_STR), final: S_FINAL,
 });
-
 const decision: Read<NoteDef> = object((f) => ({ id: f.get('id', (v, p): ClauseId => clauseId(v, p)), text: f.get('text', str) }));
-
 const experiment: Read<Experiment> = object((g) => ({ name: g.get('name', str), argv: g.get('argv', arrayOf(text, { nonEmpty: true })), exit: g.get('exit', int(0, 255)) }));
-
-export const buildOutput: Read<BuildOutput> = object((f) => {
-  const experiments = f.get('experiments', arrayOf(experiment));
-  const final = f.get('final', literal(true));
-  const docsOnlySince = f.get('docsOnlySince', nullable((v, p): Sha => sha(v, p)));
-  return {
-    summary: f.get('summary', str),
-    changedPaths: f.get('changedPaths', arrayOf(str)),
-    blockers: f.get('blockers', arrayOf(str)),
-    experiments: experiments,
-    docsOnlySince: docsOnlySince,
-    final: final,
-  };
-});
-
-export function validateBuildOutput(value: unknown): BuildOutput {
-  return buildOutput(value, 'build');
-}
+export const buildOutput: Read<BuildOutput> = object((f) => ({
+  summary: f.get('summary', str), blockers: f.get('blockers', arrayOf(str)), experiments: f.get('experiments', arrayOf(experiment)),
+  grounding: f.get('grounding', object((g) => ({ specWrong: g.get('specWrong', nullable(text)), touches: g.get('touches', arrayOf(text)) }))),
+  tooBig: f.get('tooBig', nullable(object((g) => ({ estimate: g.get('estimate', text), suggestedChildren: g.get('suggestedChildren', arrayOf(text, { nonEmpty: true })) })))),
+  notes: f.get('notes', arrayOf(str)), final: f.get('final', literal(true)),
+}));
+export function validateBuildOutput(value: unknown): BuildOutput { return buildOutput(value, 'build'); }
 
 /**
  * `decisions.json`, written by the implementer at the root of its evidence dir: every decision it took
@@ -649,13 +603,14 @@ export type ClusterReview = (typeof CLUSTER_REVIEWS)[number];
 /** One cluster of a large diff's cluster map: its id, the paths it covers (exact paths, directories or globs) and its review depth. */
 export type GateCluster = Readonly<{ id: string; paths: readonly RepoPattern[]; review: ClusterReview }>;
 type GateCommon = Readonly<{
+  standing: readonly Readonly<{id: string; disposition: 'addressed' | 'rebutted'; evidence: readonly string[]}>[];
   findings: readonly GateFinding[]; reasons: readonly string[]; premises: readonly Premise[];
   /**
    * What the gate did not review, by repository path or path pattern; null on a dev.11 answer (`gateUnreviewedDefault`):
    * unknown. Above the large-diff threshold a file in a cluster counts as reviewed at the cluster's depth, and `unreviewed`
    * names only the gaps the gate admits beyond that.
    */
-  unreviewed: readonly GateUnreviewed[] | null;
+
   /**
    * 1.0.0-dev.12: the cluster map, above the large-diff threshold only (null below it, and on a dev.11 answer:
    * `gateClustersDefault`). Code holds it to the diff: every changed path in exactly one cluster (src/pipeline/gate.ts
@@ -671,6 +626,7 @@ export type GateOutput =
   | (GateCommon & Readonly<{ decision: 'revise'; directives: readonly string[] }>);
 
 export const GATE_SCHEMA: Schema = sObj({
+  standing: sArr(sObj({id: S_STR, disposition: sEnum(['addressed', 'rebutted']), evidence: sArr(S_STR)})),
   decision: sEnum(GATE_DECISIONS),
   ordering: { anyOf: [sObj({ blockers: sArr(S_STR) }), { type: 'null' }], description: 'Only escalate solely because other units must merge first: name those unit IDs in blockers. Otherwise null. Code wakes the parked gate after all blockers merge.' },
   findings: sArr(sObj({
@@ -680,7 +636,7 @@ export const GATE_SCHEMA: Schema = sObj({
   directives: sArr(S_STR),
   reasons: sArr(S_STR),
   premises: S_PREMISES,
-  unreviewed: sArr(sObj({ path: S_STR, reason: S_STR })),
+
   clusters: sNullable(sArr(sObj({ id: S_STR, paths: sArr(S_STR), review: sEnum(CLUSTER_REVIEWS) }))),
   rulings: sArr(sObj({ finding: S_STR, ruling: sEnum(DISPUTE_RULINGS), reason: S_STR })),
 });
@@ -730,8 +686,9 @@ export const gateOutput: Read<GateOutput> = object((f): GateOutput => {
   const decision = f.get('decision', oneOf(GATE_DECISIONS));
   const ordering = answerOrdering(f, decision === 'escalate');
   const common = {
+    standing: f.get('standing', arrayOf(object((g) => ({id: g.get('id', text), disposition: g.get('disposition', oneOf(['addressed', 'rebutted'] as const)), evidence: g.get('evidence', arrayOf(text, {nonEmpty: true}))})))),
     findings: f.get('findings', arrayOf(finding)), reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })), premises: f.get('premises', arrayOf(premise)),
-    unreviewed: f.get('unreviewed', arrayOf(unreviewedEntry)),
+
     clusters: readClusters(f.get('clusters', nullable(clusterMap))),
     rulings: f.get('rulings', rulingList),
   };
@@ -1408,12 +1365,12 @@ export type RoleOutputs = {
   readonly flow: FlowOutput;
   readonly walkthrough: WalkthroughOutput;
   readonly polishJudge: PolishJudgeOutput;
-  readonly verifier: VerifierOutput;
+  readonly verifier: GateOutput;
   readonly scaffold: ScaffoldOutput;
 };
 export const ROLE_SCHEMAS: { readonly [R in Role]: Schema } = {
   planCheck: PLAN_CHECK_SCHEMA, build: BUILD_SCHEMA, gate: GATE_SCHEMA, lens: LENS_SCHEMA, checkpoint: CHECKPOINT_SCHEMA, packReview: PACK_REVIEW_SCHEMA, flow: FLOW_SCHEMA,
-  walkthrough: WALKTHROUGH_SCHEMA, polishJudge: POLISH_JUDGE_SCHEMA, verifier: VERIFIER_SCHEMA, scaffold: SCAFFOLD_SCHEMA,
+  walkthrough: WALKTHROUGH_SCHEMA, polishJudge: POLISH_JUDGE_SCHEMA, verifier: GATE_SCHEMA, scaffold: SCAFFOLD_SCHEMA,
 };
 export const ROLE_VALIDATORS: { readonly [R in Role]: (value: unknown) => RoleOutputs[R] } = {
   planCheck: validatePlanCheckOutput,
@@ -1425,6 +1382,6 @@ export const ROLE_VALIDATORS: { readonly [R in Role]: (value: unknown) => RoleOu
   flow: validateFlowOutput,
   walkthrough: validateWalkthroughOutput,
   polishJudge: validatePolishJudgeOutput,
-  verifier: validateVerifierOutput,
+  verifier: validateGateOutput,
   scaffold: validateScaffoldOutput,
 };

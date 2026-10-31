@@ -59,7 +59,7 @@ const build = (message: string, unit: string): M1Step => ({ role: 'build', round
 const gate = (reason: string, findings: readonly JsonValue[] = []): M1Step => ({
   role: 'gate',
   answer: {rulings: [],
-    decision: 'approve', findings: findings.map((f) => ({ ...(f as object), defect: null, reraises: null, hunk: null })), directives: [], reasons: [reason], premises: [], unreviewed: [],
+    decision: 'approve', findings: findings.map((f) => ({ ...(f as object), defect: null, reraises: null, hunk: null })), directives: [], reasons: [reason], premises: [], standing: [],
     clusters: null,
   },
 });

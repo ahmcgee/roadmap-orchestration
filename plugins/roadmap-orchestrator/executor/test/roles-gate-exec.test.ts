@@ -163,7 +163,7 @@ test('roles.exec-gain: with the read-only arm\'s summary as baseline, the X cell
     set: 'dev', cell, family, trial: 0, planted, gate: 'real', outcome: 'approve', caught: null, decision: verdict === 'caught' ? 'revise' : 'approve', void: null,
     graded: {
       verdict, placement: planted ? 'inlined' : null, placementMiss: false, looked: planted ? true : null, localised: verdict === 'caught', blocking: verdict === 'caught' ? 1 : 0, spurious: 0,
-      coverage: { omitted: 0, covered: 0, share: null }, unreviewed: { claimed: 0, declared: 0, silent: 0 },
+      coverage: { omitted: 0, covered: 0, share: null }, unreviewed: { claimed: null, declared: 0, silent: 0 },
     },
     readOnly: false, experiments, largeDiff: false, clusters: null, usage: null, estimatedUsd: usd, wallMs: 1000, turns: 1, load: 0, calls: 1, models: [],
     method: { available: [], tools: {}, subagents: [], firstReadS: null, firstAgentS: null, denials: 0, unavailable: [] }, stages: [], dir: '/x',
