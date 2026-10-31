@@ -33,7 +33,7 @@ test('system notes: existing files only, sorted, at the role commit; default and
 });
 
 test('system notes: build and gate receive paths only, and an edit lands as an ordinary unit diff', { timeout: SCENARIO_TIMEOUT_MS }, async () => {
-  const original = setupArc({ steps: [], units: [{ id: 'u1', scope: ['src/**', 'test/**', 'contracts/**', 'memory/**'] }] });
+  const original = setupArc({ steps: [], units: [{ id: 'u1' }] });
   writeFiles(original.repo, { 'memory/api.md': 'PRIVATE NOTES CONTENT\n', 'memory/unrelated.md': 'UNRELATED NOTES\n' });
   git(original.repo, 'add', 'memory');
   git(original.repo, 'commit', '--quiet', '-m', 'seed per-system memory');

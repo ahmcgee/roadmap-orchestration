@@ -462,11 +462,10 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
     const largeDiff = largeDiffOf(bounded);
     const seated = judgmentDispatch(ctx, unit.id, 'gate', largeDiff);
     if (seated.kind !== 'pinned') return { kind: 'routing-changed', needsUser: seated.needsUser };
-    const pinned = dispatchOf(ctx.journal.view, unit.id);
     const laneLedger = seriesLedger(ctx, series, spec.lanes, 'spec', head, specSeriesRoot(ctx.runDir, series));
     // The attached diff's files (what it does not inline) are listed and readable as evidence.
     const evidence = [...laneLedger.map((l) => l.evidenceDir), ...buildEvidence(ctx, unit.id), diffDir];
-      const map = mapInForce(ctx.journal.view);
+    const map = mapInForce(ctx.journal.view);
     if (map === null) throw new Error('gate requires a systems map');
     const reach = systemReach(map, unit.systems, paths);
     const seat = seated.dispatch;
@@ -480,7 +479,7 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
     if (largeDiff !== null) writeFileSync(list, covered.map((p) => `${p}\n`).join(''));
     const measured = renderPrompt(prompt, {
       spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec) }, intent: spec.intent, nonGoals: spec.nonGoals, ...library(ctx, spec, tip), target,
-      systemNotes: systemNotes(ctx.repo, head, unit.systems ?? [], ctx.routingBase.config),
+      systemNotes: systemNotes(ctx.repo, head, unit.systems, ctx.routingBase.config),
       direction: ctx.plan().direction, planCheckNotes: planCheckNotes(ctx, unit.id),
       obligations: observedViews(ctx, holisticInForce(ctx).obligations, chosen.direct, tip),
       standingObligations: chosen.standing,

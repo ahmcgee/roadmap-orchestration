@@ -400,7 +400,7 @@ test('gate.inputs-not-in-ff-window: while a revision holds the fence the gate ne
     writeFileSync(join(planDirOf(d), 'u1.json'), specBytes(loadUnitSpec(r.ctx, unitOf(ctx, 'u1')).spec));
     writeFileSync(join(planDirOf(d), 'u2.json'), JSON.stringify({ ...u1Spec, unit: 'u2' }));
     editPlan(d, (p) => void p.units.push({ ...p.units[0]!, id: 'u2', spec: 'u2.json' }));
-    const rctx = { runDir: r.ctx.runDir, view: r.journal.view, hostDir: r.ctx.hostDir, planFile: absPath(d.planPath), routingBase: BASE, laneEnv: process.env };
+    const rctx = { runDir: r.ctx.runDir, view: r.journal.view, hostDir: r.ctx.hostDir, planFile: absPath(d.planPath), routingBase: r.ctx.routingBase, laneEnv: process.env };
     const v = evaluateRevision(rctx, readInputFiles(absPath(d.planPath), absPath(d.repo)), { type: 'apply' });
     assert.ok(v.kind === 'accepted', JSON.stringify(v));
     keepRevision(r.ctx.runDir, v);
@@ -439,7 +439,7 @@ function obligation(id: string, statement: string): Record<string, unknown> {
 const OBLIGATIONS = {
   schema: 'roadmap/obligations-m3', cutLine: 'the arc ends when mul ships', lanes: [JOURNEY],
   obligations: [obligation('I-1', 'mul multiplies.'), obligation('I-2', 'add stays fixed.')],
-  mapping: { systems: [{ system: systemName('app'), obligations: ['I-1'] }] },
+  mapping: { systems: [{ system: systemName('documentation'), obligations: ['I-1'] }] },
 };
 
 /** A holistic arc over u1: its vision and obligations in force from revision 1, as an M3 first start records them. */

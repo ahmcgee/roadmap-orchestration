@@ -118,7 +118,7 @@ export function steerBrief(runDir: AbsPath, sha: Sha256Hex): string {
 
 /** What a decision asks for: one of the table's rounds, with the inputs its kind needs. */
 export type DecidedRound =
-  /** `directives`: added to a reopen's resumed session after the respec directive (a reverted path a scope accept took in). */
+  /** `directives`: added to a reopen's resumed session after the respec directive (additional round guidance). */
   | Readonly<{ kind: 'fresh'; directives?: readonly string[] }>
   | Readonly<{
     kind: 'fix';

@@ -86,41 +86,6 @@ const deflakeContext = (a: CorpusArc, j: OpenJournal): DeflakeContext => ({
 const unitsInForce = (a: CorpusArc, j: OpenJournal) => requirePlanInForce(runDirOfArc(a), j.view).plan.units;
 const items = (a: CorpusArc, j: OpenJournal) => j.view.opsOf('needsuser.raise').map((i) => readNeedsUser(runDirOfArc(a), i.expect.id)!);
 
-/** The files in force with unit `id` admitted as a deflake unit of the journey lane, scoped `scope` (as the deflake job builds it). */
-function withDeflakeUnit(a: CorpusArc, j: OpenJournal, id: UnitId, scope: readonly string[]): InputFiles {
-  const runDir = runDirOfArc(a);
-  const inForce = requirePlanInForce(runDir, j.view);
-  const current = inForceFiles(runDir, j.view, inForce, revisionInForce(runDir, inForce), a.planPath, a.repo);
-  const raw = JSON.parse(current.planBytes.toString('utf8')) as RawPlan;
-  const specs = new Map<UnitId, InputFile>(current.specs);
-  const spec = { intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
-    schema: SPEC_SCHEMA, unit: id, rev: 1, lanes: [], scope, resources: [], decisions: [], facts: [], cites: { contracts: [], rulings: [] },
-    acceptance: [{ id: 'A-1', state: 'active', failLoudIfUndelivered: true, clause: 'The journey lane passes on every run.' }],
-  };
-  const path = absPath(join(a.planDir, `${id}.json`));
-  const admitted = admitUnit(raw, specs, { id, risk: 'med', systems: [systemName('app')], after: [], resources: [], origin: 'deflake', deflake: { keys: [{ type: 'lane', lane: laneId('journey') }] } },
-    JSON.stringify(spec), path, `deflake unit ${id}`);
-  assert.ok(!('reasons' in admitted), JSON.stringify(admitted));
-  const planBytes = Buffer.from(`${JSON.stringify(raw, null, 2)}\n`, 'utf8');
-  const plan = parsePlan(JSON.parse(planBytes.toString('utf8')));
-  return { ...current, plan, planBytes, specs: new Map(plan.units.map((u) => [u.id, specs.get(u.id)!] as const)) };
-}
-
-/** What a dev.17 executor committed: the deflake revision with deflake-1 scoped `**` (no gate refused it then). */
-function commitDev17Unit(a: CorpusArc, j: OpenJournal): void {
-  const runDir = runDirOfArc(a);
-  const rctx = { runDir, view: j.view, hostDir: newHostDir(), planFile: a.planPath, routingBase: routingOf(a), laneEnv: process.env };
-  const narrow = evaluateRevision(rctx, withDeflakeUnit(a, j, unitId('deflake-1'), ['src/**']), { type: 'deflake' });
-  assert.equal(narrow.kind, 'accepted');
-  if (narrow.kind !== 'accepted') return;
-  const wide = withDeflakeUnit(a, j, unitId('deflake-1'), ['**']);
-  const manifest = revisionManifestOf(wide);
-  assert.ok(!('missing' in manifest));
-  const verdict = { ...narrow, next: wide, draft: { ...narrow.draft, manifest } };
-  keepRevision(runDir, verdict);
-  commitRevisionNow(j, runDir, payloadOf(verdict.draft, { type: 'deflake' }), { type: 'arc' });
-}
-
 /** Refresh editable inputs before a CAS edit, preserving executor-minted units. */
 function syncOwnerInputs(a: CorpusArc, j: OpenJournal): void {
   const dir = runDirOfArc(a);

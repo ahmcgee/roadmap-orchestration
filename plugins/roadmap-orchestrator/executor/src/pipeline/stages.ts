@@ -1294,7 +1294,7 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
   const allowance = Math.max(0, state.bounds.certifications - 1 - state.counters.unchargedLanesReds);
   const render = (call: RoundCall) => renderPrompt(prompt, {
     spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec, { buildLanesOnly: true }) }, intent: spec.intent, nonGoals: spec.nonGoals, ...lib,
-    systemNotes: systemNotes(ctx.repo, revParse(round.worktree, 'HEAD'), unit.systems ?? [], ctx.routingBase.config),
+    systemNotes: systemNotes(ctx.repo, revParse(round.worktree, 'HEAD'), unit.systems, ctx.routingBase.config),
     notes: ctx.journal.view.buildNotes(unit.id, parent.attempt).map((sha) => steerBrief(ctx.runDir, sha)),
     planCheckNotes: planCheckNotes(ctx, unit.id),
     fastLanes: activeBuildLanes(spec), suiteLanes: builderSuiteLanes(ctx.plan().suite.lanes, spec), evidenceDir: work, worktree: round.worktree, systems: unit.systems,

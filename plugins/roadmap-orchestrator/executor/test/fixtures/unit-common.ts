@@ -46,8 +46,8 @@ export const MUL_LANE: LaneJson = { id: 'mul', argv: ['node', '--test', 'test/mu
 /** The plan's suite: every test file of the repo (node's default patterns). */
 export const SUITE_LANE: LaneJson = { id: 'suite', argv: ['node', '--test'] };
 
-/** `scope`: the unit's (spec and plan) scope; default `UNIT_SCOPE`. */
-export type UnitSpecJson = Readonly<{ id: string; risk?: RiskTier; lanes?: readonly LaneJson[]; after?: readonly string[]; systems?: readonly string[]; scope?: readonly string[] }>;
+/** A unit and its declared systems (default: the first system in the fixture map). */
+export type UnitSpecJson = Readonly<{ id: string; risk?: RiskTier; lanes?: readonly LaneJson[]; after?: readonly string[]; systems?: readonly string[] }>;
 
 /** A unit's default scope. */
 export const UNIT_SCOPE: readonly string[] = ['src/**', 'test/**', 'contracts/**'];

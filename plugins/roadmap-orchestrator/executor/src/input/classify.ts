@@ -1416,7 +1416,7 @@ export type ScopeContext = Readonly<{
 /**
  * A12's `ScopeOf`, bound to what an apply's classification reads: `resume` (all) → the arc; `resume <u>` →
  * {u}; `resume --backend`, `sweep`, `resolve-edge`, `run-only` and (M4b) `flow-decide` and `flow-request` → none; `steer`, `merge-in` and
- * (scope growth) `scope-decide` → their unit; `apply` → its changes' scope
+ * `note` → their unit; `apply` → its changes' scope
  * (`changesScope`) over its proposal (the files rebased onto the files in force, its `--ruling` records landed); none when it would be rejected (a ruling
  * record that no longer reads included) or change nothing (it then
  * touches nothing); the arc when the files no longer hash to its manifest (they may be restored before it

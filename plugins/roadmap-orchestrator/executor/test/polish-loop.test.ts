@@ -134,7 +134,7 @@ describe('fix units and the polish loop (dev.13 agent D)', () => {
       assert.deepEqual(revisions.map((f) => f.source), [{ type: 'walk', job: 'walk-1' }]);
       for (const [id, x] of [['tw-keep', 'X-1'], ['tw-drop', 'X-2'], ['tw-noref', 'X-3']] as const) {
         const u = unitInForce(r, id);
-        assert.deepEqual([u.origin, u.polish, u.risk, u.after, [...u.systems]], ['polish', { milestone: 'MS-1', proposal: x }, 'high', [], SCOPE], id);
+        assert.deepEqual([u.origin, u.polish, u.risk, u.after, [...u.systems]], ['polish', { milestone: 'MS-1', proposal: x }, 'high', [], ['app']], id);
       }
       assert.deepEqual(await ticking(r, applyPolish), { kind: 'none' }, 'nothing left to settle');
 

@@ -213,7 +213,7 @@ describe('classify.milestones: the milestones edit class', () => {
 });
 
 describe('phase0.milestones: the shared rows', () => {
-  const unit = (id: string, after: string[] = [], extra: Json = {}) => ({ id, spec: `${id}.json`, risk: 'med', systems: [systemName('app')], resources: [], after, ...extra });
+  const unit = (id: string, after: string[] = [], extra: Json = {}) => ({ id, spec: `${id}.json`, risk: 'med', systems: [systemName(id)], resources: [], after, ...extra });
   const PLAN = {
     schema: 'roadmap/plan-m1', arc: 'arc-1', integrationBranch: 'main', baseline: SHA, worktreeRoot: '/var/tmp/wt', contracts: [], rulings: 'rulings.md',
     architectureDoc: 'docs/arch.md', direction: 'd', suite: { lanes: [] }, resources: [],
@@ -222,7 +222,7 @@ describe('phase0.milestones: the shared rows', () => {
   };
   // The repo row 11 reads the milestones' references in (at `main`, the integration tip).
   const rowsOf = (plan: Json, repo = makeRepo(tmpDir('phase0-milestones'), { files: { 'README.md': 'r\n' } })) => phase0Rows({
-    repo: absPath(repo), plan: parsePlan(plan), config: parseRepoConfig({ systemsMap: { systems: {app: {paths: ['src/**']}} } }), where: 'plan.json', pin: null, guide: null, phase0: null,
+    repo: absPath(repo), plan: parsePlan(plan), config: parseRepoConfig({ systemsMap: { systems: Object.fromEntries(PLAN.units.map((u) => [u.id, { paths: [`src/${u.id}/**`] }])) } }), where: 'plan.json', pin: null, guide: null, phase0: null,
     obligations: null, vision: null, specs: new Map(), ledger: [], settled: new Set(),
   }, FROM_REF);
   const milestone = { ...MILESTONE, design: { unit: 'd1' }, units: ['u1', 'u2', 'u3', 'u4'] };

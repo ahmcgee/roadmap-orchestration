@@ -94,7 +94,6 @@ export type Command =
   | Readonly<{ command: 'flow-decide'; proposal: ProposalId; decision: 'accept' | 'reject'; reason: string; run: RunLocator }>
   | Readonly<{ command: 'flow-request'; reason: string; run: RunLocator }>
   | Readonly<{ command: 'flow-given'; repo: string; lever: FlowLever; note: string }>
-  /** Scope growth (2026-10-15): `scope accept|reject <unit> --reason <text>`, the root agent's decision on a held proposal. */
   /** dev.13: `demo up|down|hold|release`, the owner's act on the demo (src/demo/promote.ts). */
   | Readonly<{ command: 'demo'; act: DemoAct; run: RunLocator }>;
 

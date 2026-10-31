@@ -184,7 +184,7 @@ describe('admit classes: repair refs and touched clauses (R45, R47)', () => {
 
   test('admits.impact-mapped-not-touched: an obligation the impact mapping selects for the scope is no declared target (admitOpOf)', () => {
     const obligations = { mapping: { systems: [{ system: systemName('app'), obligations: ['I-2', 'I-1'] }] } } as unknown as Obligations;
-    const spec = { scope: ['src/**'], obligations: ['I-1', 'I-2', 'I-3'], repairs: [] } as unknown as SpecM1;
+    const spec = { obligations: ['I-1', 'I-2', 'I-3'], repairs: [] } as unknown as SpecM1;
     const op = { op: 'admit', unit: { id: 'gap', risk: 'low', systems: [systemName('app')], after: [], origin: 'checkpoint' }, spec: '{}', targets: ['T-1'], cites: ['V-1'], evidence: ['e'] } as never;
     assert.deepEqual(admitOpOf(3, op, spec, obligations), { index: 3, unit: 'gap', cites: ['V-1'], repairs: [], targets: ['T-1'], declared: ['I-3'] });
     // Mapped I-2 (at out-of-slice T-2) is no target: an oversight; declared beyond the mapping, it is opportunity work.

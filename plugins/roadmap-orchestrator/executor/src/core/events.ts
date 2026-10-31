@@ -566,8 +566,6 @@ export const STAGE_OUTCOME_KINDS = {
   // the unit's diff base alone too; uncharged, on to the gate (the candidate decides against the tip). `witness-lane-missing`
   // (2026-10-15, arc feedback #3): as at build. Plan defects (2026-10-16): `plan-defect` (a missing witness the lane never
   // ran, or that no build of the unit could create: an uncharged park naming the defects, src/pipeline/witnesscheck.ts);
-  // `scope-growth` (salvage reverted the same out-of-scope path on the unit's last two build rounds: the hold of a
-  // plan-check's proposal, with that path as the proposal, until `scope accept|reject`).
   // dev.17: `env-unavailable` (a lane's environment did not come up or failed its probe: a retryable park on the
   // environment, never a red lane), here and at the candidate.
   lanes: [

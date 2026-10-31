@@ -91,9 +91,8 @@ export type CorpusArcOptions = Readonly<{
   /** An existing repo (a chained arc's): its HEAD is the baseline. */
   repo?: AbsPath;
   forge?: Forge;
-  /** Extra plan fields (e.g. `chain`), and a unit scope other than `src/**`. */
+  /** Extra plan fields (e.g. `chain`). */
   plan?: Json;
-  scope?: readonly string[];
   /** `.roadmap/config.json` (default `{chain: {k: 1}}`; null: none). */
   config?: Json | null;
   /** Extra baseline files for a fresh repo. */
