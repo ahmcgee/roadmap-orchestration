@@ -808,6 +808,7 @@ export async function runUnit(ctx: StageContext, unit: PlanUnit, gate: Gate): Pr
     const u = ctx.journal.view.unit(unit.id);
     const next = upcoming(u, specFacts(ctx)(unit).reproduces);
     if (unit.spike !== undefined && next?.stage === 'candidate') {
+      await retire(ctx, unit);
       ctx.journal.fact({ kind: 'spike-completed', unit: unit.id });
       return { kind: 'merged' };
     }

@@ -11,7 +11,7 @@ import { readCalls } from './helpers/scenario.ts';
 import { ciReasons, lanePlacementReasons } from '../src/input/ci.ts';
 import { parseCommand } from '../src/input/cli.ts';
 import { attemptSignals } from '../src/pipeline/attempts.ts';
-import { pinDispatch } from '../src/pipeline/dispatch.ts';
+import { pinDispatch, unitWorktree } from '../src/pipeline/dispatch.ts';
 import { lanes } from '../src/pipeline/stages.ts';
 import { runUnit } from '../src/pipeline/unit.ts';
 import { witness } from '../src/commands/witness.ts';
@@ -157,6 +157,7 @@ test('ci spike delivers the gated report and retires without a candidate or inte
   assert.ok(calls.some((c) => c.stdin.includes('The report and its evidence are the deliverable')));
   assert.equal(git(run.repo, 'rev-parse', 'main'), base);
   assert.equal(run.journal.view.opsOf('candidate.merge').length, 0);
+  assert.equal(existsSync(unitWorktree(run.ctx.plan().worktreeRoot, run.ctx.plan().arc, U1)), false, 'spike checkouts are removed after their evidence is kept');
   assert.equal(run.journal.view.opsOf('integration.ff').length, 0);
   assert.equal(run.journal.view.ciFacts().filter((f) => f.kind === 'spike-completed').length, 1);
   assert.ok(run.journal.view.opsOf('evidence.snapshot').length > 0);
