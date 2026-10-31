@@ -43,7 +43,7 @@ during a round belong to the following round.
 Successful commands close open items for their subjects through `closeItemsFor(subject, command)` before their
 terminal receipts. Apply also closes subjects of the units it changes and the lineages it re-enters; all-unit controls close unit subjects too.
 `ack` refuses an item without options. Digest/convergence items explicitly offer acknowledgement.
-Status uses `status.lock` to refuse overlapping reads of the same run; a dead holder is replaced.
+Status is read-only without a single-flight lock.
 
 ## Owner rulings on model ids (DESIGN-1.0.md §4, Routing profiles)
 
