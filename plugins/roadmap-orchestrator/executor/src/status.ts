@@ -126,7 +126,12 @@ JUDGMENT_STAGES,type JudgmentStage,
 OUTCOME_STAGES,type OperatorParkKind,type OutcomeStage,type PlanAppliedFact,
 type ProbeTarget,type RevisionPayload,type WalkOutcome,holderUnit,parentUnit,probeTargetKey,
 } from './core/events.ts';
-import { readJson } from './core/fsx.ts';
+import { AlreadyExistsError, canonicalJson as fileJson, durableUnlink, exclusivePublish, readJson } from './core/fsx.ts';
+import { type StatusLock, statusLock } from './core/records.ts';
+import { selfIdentity } from './host/liveness.ts';
+import { readBootId } from './contain/proc.ts';
+import { CliError } from './input/cli.ts';
+import { SCHEMA_VERSION } from './core/version.ts';
 import {
 type AmendmentId,type ArcId,CPU_POOL,type CommandId,type DebtId,type DivergenceId,
 type EdgeId,type FindingId,
@@ -1711,6 +1716,40 @@ export function admitViews(view: JournalView, repo: AbsPath, plan: PlanM1, meter
     }];
   });
   return { admits, opportunities, drift };
+}
+
+export const STATUS_LOCK = 'status.lock';
+
+/**
+ * Runs `read` as the run's only `roadmap status` (2026-10-23: 110 overlapping polls of a 38k-event arc exhausted the
+ * host and starved its executor). `status.lock` names its holder: a live holder refuses at once, loud; a dead one's
+ * lock (a status killed by a timeout never releases) is replaced. Two replacers of one dead lock race on the create,
+ * and the loser refuses; one that removed the dead lock just after the other replaced it lets two statuses run once.
+ * An arc that never started has no run dir, and no log to fold: its status takes no lock.
+ */
+export function statusSingleFlight<T>(runDir: AbsPath, arc: ArcId, read: () => T): T {
+  if (!existsSync(runDir)) return read();
+  const path = join(runDir, STATUS_LOCK);
+  const claim = (): boolean => {
+    try {
+      exclusivePublish(path, fileJson({ v: SCHEMA_VERSION, bootId: readBootId(), holder: selfIdentity() } satisfies StatusLock));
+      return true;
+    } catch (error) {
+      if (error instanceof AlreadyExistsError) return false;
+      throw error;
+    }
+  };
+  if (!claim()) {
+    const held = statusLock(readJson(path), path);
+    if (isAlive(held.holder, held.bootId)) throw new CliError(`status: another status of arc ${arc} is running (pid ${held.holder.pid}); run one at a time`);
+    durableUnlink(path);
+    if (!claim()) throw new CliError(`status: another status of arc ${arc} replaced the stale ${STATUS_LOCK} first; run one at a time`);
+  }
+  try {
+    return read();
+  } finally {
+    durableUnlink(path);
+  }
 }
 
 export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: LogSnapshot): Status {

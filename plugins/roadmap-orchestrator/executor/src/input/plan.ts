@@ -470,7 +470,7 @@ const holisticOf = (withVision: boolean): Read<Holistic | HolisticDoc> => object
   }));
   return {
     ...(vision === undefined ? {} : { vision }),
-    advances: f.get('advances', idList((v, p) => visionClauseId(v, p), { nonEmpty: true, legacyStringOrder: true })),
+    advances: f.get('advances', idList((v, p) => visionClauseId(v, p), { nonEmpty: true })),
     ...(obligations === undefined ? {} : { obligations }), ...(audit === undefined ? {} : { audit }),
     ...(checkpoint === undefined ? {} : { checkpoint }) };
 });

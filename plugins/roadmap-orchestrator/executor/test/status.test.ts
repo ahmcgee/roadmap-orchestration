@@ -5,7 +5,7 @@
 import { exportInputs } from '../src/commands/inputs.ts';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdirSync,readFileSync,readdirSync,writeFileSync } from 'node:fs';
+import { existsSync,mkdirSync,readFileSync,readdirSync,writeFileSync } from 'node:fs';
 import { basename,join,relative } from 'node:path';
 import { after,before,describe,test } from 'node:test';
 import { identityOf,readBootId } from '../src/contain/proc.ts';
@@ -24,7 +24,7 @@ import { laneCpuKey } from '../src/resources/calibrate.ts';
 import { MODEL_IDS } from '../src/routing/types.ts';
 import { PARK_ESCALATE_MS } from '../src/schedule/types.ts';
 import { fileSha256,loadSpec } from '../src/spec/spec.ts';
-import { SESSION_GUARANTEE,type Status,type UnitStatusLine,compactState,status } from '../src/status.ts';
+import { SESSION_GUARANTEE,STATUS_LOCK,type Status,type UnitStatusLine,compactState,status } from '../src/status.ts';
 import { watch } from '../src/watch.ts';
 import {
 EXEC_TIMEOUT_MS,type ExecRun,SMOKE_CLAUDE_ONLY,SMOKE_DEFAULT,cli,journalOf,reasonOf,setupExec,startExec,statusOf,until,
@@ -186,6 +186,20 @@ describe('status.subset', () => {
   });
 
   
+  test('status.single-flight: a status while another holds the run\'s status.lock is refused; a dead holder\'s lock is replaced', T, async () => {
+    const lock = join(r.runDir, STATUS_LOCK);
+    // The running status is a live process holding the lock for as long as the test needs: a real status ends too fast to overlap.
+    const holder = spawn('sleep', ['60'], { stdio: 'ignore' });
+    const gone = new Promise((resolve) => holder.once('exit', resolve));
+    const { pid, start } = identityOf(holder.pid!);
+    writeFileSync(lock, JSON.stringify({ v: SCHEMA_VERSION, bootId: readBootId(), holder: { pid, start } }));
+    await assert.rejects(statusOf(r), new RegExp(`another status of arc ${r.arc} is running \\(pid ${pid}\\); run one at a time`));
+    assert.ok(existsSync(lock), 'the refused status leaves the holder\'s lock');
+    holder.kill('SIGKILL');
+    await gone;
+    assert.equal((await statusOf(r)).arc, r.arc, 'the dead holder\'s lock is replaced');
+    assert.ok(!existsSync(lock), 'the status released its lock');
+  });
 });
 
 /** Every file under `dir`, relative to it. */

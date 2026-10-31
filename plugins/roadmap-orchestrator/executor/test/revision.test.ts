@@ -379,7 +379,7 @@ test('apply.obligation-restored-edited: an exempt obligation made active again i
   }
 });
 
-test('apply.obligation-split-parent-stays: a split parent is never disposed, even with a ruling naming it (H14)', T, async () => {
+test('apply.obligation-split-parent-stays: a split parent stays split (H14), and removing its child requires an apply reason', T, async () => {
   const r = holisticArc();
   try {
     editObligations(r.d, (o) => {
@@ -387,13 +387,16 @@ test('apply.obligation-split-parent-stays: a split parent is never disposed, eve
       o.obligations.push(obligation('I-4', 'mul multiplies. mul(0, x) is 0.', { parent: 'I-1' }));
     });
     assert.equal((await command(r, applyBody(r.d))).outcome.kind, 'applied');
-    // Retiring the parent (C-2 names I-1 retired): a split parent is never disposed; its family leaves with its children.
+    // Removing the parent even with an apply reason: a split parent is never disposed; its family leaves with its children.
     editObligations(r.d, (o) => {
       o.obligations = o.obligations.filter((x) => x['id'] !== 'I-1' && x['id'] !== 'I-4');
       o['mapping'] = { paths: [{ pattern: 'docs/**', obligations: ['I-2'] }] };
     });
     const reason = reasonOf((await command(r, applyBody(r.d))).outcome);
     assert.match(reason, /I-1 is split into I-4 and stays split: disposition its children instead \(H14\)/);
+    const unreasoned = reasonOf((await command(r, { ...applyBody(r.d), reason: ' ' })).outcome);
+    assert.match(unreasoned, /I-4 is weakened \(removed\) without an apply --reason/);
+    assert.equal(lastApplied(r).rev, 2, 'neither refused edit became the plan in force');
 
   } finally {
     r.journal.close();

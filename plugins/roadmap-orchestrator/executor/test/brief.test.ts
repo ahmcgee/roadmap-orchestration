@@ -140,8 +140,6 @@ async function chained(): Promise<Chained> {
     ids.owed = item(j, a2, 'audit-owed', false);
     const what = 'Tidy the berth helpers.';
     j.fact({ kind: 'debt-banked', id: debtId('B-1'), bankReason: 'gate-note', what, key: debtKey({ unit: null, bankReason: 'gate-note', what }), source: { type: 'gate', unit: 'u1', attempt: 1, index: 0 } } as unknown as Fact);
-    // Scaffolding (the issues integration was removed in 1.0.0-dev.21): an earlier executor's fact reads, and the brief ignores it.
-    j.fact({ kind: 'issue-intake', job: jobId('ckpt', 1), issue: 'issue-1', outcome: { type: 'none', reason: 'already planned' } } as unknown as Fact);
     packReviewWithNote(j, a2, 'the cut line is vague');
   });
   return { a1, a2, items: ids as Chained['items'] };

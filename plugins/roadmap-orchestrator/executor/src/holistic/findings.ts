@@ -2,8 +2,7 @@
 // store: `finding-opened` and `finding-transition` facts, folded into `HolisticFold.findings` (src/core/state.ts). This
 // module decides what is written and derives everything else from the fold.
 //
-// - **Opening and dedupe.** Openers: an audit's lenses, code's witness P1s and plan-check (R17) (lens `issue`: an
-//   earlier executor's checkpoint issue intake). `key = findingKey(lens, obligation, cause)`. A key matching an active finding (open, owned,
+// - **Opening and dedupe.** Openers: an audit's lenses, code's witness P1s and plan-check (R17). `key = findingKey(lens, obligation, cause)`. A key matching an active finding (open, owned,
 //   fixed-on-branch) merges into it: nothing is written. A key matching a finding ruled `dismissed` is suppressed unless
 //   a cited evidence blob changed (a path both cite, with a different blob): a dismissal lasts the arc's lifetime (the
 //   growth control is its scope: the arc's own log, never carried into the next arc); one matching a finding ruled

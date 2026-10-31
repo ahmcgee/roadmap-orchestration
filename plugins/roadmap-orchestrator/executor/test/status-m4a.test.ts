@@ -84,10 +84,7 @@ describe('status M4a', () => {
           { index: 1, severity: 'note', target: { type: 'plan' }, claim: 'the cut line is vague', evidence: [] },
         ],
       } as Fact);
-      // An earlier executor's checkpoint capture and its intake (the issues integration was removed in 1.0.0-dev.21: read and
-      // ignored, scaffolding); an amendment from a divergence; a banked note.
-      r.journal.fact({ kind: 'issues-captured', job: jobId('ckpt', 1), sha256: sha256('c'.repeat(64)), repo: DEFAULT_REPO, filtered: { comments: 2, pullRequests: 1 } } as unknown as Fact);
-      r.journal.fact({ kind: 'issue-intake', job: jobId('ckpt', 1), issue: 'issue-3', outcome: { type: 'none', reason: 'tracked by u1' } } as unknown as Fact);
+      // An amendment from a divergence and a banked note.
       r.journal.fact({
         kind: 'corpus-amendment', id: amendmentIdOf(1), source: { type: 'divergence', divergence: divergenceIdOf(1) }, rules: [], proposal: 'Name the tide window.', why: 'D-1', evidence: [],
       } as Fact);

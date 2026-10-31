@@ -115,7 +115,7 @@ const visionClause: Read<VisionClause> = object((f) => {
 const visionQuestion: Read<VisionQuestion> = object((f) => ({
   id: f.get('id', (v, p) => questionId(v, p)),
   text: f.get('text', str),
-  bears: f.get('bears', idList(vid, { nonEmpty: true, legacyStringOrder: true })),
+  bears: f.get('bears', idList(vid, { nonEmpty: true })),
   assumption: f.get('assumption', str),
   state: f.get('state', oneOf(QUESTION_STATES)),
 }));
@@ -279,7 +279,7 @@ export const arcLaneDef: Read<ArcLaneDef> = (value, path) => {
 
 const obligationState: Read<ObligationState> = tagged('type', {
   active: object((f): ObligationState => ({ type: f.get('type', literal('active')) })),
-  split: object((f): ObligationState => ({ type: f.get('type', literal('split')), children: f.get('children', idList(oid, { nonEmpty: true, legacyStringOrder: true })) })),
+  split: object((f): ObligationState => ({ type: f.get('type', literal('split')), children: f.get('children', idList(oid, { nonEmpty: true })) })),
   waived: object((f): ObligationState => ({ type: f.get('type', literal('waived')), reason: f.get('reason', str), rev: f.get('rev', positive) })),
   deferred: object((f): ObligationState => ({ type: f.get('type', literal('deferred')), reason: f.get('reason', str), rev: f.get('rev', positive) })),
   retired: object((f): ObligationState => ({ type: f.get('type', literal('retired')), reason: f.get('reason', str), rev: f.get('rev', positive) })),
@@ -391,7 +391,7 @@ const obligationDef: Read<ObligationDef> = object((f) => {
     rev: f.get('rev', positive),
     statement: f.get('statement', str),
     ...obligationAnchor(f),
-    serves: f.get('serves', idList(vid, { legacyStringOrder: true })),
+    serves: f.get('serves', idList(vid)),
     witness: f.get('witness', nullable(witnessRef)),
     proofJudgment: f.get('proofJudgment', nullable(proofJudgment)),
     deliveredBy: f.get('deliveredBy', sortedBy((v, p) => unitId(v, p), (u) => u)),
@@ -418,7 +418,7 @@ export const obligations: Read<Obligations> = object((f) => {
     mapping: f.get('mapping', object((g) => ({
       paths: g.get('paths', arrayOf(object((h) => ({
         pattern: h.get('pattern', (v, p) => repoPattern(v, p)),
-        obligations: h.get('obligations', idList(oid, { nonEmpty: true, legacyStringOrder: true })),
+        obligations: h.get('obligations', idList(oid, { nonEmpty: true })),
       })))),
     }))),
     ...(census === undefined ? {} : { census }),
@@ -664,15 +664,11 @@ export const FINDING_SEVERITIES = ['P1', 'P2', 'P3'] as const;
 export type FindingSeverity = (typeof FINDING_SEVERITIES)[number];
 /** Who opened it: a lens, code over a witness (a must-hold not held on an audit snapshot), or plan-check (R17). */
 /**
- * M4a: `issue` (a checkpoint's issue intake opened a P2 or P3 finding, C3). Only an earlier executor opened one (the issues
- * integration was removed in 1.0.0-dev.21); kept so its findings still read and settle (scaffolding, `issuesIgnored`).
- */
-/**
  * dev.13: `walkthrough` (a milestone walk opens a P1 for a break, a P2 for a deviation, never a P3; code opens a P1 for a
  * failed bring-up of a walk or the demo). A walkthrough finding names its milestone (`finding-opened.milestone`) and may
  * have no obligation.
  */
-export const FINDING_LENSES = [...LENS_KINDS, 'witness', 'plan-check', 'issue', 'walkthrough'] as const;
+export const FINDING_LENSES = [...LENS_KINDS, 'witness', 'plan-check', 'walkthrough'] as const;
 export type FindingLens = (typeof FINDING_LENSES)[number];
 /** `fixed-on-branch` (R5): the owner's gate approved. `resolved` and `ruled` are terminal. */
 export const FINDING_STATES = ['open', 'owned', 'fixed-on-branch', 'resolved', 'ruled'] as const;
@@ -993,7 +989,7 @@ export const divergenceDraftFields = (f: Fields): DivergenceDraft => ({
   type: f.get('type', oneOf(DIVERGENCE_KINDS)),
   from: f.get('from', str),
   what: f.get('what', str),
-  cites: f.get('cites', idList(vid, { nonEmpty: true, legacyStringOrder: true })),
+  cites: f.get('cites', idList(vid, { nonEmpty: true })),
   evidence: f.get('evidence', arrayOf(str, { nonEmpty: true })),
   preimage: f.get('preimage', preimage),
   compensation: f.get('compensation', compensation),

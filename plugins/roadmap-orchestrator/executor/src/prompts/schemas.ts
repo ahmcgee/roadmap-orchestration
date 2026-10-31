@@ -1143,8 +1143,6 @@ export const checkpointOutput: Read<CheckpointOutput> = object((f) => {
     premises: f.get('premises', arrayOf(premise)),
     corpusAmendments: f.get('corpusAmendments', arrayOf(corpusAmendmentProposal)),
   };
-  // An answer to an earlier executor's prompt carries `issueIntake`: read and ignored (`issuesIgnored`; scaffolding).
-
   if ((out.decision === 'no-op') !== (out.ops.length === 0)) throw new SchemaError(`${f.path}.ops`, out.decision === 'no-op' ? 'no ops on a no-op' : 'at least one op in a bundle', out.ops);
   return out;
 });

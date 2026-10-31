@@ -763,13 +763,13 @@ export type ObligationRev = Readonly<{ id: ObligationId; rev: number }>;
 const obligationRev: Read<ObligationRev> = object((g) => ({ id: g.get('id', (v, p) => obligationId(v, p)), rev: g.get('rev', positive) }));
 
 export const approvalFingerprint: Read<ApprovalFingerprint> = object((f) => {
-  const obligationRevs = f.optional('obligationRevs', idsAscending(obligationRev, (e) => e.id, { nonEmpty: true, legacyStringOrder: true }));
+  const obligationRevs = f.optional('obligationRevs', idsAscending(obligationRev, (e) => e.id, { nonEmpty: true }));
   const corpus = f.optional('corpus', (v, p) => sha256(v, p));
   return {
     unitCommit: f.get('unitCommit', commitSha),
     specRev: f.get('specRev', (v, p) => specRev(v, p)),
     contractRevs: f.get('contractRevs', sortedBy(object((g) => ({ path: g.get('path', (v, p) => repoPath(v, p)), blob: g.get('blob', commitSha) })), (e) => e.path)),
-    rulingRevs: f.get('rulingRevs', idsAscending(object((g) => ({ id: g.get('id', (v, p) => rulingId(v, p)), rev: g.get('rev', positive) })), (e) => e.id, { legacyStringOrder: true })),
+    rulingRevs: f.get('rulingRevs', idsAscending(object((g) => ({ id: g.get('id', (v, p) => rulingId(v, p)), rev: g.get('rev', positive) })), (e) => e.id)),
     ...(obligationRevs === undefined ? {} : { obligationRevs }),
     ...(corpus === undefined ? {} : { corpus }),
   };
@@ -1357,6 +1357,14 @@ export const recoveryLockClaim: Read<RecoveryLockClaim> = object((f) => ({
   at: f.get('at', time),
 }));
 
+/** `<runDir>/status.lock`: the run's one running `roadmap status` (src/status.ts `statusSingleFlight`). */
+export type StatusLock = Readonly<{ v: SchemaVersion; bootId: BootId; holder: ProcIdentity }>;
+export const statusLock: Read<StatusLock> = object((f) => ({
+  v: f.get('v', version),
+  bootId: f.get('bootId', bootR),
+  holder: f.get('holder', procIdentity),
+}));
+
 /** `handshake.<generation>`: the executor performs no effect until this exists and matches host.owner.json. */
 export type HandshakeFile = Readonly<{ v: SchemaVersion; nonce: Nonce; generation: number }>;
 export const handshakeFile: Read<HandshakeFile> = object((f) => ({
@@ -1501,8 +1509,7 @@ export const planManifest: Read<PlanManifest> = object((f) => ({
  *
  * M4a (a corpus arc's; absent: none, lasting): `corpus` the pin (`inputs/<sha>.corpus.json`), `corpusGuide` the guide's
  * bytes (`inputs/<sha>.corpus-guide.md`, H5) and `phase0` the Phase-0 record (`inputs/<sha>.phase0.json`). The three are
- * present together or not at all. `phase0Issues`: the issue capture an earlier executor kept beside them, read as written
- * and ignored (`issuesIgnored`, src/core/upgrade.ts; scaffolding); never written.
+ * present together or not at all.
  */
 export type RevisionInputs = Readonly<{
   rulings: Readonly<{ ledgerSha256: Sha256Hex;  }>;
@@ -1511,7 +1518,6 @@ export type RevisionInputs = Readonly<{
   corpus?: Sha256Hex;
   corpusGuide?: Sha256Hex;
   phase0?: Sha256Hex;
-  phase0Issues?: Sha256Hex;
 }>;
 /** What an `apply` hashes (A2), its body's manifest: the plan manifest and the revision inputs. */
 export type RevisionManifest = PlanManifest & RevisionInputs;
@@ -1525,19 +1531,13 @@ const sidecarShas: Read<Readonly<Record<RulingId, Sha256Hex>>> = (value, path) =
 };
 const CORPUS_INPUTS = ['corpus', 'corpusGuide', 'phase0'] as const;
 export const revisionInputs = (f: Fields): RevisionInputs => {
-  const corpus: Partial<Record<(typeof CORPUS_INPUTS)[number] | 'phase0Issues', Sha256Hex>> = {};
+  const corpus: Partial<Record<(typeof CORPUS_INPUTS)[number], Sha256Hex>> = {};
   for (const k of CORPUS_INPUTS) {
     const v = f.optional(k, (x, p) => sha256(x, p));
     if (v !== undefined) corpus[k] = v;
   }
   const n = Object.keys(corpus).length;
   if (n !== 0 && n !== CORPUS_INPUTS.length) throw new SchemaError(`${f.path}.corpus`, `all of ${CORPUS_INPUTS.join(', ')} or none (a corpus arc's inputs)`, corpus);
-  const issues = f.optional('phase0Issues', (x, p) => sha256(x, p));
-  if (issues !== undefined) {
-    if (n === 0) throw new SchemaError(`${f.path}.phase0Issues`, 'absent outside a corpus arc', issues);
-
-    corpus.phase0Issues = issues;
-  }
   return {
     rulings: f.get('rulings', object((g) => ({ ledgerSha256: g.get('ledgerSha256', (v, p) => sha256(v, p)),  }))),
     obligations: f.get('obligations', nullable((v, p) => sha256(v, p))),
@@ -1718,10 +1718,8 @@ export const NEEDS_USER_REASONS = [
   // the divergence digest (H11).
   'bundle-request', 'convergence-bound', 'convergence-identity', 'audit-owed', 'divergence-digest',
   // M4a, blocking (fixed by `m3Blocking`, as the M3 reasons): a pack review's blocking finding, holding admission before
-  // the first (K14, H9). `issue-policy-untrusted`: a checkpoint capture found the issue policy untrusted; only an earlier
-  // executor raised it (the issues integration was removed in 1.0.0-dev.21), kept so its item still reads and can be
-  // acknowledged; it holds no admission (scaffolding).
-  'pack-review', 'issue-policy-untrusted',
+  // the first (K14, H9).
+  'pack-review',
   // M4b, non-blocking: a flow proposal for the root agent (`flow accept | reject`); host advice for the owner; an applied
   // proposal's `worse` verdict (with its preimage, RC-6); a flow run without a valid answer after its retry; a ruler path
   // changed by the root agent's `apply` after the first admission (G11).

@@ -245,10 +245,6 @@ describe('admit classes: attribution (R46)', () => {
     assert.equal(one(w, admit('fix', v(3), ['F-1'])).conversions[0]!.reason, 'over-budget', 'ambiguity spends budget');
   });
 
-  test('admits.attr-issue-ambiguous: an issue finding is unattributable', () => {
-    assert.deepEqual(findingAttribution(world({ merges }), finding('F-1', v(1), { lens: 'issue', source: { type: 'job', job: job('ckpt-3') } })), []);
-  });
-
   test('admits.attr-absolute-paths-ignored: absolute (evidence-dir) paths name no unit', () => {
     const w = world({ merges });
     assert.deepEqual(findingAttribution(w, finding('F-1', v(1), { paths: ['/var/tmp/run/corpus/src/a.js'] })), []);

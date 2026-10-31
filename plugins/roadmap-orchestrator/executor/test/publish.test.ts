@@ -33,9 +33,10 @@ import { API_OP,barrierSuite,closedAs,publishArc,ruleRecord,submitRule,wire } fr
 import { SCENARIO_TIMEOUT_MS,admitAll,planCheckStep } from './fixtures/stage-common.ts';
 import {
 type ArcDescriptor,type ArcOptions,type ArcRun,U1,appendSteps,applyBody,codexStep,contextFor,gateStep,isGateCall,mulBuild,outcomes,stepUntil,
-visionApplyBody,
+visionApplyBody,syncInputs,
 } from './fixtures/unit-common.ts';
 import { PIN_FILE,VISION_DOC } from './helpers/corpusarc.ts';
+import { reached } from './helpers/barrier.ts';
 import { assertFired,writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
 import { commitAll,git,tmpDir } from './helpers/repo.ts';
@@ -95,6 +96,78 @@ function assertPublished(r: ArcRun, id: string, pub: string, tip: string, atHead
 
 
 
+
+/** A plain exported ledger edit, submitted through schema 2 apply. */
+function submitDocsEdit(r: ArcRun) {
+  syncInputs(r);
+  const ledger = join(r.d.planPath, '..', 'rulings.md');
+  writeFileSync(ledger, `${readFileSync(ledger, 'utf8')}C-2 — Helpers take finite numbers only.\n`);
+  return submitCommand(r.ctx.runDir, r.ctx.plan().arc, { ...applyBody(r.d), reason: 'Document the finite-number requirement.' });
+}
+
+test('apply.docs-red-rejected: a red docs candidate aborts the revision before any ff and releases its slot and checkouts', T, async () => {
+  const d = publishArc({ steps: [], base: 'red' });
+  const r = contextFor(d);
+  const w = wire(r);
+  try {
+    const tip = head(d);
+    const ledger = readFileSync(join(d.planPath, '..', 'rulings.md'), 'utf8');
+    const file = submitDocsEdit(r);
+    const editedLedger = readFileSync(join(d.planPath, '..', 'rulings.md'), 'utf8');
+    const outcome = await applyCommand(w.commands, file);
+    assert.equal(outcome.kind, 'rejected');
+    assert.ok(outcome.kind === 'rejected');
+    assert.match(outcome.reason, /docs publication docs-1: suite lane suite is fail on the docs candidate/);
+    assert.equal(applied(r).length, 1, 'nothing is in force');
+    assert.equal(head(d), tip, 'integration never moved');
+    assert.deepEqual(docsFfs(r), [], 'no docs ff');
+    const commit = r.journal.view.opsOf('revision.commit').at(-1)!;
+    assert.equal(r.journal.view.doneOf(commit.op), null, 'the revision commit is aborted');
+    assert.equal(slotState(r), 'free');
+    assert.deepEqual(checkouts(r), []);
+    assert.equal(readFileSync(join(d.planPath, '..', 'rulings.md'), 'utf8'), editedLedger, 'nothing is written back');
+    assert.notEqual(editedLedger, ledger, 'the owner edit stays available for correction');
+    assert.ok(closedAs(r.journal.view, [commit]).includes('revision.commit:aborted'));
+
+  } finally {
+    r.journal.close();
+  }
+});
+
+test('apply.docs-preempts-candidate: a docs edit queued while a candidate holds the slot before green preempts it (preempted, uncharged); the docs publish first, then the unit merges without a new gate', T, async () => {
+  const barrier = tmpDir('barrier');
+  const d = publishArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })], suite: [barrierSuite(barrier)] });
+  const r = contextFor(d);
+  const w = wire(r);
+  const stop = ticking(w);
+  try {
+    const tip = head(d);
+    const unit = runUnit(w.stage, r.unit('u1'), admitAll);
+    await reached(barrier, 'lane', 120_000);
+    const file = submitDocsEdit(r);
+    const outcome = await applyCommand(w.commands, file);
+    assert.equal(outcome.kind, 'applied', JSON.stringify(outcome));
+    assert.deepEqual(await unit, { kind: 'merged' });
+    const fact = assertPublished(r, file.id, 'docs-1', tip, false);
+    const docsHead = fact.publication!.head;
+    const seq = outcomes(d);
+    const pre = seq.indexOf('candidate:preempted');
+    assert.ok(pre !== -1, seq.join(' '));
+    assert.deepEqual(seq.slice(pre), ['candidate:preempted', 'candidate:green', 'ff:published', 'snapshot:published', ...seq.slice(pre + 4)]);
+    assert.equal(r.journal.view.unit(U1).counters.chargeableFailures, 0, 'a preemption is uncharged');
+    const kills = r.journal.view.opsOf('proc.kill').filter((k) => k.expect.reason === 'preempt');
+    assert.equal(kills.length, 1, 'the candidate\'s suite lane was killed with reason preempt');
+    assert.ok(r.journal.view.doneOf(kills[0]!.op) !== null);
+    const unitFf = r.journal.view.opsOf('integration.ff').find((i) => i.expect.subject === undefined)!;
+    assert.equal(unitFf.expect.old, docsHead, 'the unit published onto the docs commit');
+    assert.deepEqual(facts(r).flatMap((f) => (f.kind === 'docs-covered' ? [[f.pub, f.from, f.to]] : [])), [['docs-1', tip, docsHead]], 'a docs-only publication covers its own edge (A17)');
+    assert.equal(readCalls(d.scenarioPath).filter(isGateCall).length, 1, 'no new gate');
+    assert.deepEqual(r.journal.view.openIntents(), []);
+  } finally {
+    stop();
+    r.journal.close();
+  }
+});
 
 test('publish.green-not-preempted: once a candidate is green its ff and snapshot complete first; the docs publication then runs on the new tip', T, async () => {
   const d = publishArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })] });

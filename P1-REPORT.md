@@ -86,3 +86,38 @@ node --test --test-concurrency=8 test/contain.test.ts test/evidence.test.ts test
 The 200 distinct non-serial files contain **2,924 passes, 0 failures, 0 cancellations and 1 NOT RUN** overall. The NOT RUN cell is exclusively `contain.cgroup-real` on this read-only cgroup-v2 host; it is not counted as a pass. The full steering and obligations files passed, including the unprepared re-entry and identical-test-id lane-move assertions. The complete fault and scheduler files passed without diagnostic termination.
 
 After those runs, `node --test --test-concurrency=8 test/serial/upgrade.test.ts` ran **alone** and passed its single loud-refusal cell. Its existing comment states that PREVIOUS_RELEASE will be re-pointed to the first post-break release once one exists. The following final `npm run typecheck` exited **0**, with **0 diagnostics**. `git diff --check` is clean. No full `npm test`, other serial suite, paid merged-batch eval or push was run. All changes are committed to `cc/p1-cutover` with the requested co-author trailer.
+
+## P1 audit fixes
+
+The second continuation restores coverage of behavior retained by schema 2. This section supersedes the earlier report's status-lock removal: the audit explicitly required restoring `STATUS_LOCK`, its schema reader, the CLI single-flight wrapper, and `status.single-flight` (live holder refused, dead holder replaced, lock released). Implementation commit: `67368d14`.
+
+Restored the five non-sidecar M3 schema cells: vision rank/uniqueness/world/question rules; obligation split-parent/parent/deliverer/mapping/environment/lane refusals; malformed witness-record rules; and finding-key identity over lens, obligation and cause. Checkpoint answers again test required `corpusAmendments`, rule-anchored split children and exactly one non-null anchor. These are fresh schema-2 tests, with no upgrade adoption path.
+
+Removed `legacyStringOrder`/`legacyKey`, issue intake/capture facts and amendment sources, checkpoint issue fields, `phase0Issues`/`issuesSha256`, issue-only findings/items, their fold and snapshot read-through, and empty compatibility scaffolding. The status-M4a and brief fixtures now write current facts. Canonical ordering remains covered at the fact level, including a list in neither historical nor canonical order. Added explicit schema-2 refusals for removed issue records/fields. The only two deleted cells cover the now-deleted issue finding lens (schema and attribution); mixed watcher and needs-user cells retain their remaining checks. Overall the audit adds 14 cells, deletes those 2 compatibility-only cells, and strengthens/renames 5 existing cells: **net +12 cells**.
+
+Both docs publication behaviors still exist and are now exercised through plain-ledger `apply`: a red candidate aborts its revision before any docs ff, leaves integration unmoved, frees the slot, removes checkouts and writes nothing back; a docs publication preempts an in-flight candidate uncharged, journals `proc.kill` reason `preempt`, then the unit merges onto the docs head without another gate. The split-parent test again checks that removing its child without a reason is refused. The smoke race now advances a unit to gate approval while the smoke is blocked, and asserts that re-classification refuses the apply before commit, leaving the approved spec/revision in force. Parse-level apply/from/rev/reason/required-flag, note and acknowledgement-choice cases are restored; whether an item offers acknowledgement options is enforced by command execution.
+
+All test invocations use direct `node --test --test-concurrency=8`, with complete files and no test-name filtering. No test was skipped or weakened. `CLAUDE.md` was not edited. No full `npm test`, paid rung, serial suite or push was run.
+
+**P1 audit fixes are complete.** Counts below are each completed runner's exact summary; overlapping runs are not added together.
+
+| Run | Complete files | Tests | Pass | Fail | Cancelled | Skipped / NOT RUN |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Initial schema run | 4 | 129 | 126 | 3 | 0 | 0 |
+| Restored audit files | 8 | 305 | 305 | 0 | 0 | 0 |
+| M4a schema refusal additions | 1 | 34 | 34 | 0 | 0 | 0 |
+| Direct source coverage | 30 | 606 | 606 | 0 | 0 | 0 |
+| Final schemas | 4 | 130 | 130 | 0 | 0 | 0 |
+
+The initial schema failures were newly restored parse fixtures using an unsupported `--run-dir` locator. They now use the actual `--repo`/`--arc` locator and pass. Initial typecheck reported **2 diagnostics** (one stale test field access after deleting checkpoint issues; one local assertion helper referenced outside its scope); the next and final `npm run typecheck` both exited **0**, with **0 diagnostics**.
+
+Final coverage spans **38 distinct complete files and 912 passing tests**, with **0 failures, 0 cancellations and 0 skips/NOT RUN**. This uses the final 130-cell schema run in place of the earlier 129 schema cells inside the 305-cell audit run: `305 - 129 + 130 + 606 = 912`. No contain/cgroup cell belongs to this targeted set. The command groups, from `plugins/roadmap-orchestrator/executor/`, were:
+
+```bash
+node --test --test-concurrency=8 test/m3-schemas.test.ts test/m4a-schemas.test.ts test/m4a-rev3-schemas.test.ts test/ids.test.ts test/revision.test.ts test/apply.test.ts test/publish.test.ts test/status.test.ts
+node --test --test-concurrency=8 test/admits.test.ts test/amendments.test.ts test/brief.test.ts test/status-m4a.test.ts test/watch.test.ts test/records.test.ts test/log.test.ts test/state.test.ts test/plan.test.ts test/phase0.test.ts test/phase0-apply.test.ts test/snapshot.test.ts test/snapshot-closure.test.ts test/dev17-records.test.ts test/m2-schemas.test.ts test/m4b-schemas.test.ts test/dev13-schemas.test.ts test/cli.test.ts test/needsuser.test.ts test/inputs-export.test.ts test/obligations.test.ts test/witness.test.ts test/findings.test.ts test/spec.test.ts test/status-m3.test.ts test/status-rev3.test.ts test/milestones-plan.test.ts test/plan-defects.test.ts test/commands.test.ts test/prompts.test.ts
+node --test --test-concurrency=8 test/m3-schemas.test.ts test/m4a-schemas.test.ts test/m4a-rev3-schemas.test.ts test/ids.test.ts
+npm run typecheck
+```
+
+The one-file M4a run above used `node --test --test-concurrency=8 test/m4a-schemas.test.ts`. `git diff --check` is clean. All implementation and report changes are committed to `cc/p1-cutover` with the requested co-author trailer.

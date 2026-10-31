@@ -433,3 +433,35 @@ describe('run 10 (D): a checkpoint admit\'s spec is constrained by the schema', 
 
   
 });
+
+describe('schema 2 command forms', () => {
+  const run = { type: 'explicit', repo: '.', arc: 'arc-2' };
+  const apply = ['apply', '--repo', '.', '--arc', 'arc-2', '--from', 'export', '--rev', '7', '--reason', 'Keep the new contract.'];
+  const refuses = (argv: readonly string[], message: RegExp): void => assert.throws(() => parseCommand(argv), (e: unknown) => e instanceof CliError && message.test(e.message), argv.join(' '));
+
+  it('apply parses --from, --rev, --reason and --dry-run', () => {
+    assert.deepEqual(parseCommand(apply), { command: 'apply', run, from: 'export', rev: 7, reason: 'Keep the new contract.', dryRun: false });
+    assert.deepEqual(parseCommand([...apply, '--dry-run']), { ...parseCommand(apply), dryRun: true });
+    for (const flag of ['from', 'rev', 'reason']) {
+      const i = apply.indexOf(`--${flag}`);
+      refuses([...apply.slice(0, i), ...apply.slice(i + 2)], new RegExp(`--${flag} .* is required`));
+    }
+    for (const rev of ['0', '-1', '1.5', 'NaN']) refuses(apply.map((v) => v === '7' ? rev : v), /--rev must be a positive integer/);
+    for (const reason of [' ', 'first\nsecond']) refuses([...apply.slice(0, -1), reason], /--reason must be one non-empty line/);
+    for (const flag of ['--base', '--ruling', '--vision-edit']) refuses([...apply, flag, 'old'], /unknown option/);
+  });
+
+  it('note parses its unit and brief and refuses missing arguments', () => {
+    assert.deepEqual(parseCommand(['note', 'u1', '--brief', 'note.md', '--repo', '.', '--arc', 'arc-2']), { command: 'note', run, unit: 'u1', brief: 'note.md' });
+    refuses(['note', 'u1', '--repo', '.', '--arc', 'arc-2'], /--brief <file> is required/);
+    refuses(['note', '--brief', 'note.md', '--repo', '.', '--arc', 'arc-2'], /<unit> is required/);
+  });
+
+  it('ack parses an offered choice; optionless-item refusal remains in command execution', () => {
+    assert.deepEqual(parseCommand(['ack', 'nu-3', '--choice', 'resolved', '--repo', '.', '--arc', 'arc-2']), { command: 'ack', run, id: 'nu-3', choice: 'resolved' });
+    assert.deepEqual(parseCommand(['ack', 'nu-3', '--repo', '.', '--arc', 'arc-2']), { command: 'ack', run, id: 'nu-3', choice: null });
+    refuses(['ack', '--repo', '.', '--arc', 'arc-2'], /<needs-user-id> is required/);
+    refuses(['ack', 'bad', '--repo', '.', '--arc', 'arc-2'], /NeedsUserId/);
+    refuses(['ack', 'nu-3', '--choice', '--repo', '.', '--arc', 'arc-2'], /--choice/);
+  });
+});

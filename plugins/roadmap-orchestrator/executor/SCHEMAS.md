@@ -43,7 +43,7 @@ during a round belong to the following round.
 Successful commands close open items for their subjects through `closeItemsFor(subject, command)` before their
 terminal receipts. Apply also closes subjects of the units it changes and the lineages it re-enters; all-unit controls close unit subjects too.
 `ack` refuses an item without options. Digest/convergence items explicitly offer acknowledgement.
-Status is read-only without a single-flight lock.
+Status uses `status.lock` to refuse overlapping reads of the same run; a dead holder is replaced.
 
 ## Owner rulings on model ids (DESIGN-1.0.md §4, Routing profiles)
 
@@ -196,8 +196,7 @@ deduplicated); an `AmendmentRef` list orders by arc, then id (`amendmentRefKey`)
 any order (`answerIds`, `answerSet`; a duplicate is still an invalid answer) and are returned canonical, so the model's
 order never reaches a record and never invalidates an answer; a checkpoint's model-written ruling has its `obligations`,
 `cites` and `obligationDispositions` put in canonical order before the sidecar reader. Plain string order stays for keys
-that are not numbered ids (paths, slugs, `JobId`, `NeedsUserId`). Before dev.7 these lists were
-validated and written in string order (`T-10` before `T-9`); "1.0.0-dev.6 → 1.0.0-dev.7" says how those still read.
+that are not numbered ids (paths, slugs, `JobId`, `NeedsUserId`). Schema 2 refuses historical string order as well as any other noncanonical order.
 
 Values (`src/core/values.ts`): `AbsPath` (absolute, normalised), `RepoPath` (repo-relative, `.` = root, no
 `.`/`..` segments), `PlanPath` (relative to the plan file's directory), `RepoPattern` (relative glob, no `..`),
@@ -2322,7 +2321,7 @@ census{rule} | rule{id} | plan, claim, evidence: [{path, line}]}`.
 
 **`PlanChange`** (H7; source `command` only, as `vision`): `corpus{pinSha256, guideSha256}` (a re-pin: a drift trigger,
 every approval re-gates through the fingerprint's `corpus`, a new required-review key before the first admission);
-`phase0{sha256}` (an earlier plan change's `issuesSha256` is read and ignored; a Phase-0 record edit: only a new required-review key; `promote` while draining is
+`phase0{sha256}` (a Phase-0 record edit: only a new required-review key; `promote` while draining is
 refused, C1).
 
 **Facts** (`M4aFact`, `src/core/events.ts`; folded by the steps that write them: 0a's fold sees the job a fact names):
@@ -2330,7 +2329,7 @@ refused, C1).
 | Fact `kind` | Fields |
 |---|---|
 | `debt-banked` | `id: B-n, bankReason, what, key, source: gate{unit, attempt, index} \| finding{finding}`; idempotent per source (A4) |
-| `corpus-amendment` | `id: M-n, source: checkpoint{job: ckpt-n, index} \| divergence{divergence: D-n}, rules: T-n[] (ascending), proposal, why, evidence` (an earlier executor's `issue{job, issue}` source still reads) |
+| `corpus-amendment` | `id: M-n, source: checkpoint{job: ckpt-n, index} \| divergence{divergence: D-n}, rules: T-n[] (ascending), proposal, why, evidence` |
 | `pack-review-started` | `job: review-n, planRev, inputsSha256, key` |
 | `pack-review-ended` | `job: review-n, outcome: completed \| abandoned, findings: PackFinding[]` (each `index` its place; none when abandoned) |
 
@@ -2342,7 +2341,7 @@ refused, C1).
 corpus?` (the pin's sha256, R6).
 
 **Needs-user reasons** (`NEEDS_USER_REASONS`; blocking, fixed by `m3Blocking`): `pack-review` (holds admission before the
-first, K14, H9). An open `issue-policy-untrusted` item an earlier executor raised still reads and acks; it holds nothing.
+first, K14, H9).
 
 **Startup rows** (`src/preflight/startup.ts`; problems in `src/phase0/types.ts`; all exit 78; shared with `phase0 check`):
 `vision-unconfirmed{ref|null, expected|null, actual|null}` (null `ref`: unconfirmed; null `actual`: no such pinned
@@ -2369,8 +2368,7 @@ and hashed, so every holistic routing rev changes (OR-L3: nothing parks on it; A
 visionDoc|null}` is every judgment's `architecture` input (the corpus arm renders in B1). `RoleInputs.packReview =
 {vision, plan, specs, obligations (the file, census included), rulesIndex, phase0}`; `PackReviewOutput = {findings:
 [{severity, target, claim, evidence}], reasons, premises}` (strict schema `PACK_REVIEW_SCHEMA`). `CheckpointOutput +
-corpusAmendments[{rules, proposal, why}]`, read now and required of the model's schema from B1 (a recorded answer's
-`issueIntake`, required before 1.0.0-dev.21, is read and ignored). A split child `docRef:
+corpusAmendments[{rules, proposal, why}]`, required by the model's schema. A split child `docRef:
 DocRef | null`, `+ rule: T-n | null`, exactly one non-null (its schema in `CHECKPOINT_SCHEMA` since 0a).
 
 **CLI** (`src/input/cli.ts`, host acts, not queued; dispatch final in `src/cli/main.ts`): `phase0 check --repo (--plan

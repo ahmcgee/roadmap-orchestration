@@ -27,7 +27,7 @@
 //   - a finding from an audit lens: the units whose ff merge lies in that lens's covered range of the audit and whose
 //     first-parent diff touches one of the finding's repo-relative evidence paths (absolute paths ignored);
 //   - lens `witness`: the same over the union of the audit's ranges;
-//   - lens `issue` (an earlier executor's issue intake), or a stage finding (plan-check, build): empty;
+//   - a stage finding (plan-check, build): empty;
 //   - an obligation: the units merged after the latest head it was observed held and at or before the first head after
 //     it observed not held; never observed held: empty.
 // Lineage O: L(i) non-empty, unambiguous and inside units(O) for exactly one O. Ambiguity never grants a follow-up.
@@ -137,7 +137,7 @@ const repoPath = (p: string): boolean => !p.startsWith('/') && !p.startsWith('..
 
 /** The units a finding's attribution names (R46); empty: unattributable. */
 export function findingAttribution(w: Pick<AdmitWorld, 'audits' | 'merges'>, f: Pick<AdmitFinding, 'source' | 'lens' | 'paths'>): readonly UnitId[] {
-  if (f.source.type !== 'job' || f.lens === 'issue' || f.lens === 'plan-check') return [];
+  if (f.source.type !== 'job' || f.lens === 'plan-check') return [];
   const ranges = w.audits.get(f.source.job) ?? [];
   const covered = f.lens === 'witness' ? ranges : AUDIT_LENSES.has(f.lens) ? ranges.filter((r) => r.lens === f.lens) : [];
   const paths = new Set(f.paths.filter(repoPath));
