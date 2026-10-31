@@ -372,9 +372,6 @@ export const witnessItemIdOf = W.of;
 export const witnessItemSeq = W.n;
 
 // ---------------------------------------------------------------------------------------------------
-// M4b ids (SCHEMAS.md "M4b").
-
-// ---------------------------------------------------------------------------------------------------
 // dev.13 ids (SCHEMAS.md "dev.13: milestone walkthroughs and design units").
 
 /** A plan milestone: `MS-<n>`, plan-scoped, unique in the plan, never reused. */

@@ -518,8 +518,7 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     const chain = chainOf(absPath(layout(silent.dir).product));
     assert.equal(chain.arcs.length, 1);
     const pass = checked.result.criteria.filter((c) => c.pass).map((c) => c.name);
-    // M4b: arc 1's constraint-shift run (noAction) names the slot and its suite component, so flow-constraint holds; the
-    // loop and the shard need a decided proposal and a verdict. M4b rev 3: its lane runs carry pressure (pressure-recorded).
+    // This single-arc stop still checks lane integrity and recorded host pressure.
     assert.deepEqual(pass, ['isolation', 'arc1-complete', 'brief-acked-once', 'no-model-ids', 'host-released', 'profile', 'ruler-intact', 'pressure-recorded'], 'the paid run\'s criteria that need a second arc, the k-limit stop fail here');
     assert.match(checked.result.criteria.find((c) => c.name === 'stopped-at-k')!.detail, /vision-silent/);
   });

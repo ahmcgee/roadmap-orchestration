@@ -174,7 +174,7 @@ export const ARC_ROLES_IN_FORCE: { readonly [S in ArcScope]: readonly ArcRole[] 
   none: [], 'architecture-doc': ['lens', 'checkpoint'], corpus: ['lens', 'checkpoint', 'packReview'],
 };
 
-export function arcRolesInForce(arcScope: ArcScope, _arcRoles: ArcRoleSet | null, milestones: boolean): readonly ArcRole[] {
+export function arcRolesInForce(arcScope: ArcScope, milestones: boolean): readonly ArcRole[] {
   const roles = ARC_ROLES_IN_FORCE[arcScope];
   if (milestones && arcScope === 'none') throw new Error('the walk roles in force outside a holistic arc (milestones need the holistic layer)');
   return milestones ? [...roles, ...WALK_ROLES] : roles;
@@ -305,13 +305,13 @@ export function resolveRoutingUnder(builtin: ClassTable, stack: RoutingStack): R
 export function routingRevOf(table: RoutingTable, arcScope: ArcScope, arcRoles: ArcRoleSet | null, milestones: boolean, head = true): RoutingRev {
   const inForce = unitRolesInForce(arcRoles);
   const unitRoles: readonly Role[] = head ? inForce : inForce.filter((r) => !(DEV17_ROLES as readonly Role[]).includes(r));
-  const roles: readonly Role[] = [...unitRoles, ...arcRolesInForce(arcScope, arcRoles, milestones)];
+  const roles: readonly Role[] = [...unitRoles, ...arcRolesInForce(arcScope, milestones)];
   return routingRev(sha256Hex(canonicalJson(Object.fromEntries(roles.map((r) => [r, table[r]])))).slice(0, 16));
 }
 
 /** The seats in force (G20, LR-0a-1): the unit roles' of the role set (`unitRolesInForce`) and the arc roles' of the resolved scope and role set. */
 export function seatsInForce(resolved: ResolvedRouting): readonly SeatRef[] {
-  const roles: readonly Role[] = [...unitRolesInForce(resolved.arcRoles), ...arcRolesInForce(resolved.arcScope, resolved.arcRoles, resolved.milestones)];
+  const roles: readonly Role[] = [...unitRolesInForce(resolved.arcRoles), ...arcRolesInForce(resolved.arcScope, resolved.milestones)];
   return SEAT_REFS.filter((s) => roles.includes(s.role));
 }
 

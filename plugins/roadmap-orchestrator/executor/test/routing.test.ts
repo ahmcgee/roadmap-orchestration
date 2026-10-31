@@ -82,7 +82,7 @@ describe('routing', () => {
     assert.deepEqual(rebound.table.checkpoint.arc, FABLE);
   });
 
-  it('built-in profiles resolve (dev.17): efficient builds every tier (Luna; Sonnet medium under claude-only) and runs the lenses and flow on Sonnet high; Opus medium plan-checks and gates every tier; Opus high holds escalation', () => {
+  it('built-in profiles resolve (dev.17): efficient builds every tier (Luna; Sonnet medium under claude-only) and runs the lenses on Sonnet high; Opus medium plan-checks and gates every tier; Opus high holds escalation', () => {
     const d = resolveRouting(base).table;
     assert.deepEqual(d.build, { low: LUNA, med: LUNA, high: LUNA });
     const c = resolveRouting(arcStack('claude-only', null, null)).table;
@@ -321,13 +321,13 @@ describe('routing: the arc seats (M3)', () => {
     const base = resolveRouting(arcStack('default', null, null));
     assert.deepEqual([base.classes.lens.arc, base.classes.checkpoint.arc], ['efficient', 'summit']);
     assert.deepEqual([base.table.lens.arc, base.table.checkpoint.arc], [SONNET_HIGH, OPUS_HIGH]);
-    // A plan naming a vision puts the M3 arc seats in force: every seat but the pack review's (LR-0a-1), in the dev.7
-    // role set the flow seat's, and without milestones the two walk seats' (dev.13) is checked (the built-in arc seats have
+    // A plan naming a vision puts the M3 arc seats in force: every seat but the pack review's (LR-0a-1),
+    // and without milestones the two walk seats' (dev.13) is checked (the built-in arc seats have
     // prompt modules since B4), and the rev hashes them too.
     const plan = { target: 'architecture-doc', holistic: { vision: planPath('vision.json'), advances: [visionClauseId('V-1')] } } as const;
     const h = resolveRouting(planStack('default', null, plan, null));
     assert.equal(h.arcScope, 'architecture-doc');
-    // Not in force: the pack review's, the flow's, the two walk seats and (no dev17 role set) the three scaffold seats.
+    // Not in force: the pack review's, the two walk seats and (no dev17 role set) the three scaffold seats.
     assert.equal(seatsInForce(h).length, SEAT_REFS.length - 6);
     assert.notEqual(h.rev, base.rev);
     assert.deepEqual(unsupportedSeats(h, null), []);

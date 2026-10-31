@@ -17,7 +17,8 @@
 // (OR-Q1), and M4a's `pack-review` (K14).
 // Non-blocking (`NON_BLOCKING_M3_REASONS`):
 // `bundle-request`, the convergence brakes (OR-Q2/3: they act on the checkpoint, never halt units), `audit-owed`,
-// `divergence-digest`, `revision-notice` and `waste-finding`. Blocking means the arc is not `complete` while the item is open (§2.10); what an open item holds
+// `divergence-digest`, `revision-notice` and `waste-finding`. Blocking means the arc is not `complete` while the item is
+// open (§2.10); what an open item holds
 // back from admission is admission's (src/schedule/ready.ts) and, for `obligation-baseline` and `pack-review` (every
 // admission until it is answered), the scheduler's. A `pack-review` item a later pack
 // review's end superseded (K14), or the escalation of an abandoned walk whose milestone's bring-up or journeys an apply

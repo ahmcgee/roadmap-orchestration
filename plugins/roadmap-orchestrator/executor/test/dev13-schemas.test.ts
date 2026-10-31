@@ -259,7 +259,7 @@ describe('dev.13 roles and routing', () => {
       assert.equal(on.table.walkthrough.arc.model, 'claude-opus-5-5');
       assert.deepEqual([on.classes.walkthrough.arc, on.classes.polishJudge.arc], ['frontier', 'frontier']);
     }
-    assert.throws(() => arcRolesInForce('none', 'm4b', true), /outside a holistic arc/);
+    assert.throws(() => arcRolesInForce('none', true), /outside a holistic arc/);
   });
 
   it('a Codex rebind of the walk seats is refused: Codex has no walkthrough prompt', () => {
