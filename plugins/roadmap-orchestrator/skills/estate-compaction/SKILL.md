@@ -41,7 +41,9 @@ Approved: <YYYY-MM-DD>
 Applied: <arc> | Blocked: <refusal row>
 ```
 
-K-n is one above the highest existing record id. Use only Applied or Blocked after attempting Phase 0.
+Number approved entries K-1, K-2, … without gaps, independently of proposal numbers; append one above the highest
+record id. If approval is revoked in an entirely unapplied draft, rebuild it with contiguous ids and preserve the
+owner exchange as evidence. Use only Applied or Blocked after attempting Phase 0.
 
 ## Survey and propose
 
@@ -69,9 +71,12 @@ Deferred and rejected proposals are not approvals. Finish with the approved reco
 
 For each approved decision with neither Applied nor Blocked:
 
-- Make the exact corpus/ledger/obligation/debt edits in the next Phase-0 pack. Include `compaction K-n:` in the
-  curation entry: structural for equivalent restructuring or an owner-approved retirement, fact-currency for
-  something the product overtook. Explain any loss and its authority.
+- Make the exact corpus/ledger/obligation/debt edits in the next Phase-0 pack. Each curation `what` starts with
+  `compaction K-n:` and names original ids, replacement ids, reason, loss and owner approval. Use structural for
+  equivalent restructuring or an owner-approved retirement, fact-currency for something the product overtook.
+  `files` is nonempty: existing source-evidence paths relative to the corpus root, not the input directory.
+  For ledger/debt-only changes cite the relevant corpus context there and name the ledger/debt source in `what`;
+  an external `rulings.md` is not a corpus source. `rules` lists affected T-n ids, or `[]` when none change.
 - Retiring a rule removes its line and rationale that explains nothing else. Update the census and anchored
   obligation family. Keep retired rule ids retired. A new meaning takes a new id above the high-water.
 - Merging rules gives the replacement one census entry; keep an old id only if its meaning is unchanged.
@@ -83,7 +88,32 @@ For each approved decision with neither Applied nor Blocked:
   conservation; never manufacture a record to bypass refusal. New obligation ids are never reused.
 - The ledger format is `C-n — <text>`; withdrawal is `C-n — withdrawn by C-m`, with C-m present. A merge/fold updates
   carried `cites.rulings` and debt references before removing a referenced entry. No metadata directory is required.
-- The debt disposition JSON is `{"type":"resolve","ruling":"C-n"}`. Add the explanatory ledger entry.
+- The debt disposition JSON is `{"type":"resolve","ruling":"C-n"}`. Its active plain ledger entry names both B-n
+  and compaction K-n, explains why the debt closes and states any behavior deliberately left unfixed.
+
+For example, with corpus root `docs/corpus`, source `register.md` explaining a removed bridge, and C-41 the next
+ledger id, propose this exact replacement and record it after approval:
+
+```markdown
+## K-1 resolve
+Items: B-2: Remove the old bridge retry queue.
+Replacement: C-41 — B-2 resolved by compaction K-1: the bridge is gone; retry-queue cleanup is given up.
+Gives up: retry-queue cleanup in the removed bridge
+Why: the product removed the bridge
+Approved: 2026-11-01
+```
+
+In `phase0.json`, append this curation and replace B-2's disposition (keep all other required entries):
+
+```json
+{"tier":"fact-currency","what":"compaction K-1: resolve B-2 by C-41; .roadmap/debt.md tracks the removed bridge queue; owner approved giving up its cleanup on 2026-11-01.","files":["register.md"],"rules":[]}
+```
+```json
+{"id":"B-2","disposition":{"type":"resolve","ruling":"C-41"}}
+```
+
+Append the exact `C-41 — …` replacement line to the ledger named by `plan.rulings`. These are authored inputs;
+the rendered debt file remains untouched. Append `Applied: <arc-id>` to K-1 only after successful start.
 
 Commit corpus/config/vision changes as required, regenerate the pin, then run Phase 0 validation and start.
 Running-arc revisions use export → edit → CAS apply with the exported revision and one-line reason. Do not infer

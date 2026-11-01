@@ -182,6 +182,33 @@ test('compaction.stage-a: exact trial headings, partial approvals, playback numb
   assert.equal(gradeA(wrongAction, trialExchanges, spec.key).criteria['fidelity']!.pass, false);
 });
 
+test('compaction.stage-a: approved replacement survives a quoted loss correction; changed wording and missing approval still fail', () => {
+  // Unedited paid trial 2026-11-01T19-34-02-385Z-1064195/1/a. The owner
+  // approved C-41 as written and corrected Gives up from "nothing" to a loss.
+  const dir = new URL('fixtures/compaction-approval-loss/', import.meta.url);
+  const record = readFileSync(new URL('compaction.md', dir), 'utf8');
+  const saved = JSON.parse(readFileSync(new URL('exchanges.json', dir), 'utf8')) as Exchange[];
+  assert.equal(gradeA(record, saved, spec.key).pass, true, json(gradeA(record, saved, spec.key)));
+  const wording = 'B-2 and B-6 are closed: the PortLink bridge and its retry queue are gone, and B-1 tracks the index B-6 asks for.';
+  assert.ok(record.includes(wording));
+  const changed = record.replace(wording, 'B-2 and B-6 stay open.');
+  assert.match(gradeA(changed, saved, spec.key).criteria['fidelity']!.detail, /K-8: no matching explicit approval/);
+  const rejected = saved.map((x, i) => i === 0 ? { ...x, reply: x.reply.replace(/10: approve[^\n]+/, '10: reject') } : x);
+  assert.match(gradeA(record, rejected, spec.key).criteria['fidelity']!.detail, /K-8: no matching explicit approval/);
+  const ownerReplacement = saved.map((x, i) => i === 0 ? { ...x, reply: x.reply.replace('including the C-41 wording as written.', 'with my wording: "B-2 and B-6 stay open."') } : x);
+  assert.match(gradeA(record, ownerReplacement, spec.key).criteria['fidelity']!.detail, /K-8: no matching explicit approval/);
+  // A loss quote may precede or follow an explicit replacement instruction.
+  for (const correction of [
+    'Accepted loss: "cleanup". Replacement: "B-2 and B-6 stay open."',
+    'Replacement: "B-2 and B-6 stay open." Accept loss: "cleanup".',
+    'Accepted loss: "cleanup"; Replacement: "B-2 and B-6 stay open."',
+  ]) {
+    const answers = saved.map((x, i) => i === 0 ? { ...x, reply: x.reply.replace(/10: approve[^\n]+/, `10: approve. ${correction}`) } : x);
+    assert.match(gradeA(record, answers, spec.key).criteria['fidelity']!.detail, /K-8: no matching explicit approval/);
+    assert.equal(gradeA(changed, answers, spec.key).criteria['fidelity']!.pass, true);
+  }
+});
+
 test('compaction.stage-a: schema-2 saved trials retain exact evidence; obsolete footer, closing survey and narrowed approvals are not failures', () => {
   for (const n of [1, 2]) {
     const dir = new URL(`fixtures/compaction-schema2-trials/${n}/`, import.meta.url);

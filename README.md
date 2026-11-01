@@ -64,7 +64,8 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
    vision, selects a useful slice and writes the pack outside the product tree: plan, specs, obligations, witnesses,
    census and Phase-0 record. Every unit names systems; every spec states intent and non-goals. Existing behavior is
    must-hold, future behavior names its delivering units. Milestones define usable end-to-end experiences with
-   design references, bring-up, journeys and selected integration lanes. Phase 0 checks typed inputs, committed
+   design references, bring-up, journeys and selected integration lanes. Approved compaction carries source-backed
+   K-n curation; debt resolutions link B-n and K-n in the plain C-n ledger. Phase 0 checks typed inputs, committed
    target bytes, proof reachability and readiness; system overlap, possible future-witness vacuity, spanning proof and design ordering advise judgment.
 2. **Start and review.** Startup validates the pack, claims the host and smokes its routed backends. A fresh pack
    review checks it against the target and census. The architect adjudicates blocking findings. The supervisor
