@@ -173,7 +173,7 @@ export const GATE_DECISIONS = ['approve', 'revise', 'escalate'] as const;
  */
 export const FINDING_SEVERITIES = ['blocking', 'note', 'pre-existing'] as const;
 
-// dev.17 proportional review (SCHEMAS.md "dev.17 records"): types only; the gate schema and `gateOutput` take them when the
+// dev.17 proportional review (SCHEMAS.md "Role input and output contracts"): types only; the gate schema and `gateOutput` take them when the
 // review stages are wired.
 
 /**

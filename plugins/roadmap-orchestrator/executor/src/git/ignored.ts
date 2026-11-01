@@ -1,4 +1,4 @@
-// A lane's ignored output (DESIGN-1.0.md §4, Lanes): the gitignored files a lane created or changed in its
+// A lane's ignored output (DESIGN-1.0.md §2.7 "Plan, specs and certification lanes"): the gitignored files a lane created or changed in its
 // verification checkout, which no tree state records and the checkout's removal destroys. Every lane gets a
 // census of them (`ignored.json`, what the gate's ledger and a fix round show), and a lane that did not pass
 // also gets the undeclared ones captured, within caps, into its `ignored` snapshot: the evidence a script

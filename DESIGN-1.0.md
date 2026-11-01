@@ -90,6 +90,18 @@ checks. Large diffs use bounded inline/attached evidence and cluster coverage, w
 Executable witness presence and bounded mutation smoke precede gate in applicable arcs. Surviving/inconclusive mutants
 are explicit evidence, never silently treated as proof.
 
+Each judgment role (verifier, campaign audit, pack review and experience verdict) gets one repair turn after an
+invalid structured answer, resuming its own session/schema/cwd with every refusal reason. A second invalid answer takes
+the role's normal failure path; this does not grant another independent judgment.
+
+Certification reds (red, not-certified, witnesses-missing) have an uncharged allowance: with defaults, the first three
+return evidence without charge, the fourth charges and resets it; any charge resets it. Chargeable bound defaults to
+three. Gate revisions and candidate reds keep their separate bounds. `witness-check --lane-file` runs exact declared
+witnesses in the builder checkout: exit 0 only for passing required records, 78 for missing/failing ids. Executable
+presence and bounded mutation checks precede judgment, rather than relying on the judge to infer test execution.
+Fresh sessions after prior work receive code-built handover (diagnosis, gate/findings, unmet clauses, witnesses,
+decisions, report and evidence), bounded to ten recent history items per list.
+
 ### 2.2 Scheduling, systems and resources
 
 Units form a dependency DAG. Dependencies require actual merged/retired lineage state; contingent edges require an
@@ -106,10 +118,36 @@ files during salvage, transient validation and recovery. Evidence patterns canno
 of a unit's systems. Unmapped paths select checks conservatively.
 
 Resources have probe/teardown commands and optional pools. Probe exit 0 means free, 10 this label, 11 foreign/unlabelled;
-other exits are faults. Pools lease one instance by resource name. Labels identify the workload; residues block only
-resources they may affect. Environment declarations can power resources and have lazy up/down plus idle lifetime; plain
+other exits are faults. Pools lease one instance by resource name. Labels identify the workload. Startup refuses every foreign undispositioned residue until cleaned or isolated;
+a readable own-arc journal permits recovery of its residues, with the dirty instances withheld meanwhile. Environment declarations can power resources and have lazy up/down plus idle lifetime; plain
 probed environments have no executor-managed power lifecycle. Resource teardown and workload quiescence precede release.
 New resources for a spike cannot be admitted mid-arc without owner resolution.
+
+Admission rechecks pause, draining mutations, backend/recovery and other readiness constraints before prepare,
+reproduce, pre-build, build, lanes, gate and candidate. The post-build quiesce/evidence/salvage/teardown chain and green
+ff/snapshot chain finish despite pause/drain, so resources and publication cannot be stranded halfway through.
+Reservations are all-or-none, in global order: resource/pool name (instance number), CPU token number, integration-slot.
+Over-capacity requests refuse at load/apply; release follows confirmed cleanup. The publication holder keeps the slot
+through ff/snapshot. Docs publications outrank units and may preempt a candidate before green; red, preempted and
+finding-blocked candidates abandon and release resources before waiting again.
+
+Retryable parks name backend/host/resource/environment targets; operator parks require a root action. Probes coalesce
+by target, start immediately and back off 1/2/4/8/16/30 minutes, capped at 30. At six hours, a unit park or residue raises
+non-blocking park-escalated while probes continue. Repeating a recovered target within six hours becomes operator
+env-blocked. Usage-limit parks dominate retryable backend parks and need explicit backend resume. Backend/recovery
+holds retain their cause and do not advance the held stage. Ordering parks emit unparked once every blocker merges.
+
+CPU defaults are judgment 1, build 4, lane build 2 and other lane cadences 4. Explicit values win; after three completed
+samples of at least 30 s, use ceil(p90 of the last ten), floor 1, cap at the default. Host admission uses CPU wait ratio,
+memory PSI and low available RAM; judgments bypass the pressure brake and one workload always progresses. Pressure
+charging/holds distinguish starvation from product reds and are bounded at 30 minutes; not all job paths participate.
+
+A unit-confined throw is settled like recovery, then parks uncharged executor-fault with stack. Only audit/walk/baseline
+jobs have analogous job containment. Open shared-state operations or a held publication slot make faults fatal, as do
+unsupported job/loop faults; supervisor recovery remains bounded at three crashes/hour.
+Managed environments transition down → starting → up → stopping → down. Interrupted/failed transitions settle down
+before another up; a failed up/probe yields retryable env-unavailable, never lane red. Idle expiry, pause-all and stop
+bring unused environments down; failed down raises env-blocked. Plain environments only probe.
 
 ### 2.3 Root commands and revisions
 
@@ -213,6 +251,8 @@ validation refuses expensive or explicit whole-repo inputs at build/unit cadence
 candidate tip with attribution. Shared/cross-system checks use batch cadence and milestone selection. Batch suites still
 run at batch points without milestones and all run at close-out. Time estimates are not a lane field.
 
+A confirmed repeating red is not diagnostically rerun; a suite lane identical to a spec/arc lane runs once where
+execution identity matches. Lanes have explicit wall timeout reds, separate from the six-hour runner backstop.
 Repeated reds compare at diffBase: green on base supplies charged regression evidence, red on base uses the base-red
 protocol. Fix rounds receive actual failing and passing evidence locations, including original evidence after reuse.
 Spec-candidate reds return to their delivering unit. Stochastic k-of-n lanes do not enter flake handling; same-commit
@@ -285,6 +325,20 @@ work. Bounded walk/polish rounds use before/after comparison in the same role, r
 milestone dependents until settled. The demo keeper promotes settled milestones under code ownership; hold prevents
 promotion/restart until release. Status/brief show location, promoted head and rough edges.
 
+## Git truth and backend invariants
+
+Merged means second-parent reachability in the integration history, not a branch name or optimistic status. Every unit
+diff is `merge-base(integrationTip, branch)..branch`, recomputed after merge-in. Gate approval binds the exact commit,
+spec and requirement/contract/routing fingerprint; publication rechecks it. A red candidate tests the pre-merge tip alone:
+green there attributes regression to the candidate; base-red holds further merges until repaired. Transient validation
+and protected-path/denylist checks still run at publication; approval does not excuse forbidden artifacts.
+
+Backend outages come from structured CLI error results (`turn.failed`/error events), never strings in product command
+output. Context-exceeded is uncharged operator-env work with prompt-size evidence. Codex receives the prompt on stdin,
+uses `-C`, `--json`, `-o` and strict output schema, and runs danger-full-access inside the devcontainer. Resume is allowed
+only with matching cwd/session; a session collision gets one fresh retry. These are adapter facts, not alternative
+planning authority. Debt never mints a unit while admissions are draining; new work requires a later deliberate slice.
+
 ## 3. Routing and cost
 
 Routing layers are builtin → repo-config → plan → unit. Seat values are classes; only class bindings name backend/model/
@@ -305,7 +359,21 @@ invocation; path-triggered role evals and fixtures run once per merged batch. CL
 coverage reflects current verifier/pre-build/experience/campaign roles; diagnosis-role eval is deferred pending field cases.
 No assertion about cgroup-real passing is valid on a read-only cgroup host.
 
-This release is the one-off breaking exception to upgrade-in-place: runtime schema 1 is refused before claiming/recovering.
+The free unit tier asserts typed readers/folds, exact git/evidence identities and real-process recovery. Crash matrices
+use `crashPoint(label[@unit]:n)` to kill at each write-ahead boundary, then assert idempotent replay: no duplicate effect,
+no live orphan, no falsely released reservation and no publication of untested heads. The production seam is the same
+boundary hook used throughout recovery, not simulated success flags. Role evals grade catches, false blocks, dispositions
+and method evidence with plants/controls; listing a plant file is not a catch. M4a's independent adjudicator grades the
+retained target/plan/product/witness artifacts and the real-forge canary checks fixture isolation. Paid transcripts do not replace free recovery
+assertions, and fake fixtures do not demonstrate week-long behavior.
+
+Supervision uses actionable watch with a fixed 30-minute heartbeat. On each wake the root posts at most three lines,
+reads status and the cited evidence, takes a supported lever if needed, then waits. Log every self-initiated intervention
+and every arc-wide pause/resume/backend-resume/stop/close-admissions in the append-only external operator log. The root
+never patches the plugin or run directory; on supervisor crash-limit it reports stderr/stack evidence to the owner.
+Clocks/time zones are spec/testing guidance, not an executor mechanism that rewrites product clocks.
+
+A 0.x `.roadmap/` layout is refused, never converted. This release is the one-off breaking exception to upgrade-in-place: runtime schema 1 is refused before claiming/recovering.
 It must finish with the original executor; no adoption/default reader is promised. Subsequent releases return to the
 standing upgrade rule. Version metadata changes in lockstep across plugin, executor/lockfile and both marketplace fields.
 The previous-release regression names dev.32 and checks loud refusal before host claim.

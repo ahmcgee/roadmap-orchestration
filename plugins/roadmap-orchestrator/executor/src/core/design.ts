@@ -1,4 +1,4 @@
-// The design record (dev.17, design pass; SCHEMAS.md "dev.17 records"): what a unit's pre-build settles about the change
+// The design record (dev.17, design pass; SCHEMAS.md "Specs and design"): what a unit's pre-build settles about the change
 // before it is built, carried on the spec (`SpecM1.design`). Code binds it only as far as code can check (DESIGN-1.0.md):
 // its declared systems against the repository map, its interfaces against the risk trigger, its failure modes against the test items,
 // its breaks against the builder's departures, its clauses against the lanes that can run in the arc. This module is the record and its reader; the checks live with the stages.

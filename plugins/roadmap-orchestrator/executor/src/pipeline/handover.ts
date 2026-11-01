@@ -1,4 +1,4 @@
-// The handover (dev.17, field feedback 2026-10-23 item 1; DESIGN-1.0.md §4 "Handover"): what a build session that does not
+// The handover (dev.17, field feedback 2026-10-23 item 1; DESIGN-1.0.md §2.1 "Unit pipeline and review"): what a build session that does not
 // continue its own is told of the work before it, built in code from the executor's records alone. A re-entry, a reopen whose
 // session cannot be resumed, a seat moved to another model, a steer, a session that never persisted and a continue that
 // cannot resume all start a fresh session; keeping a session is an optimisation, never the guarantee that the history reaches

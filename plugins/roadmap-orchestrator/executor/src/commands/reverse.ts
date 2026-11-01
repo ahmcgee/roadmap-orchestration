@@ -1,4 +1,4 @@
-// `roadmap reverse <D-n>` (M3, H13; DESIGN-1.0.md §2.8 "Divergences"; plan "Checkpoint and bundles", Reversal): a
+// `roadmap reverse <D-n>` (M3, H13; DESIGN-1.0.md §2.8 "Vision, corpus and obligations"; plan "Checkpoint and bundles", Reversal): a
 // fresh compensating revision, built at request time from the divergence's preimage and committed like any revision
 // (the apply core and the fence, src/commands/apply.ts). A divergence records no executable inverse.
 //

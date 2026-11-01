@@ -483,13 +483,6 @@ Arc entries include slice, divergences, decisions, curation/corpusDivergences, d
 PR and demo. AckMarker `{briefId,at,chainHead,coverage,items}` is write-once pending then committed by rename under
 common-dir roadmap/acks. Brief ack advances coverage/chain count and does not resolve optionless runtime items.
 
-## Removed schema-1 surfaces
-
-Schema-2 readers reject retired roles/stages/facts rather than preserving dead producers. Flow optimization/proofs/givens,
-plan-check decisions, scaffold/PoC, checkpoint bundles/conversions/amendments, issue integration, scope growth/envelopes,
-docs-only certification, convergence brakes, ruling sidecars and automatic propagation have no live contract. Internal
-names such as lens classification, plain C-n fields and stale-link diagnostics survive only for the live uses above.
-
 ## Exact selected declarations
 
 The following declarations are copied from current source without historical comments. They anchor the new fact and
@@ -660,3 +653,324 @@ export const NEEDS_USER_REASONS = [
   'revision-notice', 'waste-finding',
 ] as const;
 ```
+
+## Ids
+
+Constructors in `src/core/ids.ts` reject invalid forms before branding.
+
+| Id | Grammar / allocation |
+|---|---|
+| Arc, unit, resource, edge, system, serve | `[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?` (1–64 characters) |
+| Lane, clause | `[A-Za-z][A-Za-z0-9_.-]{0,63}` |
+| Op / invocation | `<arc>/<positive sequence>` / `<op>#<positive ordinal>` |
+| Pool instance / CPU token | `<pool>#<positive n>` / `@cpu#<positive n>` |
+| Command | `cmd-<16 lowercase hex>` |
+| Session | Lowercase UUID |
+| SHA / content hash | 40 / 64 lowercase hex |
+| Routing, seat, lane, environment rev; brief id | 16 lowercase hex |
+| Needs-user | `nu-<n>`, `sup-<n>-<n>`, or `host-<slug>` |
+| Numbered ids | V (vision), Q (vision question), I (obligation), F (finding), D (divergence), T (rule), B (debt), P (Phase-0 question), K (known defect), W (spec witness), MS (milestone), J (journey), X (polish), FM (failure mode), R (gate finding), each `PREFIX-<positive n>` |
+| Root ledger | `C-<digits>` |
+| Jobs emitted by current producers | `audit|docs|batch|baseline|review|walk|compare` followed by `-<positive n>` |
+
+Positive components have at most 15 digits. Numbered ids sort by prefix then numeric suffix; ordinary keys use string
+order. T/B/P persist across arcs; W is spec-scoped; MS/K are plan-scoped; F/X/R are allocated in arc log order. Withdrawn
+or settled ids remain history, never reusable authoring slots.
+
+## Startup rejection table
+
+`src/preflight/startup.ts` owns the discriminated rows. All refuse with **78**, except live `host-busy` (**75**).
+Exit 78 writes `<runDir>/status.rejection.json:{v,at,rejections}` and `exit.reason.json`; no work is admitted.
+Schema compatibility is checked before host claim/recovery. Checks stop at the first refusing group, retaining every
+row in that group (`src/preflight/checks.ts`).
+
+| Kind | Refusal / payload |
+|---|---|
+| legacy-roadmap-dir | Unexpected entries in a 0.x layout: path, unexpected[]; never convert it |
+| schema-version | Runtime version mismatch: path, recorded, expected, detail |
+| worktree-root-unusable | path, problem tmpfs or not-writable, detail |
+| spec-lane-unrunnable | unit/null + lane + problem, or resource + probe/teardown/up/down + problem; unresolved argv0, missing env, invalid lane/environment use |
+| unsupported-routing | role/tier, layer, class, unit/null, why codex-judgment or no-prompt |
+| undispositioned-residue | residues[] not cleaned/isolated; own-arc residues proved by a readable journal are recoverable |
+| host-busy | holder owner/recovery, arc, generation, pid |
+| previous-arc-unreconciled | arc, invocations[]; durable host item |
+| recovery-holder-dead / owner-mismatch | pid / identity detail; no guessed takeover |
+| log-corrupt / containment-mode-changed | file/offset/detail / recorded and detected containment modes |
+| backend-smoke | profile, backend, missing/failed, detail |
+| plan-invalid | Schema/path/branch/baseline/resource/cite/capacity problem |
+| plan-change-refused | reasons[] from the revision classifier |
+| vision-unconfirmed / corpus-invalid / phase0-invalid | Confirmation identity / corpus problems[] / Phase-0 problems[] |
+| chain-invalid / arc-superseded | Chain problem / successor arc |
+| tree-uncommitted | Required product paths differing from HEAD |
+| holistic-needs-corpus / milestones-need-holistic | Invalid target/layer combination |
+| plan-defect | defects[] no builder can repair by implementing its spec |
+| walk-tools-missing | milestone + program, MCP configuration or handshake problem |
+
+## Host files
+
+`/var/tmp/roadmap/` (parameterized in tests) contains `host.lock`, `host.owner.json`, `host.generation`,
+`host.recovery.lock`, `handshake.<generation>`, `residues.jsonl` and its compaction archives,
+`supervisor.state.json`, `supervisor.ready.<generation>` / `supervisor.failed.<generation>`,
+`executor.<generation>.out`, `.err`, `.exit.json`, supervisor stdout/stderr logs and `demo.json`.
+Generation/owner identity guards stale files. Supervisor crash history survives restarts; three crashes/hour stop it.
+
+The arc run directory holds `events.jsonl`, immutable `inputs/`, `inv/`, needs-user/command records, `heartbeat.json`,
+`exit.reason.json`, `status.rejection.json` on refusal, `demo.desired.json` and derived `sched.json`.
+`sched.json` exposes task states and arbiter queues; status trusts it only while its recorded executor owns the run.
+It is not journal authority. `src/host/hostdir.ts`, `src/supervisor.ts` and `src/schedule/scheduler.ts` own the layout.
+
+## Residues and reservation states
+
+`resource.transition` moves an all-or-none set under a holder:
+
+| From | Edge | To |
+|---|---|---|
+| free | reserve | reserved |
+| reserved | run | running |
+| reserved / running | clean | cleaning |
+| cleaning | release | free |
+| cleaning | fail (one residue per failed instance) | cleanup-failed |
+| cleanup-failed | reclaim (sweep/retry) | cleaning |
+
+Absent table entries are free. Pending transitions prevent another reservation. Lock order is named resources/pools by
+name (instances numerically), CPU tokens numerically, integration-slot last. Requests exceeding capacity refuse at
+load/apply. A build retains its reservation through cleanup; a publication holder keeps the slot through ff/snapshot.
+Release requires confirmed quiescence and teardown. CPU tokens have no teardown or residue.
+
+Residue identity binds arc/invocation/resource instance and exactly one unit or job owner, plus recorded cleanup
+recipe/provenance. Startup refuses **all foreign undispositioned residues**, even for resources this arc does not use;
+clean or isolate them. A readable journal proving this arc owns a residue permits start so recovery/probes can reclaim
+it. Its dirty instance remains unavailable. Cleaned/isolated/transferred dispositions are durable, not manual deletion.
+
+## Scheduling
+
+Admission rechecks pause, pending mutation drain, run-only, backend parks, breakers, base-red, blocking items, findings,
+known defects, pressure, compare and deflake holds before prepare/reproduce/pre-build/build/lanes/gate/candidate.
+Quiesce/evidence/salvage/teardown and ff/snapshot are mandatory chains despite pause/drain.
+
+The arbiter serves docs/batch/job waiters first in arrival order, then units: high priority; promoted waiters by age;
+otherwise repair=deflake, polish, planned; wait-start sequence then plan index break ties. A unit promotes after **three
+other publications** in its waiting interval. Backfill may pass a blocked higher rank only with a disjoint request
+(CPU and any shared pool count as overlap). Environment/pressure-blocked requests are set aside.
+Docs publications outrank unit publications and may request candidate preemption before green. Red/preempted or
+finding-blocked candidates abandon and release their reservations; green publication finishes ff/snapshot under its holder.
+
+## Parks
+
+Parks are durable stage outcomes, not red-lane synonyms. Retryable parks record nonempty sorted probe targets;
+operator parks require a subject action. Operator env resumes the same stage; operator design needs an appropriate
+revision/re-entry. Ordering parks record unit blockers and unpark automatically with `unparked` after all blockers merge.
+A held stage does not advance or consume a charge; backend/recovery holds retain their cause (`hold{backend}`,
+`hold{recovery}`) separately from operator pause.
+
+| Retryable outcome | Probe targets |
+|---|---|
+| build process-fault/lost; gate process-fault | backend |
+| reproduce/lanes/candidate blocked | host |
+| build/salvage/teardown/reproduce/lanes/candidate cleanup-failed | Each failed resource instance |
+| salvage commit-failed | host plus failed cleanup instances |
+| reproduce/lanes/candidate env-unavailable | Named environment |
+
+`src/park/table.ts` supplies targets; `src/pipeline/transitions.ts` owns class/charge/re-entry decisions. Recovering then
+parking on the same target within six hours becomes operator env (`env-blocked`), preventing endless flapping retries.
+
+### Backend parks
+
+Usage-limit dominates retryable outage/capacity parks, holds future calls arc-wide and is never probed. Running calls
+finish. Only explicit `resume --backend` clears a usage limit; changing profiles is not availability recovery.
+Retryable backend parks share the backend probe. Backend-only parks do not receive unit/residue escalation.
+
+### Park schedule
+
+One coalesced job per backend/host/resource/environment target covers the outstanding park/residue sequence numbers.
+First probe is immediate; new uncovered parks are immediate too. Failure backoff persists as `nextProbeAt`:
+**1, 2, 4, 8, 16, 30, 30… minutes**. Passing every target re-enters the parked stage. At six hours, a unit park or an
+unclaimed residue raises one non-blocking `park-escalated`; probes continue. Two distinct units parking on one target
+within one hour trip an admission breaker and raise `env-blocked` (`src/park/schedule.ts`, `schedule/types.ts`).
+
+## Rev 3: host pressure
+
+`src/host/pressure.ts` samples `/proc/schedstat` CPU totals: delta wait / (delta run + delta wait), over a minute.
+Memory PSI full avg10 contributes; available RAM below 5% supplies a saturated backstop. Missing schedstat makes CPU
+pressure unavailable, never invented. Scheduler ticks are retained for 30 minutes in memory.
+
+At pressure >= 0.5 (saturated) the arbiter holds new builds/lanes while CPU is already reserved. Judgments bypass this brake,
+and one workload always progresses. A deadline/stall under saturation is uncharged starved work; an ordinary red gets
+one pressure rerun. Holds wait for a clear minute or 30 minutes, with at most three pressure holds per unit; after that bound
+ordinary charging applies. This does not assert every job/witness path has pressure-aware charging.
+
+### Calibrated CPU reservations
+
+`CPU_COST`: judgment 1, build 4, lane build 2, lane unit/candidate/batch 4. Explicit cpu overrides calibration.
+Otherwise execution-key history needs three samples; use ceil(nearest-rank p90 of the last ten completed runs of at
+least 30 s), floored at 1 and capped at the default. Demand is (runMs + waitMs) / wallMs. Build keys bind class/routing;
+lane keys bind argv/cwd/env/expectedExit, not lane id or reuse identity. Partial-file retries do not teach full-lane cost.
+The journal plus runner CPU records rebuild observations after restart (`src/resources/calibrate.ts`).
+
+## Fault isolation
+
+`src/schedule/fault.ts` classifies from held/open journal state at the throw. A publication slot or open shared-state
+op makes a fault fatal; so does a throw outside a supported task wrapper or a failed settlement. Unit-confined faults
+run `settleFaulted`: kill/quiesce invocations, reconcile own ops, abort a repeated faulty act, clean reservations, then
+record uncharged operator-env `executor-fault` with stack. Resume re-enters the stage; restart replays the park.
+Only audit/walk/baseline jobs have job containment; their non-blocking item holds that track until arc resume closes it.
+Shared-state faults go through supervisor recovery, bounded at three crashes/hour.
+
+## Finding record
+
+`finding-opened` fields: id F-n, key, lens, severity P1|P2|P3, obligation|null, visionClauses[], claim,
+evidence[] `{path,blob:Sha|null}`, mutant `{patchSha256,lane}`|null, source (job/stage/demo), gateHadPassed,
+optional milestone/cause/lane. Key hashes canonical `{lens,obligation,cause}`. Lens categories are invariants, drift,
+vacuity, vision, witness, pre-build and walkthrough (the closed list is `FINDING_LENSES` in holistic/types.ts).
+Walkthrough findings bind a milestone; batch reds may name a lane. The fold adds owner/state/transition history.
+
+| State | Allowed next state |
+|---|---|
+| open | owned, ruled |
+| owned | fixed-on-branch, open, ruled |
+| fixed-on-branch | resolved, owned, open, ruled |
+| resolved / ruled | Terminal |
+
+Ownership follows declared repairs; gate approval fixes on branch; publication resolves. Ruled carries
+`disposition:dismissed|deferred|accepted|released` and root/ledger/code provenance. `finding-dismissed` records the root
+command/counterEvidence/role/routingRev and folds to ruled/dismissed. Settled-finding admission checks suppress unchanged
+evidence; a changed cited blob can lift dismissal. Only root input edits disposition obligations.
+
+## Experience and evidence fact payloads
+
+The following are payloads inside the versioned journal envelope; required fields are listed without `kind`.
+
+| Fact | Payload |
+|---|---|
+| walk-started | job, milestone, round, sha, ports `{serveName:port}` |
+| walk-ended | job, outcome, findings[], proposals[], dropped[], interrupted?:true |
+| polish-proposed | id X-n, job, milestone, journey, evidence[], text, unit `{id,systems,spec}` |
+| polish-refused | proposal, reasons[] |
+| compare-started | job, unit, before, after, ports `{before,after}` |
+| compare-abandoned | job, detail, interrupted?:true |
+| tweak-judged | unit, decision keep/drop, reason judged/reference-untouched/bring-up-failed/abandoned |
+| milestone-passed | milestone, job |
+| demo-promoted | milestone, sha |
+| demo-failed | milestone, sha, log absolute path |
+| demo-acted | command, act (DemoAct: up/down/hold/release) |
+| flake-observed | owner unit/job, lane, set spec/suite/arc, on?:unit/tip, event `{tree,env,failing[],red,green}`, forgiven |
+| smoke-ran | unit, attempt, key, verdict `{killed,survived,inconclusive}` lists of `{lane,testId}` |
+| docs-published | pub, source close-out, commit |
+| docs-covered | pub, from, to (the publication's self-covered audit edge) |
+
+FlakyLedgerEntry is `{key,events,deflakes}`; key is test `{lane,testId}` or whole lane, events are ordered nonempty
+FlakyEvent records, deflakes are ordered unit ids. Stochastic lanes never produce flakes.
+A mutant spawn binds `{purpose:'mutant',of:{type:'finding',finding}|{type:'smoke',unit,attempt},lane,laneRev,tree}`;
+its `mutant.apply` intent binds worktree, at, of and patchSha256. The patch is kept by hash and executed, not judged from
+text. Smoke survivors/inconclusive checks remain explicit. `src/core/events.ts` and `src/core/flaky.ts` own these fields.
+
+### The demo
+
+Run `demo.desired.json:{v,arc,repo,worktreeRoot,up,upSeq,target}` is derived by the executor. Target is null or
+`{milestone,sha,bringUp}`. Host `demo.json:{v,ports,serving,trial,failures}` is written only by the supervisor keeper.
+Instances bind arc/repo/worktreeRoot/slot/milestone/sha/bringUp/boot/processes; serving adds up/down state. Failures bind
+arc/milestone/sha/log/upSeq/boot/at. Promotion tries the new instance beside the old one; failed bring-up retains the old
+service. Hold blocks promotion/restart until release (`src/demo/records.ts`).
+
+## Role input and output contracts
+
+`judgment-inputs` captures unit, stage, attempt, tip, head|null, specRev/specSha256, planRev/routingRev before spawn.
+Gate adds approval fingerprint, `diffShown:{inlined,notInlined}`, `largeDiff:{overflow}|null`, review/standingReview and
+designEstimate|null. Recovery consumes those identities, never a newer tip or plan.
+
+Verifier inputs are `{mode:'gate',brief:GateInputs}` or `{mode:'pre-build'|'diagnosis',brief:ReviewBrief}`. GateInputs
+includes systemNotes, touches, standing, method, spec/intent/nonGoals, cited contracts/index/target/direction, selected
+and standing obligations, bounded diff/claims, laneLedger/evidence, systems/reach/traits/reachTraits, priorRound,
+checks/escalation/largeDiff/milestones, undeclaredContracts and proportional review. ReviewBrief is `{target,vision,spec,intent,nonGoals,contracts,systems,method,history,standing}`; history supplies
+diagnosis failures where applicable. No model identity is a role input.
+
+| Role | Strict output |
+|---|---|
+| verifier gate | GateOutput decision, findings/directives/reasons/premises and gate review/coverage fields |
+| verifier pre-build/diagnosis | The same GateOutput schema; code converts findings into standing items and keeps a diagnosis/failure note |
+| campaignAudit | LensOutput findings/reasons/premises plus requests[] `{op:'request',summary,evidence,dismisses:F-n|null,counterEvidence:string|null}`; dismissal requests require counter-evidence and root action |
+| experienceVerdict | `{final:true,mode:'walkthrough',verdict:{final,journeys,findings,polish,premises,reasons}}` or `{final:true,mode:'polish',verdict:{final,decision:keep|drop,evidence,reasons,premises}}` |
+| packReview | `{findings,dispositions,reasons,premises}`; findings bind severity/target/claim/evidence `{path,line}`; delta review dispositions name prior job/index |
+
+Every judgment role gets at most one repair turn in its own session/schema/cwd when the answer fails validation;
+a second invalid answer follows the role's failure path. See `src/prompts/{inputs,schemas}.ts` and pipeline/dispatch.ts.
+
+## Runner files
+
+`InvocationBinding = {v:2,arc,op,inv}`; inv must belong to op and op to arc. Files for one invocation live at
+`<runDir>/inv/<seq>-<ordinal>/`. The runner owns `runner.json`, stdout/stderr, exit/result; input/schema and launch are
+kept before spawning. Adapters read only quiescent files and write deterministic bound results.
+
+```ts
+LaunchFile = InvocationBinding & {
+ argv:string[]; cwd:AbsPath; env:Record<string,string>; stdinPath:AbsPath|null;
+ deadlineAt:IsoTime; stallMs:number|null; graceMs:number; containment:'session'|'cgroup';
+ test:{crash:AbsPath}|null; terminal:LaunchTerminal;
+};
+ExitFile = InvocationBinding & {
+ child:{type:'exited',code:number}|{type:'signalled',signal:string}|{type:'spawn-failed',error:string};
+ cause:'exited'|'deadline'|'timeout'|'stall'|'cancel'|'recovery-kill'|'reported';
+ endedAt:IsoTime; quiescedAt:IsoTime; cpu?:{wallMs:number,runMs:number,waitMs:number}|null;
+};
+```
+
+LaunchTerminal is command `{type,purpose,expectedExit,timeoutMin?}` or backend
+`{type,purpose,role,routingRev,schemaPath,outputPath,session}`. TimeoutMin is lane-only. Claude sessions have backend,
+mode fresh/resume and id; fresh Codex lacks id until the result. Runner adds ROADMAP_OP/INV/ROLE to the declared env.
+Only launch argv can carry model ids among executor-written runtime files. Exit is published after containment empties,
+before adaptation; `reported` follows a validated final report's bounded descendant grace. Binding mismatch refuses.
+
+## Backend call kinds and read surface
+
+`src/backends/argv.ts` defines claude-build, claude-judgment, claude-acting-judge and codex-build. Builders edit their
+checkout. Read-only Claude judgments disable project settings/slash commands and use explicit tools/system text.
+Acting judges have shell/browser/project tooling in their disposable checkout with write-deny rules over existing
+paths outside allowed writable roots. This is not protection against deliberately escaped processes or paths created
+later. `--add-dir` explicitly names repo, run dir and role-specific evidence directories. `reads.json` records Read/Grep/
+Glob calls (including subagents) and denied reads for review validation.
+
+Claude JSONL is retained. A usage-limit error in **any** result dominates later success; classify from CLI error
+results, never product command stdout. Missing final results retain streamed token lower bounds with unavailable
+cost/reason; resumed builder accounting avoids double counting cumulative usage. Codex retains partial tokens and final
+`-o` output. A failed k-of-n series retains each attempted run and partial metering; aggregate failure is not zero usage.
+
+## witness-check
+
+`roadmap witness-check --lane-file <file>` is a host act in the builder's git worktree. The write-once WitnessLaneFile
+binds lane/reporter/argv/cwd/env/required ids. Run exact argv with declared env plus reporter, collect a fresh output per
+execution, and compare exact required test ids. Lane exit alone is not the verdict. Exit **0** means all required ids
+passed; **78** reports `{missing,failed,malformed}` when a required witness is missing/failing (including skipped ids).
+Lane stdout/stderr go to command stderr; temporary reporter evidence is removed afterwards. See commands/witnesscheck.ts.
+
+## Environment lifecycle
+
+Managed environments move **down → starting → up → stopping → down** through journaled environment spawns.
+Failed/lost transitions leave unsettled state, requiring down before another up. Reservation serializes each environment
+and includes powered resources. First use brings it up then probes; a failed up/probe tears it down and yields retryable
+`env-unavailable`, never a red lane. Failed down raises non-blocking `env-blocked` because it may still be running.
+
+Idle expiry requires no users or waiters. Pause-all/stop idles immediately; a unit pause uses idleMinutes. Recovery
+settles interrupted up/down spawns, downs unsettled environments and restarts an already-up environment's idle clock
+from executor start. Up/down timeout is 30 minutes, probe two minutes. Plain probe-only environments have no power state.
+
+## Lane dir and build handover
+
+A lane's explicit timeoutMin yields timeout red; without it the six-hour runner backstop applies. Previous red lanes run
+first; repeated identical red evidence is not blindly rerun. A suite lane identical to a spec/arc lane shares execution
+where identity matches. Same-commit red→green is a flake: unit-tree flakes return uncharged evidence for repair, while
+eligible integration-tip flakes can be forgiven and mint at most two deflake units before a recurring-flake item.
+Both original evidence paths remain visible. `near-duplicate-lanes` is a Phase-0 advisory, never permission to omit checks.
+Status blockingUnits uses effective lineage heads of future deliveredBy units or active must-hold repair owners
+(`holistic/blocking.ts`). Required witnesses block publication/completion; campaign audit readiness follows milestone,
+root-request and final triggers (`holistic/cadence.ts`).
+
+Fresh build sessions with prior lineage receive code-built handover: lineage, failure diagnosis, latest gate, unsettled
+findings, unmet clauses, missing/failed witnesses, inherited decisions, latest report and extant failing evidence.
+Each history list retains the ten most recent items; unmet clauses are spec-bounded (`pipeline/handover.ts`).
+
+## Container command and TUI
+
+`executor/bin/install-roadmap` installs/refreshes a managed launcher pointing to the plugin and current Node executable;
+`--bin-dir` chooses a writable PATH directory. It refuses unrelated existing commands. Refresh on plugin/container
+updates. The TUI reads retained runtime and captured document identities without making runtime writes or controlling
+admission. Closing it leaves the executor running; status/usage observation is bounded and read-only.

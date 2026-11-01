@@ -2,7 +2,7 @@ import { methodContext,reviewItems,runReview,builderTouches,reachBackstop } from
 import { systemReach,systemTraits } from '../input/systems.ts';
 import { mapInForce } from './lanes.ts';
 import { bytesSha256 } from '../spec/spec.ts';
-// The gate stage (plan "Pipeline", gate row; Authority and Gate inputs, R2; DESIGN-1.0.md §4 Independence).
+// The gate stage (plan "Pipeline", gate row; Authority and Gate inputs, R2; DESIGN-1.0.md §2.1 "Unit pipeline and review").
 //
 // A fresh acting-judge session (resumed only for its repair turn; dev.13, `claude-acting-judge`) on the gate role's seat, which a pending risk promotion or a
 // route-up moves to the escalation seat (judgmentDispatch), and a diff over the large-diff threshold to at least `high`
@@ -175,7 +175,7 @@ function selectedForGate(ctx: StageContext, unit: PlanUnit, tip: Sha, head: Sha)
 
 /**
  * A fingerprint with its revision lists in canonical id order. They are sets: a fingerprint recorded before 1.0.0-dev.7
- * lists them in string order (`C-10` before `C-9`, SCHEMAS.md "Record evolution"), and still holds against the same set.
+ * lists them in string order (`C-10` before `C-9`, SCHEMAS.md "Conventions and record evolution"), and still holds against the same set.
  */
 const canonicalFingerprint = (fp: ApprovalFingerprint): ApprovalFingerprint => ({
   ...fp,

@@ -1,4 +1,4 @@
-// Audit coverage (M3 step B5; DESIGN-1.0.md §2.5 "Coverage"; A17, H3, H8, H9): per lens, a contiguous watermark over
+// Audit coverage (M3 step B5; DESIGN-1.0.md §2.5 "Campaign audit and findings"; A17, H3, H8, H9): per lens, a contiguous watermark over
 // the integration history, derived from the log and the kept revision payloads (pure: no git, no clock).
 //
 // - The base (H3, lead ruling 2026-09-30): the arc's base is the integration head at the revision that turned the arc

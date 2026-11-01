@@ -2,7 +2,7 @@
 // units, spend and needs-user comes from folding events.jsonl in order. `state.json` exists only in
 // the snapshot tree, derived from that snapshot's log prefix, and is never read back for a decision.
 //
-// The fold also enforces the log's invariants (SCHEMAS.md "Event log"): a violation throws
+// The fold also enforces the log's invariants (SCHEMAS.md "Event log and effect contracts"): a violation throws
 // FoldInvariantError. At open the journal turns that into a refusal (`log-corrupt`); at append it means
 // the caller asked for an illegal record, and nothing is written.
 import { type FindingStateName,type FindingTo,FINDING_MOVES } from '../holistic/types.ts';
@@ -196,7 +196,7 @@ export type UnitState = Readonly<{
  */
 export type ReviewApproval = Readonly<{ seq: number; attempt: number; fingerprint: ApprovalFingerprint; blobs: ApprovalBlobs | null }>;
 
-/** dev.17 proportional review (SCHEMAS.md "Proportional review"): what `JournalView.review()` folds. */
+/** dev.17 proportional review (SCHEMAS.md "Role input and output contracts"): what `JournalView.review()` folds. */
 export type ReviewFold = Readonly<{
   /** Every ledger finding in id order, at its current outcome. */
   ledger: readonly FindingsLedgerEntry[];
@@ -353,7 +353,7 @@ export function afterEdge(status: ResourceStatus, holder: Holder, edge: Resource
 export type BackendParkState = Readonly<{ backend: Backend; seq: number; class: BackendParkClass }>;
 
 /**
- * An own-arc residue as the log proves it (A9; SCHEMAS.md "M2: parks", residue probing): the residue a done
+ * An own-arc residue as the log proves it (A9; SCHEMAS.md "Parks", residue probing): the residue a done
  * `resource.transition{fail}` recorded on an instance that no `release` has followed since. `key` is its host
  * index key, `holder` the stage attempt whose cleanup failed, `fail` that transition's op and `failSeq` its seq
  * (what a probe of the instance covers for it), and `at` the time of its done. A residue disposed of but not yet released (a
@@ -382,7 +382,7 @@ function unclassedParkRecord(f: StageOutcomeFact): ParkRecord {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// M3: the holistic layer's fold (SCHEMAS.md "M3: the holistic layer"). Raw facts, indexed and checked; the
+// M3: the holistic layer's fold (SCHEMAS.md "Vision, obligations and witnesses"). Raw facts, indexed and checked; the
 // derivations over them (observations, coverage watermarks and generations) are the
 // later steps' pure functions over this view.
 
@@ -1254,7 +1254,7 @@ export class Fold implements JournalView {
         this.#smokeRuns.push({ ...rest, seq: at.seq });
         return;
       }
-      // dev.13 (SCHEMAS.md "dev.13"): the fold sees the walk jobs and keeps every walk fact (`walkFacts`), holding a walk to
+      // dev.13 (SCHEMAS.md "Milestones and bring-up"): the fold sees the walk jobs and keeps every walk fact (`walkFacts`), holding a walk to
       // one start and one end, its proposals to id order and to its open walk, and a milestone pass and a tweak judgment to
       // once each. What they mean for units and milestones is read from `walkFacts` (agents C, D and G).
       case 'walk-started':
@@ -1321,7 +1321,7 @@ export class Fold implements JournalView {
         this.#flakes.push({ seq: at.seq, at: at.at, fact: f });
         return;
       }
-      // dev.17 (SCHEMAS.md "dev.17: propagation"): the fold keeps every propagation fact (`propagationFacts`), a stale set
+      // dev.17 (SCHEMAS.md "Specs and design"): the fold keeps every propagation fact (`propagationFacts`), a stale set
       // once per plan rev and a refusal once per (rev, target); a stale re-open sends its unit back to pre-build. What the
       // facts mean for units is read from `propagationFacts` (src/holistic/propagation.ts).
       case 'stale-set':
@@ -1372,7 +1372,7 @@ export class Fold implements JournalView {
     this.#seeJob(job);
   }
 
-  /** The M3 facts (SCHEMAS.md "M3: fold invariants"). */
+  /** The M3 facts (SCHEMAS.md "Event log and effect contracts"). */
   #holisticFact(f: HolisticFact, fail: (detail: string) => never, at: Readonly<{ seq: number; at: IsoTime }>): void {
     const { seq } = at;
     switch (f.kind) {

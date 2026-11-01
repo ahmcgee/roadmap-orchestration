@@ -1,4 +1,4 @@
-// Propagation in code (dev.17, experience-won E; DESIGN-1.0.md §2.8 "Propagation"; SCHEMAS.md "dev.17: propagation"), the
+// Propagation in code (dev.17, experience-won E; DESIGN-1.0.md §2.7 "Plan, specs and certification lanes"; SCHEMAS.md "Specs and design"), the
 // pure half: what a revision leaves stale. Boundary reopening gives unfinished units the revised inputs.
 //
 //   stale set     at every revision (the apply core, src/commands/apply.ts `evaluateRevision`): its targets are the

@@ -1,7 +1,7 @@
 import { nonBlank } from './validate.ts';
 import { type SystemName,systemName } from '../core/ids.ts';
 // The event log (`events.jsonl`) record types, their validators, canonical serialisation and the chain
-// hash rule. The journal (append, tail, fold) is step 2 and builds on these. SCHEMAS.md "Event log" is the
+// hash rule. The journal (append, tail, fold) is step 2 and builds on these. SCHEMAS.md "Event log and effect contracts" is the
 // prose twin of this module.
 import type { Buffer } from 'node:buffer';
 import { type BankReason,type DebtSource,BANK_REASONS,debtSource } from '../debt/types.ts';
@@ -826,7 +826,7 @@ export type Fact =
 export type FactRecord = Readonly<{ type: 'fact'; fact: Fact }>;
 
 /**
- * dev.17 proportional review (DESIGN-1.0.md §4 "Proportional review"; SCHEMAS.md "Proportional review").
+ * dev.17 proportional review (DESIGN-1.0.md §2.1 "Unit pipeline and review"; SCHEMAS.md "Role input and output contracts").
  *
  * `review-ledger`: a gate attempt's answer entered the findings ledger: `minted`, each finding with a path that exists at the
  * head it judged, by its place in the answer (`index`), its entry (blocking: open; any other class settled at once, banked
@@ -901,7 +901,7 @@ export type CoveredRange = Readonly<{ lens: LensKindName; from: Sha; to: Sha }>;
  */
 export type LensRefusal = Readonly<{ lens: LensKindName; attempt: number; claim: string; cause: string; reason: string }>;
 
-/** The M3 facts (SCHEMAS.md "M3: the holistic layer"). */
+/** The M3 facts (SCHEMAS.md "Vision, obligations and witnesses"). */
 export type HolisticFact =
   | SurfaceFact
   /** A witness run's records (`witness.json`, hashed): the observation key and whom it ran for. */
@@ -951,7 +951,7 @@ export type HolisticFact =
 export type SmokeVerdict = Readonly<{ killed: readonly TestRef[]; survived: readonly TestRef[]; inconclusive: readonly TestRef[] }>;
 
 /**
- * The M4a facts (SCHEMAS.md "M4a"); their behaviour is A4's (debt), C3's (intake, pack review, captures).
+ * The M4a facts (SCHEMAS.md "Corpus, Phase 0, debt and chain"); their behaviour is A4's (debt), C3's (intake, pack review, captures).
  * M4a rev 3: `lane-reused`, `series-certified` (N1), `smoke-ran` (N3).
  */
 export type M4aFact =
@@ -1000,7 +1000,7 @@ export type TweakReason = (typeof TWEAK_REASONS)[number];
 export type PolishUnitDraft = Readonly<{ id: UnitId; systems: readonly SystemName[]; spec: string }>;
 
 /**
- * The dev.13 facts (SCHEMAS.md "dev.13: milestone walkthroughs and design units"); their behaviour is agents C, D and G's.
+ * The dev.13 facts (SCHEMAS.md "Milestones and bring-up"); their behaviour is agents C, D and G's.
  * The fold keeps them in log order (`walkFacts`) and holds their ids to order.
  */
 export type WalkFact =
@@ -1064,7 +1064,7 @@ export const FLAKE_ONS = ['unit', 'tip'] as const;
 export type FlakeOn = (typeof FLAKE_ONS)[number];
 
 /**
- * dev.17, the flaky ledger (SCHEMAS.md "dev.17: the flaky ledger"; src/pipeline/deflake.ts). `flake-observed`: a lane run
+ * dev.17, the flaky ledger (SCHEMAS.md "Experience and evidence fact payloads"; src/pipeline/deflake.ts). `flake-observed`: a lane run
  * red then green on its diagnostic rerun (same tree, same environment), written once per such rerun before the lane's
  * record is read, by `owner`'s series. `set` says where the lane is defined; `event.failing` the test ids the red run's
  * reporter named (an arc lane's; empty for a spec or suite lane, whose key is the lane). `on` (dev.21): the tree it was
@@ -1074,7 +1074,7 @@ export type FlakeOn = (typeof FLAKE_ONS)[number];
 export type FlakyFact = Readonly<{ kind: 'flake-observed'; owner: LaneOwner; lane: LaneId; set: FlakyLaneSet; on?: FlakeOn; event: FlakyEvent; forgiven: boolean }>;
 
 /**
- * The dev.17 propagation facts (SCHEMAS.md "dev.17: propagation"; src/holistic/propagation.ts). The fold keeps them in log
+ * The dev.17 propagation facts (SCHEMAS.md "Specs and design"; src/holistic/propagation.ts). The fold keeps them in log
  * order (`propagationFacts`).
  */
 export type PropagationFact =
@@ -1112,7 +1112,7 @@ export type PlanField = (typeof PLAN_FIELDS)[number];
 export const SPEC_EDITS = ['undispatched', 'evidence', 'revision', 'withdrawn'] as const;
 export type SpecEdit = (typeof SPEC_EDITS)[number];
 
-/** One change of a `plan-applied` fact against the previous plan in force (SCHEMAS.md "Plan in force"). */
+/** One change of a `plan-applied` fact against the previous plan in force (SCHEMAS.md "Plan in force and CAS"). */
 export type PlanChange =
   | Readonly<{ type: 'unit-added' | 'unit-removed' | 'unit-changed'; unit: UnitId }>
   /** The undispatched units' order changed. */

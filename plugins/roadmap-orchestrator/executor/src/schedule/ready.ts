@@ -1,4 +1,4 @@
-// Readiness, admission and rank (M2 plan "Readiness", "Admission", "Priority and aging"; SCHEMAS.md M2), pure
+// Readiness, admission and rank (M2 plan "Readiness", "Admission", "Priority and aging"; SCHEMAS.md "Scheduling"), pure
 // over the log's view and the plan in force. The scheduler asks `ready` which units to start tasks for, `admit`
 // (bound to the routing in force by `admitter`) at every admission boundary of every task, and `rankOf` for the
 // arbiter's waiter order.

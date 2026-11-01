@@ -1,6 +1,6 @@
 import { nonBlank } from '../core/validate.ts';
 import { type SystemName,systemName } from '../core/ids.ts';
-// The holistic layer's records (M3, frozen in step 0a; SCHEMAS.md "M3: the holistic layer"): the vision, the
+// The holistic layer's records (M3, frozen in step 0a; SCHEMAS.md "Vision, obligations and witnesses"): the vision, the
 // obligations file, witness records, ruling sidecars, findings and divergences, and the frozen signatures the
 // later steps implement (impact selection, observations). Types, readers and pure helpers only: no I/O.
 //

@@ -181,7 +181,7 @@ export function writeFileNeedsUser(runDir: AbsPath, arc: ArcId, id: NeedsUserId,
   exclusivePublish(needsUserPath(runDir, id), canonicalJson(record));
 }
 
-/** The claim refusals that carry a durable needs-user (SCHEMAS.md startup table); host-busy is only "try later". */
+/** The claim refusals that carry a durable needs-user (SCHEMAS.md "Startup rejection table"); host-busy is only "try later". */
 export type ClaimRefusal = Extract<StartupRejection, { kind: 'owner-mismatch' | 'recovery-holder-dead' | 'previous-arc-unreconciled' }>;
 
 /**

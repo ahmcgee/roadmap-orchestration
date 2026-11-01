@@ -1,6 +1,6 @@
 import { type SystemsMap, systemsForPatterns } from '../input/systems.ts';
-// A walkthrough's report, held to its inputs and minted (dev.13, plan §2 "Output", "Minting"; SCHEMAS.md "dev.13",
-// "Outputs"). The schema reader (src/prompts/schemas.ts `validateWalkthroughOutput`) holds the answer to its shape and
+// A walkthrough's report, held to its inputs and minted (dev.13, plan §2 "Output", "Minting"; SCHEMAS.md "Milestones and bring-up",
+// "Role input and output contracts"). The schema reader (src/prompts/schemas.ts `validateWalkthroughOutput`) holds the answer to its shape and
 // the rules inside it; `walkRefusals` adds what needs the walk's inputs, each reason one sentence for the one repair turn
 // every judgment takes (read as lenses are):
 //   - every journey of the milestone is reported, and no other;

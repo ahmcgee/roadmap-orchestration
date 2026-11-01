@@ -1,4 +1,4 @@
-// The debt records (M4a, frozen in step 0a; SCHEMAS.md "M4a", DESIGN §2.9): the debt ledger `debt.md` renders, its
+// The debt records (M4a, frozen in step 0a; SCHEMAS.md "Corpus, Phase 0, debt and chain", DESIGN §2.9): the debt ledger `debt.md` renders, its
 // item, the Phase-0 disposition and the `debt-banked` fact's source. Types and readers only; A4 owns the behaviour
 // (src/debt/{ledger,mint,render}.ts): `debtKey`, minting, dedupe, rendering.
 import {

@@ -1,4 +1,4 @@
-// The systems map (dev.17, DESIGN-1.0.md §4 "Lane topology"; SCHEMAS.md "dev.17"): what the repo is made of, so a lane
+// The systems map (dev.17, DESIGN-1.0.md §2.7 "Plan, specs and certification lanes"; SCHEMAS.md "Systems and non-normative memory"): what the repo is made of, so a lane
 // runs where a change can reach it and is reused where none did. Committed by the owner in `.roadmap/config.json`
 // `systemsMap`; a start and every apply record the map of the repo config the executor read (`plan-applied.systemsMap`,
 // null when the config has none), and every reader takes it from the revision in force (`systemsMapInForce`).

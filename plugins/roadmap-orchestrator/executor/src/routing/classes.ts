@@ -1,4 +1,4 @@
-// The class catalogue (DESIGN-1.0.md §4, Routing profiles): the one place in code that binds a model to a
+// The class catalogue (DESIGN-1.0.md §3 "Routing and cost"): the one place in code that binds a model to a
 // seat. Seats name classes (profiles.ts, every routing layer); `resolveRouting` (layers.ts) binds each class
 // through the arc's profile here, unless the repo's `.roadmap/config.json` rebinds it (`routing.classes`).
 // A profile is a set of bindings: `default` puts the efficient class's builds on Codex, `claude-only` on Claude, so

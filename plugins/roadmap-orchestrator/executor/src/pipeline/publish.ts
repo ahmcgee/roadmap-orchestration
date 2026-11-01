@@ -1,5 +1,5 @@
 import { systemsMapInForce } from '../input/systems.ts';
-// The docs publication (M3 step A4; DESIGN-1.0.md §2.9, §9; plan "Commands", Docs publication; A7, A17, G12): a
+// The docs publication (M3 step A4; DESIGN-1.0.md §2.9 "Git artifacts and clean PRs"; plan "Commands", Docs publication; A7, A17, G12): a
 // revision's rendered `.roadmap/` documents, the vision files it changes (dev.16) and its contract ops, published through
 // the integration slot like a unit, so the tested head is the published head. It runs inside its revision's commit
 // (src/recover/revision.ts `commitRevision`, under the revision fence), reached through `DocsPublisher`:

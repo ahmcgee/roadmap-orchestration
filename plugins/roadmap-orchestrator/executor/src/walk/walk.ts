@@ -1,7 +1,7 @@
 import { jobStageOutcome } from '../stageoutcome.ts';
 import { experienceWalk } from '../prompts/schemas.ts';
 import { systemsMapInForce } from '../input/systems.ts';
-// The milestone walk job (dev.13, plan §2; SCHEMAS.md "dev.13"; DESIGN-1.0.md §2.12): one durable job `walk-<n>` at a
+// The milestone walk job (dev.13, plan §2; SCHEMAS.md "Milestones and bring-up"; DESIGN-1.0.md §2.12): one durable job `walk-<n>` at a
 // time, arc-wide, modelled on the audit's lifecycle (src/holistic/audit.ts). A walk brings the milestone's product up
 // from the integration SHA and an acting judge (`walkthrough`) uses it along the milestone's journeys.
 //

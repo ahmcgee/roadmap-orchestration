@@ -1,4 +1,4 @@
-// The milestone node (dev.13, plan §3; SCHEMAS.md "dev.13", "The milestone node"): a milestone is a node in the DAG. A
+// The milestone node (dev.13, plan §3; SCHEMAS.md "Milestones and bring-up"): a milestone is a node in the DAG. A
 // planned unit that descends from any unit of milestone M through `after` edges, and is not one of M's units, waits on
 // M's node until `milestone-passed{M}`: the readiness of an unmerged `after` dependency (src/schedule/ready.ts). Code
 // inserts the edge; the plan author writes nothing. `status` shows it (an `EdgeView` of type `milestone`).

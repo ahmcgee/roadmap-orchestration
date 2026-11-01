@@ -106,8 +106,8 @@ judges polish comparisons. A break holds downstream work that would need rework;
 
 One fresh campaign audit at milestones, on root request and at the final boundary judges invariants, vacuity,
 interactions and cheap document drift together. Bounded attachments/chunks preserve coverage across failures. It reports
-findings and root requests rather than silently changing the target. P1 currently needs repair or code-owned not-reproduced dismissal. An explicit root finding-disposition channel is
-missing from the current CLI/apply inputs and remains a gap against the design delta.
+findings and root requests rather than silently changing the target. P1 needs repair or evidence-backed dismissal. Root dismiss records counter-evidence and actor/routing provenance;
+audit requests leave that decision with the root. Code can also dismiss a mutant that does not reproduce.
 Only the root dispositions obligations. This keeps unattended work useful without allowing independent workers to move
 the goalposts.
 
@@ -153,3 +153,38 @@ Corpus windows, stable rule ids, the census, ranked questions and open-debt disp
 Estate compaction records explicit owner approval and applies through normal inputs. Foreign predecessors use baseline/
 previousHead without pretending a schema-1 runtime was adopted. Dev.33 is a one-off schema-2 breaking exception; future
 updates return to upgrade-in-place. The dev.32 refusal regression records that boundary.
+
+## Standing implementation decisions
+
+- **Roles, not models.** State records `{role,routingRev}`; only routing binds model ids. Prompts are explicit per
+  (role, model), with declared inheritance/unsupported pairs. `state.no-model-ids` guards the record boundary, so changing
+  a provider does not rewrite domain history or silently reuse an untested prompt.
+- **Peer backends through files.** Both CLIs run under the same runner/process interface. Launch, stdout/stderr, exit
+  and result files survive parent death; pipes alone would lose the evidence needed for adoption. Adapters are pure over
+  quiescent files and can rerun. Backend smoke actually asks for a real shell command, testing tool execution and parsing
+  rather than accepting a model's claim that the CLI works.
+- **DAG plus resource locks.** Independent units progress without sharing checkouts. All-or-none reservations prevent
+  partial acquisition deadlocks; reserved → running → cleaning → free ties release to cleanup. Failed cleanup leaves a
+  durable residue, withholding the instance until probing/sweep cleans or isolation dispositions it. Startup refuses
+  foreign residues so another arc cannot inherit an unaccounted workload.
+- **Clean PRs.** Product branches carry product changes and living `.roadmap/` documents. Runtime and raw evidence stay
+  outside the tree. `refs/roadmap/<arc>` carries allowlisted records with a SHA-256 manifest, preserving verified chain/
+  brief evidence without polluting product review.
+- **Failing output survives.** A red lane retains newly written/changed ignored output (bounded, with secret exclusions)
+  in its evidence. Otherwise the very report needed for a fix disappears when the disposable checkout is removed.
+- **Executable before judged.** `witness-check` checks exact ids, including missing/skipped tests, before a green-looking
+  suite becomes proof. Mutation smoke executes a bounded production-removal variant; survivors/inconclusive runs remain
+  visible. Reading test source is useful judgment, not evidence that the negative case fails.
+- **Clocks are spec guidance (R39).** Specs ask for product clock seams, shifted dates/time zones and injected timeouts.
+  The executor does not invent a universal fake clock for arbitrary products; doing so would conceal untested seams.
+- **Supervision through levers, with a log (OR-A3).** Actionable watch and a 30-minute heartbeat bound root attention.
+  Three-line notes keep the owner informed; supported commands retain provenance. The append-only operator log explains
+  self-initiated interventions and all arc-wide controls, including when a pause ended. The root never patches plugin/
+  runtime state: a defect is reported with evidence so repairs do not hide the failed experiment.
+- **An eval ladder.** Typed/free tests prove deterministic readers, real git/process behavior and crash replay at
+  `crashPoint(label[@unit]:n)` boundaries. Real CLI probes prove invocation/adaptation; role trials grade catches and
+  false blocks; paid fixtures test orchestration and independent M4a adjudication (with its forge-isolation canary).
+  Each tier proves a different claim; none licenses a week-long reliability claim by itself.
+
+A 0.x layout is refused, never converted. Dev.33 separately refuses schema 1; later schema-2 releases return to the
+standing upgrade-in-place rule.

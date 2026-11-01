@@ -1,4 +1,4 @@
-// Phase 0, chain and brief records (M4a, frozen in step 0a; SCHEMAS.md "M4a"): the Phase-0 record, the problems the
+// Phase 0, chain and brief records (M4a, frozen in step 0a; SCHEMAS.md "Corpus, Phase 0, debt and chain"): the Phase-0 record, the problems the
 // shared startup rows report (`phase0Rows`, C1's src/phase0/rows.ts, run by `start`, `apply` and `phase0 check`), the
 // brief ack marker and the brief payload (C4). Types and readers only.
 import { OUTCOME_STAGES,type OutcomeStage } from '../core/events.ts';

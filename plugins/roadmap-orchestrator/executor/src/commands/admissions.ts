@@ -1,4 +1,4 @@
-// `close-admissions` (M3 B7; DESIGN-1.0.md §2.10 `draining`): latches `draining` with `admissions-closed{command}`.
+// `close-admissions` (M3 B7; DESIGN-1.0.md §2.10 "Completion"): latches `draining` with `admissions-closed{command}`.
 // While draining, new P1/P2 findings raise blocking `new-finding-draining` items. Planned units run on.
 // Only an architect `apply` that adds a unit reopens admissions (the fold, src/core/state.ts). A mutation with no scope.
 //

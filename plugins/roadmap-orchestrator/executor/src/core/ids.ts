@@ -223,7 +223,7 @@ export function invocationDirName(inv: InvocationId): string {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// M3 ids (SCHEMAS.md "M3"). A numbered id's `<n>` is 1 for the first of its kind in the arc and one more for
+// M3 ids (SCHEMAS.md "Ids"). A numbered id's `<n>` is 1 for the first of its kind in the arc and one more for
 // each later one, in log order; the fold checks the order where a fact opens it (`nextFindingId`,
 // `nextDivergenceId`, `nextJobId` on the journal view). Ids are never reused.
 
@@ -291,7 +291,7 @@ export function jobIdOfKind(kind: JobKind): IdReader<JobId> {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// M4a ids (SCHEMAS.md "M4a"). Unlike the M3 ids these are global across the chain of arcs, except `M-<n>`.
+// M4a ids (SCHEMAS.md "Ids"). Unlike the M3 ids these are global across the chain of arcs, except `M-<n>`.
 
 /** A corpus rule: `T-<n>`, global across arcs; a retired id is never reused (the pin and the registry hold it). */
 export type RuleId = Brand<string, 'RuleId'>;
@@ -316,7 +316,7 @@ export const phaseQuestionId: IdReader<PhaseQuestionId> = P.read;
 export const phaseQuestionSeq = P.n;
 
 // ---------------------------------------------------------------------------------------------------
-// M4a rev 3 ids (SCHEMAS.md "M4a rev 3").
+// M4a rev 3 ids (SCHEMAS.md "Ids").
 
 /** A plan's known defect: `K-<n>`, plan-scoped and never reused (`plan.knownDefects`, F4). */
 export type KnownDefectId = Brand<string, 'KnownDefectId'>;
@@ -334,7 +334,7 @@ export const witnessItemId: IdReader<WitnessItemId> = W.read;
 export const witnessItemIdOf = W.of;
 
 // ---------------------------------------------------------------------------------------------------
-// dev.13 ids (SCHEMAS.md "dev.13: milestone walkthroughs and design units").
+// dev.13 ids (SCHEMAS.md "Ids").
 
 /** A plan milestone: `MS-<n>`, plan-scoped, unique in the plan, never reused. */
 export type MilestoneId = Brand<string, 'MilestoneId'>;
@@ -446,7 +446,7 @@ export function hostNeedsUserId(slug: string): NeedsUserId {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// dev.17 ids (SCHEMAS.md "dev.17 records").
+// dev.17 ids (SCHEMAS.md "Ids").
 
 /** A failure mode of a spec's design record: `FM-<n>`, unique in its record. */
 export type FailureModeId = Brand<string, 'FailureModeId'>;

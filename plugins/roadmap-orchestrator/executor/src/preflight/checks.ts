@@ -685,7 +685,7 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
 }
 
 /**
- * The startup rows an apply re-runs over the new plan (SCHEMAS.md "Plan in force"): the input rows for the units whose
+ * The startup rows an apply re-runs over the new plan (SCHEMAS.md "Plan in force and CAS"): the input rows for the units whose
  * entry or spec changed (`scoped`), and the routing row when the routing changed. (The lane row is the apply core's,
  * `evaluateRevision`, so every revision runs it, not only an apply.)
  */

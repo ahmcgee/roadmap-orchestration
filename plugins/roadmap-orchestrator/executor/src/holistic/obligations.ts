@@ -1,4 +1,4 @@
-// Obligation edits (DESIGN-1.0.md §2.8 "Obligation edits"; plan "Obligations as a revisioned input"; M3 step A1).
+// Obligation edits (DESIGN-1.0.md §2.3 "Root commands and revisions"; plan "Obligations as a revisioned input"; M3 step A1).
 // Pure: the classifier (A2) and a bundle's activation (B6) run `classifyObligations` over the obligations in force
 // and the proposed file; re-derivation (rederive.ts) shares `weakeningsOf`.
 //

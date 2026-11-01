@@ -2,7 +2,7 @@ import { PROMPT as EXPERIENCE } from './experienceVerdict/claude-opus-5-5.ts';
 import { PROMPT as CAMPAIGN } from './campaignAudit/claude-opus-5-5.ts';
 // The prompt table: one decision per (role, model). PromptTable is a mapped type over the closed ModelId
 // union, so adding a model fails compilation here until every role names a prompt module, a reviewed
-// `inherits`, or `unsupported` (DESIGN-1.0.md §4, Prompt–model coupling; test parse.new-model-fails).
+// `inherits`, or `unsupported` (DESIGN-1.0.md §2.1 "Unit pipeline and review"; test parse.new-model-fails).
 import type { PromptSize } from '../core/records.ts';
 import type { ModelId, PromptSupport, PromptTable, Role } from '../routing/types.ts';
 import { PROMPT as BUILD_LUNA } from './build/gpt-5.6-luna.ts';

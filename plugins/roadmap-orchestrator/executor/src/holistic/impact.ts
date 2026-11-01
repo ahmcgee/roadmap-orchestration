@@ -1,5 +1,5 @@
 import { pathClass } from '../input/systems.ts';
-// Impact selection (DESIGN-1.0.md §2.8 "Impact mapping"; the frozen `SelectObligations` of src/holistic/types.ts;
+// Impact selection (DESIGN-1.0.md §2.7 "Plan, specs and certification lanes"; the frozen `SelectObligations` of src/holistic/types.ts;
 // M3 step A1). Pure. A candidate selects:
 //   - its units' declared obligations and their repairs, and the declared obligations of their dependency closure;
 //   - every obligation a changed path touches: one of its contracts, its docRef's document (a rule-anchored one, M4a,

@@ -1,6 +1,6 @@
 import { jobStageOutcome } from '../stageoutcome.ts';
 import { experiencePolish } from '../prompts/schemas.ts';
-// A polish unit's compare (dev.13, plan §4 "Polish units", R2; SCHEMAS.md "dev.13"): after its gate approved it and
+// A polish unit's compare (dev.13, plan §4 "Polish units", R2; SCHEMAS.md "Milestones and bring-up"): after its gate approved it and
 // before its candidate is admitted, a polish unit's tweak is judged against the product as it is. A polish unit's
 // candidate admission waits until its `tweak-judged` is a `keep` (src/schedule/ready.ts, constraint `compare`); a `drop`
 // never lands, so nothing needs reverting. The compare is a durable job `compare-<n>`, one at a time, run in the holistic

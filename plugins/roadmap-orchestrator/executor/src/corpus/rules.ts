@@ -1,4 +1,4 @@
-// Rules blocks (M4a, OR-Q12; SCHEMAS.md "M4a"): in a corpus Markdown file other than the vision document, a fenced
+// Rules blocks (M4a, OR-Q12; SCHEMAS.md "Corpus, Phase 0, debt and chain"): in a corpus Markdown file other than the vision document, a fenced
 // block with info string `rules` holds one rule per line, `T-<n>: <one-line normative claim>`. Prose outside blocks is
 // rationale. A rule's section is the nearest preceding ATX heading outside any fence (null when none precedes it).
 // Blank lines inside a block are allowed; a malformed line, an empty block, an unclosed block and a duplicate id are

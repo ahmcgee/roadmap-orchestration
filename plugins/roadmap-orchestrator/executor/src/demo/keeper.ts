@@ -1,4 +1,4 @@
-// The demo keeper (plan §4a; SCHEMAS.md "dev.13" "The demo"): the supervisor's one long-lived demo per host. It runs beside
+// The demo keeper (plan §4a; SCHEMAS.md "The demo"): the supervisor's one long-lived demo per host. It runs beside
 // the supervisor's executor watch (src/supervisor.ts), reads what the arc wants (`demo.desired.json`, src/demo/promote.ts)
 // once a second, and makes the host's instance (`demo.json`) match it, one reconcile at a time:
 //

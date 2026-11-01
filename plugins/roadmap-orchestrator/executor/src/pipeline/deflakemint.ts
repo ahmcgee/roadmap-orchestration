@@ -1,5 +1,5 @@
-// The code-applied deflake revision and the flaky ledger's items (dev.17; DESIGN-1.0.md §4 "Flaky ledger", SCHEMAS.md
-// "dev.17: the flaky ledger"). What is due is src/pipeline/deflake.ts `deflakeDue`; this module acts on it. No model call.
+// The code-applied deflake revision and the flaky ledger's items (dev.17; DESIGN-1.0.md §2.7 "Plan, specs and certification lanes", SCHEMAS.md
+// "Experience and evidence fact payloads"). What is due is src/pipeline/deflake.ts `deflakeDue`; this module acts on it. No model call.
 //
 // `applyDeflake` (the scheduler's `deflake` job, every arc, holistic or not):
 //   1. each key flaking again after two deflake units raises one non-blocking `flake-recurring` item (subject the arc,

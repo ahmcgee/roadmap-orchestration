@@ -1,4 +1,4 @@
-// The witness protocol (plan "Witnesses, observations, the transition table"; DESIGN-1.0.md §2.8 Witnesses): how an
+// The witness protocol (plan "Witnesses, observations, the transition table"; DESIGN-1.0.md §2.8 "Vision, corpus and obligations"): how an
 // arc lane's run becomes a witness record. The lane runs verbatim with `witnessEnv` added to its env; afterwards
 // `collectWitness` reads its reporter's output and `witnessRecordOf` builds the record, which `writeWitnessRecord`
 // keeps write-once as `witness.json` in the lane's evidence dir. The `witnessed` fact names that file's sha256.

@@ -1,5 +1,5 @@
 import { raiseNeedsUser,raisedWithReason } from '../needsuser.ts';
-// The plan in force (owner ruling 2026-09-29; SCHEMAS.md "Plan in force"): not the files, but a fold of the
+// The plan in force (owner ruling 2026-09-29; SCHEMAS.md "Plan in force and CAS"): not the files, but a fold of the
 // event log. The latest `plan-applied` fact names a revision, the hash of plan.json's bytes and of every unit's
 // spec.json; the bytes themselves are kept content-addressed in the run dir (`inputs/<sha256>.plan.json`,
 // `inputs/<sha256>.spec.json`). `roadmap apply` and a `start` whose files differ are the only ways a new

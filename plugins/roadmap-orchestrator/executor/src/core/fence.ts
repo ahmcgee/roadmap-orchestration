@@ -1,4 +1,4 @@
-// The revision fence (A19, G2, H2; DESIGN-1.0.md §2.6 "Revision fence"; M3 step A2). One fence per arc serialises
+// The revision fence (A19, G2, H2; DESIGN-1.0.md §2.3 "Root commands and revisions"; M3 step A2). One fence per arc serialises
 // every revision (`apply`, `rule`, `reverse`, checkpoint bundles, the executor's machine spec patches) from its final
 // synchronous validation, through its docs `ff`, to its `plan-applied`, so two revisions validated against one base
 // cannot both commit. It has two halves:

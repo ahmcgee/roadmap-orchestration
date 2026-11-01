@@ -860,7 +860,7 @@ export function boundsOfRecord(record: DispatchRecord | null): Bounds {
 /** `set`: literal values. `pass`: names copied from the executor's environment; absent → spec-lane-unrunnable. */
 export type LaneEnv = Readonly<{ set: Readonly<Record<string, string>>; pass: readonly string[] }>;
 /**
- * Where a lane runs (dev.17, DESIGN-1.0.md §4 "Lane topology"), a ladder: `build` in the builder's own loop and at the
+ * Where a lane runs (dev.17, DESIGN-1.0.md §2.7 "Plan, specs and certification lanes"), a ladder: `build` in the builder's own loop and at the
  * lanes stage; `unit` at the lanes stage; `candidate` on the candidate merge in the integration slot (and, a suite lane of
  * a lower cadence, there too); `batch` never in the merge path: at the publication retiring a milestone's last unit,
  * before its walk, at a no-milestone holistic arc's cadence audits, and always at the close-out. A spec lane is `build`,

@@ -4,7 +4,7 @@ import { hasMilestones } from '../input/plan.ts';
 import { claudeBuilderRouting } from '../routing/eligibility.ts';
 import { proofNotLocal,diagnosed } from './surface.ts';
 // Dispatch: who acts for a unit, on which seat, under which pinned authority, and the backend call that
-// puts them to work (plan "Authority", R2; DESIGN-1.0.md §4 Independence, Actors are roles).
+// puts them to work (plan "Authority", R2; DESIGN-1.0.md §2.1 "Unit pipeline and review").
 //
 // - A dispatch fact pins the unit's risk floor, routingRev, implementer seat hash, bounds and spec identity.
 //   Risk promotions re-pin with a higher floor; a limits revision re-pins at the next dispatch check. Unit systems

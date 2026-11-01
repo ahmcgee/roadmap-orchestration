@@ -1,6 +1,6 @@
 import { systemsMapInForce } from '../input/systems.ts';
 import { referenceCoverageReasons } from './report.ts';
-// The code-applied polish revision (dev.13, plan §4 "Polish skips the checkpoint", R3 revised; SCHEMAS.md "dev.13"): a
+// The code-applied polish revision (dev.13, plan §4 "Polish skips the checkpoint", R3 revised; SCHEMAS.md "Milestones and bring-up"): a
 // walk's polish proposals are full units the walkthrough authored, and code admits them as one plan revision under the
 // revision fence, through THE admit path a checkpoint `admit` takes (src/holistic/admission.ts `admitUnit` and
 // `fillMappedObligations`, then the classifier, `evaluateRevision`): one admit path, two authors. No model call.

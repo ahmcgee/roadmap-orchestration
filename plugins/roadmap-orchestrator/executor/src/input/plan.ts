@@ -12,7 +12,7 @@
 // both arms; the variant fields are read only through `targetDocuments` and `visionFile` (test target.no-direct-access).
 // `chain` (H7) names the previous arc of a chained start, fixed at revision 1.
 //
-// dev.13 (SCHEMAS.md "dev.13: milestone walkthroughs and design units"): `milestones` (absent: none; `milestonesOf`),
+// dev.13 (SCHEMAS.md "Milestones and bring-up"): `milestones` (absent: none; `milestonesOf`),
 // `limits.walkRounds` (absent: 3; `walkRoundsOf`), the unit origin `polish` with its `polish` field. The in-file milestone
 // refusals are here (`milestoneRefusals`); `milestones-need-holistic` is a Phase-0 row (src/phase0/rows.ts).
 import {
@@ -61,7 +61,7 @@ export const PROBE_EXIT = { free: 0, ownLabel: 10, foreign: 11 } as const;
 export type ResourceDecl = Readonly<{ name: ResourceName; probe: ToolCommand; teardown: ToolCommand; pool?: Readonly<{ size: number }> }>;
 
 /**
- * dev.17 (SCHEMAS.md "dev.17: environments"): a costed environment a lane runs against (`LaneDef.environment`). On disk
+ * dev.17 (SCHEMAS.md "Environment lifecycle"): a costed environment a lane runs against (`LaneDef.environment`). On disk
  * `environments: {<name>: {up?, down?, probe, idleMinutes?, resources?}}`; `up`, `down` and `idleMinutes` come together or not at all.
  * With them the executor owns its lifecycle (src/resources/environments.ts): brought up lazily at a lane's first use, kept
  * up while lanes keep using it, brought down `idleMinutes` (a positive number, fractions allowed) after its last use.

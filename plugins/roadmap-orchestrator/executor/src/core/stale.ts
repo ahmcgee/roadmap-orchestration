@@ -1,4 +1,4 @@
-// Propagation records (dev.17, experience-won E; SCHEMAS.md "dev.17: propagation"): what a revision changed that other
+// Propagation records (dev.17, experience-won E; SCHEMAS.md "Specs and design"): what a revision changed that other
 // records link to (its stale targets), every link the change left stale, and what a propagation unit re-witnesses. Code
 // computes them at the revision (src/holistic/propagation.ts `staleSetOf`, no model) and journals them (`stale-set`); this
 // module is the records and their readers.

@@ -1,4 +1,4 @@
-// `roadmap merge-in <u>` (M3 step A3; DESIGN-1.0.md §2.3, §3.5 "Rebase-before-verify → merge-in"): the integration
+// `roadmap merge-in <u>` (M3 step A3; DESIGN-1.0.md §2.3 "Root commands and revisions"): the integration
 // tip merged into a unit's branch, in its worktree, when the unit is not in a task (a mutation, scope {u}: it applies
 // only once the unit's task ended). The effect, each step only where missing:
 //

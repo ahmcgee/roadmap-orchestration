@@ -1,4 +1,4 @@
-// Observations (plan "Witnesses, observations, the transition table"; DESIGN-1.0.md §2.8 Witnesses, Ordering): the
+// Observations (plan "Witnesses, observations, the transition table"; DESIGN-1.0.md §2.8 "Vision, corpus and obligations"): the
 // verdict of one obligation's witness tests in one record, and the observation store the transition table reads.
 //
 // Verdicts (pure, `verdictOf`) over the witness's declared test ids, a test id the record lacks counting as

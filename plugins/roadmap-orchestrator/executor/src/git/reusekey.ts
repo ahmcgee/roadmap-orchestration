@@ -1,4 +1,4 @@
-// The reuse key (dev.17, DESIGN-1.0.md §4 "Lane topology"): the one key every lane run is reused by, a spec or suite lane's
+// The reuse key (dev.17, DESIGN-1.0.md §2.7 "Plan, specs and certification lanes"): the one key every lane run is reused by, a spec or suite lane's
 // clean pass (src/pipeline/lanes.ts `reusablePass`, the batch skip) and an arc lane's observation (src/holistic/observe.ts)
 // alike: `(lane, laneRev, envId, inputSha)`.
 //

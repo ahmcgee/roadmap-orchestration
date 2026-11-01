@@ -1,4 +1,4 @@
-// The routing stack (DESIGN-1.0.md §4, Routing profiles), lowest to highest precedence:
+// The routing stack (DESIGN-1.0.md §3 "Routing and cost"), lowest to highest precedence:
 //
 //   builtin profile  <  .roadmap/config.json routing  <  plan.json routing  <  per-unit route
 //
@@ -228,20 +228,9 @@ export type ResolvedRouting = Readonly<{
   arcScope: ArcScope;
   arcRoles: ArcRoleSet | null;
   milestones: boolean;
-  /**
-   * TEMPORARY SCAFFOLDING (BACKLOG "Scaffolding to delete"): the revs this same stack hashed under each earlier adopted
-   * release's built-in seats and xhigh summit effort (`EARLIER_BUILTIN_SEATS`, `summitXhighTriple` in core/upgrade.ts),
-   * which status aliases a recorded rev through.
-   * Empty under any table but HEAD's.
-   */
+  /** Reserved routing metadata; the current resolver returns an empty list. */
   earlierBuiltinRevs: readonly RoutingRev[];
-  /**
-   * TEMPORARY SCAFFOLDING: the one of `earlierBuiltinRevs` under `PRE_DEV17_BUILTIN_SEATS`, the only earlier table whose
-   * build seats differ from HEAD's (dev.16 built high on frontier). A unit pinned under it is a dev.16 arc's, so dispatch
-   * keeps its started implementer's seat (`repin`). Only this table: an owner edit of HEAD's seats can hash to an older
-   * table's rev (HEAD with build.high on frontier is dev.9's table where no arc role is in force), never to this one
-   * unless it restores dev.16's seats exactly. Null under any table but HEAD's.
-   */
+  /** Reserved routing metadata; the current resolver returns null. */
   preDev17Rev: RoutingRev | null;
 }>;
 

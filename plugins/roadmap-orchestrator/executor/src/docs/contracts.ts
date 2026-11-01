@@ -1,4 +1,4 @@
-// Anchor-exact document references and contract ops (DESIGN-1.0.md §2.3 `rule`, §2.6; M3 step A1). Pure: the
+// Anchor-exact document references and contract ops (DESIGN-1.0.md §2.3 "Root commands and revisions"; M3 step A1). Pure: the
 // caller hands in the documents' text at the tip.
 //
 // An anchor names exactly one place in a document:

@@ -1,4 +1,4 @@
-// Build rounds (plan "Pipeline", R3; DESIGN-1.0.md §4 Fix rounds). The implementer is dispatched in one of
+// Build rounds (plan "Pipeline", R3; DESIGN-1.0.md §2.1 "Unit pipeline and review"). The implementer is dispatched in one of
 // five rounds: the four a decision asks for (`BuildRound`, transitions.ts) and `continue`:
 //
 //   fresh     a new session in the unit worktree (created on the unit branch at the integration tip the
@@ -72,7 +72,7 @@
 //
 // Every directive's text is src/prompts/directives.ts's (one canonical place).
 //
-// Codex resume collision (DESIGN-1.0.md §3 "Codex facts"): a `codex exec resume` that dies at once because
+// Codex resume collision (DESIGN-1.0.md "Git truth and backend invariants"): a `codex exec resume` that dies at once because
 // the thread is still held by a live session is a transient, not a verdict on the unit. `callImplementer`
 // retries such a call once, as a new invocation with the same deadline.
 import { existsSync,readFileSync } from 'node:fs';

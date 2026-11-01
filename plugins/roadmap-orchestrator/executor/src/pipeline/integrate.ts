@@ -1,5 +1,5 @@
 import { protectedPathsInForce } from '../input/protected.ts';
-// The integration slot (plan "Pipeline", candidate, ff and snapshot rows; DESIGN-1.0.md §3 "Merge"):
+// The integration slot (plan "Pipeline", candidate, ff and snapshot rows; DESIGN-1.0.md "Git truth and backend invariants"):
 // candidate → suite lanes → ff-only publication → snapshot, so the tested head is the published head.
 //
 // The publication transaction (A2, F3): the candidate takes `integration-slot` as its entry reservation, under
@@ -930,7 +930,7 @@ async function publish(ctx: StageContext, unit: PlanUnit): Promise<StageDone<'ff
 }
 
 // ---------------------------------------------------------------------------------------------------
-// A repair batch's publication (M3 B2; R7, G5, H4; DESIGN-1.0.md §2.8 "Batch repair")
+// A repair batch's publication (M3 B2; R7, G5, H4; DESIGN-1.0.md §2.9 "Git artifacts and clean PRs")
 //
 // All approved units repairing one finding publish as one candidate: `publishBatch` takes `integration-slot` under
 // `batch{finding, attempt}` (first of every unit waiter, as a repair ranks first, R6) for the batch's durable job

@@ -1,4 +1,4 @@
-// The stage `prepare` (M2; DESIGN-1.0.md §4 Re-entry, SCHEMAS.md "M2", amendments A6 and F14): a re-entered unit's
+// The stage `prepare` (M2; DESIGN-1.0.md §2.3 "Root commands and revisions", SCHEMAS.md "Scheduling", amendments A6 and F14): a re-entered unit's
 // first stage, which readies its worktree before the pipeline takes it on; and (M4a rev 3, F4) a unit's way back from a
 // known defect (its decided outcome is lanes `known-defect`), once admission lets it in (the defect's fixer merged, or
 // the entry was removed or retargeted).

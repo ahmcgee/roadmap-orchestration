@@ -1,4 +1,4 @@
-// The corpus records (M4a, frozen in step 0a; SCHEMAS.md "M4a"): the corpus guide's block, the corpus pin and the
+// The corpus records (M4a, frozen in step 0a; SCHEMAS.md "Corpus, Phase 0, debt and chain"): the corpus guide's block, the corpus pin and the
 // published rules registry. Types, readers and pure helpers only; A1 owns the behaviour (src/corpus/{rules,guide,
 // source,pin,materialise,registry}.ts): parsing rules blocks, resolving the source, deriving and re-deriving the pin.
 //

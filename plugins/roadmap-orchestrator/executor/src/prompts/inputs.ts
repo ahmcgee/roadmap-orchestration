@@ -2,7 +2,7 @@
 // Inputs are snapshotted by revision at dispatch (DESIGN-1.0.md §2.3), so a prompt is a pure function of
 // them: no dates, no random ids, no reads of the filesystem or the environment.
 //
-// The required input set per role (ROLE_INPUTS) comes from DESIGN-1.0.md §2.1 and §4 "Gate inputs"
+// The required input set per role (ROLE_INPUTS) comes from DESIGN-1.0.md §2.1 "Unit pipeline and review"
 // and the M1 plan's gate inputs (R2). Every prompt module must interpolate exactly these fields; the
 // test `prompts.fields==required` holds each module to it.
 import { createHash } from 'node:crypto';

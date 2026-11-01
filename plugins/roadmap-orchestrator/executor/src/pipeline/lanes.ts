@@ -1,5 +1,5 @@
 import { externalVerdict } from '../holistic/external.ts';
-// Lane execution (plan "Pipeline", lanes and candidate rows; DESIGN-1.0.md §4 Verification, Lanes): the
+// Lane execution (plan "Pipeline", lanes and candidate rows; DESIGN-1.0.md §2.7 "Plan, specs and certification lanes"): the
 // executor runs a series of lanes serially, verbatim, under their reservations, in a clean detached
 // checkout, in cadence order (build, unit, candidate, batch; dev.17), and keeps one evidence dir per lane. The same series
 // runs a unit's spec lanes at the salvage SHA (set `spec`, the lanes stage), the plan's build and unit suite lanes and the
@@ -1315,7 +1315,7 @@ export function seriesDirty(view: JournalView, root: AbsPath): readonly RepoPath
 }
 
 // ---------------------------------------------------------------------------------------------------
-// Journey series (M3 B2; DESIGN-1.0.md §2.8 "Journey lanes"; plan "Journey lanes and the held-claims brake")
+// Journey series (M3 B2; DESIGN-1.0.md §2.7 "Plan, specs and certification lanes"; plan "Journey lanes and the held-claims brake")
 //
 // Arc lanes (and a job's suite lanes) run owned by no unit, under the same arbiter, locks, watchdog, evidence and
 // red-lane rules as a series: in a unit's candidate under its stage holder (`owner: unit`), and under a job's holder

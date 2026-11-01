@@ -1,4 +1,4 @@
-// Where each milestone stands (dev.13, plan §2–§4; SCHEMAS.md "dev.13"): derived from the log's walk facts, the plan in
+// Where each milestone stands (dev.13, plan §2–§4; SCHEMAS.md "Milestones and bring-up"): derived from the log's walk facts, the plan in
 // force and the findings, never stored. Pure but for the repairing units the caller reads (src/pipeline/reproduce.ts
 // `repairUnits`: which units' specs repair which findings).
 //
@@ -200,7 +200,7 @@ export function settledMilestones(view: JournalView, plan: PlanM1, repairs: Repa
   });
 }
 
-/** The status line's state (SCHEMAS.md "dev.13"): `building` until reached, then `walking | blocked | passed | polishing | settled`. */
+/** The status line's state (SCHEMAS.md "Milestones and bring-up"): `building` until reached, then `walking | blocked | passed | polishing | settled`. */
 export type MilestoneState = 'building' | 'walking' | 'blocked' | 'passed' | 'polishing' | 'settled';
 
 /**

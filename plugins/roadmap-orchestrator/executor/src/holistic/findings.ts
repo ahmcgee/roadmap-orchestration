@@ -1,4 +1,4 @@
-// The findings store (DESIGN-1.0.md §2.8 "Findings and repair"; plan "Findings and repair"; M3 step B3). The log is the
+// The findings store (DESIGN-1.0.md §2.5 "Campaign audit and findings"; plan "Findings and repair"; M3 step B3). The log is the
 // store: `finding-opened` and `finding-transition` facts, folded into `HolisticFold.findings` (src/core/state.ts). This
 // module decides what is written and derives everything else from the fold.
 //

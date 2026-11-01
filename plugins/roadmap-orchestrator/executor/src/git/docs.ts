@@ -1,4 +1,4 @@
-// `docs.commit` (M3 step A4; DESIGN-1.0.md §2.9, §9; plan "Docs publication"): in the integration slot, a docs
+// `docs.commit` (M3 step A4; DESIGN-1.0.md §2.9 "Git artifacts and clean PRs"; plan "Docs publication"): in the integration slot, a docs
 // publication's one commit on the integration tip T: the executor-rendered `.roadmap/` files, the vision files a
 // revision publishes (dev.16) and the contract ops' edited documents, held on the executor-owned ref
 // `refs/roadmap-run/<arc>/docs/<pub>`. Its lanes run on it and, on green, integration fast-forwards to exactly this

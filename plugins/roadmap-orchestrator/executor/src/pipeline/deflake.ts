@@ -1,4 +1,4 @@
-// The flaky ledger (dev.17, lane topology; DESIGN-1.0.md §4 "Flaky ledger", SCHEMAS.md "dev.17: the flaky ledger"). Pure
+// The flaky ledger (dev.17, lane topology; DESIGN-1.0.md §2.7 "Plan, specs and certification lanes", SCHEMAS.md "Experience and evidence fact payloads"). Pure
 // over the log's view and the plan in force; the minting revision and its items are src/pipeline/deflakemint.ts.
 //
 // A flake is a lane run red, then green on its diagnostic rerun (src/pipeline/redlane.ts): the same tree, the same

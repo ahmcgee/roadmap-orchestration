@@ -1,4 +1,4 @@
-// Vacuity repairs and the repair side of findings (DESIGN-1.0.md §2.5 "Mutants are executed, never judged by reading",
+// Vacuity repairs and the repair side of findings (DESIGN-1.0.md §2.1 "Unit pipeline and review",
 // §2.8 "Findings and repair"; plan "Mutant reproduction"; M3 step B3).
 //
 // A vacuity finding carries a mutant: a patch the lens claims the obligation's witness does not catch. A unit whose spec

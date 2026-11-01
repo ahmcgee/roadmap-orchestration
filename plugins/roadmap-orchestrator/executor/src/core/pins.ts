@@ -1,4 +1,4 @@
-// Revision pins (dev.17, propagation; SCHEMAS.md "dev.17 records"): every link a spec or a design record carries names the
+// Revision pins (dev.17, propagation; SCHEMAS.md "Specs and design"): every link a spec or a design record carries names the
 // revision of its target it was written against, so a change to the target makes the link stale by comparison, in code.
 // A link with no pin (a dev.16 spec, or an owner's spec no pre-build has revised) reads `UNPINNED`: its staleness is
 // unknown, never "fresh".

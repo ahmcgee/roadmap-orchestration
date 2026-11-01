@@ -6,12 +6,6 @@ contracts live in SCHEMAS.md. Work tied solely to removed producers is retired w
 
 ## Command-center follow-up
 
-- Root finding dismissal with counter-evidence was proposed but has no current command/apply field. Findings currently
-  resolve through repair publication or code-owned reproduction/close-out paths. Add an evaluated authoring channel
-  before claiming the root can dismiss a campaign false positive directly.
-- The M4a operator-log checker still accepts a retired action label and lacks note/witness; synchronize its closed
-  action list before grading those interventions. The documented pause example uses a supported action.
-
 - Calibrate diagnosis (8 builds/20 judged attempts) and hard-stop (16/40) thresholds from the first field arcs. They are
   fixed in code today, independent of limits. Add a verifier diagnosis role eval when real diagnoses provide cases.
 - Restore lane time estimates only when scheduling or summary consumes them; estMin is not a current field.
@@ -120,3 +114,83 @@ Dev.33 deliberately refuses schema 1. For the next compatible release add the no
 while retaining the schema-1 refusal regression. Include backend parks, Claude-only routing, an already-launched lane,
 and queued resume after a spec edit when those records change. Historical schema-1 aliases/default cleanup is complete;
 no migration of refused runtime is promised.
+
+## Deferred measurements and integrity
+
+- **Event-log compaction.** `status.log.compactionDue` signals 50 MB or a 2 s fold; implement compaction when either
+  threshold is reached in a field arc, preserving recovery and evidence identities.
+- **Adopted runners.** Recovery awaits a live runner before dispatching; hand it to its unit task so other units can
+  progress. A takeover can hold `host.recovery.lock` beyond start's wait. Trigger: a long adopted build delaying restart.
+- **Fault coverage.** Only unit tasks and audit/walk/baseline jobs have containment wrappers. Slot holders, pack review,
+  polish/compare, repair batches, close-out, commands and the scheduler can still crash repeatedly (supervisor: three/hour).
+  Trigger: that field crash loop; record an abandonment or isolate the affected job before replay.
+- **Read-only Codex judgment override.** Judgment dispatch currently requires Claude. Add an optional evaluated override
+  only when a read-only role trial demonstrates useful quality and isolation; keep Claude as the primary path.
+- **Audit chunks.** `nextChunk`/`chunkEnd` persist bounded ranges; `fitsWhole` still sizes them using the dev.11 diff
+  measure. Remove chunking only when a role eval shows one call covers a whole representative range.
+- **Audit failure detail.** Failed campaign/lens calls can end as bare `abandoned`; persist their failure detail.
+  Trigger: an abandoned audit whose reason cannot be recovered from its end record.
+- **Stable defect lineage across audits.** Finding keys hash lens/obligation/cause, so changed wording can mint another id.
+  Trigger: the same defect recurring under distinct ids; measure duplicates before introducing lineage (F24 remainder).
+- **Repair delivery accounting.** Repair ownership follows `repairs`, while obligation delivery follows `deliveredBy`.
+  Trigger: an M4a-run-6-style repair omitted from delivery attribution; reconcile both without crediting unrelated work.
+- **Arc-constant prompt cache boundary.** Probe measured cache write 1,429 / read 44,441 tokens for about 107 KB.
+  Try stable role/target/contract text in the system prompt and round-specific inputs in the message; never promote builder
+  text into authority. Gate on a real judgment A/B with equivalent verdicts and measured weekly-limit savings.
+- **Fast suite at lanes.** Earlier certified passes are not reused there, the shared base-check cache is memory-only, and
+  `knownDefectHit` matches spec lanes only. Trigger: repeated fast suites, a restart repeating base checks, or a suite
+  known defect; reuse by identity, rebuild the base-check cache from durable evidence and extend matching as demonstrated.
+- **Chain K.** `nextStart` reads K committed at the chain head's baseline. Trigger: an owner changes K between arcs and
+  the displayed next-start decision disagrees with the intended bound; compare against the new committed config.
+- **Config lifetime.** Apply uses config read at start; class rebinds, K and systems-map edits need restart, and dry-run
+  can disagree with the live executor. Trigger: repeated mid-arc map/rebind changes or a mismatched dry-run; add revisioned
+  reload semantics rather than reading mutable config opportunistically.
+- **Host pressure gaps.** Charging does not cover witness-presence/mutation checks, journey lanes and all jobs. Status
+  lacks tick history needed to explain a pressure hold's 30-minute bound. Trigger: one of these runs fails under pressure
+  or a hold appears overdue; retain the ticks and extend only the demonstrated charging paths.
+- **Environment idle policy.** `idleMinutes` is explicitly authored, with no measured recommended default. Re-derive
+  recommendations after an arc actually uses managed environments and records idle cost/start latency.
+- **Design thresholds.** `SUBSTANTIAL_SYSTEM_LINES=200` and `DIFF_BYTES_PER_LINE=100` (used by `gateInlineLines`) are
+  first guesses. Re-derive from gate `designEstimate`/`largeDiff` and observed unit sizes in a field arc.
+- **Builder/effort measurements.** Claude-only efficient builds use Sonnet 5.5 medium; compare fix-round counts with Opus
+  before retuning. Summit uses high by the 2026-10-24 owner ruling; compare high/xhigh quality and cost before revisiting.
+- **Codex catalogue availability.** gpt-5.6-sol remains in models/argv/pricing; a ChatGPT Codex account returned 400 on
+  2026-10-06. Verify account availability before a rebind; keep the observation account/date-specific.
+- **Resume collision evidence.** The Codex retry matches `thread already` without a captured modern sample. Trigger: an
+  actual collision; retain its events and confirm the match. The dev.9 recovery-held resume crash remains unreproduced;
+  if it recurs, retain the stack and distinguish a confined fault from shared-state failure.
+- **Reporter paths.** `witnessEnv` embeds the reporter in NODE_OPTIONS without whitespace quoting. Trigger: installing
+  under a path with spaces; reproduce and fix argv/environment encoding.
+- **Removed/skipped tests.** Add a deterministic failure for removed or skipped tests unless the spec permits it.
+  Trigger: a regression hidden by deleting/skipping a test that current witnesses and gate miss.
+- **Spec witness files.** W-n items name lane/test id/clause/skeleton, no file; file reachability checks cover obligation
+  witnesses. Trigger: a spec witness that never runs; add file identity/reach checks without inferring files from names.
+- **Close-out batch reds.** Close-out batch verification can refuse with base-red rather than opening a repair finding.
+  Trigger: this refusal in a field close-out; provide a root repair path consistent with completion.
+- **Vacuity and builder eval.** Ask which smallest regression each test would miss; evaluate builders with plants that
+  vacuous suites pass (m5 run 5 first-audit baseline: 10 P2 + 3 P3). Compare both test strength and the gate's marginal
+  value before further prompt trimming.
+- **Gate-eval maintenance.** The fixture builder can spend about nine minutes before rejecting an impossible omitted
+  placement. Trigger: another wasted fixture build; fail placement early.
+- **Execution-only gate cells.** X1–X3 and `exec-gain` remain; redesign the cells when their static clues let the gate
+  pass without the experiment the metric intends to measure.
+- **Answer latency.** Compare messaging a live root session with `watch --actionable` answer wakes when answer-to-apply
+  latency becomes material; preserve the canonical answer log.
+
+## Experience evidence still needed
+
+- **m5 plant.** No recorded paid run has shown a walk itself catch the 320 px reflow plant. Trigger: a paid run where
+  the planted condition URL survives until the first walk; distinguish upstream prevention from walk detection.
+- **m3 coverage.** The checker still reports untaken paths including steer, merge-in, reproduction, batch repair,
+  owner-request, draining and real Go. Use its NOT EXERCISED list as the measurement, not a blanket end-to-end claim;
+  add paid evidence when changing a corresponding live path.
+- **Experience extensions.** Reference renders and visual-regression baselines need a measured visual miss; cross-model
+  and Sonnet/Haiku walk variants need comparative role trials. Desktop journeys need a real Electron/native target.
+  Claude Design in design units waits for usable headless `claude -p` support. Add an advisory for human-facing units
+  outside all milestones when a real plan omits its usable surface.
+
+## Scaffolding to delete
+
+- **`unclassedParkRecord`.** The fold still synthesizes operator parks for stage outcomes without explicit park data
+  (`core/state.ts`, `core/events.ts`, `pipeline/transitions.ts`). Remove the shim once every live producer supplies its
+  park class/targets and a replay test shows no supported schema-2 journal needs the fallback.

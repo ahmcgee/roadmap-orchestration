@@ -1,5 +1,5 @@
 import { protectedPathsInForce } from '../input/protected.ts';
-// Proportional review at the gate (dev.17; DESIGN-1.0.md §4 "Proportional review", SCHEMAS.md "Proportional review").
+// Proportional review at the gate (dev.17; DESIGN-1.0.md §2.1 "Unit pipeline and review", SCHEMAS.md "Role input and output contracts").
 //
 // Code owns the invariants that keep review proportional; the gate seat owns its method.
 //

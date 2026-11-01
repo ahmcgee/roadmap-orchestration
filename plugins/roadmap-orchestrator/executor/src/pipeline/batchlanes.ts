@@ -1,4 +1,4 @@
-// Batch points (dev.17, DESIGN-1.0.md §4 "Lane topology"): where the plan's `batch` suite lanes run, never in the merge
+// Batch points (dev.17, DESIGN-1.0.md §2.7 "Plan, specs and certification lanes"): where the plan's `batch` suite lanes run, never in the merge
 // path. A batch point runs on an integration SHA under a job, as a journey series (src/pipeline/lanes.ts `runJourneySeries`):
 //
 //   milestone   the walk of a milestone round (src/walk/walk.ts), after its capture and before its reservation: the
