@@ -527,7 +527,7 @@ export type WalkAgainst =
   | Readonly<{ type: 'floor'; text: string; source: RepoPath | VisionClauseId }>
   | Readonly<{ type: 'design'; path: RepoPath; anchor: string }>
   | Readonly<{ type: 'vision'; clause: VisionClauseId }>;
-/** `breaks` cites the journey, a contract or a floor; `deviates` the design, the vision or a floor. */
+/** `breaks` cites the journey, a contract or a floor; `deviates` the design or the vision. */
 export const WALK_AGAINST: { readonly [C in WalkFindingClass]: readonly WalkAgainst['type'][] } = {
   breaks: ['journey', 'contract', 'floor'],
   deviates: ['design', 'vision'],
@@ -555,13 +555,15 @@ export type WalkthroughOutput = Readonly<{
 const S_EVIDENCE = sDescribe(sArr(S_STR), 'Each entry must be ONLY the exact path of an existing saved file inside the supplied evidence directory (polish may also cite the original walk evidence directory). Relative paths resolve from that directory. No path:line suffix, colon plus commentary, quotes or explanatory prose: put explanations in note, claim or reasons. File existence and containment are checked against the supplied directories.');
 const WALK_AGAINST_SCHEMAS = {
   journey: sObj({ type: sEnum(['journey']) }),
-  contract: sObj({ type: sEnum(['contract']), path: S_REPO_PATH, anchor: S_STR, dependents: S_STR }),
+  contract: sObj({ type: sEnum(['contract']), path: S_REPO_PATH, anchor: S_STR, dependents: sDescribe(S_STR, 'Clients, scripts, consumers or later units whose implementation would need rework when the interface is fixed. Merely reading a message or using a page is not such a dependency.') }),
   floor: sObj({ type: sEnum(['floor']), text: S_STR, source: sDescribe(S_FLOOR_SOURCE, 'A non-negotiable active V-n vision clause, or a repository reference quality-floor section.') }),
   design: sObj({ type: sEnum(['design']), path: S_REPO_PATH, anchor: S_STR }),
   vision: sObj({ type: sEnum(['vision']), clause: sNumbered('V') }),
 } as const;
 const walkFindingSchema = (kind: WalkFindingClass): Schema => sObj({
-  class: sEnum([kind]), journey: sDescribe(sNumbered('J'), 'Must be a journey reported in journeys.'),
+  class: sDescribe(sEnum([kind]), kind === 'breaks'
+    ? 'A defect whose later fix forces rework of dependents: an observed failure of the product action that prevents completing the journey, a wrong interface contract consumers build on, or a measured violation of an explicitly declared quality floor or active non-negotiable clause. Copy, visuals, diagnostics and stale docs against a correct interface do not block.'
+    : 'An observed gap against a design reference or active vision clause whose repair changes nothing dependents build on: copy, visuals, layout, help/error wording, CI/log diagnostics, stale docs against a correct interface, or a console error with working actions. Sanctioned variants and choices left open are not findings.'), journey: sDescribe(sNumbered('J'), 'Must be a journey reported in journeys.'),
   evidence: {...S_EVIDENCE as object, minItems: 1}, claim: S_STR, cause: S_STR,
   against: {anyOf: WALK_AGAINST[kind].map((type) => WALK_AGAINST_SCHEMAS[type]), description: 'Contract/design paths must lie inside a supplied milestone reference. Vision clauses must be active; a vision floor must be non-negotiable.'},
   paths: sUnique(sArr(S_REPO_PATH)),

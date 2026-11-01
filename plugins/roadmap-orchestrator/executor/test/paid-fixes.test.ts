@@ -71,7 +71,7 @@ test('malformed surface trial is void and a subsequent trial still grades', () =
   assert.deepEqual(gradeSurfaceTrial('pre-build', false, referenceAnswer('pre-build', false)), {pass: true, void: null});
 });
 
-test('clean audit witness executes all sign quadrants and rejects a sign-from-first-operand mutant', async () => {
+test('clean audit witness executes all sign quadrants and double boundaries and rejects arithmetic mutants', async () => {
   const out = tmpDir('surface-clean');
   await runSurface(['campaignAudit', '--set', 'dev', '--n', '1', '--dry-run', '--out', out]);
   const cwd = join(out, 'clean-0/checkout');
@@ -81,6 +81,10 @@ test('clean audit witness executes all sign quadrants and rejects a sign-from-fi
   assert.equal(result.status, 0, result.stdout + result.stderr);
   writeFileSync(join(cwd, 'src/unit.js'), 'export function mul(a,b) { return a<0 ? -Math.abs(a*b) : Math.abs(a*b); }');
   assert.equal(run().status, 1);
+  writeFileSync(join(cwd, 'src/unit.js'), 'export function mul(a,b) { return a*b || 0; }');
+  assert.equal(run().status, 1, 'normalizing signed zero or NaN violates the double contract');
+  writeFileSync(join(cwd, 'src/unit.js'), 'export function mul(a,b) { const product = a*b; return Number.isFinite(product) ? product : Number.MAX_VALUE; }');
+  assert.equal(run().status, 1, 'clamping overflow violates the double contract');
 });
 
 test('verifier shell inspection counts and corpus trials run a real source-free witness lane', async () => {

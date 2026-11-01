@@ -87,7 +87,9 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
    expensive local checks run on candidates, with scarce shared/cross-system checks at batch/milestone boundaries.
 5. **Judge the experience and campaign.** Once milestone units retire, its selected lanes run and one experience
    role walks its journeys and judges polish comparisons. Breaks hold downstream work; deviations can be repaired
-   alongside it. Fresh whole-range campaign audits run at milestones, on request and at the final boundary, judging
+   alongside it. A break requires a failed product action, an interface repair that reworks dependents, or a measured
+   declared floor violation. Copy, visuals, diagnostics and stale docs against a correct interface deviate; sanctioned
+   choices are not findings. Fresh whole-range campaign audits run at milestones, on request and at the final boundary, judging
    invariants, vacuity, interactions and document drift together. Audits report findings and root requests; the
    architect changes the plan and alone authorizes obligation dispositions. Audit dismissal requests await the root;
    `dismiss F-n --counter-evidence "<line>"` records its evidence-backed decision, including for P1 findings.

@@ -22,6 +22,7 @@ for (const role of ['pre-build', 'campaignAudit'] as const) {
       const answer = referenceAnswer(role, cell.defect);
       assert.equal(schemaViolation(prompt.schema, answer), null);
       assert.equal(gradeSurface(role, cell.defect, answer), true);
+      assert.equal(gradeSurface(role, false, referenceAnswer(role, true)), false, 'clean requires zero findings, including notes');
       if (cell.defect) assert.equal(gradeSurface(role, true, referenceAnswer(role, false)), false);
     }
   });
