@@ -6,7 +6,7 @@ converges the codebase on the documented target state, unattended, for a week or
 
 ## Status
 
-**1.0 is in prerelease on `main`** (`1.0.0-dev.34`). The command-center release uses runtime schema 2.
+**1.0 is in prerelease on `main`** (`1.0.0-dev.33`). The command-center release uses runtime schema 2.
 Arcs started on dev.32 or earlier are refused, not adopted; finish them with their original executor.
 The last 0.x release is at tag `v0.20.0`.
 

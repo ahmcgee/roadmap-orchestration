@@ -1,6 +1,6 @@
 # Executor schemas and contracts — schema 2
 
-Current contracts for **1.0.0-dev.34**. This is a reference to the implemented readers, not an append-only release
+Current contracts for **1.0.0-dev.33**. This is a reference to the implemented readers, not an append-only release
 history. Paths below are relative to this executor directory. [DESIGN-1.0.md](../../../DESIGN-1.0.md) explains behavior;
 [reference.md](../skills/orchestrate/reference.md) lists every parser-checked CLI form.
 
