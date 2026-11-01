@@ -2,9 +2,9 @@
 // revision of its target it was written against, so a change to the target makes the link stale by comparison, in code.
 // A link with no pin (a dev.16 spec, or an owner's spec no pre-build has revised) reads `UNPINNED`: its staleness is
 // unknown, never "fresh".
-import { type ObligationId, type Sha, type VisionClauseId, obligationId, sha, visionClauseId } from './ids.ts';
-import { type RepoPath, repoPath } from './values.ts';
-import { type Read, literal, object, positive, tagged } from './validate.ts';
+import { type ObligationId,type Sha,type VisionClauseId,obligationId,sha } from './ids.ts';
+import { type RepoPath,repoPath } from './values.ts';
+import { type Read,literal,object,positive,tagged } from './validate.ts';
 
 /** A requirement (obligation `I-n`) at its normative `rev` (`ObligationRev`). */
 export type RequirementPin = Readonly<{ type: 'requirement'; id: ObligationId; rev: number }>;
@@ -32,15 +32,11 @@ export const requirementPin: Read<RequirementPin> = object((f) => ({
 export const contractPin: Read<ContractPin> = object((f) => ({
   type: f.get('type', literal('contract')), path: f.get('path', (v, p) => repoPath(v, p)), blob: f.get('blob', (v, p) => sha(v, p)),
 }));
-export const visionClausePin: Read<VisionClausePin> = object((f) => ({
-  type: f.get('type', literal('vision-clause')), id: f.get('id', (v, p) => visionClauseId(v, p)), visionRev: f.get('visionRev', positive),
-}));
 export const filePin: Read<FilePin> = object((f) => ({
   type: f.get('type', literal('file')), path: f.get('path', (v, p) => repoPath(v, p)), blob: f.get('blob', (v, p) => sha(v, p)),
 }));
 
 export const specPin: Read<SpecPin> = tagged<SpecPin['type'], SpecPin>('type', { requirement: requirementPin, contract: contractPin });
-export const pin: Read<Pin> = tagged<Pin['type'], Pin>('type', { requirement: requirementPin, contract: contractPin, 'vision-clause': visionClausePin, file: filePin });
 
 /**
  * The pins of `after` whose target `before` pinned at another revision or not at all, and the pins of `before` whose target

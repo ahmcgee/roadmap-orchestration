@@ -1,5 +1,5 @@
 import { systemName } from '../src/core/ids.ts';
-import { readNeedsUser } from '../src/needsuser.ts';
+import { readNeedsUser,raiseNeedsUser } from '../src/needsuser.ts';
 // M3 step A2: the revisioned-input core (src/commands/apply.ts `evaluateRevision`, `commitUnderFence`;
 // src/input/{classify,inforce}.ts; src/recover/revision.ts; src/core/fence.ts; src/commands/reverse.ts), over real
 // arcs (real git, real journals). The docs publication is step A4's: a stand-in (test/fixtures/docs-fake.ts) writes
@@ -23,7 +23,7 @@ type CommandContext,type CommandOutcome,type RevisionContext,applyCommand,commit
 import { newCommandId,readReceipt,submitCommand,terminalReceipt } from '../src/commands/queue.ts';
 import type { Fact,IntentOf,PlanAppliedFact,RevisionPayload } from '../src/core/events.ts';
 import { captureUnderFence,holdFence } from '../src/core/fence.ts';
-import { type DivergenceId, clauseId, invocationIdOf, jobId, unitId } from '../src/core/ids.ts';
+import { type DivergenceId,commandId,clauseId,invocationIdOf,jobId,unitId } from '../src/core/ids.ts';
 import { canonicalJson } from '../src/core/json.ts';
 import { openJournal,readJournal } from '../src/core/log.ts';
 import type { CommandBody } from '../src/core/records.ts';
@@ -260,7 +260,7 @@ test('apply.limits-below-spent: a bound below what a unit has spent is refused; 
     assert.equal(r.journal.view.unit(U1).counters.chargeableFailures, 2);
     editPlan(d, (p) => void (p['limits'] = { chargeable: 1 }));
     assert.match(reasonOf((await command(r, applyBody(d))).outcome), /unit u1: its chargeable bound 1 is below what it has spent \(2\)/);
-    editPlan(d, (p) => void (p['limits'] = { chargeable: 2, convergenceK: 1 }));
+    editPlan(d, (p) => void (p['limits'] = { chargeable: 2, }));
     const limited = await command(r, applyBody(d));
     assert.equal(limited.outcome.kind, 'applied', JSON.stringify(limited.outcome));
     assert.deepEqual(lastApplied(r).changes, [{ type: 'limits', unit: null }]);
@@ -582,9 +582,13 @@ test('revision notice: run-only clear closes a non-flow revision notice before t
   const r = contextFor(d);
   try {
     await command(r, { type: 'run-only', units: [U1] });
-    bundleAdmitsU2(r, 'restore-revision');
+    addUnit(d, 'u2');
+    const applied = await command(r, applyBody(d));
+    assert.equal(applied.outcome.kind, 'applied');
+    assert.equal(r.journal.view.planApplied()?.source?.type, 'command');
+    raiseNeedsUser(r.journal, r.ctx.runDir, {blocking: false, subject: {type: 'arc'}, reason: 'revision-notice', summary: 'Review root-applied revision 2.', recommendation: 'Review the revision.', options: [], evidence: []}, {type: 'command', command: commandId(applied.id)});
     const notices = r.journal.view.opsOf('needsuser.raise').filter((i) => readNeedsUser(r.ctx.runDir, i.expect.id)?.reason === 'revision-notice');
-    assert.equal(notices.length, 1, 'the applied bundle has its revision notice');
+    assert.equal(notices.length, 1, 'the root-applied revision has its pending notice');
     const notice = notices[0]!;
     assert.equal(r.journal.view.needsUser().find((n) => n.id === notice.expect.id)?.ack, null);
     const cleared = await command(r, { type: 'run-only', units: null });

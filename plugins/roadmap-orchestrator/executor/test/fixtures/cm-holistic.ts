@@ -7,7 +7,7 @@ import type { LogSnapshot } from '../../src/core/log.ts';
 import { absPath } from '../../src/core/values.ts';
 
 import { release } from '../helpers/barrier.ts';
-import { lensAnswer, lensStep, packReviewStep } from '../helpers/holistic.ts';
+import { lensAnswer,lensStep,packReviewStep } from '../helpers/holistic.ts';
 import { fixture } from '../helpers/proc.ts';
 import type { Owner } from '../helpers/reap.ts';
 import { tmpDir } from '../helpers/repo.ts';
@@ -63,7 +63,7 @@ function makeHolistic(r: ExecRun, units: readonly string[], i2 = false): void {
   const mapping = [...['app'].map((system) => ({ system, obligations: ['I-1'] })), ...(i2 ? [{ system: 'lib', obligations: ['I-2'] }] : [])];
   // The journey lane's test paths and each witness's file in the baseline (a fresh start requires both, plan defects 2026-10-16).
   const obligations = [{ id: 'I-1', testIds: ['t1'], files: ['test/add.test.js'] }, ...(i2 ? [{ id: 'I-2', testIds: ['t2'], files: ['test/add.test.js'] }] : [])];
-  corpusTarget(r, { obligations: obligationsJson({ obligations, mapping, laneExtra: { journey: { testPaths: ['test/**'] } } }, control), advances: ADVANCES, audit: { lenses: ['vision'] }, planExtra: { capacity: { cpu: 16 } } });
+  corpusTarget(r, { obligations: obligationsJson({ obligations, mapping, laneExtra: { journey: { testPaths: ['test/**'] } } }, control), advances: ADVANCES, planExtra: { capacity: { cpu: 16 } } });
   for (const u of units) {
     const spec = join(r.planPath, '..', `${u}.json`);
     writeFileSync(spec, JSON.stringify({ ...(JSON.parse(readFileSync(spec, 'utf8')) as Json), obligations: ['I-1'] }));
@@ -123,7 +123,7 @@ export function layoutHolisticConcurrent(t: Owner, peer: HolisticPeer): Holistic
     ]);
     const pinned = (u: string): boolean => existsSync(join(r.scenarioDir, `${u}.build.reached`));
     const hooks: readonly Hook[] = [
-      once('audit', () => pinned('u1') && pinned('u2'), () => submit(r, { type: 'audit', lenses: null })),
+      once('audit', () => pinned('u1') && pinned('u2'), () => submit(r, { type: 'audit' })),
       once('root-apply', () => factsNow(r, 'audit-ended').some((f) => f['job'] === 'audit-1') && !factsNow(r, 'plan-applied').some((f) => f['rev'] === 2), () => {
         exportCurrentInputs(r);
         const plan = JSON.parse(readFileSync(r.planPath, 'utf8')) as Json;
@@ -160,7 +160,7 @@ export function layoutHolisticConcurrent(t: Owner, peer: HolisticPeer): Holistic
       return view.opsOf('integration.ff').some((i) => i.expect.subject?.type === 'batch' && view.doneOf(i.op)?.kind === 'integration.ff');
     };
     const hooks: readonly Hook[] = [
-      once('audit', () => existsSync(join(r.scenarioDir, 'u3.build.reached')), () => submit(r, { type: 'audit', lenses: null })),
+      once('audit', () => existsSync(join(r.scenarioDir, 'u3.build.reached')), () => submit(r, { type: 'audit' })),
       once('admit-repairs', () => factsNow(r, 'audit-ended').some((f) => f['job'] === 'audit-1'), () => {
         exportCurrentInputs(r);
         admitRepairs(r);

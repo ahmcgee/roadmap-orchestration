@@ -5,17 +5,17 @@ import { join } from 'node:path';
 import { describe,test } from 'node:test';
 import { applyCommand } from '../src/commands/apply.ts';
 import { submitCommand } from '../src/commands/queue.ts';
-import { arcId, unitId } from '../src/core/ids.ts';
+import { arcId,unitId } from '../src/core/ids.ts';
 import { sha256Hex } from '../src/core/json.ts';
 
 import { runUnit } from '../src/pipeline/unit.ts';
 import { status } from '../src/status.ts';
-import { checkpointContext, completedAudit, factsOfKind } from './fixtures/checkpoint-common.ts';
-import { type CorpusHolisticArc, corpusHolisticArc } from './fixtures/corpus-holistic.ts';
+import { checkpointContext,completedAudit,factsOfKind } from './fixtures/checkpoint-common.ts';
+import { type CorpusHolisticArc,corpusHolisticArc } from './fixtures/corpus-holistic.ts';
 import { VISION_PATH } from './fixtures/corpus-unit.ts';
-import { stepTo, unitOf } from './fixtures/route-common.ts';
+import { stepTo,unitOf } from './fixtures/route-common.ts';
 import { SCENARIO_TIMEOUT_MS,admitAll,planCheckStep } from './fixtures/stage-common.ts';
-import { type ArcRun, applyBody, contextFor, gateStep, mulBuild } from './fixtures/unit-common.ts';
+import { type ArcRun,applyBody,contextFor,gateStep,mulBuild } from './fixtures/unit-common.ts';
 import { reached,release } from './helpers/barrier.ts';
 import { sampleCorpus } from './helpers/corpus.ts';
 import { lensStep } from './helpers/holistic.ts';
@@ -61,7 +61,7 @@ describe('root apply while an attempt is live or abandoned', () => {
     try {
       const unit = stepTo(x.ctx, 'u1', (f) => f.stage === 'pre-build');
       await reached(x.a.d.scenarioDir, 'pc', 120_000);
-      x.r.journal.fact({ kind: 'executor-started', generation: 99 });
+      x.r.journal.fact({ kind: 'executor-started', pressure: 'unavailable', generation: 99 });
       const spec = join(x.a.planDir, 'u1.json');
       const was = readFileSync(spec, 'utf8');
       writeFileSync(spec, JSON.stringify({ ...(JSON.parse(was) as Json), rev: 2 }));

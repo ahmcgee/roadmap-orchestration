@@ -1,12 +1,11 @@
-import { ciReasons, lanePlacementReasons } from './ci.ts';
-import { mayOverlap } from '../core/values.ts';
+import { ciReasons,lanePlacementReasons } from './ci.ts';
 import { protectedPaths } from './protected.ts';
 import { referenceCommit } from '../phase0/rows.ts';
 // Classify a proposal against the plan in force. Every refused edit contributes its reason.
 // Root applies authorize weakenings with their reason; automatic revisions retain the frozen contract gate.
 import type { IntentOf,PlanChange } from '../core/events.ts';
 import { PLAN_FIELDS } from '../core/events.ts';
-import { type JobId, type ObligationId, type ResourceName, type ResourceUnit, type RulingId, type Sha256Hex, type UnitId, compareIds, parseResourceUnit } from '../core/ids.ts';
+import { type JobId,type ObligationId,type ResourceName,type ResourceUnit,type Sha256Hex,type UnitId,compareIds,parseResourceUnit } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import { readJournal } from '../core/log.ts';
@@ -22,12 +21,12 @@ import type { AbsPath } from '../core/values.ts';
 import { type CorpusPin,parseCorpusPin } from '../corpus/types.ts';
 import { classifyObligations } from '../holistic/obligations.ts';
 import { specCensusMismatches } from '../holistic/rederive.ts';
-import { type BusyAttempt, type ObligationDisposition, type Obligations, type Vision, isExempt, parseObligations, parseVision } from '../holistic/types.ts';
+import { type BusyAttempt,type ObligationDisposition,type Obligations,type Vision,isExempt,parseObligations,parseVision } from '../holistic/types.ts';
 import { advancesReasons,visionEditReasons } from '../holistic/vision.ts';
 import { undispositioned } from '../host/residues.ts';
 import type { Phase0Record } from '../phase0/types.ts';
 import { citedFailure,laneFailures,outcomeRef } from '../pipeline/failures.ts';
-import { designFaults, pinDesign } from '../pipeline/design.ts';
+import { designFaults,pinDesign } from '../pipeline/design.ts';
 import { verificationReasons } from '../pipeline/deflake.ts';
 import { revParse } from '../git/git.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
@@ -41,22 +40,13 @@ import type { CommandScope,ScopeOf } from '../schedule/types.ts';
 import { type Ruling,parseRulings } from '../spec/rulings.ts';
 import { SpecFileError,bytesSha256,evidenceScopeConflicts,parseSpec } from '../spec/spec.ts';
 import { baseFiles,compareAndSwap } from './cas.ts';
-import { type InForce, type InputFiles, PLAN_INPUT, type RevisionInForce, type RoutingBase, SPEC_INPUT, inForceFiles, inputPath, keptInput, phase0RecordOf, planInForce, planRouting, readInputFiles, revisionInForce, revisionManifestOf, unitRouting } from './inforce.ts';
+import { type InForce,type InputFiles,PLAN_INPUT,type RevisionInForce,type RoutingBase,SPEC_INPUT,inForceFiles,inputPath,keptInput,phase0RecordOf,planInForce,planRouting,readInputFiles,revisionInForce,revisionManifestOf,unitRouting } from './inforce.ts';
 import {
 type KnownDefect,type PlanM1,type PlanUnit,boundsOf,derivedOf,environmentOf,environmentsOf,hasMilestones,knownDefectsOf,milestonesNeedHolistic,milestonesOf,parsePlan,
 planFieldValue,priorityOf,reservedUnitIdReason,
 } from './plan.ts';
 
-/**
- * Who proposes a revision (G1), as far as its rules differ: an architect's `apply`, `rule` or `reverse` command, a
- * start whose files differ, a checkpoint bundle (its cites back a split that drops text), or the executor's own
- * machine revision. Its source (`RevisionSource`) is the payload's.
- */
-/**
- * Who proposes a revision. A bundle's `admits` (M4a rev 3, OR-A1): the classes code gave its admit ops (empty in an
- * `architecture-doc` arc, LR-h); an `opportunity` class's clauses are the only `holistic.advances` it may add. An
- * apply's `rulings` (M4a rev 3, I2): the ids its `--ruling` records land (absent: none), the only ledger change it may make.
- */
+/** Who proposes a revision: root input or one of the executor's narrowly scoped machine edits. */
 export type Proposer =
   | Readonly<{ type: 'apply'; reason?: string }>
   | Readonly<{ type: 'reverse' | 'start' | 'executor' }>
@@ -66,7 +56,6 @@ export type Proposer =
   | Readonly<{ type: 'compare'; unit: UnitId }>
   /** dev.17 (flaky ledger): the code-applied deflake revision (src/pipeline/deflake.ts): it only admits deflake units. */
   | Readonly<{ type: 'deflake' }>;
-  /** dev.17: the code-applied propagation revision of the stale set plan rev `rev` recorded (src/holistic/propagation.ts): it only admits its propagation units. */
 
 /** The revision's inputs beyond plan and specs, parsed (what renders and the payload are built from). */
 export type NextInputs = Readonly<{
@@ -220,14 +209,6 @@ function entryOf(u: PlanUnit): Omit<PlanUnit, 'cut' | 'reenters' | 'routing' | '
 
 /** The revision's ledger: its rulings, or why it does not load. */
 type Ledger = Readonly<{ path: AbsPath; rulings: readonly Ruling[] }> | Readonly<{ path: AbsPath; error: string }>;
-
-/** Why `ruling` may not back `what`: not in the revision's ledger, withdrawn, or the ledger does not load; null when it may. */
-function rulingReason(ledger: Ledger, ruling: RulingId, what: string): string | null {
-  if ('error' in ledger) return `${what} cites ruling ${ruling}, but the rulings ledger does not load: ${ledger.error}`;
-  const r = ledger.rulings.find((x) => x.id === ruling);
-  if (r === undefined) return `${what} cites ruling ${ruling}, which the ledger ${ledger.path} does not hold`;
-  return r.status === 'withdrawn' ? `${what} cites ruling ${ruling}, which ${r.by} withdrew` : null;
-}
 
 const riskAbove = (a: RiskTier, b: RiskTier): boolean => RISK_TIERS.indexOf(a) > RISK_TIERS.indexOf(b);
 
@@ -726,9 +707,6 @@ export function classify(input: ClassifyInput): Classified {
   }
   if (cur.holistic !== undefined && plan.holistic === undefined) reasons.push('holistic may be added, never removed (A5)');
   if (cur.holistic === undefined && plan.holistic !== undefined) changes.push({ type: 'holistic' });
-  if (cur.holistic !== undefined && plan.holistic !== undefined && !same(cur.holistic.audit, plan.holistic.audit)) {
-    reasons.push('holistic.audit may not change once holistic is in force');
-  }
   const prevVision = input.revision.vision?.value ?? null;
   if (inputs.changed.vision && inputs.vision !== null && !same(prevVision, inputs.vision)) {
     if (proposer.type !== 'apply') reasons.push(`the vision is owner-only (A14): only an architect \`apply\` changes it, not a ${proposer.type}`);

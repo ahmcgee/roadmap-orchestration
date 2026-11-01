@@ -4,7 +4,7 @@ import { systemName } from '../../src/core/ids.ts';
 // http server and a CLI, its design reference under design/), the walk context over the run's one arbiter, and the
 // fake walkthrough's scripted answers (each validated by the frozen reader, so a fake never answers what the executor
 // could not have been given).
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync,readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { JsonValue } from '../../src/core/json.ts';
 import { requirePlanInForce } from '../../src/input/inforce.ts';
@@ -13,15 +13,15 @@ import type { UnitId } from '../../src/core/ids.ts';
 import { rankOf } from '../../src/schedule/ready.ts';
 import { validateWalkthroughOutput } from '../../src/prompts/schemas.ts';
 import type { WalkContext } from '../../src/walk/walk.ts';
-import { git, tmpDir } from '../helpers/repo.ts';
-import type { ClaudeAct, Step } from '../helpers/scenario.ts';
+import { git,tmpDir } from '../helpers/repo.ts';
+import type { ClaudeAct,Step } from '../helpers/scenario.ts';
 import { writeWitnessControl } from '../helpers/witness.ts';
 import { admitSpecWire } from '../helpers/holistic.ts';
-import { BUILD_REPORT, type LaneJson } from './stage-common.ts';
-import { ADVANCES, VISION, obligationsJson } from './brake-common.ts';
+import { BUILD_REPORT,type LaneJson } from './stage-common.ts';
+import { ADVANCES,VISION,obligationsJson } from './brake-common.ts';
 import { publishArc } from './publish-common.ts';
 import { wired } from './sched-m3-common.ts';
-import { type ArcDescriptor, type ArcRun, gateStep } from './unit-common.ts';
+import { type ArcDescriptor,type ArcRun,gateStep } from './unit-common.ts';
 
 type Json = Record<string, unknown>;
 
@@ -100,7 +100,7 @@ export function walkArc(opts: WalkArcOptions): ArcDescriptor {
     const plan = JSON.parse(readFileSync(x.planPath, 'utf8')) as Json;
     writeFileSync(x.planPath, JSON.stringify({
       ...plan, baseline: git(x.repo, 'rev-parse', 'main'),
-      holistic: { vision: 'vision.json', advances: ADVANCES, obligations: 'obligations.json', audit: { lenses: opts.auditLenses ?? ['vision'], every: 100 } },
+      holistic: { vision: 'vision.json', advances: ADVANCES, obligations: 'obligations.json' },
       milestones: [opts.milestone ?? milestoneJson()],
       ...(opts.walkRounds === undefined ? {} : { limits: { walkRounds: opts.walkRounds } }),
     }));

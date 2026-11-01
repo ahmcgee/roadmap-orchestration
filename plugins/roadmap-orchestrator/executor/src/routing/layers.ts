@@ -55,7 +55,7 @@
 //   keys are refused. `{"routing": {"profile": "claude-only"}}` is the one config line that selects the
 //   Claude-only profile. The profile is chosen by an explicit `start --profile`, else this file's
 //   `profile`, else `default`.
-import { type RepoPath, repoPath } from '../core/values.ts';
+import { type RepoPath,repoPath } from '../core/values.ts';
 import type { UnitId } from '../core/ids.ts';
 import { type RoutingRev,routingRev } from '../core/ids.ts';
 import { canonicalJson,sha256Hex } from '../core/json.ts';
@@ -67,18 +67,13 @@ import type { StartupRejection } from '../preflight/startup.ts';
 import { support } from '../prompts/index.ts';
 import { boundAt } from './classes.ts';
 import { BUILTIN_SEATS } from './profiles.ts';
-import { type ArcRole, type ArcRoleSet, type ClassBindings, type ClassSource, type ClassTable,  MODEL_CLASSES, type ModelClass, type ProfileName, type Role, type RoutingLayer, type RoutingLayerName, type RoutingProvenance, type RoutingTable, SEAT_REFS, type SeatRef, type SeatTable, type Triple, type UnitRole, atSeat, classBindings, profileName, routingLayer, seatTable } from './types.ts';
+import { type ArcRole,type ArcRoleSet,type ClassBindings,type ClassSource,type ClassTable,MODEL_CLASSES,type ModelClass,type ProfileName,type Role,type RoutingLayer,type RoutingLayerName,type RoutingProvenance,type RoutingTable,SEAT_REFS,type SeatRef,type SeatTable,type Triple,type UnitRole,atSeat,classBindings,profileName,routingLayer,seatTable } from './types.ts';
 
 /**
  * One MCP server a walk session gets (dev.13, `walkthrough.mcp.<name>`): the stdio command Claude Code spawns, with
  * `{evidence}` and `{viewport}` in `args` and `env` values substituted by code. `args` absent: none; `env` absent: none.
  */
 export type WalkMcpServer = Readonly<{ command: string; args: readonly string[]; env: Readonly<Record<string, string>> }>;
-/**
- * The placeholders code substitutes in a walk MCP server's `args` and `env` values: `{evidence}` the session's evidence dir
- * (absolute), `{viewport}` `WALK_VIEWPORT`. Nothing else is substituted.
- */
-export const WALK_SUBSTITUTIONS = ['{evidence}', '{viewport}'] as const;
 /** The pinned viewport a walk opens at (`WxH`, Playwright MCP's `--viewport-size` form); a narrow pass resizes in session. */
 export const WALK_VIEWPORT = '1280x800';
 /** An MCP server name: what Claude Code prefixes its tools with (`mcp__<name>__<tool>`). */

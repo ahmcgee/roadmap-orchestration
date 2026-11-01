@@ -12,11 +12,11 @@
 // - Coverage runs both directions and is reported, never refused: advanced clauses no non-exempt obligation serves
 //   (a gap), the horizon (active clauses the arc does not advance; expected), and non-exempt obligations serving no
 //   active clause.
-import { type NumberedId, type ObligationId, type Sha256Hex, type VisionClauseId, canonicalIds, compareIds } from '../core/ids.ts';
+import { type NumberedId,type ObligationId,type Sha256Hex,type VisionClauseId,canonicalIds,compareIds } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
 import type { CorpusPin } from '../corpus/types.ts';
 import type { StartupRejection } from '../preflight/startup.ts';
-import { type Obligations, type Vision, type VisionCoverage, isExempt, parseConfirmationRef } from './types.ts';
+import { type Obligations,type Vision,type VisionCoverage,isExempt,parseConfirmationRef } from './types.ts';
 
 /** Why citing `cites` is refused under `vision` (`what` names the citer in the reasons); empty when every clause is active. */
 export function citeReasons(vision: Vision | null, cites: readonly VisionClauseId[], what: string): readonly string[] {
@@ -68,7 +68,7 @@ export function advancesReasons(vision: Vision, advances: readonly VisionClauseI
  */
 export function visionCoverage(
   vision: Vision, advances: readonly VisionClauseId[], obligations: Obligations | null,
-  citers: readonly Readonly<{ id: NumberedId; cites: readonly VisionClauseId[] }>[], opportunity: readonly VisionClauseId[],
+  citers: readonly Readonly<{ id: NumberedId; cites: readonly VisionClauseId[] }>[],
 ): VisionCoverage {
   const active = new Set(vision.clauses.filter((c) => c.state === 'active').map((c) => c.id));
   const all = obligations?.obligations ?? [];
@@ -79,8 +79,7 @@ export function visionCoverage(
     return citedBy.length === 0 ? [] : [{ clause: c.id, citedBy: canonicalIds(citedBy) }];
   });
   return {
-    unservedAdvanced: [...active].filter((c) => advances.includes(c) && !served.has(c) && !opportunity.includes(c)).sort(compareIds),
-    unservedOpportunity: [...active].filter((c) => advances.includes(c) && !served.has(c) && opportunity.includes(c)).sort(compareIds),
+    unservedAdvanced: [...active].filter((c) => advances.includes(c) && !served.has(c)).sort(compareIds),
     horizon: [...active].filter((c) => !advances.includes(c)).sort(compareIds),
     obligationsServingNone: live.filter((o) => !o.serves.some((c) => active.has(c))).map((o): ObligationId => o.id).sort(compareIds),
     withdrawnCited: withdrawnCited.sort((a, b) => compareIds(a.clause, b.clause)),

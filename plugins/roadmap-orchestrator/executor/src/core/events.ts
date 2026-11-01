@@ -1,14 +1,14 @@
-import { type SystemName, systemName } from '../core/ids.ts';
+import { type SystemName,systemName } from '../core/ids.ts';
 // The event log (`events.jsonl`) record types, their validators, canonical serialisation and the chain
 // hash rule. The journal (append, tail, fold) is step 2 and builds on these. SCHEMAS.md "Event log" is the
 // prose twin of this module.
 import type { Buffer } from 'node:buffer';
 import { type BankReason,type DebtSource,BANK_REASONS,debtSource } from '../debt/types.ts';
-import { type HostFingerprint, hostFingerprint } from '../host/sample.ts';
+import { type HostFingerprint,hostFingerprint } from '../host/sample.ts';
 import { fraction } from './validate.ts';
 import { type PressureAvailability,PRESSURE_AVAILABILITIES } from '../host/pressure.ts';
 import { type CpuBasis,cpuBasis } from './cpu.ts';
-import { type ArcId, type ClaudeSessionId, type CommandId, type DebtId, type DivergenceId, type EdgeId, type EnvId, type FindingId, type InvocationId, type JobId, type JourneyId, type KnownDefectId, type LaneId, type LaneRev, type MilestoneId, type NeedsUserId, type ObligationId, type OpId, type OpKey,  type PlanRev, type PolishId, type ResourceInstance, type ResourceName, type ResourceUnit, type RoutingRev, type ServeName, type Sha, type Sha256Hex, type SpecRev, type UnitId, type VisionClauseId, arcId, claudeSessionId, commandId, compareResourceUnits, debtId, divergenceId, edgeId, envId, findingId, idList, invocationIdOf, jobIdOf, jobIdOfKind, journeyId, knownDefectId, laneId, laneRev, milestoneId, needsUserId, obligationId, opIdOf, opKey,  parseInvocationId, parseJobId, parseOpId, planRev, polishId, resourceInstance, resourceName, resourceUnit, routingRev, serveName, sha, sha256, specRev, unitId, visionClauseId } from './ids.ts';
+import { type ArcId,type ClaudeSessionId,type CommandId,type DebtId,type DivergenceId,type EdgeId,type EnvId,type FindingId,type InvocationId,type JobId,type JourneyId,type KnownDefectId,type LaneId,type LaneRev,type MilestoneId,type NeedsUserId,type ObligationId,type OpId,type OpKey,type PlanRev,type PolishId,type ResourceInstance,type ResourceName,type ResourceUnit,type RoutingRev,type ServeName,type Sha,type Sha256Hex,type SpecRev,type UnitId,type VisionClauseId,arcId,claudeSessionId,commandId,compareResourceUnits,debtId,divergenceId,edgeId,envId,findingId,idList,invocationIdOf,jobIdOf,jobIdOfKind,journeyId,knownDefectId,laneId,laneRev,milestoneId,needsUserId,obligationId,opIdOf,opKey,parseInvocationId,parseJobId,parseOpId,planRev,polishId,resourceInstance,resourceName,resourceUnit,routingRev,serveName,sha,sha256,specRev,unitId,visionClauseId } from './ids.ts';
 import { canonicalJson,sha256Hex } from './json.ts';
 import { type OrderingWait,orderingWait } from './ordering.ts';
 import {
@@ -37,11 +37,10 @@ tokenUsage,
 usageUnavailableReason,
 } from './records.ts';
 
-import { type AuditTrigger, type ContractOp, type DivergenceDraft, type FindingEvidence, type FindingLens, type FindingSeverity, type FindingSource, type FindingTo, type MutantRef, type ObligationDisposition, type PackDisposition, type PackFinding, type PlanDefect, type WitnessPurpose, FINDING_LENSES, FINDING_SEVERITIES, OBLIGATION_DISPOSITIONS, WITNESS_PURPOSES, auditTrigger, contractOp, divergenceDraft, divergenceDraftFields, findingEvidence, findingSource, findingTo, mutantRef, packDisposition, packFinding, planDefect } from '../holistic/types.ts';
+import { type AuditTrigger,type ContractOp,type DivergenceDraft,type FindingEvidence,type FindingLens,type FindingSeverity,type FindingSource,type FindingTo,type MutantRef,type ObligationDisposition,type PackDisposition,type PackFinding,type PlanDefect,type WitnessPurpose,FINDING_LENSES,FINDING_SEVERITIES,OBLIGATION_DISPOSITIONS,WITNESS_PURPOSES,auditTrigger,contractOp,divergenceDraft,divergenceDraftFields,findingEvidence,findingSource,findingTo,mutantRef,packDisposition,packFinding,planDefect } from '../holistic/types.ts';
 import { type SystemsMap,systemsMap } from '../input/systems.ts';
 import {
-type ArcSeatRef,type Backend,type RiskTier,type RoutingProvenance,type SeatRef,type UnitSeatRef,arcSeatFields,backend,riskTier,
-routingProvenance,seatFields,unitSeatFields,
+type ArcSeatRef,type Backend,type RoutingProvenance,type SeatRef,type UnitSeatRef,arcSeatFields,backend,routingProvenance,seatFields,unitSeatFields
 } from '../routing/types.ts';
 import { type FlakyEvent,flakyEvent } from './flaky.ts';
 import { type ReviewFindingId,reviewFindingId } from './ids.ts';
@@ -369,11 +368,10 @@ export type OpOutcome = {
   'resource.transition': Readonly<{ kind: 'transitioned' }>;
   /**
    * `pressure` (M4b rev 3, additive): the launch's own cpu wait (src/host/pressure.ts), read from its exit.json `cpu`
-   * in every settle mode; null without schedstat, for a launch under `PRESSURE_MIN_WALL_MS`, or an exit.json an earlier
-   * runner wrote. Absent on a spawn an earlier executor closed: read as null (`spawnPressureOf`).
+   * in every settle mode; null without schedstat or for a launch under `PRESSURE_MIN_WALL_MS`.
    */
   'proc.spawn':
-    | Readonly<{ kind: 'result'; resultSha256: Sha256Hex; summary: ResultSummary; pressure?: number | null }>
+    | Readonly<{ kind: 'result'; resultSha256: Sha256Hex; summary: ResultSummary; pressure: number | null }>
     | Readonly<{ kind: 'lost'; treeEffects: boolean }>;
   'proc.kill': Readonly<{ kind: 'quiesced' }>;
   'evidence.snapshot': Readonly<{ kind: 'captured'; manifestSha256: Sha256Hex; files: number }>;
@@ -799,12 +797,6 @@ export type Fact =
   /** `run-only` (M2): admission is limited to `units` (sorted), or unlimited again (null). */
   | Readonly<{ kind: 'run-only'; command: CommandId; units: readonly UnitId[] | null }>
   /**
-   * Legacy (D4, retired in dev.17; written by dev.16 and earlier): a fix round after a stalled one ran cold on the
-   * `build.high` seat (A11, G1). `attempt` is the escalated build attempt, `stalled` the build attempt whose round stalled,
-   * `from` the unit's build tier until then. No longer written; a dev.16 log's still folds (state.ts `buildTier`).
-   */
-  | Readonly<{ kind: 'implementer-escalated'; unit: UnitId; attempt: number; from: RiskTier; to: 'high'; stalled: number }>
-  /**
    * An executor started under host generation `generation` (step 13b), written at every start once the
    * journal is open. It clears the stop marker: a stop ends one run, not the arc. Pause markers and holds
    * persist until a `resume`.
@@ -814,7 +806,7 @@ export type Fact =
    * additive): whether this host reports schedstat cpu wait (src/host/pressure.ts); absent on an earlier start, read as
    * `unavailable` (`startPressureOf`). A sibling of the fingerprint, which seeds and givens compare by field equality.
    */
-  | Readonly<{ kind: 'executor-started'; generation: number; host?: HostFingerprint; pressure?: PressureAvailability }>
+  | Readonly<{ kind: 'executor-started'; generation: number; host?: HostFingerprint; pressure: PressureAvailability }>
   /**
    * The gate at `attempt` approved the unit, bound to `fingerprint` (R2): recorded before its stage-outcome,
    * read by the candidate and ff stages, and re-checked at T before `integration.ff`. dev.17: `blobs`, what it approved by
@@ -840,22 +832,13 @@ export type FactRecord = Readonly<{ type: 'fact'; fact: Fact }>;
  * or released); `settled`, the open entries of the unit this answer settled (a ruled dispute, a fixed or released finding).
  * At most one per gate attempt, before its stage-outcome.
  *
- * `docs-only`: a lanes attempt checked its build's `docsOnlySince` claim against the diff from the unit's last certified
- * tree `since` to the salvage SHA `at`: accepted by code alone (`code`) or with the verifier (`verifier`), carrying the
- * passes of `carried` over; or `refused` with the reason, the lanes then running as normal (uncharged).
- *
- * `docs-only-miss`: calibration: a candidate attempt found red a lane whose pass the unit's docs-only acceptance carried over.
  */
 export type ReviewFact =
   | Readonly<{
     kind: 'review-ledger'; unit: UnitId; attempt: number; minted: readonly Readonly<{ index: number; entry: FindingsLedgerEntry }>[];
     settled: readonly Readonly<{ id: ReviewFindingId; outcome: LedgerOutcome }>[];
-  }>
-  | Readonly<{ kind: 'docs-only'; unit: UnitId; attempt: number; since: Sha; at: Sha; verdict: DocsOnlyVerdict; reason: string | null; carried: readonly LaneId[] }>
-  | Readonly<{ kind: 'docs-only-miss'; unit: UnitId; attempt: number; lanes: readonly LaneId[] }>;
+  }>;
 export type ReviewFactKind = ReviewFact['kind'];
-export const DOCS_ONLY_VERDICTS = ['code', 'verifier', 'refused'] as const;
-export type DocsOnlyVerdict = (typeof DOCS_ONLY_VERDICTS)[number];
 
 /**
  * M3 fields of `plan-applied`: `source` (G1); `payloadSha256` (the kept `inputs/<sha>.revision.json` it was appended
@@ -902,9 +885,9 @@ export type AuditInputs = Readonly<{
   highWater: number;
   /**
    * The lens-range fix (2026-10-16): the byte budget each lens chunk's and the owners' attached diffs keep within
-   * (src/holistic/lensdiff.ts). Absent on an audit an earlier executor started: read through `auditDiffBudgetOf`.
+   * (src/holistic/lensdiff.ts). Captured on every schema-2 audit.
    */
-  diffBudget?: number;
+  diffBudget: number;
 }>;
 
 /** One lens's covered range: `from` its watermark before, `to` how far its reported chunks reached (at most the audited SHA). */
@@ -943,21 +926,20 @@ export type HolisticFact =
   }>
   | Readonly<{ kind: 'finding-transition'; id: FindingId; to: FindingTo }>
   | (Readonly<{ kind: 'audit-started' }> & AuditInputs)
-  /** M4b: `refused` (absent on an earlier executor's fact: none recorded), in call order. */
+  /** Refused drafts in call order. */
   | Readonly<{
     kind: 'audit-ended'; job: JobId; covered: readonly CoveredRange[]; findings: readonly FindingId[]; suppressed: number; outcome: 'completed' | 'abandoned';
-    refused?: readonly LensRefusal[];
+    refused: readonly LensRefusal[];
   }>
   /** A17, H8: a docs-only publication covers its own edge U→D by construction. */
   | Readonly<{ kind: 'docs-covered'; pub: JobId; from: Sha; to: Sha }>
   /** OR-V.6: `index` orders a job's divergences, so a rewrite after a crash is idempotent (H12). */
   | (Readonly<{ kind: 'divergence'; id: DivergenceId; index: number }> & DivergenceDraft)
   /** H11: the digest item binds exactly these ids; its acknowledgement covers them. */
-  | Readonly<{ kind: 'divergence-digest'; needsUser: NeedsUserId; ids: readonly DivergenceId[] }>
   | Readonly<{ kind: 'noted'; unit: UnitId; command: CommandId; brief: Sha256Hex }>
   | Readonly<{ kind: 'steered'; unit: UnitId; command: CommandId; brief: Sha256Hex; budgetMin: number; resume: boolean }>
   | Readonly<{ kind: 'merged-in'; unit: UnitId; command: CommandId; integrationTip: Sha; head: Sha }>
-  | Readonly<{ kind: 'audit-requested'; command: CommandId; lenses: readonly LensKindName[] | null }>
+  | Readonly<{ kind: 'audit-requested'; command: CommandId }>
   | Readonly<{ kind: 'admissions-closed'; command: CommandId }>
   | Readonly<{ kind: 'docs-published'; pub: JobId; source: 'close-out'; commit: Sha }>
   /** A20: active while the plan rev and the integration head are unchanged; `units` the merged units, ascending. */
@@ -991,14 +973,6 @@ export type M4aFact =
   | Readonly<{ kind: 'series-certified'; parent: Parent; checkout: AbsPath; at: Sha }>
   /** A unit attempt's mutation smoke ran (D2, Q17): `key` its allowance key; a later attempt with the same key reuses `verdict`. */
   | Readonly<{ kind: 'smoke-ran'; unit: UnitId; attempt: number; key: Sha256Hex; verdict: SmokeVerdict }>
-  /**
-   * Run 10 (E): the executor declined a non-blocking needs-user item nobody answered by the close-out (a `bundle-request`),
-   * so a non-blocking item never holds completion. It closes the item as an acknowledgement would (`choice`: the item's
-   * declining option, `reject` or `decline`, null when it offers none), with no `.ack.json` twin; at most once per id, and
-   * never with a `needs-user-acked`.
-   */
-  | Readonly<{ kind: 'needs-user-declined'; id: NeedsUserId; choice: string | null; reason: string }>
-  /** A pack review's kept inputs (K8): written after `inputs/<inputsSha256>.pack-review.json` and before the spawn; `key` its required-review key. */
   | Readonly<{ kind: 'pack-review-started'; job: JobId; planRev: PlanRev; inputsSha256: Sha256Hex; key: Sha256Hex }>
   /**
    * A pack review's findings, each identified by `(job, index)` (K13). `dispositions` (M4a rev 3, H3): a completed delta
@@ -1513,8 +1487,8 @@ export const OP_SCHEMAS: { readonly [K in OpKind]: OpSchema<K> } = {
     post: nothing,
     outcome: tagged('kind', {
       result: object((f): OpOutcome['proc.spawn'] => {
-        const pressure = f.optional('pressure', nullable(fraction));
-        return { kind: f.get('kind', literal('result')), resultSha256: f.get('resultSha256', sha256R), summary: f.get('summary', resultSummary), ...(pressure === undefined ? {} : { pressure }) };
+        const pressure = f.get('pressure', nullable(fraction));
+        return { kind: f.get('kind', literal('result')), resultSha256: f.get('resultSha256', sha256R), summary: f.get('summary', resultSummary), pressure };
       }),
       lost: object((f): OpOutcome['proc.spawn'] => ({ kind: f.get('kind', literal('lost')), treeEffects: f.get('treeEffects', bool) })),
     }),
@@ -1915,10 +1889,6 @@ const M4A_FACT_READERS: { readonly [K in M4aFactKind | CiFact['kind']]: Read<Fac
   'smoke-ran': object((f): Fact => ({
     kind: f.get('kind', literal('smoke-ran')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), key: f.get('key', sha256R), verdict: f.get('verdict', smokeVerdict),
   })),
-  'needs-user-declined': object((f): Fact => ({
-    kind: f.get('kind', literal('needs-user-declined')), id: f.get('id', (v, p): NeedsUserId => needsUserId(v, p)), choice: f.get('choice', nullable(optionId)),
-    reason: f.get('reason', str),
-  })),
   'pack-review-started': object((f): Fact => ({
     kind: f.get('kind', literal('pack-review-started')), job: f.get('job', reviewJobR), planRev: f.get('planRev', planRevR), inputsSha256: f.get('inputsSha256', sha256R),
     key: f.get('key', sha256R),
@@ -2028,18 +1998,6 @@ const REVIEW_FACT_READERS: { readonly [K in ReviewFactKind]: Read<Fact> } = {
     assertUnique(out.settled, (s) => s.id, `${f.path}.settled`);
     return out;
   }),
-  'docs-only': object((f): Fact => {
-    const out = {
-      kind: f.get('kind', literal('docs-only')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), since: f.get('since', shaR), at: f.get('at', shaR),
-      verdict: f.get('verdict', oneOf(DOCS_ONLY_VERDICTS)), reason: f.get('reason', nullable(str)), carried: f.get('carried', sortedBy(laneR, (l) => l)),
-    };
-    if ((out.verdict === 'refused') !== (out.reason !== null)) throw new SchemaError(`${f.path}.reason`, out.verdict === 'refused' ? 'why it was refused' : 'null on an acceptance', out.reason);
-    if (out.verdict === 'refused' && out.carried.length > 0) throw new SchemaError(`${f.path}.carried`, 'none on a refusal', out.carried);
-    return out;
-  }),
-  'docs-only-miss': object((f): Fact => ({
-    kind: f.get('kind', literal('docs-only-miss')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), lanes: f.get('lanes', sortedBy(laneR, (l) => l, { nonEmpty: true })),
-  })),
 };
 
 /** The readers of the M3 facts, spread into `fact`. */
@@ -2094,7 +2052,7 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
   }),
   'finding-transition': object((f): Fact => ({ kind: f.get('kind', literal('finding-transition')), id: f.get('id', findingR), to: f.get('to', findingTo) })),
   'audit-started': object((f): Fact => {
-    const diffBudget = f.optional('diffBudget', positive);
+    const diffBudget = f.get('diffBudget', positive);
     return {
       kind: f.get('kind', literal('audit-started')),
       job: f.get('job', auditJobR),
@@ -2109,7 +2067,7 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
       owners: f.get('owners', sortedBy(object((g) => ({ unit: g.get('unit', unitR), head: g.get('head', shaR) })), (o) => o.unit)),
       priorFindings: f.get('priorFindings', findingSet),
       highWater: f.get('highWater', positive),
-      ...(diffBudget === undefined ? {} : { diffBudget }),
+      diffBudget,
     };
   }),
   'audit-ended': object((f): Fact => {
@@ -2121,17 +2079,13 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
       suppressed: f.get('suppressed', nat),
       outcome: f.get('outcome', oneOf(['completed', 'abandoned'] as const)),
     };
-    const refused = f.optional('refused', arrayOf(object((g): LensRefusal => ({
+    const refused = f.get('refused', arrayOf(object((g): LensRefusal => ({
       lens: g.get('lens', lensR), attempt: g.get('attempt', positive), claim: g.get('claim', str), cause: g.get('cause', str), reason: g.get('reason', str),
     }))));
-    return { ...out, ...(refused === undefined ? {} : { refused }) };
+    return { ...out, refused };
   }),
   'docs-covered': object((f): Fact => ({ kind: f.get('kind', literal('docs-covered')), pub: f.get('pub', docsJobR), from: f.get('from', shaR), to: f.get('to', shaR) })),
   divergence: object((f): Fact => ({ kind: f.get('kind', literal('divergence')), id: f.get('id', (v, p): DivergenceId => divergenceId(v, p)), index: f.get('index', nat), ...divergenceDraftFields(f) })),
-  'divergence-digest': object((f): Fact => ({
-    kind: f.get('kind', literal('divergence-digest')), needsUser: f.get('needsUser', (v, p): NeedsUserId => needsUserId(v, p)),
-    ids: f.get('ids', idList((v, p): DivergenceId => divergenceId(v, p), { nonEmpty: true })),
-  })),
   'review-triggered': object((f): Fact => ({ kind: f.get('kind', literal('review-triggered')), unit: f.get('unit', unitR), marker: f.get('marker', oneOf(['M1', 'M2', 'M3', 'M4', 'always'] as const)), source: f.get('source', str), specRev: f.get('specRev', (v, p) => specRev(v, p)) })),
   'review-completed': object((f): Fact => ({ kind: f.get('kind', literal('review-completed')), unit: f.get('unit', unitR), mode: f.get('mode', oneOf(['pre-build', 'diagnosis'] as const)), specRev: f.get('specRev', (v, p) => specRev(v, p)), planRev: f.get('planRev', (v, p) => planRev(v, p)), inv: f.get('inv', invR), items: f.get('items', arrayOf(object((g) => ({ id: g.get('id', str), text: g.get('text', str), evidence: g.get('evidence', arrayOf(str)) })))), note: f.get('note', nullable(sha256R)) })),
   noted: object((f): Fact => ({ kind: f.get('kind', literal('noted')), unit: f.get('unit', unitR), command: f.get('command', cmdR), brief: f.get('brief', sha256R) })),
@@ -2142,7 +2096,7 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
   'merged-in': object((f): Fact => ({
     kind: f.get('kind', literal('merged-in')), unit: f.get('unit', unitR), command: f.get('command', cmdR), integrationTip: f.get('integrationTip', shaR), head: f.get('head', shaR),
   })),
-  'audit-requested': object((f): Fact => ({ kind: f.get('kind', literal('audit-requested')), command: f.get('command', cmdR), lenses: f.get('lenses', nullable(lensSet)) })),
+  'audit-requested': object((f): Fact => ({ kind: f.get('kind', literal('audit-requested')), command: f.get('command', cmdR) })),
   'admissions-closed': object((f): Fact => ({ kind: f.get('kind', literal('admissions-closed')), command: f.get('command', cmdR) })),
   'docs-published': object((f): Fact => ({ kind: f.get('kind', literal('docs-published')), pub: f.get('pub', docsJobR), source: f.get('source', literal('close-out')), commit: f.get('commit', shaR) })),
   'arc-completed': object((f): Fact => ({
@@ -2241,15 +2195,6 @@ export const fact: Read<Fact> = tagged('kind', {
   'run-only': object((f): Fact => ({
     kind: f.get('kind', literal('run-only')), command: f.get('command', cmdR), units: f.get('units', nullable(sortedBy(unitR, (u) => u, { nonEmpty: true }))),
   })),
-  'implementer-escalated': object((f): Fact => {
-    const out = {
-      kind: f.get('kind', literal('implementer-escalated')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), from: f.get('from', riskTier),
-      to: f.get('to', literal('high')), stalled: f.get('stalled', positive),
-    };
-    if (out.from === 'high') throw new SchemaError(`${f.path}.from`, 'a build tier below high', out.from);
-    if (!(out.stalled < out.attempt)) throw new SchemaError(`${f.path}.stalled`, `a build attempt before ${out.attempt}`, out.stalled);
-    return out;
-  }),
   'plan-applied': object((f): Fact => {
     const scheduling = f.optional('scheduling', literal('dag'));
     const opt: Record<string, unknown> = {};
@@ -2276,10 +2221,10 @@ export const fact: Read<Fact> = tagged('kind', {
   }),
   'executor-started': object((f): Fact => {
     const host = f.optional('host', hostFingerprint);
-    const pressure = f.optional('pressure', oneOf(PRESSURE_AVAILABILITIES));
+    const pressure = f.get('pressure', oneOf(PRESSURE_AVAILABILITIES));
     return {
       kind: f.get('kind', literal('executor-started')), generation: f.get('generation', positive), ...(host === undefined ? {} : { host }),
-      ...(pressure === undefined ? {} : { pressure }),
+      pressure,
     };
   }),
   approval: object((f): Fact => {

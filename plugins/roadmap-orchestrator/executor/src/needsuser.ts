@@ -16,26 +16,25 @@
 // `new-finding-draining`, `steered`, `not-reproduced`, `owner-request` (A16: only the owner may act), `respec-second`
 // (OR-Q1), and M4a's `pack-review` (K14).
 // Non-blocking (`NON_BLOCKING_M3_REASONS`):
-// `bundle-request`, the convergence brakes (OR-Q2/3: they act on the checkpoint, never halt units), `audit-owed`,
-// `divergence-digest`, `revision-notice` and `waste-finding`. Blocking means the arc is not `complete` while the item is
+// `revision-notice` and `waste-finding`. Blocking means the arc is not `complete` while the item is
 // open (§2.10); what an open item holds
 // back from admission is admission's (src/schedule/ready.ts) and, for `obligation-baseline` and `pack-review` (every
 // admission until it is answered), the scheduler's. A `pack-review` item a later pack
 // review's end superseded (K14), or the escalation of an abandoned walk whose milestone's bring-up or journeys an apply
 // then edited (dev.13), is open no more (`supersededItems`): it holds and blocks nothing.
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync,readFileSync,readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { crashPoint } from './core/crash.ts';
-import { type IntentOf, type Parent, parentUnit } from './core/events.ts';
-import { durableMkdir, durableRename, durableWrite, readJson } from './core/fsx.ts';
-import { type NeedsUserId, type Sha256Hex, type SpecRev, type UnitId, needsUserId, needsUserIdForOp, opKey, sha256 } from './core/ids.ts';
-import type { Journal, JournalView, NeedsUserState, Reconciler } from './core/interfaces.ts';
-import { canonicalJson, canonicalRecordBytes, sha256Hex } from './core/json.ts';
+import { type IntentOf,type Parent,parentUnit } from './core/events.ts';
+import { durableMkdir,durableRename,durableWrite,readJson } from './core/fsx.ts';
+import { type NeedsUserId,type Sha256Hex,type SpecRev,type UnitId,needsUserId,needsUserIdForOp,opKey,sha256 } from './core/ids.ts';
+import type { Journal,JournalView,NeedsUserState,Reconciler } from './core/interfaces.ts';
+import { canonicalJson,canonicalRecordBytes,sha256Hex } from './core/json.ts';
 import {
-  NEEDS_USER_REASONS, NON_BLOCKING_M3_REASONS, type NeedsUserAck, type NeedsUserReason, type NeedsUserRecord, type Stage, needsUserAck, needsUserRecord,
-  type NeedsUserContent, failureRefOf,
+NEEDS_USER_REASONS,NON_BLOCKING_M3_REASONS,type NeedsUserAck,type NeedsUserReason,type NeedsUserRecord,type Stage,needsUserAck,needsUserRecord,
+type NeedsUserContent,failureRefOf,
 } from './core/records.ts';
-import { type AbsPath, absPath, isoTimeOf } from './core/values.ts';
+import { type AbsPath,absPath,isoTimeOf } from './core/values.ts';
 import { SCHEMA_VERSION } from './core/version.ts';
 import type { RiskTier } from './routing/types.ts';
 

@@ -19,12 +19,12 @@ import {
 type ArcId,type EdgeId,
 INTEGRATION_SLOT,
 type JourneyId,type KnownDefectId,type LaneId,type MilestoneId,
-type PolishId,type ResourceName,type RulingId,type ServeName,type Sha,
+type PolishId,type ResourceName,type ServeName,type Sha,
 type SystemName,type UnitId,type VisionClauseId,
 arcId,edgeId,
 idList,
 journeyId,knownDefectId,laneId,milestoneId,
-polishId,resourceName,rulingId,serveName,sha,
+polishId,resourceName,serveName,sha,
 systemName,unitId,visionClauseId
 } from '../core/ids.ts';
 import {
@@ -36,12 +36,11 @@ knownDefectMatch,laneDefOf,laneEnv,
 
 import { type FlakyKey,flakyKey,flakyKeyOf } from '../core/flaky.ts';
 import { canonicalJson,sha256Hex } from '../core/json.ts';
-import { Fields,type Read,SchemaError,arrayOf,assertUnique,literal,nullable,object,oneOf,positive,sortedBy,str,stringMap } from '../core/validate.ts';
+import { Fields,type Read,SchemaError,arrayOf,assertUnique,literal,nullable,object,oneOf,positive,str,stringMap } from '../core/validate.ts';
 import {
 type AbsPath,type BranchName,type PlanPath,type RepoPath,type RepoPattern,absPath,branchName,planPath,repoPath,
 repoPattern,
 } from '../core/values.ts';
-import { LENS_KINDS,type LensKind } from '../holistic/types.ts';
 import { type RiskTier,type RoutingLayer,riskTier,routingLayer } from '../routing/types.ts';
 
 export const PLAN_SCHEMA = 'roadmap/plan-m1';
@@ -82,7 +81,7 @@ export type EnvironmentDecl = Readonly<{ name: ResourceName; probe: ToolCommand;
  * requirement or contract change left stale (it carries `propagation`; src/holistic/propagation.ts), ranks with repairs.
  * Every origin but `planned` is milestone-exempt (src/walk/node.ts).
  */
-export const UNIT_ORIGINS = ['planned', 'checkpoint', 'repair', 'polish', 'deflake'] as const;
+export const UNIT_ORIGINS = ['planned', 'repair', 'polish', 'deflake'] as const;
 export type UnitOrigin = (typeof UNIT_ORIGINS)[number];
 
 /**
@@ -121,7 +120,7 @@ export type UnitLimits = Readonly<{ [K in keyof Bounds]?: number }>;
  * The plan's limits: the units' bounds, the arc's convergence counter K (§2.8, default 3) and (dev.13) the walks per
  * milestone (`walkRounds`, default 3: round 1 and up to two polish or fix rounds).
  */
-export type ArcLimits = UnitLimits & Readonly<{ convergenceK?: number; walkRounds?: number; verification?: VerificationBudget }>;
+export type ArcLimits = UnitLimits & Readonly<{ walkRounds?: number; verification?: VerificationBudget }>;
 
 /**
  * dev.17 (flaky ledger): what a deflake unit's verification may cost, in lane-minutes (its runs times the lane's measured
@@ -132,7 +131,6 @@ export type VerificationBudget = Readonly<{ laneMinutes?: number; lanes?: Readon
 /** Defaults, unmeasured: re-derive once arcs have measured deflakes (BACKLOG). */
 export const DEFAULT_VERIFICATION_LANE_MINUTES = 30;
 export const BATCH_VERIFICATION_RUNS = 2;
-export const DEFAULT_CONVERGENCE_K = 3;
 export const DEFAULT_WALK_ROUNDS = 3;
 
 /**
@@ -147,14 +145,6 @@ export type Holistic = Readonly<{
   advances: readonly VisionClauseId[];
   /** The obligations file (`roadmap/obligations-m3`); absent: no obligations. */
   obligations?: PlanPath;
-  audit?: Readonly<{
-    /** Publications per cadence audit (D3); absent: 5. */
-    every?: number;
-    /** The required lens set L (H9), ascending; absent: all four. */
-    lenses?: readonly LensKind[];
-    /** The wall-clock trigger's period; absent: 360. */
-    wallClockMin?: number;
-  }>;
 }>;
 /** An `architecture-doc` plan's holistic block: the vision file (`roadmap/vision-m3`), relative to the plan's directory. */
 export type HolisticDoc = Holistic & Readonly<{ vision: PlanPath }>;
@@ -376,15 +366,6 @@ export function targetDocumentPaths(plan: PlanM1): readonly RepoPath[] {
   return t === null ? [] : t.digest === null ? [t.doc] : [t.doc, t.digest];
 }
 
-/**
- * The documents a ruling's contract ops may edit and a checkpoint's revision vector binds: the plan's contracts and the
- * architecture doc, ascending (never its digest; never a corpus file, R32).
- */
-export function contractOpDocuments(plan: PlanM1): readonly RepoPath[] {
-  const t = targetDocuments(plan);
-  return [...new Set([...plan.contracts, ...(t === null ? [] : [t.doc])])].sort();
-}
-
 /** The plan fields an apply's `plan-field` change compares (PLAN_FIELDS, src/core/events.ts); the target's read through its arm. */
 export type PlanFieldName = 'contracts' | 'rulings' | 'architectureDoc' | 'architectureDigest' | 'direction' | 'capacity' | 'expectations';
 export function planFieldValue(plan: PlanM1, field: PlanFieldName): unknown {
@@ -435,11 +416,10 @@ const verificationBudget: Read<VerificationBudget> = object((f) => {
   return { ...(laneMinutes === undefined ? {} : { laneMinutes }), ...(lanes === undefined ? {} : { lanes }) };
 });
 const arcLimits: Read<ArcLimits> = object((f) => {
-  const k = f.optional('convergenceK', positive);
   const walkRounds = f.optional('walkRounds', positive);
   const verification = f.optional('verification', verificationBudget);
   return {
-    ...limitsFields(f), ...(k === undefined ? {} : { convergenceK: k }), ...(walkRounds === undefined ? {} : { walkRounds }),
+    ...limitsFields(f), ...(walkRounds === undefined ? {} : { walkRounds }),
     ...(verification === undefined ? {} : { verification }),
   } as ArcLimits;
 });
@@ -451,16 +431,10 @@ const holisticOf = (withVision: boolean): Read<Holistic | HolisticDoc> => object
     throw new SchemaError(`${f.path}.vision`, withVision ? 'the vision file (an architecture-doc plan)' : 'absent (a corpus plan\'s vision is <repo>/.roadmap/vision.json)', vision);
   }
   const obligations = f.optional('obligations', (v, p) => planPath(v, p));
-  const audit = f.optional('audit', object((g) => {
-    const every = g.optional('every', positive);
-    const lenses = g.optional('lenses', sortedBy(oneOf(LENS_KINDS), (l) => l, { nonEmpty: true }));
-    const wallClockMin = g.optional('wallClockMin', positive);
-    return { ...(every === undefined ? {} : { every }), ...(lenses === undefined ? {} : { lenses }), ...(wallClockMin === undefined ? {} : { wallClockMin }) };
-  }));
   return {
     ...(vision === undefined ? {} : { vision }),
     advances: f.get('advances', idList((v, p) => visionClauseId(v, p), { nonEmpty: true })),
-    ...(obligations === undefined ? {} : { obligations }), ...(audit === undefined ? {} : { audit }) };
+    ...(obligations === undefined ? {} : { obligations }) };
 });
 
 /** A unit's bounds: the built-in ones, then the plan's `limits`, then the unit's own (M3). */
@@ -475,8 +449,6 @@ export function advancesOf(plan: PlanM1): readonly VisionClauseId[] {
   return plan.holistic.advances;
 }
 
-/** The arc's required lens set L (H9): `holistic.audit.lenses`, or all four. */
-export const lensSetOf = (h: Holistic): readonly LensKind[] => ['invariants'];
 
 const toolCommand: Read<ToolCommand> = object((f) => ({
   argv: f.get('argv', arrayOf(str, { nonEmpty: true })),
@@ -538,8 +510,6 @@ export const resourceEnvironments = (plan: PlanM1, names: readonly ResourceName[
 /** The environment `name` declares, or null when `name` is not an environment (a resource, the slot, or nothing). */
 export const environmentOf = (plan: Pick<PlanM1, 'environments'>, name: ResourceName): EnvironmentDecl | null =>
   environmentsOf(plan).find((e) => e.name === name) ?? null;
-
-const rulingR: Read<RulingId> = (v, p) => rulingId(v, p);
 
 const reentry: Read<Reentry> = object((f) => {
   const enterAt = f.optional('enterAt', oneOf(REENTRY_POINTS));

@@ -7,14 +7,14 @@
 // drops `architectureDoc` and names the pin, the record and `holistic` without a vision. The pin runs through the CLI as
 // a child, so a scenario's synchronous `prepare` can call this.
 import { spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { sha256Hex } from '../../src/core/json.ts';
-import { type CorpusPin, parseCorpusPin } from '../../src/corpus/types.ts';
-import { DEFAULT_CORPUS_ROOT, sampleCorpus } from '../helpers/corpus.ts';
-import { PHASE0_FILE, PIN_FILE, VISION_DOC, writePhase0 } from '../helpers/corpusarc.ts';
+import { type CorpusPin,parseCorpusPin } from '../../src/corpus/types.ts';
+import { DEFAULT_CORPUS_ROOT,sampleCorpus } from '../helpers/corpus.ts';
+import { PHASE0_FILE,PIN_FILE,VISION_DOC,writePhase0 } from '../helpers/corpusarc.ts';
 import { fixture } from '../helpers/proc.ts';
-import { commitAll, tmpDir, writeFiles } from '../helpers/repo.ts';
+import { commitAll,tmpDir,writeFiles } from '../helpers/repo.ts';
 import { VISION } from './brake-common.ts';
 import type { ArcDescriptor } from './unit-common.ts';
 
@@ -72,7 +72,7 @@ export function corpusTarget(d: ArcDescriptor, opts: CorpusTargetOptions): strin
   const { architectureDoc: _a, ...plan } = JSON.parse(readFileSync(d.planPath, 'utf8')) as Json;
   writeFileSync(d.planPath, JSON.stringify({
     ...plan, ...opts.planExtra, baseline, corpus: PIN_FILE, phase0: PHASE0_FILE,
-    holistic: { advances: [...opts.advances], obligations: 'obligations.json', ...(opts.audit === undefined ? {} : { audit: opts.audit }) },
+    holistic: { advances: [...opts.advances], obligations: 'obligations.json' },
   }));
   return baseline;
 }

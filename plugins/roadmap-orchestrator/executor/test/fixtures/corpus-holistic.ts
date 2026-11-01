@@ -2,10 +2,10 @@
 // so one lens call per audit, and a fake forge (its `gh` first on PATH while a job runs, so no read reaches a real forge:
 // `withForge` in process, `forgeEnv` for a child). Shared by test/amendments.test.ts, test/packreview.test.ts and their
 // crash child (corpus-job-child.ts).
-import { readFileSync, writeFileSync } from 'node:fs';
-import { type Forge, makeForge } from '../helpers/forge.ts';
+import { readFileSync,writeFileSync } from 'node:fs';
+import { type Forge,makeForge } from '../helpers/forge.ts';
 import type { Step } from '../helpers/scenario.ts';
-import { type CorpusUnitArc, type CorpusUnitOptions, setupCorpusArc } from './corpus-unit.ts';
+import { type CorpusUnitArc,type CorpusUnitOptions,setupCorpusArc } from './corpus-unit.ts';
 
 export type CorpusHolisticArc = CorpusUnitArc & Readonly<{ forge: Forge }>;
 
@@ -13,7 +13,7 @@ export type CorpusHolisticArc = CorpusUnitArc & Readonly<{ forge: Forge }>;
 export async function corpusHolisticArc(steps: readonly Step[], opts: CorpusUnitOptions = {}): Promise<CorpusHolisticArc> {
   const a = await setupCorpusArc(steps, opts);
   const plan = JSON.parse(readFileSync(a.d.planPath, 'utf8')) as Record<string, Record<string, unknown>>;
-  writeFileSync(a.d.planPath, JSON.stringify({ ...plan, holistic: { ...plan['holistic'], audit: { lenses: ['vision'] } } }));
+  writeFileSync(a.d.planPath, JSON.stringify({ ...plan, holistic: { ...plan['holistic'] } }));
   return { ...a, forge: makeForge() };
 }
 

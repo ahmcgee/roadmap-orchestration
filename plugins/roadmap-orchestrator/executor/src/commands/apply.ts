@@ -6,7 +6,7 @@ import type { IntentOf,OpOutcome,Parent,PlanAppliedFact,PlanChange,RevisionPaylo
 import { JUDGMENT_STAGES,probeTargetKey } from '../core/events.ts';
 import { holdFence } from '../core/fence.ts';
 import { exclusivePublish } from '../core/fsx.ts';
-import { type CommandId, type NeedsUserId, type PlanRev, type ResourceInstance, type ResourceName, type UnitId, invocationId, opKey, parseResourceUnit, planRev, resourceInstance } from '../core/ids.ts';
+import { type CommandId,type NeedsUserId,type PlanRev,type ResourceInstance,type ResourceName,type UnitId,invocationId,opKey,parseResourceUnit,planRev,resourceInstance } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import type { CommandBody,CommandFile,NeedsUserAck,NeedsUserContent,ResidueKey,RevisionManifest,SpecM1,Stage } from '../core/records.ts';
@@ -22,15 +22,15 @@ import { CONSTRAINTS_DOC,renderConstraints } from '../docs/constraints.ts';
 import { INVARIANTS_DOC,renderInvariants } from '../docs/invariants.ts';
 import { gitRun } from '../git/git.ts';
 import { staleSetOf } from '../holistic/staleset.ts';
-import type { BusyAttempt,ContractOp,DivergenceDraft,Preimage } from '../holistic/types.ts';
+import type { BusyAttempt,ContractOp,DivergenceDraft } from '../holistic/types.ts';
 import { type ResidueEntry,readResidues,recordDisposition,undispositioned } from '../host/residues.ts';
 import { type ApplyProposal,type NextInputs,type Proposer,applyProposal,busyText,classify } from '../input/classify.ts';
 import {
-type InForce,type InputFiles,RENDER_INPUT,type RevisionInForce,type RoutingBase,
+type InputFiles,RENDER_INPUT,type RevisionInForce,type RoutingBase,
 inForceFiles,
 keepCorpusFiles,keepInput,keepRevisionFiles,planInForce,planRouting,
 readInputFiles,requirePlanInForce,revisionInForce,
-revisionManifestOf,routingProvenanceOf,
+revisionManifestOf,routingProvenanceOf
 } from '../input/inforce.ts';
 import { type PlanM1,type PlanUnit,boundsOf,visionFile } from '../input/plan.ts';
 import { needsUserAckPath,openNeedsUser,raiseNeedsUser,raisedWithReason,readNeedsUser,readNeedsUserAck } from '../needsuser.ts';
@@ -236,7 +236,7 @@ async function effectOf(ctx: CommandContext, command: CommandFile): Promise<Effe
     case 'merge-in':
       return mergeIn(ctx, command.id, body.unit);
     case 'audit':
-      return requestAudit(ctx, command.id, body.lenses);
+      return requestAudit(ctx, command.id);
     case 'close-admissions':
       return closeAdmissions(ctx, command.id);
     case 'demo':
@@ -616,13 +616,6 @@ function nextRegistry(inputs: NextInputs): RulesRegistry | undefined {
 }
 
 /**
- * The preimage of what a revision touches in the obligations (H13): the plan rev it is based on and the obligations'
- * bytes before it; nothing else is touched by an obligation edit.
- */
-const obligationsPreimage = (inForce: InForce, revision: RevisionInForce): Preimage =>
-  ({ planRev: inForce.rev, specs: {}, obligationsSha256: revision.obligations?.sha256 ?? null, ledgerSha256: null, contracts: [] });
-
-/**
  * The apply core (G1, A2): evaluates a proposal (the files an `apply` or a start read; the plan in force plus a
  * bundle's ops; the ledger plus a `rule`'s sidecar; a divergence's preimage for `reverse`) against the plan in force,
  * synchronously and without effect: the classifier (src/input/classify.ts) and shared startup rows, then the payload's
@@ -800,14 +793,6 @@ export function applyWarnings(view: JournalView, plan: PlanM1, changes: readonly
       + 'when the re-entry answers a known cause, cite a ruling as `reenters.reset` to start it at 0');
   }
   return out;
-}
-
-/** The apply's manifest is the revision in force already. */
-function alreadyInForce(ctx: CommandContext, manifest: RevisionManifest): PlanRev | null {
-  const inForce = planInForce(ctx.runDir, ctx.journal.view);
-  if (inForce === null) return null;
-  const m = revisionInForce(ctx.runDir, inForce).manifest;
-  return canonicalJson(m) === canonicalJson(manifest) ? inForce.rev : null;
 }
 
 /** The command's CAS is checked under the fence through its final evaluation and commit. */

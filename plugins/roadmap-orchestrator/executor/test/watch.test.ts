@@ -6,21 +6,21 @@ import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { identityOf, readBootId } from '../src/contain/proc.ts';
-import { atomicJson, canonicalJson, exclusiveCreate } from '../src/core/fsx.ts';
-import { arcId, commandId, unitId } from '../src/core/ids.ts';
+import { identityOf,readBootId } from '../src/contain/proc.ts';
+import { atomicJson,canonicalJson,exclusiveCreate } from '../src/core/fsx.ts';
+import { arcId,commandId,unitId } from '../src/core/ids.ts';
 import { openJournal } from '../src/core/log.ts';
 import { CliError } from '../src/input/cli.ts';
-import { absPath, isoTimeOf } from '../src/core/values.ts';
+import { absPath,isoTimeOf } from '../src/core/values.ts';
 import { SCHEMA_VERSION } from '../src/core/version.ts';
-import { HOST_LOCK, hostPath, openHostDir } from '../src/host/hostdir.ts';
+import { HOST_LOCK,hostPath,openHostDir } from '../src/host/hostdir.ts';
 import { publishOwner } from '../src/host/owner.ts';
-import { needsUserAckPath, raiseNeedsUser } from '../src/needsuser.ts';
-import { HEARTBEAT_MIN, WATCH_POLL_MS, cursorAt, watch, watchActionable } from '../src/watch.ts';
+import { needsUserAckPath,raiseNeedsUser } from '../src/needsuser.ts';
+import { HEARTBEAT_MIN,WATCH_POLL_MS,cursorAt,watch,watchActionable } from '../src/watch.ts';
 import { tmpDir } from './helpers/repo.ts';
 import { claimRecord } from './fixtures/host-records.ts';
-import { LANES_BLOCKED, parkUnit } from './fixtures/probe-common.ts';
-import { contextFor, setupArc } from './fixtures/unit-common.ts';
+import { LANES_BLOCKED,parkUnit } from './fixtures/probe-common.ts';
+import { contextFor,setupArc } from './fixtures/unit-common.ts';
 
 type Line = Record<string, unknown>;
 
@@ -100,7 +100,7 @@ test('watch.m3-kinds: the holistic layer\'s items wake the watcher as any needs-
   const hostDir = openHostDir(absPath(join(tmpDir('watch-m3-host'), 'roadmap')));
   const arc = arcId(`w-${randomBytes(5).toString('hex')}`);
   const kinds = [
-    ['owner-request', true], ['divergence-digest', false], ['convergence-bound', false], ['convergence-identity', false], ['revision-notice', false],
+    ['owner-request', true], ['revision-notice', false],
     ['finding-p1-escalated', true], ['new-finding-draining', true], ['pack-review', true],
   ] as const;
   const lines: Line[] = [];

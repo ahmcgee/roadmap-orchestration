@@ -3,7 +3,7 @@
 // brief ack marker and the brief payload (C4). Types and readers only.
 import { OUTCOME_STAGES,type OutcomeStage } from '../core/events.ts';
 
-import { type ArcId, type BriefId, type ClauseId, type DebtId, type DivergenceId, type FindingId, type JobId, type MilestoneId, type NeedsUserId, type ObligationId,  type PhaseQuestionId, type RuleId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, type WitnessItemId, arcId, briefId, clauseId, compareIds, debtId, divergenceId, findingId, idList, jobIdOf, milestoneId, needsUserId, obligationId,  phaseQuestionId, ruleId, sha, sha256, unitId, visionClauseId, witnessItemId } from '../core/ids.ts';
+import { type ArcId,type BriefId,type ClauseId,type DebtId,type DivergenceId,type FindingId,type JobId,type MilestoneId,type NeedsUserId,type ObligationId,type PhaseQuestionId,type RuleId,type Sha,type Sha256Hex,type UnitId,type VisionClauseId,type WitnessItemId,arcId,briefId,clauseId,compareIds,debtId,divergenceId,findingId,idList,jobIdOf,milestoneId,needsUserId,obligationId,phaseQuestionId,ruleId,sha,sha256,unitId,visionClauseId,witnessItemId } from '../core/ids.ts';
 import { type Read,SchemaError,arrayOf,assertUnique,bool,literal,nat,nullable,object,oneOf,positive,sortedBy,str,tagged } from '../core/validate.ts';
 import { type IsoTime,type RepoPath,isoTime,repoPath } from '../core/values.ts';
 import { type DebtDisposition,debtDisposition } from '../debt/types.ts';
@@ -48,7 +48,7 @@ export type Phase0Record = Readonly<{
   questions: readonly PhaseQuestion[];
   /** One per `open` item of the baseline's debt block, ascending by id. */
   debt: readonly Readonly<{ id: DebtId; disposition: DebtDisposition }>[];
-  /** One per amendment of the previous arc's verified ref, ascending. */
+  /** The root-selected slice and its rationale. */
   slice: Readonly<{ advances: readonly VisionClauseId[]; why: string }>;
 }>;
 
@@ -270,7 +270,6 @@ export type BriefArc = Readonly<{
   /** The arc's Phase-0 slice in force at its ref (not a delta; Q19: the root agent picks it, the owner sees it here); null without a Phase-0 record. */
   slice: Readonly<{ advances: readonly VisionClauseId[]; why: string }> | null;
   divergences: readonly Readonly<{ id: DivergenceId; type: DivergenceKind; what: string }>[];
-  digests: readonly Readonly<{ needsUser: NeedsUserId; ids: readonly DivergenceId[] }>[];
   decisions: readonly string[];
   curation: readonly Curation[];
   corpusDivergences: readonly CorpusDivergence[];
@@ -327,7 +326,6 @@ const briefArc: Read<BriefArc> = object((f) => ({
   arc: f.get('arc', (v, p) => arcId(v, p)),
   slice: f.get('slice', nullable(object((g) => ({ advances: g.get('advances', idList(vidR, { nonEmpty: true })), why: g.get('why', str) })))),
   divergences: f.get('divergences', arrayOf(object((g) => ({ id: g.get('id', divR), type: g.get('type', oneOf(DIVERGENCE_KINDS)), what: g.get('what', str) })))),
-  digests: f.get('digests', arrayOf(object((g) => ({ needsUser: g.get('needsUser', (v, p) => needsUserId(v, p)), ids: g.get('ids', arrayOf(divR, { nonEmpty: true })) })))),
   decisions: f.get('decisions', arrayOf(str)),
   curation: f.get('curation', arrayOf(curation)),
   corpusDivergences: f.get('corpusDivergences', arrayOf(corpusDivergence)),

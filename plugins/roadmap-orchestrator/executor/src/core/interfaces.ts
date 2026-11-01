@@ -9,10 +9,10 @@ FlakyFact,
 GitOpKind,IntentOf,IntentRecord,JudgmentInputs,JudgmentStage,OpExpect,OpKind,OpOutcome,OpPost,Parent,
 PlanAppliedFact,PropagationFact,RecoveredBy,WalkFact,
 } from './events.ts';
-import type { ArcId, ClaudeSessionId, CommandId, DivergenceId, EdgeId, FindingId, InvocationId, JobId, JobKind, MilestoneId, NeedsUserId, OpId, OpKey, PolishId, ResourceUnit, Sha, Sha256Hex, UnitId } from './ids.ts';
+import type { ArcId,ClaudeSessionId,CommandId,DivergenceId,EdgeId,FindingId,InvocationId,JobId,JobKind,MilestoneId,NeedsUserId,OpId,OpKey,PolishId,ResourceUnit,Sha,Sha256Hex,UnitId } from './ids.ts';
 import type {
-CancelFile,ChildEnd,ContainmentMode,DispatchRecord,ExitFile,KillReason,LaunchFile,ProcIdentity,ResultFile,RunnerFileMap,
-RunnerFileName,
+CancelFile,ChildEnd,ContainmentMode,DispatchRecord,ExitFile,KillReason,LaunchFile,ProcIdentity,RunnerFileMap,
+RunnerFileName
 } from './records.ts';
 import type { ApplyQueued,BackendParkState,EdgeResolvedState,FindingState,HolisticFold,ProbeState,ResidueState,ResourceEntry,ReviewFold,UnitState } from './state.ts';
 import type { SessionCharge } from './usage.ts';
@@ -168,8 +168,8 @@ export type FlakeAt = Readonly<{ seq: number; at: IsoTime; fact: FlakyFact }>;
 export type WalkFactAt = Readonly<{ seq: number; at: IsoTime; fact: WalkFact }>;
 export type PropagationFactAt = Readonly<{ seq: number; at: IsoTime; fact: PropagationFact }>;
 
-/** How an item was closed: by `command` (`needs-user-acked`), or by the executor at the close-out (`command` null: `needs-user-declined`, run 10 E). */
-export type NeedsUserAckState = Readonly<{ command: CommandId | null; choice: string | null }>;
+/** The command that closed an item and its selected option. */
+export type NeedsUserAckState = Readonly<{ command: CommandId; choice: string | null }>;
 export type NeedsUserState = Readonly<{ id: NeedsUserId; blocking: boolean; ack: NeedsUserAckState | null }>;
 /** `stop`: the stop command recorded, if any. A pause of every unit and pauses of single units are kept apart. */
 export type ControlState = Readonly<{ stop: CommandId | null; pausedAll: boolean; pausedUnits: readonly UnitId[] }>;
@@ -232,7 +232,6 @@ export interface RunnerFiles {
 
 /** `cancel`: cancel.json when the executor wrote one (it does before cancelling the workload), else null. */
 export type AdapterInput = Readonly<{ launch: LaunchFile; exit: ExitFile; cancel: CancelFile | null; stdoutPath: AbsPath; stderrPath: AbsPath }>;
-export type Adapter = (input: AdapterInput) => ResultFile;
 
 // ---------------------------------------------------------------------------------------------------
 // Reconcilers: one per op kind, run by recovery on each open intent. Each re-reads postconditions first
@@ -276,8 +275,6 @@ export type Reconciler<K extends OpKind> = (
   intent: IntentOf<K>,
   view: JournalView,
 ) => Promise<Extract<Disposition<K>, { kind: AllowedDisposition[K] }>>;
-
-export type Reconcilers = { readonly [K in OpKind]: Reconciler<K> };
 
 // ---------------------------------------------------------------------------------------------------
 // Git operations: prepare computes every recorded input and the expected new id without moving a ref;

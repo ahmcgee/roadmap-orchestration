@@ -1,6 +1,6 @@
 // Free M4a fixture scenarios: scripted root sessions drive the real staged CLI and fake backends.
-// Arc 1 covers pack review, a witness fix, high-risk Opus builds, smoke survival, campaign audit and flow changes.
-// Arc 2 covers root-authored opportunity admission, a paused lane and its reuse, and a rejected flow proposal.
+// Arc 1 covers pack review, a witness fix, high-risk Opus builds, smoke survival and campaign audit.
+// Arc 2 covers root-authored admission, a paused lane and its reuse.
 // Both profiles share the story; high-risk builds use Claude, while eligible low-risk builds follow the profile.
 import { join } from 'node:path';
 import type { JsonValue } from '../../src/core/json.ts';
@@ -92,8 +92,6 @@ const JOBS_1: readonly Step[] = [
     { job: 'review-1', index: 0, disposition: 'resolved' },
   ]),
   lensStep('audit-1', 'vision', [{ severity: 'P2', obligation: null, visionClauses: ['V-5'], claim: DEFERRED_CLAIM, cause: 'no cancellation template is sent', evidence: [{ path: 'src/cli.js', line: 50 }] }]),
-
-  lensStep('audit-2', 'invariants'),
 ];
 
 const JOBS_2: readonly Step[] = [

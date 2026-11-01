@@ -17,24 +17,24 @@ import { journalOf } from './exec-common.ts';
 // salvage SHA, after the lane files for the build) and the mutation smoke (D2: the journey lane declares `testPaths`, so
 // the reverted production diff runs it on the mutant tree, scripted to fail t2: killed, green).
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync,readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Event, Parent } from '../../src/core/events.ts';
-import { type InvocationId, parseInvocationId } from '../../src/core/ids.ts';
+import type { Event,Parent } from '../../src/core/events.ts';
+import { type InvocationId,parseInvocationId } from '../../src/core/ids.ts';
 import type { JournalView } from '../../src/core/interfaces.ts';
 import { canonicalJson } from '../../src/core/json.ts';
 import type { LogSnapshot } from '../../src/core/log.ts';
-import { lensStep, packReviewStep } from '../helpers/holistic.ts';
-import { git, tmpDir } from '../helpers/repo.ts';
+import { lensStep,packReviewStep } from '../helpers/holistic.ts';
+import { git,tmpDir } from '../helpers/repo.ts';
 import type { Step } from '../helpers/scenario.ts';
 import { writeWitnessControl } from '../helpers/witness.ts';
-import { ADVANCES, obligationsJson } from './brake-common.ts';
+import { ADVANCES,obligationsJson } from './brake-common.ts';
 import { corpusTarget } from './corpus-target.ts';
 import { inRevisionAt } from './pm-trace.ts';
 import type { ExecRun } from './exec-common.ts';
 import type { Scenario } from './pm-common.ts';
-import { BUILD_REPORT, planCheckStep } from './stage-common.ts';
-import { MUL, applyBody, syncInputs, gateStep, workDirPattern } from './unit-common.ts';
+import { BUILD_REPORT,planCheckStep } from './stage-common.ts';
+import { MUL,applyBody,syncInputs,gateStep,workDirPattern } from './unit-common.ts';
 
 type Json = Record<string, unknown>;
 
@@ -53,7 +53,7 @@ const OBLIGATIONS = [
 function holistic(r: ExecRun): void {
   const control = join(tmpDir('pm-witness-control'), 'control.json');
   const obligations = obligationsJson({ obligations: OBLIGATIONS, mapping: MAPPED, laneExtra: { journey: { testPaths: ['test/**'] } } }, control);
-  corpusTarget(r, { obligations, advances: ADVANCES, audit: { lenses: ['vision'] } });
+  corpusTarget(r, { obligations, advances: ADVANCES });
   const baseline = git(r.repo, 'rev-parse', 'main^{tree}');
   const failsT2 = { outcomes: { t1: 'pass', t2: 'fail' } } as const;
   // The smoke's mutant: u1's salvage tree (the baseline plus MUL) with its production diff reverted, so MUL's test alone.

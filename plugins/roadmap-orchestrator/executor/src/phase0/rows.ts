@@ -1,5 +1,5 @@
-import { ciReasons, lanePlacementReasons } from '../input/ci.ts';
-import { inUnitSystems, systemsForPatterns } from '../input/systems.ts';
+import { ciReasons,lanePlacementReasons } from '../input/ci.ts';
+import { inUnitSystems,systemsForPatterns } from '../input/systems.ts';
 // The shared Phase-0 startup rows (M4a "`roadmap phase0 check`", step C1): one rule, run by `start` (src/preflight/
 // checks.ts), `apply` (src/commands/apply.ts) and `roadmap phase0 check` (src/commands/phase0.ts, both modes).
 // Synchronous: git runs as spawnSync reads.
@@ -19,7 +19,6 @@ import { inUnitSystems, systemsForPatterns } from '../input/systems.ts';
 //   4. debt        every open item of the baseline's `debt.md` block dispositioned (`debt-undispositioned`); a third
 //                  `keep` of an item kept in each of the two previous arcs needs a question whose text names the item
 //                  (`debt-kept-twice-unasked`); question ids against the chain closure (`question-reused`, H23).
-//   5. amendments  every amendment of the previous arc's verified ref dispositioned (`amendment-undispositioned`).
 //   5a. answers    (a fresh start, live) every owner answer in force in the answer log (`roadmap answer`, src/answers.ts)
 //                  applied: the record marks its question `answered` with its text, or, for a question the record
 //                  does not carry, the newest earlier arc of the chain carrying it does (`answer-unapplied`).
@@ -70,7 +69,7 @@ import { type ArcRef,chainBack,committedAcks,completedHeadOf,previousIncomplete,
 import { type ArcId,type DebtId,type MilestoneId,type UnitId,DOCS_SYSTEM,phaseQuestionSeq,sha } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { sha256Hex } from '../core/json.ts';
-import { type SpecM1, specForces } from '../core/records.ts';
+import { type SpecM1,specForces } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath,type RepoPath,type RepoPattern,absPath,matchesPattern,repoPath,repoPattern } from '../core/values.ts';
 import { readGuideBytes } from '../corpus/guide.ts';

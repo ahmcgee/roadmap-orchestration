@@ -120,13 +120,6 @@ export function compareDue(view: JournalView, plan: PlanM1): PlanUnit | null {
 export const cutDue = (view: JournalView, plan: PlanM1): PlanUnit | null =>
   plan.units.find((u) => u.origin === 'polish' && u.cut === undefined && tweakOf(view, u.id)?.decision === 'drop') ?? null;
 
-/** Whether a compare or a dropped tweak's cut is due or running (the scheduler's question before `runCompare`). */
-export function comparePending(ctx: Pick<CompareContext, 'journal' | 'runDir'>): boolean {
-  const view = ctx.journal.view;
-  const plan = requirePlanInForce(ctx.runDir, view).plan;
-  return runningCompare(view) !== null || cutDue(view, plan) !== null || compareDue(view, plan) !== null;
-}
-
 /** Compares a unit gets: the first and one retry; the second failed (not interrupted) one drops the tweak, reason `abandoned`. */
 export const COMPARE_ATTEMPTS = 2;
 

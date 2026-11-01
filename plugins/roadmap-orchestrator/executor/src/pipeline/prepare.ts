@@ -30,20 +30,19 @@
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { crashPoint } from '../core/crash.ts';
-import type { IntentOf, OpKind } from '../core/events.ts';
-import type { OpId, Sha, UnitId } from '../core/ids.ts';
-import { readJournal } from '../core/log.ts';
+import type { IntentOf,OpKind } from '../core/events.ts';
+import type { OpId,Sha,UnitId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import type { DispatchRecord } from '../core/records.ts';
-import { type Lineage, maxTier } from '../core/state.ts';
-import { type AbsPath, type RefName, type RepoPattern, absPath, branchRef } from '../core/values.ts';
+import { type Lineage,maxTier } from '../core/state.ts';
+import { type AbsPath,type RefName,absPath,branchRef } from '../core/values.ts';
 import { isAncestor } from '../git/ff.ts';
-import { refTarget, revParse } from '../git/git.ts';
-import type { PlanUnit, ReentryPoint } from '../input/plan.ts';
-import { evidenceSnapshotOp, mergeinOp, worktreeCreateOp } from '../recover/ops.ts';
-import { type StageContext, evidenceRoot, firstPin, runOp, unitBranch, unitWorktree } from './dispatch.ts';
+import { refTarget,revParse } from '../git/git.ts';
+import type { PlanUnit,ReentryPoint } from '../input/plan.ts';
+import { evidenceSnapshotOp,mergeinOp,worktreeCreateOp } from '../recover/ops.ts';
+import { type StageContext,evidenceRoot,firstPin,runOp,unitBranch,unitWorktree } from './dispatch.ts';
 import { dirtySnapshot } from './lanes.ts';
-import { type StageDone, at, executorIdentity, integrationTip, loadUnitSpec, record, start } from './stages.ts';
+import { type StageDone,at,executorIdentity,integrationTip,loadUnitSpec,record,start } from './stages.ts';
 
 /** A preparation, recorded: where the prepared worktree is and what `retire` cites. */
 export type PrepareDone = StageDone<'prepare'> & Readonly<{

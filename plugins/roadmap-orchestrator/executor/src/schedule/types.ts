@@ -49,13 +49,6 @@ export type ResourceRequest = Readonly<{
   publication: boolean;
 }>;
 
-/**
- * Each stage's entry reservation (F6), taken before the stage's first journaled op: pre-build and gate
- * `@cpu`×1; build calibrated `@cpu` only (unit.cpu overrides); lanes the first lane's set; candidate the
- * publication (`integration-slot`); prepare none. A wait cancelled by pause or stop journals nothing.
- */
-export type EntryReservation = (plan: PlanM1, unit: PlanUnit, stage: AdmissionStage) => ResourceRequest | null;
-
 /** The arbiter's answer to one waiter (src/schedule/arbiter.ts, step 1). */
 export type Grant =
   | Readonly<{ kind: 'granted'; units: readonly ResourceUnit[] }>
@@ -74,8 +67,8 @@ export type Acquire = (request: ResourceRequest, holder: Holder, rank: () => Ran
 // ---------------------------------------------------------------------------------------------------
 // Priority and aging (F17)
 
-/** R6: repair units (and, dev.17, deflake and propagation units) first, then checkpoint-originated, then polish, then planned. */
-export const ORIGIN_RANK = { repair: 0, deflake: 0, checkpoint: 1, polish: 2, planned: 3 } as const satisfies Readonly<Record<UnitOrigin, number>>;
+/** R6: repair units (and, dev.17, deflake and propagation units) first, then polish, then planned. */
+export const ORIGIN_RANK = { repair: 0, deflake: 0, polish: 2, planned: 3 } as const satisfies Readonly<Record<UnitOrigin, number>>;
 /** A waiter is promoted once this many other units published inside its current waiting interval. */
 export const PROMOTION_BYPASS = 3;
 
@@ -99,7 +92,7 @@ export type Rank = Readonly<{
 
 /**
  * M4a rev 3 (R42): `high` priority first; then promoted units, by age alone (`waitStartSeq`); then the rest by origin
- * (`checkpoint` before `planned`), then age. Plan index breaks ties, so the order is total. Negative: `a` is served first.
+ * (`polish` before `planned`), then age. Plan index breaks ties, so the order is total. Negative: `a` is served first.
  */
 export function compareRank(a: Rank, b: Rank): number {
   if (a.priority !== b.priority) return a.priority === 'high' ? -1 : 1;

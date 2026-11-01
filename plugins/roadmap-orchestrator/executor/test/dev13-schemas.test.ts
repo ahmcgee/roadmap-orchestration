@@ -88,7 +88,7 @@ describe('dev.13 plan: milestones', () => {
     refusedAt(withMilestone({ units: ['u1', 'nope'] }), /^plan\.milestones\[0\]\.units\[1\]$/);
     refusedAt(withMilestone({ design: { unit: 'nope' } }), /\.design\.unit$/);
     refusedAt(withMilestone({ units: ['u1', 'd1'] }), /\.design\.unit$/);
-    refusedAt(withMilestone({}, { ...PLAN, units: [{ ...unit('d1'), origin: 'checkpoint' }, unit('u1', ['d1']), unit('u2', ['d1'])] }), /\.design\.unit$/);
+    refusedAt(withMilestone({}, { ...PLAN, units: [{ ...unit('d1'), origin: 'repair' }, unit('u1', ['d1']), unit('u2', ['d1'])] }), /\.design\.unit$/);
     refusedAt(withMilestone({ journeys: [] }), /\.journeys$/);
     refusedAt(withMilestone({ references: [] }), /\.references$/);
     refusedAt(withMilestone({ resources: ['db'] }), /\.resources\[0\]$/);
@@ -108,7 +108,7 @@ describe('dev.13 plan: milestones', () => {
     assert.deepEqual(plan.units.at(-1)?.polish, { milestone: 'MS-1', proposal: 'X-1' });
     refusedAt({ ...PLAN, units: [...PLAN.units, { ...polish, polish: undefined }] }, /\.polish$/);
     refusedAt({ ...PLAN, units: [...PLAN.units, { ...unit('tweak'), polish: polish.polish }] }, /\.polish$/);
-    assert.ok(ORIGIN_RANK.repair < ORIGIN_RANK.checkpoint && ORIGIN_RANK.checkpoint < ORIGIN_RANK.polish && ORIGIN_RANK.polish < ORIGIN_RANK.planned);
+    assert.ok(ORIGIN_RANK.repair < ORIGIN_RANK.polish && ORIGIN_RANK.polish < ORIGIN_RANK.planned);
   });
 });
 

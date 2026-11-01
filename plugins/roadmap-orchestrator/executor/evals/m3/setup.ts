@@ -62,7 +62,7 @@ import type { CorpusPin } from '../../src/corpus/types.ts';
 import { laneRevOf,parseObligations } from '../../src/holistic/types.ts';
 import { STORE_FILE,writeStore } from '../../test/fakes/gh-store.ts';
 import { writeGhShim } from '../../test/fakes/shim.ts';
-import { AUDIT_EVERY,CONVERGENCE_K,INTEGRATION,LENSES,type Layout,MAIN,MONEY_LANE,UNITS,layout } from './layout.ts';
+import { INTEGRATION,type Layout,MAIN,MONEY_LANE,UNITS,layout } from './layout.ts';
 
 export const BARRIER_SCRIPT = fileURLToPath(new URL('./barrier.ts', import.meta.url));
 /** The money lane waits at most this long for the driver (the driver's own run timeout is shorter). */
@@ -349,8 +349,8 @@ export async function setup(dir: string): Promise<void> {
       }],
     },
     resources: [],
-    holistic: { advances: ADVANCES, obligations: 'obligations.json', audit: { every: AUDIT_EVERY, lenses: [...LENSES] } },
-    limits: { convergenceK: CONVERGENCE_K },
+    holistic: { advances: ADVANCES, obligations: 'obligations.json' },
+    limits: { },
     units: UNITS.map((id) => ({ id, spec: `${id}.json`, review: 'always', risk: 'med', systems: systemsForPaths(SCOPES[id]), resources: [], after: after[id] })),
   }));
 }

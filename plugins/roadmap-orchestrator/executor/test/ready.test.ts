@@ -1,22 +1,22 @@
 import { systemName } from '../src/core/ids.ts';
 // Readiness, admission and rank (src/schedule/ready.ts): pure over folded logs built here record by record.
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
-import { type Event, type Fact, type LogRecord, type ProbeTarget, prevHash, serializeEvent } from '../src/core/events.ts';
+import { describe,it } from 'node:test';
+import { type Event,type Fact,type LogRecord,type ProbeTarget,prevHash,serializeEvent } from '../src/core/events.ts';
 import {
-  type CommandId, type NeedsUserId, type UnitId, commandId, edgeId, invocationId, knownDefectIdOf, laneId, needsUserId, opId, opKey, planRev, seatRev, sha,
-  sha256, specRev, unitId,
+type CommandId,type NeedsUserId,type UnitId,commandId,edgeId,invocationId,knownDefectIdOf,laneId,needsUserId,opId,opKey,planRev,seatRev,sha,
+sha256,specRev,unitId,
 } from '../src/core/ids.ts';
 import type { NeedsUserReason } from '../src/core/records.ts';
 import { Fold } from '../src/core/state.ts';
-import { absPath, branchName, isoTime, planPath, refName, repoPath, repoPattern } from '../src/core/values.ts';
-import { type KnownDefect, PLAN_SCHEMA, type PlanM1, type PlanUnit } from '../src/input/plan.ts';
-import { arcStack, resolveRouting } from '../src/routing/layers.ts';
-import { type RiskTier, routingLayer } from '../src/routing/types.ts';
-import { type ReadyInput, type SpecFactsOf, activeKnownDefects, admitter, knownDefectActive, rankOf, ready } from '../src/schedule/ready.ts';
-import { type AdmissionStage, type AdmitInput, type CommandScope, type Rank, PROMOTION_BYPASS, compareRank } from '../src/schedule/types.ts';
+import { absPath,branchName,isoTime,planPath,refName,repoPath } from '../src/core/values.ts';
+import { type KnownDefect,PLAN_SCHEMA,type PlanM1,type PlanUnit } from '../src/input/plan.ts';
+import { arcStack,resolveRouting } from '../src/routing/layers.ts';
+import { type RiskTier,routingLayer } from '../src/routing/types.ts';
+import { type ReadyInput,type SpecFactsOf,activeKnownDefects,admitter,knownDefectActive,rankOf,ready } from '../src/schedule/ready.ts';
+import { type AdmissionStage,type AdmitInput,type CommandScope,type Rank,PROMOTION_BYPASS,compareRank } from '../src/schedule/types.ts';
 import type { PressureTick } from '../src/host/pressure.ts';
-import { ARC, H, REV, appliedFields, chain } from './fixtures/log-records.ts';
+import { ARC,H,REV,appliedFields,chain } from './fixtures/log-records.ts';
 
 /** The default profile with a plan seating build.high on frontier (Claude), so a med and a high unit build on different backends. */
 const ROUTING = resolveRouting(arcStack('default', null, routingLayer({ build: { high: 'frontier' } }, 'layer'))).table;
@@ -307,9 +307,9 @@ describe('admit (A12, A17)', () => {
 });
 
 describe('priority and aging (F17)', () => {
-  it('prio.age-before-origin: a checkpoint outranks an older planned waiter until both are promoted; then age alone decides', () => {
+  it('prio.age-before-origin: a polish outranks an older planned waiter until both are promoted; then age alone decides', () => {
     const [X1, X2, X3] = ['x1', 'x2', 'x3'].map((s) => unitId(s)) as [UnitId, UnitId, UnitId];
-    const plan = planOf([unit(P), unit(X1), unit(X2), unit(X3), unit(K, { origin: 'checkpoint' })]);
+    const plan = planOf([unit(P), unit(X1), unit(X2), unit(X3), unit(K, { origin: 'polish' })]);
     const log = new Log([P, X1, X2, X3]);
     const added = log.plan([P, X1, X2, X3, K], [{ type: 'unit-added', unit: K }]);
     assert.deepEqual(ready(inputOf(log, plan)).map((r) => r.unit.id), [K, P, X1, X2, X3], 'unpromoted: origin, then age, then plan index');
@@ -326,20 +326,20 @@ describe('priority and aging (F17)', () => {
     const three = ready(inputOf(log, plan));
     assert.deepEqual(three.map((r) => r.rank), [
       { unit: P, priority: 'normal', origin: 'planned', waitStartSeq: 1, bypassMerges: 3, promoted: true, planIndex: 0 },
-      { unit: K, priority: 'normal', origin: 'checkpoint', waitStartSeq: added, bypassMerges: 3, promoted: true, planIndex: 4 },
+      { unit: K, priority: 'normal', origin: 'polish', waitStartSeq: added, bypassMerges: 3, promoted: true, planIndex: 4 },
     ], 'both promoted: the older planned unit first');
     const view = log.view();
     assert.ok(compareRank(rankOf(view, plan, P), rankOf(view, plan, K)) < 0);
   });
 
-  it('prio.repair-first: a repair unit outranks checkpoint and planned waiters, older ones included (R6), until they are promoted', () => {
+  it('prio.repair-first: a repair unit outranks polish and planned waiters, older ones included (R6), until they are promoted', () => {
     const R = unitId('r');
-    const plan = planOf([unit(P), unit(K, { origin: 'checkpoint' }), unit(R, { origin: 'repair' })]);
+    const plan = planOf([unit(P), unit(K, { origin: 'polish' }), unit(R, { origin: 'repair' })]);
     const log = new Log([P]);
     log.plan([P, K], [{ type: 'unit-added', unit: K }]);
     log.plan([P, K, R], [{ type: 'unit-added', unit: R }]);
     const order = ready(inputOf(log, plan));
-    assert.deepEqual(order.map((r) => [r.unit.id, r.rank.origin]), [[R, 'repair'], [K, 'checkpoint'], [P, 'planned']], 'origin before age: repair 0, checkpoint 1, planned 2');
+    assert.deepEqual(order.map((r) => [r.unit.id, r.rank.origin]), [[R, 'repair'], [K, 'polish'], [P, 'planned']], 'origin before age: repair 0, polish 1, planned 2');
     assert.ok(order[0]!.rank.waitStartSeq > order[2]!.rank.waitStartSeq, 'the repair is the youngest waiter');
     const view = log.view();
     assert.ok(compareRank(rankOf(view, plan, R), rankOf(view, plan, K)) < 0 && compareRank(rankOf(view, plan, K), rankOf(view, plan, P)) < 0);
@@ -357,7 +357,7 @@ describe('priority and aging (F17)', () => {
     assert.deepEqual(aged.slice(0, 3), [[P, true], [K, true], [R, true]], 'every waiter promoted: the oldest first, whatever its origin');
   });
 
-  it('prio.bypass-promotion: an endless stream of checkpoint units starves a planned waiter only until it is promoted', () => {
+  it('prio.bypass-promotion: an endless stream of polish units starves a planned waiter only until it is promoted', () => {
     // One overlapping resource: each grant goes to the head of the ready order, and the granted unit publishes.
     // Q (planned, undispatched) waits from seq 1; P (planned) from its pre-build approval, so Q is older.
     const units: PlanUnit[] = [unit(Q), unit(P)];
@@ -367,7 +367,7 @@ describe('priority and aging (F17)', () => {
     let pGranted = false;
     for (let round = 1; round <= 20 && !pGranted; round += 1) {
       const ck = unitId(`c${round}`);
-      units.push(unit(ck, { origin: 'checkpoint' }));
+      units.push(unit(ck, { origin: 'polish' }));
       log.plan(units.map((u) => u.id), [{ type: 'unit-added', unit: ck }]);
       const plan = planOf(units);
       const order = ready(inputOf(log, plan));
@@ -383,7 +383,7 @@ describe('priority and aging (F17)', () => {
     assert.deepEqual(grants.map((g) => g.p.bypassMerges), [0, 1, 2, 3, 4]);
     const promotedAt = grants.findIndex((g) => g.p.promoted);
     assert.equal(grants[promotedAt]?.p.bypassMerges, PROMOTION_BYPASS);
-    for (const g of grants.slice(0, promotedAt)) assert.equal(g.rank.origin, 'checkpoint', 'unpromoted, P loses to every checkpoint unit');
+    for (const g of grants.slice(0, promotedAt)) assert.equal(g.rank.origin, 'polish', 'unpromoted, P loses to every polish unit');
     // The graded property: once P is promoted, every grant goes to P or to a unit promoted before it by age.
     for (const g of grants.slice(promotedAt)) {
       assert.ok(g.unit === P || (g.rank.promoted && compareRank(g.rank, g.p) < 0), `grant to ${g.unit} after P's promotion`);

@@ -1,6 +1,6 @@
 import { captureUnderFence } from '../core/fence.ts';
-import { raiseNeedsUser, raisedWithReason } from '../needsuser.ts';
-import { methodContext, runReview, diagnosisDue, diagnosed } from './surface.ts';
+import { raiseNeedsUser,raisedWithReason } from '../needsuser.ts';
+import { methodContext,runReview,diagnosisDue,diagnosed } from './surface.ts';
 import { systemsMapInForce } from '../input/systems.ts';
 import { protectedPathsInForce } from '../input/protected.ts';
 // Unit stages from optional pre-build annotation through certification. All effects are journaled;
@@ -9,14 +9,15 @@ import { protectedPathsInForce } from '../input/protected.ts';
 // Build resources remain held through evidence, salvage and teardown. Certification runs on a clean
 // salvage checkout. The root owns plan changes through CAS apply; builders receive notes and proof evidence.
 import { systemNotes } from './systemnotes.ts';
-import { memoryMessage, salvageSummary } from './memory.ts';
+import { memoryMessage,salvageSummary } from './memory.ts';
 import { existsSync,readFileSync } from 'node:fs';
 import { basename,dirname,isAbsolute,join,normalize,relative } from 'node:path';
 import { walkMcpConfig } from '../backends/mcp.ts';
 
 import type { Verification } from '../core/design.ts';
 import {
-BACKEND_PARK_CLASSES,type DiffShown,type GateLargeDiff,type HoldCause,type IntentOf,type JudgmentStage,type OpKind,type OutcomeStage,type StageOutcomeDetail,type StageOutcomeKind } from '../core/events.ts';
+BACKEND_PARK_CLASSES,type DiffShown,type GateLargeDiff,type HoldCause,type IntentOf,type JudgmentStage,type OpKind,type OutcomeStage,type StageOutcomeDetail,type StageOutcomeKind
+} from '../core/events.ts';
 import { holdFence } from '../core/fence.ts';
 import { durableMkdir } from '../core/fsx.ts';
 import {
@@ -29,13 +30,13 @@ type Sha,type Sha256Hex,type SpecRev,type UnitId,invocationId,
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import { censusOf } from '../core/projections.ts';
-import { type ApprovalFingerprint, type LaneDef, type NeedsUserContent, STDERR_FILE, STDOUT_FILE, type SpecM1, type SpecPatchOp, isRed, specForces, specObligations, specRepairs } from '../core/records.ts';
+import { type ApprovalFingerprint,type LaneDef,type NeedsUserContent,STDERR_FILE,STDOUT_FILE,type SpecM1,type SpecPatchOp,isRed,specForces,specObligations,specRepairs } from '../core/records.ts';
 import type { GateReview } from '../core/review.ts';
 import { SchemaError } from '../core/validate.ts';
-import { type AbsPath, type RefName, type RepoPath, type RepoPattern, absPath, branchRef, gitDate, isoTimeOf, repoPath, repoPattern } from '../core/values.ts';
+import { type AbsPath,type RefName,type RepoPath,type RepoPattern,absPath,branchRef,gitDate,isoTimeOf,repoPath,repoPattern } from '../core/values.ts';
 import { type CorpusView,materialiseCorpus } from '../corpus/materialise.ts';
 import { FILES_DIR,capturedEvidence } from '../git/evidence.ts';
-import { GitError, type Identity, git, gitRun, revParse } from '../git/git.ts';
+import { GitError,type Identity,git,gitRun,revParse } from '../git/git.ts';
 import { mergeHead,resolvedHead } from '../git/mergein.ts';
 import { type SalvageRules,SalvageStateError,SalvageUnmergedError,checkRejected,planSalvage } from '../git/salvage.ts';
 import { diffBase,transientCheck,unitDiffPaths,unitTransientRules } from '../git/transient.ts';
@@ -46,7 +47,7 @@ import { type ImpactInput,type ObligationDef,type Obligations,type Vision,parseO
 import { witnessLaneReasons } from '../input/classify.ts';
 import { regenerateLanes,unitRegenerateLanes } from '../input/derived.ts';
 
-import { CORPUS_FILE_INPUT, type CorpusInForce, type LoadedSpec, OBLIGATIONS_INPUT, PLAN_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, inputPath, keptInput, keptPayload, parseUnitSpec, requirePlanInForce, revisionInForce, specBytesOf, specShaInForce } from '../input/inforce.ts';
+import { CORPUS_FILE_INPUT,type CorpusInForce,type LoadedSpec,OBLIGATIONS_INPUT,PLAN_INPUT,RULINGS_INPUT,SPEC_INPUT,VISION_INPUT,inputPath,keptInput,keptPayload,parseUnitSpec,requirePlanInForce,revisionInForce,specBytesOf,specShaInForce } from '../input/inforce.ts';
 import {
 type KnownDefect,type PlanUnit,boundsOf,advancesOf,designUnitOf,knownDefectsOf,milestonesOf,parsePlan,targetDocumentPaths,targetDocuments,
 } from '../input/plan.ts';
@@ -54,20 +55,20 @@ type KnownDefect,type PlanUnit,boundsOf,advancesOf,designUnitOf,knownDefectsOf,m
 import { NO_PARK_FACTS,type ParkFacts,repeatNeedsUser,stageOutcomeFact } from '../park/table.ts';
 import { referenceFiles } from '../phase0/rows.ts';
 import { promptFor,renderPrompt } from '../prompts/index.ts';
-import type { ArchitectureInput, BuildBrowser, BuildLane, CorpusInput, DocText, EscalationInput, GateTargetInput, MilestonesInput, ReferenceIndex, RulingText, TargetInput, UnitMilestone, UnitTargetInput, VisionInput } from '../prompts/inputs.ts';
+import type { ArchitectureInput,BuildBrowser,BuildLane,CorpusInput,DocText,EscalationInput,GateTargetInput,MilestonesInput,ReferenceIndex,RulingText,TargetInput,UnitMilestone,UnitTargetInput,VisionInput } from '../prompts/inputs.ts';
 import { type Handover,visionInputOf } from '../prompts/inputs.ts';
 import {
 BUILD_SCHEMA,
 DECISIONS_FILE,type DecisionsFile,type Premise,buildOutput,
 validateDecisionsFile,
 } from '../prompts/schemas.ts';
-import { evidenceSnapshotOp, salvageCommitOp, worktreeRemoveOp } from '../recover/ops.ts';
+import { evidenceSnapshotOp,salvageCommitOp,worktreeRemoveOp } from '../recover/ops.ts';
 import { buildCpuKey,cpuCost } from '../resources/calibrate.ts';
 
 import { buildCpu,requestOf } from '../resources/pool.ts';
 import { probe } from '../resources/probe.ts';
 import { type Reservation,type StageHolder,buildLanes,cleanup,heldReservation,holderUnits,run } from '../resources/reserve.ts';
-import type { JudgmentSeat, Triple } from '../routing/types.ts';
+import type { JudgmentSeat,Triple } from '../routing/types.ts';
 import { runnerFiles } from '../runner/files.ts';
 import { knownDefectActive } from '../schedule/ready.ts';
 import { CPU_COST,type ResourceRequest } from '../schedule/types.ts';
@@ -77,11 +78,11 @@ import { type Ruling,parseRulings } from '../spec/rulings.ts';
 
 import { verifyRunsOf } from './deflake.ts';
 import { departures } from './design.ts';
-import { type BackendCallOutcome, type BackendCallSpec, type BackendVerdict, type Cancelled, type ImplementerDispatch, type Pinned, type StageContext, type StageParent, backendOf, cancelledNow, dispatchOf, enter, evidenceRoot, fastSuiteWorktree, implementerDispatch, isCancelled, nonEmpty, pinDispatch, runOp, runPrepared, steerDispatch, unitBranch, unitWorktree, verdictOf, verificationWorktree, workDir } from './dispatch.ts';
+import { type BackendCallOutcome,type BackendCallSpec,type BackendVerdict,type Cancelled,type ImplementerDispatch,type Pinned,type StageContext,type StageParent,backendOf,cancelledNow,dispatchOf,enter,evidenceRoot,fastSuiteWorktree,implementerDispatch,isCancelled,nonEmpty,pinDispatch,runOp,runPrepared,steerDispatch,unitBranch,unitWorktree,verdictOf,verificationWorktree,workDir } from './dispatch.ts';
 
 import { handoverOf,lineageOf,unmetClauses } from './handover.ts';
 import { invocationDir,quiescent } from './invoke.ts';
-import { type LaneRecord, type LaneRuntime, type Reusable, type Series, type VerificationTree, builderSuiteLanes, dirtyPaths, dirtySnapshot, laneOrder, laneRuntime, laneSummaryIn, mapInForce, presentCheckouts, removeCheckout, removeVerificationTree, runLaneSeries, seriesEntry, seriesOrder, specSeriesRoot, stageSuiteLanes } from './lanes.ts';
+import { type LaneRecord,type LaneRuntime,type Series,type VerificationTree,builderSuiteLanes,dirtyPaths,dirtySnapshot,laneOrder,laneRuntime,laneSummaryIn,mapInForce,presentCheckouts,removeCheckout,removeVerificationTree,runLaneSeries,seriesEntry,seriesOrder,specSeriesRoot,stageSuiteLanes } from './lanes.ts';
 
 import {
 type DecidedRound,type PreparedRound,type RoundCall,type RoundInput,callRound,decidedRound,laneFixRound,prepareRound,
@@ -91,7 +92,7 @@ steerBrief,
 import { mutationSmoke,survivingObligations } from './smoke.ts';
 
 import { pressureCause,seriesRuling } from './starved.ts';
-import { type BuildRound, type Next, type StageOutcome, transition } from './transitions.ts';
+import { type BuildRound,type Next,type StageOutcome,transition } from './transitions.ts';
 import { checksApply,publishWitnessLaneFiles,requiredAt,witnessPresence } from './witnesscheck.ts';
 // dev.17 (propagation)
 
@@ -303,11 +304,6 @@ export function visionInput(ctx: Readonly<{ journal: Readonly<{ view: JournalVie
 /** A document's first Markdown heading, for the reference index. */
 function firstHeading(text: string): string {
   return /^#{1,6}[ \t]+(.*\S)[ \t]*$/m.exec(text)?.[1] ?? '(no heading)';
-}
-
-/** A rule's first sentence, for the reference index. */
-function firstSentence(text: string): string {
-  return /^.*?[.!?](?=\s|$)/.exec(text)?.[0] ?? text;
 }
 
 /** What a unit's prompts embed in full (its cited contracts and active rulings) and the index of the rest. */
@@ -730,7 +726,7 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
   const state = ctx.journal.view.unit(unit.id);
   const allowance = Math.max(0, state.bounds.certifications - 1 - state.counters.unchargedLanesReds);
   const render = (call: RoundCall) => renderPrompt(prompt, {
-    target, spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec, { buildLanesOnly: true }) }, intent: spec.intent, nonGoals: spec.nonGoals, ...lib,
+    target, spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec, { buildLanesOnly: true, ...(unit.spike === undefined ? {} : {spike: unit.spike}) }) }, intent: spec.intent, nonGoals: spec.nonGoals, ...lib,
     systemNotes: systemNotes(ctx.repo, revParse(round.worktree, 'HEAD'), unit.systems, ctx.routingBase.config),
     notes: [`Attempt state: ${ctx.journal.view.attemptCounts(unit.id).builds} builds, ${ctx.journal.view.attemptCounts(unit.id).judged} judged stages; diagnosis at 8 builds or 20 stages. Chargeable failures ${ctx.journal.view.unit(unit.id).counters.chargeableFailures}/${boundsOf(ctx.plan(), unit).chargeable}.`, ...ctx.journal.view.spawnsOfUnit(unit.id, 'build').slice(-1).flatMap((i) => judgmentOutput(ctx, i, (v) => buildOutput(v, 'build'))?.notes ?? []), ...ctx.journal.view.buildNotes(unit.id, parent.attempt).map((sha) => steerBrief(ctx.runDir, sha)), ...ctx.journal.view.surfaceFacts().flatMap((f) => f.kind === 'review-completed' && f.unit === unit.id && f.note !== null ? [steerBrief(ctx.runDir, f.note)] : []), ...ctx.journal.view.surfaceFacts().flatMap((f) => f.kind === 'review-completed' && f.unit === unit.id && f.mode === 'pre-build' ? f.items.map((x) => `${x.id}: ${x.text} (${x.evidence.join('; ')})`) : [])],
     method: methodContext(ctx, unit, spec),
@@ -1167,15 +1163,15 @@ function suiteFault(ctx: StageContext, unit: UnitId, series: Series): LanesVerdi
 
 /**
  * `lanes` at `at` in their own checkout, removed afterwards (citing the series' evidence). `verify`: a deflake unit's
- * verification runs; `carry`: passes a docs-only change carries over.
+ * verification runs.
  */
 async function fastSuiteSeries(
   ctx: StageContext, parent: StageParent, lanes: readonly LaneDef[], at: Sha, which: 'suite' | 'base', rt: LaneRuntime,
-  verify: ReadonlyMap<LaneId, number> = new Map(), carry: ReadonlyMap<LaneId, Reusable> = new Map(), set: 'spec' | 'suite' = 'suite',
+  verify: ReadonlyMap<LaneId, number> = new Map(), set: 'spec' | 'suite' = 'suite',
 ): Promise<Series> {
   const { worktreeRoot, arc } = ctx.plan();
   const checkout = { path: fastSuiteWorktree(worktreeRoot, arc, parent.unit, parent.attempt, which), checkout: { type: 'detached', at } } as const;
-  const series = await runLaneSeries(ctx, parent, lanes, 'suite', checkout, fastSuiteRoot(ctx.runDir, parent, which), rt, false, new Map(), verify);
+  const series = await runLaneSeries(ctx, parent, lanes, set, checkout, fastSuiteRoot(ctx.runDir, parent, which), rt, false, new Map(), verify);
   if (series.tree !== null) await removeVerificationTree(ctx, series.tree, parent);
   return series;
 }
@@ -1191,7 +1187,7 @@ async function baseCheck(ctx: StageContext, parent: StageParent, base: Sha, lane
     if (check.kind === 'verdict') return check;
   }
   const running = (async (): Promise<BaseCheck> => {
-    const series = await fastSuiteSeries(ctx, parent, lanes, base, 'base', rt, new Map(), new Map(), set);
+    const series = await fastSuiteSeries(ctx, parent, lanes, base, 'base', rt, new Map(), set);
     const fault = suiteFault(ctx, parent.unit, series);
     if (fault !== null) return { kind: 'none', verdict: fault };
     const red = series.end.kind === 'red' ? [series.end.lane.lane] : [];
@@ -1240,7 +1236,7 @@ export function previousLaneReds(ctx: StageContext, unit: PlanUnit, spec: SpecM1
 
 /** The fast suite after a green spec series: its verdict, and its series at the salvage SHA (null when it has no lane). */
 async function fastSuite(
-  ctx: StageContext, unit: PlanUnit, spec: SpecM1, parent: StageParent, salvaged: Sha, rt: LaneRuntime, carry: ReadonlyMap<LaneId, Reusable>, red: ReadonlySet<LaneId>,
+  ctx: StageContext, unit: PlanUnit, spec: SpecM1, parent: StageParent, salvaged: Sha, rt: LaneRuntime, red: ReadonlySet<LaneId>,
 ): Promise<Readonly<{ verdict: LanesVerdict; series: Series | null }>> {
   const lanes = seriesOrder(fastSuiteLanes(ctx, spec, salvaged), red);
   if (lanes.length === 0) return { verdict: { kind: 'green' }, series: null };
@@ -1277,7 +1273,6 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
   // 2026-10-15: a required witness on no arc lane in force can never be checked; the unit parks before anything runs.
   const lanePark = witnessLanePark(ctx, unit, spec);
   if (lanePark !== null) return { ...record(ctx, parent, 'witness-lane-missing', lanePark), at: salvaged, ledger: [], verification: null, fix: null };
-    // dev.17 (proportional review): a build's docs-only claim, verified before any lane runs (src/pipeline/docsonly.ts).
 
   const entry = seriesEntry(ctx, order);
   const entered = await enter(ctx, stageHolder(parent), entry);
@@ -1314,7 +1309,7 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
     }
   }
   // The fast suite lanes (the 2026-10-15 batch): only after a green certified spec series.
-  const suite = verdict.kind === 'green' ? await fastSuite(ctx, unit, spec, parent, salvaged, rt, new Map(), red.suite) : null;
+  const suite = verdict.kind === 'green' ? await fastSuite(ctx, unit, spec, parent, salvaged, rt, red.suite) : null;
   if (suite !== null) verdict = suite.verdict;
   if (verdict.kind === 'red') {
     const red = [...series.ledger, ...(suite?.series?.ledger ?? [])].filter((l) => isRed(l.verdict));

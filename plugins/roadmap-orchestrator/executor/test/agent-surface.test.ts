@@ -1,11 +1,11 @@
 import { lensCoverage } from '../src/holistic/coverage.ts';
-import { sha, sha256 } from '../src/core/ids.ts';
+import { sha,sha256 } from '../src/core/ids.ts';
 import { claudeBuilderRouting } from '../src/routing/eligibility.ts';
 import { runAudit } from '../src/holistic/audit.ts';
 import { cadence } from '../src/holistic/cadence.ts';
 import { runWalk } from '../src/walk/walk.ts';
-import { walkArc, walkContext, walkStep, walkAnswer } from './fixtures/walk-common.ts';
-import { unitSteps, moduleFiles } from './fixtures/audit-common.ts';
+import { walkArc,walkContext,walkStep,walkAnswer } from './fixtures/walk-common.ts';
+import { unitSteps,moduleFiles } from './fixtures/audit-common.ts';
 import { lensStep } from './helpers/holistic.ts';
 import { wire } from './fixtures/publish-common.ts';
 import { join } from 'node:path';
@@ -15,20 +15,20 @@ import { MUL } from './fixtures/unit-common.ts';
 import { applyCommand } from '../src/commands/apply.ts';
 import { submitCommand } from '../src/commands/queue.ts';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync,readFileSync,writeFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { unitId } from '../src/core/ids.ts';
 import { standingRules } from '../src/pipeline/gate.ts';
-import { preBuild, build, loadUnitSpec } from '../src/pipeline/stages.ts';
+import { preBuild,build,loadUnitSpec } from '../src/pipeline/stages.ts';
 import { runUnit } from '../src/pipeline/unit.ts';
 import { methodModules } from '../src/prompts/method/index.ts';
-import { validateBuildOutput, validateGateOutput, validateCampaignAuditOutput } from '../src/prompts/schemas.ts';
+import { validateBuildOutput,validateGateOutput,validateCampaignAuditOutput } from '../src/prompts/schemas.ts';
 import { seatTripleOf } from '../src/pipeline/dispatch.ts';
 import { buildTriple } from '../src/pipeline/dispatch.ts';
 import { readNeedsUser } from '../src/needsuser.ts';
-import { diagnosisDue, reviewItems, markers, proofNotLocal, methodContext } from '../src/pipeline/surface.ts';
-import { contextFor, setupArc, gateStep, mulBuild, codexStep, appendSteps, stepUntil, syncInputs, commandContextFor, applyBody } from './fixtures/unit-common.ts';
-import { BUILD_REPORT, admitAll, planCheckStep, planCheckRepairStep } from './fixtures/stage-common.ts';
+import { diagnosisDue,reviewItems,markers,proofNotLocal,methodContext } from '../src/pipeline/surface.ts';
+import { contextFor,setupArc,gateStep,mulBuild,codexStep,appendSteps,stepUntil,syncInputs,commandContextFor,applyBody } from './fixtures/unit-common.ts';
+import { BUILD_REPORT,admitAll,planCheckStep,planCheckRepairStep } from './fixtures/stage-common.ts';
 import { readCalls } from './helpers/scenario.ts';
 
 const answer = {decision: 'approve' as const, ordering: null, findings: [], directives: [], reasons: ['Checked'], premises: [], standing: [], clusters: null, rulings: []};
@@ -250,7 +250,7 @@ test('surface.milestone: one combined experience verdict and one campaign audit,
     const audit = await runAudit({...ctx, clock: () => 0});
     assert.ok(audit.kind === 'ended' && audit.outcome === 'completed', JSON.stringify(audit));
     assert.equal(r.journal.view.planApplied()!.rev, before, 'the audit cannot amend the plan');
-    assert.deepEqual(r.journal.view.stageJobOutcomes().map((v) => [v.stage, v.verdict, v.findings]), [['experience-verdict', 'reported', 0], ['campaign-audit', 'completed', 0]]);
+    assert.deepEqual(r.journal.view.stageJobOutcomes().map((v) => [v.stage, v.verdict, v.findings.total]), [['experience-verdict', 'pass', 0], ['campaign-audit', 'pass', 0]]);
     assert.deepEqual(await runAudit({...ctx, clock: () => 0}), {kind: 'none'});
     assert.equal(r.journal.view.stageJobOutcomes().length, 2);
   } finally {clearInterval(tick); r.journal.close();}
@@ -316,4 +316,40 @@ test('surface.fix-round: a gate revision delivers findings, experiments and live
     assert.equal(cap.certificationAllowance, 3);
     assert.equal(r.journal.view.unit(unitId('u1')).counters.reviseRounds, 1);
   } finally {r.journal.close();}
+  const broken = {...MUL, 'src/add.js': 'export function add(a, b) { return a - b; }\n'};
+  const report = {...BUILD_REPORT, notes: ['Keep the narrow regression experiment and inspect the passing base.']};
+  const step = (files: Readonly<Record<string, string>>, message: string) => ({as: 'codex' as const, expect: {}, acts: [{type: 'commit' as const, message, files}, {type: 'emit' as const, value: report}]});
+  const lanes = [{id: 'regression', argv: ['sh', '-c', 'if grep -q "return a - b" src/add.js; then echo "src/add.js:1 ASSERTION_ADD broken sum"; exit 1; fi']}];
+  const red = setupArc({units: [{id: 'u1', lanes}], steps: [step(broken, 'introduce regression'), step({'src/round-two.js': 'export const round = 2;\n'}, 'retain regression'), step({'src/add.js': 'export function add(a, b) { return a + b; }\n'}, 'fix regression'), gateStep({decision: 'approve'})]});
+  const runtime = contextFor(red);
+  try {
+    assert.deepEqual(await runUnit(runtime.ctx, runtime.unit('u1'), admitAll), {kind: 'merged'});
+    const builds = readCalls(red.scenarioPath).filter((c) => c.as === 'codex');
+    assert.equal(builds.length, 3);
+    const prompt = builds[2]!.stdin;
+    const comparisons = runtime.journal.view.ciFacts().filter((f) => f.kind === 'lane-base-compared');
+    assert.equal(comparisons.length, 1);
+    const compared = comparisons[0]!;
+    assert.ok(compared.kind === 'lane-base-compared');
+    assert.equal(compared.result, 'pass');
+    assert.ok(existsSync(compared.evidence));
+    assert.match(prompt, /red on the unit and green at diffBase/);
+    assert.deepEqual(JSON.parse(/<base_comparison>([^<]+)<\/base_comparison>/.exec(prompt)![1]!), [{lane: compared.lane, base: compared.base, result: 'pass', evidence: compared.evidence}]);
+    const evidence = /<failing_lane_evidence>([\s\S]*?)<\/failing_lane_evidence>/.exec(prompt)![1]!;
+    assert.ok(evidence.includes(compared.evidence));
+    assert.match(evidence, /regression/);
+    const failedEvidence = evidence.trim().split('\n').map((line) => line.replace(/^- /, '')).filter((dir) => dir !== compared.evidence);
+    assert.ok(failedEvidence.length > 0, 'the unit failure is retained alongside the green base evidence');
+    assert.ok(failedEvidence.every((dir) => existsSync(dir)), 'the builder can read every failing evidence directory');
+    assert.ok(failedEvidence.some((dir) => existsSync(join(dir, 'stdout')) && readFileSync(join(dir, 'stdout'), 'utf8').includes('ASSERTION_ADD broken sum')), 'the retained unit evidence contains the actual failing lane output');
+    assert.match(prompt, /ASSERTION_ADD broken sum/);
+    assert.match(prompt, /Keep the narrow regression experiment and inspect the passing base/);
+    const cap = JSON.parse(/<cap_and_allowance>([^<]+)<\/cap_and_allowance>/.exec(prompt)![1]!);
+    assert.equal(cap.builds, 3);
+    assert.equal(cap.judgedStages, 5);
+    assert.equal(cap.chargeableFailures, 1);
+    assert.equal(cap.chargeableBound, 3);
+    assert.equal(cap.certificationAllowance, 3);
+  } finally {runtime.journal.close();}
+
 });

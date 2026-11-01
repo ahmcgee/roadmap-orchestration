@@ -39,12 +39,12 @@
 //   The steer round itself is an entry outside the table (`UnitState.entry`, src/pipeline/unit.ts).
 import type { OrderingWait } from '../core/ordering.ts';
 import {
-  type GateLargeDiff, type HoldCause, type JudgmentStage, type OperatorParkKind, type OutcomeClass, type OutcomeStage, type ParkRecord, type ProbeTarget,
-  type RetryStage, type StageOutcomeFact, type StageOutcomeKind, JUDGMENT_STAGES, probeTargetKey, certificationRed,
+type GateLargeDiff,type HoldCause,type JudgmentStage,type OperatorParkKind,type OutcomeClass,type OutcomeStage,type ParkRecord,type ProbeTarget,
+type RetryStage,type StageOutcomeFact,type StageOutcomeKind,JUDGMENT_STAGES,probeTargetKey,certificationRed,
 } from '../core/events.ts';
-import { type Bounds, DEFAULT_BOUNDS, type NeedsUserReason } from '../core/records.ts';
-import { type UnitCounters, type UnitState, afterStageOutcome } from '../core/state.ts';
-import type { JudgmentSeat, RiskTier } from '../routing/types.ts';
+import { type Bounds,type NeedsUserReason } from '../core/records.ts';
+import { type UnitCounters,type UnitState,afterStageOutcome } from '../core/state.ts';
+import type { JudgmentSeat,RiskTier } from '../routing/types.ts';
 
 /** One per (stage, kind) of `STAGE_OUTCOME_KINDS`: a gate outcome for a build stage is unrepresentable. */
 export type StageOutcome = { [S in OutcomeStage]: Readonly<{ stage: S; kind: StageOutcomeKind<S> }> }[OutcomeStage];
@@ -73,17 +73,6 @@ export type Next =
   /** Interrupted: the unit waits at its stage for a resume, which starts the stage again uncharged. */
   | Readonly<{ kind: 'hold' }>
   | Readonly<{ kind: 'retire' }>;
-
-// ---------------------------------------------------------------------------------------------------
-// The table
-
-/**
- * The built-in bounds (`DEFAULT_BOUNDS`); a unit's `limits` override them. Two revise rounds: arc 1's
- * high-risk adopted units each found real defects in a second round (arc-1 feedback item 2).
- */
-export const MAX_REVISE_ROUNDS = DEFAULT_BOUNDS.reviseRounds;
-export const MAX_CANDIDATE_REDS = DEFAULT_BOUNDS.candidateReds;
-export const MAX_RETRIES = DEFAULT_BOUNDS.retries;
 
 /**
  * Where a decision sends the unit: a build round, or another stage. `prepare` only after a lanes `known-defect` (M4a rev
@@ -183,8 +172,7 @@ export const TABLE: Table = {
     'cleanup-failed': park('residue', 'retryable'),
     interrupted: hold,
     'routing-changed': park('routing-changed', 'env'),
-    // 2026-10-15: a required witness item names no arc lane in force (an arc started on 1.0.0-dev.9; the classifier refuses
-    // it since). Uncharged; `resume` re-runs the stage once an `apply` adds the lane, or a re-entry fixes the spec.
+    // A required witness item names no arc lane in force. An apply or re-entry repairs the specification.
     'witness-lane-missing': park('witness-lane-missing', 'env'),
     // 2026-10-16: as at pre-build.
     'context-exceeded': park('context-exceeded', 'env'),

@@ -61,13 +61,6 @@ export function anchorSection(doc: string, anchor: string): Section | string {
   return { start: lines[at]!.start, end: next === -1 ? doc.length : lines[next]!.start };
 }
 
-/** Why `quotedText` is not under `anchor` in `doc`, or null when it is. */
-export function quotedTextReason(doc: string, anchor: string, quotedText: string): string | null {
-  const section = anchorSection(doc, anchor);
-  if (typeof section === 'string') return section;
-  return doc.slice(section.start, section.end).includes(quotedText) ? null : `quoted text ${JSON.stringify(quotedText)} is not under anchor ${JSON.stringify(anchor)}`;
-}
-
 const REVISED_BY = /^<!-- revised by (C-[0-9]+(?:, C-[0-9]+)*) -->\n/;
 
 /** The document with its first line citing `ruling` (the header added, or the ruling appended to it). */

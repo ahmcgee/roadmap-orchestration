@@ -4,23 +4,23 @@
 // findings.cross-key (H7); M4b: findings.mutant-edits-kept; the audit-level flows are in test/audit.test.ts.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync,readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, it } from 'node:test';
-import { type Event, type Fact, type LogRecord, prevHash, serializeEvent } from '../src/core/events.ts';
-import { arcId, commandId, findingId, jobId, laneId, obligationId, planRev, sha, sha256, unitId } from '../src/core/ids.ts';
+import { describe,it } from 'node:test';
+import { type Event,type Fact,type LogRecord,prevHash,serializeEvent } from '../src/core/events.ts';
+import { arcId,commandId,findingId,jobId,laneId,obligationId,planRev,sha,sha256,unitId } from '../src/core/ids.ts';
 import { openJournal } from '../src/core/log.ts';
 import { Fold } from '../src/core/state.ts';
-import { absPath, isoTime } from '../src/core/values.ts';
-import { MUTANT_PATCH_INPUT, patchedTree } from '../src/git/mutant.ts';
+import { absPath,isoTime } from '../src/core/values.ts';
+import { MUTANT_PATCH_INPUT,patchedTree } from '../src/git/mutant.ts';
 import {
-  type FindingDraft, type RepairUnit, admitMutant, batchable, keepMutantPatch, findingItemsDue, findingMetrics, openFinding, ownershipMoves, repairedObligations, ruleFinding, rulingRefusal,
-  witnessFindingDraft,
+type FindingDraft,type RepairUnit,admitMutant,batchable,keepMutantPatch,findingItemsDue,findingMetrics,openFinding,ownershipMoves,repairedObligations,ruleFinding,rulingRefusal,
+witnessFindingDraft,
 } from '../src/holistic/findings.ts';
 import { inputPath } from '../src/input/inforce.ts';
 import { PARK_ESCALATE_MS } from '../src/schedule/types.ts';
-import { ARC, AT, H, appliedFields, chain } from './fixtures/log-records.ts';
-import { git, makeRepo, tmpDir } from './helpers/repo.ts';
+import { ARC,AT,H,appliedFields,chain } from './fixtures/log-records.ts';
+import { git,makeRepo,tmpDir } from './helpers/repo.ts';
 
 const I1 = obligationId('I-1');
 const B1 = sha('b'.repeat(40));
@@ -214,7 +214,7 @@ describe('needs-user items and instrumentation', () => {
 
   it('findings.draining: a P1 or P2 opened while draining raises new-finding-draining once its audit ended; a P3, or one opened before, does not', () => {
     const audit = (kind: 'audit-started' | 'audit-ended'): LogRecord => fact(kind === 'audit-started'
-      ? { kind, job: 'audit-1', triggers: [{ type: 'cadence' }], generation: 1, lenses: ['invariants'], integrationSha: B1, planRev: 1, ledgerSha256: null, obligationsSha256: null, visionSha256: V, owners: [], priorFindings: [], highWater: 1 }
+      ? { kind, job: 'audit-1', triggers: [{ type: 'final' }], generation: 1, lenses: ['invariants'], integrationSha: B1, planRev: 1, ledgerSha256: null, obligationsSha256: null, visionSha256: V, owners: [], priorFindings: [], highWater: 1 }
       : { kind, job: 'audit-1', covered: [{ lens: 'invariants', from: B2, to: B1 }], findings: ['F-2', 'F-3', 'F-4'], suppressed: 0, outcome: 'completed' });
     const base = [plan(1), opened(1, { source: { type: 'job', job: 'baseline-1' } }), fact({ kind: 'admissions-closed', command: 'cmd-00000000000000aa' }), audit('audit-started'), opened(2), opened(3, { severity: 'P2' }),
       opened(4, { severity: 'P3', lens: 'vision', visionClauses: ['V-1'], obligation: null })];

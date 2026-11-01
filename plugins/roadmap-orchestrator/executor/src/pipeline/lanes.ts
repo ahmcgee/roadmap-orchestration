@@ -356,10 +356,10 @@ function treeManifest(dir: AbsPath): EvidenceManifest {
   return manifest;
 }
 
-/** The lane's census, or null when none was recorded (a lane an older executor ran, or a crash before the write). */
-function readCensus(dir: AbsPath): IgnoredCensus | null {
+/** The census committed by lane postprocessing. */
+function readCensus(dir: AbsPath): IgnoredCensus {
   const path = join(dir, IGNORED_FILE);
-  return existsSync(path) ? ignoredCensus(readJson(path), path) : null;
+  return ignoredCensus(readJson(path), path);
 }
 
 function hostSample(value: unknown, path: string): HostSample {
@@ -375,10 +375,9 @@ function hostSample(value: unknown, path: string): HostSample {
   return { load1: num('load1', false), cpus: num('cpus', true), memTotalKb: num('memTotalKb', true), memAvailableKb: num('memAvailableKb', false) };
 }
 
-/** A run's host samples (`host.json`), or null when none were recorded (an older executor, or a crash before the write). */
-function readLaneHost(dir: AbsPath): LaneHost | null {
+/** The host samples committed by lane postprocessing. */
+function readLaneHost(dir: AbsPath): LaneHost {
   const path = join(dir, HOST_FILE);
-  if (!existsSync(path)) return null;
   const raw = readJson(path);
   if (typeof raw !== 'object' || raw === null) throw new Error(`${path}: not an object`);
   const { start, end, ...rest } = raw as Record<string, unknown>;
@@ -393,7 +392,7 @@ function readLaneHost(dir: AbsPath): LaneHost | null {
  * exit.json the end), its evidence dir's census and host samples, and a red run's host signatures. The live
  * series and every later reader build records here, so they are the same record.
  */
-function laneRun(ctx: StageContext, intent: IntentOf<'proc.spawn'>, lane: LaneDef, dir: AbsPath): LaneRun {
+function laneRun(ctx: StageContext, intent: IntentOf<'proc.spawn'>, lane: LaneDef, dir: AbsPath, pendingEvidence = false): LaneRun {
   if (intent.parent.type !== 'stage') throw new Error(`lane spawn ${intent.op} has no stage parent`);
   const subject = intent.expect.subject;
   if (subject.purpose !== 'lane') throw new Error(`${intent.op} spawned a ${subject.purpose}, not a lane`);
@@ -409,8 +408,8 @@ function laneRun(ctx: StageContext, intent: IntentOf<'proc.spawn'>, lane: LaneDe
   const verdict: CommandVerdict = result?.verdict ?? 'process-fault';
   return {
     lane: lane.id, argv: subject.files === undefined ? lane.argv : testArgvOf(lane, subject.files), expectedExit: lane.expectedExit, exitCode: result?.exitCode ?? null, verdict, evidenceDir: dir,
-    ignored: readCensus(dir), inv, at, endedAt: files.read('exit.json')?.endedAt ?? at, fixDirs: fixDirsOf(dir, lane),
-    host: readLaneHost(dir), signatures: isRed(verdict) ? outputSignatures([join(invDir, STDOUT_FILE), join(invDir, STDERR_FILE)], HOST_SIGNATURES) : [],
+    ignored: pendingEvidence ? null : readCensus(dir), inv, at, endedAt: files.read('exit.json')?.endedAt ?? at, fixDirs: fixDirsOf(dir, lane),
+    host: pendingEvidence ? null : readLaneHost(dir), signatures: isRed(verdict) ? outputSignatures([join(invDir, STDOUT_FILE), join(invDir, STDERR_FILE)], HOST_SIGNATURES) : [],
     // A run's own record; a reused lane's ledger entry sets it (`reusedRecord`).
     reused: null, redRev, pressure: donePressure(ctx.journal.view, intent.op),
   };
@@ -592,12 +591,15 @@ function spawnRecord(ctx: StageContext, parent: StageParent, lane: LaneDef, spaw
 
 /**
  * The evidence root of the series a certified run's first spawn `inv` ran in: the parent dir of where its output was
- * snapshotted (`<root>/<lane>/output`), or null when nothing was snapshotted (a crash cut its series short).
+ * snapshotted (`<root>/<lane>/output`), or null when postprocessing never finished. `host.json` is published
+ * last, after the snapshots and census, so its presence marks a readable execution rather than a partial crash artifact.
  */
 function seriesRootOf(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath }>, inv: InvocationId): AbsPath | null {
   const source = invocationDir(ctx.runDir, inv);
   const snap = ctx.journal.view.opsOf('evidence.snapshot').find((i) => i.expect.source === source);
-  return snap === undefined ? null : absPath(dirname(dirname(snap.expect.dest)));
+  if (snap === undefined) return null;
+  const lane = dirname(snap.expect.dest);
+  return existsSync(join(lane, HOST_FILE)) ? absPath(dirname(lane)) : null;
 }
 
 /** One series' execution of a lane, read back: its series, set and commit, its spawns' identity and its record. */
@@ -858,7 +860,7 @@ async function runLane(
   // The ignored-output census, from the lane's start and verdict as its files record them; a lane that did
   // not pass also gets its undeclared ignored output captured.
   const spawned = spawnOf(ctx.journal.view, outcome.op);
-  const ended = laneRun(ctx, spawned, lane, dir);
+  const ended = laneRun(ctx, spawned, lane, dir, true);
   const declared = lane.evidenceGlobs.length === 0 ? [] : treeManifest(dir).files.map((f) => f.path);
   const writes = ignoredWrites(tree, new Date(ended.at).getTime());
   const plan = planIgnored(writes, { passed: ended.verdict === 'pass', declared: new Set(declared), excludes: lane.evidenceExcludes });
@@ -908,13 +910,11 @@ export function seriesEntry(ctx: ResourceContext, lanes: readonly LaneDef[]): Re
  * first lane is reused). `witnesses`: a candidate's suite lanes that also run as an identical arc lane (F6), by id.
  * `verify` (dev.17): a deflake unit's verification runs per lane (src/pipeline/deflake.ts `verifyRunsOf`): that lane runs
  * fresh, that many times, every run passing. A flaky lane (red, then green on its diagnostic rerun) is recorded in the
- * flaky ledger (`observeFlake`) and passes when the ledger forgives it. `carry` (dev.17, a verified docs-only change:
- * src/pipeline/docsonly.ts): passes reused in place of `reusablePass`, by lane id.
+ * flaky ledger (`observeFlake`) and passes when the ledger forgives it.
  */
 export async function runLaneSeries(
   ctx: StageContext, parent: StageParent, lanes: readonly LaneDef[], set: LaneSet, checkout: WorktreeCreateRequest, root: AbsPath,
   rt: LaneRuntime, entered: boolean, witnesses: ReadonlyMap<LaneId, ArcLaneDef> = new Map(), verify: ReadonlyMap<LaneId, number> = new Map(),
-  carry: ReadonlyMap<LaneId, Reusable> = new Map(),
 ): Promise<Series> {
   if (checkout.checkout.type !== 'detached') throw new Error(`a lane series runs in a detached checkout, not on ${checkout.checkout.branch}`);
   const ids = new Set<string>(lanes.map((l) => l.id));
@@ -1022,7 +1022,7 @@ export async function runLaneSeries(
       continue;
     }
     // A stand-in for an arc lane always runs: its run is also the arc lane's witness (F6).
-    const reusable = witnesses.has(lane.id) ? null : carry.get(lane.id) ?? reusablePass(ctx, parent, lane, at, now);
+    const reusable = witnesses.has(lane.id) ? null : reusablePass(ctx, parent, lane, at, now);
     const partial = reusable !== null || witnesses.has(lane.id) ? null : testOnlyRun(ctx, lane, at, now);
     const carried = reusable ?? (partial !== null && partial.files.length === 0 ? partial.base : null);
     if (carried !== null) {

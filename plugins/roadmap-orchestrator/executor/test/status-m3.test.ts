@@ -133,7 +133,7 @@ describe('status M3', () => {
       assert.deepEqual([s.waived, s.deferred], [[{ obligation: 'I-5', reason: 'test disposition' }], []]);
       assert.deepEqual(s.vision, {
         rev: 1, confirmation: null, clauses: VISION.clauses, questions: [], advances: ['V-1', 'V-2'],
-        coverage: { unservedAdvanced: ['V-2'], unservedOpportunity: [], horizon: [], obligationsServingNone: [], withdrawnCited: [] },
+        coverage: { unservedAdvanced: ['V-2'], horizon: [], obligationsServingNone: [], withdrawnCited: [] },
       });
       noModelIds(s);
 
@@ -218,15 +218,15 @@ describe('status M3', () => {
   it('status.findings-audit / status.coverage-per-lens: per lens in L its watermark follows audits and docs edges (pending until the gap closes), the uncovered range, the generation and running audit, checkpoint lane minutes; active findings and their metrics; the owed audit and the completion predicate', T, async () => {
     const { d } = auditArc({
       steps: [], units: [{ id: 'u1' }, { id: 'u2' }, { id: 'u3' }], obligations: [{ id: 'I-1', testIds: ['t1'] }], mapping: [], trees: {},
-      audit: { lenses: ['invariants', 'vision'] },
+
     });
     const r = contextFor(d);
     try {
       const t0 = sha(git(d.repo, 'rev-parse', 'main'));
       const [, t1] = publish(r, 'u1', { 'src/one.js': 'export const one = 1;\n' });
       const v = visionSha(r);
-      r.journal.fact({
-        kind: 'audit-started', job: jobId('audit', 1), triggers: [{ type: 'cadence' }], generation: 1, lenses: ['invariants', 'vision'], integrationSha: t1,
+      r.journal.fact({diffBudget: 24000,
+        kind: 'audit-started', job: jobId('audit', 1), triggers: [{ type: 'final' }], generation: 1, lenses: ['invariants', 'vision'], integrationSha: t1,
         planRev: planRev(1), ledgerSha256: null, obligationsSha256: null, visionSha256: v, owners: [], priorFindings: [], highWater: r.journal.view.highWater(),
       } as unknown as Fact);
       let s = statusOf(r);
@@ -235,7 +235,7 @@ describe('status M3', () => {
         kind: 'finding-opened', id: 'F-1', key: sha256('1'.repeat(64)), lens: 'invariants', severity: 'P1', obligation: 'I-1', visionClauses: ['V-1'], claim: 'I-1 is broken',
         evidence: [{ path: 'src/one.js', blob: null }], mutant: null, source: { type: 'job', job: 'audit-1' }, gateHadPassed: true,
       } as unknown as Fact);
-      r.journal.fact({ kind: 'audit-ended', job: jobId('audit', 1), covered: [{ lens: 'invariants', from: t0, to: t1 }], findings: ['F-1'], suppressed: 0, outcome: 'completed' } as unknown as Fact);
+      r.journal.fact({refused: [],  kind: 'audit-ended', job: jobId('audit', 1), covered: [{ lens: 'invariants', from: t0, to: t1 }], findings: ['F-1'], suppressed: 0, outcome: 'completed' } as unknown as Fact);
       const [, t2] = publish(r, 'u2', { 'src/two.js': 'export const two = 2;\n' });
       r.journal.fact({ kind: 'docs-covered', pub: jobId('docs', 1), from: t1, to: t2 } as unknown as Fact);
 
@@ -273,7 +273,6 @@ describe('status M3', () => {
     try {
       let s = statusOf(r);
       assert.deepEqual([s.decisionsSince, s.divergences], [[], []], 'the arc\'s first revision decides nothing');
-      assert.deepEqual(s.convergence, { k: 3, counter: 0, since: 0, open: [] });
       const record = ruleRecord(r, 'C-2', { ruledBy: { type: 'code', reason: 'close-out' }, cites: ['V-1'], evidence: ['scripted evidence'], statement: 'Keep helpers pure.' });
       const rulingSha = keepInput(r.ctx.runDir, Buffer.from(`${JSON.stringify(record)}\n`), RULING_INPUT);
       const prev = keptPayload(r.ctx.runDir, r.journal.view.planApplied()!.payloadSha256!);
@@ -298,28 +297,12 @@ describe('status M3', () => {
         ['divergence', 'D-1', 'interpretation: trust means tested', checkpoint],
         ['divergence', 'D-2', 'interpretation: helpers stay small', checkpoint],
       ]);
-      assert.deepEqual(s.divergences.map((x) => [x.id, x.bundle, x.cites, x.evidence, x.compensation, x.digest]), [
-        ['D-1', 'ckpt-1', ['V-1'], ['scripted evidence'], { hint: 'nothing to undo', kind: 'none' }, null],
-        ['D-2', 'ckpt-1', ['V-1'], ['scripted evidence'], { hint: 'nothing to undo', kind: 'none' }, null],
+      assert.deepEqual(s.divergences.map((x) => [x.id, x.bundle, x.cites, x.evidence, x.compensation]), [
+        ['D-1', 'ckpt-1', ['V-1'], ['scripted evidence'], { hint: 'nothing to undo', kind: 'none' }],
+        ['D-2', 'ckpt-1', ['V-1'], ['scripted evidence'], { hint: 'nothing to undo', kind: 'none' }],
       ]);
-      assert.deepEqual(s.convergence, { k: 3, counter: 0, since: 0, open: [] });
       assert.deepEqual(s.vision?.coverage.withdrawnCited, []);
 
-      const digest = item(r, 'divergence-digest', false);
-      r.journal.fact({ kind: 'divergence-digest', needsUser: digest, ids: ['D-1', 'D-2'] } as unknown as Fact);
-      assert.deepEqual(statusOf(r).divergences.map((x) => [x.id, x.digest]), [['D-1', digest], ['D-2', digest]], 'an open digest binds them');
-      const bound = item(r, 'convergence-bound', false);
-      assert.deepEqual(statusOf(r).convergence, { k: 3, counter: 0, since: 0, open: [bound] });
-      ack(r, digest);
-      ack(r, bound);
-      s = statusOf(r);
-      assert.deepEqual([s.divergences, s.decisionsSince], [[], []], 'the acknowledged digest covers them, and nothing was decided since');
-      assert.deepEqual([s.convergence?.counter, s.convergence?.open], [0, []], 'acknowledging the bound resets the counter');
-      assert.ok((s.convergence?.since ?? 0) > 0);
-      r.journal.fact({ kind: 'divergence', id: 'D-3', index: 0, ...draft('a later reading'), job: jobId('ckpt', 2) } as unknown as Fact);
-      s = statusOf(r);
-      assert.deepEqual(s.decisionsSince.map((x) => [x.kind, x.id, x.ruledBy]), [['divergence', 'D-3', {type: 'executor'}]]);
-      assert.deepEqual(s.divergences.map((x) => [x.id, x.digest]), [['D-3', null]]);
       noModelIds(s);
     } finally {
       r.journal.close();
@@ -364,7 +347,7 @@ describe('status M3', () => {
       assert.deepEqual([s.host.log.bytes, s.host.log.events, s.host.log.compactionDue], [size(), readJournal(r.ctx.runDir, arcId(d.arc)).events.length, false]);
       assert.ok(Number.isInteger(s.host.log.foldMs) && s.host.log.foldMs >= 0);
       const before = s.host.log;
-      r.journal.fact({ kind: 'executor-started', generation: 2 });
+      r.journal.fact({ kind: 'executor-started', pressure: 'unavailable', generation: 2 });
       s = statusOf(r);
       assert.deepEqual([s.host.log.events, s.host.log.bytes], [before.events + 1, size()]);
       assert.ok(s.host.log.bytes > before.bytes);
@@ -387,7 +370,6 @@ describe('status M3', () => {
         usage: { inputTokens: 10, outputTokens: 2, cacheReadTokens: null, cacheWriteTokens: null, turns: null, costUsd: null },
       });
       const s = statusOf(r);
-      assert.deepEqual([s.holistic, s.target, s.vision, s.audit, s.convergence], [false, null, null, null, null]);
       assert.deepEqual([s.nowTrue, s.notYetTrue, s.waived, s.deferred, s.divergences, s.decisionsSince, s.findings], [[], [], [], [], [], [], { active: [], metrics: [], released: { root: 0, closeOut: 0 } }]);
       assert.deepEqual(s.completion, { planRev: null, head: null, active: false, sealed: false, notSealed: 'not completed', unmet: ['units-open'] });
       assert.deepEqual(s.spend.byModel, { models: [{ model: 'gpt-5.6-luna', calls: 1, input: 10, output: 2, cacheRead: 0, cacheWrite: 0, turns: 0, costUsd: 0, unavailable: 0 }], unresolvedRevs: [] });

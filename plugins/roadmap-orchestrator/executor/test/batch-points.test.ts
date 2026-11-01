@@ -5,9 +5,9 @@ import { systemName } from '../src/core/ids.ts';
 // batch.walk-skips-green-input (round 2 on an unchanged input runs no batch lane), batch.audit-red (a witness P1 over no
 // obligation), batch.closeout-nothing-to-change (red refuses, green passes; the lane runs each time).
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync,readFileSync,rmSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, test } from 'node:test';
+import { describe,test } from 'node:test';
 import type { Fact } from '../src/core/events.ts';
 import { commandId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
@@ -17,16 +17,16 @@ import { runUnit } from '../src/pipeline/unit.ts';
 import { holisticContexts } from '../src/schedule/scheduler.ts';
 import { runWalk } from '../src/walk/walk.ts';
 import { lensStep } from './helpers/holistic.ts';
-import { git, tmpDir } from './helpers/repo.ts';
-import { type Step, readCalls } from './helpers/scenario.ts';
-import { auditArc, auditContext, moduleFiles, unitSteps } from './fixtures/audit-common.ts';
+import { git,tmpDir } from './helpers/repo.ts';
+import { type Step,readCalls } from './helpers/scenario.ts';
+import { auditArc,auditContext,moduleFiles,unitSteps } from './fixtures/audit-common.ts';
 import { holisticArc } from './fixtures/brake-common.ts';
 import { applyPlanEdit } from './fixtures/checkpoint-common.ts';
 import { intents } from './fixtures/invoke-specs.ts';
 import { wired } from './fixtures/sched-m3-common.ts';
-import { type LaneJson, SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
-import { type ArcRun, SUITE_LANE, codexStep, contextFor,syncInputs, gateStep } from './fixtures/unit-common.ts';
-import { BROKEN_WALK, GREETING, milestoneJson, unitInForce, walkAnswer, walkArc, walkContext, walkStep } from './fixtures/walk-common.ts';
+import { type LaneJson,SCENARIO_TIMEOUT_MS,admitAll,planCheckStep } from './fixtures/stage-common.ts';
+import { type ArcRun,SUITE_LANE,codexStep,contextFor,syncInputs,gateStep } from './fixtures/unit-common.ts';
+import { BROKEN_WALK,GREETING,milestoneJson,unitInForce,walkAnswer,walkArc,walkContext,walkStep } from './fixtures/walk-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS * 2 };
 type Json = Record<string, unknown>;
@@ -176,14 +176,14 @@ describe('the audit batch point (dev.17)', () => {
   test('batch.audit-red: in an arc without milestones, a red batch lane opens a witness P1 over no obligation naming it, in the audit\'s findings', T, async () => {
     const { d } = auditArc({
       steps: [lensStep('audit-1', 'vision')], units: [{ id: 'u1' }],
-      obligations: [{ id: 'I-1', testIds: ['t1'] }], trees: { '*': { outcomes: { t1: 'pass' } } }, mapping: [], audit: { lenses: ['vision'] },
+      obligations: [{ id: 'I-1', testIds: ['t1'] }], trees: { '*': { outcomes: { t1: 'pass' } } }, mapping: [],
       suite: [SUITE_LANE, batchLane(RED())],
     });
     const r = contextFor(d);
     const { ctx, w } = auditContext(r);
     const tick = setInterval(() => w.arbiter.wake(), 50);
     try {
-      r.journal.fact({ kind: 'audit-requested', command: commandId(`cmd-${'1'.padStart(16, 'b')}`), lenses: ['vision'] });
+      r.journal.fact({ kind: 'audit-requested', command: commandId(`cmd-${'1'.padStart(16, 'b')}`) });
       const out = await runAudit(ctx);
       assert.ok(out.kind === 'ended' && out.outcome === 'completed', JSON.stringify(out));
       const [started] = factsOf(r, 'audit-started');

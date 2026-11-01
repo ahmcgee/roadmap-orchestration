@@ -13,15 +13,15 @@
 // M4a (K9, R26, H21): `brief --ack` enqueues its `ack` commands under deterministic ids (`ackCommandId`: the pending
 // marker's `at` and each item's ordinal), idempotently (`enqueueCommand`): a rerun after a crash finds its own files.
 import { randomBytes } from 'node:crypto';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync,readFileSync,readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { AlreadyExistsError, durableMkdir, exclusivePublish } from '../core/fsx.ts';
-import { type ArcId, type CommandId, type Sha256Hex, commandId, sha256 } from '../core/ids.ts';
-import { canonicalJson, canonicalRecordBytes, sha256Hex } from '../core/json.ts';
+import { AlreadyExistsError,durableMkdir,exclusivePublish } from '../core/fsx.ts';
+import { type ArcId,type CommandId,type Sha256Hex,commandId,sha256 } from '../core/ids.ts';
+import { canonicalJson,canonicalRecordBytes,sha256Hex } from '../core/json.ts';
 import {
-  CONTROL_COMMANDS, type CommandBody, type CommandFile, type Receipt, commandFile, receipt,
+CONTROL_COMMANDS,type CommandBody,type CommandFile,type Receipt,commandFile,receipt,
 } from '../core/records.ts';
-import { type AbsPath, type IsoTime, absPath, isoTimeOf } from '../core/values.ts';
+import { type AbsPath,type IsoTime,absPath,isoTimeOf } from '../core/values.ts';
 import { SCHEMA_VERSION } from '../core/version.ts';
 
 /** How often the executor looks for new commands. */
@@ -48,9 +48,6 @@ export const isControl = (body: CommandBody): boolean => (CONTROL_COMMANDS as re
 export function newCommandId(): CommandId {
   return commandId(`cmd-${Date.now().toString(16).padStart(12, '0')}${randomBytes(2).toString('hex')}`);
 }
-
-/** When a command was submitted (ms since the epoch): the clock both id forms carry in their first 12 hex. */
-export const submittedAtMs = (id: CommandId): number => Number.parseInt(id.slice('cmd-'.length, 'cmd-'.length + 12), 16);
 
 /** The ordinals an ack command id can carry (4 hex). */
 export const MAX_ACK_ITEMS = 0x1_0000;

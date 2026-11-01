@@ -1315,7 +1315,7 @@ test('stopped snapshots explain pending walkthroughs and the gates units actuall
   assert.equal(JSON.parse(joined.body).reason, joined.waitReason);
   assert.doesNotMatch(joined.waitReason, /left|right/, 'satisfied prerequisites are not waiting reasons');
   const ui = new ViewState(); ui.accept(d); ui.expandedGraph = true; ui.selected.set('1:0', 'join');
-  ui.diagnostics.accept(Buffer.from('roadmap: upgrade default (legacy): retained legacy format\n'), 'stderr');
+  ui.diagnostics.accept(Buffer.from('roadmap: optional preview unavailable\n'), 'stderr');
   for (const [w, h] of [[120, 35], [80, 24]]) {
     const frame = ui.render(w!, h!, false); assert.equal(frame.length, h); assert.ok(frame.every((row) => width(row) === w! - 1));
     const text = frame.join('\n'); assert.match(text, /Executor stopped/); assert.match(text, /walkthrough pending/); assert.match(text, /Waiting for: MS-1 milestone gate/);
@@ -1330,7 +1330,7 @@ test('stopped snapshots explain pending walkthroughs and the gates units actuall
 
 test('worker diagnostics are readable informational notes, never run banners or false faults', () => {
   const ui = new ViewState(); ui.accept(observed());
-  const warning = 'roadmap: upgrade default (lane.tier.spec): a spec lane declaring tier; read as its cadence';
+  const warning = 'roadmap: optional preview unavailable (capture.preview)';
   ui.diagnostics.accept(Buffer.from(warning + '\n'), 'stderr');
   ui.diagnostics.accept(Buffer.from(warning + '\n'), 'stderr');
   assert.equal(ui.diagnostics.entries().length, 1);
@@ -1341,9 +1341,9 @@ test('worker diagnostics are readable informational notes, never run banners or 
     assert.match(text, /4 Exceptions & notes/); assert.match(text, /Exceptions 0/); assert.match(text, /faults 0/);
     assert.doesNotMatch(text, /upgrade default|lane\.tier|Observer:/);
   }
-  ui.key('', '4', 18); assert.equal(ui.rows().length, 1); assert.match(ui.selection()!.label, /Viewer note: older run format/);
+  ui.key('', '4', 18); assert.equal(ui.rows().length, 1); assert.match(ui.selection()!.label, /Viewer diagnostics/);
   ui.open(); const detail = ui.render(120, 35, false).join('\n');
-  assert.match(detail, /No action is needed/); assert.match(detail, /Technical Details/); assert.match(detail, /lane\.tier\.spec/);
+  assert.match(detail, /Technical messages from the viewer/); assert.match(detail, /Technical Details/); assert.match(detail, /capture\.preview/);
   ui.key('escape', '', 18); ui.error = 'journal corruption';
   assert.equal(ui.rows().length, 2); assert.equal(ui.rows()[0]!.id, 'observation-error');
   assert.match(ui.render(120, 35, false).join('\n'), /STALE.*journal corruption/);
@@ -1357,7 +1357,8 @@ test('diagnostic retention handles split UTF-8 and independent streams, strips c
   diagnostics.accept(text.subarray(split), 'stderr');
   let entry = diagnostics.entries()[0]!;
   assert.equal(entry.label, 'Viewer diagnostics'); assert.match(entry.body, /café unexpected diagnostic/);
-  assert.doesNotMatch(entry.description!, /No action is needed/);
+  assert.match(entry.description!, /Technical messages from the viewer/);
+  assert.doesNotMatch(entry.description!, /upgrade defaults|compatibility defaults/i);
   diagnostics.accept(Buffer.from('\x1b[2Jcontrol\n'), 'stderr');
   assert.doesNotMatch(diagnostics.entries()[0]!.body, /\\u001b/);
   diagnostics.accept(Buffer.from('x'.repeat(10000)), 'stdout');

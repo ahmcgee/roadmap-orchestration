@@ -1,14 +1,14 @@
 // M2 fold cases (src/core/state.ts): the incremental resource table, park derivation from probe facts,
 // backend park epochs and dominance, hold causes, lineage, cut, build tier, the scheduling flag.
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
-import { type Event, type Fact, type LogRecord, prevHash, serializeEvent } from '../src/core/events.ts';
-import { type UnitId, commandId, invocationId, opId, opKey, planRev, seatRev, sha, specRev, unitId } from '../src/core/ids.ts';
-import { Fold, FoldInvariantError } from '../src/core/state.ts';
-import { isoTime, repoPattern } from '../src/core/values.ts';
+import { describe,it } from 'node:test';
+import { type Event,type Fact,type LogRecord,prevHash,serializeEvent } from '../src/core/events.ts';
+import { type UnitId,commandId,invocationId,opId,opKey,planRev,seatRev,sha,specRev,unitId } from '../src/core/ids.ts';
+import { Fold,FoldInvariantError } from '../src/core/state.ts';
+import { isoTime } from '../src/core/values.ts';
 import { effectiveDependency } from '../src/schedule/graph.ts';
 import type { RiskTier } from '../src/routing/types.ts';
-import { ARC, H, REV, U1, appliedFields, chain } from './fixtures/log-records.ts';
+import { ARC,H,REV,U1,appliedFields,chain } from './fixtures/log-records.ts';
 
 const U2 = unitId('u2');
 const U3 = unitId('u3');
@@ -255,20 +255,6 @@ describe('fold: lineage, cut, build tier, scheduling', () => {
     refuses([...cut, dispatch(U2)], 3, /dispatch of u2, which is cut/);
     refuses([...cut, outcome(U2, 'pre-build', 1, 'approve', 'advance')], 3, /which is cut/);
     refuses([planApplied(1, [U1]), outcome(U1, 'snapshot', 1, 'published', 'retire'), planApplied(2, [U1], [{ type: 'unit-cut', unit: U1 }])], 3, /cuts u1, which is retired/);
-  });
-
-  it('buildTier: the dispatch floor, raised to high by implementer-escalated and kept there', () => {
-    const esc = fact({ kind: 'implementer-escalated', unit: U1, attempt: 3, from: 'low', to: 'high', stalled: 2 });
-    const f = folded([dispatch(U1, 'low'), esc, dispatch(U1, 'med')]);
-    assert.equal(f.unit(U1).buildTier, 'high');
-    assert.equal(f.unit(U1).risk, 'med');
-    assert.equal(folded([dispatch(U1, 'low'), dispatch(U1, 'med')]).unit(U1).buildTier, 'med');
-    refuses([esc], 1, /never dispatched/);
-    refuses([dispatch(U1, 'med'), esc], 2, /from low; its build tier is med/);
-    refuses([
-      dispatch(U1, 'low'), outcome(U1, 'lanes', 1, 'red', 'advance', { chargeable: true }), outcome(U1, 'lanes', 2, 'red', 'advance', { chargeable: true }),
-      outcome(U1, 'lanes', 3, 'red', 'park', { chargeable: true }), esc,
-    ], 5, /at the chargeable bound/);
   });
 
   it('scheduling: the first revision comes before any dispatch', () => {

@@ -7,7 +7,7 @@
 //              in the revision's docs candidate, G12: the publication's to check, so the change carries activation.)
 //   split      (H14) active → split{children}: every child new, naming the parent, rev 1, active, with its own
 //              witness and a fresh proof. Every sentence of the parent's statement must occur verbatim in a child;
-//              the architect's children may drop none, a checkpoint split drops text only citing active clauses,
+//              the root's children retain every parent sentence,
 //              and the dropped sentences are returned for its `split-dropped` divergence. A split parent stays
 //              split with the same children. A split may not weaken: under a must-hold parent (latched included), a
 //              future child must name a delivering unit not yet published, else it could never latch and its
@@ -25,7 +25,7 @@
 // refresh alone is not normative); a parent is never
 // changed; a proof judgment bound to another obligation revision, lane revision or witness definition is stale; in an arc with a vision every
 // non-exempt obligation serves a clause, and newly cited clauses are active.
-import type { LaneId,ObligationId,UnitId,VisionClauseId } from '../core/ids.ts';
+import type { LaneId,ObligationId,UnitId } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
 import { type CorpusPin,activeRules } from '../corpus/types.ts';
 import {
@@ -34,8 +34,8 @@ obligationSource
 } from './types.ts';
 import { citeReasons } from './vision.ts';
 
-/** Who proposes the revision: the architect's `apply`, or a checkpoint bundle op citing clauses. */
-export type ObligationAuthor = Readonly<{ type: 'architect'; reason?: string | undefined; rev?: number }> | Readonly<{ type: 'checkpoint'; cites: readonly VisionClauseId[] }>;
+/** The root's apply command is the sole obligation author. */
+export type ObligationAuthor = Readonly<{ type: 'architect'; reason?: string | undefined; rev?: number }>;
 
 export type ObligationChange =
   | Readonly<{ type: 'added'; id: ObligationId; activation: Activation }>
@@ -212,9 +212,9 @@ export function classifyObligations(prev: Obligations | null, next: Obligations,
   };
 
   function disposed(id: ObligationId, w: Weakening): void {
-    const reason = ctx.author.type === 'architect' ? ctx.author.reason ?? ctx.reason : null;
+    const reason = ctx.author.reason ?? ctx.reason;
     if (!reason?.trim()) reasons.push(`${id} is weakened (${w.what}) without an apply --reason`);
-    else changes.push({ type: 'disposed', id, disposition: w.disposition, reason, rev: ctx.author.type === 'architect' ? ctx.author.rev ?? ctx.rev ?? 1 : ctx.rev ?? 1 });
+    else changes.push({ type: 'disposed', id, disposition: w.disposition, reason, rev: ctx.author.rev ?? ctx.rev ?? 1 });
   }
 
   function split(p: ObligationDef, o: ObligationDef, children: readonly ObligationId[]): void {
@@ -237,9 +237,7 @@ export function classifyObligations(prev: Obligations | null, next: Obligations,
     }
     const dropped = sentences(p.statement).filter((t) => !kids.some((k) => k.statement.includes(t)));
     if (dropped.length > 0) {
-      if (ctx.author.type === 'architect') reasons.push(`${o.id}'s children drop parent text: ${dropped.map((t) => JSON.stringify(t)).join(', ')}`);
-      else if (ctx.author.cites.length === 0) reasons.push(`${o.id}'s split drops parent text without citing a vision clause`);
-      else reasons.push(...citeReasons(ctx.vision, ctx.author.cites, `${o.id}'s split`));
+      reasons.push(`${o.id}'s children drop parent text: ${dropped.map((t) => JSON.stringify(t)).join(', ')}`);
     }
     changes.push({ type: 'split', id: o.id, children, dropped });
   }

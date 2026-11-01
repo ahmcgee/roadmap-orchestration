@@ -1,20 +1,20 @@
-import { type SystemName, systemName } from '../core/ids.ts';
+import { type SystemName,systemName } from '../core/ids.ts';
 // Strict role-result schemas and validators. Verifier pre-build and diagnosis modes annotate;
 // gate mode approves, requests a fix or escalates. Builders report grounding and experiments;
 // campaign audits report findings and root requests. Cross-field checks supplement JSON Schema.
-import { type ClauseId, type FailureModeId, type FindingId, type JourneyId, type LaneId, type ObligationId, type ReviewFindingId, type Sha, type UnitId, type VisionClauseId, answerIds, clauseId, findingId, journeyId, laneId, obligationId, reviewFindingId, unitId, visionClauseId } from '../core/ids.ts';
+import { type ClauseId,type FailureModeId,type FindingId,type JourneyId,type LaneId,type ObligationId,type ReviewFindingId,type UnitId,type VisionClauseId,answerIds,clauseId,findingId,journeyId,laneId,obligationId,reviewFindingId,unitId,visionClauseId } from '../core/ids.ts';
 import { type JsonValue } from '../core/json.ts';
-import { type NoteDef, SPEC_SCHEMA, specM1 } from '../core/records.ts';
+import { type NoteDef,SPEC_SCHEMA,specM1 } from '../core/records.ts';
 import { type ReviewDispute,reviewDispute } from '../core/review.ts';
-import { Fields, type Read, SchemaError, arrayOf, assertUnique, envName, int, literal, nullable, object, oneOf, str, tagged, text } from '../core/validate.ts';
+import { Fields,type Read,SchemaError,arrayOf,assertUnique,envName,int,literal,nullable,object,oneOf,str,tagged,text } from '../core/validate.ts';
 import { type RepoPath,type RepoPattern,matchesPattern,repoPath,repoPattern } from '../core/values.ts';
-import { type FindingSeverity, FINDING_SEVERITIES as LENS_SEVERITIES, PACK_DISPOSITIONS, PACK_SEVERITIES, type PackDisposition, type PackSeverity, type PackTarget, packDisposition, packTarget } from '../holistic/types.ts';
+import { type FindingSeverity,FINDING_SEVERITIES as LENS_SEVERITIES,PACK_DISPOSITIONS,PACK_SEVERITIES,type PackDisposition,type PackSeverity,type PackTarget,packDisposition,packTarget } from '../holistic/types.ts';
 
 import { type OrderingWait,orderingWait } from '../core/ordering.ts';
 
-import { type ClauseLanes, type DesignChange, type DesignExperiment, type FailureModeProof, type NewSystem, type UnitKind, type Verification } from '../core/design.ts';
+import { type ClauseLanes,type DesignChange,type DesignExperiment,type FailureModeProof,type NewSystem,type UnitKind,type Verification } from '../core/design.ts';
 import type { MutantEdit } from '../git/mutant.ts';
-import { BUILD_CLASSES, RISK_TIERS, type Role } from '../routing/types.ts';
+import { type Role } from '../routing/types.ts';
 import { specBytes } from '../spec/spec.ts';
 
 // ---------------------------------------------------------------------------------------------------
@@ -184,11 +184,7 @@ export type DefectCategory = (typeof DEFECT_CATEGORIES)[number];
 /** dev.17's finding classes: `ride-along` (comments, docs) never causes a revise; drag makes it debt, else it is released. */
 export const FINDING_SEVERITIES_DEV17 = [...FINDING_SEVERITIES, 'ride-along'] as const;
 export type FindingSeverityDev17 = (typeof FINDING_SEVERITIES_DEV17)[number];
-/**
- * The build answer's `docsOnlySince` (dev.17): the tested sha since which the builder says it changed only docs and
- * comments, or null. Code verifies the claim; the model's word alone carries no lane pass over.
- */
-export type DocsOnlySince = Sha | null;
+
 
 /**
  * dev.17: the gate's ruling on a builder's dispute of an open ledger finding (decisions.json `disputes`): `upheld` (the finding
@@ -235,8 +231,6 @@ export type GateFinding = Readonly<{
   /** dev.17: on a delta re-gate, the changed hunk a blocking finding on an unchanged file rests on; null otherwise. */
   hunk: HunkRef | null;
 }>;
-/** A part of the change the gate says it did not review (dev.12 round 2): recorded and reported, never enforced. */
-export type GateUnreviewed = Readonly<{ path: string; reason: string }>;
 /**
  * How deeply a cluster of a large diff was reviewed (1.0.0-dev.12, the large-diff gate): `description` (a subagent's
  * description of the cluster sufficed: a purely mechanical cluster its substitutions fully explain, with no deviation),
@@ -285,12 +279,8 @@ export const GATE_SCHEMA: Schema = sObj({
   rulings: sArr(sObj({ finding: S_STR, ruling: sEnum(DISPUTE_RULINGS), reason: S_STR })),
 });
 
-/** Absent (a dev.12 answer): `unrecorded`, with the upgrade warning; null: not debt. */
-const readDebt = (read: GateDebt | null): GateDebt | null => read;
 const gateExperiment: Read<GateExperiment> = object((f) => ({ command: f.get('command', str), output: f.get('output', str) }));
 const hunkRef: Read<HunkRef> = object((g) => ({ path: g.get('path', str), line: g.get('line', int(1, Number.MAX_SAFE_INTEGER)) }));
-/** Absent (a dev.16 answer): null, with the upgrade warning. */
-const dev17 = <T>(read: T | null): T | null => read;
 const finding: Read<GateFinding> = object((f) => {
  const out: GateFinding = {
   evidence: f.get('evidence', arrayOf(text)),
@@ -298,11 +288,11 @@ const finding: Read<GateFinding> = object((f) => {
   path: f.get('path', nullable(str)),
   text: f.get('text', str),
   contractRef: f.get('contractRef', nullable(str)),
-  experiments: f.optional('experiments', arrayOf(gateExperiment)) ?? [],
-  debt: readDebt(f.get('debt', nullable(object((g): GateDebt => ({ drag: g.get('drag', str) }))))),
-  defect: dev17(f.get('defect', nullable(oneOf(DEFECT_CATEGORIES)))),
-  reraises: dev17(f.get('reraises', nullable((v, p): ReviewFindingId => reviewFindingId(v, p)))),
-  hunk: dev17(f.get('hunk', nullable(hunkRef))),
+  experiments: f.get('experiments', arrayOf(gateExperiment)),
+  debt: f.get('debt', nullable(object((g): GateDebt => ({ drag: g.get('drag', str) })))),
+  defect: f.get('defect', nullable(oneOf(DEFECT_CATEGORIES))),
+  reraises: f.get('reraises', nullable((v, p): ReviewFindingId => reviewFindingId(v, p))),
+  hunk: f.get('hunk', nullable(hunkRef)),
  };
  if (out.experiments.length === 0 && !out.evidence.some((e) => /:\d+/.test(e))) throw new SchemaError(`${f.path}.evidence`, 'an experiment or path:line evidence', out.evidence);
  return out;
@@ -324,8 +314,6 @@ const clusterMap: Read<readonly GateCluster[]> = (value, path) => {
   assertUnique(clusters, (c) => c.id, path);
   return clusters;
 };
-/** Absent (a dev.11 answer): no map, with the upgrade warning; null: no map. */
-const readClusters = (read: readonly GateCluster[] | null): readonly GateCluster[] | null => read;
 const emptyList: Read<readonly []> = (value, path) => {
   if (!Array.isArray(value) || value.length !== 0) throw new SchemaError(path, 'an empty array (directives only with revise)', value);
   return [];
@@ -338,7 +326,7 @@ export const gateOutput: Read<GateOutput> = object((f): GateOutput => {
     standing: f.get('standing', arrayOf(object((g) => ({id: g.get('id', text), disposition: g.get('disposition', oneOf(['addressed', 'rebutted'] as const)), evidence: g.get('evidence', arrayOf(text, {nonEmpty: true}))})))),
     findings: f.get('findings', arrayOf(finding)), reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })), premises: f.get('premises', arrayOf(premise)),
 
-    clusters: readClusters(f.get('clusters', nullable(clusterMap))),
+    clusters: f.get('clusters', nullable(clusterMap)),
     rulings: f.get('rulings', rulingList),
   };
   if (decision === 'revise') return { ...common, decision, directives: f.get('directives', arrayOf(str, { nonEmpty: true })) };

@@ -6,21 +6,20 @@
 // and the M1 plan's gate inputs (R2). Every prompt module must interpolate exactly these fields; the
 // test `prompts.fields==required` holds each module to it.
 import { createHash } from 'node:crypto';
-import type { OutcomeStage,TestRef } from '../core/events.ts';
-import type { ClauseId, FindingId, InvocationId, JobId, LaneId, MilestoneId, ObligationId, PolishId, ReviewFindingId, RulingId, ServeName, Sha, SpecRev, SystemName, UnitId, VisionClauseId, WitnessItemId } from '../core/ids.ts';
+import type { TestRef } from '../core/events.ts';
+import type { ClauseId,FindingId,InvocationId,JobId,LaneId,MilestoneId,ObligationId,PolishId,ReviewFindingId,RulingId,ServeName,Sha,SpecRev,SystemName,UnitId,VisionClauseId,WitnessItemId } from '../core/ids.ts';
 import type { JsonValue } from '../core/json.ts';
-import type { CommandVerdict, FailureRef, IgnoredCensus, LaneDef, NeedsUserReason, SpecPatchOp } from '../core/records.ts';
+import type { CommandVerdict,FailureRef,IgnoredCensus,LaneDef } from '../core/records.ts';
 import type { GateDelta,LedgerOutcome } from '../core/review.ts';
 import type { AbsPath,RepoPath,RepoPattern } from '../core/values.ts';
 import type { PinnedRule } from '../corpus/types.ts';
 import { type BoundedDiff,EXAMPLES } from '../git/boundeddiff.ts';
 import type { RequiredWitness } from '../holistic/required.ts';
-import type { FindingLens, FindingSeverity, FindingStateName, LensKind, ObligationDef, Obligations, ObservationKey, ObservationVerdict, PackFinding, Vision, VisionClause, VisionCoverage, VisionQuestion } from '../holistic/types.ts';
+import type { FindingLens,FindingSeverity,FindingStateName,LensKind,ObligationDef,Obligations,ObservationKey,ObservationVerdict,PackFinding,Vision,VisionClause,VisionQuestion } from '../holistic/types.ts';
 import { obligationSource } from '../holistic/types.ts';
 import type { BringUp,Journey } from '../input/plan.ts';
 
 import type { Phase0Record } from '../phase0/types.ts';
-import type { Argv0 } from '../preflight/argv0.ts';
 import type { Role } from '../routing/types.ts';
 import type { GateFinding,Premise } from './schemas.ts';
 
@@ -87,12 +86,6 @@ export type LaneLedgerEntry = Readonly<{
   /** M4a rev 3 (F1a): the earlier execution this lane's pass was reused from (its SHA and invocation); null when it ran. */
   reused: Readonly<{ at: Sha; inv: InvocationId }> | null;
 }>;
-
-/** A checkout a pre-build reads: a detached tree at `at`. */
-export type Checkout = Readonly<{ path: AbsPath; at: Sha }>;
-
-/** A lane's argv[0] resolved under the lane's declared environment on this host (arc-1 feedback item 3). */
-export type LaneProgram = Readonly<{ lane: LaneId; argv0: string; resolved: Argv0 }>;
 
 /** A gate after its own revise inherits that round's directives, findings and premises, and the delta since. */
 export type GatePriorRound = Readonly<{
@@ -399,21 +392,6 @@ export type LensInputs = Readonly<{
 export type DiffClaims = Readonly<{ acceptance: readonly ClauseId[]; witnesses: readonly WitnessItemId[]; obligations: readonly ObligationId[] }>;
 
 /**
- * Why a unit parked, as the checkpoint reads it. `design`: a judgment's escalation or a refusal, a design question;
- * else the executor parked it, and `detail` says why (a spent bound, the obligations its candidate left red).
- */
-export type ParkCause = Readonly<{
-  stage: OutcomeStage; attempt: number; outcome: string; reason: NeedsUserReason; design: boolean; detail: readonly string[];
-}>;
-
-/**
- * A checkpoint's trigger: a milestone boundary, a completed audit, a park with its cause (null: the unit has moved on since the capture), or
- * (dev.13) a milestone walk: its milestone and round, the findings it opened or re-reported, and its evidence dir (the
- * screenshots, transcripts and server logs the findings cite, readable by the session).
- */
-export type WalkTriggerView = Readonly<{ type: 'walk'; job: JobId; milestone: MilestoneId; round: number; findings: readonly FindingId[]; evidenceDir: AbsPath }>;
-
-/**
  * Arc feedback 2026-10-16 (a checkpoint re-entered a unit without finding why it failed): what the executor's records say
  * about a parked unit's lineage, the parked unit first, then each unit it re-entered. Each failure carries the reference a
  * re-entry cites in `fixes`. `reverted`: the protected paths salvage reverted, with how many salvages
@@ -430,31 +408,6 @@ export type ParkDiagnosis = Readonly<{
   /** The lineage's re-entries, oldest first, each with the failure it cited (null: applied before `fixes`). */
   reentries: readonly Readonly<{ unit: UnitId; reenters: UnitId; fixes: FailureRef | null }>[];
 }>;
-
-/** The diagnosis, rendered for the checkpoint ahead of everything but the vision and the trigger; empty when none. */
-export function diagnosisText(d: ParkDiagnosis | null): string {
-  if (d === null) return '';
-  const unit = (u: ParkDiagnosis['units'][number]): string => {
-    const lines = [
-      ...u.outcomes.map((o) => `- ${o.ref}: ${o.text}`),
-      ...u.lanes.map((l) => `- ${l.ref}: lane failure, ${l.class}${l.hostSuspected === null ? '' : `, host-suspected (${l.hostSuspected.join(', ')})`}`),
-      ...(u.reverted.length === 0 ? [] : [`- Edits to protected paths that salvage reverted: ${u.reverted.map((r) => `${r.path} (${r.salvages}×)`).join(', ')}`]),
-      ...u.witnesses.map((w) => `- Required witness ${w.test.lane}/${w.test.testId} ${w.reason} at lanes attempt ${w.attempt}`),
-    ];
-    return [`Unit ${u.unit}:`, ...(lines.length === 0 ? ['- no failure recorded'] : lines)].join('\n');
-  };
-  const reentries = d.reentries.map((r) => `- ${r.unit} re-entered ${r.reenters}${r.fixes === null ? ' (it cited no failure)' : ` to fix ${r.fixes}`}`);
-  return `\n\n<diagnosis>
-The executor's records of the parked unit's lineage, the parked unit first. A repeated failure, a lane the build keeps failing,
-edits salvage keeps reverting, or a witness test that is never found points at the cause; address it. A reenter op cites one of
-these references in fixes.
-${d.units.map(unit).join('\n')}${reentries.length === 0 ? '' : `\nEarlier re-entries of this lineage:\n${reentries.join('\n')}`}
-</diagnosis>`;
-}
-
-/** What a checkpoint manifest entry names (H4). */
-export const MANIFEST_KINDS = ['plan', 'spec', 'ledger', 'sidecar', 'obligations', 'vision', 'phase0'] as const;
-export type ManifestKind = (typeof MANIFEST_KINDS)[number];
 
 /**
  * M4a (OR-Q16): what a pack review reads, all read-only, rendered from its kept `PackReviewInputs` (K8): the vision,
@@ -661,10 +614,6 @@ export function buildBrowserText(b: BuildBrowser | null): string {
   return `\n\n<browser>\nThis session has the MCP server${b.servers.length === 1 ? '' : 's'} ${b.servers.join(', ')} (a browser drive), so you can bring the product up and look at and screenshot your own work; screenshots it saves land in the evidence directory. Each milestone's bring-up runs from the worktree root with its env, and {port:<name>} stands for a free port you choose:\n${bringUps.join('\n')}\nStop whatever you start before your final report.\n</browser>`;
 }
 
-export function rulingsText(rulings: readonly RulingText[]): string {
-  return rulings.length === 0 ? '(none cited)' : rulings.map((r) => `${r.id}: ${r.text}`).join('\n');
-}
-
 export function bullets(items: readonly string[], empty: string): string {
   return items.length === 0 ? empty : items.map((i) => `- ${i}`).join('\n');
 }
@@ -774,11 +723,6 @@ export function escalationText(e: EscalationInput | null, role: 'pre-build' | 'g
 This ${role} is an escalation: a judgment at the seat below could not settle the unit, so it is yours, with more effort behind it. ${why}
 Weigh the earlier reasons as another reviewer's claims, not as facts, and decide on the evidence yourself. There is no seat above this one: escalating again parks the unit until its spec is revised, so do it only when the unit cannot go on without that.
 </escalation>`;
-}
-
-/** dev.17 (propagation): the unit's stale links, each to answer by its key; nothing when it has none. */
-export function staleLinksText(lines: readonly string[]): string {
-  return lines.length === 0 ? '' : `\n\n<stale_links>\n${lines.map((l) => `- ${l}`).join('\n')}\n</stale_links>`;
 }
 
 /** A pack review's delta (the review it follows, what changed, the unresolved earlier findings), or nothing for a full review. */
@@ -891,37 +835,9 @@ export function rulesIndexText(rules: readonly PinnedRule[], opts: Readonly<{ ha
   ]).join('\n');
 }
 
-/** The reference index as data: one line per uncited contract and per ruling not embedded. */
-export function referenceIndexText(index: ReferenceIndex): string {
-  const contracts = index.contracts.map((c) => `- ${c.path}: ${c.heading}`);
-  const rulings = index.rulings.map((r) => `- ${r.id}: ${r.line}`);
-  return [
-    `Rulings ledger: ${index.ledger}`,
-    'Contracts not embedded:',
-    contracts.length === 0 ? '(none)' : contracts.join('\n'),
-    'Rulings not embedded:',
-    rulings.length === 0 ? '(none)' : rulings.join('\n'),
-    ...(index.withdrawn.length === 0 ? [] : [`Withdrawn rulings (never cite): ${index.withdrawn.join(', ')}`]),
-  ].join('\n');
-}
-
-export function laneProgramsText(programs: readonly LaneProgram[]): string {
-  if (programs.length === 0) return '(no active lanes)';
-  return programs.map((p) => {
-    const r = p.resolved;
-    const where = r.kind === 'program' ? `resolves to ${r.realpath}` : r.kind === 'repository-file' ? 'is a repository file' : "is not found on the lane's PATH";
-    return `- ${p.lane}: ${p.argv0} ${where}`;
-  }).join('\n');
-}
-
 export function premisesText(premises: readonly Premise[]): string {
   if (premises.length === 0) return '(none recorded)';
   return premises.map((p) => `- ${p.claim} [${p.evidence.length === 0 ? 'no evidence cited' : p.evidence.map((e) => `${e.path}:${e.line}`).join(', ')}]`).join('\n');
-}
-
-/** A spec patch, one op per line as the JSON the pre-build wrote. */
-export function patchText(ops: readonly SpecPatchOp[]): string {
-  return ops.map((op) => `- ${JSON.stringify(op)}`).join('\n');
 }
 
 /** A gate round's findings for the next round's handoff: each with the commands of the experiments it cited (dev.13), not their output. */
@@ -1005,17 +921,6 @@ export function findingViewsText(findings: readonly FindingView[]): string {
     const tags = [f.severity, f.lens, f.state, ...(f.owner === null ? [] : [`owned by ${f.owner}`])];
     return `- ${f.id} [${tags.join(', ')}]${f.obligation === null ? '' : ` ${f.obligation}`}: ${f.claim}`;
   }).join('\n');
-}
-
-export function coverageText(c: VisionCoverage): string {
-  const withdrawn = c.withdrawnCited.map((w) => `${w.clause} (cited by ${w.citedBy.join(', ')})`);
-  return [
-    `Advanced clauses no active obligation serves: ${c.unservedAdvanced.join(', ') || 'none'}`,
-    `Opportunity clauses no active obligation serves (not a gap to close: see the opportunity rules): ${c.unservedOpportunity.join(', ') || 'none'}`,
-    `Horizon clauses (beyond this arc, not a gap): ${c.horizon.join(', ') || 'none'}`,
-    `Active obligations serving no clause: ${c.obligationsServingNone.join(', ') || 'none'}`,
-    `Withdrawn clauses still cited: ${withdrawn.join('; ') || 'none'}`,
-  ].join('\n');
 }
 
 /** Neutral path-only slot; the role's wording is defined separately from memory selection. */

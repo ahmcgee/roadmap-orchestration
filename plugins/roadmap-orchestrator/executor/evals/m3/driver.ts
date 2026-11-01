@@ -17,11 +17,7 @@
 // status` or a barrier file, never on timing, and each independent of the others' order; each is recorded in the
 // report (`devices`), which check.ts reads:
 //
-//   acks         first at every poll, whatever the branch: every `divergence-digest` and `convergence-bound` item,
-//                acknowledged once each as it opens; every `bundle-request` (a convergence brake, a draining arc, a
-//                re-evaluation) answered as an architect who trusts the checkpoint would: `ack <id> --choice apply`
-//                when the item offers `apply` (the next job of its trigger enacts the bundle), a plain `ack` when it
-//                offers nothing
+//   acks         actual subject closures recorded from needs-user-acked facts, including command-driven closure
 //   runOnly      before `start`, the driver creates the run dir and queues `run-only parse tidy`: `report` never
 //                starts before the regression's audit (R) or the bundle's drift audit (P)
 //   branch       R once tidy published S and the first audit of S waits at the money barrier, or I-2's witness ran on S
@@ -246,8 +242,6 @@ const factsOf = <K extends Fact['kind']>(events: readonly Event[], kind: K): rea
 
 const merged = (s: Status, unit: string): boolean => s.units.find((u) => u.unit === unit)?.status === 'retired';
 const now = (): string => new Date().toISOString();
-/** The items the driver acknowledges whenever they are open (story steps 5 and 6, and the bundle requests). */
-const ACKED_REASONS: readonly string[] = ['divergence-digest', 'convergence-bound', 'bundle-request'];
 /** The unit whose change regresses I-2 in branch R, and which branch P stops upstream. */
 const TIDY = 'tidy';
 /** The changes by which a bundle revision disposes of tidy (branch P). */
@@ -315,7 +309,7 @@ function recordClosures(l: Layout, d: Devices, events: readonly Event[]): void {
   for (const f of factsOf(events, 'needs-user-acked')) {
     if (d.acks.some((a) => a.needsUser === f.id)) continue;
     const item = readNeedsUser(absPath(l.runDir), f.id);
-    if (item !== null && ACKED_REASONS.includes(item.reason)) d.acks.push({needsUser: f.id, reason: item.reason, choice: f.choice, ack: f.command});
+    if (item !== null) d.acks.push({needsUser: f.id, reason: item.reason, choice: f.choice, ack: f.command});
   }
 }
 

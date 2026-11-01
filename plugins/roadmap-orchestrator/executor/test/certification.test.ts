@@ -1,19 +1,23 @@
 // Turn-boundary certification: real unit loops, git checkouts and fake backends behind PATH shims.
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync,writeFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { runUnit, step } from '../src/pipeline/unit.ts';
-import { build, preBuild } from '../src/pipeline/stages.ts';
+import { runUnit,step } from '../src/pipeline/unit.ts';
+import { build,preBuild } from '../src/pipeline/stages.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
 import { readCalls } from './helpers/scenario.ts';
-import { events, intents } from './fixtures/invoke-specs.ts';
-import { BUILD_REPORT, admitAll, planCheckStep, setupUnit, started } from './fixtures/stage-common.ts';
-import { U1, gateStep, codexStep, contextFor, mulBuild, setupArc, stepUntil } from './fixtures/unit-common.ts';
+import { events,intents } from './fixtures/invoke-specs.ts';
+import { BUILD_REPORT,admitAll,planCheckStep,setupUnit,started } from './fixtures/stage-common.ts';
+import { U1,gateStep,codexStep,contextFor,mulBuild,setupArc,stepUntil } from './fixtures/unit-common.ts';
 
 const T = { timeout: 300_000 };
 
 test('certification: three reds free, fourth charged, allowance resets, twelfth parks at the chargeable bound', T, async () => {
-  const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), ...Array.from({ length: 11 }, (_, i) => codexStep([{ type: 'commit', message: 'repair attempt', files: { 'src/attempt.js': `export const attempt = ${i};\n` } }], { argv: ['exec', 'resume'] }))],
+  const repairs = Array.from({length: 11}, (_, i) => {
+    const acts = [{type: 'commit' as const, message: 'repair attempt', files: {'src/attempt.js': `export const attempt = ${i};\n`}}];
+    return i < 7 ? codexStep(acts, {argv: ['exec', 'resume']}) : {as: 'claude' as const, expect: {argv: [i === 7 ? '--session-id' : '--resume'], argvLacks: ['--tools']}, acts: [...acts, {type: 'emit' as const, value: BUILD_REPORT}]};
+  });
+  const d = setupArc({steps: [planCheckStep({decision: 'approve'}), mulBuild(), ...repairs.slice(0, 7), gateStep({decision: 'approve'}), ...repairs.slice(7)],
     // Alternate distinct reds: this exercises the ordinary certification allowance, independently of
     // repeated-red base comparison (a confirmed repeat follows regression/base-red instead).
     units: [{ id: 'u1', lanes: [0, 1].map((parity) => ({ id: `red-${parity}`, argv: ['node', '-e',

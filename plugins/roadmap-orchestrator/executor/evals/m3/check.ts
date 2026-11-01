@@ -1,5 +1,5 @@
 import { protectedPaths } from '../../src/input/protected.ts';
-import { laneEvidenceGlobs, transientViolations } from '../../src/git/transient.ts';
+import { laneEvidenceGlobs,transientViolations } from '../../src/git/transient.ts';
 // The M3 paid fixture, step 3: `node evals/m3/check.ts <dir>` grades a finished run (setup → driver) from the log,
 // the repo, the run dir and report.json. Agent-facing output: one JSON line `{pass, criteria[{name, pass, detail}],
 // notExercised[], cannotShow[]}`, then the two lists as lines. Exits 1 when any criterion fails.
@@ -17,9 +17,6 @@ import { laneEvidenceGlobs, transientViolations } from '../../src/git/transient.
 //                           every unit a bundle added merged, each finding it repairs resolved or ruled and each
 //                           obligation it serves held; the bundle requests the driver answered (informational)
 //   bundle-divergences      [5] every bundle revision recorded divergences, one citing V-2
-//   divergence-digest-bound [5] each digest binds exactly (as a set) the divergences recorded before it that no earlier digest
-//                           bound; the driver acknowledged each; none is left uncovered
-//   convergence-bound       [6] K = 1: `convergence-bound` was raised, each one acknowledged by the driver
 //   drift-audit             [8] an audit triggered by a bundle revision's drift ran the vision lens alone, or with the
 //                           triggers coalesced into it the union they require (a cadence one: all of L), completed
 //   final-audit             [9] the last audit was `final`, ran lenses of L on the last unit publication's head; its
@@ -53,32 +50,32 @@ import { laneEvidenceGlobs, transientViolations } from '../../src/git/transient.
 //   checkpoint and pack-review calls; a judgment's one repair turn resumes its own fresh session), meter-covers-calls (unit and arc calls), no-model-ids
 //
 // The non-exercised list names what this run's journal shows no trace of, from: rule, reverse, steer, merge-in,
-// reproduction, batch repair, per-identity bound, owner-request, draining, real go, literal partial bundle. The paid
+// reproduction, batch repair, owner-request, draining, real go, literal partial bundle. The paid
 // run takes none of them (the fake story takes the literal partial bundle); each has a fake integrated test.
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { basename, join, relative, resolve } from 'node:path';
-import type { Event, Fact, IntentOf } from '../../src/core/events.ts';
-import { type ArcId, type CommandId, type NeedsUserId, type OpId, type UnitId, arcId, invocationDirName, invocationId } from '../../src/core/ids.ts';
+import { existsSync,readFileSync,readdirSync,statSync } from 'node:fs';
+import { basename,join,relative,resolve } from 'node:path';
+import type { Event,Fact,IntentOf } from '../../src/core/events.ts';
+import { type ArcId,type CommandId,type NeedsUserId,type OpId,type UnitId,arcId,invocationDirName,invocationId } from '../../src/core/ids.ts';
 import type { JournalView } from '../../src/core/interfaces.ts';
 import { readJournal } from '../../src/core/log.ts';
-import { RUNNER_FILE_READERS, type ResultFile } from '../../src/core/records.ts';
-import { type AbsPath, absPath, repoPath } from '../../src/core/values.ts';
+import { RUNNER_FILE_READERS,type ResultFile } from '../../src/core/records.ts';
+import { type AbsPath,absPath,repoPath } from '../../src/core/values.ts';
 import { candidateRef } from '../../src/git/candidate.ts';
-import { git, refTarget, revParse } from '../../src/git/git.ts';
-import { snapshotRef, verifySnapshot, witnessDir } from '../../src/git/snapshot.ts';
+import { git,refTarget,revParse } from '../../src/git/git.ts';
+import { snapshotRef,verifySnapshot,witnessDir } from '../../src/git/snapshot.ts';
 import { verdictOf } from '../../src/holistic/observe.ts';
-import { type Obligations, type ObservationVerdict, isExempt, parseObligations, witnessRecord } from '../../src/holistic/types.ts';
+import { type Obligations,type ObservationVerdict,isExempt,parseObligations,witnessRecord } from '../../src/holistic/types.ts';
 import { WITNESS_RECORD_FILE } from '../../src/holistic/witness.ts';
-import { OBLIGATIONS_INPUT, keptInput, requirePlanInForce, revisionInForce } from '../../src/input/inforce.ts';
-import { type PlanM1, parsePlan } from '../../src/input/plan.ts';
+import { OBLIGATIONS_INPUT,keptInput,requirePlanInForce,revisionInForce } from '../../src/input/inforce.ts';
+import { type PlanM1,parsePlan } from '../../src/input/plan.ts';
 import { readNeedsUser } from '../../src/needsuser.ts';
-import { pendingCommandIds, readCommand } from '../../src/commands/queue.ts';
+import { pendingCommandIds,readCommand } from '../../src/commands/queue.ts';
 import { DEBT_DOC } from '../../src/docs/debt.ts';
 import { invocationDir } from '../../src/pipeline/invoke.ts';
 import { MODEL_IDS } from '../../src/routing/types.ts';
 import { parseSpec } from '../../src/spec/spec.ts';
 import type { Report } from './driver.ts';
-import { LENSES, MAIN, MONEY_LANE, type StoryBranch, layout } from './layout.ts';
+import { LENSES,MAIN,MONEY_LANE,type StoryBranch,layout } from './layout.ts';
 
 type Verdict = Readonly<{ pass: boolean; detail: string }>;
 export type Criterion = Readonly<{ name: string }> & Verdict;
@@ -86,7 +83,7 @@ export type CheckResult = Readonly<{ pass: boolean; branch: StoryBranch | null; 
 
 /** What the paid run leaves untaken (plan "Fixture evals/m3/", not exercised), in the order the report lists them. */
 export const BRANCHES = [
-  'rule', 'reverse', 'steer', 'merge-in', 'reproduction', 'batch repair', 'per-identity bound', 'owner-request', 'draining', 'real go', 'literal partial bundle',
+  'rule', 'reverse', 'steer', 'merge-in', 'reproduction', 'batch repair', 'owner-request', 'draining', 'real go', 'literal partial bundle',
 ] as const;
 export type Branch = (typeof BRANCHES)[number];
 
@@ -292,9 +289,7 @@ function bundlesWhole(run: Run): Verdict {
     for (const o of spec.obligations ?? []) if (held.get(o) !== 'held') problems.push(`${unit} serves ${o}, which is ${held.get(o) ?? 'absent'} on the head`);
     lines.push(`${unit} (rev ${rev.rev}, repairs ${JSON.stringify(spec.repairs ?? [])}) merged`);
   }
-  const requests = run.report.devices.acks.filter((a) => a.reason === 'bundle-request');
-  const answered = requests.map((a) => `${a.needsUser}:${a.choice ?? 'ack'}`).join(', ');
-  return verdict(problems, `bundle revisions ${applied.map((b) => b.rev).join(', ')}; ${lines.join('; ') || 'no unit added'}; ${requests.length} bundle requests answered by the driver${requests.length === 0 ? '' : ` (${answered})`} (informational)`);
+  return verdict(problems, `root revisions ${applied.map((b) => b.rev).join(', ')}; ${lines.join('; ') || 'no unit added'}`);
 }
 
 function bundleDivergences(run: Run): Verdict {
@@ -332,55 +327,6 @@ function branchMatches(run: Run): Verdict {
   const recorded = run.report.devices.branch?.branch ?? null;
   if (b === null) return { pass: false, detail: `the log shows no branch (driver recorded ${recorded})` };
   return { pass: b.branch === recorded, detail: `branch ${b.branch}: ${b.detail}; the driver recorded ${recorded}` };
-}
-
-function divergenceDigestBound(run: Run): Verdict {
-  const problems: string[] = [];
-  const bound = new Set<string>();
-  const digests = factsOf(run, 'divergence-digest');
-  for (const g of digests) {
-    // The binding is a set: compared sorted, with the executor's own comparator (string order: D-10 before D-9).
-    const expected = factsOf(run, 'divergence').filter((d) => d.seq < g.seq && !bound.has(d.id)).map((d) => d.id as string).sort();
-    if (JSON.stringify([...g.ids].sort()) !== JSON.stringify(expected)) problems.push(`digest ${g.needsUser} binds ${JSON.stringify(g.ids)}, not ${JSON.stringify(expected)}`);
-    for (const id of g.ids) bound.add(id);
-  }
-  const acks = run.report.devices.acks;
-  if (digests.length === 0) problems.push('no digest was raised');
-  // A digest raised in the arc's last turns may be acknowledged only after the arc completed: the driver's ack is then
-  // a command no executor is left to apply (`afterCompletion`). Its ids stay uncovered, and that is the only way they may.
-  const late = new Set<string>();
-  for (const g of digests) {
-    if (!acks.some((a) => a.needsUser === g.needsUser && a.reason === 'divergence-digest')) problems.push(`the driver did not acknowledge the digest ${g.needsUser}`);
-    else if (run.view.needsUser().find((n) => n.id === g.needsUser)?.ack == null) {
-      if (afterCompletion(run, g.needsUser)) for (const id of g.ids) late.add(id);
-      else problems.push(`${g.needsUser} is not acknowledged`);
-    }
-  }
-  const uncovered = run.report.status.divergences.map((d) => d.id).filter((id) => !late.has(id));
-  if (uncovered.length > 0) problems.push(`uncovered divergences ${JSON.stringify(uncovered)}`);
-  if (factsOf(run, 'divergence').length === 0) problems.push('no divergence recorded');
-  return verdict(problems, `${digests.length} digests: ${digests.map((x) => `${x.needsUser} [${x.ids.join(', ')}]`).join('; ')}; each acknowledged by the driver${late.size > 0 ? ` (${[...late].join(', ')} after completion)` : ''}`);
-}
-
-/** The driver's ack of `needsUser` was queued after `arc-completed`: no executor ran to apply it. */
-function afterCompletion(run: Run, needsUser: string): boolean {
-  const done = run.events.findLast((e) => e.type === 'fact' && e.fact.kind === 'arc-completed');
-  if (done === undefined) return false;
-  const ack = run.report.devices.acks.find((a) => a.needsUser === needsUser);
-  if (ack === undefined) return false;
-  const file = join(run.runDir, 'commands', 'incoming', `${ack.ack}.json`);
-  return existsSync(file) && statSync(file).mtimeMs > Date.parse(done.at);
-}
-
-function convergenceBound(run: Run): Verdict {
-  const raised = items(run, 'convergence-bound');
-  const acks = run.report.devices.acks;
-  const problems: string[] = [];
-  if (raised.length === 0) problems.push('no convergence-bound item was raised');
-  for (const item of raised) {
-    if (!acks.some((a) => a.needsUser === item.id && a.reason === 'convergence-bound') || item.ack === null) problems.push(`${item.id} is not acknowledged by the driver`);
-  }
-  return verdict(problems, `${raised.map((n) => n.id).join(', ')} raised, each acknowledged by the driver`);
 }
 
 function repairResolved(run: Run): Verdict {
@@ -423,40 +369,6 @@ function latentRepair(run: Run): Verdict {
   return verdict(problems, `lens findings ${found.map((f) => `${f.id} (${f.lens}, ${f.severity})`).join(', ')} on S ${s.new}; ${repair} repairs ${JSON.stringify(named)}, published ${pub?.new}; resolved; I-2 held`);
 }
 
-/**
- * The lenses an audit's coalesced triggers require (src/holistic/cadence.ts): drift L ∩ {drift, vision} (here the vision
- * lens); cadence, unwitnessed and wall-clock all of L; a request its lenses ∩ L. `final` adds the lenses still
- * outstanding, which the log does not record: with it, the required set is a floor and L the ceiling.
- */
-function requiredLenses(run: Run, triggers: Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: 'audit-started' }>['triggers']): Readonly<{ floor: readonly string[]; exact: boolean }> {
-  const out = new Set<string>();
-  for (const t of triggers) {
-    if (t.type === 'drift') out.add('vision');
-    else if (t.type === 'requested') {
-      const q = factsOf(run, 'audit-requested').find((f) => f.command === t.command);
-      for (const l of LENSES) if (q?.lenses == null || q.lenses.includes(l)) out.add(l);
-    } else if (t.type !== 'final') for (const l of LENSES) out.add(l);
-  }
-  return { floor: LENSES.filter((l) => out.has(l)), exact: !triggers.some((t) => t.type === 'final') };
-}
-
-function driftAudit(run: Run): Verdict {
-  const revs = new Set(bundleRevisions(run).map((b) => b.rev as number));
-  const audit = factsOf(run, 'audit-started').find((a) => a.triggers.some((t) => t.type === 'drift' && revs.has(t.planRev)));
-  if (audit === undefined) return { pass: false, detail: `no audit triggered by the drift of bundle revisions ${[...revs].join(', ')}` };
-  const problems: string[] = [];
-  // A drift trigger alone runs the vision lens; coalesced with a cadence (or other) trigger the audit runs the union.
-  const { floor, exact } = requiredLenses(run, audit.triggers);
-  const ran: readonly string[] = [...audit.lenses].sort();
-  const fits = exact ? JSON.stringify(ran) === JSON.stringify([...floor].sort()) : floor.every((l) => ran.includes(l)) && ran.every((l) => (LENSES as readonly string[]).includes(l));
-  if (!ran.includes('vision') || !fits) problems.push(`${audit.job} (${JSON.stringify(audit.triggers)}) ran ${JSON.stringify(audit.lenses)}, not what its triggers require (${exact ? '' : 'at least '}${JSON.stringify(floor)})`);
-  if (factsOf(run, 'audit-ended').find((e) => e.job === audit.job)?.outcome !== 'completed') problems.push(`${audit.job} did not complete`);
-  const ck = rootApplyAfterAudit(run, audit.job);
-  // Nothing new since a settled checkpoint: the audit has none (`checkpoint-skipped`, arc feedback 2026-10-16).
-  const after = ck === null ? 'its checkpoint skipped' : `${ck.job} ${ck.decision}`;
-  return verdict(problems, `${audit.job} (${JSON.stringify(audit.triggers)}) ran ${audit.lenses.join(', ')}, as its triggers require; ${after}`);
-}
-
 function finalAudit(run: Run): Verdict {
   const last = factsOf(run, 'audit-started').at(-1);
   if (last === undefined) return { pass: false, detail: 'no audit' };
@@ -487,6 +399,16 @@ function closeOut(run: Run): Verdict {
   const covered = factsOf(run, 'docs-covered').find((f) => f.pub === p.pub);
   if (covered === undefined || covered.from !== ff.old || covered.to !== ff.new) problems.push(`docs-covered of ${p.pub}: ${JSON.stringify(covered)}, not ${ff.old}→${ff.new}`);
   return verdict(problems, `${p.pub}: ${ff.old}→${ff.new}, ${changed.join(', ')}; docs-covered its own edge`);
+}
+
+/** The driver's ack of `needsUser` was queued after `arc-completed`: no executor ran to apply it. */
+function afterCompletion(run: Run, needsUser: string): boolean {
+  const done = run.events.findLast((e) => e.type === 'fact' && e.fact.kind === 'arc-completed');
+  if (done === undefined) return false;
+  const ack = run.report.devices.acks.find((a) => a.needsUser === needsUser);
+  if (ack === undefined) return false;
+  const file = join(run.runDir, 'commands', 'incoming', `${ack.ack}.json`);
+  return existsSync(file) && statSync(file).mtimeMs > Date.parse(done.at);
 }
 
 function completion(run: Run): Verdict {
@@ -786,7 +708,6 @@ function exercised(run: Run): ReadonlySet<Branch> {
   if (factsOf(run, 'merged-in').length > 0) out.add('merge-in');
   if (factsOf(run, 'stage-outcome').some((f) => f.stage === 'reproduce')) out.add('reproduction');
   if (run.events.some((e) => e.type === 'intent' && e.kind === 'candidate.merge' && e.expect.batch !== undefined)) out.add('batch repair');
-  if (items(run, 'convergence-identity').length > 0) out.add('per-identity bound');
   if (items(run, 'owner-request').length > 0) out.add('owner-request');
   if (factsOf(run, 'admissions-closed').length > 0) out.add('draining');
   const goLanes = new Set(run.obligations.lanes.filter((l) => l.reporter === 'go-test-json').map((l) => l.id as string));

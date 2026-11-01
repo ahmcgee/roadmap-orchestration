@@ -333,8 +333,8 @@ function composeArc(c: Ctx, n: ArcNo, baseline: string, opts: Readonly<{ answer?
     suite: { lanes: suite },
     resources: [],
     // Arc 2 audits every publication: cutoff's audit is the one whose checkpoint admits the opportunity.
-    holistic: { advances: slice.advances, obligations: 'obligations.json', audit: { every: n === 2 ? 1 : 2, lenses: ['vision'] } },
-    limits: { convergenceK: 3 },
+    holistic: { advances: slice.advances, obligations: 'obligations.json' },
+    limits: { },
     units: units.map((u) => ({ id: u.id, spec: `${u.id}.json`, review: 'always', risk: u.risk, systems: u.systems, resources: [], after: u.after.filter((a) => units.some((x) => x.id === a)) })),
     ...(opts.previous === undefined ? {} : { chain: { previousArc: opts.previous.arc, previousHead: opts.previous.head } }),
   }));
@@ -539,14 +539,7 @@ function logIntervention(c: Ctx, arc: string, lever: string, bullets: Readonly<{
   writeFileSync(file, `${existsSync(file) ? '' : '# Operator log\n\n'}${entry}`, { flag: 'a' });
 }
 
-/**
- * Arc 2's blocked wake, after releasing cutoff's audit: supervise in this turn, each step waiting on a state the journal
- * or status shows, never on time. The audit's checkpoint admits the opportunity `fits` and converts the over-budget day view
- * (scenario.ts); its bundle departs from the plan, so a non-blocking `divergence-digest` item is raised. Once the drift
- * audit that bundle owes has its checkpoint (`DRIFT_CHECKPOINT`) decided, the run-only limit goes and notice runs. Its
- * `slow` lane hangs (golden.ts SLOW_LANE): the root agent pauses notice and ends the turn. The next wake therefore holds
- * the run newly `held`; clearing run-only closed the digest through the arc subject (`resumePaused` follows).
- */
+/** Root applies the campaign repair, clears run-only, then pauses the hanging lane for the next held-unit wake. */
 function superviseArc2(c: Ctx, a: ArcState): string {
   const l = layout(c.dir);
   const at = ['--repo', l.product, '--arc', a.arc];
@@ -578,11 +571,7 @@ function superviseArc2(c: Ctx, a: ArcState): string {
   writeFile(join(exported, 'obligations.json'), json(obligations));
   c.t.roadmap(['apply', ...at, '--from', exported, '--rev', String(base.planRev), '--reason', 'The root adds fits with its draught witness and keeps the parent obligation as a split restatement.']);
   c.t.untilFact(a.arc, 'the root fits revision applied', (facts) => facts.find((f) => f.kind === 'plan-applied' && f.changes.some((change) => change.type === 'unit-added' && change.unit === 'fits')));
-  // The ruler notice is raised asynchronously after the revision. Clear it during this root turn, just as the
-  // arc-1 flow revision notice is cleared; otherwise it can race the next held-unit wake.
-  const ruler = c.t.until(a.arc, 'the root revision ruler notice', (s) => s.needsUser.some((n) => n.reason === 'ruler-changed')).needsUser.find((n) => n.reason === 'ruler-changed')!;
   c.t.roadmap(['run-only', '--clear', ...at]);
-  c.t.untilFact(a.arc, 'run-only clear to close the ruler notice', (facts) => facts.find((f) => f.kind === 'needs-user-acked' && f.id === ruler.id));
   const hung = c.t.until(a.arc, `notice running its ${SLOW_LANE.id} lane`, (s) => unitOf(s, 'notice').running?.lane?.id === SLOW_LANE.id);
   c.state.paused = { unit: 'notice', lane: JSON.stringify(unitOf(hung, 'notice').running!.lane) };
   c.t.roadmap(['pause', 'notice', ...at]);

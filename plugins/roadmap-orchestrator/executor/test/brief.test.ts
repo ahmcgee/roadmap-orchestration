@@ -13,9 +13,9 @@ import { renderBrief } from '../src/brief.ts';
 import { acksDir } from '../src/chain.ts';
 import { brief } from '../src/commands/brief.ts';
 import { chainStatus } from '../src/commands/chain.ts';
-import { MAX_ACK_ITEMS,ackCommandId,enqueueCommand,incomingPath } from '../src/commands/queue.ts';
+import { MAX_ACK_ITEMS,ackCommandId,enqueueCommand } from '../src/commands/queue.ts';
 import type { Fact } from '../src/core/events.ts';
-import { type BriefId, type NeedsUserId, arcId, commandId, debtId, divergenceIdOf, jobId, needsUserId, sha256 } from '../src/core/ids.ts';
+import { type BriefId,type NeedsUserId,arcId,commandId,debtId,divergenceIdOf,jobId,needsUserId,sha256 } from '../src/core/ids.ts';
 import { canonicalJson } from '../src/core/json.ts';
 import { EVENTS_FILE,type OpenJournal,openJournal } from '../src/core/log.ts';
 import type { NeedsUserReason } from '../src/core/records.ts';
@@ -105,8 +105,6 @@ async function chained(): Promise<Chained> {
   const h1 = await seal(a1, {
     before: (j) => {
       divergence(j, 1, 1, 0, 'trust means tested');
-      arc1Digest = item(j, a1, 'divergence-digest', false);
-      j.fact({ kind: 'divergence-digest', needsUser: arc1Digest, ids: [divergenceIdOf(1)] } as Fact);
     },
   });
   betweenArc(a1.repo, h1);
@@ -120,9 +118,6 @@ async function chained(): Promise<Chained> {
   const ids: Partial<Record<keyof Chained['items'], NeedsUserId>> = { arc1Digest: arc1Digest! };
   await write(a2, (j) => {
     divergence(j, 1, 1, 0, 'a berth is a slot');
-    ids.digest = item(j, a2, 'divergence-digest', false);
-    j.fact({ kind: 'divergence-digest', needsUser: ids.digest, ids: [divergenceIdOf(1)] } as Fact);
-    ids.bound = item(j, a2, 'convergence-bound', false);
     ids.owner = item(j, a2, 'owner-request', true);
     ids.owed = item(j, a2, 'revision-notice', false);
     const what = 'Tidy the berth helpers.';
@@ -165,7 +160,6 @@ describe('roadmap brief', () => {
     assert.deepEqual(one.slice, { advances: ['V-1'], why: 'the first slice' }, 'the Phase-0 slice in force (Q19)');
     assert.deepEqual(arcOf(p, 'arc-2').slice, { advances: ['V-1'], why: 'the first slice' });
     assert.deepEqual(one.divergences, [{ id: 'D-1', type: 'interpretation', what: 'trust means tested' }]);
-    assert.deepEqual(one.digests, [{ needsUser: items.arc1Digest, ids: ['D-1'] }]);
     assert.deepEqual(one.decisions, ['divergence D-1: interpretation: trust means tested (executor)']);
     assert.deepEqual(one.census, { held: 0, obligationRules: 1, outOfSlice: 1, untestable: 1, prodOnly: 0 });
     assert.deepEqual(one.pr, { type: 'none' }, 'arc 1 integrates on main');
@@ -176,7 +170,7 @@ describe('roadmap brief', () => {
     assert.deepEqual(two.debt, { banked: [{ id: 'B-1', what: 'Tidy the berth helpers.' }], dispositioned: [] });
     assert.deepEqual(two.packReviewNotes, [{ job: 'review-1', index: 0, claim: 'the cut line is vague' }]);
     assert.deepEqual(two.pr, { type: 'none' });
-    assert.deepEqual(p.items, [{ arc: 'arc-2', id: items.digest }, { arc: 'arc-2', id: items.bound }].sort((x, y) => (x.id < y.id ? -1 : 1)));
+    assert.deepEqual(p.items, []);
 
     const acked = await briefOf(a2, first.id);
     assert.equal(acked.kind, 'acked', JSON.stringify(acked));
@@ -185,7 +179,7 @@ describe('roadmap brief', () => {
     assert.deepEqual(after.chain.unackedStarts, []);
     assert.deepEqual(after.items, []);
     for (const x of after.arcs) {
-      assert.deepEqual([x.divergences, x.digests, x.decisions, x.debt.banked, x.questions, x.curation, x.packReviewNotes], [[], [], [], [], [], [], []], x.arc);
+      assert.deepEqual([x.divergences, x.decisions, x.debt.banked, x.questions, x.curation, x.packReviewNotes], [[], [], [], [], [], []], x.arc);
     }
     assert.deepEqual(arcOf(after, 'arc-1').census, one.census, 'the census is the ref\'s, not a delta');
     // arc 2 moves on: only what came after the ack shows, in arc 2 alone.
@@ -249,7 +243,7 @@ describe('roadmap brief', () => {
       `# Roadmap brief ${b.id}`, 'chain: position 2, K 1, unacked starts: arc-2', 'next start: refused: arc-2 is not complete', `ack: roadmap brief --repo <repo> --ack ${b.id}`, '### arc-1', '### arc-2', 'slice: advances V-1: the first slice',
       'D-1 interpretation: a berth is a slot', '#### Questions (working assumptions)', '#1 P-1 open: Is the cancellation window 24 h or 48 h? — assuming: 48 h',
       'B-1: Tidy the berth helpers.', 'review-1#0: the cut line is vague',
-      'census: 0% held (0/1 obligation rules held; 1 out of slice, 1 untestable, 0 prod-only)', `arc-2/${items.digest}`,
+      'census: 0% held (0/1 obligation rules held; 1 out of slice, 1 untestable, 0 prod-only)',
     ]) assert.ok(b.markdown.includes(text), `${text}\n---\n${b.markdown}`);
     // Another payload renders another text: the Markdown depends on nothing else.
     const changed = { ...b.payload, chain: { ...b.payload.chain, k: 3 } };
@@ -258,26 +252,6 @@ describe('roadmap brief', () => {
     assert.deepEqual([md.code, md.stdout], [0, b.markdown]);
     const json = await cli(a2, ['brief', '--repo', a2.repo, '--json']);
     assert.deepEqual([json.code, JSON.parse(json.stdout)], [0, { briefId: b.id, payload: JSON.parse(canonicalJson(b.payload)) }]);
-  });
-
-  it('brief.ack-nonblocking-only: an ack enqueues one ack per open non-blocking digest and convergence-bound item of a live arc, never a blocking item, another reason or a done arc\'s', T, async () => {
-    const { a1, a2, items } = await chained();
-    const b = await payloadOf(a2);
-    const expected = [items.digest, items.bound].sort();
-    assert.deepEqual(b.payload.items.map((i) => [i.arc, i.id]), expected.map((id) => ['arc-2', id]));
-    const acked = await briefOf(a2, b.id);
-    assert.equal(acked.kind, 'acked');
-    if (acked.kind !== 'acked') throw new Error('unreachable');
-    assert.equal(acked.commands.length, 2);
-    assert.deepEqual(incoming(a2), acked.commands.map((c) => `${c}.json`));
-    const bodies = acked.commands.map((c) => JSON.parse(readFileSync(incomingPath(runDirOfArc(a2), c), 'utf8')) as Json);
-    assert.deepEqual(bodies.map((f) => [f['arc'], f['body']]), expected.map((id) => ['arc-2', { type: 'ack', needsUser: id, choice: null }]));
-    assert.deepEqual(incoming(a1), [], 'arc 1 is done: its open digest is not acked by a brief');
-    assert.ok(!bodies.some((f) => [items.owner, items.owed].includes((f['body'] as { needsUser: NeedsUserId }).needsUser)));
-    // A rerun of the committed id reports the same commands and writes nothing.
-    assert.deepEqual(await briefOf(a2, b.id), acked);
-    assert.deepEqual(incoming(a2), acked.commands.map((c) => `${c}.json`));
-    assert.deepEqual(ackFiles(a2), [`${b.id}.json`]);
   });
 
   for (const cell of crashCells(BRIEF_ACK)) {
@@ -289,7 +263,7 @@ describe('roadmap brief', () => {
       assertFired(trigger);
       assert.notEqual(crashed.code, 0);
       assert.deepEqual(ackFiles(a2), [`${b.id}.pending.json`], 'the marker is still pending');
-      assert.equal(incoming(a2).length, cell.label === 'brief.ack.after-pending' ? 0 : 2);
+      assert.equal(incoming(a2).length, 0);
       const marker = parseAckMarker(JSON.parse(readFileSync(join(acksDir(a2.repo), `${b.id}.pending.json`), 'utf8')));
       const ids = marker.items.map((_, i) => ackCommandId(marker.at, i));
       if (cell.label === 'brief.ack.after-enqueue') {

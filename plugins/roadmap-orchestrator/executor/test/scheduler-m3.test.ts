@@ -42,7 +42,7 @@ import { SCENARIO_TIMEOUT_MS,admitAll,planCheckStep } from './fixtures/stage-com
 import { type ArcDescriptor,type ArcRun,appendSteps,applyBody,codexStep,commandContextFor,contextFor,syncInputs,setupArc } from './fixtures/unit-common.ts';
 import { reached,release } from './helpers/barrier.ts';
 import { assertFired,writeTrigger } from './helpers/crash.ts';
-import { checkpointStep, lensStep, noteLensStep } from './helpers/holistic.ts';
+import { checkpointStep,lensStep,noteLensStep } from './helpers/holistic.ts';
 import { runFixture } from './helpers/proc.ts';
 import { git,tmpDir } from './helpers/repo.ts';
 import { type Step,readCalls } from './helpers/scenario.ts';
@@ -89,7 +89,7 @@ describe('completion (§2.10, A8, A20, G8)', () => {
       assert.ok(baseline.length > 0 && baseline.every((f) => f.seq < firstOutcome), 'the baseline witnessed before any unit stage (A6)');
       const [started] = factsOf(r, 'audit-started');
       assert.deepEqual(started!.triggers, [{ type: 'final' }], 'the final audit, no work left');
-      assert.deepEqual(r.journal.view.stageJobOutcomes().map((f) => [f.stage, f.verdict, f.findings]), [['campaign-audit', 'completed', 0]]);
+      assert.deepEqual(r.journal.view.stageJobOutcomes().map((f) => [f.stage, f.verdict, f.findings.total]), [['campaign-audit', 'pass', 0]]);
       const [published] = factsOf(r, 'docs-published');
       assert.deepEqual([published!.pub, published!.source, published!.commit], ['docs-1', 'close-out', head(d)], 'the close-out published the head');
       const [covered] = factsOf(r, 'docs-covered');
@@ -188,7 +188,7 @@ describe('completion (§2.10, A8, A20, G8)', () => {
       const audited = await runAudit(h.audit);
       assert.ok(audited.kind === 'ended' && audited.outcome === 'completed', JSON.stringify(audited));
       assert.deepEqual(blockers(), ['close-out']);
-      assert.deepEqual(r.journal.view.stageJobOutcomes().map((f) => f.verdict), ['completed']);
+      assert.deepEqual(r.journal.view.stageJobOutcomes().map((f) => f.verdict), ['pass']);
       assert.deepEqual(blockers(), ['close-out'], 'quiescent: only the close-out is left');
       assert.equal((await publishCloseOut(h.docs)).kind, 'published');
       assert.deepEqual(blockers(), []);
@@ -283,7 +283,7 @@ describe('stop (B7 follow-up, lead ruling: control applies immediately)', () => 
     const d = checkpointArc([lensStep('audit-1', 'vision', [], [barrier])]);
     const r = contextFor(d);
     submit(r, { type: 'pause', target: { type: 'unit', unit: unitId('u1') } });
-    submit(r, { type: 'audit', lenses: null });
+    submit(r, { type: 'audit' });
     const s = startHolistic(r);
     try {
       await reached(d.scenarioDir, 'lens', WAIT_MS);
@@ -334,11 +334,11 @@ describe('holistic jobs in the scheduler', () => {
     const r = contextFor(d);
     // u1 stays paused: only the requested audits run.
     submit(r, { type: 'pause', target: { type: 'unit', unit: unitId('u1') } });
-    const a = submit(r, { type: 'audit', lenses: null });
+    const a = submit(r, { type: 'audit' });
     const s = startHolistic(r);
     try {
       await reached(d.scenarioDir, 'lens', WAIT_MS);
-      const b = submit(r, { type: 'audit', lenses: ['invariants'] });
+      const b = submit(r, { type: 'audit' });
       await until(() => terminalReceipt(r.ctx.runDir, b) !== null, WAIT_MS, 'the second audit request applied');
       assert.equal(terminalReceipt(r.ctx.runDir, b)!.state, 'applied');
       assert.deepEqual(factsOf(r, 'audit-started').map((f) => f.job), ['audit-1'], 'one audit at a time');
@@ -472,17 +472,15 @@ describe('the M3 commands and items', () => {
     const r = contextFor(completingArc());
     try {
       const w = wired(r);
-      const bad = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'audit', lenses: ['vision'] }));
-      assert.ok(bad.kind === 'rejected' && /outside the arc's required lens set \(invariants\)/.test(bad.reason), JSON.stringify(bad));
-      const ok = submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'audit', lenses: ['invariants'] });
+      const ok = submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'audit' });
       assert.equal((await applyCommand(w.commands, ok)).kind, 'applied');
-      assert.deepEqual(factsOf(r, 'audit-requested').map((f) => [f.command, f.lenses]), [[ok.id, ['invariants']]]);
+      assert.deepEqual(factsOf(r, 'audit-requested').map((f) => f.command), [ok.id]);
     } finally {
       r.journal.close();
     }
     const m2 = contextFor(setupArc({ steps: [] }));
     try {
-      const out = await applyCommand(commandContextFor(m2), submitCommand(m2.ctx.runDir, m2.journal.view.arc, { type: 'audit', lenses: null }));
+      const out = await applyCommand(commandContextFor(m2), submitCommand(m2.ctx.runDir, m2.journal.view.arc, { type: 'audit' }));
       assert.ok(out.kind === 'rejected' && /no holistic layer/.test(out.reason), JSON.stringify(out));
     } finally {
       m2.journal.close();
@@ -493,13 +491,13 @@ describe('the M3 commands and items', () => {
     assert.equal(m3Blocking('owner-request'), true);
     assert.equal(m3Blocking('obligation-baseline'), true);
     assert.equal(m3Blocking('respec-second'), true);
-    for (const reason of ['bundle-request', 'convergence-bound', 'convergence-identity', 'revision-notice', 'divergence-digest'] as const) assert.equal(m3Blocking(reason), false);
+    for (const reason of ['revision-notice'] as const) assert.equal(m3Blocking(reason), false);
     assert.equal(m3Blocking('base-red'), null, 'an earlier reason: its raiser decides');
     const r = contextFor(completingArc());
     try {
       assert.throws(() => raiseNeedsUser(r.journal, r.ctx.runDir, {
-        blocking: true, subject: { type: 'arc' }, reason: 'convergence-bound', summary: 'x', recommendation: 'y', options: [], evidence: [],
-      }, { type: 'arc' }), /convergence-bound needs-user is raised non-blocking, not blocking/);
+        blocking: true, subject: { type: 'arc' }, reason: 'revision-notice', summary: 'x', recommendation: 'y', options: [], evidence: [],
+      }, { type: 'arc' }), /revision-notice needs-user is raised non-blocking, not blocking/);
       assert.deepEqual(r.journal.view.needsUser(), []);
     } finally {
       r.journal.close();

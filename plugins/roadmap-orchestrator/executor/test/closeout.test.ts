@@ -4,17 +4,17 @@
 // bundle request. Named tests: closeout.declines-request-and-banks, closeout.declined-ack-refused, and the crash row
 // CLOSE_OUT_SETTLEMENT (each label of test/matrix.ts, crashed in a child, settled once by the next).
 import assert from 'node:assert/strict';
-import { describe, test } from 'node:test';
+import { describe,test } from 'node:test';
 import { settleCloseOut } from '../src/holistic/closeout.ts';
-import { assertFired, writeTrigger } from './helpers/crash.ts';
+import { assertFired,writeTrigger } from './helpers/crash.ts';
 import { lensStep } from './helpers/holistic.ts';
 import { runFixture } from './helpers/proc.ts';
 import { tmpDir } from './helpers/repo.ts';
-import { checkpointContext, completedAudit, factsOfKind } from './fixtures/checkpoint-common.ts';
-import { type CorpusHolisticArc, corpusHolisticArc, forgeEnv } from './fixtures/corpus-holistic.ts';
+import { checkpointContext,completedAudit,factsOfKind } from './fixtures/checkpoint-common.ts';
+import { type CorpusHolisticArc,corpusHolisticArc,forgeEnv } from './fixtures/corpus-holistic.ts';
 import { SCENARIO_TIMEOUT_MS } from './fixtures/stage-common.ts';
-import { type ArcRun, contextFor } from './fixtures/unit-common.ts';
-import { CLOSE_OUT_SETTLEMENT, crashCells } from './matrix.ts';
+import { type ArcRun,contextFor } from './fixtures/unit-common.ts';
+import { CLOSE_OUT_SETTLEMENT,crashCells } from './matrix.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 
@@ -25,14 +25,12 @@ async function requested(): Promise<Readonly<{a:CorpusHolisticArc}>> {const a=aw
 function settled(r: ArcRun) {
   const fold = r.journal.view.holistic();
   return {
-    declined: factsOfKind(r, 'needs-user-declined').map((f) => [f.id, f.choice]),
     debt: factsOfKind(r, 'debt-banked').map((f) => [f.bankReason, f.source]),
     findings: fold.findings.map((f) => [f.id, f.state, f.last?.state === 'ruled' ? f.last.by : null]),
   };
 }
 
 const expected = () => ({
-  declined: [],
   debt: [['finding-deferred', { type: 'finding', finding: 'F-1' }]],
   findings: [['F-1', 'ruled', { type: 'code', reason: 'close-out' }], ['F-2', 'open', null]],
 });

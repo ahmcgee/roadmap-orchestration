@@ -18,8 +18,8 @@ DEFAULT_BOUNDS,approvalFingerprint,commandBody,dispatchRecord,obligationRevsOf,r
 import { SchemaError } from '../src/core/validate.ts';
 import { isoTime } from '../src/core/values.ts';
 import { type ObligationCase,type ObligationEffect,OBLIGATION_EFFECTS,obligationEffect } from '../src/holistic/table.ts';
-import { type Obligations, findingKey, laneRevOf, parseObligations, parseVision, witnessRecord, OBSERVATION_VERDICTS } from '../src/holistic/types.ts';
-import { DEFAULT_CONVERGENCE_K,boundsOf,lensSetOf,parsePlan } from '../src/input/plan.ts';
+import { type Obligations,findingKey,laneRevOf,parseObligations,parseVision,witnessRecord,OBSERVATION_VERDICTS } from '../src/holistic/types.ts';
+import { boundsOf,parsePlan } from '../src/input/plan.ts';
 import { validateLensOutput } from '../src/prompts/schemas.ts';
 import { ORIGIN_RANK } from '../src/schedule/types.ts';
 
@@ -67,17 +67,16 @@ const HOLISTIC_FACTS: { readonly [K in HolisticFactKind]: object } = {
   },
   'finding-transition': { kind: 'finding-transition', id: 'F-1', to: { state: 'ruled', disposition: 'dismissed', by: { type: 'code', reason: 'not-reproduced' } } },
   'audit-started': {
-    kind: 'audit-started', job: 'audit-1', triggers: [{ type: 'cadence' }, { type: 'requested', command: CMD }], generation: 1, lenses: ['invariants', 'vision'],
-    integrationSha: A, planRev: 4, ledgerSha256: H, obligationsSha256: H2, visionSha256: H, owners: [{ unit: 'u1', head: B }], priorFindings: ['F-1'], highWater: 90,
+    kind: 'audit-started', job: 'audit-1', triggers: [{ type: 'final' }, { type: 'requested', command: CMD }], generation: 1, lenses: ['invariants', 'vision'],
+    integrationSha: A, planRev: 4, ledgerSha256: H, obligationsSha256: H2, visionSha256: H, owners: [{ unit: 'u1', head: B }], priorFindings: ['F-1'], highWater: 90, diffBudget: 24000,
   },
-  'audit-ended': { kind: 'audit-ended', job: 'audit-1', covered: [{ lens: 'invariants', from: B, to: A }], findings: ['F-1'], suppressed: 2, outcome: 'completed' },
+  'audit-ended': { kind: 'audit-ended', job: 'audit-1', refused: [], covered: [{ lens: 'invariants', from: B, to: A }], findings: ['F-1'], suppressed: 2, outcome: 'completed' },
   'docs-covered': { kind: 'docs-covered', pub: 'docs-1', from: A, to: B },
   divergence: { kind: 'divergence', id: 'D-1', index: 0, ...draft },
-  'divergence-digest': { kind: 'divergence-digest', needsUser: 'nu-40', ids: ['D-1', 'D-2'] },
   noted: {kind: 'noted', unit: unitId('u1'), command: commandId('cmd-0000000000000001'), brief: sha256('a'.repeat(64))},
   steered: { kind: 'steered', unit: U1, command: CMD, brief: H, budgetMin: 30, resume: false },
   'merged-in': { kind: 'merged-in', unit: U1, command: CMD, integrationTip: A, head: B },
-  'audit-requested': { kind: 'audit-requested', command: CMD, lenses: ['drift'] },
+  'audit-requested': { kind: 'audit-requested', command: CMD },
   'admissions-closed': { kind: 'admissions-closed', command: CMD },
   'docs-published': { kind: 'docs-published', pub: 'docs-2', source: 'close-out', commit: B },
   'arc-completed': { kind: 'arc-completed', planRev: 6, head: A, highWater: 120, units: ['u1', 'u2'] },
@@ -194,6 +193,9 @@ describe('M3 inputs: vision and obligations', () => {
 });
 
 describe('M3 event records', () => {
+  it('schema 2 refuses facts of the retired notification, docs-only and implementer-escalation paths', () => {
+    for (const kind of ['docs-only', 'docs-only-miss', 'needs-user-declined', 'divergence-digest', 'implementer-escalated']) refusesFact({kind}, /kind/);
+  });
   it('every holistic fact round-trips byte-identically', () => {
     for (const f of Object.values(HOLISTIC_FACTS)) roundTrip(fact(f));
   });
@@ -218,7 +220,6 @@ describe('M3 event records', () => {
     refusesFact({ ...opened, lens: 'witness', mutant: null, severity: 'P2' }, /severity/);
     refusesFact({ ...opened, lens: 'vision', mutant: null, severity: 'P1' }, /severity/);
     refusesFact({ ...HOLISTIC_FACTS['audit-started'], job: 'ckpt-1' }, /job/);
-    refusesFact({ ...HOLISTIC_FACTS['divergence-digest'], ids: [] }, /ids/);
     refusesFact({ ...HOLISTIC_FACTS.divergence, cites: [] }, /cites/);
   });
 
@@ -348,14 +349,14 @@ describe('M3 file records', () => {
       { type: 'steer', unit: 'u1', brief: { path: '/r/brief.md', sha256: H }, budgetMin: 45, class: 'frontier', resume: true },
       { type: 'steer', unit: 'u1', brief: { path: '/r/brief.md', sha256: H }, budgetMin: 45, class: null, resume: false },
       { type: 'merge-in', unit: 'u1' },
-      { type: 'audit', lenses: ['drift', 'vision'] },
-      { type: 'audit', lenses: null },
+      { type: 'audit' },
+      { type: 'audit' },
       { type: 'close-admissions' },
       { type: 'apply', planFile: '/r/plan.json', rev: 1, reason: 'Root approved', base: {planSha256: H, specs: {u1: H}, rulings: {ledgerSha256: H}, obligations: null, vision: H2}, manifest: {planSha256: H2, specs: {u1: H}, rulings: {ledgerSha256: H}, obligations: null, vision: H2} },
     ];
     for (const b of bodies) assert.deepEqual(commandBody(b, 'b'), b);
     assert.throws(() => commandBody({ type: 'steer', unit: 'u1', brief: { path: '/r/b', sha256: H }, budgetMin: 0, class: null, resume: false }, 'b'), /budgetMin/);
-    assert.throws(() => commandBody({ type: 'audit', lenses: ['vision', 'drift'] }, 'b'), /lenses/);
+    assert.throws(() => commandBody({ type: 'audit', lenses: ['vision'] }, 'b'), /lenses/);
     const apply = bodies.at(-1)!;
     assert.throws(() => commandBody({...apply, manifest: {planSha256: H, specs: {u1: H}, rulings: {ledgerSha256: H}}}, 'b'), /obligations/);
     assert.throws(() => commandBody({...apply, manifest: {planSha256: H, specs: {u1: H}}}, 'b'), /rulings/);
@@ -384,8 +385,8 @@ describe('M3 file records', () => {
     };
     const m3 = {
       ...base,
-      holistic: { vision: 'vision.json', advances: ['V-1', 'V-4'], obligations: 'obligations.json', audit: { every: 2, lenses: ['invariants', 'vision'], wallClockMin: 120 } },
-      limits: { chargeable: 4, convergenceK: 1 },
+      holistic: { vision: 'vision.json', advances: ['V-1', 'V-4'], obligations: 'obligations.json' },
+      limits: { chargeable: 4 },
       units: [{ ...unit, origin: 'repair', routing: { verifier: { med: 'summit' } }, limits: { reviseRounds: 1 } }, { ...unit, id: 'u2', spec: 'specs/u2.json' }],
     };
     const plan = parsePlan(m3);
@@ -393,21 +394,20 @@ describe('M3 file records', () => {
     assert.ok(plan.target === 'architecture-doc' && plan.holistic !== undefined);
     assert.deepEqual(boundsOf(plan, plan.units[0]!), { ...DEFAULT_BOUNDS, chargeable: 4, reviseRounds: 1 });
     assert.deepEqual(boundsOf(plan, plan.units[1]!), { ...DEFAULT_BOUNDS, chargeable: 4 });
-    assert.deepEqual(lensSetOf(plan.holistic!), ['invariants']);
-    assert.deepEqual(lensSetOf({ advances: plan.holistic.advances }), ['invariants']);
-    assert.equal(DEFAULT_CONVERGENCE_K, 3);
     const noM3 = parsePlan(base);
     assert.equal(noM3.holistic, undefined);
     assert.deepEqual(boundsOf(noM3, noM3.units[0]!), DEFAULT_BOUNDS);
     assert.throws(() => parsePlan({ ...base, holistic: { obligations: 'o.json', advances: ['V-1'] } }), /holistic\.vision/);
-    assert.throws(() => parsePlan({ ...base, holistic: { vision: 'v.json', advances: ['V-1'], audit: { lenses: ['vision', 'drift'] } } }), /lenses/);
+    assert.throws(() => parsePlan({ ...base, holistic: { vision: 'v.json', advances: ['V-1'], audit: { lenses: ['vision', 'drift'] } } }), /audit/);
     assert.throws(() => parsePlan({ ...base, holistic: { vision: 'v.json' } }), /holistic\.advances/);
     assert.throws(() => parsePlan({ ...base, holistic: { vision: 'v.json', advances: [] } }), /holistic\.advances: expected a non-empty array/);
     assert.throws(() => parsePlan({ ...base, holistic: { vision: 'v.json', advances: ['V-2', 'V-1'] } }), /holistic\.advances\[1\]/);
     assert.throws(() => parsePlan({ ...base, limits: { chargeable: 0 } }), /limits\.chargeable/);
     assert.throws(() => parsePlan({...base, units: [{...unit, limits: {redirects: 1}}]}), /limits\.redirects/);
     assert.throws(() => parsePlan({ ...base, units: [{ ...unit, limits: { convergenceK: 2 } }] }), /convergenceK/);
-    assert.deepEqual(ORIGIN_RANK, { repair: 0, deflake: 0, checkpoint: 1, polish: 2, planned: 3 });
+    assert.throws(() => parsePlan({...base, limits: {convergenceK: 2}}), /convergenceK/);
+    assert.throws(() => parsePlan({...base, units: [{...unit, origin: 'checkpoint'}]}), /origin/);
+    assert.deepEqual(ORIGIN_RANK, { repair: 0, deflake: 0, polish: 2, planned: 3 });
   });
 });
 

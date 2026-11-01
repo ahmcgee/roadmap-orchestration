@@ -108,8 +108,7 @@ import { raiseWasteFindings } from '../flow/waste.ts';
 // no outstanding audit range or owed trigger; the latest generation
 // quiescent under the vision in force; the close-out publication done (the head is its commit) or nothing to
 // change; every non-exempt obligation held on the head. With only quiescence, the close-out and the obligations left,
-// the close-out settlement runs first (run 10, src/holistic/closeout.ts `settleCloseOut`: unanswered bundle requests
-// declined, a corpus arc's open P2/P3 findings with no obligation banked). The close-out (A8, `publishCloseOut`) runs once all but
+// the close-out settlement runs first (src/holistic/closeout.ts `settleCloseOut`: P2 finding debt and P3 releases). The close-out (A8, `publishCloseOut`) runs once all but
 // itself and the obligations hold (its lanes witness every arc lane on the head it publishes, or on the head alone
 // when nothing changes). Then, for every arc, `arc-completed{planRev, head, highWater, units}` (once while active) and
 // the terminal snapshot (parent `arc`, G8), so `gc` can seal it, and the run ends `complete`. The completion stays active while the plan rev and the
@@ -122,7 +121,7 @@ import type { CommandContext } from '../commands/apply.ts';
 import { applyCommand,applyControl } from '../commands/apply.ts';
 import { POLL_MS,isControl,pollCommands,readReceipt,writeReceipt } from '../commands/queue.ts';
 import { crashPoint } from '../core/crash.ts';
-import { type IntentOf, type Parent, probeTargetKey } from '../core/events.ts';
+import { type IntentOf,type Parent,probeTargetKey } from '../core/events.ts';
 import { atomicJson,canonicalJson } from '../core/fsx.ts';
 import {
 type ArcId,type CommandId,type EnvId,type FindingId,type InvocationId,type JobId,type LaneId,type NeedsUserId,type OpId,type ResourceName,type Sha,type UnitId,arcId,commandId,findingId,
@@ -149,7 +148,7 @@ import { type ArcLaneDef,isExempt,laneRevOf } from '../holistic/types.ts';
 import { PressureTicks,readHostCpu } from '../host/pressure.ts';
 import { commandScope } from '../input/classify.ts';
 import type { RoutingBase } from '../input/inforce.ts';
-import { type PlanM1,type PlanUnit,hasMilestones,lensSetOf } from '../input/plan.ts';
+import { type PlanM1,type PlanUnit,hasMilestones } from '../input/plan.ts';
 import { type BlockingItem,blockingItems,holdsUnit,openBlocking,raiseNeedsUser,raisedFor,readNeedsUser } from '../needsuser.ts';
 import type { ProberHandle } from '../park/probe.ts';
 import { raiseDue as raiseScheduleDue,trippedTargets } from '../park/schedule.ts';
@@ -516,7 +515,7 @@ export function completionBlockers(h: HolisticContexts, input: Readonly<{ blocki
   if (auditPending(ctx)) out.add('audit-pending');
   const c = cadence(ctx, ctx.clock);
   if (c === null) throw new Error('a holistic arc without a cadence');
-  if (coverageOf(fold, c.base, lensSetOf(holistic), c.head).some((x) => x.outstanding)) out.add('coverage-outstanding');
+  if (coverageOf(fold, c.base, ['invariants'] as const, c.head).some((x) => x.outstanding)) out.add('coverage-outstanding');
   if (c.owed.length > 0) out.add('audit-owed');
   // dev.13: a milestone walk due or running, or a round still open (src/walk/milestones.ts).
   if (hasMilestones(plan) && walksPending(view, plan, repairUnits(ctx))) out.add('walk-pending');

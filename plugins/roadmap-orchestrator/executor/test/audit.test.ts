@@ -1,22 +1,12 @@
-// M3 step B5: the cadence audit (src/holistic/{audit,cadence,coverage}.ts) and the arc roles' call (src/pipeline/dispatch.ts
-// `callArcRole`), over real arcs: real git, real processes, the fake claude answering lens calls keyed by job and lens, fake
-// witness lanes scripted per tree. Named tests: cadence.triggers, cadence.final-outstanding-lenses (H9),
-// audit.immutable-inputs, audit.coverage, audit.one-call-per-lens (R-16), audit.race-ends-before-merge and audit.race-merge-during-audit (both race
-// orders), audit.owed, audit.skipped-on-park, audit.starts-in-ff-window (H2), coverage.docs-edge-contiguous (H8), coverage.docs-edge-subsumed,
-// coverage.vision-reset (H3), the crash cells of the matrix row AUDIT_JOB (test/matrix.ts), and M4a rev 3 (N5):
-// cadence.spec-only-bundle-vision-lens-only, cadence.obligation-bundle-full-drift, the 2026-10-24 field fixes
-// cadence.exempt-not-unwitnessed and cadence.drift-throttled, audit.cross-lens-merge-corroborated,
-// audit.cross-lens-different-cause-separate (with a refused mutant refused again); M4b: audit.refused-mutant-retried; the
-// lens-range fix (2026-10-16): audit.range-chunked, audit.oversized-publication-bounded, audit.upgrade-dev10-oversized-range,
-// audit.chunk-crash-resume.
+// Campaign audit coverage, findings, bounded chunks and crash recovery over real git and processes.
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe,test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { applyCommand,evaluateRevision,keepRevision,payloadOf } from '../src/commands/apply.ts';
 import { submitCommand } from '../src/commands/queue.ts';
-import { type CommandId, type JobId, type Sha, commandId, jobId, opKey, sha, sha256 } from '../src/core/ids.ts';
+import { type CommandId,type JobId,type Sha,commandId,jobId,opKey,sha,sha256 } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import { absPath,branchName,isoTimeOf } from '../src/core/values.ts';
 import { MUTANT_PATCH_INPUT } from '../src/git/mutant.ts';
@@ -54,13 +44,13 @@ let commands = 0;
 /** An `audit-requested` fact, as the `audit` command (B7) writes it. */
 function requestAudit(r: ArcRun, lenses: readonly Lens[] | null = null): CommandId {
   const command = commandId(`cmd-${(++commands).toString(16).padStart(16, 'b')}`);
-  r.journal.fact({ kind: 'audit-requested', command, lenses });
+  r.journal.fact({ kind: 'audit-requested', command });
   return command;
 }
 const started = (r: ArcRun) => factsOf(r).flatMap((f) => (f.kind === 'audit-started' ? [f] : []));
 const ended = (r: ArcRun) => factsOf(r).flatMap((f) => (f.kind === 'audit-ended' ? [f] : []));
 /** The owed triggers, compactly: `drift:<rev>`, `unwitnessed:<I-n>`, or the type. */
-const owed = (c: Cadence | null): readonly string[] => (c?.owed ?? []).map((t) => (t.type === 'drift' ? `drift:${t.planRev}` : t.type === 'unwitnessed' ? `unwitnessed:${t.obligation}` : t.type));
+const owed = (c: Cadence | null): readonly string[] => (c?.owed ?? []).map((t) => (t.type));
 const lensCalls = (r: ArcRun) => readCalls(r.d.scenarioPath).filter((c) => c.lens !== null);
 /** Every call of audit `job`: its lenses' first calls and their repair turns (whose prompt names no lens). */
 const auditCalls = (r: ArcRun, job = 'audit-1') => readCalls(r.d.scenarioPath).filter((c) => c.unit === job);
@@ -86,7 +76,7 @@ describe('the audit job', () => {
   test('audit.immutable-inputs: the capture records the revisions, owners, prior findings and high water; the lenses read those, not what lands meanwhile; each call is metered to the job by role and routingRev', T, async () => {
     const { d } = auditArc({
       steps: [...unitSteps('u2', moduleFiles('div', '/')), ...unitSteps('u1', moduleFiles('mul', '*')), barrierLens('audit-1', 'invariants')],
-      units: [{ id: 'u1' }, { id: 'u2', lanes: [] }], ...I1, mapping: [], audit: { lenses: [...L2] },
+      units: [{ id: 'u1' }, { id: 'u2', lanes: [] }], ...I1, mapping: [],
     });
     const r = contextFor(d);
     const { ctx, w } = auditContext(r);
@@ -141,7 +131,7 @@ describe('the audit job', () => {
 
   for (const earlierOperations of [1, 2, 3]) {
     test(`audit.lost-call-cap: ${earlierOperations} earlier operations of one logical lens call survive a restart; only two reissues are allowed`, T, async () => {
-      const { d } = auditArc({ steps: [lensStep('audit-1', 'invariants')], units: [{ id: 'u1' }], ...I1, mapping: [], audit: { lenses: ['invariants'] } });
+      const { d } = auditArc({ steps: [lensStep('audit-1', 'invariants')], units: [{ id: 'u1' }], ...I1, mapping: [] });
       const setup = contextFor(d);
       requestAudit(setup);
       setup.journal.close();
@@ -176,7 +166,7 @@ describe('the audit job', () => {
     const { d } = auditArc({
       steps: [...unitSteps('u1', moduleFiles('mul', '*')), ...unitSteps('u2', moduleFiles('div', '/')), lensStep('audit-1', 'invariants'), lensStep('audit-2', 'invariants')],
       units: [{ id: 'u1', obligations: ['I-1'] }, { id: 'u2', obligations: ['I-1'] }, { id: 'u3', obligations: ['I-1'] }], ...I1, mapping: mapped(['I-1']),
-      audit: { every: 1, lenses: ['invariants'] },
+
     });
     const r = contextFor(d);
     const { ctx } = auditContext(r);
@@ -206,7 +196,7 @@ describe('the audit job', () => {
       units: [{ id: 'u1', obligations: ['I-1'] }, { id: 'u2', obligations: ['I-1'] }, { id: 'u3', obligations: ['I-1'] }],
       obligations: [{ id: 'I-1', testIds: ['t1'] }, { id: 'I-2', testIds: ['t2'], lane: 'other' }], lanes: ['journey', 'other'],
       mapping: mapped(['I-1']), trees: { '*': { outcomes: { t1: 'pass' } } }, ownControl: { other: { '*': { outcomes: { t2: 'fail' } } } },
-      audit: { every: 1, lenses: ['invariants'] },
+
     });
     const r = contextFor(d);
     const { ctx, w } = auditContext(r);
@@ -241,7 +231,7 @@ describe('the audit job', () => {
   test('audit.skipped-on-park: a lens that hits a usage limit parks its backend and abandons the audit; while it is parked a due audit is skipped and its triggers stay owed', T, async () => {
     const { d } = auditArc({
       steps: [{ as: 'claude', unit: 'audit-1', lens: 'invariants', expect: {}, acts: [{ type: 'usageLimit' }] }],
-      units: [{ id: 'u1' }], ...I1, mapping: [], audit: { lenses: [...L2] },
+      units: [{ id: 'u1' }], ...I1, mapping: [],
     });
     const r = contextFor(d);
     const { ctx } = auditContext(r);
@@ -266,7 +256,7 @@ describe('the audit job', () => {
 
   test('audit.starts-in-ff-window (H2): an audit due while a revision holds the fence (its docs publication before the ff) captures the state after the activation', T, async () => {
     const barrier = tmpDir('barrier');
-    const { d } = auditArc({ steps: [lensStep('audit-1', 'invariants')], suite: [barrierSuite(barrier)], units: [{ id: 'u1' }], ...I1, mapping: [], audit: { lenses: ['invariants'] } });
+    const { d } = auditArc({ steps: [lensStep('audit-1', 'invariants')], suite: [barrierSuite(barrier)], units: [{ id: 'u1' }], ...I1, mapping: [] });
     const r = contextFor(d);
     const { ctx, w } = auditContext(r);
     const stop = ticking(w);
@@ -298,7 +288,7 @@ describe('coverage', () => {
   test('coverage.docs-edge-contiguous (H8): a docs-only publication covers its own edge U→D, extending a watermark only once it reaches U; its drift trigger is kept', T, async () => {
     const { d } = auditArc({
       steps: [...unitSteps('u1', moduleFiles('mul', '*')), barrierLens('audit-1', 'invariants')],
-      units: [{ id: 'u1', obligations: ['I-1'] }, { id: 'u2', obligations: ['I-1'] }], ...I1, mapping: mapped(['I-1']), audit: { every: 5, lenses: [...L2] },
+      units: [{ id: 'u1', obligations: ['I-1'] }, { id: 'u2', obligations: ['I-1'] }], ...I1, mapping: mapped(['I-1']),
     });
     const r = contextFor(d);
     const { ctx, w } = auditContext(r);
@@ -332,7 +322,7 @@ describe('coverage', () => {
   test('coverage.docs-edge-subsumed (paid m3 run 8): a docs edge the watermark passes inside an audit\'s range, without following it, is not pending', T, async () => {
     const { d } = auditArc({
       steps: [...unitSteps('u1', moduleFiles('mul', '*')), lensStep('audit-1', 'invariants')],
-      units: [{ id: 'u1', obligations: ['I-1'] }], ...I1, mapping: mapped(['I-1']), audit: { every: 5, lenses: [...L2] },
+      units: [{ id: 'u1', obligations: ['I-1'] }], ...I1, mapping: mapped(['I-1']),
     });
     const r = contextFor(d);
     const { ctx, w } = auditContext(r);
@@ -366,7 +356,7 @@ describe('coverage', () => {
         lensStep('audit-1', 'invariants'), lensStep('audit-2', 'invariants'),
       ],
       units: [{ id: 'u1', obligations: ['I-1'] }, { id: 'u2', obligations: ['I-1'] }, { id: 'u3', obligations: ['I-1'] }], ...I1, mapping: mapped(['I-1']),
-      audit: { every: 5, lenses: [...L2] },
+
     });
     const r = contextFor(d);
     const { ctx, w } = auditContext(r);
@@ -436,7 +426,7 @@ describe(`matrix row ${AUDIT_JOB}`, () => {
   const laneSpawns = (r: ArcRun): number => r.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'journey').length;
   for (const cell of crashCells(AUDIT_JOB)) for (const occurrence of OCCURRENCES[cell.label] ?? [1]) {
     test(`audit crashed at ${cell.boundary} ${cell.label}#${occurrence}: ${cell.recovery.slice(0, 80)}…`, T, async () => {
-      const { d } = auditArc({ steps: [lensStep('audit-1', 'invariants')], units: [{ id: 'u1' }], ...I1, mapping: [], audit: { lenses: [...L2] } });
+      const { d } = auditArc({ steps: [lensStep('audit-1', 'invariants')], units: [{ id: 'u1' }], ...I1, mapping: [] });
       const setup = contextFor(d);
       requestAudit(setup);
       setup.journal.close();
@@ -525,7 +515,7 @@ describe('cross-lens dedupe within one audit (M4a rev 3, H7)', () => {
         jobRepairStep('audit-1', lensAnswer([{ ...SAME, claim: 'add is vacuous', mutant: mutant('a + b') }]),
           ['finding "add is vacuous"', 'old occurs 0 times', 'the report\'s other findings are recorded']),
       ],
-      units: [{ id: 'u1', obligations: ['I-1'] }], ...I1, mapping: mapped(['I-1']), audit: { every: 5, lenses: ['vacuity'] },
+      units: [{ id: 'u1', obligations: ['I-1'] }], ...I1, mapping: mapped(['I-1']),
     });
     const r = contextFor(d);
     const { ctx } = auditContext(r);
@@ -582,7 +572,7 @@ describe('the lens-range fix: chunks by publication, bounded attachments', () =>
         ...unitSteps('u2', { 'src/ownerbig.js': bigSource('ownerbig', 300_000), 'src/owner.js': 'export const owner = 1;\n' }, { clusters: [{ id: 'all', paths: ['**'], review: 'close' }] }),
         lensStep('audit-1', 'invariants'),
       ],
-      units: [{ id: 'u1' }, { id: 'u2' }], ...I1, mapping: [], audit: { lenses: ['invariants'] },
+      units: [{ id: 'u1' }, { id: 'u2' }], ...I1, mapping: [],
       planExtra: { derived: [{ sources: ['src/**'], outputs: ['dist/**'] }] },
     });
     const r = contextFor(d);
@@ -640,7 +630,7 @@ describe('the lens-range fix: chunks by publication, bounded attachments', () =>
     test(`audit.chunk-crash-resume: crashed at the runner exit of chunk ${before}'s call, the job resumes and asks no chunk twice`, T, async () => {
       const { d } = auditArc({
         steps: [...TWO_BIG, lensStep('audit-1', 'invariants'), lensStep('audit-1', 'invariants')],
-        ...TWO_UNITS, audit: { every: 5, lenses: ['invariants'] },
+        ...TWO_UNITS,
       });
       const setup = contextFor(d);
       const S0 = head(d.repo);
@@ -683,7 +673,7 @@ test('audit.range-chunked: a range over the budget is reviewed chunk by chunk in
         lensStep('audit-1', 'invariants', [], [], ['bigone000100']), { as: 'claude', unit: 'audit-1', expect: {}, acts: [{ type: 'exit', code: 1 }] },
         lensStep('audit-2', 'invariants', [], [], ['bigtwo000100']),
       ],
-      ...TWO_UNITS, audit: { every: 5, lenses: [...L2], wallClockMin: 1 },
+      ...TWO_UNITS,
     });
     const r = contextFor(d);
     const { ctx } = auditContext(r);
@@ -722,7 +712,7 @@ test('audit.coverage-and-one-campaign-call: one fresh seat judges invariants, va
       {obligation: 'I-1', severity: 'P2', cause: 'add: invalid input accepted', claim: 'Invariant violation', evidence},
       {obligation: 'I-1', severity: 'P2', cause: 'add: vacuous zero check', claim: 'Vacuous witness', evidence, mutant: {lane: 'journey', edits: [{path: 'src/add.js', old: 'a + b', new: 'a - b'}]}},
       {obligation: 'I-1', severity: 'P2', cause: 'add and mul: inconsistent operand handling', claim: 'Cross-unit interaction', evidence},
-    ])], units: [{id: 'u1'}], ...I1, mapping: [], audit: {lenses: ['invariants', 'vacuity', 'vision']},
+    ])], units: [{id: 'u1'}], ...I1, mapping: [],
   });
   const r = contextFor(d), {ctx} = auditContext(r);
   try {

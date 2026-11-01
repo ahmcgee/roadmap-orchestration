@@ -1,5 +1,5 @@
-import { methodContext, reviewItems, runReview, builderTouches, reachBackstop } from './surface.ts';
-import { systemReach, systemTraits } from '../input/systems.ts';
+import { methodContext,reviewItems,runReview,builderTouches,reachBackstop } from './surface.ts';
+import { systemReach,systemTraits } from '../input/systems.ts';
 import { mapInForce } from './lanes.ts';
 import { bytesSha256 } from '../spec/spec.ts';
 // The gate stage (plan "Pipeline", gate row; Authority and Gate inputs, R2; DESIGN-1.0.md §4 Independence).
@@ -110,7 +110,7 @@ import { invocationDir } from './invoke.ts';
 import { laneRecordIn,latestSpecSeries,observedViews,seriesLedger,seriesTree,specSeriesRoot } from './lanes.ts';
 import { approvalBlobs,gateDelta,ledgerFact,openDisputes,reviewInput,reviewRules,unitLedger } from './review.ts';
 import { gateSmokeChecks } from './smoke.ts';
-import { type JudgmentReader, type PreBuildDone, type StageDone, at, changedPremiseFiles, corpusInForce, enterJudgment, escalationOf, fastSuiteRoot, fastSuiteLanes, holisticInForce, inMs, integrationTip, judgedAnswer, judgmentOutput, judgmentSpawns, ledger, ledgerDir, library, loadUnitSpec, record, releaseJudgment, removeJudgmentCheckouts, start, targetDirs, unitImpactInput, unitMilestones, unitTarget, verdictKind, writeJudgmentInputs } from './stages.ts';
+import { type JudgmentReader,type PreBuildDone,type StageDone,at,changedPremiseFiles,corpusInForce,enterJudgment,escalationOf,fastSuiteRoot,fastSuiteLanes,holisticInForce,inMs,integrationTip,judgedAnswer,judgmentOutput,judgmentSpawns,ledger,ledgerDir,library,loadUnitSpec,record,releaseJudgment,removeJudgmentCheckouts,start,targetDirs,unitImpactInput,unitMilestones,unitTarget,verdictKind,writeJudgmentInputs } from './stages.ts';
 import { gateWitnessChecks } from './witnesscheck.ts';
 
 /** The unit's approved-or-not commit: its branch tip, which every build round and merge-in moves. */
@@ -467,7 +467,7 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
     if (largeDiff !== null) writeFileSync(list, covered.map((p) => `${p}\n`).join(''));
     const measured = renderPrompt(prompt, {mode: 'gate', brief: {
       touches, standing: reviewItems(ctx.journal.view, unit.id), method: methodContext(ctx, unit, spec, [...paths, ...touches]),
-      spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec) }, intent: spec.intent, nonGoals: spec.nonGoals, ...library(ctx, spec, tip), target,
+      spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec, unit.spike === undefined ? {} : {spike: unit.spike}) }, intent: spec.intent, nonGoals: spec.nonGoals, ...library(ctx, spec, tip), target,
       systemNotes: systemNotes(ctx.repo, head, unit.systems, ctx.routingBase.config),
       direction: ctx.plan().direction,
       obligations: observedViews(ctx, holisticInForce(ctx).obligations, chosen.direct, tip),

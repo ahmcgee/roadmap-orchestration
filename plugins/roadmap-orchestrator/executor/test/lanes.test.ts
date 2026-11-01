@@ -244,13 +244,13 @@ test('lanes.ignored-census-pass: a passing lane\'s ignored writes are counted, n
   assert.match(text[1]!, /; ignored writes: 2 files \(10 B\), 0 captured; uncaptured: 2 under \.local\/b\/ \(not-declared\)$/);
   assert.doesNotMatch(text[2]!, /ignored writes/, 'a lane that wrote no ignored file has no clause');
 
-  // A lane an older executor ran has no census: it reads back as null, and the ledger says nothing of it.
+  // Schema 2 requires the census of a completed lane; missing evidence is refused.
   const [spawn] = laneSpawns(run);
   assert.ok(spawn !== undefined && spawn.parent.type === 'stage');
+  const parent = spawn.parent;
   rmSync(join(done.ledger[0]!.evidenceDir, 'ignored.json'));
-  const [first] = seriesLedger(run.ctx, spawn.parent, loadUnitSpec(run.ctx, run.unit).spec.lanes, 'spec', run.base, specSeriesRoot(run.runDir, spawn.parent));
-  assert.equal(first?.ignored, null);
-  assert.doesNotMatch(laneLedgerText([first!]), /ignored writes/);
+  assert.throws(() => seriesLedger(run.ctx, parent, loadUnitSpec(run.ctx, run.unit).spec.lanes, 'spec', run.base, specSeriesRoot(run.runDir, parent)), /ENOENT:.*ignored\.json/);
+
 });
 
 test('lanes.ignored-killed: a lane killed mid-run gets its ignored output captured too', T, async () => {

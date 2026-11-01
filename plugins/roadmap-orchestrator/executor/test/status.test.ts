@@ -104,7 +104,6 @@ describe('status.subset', () => {
       vision: null,
       divergences: [],
       decisionsSince: [],
-      convergence: null,
       findings: { active: [], metrics: [], released: { root: 0, closeOut: 0 } },
       audit: null,
       completion: { planRev: null, head: null, active: false, sealed: false, notSealed: 'not completed', unmet: ['units-open'] },
@@ -117,7 +116,6 @@ describe('status.subset', () => {
       timings: [],
       answers: [],
       knownDefects: [],
-      flow: null,
       demo: null,
       milestones: [],
     });
@@ -126,8 +124,8 @@ describe('status.subset', () => {
   test('after a completed run: state, owner, units, spend by role and by model, containment and its narrowed guarantee', () => {
     const s = after_;
     assert.deepEqual(Object.keys(s).sort(), [
-      'answers', 'arc', 'audit', 'census', 'chain', 'commands', 'completion', 'convergence', 'corpus', 'debt', 'decisionsSince', 'deferred', 'demo',
-      'divergences', 'edges', 'findings', 'flow', 'holds', 'holistic', 'host', 'knownDefects', 'milestones', 'needsUser', 'notYetTrue', 'nowTrue',
+      'answers', 'arc', 'audit', 'census', 'chain', 'commands', 'completion', 'corpus', 'debt', 'decisionsSince', 'deferred', 'demo',
+      'divergences', 'edges', 'findings', 'holds', 'holistic', 'host', 'knownDefects', 'milestones', 'needsUser', 'notYetTrue', 'nowTrue',
       'packReview', 'parkedBackends', 'plan', 'rejection', 'routing', 'run', 'runOnly', 'spend', 'target', 'timings', 'units', 'vision', 'waived',
     ]);
     assert.equal(s.plan?.rev, 1, 'the first start put plan.json in force as revision 1');
@@ -168,7 +166,7 @@ describe('status.subset', () => {
     // M3: an arc without the holistic layer has vacuous holistic keys and completes as in M2; like every arc it records
     // `arc-completed` and its terminal snapshot (B7 lead ruling), so it is sealed.
     assert.equal(s.holistic, false);
-    assert.deepEqual([s.target, s.vision, s.audit, s.convergence, s.nowTrue, s.notYetTrue, s.divergences], [null, null, null, null, [], [], []]);
+    assert.deepEqual([s.target, s.vision, s.audit, s.nowTrue, s.notYetTrue, s.divergences], [null, null, null, [], [], []]);
     // Pre-build review annotates; it cannot author a design record.
     assert.deepEqual(s.decisionsSince, []);
     assert.deepEqual(s.completion, { planRev: 1, head: git(r.repo, 'rev-parse', 'main'), active: true, sealed: true, notSealed: null, unmet: [] });

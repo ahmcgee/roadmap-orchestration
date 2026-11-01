@@ -2,9 +2,9 @@
 // place, the class catalogue (classes.ts), which `.roadmap/config.json` may rebind per repo. Model ids live
 // only in the model and class catalogues, a repo's class rebinds and launch argv; executor-written records
 // name a role, a seat and a RoutingRev instead.
-import { type UnitId, unitId } from '../core/ids.ts';
-import { Fields, type Read, SchemaError, literal, nullable, object, oneOf } from '../core/validate.ts';
-import { effortSupported, modelInfo } from './models.ts';
+import { type UnitId,unitId } from '../core/ids.ts';
+import { Fields,type Read,SchemaError,literal,nullable,object,oneOf } from '../core/validate.ts';
+import { effortSupported,modelInfo } from './models.ts';
 
 export const CLAUDE_MODELS = ['claude-opus-5-5', 'claude-fable-5-1', 'claude-sonnet-5-5', 'claude-haiku-5-5'] as const;
 export const CODEX_MODELS = ['gpt-5.6-luna', 'gpt-5.6-sol'] as const;
@@ -23,7 +23,6 @@ export type CodexEffort = (typeof CODEX_EFFORTS)[number];
 /** `claude --effort <level>` (Claude Code 2.1.283); models.ts lists which a model takes. */
 export const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type ClaudeEffort = (typeof CLAUDE_EFFORTS)[number];
-export type Effort = CodexEffort | ClaudeEffort;
 
 /** A Claude triple with a Codex effort, or a model on the other backend, is unrepresentable. */
 export type Triple =
@@ -46,7 +45,6 @@ export type WalkRole = (typeof WALK_ROLES)[number];
 export const ACTING_JUDGE_ROLES = [...WALK_ROLES, 'verifier'] as const satisfies readonly Role[];
 export type ActingJudgeRole = (typeof ACTING_JUDGE_ROLES)[number];
 export const ACTING_ROLES = ['build', ...ACTING_JUDGE_ROLES] as const satisfies readonly Role[];
-export type ActingRole = (typeof ACTING_ROLES)[number];
 export type JudgmentSessionRole = FreshRole | ActingJudgeRole;
 export const JUDGMENT_SESSION_ROLES = [...FRESH_ROLES, ...ACTING_JUDGE_ROLES] as const satisfies readonly Role[];
 
@@ -72,7 +70,7 @@ export const SEATS: { readonly [R in Role]: readonly SeatOf<R>[] } = {
 export type SeatRef = { [R in Role]: Readonly<{ role: R; tier: SeatOf<R> }> }[Role];
 /** A seat of a unit role: what a unit's backend call and its usage name. */
 export type UnitSeatRef = Extract<SeatRef, Readonly<{ role: UnitRole }>>;
-/** An arc role's seat: pack review, flow, experience verdict or campaign audit. */
+/** An arc role's seat: pack review, experience verdict or campaign audit. */
 export type ArcSeatRef = Extract<SeatRef, Readonly<{ role: ArcRole }>>;
 /** Every seat, role by role in `ROLES` order, each role's tiers in seat order. */
 export const SEAT_REFS: readonly SeatRef[] = ROLES.flatMap((r) => SEATS[r].map((tier) => ({ role: r, tier }) as SeatRef));
@@ -155,7 +153,6 @@ export const role: Read<Role> = oneOf(ROLES);
 export const riskTier: Read<RiskTier> = oneOf(RISK_TIERS);
 export const backend: Read<Backend> = oneOf(BACKENDS);
 export const profileName: Read<ProfileName> = oneOf(PROFILES);
-export const modelId: Read<ModelId> = oneOf(MODEL_IDS);
 export const modelClass: Read<ModelClass> = oneOf(MODEL_CLASSES);
 export const buildClass: Read<BuildClass> = oneOf(BUILD_CLASSES);
 /** The class reader for a seat of `r`: a build class at a build seat, any class at a judgment seat. */

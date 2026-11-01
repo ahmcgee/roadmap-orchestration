@@ -174,8 +174,8 @@ describe('cli: M3 forms', () => {
       command: 'steer', unit: 'u1', brief: 'b.md', budgetMin: 45, class: 'summit', resume: true, run: HOST,
     });
     assert.deepEqual(parseCommand(['merge-in', 'u1']), { command: 'merge-in', unit: 'u1', run: HOST });
-    assert.deepEqual(parseCommand(['audit']), { command: 'audit', lenses: null, run: HOST });
-    assert.deepEqual(parseCommand(['audit', '--lens', 'vision,drift,vision']), { command: 'audit', lenses: ['drift', 'vision'], run: HOST });
+    assert.deepEqual(parseCommand(['audit']), { command: 'audit', run: HOST });
+    assert.throws(() => parseCommand(['audit', '--lens', 'vision,drift,vision']), /lens/);
     assert.deepEqual(parseCommand(['close-admissions', ...EXPLICIT]), { command: 'close-admissions', run: EXPLICIT_RUN });
     assert.deepEqual(parseCommand(['gc', '--repo', '/r']), { command: 'gc', repo: '/r', keep: null, dryRun: false });
     assert.deepEqual(parseCommand(['gc', '--repo', '/r', '--keep', '3', '--dry-run']), { command: 'gc', repo: '/r', keep: 3, dryRun: true });
@@ -212,7 +212,7 @@ describe('cli: M3 forms', () => {
       [['reverse', 'D-2'], { type: 'reverse', divergence: 'D-2' }],
       [['steer', 'u1', '--brief', record, '--budget', '30', '--class', 'frontier'], { type: 'steer', unit: 'u1', brief: { path: record, sha256: sha }, budgetMin: 30, class: 'frontier', resume: false }],
       [['merge-in', 'u1'], { type: 'merge-in', unit: 'u1' }],
-      [['audit', '--lens', 'invariants'], { type: 'audit', lenses: ['invariants'] }],
+      [['audit'], { type: 'audit' }],
       [['close-admissions'], { type: 'close-admissions' }],
     ];
     for (const [args, body] of cases) {

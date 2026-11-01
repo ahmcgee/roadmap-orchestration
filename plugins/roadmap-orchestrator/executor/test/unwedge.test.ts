@@ -7,22 +7,22 @@
 // wedged in: the startup below is the new executor's. Named tests: unwedge.recovery-holds-then-resume,
 // unwedge.unpaused-runs-on, unwedge.spec-edit-and-reentry, unwedge.cut.
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, test } from 'node:test';
+import { describe,test } from 'node:test';
 import { applyCommand } from '../src/commands/apply.ts';
 import { submitCommand } from '../src/commands/queue.ts';
 import type { Fact } from '../src/core/events.ts';
 import { readJournal } from '../src/core/log.ts';
 import type { CommandBody } from '../src/core/records.ts';
-import { consume, holdAbandoned, runUnit } from '../src/pipeline/unit.ts';
+import { consume,holdAbandoned,runUnit } from '../src/pipeline/unit.ts';
 import { recover } from '../src/recover/recover.ts';
-import { assertFired, writeTrigger } from './helpers/crash.ts';
+import { assertFired,writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
 import { tmpDir } from './helpers/repo.ts';
 import { recoveryContext } from './fixtures/rec-common.ts';
-import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
-import { syncInputs, type ArcDescriptor, type ArcRun, U1, applyBody, commandContextFor, contextFor, gateStep, mulBuild, outcomes, setupArc } from './fixtures/unit-common.ts';
+import { SCENARIO_TIMEOUT_MS,admitAll,planCheckStep } from './fixtures/stage-common.ts';
+import { syncInputs,type ArcDescriptor,type ArcRun,U1,applyBody,commandContextFor,contextFor,gateStep,mulBuild,outcomes,setupArc } from './fixtures/unit-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 type Json = Record<string, unknown>;
@@ -55,7 +55,7 @@ async function crashedInBuild(paused: boolean): Promise<ArcRun> {
   assert.deepEqual(r.journal.view.unit(U1).open, { stage: 'build', attempt: 2, seq: r.journal.view.unit(U1).open?.seq }, 'the build attempt is open');
   if (paused) await command(r, { type: 'pause', target: { type: 'unit', unit: U1 } });
   // The fixture's start.json is generation 1, which the snapshot binds to the latest start.
-  r.journal.fact({ kind: 'executor-started', generation: 1 });
+  r.journal.fact({ kind: 'executor-started', pressure: 'unavailable', generation: 1 });
   await recover(recoveryContext(r));
   assert.equal(await consume(r.ctx, r.unit('u1')), null, 'the build call was lost before its runner: nothing to consume');
   holdAbandoned(r.ctx, r.unit('u1'));

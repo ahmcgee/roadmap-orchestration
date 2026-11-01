@@ -39,14 +39,12 @@ describe('m4b rev 3: host pressure records', () => {
   it('a start records schedstat availability and a spawn result its pressure; both absent on an earlier executor\'s, read with defaults', () => {
     roundTrip(fact({ kind: 'executor-started', generation: 3, host: { platform: 'linux', arch: 'x64', cpus: 8, memGiB: 31 }, pressure: 'available' }));
     roundTrip(fact({ kind: 'executor-started', generation: 3, pressure: 'unavailable' }));
-    roundTrip(fact({ kind: 'executor-started', generation: 3, host: { platform: 'linux', arch: 'x64', cpus: 8, memGiB: 31 } }));
-    roundTrip(fact({ kind: 'executor-started', generation: 3 }));
+    refuses(fact({ kind: 'executor-started', generation: 3, host: { platform: 'linux', arch: 'x64', cpus: 8, memGiB: 31 } }), /pressure/);
+    refuses(fact({ kind: 'executor-started', generation: 3 }), /pressure/);
     refuses(fact({ kind: 'executor-started', generation: 3, pressure: 'none' }), /\.pressure$/);
     for (const pressure of [0, 0.37, 1, null]) roundTrip(done({ ...result, pressure }));
     for (const pressure of [1.01, -0.1, '0.3']) refuses(done({ ...result, pressure }), /\.pressure$/);
-    const old = roundTrip(done(result));
-    assert.ok(old.type === 'done' && old.kind === 'proc.spawn' && old.outcome.kind === 'result');
-    assert.equal(spawnPressureOf(old.outcome), null);
+    refuses(done(result), /pressure/);
     assert.equal(spawnPressureOf({ pressure: 0.4 }), 0.4);
     assert.equal(startPressureOf({pressure: 'unavailable'}), 'unavailable');
     assert.equal(startPressureOf({ pressure: 'available' }), 'available');

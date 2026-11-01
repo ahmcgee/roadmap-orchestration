@@ -5,7 +5,7 @@
 // The fold also enforces the log's invariants (SCHEMAS.md "Event log"): a violation throws
 // FoldInvariantError. At open the journal turns that into a refusal (`log-corrupt`); at append it means
 // the caller asked for an illegal record, and nothing is written.
-import { type FindingStateName, type FindingTo, FINDING_MOVES } from '../holistic/types.ts';
+import { type FindingStateName,type FindingTo,FINDING_MOVES } from '../holistic/types.ts';
 import { type Backend,type RiskTier,type Role,type UnitRole,RISK_TIERS } from '../routing/types.ts';
 import {
 type AbortRecord,type AuditInputs,type BackendParkClass,
@@ -20,7 +20,7 @@ certificationRed,
 prevHash,probeTargetKey,serializeEvent
 } from './events.ts';
 import { CounterRegressionError } from './fsx.ts';
-import { type ArcId, type ClaudeSessionId, type CommandId, type DivergenceId, type EdgeId, type FindingId, type InvocationId, type JobId, type JobKind, type MilestoneId, type NeedsUserId, type ObligationId, type OpId, type OpKey, type PlanRev, type PolishId, type ResourceInstance, type ResourceUnit, type ReviewFindingId, type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId, compareResourceUnits, divergenceIdOf, findingIdOf, jobId, parseInvocationId, parseJobId, parseOpId, polishIdOf, reviewFindingIdOf } from './ids.ts';
+import { type ArcId,type ClaudeSessionId,type CommandId,type DivergenceId,type EdgeId,type FindingId,type InvocationId,type JobId,type JobKind,type MilestoneId,type NeedsUserId,type ObligationId,type OpId,type OpKey,type PlanRev,type PolishId,type ResourceInstance,type ResourceUnit,type ReviewFindingId,type RoutingRev,type Sha,type Sha256Hex,type SpecRev,type UnitId,compareResourceUnits,divergenceIdOf,findingIdOf,jobId,parseInvocationId,parseJobId,parseOpId,polishIdOf,reviewFindingIdOf } from './ids.ts';
 import type { ControlState,FlakeAt,JournalView,NeedsUserAckState,NeedsUserState,PropagationFactAt,WalkFactAt } from './interfaces.ts';
 import { canonicalJson } from './json.ts';
 import { type ApprovalFingerprint,type Bounds,type ContainmentMode,type DispatchRecord,type ResidueKey,type Stage,DEFAULT_BOUNDS,boundsOfRecord } from './records.ts';
@@ -41,9 +41,6 @@ export class FoldInvariantError extends Error {
 }
 
 export type TailDiscarded = Extract<Fact, { kind: 'tail-discarded' }>;
-
-/** The third chargeable (design-class) failure parks the unit, unless its `limits` say otherwise (M3). */
-export const CHARGEABLE_BOUND = DEFAULT_BOUNDS.chargeable;
 
 /** Per-unit counters: cumulative except the resettable certification allowance. */
 export type UnitCounters = Readonly<{
@@ -165,8 +162,8 @@ export type UnitState = Readonly<{
   /** The latest retryable park recovery (M2): when, and the targets that passed; null before one. */
   lastRecovery: Readonly<{ at: IsoTime; targets: readonly ProbeTarget[] }> | null;
   /**
-   * The implementer's seat tier (A11): the risk floor, or `high` once a dev.16 `implementer-escalated` fact moved it (D4,
-   * retired in dev.17: none is written now); null before the first dispatch. The routing-changed check compares against
+   * The implementer's pinned risk floor (A11),
+   * null before the first dispatch. The routing-changed check compares against
    * `build.<buildTier>`.
    */
   buildTier: RiskTier | null;
@@ -198,7 +195,6 @@ export type UnitState = Readonly<{
  * one, and its log position (`seq`: the stale sets recorded after it changed what it bound, src/pipeline/review.ts).
  */
 export type ReviewApproval = Readonly<{ seq: number; attempt: number; fingerprint: ApprovalFingerprint; blobs: ApprovalBlobs | null }>;
-type DocsOnlyFact = Extract<Fact, Readonly<{ kind: 'docs-only' }>>;
 
 /** dev.17 proportional review (SCHEMAS.md "Proportional review"): what `JournalView.review()` folds. */
 export type ReviewFold = Readonly<{
@@ -210,7 +206,6 @@ export type ReviewFold = Readonly<{
   approval: (unit: UnitId) => ReviewApproval | null;
   /** The unit's latest lanes attempt that ended green (its salvage SHA is that attempt's spec series' commit); null before one. */
   greenLanes: (unit: UnitId) => number | null;
-  docsOnly: readonly (DocsOnlyFact & Readonly<{ seq: number }>)[];
 }>;
 
 /** One failure outcome of a unit (`UnitState.failures`): the fact, its seq and the park it recorded. */
@@ -374,7 +369,7 @@ export type EdgeResolvedState = Readonly<{ command: CommandId; evidence: string;
 
 /** The outcomes whose park needs a spec revision or a re-entry (A7's operator-design rows). */
 const DESIGN_PARK_OUTCOMES: ReadonlySet<string> = new Set([
-  'refusal', 'escalate', 'infeasible', 'risk-lowered', 'scope-widened', 'redirect', 'revise', 'malformed', 'empty-diff', 'red',
+  'refusal', 'escalate', 'infeasible', 'risk-lowered', 'scope-widened', 'revise', 'malformed', 'empty-diff', 'red',
 ]);
 
 /**
@@ -388,7 +383,7 @@ function unclassedParkRecord(f: StageOutcomeFact): ParkRecord {
 
 // ---------------------------------------------------------------------------------------------------
 // M3: the holistic layer's fold (SCHEMAS.md "M3: the holistic layer"). Raw facts, indexed and checked; the
-// derivations over them (observations, coverage watermarks, generations, convergence, digests to raise) are the
+// derivations over them (observations, coverage watermarks and generations) are the
 // later steps' pure functions over this view.
 
 type Seq = Readonly<{ seq: number }>;
@@ -396,7 +391,6 @@ type FactOf<K extends HolisticFact['kind']> = Extract<HolisticFact, { kind: K }>
 /** M4a: a banked debt item as the fold keeps it: its fact (what `mintDebt` and `ledgerAfterArc` read) and seq. */
 export type BankedDebt = Extract<Fact, { kind: 'debt-banked' }> & Seq;
 type M4aFactOf<K extends Fact['kind']> = Omit<Extract<Fact, { kind: K }>, 'kind'> & Seq;
-/** M4a: a corpus amendment (`M-n`, in id order), its source unique. */
 /** M4a: a pack review job: its kept inputs' fact, and its end (null while running). */
 export type PackReviewState = Readonly<{ started: M4aFactOf<'pack-review-started'>; ended: M4aFactOf<'pack-review-ended'> | null }>;
 
@@ -425,9 +419,7 @@ export type HolisticFold = Readonly<{
   auditRequests: readonly (Omit<FactOf<'audit-requested'>, 'kind'> & Seq)[];
   docsCovered: readonly (Omit<FactOf<'docs-covered'>, 'kind'> & Seq)[];
   docsPublished: readonly (Omit<FactOf<'docs-published'>, 'kind'> & Seq)[];
-  /** Arc feedback 2026-10-16: the completed audits whose checkpoint was not run, having found nothing new, in log order. */
   divergences: readonly (Omit<FactOf<'divergence'>, 'kind'> & Seq)[];
-  digests: readonly (Omit<FactOf<'divergence-digest'>, 'kind'> & Seq)[];
   steered: readonly (Omit<FactOf<'steered'>, 'kind'> & Seq)[];
   mergedIn: readonly (Omit<FactOf<'merged-in'>, 'kind'> & Seq)[];
   /** M4a (R7): the debt this arc banked, in log order; one per source, id and key (src/debt/mint.ts `mintDebt`). */
@@ -693,7 +685,6 @@ export class Fold implements JournalView {
   readonly #docsCovered: (Omit<FactOf<'docs-covered'>, 'kind'> & Seq)[] = [];
   readonly #docsPublished: (Omit<FactOf<'docs-published'>, 'kind'> & Seq)[] = [];
   readonly #divergences: (Omit<FactOf<'divergence'>, 'kind'> & Seq)[] = [];
-  readonly #digests: (Omit<FactOf<'divergence-digest'>, 'kind'> & Seq)[] = [];
   readonly #surfaceFacts: import('./events.ts').SurfaceFact[] = [];
   readonly #noted: Readonly<{unit: UnitId; command: CommandId; brief: Sha256Hex; seq: number}>[] = [];
   readonly #steered: (Omit<FactOf<'steered'>, 'kind'> & Seq)[] = [];
@@ -723,7 +714,6 @@ export class Fold implements JournalView {
   readonly #ledgered = new Map<string, readonly Readonly<{ index: number; id: ReviewFindingId }>[]>();
   readonly #approvals = new Map<UnitId, ReviewApproval>();
   readonly #greenLanes = new Map<UnitId, number>();
-  readonly #docsOnly: (DocsOnlyFact & Seq)[] = [];
 
   constructor(arc: ArcId) {
     this.arc = arc;
@@ -1045,7 +1035,11 @@ export class Fold implements JournalView {
         return;
       }
       case 'stage-outcome': {
-        if (!('unit' in f)) { this.#stageJobOutcomes.push(f); break; }
+        if (!('unit' in f)) {
+          if (this.#stageJobOutcomes.some((v) => v.job === f.job && v.stage === f.stage)) fail(`second arc verdict for ${f.job}`);
+          this.#stageJobOutcomes.push(f);
+          break;
+        }
         const key = `${f.stage}#${f.attempt}`;
         const existing = this.#units.get(f.unit);
         if (existing?.outcomes.has(key) === true) fail(`second stage-outcome for ${f.unit} ${key}`);
@@ -1145,16 +1139,6 @@ export class Fold implements JournalView {
       case 'run-only':
         this.#runOnly = f.units;
         return;
-      case 'implementer-escalated': {
-        const state = this.unit(f.unit);
-        if (state.buildTier === null) return fail(`implementer-escalated for ${f.unit}, which was never dispatched`);
-        if (state.buildTier !== f.from) fail(`implementer-escalated for ${f.unit} from ${f.from}; its build tier is ${state.buildTier}`);
-        // G1: only while a charged round is left in the budget.
-        if (state.counters.chargeableFailures >= state.bounds.chargeable) fail(`implementer-escalated for ${f.unit} at the chargeable bound`);
-        const u = this.#unit(f.unit, 'build');
-        this.#setUnitState(u, { ...u.state, buildTier: f.to });
-        return;
-      }
       case 'approval': {
         const u = this.#unit(f.unit, 'gate');
         this.#setUnitState(u, { ...u.state, approval: { attempt: f.attempt, fingerprint: f.fingerprint } });
@@ -1179,11 +1163,6 @@ export class Fold implements JournalView {
         this.#ledgered.set(key, f.minted.map((m) => ({ index: m.index, id: m.entry.id })));
         return;
       }
-      case 'docs-only':
-        this.#docsOnly.push({ ...f, seq: at.seq });
-        return;
-      case 'docs-only-miss':
-        return;
       case 'backend-park': {
         const cur = this.#backendParks.get(f.backend);
         const cls = cur?.class === 'usage-limit' ? 'usage-limit' : f.class;
@@ -1227,7 +1206,7 @@ export class Fold implements JournalView {
           if (c.type === 'milestones') for (const m of c.rewalk ?? []) this.#rewalkSeqs.set(m, at.seq);
         }
         return;
-      // M4a: debt (C2); amendments, intake, pack reviews and checkpoint captures (C3).
+      // Debt, intake and pack reviews.
       case 'debt-banked': {
         const same = this.#debt.find((d) => d.id === f.id || d.key === f.key || canonicalJson(d.source) === canonicalJson(f.source));
         if (same !== undefined) fail(`debt ${f.id} banked again: ${same.id} (seq ${same.seq}) has its id, key or source (banking is idempotent per source)`);
@@ -1275,11 +1254,6 @@ export class Fold implements JournalView {
         this.#smokeRuns.push({ ...rest, seq: at.seq });
         return;
       }
-      case 'needs-user-declined':
-        if (!this.#needsUser.has(f.id)) fail(`needs-user-declined of ${f.id}, which was never raised`);
-        if (this.#acks.has(f.id)) fail(`needs-user ${f.id} declined after it was closed`);
-        this.#acks.set(f.id, { command: null, choice: f.choice });
-        return;
       // dev.13 (SCHEMAS.md "dev.13"): the fold sees the walk jobs and keeps every walk fact (`walkFacts`), holding a walk to
       // one start and one end, its proposals to id order and to its open walk, and a milestone pass and a tweak judgment to
       // once each. What they mean for units and milestones is read from `walkFacts` (agents C, D and G).
@@ -1470,17 +1444,6 @@ export class Fold implements JournalView {
         this.#divergences.push({ ...rest, seq });
         return;
       }
-      case 'divergence-digest': {
-        const known = new Set(this.#divergences.map((d) => d.id));
-        const bound = new Set(this.#digests.flatMap((d) => d.ids));
-        for (const id of f.ids) {
-          if (!known.has(id)) fail(`divergence-digest names ${id}, which was never recorded`);
-          if (bound.has(id)) fail(`divergence-digest names ${id}, which an earlier digest binds (H11)`);
-        }
-        const { kind: _k, ...rest } = f;
-        this.#digests.push({ ...rest, seq });
-        return;
-      }
       case 'review-triggered':
       case 'review-completed':
         this.#surfaceFacts.push(f);
@@ -1540,7 +1503,6 @@ export class Fold implements JournalView {
     // M4b (R5): the arc's role set is fixed at revision 1; every later revision carries it unchanged.
     const roles = this.#planApplied?.routingProvenance.arcRoles;
     if (this.#planApplied !== null && roles !== f.routingProvenance.arcRoles) fail(`plan-applied rev ${f.rev} records arcRoles ${f.routingProvenance.arcRoles ?? 'none'}; revision 1 fixed ${roles ?? 'none'}`);
-    // M3 (A5): the vision, once in force, stays; a bundle's revision is its checkpoint's decision.
     if (this.#holisticOn && f.visionSha256 === undefined) fail(`plan-applied rev ${f.rev} drops the vision (holistic may be added, never removed)`);
     const edits: { unit: UnitId; update: (u: UnitState) => UnitState }[] = [];
     const lineages: (() => void)[] = [];
@@ -2085,7 +2047,6 @@ export class Fold implements JournalView {
       docsCovered: this.#docsCovered,
       docsPublished: this.#docsPublished,
       divergences: this.#divergences,
-      digests: this.#digests,
       steered: this.#steered,
       mergedIn: this.#mergedIn,
       debt: this.#debt,
@@ -2098,7 +2059,7 @@ export class Fold implements JournalView {
     };
   }
 
-  /** dev.17 proportional review: the findings ledger, the latest approval of each unit, and the docs-only checks. */
+  /** The findings ledger and latest approval of each unit. */
   review(): ReviewFold {
     return {
       ledger: [...this.#ledger.values()],
@@ -2106,7 +2067,6 @@ export class Fold implements JournalView {
       ledgered: (unit, attempt) => this.#ledgered.get(`${unit} gate#${attempt}`) ?? null,
       approval: (unit) => this.#approvals.get(unit) ?? null,
       greenLanes: (unit) => this.#greenLanes.get(unit) ?? null,
-      docsOnly: this.#docsOnly,
     };
   }
 

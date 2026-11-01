@@ -52,9 +52,6 @@ export function polishDue(view: JournalView, plan: PlanM1): Readonly<{ walk: Wal
   return null;
 }
 
-/** Whether the polish revision has proposals to settle now (the scheduler's question). */
-export const polishPending = (ctx: PolishContext): boolean => polishDue(ctx.journal.view, requirePlanInForce(ctx.runDir, ctx.journal.view).plan) !== null;
-
 /** The revision in force with `proposals` admitted as polish units of `m`, or every reason the admit path refuses. */
 function proposalFiles(ctx: PolishContext, current: InputFiles, m: Milestone, proposals: readonly Proposed[]): Readonly<{ files: InputFiles }> | Readonly<{ reasons: readonly string[] }> {
   const raw = JSON.parse(current.planBytes.toString('utf8')) as RawPlan;

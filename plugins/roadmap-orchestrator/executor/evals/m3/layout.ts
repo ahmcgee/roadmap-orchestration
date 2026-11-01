@@ -25,8 +25,6 @@ export type FixtureUnit = (typeof UNITS)[number];
 export const FIRST = ['parse', 'tidy'] as const;
 /** The required lens set L (H9), ascending as the plan holds it. */
 export const LENSES = ['invariants', 'vision'] as const;
-export const AUDIT_EVERY = 2;
-export const CONVERGENCE_K = 1;
 /** The arc lane of I-2; its run in the first audit that sees the regression waits at the barrier (branch R: A1). */
 export const MONEY_LANE = 'money';
 /** The fake checkpoint call of the first checkpoint waits here until the driver's stale `apply` is applied. */

@@ -43,15 +43,14 @@
 import type { DesignRecord,Verification } from '../core/design.ts';
 import { type FlakeOn,type FlakyFact,type FlakyLaneSet,type LaneOwner } from '../core/events.ts';
 import { type FlakyEvent,type FlakyKey,type FlakyLedgerEntry,flakyKeyOf } from '../core/flaky.ts';
-import { type InvocationId,type LaneId,type SystemName,type UnitId } from '../core/ids.ts';
+import { type InvocationId,type LaneId,type UnitId } from '../core/ids.ts';
 import type { FlakeAt,Journal,JournalView } from '../core/interfaces.ts';
 import { type LaneDef,type SpecM1,cadenceAtOrBefore,specForces } from '../core/records.ts';
 
-import type { AbsPath,RepoPattern } from '../core/values.ts';
-import { mayOverlap } from '../input/classify.ts';
+import type { AbsPath } from '../core/values.ts';
 import { lineageMembers } from '../input/lineage.ts';
 import { BATCH_VERIFICATION_RUNS,DEFAULT_VERIFICATION_LANE_MINUTES,type PlanM1,type PlanUnit } from '../input/plan.ts';
-import { type SystemDef,type SystemsMap,dependentsClosure } from '../input/systems.ts';
+import { type SystemsMap,dependentsClosure } from '../input/systems.ts';
 import { runnerFiles } from '../runner/files.ts';
 import { invocationDir } from './invoke.ts';
 
@@ -133,15 +132,13 @@ function ownKeys(view: JournalView, plan: PlanM1, unit: UnitId): ReadonlySet<str
 /** One ledger entry with the seqs of its events (the flakes' facts), for the minting decision. */
 export type LedgerEntry = FlakyLedgerEntry & Readonly<{ at: readonly FlakeAt[]; set: FlakyLaneSet }>;
 
-/** The tree flake `fact` was seen on: its `on`, or (written before dev.21) as its red run's stage says (`flakeOnDefault`). */
+/** The tree the schema-2 flake record names. */
 export function flakeOnOf(view: JournalView, fact: FlakyFact): FlakeOn {
   return fact.on!;
 }
 
 /**
- * The arc's flaky ledger: one entry per key of the tip's flakes, in the order its first was observed. An arc whose
- * revision in force a release before 1.0.0-dev.17 applied ran without one: its ledger starts empty at the upgrade (warned
- * once).
+ * The arc's flaky ledger: one entry per key of the tip's flakes, in the order its first was observed.
  */
 export function flakyLedger(view: JournalView, plan: PlanM1): readonly LedgerEntry[] {
 
@@ -244,12 +241,6 @@ export function deflakeDue(view: JournalView, plan: PlanM1): DeflakeDue {
   }
   return { mint: [...groups.values()], recurring };
 }
-
-/** Whether anything is due (the scheduler's question). */
-export const deflakePending = (view: JournalView, plan: PlanM1): boolean => {
-  const due = deflakeDue(view, plan);
-  return due.mint.length > 0 || due.recurring.length > 0;
-};
 
 // ---------------------------------------------------------------------------------------------------
 // Code edges

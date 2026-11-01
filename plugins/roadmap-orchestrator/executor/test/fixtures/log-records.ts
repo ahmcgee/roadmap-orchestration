@@ -45,7 +45,7 @@ export function spawnIntent(seq: number, opts: Readonly<{ ordinal?: number; key?
 }
 
 export const spawnResult = (op: OpId): LogRecord =>
-  ({ type: 'done', op, kind: 'proc.spawn', outcome: { kind: 'result', resultSha256: H, summary: { type: 'backend', outcome: 'success' } }, recoveredBy: null });
+  ({ type: 'done', op, kind: 'proc.spawn', outcome: { kind: 'result', pressure: null, resultSha256: H, summary: { type: 'backend', outcome: 'success' } }, recoveredBy: null });
 export const spawnLost = (op: OpId): LogRecord =>
   ({ type: 'done', op, kind: 'proc.spawn', outcome: { kind: 'lost', treeEffects: false }, recoveredBy: 'reconciled' });
 

@@ -1,24 +1,24 @@
 // Shared unit admission for executor-minted deflake and milestone polish units.
 import type { SystemName } from '../core/ids.ts';
-import { type ObligationId, type ResourceName, type UnitId, canonicalIds } from '../core/ids.ts';
+import { type ObligationId,type ResourceName,type UnitId,canonicalIds } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
-import { type SpecM1, specObligations } from '../core/records.ts';
+import { type SpecM1,specObligations } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath } from '../core/values.ts';
-import { type InputFile, type RoutingBase } from '../input/inforce.ts';
-import { type DeflakeOrigin, type PlanM1, type PolishOrigin } from '../input/plan.ts';
+import { type InputFile,type RoutingBase } from '../input/inforce.ts';
+import { type DeflakeOrigin,type PlanM1,type PolishOrigin } from '../input/plan.ts';
 import { type DocsPublisher } from '../recover/revision.ts';
 import type { RiskTier } from '../routing/types.ts';
 import { SpecFileError,parseSpec,specBytes } from '../spec/spec.ts';
 import type { AuditContext } from './audit.ts';
-import { type Obligations, isExempt } from './types.ts';
+import { type Obligations,isExempt } from './types.ts';
 
 export type RevisionContext = AuditContext & Readonly<{ planFile: AbsPath; routingBase: RoutingBase; docs: DocsPublisher; laneEnv: Readonly<Record<string, string | undefined>> }>;
 type RawUnit = Record<string, unknown> & {id: string};
 export type RawPlan = Record<string, unknown> & {units: RawUnit[]; limits?: Record<string, number>};
 export type AdmitEntry = Readonly<{
   id: UnitId; risk: RiskTier; systems: readonly SystemName[]; after: readonly UnitId[]; resources: readonly ResourceName[];
-  origin: 'checkpoint' | 'repair' | 'polish' | 'deflake'; polish?: PolishOrigin; deflake?: DeflakeOrigin;
+  origin: 'repair' | 'polish' | 'deflake'; polish?: PolishOrigin; deflake?: DeflakeOrigin;
 }>;
 export function admitUnit(plan: RawPlan, specs: Map<UnitId, InputFile>, entry: AdmitEntry, specText: string, specPath: AbsPath, at: string): Readonly<{ spec: SpecM1 }> | Readonly<{ reasons: readonly string[] }> {
   if (plan.units.some((u) => u.id === entry.id)) return { reasons: [`${at}: unit ${entry.id} is already planned`] };

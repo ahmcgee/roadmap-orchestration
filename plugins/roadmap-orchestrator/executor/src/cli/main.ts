@@ -129,7 +129,7 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
     case 'demo':
       return submit(command.run, hostDir, { type: 'demo', act: command.act });
     case 'audit':
-      return submit(command.run, hostDir, { type: 'audit', lenses: command.lenses });
+      return submit(command.run, hostDir, { type: 'audit' });
     case 'close-admissions':
       return submit(command.run, hostDir, { type: 'close-admissions' });
     case 'gc': {

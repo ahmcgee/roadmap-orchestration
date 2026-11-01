@@ -119,7 +119,6 @@ describe('M2 event records', () => {
       { kind: 'edge-resolved', edge: 'e-top', command: cmd, evidence: 'the migration landed in #412' },
       { kind: 'run-only', command: cmd, units: ['a', 'b'] },
       { kind: 'run-only', command: cmd, units: null },
-      { kind: 'implementer-escalated', unit, attempt: 6, from: 'low', to: 'high', stalled: 5 },
       { kind: 'plan-applied', rev: 1, command: null, planSha256: H, specs: { u1: H }, changes: [], ...appliedFields(1, null) },
       {
         kind: 'plan-applied', rev: 2, command: cmd, planSha256: H, specs: { u1: H, u2: H },
@@ -138,8 +137,6 @@ describe('M2 event records', () => {
     refusesLine(fact({ kind: 'judgment-inputs', unit, stage: 'build', attempt: 1, tip: A, head: A, specRev: 1, specSha256: H, planRev: 1, routingRev: rev }), /pre-build \| gate/);
     refusesLine(fact({ kind: 'run-only', command: cmd, units: ['b', 'a'] }), /ascending/);
     refusesLine(fact({ kind: 'run-only', command: cmd, units: [] }), /non-empty/);
-    refusesLine(fact({ kind: 'implementer-escalated', unit, attempt: 6, from: 'high', to: 'high', stalled: 5 }), /below high/);
-    refusesLine(fact({ kind: 'implementer-escalated', unit, attempt: 6, from: 'low', to: 'high', stalled: 6 }), /a build attempt before 6/);
     refusesLine(fact({ kind: 'plan-applied', rev: 2, command: null, planSha256: H, specs: { u1: H }, changes: [], ...appliedFields(2, null), scheduling: 'dag' }), /absent after rev 1/);
     refusesLine(fact({ kind: 'plan-applied', rev: 2, command: null, planSha256: H, specs: { u1: H }, changes: [{ type: 'unit-reentered', unit: 'u1', reenters: 'u1', reset: false }], ...appliedFields(2, null) }), /other than the re-entering one/);
     assert.deepEqual(edgeId('e-top'), 'e-top');
@@ -183,7 +180,7 @@ describe('M2 plan fields', () => {
       units: [
         u('base', { origin: 'planned', cpu: 2 }),
         u('top', { after: ['base'], contingent: [{ id: 'e-top', condition: 'the API is live' }], cut: { reason: 'descoped' } }),
-        u('base2', { reenters: { unit: 'base', enterAt: 'verify', reset: { reason: 'Retry with the revised contract' } }, origin: 'checkpoint' }),
+        u('base2', { reenters: { unit: 'base', enterAt: 'verify', reset: { reason: 'Retry with the revised contract' } }, origin: 'repair' }),
       ],
     });
     assert.deepEqual(plan.capacity, { cpu: 12 });
@@ -191,7 +188,7 @@ describe('M2 plan fields', () => {
     assert.deepEqual(plan.units.map((x) => [x.origin, x.cpu, x.contingent, x.reenters, x.cut]), [
       ['planned', 2, [], undefined, undefined],
       [undefined, undefined, [{ id: 'e-top', condition: 'the API is live' }], undefined, { reason: 'descoped' }],
-      ['checkpoint', undefined, [], { unit: 'base', enterAt: 'verify', reset: { reason: 'Retry with the revised contract' } }, undefined],
+      ['repair', undefined, [], { unit: 'base', enterAt: 'verify', reset: { reason: 'Retry with the revised contract' } }, undefined],
     ]);
     const plain = parsePlan({ ...base, units: [u('a')] });
     for (const k of ['capacity']) assert.equal(k in plain, false, k);

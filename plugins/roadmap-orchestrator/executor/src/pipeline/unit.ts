@@ -108,7 +108,8 @@ witnessCheckoutFixRound,witnessFixRound,
 
 import {
 type BuildRun,type StageDone,at,build,buildRead,evidence,failedFacts,fastSuiteRoot,keptSpecPath,laneGlobs,lanes,loadUnitSpec,
-preBuild,quiesce,readDecisions,record,recordedCall,salvage,salvageRejections,teardown } from './stages.ts';
+preBuild,quiesce,readDecisions,record,recordedCall,salvage,salvageRejections,teardown
+} from './stages.ts';
 import { type Next,type Target,decidedBy } from './transitions.ts';
 import { requiredAt } from './witnesscheck.ts';
 
@@ -250,16 +251,14 @@ function candidateRed(ctx: StageContext, unit: PlanUnit, at: StageParent): Reado
   const failing = suite.filter((l) => l.verdict !== 'pass');
   // M3: a green suite with red held claims (the brake): the obligations and journey lanes left red.
   if (failing.length === 0 && [...seriesDirty(view, root), ...seriesDirty(view, specRoot)].length === 0) return { fix: candidateBrakeFix(ctx, unit, at), suite };
-  return { fix: { failingEvidenceDirs: (failing.length > 0 ? failing : suite).flatMap(failingEvidenceDirs), directives: failingLaneDirectives(failing) }, suite };
-}
-
-/**
- * The cause of a red candidate attempt `at` in sentences, as its fix round would read it (the checkpoint's park
- * trigger): the suite lanes that were not green, then the fix round's directives (the obligations the brake graded red).
- */
-export function candidateRedCause(ctx: StageContext, unit: PlanUnit, at: StageParent): readonly string[] {
-  const { fix, suite } = candidateRed(ctx, unit, at);
-  return [...suite.filter((l) => l.verdict !== 'pass').map((l) => `Suite lane ${l.lane} ended ${l.verdict} on the candidate.`), ...fix.directives];
+  // This red suite was compared with a green tip-alone series before the candidate outcome was recorded.
+  const base = latestCandidate(ctx, unit.id).expect.integrationTip;
+  const evidence = absPath(join(evidenceRoot(ctx.runDir, at), 'base'));
+  return { fix: {
+    failingEvidenceDirs: [...(failing.length > 0 ? failing : suite).flatMap(failingEvidenceDirs), evidence],
+    baseComparison: failing.map((lane) => ({lane: lane.lane, base, result: 'pass', evidence})),
+    directives: [...failingLaneDirectives(failing), `The candidate is red and the integration base ${base} is green. Base comparison evidence: ${evidence}.`],
+  }, suite };
 }
 
 /**

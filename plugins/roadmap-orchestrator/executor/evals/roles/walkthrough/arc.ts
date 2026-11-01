@@ -16,49 +16,49 @@ import { systemsMapInForce } from '../../../src/input/systems.ts';
 // shell calls, subagents, token load, spend) and the harness's brakes, which kill the session: the token load over 3x
 // the cell's median so far (`runaway`), past 45 minutes (`runaway`), the trial's live spend at list price over
 // `--trial-cap` (`cap`; every walkthrough call of the trial counted).
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { type InvocationId, type JobId, arcId, invocationId } from '../../../src/core/ids.ts';
+import { cpSync,existsSync,mkdirSync,readdirSync,readFileSync,writeFileSync } from 'node:fs';
+import { dirname,join } from 'node:path';
+import { type InvocationId,type JobId,arcId,invocationId } from '../../../src/core/ids.ts';
 import type { JsonValue } from '../../../src/core/json.ts';
 import { openJournal } from '../../../src/core/log.ts';
-import { STDOUT_FILE, type RunStart } from '../../../src/core/records.ts';
+import { STDOUT_FILE,type RunStart } from '../../../src/core/records.ts';
 import { atomicJson } from '../../../src/core/fsx.ts';
 import { SchemaError } from '../../../src/core/validate.ts';
-import { absPath, isoTimeOf } from '../../../src/core/values.ts';
+import { absPath,isoTimeOf } from '../../../src/core/values.ts';
 import { SCHEMA_VERSION } from '../../../src/core/version.ts';
 import { jobEvidenceRoot } from '../../../src/git/snapshot.ts';
 import { readClaude } from '../../../src/backends/claude.ts';
-import { readInputFiles, recordPlan, requirePlanInForce } from '../../../src/input/inforce.ts';
+import { readInputFiles,recordPlan,requirePlanInForce } from '../../../src/input/inforce.ts';
 import { milestonesOf } from '../../../src/input/plan.ts';
 import { invocationDir } from '../../../src/pipeline/invoke.ts';
 import { holisticInForce } from '../../../src/pipeline/stages.ts';
 import { runUnit } from '../../../src/pipeline/unit.ts';
 import { promptFor } from '../../../src/prompts/index.ts';
-import { type WalkthroughOutput, experienceWalk } from '../../../src/prompts/schemas.ts';
-import { type RepoConfig, arcStack, resolveRouting } from '../../../src/routing/layers.ts';
+import { type WalkthroughOutput,experienceWalk } from '../../../src/prompts/schemas.ts';
+import { type RepoConfig,arcStack,resolveRouting } from '../../../src/routing/layers.ts';
 import { profileName } from '../../../src/routing/types.ts';
 import { runnerFiles } from '../../../src/runner/files.ts';
 import { runWalk } from '../../../src/walk/walk.ts';
 import { walkRefusals } from '../../../src/walk/report.ts';
 import type { ArcRun } from '../../../test/fixtures/unit-common.ts';
-import { type ArcDescriptor, contextFor, isGateCall, isPlanCheckCall, laneJson } from '../../../test/fixtures/unit-common.ts';
+import { type ArcDescriptor,contextFor,isGateCall,isPlanCheckCall,laneJson } from '../../../test/fixtures/unit-common.ts';
 import { arcFor } from '../../../test/fixtures/invoke-specs.ts';
 import { unitSteps } from '../../../test/fixtures/audit-common.ts';
 import { obligationsJson } from '../../../test/fixtures/brake-common.ts';
 import { admitAll } from '../../../test/fixtures/stage-common.ts';
-import { unitInForce, walkContext } from '../../../test/fixtures/walk-common.ts';
-import { makeRepo, revParse, tmpDir } from '../../../test/helpers/repo.ts';
-import { type Step, readCalls, writeScenario } from '../../../test/helpers/scenario.ts';
+import { unitInForce,walkContext } from '../../../test/fixtures/walk-common.ts';
+import { makeRepo,revParse,tmpDir } from '../../../test/helpers/repo.ts';
+import { type Step,readCalls,writeScenario } from '../../../test/helpers/scenario.ts';
 import { writeWitnessControl } from '../../../test/helpers/witness.ts';
-import { repositoryPaths, scanTranscript } from '../../m4a/transcript.ts';
+import { repositoryPaths,scanTranscript } from '../../m4a/transcript.ts';
 import type { CellSet } from '../gate/cells.ts';
-import { type Usage, parseEvents, readTranscript, sumUsage, toolCounts, unavailableCalls, usageOf } from '../transcript.ts';
-import { FLOW_PAGE, pagePath } from './families.ts';
+import { type Usage,parseEvents,readTranscript,sumUsage,toolCounts,unavailableCalls,usageOf } from '../transcript.ts';
+import { FLOW_PAGE,pagePath } from './families.ts';
 import {
-  ADVANCES, MILESTONE_UNIT, REFERENCE, RELEASE_NOTE, type SlotKey, UNIT_ACCEPTANCE, VISION_JSON, type WalkCell, type WalkFixture, type WalkKey,
-  buildWalkFixture, walkRepoConfig,
+ADVANCES,MILESTONE_UNIT,REFERENCE,RELEASE_NOTE,type SlotKey,UNIT_ACCEPTANCE,VISION_JSON,type WalkCell,type WalkFixture,type WalkKey,
+buildWalkFixture,walkRepoConfig,
 } from './fixture.ts';
-import { type WalkGraded, gradeWalk } from './grade.ts';
+import { type WalkGraded,gradeWalk } from './grade.ts';
 
 /**
  * Degenerate walkers, each knowing the key (what a cheating walker would know): `clean-report` reports every journey
@@ -257,7 +257,7 @@ export function setupMilestoneArc(f: Pick<WalkFixture, 'files' | 'milestone'>, c
     contracts: [`${REFERENCE}/api.md`], rulings: 'rulings.md', architectureDoc: 'ARCHITECTURE.md', direction: 'Ship the milestone to its design reference.',
     suite: { lanes: [laneJson({ ...lane, id: 'suite' })] }, resources: [],
     units: [{ id: MILESTONE_UNIT, spec: `${MILESTONE_UNIT}.json`, risk: 'med', review: 'always', systems: ['app'], resources: [] }],
-    holistic: { vision: 'vision.json', advances: ADVANCES, obligations: 'obligations.json', audit: { lenses: ['vision'], every: 100 } },
+    holistic: { vision: 'vision.json', advances: ADVANCES, obligations: 'obligations.json' },
     milestones: [JSON.parse(JSON.stringify(f.milestone)) as JsonValue],
   }));
   const runDir = tmpDir('walk-run');

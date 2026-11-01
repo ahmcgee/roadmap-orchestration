@@ -5,20 +5,20 @@
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, it, test } from 'node:test';
+import { describe,it,test } from 'node:test';
 import { setImmediate as tick } from 'node:timers/promises';
-import { type ResourceUnit, INTEGRATION_SLOT, arcId, jobId, sha256, parseResourceUnit, poolInstance, unitId } from '../src/core/ids.ts';
+import { type ResourceUnit,INTEGRATION_SLOT,arcId,jobId,sha256,parseResourceUnit,poolInstance,unitId } from '../src/core/ids.ts';
 import { openJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
-import { isDirty, overlaps } from '../src/resources/pool.ts';
+import { isDirty,overlaps } from '../src/resources/pool.ts';
 import {
-  type AcquiringHolder, type RetryHolder, type StageHolder, cleanup, entryOf, holderUnits, reserve, resourceTable, retryReclaim, run,
-  sameHolder, transition,
+type AcquiringHolder,type RetryHolder,type StageHolder,cleanup,entryOf,holderUnits,reserve,resourceTable,retryReclaim,run,
+sameHolder,transition,
 } from '../src/resources/reserve.ts';
-import { type Arbiter, createArbiter } from '../src/schedule/arbiter.ts';
-import { type Grant, type Rank, type ResourceRequest, compareRank } from '../src/schedule/types.ts';
-import { CACHE, CPU, DB, ESTATE, ESTATE_SIZE, QUEUE, newRun, openPoolRun } from './fixtures/pool-plan.ts';
-import { stageHolder, stageParent } from './fixtures/res-plan.ts';
+import { type Arbiter,createArbiter } from '../src/schedule/arbiter.ts';
+import { type Grant,type Rank,type ResourceRequest,compareRank } from '../src/schedule/types.ts';
+import { CACHE,CPU,DB,ESTATE,ESTATE_SIZE,QUEUE,newRun,openPoolRun } from './fixtures/pool-plan.ts';
+import { stageHolder,stageParent } from './fixtures/res-plan.ts';
 
 const T = { timeout: 60_000 };
 const req = (r: Partial<ResourceRequest>): ResourceRequest => ({ named: [], pools: [], cpu: 0, publication: false, ...r });
@@ -42,7 +42,7 @@ function release(ctx: Parameters<typeof reserve>[0], holder: StageHolder): void 
 }
 
 describe('arbiter.priority', () => {
-  it('waiters on one resource are served promoted-oldest first, then checkpoint before planned, then age', T, async () => {
+  it('waiters on one resource are served promoted-oldest first, then polish before planned, then age', T, async () => {
     const r = newRun();
     const { ctx, journal } = openPoolRun(r);
     const arb = createArbiter(ctx);
@@ -50,13 +50,13 @@ describe('arbiter.priority', () => {
     assert.ok(reserve(ctx, x, req({ named: [DB] }), stageParent(x)).state === 'reserved');
     const ws = [
       ['planned-old', rank('planned-old', 10)],
-      ['checkpoint-new', rank('checkpoint-new', 40, { origin: 'checkpoint' })],
+      ['polish-new', rank('polish-new', 40, { origin: 'polish' })],
       ['promoted-new', rank('promoted-new', 30, { promoted: true, bypassMerges: 3 })],
       ['promoted-old', rank('promoted-old', 20, { promoted: true, bypassMerges: 4 })],
       ['planned-new', rank('planned-new', 50)],
     ] as const;
     const waits = ws.map(([u, rk]) => ({ u, h: holderOf(u), ...wait(arb, req({ named: [DB] }), holderOf(u), rk) }));
-    assert.deepEqual(arb.waiting().map((w) => w.holder.unit), ['promoted-old', 'promoted-new', 'checkpoint-new', 'planned-old', 'planned-new']);
+    assert.deepEqual(arb.waiting().map((w) => w.holder.unit), ['promoted-old', 'promoted-new', 'polish-new', 'planned-old', 'planned-new']);
     let holder: StageHolder = x;
     const order: string[] = [];
     for (let i = 0; i < ws.length; i++) {
@@ -69,13 +69,13 @@ describe('arbiter.priority', () => {
       order.push(got[0]!.u);
       holder = got[0]!.h;
     }
-    assert.deepEqual(order, ['promoted-old', 'promoted-new', 'checkpoint-new', 'planned-old', 'planned-new']);
+    assert.deepEqual(order, ['promoted-old', 'promoted-new', 'polish-new', 'planned-old', 'planned-new']);
     journal.close();
   });
 });
 
 describe('arbiter.priority-first', () => {
-  it('a high-priority waiter is served before promoted, checkpoint and older planned ones (M4a rev 3, R42)', T, async () => {
+  it('a high-priority waiter is served before promoted, polish and older planned ones (M4a rev 3, R42)', T, async () => {
     const r = newRun();
     const { ctx, journal } = openPoolRun(r);
     const arb = createArbiter(ctx);
@@ -83,12 +83,12 @@ describe('arbiter.priority-first', () => {
     assert.ok(reserve(ctx, x, req({ named: [DB] }), stageParent(x)).state === 'reserved');
     const ws = [
       ['promoted-old', rank('promoted-old', 10, { promoted: true, bypassMerges: 5 })],
-      ['checkpoint-old', rank('checkpoint-old', 20, { origin: 'checkpoint' })],
+      ['polish-old', rank('polish-old', 20, { origin: 'polish' })],
       ['high-new', rank('high-new', 90, { priority: 'high' })],
       ['high-newer', rank('high-newer', 95, { priority: 'high' })],
     ] as const;
     const waits = ws.map(([u, rk]) => ({ u, h: holderOf(u), ...wait(arb, req({ named: [DB] }), holderOf(u), rk) }));
-    assert.deepEqual(arb.waiting().map((w) => w.holder.unit), ['high-new', 'high-newer', 'promoted-old', 'checkpoint-old']);
+    assert.deepEqual(arb.waiting().map((w) => w.holder.unit), ['high-new', 'high-newer', 'promoted-old', 'polish-old']);
     let holder: StageHolder = x;
     const order: string[] = [];
     for (let i = 0; i < ws.length; i++) {
@@ -100,7 +100,7 @@ describe('arbiter.priority-first', () => {
       order.push(got[0]!.u);
       holder = got[0]!.h;
     }
-    assert.deepEqual(order, ['high-new', 'high-newer', 'promoted-old', 'checkpoint-old']);
+    assert.deepEqual(order, ['high-new', 'high-newer', 'promoted-old', 'polish-old']);
     journal.close();
   });
 });
@@ -340,7 +340,7 @@ describe('res.no-overlap-randomized', () => {
         const holder = holderOf(`u${serial}`);
         const l: Live = { holder, request: randomRequest(), ac: new AbortController(), grant: null };
         live.push(l);
-        const rk = rank(`u${serial}`, Math.floor(random() * 50), random() < 0.2 ? { promoted: true, bypassMerges: 3 } : { origin: pick(['planned', 'checkpoint'] as const) });
+        const rk = rank(`u${serial}`, Math.floor(random() * 50), random() < 0.2 ? { promoted: true, bypassMerges: 3 } : { origin: pick(['planned', 'polish'] as const) });
         const before = [...arb.waiting()];
         void arb.acquire(l.request, holder, () => rk, l.ac.signal).then((g) => {
           l.grant = g;

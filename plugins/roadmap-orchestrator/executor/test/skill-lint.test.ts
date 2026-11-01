@@ -91,12 +91,17 @@ function filesUnder(dir: string): string[] {
 }
 
 describe('skill-lint', () => {
-  it('skill-lint.cli-forms: every CLI form in reference.md parses, and every command is documented', () => {
+  it('skill-lint.cli-forms: live reference forms parse, the retired lens selector is refused, and every command is documented', () => {
     const forms = [...readFileSync(REFERENCE, 'utf8').matchAll(/`(roadmap [^`]+)`/g)].map((m) => m[1] as string);
     assert.ok(forms.length > 0, 'reference.md documents no CLI form');
     const seen = new Set<string>();
     for (const form of forms) {
       for (const argv of argvsOf(form)) {
+        // P3c retires the selector; P4 owns the remaining reference prose. Still test its explicit refusal.
+        if (argv[0] === 'audit' && argv.includes('--lens')) {
+          assert.throws(() => parseCommand(argv), /unknown option --lens/, form);
+          continue;
+        }
         let parsed: Command;
         try {
           parsed = parseCommand(argv);

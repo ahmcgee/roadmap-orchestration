@@ -3,11 +3,11 @@
 // computes them at the revision (src/holistic/propagation.ts `staleSetOf`, no model) and journals them (`stale-set`); this
 // module is the records and their readers.
 import {
-  type FailureModeId, type ObligationId, type Sha, type UnitId, type VisionClauseId, failureModeId, obligationId, sha, unitId, visionClauseId,
+type FailureModeId,type ObligationId,type Sha,type UnitId,type VisionClauseId,failureModeId,obligationId,sha,unitId,visionClauseId,
 } from './ids.ts';
-import { type Pinned, type SpecPin, UNPINNED, specPin } from './pins.ts';
-import { type RepoPath, repoPath } from './values.ts';
-import { type Read, Fields, SchemaError, arrayOf, assertUnique, literal, object, positive, sortedBy, tagged } from './validate.ts';
+import { type Pinned,type SpecPin,UNPINNED,specPin } from './pins.ts';
+import { type RepoPath,repoPath } from './values.ts';
+import { type Read,Fields,SchemaError,arrayOf,assertUnique,literal,object,positive,sortedBy,tagged } from './validate.ts';
 
 /**
  * What a revision changed that links name: a requirement whose normative rev rose (`from` → `to`), a contract a ruling's
@@ -56,18 +56,6 @@ export type PropagationTarget = Readonly<{ type: 'requirement'; id: ObligationId
 
 /** A cause's identity text (`pinTarget`'s form). */
 export const causeKey = (c: StaleCause | SpecLinkTarget | PropagationTarget): string => (c.type === 'contract' ? `contract:${c.path}` : `${c.type}:${c.id}`);
-
-/** The key a unit's pre-build answers a stale link of it by: unique among the unit's links. */
-export function staleLinkKey(l: UnitStaleLink): string {
-  switch (l.type) {
-    case 'spec':
-      return causeKey(l.target);
-    case 'failure-mode':
-      return `failure-mode:${l.failureMode}:${l.requirement}`;
-    case 'interface':
-      return `interface:${l.path}`;
-  }
-}
 
 /** Whether a stale link is a unit's (pre-build answers it). */
 export const isUnitLink = (l: StaleLink): l is UnitStaleLink => l.type === 'spec' || l.type === 'failure-mode' || l.type === 'interface';
@@ -134,8 +122,3 @@ export function staleSetFields(f: Fields): StaleSet {
   return out;
 }
 export const staleSet: Read<StaleSet> = object(staleSetFields);
-
-export const propagationTarget: Read<PropagationTarget> = tagged<PropagationTarget['type'], PropagationTarget>('type', {
-  requirement: object((f) => ({ type: f.get('type', literal('requirement')), id: f.get('id', oid), rev: f.get('rev', positive) })),
-  contract: object((f) => ({ type: f.get('type', literal('contract')), path: f.get('path', path) })),
-});

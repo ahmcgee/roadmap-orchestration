@@ -13,7 +13,6 @@ import { type ClassifyContext,classifyObligations } from '../src/holistic/obliga
 import { rederive } from '../src/holistic/rederive.ts';
 import { type Obligations,type Vision,laneRevOf,parseObligations,parseVision } from '../src/holistic/types.ts';
 import { advancesReasons,citeReasons,visionCoverage,visionEditReasons } from '../src/holistic/vision.ts';
-import { coverageText } from '../src/prompts/inputs.ts';
 
 const LANE = {
   id: 'journey', argv: ['node', '--test', 'journey.test.js'], cwd: 'test', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [],
@@ -138,11 +137,6 @@ describe('obligation edits', () => {
     });
     const drops = splitInto([ob('I-4', { statement: 'Money is never mis-rounded.', serves: ['V-2'] })]);
     assert.deepEqual(classifyObligations(PREV, drops, ARCHITECT).reasons, ['I-2\'s children drop parent text: "Totals round half-even."']);
-    const ckpt = classifyObligations(PREV, drops, { ...ARCHITECT, author: { type: 'checkpoint', cites: [visionClauseId('V-2')] } });
-    assert.deepEqual(ckpt.reasons, []);
-    assert.deepEqual(ckpt.changes, [{ type: 'split', id: 'I-2', children: ['I-4'], dropped: ['Totals round half-even.'] }]);
-    assert.deepEqual(classifyObligations(PREV, drops, { ...ARCHITECT, author: { type: 'checkpoint', cites: [visionClauseId('V-4')] } }).reasons,
-      ["I-2's split cites V-4, which is withdrawn (a withdrawn clause may not be newly cited)"]);
     // A split parent stays split into the same children; an existing obligation is not a new child.
     assert.deepEqual(classifyObligations(keeps, keeps, ARCHITECT).reasons, []);
     const regrow = file([
@@ -307,23 +301,14 @@ describe('the vision record', () => {
     const o = file([...BASE, ob('I-4', { serves: ['V-4'] }), ob('I-5', { serves: ['V-3'], state: { type: 'waived', reason: 'test disposition', rev: 2 } })]);
     const advances = ['V-2', 'V-3', 'V-5'].map((c) => visionClauseId(c));
     const citers = [{ id: rulingId('C-2'), cites: [visionClauseId('V-4')] }, { id: divergenceId('D-1'), cites: [visionClauseId('V-2')] }];
-    assert.deepEqual(visionCoverage(VISION, advances, o, citers, []), {
+    assert.deepEqual(visionCoverage(VISION, advances, o, citers), {
       unservedAdvanced: ['V-3', 'V-5'],
-      unservedOpportunity: [],
       horizon: ['V-1'],
       obligationsServingNone: ['I-4'],
       withdrawnCited: [{ clause: 'V-4', citedBy: ['C-2', 'I-4'] }],
     });
     const all = ['V-1', 'V-2', 'V-3', 'V-5'].map((c) => visionClauseId(c));
-    assert.deepEqual(visionCoverage(VISION, all, null, [], []), { unservedAdvanced: ['V-1', 'V-2', 'V-3', 'V-5'], unservedOpportunity: [], horizon: [], obligationsServingNone: [], withdrawnCited: [] });
-  });
-
-  it('vision.coverage-opportunity: an opportunity\'s unserved clause is listed apart, never as an advanced gap (paid M4b runs 3 and 5)', () => {
-    const o = file([...BASE, ob('I-4', { serves: ['V-4'] })]);
-    const advances = ['V-2', 'V-3', 'V-5'].map((c) => visionClauseId(c));
-    const c = visionCoverage(VISION, advances, o, [], [visionClauseId('V-5'), visionClauseId('V-2')]);
-    assert.deepEqual([c.unservedAdvanced, c.unservedOpportunity], [['V-3'], ['V-5']], 'V-2 is served; V-5 is the opportunity\'s and unserved');
-    assert.match(coverageText(c), /^Advanced clauses no active obligation serves: V-3\nOpportunity clauses no active obligation serves \(not a gap to close: see the opportunity rules\): V-5$/m);
+    assert.deepEqual(visionCoverage(VISION, all, null, []), { unservedAdvanced: ['V-1', 'V-2', 'V-3', 'V-5'], horizon: [], obligationsServingNone: [], withdrawnCited: [] });
   });
 
   it('vision.advances: every id an active clause of the vision, one a world clause', () => {

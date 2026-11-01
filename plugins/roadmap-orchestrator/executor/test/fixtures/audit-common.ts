@@ -21,7 +21,6 @@ import { type ArcRun,codexStep,gateStep } from './unit-common.ts';
 type Json = Record<string, unknown>;
 
 export type AuditArcOptions = HolisticOptions & Readonly<{
-  audit: Readonly<{ every?: number; lenses?: readonly string[]; wallClockMin?: number }>;
   /** Arc lanes scripted by a control file of their own (lane id → its trees): they report only these tests. */
   ownControl?: Readonly<Record<string, Readonly<Record<string, TreePlan>>>>;
 }>;
@@ -52,7 +51,7 @@ export function auditArc(opts: AuditArcOptions): HolisticArc {
     writeFileSync(join(planDir, 'vision.json'), JSON.stringify(VISION));
     writeFileSync(join(planDir, 'obligations.json'), JSON.stringify(withOwnControls(obligationsJson(opts, control), opts.ownControl)));
     const plan = JSON.parse(readFileSync(x.planPath, 'utf8')) as Json;
-    writeFileSync(x.planPath, JSON.stringify({ ...plan, ...opts.planExtra, holistic: { vision: 'vision.json', advances: ADVANCES, obligations: 'obligations.json', audit: opts.audit } }));
+    writeFileSync(x.planPath, JSON.stringify({ ...plan, ...opts.planExtra, holistic: { vision: 'vision.json', advances: ADVANCES, obligations: 'obligations.json' } }));
     for (const u of opts.units ?? []) {
       if (u.obligations === undefined) continue;
       const spec = join(planDir, `${u.id}.json`);

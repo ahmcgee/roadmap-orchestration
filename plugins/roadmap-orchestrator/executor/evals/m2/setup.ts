@@ -10,7 +10,7 @@ import { systemName } from '../../src/core/ids.ts';
 //   barriers/ empty: the lanes write `.reached` here, the driver `.release`
 //
 // Units (DAG, merged-only edges): `base`; `left` and `right` after it; `top` after both, plus the contingent edge
-// `e-top` the driver resolves once `left` merges; `urgent` (origin checkpoint, no deps), which the driver keeps
+// `e-top` the driver resolves once `left` merges; `urgent` (root repair origin, no deps), which the driver keeps
 // out with `run-only` until `right` is paused. `right` and `urgent` both edit the one line of src/registry.js,
 // so once `urgent` merges, `right` conflicts with integration; `right2` (`reentrySpec`, written by the driver)
 // re-enters it at verify and resolves the conflict.
@@ -21,11 +21,11 @@ import { systemName } from '../../src/core/ids.ts';
 // `right` also has the `right-hold` barrier lane, after its edit commit.
 // Each unit's product is a one-function module and a test: every lane runs in seconds.
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { existsSync,mkdirSync,readdirSync,writeFileSync } from 'node:fs';
+import { dirname,join,resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  CPU_CAPACITY, EDGE, ESTATE_HOLD, ESTATE_ROUNDS, INTEGRATION, type Layout, MAIN, POOL, POOL_SIZE, REENTRY, RIGHT_HOLD, SHARED_FILE, UNITS, layout,
+CPU_CAPACITY,EDGE,ESTATE_HOLD,ESTATE_ROUNDS,INTEGRATION,type Layout,MAIN,POOL,POOL_SIZE,REENTRY,RIGHT_HOLD,SHARED_FILE,UNITS,layout,
 } from './layout.ts';
 
 export const ESTATE_SCRIPT = fileURLToPath(new URL('./estate.ts', import.meta.url));
@@ -176,7 +176,7 @@ const PLAN_UNITS: Readonly<Record<(typeof UNITS)[number], object>> = {
   left: { after: ['base'] },
   right: { after: ['base'] },
   top: { after: ['left', 'right'], contingent: [{ id: EDGE, condition: 'left has merged and its left() is what top builds on' }] },
-  urgent: { origin: 'checkpoint' },
+  urgent: { origin: 'repair' },
 };
 
 // Isolated from the user's global and system git config, as in evals/m1/setup.ts.

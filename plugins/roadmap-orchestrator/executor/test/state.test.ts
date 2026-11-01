@@ -128,7 +128,7 @@ describe('fold derives', () => {
       backendParks: [], resources: [], runOnly: null, resolvedEdges: [],
       holistic: {
         on: false, witnessed: [], latched: [], findings: [], audits: [], auditRequests: [], docsCovered: [], docsPublished: [], divergences: [],
-        digests: [], steered: [], mergedIn: [], debt: [], packReviews: [], draining: null, completion: null, laneReuses: [], certificates: [], smokeRuns: [],
+        steered: [], mergedIn: [], debt: [], packReviews: [], draining: null, completion: null, laneReuses: [], certificates: [], smokeRuns: [],
       },
     });
   });
@@ -456,7 +456,7 @@ describe('fold: command effects (step 13)', () => {
 
   it('executor-started clears the stop marker and nothing else: pauses and holds persist', () => {
     const s = fold(ARC, chain([
-      hold, fact({ kind: 'paused', command: C, target: { type: 'all' } }), fact({ kind: 'stop-requested', command: C }), fact({ kind: 'executor-started', generation: 2 }),
+      hold, fact({ kind: 'paused', command: C, target: { type: 'all' } }), fact({ kind: 'stop-requested', command: C }), fact({ kind: 'executor-started', pressure: 'unavailable', generation: 2 }),
     ]));
     assert.deepEqual(s.control, { stop: null, pausedAll: true, pausedUnits: [] });
     assert.equal(s.units[0]?.status, 'held');

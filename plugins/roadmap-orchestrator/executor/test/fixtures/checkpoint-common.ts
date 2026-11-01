@@ -3,20 +3,20 @@ import { systemName } from '../../src/core/ids.ts';
 // Shared by the checkpoint tests (test/checkpoint.test.ts) and their crash child (checkpoint-child.ts): an audit-common
 // arc whose required lens set is the vision lens alone (one lens call per audit), the checkpoint context over the run's
 // one arbiter (the command context's docs publisher and routing base), and the readers the tests assert with.
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { applyCommand } from '../../src/commands/apply.ts';
 import { submitCommand } from '../../src/commands/queue.ts';
-import { type CommandId, commandId } from '../../src/core/ids.ts';
+import { type CommandId,commandId } from '../../src/core/ids.ts';
 import type { JsonValue } from '../../src/core/json.ts';
 import { runAudit } from '../../src/holistic/audit.ts';
 import type { RevisionContext } from '../../src/holistic/admission.ts';
 import type { Clock } from '../../src/holistic/cadence.ts';
 import type { Step } from '../helpers/scenario.ts';
-import { admitSpecWire, lensStep, noteLensStep } from '../helpers/holistic.ts';
-import { type AuditArcOptions, auditArc, auditContext, factsOf } from './audit-common.ts';
-import { type ArcDescriptor, type ArcRun, applyBody, syncInputs,visionApplyBody } from './unit-common.ts';
+import { admitSpecWire,lensStep,noteLensStep } from '../helpers/holistic.ts';
+import { type AuditArcOptions,auditArc,auditContext,factsOf } from './audit-common.ts';
+import { type ArcDescriptor,type ArcRun,applyBody,syncInputs,visionApplyBody } from './unit-common.ts';
 
 type Json = Record<string, unknown>;
 
@@ -24,7 +24,7 @@ type Json = Record<string, unknown>;
 export function checkpointArc(steps: readonly Step[], extra: Partial<AuditArcOptions> = {}): ArcDescriptor {
   return auditArc({
     steps, units: [{ id: 'u1' }], obligations: [{ id: 'I-1', testIds: ['t1'] }], trees: { '*': { outcomes: { t1: 'pass' } } }, mapping: [],
-    audit: { lenses: ['vision'] }, ...extra,
+    ...extra,
   }).d;
 }
 
@@ -40,7 +40,7 @@ let commands = 0;
 /** An `audit-requested` fact, as the `audit` command (B7) writes it. */
 export function requestAudit(r: ArcRun): CommandId {
   const command = commandId(`cmd-${(++commands).toString(16).padStart(16, 'c')}`);
-  r.journal.fact({ kind: 'audit-requested', command, lenses: null });
+  r.journal.fact({ kind: 'audit-requested', command });
   return command;
 }
 
@@ -97,7 +97,7 @@ export const witnessSplit = (unit: string, clause: string): JsonValue => ({
 export function admitOp(d: ArcDescriptor, id: string, lanes?: readonly Json[]): JsonValue {
   const spec = JSON.parse(readFileSync(join(d.planPath, '..', 'u1.json'), 'utf8')) as Json;
   return {
-    op: 'admit', unit: { id, risk: 'med', systems: [systemName('app')], after: [], origin: 'checkpoint' },
+    op: 'admit', unit: { id, risk: 'med', systems: [systemName('app')], after: [], origin: 'repair' },
     spec: admitSpecWire({ ...spec, unit: id, rev: 1, ...(lanes === undefined ? {} : { lanes }) }), targets: [],
     cites: ['V-1'], evidence: ['scripted evidence'],
   };

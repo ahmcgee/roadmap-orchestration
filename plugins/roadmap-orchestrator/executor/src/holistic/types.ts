@@ -1,4 +1,4 @@
-import { type SystemName, systemName } from '../core/ids.ts';
+import { type SystemName,systemName } from '../core/ids.ts';
 // The holistic layer's records (M3, frozen in step 0a; SCHEMAS.md "M3: the holistic layer"): the vision, the
 // obligations file, witness records, ruling sidecars, findings and divergences, and the frozen signatures the
 // later steps implement (impact selection, observations). Types, readers and pure helpers only: no I/O.
@@ -7,19 +7,17 @@ import { type SystemName, systemName } from '../core/ids.ts';
 // observations, the transition table in table.ts), B3 (findings), B5 (audits, coverage), B6 (checkpoint, bundles,
 // divergences).
 import {
-type EnvId,
-type FindingId,type InvocationId,type JobId,type LaneId,type LaneRev,
+type EnvId,type InvocationId,type JobId,type LaneId,type LaneRev,
 type MilestoneId,
 type ObligationId,
 
 type PlanRev,type QuestionId,type RoutingRev,type RuleId,
-type RulingId,type Sha,type Sha256Hex,type UnitId,type VisionClauseId,envId,findingId,
-idList,idsAscending,
+type RulingId,type Sha,type Sha256Hex,type UnitId,type VisionClauseId,envId,idList,idsAscending,
 invocationIdOf,jobIdOf,jobIdOfKind,laneId,laneRev,
 milestoneId,
 obligationId,
 
-planRev,questionId,routingRev,ruleId,rulingId,sha,sha256,unitId,visionClauseId,
+planRev,questionId,routingRev,ruleId,rulingId,sha,sha256,unitId,visionClauseId
 } from '../core/ids.ts';
 import { canonicalJson,sha256Hex } from '../core/json.ts';
 import {
@@ -37,7 +35,6 @@ import type { SchemaVersion } from '../core/version.ts';
 
 const vid: Read<VisionClauseId> = (v, p) => visionClauseId(v, p);
 const oid: Read<ObligationId> = (v, p) => obligationId(v, p);
-const fid: Read<FindingId> = (v, p) => findingId(v, p);
 const rid: Read<RulingId> = (v, p) => rulingId(v, p);
 const shaR: Read<Sha> = (v, p) => sha(v, p);
 const sha256R: Read<Sha256Hex> = (v, p) => sha256(v, p);
@@ -56,7 +53,6 @@ const ruleRefR: Read<RuleRef> = object((g) => ({ id: g.get('id', ruleR), textSha
 
 export const LENS_KINDS = LENS_KIND_NAMES;
 export type LensKind = LensKindName;
-export const lensKind: Read<LensKind> = oneOf(LENS_KINDS);
 
 // ---------------------------------------------------------------------------------------------------
 // The vision (OR-V, A14, H16): `holistic.vision` in plan.json names this file.
@@ -145,8 +141,6 @@ export const vision: Read<Vision> = object((f) => {
 export function parseVision(value: unknown): Vision {
   return vision(value, 'vision');
 }
-
-export const activeClauses = (v: Vision): readonly VisionClauseId[] => v.clauses.filter((c) => c.state === 'active').map((c) => c.id);
 
 /**
  * A vision confirmation reference (OR-V+, R18): `corpus` names a corpus file by its path under the corpus root and the
@@ -497,13 +491,7 @@ function normalisedLane(lane: LaneDef | ArcLaneDef): LaneDef | ArcLaneDef {
   return 'reporter' in def ? arcLaneDef(def, 'lane') : laneDef(def, 'lane');
 }
 
-/**
- * Whether a recorded lane rev is `lane`'s (F7): its normalised rev, or (TEMPORARY SCAFFOLDING, `minimalLaneRev` in
- * src/core/upgrade.ts) the rev of its minimal form, a default-valued field omitted (`evidenceExcludes: []`), as a
- * generator hashing raw input wrote it before 1.0.0-dev.7 (run 5), or (TEMPORARY SCAFFOLDING, `tierLaneRev`) the rev of its
- * dev.16 form, `tier` in place of `cadence` (a lane declaring none of the dev.17 fields). Every comparison of a recorded rev
- * with a lane goes here.
- */
+/** Whether a recorded lane revision equals the schema-2 definition's normalised revision. */
 export function laneRevMatches(recorded: LaneRev, lane: LaneDef | ArcLaneDef): boolean {
   return recorded === laneRevOf(lane);
 }
@@ -521,11 +509,6 @@ export const isMustHold = (o: ObligationDef, latched: ReadonlySet<ObligationId>)
 export type VisionCoverage = Readonly<{
   /** Active clauses the arc advances (`holistic.advances`) that no active obligation serves, an opportunity's excepted: a real gap. */
   unservedAdvanced: readonly VisionClauseId[];
-  /**
-   * An opportunity's clauses (OR-A1: they joined `advances`) that no active obligation serves (paid M4b runs 3 and 5). Not a
-   * gap the arc must close: serving one may need an arc lane, which is the owner's to add; status and the brief show it.
-   */
-  unservedOpportunity: readonly VisionClauseId[];
   /** Active clauses outside `holistic.advances`: the horizon beyond this arc, expected and never a gap. */
   horizon: readonly VisionClauseId[];
   /** Active obligations serving no clause. */
@@ -583,9 +566,6 @@ export const OBSERVATION_VERDICTS = ['held', 'not-held', 'partial', 'unwitnessed
 export type ObservationVerdict = (typeof OBSERVATION_VERDICTS)[number];
 /** What an observation is keyed by and reused on (all four, plus the records' hash). */
 export type ObservationKey = Readonly<{ treeSha: Sha; lane: LaneId; laneRev: LaneRev; envId: EnvId }>;
-export const observationKey: Read<ObservationKey> = object((f) => ({
-  treeSha: f.get('treeSha', shaR), lane: f.get('lane', (v, p) => laneId(v, p)), laneRev: f.get('laneRev', (v, p) => laneRev(v, p)), envId: f.get('envId', (v, p) => envId(v, p)),
-}));
 export const observationKeyText = (k: ObservationKey): string => `${k.treeSha}/${k.lane}/${k.laneRev}/${k.envId}`;
 
 /** B1's pure verdict over one obligation's witness tests in one record (frozen signature). */
@@ -610,50 +590,17 @@ export type ImpactInput = Readonly<{
 }>;
 /** The selected obligations, ascending, split closure applied (H14: a selected child selects its parent and back). */
 export type SelectObligations = (input: ImpactInput) => readonly ObligationId[];
-
-// ---------------------------------------------------------------------------------------------------
-// Ruling sidecars (§2.6; G21): `rule <record.json>` and a bundle's rulings. A1 validates them against the ledger.
-
-export const RULING_SCHEMA = 'roadmap/ruling-m3';
-export const RULING_KINDS = ['constraint', 'decision', 'deviation', 'disposition'] as const;
-export type RulingKind = (typeof RULING_KINDS)[number];
-export const DOC_RELATIONS = ['consistent', 'refines', 'deviates'] as const;
-export type DocRelation = (typeof DOC_RELATIONS)[number];
-/** A rule ref's relations (K19): a ruling never deviates from the corpus; a departure is a divergence plus an amendment. */
-export const RULE_RELATIONS = ['consistent', 'refines'] as const;
-export type RuleRelation = (typeof RULE_RELATIONS)[number];
-export type RulingDocRef = DocRef & Readonly<{ relation: DocRelation }>;
-/** M4a: a ruling's reference to a pinned corpus rule, resolved in the pin (C1). */
-export type RulingRuleRef = Readonly<{ rule: RuleId; textSha256: Sha256Hex; relation: RuleRelation }>;
-/** One entry of a sidecar's `docRefs` (on disk told apart by `rule`); read only through `rulingRefSource`. */
-export type RulingRef = RulingDocRef | RulingRuleRef;
-export type RulingRefSource =
-  | Readonly<{ kind: 'doc'; path: RepoPath; anchor: string; quotedText: string; relation: DocRelation }>
-  | Readonly<{ kind: 'rule'; rule: RuleId; textSha256: Sha256Hex; relation: RuleRelation }>;
-/** The only reader of a sidecar ref's arm (H10). */
-export function rulingRefSource(d: RulingRef): RulingRefSource {
-  return 'rule' in d
-    ? { kind: 'rule', rule: d.rule, textSha256: d.textSha256, relation: d.relation }
-    : { kind: 'doc', path: d.path, anchor: d.anchor, quotedText: d.quotedText, relation: d.relation };
-}
 /** An anchor-exact contract edit: the one match of `oldText` under `anchor` in `path` becomes `newText`. */
 export type ContractOp = Readonly<{ path: RepoPath; anchor: string; oldText: string; newText: string }>;
 /** Weakening dispositions (LR-c; "Obligations as a revisioned input"): `amended` covers a statement, docRef or activation change. */
 export const OBLIGATION_DISPOSITIONS = ['waived', 'deferred', 'retired', 'amended'] as const;
 export type ObligationDisposition = (typeof OBLIGATION_DISPOSITIONS)[number];
-export const RULING_LIFETIMES = ['arc', 'standing'] as const;
-export const RULING_STATUSES = ['active', 'superseded', 'withdrawn'] as const;
 
 const contractRevs = sortedBy(object((g) => ({ path: g.get('path', pathR), blob: g.get('blob', shaR) })), (e) => e.path);
 
 export const contractOp: Read<ContractOp> = object((f) => ({
   path: f.get('path', pathR), anchor: f.get('anchor', str), oldText: f.get('oldText', str), newText: f.get('newText', text),
 }));
-
-/** A doc ref `{path, anchor, quotedText, relation}`, or (M4a) a rule ref `{rule, textSha256, relation: consistent | refines}` (K19). */
-const rulingRef: Read<RulingRef> = (value, path) => typeof value === 'object' && value !== null && Object.hasOwn(value, 'rule')
-  ? object((g): RulingRef => ({ rule: g.get('rule', ruleR), textSha256: g.get('textSha256', sha256R), relation: g.get('relation', oneOf(RULE_RELATIONS)) }))(value, path)
-  : object((g): RulingRef => ({ ...docRefFields(g), relation: g.get('relation', oneOf(DOC_RELATIONS)) }))(value, path);
 
 
 
@@ -755,41 +702,15 @@ export const findingTo: Read<FindingTo> = tagged('state', {
 /** Why an audit runs (coalesced into one `audit-started`). */
 export type AuditTrigger =
   | Readonly<{type: 'milestone'; milestone: MilestoneId}>
-  /** Every N publications (D3, N = `holistic.audit.every`, default 5). */
-  | Readonly<{ type: 'cadence' }>
-  /** R8: a publication left a selected active future (not latched) obligation unwitnessed; never an exempt one. */
-  | Readonly<{ type: 'unwitnessed'; obligation: ObligationId }>
-  /**
-   * A revision from a rule, a bundle, `reverse`, or an architect spec, obligation or vision edit: `L ∩ {drift, vision}`.
-   */
-  | Readonly<{ type: 'drift'; planRev: number }>
-  | Readonly<{ type: 'wall-clock' }>
   | Readonly<{ type: 'requested'; command: string }>
   /** H9: at the final head, every lens in L with an outstanding range. */
   | Readonly<{ type: 'final' }>;
 
 export const auditTrigger: Read<AuditTrigger> = tagged('type', {
   milestone: object((f): AuditTrigger => ({type: f.get('type', literal('milestone')), milestone: f.get('milestone', (v, p) => milestoneId(v, p))})),
-  cadence: object((f): AuditTrigger => ({ type: f.get('type', literal('cadence')) })),
-  unwitnessed: object((f): AuditTrigger => ({ type: f.get('type', literal('unwitnessed')), obligation: f.get('obligation', oid) })),
-  drift: object((f): AuditTrigger => ({type: f.get('type', literal('drift')), planRev: f.get('planRev', positive)})),
-  'wall-clock': object((f): AuditTrigger => ({ type: f.get('type', literal('wall-clock')) })),
   requested: object((f): AuditTrigger => ({ type: f.get('type', literal('requested')), command: f.get('command', (v, p) => { const s = str(v, p); if (!/^cmd-[0-9a-f]{16}$/.test(s)) throw new SchemaError(p, 'a command id', v); return s; }) })),
   final: object((f): AuditTrigger => ({ type: f.get('type', literal('final')) })),
 });
-
-/**
- * The revision vector read for a revision proposal and compared by its staleness check (H3: the
- * vision sha always): the plan rev, each spec's rev, the obligations, ledger and vision bytes, the contract blobs.
- */
-export type RevisionVector = Readonly<{
-  plan: number;
-  specs: Readonly<Record<UnitId, number>>;
-  obligationsSha256: Sha256Hex | null;
-  ledgerSha256: Sha256Hex | null;
-  visionSha256: Sha256Hex;
-  contracts: readonly Readonly<{ path: RepoPath; blob: Sha }>[];
-}>;
 
 const specRevs: Read<Readonly<Record<UnitId, number>>> = (value, path) => {
   const f = new Fields(value, path);
@@ -798,22 +719,9 @@ const specRevs: Read<Readonly<Record<UnitId, number>>> = (value, path) => {
   f.end();
   return out;
 };
-export const revisionVector: Read<RevisionVector> = object((f) => ({
-  plan: f.get('plan', positive),
-  specs: f.get('specs', specRevs),
-  obligationsSha256: f.get('obligationsSha256', nullable(sha256R)),
-  ledgerSha256: f.get('ledgerSha256', nullable(sha256R)),
-  visionSha256: f.get('visionSha256', sha256R),
-  contracts: f.get('contracts', contractRevs),
-}));
 
 /** An open stage attempt a root edit must wait for. */
 export type BusyAttempt = Readonly<{ unit: UnitId; stage: Stage; attempt: number }>;
-
-// ---------------------------------------------------------------------------------------------------
-// A witness-check lane file (`<evidenceDir>/witness/<lane>.json`, M4a rev 3 D1, R56): what `roadmap witness-check` runs
-
-export const WITNESS_LANE_FILE_DIR = 'witness';
 /**
  * Published write-once before a build call, one per fast required lane: the lane's argv, cwd (relative to the worktree),
  * env, reporter, and the test ids the unit must make pass (ascending). Same bytes on a retry (the spec rev and the
@@ -885,15 +793,6 @@ export const divergenceDraftFields = (f: Fields): DivergenceDraft => ({
   compensation: f.get('compensation', compensation),
 });
 export const divergenceDraft: Read<DivergenceDraft> = object(divergenceDraftFields);
-
-// ---------------------------------------------------------------------------------------------------
-// Owner-only acts (A16, H10)
-
-/** The closed set a checkpoint may only `request`: never express as an op, and nested effects convert to it. */
-export const OWNER_ONLY_CLASSES = [
-  'destructive', 'cost', 'legal', 'vision', 'resource', 'config', 'gc', 'ref-deletion', 'lane-program', 'env-prerequisite', 'contract-path',
-] as const;
-export type OwnerOnlyClass = (typeof OWNER_ONLY_CLASSES)[number];
 
 // ---------------------------------------------------------------------------------------------------
 // Pack review (M4a, OR-Q16; C3 runs the job, `packReviewKey` is src/holistic/packreview.ts)

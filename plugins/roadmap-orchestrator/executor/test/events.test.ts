@@ -92,8 +92,8 @@ const OUTCOMES: { readonly [K in OpKind]: readonly OpOutcome[K][] } = {
   'worktree.remove': [{ kind: 'removed' }],
   'resource.transition': [{ kind: 'transitioned' }],
   'proc.spawn': [
-    { kind: 'result', resultSha256: H, summary: { type: 'backend', outcome: 'success' } },
-    { kind: 'result', resultSha256: H, summary: { type: 'command', verdict: 'fail' } },
+    { kind: 'result', pressure: null, resultSha256: H, summary: { type: 'backend', outcome: 'success' } },
+    { kind: 'result', pressure: null, resultSha256: H, summary: { type: 'command', verdict: 'fail' } },
     { kind: 'lost', treeEffects: true },
   ],
   'proc.kill': [{ kind: 'quiesced' }],
@@ -124,7 +124,7 @@ const FACTS: readonly Fact[] = [
   { kind: 'paused', command: commandId('cmd-0123456789abcdef'), target: { type: 'all' } },
   { kind: 'stop-requested', command: commandId('cmd-0123456789abcdef') },
   { kind: 'resumed', command: commandId('cmd-0123456789abcdef'), target: { type: 'backend', backend: 'codex' } },
-  { kind: 'executor-started', generation: 3 },
+  { kind: 'executor-started', pressure: 'unavailable', generation: 3 },
 ];
 
 function envelope(seq: number): Envelope {

@@ -61,10 +61,7 @@
 // same attempt, fresh on the kept worktree with the round's inputs and NO_SESSION_NOTE (`PreparedRound.fresh`,
 // `callRound`).
 //
-// No escalation (dev.17): a stalled build stays on its seat and runs out its chargeable bound, then parks. The D4 escalation
-// (a cold fix round on `build.high` after a stalled round, `implementer-escalated`) is retired: every build seat binds the
-// efficient class, whose builds consult an Opus advisor at their own decision points (backends/argv.ts). A dev.16 log's
-// `implementer-escalated` facts still fold (core/state.ts `buildTier`).
+// A stalled build keeps its seat until its chargeable bound, then parks. M4 diagnosis can reroute eligible builds.
 //
 // Deadlines (M3: the unit's pinned bounds, `limits`). A fix round's window is the measured lane series plus the
 // unit's edit allowance (`editAllowanceMin`), a fresh build's its `freshBuildMin`; the built-in values are
@@ -78,30 +75,30 @@
 // Codex resume collision (DESIGN-1.0.md §3 "Codex facts"): a `codex exec resume` that dies at once because
 // the thread is still held by a live session is a transient, not a verdict on the unit. `callImplementer`
 // retries such a call once, as a new invocation with the same deadline.
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync,readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { freshClaudeImplementerSession } from '../backends/argv.ts';
-import type { CiFact, IntentOf, TestRef } from '../core/events.ts';
+import type { CiFact,IntentOf,TestRef } from '../core/events.ts';
 import type { RequiredWitness } from '../holistic/required.ts';
-import { type ImplementerSessionId, type InvocationId, type SeatRev, type Sha, type Sha256Hex, type UnitId, invocationId, parseInvocationId } from '../core/ids.ts';
+import { type ImplementerSessionId,type InvocationId,type SeatRev,type Sha,type Sha256Hex,type UnitId,invocationId,parseInvocationId } from '../core/ids.ts';
 import { keptInput } from '../input/inforce.ts';
 import type { UnitState } from '../core/state.ts';
-import { isRed, type Bounds, type ImplementerSession, STDERR_FILE } from '../core/records.ts';
-import { type AbsPath, type IsoTime, type RefName, type RepoPath, branchRef, isoTimeOf } from '../core/values.ts';
-import { refTarget, revParse } from '../git/git.ts';
-import { type FixRound, ignoredText } from '../prompts/inputs.ts';
+import { isRed,type Bounds,type ImplementerSession,STDERR_FILE } from '../core/records.ts';
+import { type AbsPath,type IsoTime,type RefName,type RepoPath,branchRef,isoTimeOf } from '../core/values.ts';
+import { refTarget,revParse } from '../git/git.ts';
+import { type FixRound,ignoredText } from '../prompts/inputs.ts';
 import {
-  CONTINUE_DIRECTIVE, CONTINUE_FRESH_DIRECTIVE, NO_SESSION_NOTE, RESOLVE_DIRECTIVE, RESPEC_DIRECTIVE, RESPEC_FRESH_DIRECTIVE, STEER_DIRECTIVE, dirtyLanesDirective,
-  flakyLaneDirective, movedHeadDirective, repeatRedDirective, resolveUnmetDirective, resumeDirectives, smokeFixDirectives, stalledLaneDirective, witnessFixDirectives,
+CONTINUE_DIRECTIVE,CONTINUE_FRESH_DIRECTIVE,NO_SESSION_NOTE,RESOLVE_DIRECTIVE,RESPEC_DIRECTIVE,RESPEC_FRESH_DIRECTIVE,STEER_DIRECTIVE,dirtyLanesDirective,
+flakyLaneDirective,movedHeadDirective,repeatRedDirective,resolveUnmetDirective,resumeDirectives,smokeFixDirectives,stalledLaneDirective,witnessFixDirectives,
 } from '../prompts/directives.ts';
 import { runnerFiles } from '../runner/files.ts';
 import {
-  type BackendCallOutcome, type BackendCallSpec, type ImplementerDispatch, type StageContext, type StageParent, callBackend, implementerSeatRev, minutesMs, runOp, sameSession, seatTripleOf, sessionNeverPersisted, unitBranch,
-  unitWorktree,
+type BackendCallOutcome,type BackendCallSpec,type ImplementerDispatch,type StageContext,type StageParent,callBackend,implementerSeatRev,minutesMs,runOp,sameSession,seatTripleOf,sessionNeverPersisted,unitBranch,
+unitWorktree,
 } from './dispatch.ts';
 import { invocationDir } from './invoke.ts';
-import { LANE_STALL_MS, type LaneRecord, type VerificationTree, dirtyPaths, removeVerificationTree, seriesDurationMs } from './lanes.ts';
+import { LANE_STALL_MS,type LaneRecord,type VerificationTree,dirtyPaths,removeVerificationTree,seriesDurationMs } from './lanes.ts';
 import type { BuildRound } from './transitions.ts';
 import { worktreeCreateOp } from '../recover/ops.ts';
 

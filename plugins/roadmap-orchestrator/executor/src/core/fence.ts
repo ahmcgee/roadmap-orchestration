@@ -62,11 +62,6 @@ export async function holdFence(journal: Journal): Promise<FenceHold> {
   };
 }
 
-/** Whether a revision holds the fence now (in process, or durably). */
-export function fenceHeld(journal: Journal): boolean {
-  return lockOf(journal).held || journal.view.openIntents().some((i) => i.kind === 'revision.commit');
-}
-
 /**
  * Takes the fence briefly (H2): waits for any revision to commit, runs `capture` synchronously (it reads the
  * inputs in force and writes its capture fact, awaiting nothing), and releases it.

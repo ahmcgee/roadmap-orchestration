@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
-import { appendFileSync, copyFileSync, existsSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync,copyFileSync,existsSync,readFileSync,readdirSync,renameSync,rmSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { arcId, findingId, jobId, milestoneId, sha, sha256, unitId } from '../src/core/ids.ts';
+import { arcId,findingId,jobId,milestoneId,sha,sha256,unitId } from '../src/core/ids.ts';
 import { sha256Hex } from '../src/core/json.ts';
-import { LogCorruptError, ObserverJournal, fragmentName, openJournal, readJournal } from '../src/core/log.ts';
+import { LogCorruptError,ObserverJournal,fragmentName,openJournal,readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
-import { type FindingDraft, openFinding, ruleFinding } from '../src/holistic/findings.ts';
+import { type FindingDraft,openFinding,ruleFinding } from '../src/holistic/findings.ts';
 import { settleWalks } from '../src/walk/walk.ts';
 import { walkArc } from './fixtures/walk-common.ts';
 import { contextFor } from './fixtures/unit-common.ts';
@@ -47,7 +47,7 @@ test('cursor transfer equals a cold open after append, tail, saved fragment, rep
     const cursor = new ObserverJournal(dir, arc);
     const before = cursor.read().view;
     if (change === 'append') {
-      const next = openJournal(dir, arc); next.fact({ kind: 'executor-started', generation: 3 }); next.close();
+      const next = openJournal(dir, arc); next.fact({ kind: 'executor-started', pressure: 'unavailable', generation: 3 }); next.close();
     } else if (change === 'tail') appendFileSync(path, '{"torn');
     else if (change === 'fragment') {
       const fragment = Buffer.from('{"torn');

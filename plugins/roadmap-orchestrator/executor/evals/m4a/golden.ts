@@ -460,7 +460,7 @@ export const DIRECTION = 'Grow tidewater toward the harbour the vision describes
  */
 export const OPPORTUNITY = {
   fits: {
-    unit: { id: 'fits', risk: 'low', systems: systemsForPaths(['src/registers.js', 'test/unit/registers.test.js', 'journeys/berths.journey.js']), after: ['notice'], origin: 'checkpoint' },
+    unit: { id: 'fits', risk: 'low', systems: systemsForPaths(['src/registers.js', 'test/unit/registers.test.js', 'journeys/berths.journey.js']), after: ['notice'], origin: 'repair' },
     unitLane: { id: 'registers-unit', file: 'test/unit/registers.test.js' },
     acceptance: [
       'src/registers.js `berthsFor(draught)` lists the berths whose maximum draught takes a vessel of that draught, shallowest first; a draught that is not a positive number is refused.',
@@ -471,7 +471,7 @@ export const OPPORTUNITY = {
     why: 'A visiting yacht finds the berths its draught allows (V-7): one function over the berth register, in reach while cancellations are built.',
   },
   dayview: {
-    unit: { id: 'dayview', risk: 'low', systems: systemsForPaths(['src/cli.js', 'src/dayview.js', 'test/unit/dayview.test.js']), after: [], origin: 'checkpoint' },
+    unit: { id: 'dayview', risk: 'low', systems: systemsForPaths(['src/cli.js', 'src/dayview.js', 'test/unit/dayview.test.js']), after: [], origin: 'repair' },
     unitLane: { id: 'dayview-unit', file: 'test/unit/dayview.test.js' },
     acceptance: ['`tidewater day <date>` prints the day\'s windows with each berth\'s booking.'],
     targets: [],

@@ -28,7 +28,7 @@ import {
 type IntentOf,type Parent,type PlanAppliedFact,type PlanChange,REVISION_FENCE_KEY,type RevisionPayload,parseRevisionPayload,
 } from '../core/events.ts';
 import { durableMkdir,durableWrite } from '../core/fsx.ts';
-import { type OpId,type PlanRev,type RulingId,type Sha256Hex,type UnitId,opKey,planRev } from '../core/ids.ts';
+import { type OpId,type PlanRev,type Sha256Hex,type UnitId,opKey,planRev } from '../core/ids.ts';
 import type { Journal,JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import type { PlanManifest,RevisionManifest,SpecM1 } from '../core/records.ts';
@@ -128,9 +128,6 @@ export type InputFiles = Readonly<{
 
 export const specFilePath = (planFile: AbsPath, unit: PlanUnit): AbsPath => absPath(join(dirname(planFile), unit.spec));
 export const ledgerPath = (planFile: AbsPath, plan: PlanM1): AbsPath => absPath(join(dirname(planFile), plan.rulings));
-/** Where the ruling sidecars of a ledger live: `<ledger>.d/`, one `C-<n>.json` each. */
-export const sidecarDir = (ledger: AbsPath): AbsPath => absPath(`${ledger}.d`);
-export const sidecarPath = (ledger: AbsPath, id: RulingId): AbsPath => absPath(join(sidecarDir(ledger), `${id}.json`));
 const SIDECAR_NAME = /^(C-[0-9]+)\.json$/;
 
 const inputFile = (path: AbsPath): InputFile => ({ path, bytes: existsSync(path) ? readFileSync(path) : null });
@@ -334,12 +331,6 @@ export function payloadAtRev(view: JournalView, runDir: AbsPath, rev: number): R
   const commit = view.opsOf('revision.commit').find((c) => c.expect.rev === rev && view.doneOf(c.op) !== null);
   if (commit === undefined) throw new Error(`plan rev ${rev} has no applied revision.commit`);
   return keptPayload(runDir, commit.expect.payloadSha256);
-}
-
-/** dev.17: the obligations in force at plan rev `rev` (its kept payload's), or null for a revision without them. */
-export function obligationsAtRev(view: JournalView, runDir: AbsPath, rev: number): Obligations | null {
-  const sha = payloadAtRev(view, runDir, rev).manifest.obligations;
-  return sha === null ? null : parseObligations(JSON.parse(kept(runDir, sha, OBLIGATIONS_INPUT).toString('utf8')));
 }
 
 /** The open `revision.commit` (A19: at most one, its key), or null: the revision fence's durable half. */

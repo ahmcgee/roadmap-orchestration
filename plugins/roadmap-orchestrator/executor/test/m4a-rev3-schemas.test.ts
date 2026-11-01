@@ -10,7 +10,7 @@ import { schemaViolation } from '../src/backends/adapter.ts';
 import { DETAILED_OUTCOMES,type Envelope,type Event,type Fact,type LogRecord,STAGE_OUTCOME_KINDS,parseEventLine,prevHash,serializeEvent } from '../src/core/events.ts';
 import {
 InvalidIdError,arcId,commandId,jobId,knownDefectId,
-opId,opKey,opportunityId,sha,sha256,unitId,witnessItemId
+opId,opKey,sha,sha256,unitId,witnessItemId
 } from '../src/core/ids.ts';
 import { canonicalJson,canonicalJson as cj,sha256Hex } from '../src/core/json.ts';
 import { DEFAULT_BOUNDS,boundsOfRecord,dispatchRecord,laneDef,laneDefOf,redFile,specM1,specPatchOp } from '../src/core/records.ts';
@@ -60,9 +60,8 @@ const obligationsWith = (lane: object) => ({ schema: 'roadmap/obligations-m3', c
 describe('m4a-rev3 ids', () => {
   it('known defects K-n, opportunities O-n, witness items W-n; the canonical form only', () => {
     assert.equal(knownDefectId('K-3'), 'K-3');
-    assert.equal(opportunityId('O-1'), 'O-1');
     assert.equal(witnessItemId('W-12'), 'W-12');
-    for (const [read, bad] of [[knownDefectId, 'K-0'], [opportunityId, 'O-01'], [witnessItemId, 'W-'], [witnessItemId, 'A-1']] as const) {
+    for (const [read, bad] of [[knownDefectId, 'K-0'], [witnessItemId, 'W-'], [witnessItemId, 'A-1']] as const) {
       assert.throws(() => (read as (v: unknown) => unknown)(bad), InvalidIdError, String(bad));
     }
   });
@@ -277,7 +276,7 @@ describe('types.lane-rev-normalised', () => {
 describe('state.open-attempt-live-vs-abandoned', () => {
   it('an attempt started after the latest executor start is live; one an executor restart found open is abandoned; closed is none', () => {
     const records: LogRecord[] = [
-      { type: 'fact', fact: { kind: 'executor-started', generation: 1 } },
+      { type: 'fact', fact: { kind: 'executor-started', pressure: 'unavailable', generation: 1 } },
       spawnIntent(2, { stage: 'build', attempt: 1 }),
     ];
     const foldOf = (rs: readonly LogRecord[]): Fold => {
@@ -286,7 +285,7 @@ describe('state.open-attempt-live-vs-abandoned', () => {
       return f;
     };
     assert.deepEqual(openAttempt(foldOf(records), U1), { stage: 'build', attempt: 1, live: true });
-    const restarted = [...records, { type: 'fact', fact: { kind: 'executor-started', generation: 2 } } as LogRecord];
+    const restarted = [...records, { type: 'fact', fact: { kind: 'executor-started', pressure: 'unavailable', generation: 2 } } as LogRecord];
     assert.deepEqual(openAttempt(foldOf(restarted), U1), { stage: 'build', attempt: 1, live: false });
     const closed = [...restarted, spawnResult(opId(LOG_ARC, 2)),
       { type: 'fact', fact: { kind: 'stage-outcome', unit: U1, stage: 'build', attempt: 1, outcome: 'success', class: 'advance', chargeable: false } } as LogRecord];
@@ -403,7 +402,7 @@ describe('experience verdict: proposed unit specs use the strict full-spec wire 
 });
 
 it('schema 2 refuses the retired specs-only drift payload', () => {
-  refuses(fact({kind: 'audit-started', job: 'audit-2', generation: 1, lenses: ['invariants'], integrationSha: A, planRev: 3, ledgerSha256: null, obligationsSha256: null, visionSha256: H, owners: [], priorFindings: [], highWater: 9, triggers: [{type: 'drift', planRev: 3, specsOnly: ['u1']}]}), /specsOnly$/);
+  refuses(fact({diffBudget: 24000, kind: 'audit-started', job: 'audit-2', generation: 1, lenses: ['invariants'], integrationSha: A, planRev: 3, ledgerSha256: null, obligationsSha256: null, visionSha256: H, owners: [], priorFindings: [], highWater: 9, triggers: [{type: 'drift', planRev: 3, specsOnly: ['u1']}]}), /triggers\[0\]\.type$/);
 });
 
 it('schema 2 refuses checkpoint overrun debt and admit sources', () => {

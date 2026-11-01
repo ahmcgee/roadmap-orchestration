@@ -279,27 +279,26 @@ describe('routing: the arc seats (M3)', () => {
       assert.equal(r.arcScope, 'none');
       assert.deepEqual(seatsInForce(r).map((s) => s.role).filter((role) => role === 'campaignAudit' || role === 'packReview'), []);
       assert.deepEqual(unsupportedSeats(r, null), [], p);
-      // dev.17: the unit roles include the docs-only verifier.
+      // Unit roles are build and verifier.
       const m2Table = {build: r.table.build, verifier: r.table.verifier};
       assert.equal(r.rev, createHash('sha256').update(canonicalJson(m2Table)).digest('hex').slice(0, 16), `${p}: the M2 rev`);
       // An arc seat rebound in a plan layer changes nothing while the arc is not holistic.
       assert.equal(resolveRouting(arcStack(p, null, layer({campaignAudit: {arc: 'efficient'}}))).rev, r.rev);
     }
-    // The built-in arc seats: the lenses on efficient (Sonnet high), the checkpoint on summit (Opus high).
+    // The built-in campaign audit sits on summit (Opus high).
     const base = resolveRouting(arcStack('default', null, null));
     assert.deepEqual([base.classes.campaignAudit.arc], ['summit']);
     assert.deepEqual([base.table.campaignAudit.arc], [OPUS_HIGH]);
-    // A plan naming a vision puts the M3 arc seats in force: every seat but the pack review's (LR-0a-1), in the dev.7
-    // role set the flow seat's, and without milestones the two walk seats' (dev.13) is checked (the built-in arc seats have
-    // prompt modules since B4), and the rev hashes them too.
+    // A vision puts campaign audit in force. Without milestones or corpus scope, experience verdict and pack review stay out.
     const plan = { target: 'architecture-doc', holistic: { vision: planPath('vision.json'), advances: [visionClauseId('V-1')] } } as const;
     const h = resolveRouting(planStack('default', null, plan, null));
     assert.equal(h.arcScope, 'architecture-doc');
-    // Not in force: the pack review's, the flow's, the two walk seats and (no dev17 role set) the three scaffold seats.
-    assert.equal(seatsInForce(h).length, SEAT_REFS.length - 3);
+    // Only the experience and pack-review seats are out of force.
+    assert.equal(seatsInForce(h).length, SEAT_REFS.length - 2);
+    assert.deepEqual(seatsInForce(h).filter((s) => s.tier === 'arc'), [{role: 'campaignAudit', tier: 'arc'}]);
     assert.notEqual(h.rev, base.rev);
     assert.deepEqual(unsupportedSeats(h, null), []);
-    // Every Claude model has a module for every arc role (Sonnet since 2026-10-15): a plan may seat the checkpoint on efficient.
+    // Every Claude model has a module for every arc role (Sonnet since 2026-10-15): a plan may seat campaign audit on efficient.
     const sonnet = resolveRouting(planStack('claude-only', null, { ...plan, routing: layer({campaignAudit: { arc: 'efficient' } }) }, null));
     assert.deepEqual(sonnet.table.campaignAudit.arc, SONNET_HIGH);
     assert.deepEqual(unsupportedSeats(sonnet, null), []);

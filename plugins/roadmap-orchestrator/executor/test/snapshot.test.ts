@@ -228,7 +228,7 @@ async function holisticRun(witnessFor: 'job' | 'candidate' = 'job'): Promise<Hol
       routingRev: resolveRouting(provenanceStack(provenance, 'none', null, false)).rev, implementerSeatRev: seatRev('fedcba9876543210'), at: isoTimeOf(new Date()), transientRules: 'm3',
     },
   });
-  journal.fact({ kind: 'executor-started', generation: 1 });
+  journal.fact({ kind: 'executor-started', pressure: 'unavailable', generation: 1 });
   const job = jobId('docs', 1);
   const spawn = journal.begin({
     kind: 'proc.spawn', key: opKey(`lane:${job}`), parent: { type: 'arc' }, deadlineAt: null,
@@ -311,13 +311,13 @@ describe('incremental snapshots', () => {
     assert.ok(!treePaths(r.repo, first.post.new).some((p) => p.endsWith('/result.json')), 'an open spawn names no result');
 
     const next = openArc(r.runDir);
-    next.done(spawn.op, 'proc.spawn', { kind: 'result', resultSha256: sha256(sha256Hex(result)), summary: { type: 'backend', outcome: 'success' } }, null);
+    next.done(spawn.op, 'proc.spawn', { kind: 'result', pressure: null, resultSha256: sha256(sha256Hex(result)), summary: { type: 'backend', outcome: 'success' } }, null);
     const spec = keepInput(r.runDir, Buffer.from('{"new":"spec"}\n'), SPEC_INPUT);
     next.fact({ kind: 'judgment-inputs', unit: UNIT, stage: 'pre-build', attempt: 1, tip: sha('b'.repeat(40)), head: null, specRev: specRev(2), specSha256: spec, planRev: planRev(1), routingRev: routingRev('0123456789abcdef') });
     const startPath = join(r.runDir, 'start.json');
     const start = JSON.parse(readFileSync(startPath, 'utf8'));
     writeFileSync(startPath, JSON.stringify({ ...start, generation: 2 }) + '\n');
-    next.fact({ kind: 'executor-started', generation: 2 });
+    next.fact({ kind: 'executor-started', pressure: 'unavailable', generation: 2 });
     next.close();
     const nuPath = needsUserPath(r.runDir, r.needsUser as NeedsUserId);
     const nu = JSON.parse(readFileSync(nuPath, 'utf8'));

@@ -1,8 +1,7 @@
 // Branded identifiers. Each id has one constructor that checks its textual form and throws
 // InvalidIdError otherwise, so an unchecked string can never reach a place that wants an id. The forms
 // are recorded in SCHEMAS.md ("Ids").
-import type { Stage } from './records.ts';
-import { type Brand, type Read, SchemaError, answerSet, sortedBy } from './validate.ts';
+import { type Brand,type Read,SchemaError,answerSet,sortedBy } from './validate.ts';
 
 export class InvalidIdError extends SchemaError {
   readonly idKind: string;
@@ -254,14 +253,12 @@ export type FindingId = Brand<string, 'FindingId'>;
 const F = numbered('FindingId', 'F');
 export const findingId: IdReader<FindingId> = F.read;
 export const findingIdOf = F.of;
-export const findingSeq = F.n;
 
 /** A divergence: `D-<n>`, numbered in the order the arc's `divergence` facts record them. */
 export type DivergenceId = Brand<string, 'DivergenceId'>;
 const D = numbered('DivergenceId', 'D');
 export const divergenceId: IdReader<DivergenceId> = D.read;
 export const divergenceIdOf = D.of;
-export const divergenceSeq = D.n;
 
 /**
  * A durable job the arc runs outside any unit: an audit, a checkpoint, a docs publication, a repair batch, the
@@ -300,7 +297,6 @@ export function jobIdOfKind(kind: JobKind): IdReader<JobId> {
 export type RuleId = Brand<string, 'RuleId'>;
 const T = numbered('RuleId', 'T');
 export const ruleId: IdReader<RuleId> = T.read;
-export const ruleIdOf = T.of;
 export const ruleSeq = T.n;
 
 /** A debt item: `B-<n>`, global and stable across arcs (`debt.md`'s block holds the high-water). */
@@ -317,7 +313,6 @@ export const debtSeq = B.n;
 export type PhaseQuestionId = Brand<string, 'PhaseQuestionId'>;
 const P = numbered('PhaseQuestionId', 'P');
 export const phaseQuestionId: IdReader<PhaseQuestionId> = P.read;
-export const phaseQuestionIdOf = P.of;
 export const phaseQuestionSeq = P.n;
 
 // ---------------------------------------------------------------------------------------------------
@@ -329,13 +324,6 @@ const K = numbered('KnownDefectId', 'K');
 export const knownDefectId: IdReader<KnownDefectId> = K.read;
 export const knownDefectIdOf = K.of;
 
-/** A checkpoint opportunity: `O-<n>`, arc-scoped, numbered in the order the arc's admits record them (OR-A1). */
-export type OpportunityId = Brand<string, 'OpportunityId'>;
-const O = numbered('OpportunityId', 'O');
-export const opportunityId: IdReader<OpportunityId> = O.read;
-export const opportunityIdOf = O.of;
-export const opportunitySeq = O.n;
-
 /**
  * A spec's witness item: `W-<n>`, a spec item id like an acceptance clause's (unique among the spec's items, never
  * reused); the next one is the next free `W-n` of the spec (R59).
@@ -344,7 +332,6 @@ export type WitnessItemId = Brand<string, 'WitnessItemId'>;
 const W = numbered('WitnessItemId', 'W');
 export const witnessItemId: IdReader<WitnessItemId> = W.read;
 export const witnessItemIdOf = W.of;
-export const witnessItemSeq = W.n;
 
 // ---------------------------------------------------------------------------------------------------
 // dev.13 ids (SCHEMAS.md "dev.13: milestone walkthroughs and design units").
@@ -366,7 +353,6 @@ export type PolishId = Brand<string, 'PolishId'>;
 const X = numbered('PolishId', 'X');
 export const polishId: IdReader<PolishId> = X.read;
 export const polishIdOf = X.of;
-export const polishSeq = X.n;
 
 /**
  * A bring-up's long-lived process (`bringUp.serve[].name`): a slug, unique in its bring-up. `{port:<name>}` names the
@@ -384,7 +370,7 @@ export const serveName: IdReader<ServeName> = textual('ServeName', new RegExp(`^
 
 export type NumberedId =
   | VisionClauseId | QuestionId | ObligationId | FindingId | DivergenceId | RuleId | DebtId | PhaseQuestionId | RulingId | KnownDefectId
-  | OpportunityId | WitnessItemId | MilestoneId | JourneyId | PolishId;
+  | WitnessItemId | MilestoneId | JourneyId | PolishId;
 
 const NUMBERED_ID = /^([A-Z]{1,2})-([0-9]+)$/;
 
@@ -466,11 +452,9 @@ export function hostNeedsUserId(slug: string): NeedsUserId {
 export type FailureModeId = Brand<string, 'FailureModeId'>;
 const FM = numbered('FailureModeId', 'FM');
 export const failureModeId: IdReader<FailureModeId> = FM.read;
-export const failureModeIdOf = FM.of;
 
 /** A gate finding in the arc's findings ledger: `R-<n>`, numbered arc-wide in ledger order, never reused. */
 export type ReviewFindingId = Brand<string, 'ReviewFindingId'>;
 const R = numbered('ReviewFindingId', 'R');
 export const reviewFindingId: IdReader<ReviewFindingId> = R.read;
 export const reviewFindingIdOf = R.of;
-export const reviewFindingSeq = R.n;

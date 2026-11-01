@@ -1,10 +1,10 @@
 // The unit graph with re-entry substituted (src/schedule/graph.ts, F15) and the frozen rank order
 // (src/schedule/types.ts, F17).
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
-import { type UnitId, findingId, unitId } from '../src/core/ids.ts';
-import { type GraphUnit, effectiveGraph, findCycle, holdCycle, lineageHead } from '../src/schedule/graph.ts';
-import { type Rank, compareRank } from '../src/schedule/types.ts';
+import { describe,it } from 'node:test';
+import { type UnitId,findingId,unitId } from '../src/core/ids.ts';
+import { type GraphUnit,effectiveGraph,findCycle,holdCycle,lineageHead } from '../src/schedule/graph.ts';
+import { type Rank,compareRank } from '../src/schedule/types.ts';
 
 const g = (id: string, after: readonly string[] = [], reenters?: string): GraphUnit => ({
   id: unitId(id), after: after.map((a) => unitId(a)), ...(reenters === undefined ? {} : { reenters: { unit: unitId(reenters) } }),
@@ -48,17 +48,17 @@ describe('hold cycles (arc feedback 2026-10-15)', () => {
 describe('rank', () => {
   const r = (unit: string, extra: Partial<Rank>): Rank => ({ unit: unitId(unit), priority: 'normal', origin: 'planned', waitStartSeq: 10, bypassMerges: 0, promoted: false, planIndex: 0, ...extra });
 
-  it('promoted units first, by age alone; then checkpoint before planned, then age, then plan index', () => {
+  it('promoted units first, by age alone; then polish before planned, then age, then plan index', () => {
     const ranks = [
       r('planned-old', { waitStartSeq: 1, planIndex: 3 }),
-      r('checkpoint-young', { origin: 'checkpoint', waitStartSeq: 50, planIndex: 4 }),
-      r('promoted-young-checkpoint', { origin: 'checkpoint', promoted: true, bypassMerges: 3, waitStartSeq: 40, planIndex: 5 }),
+      r('polish-young', { origin: 'polish', waitStartSeq: 50, planIndex: 4 }),
+      r('promoted-young-polish', { origin: 'polish', promoted: true, bypassMerges: 3, waitStartSeq: 40, planIndex: 5 }),
       r('promoted-old-planned', { promoted: true, bypassMerges: 4, waitStartSeq: 20, planIndex: 6 }),
       r('planned-tie-b', { waitStartSeq: 30, planIndex: 2 }),
       r('planned-tie-a', { waitStartSeq: 30, planIndex: 1 }),
     ];
     assert.deepEqual([...ranks].sort(compareRank).map((x) => x.unit), [
-      'promoted-old-planned', 'promoted-young-checkpoint', 'checkpoint-young', 'planned-old', 'planned-tie-a', 'planned-tie-b',
+      'promoted-old-planned', 'promoted-young-polish', 'polish-young', 'planned-old', 'planned-tie-a', 'planned-tie-b',
     ]);
   });
 });

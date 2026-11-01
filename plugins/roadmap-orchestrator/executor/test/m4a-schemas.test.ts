@@ -24,7 +24,7 @@ import { parseDebtLedger } from '../src/debt/types.ts';
 import { packReviewKey } from '../src/holistic/packreview.ts';
 import { obligationSource,parseConfirmationRef,parseObligations,parsePackReviewInputs } from '../src/holistic/types.ts';
 import { CliError,parseCommand } from '../src/input/cli.ts';
-import { contractOpDocuments,parsePlan,targetDocumentPaths,targetDocuments,visionFile } from '../src/input/plan.ts';
+import { parsePlan,targetDocumentPaths,targetDocuments,visionFile } from '../src/input/plan.ts';
 import { m3Blocking } from '../src/needsuser.ts';
 import { parseAckMarker,parseBriefPayload,parsePhase0Record } from '../src/phase0/types.ts';
 import { exitCodeFor,rejectionFile } from '../src/preflight/startup.ts';
@@ -144,7 +144,6 @@ describe('plan.target-union', () => {
     assert.equal(doc.target, 'architecture-doc');
     assert.deepEqual(targetDocuments(doc), { doc: 'docs/arch.md', digest: 'docs/digest.md' });
     assert.deepEqual(targetDocumentPaths(doc), ['docs/arch.md', 'docs/digest.md']);
-    assert.deepEqual(contractOpDocuments(doc), ['docs/api.md', 'docs/arch.md']);
     assert.deepEqual(visionFile(doc), { base: 'plan', path: 'vision.json' });
     assert.equal(visionFile(parsePlan(docPlan)), null);
 
@@ -152,7 +151,6 @@ describe('plan.target-union', () => {
     assert.deepEqual(corpus, { ...corpusPlan, target: 'corpus', units: [{ ...unit, after: [], contingent: [] }] });
     assert.equal(targetDocuments(corpus), null);
     assert.deepEqual(targetDocumentPaths(corpus), []);
-    assert.deepEqual(contractOpDocuments(corpus), ['docs/api.md']);
     assert.deepEqual(visionFile(corpus), { base: 'repo', path: '.roadmap/vision.json' });
     assert.deepEqual(corpus.chain, { previousArc: 'arc-1', previousHead: B });
   });
@@ -377,7 +375,7 @@ describe('startup rows, brief and ack', () => {
     const payload = {
       schema: 'roadmap/brief-m4', coverage, items, chain: { position: 2, k: 1, unackedStarts: ['arc-2'], nextStart: { allowed: false, reason: 'limit', k: 1, unacked: 2 } },
       arcs: [{
-        arc: 'arc-2', slice: { advances: ['V-1', 'V-2'], why: 'first slice' }, divergences: [{ id: 'D-1', type: 'target-departed', what: 'w' }], digests: [{ needsUser: 'nu-12', ids: ['D-1'] }], decisions: ['d'],
+        arc: 'arc-2', slice: { advances: ['V-1', 'V-2'], why: 'first slice' }, divergences: [{ id: 'D-1', type: 'target-departed', what: 'w' }], decisions: ['d'],
         curation: phase0.curation, corpusDivergences: phase0.corpusDivergences,
         debt: { banked: [{ id: 'B-3', what: 'tidy x' }], dispositioned: [{ id: 'B-2', disposition: { type: 'keep', reason: 'later' } }] },
         questions: [{ id: 'P-4', rank: 1, text: 't', assumption: 'a', state: { type: 'open' } }],
@@ -385,10 +383,6 @@ describe('startup rows, brief and ack', () => {
         census: { held: 3, obligationRules: 4, outOfSlice: 2, untestable: 1, prodOnly: 1 },
         timings: [{ stage: 'build', count: 3, p50Ms: 60_000, maxMs: 90_000 }],
         pr: { type: 'pr', number: 7, url: 'https://example.invalid/pull/7', state: 'open', base: 'arc-1', needsRebase: false },
-        flow: {
-          constraint: 'slot:integration (suite:unit)', accounting: 'T 1 units/h; I 2; OE $3/h', verdicts: ['flow-1.0: improved'], rulerChanges: [], hostAdvice: [],
-          dropped: ['flow-2.0 (arc-1): capacity.cpu to 6'],
-        },
         demo: null,
       }],
     };

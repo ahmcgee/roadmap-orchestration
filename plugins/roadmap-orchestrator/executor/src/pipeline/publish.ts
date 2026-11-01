@@ -84,7 +84,7 @@ import { standing } from '../git/worktree.ts';
 import { selectObligations } from '../holistic/impact.ts';
 import { verdictOf } from '../holistic/observe.ts';
 import { brakesOn,obligationEffects } from '../holistic/table.ts';
-import { type ArcLaneDef, type Obligations, isExempt, parseObligations } from '../holistic/types.ts';
+import { type ArcLaneDef,type Obligations,isExempt,parseObligations } from '../holistic/types.ts';
 import {
 OBLIGATIONS_INPUT,
 RENDER_INPUT,
@@ -181,24 +181,7 @@ function textAt(repo: AbsPath, commit: Sha, path: RepoPath): string | null {
   return r.code === 0 ? r.stdout : null;
 }
 
-/** A path's blob at `commit`, or null when absent. */
-function blobAt(repo: AbsPath, commit: Sha, path: RepoPath): Sha | null {
-  const r = gitRun(repo, ['rev-parse', '--verify', '-q', `${commit}:${path}`], { okCodes: [0, 1, 128] });
-  return r.code === 0 ? (r.stdout.trim() as Sha) : null;
-}
-
 type Reader = Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath; planFile: AbsPath; repo: AbsPath }>;
-
-/**
- * What `validateRuling` reads (A1) at the integration tip `tip`: the ledger, obligations and vision in force, the
- * tip's documents and blobs, the plan's contracts and architecture doc. Not the units: a ruling may apply to a unit
- * its own revision adds, so each caller names the units of the plan the ruling lands with (paid M4b run 3, OP-2: the
- * in-force plan's units refused a ruling for a unit the same apply or bundle added, at the docs publication though its
- * dry run accepted it). The `rule` command validates a sidecar against it, and a docs publication again under the slot.
- */
-export function rulingContextAt(ctx: Reader, tip: Sha): {blobAt: (path: RepoPath) => Sha | null} {
-  return {blobAt: (path) => blobAt(ctx.repo, tip, path)};
-}
 
 const keptOr = (runDir: AbsPath, sha: Sha256Hex, ext: string): Buffer => {
   const bytes = keptInput(runDir, sha, ext);
@@ -260,7 +243,6 @@ function docsFiles(ctx: Reader, payload: RevisionPayload, tip: Sha): Files {
   const renders: DocsFile[] = [
     ...publication.renders.map((r) => ({ path: r.path, bytes: keptOr(ctx.runDir, r.sha256, RENDER_INPUT) })), ...(debt === null ? [] : [debt]),
   ];
-  const reasons: string[] = [];
   const applied = applyContractOps(publication.contractOps, `revision-${payload.rev}`, (path) => textAt(ctx.repo, tip, path));
   if ('reasons' in applied) return {kind: 'refused', reasons: applied.reasons};
   const edited = new Map(applied.edits.map((e) => [e.path, e.text]));

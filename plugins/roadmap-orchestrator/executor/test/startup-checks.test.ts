@@ -176,7 +176,7 @@ describe('startup.rejections', () => {
         if (corrupt) appendFileSync(join(ctx.runDir, 'events.jsonl'), 'bad complete line\n');
         else {
           const journal = openJournal(ctx.runDir, ctx.plan.arc);
-          appendedSeq = journal.fact({ kind: 'executor-started', generation: 2 });
+          appendedSeq = journal.fact({ kind: 'executor-started', pressure: 'unavailable', generation: 2 });
           journal.close();
         }
         return claimed;

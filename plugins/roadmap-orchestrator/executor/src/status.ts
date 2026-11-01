@@ -61,17 +61,11 @@ import { type Certification,type WorkRun,certification,workRuns } from './status
 //                 `dischargingObservation`): on the head's tree, the lane at its current rev, in the environment the
 //                 executor recorded for it (`recordedLaneEnv`), so status never shows true what completion counts unmet
 //   waived/deferred  exempt obligations with the ruling that exempted each
-//   vision        the vision in force (clauses, questions), the plan's slice of it (`advances`) and its coverage
-//                 (A1 `visionCoverage`: advanced clauses unserved, an opportunity's unserved clauses apart, the horizon,
-//                 obligations serving none, withdrawn clauses still cited; citers: the sidecars in force and the divergences)
-//   divergences   every divergence no acknowledged digest covers (H11), with what differed, the clauses cited,
-//                 evidence, its bundle and its compensation hint (H13)
-//   decisionsSince  what was decided since the architect last acknowledged a divergence digest (the whole arc
-//                 before one): rulings, bundles, patches, re-entries, cuts, steers, divergences, reversals and the audits
-//   convergence   K, the applied bundles counted against it since the counter last cleared, the open brake items
-//   findings      the active findings, `findingMetrics` (B3), and releases by root ruling or close-out
+//   vision        clauses, questions, slice and obligation coverage
+//   divergences   recorded departures and their compensation
+//   decisionsSince  recorded revisions, steers and divergences
 //   audit         per lens in L: its watermark and the docs edges pending a gap (B5 `coverageOf`), the uncovered
-//                 range, the generation, and the minutes of lanes run under checkpoint jobs
+//                 range and the completed audit generation
 //   completion    the latest `arc-completed` (A20 `active`), whether it is sealed (A5b `sealingOf`), the unmet
 //                 clauses of the completion predicate now (the scheduler's `completionBlockers`: one rule)
 //   host.log      the event log's size and fold time: the deferred compaction's trigger (50 MB or 2 s)
@@ -115,13 +109,13 @@ OUTCOME_STAGES,type OperatorParkKind,type OutcomeStage,type PlanAppliedFact,
 type ProbeTarget,type RevisionPayload,type WalkOutcome,holderUnit,parentUnit,probeTargetKey,
 } from './core/events.ts';
 import { readJson } from './core/fsx.ts';
-import { type ArcId, CPU_POOL, type CommandId, type DebtId, type DivergenceId, type EdgeId, type FindingId, type InvocationId, type JobId, type KnownDefectId, type LaneId, type MilestoneId, type NeedsUserId, type ObligationId, type PlanRev, type ResourceUnit, type RoutingRev, type RuleId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, canonicalIds, commandId, compareIds, compareResourceUnits, cpuToken, invocationId, sha } from './core/ids.ts';
+import { type ArcId,CPU_POOL,type CommandId,type DebtId,type DivergenceId,type EdgeId,type FindingId,type InvocationId,type JobId,type KnownDefectId,type LaneId,type MilestoneId,type NeedsUserId,type ObligationId,type PlanRev,type ResourceUnit,type RoutingRev,type RuleId,type Sha,type Sha256Hex,type UnitId,type VisionClauseId,canonicalIds,commandId,compareIds,compareResourceUnits,cpuToken,invocationId,sha } from './core/ids.ts';
 import type { JournalView } from './core/interfaces.ts';
 import { EVENTS_FILE,type LogSnapshot,readJournal } from './core/log.ts';
 import { gateLargeDiffOf } from './core/projections.ts';
 import { type CommandBody,type ContainmentMode,type KnownDefectMatch,type NeedsUserReason,type Receipt,type RunStart,type Stage,heartbeat,runStart,} from './core/records.ts';
 import type { HolisticFold,Lineage,ResourceEntry,UnitState } from './core/state.ts';
-import { type AbsPath, type IsoTime, absPath, branchRef, isoTimeOf } from './core/values.ts';
+import { type AbsPath,type IsoTime,absPath,branchRef,isoTimeOf } from './core/values.ts';
 import type { CorpusPin } from './corpus/types.ts';
 import type { BankReason,DebtItem,DebtLedger } from './debt/types.ts';
 import { type DemoStatus,demoStatus } from './demo/promote.ts';
@@ -130,19 +124,17 @@ import { git,revParse } from './git/git.ts';
 import { witnessDir } from './git/snapshot.ts';
 import { obligationBlockingUnits,unmergedOf } from './holistic/blocking.ts';
 import type { RevisionContext } from './holistic/admission.ts';
-import { brakesOf } from './holistic/convergence.ts';
 import { coverageBase,coverageOf } from './holistic/coverage.ts';
-import { uncoveredDivergences } from './holistic/divergence.ts';
 import { type FindingMetric,type RepairUnit,findingMetrics,isActive } from './holistic/findings.ts';
 import { type Observation,type ObservationStore,type WitnessedEntry,verdictOf } from './holistic/observe.ts';
 import { type PackReviewStatus,packItemOf,packReviewStatus } from './holistic/packreview.ts';
-import { type ArcLaneDef, type CensusEntry, type CensusState, type ClauseState, type Compensation, type DivergenceKind, type FindingLens, type FindingSeverity, type FindingStateName, type LensKind, type ObligationDef, type Obligations, type ObservationVerdict, type Vision, type VisionClauseKind, type VisionCoverage, type VisionQuestion, isExempt, isMustHold, observationKeyText } from './holistic/types.ts';
+import { type ArcLaneDef,type CensusEntry,type CensusState,type ClauseState,type Compensation,type DivergenceKind,type FindingLens,type FindingSeverity,type FindingStateName,type LensKind,type ObligationDef,type Obligations,type ObservationVerdict,type Vision,type VisionClauseKind,type VisionCoverage,type VisionQuestion,isExempt,isMustHold,observationKeyText } from './holistic/types.ts';
 import { visionCoverage } from './holistic/vision.ts';
 import { isAlive } from './host/liveness.ts';
 import { readClaim } from './host/lock.ts';
 import { readOwner } from './host/owner.ts';
 import { type CorpusInForce,type InForce,PLAN_INPUT,RULING_INPUT,type RevisionInForce,keptInput,keptPayload,planInForce,revisionInForce,routingBaseOf } from './input/inforce.ts';
-import { type KnownDefect,type PlanM1,type PlanUnit,advancesOf,hasMilestones,knownDefectsOf,lensSetOf,milestonesOf,parsePlan } from './input/plan.ts';
+import { type KnownDefect,type PlanM1,type PlanUnit,advancesOf,hasMilestones,knownDefectsOf,milestonesOf,parsePlan } from './input/plan.ts';
 import { type ClassTotal,type JobTotal,type ModelTotal,type RoleTotal,type SmokeTotal,byClass,byModel,meterOf,ownShare } from './meter.ts';
 import { type BlockingItem,blockingItems,fileNeedsUser,holdsUnit,openNeedsUser,recordOf,supersededItems } from './needsuser.ts';
 import { escalateAt,probeTargets,trippedTargets } from './park/schedule.ts';
@@ -388,7 +380,7 @@ export type VisionView = Readonly<{
   coverage: VisionCoverage;
 }>;
 
-/** A divergence no acknowledged digest covers (H11): `digest` the open digest item that binds it, if any. */
+/** A recorded departure and its compensation. */
 export type DivergenceView = Readonly<{
   id: DivergenceId;
   type: DivergenceKind;
@@ -398,28 +390,17 @@ export type DivergenceView = Readonly<{
   evidence: readonly string[];
   bundle: JobId;
   compensation: Compensation;
-  digest: NeedsUserId | null;
 }>;
 
 export const DECISION_KINDS = ['ruling', 'patch', 'reenter', 'cut', 'steer', 'divergence', 'reverse'] as const;
 export type DecisionKind = (typeof DECISION_KINDS)[number];
-/** Who decided: the architect (a command, or a start's edited files: null), a checkpoint job, pre-build's redirect, or the executor. */
+/** Who decided: the root, verifier or executor. */
 export type RuledBy =
   | Readonly<{ type: 'architect'; command: CommandId | null }>
   | Readonly<{ type: 'judgment'; role: 'verifier' }>
   | Readonly<{ type: 'executor' }>;
 /** One decision: its log seq, what it is, the id it names (C-n, ckpt-n, a unit, D-n), one line, and who ruled. */
 export type Decision = Readonly<{ seq: number; kind: DecisionKind; id: string; oneLine: string; ruledBy: RuledBy }>;
-
-export type ConvergenceView = Readonly<{
-  k: number;
-  /** Bundles applied since the counter last cleared (a publication, a latch, or an acknowledged `convergence-bound`). */
-  counter: number;
-  /** The seq the counter counts from. */
-  since: number;
-  /** Open `convergence-bound` and `convergence-identity` items. */
-  open: readonly NeedsUserId[];
-}>;
 
 /** The released findings, by who released them (dev.13). */
 export type ReleasedFindings = Readonly<{ root: number; closeOut: number }>;
@@ -446,11 +427,9 @@ export type AuditView = Readonly<{
   coverage: readonly Readonly<{ lens: LensKind; coveredTo: Sha; outstanding: boolean; pendingDocs: readonly Readonly<{ pub: JobId; from: Sha; to: Sha }>[] }>[];
   /** Each lens's range not covered yet: from its watermark to the integration head. */
   uncovered: readonly Readonly<{ lens: LensKind; from: Sha; to: Sha }>[];
-  /** The highest generation any audit or checkpoint recorded (0 before one). */
+  /** The highest generation any audit recorded (0 before one). */
   generation: number;
   running: JobId | null;
-  /** Wall-clock minutes of the journey lanes checkpoint jobs ran (a running one's up to now). */
-  /** Null without milestones; otherwise retire this many before the next steering checkpoint. */
 }>;
 
 export type CompletionView = Readonly<{
@@ -498,7 +477,7 @@ export type Status = Readonly<{
      * over the same resolvable revisions as `byModel`.
      */
     byClass: Readonly<{ classes: readonly ClassTotal[]; unresolvedRevs: readonly RoutingRev[] }>;
-    /** M3: each job's lens and checkpoint calls, M4a's pack review calls (also in `byRole` and `byModel`). */
+    /** M3: each job's campaign audit, experience verdict and pack review calls (also in `byRole` and `byModel`). */
     byJob: readonly JobTotal[];
     /** Start-up smokes per backend: in neither `byRole` nor `byModel`. */
     bySmoke: readonly SmokeTotal[];
@@ -521,7 +500,6 @@ export type Status = Readonly<{
   vision: VisionView | null;
   divergences: readonly DivergenceView[];
   decisionsSince: readonly Decision[];
-  convergence: ConvergenceView | null;
   /** Active findings, repair metrics and releases by root ruling or close-out. */
   findings: Readonly<{ active: readonly FindingLine[]; metrics: readonly FindingMetric[]; released: ReleasedFindings }>;
   audit: AuditView | null;
@@ -1196,7 +1174,7 @@ function exemptBy(obligations: Obligations | null, type: 'waived' | 'deferred'):
     .sort((a, b) => compareIds(a.obligation, b.obligation));
 }
 
-function visionOf(revision: RevisionInForce, advances: readonly VisionClauseId[], fold: HolisticFold, opportunity: readonly VisionClauseId[]): VisionView | null {
+function visionOf(revision: RevisionInForce, advances: readonly VisionClauseId[], fold: HolisticFold): VisionView | null {
   if (revision.vision === null) return null;
   const v = revision.vision.value;
   const citers = [
@@ -1207,16 +1185,14 @@ function visionOf(revision: RevisionInForce, advances: readonly VisionClauseId[]
     clauses: v.clauses.map((c) => ({ id: c.id, kind: c.kind, text: c.text, rank: c.rank, state: c.state })),
     questions: v.questions,
     advances,
-    coverage: visionCoverage(v, advances, revision.obligations?.value ?? null, citers, opportunity),
+    coverage: visionCoverage(v, advances, revision.obligations?.value ?? null, citers),
   };
 }
 
-/** Every divergence no acknowledged digest covers (H11), ascending. */
+/** Recorded departures in id order. */
 function divergencesOf(view: JournalView): readonly DivergenceView[] {
-  const open = new Map(view.holistic().digests.filter((g) => view.ackOf(g.needsUser) === null).flatMap((g) => g.ids.map((id) => [id, g.needsUser] as const)));
-  return uncoveredDivergences(view).map((d) => ({
+  return view.holistic().divergences.map((d) => ({
     id: d.id, type: d.type, from: d.from, what: d.what, cites: d.cites, evidence: d.evidence, bundle: d.job, compensation: d.compensation,
-    digest: open.get(d.id) ?? null,
   }));
 }
 
@@ -1269,18 +1245,9 @@ function runDirDecisions(runDir: AbsPath, arc: ArcId): DecisionReader {
   };
 }
 
-/** The seq after which `status.decisionsSince` lists: the architect's latest acknowledgement of a divergence digest (0 before one). */
-function digestAckedAt(view: JournalView, acks: ReadonlyMap<NeedsUserId, number>): number {
-  return Math.max(0, ...view.holistic().digests.flatMap((g) => {
-    const seq = acks.get(g.needsUser);
-    return seq === undefined ? [] : [seq];
-  }));
-}
-
 /**
- * The decisions after `since`, in log order: each revision's rulings, bundle or reversal, cuts, re-entries and spec
- * patches; the executor's spec patches; steers; and divergences. `status` lists them since the latest acknowledged
- * divergence digest; the brief since its coverage vector's high-water.
+ * The decisions after `since`, in log order: each revision's rulings, root apply or reversal, cuts, re-entries and spec
+ * patches; the executor's spec patches; steers; and divergences. The brief uses its coverage vector's high-water.
  */
 export function decisionsAfter(view: JournalView, events: readonly Event[], since: number, read: DecisionReader): readonly Decision[] {
   const out: Decision[] = [];
@@ -1325,21 +1292,11 @@ export function decisionsAfter(view: JournalView, events: readonly Event[], sinc
   return out;
 }
 
-/**
- * The convergence brakes (§2.8, A9; B6 `brakesOf`): the applied bundles counted against K since the counter last cleared,
- * and the open brake items. The bundles are the log's committed bundle revisions; their ops (read from the checkpoint's
- * recorded call) only feed the identity bound, which the checkpoint applies and status does not render.
- */
-function convergenceOf(runDir: AbsPath, view: JournalView, plan: PlanM1): ConvergenceView {
-  const brakes = brakesOf(view, runDir, plan);
-  return { k: brakes.k, counter: brakes.count, since: brakes.since, open: brakes.open };
-}
-
 function auditOf(runDir: AbsPath, view: JournalView, events: readonly Event[], plan: PlanM1, head: Sha, now: number): AuditView {
   const fold = view.holistic();
   const holistic = plan.holistic;
   if (holistic === undefined) throw new Error('the audit view of an arc whose plan in force has no holistic layer');
-  const lenses = lensSetOf(holistic);
+  const lenses = ['invariants'] as const;
   const base = coverageBase({ journal: { view }, runDir }, head);
   if (base === null) throw new Error(`arc ${view.arc} is holistic but no applied revision names a vision`);
   const coverage = coverageOf(fold, base, lenses, head);
@@ -1353,7 +1310,7 @@ function auditOf(runDir: AbsPath, view: JournalView, events: readonly Event[], p
   };
 }
 
-/** The highest generation any audit or checkpoint recorded; 0 before one. */
+/** The highest generation any audit recorded; 0 before one. */
 const generationOf = (fold: HolisticFold): number =>
   Math.max(0, ...fold.audits.map((a) => a.started.generation));
 
@@ -1604,10 +1561,9 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?:
     notYetTrue: t.notYetTrue,
     waived: exemptBy(obligations, 'waived'),
     deferred: exemptBy(obligations, 'deferred'),
-    vision: on === null || revision === null ? null : visionOf(revision, advancesOf(on.plan), fold, []),
+    vision: on === null || revision === null ? null : visionOf(revision, advancesOf(on.plan), fold),
     divergences: divergencesOf(view),
-    decisionsSince: decisionsAfter(view, events, digestAckedAt(view, acks), runDirDecisions(runDir, arc)),
-    convergence: on === null ? null : convergenceOf(runDir, view, on.plan),
+    decisionsSince: decisionsAfter(view, events, 0, runDirDecisions(runDir, arc)),
     findings: {
       active: fold.findings.filter(isActive).map((f) => ({ id: f.id, lens: f.lens, severity: f.severity, state: f.state, owner: f.owner, obligation: f.obligation, claim: f.claim })),
       metrics: findingMetrics(events, fold.findings),

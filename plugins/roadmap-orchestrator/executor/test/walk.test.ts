@@ -101,7 +101,7 @@ describe('the milestone node (src/walk/node.ts)', () => {
 
   test('node.lineage: a re-entry of a milestone unit is one of its units; a re-entry of a gated unit is gated; an edge on a superseded unit stands for its lineage', () => {
     const plan = planOf(
-      [{ id: 'a' }, { id: 'a2', reenters: 'a', origin: 'checkpoint' }, { id: 'b', after: ['a'] }, { id: 'b2', reenters: 'b', origin: 'checkpoint' }, { id: 'c', after: ['a2'] }],
+      [{ id: 'a' }, { id: 'a2', reenters: 'a', origin: 'repair' }, { id: 'b', after: ['a'] }, { id: 'b2', reenters: 'b', origin: 'repair' }, { id: 'c', after: ['a2'] }],
       [MILESTONE('MS-1', ['a'])],
     );
     assert.deepEqual(edges(plan), { b: ['MS-1'], b2: ['MS-1'], c: ['MS-1'] });
@@ -109,7 +109,7 @@ describe('the milestone node (src/walk/node.ts)', () => {
 
   test('node.exempt: repair, checkpoint-admitted and polish units below a milestone never wait on its node', () => {
     const plan = planOf([
-      { id: 'a' }, { id: 'fix', after: ['a'], origin: 'repair' }, { id: 'ck', after: ['a'], origin: 'checkpoint' },
+      { id: 'a' }, { id: 'fix', after: ['a'], origin: 'repair' }, { id: 'ck', after: ['a'], origin: 'repair' },
       { id: 'pol', after: ['a'], origin: 'polish', polish: { milestone: 'MS-1', proposal: 'X-1' } }, { id: 'planned', after: ['fix'] },
     ], [MILESTONE('MS-1', ['a'])]);
     assert.deepEqual(edges(plan), { planned: ['MS-1'] });

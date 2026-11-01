@@ -8,16 +8,12 @@
 // - **Since** (H6): the last committed ack (the latest `at`; ties by id) carries a coverage vector `[{arc,
 //   snapshotCommit, highWater}]`. An arc's delta is its ref's events after that high-water; an arc absent from the vector
 //   starts at seq 0. Nothing else defines a delta. The new vector is, per chained arc, its ref's commit and high-water.
-// - **Per arc** (`BriefArc`), from its delta: the divergences and digests; the decisions (`status`'s `decisionsAfter`,
+// - **Per arc** (`BriefArc`), from its delta: the divergences; the decisions (`status`'s `decisionsAfter`,
 //   read from the ref); the Phase-0 record when a revision in the delta changed it (its curation digest, corpus
 //   divergences, questions with their working assumptions and debt dispositions); the debt banked; the pack reviews' notes; the stage timings of the
 //   attempts completed in the delta (`status`'s `stageTimings`). Not a delta: the census at the ref (a corpus arc's;
 //   `held` = its obligation-state rules whose obligation holds on the arc's integration head, `status`'s rule over the
 //   ref's witness records) and the arc's PR now (non-fatal `unavailable`).
-// - **Items** (R10): the open (unacknowledged at the ref), non-blocking `divergence-digest` and `convergence-bound`
-//   items of every live arc (a run dir in this repo and no done completion in its ref) that no committed ack lists
-//   (its `ack` is enqueued, applied or not): what an ack of the brief acknowledges. Blocking items are never acked by a
-//   brief.
 // - **Chain**: the head's position (1-based), K, the unacked starts and the next start (src/commands/chain.ts
 //   `chainQuota`: K committed at the head's baseline, the start predicate src/chain.ts `nextStartOf`).
 // - **Answers** (src/answers.ts): the owner's recorded answers (`roadmap answer`) no Phase-0 record applies yet, read
@@ -27,36 +23,29 @@
 //   and SHA, held, up, what changed since the promotion before it, the open walkthrough P2s as rough edges). Where it runs
 //   is status's alone: the brief reads refs only.
 // The payload holds no clock; forge state, census figures and timings are in it, so a change of any changes the id.
-import { existsSync } from 'node:fs';
-import { answerLine, unappliedAnswers } from './answers.ts';
-import { type ArcRef, committedAcks, completedHeadOf } from './chain.ts';
-import { type ChainLink, chainHead, chainQuota, chainTo, linkOf, prsOf } from './commands/chain.ts';
-import { type ArcId, type BriefId, type Sha, briefId, invocationDirName } from './core/ids.ts';
-import { PRESSURE_SATURATED } from './host/pressure.ts';
-import { canonicalJson, sha256Hex } from './core/json.ts';
-import { type CommandBody, needsUserRecord } from './core/records.ts';
+import { answerLine,unappliedAnswers } from './answers.ts';
+import { type ArcRef,committedAcks } from './chain.ts';
+import { type ChainLink,chainHead,chainQuota,chainTo,linkOf,prsOf } from './commands/chain.ts';
+import { type ArcId,type BriefId,type Sha,briefId,invocationDirName } from './core/ids.ts';
+import { canonicalJson,sha256Hex } from './core/json.ts';
+import { type CommandBody } from './core/records.ts';
 import { parseRevisionPayload } from './core/events.ts';
-import { type AbsPath, absPath } from './core/values.ts';
+import { type AbsPath,absPath } from './core/values.ts';
 import { join } from 'node:path';
-import { gitCommonDir, gitRun, revParse } from './git/git.ts';
-import { observationOf, observationStore } from './holistic/observe.ts';
+import { gitCommonDir,gitRun,revParse } from './git/git.ts';
+import { observationOf,observationStore } from './holistic/observe.ts';
 import { parseObligations } from './holistic/types.ts';
-import { OBLIGATIONS_INPUT, PHASE0_INPUT, REVISION_INPUT, RULING_INPUT } from './input/inforce.ts';
-import { CliError, runDir } from './input/cli.ts';
-import { NEEDS_USER_DIR, openNeedsUser } from './needsuser.ts';
-import { type AckItem, BRIEF_SCHEMA, type BriefArc,  type BriefPayload, type BriefPr, type CoverageEntry, type NextStart, parseBriefPayload, parsePhase0Record } from './phase0/types.ts';
-import { meterOf } from './meter.ts';
-import { type Decision,  censusCounts, decisionsAfter, heldPct, obligationLeaves, stageTimings } from './status.ts';
-import { arcRolesOf } from './input/inforce.ts';
-import type { PlanM1 } from './input/plan.ts';
+import { OBLIGATIONS_INPUT,PHASE0_INPUT,REVISION_INPUT,RULING_INPUT } from './input/inforce.ts';
+import { CliError } from './input/cli.ts';
+import { BRIEF_SCHEMA,type BriefArc,type BriefPayload,type BriefPr,type CoverageEntry,type NextStart,parseBriefPayload,parsePhase0Record } from './phase0/types.ts';
+import { type Decision,censusCounts,decisionsAfter,heldPct,obligationLeaves,stageTimings } from './status.ts';
 import { demoView } from './demo/promote.ts';
 import type { Repairs } from './walk/milestones.ts';
 import { specRepairs } from './core/records.ts';
-import { SPEC_INPUT, specShaInForce } from './input/inforce.ts';
+import { SPEC_INPUT,specShaInForce } from './input/inforce.ts';
 import { parseSpec } from './spec/spec.ts';
 
 /** The brief's reasons an ack acknowledges (R10): non-blocking, rendered for a live arc. */
-export const ACKED_REASONS = ['divergence-digest', 'convergence-bound'] as const;
 
 export type Brief = Readonly<{ briefId: BriefId; payload: BriefPayload; chainHead: ArcId }>;
 
@@ -134,7 +123,6 @@ function briefArc(repo: AbsPath, ref: ArcRef, from: number, pr: BriefPr, previou
     arc: ref.arc,
     slice: inForce === null ? null : inForce.slice,
     divergences: facts.flatMap((f) => (f.kind === 'divergence' ? [{ id: f.id, type: f.type, what: f.what }] : [])),
-    digests: facts.flatMap((f) => (f.kind === 'divergence-digest' ? [{ needsUser: f.needsUser, ids: f.ids }] : [])),
     decisions: decisions.map(decisionLine),
     curation: record?.curation ?? [],
     corpusDivergences: record?.corpusDivergences ?? [],
@@ -152,20 +140,6 @@ function briefArc(repo: AbsPath, ref: ArcRef, from: number, pr: BriefPr, previou
   };
 }
 
-/** Whether an ack of `ref`'s items can be applied: its run dir is in this repo and its ref holds no done completion. */
-const live = (repo: AbsPath, ref: ArcRef): boolean => existsSync(runDir(gitCommonDir(repo), ref.arc)) && completedHeadOf(ref)?.done !== true;
-
-/** The arc's open, non-blocking digest and convergence-bound items (R10), by the records its ref keeps. */
-function itemsOf(repo: AbsPath, ref: ArcRef): readonly AckItem[] {
-  return openNeedsUser(ref.view).filter((n) => !n.blocking).flatMap((n) => {
-    const bytes = refBlob(repo, ref, `${NEEDS_USER_DIR}/${n.id}.json`);
-    if (bytes === null) throw new Error(`${ref.arc}: its ref keeps no record of the raised item ${n.id}`);
-    const reason = needsUserRecord(JSON.parse(bytes), `${ref.arc}:${n.id}`).reason;
-    return (ACKED_REASONS as readonly string[]).includes(reason) ? [{ arc: ref.arc, id: n.id }] : [];
-  });
-}
-
-const itemKey = (i: AckItem): string => `${i.arc}\u0000${i.id}`;
 const byKey = <T>(key: (x: T) => string) => (a: T, b: T): number => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0);
 
 /** The brief of the repo's chain now (see the header). */
@@ -177,14 +151,13 @@ export function computeBrief(repo: AbsPath): Brief {
   const last = [...acks].sort(byKey((a) => `${a.at} ${a.briefId}`)).at(-1);
   const from = new Map((last?.coverage ?? []).map((c) => [c.arc, c.highWater]));
   // An item a committed ack already enqueued an `ack` for is acked, whether or not its executor has applied it yet.
-  const enqueued = new Set(acks.flatMap((a) => a.items.map(itemKey)));
   const links: readonly ChainLink[] = chain.map(linkOf);
   const prs = prsOf(repo, links);
   const arcs = [...chain].sort(byKey((r) => r.arc));
   const payload: BriefPayload = {
     schema: BRIEF_SCHEMA,
     coverage: arcs.map((r): CoverageEntry => ({ arc: r.arc, snapshotCommit: r.commit, highWater: r.highWater })),
-    items: arcs.filter((r) => live(repo, r)).flatMap((r) => itemsOf(repo, r)).filter((i) => !enqueued.has(itemKey(i))).sort(byKey(itemKey)),
+    items: [],
     chain: { position: chain.length, ...chainQuota(repo, chain.map((r) => r.arc), { plan: head.plan, ref: head }, acks) },
     answers: unappliedAnswers(gitCommonDir(repo)),
     arcs: arcs.map((r) => briefArc(repo, r, from.get(r.arc) ?? 0, prs.get(r.arc)!, chain[chain.indexOf(r) - 1] ?? null)),
@@ -220,7 +193,6 @@ function arcMarkdown(a: BriefArc): string {
     ...(c === null ? [] : [`census: ${pct === null ? 'no obligation rules' : `${pct}% held`} (${c.held}/${c.obligationRules} obligation rules held; ${c.outOfSlice} out of slice, ${c.untestable} untestable, ${c.prodOnly} prod-only)`]),
   ])}${[
     section('Divergences', a.divergences.map((d) => `${d.id} ${d.type}: ${d.what}`)),
-    section('Digests', a.digests.map((g) => `${g.needsUser}: ${g.ids.join(', ')}`)),
     section('Decisions', a.decisions),
     section('Curation', a.curation.map((x) => `${x.tier}: ${x.what} (${x.files.join(', ')}${x.rules.length === 0 ? '' : `; ${x.rules.join(', ')}`})`)),
     section('Corpus divergences', a.corpusDivergences.map((x) => `${x.what} (cites ${x.cites.join(', ')}; preimage ${x.preimage.files.map((f) => f.path).join(', ')})`)),

@@ -353,7 +353,7 @@ describe('the red class and the repeat skip (F2, F3)', () => {
     assert.throws(() => readBack(run, 1, run.base), /red class \(red\.json\) was never written/);
   });
 
-  test('redlane.unstamped-refused: a pre-break rerun without required host evidence fails loudly', T, async () => {
+  test('redlane.unstamped-refused: a pre-break rerun without schema-2 evidence fails loudly', T, async () => {
     const run = unitRun([{ id: 'oom', argv: ['sh', '-c', 'echo "Out of memory: Killed process 42" >&2; exit 1'] }]);
     const [lane] = specLanes(run);
     const parent = parentOf(1);
@@ -367,7 +367,7 @@ describe('the red class and the repeat skip (F2, F3)', () => {
     });
     await once(lane!.argv);
     await once(['true']);
-    assert.throws(() => readBack(run, 1, run.base), /rerun after a signature without host evidence/, 'a pre-break rerun receives no historical classification');
+    assert.throws(() => readBack(run, 1, run.base), /ENOENT:.*ignored\.json/, 'a pre-break rerun receives no historical classification');
   });
 
   test('lanes.host-suspected: a red run whose output carries a host signature records it with the host evidence', T, async () => {

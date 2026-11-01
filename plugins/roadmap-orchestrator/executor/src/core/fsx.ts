@@ -16,18 +16,18 @@
 // - `monotonic()` became a generic counter-map check: 0.x hard-coded checkpoint fields (spend, rounds,
 //   consults); the rule kept is "a counter never decreases and never disappears".
 import {
-  closeSync,
-  fsyncSync,
-  linkSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  renameSync,
-  unlinkSync,
-  writeSync,
+closeSync,
+fsyncSync,
+linkSync,
+mkdirSync,
+openSync,
+readFileSync,
+renameSync,
+unlinkSync,
+writeSync,
 } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { dirname, resolve } from 'node:path';
+import { dirname,resolve } from 'node:path';
 
 export class AlreadyExistsError extends Error {
   readonly path: string;
@@ -201,15 +201,4 @@ export function atomicJson(path: string, value: unknown): void {
 /** Parse a JSON file. The result is `unknown`: callers validate it into their typed record. */
 export function readJson(path: string): unknown {
   return JSON.parse(readFileSync(path, 'utf8'));
-}
-
-/** Refuse if any counter in `before` is absent from `after` or smaller there. */
-export function monotonic(
-  before: Readonly<Record<string, number>>,
-  after: Readonly<Record<string, number>>,
-): void {
-  for (const [counter, value] of Object.entries(before)) {
-    const next = after[counter];
-    if (next === undefined || next < value) throw new CounterRegressionError(counter, value, next);
-  }
 }

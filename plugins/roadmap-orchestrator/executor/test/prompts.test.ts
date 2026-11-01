@@ -571,7 +571,7 @@ describe('output validators', () => {
     assert.ok(!schema.required.includes('unreviewed'));
   });
 
-  it('gate (dev.13, the gate\'s shell): a finding cites the experiments it rests on, each a command and its output; a live answer gives the list, an omitted experiment list reads as none', () => {
+  it('gate (dev.13, the gate\'s shell): a finding cites the experiments it rests on, each a command and its output; a live answer gives the list, a missing experiment list is refused', () => {
     const experiments = [{ command: 'node probe.mjs', output: 'expected 9, got 2' }];
     const finding = {evidence: ["src/a/parse.ts:1"],  severity: 'blocking', path: 'src/a/parse.ts', text: 'A2 fails on two-digit inputs.', contractRef: null, experiments, debt: null, defect: null, reraises: null, hunk: null };
     assert.deepEqual(validateGateOutput({ ...ok.gate, findings: [finding] }).findings[0]!.experiments, experiments);
@@ -579,12 +579,12 @@ describe('output validators', () => {
       assert.throws(() => validateGateOutput({ ...ok.gate, findings: [{ ...finding, experiments: bad }] }), SchemaError, JSON.stringify(bad));
     }
     const { experiments: _e, ...dev12 } = finding;
-    assert.deepEqual(validateGateOutput({ ...ok.gate, findings: [dev12] }).findings[0]!.experiments, []);
+    assert.throws(() => validateGateOutput({ ...ok.gate, findings: [dev12] }), /experiments/);
     const item = ((GATE_SCHEMA as { properties: Record<string, { items: { required: readonly string[] } }> }).properties['findings']!).items;
     assert.ok(item.required.includes('experiments'), 'a live gate answers it on every finding');
   });
 
-  it('gate (dev.13, the convergence tail): a finding says whether it is debt, {drag} or null; a live answer gives it on every finding, an omitted experiment list reads as none', () => {
+  it('gate (dev.13, the convergence tail): a finding says whether it is debt, {drag} or null; a live answer gives it on every finding, a missing experiment list is refused', () => {
     const note = {evidence: ["src/a/parse.ts:1"],  severity: 'note', path: 'src/a/parse.ts', text: 'parse re-reads the file per call.', contractRef: null, experiments: [], defect: null, reraises: null, hunk: null };
     const debt = { drag: 'Every later reader of big inputs pays the re-read.' };
     assert.deepEqual(validateGateOutput({ ...ok.gate, findings: [{ ...note, debt }] }).findings[0]!.debt, debt);

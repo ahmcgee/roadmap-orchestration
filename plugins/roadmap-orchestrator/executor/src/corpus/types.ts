@@ -4,9 +4,9 @@
 //
 // Paths in a guide and a pin are relative to the source's `root` (a path "under root"), never to the product repo,
 // so one shape serves every source kind. For a same-repo source the product path of a corpus file is `root/path`.
-import { type RuleId, type Sha, type Sha256Hex, idsAscending, ruleId, ruleSeq, sha, sha256 } from '../core/ids.ts';
-import { type Read, SchemaError, arrayOf, assertUnique, literal, nat, nullable, object, sortedBy, str, tagged } from '../core/validate.ts';
-import { type AbsPath, type RepoPath, type RepoPattern, absPath, repoPath, repoPattern } from '../core/values.ts';
+import { type RuleId,type Sha,type Sha256Hex,idsAscending,ruleId,ruleSeq,sha,sha256 } from '../core/ids.ts';
+import { type Read,SchemaError,arrayOf,assertUnique,literal,nat,nullable,object,sortedBy,str,tagged } from '../core/validate.ts';
+import { type AbsPath,type RepoPath,type RepoPattern,absPath,repoPath,repoPattern } from '../core/values.ts';
 
 const pathR: Read<RepoPath> = (v, p) => repoPath(v, p);
 const sha256R: Read<Sha256Hex> = (v, p) => sha256(v, p);
@@ -28,7 +28,6 @@ export type CorpusSource =
   | Readonly<{ kind: 'same-repo'; root: RepoPath }>
   | Readonly<{ kind: 'other-repo'; path: AbsPath; root: RepoPath }>
   | Readonly<{ kind: 'checkout'; remote: string; root: RepoPath }>;
-export type CorpusSourceKind = CorpusSource['kind'];
 
 export type CorpusGuide = Readonly<{
   schema: typeof CORPUS_GUIDE_SCHEMA;

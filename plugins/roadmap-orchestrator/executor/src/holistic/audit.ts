@@ -25,30 +25,30 @@ import { capturedEvidence } from '../git/evidence.ts';
 import { catFileType,refTarget,revParse } from '../git/git.ts';
 import { jobEvidenceRoot } from '../git/snapshot.ts';
 import { diffBase } from '../git/transient.ts';
-import { OBLIGATIONS_INPUT, PLAN_INPUT, RULINGS_INPUT, VISION_INPUT, keptInput, keptPayload, payloadAtRev } from '../input/inforce.ts';
+import { OBLIGATIONS_INPUT,PLAN_INPUT,RULINGS_INPUT,VISION_INPUT,keptInput,keptPayload,payloadAtRev } from '../input/inforce.ts';
 import { advancesOf,derivedOf,hasMilestones,parsePlan } from '../input/plan.ts';
-import { readNeedsUser, raiseNeedsUser,raisedFor } from '../needsuser.ts';
+import { readNeedsUser,raiseNeedsUser,raisedFor } from '../needsuser.ts';
 import { runBatchPoint } from '../pipeline/batchlanes.ts';
 import {
 type BackendCallOutcome,type JobParent,type RepairTurn,type StageContext,arcSeat,callArcRole,isRepairTurnOf,minutesMs,recordedArcCall,repairTurnOf,runOp,unitBranch,verdictOf,
 } from '../pipeline/dispatch.ts';
 import { type JourneyEnd,arcJourneyLane,dirtySnapshot,jobSeriesCheckout,observedViews,removeJobCheckouts,runJourneySeries } from '../pipeline/lanes.ts';
-import { architecture, docAt, inMs, judgmentEntry, ledgerDir, targetDirs } from '../pipeline/stages.ts';
+import { architecture,docAt,inMs,judgmentEntry,ledgerDir,targetDirs } from '../pipeline/stages.ts';
 import { judgmentRepairDirective } from '../prompts/directives.ts';
 import { promptFor,renderPrompt } from '../prompts/index.ts';
-import { type FindingView, visionInputOf } from '../prompts/inputs.ts';
-import { type LensFinding, type LensOutput } from '../prompts/schemas.ts';
+import { type FindingView,visionInputOf } from '../prompts/inputs.ts';
+import { type LensFinding,type LensOutput } from '../prompts/schemas.ts';
 import { evidenceSnapshotOp,worktreeCreateOp,worktreeRemoveOp } from '../recover/ops.ts';
 import { probe } from '../resources/probe.ts';
 import { type JobHolder,type Reservation,cleanup,heldReservation,run } from '../resources/reserve.ts';
 import type { AcquireFirst } from '../schedule/arbiter.ts';
 
-import { type Clock, cadence, integrationHeadNow } from './cadence.ts';
-import { coverageBase, lensCoverage, publishedHeads } from './coverage.ts';
+import { type Clock,cadence,integrationHeadNow } from './cadence.ts';
+import { coverageBase,lensCoverage,publishedHeads } from './coverage.ts';
 import { type FindingDraft,admitMutant,openFinding,witnessFindingDraft } from './findings.ts';
-import { chunkEnd, LENS_DIFF_BUDGET } from './lensdiff.ts';
+import { chunkEnd,LENS_DIFF_BUDGET } from './lensdiff.ts';
 import { verdictOf as witnessVerdict } from './observe.ts';
-import { FINDING_MOVES, type FindingEvidence, type LensKind, type MutantRef, type Obligations, type ObservationVerdict, type Vision, type WitnessRecord, isExempt, isMustHold, parseObligations, parseVision } from './types.ts';
+import { FINDING_MOVES,type FindingEvidence,type LensKind,type MutantRef,type Obligations,type ObservationVerdict,type Vision,type WitnessRecord,isExempt,isMustHold,parseObligations,parseVision } from './types.ts';
 
 /** What an audit needs: a stage context (processes, resources, routing), the arbiter's first-served waits, a clock. */
 export type AuditContext = StageContext & Readonly<{ acquireFirst: AcquireFirst; clock: Clock }>;
@@ -529,7 +529,7 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
     return to === undefined || to === from ? [] : [{ lens, from, to }];
   }).sort((a, b) => (a.lens < b.lens ? -1 : 1));
   const findings = canonicalIds(t.ids);
-  jobStageOutcome(ctx.journal, job, 'campaign-audit', null, outcome === 'abandoned' ? 'abandoned' : (findings.length === 0 ? 'pass' : 'revise'), findings);
+  jobStageOutcome(ctx.journal, job, 'campaign-audit', s.triggers.find((t) => t.type === 'milestone')?.milestone ?? null, outcome === 'abandoned' ? 'abandoned' : (findings.length === 0 ? 'pass' : 'revise'), findings);
   ctx.journal.fact({ kind: 'audit-ended', job, covered: ranges, findings, suppressed: t.suppressed, outcome, refused: t.refused });
   crashPoint('audit.after-ended');
 

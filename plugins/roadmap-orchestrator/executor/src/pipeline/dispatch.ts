@@ -1,8 +1,8 @@
 import { appliedRevisions } from '../holistic/coverage.ts';
-import { arcScopeOf, provenanceStack, resolveRouting } from '../routing/layers.ts';
+import { arcScopeOf,provenanceStack,resolveRouting } from '../routing/layers.ts';
 import { hasMilestones } from '../input/plan.ts';
 import { claudeBuilderRouting } from '../routing/eligibility.ts';
-import { proofNotLocal, diagnosed } from './surface.ts';
+import { proofNotLocal,diagnosed } from './surface.ts';
 // Dispatch: who acts for a unit, on which seat, under which pinned authority, and the backend call that
 // puts them to work (plan "Authority", R2; DESIGN-1.0.md §4 Independence, Actors are roles).
 //
@@ -58,7 +58,7 @@ STDOUT_FILE,
 boundsOfRecord,
 } from '../core/records.ts';
 import type { SpecState } from '../core/state.ts';
-import { type AbsPath, type BranchName, type IsoTime, type RefName, absPath, branchName, isoTimeOf, refName } from '../core/values.ts';
+import { type AbsPath,type BranchName,type IsoTime,type RefName,absPath,branchName,isoTimeOf,refName } from '../core/values.ts';
 import { type RoutingBase,inputPath,keepInput } from '../input/inforce.ts';
 import { type PlanUnit,boundsOf } from '../input/plan.ts';
 import { routingChangedRecommendation } from '../needsuser.ts';
@@ -339,7 +339,7 @@ export function judgmentDispatch(ctx: StageContext, unit: UnitId, stage: Judgmen
 
 
 /**
- * dev.17: the verifier's seat for a unit's docs-only claim: `verifier.<risk floor>` under the routing in force (the unit's
+ * The verifier's seat for a unit's judgment: `verifier.<risk floor>` under the routing in force (the unit's
  * pinned record, re-pinned when the routing or plan moved it, as at a judgment), or the routing change that parks it.
  */
 export function verifierDispatch(ctx: StageContext, unit: UnitId): Pinned<JudgmentDispatch> {
@@ -354,7 +354,7 @@ export function verifierDispatch(ctx: StageContext, unit: UnitId): Pinned<Judgme
 
 /**
  * The implementer's seat: the unit's build tier (`UnitState.buildTier`), its (possibly pre-build-raised) risk floor, or
- * `high` in a dev.16 arc whose unit an `implementer-escalated` fact moved there (D4, retired in dev.17). On the floor the
+ * On the floor the
  * seat's rev is the pinned `implementerSeatRev`; escalated, it is `build.high`'s under the routing in force.
  */
 export function implementerDispatch(ctx: StageContext, unit: UnitId): Pinned<ImplementerDispatch> {

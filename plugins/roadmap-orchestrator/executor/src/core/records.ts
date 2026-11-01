@@ -25,7 +25,7 @@ import {
 type Brand,type Read,Fields,SchemaError,arrayOf,assertUnique,bool,envName,int,literal,nat,nullable,object,oneOf,
 positive,sortedBy,str,stringMap,tagged,text,version,
 } from './validate.ts';
-import { type AbsPath, type BootId, type IsoTime, type Nonce, type RepoPath, type RepoPattern, absPath, bootId, isoTime, nonce, repoPath, repoPattern } from './values.ts';
+import { type AbsPath,type BootId,type IsoTime,type Nonce,type RepoPath,type RepoPattern,absPath,bootId,isoTime,nonce,repoPath,repoPattern } from './values.ts';
 import type { SchemaVersion } from './version.ts';
 
 import { type HostSignatureId,HOST_SIGNATURES } from '../host/signatures.ts';
@@ -65,19 +65,14 @@ export const CANCEL_REASONS = ['pause', 'stop', 'recovery', 'preempt', 'supersed
 export type CancelReason = (typeof CANCEL_REASONS)[number];
 /** The cancel reasons that end a workload with exit cause `cancel` (the runner turns `recovery` into `recovery-kill`). */
 export const INTERRUPT_REASONS = ['pause', 'stop'] as const;
-export type InterruptReason = (typeof INTERRUPT_REASONS)[number];
 /** A command (a lane) may also be cancelled by a preempting docs publication (M3, A7); a backend call never is. */
 export const LANE_INTERRUPT_REASONS = [...INTERRUPT_REASONS, 'preempt'] as const;
-export type LaneInterruptReason = (typeof LANE_INTERRUPT_REASONS)[number];
 /** dev.13: a command's cancel reasons: a lane's, and `teardown` (only a bring-up's `serve` process, which its owner stops). */
 export const COMMAND_CANCEL_REASONS = [...LANE_INTERRUPT_REASONS, 'teardown'] as const;
 export type CommandCancelReason = (typeof COMMAND_CANCEL_REASONS)[number];
 /** A backend call may also be cancelled because a revision superseded the checkpoint inputs it runs on; a lane never is. */
 export const BACKEND_CANCEL_REASONS = [...INTERRUPT_REASONS, 'supersede'] as const;
 export type BackendCancelReason = (typeof BACKEND_CANCEL_REASONS)[number];
-
-export const SPAWN_PURPOSES = ['backend', 'lane', 'teardown', 'probe', 'smoke'] as const;
-export type SpawnPurpose = (typeof SPAWN_PURPOSES)[number];
 /**
  * dev.13: `bring-up`, a milestone product's setup, serve or seed command (src/walk/bringup.ts). dev.17: `environment`, a plan
  * environment's up, down or probe (src/resources/environments.ts).
@@ -128,9 +123,6 @@ export const failureRef: Read<FailureRef> = (value, path) => {
 /** The reference naming `parts`. */
 export const failureRefOf = (p: FailureRefParts): FailureRef =>
   (p.type === 'outcome' ? `${p.unit}/${p.stage}#${p.attempt}` : `${p.unit}/lanes#${p.attempt}/${p.lane}`) as FailureRef;
-
-export const RESOURCE_STATES = ['free', 'reserved', 'running', 'cleaning', 'cleanup-failed'] as const;
-export type ResourceState = (typeof RESOURCE_STATES)[number];
 
 const role: Read<Role> = oneOf(ROLES);
 const opId: Read<OpId> = (v, p) => opIdOf(v, p);
@@ -1115,7 +1107,7 @@ export const specWitnesses = (spec: SpecM1): readonly Stated<WitnessItemDef>[] =
 export const specRemoves = (spec: SpecM1): readonly string[] => spec.removes ?? [];
 /** The suite lanes a spec forces at its lanes stage (dev.17); none when absent. */
 export const specForces = (spec: SpecM1): readonly LaneId[] => spec.forces ?? [];
-/** A spec's unit kind (dev.17): its design record's, or `module` with the upgrade warning when it has none. */
+/** A spec's unit kind: its design record's, or `module` when it has none. */
 export const specKindOf = (spec: SpecM1): UnitKind => spec.design?.kind ?? 'module';
 
 /** The requirements a spec links to: the obligations it declares, the obligations it repairs, those its witness items name. */
@@ -1483,10 +1475,6 @@ export const manifestSpecs: Read<Readonly<Record<UnitId, Sha256Hex>>> = (value, 
   if (Object.keys(out).length === 0) throw new SchemaError(path, 'at least one unit', value);
   return out;
 };
-export const planManifest: Read<PlanManifest> = object((f) => ({
-  planSha256: f.get('planSha256', (v, p) => sha256(v, p)),
-  specs: f.get('specs', manifestSpecs),
-}));
 
 /**
  * M3 (G1, A3, A14): the revisioned set beyond plan and specs. `rulings`: the ledger's bytes and each ruling
@@ -1508,14 +1496,6 @@ export type RevisionInputs = Readonly<{
 }>;
 /** What an `apply` hashes (A2), its body's manifest: the plan manifest and the revision inputs. */
 export type RevisionManifest = PlanManifest & RevisionInputs;
-
-const sidecarShas: Read<Readonly<Record<RulingId, Sha256Hex>>> = (value, path) => {
-  const f = new Fields(value, path);
-  const out: Record<RulingId, Sha256Hex> = {};
-  for (const key of Object.keys(value as object)) out[rulingId(key, `${path}.${key}`)] = f.get(key, (v, p) => sha256(v, p));
-  f.end();
-  return out;
-};
 const CORPUS_INPUTS = ['corpus', 'corpusGuide', 'phase0'] as const;
 export const revisionInputs = (f: Fields): RevisionInputs => {
   const corpus: Partial<Record<(typeof CORPUS_INPUTS)[number], Sha256Hex>> = {};
@@ -1561,8 +1541,8 @@ export type CommandBody =
   | Readonly<{ type: 'witness'; obligation: ObligationId; expectedHead: Sha; result: 'pass' | 'fail'; evidence: string; evidenceFile: HashedFile | null }>
   | Readonly<{ type: 'note'; unit: UnitId; brief: HashedFile }>
   | Readonly<{ type: 'merge-in'; unit: UnitId }>
-  /** `roadmap audit [--lens <k,…>]` (M3): an audit of those lenses (ascending), or of the arc's lens set L (null). Scope ∅. */
-  | Readonly<{ type: 'audit'; lenses: readonly LensKindName[] | null }>
+  /** Request a fresh whole-campaign audit. */
+  | Readonly<{ type: 'audit' }>
   /** `roadmap close-admissions` (M3): latch `draining`. Scope ∅. */
   | Readonly<{ type: 'close-admissions' }>
   /**
@@ -1631,7 +1611,7 @@ export const commandBody: Read<CommandBody> = tagged('type', {
   })),
   'merge-in': object((f): CommandBody => ({ type: f.get('type', literal('merge-in')), unit: f.get('unit', unit) })),
   audit: object((f): CommandBody => ({
-    type: f.get('type', literal('audit')), lenses: f.get('lenses', nullable(sortedBy(oneOf(LENS_KIND_NAMES), (l) => l, { nonEmpty: true }))),
+    type: f.get('type', literal('audit')),
   })),
   'close-admissions': object((f): CommandBody => ({ type: f.get('type', literal('close-admissions')) })),
   demo: object((f): CommandBody => ({ type: f.get('type', literal('demo')), act: f.get('act', oneOf(DEMO_ACTS)) })),
@@ -1684,12 +1664,9 @@ export const NEEDS_USER_REASONS = [
   // repeat park on one target.
   'park-escalated', 'env-blocked',
   // M3, blocking: a must-hold obligation not held at the baseline (A6); a parked owner's P1 at the park deadline;
-  // a new P1 or P2 while draining; a steer's park; a mutant not reproduced; an owner-only act the checkpoint
+  // a new P1 or P2 while draining; a steer's park; a mutant not reproduced; an owner-only act an audit
   // requested (A16); a second design park on one lineage (OR-Q1).
   'obligation-baseline', 'finding-p1-escalated', 'new-finding-draining', 'steered', 'not-reproduced', 'owner-request', 'respec-second',
-  // M3, non-blocking: a bundle held for the architect (A9: `apply | reject`); the convergence brakes; an owed audit;
-  // the divergence digest (H11).
-  'bundle-request', 'convergence-bound', 'convergence-identity', 'divergence-digest',
   // M4a, blocking (fixed by `m3Blocking`, as the M3 reasons): a pack review's blocking finding, holding admission before
   // the first (K14, H9).
   'pack-review',
@@ -1719,7 +1696,7 @@ export const NEEDS_USER_REASONS = [
 ] as const;
 /** The reasons from M3 on raised non-blocking; every other one is raised blocking. */
 export const NON_BLOCKING_M3_REASONS = [
-  'bundle-request', 'convergence-bound', 'convergence-identity', 'divergence-digest', 'executor-fault', 'deflake-parked', 'flake-recurring', 'apply-dropped',  'revision-notice', 'waste-finding',
+  'executor-fault', 'deflake-parked', 'flake-recurring', 'apply-dropped',  'revision-notice', 'waste-finding',
 ] as const satisfies readonly NeedsUserReason[];
 export type NeedsUserReason = (typeof NEEDS_USER_REASONS)[number];
 

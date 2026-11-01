@@ -33,10 +33,3 @@ export function loadRulings(file: string): readonly Ruling[] {
   return parseRulings(readFileSync(file, 'utf8'), file);
 }
 
-const rulingNumber = (id: RulingId): number => Number(id.slice(2));
-
-/** The id a new ruling takes: one more than the ledger's highest (C-1 for an empty ledger). */
-export function nextRulingId(ledger: readonly Ruling[]): RulingId {
-  return rulingId(`C-${Math.max(0, ...ledger.map((r) => rulingNumber(r.id))) + 1}`);
-}
-

@@ -295,7 +295,7 @@ const ROWS: readonly Row[] = [
         expect: { path: absPath(tmpDir('apply-wt')), checkout: { type: 'detached', at: sha('0'.repeat(40)) } }, post: null,
       }) });
       // The executor restarted with the attempt open: crash-abandoned (M4a rev 3, `openAttempt`).
-      r.journal.fact({ kind: 'executor-started', generation: 2 });
+      r.journal.fact({ kind: 'executor-started', pressure: 'unavailable', generation: 2 });
     },
     edit: revise,
     expect: (r) => [specChange(r.d, 'u1', 'revision', 2)],

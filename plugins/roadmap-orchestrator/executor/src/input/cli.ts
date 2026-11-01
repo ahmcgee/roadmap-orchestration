@@ -5,7 +5,7 @@ import {
 type ObligationId,obligationId,type ArcId,type BriefId,type DivergenceId,type EdgeId,type NeedsUserId,type PhaseQuestionId,type ResourceName,type Sha,
 type UnitId,arcId,briefId,divergenceId,edgeId,needsUserId,phaseQuestionId,resourceName,sha,unitId,
 } from '../core/ids.ts';
-import { DEMO_ACTS,type DemoAct,LENS_KIND_NAMES,type LensKindName,type PauseTarget,type ResumeTarget } from '../core/records.ts';
+import { DEMO_ACTS,type DemoAct,type PauseTarget,type ResumeTarget } from '../core/records.ts';
 import { oneOf } from '../core/validate.ts';
 import { type AbsPath,absPath } from '../core/values.ts';
 import { type BuildClass,type ProfileName,backend,buildClass,profileName } from '../routing/types.ts';
@@ -61,8 +61,8 @@ export type Command =
   | Readonly<{ command: 'witness'; obligation: ObligationId; result: 'pass' | 'fail'; evidence: string; run: RunLocator }>
   | Readonly<{ command: 'note'; unit: UnitId; brief: string; run: RunLocator }>
   | Readonly<{ command: 'merge-in'; unit: UnitId; run: RunLocator }>
-  /** M3: an audit of these lenses (`--lens a,b`, ascending), or of the arc's lens set (null). */
-  | Readonly<{ command: 'audit'; lenses: readonly LensKindName[] | null; run: RunLocator }>
+  /** Request a fresh whole-campaign audit. */
+  | Readonly<{ command: 'audit'; run: RunLocator }>
   | Readonly<{ command: 'close-admissions'; run: RunLocator }>
   /** M3 (A20, H5): prunes sealed arcs of `repo` and the host dir, keeping the last `keep` (null: the default). A CLI action, not a command. */
   | Readonly<{ command: 'gc'; repo: string; keep: number | null; dryRun: boolean }>
@@ -128,12 +128,6 @@ function parseRest(argv: readonly string[], allowed: Readonly<Record<string, 'va
 function value(p: Parsed, name: string): string | undefined {
   const v = p.flags.get(name);
   return typeof v === 'string' ? v : undefined;
-}
-
-/** A `many` option's values, in the order given ([] when absent). */
-function values(p: Parsed, name: string): readonly string[] {
-  const v = p.flags.get(name);
-  return Array.isArray(v) ? v : [];
 }
 
 function positionals(p: Parsed, command: string, max: number): readonly string[] {
@@ -312,11 +306,9 @@ export function parseCommand(argv: readonly string[]): Command {
       return { command, unit: arg(command, '<unit>', unitId, onePositional(p, command, '<unit>')), run: locator(p, command) };
     }
     case 'audit': {
-      const p = parseRest(rest, { ...LOCATOR, lens: 'value' }, command);
+      const p = parseRest(rest, LOCATOR, command);
       positionals(p, command, 0);
-      const raw = value(p, 'lens');
-      const lenses = raw === undefined ? null : [...new Set(raw.split(',').map((l) => arg(command, '--lens', (v, path) => oneOf(LENS_KIND_NAMES)(v, path ?? '--lens'), l)))].sort();
-      return { command, lenses, run: locator(p, command) };
+      return { command, run: locator(p, command) };
     }
     case 'close-admissions': {
       const p = parseRest(rest, LOCATOR, command);
@@ -417,12 +409,6 @@ export function parseCommand(argv: readonly string[]): Command {
         `unknown command ${JSON.stringify(command ?? '')}; expected one of --version, start, status, watch, stop, pause, ack, resume, sweep, apply, resolve-edge, run-only, reverse, steer, note, witness, merge-in, audit, close-admissions, gc, phase0 check, corpus pin, brief, pr, chain status, answer, witness-check, resume-arc, inputs export, demo up, demo down, demo hold, demo release`,
       );
   }
-}
-
-/** An option's text, refused when blank. */
-function nonBlank(command: string, name: string, text: string): string {
-  if (text.trim() === '') throw new CliError(`${command}: --${name} is empty`);
-  return text;
 }
 
 /** A required `--name <what>` option. */

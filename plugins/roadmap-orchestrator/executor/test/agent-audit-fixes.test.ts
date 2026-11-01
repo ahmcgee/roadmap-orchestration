@@ -1,23 +1,23 @@
 import assert from 'node:assert/strict';
-import {test} from 'node:test';
-import {unitId} from '../src/core/ids.ts';
-import {buildTriple, pinDispatch, raiseRisk} from '../src/pipeline/dispatch.ts';
-import {build, loadUnitSpec, preBuild} from '../src/pipeline/stages.ts';
-import {markers, reviewItems} from '../src/pipeline/surface.ts';
-import {runUnit} from '../src/pipeline/unit.ts';
-import {runAudit} from '../src/holistic/audit.ts';
-import {runWalk} from '../src/walk/walk.ts';
-import {validateGateOutput, validateCampaignAuditOutput} from '../src/prompts/schemas.ts';
-import {promptFor} from '../src/prompts/index.ts';
-import type {BuildInputs} from '../src/prompts/inputs.ts';
-import {absPath, repoPath} from '../src/core/values.ts';
-import {specRev} from '../src/core/ids.ts';
-import {contextFor, setupArc, gateStep} from './fixtures/unit-common.ts';
-import {BUILD_REPORT, admitAll, planCheckStep} from './fixtures/stage-common.ts';
-import {walkArc, milestoneJson, walkContext, walkStep, walkAnswer} from './fixtures/walk-common.ts';
-import {unitSteps, moduleFiles} from './fixtures/audit-common.ts';
-import {lensStep} from './helpers/holistic.ts';
-import {readCalls} from './helpers/scenario.ts';
+import { test } from 'node:test';
+import { unitId } from '../src/core/ids.ts';
+import { buildTriple,pinDispatch,raiseRisk } from '../src/pipeline/dispatch.ts';
+import { build,loadUnitSpec,preBuild } from '../src/pipeline/stages.ts';
+import { markers,reviewItems } from '../src/pipeline/surface.ts';
+import { runUnit } from '../src/pipeline/unit.ts';
+import { runAudit } from '../src/holistic/audit.ts';
+import { runWalk } from '../src/walk/walk.ts';
+import { validateGateOutput,validateCampaignAuditOutput } from '../src/prompts/schemas.ts';
+import { promptFor } from '../src/prompts/index.ts';
+import type { BuildInputs } from '../src/prompts/inputs.ts';
+import { absPath,repoPath } from '../src/core/values.ts';
+import { specRev } from '../src/core/ids.ts';
+import { contextFor,setupArc } from './fixtures/unit-common.ts';
+import { BUILD_REPORT,admitAll,planCheckStep } from './fixtures/stage-common.ts';
+import { walkArc,milestoneJson,walkContext,walkStep,walkAnswer } from './fixtures/walk-common.ts';
+import { unitSteps,moduleFiles } from './fixtures/audit-common.ts';
+import { lensStep } from './helpers/holistic.ts';
+import { readCalls } from './helpers/scenario.ts';
 
 const T = {timeout: 120_000};
 const clean = {decision: 'approve', ordering: null, findings: [], directives: [], reasons: ['Checked'], premises: [], standing: [], clusters: null, rulings: []};
@@ -88,7 +88,7 @@ test('surface.nonzero-verdicts: experience and campaign outcomes record actual a
     assert.equal((await runUnit(w.stage, r.unit('u1'), admitAll)).kind, 'merged');
     assert.equal((await runWalk(ctx)).kind, 'ended');
     assert.equal((await runAudit({...ctx, clock: () => 0})).kind, 'ended');
-    assert.deepEqual(r.journal.view.stageJobOutcomes().map((v) => [v.stage, v.findings]), [['experience-verdict', 1], ['campaign-audit', 1]]);
+    assert.deepEqual(r.journal.view.stageJobOutcomes().map((v) => [v.stage, v.findings.total]), [['experience-verdict', 1], ['campaign-audit', 1]]);
   } finally {clearInterval(tick); r.journal.close();}
 });
 
