@@ -17,7 +17,7 @@
 <rect x="140" y="330" width="300" height="100" rx="10" fill="#f0f7ff" class="task"/>
 <text x="290.0" y="361.0" class="label" text-anchor="middle"><tspan x="290.0" dy="0">Phase 0</tspan><tspan x="290.0" dy="24">Rules, systems, specs</tspan><tspan x="290.0" dy="24">Obligations and milestones</tspan></text>
 <rect x="540" y="330" width="340" height="100" rx="10" fill="#f0f7ff" class="task"/>
-<text x="710.0" y="361.0" class="label" text-anchor="middle"><tspan x="710.0" dy="0">Watch and decide</tspan><tspan x="710.0" dy="24">Export → edit → CAS apply</tspan><tspan x="710.0" dy="24">Steer · note · witness</tspan></text>
+<text x="710.0" y="361.0" class="label" text-anchor="middle"><tspan x="710.0" dy="0">Watch and decide</tspan><tspan x="710.0" dy="24">Export → edit → CAS apply</tspan><tspan x="710.0" dy="24">Steer · note · witness · dismiss</tspan></text>
 <rect x="1050" y="330" width="330" height="100" rx="10" fill="#f0f7ff" class="task"/>
 <text x="1215.0" y="373.0" class="label" text-anchor="middle"><tspan x="1215.0" dy="0">Present brief and demo</tspan><tspan x="1215.0" dy="24">Prepare PR; choose next slice</tspan></text>
 <polyline points="290,230 290,330" class="edge msg"/>
@@ -38,7 +38,7 @@
 <rect x="560" y="735" width="330" height="100" rx="10" fill="#f3f8f4" class="task"/>
 <text x="725.0" y="766.0" class="label" text-anchor="middle"><tspan x="725.0" dy="0">Milestone experience verdict</tspan><tspan x="725.0" dy="24">Whole-campaign audit</tspan><tspan x="725.0" dy="24">Findings and root requests</tspan></text>
 <rect x="1000" y="735" width="340" height="100" rx="10" fill="#f3f8f4" class="task"/>
-<text x="1170.0" y="766.0" class="label" text-anchor="middle"><tspan x="1170.0" dy="0">Final witnesses and close-out</tspan><tspan x="1170.0" dy="24">Snapshot and completion</tspan><tspan x="1170.0" dy="24">Stacked PR and next arc</tspan></text>
+<text x="1170.0" y="766.0" class="label" text-anchor="middle"><tspan x="1170.0" dy="0">Final witnesses and close-out</tspan><tspan x="1170.0" dy="24">Snapshot and completion</tspan><tspan x="1170.0" dy="24">Evidence for PR and next arc</tspan></text>
 <polyline points="1030,650 1030,685 725,685 725,735" class="edge"/>
 <polyline points="890,785 1000,785" class="edge"/>
 <polyline points="1170,735 1400,735 1400,460 1215,460 1215,430" class="edge msg"/>
@@ -46,5 +46,5 @@
 <text x="1080" y="710" class="small" text-anchor="middle"><tspan x="1080" dy="0">findings return to root</tspan></text>
 <text x="630" y="885" class="small" text-anchor="middle"><tspan x="630" dy="0">Fix rounds retain findings, lane failures, base comparisons, notes and allowance/cap state.</tspan></text>
 <rect x="60" y="940" width="1380" height="75" rx="4" fill="#fff" class="task"/>
-<text x="85" y="970" class="small" text-anchor="start"><tspan x="85" dy="0">Fixed diagnosis 8 builds / 20 judged attempts; hard stop 16 / 40. Expectations are forecasts, never spend caps.</tspan><tspan x="85" dy="24">System responsibility guides reach review. Subject actions close notices; ack is only for offered options.</tspan></text>
+<text x="85" y="970" class="small" text-anchor="start"><tspan x="85" dy="0">Fixed diagnosis 8 builds / 20 judged attempts; hard stop 16 / 40. Expectations are forecasts, never spend caps.</tspan><tspan x="85" dy="24">Watch: 30-minute heartbeat, at most 3 chat lines; operator log. Root never patches plugin/runtime. Ack only for offered options.</tspan></text>
 </svg>

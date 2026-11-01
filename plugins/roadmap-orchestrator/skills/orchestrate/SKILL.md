@@ -82,7 +82,9 @@ A milestone runs its selected lanes after its units retire, then a fresh experie
 
 ## Supervision and intervention
 
-Keep an actionable watch outstanding while the arc runs. On wake, read `status --summary`, then full status and cited evidence for the affected subject. Use the log sequence in the watch result to continue without replaying old wakes. The summary reports progress, spend/expectations, milestone verdicts, caught counts, captures and waste. Its caught total is lane reds + gate revise outcomes + unique finding keys; it is an activity aggregate, not a count of independently verified defects. Capture entries list suite capture invocations; inspect gate evidence for spec captures.
+Keep an actionable watch outstanding while the arc runs, with its fixed **30-minute heartbeat**. On every wake, post
+at most **3 lines** in chat: what moved, what is next, anything odd. Read status and only evidence cited by the affected
+item; act when needed, then return to the same watch. The heartbeat is the organic check; do not add habitual polling. On wake, read `status --summary`, then full status and cited evidence for the affected subject. Use the log sequence in the watch result to continue without replaying old wakes. The summary reports progress, spend/expectations, milestone verdicts, caught counts, captures and waste. Its caught total is lane reds + gate revise outcomes + unique finding keys; it is an activity aggregate, not a count of independently verified defects. Capture entries list suite capture invocations; inspect gate evidence for spec captures.
 
 Exercise the smallest action that resolves the cause:
 
@@ -96,7 +98,10 @@ Exercise the smallest action that resolves the cause:
 
 Successful subject actions close the relevant optionless needs-user items. **Ack is only for items with offered options**; use the offered option id. A plain ack is not a substitute for fixing a spec, supplying evidence or resuming a backend. Revision notices and waste findings are non-blocking. Inspect their evidence and resolve their subject as appropriate.
 
-Log material interventions outside the product tree in `skill-feedback.md`: symptom, evidence, outcome, and the executor improvement that would remove the need. Do not poll by habit or hide an intervention in unexplained state edits. Escalate uncertainty the owner's target cannot settle, with the evidence and a working assumption.
+Log every self-initiated intervention once in `<repo>/../roadmap-inputs/skill-feedback.md` (append-only): symptom,
+evidence, outcome, and the executor improvement that would remove the need. Routine Phase 0/start/PR/check-ins and
+following an item recommendation are not interventions. Every arc-wide pause, resume-all, backend resume, stop and
+close-admissions gets an entry whoever requested it; record when it ended. Do not poll by habit or hide an intervention in unexplained state edits. Escalate uncertainty the owner's target cannot settle, with the evidence and a working assumption.
 
 ## Changing inputs
 
@@ -114,7 +119,9 @@ Capture lanes bring up a contained stack and repo capture script on a leased por
 
 `docs/systems/<system>.md` (configurable as `systemNotesDir`) carries non-normative gotchas, seams and rigs. Build/gate receive existing note paths from their checkout commit. Edit notes as normal unit diffs, with gate review. Normative claims stay in the corpus. Salvage and candidate commit bodies retain captured build summaries and decisions; recovery uses verified evidence bytes.
 
-Recover by reading status and durable evidence, exporting inputs if needed, and restarting through `start` or `resume-arc`. A dead-owner boot hook can invoke `resume-arc --repo`; propose devcontainer edits within the owner's authorization. Never adopt schema-1 runtime state or delete it to force a start. The supervisor owns restart/backoff; containment emptiness precedes releasing resources or reading terminal outputs. Session containment cannot prevent a process that deliberately escapes it; cgroup mode requires host support.
+Recover by reading status and durable evidence, exporting inputs if needed, and restarting through `start` or `resume-arc`. A dead-owner boot hook can invoke `resume-arc --repo`; propose devcontainer edits within the owner's authorization. Never adopt schema-1 runtime state or delete it to force a start. The root never patches the plugin or run directory. At supervisor-crash-limit, read the cited executor stderr logs,
+report the error and stack to the owner in a final check-in, and stop with reason owner; do not ack/restart around it.
+The supervisor owns restart/backoff; containment emptiness precedes releasing resources or reading terminal outputs. Session containment cannot prevent a process that deliberately escapes it; cgroup mode requires host support.
 
 ## Completion
 

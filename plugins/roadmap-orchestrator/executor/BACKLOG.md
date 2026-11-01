@@ -181,7 +181,7 @@ no migration of refused runtime is promised.
 
 - **m5 plant.** No recorded paid run has shown a walk itself catch the 320 px reflow plant. Trigger: a paid run where
   the planted condition URL survives until the first walk; distinguish upstream prevention from walk detection.
-- **m3 coverage.** The checker still reports untaken paths including steer, merge-in, reproduction, batch repair,
+- **m3 coverage.** The checker still reports untaken paths including reverse, steer, merge-in, reproduction, batch repair,
   owner-request, draining and real Go. Use its NOT EXERCISED list as the measurement, not a blanket end-to-end claim;
   add paid evidence when changing a corresponding live path.
 - **Experience extensions.** Reference renders and visual-regression baselines need a measured visual miss; cross-model

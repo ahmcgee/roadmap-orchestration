@@ -243,7 +243,9 @@ journeys are nonempty where required; selected lanes default []. A design unit i
 Journeys have `{id,text,via:browser|shell,entry,budget:{steps,seconds}|null}`. BringUp has setup argv[], serve entries
 `{name,argv,ready:{http}|{log}}`, env map, seed argv[]. `{port:<serve-name>}` substitutes allocated ports consistently.
 References are design directories and have a 512 KiB text budget. Missing tools/MCP handshake refuse browser readiness.
-Milestone dependents wait for experience settlement; breaks hold, deviations can be repaired alongside work. Walk and
+A planned descendant outside the milestone waits for milestone-passed; code follows lineage heads. Non-planned
+lineages are exempt so repairs/polish can proceed. A reported walk with no active walkthrough P1 passes the node;
+polish may still be settling. Breaks hold, deviations can be repaired alongside work. Walk and
 before/after comparison share the experienceVerdict role. Demo records/controls are in `src/demo/records.ts`.
 
 ## Vision, obligations and witnesses

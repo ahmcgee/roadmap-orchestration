@@ -28,7 +28,7 @@ The probe is paid; run it only as the batch's triggered rung, not as a documenta
 
 ## Fixture families
 
-Each family has setup.ts, driver.ts, check.ts and report.ts. Setup creates a fresh isolated fixture directory. Drivers
+Each family has setup.ts, driver.ts and check.ts; reports are output JSON, not a shared report.ts module. Setup creates a fresh isolated fixture directory. Drivers
 write evidence/reports; check re-reads saved evidence and can be rerun without asking a model. Never reuse a run directory
 as though it were a fresh trial. Read the family's parser before invoking an option.
 
@@ -76,8 +76,23 @@ Pre-build and campaignAudit dry-run performs no backend calls. Their surface par
 --cap and --out. It does not support holdout/rebind/compare. A verifier diagnosis eval is backlog until field diagnoses
 supply representative cases; gate-mode coverage is not diagnosis evidence.
 
-Gate/experience harnesses have their own parsers for cells, parallelism, cap/trial-cap, rebind, saved summaries and
-holdout comparison; use the selected mode's help/source. Live trial-cap estimation can undercount delegated spend; a
+Per-mode forms (optional flags in brackets; placeholders are literal usage notation):
+
+```text
+node evals/roles/run.ts verifier --set dev|holdout [--n 3] [--cells G0,G3a] [--parallel 4] [--size 3000] [--seed roles-1] [--risk low|med|high] [--rebind CLASS=MODEL:EFFORT] [--out DIR] [--compare SUMMARY] [--cap USD] [--trial-cap USD] [--read-only] [--baseline SUMMARY] [--fake approve-all|revise-all|cite-every-path|cite-plant|overspend]
+node evals/roles/run.ts gate --set dev|holdout [same flags as verifier]
+node evals/roles/run.ts pre-build --set dev [--n 3] [--dry-run] [--fake expected|empty] [--cap USD] [--out DIR]
+node evals/roles/run.ts campaignAudit --set dev [--n 3] [--dry-run] [--fake expected|empty] [--cap USD] [--out DIR]
+node evals/roles/run.ts walkthrough --set dev|holdout [--n 3] [--cells S1,S2] [--parallel 2] [--rebind CLASS=MODEL:EFFORT] [--out DIR] [--compare SUMMARY] [--cap USD] [--trial-cap USD] [--fake oracle]
+node evals/roles/run.ts polishJudge --set dev|holdout [--n 3] [--cells SP-B,HI-W] [--parallel 2] [--rebind CLASS=MODEL:EFFORT] [--out DIR] [--compare SUMMARY] [--cap USD] [--trial-cap USD] [--fake oracle]
+node evals/roles/triggers.ts <base>
+```
+
+Rebind can repeat. Gate --size is 2,000–5,000 for real trials (100–5,000 fake); --read-only supplies the comparison arm,
+and an acting run's --baseline must name that arm's same-cell summary. --compare is holdout acceptance against saved dev
+results. The walkthrough/polish fake oracle validates the grader/harness without paid calls, never the real role's efficacy;
+gate uses its listed degenerate fakes instead. Trials write
+trials.jsonl, summary.json and per-cell evidence under --out; use an empty directory. Live trial-cap estimation can undercount delegated spend; a
 between-trial cap and recorded final usage are distinct. Holdout fixtures are untracked and acceptance-only. Judge actual
 catch/false-block/method evidence; a planted case is not caught merely because its file was listed.
 
@@ -107,3 +122,71 @@ partial tokens are retained and missing native USD is estimated from a routed-mo
 `status --summary` exposes spend, progress, verdicts and an activity aggregate of catches; it is not the role-eval grader.
 Its capture list currently shows suite capture spawns, while actual gate evidence includes related spec captures too.
 Observer tools read saved runtime/evidence and must not acquire control over the arc.
+
+## M1 execution and coverage
+
+```sh
+node evals/m1/setup.ts <dir>
+node evals/m1/driver.ts <dir> --profile claude-only
+node evals/m1/check.ts <dir>
+```
+
+For a free scripted run, append `--fake <scenario.json>` to the driver; it uses PATH shims and a private host directory.
+Real runs have a 90-minute driver timeout plus stop grace; fakes have five minutes. Claude-only shadows every PATH
+directory containing executable codex so accidental dependence on that CLI fails visibly.
+
+`check.ts` reports NOT EXERCISED for untaken branches: redirect, red lane, fix round, conflict/merge-in, red candidate,
+base-red, gate revise, unpublished/fresh candidate and usage-limit. CANNOT SHOW always lists real cgroup containment,
+crash boundaries under real models and week-long reliability. A green fixture does not erase either list. Use branch
+labels as checker output, not a promise that every label names a current runtime stage.
+
+## M4a independent adjudication
+
+After the paid run and `node evals/m4a/check.ts <dir>`, run **once**:
+
+```sh
+node evals/m4a/adjudicate.ts <dir>
+```
+
+It builds a read-only evidence tree from arc 1's verified target/plan/product/witness artifacts and grades R1–R7 without
+the answer key. Writes adjudication.json and adjudication/transcript.jsonl; an answer-key transcript hit voids the result.
+The lead accepts each finding into a fix/backlog or rejects it with a reason; the raw model verdict does not gate alone.
+The driver's real-forge before/after canary separately checks that fixture isolation left the real forge unchanged.
+
+## The M5 fixture
+
+Prerequisites: authenticated Claude CLI (and Codex for the mixed profile), Node 24, the `playwright-mcp` executable and
+its installed Chromium. Setup vendors the frontend-design skill with its licences under product `.claude/skills/`;
+check verifies those bytes remain unchanged. Product config already declares this MCP command:
+
+```text
+playwright-mcp --headless --isolated --browser chromium --output-dir {evidence} --viewport-size {viewport}
+```
+
+The executor substitutes the evidence directory/viewport and checks the MCP handshake. The rendering oracle expects
+exactly one Chromium installation under `~/.cache/ms-playwright/chromium-*/chrome-linux*/chrome`.
+
+```sh
+node evals/m5/setup.ts <dir>
+node evals/m5/driver.ts <dir> --profile claude-only
+node evals/m5/check.ts <dir>
+node evals/m5/reflow.ts <product> <sha>
+```
+
+M5 drives a real architect session rather than scripting its plan. The plant is a long unbreakable URL in the first
+book's condition data; at 320 CSS px it causes horizontal page overflow. `reflow.ts` renders the recorded SHA;
+plant-repaired requires a fitting page **and** the planted book/title/URL still present. Plant-caught distinguishes a
+resolved finding from prevention before the first walk; upstream prevention is not evidence that the walk caught it.
+Run walk-browser and evals-m5-reflow free tests serially on this host.
+
+## Background observer
+
+```text
+node evals/observer.ts <fixtureDir> [--backend codex|claude] [--interval-min 10] [--model MODEL] [--max-hours 7] [--host-dir DIR] [--once] [--no-retro]
+```
+
+Default backend is a read-only Codex session; Claude uses Read/Glob/Grep only. Each tick collects new journal,
+root-transcript and host-log evidence, advances observer/cursor.json and appends observer/observations.jsonl.
+Abort/high observations print as `OBSERVER ...` lines; raw tick artifacts are retained under observer/.
+At report.json it writes a whole-run observer/retro.md unless --no-retro. --once performs one observation; max-hours
+bounds the loop. It reports defects/efficiency opportunities and never acts on the fixture.

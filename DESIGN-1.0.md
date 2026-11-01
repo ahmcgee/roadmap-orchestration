@@ -336,7 +336,7 @@ and protected-path/denylist checks still run at publication; approval does not e
 Backend outages come from structured CLI error results (`turn.failed`/error events), never strings in product command
 output. Context-exceeded is uncharged operator-env work with prompt-size evidence. Codex receives the prompt on stdin,
 uses `-C`, `--json`, `-o` and strict output schema, and runs danger-full-access inside the devcontainer. Resume is allowed
-only with matching cwd/session; a session collision gets one fresh retry. These are adapter facts, not alternative
+only with matching cwd/session; a session collision gets one retry as a new invocation of the same session/deadline after five seconds. These are adapter facts, not alternative
 planning authority. Debt never mints a unit while admissions are draining; new work requires a later deliberate slice.
 
 ## 3. Routing and cost

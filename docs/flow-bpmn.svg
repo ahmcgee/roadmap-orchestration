@@ -22,9 +22,9 @@
 <path d="M540 342L568 370L540 398L512 370Z" fill="#fff" stroke="#476581" stroke-width="1.8"/>
 <text x="540" y="376" class="label" text-anchor="middle"><tspan x="540" dy="0">×</tspan></text>
 <rect x="615" y="320" width="260" height="100" rx="10" fill="#f0f7ff" class="task"/>
-<text x="745.0" y="363.0" class="label" text-anchor="middle"><tspan x="745.0" dy="0">Start arc</tspan><tspan x="745.0" dy="24">Adjudicate pack review</tspan></text>
+<text x="745.0" y="363.0" class="label" text-anchor="middle"><tspan x="745.0" dy="0">Start: validate / claim / smoke</tspan><tspan x="745.0" dy="24">Adjudicate pack review</tspan></text>
 <rect x="990" y="320" width="300" height="100" rx="10" fill="#f0f7ff" class="task"/>
-<text x="1140.0" y="351.0" class="label" text-anchor="middle"><tspan x="1140.0" dy="0">Inspect subject and evidence</tspan><tspan x="1140.0" dy="24">Export → edit → CAS apply</tspan><tspan x="1140.0" dy="24">or steer / note / witness</tspan></text>
+<text x="1140.0" y="351.0" class="label" text-anchor="middle"><tspan x="1140.0" dy="0">Inspect subject and evidence</tspan><tspan x="1140.0" dy="24">Export → edit → CAS apply</tspan><tspan x="1140.0" dy="24">Steer / note / witness / dismiss</tspan></text>
 <rect x="1480" y="320" width="300" height="100" rx="10" fill="#f0f7ff" class="task"/>
 <text x="1630.0" y="351.0" class="label" text-anchor="middle"><tspan x="1630.0" dy="0">Present brief and demo</tspan><tspan x="1630.0" dy="24">Prepare stacked PR</tspan><tspan x="1630.0" dy="24">Check next-start bound</tspan></text>
 <circle cx="1820" cy="370" r="18" fill="#fff" stroke="#334155" stroke-width="4"/>
@@ -47,14 +47,14 @@
 <polyline points="1250,223 1250,320" class="edge msg"/>
 <polyline points="1630,320 1630,223" class="edge msg"/>
 <text x="1520" y="468" class="small" text-anchor="middle"><tspan x="1520" dy="0">Another slice only within acknowledged bound; otherwise wait.</tspan></text>
-<polyline points="1630,420 1630,495 745,495 745,420" class="edge"/>
+<polyline points="1630,420 1630,495 335,495 335,420" class="edge"/>
 <text x="1160" y="486" class="small" text-anchor="middle"><tspan x="1160" dy="0">next arc</tspan></text>
 <path d="M93 1030H1885" stroke="#94a3b8"/>
 <text x="115" y="590" class="sub" text-anchor="start"><tspan x="115" dy="0">Unit pipeline (multi-instance subprocess over ready DAG units)</tspan></text>
 <rect x="105" y="610" width="1768" height="408" rx="10" fill="none" stroke="#94a3b8"/><path d="M950 1000v12 M960 1000v12 M970 1000v12" stroke="#476581" stroke-width="2"/>
 <circle cx="130" cy="680" r="18" fill="#fff" stroke="#334155" stroke-width="1.8"/>
 <rect x="180" y="630" width="240" height="100" rx="10" fill="#f0f7ff" class="task"/>
-<text x="300.0" y="661.0" class="label" text-anchor="middle"><tspan x="300.0" dy="0">Validate / claim / smoke</tspan><tspan x="300.0" dy="24">Pack review; admit</tspan><tspan x="300.0" dy="24">Reserve CPU/resources</tspan></text>
+<text x="300.0" y="661.0" class="label" text-anchor="middle"><tspan x="300.0" dy="0">Admit ready DAG unit</tspan><tspan x="300.0" dy="24">Reserve CPU/resources</tspan><tspan x="300.0" dy="24">Prepare checkout</tspan></text>
 <path d="M475 652L503 680L475 708L447 680Z" fill="#fff" stroke="#476581" stroke-width="1.8"/>
 <text x="475" y="686" class="label" text-anchor="middle"><tspan x="475" dy="0">×</tspan></text>
 <rect x="540" y="630" width="230" height="100" rx="10" fill="#f0f7ff" class="task"/>
@@ -111,7 +111,7 @@
 <rect x="190" y="1115" width="260" height="100" rx="10" fill="#f0f7ff" class="task"/>
 <text x="320.0" y="1146.0" class="label" text-anchor="middle"><tspan x="320.0" dy="0">Milestone members retired</tspan><tspan x="320.0" dy="24">Selected batch lanes</tspan><tspan x="320.0" dy="24">Bring up product</tspan></text>
 <rect x="530" y="1115" width="280" height="100" rx="10" fill="#f0f7ff" class="task"/>
-<text x="670.0" y="1146.0" class="label" text-anchor="middle"><tspan x="670.0" dy="0">Experience verdict</tspan><tspan x="670.0" dy="24">Walk journeys; compare polish</tspan><tspan x="670.0" dy="24">Breaks hold dependents</tspan></text>
+<text x="670.0" y="1146.0" class="label" text-anchor="middle"><tspan x="670.0" dy="0">Experience verdict</tspan><tspan x="670.0" dy="24">Walk / compare; promote demo</tspan><tspan x="670.0" dy="24">Breaks hold dependents</tspan></text>
 <path d="M875 1137L903 1165L875 1193L847 1165Z" fill="#fff" stroke="#476581" stroke-width="1.8"/>
 <text x="875" y="1171" class="label" text-anchor="middle"><tspan x="875" dy="0">×</tspan></text>
 <rect x="990" y="1115" width="285" height="100" rx="10" fill="#f0f7ff" class="task"/>
@@ -132,7 +132,7 @@
 <text x="1398" y="1144" class="small" text-anchor="middle"><tspan x="1398" dy="0">final</tspan></text>
 <polyline points="1730,1165 1797,1165" class="edge"/>
 <rect x="530" y="1350" width="300" height="100" rx="10" fill="#f0f7ff" class="task"/>
-<text x="680.0" y="1381.0" class="label" text-anchor="middle"><tspan x="680.0" dy="0">Root-authored repair / polish</tspan><tspan x="680.0" dy="24">Gated unit execution</tspan><tspan x="680.0" dy="24">Merge and re-walk as needed</tspan></text>
+<text x="680.0" y="1381.0" class="label" text-anchor="middle"><tspan x="680.0" dy="0">Repair / proposed polish</tspan><tspan x="680.0" dy="24">Gated unit execution</tspan><tspan x="680.0" dy="24">Merge and re-walk as needed</tspan></text>
 <rect x="990" y="1350" width="300" height="100" rx="10" fill="#f0f7ff" class="task"/>
 <text x="1140.0" y="1381.0" class="label" text-anchor="middle"><tspan x="1140.0" dy="0">Findings + requests to root</tspan><tspan x="1140.0" dy="24">Root alone dispositions</tspan><tspan x="1140.0" dy="24">obligations / target changes</tspan></text>
 <path d="M1340 1372L1368 1400L1340 1428L1312 1400Z" fill="#fff" stroke="#476581" stroke-width="1.8"/>
@@ -149,5 +149,5 @@
 <polyline points="1815,1147 1855,1147 1855,535 1740,535 1740,420" class="edge msg"/>
 <text x="115" y="1538" class="small" text-anchor="start"><tspan x="115" dy="0">No-milestone arcs take requested/final audit and close-out directly. A spike retires its report; it never enters candidate publication.</tspan></text>
 <rect x="60" y="1610" width="1800" height="80" rx="4" fill="#fff" class="task"/>
-<text x="85" y="1642" class="small" text-anchor="start"><tspan x="85" dy="0">Evidence and authority: journal + kept inputs; containment empty before reading results or releasing resources; protected paths stay guarded.</tspan><tspan x="85" dy="24">CAS refuses every stale edited file together; untouched files take current bytes. Expectations and waste are advisory. Ack is only for offered options.</tspan></text>
+<text x="85" y="1642" class="small" text-anchor="start"><tspan x="85" dy="0">Evidence and authority: journal + kept inputs; containment empty before reading results or releasing resources; protected paths stay guarded.</tspan><tspan x="85" dy="24">Watch: 30-minute heartbeat, at most 3 chat lines; log interventions and arc-wide controls. Root never patches plugin/runtime. Ack only for offered options.</tspan></text>
 </svg>

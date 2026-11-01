@@ -86,7 +86,9 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
    architect changes the plan and alone authorizes obligation dispositions. Audit dismissal requests await the root;
    `dismiss F-n --counter-evidence "<line>"` records its evidence-backed decision, including for P1 findings.
 6. **Supervise from the command center.** The architect watches actionable events and reads `status --summary` for
-   progress, spend versus expectations, milestone verdicts, caught counts and waste. To change inputs, export the
+   progress, spend versus expectations, milestone verdicts, caught counts and waste. Watch includes a fixed 30-minute
+   heartbeat; each wake gets at most three chat lines. Interventions and every arc-wide control go in the external
+   operator log. The root never patches the plugin or run directory. To change inputs, export the
    current pack, edit it, then `apply --from <dir> --rev <N> --reason "<line>"`. Edited files must still match their
    exported base; untouched files take current bytes, and edited specs advance automatically. Steer cancels an
    unfinished unit into a directed round; note informs its next build without interruption. Successful subject
@@ -107,8 +109,43 @@ pinned corpus paths remain guarded. `docs/systems/<system>.md` (configurable) is
 through ordinary gated diffs; normative claims stay in the corpus. Commit bodies retain captured summaries and
 structured decisions, making later work and crash recovery intelligible.
 
+Certification allows three uncharged reds before the fourth charges (defaults); witnesses-missing counts in that
+allowance. Gate revisions and candidate reds have separate bounds. Fresh build sessions with earlier lineage receive
+a handover of diagnosis, findings, unmet clauses, witness failures, decisions and original evidence. Exact witness ids
+can be checked with `witness-check --lane-file` before requesting certification.
+
+A same-commit red→green run is flaky; unit-tree flakes need repair, while eligible tip flakes can be forgiven and mint
+deflake units. Stochastic k-of-n lanes follow their declared rule instead. Ordering parks wake when their named blockers
+merge. Managed environments start lazily, stay up while used and stop when idle; failed up/probe parks retryably rather
+than counting as a red test. CPU reservations calibrate from completed runs; judgments and one workload can progress
+under the host-pressure brake. Startup refuses foreign residues until cleaned or isolated, allowing proven own-arc
+residues to recover.
+
+For live or retained observation, use `roadmap tui --repo <path> --arc <id>`. It refreshes without runtime writes;
+closing it leaves execution running. The header separates executor liveness, active workloads and signed-in Claude
+five-hour/weekly usage (read-only five-minute observation with cached fallback). Documents and logs use recorded
+revision/commit identities, so unapplied working-tree edits are excluded.
+
+| TUI control | View / behavior |
+|---|---|
+| 1–4; Tab / arrows | Dependency map, Activity, Estate, Exceptions |
+| x / g / a | Expand Activity / toggle map context / reveal retained history |
+| c / m / r / R | Show settled map nodes / next milestone / next or previous running item |
+| Enter / Space | Open selected logs/document; expand an Estate collection |
+| /, n, N, Esc | Search/jump forward/back; clear search then return |
+| r in details; b | Raw/readable record; original repair input when retained |
+| ? | Contextual controls |
+
+Map selection links Activity by recorded unit/milestone/lineage; rows retain the actual unit. Estate leads with vision,
+slice and plan, then naturally ordered document collections and debt. Missing evidence stays explicit. Historical
+future-obligation checks say pre-delivery, and mutation detections remain distinct from product failures. A stopped
+executor gets a STOPPED banner; informational viewer diagnostics do not become runtime exceptions. The persistent
+`node test/fixtures/tui-lineage-demo.ts` example (from executor/) prints a launcher for inspecting replacement lineage.
+
 The `vision` skill owns target dialogue and confirmation. The `estate-compaction` skill records owner-approved
-reductions of rules, obligations, root ledger text and debt for the next Phase 0.
+reductions of rules, obligations, root ledger text and debt for the next Phase 0. Approved records wait outside product
+in `roadmap-inputs/compaction.md` and apply through normal validated input edits. PR review/CI fixes likewise
+become root-authored units, preserving the same gates and evidence.
 
 ## Layout
 

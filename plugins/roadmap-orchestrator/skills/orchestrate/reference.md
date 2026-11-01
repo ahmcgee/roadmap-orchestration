@@ -189,6 +189,11 @@ The brief hashes the whole canonical payload into briefId and renders Markdown f
 
 Actionable watch wakes for durable needs-user changes, relevant unit/arc transitions, executor death and heartbeat check-ins. After waking, consume the cause, act, then watch again from its sequence. End the turn at an owner check-in. An observation terminal is optional, not the monitor.
 
+Keep actionable watch outstanding with the default 30-minute heartbeat. On every wake post at most 3 lines (progress,
+next step, oddities), read status and the affected item/cited evidence, act if needed and continue from the returned seq.
+The root never patches the plugin or run directory. On supervisor crash-limit, report the cited stderr error/stack to
+the owner and stop with reason owner; do not ack or restart around the defect.
+
 ## Refusals and recovery
 
 Read the complete row/receipt. Fix the source, then retry the same canonical action.
@@ -214,7 +219,9 @@ A boot hook can call resume-arc in the product repo. An input export works with 
 
 ## The operator log
 
-Keep `skill-feedback.md` outside product, one append-only entry per material intervention. Entry ids count up; each heading
+Keep `<repo>/../roadmap-inputs/skill-feedback.md` outside product, one append-only entry per self-initiated intervention.
+Routine Phase 0/start/PR/check-ins and following an item recommendation are not interventions. Always log arc-wide pause,
+resume-all, backend resume, stop and close-admissions whoever requested it; include when the control ended. Entry ids count up; each heading
 names UTC time, arc and action, followed by exactly one nonempty bullet for symptom, evidence, outcome and executor change.
 Prefer measured failure patterns over habitual polling.
 
@@ -226,8 +233,8 @@ Prefer measured failure patterns over habitual polling.
 - executor change: report stalled progress with the lane evidence and last activity time.
 ```
 
-The checker recognizes note, witness, dismiss, sweep, resolve-edge, run-only and the four demo actions alongside the other current controls; the retired rule label is refused.
-Keep actual intervention evidence; report that checker limitation when grading those new actions.
+The checker recognizes note, witness, dismiss, sweep, resolve-edge, run-only and the four demo actions alongside the
+other current controls. Keep actual intervention evidence for grading.
 
 ## Chaining
 
