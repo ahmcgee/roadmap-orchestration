@@ -278,7 +278,7 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     )).sort());
     assert.deepEqual(wakes, [
       ['needs-user:pack-review'], ['units:blocked'], ['units:complete'],
-      ['units:blocked'], ['units:held'], ['units:complete'],
+      ['units:blocked'], ['needs-user:ruler-changed', 'units:held'], ['units:complete'],
     ]);
     const revisions = raisedOf(arc1, 'revision-notice', story.dir, 1);
     assert.equal(revisions.length, 1, 'the applied flow revision has its P1 notice');

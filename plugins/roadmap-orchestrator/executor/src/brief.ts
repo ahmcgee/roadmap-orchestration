@@ -10,7 +10,7 @@
 //   starts at seq 0. Nothing else defines a delta. The new vector is, per chained arc, its ref's commit and high-water.
 // - **Per arc** (`BriefArc`), from its delta: the divergences and digests; the decisions (`status`'s `decisionsAfter`,
 //   read from the ref); the Phase-0 record when a revision in the delta changed it (its curation digest, corpus
-//   divergences, questions with their working assumptions and debt dispositions); the debt banked; the amendments (`<arc>/M-n`); the pack reviews' notes; the stage timings of the
+//   divergences, questions with their working assumptions and debt dispositions); the debt banked; the pack reviews' notes; the stage timings of the
 //   attempts completed in the delta (`status`'s `stageTimings`). Not a delta: the census at the ref (a corpus arc's;
 //   `held` = its obligation-state rules whose obligation holds on the arc's integration head, `status`'s rule over the
 //   ref's witness records) and the arc's PR now (non-fatal `unavailable`).
@@ -20,9 +20,6 @@
 //   brief.
 // - **Chain**: the head's position (1-based), K, the unacked starts and the next start (src/commands/chain.ts
 //   `chainQuota`: K committed at the head's baseline, the start predicate src/chain.ts `nextStartOf`).
-// - **Admits** (M4a rev 3, OR-A1; corpus arcs): the admits classified in the delta (`status`'s `admitViews` over the ref),
-//   the opportunities at the ref, the drift indicator's non-zero lines at the ref (the only check on under-declared admit
-//   targets), and each amendment a converted admit made names that admit.
 // - **Answers** (src/answers.ts): the owner's recorded answers (`roadmap answer`) no Phase-0 record applies yet, read
 //   from the answer log and the newest arcs' records in force (a live arc's run dir before its ref): rendered first, as
 //   the act the root agent owes now.
@@ -52,7 +49,7 @@ import { CliError, runDir } from './input/cli.ts';
 import { NEEDS_USER_DIR, openNeedsUser } from './needsuser.ts';
 import { type AckItem, BRIEF_SCHEMA, type BriefArc, type BriefFlow, type BriefPayload, type BriefPr, type CoverageEntry, type NextStart, parseBriefPayload, parsePhase0Record } from './phase0/types.ts';
 import { meterOf } from './meter.ts';
-import { type Decision, admitViews, censusCounts, decisionsAfter, heldPct, obligationLeaves, stageTimings } from './status.ts';
+import { type Decision,  censusCounts, decisionsAfter, heldPct, obligationLeaves, stageTimings } from './status.ts';
 import { codeConstraintOf, windowPressure } from './flow/constraint.ts';
 import { seriesOfRef } from './flow/history.ts';
 import { proposalLine } from './flow/job.ts';
@@ -182,8 +179,6 @@ function briefArc(repo: AbsPath, ref: ArcRef, from: number, pr: BriefPr, previou
     command: (): CommandBody | null => null,
   });
   const inForce = now === undefined ? null : parsePhase0Record(JSON.parse(ref.input(now, PHASE0_INPUT).toString('utf8')));
-  // OR-A1 (corpus arcs): the classified admits, opportunities and drift indicator, by status's rule over the ref's log.
-  const admitted = ref.plan.target === 'corpus' ? admitViews(ref.view, repo, ref.plan, meterOf(ref.events)) : { admits: [], opportunities: [], drift: [] };
   return {
     arc: ref.arc,
     slice: inForce === null ? null : inForce.slice,
@@ -202,9 +197,6 @@ function briefArc(repo: AbsPath, ref: ArcRef, from: number, pr: BriefPr, previou
     census: censusAt(repo, ref),
     timings: stageTimings(ref.events, from),
     pr,
-    admits: admitted.admits.filter((x) => x.seq > from).map((x) => ({ job: x.job, index: x.index, unit: x.unit, class: x.class, clauses: x.clauses, followUp: x.followUp })),
-    opportunities: admitted.opportunities,
-    drift: admitted.drift.filter((x) => x.findings.length > 0).map((x) => ({ unit: x.unit, job: x.job, findings: x.findings.map((f) => ({ id: f.id, clauses: f.clauses })) })),
     flow: briefFlow(ref, from, previous),
     demo: demoView({ view: ref.view, plan: ref.plan, repairs: refRepairs(repo, ref) }),
   };
@@ -285,9 +277,6 @@ function arcMarkdown(a: BriefArc): string {
     section('Questions (working assumptions)', [...a.questions].sort((x, y) => x.rank - y.rank).map((q) => `#${q.rank} ${q.id} ${q.state.type === 'open' ? 'open' : `answered: ${q.state.answer}`}: ${q.text} — assuming: ${q.assumption}`)),
     section('Debt banked', a.debt.banked.map((d) => `${d.id}: ${d.what}`)),
     section('Debt dispositioned', a.debt.dispositioned.map((d) => `${d.id}: ${canonicalJson(d.disposition).trim()}`)),
-    section('Admits', a.admits.map((x) => `${x.unit} (${x.job}#${x.index}): ${x.class}${x.clauses.length === 0 ? '' : ` ${x.clauses.join(', ')}`}${x.followUp === null ? '' : `, follow-up of ${x.followUp}`}`)),
-    section('Opportunities', a.opportunities.map((o) => `${o.id} advances ${o.clauses.join(', ')}: units ${o.units.join(', ')}; ${o.followUps} follow-up${o.followUps === 1 ? '' : 's'}; $${o.spentUsd}${o.overrun.length === 0 ? '' : `; overrun by ${o.overrun.map((x) => `${x.job}#${x.index}`).join(', ')}`}`)),
-    section('Drift (findings outside the slice on checkpoint units\' merges)', a.drift.map((d) => `${d.unit} (${d.job}): ${d.findings.length} — ${d.findings.map((f) => `${f.id} ${f.clauses.join(', ')}`).join('; ')}`)),
     section('Pack review notes', a.packReviewNotes.map((n) => `${n.job}#${n.index}: ${n.claim}`)),
     ...(a.flow === null ? [] : [section('Flow', [
       `constraint: ${a.flow.constraint ?? 'none yet (no merged unit)'}`,

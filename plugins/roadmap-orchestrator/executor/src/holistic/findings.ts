@@ -14,9 +14,8 @@
 //   finding (`ownershipMoves`, driven by src/pipeline/reproduce.ts `syncRepairs`): the first live unit whose spec
 //   repairs it owns it; its gate's approval standing makes it `fixed-on-branch`; its publication resolves it. A
 //   `witness` P1 is also resolved by any unit repairing its obligation that publishes after it opened (the brake proved
-//   the obligation held with integrated evidence). Ruling a finding is `ruleFinding`: P1s never bank (a checkpoint may
-//   only dismiss one; deferring, accepting or releasing it takes a disposition ruling). dev.13: what a checkpoint's
-//   dispositions become when applied, and which findings code releases then, is src/holistic/tail.ts.
+//   the obligation held with integrated evidence). Root disposition rulings and close-out govern `ruleFinding`;
+//   P1s never bank.
 // - **Blocking (G10).** An active P1 over an obligation a candidate selects blocks it, unless the unit's spec repairs
 //   that obligation (`p1Blocking`): at admission (src/schedule/ready.ts), before green and before the ff
 //   (src/pipeline/integrate.ts `findingBlocking`).

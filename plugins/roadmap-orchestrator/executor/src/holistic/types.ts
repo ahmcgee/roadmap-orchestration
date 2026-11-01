@@ -11,19 +11,19 @@ type EnvId,
 type FindingId,type InvocationId,type JobId,type LaneId,type LaneRev,
 type MilestoneId,
 type ObligationId,
-type OpportunityId,
+
 type PlanRev,type QuestionId,type RoutingRev,type RuleId,
 type RulingId,type Sha,type Sha256Hex,type UnitId,type VisionClauseId,envId,findingId,
 idList,idsAscending,
 invocationIdOf,jobIdOf,jobIdOfKind,laneId,laneRev,
 milestoneId,
 obligationId,
-opportunityId,
+
 planRev,questionId,routingRev,ruleId,rulingId,sha,sha256,unitId,visionClauseId,
 } from '../core/ids.ts';
 import { canonicalJson,sha256Hex } from '../core/json.ts';
 import {
-LENS_KIND_NAMES,type LaneDef,type LensKindName,type RepairRef,type Stage,laneDef,laneDefOf,laneEnv,repairRef,
+LENS_KIND_NAMES,type LaneDef,type LensKindName,type Stage,laneDef,laneDefOf,laneEnv,
 } from '../core/records.ts';
 
 import {
@@ -688,18 +688,7 @@ export type FindingSource =
   | Readonly<{ type: 'demo'; sha: Sha }>;
 /** A vacuity finding's mutant: the patch (kept content-addressed) and the lane that should kill it. */
 export type MutantRef = Readonly<{ patchSha256: Sha256Hex; lane: LaneId }>;
-/**
- * Why code released a finding when checkpoint `job`'s decision was applied (dev.13, the convergence tail, owner ruling
- * 2026-10-20; src/holistic/tail.ts): `p3`, a P3 the decision did not fix (P3 is never debt); `regress`, a P2 or P3 below
- * the regress brake (code a finding-origin unit introduced: only a P1 spawns a unit); `settled`, one below the settled
- * brake (every milestone passed and every planned unit merged).
- */
-/** Who ruled a finding: a checkpoint's `findingDispositions`, a ruling, or code (a mutant not reproduced). */
-/**
- * `code`: a reproduce that killed the mutant dismisses its finding (`not-reproduced`); run 10 (F) the close-out defers an
- * open P2 with no obligation (`close-out`; dev.13: it releases such a P3). dev.13 `release`: code released it when
- * checkpoint `job`'s decision was applied, for `reason` (only with disposition `released`).
- */
+/** A root ruling, mutant reproduction, or close-out disposition that ruled a finding. */
 export type FindingRuledBy =
   | Readonly<{ type: 'ruling'; ruling: RulingId }>
   | Readonly<{ type: 'code'; reason: 'not-reproduced' | 'close-out' }>;
@@ -817,84 +806,8 @@ export const revisionVector: Read<RevisionVector> = object((f) => ({
   contracts: f.get('contracts', contractRevs),
 }));
 
-/**
- * A bundle's outcome other than an applied revision (which is its `plan-applied{source: bundle}`). `busy` (M4a rev 3, C5,
- * R50): the bundle touched a unit with an open stage attempt (`units`, ascending by unit); it is decided again only once
- * each attempt has closed, and never counts toward `secondInvalid`.
- */
-export const BUNDLE_REJECTIONS = ['stale', 'evidence', 'invalid', 'busy'] as const;
-export type BundleRejection = (typeof BUNDLE_REJECTIONS)[number];
-/** An open stage attempt a `busy` rejection names. */
+/** An open stage attempt a root edit must wait for. */
 export type BusyAttempt = Readonly<{ unit: UnitId; stage: Stage; attempt: number }>;
-export type BundleOutcome =
-  /** `conversions` (M4a rev 3, OR-A1): every op converted (none left to apply); absent: none (lasting). */
-  | Readonly<{ kind: 'no-op'; conversions?: readonly Conversion[] }>
-  /** `units` exactly on a `busy` rejection (non-empty). */
-  | Readonly<{ kind: 'rejected'; reason: BundleRejection; detail: string; units?: readonly BusyAttempt[] }>
-  /** Held for the architect: a `bundle-request` (A9, draining, a brake) or an `owner-request` (A16). */
-  | Readonly<{ kind: 'requested'; needsUser: string }>;
-
-// ---------------------------------------------------------------------------------------------------
-// Checkpoint admit classes (M4a rev 3, OR-A1, LR-k; src/holistic/admits.ts classifies, N2)
-
-/** Opportunities an arc may admit (OR-A1); unmeasured. */
-export const OPPORTUNITY_BUDGET = 1;
-/** Follow-up repairs one opportunity may carry (LR-k, R48). */
-export const OPPORTUNITY_FOLLOW_UPS = 1;
-/**
- * The class code gives a checkpoint `admit` (R45's decision table, corpus arcs only, LR-h). `repair`: it restores an
- * in-slice obligation or behaviour that does not hold (`refs`: its spec's repairs, non-empty), the follow-up of
- * opportunity `followUp` when its attribution lies wholly in that opportunity's lineage. `oversight`: a gap within the
- * owner-selected slice. `opportunity`: it advances clauses outside the slice (`clauses`, joining `holistic.advances`).
- * `unrelated` is never a class: such an admit converts.
- */
-export type AdmitClass =
-  | Readonly<{ type: 'repair'; refs: readonly RepairRef[]; followUp: OpportunityId | null }>
-  | Readonly<{ type: 'oversight'; clauses: readonly VisionClauseId[] }>
-  | Readonly<{ type: 'opportunity'; id: OpportunityId; clauses: readonly VisionClauseId[] }>;
-/** An admit of a bundle as its decision record keeps it: the op's index in the checkpoint answer, its unit, its class. */
-export type ClassifiedAdmit = Readonly<{ index: number; unit: UnitId; class: AdmitClass }>;
-/**
- * dev.13 (the convergence tail, src/holistic/tail.ts): `regress-brake`, `settled-brake`: an admit whose every repair is a
- * finding below that brake (any arc, not only a corpus arc); the findings it named are released or banked when the
- * decision is applied, never a corpus amendment.
- */
-export const CONVERSION_REASONS = ['unrelated', 'over-budget', 'unwitnessed', 'follow-up-overrun', 'regress-brake', 'settled-brake'] as const;
-export type ConversionReason = (typeof CONVERSION_REASONS)[number];
-/** The conversions a brake makes (dev.13): no amendment, the findings settled by the tail rules. */
-export const BRAKE_CONVERSIONS = ['regress-brake', 'settled-brake'] as const satisfies readonly ConversionReason[];
-export const isBrakeConversion = (r: ConversionReason): r is (typeof BRAKE_CONVERSIONS)[number] => (BRAKE_CONVERSIONS as readonly string[]).includes(r);
-/**
- * An admit code dropped from a bundle (R35): it becomes a corpus amendment (and, for `follow-up-overrun`, a debt item
- * naming `opportunity`); a brake's conversion (dev.13) becomes neither. `opportunity` is non-null exactly for `follow-up-overrun`.
- */
-export type Conversion = Readonly<{ index: number; unit: UnitId; reason: ConversionReason; opportunity: OpportunityId | null }>;
-
-const repairRefsR: Read<readonly RepairRef[]> = (value, path) => {
-  const out = arrayOf(repairRef, { nonEmpty: true })(value, path);
-  assertUnique(out, (r) => r, path);
-  return out;
-};
-export const admitClass: Read<AdmitClass> = tagged('type', {
-  repair: object((f): AdmitClass => ({ type: f.get('type', literal('repair')), refs: f.get('refs', repairRefsR), followUp: f.get('followUp', nullable((v, p) => opportunityId(v, p))) })),
-  oversight: object((f): AdmitClass => ({ type: f.get('type', literal('oversight')), clauses: f.get('clauses', idList(vid, { nonEmpty: true })) })),
-  opportunity: object((f): AdmitClass => ({
-    type: f.get('type', literal('opportunity')), id: f.get('id', (v, p) => opportunityId(v, p)), clauses: f.get('clauses', idList(vid, { nonEmpty: true })),
-  })),
-});
-export const classifiedAdmit: Read<ClassifiedAdmit> = object((f) => ({ index: f.get('index', nat), unit: f.get('unit', (v, p) => unitId(v, p)), class: f.get('class', admitClass) }));
-export const conversion: Read<Conversion> = object((f) => {
-  const out = {
-    index: f.get('index', nat), unit: f.get('unit', (v, p) => unitId(v, p)), reason: f.get('reason', oneOf(CONVERSION_REASONS)),
-    opportunity: f.get('opportunity', nullable((v, p) => opportunityId(v, p))),
-  };
-  if ((out.reason === 'follow-up-overrun') !== (out.opportunity !== null)) {
-    throw new SchemaError(`${f.path}.opportunity`, out.reason === 'follow-up-overrun' ? 'the opportunity a follow-up overran' : 'null (only a follow-up overrun names one)', out.opportunity);
-  }
-  return out;
-});
-/** A bundle's admits or conversions: ascending by op index, each index once. */
-export const byIndex = <T extends Readonly<{ index: number }>>(item: Read<T>): Read<readonly T[]> => sortedBy(item, (x) => String(x.index).padStart(6, '0'), { nonEmpty: true, order: 'by op index' });
 
 // ---------------------------------------------------------------------------------------------------
 // A witness-check lane file (`<evidenceDir>/witness/<lane>.json`, M4a rev 3 D1, R56): what `roadmap witness-check` runs

@@ -15,7 +15,7 @@ proofMinutes,verdictAfter,verdictBefore,
 } from '../flow/types.ts';
 import { type PressureAvailability,PRESSURE_AVAILABILITIES } from '../host/pressure.ts';
 import { type CpuBasis,cpuBasis } from './cpu.ts';
-import { type ArcId, type ClaudeSessionId, type CommandId, type DebtId, type DivergenceId, type EdgeId, type EnvId, type FindingId, type InvocationId, type JobId, type JourneyId, type KnownDefectId, type LaneId, type LaneRev, type MilestoneId, type NeedsUserId, type ObligationId, type OpId, type OpKey, type OpportunityId, type PlanRev, type PolishId, type ProposalId, type ResourceInstance, type ResourceName, type ResourceUnit, type RoutingRev, type ServeName, type Sha, type Sha256Hex, type SpecRev, type UnitId, type VisionClauseId, arcId, claudeSessionId, commandId, compareResourceUnits, debtId, divergenceId, edgeId, envId, findingId, idList, invocationIdOf, jobIdOf, jobIdOfKind, journeyId, knownDefectId, laneId, laneRev, milestoneId, needsUserId, obligationId, opIdOf, opKey, opportunityId, parseInvocationId, parseJobId, parseOpId, planRev, polishId, proposalId, proposalJob, resourceInstance, resourceName, resourceUnit, routingRev, serveName, sha, sha256, specRev, unitId, visionClauseId } from './ids.ts';
+import { type ArcId, type ClaudeSessionId, type CommandId, type DebtId, type DivergenceId, type EdgeId, type EnvId, type FindingId, type InvocationId, type JobId, type JourneyId, type KnownDefectId, type LaneId, type LaneRev, type MilestoneId, type NeedsUserId, type ObligationId, type OpId, type OpKey,  type PlanRev, type PolishId, type ProposalId, type ResourceInstance, type ResourceName, type ResourceUnit, type RoutingRev, type ServeName, type Sha, type Sha256Hex, type SpecRev, type UnitId, type VisionClauseId, arcId, claudeSessionId, commandId, compareResourceUnits, debtId, divergenceId, edgeId, envId, findingId, idList, invocationIdOf, jobIdOf, jobIdOfKind, journeyId, knownDefectId, laneId, laneRev, milestoneId, needsUserId, obligationId, opIdOf, opKey,  parseInvocationId, parseJobId, parseOpId, planRev, polishId, proposalId, proposalJob, resourceInstance, resourceName, resourceUnit, routingRev, serveName, sha, sha256, specRev, unitId, visionClauseId } from './ids.ts';
 import { canonicalJson,sha256Hex } from './json.ts';
 import { type OrderingWait,orderingWait } from './ordering.ts';
 import {
@@ -334,14 +334,7 @@ export type IntegrationFfExpect = Readonly<{ ref: RefName; old: Sha; new: Sha }>
 /** The revision a revision is evaluated against: the plan rev in force, or 0 before the arc's first (M3 step A2). */
 export type RevisionBase = PlanRev | 0;
 
-/**
- * Where a revision came from (G1): the arc's start, an architect command, a checkpoint bundle, the executor's own patch, or
- * (M4b) an accepted flow proposal, committed under the fence.
- * A bundle's `admits` and `conversions` (M4a rev 3, OR-A1, Q4): code's classification of its `admit` ops, persisted in
- * the decision record before any settlement and never recomputed; both present (in a corpus arc) or both absent (an
- * `architecture-doc` arc, or 1.0.0-dev.6: unclassified, never counted against a budget or a follow-up; `bundleClassesOf`).
- * dev.13: `conversions` alone (non-empty) outside a corpus arc: the admits a brake converted (src/holistic/tail.ts).
- */
+/** The start, root command, executor patch or accepted flow/walk change that authored a revision. */
 export type RevisionSource =
   | Readonly<{ type: 'start' }>
   | Readonly<{ type: 'command'; command: CommandId }>
@@ -974,15 +967,14 @@ export type HolisticFact =
 export type SmokeVerdict = Readonly<{ killed: readonly TestRef[]; survived: readonly TestRef[]; inconclusive: readonly TestRef[] }>;
 
 /**
- * The M4a facts (SCHEMAS.md "M4a"); their behaviour is A4's (debt), C3's (amendments, intake, pack review, captures).
- * M4a rev 3: `lane-reused`, `series-certified` (N1), `smoke-ran` (N3), `finding-corroborated` (N5).
+ * The M4a facts (SCHEMAS.md "M4a"); their behaviour is A4's (debt), C3's (intake, pack review, captures).
+ * M4a rev 3: `lane-reused`, `series-certified` (N1), `smoke-ran` (N3).
  */
 export type M4aFact =
   /**
-   * A debt item banked (R7): after the approving gate's `approval`, or a checkpoint's deferral; idempotent per `source`.
-   * `opportunity` (M4a rev 3, LR-k) exactly on an `opportunity-overrun` item: the opportunity it names.
+   * A debt item banked (R7): after the approving gate's `approval` or a close-out finding deferral; idempotent per `source`.
    */
-  | Readonly<{ kind: 'debt-banked'; id: DebtId; bankReason: BankReason; what: string; key: Sha256Hex; source: DebtSource; opportunity?: OpportunityId }>
+  | Readonly<{ kind: 'debt-banked'; id: DebtId; bankReason: BankReason; what: string; key: Sha256Hex; source: DebtSource }>
   /**
    * A series reused a lane's earlier pass instead of running it (F1a, R52), written before the lane would have run;
    * keyed `(parent, lane)`. `from`: the reused execution's series parent, invocation and SHA.
@@ -999,7 +991,6 @@ export type M4aFact =
   | Readonly<{ kind: 'series-certified'; parent: Parent; checkout: AbsPath; at: Sha }>
   /** A unit attempt's mutation smoke ran (D2, Q17): `key` its allowance key; a later attempt with the same key reuses `verdict`. */
   | Readonly<{ kind: 'smoke-ran'; unit: UnitId; attempt: number; key: Sha256Hex; verdict: SmokeVerdict }>
-  /** A second lens's draft merged into finding `id` within one audit (H7, R62): its lens and claim, kept as its rationale. */
   /**
    * Run 10 (E): the executor declined a non-blocking needs-user item nobody answered by the close-out (a `bundle-request`),
    * so a non-blocking item never holds completion. It closes the item as an acknowledgement would (`choice`: the item's
@@ -1007,7 +998,6 @@ export type M4aFact =
    * never with a `needs-user-acked`.
    */
   | Readonly<{ kind: 'needs-user-declined'; id: NeedsUserId; choice: string | null; reason: string }>
-  /** A proposed change to the corpus, dispositioned at the next Phase 0. */
   /** A pack review's kept inputs (K8): written after `inputs/<inputsSha256>.pack-review.json` and before the spawn; `key` its required-review key. */
   | Readonly<{ kind: 'pack-review-started'; job: JobId; planRev: PlanRev; inputsSha256: Sha256Hex; key: Sha256Hex }>
   /**
@@ -1946,12 +1936,7 @@ const M4A_FACT_READERS: { readonly [K in M4aFactKind]: Read<Fact> } = {
       kind: f.get('kind', literal('debt-banked')), id: f.get('id', (v, p) => debtId(v, p)), bankReason: f.get('bankReason', oneOf(BANK_REASONS)), what: f.get('what', str),
       key: f.get('key', sha256R), source: f.get('source', debtSource),
     };
-    const opportunity = f.optional('opportunity', (v, p) => opportunityId(v, p));
-    if ((out.bankReason === 'opportunity-overrun') !== (opportunity !== undefined)) {
-      throw new SchemaError(`${f.path}.opportunity`, out.bankReason === 'opportunity-overrun' ? 'the opportunity an overrun names' : 'absent (only an opportunity overrun names one)', opportunity);
-    }
-    if ((out.bankReason === 'opportunity-overrun') !== (out.source.type === 'admit')) throw new SchemaError(`${f.path}.source`, out.bankReason === 'opportunity-overrun' ? 'the admit that overran' : 'a gate or finding source', out.source);
-    return opportunity === undefined ? out : { ...out, opportunity };
+    return out;
   }),
   'lane-reused': object((f): Fact => {
     const set = f.optional('set', oneOf(['spec', 'suite'] as const));

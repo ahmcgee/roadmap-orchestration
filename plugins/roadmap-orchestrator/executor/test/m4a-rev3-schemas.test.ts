@@ -17,8 +17,7 @@ import { DEFAULT_BOUNDS,boundsOfRecord,dispatchRecord,laneDef,laneDefOf,redFile,
 import { Fold,openAttempt } from '../src/core/state.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { absPath,isoTime } from '../src/core/values.ts';
-import { debtSource } from '../src/debt/types.ts';
-import { type ArcLaneDef,admitClass,conversion,laneRevOf,parseObligations,witnessLaneFile } from '../src/holistic/types.ts';
+import { type ArcLaneDef,laneRevOf,parseObligations,witnessLaneFile } from '../src/holistic/types.ts';
 import { CliError,parseCommand } from '../src/input/cli.ts';
 import { knownDefectsOf,parsePlan,priorityOf } from '../src/input/plan.ts';
 import {
@@ -102,32 +101,6 @@ describe('m4a-rev3 spawn subjects and mutant records', () => {
 });
 
 describe('m4a-rev3 checkpoint records', () => {
-  const admits = [
-    { index: 0, unit: 'u4', class: { type: 'repair', refs: ['F-3', 'I-2'], followUp: 'O-1' } },
-    { index: 2, unit: 'u5', class: { type: 'opportunity', id: 'O-2', clauses: ['V-5'] } },
-    { index: 3, unit: 'u6', class: { type: 'oversight', clauses: ['V-1', 'V-2'] } },
-  ];
-  const conversions = [{ index: 1, unit: 'u7', reason: 'follow-up-overrun', opportunity: 'O-1' }, { index: 4, unit: 'u8', reason: 'unrelated', opportunity: null }];
-
-  it('admit classes and conversions: closed, with their cross-field rules', () => {
-    for (const a of admits) same(admitClass, a.class);
-    for (const c of conversions) same(conversion, c);
-    assert.throws(() => admitClass({ type: 'unrelated' }, 'x'), SchemaError);
-    assert.throws(() => admitClass({ type: 'repair', refs: [], followUp: null }, 'x'), SchemaError);
-    assert.throws(() => conversion({ index: 1, unit: 'u7', reason: 'over-budget', opportunity: 'O-1' }, 'x'), /only a follow-up overrun/);
-    assert.throws(() => conversion({ index: 1, unit: 'u7', reason: 'follow-up-overrun', opportunity: null }, 'x'), /the opportunity/);
-  });
-
-  it('a converted admit\'s amendment and its overrun debt name their source; the debt names the opportunity', () => {
-    const debt = { kind: 'debt-banked', id: 'B-4', bankReason: 'opportunity-overrun', what: 'the third repair of O-1', key: H, source: { type: 'admit', job: CKPT, index: 1 }, opportunity: 'O-1' };
-    roundTrip(fact(debt));
-    const { opportunity: _o, ...debtBare } = debt;
-    refuses(fact(debtBare), /opportunity$/);
-    refuses(fact({ ...debt, bankReason: 'gate-note' }), /opportunity$/);
-    refuses(fact({ ...debtBare, bankReason: 'gate-note' }), /source$/);
-    same(debtSource, { type: 'admit', job: CKPT, index: 0 });
-  });
-
   it('an in-session assessment opens a P3 pre-build finding from its build attempt', () => {
     roundTrip(fact({
       kind: 'finding-opened', id: 'F-1', key: H, lens: 'pre-build', severity: 'P3', obligation: null, visionClauses: ['V-2'], claim: 'c', evidence: [], mutant: null,
@@ -431,4 +404,9 @@ describe('experience verdict: proposed unit specs use the strict full-spec wire 
 
 it('schema 2 refuses the retired specs-only drift payload', () => {
   refuses(fact({kind: 'audit-started', job: 'audit-2', generation: 1, lenses: ['invariants'], integrationSha: A, planRev: 3, ledgerSha256: null, obligationsSha256: null, visionSha256: H, owners: [], priorFindings: [], highWater: 9, triggers: [{type: 'drift', planRev: 3, specsOnly: ['u1']}]}), /specsOnly$/);
+});
+
+it('schema 2 refuses checkpoint overrun debt and admit sources', () => {
+  refuses(fact({kind: 'debt-banked', id: 'B-4', bankReason: 'opportunity-overrun', what: 'old conversion', key: H, source: {type: 'admit', job: CKPT, index: 1}, opportunity: 'O-1'}), /bankReason$/);
+  refuses(fact({kind: 'debt-banked', id: 'B-4', bankReason: 'gate-note', what: 'old source', key: H, source: {type: 'admit', job: CKPT, index: 1}}), /source.type$/);
 });

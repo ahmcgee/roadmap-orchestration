@@ -55,4 +55,3 @@ function mappedObligations(obligations: Obligations, systems: readonly SystemNam
   const mapped = obligations.mapping.systems.filter((m) => systems.includes(m.system)).flatMap((m) => m.obligations).filter((id) => live.has(id));
   return canonicalIds([...declared, ...mapped]);
 }
-

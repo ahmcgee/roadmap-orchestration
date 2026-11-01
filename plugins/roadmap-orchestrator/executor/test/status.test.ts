@@ -105,7 +105,7 @@ describe('status.subset', () => {
       divergences: [],
       decisionsSince: [],
       convergence: null,
-      findings: { active: [], metrics: [], released: { checkpoint: 0, p3: 0, regress: 0, settled: 0, closeOut: 0 }, refusedAdmits: { regress: 0, settled: 0 } },
+      findings: { active: [], metrics: [], released: { root: 0, closeOut: 0 } },
       audit: null,
       completion: { planRev: null, head: null, active: false, sealed: false, notSealed: 'not completed', unmet: ['units-open'] },
       holds: [],
@@ -117,9 +117,6 @@ describe('status.subset', () => {
       timings: [],
       answers: [],
       knownDefects: [],
-      admits: [],
-      opportunities: [],
-      drift: [],
       flow: null,
       demo: null,
       milestones: [],
@@ -129,8 +126,8 @@ describe('status.subset', () => {
   test('after a completed run: state, owner, units, spend by role and by model, containment and its narrowed guarantee', () => {
     const s = after_;
     assert.deepEqual(Object.keys(s).sort(), [
-      'admits', 'answers', 'arc', 'audit', 'census', 'chain', 'commands', 'completion', 'convergence', 'corpus', 'debt', 'decisionsSince', 'deferred', 'demo',
-      'divergences', 'drift', 'edges', 'findings', 'flow', 'holds', 'holistic', 'host', 'knownDefects', 'milestones', 'needsUser', 'notYetTrue', 'nowTrue', 'opportunities',
+      'answers', 'arc', 'audit', 'census', 'chain', 'commands', 'completion', 'convergence', 'corpus', 'debt', 'decisionsSince', 'deferred', 'demo',
+      'divergences', 'edges', 'findings', 'flow', 'holds', 'holistic', 'host', 'knownDefects', 'milestones', 'needsUser', 'notYetTrue', 'nowTrue',
       'packReview', 'parkedBackends', 'plan', 'rejection', 'routing', 'run', 'runOnly', 'spend', 'target', 'timings', 'units', 'vision', 'waived',
     ]);
     assert.equal(s.plan?.rev, 1, 'the first start put plan.json in force as revision 1');

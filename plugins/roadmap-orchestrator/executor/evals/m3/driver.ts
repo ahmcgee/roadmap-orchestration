@@ -73,7 +73,6 @@ import { EXIT_REASON_FILE,type ExitReason } from '../../src/executor.ts';
 import { revParse } from '../../src/git/git.ts';
 import { witnessDir } from '../../src/git/snapshot.ts';
 import { verdictOf } from '../../src/holistic/observe.ts';
-import type { BundleOutcome } from '../../src/holistic/types.ts';
 import { type ObservationVerdict,parseObligations,witnessRecord } from '../../src/holistic/types.ts';
 import { WITNESS_RECORD_FILE } from '../../src/holistic/witness.ts';
 import { HOST_DIR,hostPath } from '../../src/host/hostdir.ts';
@@ -257,7 +256,6 @@ const ACKED_REASONS: readonly string[] = ['divergence-digest', 'convergence-boun
 const TIDY = 'tidy';
 /** The changes by which a bundle revision disposes of tidy (branch P). */
 const DISPOSALS: readonly string[] = ['unit-cut', 'unit-changed', 'spec', 'unit-reentered', 'unit-removed'];
-const outcomeText = (o: BundleOutcome): string => (o.kind === 'rejected' ? `rejected{${o.reason}}: ${o.detail}` : o.kind === 'requested' ? `requested (${o.needsUser})` : o.kind);
 
 /** Rewrites the plan's `direction`, as the architect would, keeping every other byte of its JSON. */
 function editDirection(l: Layout): void {

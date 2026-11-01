@@ -209,11 +209,7 @@ const keptOr = (runDir: AbsPath, sha: Sha256Hex, ext: string): Buffer => {
 // ---------------------------------------------------------------------------------------------------
 // Debt (M4a)
 
-/**
- * The unit a banked item belongs to (`ledgerAfterArc`): a gate note's own; a deferred finding's owner (the unit its
- * deferral minted it under); (M4a rev 3) a converted admit's unit, as its bundle's decision record names it. A finding or
- * conversion the log does not hold is a bug.
- */
+/** A gate note's unit or a deferred finding's owner; a missing finding is a journal error. */
 export function debtUnitOf(view: JournalView): UnitOfSource {
   return (source) => {
     switch (source.type) {
@@ -224,7 +220,6 @@ export function debtUnitOf(view: JournalView): UnitOfSource {
         if (finding === undefined) throw new Error(`debt banked from ${source.finding}, which the fold does not hold`);
         return finding.owner;
       }
-      case 'admit': throw new Error('schema 2 has no converted-admit debt');
     }
   };
 }

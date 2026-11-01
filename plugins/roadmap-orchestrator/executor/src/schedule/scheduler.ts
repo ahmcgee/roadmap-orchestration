@@ -11,7 +11,7 @@
 //   3. start the probe jobs that are due (`prober.due`), at most one per target;
 //   4. raise the needs-user items now due: a halted unit's (an operator park, a stop; a design park's per OR-Q1,
 //      below) and the park schedule's (escalations, breakers; src/park/schedule.ts); in a holistic arc also the
-//      findings' (`raiseFindingItems`) and an owed audit's (`raiseAuditOwed`); then the holistic jobs (below); then,
+//      findings' (`raiseFindingItems`); then the holistic jobs (below); then,
 //      with nothing running and no mutation pending, end `complete` when the completion predicate holds (below);
 //   5. start a task for every active unit without one whose next stage is a chain (a recovered park's), then for
 //      every ready unit without one (`ready`), and admit waiting tasks (`admitter`), less the scheduler's own holds

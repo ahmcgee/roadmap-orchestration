@@ -68,8 +68,7 @@ import { type Certification,type WorkRun,certification,workRuns } from './status
 //   decisionsSince  what was decided since the architect last acknowledged a divergence digest (the whole arc
 //                 before one): rulings, bundles, patches, re-entries, cuts, steers, divergences, reversals and the audits
 //   convergence   K, the applied bundles counted against it since the counter last cleared, the open brake items
-//   findings      the active findings and `findingMetrics` (B3); dev.13 the released findings by who released them and
-//                 the admits a brake converted (src/holistic/tail.ts)
+//   findings      the active findings, `findingMetrics` (B3), and releases by root ruling or close-out
 //   audit         per lens in L: its watermark and the docs edges pending a gap (B5 `coverageOf`), the uncovered
 //                 range, the generation, and the minutes of lanes run under checkpoint jobs
 //   completion    the latest `arc-completed` (A20 `active`), whether it is sealed (A5b `sealingOf`), the unmet
@@ -83,7 +82,6 @@ import { type Certification,type WorkRun,certification,workRuns } from './status
 //   corpus        the pin in force: its sha, source, file and rule counts, and the Phase-0 record's sha
 //   census        each pinned rule's state, whether its obligation is now true (`nowTrue`), the counts and % held, and
 //                 `lastHeld` (also counting a not-covered obligation whose `lastObserved` is held)
-//   amendments    the corpus amendments (every arc; empty outside a corpus arc)
 //   debt          what this arc banked and its ledger now (`arcDebtLedger`)
 //   chain         the chain ending at this arc (src/commands/chain.ts: K, acked starts, PRs non-fatal), its position
 //   timings       per stage, the completed attempts' count, median and maximum (`stageTimings`, LR-c; every arc)
@@ -98,15 +96,6 @@ import { type Certification,type WorkRun,certification,workRuns } from './status
 //   units[].gate  (dev.12 round 2) the latest gate answer: decision, findings by class, and `unreviewed` (src/pipeline/gate.ts)
 //   units[].priority.priority  the unit's plan priority (F1b), first in its rank
 //   knownDefects  each plan known defect (F4): its fixer, whether its lineage merged, the units it holds at prepare now
-//   checkpointWaits  each checkpoint rejected `busy` still waiting for the attempts it named (C5): "checkpoint <job>
-//                 waiting for <unit> <stage> boundary"
-//   admits        a corpus arc's classified checkpoint admits (OR-A1), in log order
-//   opportunities each opportunity O-n: its clauses, units (its unit, its follow-ups', their lineages), follow-ups, the
-//                 units' spend, and the admits that overran it (converted `follow-up-overrun`)
-//   drift         the drift indicator (B "Visibility"), the only check on under-declared admit targets: per merged
-//                 checkpoint unit not classed opportunity, the findings attributed to its merge (R46, the lens's covered
-//                 range and its paths) whose vision clauses lie wholly outside the owner slice and the opportunities'
-//                 clauses (`advances ∪ OC`)
 //   milestones    (dev.13) each plan milestone: its state (src/walk/milestones.ts `milestoneState`), whether its node
 //                 passed, its last round, its walks and its active walkthrough findings; `edges` adds each node edge
 import { existsSync,readdirSync,statSync } from 'node:fs';
@@ -125,7 +114,7 @@ OUTCOME_STAGES,type OperatorParkKind,type OutcomeStage,type PlanAppliedFact,
 type ProbeTarget,type RevisionPayload,type WalkOutcome,holderUnit,parentUnit,probeTargetKey,
 } from './core/events.ts';
 import { readJson } from './core/fsx.ts';
-import { type ArcId, CPU_POOL, type CommandId, type DebtId, type DivergenceId, type EdgeId, type FindingId, type InvocationId, type JobId, type KnownDefectId, type LaneId, type MilestoneId, type NeedsUserId, type ObligationId, type OpportunityId, type PlanRev, type ProposalId, type ResourceUnit, type RoutingRev, type RuleId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, canonicalIds, commandId, compareIds, compareResourceUnits, cpuToken, invocationId, sha } from './core/ids.ts';
+import { type ArcId, CPU_POOL, type CommandId, type DebtId, type DivergenceId, type EdgeId, type FindingId, type InvocationId, type JobId, type KnownDefectId, type LaneId, type MilestoneId, type NeedsUserId, type ObligationId, type PlanRev, type ProposalId, type ResourceUnit, type RoutingRev, type RuleId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, canonicalIds, commandId, compareIds, compareResourceUnits, cpuToken, invocationId, sha } from './core/ids.ts';
 import type { JournalView } from './core/interfaces.ts';
 import { EVENTS_FILE,type LogSnapshot,readJournal } from './core/log.ts';
 import { gateLargeDiffOf } from './core/projections.ts';
@@ -147,14 +136,14 @@ import { uncoveredDivergences } from './holistic/divergence.ts';
 import { type FindingMetric,type RepairUnit,findingMetrics,isActive } from './holistic/findings.ts';
 import { type Observation,type ObservationStore,type WitnessedEntry,verdictOf } from './holistic/observe.ts';
 import { type PackReviewStatus,packItemOf,packReviewStatus } from './holistic/packreview.ts';
-import { type AdmitClass, type ArcLaneDef, type CensusEntry, type CensusState, type ClauseState, type Compensation, type Conversion, type DivergenceKind, type FindingLens, type FindingSeverity, type FindingStateName, type LensKind, type ObligationDef, type Obligations, type ObservationVerdict, type Vision, type VisionClauseKind, type VisionCoverage, type VisionQuestion, isExempt, isMustHold, observationKeyText } from './holistic/types.ts';
+import { type ArcLaneDef, type CensusEntry, type CensusState, type ClauseState, type Compensation, type DivergenceKind, type FindingLens, type FindingSeverity, type FindingStateName, type LensKind, type ObligationDef, type Obligations, type ObservationVerdict, type Vision, type VisionClauseKind, type VisionCoverage, type VisionQuestion, isExempt, isMustHold, observationKeyText } from './holistic/types.ts';
 import { visionCoverage } from './holistic/vision.ts';
 import { isAlive } from './host/liveness.ts';
 import { readClaim } from './host/lock.ts';
 import { readOwner } from './host/owner.ts';
 import { type CorpusInForce,type InForce,PLAN_INPUT,RULING_INPUT,type RevisionInForce,keptInput,keptPayload,planInForce,revisionInForce,routingBaseOf } from './input/inforce.ts';
 import { type KnownDefect,type PlanM1,type PlanUnit,advancesOf,hasMilestones,knownDefectsOf,lensSetOf,milestonesOf,parsePlan } from './input/plan.ts';
-import { type ClassTotal,type JobTotal,type Meter,type ModelTotal,type RoleTotal,type SmokeTotal,byClass,byModel,meterOf,ownShare } from './meter.ts';
+import { type ClassTotal,type JobTotal,type ModelTotal,type RoleTotal,type SmokeTotal,byClass,byModel,meterOf,ownShare } from './meter.ts';
 import { type BlockingItem,blockingItems,fileNeedsUser,holdsUnit,openNeedsUser,recordOf,supersededItems } from './needsuser.ts';
 import { escalateAt,probeTargets,trippedTargets } from './park/schedule.ts';
 import type { BriefArc,OwnerAnswer,StageTiming } from './phase0/types.ts';
@@ -435,22 +424,18 @@ export type ConvergenceView = Readonly<{
 }>;
 
 /** The released findings, by who released them (dev.13). */
-export type TailReleased = Readonly<{ checkpoint: number; p3: number; regress: number; settled: number; closeOut: number }>;
+export type ReleasedFindings = Readonly<{ root: number; closeOut: number }>;
 
-/** The released findings and the admits a brake converted, counted from the fold and the decision records (dev.13). */
-function tailCounts(view: JournalView): Pick<Status['findings'], 'released' | 'refusedAdmits'> {
-  const released = { checkpoint: 0, p3: 0, regress: 0, settled: 0, closeOut: 0 };
+/** Released findings counted from the fold. */
+function releaseCounts(view: JournalView): Pick<Status['findings'], 'released'> {
+  const released = { root: 0, closeOut: 0 };
   for (const f of view.holistic().findings) {
     const last = f.last;
     if (last?.state !== 'ruled' || last.disposition !== 'released') continue;
     if (last.by.type === 'code' && last.by.reason === 'close-out') released.closeOut++;
-    else released.checkpoint++;
+    else released.root++;
   }
-  const conversions: readonly Conversion[] = [];
-  return {
-    released,
-    refusedAdmits: { regress: conversions.filter((c) => c.reason === 'regress-brake').length, settled: conversions.filter((c) => c.reason === 'settled-brake').length },
-  };
+  return { released };
 }
 
 export type FindingLine = Readonly<{
@@ -539,12 +524,8 @@ export type Status = Readonly<{
   divergences: readonly DivergenceView[];
   decisionsSince: readonly Decision[];
   convergence: ConvergenceView | null;
-  /**
-   * dev.13 (the convergence tail, src/holistic/tail.ts): `released` counts the released findings by who released them (a
-   * checkpoint, or code: a P3 nobody fixed, below the regress or the settled brake, at the close-out); `refusedAdmits`
-   * counts the admits a brake converted.
-   */
-  findings: Readonly<{ active: readonly FindingLine[]; metrics: readonly FindingMetric[]; released: TailReleased; refusedAdmits: Readonly<{ regress: number; settled: number }> }>;
+  /** Active findings, repair metrics and releases by root ruling or close-out. */
+  findings: Readonly<{ active: readonly FindingLine[]; metrics: readonly FindingMetric[]; released: ReleasedFindings }>;
   audit: AuditView | null;
   completion: CompletionView;
   /** M4a: the arc-wide holds on every admission now (the scheduler's `arcHolds`; empty outside a holistic arc). */
@@ -565,12 +546,6 @@ export type Status = Readonly<{
   answers: readonly (OwnerAnswer & Readonly<{ line: string }>)[];
   /** M4a rev 3 (F4): the plan's known defects in force and the units each holds at prepare now. */
   knownDefects: readonly KnownDefectView[];
-  /** M4a rev 3 (C5): the checkpoints a `busy` rejection keeps waiting for a stage boundary. */
-  /** M4a rev 3 (OR-A1): a corpus arc's classified checkpoint admits; empty in any other arc. */
-  admits: readonly AdmitLine[];
-  opportunities: readonly OpportunityLine[];
-  /** The drift indicator (see the header): one line per merged checkpoint unit not classed opportunity. */
-  drift: readonly DriftLine[];
   /**
    * M4b (plan "Surfaces"): the flow loop (src/flow/track.ts `flowStatus`): `off-dev7` for an arc 1.0.0-dev.7 started; else
    * the constraint, the chart, the accounting (diagnostic only), the open window, the verdicts, the proposals pending,
@@ -596,30 +571,6 @@ export type MilestoneView = Readonly<{
 }>;
 
 export type KnownDefectView = Readonly<{ id: KnownDefectId; match: KnownDefectMatch; fixUnit: UnitId; fixMerged: boolean; holds: readonly UnitId[] }>;
-export type AdmitLine = Readonly<{
-  /** The seq of the bundle revision's commit intent that recorded it. */
-  seq: number; job: JobId; index: number; unit: UnitId; class: AdmitClass['type'];
-  /** An oversight's or opportunity's clauses; none for a repair. */
-  clauses: readonly VisionClauseId[];
-  followUp: OpportunityId | null;
-}>;
-export type OpportunityLine = Readonly<{
-  id: OpportunityId; clauses: readonly VisionClauseId[];
-  /** Its unit, its follow-ups' units and every unit re-entering them, ascending. */
-  units: readonly UnitId[];
-  followUps: number;
-  /** What the units' calls cost (list price; calls without a cost add nothing). */
-  spentUsd: number;
-  /** The admits converted `follow-up-overrun` against it (LR-k). */
-  overrun: readonly Readonly<{ job: JobId; index: number }>[];
-}>;
-export type DriftLine = Readonly<{
-  unit: UnitId; job: JobId; class: 'repair' | 'oversight';
-  /** The merged units of its lineage the findings were attributed to. */
-  merged: readonly UnitId[];
-  findings: readonly Readonly<{ id: FindingId; severity: FindingSeverity; clauses: readonly VisionClauseId[]; claim: string }>[];
-}>;
-
 /** How many terminal receipts `status` shows. */
 export const RECEIPTS_SHOWN = 10;
 
@@ -1573,7 +1524,7 @@ function chainOf(repo: AbsPath, plan: PlanM1): ChainView {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// M4a rev 3: known defects, busy checkpoints, admits, opportunities and the drift indicator
+// M4a rev 3: known defects
 
 /** Each plan known defect in force: its fixer, whether the fixer's lineage merged, and the units admission holds under it now. */
 function knownDefectViews(view: JournalView, plan: PlanM1, lines: readonly UnitCore[]): readonly KnownDefectView[] {
@@ -1582,11 +1533,6 @@ function knownDefectViews(view: JournalView, plan: PlanM1, lines: readonly UnitC
     holds: lines.filter((l) => (l.waitingFor?.admission ?? []).some((c) => c.type === 'known-defect' && c.id === k.id)).map((l) => l.unit),
   }));
 }
-
-export type AdmitViews = Readonly<{ admits: readonly AdmitLine[]; opportunities: readonly OpportunityLine[]; drift: readonly DriftLine[] }>;
-const NO_ADMITS: AdmitViews = { admits: [], opportunities: [], drift: [] };
-
-export function admitViews(_view: JournalView, _repo: AbsPath, _plan: PlanM1, _meter: Meter): AdmitViews { return NO_ADMITS; }
 
 export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: LogSnapshot): Status {
   const d = derive(runDir, arc, hostDir, snapshot);
@@ -1622,7 +1568,6 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?:
   const h = on === null || start === null || inForce === null ? null : holisticReader(runDir, hostDir, d, inForce);
   const corpus = revision?.corpus ?? null;
   const reader = on === null || start === null ? null : { journal: { view }, runDir, planFile: start.record.planFile, repo: on.repo };
-  const admitted = on === null || corpus === null ? NO_ADMITS : admitViews(view, on.repo, on.plan, meter);
   const repairs = start === null || plan === null ? [] : repairUnits({
     journal: { view }, runDir, planDir: absPath(dirname(start.record.planFile)), plan: () => plan,
   });
@@ -1675,7 +1620,7 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?:
     findings: {
       active: fold.findings.filter(isActive).map((f) => ({ id: f.id, lens: f.lens, severity: f.severity, state: f.state, owner: f.owner, obligation: f.obligation, claim: f.claim })),
       metrics: findingMetrics(events, fold.findings),
-      ...tailCounts(view),
+      ...releaseCounts(view),
     },
     audit,
     completion: completionOf(runDir, d, { d, hostDir, pending: commands.pending.length }),
@@ -1688,7 +1633,6 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?:
     timings: stageTimings(events),
     answers: unappliedAnswers(commonDirOfRun(runDir)).map((a) => ({ ...a, line: answerLine(a) })),
     knownDefects: plan === null ? [] : knownDefectViews(view, plan, d.units),
-    ...admitted,
     demo: plan === null || start === null ? null : demoStatus({ view, plan, repairs }, hostDir),
     flow: start === null || plan === null ? null
       : flowStatus({ runDir, repo: start.record.repo, journal: { view } }, revParse(start.record.repo, branchRef(plan.integrationBranch)), isoTimeOf(new Date(now))),
