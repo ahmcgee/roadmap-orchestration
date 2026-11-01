@@ -30,7 +30,7 @@ function turnUsage(u: unknown): TokenUsage | null {
     outputTokens: r['output_tokens'],
     cacheReadTokens: read === undefined ? null : read,
     cacheWriteTokens: write === undefined ? null : write,
-    // Codex reports neither a turn count nor a cost.
+    // Codex reports no turn count; preserve native USD cost when present.
     turns: null,
     costUsd: cost === undefined ? null : cost as number,
   };
