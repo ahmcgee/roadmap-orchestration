@@ -664,7 +664,11 @@ function superviseArc2(c: Ctx, a: ArcState): string {
   writeFile(join(exported, 'obligations.json'), json(obligations));
   c.t.roadmap(['apply', ...at, '--from', exported, '--rev', String(base.planRev), '--reason', 'The root adds fits with its draught witness and keeps the parent obligation as a split restatement.']);
   c.t.untilFact(a.arc, 'the root fits revision applied', (facts) => facts.find((f) => f.kind === 'plan-applied' && f.changes.some((change) => change.type === 'unit-added' && change.unit === 'fits')));
+  // The ruler notice is raised asynchronously after the revision. Clear it during this root turn, just as the
+  // arc-1 flow revision notice is cleared; otherwise it can race the next held-unit wake.
+  const ruler = c.t.until(a.arc, 'the root revision ruler notice', (s) => s.needsUser.some((n) => n.reason === 'ruler-changed')).needsUser.find((n) => n.reason === 'ruler-changed')!;
   c.t.roadmap(['run-only', '--clear', ...at]);
+  c.t.untilFact(a.arc, 'run-only clear to close the ruler notice', (facts) => facts.find((f) => f.kind === 'needs-user-acked' && f.id === ruler.id));
   const hung = c.t.until(a.arc, `notice running its ${SLOW_LANE.id} lane`, (s) => unitOf(s, 'notice').running?.lane?.id === SLOW_LANE.id);
   c.state.paused = { unit: 'notice', lane: JSON.stringify(unitOf(hung, 'notice').running!.lane) };
   c.t.roadmap(['pause', 'notice', ...at]);

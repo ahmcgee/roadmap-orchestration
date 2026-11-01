@@ -278,7 +278,7 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     )).sort());
     assert.deepEqual(wakes, [
       ['needs-user:pack-review'], ['units:blocked'], ['units:complete'],
-      ['units:blocked'], ['needs-user:ruler-changed', 'units:held'], ['units:complete'],
+      ['units:blocked'], ['units:held'], ['units:complete'],
     ]);
     const revisions = raisedOf(arc1, 'revision-notice', story.dir, 1);
     assert.equal(revisions.length, 1, 'the applied flow revision has its P1 notice');
@@ -289,7 +289,12 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     assert.deepEqual(raisedOf(arc2, 'divergence-digest', story.dir, 2), [], 'campaign audits cannot create checkpoint divergence digests');
     const rootRevision = factsOf(arc2, 'plan-applied').find((f) => f.changes.some((change) => change.type === 'unit-added' && change.unit === 'fits'));
     assert.ok(rootRevision !== undefined, 'the root admitted fits through apply');
-    assert.ok(factsOf(arc2, 'run-only').some((f) => f.units === null && f.seq > rootRevision.seq), 'the root cleared run-only after its revision applied');
+    const rootClear = factsOf(arc2, 'run-only').find((f) => f.units === null && f.seq > rootRevision.seq)!;
+    assert.ok(rootClear !== undefined, 'the root cleared run-only after its revision applied');
+    const ruler = raisedOf(arc2, 'ruler-changed', story.dir, 2);
+    assert.equal(ruler.length, 1, 'the material root revision has its ruler notice');
+    const closedRuler = factsOf(arc2, 'needs-user-acked').find((f) => f.id === ruler[0]!.id)!;
+    assert.ok(rootRevision.seq < ruler[0]!.seq && ruler[0]!.seq < rootClear.seq && rootClear.seq < closedRuler.seq, 'the root waits for its ruler notice and clears it before ending the turn');
     // The chain boundaries (paid runs 12, 13): arc 1's check-in is one final message, no numbered question (P-1 stays in
     // the brief), a hold for the spend approval, then the action taken on resume (arc 2 starts under K = 1: the bootstrap
     // start counts as acked); arc 2's carries the stop.
