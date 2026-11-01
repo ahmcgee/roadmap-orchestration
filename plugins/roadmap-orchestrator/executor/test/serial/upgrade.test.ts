@@ -7,7 +7,8 @@ import { absPath } from '../../src/core/values.ts';
 import { runDir } from '../../src/input/cli.ts';
 import { gitCommonDir,runChecks } from '../../src/preflight/checks.ts';
 import { setupArc } from '../fixtures/unit-common.ts';
-// PREVIOUS_RELEASE is re-pointed to the first post-break release once one exists.
+// dev.33 is the one-off schema-2 cut: the immediately previous release is dev.32 and must be refused.
+// Keep this refusal regression when a later release adds the normal schema-2 upgrade-in-place check.
 const PREVIOUS_RELEASE = '1.0.0-dev.32';
 test('upgrade.previous-schema: startup refuses schema 1 loudly before claiming or recovering', async () => {
   const d = setupArc({steps: []});

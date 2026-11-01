@@ -1,213 +1,50 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="1250" viewBox="0 0 1100 1250" role="img" aria-labelledby="title desc">
-<title id="title">How a roadmap-orchestrator arc runs</title>
-<desc id="desc">A simplified swimlane flowchart in three lanes: you (the owner), the architect (Claude in your session) and the executor (a detached process that runs unattended and calls models for judgment). Bootstrap, once per repo: you write the target state, the architect sets up the repo and you confirm the vision and set K, the number of arcs that may chain. Phase 0, each arc: the architect curates the corpus into obligations and questions, writes the plan and specs, and starts the executor, which runs a pack review and a baseline witness. Estate compaction, optional and whenever you choose (while an arc runs or between arcs): the architect proposes retire, merge, tighten and fold decisions in batches, you approve each, and the approved decisions wait in roadmap-inputs/_next/compaction.md until the next Phase 0 applies them. The unattended run: the executor schedules ready units; each unit, in parallel, goes through plan-check (a design pass by a model), a build (a model), the test lanes, a review gate (a model) and publication onto the arc branch; The builder uses targeted checks, then requests executor certification. Lanes run previous reds first. The first three certification reds return uncharged fix rounds; the fourth charges and resets the allowance, parking at the chargeable bound. A same-commit flake returns an uncharged fix round without spending that allowance. Gate revise stays charged. Ordering parks wake after all named blockers merge. A lane timeoutMin produces a timeout red. When a milestone's units have merged, a model walks its journeys; a settled milestone is promoted to a demo you can try. Audits accumulate for the steering checkpoint, every two retired milestones by default after the walk. Any unweighed walk finding, at any severity, gets an immediate checkpoint and holds its round open for repair and re-walk, bounded by walkRounds and always after merged code. A vision edit reopens the immediate trigger for open findings weighed only under the old vision, even after a decision or skip. It also weighs accumulated audit findings without resetting the milestone interval; an unchanged milestone capture is skipped. Design parks, unweighed audit P1s and the final audit also trigger immediately. Without milestones, new audit findings trigger checkpoints. It admits, respecifies or cuts units. Meanwhile the architect watches the run, adjudicates the items it hands over through plan edits and resumes, and brings owner-only decisions and questions to you. Completion: when no work is left the executor closes out the arc, the architect opens a stacked PR and checks in with you, stating the estate size and recommending compaction when none was applied in the last three arcs; if K arcs have run it stops and you merge the stacked PRs, otherwise it chains into the next arc's Phase 0.</desc>
-<style>
-text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, "DejaVu Sans", sans-serif; fill: #1f2328; }
-.h1 { font-size: 22px; font-weight: 700; }
-.sub, .lg, .ls { font-size: 13px; fill: #59636e; }
-.lt { font-size: 15px; font-weight: 700; }
-.lt.ow { fill: #b45309; } .lt.ar { fill: #4338ca; } .lt.ex { fill: #047857; }
-.lane.ow { fill: #fffaf3; } .lane.ar { fill: #f7f8ff; } .lane.ex { fill: #f5fcf8; }
-.box { stroke-width: 1.5; }
-.box.ow { fill: #fff7ed; stroke: #b45309; }
-.box.ar { fill: #eef2ff; stroke: #4338ca; }
-.box.ex { fill: #ecfdf5; stroke: #047857; }
-.box.step { fill: #ffffff; stroke: #047857; stroke-width: 1.2; }
-.group { fill: none; stroke: #047857; stroke-width: 1; stroke-dasharray: 4 3; }
-.gl { font-size: 12px; fill: #047857; font-style: italic; }
-.t { font-size: 14px; font-weight: 600; }
-.b { font-size: 12.5px; fill: #3d444d; }
-.chip { fill: #7c3aed; }
-.chipt { font-size: 10px; font-weight: 600; fill: #ffffff; }
-.arr { fill: none; stroke: #8c959f; stroke-width: 1.6; }
-.ah { fill: #8c959f; }
-.al { font-size: 12px; fill: #59636e; font-style: italic; }
-.band { stroke: #8c959f; stroke-width: 1; stroke-dasharray: 2 4; }
-.pill { fill: #1f2328; }
-.bandt { font-size: 12px; font-weight: 700; fill: #ffffff; letter-spacing: 0.06em; }
-.term { fill: #1f2328; }
-.termt { font-size: 13px; font-weight: 600; fill: #ffffff; }
-.dia { fill: #ffffff; stroke: #4338ca; stroke-width: 1.5; }
-</style>
-<defs>
-<marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0 0 L10 5 L0 10 z"/></marker>
-</defs>
-
-<rect width="1100" height="1250" fill="#ffffff"/>
-
-<text class="h1" x="24" y="36">How a roadmap-orchestrator arc runs</text>
-<text class="sub" x="24" y="58">The big picture. Phase 0 through completion repeats for each chained arc, up to K.</text>
-<rect class="box ow" x="24" y="72" width="16" height="16" rx="4"/><text class="lg" x="48" y="85">You</text>
-<rect class="box ar" x="92" y="72" width="16" height="16" rx="4"/><text class="lg" x="116" y="85">Architect (AI)</text>
-<rect class="box ex" x="236" y="72" width="16" height="16" rx="4"/><text class="lg" x="260" y="85">Executor (code)</text>
-<rect class="chip" x="380" y="72" width="44" height="16" rx="8"/><text class="chipt" x="402" y="84" text-anchor="middle">model</text>
-<text class="lg" x="432" y="85">the executor calls a model</text>
-
-<!-- lanes -->
-<rect class="lane ow" x="16" y="98" width="200" height="886" rx="12"/>
-<text class="lt ow" x="36" y="120">You</text><text class="ls" x="36" y="136">the owner</text>
-<rect class="lane ar" x="232" y="98" width="248" height="886" rx="12"/>
-<text class="lt ar" x="260" y="120">Architect</text><text class="ls" x="260" y="136">Claude in your session</text>
-<rect class="lane ex" x="496" y="98" width="588" height="886" rx="12"/>
-<text class="lt ex" x="520" y="120">Executor</text><text class="ls" x="520" y="136">detached, unattended</text>
-
-<!-- bands -->
-<line class="band" x1="16" y1="160" x2="1084" y2="160"/>
-<rect class="pill" x="40" y="148" width="224" height="24" rx="12"/><text class="bandt" x="54" y="164.5">ONCE PER REPO: BOOTSTRAP</text>
-<line class="band" x1="16" y1="314" x2="1084" y2="314"/>
-<rect class="pill" x="40" y="302" width="154" height="24" rx="12"/><text class="bandt" x="54" y="318.5">EACH ARC: PHASE 0</text>
-<line class="band" x1="16" y1="470" x2="1084" y2="470"/>
-<rect class="pill" x="40" y="458" width="140" height="24" rx="12"/><text class="bandt" x="54" y="474.5">UNATTENDED RUN</text>
-<line class="band" x1="16" y1="850" x2="1084" y2="850"/>
-<rect class="pill" x="40" y="838" width="112" height="24" rx="12"/><text class="bandt" x="54" y="854.5">COMPLETION</text>
-
-<!-- bootstrap -->
-<rect class="box ow" x="36" y="180" width="168" height="50" rx="8"/>
-<text class="t" x="48" y="200">Write the target state</text><text class="b" x="48" y="218">then /orchestrate</text>
-<rect class="box ar" x="260" y="180" width="180" height="50" rx="8"/>
-<text class="t" x="272" y="200">Bootstrap the repo</text><text class="b" x="272" y="218">CLI on PATH, corpus</text>
-<path class="arr" d="M204 200 H258" marker-end="url(#ah)"/>
-<rect class="box ow" x="36" y="246" width="168" height="50" rx="8"/>
-<text class="t" x="48" y="266">Confirm the vision</text><text class="b" x="48" y="284">set K, first slice</text>
-<path class="arr" d="M290 230 V262 H206" marker-end="url(#ah)"/>
-<path class="arr" d="M204 282 H330 V332" marker-end="url(#ah)"/>
-
-<!-- phase 0 -->
-<rect class="box ar" x="260" y="334" width="180" height="50" rx="8"/>
-<text class="t" x="272" y="354">Phase 0: the corpus</text><text class="b" x="272" y="372">obligations, questions</text>
-<rect class="box ar" x="260" y="400" width="180" height="50" rx="8"/>
-<text class="t" x="272" y="420">Plan and specs</text><text class="b" x="272" y="438">phase0 check, start</text>
-<path class="arr" d="M350 384 V398" marker-end="url(#ah)"/>
-<rect class="box ow" x="36" y="356" width="168" height="86" rx="8" stroke-dasharray="5 3"/>
-<text class="t" x="48" y="376">Estate compaction</text>
-<text class="b" x="48" y="394">optional, any time</text>
-<text class="b" x="48" y="412">approve each decision</text>
-<text class="b" x="48" y="430">_next/compaction.md</text>
-<path class="arr" d="M204 374 H258" marker-end="url(#ah)"/>
-<rect class="box ex" x="640" y="400" width="300" height="50" rx="8"/>
-<text class="t" x="652" y="420">Pack review, baseline</text><text class="b" x="652" y="438">whole-plan read, witness</text>
-<rect class="chip" x="884" y="408" width="44" height="16" rx="8"/><text class="chipt" x="906" y="420" text-anchor="middle">model</text>
-<path class="arr" d="M440 425 H638" marker-end="url(#ah)"/>
-<text class="al" x="540" y="418" text-anchor="middle">roadmap start</text>
-
-<!-- run: architect and you -->
-<rect class="box ar" x="260" y="490" width="180" height="90" rx="8"/>
-<text class="t" x="272" y="512">Watch and adjudicate</text>
-<text class="b" x="272" y="532">roadmap watch</text>
-<text class="b" x="272" y="550">apply, resume, ack</text>
-<text class="b" x="272" y="568">scope accept/reject</text>
-<path class="arr" d="M350 450 V488" marker-end="url(#ah)"/>
-<rect class="box ow" x="36" y="500" width="168" height="50" rx="8"/>
-<text class="t" x="48" y="520">Answer questions</text><text class="b" x="48" y="538">owner-only acts</text>
-<path class="arr" d="M208 525 H256" marker-start="url(#ah)" marker-end="url(#ah)"/>
-
-<!-- run: executor -->
-<rect class="box ex" x="640" y="490" width="300" height="40" rx="8"/>
-<text class="t" x="652" y="515">Schedule ready units</text>
-<path class="arr" d="M790 450 V488" marker-end="url(#ah)"/>
-<path class="arr" d="M440 510 H638" marker-end="url(#ah)"/>
-<text class="al" x="540" y="503" text-anchor="middle">plan edits, resumes</text>
-<path class="arr" d="M520 566 H442" marker-end="url(#ah)"/>
-<text class="al" x="481" y="560" text-anchor="middle">parks, items</text>
-
-<rect class="group" x="520" y="550" width="546" height="136" rx="10"/>
-<text class="gl" x="1056" y="566" text-anchor="end">each unit, in parallel</text>
-<path class="arr" d="M680 530 V542 H575 V572" marker-end="url(#ah)"/>
-
-<rect class="box step" x="530" y="574" width="90" height="64" rx="7"/>
-<text class="t" x="575" y="596" text-anchor="middle">Plan-check</text><text class="b" x="575" y="612" text-anchor="middle">design pass</text>
-<rect class="chip" x="555" y="619" width="40" height="13" rx="6.5"/><text class="chipt" x="575" y="629" text-anchor="middle">model</text>
-<rect class="box step" x="639" y="574" width="90" height="64" rx="7"/>
-<text class="t" x="684" y="596" text-anchor="middle">Build</text><text class="b" x="684" y="612" text-anchor="middle">targeted only</text>
-<rect class="chip" x="664" y="619" width="40" height="13" rx="6.5"/><text class="chipt" x="684" y="629" text-anchor="middle">model</text>
-<rect class="box step" x="748" y="574" width="90" height="64" rx="7"/>
-<text class="t" x="793" y="596" text-anchor="middle">Lanes</text><text class="b" x="793" y="612" text-anchor="middle">red-first tests</text>
-<rect class="box step" x="857" y="574" width="90" height="64" rx="7"/>
-<text class="t" x="902" y="596" text-anchor="middle">Gate</text><text class="b" x="902" y="612" text-anchor="middle">fresh review</text>
-<rect class="chip" x="882" y="619" width="40" height="13" rx="6.5"/><text class="chipt" x="902" y="629" text-anchor="middle">model</text>
-<rect class="box step" x="966" y="574" width="90" height="64" rx="7"/>
-<text class="t" x="1011" y="596" text-anchor="middle">Publish</text><text class="b" x="1011" y="612" text-anchor="middle">to arc branch</text>
-<path class="arr" d="M620 600 H637" marker-end="url(#ah)"/>
-<path class="arr" d="M729 600 H746" marker-end="url(#ah)"/>
-<path class="arr" d="M838 600 H855" marker-end="url(#ah)"/>
-<path class="arr" d="M947 600 H964" marker-end="url(#ah)"/>
-<path class="arr" d="M902 638 V656 H684 V640" marker-end="url(#ah)"/>
-<path class="arr" d="M793 638 V656"/>
-<text class="al" x="793" y="675" text-anchor="middle">lanes red: 3 free fixes, 4th charged; gate revise: charged</text>
-
-<rect class="box ex" x="530" y="712" width="190" height="50" rx="8"/>
-<text class="t" x="542" y="732">Milestone walk</text><text class="b" x="542" y="750">journeys end to end</text>
-<rect class="chip" x="664" y="720" width="44" height="16" rx="8"/><text class="chipt" x="686" y="732" text-anchor="middle">model</text>
-<path class="arr" d="M575 686 V710" marker-end="url(#ah)"/>
-<text class="al" x="583" y="703">milestone reached</text>
-
-<rect class="box ex" x="850" y="712" width="206" height="118" rx="8"/>
-<text class="t" x="862" y="732">Steering checkpoint</text>
-<text class="b" x="862" y="750">every 2 milestones, after walk</text>
-<text class="b" x="862" y="768">weigh audit + walk findings</text>
-<text class="b" x="862" y="786">any walk finding: immediate</text>
-<text class="b" x="862" y="804">audit P1, park, final: immediate</text>
-<text class="b" x="862" y="822">no milestones: audit</text>
-<rect class="chip" x="1002" y="810" width="44" height="16" rx="8"/><text class="chipt" x="1024" y="822" text-anchor="middle">model</text>
-<path class="arr" d="M958 686 V710" marker-end="url(#ah)"/>
-<text class="al" x="950" y="703" text-anchor="end">audits, design parks</text>
-<path class="arr" d="M720 737 H848" marker-end="url(#ah)"/>
-<text class="al" x="785" y="718" text-anchor="middle">any unweighed</text>
-<text class="al" x="785" y="731" text-anchor="middle">finding: at once</text>
-<path class="arr" d="M850 790 H750 V770 H710" marker-end="url(#ah)"/>
-<text class="al" x="785" y="765" text-anchor="middle">repair → re-walk</text>
-<text class="al" x="785" y="807" text-anchor="middle">≤ walkRounds</text>
-<text class="al" x="850" y="843">New vision re-weighs; walk keeps K.</text>
-<path class="arr" d="M1056 737 H1076 V510 H942" marker-end="url(#ah)"/>
-<text class="al" x="1008" y="503" text-anchor="middle">steers the run</text>
-
-<rect class="box ex" x="530" y="784" width="190" height="50" rx="8"/>
-<text class="t" x="542" y="804">Promote the demo</text><text class="b" x="542" y="822">automatic, stable ports</text>
-<path class="arr" d="M625 762 V782" marker-end="url(#ah)"/>
-<text class="al" x="633" y="777">settled</text>
-<rect class="box ow" x="36" y="784" width="168" height="50" rx="8"/>
-<text class="t" x="48" y="804">Try the demo</text><text class="b" x="48" y="822">roadmap demo</text>
-<path class="arr" d="M530 809 H206" marker-end="url(#ah)"/>
-
-<!-- completion -->
-<rect class="box ex" x="740" y="870" width="200" height="40" rx="8"/>
-<text class="t" x="752" y="895">Close out the arc</text>
-<path class="arr" d="M958 830 V890 H942" marker-end="url(#ah)"/>
-<text class="al" x="966" y="866">no work left</text>
-<rect class="box ar" x="260" y="866" width="180" height="50" rx="8"/>
-<text class="t" x="272" y="886">Open PR, check in</text><text class="b" x="272" y="904">estate size, compaction?</text>
-<path class="arr" d="M740 890 H442" marker-end="url(#ah)"/>
-<text class="al" x="590" y="883" text-anchor="middle">arc complete</text>
-<rect class="box ow" x="36" y="866" width="168" height="50" rx="8"/>
-<text class="t" x="48" y="886">Merge stacked PRs</text><text class="b" x="48" y="904">brief --ack frees K</text>
-<path class="arr" d="M260 890 H206" marker-end="url(#ah)"/>
-
-<path class="dia" d="M350 928 L420 950 L350 972 L280 950 Z"/>
-<text class="t" x="350" y="955" text-anchor="middle">K reached?</text>
-<path class="arr" d="M350 916 V926" marker-end="url(#ah)"/>
-<rect class="term" x="540" y="935" width="130" height="30" rx="15"/>
-<text class="termt" x="605" y="955" text-anchor="middle">Stop</text>
-<path class="arr" d="M420 950 H538" marker-end="url(#ah)"/>
-<text class="al" x="479" y="943" text-anchor="middle">yes</text>
-<path class="arr" d="M280 950 H24 V345 H258" marker-end="url(#ah)"/>
-<text class="al" x="120" y="943" text-anchor="middle">no: chain the next arc</text>
-<rect x="0" y="1000" width="1100" height="40" fill="#fff"/>
-<text x="24" y="1025" font-size="14" fill="#59636e">Container setup installs roadmap on PATH. Use roadmap tui during execution and for review after completion.</text>
-<!-- Certification detail uses the same light swimlane palette. -->
-<rect class="box ex" x="24" y="1050" width="1052" height="176" rx="10"/>
-<text class="lt ex" x="42" y="1075">Certification loop (default bounds)</text>
-<rect class="box step" x="42" y="1090" width="222" height="56" rx="7"/>
-<text class="t" x="153" y="1112" text-anchor="middle">Build → report</text>
-<text class="b" x="153" y="1132" text-anchor="middle">targeted checks; no full rehearsal</text>
-<path class="arr" d="M264 1118 H294" marker-end="url(#ah)"/>
-<rect class="box step" x="296" y="1090" width="222" height="56" rx="7"/>
-<text class="t" x="407" y="1112" text-anchor="middle">Quiesce → lanes</text>
-<text class="b" x="407" y="1132" text-anchor="middle">red-first; timeoutMin → timeout red</text>
-<path class="arr" d="M518 1118 H548" marker-end="url(#ah)"/>
-<rect class="box step" x="550" y="1090" width="506" height="56" rx="7"/>
-<text class="t" x="803" y="1112" text-anchor="middle">Red → fix uncharged ×3; 4th → charge, reset allowance</text>
-<text class="b" x="803" y="1132" text-anchor="middle">chargeable bound reached → park; otherwise → build fix</text>
-<text class="b" x="42" y="1170">Same-commit flaky → uncharged fix; allowance unchanged. Green → gate → candidate → publish.</text>
-<text class="b" x="42" y="1192">Ordering park → wait for every named blocker to merge → automatically retry the parked stage.</text>
-<text class="b" x="42" y="1214">Builds hold CPU only; lanes hold their estate. CPU calibrates from runs; pressure can hold admission.</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="1050" viewBox="0 0 1500 1050" role="img" aria-labelledby="title desc">
+<title id="title">An arc from target to evidence</title><desc id="desc">Owner, architect and executor responsibilities in the command-center flow. Root changes inputs by exported CAS; executable evidence gates publication and milestone review.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 1 1 L 9 5 L 1 9" fill="none" stroke="#334155" stroke-width="1.6"/></marker></defs><style>text{font-family:Arial,Helvetica,sans-serif;fill:#172b45} .title{font-size:30px;font-weight:700}.sub{font-size:17px;fill:#475569}.label{font-size:16px}.small{font-size:14px;fill:#475569}.task{stroke:#476581;stroke-width:1.6}.edge{fill:none;stroke:#334155;stroke-width:1.8;marker-end:url(#arrow)}.msg{stroke-dasharray:7 5}.pool{fill:#fff;stroke:#94a3b8;stroke-width:1.3}</style>
+<rect width="1500" height="1050" fill="#fff"/>
+<text x="60" y="55" class="title" text-anchor="start"><tspan x="60" dy="0">From target to tested product</tspan></text>
+<text x="60" y="88" class="sub" text-anchor="start"><tspan x="60" dy="0">Command center · schema 2 · 1.0.0-dev.33</tspan></text>
+<rect x="35" y="120" width="1430" height="140" class="pool"/><path d="M93 120V260" stroke="#94a3b8"/>
+<text transform="translate(69 190.0) rotate(-90)" text-anchor="middle" class="label">Owner</text>
+<rect x="35" y="285" width="1430" height="200" class="pool"/><path d="M93 285V485" stroke="#94a3b8"/>
+<text transform="translate(69 385.0) rotate(-90)" text-anchor="middle" class="label">Architect</text>
+<rect x="35" y="510" width="1430" height="400" class="pool"/><path d="M93 510V910" stroke="#94a3b8"/>
+<text transform="translate(69 710.0) rotate(-90)" text-anchor="middle" class="label">Executor</text>
+<rect x="140" y="150" width="300" height="80" rx="10" fill="#fff6de" class="task"/>
+<text x="290.0" y="183.0" class="label" text-anchor="middle"><tspan x="290.0" dy="0">Confirm vision and slice</tspan><tspan x="290.0" dy="24">Set autonomy bound</tspan></text>
+<rect x="1050" y="150" width="330" height="80" rx="10" fill="#fff6de" class="task"/>
+<text x="1215.0" y="183.0" class="label" text-anchor="middle"><tspan x="1215.0" dy="0">Answer target questions</tspan><tspan x="1215.0" dy="24">Acknowledge exact brief</tspan></text>
+<rect x="140" y="330" width="300" height="100" rx="10" fill="#f0f7ff" class="task"/>
+<text x="290.0" y="361.0" class="label" text-anchor="middle"><tspan x="290.0" dy="0">Phase 0</tspan><tspan x="290.0" dy="24">Rules, systems, specs</tspan><tspan x="290.0" dy="24">Obligations and milestones</tspan></text>
+<rect x="540" y="330" width="340" height="100" rx="10" fill="#f0f7ff" class="task"/>
+<text x="710.0" y="361.0" class="label" text-anchor="middle"><tspan x="710.0" dy="0">Watch and decide</tspan><tspan x="710.0" dy="24">Export → edit → CAS apply</tspan><tspan x="710.0" dy="24">Steer · note · witness</tspan></text>
+<rect x="1050" y="330" width="330" height="100" rx="10" fill="#f0f7ff" class="task"/>
+<text x="1215.0" y="373.0" class="label" text-anchor="middle"><tspan x="1215.0" dy="0">Present brief and demo</tspan><tspan x="1215.0" dy="24">Prepare PR; choose next slice</tspan></text>
+<polyline points="290,230 290,330" class="edge msg"/>
+<polyline points="1215,330 1215,230" class="edge msg"/>
+<polyline points="440,380 540,380" class="edge"/>
+<polyline points="880,380 1050,380" class="edge"/>
+<rect x="140" y="555" width="260" height="95" rx="10" fill="#f0f7ff" class="task"/>
+<text x="270.0" y="595.5" class="label" text-anchor="middle"><tspan x="270.0" dy="0">Validate and start</tspan><tspan x="270.0" dy="24">Fresh pack review</tspan></text>
+<rect x="480" y="555" width="300" height="95" rx="10" fill="#f0f7ff" class="task"/>
+<text x="630.0" y="583.5" class="label" text-anchor="middle"><tspan x="630.0" dy="0">Conditional annotation</tspan><tspan x="630.0" dy="24">Grounded build</tspan><tspan x="630.0" dy="24">Evidence and certification</tspan></text>
+<rect x="880" y="555" width="300" height="95" rx="10" fill="#f0f7ff" class="task"/>
+<text x="1030.0" y="583.5" class="label" text-anchor="middle"><tspan x="1030.0" dy="0">Fresh gate</tspan><tspan x="1030.0" dy="24">Candidate at current tip</tspan><tspan x="1030.0" dy="24">Publish exact tested head</tspan></text>
+<polyline points="290,430 290,555" class="edge msg"/>
+<polyline points="400,602 480,602" class="edge"/>
+<polyline points="780,602 880,602" class="edge"/>
+<rect x="140" y="735" width="320" height="100" rx="10" fill="#f3f8f4" class="task"/>
+<text x="300.0" y="766.0" class="label" text-anchor="middle"><tspan x="300.0" dy="0">Resources and recovery</tspan><tspan x="300.0" dy="24">Quiescence · durable evidence</tspan><tspan x="300.0" dy="24">System notes and commit memory</tspan></text>
+<rect x="560" y="735" width="330" height="100" rx="10" fill="#f3f8f4" class="task"/>
+<text x="725.0" y="766.0" class="label" text-anchor="middle"><tspan x="725.0" dy="0">Milestone experience verdict</tspan><tspan x="725.0" dy="24">Whole-campaign audit</tspan><tspan x="725.0" dy="24">Findings and root requests</tspan></text>
+<rect x="1000" y="735" width="340" height="100" rx="10" fill="#f3f8f4" class="task"/>
+<text x="1170.0" y="766.0" class="label" text-anchor="middle"><tspan x="1170.0" dy="0">Final witnesses and close-out</tspan><tspan x="1170.0" dy="24">Snapshot and completion</tspan><tspan x="1170.0" dy="24">Stacked PR and next arc</tspan></text>
+<polyline points="1030,650 1030,685 725,685 725,735" class="edge"/>
+<polyline points="890,785 1000,785" class="edge"/>
+<polyline points="1170,735 1400,735 1400,460 1215,460 1215,430" class="edge msg"/>
+<polyline points="725,735 725,695 820,695 820,430" class="edge msg"/>
+<text x="1080" y="710" class="small" text-anchor="middle"><tspan x="1080" dy="0">findings return to root</tspan></text>
+<text x="630" y="885" class="small" text-anchor="middle"><tspan x="630" dy="0">Fix rounds retain findings, lane failures, base comparisons, notes and allowance/cap state.</tspan></text>
+<rect x="60" y="940" width="1380" height="75" rx="4" fill="#fff" class="task"/>
+<text x="85" y="970" class="small" text-anchor="start"><tspan x="85" dy="0">Fixed diagnosis 8 builds / 20 judged attempts; hard stop 16 / 40. Expectations are forecasts, never spend caps.</tspan><tspan x="85" dy="24">System responsibility guides reach review. Subject actions close notices; ack is only for offered options.</tspan></text>
 </svg>
