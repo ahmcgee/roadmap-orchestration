@@ -618,3 +618,24 @@ Final full non-serial suite after the residue cleanup: **205 files, 2,750 passed
 
 
 Final concurrent-matrix rerun: **473/473 passed**, no skips/cancellations. The locked M4a rerun was again **22 passed / 1 failed**, with the inverse wake mismatch: the transient `ruler-changed` item was absent. Both timing runs are reported here. Root `apply` commits before the flow tracker asynchronously raises its ruler notice; the fixture's immediate run-only clear could precede that raise, leaving the item to leak into the next held-unit wake. The fake root now waits for the notice before clearing run-only, then waits for its acknowledgement before ending its turn, matching arc 1's existing revision-notice synchronization. The original exact wake assertion is restored; added assertions prove revision → notice → clear → acknowledgement ordering. No test or wake assertion was removed or weakened. This follow-up changes only the eval fixture and its serial test; production source remains the source verified by the complete non-serial suite and both final matrices.
+
+
+Final serial verification, each file separately under the shared `serial.lock` and `--test-concurrency=1`:
+
+| File (`test/serial/`) | Passed | Failed | Skipped |
+| --- | ---: | ---: | ---: |
+| `pipeline-matrix.test.ts` | 318 | 0 | 0 |
+| `concurrent-matrix.test.ts` | 473 | 0 | 0 |
+| `evals-m4a.test.ts` | 23 | 0 | 0 |
+| `upgrade.test.ts` | 1 | 0 | 0 |
+| `calibrate.test.ts` | 1 | 0 | 0 |
+| `pool-crash.test.ts` | 37 | 0 | 0 |
+| `probe-crash.test.ts` | 16 | 0 | 0 |
+| `resource-recover.test.ts` | 62 | 0 | 0 |
+| `pressure.test.ts` | 1 | 0 | 0 |
+| `roles-default-size.test.ts` | 1 | 0 | 0 |
+| `evals-m5-reflow.test.ts` | 1 | 0 | 0 |
+| `walk-browser.test.ts` | 3 | 0 | 0 |
+| **Total** | **937** | **0** | **0** |
+
+M4a final rerun passed **23/23**, preserving the original exact wake assertion and verifying the ruler-notice ordering barrier. The non-serial fake-backend file rerun after that fixture-only change passed **10/10**. Final typecheck passed. No paid eval, full `npm test`, version bump, push, or cgroup-real pass was performed. All `.p3c-*` scratch files were removed before the final commit.
