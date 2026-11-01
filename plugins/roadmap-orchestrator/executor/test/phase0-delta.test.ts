@@ -1,4 +1,8 @@
 // Command-center plan §9: runtime coverage of refusing rows and the two missing proof advisories.
+// Retained coverage: phase0.test.ts (schema/plan-invalid, tree, chain), foreign-baseline.test.ts
+// (corpus drift), revision.test.ts startup.obligation-dropped, system-scope.test.ts overlap,
+// milestones-plan.test.ts milestone-unit-before-design. vision-leak and scope-references-outside
+// were already retired with their implementations by P1/P2; §9 requires they stay absent.
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';

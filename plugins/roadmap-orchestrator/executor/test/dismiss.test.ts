@@ -92,3 +92,27 @@ test('dismiss closes a grouped finding request only after its last finding settl
     assert.deepEqual(openBlocking(r.journal.view), []);
   } finally {r.journal.close();}
 });
+
+
+test('root apply supplying a repair answers finding requests without dismissing the finding', async () => {
+  const {readFileSync, writeFileSync} = await import('node:fs');
+  const {contextFor, setupArc, syncInputs, applyBody, commandContextFor} = await import('./fixtures/unit-common.ts');
+  const d = setupArc({steps: []});
+  const r = contextFor(d);
+  try {
+    openFinding(r.journal, {...draft(), obligation: null});
+    openFinding(r.journal, {...draft(), obligation: null, cause: 'second false positive'});
+    const item = (findings: string[]) => raiseNeedsUser(r.journal, r.ctx.runDir, {blocking: true, subject: {type: 'findings', findings: findings.map((id) => findingId(id))}, reason: 'owner-request', summary: findings.join(','), recommendation: 'Admit a repair or dismiss with counter-evidence', options: [], evidence: []}, {type: 'arc'});
+    const one = item(['F-1']);
+    const both = item(['F-1', 'F-2']);
+    syncInputs(r);
+    const path = join(d.planPath, '..', 'u1.json');
+    writeFileSync(path, JSON.stringify({...JSON.parse(readFileSync(path, 'utf8')), repairs: ['F-1']}));
+    const cmd = submitCommand(r.ctx.runDir, r.journal.view.arc, applyBody(d));
+    const out = await applyCommand(commandContextFor(r), cmd);
+    assert.equal(out.kind, 'applied', JSON.stringify(out));
+    assert.equal(r.journal.view.ackOf(one)?.command, cmd.id);
+    assert.equal(r.journal.view.ackOf(both), null, 'the revision supplies no repair for F-2');
+    assert.ok(r.journal.view.holistic().findings.every(isActive), 'a root repair response does not dismiss either finding');
+  } finally {r.journal.close();}
+});

@@ -374,7 +374,7 @@ NeedsUserRecord `{v:2,id,arc,raisedAt,blocking,subject,reason,summary,recommenda
 unit `{type:'unit',unit}`, arc, host or `{type:'findings',findings:FindingId[]}` (nonempty). A dismissal closes matching finding subjects only when every named finding is resolved or ruled. Options are `{id,label}`; evidence is absolute paths. Ack record is
 `{v:2,id,command,choice:string|null,at}`. Optionless items reject ack; successful subject actions close them. Offered choice
 must exist. Revision-notice and waste-finding are non-blocking. Subject closure preserves publication/recovery ordering
-instead of requiring a second bookkeeping command. The full current reason enum is emitted in the appendix.
+instead of requiring a second bookkeeping command. A root apply that supplies repairs for every finding named by a finding-subject request closes that request without dismissing the findings; repair publication still settles them. Successful root actions can also close already-settled finding requests. The full current reason enum is emitted in the appendix.
 
 ## Roles, routing and strict results
 
@@ -446,8 +446,7 @@ pipeline/transitions.ts and park/table.ts. Attempt counting includes build/lanes
 
 Finding/audit wire categories retain lens names as classifications. Scheduling has one campaign seat at milestone,
 requested and final triggers; no selector flag or rolling cadence. Bounded diff budgets/refusals and durable partial
-coverage remain. Close-out debt/releases remain; only the root edits obligation authority. There is no root finding-disposition command
-or exported apply field; repair publication and code-owned reproduction/close-out paths change finding state.
+coverage remain. Close-out debt/releases remain; only the root edits obligation authority. Root dismissals use the dedicated dismiss command and finding-dismissed fact; audit requests never apply them. Repair publication and code-owned reproduction/close-out paths also change finding state.
 
 ## Runner, host, publication and recovery records
 

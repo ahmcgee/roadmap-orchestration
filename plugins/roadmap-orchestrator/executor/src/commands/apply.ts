@@ -171,12 +171,27 @@ export async function finish(ctx: CommandContext, intent: IntentOf<'command.appl
     if ('target' in b && b.target.type === 'all') subjects.push(...ctx.plan().units.map((u) => ({type: 'unit' as const, unit: u.id})));
     if (b.type === 'sweep' || (b.type === 'resume' && b.target.type === 'backend')) subjects.push({type: 'host'});
     if (b.type === 'witness' || b.type === 'dismiss') subjects.splice(0, subjects.length);
-    if (b.type === 'dismiss') {
-      const findings = ctx.journal.view.holistic().findings;
-      for (const n of openNeedsUser(ctx.journal.view)) {
-        const subject = readNeedsUser(ctx.runDir, n.id)?.subject;
-        if (subject?.type === 'findings' && subject.findings.includes(b.finding) && subject.findings.every((id) => findings.some((f) => f.id === id && (f.state === 'ruled' || f.state === 'resolved')))) subjects.push(subject);
+    const findingItems = openNeedsUser(ctx.journal.view).flatMap((n) => {
+      const subject = readNeedsUser(ctx.runDir, n.id)?.subject;
+      return subject?.type === 'findings' ? [subject] : [];
+    });
+    const repairs = new Set<string>();
+    if (b.type === 'apply' && findingItems.length > 0) {
+      // A root revision supplying a repair answers its request, just as it answered the former arc item.
+      const inForce = requirePlanInForce(ctx.runDir, ctx.journal.view);
+      const files = inForceFiles(ctx.runDir, ctx.journal.view, inForce, revisionInForce(ctx.runDir, inForce), ctx.planFile, ctx.repo);
+      for (const subject of subjects) if (subject.type === 'unit') {
+        const file = files.specs.get(subject.unit);
+        if (file !== undefined && file.bytes !== null) for (const ref of parseSpec(file.bytes, file.path).repairs ?? []) repairs.add(ref);
       }
+    }
+    const findings = ctx.journal.view.holistic().findings;
+    for (const subject of findingItems) {
+      if (b.type === 'dismiss' && !subject.findings.includes(b.finding)) continue;
+      const answered = subject.findings.every((id) => findings.some((f) => f.id === id && (
+        f.state === 'ruled' || f.state === 'resolved' || repairs.has(f.id) || (f.lens === 'witness' && f.obligation !== null && repairs.has(f.obligation))
+      )));
+      if (answered) subjects.push(subject);
     }
     for (const subject of subjects) verified.push(...closeItemsFor(ctx, subject, id));
   }
