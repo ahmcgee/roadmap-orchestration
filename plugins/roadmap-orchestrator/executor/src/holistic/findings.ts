@@ -374,7 +374,7 @@ export function findingMetrics(events: readonly Event[], findings: readonly Find
     if (e.type !== 'fact') continue;
     const f = e.fact;
     if (f.kind === 'finding-opened') opened.set(f.id, Date.parse(e.at));
-    if (f.kind === 'finding-transition' && (f.to.state === 'resolved' || f.to.state === 'ruled')) closed.set(f.id, Date.parse(e.at));
+    if (f.kind === 'finding-dismissed' || (f.kind === 'finding-transition' && (f.to.state === 'resolved' || f.to.state === 'ruled'))) closed.set(f.id, Date.parse(e.at));
   }
   return findings.map((f) => {
     const from = opened.get(f.id);
