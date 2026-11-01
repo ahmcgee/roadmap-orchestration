@@ -77,7 +77,7 @@ This reduces repetitive expensive runs without claiming an untested unit branch 
 Explicit lane inputs narrow reuse keys to actual tree inputs; systems are the fallback. Reuse still binds execution/
 environment identity and clean completed certificates. Repeated reds are compared at diffBase: red there is an upstream
 problem, green there is regression evidence for the fix round. Original failing and passing directories survive reuse.
-Estimated lane minutes were removed because neither scheduling nor summary consumes them; observed evidence drives waste.
+Observed execution evidence drives waste measurements.
 
 ## 8. Evidence must witness a claim
 

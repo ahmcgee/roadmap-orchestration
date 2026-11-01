@@ -113,7 +113,7 @@ admission backoff. Starvation handling remains code, independent of any agent op
 Every unit requires nonempty known systems. SystemsMap declares path/test membership, shared dependents, contract
 consumers and dependency relationships; optional persistent/redacts traits trigger review methods. Systems describe
 responsibility and impact, not exclusive write rights. Paths outside unit systems become neutral gate reach input.
-Phase 0 reports overlaps as advisories. It also advises possible future-witness vacuity when all declared witness files already exist, and spanning proof when multi-unit delivery lacks a candidate/batch lane covering its systems. These are read-only smells, never admission holds; baseline execution determines actual vacuity. Command-center plan §9 removes vision-leak and scope-references-outside. A central protectedPaths definition guards roadmap and same-repo pinned corpus
+Phase 0 reports overlaps as advisories. It also advises possible future-witness vacuity when all declared witness files already exist, and spanning proof when multi-unit delivery lacks a candidate/batch lane covering its systems. These are read-only smells, never admission holds; baseline execution determines actual vacuity. A central protectedPaths definition guards roadmap and same-repo pinned corpus
 files during salvage, transient validation and recovery. Evidence patterns cannot hide protected paths or tracked files
 of a unit's systems. Unmapped paths select checks conservatively.
 
@@ -334,7 +334,7 @@ green there attributes regression to the candidate; base-red holds further merge
 and protected-path/denylist checks still run at publication; approval does not excuse forbidden artifacts.
 
 Backend outages come from structured CLI error results (`turn.failed`/error events), never strings in product command
-output. Context-exceeded is uncharged operator-env work with prompt-size evidence. Codex receives the prompt on stdin,
+output. Build/gate context-exceeded is uncharged operator-env work with prompt-size evidence. Codex receives the prompt on stdin,
 uses `-C`, `--json`, `-o` and strict output schema, and runs danger-full-access inside the devcontainer. Resume is allowed
 only with matching cwd/session; a session collision gets one retry as a new invocation of the same session/deadline after five seconds. These are adapter facts, not alternative
 planning authority. Debt never mints a unit while admissions are draining; new work requires a later deliberate slice.

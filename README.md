@@ -99,6 +99,12 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
    the exact brief only after the owner does. Another arc starts only within the chain bound and while the vision
    calls for work.
 
+The architect records owner answers with `roadmap answer P-n --text "<answer>"` and applies answers affecting this arc
+immediately. Open questions retain working assumptions; chaining within the acknowledged bound need not wait for every
+answer. Each lane series runs earlier reds first, then cadence order, stopping at the first red. Explicit `timeoutMin`
+yields a timeout red; without it the six-hour runner backstop applies. Eligible certified passes reuse only when their
+execution/environment identity and input hashes match.
+
 Diagnosis begins at 8 builds or 20 judged build/lanes/gate attempts, counting interrupted and uncharged work. It
 supplies a note and moves remaining mixed-profile builds to Claude. The fixed 16-build/40-stage boundary raises an
 attempt-cap item for the architect. Spend expectations are forecasts, never caps. Usage limits park a backend until

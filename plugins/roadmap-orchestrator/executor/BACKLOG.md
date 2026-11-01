@@ -2,13 +2,14 @@
 
 Reconciled for **1.0.0-dev.33**. These are deferred proposals and observations, not implemented contracts. Verify the
 current source and reproduce the stated trigger before acting. Completed release history lives in git; runtime/input
-contracts live in SCHEMAS.md. Work tied solely to removed producers is retired with those features.
+contracts live in SCHEMAS.md.
 
 ## Command-center follow-up
 
 - Calibrate diagnosis (8 builds/20 judged attempts) and hard-stop (16/40) thresholds from the first field arcs. They are
   fixed in code today, independent of limits. Add a verifier diagnosis role eval when real diagnoses provide cases.
-- Restore lane time estimates only when scheduling or summary consumes them; estMin is not a current field.
+- Add measured lane time estimates when a scheduling or summary decision will consume them. Trigger: an expensive
+  decision that actual durations alone cannot guide.
 - Evaluate a design-applied gate, polish-process improvements and token lint against field evidence.
 - Measure mixed-profile M1 and UI units' rounds to green and M4 fallback rates; compare with Claude-built units.
   Default permits low/med Codex builds except M2/design; capture-only UI remains eligible. A profile share dial is deferred

@@ -128,13 +128,12 @@ checks at the unit lanes point, subject to integration/expense placement rules.
 
 Cites keeps the legacy field names above. Only contracts are supplied to seats; C-n text is root-facing. Plain ledger
 format is `C-n — <text>` or `C-n — withdrawn by C-m`, with C-m present and each id once. Empty lines/headings are ignored.
-No sidecar directory or consistency stamp is part of RevisionInputs.
 
 DesignRecord and its validators live in `src/core/design.ts`: unit kind, typed changes/interfaces, failure modes/proofs,
 clause-lane coverage, breaks, experiments, newSystem and verification. Root-authored design must pass reachability,
-reference coverage, clause/witness and verification checks. It is not produced by a separate design-review seat.
+reference coverage, clause/witness and verification checks. It is authored by the root.
 Pins in `src/core/pins.ts` bind linked requirement revisions and contract blobs. `stale-set`, `stale-answered` and
-`stale-reopened` retain revision-link diagnostics and boundary reopening; no automatically minted propagation unit exists.
+`stale-reopened` retain revision-link diagnostics and boundary reopening.
 
 ### Lanes
 
@@ -151,8 +150,7 @@ systems, testArgv, stochastic, environment, readsComments, kind/capture.
 
 Contextual authoring (`ciReasons`) refuses cost expensive or explicit whole-tree inputs (`*`, `**`, `**/*`) at build/unit.
 Shared-resource/cross-system spec placement refuses outside spike. Forced expensive/integration suites refuse for normal
-units. Selected milestone lanes must be suite batch lanes explicitly shared-resource or cross-system. There is no
-milestone cadence literal, attempts/reviewAfterReds Bounds field or lane estMin.
+units. Selected milestone lanes must be suite batch lanes explicitly shared-resource or cross-system.
 
 Systems select impacted checks conservatively; unmapped paths select. Reuse input is explicit inputs-filtered ls-tree,
 else unit systems for implicit spec lanes or lane systems. Command/environment/lane identity, clean series certificate and
@@ -360,7 +358,7 @@ Apply still classifies safety/proof/risk/split/contract invariants and stores th
 activated under a fence with plan-applied last. Queued commands retain boundary provenance through restart. Executor CAS
 races retry and produce non-blocking notices; root commands do not auto-raise executor revision notices.
 
-Phase-0 advisories add `{kind:"vacuous-future-witness",obligation,files}` for existing future witness files and `{kind:"spanning-proof",obligation,lane,units}` for multi-unit delivery without a spanning candidate/batch lane. They never refuse. Actual baseline vacuity remains execution-derived. Plan §9 retired vision-leak and scope-references-outside.
+Phase-0 advisories add `{kind:"vacuous-future-witness",obligation,files}` for existing future witness files and `{kind:"spanning-proof",obligation,lane,units}` for multi-unit delivery without a spanning candidate/batch lane. They never refuse. Actual baseline vacuity remains execution-derived.
 
 ## Commands, receipts and needs-user
 
@@ -390,7 +388,7 @@ Codex; M2/design/high risk and diagnosis fallback use Claude. M1/capture-only re
 frontier advisor remain. Effective fallback/profile changes have routing revisions so history resolves actual seats.
 Config also accepts chain, walkthrough.mcp, systemsMap and systemNotesDir; unknown keys refuse.
 
-Strict role output readers reject retired fields. BuildOutput is summary/blockers/experiments/grounding/tooBig/notes/final
+Strict role output readers reject unknown fields. BuildOutput is summary/blockers/experiments/grounding/tooBig/notes/final
 (exact type below). Grounding contains specWrong nullable text and touches strings; tooBig is **top-level**. Structured
 decisions come from decisions.json captured by evidence, not a BuildOutput decisions key. Final false is an intermediate
 wait protocol; the terminal build output must be final true.
