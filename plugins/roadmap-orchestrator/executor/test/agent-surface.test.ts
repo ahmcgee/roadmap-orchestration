@@ -356,7 +356,7 @@ test('surface.fix-round: a gate revision delivers findings, experiments and live
 });
 
 
-test('surface.campaign-dismissal: request reaches the root without changing its finding', {timeout: 120_000}, async () => {
+for (const decidedBeforeReport of [false, true]) test(`surface.campaign-dismissal: ${decidedBeforeReport ? 'a stale request after root dismissal is informational' : 'a request reaches the root without changing its finding'}`, {timeout: 120_000}, async () => {
   const { openFinding } = await import('../src/holistic/findings.ts');
   const { findingId, jobId } = await import('../src/core/ids.ts');
   const step = lensStep('audit-1', 'invariants');
@@ -366,21 +366,31 @@ test('surface.campaign-dismissal: request reaches the root without changing its 
   const tick = setInterval(() => w.arbiter.wake(), 50);
   try {
     openFinding(r.journal, {lens: 'invariants', severity: 'P1', obligation: null, visionClauses: [], claim: 'false regression', cause: 'false regression', evidence: [], mutant: null, source: {type: 'job', job: jobId('baseline', 1)}, gateHadPassed: false});
+    const {raiseNeedsUser, openBlocking} = await import('../src/needsuser.ts');
+    assert.throws(() => raiseNeedsUser(r.journal, r.ctx.runDir, {blocking: false, subject: {type: 'findings', findings: [findingId('F-1')]}, reason: 'owner-request', summary: 'Cannot suppress an active finding request', recommendation: 'Root decision required', options: [], evidence: []}, {type: 'arc'}), /raised blocking/);
     // Replace the scripted audit answer with the current campaign request wire shape.
     const scenario = JSON.parse(readFileSync(d.scenarioPath, 'utf8'));
     const emit = scenario.steps[0].acts.find((a: {type: string}) => a.type === 'emit');
     emit.value.requests = [{op: 'request', summary: 'Dismiss F-1', evidence: ['src/mul.js:1'], dismisses: 'F-1', counterEvidence: 'Restart retains the committed write'}];
     writeFileSync(d.scenarioPath, JSON.stringify(scenario));
     r.journal.fact({kind: 'audit-requested', command: (await import('../src/core/ids.ts')).commandId('cmd-1111111111111111')});
+    const cmd = submitCommand(r.ctx.runDir, r.journal.view.arc, {type: 'dismiss', finding: findingId('F-1'), counterEvidence: 'Restart retains the committed write'});
+    if (decidedBeforeReport) assert.equal((await applyCommand(w.commands, cmd)).kind, 'applied');
     const before = r.journal.view.planApplied()!.rev;
     assert.equal((await runAudit({...ctx, clock: () => 0})).kind, 'ended');
-    assert.equal(r.journal.view.holistic().findings[0]?.state, 'open');
+    assert.equal(r.journal.view.holistic().findings[0]?.state, decidedBeforeReport ? 'ruled' : 'open');
     assert.equal(r.journal.view.planApplied()!.rev, before);
     const request = r.journal.view.needsUser().map((n) => readNeedsUser(r.ctx.runDir, n.id)).find((n) => n?.summary === 'Dismiss F-1');
     assert.deepEqual(request?.subject, {type: 'findings', findings: ['F-1']});
     assert.match(request?.recommendation ?? '', /Restart retains the committed write/);
-    const cmd = submitCommand(r.ctx.runDir, r.journal.view.arc, {type: 'dismiss', finding: findingId('F-1'), counterEvidence: 'Restart retains the committed write'});
-    assert.equal((await applyCommand(w.commands, cmd)).kind, 'applied');
-    assert.equal(r.journal.view.ackOf(request!.id)?.command, cmd.id);
+    assert.equal(request?.blocking, !decidedBeforeReport);
+    if (decidedBeforeReport) {
+      assert.deepEqual(openBlocking(r.journal.view), [], 'the late request cannot re-block completion');
+      assert.match(request?.recommendation ?? '', /already settled/);
+    }
+    if (!decidedBeforeReport) {
+      assert.equal((await applyCommand(w.commands, cmd)).kind, 'applied');
+      assert.equal(r.journal.view.ackOf(request!.id)?.command, cmd.id);
+    }
   } finally {clearInterval(tick); r.journal.close();}
 });

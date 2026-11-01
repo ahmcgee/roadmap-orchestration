@@ -12,7 +12,7 @@
 // refused claim's) are files only (`fileNeedsUser`); `blockingItems` reads both for admission.
 //
 // M3 (B7; the OR rulings), M4a and M4b: whether an item of a reason from M3 on blocks is fixed by its reason (`m3Blocking`),
-// and a raise that disagrees fails loud. Blocking: `obligation-baseline` (A6), `finding-p1-escalated`,
+// and a raise that disagrees fails loud. A request naming only settled findings is informational: its decision already landed. Blocking: `obligation-baseline` (A6), `finding-p1-escalated`,
 // `new-finding-draining`, `steered`, `not-reproduced`, `owner-request` (A16: only the owner may act), `respec-second`
 // (OR-Q1), and M4a's `pack-review` (K14).
 // Non-blocking (`NON_BLOCKING_M3_REASONS`):
@@ -53,7 +53,7 @@ const fileSha = (path: AbsPath): Sha256Hex => sha256(sha256Hex(readFileSync(path
 /** The reasons from M3 on (every reason from `obligation-baseline` on, M4a's included); an earlier reason's raiser decides whether it blocks. */
 const M3_REASONS: readonly NeedsUserReason[] = NEEDS_USER_REASONS.slice(NEEDS_USER_REASONS.indexOf('obligation-baseline'));
 
-/** Whether an item with `reason` is raised blocking: fixed for an M3 reason (the OR rulings), null for an earlier one. */
+/** Default blocking flag by reason; raiseNeedsUser exempts requests naming only settled findings. Earlier reasons return null. */
 export function m3Blocking(reason: NeedsUserReason): boolean | null {
   if (!M3_REASONS.includes(reason)) return null;
   return !(NON_BLOCKING_M3_REASONS as readonly NeedsUserReason[]).includes(reason);
@@ -65,7 +65,10 @@ export function m3Blocking(reason: NeedsUserReason): boolean | null {
  * parked, or the arc. The executor reads it back to raise each such item once (`raisedFor`).
  */
 export function raiseNeedsUser(journal: Journal, runDir: AbsPath, content: NeedsUserContent, parent: Parent): NeedsUserId {
-  const blocking = m3Blocking(content.reason);
+  const subject = content.subject;
+  const settledRequest = content.reason === 'owner-request' && subject.type === 'findings' && subject.findings.length > 0 && subject.findings.every((id) =>
+    journal.view.holistic().findings.some((f) => f.id === id && (f.state === 'ruled' || f.state === 'resolved')));
+  const blocking = settledRequest ? false : m3Blocking(content.reason);
   if (blocking !== null && blocking !== content.blocking) {
     throw new Error(`a ${content.reason} needs-user is raised ${blocking ? 'blocking' : 'non-blocking'}, not ${content.blocking ? 'blocking' : 'non-blocking'}`);
   }

@@ -45,7 +45,7 @@ import type { AcquireFirst } from '../schedule/arbiter.ts';
 
 import { type Clock,cadence,integrationHeadNow } from './cadence.ts';
 import { coverageBase,lensCoverage,publishedHeads } from './coverage.ts';
-import { type FindingDraft,admitMutant,openFinding,witnessFindingDraft } from './findings.ts';
+import { type FindingDraft,admitMutant,isActive,openFinding,witnessFindingDraft } from './findings.ts';
 import { chunkEnd,LENS_DIFF_BUDGET } from './lensdiff.ts';
 import { verdictOf as witnessVerdict } from './observe.ts';
 import { FINDING_MOVES,type FindingEvidence,type LensKind,type MutantRef,type Obligations,type ObservationVerdict,type Vision,type WitnessRecord,isExempt,isMustHold,parseObligations,parseVision } from './types.ts';
@@ -447,12 +447,15 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
       const raised = ctx.journal.view.opsOf('needsuser.raise').some((i) =>
         i.parent.type === 'job' && i.parent.job === job && readNeedsUser(ctx.runDir, i.expect.id)?.summary === request.summary);
       if (raised) continue;
+      const target = request.dismisses === null ? undefined : ctx.journal.view.holistic().findings.find((f) => f.id === request.dismisses);
+      // A root decision may land while the audit is running. Surface its stale request without reopening a blocker.
+      const blocking = target === undefined || isActive(target);
       const dismissal = request.dismisses === null ? '' : `Dismiss ${request.dismisses} only on counter-evidence: ${request.counterEvidence}. `;
       raiseNeedsUser(ctx.journal, ctx.runDir, {
-        blocking: true,
-        subject: request.dismisses === null ? {type: 'arc'} : {type: 'findings', findings: [request.dismisses]},
+        blocking,
+        subject: request.dismisses === null || target === undefined ? {type: 'arc'} : {type: 'findings', findings: [request.dismisses]},
         reason: 'owner-request', summary: request.summary,
-        recommendation: `Evidence: ${request.evidence.join('; ')}. ${dismissal}The root reviews: dismiss <finding> --counter-evidence for dismissal, apply --reason for plan changes.`,
+        recommendation: `${blocking ? '' : 'The named finding is already settled; this request is informational. '}Evidence: ${request.evidence.join('; ')}. ${dismissal}The root reviews: dismiss <finding> --counter-evidence for dismissal, apply --reason for plan changes.`,
         evidence: [jobEvidenceRoot(ctx.runDir, job)], options: [],
       }, parent);
     }
