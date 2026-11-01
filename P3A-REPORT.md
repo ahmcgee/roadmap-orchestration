@@ -158,3 +158,52 @@ Flow-only assertions removed from surviving mixed cases (same §8 authorization)
 - `test/evals-m3.test.ts`: evals-m3.setup-valid: remove the one-flow-run count; preserve all unit, smoke, review, audit, checkpoint and product assertions. The fake repair no longer waits for the deleted flow job.
 
 The shared `flow-series-per-completion` oracle and two flow-specific matrix rows retire with their feature; every other oracle assertion remains. Scripted M4a flow requests/steps retire with it. Removed paid probe scenarios (same §8 authorization): `evals/probe.ts` m4b.flow (including m4b.flow.answer) and m4b.proof. Neither was run.
+
+## Continuation 2
+
+Restored the kept `run-only --clear` revision-notice closure check in `test/revision.test.ts`, using a bundle revision. It checks exactly one notice, its open state before clear, ordering (raise → run-only fact → closure), and closure by that command before it returns. This corrects the earlier report's classification of that assertion as flow-only.
+
+Deleted the remaining flow prompt, role/seat/schema/input entries, facts/readers/fold/accessor, proposal/proof jobs and ids, brief field, kept-input/snapshot arms, hold/source/spawn variants, reasons, config and orphaned fixture/probe helpers. `HostFingerprint` and its reader now live in `host/sample.ts`; the pressure fraction reader lives in `core/validate.ts`. The sole `repoGiven` consumer was the retired `flow.givens` config parser; both were deleted, leaving no unused givens parser. The schema-1 startup check refuses pre-cut runs before claim/recovery (`runSchemaRows`), so no flow journal compatibility reader remains. Added a schema-2 regression case refusing all eight retired fact kinds, both job kinds, the routing seat and flow config. Role-set provenance, host telemetry/holds and checkpoint assertions remain. Orphaned matrix constants/trace markers and fake-root flow-rejection state are gone; its live read-out release flag retains its behavior under its own name.
+
+Removed the speculative LaneDef `cost` lookup; waste uses observed wall time. The summary golden now has one lane red, two distinct lenses, duplicate-finding deduplication, and a grinding finding in `summary.waste`.
+
+Codex prices each reported turn before summing, preserves native USD amounts, and propagates `costEstimated` if any turn was estimated. Two new tests run the fake Codex backend through `adapt`, checking both turn orders and both model-flag spellings. `backendArgv` supplies `-m <routed model>` on both fresh and resume paths; the missing/unknown-model price error stays loud. The report-grace fixture hand-wrote a Codex launch without a model; it now supplies the same explicit model flag production uses, keeping every test assertion. Production CLI invocation is unchanged. No paid evals were run, as requested.
+
+Removed **nine whole test cases**, each authorized by design delta, Execution phases P3(a) “flow-loop retirement” and Fable judgment §8: “Retire M4b flow loop (src/flow ~3.5 KLOC) this batch; keep host:cpu back-off as code.” Every case removed in this continuation is listed here:
+
+- `test/m4b-schemas.test.ts`: `proposals are <flow job>.<k>; stations are the closed grammar; jobs flow-n and proof-n` — retired flow ids/stations/jobs.
+- `test/m4b-schemas.test.ts`: `each flow fact round-trips byte for byte` — retired flow facts; its two executor-started/host assertions were moved into the surviving host telemetry case.
+- `test/m4b-schemas.test.ts`: `refuses illegal flow states` — retired flow fact validation.
+- `test/m4b-schemas.test.ts`: `the revision source, hold cause and proof spawn arms; the flow commands` — retired flow source/hold/proof variants.
+- `test/m4b-schemas.test.ts`: `a series point and a suite run carry pressure (series v2), a point per station too; host:cpu is no minutes or station-pressure key` — retired flow series, not host pressure measurement.
+- `test/m4b-schemas.test.ts`: `a flow series reads; its points partition lead time over leaf stations` — retired flow series reader.
+- `test/m4b-schemas.test.ts`: `flow inputs and host givens read; givens ascend by id` — retired flow inputs/givens/config.
+- `test/m4b-schemas.test.ts`: `exactly one of proposal and noAction; a suite lane's unused fields null and read as absent` — retired flow output/schema.
+- `test/prompts.test.ts`: `the flow prompt: the ruler out of reach, one proposal, the lever shapes` — retired flow prompt.
+
+Flow-only parts removed from surviving cases under the same plan text: M4a brief round-trip fixture loses only the deleted flow field (all round-trip/answer/clock/refusal assertions remain); M4b host case loses station/trigger/drop/metric assertions but retains invocation-bound host-pressure hold checks; M4b routing case loses the retired class/rebind assertions but retains all role-set provenance checks and now checks refusal of flow config/routing; prompt samples/seat loop lose only flow; Claude judgment-session case loses only the flow iteration; routing class/profile/efficient/economy/hash/filter cases lose only flow-seat entries; snapshot closure loses only the proof-spawn branch; M4a harness pressure case loses only flow-window assertions (all lane-pressure positive/negative controls remain); serial M4a synthetic criteria case loses only flow constraint/decision/proof/verdict assertions (every lane revision, argv and witness-multiset assertion remains, renamed `evals-m4a.ruler-criteria`). No other assertion was removed or weakened.
+
+Final `npm run typecheck` passed. The complete final non-serial batch (`node --test --test-concurrency=4 test/*.test.ts`) covered 206 files: **2,880 passed, 0 failed, 1 NOT RUN** (`contain.cgroup-real`, read-only cgroup v2; never counted as a pass).
+
+Reruns: the first focused batch passed 144/150; two new fake-backend tests still used a captured output path and four routing expectations still named the deleted seat. After correcting those fixtures/expectations, their rerun passed 24/24. The first full non-serial batch passed 2,877 with three failures and the same one NOT RUN: the brief fixture still contained the deleted flow field (corrected file: 34/34), and two report-grace fixtures omitted Codex's model flag. Those timing-bound report cases were rerun unchanged under the shared lock before diagnosis: 6/8 passed, the same two failed with `Codex model has no price`, at 30.791/30.786 s (initial run: 30.809/30.816 s). Adding the production model flag, without changing an assertion or timing bound, passed locked 8/8 (30.842/30.836 s). Both also passed in the final full batch (30.917/30.913 s).
+
+The first locked M4a file passed **21/22**: its setup isolation assertion correctly found the repository path in `.p3a-focused.log`, because I had put verification artifacts inside the staged plugin tree. The story and every other case passed. All logs were moved to a directory at the worktree root, outside the plugin; no test, assertion, timing bound or staging filter changed. The unchanged full M4a rerun passed **22/22**, no failures/skips (setup isolation: 131.209 s).
+
+Every serial file ran individually with `--test-concurrency=1` under the shared `serial.lock`. All **12 serial files** passed, **1,008/1,008**, with no failures, cancellations or skips in their final runs:
+
+| Serial file | Passed |
+| --- | ---: |
+| `pipeline-matrix.test.ts` | 362/362 |
+| `concurrent-matrix.test.ts` | 501/501 |
+| `evals-m4a.test.ts` | 22/22 |
+| `upgrade.test.ts` | 1/1 |
+| `calibrate.test.ts` | 1/1 |
+| `pressure.test.ts` | 1/1 |
+| `probe-crash.test.ts` | 16/16 |
+| `resource-recover.test.ts` | 62/62 |
+| `pool-crash.test.ts` | 37/37 |
+| `walk-browser.test.ts` | 3/3 |
+| `evals-m5-reflow.test.ts` | 1/1 |
+| `roles-default-size.test.ts` | 1/1 |
+
+The unchanged `upgrade.test.ts` confirms that schema-1 runs are refused before host claim/recovery. Routing tests and both matrices pass with the retired flow seat absent from the routing hash. No test was disabled or weakened. No paid evals, full `npm test`, version bump, push, or P4 documentation changes were made.
